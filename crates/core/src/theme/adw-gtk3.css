@@ -1,0 +1,35 @@
+/* WolOS Kit scaffold for GTK 3 apps (adw-gtk3 underneath). Colours are theme tokens (wol_ + token), metrics
+   wrap a shared::theme::scaffold name in at-signs. GTK 3 CSS only: no custom properties, no color-mix. */
+
+/* ---- Toolbar (Kit .toolbar): 52 px header bar, glass, hairline below; title 13 semibold ---- */
+headerbar { min-height: @TOOLBAR_HEIGHT@px; background: @wol_glass; border-color: @wol_line; box-shadow: none; }
+headerbar .title { font-size: @BODY@px; font-weight: 600; }
+headerbar .subtitle { font-size: @SECONDARY@px; color: @wol_dim; }
+headerbar button:not(.titlebutton), headerbar entry { min-height: @CONTROL_HEIGHT@px; border-radius: @RADIUS_CONTROL@px; }
+
+/* ---- Lists and cards: radius 10, hairline, accent selection (before the sidebar: its pill wins) ---- */
+row:selected, row.activatable:selected { background-color: alpha(@wol_accent, 0.22); color: @wol_text; }
+list.content, frame > border, .frame { border-radius: @RADIUS_CARD@px; border-color: @wol_line; }
+
+/* ---- Sidebar (Kit list.sidebar): 28 px source rows, accent pill selection ---- */
+.sidebar, .sidebar list, .navigation-sidebar, placessidebar list, stacksidebar list { background-color: @wol_sidebar; }
+.navigation-sidebar > row, .sidebar list > row, placessidebar row, stacksidebar row {
+  min-height: @SOURCE_ROW@px; margin: 0 8px 1px 8px; border-radius: @RADIUS_CONTROL@px; }
+.navigation-sidebar > row:selected, .sidebar list > row:selected, placessidebar row:selected, stacksidebar row:selected,
+.navigation-sidebar > row.activatable:selected, .sidebar list > row.activatable:selected {
+  background-color: @wol_accent; color: @wol_accent_text; }
+.navigation-sidebar > row:selected image, .navigation-sidebar > row:selected label, .sidebar list > row:selected image,
+.sidebar list > row:selected label, placessidebar row:selected image, placessidebar row:selected label { color: @wol_accent_text; }
+
+/* ---- Controls (Kit btn / search-field / switch): radius 6, accent checked ---- */
+button, entry, spinbutton, combobox button, button.combo { border-radius: @RADIUS_CONTROL@px; }
+button.text-button { font-weight: 500; }
+entry { background-color: @wol_control; border-color: @wol_line; }
+entry:focus { border-color: @wol_accent; box-shadow: inset 0 0 0 1px @wol_accent; }
+switch:checked, check:checked, radio:checked, scale highlight, progressbar progress { background-color: @wol_accent; }
+
+/* ---- Menus and popovers (Kit popover.menu): glass, radius 10, accent hover ---- */
+popover, popover.background, menu, .menu, .context-menu { border-radius: @RADIUS_CARD@px; }
+popover modelbutton { min-height: @CONTROL_HEIGHT@px; border-radius: @RADIUS_CONTROL@px; }
+popover modelbutton:hover, menu menuitem:hover, .menu menuitem:hover { background-color: @wol_accent; color: @wol_accent_text; }
+tooltip.background { border-radius: @RADIUS_CONTROL@px; }

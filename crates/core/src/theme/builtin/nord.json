@@ -1,0 +1,20 @@
+{
+  "id": "nord",
+  "name": "Nord",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#2e3440",
+    "sidebar": "rgba(39,44,54,0.92)",
+    "card": "#3b4252",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#eceff4",
+    "dim": "#d8dee9",
+    "accent": "#88c0d0",
+    "accentText": "#2e3440",
+    "glass": "rgba(46,52,64,0.84)",
+    "control": "#434c5e",
+    "success": "#a3be8c",
+    "warning": "#ebcb8b",
+    "danger": "#bf616a"
+  }
+}

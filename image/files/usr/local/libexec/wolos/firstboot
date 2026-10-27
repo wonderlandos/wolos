@@ -1,0 +1,22 @@
+#!/bin/sh
+# WolOS first boot: login UI user, GPU driver, Linuxulator, Steam. Idempotent.
+set -u
+export ASSUME_ALWAYS_YES=yes   # never stop boot on a pkg bootstrap prompt
+log() { echo "wolos_firstboot: $*"; logger -t wolos_firstboot "$*"; }
+# Fallback only: the installer chroot installs the packages from the local repo (offline). A repo
+# still present here means that step failed: say so loudly, retry from the same local repo.
+if [ -d /var/cache/wolos-repo ]; then
+  log "WARNING: installer did not install the desktop packages; retrying from the local repo"
+  /usr/local/libexec/wolos/install-pkgs || log "ERROR: install-pkgs failed; desktop packages missing"
+fi
+# Login window UI user (wol-login, ADR 0024 in IaraOS): unprivileged, no shell.
+pw usershow _wollogin >/dev/null 2>&1 || pw useradd _wollogin -u 911 -c "WolOS login window" -d /var/empty -s /usr/sbin/nologin -G video
+# Driver packages not in the offline repo (NVIDIA: the catalogue picks 595 or the 580 branch): install
+# them now, online, and load them with their tunables before the greeter starts. rc.d wolos_hw
+# (`wol hw boot`) loads drivers on every later boot.
+/usr/local/bin/wol hw boot --online || log "wol hw boot --online failed"
+# Linuxulator + Steam (packages ship in wolos.txz; fetch if missing and online).
+sysrc -q linux_enable=YES >/dev/null
+for p in linux_base-rl9 linux-steam-utils; do pkg -N >/dev/null 2>&1 && pkg info -e "$p" || pkg install -y "$p" || log "$p install failed"; done
+service linux start >/dev/null 2>&1 || :
+# First user: the setup assistant (wol-setup via wol-login, ADR 0004) on the first greeter.

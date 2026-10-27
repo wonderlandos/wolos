@@ -1,0 +1,10 @@
+{
+  "name": "Light",
+  "description": "Easiest on the battery.",
+  "rounding": 8,
+  "blur": false,
+  "shadow": false,
+  "glass": 1.2,
+  "speed": 1.4,
+  "switch": "fade"
+}

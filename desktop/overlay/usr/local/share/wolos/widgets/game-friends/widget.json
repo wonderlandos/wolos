@@ -1,0 +1,63 @@
+{
+  "_comment": "Example custom widget. Copy this folder to ~/.local/share/wolos/widgets/<your-id>/ and edit. Guide: archicture/modules/widgets.md",
+  "name": "Game Friends",
+  "description": "Which friends are online, and what they play.",
+  "icon": "input-gaming-symbolic",
+  "sizes": ["small", "medium", "large"],
+  "refresh": 120,
+  "source": {"command": ["./friends.sh"], "timeout": 4},
+  "layouts": {
+    "small": {"type": "stack", "spacing": 4, "children": [
+      {"type": "row", "spacing": 8, "children": [
+        {"type": "icon", "name": "input-gaming-symbolic", "tone": "accent"},
+        {"type": "label", "text": "Friends", "role": "title"}
+      ]},
+      {"type": "spacer"},
+      {"type": "label", "text": "{{online.length}}", "role": "display"},
+      {"type": "label", "text": "online of {{total}}", "role": "secondary"}
+    ]},
+    "medium": {"type": "stack", "spacing": 8, "children": [
+      {"type": "row", "spacing": 8, "children": [
+        {"type": "icon", "name": "input-gaming-symbolic", "tone": "accent"},
+        {"type": "label", "text": "Friends Online", "role": "title"},
+        {"type": "spacer"},
+        {"type": "badge", "text": "{{online.length}}", "tone": "success"}
+      ]},
+      {"type": "list", "items": "{{online}}", "max": 3, "spacing": 4, "empty": "Nobody is online.",
+       "item": {"type": "row", "spacing": 8, "children": [
+         {"type": "icon", "name": "avatar-default-symbolic", "tone": "dim"},
+         {"type": "label", "text": "{{item.name}}"},
+         {"type": "spacer"},
+         {"type": "label", "text": "{{item.game}}", "role": "secondary"}
+       ]}}
+    ]},
+    "large": {"type": "stack", "spacing": 12, "children": [
+      {"type": "row", "spacing": 8, "children": [
+        {"type": "icon", "name": "input-gaming-symbolic", "tone": "accent"},
+        {"type": "label", "text": "Friends Online", "role": "title"},
+        {"type": "spacer"},
+        {"type": "badge", "text": "{{online.length}} of {{total}}", "tone": "success"}
+      ]},
+      {"type": "list", "items": "{{online}}", "max": 5, "spacing": 8, "empty": "Nobody is online.",
+       "item": {"type": "row", "spacing": 8, "children": [
+         {"type": "icon", "name": "avatar-default-symbolic", "tone": "dim"},
+         {"type": "stack", "children": [
+           {"type": "label", "text": "{{item.name}}", "role": "title"},
+           {"type": "label", "text": "{{item.game}} · {{item.status}}", "role": "secondary"}
+         ]}
+       ]}},
+      {"type": "spacer"},
+      {"type": "label", "text": "Played this week", "role": "caption", "tone": "dim"},
+      {"type": "chart", "kind": "bar", "values": "{{week}}", "tone": "accent", "size": "medium"}
+    ]}
+  },
+  "sample": {
+    "total": 12,
+    "online": [
+      {"name": "Alice", "game": "Croquet Royale", "status": "In a match"},
+      {"name": "Dinah", "game": "Yarn Quest", "status": "Exploring"},
+      {"name": "Hatter", "game": "Tea Tycoon", "status": "Lobby"}
+    ],
+    "week": [2, 3, 1, 4, 6, 5, 3]
+  }
+}

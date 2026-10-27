@@ -1,0 +1,112 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 02:43:24 -0300
+Subject: [PATCH 1/2] animation: tick once per monitor frame instead of every 1
+ ms
+
+---
+ src/animation/AnimationManager.cpp |  9 ++++++++-
+ src/helpers/WolosPerf.hpp          | 27 ++++++++++++++++++++++++++
+ tests/helpers/WolosPerf.cpp        | 31 ++++++++++++++++++++++++++++++
+ 3 files changed, 66 insertions(+), 1 deletion(-)
+ create mode 100644 src/helpers/WolosPerf.hpp
+ create mode 100644 tests/helpers/WolosPerf.cpp
+
+diff --git a/src/animation/AnimationManager.cpp b/src/animation/AnimationManager.cpp
+index 7742d2f..ddb8684 100644
+--- a/src/animation/AnimationManager.cpp
++++ b/src/animation/AnimationManager.cpp
+@@ -1,4 +1,5 @@
+ #include "AnimationManager.hpp"
++#include "../helpers/WolosPerf.hpp"
+ #include "../Compositor.hpp"
+ #include "../desktop/DesktopTypes.hpp"
+ #include "../helpers/AnimatedVariable.hpp"
+@@ -373,7 +374,13 @@ void CHyprAnimationManager::scheduleTick() {
+         return;
+     }
+ 
+-    m_animationTimer->updateTimeout(std::chrono::milliseconds(1));
++    // WolOS: one tick per frame of the fastest monitor instead of every 1 ms (fewer wakeups while animating).
++    float fastestHz = 0.F;
++    for (const auto& mon : State::monitorState()->monitors()) {
++        if (mon->m_enabled)
++            fastestHz = std::max(fastestHz, mon->m_refreshRate);
++    }
++    m_animationTimer->updateTimeout(WolosPerf::animationTickInterval(fastestHz));
+ }
+ 
+ void CHyprAnimationManager::onTicked() {
+diff --git a/src/helpers/WolosPerf.hpp b/src/helpers/WolosPerf.hpp
+new file mode 100644
+index 0000000..8dc3992
+--- /dev/null
++++ b/src/helpers/WolosPerf.hpp
+@@ -0,0 +1,27 @@
++#pragma once
++
++// WolOS idle/CPU policy (ported from IaraOS iara-compositor). Pure functions: tested in tests/helpers/WolosPerf.cpp.
++
++#include <algorithm>
++#include <chrono>
++
++namespace WolosPerf {
++    // Slow safety tick for the cursor-hiding check (was a fixed 2 Hz poll).
++    inline constexpr int CURSOR_HEARTBEAT_MS = 5000;
++
++    // Animations tick once per frame of the fastest enabled monitor (was every 1 ms), never faster than 1 kHz.
++    inline std::chrono::microseconds animationTickInterval(float fastestHz) {
++        if (fastestHz <= 0.F)
++            fastestHz = 60.F;
++        return std::chrono::microseconds(std::max(1000, static_cast<int>(1000000.0 / fastestHz)));
++    }
++
++    // Sleep until the cursor inactivity timeout can fire, or the heartbeat, whichever is sooner.
++    inline int cursorTickerDelayMs(float timeoutS, bool hiddenOnTimeout, float sinceMoveS) {
++        if (timeoutS <= 0.F || hiddenOnTimeout)
++            return CURSOR_HEARTBEAT_MS;
++        const int remaining = static_cast<int>((timeoutS - sinceMoveS) * 1000.F) + 1;
++        return std::clamp(remaining, 50, CURSOR_HEARTBEAT_MS);
++    }
++
++}
+diff --git a/tests/helpers/WolosPerf.cpp b/tests/helpers/WolosPerf.cpp
+new file mode 100644
+index 0000000..bc91519
+--- /dev/null
++++ b/tests/helpers/WolosPerf.cpp
+@@ -0,0 +1,31 @@
++#include <helpers/WolosPerf.hpp>
++
++#include <gtest/gtest.h>
++
++using namespace WolosPerf;
++
++TEST(WolosPerf, animationTickFollowsFastestMonitor) {
++    struct {
++        float hz;
++        int   us;
++    } cases[] = {{60.F, 16666}, {144.F, 6944}, {0.F, 16666}, {-1.F, 16666}, {2000.F, 1000}};
++    for (auto c : cases)
++        EXPECT_EQ(animationTickInterval(c.hz).count(), c.us) << c.hz;
++}
++
++TEST(WolosPerf, cursorTickerSleepsUntilTimeout) {
++    struct {
++        float timeoutS;
++        bool  hidden;
++        float sinceMoveS;
++        int   ms;
++    } cases[] = {
++        {0.F, false, 0.F, CURSOR_HEARTBEAT_MS},  // no timeout: slow heartbeat only
++        {3.F, false, 1.F, 2001},                 // wake right after the deadline
++        {3.F, false, 2.99F, 50},                 // clamped minimum
++        {3.F, true, 9.F, CURSOR_HEARTBEAT_MS},   // already hidden: movement event unhides
++        {100.F, false, 0.F, CURSOR_HEARTBEAT_MS} // never sleep longer than the heartbeat
++    };
++    for (auto c : cases)
++        EXPECT_EQ(cursorTickerDelayMs(c.timeoutS, c.hidden, c.sinceMoveS), c.ms) << c.timeoutS << " " << c.sinceMoveS;
++}
+-- 
+2.54.0
+

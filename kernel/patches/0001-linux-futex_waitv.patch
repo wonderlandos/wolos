@@ -1,0 +1,540 @@
+# SPDX-License-Identifier: LicenseRef-Wonderland-1.0
+# Copyright (c) 2026 Julia Klee. WolOS kernel/driver patch: see LICENSES/Wonderland-1.0.md.
+diff --color -ruN a/sys/amd64/linux/syscalls.master b/sys/amd64/linux/syscalls.master
+--- sys/amd64/linux/syscalls.master
++++ sys/amd64/linux/syscalls.master
+@@ -2176,7 +2176,13 @@
+ 	}
+ ; Linux 5.16:
+ 449	AUE_NULL		STD {
+-		int linux_futex_waitv(void);
++		int linux_futex_waitv(
++		    struct linux_futex_waitv *waiters,
++		    l_uint nr_futexes,
++		    l_uint flags,
++		    struct l_timespec *timeout,
++		    clockid_t clockid
++		);
+ 	}
+ ; Linux 5.17:
+ 450	AUE_NULL		STD {
+diff --color -ruN a/sys/amd64/linux32/syscalls.master b/sys/amd64/linux32/syscalls.master
+--- sys/amd64/linux32/syscalls.master
++++ sys/amd64/linux32/syscalls.master
+@@ -2606,7 +2606,13 @@
+ 	}
+ ; Linux 5.16:
+ 449	AUE_NULL		STD {
+-		int linux_futex_waitv(void);
++		int linux_futex_waitv(
++		    struct linux_futex_waitv *waiters,
++		    l_uint nr_futexes,
++		    l_uint flags,
++		    struct l_timespec64 *timeout,
++		    clockid_t clockid
++		);
+ 	}
+ ; Linux 5.17:
+ 450	AUE_NULL		STD {
+diff --color -ruN a/sys/arm64/linux/syscalls.master b/sys/arm64/linux/syscalls.master
+--- sys/arm64/linux/syscalls.master
++++ sys/arm64/linux/syscalls.master
+@@ -1854,7 +1854,13 @@
+ 	}
+ ; Linux 5.16:
+ 449	AUE_NULL		STD {
+-		int linux_futex_waitv(void);
++		int linux_futex_waitv(
++		    struct linux_futex_waitv *waiters,
++		    l_uint nr_futexes,
++		    l_uint flags,
++		    struct l_timespec *timeout,
++		    clockid_t clockid
++		);
+ 	}
+ ; Linux 5.17:
+ 450	AUE_NULL		STD {
+diff --color -ruN a/sys/compat/linux/linux_dummy.c b/sys/compat/linux/linux_dummy.c
+--- sys/compat/linux/linux_dummy.c
++++ sys/compat/linux/linux_dummy.c
+@@ -151,8 +151,7 @@
+ DUMMY(quotactl_fd);
+ /* Linux 5.15: */
+ DUMMY(process_mrelease);
+-/* Linux 5.16: */
+-DUMMY(futex_waitv);
++/* Linux 5.16: futex_waitv is implemented in linux_futex.c */
+ DUMMY(set_mempolicy_home_node);
+ /* Linux 6.5: */
+ DUMMY(cachestat);
+diff --color -ruN a/sys/compat/linux/linux_emul.c b/sys/compat/linux/linux_emul.c
+--- sys/compat/linux/linux_emul.c
++++ sys/compat/linux/linux_emul.c
+@@ -39,7 +39,9 @@
+ #include <sys/resourcevar.h>
+ #include <sys/sx.h>
+ #include <sys/syscallsubr.h>
++#include <sys/sysctl.h>
+ #include <sys/sysent.h>
++#include <sys/umtxvar.h>
+ 
+ #include <compat/linux/linux_emul.h>
+ #include <compat/linux/linux_mib.h>
+@@ -247,6 +249,7 @@
+ 		p->p_emuldata = NULL;
+ 		PROC_UNLOCK(p);
+ 
++		linux_futex_waitv_free(em);
+ 		free(em, M_LINUX);
+ 		free(pem, M_LINUX);
+ 	}
+@@ -313,6 +316,30 @@
+ 	return (0);
+ }
+ 
++/* Futex spin tunable: shared by every Linux ABI module, so it lives here. */
++u_int linux_futex_spin = 100;
++SYSCTL_UINT(_compat_linux, OID_AUTO, futex_spin, CTLFLAG_RWTUN,
++    &linux_futex_spin, 0,
++    "futex waits: spin iterations before sleeping (0 = never spin)");
++
++/*
++ * Free the futex_waitv cache (linux_futex.c).  Lives here, in linux_common,
++ * because emuldata is freed here for every Linux ABI.
++ */
++void
++linux_futex_waitv_free(struct linux_emuldata *em)
++{
++	u_int i;
++
++	for (i = 0; i < em->waitv_cap; i++)
++		umtxq_free(em->waitv_uq[i]);
++	free(em->waitv_uq, M_LINUX);
++	free(em->waitv_buf, M_LINUX);
++	em->waitv_uq = NULL;
++	em->waitv_buf = NULL;
++	em->waitv_cap = 0;
++}
++
+ void
+ linux_thread_dtor(struct thread *td)
+ {
+@@ -325,6 +352,7 @@
+ 
+ 	LINUX_CTR1(thread_dtor, "thread(%d)", em->em_tid);
+ 
++	linux_futex_waitv_free(em);
+ 	free(em, M_LINUX);
+ }
+ 
+diff --color -ruN a/sys/compat/linux/linux_emul.h b/sys/compat/linux/linux_emul.h
+--- sys/compat/linux/linux_emul.h
++++ sys/compat/linux/linux_emul.h
+@@ -31,6 +31,8 @@
+ #define	_LINUX_EMUL_H_
+ 
+ struct image_params;
++struct linux_futex_waitv;
++struct umtx_q;
+ 
+ /*
+  * modeled after similar structure in NetBSD
+@@ -44,6 +46,11 @@
+ 	int	em_tid;			/* thread id */
+ 
+ 	struct	linux_robust_list_head	*robust_futexes;
++
++	/* futex_waitv: per-thread queue entries, reused across calls. */
++	struct	umtx_q			**waitv_uq;
++	struct	linux_futex_waitv	*waitv_buf;
++	u_int				waitv_cap;
+ };
+ 
+ struct linux_emuldata	*em_find(struct thread *);
+@@ -53,6 +60,8 @@
+ void	linux_schedtail(struct thread *);
+ int	linux_on_exec(struct proc *, struct image_params *);
+ void	linux_thread_dtor(struct thread *);
++void	linux_futex_waitv_free(struct linux_emuldata *);
++extern u_int linux_futex_spin;
+ int	linux_common_execve(struct thread *, struct image_args *);
+ 
+ /* process emuldata flags */
+diff --color -ruN a/sys/compat/linux/linux_futex.c b/sys/compat/linux/linux_futex.c
+--- sys/compat/linux/linux_futex.c
++++ sys/compat/linux/linux_futex.c
+@@ -31,10 +31,13 @@
+ #include <sys/imgact_elf.h>
+ #include <sys/ktr.h>
+ #include <sys/lock.h>
++#include <sys/malloc.h>
+ #include <sys/mutex.h>
+ #include <sys/priv.h>
+ #include <sys/proc.h>
+ #include <sys/sched.h>
++#include <sys/sleepqueue.h>
++#include <sys/smp.h>
+ #include <sys/sysent.h>
+ #include <sys/vnode.h>
+ #include <sys/umtxvar.h>
+@@ -1067,3 +1070,208 @@
+ 		    LINUX_HANDLE_DEATH_PENDING);
+ 	}
+ }
++
++/*
++ * futex_waitv(2): wait on up to 128 futexes, return the index of the one
++ * that woke us.
++ *
++ * Tuned for Wine/Proton fsync, which calls it on every wait:
++ * - values are checked before any queue is touched, so a stale wait
++ *   returns EAGAIN without locks;
++ * - queue entries are cached per thread: no allocation after the first call;
++ * - the thread sleeps on one wake record (struct umtxq_wake); the first
++ *   waker records its index, so no rescan is needed to find it;
++ * - a short bounded spin (compat.linux.futex_spin) catches the
++ *   common immediate hand-off before paying for a sleep.
++ */
++/* Grow the per-thread cache to hold at least nr entries. */
++static void
++linux_futex_waitv_reserve(struct linux_emuldata *em, u_int nr)
++{
++	struct linux_futex_waitv *buf;
++	struct umtx_q **uq;
++	u_int cap, i;
++
++	if (__predict_true(nr <= em->waitv_cap))
++		return;
++	cap = MAX(8, em->waitv_cap);
++	while (cap < nr)
++		cap *= 2;
++	uq = malloc(cap * sizeof(*uq), M_LINUX, M_WAITOK);
++	buf = malloc(cap * sizeof(*buf), M_LINUX, M_WAITOK);
++	for (i = 0; i < em->waitv_cap; i++)
++		uq[i] = em->waitv_uq[i];
++	for (; i < cap; i++)
++		uq[i] = umtxq_alloc();
++	free(em->waitv_uq, M_LINUX);
++	free(em->waitv_buf, M_LINUX);
++	em->waitv_uq = uq;
++	em->waitv_buf = buf;
++	em->waitv_cap = cap;
++}
++
++/* EWOULDBLOCK if any value differs (Linux EAGAIN), EFAULT if unreadable. */
++static int
++linux_futex_waitv_check(const struct linux_futex_waitv *wv, u_int nr)
++{
++	uint32_t uval;
++	u_int i;
++
++	for (i = 0; i < nr; i++) {
++		if (fueword32((void *)(uintptr_t)wv[i].uaddr, &uval) != 0)
++			return (EFAULT);
++		if (uval != (uint32_t)wv[i].val)
++			return (EWOULDBLOCK);
++	}
++	return (0);
++}
++
++/* Sleep until woken, timed out or interrupted. */
++static int
++linux_futex_waitv_sleep(struct umtxq_wake *w, struct umtx_abs_timeout *timo)
++{
++	sbintime_t sbt;
++	u_int spin;
++	int error, flags;
++
++	if (mp_ncpus > 1)
++		for (spin = linux_futex_spin; spin > 0 &&
++		    atomic_load_acq_int(&w->w_index) == UMTXQ_WAKE_NONE; spin--)
++			cpu_spinwait();
++	error = 0;
++	while (atomic_load_acq_int(&w->w_index) == UMTXQ_WAKE_NONE) {
++		sbt = 0;
++		flags = 0;
++		if (timo != NULL) {
++			if (timo->is_abs_real)
++				curthread->td_rtcgen =
++				    atomic_load_acq_int(&rtc_generation);
++			error = umtx_abs_timeout_getsbt(timo, &sbt, &flags);
++			if (error != 0)
++				break;
++		}
++		sleepq_lock(w);
++		if (atomic_load_acq_int(&w->w_index) != UMTXQ_WAKE_NONE) {
++			sleepq_release(w);
++			break;
++		}
++		sleepq_add(w, NULL, "futexv", SLEEPQ_SLEEP |
++		    SLEEPQ_INTERRUPTIBLE, 0);
++		if (sbt != 0) {
++			sleepq_set_timeout_sbt(w, sbt, 0, flags);
++			error = sleepq_timedwait_sig(w, 0);
++		} else
++			error = sleepq_wait_sig(w, 0);
++		if (error == EWOULDBLOCK) {
++			error = (flags & C_ABSOLUTE) != 0 ? ETIMEDOUT : 0;
++			if (error != 0)
++				break;
++		} else if (error != 0)
++			break;
++	}
++	curthread->td_rtcgen = 0;
++	return (error);
++}
++
++int
++linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
++{
++	struct umtx_abs_timeout timo;
++	struct linux_emuldata *em;
++	struct linux_futex_waitv *wv;
++	struct umtxq_wake w;
++	struct umtx_q *uq;
++	struct timespec ts;
++	u_int i, nr, queued;
++	int clockid, error;
++
++	nr = args->nr_futexes;
++	if (args->flags != 0 || nr == 0 || nr > LINUX_FUTEX_WAITV_MAX)
++		return (EINVAL);
++	if (args->timeout != NULL) {
++		switch (args->clockid) {
++		case LINUX_CLOCK_MONOTONIC:
++			clockid = CLOCK_MONOTONIC;
++			break;
++		case LINUX_CLOCK_REALTIME:
++			clockid = CLOCK_REALTIME;
++			break;
++		default:
++			return (EINVAL);
++		}
++#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
++		error = linux_get_timespec64(&ts, args->timeout);
++#else
++		error = linux_get_timespec(&ts, args->timeout);
++#endif
++		if (error != 0)
++			return (error);
++		umtx_abs_timeout_init(&timo, clockid, 1, &ts);
++	}
++
++	em = em_find(td);
++	linux_futex_waitv_reserve(em, nr);
++	wv = em->waitv_buf;
++	error = copyin(args->waiters, wv, nr * sizeof(*wv));
++	if (error != 0)
++		return (error);
++	for (i = 0; i < nr; i++) {
++		if ((wv[i].flags & ~(LINUX_FUTEX2_SIZE_MASK |
++		    LINUX_FUTEX2_PRIVATE)) != 0 || wv[i].__reserved != 0 ||
++		    (wv[i].flags & LINUX_FUTEX2_SIZE_MASK) !=
++		    LINUX_FUTEX2_SIZE_U32 || (wv[i].val >> 32) != 0 ||
++		    !__is_aligned(wv[i].uaddr, sizeof(uint32_t)))
++			return (EINVAL);
++	}
++
++	/* Fast path: a value already changed, nothing to queue. */
++	error = linux_futex_waitv_check(wv, nr);
++	if (error != 0)
++		return (error);
++
++	w.w_index = UMTXQ_WAKE_NONE;
++	for (queued = 0; queued < nr; queued++) {
++		uq = em->waitv_uq[queued];
++		error = umtx_key_get((void *)(uintptr_t)wv[queued].uaddr,
++		    TYPE_FUTEX, (wv[queued].flags & LINUX_FUTEX2_PRIVATE) != 0 ?
++		    THREAD_SHARE : AUTO_SHARE, &uq->uq_key);
++		if (error != 0)
++			break;
++		uq->uq_thread = td;
++		uq->uq_bitset = FUTEX_BITSET_MATCH_ANY;
++		uq->uq_wake = &w;
++		uq->uq_wake_index = queued;
++		umtxq_lock(&uq->uq_key);
++		umtxq_insert(uq);
++		umtxq_unlock(&uq->uq_key);
++	}
++
++	/*
++	 * Queued before reading: a waker that changes a value after this
++	 * check finds us on its queue.
++	 */
++	atomic_thread_fence_seq_cst();
++	if (error == 0)
++		error = linux_futex_waitv_check(wv, nr);
++	if (error == 0)
++		error = linux_futex_waitv_sleep(&w,
++		    args->timeout != NULL ? &timo : NULL);
++
++	/* Holding each chain lock: no waker can still reach &w after this. */
++	for (i = 0; i < queued; i++) {
++		uq = em->waitv_uq[i];
++		umtxq_lock(&uq->uq_key);
++		if ((uq->uq_flags & UQF_UMTXQ) != 0)
++			umtxq_remove(uq);
++		uq->uq_wake = NULL;
++		umtxq_unlock(&uq->uq_key);
++		umtx_key_release(&uq->uq_key);
++	}
++
++	/* A wake that raced with a timeout or signal still wins. */
++	if (w.w_index != UMTXQ_WAKE_NONE) {
++		td->td_retval[0] = w.w_index;
++		return (0);
++	}
++	return (error);
++}
+diff --color -ruN a/sys/compat/linux/linux_futex.h b/sys/compat/linux/linux_futex.h
+--- sys/compat/linux/linux_futex.h
++++ sys/compat/linux/linux_futex.h
+@@ -77,6 +77,19 @@
+ #define	FUTEX_TID_MASK		0x3fffffff
+ #define	FUTEX_BITSET_MATCH_ANY	0xffffffff
+ 
++/* futex_waitv(2), Linux 5.16 */
++#define	LINUX_FUTEX_WAITV_MAX		128
++#define	LINUX_FUTEX2_SIZE_U32		0x02
++#define	LINUX_FUTEX2_SIZE_MASK		0x03
++#define	LINUX_FUTEX2_PRIVATE		LINUX_FUTEX_PRIVATE_FLAG
++
++struct linux_futex_waitv {
++	uint64_t	val;
++	uint64_t	uaddr;
++	uint32_t	flags;
++	uint32_t	__reserved;
++};
++
+ /* robust futexes */
+ struct linux_robust_list {
+ 	l_uintptr_t			next;
+diff --color -ruN a/sys/i386/linux/syscalls.master b/sys/i386/linux/syscalls.master
+--- sys/i386/linux/syscalls.master
++++ sys/i386/linux/syscalls.master
+@@ -2618,7 +2618,13 @@
+ 	}
+ ; Linux 5.16:
+ 449	AUE_NULL		STD {
+-		int linux_futex_waitv(void);
++		int linux_futex_waitv(
++		    struct linux_futex_waitv *waiters,
++		    l_uint nr_futexes,
++		    l_uint flags,
++		    struct l_timespec64 *timeout,
++		    clockid_t clockid
++		);
+ 	}
+ ; Linux 5.17:
+ 450	AUE_NULL		STD {
+diff --color -ruN a/sys/kern/kern_umtx.c b/sys/kern/kern_umtx.c
+--- sys/kern/kern_umtx.c
++++ sys/kern/kern_umtx.c
+@@ -573,6 +573,28 @@
+ /*
+  * Wake up threads waiting on an userland object by a bit mask.
+  */
++/*
++ * Wake the thread waiting on uq.  A multi-queue waiter (uq_wake != NULL)
++ * is woken once, by the first of its queues to be signalled.
++ */
++static __inline void
++umtxq_wakeup(struct umtx_q *uq, bool one)
++{
++	struct umtxq_wake *w;
++
++	w = uq->uq_wake;
++	if (__predict_true(w == NULL)) {
++		if (one)
++			wakeup_one(uq);
++		else
++			wakeup(uq);
++		return;
++	}
++	if (atomic_cmpset_rel_int(&w->w_index, UMTXQ_WAKE_NONE,
++	    uq->uq_wake_index))
++		wakeup(w);
++}
++
+ int
+ umtxq_signal_mask(struct umtx_key *key, int n_wake, u_int bitset)
+ {
+@@ -589,7 +611,7 @@
+ 		if ((uq->uq_bitset & bitset) == 0)
+ 			continue;
+ 		umtxq_remove_queue(uq, UMTX_SHARED_QUEUE);
+-		wakeup_one(uq);
++		umtxq_wakeup(uq, true);
+ 		if (++ret >= n_wake)
+ 			break;
+ 	}
+@@ -613,7 +635,7 @@
+ 	if (uh != NULL) {
+ 		while ((uq = TAILQ_FIRST(&uh->head)) != NULL) {
+ 			umtxq_remove_queue(uq, q);
+-			wakeup(uq);
++			umtxq_wakeup(uq, false);
+ 			if (++ret >= n_wake)
+ 				return (ret);
+ 		}
+@@ -630,7 +652,7 @@
+ 
+ 	UMTXQ_LOCKED_ASSERT(umtxq_getchain(&uq->uq_key));
+ 	umtxq_remove(uq);
+-	wakeup(uq);
++	umtxq_wakeup(uq, false);
+ }
+ 
+ /*
+@@ -657,7 +679,7 @@
+ 	TAILQ_FOREACH_SAFE(uq, &uh->head, uq_link, uq_temp) {
+ 		if (++ret <= n_wake) {
+ 			umtxq_remove(uq);
+-			wakeup_one(uq);
++			umtxq_wakeup(uq, true);
+ 		} else {
+ 			umtxq_remove(uq);
+ 			uq->uq_key = *key2;
+@@ -720,7 +742,7 @@
+ 	}
+ }
+ 
+-static int
++int
+ umtx_abs_timeout_getsbt(struct umtx_abs_timeout *timo, sbintime_t *sbt,
+     int *flags)
+ {
+diff --color -ruN a/sys/sys/umtxvar.h b/sys/sys/umtxvar.h
+--- sys/sys/umtxvar.h
++++ sys/sys/umtxvar.h
+@@ -148,6 +148,22 @@
+ 
+ 	/* The queue we on */
+ 	struct umtxq_queue	*uq_cur_queue;
++
++	/*
++	 * Shared wake record when one thread waits on several queues
++	 * (Linux futex_waitv); NULL for ordinary waits.
++	 */
++	struct umtxq_wake	*uq_wake;
++	u_int			uq_wake_index;
++};
++
++/*
++ * A thread waiting on several umtx queues sleeps on one wake record.
++ * The first waker stores the index of its queue entry and wakes the record.
++ */
++struct umtxq_wake {
++	volatile u_int		w_index;
++#define	UMTXQ_WAKE_NONE		0xffffffffu
+ };
+ 
+ TAILQ_HEAD(umtxq_head, umtx_q);
+@@ -200,6 +216,7 @@
+ 
+ void umtx_abs_timeout_init(struct umtx_abs_timeout *, int, int,
+     const struct timespec *);
++int umtx_abs_timeout_getsbt(struct umtx_abs_timeout *, sbintime_t *, int *);
+ int umtx_copyin_timeout(const void *, struct timespec *);
+ void umtx_exec(struct proc *p);
+ int umtx_key_get(const void *, int, int, struct umtx_key *);

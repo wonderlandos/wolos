@@ -1,0 +1,13 @@
+{
+  "name": "Liquid Glass",
+  "description": "Deep blur, see-through windows.",
+  "rounding": 16,
+  "blur_size": 10,
+  "blur_passes": 4,
+  "vibrancy": 0.35,
+  "active_opacity": 0.97,
+  "inactive_opacity": 0.9,
+  "glass": 0.8,
+  "shadow_range": 40,
+  "motion": "pop"
+}

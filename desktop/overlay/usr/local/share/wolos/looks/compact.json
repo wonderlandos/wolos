@@ -1,0 +1,12 @@
+{
+  "name": "Compact",
+  "description": "Tight gaps, room for more windows.",
+  "gaps": 4,
+  "rounding": 4,
+  "border_size": 1,
+  "border_colors": ["#8b6cff"],
+  "inactive_border": "#80808040",
+  "shadow": false,
+  "motion": "slide",
+  "speed": 1.6
+}

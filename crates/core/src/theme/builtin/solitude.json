@@ -1,0 +1,21 @@
+{
+  "id": "solitude",
+  "name": "Solitude",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#101315",
+    "sidebar": "rgba(12,14,16,0.92)",
+    "card": "#1e2123",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#cacccc",
+    "dim": "#9a9ea0",
+    "accent": "#a5aeb4",
+    "accentText": "#101315",
+    "glass": "rgba(16,19,21,0.84)",
+    "control": "#343d41",
+    "success": "#8fb38a",
+    "warning": "#d9b26a",
+    "danger": "#de6145"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-night.svg"
+}

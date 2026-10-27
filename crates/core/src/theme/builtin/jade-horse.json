@@ -1,0 +1,21 @@
+{
+  "id": "jade-horse",
+  "name": "Jade Horse",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#142620",
+    "sidebar": "rgba(15,30,25,0.92)",
+    "card": "#203b31",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#dfede5",
+    "dim": "#bed6c9",
+    "accent": "#8bcbb1",
+    "accentText": "#142620",
+    "glass": "rgba(20,38,32,0.84)",
+    "control": "#2b5147",
+    "success": "#8bcbb1",
+    "warning": "#d2ab8d",
+    "danger": "#d88d91"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-night.svg"
+}

@@ -1,0 +1,214 @@
+From 2c35d3554d5044e480e41c2907c0a11ebe816478 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 09:22:20 -0300
+Subject: [PATCH] sendshortcut: keys resolve without held modifiers; the tap
+ restores the real modifiers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Shift held (⇧⌘Z) made `z` unresolvable, a Cyrillic layout had no `c`, and every
+tap sent all-zero modifiers afterwards: the app lost Caps Lock, the active layout
+and the held Super until the next real modifier change. Policy in WolosKeys.hpp.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/config/legacy/DispatcherTranslator.cpp  | 17 ++-----
+ src/config/shared/actions/ConfigActions.cpp | 14 +++++-
+ src/helpers/WolosKeys.hpp                   | 46 +++++++++++++++++
+ tests/helpers/WolosKeys.cpp                 | 56 +++++++++++++++++++++
+ 4 files changed, 119 insertions(+), 14 deletions(-)
+ create mode 100644 src/helpers/WolosKeys.hpp
+ create mode 100644 tests/helpers/WolosKeys.cpp
+
+diff --git a/src/config/legacy/DispatcherTranslator.cpp b/src/config/legacy/DispatcherTranslator.cpp
+index b534fec..f645231 100644
+--- a/src/config/legacy/DispatcherTranslator.cpp
++++ b/src/config/legacy/DispatcherTranslator.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include <hyprutils/string/String.hpp>
+ #include <hyprutils/string/VarList2.hpp>
++#include "../../helpers/WolosKeys.hpp"
+ using namespace Hyprutils::String;
+ 
+ using namespace Config;
+@@ -557,18 +558,10 @@ static SDispatchResult sendshortcut(const std::string& args) {
+         const auto KEYPAIRSTRING = std::format("{}{}", rc<uintptr_t>(KB.get()), KEY);
+ 
+         if (!g_pKeybindManager->m_keyToCodeCache.contains(KEYPAIRSTRING)) {
+-            xkb_keymap*   km          = KB->m_xkbKeymap;
+-            xkb_state*    ks          = KB->m_xkbState;
+-            xkb_keycode_t keycode_min = xkb_keymap_min_keycode(km);
+-            xkb_keycode_t keycode_max = xkb_keymap_max_keycode(km);
+-
+-            for (xkb_keycode_t kc = keycode_min; kc <= keycode_max; ++kc) {
+-                xkb_keysym_t sym = xkb_state_key_get_one_sym(ks, kc);
+-                if (sym == KEYSYM) {
+-                    keycode                                            = kc;
+-                    g_pKeybindManager->m_keyToCodeCache[KEYPAIRSTRING] = keycode;
+-                }
+-            }
++            // WolOS: no held modifier changes the key (⇧⌘Z), other layouts are searched too.
++            keycode = WolosKeys::keycodeFor(KB->m_xkbKeymap, KEYSYM, KB->m_modifiersState.group);
++            if (keycode)
++                g_pKeybindManager->m_keyToCodeCache[KEYPAIRSTRING] = keycode;
+ 
+             if (!keycode)
+                 return {.success = false, .error = "sendshortcut: key not found"};
+diff --git a/src/config/shared/actions/ConfigActions.cpp b/src/config/shared/actions/ConfigActions.cpp
+index cf38816..3ccb762 100644
+--- a/src/config/shared/actions/ConfigActions.cpp
++++ b/src/config/shared/actions/ConfigActions.cpp
+@@ -35,6 +35,7 @@
+ #include <numbers>
+ #include <utility>
+ #include <type_traits>
++#include "../../../helpers/WolosKeys.hpp"
+ 
+ using namespace Config;
+ using namespace Config::Actions;
+@@ -1551,7 +1552,15 @@ ActionResult Actions::pass(uint32_t modMask, uint32_t key, std::optional<PHLWIND
+             window = nullptr;
+     }
+ 
+-    g_pSeatManager->sendKeyboardMods(modMask, 0, 0, 0);
++    // WolOS: the tap keeps the user's layout; afterwards the client gets the real modifiers back (WolosKeys).
++    const auto             KB   = g_pSeatManager->m_keyboard.lock();
++    const WolosKeys::SMods REAL = KB ? WolosKeys::SMods{.depressed = KB->m_modifiersState.depressed,
++                                                        .latched   = KB->m_modifiersState.latched,
++                                                        .locked    = KB->m_modifiersState.locked,
++                                                        .group     = KB->m_modifiersState.group} :
++                                       WolosKeys::SMods{};
++    const auto             TAP  = WolosKeys::tapMods(modMask, REAL);
++    g_pSeatManager->sendKeyboardMods(TAP.depressed, TAP.latched, TAP.locked, TAP.group);
+ 
+     if (S.m_passPressed == 1) {
+         if (!isMouse)
+@@ -1573,7 +1582,8 @@ ActionResult Actions::pass(uint32_t modMask, uint32_t key, std::optional<PHLWIND
+         }
+     }
+ 
+-    g_pSeatManager->sendKeyboardMods(0, 0, 0, 0);
++    const auto AFTER = WolosKeys::afterTap(REAL);
++    g_pSeatManager->sendKeyboardMods(AFTER.depressed, AFTER.latched, AFTER.locked, AFTER.group);
+ 
+     if (!window)
+         return {};
+diff --git a/src/helpers/WolosKeys.hpp b/src/helpers/WolosKeys.hpp
+new file mode 100644
+index 0000000..e3ea104
+--- /dev/null
++++ b/src/helpers/WolosKeys.hpp
+@@ -0,0 +1,46 @@
++#pragma once
++
++#include <cstdint>
++#include <xkbcommon/xkbcommon.h>
++
++// WolOS `sendshortcut`: ⌘ shortcuts tap the app's own key (⌘C -> Ctrl+C). Pure functions: tested in
++// tests/helpers/WolosKeys.cpp.
++
++namespace WolosKeys {
++    struct SMods {
++        uint32_t depressed = 0, latched = 0, locked = 0, group = 0;
++        bool     operator==(const SMods&) const = default;
++    };
++
++    // The key that types `sym` with no modifier held: in layout `group` first, then in any layout. Upstream matched the
++    // live state, so with Shift held (⇧⌘Z) `z` was not found, and a Cyrillic layout had no `c` at all.
++    inline xkb_keycode_t keycodeFor(xkb_keymap* km, xkb_keysym_t sym, xkb_layout_index_t group) {
++        if (!km || sym == XKB_KEY_NoSymbol)
++            return 0;
++        const auto in = [&](xkb_layout_index_t g) -> xkb_keycode_t {
++            for (xkb_keycode_t kc = xkb_keymap_min_keycode(km); kc <= xkb_keymap_max_keycode(km); ++kc) {
++                const xkb_keysym_t* syms = nullptr;
++                if (g < xkb_keymap_num_layouts_for_key(km, kc) && xkb_keymap_key_get_syms_by_level(km, kc, g, 0, &syms) == 1 && syms[0] == sym)
++                    return kc;
++            }
++            return 0;
++        };
++        if (const auto kc = in(group))
++            return kc;
++        for (xkb_layout_index_t g = 0; g < xkb_keymap_num_layouts(km); ++g) {
++            if (const auto kc = in(g))
++                return kc;
++        }
++        return 0;
++    }
++
++    // Modifiers the client sees during the tap: the shortcut's, in the user's active layout.
++    inline constexpr SMods tapMods(uint32_t modMask, const SMods& real) {
++        return {.depressed = modMask, .latched = 0, .locked = 0, .group = real.group};
++    }
++
++    // After the tap: the real state again (upstream sent all zero, dropping Caps Lock, the layout and the held ⌘).
++    inline constexpr SMods afterTap(const SMods& real) {
++        return real;
++    }
++}
+diff --git a/tests/helpers/WolosKeys.cpp b/tests/helpers/WolosKeys.cpp
+new file mode 100644
+index 0000000..c701ed2
+--- /dev/null
++++ b/tests/helpers/WolosKeys.cpp
+@@ -0,0 +1,56 @@
++#include <helpers/WolosKeys.hpp>
++
++#include <gtest/gtest.h>
++
++using namespace WolosKeys;
++
++namespace {
++    struct SKeymap {
++        xkb_context* ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
++        xkb_keymap*  km  = nullptr;
++        explicit SKeymap(const char* layouts) {
++            const xkb_rule_names names = {.rules = nullptr, .model = "pc105", .layout = layouts, .variant = nullptr, .options = nullptr};
++            km                         = xkb_keymap_new_from_names(ctx, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
++        }
++        ~SKeymap() {
++            xkb_keymap_unref(km);
++            xkb_context_unref(ctx);
++        }
++    };
++    xkb_keysym_t sym(const char* name) {
++        return xkb_keysym_from_name(name, XKB_KEYSYM_CASE_INSENSITIVE);
++    }
++}
++
++// ⇧⌘Z taps Ctrl+Shift+Z while Shift is held. Upstream matched keysyms in the live state, where the Z key is `Z`,
++// so `z` was "not found". Resolution ignores held modifiers.
++TEST(WolosKeys, keycodeIgnoresHeldModifiers) {
++    SKeymap us("us");
++    ASSERT_NE(us.km, nullptr);
++    // evdev keycode + 8: z 44, c 46, 0 11, minus 12, equal 13, period 52.
++    struct {
++        const char*   key;
++        xkb_keycode_t code;
++    } cases[] = {{"Z", 52}, {"z", 52}, {"C", 54}, {"0", 19}, {"minus", 20}, {"equal", 21}, {"period", 60}};
++    for (auto c : cases)
++        EXPECT_EQ(keycodeFor(us.km, sym(c.key), 0), c.code) << c.key;
++    EXPECT_EQ(keycodeFor(us.km, sym("plus"), 0), 0u) << "shifted symbols are not a key of their own";
++}
++
++// ⌘C on a Cyrillic layout taps the key that is C in another layout (the active one has no `c`).
++TEST(WolosKeys, keycodeFallsBackToAnotherLayout) {
++    SKeymap ruUs("ru,us");
++    ASSERT_NE(ruUs.km, nullptr);
++    EXPECT_EQ(keycodeFor(ruUs.km, sym("c"), 0), 54u);
++    EXPECT_EQ(keycodeFor(ruUs.km, sym("c"), 1), 54u);
++    SKeymap de("de");
++    EXPECT_EQ(keycodeFor(de.km, sym("z"), 0), 29u) << "German Z is where US has Y";
++}
++
++// After a synthetic tap the client gets the real modifier state back (upstream sent all zero: the app lost Caps Lock,
++// the active layout and the held ⌘ until the next real modifier change).
++TEST(WolosKeys, tapKeepsLayoutAndRestoresRealModifiers) {
++    const SMods real = {.depressed = 0x40, .latched = 0, .locked = 0x2, .group = 1};
++    EXPECT_EQ(tapMods(0x4, real), (SMods{.depressed = 0x4, .latched = 0, .locked = 0, .group = 1}));
++    EXPECT_EQ(afterTap(real), real);
++}
+-- 
+2.54.0
+

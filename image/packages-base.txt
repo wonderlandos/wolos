@@ -1,0 +1,8 @@
+# Image-side packages always installed (desktop/packages.txt adds the desktop).
+pkg
+drm-kmod
+linux_base-rl9
+linux-steam-utils
+bsddialog
+hyprland
+wine-proton      # native Wine for Windows games: WolOS Proton in Steam, wol-run (archicture/modules/games.md)

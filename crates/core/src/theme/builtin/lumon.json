@@ -1,0 +1,21 @@
+{
+  "id": "lumon",
+  "name": "Lumon",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#16242d",
+    "sidebar": "rgba(16,27,33,0.92)",
+    "card": "#1b2d40",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#d6e2ee",
+    "dim": "#93aec4",
+    "accent": "#8bc9eb",
+    "accentText": "#16242d",
+    "glass": "rgba(22,36,45,0.84)",
+    "control": "#243d56",
+    "success": "#86c7a4",
+    "warning": "#e6c07b",
+    "danger": "#e4787d"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-night.svg"
+}

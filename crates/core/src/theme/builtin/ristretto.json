@@ -1,0 +1,21 @@
+{
+  "id": "ristretto",
+  "name": "Ristretto",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#2c2525",
+    "sidebar": "rgba(33,27,27,0.92)",
+    "card": "#3d2f2a",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#e6d9db",
+    "dim": "#c3b7b8",
+    "accent": "#f38d70",
+    "accentText": "#2c2525",
+    "glass": "rgba(44,37,37,0.84)",
+    "control": "#403e41",
+    "success": "#adda78",
+    "warning": "#f9cc6c",
+    "danger": "#fd6883"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-dusk.svg"
+}

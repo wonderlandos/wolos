@@ -1,0 +1,17 @@
+PM IER=0x00000070 IMR=0xffffff8f ISR=0x00000000 IIR=0x00000000, MASK=0x00003fde
+pm_intrmsk_mbz: 0x80000000
+RPDECLIMIT: 0x00000000
+RPNSWREQ: 300MHz
+CAGF: 350MHz
+RP CUR UP EI: 0 (0ns)
+Lowest (RPN) frequency: 100MHz
+Nominal (RP1) frequency: 400MHz
+Max non-overclocked (RP0) frequency: 1400MHz
+Max overclocked frequency: 1400MHz
+Current freq: 300 MHz
+Actual freq: 350 MHz
+Idle freq: 100 MHz
+Min freq: 100 MHz
+Boost freq: 1400 MHz
+Max freq: 1400 MHz
+efficient (RPe) frequency: 300 MHz

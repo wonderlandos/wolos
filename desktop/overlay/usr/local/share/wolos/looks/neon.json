@@ -1,0 +1,14 @@
+{
+  "name": "Neon",
+  "description": "Gradient borders, bouncy motion.",
+  "gaps": 14,
+  "rounding": 10,
+  "blur_size": 6,
+  "border_size": 2,
+  "border_colors": ["#ff3cac", "#784ba0", "#2b86c5"],
+  "border_angle": 45,
+  "inactive_border": "#2b2b3a99",
+  "shadow_range": 20,
+  "motion": "pop",
+  "speed": 1.2
+}

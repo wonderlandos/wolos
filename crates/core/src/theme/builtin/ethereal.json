@@ -1,0 +1,21 @@
+{
+  "id": "ethereal",
+  "name": "Ethereal",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#060b1e",
+    "sidebar": "rgba(4,8,22,0.92)",
+    "card": "#131a3a",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#ffcead",
+    "dim": "#c9b8a6",
+    "accent": "#7d82d9",
+    "accentText": "#060b1e",
+    "glass": "rgba(6,11,30,0.84)",
+    "control": "#252e56",
+    "success": "#92a593",
+    "warning": "#e9bb4f",
+    "danger": "#ed5b5a"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-dusk.svg"
+}

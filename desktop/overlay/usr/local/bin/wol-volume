@@ -1,0 +1,10 @@
+#!/bin/sh
+# wol-volume up|down|mute via PipeWire wpctl.
+case ${1:-} in
+up) wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ ;;
+down) wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
+mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
+*) echo "usage: wol-volume up|down|mute" >&2; exit 64 ;;
+esac
+# The shell reads the new level now and shows the OSD (no wait for its status poll).
+exec wol shell show osd

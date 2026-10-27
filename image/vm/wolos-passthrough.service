@@ -1,0 +1,13 @@
+# Host unit: on the "WolOS GPU passthrough" boot entry, boot WolOS on the laptop's own iGPU.
+# Install: sudo cp image/vm/wolos-passthrough.service /etc/systemd/system/ && sudo systemctl enable wolos-passthrough
+[Unit]
+Description=WolOS on the host iGPU (VFIO passthrough)
+ConditionKernelCommandLine=wolos.passthrough=1
+After=local-fs.target network.target
+
+[Service]
+Type=simple
+ExecStart=/home/klee/Documentos/WOLOS/image/vm/run-gpu.sh
+
+[Install]
+WantedBy=multi-user.target

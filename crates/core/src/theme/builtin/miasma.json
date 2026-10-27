@@ -1,0 +1,21 @@
+{
+  "id": "miasma",
+  "name": "Miasma",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#222222",
+    "sidebar": "rgba(25,25,25,0.92)",
+    "card": "#2c2c2c",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#c2c2b0",
+    "dim": "#a6a696",
+    "accent": "#a8b36a",
+    "accentText": "#222222",
+    "glass": "rgba(34,34,34,0.84)",
+    "control": "#383838",
+    "success": "#5f875f",
+    "warning": "#c9a554",
+    "danger": "#b36d43"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-dusk.svg"
+}

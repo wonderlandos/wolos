@@ -1,0 +1,21 @@
+{
+  "id": "hackerman",
+  "name": "Hackerman",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#0b0c16",
+    "sidebar": "rgba(8,9,16,0.92)",
+    "card": "#151828",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#ddf7ff",
+    "dim": "#b5c5db",
+    "accent": "#82fb9c",
+    "accentText": "#0b0c16",
+    "glass": "rgba(11,12,22,0.84)",
+    "control": "#1f253a",
+    "success": "#82fb9c",
+    "warning": "#e5c07b",
+    "danger": "#f7768e"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-night.svg"
+}

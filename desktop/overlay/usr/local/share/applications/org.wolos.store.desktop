@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=App Store
+Comment=Get apps for WolOS
+Icon=wolos-software
+Exec=wol-store %f
+Categories=System;PackageManager;
+MimeType=application/x-wolos-package;
+StartupNotify=true

@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# PROVIDE: wolos_quiet
+# BEFORE: dumpon hostid sysctl zvol zpool zfsbe fsck root disks
+# KEYWORD: nojail
+#
+# WolOS boot (ADR 0012): after the loader splash nothing but WolOS reaches the screen. On a video
+# console everything rc prints from here on is black on black, without a cursor; it is still in
+# dmesg -a, /var/log and on a serial console. wol-login's console notice resets the colours.
+
+. /etc/rc.subr
+
+name=wolos_quiet
+start_cmd=wolos_quiet_start
+stop_cmd=:
+
+wolos_quiet_start()
+{
+	case $(sysctl -n kern.console 2>/dev/null) in
+	ttyv*) printf '\033[30;40m\033[?25l\033[H\033[2J' ;;
+	esac
+}
+
+load_rc_config $name
+run_rc_command "$1"

@@ -1,0 +1,9 @@
+{
+  "name": "Paper",
+  "description": "Sharp corners, soft shadows.",
+  "gaps": 20,
+  "rounding": 2,
+  "blur": false,
+  "shadow_range": 14,
+  "switch": "vertical"
+}

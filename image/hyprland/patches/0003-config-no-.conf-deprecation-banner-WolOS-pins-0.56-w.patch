@@ -1,0 +1,27 @@
+From ef4023ca1b572f12c8bea624e41b09338898265e Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 08:11:55 -0300
+Subject: [PATCH] config: no .conf deprecation banner (WolOS pins 0.56 with a
+ .conf)
+
+---
+ src/Compositor.cpp | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/src/Compositor.cpp b/src/Compositor.cpp
+index 1d2d8b9..41e78a3 100644
+--- a/src/Compositor.cpp
++++ b/src/Compositor.cpp
+@@ -897,8 +897,7 @@ void CCompositor::performUserChecks() {
+                                                  CHyprColor{1.0, 0.1, 0.1, 1.0}, 15000, ICON_ERROR);
+     }
+ 
+-    if (Config::mgr()->type() == Config::CONFIG_LEGACY)
+-        Notification::overlay()->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_OUTDATED_CONFIG), CHyprColor{}, 15000, ICON_WARNING);
++    // WolOS pins 0.56 and ships a .conf: no deprecation banner for end users.
+ 
+     if (!m_watchdogWriteFd.isValid() && !*PNOWATCHDOG)
+         Notification::overlay()->addNotification(I18n::i18nEngine()->localize(I18n::TXT_KEY_NOTIF_NO_WATCHDOG), CHyprColor{1.0, 0.1, 0.1, 1.0}, 15000, ICON_WARNING);
+-- 
+2.54.0
+

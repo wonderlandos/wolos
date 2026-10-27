@@ -1,0 +1,21 @@
+{
+  "id": "white",
+  "name": "White",
+  "variant": "light",
+  "tokens": {
+    "surface": "#f5f5f5",
+    "sidebar": "rgba(238,238,238,0.92)",
+    "card": "#ffffff",
+    "line": "rgba(0,0,0,0.08)",
+    "text": "#000000",
+    "dim": "#6e6e6e",
+    "accent": "#3a3a3c",
+    "accentText": "#ffffff",
+    "glass": "rgba(245,245,245,0.84)",
+    "control": "#e8e8e8",
+    "success": "#3f9a4f",
+    "warning": "#c98a12",
+    "danger": "#d0453b"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-day.svg"
+}

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: LicenseRef-Wonderland-1.0
+# Copyright (c) 2026 Julia Klee. WolOS kernel/driver patch: see LICENSES/Wonderland-1.0.md.
+--- a/drivers/gpu/drm/i915/display/intel_bios.c	2026-10-26 20:17:58.258311584 -0300
++++ b/drivers/gpu/drm/i915/display/intel_bios.c	2026-10-26 20:17:58.269179609 -0300
+@@ -3022,12 +3022,17 @@
+ 	vga_pci_unmap_bios(device_get_parent(pdev->dev.bsddev), bios)
+ #endif
+ 
++/*
++ * WolOS: last-resort VBT file. A passed-through iGPU gets no OpRegion or option ROM, and without a
++ * VBT the eDP panel is never powered. Real hardware finds its VBT first and never reads this.
++ */
++#define WOL_VBT_FALLBACK "i915/vbt.bin"
++
+ static struct vbt_header *firmware_get_vbt(struct intel_display *display,
+-					   size_t *size)
++					   const char *name, size_t *size)
+ {
+ 	struct vbt_header *vbt = NULL;
+ 	const struct firmware *fw = NULL;
+-	const char *name = display->params.vbt_firmware;
+ 	int ret;
+ 
+ 	if (!name || !*name)
+@@ -3194,7 +3199,7 @@
+ 	const struct vbt_header *vbt = NULL;
+ 	intel_wakeref_t wakeref;
+ 
+-	vbt = firmware_get_vbt(display, sizep);
++	vbt = firmware_get_vbt(display, display->params.vbt_firmware, sizep);
+ 
+ 	if (!vbt)
+ 		vbt = intel_opregion_get_vbt(display, sizep);
+@@ -3211,6 +3216,9 @@
+ 		with_intel_runtime_pm(&i915->runtime_pm, wakeref)
+ 			vbt = oprom_get_vbt(display, sizep);
+ 
++	if (!vbt)
++		vbt = firmware_get_vbt(display, WOL_VBT_FALLBACK, sizep);
++
+ 	return vbt;
+ }
+ 

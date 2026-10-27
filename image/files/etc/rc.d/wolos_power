@@ -1,0 +1,21 @@
+#!/bin/sh
+# PROVIDE: wolos_power
+# REQUIRE: wolos_hw sysctl
+# BEFORE: LOGIN
+# KEYWORD: nojail suspend resume
+# Power policy (archicture/modules/power.md): at boot and after resume `wol power apply` sets what
+# the power source and mode call for (devd runs it on AC changes). Before sleep, rc.suspend runs
+# `wolos_power suspend`: every session that asks for the password after sleep is locked first.
+. /etc/rc.subr
+name=wolos_power
+rcvar=wolos_power_enable
+start_cmd=wolos_power_start
+stop_cmd=:
+extra_commands="suspend resume"
+suspend_cmd=wolos_power_suspend
+resume_cmd=wolos_power_start
+wolos_power_start() { /usr/local/bin/wol power apply; }
+wolos_power_suspend() { /usr/local/bin/wol power suspend; }
+load_rc_config $name
+: "${wolos_power_enable:=YES}"
+run_rc_command "$1"

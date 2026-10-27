@@ -1,0 +1,431 @@
+//! Apply gpu_select + glass parameters to a Hyprland session. Pure: facts in, env/config text out.
+//! `wol-realtime gpu env` prints [`session_env`], `gpu offload` [`offload_env`] (one app on the
+//! discrete GPU: `eval "$(wol-realtime gpu offload)"; exec app`), `gpu hyprconf` [`hyprland_fragment`].
+use crate::glass::{Budget, GlassConfig};
+use crate::gpu_select::{GpuInfo, choose};
+
+/// /dev/dri/renderD(128+n) -> /dev/dri/card(n).
+pub fn card_of(render_node: &str) -> Option<String> {
+    let n: u32 = render_node.strip_prefix("/dev/dri/renderD")?.parse().ok()?;
+    Some(format!("/dev/dri/card{}", n.checked_sub(128)?))
+}
+
+/// GPU userland the environment may point at: a variable naming a missing library breaks GBM, GLX
+/// or VA-API for every app. Pure facts; the binary fills them with [`Userland::probe`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Userland {
+    /// [`NVIDIA_GBM`] (nvidia-driver): GBM backend on NVIDIA.
+    pub nvidia_gbm: bool,
+    /// [`NVIDIA_GLX`] (nvidia-driver): the GLVND GLX vendor.
+    pub nvidia_glx: bool,
+    /// [`NVIDIA_VAAPI`] (libva-nvidia-driver, optional): VA-API driver "nvidia-drm".
+    pub nvidia_vaapi: bool,
+}
+
+pub const NVIDIA_GBM: &str = "/usr/local/lib/gbm/nvidia-drm_gbm.so";
+pub const NVIDIA_GLX: &str = "/usr/local/lib/libGLX_nvidia.so.0";
+pub const NVIDIA_VAAPI: &str = "/usr/local/lib/dri/nvidia-drm_drv_video.so";
+
+impl Userland {
+    pub fn probe() -> Self {
+        let has = |p: &str| std::path::Path::new(p).exists();
+        Self {
+            nvidia_gbm: has(NVIDIA_GBM),
+            nvidia_glx: has(NVIDIA_GLX),
+            nvidia_vaapi: has(NVIDIA_VAAPI),
+        }
+    }
+}
+
+/// Environment for the compositor session: composite GPU first in AQ_DRM_DEVICES.
+pub fn session_env(
+    gpus: &[GpuInfo],
+    override_node: Option<&str>,
+    u: &Userland,
+) -> Vec<(String, String)> {
+    let Some(main) = choose(gpus, override_node) else {
+        return Vec::new();
+    };
+    let mut order: Vec<&GpuInfo> = vec![main];
+    order.extend(gpus.iter().filter(|g| g.node != main.node));
+    let cards: Vec<String> = order.iter().filter_map(|g| card_of(&g.node)).collect();
+    let mut env = vec![
+        ("AQ_DRM_DEVICES".to_owned(), cards.join(":")),
+        ("WOL_RENDER_NODE".to_owned(), main.node.clone()),
+    ];
+    if main.driver == "i915" || main.driver == "xe" {
+        env.push(("LIBVA_DRIVER_NAME".into(), "iHD".into()));
+    }
+    if main.driver == "nvidia-drm" {
+        let mut set = |on: bool, k: &str, v: &str| {
+            if on {
+                env.push((k.into(), v.into()));
+            }
+        };
+        set(u.nvidia_vaapi, "LIBVA_DRIVER_NAME", "nvidia-drm");
+        set(u.nvidia_glx, "__GLX_VENDOR_LIBRARY_NAME", "nvidia");
+        set(u.nvidia_gbm, "GBM_BACKEND", "nvidia-drm");
+    }
+    env
+}
+
+/// Discrete GPU apps may use (PRIME offload), when the compositor runs elsewhere.
+pub fn offload_gpu<'a>(gpus: &'a [GpuInfo], override_node: Option<&str>) -> Option<&'a GpuInfo> {
+    let main = choose(gpus, override_node)?;
+    gpus.iter().find(|g| g.node != main.node && !g.integrated)
+}
+
+/// Env to run one app on the offload GPU (`wol-realtime gpu offload`). Empty when there is none,
+/// or when it is an NVIDIA GPU whose driver userland is not installed.
+pub fn offload_env(
+    gpus: &[GpuInfo],
+    override_node: Option<&str>,
+    u: &Userland,
+) -> Vec<(String, String)> {
+    let Some(d) = offload_gpu(gpus, override_node) else {
+        return Vec::new();
+    };
+    let kv = |k: &str, v: &str| (k.to_owned(), v.to_owned());
+    if d.driver == "nvidia-drm" && !u.nvidia_glx {
+        Vec::new()
+    } else if d.driver == "nvidia-drm" {
+        // GL (GLX), Vulkan (nvidia_layers.json implicit layer) and EGL offload in the NVIDIA driver.
+        vec![
+            kv("__NV_PRIME_RENDER_OFFLOAD", "1"),
+            kv("__GLX_VENDOR_LIBRARY_NAME", "nvidia"),
+            kv("__VK_LAYER_NV_optimus", "NVIDIA_only"),
+        ]
+    } else {
+        // Mesa: DRI_PRIME picks the GPU for GL; the device-select layer honours it for Vulkan.
+        vec![
+            kv("DRI_PRIME", "1"),
+            kv("MESA_VK_DEVICE_SELECT_FORCE_DEFAULT_DEVICE", "1"),
+        ]
+    }
+}
+
+/// Shell `export` lines (stable order), for `wol-session` to source.
+pub fn exports(env: &[(String, String)]) -> String {
+    env.iter()
+        .map(|(k, v)| format!("export {k}='{v}'\n"))
+        .collect()
+}
+
+/// Hyprland config fragment: blur from glass params (degraded by budget), event-driven frames.
+pub fn hyprland_fragment(glass: &GlassConfig, budget: Budget, vrr: bool) -> String {
+    let blur = if glass.degrade {
+        glass.blur.degrade(budget)
+    } else {
+        glass.blur
+    };
+    // Hyprland blur size ~ kawase spread at full resolution.
+    let size = (blur.offset * blur.downscale.max(1) as f32)
+        .round()
+        .max(1.0) as u32;
+    format!(
+        "# generated by `wol gpu hyprconf`; do not edit\n\
+decoration {{\n    blur {{\n        enabled = {}\n        size = {size}\n        passes = {}\n        new_optimizations = true\n        xray = false\n    }}\n}}\n\
+misc {{\n    vfr = true\n    vrr = {}\n}}\n\
+render {{\n    direct_scanout = 1\n}}\n\
+debug {{\n    damage_tracking = 2\n}}\n",
+        glass.enabled,
+        blur.passes,
+        u8::from(vrr) * 2, // 2 = fullscreen only: no flicker on the desktop
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NV: Userland = Userland {
+        nvidia_gbm: true,
+        nvidia_glx: true,
+        nvidia_vaapi: true,
+    };
+
+    fn gpu(node: &str, driver: &str, display: bool, integrated: bool) -> GpuInfo {
+        GpuInfo {
+            node: node.into(),
+            driver: driver.into(),
+            boot_vga: display,
+            drives_display: display,
+            integrated,
+        }
+    }
+
+    #[test]
+    fn card_mapping() {
+        for (r, c) in [
+            ("/dev/dri/renderD128", Some("/dev/dri/card0")),
+            ("/dev/dri/renderD129", Some("/dev/dri/card1")),
+            ("/dev/dri/renderD12", None),
+            ("x", None),
+        ] {
+            assert_eq!(card_of(r).as_deref(), c, "{r}");
+        }
+    }
+
+    #[test]
+    fn session_env_table() {
+        let hybrid = [
+            gpu("/dev/dri/renderD129", "nvidia-drm", false, false),
+            gpu("/dev/dri/renderD128", "i915", true, true),
+        ];
+        let env = session_env(&hybrid, None, &NV);
+        assert_eq!(
+            env[0],
+            (
+                "AQ_DRM_DEVICES".into(),
+                "/dev/dri/card0:/dev/dri/card1".into()
+            )
+        );
+        assert_eq!(env[1].1, "/dev/dri/renderD128");
+        // Intel compositor: VA-API via intel-media-driver (iHD), not the legacy i965 name.
+        assert_eq!(env[2], ("LIBVA_DRIVER_NAME".into(), "iHD".into()));
+        assert_eq!(env.len(), 3);
+        assert_eq!(
+            offload_env(&hybrid, None, &NV)[0],
+            ("__NV_PRIME_RENDER_OFFLOAD".into(), "1".into())
+        );
+
+        let forced = session_env(&hybrid, Some("/dev/dri/renderD129"), &NV);
+        assert_eq!(forced[0].1, "/dev/dri/card1:/dev/dri/card0");
+        assert!(forced.iter().any(|(k, _)| k == "GBM_BACKEND"));
+        assert!(offload_env(&hybrid, Some("/dev/dri/renderD129"), &NV).is_empty()); // only iGPU left
+
+        let amd = [
+            gpu("/dev/dri/renderD128", "amdgpu", false, true),
+            gpu("/dev/dri/renderD129", "amdgpu", true, false),
+        ];
+        assert_eq!(
+            session_env(&amd, None, &NV)[0].1,
+            "/dev/dri/card1:/dev/dri/card0"
+        );
+        assert!(offload_env(&amd, None, &NV).is_empty()); // compositor already on the dGPU
+        assert!(
+            !session_env(&amd, None, &NV)
+                .iter()
+                .any(|(k, _)| k == "LIBVA_DRIVER_NAME")
+        );
+
+        let amd_laptop = [
+            gpu("/dev/dri/renderD128", "amdgpu", true, true),
+            gpu("/dev/dri/renderD129", "amdgpu", false, false),
+        ];
+        assert_eq!(
+            offload_env(&amd_laptop, None, &NV)[0],
+            ("DRI_PRIME".into(), "1".into())
+        );
+
+        assert!(session_env(&[], None, &NV).is_empty());
+        assert!(session_env(&hybrid, Some("/dev/dri/renderD200"), &NV).is_empty());
+    }
+
+    /// Memory-bandwidth #3: compression comes from modifier negotiation; the session must never
+    /// switch it off (AQ_NO_MODIFIERS forces linear buffers, INTEL_DEBUG=noccs drops CCS).
+    #[test]
+    fn session_never_disables_modifiers_or_compression() {
+        for driver in ["i915", "xe", "amdgpu", "nvidia-drm", "virtio_gpu"] {
+            let env = session_env(&[gpu("/dev/dri/renderD128", driver, true, true)], None, &NV);
+            for (k, v) in &env {
+                assert!(
+                    k != "AQ_NO_MODIFIERS" && !v.contains("noccs"),
+                    "{driver}: {k}={v}"
+                );
+                assert!(k != "INTEL_DEBUG", "{driver}: {k}={v}");
+            }
+        }
+    }
+
+    /// NVIDIA (nvidia-driver 595/580 on FreeBSD): every variable points at a file that exists.
+    /// GBM_BACKEND or a GLX vendor without the library stops GBM/GLX; libva-nvidia-driver's name is
+    /// nvidia-drm. Vulkan finds share/vulkan/icd.d/nvidia_icd.json itself; Hyprland handles the
+    /// NVIDIA cursor (cursor:no_hardware_cursors = 2): nothing forced for either.
+    #[test]
+    fn nvidia_env_names_only_installed_userland() {
+        let only = [gpu("/dev/dri/renderD128", "nvidia-drm", true, false)];
+        let full = Userland {
+            nvidia_gbm: true,
+            nvidia_glx: true,
+            nvidia_vaapi: true,
+        };
+        let get = |env: &[(String, String)], k: &str| {
+            env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
+        };
+        for (u, gbm, glx, va) in [
+            (full, Some("nvidia-drm"), Some("nvidia"), Some("nvidia-drm")),
+            (
+                Userland {
+                    nvidia_vaapi: false,
+                    ..full
+                },
+                Some("nvidia-drm"),
+                Some("nvidia"),
+                None,
+            ),
+            (Userland::default(), None, None, None),
+        ] {
+            let env = session_env(&only, None, &u);
+            assert_eq!(get(&env, "GBM_BACKEND").as_deref(), gbm, "{u:?}");
+            assert_eq!(
+                get(&env, "__GLX_VENDOR_LIBRARY_NAME").as_deref(),
+                glx,
+                "{u:?}"
+            );
+            assert_eq!(get(&env, "LIBVA_DRIVER_NAME").as_deref(), va, "{u:?}");
+            for k in [
+                "VK_ICD_FILENAMES",
+                "VK_DRIVER_FILES",
+                "WLR_NO_HARDWARE_CURSORS",
+            ] {
+                assert!(get(&env, k).is_none(), "{k} forced");
+            }
+        }
+        // Hybrid laptop, Intel composites: nothing NVIDIA-wide in the session (it would steer the
+        // Intel GBM/GLX); apps reach the dGPU through PRIME offload, only with the driver there.
+        let hybrid = [
+            gpu("/dev/dri/renderD128", "i915", true, true),
+            gpu("/dev/dri/renderD129", "nvidia-drm", false, false),
+        ];
+        let env = session_env(&hybrid, None, &full);
+        assert_eq!(
+            get(&env, "AQ_DRM_DEVICES").unwrap(),
+            "/dev/dri/card0:/dev/dri/card1"
+        );
+        assert!(
+            get(&env, "GBM_BACKEND").is_none() && get(&env, "__GLX_VENDOR_LIBRARY_NAME").is_none()
+        );
+        let off = offload_env(&hybrid, None, &full);
+        assert_eq!(get(&off, "__NV_PRIME_RENDER_OFFLOAD").as_deref(), Some("1"));
+        assert_eq!(
+            get(&off, "__VK_LAYER_NV_optimus").as_deref(),
+            Some("NVIDIA_only")
+        );
+        assert_eq!(
+            get(&off, "__GLX_VENDOR_LIBRARY_NAME").as_deref(),
+            Some("nvidia")
+        );
+        assert!(offload_env(&hybrid, None, &Userland::default()).is_empty());
+    }
+
+    #[test]
+    fn exports_quote() {
+        assert_eq!(exports(&[("A".into(), "b:c".into())]), "export A='b:c'\n");
+    }
+
+    #[test]
+    fn fragment_follows_glass_and_budget() {
+        let g = GlassConfig::default();
+        let full = hyprland_fragment(&g, Budget::default(), true);
+        assert!(full.contains(&format!("passes = {}", g.blur.passes)));
+        assert!(
+            full.contains("vfr = true")
+                && full.contains("vrr = 2")
+                && full.contains("direct_scanout = 1")
+        );
+        let tight = Budget {
+            integrated: true,
+            on_battery: true,
+        };
+        let low = hyprland_fragment(&g, tight, false);
+        let want = format!("passes = {}", g.blur.degrade(tight).passes);
+        assert!(low.contains(&want));
+        assert!(low.contains("vrr = 0"));
+        let off = GlassConfig::parse(r#"{"enabled":false}"#);
+        assert!(hyprland_fragment(&off, Budget::default(), false).contains("enabled = false"));
+    }
+}
+
+/// `wol-realtime gpu <env|offload|hyprconf [--vrr]>` output. None = usage error.
+pub fn gpu_command(
+    args: &[&str],
+    gpus: &[GpuInfo],
+    override_node: Option<&str>,
+    userland: &Userland,
+    glass: &GlassConfig,
+    on_battery: bool,
+) -> Option<String> {
+    match args {
+        ["env"] => Some(exports(&session_env(gpus, override_node, userland))),
+        ["offload"] => Some(exports(&offload_env(gpus, override_node, userland))),
+        ["hyprconf", rest @ ..] if rest.iter().all(|a| *a == "--vrr") => {
+            let integrated = choose(gpus, override_node).is_some_and(|g| g.integrated);
+            Some(hyprland_fragment(
+                glass,
+                Budget {
+                    integrated,
+                    on_battery,
+                },
+                !rest.is_empty(),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Running on battery: FreeBSD `hw.acpi.acline` = 0, Linux a power supply reports Discharging.
+pub fn on_battery() -> bool {
+    #[cfg(target_os = "freebsd")]
+    {
+        std::process::Command::new("sysctl")
+            .args(["-n", "hw.acpi.acline"])
+            .output()
+            .is_ok_and(|o| o.stdout.trim_ascii() == b"0")
+    }
+    #[cfg(not(target_os = "freebsd"))]
+    {
+        std::fs::read_dir("/sys/class/power_supply").is_ok_and(|d| {
+            d.flatten().any(|e| {
+                std::fs::read_to_string(e.path().join("status"))
+                    .is_ok_and(|s| s.trim() == "Discharging")
+            })
+        })
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn gpu_command_table() {
+        let gpus = [GpuInfo {
+            node: "/dev/dri/renderD128".into(),
+            driver: "i915".into(),
+            boot_vga: true,
+            drives_display: true,
+            integrated: true,
+        }];
+        let g = GlassConfig::default();
+        let u = Userland::default();
+        let run = |a: &[&str]| gpu_command(a, &gpus, None, &u, &g, false);
+        assert_eq!(
+            run(&["env"]).unwrap(),
+            exports(&session_env(&gpus, None, &u))
+        );
+        // `offload`: env for one app on the discrete GPU; empty without one.
+        assert_eq!(run(&["offload"]).unwrap(), "");
+        assert_eq!(
+            run(&["hyprconf"]).unwrap(),
+            hyprland_fragment(
+                &g,
+                Budget {
+                    integrated: true,
+                    on_battery: false
+                },
+                false
+            )
+        );
+        assert!(run(&["hyprconf", "--vrr"]).unwrap().contains("vrr = 2"));
+        for bad in [
+            &[][..],
+            &["x"],
+            &["hyprconf", "--fast"],
+            &["env", "x"],
+            &["offload", "x"],
+        ] {
+            assert!(run(bad).is_none(), "{bad:?}");
+        }
+    }
+}

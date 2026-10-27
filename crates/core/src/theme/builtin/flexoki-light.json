@@ -1,0 +1,21 @@
+{
+  "id": "flexoki-light",
+  "name": "Flexoki Light",
+  "variant": "light",
+  "tokens": {
+    "surface": "#f2efe4",
+    "sidebar": "rgba(235,232,221,0.92)",
+    "card": "#fffcf0",
+    "line": "rgba(0,0,0,0.08)",
+    "text": "#100f0f",
+    "dim": "#6f6e69",
+    "accent": "#205ea6",
+    "accentText": "#ffffff",
+    "glass": "rgba(242,239,228,0.84)",
+    "control": "#e6e4d9",
+    "success": "#879a39",
+    "warning": "#d0a215",
+    "danger": "#d14d41"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-day.svg"
+}

@@ -1,0 +1,29 @@
+{
+  "grants": [
+    {
+      "app": "/usr/local/bin/wlrctl",
+      "capability": "window-list"
+    },
+    {
+      "app": "/usr/local/bin/wayvnc",
+      "capability": "screen-capture"
+    },
+    {
+      "app": "/usr/local/bin/wayvnc",
+      "capability": "input-injection"
+    },
+    {
+      "app": "/usr/local/bin/wl-paste",
+      "capability": "clipboard-history"
+    },
+    {
+      "app": "/usr/local/bin/grim",
+      "capability": "screen-capture"
+    },
+    {
+      "app": "/usr/local/bin/slurp",
+      "capability": "shell-layer"
+    }
+  ],
+  "_note": "Dev VM: wayvnc serves the desktop to image/vm/open.sh. grim/slurp back iara-screenshot (Super+Shift+3/4/5). On user systems these grants come from Settings > Privacy."
+}

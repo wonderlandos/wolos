@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/shared",
+    "crates/core",
+    "crates/api",
+    "crates/realtime",
+    "crates/proxy",
+    "crates/controller",
+    "crates/shell",
+]
+
+[workspace.package]
+version = "0.10.0"
+edition = "2024"
+license = "BSD-2-Clause"
+authors = ["Julia Klee"]
+
+[workspace.dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# .wol signatures and hashes (ADR 0011).
+ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
+sha2 = "0.10"
+shared = { path = "crates/shared" }
+wol_core = { path = "crates/core", package = "core" }
+
+# Vendored with a one-line idle-exit fix (archicture/adr/0006-vendored-blocking-idle-exit.md).
+[patch.crates-io]
+blocking = { path = "third_party/blocking" }

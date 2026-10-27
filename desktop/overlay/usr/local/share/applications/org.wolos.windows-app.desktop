@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Windows App
+Comment=Opens Windows programs and installers
+Icon=application-x-executable
+# Native wine-proton, one prefix per program (archicture/modules/games.md).
+Exec=wol-run --exe %f
+Terminal=false
+NoDisplay=true
+Categories=Game;
+MimeType=application/x-ms-dos-executable;application/x-msdownload;application/x-msdos-program;application/vnd.microsoft.portable-executable;application/x-msi;application/x-ms-installer;

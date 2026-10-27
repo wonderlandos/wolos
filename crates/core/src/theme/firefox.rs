@@ -1,0 +1,343 @@
+//! Firefox chrome stylesheet from one resolved theme. Loaded as a user sheet by the AutoConfig
+//! script `/usr/local/lib/firefox/wolos.cfg` (nsIStyleSheetService; reloaded when the file
+//! changes), so it needs no profile and survives new profiles and updates. Every rule sits in an
+//! `@-moz-document` block: the browser window and the new-tab page only, never web pages.
+
+use super::ResolvedTheme;
+use super::apps::{readable, token_color};
+use shared::theme::{Color, Variant};
+
+/// Relative to the toolkit dir; `wolos.cfg` reads the same path.
+pub const CSS: &str = "firefox/wolos-chrome.css";
+/// Browser window documents (main window, Library, page info).
+const CHROME_DOCS: &str = "url(\"chrome://browser/content/browser.xhtml\"), url-prefix(\"chrome://browser/content/places/\")";
+const NEWTAB_DOCS: &str =
+    "url(\"about:newtab\"), url(\"about:home\"), url(\"about:privatebrowsing\")";
+
+pub fn chrome_css(t: &ResolvedTheme) -> String {
+    let c = |k: &str| token_color(t, k);
+    let h = |k: &str| c(k).to_hex();
+    let dark = t.variant == Variant::Dark;
+    let scheme = if dark { "dark" } else { "light" };
+    let (surface, text) = (c("surface"), c("text"));
+    let tint = |a: f64| mix_hex(surface, text, a);
+    // Accent used as text (links, attention icons) must read on the toolbar.
+    let link = readable(c("accent"), surface, 4.5).to_hex();
+    let vars: Vec<(&str, String)> = vec![
+        ("--toolbox-bgcolor", h("surface")),
+        ("--toolbox-bgcolor-inactive", h("surface")),
+        ("--toolbox-textcolor", h("text")),
+        ("--toolbox-textcolor-inactive", h("dim")),
+        ("--toolbar-bgcolor", h("surface")),
+        ("--toolbar-color", h("text")),
+        ("--toolbar-field-background-color", h("control")),
+        ("--toolbar-field-color", h("text")),
+        ("--toolbar-field-border-color", "transparent".into()),
+        ("--toolbar-field-focus-background-color", h("card")),
+        ("--toolbar-field-focus-color", h("text")),
+        ("--toolbar-field-focus-border-color", h("accent")),
+        ("--toolbarseparator-color", h("line")),
+        ("--toolbarbutton-icon-fill", h("text")),
+        ("--toolbarbutton-icon-fill-attention", link.clone()),
+        ("--toolbarbutton-hover-background", tint(0.10)),
+        ("--toolbarbutton-active-background", tint(0.18)),
+        ("--toolbarbutton-border-radius", "6px".into()),
+        ("--tab-selected-bgcolor", h("card")),
+        ("--tab-selected-textcolor", h("text")),
+        ("--tab-hover-background-color", tint(0.07)),
+        ("--tab-border-radius", "6px".into()),
+        ("--tab-selected-shadow", format!("0 0 0 1px {}", h("line"))),
+        ("--tabs-navbar-separator-style", "none".into()),
+        ("--chrome-content-separator-color", h("line")),
+        ("--urlbar-box-background-color", h("control")),
+        ("--urlbar-box-background-color-focus", h("card")),
+        ("--urlbarview-background-color-hover", tint(0.07)),
+        ("--urlbarview-background-color-selected", h("accent")),
+        ("--urlbarview-text-color-selected", h("accentText")),
+        ("--sidebar-background-color", h("sidebar")),
+        ("--sidebar-text-color", h("text")),
+        ("--sidebar-border-color", h("line")),
+        ("--arrowpanel-background", h("card")),
+        ("--arrowpanel-color", h("text")),
+        ("--arrowpanel-border-color", h("line")),
+        ("--panel-background", h("card")),
+        ("--panel-color", h("text")),
+        ("--panel-border-color", h("line")),
+        ("--panel-separator-color", h("line")),
+        ("--menu-background-color", h("card")),
+        ("--menu-color", h("text")),
+        ("--menu-border-color", h("line")),
+        ("--menuitem-hover-background-color", tint(0.08)),
+        ("--background-color-canvas", h("surface")),
+        ("--background-color-box", h("card")),
+        ("--text-color", h("text")),
+        ("--text-color-deemphasized", h("dim")),
+        ("--border-color", h("line")),
+        ("--border-color-card", h("line")),
+        ("--focus-outline-color", h("accent")),
+        ("--color-accent-primary", h("accent")),
+        (
+            "--color-accent-primary-hover",
+            mix_hex(c("accent"), text, 0.12),
+        ),
+        (
+            "--color-accent-primary-active",
+            mix_hex(c("accent"), text, 0.24),
+        ),
+        ("--button-background-color", h("control")),
+        (
+            "--button-background-color-hover",
+            mix_hex(c("control"), text, 0.08),
+        ),
+        (
+            "--button-background-color-active",
+            mix_hex(c("control"), text, 0.16),
+        ),
+        ("--button-text-color", h("text")),
+        ("--button-background-color-primary", h("accent")),
+        ("--button-text-color-primary", h("accentText")),
+        ("--input-bgcolor", h("card")),
+        ("--input-color", h("text")),
+        ("--link-color", link.clone()),
+    ];
+    let mut s = format!(
+        "/* WolOS {} — generated by `wol theme`; edits are overwritten. Loaded by wolos.cfg. */\n",
+        t.id
+    );
+    s += &format!(
+        "@-moz-document {CHROME_DOCS} {{\n:root {{\n  color-scheme: {scheme} !important;\n"
+    );
+    for (k, v) in &vars {
+        s += &format!("  {k}: {v} !important;\n");
+    }
+    s += "}\n";
+    s += ":root, menupopup, panel, tooltip { font-family: \"Inter\", sans-serif !important; }\n";
+    s += "#navigator-toolbox { background-color: var(--toolbox-bgcolor) !important; border-bottom: 1px solid var(--chrome-content-separator-color) !important; }\n";
+    // Compact clean tabs: no separators, hairline-outlined selected tab.
+    s += ".tabbrowser-tab { --tab-min-height: 30px !important; }\n";
+    s += ".tab-background { border-radius: 6px !important; box-shadow: none !important; }\n";
+    s += ".tabbrowser-tab[selected] .tab-background { background-color: var(--tab-selected-bgcolor) !important; box-shadow: var(--tab-selected-shadow) !important; }\n";
+    s += "#urlbar-background { border-radius: 6px !important; }\n";
+    s += &traffic_lights(t);
+    s += "}\n";
+    s += &format!(
+        "@-moz-document {NEWTAB_DOCS} {{\n:root {{\n  color-scheme: {scheme} !important;\n"
+    );
+    for (k, v) in [
+        ("--newtab-background-color", h("surface")),
+        ("--newtab-background-color-secondary", h("card")),
+        ("--newtab-background-card", h("card")),
+        ("--newtab-text-primary-color", h("text")),
+        ("--newtab-text-secondary-color", h("dim")),
+        ("--newtab-text-secondary-text", h("dim")),
+        ("--newtab-wordmark-color", h("text")),
+        ("--newtab-element-hover-color", tint(0.07)),
+        ("--newtab-element-active-color", tint(0.14)),
+        ("--newtab-primary-action-background", h("accent")),
+        ("--newtab-primary-element-text-color", h("accentText")),
+        ("--newtab-weather-background-color", h("card")),
+        ("--in-content-page-background", h("surface")),
+        ("--in-content-page-color", h("text")),
+        ("--link-color", link.clone()),
+    ] {
+        s += &format!("  {k}: {v} !important;\n");
+    }
+    s += "}\n";
+    s += &format!(
+        "body {{ background-color: {} !important; color: {} !important; font-family: \"Inter\", sans-serif !important; }}\n",
+        h("surface"),
+        h("text")
+    );
+    s += "}\n";
+    s
+}
+
+/// Kit traffic lights (`button.light`): 12 px circles 22 px apart, left, close first; the glyph
+/// shows while the pointer is over the group. Order is forced so it does not depend on GTK's
+/// reported decoration layout.
+fn traffic_lights(t: &ResolvedTheme) -> String {
+    let h = |k: &str| token_color(t, k).to_hex();
+    let mut s = String::new();
+    s += ".titlebar-buttonbox-container { order: -1 !important; margin-inline-start: 12px !important; }\n";
+    s += ".titlebar-buttonbox { --titlebar-button-size: 12px !important; --titlebar-button-spacing: 5px !important; --titlebar-button-end-spacing: 5px !important; }\n";
+    s += ".titlebar-spacer[type=\"pre-tabs\"] { width: 8px !important; }\n";
+    s += ".titlebar-button { padding-inline: 5px !important; }\n";
+    s += ".titlebar-close { order: 0 !important; }\n.titlebar-min { order: 1 !important; }\n.titlebar-max, .titlebar-restore { order: 2 !important; }\n";
+    // Firefox hides buttons missing from GTK's layout (e.g. a host default of "close" only).
+    s += ".titlebar-min, :root:not([sizemode=\"maximized\"]) .titlebar-max, :root[sizemode=\"maximized\"] .titlebar-restore { display: flex !important; }\n";
+    s += ".titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12) !important; transition: none !important; }\n";
+    for (sel, tok) in [
+        (".titlebar-close", "danger"),
+        (".titlebar-min", "warning"),
+        (":is(.titlebar-max, .titlebar-restore)", "success"),
+    ] {
+        s += &format!(
+            "{sel} > .toolbarbutton-icon, {sel}:hover > .toolbarbutton-icon {{ background-color: {} !important; }}\n",
+            h(tok)
+        );
+    }
+    for (sel, icon) in [
+        (".titlebar-close", "window-close-symbolic"),
+        (".titlebar-min", "window-minimize-symbolic"),
+        (".titlebar-max", "window-maximize-symbolic"),
+        (".titlebar-restore", "window-restore-symbolic"),
+    ] {
+        s += &format!(
+            ".titlebar-buttonbox:hover {sel} > .toolbarbutton-icon {{ background-image: -moz-symbolic-icon({icon}) !important; background-size: 8px !important; color: rgba(0,0,0,0.55) !important; stroke: rgba(0,0,0,0.55) !important; }}\n"
+        );
+    }
+    s
+}
+
+fn mix_hex(a: Color, b: Color, t: f64) -> String {
+    super::apps::mix(a, b, t).to_hex()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::ThemeCatalog;
+
+    fn css(id: &str) -> (ResolvedTheme, String) {
+        let t = ThemeCatalog::builtin().resolve(id).unwrap();
+        let s = chrome_css(&t);
+        (t, s)
+    }
+
+    #[test]
+    fn chrome_follows_the_theme() {
+        for (id, scheme) in [
+            ("wol-light", "light"),
+            ("wol-dark", "dark"),
+            ("ristretto", "dark"),
+        ] {
+            let (t, s) = css(id);
+            let hx = |k: &str| token_color(&t, k).to_hex();
+            for want in [
+                format!("--toolbox-bgcolor: {} !important;", hx("surface")),
+                format!("--tab-selected-bgcolor: {} !important;", hx("card")),
+                format!(
+                    "--toolbar-field-background-color: {} !important;",
+                    hx("control")
+                ),
+                format!("--sidebar-background-color: {} !important;", hx("sidebar")),
+                format!("--arrowpanel-background: {} !important;", hx("card")),
+                format!("--panel-color: {} !important;", hx("text")),
+                format!("--newtab-background-color: {} !important;", hx("surface")),
+                format!("--focus-outline-color: {} !important;", hx("accent")),
+                format!("color-scheme: {scheme} !important;"),
+                format!(
+                    ".titlebar-close > .toolbarbutton-icon, .titlebar-close:hover > .toolbarbutton-icon {{ background-color: {} !important; }}",
+                    hx("danger")
+                ),
+            ] {
+                assert!(s.contains(&want), "{id}: {want}");
+            }
+            assert!(s.contains("font-family: \"Inter\", sans-serif !important;"));
+        }
+    }
+
+    #[test]
+    fn traffic_lights_left_close_first() {
+        let (_, s) = css("wol-light");
+        for want in [
+            ".titlebar-buttonbox-container { order: -1 !important;",
+            ".titlebar-close { order: 0 !important; }",
+            ".titlebar-min { order: 1 !important; }",
+            ".titlebar-max, .titlebar-restore { order: 2 !important; }",
+            ".titlebar-min, :root:not([sizemode=\"maximized\"]) .titlebar-max, :root[sizemode=\"maximized\"] .titlebar-restore { display: flex !important; }",
+            "width: 12px !important; height: 12px !important; border-radius: 50% !important;",
+        ] {
+            assert!(s.contains(want), "{want}");
+        }
+    }
+
+    /// A user sheet applies to every document; unscoped rules would restyle the web.
+    #[test]
+    fn never_styles_web_pages() {
+        for s in ThemeCatalog::builtin().list() {
+            let (_, css) = css(&s.id);
+            let mut depth = 0i32;
+            for line in css.lines().filter(|l| !l.starts_with("/*")) {
+                if depth == 0 {
+                    assert!(line.starts_with("@-moz-document "), "{}: {line}", s.id);
+                }
+                depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+            }
+            assert_eq!(depth, 0, "{}: balanced braces", s.id);
+            assert_eq!(css.matches("@-moz-document ").count(), 2);
+            for l in css
+                .lines()
+                .filter(|l| l.contains(": ") && l.trim_start().starts_with("--"))
+            {
+                assert!(l.ends_with(" !important;"), "{}: {l}", s.id);
+            }
+        }
+    }
+
+    fn overlay(rel: &str) -> String {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../desktop/overlay/usr/local/lib/firefox")
+            .join(rel);
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    /// AutoConfig in the install dir: no profile path, survives new profiles and updates.
+    #[test]
+    fn autoconfig_loads_the_generated_sheet() {
+        let js = overlay("defaults/pref/autoconfig.js");
+        for want in [
+            "pref(\"general.config.filename\", \"wolos.cfg\");",
+            "pref(\"general.config.obscure_value\", 0);",
+            "pref(\"general.config.sandbox_enabled\", false);",
+        ] {
+            assert!(js.contains(want), "{want}");
+        }
+        let cfg = overlay("wolos.cfg");
+        assert!(cfg.starts_with("//"), "AutoConfig skips the first line");
+        for want in [
+            format!("\"wolos/toolkits/{CSS}\""),
+            format!("\"{}/{CSS}\"", super::super::apps::SYSTEM_DIR),
+            "loadAndRegisterSheet".into(),
+            "USER_SHEET".into(),
+            "unregisterSheet".into(),
+            "lastModifiedTime".into(),
+            "defaultPref(\"toolkit.legacyUserProfileCustomizations.stylesheets\", true);".into(),
+            "defaultPref(\"widget.use-xdg-desktop-portal.settings\", 1);".into(),
+            "defaultPref(\"browser.uidensity\", 1);".into(),
+            "defaultPref(\"browser.toolbars.bookmarks.visibility\", \"never\");".into(),
+        ] {
+            assert!(cfg.contains(&want), "{want}");
+        }
+        let policies = overlay("distribution/policies.json");
+        let v: serde_json::Value = serde_json::from_str(&policies).unwrap();
+        assert_eq!(
+            v["policies"]["DisplayBookmarksToolbar"], "never",
+            "no bookmarks-bar notice"
+        );
+        for k in ["DisableTelemetry", "DisableFirefoxStudies", "DisablePocket"] {
+            assert_eq!(v["policies"][k], true, "{k}");
+        }
+        assert!(
+            !policies.contains("general.config"),
+            "policies cannot set AutoConfig"
+        );
+    }
+
+    #[test]
+    fn links_read_on_the_toolbar() {
+        for s in ThemeCatalog::builtin().list() {
+            let (t, css) = css(&s.id);
+            let link = css
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("--link-color: "))
+                .and_then(|v| Color::parse(v.trim_end_matches(" !important;")))
+                .unwrap();
+            assert!(
+                Color::contrast(link, token_color(&t, "surface")) >= 4.5,
+                "{}",
+                s.id
+            );
+        }
+    }
+}

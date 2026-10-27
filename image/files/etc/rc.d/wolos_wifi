@@ -1,0 +1,12 @@
+#!/bin/sh
+# PROVIDE: wolos_wifi
+# REQUIRE: FILESYSTEMS wolos_hw
+# BEFORE: netif
+. /etc/rc.subr
+name=wolos_wifi
+rcvar=wolos_wifi_enable
+start_cmd=/usr/local/libexec/wolos/wifi
+stop_cmd=:
+load_rc_config $name
+: "${wolos_wifi_enable:=YES}"
+run_rc_command "$1"

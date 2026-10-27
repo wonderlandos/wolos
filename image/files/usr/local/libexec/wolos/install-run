@@ -1,0 +1,51 @@
+#!/bin/sh
+# Install WolOS from the live desktop (wol-installer, ADR 0013): erase <disk> and install, as root
+# (the live image lets its user run this with sudo, no password). The same installer as the boot
+# menu: bsdinstall with /etc/installerconfig, WOLOS_INSTALL_DISK set so it shows no dialogs.
+# Progress on stdout, one line per step: "wolos-install: <stage> <percent> <message>", stages
+# prepare disk files boot settings packages finish done failed. Full log: /tmp/bsdinstall_log.
+# Exit: 0 installed, 1 the install stopped, 2 not a disk the installer may erase.
+set -u
+# WOLOS_INSTALL_PATH: tests only (sudo resets the environment).
+PATH=${WOLOS_INSTALL_PATH:-/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin}; export PATH
+say() { echo "wolos-install: $*"; }
+disk=${1:-}
+here=$(dirname "$0")
+# Every check before the first write: a refused disk is left exactly as it was.
+# A USB disk opened in Files: let its partitions go (autofs mounts them again on demand).
+[ -n "$disk" ] && mount -p | awk -v d="/dev/$disk" 'index($1, d) == 1 && substr($1, length(d) + 1) ~ /^[ps][0-9]/ {print $2}' |
+  sort -r | while read -r m; do umount "$m"; done
+if [ -z "$disk" ] || ! sh "$here/install-check" "$disk" >/dev/null; then
+  say failed 0 "not a disk the installer may erase: ${disk:-none}"
+  exit 2
+fi
+say prepare 0 "Preparing to install on $disk"
+# Closing the lid must not sleep the machine mid-install (laptops sleep on lid close); the app
+# keeps the screen awake. The lid action comes back however the install ends.
+lid=$(sysctl -n hw.acpi.lid_switch_state 2>/dev/null || :)
+if [ -n "$lid" ] && [ "$lid" != NONE ]; then
+  trap 'sysctl hw.acpi.lid_switch_state="$lid" >/dev/null' EXIT
+  trap 'exit 1' HUP INT TERM
+  sysctl hw.acpi.lid_switch_state=NONE >/dev/null
+fi
+# A stopped earlier attempt in this session may have left its pool imported under /mnt.
+if [ "$(zpool get -H -o value altroot zroot 2>/dev/null)" = /mnt ]; then
+  mount -p | awk '$2 ~ "^/mnt(/|$)" {print $2}' | sort -r | while read -r m; do umount -f "$m"; done
+  zpool export -f zroot || { say failed 0 "the pool of an earlier attempt is busy"; exit 1; }
+fi
+export WOLOS_INSTALL_DISK="$disk" TERM=vt100 LINES=24 COLUMNS=80
+# bsdinstall wants a terminal (distextract draws its progress): script(1) gives it one. What it
+# draws reaches our stdout with the progress lines. Exit status is bsdinstall's.
+if script -q /dev/null bsdinstall script /etc/installerconfig; then
+  say finish 98 "Checking the new system"
+  # Done only once the pool imports cleanly and both boot loaders are on the disk.
+  if problems=$(sh "$here/install-verify" "$disk"); then
+    say done 100 "WolOS is installed on $disk"
+  else
+    say failed 0 "the new system did not check out: $(echo "$problems" | tr '\n' ' ')"
+    exit 1
+  fi
+else
+  say failed 0 "the installer stopped (log: /tmp/bsdinstall_log)"
+  exit 1
+fi
