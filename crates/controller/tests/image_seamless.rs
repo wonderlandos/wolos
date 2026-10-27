@@ -198,3 +198,10 @@ fn loader_shows_the_wolos_splash() {
         "8-bit RGBA, not interlaced"
     );
 }
+
+/// Hyprland draws no title bars: GTK 3 apps without a header bar (Shotwell) lost their traffic lights.
+#[test]
+fn every_gtk3_window_draws_the_kit_traffic_lights() {
+    let s = read("desktop/overlay/usr/local/bin/wol-session");
+    assert!(s.contains("export GTK_CSD=${GTK_CSD:-1}"), "{s}");
+}

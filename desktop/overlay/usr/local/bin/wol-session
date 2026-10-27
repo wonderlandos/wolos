@@ -34,6 +34,8 @@ fi
 # GTK 4: cairo renderer until a GPU renderer is proven on real hardware (the default never mapped
 # the shell, Setup or login windows on the passthrough iGPU). A user override wins.
 export GSK_RENDERER=${GSK_RENDERER:-cairo}
+# GTK 3: client-side title bars everywhere, so apps without a header bar still get the traffic lights.
+export GTK_CSD=${GTK_CSD:-1}
 # start-hyprland: the 0.56 watchdog launcher (restarts on crash; no "started without" banner).
 # After a crash it restarts Hyprland locked behind this lock screen (WolOS fork, ADR 0012).
 export WOLOS_CRASH_LOCK_CMD="wol-lock --startup"
