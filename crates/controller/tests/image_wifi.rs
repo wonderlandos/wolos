@@ -93,7 +93,8 @@ fn run_wait(
     }
 }
 
-const NET: &str = "sysrc -q ifconfig_wlan0=WPA DHCP\n";
+/// LinuxKPI drivers (iwlwifi) stay down under netif's WPA path: wpa_supplicant never scans until wlan0 is UP.
+const NET: &str = "sysrc -q ifconfig_wlan0=WPA DHCP\nifconfig wlan0 up\n";
 
 #[test]
 fn creates_wlan0_on_the_first_wireless_device_each_boot() {
