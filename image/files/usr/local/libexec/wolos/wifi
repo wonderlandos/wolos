@@ -21,5 +21,7 @@ if [ ! -e "$conf" ]; then
   (umask 077; printf 'ctrl_interface=/var/run/wpa_supplicant\nctrl_interface_group=wheel\n' >"$conf")
 fi
 [ -n "$(sysrc -n ifconfig_wlan0 2>/dev/null)" ] || sysrc -q ifconfig_wlan0="WPA DHCP"
+# netif hands wlan0 to wpa_supplicant (WPA): LinuxKPI drivers never come up on their own, so no scans.
+ifconfig wlan0 up || log "wlan0 up failed"
 log "wlan0 on $dev"
 exit 0
