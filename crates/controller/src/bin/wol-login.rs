@@ -47,13 +47,15 @@ fn main() {
             let started = Instant::now();
             let ok = run_session(&user, flow.locked, || marks.spawned(what));
             marks.exited(what);
-            if failed_early(started.elapsed(), ok) && flow.locked {
-                println!("wol-login: locked start failed; the login window takes over");
-                flow.locked_start_failed();
-            } else if started.elapsed() >= GreeterRespawn::HEALTHY {
-                flow.session_ran_healthy();
+            if let Some(next) = after_session(&mut flow, &mut respawn, started.elapsed(), ok) {
+                if next.log {
+                    println!(
+                        "wol-login: session failed early; retrying with backoff up to {}s",
+                        GreeterRespawn::MAX_DELAY.as_secs()
+                    );
+                }
+                std::thread::sleep(next.delay);
             }
-            flow.session_ended();
             flow.listed = listed_on_system();
             phase = flow.start();
             continue;
