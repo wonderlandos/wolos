@@ -1,0 +1,21 @@
+{
+  "id": "lupine",
+  "name": "Lupine",
+  "variant": "light",
+  "tokens": {
+    "surface": "#ececec",
+    "sidebar": "rgba(229,229,229,0.92)",
+    "card": "#fafafa",
+    "line": "rgba(0,0,0,0.08)",
+    "text": "#212121",
+    "dim": "#616161",
+    "accent": "#3264eb",
+    "accentText": "#ffffff",
+    "glass": "rgba(236,236,236,0.84)",
+    "control": "#dedede",
+    "success": "#2f9e44",
+    "warning": "#e8a317",
+    "danger": "#e5484d"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-day.svg"
+}

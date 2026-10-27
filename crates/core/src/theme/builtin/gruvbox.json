@@ -1,0 +1,20 @@
+{
+  "id": "gruvbox",
+  "name": "Gruvbox",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#282828",
+    "sidebar": "rgba(29,32,33,0.92)",
+    "card": "#3c3836",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#ebdbb2",
+    "dim": "#a89984",
+    "accent": "#83a598",
+    "accentText": "#1d2021",
+    "glass": "rgba(40,40,40,0.84)",
+    "control": "#504945",
+    "success": "#b8bb26",
+    "warning": "#fabd2f",
+    "danger": "#fb4934"
+  }
+}

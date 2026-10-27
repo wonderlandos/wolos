@@ -1,0 +1,25 @@
+# WolOS: no core files in home folders (a crashed app left Hyprland.core in ~). Crash details: logs.
+kern.coredump=0
+# ULE: a waking thread with a better timeshare priority preempts at once (default 40: kernel only),
+# so the frontmost app and compositor (wolos_qos nice -10) cut in ahead of batch work.
+kern.sched.ule.preempt_thresh=224
+# Users may mount media they own (USB sticks, fusefs exFAT/NTFS) without root.
+vfs.usermount=1
+# Steam (linux-steam-utils) runs its web view in a chroot without root. The kernel allows that
+# only for processes that can never gain privileges (setuid is ignored).
+security.bsd.unprivileged_chroot=1
+# No kernel debugger from a key chord on the console keyboard.
+kern.vt.kbd_debug=0
+# Hardening (wol_core::security::HARDENING; ASLR is already on by default in FreeBSD 15).
+# Accounts cannot list each other's processes (command lines can hold secrets).
+security.bsd.see_other_uids=0
+# Nor the processes of groups they are not in.
+security.bsd.see_other_gids=0
+# The kernel log (addresses, devices, USB serials) is for administrators.
+security.bsd.unprivileged_read_msgbuf=0
+# No hard links to other accounts' files (link tricks in shared folders).
+security.bsd.hardlink_check_uid=1
+# Nor to files of groups the account is not in.
+security.bsd.hardlink_check_gid=1
+# Process IDs cannot be guessed (PID races against helpers).
+kern.randompid=1

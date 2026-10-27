@@ -1,0 +1,20 @@
+{
+  "id": "kanagawa",
+  "name": "Kanagawa",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#1f1f28",
+    "sidebar": "rgba(22,22,29,0.92)",
+    "card": "#2a2a37",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#dcd7ba",
+    "dim": "#c8c093",
+    "accent": "#7e9cd8",
+    "accentText": "#16161d",
+    "glass": "rgba(31,31,40,0.84)",
+    "control": "#363646",
+    "success": "#98bb6c",
+    "warning": "#e6c384",
+    "danger": "#e46876"
+  }
+}

@@ -1,0 +1,9 @@
+/* Accessibility > Increase Contrast: appended after kit.css when `wol/contrast` exists.
+   Secondary text at full text colour, visible edges on every card and control, opaque panels. */
+:root {
+  --dim: var(--text);
+  --line: color-mix(in srgb, var(--text) 55%, transparent);
+  --control-off: color-mix(in srgb, var(--text) 32%, transparent);
+}
+.glass-panel { background: var(--surface); }
+.module, .card-list, button.square-tile, button.control-circle, entry, dropdown.dropdown > button { box-shadow: 0 0 0 1px var(--line); }

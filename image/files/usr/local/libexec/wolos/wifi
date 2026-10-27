@@ -1,0 +1,25 @@
+#!/bin/sh
+# WolOS Wi-Fi: create wlan0 on the first wireless device and let netif run wpa_supplicant + DHCP on it.
+# The driver is loaded before this by rc.d wolos_hw (`wol hw boot`, hardware catalogue).
+# The shell, Control Center and Setup Assistant all use wlan0 and /etc/wpa_supplicant.conf.
+set -u
+log() { echo "wolos_wifi: $*"; logger -t wolos_wifi "$*"; }
+conf=${WOLOS_WPA_CONF:-/etc/wpa_supplicant.conf}
+# LinuxKPI drivers attach after firmware load: wait for the net80211 device, but only when a
+# wireless PCI function is there (desktops without Wi-Fi boot without the wait).
+nic=0 wait=0
+pciconf -l 2>/dev/null | grep -q 'class=0x0280' && nic=1 wait=${WOLOS_WIFI_WAIT:-10}
+i=0
+while :; do
+  dev=$(sysctl -n net.wlan.devices 2>/dev/null | awk '{print $1}')
+  [ -n "$dev" ] || [ "$i" -ge "$wait" ] && break
+  i=$((i + 1)); sleep 1
+done
+[ -n "$dev" ] || { [ "$nic" = 0 ] || log "no wireless device attached (wol hw status)"; exit 0; }
+ifconfig wlan0 >/dev/null 2>&1 || ifconfig wlan0 create wlandev "$dev" || { log "wlan0 create on $dev failed"; exit 0; }
+if [ ! -e "$conf" ]; then
+  (umask 077; printf 'ctrl_interface=/var/run/wpa_supplicant\nctrl_interface_group=wheel\n' >"$conf")
+fi
+[ -n "$(sysrc -n ifconfig_wlan0 2>/dev/null)" ] || sysrc -q ifconfig_wlan0="WPA DHCP"
+log "wlan0 on $dev"
+exit 0

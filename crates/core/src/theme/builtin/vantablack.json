@@ -1,0 +1,21 @@
+{
+  "id": "vantablack",
+  "name": "Vantablack",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#000000",
+    "sidebar": "rgba(9,9,9,0.92)",
+    "card": "#121212",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#ffffff",
+    "dim": "#a0a0a0",
+    "accent": "#bdbdbd",
+    "accentText": "#000000",
+    "glass": "rgba(0,0,0,0.84)",
+    "control": "#1a1a1a",
+    "success": "#7fa37a",
+    "warning": "#c9a35a",
+    "danger": "#c4655f"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-night.svg"
+}

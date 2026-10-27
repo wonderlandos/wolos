@@ -1,0 +1,12 @@
+#!/bin/sh
+# PROVIDE: wolos_firstboot
+# REQUIRE: NETWORKING ldconfig
+# BEFORE: LOGIN wold
+# KEYWORD: firstboot
+. /etc/rc.subr
+name=wolos_firstboot
+rcvar=wolos_firstboot_enable
+start_cmd=/usr/local/libexec/wolos/firstboot
+stop_cmd=:
+load_rc_config $name
+run_rc_command "$1"

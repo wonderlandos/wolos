@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: LicenseRef-Wonderland-1.0
+# Copyright (c) 2026 Julia Klee. WolOS kernel/driver patch: see LICENSES/Wonderland-1.0.md.
+diff --color -ruN c0/sys/compat/linux/linux_futex.c c/sys/compat/linux/linux_futex.c
+--- sys/compat/linux/linux_futex.c
++++ sys/compat/linux/linux_futex.c
+@@ -768,6 +768,20 @@
+ 		error = EWOULDBLOCK;
+ 	umtxq_lock(&uq->uq_key);
+ 	umtxq_unbusy(&uq->uq_key);
++	/*
++	 * Bounded spin (compat.linux.futex_spin): most hand-offs between
++	 * threads complete within microseconds, cheaper than a sleep and
++	 * wakeup.  Not busy here, so wakers are not blocked by the spin.
++	 */
++	if (error == 0 && linux_futex_spin != 0 && mp_ncpus > 1) {
++		u_int spin;
++
++		umtxq_unlock(&uq->uq_key);
++		for (spin = linux_futex_spin; spin > 0 &&
++		    (atomic_load_int(&uq->uq_flags) & UQF_UMTXQ) != 0; spin--)
++			cpu_spinwait();
++		umtxq_lock(&uq->uq_key);
++	}
+ 	if (error == 0) {
+ 		error = umtxq_sleep(uq, "futex",
+ 		    args->ts == NULL ? NULL : &timo);

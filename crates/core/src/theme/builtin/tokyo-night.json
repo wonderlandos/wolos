@@ -1,0 +1,20 @@
+{
+  "id": "tokyo-night",
+  "name": "Tokyo Night",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#1a1b26",
+    "sidebar": "rgba(22,22,30,0.92)",
+    "card": "#24283b",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#c0caf5",
+    "dim": "#a9b1d6",
+    "accent": "#7aa2f7",
+    "accentText": "#1a1b26",
+    "glass": "rgba(26,27,38,0.84)",
+    "control": "#292e42",
+    "success": "#9ece6a",
+    "warning": "#e0af68",
+    "danger": "#f7768e"
+  }
+}

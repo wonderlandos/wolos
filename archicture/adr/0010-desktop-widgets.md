@@ -1,0 +1,11 @@
+# 0010 - desktop widgets: one layer surface, data packages, no web view
+Status: accepted
+Context: Widgets on the desktop (clock, calendar, weather, music, batteries, system) and widgets people build themselves. Options for custom widgets were a web view per widget, a scripting runtime, or a declarative layout over the Kit. Every widget also costs idle wakeups, and the desktop must stay calm (performance.md).
+Decision:
+- One `wol-desktop` layer surface in `wol-shell`, layer Bottom (above the wallpaper, below windows), anchored to all edges inside the menu bar and Dock zones. Edit Widgets moves it to layer Top with on-demand keyboard, then back.
+- Cards sit on a cell grid (164 px cells, 16 gap, 24 margin, `shared::widgets::grid`). Positions are cells, saved in `$XDG_CONFIG_HOME/wolos/widgets.json` (`shared::widgets::Desktop`); a smaller screen moves cards inward for display only. Unknown kinds, keys and entries survive a round trip.
+- Custom widget = a package folder (`widget.json` + optional data script) in `~/.local/share/wolos/widgets/` or `/usr/local/share/wolos/widgets/`. The layout is a tree of Kit primitives with `{{path}}` bindings into the JSON a source returns. No code runs in the shell: sources are a command (as the user, timeout, RLIMIT_CPU, nice 10, output cap, never a shell), a file, or an http GET that needs a per-package, per-host grant the user gives on the card.
+- One coalesced timer for every widget (`widgets::schedule`), aligned to minute boundaries; music and batteries are D-Bus event driven; everything pauses while a fullscreen window covers the desktop. Nothing animates unless the user acted.
+- Weather: Open-Meteo, a city the user picks by name (geocoding sends only the typed name), never derived from the network address.
+- `wol widgets list|add|remove|reload|validate` edits the same file through `wol_core::widgets` and asks a running shell to reload.
+Consequences: A broken package shows an error card naming each problem by JSON path; it never breaks the desktop. Widget authors get the system's look for free and cannot draw outside it. No web engine in the shell. Interactive widgets are limited to buttons (run a written-out program, open a URL, launch an app).

@@ -1,0 +1,2 @@
+# WolOS: administrators (group wheel) may use sudo with their own password.
+%wheel ALL=(ALL:ALL) ALL

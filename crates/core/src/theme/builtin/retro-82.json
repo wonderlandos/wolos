@@ -1,0 +1,21 @@
+{
+  "id": "retro-82",
+  "name": "Retro 82",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#05182e",
+    "sidebar": "rgba(3,18,34,0.92)",
+    "card": "#0a2540",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#f6dcac",
+    "dim": "#a7c9c6",
+    "accent": "#faa968",
+    "accentText": "#05182e",
+    "glass": "rgba(5,24,46,0.84)",
+    "control": "#134e5a",
+    "success": "#40b5a6",
+    "warning": "#f6c86c",
+    "danger": "#f85525"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-dusk.svg"
+}

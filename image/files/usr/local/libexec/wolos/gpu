@@ -1,0 +1,11 @@
+#!/bin/sh
+# WolOS GPU: the KMS driver for this boot's GPU is loaded before this by rc.d wolos_hw
+# (`wol hw boot`, hardware catalogue). Here: the panel it exposes.
+set -u
+log() { echo "wolos_gpu: $*"; logger -t wolos_gpu "$*"; }
+# A panel handed over at brightness 0 (VFIO passthrough, some firmware) shows nothing: raise it, never lower one.
+for b in "${WOLOS_BACKLIGHT_DIR:-/dev/backlight}"/backlight*; do
+  [ -e "$b" ] || continue
+  [ "$(backlight -f "$b" 2>/dev/null | awk '{print $2}')" = 0 ] && backlight -f "$b" 80 && log "backlight ${b##*/} 0 -> 80"
+done
+exit 0

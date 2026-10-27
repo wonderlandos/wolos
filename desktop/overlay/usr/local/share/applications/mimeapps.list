@@ -1,0 +1,34 @@
+# WolOS default apps (GLib/xdg-utils read $XDG_DATA_DIRS/applications/mimeapps.list).
+# Users' choices (~/.config/mimeapps.list) override these.
+[Default Applications]
+x-scheme-handler/http=firefox.desktop;
+x-scheme-handler/https=firefox.desktop;
+text/html=firefox.desktop;
+application/xhtml+xml=firefox.desktop;
+x-scheme-handler/mailto=org.gnome.Geary.desktop;
+inode/directory=org.gnome.Nautilus.desktop;
+application/pdf=org.gnome.Papers.desktop;
+text/plain=org.gnome.TextEditor.desktop;
+image/png=org.gnome.eog.desktop;
+image/jpeg=org.gnome.eog.desktop;
+image/gif=org.gnome.eog.desktop;
+image/webp=org.gnome.eog.desktop;
+image/svg+xml=org.gnome.eog.desktop;
+audio/mpeg=io.bassi.Amberol.desktop;
+audio/flac=io.bassi.Amberol.desktop;
+audio/ogg=io.bassi.Amberol.desktop;
+audio/x-wav=io.bassi.Amberol.desktop;
+video/mp4=io.github.celluloid_player.Celluloid.desktop;
+video/webm=io.github.celluloid_player.Celluloid.desktop;
+video/x-matroska=io.github.celluloid_player.Celluloid.desktop;
+application/zip=org.gnome.FileRoller.desktop;
+application/x-tar=org.gnome.FileRoller.desktop;
+application/x-compressed-tar=org.gnome.FileRoller.desktop;
+application/x-7z-compressed=org.gnome.FileRoller.desktop;
+text/calendar=org.gnome.Calendar.desktop;
+x-scheme-handler/steam=steam.desktop;
+x-scheme-handler/steamlink=steam.desktop;
+application/x-ms-dos-executable=org.wolos.windows-app.desktop;
+application/x-msdownload=org.wolos.windows-app.desktop;
+application/vnd.microsoft.portable-executable=org.wolos.windows-app.desktop;
+application/x-msi=org.wolos.windows-app.desktop;

@@ -1,0 +1,2 @@
+# Daily update check (wol_core::update::check): hourly, the script itself waits a day between checks.
+@hourly	root	/usr/local/libexec/wolos/update-check

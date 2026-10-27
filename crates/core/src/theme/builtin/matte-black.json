@@ -1,0 +1,21 @@
+{
+  "id": "matte-black",
+  "name": "Matte Black",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#121212",
+    "sidebar": "rgba(13,13,13,0.92)",
+    "card": "#1e1e1e",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#bebebe",
+    "dim": "#8a8a8d",
+    "accent": "#e68e0d",
+    "accentText": "#121212",
+    "glass": "rgba(18,18,18,0.84)",
+    "control": "#2a2a2a",
+    "success": "#8fae6b",
+    "warning": "#ffc107",
+    "danger": "#d35f5f"
+  },
+  "wallpaper": "/usr/local/share/wolos/wallpapers/wonderland-night.svg"
+}

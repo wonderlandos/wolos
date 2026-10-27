@@ -1,0 +1,216 @@
+From 25acbc2602c35f4b95c39f0e494d0897d954b444 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Tue, 27 Oct 2026 01:51:52 -0300
+Subject: [PATCH] session-lock: a takeover lock hides workspaces from its first
+ frame; crash restart relaunches the locker
+
+A lock that replaces one already holding the session (--locked-cmd start, a
+crashed locker restored with misc:allow_session_lock_restore) drew the
+workspaces until its first frame. They stay hidden now.
+
+start-hyprland after a crash passes --locked-cmd $WOLOS_CRASH_LOCK_CMD when
+set, instead of --locked with nothing that can unlock the session.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/helpers/WolosLock.hpp           | 35 +++++++++++++++++++++++++++++
+ src/managers/SessionLockManager.cpp | 15 +++++++++++--
+ src/managers/SessionLockManager.hpp |  2 ++
+ src/render/Renderer.cpp             |  4 ++--
+ start/src/core/Instance.cpp         |  5 ++++-
+ tests/helpers/WolosLock.cpp         | 32 ++++++++++++++++++++++++++
+ 6 files changed, 88 insertions(+), 5 deletions(-)
+ create mode 100644 src/helpers/WolosLock.hpp
+ create mode 100644 tests/helpers/WolosLock.cpp
+
+diff --git a/src/helpers/WolosLock.hpp b/src/helpers/WolosLock.hpp
+new file mode 100644
+index 0000000..69e5a2f
+--- /dev/null
++++ b/src/helpers/WolosLock.hpp
+@@ -0,0 +1,35 @@
++#pragma once
++
++#include <string>
++#include <vector>
++
++// WolOS session-lock policy (ADR 0012). Pure functions: tested in tests/helpers/WolosLock.cpp.
++
++namespace WolosLock {
++    struct SLockState {
++        bool missing  = false; // no lock object, or misc:lockdead_screen_delay passed without a frame
++        bool locked   = false; // the client was sent `locked`
++        bool denied   = false; // the client was sent `finished`
++        bool takeover = false; // this lock replaced one that already held the session
++    };
++
++    // Workspaces are not drawn under the lock. Upstream hides them once the lock is confirmed, denied or missing, so a
++    // fresh lock on an unlocked desktop shows no black flash. A takeover (`--locked-cmd` start, crashed locker restored)
++    // hides them from its first frame: the desktop was never visible and must not flash before the new lock draws.
++    inline constexpr bool workspacesHidden(const SLockState& s) {
++        return s.missing || s.locked || s.denied || s.takeover;
++    }
++
++    // A new lock is a takeover when the session was already locked before it arrived.
++    inline constexpr bool isTakeover(bool sessionWasLocked) {
++        return sessionWasLocked;
++    }
++
++    // start-hyprland after a crash: relaunch locked *with* the locker named in $WOLOS_CRASH_LOCK_CMD.
++    // Upstream `--locked` alone leaves a locked screen with nothing that can unlock it.
++    inline std::vector<std::string> crashLockArgs(const char* lockCmd) {
++        if (lockCmd && *lockCmd)
++            return {"--locked-cmd", lockCmd};
++        return {"--locked"};
++    }
++}
+diff --git a/src/managers/SessionLockManager.cpp b/src/managers/SessionLockManager.cpp
+index bb3e792..67f4816 100644
+--- a/src/managers/SessionLockManager.cpp
++++ b/src/managers/SessionLockManager.cpp
+@@ -10,6 +10,7 @@
+ #include "../managers/input/InputManager.hpp"
+ #include "../managers/eventLoop/EventLoopManager.hpp"
+ #include "../state/MonitorState.hpp"
++#include "../helpers/WolosLock.hpp"
+ #include <algorithm>
+ #include <ranges>
+ 
+@@ -63,8 +64,9 @@ void CSessionLockManager::onNewSessionLock(SP<CSessionLock> pLock) {
+ 
+     LOGM(Log::DEBUG, "Session got locked by {:x}", (uintptr_t)pLock.get());
+ 
+-    m_sessionLock       = makeUnique<SSessionLock>();
+-    m_sessionLock->lock = pLock;
++    m_sessionLock           = makeUnique<SSessionLock>();
++    m_sessionLock->lock     = pLock;
++    m_sessionLock->takeover = WolosLock::isTakeover(PROTO::sessionLock->isLocked());
+     m_sessionLock->lockTimer.reset();
+ 
+     m_sessionLock->listeners.newSurface = pLock->m_events.newLockSurface.listen([this](const SP<CSessionLockSurface>& surface) {
+@@ -249,3 +251,12 @@ bool CSessionLockManager::shallConsiderLockMissing() {
+ 
+     return m_sessionLock->lockTimer.getMillis() > *LOCKDEAD_SCREEN_DELAY;
+ }
++
++bool CSessionLockManager::workspacesHidden() {
++    return WolosLock::workspacesHidden({
++        .missing  = shallConsiderLockMissing(),
++        .locked   = clientLocked(),
++        .denied   = clientDenied(),
++        .takeover = m_sessionLock && m_sessionLock->takeover,
++    });
++}
+diff --git a/src/managers/SessionLockManager.hpp b/src/managers/SessionLockManager.hpp
+index cd312d5..1251188 100644
+--- a/src/managers/SessionLockManager.hpp
++++ b/src/managers/SessionLockManager.hpp
+@@ -48,6 +48,7 @@ struct SSessionLock {
+ 
+     bool                         hasSentLocked = false;
+     bool                         hasSentDenied = false;
++    bool                         takeover      = false; // WolOS: replaced a lock that already held the session
+     std::unordered_set<uint64_t> lockedMonitors;
+ };
+ 
+@@ -72,6 +73,7 @@ class CSessionLockManager {
+     void                    onLockscreenRenderedOnMonitor(uint64_t id);
+ 
+     bool                    shallConsiderLockMissing();
++    bool                    workspacesHidden();
+ 
+     struct {
+         CSignalT<> lock;
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index 8f40ca1..06a1b6f 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -1111,7 +1111,7 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
+     if UNLIKELY (g_pSessionLockManager->isSessionLocked() && !*PSESSIONLOCKXRAY) {
+         // We stop to render workspaces as soon as the lockscreen was sent the "locked" or "finished" (aka denied) event.
+         // In addition we make sure to stop rendering workspaces after misc:lockdead_screen_delay has passed.
+-        if (g_pSessionLockManager->shallConsiderLockMissing() || g_pSessionLockManager->clientLocked() || g_pSessionLockManager->clientDenied())
++        if (g_pSessionLockManager->workspacesHidden())
+             return;
+     }
+ 
+@@ -1672,7 +1672,7 @@ void IHyprRenderer::renderLockscreen(PHLMONITOR pMonitor, const Time::steady_tp&
+         return;
+     }
+ 
+-    const bool RENDERPRIMER = g_pSessionLockManager->shallConsiderLockMissing() || g_pSessionLockManager->clientLocked() || g_pSessionLockManager->clientDenied();
++    const bool RENDERPRIMER = g_pSessionLockManager->workspacesHidden();
+     if (RENDERPRIMER)
+         renderSessionLockPrimer(pMonitor);
+ 
+diff --git a/start/src/core/Instance.cpp b/start/src/core/Instance.cpp
+index 77661dc..0f3c87c 100644
+--- a/start/src/core/Instance.cpp
++++ b/start/src/core/Instance.cpp
+@@ -2,6 +2,7 @@
+ #include "State.hpp"
+ #include "../helpers/Logger.hpp"
+ #include "../helpers/Nix.hpp"
++#include "../../../src/helpers/WolosLock.hpp"
+ 
+ #include <cstdlib>
+ #include <cstring>
+@@ -9,6 +10,8 @@
+ #include <sys/types.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
++#include <algorithm>
++#include <iterator>
+ #include <ranges>
+ #include <string_view>
+ 
+@@ -33,7 +36,7 @@ void CHyprlandInstance::runHyprlandThread(bool safeMode, bool lockedCrash) {
+         argsStd.emplace_back("--safe-mode");
+ 
+     if (lockedCrash)
+-        argsStd.emplace_back("--locked");
++        std::ranges::copy(WolosLock::crashLockArgs(getenv("WOLOS_CRASH_LOCK_CMD")), std::back_inserter(argsStd));
+ 
+     for (const auto& a : g_state->rawArgvNoBinPath) {
+         argsStd.emplace_back(a);
+diff --git a/tests/helpers/WolosLock.cpp b/tests/helpers/WolosLock.cpp
+new file mode 100644
+index 0000000..e4cb1b1
+--- /dev/null
++++ b/tests/helpers/WolosLock.cpp
+@@ -0,0 +1,32 @@
++#include <helpers/WolosLock.hpp>
++
++#include <gtest/gtest.h>
++
++using namespace WolosLock;
++
++TEST(WolosLock, workspacesHiddenUnderTheLock) {
++    struct {
++        SLockState s;
++        bool       hidden;
++    } cases[] = {
++        {{.missing = false, .locked = false, .denied = false, .takeover = false}, false}, // fresh lock on an unlocked desktop: no black flash
++        {{.missing = true, .locked = false, .denied = false, .takeover = false}, true},  // lock missing or timed out
++        {{.missing = false, .locked = true, .denied = false, .takeover = false}, true},  // lock confirmed
++        {{.missing = false, .locked = false, .denied = true, .takeover = false}, true},  // lock denied
++        {{.missing = false, .locked = false, .denied = false, .takeover = true}, true},  // locked start / crashed locker restored
++    };
++    for (auto c : cases)
++        EXPECT_EQ(workspacesHidden(c.s), c.hidden) << c.s.missing << c.s.locked << c.s.denied << c.s.takeover;
++}
++
++TEST(WolosLock, takeoverOnlyWhenAlreadyLocked) {
++    EXPECT_TRUE(isTakeover(true));
++    EXPECT_FALSE(isTakeover(false));
++}
++
++TEST(WolosLock, crashRestartRelaunchesTheLocker) {
++    using V = std::vector<std::string>;
++    EXPECT_EQ(crashLockArgs("wol-lock --startup"), (V{"--locked-cmd", "wol-lock --startup"}));
++    EXPECT_EQ(crashLockArgs(""), (V{"--locked"})); // upstream: locked, nothing to unlock with
++    EXPECT_EQ(crashLockArgs(nullptr), (V{"--locked"}));
++}
+-- 
+2.54.0
+

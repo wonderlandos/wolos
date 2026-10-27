@@ -1,0 +1,20 @@
+{
+  "id": "everforest",
+  "name": "Everforest",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#2d353b",
+    "sidebar": "rgba(35,42,46,0.92)",
+    "card": "#343f44",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#d3c6aa",
+    "dim": "#9da9a0",
+    "accent": "#a7c080",
+    "accentText": "#232a2e",
+    "glass": "rgba(45,53,59,0.84)",
+    "control": "#3d484d",
+    "success": "#a7c080",
+    "warning": "#dbbc7f",
+    "danger": "#e67e80"
+  }
+}

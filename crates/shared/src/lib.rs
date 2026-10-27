@@ -1,0 +1,15 @@
+//! Repository-wide contracts and primitives. Transport- and storage-agnostic where practical.
+pub mod admin;
+pub mod bundle;
+pub mod errors;
+pub mod events;
+pub mod hardware;
+pub mod jobs;
+pub mod login;
+pub mod package;
+pub mod par;
+pub mod qos;
+pub mod shell;
+pub mod sys;
+pub mod theme;
+pub mod widgets;

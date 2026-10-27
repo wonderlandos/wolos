@@ -1,0 +1,50 @@
+#!/bin/sh
+# wol-screenshot full|region|clip|window X,Y WxH|record|record-region|stop [--dir D] [--delay N]
+# Prints the saved file's path. Default dir the Desktop (recordings ~/Movies). The banner names
+# the folder and shows the picture as its thumbnail.
+# Recording uses wf-recorder (multimedia/wf-recorder); stop with `stop` or by recording again.
+set -eu
+mode=${1:-full}; [ $# -gt 0 ] && shift
+geom=
+if [ "$mode" = window ]; then geom="$1 $2"; shift 2; fi
+dir= delay=0
+while [ $# -gt 0 ]; do
+	case $1 in
+	--dir) dir=$2; shift 2 ;;
+	--delay) delay=$2; shift 2 ;;
+	*) echo "wol-screenshot: unknown option $1" >&2; exit 64 ;;
+	esac
+done
+pidf=${XDG_RUNTIME_DIR:-/tmp}/wol-record.pid
+stamp=$(date '+%Y-%m-%d at %H.%M.%S')
+stop() {
+	pid=$(cut -d' ' -f1 "$pidf"); f=$(cut -d' ' -f2- "$pidf")
+	kill -INT "$pid" 2>/dev/null || true
+	while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
+	rm -f "$pidf"
+	notify-send -a Screenshot 'Screen recording saved' "$f"
+	echo "$f"; exit 0
+}
+case $mode in
+record|record-region|stop) [ -f "$pidf" ] && stop; [ "$mode" = stop ] && exit 0
+	dir=${dir:-$HOME/Movies}; mkdir -p "$dir"; f="$dir/Screen Recording $stamp.mp4"
+	g=; [ "$mode" = record-region ] && { g=$(slurp) || exit 0; }
+	sleep "$delay"
+	if [ -n "$g" ]; then wf-recorder -g "$g" -f "$f" >/dev/null 2>&1 & else wf-recorder -f "$f" >/dev/null 2>&1 & fi
+	echo "$! $f" > "$pidf"; exit 0 ;;
+esac
+dir=${dir:-${XDG_DESKTOP_DIR:-$HOME/Desktop}}
+mkdir -p "$dir"
+f="$dir/Screenshot $stamp.png"
+case $mode in
+full) sleep "$delay"; grim "$f" ;;
+window) sleep "$delay"; grim -g "$geom" "$f" ;;
+region) g=$(slurp) || exit 0; sleep "$delay"; grim -g "$g" "$f" ;;
+clip) g=$(slurp) || exit 0; grim -g "$g" - | wl-copy -t image/png >/dev/null 2>&1; notify-send -a Screenshot 'Copied to clipboard'; exit 0 ;;
+*) echo "usage: wol-screenshot full|region|clip|window X,Y WxH|record|record-region|stop [--dir D] [--delay N]" >&2; exit 64 ;;
+esac
+# wl-copy stays running to serve the clipboard: keep it off our stdout (callers read to EOF).
+wl-copy -t image/png < "$f" >/dev/null 2>&1
+[ -n "${WOL_SCREENSHOT_QUIET:-}" ] ||
+	notify-send -a Screenshot -i wolos-photos -h "string:image-path:$f" "Screenshot saved to ${dir##*/}"
+echo "$f"

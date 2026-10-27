@@ -1,0 +1,17 @@
+#!/bin/sh
+# PROVIDE: wolos_hw
+# REQUIRE: FILESYSTEMS wolos_live
+# BEFORE: netif wolos_wifi wolos_gpu
+# KEYWORD: nojail
+# Every boot (a disk moves between machines): load the drivers the hardware catalogue names for the
+# devices present, write next-boot tunables (microcode, vendor drivers), decide powerd, and publish
+# /var/run/wolos-hw.json for Settings and `wol hw`. archicture/modules/hardware.md
+. /etc/rc.subr
+name=wolos_hw
+rcvar=wolos_hw_enable
+start_cmd=wolos_hw_start
+stop_cmd=:
+wolos_hw_start() { /usr/local/bin/wol hw boot; }
+load_rc_config $name
+: "${wolos_hw_enable:=YES}"
+run_rc_command "$1"

@@ -1,0 +1,15 @@
+#!/bin/sh
+# WolOS live (ISO, ADR 0009): the root is read-only cd9660. Writable state lives in memory (tmpfs,
+# unionfs over /etc and /usr/local/etc; /var and /tmp are rc's memory disks). Never touches a disk.
+# Any other root (installed system, rw USB stick) is left alone.
+set -u
+R=${WOLOS_LIVE_ROOT:-}
+[ "$(mount -p | awk '$2=="/"{print $3; exit}')" = cd9660 ] || exit 0
+logger -t wolos_live "live boot: memory overlays" 2>/dev/null || :
+for d in /etc /usr/local/etc; do
+  u=$R/var/run/wolos-live$d; mkdir -p "$u"
+  mount -t tmpfs tmpfs "$u" && mount -t unionfs "$u" "$R$d"
+done
+mount -t tmpfs tmpfs "$R/home"
+mkdir -p "$R/home/live"
+chown -R 1000:1000 "$R/home/live"

@@ -1,0 +1,23 @@
+#!/bin/sh
+# Screen zoom around the pointer (Hyprland cursor:zoom_factor). Bound to ⌥⌘8 / ⌥⌘= / ⌥⌘- in the shipped
+# hyprland.conf (System Settings > Keyboard > Shortcuts > Accessibility). Usage: wol-zoom in|out|toggle
+state="${XDG_RUNTIME_DIR:-/tmp}/wol-zoom"
+cur=$(hyprctl getoption cursor:zoom_factor 2>/dev/null | awk '/^float:/ { print $2; exit }')
+[ -n "$cur" ] || cur=1
+case "$1" in
+in) new=$(awk -v c="$cur" 'BEGIN { v = c * 1.25; if (v > 10) v = 10; printf "%.2f", v }') ;;
+out) new=$(awk -v c="$cur" 'BEGIN { v = c / 1.25; if (v < 1.05) v = 1; printf "%.2f", v }') ;;
+toggle)
+	if awk -v c="$cur" 'BEGIN { exit !(c > 1.01) }'; then
+		echo "$cur" >"$state"
+		new=1
+	else
+		new=$(cat "$state" 2>/dev/null || echo 2)
+	fi
+	;;
+*)
+	echo "usage: wol-zoom in|out|toggle" >&2
+	exit 2
+	;;
+esac
+exec hyprctl keyword cursor:zoom_factor "$new" >/dev/null

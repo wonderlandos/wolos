@@ -1,0 +1,6 @@
+NAME=WolOS
+ID=wolos
+ID_LIKE=freebsd
+VERSION_ID=0.11
+PRETTY_NAME="WolOS 0.11"
+HOME_URL="https://github.com/wonderlandos/wolos"

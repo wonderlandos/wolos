@@ -1,0 +1,20 @@
+{
+  "id": "catppuccin-mocha",
+  "name": "Catppuccin Mocha",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#1e1e2e",
+    "sidebar": "rgba(24,24,37,0.92)",
+    "card": "#313244",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#cdd6f4",
+    "dim": "#a6adc8",
+    "accent": "#89b4fa",
+    "accentText": "#11111b",
+    "glass": "rgba(30,30,46,0.84)",
+    "control": "#45475a",
+    "success": "#a6e3a1",
+    "warning": "#f9e2af",
+    "danger": "#f38ba8"
+  }
+}

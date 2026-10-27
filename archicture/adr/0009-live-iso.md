@@ -1,0 +1,5 @@
+# 0009 - live ISO boots the desktop
+Status: accepted
+Context: The ISO (image/iso.sh) booted only bsdinstall; no way to try WolOS without erasing a disk. build.sh already installs the desktop into the live root (WOLOS_LIVE=1). The ISO root is read-only cd9660; largest file must be < 4 GiB.
+Decision: The live root is the product. Accounts (`_wollogin`, `live` uid 1000 wheel/video, no password) and `login.json` autologin are baked at build time. rc.d `wolos_live` (only on a cd9660 root) mounts tmpfs unionfs over `/etc` and `/usr/local/etc` and a tmpfs `/home`; rc makes `/var` and `/tmp` memory disks. rc.local runs bsdinstall only with loader `set wolos.install=1`. Live dock pin "Install WolOS" runs `libexec/wolos/wol-install` (same `installerconfig`, via `su` to the passwordless live root).
+Consequences: Nothing written to internal disks until the user installs. Live changes vanish at reboot. One root image serves live and installer; no squashfs/second rootfs. The rw USB `.img` also boots the desktop (overlays skipped on UFS).

@@ -1,0 +1,41 @@
+#!/bin/sh
+# WolOS installer: is the new system on <disk> whole? Run by install-run before it says "done".
+# Imports the pool read-only from <disk>'s ZFS partition only (another disk may hold a zroot too),
+# checks its boot dataset, the BIOS boot code and the EFI loader, then lets the pool go.
+# Prints "ok" (exit 0) or one "problem <what>" line per fault (exit 1).
+set -u
+disk=${1:-}; pool=${2:-zroot}
+[ -n "$disk" ] || { echo "problem no-disk"; exit 1; }
+bad=0; problem() { echo "problem $*"; bad=1; }
+parts=$(gpart show -p "$disk" 2>/dev/null)
+part() { echo "$parts" | awk -v t="$1" '$4 == t {print $3; exit}'; }
+zp=$(part freebsd-zfs); esp=$(part efi)
+[ -n "$(part freebsd-boot)" ] || problem bios-boot
+# bsdinstall may leave the pool imported under /mnt: let it go first (only when it lives on <disk>).
+if zpool list -H -v "$pool" 2>/dev/null | grep -q "[[:space:]]$disk"; then
+  zpool export "$pool" || zpool export -f "$pool" || problem pool-busy
+fi
+if [ -z "$zp" ]; then
+  problem zfs-partition
+elif zpool import -d "/dev/$zp" -N -o readonly=on -R /tmp/wolos-verify "$pool" 2>/dev/null; then
+  [ "$(zpool get -H -o value bootfs "$pool")" = "$pool/ROOT/default" ] || problem bootfs
+  [ "$(zpool list -H -o health "$pool")" = ONLINE ] || problem pool-health
+  zpool export "$pool" || problem pool-export
+else
+  problem pool-import
+fi
+if [ -n "$esp" ]; then
+  m=$(mktemp -d /tmp/wolos-verify-esp.XXXXXX)
+  if mount_msdosfs -o ro "/dev/$esp" "$m"; then
+    [ -s "$m/EFI/WolOS/loader.efi" ] || problem efi-loader
+    [ -s "$m/EFI/BOOT/BOOTX64.EFI" ] || problem efi-fallback
+    umount "$m"
+  else
+    problem efi-mount
+  fi
+  rmdir "$m"
+else
+  problem efi-partition
+fi
+[ $bad = 0 ] && echo ok
+exit $bad

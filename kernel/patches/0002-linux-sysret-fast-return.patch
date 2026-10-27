@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: LicenseRef-Wonderland-1.0
+# Copyright (c) 2026 Julia Klee. WolOS kernel/driver patch: see LICENSES/Wonderland-1.0.md.
+diff --color -ruN a/sys/amd64/amd64/exception.S b/sys/amd64/amd64/exception.S
+--- sys/amd64/amd64/exception.S
++++ sys/amd64/amd64/exception.S
+@@ -544,6 +544,7 @@
+ 	movq	%rax,TF_RAX(%rsp)	/* syscall number */
+ 	movq	%rdx,TF_RDX(%rsp)	/* arg 3 */
+ 	movq	%r10,TF_RCX(%rsp)	/* arg 4 */
++	movq	%r10,TF_R10(%rsp)	/* restored by sysret (Linux ABI) */
+ 	SAVE_SEGS
+ 	call	handle_ibrs_entry
+ 	movq	PCPU(CURPCB),%r11
+@@ -586,15 +587,24 @@
+ 	movq	TF_RAX(%rsp),%rax	/* return value 1 */
+ 	movq	TF_RFLAGS(%rsp),%r11	/* original %rflags */
+ 	movq	TF_RIP(%rsp),%rcx	/* original %rip */
++	/*
++	 * Restore the caller's own %r8-%r10 (saved at entry; no kernel
++	 * data leaks) instead of zeroing them: the Linux ABI preserves
++	 * them, so Linux syscalls can return here instead of a full iret.
++	 * %r9 is the %cr3 scratch register: park it in the PCPU slot,
++	 * which is mapped in both page tables (see fast_syscall_pti).
++	 */
++	movq	TF_R9(%rsp),%r8
++	movq	%r8,PCPU(SCRATCH_RAX)
++	movq	TF_R8(%rsp),%r8
++	movq	TF_R10(%rsp),%r10
+ 	movq	TF_RSP(%rsp),%rsp	/* user stack pointer */
+-	xorl	%r8d,%r8d		/* zero the rest of GPRs */
+-	xorl	%r10d,%r10d
+ 	cmpq	$~0,PCPU(UCR3)
+ 	je	2f
+ 	movq	PCPU(UCR3),%r9
+ 	andq	PCPU(UCR3_LOAD_MASK),%r9
+ 	movq	%r9,%cr3
+-2:	xorl	%r9d,%r9d
++2:	movq	PCPU(SCRATCH_RAX),%r9
+ 	movq	$PMAP_UCR3_NOMASK,PCPU(UCR3_LOAD_MASK)
+ 	swapgs
+ 	sysretq
+diff --color -ruN a/sys/amd64/linux/linux_sysvec.c b/sys/amd64/linux/linux_sysvec.c
+--- sys/amd64/linux/linux_sysvec.c
++++ sys/amd64/linux/linux_sysvec.c
+@@ -171,6 +171,11 @@
+ 	return (0);
+ }
+ 
++static bool linux_sysret_fast = true;
++SYSCTL_BOOL(_compat_linux, OID_AUTO, sysret_fast, CTLFLAG_RWTUN,
++    &linux_sysret_fast, 0,
++    "Return from Linux syscalls with sysret (0 = always full iret)");
++
+ static void
+ linux_set_syscall_retval(struct thread *td, int error)
+ {
+@@ -202,12 +207,13 @@
+ 	}
+ 
+ 	/*
+-	 * Differently from FreeBSD native ABI, on Linux only %rcx
+-	 * and %r11 values are not preserved across the syscall.
+-	 * Require full context restore to get all registers except
+-	 * those two restored at return to usermode.
++	 * On Linux only %rcx and %r11 are not preserved across the syscall.
++	 * The sysret fast path restores every other register from the
++	 * trapframe, so only restarts and context replacements (sigreturn)
++	 * need the full iret.
+ 	 */
+-	set_pcb_flags(td->td_pcb, PCB_FULL_IRET);
++	if (!linux_sysret_fast || error == ERESTART || error == EJUSTRETURN)
++		set_pcb_flags(td->td_pcb, PCB_FULL_IRET);
+ }
+ 
+ static void

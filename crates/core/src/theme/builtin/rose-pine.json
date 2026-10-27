@@ -1,0 +1,20 @@
+{
+  "id": "rose-pine",
+  "name": "Rose Pine",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#191724",
+    "sidebar": "rgba(22,20,31,0.92)",
+    "card": "#1f1d2e",
+    "line": "rgba(255,255,255,0.08)",
+    "text": "#e0def4",
+    "dim": "#908caa",
+    "accent": "#c4a7e7",
+    "accentText": "#191724",
+    "glass": "rgba(25,23,36,0.84)",
+    "control": "#26233a",
+    "success": "#9ccfd8",
+    "warning": "#f6c177",
+    "danger": "#eb6f92"
+  }
+}
