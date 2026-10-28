@@ -84,6 +84,22 @@ fn bluetooth_prefers_high_quality_codecs() {
 }
 
 #[test]
+fn end_user_image_has_no_toolchain_or_gnu_docs() {
+    let all = format!(
+        "{}\n{}\n{}",
+        read("desktop/packages.txt"),
+        read("image/arch/packages.x86_64"),
+        read("image/packages-base.txt")
+    );
+    for banned in ["gcc", "texinfo", "man-pages", "base-devel", "make", "autoconf"] {
+        assert!(
+            !all.lines().any(|l| l.split_whitespace().next() == Some(banned)),
+            "{banned} ships on the image"
+        );
+    }
+}
+
+#[test]
 fn gamemode_and_rtkit_are_installed() {
     let p = read("desktop/packages.txt");
     for want in ["gamemode", "lib32-gamemode", "rtkit"] {
