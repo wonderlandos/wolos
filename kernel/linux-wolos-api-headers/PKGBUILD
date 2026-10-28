@@ -2,15 +2,19 @@
 # UAPI headers from the same WolKernel tree as linux-wolos (ADR 0017): replaces Arch's linux-api-headers.
 # _ref and the extra patches must match kernel/linux-wolos/PKGBUILD for the same release.
 pkgname=linux-wolos-api-headers
-pkgver=7.3.0
+# Version: kernel/VERSION (pkgver = <wolkernel>+<linux>; epoch 1 sorts it above the old 7.3.0).
+_wk=$(sed -n 's/^wolkernel=//p' "$startdir/../VERSION")
+_linux=$(sed -n 's/^linux=//p' "$startdir/../VERSION")
+epoch=1
+pkgver=$_wk+$_linux
 pkgrel=1
 _ref=83f32c773255720a661aa45d83e36278135f23f5
-pkgdesc='Kernel headers sanitized for use in userspace (WolKernel)'
+pkgdesc="Kernel headers sanitized for use in userspace (WolKernel $_wk ($_linux))"
 arch=(any)
 url='https://github.com/wonderlandos/linux'
 license=(GPL-2.0-only)
 makedepends=(git rsync)
-provides=("linux-api-headers=$pkgver")
+provides=("linux-api-headers=$_linux")
 conflicts=(linux-api-headers)
 replaces=(linux-api-headers)
 source=("linux::git+https://github.com/wonderlandos/linux.git#commit=$_ref")
