@@ -6,12 +6,15 @@ WolOS live + installer ISO on Arch Linux packages pinned to one Arch Linux Archi
 |---|---|
 | `arch/` | mkarchiso profile (releng-based): `snapshot`, `pacman.conf` (`[wolos]` first, then core/extra/multilib at the snapshot), `packages.x86_64`, systemd-boot entries (live, Install WolOS), live-only `airootfs` |
 | `arch/wolos-update-slot` | wrapper over `wol update apply`: update into the other slot, boot it next |
-| `repo/build.sh` | signed `[wolos]` repo: `linux-wolos` (`kernel/`), `hyprland-wolos` (0.56.2 + `hyprland/patches`), `wolos-system`, `wolos-base` |
+| `repo/packages` | one line per package: name, PKGBUILD dir, local deps, watched paths; the build order |
+| `repo/build.sh` | signed `[wolos]` repo in that order: `linux-wolos` (`kernel/linux-wolos`), `hyprland-wolos` (0.56.2 + `hyprland/patches`), `wolos-system`, `wolos-base`; `WOLOS_REPO_ONLY` rebuilds a subset, `WOLOS_CHROOT` uses a devtools chroot for self-contained recipes |
+| `repo/changed.sh` | changed paths on stdin -> packages to rebuild (each plus its users) |
 | `repo/wolos-system/` | Rust binaries (`build-rust.sh`), Hyprland plugins, `desktop/overlay`, `files/`, design |
 | `repo/wolos-base/` | one versioned base: kernel, headers, uutils coreutils, sudo-rs, bsdtar, zsh, systemd; `base.manifest` |
 | `files/` | systemd units + preset, sysusers, tmpfiles, sysctl.d, udev, plymouth theme, installer (`usr/lib/wolos`) |
 | `build.sh` | `[wolos]` repo if missing -> staged profile -> `mkarchiso` (or `podman` `archlinux:base-devel`) -> ISO + release manifest |
-| `release-manifest.sh` | `{snapshot, repo_revision, image, sha256, size}` |
+| `release-manifest.sh` | `release.json`: `{version, snapshot, wolos_repo, kernel, image, sha256, size}` |
+| `sign-release.sh` | `release.json.sig`: raw Ed25519 with the package key |
 | `vm/` | QEMU/KVM + OVMF + virtio-gpu: `build.sh`, `run.sh` (live), `test-install.sh` (unattended), `run-installed.sh`, `run-gpu.sh` (host iGPU) |
 
 Build (host with archiso, ~20 GB free in `~/WolOS-vm`):
@@ -24,3 +27,9 @@ image/vm/run-installed.sh
 
 Move a release to a newer snapshot: change `arch/snapshot` and the dates in both `pacman.conf` files, rebuild, run `test-install.sh`.
 Boot chain and installer: `archicture/modules/boot.md`.
+
+## CI and updates
+
+- `.github/workflows/packages.yml` (push to `main`): rebuilds the changed packages in an archlinux container and publishes the repo as the assets of the `repo-<snapshot>` release.
+- `.github/workflows/iso.yml` (tag `v*` or manual): `mkarchiso` in a privileged container; the tag's release, marked latest, carries the ISO, `.sha256`, `release.json` and `release.json.sig`.
+- Users: `wolos-update-check.timer` fetches `releases/latest/download/release.json` (+ `.sig`); Software Update or `wolos-update-slot` runs `wol update apply` into the other slot at that snapshot, and the running slot stays the restore point.

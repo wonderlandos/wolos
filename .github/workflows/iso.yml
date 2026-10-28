@@ -1,0 +1,132 @@
+# WolOS release image: mkarchiso (image/build.sh) in a privileged archlinux container, from the
+# [wolos] repo the packages workflow published (built here if there is none yet). A tag `v*`
+# publishes the ISO, its .sha256 and release.json (+ release.json.sig) as the latest GitHub
+# release: release.json is what `update-check` and `wol update` read. A manual run keeps the files
+# as a workflow artifact.
+# Signing: secret WOLOS_RELEASE_KEY (Ed25519 PEM, the package key), WOLOS_GPG_KEY for a rebuilt repo.
+# Extra patches from $WOLOS_OVERLAY when present (vars.WOLOS_OVERLAY_REPO + secrets.WOLOS_OVERLAY_TOKEN).
+name: iso
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: iso-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  iso:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OVERLAY_REPO: ${{ vars.WOLOS_OVERLAY_REPO }}
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Extra patches (when present)
+        if: env.OVERLAY_REPO != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OVERLAY_REPO }}
+          token: ${{ secrets.WOLOS_OVERLAY_TOKEN }}
+          path: wolos-overlay
+
+      - name: The [wolos] repo
+        id: repo
+        run: |
+          snap=$(tr -d '[:space:]' < image/arch/snapshot)
+          echo "snap=$snap" >> "$GITHUB_OUTPUT"
+          mkdir -p out/repo/x86_64
+          if gh release download "repo-$snap" --dir out/repo/x86_64 && [ -s out/repo/x86_64/wolos.db ]; then
+            cp out/repo/x86_64/revision out/repo/revision 2>/dev/null || true
+          else
+            rm -rf out/repo/x86_64/*   # none yet: image/build.sh builds it
+          fi
+
+      - name: Cache pacman packages
+        uses: actions/cache@v4
+        with:
+          path: out/pkgcache
+          key: wolos-iso-${{ steps.repo.outputs.snap }}
+
+      - name: mkarchiso in an archlinux container
+        env:
+          GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          url=https://github.com/${{ github.repository }}/releases/download/$TAG
+          mkdir -p out/pkgcache
+          docker run --rm --privileged -v "$PWD:/src" -w /src -v "$PWD/out/pkgcache:/var/cache/pacman/pkg" \
+            -e GPG_KEY -e WOLOS_IMAGE_URL="$url" archlinux:latest bash -euo pipefail -c '
+              pacman -Syu --noconfirm --needed archiso git base-devel sudo rust clang
+              git config --global --add safe.directory "*"
+              if [ ! -s out/repo/x86_64/wolos.db ]; then
+                useradd -m builder; echo "builder ALL=(root) NOPASSWD: /usr/bin/pacman" > /etc/sudoers.d/builder
+                chown -R builder /src
+                ov=; [ -d /src/wolos-overlay ] && ov=/src/wolos-overlay
+                sudo -u builder -H env GPG_KEY="$GPG_KEY" WOLOS_OVERLAY="$ov" bash -euo pipefail -c "
+                  git config --global --add safe.directory \"*\"
+                  if [ -n \"\$GPG_KEY\" ]; then
+                    echo \"\$GPG_KEY\" | gpg --batch --import
+                    export WOLOS_SIGN_KEY=\$(gpg --list-secret-keys --with-colons | awk -F: \"/^fpr/ {print \\\$10; exit}\")
+                  else
+                    export WOLOS_UNSIGNED=1
+                  fi
+                  [ -n \"\$WOLOS_OVERLAY\" ] || unset WOLOS_OVERLAY
+                  WOLOS_INSTALL_DEPS=1 WOLOS_WORK=/src/out/work WOLOS_REPO_DIR=/src/out/repo image/repo/build.sh
+                "
+              fi
+              WOLOS_WORK=/src/out/work WOLOS_REPO_DIR=/src/out/repo image/build.sh
+            '
+
+      - name: Release files
+        env:
+          KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+        run: |
+          sudo chown -R "$(id -u)" out
+          mkdir -p dist
+          iso=$(ls -t out/work/out/wolos-*.iso | head -1)
+          mv "$iso" dist/
+          cp "${iso%.iso}.json" dist/release.json   # release-manifest.sh, written by image/build.sh
+          (cd dist && sha256sum "$(basename "$iso")" > "$(basename "$iso").sha256")
+          if [ -n "$KEY" ]; then
+            printf '%s\n' "$KEY" > "$RUNNER_TEMP/release.pem"
+            image/sign-release.sh dist/release.json "$RUNNER_TEMP/release.pem"
+            rm -f "$RUNNER_TEMP/release.pem"
+          else
+            echo "::warning::no WOLOS_RELEASE_KEY: release.json unsigned, updates will not offer it"
+          fi
+          cat dist/release.json
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          make_latest: true
+          files: |
+            dist/*.iso
+            dist/*.sha256
+            dist/release.json
+            dist/release.json.sig
+
+      - name: Keep the image (manual run)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolos-iso
+          path: dist/
+          retention-days: 7
