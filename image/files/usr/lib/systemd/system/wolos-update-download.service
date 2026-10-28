@@ -1,0 +1,10 @@
+[Unit]
+Description=WolOS automatic updates (downloads only; Software Update installs)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/update-download
+Nice=10
+IOSchedulingClass=idle

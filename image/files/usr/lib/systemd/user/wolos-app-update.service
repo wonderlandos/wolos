@@ -1,0 +1,9 @@
+[Unit]
+Description=Install Flathub app updates for this account
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/flatpak --user update -y --noninteractive
+Nice=10
+IOSchedulingClass=idle

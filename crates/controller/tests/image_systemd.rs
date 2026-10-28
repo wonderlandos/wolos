@@ -408,3 +408,59 @@ fn boot_shows_only_the_wolos_splash() {
     let i = read("image/repo/wolos-system/wolos-system.install");
     assert!(i.contains("plymouth-set-default-theme wolos"));
 }
+
+/// Automatic updates (Settings > Software Update): a daily system timer checks and downloads
+/// into pacman's cache unless /etc/wolos/auto-update says `download=off`; it never installs.
+/// App updates are a per-account user timer that Settings enables.
+#[test]
+fn automatic_updates_download_daily_and_apps_update_per_account() {
+    let t = unit("wolos-update-download.timer");
+    assert_eq!(values(&t, "Timer", "OnCalendar"), ["daily"]);
+    assert_eq!(values(&t, "Timer", "Persistent"), ["true"]);
+    let s = unit("wolos-update-download.service");
+    assert_eq!(
+        values(&s, "Service", "ExecStart"),
+        ["/usr/lib/wolos/update-download"]
+    );
+    assert_eq!(values(&s, "Service", "Type"), ["oneshot"]);
+    let d = scratch("autoupdate");
+    let conf = d.join("auto-update");
+    let path = fakes(&d, &[("wol", ""), ("pacman", "")]);
+    let run = || {
+        let st = Command::new("sh")
+            .arg(repo("image/files/usr/lib/wolos/update-download"))
+            .env("PATH", &path)
+            .env("WOLOS_AUTO_UPDATE", &conf)
+            .status()
+            .unwrap();
+        assert!(st.success());
+    };
+    run();
+    assert_eq!(
+        log(&d),
+        "wol update check --json\npacman -Swu --noconfirm --noprogressbar\n",
+        "no file: on"
+    );
+    fs::write(&conf, wol_core::update::auto::conf(false)).unwrap();
+    fs::remove_file(d.join("log")).unwrap();
+    run();
+    assert_eq!(log(&d), "", "download=off: nothing runs");
+    assert!(!log(&d).contains("-Syu"), "never installs");
+
+    let user = "image/files/usr/lib/systemd/user";
+    let ut = read(&format!("{user}/wolos-app-update.timer"));
+    assert_eq!(values(&ut, "Timer", "OnCalendar"), ["daily"]);
+    assert_eq!(values(&ut, "Install", "WantedBy"), ["timers.target"]);
+    let us = read(&format!("{user}/wolos-app-update.service"));
+    assert_eq!(
+        values(&us, "Service", "ExecStart"),
+        [
+            "/usr/bin/flatpak",
+            "--user",
+            "update",
+            "-y",
+            "--noninteractive"
+        ]
+    );
+    assert_eq!(wol_core::update::auto::APPS_TIMER, "wolos-app-update.timer");
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=WolOS automatic app updates, once a day
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

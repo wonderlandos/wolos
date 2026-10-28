@@ -1,0 +1,10 @@
+[Unit]
+Description=WolOS automatic updates: check and download once a day
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

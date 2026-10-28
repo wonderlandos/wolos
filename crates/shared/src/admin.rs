@@ -68,6 +68,8 @@ pub enum AdminAction {
     FlatpakInstall,
     /// Remove one system-wide Flatpak app: `<app-id>`.
     FlatpakRemove,
+    /// Automatic updates: download pending packages in the background, `on` or `off`.
+    AutoUpdate,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -108,6 +110,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::FlatpakOverride, "flatpak-override"),
     (AdminAction::FlatpakInstall, "flatpak-install"),
     (AdminAction::FlatpakRemove, "flatpak-remove"),
+    (AdminAction::AutoUpdate, "auto-update"),
 ];
 
 impl AdminAction {
@@ -258,6 +261,7 @@ mod tests {
             "bt-forget",
             "wifi-forget",
             "session-power",
+            "auto-update",
         ] {
             assert_eq!(AdminAction::parse(n).map(AdminAction::name), Some(n));
         }

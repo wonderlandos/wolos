@@ -175,6 +175,7 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         }
         AdminAction::Hostname => ok(n == 1 && sharing::is_valid_hostname(a[0])),
         AdminAction::Lid => ok(n == 1 && (a[0] == "sleep" || a[0] == "nothing")),
+        AdminAction::AutoUpdate => ok(n == 1 && on_off(a[0])),
         AdminAction::PrinterAdd => {
             ok(n == 2 && printers::is_valid_name(a[0]) && printers::is_valid_uri(a[1]))
         }
@@ -335,6 +336,11 @@ pub fn plan_with(
         AdminAction::RemoteLogin => service_steps("sshd.service", a[0] == "on"),
         AdminAction::Firewall => service_steps("nftables.service", a[0] == "on"),
         AdminAction::Hostname => vec![argv(&["hostnamectl", "set-hostname", &a[0]])],
+        AdminAction::AutoUpdate => vec![write(
+            crate::update::auto::FILE,
+            0o644,
+            crate::update::auto::conf(a[0] == "on"),
+        )],
         AdminAction::Lid => {
             let l = if a[0] == "sleep" {
                 power::Lid::Sleep
@@ -934,6 +940,10 @@ mod tests {
             (Lid, &["sleep"], true),
             (Lid, &["nothing"], true),
             (Lid, &["S5"], false),
+            (AutoUpdate, &["on"], true),
+            (AutoUpdate, &["off"], true),
+            (AutoUpdate, &["yes"], false),
+            (AutoUpdate, &[], false),
             (
                 PrinterAdd,
                 &["HP_LaserJet", "ipp://10.0.0.5/ipp/print"],
@@ -1077,6 +1087,11 @@ mod tests {
                 })
                 .unwrap()
         };
+        let (c, mode) = content(AutoUpdate, &["off"]);
+        assert_eq!(
+            (c.render(None), mode),
+            (crate::update::auto::conf(false), 0o644)
+        );
         let (c, mode) = content(Lid, &["sleep"]);
         assert_eq!(
             (c.render(Some("[Login]\nHandleLidSwitch=ignore\n")), mode),
