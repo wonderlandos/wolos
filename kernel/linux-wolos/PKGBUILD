@@ -53,11 +53,12 @@ _make() {
   fi
 }
 _commit=$(<"$startdir/ref")
-_srcname=linux
+_srcname=linux-$_commit
+# A tarball of the pinned commit: no clone of the full kernel history (minutes in CI).
 source=(
-  "git+https://github.com/wonderlandos/linux.git#commit=$_commit"
+  "linux-$_commit.tar.gz::https://github.com/wonderlandos/linux/archive/$_commit.tar.gz"
   config.x86_64
-  wolos.config::../../kernel/conf/wolos.config
+  wolos.config
   prepare.sh
 )
 sha256sums=(SKIP SKIP SKIP SKIP)
