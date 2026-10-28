@@ -6,6 +6,7 @@ enable wolos-gpu.service
 enable wolos-firstboot.service
 enable wolos-power.service
 enable wolos-update-check.timer
+enable wolos-update-download.timer
 enable NetworkManager.service
 enable bluetooth.service
 enable nftables.service

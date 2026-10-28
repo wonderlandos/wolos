@@ -1,0 +1,16 @@
+#!/bin/sh
+# Automatic updates (wolos-update-download.timer, wol_core::update::auto): check, then download the
+# pending packages into pacman's cache so Update Now is quick. Never installs: that stays Software
+# Update, which saves a restore point first. Off when $WOLOS_AUTO_UPDATE says download=off.
+set -u
+conf=${WOLOS_AUTO_UPDATE:-/etc/wolos/auto-update}
+mode=on
+if [ -r "$conf" ]; then
+	v=$(sed -n 's/^[[:space:]]*download[[:space:]]*=[[:space:]]*//p' "$conf" | tail -n 1)
+	[ "$v" = off ] && mode=off
+fi
+[ "$mode" = on ] || exit 0
+# `wol update check` refreshes the catalogue; offline leaves nothing to download.
+wol update check --json >/dev/null 2>&1 || exit 0
+pacman -Swu --noconfirm --noprogressbar >/dev/null 2>&1
+exit 0

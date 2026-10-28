@@ -5,6 +5,7 @@
 //! Pure: produces argv lists; the caller runs them in order and stops on the first failure,
 //! then runs [`rollback`] (the new slot is deleted; the running slot stays the restore point).
 
+pub mod auto;
 pub mod check;
 
 /// The two root slots (btrfs subvolumes `@wolos-a`, `@wolos-b`).
