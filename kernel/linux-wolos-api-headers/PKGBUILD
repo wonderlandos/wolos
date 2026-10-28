@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # UAPI headers from the same WolKernel tree as linux-wolos (ADR 0017): replaces Arch's linux-api-headers.
-# _ref and the extra patches must match kernel/linux-wolos/PKGBUILD for the same release.
+# _ref must match kernel/linux-wolos/ref (the fork's wolos branch, which carries the WolKernel patches).
 pkgname=linux-wolos-api-headers
 # Version: kernel/VERSION (pkgver = <wolkernel>+<linux>; epoch 1 sorts it above the old 7.3.0).
 _wk=$(sed -n 's/^wolkernel=//p' "$startdir/../VERSION")
@@ -8,7 +8,7 @@ _linux=$(sed -n 's/^linux=//p' "$startdir/../VERSION")
 epoch=1
 pkgver=$_wk+$_linux
 pkgrel=1
-_ref=83f32c773255720a661aa45d83e36278135f23f5
+_ref=254dce564ad96c4287d97e21198996e2fcda065b
 pkgdesc="Kernel headers sanitized for use in userspace (WolKernel $_wk ($_linux))"
 arch=(any)
 url='https://github.com/wonderlandos/linux'

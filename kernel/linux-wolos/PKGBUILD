@@ -1,6 +1,7 @@
-# linux-wolos: the WolOS kernel fork (github.com/wonderlandos/linux) at the commit in ./ref, Arch's
-# config.x86_64 from the snapshot (vendored next to this file) + kernel/conf/wolos.config, plus extra
-# patches from $WOLOS_OVERLAY/kernel/linux/patches when present. Published only in the [wolos] repo
+# linux-wolos: the WolOS kernel fork (github.com/wonderlandos/linux, branch wolos: the WolKernel patches)
+# at the commit in ./ref, Arch's config.x86_64 from the snapshot (vendored next to this file) + the fork's
+# kernel/configs/wolos.config + kernel/conf/wolos.config, plus extra patches from
+# $WOLOS_OVERLAY/kernel/linux/patches when set. Published only in the [wolos] repo
 # (image/repo/build.sh). Packaging follows Arch's linux PKGBUILD.
 # Build: cd kernel/linux-wolos && makepkg -s   (or image/repo/build.sh)
 
@@ -37,8 +38,7 @@ export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EP
 prepare() {
   cd $_srcname
   echo "-$pkgrel" > localversion.10-pkgrel
-  WOLOS_OVERLAY=${WOLOS_OVERLAY:-$startdir/../../../wolos-overlay} \
-    sh ../prepare.sh . ../config.x86_64 ../wolos.config
+  WOLOS_OVERLAY=${WOLOS_OVERLAY:-} sh ../prepare.sh . ../config.x86_64 ../wolos.config
   make -s kernelrelease > version
   echo "Prepared $pkgbase version $(<version)"
 }
