@@ -42,6 +42,13 @@ jobs:
           restore-keys: ccache-${{ matrix.march }}-
 
       # Fetched before makepkg (which uses the file): parallel jobs hitting archive/ get HTTP 429.
+      # BTF generation (pahole over all of vmlinux) peaks above the runner's 16 GB RAM.
+      - name: Add swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 16G /mnt/wolos-swap && sudo chmod 600 /mnt/wolos-swap
+          sudo mkswap /mnt/wolos-swap >/dev/null && sudo swapon /mnt/wolos-swap && free -g
+
       - name: Fetch the pinned kernel source
         run: |
           c=$(cat kernel/linux-wolos/ref)
