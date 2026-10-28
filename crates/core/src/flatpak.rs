@@ -436,6 +436,120 @@ pub fn apps(h: &dyn crate::system::Host, home: &str) -> Vec<App> {
     out
 }
 
+// ---- App Store: Flathub as a second source ----
+
+/// A Flathub app found by `flatpak search`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hit {
+    pub id: String,
+    pub name: String,
+    pub summary: String,
+}
+
+fn argv(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| (*s).to_owned()).collect()
+}
+
+/// Read-only Flathub search (the local appstream); None for empty or option-like terms.
+pub fn search_argv(term: &str) -> Option<Vec<String>> {
+    let t = term.trim();
+    (!t.is_empty() && !t.starts_with('-') && !t.chars().any(char::is_control)).then(|| {
+        argv(&[
+            "flatpak",
+            "search",
+            "--columns=application,name,description,remotes",
+            "--",
+            t,
+        ])
+    })
+}
+
+/// `flatpak search` rows (tab-separated) from Flathub. `native(hit)` says a native package
+/// already covers it (ours, then Cachy, then Arch win): those are dropped, one tile per app.
+pub fn parse_search(text: &str, native: impl Fn(&Hit) -> bool) -> Vec<Hit> {
+    let mut v: Vec<Hit> = Vec::new();
+    for line in text.lines() {
+        let f: Vec<&str> = line.split('\t').collect();
+        let [id, name, summary, remotes, ..] = f[..] else {
+            continue;
+        };
+        if !is_app_id(id)
+            || !remotes.split(',').any(|r| r.trim() == REMOTE)
+            || v.iter().any(|h| h.id == id)
+        {
+            continue;
+        }
+        let h = Hit {
+            id: id.into(),
+            name: name.trim().into(),
+            summary: summary.trim().into(),
+        };
+        if !native(&h) {
+            v.push(h);
+        }
+    }
+    v
+}
+
+/// The package name a native build of `hit` would most likely carry (`org.gimp.GIMP` -> `gimp`).
+pub fn native_guess(hit: &Hit) -> String {
+    hit.id.rsplit('.').next().unwrap_or("").to_lowercase()
+}
+
+/// Install for this account only: no administrator password, the consent sheet still asks.
+pub fn install_argv(app_id: &str) -> Vec<String> {
+    argv(&[
+        "flatpak",
+        "install",
+        "--user",
+        "--noninteractive",
+        "-y",
+        REMOTE,
+        app_id,
+    ])
+}
+
+pub fn remove_argv(app_id: &str) -> Vec<String> {
+    argv(&[
+        "flatpak",
+        "uninstall",
+        "--user",
+        "--noninteractive",
+        "-y",
+        app_id,
+    ])
+}
+
+/// Software Update: every Flatpak app and runtime of this account.
+pub fn update_argv() -> Vec<String> {
+    argv(&["flatpak", "update", "--user", "--noninteractive", "-y"])
+}
+
+/// `flatpak list --app --columns=application` (both scopes).
+pub fn installed_argv() -> Vec<String> {
+    argv(&["flatpak", "list", "--app", "--columns=application"])
+}
+
+/// `flatpak remote-ls --updates --app --columns=application`: ids with an update waiting.
+pub fn updates_argv() -> Vec<String> {
+    argv(&[
+        "flatpak",
+        "remote-ls",
+        "--updates",
+        "--app",
+        "--columns=application",
+    ])
+}
+
+/// One app id per line (list, remote-ls); anything else skipped.
+pub fn parse_ids(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| is_app_id(l))
+        .map(String::from)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,6 +773,52 @@ mod tests {
             ]
         );
         assert_eq!((a[1].name.as_str(), a[1].scope), ("Steam", Scope::System));
+    }
+
+    #[test]
+    fn flathub_search_keeps_one_tile_per_app_and_prefers_native() {
+        let out = "org.gimp.GIMP\tGIMP\tCreate images\tflathub\n\
+                   org.kde.krita\tKrita\tDigital painting\tflathub\n\
+                   org.kde.krita\tKrita\tDigital painting\tflathub\n\
+                   com.example.Other\tOther\tFrom elsewhere\tsomeremote\n\
+                   bad id\tX\tY\tflathub\n\
+                   Application ID\tName\n";
+        let native = |h: &Hit| native_guess(h) == "gimp";
+        let v = parse_search(out, native);
+        assert_eq!(
+            v,
+            [Hit {
+                id: "org.kde.krita".into(),
+                name: "Krita".into(),
+                summary: "Digital painting".into()
+            }]
+        );
+        assert_eq!(search_argv("-x"), None);
+        assert_eq!(search_argv("  "), None);
+        assert_eq!(
+            search_argv("paint").unwrap().join(" "),
+            "flatpak search --columns=application,name,description,remotes -- paint"
+        );
+    }
+
+    #[test]
+    fn store_argv_are_per_user() {
+        assert_eq!(
+            install_argv("org.kde.krita").join(" "),
+            "flatpak install --user --noninteractive -y flathub org.kde.krita"
+        );
+        assert_eq!(
+            remove_argv("org.kde.krita").join(" "),
+            "flatpak uninstall --user --noninteractive -y org.kde.krita"
+        );
+        assert_eq!(
+            update_argv().join(" "),
+            "flatpak update --user --noninteractive -y"
+        );
+        assert_eq!(
+            parse_ids("org.kde.krita\n\nApplication ID\norg.gimp.GIMP\n"),
+            ["org.kde.krita", "org.gimp.GIMP"]
+        );
     }
 
     #[test]
