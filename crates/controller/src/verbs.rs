@@ -7,6 +7,7 @@ use crate::cli::Invocation;
 use crate::run::{Env, emit_json, fail};
 use serde_json::{Value, json};
 use shared::errors::ErrorCode;
+use shared::par::join;
 use std::path::{Path, PathBuf};
 use wol_core::automation::{self, Outcome, Policy, Record, audit, policy, tidy};
 use wol_core::controls::{ControlError, Controls};
@@ -405,7 +406,8 @@ fn battery_state(env: &mut dyn Env) -> Value {
 
 fn wifi_state(env: &mut dyn Env) -> Value {
     let c = env.controls();
-    json!({"on": c.wifi_enabled(), "networks": c.wifi_networks()})
+    let (on, networks) = join(|| c.wifi_enabled(), || c.wifi_networks());
+    json!({"on": on, "networks": networks})
 }
 
 fn bluetooth_state(env: &mut dyn Env) -> Value {
@@ -414,15 +416,19 @@ fn bluetooth_state(env: &mut dyn Env) -> Value {
 
 fn network_state(env: &mut dyn Env) -> Value {
     let c = env.controls();
-    let info = wol_core::netinfo::read(&*c.host);
-    let joined = c.wifi_networks().into_iter().find(|n| n.connected);
+    // Independent probes (ip, nmcli twice, bluetoothctl): fork/join, fields keep their order.
+    let ((info, networks), (on, bluetooth)) = join(
+        || join(|| wol_core::netinfo::read(&*c.host), || c.wifi_networks()),
+        || join(|| c.wifi_enabled(), || c.bluetooth()),
+    );
+    let joined = networks.into_iter().find(|n| n.connected);
     json!({
         "online": info.gateway.is_some(),
         "gateway": info.gateway,
         "dns": info.dns,
         "interfaces": info.interfaces,
-        "wifi": {"on": c.wifi_enabled(), "network": joined.as_ref().map(|n| n.ssid.clone()), "signal": joined.map(|n| n.signal)},
-        "bluetooth": c.bluetooth(),
+        "wifi": {"on": on, "network": joined.as_ref().map(|n| n.ssid.clone()), "signal": joined.map(|n| n.signal)},
+        "bluetooth": bluetooth,
     })
 }
 
