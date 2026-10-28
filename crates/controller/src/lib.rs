@@ -7,6 +7,7 @@ pub mod games;
 pub mod hw;
 pub mod login;
 pub mod mcp;
+pub mod mirror;
 pub mod packages;
 pub mod pam;
 pub mod power;
