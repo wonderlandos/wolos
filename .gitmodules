@@ -1,3 +1,6 @@
+[submodule "crates/shell"]
+	path = crates/shell
+	url = https://github.com/wonderlandos/wolos-shell.git
 [submodule "design"]
 	path = design
 	url = https://github.com/wonderlandos/wolos-brand.git

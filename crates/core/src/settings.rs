@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 pub mod appearance {
     pub const LIGHT: &str = "light";
     pub const DARK: &str = "dark";
-    pub const FILE: &str = "/usr/local/etc/wolos/appearance";
+    pub const FILE: &str = "/etc/wolos/appearance";
 
     /// Anything but "dark" reads as light.
     pub fn parse(text: Option<&str>) -> &'static str {
@@ -27,7 +27,7 @@ pub mod appearance {
 pub mod keybinds {
     use super::BTreeMap;
 
-    pub const FILE: &str = "/usr/local/etc/wolos/keybinds.json";
+    pub const FILE: &str = "/etc/wolos/keybinds.json";
     const MODS: [&str; 9] = [
         "super", "cmd", "logo", "mod4", "ctrl", "control", "alt", "mod1", "shift",
     ];
@@ -53,7 +53,7 @@ pub mod keybinds {
 }
 
 pub mod idle {
-    pub const FILE: &str = "/usr/local/etc/wolos/idle.json";
+    pub const FILE: &str = "/etc/wolos/idle.json";
     pub const DEFAULT_SECS: u32 = 300;
 
     pub fn parse(json: &str) -> u32 {
@@ -70,13 +70,13 @@ pub mod idle {
 
 pub mod users {
     /// Login shell of every account WolOS creates (Setup Assistant, Settings > Accounts, live user).
-    /// pkg zsh registers it in /etc/shells. root keeps /bin/sh: recovery must not depend on /usr/local.
-    pub const LOGIN_SHELL: &str = "/usr/local/bin/zsh";
+    /// The zsh package registers it in /etc/shells. root keeps bash.
+    pub const LOGIN_SHELL: &str = "/usr/bin/zsh";
     /// Groups of every account: video (cameras, GPU render nodes).
-    pub const ACCOUNT_GROUPS: &str = "video";
-    /// Administrators, like the Setup Assistant's account: wheel (sudo, wol-admind), operator (USB
-    /// sticks writable under /media; operator can also read raw disks, so never standard accounts).
-    pub const ACCOUNT_GROUPS_ADMIN: &str = "wheel,video,operator";
+    pub const ACCOUNT_GROUPS: &str = "video,input,audio";
+    /// Administrators, like the Setup Assistant's account: wheel (sudo via /etc/sudoers.d,
+    /// wol-admind). USB sticks mount through udisks for every session.
+    pub const ACCOUNT_GROUPS_ADMIN: &str = "wheel,video,input,audio";
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Account {
@@ -193,31 +193,32 @@ pub mod users {
         }
     }
 
+    /// `useradd -m -c NAME -s zsh -G groups LOGIN`.
     pub fn add_argv(name: &str, full_name: &str, admin: bool) -> Option<Vec<String>> {
         if !is_valid_name(name) {
             return None;
         }
-        let mut v: Vec<String> = [
-            "pw",
-            "useradd",
-            "-n",
-            name,
-            "-c",
-            &full_name.replace(':', ""),
-            "-m",
-            "-s",
-            LOGIN_SHELL,
-        ]
-        .map(String::from)
-        .to_vec();
         // Admins get the Setup Assistant account's groups (controller::login::setup_plan).
         let groups = if admin {
             ACCOUNT_GROUPS_ADMIN
         } else {
             ACCOUNT_GROUPS
         };
-        v.extend(["-G".into(), groups.into()]);
-        Some(v)
+        Some(
+            [
+                "useradd",
+                "-m",
+                "-c",
+                &full_name.replace(':', ""),
+                "-s",
+                LOGIN_SHELL,
+                "-G",
+                groups,
+                name,
+            ]
+            .map(String::from)
+            .to_vec(),
+        )
     }
 
     /// New account password: 8..=128 characters, no control characters.
@@ -225,21 +226,13 @@ pub mod users {
         (8..=128).contains(&p.chars().count()) && !p.chars().any(char::is_control)
     }
 
-    /// `pw usermod -n NAME -h 0`: password read from stdin (fd 0).
+    /// `chpasswd`: `NAME:PASSWORD` read from stdin (never argv).
     pub fn password_argv(name: &str) -> Option<Vec<String>> {
-        is_valid_name(name).then(|| {
-            ["pw", "usermod", "-n", name, "-h", "0"]
-                .map(String::from)
-                .to_vec()
-        })
+        is_valid_name(name).then(|| vec!["chpasswd".into()])
     }
 
     pub fn remove_argv(name: &str) -> Option<Vec<String>> {
-        is_valid_name(name).then(|| {
-            ["pw", "userdel", "-n", name, "-r"]
-                .map(String::from)
-                .to_vec()
-        })
+        is_valid_name(name).then(|| ["userdel", "-r", name].map(String::from).to_vec())
     }
 }
 
@@ -260,7 +253,7 @@ pub mod timezones {
     }
 
     pub fn set_argv(zone: &str) -> Vec<String> {
-        vec!["tzsetup".into(), zone.into()]
+        vec!["timedatectl".into(), "set-timezone".into(), zone.into()]
     }
 }
 
@@ -311,12 +304,12 @@ mod tests {
         }
         assert_eq!(
             users::add_argv("bob", "B:b", true).unwrap().join(" "),
-            "pw useradd -n bob -c Bb -m -s /usr/local/bin/zsh -G wheel,video,operator"
+            "useradd -m -c Bb -s /usr/bin/zsh -G wheel,video,input,audio bob"
         );
         // Admins match the Setup Assistant's account; everyone gets cameras (group video).
         assert_eq!(
             users::add_argv("ann", "Ann", false).unwrap().join(" "),
-            "pw useradd -n ann -c Ann -m -s /usr/local/bin/zsh -G video"
+            "useradd -m -c Ann -s /usr/bin/zsh -G video,input,audio ann"
         );
         assert!(users::remove_argv("x y").is_none());
     }

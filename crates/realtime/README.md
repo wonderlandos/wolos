@@ -18,4 +18,4 @@ wol-realtime gpu hyprconf [--vrr]  # Hyprland config fragment
 cargo test -p realtime
 ```
 
-Config: `/usr/local/etc/wolos/{glass,consent,idle}.json`.
+Config: `/etc/wolos/{glass,consent,idle}.json`.

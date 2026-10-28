@@ -16,8 +16,12 @@ pub struct Load {
 }
 
 /// OS access for system services. [`PosixHost`] is the real one; [`fake::FakeHost`] for tests.
+/// Linux: everything is a file under /proc and /sys, or a command.
 pub trait Host: Send + Sync {
-    fn is_freebsd(&self) -> bool;
+    /// Transitional (ADR 0016): false on every real host; kept until the last FreeBSD branch is gone.
+    fn is_freebsd(&self) -> bool {
+        false
+    }
     /// Unix seconds.
     fn now(&self) -> f64;
     fn read_text(&self, path: &str) -> Option<String>;
@@ -34,16 +38,29 @@ pub trait Host: Send + Sync {
     fn run_slow(&self, argv: &[&str]) -> Option<String> {
         self.run(argv)
     }
-    fn sysctl_i64(&self, name: &str) -> Option<i64>;
-    fn sysctl_bytes(&self, name: &str) -> Option<Vec<u8>>;
-    /// sysctl into a caller buffer; returns length. Real host does not allocate.
+    /// Transitional FreeBSD sysctl (ADR 0016): None on Linux. Read /proc and /sys instead.
+    fn sysctl_i64(&self, _name: &str) -> Option<i64> {
+        None
+    }
+    /// Transitional, see [`Host::sysctl_i64`].
+    fn sysctl_bytes(&self, _name: &str) -> Option<Vec<u8>> {
+        None
+    }
+    /// Transitional, see [`Host::sysctl_i64`].
     fn sysctl_into(&self, name: &str, buf: &mut [u8]) -> Option<usize> {
         let b = self.sysctl_bytes(name)?;
         let n = b.len().min(buf.len());
         buf[..n].copy_from_slice(&b[..n]);
         Some(n)
     }
-    fn sysctl_string(&self, name: &str) -> Option<String>;
+    /// Transitional, see [`Host::sysctl_i64`].
+    fn sysctl_string(&self, _name: &str) -> Option<String> {
+        None
+    }
+    /// Target of a symlink (sysfs `driver`, `device` links), as written.
+    fn read_link(&self, _path: &str) -> Option<String> {
+        None
+    }
     fn load_average(&self) -> Option<Load>;
     /// Full paths of entries of `dir`, sorted; empty if missing.
     fn list_dir(&self, dir: &str) -> Vec<String>;
@@ -54,7 +71,7 @@ pub trait Host: Send + Sync {
 
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Real host: files, sysctl(3) on FreeBSD, child processes with a timeout.
+/// Real host: files under /proc and /sys, child processes with a timeout.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct PosixHost;
 
@@ -95,9 +112,6 @@ pub fn run_with_timeout(argv: &[&str], timeout: Duration) -> Option<String> {
 }
 
 impl Host for PosixHost {
-    fn is_freebsd(&self) -> bool {
-        cfg!(target_os = "freebsd")
-    }
     fn now(&self) -> f64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -116,24 +130,10 @@ impl Host for PosixHost {
     fn run_slow(&self, argv: &[&str]) -> Option<String> {
         run_with_timeout(argv, Duration::from_secs(120))
     }
-    fn sysctl_i64(&self, name: &str) -> Option<i64> {
-        let b = sysctl::read(name)?;
-        match b.len() {
-            4 => Some(i64::from(i32::from_ne_bytes(b[..4].try_into().ok()?))),
-            8 => Some(i64::from_ne_bytes(b[..8].try_into().ok()?)),
-            _ => None,
-        }
-    }
-    fn sysctl_bytes(&self, name: &str) -> Option<Vec<u8>> {
-        sysctl::read(name)
-    }
-    fn sysctl_into(&self, name: &str, buf: &mut [u8]) -> Option<usize> {
-        sysctl::read_into(name, buf)
-    }
-    fn sysctl_string(&self, name: &str) -> Option<String> {
-        let b = sysctl::read(name)?;
-        let end = b.iter().position(|c| *c == 0).unwrap_or(b.len());
-        Some(String::from_utf8_lossy(&b[..end]).into_owned())
+    fn read_link(&self, path: &str) -> Option<String> {
+        std::fs::read_link(path)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
     }
     fn load_average(&self) -> Option<Load> {
         let mut l = [0f64; 3];
@@ -159,43 +159,6 @@ impl Host for PosixHost {
     fn is_root(&self) -> bool {
         // SAFETY: geteuid has no preconditions.
         unsafe { libc::geteuid() == 0 }
-    }
-}
-
-/// sysctlbyname(3). FreeBSD only; None elsewhere.
-pub mod sysctl {
-    /// Into a caller buffer; returns bytes written. Does not allocate.
-    #[cfg(target_os = "freebsd")]
-    pub fn read_into(name: &str, buf: &mut [u8]) -> Option<usize> {
-        let mut cname = [0u8; 128];
-        if name.len() >= cname.len() {
-            return None;
-        }
-        cname[..name.len()].copy_from_slice(name.as_bytes());
-        let mut len: libc::size_t = buf.len();
-        // SAFETY: cname is NUL-terminated; sysctlbyname writes at most len bytes into buf.
-        let r = unsafe {
-            libc::sysctlbyname(
-                cname.as_ptr().cast(),
-                buf.as_mut_ptr().cast(),
-                &mut len,
-                std::ptr::null(),
-                0,
-            )
-        };
-        (r == 0).then_some(len)
-    }
-
-    #[cfg(not(target_os = "freebsd"))]
-    pub fn read_into(_name: &str, _buf: &mut [u8]) -> Option<usize> {
-        None
-    }
-
-    pub fn read(name: &str) -> Option<Vec<u8>> {
-        let mut buf = vec![0u8; 4096];
-        let n = read_into(name, &mut buf)?;
-        buf.truncate(n);
-        Some(buf)
     }
 }
 
@@ -378,7 +341,7 @@ mod tests {
 
     #[test]
     fn cached_respects_ttl_fallback_and_invalidate() {
-        let h = Arc::new(FakeHost::new(false));
+        let h = Arc::new(FakeHost::linux());
         let n = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let n2 = n.clone();
         let c = Cached::new(h.clone(), 10.0, 0u32, move || {
@@ -397,10 +360,10 @@ mod tests {
     #[test]
     fn updates_are_cached_and_invalidated() {
         let h = Arc::new(FakeHost::new(true));
-        h.slow("pkg version -U -vRL=", "a-1 <   needs updating\n");
+        h.slow("pacman -Qu", "a 1-1 -> 2-1\n");
         let api = SystemApi::new(h.clone());
         assert_eq!(api.pending_updates(), Some(vec!["a".into()]));
-        h.slow("pkg version -U -vRL=", "");
+        h.slow("pacman -Qu", "");
         assert_eq!(api.pending_updates().map(|v| v.len()), Some(1));
         api.invalidate_updates();
         assert_eq!(api.pending_updates().map(|v| v.len()), Some(0));
@@ -408,7 +371,7 @@ mod tests {
 
     #[test]
     fn topics_have_json_and_unknown_is_none() {
-        let api = SystemApi::new(Arc::new(FakeHost::new(false)));
+        let api = SystemApi::new(Arc::new(FakeHost::linux()));
         for t in TOPICS {
             assert!(api.topic_json(t).is_some(), "{t}");
         }
@@ -419,7 +382,7 @@ mod tests {
     fn hw_topic_is_the_hardware_snapshot() {
         // `wol sys hw` = `wol hw list --json`: the same catalogue-resolved devices.
         assert!(TOPICS.contains(&"hw"));
-        let api = SystemApi::new(Arc::new(FakeHost::new(false)));
+        let api = SystemApi::new(Arc::new(FakeHost::linux()));
         assert_eq!(
             api.topic_json("hw"),
             Some(serde_json::json!({"devices": []}))

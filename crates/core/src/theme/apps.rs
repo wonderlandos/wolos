@@ -32,7 +32,7 @@ pub const LINKS: [&str; 9] = [
 pub const GTK3_THEME_DIR: &str = "gtk3-theme";
 pub const GTK3_THEME_CSS: &str = "gtk3-theme/gtk-3.0/gtk.css";
 /// adw-gtk3 install dir (`image/fetch-theme.sh`).
-pub const ADW_GTK3_DIR: &str = "/usr/local/share/themes";
+pub const ADW_GTK3_DIR: &str = "/usr/share/themes";
 
 pub fn gtk3_theme_name(t: &ResolvedTheme) -> String {
     format!("WolOS-{}", t.id)
@@ -44,7 +44,7 @@ pub const DATA_LINKS: [&str; 2] = super::sourceview::FILES;
 pub const SHELL_COLORS: &str = "zsh/colors.zsh";
 /// System copy rendered from the default theme (`image/build.sh`); users get their own under
 /// `$XDG_CONFIG_HOME/wolos/toolkits`.
-pub const SYSTEM_DIR: &str = "/usr/local/share/wolos";
+pub const SYSTEM_DIR: &str = "/usr/share/wolos";
 /// Shipped icon theme (`design/icons`, inherits Adwaita); the catalog's `iconTheme` names themes
 /// the image does not install, so apps always get this one, like the shell.
 pub const ICON_THEME: &str = "WolOS";
@@ -868,7 +868,7 @@ mod tests {
         }
     }
 
-    /// Contract with the system zshrc (`/usr/local/etc/zshrc`): it sources
+    /// Contract with the system zshrc (`/etc/zshrc`): it sources
     /// `toolkits/zsh/colors.zsh` and reads `WOLOS_PROMPT_*` as `#rrggbb`.
     #[test]
     fn zsh_prompt_colours() {
@@ -936,7 +936,7 @@ mod tests {
             let f = render(&t, Path::new("/x"));
             let th = file(&f, GTK3_THEME_CSS);
             assert!(th.starts_with(&format!(
-                "@import url(\"file:///usr/local/share/themes/{adw}/gtk-3.0/gtk.css\");\n"
+                "@import url(\"file:///usr/share/themes/{adw}/gtk-3.0/gtk.css\");\n"
             )));
             assert!(th.contains(&format!(
                 "@define-color accent_bg_color {};",
@@ -1087,8 +1087,8 @@ mod tests {
     /// The image ships the default theme's files (`desktop/overlay`); `WOL_REGEN=1` rewrites them.
     #[test]
     fn system_copy_is_the_default_render() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../desktop/overlay/usr/local/share/wolos");
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop/overlay/usr/share/wolos");
         // settings.ini names `WolOS-wol-light`: the system theme dir resolves it before any
         // `wol theme set`.
         let link = root

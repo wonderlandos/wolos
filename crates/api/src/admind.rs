@@ -23,7 +23,7 @@ pub trait AdminOs {
     fn log(&self, text: &str);
     /// Accounts with a desktop session on this machine (a Hyprland socket in their runtime dir).
     fn sessions(&self) -> Vec<u32>;
-    /// Fixed argv, stdout; None if it failed (`bectl list -H` without ZFS boot environments).
+    /// Fixed argv, stdout; None if it failed.
     fn capture(&self, argv: &[String]) -> Option<String>;
     /// Wall-clock seconds (restore point names).
     fn wall_now(&self) -> u64;
@@ -146,14 +146,6 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
             return false;
         }
     };
-    let kind = if req.action == AdminAction::PkgUpgrade {
-        wol_core::update::be::Kind::Update
-    } else {
-        wol_core::update::be::Kind::Install
-    };
-    if wol_core::admin::needs_restore_point(req.action) && !restore_point(os, kind) {
-        return false;
-    }
     let long = matches!(
         req.action,
         AdminAction::PkgUpgrade | AdminAction::PkgInstall
@@ -170,7 +162,7 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
 }
 
 /// `.wol` install (ADR 0011): verify the daemon's own copy, check the payload is the package
-/// Info.json names, then deps and `pkg add` after a restore point. `trust` is what the caller
+/// Info.json names, then `pacman -U` (dependencies from the pinned repos). `trust` is what the caller
 /// approved: an unsigned file needs `unsigned` (and so a fresh password).
 fn wol_install(os: &dyn AdminOs, src: &str, trust: &str, caller: Option<u32>) -> bool {
     let Some(dir) = os.stage_dir() else {
@@ -213,18 +205,10 @@ fn stage_and_install(
             info.package, info.version
         ));
     }
-    let deps = query(package::query_deps_argv(p))
-        .and_then(|t| package::parse_deps(&t))
-        .ok_or("could not read the payload dependencies")?;
-    let installed = query(package::query_installed_argv(&info.package));
-    let installed = installed.as_deref().map(str::trim);
-    let steps = package::install_steps(p, &info.package, &info.version, &deps, installed)?;
-    if steps.is_empty() {
-        return Ok(());
-    }
-    if !restore_point(os, wol_core::update::be::Kind::Install) {
-        return Err("no restore point".into());
-    }
+    let installed = query(package::query_installed_argv(&info.package))
+        .and_then(|t| package::parse_name_version(&t))
+        .map(|(_, v)| v);
+    let steps = package::install_steps(p, &info.version, installed.as_deref())?;
     for s in &steps {
         if !os.run(s, true) {
             return Err(format!("{} failed", s.join(" ")));
@@ -264,7 +248,7 @@ fn wol_remove(os: &dyn AdminOs, id: &str) -> bool {
             return false;
         }
     };
-    restore_point(os, wol_core::update::be::Kind::Install) && steps.iter().all(|s| os.run(s, true))
+    steps.iter().all(|s| os.run(s, true))
 }
 
 /// The daemon reads a caller's file only if the caller could: owner, or world-readable. Root
@@ -275,37 +259,6 @@ pub fn caller_may_read(file_uid: u32, mode: u32, caller: Option<u32>) -> bool {
         Some(u) => file_uid == u || mode & 0o004 != 0,
         None => false,
     }
-}
-
-/// Restore point (ZFS boot environment) before packages change in place, then prune the old
-/// ones (never the running or next-boot one). No boot environments: true, nothing to do. A
-/// failed create is false: no update without a way back.
-fn restore_point(os: &dyn AdminOs, kind: wol_core::update::be::Kind) -> bool {
-    use wol_core::update::be;
-    let list = os.capture(&be::LIST_ARGV.map(String::from));
-    let Some((create, destroy)) = be::restore_point(list.as_deref(), kind, os.wall_now()) else {
-        return true;
-    };
-    let name = &create[2];
-    let exists = be::parse(list.as_deref().unwrap_or(""))
-        .iter()
-        .any(|b| &b.name == name);
-    if !exists && !os.run(&create, false) {
-        os.log(&format!(
-            "restore point {name}: bectl create failed; packages left unchanged"
-        ));
-        return false;
-    }
-    os.log(&format!("restore point {name}"));
-    for d in destroy {
-        if !os.run(&d, false) {
-            os.log(&format!(
-                "could not remove old restore point {}",
-                d[d.len() - 1]
-            ));
-        }
-    }
-    true
 }
 
 /// Real OS: fixed argv with timeouts, atomic writes, PAM via the wol-authcheck helper, syslog via logger(1).
@@ -504,9 +457,6 @@ mod tests {
         delays: Cell<u32>,
         auths: Cell<u32>,
         fail_run: bool,
-        /// `bectl list -H` output; None = not root on ZFS.
-        bectl: Option<String>,
-        fail_create: bool,
         captured: RefCell<Vec<Vec<String>>>,
         /// Probe answers by command line (`sysctl -n hw.ncpu` -> "4\n"); others fail.
         probes: Vec<(&'static str, &'static str)>,
@@ -515,7 +465,7 @@ mod tests {
 
         /// Trusted package keys.
         keys: Vec<[u8; 32]>,
-        /// (`pkg query` command line suffix, stdout); unmatched queries fail.
+        /// (`pacman -Q` command line suffix, stdout); unmatched queries fail.
         pkg: Vec<(&'static str, String)>,
         /// (path, text) for `read`.
         files: Vec<(String, String)>,
@@ -535,16 +485,12 @@ mod tests {
         }
         fn run(&self, argv: &[String], _: bool) -> bool {
             self.ran.borrow_mut().push(argv.to_vec());
-            let create = argv[..2] == ["bectl", "create"];
-            !(self.fail_run || self.fail_create && create)
+            !self.fail_run
         }
         fn capture(&self, argv: &[String]) -> Option<String> {
             self.captured.borrow_mut().push(argv.to_vec());
-            if argv[..] == wol_core::update::be::LIST_ARGV {
-                return self.bectl.clone();
-            }
             let line = argv.join(" ");
-            if argv[..2] == ["pkg", "query"] {
+            if argv[0] == "pacman" {
                 return self
                     .pkg
                     .iter()
@@ -717,9 +663,9 @@ mod tests {
             AdminReply::Ok
         );
         let ran = os.ran.borrow();
-        assert_eq!(ran[0][..2], ["pw", "useradd"]);
-        assert_eq!(ran[1], ["pw", "usermod", "-n", "dinah", "-h", "0"]);
-        assert_eq!(os.stdin.borrow()[0], "n3w-passw0rd\n");
+        assert_eq!(ran[0][..2], ["useradd", "-m"]);
+        assert_eq!(ran[1], ["chpasswd"]);
+        assert_eq!(os.stdin.borrow()[0], "dinah:n3w-passw0rd\n");
         assert!(ran.iter().flatten().all(|a| !a.contains("n3w")));
         assert!(os.log.borrow().iter().all(|l| !l.contains("n3w")));
         let nopw = encode(&req(AdminAction::UserAdd, &["dinah", "Dinah", "no"]), b"");
@@ -729,88 +675,29 @@ mod tests {
         );
     }
 
-    /// Package changes start with a restore point (ZFS boot environment) and keep the newest 5.
+    /// Update Now stays inside the pinned release: pacman, no restore point of its own (the
+    /// previous root slot is the way back).
     #[test]
-    fn package_changes_start_with_a_restore_point() {
-        let bes: String = (1..=5)
-            .map(|i| format!("wol-before-update-{i}\t-\t-\t1G\t2026-10-0{i} 10:00\n"))
-            .collect::<String>()
-            + "default\tNR\t/\t9G\t2025-01-01 10:00\n";
-        let os = Fake {
-            bectl: Some(bes),
-            // The daily check fetched FreeBSD fixes: they install inside the same restore point.
-            probes: vec![(
-                "freebsd-update -f /var/db/wolos/updates/freebsd-update.conf updatesready",
-                "There are updates available to install.\n",
-            )],
-            ..Fake::default()
-        };
+    fn package_upgrade_runs_pacman() {
+        let os = Fake::default();
         let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
         assert_eq!(
             handle(&up, ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
         let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-        assert_eq!(ran[0], "bectl create wol-before-update-1761600000");
-        assert_eq!(ran[1], "bectl destroy -o wol-before-update-1");
-        assert!(ran[2].starts_with("freebsd-update "), "{ran:?}");
-        assert!(ran[2].ends_with(" install"), "{ran:?}");
-        assert!(ran[3].starts_with("pkg "), "{ran:?}");
-        assert!(
-            ran.iter().all(|r| !r.contains("default")),
-            "never the running BE"
-        );
-        assert!(
-            os.captured
-                .borrow()
-                .iter()
-                .any(|c| c[..] == ["bectl", "list", "-H"])
-        );
-        assert!(
-            os.log
-                .borrow()
-                .iter()
-                .any(|l| l.contains("restore point wol-before-update-1761600000"))
-        );
-    }
-
-    #[test]
-    fn no_restore_point_no_update() {
-        let os = Fake {
-            bectl: Some("default\tNR\t/\t9G\t2025-01-01 10:00\n".into()),
-            fail_create: true,
-            ..Fake::default()
-        };
-        let install = encode(&req(AdminAction::PkgInstall, &["steam"]), b"");
-        assert_eq!(
-            handle(&install, ROOT, &mut AuthCache::default(), &os),
-            AdminReply::Failed
-        );
-        assert_eq!(os.ran.borrow().len(), 1, "pkg never ran");
-        // Not root on ZFS: no boot environments, the update runs as before.
-        let plain = Fake::default();
-        let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
-        assert_eq!(
-            handle(&up, ROOT, &mut AuthCache::default(), &plain),
-            AdminReply::Ok
-        );
-        assert!(plain.ran.borrow()[0][0] == "pkg");
-        // Other actions never look at boot environments.
+        assert_eq!(ran, ["pacman -Syu --noconfirm"]);
         let wifi = Fake::default();
         let r = req(AdminAction::WifiPower, &["wlan0", "off"]);
         handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &wifi);
         assert!(wifi.captured.borrow().is_empty());
     }
 
-    /// Regression: Speed Shift laptops have powerd off (hardware module), so Low Power Mode
-    /// sets the energy preference on every CPU instead of restarting powerd.
+    /// Low Power Mode probes the machine, saves the mode and switches power-profiles-daemon.
     #[test]
     fn low_power_mode_follows_the_probed_hardware() {
         let os = Fake {
-            probes: vec![
-                ("sysctl -n hw.ncpu", "2\n"),
-                ("sysctl -n dev.hwpstate_intel.0.epp", "50\n"),
-            ],
+            probes: vec![("nproc", "2\n"), ("powerprofilesctl get", "balanced\n")],
             ..Fake::default()
         };
         let low = encode(&req(AdminAction::PowerMode, &["low"]), b"");
@@ -819,23 +706,20 @@ mod tests {
             AdminReply::Ok
         );
         let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-        assert_eq!(
-            ran,
-            ["sysctl dev.hwpstate_intel.0.epp=85 dev.hwpstate_intel.1.epp=85"]
-        );
+        assert_eq!(ran, ["powerprofilesctl set power-saver"]);
         assert_eq!(
             os.wrote.borrow()[0],
             (
-                "/usr/local/etc/wolos/power.json".to_string(),
+                "/etc/wolos/power.json".to_string(),
                 "{\"mode\":\"low\"}\n".to_string()
             )
         );
         let probed: Vec<String> = os.captured.borrow().iter().map(|a| a.join(" ")).collect();
         assert!(
-            probed.contains(&"sysctl -n hw.acpi.acline".to_string()),
+            probed.contains(&"ls /sys/class/power_supply".to_string()),
             "{probed:?}"
         );
-        // Nothing to steer (VM: no cpufreq, powerd off): refused, nothing runs.
+        // Nothing to steer (VM: no power-profiles-daemon): refused, nothing runs.
         let vm = Fake::default();
         assert_eq!(
             handle(&low, ROOT, &mut AuthCache::default(), &vm),
@@ -850,10 +734,7 @@ mod tests {
     #[test]
     fn everyday_changes_need_no_password_at_the_computer() {
         let os = Fake {
-            probes: vec![
-                ("sysctl -n hw.ncpu", "1\n"),
-                ("sysctl -n dev.hwpstate_intel.0.epp", "50\n"),
-            ],
+            probes: vec![("nproc", "1\n"), ("powerprofilesctl get", "balanced\n")],
             sessions: vec![1001, 1002],
             ..Fake::default()
         };
@@ -874,7 +755,10 @@ mod tests {
             handle(&sleep, BOB, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(os.ran.borrow().last().unwrap().join(" "), "acpiconf -s 3");
+        assert_eq!(
+            os.ran.borrow().last().unwrap().join(" "),
+            "systemctl suspend"
+        );
         assert_eq!(os.auths.get(), 0);
         assert!(
             os.log.borrow().iter().any(|l| l.contains("session-power")),
@@ -944,10 +828,7 @@ mod tests {
     fn pkg_os() -> Fake {
         Fake {
             keys: vec![wol_core::package::public_of(&SEED)],
-            pkg: vec![
-                ("%n\t%v", "wol-fixture\t1.0\n".into()),
-                ("%dn", "gtk4\nlibadwaita\n".into()),
-            ],
+            pkg: vec![("payload.pkg", "wol-fixture 1.0\n".into())],
             ..Fake::default()
         }
     }
@@ -967,7 +848,7 @@ mod tests {
             .collect()
     }
 
-    /// Signed `.wol`: verified on the daemon's own copy, deps from FreeBSD pkg, then pkg add.
+    /// Signed `.wol`: verified on the daemon's own copy, then `pacman -U` (deps from the repos).
     #[test]
     fn wol_install_signed() {
         let os = pkg_os();
@@ -977,28 +858,23 @@ mod tests {
             handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(
-            ran(&os),
-            [
-                "pkg install -y -A gtk4 libadwaita",
-                "pkg add <stage>/payload.pkg"
-            ]
-        );
+        assert_eq!(ran(&os), ["pacman -U --noconfirm <stage>/payload.pkg"]);
         let stage = os.stage.borrow().clone().unwrap();
         assert!(!stage.exists(), "staging removed");
-        // Another version installed: replaced after the deps are in.
+        // Same version installed: nothing runs.
         let os = Fake {
-            pkg: [pkg_os().pkg, vec![("%v wol-fixture", "0.9\n".into())]].concat(),
+            pkg: [
+                pkg_os().pkg,
+                vec![("-Q wol-fixture", "wol-fixture 1.0\n".into())],
+            ]
+            .concat(),
             ..pkg_os()
         };
         assert_eq!(
             handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(
-            ran(&os)[1..],
-            ["pkg delete -y wol-fixture", "pkg add <stage>/payload.pkg"]
-        );
+        assert!(ran(&os).is_empty());
     }
 
     /// Refusals: nothing runs, the log says why.
@@ -1014,7 +890,7 @@ mod tests {
         b[at] = b'P';
         std::fs::write(&tampered, b).unwrap();
         let mismatch = Fake {
-            pkg: vec![("%n\t%v", "other\t1.0\n".into()), ("%dn", String::new())],
+            pkg: vec![("payload.pkg", "other 1.0\n".into())],
             ..pkg_os()
         };
         let cases: [(&str, &str, Fake, &str); 4] = [
@@ -1055,7 +931,10 @@ mod tests {
             handle(&encode(&r, b"good"), ANN, &mut cache, &os),
             AdminReply::Ok
         );
-        assert_eq!(ran(&os).last().unwrap(), "pkg add <stage>/payload.pkg");
+        assert_eq!(
+            ran(&os).last().unwrap(),
+            "pacman -U --noconfirm <stage>/payload.pkg"
+        );
         // Signed installs use the cache as before.
         let s = wol_file("fresh-signed", Some(&SEED), b"payload");
         let r = req(AdminAction::WolInstall, &[&s, "signed"]);
@@ -1069,7 +948,7 @@ mod tests {
     fn wol_remove_reads_the_install_record() {
         let os = Fake {
             files: vec![(
-                "/usr/local/share/wolos/packages/org.wolos.Fixture/Info.json".into(),
+                "/usr/share/wolos/packages/org.wolos.Fixture/Info.json".into(),
                 INFO.into(),
             )],
             ..Fake::default()
@@ -1079,7 +958,7 @@ mod tests {
             handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(ran(&os), ["pkg delete -y wol-fixture", "pkg autoremove -y"]);
+        assert_eq!(ran(&os), ["pacman -Rns --noconfirm wol-fixture"]);
         let r = req(AdminAction::WolRemove, &["org.wolos.Missing"]);
         let os = Fake::default();
         assert_eq!(

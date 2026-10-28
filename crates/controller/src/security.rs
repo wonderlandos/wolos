@@ -39,7 +39,7 @@ fn status(env: &mut dyn Env, action: &str, json: bool) -> i32 {
             serde_json::json!({
                 "on": st.firewall,
                 "running": st.firewall_running,
-                "rules": wol_core::sharing::PF_RULES,
+                "rules": wol_core::sharing::FIREWALL_RULES,
             })
         } else {
             serde_json::to_value(&st).unwrap_or_default()

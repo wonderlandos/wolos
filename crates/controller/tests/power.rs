@@ -13,16 +13,18 @@ fn laptop(on_battery: bool) -> FakeEnv {
     let c = |a: &str, b: &str| (a.to_string(), b.to_string());
     FakeEnv {
         captures: vec![
-            c("sysctl -n hw.ncpu", "2\n"),
-            c("sysctl -n dev.hwpstate_intel.0.epp", "50\n"),
+            c("nproc", "2\n"),
+            c("powerprofilesctl get", "balanced\n"),
+            c("ls /sys/class/power_supply", "AC\nBAT0\n"),
+            c("cat /sys/class/power_supply/AC/type", "Mains\n"),
             c(
-                "sysctl -n hw.acpi.acline",
+                "cat /sys/class/power_supply/AC/online",
                 if on_battery { "0\n" } else { "1\n" },
             ),
-            c("sysctl -n hw.acpi.battery.life", "41\n"),
-            c("sysctl -n hw.acpi.cpu.cx_lowest", "C1\n"),
-            c("sysctl -n hw.acpi.lid_switch_state", "NONE\n"),
-            c("sysctl -n hw.acpi.supported_sleep_state", "S3 S4 S5\n"),
+            c("cat /sys/class/power_supply/BAT0/type", "Battery\n"),
+            c("cat /sys/class/power_supply/BAT0/capacity", "41\n"),
+            c("ls /proc/acpi/button/lid", "LID0\n"),
+            c("cat /sys/power/state", "freeze mem\n"),
         ],
         ..FakeEnv::default()
     }
@@ -42,13 +44,13 @@ fn status_json() {
     assert_eq!(v["mode"], "auto");
     assert_eq!(v["battery"], 41);
     assert_eq!(v["epp"], 75);
-    assert_eq!(v["cx_lowest"], "Cmax");
-    assert_eq!(v["lid"], "Nothing");
+    assert_eq!(v["cx_lowest"], serde_json::Value::Null);
+    assert_eq!(v["lid"], "Sleep");
     assert_eq!(v["charge_limit"], serde_json::Value::Null);
     let mut env = laptop(false);
     env.tty = true;
     env.files.push((
-        PathBuf::from("/usr/local/etc/wolos/power.json"),
+        PathBuf::from("/etc/wolos/power.json"),
         "{\"mode\":\"low\"}\n".into(),
     ));
     assert_eq!(run("power", &mut env), 0);
@@ -58,38 +60,40 @@ fn status_json() {
         env.out
     );
     assert!(env.out.contains("mode: low\n"));
-    assert!(env.out.contains("energy preference 85"));
+    assert!(env.out.contains("energy preference 100"));
 }
 
 #[test]
 fn apply_runs_the_plan_as_root_only() {
     let mut env = laptop(true);
+    env.files.push((
+        PathBuf::from("/etc/wolos/power.json"),
+        "{\"mode\":\"high\"}\n".into(),
+    ));
     assert_ne!(run("power apply", &mut env), 0);
     assert!(env.execs.is_empty());
     env.root = true;
     assert_eq!(run("power apply", &mut env), 0);
     let ran: Vec<String> = env.execs.iter().map(|a| a.join(" ")).collect();
-    assert_eq!(
-        ran,
-        [
-            "sysctl dev.hwpstate_intel.0.epp=75 dev.hwpstate_intel.1.epp=75 hw.acpi.cpu.cx_lowest=Cmax",
-            "sysctl hw.acpi.lid_switch_state=S3",
-        ]
-    );
+    assert_eq!(ran, ["powerprofilesctl set performance"]);
     assert!(
-        env.out.contains("wolos_power: auto on battery\n"),
+        env.out.contains("wolos_power: high on battery\n"),
         "{}",
         env.out
     );
-    // The user chose "Nothing" for the lid (wol-admind lid): kept.
+    // Already balanced: nothing to run. A failing step never fails boot or udev.
+    let mut env = laptop(false);
+    env.root = true;
+    assert_eq!(run("power apply", &mut env), 0);
+    assert!(env.execs.is_empty());
     let mut env = laptop(false);
     env.root = true;
     env.files.push((
-        PathBuf::from("/etc/sysctl.conf.local"),
-        "hw.acpi.lid_switch_state=NONE\n".into(),
+        PathBuf::from("/etc/wolos/power.json"),
+        "{\"mode\":\"low\"}\n".into(),
     ));
     env.exec_codes = vec![1];
-    assert_eq!(run("power apply", &mut env), 0, "never fails boot or devd");
+    assert_eq!(run("power apply", &mut env), 0);
     assert_eq!(env.execs.len(), 1);
     assert!(env.out.contains("failed\n"));
 }
@@ -127,7 +131,7 @@ fn session_power_goes_through_wol_admind() {
         ..FakeEnv::default()
     };
     assert_eq!(run("power shutdown", &mut env), 0);
-    assert_eq!(env.execs[0].join(" "), "shutdown -p now");
+    assert_eq!(env.execs[0].join(" "), "systemctl poweroff");
 }
 
 #[test]
@@ -155,9 +159,9 @@ fn suspend_locks_sessions_that_ask_for_the_password_after_sleep() {
                 "/etc/passwd",
                 "ann:*:1001:1001:Ann:/home/ann:/bin/sh\nbob:*:1002:1002:Bob:/home/bob:/bin/sh\n",
             ),
-            f("/var/run/user/911/hypr/g/.socket.sock", ""),
-            f("/var/run/user/1001/hypr/a/.socket.sock", ""),
-            f("/var/run/user/1002/hypr/b/.socket.sock", ""),
+            f("/run/user/911/hypr/g/.socket.sock", ""),
+            f("/run/user/1001/hypr/a/.socket.sock", ""),
+            f("/run/user/1002/hypr/b/.socket.sock", ""),
             // Bob turned "require password after sleep" off (no before_sleep_cmd).
             f(
                 "/home/bob/.config/hypr/hypridle.conf",
@@ -172,7 +176,7 @@ fn suspend_locks_sessions_that_ask_for_the_password_after_sleep() {
     assert_eq!(
         env.requests[0],
         (
-            PathBuf::from("/var/run/user/1001/hypr/a/.socket.sock"),
+            PathBuf::from("/run/user/1001/hypr/a/.socket.sock"),
             b"dispatch exec pgrep -x wol-lock || wol-lock".to_vec()
         )
     );
@@ -184,7 +188,7 @@ fn suspend_locks_sessions_that_ask_for_the_password_after_sleep() {
 #[test]
 fn system_idle_config_has_the_battery_steps() {
     let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../desktop/overlay/usr/local/share/wolos/hypr/hypridle.conf");
+        .join("../../desktop/overlay/usr/share/wolos/hypr/hypridle.conf");
     let conf = std::fs::read_to_string(f).unwrap();
     assert!(
         conf.ends_with(&wol_core::power::policy::hypridle_listeners()),

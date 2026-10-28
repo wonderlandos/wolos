@@ -1,7 +1,7 @@
 //! Idle lock policy. Pure: activity and time in, "lock now" out.
-//! Config: /usr/local/etc/wolos/idle.json `{ "lock_after_secs": 300 }` (0 = never).
+//! Config: /etc/wolos/idle.json `{ "lock_after_secs": 300 }` (0 = never).
 
-pub const DEFAULT_FILE: &str = "/usr/local/etc/wolos/idle.json";
+pub const DEFAULT_FILE: &str = "/etc/wolos/idle.json";
 pub const DEFAULT_LOCK_AFTER_MS: u64 = 300_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

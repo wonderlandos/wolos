@@ -1,0 +1,4 @@
+# WolOS system zprofile: every login zsh (console, `su -l`, the desktop session start). Quiet and
+# fast: it runs on each login. /etc/profile loads /etc/profile.d drop-ins from packages;
+# they are sh scripts.
+[[ -r /etc/profile ]] && emulate sh -c '. /etc/profile'

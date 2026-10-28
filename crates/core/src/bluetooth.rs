@@ -1,4 +1,5 @@
-//! Bluetooth for Settings: FreeBSD netgraph stack (hccontrol, hcsecd.conf), bluetoothctl on the Linux dev host.
+//! Bluetooth for Settings: BlueZ through bluetoothctl (no root: the person at the computer may
+//! pair, connect and forget). The hcsecd.conf helpers stay until wol-admind drops `bt-pair`.
 use crate::system::Host;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -29,7 +30,7 @@ pub struct BtState {
     pub devices: Vec<BtDevice>,
 }
 
-pub const NODE: &str = "ubt0hci";
+/// Transitional (ADR 0016): the FreeBSD pairing file wol-admind `bt-pair`/`bt-forget` still write.
 pub const HCSECD_CONF: &str = "/etc/bluetooth/hcsecd.conf";
 
 /// Six hex pairs separated by ':'.
@@ -39,65 +40,6 @@ pub fn is_valid_addr(s: &str) -> bool {
         && parts
             .iter()
             .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit()))
-}
-
-/// Class of Device: major class in bits 8..12; peripheral minor bit 6 keyboard, bit 7 pointing.
-pub fn kind_of_class(cod: u32) -> BtKind {
-    match (cod >> 8) & 0x1f {
-        0x01 => BtKind::Computer,
-        0x02 => BtKind::Phone,
-        0x04 => BtKind::Audio,
-        0x05 if cod & 0x40 != 0 => BtKind::Keyboard,
-        0x05 if cod & 0x80 != 0 => BtKind::Mouse,
-        _ => BtKind::Other,
-    }
-}
-
-/// "Class: 00:25:40" (hccontrol) or "0x002540" -> 0x002540.
-fn parse_class(v: &str) -> Option<u32> {
-    let v = v.trim();
-    match v.strip_prefix("0x") {
-        Some(h) => u32::from_str_radix(h, 16).ok(),
-        None => u32::from_str_radix(&v.replace(':', ""), 16).ok(),
-    }
-}
-
-fn value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    line.trim().strip_prefix(key).map(str::trim)
-}
-
-/// `hccontrol -n ubt0hci inquiry`: (address, class of device), first sighting wins.
-pub fn parse_inquiry(text: &str) -> Vec<(String, u32)> {
-    let mut v: Vec<(String, u32)> = Vec::new();
-    let mut addr: Option<String> = None;
-    for l in text.lines() {
-        if let Some(a) = value(l, "BD_ADDR:") {
-            addr = Some(a.to_ascii_lowercase()).filter(|a| is_valid_addr(a));
-        } else if let Some(c) = value(l, "Class:").and_then(parse_class)
-            && let Some(a) = addr.take()
-            && !v.iter().any(|x| x.0 == a)
-        {
-            v.push((a, c));
-        }
-    }
-    v
-}
-
-/// `hccontrol -n ubt0hci remote_name_request <addr>`: "Name: Magic Keyboard".
-pub fn parse_remote_name(text: &str) -> Option<String> {
-    text.lines()
-        .find_map(|l| value(l, "Name:"))
-        .filter(|n| !n.is_empty())
-        .map(String::from)
-}
-
-/// `hccontrol -n ubt0hci read_connection_list`: remote addresses of open links.
-pub fn parse_connections(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|l| l.split_whitespace().next())
-        .map(str::to_ascii_lowercase)
-        .filter(|a| is_valid_addr(a))
-        .collect()
 }
 
 /// (start, end) of each `device { ... }` block, end past the closing brace and its newline.
@@ -205,32 +147,8 @@ pub fn parse_bluetoothctl_devices(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Adapter, power and paired devices (fast; no inquiry).
+/// Adapter, power and paired devices (fast; no scan).
 pub fn read(h: &dyn Host) -> BtState {
-    if h.is_freebsd() {
-        if h.run(&["hccontrol", "-n", NODE, "read_bd_addr"]).is_none() {
-            return BtState::default();
-        }
-        let conns = h
-            .run(&["hccontrol", "-n", NODE, "read_connection_list"])
-            .map(|t| parse_connections(&t))
-            .unwrap_or_default();
-        let devices = h
-            .read_text(HCSECD_CONF)
-            .map(|t| parse_hcsecd(&t))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|d| BtDevice {
-                connected: conns.contains(&d.addr),
-                ..d
-            })
-            .collect();
-        return BtState {
-            present: true,
-            powered: true,
-            devices,
-        };
-    }
     let Some(show) = h.run(&["bluetoothctl", "show"]) else {
         return BtState::default();
     };
@@ -262,25 +180,8 @@ pub fn read(h: &dyn Host) -> BtState {
     }
 }
 
-/// Nearby devices (slow: inquiry takes ~10 s; call off the UI thread). Nameless devices show their address.
+/// Nearby devices (slow: the scan takes ~8 s; call off the UI thread). Nameless devices show their address.
 pub fn scan(h: &dyn Host) -> Vec<BtDevice> {
-    if h.is_freebsd() {
-        return h
-            .run_slow(&["hccontrol", "-n", NODE, "inquiry"])
-            .map(|t| parse_inquiry(&t))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(addr, cod)| BtDevice {
-                name: h
-                    .run(&["hccontrol", "-n", NODE, "remote_name_request", &addr])
-                    .and_then(|t| parse_remote_name(&t))
-                    .unwrap_or_else(|| addr.clone()),
-                kind: kind_of_class(cod),
-                addr,
-                ..Default::default()
-            })
-            .collect();
-    }
     let _ = h.run_slow(&["bluetoothctl", "--timeout", "8", "scan", "on"]);
     h.run(&["bluetoothctl", "devices"])
         .map(|t| parse_bluetoothctl_devices(&t))
@@ -294,30 +195,32 @@ pub fn scan(h: &dyn Host) -> Vec<BtDevice> {
         .collect()
 }
 
+/// Pair, trust (reconnects by itself) and connect; or remove. Fixed argv, address checked.
+pub fn pair_argvs(addr: &str) -> Option<[[&str; 3]; 3]> {
+    is_valid_addr(addr).then_some([
+        ["bluetoothctl", "pair", addr],
+        ["bluetoothctl", "trust", addr],
+        ["bluetoothctl", "connect", addr],
+    ])
+}
+
+pub fn forget_argv(addr: &str) -> Option<[&str; 3]> {
+    is_valid_addr(addr).then_some(["bluetoothctl", "remove", addr])
+}
+
+/// Pair a device found by [`scan`] (slow: call off the UI thread).
+pub fn pair(h: &dyn Host, addr: &str) -> bool {
+    pair_argvs(addr).is_some_and(|steps| steps.iter().all(|a| h.run_slow(a).is_some()))
+}
+
+pub fn forget(h: &dyn Host, addr: &str) -> bool {
+    forget_argv(addr).is_some_and(|a| h.run(&a).is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::system::fake::FakeHost;
-
-    const INQUIRY: &str = "Inquiry result, num_responses=2
-Inquiry result #0
-\tBD_ADDR: 00:1E:52:7A:2B:3C
-\tPage Scan Rep. Mode: 0x1
-\tPage Scan Period Mode: 00
-\tPage Scan Mode: 00
-\tClass: 00:25:40
-\tClock offset: 0x78ef
-Inquiry result #1
-\tBD_ADDR: 3c:58:c2:aa:bb:cc
-\tPage Scan Rep. Mode: 0x1
-\tClass: 0x5a020c
-\tClock offset: 0x1234
-Inquiry result, num_responses=1
-Inquiry result #0
-\tBD_ADDR: 00:1e:52:7a:2b:3c
-\tClass: 00:25:40
-Inquiry complete. Status: No error [00]
-";
 
     const HCSECD: &str = "# $FreeBSD$\n#\n# hcsecd.conf\n#\ndevice {\n\tbdaddr\t00:1e:52:7a:2b:3c;\n\tname\t\"Magic Keyboard\";\n\tkey\tnokey;\n\tpin\t\"0000\";\n}\n\ndevice {\n\tbdaddr\t00:11:22:33:44:55;\n\tname\t\"Headphones\";\n\tkey\tnokey;\n\tpin\tnopin;\n}\n";
 
@@ -334,38 +237,6 @@ Inquiry complete. Status: No error [00]
         ] {
             assert_eq!(is_valid_addr(a), ok, "{a}");
         }
-        for (cod, k) in [
-            (0x002540, BtKind::Keyboard),
-            (0x002580, BtKind::Mouse),
-            (0x240404, BtKind::Audio),
-            (0x5a020c, BtKind::Phone),
-            (0x7a010c, BtKind::Computer),
-            (0x000000, BtKind::Other),
-        ] {
-            assert_eq!(kind_of_class(cod), k, "{cod:#x}");
-        }
-    }
-
-    #[test]
-    fn hccontrol_outputs() {
-        assert_eq!(
-            parse_inquiry(INQUIRY),
-            [
-                ("00:1e:52:7a:2b:3c".to_string(), 0x002540),
-                ("3c:58:c2:aa:bb:cc".to_string(), 0x5a020c)
-            ]
-        );
-        assert_eq!(
-            parse_remote_name("BD_ADDR: 00:1e:52:7a:2b:3c\nName: Magic Keyboard\n").as_deref(),
-            Some("Magic Keyboard")
-        );
-        assert_eq!(
-            parse_remote_name("hccontrol: Could not execute command\n"),
-            None
-        );
-        let conns = "Remote BD_ADDR    Handle Type Mode Role Encrypt Pending Queue State\n00:1E:52:7A:2B:3C     41  ACL    0 MAST    NONE       0     0 OPEN\n";
-        assert_eq!(parse_connections(conns), ["00:1e:52:7a:2b:3c"]);
-        assert!(parse_connections("Remote BD_ADDR    Handle Type\n").is_empty());
     }
 
     #[test]
@@ -410,35 +281,8 @@ Inquiry complete. Status: No error [00]
     }
 
     #[test]
-    fn reads_freebsd_stack() {
-        let h = FakeHost::new(true);
-        assert_eq!(read(&h), BtState::default(), "no adapter: nothing");
-        h.command("hccontrol -n ubt0hci read_bd_addr", "BD_ADDR: 00:1a:7d:da:71:13\n")
-            .command(
-                "hccontrol -n ubt0hci read_connection_list",
-                "Remote BD_ADDR    Handle Type Mode Role Encrypt Pending Queue State\n00:1e:52:7a:2b:3c     41  ACL    0 MAST    NONE       0     0 OPEN\n",
-            )
-            .file(HCSECD_CONF, HCSECD);
-        let s = read(&h);
-        assert!(s.present && s.powered);
-        assert_eq!(s.devices.len(), 2);
-        assert!(s.devices[0].connected && !s.devices[1].connected);
-        h.slow("hccontrol -n ubt0hci inquiry", INQUIRY).command(
-            "hccontrol -n ubt0hci remote_name_request 00:1e:52:7a:2b:3c",
-            "Name: Magic Keyboard\n",
-        );
-        let found = scan(&h);
-        assert_eq!(found.len(), 2);
-        assert_eq!(
-            (found[0].name.as_str(), found[0].kind, found[0].paired),
-            ("Magic Keyboard", BtKind::Keyboard, false)
-        );
-        assert_eq!(found[1].name, "3c:58:c2:aa:bb:cc", "nameless: address");
-    }
-
-    #[test]
     fn reads_bluetoothctl() {
-        let h = FakeHost::new(false);
+        let h = FakeHost::linux();
         h.command(
             "bluetoothctl show",
             "Controller 00:1A:7D:DA:71:13 (public)\n\tPowered: no\n",
@@ -455,5 +299,29 @@ Inquiry complete. Status: No error [00]
         assert_eq!(s.devices[0].name, "Magic Mouse");
         assert!(s.devices[0].paired && !s.devices[0].connected);
         assert_eq!(scan(&h)[0].addr, "11:22:33:44:55:66");
+        assert_eq!(read(&FakeHost::linux()), BtState::default(), "no BlueZ");
+    }
+
+    #[test]
+    fn pair_and_forget() {
+        let h = FakeHost::linux();
+        h.slow(
+            "bluetoothctl pair 11:22:33:44:55:66",
+            "Pairing successful\n",
+        )
+        .slow("bluetoothctl trust 11:22:33:44:55:66", "trust succeeded\n")
+        .command(
+            "bluetoothctl remove 11:22:33:44:55:66",
+            "Device has been removed\n",
+        );
+        assert!(!pair(&h, "11:22:33:44:55:66"), "connect failed");
+        h.slow(
+            "bluetoothctl connect 11:22:33:44:55:66",
+            "Connection successful\n",
+        );
+        assert!(pair(&h, "11:22:33:44:55:66"));
+        assert!(forget(&h, "11:22:33:44:55:66"));
+        assert!(!pair(&h, "11:22:33:44:55:66; reboot"));
+        assert_eq!(forget_argv("--help"), None);
     }
 }

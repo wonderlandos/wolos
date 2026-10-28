@@ -8,7 +8,10 @@
 pub struct GpuInfo {
     /// Render node, e.g. /dev/dri/renderD128.
     pub node: String,
-    /// Kernel driver, e.g. i915, xe, amdgpu, nvidia-drm.
+    /// Its KMS node, e.g. /dev/dri/card1 (not always render minus 128: simpledrm may hold card0).
+    /// Empty when unknown.
+    pub card: String,
+    /// Kernel driver of the PCI device, e.g. i915, xe, amdgpu, nvidia, virtio-pci.
     pub driver: String,
     /// Firmware marked it as the boot display GPU (boot_vga).
     pub boot_vga: bool,
@@ -55,6 +58,7 @@ mod tests {
     ) -> GpuInfo {
         GpuInfo {
             node: node.into(),
+            card: String::new(),
             driver: driver.into(),
             boot_vga,
             drives_display,

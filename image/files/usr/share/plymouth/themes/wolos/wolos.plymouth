@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=WolOS
+Description=The WolOS mark on black, from the boot loader to the first WolOS frame (ADR 0012)
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/wolos
+ScriptFile=/usr/share/plymouth/themes/wolos/wolos.script

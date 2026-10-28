@@ -1,6 +1,6 @@
 //! Everyday userland from the real-GPU run: sudo for administrators, zsh for every account, user
 //! folders, unlocked keyring, printing, removable media and default apps (Firefox the browser).
-//! Scripts run on the host with fake FreeBSD tools.
+//! Scripts run on the host with fakes.
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, path::PathBuf, process::Command};
 
 fn repo(p: &str) -> PathBuf {
@@ -14,7 +14,7 @@ fn read(p: &str) -> String {
 }
 
 fn packages() -> Vec<String> {
-    ["image/packages-base.txt", "desktop/packages.txt"]
+    ["image/arch/packages.x86_64", "desktop/packages.txt"]
         .iter()
         .flat_map(|f| {
             read(f)
@@ -57,8 +57,6 @@ fn zsh() -> Option<&'static str> {
 fn image_ships_the_everyday_userland() {
     let pkgs = packages();
     for p in [
-        "sudo",
-        "zsh",
         "zsh-autosuggestions",
         "zsh-syntax-highlighting",
         "zsh-completions",
@@ -66,9 +64,12 @@ fn image_ships_the_everyday_userland() {
         "gnome-keyring",
         "cups",
         "cups-filters",
-        "avahi-app",
-        "fusefs-ntfs",
-        "fusefs-exfat",
+        "avahi",
+        "nss-mdns",
+        "udisks2",
+        "gvfs",
+        "ntfs-3g",
+        "exfatprogs",
         "nautilus",
         "geary",
         "amberol",
@@ -90,12 +91,15 @@ fn image_ships_the_everyday_userland() {
     }
     // Weather is the WolOS desktop widget: gnome-weather needs geoclue and gjs + spidermonkey (~55 MB).
     assert!(!pkgs.iter().any(|x| x == "gnome-weather"));
+    // sudo-rs and zsh come with wolos-base (ADR 0017).
+    let base = read("image/repo/wolos-base/PKGBUILD");
+    assert!(base.contains("'sudo-rs'") && base.contains("'zsh'"));
 }
 
 #[test]
 fn administrators_can_sudo() {
     // Setup made an admin (group wheel) but the stock sudoers has no %wheel rule.
-    let p = "desktop/overlay/usr/local/etc/sudoers.d/wolos";
+    let p = "desktop/overlay/etc/sudoers.d/wolos";
     let rules: Vec<String> = read(p)
         .lines()
         .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
@@ -103,11 +107,12 @@ fn administrators_can_sudo() {
         .collect();
     assert_eq!(rules, ["%wheel ALL=(ALL:ALL) ALL"]);
     assert!(
-        read("image/build.sh").contains(r#"chmod 440 "$STAGE/usr/local/etc/sudoers.d/wolos""#),
+        read("image/repo/wolos-system/PKGBUILD")
+            .contains(r#"chmod 440 "$pkgdir/etc/sudoers.d/wolos""#),
         "sudoers drop-in must be 0440"
     );
-    // The 15.1 sudo package's sudoers ends with `@includedir /usr/local/etc/sudoers.d` (checked on
-    // the installed VM). visudo validates the syntax where the host has it.
+    // sudo-rs reads /etc/sudoers, whose Arch default ends with `@includedir /etc/sudoers.d`.
+    // visudo validates the syntax where the host has it.
     if let Ok(out) = Command::new("visudo").arg("-csf").arg(repo(p)).output() {
         assert!(
             out.status.success(),
@@ -119,27 +124,23 @@ fn administrators_can_sudo() {
 
 #[test]
 fn every_account_logs_in_to_zsh_and_root_keeps_sh() {
-    assert_eq!(wol_core::settings::users::LOGIN_SHELL, "/usr/local/bin/zsh");
+    assert!(wol_core::settings::users::LOGIN_SHELL.ends_with("/bin/zsh"));
     let b = read("image/build.sh");
-    let live = b.lines().find(|l| l.contains("useradd live")).unwrap();
-    assert!(live.contains("-s /usr/local/bin/zsh"), "{live}");
-    // root stays on /bin/sh (base system): a broken /usr/local must not lock out recovery.
-    for f in ["image/build.sh", "image/installerconfig", "image/rcconf.sh"] {
-        let s = read(f);
-        assert!(
-            !s.contains("usermod root") && !s.contains("chsh"),
-            "{f} changes root's shell"
-        );
-    }
+    let live = b.lines().find(|l| l.starts_with("u live ")).unwrap();
+    assert!(live.ends_with(" /usr/bin/zsh"), "{live}");
+    // root keeps bash (base system): a broken desktop package must not lock out recovery.
+    assert!(
+        !b.contains("usermod root") && !b.contains("chsh"),
+        "image/build.sh changes root's shell"
+    );
     // Users' own files: only skel (new accounts) and system-level rc files, never ~/.zshrc.
     let skel = read("desktop/overlay/usr/share/skel/dot.zshrc");
     assert!(
         skel.lines().all(|l| l.starts_with('#')),
         "skel .zshrc is comments only"
     );
-    // zsh's newuser module sources SITESCRIPT_DIR/newuser before the wizard script (strings of
-    // zsh-5.9.2.pkg newuser.so: /usr/local/share/zsh/scripts, then .../5.9.2/scripts).
-    let newuser = read("desktop/overlay/usr/local/share/zsh/scripts/newuser");
+    // zsh's newuser module sources SITESCRIPT_DIR/newuser before the wizard script.
+    let newuser = read("desktop/overlay/usr/share/zsh/scripts/newuser");
     assert!(
         newuser.lines().all(|l| l.starts_with('#')) && !newuser.contains("zsh-newuser-install"),
         "no zsh first-run wizard"
@@ -148,11 +149,11 @@ fn every_account_logs_in_to_zsh_and_root_keeps_sh() {
 
 #[test]
 fn system_zshrc_loads_plugins_theme_colours_and_keys() {
-    let rc = "desktop/overlay/usr/local/etc/zshrc";
+    let rc = "desktop/overlay/etc/zshrc";
     let text = read(rc);
-    // FreeBSD ports paths (pkg-plist of shells/zsh-autosuggestions, shells/zsh-syntax-highlighting).
+    // Arch package paths (zsh-autosuggestions, zsh-syntax-highlighting).
     for p in [
-        "${WOLOS_ZSH_PLUGINS:-/usr/local/share}",
+        "${WOLOS_ZSH_PLUGINS:-/usr/share/zsh/plugins}",
         "zsh-autosuggestions/zsh-autosuggestions.zsh",
         "zsh-syntax-highlighting/zsh-syntax-highlighting.zsh",
         "wolos/toolkits/zsh/colors.zsh",
@@ -163,7 +164,7 @@ fn system_zshrc_loads_plugins_theme_colours_and_keys() {
         eprintln!("zsh not on this host: zshrc run skipped");
         return;
     };
-    for f in [rc, "desktop/overlay/usr/local/etc/zprofile"] {
+    for f in [rc, "desktop/overlay/etc/zprofile"] {
         let st = Command::new(zsh).arg("-n").arg(repo(f)).status().unwrap();
         assert!(st.success(), "zsh -n {f}");
     }
@@ -257,7 +258,7 @@ fn session_creates_user_folders_and_finishes_the_keyring() {
     let home = d.join("home");
     fs::create_dir_all(&home).unwrap();
     let st = Command::new("sh")
-        .arg(repo("desktop/overlay/usr/local/bin/wol-session"))
+        .arg(repo("desktop/overlay/usr/bin/wol-session"))
         .env("PATH", path_with(&d))
         .env("HOME", &home)
         .env("XDG_RUNTIME_DIR", &d)
@@ -269,7 +270,7 @@ fn session_creates_user_folders_and_finishes_the_keyring() {
         fs::read_to_string(home.join("log")).unwrap(),
         "dirs\nsession\n"
     );
-    let hypr = read("desktop/overlay/usr/local/share/wolos/hypr/hyprland.conf");
+    let hypr = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
     assert!(
         hypr.lines()
             .any(|l| l.starts_with("exec-once = gnome-keyring-daemon --start --components=secrets")),
@@ -277,113 +278,19 @@ fn session_creates_user_folders_and_finishes_the_keyring() {
     );
 }
 
-/// Runs image/rcconf.sh on a temp root with a fake sysrc; returns (sysrc log, auto_master).
-fn run_rcconf() -> (String, String) {
-    let d = sandbox(
-        "rcconf",
-        &[("sysrc", "#!/bin/sh\necho \"$@\" >> \"$LOG\"\n")],
-    );
-    let root = d.join("root");
-    fs::create_dir_all(root.join("etc")).unwrap();
-    fs::write(
-        root.join("etc/auto_master"),
-        "/net\t\t-hosts\t\t-nobrowse,nosuid,intr\n#/media\t\t-media\t\t-nosuid\n",
-    )
-    .unwrap();
-    for _ in 0..2 {
-        let st = Command::new("sh")
-            .arg(repo("image/rcconf.sh"))
-            .arg(&root)
-            .env("PATH", path_with(&d))
-            .env("LOG", d.join("log"))
-            .status()
-            .unwrap();
-        assert!(st.success());
-    }
-    (
-        fs::read_to_string(d.join("log")).unwrap(),
-        fs::read_to_string(root.join("etc/auto_master")).unwrap(),
-    )
-}
-
+/// Printing and removable media are on in live and installed systems (the WolOS preset).
 #[test]
-fn printing_and_removable_media_are_on_in_live_and_installed_systems() {
-    let (log, master) = run_rcconf();
-    let inst = read("image/installerconfig");
-    for kv in [
-        "cupsd_enable=YES",
-        "avahi_daemon_enable=YES",
-        "autofs_enable=YES",
-    ] {
-        assert!(log.contains(kv), "rcconf.sh lacks {kv}:\n{log}");
-        assert!(inst.contains(kv), "installerconfig lacks {kv}");
+fn printing_and_removable_media_are_on() {
+    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    for u in ["cups.socket", "avahi-daemon.service", "udisks2.service"] {
+        assert!(preset.lines().any(|l| l == format!("enable {u}")), "{u}");
     }
-    let media: Vec<&str> = master.lines().filter(|l| l.starts_with("/media")).collect();
-    assert_eq!(media, ["/media\t\t-wolmedia\t-nosuid,noatime"], "{master}");
-    assert!(
-        inst.contains("-wolmedia"),
-        "installerconfig lacks the /media map"
-    );
-    for s in [
-        "image/rcconf.sh",
-        "image/installerconfig",
-        "image/build.sh",
-        "desktop/overlay/etc/autofs/special_wolmedia",
-        "desktop/overlay/usr/local/bin/wol-session",
-    ] {
-        sh_n(s);
-    }
-}
-
-#[test]
-fn usb_sticks_mount_writable_for_wolos_accounts() {
-    // Stock /etc/autofs/special_media lines (FreeBSD 15.1) per filesystem.
-    let stock = "#!/bin/sh\n[ $# -eq 0 ] && { echo da0s1; echo da1p1; exit 0; }\ncase $1 in\n\
-        fat) echo '-fstype=msdosfs,sync   :/dev/da0s1' ;;\n\
-        exfat) echo '-mountprog=/usr/local/sbin/mount.exfat,fstype=exfat,sync     :/dev/da0s1' ;;\n\
-        ntfs) echo '-mountprog=/usr/local/bin/ntfs-3g,fstype=ntfs,sync  :/dev/da0s1' ;;\n\
-        ufs) echo '-fstype=ufs,async  :/dev/da0p1' ;;\n\
-        *) echo 'Cannot mount' >&2; exit 1 ;;\nesac\n";
-    let d = sandbox("media", &[("special_media", stock)]);
-    let run = |args: &[&str]| {
-        Command::new("sh")
-            .arg(repo("desktop/overlay/etc/autofs/special_wolmedia"))
-            .args(args)
-            .env("WOLOS_SPECIAL_MEDIA", d.join("bin/special_media"))
-            .output()
-            .unwrap()
-    };
-    for (key, want) in [
-        (
-            "fat",
-            "-fstype=msdosfs,gid=5,mask=436,dirmask=509,sync   :/dev/da0s1",
-        ),
-        (
-            "exfat",
-            "-mountprog=/usr/local/sbin/mount.exfat,fstype=exfat,allow_other,gid=5,umask=002,sync     :/dev/da0s1",
-        ),
-        (
-            "ntfs",
-            "-mountprog=/usr/local/bin/ntfs-3g,fstype=ntfs,allow_other,gid=5,umask=002,sync  :/dev/da0s1",
-        ),
-        ("ufs", "-fstype=ufs,async  :/dev/da0p1"),
-    ] {
-        let o = run(&[key]);
-        assert!(o.status.success());
-        assert_eq!(String::from_utf8_lossy(&o.stdout).trim_end(), want, "{key}");
-    }
-    assert_eq!(String::from_utf8_lossy(&run(&[]).stdout), "da0s1\nda1p1\n");
-    assert!(!run(&["none"]).status.success(), "errors pass through");
-    let mode = fs::metadata(repo("desktop/overlay/etc/autofs/special_wolmedia"))
-        .unwrap()
-        .permissions()
-        .mode();
-    assert_eq!(mode & 0o111, 0o111, "automountd executes the map");
+    sh_n("desktop/overlay/usr/bin/wol-session");
 }
 
 #[test]
 fn firefox_and_the_dock_apps_open_their_files_by_default() {
-    let mime = read("desktop/overlay/usr/local/share/applications/mimeapps.list");
+    let mime = read("desktop/overlay/usr/share/applications/mimeapps.list");
     for t in [
         "x-scheme-handler/http=firefox.desktop;",
         "x-scheme-handler/https=firefox.desktop;",

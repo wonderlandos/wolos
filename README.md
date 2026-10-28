@@ -73,4 +73,4 @@ Every screenshot above is real WolOS on FreeBSD 15.1, rendered by the shipping c
 
 > Early. The image installs offline and boots; the full desktop is being proven on real hardware now.
 
-**License:** BSD-2-Clause; the shell is GPL-3.0-or-later; the kernel and driver patches are source-available under the Wonderland License 1.0; brand art is under the Wonderland Brand License 1.0. See [`LICENSING.md`](LICENSING.md). © 2026 Julia Klee.
+**License:** BSD-2-Clause; the shell is GPL-3.0-or-later; brand art is CC BY-NC-ND 4.0 (share it to talk about WolOS; ask for anything else). See [`COPYRIGHT`](COPYRIGHT). © 2026 Julia Klee.

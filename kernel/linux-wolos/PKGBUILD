@@ -1,0 +1,97 @@
+# linux-wolos: the WolOS kernel fork (github.com/wonderlandos/linux) at the commit in ./ref, Arch's
+# config.x86_64 from the snapshot (vendored next to this file) + kernel/conf/wolos.config, plus extra
+# patches from $WOLOS_OVERLAY/kernel/linux/patches when present. Published only in the [wolos] repo
+# (image/repo/build.sh). Packaging follows Arch's linux PKGBUILD.
+# Build: cd kernel/linux-wolos && makepkg -s   (or image/repo/build.sh)
+
+pkgbase=linux-wolos
+pkgver=7.3.0
+pkgrel=1
+pkgdesc='Linux (WolOS)'
+url='https://github.com/wonderlandos/linux'
+arch=(x86_64)
+license=(GPL-2.0-only)
+makedepends=(bc binutils cpio gettext git glibc libelf libgcc openssl pahole perl python rust
+  rust-bindgen rust-src tar xxhash xz zlib zstd)
+options=(!debug !strip)
+_commit=$(<"$startdir/ref")
+_srcname=linux
+source=(
+  "git+https://github.com/wonderlandos/linux.git#commit=$_commit"
+  config.x86_64
+  wolos.config::../../kernel/conf/wolos.config
+  prepare.sh
+)
+sha256sums=(SKIP SKIP SKIP SKIP)
+
+export KBUILD_BUILD_HOST=wolos
+export KBUILD_BUILD_USER=$pkgbase
+export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
+
+prepare() {
+  cd $_srcname
+  echo "-$pkgrel" > localversion.10-pkgrel
+  WOLOS_OVERLAY=${WOLOS_OVERLAY:-$startdir/../../../wolos-overlay} \
+    sh ../prepare.sh . ../config.x86_64 ../wolos.config
+  make -s kernelrelease > version
+  echo "Prepared $pkgbase version $(<version)"
+}
+
+build() {
+  cd $_srcname
+  make all
+  make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
+}
+
+_package() {
+  pkgdesc="The $pkgdesc kernel and modules"
+  depends=(coreutils initramfs kmod)
+  optdepends=('linux-firmware: firmware images needed for some devices'
+    'scx-scheds: sched_ext schedulers'
+    'wireless-regdb: to set the correct wireless channels of your country')
+  provides=(KSMBD-MODULE NTSYNC-MODULE WIREGUARD-MODULE)
+
+  cd $_srcname
+  local modulesdir="$pkgdir/usr/lib/modules/$(<version)"
+  install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
+  # mkinitcpio names the kernel and initramfs after this (vmlinuz-linux-wolos).
+  echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+  ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 \
+    DEPMOD=/doesnt/exist modules_install
+  rm -f "$modulesdir"/build
+}
+
+_package-headers() {
+  pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel (DKMS: nvidia-open-dkms)"
+  depends=(binutils glibc libelf libgcc openssl pahole xxhash zlib zstd)
+  provides=(LINUX-HEADERS)
+
+  cd $_srcname
+  local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
+  install -Dt "$builddir" -m644 .config Makefile Module.symvers System.map \
+    localversion.* version vmlinux tools/bpf/bpftool/vmlinux.h
+  install -Dt "$builddir/kernel" -m644 kernel/Makefile
+  install -Dt "$builddir/arch/x86" -m644 arch/x86/Makefile
+  cp -t "$builddir" -a scripts
+  [[ $(scripts/config -s CONFIG_HAVE_STACK_VALIDATION) = y ]] &&
+    install -Dt "$builddir/tools/objtool" tools/objtool/objtool
+  [[ $(scripts/config -s CONFIG_DEBUG_INFO_BTF_MODULES) = y ]] &&
+    install -Dt "$builddir/tools/bpf/resolve_btfids" tools/bpf/resolve_btfids/resolve_btfids
+  cp -t "$builddir" -a include
+  cp -t "$builddir/arch/x86" -a arch/x86/include
+  install -Dt "$builddir/arch/x86/kernel" -m644 arch/x86/kernel/asm-offsets.s
+  install -Dt "$builddir/drivers/md" -m644 drivers/md/*.h
+  install -Dt "$builddir/net/mac80211" -m644 net/mac80211/*.h
+  find -L "$builddir" -type l -printf 'Removing %P\n' -delete
+  find "$builddir" -type f -name '*.o' -delete
+  mkdir -p "$pkgdir/usr/src"
+  ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
+}
+
+pkgname=("$pkgbase" "$pkgbase-headers")
+for _p in "${pkgname[@]}"; do
+  eval "package_$_p() {
+    $(declare -f "_package${_p#$pkgbase}")
+    _package${_p#$pkgbase}
+  }"
+done

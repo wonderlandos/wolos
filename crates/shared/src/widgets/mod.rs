@@ -13,7 +13,7 @@ pub const DESKTOP_FILE: &str = "wolos/widgets.json";
 /// User packages under `$XDG_DATA_HOME` (default `~/.local/share`): `<dir>/<id>/widget.json`.
 pub const USER_PACKAGES_DIR: &str = "wolos/widgets";
 /// Packages shipped with the system.
-pub const SYSTEM_PACKAGES_DIR: &str = "/usr/local/share/wolos/widgets";
+pub const SYSTEM_PACKAGES_DIR: &str = "/usr/share/wolos/widgets";
 pub const MANIFEST_FILE: &str = "widget.json";
 pub const VERSION: u32 = 1;
 /// Prefix of custom widget kinds in the layout file: `custom:<package id>`.

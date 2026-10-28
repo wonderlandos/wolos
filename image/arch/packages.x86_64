@@ -1,0 +1,31 @@
+# WolOS live + installed system. The desktop list is desktop/packages.txt; image/build.sh merges both.
+# wolos-base (ADR 0017, [wolos]): Arch base + linux-wolos (+ headers for DKMS such as nvidia-open-dkms)
+# + uutils coreutils, sudo-rs, bsdtar, zsh, systemd and the wol tools, at one release version.
+wolos-base
+linux-firmware
+intel-ucode
+amd-ucode
+sof-firmware
+mkinitcpio
+mkinitcpio-archiso
+plymouth
+# Installer and A/B slots: GPT, ESP, btrfs, systemd-boot (in systemd), unsquash of the live root.
+arch-install-scripts
+btrfs-progs
+gptfdisk
+dosfstools
+squashfs-tools
+efibootmgr
+pacman-contrib
+# Hardware and networking.
+networkmanager
+iwd
+wireless-regdb
+bluez
+bluez-utils
+nftables
+pciutils
+usbutils
+dkms
+less
+man-db

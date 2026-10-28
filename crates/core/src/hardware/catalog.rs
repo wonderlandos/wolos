@@ -1,66 +1,44 @@
-//! The hardware catalogue: device ids -> driver, firmware, tunables, quirks. Data only.
-//! Sources: fwget(8) maps on 15.1 (`/usr/libexec/fwget/pci_*`), drm-kmod 6.12 / Linux radeon/amdgpu
-//! defaults, the 15.1 module set (`/boot/kernel`), port pkg-messages. archicture/modules/hardware.md.
+//! The hardware catalogue: device ids -> Linux driver, kernel modules, Arch firmware/driver packages,
+//! modprobe options, quirks. Data only. Sources: kernel driver id tables (i915/xe, amdgpu/radeon,
+//! iwlwifi, rtw88/rtw89, ath1xk, mt76), Arch linux-firmware split packages, NVIDIA open-module support
+//! list (Turing and newer). archicture/modules/hardware.md.
 use super::{BASE, Bus, Entry};
 use shared::hardware::Kind::*;
 
-const IWL: &[&str] = &["iwlwifi", "iwm", "iwx"];
-const DRM: &[&str] = &["drmn"];
-// LinuxKPI Wi-Fi on 15.1 (man pages, FreeBSD status report 2026Q2, sys/compat/linuxkpi): kernel/README.md.
-const ATH10K_NOTE: &[&str] =
-    &["no ath10k driver in FreeBSD 15.1: not in the release build, upstream port unfinished"];
-const ATH11K_NOTE: &[&str] = &[
-    "no ath11k/ath12k driver in FreeBSD 15.1: LinuxKPI has no MHI/QRTR transport for its firmware",
-];
-const MT7921_NOTE: &[&str] =
-    &["802.11a/b/g only on FreeBSD 15.1 (mt7921(4)): up to 54 Mbit/s; module built by WolKernel"];
-const NV_KLDS: &[&str] = &["nvidia-modeset", "nvidia-drm"];
-const NV_DRIVERS: &[&str] = &["nvidia", "drmn"];
-/// nvidia-drm-kmod pkg-message: KMS (Wayland) needs this before nvidia-drm.ko loads.
-const NV_MODESET: &[&str] = &["hw.nvidiadrm.modeset=\"1\""];
+const FW_INTEL: &[&str] = &["linux-firmware-intel"];
+const FW_AMD: &[&str] = &["linux-firmware-amdgpu"];
+const FW_RADEON: &[&str] = &["linux-firmware-radeon"];
+const FW_REALTEK: &[&str] = &["linux-firmware-realtek"];
+const FW_ATH: &[&str] = &["linux-firmware-atheros"];
+const FW_MTK: &[&str] = &["linux-firmware-mediatek"];
+/// nvidia_drm: KMS for Wayland, fbdev for the console; read when the module loads.
+const NV_OPTIONS: &[&str] = &["options nvidia_drm modeset=1 fbdev=1"];
 
-const fn intel_gpu(
-    name: &'static str,
-    devices: &'static [(u16, u16)],
-    fw: &'static [&'static str],
-) -> Entry {
+const fn intel_gpu(name: &'static str, devices: &'static [(u16, u16)]) -> Entry {
     Entry {
         name,
         kind: Gpu,
         vendor: Some(0x8086),
         devices,
         class: "03",
-        drivers: DRM,
-        klds: &["i915kms"],
-        firmware: fw,
+        drivers: &["i915"],
+        klds: &["i915"],
+        firmware: FW_INTEL,
+        packages: &["vulkan-intel"],
         ..BASE
     }
 }
 
-const fn iwlwifi(
-    name: &'static str,
-    devices: &'static [(u16, u16)],
-    fw: &'static [&'static str],
-) -> Entry {
-    Entry {
-        name,
-        kind: Wifi,
-        vendor: Some(0x8086),
-        devices,
-        class: "0280",
-        drivers: IWL,
-        klds: &["if_iwlwifi"],
-        firmware: fw,
-        ..BASE
-    }
+const fn iwlwifi(name: &'static str, devices: &'static [(u16, u16)]) -> Entry {
+    wifi(name, 0x8086, devices, &["iwlwifi"], FW_INTEL)
 }
 
+/// PCI Wi-Fi whose driver and module share a name.
 const fn wifi(
     name: &'static str,
     vendor: u16,
     devices: &'static [(u16, u16)],
-    drivers: &'static [&'static str],
-    klds: &'static [&'static str],
+    module: &'static [&'static str],
     fw: &'static [&'static str],
 ) -> Entry {
     Entry {
@@ -69,68 +47,48 @@ const fn wifi(
         vendor: Some(vendor),
         devices,
         class: "0280",
-        drivers,
-        klds,
+        drivers: module,
+        klds: module,
         firmware: fw,
         ..BASE
     }
 }
 
-/// A card with no working FreeBSD 15.1 driver: nothing to install, say why.
-const fn no_wifi(
-    name: &'static str,
-    vendor: u16,
-    devices: &'static [(u16, u16)],
-    klds: &'static [&'static str],
-    notes: &'static [&'static str],
-) -> Entry {
-    Entry {
-        name,
-        kind: Wifi,
-        vendor: Some(vendor),
-        devices,
-        class: "0280",
-        klds,
-        notes,
-        supported: false,
-        ..BASE
-    }
-}
-
-const fn bt(
-    name: &'static str,
-    vendor: Option<u16>,
-    fw: &'static [&'static str],
-    notes: &'static [&'static str],
-) -> Entry {
+const fn bt(name: &'static str, vendor: Option<u16>, fw: &'static [&'static str]) -> Entry {
     Entry {
         name,
         kind: Bluetooth,
         bus: Bus::Usb,
         vendor,
         class: "e00101",
-        drivers: &["ubt"],
-        klds: &["ng_ubt"],
+        drivers: &["btusb"],
+        klds: &["btusb"],
         firmware: fw,
-        notes,
         ..BASE
     }
 }
 
-const fn virt(name: &'static str, vendor: u16, devices: &'static [(u16, u16)]) -> Entry {
+/// Virtual GPU with an in-kernel DRM driver: Hyprland runs in the VM.
+const fn virt(
+    name: &'static str,
+    vendor: u16,
+    devices: &'static [(u16, u16)],
+    drivers: &'static [&'static str],
+    klds: &'static [&'static str],
+) -> Entry {
     Entry {
         name,
         kind: Gpu,
         vendor: Some(vendor),
         devices,
         class: "03",
-        notes: &["virtual GPU: no DRM driver on FreeBSD, framebuffer only (no compositor)"],
-        supported: false,
+        drivers,
+        klds,
         ..BASE
     }
 }
 
-/// Radeon (pre-GCN, SI, CIK): radeonkms is the default driver for these (amdgpu needs si/cik_support).
+/// Radeon (pre-GCN, SI, CIK): radeon is the kernel's default for these (amdgpu needs si/cik_support).
 const RADEON: &[(u16, u16)] = &[
     (0x1304, 0x131d), // Kaveri
     (0x4100, 0x5fff), // R100-R400
@@ -146,19 +104,15 @@ const RADEON: &[(u16, u16)] = &[
 ];
 
 pub const CATALOG: &[Entry] = &[
-    // ---- CPU (bus Cpu: vendor from hw.model) ----
+    // ---- CPU (bus Cpu: vendor from /proc/cpuinfo; driver = cpufreq scaling_driver) ----
     Entry {
         name: "Intel processor",
         kind: Cpu,
         bus: Bus::Cpu,
         vendor: Some(0x8086),
-        drivers: &["hwpstate_intel", "est"],
-        klds: &["coretemp", "cpuctl"],
-        firmware: &["cpu-microcode-intel"],
-        loader: &[
-            "cpu_microcode_load=\"YES\"",
-            "cpu_microcode_name=\"/boot/firmware/intel-ucode.bin\"",
-        ],
+        drivers: &["intel_pstate", "intel_cpufreq", "acpi-cpufreq"],
+        klds: &["coretemp"],
+        firmware: &["intel-ucode"],
         ..BASE
     },
     Entry {
@@ -166,31 +120,18 @@ pub const CATALOG: &[Entry] = &[
         kind: Cpu,
         bus: Bus::Cpu,
         vendor: Some(0x1022),
-        drivers: &["hwpstate"],
-        klds: &["amdtemp", "cpuctl"],
-        firmware: &["cpu-microcode-amd"],
-        loader: &[
-            "cpu_microcode_load=\"YES\"",
-            "cpu_microcode_name=\"/boot/firmware/amd-ucode.bin\"",
-        ],
+        drivers: &["amd-pstate-epp", "amd-pstate", "acpi-cpufreq"],
+        klds: &["k10temp"],
+        firmware: &["amd-ucode"],
         ..BASE
     },
-    // ---- GPU (fwget pci_video_intel; RPL/MTL/DG2 added from i915_pciids.h) ----
-    intel_gpu(
-        "Intel HD Graphics (Skylake)",
-        &[(0x1900, 0x19ff)],
-        &["gpu-firmware-intel-kmod-skylake"],
-    ),
+    // ---- GPU: Intel (i915 up to Meteor/Arrow Lake; xe for Xe2 and newer) ----
+    intel_gpu("Intel HD Graphics (Skylake)", &[(0x1900, 0x19ff)]),
     intel_gpu(
         "Intel HD Graphics (Broxton)",
         &[(0x0a00, 0x0aff), (0x1a00, 0x1aff), (0x5a84, 0x5a85)],
-        &["gpu-firmware-intel-kmod-broxton"],
     ),
-    intel_gpu(
-        "Intel UHD Graphics (Gemini Lake)",
-        &[(0x3180, 0x318f)],
-        &["gpu-firmware-intel-kmod-geminilake"],
-    ),
+    intel_gpu("Intel UHD Graphics (Gemini Lake)", &[(0x3180, 0x318f)]),
     intel_gpu(
         "Intel UHD Graphics (Kaby/Coffee/Comet Lake)",
         &[
@@ -199,79 +140,48 @@ pub const CATALOG: &[Entry] = &[
             (0x8700, 0x87ff),
             (0x9b00, 0x9bff),
         ],
-        &["gpu-firmware-intel-kmod-kabylake"],
     ),
-    intel_gpu(
-        "Intel Graphics (Cannon Lake)",
-        &[(0x5a00, 0x5aff)],
-        &["gpu-firmware-intel-kmod-cannonlake"],
-    ),
-    intel_gpu(
-        "Intel Iris Plus (Ice Lake)",
-        &[(0x8a00, 0x8aff)],
-        &["gpu-firmware-intel-kmod-icelake"],
-    ),
+    intel_gpu("Intel Graphics (Cannon Lake)", &[(0x5a00, 0x5aff)]),
+    intel_gpu("Intel Iris Plus (Ice Lake)", &[(0x8a00, 0x8aff)]),
     intel_gpu(
         "Intel UHD Graphics (Elkhart/Jasper Lake)",
         &[(0x4500, 0x45ff), (0x4e00, 0x4eff)],
-        &["gpu-firmware-intel-kmod-elkhartlake"],
     ),
-    intel_gpu(
-        "Intel Iris Xe (Tiger Lake)",
-        &[(0x9a00, 0x9aff)],
-        &["gpu-firmware-intel-kmod-tigerlake"],
-    ),
-    intel_gpu(
-        "Intel UHD Graphics (Rocket Lake)",
-        &[(0x4c00, 0x4cff)],
-        &[
-            "gpu-firmware-intel-kmod-rocketlake",
-            "gpu-firmware-intel-kmod-tigerlake",
-        ],
-    ),
-    intel_gpu(
-        "Intel Iris Xe MAX (DG1)",
-        &[(0x4900, 0x49ff)],
-        &["gpu-firmware-intel-kmod-dg1"],
-    ),
+    intel_gpu("Intel Iris Xe (Tiger Lake)", &[(0x9a00, 0x9aff)]),
+    intel_gpu("Intel UHD Graphics (Rocket Lake)", &[(0x4c00, 0x4cff)]),
+    intel_gpu("Intel Iris Xe MAX (DG1)", &[(0x4900, 0x49ff)]),
     intel_gpu(
         "Intel Iris Xe (Alder/Raptor Lake)",
         &[(0x4600, 0x46ff), (0xa700, 0xa7ff)],
-        &[
-            "gpu-firmware-intel-kmod-alderlake",
-            "gpu-firmware-intel-kmod-tigerlake",
-        ],
     ),
-    intel_gpu(
-        "Intel Arc (DG2)",
-        &[(0x5600, 0x56ff)],
-        &["gpu-firmware-intel-kmod-dg2"],
-    ),
+    intel_gpu("Intel Arc (DG2)", &[(0x5600, 0x56ff)]),
     intel_gpu(
         "Intel Arc Graphics (Meteor/Arrow Lake)",
         &[(0x7d00, 0x7dff)],
-        &["gpu-firmware-intel-kmod-meteorlake"],
     ),
     Entry {
         name: "Intel Xe2 graphics (Lunar Lake, Battlemage)",
         kind: Gpu,
         vendor: Some(0x8086),
-        devices: &[(0x6400, 0x64ff), (0xe200, 0xe2ff)],
+        devices: &[(0x6400, 0x64ff), (0xe200, 0xe2ff), (0xb080, 0xb0ff)],
         class: "03",
-        notes: &["needs the xe driver, which drm-kmod 6.12 does not ship: framebuffer only"],
-        supported: false,
+        drivers: &["xe"],
+        klds: &["xe"],
+        firmware: FW_INTEL,
+        packages: &["vulkan-intel"],
         ..BASE
     },
-    intel_gpu("Intel graphics", &[], &[]),
+    intel_gpu("Intel graphics", &[]),
+    // ---- GPU: AMD ----
     Entry {
-        name: "AMD Radeon (radeonkms)",
+        name: "AMD Radeon (radeon)",
         kind: Gpu,
         vendor: Some(0x1002),
         devices: RADEON,
         class: "03",
-        drivers: DRM,
-        klds: &["radeonkms"],
-        firmware: &["gpu-firmware-kmod"],
+        drivers: &["radeon"],
+        klds: &["radeon"],
+        firmware: FW_RADEON,
         ..BASE
     },
     Entry {
@@ -279,34 +189,25 @@ pub const CATALOG: &[Entry] = &[
         kind: Gpu,
         vendor: Some(0x1002),
         class: "03",
-        drivers: DRM,
+        drivers: &["amdgpu"],
         klds: &["amdgpu"],
-        firmware: &["gpu-firmware-kmod"],
+        firmware: FW_AMD,
+        packages: &["vulkan-radeon"],
         ..BASE
     },
-    // NVIDIA (pkg nvidia-drm-kmod = nvidia-drm-612-kmod + nvidia-kmod + nvidia-driver 595, ~520 MB:
-    // installed online at first boot). 595 dropped Maxwell/Pascal/Volta (580 is their last branch).
+    // ---- GPU: NVIDIA (open kernel modules need Turing or newer; older cards get nouveau) ----
     Entry {
-        name: "NVIDIA GeForce (Kepler or older)",
+        name: "NVIDIA GeForce (Maxwell or older)",
         kind: Gpu,
         vendor: Some(0x10de),
-        devices: &[(0x0000, 0x133f)],
+        devices: &[(0x0000, 0x1dff)],
         class: "03",
-        notes: &["needs the legacy 470 driver, which has no modesetting (Wayland) on FreeBSD"],
-        supported: false,
-        ..BASE
-    },
-    Entry {
-        name: "NVIDIA GeForce (Maxwell/Pascal/Volta)",
-        kind: Gpu,
-        vendor: Some(0x10de),
-        devices: &[(0x1340, 0x1dff)],
-        class: "03",
-        drivers: NV_DRIVERS,
-        klds: NV_KLDS,
-        packages: &["nvidia-drm-kmod-580"],
-        loader: NV_MODESET,
-        notes: &["legacy 580 driver (595 dropped these GPUs); installed online at first boot"],
+        drivers: &["nouveau"],
+        klds: &["nouveau"],
+        firmware: &["linux-firmware-nvidia"],
+        notes: &[
+            "nouveau driver: the NVIDIA driver supports Turing (GeForce 16/RTX 20) and newer only; games run slower",
+        ],
         ..BASE
     },
     Entry {
@@ -314,19 +215,43 @@ pub const CATALOG: &[Entry] = &[
         kind: Gpu,
         vendor: Some(0x10de),
         class: "03",
-        drivers: NV_DRIVERS,
-        klds: NV_KLDS,
-        packages: &["nvidia-drm-kmod"],
-        loader: NV_MODESET,
-        notes: &["driver 595, not shipped offline (~520 MB): installed online at first boot"],
+        drivers: &["nvidia"],
+        klds: &["nvidia", "nvidia_modeset", "nvidia_drm", "nvidia_uvm"],
+        packages: &["nvidia-open", "nvidia-utils"],
+        loader: NV_OPTIONS,
+        notes: &["NVIDIA driver (open kernel modules); installed online at first boot if missing"],
         ..BASE
     },
-    virt("QEMU standard VGA", 0x1234, &[(0x1111, 0x1111)]),
-    virt("QEMU QXL", 0x1b36, &[(0x0100, 0x0100)]),
-    virt("virtio-gpu", 0x1af4, &[(0x1050, 0x1050)]),
-    virt("VMware SVGA", 0x15ad, &[(0x0405, 0x0405)]),
-    virt("VirtualBox display", 0x80ee, &[(0xbeef, 0xbeef)]),
-    // ---- Wi-Fi (fwget pci_network_* on 15.1) ----
+    virt(
+        "QEMU standard VGA",
+        0x1234,
+        &[(0x1111, 0x1111)],
+        &["bochs-drm"],
+        &["bochs"],
+    ),
+    virt("QEMU QXL", 0x1b36, &[(0x0100, 0x0100)], &["qxl"], &["qxl"]),
+    virt(
+        "virtio-gpu",
+        0x1af4,
+        &[(0x1050, 0x1050)],
+        &["virtio-pci"],
+        &["virtio_gpu"],
+    ),
+    virt(
+        "VMware SVGA",
+        0x15ad,
+        &[(0x0405, 0x0405)],
+        &["vmwgfx"],
+        &["vmwgfx"],
+    ),
+    virt(
+        "VirtualBox display",
+        0x80ee,
+        &[(0xbeef, 0xbeef)],
+        &["vboxvideo"],
+        &["vboxvideo"],
+    ),
+    // ---- Wi-Fi ----
     iwlwifi(
         "Intel Wireless 7260/3160/7265/3165/3168",
         &[
@@ -335,12 +260,10 @@ pub const CATALOG: &[Entry] = &[
             (0x24fb, 0x24fb),
             (0x3165, 0x3166),
         ],
-        &["wifi-firmware-iwlwifi-kmod-7000"],
     ),
     iwlwifi(
         "Intel Wireless 8260/8265",
         &[(0x24f3, 0x24f6), (0x24fd, 0x24fd)],
-        &["wifi-firmware-iwlwifi-kmod-8000"],
     ),
     iwlwifi(
         "Intel Wireless-AC 9260/9461/9462/9560",
@@ -352,7 +275,6 @@ pub const CATALOG: &[Entry] = &[
             (0x9df0, 0x9df0),
             (0xa370, 0xa370),
         ],
-        &["wifi-firmware-iwlwifi-kmod-9000"],
     ),
     iwlwifi(
         "Intel Wi-Fi 6 AX200/AX201",
@@ -366,7 +288,6 @@ pub const CATALOG: &[Entry] = &[
             (0x4df0, 0x4df0),
             (0xa0f0, 0xa0f0),
         ],
-        &["wifi-firmware-iwlwifi-kmod-22000"],
     ),
     iwlwifi(
         "Intel Wi-Fi 6E AX210/AX211",
@@ -380,7 +301,6 @@ pub const CATALOG: &[Entry] = &[
             (0x7e40, 0x7e40),
             (0x7f70, 0x7f70),
         ],
-        &["wifi-firmware-iwlwifi-kmod-ax210"],
     ),
     iwlwifi(
         "Intel Wi-Fi 7 BE200/BE202",
@@ -392,7 +312,6 @@ pub const CATALOG: &[Entry] = &[
             (0x7740, 0x7740),
             (0xa840, 0xa840),
         ],
-        &["wifi-firmware-iwlwifi-kmod-bz"],
     ),
     iwlwifi(
         "Intel Wi-Fi 7 (Lunar/Panther Lake)",
@@ -403,203 +322,186 @@ pub const CATALOG: &[Entry] = &[
             (0xe340, 0xe340),
             (0xe440, 0xe440),
         ],
-        &["wifi-firmware-iwlwifi-kmod-sc"],
     ),
-    iwlwifi("Intel Wi-Fi", &[], &[]),
+    iwlwifi("Intel Wi-Fi", &[]),
     wifi(
         "Realtek RTL8723DE",
         0x10ec,
         &[(0xd723, 0xd723)],
-        &["rtw88"],
-        &["if_rtw88"],
-        &["wifi-firmware-rtw88-kmod-rtw8723d"],
+        &["rtw88_8723de"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8814AE",
         0x10ec,
         &[(0x8813, 0x8813)],
-        &["rtw88"],
-        &["if_rtw88"],
-        &["wifi-firmware-rtw88-kmod-rtw8814a"],
+        &["rtw88_8814ae"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8821CE",
         0x10ec,
         &[(0xb821, 0xb821), (0xc821, 0xc821)],
-        &["rtw88"],
-        &["if_rtw88"],
-        &["wifi-firmware-rtw88-kmod-rtw8821c"],
+        &["rtw88_8821ce"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8822BE",
         0x10ec,
         &[(0xb822, 0xb822)],
-        &["rtw88"],
-        &["if_rtw88"],
-        &["wifi-firmware-rtw88-kmod-rtw8822b"],
+        &["rtw88_8822be"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8822CE",
         0x10ec,
         &[(0xc822, 0xc822), (0xc82f, 0xc82f)],
-        &["rtw88"],
-        &["if_rtw88"],
-        &["wifi-firmware-rtw88-kmod-rtw8822c"],
+        &["rtw88_8822ce"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8851BE",
         0x10ec,
         &[(0xb851, 0xb851)],
-        &["rtw89"],
-        &["if_rtw89"],
-        &["wifi-firmware-rtw89-kmod-rtw8851b"],
+        &["rtw89_8851be"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8852AE",
         0x10ec,
         &[(0x8852, 0x8852), (0xa85a, 0xa85a)],
-        &["rtw89"],
-        &["if_rtw89"],
-        &["wifi-firmware-rtw89-kmod-rtw8852a"],
+        &["rtw89_8852ae"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8852BE",
         0x10ec,
         &[(0xb852, 0xb852), (0xb85b, 0xb85b)],
-        &["rtw89"],
-        &["if_rtw89"],
-        &["wifi-firmware-rtw89-kmod-rtw8852b"],
+        &["rtw89_8852be"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8852BTE",
         0x10ec,
         &[(0xb520, 0xb520)],
-        &["rtw89"],
-        &["if_rtw89"],
-        &["wifi-firmware-rtw89-kmod-rtw8852bt"],
+        &["rtw89_8852bte"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8852CE",
         0x10ec,
         &[(0xc852, 0xc852)],
-        &["rtw89"],
-        &["if_rtw89"],
-        &["wifi-firmware-rtw89-kmod-rtw8852c"],
+        &["rtw89_8852ce"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8922AE",
         0x10ec,
         &[(0x8922, 0x8922), (0x892b, 0x892b)],
-        &["rtw89"],
-        &["if_rtw89"],
-        &["wifi-firmware-rtw89-kmod-rtw8922a"],
+        &["rtw89_8922ae"],
+        FW_REALTEK,
     ),
     wifi(
         "Realtek RTL8188CE/8192CE/8188EE",
         0x10ec,
         &[(0x8176, 0x8179)],
-        &["rtwn"],
-        &["if_rtwn_pci"],
-        &[],
+        &["rtl8192ce"],
+        FW_REALTEK,
     ),
-    wifi(
-        "Realtek Wi-Fi",
-        0x10ec,
-        &[],
-        &["rtw88", "rtw89"],
-        &["if_rtw88", "if_rtw89"],
-        &[],
-    ),
+    Entry {
+        name: "Realtek Wi-Fi",
+        kind: Wifi,
+        vendor: Some(0x10ec),
+        class: "0280",
+        firmware: FW_REALTEK,
+        ..BASE
+    },
     wifi(
         "Atheros 802.11n",
         0x168c,
         &[(0x0007, 0x0037)],
-        &["ath"],
-        &["if_ath"],
+        &["ath9k"],
         &[],
     ),
-    no_wifi(
+    wifi(
         "Qualcomm QCA988x",
         0x168c,
         &[(0x003c, 0x003c)],
-        &["if_ath10k"],
-        ATH10K_NOTE,
+        &["ath10k_pci"],
+        FW_ATH,
     ),
-    no_wifi(
+    wifi(
         "Qualcomm QCA6174 (Killer 1435/1535)",
         0x168c,
         &[(0x003e, 0x003e), (0x0041, 0x0041)],
-        &["if_ath10k"],
-        ATH10K_NOTE,
+        &["ath10k_pci"],
+        FW_ATH,
     ),
-    no_wifi(
+    wifi(
         "Qualcomm QCA9377",
         0x168c,
         &[(0x0042, 0x0042)],
-        &["if_ath10k"],
-        ATH10K_NOTE,
+        &["ath10k_pci"],
+        FW_ATH,
     ),
-    no_wifi(
+    wifi(
         "Qualcomm QCA6390",
         0x17cb,
         &[(0x1101, 0x1101)],
-        &["if_ath11k"],
-        ATH11K_NOTE,
+        &["ath11k_pci"],
+        FW_ATH,
     ),
-    no_wifi(
+    wifi(
         "Qualcomm WCN6855 (QCNFA765)",
         0x17cb,
         &[(0x1103, 0x1103)],
-        &["if_ath11k"],
-        ATH11K_NOTE,
+        &["ath11k_pci"],
+        FW_ATH,
     ),
-    no_wifi(
+    wifi(
         "Qualcomm WCN7850 (FastConnect 7800)",
         0x17cb,
         &[(0x1107, 0x1107)],
-        &["if_ath12k"],
-        ATH11K_NOTE,
+        &["ath12k"],
+        FW_ATH,
     ),
-    no_wifi("Qualcomm Wi-Fi", 0x17cb, &[], &["if_ath11k"], ATH11K_NOTE),
-    Entry {
-        notes: MT7921_NOTE,
-        ..wifi(
-            "MediaTek MT7921/MT7922",
-            0x14c3,
-            &[
-                (0x0608, 0x0608),
-                (0x0616, 0x0616),
-                (0x7920, 0x7920),
-                (0x7922, 0x7922),
-                (0x7961, 0x7961),
-            ],
-            &["mt7921"],
-            &["if_mt7921"],
-            &["wifi-firmware-mt76-kmod-mt7921"],
-        )
-    },
-    no_wifi(
+    wifi("Qualcomm Wi-Fi", 0x17cb, &[], &["ath11k_pci"], FW_ATH),
+    wifi(
+        "MediaTek MT7921/MT7922",
+        0x14c3,
+        &[
+            (0x0608, 0x0608),
+            (0x0616, 0x0616),
+            (0x7920, 0x7920),
+            (0x7922, 0x7922),
+            (0x7961, 0x7961),
+        ],
+        &["mt7921e"],
+        FW_MTK,
+    ),
+    wifi(
         "MediaTek MT7925",
         0x14c3,
         &[(0x0717, 0x0717), (0x7925, 0x7925)],
-        &["if_mt7925"],
-        &["mt7925 is unstable on FreeBSD 15.1 (status report 2026Q2): not built"],
+        &["mt7925e"],
+        FW_MTK,
     ),
-    no_wifi(
-        "MediaTek Wi-Fi",
-        0x14c3,
-        &[],
-        &[],
-        &["no driver for this MediaTek chip in FreeBSD 15.1"],
-    ),
+    Entry {
+        name: "MediaTek Wi-Fi",
+        kind: Wifi,
+        vendor: Some(0x14c3),
+        class: "0280",
+        firmware: FW_MTK,
+        ..BASE
+    },
     Entry {
         name: "Broadcom Wi-Fi",
         kind: Wifi,
         vendor: Some(0x14e4),
         class: "0280",
-        drivers: &["bwn", "bwi"],
-        notes: &["most Broadcom Wi-Fi has no FreeBSD driver: use a supported USB adapter"],
-        supported: false,
+        drivers: &["brcmfmac", "wl", "b43", "bcma-pci-bridge"],
+        firmware: &["linux-firmware-broadcom"],
+        notes: &["some Broadcom cards need the broadcom-wl driver"],
         ..BASE
     },
     // ---- Ethernet ----
@@ -609,15 +511,9 @@ pub const CATALOG: &[Entry] = &[
         vendor: Some(0x10ec),
         devices: &[(0x8125, 0x8127), (0x5000, 0x5000)],
         class: "0200",
-        drivers: &["re"],
-        packages: &["realtek-re-kmod"],
-        loader: &[
-            "if_re_load=\"YES\"",
-            "if_re_name=\"/boot/modules/if_re.ko\"",
-        ],
-        notes: &[
-            "vendor driver (realtek-re-kmod) loaded by the loader: base re(4) lacks these chips",
-        ],
+        drivers: &["r8169"],
+        klds: &["r8169"],
+        firmware: FW_REALTEK,
         ..BASE
     },
     Entry {
@@ -626,8 +522,9 @@ pub const CATALOG: &[Entry] = &[
         vendor: Some(0x10ec),
         devices: &[(0x8136, 0x8136), (0x8161, 0x8161), (0x8168, 0x8169)],
         class: "0200",
-        drivers: &["re"],
-        klds: &["if_re"],
+        drivers: &["r8169"],
+        klds: &["r8169"],
+        firmware: FW_REALTEK,
         ..BASE
     },
     Entry {
@@ -643,7 +540,7 @@ pub const CATALOG: &[Entry] = &[
         ],
         class: "0200",
         drivers: &["igc"],
-        klds: &["if_igc"],
+        klds: &["igc"],
         ..BASE
     },
     Entry {
@@ -651,44 +548,31 @@ pub const CATALOG: &[Entry] = &[
         kind: Ethernet,
         vendor: Some(0x8086),
         class: "0200",
-        drivers: &["em", "igb", "ix", "ixl", "ice"],
-        klds: &["if_em"],
+        drivers: &["e1000e", "e1000", "igb", "ixgbe", "i40e", "ice"],
         ..BASE
     },
-    // ---- Bluetooth (USB; firmware loaded by iwmbtfw(8)/rtlbtfw(8)/bcmfw(8) from devd) ----
-    bt(
-        "Intel Bluetooth",
-        Some(0x8087),
-        &["iwmbt-firmware"],
-        &["firmware upload: iwmbtfw(8) via devd"],
-    ),
-    bt(
-        "Realtek Bluetooth",
-        Some(0x0bda),
-        &["rtlbt-firmware"],
-        &["firmware upload: rtlbtfw(8) via devd"],
-    ),
-    Entry {
-        name: "Broadcom BCM2033 Bluetooth",
-        vendor: Some(0x0a5c),
-        devices: &[(0x2033, 0x2033)],
-        class: "",
-        drivers: &["ubtbcmfw", "ubt"],
-        klds: &["ubtbcmfw", "ng_ubt"],
-        notes: &["firmware upload: bcmfw(8)"],
-        ..bt("", None, &["bluez-firmware"], &[])
-    },
-    bt("Bluetooth", None, &[], &[]),
+    // ---- Bluetooth (USB, btusb; firmware loaded by the kernel) ----
+    bt("Intel Bluetooth", Some(0x8087), FW_INTEL),
+    bt("Realtek Bluetooth", Some(0x0bda), FW_REALTEK),
+    bt("Qualcomm Bluetooth", Some(0x0cf3), FW_ATH),
+    bt("MediaTek Bluetooth", Some(0x0e8d), FW_MTK),
+    bt("Bluetooth", None, &[]),
     // ---- Audio ----
     Entry {
         name: "Intel Smart Sound / SOF audio DSP",
         kind: Audio,
         vendor: Some(0x8086),
         class: "040380",
-        notes: &[
-            "no FreeBSD driver for the SOF DSP: pick HD Audio in the firmware setup if offered; USB/Bluetooth audio work",
+        drivers: &[
+            "snd_hda_intel",
+            "sof-audio-pci-intel-tgl",
+            "sof-audio-pci-intel-mtl",
+            "sof-audio-pci-intel-lnl",
+            "sof-audio-pci-intel-cnl",
+            "sof-audio-pci-intel-icl",
+            "sof-audio-pci-intel-apl",
         ],
-        supported: false,
+        firmware: &["sof-firmware"],
         ..BASE
     },
     Entry {
@@ -696,26 +580,33 @@ pub const CATALOG: &[Entry] = &[
         kind: Audio,
         vendor: Some(0x1022),
         class: "0480",
-        notes: &["no FreeBSD driver for ACP (digital microphones); HD Audio outputs work"],
-        supported: false,
+        drivers: &[
+            "snd_acp_pci",
+            "snd_pci_acp3x",
+            "snd_rn_pci_acp3x",
+            "snd_pci_acp5x",
+            "snd_pci_acp6x",
+            "snd_pci_ps",
+        ],
+        firmware: &["sof-firmware"],
         ..BASE
     },
     Entry {
         name: "HD Audio",
         kind: Audio,
         class: "0403",
-        drivers: &["hdac"],
-        klds: &["snd_hda"],
+        drivers: &["snd_hda_intel"],
+        klds: &["snd_hda_intel"],
         ..BASE
     },
-    // ---- Webcam (UVC in userland: webcamd + cuse); before USB audio: a camera with a mic is a camera ----
+    // ---- Webcam (UVC); before USB audio: a camera with a mic is a camera ----
     Entry {
         name: "USB camera",
         kind: Webcam,
         bus: Bus::Usb,
         class: "0e",
-        klds: &["cuse"],
-        packages: &["webcamd"],
+        drivers: &["uvcvideo"],
+        klds: &["uvcvideo"],
         notes: &["/dev/video* is for members of group video"],
         ..BASE
     },
@@ -724,8 +615,8 @@ pub const CATALOG: &[Entry] = &[
         kind: Audio,
         bus: Bus::Usb,
         class: "01",
-        drivers: &["uaudio"],
-        klds: &["snd_uaudio"],
+        drivers: &["snd-usb-audio"],
+        klds: &["snd_usb_audio"],
         ..BASE
     },
     // ---- Input ----
@@ -734,7 +625,7 @@ pub const CATALOG: &[Entry] = &[
         kind: Input,
         bus: Bus::Acpi,
         class: "PNP0C50",
-        klds: &["ig4", "iichid", "hmt"],
+        klds: &["i2c_hid_acpi"],
         ..BASE
     },
     Entry {
@@ -742,7 +633,7 @@ pub const CATALOG: &[Entry] = &[
         kind: Input,
         bus: Bus::Acpi,
         class: "ACPI0C50",
-        klds: &["ig4", "iichid", "hmt"],
+        klds: &["i2c_hid_acpi"],
         ..BASE
     },
     Entry {
@@ -750,7 +641,7 @@ pub const CATALOG: &[Entry] = &[
         kind: Input,
         bus: Bus::Acpi,
         class: "AMDI0010",
-        klds: &["ig4"],
+        klds: &["i2c_designware_platform"],
         ..BASE
     },
     Entry {
@@ -758,8 +649,8 @@ pub const CATALOG: &[Entry] = &[
         kind: Input,
         vendor: Some(0x8086),
         class: "0c80",
-        drivers: &["ig4iic"],
-        klds: &["ig4"],
+        drivers: &["intel-lpss"],
+        klds: &["intel_lpss_pci"],
         ..BASE
     },
     // ---- Card readers ----
@@ -774,24 +665,24 @@ pub const CATALOG: &[Entry] = &[
             (0x525a, 0x525a),
             (0x5260, 0x5260),
         ],
-        drivers: &["rtsx"],
-        klds: &["rtsx", "mmcsd"],
+        drivers: &["rtsx_pci"],
+        klds: &["rtsx_pci", "rtsx_pci_sdmmc"],
         ..BASE
     },
     Entry {
         name: "SD card reader",
         kind: CardReader,
         class: "0805",
-        drivers: &["sdhci_pci"],
-        klds: &["sdhci_pci", "mmcsd"],
+        drivers: &["sdhci-pci"],
+        klds: &["sdhci_pci"],
         ..BASE
     },
-    // ---- Backlight (backlight(4) devices) ----
+    // ---- Backlight (/sys/class/backlight) ----
     Entry {
         name: "Display backlight",
         kind: Backlight,
         bus: Bus::Backlight,
-        notes: &["raised from 0 at boot (wolos_gpu)"],
+        notes: &["raised from 0 at boot"],
         ..BASE
     },
 ];

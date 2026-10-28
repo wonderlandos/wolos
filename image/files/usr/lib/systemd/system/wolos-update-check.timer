@@ -1,0 +1,10 @@
+[Unit]
+Description=WolOS update check, hourly (the check itself runs once a day)
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

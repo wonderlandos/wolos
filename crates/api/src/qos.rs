@@ -9,8 +9,49 @@ pub trait Applier: Send + Sync {
     fn gpu_foreground(&self, _pid: i32) {}
 }
 
-/// Real policy: `wolos_qos` kmod (all threads) when loaded, else rtprio(2) / setpriority(2)
-/// on FreeBSD; setpriority only elsewhere.
+/// Linux mapping of a class, per thread: (scheduler, nice, I/O class). The FreeBSD realtime class
+/// has no safe Linux twin (SCHED_RR can starve the compositor): it becomes the strongest nice
+/// boost until a sched_ext scheduler takes QoS over (ADR 0016).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Linux {
+    /// SCHED_OTHER or SCHED_IDLE.
+    pub idle: bool,
+    pub nice: i8,
+    /// ioprio_set value: IOPRIO_CLASS_IDLE, or best effort with the level nice implies.
+    pub ioprio: i32,
+}
+
+const IOPRIO_CLASS_SHIFT: i32 = 13;
+const IOPRIO_CLASS_BE: i32 = 2;
+const IOPRIO_CLASS_IDLE: i32 = 3;
+/// Strongest boost for UserInteractive (FreeBSD rtprio).
+pub const INTERACTIVE_NICE: i8 = -15;
+
+pub fn linux(class: QosClass) -> Linux {
+    let be = |nice: i8| (IOPRIO_CLASS_BE << IOPRIO_CLASS_SHIFT) | ((i32::from(nice) + 20) / 5);
+    match class.policy() {
+        SchedPolicy::RtPrio(_) => Linux {
+            idle: false,
+            nice: INTERACTIVE_NICE,
+            ioprio: be(INTERACTIVE_NICE),
+        },
+        SchedPolicy::Nice(n) => Linux {
+            idle: false,
+            nice: n,
+            ioprio: be(n),
+        },
+        SchedPolicy::IdPrio(_) => Linux {
+            idle: true,
+            nice: 19,
+            ioprio: IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT,
+        },
+    }
+}
+
+/// i915 foreground pid (WolOS kernel patch, ADR 0008); absent on a stock kernel: no-op.
+pub const I915_FG_PID: &str = "/sys/module/i915/parameters/wol_fg_pid";
+
+/// Real policy: every thread of the process (Linux priorities are per thread).
 pub struct Sched;
 
 impl Applier for Sched {
@@ -18,132 +59,81 @@ impl Applier for Sched {
         if pid <= 0 {
             return false;
         }
-        #[cfg(target_os = "freebsd")]
-        if let Some(ok) = kmod::apply(pid, class) {
-            return ok;
-        }
-        match class.policy() {
-            SchedPolicy::Nice(n) => set_nice(pid, n) && set_rt(pid, RtKind::Normal, 0),
-            SchedPolicy::RtPrio(p) => set_rt(pid, RtKind::Realtime, p),
-            SchedPolicy::IdPrio(p) => set_rt(pid, RtKind::Idle, p),
-        }
+        let l = linux(class);
+        let mut any = false;
+        let ok = for_each_thread(pid, |tid| {
+            any = true;
+            set_thread(tid, l)
+        });
+        ok && any
     }
 
-    #[cfg(target_os = "freebsd")]
     fn gpu_foreground(&self, pid: i32) {
-        // Absent unless the WolOS i915kms (kernel/drm) is loaded: then a no-op.
-        let v: libc::c_int = pid;
-        // SAFETY: sysctlbyname reads size_of::<c_int>() bytes from v; no output buffer.
-        unsafe {
-            libc::sysctlbyname(
-                c"compat.linuxkpi.i915_wol_fg_pid".as_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                (&raw const v).cast(),
-                size_of::<libc::c_int>(),
-            )
-        };
-    }
-}
-
-#[allow(dead_code)] // variants used on FreeBSD only
-enum RtKind {
-    Realtime,
-    Normal,
-    Idle,
-}
-
-fn set_nice(pid: i32, nice: i8) -> bool {
-    // SAFETY: plain syscall with integer arguments.
-    unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as _, i32::from(nice)) == 0 }
-}
-
-#[cfg(target_os = "freebsd")]
-fn set_rt(pid: i32, kind: RtKind, prio: u8) -> bool {
-    let rt = libc::rtprio {
-        type_: match kind {
-            RtKind::Realtime => libc::RTP_PRIO_REALTIME,
-            RtKind::Normal => libc::RTP_PRIO_NORMAL,
-            RtKind::Idle => libc::RTP_PRIO_IDLE,
-        },
-        prio: u16::from(prio),
-    };
-    let mut rt = rt;
-    // SAFETY: rtprio(2) reads a valid struct.
-    unsafe { libc::rtprio(libc::RTP_SET, pid, &mut rt) == 0 }
-}
-
-/// `wolos_qos_set(tid, class)` syscall (kernel/wolos_qos). Number from `kern.wolos_qos.syscall`.
-#[cfg(target_os = "freebsd")]
-mod kmod {
-    use shared::qos::QosClass;
-    use std::sync::OnceLock;
-
-    /// Thread capacity per call; larger processes fall back to the per-process path.
-    const MAX_THREADS: usize = 64;
-
-    fn syscall_no() -> Option<libc::c_int> {
-        static NO: OnceLock<Option<libc::c_int>> = OnceLock::new();
-        *NO.get_or_init(|| {
-            let mut v: libc::c_int = -1;
-            let mut len = size_of::<libc::c_int>();
-            // SAFETY: sysctlbyname writes at most len bytes into v.
-            let r = unsafe {
-                libc::sysctlbyname(
-                    c"kern.wolos_qos.syscall".as_ptr(),
-                    (&raw mut v).cast(),
-                    &mut len,
-                    std::ptr::null(),
-                    0,
-                )
-            };
-            (r == 0 && v > 0).then_some(v)
-        })
-    }
-
-    /// None: kmod not loaded or too many threads (caller falls back). Some(ok) otherwise.
-    pub fn apply(pid: i32, class: QosClass) -> Option<bool> {
-        let no = syscall_no()?;
-        // SAFETY: kinfo_proc is plain old data; zeroed is a valid value.
-        let mut kp: [libc::kinfo_proc; MAX_THREADS] = unsafe { std::mem::zeroed() };
-        let mut len = size_of_val(&kp);
-        let mib = [
-            libc::CTL_KERN,
-            libc::KERN_PROC,
-            libc::KERN_PROC_PID | libc::KERN_PROC_INC_THREAD,
-            pid,
-        ];
-        // SAFETY: sysctl writes at most len bytes into kp.
-        let r = unsafe {
-            libc::sysctl(
-                mib.as_ptr(),
-                mib.len() as u32,
-                kp.as_mut_ptr().cast(),
-                &mut len,
-                std::ptr::null(),
-                0,
-            )
-        };
-        if r != 0 {
-            return None;
+        use std::io::Write;
+        let mut buf = [0u8; 12];
+        let mut w = &mut buf[..];
+        if write!(w, "{pid}").is_err() {
+            return;
         }
-        let n = len / size_of::<libc::kinfo_proc>();
-        if n == 0 {
-            return Some(false);
+        let n = 12 - w.len();
+        if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(I915_FG_PID) {
+            let _ = f.write_all(&buf[..n]);
+        }
+    }
+}
+
+fn set_thread(tid: i32, l: Linux) -> bool {
+    let param = libc::sched_param { sched_priority: 0 };
+    let policy = if l.idle {
+        libc::SCHED_IDLE
+    } else {
+        libc::SCHED_OTHER
+    };
+    // SAFETY: plain syscalls with integer arguments and a valid sched_param.
+    unsafe {
+        libc::sched_setscheduler(tid, policy, &param) == 0
+            && libc::setpriority(libc::PRIO_PROCESS, tid as _, i32::from(l.nice)) == 0
+            && libc::syscall(
+                libc::SYS_ioprio_set,
+                1, /* IOPRIO_WHO_PROCESS */
+                tid,
+                l.ioprio,
+            ) == 0
+    }
+}
+
+/// Calls `f` for every thread id in /proc/<pid>/task; false when the directory cannot be read or
+/// any call failed. Does not allocate (opendir/readdir with a stack path).
+fn for_each_thread(pid: i32, mut f: impl FnMut(i32) -> bool) -> bool {
+    use std::io::Write;
+    let mut path = [0u8; 32];
+    let mut w = &mut path[..];
+    if write!(w, "/proc/{pid}/task\0").is_err() {
+        return false;
+    }
+    // SAFETY: path is NUL-terminated; the DIR is closed below; dirent names are NUL-terminated.
+    unsafe {
+        let dir = libc::opendir(path.as_ptr().cast());
+        if dir.is_null() {
+            return false;
         }
         let mut ok = true;
-        for k in &kp[..n] {
-            // SAFETY: plain syscall with integer arguments.
-            ok &= unsafe { libc::syscall(no, k.ki_tid, libc::c_int::from(class as u8)) } == 0;
+        loop {
+            let e = libc::readdir(dir);
+            if e.is_null() {
+                break;
+            }
+            let name = std::ffi::CStr::from_ptr((*e).d_name.as_ptr()).to_bytes();
+            if let Some(tid) = std::str::from_utf8(name)
+                .ok()
+                .and_then(|s| s.parse::<i32>().ok())
+            {
+                ok &= f(tid);
+            }
         }
-        Some(ok)
+        libc::closedir(dir);
+        ok
     }
-}
-
-/// Not FreeBSD: realtime/idle classes have no portable equivalent; normal is a no-op.
-#[cfg(not(target_os = "freebsd"))]
-fn set_rt(_pid: i32, kind: RtKind, _prio: u8) -> bool {
-    matches!(kind, RtKind::Normal)
 }
 
 /// Apply one foreground switch: previous app -> Default, new one -> UserInteractive.
@@ -189,7 +179,7 @@ pub fn serve(
 }
 
 /// Only the realtime agent may boost (canonical executable path of the peer).
-pub const REALTIME_EXE: &str = "/usr/local/bin/wol-realtime";
+pub const REALTIME_EXE: &str = "/usr/bin/wol-realtime";
 
 pub fn peer_allowed(peer_exe: &[u8], allowed: &str) -> bool {
     peer_exe == allowed.as_bytes()
@@ -256,29 +246,54 @@ pub mod tests {
         assert_eq!(*r.0.lock().unwrap(), vec![(7, QosClass::UserInteractive)]);
     }
 
-    /// Needs `kldload wolos_qos`; skipped otherwise.
-    #[cfg(target_os = "freebsd")]
     #[test]
-    fn kmod_sets_child_class() {
+    fn linux_class_table() {
+        use QosClass::*;
+        let be = |level: i32| (2 << 13) | level;
+        for (c, idle, nice, io) in [
+            (UserInteractive, false, -15, be(1)),
+            (UserInitiated, false, -10, be(2)),
+            (Default, false, 0, be(4)),
+            (Utility, false, 10, be(6)),
+            (Background, true, 19, 3 << 13),
+        ] {
+            assert_eq!(
+                linux(c),
+                Linux {
+                    idle,
+                    nice,
+                    ioprio: io
+                },
+                "{c:?}"
+            );
+        }
+    }
+
+    /// Lowering a child needs no privilege: every thread gets the nice value, Background is
+    /// SCHED_IDLE. A missing pid fails.
+    #[test]
+    fn sched_lowers_a_real_child() {
         let mut child = std::process::Command::new("sleep")
             .arg("5")
             .spawn()
             .unwrap();
         let pid = child.id() as i32;
-        let r = super::kmod::apply(pid, QosClass::Utility);
-        // SAFETY: plain syscall.
+        let utility = Sched.apply(pid, QosClass::Utility);
+        // SAFETY: plain syscalls.
         let nice = unsafe { libc::getpriority(libc::PRIO_PROCESS, pid as _) };
+        let background = Sched.apply(pid, QosClass::Background);
+        let policy = unsafe { libc::sched_getscheduler(pid) };
         child.kill().ok();
         child.wait().ok();
-        match r {
-            None => eprintln!("wolos_qos not loaded: skipped"),
-            Some(ok) => assert!(ok && nice == 10, "ok={ok} nice={nice}"),
-        }
+        assert!(utility && nice == 10, "utility={utility} nice={nice}");
+        assert!(background && policy == libc::SCHED_IDLE, "policy={policy}");
+        assert!(!Sched.apply(i32::MAX, QosClass::Utility));
+        assert!(!Sched.apply(0, QosClass::Utility));
     }
 
     #[test]
     fn peer_check() {
-        assert!(peer_allowed(b"/usr/local/bin/wol-realtime", REALTIME_EXE));
+        assert!(peer_allowed(b"/usr/bin/wol-realtime", REALTIME_EXE));
         assert!(!peer_allowed(b"/tmp/wol-realtime", REALTIME_EXE));
     }
 

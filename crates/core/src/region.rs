@@ -31,24 +31,19 @@ pub fn zones(h: &dyn Host) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// FreeBSD `/var/db/zoneinfo` (tzsetup), Linux `/etc/timezone`; "UTC" when missing or odd.
+/// `/etc/localtime` (timedatectl's symlink); "UTC" when missing or odd.
 pub fn current_zone(h: &dyn Host) -> String {
-    let file = if h.is_freebsd() {
-        "/var/db/zoneinfo"
+    let link = h.read_link("/etc/localtime");
+    let z = crate::settings::timezones::current(link.as_deref());
+    if crate::settings::timezones::is_valid(z) {
+        z.into()
     } else {
-        "/etc/timezone"
-    };
-    h.read_text(file)
-        .and_then(|t| t.lines().next().map(|l| l.trim().to_string()))
-        .filter(|z| crate::settings::timezones::is_valid(z))
-        .unwrap_or_else(|| "UTC".into())
+        "UTC".into()
+    }
 }
 
-/// Network time on? FreeBSD: `service ntpd enabled` exits 0. None when unknown.
+/// Network time on (systemd-timesyncd through timedatectl)? None when unknown.
 pub fn ntp_enabled(h: &dyn Host) -> Option<bool> {
-    if h.is_freebsd() {
-        return Some(h.run(&["service", "ntpd", "enabled"]).is_some());
-    }
     match h
         .run(&["timedatectl", "show", "-p", "NTP", "--value"])?
         .trim()
@@ -115,7 +110,7 @@ mod tests {
             ]
         );
         assert!(parse_zone_tab("").is_empty());
-        let h = FakeHost::new(true);
+        let h = FakeHost::linux();
         assert!(zones(&h).is_empty());
         h.file(
             "/usr/share/zoneinfo/zone.tab",
@@ -127,31 +122,33 @@ mod tests {
     }
 
     #[test]
-    fn current_zone_per_platform() {
-        let h = FakeHost::new(true);
+    fn current_zone_is_the_localtime_link() {
+        let h = FakeHost::linux();
         assert_eq!(current_zone(&h), "UTC");
-        h.file("/var/db/zoneinfo", "America/Sao_Paulo\n");
+        h.link("/etc/localtime", "../usr/share/zoneinfo/America/Sao_Paulo");
         assert_eq!(current_zone(&h), "America/Sao_Paulo");
-        h.file("/var/db/zoneinfo", "../../etc/passwd\n");
+        h.link("/etc/localtime", "/usr/share/zoneinfo/Europe/Lisbon");
+        assert_eq!(current_zone(&h), "Europe/Lisbon");
+        h.link("/etc/localtime", "/usr/share/zoneinfo/../../etc/passwd");
         assert_eq!(current_zone(&h), "UTC");
-        let l = FakeHost::new(false);
-        assert_eq!(current_zone(&l), "UTC");
-        l.file("/etc/timezone", "Europe/Lisbon\n");
-        assert_eq!(current_zone(&l), "Europe/Lisbon");
+        h.link("/etc/localtime", "/etc/passwd");
+        assert_eq!(current_zone(&h), "UTC");
     }
 
     #[test]
     fn network_time() {
-        let h = FakeHost::new(true);
-        assert_eq!(ntp_enabled(&h), Some(false));
-        h.command("service ntpd enabled", "");
-        assert_eq!(ntp_enabled(&h), Some(true));
-        let l = FakeHost::new(false);
+        let l = FakeHost::linux();
         assert_eq!(ntp_enabled(&l), None);
         l.command("timedatectl show -p NTP --value", "yes\n");
         assert_eq!(ntp_enabled(&l), Some(true));
         l.command("timedatectl show -p NTP --value", "no\n");
         assert_eq!(ntp_enabled(&l), Some(false));
+    }
+
+    #[test]
+    fn real_host_zone_is_valid() {
+        let z = current_zone(&crate::system::PosixHost);
+        assert!(crate::settings::timezones::is_valid(&z), "{z}");
     }
 
     #[test]

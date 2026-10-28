@@ -4,6 +4,15 @@
 use crate::glass::{Budget, GlassConfig};
 use crate::gpu_select::{GpuInfo, choose};
 
+/// KMS node of a GPU: the probed card, else /dev/dri/renderD(128+n) -> /dev/dri/card(n).
+pub fn card(g: &GpuInfo) -> Option<String> {
+    if g.card.is_empty() {
+        card_of(&g.node)
+    } else {
+        Some(g.card.clone())
+    }
+}
+
 /// /dev/dri/renderD(128+n) -> /dev/dri/card(n).
 pub fn card_of(render_node: &str) -> Option<String> {
     let n: u32 = render_node.strip_prefix("/dev/dri/renderD")?.parse().ok()?;
@@ -14,17 +23,22 @@ pub fn card_of(render_node: &str) -> Option<String> {
 /// or VA-API for every app. Pure facts; the binary fills them with [`Userland::probe`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Userland {
-    /// [`NVIDIA_GBM`] (nvidia-driver): GBM backend on NVIDIA.
+    /// [`NVIDIA_GBM`] (nvidia-utils): GBM backend on NVIDIA.
     pub nvidia_gbm: bool,
-    /// [`NVIDIA_GLX`] (nvidia-driver): the GLVND GLX vendor.
+    /// [`NVIDIA_GLX`] (nvidia-utils): the GLVND GLX vendor.
     pub nvidia_glx: bool,
-    /// [`NVIDIA_VAAPI`] (libva-nvidia-driver, optional): VA-API driver "nvidia-drm".
+    /// [`NVIDIA_VAAPI`] (libva-nvidia-driver, optional): VA-API driver "nvidia".
     pub nvidia_vaapi: bool,
 }
 
-pub const NVIDIA_GBM: &str = "/usr/local/lib/gbm/nvidia-drm_gbm.so";
-pub const NVIDIA_GLX: &str = "/usr/local/lib/libGLX_nvidia.so.0";
-pub const NVIDIA_VAAPI: &str = "/usr/local/lib/dri/nvidia-drm_drv_video.so";
+pub const NVIDIA_GBM: &str = "/usr/lib/gbm/nvidia-drm_gbm.so";
+pub const NVIDIA_GLX: &str = "/usr/lib/libGLX_nvidia.so.0";
+pub const NVIDIA_VAAPI: &str = "/usr/lib/dri/nvidia_drv_video.so";
+
+/// The NVIDIA driver: `nvidia` (PCI driver of nvidia-open), `nvidia-drm` (its DRM module).
+pub fn is_nvidia(driver: &str) -> bool {
+    driver == "nvidia" || driver == "nvidia-drm"
+}
 
 impl Userland {
     pub fn probe() -> Self {
@@ -48,7 +62,7 @@ pub fn session_env(
     };
     let mut order: Vec<&GpuInfo> = vec![main];
     order.extend(gpus.iter().filter(|g| g.node != main.node));
-    let cards: Vec<String> = order.iter().filter_map(|g| card_of(&g.node)).collect();
+    let cards: Vec<String> = order.iter().filter_map(|g| card(g)).collect();
     let mut env = vec![
         ("AQ_DRM_DEVICES".to_owned(), cards.join(":")),
         ("WOL_RENDER_NODE".to_owned(), main.node.clone()),
@@ -56,13 +70,13 @@ pub fn session_env(
     if main.driver == "i915" || main.driver == "xe" {
         env.push(("LIBVA_DRIVER_NAME".into(), "iHD".into()));
     }
-    if main.driver == "nvidia-drm" {
+    if is_nvidia(&main.driver) {
         let mut set = |on: bool, k: &str, v: &str| {
             if on {
                 env.push((k.into(), v.into()));
             }
         };
-        set(u.nvidia_vaapi, "LIBVA_DRIVER_NAME", "nvidia-drm");
+        set(u.nvidia_vaapi, "LIBVA_DRIVER_NAME", "nvidia");
         set(u.nvidia_glx, "__GLX_VENDOR_LIBRARY_NAME", "nvidia");
         set(u.nvidia_gbm, "GBM_BACKEND", "nvidia-drm");
     }
@@ -86,9 +100,9 @@ pub fn offload_env(
         return Vec::new();
     };
     let kv = |k: &str, v: &str| (k.to_owned(), v.to_owned());
-    if d.driver == "nvidia-drm" && !u.nvidia_glx {
+    if is_nvidia(&d.driver) && !u.nvidia_glx {
         Vec::new()
-    } else if d.driver == "nvidia-drm" {
+    } else if is_nvidia(&d.driver) {
         // GL (GLX), Vulkan (nvidia_layers.json implicit layer) and EGL offload in the NVIDIA driver.
         vec![
             kv("__NV_PRIME_RENDER_OFFLOAD", "1"),
@@ -147,11 +161,22 @@ mod tests {
     fn gpu(node: &str, driver: &str, display: bool, integrated: bool) -> GpuInfo {
         GpuInfo {
             node: node.into(),
+            card: String::new(),
             driver: driver.into(),
             boot_vga: display,
             drives_display: display,
             integrated,
         }
+    }
+
+    #[test]
+    fn probed_card_wins_over_the_minor() {
+        let mut g = gpu("/dev/dri/renderD128", "i915", true, true);
+        assert_eq!(card(&g).as_deref(), Some("/dev/dri/card0"));
+        g.card = "/dev/dri/card1".into();
+        assert_eq!(card(&g).as_deref(), Some("/dev/dri/card1"));
+        let env = session_env(&[g], None, &Userland::default());
+        assert_eq!(env[0], ("AQ_DRM_DEVICES".into(), "/dev/dri/card1".into()));
     }
 
     #[test]
@@ -169,7 +194,7 @@ mod tests {
     #[test]
     fn session_env_table() {
         let hybrid = [
-            gpu("/dev/dri/renderD129", "nvidia-drm", false, false),
+            gpu("/dev/dri/renderD129", "nvidia", false, false),
             gpu("/dev/dri/renderD128", "i915", true, true),
         ];
         let env = session_env(&hybrid, None, &NV);
@@ -238,13 +263,13 @@ mod tests {
         }
     }
 
-    /// NVIDIA (nvidia-driver 595/580 on FreeBSD): every variable points at a file that exists.
+    /// NVIDIA (nvidia-open + nvidia-utils): every variable points at a file that exists.
     /// GBM_BACKEND or a GLX vendor without the library stops GBM/GLX; libva-nvidia-driver's name is
-    /// nvidia-drm. Vulkan finds share/vulkan/icd.d/nvidia_icd.json itself; Hyprland handles the
+    /// nvidia. Vulkan finds share/vulkan/icd.d/nvidia_icd.json itself; Hyprland handles the
     /// NVIDIA cursor (cursor:no_hardware_cursors = 2): nothing forced for either.
     #[test]
     fn nvidia_env_names_only_installed_userland() {
-        let only = [gpu("/dev/dri/renderD128", "nvidia-drm", true, false)];
+        let only = [gpu("/dev/dri/renderD128", "nvidia", true, false)];
         let full = Userland {
             nvidia_gbm: true,
             nvidia_glx: true,
@@ -254,7 +279,7 @@ mod tests {
             env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())
         };
         for (u, gbm, glx, va) in [
-            (full, Some("nvidia-drm"), Some("nvidia"), Some("nvidia-drm")),
+            (full, Some("nvidia-drm"), Some("nvidia"), Some("nvidia")),
             (
                 Userland {
                     nvidia_vaapi: false,
@@ -364,24 +389,15 @@ pub fn gpu_command(
     }
 }
 
-/// Running on battery: FreeBSD `hw.acpi.acline` = 0, Linux a power supply reports Discharging.
+/// Running on battery: a power supply of the computer reports Discharging (a mouse's battery,
+/// scope Device, does not count).
 pub fn on_battery() -> bool {
-    #[cfg(target_os = "freebsd")]
-    {
-        std::process::Command::new("sysctl")
-            .args(["-n", "hw.acpi.acline"])
-            .output()
-            .is_ok_and(|o| o.stdout.trim_ascii() == b"0")
-    }
-    #[cfg(not(target_os = "freebsd"))]
-    {
-        std::fs::read_dir("/sys/class/power_supply").is_ok_and(|d| {
-            d.flatten().any(|e| {
-                std::fs::read_to_string(e.path().join("status"))
-                    .is_ok_and(|s| s.trim() == "Discharging")
-            })
+    std::fs::read_dir("/sys/class/power_supply").is_ok_and(|d| {
+        d.flatten().any(|e| {
+            let f = |k: &str| std::fs::read_to_string(e.path().join(k)).unwrap_or_default();
+            f("status").trim() == "Discharging" && f("scope").trim() != "Device"
         })
-    }
+    })
 }
 
 #[cfg(test)]
@@ -392,6 +408,7 @@ mod command_tests {
     fn gpu_command_table() {
         let gpus = [GpuInfo {
             node: "/dev/dri/renderD128".into(),
+            card: String::new(),
             driver: "i915".into(),
             boot_vga: true,
             drives_display: true,

@@ -204,7 +204,7 @@ mod tests {
             "pub const SIDEBAR_WIDTH: i32 = {};",
             m::SIDEBAR_WIDTH
         )));
-        let hypr = repo("desktop/overlay/usr/local/share/wolos/hypr/hyprland.conf");
+        let hypr = repo("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
         for want in [
             format!("rounding = {}\n", m::WINDOW_RADIUS),
             format!(

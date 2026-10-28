@@ -1,12 +1,13 @@
 //! Power policy: the power source picks the profile, Low Power / High Power Mode is the user's
 //! override. Pure: facts from read-only probes + the saved state in, a plan of fixed argv out.
-//! `wol power apply` (devd on AC changes, rc.d at boot and resume) and wol-admind `power-mode` run
-//! the same plan. The lid action is wol-admind `lid` (kernel `hw.acpi.lid_switch_state`).
-use super::{EPP_ARGV, NCPU_ARGV, POWERD_ENABLED_ARGV, epp_key};
+//! `wol power apply` (udev on AC changes, systemd at boot and resume) and wol-admind `power-mode`
+//! run the same plan. The CPU and platform energy profile belong to power-profiles-daemon; the lid
+//! action is systemd-logind's (wol-admind `lid`, [`super::LID_CONF`]).
+use super::Lid;
 use serde::{Deserialize, Serialize};
 
 /// World-readable; wol-admind `power-mode` writes it, `wol power apply` reads it.
-pub const STATE_FILE: &str = "/usr/local/etc/wolos/power.json";
+pub const STATE_FILE: &str = "/etc/wolos/power.json";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -54,7 +55,7 @@ impl State {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
-    /// Mains, or a desktop without an AC adapter sysctl.
+    /// Mains, or a desktop without a Mains power supply.
     #[default]
     Ac,
     Battery,
@@ -64,11 +65,10 @@ pub enum Source {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Cpu {
-    /// Intel Speed Shift: the energy/performance preference (`dev.hwpstate_intel.N.epp`).
+    /// power-profiles-daemon: CPU energy preference (intel_pstate, amd-pstate-epp) and the ACPI
+    /// platform profile.
     Epp,
-    /// cpufreq(4) without HWP (AMD hwpstate, Intel est): powerd(8) picks the speed.
-    Powerd,
-    /// Nothing to steer (virtual machine, firmware owns it).
+    /// Nothing to steer (virtual machine, no power-profiles-daemon).
     #[default]
     Fixed,
 }
@@ -76,119 +76,123 @@ pub enum Cpu {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wlan {
     pub name: String,
-    /// The driver supports 802.11 power save (`ifconfig wlanN list caps` has PMGT).
+    /// The driver supports 802.11 power save (`iw dev <if> get power_save` answers).
     pub power_save: bool,
 }
 
-/// What the probes found. Absent sysctls mean the hardware is absent.
+/// What the probes found. A failing probe means the hardware or service is absent.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
     pub ncpu: u32,
     pub cpu: Cpu,
-    /// Current `powerd_flags` (rc.conf), when powerd runs.
-    pub powerd_flags: Option<String>,
+    /// power-profiles-daemon profile now (`balanced`).
+    pub profile: Option<String>,
     pub source: Source,
-    /// `hw.acpi.battery.life`, None without a battery.
+    /// Battery capacity %, None without a battery.
     pub battery: Option<u8>,
-    /// Current `hw.acpi.cpu.cx_lowest`; None without acpi_cpu(4) idle states.
-    pub cx_lowest: Option<String>,
-    /// Current `hw.acpi.lid_switch_state`; None without a lid.
-    pub lid_switch: Option<String>,
-    /// S3 in `hw.acpi.supported_sleep_state`.
+    /// Lid action now; None without a lid.
+    pub lid: Option<Lid>,
+    /// Suspend to RAM (`mem` in /sys/power/state).
     pub sleep: bool,
     pub wlans: Vec<Wlan>,
 }
 
-pub const ACLINE_ARGV: [&str; 3] = ["sysctl", "-n", "hw.acpi.acline"];
-pub const BATTERY_ARGV: [&str; 3] = ["sysctl", "-n", "hw.acpi.battery.life"];
-pub const CX_ARGV: [&str; 3] = ["sysctl", "-n", "hw.acpi.cpu.cx_lowest"];
-pub const LID_ARGV: [&str; 3] = ["sysctl", "-n", "hw.acpi.lid_switch_state"];
-pub const SLEEP_ARGV: [&str; 3] = ["sysctl", "-n", "hw.acpi.supported_sleep_state"];
-pub const POWERD_FLAGS_ARGV: [&str; 3] = ["sysrc", "-n", "powerd_flags"];
-pub const WLAN_ARGV: [&str; 3] = ["ifconfig", "-g", "wlan"];
+pub const NCPU_ARGV: [&str; 1] = ["nproc"];
+pub const PROFILE_ARGV: [&str; 2] = ["powerprofilesctl", "get"];
+pub const SUPPLIES_ARGV: [&str; 2] = ["ls", "/sys/class/power_supply"];
+pub const LID_ARGV: [&str; 2] = ["ls", "/proc/acpi/button/lid"];
+pub const LID_CONF_ARGV: [&str; 2] = ["cat", super::LID_CONF];
+pub const SLEEP_ARGV: [&str; 2] = ["cat", "/sys/power/state"];
+pub const NET_ARGV: [&str; 2] = ["ls", "/sys/class/net"];
 
-/// `wlanN` only (the name reaches argv).
-fn is_wlan(s: &str) -> bool {
-    s.len() > 4
-        && s.len() < 9
-        && s.starts_with("wlan")
-        && s[4..].bytes().all(|b| b.is_ascii_digit())
+/// A sysfs entry name that may reach argv: no path separators, no options.
+fn is_name(s: &str) -> bool {
+    (1..=32).contains(&s.len())
+        && !s.starts_with(['-', '.'])
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
 }
 
-/// `probe`: fixed argv -> stdout, None when it failed (a missing sysctl fails).
+/// `probe`: fixed argv -> stdout, None when it failed (a missing file fails `cat` and `ls`).
 pub fn facts(probe: &dyn Fn(&[&str]) -> Option<String>) -> Facts {
     let text = |argv: &[&str]| probe(argv).map(|s| s.trim().to_owned());
-    let num = |argv: &[&str]| text(argv).and_then(|s| s.parse::<i64>().ok());
-    let cpu = if num(&EPP_ARGV).is_some() {
-        Cpu::Epp
-    } else if probe(&POWERD_ENABLED_ARGV).is_some() {
-        Cpu::Powerd
-    } else {
-        Cpu::Fixed
+    let names = |argv: &[&str]| -> Vec<String> {
+        text(argv)
+            .unwrap_or_default()
+            .split_whitespace()
+            .filter(|n| is_name(n))
+            .map(String::from)
+            .collect()
     };
-    let wlans = text(&WLAN_ARGV)
-        .unwrap_or_default()
-        .split_whitespace()
-        .filter(|n| is_wlan(n))
+    let profile = text(&PROFILE_ARGV).filter(|p| !p.is_empty());
+    let (mut mains, mut on_ac, mut battery) = (false, false, None);
+    for n in names(&SUPPLIES_ARGV) {
+        let f = |k: &str| text(&["cat", &format!("/sys/class/power_supply/{n}/{k}")]);
+        match f("type").as_deref() {
+            Some("Mains") => {
+                mains = true;
+                on_ac |= f("online").as_deref() == Some("1");
+            }
+            Some("Battery") if battery.is_none() && f("scope").as_deref() != Some("Device") => {
+                battery = f("capacity")
+                    .and_then(|c| c.parse::<u8>().ok())
+                    .filter(|c| *c <= 100);
+            }
+            _ => {}
+        }
+    }
+    let wlans = names(&NET_ARGV)
+        .into_iter()
+        .filter(|n| probe(&["ls", &format!("/sys/class/net/{n}/wireless")]).is_some())
         .map(|n| Wlan {
-            name: n.to_owned(),
-            power_save: probe(&["ifconfig", n, "list", "caps"]).is_some_and(|c| {
-                c.split(|ch: char| !ch.is_ascii_alphanumeric())
-                    .any(|w| w == "PMGT")
-            }),
+            power_save: probe(&["iw", "dev", &n, "get", "power_save"]).is_some(),
+            name: n,
         })
         .collect();
     Facts {
-        ncpu: num(&NCPU_ARGV).map_or(0, |n| n.clamp(0, 1024) as u32),
-        cpu,
-        powerd_flags: (cpu == Cpu::Powerd)
-            .then(|| text(&POWERD_FLAGS_ARGV))
-            .flatten(),
-        source: match num(&ACLINE_ARGV) {
-            Some(0) => Source::Battery,
-            _ => Source::Ac,
+        ncpu: text(&NCPU_ARGV)
+            .and_then(|s| s.parse::<u32>().ok())
+            .map_or(0, |n| n.min(4096)),
+        cpu: if profile.is_some() {
+            Cpu::Epp
+        } else {
+            Cpu::Fixed
         },
-        battery: num(&BATTERY_ARGV)
-            .filter(|l| (0..=100).contains(l))
-            .map(|l| l as u8),
-        cx_lowest: text(&CX_ARGV).filter(|s| !s.is_empty()),
-        lid_switch: text(&LID_ARGV).filter(|s| !s.is_empty()),
-        sleep: text(&SLEEP_ARGV).is_some_and(|s| s.split_whitespace().any(|w| w == "S3")),
+        profile,
+        source: if mains && !on_ac && battery.is_some() {
+            Source::Battery
+        } else {
+            Source::Ac
+        },
+        battery,
+        lid: (!names(&LID_ARGV).is_empty()).then(|| {
+            text(&LID_CONF_ARGV)
+                .and_then(|t| super::parse_lid_conf(&t))
+                .unwrap_or(Lid::Sleep)
+        }),
+        sleep: text(&SLEEP_ARGV).is_some_and(|s| s.split_whitespace().any(|w| w == "mem")),
         wlans,
     }
 }
 
-/// Speed Shift energy preference, 0 = performance .. 100 = efficiency. Intel's own presets:
-/// balance_performance 128/255 (50), balance_power 192/255 (75), power 255/255 (100).
+/// power-profiles-daemon profile. On battery `balanced` already prefers efficiency
+/// (power-profiles-daemon picks `balance_power` for the CPU).
+pub fn profile_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Auto => "balanced",
+        Mode::Low => "power-saver",
+        Mode::High => "performance",
+    }
+}
+
+/// The energy preference the profile results in, 0 = performance .. 100 = efficiency (Intel's
+/// presets: balance_performance 50, balance_power 75, power 100). Shown in status.
 pub fn epp(mode: Mode, source: Source) -> u8 {
     match (mode, source) {
         (Mode::Auto, Source::Ac) => 50,
         (Mode::Auto, Source::Battery) => 75,
-        (Mode::Low, Source::Ac) => 85,
-        (Mode::Low, Source::Battery) => 100,
+        (Mode::Low, _) => 100,
         (Mode::High, _) => 0,
-    }
-}
-
-/// powerd(8) flags. powerd itself switches between `-a` (AC) and `-b` (battery).
-pub fn powerd_flags(mode: Mode) -> &'static str {
-    use crate::controls::{POWERD_AUTO, POWERD_LOW};
-    match mode {
-        Mode::Auto => POWERD_AUTO,
-        Mode::Low => POWERD_LOW,
-        Mode::High => POWERD_HIGH,
-    }
-}
-
-pub const POWERD_HIGH: &str = "-a maximum -b hiadaptive";
-
-/// Deepest CPU idle state. FreeBSD keeps C1 on AC (`performance_cx_lowest=NONE`) and Cmax on
-/// battery (`economy_cx_lowest`); WolOS also idles deep on AC (quiet desktops) except in High
-/// Power Mode on AC, where C1 keeps wake-up latency lowest. Matches power_profile(8) on battery.
-pub fn cx_lowest(mode: Mode, source: Source) -> &'static str {
-    match (mode, source) {
-        (Mode::High, Source::Ac) => "C1",
-        _ => "Cmax",
     }
 }
 
@@ -199,30 +203,17 @@ pub fn wifi_power_save(mode: Mode, source: Source) -> bool {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Plan {
-    /// `key=value` for one `sysctl` call (every key exists on this machine).
-    pub sysctl: Vec<(String, String)>,
-    /// New `powerd_flags`, then `service powerd restart` (only when powerd runs and they change).
-    pub powerd_flags: Option<&'static str>,
+    /// New power-profiles-daemon profile (only when it changes).
+    pub profile: Option<&'static str>,
     /// (interface, power save on).
     pub wifi: Vec<(String, bool)>,
 }
 
 pub fn plan(f: &Facts, mode: Mode) -> Plan {
-    let mut sysctl = Vec::new();
-    if f.cpu == Cpu::Epp {
-        let v = epp(mode, f.source).to_string();
-        sysctl.extend((0..f.ncpu.max(1)).map(|c| (epp_key(c), v.clone())));
-    }
-    let cx = cx_lowest(mode, f.source);
-    if f.cx_lowest.as_deref().is_some_and(|c| c != cx) {
-        sysctl.push(("hw.acpi.cpu.cx_lowest".into(), cx.into()));
-    }
-    let flags = powerd_flags(mode);
+    let want = profile_name(mode);
     let ps = wifi_power_save(mode, f.source);
     Plan {
-        sysctl,
-        powerd_flags: (f.cpu == Cpu::Powerd && f.powerd_flags.as_deref() != Some(flags))
-            .then_some(flags),
+        profile: (f.cpu == Cpu::Epp && f.profile.as_deref() != Some(want)).then_some(want),
         wifi: f
             .wlans
             .iter()
@@ -236,21 +227,22 @@ impl Plan {
     /// Fixed argv in order. Empty: nothing to change.
     pub fn argv(&self) -> Vec<Vec<String>> {
         let mut out = Vec::new();
-        if !self.sysctl.is_empty() {
-            let mut v = vec!["sysctl".to_owned()];
-            v.extend(self.sysctl.iter().map(|(k, x)| format!("{k}={x}")));
-            out.push(v);
-        }
-        if let Some(f) = self.powerd_flags {
-            out.push(vec!["sysrc".into(), format!("powerd_flags={f}")]);
-            out.push(vec!["service".into(), "powerd".into(), "restart".into()]);
+        if let Some(p) = self.profile {
+            out.push(vec!["powerprofilesctl".into(), "set".into(), p.into()]);
         }
         for (i, on) in &self.wifi {
-            out.push(vec![
-                "ifconfig".into(),
-                i.clone(),
-                if *on { "powersave" } else { "-powersave" }.into(),
-            ]);
+            out.push(
+                [
+                    "iw",
+                    "dev",
+                    i,
+                    "set",
+                    "power_save",
+                    if *on { "on" } else { "off" },
+                ]
+                .map(String::from)
+                .to_vec(),
+            );
         }
         out
     }
@@ -262,17 +254,18 @@ pub struct Status {
     pub source: Source,
     pub mode: Mode,
     /// What closing the lid does now; None without a lid.
-    pub lid: Option<super::Lid>,
+    pub lid: Option<Lid>,
     pub battery: Option<u8>,
     pub cpu: Cpu,
-    /// Preference the plan sets now (Speed Shift only).
+    /// Energy preference the profile gives now ([`epp`]); None when nothing steers the CPU.
     pub epp: Option<u8>,
+    /// Always None on Linux: cpuidle picks idle states. Kept for older clients.
     pub cx_lowest: Option<String>,
-    /// The machine can sleep (S3).
+    /// The machine can sleep (suspend to RAM).
     pub sleep: bool,
     /// Interfaces with 802.11 power save on now.
     pub wifi_power_save: Vec<String>,
-    /// Battery charge limit, %: None, no FreeBSD 15.1 driver exposes one.
+    /// Battery charge limit, %: not read yet.
     pub charge_limit: Option<u8>,
 }
 
@@ -281,40 +274,15 @@ pub fn status(f: &Facts, st: &State) -> Status {
     Status {
         source: f.source,
         mode: st.mode,
-        lid: f.lid_switch.as_deref().map(|l| {
-            if l == "NONE" {
-                super::Lid::Nothing
-            } else {
-                super::Lid::Sleep
-            }
-        }),
+        lid: f.lid,
         battery: f.battery,
         cpu: f.cpu,
         epp: (f.cpu == Cpu::Epp).then(|| epp(st.mode, f.source)),
-        cx_lowest: f
-            .cx_lowest
-            .as_ref()
-            .map(|_| cx_lowest(st.mode, f.source).to_owned()),
+        cx_lowest: None,
         sleep: f.sleep,
         wifi_power_save: p.wifi.iter().filter(|w| w.1).map(|w| w.0.clone()).collect(),
         charge_limit: None,
     }
-}
-
-/// Laptops sleep when the lid closes, like a Mac: the first `wol power apply` sets S3 when the
-/// machine has a lid, can sleep, and nobody chose (no lid line in `sysctl.conf.local`, which
-/// wol-admind `lid` writes). The lock is on screen before the machine sleeps (`wol power suspend`).
-pub fn lid_default(f: &Facts, sysctl_local: Option<&str>) -> Option<(String, String)> {
-    let key = "hw.acpi.lid_switch_state";
-    let chosen = sysctl_local.unwrap_or("").lines().any(|l| {
-        !l.trim_start().starts_with('#') && l.split_once('=').is_some_and(|(k, _)| k.trim() == key)
-    });
-    (f.sleep && f.lid_switch.as_deref() == Some("NONE") && !chosen).then(|| {
-        (
-            key.to_owned(),
-            super::lid_value(super::Lid::Sleep).to_owned(),
-        )
-    })
 }
 
 /// Low battery warnings at these levels (%), once each on the way down.
@@ -397,8 +365,8 @@ pub fn hypridle_listeners() -> String {
 
 /// Login accounts start here; the login window (`_wollogin`, 911) is never locked.
 pub const FIRST_USER_UID: u32 = 1000;
-/// Session runtime dirs (`/var/run/user/<uid>`, made by wol-login).
-pub const RUNTIME_ROOT: &str = "/var/run/user";
+/// Session runtime dirs (`/run/user/<uid>`, made by systemd-logind).
+pub const RUNTIME_ROOT: &str = "/run/user";
 /// Hyprland IPC request: start the user's lock unless it already runs (as the user, in the session).
 pub const LOCK_REQUEST: &[u8] = b"dispatch exec pgrep -x wol-lock || wol-lock";
 
@@ -444,7 +412,7 @@ pub fn home_of(passwd: &str, uid: u32) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// (probe argv, stdout) pairs; anything else fails like a missing sysctl.
+    /// (probe argv, stdout) pairs; anything else fails like a missing file.
     fn probe(t: &'static [(&'static str, &'static str)]) -> impl Fn(&[&str]) -> Option<String> {
         move |argv| {
             let l = argv.join(" ");
@@ -453,26 +421,35 @@ mod tests {
     }
 
     const LAPTOP: &[(&str, &str)] = &[
-        ("sysctl -n hw.ncpu", "4\n"),
-        ("sysctl -n dev.hwpstate_intel.0.epp", "50\n"),
-        ("sysctl -n hw.acpi.acline", "0\n"),
-        ("sysctl -n hw.acpi.battery.life", "64\n"),
-        ("sysctl -n hw.acpi.cpu.cx_lowest", "C1\n"),
-        ("sysctl -n hw.acpi.lid_switch_state", "NONE\n"),
-        ("sysctl -n hw.acpi.supported_sleep_state", "S3 S4 S5\n"),
-        ("ifconfig -g wlan", "wlan0\n"),
+        ("nproc", "4\n"),
+        ("powerprofilesctl get", "balanced\n"),
         (
-            "ifconfig wlan0 list caps",
-            "drivercaps=4f8def41<STA,FF,TURBOP,IBSS,PMGT,SWRETRY,TXPMGT,SHSLOT>\n",
+            "ls /sys/class/power_supply",
+            "ADP0\nBAT0\nhidpp_battery_0\n",
         ),
+        ("cat /sys/class/power_supply/ADP0/type", "Mains\n"),
+        ("cat /sys/class/power_supply/ADP0/online", "0\n"),
+        (
+            "cat /sys/class/power_supply/hidpp_battery_0/type",
+            "Battery\n",
+        ),
+        (
+            "cat /sys/class/power_supply/hidpp_battery_0/scope",
+            "Device\n",
+        ),
+        ("cat /sys/class/power_supply/BAT0/type", "Battery\n"),
+        ("cat /sys/class/power_supply/BAT0/capacity", "64\n"),
+        ("ls /proc/acpi/button/lid", "LID0\n"),
+        ("cat /sys/power/state", "freeze mem disk\n"),
+        ("ls /sys/class/net", "lo\nenp0s31f6\nwlan0\n"),
+        ("ls /sys/class/net/wlan0/wireless", ""),
+        ("iw dev wlan0 get power_save", "Power save: off\n"),
     ];
 
-    const AMD_DESKTOP: &[(&str, &str)] = &[
-        ("sysctl -n hw.ncpu", "16\n"),
-        ("service powerd enabled", ""),
-        ("sysrc -n powerd_flags", "-a hiadaptive\n"),
-        ("sysctl -n hw.acpi.cpu.cx_lowest", "C1\n"),
-        ("sysctl -n hw.acpi.supported_sleep_state", "S3 S4 S5\n"),
+    const DESKTOP: &[(&str, &str)] = &[
+        ("nproc", "16\n"),
+        ("powerprofilesctl get", "performance\n"),
+        ("cat /sys/power/state", "freeze mem disk\n"),
     ];
 
     #[test]
@@ -483,11 +460,10 @@ mod tests {
             Facts {
                 ncpu: 4,
                 cpu: Cpu::Epp,
-                powerd_flags: None,
+                profile: Some("balanced".into()),
                 source: Source::Battery,
                 battery: Some(64),
-                cx_lowest: Some("C1".into()),
-                lid_switch: Some("NONE".into()),
+                lid: Some(Lid::Sleep),
                 sleep: true,
                 wlans: vec![Wlan {
                     name: "wlan0".into(),
@@ -495,16 +471,10 @@ mod tests {
                 }],
             }
         );
-        let d = facts(&probe(AMD_DESKTOP));
+        let d = facts(&probe(DESKTOP));
         assert_eq!(
-            (
-                d.cpu,
-                d.source,
-                d.battery,
-                d.lid_switch,
-                d.powerd_flags.as_deref()
-            ),
-            (Cpu::Powerd, Source::Ac, None, None, Some("-a hiadaptive"))
+            (d.cpu, d.source, d.battery, d.lid, d.sleep),
+            (Cpu::Epp, Source::Ac, None, None, true)
         );
         // A VM: nothing answers.
         let vm = facts(&|_: &[&str]| None);
@@ -512,43 +482,49 @@ mod tests {
             (vm.cpu, vm.source, vm.sleep),
             (Cpu::Fixed, Source::Ac, false)
         );
-        // Only wlanN names reach argv; no PMGT, no power save.
+        // Only plain names reach argv; no power save answer, no power save.
         let odd = facts(&probe(&[
-            ("ifconfig -g wlan", "wlan1 em0;id wlan12345678\n"),
-            ("ifconfig wlan1 list caps", "drivercaps=1<STA,TXPMGT>\n"),
-            ("sysctl -n hw.acpi.battery.life", "-1\n"),
+            ("ls /sys/class/net", "wlp2s0 -rf ../x\n"),
+            ("ls /sys/class/net/wlp2s0/wireless", ""),
+            ("ls /sys/class/power_supply", "BAT1\n"),
+            ("cat /sys/class/power_supply/BAT1/type", "Battery\n"),
+            ("cat /sys/class/power_supply/BAT1/capacity", "250\n"),
+            ("ls /proc/acpi/button/lid", "LID\n"),
+            (
+                "cat /etc/systemd/logind.conf.d/50-wolos-lid.conf",
+                "[Login]\nHandleLidSwitch=ignore\n",
+            ),
         ]));
         assert_eq!(
             odd.wlans,
             vec![Wlan {
-                name: "wlan1".into(),
+                name: "wlp2s0".into(),
                 power_save: false
             }]
         );
-        assert_eq!(odd.battery, None, "-1 = no battery");
+        assert_eq!(odd.battery, None, "out of range");
+        assert_eq!(odd.source, Source::Ac, "no Mains supply: AC");
+        assert_eq!(odd.lid, Some(Lid::Nothing));
     }
 
     #[test]
     fn profile_table() {
         use Mode::*;
         use Source::*;
-        for (m, s, e, cx, ps) in [
-            (Auto, Ac, 50, "Cmax", false),
-            (Auto, Battery, 75, "Cmax", true),
-            (Low, Ac, 85, "Cmax", false),
-            (Low, Battery, 100, "Cmax", true),
-            (High, Ac, 0, "C1", false),
-            (High, Battery, 0, "Cmax", false),
+        for (m, s, e, ps) in [
+            (Auto, Ac, 50, false),
+            (Auto, Battery, 75, true),
+            (Low, Ac, 100, false),
+            (Low, Battery, 100, true),
+            (High, Ac, 0, false),
+            (High, Battery, 0, false),
         ] {
-            assert_eq!(
-                (epp(m, s), cx_lowest(m, s), wifi_power_save(m, s)),
-                (e, cx, ps),
-                "{m:?} {s:?}"
-            );
+            assert_eq!((epp(m, s), wifi_power_save(m, s)), (e, ps), "{m:?} {s:?}");
         }
-        assert_eq!(powerd_flags(Auto), "-a hiadaptive");
-        assert_eq!(powerd_flags(Low), "-a minimum -b minimum");
-        assert_eq!(powerd_flags(High), "-a maximum -b hiadaptive");
+        assert_eq!(
+            Mode::ALL.map(profile_name),
+            ["balanced", "power-saver", "performance"]
+        );
     }
 
     fn shown(p: &Plan) -> String {
@@ -564,36 +540,19 @@ mod tests {
         let laptop = facts(&probe(LAPTOP));
         assert_eq!(
             shown(&plan(&laptop, Mode::Auto)),
-            "sysctl dev.hwpstate_intel.0.epp=75 dev.hwpstate_intel.1.epp=75 \
-             dev.hwpstate_intel.2.epp=75 dev.hwpstate_intel.3.epp=75 hw.acpi.cpu.cx_lowest=Cmax; \
-             ifconfig wlan0 powersave"
+            "iw dev wlan0 set power_save on",
+            "already balanced"
         );
         let mut on_ac = laptop.clone();
         on_ac.source = Source::Ac;
-        on_ac.cx_lowest = Some("Cmax".into());
         assert_eq!(
-            shown(&plan(&on_ac, Mode::High)),
-            "sysctl dev.hwpstate_intel.0.epp=0 dev.hwpstate_intel.1.epp=0 \
-             dev.hwpstate_intel.2.epp=0 dev.hwpstate_intel.3.epp=0 hw.acpi.cpu.cx_lowest=C1; \
-             ifconfig wlan0 -powersave"
-        );
-        // powerd: flags change only when needed; never `service powerd restart` without powerd.
-        let amd = facts(&probe(AMD_DESKTOP));
-        assert_eq!(
-            shown(&plan(&amd, Mode::Auto)),
-            "sysctl hw.acpi.cpu.cx_lowest=Cmax"
+            shown(&plan(&on_ac, Mode::Low)),
+            "powerprofilesctl set power-saver; iw dev wlan0 set power_save off"
         );
         assert_eq!(
-            shown(&plan(&amd, Mode::Low)),
-            "sysctl hw.acpi.cpu.cx_lowest=Cmax; sysrc powerd_flags=-a minimum -b minimum; \
-             service powerd restart"
+            shown(&plan(&facts(&probe(DESKTOP)), Mode::Auto)),
+            "powerprofilesctl set balanced"
         );
-        for m in Mode::ALL {
-            assert!(
-                !shown(&plan(&laptop, m)).contains("powerd"),
-                "Speed Shift: powerd is off"
-            );
-        }
         assert!(
             plan(&facts(&|_: &[&str]| None), Mode::Low)
                 .argv()
@@ -626,11 +585,11 @@ mod tests {
             Status {
                 source: Source::Battery,
                 mode: Mode::Auto,
-                lid: Some(crate::power::Lid::Nothing),
+                lid: Some(Lid::Sleep),
                 battery: Some(64),
                 cpu: Cpu::Epp,
                 epp: Some(75),
-                cx_lowest: Some("Cmax".into()),
+                cx_lowest: None,
                 sleep: true,
                 wifi_power_save: vec!["wlan0".into()],
                 charge_limit: None,
@@ -639,44 +598,19 @@ mod tests {
         let json = serde_json::to_value(&st).unwrap();
         assert_eq!(json["source"], "battery");
         assert_eq!(json["cpu"], "epp");
-        let d = status(&facts(&probe(AMD_DESKTOP)), &State::default());
-        assert_eq!((d.lid, d.epp, d.cpu), (None, None, Cpu::Powerd));
-    }
-
-    #[test]
-    fn lid_sleeps_by_default_unless_chosen() {
-        let f = facts(&probe(LAPTOP));
-        let s3 = Some(("hw.acpi.lid_switch_state".to_string(), "S3".to_string()));
-        assert_eq!(lid_default(&f, None), s3);
-        assert_eq!(
-            lid_default(&f, Some("kern.coredump=0\n# hw.acpi.lid_switch_state=S3\n")),
-            s3
-        );
-        assert_eq!(
-            lid_default(&f, Some("hw.acpi.lid_switch_state=NONE\n")),
-            None,
-            "the user chose Nothing"
-        );
-        let mut no_s3 = f.clone();
-        no_s3.sleep = false;
-        assert_eq!(lid_default(&no_s3, None), None);
-        let mut desktop = f.clone();
-        desktop.lid_switch = None;
-        assert_eq!(lid_default(&desktop, None), None);
-        let mut set = f;
-        set.lid_switch = Some("S3".into());
-        assert_eq!(lid_default(&set, None), None, "already sleeps");
+        let vm = status(&facts(&|_: &[&str]| None), &State::default());
+        assert_eq!((vm.lid, vm.epp, vm.cpu), (None, None, Cpu::Fixed));
     }
 
     #[test]
     fn sessions_to_lock_before_sleep() {
         let tree = [
-            "/var/run/user/911/hypr/g/.socket.sock",
-            "/var/run/user/1001/hypr/a1/.socket.sock",
-            "/var/run/user/1001/hypr/a1/.socket2.sock",
-            "/var/run/user/1001/hypr/stale/hyprland.log",
-            "/var/run/user/1002/hypr/b/.socket.sock",
-            "/var/run/user/x/hypr/c/.socket.sock",
+            "/run/user/911/hypr/g/.socket.sock",
+            "/run/user/1001/hypr/a1/.socket.sock",
+            "/run/user/1001/hypr/a1/.socket2.sock",
+            "/run/user/1001/hypr/stale/hyprland.log",
+            "/run/user/1002/hypr/b/.socket.sock",
+            "/run/user/x/hypr/c/.socket.sock",
         ];
         let list = |d: &str| -> Vec<String> {
             let mut v: Vec<String> = tree
@@ -693,16 +627,16 @@ mod tests {
             [
                 Session {
                     uid: 1001,
-                    socket: "/var/run/user/1001/hypr/a1/.socket.sock".into()
+                    socket: "/run/user/1001/hypr/a1/.socket.sock".into()
                 },
                 Session {
                     uid: 1002,
-                    socket: "/var/run/user/1002/hypr/b/.socket.sock".into()
+                    socket: "/run/user/1002/hypr/b/.socket.sock".into()
                 },
             ],
             "not the login window, not a stale instance"
         );
-        let pw = "root:*:0:0::/root:/bin/sh\nann:*:1001:1001:Ann:/home/ann:/usr/local/bin/zsh\n";
+        let pw = "root:*:0:0::/root:/bin/sh\nann:*:1001:1001:Ann:/home/ann:/usr/bin/zsh\n";
         assert_eq!(home_of(pw, 1001).as_deref(), Some("/home/ann"));
         assert_eq!(home_of(pw, 1002), None);
         assert_eq!(LOCK_REQUEST, b"dispatch exec pgrep -x wol-lock || wol-lock");

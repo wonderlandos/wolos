@@ -1,0 +1,16 @@
+# WolOS services (ADR 0016). Arch units WolOS relies on are enabled here too.
+enable wold.service
+enable wolos-boot-ok.service
+enable wolos-hw.service
+enable wolos-gpu.service
+enable wolos-firstboot.service
+enable wolos-power.service
+enable wolos-update-check.timer
+enable NetworkManager.service
+enable bluetooth.service
+enable nftables.service
+enable cups.socket
+enable avahi-daemon.service
+enable systemd-timesyncd.service
+enable udisks2.service
+enable seatd.service

@@ -1,6 +1,6 @@
 //! Control Center extras: battery, Now Playing (MPRIS via playerctl), Bluetooth devices, keyboard
 //! backlight, Low Power Mode, accessibility (Hyprland options), Night Shift probe, default route.
-//! Same shape as the parent module: pure parsers (fixture-tested) + fixed argv per platform.
+//! Same shape as the parent module: pure parsers (fixture-tested) + sysfs reads and fixed argv.
 use super::{ControlError, Controls, backlight_percent};
 use crate::power::policy::Mode;
 use shared::admin::AdminAction;
@@ -58,29 +58,6 @@ const NIGHT_BELOW_K: u32 = 6000;
 
 /// playerctl `--format`: one tab-separated line.
 pub const PLAYERCTL_FORMAT: &str = "{{status}}\t{{position}}\t{{mpris:length}}\t{{xesam:title}}\t{{xesam:artist}}\t{{mpris:artUrl}}\t{{playerName}}";
-
-/// powerd(8) flags for Low Power Mode and for the WolOS default (`image/rcconf.sh`).
-pub const POWERD_LOW: &str = "-a minimum -b minimum";
-pub const POWERD_AUTO: &str = "-a hiadaptive";
-
-/// FreeBSD `hw.acpi.battery.{life,time,state}`: life -1 = no battery; state bit 1 discharging, 2 charging.
-pub fn battery_bsd(life: i64, time: i64, state: i64) -> Option<BatteryState> {
-    if !(0..=100).contains(&life) {
-        return None;
-    }
-    let charge = if state & 2 != 0 {
-        Charge::Charging
-    } else if state & 1 != 0 {
-        Charge::Discharging
-    } else {
-        Charge::Full
-    };
-    Some(BatteryState {
-        percent: life as u8,
-        charge,
-        minutes: (charge == Charge::Discharging && time > 0).then_some(time as u32),
-    })
-}
 
 /// Linux power_supply: capacity, status, energy (or charge) now/full and power (or current) now.
 pub fn battery_sysfs(
@@ -161,20 +138,13 @@ pub fn parse_hypr_option(json: &str) -> Option<f64> {
         .or_else(|| v.get("float").and_then(|x| x.as_f64()))
 }
 
-/// `/etc/rc.conf` -> Low Power Mode on (powerd at minimum); None without powerd.
-pub fn parse_powerd(rc_conf: &str) -> Option<bool> {
-    let p = crate::system::pairs(rc_conf, '=');
-    let val = |k: &str| p.get(k).map(|v| v.trim().trim_matches('"').to_string());
-    (val("powerd_enable")?.eq_ignore_ascii_case("yes"))
-        .then(|| val("powerd_flags").is_some_and(|f| f.contains("-a minimum")))
-}
-
-/// `route -n get default`: "interface: em0".
-pub fn parse_route_iface(text: &str) -> Option<String> {
-    text.lines()
-        .find_map(|l| l.trim().strip_prefix("interface:"))
-        .map(|i| i.trim().to_string())
-        .filter(|i| !i.is_empty())
+/// `/proc/net/route`: the interface of the first default route (destination 0, flag UP|GATEWAY).
+pub fn parse_proc_route(text: &str) -> Option<String> {
+    text.lines().skip(1).find_map(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        let flags = u32::from_str_radix(f.get(3)?, 16).ok()?;
+        (f.get(1) == Some(&"00000000") && flags & 0x3 == 0x3).then(|| f[0].to_string())
+    })
 }
 
 fn read_u64(c: &Controls, path: &str) -> Option<u64> {
@@ -186,19 +156,10 @@ impl Controls {
 
     pub fn battery(&self) -> Option<BatteryState> {
         let h = &self.host;
-        if self.bsd() {
-            return battery_bsd(
-                h.sysctl_i64("hw.acpi.battery.life")?,
-                h.sysctl_i64("hw.acpi.battery.time").unwrap_or(-1),
-                h.sysctl_i64("hw.acpi.battery.state").unwrap_or(0),
-            );
-        }
         let dir = h
             .list_dir("/sys/class/power_supply")
             .into_iter()
-            .find(|d| {
-                h.read_text(&format!("{d}/type")).as_deref().map(str::trim) == Some("Battery")
-            })?;
+            .find(|d| crate::power::batteries(&**h).contains(d))?;
         let f = |n: &str| read_u64(self, &format!("{dir}/{n}"));
         let (now, full, rate) = match f("energy_now") {
             Some(n) => (Some(n), f("energy_full"), f("power_now")),
@@ -230,11 +191,8 @@ impl Controls {
 
     // ---- Bluetooth devices ----
 
-    /// Paired devices (BlueZ). FreeBSD has no pairing backend yet: empty.
+    /// Paired devices (BlueZ).
     pub fn bt_devices(&self) -> Vec<BtDevice> {
-        if self.bsd() {
-            return Vec::new();
-        }
         let Some(paired) = self.run(&["bluetoothctl", "devices", "Paired"]) else {
             return Vec::new();
         };
@@ -256,9 +214,6 @@ impl Controls {
         if !is_bt_addr(addr) {
             return Err(ControlError::Invalid);
         }
-        if self.bsd() {
-            return Err(ControlError::Unavailable);
-        }
         let verb = if on { "connect" } else { "disconnect" };
         match self.host.run_slow(&["bluetoothctl", verb, addr]) {
             Some(o) if o.contains("Failed") || o.contains("not available") => {
@@ -272,9 +227,6 @@ impl Controls {
     // ---- Keyboard backlight ----
 
     fn kbd_led(&self) -> Option<(String, u64)> {
-        if self.bsd() {
-            return None;
-        }
         let dir = self
             .host
             .list_dir("/sys/class/leds")
@@ -314,60 +266,38 @@ impl Controls {
 
     // ---- Low Power Mode ----
 
-    /// Linux: power-profiles-daemon. FreeBSD: the Speed Shift preference (EPP), else powerd flags
-    /// (rc.conf; rc.conf.d/powerd overrides powerd_enable). None: nothing to steer, hide the switch.
+    /// Low Power Mode on; None when nothing steers the CPU (no power-profiles-daemon): hide the switch.
     pub fn low_power(&self) -> Option<bool> {
-        if self.bsd() {
-            return self.power_mode().map(|m| m == Mode::Low);
-        }
-        self.run(&["powerprofilesctl", "get"])
-            .map(|s| s.trim() == "power-saver")
+        self.power_mode().map(|m| m == Mode::Low)
     }
 
-    /// FreeBSD power mode (`power::policy`): the saved mode, when something steers the CPU (Speed
-    /// Shift, or powerd enabled: rc.conf.d/powerd overrides rc.conf). Without a saved mode, powerd
-    /// flags at minimum read as Low (systems set up before the policy). None: hide the switch.
+    /// Power mode (`power::policy`): the saved mode, when power-profiles-daemon runs. Without a
+    /// saved mode, the profile now (set before the policy, or by another tool). None: hide the switch.
     pub fn power_mode(&self) -> Option<Mode> {
-        if !self.bsd() {
-            return self
-                .low_power()
-                .map(|l| if l { Mode::Low } else { Mode::Auto });
-        }
-        let epp = self.host.sysctl_i64(&crate::power::epp_key(0)).is_some();
-        let rc = self.host.read_text("/etc/rc.conf").unwrap_or_default();
-        let rcd = self
-            .host
-            .read_text(&format!("{}/powerd", crate::hardware::RC_CONF_DIR))
-            .unwrap_or_default();
-        // `pairs` keeps the first value: rc.conf.d/powerd (sourced after rc.conf) goes first.
-        let powerd = parse_powerd(&format!("{rcd}\n{rc}"));
-        if !epp && powerd.is_none() {
-            return None;
-        }
-        match self.host.read_text(crate::power::policy::STATE_FILE) {
-            Some(t) => Some(crate::power::policy::State::parse(Some(&t)).mode),
-            None if !epp && powerd == Some(true) => Some(Mode::Low),
-            None => Some(Mode::Auto),
-        }
+        let now = self.run(&crate::power::policy::PROFILE_ARGV)?;
+        Some(
+            match self.host.read_text(crate::power::policy::STATE_FILE) {
+                Some(t) => crate::power::policy::State::parse(Some(&t)).mode,
+                None => match now.trim() {
+                    "power-saver" => Mode::Low,
+                    "performance" => Mode::High,
+                    _ => Mode::Auto,
+                },
+            },
+        )
     }
 
     pub fn set_low_power(&self, on: bool, pw: &str) -> Result<(), ControlError> {
-        if self.bsd() {
-            return self.set_power_mode(if on { Mode::Low } else { Mode::Auto }, pw);
-        }
-        let p = if on { "power-saver" } else { "balanced" };
-        self.ok(self.run(&["powerprofilesctl", "set", p]))
+        self.set_power_mode(if on { Mode::Low } else { Mode::Auto }, pw)
     }
 
-    /// wol-admind `power-mode` (no password: like brightness, any local user may change it).
+    /// wol-admind `power-mode`: saved for `wol power apply` (AC changes, boot, resume). No password:
+    /// like brightness, any local user may change it.
     pub fn set_power_mode(&self, m: Mode, pw: &str) -> Result<(), ControlError> {
-        if !self.bsd() {
-            return self.set_low_power(m == Mode::Low, pw);
-        }
         self.admin(AdminAction::PowerMode, &[m.name()], pw)
     }
 
-    // ---- Accessibility (Hyprland, both platforms) ----
+    // ---- Accessibility (Hyprland) ----
 
     pub fn accessibility(&self) -> Option<A11y> {
         let opt = |name: &str| {
@@ -409,10 +339,11 @@ impl Controls {
 
     // ---- Network ----
 
-    /// FreeBSD default-route interface (no sysfs): "em0", "wlan0"; None offline.
+    /// Default-route interface ("enp0s31f6", "wlan0"); None offline.
     pub fn default_iface(&self) -> Option<String> {
-        self.run(&["route", "-n", "get", "default"])
-            .and_then(|s| parse_route_iface(&s))
+        self.host
+            .read_text("/proc/net/route")
+            .and_then(|s| parse_proc_route(&s))
     }
 }
 
@@ -423,8 +354,8 @@ mod tests {
     use shared::admin::AdminReply;
     use std::sync::{Arc, Mutex};
 
-    fn controls(bsd: bool) -> (Arc<FakeHost>, Controls, Arc<Mutex<Vec<String>>>) {
-        let h = Arc::new(FakeHost::new(bsd));
+    fn controls() -> (Arc<FakeHost>, Controls, Arc<Mutex<Vec<String>>>) {
+        let h = Arc::new(FakeHost::linux());
         let log = Arc::new(Mutex::new(Vec::new()));
         let l = log.clone();
         let mut c = Controls::new(h.clone());
@@ -444,18 +375,6 @@ mod tests {
     #[test]
     fn battery_table() {
         use Charge::*;
-        for (life, time, state, want) in [
-            (82, 191, 1, Some((82, Discharging, Some(191)))),
-            (40, -1, 2, Some((40, Charging, None))),
-            (100, -1, 0, Some((100, Full, None))),
-            (-1, -1, 7, None),
-        ] {
-            assert_eq!(
-                battery_bsd(life, time, state).map(|b| (b.percent, b.charge, b.minutes)),
-                want,
-                "{life} {time} {state}"
-            );
-        }
         let b = battery_sysfs(
             "50\n",
             "Discharging\n",
@@ -475,21 +394,8 @@ mod tests {
     }
 
     #[test]
-    fn battery_reads_per_platform() {
-        let (h, c, _) = controls(true);
-        assert_eq!(c.battery(), None, "desktop: no battery sysctls");
-        h.int("hw.acpi.battery.life", 64)
-            .int("hw.acpi.battery.time", 125)
-            .int("hw.acpi.battery.state", 1);
-        assert_eq!(
-            c.battery(),
-            Some(BatteryState {
-                percent: 64,
-                charge: Charge::Discharging,
-                minutes: Some(125)
-            })
-        );
-        let (h, c, _) = controls(false);
+    fn battery_reads_sysfs() {
+        let (h, c, _) = controls();
         h.file("/sys/class/power_supply/AC/type", "Mains\n");
         assert_eq!(c.battery(), None);
         h.file("/sys/class/power_supply/BAT0/type", "Battery\n")
@@ -538,7 +444,7 @@ mod tests {
 
     #[test]
     fn media_verbs() {
-        let (h, c, _) = controls(false);
+        let (h, c, _) = controls();
         h.command("playerctl next", "");
         assert_eq!(c.media("next"), Ok(()));
         assert_eq!(
@@ -556,7 +462,7 @@ mod tests {
 
     #[test]
     fn bluetooth_devices() {
-        let (h, c, _) = controls(false);
+        let (h, c, _) = controls();
         h.command(
             "bluetoothctl devices Paired",
             "Device AA:BB:CC:DD:EE:01 AirPods Pro\nDevice AA:BB:CC:DD:EE:02 MX Keys\njunk\n",
@@ -582,17 +488,11 @@ mod tests {
             Err(ControlError::Failed)
         );
         assert_eq!(c.bt_connect("AA:BB; rm", true), Err(ControlError::Invalid));
-        let (_, bsd, _) = controls(true);
-        assert!(bsd.bt_devices().is_empty());
-        assert_eq!(
-            bsd.bt_connect("AA:BB:CC:DD:EE:01", true),
-            Err(ControlError::Unavailable)
-        );
     }
 
     #[test]
     fn keyboard_backlight() {
-        let (h, c, _) = controls(false);
+        let (h, c, _) = controls();
         assert_eq!(c.keyboard_brightness(), None);
         h.file("/sys/class/leds/input3::capslock/brightness", "0\n")
             .file("/sys/class/leds/tpacpi::kbd_backlight/brightness", "1\n")
@@ -609,90 +509,45 @@ mod tests {
             "{:?}",
             h.ran()
         );
-        let (_, bsd, _) = controls(true);
-        assert_eq!(bsd.keyboard_brightness(), None);
+        let (_, none, _) = controls();
         assert_eq!(
-            bsd.set_keyboard_brightness(50),
+            none.set_keyboard_brightness(50),
             Err(ControlError::Unavailable)
         );
     }
 
+    /// power-profiles-daemon must run (else the switch hides); the saved mode is the truth, the
+    /// profile now only without one. Changes go through wol-admind so `wol power apply` keeps them.
     #[test]
     fn low_power_mode() {
+        use crate::power::policy::{Mode, STATE_FILE};
+        let (h, c, log) = controls();
+        assert_eq!(c.low_power(), None, "no power-profiles-daemon");
+        h.command("powerprofilesctl get", "power-saver\n");
         assert_eq!(
-            parse_powerd("powerd_enable=\"YES\"\npowerd_flags=\"-a minimum -b minimum\"\n"),
-            Some(true)
+            c.power_mode(),
+            Some(Mode::Low),
+            "no saved mode: the profile"
         );
+        h.command("powerprofilesctl get", "performance\n");
+        assert_eq!(c.power_mode(), Some(Mode::High));
+        h.file(STATE_FILE, "{\"mode\":\"auto\"}\n");
         assert_eq!(
-            parse_powerd("powerd_enable=\"YES\"\npowerd_flags=\"-a hiadaptive\"\n"),
-            Some(false)
+            (c.power_mode(), c.low_power()),
+            (Some(Mode::Auto), Some(false))
         );
-        assert_eq!(parse_powerd("sshd_enable=YES\n"), None);
-        let (h, c, log) = controls(true);
-        h.file(
-            "/etc/rc.conf",
-            "powerd_enable=\"YES\"\npowerd_flags=\"-a hiadaptive\"\n",
-        );
-        assert_eq!(c.low_power(), Some(false));
         assert_eq!(c.set_low_power(true, ""), Err(ControlError::NeedsAuth));
         assert_eq!(c.set_low_power(true, "pw"), Ok(()));
-        assert_eq!(log.lock().unwrap()[1], r#"power-mode ["low"]"#);
-        let (h, c, _) = controls(false);
-        h.command("powerprofilesctl get", "power-saver\n")
-            .command("powerprofilesctl set balanced", "");
-        assert_eq!(c.low_power(), Some(true));
-        assert_eq!(c.set_low_power(false, ""), Ok(()));
-    }
-
-    /// Speed Shift: the EPP sysctl is the truth; powerd may be off (rc.conf.d/powerd from the
-    /// hardware module overrides rc.conf). Neither: None, the switch hides.
-    #[test]
-    fn low_power_reads_epp_first_then_powerd() {
-        use crate::power::policy::{Mode, STATE_FILE};
-        let (h, c, log) = controls(true);
-        h.file(
-            "/etc/rc.conf",
-            "powerd_enable=\"YES\"\npowerd_flags=\"-a hiadaptive\"\n",
-        )
-        .file("/etc/rc.conf.d/powerd", "powerd_enable=\"NO\"\n");
-        assert_eq!(c.low_power(), None, "no EPP, powerd off");
-        // The preference follows the power source (75 on battery): the saved mode is the truth.
-        h.int("dev.hwpstate_intel.0.epp", 85);
-        assert_eq!(c.power_mode(), Some(Mode::Auto), "no saved mode yet");
-        h.file(STATE_FILE, "{\"mode\":\"low\"}\n");
-        assert_eq!(
-            (c.power_mode(), c.low_power()),
-            (Some(Mode::Low), Some(true))
-        );
-        h.file(STATE_FILE, "{\"mode\":\"high\"}\n");
-        assert_eq!(
-            (c.power_mode(), c.low_power()),
-            (Some(Mode::High), Some(false))
-        );
         assert_eq!(c.set_power_mode(Mode::High, "pw"), Ok(()));
         assert_eq!(
-            log.lock().unwrap().last().unwrap(),
-            r#"power-mode ["high"]"#
+            log.lock().unwrap()[1..],
+            [r#"power-mode ["low"]"#, r#"power-mode ["high"]"#]
         );
-        let (h, c, _) = controls(true);
-        h.file(
-            "/etc/rc.conf",
-            "powerd_enable=\"NO\"\npowerd_flags=\"-a minimum -b minimum\"\n",
-        )
-        .file("/etc/rc.conf.d/powerd", "powerd_enable=\"YES\"\n");
-        assert_eq!(
-            c.low_power(),
-            Some(true),
-            "rc.conf.d/powerd turns powerd on; no saved mode: the flags tell"
-        );
-        h.file(STATE_FILE, "{\"mode\":\"auto\"}\n");
-        assert_eq!(c.low_power(), Some(false));
-        assert_eq!(controls(true).1.low_power(), None, "no rc.conf");
     }
 
     #[test]
     fn accessibility_options() {
-        let (h, c, _) = controls(true);
+        let (h, c, _) = controls();
         assert_eq!(c.accessibility(), None, "no Hyprland");
         h.command(
             "hyprctl -j getoption animations:enabled",
@@ -718,7 +573,7 @@ mod tests {
 
     #[test]
     fn night_shift_and_route_probes() {
-        let (h, c, _) = controls(true);
+        let (h, c, _) = controls();
         assert_eq!(c.night_shift(), None, "hyprsunset not running");
         h.command("hyprctl hyprsunset temperature", "4500\n");
         assert_eq!(c.night_shift(), Some(true));
@@ -727,10 +582,13 @@ mod tests {
         h.command("hyprctl hyprsunset temperature", "invalid command");
         assert_eq!(c.night_shift(), None);
         assert_eq!(c.default_iface(), None);
-        h.command(
-            "route -n get default",
-            "   route to: default\ndestination: default\n  interface: wlan0\n      flags: <UP,GATEWAY,DONE,STATIC>\n",
+        h.file(
+            "/proc/net/route",
+            "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n\
+             docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n\
+             wlan0\t00000000\t0103A8C0\t0003\t0\t0\t600\t00000000\t0\t0\t0\n",
         );
         assert_eq!(c.default_iface().as_deref(), Some("wlan0"));
+        assert_eq!(parse_proc_route("Iface\tDestination\n"), None);
     }
 }

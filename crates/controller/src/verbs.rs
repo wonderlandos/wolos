@@ -494,7 +494,7 @@ fn find_app(env: &dyn Env, app: &str) -> Option<PathBuf> {
         .map_or_else(|| home.join(".local/share"), PathBuf::from);
     let dirs = env
         .var("XDG_DATA_DIRS")
-        .unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        .unwrap_or_else(|| "/usr/share:/usr/share".into());
     let roots = std::iter::once(data_home)
         .chain(dirs.split(':').filter(|d| !d.is_empty()).map(PathBuf::from));
     let want = app.trim_end_matches(".desktop").to_lowercase();
@@ -833,7 +833,7 @@ fn restore_list(env: &mut dyn Env, json: bool) -> i32 {
         return fail(
             env,
             ErrorCode::Unavailable,
-            "no restore points: this system does not use ZFS boot environments",
+            "no restore points: this system does not boot WolOS root slots",
         );
     };
     let target = be::rollback_target(&list).map(|b| b.name.clone());
@@ -906,13 +906,6 @@ pub fn rollback(env: &mut dyn Env, be: Option<&str>) -> i32 {
         return crate::run::exec(env, &be::activate_argv(&name));
     }
     restore_activate(env, &name)
-}
-
-/// After `wol update apply`: keep the newest [`be::KEEP`] WolOS restore points.
-pub fn prune_restore_points(env: &mut dyn Env) {
-    for name in be::prune(&boot_envs(env).unwrap_or_default(), be::KEEP) {
-        let _ = env.exec(&be::destroy_argv(&name));
-    }
 }
 
 // ---- helpers ----

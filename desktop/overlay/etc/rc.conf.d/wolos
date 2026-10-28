@@ -1,3 +1,0 @@
-# WolOS desktop services. Load GPU module per hardware (i915kms/amdgpu) via kld_list.
-dbus_enable="YES"
-seatd_enable="YES"

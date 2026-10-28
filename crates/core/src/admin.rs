@@ -12,7 +12,7 @@ pub const MAX_FULL_NAME: usize = 64;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AdminStep {
     Run(Vec<String>),
-    /// Fixed argv with a secret on stdin (never argv): e.g. `pw usermod -h 0`.
+    /// Fixed argv with a secret on stdin (never argv): e.g. `chpasswd`.
     RunInput {
         argv: Vec<String>,
         input: String,
@@ -46,11 +46,6 @@ pub enum WriteContent {
         capability: String,
         allow: bool,
     },
-    /// Add (with name) or drop (None) one device in the current hcsecd.conf.
-    Hcsecd {
-        addr: String,
-        name: Option<String>,
-    },
 }
 
 impl WriteContent {
@@ -74,11 +69,6 @@ impl WriteContent {
                 capability,
                 allow,
             } => crate::consent::set(current, app, capability, *allow),
-            Self::Hcsecd { addr, name: None } => bluetooth::remove_hcsecd(current, addr),
-            Self::Hcsecd {
-                addr,
-                name: Some(n),
-            } => bluetooth::upsert_hcsecd(current, addr, n),
         }
     }
 }
@@ -198,14 +188,14 @@ pub fn audio_default_argv(pcm: &str) -> Vec<String> {
 }
 
 /// Power mode: save it for `wol power apply` (AC changes, boot, resume), then run the policy
-/// plan for this machine and power source now (`power::policy`). Nothing steers the CPU (no Speed
-/// Shift, powerd off): Err, the switch is hidden there.
+/// plan for this machine and power source now (`power::policy`). Nothing steers the CPU (no
+/// power-profiles-daemon): Err, the switch is hidden there.
 pub fn power_steps(
     mode: power::policy::Mode,
     f: &power::policy::Facts,
 ) -> Result<Vec<AdminStep>, String> {
     if f.cpu == power::policy::Cpu::Fixed {
-        return Err("power-mode: no Speed Shift preference and powerd is off".into());
+        return Err("power-mode: power-profiles-daemon is not running".into());
     }
     let mut steps = vec![write(
         power::policy::STATE_FILE,
@@ -280,24 +270,16 @@ pub fn plan_with(
             AdminStep::Run(users::add_argv(&a[0], &a[1], a[2] == "yes").unwrap_or_default()),
             AdminStep::RunInput {
                 argv: users::password_argv(&a[0]).unwrap_or_default(),
-                input: format!("{}\n", a[3]),
+                input: format!("{}:{}\n", a[0], a[3]),
             },
         ],
         AdminAction::UserRemove => vec![AdminStep::Run(
             users::remove_argv(&a[0]).unwrap_or_default(),
         )],
         AdminAction::TimeZone => vec![AdminStep::Run(timezones::set_argv(&a[0]))],
-        AdminAction::PkgRefresh => vec![argv(&["pkg", "update", "-q"])],
-        AdminAction::PkgUpgrade => {
-            // FreeBSD's fixes the daily check fetched (update::check), then the packages.
-            use crate::update::check;
-            let ready = check::base_ready_argv();
-            let ready: Vec<&str> = ready.iter().map(String::as_str).collect();
-            let base = probe(&ready).map(|_| AdminStep::Run(check::base_install_argv()));
-            base.into_iter()
-                .chain([argv(&["pkg", "upgrade", "-y"])])
-                .collect()
-        }
+        AdminAction::PkgRefresh => vec![argv(&["pacman", "-Sy"])],
+        // Inside the pinned release only `[wolos]` moves; a new release is a new root slot.
+        AdminAction::PkgUpgrade => vec![argv(&["pacman", "-Syu", "--noconfirm"])],
         // Revoke: the daemon handles it. Packages: verified and planned by the daemon itself.
         AdminAction::Revoke | AdminAction::WolInstall | AdminAction::WolRemove => vec![],
         AdminAction::PowerMode => power_steps(
@@ -312,53 +294,24 @@ pub fn plan_with(
         AdminAction::BootEnvironment => {
             vec![AdminStep::Run(crate::update::be::activate_argv(&a[0]))]
         }
-        AdminAction::HwLoad => vec![argv(&["kldload", "-n", &a[0]])],
-        AdminAction::Ntp => service_steps(
-            "ntpd",
-            a[0] == "on",
-            &["ntpd_enable=YES", "ntpd_sync_on_start=YES"],
-            &["ntpd_enable=NO"],
-            probe,
-        ),
-        AdminAction::RemoteLogin => service_steps(
-            "sshd",
-            a[0] == "on",
-            &["sshd_enable=YES"],
-            &["sshd_enable=NO"],
-            probe,
-        ),
-        // `service pf onestart` loads the rules and enables pf whether or not it runs (it never
-        // refuses a running pf); `onestop` disables it only when enabled.
-        AdminAction::Firewall if a[0] == "on" => vec![
-            argv(&[
-                "sysrc",
-                "pf_enable=YES",
-                &format!("pf_rules={}", sharing::PF_RULES),
-            ]),
-            argv(&["service", "pf", "onestart"]),
-        ],
-        AdminAction::Firewall => vec![
-            argv(&["service", "pf", "onestop"]),
-            argv(&["sysrc", "pf_enable=NO"]),
-        ],
-        AdminAction::Hostname => vec![
-            argv(&["sysrc", &format!("hostname={}", a[0])]),
-            argv(&["hostname", &a[0]]),
-        ],
+        AdminAction::HwLoad => vec![argv(&["modprobe", &a[0]])],
+        AdminAction::Ntp => vec![argv(&[
+            "timedatectl",
+            "set-ntp",
+            if a[0] == "on" { "true" } else { "false" },
+        ])],
+        AdminAction::RemoteLogin => service_steps("sshd.service", a[0] == "on"),
+        AdminAction::Firewall => service_steps("nftables.service", a[0] == "on"),
+        AdminAction::Hostname => vec![argv(&["hostnamectl", "set-hostname", &a[0]])],
         AdminAction::Lid => {
-            let key = "hw.acpi.lid_switch_state";
-            let v = power::lid_value(if a[0] == "sleep" {
+            let l = if a[0] == "sleep" {
                 power::Lid::Sleep
             } else {
                 power::Lid::Nothing
-            });
+            };
             vec![
-                argv(&["sysctl", &format!("{key}={v}")]),
-                AdminStep::Write {
-                    path: power::SYSCTL_LOCAL.into(),
-                    mode: 0o644,
-                    content: WriteContent::SysctlUpsert(vec![(key.into(), v.into())]),
-                },
+                write(power::LID_CONF, 0o644, power::lid_conf(l)),
+                argv(&power::LOGIND_RELOAD_ARGV),
             ]
         }
         AdminAction::PrinterAdd => vec![AdminStep::Run(
@@ -379,17 +332,15 @@ pub fn plan_with(
                 allow: a[2] == "allow",
             },
         }],
-        AdminAction::BtPair | AdminAction::BtForget => vec![
-            AdminStep::Write {
-                path: bluetooth::HCSECD_CONF.into(),
-                mode: 0o600,
-                content: WriteContent::Hcsecd {
-                    addr: a[0].to_ascii_lowercase(),
-                    name: a.get(1).cloned(),
-                },
-            },
-            argv(&["service", "hcsecd", "onerestart"]),
-        ],
+        AdminAction::BtPair => bluetooth::pair_argvs(&a[0])
+            .into_iter()
+            .flatten()
+            .map(|s| argv(&s))
+            .collect(),
+        AdminAction::BtForget => bluetooth::forget_argv(&a[0])
+            .map(|s| argv(&s))
+            .into_iter()
+            .collect(),
         AdminAction::WifiForget => vec![
             AdminStep::Write {
                 path: wifi::CONF_PATH.into(),
@@ -404,38 +355,24 @@ pub fn plan_with(
     })
 }
 
-/// Session menu power verbs. Sleep goes through rc.suspend, which locks every session first
-/// (`wol power suspend`).
+/// Session menu power verbs (logind locks every session before sleep).
 pub fn session_power_argv(verb: &str) -> Option<&'static [&'static str]> {
     Some(match verb {
-        "sleep" => &["acpiconf", "-s", "3"],
-        "restart" => &["shutdown", "-r", "now"],
-        "shutdown" => &["shutdown", "-p", "now"],
+        "sleep" => &["systemctl", "suspend"],
+        "restart" => &["systemctl", "reboot"],
+        "shutdown" => &["systemctl", "poweroff"],
         _ => return None,
     })
 }
 
-/// rc.conf switch for `svc`, then start or stop it now unless it already is so (rc.subr refuses
-/// to start a running service or stop a stopped one). Running = `service <svc> onestatus` exits 0.
-fn service_steps(
-    svc: &str,
-    on: bool,
-    enable: &[&str],
-    disable: &[&str],
-    probe: &dyn Fn(&[&str]) -> Option<String>,
-) -> Vec<AdminStep> {
-    let mut sysrc = vec!["sysrc"];
-    sysrc.extend(if on { enable } else { disable });
-    let mut steps = vec![argv(&sysrc)];
-    let running = probe(&["service", svc, "onestatus"]).is_some();
-    if on != running {
-        steps.push(argv(&[
-            "service",
-            svc,
-            if on { "onestart" } else { "onestop" },
-        ]));
-    }
-    steps
+/// Enable and start (or disable and stop) a systemd unit; both are no-ops when already so.
+fn service_steps(unit: &str, on: bool) -> Vec<AdminStep> {
+    vec![argv(&[
+        "systemctl",
+        if on { "enable" } else { "disable" },
+        "--now",
+        unit,
+    ])]
 }
 
 /// Bluetooth device name for hcsecd.conf: 1..=64 characters that cannot end its quoted string or block.
@@ -484,18 +421,6 @@ pub fn user_level_ok(r: &AdminRequest, uid: u32, sessions: &[u32]) -> bool {
     is_user_level(r.action)
         && sessions.contains(&uid)
         && !(ends_sessions && sessions.iter().any(|s| *s != uid))
-}
-
-/// Package changes made in place: wol-admind creates a restore point (boot environment) first
-/// (`update::be::restore_point`).
-pub fn needs_restore_point(a: AdminAction) -> bool {
-    matches!(
-        a,
-        AdminAction::PkgUpgrade
-            | AdminAction::PkgInstall
-            | AdminAction::WolInstall
-            | AdminAction::WolRemove
-    )
 }
 
 /// An unsigned `.wol` install is approved with the password every time (never the cache).
@@ -698,16 +623,16 @@ mod tests {
             (PkgInstall, &["htop"], true),
             (PkgInstall, &["-y"], false),
             (PkgInstall, &["a", "b"], false),
-            (BootEnvironment, &["wol-before-update-1"], true),
-            (BootEnvironment, &["default"], true),
+            (BootEnvironment, &["wolos-a"], true),
+            (BootEnvironment, &["default"], false),
             (BootEnvironment, &["-F"], false),
             (BootEnvironment, &["a;b"], false),
             (BootEnvironment, &[], false),
-            (HwLoad, &["if_iwlwifi"], true),
-            (HwLoad, &["coretemp"], true),
+            (HwLoad, &["iwlwifi"], true),
+            (HwLoad, &["i915"], true),
             (HwLoad, &["evil"], false),
             (HwLoad, &["/tmp/evil.ko"], false),
-            (HwLoad, &["if_iwlwifi", "x"], false),
+            (HwLoad, &["iwlwifi", "x"], false),
             (PowerMode, &["low"], true),
             (PowerMode, &["auto"], true),
             (PowerMode, &["high"], true),
@@ -733,39 +658,43 @@ mod tests {
         };
         let cases: &[(AdminAction, &[&str], &str)] = &[
             (AudioDefault, &["pcm1"], "sysctl hw.snd.default_unit=1"),
-            (SessionPower, &["sleep"], "acpiconf -s 3"),
-            (SessionPower, &["restart"], "shutdown -r now"),
-            (SessionPower, &["shutdown"], "shutdown -p now"),
+            (SessionPower, &["sleep"], "systemctl suspend"),
+            (SessionPower, &["restart"], "systemctl reboot"),
+            (SessionPower, &["shutdown"], "systemctl poweroff"),
             (WifiPower, &["wlan0", "off"], "ifconfig wlan0 down"),
             (Bluetooth, &["on"], "service bluetooth onestart ubt0"),
             (
                 UserAdd,
                 &["bob", "Bob B", "yes", "s3cret-pw"],
-                "pw useradd -n bob -c Bob B -m -s /usr/local/bin/zsh -G wheel,video,operator; pw usermod -n bob -h 0 <stdin",
+                "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,video,input,audio bob; chpasswd <stdin",
             ),
-            (UserRemove, &["bob"], "pw userdel -n bob -r"),
-            (TimeZone, &["Europe/Lisbon"], "tzsetup Europe/Lisbon"),
-            (PkgUpgrade, &[], "pkg upgrade -y"),
-            (PkgRefresh, &[], "pkg update -q"),
-            (BootEnvironment, &["wol-1"], "bectl activate wol-1"),
+            (UserRemove, &["bob"], "userdel -r bob"),
+            (
+                TimeZone,
+                &["Europe/Lisbon"],
+                "timedatectl set-timezone Europe/Lisbon",
+            ),
+            (PkgUpgrade, &[], "pacman -Syu --noconfirm"),
+            (PkgRefresh, &[], "pacman -Sy"),
+            (
+                BootEnvironment,
+                &["wolos-b"],
+                "bootctl set-default wolos-b.conf",
+            ),
             (
                 PkgInstall,
                 &["steam"],
-                "sysrc linux_enable=YES; service linux start; pkg install -y linux_base-rl9 linux-steam-utils",
+                "pacman -S --needed --noconfirm steam",
             ),
             (
                 WifiJoin,
                 &["wlan0", "Home"],
                 "write /etc/wpa_supplicant.conf; wpa_cli -i wlan0 reconfigure",
             ),
-            (
-                Appearance,
-                &["dark"],
-                "write /usr/local/etc/wolos/appearance",
-            ),
-            (Idle, &["60"], "write /usr/local/etc/wolos/idle.json"),
+            (Appearance, &["dark"], "write /etc/wolos/appearance"),
+            (Idle, &["60"], "write /etc/wolos/idle.json"),
             (Revoke, &[], ""),
-            (HwLoad, &["iichid"], "kldload -n iichid"),
+            (HwLoad, &["i2c_hid_acpi"], "modprobe i2c_hid_acpi"),
         ];
         for (a, args, want) in cases {
             let steps = plan(&r(*a, args)).unwrap();
@@ -797,38 +726,25 @@ mod tests {
         }
     }
 
-    const SPEED_SHIFT: &[(&str, &str)] = &[
-        ("sysctl -n hw.ncpu", "4\n"),
-        ("sysctl -n dev.hwpstate_intel.0.epp", "50\n"),
-    ];
+    const SPEED_SHIFT: &[(&str, &str)] =
+        &[("nproc", "4\n"), ("powerprofilesctl get", "balanced\n")];
 
-    /// Update Now installs what the daily check fetched: FreeBSD's fixes (when ready), then the
-    /// packages, after one restore point (wol-admind).
+    /// Update Now installs the `[wolos]` fixes inside the pinned release (a new release is a new
+    /// root slot: `wol update apply`).
     #[test]
-    fn package_upgrade_installs_fetched_freebsd_fixes_first() {
-        let ready: Facts = &[(
-            "freebsd-update -f /var/db/wolos/updates/freebsd-update.conf updatesready",
-            "There are updates available to install.\n",
-        )];
-        let p = plan_with(&r(PkgUpgrade, &[]), &probe(ready)).unwrap();
-        assert_eq!(
-            shown(&p),
-            "freebsd-update -f /var/db/wolos/updates/freebsd-update.conf install; pkg upgrade -y"
-        );
+    fn package_upgrade_stays_inside_the_release() {
         let p = plan_with(&r(PkgUpgrade, &[]), &probe(&[])).unwrap();
-        assert_eq!(shown(&p), "pkg upgrade -y", "nothing fetched");
+        assert_eq!(shown(&p), "pacman -Syu --noconfirm");
     }
 
-    /// Regression: on Speed Shift CPUs the hardware module turns powerd off, so
-    /// `service powerd restart` failed and Low Power Mode never switched. The mode is saved for
-    /// `wol power apply` (AC changes, boot, resume); the power source picks the preference.
+    /// The mode is saved for `wol power apply` (AC changes, boot, resume); the plan switches the
+    /// power-profiles-daemon profile only when it differs.
     #[test]
     fn power_mode_saves_the_mode_and_runs_the_policy() {
         let p = plan_with(&r(PowerMode, &["low"]), &probe(SPEED_SHIFT)).unwrap();
         assert_eq!(
             shown(&p),
-            "write /usr/local/etc/wolos/power.json; sysctl dev.hwpstate_intel.0.epp=85 \
-             dev.hwpstate_intel.1.epp=85 dev.hwpstate_intel.2.epp=85 dev.hwpstate_intel.3.epp=85"
+            "write /etc/wolos/power.json; powerprofilesctl set power-saver"
         );
         let AdminStep::Write { content, mode, .. } = &p[0] else {
             panic!()
@@ -837,72 +753,30 @@ mod tests {
             (content.render(Some("{\"mode\":\"auto\"}")).as_str(), *mode),
             ("{\"mode\":\"low\"}\n", 0o644)
         );
-        for (m, epp) in [("auto", "50"), ("high", "0")] {
+        for (m, want) in [
+            ("auto", "write /etc/wolos/power.json"),
+            (
+                "high",
+                "write /etc/wolos/power.json; powerprofilesctl set performance",
+            ),
+        ] {
             let p = plan_with(&r(PowerMode, &[m]), &probe(SPEED_SHIFT)).unwrap();
-            assert!(
-                shown(&p).contains(&format!("sysctl dev.hwpstate_intel.0.epp={epp} ")),
-                "{m}: {}",
-                shown(&p)
-            );
+            assert_eq!(shown(&p), want, "{m}");
         }
-        const ON_BATTERY: &[(&str, &str)] = &[
-            ("sysctl -n hw.ncpu", "1\n"),
-            ("sysctl -n dev.hwpstate_intel.0.epp", "50\n"),
-            ("sysctl -n hw.acpi.acline", "0\n"),
-        ];
-        let p = plan_with(&r(PowerMode, &["auto"]), &probe(ON_BATTERY)).unwrap();
-        assert!(shown(&p).ends_with("sysctl dev.hwpstate_intel.0.epp=75"));
     }
 
     #[test]
     fn power_mode_steers_what_the_machine_has() {
-        const POWERD: &[(&str, &str)] = &[
-            ("sysctl -n hw.ncpu", "8\n"),
-            ("service powerd enabled", ""),
-            ("sysrc -n powerd_flags", "-a hiadaptive\n"),
-        ];
-        const BOTH: &[(&str, &str)] = &[
-            ("sysctl -n hw.ncpu", "1\n"),
-            ("sysctl -n dev.hwpstate_intel.0.epp", "85\n"),
-            ("service powerd enabled", ""),
-        ];
-        for (facts, mode, want) in [
-            (
-                POWERD,
-                "low",
-                "write /usr/local/etc/wolos/power.json; sysrc powerd_flags=-a minimum -b minimum; \
-                 service powerd restart",
-            ),
-            (POWERD, "auto", "write /usr/local/etc/wolos/power.json"),
-            (
-                POWERD,
-                "high",
-                "write /usr/local/etc/wolos/power.json; sysrc powerd_flags=-a maximum -b hiadaptive; \
-                 service powerd restart",
-            ),
-            (
-                BOTH,
-                "low",
-                "write /usr/local/etc/wolos/power.json; sysctl dev.hwpstate_intel.0.epp=85",
-            ),
-        ] {
-            let p = plan_with(&r(PowerMode, &[mode]), &probe(facts)).unwrap();
-            assert_eq!(shown(&p), want, "{facts:?} {mode}");
-        }
         assert!(
-            plan_with(
-                &r(PowerMode, &["low"]),
-                &probe(&[("sysctl -n hw.ncpu", "4\n")])
-            )
-            .is_err(),
-            "neither EPP nor powerd: nothing to control"
+            plan_with(&r(PowerMode, &["low"]), &probe(&[("nproc", "4\n")])).is_err(),
+            "no power-profiles-daemon: nothing to control"
         );
         assert!(plan(&r(PowerMode, &["low"])).is_err(), "no facts");
     }
 
     #[test]
     fn settings_verbs_allow_list() {
-        let app = "/usr/local/bin/wayvnc";
+        let app = "/usr/bin/wayvnc";
         let cases: &[(AdminAction, &[&str], bool)] = &[
             (Ntp, &["on"], true),
             (Ntp, &["off"], true),
@@ -969,66 +843,46 @@ mod tests {
 
     #[test]
     fn settings_verbs_plan() {
-        const NTPD_UP: &[(&str, &str)] = &[("service ntpd onestatus", "ntpd is running\n")];
-        const SSHD_UP: &[(&str, &str)] = &[("service sshd onestatus", "sshd is running\n")];
         let printer = ["HP", "ipp://10.0.0.5/ipp/print"];
-        let app = "/usr/local/bin/wayvnc";
+        let app = "/usr/bin/wayvnc";
         let cases: &[(AdminAction, &[&str], Facts, &str)] = &[
-            (
-                Ntp,
-                &["on"],
-                &[],
-                "sysrc ntpd_enable=YES ntpd_sync_on_start=YES; service ntpd onestart",
-            ),
-            (
-                Ntp,
-                &["on"],
-                NTPD_UP,
-                "sysrc ntpd_enable=YES ntpd_sync_on_start=YES",
-            ),
-            (
-                Ntp,
-                &["off"],
-                NTPD_UP,
-                "sysrc ntpd_enable=NO; service ntpd onestop",
-            ),
-            (Ntp, &["off"], &[], "sysrc ntpd_enable=NO"),
+            (Ntp, &["on"], &[], "timedatectl set-ntp true"),
+            (Ntp, &["off"], &[], "timedatectl set-ntp false"),
             (
                 RemoteLogin,
                 &["on"],
                 &[],
-                "sysrc sshd_enable=YES; service sshd onestart",
+                "systemctl enable --now sshd.service",
             ),
-            (RemoteLogin, &["on"], SSHD_UP, "sysrc sshd_enable=YES"),
             (
                 RemoteLogin,
                 &["off"],
-                SSHD_UP,
-                "sysrc sshd_enable=NO; service sshd onestop",
+                &[],
+                "systemctl disable --now sshd.service",
             ),
             (
                 Hostname,
                 &["julias-laptop"],
                 &[],
-                "sysrc hostname=julias-laptop; hostname julias-laptop",
+                "hostnamectl set-hostname julias-laptop",
             ),
             (
                 Firewall,
                 &["on"],
                 &[],
-                "sysrc pf_enable=YES pf_rules=/usr/local/share/wolos/pf.conf; service pf onestart",
+                "systemctl enable --now nftables.service",
             ),
             (
                 Firewall,
                 &["off"],
                 &[],
-                "service pf onestop; sysrc pf_enable=NO",
+                "systemctl disable --now nftables.service",
             ),
             (
                 Lid,
                 &["nothing"],
                 &[],
-                "sysctl hw.acpi.lid_switch_state=NONE; write /etc/sysctl.conf.local",
+                "write /etc/systemd/logind.conf.d/50-wolos-lid.conf; systemctl kill -s HUP systemd-logind",
             ),
             (
                 PrinterAdd,
@@ -1042,19 +896,19 @@ mod tests {
                 Consent,
                 &[app, "screen-capture", "allow"],
                 &[],
-                "write /usr/local/etc/wolos/consent.json",
+                "write /etc/wolos/consent.json",
             ),
             (
                 BtPair,
                 &["00:11:22:aa:bb:cc", "MX Keys"],
                 &[],
-                "write /etc/bluetooth/hcsecd.conf; service hcsecd onerestart",
+                "bluetoothctl pair 00:11:22:aa:bb:cc; bluetoothctl trust 00:11:22:aa:bb:cc; bluetoothctl connect 00:11:22:aa:bb:cc",
             ),
             (
                 BtForget,
                 &["00:11:22:aa:bb:cc"],
                 &[],
-                "write /etc/bluetooth/hcsecd.conf; service hcsecd onerestart",
+                "bluetoothctl remove 00:11:22:aa:bb:cc",
             ),
             (
                 WifiForget,
@@ -1084,32 +938,15 @@ mod tests {
         };
         let (c, mode) = content(Lid, &["sleep"]);
         assert_eq!(
-            (
-                c.render(Some("kern.coredump=0\nhw.acpi.lid_switch_state=NONE\n")),
-                mode
-            ),
-            (
-                "kern.coredump=0\nhw.acpi.lid_switch_state=S3\n".into(),
-                0o644
-            )
+            (c.render(Some("[Login]\nHandleLidSwitch=ignore\n")), mode),
+            (power::lid_conf(power::Lid::Sleep), 0o644)
         );
-        let (c, mode) = content(
-            Consent,
-            &["/usr/local/bin/wayvnc", "screen-capture", "allow"],
-        );
-        let cur = r#"{"grants":[{"app":"/usr/local/bin/grim","capability":"screen-capture"}]}"#;
+        let (c, mode) = content(Consent, &["/usr/bin/wayvnc", "screen-capture", "allow"]);
+        let cur = r#"{"grants":[{"app":"/usr/bin/grim","capability":"screen-capture"}]}"#;
         assert_eq!(crate::consent::parse(&c.render(Some(cur))).len(), 2);
         assert_eq!(mode, 0o644);
-        let (c, _) = content(Consent, &["/usr/local/bin/grim", "screen-capture", "deny"]);
+        let (c, _) = content(Consent, &["/usr/bin/grim", "screen-capture", "deny"]);
         assert!(crate::consent::parse(&c.render(Some(cur))).is_empty());
-        let (c, mode) = content(BtPair, &["00:11:22:AA:BB:CC", "MX Keys"]);
-        let paired = c.render(Some("# hcsecd.conf\n"));
-        assert!(
-            paired.starts_with("# hcsecd.conf\n") && paired.contains("bdaddr\t00:11:22:aa:bb:cc;")
-        );
-        assert_eq!(mode, 0o600);
-        let (c, _) = content(BtForget, &["00:11:22:aa:bb:cc"]);
-        assert_eq!(c.render(Some(&paired)), "# hcsecd.conf\n\n");
         let (c, mode) = content(WifiForget, &["wlan0", "Home"]);
         let wpa = "ctrl_interface=/var/run/wpa_supplicant\n\nnetwork={\n\tssid=\"Home\"\n\tpsk=\"pw123456\"\n}\nnetwork={\n\tssid=\"Work\"\n\tkey_mgmt=NONE\n}\n";
         assert_eq!(
@@ -1169,7 +1006,7 @@ mod tests {
         let AdminStep::RunInput { argv, input } = &p[1] else {
             panic!()
         };
-        assert_eq!(input, "s3cret-pw\n");
+        assert_eq!(input, "bob:s3cret-pw\n");
         assert!(argv.iter().all(|a| !a.contains("s3cret")));
         assert!(
             !p.iter()
@@ -1305,7 +1142,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert!(needs_restore_point(WolInstall) && needs_restore_point(WolRemove));
         assert!(needs_fresh_password(&r(
             WolInstall,
             &["/h/a.wol", "unsigned"]

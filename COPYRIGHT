@@ -1,0 +1,15 @@
+WolOS. Copyright (c) 2026 Julia Klee.
+
+| Path | License |
+|---|---|
+| everything not listed below | BSD-2-Clause (`LICENSE`) |
+| `crates/shell/` | GPL-3.0-or-later (`crates/shell/LICENSE`) |
+| `design/` (except `design/tools/`, `design/icons/store/`) | CC BY-NC-ND 4.0 (`design/LICENSE`) |
+| `design/icons/store/` | each icon's own license (`design/icons/store/LICENSES.md`) |
+| `assets/` | CC BY-NC-ND 4.0 (`assets/LICENSE`) |
+| `third_party/blocking/` | Apache-2.0 OR MIT |
+
+"WolOS", the WolOS logo, wordmark and glyph are trademarks of Julia Klee.
+Talking about WolOS with them is welcome (non-commercial, credited). Forks and products need
+Julia Klee's written permission to use them; otherwise build with your own name and art.
+Other permissions (commercial, modified art): ask Julia Klee, github.com/wonderlandos.

@@ -1,3 +1,0 @@
-# FreeBSD installs ports libraries (pixman, xkbcommon, libinput) in /usr/local/lib, which ld does not search by default.
-[target.x86_64-unknown-freebsd]
-rustflags = ["-L", "/usr/local/lib"]

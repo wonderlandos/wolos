@@ -29,8 +29,8 @@ pub struct Identity {
 }
 
 /// WolOS's own components live in root-owned `<libexec>/wol-*` folders. Callers pass the canonical
-/// libexec path (it may be a symlink, e.g. /usr/local -> /work/local) and canonical identities.
-pub const LIBEXEC: &str = "/usr/local/libexec";
+/// libexec path (it may be a symlink, e.g. /usr -> /work/local) and canonical identities.
+pub const LIBEXEC: &str = "/usr/libexec";
 
 /// Capabilities system components get without asking (the shell needs its layers and the window list).
 const SYSTEM_DEFAULTS: [Capability; 2] = [Capability::ShellLayer, Capability::WindowList];
@@ -79,20 +79,20 @@ mod tests {
 
     #[test]
     fn shell_gets_layers_and_window_list_without_asking() {
-        let shell = id("/usr/local/libexec/wol-shell/Wol.Shell.dll");
+        let shell = id("/usr/libexec/wol-shell/Wol.Shell.dll");
         assert!(allowed(&shell, Capability::ShellLayer, &[], LIBEXEC));
         assert!(allowed(&shell, Capability::WindowList, &[], LIBEXEC));
     }
 
     #[test]
     fn even_system_components_need_consent_to_record_the_screen() {
-        let shell = id("/usr/local/libexec/wol-shell/Wol.Shell.dll");
+        let shell = id("/usr/libexec/wol-shell/Wol.Shell.dll");
         assert!(!allowed(&shell, Capability::ScreenCapture, &[], LIBEXEC));
     }
 
     #[test]
     fn ordinary_apps_get_nothing_privileged_by_default() {
-        let app = id("/usr/local/bin/firefox");
+        let app = id("/usr/bin/firefox");
         for cap in [
             Capability::ShellLayer,
             Capability::WindowList,
@@ -106,24 +106,21 @@ mod tests {
 
     #[test]
     fn consent_grants_exactly_one_capability_to_exactly_one_app() {
-        let grants = vec![(
-            "/usr/local/bin/obs".to_string(),
-            "screen-capture".to_string(),
-        )];
+        let grants = vec![("/usr/bin/obs".to_string(), "screen-capture".to_string())];
         assert!(allowed(
-            &id("/usr/local/bin/obs"),
+            &id("/usr/bin/obs"),
             Capability::ScreenCapture,
             &grants,
             LIBEXEC
         ));
         assert!(!allowed(
-            &id("/usr/local/bin/obs"),
+            &id("/usr/bin/obs"),
             Capability::InputInjection,
             &grants,
             LIBEXEC
         ));
         assert!(!allowed(
-            &id("/usr/local/bin/firefox"),
+            &id("/usr/bin/firefox"),
             Capability::ScreenCapture,
             &grants,
             LIBEXEC
@@ -133,18 +130,18 @@ mod tests {
     #[test]
     fn path_tricks_do_not_make_an_app_system() {
         assert!(!is_system(
-            &id("/usr/local/libexec/wol-shell/../../../home/eve/evil.dll"),
+            &id("/usr/libexec/wol-shell/../../../home/eve/evil.dll"),
             LIBEXEC
         ));
         assert!(!is_system(
-            &id("/home/eve/usr/local/libexec/wol-shell/x.dll"),
+            &id("/home/eve/usr/libexec/wol-shell/x.dll"),
             LIBEXEC
         ));
     }
 
     #[test]
     fn symlinked_install_root_is_honoured_when_identities_are_canonical() {
-        // /usr/local -> /work/local: the kernel reports /work/local/...; the caller passes the canonical libexec.
+        // /usr -> /work/local: the kernel reports /work/local/...; the caller passes the canonical libexec.
         let shell = id("/work/local/libexec/wol-shell/Wol.Shell.dll");
         assert!(allowed(
             &shell,
@@ -159,20 +156,20 @@ mod tests {
     fn dotnet_apps_are_identified_by_their_assembly() {
         let args = vec![
             "dotnet".to_string(),
-            "/usr/local/libexec/wol-shell/Wol.Shell.dll".to_string(),
+            "/usr/libexec/wol-shell/Wol.Shell.dll".to_string(),
         ];
         assert_eq!(
-            identity_from("/usr/local/share/dotnet/dotnet", &args).code,
-            "/usr/local/libexec/wol-shell/Wol.Shell.dll"
+            identity_from("/usr/share/dotnet/dotnet", &args).code,
+            "/usr/libexec/wol-shell/Wol.Shell.dll"
         );
         assert_eq!(
-            identity_from("/usr/local/bin/foot", &["foot".into()]).code,
-            "/usr/local/bin/foot"
+            identity_from("/usr/bin/foot", &["foot".into()]).code,
+            "/usr/bin/foot"
         );
     }
 }
 
-/// Consent database (`/usr/local/etc/wolos/consent.json`): `{"grants":[{"app": "<canonical path>", "capability": "<name>"}]}`.
+/// Consent database (`/etc/wolos/consent.json`): `{"grants":[{"app": "<canonical path>", "capability": "<name>"}]}`.
 #[derive(serde::Deserialize, Default)]
 pub struct Consent {
     #[serde(default)]
@@ -225,18 +222,14 @@ mod consent_tests {
 
     #[test]
     fn grants_parse_into_pairs() {
-        let c = Consent::parse(
-            r#"{"grants":[{"app":"/usr/local/bin/wlrctl","capability":"window-list"}]}"#,
-        );
+        let c =
+            Consent::parse(r#"{"grants":[{"app":"/usr/bin/wlrctl","capability":"window-list"}]}"#);
         assert_eq!(
             c.pairs(),
-            vec![(
-                "/usr/local/bin/wlrctl".to_string(),
-                "window-list".to_string()
-            )]
+            vec![("/usr/bin/wlrctl".to_string(), "window-list".to_string())]
         );
         let id = Identity {
-            code: "/usr/local/bin/wlrctl".into(),
+            code: "/usr/bin/wlrctl".into(),
         };
         assert!(allowed(&id, Capability::WindowList, &c.pairs(), LIBEXEC));
         assert!(!allowed(
@@ -259,7 +252,7 @@ mod consent_tests {
             code: format!("{LIBEXEC}/wol-shell/Wol.Shell.dll"),
         };
         let paste = Identity {
-            code: "/usr/local/bin/wl-paste".into(),
+            code: "/usr/bin/wl-paste".into(),
         };
         assert!(!allowed(&shell, Capability::ClipboardHistory, &[], LIBEXEC));
         assert!(!allowed(&paste, Capability::ClipboardHistory, &[], LIBEXEC));
@@ -279,10 +272,10 @@ mod consent_tests {
         let c = Consent::parse(include_str!("../config/consent.json"));
         let g = c.pairs();
         let grim = Identity {
-            code: "/usr/local/bin/grim".into(),
+            code: "/usr/bin/grim".into(),
         };
         let slurp = Identity {
-            code: "/usr/local/bin/slurp".into(),
+            code: "/usr/bin/slurp".into(),
         };
         assert!(allowed(&grim, Capability::ScreenCapture, &g, LIBEXEC));
         assert!(allowed(&slurp, Capability::ShellLayer, &g, LIBEXEC));

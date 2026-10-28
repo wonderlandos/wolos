@@ -1,9 +1,8 @@
 //! The image ships what the Steam client checks before it starts, a Steam launcher that runs
-//! `wol games steam`, and a handler that opens Windows programs on native wine-proton.
+//! `wol games steam`, and a handler that opens Windows programs on Wine.
 use controller::cli::parse;
 use controller::games::STEAM_ICON;
 use std::path::PathBuf;
-use wol_core::games::doctor::SYSCTLS;
 
 fn repo(p: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -22,26 +21,24 @@ fn key<'a>(desktop: &'a str, k: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no {k}="))
 }
 
-const APPS: &str = "desktop/overlay/usr/local/share/applications";
+const APPS: &str = "desktop/overlay/usr/share/applications";
 
 #[test]
-fn every_client_setting_is_on_at_boot() {
-    let conf = read("desktop/overlay/etc/sysctl.conf.local")
-        + &read("desktop/overlay/etc/sysctl.kld.d/linux.conf");
-    for (id, name, _) in SYSCTLS {
-        let line = format!("{name}=1");
-        assert!(conf.lines().any(|l| l == line), "{id}: {line} not set");
-    }
-    let loader = read("image/files/boot/loader.conf.d/wolos-games.conf");
-    assert!(loader.lines().any(|l| l == "nullfs_load=\"YES\""));
-    assert!(read("image/rcconf.sh").contains("linux_enable=YES"));
-    let base = read("image/packages-base.txt");
-    for p in ["linux_base-rl9", "linux-steam-utils", "wine-proton"] {
+fn steam_and_wine_are_native_packages() {
+    let p = read("desktop/packages.txt");
+    for want in [
+        "steam",
+        "wine",
+        "lib32-mesa",
+        "lib32-vulkan-intel",
+        "lib32-vulkan-radeon",
+    ] {
         assert!(
-            base.lines().any(|l| l.split_whitespace().next() == Some(p)),
-            "{p} not in the base packages"
+            p.lines().any(|l| l.split_whitespace().next() == Some(want)),
+            "{want}"
         );
     }
+    assert!(read("image/arch/pacman.conf").contains("\n[multilib]\n"));
 }
 
 #[test]
@@ -58,7 +55,9 @@ fn steam_opens_through_wol_games_steam() {
     assert_eq!(icon, STEAM_ICON);
     let name = icon.rsplit('/').next().unwrap();
     assert!(repo(&format!("design/icons/store/{name}")).exists());
-    assert!(read("image/build.sh").contains("/usr/local/share/wolos/store-icons"));
+    assert!(
+        read("image/repo/wolos-system/PKGBUILD").contains("$pkgdir/usr/share/wolos/store-icons")
+    );
 }
 
 #[test]

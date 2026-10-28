@@ -1,0 +1,12 @@
+# 0016 - Arch Linux base, released in snapshots
+Status: accepted. Supersedes the FreeBSD base of 0001 (fork-and-tune stays).
+Context: the desktop needs current GPU drivers (Mesa, NVIDIA, virtio-gpu in VMs), native Steam and Proton, and a current kernel. A rolling base breaks the "it just works" promise; a frozen base ages.
+Decision:
+- Base = Arch Linux packages pinned to one Arch Linux Archive date per WolOS release (`image/arch/snapshot`). pacman reads only that date (`Server = https://archive.archlinux.org/repos/<date>/$repo/os/$arch`). A WolOS update moves the whole system to a newer tested date; nothing rolls in between.
+- Kernel = only `linux-wolos`, published through the `[wolos]` channel: github.com/wonderlandos/linux (current stable, pinned ref) + `kernel/conf/wolos.config` fragment + extra patches from `$WOLOS_OVERLAY` when present. Other or modified kernels may be installed with pacman; they get their own boot entry, `linux-wolos` stays the default.
+- A/B slots: btrfs root subvolumes `@wolos-a` / `@wolos-b` (writable, so pacman works), shared `@home`, `@var`. An update snapshots the running root into the other slot, moves its pacman.conf to the new release date, runs `pacman -Syu` there and boots it next; user-installed packages carry over. systemd-boot entries with boot counting (`+3`) fall back to the previous slot, which is also the restore point. A failed update deletes the new slot.
+- Init = systemd. rc.d scripts become units in `image/files/usr/lib/systemd/`. sysctl/pciconf/kld readers become /proc, /sys, `lspci`, modprobe.
+- Build: `image/build.sh` = mkarchiso profile `image/arch/` (live + installer ISO) on any Arch host or `archlinux` container. VM tests use QEMU virtio-gpu, so Hyprland runs in the VM.
+- Packages: pacman stays the package manager, used directly; `wol` controls only the pinned pacman.conf, release updates and `.wol` app metadata. `.wol` = signed pacman package + WolOS metadata; `[wolos]` repo (apps, kernel, system) beside the pinned Arch repos; each release has a signed manifest (snapshot date, repo revision, image + sha256).
+- Steam and Proton are native packages (multilib). NVIDIA uses `nvidia-open`.
+Consequences: FreeBSD-only code (ZFS boot environments, pf, bsdinstall, pkg, wolos_qos kmod) is replaced; `Host::is_freebsd` paths stay compiling only while removed slice by slice. Firewall = nftables. Scheduler QoS moves to a sched_ext scheduler (follow-up).

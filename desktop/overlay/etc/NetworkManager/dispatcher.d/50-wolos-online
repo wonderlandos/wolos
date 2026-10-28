@@ -1,0 +1,7 @@
+#!/bin/sh
+# NetworkManager dispatcher (IFACE ACTION). A connection came up: a driver only the internet has
+# (NVIDIA) that first boot could not install is installed now (`wol hw online`), one run at a time,
+# in the background, so the connection is never delayed. The session says restart, or where to fix it.
+[ "${2:-}" = up ] || exit 0
+flock -n "${WOLOS_LOCK:-/run/wolos-hw-online.lock}" wol hw online >/dev/null 2>&1 &
+exit 0

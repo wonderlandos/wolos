@@ -1,0 +1,47 @@
+# wolos-system: everything WolOS adds to the Arch base, from this repo: the Rust binaries
+# (image/build-rust.sh), Hyprland plugins (image/hyprland/build-plugins.sh), desktop/overlay,
+# image/files (systemd units, installer, helpers) and design (icons, wallpapers, illustrations).
+pkgname=wolos-system
+pkgver=$(awk '/^## [0-9]/ {print $2; exit}' "$startdir/../../../CHANGELOG.md")
+pkgrel=1
+pkgdesc='WolOS system services, shell and desktop defaults'
+arch=(x86_64)
+url='https://github.com/wonderlandos/wolos'
+license=(BSD-2-Clause GPL-3.0-or-later CC-BY-NC-ND-4.0)
+depends=(hyprland-wolos gtk4 gtk4-layer-shell libadwaita pam systemd)
+makedepends=(cargo clang pkgconf hyprland-wolos git)
+options=(!debug !lto)
+backup=(etc/wolos/shell.json etc/sudoers.d/wolos etc/pam.d/wol-login etc/nftables.conf
+  etc/zshrc etc/zprofile)
+install=wolos-system.install
+_repo=$(cd "$startdir/../../.." && pwd)
+
+build() {
+  export CARGO_TARGET_DIR=$srcdir/target
+  "$_repo/image/build-rust.sh" "$srcdir/stage"
+  "$_repo/image/hyprland/build-plugins.sh" "$srcdir/stage"
+}
+
+package() {
+  cp -a "$srcdir/stage/." "$pkgdir/"
+  (cd "$_repo/desktop/overlay" && tar --exclude ./usr/local -cf - .) | tar -C "$pkgdir" --no-same-owner -xf -
+  (cd "$_repo/image/files" && cp -a --no-preserve=ownership . "$pkgdir/")
+  install -Dm755 "$_repo/image/hw/verify-gpu.sh" "$pkgdir/usr/lib/wolos/verify-gpu.sh"
+  install -Dm755 "$_repo/image/arch/wolos-update-slot" "$pkgdir/usr/bin/wolos-update-slot"
+  local d=$_repo/design
+  [ ! -d "$d/icons" ] || sh "$d/icons/install.sh" "$pkgdir/usr/share/icons/WolOS"
+  [ ! -d "$d/wallpapers" ] || { install -d "$pkgdir/usr/share/wolos/wallpapers"; cp -R "$d/wallpapers/." "$pkgdir/usr/share/wolos/wallpapers/"; }
+  [ ! -d "$d/tokens" ] || { install -d "$pkgdir/usr/share/wolos/tokens"; cp -R "$d/tokens/." "$pkgdir/usr/share/wolos/tokens/"; }
+  [ ! -d "$d/icons/store" ] || install -Dm644 -t "$pkgdir/usr/share/wolos/store-icons" "$d"/icons/store/*.svg
+  [ ! -f "$d/brand/wolos-splash.png" ] || install -Dm644 "$d/brand/wolos-splash.png" "$pkgdir/usr/share/plymouth/themes/wolos/wolos.png"
+  local a f
+  for a in setup-welcome white-rabbit keyhole pocket-watch cheshire teacup lock-peek; do
+    for f in "$d/illustrations/png/$a"@*.png; do
+      [ ! -f "$f" ] || install -Dm644 -t "$pkgdir/usr/share/wolos/illustrations" "$f"
+    done
+  done
+  chmod 440 "$pkgdir/etc/sudoers.d/wolos"
+  chmod 755 "$pkgdir"/usr/lib/wolos/* "$pkgdir"/usr/bin/*
+  # Rust and GPL-3.0 shell licenses travel with the package.
+  install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -4,7 +4,7 @@
 use crate::system::Host;
 use serde_json::{Map, Value, json};
 
-pub const FILE: &str = "/usr/local/etc/wolos/consent.json";
+pub const FILE: &str = "/etc/wolos/consent.json";
 
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
 pub const CAPABILITIES: [&str; 4] = [
@@ -85,15 +85,15 @@ mod tests {
     use super::*;
     use crate::system::fake::FakeHost;
 
-    const SHIPPED: &str = r#"{"grants":[{"app":"/usr/local/bin/grim","capability":"screen-capture"},{"app":"/usr/local/bin/slurp","capability":"shell-layer"}],"_note":"dev VM"}"#;
+    const SHIPPED: &str = r#"{"grants":[{"app":"/usr/bin/grim","capability":"screen-capture"},{"app":"/usr/bin/slurp","capability":"shell-layer"}],"_note":"dev VM"}"#;
 
     #[test]
     fn grants_parse_fail_closed() {
         assert_eq!(
             parse(SHIPPED),
             [
-                ("/usr/local/bin/grim".into(), "screen-capture".into()),
-                ("/usr/local/bin/slurp".into(), "shell-layer".into())
+                ("/usr/bin/grim".into(), "screen-capture".into()),
+                ("/usr/bin/slurp".into(), "shell-layer".into())
             ]
         );
         for bad in [
@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn allow_and_deny_touch_one_grant() {
-        let wl = "/usr/local/bin/wlrctl";
+        let wl = "/usr/bin/wlrctl";
         let on = set(Some(SHIPPED), wl, "window-list", true);
         assert_eq!(parse(&on).len(), 3);
         assert!(
@@ -121,15 +121,10 @@ mod tests {
         assert_eq!(set(Some(&on), wl, "window-list", true), on, "no duplicate");
         let off = set(Some(&on), wl, "window-list", false);
         assert_eq!(parse(&off), parse(SHIPPED));
-        let off = set(
-            Some(SHIPPED),
-            "/usr/local/bin/grim",
-            "screen-capture",
-            false,
-        );
+        let off = set(Some(SHIPPED), "/usr/bin/grim", "screen-capture", false);
         assert_eq!(
             parse(&off),
-            [("/usr/local/bin/slurp".into(), "shell-layer".into())]
+            [("/usr/bin/slurp".into(), "shell-layer".into())]
         );
         // A malformed file grants nothing; the edit starts it over with just this grant.
         assert_eq!(
@@ -142,18 +137,18 @@ mod tests {
     #[test]
     fn what_settings_may_grant() {
         for (app, cap, ok) in [
-            ("/usr/local/bin/wayvnc", "screen-capture", true),
-            ("/usr/local/bin/wayvnc", "input-injection", true),
-            ("/usr/local/bin/wl-paste", "clipboard-history", true),
-            ("/usr/local/bin/wlrctl", "window-list", true),
-            ("/usr/local/bin/wlrctl", "shell-layer", false),
-            ("/usr/local/bin/wlrctl", "root", false),
+            ("/usr/bin/wayvnc", "screen-capture", true),
+            ("/usr/bin/wayvnc", "input-injection", true),
+            ("/usr/bin/wl-paste", "clipboard-history", true),
+            ("/usr/bin/wlrctl", "window-list", true),
+            ("/usr/bin/wlrctl", "shell-layer", false),
+            ("/usr/bin/wlrctl", "root", false),
             ("wlrctl", "window-list", false),
-            ("/usr/local/bin/../../../home/eve/x", "window-list", false),
-            ("/usr/local//bin/x", "window-list", false),
-            ("/usr/local/./bin/x", "window-list", false),
-            ("/usr/local/bin/", "window-list", false),
-            ("/usr/local/bin/x\ny", "window-list", false),
+            ("/usr/bin/../../../home/eve/x", "window-list", false),
+            ("/usr//bin/x", "window-list", false),
+            ("/usr/./bin/x", "window-list", false),
+            ("/usr/bin/", "window-list", false),
+            ("/usr/bin/x\ny", "window-list", false),
             ("xwayland", "window-list", false),
             ("", "window-list", false),
         ] {

@@ -1,26 +1,28 @@
-//! "About this computer": /etc/os-release + sysctl (FreeBSD) or /proc (Linux).
+//! "About this computer": /etc/os-release, /proc/cpuinfo, /proc/meminfo, /proc/sys/kernel.
 use super::{Host, pairs};
-use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct SystemInfo {
     pub name: String,
-    /// `kern.ident`: the kernel product (WolKernel; GENERIC on a stock kernel).
+    /// Kernel product: WolKernel (`linux-wolos`, release ends in `-wolos`) or Linux on a stock kernel.
     pub kernel: String,
-    /// `kern.ostype kern.osrelease` (FreeBSD 15.1-RELEASE-p6): the base the kernel reports.
+    /// `ostype osrelease` (Linux 6.17.1-wolos): what the kernel reports.
     pub base: String,
     pub processor: String,
     pub memory: String,
 }
 
-pub const SYSCTL_KEYS: [&str; 6] = [
-    "kern.ident",
-    "kern.ostype",
-    "kern.osrelease",
-    "hw.model",
-    "hw.ncpu",
-    "hw.physmem",
-];
+/// Raw Linux facts behind [`SystemInfo`]; empty strings / 0 = unknown.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Facts<'a> {
+    pub os_release: &'a str,
+    pub cpuinfo: &'a str,
+    pub meminfo: &'a str,
+    pub ostype: &'a str,
+    pub osrelease: &'a str,
+    /// 0 = count `processor` lines in cpuinfo.
+    pub ncpu: usize,
+}
 
 impl SystemInfo {
     pub fn unknown() -> Self {
@@ -33,102 +35,70 @@ impl SystemInfo {
         }
     }
 
-    pub fn from(os_release: &str, sysctl: &HashMap<&str, String>) -> Self {
-        let os: HashMap<&str, &str> = os_release
+    pub fn from(f: &Facts) -> Self {
+        let os: std::collections::HashMap<&str, &str> = f
+            .os_release
             .lines()
             .filter_map(|l| l.split_once('='))
             .map(|(k, v)| (k, v.trim_matches('"')))
             .collect();
-        let get = |k: &str| {
-            sysctl
-                .get(k)
-                .filter(|v| !v.is_empty())
-                .cloned()
-                .unwrap_or_else(|| "Unknown".into())
+        let known = |s: &str| (!s.trim().is_empty()).then(|| s.trim().to_owned());
+        let mem = super::stats::MemoryStats::parse_meminfo(f.meminfo).total;
+        let model = pairs(f.cpuinfo, ':')
+            .get("model name")
+            .and_then(|m| known(m));
+        let ncpu = match f.ncpu {
+            0 => f
+                .cpuinfo
+                .lines()
+                .filter(|l| l.starts_with("processor"))
+                .count(),
+            n => n,
         };
-        let memory = sysctl
-            .get("hw.physmem")
-            .and_then(|v| v.parse::<i64>().ok())
-            .map_or_else(
-                || "Unknown".into(),
-                |b| format!("{} GB", (b + (1 << 29)) >> 30),
-            );
-        let model = get("hw.model");
-        let processor = if model == "Unknown" {
-            model
-        } else {
-            format!("{model} ({} cores)", get("hw.ncpu"))
-        };
-        let base = match (get("kern.ostype"), get("kern.osrelease")) {
-            (t, r) if t != "Unknown" && r != "Unknown" => format!("{t} {r}"),
-            _ => "Unknown".into(),
-        };
+        let (t, r) = (known(f.ostype), known(f.osrelease));
         Self {
             name: os
                 .get("PRETTY_NAME")
                 .or_else(|| os.get("NAME"))
                 .map_or("WolOS", |v| v)
                 .into(),
-            kernel: get("kern.ident"),
-            base,
-            processor,
-            memory,
+            kernel: match &r {
+                Some(r) if r.ends_with("-wolos") => "WolKernel".into(),
+                Some(_) => t.clone().unwrap_or_else(|| "Linux".into()),
+                None => "Unknown".into(),
+            },
+            base: match (&t, &r) {
+                (Some(t), Some(r)) => format!("{t} {r}"),
+                _ => "Unknown".into(),
+            },
+            processor: model.map_or_else(|| "Unknown".into(), |m| format!("{m} ({ncpu} cores)")),
+            memory: if mem > 0 {
+                format!("{} GB", (mem + (1 << 29)) >> 30)
+            } else {
+                "Unknown".into()
+            },
         }
     }
 
     pub fn read(h: &dyn Host) -> Self {
+        let r = |p: &str| h.read_text(p).unwrap_or_default();
         let os = h
             .read_text("/etc/os-release")
-            .or_else(|| h.read_text("/usr/local/etc/os-release"))
+            .or_else(|| h.read_text("/usr/lib/os-release"))
             .unwrap_or_default();
-        let mut m = HashMap::new();
-        if h.is_freebsd() {
-            for k in SYSCTL_KEYS {
-                let v = if k == "hw.ncpu" || k == "hw.physmem" {
-                    h.sysctl_i64(k).map(|v| v.to_string())
-                } else {
-                    h.sysctl_string(k)
-                };
-                m.insert(k, v.unwrap_or_default());
-            }
-        } else {
-            let cpu = h.read_text("/proc/cpuinfo").unwrap_or_default();
-            m.insert(
-                "hw.model",
-                pairs(&cpu, ':')
-                    .get("model name")
-                    .map(|s| s.to_string())
-                    .unwrap_or_default(),
-            );
-            m.insert(
-                "hw.ncpu",
-                std::thread::available_parallelism()
-                    .map_or(1, |n| n.get())
-                    .to_string(),
-            );
-            let mem = super::stats::MemoryStats::parse_meminfo(
-                &h.read_text("/proc/meminfo").unwrap_or_default(),
-            )
-            .total;
-            m.insert(
-                "hw.physmem",
-                if mem > 0 {
-                    mem.to_string()
-                } else {
-                    String::new()
-                },
-            );
-            let proc = |k: &str| {
-                h.read_text(&format!("/proc/sys/kernel/{k}"))
-                    .unwrap_or_default()
-                    .trim()
-                    .to_owned()
-            };
-            m.insert("kern.ident", proc("osrelease"));
-            m.insert("kern.ostype", proc("ostype"));
-            m.insert("kern.osrelease", proc("osrelease"));
-        }
-        Self::from(&os, &m)
+        let (cpuinfo, meminfo) = (r("/proc/cpuinfo"), r("/proc/meminfo"));
+        let (ostype, osrelease) = (
+            r("/proc/sys/kernel/ostype"),
+            r("/proc/sys/kernel/osrelease"),
+        );
+        Self::from(&Facts {
+            os_release: &os,
+            cpuinfo: &cpuinfo,
+            meminfo: &meminfo,
+            ostype: &ostype,
+            osrelease: &osrelease,
+            ncpu: 0,
+        })
     }
 }
 
@@ -136,54 +106,57 @@ impl SystemInfo {
 mod tests {
     use super::*;
 
+    const CPUINFO: &str = "processor\t: 0\nvendor_id\t: GenuineIntel\nmodel name\t: 12th Gen Intel(R) Core(TM) i7-1255U\n\nprocessor\t: 1\nmodel name\t: 12th Gen Intel(R) Core(TM) i7-1255U\n";
+
     #[test]
-    fn from_os_release_and_sysctl() {
-        let m: HashMap<&str, String> = [
-            ("kern.ident", "GENERIC".to_string()),
-            ("hw.model", "Intel i7".into()),
-            ("hw.ncpu", "8".into()),
-            ("hw.physmem", (16i64 << 30).to_string()),
-        ]
-        .into();
-        let i = SystemInfo::from("NAME=FreeBSD\nPRETTY_NAME=\"WolOS 0.10\"\n", &m);
+    fn from_linux_facts() {
+        let i = SystemInfo::from(&Facts {
+            os_release: "NAME=\"WolOS\"\nPRETTY_NAME=\"WolOS 0.16\"\nID_LIKE=arch\n",
+            cpuinfo: CPUINFO,
+            meminfo: "MemTotal:       16303412 kB\nMemAvailable: 1 kB\n",
+            ostype: "Linux\n",
+            osrelease: "6.17.1-wolos\n",
+            ncpu: 0,
+        });
         assert_eq!(
             i,
             SystemInfo {
-                name: "WolOS 0.10".into(),
-                kernel: "GENERIC".into(),
-                base: "Unknown".into(),
-                processor: "Intel i7 (8 cores)".into(),
+                name: "WolOS 0.16".into(),
+                kernel: "WolKernel".into(),
+                base: "Linux 6.17.1-wolos".into(),
+                processor: "12th Gen Intel(R) Core(TM) i7-1255U (2 cores)".into(),
                 memory: "16 GB".into()
             }
         );
-        let u = SystemInfo::from("", &HashMap::new());
-        assert_eq!(u, SystemInfo::unknown());
+        assert_eq!(SystemInfo::from(&Facts::default()), SystemInfo::unknown());
+        let stock = SystemInfo::from(&Facts {
+            ostype: "Linux",
+            osrelease: "6.17.1-arch1-1",
+            ..Default::default()
+        });
+        assert_eq!(stock.kernel, "Linux");
     }
 
     #[test]
-    fn freebsd_reads_sysctl() {
-        let h = super::super::fake::FakeHost::new(true);
-        // WolKernel: kern.ident names the product; ostype stays FreeBSD (pkg ABI, ports, Linuxulator).
-        h.string("kern.ident", "WolKernel")
-            .string("kern.ostype", "FreeBSD")
-            .string("kern.osrelease", "15.1-RELEASE-p6")
-            .string("hw.model", "Ryzen")
-            .int("hw.ncpu", 4)
-            .int("hw.physmem", 8 << 30);
+    fn reads_proc_through_host() {
+        let h = super::super::fake::FakeHost::linux();
+        h.file("/usr/lib/os-release", "PRETTY_NAME=\"Arch Linux\"\n")
+            .file("/proc/cpuinfo", CPUINFO)
+            .file("/proc/meminfo", "MemTotal: 8388608 kB\n")
+            .file("/proc/sys/kernel/ostype", "Linux\n")
+            .file("/proc/sys/kernel/osrelease", "6.17.1-wolos\n");
         let i = SystemInfo::read(&h);
         assert_eq!(
-            (
-                i.kernel.as_str(),
-                i.base.as_str(),
-                i.processor.as_str(),
-                i.memory.as_str()
-            ),
-            (
-                "WolKernel",
-                "FreeBSD 15.1-RELEASE-p6",
-                "Ryzen (4 cores)",
-                "8 GB"
-            )
+            (i.name.as_str(), i.kernel.as_str(), i.memory.as_str()),
+            ("Arch Linux", "WolKernel", "8 GB")
         );
+    }
+
+    #[test]
+    fn real_host_reports_linux() {
+        let i = SystemInfo::read(&super::super::PosixHost);
+        assert!(i.base.starts_with("Linux "), "{i:?}");
+        assert_ne!(i.memory, "Unknown");
+        assert_ne!(i.processor, "Unknown");
     }
 }

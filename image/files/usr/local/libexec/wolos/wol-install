@@ -1,9 +1,0 @@
-#!/bin/sh
-# "Install WolOS" from the live desktop (ADR 0009, ADR 0013): the Install WolOS app (disk, erase
-# warning, progress, Restart); it runs libexec/wolos/install-run as root through sudo, which the
-# live image allows without a password. Without the app: the same unattended installer as the
-# boot menu, in a terminal (su to the live root, which has an empty password).
-if [ -x /usr/local/bin/wol-installer ]; then
-  exec /usr/local/bin/wol-installer
-fi
-exec foot -T "Install WolOS" su -m root -c 'bsdinstall script /etc/installerconfig; echo; echo "Press Enter to close."; read _'

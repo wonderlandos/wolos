@@ -1,45 +1,32 @@
 # kernel
 
-WolKernel = GENERIC (releng/15.1) + a few justified config lines + `wolos_qos` kmod + LinuxKPI Wi-Fi modules GENERIC leaves out.
-`uname -i`, `kern.ident`, About This Computer and the boot menu say WolKernel; `uname -s` (ostype) stays FreeBSD because pkg's ABI (`FreeBSD:15:amd64`), ports and the Linux ABI layer key on it.
-Patches live here: `patches/` (kernel, `-p0` on releng/15.1) and `drm/patches/` (drm-kmod, `-p1`). `verify.sh` and `drm/verify.sh` check that the built kernel and i915kms carry them. License: `LICENSE` (patches, `wolos_qos`, checks: Wonderland License 1.0, source-available; scripts and conf: BSD-2-Clause).
+WolKernel (package `linux-wolos`, ADR 0016/0017) = github.com/wonderlandos/linux at a pinned stable ref + `conf/wolos.config` over Arch's x86_64 config.
+Extra patches come from `$WOLOS_OVERLAY/kernel/linux/patches` when present.
 
 | path | what |
 |---|---|
-| `conf/WolKernel` | `include GENERIC`, `ident WolKernel`, HZ=1000 (VMs default to 100), no debug options; one reason per line in the file |
-| `fetch-src.sh [DIR]` | shallow clone releng/15.1 (~3.5 GB free required, checked) |
-| `check.sh [SRC]` | dry run, changes nothing: ident, `config(8)` (FreeBSD), patches apply in order on copies, extra modules' `make -n` (FreeBSD) |
-| `build.sh [SRC]` | patches in name order (a patch that does not apply stops with exit 3), sysent, buildkernel + installkernel `KERNCONF=WolKernel`, `/boot/kernel/ident`, extra modules, `wolos_qos`, `verify.sh` (~8 GB obj, checked) |
-| `drm/build.sh SRC OUT` | drm-kmod `drm_v6.12.85_3` (pkg drm-612-kmod tag, sha256 pinned) + `drm/patches` (exit 3 if one does not apply), then `drm/verify.sh`: dmabuf, ttm, drm, i915kms into `OUT/boot/modules` (ADR 0008, ~1 min) |
-| `patches/`, `drm/patches/` | WolKernel and i915 patches; `patches/tests/`: static Linux fixtures for `image/vm/test/compat.sh` |
-| `verify.sh`, `drm/verify.sh` | the built kernel / i915kms carry each patch's marker |
-| `tests/check.sh`, `tests/apply.sh [REF]` | patch contract (markers, verify coverage); patches apply to releng/15.1 and the pinned drm-kmod tag (sparse fetch, any host) |
-| `wolos_qos/` | kmod: syscall `wolos_qos_set(tid, class)`; number in `sysctl kern.wolos_qos.syscall`; `test_qos.c` |
+| `conf/wolos.config` | Kconfig fragment, one comment per group; `scripts/kconfig/merge_config.sh <arch config> conf/wolos.config && make olddefconfig` |
+| `abi-removed.txt` | userspace interfaces removed versus Arch's kernel, one per line (`wol doctor` reads it) |
+| `linux-wolos-api-headers/` | UAPI headers from the same tree; replaces `linux-api-headers` |
 
-Extra modules (`WOLOS_EXTRA_KMODS`, default `mt76/core mt76/mt7921`) build against the kernel objdir into `/boot/kernel`; after a failure the rest are skipped and those cards report unsupported.
-The loader menu names a kernel directory by its `ident` file (`WolKernel <kernel size>`, `image/files/boot/lua/local.lua`); a kernel installed over it later keeps its directory name.
+What users notice versus Arch's `linux`:
+- Anything that runs on stock Arch runs here: 32-bit apps and Steam, Wine/Proton, Flatpak/AppImage/Snap, Docker/Podman, KVM/VirtualBox, browser sandboxes, DKMS modules (NVIDIA, ZFS, v4l2loopback).
+- Removed: the x32 ABI (no x32 software exists in Arch, Flatpak or container images). Datacenter-only drivers are not built (InfiniBand, Fibre Channel, storage targets, legacy RAID cards, telecom links, cluster filesystems).
+- Desktop tuning: 1000 Hz full preemption, sched_ext with the WolOS scheduler (stock EEVDF if it stops), hugepages on request only, MGLRU, zram/zswap with zstd, BBR.
+- Module ABI is stable within a release line (CONFIG_MODVERSIONS): vendor modules built once keep loading until the next line.
+- `uname -r` ends in `-wolos`; `uname -v` names the WolOS release (`WOLOS-<release>`), the same as `/etc/os-release`.
+- `/sys/kernel/wolos/` and `<linux/wolos.h>` exist when the extra patches are applied; nothing depends on them to boot.
 
-Expected `build.sh` log, in order (N = number of patches in `patches/`):
+Measured (7.3.0, `make olddefconfig`): Arch 6332 modules / 3247 built-in options; WolKernel 6154 / 3164 (-178 modules, -83 built-in).
 
-```
-patch applied: <name>                (or "already applied"; N lines)
-patches: N
->>> Kernel build for WolKernel completed on ...
---------------------------------------------------------------
->>> Installing kernel WolKernel completed on ...
-extra module built: mt76/core
-extra module built: mt76/mt7921
-extra modules: 2 built, 0 failed
-kernel: WolKernel installed in <DESTDIR>/boot/kernel
-```
 
-Any `patch does not apply`, `extra module FAILED` (log path on the same line) or a nonzero exit from `verify.sh` is a build bug, not a warning.
+## Build
 
-QoS ABI (stable): 0 UserInteractive rtprio 8 · 1 UserInitiated nice -10 · 2 Default nice 0 · 3 Utility nice 10 · 4 Background idprio 16.
-nice is per process; classes 0/1 need root.
+| path | what |
+|---|---|
+| `linux-wolos/ref` | pinned fork commit (bump it to move the kernel) |
+| `linux-wolos/PKGBUILD` | `makepkg -s`: `linux-wolos` + `linux-wolos-headers` (DKMS, e.g. `nvidia-open-dkms`) |
+| `linux-wolos/prepare.sh` | extra patches in name order (no fuzz; exit 3 if one does not apply), fragment merge, `make olddefconfig` |
+| `linux-wolos/config.x86_64` | Arch `linux` config at the snapshot (`7.2.11.arch1-1`) |
 
-```sh
-kernel/fetch-src.sh /usr/src
-kernel/check.sh /usr/src     # any host; full checks on FreeBSD
-kernel/build.sh /usr/src     # on FreeBSD 15.1, root
-```
+Published only in `[wolos]` (`image/repo/build.sh`); the ISO never ships Arch `linux`. Other kernels installed with pacman get their own boot entry; `linux-wolos` stays the default.

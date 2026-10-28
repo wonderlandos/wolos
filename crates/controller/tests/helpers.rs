@@ -167,39 +167,41 @@ fn downloads_outside_home_refused() {
     assert!(e.err.contains("inside your home"));
 }
 
-const BECTL: &str = "default\tN\t/\t21.5G\t2026-01-01 10:00\n\
-wol-before-update-1761000000\t-\t-\t300M\t2026-10-20 09:00\n\
-wol-update-1761500000\tR\t-\t1.1G\t2026-10-26 18:13\n";
+/// Running wolos-a; an update waits in wolos-b for its first boot.
+const BOOTCTL: &str = r#"[
+ {"id":"wolos-a.conf","version":"2026/10/20","isSelected":true,"isDefault":false},
+ {"id":"wolos-b+3.conf","version":"2026/11/02","isSelected":false,"isDefault":true,"triesLeft":3}
+]"#;
 
-fn bectl_env(tag: &str) -> FakeEnv {
+fn slots_env(tag: &str) -> FakeEnv {
     FakeEnv {
         home: temp_home(tag),
-        captures: vec![("bectl list -H".into(), BECTL.into())],
+        captures: vec![("bootctl list --json=short".into(), BOOTCTL.into())],
         ..Default::default()
     }
 }
 
 #[test]
 fn restore_list_marks_the_rollback_target() {
-    let mut e = bectl_env("restorelist");
+    let mut e = slots_env("restorelist");
     assert_eq!(run("restore list --json", &mut e), 0, "{}", e.err);
     let v = json_out(&e);
-    assert_eq!(v.as_array().unwrap().len(), 3);
+    assert_eq!(v.as_array().unwrap().len(), 2);
     assert_eq!(
         v[0]["rollback"], true,
-        "pending update: rollback keeps the running BE"
+        "pending update: rollback keeps the running slot"
     );
     let mut none = FakeEnv {
         home: temp_home("nobe"),
         ..Default::default()
     };
     assert_eq!(run("restore list", &mut none), 69);
-    assert!(none.err.contains("ZFS"));
+    assert!(none.err.contains("root slots"));
 }
 
 #[test]
 fn rollback_goes_through_wol_admind_with_the_password() {
-    let mut e = bectl_env("rollback");
+    let mut e = slots_env("rollback");
     e.replies = vec!["auth\n".into(), "ok\n".into()];
     e.stdin = vec!["s3cret".into()];
     assert_eq!(run("update rollback", &mut e), 0, "{}", e.err);
@@ -208,75 +210,65 @@ fn rollback_goes_through_wol_admind_with_the_password() {
         .iter()
         .map(|r| String::from_utf8_lossy(&r.1).into_owned())
         .collect();
-    assert_eq!(sent[0], "boot-environment\x001\x00default\x00");
-    assert_eq!(sent[1], "boot-environment\x001\x00default\x00s3cret");
-    assert!(e.execs.is_empty(), "not root: never runs bectl itself");
-    let mut e = bectl_env("activate");
-    assert_eq!(run("restore activate nope", &mut e), 66);
+    assert_eq!(sent[0], "boot-environment\x001\x00wolos-a\x00");
+    assert_eq!(sent[1], "boot-environment\x001\x00wolos-a\x00s3cret");
+    assert!(e.execs.is_empty(), "not root: never runs bootctl itself");
+    let mut e = FakeEnv {
+        home: temp_home("activate"),
+        captures: vec![(
+            "bootctl list --json=short".into(),
+            r#"[{"id":"wolos-a.conf","isSelected":true}]"#.into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("restore activate wolos-b", &mut e), 66);
     assert_eq!(run("restore activate a;b", &mut e), 64);
     assert!(e.requests.is_empty());
 }
 
 #[test]
-fn update_apply_keeps_the_newest_restore_points() {
-    let many: String = (0..7)
-        .map(|i| format!("wol-update-{i}\t-\t-\t1G\t2026-10-0{} 10:00\n", i + 1))
-        .collect::<String>()
-        + "default\tNR\t/\t1G\t2025-01-01 10:00\n";
+fn first_update_has_no_previous_slot_to_replace() {
     let mut e = FakeEnv {
-        home: temp_home("prune"),
+        home: temp_home("firstupdate"),
         root: true,
-        captures: vec![("bectl list -H".into(), many)],
+        files: vec![(
+            std::path::PathBuf::from("/proc/cmdline"),
+            "rootflags=subvol=@wolos-a\n".into(),
+        )],
+        captures: vec![(
+            "bootctl list --json=short".into(),
+            r#"[{"id":"wolos-a.conf","isSelected":true}]"#.into(),
+        )],
         ..Default::default()
     };
-    assert_eq!(
-        run("update apply wol-update-9 --yes", &mut e),
-        0,
-        "{}",
-        e.err
-    );
-    let destroyed: Vec<String> = e
-        .execs
-        .iter()
-        .filter(|a| a.get(1).is_some_and(|x| x == "destroy"))
-        .map(|a| a.join(" "))
-        .collect();
-    assert_eq!(
-        destroyed,
-        [
-            "bectl destroy -o wol-update-0",
-            "bectl destroy -o wol-update-1"
-        ]
-    );
+    assert_eq!(run("update apply --yes", &mut e), 0, "{}", e.err);
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran[0], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
+    assert!(!ran.iter().any(|r| r.contains("delete")), "{ran:?}");
+    assert_eq!(ran.last().unwrap(), "bootctl set-default wolos-b.conf");
+    assert!(e.out.contains("updated into wolos-b"));
 }
 
+/// NetworkManager lets the person at the computer switch the radio: no wol-admind, no password.
 #[test]
-fn wifi_off_on_freebsd_asks_wol_admind_for_the_password() {
-    let host = Arc::new(wol_core::system::fake::FakeHost::new(true));
-    host.command(
-        "ifconfig wlan0",
-        "wlan0: flags=8802<BROADCAST,SIMPLEX,MULTICAST>\n",
-    );
+fn wifi_off_needs_no_password() {
+    let host = Arc::new(wol_core::system::fake::FakeHost::linux());
+    host.command("nmcli radio wifi off", "")
+        .command("nmcli radio wifi", "disabled\n");
     let mut e = FakeEnv {
         home: temp_home("wifi"),
         host: Some(host),
         ..Default::default()
     };
-    e.admin.lock().unwrap().replies = vec![AdminReply::NeedsAuth, AdminReply::Ok];
-    e.stdin = vec!["s3cret".into()];
     assert_eq!(run("wifi off --json", &mut e), 0, "{}", e.err);
     assert_eq!(json_out(&e)["on"], false);
-    assert_eq!(
-        e.admin.lock().unwrap().sent,
-        ["wifi-power wlan0 off pw=", "wifi-power wlan0 off pw=s3cret"]
-    );
+    assert!(e.admin.lock().unwrap().sent.is_empty());
     let mut e = FakeEnv {
         home: temp_home("wifi2"),
-        host: Some(Arc::new(wol_core::system::fake::FakeHost::new(true))),
+        host: Some(Arc::new(wol_core::system::fake::FakeHost::linux())),
         ..Default::default()
     };
-    e.admin.lock().unwrap().replies = vec![AdminReply::NeedsAuth];
-    assert_eq!(run("wifi on", &mut e), 77, "no password on stdin");
+    assert_ne!(run("wifi on", &mut e), 0, "no NetworkManager");
 }
 
 #[test]

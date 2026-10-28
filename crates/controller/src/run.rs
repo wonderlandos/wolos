@@ -14,7 +14,6 @@ pub const SHELL_SOCKET: &str = "wol-shell.sock";
 pub const RUN_BIN: &str = "wol-run";
 /// Owner of GPU selection (realtime crate): `wol-realtime gpu env|hyprconf`.
 pub const GPU_BIN: &str = "wol-realtime";
-pub const UPDATE_MOUNT: &str = "/mnt/wol-update";
 const PASSWORD_TRIES: usize = 3;
 
 /// Side effects `wol` needs.
@@ -189,6 +188,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "shell.toggle" | "shell.show" | "shell.hide" | "shell.reload" => shell(env, inv),
         "update.check" => update_check(env, json),
         "update.status" => update_status(env, json),
+        "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
         "update.rollback" => crate::verbs::rollback(env, inv.get("be")),
         "gpu.env" => exec(env, &[GPU_BIN.into(), "gpu".into(), "env".into()]),
@@ -389,8 +389,7 @@ fn bundle_plan(env: &mut dyn Env, bundle: &str, json: bool) -> i32 {
     };
     let host = wol_core::bundle::HostCaps {
         arch: wol_core::bundle::host_arch().into(),
-        linux_compat: env.read_file(Path::new("/compat/linux/bin/sh")).is_some()
-            || env.var("WOL_LINUX_COMPAT").is_some(),
+        linux_compat: true,
         proton: env.var("WOL_PROTON").is_some(),
     };
     match wol_core::bundle::resolve(&info, &host) {
@@ -568,11 +567,11 @@ fn update_check(env: &mut dyn Env, json: bool) -> i32 {
     let refreshed = refresh_catalogue(env);
     let out = env.capture(&wol_core::update::PENDING_ARGV);
     let Some(mut pending) = wol_core::update::parse_pending(out.as_deref()) else {
-        return fail(env, ErrorCode::Unavailable, "pkg version failed");
+        return fail(env, ErrorCode::Unavailable, "pacman -Qu failed");
     };
-    // FreeBSD's fixes the daily check fetched, until installed: Update Now installs them too.
+    // A newer release the daily check found, until installed (`wol update apply`).
     if let Some(b) = update_snapshot(env).and_then(|u| u.base) {
-        pending.push(format!("FreeBSD {b}"));
+        pending.push(format!("WolOS {b}"));
     }
     if pending.is_empty() && !refreshed {
         // Never claim "up to date" from a catalogue that could not be refreshed.
@@ -592,22 +591,79 @@ fn update_check(env: &mut dyn Env, json: bool) -> i32 {
     0
 }
 
-/// The daily check's findings (wol_core::update::check), without FreeBSD fixes installed since.
+/// The daily check's findings (wol_core::update::check), without a release installed since.
 fn update_snapshot(env: &mut dyn Env) -> Option<wol_core::update::check::Updates> {
     use wol_core::update::check::{DIR, USERLAND_ARGV, Updates};
+    let keys = wol_core::package::read_keys(Path::new(
+        &env.var("WOL_KEYS_DIR")
+            .unwrap_or_else(|| shared::package::KEYS_DIR.into()),
+    ));
     let f = |n: &str| env.read_file(&Path::new(DIR).join(n)).unwrap_or_default();
-    let u = Updates::parse(&f("checked"), &f("pkg"), &f("audit"), &f("base"))?;
+    let u = Updates::from_files(f, &keys)?;
     let userland = u.base.as_ref().and_then(|_| env.capture(&USERLAND_ARGV));
     Some(u.installed(userland.as_deref()))
+}
+
+/// Running WolOS base: (os-release VERSION_ID, kernel release, kernel is linux-wolos).
+fn running_base(env: &mut dyn Env) -> (Option<String>, String, bool) {
+    let base = env
+        .read_file(Path::new("/etc/os-release"))
+        .and_then(|t| wol_core::base::version(&t));
+    let kernel = env
+        .read_file(Path::new("/proc/sys/kernel/osrelease"))
+        .map(|k| k.trim().to_owned())
+        .unwrap_or_default();
+    let wolos = wol_core::games::doctor::is_wolos_kernel(&kernel);
+    (base, kernel, wolos)
+}
+
+/// `wol base verify`: every file of the wolos-base manifest against its sha256. `WOL_ROOT`
+/// checks another root (an installed disk).
+fn base_verify(env: &mut dyn Env, json: bool) -> i32 {
+    let root = env.var("WOL_ROOT").unwrap_or_default();
+    let at = |p: &str| PathBuf::from(format!("{root}{p}"));
+    let Some(text) = env.read_file(&at(wol_core::base::MANIFEST)) else {
+        return fail(
+            env,
+            ErrorCode::NotFound,
+            &format!("no base manifest at {}", wol_core::base::MANIFEST),
+        );
+    };
+    let Some(entries) = wol_core::base::parse_manifest(&text) else {
+        return fail(env, ErrorCode::Failed, "base manifest is malformed");
+    };
+    let findings =
+        wol_core::base::verify(&entries, &|p| wol_core::package::sha256_file(&at(p)).ok());
+    if json || !env.stdout_tty() {
+        env.out(&format!(
+            "{}\n",
+            serde_json::json!({"files": entries.len(), "findings": findings})
+        ));
+    } else if findings.is_empty() {
+        env.out(&format!("{} base files intact\n", entries.len()));
+    } else {
+        for f in &findings {
+            env.out(&format!("{} {}\n", f.state, f.path));
+        }
+    }
+    if findings.is_empty() {
+        0
+    } else {
+        ErrorCode::Failed.exit()
+    }
 }
 
 /// `wol update status`: null / "not checked yet" before the first check.
 fn update_status(env: &mut dyn Env, json: bool) -> i32 {
     let u = update_snapshot(env);
+    let (base, kernel, wolos) = running_base(env);
     if json || !env.stdout_tty() {
         let v = u.map(|u| {
             let mut v = serde_json::json!(u);
             v["count"] = u.count().into();
+            v["base_version"] = base.clone().into();
+            v["kernel"] = kernel.clone().into();
+            v["kernel_is_wolos"] = wolos.into();
             v
         });
         env.out(&format!("{}\n", v.unwrap_or_default()));
@@ -617,7 +673,17 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
         env.out("not checked yet\n");
         return 0;
     };
-    let mut s = format!("checked {}\n", u.checked);
+    let mut s = format!(
+        "base {}, kernel {}{}\nchecked {}\n",
+        base.as_deref().unwrap_or("unknown"),
+        if kernel.is_empty() {
+            "unknown"
+        } else {
+            &kernel
+        },
+        if wolos { " (linux-wolos)" } else { "" },
+        u.checked
+    );
     for p in &u.packages {
         let tag = if u.security.contains(p) {
             " (security fix)"
@@ -627,7 +693,12 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
         s.push_str(&format!("{p}{tag}\n"));
     }
     if let Some(b) = &u.base {
-        s.push_str(&format!("FreeBSD {b}\n"));
+        s.push_str(&format!("WolOS {b}\n"));
+    }
+    for k in &u.kernels {
+        s.push_str(&format!(
+            "{k}: your own kernel, kept (WolOS boots linux-wolos)\n"
+        ));
     }
     if u.count() == 0 {
         s.push_str("up to date\n");
@@ -636,24 +707,43 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
     0
 }
 
+/// `wol update plan|apply [slot] [--release YYYY/MM/DD]`: update into the other root slot
+/// (`wol_core::update::plan`); the release defaults to the one the daily check found.
 fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
-    let be = inv
-        .get("be")
-        .map_or_else(|| format!("wol-update-{}", env.now_secs()), String::from);
-    let Some(steps) = wol_core::update::plan(&be, UPDATE_MOUNT, inv.flag("base")) else {
+    use wol_core::update::{self as up, Step};
+    let running = env
+        .read_file(Path::new("/proc/cmdline"))
+        .and_then(|c| up::running_slot(&c));
+    let slot = match inv.get("be") {
+        Some(s) => s.to_string(),
+        None => running
+            .and_then(up::other_slot)
+            .unwrap_or(up::SLOTS[1])
+            .to_string(),
+    };
+    if Some(slot.as_str()) == running {
         return fail(
             env,
             ErrorCode::Usage,
-            &format!("bad boot environment '{be}'"),
+            &format!("{slot} is the running system; update the other slot"),
+        );
+    }
+    let date = inv
+        .get("release")
+        .map(String::from)
+        .or_else(|| update_snapshot(env).and_then(|u| u.snapshot));
+    let replace = env
+        .capture(&up::be::LIST_ARGV)
+        .is_some_and(|t| up::be::parse(&t).iter().any(|b| b.name == slot));
+    let Some(steps) = up::plan(&slot, replace, date.as_deref()) else {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            &format!("bad slot '{slot}' or release date"),
         );
     };
     if inv.action == "update.plan" {
-        env.out(
-            &steps
-                .iter()
-                .map(|s| format!("{}\n", s.join(" ")))
-                .collect::<String>(),
-        );
+        env.out(&steps.iter().map(|s| format!("{s}\n")).collect::<String>());
         return 0;
     }
     if !inv.flag("yes") {
@@ -667,23 +757,23 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
         return fail(env, ErrorCode::Denied, "update apply needs root");
     }
     for s in &steps {
-        env.err(&format!("wol update: {}\n", s.join(" ")));
-        let code = env.exec(s).unwrap_or(127);
+        env.err(&format!("wol update: {s}\n"));
+        let code = match s {
+            Step::Run(argv) => env.exec(argv).unwrap_or(127),
+            Step::Write { path, text } => i32::from(env.write_file(Path::new(path), text).is_err()),
+        };
         if code != 0 {
-            for r in wol_core::update::rollback(&be) {
+            for r in up::rollback(&slot) {
                 let _ = env.exec(&r);
             }
             return fail(
                 env,
                 ErrorCode::Failed,
-                &format!("{} failed ({code}); boot environment {be} removed", s[0]),
+                &format!("{s} failed ({code}); slot {slot} removed"),
             );
         }
     }
-    crate::verbs::prune_restore_points(env);
-    env.out(&format!(
-        "updated in boot environment {be}; reboot to use it\n"
-    ));
+    env.out(&format!("updated into {slot}; restart to use it\n"));
     0
 }
 

@@ -365,7 +365,7 @@ mod tests {
             assert_eq!(s.tokens.len(), 13, "{}", s.id);
             if let Some(w) = &s.wallpaper {
                 let name = w
-                    .strip_prefix("/usr/local/share/wolos/wallpapers/")
+                    .strip_prefix("/usr/share/wolos/wallpapers/")
                     .unwrap_or_else(|| panic!("{}: {w}", s.id));
                 assert!(walls.join(name).is_file(), "{}: {w}", s.id);
             }
@@ -503,7 +503,7 @@ mod tests {
         assert_eq!(
             search_paths(Path::new("/home/u/.config")),
             vec![
-                PathBuf::from("/usr/local/share/wolos/themes"),
+                PathBuf::from("/usr/share/wolos/themes"),
                 PathBuf::from("/home/u/.config/wolos/themes")
             ]
         );

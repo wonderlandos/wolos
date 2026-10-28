@@ -11,19 +11,25 @@ struct State {
     slow: HashMap<String, String>,
     ints: HashMap<String, i64>,
     raw: HashMap<String, Vec<u8>>,
+    links: HashMap<String, String>,
     strings: HashMap<String, String>,
     ran: Vec<String>,
     load: Option<Load>,
     root: bool,
 }
 
-/// Files, commands ("file arg arg" -> stdout) and sysctls.
+/// Files, symlinks, commands ("file arg arg" -> stdout); sysctls only for the transitional FreeBSD paths.
 pub struct FakeHost {
     freebsd: bool,
     s: Mutex<State>,
 }
 
 impl FakeHost {
+    /// The normal fake: a Linux host.
+    pub fn linux() -> Self {
+        Self::new(false)
+    }
+    /// `freebsd = true` is transitional (ADR 0016); new tests use [`FakeHost::linux`].
     pub fn new(freebsd: bool) -> Self {
         Self {
             freebsd,
@@ -38,6 +44,10 @@ impl FakeHost {
     }
     pub fn file(&self, path: &str, text: &str) -> &Self {
         self.st().files.insert(path.into(), text.into());
+        self
+    }
+    pub fn link(&self, path: &str, target: &str) -> &Self {
+        self.st().links.insert(path.into(), target.into());
         self
     }
     pub fn command(&self, line: &str, out: &str) -> &Self {
@@ -105,6 +115,9 @@ impl Host for FakeHost {
     }
     fn sysctl_string(&self, name: &str) -> Option<String> {
         self.st().strings.get(name).cloned()
+    }
+    fn read_link(&self, path: &str) -> Option<String> {
+        self.st().links.get(path).cloned()
     }
     fn load_average(&self) -> Option<Load> {
         self.st().load

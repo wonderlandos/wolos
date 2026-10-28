@@ -1,6 +1,7 @@
 //! `wol games doctor`: what Steam and Windows games need on this machine, each with the exact
-//! fix. [`gather`] reads facts through [`Host`]; [`checks`] is pure.
-use super::{steam, wine};
+//! fix. Steam is the native Arch package (multilib); Proton comes through Steam; wine is native.
+//! [`gather`] reads facts through [`Host`]; [`checks`] is pure.
+use super::wine;
 use crate::system::Host;
 use std::path::{Path, PathBuf};
 
@@ -46,7 +47,7 @@ pub struct VkDevice {
     pub vendor: String,
 }
 
-/// Linux-ABI `futex_waitv(2)` (syscall 449), probed with [`futex_probe_elf`].
+/// `futex_waitv(2)` (syscall 449, Proton's fsync), probed with [`futex_probe_elf`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FutexWaitv {
@@ -57,74 +58,47 @@ pub enum FutexWaitv {
     NoLinuxAbi,
 }
 
-pub const LINUX_ROOT: &str = "/compat/linux";
-pub const ICD_DIR: &str = "/usr/local/share/vulkan/icd.d";
-/// Mounts linux-steam-utils requires under the Linux root (rc.d `linux`, `linux_mounts_enable`).
-pub const LINUX_MOUNTS: [(&str, &str); 5] = [
-    ("/compat/linux/proc", "linprocfs"),
-    ("/compat/linux/sys", "linsysfs"),
-    ("/compat/linux/dev", "devfs"),
-    ("/compat/linux/dev/shm", "tmpfs"),
-    ("/compat/linux/dev/fd", "fdescfs"),
-];
-/// (sysctl, how to persist it). All must be 1 for linux-steam-utils.
-pub const SYSCTLS: [(&str, &str, &str); 3] = [
-    (
-        "unprivileged-chroot",
-        "security.bsd.unprivileged_chroot",
-        "/etc/sysctl.conf",
-    ),
-    ("usermount", "vfs.usermount", "/etc/sysctl.conf"),
-    (
-        "linux-ifnames",
-        "compat.linux.use_real_ifnames",
-        "/etc/sysctl.kld.d/linux.conf",
-    ),
-];
+/// Vulkan ICD manifests (64- and 32-bit drivers).
+pub const ICD_DIR: &str = "/usr/share/vulkan/icd.d";
+pub const PACMAN_CONF: &str = "/etc/pacman.conf";
+pub const STEAM_BIN: &str = "/usr/bin/steam";
+/// Kernel settings games need; none on Linux (kept for callers that list them).
+pub const SYSCTLS: [(&str, &str, &str); 0] = [];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
     pub user: String,
     pub groups: Vec<String>,
-    /// `kern.features.linux` (32-bit: the Steam client) and `kern.features.linux64`.
-    pub linux32: bool,
-    pub linux64: bool,
-    /// (mount point, type) from `mount -p`.
-    pub mounts: Vec<(String, String)>,
-    /// `/compat/linux/etc/os-release` (ID, VERSION_ID).
-    pub linux_base: Option<(String, String)>,
-    pub nullfs: bool,
-    /// Values of [`SYSCTLS`], same order.
-    pub sysctls: Vec<Option<i64>>,
-    pub machine_id: bool,
+    /// `[multilib]` enabled in pacman.conf (Steam and the 32-bit drivers live there).
+    pub multilib: bool,
+    /// The steam package.
+    pub steam: bool,
+    /// `~/.local/share/Steam/ubuntu12_32`: the Steam client is bootstrapped.
+    pub steam_bootstrapped: bool,
     /// `/dev/dri` exists (a DRM driver is loaded).
     pub drm: bool,
-    pub steam_utils: bool,
-    /// `~/.steam/steam/ubuntu12_32`: the Steam client is bootstrapped.
-    pub steam_bootstrapped: bool,
-    pub tool_current: bool,
-    pub wine: Option<String>,
-    pub wine_version: Option<wine::Version>,
-    pub i386_package: bool,
-    pub bin_wow64: bool,
-    /// FreeBSD Vulkan ICD manifests (file names).
+    /// Vulkan ICD manifests (file names).
     pub icds: Vec<String>,
+    /// 32-bit Vulkan loader and OpenGL (the Steam client and 32-bit games).
+    pub lib32_vulkan: bool,
+    pub lib32_gl: bool,
     /// None: vulkaninfo missing or failed.
     pub vulkan: Option<Vec<VkDevice>>,
     /// `intel` | `amd` | `nvidia`, from the hardware snapshot (else Vulkan vendor ids).
     pub gpu_vendors: Vec<&'static str>,
-    /// Kernel module version from `hw.nvidia.version`.
+    /// Kernel module version from `/proc/driver/nvidia/version`.
     pub nvidia_version: Option<String>,
-    /// `/compat/linux/usr/lib/libGLX_nvidia.so.<version>` (32-bit, the Steam client).
-    pub linux_nvidia_libs: bool,
-    /// Valve Proton installs carrying DXVK for this wine-proton release.
-    pub proton_dirs: Vec<String>,
-    pub dxvk_env: bool,
-    pub libc6_shim: bool,
-    pub python3: bool,
-    /// linux-steam-utils' "FreeBSD Wine (emulators/wine-proton)" tool.
-    pub lsu_wine_tool: bool,
+    /// `/usr/lib32/libGLX_nvidia.so.<version>` (lib32-nvidia-utils, same version).
+    pub lib32_nvidia: bool,
+    pub wine: Option<String>,
+    pub wine_version: Option<wine::Version>,
     pub futex_waitv: FutexWaitv,
+    /// `/dev/ntsync` (Proton's NT sync driver).
+    pub ntsync: bool,
+    /// Running kernel release (`/proc/sys/kernel/osrelease`).
+    pub kernel: String,
+    /// WolOS base version (`/etc/os-release` VERSION_ID).
+    pub base: Option<String>,
 }
 
 fn exists(h: &dyn Host, p: &Path) -> bool {
@@ -134,15 +108,9 @@ fn exists(h: &dyn Host, p: &Path) -> bool {
     h.list_dir(&parent.to_string_lossy()).iter().any(|e| e == s)
 }
 
-/// (mount point, type) per `mount -p` line (fstab format).
-pub fn parse_mounts(text: &str) -> Vec<(String, String)> {
-    text.lines()
-        .filter_map(|l| {
-            let mut f = l.split_whitespace();
-            let (_dev, at, ty) = (f.next()?, f.next()?, f.next()?);
-            Some((at.to_owned(), ty.to_owned()))
-        })
-        .collect()
+/// `[multilib]` section header not commented out.
+pub fn multilib_enabled(pacman_conf: &str) -> bool {
+    pacman_conf.lines().any(|l| l.trim() == "[multilib]")
 }
 
 /// (ID, VERSION_ID) from os-release text.
@@ -153,6 +121,11 @@ pub fn parse_os_release(text: &str) -> Option<(String, String)> {
             .map(|v| v.trim().trim_matches('"').to_owned())
     };
     Some((get("ID")?, get("VERSION_ID").unwrap_or_default()))
+}
+
+/// The running kernel is the WolOS one (`linux-wolos` releases carry `wolos` in their name).
+pub fn is_wolos_kernel(release: &str) -> bool {
+    release.contains("wolos")
 }
 
 /// Devices of `vulkaninfo --summary`.
@@ -204,13 +177,14 @@ pub fn vendor_name(id: &str) -> Option<&'static str> {
     }
 }
 
-/// Version token of `hw.nvidia.version` ("NVIDIA UNIX x86_64 Kernel Module  595.104.02  ...").
+/// Driver version from `/proc/driver/nvidia/version` ("NVRM version: NVIDIA UNIX Open Kernel
+/// Module for x86_64  570.144  Release Build ..."): the first version token after "Kernel Module".
 pub fn parse_nvidia_version(text: &str) -> Option<String> {
     let after = text.split("Kernel Module").nth(1)?;
-    let v = after.split_whitespace().next()?;
-    v.chars()
-        .all(|c| c.is_ascii_digit() || c == '.')
-        .then(|| v.to_owned())
+    after
+        .split_whitespace()
+        .find(|v| v.contains('.') && v.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .map(str::to_owned)
 }
 
 /// A static Linux x86-64 ELF (OSABI Linux) that calls `futex_waitv(NULL, 0, 0, NULL, 0)` and
@@ -255,8 +229,7 @@ pub fn futex_probe_elf() -> Vec<u8> {
     e
 }
 
-/// Write [`futex_probe_elf`] into `dir`, run it, remove it. On a stock FreeBSD kernel the Linux
-/// ABI logs "syscall futex_waitv not implemented" once.
+/// Write [`futex_probe_elf`] into `dir`, run it, remove it.
 pub fn probe_futex_waitv(dir: &Path) -> FutexWaitv {
     run_probe(dir, &futex_probe_elf())
 }
@@ -303,13 +276,11 @@ pub fn gather(
     var: &dyn Fn(&str) -> Option<String>,
     futex_waitv: FutexWaitv,
 ) -> Facts {
-    let read = |p: &Path| h.read_text(&p.to_string_lossy());
     let has = |p: &str| exists(h, Path::new(p));
-    let root = Path::new(wine::ROOT);
-    let wine = wine::loader(&|p| exists(h, p), root, home, Some(wine::PeArch::Amd64));
+    let wine = has("/usr/bin/wine").then(|| "/usr/bin/wine".to_string());
     let wine_version = wine
         .as_ref()
-        .and_then(|w| h.run(&[&w.to_string_lossy(), "--version"]))
+        .and_then(|w| h.run(&[w, "--version"]))
         .and_then(|t| wine::Version::parse(&t));
     let vulkan = h
         .run_slow(&["vulkaninfo", "--summary"])
@@ -335,71 +306,47 @@ pub fn gather(
     gpu_vendors.sort();
     gpu_vendors.dedup();
     let nvidia_version = h
-        .sysctl_string("hw.nvidia.version")
+        .read_text("/proc/driver/nvidia/version")
         .and_then(|t| parse_nvidia_version(&t));
-    let steam_root = steam::steam_root(home, &|p| exists(h, p));
-    let proton_dirs = wine_version
-        .map(|v| {
-            steam::libraries(&steam_root, &read)
-                .iter()
-                .flat_map(|lib| {
-                    steam::proton_names(v)
-                        .into_iter()
-                        .map(move |n| lib.join("steamapps/common").join(n))
-                })
-                .filter(|d| exists(h, &d.join("files/lib/wine/dxvk")))
-                .map(|d| d.to_string_lossy().into_owned())
-                .collect()
-        })
-        .unwrap_or_default();
-    let i386 = home
-        .join(wine::I386_ROOT)
-        .join(root.strip_prefix("/").unwrap_or(root))
-        .join("bin/wine");
     Facts {
         user: var("USER").unwrap_or_default(),
         groups: h
             .run(&["id", "-Gn"])
             .map(|t| t.split_whitespace().map(String::from).collect())
             .unwrap_or_default(),
-        linux32: h.sysctl_i64("kern.features.linux") == Some(1),
-        linux64: h.sysctl_i64("kern.features.linux64") == Some(1),
-        mounts: h
-            .run(&["mount", "-p"])
-            .map(|t| parse_mounts(&t))
-            .unwrap_or_default(),
-        linux_base: h
-            .read_text(&format!("{LINUX_ROOT}/etc/os-release"))
-            .and_then(|t| parse_os_release(&t)),
-        nullfs: h.run(&["kldstat", "-q", "-m", "nullfs"]).is_some(),
-        sysctls: SYSCTLS.iter().map(|s| h.sysctl_i64(s.1)).collect(),
-        machine_id: has("/etc/machine-id"),
+        multilib: h
+            .read_text(PACMAN_CONF)
+            .is_some_and(|t| multilib_enabled(&t)),
+        steam: has(STEAM_BIN),
+        steam_bootstrapped: exists(h, &home.join(".local/share/Steam/ubuntu12_32")),
         drm: has("/dev/dri"),
-        steam_utils: has(&format!("{}/bin/steam", steam::LSU)),
-        steam_bootstrapped: exists(h, &home.join(".steam/steam/ubuntu12_32")),
-        tool_current: steam::is_current(&read, &steam_root, steam::WOL_RUN),
-        wine: wine.map(|w| w.to_string_lossy().into_owned()),
-        wine_version,
-        i386_package: exists(h, &i386),
-        bin_wow64: exists(h, &root.join("bin-wow64/wine")),
         icds: h
             .list_dir(ICD_DIR)
             .iter()
             .filter(|p| p.ends_with(".json"))
             .filter_map(|p| p.rsplit('/').next().map(String::from))
             .collect(),
+        lib32_vulkan: has("/usr/lib32/libvulkan.so.1"),
+        lib32_gl: has("/usr/lib32/libGLX_mesa.so.0") || has("/usr/lib32/libGLX_nvidia.so.0"),
         vulkan,
         gpu_vendors,
-        linux_nvidia_libs: nvidia_version
+        lib32_nvidia: nvidia_version
             .as_ref()
-            .is_some_and(|v| has(&format!("{LINUX_ROOT}/usr/lib/libGLX_nvidia.so.{v}"))),
+            .is_some_and(|v| has(&format!("/usr/lib32/libGLX_nvidia.so.{v}"))),
         nvidia_version,
-        proton_dirs,
-        dxvk_env: var("WOL_DXVK_DIR").is_some(),
-        libc6_shim: has("/usr/local/bin/c6-shim-env"),
-        python3: has("/usr/local/bin/python3"),
-        lsu_wine_tool: has(&format!("{}/tools/LSU_FreeBSD_Wine/run.rb", steam::LSU)),
+        wine,
+        wine_version,
         futex_waitv,
+        ntsync: has("/dev/ntsync"),
+        kernel: h
+            .read_text("/proc/sys/kernel/osrelease")
+            .map(|t| t.trim().to_owned())
+            .unwrap_or_default(),
+        base: h
+            .read_text("/etc/os-release")
+            .and_then(|t| parse_os_release(&t))
+            .map(|(_, v)| v)
+            .filter(|v| !v.is_empty()),
     }
 }
 
@@ -417,353 +364,192 @@ fn check(
     }
 }
 
-/// Every check, Steam client first, then Windows games.
+fn ok_or(ok: bool, bad: Status) -> Status {
+    if ok { Status::Ok } else { bad }
+}
+
+/// 64- and 32-bit Vulkan driver packages for the GPU vendors.
+fn vulkan_packages(vendors: &[&str]) -> String {
+    let mut p = vec!["vulkan-icd-loader", "lib32-vulkan-icd-loader"];
+    for v in vendors {
+        p.extend(match *v {
+            "intel" => ["vulkan-intel", "lib32-vulkan-intel"],
+            "amd" => ["vulkan-radeon", "lib32-vulkan-radeon"],
+            _ => ["nvidia-utils", "lib32-nvidia-utils"],
+        });
+    }
+    format!("sudo pacman -S --needed {}", p.join(" "))
+}
+
+/// Every check: the WolOS base first, then the Steam client, then games.
 pub fn checks(f: &Facts) -> Vec<Check> {
-    use Status::*;
     let mut c = Vec::new();
-    let ok_or = |good: bool, bad: Status| if good { Ok } else { bad };
     c.push(check(
-        "linux-abi",
-        ok_or(f.linux32 && f.linux64, Fail),
-        match (f.linux32, f.linux64) {
-            (true, true) => {
-                "Linux ABI loaded, 32- and 64-bit (the Steam client is a Linux program)"
-            }
-            (false, true) => "32-bit Linux ABI missing (the Steam client is 32-bit)",
-            _ => "Linux ABI not loaded (the Steam client is a Linux program)",
-        },
-        if f.linux32 && f.linux64 {
-            ""
+        "base",
+        if is_wolos_kernel(&f.kernel) {
+            Status::Ok
         } else {
-            "sudo sysrc linux_enable=YES && sudo service linux start"
+            Status::Info
         },
-    ));
-    let missing: Vec<String> = LINUX_MOUNTS
-        .iter()
-        .filter(|(at, ty)| !f.mounts.iter().any(|m| m.0 == *at && m.1 == *ty))
-        .map(|(at, ty)| format!("{ty} on {at}"))
-        .collect();
-    c.push(check(
-        "linux-mounts",
-        ok_or(missing.is_empty(), Fail),
-        if missing.is_empty() {
-            "linprocfs, linsysfs, devfs, tmpfs, fdescfs mounted in /compat/linux".into()
-        } else {
-            format!("not mounted: {}", missing.join(", "))
-        },
-        if missing.is_empty() {
-            ""
-        } else {
-            "sudo sysrc linux_mounts_enable=YES && sudo service linux restart"
-        },
-    ));
-    let base_ok = f.linux_base.as_ref().is_some_and(|(id, v)| {
-        id == "rocky"
-            && v.split('.')
-                .next()
-                .and_then(|m| m.parse::<u32>().ok())
-                .is_some_and(|m| m >= 9)
-    });
-    c.push(check(
-        "linux-base",
-        ok_or(base_ok, Fail),
-        match &f.linux_base {
-            Some((id, v)) => format!("{id} {v} in /compat/linux"),
-            None => "no Linux base in /compat/linux".into(),
-        },
-        if base_ok {
-            ""
-        } else {
-            "sudo pkg install -y linux_base-rl9"
-        },
-    ));
-    c.push(check(
-        "steam-utils",
-        ok_or(f.steam_utils, Fail),
-        if f.steam_utils {
-            "linux-steam-utils installed (Steam launcher)"
-        } else {
-            "linux-steam-utils missing (runs the Linux Steam client)"
-        },
-        if f.steam_utils {
-            ""
-        } else {
-            "sudo pkg install -y linux-steam-utils"
-        },
-    ));
-    for ((id, name, persist), v) in SYSCTLS.iter().zip(&f.sysctls) {
-        let good = *v == Some(1);
-        c.push(check(
-            id,
-            ok_or(good, Fail),
-            format!(
-                "{name}={}",
-                v.map_or("unset".to_string(), |x| x.to_string())
-            ),
-            if good {
-                String::new()
+        format!(
+            "WolOS base {}, kernel {}{}",
+            f.base.as_deref().unwrap_or("unknown"),
+            if f.kernel.is_empty() {
+                "unknown"
             } else {
-                format!("sudo sysctl {name}=1 && echo {name}=1 | sudo tee -a {persist}")
+                &f.kernel
             },
-        ));
-    }
-    c.push(check(
-        "nullfs",
-        ok_or(f.nullfs, Fail),
-        if f.nullfs {
-            "nullfs loaded"
-        } else {
-            "nullfs not loaded (Steam's web helper chroot)"
-        },
-        if f.nullfs {
-            ""
-        } else {
-            "sudo kldload nullfs && sudo sysrc kld_list+=nullfs"
-        },
-    ));
-    c.push(check(
-        "machine-id",
-        ok_or(f.machine_id, Fail),
-        if f.machine_id {
-            "/etc/machine-id present"
-        } else {
-            "/etc/machine-id missing"
-        },
-        if f.machine_id {
-            ""
-        } else {
-            "sysctl -n kern.hostuuid | tr -d - | sudo tee /etc/machine-id"
-        },
-    ));
-    let video = f.groups.iter().any(|g| g == "video");
-    c.push(match (f.drm, video) {
-        (false, _) => check(
-            "gpu-access",
-            Warn,
-            "no GPU driver loaded (/dev/dri missing)",
-            "wol hw status",
-        ),
-        (true, true) => check("gpu-access", Ok, "member of video (GPU access)", ""),
-        (true, false) => check(
-            "gpu-access",
-            Fail,
-            format!("{} is not in group video", f.user),
-            format!(
-                "sudo pw groupmod video -m {}  # then log out and in",
-                if f.user.is_empty() { "$USER" } else { &f.user }
-            ),
-        ),
-    });
-    c.push(check(
-        "steam",
-        ok_or(f.steam_bootstrapped, Warn),
-        if f.steam_bootstrapped {
-            "Steam client installed in ~/.steam/steam"
-        } else {
-            "Steam client not downloaded yet"
-        },
-        if f.steam_bootstrapped {
-            ""
-        } else {
-            "wol games steam"
-        },
-    ));
-    c.push(check(
-        "wolos-proton",
-        ok_or(f.tool_current, Warn),
-        if f.tool_current {
-            "WolOS Proton compatibility tool installed"
-        } else {
-            "WolOS Proton compatibility tool missing or outdated"
-        },
-        if f.tool_current {
-            ""
-        } else {
-            "wol games steam-setup"
-        },
-    ));
-    let pkg_upgrade = "sudo pkg upgrade -y wine-proton  # 11.x (WoW64) is on the latest branch";
-    match (&f.wine, f.wine_version) {
-        (None, _) => c.push(check(
-            "wine-proton",
-            Fail,
-            "wine-proton not installed (runs Windows games natively)",
-            "sudo pkg install -y wine-proton",
-        )),
-        (Some(w), None) => c.push(check(
-            "wine-proton",
-            Warn,
-            format!("{w}: version unreadable"),
-            "sudo pkg install -f -y wine-proton",
-        )),
-        (Some(w), Some(v)) => {
-            c.push(check(
-                "wine-proton",
-                Ok,
-                format!("wine-proton {v} ({w}), native FreeBSD"),
-                "",
-            ));
-            c.push(match wine::win32(v, f.i386_package, f.bin_wow64) {
-                wine::Win32::Wow64 => check(
-                    "win32",
-                    Ok,
-                    "32-bit Windows programs: WoW64, no lib32 needed",
-                    "",
-                ),
-                wine::Win32::I386Package => check(
-                    "win32",
-                    Ok,
-                    "32-bit Windows programs: i386 wine-proton in ~/.i386-wine-pkg",
-                    "",
-                ),
-                wine::Win32::Wow64Experimental => check(
-                    "win32",
-                    Warn,
-                    format!("32-bit Windows programs: wine-proton {v} bin-wow64 (experimental)"),
-                    pkg_upgrade,
-                ),
-                wine::Win32::Missing => check(
-                    "win32",
-                    Warn,
-                    "32-bit Windows programs cannot run",
-                    pkg_upgrade,
-                ),
-            });
-            c.push(match wine::sync(v) {
-                wine::Sync::Esync => check("sync", Info, "esync (eventfd), WINEESYNC=1", ""),
-                wine::Sync::Server => check(
-                    "sync",
-                    Info,
-                    "wineserver sync: wine-proton 11 has no esync; its fsync and ntsync are Linux-only",
-                    "",
-                ),
-            });
-        }
-    }
-    c.push(check(
-        "futex-waitv",
-        if f.futex_waitv == FutexWaitv::Present {
-            Ok
-        } else {
-            Info
-        },
-        match f.futex_waitv {
-            FutexWaitv::Present => {
-                "Linux ABI futex_waitv present (Linux games, Linux Proton fsync)"
+            if is_wolos_kernel(&f.kernel) {
+                " (linux-wolos)"
+            } else {
+                " (not linux-wolos: your own kernel, kept)"
             }
-            FutexWaitv::Absent => {
-                "Linux ABI futex_waitv missing: Linux Proton uses esync (native games unaffected)"
-            }
-            FutexWaitv::NoLinuxAbi => "futex_waitv not probed: Linux ABI not loaded",
-            FutexWaitv::Unknown => "futex_waitv not probed",
-        },
+        ),
         "",
     ));
-    let nvidia = f.gpu_vendors.contains(&"nvidia");
-    let driver_pkg = if nvidia { "nvidia-driver" } else { "mesa-dri" };
+    c.push(check(
+        "multilib",
+        ok_or(f.multilib, Status::Fail),
+        if f.multilib {
+            "multilib repository on (Steam and 32-bit drivers)"
+        } else {
+            "multilib repository off: Steam and the 32-bit drivers live there"
+        },
+        if f.multilib {
+            ""
+        } else {
+            "enable [multilib] in /etc/pacman.conf, then sudo pacman -Sy"
+        },
+    ));
+    c.push(check(
+        "steam",
+        ok_or(f.steam, Status::Fail),
+        if f.steam {
+            "Steam installed"
+        } else {
+            "Steam not installed"
+        },
+        if f.steam { "" } else { "sudo pacman -S steam" },
+    ));
+    c.push(check(
+        "drm",
+        ok_or(f.drm, Status::Fail),
+        if f.drm {
+            "graphics driver loaded (/dev/dri)"
+        } else {
+            "no graphics driver loaded (/dev/dri missing)"
+        },
+        if f.drm { "" } else { "wol hw doctor" },
+    ));
+    let gl = f.lib32_gl && f.lib32_vulkan;
+    c.push(check(
+        "lib32-gl",
+        ok_or(gl, Status::Fail),
+        if gl {
+            "32-bit OpenGL and Vulkan present (the Steam client is 32-bit)"
+        } else {
+            "32-bit OpenGL or Vulkan missing (the Steam client is 32-bit)"
+        },
+        if gl {
+            String::new()
+        } else {
+            format!("{} lib32-mesa", vulkan_packages(&f.gpu_vendors))
+        },
+    ));
     c.push(check(
         "vulkan-icd",
-        ok_or(!f.icds.is_empty(), Fail),
+        ok_or(!f.icds.is_empty(), Status::Fail),
         if f.icds.is_empty() {
-            format!("no Vulkan driver in {ICD_DIR}")
+            format!("no Vulkan driver in {ICD_DIR} (DXVK and VKD3D need one)")
         } else {
             format!("Vulkan drivers: {}", f.icds.join(", "))
         },
         if f.icds.is_empty() {
-            format!("sudo pkg install -y {driver_pkg}")
+            vulkan_packages(&f.gpu_vendors)
         } else {
             String::new()
         },
     ));
-    c.push(match &f.vulkan {
-        None => check(
+    let gpus: Vec<&VkDevice> = f
+        .vulkan
+        .iter()
+        .flatten()
+        .filter(|d| d.kind != "CPU")
+        .collect();
+    c.push(match (&f.vulkan, gpus.first()) {
+        (None, _) => check(
             "vulkan",
-            Warn,
+            Status::Warn,
             "vulkaninfo missing or failed",
-            "sudo pkg install -y vulkan-tools && vulkaninfo --summary",
+            "sudo pacman -S vulkan-tools",
         ),
-        Some(d) if d.is_empty() => check("vulkan", Fail, "no Vulkan device", "wol hw status"),
-        Some(d) => {
-            let names: Vec<String> = d
-                .iter()
-                .map(|x| format!("{} ({}, Vulkan {})", x.name, x.driver, x.api))
-                .collect();
-            if d.iter().all(|x| x.kind == "CPU") {
-                check(
-                    "vulkan",
-                    Warn,
-                    format!("software Vulkan only: {}", names.join("; ")),
-                    "wol hw status",
-                )
-            } else {
-                check("vulkan", Ok, names.join("; "), "")
-            }
-        }
-    });
-    if nvidia {
-        c.push(match (&f.nvidia_version, f.linux_nvidia_libs) {
-            (None, _) => check(
-                "nvidia",
-                Fail,
-                "NVIDIA GPU without the nvidia driver",
-                "wol hw fix --yes",
-            ),
-            (Some(v), false) => check(
-                "nvidia",
-                Fail,
-                format!("nvidia {v}: Linux libraries for the Steam client missing"),
-                "sudo pkg install -y linux-nvidia-libs",
-            ),
-            (Some(v), true) => check(
-                "nvidia",
-                Ok,
-                format!("nvidia {v}, Linux libraries match"),
-                "",
-            ),
-        });
-    }
-    let install_proton = f
-        .wine_version
-        .and_then(|v| Some((v, steam::proton_app_id(v)?)))
-        .map(|(v, id)| format!("in Steam install Proton {v}: steam steam://install/{id}"))
-        .unwrap_or_else(|| "set WOL_DXVK_DIR to an extracted DXVK release".into());
-    c.push(if let Some(d) = f.proton_dirs.first() {
-        check(
-            "dxvk",
-            Ok,
-            format!("DXVK, vkd3d-proton, dxvk-nvapi from {d}"),
+        (Some(_), None) => check(
+            "vulkan",
+            Status::Fail,
+            "Vulkan sees only the CPU renderer (llvmpipe): games would crawl",
+            vulkan_packages(&f.gpu_vendors),
+        ),
+        (Some(_), Some(d)) => check(
+            "vulkan",
+            Status::Ok,
+            format!("{} ({}, Vulkan {})", d.name, d.driver, d.api),
             "",
-        )
-    } else if f.dxvk_env {
-        check("dxvk", Ok, "DXVK from WOL_DXVK_DIR", "")
-    } else {
-        check(
-            "dxvk",
-            Warn,
-            "no DXVK: Direct3D 8-11 use wined3d (OpenGL), Direct3D 12 uses wine's vkd3d",
-            install_proton.clone(),
-        )
+        ),
     });
-    let steamworks = f.lsu_wine_tool && f.libc6_shim && f.python3 && !f.proton_dirs.is_empty();
+    if let Some(v) = &f.nvidia_version {
+        c.push(check(
+            "nvidia",
+            ok_or(f.lib32_nvidia, Status::Fail),
+            if f.lib32_nvidia {
+                format!("nvidia {v}, 32-bit libraries match")
+            } else {
+                format!("nvidia {v}: 32-bit libraries for the Steam client missing or older")
+            },
+            if f.lib32_nvidia {
+                ""
+            } else {
+                "sudo pacman -S --needed lib32-nvidia-utils"
+            },
+        ));
+    }
     c.push(check(
-        "steamworks",
-        Info,
-        if steamworks {
-            "games that need the Steam client API: pick \"FreeBSD Wine (emulators/wine-proton)\""
-        } else {
-            "games that need the Steam client API need linux-steam-utils' FreeBSD Wine tool"
+        "futex-waitv",
+        match f.futex_waitv {
+            FutexWaitv::Present => Status::Ok,
+            FutexWaitv::Unknown => Status::Info,
+            _ => Status::Warn,
         },
-        if steamworks || !f.steam_utils {
-            String::new()
+        match f.futex_waitv {
+            FutexWaitv::Present => "futex_waitv present (Proton fsync)",
+            FutexWaitv::Unknown => "futex_waitv not probed",
+            _ => "futex_waitv missing: Proton falls back to esync",
+        },
+        "",
+    ));
+    c.push(check(
+        "ntsync",
+        ok_or(f.ntsync, Status::Info),
+        if f.ntsync {
+            "/dev/ntsync present (Proton NT sync)"
         } else {
-            let mut fix = vec![];
-            if !(f.libc6_shim && f.python3) {
-                fix.push("sudo pkg install -y libc6-shim python3".to_string());
+            "/dev/ntsync missing: Proton uses fsync"
+        },
+        "",
+    ));
+    c.push(check(
+        "wine",
+        ok_or(f.wine.is_some(), Status::Info),
+        match (&f.wine, f.wine_version) {
+            (Some(_), Some(v)) => {
+                format!("wine {}.{} (Windows apps outside Steam)", v.major, v.minor)
             }
-            if f.proton_dirs.is_empty() {
-                fix.push(install_proton.clone());
-            }
-            fix.join(" && ")
+            (Some(w), None) => format!("{w} (Windows apps outside Steam)"),
+            _ => "wine not installed: Steam games use Proton, which Steam installs".into(),
+        },
+        if f.wine.is_some() {
+            ""
+        } else {
+            "sudo pacman -S wine (only for Windows apps outside Steam)"
         },
     ));
     c
@@ -774,20 +560,8 @@ pub fn ready(checks: &[Check]) -> bool {
     checks.iter().all(|c| c.status != Status::Fail)
 }
 
-/// Checks linux-steam-utils needs before the Steam client starts (its `steam` script refuses
-/// without them); the others only matter once a game runs.
-pub const STEAM_CLIENT: [&str; 10] = [
-    "linux-abi",
-    "linux-mounts",
-    "linux-base",
-    "steam-utils",
-    "unprivileged-chroot",
-    "usermount",
-    "linux-ifnames",
-    "nullfs",
-    "machine-id",
-    "nvidia",
-];
+/// Checks the Steam client needs before it starts; the others only matter once a game runs.
+pub const STEAM_CLIENT: [&str; 5] = ["multilib", "steam", "drm", "lib32-gl", "nvidia"];
 
 /// Failed checks that keep the Steam client from starting.
 pub fn steam_blockers(checks: &[Check]) -> Vec<&Check> {

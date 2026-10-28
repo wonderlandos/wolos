@@ -1,0 +1,15 @@
+[Unit]
+Description=WolOS job supervisor (wold: login window, admin daemon; jobs in /etc/wolos/jobs)
+After=dbus.service seatd.service systemd-user-sessions.service wolos-hw.service
+Wants=dbus.service seatd.service
+
+[Service]
+ExecStart=/usr/bin/wold /etc/wolos/jobs
+Restart=always
+RestartSec=1
+# SIGTERM to wold first: it stops every job tree (children first), then exits.
+KillMode=mixed
+ExecStopPost=/usr/bin/rm -f /run/wold.sock /run/wol-qos.sock
+
+[Install]
+WantedBy=multi-user.target

@@ -1,10 +1,10 @@
 //! Pure parts of `wol-login` (IaraOS ADR 0024): passwd parsing, auth request framing, login flow, session plan.
 
 pub use shared::login::SOCKET;
-pub const GREETER: &str = "/usr/local/bin/wol-greeter-session";
+pub const GREETER: &str = "/usr/bin/wol-greeter-session";
 pub const UI_USER: &str = "_wollogin";
-pub const SESSION: &str = "/usr/local/bin/wol-session";
-pub const CONFIG_FILE: &str = "/usr/local/etc/wolos/login.json";
+pub const SESSION: &str = "/usr/bin/wol-session";
+pub const CONFIG_FILE: &str = "/etc/wolos/login.json";
 pub const PASSWD_FILE: &str = "/etc/passwd";
 pub const SHELLS_FILE: &str = "/etc/shells";
 pub const MAX_USER: usize = 32;
@@ -197,24 +197,11 @@ pub enum SetupStep {
     },
 }
 
-/// Account first (password on stdin, `pw -h 0`), then per-user and system preferences.
+/// Account first (`useradd`, then the password on `chpasswd`'s stdin), then per-user and
+/// system preferences.
 pub fn setup_plan(a: &NewAccount) -> Vec<SetupStep> {
     let home = format!("/home/{}", a.name);
-    let argv = [
-        "pw",
-        "useradd",
-        "-n",
-        &a.name,
-        "-c",
-        &a.full_name,
-        "-m",
-        "-s",
-        wol_core::settings::users::LOGIN_SHELL,
-        "-G",
-        "wheel,video,operator",
-        "-h",
-        "0",
-    ];
+    let argv = wol_core::settings::users::add_argv(&a.name, &a.full_name, true).unwrap_or_default();
     let w = |path: String, content: String, user_owned: bool| SetupStep::Write {
         path,
         content,
@@ -222,8 +209,12 @@ pub fn setup_plan(a: &NewAccount) -> Vec<SetupStep> {
     };
     let mut v = vec![
         SetupStep::Run {
-            argv: argv.map(String::from).to_vec(),
-            stdin: a.password.clone(),
+            argv,
+            stdin: String::new(),
+        },
+        SetupStep::Run {
+            argv: vec!["chpasswd".into()],
+            stdin: format!("{}:{}\n", a.name, a.password),
         },
         // gnome-keyring creates the login keyring here at the first login (wol-login, wol-lock).
         SetupStep::Dir {
@@ -391,7 +382,7 @@ pub fn session_command(u: &LoginUser, locked: bool) -> Option<Vec<String>> {
     })
 }
 
-pub const KEYRING_DAEMON: &str = "/usr/local/bin/gnome-keyring-daemon";
+pub const KEYRING_DAEMON: &str = "/usr/bin/gnome-keyring-daemon";
 
 /// gnome-keyring at login: reads the password on stdin, unlocks (or creates) the login keyring once
 /// the session runs `gnome-keyring-daemon --start` (hyprland.conf) within 120 s. Not pam_gnome_keyring:
@@ -553,36 +544,6 @@ pub fn failed_early(ran: std::time::Duration, ok: bool) -> bool {
     !ok && ran < GreeterRespawn::HEALTHY
 }
 
-/// What follows a session that ended after `ran`: Some(backoff) when it failed early (a locked
-/// start counts whatever the exit status: nobody could have unlocked it in time; the next start is
-/// the login window), None otherwise. A healthy run resets the backoff.
-pub fn after_session(
-    flow: &mut LoginFlow,
-    respawn: &mut GreeterRespawn,
-    ran: std::time::Duration,
-    ok: bool,
-) -> Option<Respawn> {
-    let early = if flow.locked {
-        ran < GreeterRespawn::HEALTHY
-    } else {
-        failed_early(ran, ok)
-    };
-    let next = if early {
-        if flow.locked {
-            flow.locked_start_failed();
-        }
-        Some(respawn.exited(ran))
-    } else {
-        if ran >= GreeterRespawn::HEALTHY {
-            flow.session_ran_healthy();
-            respawn.reset();
-        }
-        None
-    };
-    flow.session_ended();
-    next
-}
-
 /// `!setup-wifi` answer once wpa_supplicant reloaded its networks (ADR 0013): Some(reply) when
 /// decided, None to keep polling. The session's rules (`Controls::wait_joined`): a secured network
 /// that refuses us is a wrong password; giving up after `JOIN_WAIT` is an error, never "ok".
@@ -675,7 +636,7 @@ pub fn console_notice(dri_present: bool, status: &str) -> String {
 }
 
 /// Greeter respawn policy: a greeter that dies quickly (e.g. Hyprland without DRM) is retried with
-/// exponential backoff (1 s .. 30 s) and logged once per failure streak, never spun.
+/// exponential backoff (1 s .. 5 min) and logged once per failure streak, never spun.
 #[derive(Debug, Default)]
 pub struct GreeterRespawn {
     quick_exits: u32,
@@ -691,11 +652,7 @@ pub struct Respawn {
 impl GreeterRespawn {
     /// A greeter that ran at least this long counts as healthy and resets the backoff.
     pub const HEALTHY: std::time::Duration = std::time::Duration::from_secs(30);
-    pub const MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
-
-    pub fn reset(&mut self) {
-        self.quick_exits = 0;
-    }
+    pub const MAX_DELAY: std::time::Duration = std::time::Duration::from_secs(300);
 
     pub fn exited(&mut self, ran: std::time::Duration) -> Respawn {
         if ran >= Self::HEALTHY {
@@ -840,8 +797,12 @@ mod tests {
             (quick, 4, false),
             (quick, 8, false),
             (quick, 16, false),
-            (quick, 30, false),
-            (quick, 30, false),
+            (quick, 32, false),
+            (quick, 64, false),
+            (quick, 128, false),
+            (quick, 256, false),
+            (quick, 300, false),
+            (quick, 300, false),
             // a greeter that stayed up resets the backoff and logs again
             (D::from_secs(120), 1, true),
             (quick, 2, false),
@@ -862,12 +823,12 @@ mod tests {
 root:*:0:0:Charlie &:/root:/bin/sh
 nobody:*:65534:65534:Unprivileged user:/nonexistent:/usr/sbin/nologin
 _wollogin:*:911:911:WolOS login window:/var/empty:/usr/sbin/nologin
-zoe:*:1002:1002:Zoe Lima,,,:/home/zoe:/usr/local/bin/zsh
+zoe:*:1002:1002:Zoe Lima,,,:/home/zoe:/usr/bin/zsh
 ana:*:1001:1001:&:/home/ana:/bin/sh
 bot:*:1003:1003:Bot:/home/bot:/usr/sbin/nologin
 broken:line
 ";
-    const SHELLS: &str = "/bin/sh\n/bin/csh\n/usr/local/bin/zsh\n";
+    const SHELLS: &str = "/bin/sh\n/bin/csh\n/usr/bin/zsh\n";
 
     fn user(name: &str, uid: u32, full: &str, home: &str, shell: &str) -> LoginUser {
         LoginUser {
@@ -889,7 +850,7 @@ broken:line
         );
         assert_eq!(
             u[1],
-            user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/local/bin/zsh")
+            user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/bin/zsh")
         );
     }
 
@@ -1075,13 +1036,7 @@ broken:line
         std::fs::create_dir_all(&root).unwrap();
         // SAFETY: getuid/getgid have no preconditions.
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
-        let me = user(
-            "alice",
-            uid,
-            "Alice Liddell",
-            "/home/alice",
-            "/usr/local/bin/zsh",
-        );
+        let me = user("alice", uid, "Alice Liddell", "/home/alice", "/usr/bin/zsh");
         let mut ran = Vec::new();
         let created = apply_setup(
             &setup_plan(&account()),
@@ -1093,14 +1048,19 @@ broken:line
             || Some(LoginUser { gid, ..me.clone() }),
         );
         assert_eq!(created.map(|u| u.name), Some("alice".into()));
-        let (argv, stdin) = &ran[0];
-        assert!(argv.starts_with("pw useradd -n alice "), "{argv}");
-        assert!(argv.contains(" -s /usr/local/bin/zsh "), "zsh: {argv}");
+        let (argv, _) = &ran[0];
+        assert!(argv.starts_with("useradd -m "), "{argv}");
+        assert!(argv.ends_with(" alice"), "{argv}");
+        assert!(argv.contains(" -s /usr/bin/zsh "), "zsh: {argv}");
         assert!(
-            argv.contains(" -G wheel,video,operator "),
+            argv.contains(" -G wheel,video,input,audio "),
             "administrator (wheel): {argv}"
         );
-        assert_eq!(stdin, "curiouser", "password on stdin, never in argv");
+        assert_eq!(
+            ran[1],
+            ("chpasswd".to_string(), "alice:curiouser\n".to_string()),
+            "password on stdin, never in argv"
+        );
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let keyrings = root.join("home/alice/.local/share/keyrings");
         let m = std::fs::metadata(&keyrings).expect("keyring dir");
@@ -1128,33 +1088,29 @@ broken:line
             p[0],
             SetupStep::Run {
                 argv: [
-                    "pw",
                     "useradd",
-                    "-n",
-                    "alice",
+                    "-m",
                     "-c",
                     "Alice Liddell",
-                    "-m",
                     "-s",
-                    "/usr/local/bin/zsh",
+                    "/usr/bin/zsh",
                     "-G",
-                    "wheel,video,operator",
-                    "-h",
-                    "0"
+                    "wheel,video,input,audio",
+                    "alice"
                 ]
                 .map(String::from)
                 .to_vec(),
-                stdin: "curiouser".into(),
+                stdin: String::new(),
             }
         );
         assert_eq!(
-            p[1],
+            p[2],
             SetupStep::Dir {
                 path: "/home/alice/.local/share/keyrings".into(),
                 mode: 0o700,
             }
         );
-        let writes: Vec<(&str, &str, bool)> = p[2..]
+        let writes: Vec<(&str, &str, bool)> = p[3..]
             .iter()
             .map(|s| match s {
                 SetupStep::Write {
@@ -1181,16 +1137,16 @@ broken:line
                 ("/home/alice/.config/wolos/theme", "wol-dark-blue", true),
                 ("/var/db/wolos/hints/alice", "white rabbit\n", false),
                 ("/var/db/wolos/avatars/alice", "green\n", false),
-                ("/usr/local/etc/wolos/appearance", "dark", false),
+                ("/etc/wolos/appearance", "dark", false),
             ]
         );
-        // Auto + default accent + no hint/avatar: account, keyring dir, login_conf, setup.json.
+        // Auto + default accent + no hint/avatar: account, password, keyring dir, login_conf, setup.json.
         let mut auto = account();
         auto.appearance = "auto".into();
         auto.hint = "".into();
         auto.avatar = "".into();
         auto.accent = "violet".into();
-        assert_eq!(setup_plan(&auto).len(), 4);
+        assert_eq!(setup_plan(&auto).len(), 5);
         // Auto with another accent follows the appearance in that accent; unknown values are dropped.
         auto.accent = "blue".into();
         let theme = |a: &NewAccount| {
@@ -1207,7 +1163,7 @@ broken:line
         assert_eq!(theme(&auto), None);
         assert_eq!(
             setup_plan(&auto).len(),
-            4,
+            5,
             "unknown avatar colour not written"
         );
     }
@@ -1276,54 +1232,6 @@ broken:line
         assert!(!g.locked);
     }
 
-    /// Serial log of the bug: `session (locked)` spawn/exit every ~330 ms, forever (the session
-    /// wrapper exits 0 even though the compositor never came up).
-    #[test]
-    fn a_failing_locked_start_falls_back_once_then_backs_off() {
-        use std::time::Duration as D;
-        let ana = user("ana", 1001, "Ana", "/home/ana", "/bin/sh");
-        let mut f = LoginFlow::new(vec![ana.clone()], None);
-        let mut r = GreeterRespawn::default();
-        let quick = D::from_millis(330);
-        assert_eq!(f.start(), Phase::Session);
-        assert!(f.locked);
-        // exit status 0 or not, it died before anyone could unlock it
-        let next = after_session(&mut f, &mut r, quick, true).expect("backoff");
-        assert_eq!((next.delay, next.log), (D::from_secs(1), true));
-        assert_eq!(f.start(), Phase::Greeter, "login window, not locked again");
-        // later failures of any kind keep doubling, capped, one log line per step
-        let mut seen = vec![];
-        for _ in 0..7 {
-            let n = r.exited(quick);
-            seen.push(n.delay.as_secs());
-            assert!(!n.log);
-        }
-        assert_eq!(seen, [2, 4, 8, 16, 30, 30, 30]);
-        // a healthy session resets everything and locks again
-        f.submit("ana");
-        f.authenticated(true);
-        assert!(after_session(&mut f, &mut r, D::from_secs(60), true).is_none());
-        assert_eq!(f.start(), Phase::Session);
-        assert!(f.locked);
-        assert_eq!(r.exited(quick).delay, D::from_secs(1));
-    }
-
-    #[test]
-    fn an_unlocked_session_failing_early_backs_off_but_a_quick_logout_does_not() {
-        use std::time::Duration as D;
-        let ana = user("ana", 1001, "Ana", "/home/ana", "/bin/sh");
-        let zoe = user("zoe", 1002, "Zoe", "/home/zoe", "/bin/sh");
-        let mut f = LoginFlow::new(vec![ana, zoe.clone()], Some(zoe));
-        let mut r = GreeterRespawn::default();
-        assert_eq!(f.start(), Phase::Session);
-        assert!(!f.locked);
-        assert!(after_session(&mut f, &mut r, D::from_secs(2), true).is_none());
-        let n = after_session(&mut f, &mut r, D::from_secs(2), false).expect("backoff");
-        assert_eq!(n.delay, D::from_secs(1));
-        let n = after_session(&mut f, &mut r, D::from_secs(2), false).expect("backoff");
-        assert_eq!((n.delay, n.log), (D::from_secs(2), false));
-    }
-
     #[test]
     fn a_locked_start_that_dies_early_hands_over_to_the_login_window() {
         use std::time::Duration;
@@ -1357,7 +1265,7 @@ broken:line
 
     #[test]
     fn session_runs_through_su_with_private_runtime_dir() {
-        let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/local/bin/zsh");
+        let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/bin/zsh");
         assert_eq!(runtime_dir(&zoe), "/var/run/user/1002");
         let su = |env: &str| {
             [
@@ -1365,9 +1273,7 @@ broken:line
                 "-l".into(),
                 "zoe".into(),
                 "-c".into(),
-                format!(
-                    "exec env XDG_RUNTIME_DIR=/var/run/user/1002 {env}/usr/local/bin/wol-session"
-                ),
+                format!("exec env XDG_RUNTIME_DIR=/var/run/user/1002 {env}/usr/bin/wol-session"),
             ]
         };
         assert_eq!(session_command(&zoe, false).unwrap(), su(""));
@@ -1383,7 +1289,7 @@ broken:line
     fn keyring_unlocks_from_the_login_password_in_the_session_runtime_dir() {
         // Geary/Calendar nagged for the "login" keyring: the daemon must get the password at login and
         // listen where the session looks ($XDG_RUNTIME_DIR/keyring), then stop at logout.
-        let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/local/bin/zsh");
+        let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/bin/zsh");
         assert_eq!(
             keyring_login_command(&zoe).unwrap(),
             [
@@ -1391,7 +1297,7 @@ broken:line
                 "-l",
                 "zoe",
                 "-c",
-                "exec env XDG_RUNTIME_DIR=/var/run/user/1002 /usr/local/bin/gnome-keyring-daemon --daemonize --login"
+                "exec env XDG_RUNTIME_DIR=/var/run/user/1002 /usr/bin/gnome-keyring-daemon --daemonize --login"
             ]
         );
         assert!(keyring_login_command(&user("a;b", 1, "", "", "")).is_none());

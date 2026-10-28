@@ -1,5 +1,6 @@
 //! Every daemon the shell and `wol` talk to starts at boot on the image. wol-admind shipped as a binary
-//! only (no job, an rc.d script left off and pointing at /usr/local/sbin): every admin action failed.
+//! only (no job, a launcher left off and pointing at the wrong path): every admin action failed.
+//! wold itself is a systemd unit enabled by the WolOS preset (ADR 0016).
 use shared::jobs::JobSpec;
 use std::{fs, path::PathBuf};
 
@@ -36,7 +37,7 @@ fn daemons() -> Vec<String> {
 
 /// Jobs wold starts at boot (image overlay).
 fn boot_jobs() -> Vec<JobSpec> {
-    let dir = repo("desktop/overlay/usr/local/etc/wolos/jobs");
+    let dir = repo("desktop/overlay/etc/wolos/jobs");
     fs::read_dir(&dir)
         .unwrap()
         .flatten()
@@ -66,17 +67,16 @@ fn every_daemon_starts_at_boot() {
     let jobs = boot_jobs();
     for d in &ds {
         assert!(installed(d), "{d}: not installed by image/build-rust.sh");
-        let path = format!("/usr/local/bin/{d}");
+        let path = format!("/usr/bin/{d}");
         if d == "wold" {
-            // wold is the supervisor: rc.d, enabled on live and installed systems.
-            let rc = read("image/files/usr/local/etc/rc.d/wold");
+            // wold is the supervisor: a systemd unit, enabled on live and installed systems.
+            let unit = read("image/files/usr/lib/systemd/system/wold.service");
             assert!(
-                rc.contains(&path) && rc.contains("wold_enable:=YES"),
-                "{rc}"
+                unit.contains(&format!("ExecStart={path} /etc/wolos/jobs")),
+                "{unit}"
             );
-            for f in ["image/rcconf.sh", "image/installerconfig"] {
-                assert!(read(f).contains("wold_enable=YES"), "{f}");
-            }
+            let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+            assert!(preset.lines().any(|l| l == "enable wold.service"));
             continue;
         }
         let job = jobs
@@ -93,7 +93,8 @@ fn admin_daemon_is_a_wold_job_only() {
         .into_iter()
         .find(|j| j.label == "org.wol.admin")
         .expect("org.wol.admin job");
-    assert_eq!(job.program, ["/usr/local/bin/wol-admind"]);
-    // One mechanism: no second (rc.d) launcher for the same socket.
-    assert!(!repo("crates/api/rc.d/wol_admind").exists());
+    assert_eq!(job.program, ["/usr/bin/wol-admind"]);
+    // One mechanism: no second launcher (rc.d script or unit) for the same socket.
+    assert!(!repo("crates/api/rc.d").exists());
+    assert!(!repo("image/files/usr/lib/systemd/system/wol-admind.service").exists());
 }

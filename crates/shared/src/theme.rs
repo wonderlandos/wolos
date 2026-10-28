@@ -81,7 +81,7 @@ pub const CONTRAST_RULES: [(&str, &str, f64); 6] = [
     ("accentText", "accent", ACCENT_CONTRAST),
 ];
 
-pub const SYSTEM_THEMES_DIR: &str = "/usr/local/share/wolos/themes";
+pub const SYSTEM_THEMES_DIR: &str = "/usr/share/wolos/themes";
 /// Under `$XDG_CONFIG_HOME`.
 pub const USER_THEMES_DIR: &str = "wolos/themes";
 /// Under `$XDG_CONFIG_HOME`: one theme id.

@@ -1,0 +1,42 @@
+#!/bin/sh
+# Copy this slot's kernels and initramfs images to the ESP and write their systemd-boot entries
+# (pacman hook 95-wolos-esp after every kernel or initramfs change; the installer and updates
+# with --new). The slot is /etc/wolos/slot (a|b); options are /etc/kernel/cmdline.
+#   linux-wolos  -> wolos-<slot>[+tries].conf, the default entry with boot counting; a plain sync keeps
+#                   its name and counter, --new starts at three tries.
+#   other kernel -> wolos-<slot>-<pkgbase>.conf, its own entry (linux-zen, a self-built kernel).
+set -eu
+R=${WOLOS_ROOT:-}
+ESP=${WOLOS_ESP:-$R/efi}
+[ -f "$R/etc/wolos/slot" ] || exit 0    # live system: no slot, nothing to sync
+slot=$(cat "$R/etc/wolos/slot")
+opts=$(cat "$R/etc/kernel/cmdline")
+ver=$(cat "$R/usr/share/wolos/base.version" 2>/dev/null || :)
+E=$ESP/loader/entries; D=$ESP/wolos-$slot
+mkdir -p "$E" "$D"
+for k in "$R"/boot/vmlinuz-*; do
+  [ -f "$k" ] || continue
+  kb=${k##*/vmlinuz-}
+  cp "$k" "$D/vmlinuz-$kb"
+  [ ! -f "$R/boot/initramfs-$kb.img" ] || cp "$R/boot/initramfs-$kb.img" "$D/initramfs-$kb.img"
+  if [ "$kb" = linux-wolos ]; then
+    title=WolOS; key=wolos-$slot
+    cur=$(ls "$E" | grep -E "^wolos-$slot(\+[0-9]+(-[0-9]+)?)?\.conf$" | head -1 || :)
+    if [ "${1:-}" = --new ] || [ -z "$cur" ]; then
+      [ -z "$cur" ] || rm -f "$E/$cur"
+      name=wolos-$slot+3.conf
+    else
+      name=$cur
+    fi
+  else
+    title="WolOS ($kb)"; key=wolos-$slot-$kb; name=wolos-$slot-$kb.conf
+  fi
+  {
+    echo "title $title"
+    echo "sort-key $key"
+    [ -z "$ver" ] || echo "version $ver"
+    echo "linux /wolos-$slot/vmlinuz-$kb"
+    echo "initrd /wolos-$slot/initramfs-$kb.img"
+    echo "options $opts"
+  } > "$E/$name"
+done

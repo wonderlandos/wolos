@@ -18,11 +18,12 @@ pub const SIGNATURE: &str = "SHA256.sig";
 
 pub const MIME: &str = "application/x-wolos-package";
 /// Trusted Ed25519 public keys (`*.pub`, PEM SPKI).
-pub const KEYS_DIR: &str = "/usr/local/share/wolos/keys";
-/// Install records: `<id>/Info.json`, shipped inside each payload (pkg owns them).
-pub const RECORDS_DIR: &str = "/usr/local/share/wolos/packages";
-/// Prefix the payload installs into; target entries are relative to it.
-pub const PREFIX: &str = "/usr/local";
+pub const KEYS_DIR: &str = "/usr/share/wolos/keys";
+/// Install records: `<id>/Info.json`, shipped inside each payload (pacman owns them, so what
+/// pacman installed is the only source of truth).
+pub const RECORDS_DIR: &str = "/usr/share/wolos/packages";
+/// Prefix the payload (a pacman package) installs into; target entries are relative to it.
+pub const PREFIX: &str = "/usr";
 /// wol-admind's root-only copy of the file it verifies and installs.
 pub const STAGING_DIR: &str = "/var/cache/wolos/install";
 /// Largest `.wol` file accepted (bytes).

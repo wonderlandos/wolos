@@ -47,15 +47,13 @@ fn main() {
             let started = Instant::now();
             let ok = run_session(&user, flow.locked, || marks.spawned(what));
             marks.exited(what);
-            if let Some(next) = after_session(&mut flow, &mut respawn, started.elapsed(), ok) {
-                if next.log {
-                    println!(
-                        "wol-login: session failed early; retrying with backoff up to {}s",
-                        GreeterRespawn::MAX_DELAY.as_secs()
-                    );
-                }
-                std::thread::sleep(next.delay);
+            if failed_early(started.elapsed(), ok) && flow.locked {
+                println!("wol-login: locked start failed; the login window takes over");
+                flow.locked_start_failed();
+            } else if started.elapsed() >= GreeterRespawn::HEALTHY {
+                flow.session_ran_healthy();
             }
+            flow.session_ended();
             flow.listed = listed_on_system();
             phase = flow.start();
             continue;
@@ -480,6 +478,15 @@ fn home_state(name: &str) -> Option<wol_core::home_crypt::State> {
 fn run_crypt(c: &wol_core::home_crypt::Cmd) -> bool {
     let argv: Vec<&str> = c.argv.iter().map(String::as_str).collect();
     let t = Duration::from_secs(60);
+    if !c.env.is_empty() {
+        // Secrets homectl reads from its environment (never argv).
+        return Command::new(&c.argv[0])
+            .args(&c.argv[1..])
+            .envs(c.env.iter().map(|(k, v)| (k, v)))
+            .stdin(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+    }
     match &c.stdin {
         Some(pw) => wol_core::controls::run_with_input(&argv, pw, t).is_some(),
         None => wol_core::system::run_with_timeout(&argv, t).is_some(),

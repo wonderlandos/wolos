@@ -1,7 +1,7 @@
 //! Generic hardware: detect -> match the [`catalog`] -> driver + firmware + quirks -> status.
 //! One path for boot (`wol hw boot`), `wol hw`, Settings and scripts. Reads go through [`Host`]
-//! (5 commands, 2 s timeout each, never a shell); matching, status and the boot plan are pure.
-//! See archicture/modules/hardware.md.
+//! (sysfs, /proc, `lspci -mm`, `pacman -Qq`; 2 s timeout per command, never a shell); matching,
+//! status and the boot plan are pure. See archicture/modules/hardware.md.
 pub mod catalog;
 #[cfg(test)]
 mod fixtures;
@@ -9,7 +9,7 @@ pub mod online;
 pub mod parse;
 
 use crate::system::Host;
-use shared::hardware::{Device, HardwareSnapshot, Kind, SNAPSHOT_PATH, State};
+use shared::hardware::{Device, HardwareSnapshot, Kind, State};
 use std::collections::HashSet;
 
 /// Where a device was found.
@@ -17,11 +17,11 @@ use std::collections::HashSet;
 pub enum Bus {
     Pci,
     Usb,
-    /// `devinfo` ACPI nodes, matched on `_HID`/`_CID`.
+    /// `/sys/bus/acpi/devices`, matched on `_HID`/`_CID` (modalias).
     Acpi,
-    /// The processor (vendor from `hw.model`).
+    /// The processor (vendor from /proc/cpuinfo).
     Cpu,
-    /// backlight(4) devices.
+    /// `/sys/class/backlight` devices.
     Backlight,
 }
 
@@ -50,14 +50,15 @@ pub struct Entry {
     /// Class prefix: PCI class hex (`0280`), USB class/sub/proto hex of the device or any
     /// interface (`e00101`), ACPI `_HID`/`_CID`. Empty = any.
     pub class: &'static str,
-    /// Unit name prefixes that count as "driver attached" (`iwlwifi` for `iwlwifi0`, or a child
-    /// such as `drmn`). Empty = attachment not checked.
+    /// sysfs driver names (the `driver` link) that count as "driver attached". Empty = not checked.
     pub drivers: &'static [&'static str],
+    /// Kernel modules (`_` spelling) this device needs loaded.
     pub klds: &'static [&'static str],
+    /// Arch firmware packages.
     pub firmware: &'static [&'static str],
-    /// Driver/userland packages.
+    /// Arch driver/userland packages.
     pub packages: &'static [&'static str],
-    /// loader.conf lines, used once every package and file they name is present.
+    /// modprobe.d lines (`options <module> k=v`), used once every package is installed.
     pub loader: &'static [&'static str],
     pub notes: &'static [&'static str],
     /// false: no driver in this release (status `unsupported`).
@@ -126,7 +127,7 @@ pub fn lookup(
         .min_by_key(|e| e.rank(device))
 }
 
-/// A module the catalogue may load: the wol-admind `hw-load` allow-list.
+/// A kernel module the catalogue may load: the wol-admind `hw-load` allow-list.
 pub fn is_catalogue_kld(k: &str) -> bool {
     catalog::CATALOG.iter().any(|e| e.klds.contains(&k))
 }
@@ -134,33 +135,27 @@ pub fn is_catalogue_kld(k: &str) -> bool {
 /// What the host has. `None` = unknown (never reported as missing).
 #[derive(Clone, Debug, Default)]
 pub struct Ctx {
-    /// Loaded kld files and modules (`kldstat -v`).
+    /// Loaded modules (`/proc/modules`) plus built-ins (`modules.builtin`).
     pub loaded: Option<HashSet<String>>,
-    /// Module files on disk (`/boot/kernel`, `/boot/modules`), without `.ko`.
+    /// Modules this kernel has (`modules.dep` + `modules.builtin`).
     pub available: Option<HashSet<String>>,
-    /// Installed packages.
+    /// Installed packages (`pacman -Qq`).
     pub installed: Option<HashSet<String>>,
-    /// Files under `/boot/firmware` and `/boot/modules` (full paths), for loader lines.
-    pub files: Option<HashSet<String>>,
 }
 
 impl Ctx {
     fn is_loaded(&self, k: &str) -> Option<bool> {
-        let l = self.loaded.as_ref()?;
-        Some(l.contains(k) || k.strip_prefix("if_").is_some_and(|m| l.contains(m)))
+        Some(self.loaded.as_ref()?.contains(&parse::module(k)))
     }
     fn on_disk(&self, k: &str) -> Option<bool> {
-        Some(self.available.as_ref()?.contains(k))
+        Some(self.available.as_ref()?.contains(&parse::module(k)))
     }
     fn is_installed(&self, p: &str) -> bool {
         self.installed.as_ref().is_none_or(|i| i.contains(p))
     }
-    fn file_exists(&self, p: &str) -> bool {
-        self.files.as_ref().is_none_or(|f| f.contains(p))
-    }
 }
 
-/// Fill catalogue data and status into `d`. `units`: unit names attached to the device.
+/// Fill catalogue data and status into `d`. `units`: driver names bound to the device.
 pub fn resolve(entry: Option<&Entry>, mut d: Device, units: &[&str], ctx: &Ctx) -> Device {
     let Some(e) = entry else {
         // A device of an interesting class the catalogue does not know.
@@ -172,8 +167,8 @@ pub fn resolve(entry: Option<&Entry>, mut d: Device, units: &[&str], ctx: &Ctx) 
     };
     d.kind = e.kind;
     // The bus's own description names generic matches better ("Haswell-ULT Integrated Graphics"),
-    // unless it is empty or a bare id, or the row explains an unsupported device.
-    let bare = d.name.is_empty() || d.name.starts_with("vendor 0x");
+    // unless it is empty or a bare `vvvv:dddd` id, or the row names an exact device range.
+    let bare = d.name.is_empty() || d.name == d.id;
     if !e.devices.is_empty() || !e.supported || bare {
         d.name = e.name.into();
     }
@@ -185,7 +180,11 @@ pub fn resolve(entry: Option<&Entry>, mut d: Device, units: &[&str], ctx: &Ctx) 
     if !e.drivers.is_empty() {
         d.driver = units
             .iter()
-            .find(|u| e.drivers.iter().any(|p| parse::unit_of(u, p)))
+            .find(|u| {
+                e.drivers
+                    .iter()
+                    .any(|p| parse::module(p) == parse::module(u))
+            })
             .map(|u| (*u).to_owned());
     }
     if !e.supported {
@@ -214,12 +213,7 @@ pub fn resolve(entry: Option<&Entry>, mut d: Device, units: &[&str], ctx: &Ctx) 
             (None, _) => {}
         }
     }
-    let path_ok = |l: &&str| {
-        l.split_once('=')
-            .map(|(_, v)| v.trim_matches('"'))
-            .is_none_or(|v| !v.starts_with('/') || ctx.file_exists(v))
-    };
-    if d.missing_packages.is_empty() && e.loader.iter().all(path_ok) {
+    if d.missing_packages.is_empty() {
         d.loader = own(e.loader);
     }
     let missing_driver_pkgs: Vec<&str> = e
@@ -243,12 +237,10 @@ pub fn resolve(entry: Option<&Entry>, mut d: Device, units: &[&str], ctx: &Ctx) 
     } else if !d.missing_klds.is_empty() {
         (State::NeedsDriver, fix("load", &d.missing_klds))
     } else if e.bus != Bus::Cpu && !e.drivers.is_empty() && d.driver.is_none() {
-        let h = if d.loader.is_empty() {
-            "driver loaded but not attached: see dmesg"
-        } else {
-            "restart to load the driver (loader.conf)"
-        };
-        (State::NeedsDriver, h.into())
+        (
+            State::NeedsDriver,
+            "driver loaded but not attached: see the kernel log".into(),
+        )
     } else {
         (State::Ready, String::new())
     };
@@ -271,166 +263,184 @@ fn pci_kind(class: &str) -> Option<Kind> {
     .map(|(_, k)| *k)
 }
 
-/// The CPU: catalogue row, cpufreq driver, and the powerd decision (powerd needs cpufreq(4); with
-/// Speed Shift the hardware picks P-states and powerd has nothing to do).
-fn cpu(host: &dyn Host, nodes: &[parse::Node], ctx: &Ctx) -> Option<Device> {
-    let model = host.sysctl_string("hw.model")?;
-    let vendor = parse::cpu_vendor(&model);
-    let cpu0 = nodes.iter().position(|n| n.name == "cpu0");
-    let units: Vec<&str> = cpu0
-        .map(|i| parse::children(nodes, i).collect())
-        .unwrap_or_default();
+const CPUFREQ_DRIVER: &str = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver";
+
+fn trimmed(host: &dyn Host, path: &str) -> Option<String> {
+    host.read_text(path)
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
+/// Basename of a sysfs `driver` link.
+fn driver_of(host: &dyn Host, dev: &str) -> Option<String> {
+    host.read_link(&format!("{dev}/driver"))
+        .and_then(|t| t.rsplit('/').next().map(String::from))
+        .filter(|s| !s.is_empty())
+}
+
+fn base(p: &str) -> &str {
+    p.rsplit('/').next().unwrap_or(p)
+}
+
+/// The CPU: catalogue row and its cpufreq driver (`intel_pstate`, `amd-pstate-epp`, ...).
+fn cpu(host: &dyn Host, ctx: &Ctx) -> Option<Device> {
+    let (vendor_id, model) = parse::cpuinfo(&host.read_text("/proc/cpuinfo")?);
+    let model = model?;
+    let vendor_id = vendor_id.unwrap_or_default();
+    let freq = trimmed(host, CPUFREQ_DRIVER);
+    let units: Vec<&str> = freq.iter().map(String::as_str).collect();
     let d = Device {
         kind: Kind::Cpu,
-        name: model.trim().to_owned(),
+        name: model.clone(),
         bus: Bus::Cpu.name().into(),
-        id: match vendor {
-            Some(0x8086) => "GenuineIntel",
-            Some(0x1022) => "AuthenticAMD",
-            _ => "",
-        }
-        .into(),
+        id: vendor_id.clone(),
         location: "cpu0".into(),
         ..Default::default()
     };
-    let mut d = resolve(lookup(Bus::Cpu, vendor, None, &[]), d, &units, ctx);
-    d.name = model.trim().to_owned();
-    let cpufreq = host.sysctl_i64("dev.cpu.0.freq").is_some();
-    let hwp = d
-        .driver
-        .as_deref()
-        .is_some_and(|u| parse::unit_of(u, "hwpstate_intel"));
-    let powerd = cpufreq && !hwp;
-    d.rc.push(format!(
-        "powerd_enable=\"{}\"",
-        if powerd { "YES" } else { "NO" }
-    ));
-    if !cpufreq {
+    let entry = lookup(Bus::Cpu, parse::cpu_vendor(&vendor_id), None, &[]);
+    let mut d = resolve(entry, d, &units, ctx);
+    d.name = model;
+    if freq.is_none() {
         d.notes
-            .push("no cpufreq(4) driver (virtual machine or firmware setting): powerd off".into());
-    } else if hwp {
-        d.notes
-            .push("Speed Shift: the processor picks its own speed; powerd off".into());
+            .push("no cpufreq driver (virtual machine or firmware setting)".into());
     }
     Some(d)
 }
 
-/// Snapshot of the hardware present now. Never fails: missing tools give fewer devices.
-pub fn read(host: &dyn Host) -> HardwareSnapshot {
-    if !host.is_freebsd() {
-        return HardwareSnapshot::default();
+/// What the host has: loaded and available modules, installed packages.
+pub fn context(host: &dyn Host) -> Ctx {
+    let release = trimmed(host, "/proc/sys/kernel/osrelease").unwrap_or_default();
+    let dir = format!("/usr/lib/modules/{release}");
+    let builtin = host
+        .read_text(&format!("{dir}/modules.builtin"))
+        .map(|t| parse::module_paths(&t))
+        .unwrap_or_default();
+    let loaded = host.read_text("/proc/modules").map(|t| {
+        let mut l = parse::proc_modules(&t);
+        l.extend(builtin.iter().cloned());
+        l
+    });
+    let available = host.read_text(&format!("{dir}/modules.dep")).map(|t| {
+        let mut a = parse::module_paths(&t);
+        a.extend(builtin.iter().cloned());
+        a
+    });
+    Ctx {
+        loaded,
+        available,
+        installed: host.run(&["pacman", "-Qq"]).map(|t| parse::lines(&t)),
     }
-    let run = |argv: &[&str]| host.run(argv);
-    let pci = run(&["pciconf", "-lv"])
-        .map(|t| parse::pciconf(&t))
+}
+
+fn pci(host: &dyn Host, ctx: &Ctx, out: &mut Vec<Device>) {
+    let names = host
+        .run(&["lspci", "-mm"])
+        .map(|t| parse::lspci_names(&t))
         .unwrap_or_default();
-    let nodes = run(&["devinfo", "-v"])
-        .map(|t| parse::devinfo(&t))
-        .unwrap_or_default();
-    let usb = run(&[
-        "usbconfig",
-        "dump_device_desc",
-        "dump_curr_config_desc",
-        "show_ifdrv",
-    ])
-    .map(|t| parse::usbconfig(&t))
-    .unwrap_or_default();
-    let stems = |dirs: &[&str]| -> Option<HashSet<String>> {
-        let s: HashSet<String> = dirs
-            .iter()
-            .flat_map(|d| host.list_dir(d))
-            .filter_map(|p| p.rsplit('/').next()?.strip_suffix(".ko").map(String::from))
-            .collect();
-        (!s.is_empty()).then_some(s)
-    };
-    let files: HashSet<String> = ["/boot/firmware", "/boot/modules"]
-        .iter()
-        .flat_map(|d| host.list_dir(d))
-        .collect();
-    let ctx = Ctx {
-        loaded: run(&["kldstat", "-v"]).map(|t| parse::kldstat(&t)),
-        available: stems(&["/boot/kernel", "/boot/modules"]),
-        installed: run(&["pkg", "query", "%n"]).map(|t| parse::lines(&t)),
-        files: (!files.is_empty()).then_some(files),
-    };
-    let mut devices: Vec<Device> = Vec::new();
-    devices.extend(cpu(host, &nodes, &ctx));
-    for p in &pci {
-        let entry = lookup(Bus::Pci, Some(p.vendor), Some(p.device), &[&p.class]);
-        let Some(kind) = entry.map(|e| e.kind).or_else(|| pci_kind(&p.class)) else {
+    for p in host.list_dir("/sys/bus/pci/devices") {
+        let id = |f: &str| {
+            host.read_text(&format!("{p}/{f}"))
+                .and_then(|s| parse::hex16(&s))
+        };
+        let (Some(vendor), Some(device)) = (id("vendor"), id("device")) else {
             continue;
         };
-        let mut units: Vec<&str> = Vec::new();
-        if p.attached() {
-            units.push(&p.unit);
-        }
-        if let Some(i) = parse::pci_node(&nodes, &p.location) {
-            units.extend(parse::children(&nodes, i));
-        }
+        let Some(class) = host
+            .read_text(&format!("{p}/class"))
+            .and_then(|s| parse::pci_class(&s))
+        else {
+            continue;
+        };
+        let entry = lookup(Bus::Pci, Some(vendor), Some(device), &[&class]);
+        let Some(kind) = entry.map(|e| e.kind).or_else(|| pci_kind(&class)) else {
+            continue;
+        };
+        let addr = base(&p);
+        let driver = driver_of(host, &p);
+        let units: Vec<&str> = driver.iter().map(String::as_str).collect();
+        let pid = format!("{vendor:04x}:{device:04x}");
         let d = Device {
             kind,
-            name: if p.device_name.is_empty() {
-                format!("{:04x}:{:04x}", p.vendor, p.device)
-            } else {
-                p.device_name.clone()
-            },
-            bus: Bus::Pci.name().into(),
-            id: format!("{:04x}:{:04x}", p.vendor, p.device),
-            location: p.location.clone(),
-            driver: p.attached().then(|| p.unit.clone()),
-            ..Default::default()
-        };
-        devices.push(resolve(entry, d, &units, &ctx));
-    }
-    for u in &usb {
-        let classes: Vec<&str> = u.classes.iter().map(String::as_str).collect();
-        let Some(entry) = lookup(Bus::Usb, Some(u.vendor), Some(u.product), &classes) else {
-            continue;
-        };
-        let mut units: Vec<&str> = u.drivers.iter().map(String::as_str).collect();
-        units.extend(
-            nodes
+            name: names
                 .iter()
-                .filter(|n| n.get("ugen") == Some(&u.ugen))
-                .map(|n| n.name.as_str()),
-        );
-        let d = Device {
-            name: u.desc.clone(),
-            bus: Bus::Usb.name().into(),
-            id: format!("{:04x}:{:04x}", u.vendor, u.product),
-            location: u.ugen.clone(),
+                .find(|(s, _)| s == parse::lspci_slot(addr))
+                .map_or_else(|| pid.clone(), |(_, n)| n.clone()),
+            bus: Bus::Pci.name().into(),
+            id: pid,
+            location: addr.to_owned(),
+            driver: driver.clone(),
             ..Default::default()
         };
-        devices.push(resolve(Some(entry), d, &units, &ctx));
+        out.push(resolve(entry, d, &units, ctx));
     }
-    if usb.is_empty() && !host.is_root() {
-        // usbconfig needs root: reuse what the boot snapshot saw.
-        let boot: HardwareSnapshot = host
-            .read_text(SNAPSHOT_PATH)
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default();
-        devices.extend(boot.devices.into_iter().filter(|d| d.bus == "usb"));
-    }
-    for n in &nodes {
-        let classes: Vec<&str> = ["_HID", "_CID"].iter().filter_map(|k| n.get(k)).collect();
-        if classes.is_empty() {
+}
+
+fn usb(host: &dyn Host, ctx: &Ctx, out: &mut Vec<Device>) {
+    let all = host.list_dir("/sys/bus/usb/devices");
+    let code = |p: &str, k: &str| {
+        let f = |s: &str| trimmed(host, &format!("{p}/b{k}{s}")).unwrap_or_else(|| "00".into());
+        format!("{}{}{}", f("Class"), f("SubClass"), f("Protocol")).to_ascii_lowercase()
+    };
+    for p in &all {
+        let id = |f: &str| {
+            host.read_text(&format!("{p}/{f}"))
+                .and_then(|s| parse::hex16(&s))
+        };
+        let (Some(vendor), Some(product)) = (id("idVendor"), id("idProduct")) else {
             continue;
-        }
-        if let Some(entry) = lookup(Bus::Acpi, None, None, &classes) {
-            let d = Device {
-                bus: Bus::Acpi.name().into(),
-                id: classes.join(","),
-                location: n.get("handle").unwrap_or_default().to_owned(),
-                driver: (n.name != "unknown").then(|| n.name.clone()),
-                ..Default::default()
-            };
-            devices.push(resolve(Some(entry), d, &[], &ctx));
-        }
+        };
+        let prefix = format!("{p}:");
+        let ifs: Vec<&String> = all.iter().filter(|i| i.starts_with(&prefix)).collect();
+        let mut classes = vec![code(p, "Device")];
+        classes.extend(ifs.iter().map(|i| code(i, "Interface")));
+        let cl: Vec<&str> = classes.iter().map(String::as_str).collect();
+        let Some(entry) = lookup(Bus::Usb, Some(vendor), Some(product), &cl) else {
+            continue;
+        };
+        let drivers: Vec<String> = ifs.iter().filter_map(|i| driver_of(host, i)).collect();
+        let units: Vec<&str> = drivers.iter().map(String::as_str).collect();
+        let d = Device {
+            name: trimmed(host, &format!("{p}/product")).unwrap_or_default(),
+            bus: Bus::Usb.name().into(),
+            id: format!("{vendor:04x}:{product:04x}"),
+            location: base(p).to_owned(),
+            ..Default::default()
+        };
+        out.push(resolve(Some(entry), d, &units, ctx));
     }
-    for b in host.list_dir("/dev/backlight") {
+}
+
+/// Snapshot of the hardware present now. Never fails: missing sources give fewer devices.
+pub fn read(host: &dyn Host) -> HardwareSnapshot {
+    let ctx = context(host);
+    let mut devices: Vec<Device> = Vec::new();
+    devices.extend(cpu(host, &ctx));
+    pci(host, &ctx, &mut devices);
+    usb(host, &ctx, &mut devices);
+    for p in host.list_dir("/sys/bus/acpi/devices") {
+        let classes = host
+            .read_text(&format!("{p}/modalias"))
+            .map(|m| parse::acpi_ids(&m))
+            .unwrap_or_default();
+        let cl: Vec<&str> = classes.iter().map(String::as_str).collect();
+        let Some(entry) = (!cl.is_empty())
+            .then(|| lookup(Bus::Acpi, None, None, &cl))
+            .flatten()
+        else {
+            continue;
+        };
+        let d = Device {
+            bus: Bus::Acpi.name().into(),
+            id: classes.join(","),
+            location: base(&p).to_owned(),
+            ..Default::default()
+        };
+        devices.push(resolve(Some(entry), d, &[], &ctx));
+    }
+    for b in host.list_dir("/sys/class/backlight") {
         let d = Device {
             bus: Bus::Backlight.name().into(),
-            id: b.rsplit('/').next().unwrap_or_default().to_owned(),
+            id: base(&b).to_owned(),
             location: b.clone(),
             ..Default::default()
         };
@@ -449,21 +459,19 @@ pub fn read(host: &dyn Host) -> HardwareSnapshot {
     HardwareSnapshot { devices }
 }
 
-/// Next-boot loader tunables for this machine's hardware.
-pub const LOADER_CONF: &str = "/boot/loader.conf.d/wolos-hw.conf";
-/// rc.conf.d files (`/etc/rc.conf.d/<service>`) override rc.conf per service.
-pub const RC_CONF_DIR: &str = "/etc/rc.conf.d";
-/// First line of every file `wol hw boot` owns; files without it are the user's and left alone.
+/// modprobe options for this machine's hardware; modprobe reads them whenever a module loads.
+pub const MODPROBE_CONF: &str = "/etc/modprobe.d/wolos-hw.conf";
+/// Modules systemd-modules-load loads every boot (catalogue modules udev may not autoload).
+pub const MODULES_LOAD: &str = "/etc/modules-load.d/wolos-hw.conf";
+/// First line of every file `wol hw boot` owns.
 pub const HEADER: &str =
     "# Written by `wol hw boot` for this machine's hardware (every boot). Do not edit.\n";
 
-/// What `wol hw boot` does: set tunables and load modules now, write tunables for the next boot.
+/// What `wol hw boot` does: write modprobe options and the boot module list, then load modules
+/// now. Files first: a module reads its options only when it loads.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BootPlan {
-    /// kenv(1) before `kldload`: kernel tunables (dotted names) of devices whose modules load now;
-    /// a module reads them only at load, and loader.conf applies them from the next boot.
-    pub kenv: Vec<(String, String)>,
-    pub kldload: Vec<String>,
+    pub modprobe: Vec<String>,
     /// (path, full content); only files that change.
     pub writes: Vec<(String, String)>,
 }
@@ -480,23 +488,6 @@ fn dedup(it: impl Iterator<Item = String>) -> Vec<String> {
 
 /// Pure: `current(path)` is the file's text now.
 pub fn boot_plan(snap: &HardwareSnapshot, current: &dyn Fn(&str) -> Option<String>) -> BootPlan {
-    let mut p = BootPlan {
-        kldload: dedup(
-            snap.devices
-                .iter()
-                .flat_map(|d| d.missing_klds.iter().cloned()),
-        ),
-        kenv: Vec::new(),
-        writes: Vec::new(),
-    };
-    for d in snap.devices.iter().filter(|d| !d.missing_klds.is_empty()) {
-        for (k, v) in d.loader.iter().filter_map(|l| l.split_once('=')) {
-            let kv = (k.to_owned(), v.trim_matches('"').to_owned());
-            if k.contains('.') && !p.kenv.contains(&kv) {
-                p.kenv.push(kv);
-            }
-        }
-    }
     let body = |lines: &[String]| {
         let mut s = HEADER.to_owned();
         for l in lines {
@@ -505,36 +496,26 @@ pub fn boot_plan(snap: &HardwareSnapshot, current: &dyn Fn(&str) -> Option<Strin
         }
         s
     };
-    let loader = dedup(snap.devices.iter().flat_map(|d| d.loader.iter().cloned()));
-    let want = body(&loader);
-    match current(LOADER_CONF) {
-        Some(cur) if cur == want => {}
-        None if loader.is_empty() => {}
-        _ => p.writes.push((LOADER_CONF.into(), want)),
-    }
-    let rc = dedup(snap.devices.iter().flat_map(|d| d.rc.iter().cloned()));
-    let mut services: Vec<&str> = Vec::new();
-    for l in &rc {
-        if let Some((svc, _)) = l.split_once('=').and_then(|(var, _)| var.rsplit_once('_'))
-            && !services.contains(&svc)
-        {
-            services.push(svc);
-        }
-    }
-    for svc in services {
-        let lines: Vec<String> = rc
+    let options = dedup(snap.devices.iter().flat_map(|d| d.loader.iter().cloned()));
+    let modules = dedup(
+        snap.devices
             .iter()
-            .filter(|l| l.starts_with(&format!("{svc}_")))
-            .cloned()
-            .collect();
-        let path = format!("{RC_CONF_DIR}/{svc}");
+            .filter(|d| d.state != State::Unsupported)
+            .flat_map(|d| d.klds.iter().cloned()),
+    );
+    let mut writes = Vec::new();
+    for (path, lines) in [(MODPROBE_CONF, options), (MODULES_LOAD, modules)] {
         let want = body(&lines);
-        match current(&path) {
-            Some(cur) if cur == want || !cur.starts_with(HEADER) => {}
-            _ => p.writes.push((path, want)),
+        match current(path) {
+            Some(cur) if cur == want => {}
+            None if lines.is_empty() => {}
+            _ => writes.push((path.to_owned(), want)),
         }
     }
-    p
+    BootPlan {
+        modprobe: fixes(snap).0,
+        writes,
+    }
 }
 
 /// What `wol hw fix` offers: modules to load now, packages to install.

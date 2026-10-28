@@ -13,9 +13,9 @@ fn read(p: &str) -> String {
 
 #[test]
 fn direct_scanout_and_vaapi_decode_are_on() {
-    let perf = read("desktop/overlay/usr/local/share/wolos/hypr/wolos-perf.conf");
+    let perf = read("desktop/overlay/usr/share/wolos/hypr/wolos-perf.conf");
     assert!(perf.contains("direct_scanout = 2"));
-    let pol = read("desktop/overlay/usr/local/lib/firefox/distribution/policies.json");
+    let pol = read("desktop/overlay/usr/lib/firefox/distribution/policies.json");
     for k in [
         r#""media.ffmpeg.vaapi.enabled": { "Value": true"#,
         r#""media.hardware-video-decoding.force-enabled": { "Value": true"#,

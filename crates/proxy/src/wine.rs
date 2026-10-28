@@ -1,17 +1,16 @@
-//! Windows programs on wine-proton (Steam verbs, `--exe`): the facts wol-run reads, the
-//! environment it builds, the plan (prefix, DLLs, argv) and its executor.
+//! Windows programs outside Steam (`--exe`, bundles with a Proton target): the facts wol-run
+//! reads, the environment it builds, the plan (prefix, DLLs, argv) and its executor. The runner
+//! is the native `wine` package or, when wine is not installed, umu-launcher.
 use crate::{LaunchPlan, dlls, tuning::Vendor};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use wol_core::games::wine::{self as w, PeArch, Version};
+use wol_core::games::wine::{self as w, Version};
 
 /// File access the planners need (real: [`RealFs`]; tests: a map).
 pub trait Fs {
     fn exists(&self, p: &Path) -> bool;
     /// Entries of a directory, sorted; empty if missing.
     fn list(&self, p: &Path) -> Vec<PathBuf>;
-    /// First bytes (PE header); empty if unreadable.
-    fn head(&self, p: &Path) -> Vec<u8>;
     fn read(&self, p: &Path) -> Option<String>;
 }
 
@@ -28,54 +27,79 @@ impl Fs for RealFs {
         v.sort();
         v
     }
-    fn head(&self, p: &Path) -> Vec<u8> {
-        use std::io::Read;
-        let mut b = vec![0; 4096];
-        let n = std::fs::File::open(p)
-            .and_then(|mut f| f.read(&mut b))
-            .unwrap_or(0);
-        b.truncate(n);
-        b
-    }
     fn read(&self, p: &Path) -> Option<String> {
         std::fs::read_to_string(p).ok()
     }
 }
 
-/// This machine's wine-proton, as wol-run sees it.
+/// What runs a Windows program.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Runner {
+    /// wine (WoW64): wol-run makes the prefix and copies DXVK/vkd3d-proton into it.
+    Wine(PathBuf),
+    /// umu-launcher: Proton brings its own DXVK and makes the prefix.
+    Umu(PathBuf),
+}
+
+impl Runner {
+    pub fn path(&self) -> &Path {
+        match self {
+            Runner::Wine(p) | Runner::Umu(p) => p,
+        }
+    }
+    pub fn name(&self) -> &'static str {
+        match self {
+            Runner::Wine(_) => "wine",
+            Runner::Umu(_) => "umu",
+        }
+    }
+    /// Variables the runner needs on top of the vendor defaults.
+    pub fn defaults(&self, vendor: Vendor) -> Vec<(&'static str, &'static str)> {
+        let mut d = crate::tuning::defaults(vendor);
+        if matches!(self, Runner::Umu(_)) {
+            d.push(("GAMEID", w::UMU_GAME_ID));
+        }
+        d
+    }
+}
+
+/// This machine's wine, as wol-run sees it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Wine {
-    pub root: PathBuf,
+    pub bin: PathBuf,
+    /// umu-launcher, unless `WOL_WINE` picks one loader.
+    pub umu: Option<PathBuf>,
     /// `WOL_WINE`: one loader for every program (a custom build).
-    pub forced: Option<PathBuf>,
+    pub forced: bool,
     pub version: Option<Version>,
     pub vendor: Vendor,
 }
 
 impl Wine {
-    /// Loader for `program` (its PE machine picks bin/wine64, bin/wine or bin-wow64/wine).
-    pub fn loader(&self, home: &Path, program: Option<&Path>, fs: &dyn Fs) -> Option<PathBuf> {
-        if let Some(f) = &self.forced {
-            return Some(f.clone());
+    /// Wine when installed (works offline), else umu-launcher.
+    pub fn runner(&self, fs: &dyn Fs) -> Option<Runner> {
+        if fs.exists(&self.bin) {
+            return Some(Runner::Wine(self.bin.clone()));
         }
-        let pe = program.and_then(|p| w::pe_arch(&fs.head(p)));
-        w::loader(&|p| fs.exists(p), &self.root, home, pe)
+        self.umu
+            .as_ref()
+            .filter(|u| fs.exists(u))
+            .map(|u| Runner::Umu(u.clone()))
     }
 
-    /// Real host: `WOL_WINE`, `<loader> --version`, `WOL_GPU_PRESET` or the hardware snapshot.
-    pub fn detect(var: &dyn Fn(&str) -> Option<String>, home: &Path) -> Self {
-        let root = PathBuf::from(w::ROOT);
+    /// Real host: `WOL_WINE`, `wine --version`, `WOL_GPU_PRESET` or the hardware snapshot.
+    pub fn detect(var: &dyn Fn(&str) -> Option<String>) -> Self {
         let forced = var("WOL_WINE").map(PathBuf::from);
-        let probe = forced
-            .clone()
-            .or_else(|| w::loader(&|p| p.exists(), &root, home, Some(PeArch::Amd64)));
-        let version = probe
-            .and_then(|l| {
+        let bin = forced.clone().unwrap_or_else(|| PathBuf::from(w::BIN));
+        let version = bin
+            .exists()
+            .then(|| {
                 wol_core::system::run_with_timeout(
-                    &[&l.to_string_lossy(), "--version"],
+                    &[&bin.to_string_lossy(), "--version"],
                     std::time::Duration::from_secs(5),
                 )
             })
+            .flatten()
             .and_then(|t| Version::parse(&t));
         let vendor = var("WOL_GPU_PRESET")
             .and_then(|v| Vendor::parse(&v))
@@ -96,60 +120,13 @@ impl Wine {
                 crate::tuning::game_vendor(&names)
             });
         Wine {
-            root,
-            forced,
+            bin,
+            umu: forced.is_none().then(|| PathBuf::from(w::UMU_BIN)),
+            forced: forced.is_some(),
             version,
             vendor,
         }
     }
-}
-
-/// FreeBSD's default user PATH (login.conf).
-pub const FREEBSD_PATH: &str = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
-/// Steam Runtime and Linux-side variables that must not reach FreeBSD programs.
-pub const DROP: [&str; 6] = [
-    "STEAM_RUNTIME",
-    "STEAM_RUNTIME_LIBRARY_PATH",
-    "STEAM_RUNTIME_SCOUT",
-    "SYSTEM_LD_LIBRARY_PATH",
-    "SYSTEM_PATH",
-    "LD_AUDIT",
-];
-pub const DROP_PREFIXES: [&str; 3] = ["PRESSURE_VESSEL_", "SRT_", "LSU_LINUX_"];
-/// Path lists whose Linux entries are removed.
-pub const PATH_LISTS: [&str; 9] = [
-    "PATH",
-    "LD_LIBRARY_PATH",
-    "LD_PRELOAD",
-    "LIBGL_DRIVERS_PATH",
-    "VK_ICD_FILENAMES",
-    "VK_DRIVER_FILES",
-    "VK_ADD_DRIVER_FILES",
-    "VK_LAYER_PATH",
-    "VK_ADD_LAYER_PATH",
-];
-/// Steam's implicit Vulkan layers (overlay, fossilize) are Linux libraries.
-pub const STEAM_LAYERS_OFF: [(&str, &str); 2] = [
-    ("DISABLE_VK_LAYER_VALVE_steam_overlay_1", "1"),
-    ("DISABLE_VK_LAYER_VALVE_steam_fossilize_1", "1"),
-];
-/// Proton's `PROTON_LOG=1` channels.
-pub const LOG_CHANNELS: &str = "+timestamp,+pid,+tid,+seh,+unwind,+threadname,+debugstr,+loaddll";
-
-/// A path that only exists for Linux programs (Linux root, Steam client and runtime dirs).
-pub fn is_linux_path(p: &str) -> bool {
-    p.starts_with("/compat/linux")
-        || [
-            "/ubuntu12_32",
-            "/ubuntu12_64",
-            "/steam-runtime",
-            "/steam-utils/lxbin",
-            "/steam-utils/lib32",
-            "/steam-utils/lib64",
-            "gameoverlayrenderer.so",
-        ]
-        .iter()
-        .any(|m| p.contains(m))
 }
 
 pub fn flag(env: &BTreeMap<String, String>, k: &str) -> bool {
@@ -159,56 +136,17 @@ pub fn flag(env: &BTreeMap<String, String>, k: &str) -> bool {
 /// Inputs of [`wine_env`].
 pub struct EnvInput<'a> {
     pub incoming: &'a BTreeMap<String, String>,
-    pub loader: &'a Path,
     pub prefix: &'a Path,
     pub defaults: &'a [(&'static str, &'static str)],
     /// DLLs installed native-first.
     pub dlls: &'a [String],
-    /// Launched by Steam (Linux parent): turn off Steam's Linux Vulkan layers.
-    pub steam: bool,
 }
 
-/// Environment for wine: the incoming one cleaned of Linux and Steam Runtime state, wine first
-/// on PATH, the prefix, DLL overrides, then defaults where unset. `PROTON_*` knobs (read by
-/// Valve's Proton script, not by wine) become what that script would set.
+/// Environment for the runner: the incoming one, the prefix, DLL overrides, then defaults where
+/// unset (a variable already in the environment wins).
 pub fn wine_env(i: &EnvInput) -> BTreeMap<String, String> {
-    let mut e: BTreeMap<String, String> = i
-        .incoming
-        .iter()
-        .filter(|(k, _)| {
-            !DROP.contains(&k.as_str()) && !DROP_PREFIXES.iter().any(|p| k.starts_with(p))
-        })
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    for k in PATH_LISTS {
-        let Some(v) = e.get(k) else { continue };
-        let sep: &[char] = if k == "LD_PRELOAD" {
-            &[':', ' ']
-        } else {
-            &[':']
-        };
-        let kept: Vec<&str> = v
-            .split(sep)
-            .filter(|p| !p.is_empty() && !is_linux_path(p))
-            .collect();
-        if kept.is_empty() {
-            e.remove(k);
-        } else {
-            e.insert(k.into(), kept.join(":"));
-        }
-    }
-    let bin = i.loader.parent().unwrap_or(Path::new("/"));
-    let path = e
-        .get("PATH")
-        .cloned()
-        .unwrap_or_else(|| FREEBSD_PATH.into());
-    e.insert("PATH".into(), format!("{}:{path}", bin.display()));
+    let mut e = i.incoming.clone();
     e.insert("WINEPREFIX".into(), i.prefix.to_string_lossy().into_owned());
-    if i.steam {
-        for (k, v) in STEAM_LAYERS_OFF {
-            e.insert(k.into(), v.into());
-        }
-    }
     match crate::dlls::overrides(
         i.dlls,
         i.incoming.get("WINEDLLOVERRIDES").map(String::as_str),
@@ -220,19 +158,8 @@ pub fn wine_env(i: &EnvInput) -> BTreeMap<String, String> {
         e.entry("DXVK_ENABLE_NVAPI".into())
             .or_insert_with(|| "1".into());
     }
-    let log = flag(i.incoming, "PROTON_LOG");
-    if log {
-        e.entry("WINEDEBUG".into())
-            .or_insert_with(|| LOG_CHANNELS.into());
-        e.entry("DXVK_LOG_LEVEL".into())
-            .or_insert_with(|| "info".into());
-    }
     for (k, v) in i.defaults {
-        let skip = (*k == "WINEESYNC" && flag(i.incoming, "PROTON_NO_ESYNC"))
-            || (*k == "DXVK_LOG_PATH" && log);
-        if !skip {
-            e.entry((*k).into()).or_insert_with(|| (*v).into());
-        }
+        e.entry((*k).into()).or_insert_with(|| (*v).into());
     }
     e
 }
@@ -271,59 +198,55 @@ pub fn pick_dlls(
         .collect()
 }
 
-/// Valve Proton installs in the Steam libraries for this release, best first.
-pub fn proton_dirs(libraries: &[PathBuf], version: Option<Version>, fs: &dyn Fs) -> Vec<PathBuf> {
-    let Some(v) = version else { return vec![] };
-    let names = wol_core::games::steam::proton_names(v);
-    names
-        .iter()
-        .flat_map(|n| {
-            libraries
-                .iter()
-                .map(move |l| l.join("steamapps/common").join(n))
-        })
-        .filter(|d| fs.exists(&d.join("files")))
-        .collect()
+/// Valve Proton installs in the Steam libraries that carry DLLs, best first.
+pub fn proton_dirs(libraries: &[PathBuf], fs: &dyn Fs) -> Vec<PathBuf> {
+    let mut out = vec![];
+    for lib in libraries {
+        let common = lib.join("steamapps/common");
+        let names: Vec<String> = fs
+            .list(&common)
+            .iter()
+            .filter_map(|p| Some(p.file_name()?.to_string_lossy().into_owned()))
+            .collect();
+        out.extend(
+            wol_core::games::steam::proton_order(&names)
+                .into_iter()
+                .map(|n| common.join(n))
+                .filter(|d| fs.exists(&d.join("files"))),
+        );
+    }
+    out
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WinePlan {
-    /// None: nothing to run (destroyprefix).
-    pub launch: Option<LaunchPlan>,
-    pub loader: PathBuf,
+    pub launch: LaunchPlan,
+    pub runner: Option<Runner>,
     pub prefix: PathBuf,
     /// Create the prefix (`wine wineboot -u`) when it has no `system.reg`.
     pub ensure_prefix: bool,
     pub copies: Vec<(PathBuf, PathBuf)>,
-    /// `wineserver -w` first: the prefix's previous session must end (waitforexitandrun).
-    pub wait_server: bool,
-    /// Remove this directory (destroyprefix).
-    pub remove: Option<PathBuf>,
-    /// The program's stderr goes here (`PROTON_LOG=1`).
-    pub log: Option<PathBuf>,
     /// One line for stderr.
     pub summary: String,
 }
 
-/// Run a plan: prefix, DLLs, wait, program. Helper steps write to `stderr` only, so stdout
-/// carries just the program's output (getcompatpath). Returns the program's exit code.
+/// Run a plan: prefix, DLLs, program. Helper steps write to `stderr` only, so stdout carries just
+/// the program's output. Returns the program's exit code.
 pub fn execute(
     p: &WinePlan,
     stdout: std::os::fd::OwnedFd,
     stderr: std::os::fd::OwnedFd,
 ) -> std::io::Result<i32> {
-    if let Some(d) = &p.remove {
-        if d.exists() {
-            std::fs::remove_dir_all(d)?;
+    let launch = &p.launch;
+    if let (true, Some(Runner::Wine(wine))) = (p.ensure_prefix, &p.runner)
+        && !p.prefix.join("system.reg").exists()
+    {
+        if let Some(parent) = p.prefix.parent() {
+            std::fs::create_dir_all(parent)?;
         }
-        return Ok(0);
-    }
-    let Some(launch) = &p.launch else {
-        return Ok(0);
-    };
-    let helper = |program: &Path, args: &[&str]| -> std::io::Result<()> {
-        let mut c = std::process::Command::new(program);
-        c.args(args)
+        // `-u` returns once the prefix is written.
+        let mut c = std::process::Command::new(wine);
+        c.args(["wineboot", "-u"])
             .env_clear()
             .envs(&launch.env)
             .stdin(std::process::Stdio::null())
@@ -332,28 +255,10 @@ pub fn execute(
         if let Some(d) = &launch.cwd {
             c.current_dir(d);
         }
-        c.status().map(|_| ())
-    };
-    if p.ensure_prefix && !p.prefix.join("system.reg").exists() {
-        if let Some(parent) = p.prefix.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        // `-u` returns once the prefix is written.
-        helper(&p.loader, &["wineboot", "-u"])?;
+        c.status()?;
     }
     crate::dlls::copy_changed(&p.copies)?;
-    if p.wait_server {
-        helper(&w::wineserver(&p.loader), &["-w"])?;
-    }
-    let err = match &p.log {
-        Some(l) => std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(l)?
-            .into(),
-        None => stderr,
-    };
-    crate::run(launch, stdout, err)
+    crate::run(launch, stdout, stderr)
 }
 
 #[cfg(test)]
@@ -392,9 +297,6 @@ pub(crate) mod fake {
             v.dedup();
             v
         }
-        fn head(&self, p: &Path) -> Vec<u8> {
-            self.0.get(p).cloned().unwrap_or_default()
-        }
         fn read(&self, p: &Path) -> Option<String> {
             self.0
                 .get(p)
@@ -411,81 +313,35 @@ mod tests {
         kv.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect()
     }
 
-    /// Steam (via linux-steam-utils) environment -> what wine gets.
     #[test]
-    fn env_translation_table() {
+    fn env_table() {
         let incoming = map(&[
             ("HOME", "/home/ana"),
-            (
-                "PATH",
-                "/usr/local/steam-utils/lxbin:/home/ana/.steam/steam/ubuntu12_32/steam-runtime/usr/bin:/compat/linux/bin:/usr/bin:/bin",
-            ),
-            (
-                "LD_PRELOAD",
-                "/home/ana/.steam/steam/ubuntu12_32/gameoverlayrenderer.so /home/ana/.steam/steam/ubuntu12_64/gameoverlayrenderer.so",
-            ),
-            (
-                "LD_LIBRARY_PATH",
-                "/compat/linux/usr/lib64/nss:/home/ana/.steam/steam/ubuntu12_32",
-            ),
-            (
-                "STEAM_RUNTIME",
-                "/home/ana/.steam/steam/ubuntu12_32/steam-runtime",
-            ),
-            ("SYSTEM_LD_LIBRARY_PATH", "/compat/linux/usr/lib64"),
-            ("PRESSURE_VESSEL_FILESYSTEMS_RO", "/compat"),
-            ("LSU_LINUX_PATH", "/compat/linux/bin"),
-            (
-                "VK_ICD_FILENAMES",
-                "/compat/linux/usr/share/vulkan/icd.d/intel_icd.x86_64.json",
-            ),
-            (
-                "VK_LAYER_PATH",
-                "/usr/local/share/vulkan/explicit_layer.d:/compat/linux/usr/share/vulkan/explicit_layer.d",
-            ),
+            ("PATH", "/usr/bin:/bin"),
+            ("LD_LIBRARY_PATH", "/opt/lib"),
             ("WINEDLLOVERRIDES", "winhttp=n,b"),
             ("MESA_VK_WSI_PRESENT_MODE", "fifo"),
-            ("SteamGameId", "1145360"),
-            (
-                "STEAM_COMPAT_DATA_PATH",
-                "/home/ana/.steam/steam/steamapps/compatdata/1145360",
-            ),
         ]);
-        let defaults = crate::tuning::defaults(Vendor::Intel, Version::parse("wine-10.0"));
+        let defaults = crate::tuning::defaults(Vendor::Intel);
         let dlls = vec!["d3d11".to_string(), "dxgi".to_string()];
         let e = wine_env(&EnvInput {
             incoming: &incoming,
-            loader: Path::new("/usr/local/wine-proton/bin/wine64"),
             prefix: Path::new("/c/pfx"),
             defaults: &defaults,
             dlls: &dlls,
-            steam: true,
         });
         // (variable, expected value; None = absent)
         let table: &[(&str, Option<&str>)] = &[
-            ("PATH", Some("/usr/local/wine-proton/bin:/usr/bin:/bin")),
-            ("LD_PRELOAD", None),
-            ("LD_LIBRARY_PATH", None),
-            ("STEAM_RUNTIME", None),
-            ("SYSTEM_LD_LIBRARY_PATH", None),
-            ("PRESSURE_VESSEL_FILESYSTEMS_RO", None),
-            ("LSU_LINUX_PATH", None),
-            ("VK_ICD_FILENAMES", None),
-            (
-                "VK_LAYER_PATH",
-                Some("/usr/local/share/vulkan/explicit_layer.d"),
-            ),
+            ("PATH", Some("/usr/bin:/bin")),
+            ("LD_LIBRARY_PATH", Some("/opt/lib")),
             ("WINEPREFIX", Some("/c/pfx")),
             ("WINEDLLOVERRIDES", Some("d3d11,dxgi=n,b;winhttp=n,b")),
-            ("DISABLE_VK_LAYER_VALVE_steam_overlay_1", Some("1")),
-            ("DISABLE_VK_LAYER_VALVE_steam_fossilize_1", Some("1")),
             ("MESA_VK_WSI_PRESENT_MODE", Some("fifo")),
-            ("WINEESYNC", Some("1")),
             ("WINEDEBUG", Some("-all")),
             ("DXVK_LOG_PATH", Some("none")),
             ("STAGING_SHARED_MEMORY", Some("1")),
+            ("WINEESYNC", None),
             ("DXVK_ENABLE_NVAPI", None),
-            ("SteamGameId", Some("1145360")),
             ("HOME", Some("/home/ana")),
         ];
         for (k, want) in table {
@@ -494,32 +350,17 @@ mod tests {
     }
 
     #[test]
-    fn proton_switches() {
-        let base = |kv: &[(&str, &str)]| {
-            let incoming = map(kv);
-            let defaults = crate::tuning::defaults(Vendor::Nvidia, Version::parse("wine-10.0"));
-            let dlls = vec!["d3d11".to_string(), "nvapi64".to_string()];
-            wine_env(&EnvInput {
-                incoming: &incoming,
-                loader: Path::new("/w/bin/wine"),
-                prefix: Path::new("/p"),
-                defaults: &defaults,
-                dlls: &dlls,
-                steam: false,
-            })
-        };
-        let e = base(&[]);
-        assert_eq!(e["PATH"], format!("/w/bin:{FREEBSD_PATH}"));
+    fn nvapi_and_proton_switches() {
+        let incoming = map(&[]);
+        let defaults = crate::tuning::defaults(Vendor::Nvidia);
+        let dlls = vec!["d3d11".to_string(), "nvapi64".to_string()];
+        let e = wine_env(&EnvInput {
+            incoming: &incoming,
+            prefix: Path::new("/p"),
+            defaults: &defaults,
+            dlls: &dlls,
+        });
         assert_eq!(e["DXVK_ENABLE_NVAPI"], "1");
-        assert!(!e.contains_key("DISABLE_VK_LAYER_VALVE_steam_overlay_1"));
-        let e = base(&[("PROTON_NO_ESYNC", "1")]);
-        assert!(!e.contains_key("WINEESYNC"));
-        let e = base(&[("PROTON_LOG", "1")]);
-        assert_eq!(e["WINEDEBUG"], LOG_CHANNELS);
-        assert_eq!(e["DXVK_LOG_LEVEL"], "info");
-        assert!(!e.contains_key("DXVK_LOG_PATH"));
-        let e = base(&[("PROTON_LOG", "1"), ("WINEDEBUG", "+relay")]);
-        assert_eq!(e["WINEDEBUG"], "+relay", "the user's channels win");
 
         use dlls::Component::*;
         let m = map;
@@ -558,22 +399,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn linux_paths() {
-        for (p, linux) in [
-            ("/compat/linux/usr/lib64", true),
-            ("/home/a/.steam/steam/ubuntu12_32", true),
-            (
-                "/home/a/.steam/steam/ubuntu12_32/steam-runtime/usr/bin",
-                true,
-            ),
-            ("/usr/local/steam-utils/lxbin", true),
-            ("/usr/local/steam-utils/bin", false),
-            ("/usr/local/bin", false),
-            ("/home/a/.local/share/Steam/steamapps/common/Game", false),
-        ] {
-            assert_eq!(is_linux_path(p), linux, "{p}");
+    fn wine(umu: bool) -> Wine {
+        Wine {
+            bin: "/usr/bin/wine".into(),
+            umu: umu.then(|| "/usr/bin/umu-run".into()),
+            forced: false,
+            version: None,
+            vendor: Vendor::Other,
         }
+    }
+
+    #[test]
+    fn runner_prefers_wine_then_umu() {
+        use fake::FakeFs;
+        let both = FakeFs::with(&[("/usr/bin/wine", b""), ("/usr/bin/umu-run", b"")]);
+        let umu_only = FakeFs::with(&[("/usr/bin/umu-run", b"")]);
+        let none = FakeFs::default();
+        assert_eq!(
+            wine(true).runner(&both),
+            Some(Runner::Wine("/usr/bin/wine".into()))
+        );
+        assert_eq!(
+            wine(true).runner(&umu_only),
+            Some(Runner::Umu("/usr/bin/umu-run".into()))
+        );
+        assert_eq!(wine(false).runner(&umu_only), None, "WOL_WINE: one loader");
+        assert_eq!(wine(true).runner(&none), None);
+        let umu = Runner::Umu("/usr/bin/umu-run".into());
+        assert!(
+            umu.defaults(Vendor::Other)
+                .contains(&("GAMEID", "umu-default"))
+        );
+        assert!(
+            !Runner::Wine("/usr/bin/wine".into())
+                .defaults(Vendor::Other)
+                .iter()
+                .any(|kv| kv.0 == "GAMEID")
+        );
     }
 
     #[test]
@@ -584,9 +446,14 @@ mod tests {
             (&format!("{p}/dxvk/x86_64-windows/d3d11.dll"), b""),
             (&format!("{p}/nvapi/x86_64-windows/nvapi64.dll"), b""),
             (&format!("{p}/vkd3d-proton/x86_64-windows/d3d12.dll"), b""),
+            ("/s/steamapps/common/Proton 9.0/readme", b""),
         ]);
-        let dirs = proton_dirs(&[PathBuf::from("/s")], Version::parse("wine-10.0"), &fs);
-        assert_eq!(dirs, [PathBuf::from("/s/steamapps/common/Proton 10.0")]);
+        let dirs = proton_dirs(&[PathBuf::from("/s")], &fs);
+        assert_eq!(
+            dirs,
+            [PathBuf::from("/s/steamapps/common/Proton 10.0")],
+            "only installs that carry files/"
+        );
         let names = |kv: &[(&str, &str)], v| -> Vec<dlls::Component> {
             pick_dlls(&map(kv), v, &dirs, &fs)
                 .iter()
@@ -601,6 +468,6 @@ mod tests {
             [Vkd3d],
             "no DXVK, so no NVAPI"
         );
-        assert!(proton_dirs(&[PathBuf::from("/s")], None, &fs).is_empty());
+        assert!(proton_dirs(&[PathBuf::from("/none")], &fs).is_empty());
     }
 }

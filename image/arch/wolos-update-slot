@@ -1,0 +1,9 @@
+#!/bin/sh
+# wolos-update-slot [SNAPSHOT YYYY-MM-DD]: update WolOS into the other slot and start it on the next boot.
+# A thin wrapper: `wol update apply SLOT [DATE]` snapshots the running root into the inactive slot,
+# repoints its pacman.conf at DATE (default: the newest tested release), runs pacman -Syu inside it,
+# rebuilds the initramfs and a boot entry with three tries and makes it the next boot.
+# The running slot stays as the restore point.
+cur=$(findmnt -no OPTIONS / | sed -n 's/.*subvol=\/*\([^,]*\).*/\1/p')
+case $cur in @wolos-a) slot=@wolos-b ;; *) slot=@wolos-a ;; esac
+exec wol update apply "$slot" ${1:+"$(echo "$1" | tr - /)"} --yes

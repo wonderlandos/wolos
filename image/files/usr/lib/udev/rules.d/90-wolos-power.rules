@@ -1,0 +1,3 @@
+# WolOS power policy (archicture/modules/power.md): AC adapter plugged or unplugged -> the profile
+# for the new source.
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ACTION=="change", RUN+="/usr/bin/wol power apply"

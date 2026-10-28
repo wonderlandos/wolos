@@ -1,5 +1,5 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+From: klee <71413974+kleeedolinux@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 02:43:24 -0300
 Subject: [PATCH 2/2] renderer: arm cursor-hide ticker for the timeout, 5 s
  heartbeat otherwise

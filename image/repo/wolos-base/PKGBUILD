@@ -1,0 +1,55 @@
+# wolos-base (ADR 0017): WolKernel + its UAPI headers + the base userland at one WolOS release.
+# Non-GNU tools take the GNU names (uutils coreutils, sudo-rs) and stand in for the GNU packages
+# through provides/conflicts, so `base`, `base-devel` and everything that depends on coreutils or
+# sudo still resolve. glibc, gcc-libs and bash stay (Steam, Proton, NVIDIA; Arch hooks need bash).
+# GNU findutils, diffutils and tar stay too: no uutils findutils/diffutils at the snapshot, and
+# pacman/dkms scripts use GNU tar options (bsdtar is shipped and preferred by makepkg/mkinitcpio).
+# Ships /usr/share/wolos/base.manifest (sha256 + path of every base file; image/repo/base-manifest.sh,
+# passed in WOLOS_BASE_MANIFEST) and the os-release of this release.
+pkgname=wolos-base
+pkgver=$(awk '/^## [0-9]/ {print $2; exit}' "$startdir/../../../CHANGELOG.md")
+pkgrel=1
+pkgdesc='WolOS base system: kernel, headers and userland of one release'
+arch=(x86_64)
+url='https://github.com/wonderlandos/wolos'
+license=(BSD-2-Clause)
+depends=('base' 'linux-wolos' 'linux-wolos-headers' 'linux-wolos-api-headers' 'uutils-coreutils'
+  'sudo-rs' 'libarchive' 'zsh' 'systemd' 'wolos-system' 'glibc' 'gcc-libs' 'bash')
+provides=('coreutils=9.12' 'sudo')
+conflicts=('coreutils' 'sudo')
+backup=()
+install=wolos-base.install
+source=(os-release::../../files/usr/share/wolos/os-release wolos-os-release.hook)
+sha256sums=(SKIP SKIP)
+
+# GNU coreutils 9.12 program names; uutils-coreutils ships each as uu-<name>.
+_coreutils=('[' b2sum base32 base64 basename basenc cat chgrp chmod chown chroot cksum comm cp csplit
+  cut date dd df dir dircolors dirname du echo env expand expr factor false fmt fold groups head hostid
+  id install join link ln logname ls md5sum mkdir mkfifo mknod mktemp mv nice nl nohup nproc numfmt od
+  paste pathchk pinky pr printenv printf ptx pwd readlink realpath rm rmdir seq sha1sum sha224sum
+  sha256sum sha384sum sha512sum shred shuf sleep sort split stat stdbuf stty sum sync tac tail tee test
+  timeout touch tr true truncate tsort tty uname unexpand uniq unlink users vdir wc who whoami yes)
+
+package() {
+  local b
+  install -d "$pkgdir/usr/bin"
+  for b in "${_coreutils[@]}"; do
+    ln -s "uu-$b" "$pkgdir/usr/bin/$b"
+  done
+  for b in sudo sudoedit visudo; do
+    ln -s "$b-rs" "$pkgdir/usr/bin/$b"
+  done
+  # os-release of this release: /etc/os-release is written from it by the hook (filesystem owns
+  # /usr/lib/os-release and the /etc symlink).
+  sed "s/@VERSION@/$pkgver/g" "$srcdir/os-release" | install -Dm644 /dev/stdin "$pkgdir/usr/share/wolos/os-release"
+  install -Dm644 "$srcdir/wolos-os-release.hook" "$pkgdir/usr/share/libalpm/hooks/wolos-os-release.hook"
+  echo "$pkgver" | install -Dm644 /dev/stdin "$pkgdir/usr/share/wolos/base.version"
+  # Manifest last: it hashes the base packages and this package's own files.
+  {
+    [ -z "${WOLOS_BASE_MANIFEST:-}" ] || cat "$WOLOS_BASE_MANIFEST"
+    (cd "$pkgdir" && find . \( -type f -o -type l \) -printf '%P\n' | LC_ALL=C sort | while IFS= read -r f; do
+      if [ -L "$f" ]; then s=$(readlink "$f" | sha256sum); else s=$(sha256sum < "$f"); fi
+      printf '%s  /%s\n' "${s%% *}" "$f"
+    done)
+  } | LC_ALL=C sort -k2 | install -Dm644 /dev/stdin "$pkgdir/usr/share/wolos/base.manifest"
+}

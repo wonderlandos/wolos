@@ -1,190 +1,176 @@
-//! Tool output fixtures: an Alder Lake-P laptop (ThinkPad-class) on FreeBSD 15.1. Formats follow the
-//! test VM's real output (`pciconf -lv`, `devinfo -v`, `kldstat -v`); USB per usbconfig(8).
+//! Linux fixtures recorded on an Alder Lake-P laptop (ThinkPad-class, Arch kernel 6.x): sysfs ids,
+//! driver links, `lspci -mm`, `/proc/modules`, `modules.dep`, `/proc/cpuinfo`.
+use crate::system::fake::FakeHost;
 
-pub const PCICONF_ADL: &str = "\
-hostb0@pci0:0:0:0:\tclass=0x060000 rev=0x02 hdr=0x00 vendor=0x8086 device=0x4621 subvendor=0x17aa subdevice=0x22e6
-    vendor     = 'Intel Corporation'
-    device     = '12th Gen Core Processor Host Bridge/DRAM Registers'
-    class      = bridge
-    subclass   = HOST-PCI
-vgapci0@pci0:0:2:0:\tclass=0x030000 rev=0x0c hdr=0x00 vendor=0x8086 device=0x46a8 subvendor=0x17aa subdevice=0x22e6
-    vendor     = 'Intel Corporation'
-    device     = 'Alder Lake-UP3 GT2 [Iris Xe Graphics]'
-    class      = display
-    subclass   = VGA
-xhci0@pci0:0:13:0:\tclass=0x0c0330 rev=0x02 hdr=0x00 vendor=0x8086 device=0x461e subvendor=0x17aa subdevice=0x22e6
-    vendor     = 'Intel Corporation'
-    device     = 'Alder Lake-P Thunderbolt 4 USB Controller'
-    class      = serial bus
-    subclass   = USB
-iwlwifi0@pci0:0:20:3:\tclass=0x028000 rev=0x01 hdr=0x00 vendor=0x8086 device=0x51f0 subvendor=0x8086 subdevice=0x0094
-    vendor     = 'Intel Corporation'
-    device     = 'Alder Lake-P PCH CNVi WiFi'
-    class      = network
-ig4iic0@pci0:0:21:0:\tclass=0x0c8000 rev=0x01 hdr=0x00 vendor=0x8086 device=0x51e8 subvendor=0x17aa subdevice=0x22e6
-    vendor     = 'Intel Corporation'
-    device     = 'Alder Lake PCH Serial IO I2C Controller #0'
-    class      = serial bus
-none1@pci0:0:31:3:\tclass=0x040380 rev=0x01 hdr=0x00 vendor=0x8086 device=0x51c8 subvendor=0x17aa subdevice=0x22e6
-    vendor     = 'Intel Corporation'
-    device     = 'Alder Lake PCH-P High Definition Audio Controller'
-    class      = multimedia
-    subclass   = HDA
-re0@pci0:2:0:0:\tclass=0x020000 rev=0x15 hdr=0x00 vendor=0x10ec device=0x8168 subvendor=0x17aa subdevice=0x22e6
-    vendor     = 'Realtek Semiconductor Co., Ltd.'
-    device     = 'RTL8111/8168/8211/8411 PCI Express Gigabit Ethernet Controller'
-    class      = network
-    subclass   = ethernet
-rtsx0@pci0:3:0:0:\tclass=0xff0000 rev=0x01 hdr=0x00 vendor=0x10ec device=0x525a subvendor=0x17aa subdevice=0x22e6
-    vendor     = 'Realtek Semiconductor Co., Ltd.'
-    device     = 'RTS525A PCI Express Card Reader'
-nvme0@pci0:4:0:0:\tclass=0x010802 rev=0x00 hdr=0x00 vendor=0x144d device=0xa80a subvendor=0x144d subdevice=0xa801
-    vendor     = 'Samsung Electronics Co Ltd'
-    device     = 'NVMe SSD Controller PM9A1/PM9A3/980PRO'
-    class      = mass storage
-    subclass   = NVM
+pub const LSPCI_MM_ADL: &str = r#"00:00.0 "Host bridge" "Intel Corporation" "Alder Lake-U15 Host and DRAM Controller" -r04 -p00 "Lenovo" "Device 3805"
+00:02.0 "VGA compatible controller" "Intel Corporation" "Alder Lake-UP3 GT2 [Iris Xe Graphics]" -r0c -p00 "Lenovo" "Device 3b3a"
+00:0d.0 "USB controller" "Intel Corporation" "Alder Lake-P Thunderbolt 4 USB Controller" -r04 -p30 "Lenovo" "Device 3824"
+00:14.3 "Network controller" "Intel Corporation" "Alder Lake-P PCH CNVi WiFi" -r01 -p00 "Intel Corporation" "Dual Band Wi-Fi 5(802.11ac) Wireless-AC 9560 80MHz 2x2 [Jefferson Peak]"
+00:15.0 "Serial bus controller" "Intel Corporation" "Alder Lake PCH Serial IO I2C Controller #0" -r01 -p00 "Lenovo" "Device 3812"
+00:1f.3 "Audio device" "Intel Corporation" "Alder Lake PCH-P High Definition Audio Controller" -r01 -p80 "Lenovo" "Device 3881"
+01:00.0 "Non-Volatile memory controller" "SK hynix" "BC901 NVMe Solid State Drive (DRAM-less)" -r03 -p02 "SK hynix" "BC901 NVMe Solid State Drive (DRAM-less)"
+02:00.0 "SD Host controller" "Genesys Logic, Inc" "GL9750 SD Host Controller" -r01 -p01 "Lenovo" "Device 384a"
+"#;
+
+/// (address, vendor, device, class, driver link basename or "").
+pub const PCI_ADL: &[(&str, &str, &str, &str, &str)] = &[
+    ("0000:00:00.0", "0x8086", "0x4601", "0x060000", "igen6_edac"),
+    ("0000:00:02.0", "0x8086", "0x46a8", "0x030000", "i915"),
+    ("0000:00:0d.0", "0x8086", "0x461e", "0x0c0330", "xhci_hcd"),
+    ("0000:00:14.3", "0x8086", "0x51f0", "0x028000", "iwlwifi"),
+    ("0000:00:15.0", "0x8086", "0x51e8", "0x0c8000", "intel-lpss"),
+    (
+        "0000:00:1f.3",
+        "0x8086",
+        "0x51c8",
+        "0x040380",
+        "snd_hda_intel",
+    ),
+    ("0000:01:00.0", "0x1c5c", "0x1d59", "0x010802", "nvme"),
+    ("0000:02:00.0", "0x17a0", "0x9750", "0x080501", "sdhci-pci"),
+];
+
+/// USB devices: (name, idVendor, idProduct, class/sub/proto, product); interfaces:
+/// (name, class/sub/proto, driver).
+pub const USB_ADL: &[(&str, &str, &str, &str, &str)] = &[
+    ("usb3", "1d6b", "0002", "090001", "xHCI Host Controller"),
+    ("3-10", "8087", "0aaa", "e00101", ""),
+    ("3-8", "04f2", "b78e", "ef0201", "Integrated Camera"),
+    ("3-9.4", "046d", "c00e", "000000", "USB-PS/2 Optical Mouse"),
+];
+pub const USB_IF_ADL: &[(&str, &str, &str)] = &[
+    ("3-0:1.0", "090000", "hub"),
+    ("3-10:1.0", "e00101", "btusb"),
+    ("3-10:1.1", "e00101", "btusb"),
+    ("3-8:1.0", "0e0100", "uvcvideo"),
+    ("3-8:1.1", "0e0200", "uvcvideo"),
+    ("3-8:1.2", "fe0101", ""),
+    ("3-9.4:1.0", "030102", "usbhid"),
+];
+
+pub const PROC_MODULES: &str = "\
+uvcvideo 151552 0 - Live 0x0000000000000000
+btusb 77824 0 - Live 0x0000000000000000
+iwlwifi 581632 1 iwlmvm, Live 0x0000000000000000
+i915 4612096 38 - Live 0x0000000000000000
+snd_hda_intel 69632 3 - Live 0x0000000000000000
+snd_sof_pci_intel_tgl 12288 0 - Live 0x0000000000000000
+intel_lpss_pci 28672 0 - Live 0x0000000000000000
+sdhci_pci 86016 0 - Live 0x0000000000000000
 ";
 
-pub const DEVINFO_ADL: &str = "\
-nexus0
-  cryptosoft0 <software crypto>
-  apic0 <APIC resources>
-  acpi0 <LENOVO TP-R2B  >
-    cpu0 pnpinfo _HID=none _UID=0 _CID=none at handle=\\_SB_.PR00
-      hwpstate_intel0 <Intel Speed Shift>
-      cpufreq0
-    cpu1 pnpinfo _HID=none _UID=0 _CID=none at handle=\\_SB_.PR01
-      hwpstate_intel1 <Intel Speed Shift>
-      cpufreq1
-    unknown pnpinfo _HID=ELAN0678 _UID=1 _CID=PNP0C50 at handle=\\_SB_.PC00.I2C0.TPD0
-    pcib0 <ACPI Host-PCI bridge> pnpinfo _HID=PNP0A08 _UID=0 _CID=PNP0A03 at handle=\\_SB_.PC00
-      pci0 <ACPI PCI bus>
-        hostb0 <Host to PCI bridge> pnpinfo vendor=0x8086 device=0x4621 subvendor=0x17aa subdevice=0x22e6 class=0x060000 at slot=0 function=0 dbsf=pci0:0:0:0 handle=\\_SB_.PC00
-        vgapci0 <VGA-compatible display> pnpinfo vendor=0x8086 device=0x46a8 subvendor=0x17aa subdevice=0x22e6 class=0x030000 at slot=2 function=0 dbsf=pci0:0:2:0 handle=\\_SB_.PC00.GFX0
-          drmn0
-        xhci0 <Intel Alder Lake-P Thunderbolt 4 USB controller> pnpinfo vendor=0x8086 device=0x461e subvendor=0x17aa subdevice=0x22e6 class=0x0c0330 at slot=13 function=0 dbsf=pci0:0:13:0 handle=\\_SB_.PC00.TXHC
-          usbus0
-            uhub0 <0x8086 XHCI root HUB, class 9/0, rev 3.00/1.00, addr 1> pnpinfo vendor=0x8086 product=0x0000 devclass=0x09 devsubclass=0x00 devproto=0x01 sernum=\"\" release=0x0100 mode=host intclass=0x09 intsubclass=0x00 intprotocol=0x00 at bus=0 hubaddr=0 port=0 devaddr=1 interface=0 ugen=ugen0.1
-              ubt0 <Intel Bluetooth> pnpinfo vendor=0x8087 product=0x0026 devclass=0xe0 devsubclass=0x01 devproto=0x01 sernum=\"\" release=0x0002 mode=host intclass=0xe0 intsubclass=0x01 intprotocol=0x01 at bus=0 hubaddr=1 port=10 devaddr=3 interface=0 ugen=ugen0.3
-        iwlwifi0 <iwlwifi> pnpinfo vendor=0x8086 device=0x51f0 subvendor=0x8086 subdevice=0x0094 class=0x028000 at slot=20 function=3 dbsf=pci0:0:20:3 handle=\\_SB_.PC00.CNVW
-        ig4iic0 <Intel Alder Lake-M I2C Controller-0> pnpinfo vendor=0x8086 device=0x51e8 subvendor=0x17aa subdevice=0x22e6 class=0x0c8000 at slot=21 function=0 dbsf=pci0:0:21:0 handle=\\_SB_.PC00.I2C0
-          iicbus0 <Philips I2C bus>
-        unknown pnpinfo vendor=0x8086 device=0x51c8 subvendor=0x17aa subdevice=0x22e6 class=0x040380 at slot=31 function=3 dbsf=pci0:0:31:3 handle=\\_SB_.PC00.HDAS
-        pcib1 <ACPI PCI-PCI bridge> at slot=28 function=0 dbsf=pci0:0:28:0 handle=\\_SB_.PC00.RP01
-          pci1 <ACPI PCI bus>
-            re0 <RealTek 8168/8111 B/C/CP/D/DP/E/F/G PCIe Gigabit Ethernet> pnpinfo vendor=0x10ec device=0x8168 subvendor=0x17aa subdevice=0x22e6 class=0x020000 at slot=0 function=0 dbsf=pci0:2:0:0 handle=\\_SB_.PC00.RP01.PXSX
-              miibus0
-            rtsx0 <2.0 Realtek RTS525A PCI MMC/SD Card Reader> pnpinfo vendor=0x10ec device=0x525a subvendor=0x17aa subdevice=0x22e6 class=0xff0000 at slot=0 function=0 dbsf=pci0:3:0:0 handle=\\_SB_.PC00.RP02.PXSX
+pub const MODULES_DEP: &str = "\
+kernel/drivers/gpu/drm/i915/i915.ko.zst: kernel/drivers/gpu/drm/display/drm_display_helper.ko.zst
+kernel/drivers/gpu/drm/xe/xe.ko.zst:
+kernel/drivers/net/wireless/intel/iwlwifi/iwlwifi.ko.zst: kernel/net/wireless/cfg80211.ko.zst
+kernel/drivers/net/wireless/realtek/rtw88/rtw88_8822ce.ko.zst:
+kernel/drivers/hid/i2c-hid/i2c-hid-acpi.ko.zst: kernel/drivers/hid/i2c-hid/i2c-hid.ko.zst
+kernel/drivers/hwmon/coretemp.ko.zst:
+kernel/drivers/media/usb/uvc/uvcvideo.ko.zst:
+kernel/drivers/bluetooth/btusb.ko.zst:
+kernel/drivers/mmc/host/sdhci-pci.ko.zst:
+kernel/drivers/mfd/intel-lpss-pci.ko.zst:
+kernel/sound/pci/hda/snd-hda-intel.ko.zst:
+extramodules/nvidia-drm.ko.zst: extramodules/nvidia-modeset.ko.zst
 ";
 
-pub const USBCONFIG_LAPTOP: &str = "\
-ugen0.1: <Intel XHCI root HUB> at usbus0, cfg=0 md=HOST spd=SUPER (5.0Gbps) pwr=SAVE (0mA)
+pub const CPUINFO_ADL: &str = "\
+processor\t: 0
+vendor_id\t: GenuineIntel
+cpu family\t: 6
+model\t\t: 154
+model name\t: 12th Gen Intel(R) Core(TM) i5-1235U
+flags\t\t: fpu vme hwp hwp_epp
 
-  bLength = 0x0012
-  bDescriptorType = 0x0001
-  bcdUSB = 0x0300
-  bDeviceClass = 0x0009  <Hub>
-  bDeviceSubClass = 0x0000
-  bDeviceProtocol = 0x0003
-  bMaxPacketSize0 = 0x0009
-  idVendor = 0x8086
-  idProduct = 0x0000
-  bcdDevice = 0x0100
-  iManufacturer = 0x0001  <Intel>
-  iProduct = 0x0002  <XHCI root HUB>
-  iSerialNumber = 0x0000  <no string>
-  bNumConfigurations = 0x0001
-
-
- Configuration index 0
-
-    bLength = 0x0009
-    bDescriptorType = 0x0002
-    bNumInterfaces = 0x0001
-
-    Interface 0
-      bLength = 0x0009
-      bDescriptorType = 0x0004
-      bInterfaceNumber = 0x0000
-      bAlternateSetting = 0x0000
-      bNumEndpoints = 0x0001
-      bInterfaceClass = 0x0009  <Hub>
-      bInterfaceSubClass = 0x0000
-      bInterfaceProtocol = 0x0000
-      iInterface = 0x0000  <no string>
-
-ugen0.1.0: uhub0: <Intel XHCI root HUB, class 9/0, rev 3.00/1.00, addr 1>
-ugen0.3: <vendor 0x8087 product 0x0026> at usbus0, cfg=0 md=HOST spd=FULL (12Mbps) pwr=ON (100mA)
-
-  bLength = 0x0012
-  bDeviceClass = 0x00e0  <Wireless Controller>
-  bDeviceSubClass = 0x0001
-  bDeviceProtocol = 0x0001
-  idVendor = 0x8087
-  idProduct = 0x0026
-  bcdDevice = 0x0002
-
- Configuration index 0
-
-    Interface 0
-      bInterfaceNumber = 0x0000
-      bInterfaceClass = 0x00e0  <Wireless Controller>
-      bInterfaceSubClass = 0x0001
-      bInterfaceProtocol = 0x0001
-
-    Interface 1
-      bInterfaceNumber = 0x0001
-      bInterfaceClass = 0x00e0  <Wireless Controller>
-      bInterfaceSubClass = 0x0001
-      bInterfaceProtocol = 0x0001
-
-ugen0.3.0: ubt0: <Intel Bluetooth>
-ugen0.4: <Chicony Electronics Co.,Ltd. Integrated Camera> at usbus0, cfg=0 md=HOST spd=HIGH (480Mbps) pwr=ON (500mA)
-
-  bDeviceClass = 0x00ef  <Miscellaneous device>
-  bDeviceSubClass = 0x0002
-  bDeviceProtocol = 0x0001
-  idVendor = 0x04f2
-  idProduct = 0xb6dd
-
- Configuration index 0
-
-    Interface 0
-      bInterfaceClass = 0x000e  <Video>
-      bInterfaceSubClass = 0x0001
-      bInterfaceProtocol = 0x0000
-
-    Interface 1
-      bInterfaceClass = 0x000e  <Video>
-      bInterfaceSubClass = 0x0002
-      bInterfaceProtocol = 0x0000
-
+processor\t: 1
+vendor_id\t: GenuineIntel
+model name\t: 12th Gen Intel(R) Core(TM) i5-1235U
 ";
 
-pub const KLDSTAT: &str = "\
-Id Refs Address                Size Name
- 1   51 0xffffffff80200000  22fbe60 kernel (/boot/kernel/kernel)
-        Contains modules:
-                 Id Name
-                407 cubic
-                262 pci/snd_hda
-                263 hdac/snd_hda
-                479 cpu/hwpstate_intel
-                380 cpu/cpufreq
-                232 pci/re
-                133 pci/igc
-                109 pci/em
-                239 pci/sdhci_pci
- 7    1 0xffffffff82c20000   621c30 zfs.ko (/boot/kernel/zfs.ko)
-        Contains modules:
-                 Id Name
-                481 zfsctrl
- 9    1 0xffffffff83618000    c4498 if_iwlwifi.ko (/boot/kernel/if_iwlwifi.ko)
-        Contains modules:
-                 Id Name
-                510 iwlwifi
-10    1 0xffffffff83800000   2c2160 i915kms.ko (/boot/modules/i915kms.ko)
-11    1 0xffffffff83b00000     4250 rtsx.ko (/boot/kernel/rtsx.ko)
-12    1 0xffffffff83b10000     9a30 ig4.ko (/boot/kernel/ig4.ko)
-13    1 0xffffffff83b20000     b1c8 ng_ubt.ko (/boot/kernel/ng_ubt.ko)
-";
+pub const RELEASE: &str = "6.17.1-wolos";
+
+/// Fill `h` with a PCI/USB/ACPI tree.
+pub fn sysfs(
+    h: &FakeHost,
+    pci: &[(&str, &str, &str, &str, &str)],
+    usb: &[(&str, &str, &str, &str, &str)],
+    ifs: &[(&str, &str, &str)],
+) {
+    for (a, v, d, c, drv) in pci {
+        let p = format!("/sys/bus/pci/devices/{a}");
+        h.file(&format!("{p}/vendor"), &format!("{v}\n"))
+            .file(&format!("{p}/device"), &format!("{d}\n"))
+            .file(&format!("{p}/class"), &format!("{c}\n"));
+        if !drv.is_empty() {
+            h.link(
+                &format!("{p}/driver"),
+                &format!("../../../bus/pci/drivers/{drv}"),
+            );
+        }
+    }
+    for (n, v, d, c, prod) in usb {
+        let p = format!("/sys/bus/usb/devices/{n}");
+        h.file(&format!("{p}/idVendor"), &format!("{v}\n"))
+            .file(&format!("{p}/idProduct"), &format!("{d}\n"))
+            .file(&format!("{p}/bDeviceClass"), &format!("{}\n", &c[..2]))
+            .file(&format!("{p}/bDeviceSubClass"), &format!("{}\n", &c[2..4]))
+            .file(&format!("{p}/bDeviceProtocol"), &format!("{}\n", &c[4..]));
+        if !prod.is_empty() {
+            h.file(&format!("{p}/product"), &format!("{prod}\n"));
+        }
+    }
+    for (n, c, drv) in ifs {
+        let p = format!("/sys/bus/usb/devices/{n}");
+        h.file(&format!("{p}/bInterfaceClass"), &format!("{}\n", &c[..2]))
+            .file(
+                &format!("{p}/bInterfaceSubClass"),
+                &format!("{}\n", &c[2..4]),
+            )
+            .file(
+                &format!("{p}/bInterfaceProtocol"),
+                &format!("{}\n", &c[4..]),
+            );
+        if !drv.is_empty() {
+            h.link(
+                &format!("{p}/driver"),
+                &format!("../../../../bus/usb/drivers/{drv}"),
+            );
+        }
+    }
+}
+
+/// The laptop, with `installed` packages (`pacman -Qq`).
+pub fn adl_host(installed: &str) -> FakeHost {
+    let h = FakeHost::linux();
+    sysfs(&h, PCI_ADL, USB_ADL, USB_IF_ADL);
+    h.command("lspci -mm", LSPCI_MM_ADL)
+        .command("pacman -Qq", installed)
+        .file("/proc/modules", PROC_MODULES)
+        .file("/proc/cpuinfo", CPUINFO_ADL)
+        .file("/proc/sys/kernel/osrelease", &format!("{RELEASE}\n"))
+        .file(
+            &format!("/usr/lib/modules/{RELEASE}/modules.dep"),
+            MODULES_DEP,
+        )
+        .file(
+            &format!("/usr/lib/modules/{RELEASE}/modules.builtin"),
+            "kernel/drivers/acpi/video.ko\n",
+        )
+        .file(
+            "/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver",
+            "intel_pstate\n",
+        )
+        .file(
+            "/sys/bus/acpi/devices/SYNA2BA6:00/modalias",
+            "acpi:SYNA2BA6:PNP0C50:\n",
+        )
+        .file(
+            "/sys/bus/acpi/devices/ACPI0003:00/modalias",
+            "acpi:ACPI0003:\n",
+        )
+        .file(
+            "/sys/class/backlight/intel_backlight/max_brightness",
+            "19393\n",
+        );
+    h
+}

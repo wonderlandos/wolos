@@ -1,5 +1,5 @@
 //! `.wol` package files (ADR 0011, archicture/modules/packages.md): read and verify the ustar
-//! archive (hashes, Ed25519 signature, Info.json), extract the payload, plan the pkg(8) install.
+//! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `pacman -U` install.
 use shared::bundle::{INFO_FILE, Info};
 use shared::package::{
     Entry, Index, MANIFEST, MAX_SIZE, MEMBERS, PAYLOAD, SIGNATURE, is_app_id, is_version,
@@ -360,84 +360,61 @@ pub fn ustar(members: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
-/// Steps after verification: dependencies from FreeBSD pkg (marked automatic, so
-/// `pkg autoremove` drops them with the app), then the payload. Another installed version is
-/// deleted right before the add, after the dependencies are in place.
+/// Steps after verification: `pacman -U` of the payload (a pacman package). pacman resolves its
+/// dependencies from the pinned repos and replaces another installed version itself; the same
+/// version installed: nothing to do.
 pub fn install_steps(
     payload: &str,
-    package: &str,
     version: &str,
-    deps: &[String],
     installed: Option<&str>,
 ) -> Result<Vec<Vec<String>>, String> {
-    if let Some(d) = deps.iter().find(|d| !shared::package::is_pkg_name(d)) {
-        return Err(format!("bad dependency {d}"));
+    if !payload.starts_with('/') {
+        return Err(format!("payload {payload} is not an absolute path"));
     }
     if installed == Some(version) {
         return Ok(vec![]);
     }
-    let v = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<String>>();
-    let mut steps = Vec::new();
-    if !deps.is_empty() {
-        let mut i = v(&["pkg", "install", "-y", "-A"]);
-        i.extend(deps.iter().cloned());
-        steps.push(i);
-    }
-    if installed.is_some() {
-        steps.push(v(&["pkg", "delete", "-y", package]));
-    }
-    steps.push(v(&["pkg", "add", payload]));
-    Ok(steps)
+    Ok(vec![
+        ["pacman", "-U", "--noconfirm", payload]
+            .map(String::from)
+            .to_vec(),
+    ])
 }
 
-/// Remove an installed app from its install record text: the package, then dependencies
-/// nothing else needs.
+/// Remove an installed app from its install record text: the package and the dependencies
+/// nothing else needs (`pacman -Rns`).
 pub fn remove_steps(id: &str, record: &str) -> Result<Vec<Vec<String>>, String> {
     let i = Info::parse(record)?;
     if i.id != id || i.package.is_empty() {
         return Err(format!("{id}: install record does not match"));
     }
     Ok(vec![
-        ["pkg", "delete", "-y", &i.package]
+        ["pacman", "-Rns", "--noconfirm", &i.package]
             .map(String::from)
             .to_vec(),
-        ["pkg", "autoremove", "-y"].map(String::from).to_vec(),
     ])
 }
 
-/// `pkg query -F <file> '%n\t%v'` of the payload.
+/// `pacman -Qp <file>`: the payload's `name version`.
 pub fn query_name_version_argv(payload: &str) -> Vec<String> {
-    ["pkg", "query", "-F", payload, "%n\t%v"]
-        .map(String::from)
-        .to_vec()
+    ["pacman", "-Qp", payload].map(String::from).to_vec()
 }
 
-/// `pkg query -F <file> '%dn'`: the payload's dependency names.
-pub fn query_deps_argv(payload: &str) -> Vec<String> {
-    ["pkg", "query", "-F", payload, "%dn"]
-        .map(String::from)
-        .to_vec()
-}
-
-/// `pkg query %v <name>`: installed version (fails when not installed).
+/// `pacman -Q <name>`: installed `name version` (fails when not installed).
 pub fn query_installed_argv(package: &str) -> Vec<String> {
-    ["pkg", "query", "%v", package].map(String::from).to_vec()
+    ["pacman", "-Q", package].map(String::from).to_vec()
 }
 
-/// One `name<TAB>version` line.
+/// One `name version` line (`pacman -Q` / `-Qp`).
 pub fn parse_name_version(text: &str) -> Option<(String, String)> {
     let mut lines = text.lines().filter(|l| !l.is_empty());
-    let (n, v) = lines.next()?.split_once('\t')?;
-    (lines.next().is_none() && shared::package::is_pkg_name(n) && is_version(v))
-        .then(|| (n.to_owned(), v.to_owned()))
-}
-
-/// One pkg name per line; None if any line is not one.
-pub fn parse_deps(text: &str) -> Option<Vec<String>> {
-    text.lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| shared::package::is_pkg_name(l).then(|| l.to_owned()))
-        .collect()
+    let mut f = lines.next()?.split(' ');
+    let (n, v) = (f.next()?, f.next()?);
+    (f.next().is_none()
+        && lines.next().is_none()
+        && shared::package::is_pkg_name(n)
+        && is_version(v))
+    .then(|| (n.to_owned(), v.to_owned()))
 }
 
 /// Install records `<dir>/<id>/Info.json` (the directory name must be the id), sorted by id.
@@ -504,9 +481,11 @@ pub fn verify_index(text: &[u8], sig: Option<&[u8]>, keys: &[[u8; 32]]) -> Resul
         .ok_or_else(|| "index signature not from a trusted key".into())
 }
 
-/// FreeBSD fetch(1) into `dest`.
+/// curl into `dest` (fails on HTTP errors).
 pub fn fetch_argv(url: &str, dest: &str) -> Vec<String> {
-    ["fetch", "-q", "-o", dest, url].map(String::from).to_vec()
+    ["curl", "-fsSL", "-o", dest, url]
+        .map(String::from)
+        .to_vec()
 }
 
 #[cfg(test)]
@@ -719,7 +698,7 @@ mod tests {
     }
     #[test]
     fn install_steps_table() {
-        let deps = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let p = "/var/cache/wolos/install/1/payload.pkg";
         let show = |r: Result<Vec<Vec<String>>, String>| match r {
             Ok(steps) => steps
                 .iter()
@@ -728,29 +707,27 @@ mod tests {
                 .join("; "),
             Err(e) => format!("error: {e}"),
         };
-        let p = "/var/cache/wolos/install/1/payload.pkg";
-        let cases: [(&[&str], Option<&str>, &str); 5] = [
+        let cases: [(&str, Option<&str>, &str); 4] = [
             (
-                &["gtk4", "libadwaita"],
+                p,
                 None,
-                "pkg install -y -A gtk4 libadwaita; pkg add /var/cache/wolos/install/1/payload.pkg",
+                "pacman -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
             ),
-            (&[], None, "pkg add /var/cache/wolos/install/1/payload.pkg"),
             // Same version installed: nothing to do.
-            (&["gtk4"], Some("3.1.0"), ""),
-            // Another version: replace it (deps first, so a failure leaves the old app in place).
+            (p, Some("3.1.0-1"), ""),
+            // Another version: pacman replaces it.
             (
-                &["gtk4"],
-                Some("3.0.0"),
-                "pkg install -y -A gtk4; pkg delete -y raider; pkg add /var/cache/wolos/install/1/payload.pkg",
+                p,
+                Some("3.0.0-1"),
+                "pacman -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
             ),
-            (&["-f"], None, "error: bad dependency -f"),
+            ("-x", None, "error: payload -x is not an absolute path"),
         ];
-        for (d, installed, want) in cases {
+        for (payload, installed, want) in cases {
             assert_eq!(
-                show(install_steps(p, "raider", "3.1.0", &deps(d), installed)),
+                show(install_steps(payload, "3.1.0-1", installed)),
                 want,
-                "{d:?} {installed:?}"
+                "{installed:?}"
             );
         }
     }
@@ -760,10 +737,7 @@ mod tests {
         let rec = |pkg: &str| INFO.replace("wol-fixture", pkg);
         assert_eq!(
             remove_steps("org.wolos.Fixture", &rec("wol-fixture")).unwrap(),
-            [
-                vec!["pkg", "delete", "-y", "wol-fixture"],
-                vec!["pkg", "autoremove", "-y"]
-            ]
+            [vec!["pacman", "-Rns", "--noconfirm", "wol-fixture"]]
         );
         // The record must be the app asked for and name a package.
         assert!(remove_steps("org.wolos.Other", &rec("wol-fixture")).is_err());
@@ -775,23 +749,18 @@ mod tests {
             .is_err()
         );
         assert!(remove_steps("org.wolos.Fixture", "{").is_err());
+        assert_eq!(fetch_argv("https://x/a.wol", "/t/a")[0], "curl");
     }
 
     #[test]
     fn pkg_query_output() {
         assert_eq!(
-            parse_name_version("raider\t3.1.0\n"),
-            Some(("raider".into(), "3.1.0".into()))
+            parse_name_version("raider 3.1.0-1\n"),
+            Some(("raider".into(), "3.1.0-1".into()))
         );
-        for bad in ["", "raider", "raider\t", "-x\t1", "a\t1 2", "a\t1\nb\t2\n"] {
+        for bad in ["", "raider", "raider ", "-x 1", "a 1 2", "a 1\nb 2\n"] {
             assert_eq!(parse_name_version(bad), None, "{bad:?}");
         }
-        assert_eq!(
-            parse_deps("gtk4\nlibadwaita\n\n"),
-            Some(vec!["gtk4".into(), "libadwaita".into()])
-        );
-        assert_eq!(parse_deps(""), Some(vec![]));
-        assert_eq!(parse_deps("gtk4\n-f\n"), None);
     }
 
     #[test]
