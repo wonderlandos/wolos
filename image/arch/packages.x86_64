@@ -27,5 +27,7 @@ nftables
 pciutils
 usbutils
 dkms
+# Swap in compressed RAM (usr/lib/systemd/zram-generator.conf).
+zram-generator
 less
 man-db

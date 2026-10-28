@@ -1,19 +1,57 @@
-# linux-wolos: the WolOS kernel fork (github.com/wonderlandos/linux) at the commit in ./ref, Arch's
-# config.x86_64 from the snapshot (vendored next to this file) + kernel/conf/wolos.config, plus extra
-# patches from $WOLOS_OVERLAY/kernel/linux/patches when present. Published only in the [wolos] repo
+# linux-wolos: the WolOS kernel fork (github.com/wonderlandos/linux, branch wolos: the WolKernel patches)
+# at the commit in ./ref, Arch's config.x86_64 from the snapshot (vendored next to this file) + the fork's
+# kernel/configs/wolos.config + kernel/conf/wolos.config, plus extra patches from
+# $WOLOS_OVERLAY/kernel/linux/patches when set. Published only in the [wolos] repo
 # (image/repo/build.sh). Packaging follows Arch's linux PKGBUILD.
 # Build: cd kernel/linux-wolos && makepkg -s   (or image/repo/build.sh)
+#
+# Build options (environment, all off by default; the release build uses the defaults):
+#   _march=generic|v3|v4|native  CPU level. generic (x86-64, every 64-bit PC) is the default package;
+#                                v3 (x86-64-v3: AVX2, Haswell/Zen 1 and newer) and v4 (AVX-512) build linux-wolos-v3/-v4,
+#                                which the installer may pick on matching CPUs. native = this machine only.
+#   _cc_o3=y                     -O3 instead of -O2 (larger kernel; measure before shipping).
+#   _use_llvm_lto=none|thin|full Clang + LLVM (LLVM=1) with ThinLTO or full LTO.
+#   _localmodcfg=y               developer build: only the modules in modprobed.db (~/.config/modprobed.db,
+#                                or $_modprobed_db), else the ones loaded now (localmodconfig). Minutes, not hours.
+# ccache is used when installed (CCACHE_DIR as usual). MAKEFLAGS defaults to -j$(nproc).
+_march=${_march:-generic}
+_cc_o3=${_cc_o3:-}
+_use_llvm_lto=${_use_llvm_lto:-none}
+_localmodcfg=${_localmodcfg:-}
+_modprobed_db=${_modprobed_db:-$HOME/.config/modprobed.db}
+export MAKEFLAGS=${MAKEFLAGS:--j$(nproc)}
 
-pkgbase=linux-wolos
-pkgver=7.3.0
+case $_march in generic|native) _suffix= ;; v3|v4) _suffix=-$_march ;; *) echo "_march: $_march?" >&2; exit 1 ;; esac
+pkgbase=linux-wolos$_suffix
+# Version: kernel/VERSION, shown as "WolKernel 1.0 (7.3)" (pkgver 1.0+7.3; epoch 1 sorts it above the old 7.3.0).
+_wk=$(sed -n 's/^wolkernel=//p' "$startdir/../VERSION")
+_linux=$(sed -n 's/^linux=//p' "$startdir/../VERSION")
+epoch=1
+pkgver=$_wk+$_linux
 pkgrel=1
-pkgdesc='Linux (WolOS)'
+pkgdesc="WolKernel $_wk ($_linux)"
 url='https://github.com/wonderlandos/linux'
 arch=(x86_64)
 license=(GPL-2.0-only)
 makedepends=(bc binutils cpio gettext git glibc libelf libgcc openssl pahole perl python rust
   rust-bindgen rust-src tar xxhash xz zlib zstd)
 options=(!debug !strip)
+[ "$_use_llvm_lto" = none ] || makedepends+=(clang llvm lld)
+
+# Compiler and flags shared by every make call (build, modules_install, headers).
+_cc=gcc
+[ "$_use_llvm_lto" = none ] || _cc=clang
+command -v ccache >/dev/null 2>&1 && _cc="ccache $_cc"
+_kcflags=
+case $_march in v3|v4) _kcflags="-march=x86-64-$_march"; _krust="-Ctarget-cpu=x86-64-$_march" ;; esac
+[ -n "$_cc_o3" ] && _kcflags="$_kcflags -O3"
+_make() {
+  if [ "$_use_llvm_lto" = none ]; then
+    make CC="$_cc" KCFLAGS="$_kcflags" KRUSTFLAGS="${_krust:-}" "$@"
+  else
+    make LLVM=1 LLVM_IAS=1 CC="$_cc" KCFLAGS="$_kcflags" KRUSTFLAGS="${_krust:-}" "$@"
+  fi
+}
 _commit=$(<"$startdir/ref")
 _srcname=linux
 source=(
@@ -26,21 +64,32 @@ sha256sums=(SKIP SKIP SKIP SKIP)
 
 export KBUILD_BUILD_HOST=wolos
 export KBUILD_BUILD_USER=$pkgbase
+# uname -v: "#1 WolKernel 1.0 (7.3) SMP PREEMPT_DYNAMIC <date>".
+export KBUILD_BUILD_VERSION="$pkgrel WolKernel $_wk ($_linux)"
 export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
 
 prepare() {
   cd $_srcname
   echo "-$pkgrel" > localversion.10-pkgrel
-  WOLOS_OVERLAY=${WOLOS_OVERLAY:-$startdir/../../../wolos-overlay} \
-    sh ../prepare.sh . ../config.x86_64 ../wolos.config
-  make -s kernelrelease > version
+  WOLOS_OVERLAY=${WOLOS_OVERLAY:-} sh ../prepare.sh . ../config.x86_64 ../wolos.config
+  [ "$_march" = native ] && scripts/config -e X86_NATIVE_CPU
+  case $_use_llvm_lto in
+    thin) scripts/config -d LTO_NONE -e LTO_CLANG_THIN ;;
+    full) scripts/config -d LTO_NONE -e LTO_CLANG_FULL ;;
+  esac
+  if [ -n "$_localmodcfg" ]; then
+    if [ -f "$_modprobed_db" ]; then _make LSMOD="$_modprobed_db" localmodconfig </dev/null
+    else _make localmodconfig </dev/null; fi
+  fi
+  _make olddefconfig
+  _make -s kernelrelease > version
   echo "Prepared $pkgbase version $(<version)"
 }
 
 build() {
   cd $_srcname
-  make all
-  make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
+  _make all
+  _make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
 }
 
 _package() {
@@ -53,10 +102,10 @@ _package() {
 
   cd $_srcname
   local modulesdir="$pkgdir/usr/lib/modules/$(<version)"
-  install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
+  install -Dm644 "$(_make -s image_name)" "$modulesdir/vmlinuz"
   # mkinitcpio names the kernel and initramfs after this (vmlinuz-linux-wolos).
   echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
-  ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 \
+  ZSTD_CLEVEL=19 _make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 \
     DEPMOD=/doesnt/exist modules_install
   rm -f "$modulesdir"/build
 }
