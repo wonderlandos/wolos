@@ -283,11 +283,10 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
             }
         }
         Some(Request::SetupWifi { ssid, password }) => {
-            let answer = if join_wifi(&ssid, password.as_deref()) {
-                wait_joined(&ssid, password.is_some())
-            } else {
-                "error"
-            };
+            let answer = controller::login::nm_join_reply(
+                join_wifi(&ssid, password.as_deref()),
+                password.is_some(),
+            );
             println!("wol-login: setup wifi {ssid}: {answer}");
             reply(client, answer, answer != "ok");
             flow.phase
@@ -327,20 +326,23 @@ fn run_setup(a: &NewAccount) -> Option<LoginUser> {
     })
 }
 
-/// Asks wpa_supplicant for a fresh scan, waits for it, then lists what it heard.
+/// Asks NetworkManager for a fresh scan and lists what it heard.
 fn scan_wifi() -> Vec<shared::login::SeenNetwork> {
-    let out = |args: &[&str]| {
-        Command::new("wpa_cli")
-            .args(["-i", WLAN])
-            .args(args)
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
-    };
-    out(&["scan"]);
-    std::thread::sleep(Duration::from_secs(3));
-    let cur = wol_core::controls::parse_wpa_status(&out(&["status"]));
-    wol_core::controls::parse_scan_results(&out(&["scan_results"]), cur.as_deref())
+    let out = Command::new("nmcli")
+        .args([
+            "-t",
+            "-f",
+            "IN-USE,SIGNAL,SECURITY,SSID",
+            "dev",
+            "wifi",
+            "list",
+            "--rescan",
+            "yes",
+        ])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    wol_core::controls::parse_nmcli_wifi(&out)
         .into_iter()
         .map(|n| shared::login::SeenNetwork {
             ssid: n.ssid,
@@ -351,28 +353,7 @@ fn scan_wifi() -> Vec<shared::login::SeenNetwork> {
         .collect()
 }
 
-/// Polls wpa_supplicant until `ssid` is joined, refused or `JOIN_WAIT` passed (see [`wifi_reply`]).
-fn wait_joined(ssid: &str, secured: bool) -> &'static str {
-    let out = |args: &[&str]| {
-        Command::new("wpa_cli")
-            .args(["-i", WLAN])
-            .args(args)
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
-    };
-    let start = Instant::now();
-    loop {
-        let state = wol_core::wifi::join_state(&out(&["status"]), &out(&["list_networks"]), ssid);
-        let waited_out = start.elapsed() >= wol_core::controls::JOIN_WAIT;
-        if let Some(r) = wifi_reply(state, secured, waited_out) {
-            return r;
-        }
-        std::thread::sleep(Duration::from_millis(500));
-    }
-}
-
-/// Same allow-listed steps as wol-admind's Wi-Fi join (wpa_supplicant.conf upsert + reconfigure).
+/// Same allow-listed steps as wol-admind's Wi-Fi join (NetworkManager, password on stdin).
 fn join_wifi(ssid: &str, password: Option<&str>) -> bool {
     let mut args = vec![WLAN.to_string(), ssid.to_string()];
     args.extend(password.map(String::from));

@@ -634,10 +634,10 @@ mod tests {
             handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(os.wrote.borrow().len(), 1);
+        assert!(os.wrote.borrow().is_empty());
         assert_eq!(
-            os.ran.borrow()[0],
-            ["wpa_cli", "-i", "wlan0", "reconfigure"]
+            os.ran.borrow()[0].join(" "),
+            "nmcli dev wifi connect Home passwd-file /dev/stdin"
         );
         assert!(os.log.borrow().iter().all(|l| !l.contains("hunter22")));
         let failing = Fake {

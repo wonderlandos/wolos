@@ -562,6 +562,16 @@ pub fn wifi_reply(
     }
 }
 
+/// `!setup-wifi` answer from NetworkManager's join (`nmcli dev wifi connect` waits for the result):
+/// a secured network that refuses us is a wrong password, anything else failing is an error.
+pub fn nm_join_reply(joined: bool, secured: bool) -> &'static str {
+    match (joined, secured) {
+        (true, _) => "ok",
+        (false, true) => "denied",
+        (false, false) => "error",
+    }
+}
+
 /// How long the greeter may take to leave on its own once the session is decided (ADR 0012): the
 /// login window fades to black and exits; the setup assistant first shows Done until "Get Started".
 /// Then it is stopped either way.
@@ -708,6 +718,9 @@ mod tests {
     #[test]
     fn setup_wifi_answers_only_once_joined() {
         use wol_core::wifi::JoinState::*;
+        assert_eq!(nm_join_reply(true, true), "ok");
+        assert_eq!(nm_join_reply(false, true), "denied");
+        assert_eq!(nm_join_reply(false, false), "error");
         assert_eq!(wifi_reply(Joined, true, false), Some("ok"));
         assert_eq!(
             wifi_reply(Refused, true, false),
