@@ -430,6 +430,10 @@ fn hyprland_fork_and_system_package_recipes() {
     ] {
         assert!(h.contains(want), "hyprland-wolos lacks {want}");
     }
+    // makepkg finds local sources only beside the PKGBUILD: the patches are applied from $startdir.
+    let source = h.lines().find(|l| l.starts_with("source=")).unwrap();
+    assert!(!source.contains("patch"), "patches listed in source: {source}");
+    assert!(h.contains("\"$startdir\"/../../hyprland/patches/"));
     let w = read("image/repo/wolos-system/PKGBUILD");
     for want in [
         "pkgname=wolos-system",

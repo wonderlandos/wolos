@@ -16,18 +16,18 @@ makedepends=(cmake glaze hyprland-protocols hyprwayland-scanner meson ninja xorg
 provides=(hyprland="$pkgver" wayland-compositor)
 conflicts=(hyprland)
 _archive="Hyprland-$pkgver"
-_patches=(../../hyprland/patches/*.patch)
-source=("$_archive.tar.gz::$url/releases/download/v$pkgver/source-v$pkgver.tar.gz" "${_patches[@]}")
+source=("$_archive.tar.gz::$url/releases/download/v$pkgver/source-v$pkgver.tar.gz")
 sha256sums=('03ad3f5ef152ff44116ffd56fcf808486211ecabf4f0ba567108ee746ba5cd2e')
-for _p in "${_patches[@]}"; do sha256sums+=(SKIP); done
 
 prepare() {
   ln -sf hyprland-source "$_archive"
   cd "$_archive"
   local p
-  for p in "${_patches[@]}"; do
+  # The patches live in the tree (image/hyprland/patches); makepkg finds local sources only beside
+  # the PKGBUILD, so they are applied from there rather than listed in source.
+  for p in "$startdir"/../../hyprland/patches/*.patch; do
     echo "WolOS patch: ${p##*/}"
-    patch -Np1 < "$srcdir/${p##*/}"
+    patch -Np1 < "$p"
   done
   sed -i -e '/^release:/{n;s/-D/-DCMAKE_SKIP_RPATH=ON -D/}' Makefile
   sed -i -e '/find_package.glaze/s/7...<8 //' {.,hyprpm,start}/CMakeLists.txt

@@ -33,6 +33,7 @@ build() {
     -D system_dbus_proxy=xdg-dbus-proxy \
     -D gtkdoc=disabled \
     -D docbook_docs=disabled \
+    -D man=disabled \
     -D tests=false
   meson compile -C build
 }
