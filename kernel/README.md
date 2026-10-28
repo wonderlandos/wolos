@@ -16,12 +16,24 @@ Extra patches from `$WOLOS_OVERLAY/kernel/linux/patches` apply only when that va
 
 What users notice versus Arch's `linux`:
 - Anything that runs on stock Arch runs here: 32-bit apps and Steam, Wine/Proton, Flatpak/AppImage/Snap, Docker/Podman, KVM/VirtualBox, browser sandboxes, DKMS modules (NVIDIA, ZFS, v4l2loopback).
-- Removed (`abi-removed.txt`): the x32 ABI and the vsyscall page (only pre-2011 static binaries use it; boot with `vsyscall=xonly` to bring it back), plus pre-2010 PC hardware (PCMCIA/CardBus, floppy controller, parallel port, gameport, 1990s PCI NICs, pre-ACPI MP tables), the VESA/EFI framebuffers (simpledrm covers boot), cluster sockets (RDS, TIPC, RxRPC/AFS) and raw-flash filesystems. Datacenter-only drivers are not built (InfiniBand, Fibre Channel, storage targets, legacy RAID cards, telecom links, cluster filesystems).
-- Desktop tuning: 1000 Hz full preemption, sched_ext with the WolOS scheduler (stock EEVDF if it stops), hugepages on request only, MGLRU, BBR, NTSYNC, at most 512 CPUs.
-- Image side: zram swap (zstd, half of RAM up to 8 GB; zswap built but off), `sysctl.d/70-wolos-performance.conf` (swappiness 100 for zram, small dirty-page steps, no NMI watchdog), `tmpfiles.d/70-wolos-performance.conf` (MGLRU min_ttl 1 s, THP defrag on request), `udev/rules.d/60-wolos-ioscheduler.rules` (none / mq-deadline / bfq).
+- The app in front goes first. wold writes its pid to `/sys/kernel/wolos/foreground_pid` on every switch; the kernel then gives it a CPU floor (`foreground_uclamp_min`, 512), exact timers (`foreground_timerslack_ns`, 0: Wine/Proton frame limiters wake on time), the i915 waitboost and the top `scx_wolos` slot. Background threads coalesce wakeups (`background_timerslack_ns`, 50 ms).
+- Removed (`abi-removed.txt`): the x32 ABI, legacy PTYs and the vsyscall page (boot with `vsyscall=xonly` for pre-2011 static binaries), plus pre-2010 PC hardware (PCMCIA/CardBus, floppy, parallel port, gameport, 1990s PCI NICs, pre-ACPI MP tables), the VESA/EFI framebuffers (simpledrm covers boot), cluster sockets (RDS, TIPC, RxRPC/AFS) and raw-flash filesystems. Datacenter-only drivers are not built.
 - Module ABI is stable within a release line (CONFIG_MODVERSIONS): vendor modules built once keep loading until the next line.
 - `uname -r` ends in `-wolos`; `uname -v` reads `#1 WolKernel 1.0 (7.3) SMP PREEMPT_DYNAMIC <date>`.
-- `/sys/kernel/wolos/` and `<linux/wolos.h>` exist when the extra patches are applied; nothing depends on them to boot.
+
+What is in 1.0 (each has an off switch; table with sources in `README.wolos.md` on the fork):
+
+| area | change |
+|---|---|
+| scheduler | `scx_wolos` (sched_ext): per-CPU queues, stealing within the shared cache first, QoS slices (1/2/4 ms), frontmost boost from `foreground_pid`; BORE and an interactivity-tuned EEVDF when it is not loaded |
+| frontmost app | CPU floor and exact timers for the app in front, timer coalescing behind (WolOS code) |
+| locks | futex spins briefly before sleeping (`futex.spin_ns`); `selftests/wolos/futex_pingpong` measures it |
+| games | NTSYNC and futex_waitv built in; split-lock mitigation off; i915 frame-deadline boost |
+| memory | zram first (lz4/zstd, writeback, `page-cluster` 0), MGLRU working-set protection, no watermark boosting or proactive compaction, THP on request |
+| disk | ADIOS I/O scheduler by default; none on NVMe, BFQ on spinning disks (udev) |
+| network | BBRv3 with fq by default, MPTCP and WireGuard built in |
+| graphics | AMD color management (HDR) properties; parallel CPU bring-up at boot |
+| build | `-O3`, x86-64-v3/v4 flavours, Clang ThinLTO, zstd modules, ccache (options below) |
 
 Measured (7.3.0, `make olddefconfig`, before the 1.0 trim): Arch 6332 modules / 3247 built-in options; WolKernel 6154 / 3164 (-178 modules, -83 built-in).
 WolKernel 1.0 (7.3): not re-measured; the CI build prints both counts.
