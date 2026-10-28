@@ -1,6 +1,6 @@
 # WolOS architecture map
-Base: FreeBSD 15.1-RELEASE (src + pkg). Compositor: Hyprland (ADR 0001).
-Layers: `kernel/` -> `image/` (installs pkgs + `desktop/` overlay + `design/` assets).
+Base: Arch Linux snapshot (ADR 0016). Compositor: Hyprland (ADR 0001).
+Layers: `kernel/` -> `image/` (installs packages + `desktop/` overlay + `design/` assets).
 Rust userland: one Cargo workspace in `crates/` (ADR 0002). Rules enforced by `crates/shared/tests/architecture.rs`.
 Rule: prefer upstream ports + config over new code.
 
@@ -9,7 +9,7 @@ Rule: prefer upstream ports + config over new code.
 | `adr/` | decisions |
 | `modules/system-api.md` | System API topics + invariants |
 | `modules/intel-graphics.md` | i915 firmware, tunables, VA-API/Vulkan stack |
-| `modules/hardware.md` | hardware catalogue, `wol hw`, rc.d `wolos_hw`, shipped firmware, 15.1 gaps |
+| `modules/hardware.md` | hardware catalogue, `wol hw`, `wolos-hw.service`, shipped firmware, 15.1 gaps |
 | `modules/ux-journeys.md` | 13 user journeys with verdicts and owners; error copy rules (`shell::copy`, lint) |
 | `modules/automation.md` | helpers (`wol mcp`, scripts): policy, approval sheet wire, audit log |
 | `modules/userland.md` | Dock apps and app-ids, default apps, zsh, sudo, keyring, printing, USB sticks, size |
