@@ -557,7 +557,27 @@ pub fn install_plan(target: &str) -> Option<Vec<Vec<String>>> {
         None if is_pkg_name(target) => vec![target],
         None => return None,
     };
-    Some(vec![pacman("-S", "--needed", &pkgs)])
+    let mut step = pacman("-S", "--needed", &pkgs);
+    // Plain per-package lines the App Store turns into a percentage (`crate::progress`).
+    step.insert(3, "--noprogressbar".into());
+    Some(vec![step])
+}
+
+/// `pacman -Si` in C locale for the details page; None for an invalid name.
+pub fn info_argv(pkg: &str) -> Option<Vec<String>> {
+    is_pkg_name(pkg).then(|| {
+        ["env", "LC_ALL=C", "pacman", "-Si", "--", pkg]
+            .map(String::from)
+            .to_vec()
+    })
+}
+
+/// "Installed Size  : 154.93 MiB" -> "154.93 MiB".
+pub fn parse_installed_size(text: &str) -> Option<String> {
+    text.lines().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        (k.trim() == "Installed Size").then(|| v.trim().to_owned())
+    })
 }
 
 /// Fixed argv step that removes a catalog id or plain package name, with its unused dependencies.
@@ -695,19 +715,51 @@ mod tests {
     }
 
     #[test]
+    fn package_info_for_the_details_page() {
+        assert_eq!(
+            info_argv("gimp").unwrap().join(" "),
+            "env LC_ALL=C pacman -Si -- gimp"
+        );
+        assert_eq!(info_argv("-x"), None);
+        let t = "Name            : gimp\nInstalled Size  : 154.93 MiB\nPackager        : X\n";
+        assert_eq!(parse_installed_size(t).as_deref(), Some("154.93 MiB"));
+    }
+
+    #[test]
     fn install_plans() {
         let p = |v: &[&str]| vec![v.iter().map(|x| x.to_string()).collect::<Vec<_>>()];
         assert_eq!(
             install_plan("gimp").unwrap(),
-            p(&["pacman", "-S", "--needed", "--noconfirm", "gimp"])
+            p(&[
+                "pacman",
+                "-S",
+                "--needed",
+                "--noprogressbar",
+                "--noconfirm",
+                "gimp"
+            ])
         );
         assert_eq!(
             install_plan("steam").unwrap(),
-            p(&["pacman", "-S", "--needed", "--noconfirm", "steam"])
+            p(&[
+                "pacman",
+                "-S",
+                "--needed",
+                "--noprogressbar",
+                "--noconfirm",
+                "steam"
+            ])
         );
         assert_eq!(
             install_plan("htop").unwrap(),
-            p(&["pacman", "-S", "--needed", "--noconfirm", "htop"])
+            p(&[
+                "pacman",
+                "-S",
+                "--needed",
+                "--noprogressbar",
+                "--noconfirm",
+                "htop"
+            ])
         );
         assert_eq!(
             remove_plan("gimp").unwrap(),

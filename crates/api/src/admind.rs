@@ -15,6 +15,8 @@ pub trait AdminOs {
     fn run(&self, argv: &[String], long: bool) -> bool;
     /// Fixed argv with `input` on stdin (secrets never in argv).
     fn run_input(&self, argv: &[String], input: &str) -> bool;
+    /// Long install, its percentage published to `path` (`wol_core::progress`).
+    fn run_progress(&self, argv: &[String], kind: wol_core::progress::Kind, path: &str) -> bool;
     fn write(&self, path: &str, mode: u32, text: &str) -> bool;
     fn read(&self, path: &str) -> Option<String>;
     /// Fixed delay before every refusal.
@@ -154,8 +156,22 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
             | AdminAction::FlatpakInstall
             | AdminAction::FlatpakRemove
     );
+    // App Store installs publish their percentage for the tile ring.
+    let progress = match req.action {
+        AdminAction::PkgInstall => Some(wol_core::progress::Kind::Pacman),
+        AdminAction::FlatpakInstall => Some(wol_core::progress::Kind::Flatpak),
+        _ => None,
+    }
+    .zip(
+        req.args
+            .first()
+            .and_then(|t| wol_core::progress::file_for(wol_core::progress::SYSTEM_DIR, t)),
+    );
     steps.iter().all(|s| match s {
-        AdminStep::Run(argv) => os.run(argv, long),
+        AdminStep::Run(argv) => match &progress {
+            Some((kind, path)) => os.run_progress(argv, *kind, path),
+            None => os.run(argv, long),
+        },
         AdminStep::RunInput { argv, input } => os.run_input(argv, input),
         AdminStep::Write {
             path,
@@ -301,6 +317,10 @@ impl AdminOs for RealOs {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         let t = std::time::Duration::from_secs(if long { 1800 } else { 30 });
         wol_core::system::run_with_timeout(&argv, t).is_some()
+    }
+    fn run_progress(&self, argv: &[String], kind: wol_core::progress::Kind, path: &str) -> bool {
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        wol_core::progress::run_tracked(&argv, kind, path, std::time::Duration::from_secs(1800))
     }
     fn run_input(&self, argv: &[String], input: &str) -> bool {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -474,6 +494,8 @@ mod tests {
         /// (path, text) for `read`.
         files: Vec<(String, String)>,
         stage: RefCell<Option<std::path::PathBuf>>,
+        /// Progress files of tracked runs.
+        progress: RefCell<Vec<String>>,
     }
 
     impl AdminOs for Fake {
@@ -490,6 +512,10 @@ mod tests {
         fn run(&self, argv: &[String], _: bool) -> bool {
             self.ran.borrow_mut().push(argv.to_vec());
             !self.fail_run
+        }
+        fn run_progress(&self, argv: &[String], _: wol_core::progress::Kind, path: &str) -> bool {
+            self.progress.borrow_mut().push(path.into());
+            self.run(argv, true)
         }
         fn capture(&self, argv: &[String]) -> Option<String> {
             self.captured.borrow_mut().push(argv.to_vec());
@@ -850,6 +876,31 @@ mod tests {
                     .map_or(l.clone(), |s| l.replace(s, "<stage>"))
             })
             .collect()
+    }
+
+    /// App Store installs publish their percentage; other verbs run plainly.
+    #[test]
+    fn store_installs_publish_progress() {
+        let os = Fake::default();
+        for (a, t) in [
+            (AdminAction::PkgInstall, "gimp"),
+            (AdminAction::FlatpakInstall, "org.gimp.GIMP"),
+            (AdminAction::PkgRemove, "gimp"),
+        ] {
+            let r = req(a, &[t]);
+            assert_eq!(
+                handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+                AdminReply::Ok
+            );
+        }
+        assert_eq!(
+            *os.progress.borrow(),
+            [
+                "/run/wolos/progress/gimp",
+                "/run/wolos/progress/org.gimp.GIMP"
+            ]
+        );
+        assert_eq!(os.ran.borrow().len(), 3);
     }
 
     /// Signed `.wol`: verified on the daemon's own copy, then `pacman -U` (deps from the repos).

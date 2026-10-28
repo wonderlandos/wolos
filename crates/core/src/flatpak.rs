@@ -541,6 +541,48 @@ pub fn updates_argv() -> Vec<String> {
     ])
 }
 
+/// `flatpak remote-info` for the details page (size; `--show-metadata` for permissions), in C
+/// locale so labels parse. None for an invalid id.
+pub fn remote_info_argv(scope: Scope, app_id: &str, metadata: bool) -> Option<Vec<String>> {
+    is_app_id(app_id).then(|| {
+        let mut v = argv(&["env", "LC_ALL=C", "flatpak", "remote-info", scope.flag()]);
+        if metadata {
+            v.push("--show-metadata".into());
+        }
+        v.extend([REMOTE.to_owned(), app_id.to_owned()]);
+        v
+    })
+}
+
+/// "Installed: 5.1 MB" from `flatpak remote-info`.
+pub fn parse_installed_size(text: &str) -> Option<String> {
+    text.lines().find_map(|l| {
+        let v = l.trim().strip_prefix("Installed:")?.trim();
+        (!v.is_empty()).then(|| v.to_owned())
+    })
+}
+
+/// Permissions an app asks for: the `[Context]` group of its metadata, one [`Perm`] each.
+pub fn metadata_perms(text: &str) -> Vec<Perm> {
+    let mut out = Vec::new();
+    let mut ctx = false;
+    for l in text.lines().map(str::trim) {
+        if l.starts_with('[') {
+            ctx = l == "[Context]";
+            continue;
+        }
+        let Some((k, vals)) = l.split_once('=').filter(|_| ctx) else {
+            continue;
+        };
+        for v in vals.split(';').filter(|v| !v.is_empty()) {
+            if let Some(p) = Perm::parse(&format!("{k}={v}")) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
 /// One app id per line (list, remote-ls); anything else skipped.
 pub fn parse_ids(text: &str) -> Vec<String> {
     text.lines()
@@ -553,6 +595,31 @@ pub fn parse_ids(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_info_for_the_details_page() {
+        assert_eq!(
+            remote_info_argv(Scope::User, "org.gnome.Calculator", true)
+                .unwrap()
+                .join(" "),
+            "env LC_ALL=C flatpak remote-info --user --show-metadata flathub org.gnome.Calculator"
+        );
+        assert_eq!(remote_info_argv(Scope::User, "-x", false), None);
+        let info = "Calculator - Perform\n\n        ID: org.gnome.Calculator\n  Download: 2.0 MB\n Installed: 5.1 MB\n";
+        assert_eq!(parse_installed_size(info).as_deref(), Some("5.1 MB"));
+        let meta = "[Application]\nname=x\n\n[Context]\nshared=ipc;network;\nsockets=fallback-x11;wayland;\ndevices=dri;\n\n[X-DConf]\nmigrate-path=/x/\n";
+        let p: Vec<String> = metadata_perms(meta).iter().map(Perm::spelling).collect();
+        assert_eq!(
+            p,
+            [
+                "shared=ipc",
+                "shared=network",
+                "sockets=fallback-x11",
+                "sockets=wayland",
+                "devices=dri"
+            ]
+        );
+    }
 
     fn p(s: &str) -> Perm {
         Perm::parse(s).unwrap_or_else(|| panic!("{s}"))
