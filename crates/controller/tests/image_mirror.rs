@@ -398,3 +398,65 @@ fn release_refreshes_the_cachy_snapshot() {
     assert_eq!(m.cachy, "20261020-ab12cd34");
     assert!(read("image/build.sh").contains("cachy}/revision"));
 }
+
+const WOLOS_KEY: &str = "C3B6062A2BA6EEABC1DA0F5766C5F2B181374033";
+
+fn fingerprints(p: &str) -> Vec<String> {
+    let out = Command::new("gpg")
+        .args(["--show-keys", "--with-colons"])
+        .arg(repo(p))
+        .output()
+        .expect("gpg");
+    let mut fprs = Vec::new();
+    let mut primary = false;
+    for l in String::from_utf8_lossy(&out.stdout).lines() {
+        let f: Vec<&str> = l.split(':').collect();
+        match f[0] {
+            "pub" => primary = true,
+            "sub" => primary = false,
+            "fpr" if primary => fprs.push(f[9].to_owned()),
+            _ => {}
+        }
+    }
+    fprs
+}
+
+#[test]
+fn keyring_package_carries_repo_and_cachy_keys_fully_trusted() {
+    let cachy = read("image/repo/cachy-trusted");
+    let cachy: Vec<&str> = cachy.lines().filter_map(|l| l.split(':').next()).collect();
+    let keys = fingerprints("image/repo/wolos-keyring/wolos.gpg");
+    assert!(keys.iter().any(|k| k == WOLOS_KEY), "{keys:?}");
+    assert_eq!(fingerprints("image/repo/wolos-repo.pub.asc"), [WOLOS_KEY]);
+    for c in &cachy {
+        assert!(keys.iter().any(|k| k == c), "{c} missing from {keys:?}");
+    }
+    let trusted = read("image/repo/wolos-keyring/wolos-trusted");
+    for k in keys.iter() {
+        assert!(
+            trusted.contains(&format!("{k}:4:\n")),
+            "{k} not fully trusted"
+        );
+    }
+    let pb = read("image/repo/wolos-keyring/PKGBUILD");
+    assert!(pb.contains("$pkgdir/usr/share/pacman/keyrings/wolos.gpg"));
+    assert!(pb.contains("$pkgdir/usr/share/pacman/keyrings/wolos-trusted"));
+    assert!(pb.contains("install=wolos-keyring.install"));
+    let inst = read("image/repo/wolos-keyring/wolos-keyring.install");
+    assert!(inst.contains("post_install()") && inst.contains("post_upgrade()"));
+    assert!(inst.contains("pacman-key --populate wolos"));
+}
+
+#[test]
+fn keyring_is_built_before_base_and_installed_first() {
+    let order = |text: &str, name: &str| {
+        text.lines()
+            .position(|l| l.split_whitespace().next() == Some(name))
+            .unwrap_or_else(|| panic!("{name} missing"))
+    };
+    let pk = read("image/repo/packages");
+    assert!(order(&pk, "wolos-keyring") < order(&pk, "wolos-base"));
+    assert!(pk.contains("\nwolos-keyring "));
+    let list = read("image/arch/packages.x86_64");
+    assert!(order(&list, "wolos-keyring") < order(&list, "wolos-base"));
+}

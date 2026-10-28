@@ -1,6 +1,7 @@
 # WolOS live + installed system. The desktop list is desktop/packages.txt; image/build.sh merges both.
 # wolos-base (ADR 0017, [wolos]): Arch base + linux-wolos (+ headers for DKMS such as nvidia-open-dkms)
 # + uutils coreutils, sudo-rs, bsdtar, zsh, systemd and the wol tools, at one release version.
+wolos-keyring
 wolos-base
 wolos-mirrorlist
 linux-firmware
