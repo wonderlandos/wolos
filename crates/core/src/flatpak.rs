@@ -367,6 +367,75 @@ pub fn export_paths(install_dir: &str, app_id: &str) -> (String, String) {
     )
 }
 
+/// One Flatpak app with recorded permissions, as Settings > Privacy lists it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct App {
+    pub id: String,
+    pub scope: Scope,
+    pub name: String,
+    /// Exported icon file, or the app id as an icon name.
+    pub icon: String,
+    /// Each permission and whether it is on now (not turned off by an override).
+    pub perms: Vec<(Perm, bool)>,
+}
+
+/// Grants from both consent files, grouped per app, with the override files' verdicts.
+pub fn apps(h: &dyn crate::system::Host, home: &str) -> Vec<App> {
+    let mut out: Vec<App> = Vec::new();
+    for (scope, file, dir) in [
+        (
+            Scope::User,
+            format!("{home}/{USER_GRANTS}"),
+            format!("{home}/{USER_DIR}"),
+        ),
+        (
+            Scope::System,
+            SYSTEM_GRANTS.to_owned(),
+            SYSTEM_DIR.to_owned(),
+        ),
+    ] {
+        let grants = h
+            .read_text(&file)
+            .map(|t| parse_grants(&t, scope))
+            .unwrap_or_default();
+        for g in grants {
+            let i = match out
+                .iter()
+                .position(|a| a.id == g.app_id && a.scope == scope)
+            {
+                Some(i) => i,
+                None => {
+                    let (desktop, icon) = export_paths(&dir, &g.app_id);
+                    let name = h
+                        .read_text(&desktop)
+                        .and_then(|t| desktop_name(&t))
+                        .unwrap_or_else(|| g.app_id.rsplit('.').next().unwrap_or("").to_owned());
+                    let icon = if std::path::Path::new(&icon).is_file() {
+                        icon
+                    } else {
+                        g.app_id.clone()
+                    };
+                    out.push(App {
+                        id: g.app_id.clone(),
+                        scope,
+                        name,
+                        icon,
+                        perms: Vec::new(),
+                    });
+                    out.len() - 1
+                }
+            };
+            let overrides = h
+                .read_text(&format!("{dir}/overrides/{}", g.app_id))
+                .unwrap_or_default();
+            let on = !g.perm.denied_in(&overrides);
+            out[i].perms.push((g.perm, on));
+        }
+    }
+    out.sort_by_key(|a| a.name.to_lowercase());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,6 +622,43 @@ mod tests {
         assert_eq!(g[0].app_id, "org.gimp.GIMP");
         assert_eq!(g[1].perm, p("shared=network"));
         assert!(parse_grants("nope", Scope::User).is_empty());
+    }
+
+    #[test]
+    fn apps_group_grants_and_read_overrides() {
+        use crate::system::fake::FakeHost;
+        let h = FakeHost::linux();
+        h.file(
+                "/home/ana/.config/wolos/flatpak-consent.json",
+                r#"{"grants":[{"app":"/home/ana/.local/share/flatpak/app/org.gimp.GIMP","capability":"flatpak:filesystems=home"},{"app":"/home/ana/.local/share/flatpak/app/org.gimp.GIMP","capability":"flatpak:shared=network"}]}"#,
+            )
+            .file(
+                "/home/ana/.local/share/flatpak/overrides/org.gimp.GIMP",
+                "[Context]\nshared=!network;\n",
+            )
+            .file(
+                "/home/ana/.local/share/flatpak/app/org.gimp.GIMP/current/active/export/share/applications/org.gimp.GIMP.desktop",
+                "[Desktop Entry]\nName=GIMP\n",
+            )
+            .file(
+                "/etc/wolos/flatpak-consent.json",
+                r#"{"grants":[{"app":"/var/lib/flatpak/app/com.valvesoftware.Steam","capability":"flatpak:devices=all"}]}"#,
+            );
+        let a = apps(&h, "/home/ana");
+        assert_eq!(a.len(), 2);
+        assert_eq!((a[0].name.as_str(), a[0].scope), ("GIMP", Scope::User));
+        assert_eq!(a[0].icon, "org.gimp.GIMP");
+        assert_eq!(
+            a[0].perms
+                .iter()
+                .map(|(p, on)| (p.spelling(), *on))
+                .collect::<Vec<_>>(),
+            [
+                ("filesystems=home".to_owned(), true),
+                ("shared=network".to_owned(), false)
+            ]
+        );
+        assert_eq!((a[1].name.as_str(), a[1].scope), ("Steam", Scope::System));
     }
 
     #[test]
