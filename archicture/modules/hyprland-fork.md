@@ -25,6 +25,9 @@ Frontmost QoS and placement: `plugins/wol-hypr` + `crates/realtime` C ABI (`wol_
 | Client minimise is real (CSD minimise light enabled) | - | xdg `wm_capabilities` + `set_minimized` -> `special:hidden` | patch 0004 | - |
 | Locked start / restored locker never shows the desktop; crash restart relaunches the locker (ADR 0012) | - | `SSessionLock::takeover`, `start-hyprland` `$WOLOS_CRASH_LOCK_CMD` | patch 0005 | - |
 | ⌘C reaches the app as Ctrl+C: `sendshortcut` finds the key in any layout (⇧⌘Z, Cyrillic), taps only the asked modifiers, restores the real ones (`WolosKeys.hpp`, gtest) | - | `DispatcherTranslator` `sendshortcut`, `Actions::pass` | patch 0006 | - |
+| Content-only layer commits (menu bar clock, Dock badge) damage only the changed pixels; quiet backdrop commits keep the cached blur | `blur.rs` (redo on backdrop change) | `CLayerSurface::onCommit` | patch 0007 | not measured (needs GPU run) |
+| Focusing a minimised window (Dock click, `focuswindow`, app activation) restores it to the current desktop | - | `CFocusState::fullWindowFocus`, `WolosWindow.hpp` | patch 0008 | - |
+| `direct_scanout = 2` also scans out fullscreen video (content-type video) and tearing-hint games | `backend_drm.rs` | `CMonitor::isDSBlocked` | patch 0009 | not measured (needs GPU run) |
 | Active window raised; CSD apps tagged `wol-csd`; placement after layout | - | `window.active`, `window.open`, `window.openLate` hooks | plugin | - |
 
 Measurement: Linux host (CachyOS), nested Wayland backend, 1280x800, one static alacritty window,
@@ -33,5 +36,5 @@ Animating = `hyprctl dispatch workspace` toggled every 500 ms.
 
 Invariants:
 - Patches stay small and apply with `git apply --check` on `v0.56.2`.
-- Policy math lives in `src/helpers/WolosPerf.hpp` and `src/helpers/WolosLock.hpp`, tested by `tests/helpers/`.
+- Policy math lives in `src/helpers/WolosPerf.hpp`, `WolosLock.hpp` and `WolosWindow.hpp`, tested by `tests/helpers/`.
 - Bump the base tag only together with the FreeBSD port; rebase patches then.
