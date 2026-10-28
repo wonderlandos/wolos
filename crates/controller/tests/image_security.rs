@@ -18,16 +18,13 @@ fn compositor_privacy_rules_ship_and_load() {
     let rel = format!("desktop/overlay{HYPR_PERMISSIONS}");
     assert_eq!(read(&rel), hypr_permissions(&[]), "{rel}: regenerate");
     let conf = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
-    // Arch layout: the overlay moved from /usr/local to /usr; wol_core still names /usr/local
-    // until its paths follow (ADR 0016).
-    let arch = |p: &str| p.replace("/usr/local/", "/usr/");
-    let source = format!("source = {}", arch(HYPR_PERMISSIONS));
+    let source = format!("source = {HYPR_PERMISSIONS}");
     let at = conf.find(&source).expect("hyprland.conf sources the rules");
     let plugin = conf.find("\nplugin = ").unwrap();
     assert!(at < plugin, "rules before the plugin lines");
     for p in conf.lines().filter_map(|l| l.strip_prefix("plugin = ")) {
         assert!(
-            p.starts_with(&arch(wol_core::security::PLUGIN_DIR)) && p.ends_with(".so"),
+            p.starts_with(wol_core::security::PLUGIN_DIR) && p.ends_with(".so"),
             "{p}: plugins load only from the plugin folder"
         );
     }

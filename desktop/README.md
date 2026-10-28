@@ -4,18 +4,18 @@ Overlay defaults for the WolOS session. Copy `overlay/` onto `/`; install `packa
 
 | Path | Purpose |
 |---|---|
-| `usr/local/bin/wol-session` | Creates `~/.config/hypr/hyprland.conf` (sources system file) once; links toolkit defaults; runs `dbus-run-session start-hyprland` |
-| `usr/local/share/wolos/hypr/hyprland.conf` | macOS feel: floating, hyprbars traffic lights, spring animations, blur, keybinds, autostart |
-| `usr/local/share/wolos/hypr/hypridle.conf` | Lock (wol-lock) at 300 s, DPMS off at 360 s |
-| `usr/local/etc/wolos/shell.json` | wol-shell menu bar, status icons, dock, wallpapers |
-| `usr/local/bin/wol-screenshot`, `wol-volume` | grim/slurp and wpctl helpers |
-| `usr/local/etc/xdg/gtk-{3,4}.0`, `qt6ct`, `foot` | Theme adw-gtk3 + font Inter (image/fetch-theme.sh), icons WolOS |
-| `usr/local/etc/fonts/conf.d/60-wolos-inter.conf` | `Inter` -> Inter Variable; default sans |
-| `usr/local/etc/xdg/xdg-desktop-portal/hyprland-portals.conf` | Hyprland portal, GTK file chooser |
-| `usr/local/etc/wolos/jobs/org.wol.login.json` | wold job: `wol-login` (root) -> `wol-greeter-session` -> `wol-session` |
-| `usr/local/bin/wol-greeter-session`, `share/wolos/hypr/login.conf` | Login window: Hyprland + wol-loginwindow as `_wollogin` (uid 911, firstboot) |
-| `usr/local/etc/pam.d/wol-login` | PAM service of wol-login |
-| `etc/rc.conf.d/wolos` | dbus, seatd (wold: `image/files/usr/local/etc/rc.d/wold`, on by default) |
+| `usr/bin/wol-session` | Creates `~/.config/hypr/hyprland.conf` (sources system file) once; links toolkit defaults; runs `dbus-run-session start-hyprland` |
+| `usr/share/wolos/hypr/hyprland.conf` | macOS feel: floating, hyprbars traffic lights, spring animations, blur, keybinds, autostart |
+| `usr/share/wolos/hypr/hypridle.conf` | Lock (wol-lock) at 300 s, DPMS off at 360 s |
+| `usr/etc/wolos/shell.json` | wol-shell menu bar, status icons, dock, wallpapers |
+| `usr/bin/wol-screenshot`, `wol-volume` | grim/slurp and wpctl helpers |
+| `usr/etc/xdg/gtk-{3,4}.0`, `qt6ct`, `foot` | Theme adw-gtk3 + font Inter (image/fetch-theme.sh), icons WolOS |
+| `usr/etc/fonts/conf.d/60-wolos-inter.conf` | `Inter` -> Inter Variable; default sans |
+| `usr/etc/xdg/xdg-desktop-portal/hyprland-portals.conf` | Hyprland portal, GTK file chooser |
+| `usr/etc/wolos/jobs/org.wol.login.json` | wold job: `wol-login` (root) -> `wol-greeter-session` -> `wol-session` |
+| `usr/bin/wol-greeter-session`, `share/wolos/hypr/login.conf` | Login window: Hyprland + wol-loginwindow as `_wollogin` (uid 911, firstboot) |
+| `usr/etc/pam.d/wol-login` | PAM service of wol-login |
+| `etc/NetworkManager/` | NetworkManager dispatcher (wold: `wold.service`, on by default) |
 
 Super is Command (⌘). A plain ⌘ letter belongs to the app in front: `wol-app` taps the app's own
 key (Ctrl+C; a terminal's Ctrl+Shift+C), see `shell::appmenu::send`.

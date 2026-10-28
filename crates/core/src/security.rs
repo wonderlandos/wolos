@@ -202,18 +202,18 @@ pub fn enforcement(capability: &str) -> Option<Enforcement> {
 /// Programs that may copy the screen (and see the pointer in it) directly: the portal (it asks
 /// which screen to share), the shell and its screenshot, recording and Mission Control tools.
 pub const SCREENCOPY_SYSTEM: &[&str] = &[
-    "/usr/local/libexec/xdg-desktop-portal-hyprland",
-    "/usr/local/bin/grim",
-    "/usr/local/bin/wf-recorder",
-    "/usr/local/bin/wol-window-shot",
-    "/usr/local/bin/wol-shell",
+    "/usr/lib/xdg-desktop-portal-hyprland",
+    "/usr/bin/grim",
+    "/usr/bin/wf-recorder",
+    "/usr/bin/wol-window-shot",
+    "/usr/bin/wol-shell",
 ];
 
 /// Compositor plugins load only from the root-owned plugin folder (hyprbars, wol-hypr).
-pub const PLUGIN_DIR: &str = "/usr/local/lib/hyprland/plugins";
+pub const PLUGIN_DIR: &str = "/usr/lib/hyprland/plugins";
 
 /// Shipped Hyprland permission rules (`hypr/permissions.conf`, test-checked).
-pub const HYPR_PERMISSIONS: &str = "/usr/local/share/wolos/hypr/permissions.conf";
+pub const HYPR_PERMISSIONS: &str = "/usr/share/wolos/hypr/permissions.conf";
 
 /// Hyprland `permission` rules: system tools and `granted` apps may copy the screen; nobody may
 /// capture input; plugins only from [`PLUGIN_DIR`]. First match wins, so each deny comes last;
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn compositor_rules_allow_system_tools_and_granted_apps_only() {
-        let s = hypr_permissions(&["/usr/local/bin/obs", "relative/app", "/opt/x(1)"]);
+        let s = hypr_permissions(&["/usr/bin/obs", "relative/app", "/opt/x(1)"]);
         let rules: Vec<&str> = s.lines().filter(|l| l.starts_with("permission")).collect();
         let allowed: Vec<&str> = rules
             .iter()
@@ -376,12 +376,12 @@ mod tests {
         assert_eq!(
             allowed,
             [
-                "^/usr/local/libexec/xdg-desktop-portal-hyprland$",
-                "^/usr/local/bin/grim$",
-                "^/usr/local/bin/wf-recorder$",
-                "^/usr/local/bin/wol-window-shot$",
-                "^/usr/local/bin/wol-shell$",
-                "^/usr/local/bin/obs$",
+                "^/usr/lib/xdg-desktop-portal-hyprland$",
+                "^/usr/bin/grim$",
+                "^/usr/bin/wf-recorder$",
+                "^/usr/bin/wol-window-shot$",
+                "^/usr/bin/wol-shell$",
+                "^/usr/bin/obs$",
                 "^/opt/x\\(1\\)$",
             ]
         );
@@ -392,7 +392,7 @@ mod tests {
                 "permission = .*, screencopy, deny",
                 "permission = .*, cursorpos, deny",
                 "permission = .*, input-capture, deny",
-                "permission = ^/usr/local/lib/hyprland/plugins/[^/]+\\.so$, plugin, allow",
+                "permission = ^/usr/lib/hyprland/plugins/[^/]+\\.so$, plugin, allow",
                 "permission = .*, plugin, deny",
             ]
         );
