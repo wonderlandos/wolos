@@ -21,8 +21,7 @@ pub fn downloads(text: Option<&str>) -> bool {
     !text.is_some_and(|t| {
         t.lines()
             .filter_map(|l| l.trim().split_once('='))
-            .filter(|(k, _)| k.trim() == "download")
-            .last()
+            .rfind(|(k, _)| k.trim() == "download")
             .is_some_and(|(_, v)| v.trim() == "off")
     })
 }

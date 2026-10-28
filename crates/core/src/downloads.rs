@@ -18,7 +18,7 @@ pub fn dir(user_dirs: Option<&str>, home: &str) -> String {
     };
     text.lines()
         .filter_map(|l| l.trim().strip_prefix("XDG_DOWNLOAD_DIR="))
-        .last()
+        .next_back()
         .map(|v| v.trim().trim_matches('"').replace("$HOME", home))
         .filter(|v| v.starts_with('/') && v.trim_end_matches('/') != home)
         .unwrap_or(fallback)
