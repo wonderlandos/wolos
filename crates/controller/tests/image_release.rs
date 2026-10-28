@@ -223,3 +223,13 @@ fn workflows_free_disk_and_build_without_extra_patches() {
         }
     }
 }
+
+/// The release key CI signs with (secret WOLOS_RELEASE_KEY) is one of the keys updates trust.
+#[test]
+fn image_trusts_the_ci_release_key() {
+    let dir = repo("desktop/overlay/usr/share/wolos/keys");
+    let keys = wol_core::package::read_keys(&dir);
+    assert!(keys.len() >= 2, "{keys:?}");
+    let pem = std::fs::read_to_string(dir.join("wolos-2026b.pub")).unwrap();
+    assert!(keys.contains(&wol_core::package::public_key(&pem).unwrap()));
+}
