@@ -68,11 +68,16 @@ fn repos_in_order_with_the_wolos_mirrorlist() {
     let s = wol_core::mirror::servers(&list);
     assert_eq!(
         s[0],
+        format!("https://wolos.squareweb.app/$repo-{}", snapshot()),
+        "primary = the WolOS CDN"
+    );
+    assert_eq!(
+        s[1],
         format!(
             "https://github.com/wonderlandos/wolos/releases/download/$repo-{}",
             snapshot()
         ),
-        "primary = the release assets"
+        "fallback = the release assets the CDN pulls from"
     );
     assert!(s.len() >= 2, "extra mirrors listed");
     assert!(
