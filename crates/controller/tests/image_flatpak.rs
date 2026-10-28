@@ -95,3 +95,51 @@ fn flathub_is_a_system_remote() {
     let key = t.lines().find_map(|l| l.strip_prefix("GPGKey=")).unwrap();
     assert!(key.len() > 1000, "a whole key, not a stub");
 }
+
+/// X11 apps run through XWayland at 1:1 (the per-app scale makes them sharp, not upscaled);
+/// Electron/Chromium apps pick Wayland when they can.
+#[test]
+fn x11_compat_and_electron_wayland_hint() {
+    let hypr = read("desktop/overlay/usr/share/wolos/hypr/wolos-perf.conf");
+    let xw = hypr.split("xwayland {").nth(1).expect("xwayland block");
+    let xw = xw.split('}').next().unwrap();
+    assert!(xw.contains("enabled = true"), "{xw}");
+    assert!(xw.contains("force_zero_scaling = true"), "{xw}");
+    let env = read("desktop/overlay/usr/lib/environment.d/60-wolos-flatpak.conf");
+    assert!(
+        env.lines()
+            .any(|l| l == "ELECTRON_OZONE_PLATFORM_HINT=auto")
+    );
+}
+
+/// Apps that offer Wayland and fallback X11 keep Flatpak's default (native Wayland): nothing in
+/// WolOS overrides their sockets.
+fn scan(dir: &std::path::Path, hits: &mut Vec<String>) {
+    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if !p.ends_with("target") && !p.ends_with(".git") && !p.ends_with("golden") {
+                scan(&p, hits);
+            }
+        } else if let Ok(t) = fs::read_to_string(&p) {
+            for bad in [
+                "--socket=fallback-x11",
+                "--nosocket=wayland",
+                "sockets=!wayland",
+            ] {
+                if t.contains(bad) && !p.ends_with("image_flatpak.rs") {
+                    hits.push(format!("{}: {bad}", p.display()));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn wayland_capable_flatpaks_are_never_overridden() {
+    let mut hits = Vec::new();
+    for d in ["crates", "desktop", "image/files"] {
+        scan(&repo(d), &mut hits);
+    }
+    assert!(hits.is_empty(), "{hits:?}");
+}

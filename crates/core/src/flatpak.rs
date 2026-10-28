@@ -583,6 +583,54 @@ pub fn metadata_perms(text: &str) -> Vec<Perm> {
     out
 }
 
+impl Perm {
+    /// X11 is how the app shows its windows, not access to anything: granted without asking
+    /// (Settings > Privacy lists it under Display, without a switch).
+    pub fn is_display(&self) -> bool {
+        self.key == Key::Sockets && matches!(self.value.as_str(), "x11" | "fallback-x11")
+    }
+}
+
+/// The permissions the consent sheet asks about.
+pub fn to_ask(perms: &[Perm]) -> Vec<Perm> {
+    perms.iter().filter(|p| !p.is_display()).cloned().collect()
+}
+
+/// Declares X11 and not Wayland: runs through XWayland (an app with `wayland` and
+/// `fallback-x11` runs natively, Flatpak's default, never overridden).
+pub fn x11_only(perms: &[Perm]) -> bool {
+    let has = |v: &str| perms.iter().any(|p| p.key == Key::Sockets && p.value == v);
+    has("x11") && !has("wayland")
+}
+
+/// XWayland renders 1:1 (`force_zero_scaling`), so an X11-only app on a HiDPI screen scales
+/// itself: a per-app override with the whole-number scale. None at scale < 1.5 or a bad id.
+pub fn x11_scale_argv(app_id: &str, scale: f64) -> Option<Vec<String>> {
+    let n = scale.round() as u32;
+    (is_app_id(app_id) && scale >= 1.5 && n >= 2).then(|| {
+        vec![
+            "flatpak".into(),
+            "override".into(),
+            "--user".into(),
+            format!("--env=GDK_SCALE={n}"),
+            format!("--env=QT_SCALE_FACTOR={n}"),
+            app_id.into(),
+        ]
+    })
+}
+
+/// Largest monitor scale in `hyprctl monitors -j`; 1 when unreadable.
+pub fn max_monitor_scale(json: &str) -> f64 {
+    serde_json::from_str::<Vec<serde_json::Value>>(json)
+        .ok()
+        .and_then(|v| {
+            v.iter()
+                .filter_map(|m| m.get("scale")?.as_f64())
+                .reduce(f64::max)
+        })
+        .unwrap_or(1.0)
+}
+
 /// One app id per line (list, remote-ls); anything else skipped.
 pub fn parse_ids(text: &str) -> Vec<String> {
     text.lines()
@@ -595,6 +643,57 @@ pub fn parse_ids(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_sockets_are_granted_without_asking() {
+        let perms = |v: &[&str]| v.iter().map(|s| p(s)).collect::<Vec<_>>();
+        assert!(p("sockets=x11").is_display());
+        assert!(p("sockets=fallback-x11").is_display());
+        assert!(!p("sockets=pulseaudio").is_display());
+        assert!(!p("filesystems=home").is_display());
+        assert_eq!(
+            to_ask(&perms(&[
+                "sockets=x11",
+                "shared=network",
+                "sockets=fallback-x11"
+            ])),
+            perms(&["shared=network"])
+        );
+        assert!(
+            to_ask(&perms(&["sockets=x11"])).is_empty(),
+            "nothing to ask: no sheet"
+        );
+    }
+
+    #[test]
+    fn only_x11_only_apps_get_a_scale() {
+        let perms = |v: &[&str]| v.iter().map(|s| p(s)).collect::<Vec<_>>();
+        assert!(x11_only(&perms(&["sockets=x11", "devices=dri"])));
+        // Wayland + fallback X11: native Wayland, Flatpak's default, untouched.
+        assert!(!x11_only(&perms(&[
+            "sockets=wayland",
+            "sockets=fallback-x11"
+        ])));
+        assert!(!x11_only(&perms(&["sockets=wayland"])));
+        assert_eq!(
+            x11_scale_argv("org.old.App", 2.0).unwrap().join(" "),
+            "flatpak override --user --env=GDK_SCALE=2 --env=QT_SCALE_FACTOR=2 org.old.App"
+        );
+        assert_eq!(
+            x11_scale_argv("org.old.App", 1.0),
+            None,
+            "1:1 already sharp"
+        );
+        assert_eq!(x11_scale_argv("org.old.App", 1.25), None);
+        assert_eq!(
+            x11_scale_argv("org.old.App", 1.6).unwrap()[3],
+            "--env=GDK_SCALE=2"
+        );
+        assert_eq!(x11_scale_argv("-x", 2.0), None);
+        let mons = r#"[{"name":"eDP-1","scale":1.50},{"name":"DP-1","scale":2.00}]"#;
+        assert_eq!(max_monitor_scale(mons), 2.0);
+        assert_eq!(max_monitor_scale("nope"), 1.0);
+    }
 
     #[test]
     fn remote_info_for_the_details_page() {
