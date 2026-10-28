@@ -60,7 +60,7 @@ fn recipe_builds_the_fork_at_the_recorded_commit() {
     let p = read("kernel/linux-wolos/PKGBUILD");
     for want in [
         "pkgbase=linux-wolos",
-        "git+https://github.com/wonderlandos/linux.git#commit=",
+        "https://github.com/wonderlandos/linux/archive/$_commit.tar.gz",
         "$(<\"$startdir/ref\")",
         "wolos.config",
         "config.x86_64",
