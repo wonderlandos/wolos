@@ -1,0 +1,13 @@
+#!/bin/sh
+# WolOS GPU (wolos-gpu.service): the display driver for this boot's GPU is loaded before this by
+# wolos-hw.service (`wol hw boot`). Here: a panel handed over at brightness 0 (VFIO passthrough,
+# some firmware) shows nothing, so raise it to 80 %; never lower one.
+set -u
+log() { echo "wolos-gpu: $*"; logger -t wolos-gpu "$*" 2>/dev/null || :; }
+for b in "${WOLOS_BACKLIGHT_DIR:-/sys/class/backlight}"/*; do
+  [ -f "$b/brightness" ] || continue
+  [ "$(cat "$b/brightness")" = 0 ] || continue
+  max=$(cat "$b/max_brightness" 2>/dev/null) || continue
+  echo $((max * 8 / 10)) > "$b/brightness" && log "backlight ${b##*/} 0 -> 80%"
+done
+exit 0

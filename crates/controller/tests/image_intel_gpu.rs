@@ -14,7 +14,7 @@ fn read(p: &str) -> String {
 
 fn packages() -> Vec<String> {
     let mut v = Vec::new();
-    for f in ["image/packages-base.txt", "desktop/packages.txt"] {
+    for f in ["image/arch/packages.x86_64", "desktop/packages.txt"] {
         for l in read(f).lines() {
             let p = l.split('#').next().unwrap().trim();
             if !p.is_empty() {
@@ -26,62 +26,26 @@ fn packages() -> Vec<String> {
 }
 
 #[test]
-fn offline_repo_has_intel_firmware_and_userspace() {
+fn image_has_intel_firmware_and_userspace() {
     let pkgs = packages();
     for want in [
-        // DMC/GuC/HuC .ko for ADL-P (46a8), ADL-S/RPL, TGL (+ HuC for ADL), RKL, MTL.
-        "gpu-firmware-intel-kmod-alderlake",
-        "gpu-firmware-intel-kmod-tigerlake",
-        "gpu-firmware-intel-kmod-rocketlake",
-        "gpu-firmware-intel-kmod-meteorlake",
-        // GL (iris) + Vulkan (anv) + VA-API (iHD).
-        "mesa-dri",
-        "mesa-libs",
-        "vulkan-loader",
-        "libva",
-        "libva-intel-media-driver",
+        // i915/xe firmware (DMC, GuC, HuC) and Intel CPU microcode.
+        "linux-firmware",
+        "intel-ucode",
+        // GL (iris) + Vulkan (anv) + VA-API (iHD), 64- and 32-bit for Steam.
+        "mesa",
+        "lib32-mesa",
+        "vulkan-intel",
+        "lib32-vulkan-intel",
+        "intel-media-driver",
         // Proof tools for image/hw/verify-gpu.sh.
-        "mesa-demos",
+        "mesa-utils",
         "vulkan-tools",
         "libva-utils",
         "glmark2",
         "vkmark",
-        // Compute: no Intel OpenCL/Level Zero runtime on FreeBSD; Vulkan compute (anv) peak + BW.
-        "vkpeak",
     ] {
         assert!(pkgs.iter().any(|p| p == want), "missing package {want}");
-    }
-}
-
-#[test]
-fn i915_tunables_are_upstream_defaults_only() {
-    let s = read("image/files/boot/loader.conf.d/wolos-i915.conf");
-    let kv: Vec<(&str, &str)> = s
-        .lines()
-        .map(|l| l.split('#').next().unwrap().trim())
-        .filter(|l| !l.is_empty())
-        .map(|l| l.split_once('=').expect(l))
-        .collect();
-    for (k, _) in &kv {
-        assert!(
-            k.starts_with("compat.linuxkpi.i915_"),
-            "{k}: Intel-scoped only"
-        );
-    }
-    for want in [
-        ("compat.linuxkpi.i915_enable_guc", "\"0\""),
-        ("compat.linuxkpi.i915_enable_fbc", "\"-1\""),
-        ("compat.linuxkpi.i915_enable_psr", "\"-1\""),
-        ("compat.linuxkpi.i915_enable_dc", "\"-1\""),
-    ] {
-        assert!(kv.contains(&want), "want {want:?} in {kv:?}");
-    }
-    let doc = read("archicture/modules/intel-graphics.md");
-    for (k, _) in &kv {
-        assert!(
-            doc.contains(k.trim_start_matches("compat.linuxkpi.")),
-            "{k} undocumented"
-        );
     }
 }
 
@@ -103,7 +67,7 @@ fn session_sources_gpu_env() {
         fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
     }
     let st = Command::new("sh")
-        .arg(repo("desktop/overlay/usr/local/bin/wol-session"))
+        .arg(repo("desktop/overlay/usr/bin/wol-session"))
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .env("HOME", bin.join("home"))
         .env("XDG_RUNTIME_DIR", &bin)
@@ -151,26 +115,4 @@ fn verify_gpu_script_records_the_proof() {
     ] {
         assert!(s.contains(want), "{p} lacks {want}");
     }
-}
-
-#[test]
-fn install_test_checks_intel_stack() {
-    let s = read("image/vm/test-install.sh");
-    for want in [
-        "i915_adlp_dmc_bin.ko",
-        "libva-intel-media-driver",
-        "intel_icd",
-        "iris_dri.so",
-        "strings /boot/modules/i915kms.ko | grep -c wol_fg_pid",
-        "wol-realtime gpu caps",
-        "wol-realtime power show",
-        "vkpeak",
-    ] {
-        assert!(s.contains(want), "test-install.sh lacks {want}");
-    }
-    // Never touch the kept disk of earlier runs (run-installed.sh): scratch disk has its own name.
-    assert!(
-        !s.contains("rm -f serial.log inst.img disk.raw"),
-        "scratch run deletes disk.raw"
-    );
 }

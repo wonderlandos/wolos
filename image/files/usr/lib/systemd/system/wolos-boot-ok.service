@@ -1,0 +1,14 @@
+[Unit]
+Description=WolOS boot is good: the login window supervisor is up (boot counting)
+Requires=wold.service
+After=wold.service
+Before=boot-complete.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/wolos/boot-ok
+
+[Install]
+RequiredBy=boot-complete.target

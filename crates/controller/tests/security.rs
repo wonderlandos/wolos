@@ -31,21 +31,27 @@ fn firewall_on_and_off_go_through_wol_admind() {
 fn status_shows_firewall_and_hardening() {
     let mut env = FakeEnv {
         captures: vec![
-            c("sysrc -n pf_enable", "YES\n"),
-            c("sysrc -n syslogd_flags", "-ss\n"),
-            c("sysctl -n security.bsd.see_other_uids", "0\n"),
-            c("sysctl -n kern.randompid", "1\n"),
+            c(
+                "systemctl show -p UnitFileState --value nftables.service",
+                "enabled\n",
+            ),
+            c(
+                "systemctl show -p UnitFileState --value rsyslog.service",
+                "\n",
+            ),
+            c(
+                "systemctl show -p UnitFileState --value syslog-ng@default.service",
+                "\n",
+            ),
+            c("cat /proc/sys/kernel/kptr_restrict", "2\n"),
+            c("cat /proc/sys/kernel/dmesg_restrict", "1\n"),
         ],
         ..FakeEnv::default()
     };
     assert_eq!(run("firewall --json", &mut env), 0);
     let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
     assert_eq!(v["on"], true);
-    assert_eq!(
-        v["running"],
-        serde_json::Value::Null,
-        "pfctl: administrators only"
-    );
+    assert_eq!(v["running"], serde_json::Value::Null, "state unknown");
     env.out.clear();
     env.tty = true;
     assert_eq!(run("security", &mut env), 0);
@@ -56,12 +62,9 @@ fn status_shows_firewall_and_hardening() {
         env.out
     );
     assert!(env.out.contains("system log on the network: no\n"));
+    assert!(env.out.contains("kernel.kptr_restrict: 2 (want 2, ok)\n"));
     assert!(
         env.out
-            .contains("security.bsd.see_other_uids: 0 (want 0, ok)\n")
-    );
-    assert!(
-        env.out
-            .contains("security.bsd.see_other_gids: ? (want 0, differs)\n")
+            .contains("fs.protected_symlinks: ? (want 1, differs)\n")
     );
 }

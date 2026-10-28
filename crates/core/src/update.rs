@@ -1,23 +1,39 @@
-//! System update plan with boot environments: new BE, upgrade inside it, activate on success.
-//! Pure: produces argv lists; the caller runs them in order and stops on the first failure.
+//! System update with A/B root slots (ADR 0016): snapshot the running root into the other slot,
+//! pin it to the new release's Arch Linux Archive date, `pacman -Syu` inside it, rebuild its
+//! initramfs and boot entry (boot counting), boot it next. Packages the person installed with
+//! pacman come along: the slot is a copy of the running root, never an image.
+//! Pure: produces argv lists; the caller runs them in order and stops on the first failure,
+//! then runs [`rollback`] (the new slot is deleted; the running slot stays the restore point).
 
 pub mod check;
 
-/// Pending package names from `pkg version -U -vRL=`; None when output unknown.
+/// The two root slots (btrfs subvolumes `@wolos-a`, `@wolos-b`).
+pub const SLOTS: [&str; 2] = ["wolos-a", "wolos-b"];
+/// The btrfs top level (subvolid=5), mounted by the image.
+pub const TOP: &str = "/run/wolos/top";
+/// The EFI system partition.
+pub const ESP: &str = "/efi";
+/// Kernel and initramfs every slot boots (`linux-wolos`).
+pub const KERNEL: &str = "vmlinuz-linux-wolos";
+pub const INITRAMFS: &str = "initramfs-linux-wolos.img";
+/// Boot counting: tries before systemd-boot falls back to the other slot.
+pub const TRIES: u32 = 3;
+/// pacman mirrorlist `wol` owns: one Arch Linux Archive date (`/repos/YYYY/MM/DD/`).
+pub const MIRRORLIST: &str = "/etc/pacman.d/mirrorlist";
+
+/// Pending package names from `pacman -Qu` (`name old -> new`); None when output unknown.
+/// Inside one release only `[wolos]` moves: everything else is pinned to the snapshot date.
 pub fn parse_pending(output: Option<&str>) -> Option<Vec<String>> {
     Some(
         output?
             .lines()
-            .filter(|l| l.contains("needs updating"))
-            .filter_map(|l| {
-                let pkg = l.split_whitespace().next()?;
-                Some(pkg.rsplit_once('-').map_or(pkg, |(n, _)| n).to_owned())
-            })
+            .filter(|l| l.contains(" -> "))
+            .filter_map(|l| l.split_whitespace().next().map(str::to_owned))
             .collect(),
     )
 }
 
-pub const PENDING_ARGV: [&str; 4] = ["pkg", "version", "-U", "-vRL="];
+pub const PENDING_ARGV: [&str; 2] = ["pacman", "-Qu"];
 
 /// "2 package updates: a, b" / "+N more".
 pub fn summary(names: &[String], max: usize) -> String {
@@ -29,174 +45,208 @@ pub fn summary(names: &[String], max: usize) -> String {
     s
 }
 
-/// Valid boot environment name: `wol-YYYYMMDD-HHMM` style, `[A-Za-z0-9._-]`, max 64.
+/// A root slot name ([`SLOTS`]).
 pub fn is_valid_be(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 64
-        && !name.starts_with('-')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
+    SLOTS.contains(&name)
 }
 
-/// Steps: create BE, mount it, upgrade packages (and optionally base) inside it, unmount, activate (next boot).
-pub fn plan(be: &str, mountpoint: &str, with_base: bool) -> Option<Vec<Vec<String>>> {
-    if !is_valid_be(be) || !mountpoint.starts_with('/') {
+/// Arch Linux Archive date `YYYY/MM/DD`.
+pub fn is_snapshot_date(d: &str) -> bool {
+    let b = d.as_bytes();
+    b.len() == 10
+        && b[4] == b'/'
+        && b[7] == b'/'
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit())
+}
+
+/// Running slot from `/proc/cmdline` (`rootflags=subvol=@wolos-a`).
+pub fn running_slot(cmdline: &str) -> Option<&'static str> {
+    let sub = cmdline.split_whitespace().find_map(|w| {
+        w.strip_prefix("rootflags=")?
+            .split(',')
+            .find_map(|o| o.strip_prefix("subvol="))
+    })?;
+    let sub = sub.trim_start_matches('/').trim_start_matches('@');
+    SLOTS.into_iter().find(|s| *s == sub)
+}
+
+/// The slot that is not `running`.
+pub fn other_slot(running: &str) -> Option<&'static str> {
+    is_valid_be(running).then(|| SLOTS.into_iter().find(|s| *s != running))?
+}
+
+/// systemd-boot entry for `slot` (written as `<slot>+3.conf`: boot counting).
+pub fn entry(slot: &str, release: &str) -> String {
+    format!(
+        "title WolOS\nversion {release}\nlinux /{slot}/{KERNEL}\ninitrd /{slot}/{INITRAMFS}\n\
+options root=LABEL=wolos rootflags=subvol=@{slot} rw quiet splash\n"
+    )
+}
+
+/// Entry file name with the boot counter.
+pub fn entry_file(slot: &str) -> String {
+    format!("{ESP}/loader/entries/{slot}+{TRIES}.conf")
+}
+
+/// One update step: a fixed argv (never a shell) or a whole-file write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    Run(Vec<String>),
+    Write { path: String, text: String },
+}
+
+impl std::fmt::Display for Step {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Step::Run(a) => f.write_str(&a.join(" ")),
+            Step::Write { path, .. } => write!(f, "write {path}"),
+        }
+    }
+}
+
+/// Steps to update into `slot` (the inactive one). `replace`: the slot holds the previous
+/// restore point, deleted first (slot count stays two). `date`: the new release's snapshot
+/// (None = same release, `[wolos]` fixes only). The default entry always boots linux-wolos;
+/// kernels the person added with pacman stay installed.
+pub fn plan(slot: &str, replace: bool, date: Option<&str>) -> Option<Vec<Step>> {
+    if !is_valid_be(slot) || date.is_some_and(|d| !is_snapshot_date(d)) {
         return None;
     }
-    let v = |a: &[&str]| a.iter().map(|s| (*s).to_owned()).collect::<Vec<String>>();
-    let mut steps = vec![
-        v(&["bectl", "create", be]),
-        v(&["bectl", "mount", be, mountpoint]),
-        v(&["pkg", "-r", mountpoint, "upgrade", "-y"]),
-    ];
-    if with_base {
-        steps.push(v(&["freebsd-update", "-b", mountpoint, "fetch", "install"]));
+    let v = |a: &[&str]| Step::Run(a.iter().map(|s| (*s).to_owned()).collect());
+    let root = format!("{TOP}/@{slot}");
+    let mut steps = Vec::new();
+    if replace {
+        steps.push(v(&["btrfs", "subvolume", "delete", &root]));
     }
-    steps.push(v(&["bectl", "umount", be]));
-    steps.push(v(&["bectl", "activate", be]));
+    steps.push(v(&["btrfs", "subvolume", "snapshot", "/", &root]));
+    if let Some(d) = date {
+        steps.push(v(&[
+            "sed",
+            "-i",
+            "-E",
+            &format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
+            &format!("{root}{MIRRORLIST}"),
+        ]));
+    }
+    steps.push(v(&["arch-chroot", &root, "pacman", "-Syu", "--noconfirm"]));
+    steps.push(v(&["arch-chroot", &root, "mkinitcpio", "-P"]));
+    let esp = format!("{ESP}/{slot}");
+    steps.push(v(&["mkdir", "-p", &esp]));
+    steps.push(v(&[
+        "cp",
+        &format!("{root}/boot/{KERNEL}"),
+        &format!("{root}/boot/{INITRAMFS}"),
+        &esp,
+    ]));
+    steps.push(Step::Write {
+        path: entry_file(slot),
+        text: entry(slot, date.unwrap_or("current")),
+    });
+    steps.push(v(&["bootctl", "set-default", &format!("{slot}.conf")]));
     Some(steps)
 }
 
-/// Rollback after a failed step: drop the half-upgraded BE.
-pub fn rollback(be: &str) -> Vec<Vec<String>> {
+/// After a failed step: delete the half-made slot and its entry.
+pub fn rollback(slot: &str) -> Vec<Vec<String>> {
     vec![
-        vec!["bectl".into(), "umount".into(), "-f".into(), be.into()],
-        vec!["bectl".into(), "destroy".into(), "-F".into(), be.into()],
+        vec![
+            "btrfs".into(),
+            "subvolume".into(),
+            "delete".into(),
+            format!("{TOP}/@{slot}"),
+        ],
+        vec!["rm".into(), "-f".into(), entry_file(slot)],
     ]
 }
 
-/// Restore points: ZFS boot environments (`bectl`). WolOS names its own `wol-*`; only those are
-/// ever pruned, and never the one running now or the one booting next.
+/// Restore points = the two root slots, as systemd-boot lists them.
 pub mod be {
     use serde::{Deserialize, Serialize};
 
-    pub const LIST_ARGV: [&str; 3] = ["bectl", "list", "-H"];
-    /// WolOS restore points kept; older `wol-*` boot environments are destroyed.
-    pub const KEEP: usize = 5;
-    pub const PREFIX: &str = "wol-";
-
-    /// Why a restore point was made. Each kind is pruned on its own: installing an app never
-    /// removes the point taken before the last system update.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Kind {
-        Update,
-        Install,
-    }
-
-    impl Kind {
-        pub const fn prefix(self) -> &'static str {
-            match self {
-                Kind::Update => "wol-before-update-",
-                Kind::Install => "wol-before-install-",
-            }
-        }
-    }
+    /// `bootctl list --json=short`: every boot entry, the selected (running) and default one.
+    pub const LIST_ARGV: [&str; 3] = ["bootctl", "list", "--json=short"];
+    /// Slots kept: the running one and the previous one.
+    pub const KEEP: usize = 2;
 
     #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
     pub struct BootEnv {
         pub name: String,
-        /// Running now (`N`).
+        /// Running now.
         pub active: bool,
-        /// Boots next (`R`, or `T` once).
+        /// Boots next.
         pub next_boot: bool,
         pub mountpoint: Option<String>,
+        /// Boot tries left (empty when the slot booted fine).
         pub space: String,
-        /// `YYYY-MM-DD HH:MM` as bectl prints it (sorts as text).
+        /// Release snapshot date of the slot (entry `version`).
         pub created: String,
     }
 
-    /// `bectl list -H`: tab-separated name, active flags, mountpoint, space, created.
+    /// WolOS slots from `bootctl list --json=short`.
     pub fn parse(text: &str) -> Vec<BootEnv> {
-        text.lines()
-            .filter_map(|l| {
-                let f: Vec<&str> = if l.contains('\t') {
-                    l.split('\t').map(str::trim).collect()
-                } else {
-                    l.split_whitespace().collect()
-                };
-                if f.len() < 5 || !super::is_valid_be(f[0]) {
+        let Ok(serde_json::Value::Array(entries)) = serde_json::from_str(text) else {
+            return Vec::new();
+        };
+        entries
+            .iter()
+            .filter_map(|e| {
+                let id = e["id"].as_str()?;
+                let name = id.trim_end_matches(".conf");
+                let name = name.split_once('+').map_or(name, |(n, _)| n);
+                if !super::is_valid_be(name) {
                     return None;
                 }
-                let flags = f[1];
+                let active = e["isSelected"].as_bool().unwrap_or(false);
                 Some(BootEnv {
-                    name: f[0].into(),
-                    active: flags.contains('N'),
-                    next_boot: flags.contains('R') || flags.contains('T'),
-                    mountpoint: (f[2] != "-").then(|| f[2].into()),
-                    space: f[3].into(),
-                    created: f[4..].join(" "),
+                    name: name.into(),
+                    active,
+                    next_boot: e["isDefault"].as_bool().unwrap_or(false),
+                    mountpoint: active.then(|| "/".into()),
+                    space: e["triesLeft"]
+                        .as_u64()
+                        .map_or_else(String::new, |t| format!("{t} tries left")),
+                    created: e["version"].as_str().unwrap_or("").into(),
                 })
             })
             .collect()
     }
 
-    /// `wol update rollback` without a name: a pending switch to another BE is cancelled (boot the
-    /// running one again); otherwise the newest BE that is not running.
+    /// Slot to go back to: the running one while an update waits for its first boot,
+    /// otherwise the other slot.
     pub fn rollback_target(bes: &[BootEnv]) -> Option<&BootEnv> {
         let running = bes.iter().find(|b| b.active);
         if bes.iter().any(|b| b.next_boot && !b.active) {
             return running;
         }
-        bes.iter()
-            .filter(|b| !b.active)
-            .max_by(|a, b| a.created.cmp(&b.created).then(a.name.cmp(&b.name)))
+        bes.iter().find(|b| !b.active)
     }
 
-    /// Names to destroy so at most `keep` `wol-*` BEs remain; oldest first. Never the running or
-    /// next-boot BE, never one WolOS did not create.
-    pub fn prune(bes: &[BootEnv], keep: usize) -> Vec<String> {
-        prune_prefix(bes, PREFIX, keep)
-    }
-
-    /// [`prune`] limited to names starting with `prefix` (one [`Kind`] of restore point).
-    pub fn prune_prefix(bes: &[BootEnv], prefix: &str, keep: usize) -> Vec<String> {
-        let mut ours: Vec<&BootEnv> = bes.iter().filter(|b| b.name.starts_with(prefix)).collect();
-        ours.sort_by(|a, b| a.created.cmp(&b.created).then(a.name.cmp(&b.name)));
-        let extra = ours.len().saturating_sub(keep);
-        ours.into_iter()
-            .take(extra)
-            .filter(|b| !b.active && !b.next_boot)
-            .map(|b| b.name.clone())
-            .collect()
+    /// Two slots only: nothing to prune.
+    pub fn prune(_bes: &[BootEnv], _keep: usize) -> Vec<String> {
+        Vec::new()
     }
 
     pub fn activate_argv(name: &str) -> Vec<String> {
-        vec!["bectl".into(), "activate".into(), name.into()]
+        vec![
+            "bootctl".into(),
+            "set-default".into(),
+            format!("{name}.conf"),
+        ]
     }
 
-    /// `-o` also destroys the origin snapshot.
     pub fn destroy_argv(name: &str) -> Vec<String> {
-        vec!["bectl".into(), "destroy".into(), "-o".into(), name.into()]
+        vec![
+            "btrfs".into(),
+            "subvolume".into(),
+            "delete".into(),
+            format!("{}/@{name}", super::TOP),
+        ]
     }
 
-    /// Boot environments on `host`; None without bectl (not root on ZFS) or when it fails.
     pub fn read(host: &dyn crate::system::Host) -> Option<Vec<BootEnv>> {
         host.run(&LIST_ARGV).map(|t| parse(&t))
-    }
-
-    /// `wol-before-update-<unix secs>` or `wol-before-install-<unix secs>`.
-    pub fn restore_point_name(kind: Kind, now: u64) -> String {
-        format!("{}{now}", kind.prefix())
-    }
-
-    /// Steps wol-admind runs before changing packages in place: create a restore point, then prune
-    /// old ones. `list` = `bectl list -H` output; None = no boot environments (not root on ZFS):
-    /// no steps, the update runs without a restore point.
-    pub fn restore_point(
-        list: Option<&str>,
-        kind: Kind,
-        now: u64,
-    ) -> Option<(Vec<String>, Vec<Vec<String>>)> {
-        let bes = parse(list?);
-        let name = restore_point_name(kind, now);
-        let create = vec!["bectl".into(), "create".into(), name];
-        // The new BE is the newest: keep KEEP - 1 of the existing ones.
-        let destroy = prune_prefix(&bes, kind.prefix(), KEEP.saturating_sub(1))
-            .iter()
-            .map(|n| destroy_argv(n))
-            .collect();
-        Some((create, destroy))
     }
 }
 
@@ -210,19 +260,15 @@ mod tests {
             (None, None),
             (Some(""), Some("")),
             (
-                Some(
-                    "curl-8.1 <   needs updating (remote has 8.2)\nfoo-bar-1.0_2,1 <   needs updating\n",
-                ),
-                Some("curl,foo-bar"),
+                Some("wol-shell 0.12.1-1 -> 0.12.2-1\nwolos-keyring 1-1 -> 2-1\n"),
+                Some("wol-shell,wolos-keyring"),
             ),
-            (
-                Some("pkg-1.20   ?   orphaned: ports-mgmt/pkg\nfoo-1 >   succeeds index\n"),
-                Some(""),
-            ),
+            (Some("error: no database\n"), Some("")),
         ];
         for (out, want) in cases {
             assert_eq!(parse_pending(out).map(|l| l.join(",")).as_deref(), want);
         }
+        assert_eq!(PENDING_ARGV, ["pacman", "-Qu"]);
     }
 
     #[test]
@@ -236,36 +282,88 @@ mod tests {
     }
 
     #[test]
-    fn be_plan() {
-        let p = plan("wol-20261026", "/mnt/upd", false).unwrap();
-        let s: Vec<String> = p.iter().map(|a| a.join(" ")).collect();
+    fn slots_from_the_kernel_command_line() {
+        let c =
+            "initrd=/wolos-a/initramfs root=LABEL=wolos rootflags=subvol=@wolos-a,compress=zstd rw";
+        assert_eq!(running_slot(c), Some("wolos-a"));
+        assert_eq!(running_slot("rootflags=subvol=/@wolos-b"), Some("wolos-b"));
+        assert_eq!(running_slot("rootflags=subvol=@root"), None);
+        assert_eq!(running_slot(""), None);
+        assert_eq!(other_slot("wolos-a"), Some("wolos-b"));
+        assert_eq!(other_slot("wolos-b"), Some("wolos-a"));
+        assert_eq!(other_slot("x"), None);
+        for (d, ok) in [
+            ("2026/10/20", true),
+            ("2026-10-20", false),
+            ("2026/10/2", false),
+            ("../10/2026", false),
+        ] {
+            assert_eq!(is_snapshot_date(d), ok, "{d}");
+        }
+    }
+
+    #[test]
+    fn update_snapshots_the_running_root_into_the_other_slot() {
+        let p = plan("wolos-b", true, Some("2026/11/02")).unwrap();
+        let s: Vec<String> = p.iter().map(Step::to_string).collect();
         assert_eq!(
             s,
             [
-                "bectl create wol-20261026",
-                "bectl mount wol-20261026 /mnt/upd",
-                "pkg -r /mnt/upd upgrade -y",
-                "bectl umount wol-20261026",
-                "bectl activate wol-20261026"
+                "btrfs subvolume delete /run/wolos/top/@wolos-b",
+                "btrfs subvolume snapshot / /run/wolos/top/@wolos-b",
+                "sed -i -E s#/repos/[0-9]{4}/[0-9]{2}/[0-9]{2}/#/repos/2026/11/02/# \
+/run/wolos/top/@wolos-b/etc/pacman.d/mirrorlist",
+                "arch-chroot /run/wolos/top/@wolos-b pacman -Syu --noconfirm",
+                "arch-chroot /run/wolos/top/@wolos-b mkinitcpio -P",
+                "mkdir -p /efi/wolos-b",
+                "cp /run/wolos/top/@wolos-b/boot/vmlinuz-linux-wolos \
+/run/wolos/top/@wolos-b/boot/initramfs-linux-wolos.img /efi/wolos-b",
+                "write /efi/loader/entries/wolos-b+3.conf",
+                "bootctl set-default wolos-b.conf",
             ]
         );
-        assert_eq!(plan("x", "/m", true).unwrap().len(), 6);
-        for bad in ["", "-x", "a b", "a;b", "../x"] {
-            assert!(plan(bad, "/m", false).is_none(), "{bad}");
+        // First update: no previous slot; same release: no new date.
+        let first = plan("wolos-a", false, None).unwrap();
+        assert_eq!(
+            first[0].to_string(),
+            "btrfs subvolume snapshot / /run/wolos/top/@wolos-a"
+        );
+        assert!(!first.iter().any(|s| s.to_string().starts_with("sed ")));
+        assert!(
+            matches!(&p[7], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
+        );
+        for (slot, date) in [("x", None), ("wolos-a", Some("2026-11-02")), ("", None)] {
+            assert!(plan(slot, false, date).is_none(), "{slot} {date:?}");
         }
-        assert!(plan("x", "rel", false).is_none());
-        assert_eq!(rollback("x")[1].join(" "), "bectl destroy -F x");
+        let r: Vec<String> = rollback("wolos-b").iter().map(|a| a.join(" ")).collect();
+        assert_eq!(
+            r,
+            [
+                "btrfs subvolume delete /run/wolos/top/@wolos-b",
+                "rm -f /efi/loader/entries/wolos-b+3.conf"
+            ]
+        );
     }
 
-    const BECTL: &str = "default\tNR\t/\t21.5G\t2026-01-01 10:00\n\
-wol-update-1761500000\t-\t-\t1.1G\t2026-10-26 18:13\n\
-wol-before-update-1761000000\t-\t-\t300M\t2026-10-20 09:00\n\
-bad name\t-\t-\t1M\t2026-10-20 09:00\n";
+    #[test]
+    fn boot_entry_counts_tries() {
+        let e = entry("wolos-b", "2026/11/02");
+        assert!(e.contains("linux /wolos-b/vmlinuz-linux-wolos\n"));
+        assert!(e.contains("rootflags=subvol=@wolos-b "));
+        assert!(e.contains("version 2026/11/02\n"));
+        assert_eq!(entry_file("wolos-b"), "/efi/loader/entries/wolos-b+3.conf");
+    }
+
+    pub(crate) const BOOTCTL: &str = r#"[
+ {"id":"wolos-a.conf","version":"2026/10/20","isDefault":false,"isSelected":true},
+ {"id":"wolos-b+2-1.conf","version":"2026/11/02","isDefault":true,"isSelected":false,"triesLeft":2},
+ {"id":"auto-efi-shell","isDefault":false,"isSelected":false}
+]"#;
 
     #[test]
-    fn bectl_list_fixture() {
-        let b = be::parse(BECTL);
-        assert_eq!(b.len(), 3, "invalid names skipped");
+    fn slots_from_bootctl() {
+        let b = be::parse(BOOTCTL);
+        assert_eq!(b.len(), 2, "only WolOS slots");
         assert_eq!(
             (
                 b[0].name.as_str(),
@@ -273,111 +371,38 @@ bad name\t-\t-\t1M\t2026-10-20 09:00\n";
                 b[0].next_boot,
                 b[0].mountpoint.as_deref()
             ),
-            ("default", true, true, Some("/"))
+            ("wolos-a", true, false, Some("/"))
         );
-        assert_eq!(b[1].created, "2026-10-26 18:13");
         assert_eq!(
-            (b[1].active, b[1].next_boot, b[1].mountpoint.clone()),
-            (false, false, None)
+            (
+                b[1].name.as_str(),
+                b[1].next_boot,
+                b[1].space.as_str(),
+                b[1].created.as_str()
+            ),
+            ("wolos-b", true, "2 tries left", "2026/11/02")
         );
-        // Space-aligned output (no -H) still parses; T = boots next once.
-        let s = be::parse("wol-x   T   -   1M   2026-10-27 08:00\n");
-        assert!(s[0].next_boot && s[0].created == "2026-10-27 08:00");
+        assert!(be::parse("not json").is_empty());
+        // Update applied, not rebooted yet: rollback = keep booting the running slot.
+        assert_eq!(be::rollback_target(&b).unwrap().name, "wolos-a");
+        let booted = be::parse(&BOOTCTL.replace("\"isDefault\":true", "\"isDefault\":false"));
+        assert_eq!(be::rollback_target(&booted).unwrap().name, "wolos-b");
+        assert!(be::prune(&b, be::KEEP).is_empty());
+        assert_eq!(
+            be::activate_argv("wolos-a").join(" "),
+            "bootctl set-default wolos-a.conf"
+        );
+        assert_eq!(
+            be::destroy_argv("wolos-b").join(" "),
+            "btrfs subvolume delete /run/wolos/top/@wolos-b"
+        );
     }
 
     #[test]
     fn read_from_host() {
-        let h = crate::system::fake::FakeHost::new(true);
-        assert_eq!(be::read(&h), None, "no bectl: not root on ZFS");
-        h.command("bectl list -H", BECTL);
-        assert_eq!(be::read(&h).unwrap().len(), 3);
-    }
-
-    #[test]
-    fn rollback_target_table() {
-        let b = be::parse(BECTL);
-        assert_eq!(
-            be::rollback_target(&b).unwrap().name,
-            "wol-update-1761500000"
-        );
-        // Update applied, not rebooted yet: rollback = keep booting the running BE.
-        let pending = be::parse(
-            "default\tN\t/\t1G\t2026-01-01 10:00\nwol-update-2\tR\t-\t1G\t2026-10-26 18:13\n",
-        );
-        assert_eq!(be::rollback_target(&pending).unwrap().name, "default");
-        assert!(
-            be::rollback_target(&be::parse("default\tNR\t/\t1G\t2026-01-01 10:00\n")).is_none()
-        );
-    }
-
-    #[test]
-    fn prune_never_destroys_running_next_or_foreign() {
-        let mut text = String::from("default\t-\t-\t1G\t2025-01-01 10:00\n");
-        for i in 0..8 {
-            let flags = match i {
-                0 => "N",
-                1 => "R",
-                _ => "-",
-            };
-            text.push_str(&format!(
-                "wol-{i}\t{flags}\t-\t1G\t2026-10-0{} 10:00\n",
-                i + 1
-            ));
-        }
-        let b = be::parse(&text);
-        assert_eq!(be::prune(&b, 3), ["wol-2", "wol-3", "wol-4"]);
-        assert!(
-            be::prune(&b, 0)
-                .iter()
-                .all(|n| n != "wol-0" && n != "wol-1" && n != "default")
-        );
-        assert!(be::prune(&b, 20).is_empty());
-        assert_eq!(
-            be::destroy_argv("wol-2").join(" "),
-            "bectl destroy -o wol-2"
-        );
-    }
-
-    #[test]
-    fn restore_point_before_in_place_updates() {
-        assert_eq!(
-            be::restore_point(None, be::Kind::Update, 7),
-            None,
-            "no ZFS: no restore point"
-        );
-        let (create, destroy) =
-            be::restore_point(Some(BECTL), be::Kind::Update, 1761600000).unwrap();
-        assert_eq!(
-            create.join(" "),
-            "bectl create wol-before-update-1761600000"
-        );
-        assert!(destroy.is_empty());
-        assert!(is_valid_be(&be::restore_point_name(
-            be::Kind::Install,
-            u64::MAX
-        )));
-        let many: String = (0..6)
-            .map(|i| {
-                format!(
-                    "wol-before-update-{i}\t-\t-\t1G\t2026-10-0{} 10:00\n",
-                    i + 1
-                )
-            })
-            .collect::<String>()
-            + "default\tNR\t/\t1G\t2025-01-01 10:00\n";
-        let (_, destroy) = be::restore_point(Some(&many), be::Kind::Update, 1).unwrap();
-        let d: Vec<String> = destroy.iter().map(|a| a.join(" ")).collect();
-        assert_eq!(
-            d,
-            [
-                "bectl destroy -o wol-before-update-0",
-                "bectl destroy -o wol-before-update-1"
-            ],
-            "KEEP incl. the new one"
-        );
-        // Installing an app prunes only install points: the pre-update ones stay.
-        let (create, destroy) = be::restore_point(Some(&many), be::Kind::Install, 2).unwrap();
-        assert_eq!(create[2], "wol-before-install-2");
-        assert!(destroy.is_empty(), "{destroy:?}");
+        let h = crate::system::fake::FakeHost::new(false);
+        assert_eq!(be::read(&h), None, "no bootctl");
+        h.command("bootctl list --json=short", BOOTCTL);
+        assert_eq!(be::read(&h).unwrap().len(), 2);
     }
 }

@@ -1,7 +1,6 @@
 # WolOS architecture map
 Base: FreeBSD 15.1-RELEASE (src + pkg). Compositor: Hyprland (ADR 0001).
 Layers: `kernel/` -> `image/` (installs pkgs + `desktop/` overlay + `design/` assets).
-Licenses per directory: `LICENSING.md` (kernel/driver patches and `wolos_qos`: Wonderland License 1.0, source-available).
 Rust userland: one Cargo workspace in `crates/` (ADR 0002). Rules enforced by `crates/shared/tests/architecture.rs`.
 Rule: prefer upstream ports + config over new code.
 
@@ -18,7 +17,7 @@ Rule: prefer upstream ports + config over new code.
 | `adr/0009-live-iso.md` | live ISO: desktop on cd9660, memory overlays |
 | `modules/widgets.md` | desktop widgets, Edit Widgets, building a widget package, `wol widgets` (ADR 0010) |
 | `modules/packages.md` | `.wol` format, keys and trust, `wol install/remove/list/search`, index, factory (ADR 0011) |
-| `modules/games.md` | Steam on the Linux ABI, WolOS Proton on native wine-proton, `wol games`, `.exe` double-click |
+| `modules/games.md` | native Steam and Proton, `wol games`, `.exe` double-click on wine or umu |
 | `modules/power.md` | power policy per power source and mode, sleep and lock, battery alerts, `wol power` (ADR 0014) |
 | `modules/security.md` | firewall, hardening, daily update check, encrypted homes, app permissions, what runs as root (ADR 0015) |
 | `modules/boot.md` | quiet boot, ESP layout and firmware entry, GRUB/rEFInd, Secure Boot, install safety checks |

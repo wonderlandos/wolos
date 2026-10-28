@@ -1,4 +1,0 @@
-# USB cameras: devd starts webcamd(8) on attach, but only with this set (pkg-message).
-webcamd_enable="YES"
-# /dev/video* for group video (base gid 44), which WolOS accounts join; the default is group webcamd.
-webcamd_group="video"

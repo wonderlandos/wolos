@@ -27,7 +27,7 @@ pub fn of_pid(pid: i32) -> Identity {
 
 use shared::sys::canonical;
 
-/// Canonical system libexec folder (it may be a symlink, e.g. /usr/local -> /work/local).
+/// Canonical system libexec folder (it may be a symlink, e.g. /usr -> /work/local).
 pub fn libexec() -> &'static str {
     static LIBEXEC: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     LIBEXEC.get_or_init(|| canonical(crate::policy::LIBEXEC))
@@ -35,7 +35,7 @@ pub fn libexec() -> &'static str {
 
 /// Consent grants (ADR 0013) with canonical app paths. Re-read per connection so edits apply at once.
 pub fn grants() -> Vec<(String, String)> {
-    let json = std::fs::read_to_string("/usr/local/etc/wolos/consent.json").unwrap_or_default();
+    let json = std::fs::read_to_string("/etc/wolos/consent.json").unwrap_or_default();
     crate::policy::Consent::parse(&json)
         .pairs()
         .into_iter()

@@ -1,0 +1,107 @@
+#!/bin/sh
+# Install WolOS (ADR 0013, ADR 0016): erase <disk> and install, as root (the live image lets its
+# user run this with sudo, no password). GPT: ESP (1 GiB, /efi) + one btrfs partition with
+# subvolumes @wolos-a (this system), @home and @var; the first update creates @wolos-b. The live
+# root (airootfs.sfs) is copied into @wolos-a without the live-only files, and systemd-boot starts it
+# with boot counting (three tries).
+# Progress on stdout, one line per step: "wolos-install: <stage> <percent> <message>", stages
+# prepare disk files boot settings finish done failed.
+# Exit: 0 installed, 1 the install stopped, 2 not a disk the installer may erase.
+# Env (tests): WOLOS_INSTALL_PATH, WOLOS_INSTALL_ROOT (/mnt/wolos), WOLOS_SOURCE_SFS, WOLOS_NO_INHIBIT.
+set -u
+PATH=${WOLOS_INSTALL_PATH:-/usr/bin:/usr/sbin}; export PATH
+say() { echo "wolos-install: $*"; }
+disk=${1:-}
+here=$(cd "$(dirname "$0")" && pwd)
+# Closing the lid or idling must not sleep the machine mid-install; the hold ends with the install.
+if [ "${WOLOS_NO_INHIBIT:-0}" != 1 ] && [ -z "${WOLOS_INHIBITED:-}" ] && command -v systemd-inhibit >/dev/null; then
+  WOLOS_INHIBITED=1 exec systemd-inhibit --what=sleep:idle:handle-lid-switch --who="Install WolOS" \
+    --why="Installing WolOS" "$0" "$@"
+fi
+# A USB disk opened in Files: let its partitions go first.
+[ -n "$disk" ] && findmnt -rno SOURCE,TARGET | awk -v d="$disk" 'index($1, d) == 1 && substr($1, length(d) + 1) ~ /^p?[0-9]+$/ {print $2}' |
+  sort -r | while read -r m; do umount "$m"; done
+# Every check before the first write: a refused disk is left exactly as it was.
+if [ -z "$disk" ] || ! sh "$here/install-check" "$disk" >/dev/null; then
+  say failed 0 "not a disk the installer may erase: ${disk:-none}"
+  exit 2
+fi
+T=${WOLOS_INSTALL_ROOT:-/mnt/wolos}
+SFS=${WOLOS_SOURCE_SFS:-/run/archiso/bootmnt/wolos/x86_64/airootfs.sfs}
+cleanup() { sync; umount -R "$T" 2>/dev/null || :; }
+fail() { say failed 0 "$*"; cleanup; exit 1; }
+part() { case $disk in *[0-9]) echo "${disk}p$1" ;; *) echo "$disk$1" ;; esac; }
+say prepare 0 "Preparing to install on $disk"
+
+say disk 5 "Erasing $disk"
+sgdisk --zap-all "$disk" >/dev/null &&
+  sgdisk -n 1:0:+1G -t 1:ef00 -c 1:WOLOS_ESP -n 2:0:0 -t 2:8304 -c 2:WolOS "$disk" >/dev/null ||
+  fail "could not partition $disk"
+partprobe "$disk" 2>/dev/null; udevadm settle 2>/dev/null
+esp=$(part 1); root=$(part 2)
+mkfs.fat -F 32 -n WOLOS "$esp" >/dev/null && mkfs.btrfs -f -L WolOS "$root" >/dev/null || fail "could not format $disk"
+ruuid=$(blkid -s UUID -o value "$root"); euuid=$(blkid -s UUID -o value "$esp")
+mkdir -p "$T" && mount "$root" "$T" || fail "could not mount the new system"
+for s in @wolos-a @home @var; do
+  btrfs subvolume create "$T/$s" >/dev/null || fail "could not create $s"
+done
+umount "$T"
+O=compress=zstd:1,noatime
+mount -o "subvol=@wolos-a,$O" "$root" "$T" || fail "could not mount @wolos-a"
+mkdir -p "$T/home" "$T/var" "$T/efi"
+mount -o "subvol=@home,$O" "$root" "$T/home" && mount -o "subvol=@var,$O" "$root" "$T/var" &&
+  mount "$esp" "$T/efi" || fail "could not mount the new system"
+
+say files 15 "Copying WolOS"
+unsquashfs -f -d "$T" "$SFS" >/dev/null || fail "could not copy the system"
+# Live-only files: the live account, its autologin and installer rights, archiso boot bits.
+rm -rf "$T/etc/sysusers.d/wolos-live.conf" "$T/etc/tmpfiles.d/wolos-live.conf" "$T/etc/sudoers.d/wolos-live" \
+  "$T/etc/wolos/login.json" "$T/etc/wolos-live" "$T/etc/mkinitcpio.conf.d/archiso.conf" \
+  "$T/etc/systemd/system/pacman-init.service" "$T/etc/systemd/system/etc-pacman.d-gnupg.mount" \
+  "$T/etc/systemd/system/multi-user.target.wants/pacman-init.service" \
+  "$T/etc/systemd/system/wolos-autoinstall.service" "$T/etc/systemd/system/multi-user.target.wants/wolos-autoinstall.service" \
+  "$T/etc/systemd/journald.conf.d/volatile-storage.conf" "$T/home/live"
+userdel -R "$T" live 2>/dev/null || :
+# The live dock's copy of shell.json gives way to the package's.
+[ ! -f "$T/etc/wolos/shell.json.pacnew" ] || mv "$T/etc/wolos/shell.json.pacnew" "$T/etc/wolos/shell.json"
+# The package database belongs to the slot, not the shared @var (pacman.conf DBPath).
+if [ -d "$T/var/lib/pacman/local" ]; then
+  mkdir -p "$T/usr/lib/pacman" && mv "$T/var/lib/pacman/local" "$T/usr/lib/pacman/local" || fail "could not move the package database"
+fi
+echo a > "$T/etc/wolos/slot"
+mkdir -p "$T/etc/kernel"
+echo "root=UUID=$ruuid rootflags=subvol=@wolos-a rw quiet splash loglevel=3 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0" > "$T/etc/kernel/cmdline"
+cat > "$T/etc/fstab" <<EOF
+# WolOS: / is the slot the boot entry names (rootflags=subvol=@wolos-a or @wolos-b).
+UUID=$ruuid /home btrfs subvol=/@home,$O 0 0
+UUID=$ruuid /var btrfs subvol=/@var,$O 0 0
+UUID=$euuid /efi vfat umask=0077,shortname=winnt 0 2
+EOF
+
+say boot 70 "Making $disk start WolOS"
+mkdir -p "$T/etc/mkinitcpio.d" "$T/boot"
+for m in "$T"/usr/lib/modules/*/; do
+  [ -f "$m/pkgbase" ] && [ -f "$m/vmlinuz" ] || continue
+  kb=$(cat "$m/pkgbase")
+  install -m 644 "$m/vmlinuz" "$T/boot/vmlinuz-$kb"
+  printf "PRESETS=('default')\nALL_kver='/boot/vmlinuz-%s'\ndefault_image='/boot/initramfs-%s.img'\n" "$kb" "$kb" > "$T/etc/mkinitcpio.d/$kb.preset"
+done
+[ -f "$T/boot/vmlinuz-linux-wolos" ] || fail "no linux-wolos kernel in the image"
+arch-chroot "$T" mkinitcpio -P >/dev/null 2>&1 || fail "could not build the initramfs"
+bootctl --esp-path="$T/efi" install >/dev/null 2>&1 || fail "could not install the boot loader"
+WOLOS_ROOT=$T WOLOS_ESP=$T/efi sh "$here/esp-sync" --new || fail "could not write the boot entry"
+mkdir -p "$T/efi/loader"
+printf 'default wolos-a.conf\ntimeout 0\nconsole-mode keep\neditor no\n' > "$T/efi/loader/loader.conf"
+
+say settings 90 "Settings"
+echo wolos > "$T/etc/hostname"
+printf 'uninitialized\n' > "$T/etc/machine-id"
+arch-chroot "$T" pacman-key --init >/dev/null 2>&1 && arch-chroot "$T" pacman-key --populate >/dev/null 2>&1 ||
+  say settings 92 "package keys: set up on first update"
+
+say finish 98 "Checking the new system"
+for f in "efi/loader/entries/wolos-a+3.conf" "efi/wolos-a/vmlinuz-linux-wolos" "efi/wolos-a/initramfs-linux-wolos.img" "etc/fstab"; do
+  [ -s "$T/$f" ] || fail "the new system did not check out: $f missing"
+done
+cleanup
+say done 100 "WolOS is installed on $disk"

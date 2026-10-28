@@ -1,5 +1,5 @@
 From ef4023ca1b572f12c8bea624e41b09338898265e Mon Sep 17 00:00:00 2001
-From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+From: kleeedolinux <71413974+kleeedolinux@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 08:11:55 -0300
 Subject: [PATCH] config: no .conf deprecation banner (WolOS pins 0.56 with a
  .conf)

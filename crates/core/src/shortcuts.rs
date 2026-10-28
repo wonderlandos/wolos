@@ -8,12 +8,11 @@ use std::collections::BTreeMap;
 pub const PREFS_FILE: &str = "wolos/shortcuts.json";
 pub const INCLUDE: &str = "hypr/wolos/shortcuts.conf";
 /// Installed defaults; the repo copies below are the fallback (dev, tests).
-pub const SHIPPED_PATH: &str = "/usr/local/share/wolos/hypr/hyprland.conf";
-pub const TILING_PATH: &str = "/usr/local/share/wolos/hypr/tiling.conf";
+pub const SHIPPED_PATH: &str = "/usr/share/wolos/hypr/hyprland.conf";
+pub const TILING_PATH: &str = "/usr/share/wolos/hypr/tiling.conf";
 pub const SHIPPED: &str =
-    include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/hyprland.conf");
-pub const TILING: &str =
-    include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/tiling.conf");
+    include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+pub const TILING: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/tiling.conf");
 
 pub const CTRL: u8 = 1;
 pub const ALT: u8 = 2;

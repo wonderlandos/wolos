@@ -1,9 +1,9 @@
 //! Settings > General > Sharing and Network > Firewall: computer name, Remote Login (sshd) and
-//! the firewall (pf). Reads go through [`Host`]; changes through wol-admind.
+//! the firewall (nftables). Reads go through [`Host`]; changes through wol-admind.
 use crate::system::Host;
 
-/// The ruleset `firewall on` loads (block in, pass out; desktop/overlay).
-pub const PF_RULES: &str = "/usr/local/share/wolos/pf.conf";
+/// The ruleset nftables.service loads (block in, pass out; desktop/overlay).
+pub const FIREWALL_RULES: &str = "/etc/nftables.conf";
 
 /// One RFC 1123 label, lowercase: 1..=63 of `[a-z0-9-]`, no `-` at either end.
 pub fn is_valid_hostname(s: &str) -> bool {
@@ -14,40 +14,37 @@ pub fn is_valid_hostname(s: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// rc.conf boolean as rc.subr's checkyesno reads it (`sysrc -n <var>` output); `NONE` is off.
-pub fn parse_rc_yes(text: &str) -> Option<bool> {
-    match text.trim().to_ascii_lowercase().as_str() {
-        "yes" | "true" | "on" | "1" => Some(true),
-        "no" | "false" | "off" | "0" | "none" => Some(false),
+/// Unit file state (`systemctl show -p UnitFileState --value <unit>`): enabled at boot or not;
+/// None when unknown.
+pub fn parse_enabled(text: &str) -> Option<bool> {
+    match text.trim() {
+        "enabled" | "enabled-runtime" | "alias" => Some(true),
+        "disabled" | "masked" | "masked-runtime" | "static" | "indirect" | "linked" | "" => {
+            Some(false)
+        }
         _ => None,
     }
 }
 
-fn rc_yes(h: &dyn Host, var: &str) -> Option<bool> {
-    if !h.is_freebsd() {
-        return None;
-    }
-    parse_rc_yes(&h.run(&["sysrc", "-n", var])?)
+/// Unit enabled at boot (`systemctl show` exits 0 for disabled and missing units too).
+pub fn enabled(h: &dyn Host, unit: &str) -> Option<bool> {
+    parse_enabled(&h.run(&["systemctl", "show", "-p", "UnitFileState", "--value", unit])?)
 }
 
-/// Computer name now (`kern.hostname`; Linux dev host: /proc).
+/// Computer name now.
 pub fn hostname(h: &dyn Host) -> Option<String> {
-    let name = if h.is_freebsd() {
-        h.sysctl_string("kern.hostname")?
-    } else {
-        h.read_text("/proc/sys/kernel/hostname")?
-    };
+    let name = h.read_text("/proc/sys/kernel/hostname")?;
     Some(name.trim().to_owned()).filter(|n| !n.is_empty())
 }
 
-/// Remote Login (sshd) on at boot; None off FreeBSD.
+/// Remote Login (sshd) on at boot.
 pub fn remote_login(h: &dyn Host) -> Option<bool> {
-    rc_yes(h, "sshd_enable")
+    enabled(h, "sshd.service")
 }
 
-/// Firewall (pf) on at boot; None off FreeBSD.
+/// Firewall (nftables) on at boot.
 pub fn firewall(h: &dyn Host) -> Option<bool> {
-    rc_yes(h, "pf_enable")
+    enabled(h, "nftables.service")
 }
 
 #[cfg(test)]
@@ -81,41 +78,35 @@ mod tests {
     }
 
     #[test]
-    fn rc_yes_values() {
+    fn systemctl_is_enabled_values() {
         for (t, want) in [
-            ("YES\n", Some(true)),
-            ("yes", Some(true)),
-            ("TRUE\n", Some(true)),
-            ("on", Some(true)),
-            ("1", Some(true)),
-            ("NO\n", Some(false)),
-            ("false", Some(false)),
-            ("off", Some(false)),
-            ("0", Some(false)),
-            ("NONE", Some(false)),
-            ("", None),
-            ("maybe", None),
+            ("enabled\n", Some(true)),
+            ("disabled\n", Some(false)),
+            ("masked\n", Some(false)),
+            ("static\n", Some(false)),
+            ("", Some(false)),
+            ("Failed to get unit file state", None),
         ] {
-            assert_eq!(parse_rc_yes(t), want, "{t:?}");
+            assert_eq!(parse_enabled(t), want, "{t:?}");
         }
     }
 
     #[test]
-    fn freebsd_reads() {
-        let h = FakeHost::new(true);
+    fn reads() {
+        let h = FakeHost::new(false);
         assert_eq!(
             (hostname(&h), remote_login(&h), firewall(&h)),
-            (None, None, None)
+            (None, None, None),
+            "no systemd: unknown"
         );
-        h.string("kern.hostname", "wolos\n")
-            .command("sysrc -n sshd_enable", "NO\n")
-            .command("sysrc -n pf_enable", "YES\n");
+        h.file("/proc/sys/kernel/hostname", "wolos\n")
+            .command(
+                "systemctl show -p UnitFileState --value nftables.service",
+                "enabled\n",
+            )
+            .command("systemctl show -p UnitFileState --value sshd.service", "\n");
         assert_eq!(hostname(&h).as_deref(), Some("wolos"));
-        assert_eq!(remote_login(&h), Some(false));
         assert_eq!(firewall(&h), Some(true));
-        let l = FakeHost::new(false);
-        assert_eq!((remote_login(&l), firewall(&l)), (None, None));
-        l.file("/proc/sys/kernel/hostname", "devbox\n");
-        assert_eq!(hostname(&l).as_deref(), Some("devbox"));
+        assert_eq!(remote_login(&h), Some(false), "not installed: off");
     }
 }

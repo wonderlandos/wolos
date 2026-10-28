@@ -1,0 +1,9 @@
+[Unit]
+Description=WolOS daily update check (looks only)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/update-check
+Nice=10
+IOSchedulingClass=idle

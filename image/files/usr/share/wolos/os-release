@@ -1,0 +1,8 @@
+NAME=WolOS
+ID=wolos
+ID_LIKE=arch
+VERSION_ID=@VERSION@
+VERSION="@VERSION@"
+PRETTY_NAME="WolOS @VERSION@"
+HOME_URL="https://github.com/wonderlandos/wolos"
+LOGO=wolos

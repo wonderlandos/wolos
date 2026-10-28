@@ -18,10 +18,10 @@ pub const NO_DOWNLOAD: Notice = (
     "Check that you're online, then open Steam again.",
 );
 
-/// A setting the client needs is off. WolOS turns each one on at startup.
+/// The graphics driver is not loaded.
 pub const SETTINGS: Notice = (
     "Steam can't open yet",
-    "A system setting Steam needs is off. Restart your computer, then open Steam again.",
+    "Your graphics driver isn't running. Restart your computer, then open Steam again.",
 );
 
 /// A package the client needs is not installed (the doctor names it).
@@ -30,7 +30,7 @@ pub const MISSING: Notice = (
     "Part of Steam is missing. To add it, open Terminal and type wol games doctor.",
 );
 
-/// The Linux side of the NVIDIA driver (the Steam client draws with it) is missing.
+/// The 32-bit NVIDIA libraries (the Steam client draws with them) are missing.
 pub const NVIDIA: Notice = (
     "Steam can't open yet",
     "Steam needs graphics files for your NVIDIA card. To add them, open Terminal and type wol games doctor.",
@@ -41,7 +41,7 @@ pub const ALL: [Notice; 5] = [PREPARING, NO_DOWNLOAD, SETTINGS, MISSING, NVIDIA]
 /// The notice for what keeps the client from starting ([`super::doctor::steam_blockers`]).
 pub fn blocked(blockers: &[&Check]) -> Notice {
     let has = |id: &str| blockers.iter().any(|c| c.id == id);
-    if has("steam-utils") || has("linux-base") {
+    if has("steam") || has("multilib") || has("lib32-gl") {
         MISSING
     } else if has("nvidia") {
         NVIDIA
@@ -67,12 +67,11 @@ mod tests {
     #[test]
     fn each_blocker_gets_its_notice() {
         for (ids, want) in [
-            (&["nullfs"][..], SETTINGS),
-            (&["linux-abi", "machine-id", "usermount"][..], SETTINGS),
-            (&["linux-mounts", "steam-utils"][..], MISSING),
-            (&["linux-base"][..], MISSING),
+            (&["drm"][..], SETTINGS),
+            (&["steam"][..], MISSING),
+            (&["multilib", "lib32-gl"][..], MISSING),
             (&["nvidia"][..], NVIDIA),
-            (&["nvidia", "linux-base"][..], MISSING),
+            (&["nvidia", "steam"][..], MISSING),
         ] {
             let checks: Vec<Check> = ids.iter().map(|i| fail(i)).collect();
             let refs: Vec<&Check> = checks.iter().collect();

@@ -1,6 +1,6 @@
-//! Games: native wine-proton facts, the `WolOS Proton` Steam compatibility tool, and the checks
-//! behind `wol games doctor` (archicture/modules/games.md). Windows games run on wine-proton, a
-//! native FreeBSD build; only the Steam client itself (Linux-only) uses the Linux ABI.
+//! Games: Steam and wine facts and the checks behind `wol games doctor`
+//! (archicture/modules/games.md). Steam is the native Arch package and manages Proton itself;
+//! wine (or umu-launcher) is only for Windows programs outside Steam.
 pub mod doctor;
 pub mod notice;
 pub mod steam;

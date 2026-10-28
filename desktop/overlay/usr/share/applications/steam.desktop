@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Steam
+Comment=Thousands of games, one library
+Icon=/usr/share/wolos/store-icons/steam.svg
+# wol games steam: first start downloads the client (notification), starts Steam.
+Exec=wol games steam %u
+Terminal=false
+Categories=Game;
+MimeType=x-scheme-handler/steam;x-scheme-handler/steamlink;
+StartupWMClass=steam
+PrefersNonDefaultGPU=true

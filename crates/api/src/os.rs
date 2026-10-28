@@ -138,7 +138,7 @@ pub fn stop_stale(pid_dir: &std::path::Path, label: &str) {
     let _ = std::fs::remove_file(f);
 }
 
-/// SIGTERM: whole reaper subtree on FreeBSD (3 s grace), else each job tree.
+/// SIGTERM: whole reaper subtree (3 s grace), else each job tree.
 pub fn stop_all(running: &[i32]) {
     if crate::reaper::kill_all(libc::SIGTERM) {
         std::thread::sleep(Duration::from_secs(3));

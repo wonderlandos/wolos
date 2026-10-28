@@ -19,9 +19,9 @@ pub struct BrowserPaths {
 }
 
 pub const HELIUM: BrowserPaths = BrowserPaths {
-    bin: "/usr/local/bin/helium",
-    policies_dir: "/usr/local/etc/helium/policies/managed",
-    initial_prefs: "/usr/local/share/helium/initial_preferences",
+    bin: "/usr/bin/helium",
+    policies_dir: "/etc/helium/policies/managed",
+    initial_prefs: "/usr/share/helium/initial_preferences",
 };
 /// Our file in `HELIUM.policies_dir`.
 pub const POLICY_FILE: &str = "wolos.json";
@@ -87,10 +87,9 @@ mod tests {
     /// portal; xdg-desktop-portal-gtk serves it from the gsettings `wol theme` writes.
     #[test]
     fn settings_portal_is_the_gtk_backend() {
-        let conf = std::fs::read_to_string(overlay(
-            "/usr/local/etc/xdg/xdg-desktop-portal/hyprland-portals.conf",
-        ))
-        .unwrap();
+        let conf =
+            std::fs::read_to_string(overlay("/etc/xdg/xdg-desktop-portal/hyprland-portals.conf"))
+                .unwrap();
         assert!(
             conf.lines()
                 .any(|l| l == "org.freedesktop.impl.portal.Settings=gtk")

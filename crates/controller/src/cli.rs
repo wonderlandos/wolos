@@ -217,23 +217,29 @@ pub const TREE: &[Cmd] = &[
         "List pending package upgrades",
     ),
     cmd(
+        &["base", "verify"],
+        "base.verify",
+        &[],
+        "Base files that changed or went missing (wolos-base manifest)",
+    ),
+    cmd(
         &["update", "status"],
         "update.status",
         &[],
-        "What the daily check found: packages, security fixes, FreeBSD fixes",
+        "What the daily check found: package fixes, security fixes, a new release",
     ),
     cmd(
         &["update", "plan"],
         "update.plan",
-        &[opt("be")],
-        "Commands an upgrade would run (new boot environment)",
+        &[opt("be"), opt("release")],
+        "Commands an update would run (the other root slot)",
     ),
     Cmd {
         path: &["update", "apply"],
         action: "update.apply",
-        args: &[opt("be")],
-        flags: &["base"],
-        help: "Upgrade in a new boot environment (root, --yes)",
+        args: &[opt("be"), opt("release")],
+        flags: &[],
+        help: "Update into the other root slot (root, --yes)",
         hidden: false,
     },
     cmd(
@@ -307,12 +313,6 @@ pub const TREE: &[Cmd] = &[
         "games.doctor",
         &[],
         "What Steam and Windows games need on this machine, with the fix",
-    ),
-    cmd(
-        &["games", "steam-setup"],
-        "games.steam-setup",
-        &[],
-        "Install or refresh the WolOS Proton compatibility tool for Steam",
     ),
     cmd(
         &["games", "steam"],
@@ -961,7 +961,10 @@ mod tests {
             ("port Game.wol", "bundle.plan bundle=Game.wol"),
             ("update check", "update.check"),
             ("update apply", "update.apply"),
-            ("update apply --base --yes", "update.apply --base --yes"),
+            (
+                "update apply wolos-b 2026/11/02 --yes",
+                "update.apply be=wolos-b release=2026/11/02 --yes",
+            ),
             ("update plan", "update.plan"),
             ("admin revoke", "admin action=revoke"),
             ("admin idle 300", "admin action=idle args=300"),
@@ -987,7 +990,6 @@ mod tests {
                 "games steam steam://install/3658110",
                 "games.steam url=steam://install/3658110",
             ),
-            ("games steam-setup", "games.steam-setup"),
             ("games doctor --json", "games.doctor --json"),
             ("games", "games.doctor"),
             ("", "help"),
@@ -1044,7 +1046,7 @@ mod tests {
         assert!(h.contains("shell toggle <switcher|notifications"));
         assert!(!h.contains("jobs list"), "aliases are hidden");
         let h = help(&["update".into()]);
-        assert!(h.contains("update apply [be] [--base]") && !h.contains("theme"));
+        assert!(h.contains("update apply [be] [release]") && !h.contains("theme"));
     }
 
     /// `.wol` and App Store verbs (ADR 0011).

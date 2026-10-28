@@ -1,4 +1,4 @@
-//! `wol hw`: hardware list, status, fix, and the boot step (rc.d `wolos_hw`). Logic in
+//! `wol hw`: hardware list, status, fix, and the boot step (`wolos-hw.service`). Logic in
 //! `wol_core::hardware`; root changes through wol-admind (`hw-load`, `pkg-install`).
 use crate::cli::Invocation;
 use crate::run::{Env, admin_send};
@@ -46,6 +46,15 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
             ErrorCode::Failed.exit()
         }
     }
+}
+
+/// pacman, non-interactive, skipping what is already installed.
+fn pacman_install(pkgs: &[String]) -> Vec<String> {
+    let mut argv: Vec<String> = ["pacman", "-S", "--needed", "--noconfirm"]
+        .map(String::from)
+        .to_vec();
+    argv.extend(pkgs.iter().cloned());
+    argv
 }
 
 fn out_json(env: &mut dyn Env, v: &serde_json::Value) {
@@ -130,7 +139,7 @@ fn fix(env: &mut dyn Env, yes: bool) -> i32 {
     code
 }
 
-/// `/etc/dhclient-exit-hooks` on a new lease (root, background, one at a time via lockf): install
+/// NetworkManager dispatcher on `up` (root, background, one at a time): install
 /// what the catalogue still misses (an NVIDIA driver first boot had no network for), once per boot,
 /// without loading it: the next boot does. [`ONLINE_PATH`] tells the session (restart, or where
 /// to fix it). Not while first boot runs: its own `wol hw boot --online` installs.
@@ -147,12 +156,11 @@ fn online(env: &mut dyn Env) -> i32 {
     let Some((packages, graphics)) = wol_core::hardware::online::pending(&snap) else {
         return 0;
     };
-    let mut argv: Vec<String> = ["pkg", "install", "-y"].map(String::from).to_vec();
-    argv.extend(packages.iter().cloned());
+    let argv = pacman_install(&packages);
     let ok = matches!(env.exec(&argv), Ok(0));
     let what = packages.join(" ");
     env.out(&format!(
-        "wolos_hw: pkg install {what}{}\n",
+        "wolos_hw: pacman -S {what}{}\n",
         if ok { "" } else { " failed" }
     ));
     let r = OnlineInstall {
@@ -176,10 +184,10 @@ fn online(env: &mut dyn Env) -> i32 {
     0
 }
 
-/// rc.d `wolos_hw`, every boot (a disk moves between machines): set the tunables of modules about to
-/// load (kenv), load the modules the catalogue names for the hardware present, write next-boot
-/// tunables, publish the snapshot. Never fails boot.
-/// `online` (wolos_firstboot, network up): first install the packages the catalogue says are missing
+/// `wolos-hw.service`, every boot (a disk moves between machines): write modprobe options and the
+/// boot module list, load the modules the catalogue names for the hardware present, publish the
+/// snapshot. Never fails boot.
+/// `online` (first boot, network up): first install the packages the catalogue says are missing
 /// (NVIDIA drivers are not in the offline repo), so this boot already loads them.
 fn boot(env: &mut dyn Env, online: bool) -> i32 {
     if !env.is_root() {
@@ -189,37 +197,29 @@ fn boot(env: &mut dyn Env, online: bool) -> i32 {
     let mut snap = env.hardware();
     let (_, install) = fixes(&snap);
     if online && !install.is_empty() {
-        let mut argv: Vec<String> = ["pkg", "install", "-y"].map(String::from).to_vec();
-        argv.extend(install.iter().cloned());
         let what = install.join(" ");
-        match env.exec(&argv) {
-            Ok(0) => env.out(&format!("wolos_hw: pkg install {what}\n")),
-            _ => env.out(&format!("wolos_hw: pkg install {what} failed\n")),
+        match env.exec(&pacman_install(&install)) {
+            Ok(0) => env.out(&format!("wolos_hw: pacman -S {what}\n")),
+            _ => env.out(&format!("wolos_hw: pacman -S {what} failed\n")),
         }
         snap = env.hardware();
     }
     let plan = boot_plan(&snap, &|p| env.read_file(Path::new(p)));
-    for (k, v) in &plan.kenv {
-        let argv = ["kenv".to_string(), format!("{k}={v}")];
-        match env.exec(&argv) {
-            Ok(0) => env.out(&format!("wolos_hw: kenv {k}={v}\n")),
-            _ => env.out(&format!("wolos_hw: kenv {k}={v} failed\n")),
-        }
-    }
-    for k in &plan.kldload {
-        let argv = ["kldload".to_string(), "-n".into(), k.clone()];
-        match env.exec(&argv) {
-            Ok(0) => env.out(&format!("wolos_hw: kldload {k}\n")),
-            _ => env.out(&format!("wolos_hw: kldload {k} failed\n")),
-        }
-    }
+    // Options first: a module reads modprobe.d only when it loads.
     for (path, text) in &plan.writes {
         match env.write_file(Path::new(path), text) {
             Ok(()) => env.out(&format!("wolos_hw: wrote {path}\n")),
             Err(e) => env.out(&format!("wolos_hw: {path}: {e}\n")),
         }
     }
-    let snap = if plan.kldload.is_empty() {
+    for k in &plan.modprobe {
+        let argv = ["modprobe".to_string(), k.clone()];
+        match env.exec(&argv) {
+            Ok(0) => env.out(&format!("wolos_hw: modprobe {k}\n")),
+            _ => env.out(&format!("wolos_hw: modprobe {k} failed\n")),
+        }
+    }
+    let snap = if plan.modprobe.is_empty() {
         snap
     } else {
         env.hardware()

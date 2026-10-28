@@ -1,0 +1,15 @@
+#!/bin/sh
+# WolOS first boot (wolos-firstboot.service, once): driver packages not on the image (NVIDIA: the
+# hardware catalogue picks nvidia-open-dkms) are installed online and loaded before the login window.
+# wolos-hw.service (`wol hw boot`) loads drivers on every later boot. The first user is created by
+# the setup assistant on the first login window (ADR 0004).
+set -u
+log() { echo "wolos-firstboot: $*"; logger -t wolos-firstboot "$*" 2>/dev/null || :; }
+D=${WOLOS_STATE:-/var/lib/wolos}
+if wol hw boot --online; then
+  mkdir -p "$D" && touch "$D/firstboot-done"
+else
+  # Offline or a failed download: the network-up hook retries (wol hw online); next boot tries again.
+  log "wol hw boot --online failed"
+fi
+exit 0

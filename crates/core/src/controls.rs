@@ -197,44 +197,6 @@ pub fn parse_wpa_status(text: &str) -> Option<String> {
         .flatten()
 }
 
-/// `mixer -o vol.volume vol.mute` (FreeBSD 14+): "vol.volume=0.75:0.75" "vol.mute=0".
-pub fn parse_mixer(text: &str) -> Option<Volume> {
-    let p = crate::system::pairs(text, '=');
-    let left = p
-        .get("vol.volume")?
-        .split(':')
-        .next()?
-        .parse::<f64>()
-        .ok()?;
-    Some(Volume {
-        percent: (left * 100.0).round().clamp(0.0, 100.0) as u8,
-        muted: p.get("vol.mute").is_some_and(|m| *m == "1"),
-    })
-}
-
-/// `/dev/sndstat`: "pcm0: <Realtek ALC269 (Analog)> (play/rec) default".
-pub fn parse_sndstat(text: &str) -> Vec<Output> {
-    text.lines()
-        .filter(|l| l.starts_with("pcm") && l.contains("play"))
-        .filter_map(|l| {
-            let (id, rest) = l.split_once(':')?;
-            let name = rest.split_once('<')?.1.split_once('>')?.0;
-            Some(Output {
-                id: id.trim().into(),
-                name: name.trim().into(),
-                default: rest.trim_end().ends_with("default"),
-            })
-        })
-        .collect()
-}
-
-/// `backlight -q` (FreeBSD 13+): "75".
-pub fn parse_backlight(text: &str) -> Option<u8> {
-    let t = text.trim();
-    let n = t.rsplit([' ', ':']).next()?.trim();
-    n.parse::<u8>().ok().map(|p| p.min(100))
-}
-
 // ---- Hyprland ----
 
 /// `hyprctl -j monitors all`.
@@ -289,9 +251,8 @@ pub fn monitor_rule(name: &str, w: u32, h: u32, refresh: f64, scale: f64) -> Opt
 
 pub const NIGHT_SHIFT_KELVIN: u32 = 4500;
 
-/// How long a FreeBSD Wi-Fi join waits for the network, and how often it looks.
+/// How long a Wi-Fi join (login window, wpa_supplicant) waits for the network.
 pub const JOIN_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
-const JOIN_POLL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Platform reads and writes. `stdin` runs argv with input on stdin (secrets); `admin` sends one wol-admind request.
 pub type StdinRunner = dyn Fn(&[&str], &str) -> Option<String> + Send + Sync;
@@ -301,7 +262,7 @@ pub struct Controls {
     pub host: Arc<dyn Host>,
     pub stdin: Arc<StdinRunner>,
     pub admin: Arc<AdminSender>,
-    /// FreeBSD wireless interface.
+    /// Wireless interface name (shown in Settings; NetworkManager needs none).
     pub wlan: String,
 }
 
@@ -321,10 +282,6 @@ impl Controls {
             }),
             wlan: "wlan0".into(),
         }
-    }
-
-    fn bsd(&self) -> bool {
-        self.host.is_freebsd()
     }
 
     fn run(&self, argv: &[&str]) -> Option<String> {
@@ -359,67 +316,43 @@ impl Controls {
 
     // ---- Wi-Fi ----
 
+    /// NetworkManager radio switch.
     pub fn wifi_enabled(&self) -> Option<bool> {
-        if self.bsd() {
-            let o = self.run(&["ifconfig", &self.wlan])?;
-            Some(o.lines().next().is_some_and(|l| l.contains("<UP")))
-        } else {
-            self.run(&["nmcli", "radio", "wifi"])
-                .map(|o| o.trim() == "enabled")
-        }
+        self.run(&["nmcli", "radio", "wifi"])
+            .map(|o| o.trim() == "enabled")
     }
 
     pub fn wifi_networks(&self) -> Vec<WifiNet> {
-        if self.bsd() {
-            let cur = self
-                .run(&["wpa_cli", "-i", &self.wlan, "status"])
-                .and_then(|s| parse_wpa_status(&s));
-            self.run(&["wpa_cli", "-i", &self.wlan, "scan_results"])
-                .map(|s| parse_scan_results(&s, cur.as_deref()))
-                .unwrap_or_default()
-        } else {
-            self.run(&[
-                "nmcli",
-                "-t",
-                "-f",
-                "IN-USE,SIGNAL,SECURITY,SSID",
-                "dev",
-                "wifi",
-                "list",
-                "--rescan",
-                "no",
-            ])
-            .map(|s| parse_nmcli_wifi(&s))
-            .unwrap_or_default()
-        }
+        self.run(&[
+            "nmcli",
+            "-t",
+            "-f",
+            "IN-USE,SIGNAL,SECURITY,SSID",
+            "dev",
+            "wifi",
+            "list",
+            "--rescan",
+            "no",
+        ])
+        .map(|s| parse_nmcli_wifi(&s))
+        .unwrap_or_default()
     }
 
-    pub fn set_wifi(&self, on: bool, pw: &str) -> Result<(), ControlError> {
+    /// NetworkManager lets the person at the computer switch the radio (polkit): no password.
+    pub fn set_wifi(&self, on: bool, _pw: &str) -> Result<(), ControlError> {
         let v = if on { "on" } else { "off" };
-        if self.bsd() {
-            self.admin(AdminAction::WifiPower, &[&self.wlan, v], pw)
-        } else {
-            self.ok(self.run(&["nmcli", "radio", "wifi", v]))
-        }
+        self.ok(self.run(&["nmcli", "radio", "wifi", v]))
     }
 
-    /// Joins (slow: call off the UI thread). Password on stdin (Linux) or inside the admin request (FreeBSD).
+    /// Joins (slow: call off the UI thread). The password goes on stdin, never argv.
     pub fn wifi_join(
         &self,
         ssid: &str,
         password: Option<&str>,
-        admin_pw: &str,
+        _admin_pw: &str,
     ) -> Result<(), ControlError> {
         if crate::wifi::validate(ssid, password).is_some() {
             return Err(ControlError::Invalid);
-        }
-        if self.bsd() {
-            let mut a = vec![self.wlan.as_str(), ssid];
-            if let Some(p) = password {
-                a.push(p);
-            }
-            self.admin(AdminAction::WifiJoin, &a, admin_pw)?;
-            return self.wait_joined(ssid, password.is_some());
         }
         let out = match password {
             Some(p) => (self.stdin)(
@@ -445,89 +378,42 @@ impl Controls {
         })
     }
 
-    /// FreeBSD, after wol-admind reloaded wpa_supplicant: Ok once `ssid` is joined, WrongPassword
-    /// when a secured network refused us, Failed after [`JOIN_WAIT`]. Unreadable wpa_supplicant
-    /// (not in its group): Ok, as before the wait existed.
-    fn wait_joined(&self, ssid: &str, secured: bool) -> Result<(), ControlError> {
-        let start = std::time::Instant::now();
-        loop {
-            let Some(status) = self.run(&["wpa_cli", "-i", &self.wlan, "status"]) else {
-                return Ok(());
-            };
-            let nets = self
-                .run(&["wpa_cli", "-i", &self.wlan, "list_networks"])
-                .unwrap_or_default();
-            match crate::wifi::join_state(&status, &nets, ssid) {
-                crate::wifi::JoinState::Joined => return Ok(()),
-                crate::wifi::JoinState::Refused if secured => {
-                    return Err(ControlError::WrongPassword);
-                }
-                crate::wifi::JoinState::Refused => return Err(ControlError::Failed),
-                crate::wifi::JoinState::Trying if start.elapsed() >= JOIN_WAIT => {
-                    return Err(ControlError::Failed);
-                }
-                crate::wifi::JoinState::Trying => std::thread::sleep(JOIN_POLL),
-            }
-        }
-    }
-
     // ---- Audio ----
 
+    /// PipeWire default sink (wpctl).
     pub fn volume(&self) -> Option<Volume> {
-        if self.bsd() {
-            self.run(&["mixer", "-o", "vol.volume", "vol.mute"])
-                .and_then(|s| parse_mixer(&s))
-        } else {
-            self.run(&["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
-                .and_then(|s| parse_wpctl_volume(&s))
-        }
+        self.run(&["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"])
+            .and_then(|s| parse_wpctl_volume(&s))
     }
 
     pub fn set_volume(&self, percent: u8) -> Result<(), ControlError> {
         let p = percent.min(100);
-        if self.bsd() {
-            self.ok(self.run(&["mixer", &format!("vol.volume={:.2}", p as f64 / 100.0)]))
-        } else {
-            self.ok(self.run(&[
-                "wpctl",
-                "set-volume",
-                "@DEFAULT_AUDIO_SINK@",
-                &format!("{p}%"),
-            ]))
-        }
+        self.ok(self.run(&[
+            "wpctl",
+            "set-volume",
+            "@DEFAULT_AUDIO_SINK@",
+            &format!("{p}%"),
+        ]))
     }
 
     pub fn set_muted(&self, muted: bool) -> Result<(), ControlError> {
         let m = if muted { "1" } else { "0" };
-        if self.bsd() {
-            self.ok(self.run(&["mixer", &format!("vol.mute={m}")]))
-        } else {
-            self.ok(self.run(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", m]))
-        }
+        self.ok(self.run(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", m]))
     }
 
+    /// Sinks through pipewire-pulse.
     pub fn outputs(&self) -> Vec<Output> {
-        if self.bsd() {
-            self.host
-                .read_text("/dev/sndstat")
-                .map(|s| parse_sndstat(&s))
-                .unwrap_or_default()
-        } else {
-            let def = self.run(&["pactl", "get-default-sink"]).unwrap_or_default();
-            self.run(&["pactl", "list", "sinks"])
-                .map(|s| parse_pactl_sinks(&s, &def))
-                .unwrap_or_default()
-        }
+        let def = self.run(&["pactl", "get-default-sink"]).unwrap_or_default();
+        self.run(&["pactl", "list", "sinks"])
+            .map(|s| parse_pactl_sinks(&s, &def))
+            .unwrap_or_default()
     }
 
-    pub fn set_output(&self, id: &str, pw: &str) -> Result<(), ControlError> {
-        if self.bsd() {
-            self.admin(AdminAction::AudioDefault, &[id], pw)
-        } else if id.is_empty() || id.starts_with('-') {
-            Err(ControlError::Invalid)
-        } else {
-            self.ok(self.run(&["pactl", "set-default-sink", id]))
+    pub fn set_output(&self, id: &str, _pw: &str) -> Result<(), ControlError> {
+        if id.is_empty() || id.starts_with('-') {
+            return Err(ControlError::Invalid);
         }
+        self.ok(self.run(&["pactl", "set-default-sink", id]))
     }
 
     // ---- Brightness ----
@@ -547,13 +433,8 @@ impl Controls {
         Some((dir, max))
     }
 
-    /// No fork on Linux (sysfs).
+    /// No fork (sysfs).
     pub fn brightness(&self) -> Option<u8> {
-        if self.bsd() {
-            return self
-                .run(&["backlight", "-q"])
-                .and_then(|s| parse_backlight(&s));
-        }
         let (dir, max) = self.linux_backlight()?;
         backlight_percent(
             &self.host.read_text(&format!("{dir}/brightness"))?,
@@ -561,12 +442,9 @@ impl Controls {
         )
     }
 
-    /// Linux: logind `SetBrightness` (no root). FreeBSD: backlight(8).
+    /// logind `SetBrightness` (no root).
     pub fn set_brightness(&self, percent: u8) -> Result<(), ControlError> {
         let p = percent.clamp(1, 100);
-        if self.bsd() {
-            return self.ok(self.run(&["backlight", &p.to_string()]));
-        }
         let (dir, max) = self.linux_backlight().ok_or(ControlError::Unavailable)?;
         let dev = dir.rsplit('/').next().unwrap_or("");
         let raw = (max * p as u64 / 100).max(1).to_string();
@@ -586,26 +464,18 @@ impl Controls {
 
     // ---- Bluetooth ----
 
+    /// BlueZ adapter powered.
     pub fn bluetooth(&self) -> Option<bool> {
-        if self.bsd() {
-            let o = self.run(&["hccontrol", "-n", "ubt0hci", "read_scan_enable"])?;
-            Some(!o.contains("disabled") && !o.trim().ends_with("0"))
-        } else {
-            self.run(&["bluetoothctl", "show"])
-                .and_then(|s| parse_bluetoothctl(&s))
-        }
+        self.run(&["bluetoothctl", "show"])
+            .and_then(|s| parse_bluetoothctl(&s))
     }
 
-    pub fn set_bluetooth(&self, on: bool, pw: &str) -> Result<(), ControlError> {
+    pub fn set_bluetooth(&self, on: bool, _pw: &str) -> Result<(), ControlError> {
         let v = if on { "on" } else { "off" };
-        if self.bsd() {
-            self.admin(AdminAction::Bluetooth, &[v], pw)
-        } else {
-            self.ok(self.run(&["bluetoothctl", "power", v]))
-        }
+        self.ok(self.run(&["bluetoothctl", "power", v]))
     }
 
-    // ---- Displays (Hyprland, both platforms) ----
+    // ---- Displays (Hyprland) ----
 
     pub fn monitors(&self) -> Vec<Monitor> {
         self.run(&["hyprctl", "-j", "monitors", "all"])
@@ -786,13 +656,6 @@ mod tests {
                 "{t}"
             );
         }
-        assert_eq!(
-            parse_mixer("vol.volume=0.75:0.70\nvol.mute=1\n"),
-            Some(Volume {
-                percent: 75,
-                muted: true
-            })
-        );
         let sinks = "Sink #43\n\tState: RUNNING\n\tName: mic_sink\n\tDescription: Mic\nSink #70\n\tName: alsa.out\n\tDescription: Built-in Audio\n";
         let o = parse_pactl_sinks(sinks, "alsa.out\n");
         assert_eq!(o.len(), 2);
@@ -800,21 +663,10 @@ mod tests {
             (o[1].id.as_str(), o[1].name.as_str(), o[1].default),
             ("alsa.out", "Built-in Audio", true)
         );
-        let st = "Installed devices:\npcm0: <Realtek ALC269 (Analog)> (play/rec) default\npcm1: <HDMI> (play)\npcm2: <Mic> (rec)\n";
-        let o = parse_sndstat(st);
-        assert_eq!(
-            o.iter()
-                .map(|x| (x.id.as_str(), x.name.as_str(), x.default))
-                .collect::<Vec<_>>(),
-            [
-                ("pcm0", "Realtek ALC269 (Analog)", true),
-                ("pcm1", "HDMI", false)
-            ]
-        );
     }
 
     #[test]
-    fn freebsd_wifi_and_misc_parsers() {
+    fn wpa_and_misc_parsers() {
         let scan = "bssid / frequency / signal level / flags / ssid\n00:11\t2412\t-50\t[WPA2-PSK-CCMP][ESS]\tHome\n00:12\t2412\t-80\t[ESS]\tFree\n00:13\t5180\t-60\t[WPA2-PSK]\t\n";
         let v = parse_scan_results(scan, Some("Home"));
         assert_eq!(v.len(), 2);
@@ -828,8 +680,6 @@ mod tests {
             Some("Home")
         );
         assert_eq!(parse_wpa_status("wpa_state=SCANNING\nssid=Home\n"), None);
-        assert_eq!(parse_backlight("75\n"), Some(75));
-        assert_eq!(parse_backlight("brightness: 30\n"), Some(30));
         assert_eq!(backlight_percent("10666", "21333"), Some(49));
         assert_eq!(backlight_percent("1", "0"), None);
         assert_eq!(
@@ -855,8 +705,8 @@ mod tests {
         assert!(parse_hypr_monitors("nope").is_empty());
     }
 
-    fn controls(bsd: bool) -> (Arc<FakeHost>, Controls, Arc<Mutex<Vec<String>>>) {
-        let h = Arc::new(FakeHost::new(bsd));
+    fn controls() -> (Arc<FakeHost>, Controls, Arc<Mutex<Vec<String>>>) {
+        let h = Arc::new(FakeHost::linux());
         let log = Arc::new(Mutex::new(Vec::new()));
         let (l1, l2) = (log.clone(), log.clone());
         let c = Controls {
@@ -886,7 +736,7 @@ mod tests {
 
     #[test]
     fn linux_reads_and_writes() {
-        let (h, c, log) = controls(false);
+        let (h, c, log) = controls();
         h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.64\n")
             .command("nmcli radio wifi", "enabled\n")
             .command("wpctl set-volume @DEFAULT_AUDIO_SINK@ 30%", "")
@@ -918,73 +768,36 @@ mod tests {
         );
     }
 
-    /// FreeBSD join: wol-admind only rewrites wpa_supplicant.conf; the answer waits for the network
-    /// (wrong password = WrongPassword, not a silent success).
+    /// Radio, Bluetooth and the output need no administrator (NetworkManager, BlueZ, PipeWire);
+    /// accounts and packages still go through wol-admind.
     #[test]
-    fn freebsd_join_waits_for_the_network() {
-        const NETS: &str = "network id / ssid / bssid / flags\n0\tHome\tany\t[TEMP-DISABLED]\n1\tCafe\tany\t[TEMP-DISABLED]\n";
-        let (h, c, _) = controls(true);
-        h.command("wpa_cli -i wlan0 status", "wpa_state=SCANNING\n")
-            .command("wpa_cli -i wlan0 list_networks", NETS);
+    fn local_changes_and_admin_actions() {
+        let (h, c, log) = controls();
+        h.command("nmcli radio wifi off", "")
+            .command("bluetoothctl power on", "Changing power on succeeded\n")
+            .command("pactl set-default-sink alsa.out", "");
+        assert_eq!(c.set_wifi(false, ""), Ok(()));
+        assert_eq!(c.set_bluetooth(true, ""), Ok(()));
+        assert_eq!(c.set_output("alsa.out", ""), Ok(()));
+        assert_eq!(c.set_output("-x", ""), Err(ControlError::Invalid));
         assert_eq!(
-            c.wifi_join("Home", Some("password1"), "secret"),
-            Err(ControlError::WrongPassword)
-        );
-        assert_eq!(
-            c.wifi_join("Cafe", None, "secret"),
-            Err(ControlError::Failed),
-            "open network refused: not a password problem"
-        );
-        h.command(
-            "wpa_cli -i wlan0 status",
-            "wpa_state=COMPLETED\nssid=Home\n",
-        );
-        assert_eq!(c.wifi_join("Home", Some("password1"), "secret"), Ok(()));
-        let (_, c, _) = controls(true);
-        assert_eq!(
-            c.wifi_join("Home", Some("password1"), "secret"),
-            Ok(()),
-            "wpa_supplicant unreadable: trust the reconfigure"
-        );
-    }
-
-    #[test]
-    fn freebsd_admin_actions() {
-        let (h, c, log) = controls(true);
-        h.command(
-            "mixer -o vol.volume vol.mute",
-            "vol.volume=0.50:0.50\nvol.mute=0\n",
-        )
-        .command("backlight -q", "80\n");
-        assert_eq!(c.volume().map(|v| v.percent), Some(50));
-        assert_eq!(c.brightness(), Some(80));
-        assert_eq!(
-            c.wifi_join("Home", Some("password1"), ""),
+            c.add_user("dinah", "Dinah", false, "n3w-passw0rd", ""),
             Err(ControlError::NeedsAuth)
         );
-        assert_eq!(c.wifi_join("Home", Some("password1"), "secret"), Ok(()));
-        assert_eq!(c.set_wifi(false, "secret"), Ok(()));
-        assert_eq!(c.set_output("pcm1", "secret"), Ok(()));
-        assert_eq!(c.set_output("pcmX", "secret"), Err(ControlError::Invalid));
         assert_eq!(
             c.add_user("dinah", "Dinah", false, "n3w-passw0rd", "secret"),
             Ok(())
         );
         let l = log.lock().unwrap().clone();
-        assert_eq!(
-            l[1],
-            r#"admin wifi-join ["wlan0", "Home", "password1"] pw=secret"#
-        );
-        assert!(l[2].starts_with("admin wifi-power [\"wlan0\", \"off\"]"));
-        assert!(l.iter().any(|x| x.starts_with("admin user-add")));
+        assert!(l.iter().all(|x| x.starts_with("admin user-add")), "{l:?}");
         assert_eq!(c.pkg_install("steam", "secret"), Ok(()));
         assert_eq!(c.pkg_install("-rf", "secret"), Err(ControlError::Invalid));
     }
 
     #[test]
     fn restore_point_and_revoke_go_to_wol_admind() {
-        let (_, c, log) = controls(true);
-        assert_eq!(c.boot_environment("wol-before-update-1", "secret"), Ok(()));
+        let (_, c, log) = controls();
+        assert_eq!(c.boot_environment("wolos-b", "secret"), Ok(()));
         assert_eq!(
             c.boot_environment("a;b", "secret"),
             Err(ControlError::Invalid)
@@ -994,7 +807,7 @@ mod tests {
         assert_eq!(
             l,
             [
-                r#"admin boot-environment ["wol-before-update-1"] pw=secret"#,
+                r#"admin boot-environment ["wolos-b"] pw=secret"#,
                 "admin revoke [] pw="
             ]
         );
@@ -1003,7 +816,7 @@ mod tests {
     /// Settings sends any allow-listed request through one call; invalid ones never leave.
     #[test]
     fn any_admin_request_goes_through_one_call() {
-        let (_, c, log) = controls(true);
+        let (_, c, log) = controls();
         let req = |action, args: &[&str]| AdminRequest {
             action,
             args: sv(args),
@@ -1027,7 +840,7 @@ mod tests {
                 r#"admin firewall ["on"] pw="#
             ]
         );
-        let mut down = Controls::new(Arc::new(FakeHost::new(true)));
+        let mut down = Controls::new(Arc::new(FakeHost::linux()));
         down.admin = Arc::new(|_, _| None);
         assert_eq!(
             down.admin_request(&req(AdminAction::Ntp, &["on"]), "pw"),
@@ -1037,24 +850,13 @@ mod tests {
 
     #[test]
     fn settings_reads() {
-        let (h, c, _) = controls(true);
-        let all = |c: &Controls| {
-            let t = (c.network_time(), c.remote_login(), c.firewall());
-            (t, c.hostname(), c.lid())
-        };
-        assert_eq!(all(&c), ((Some(false), None, None), None, None));
-        h.command("service ntpd enabled", "")
-            .command("sysrc -n sshd_enable", "YES\n")
-            .command("sysrc -n pf_enable", "NO\n")
-            .string("kern.hostname", "wolos")
-            .string("hw.acpi.lid_switch_state", "S3");
+        let (h, c, _) = controls();
+        assert_eq!((c.network_time(), c.lid()), (None, None));
+        h.command("timedatectl show -p NTP --value", "yes\n")
+            .file("/proc/acpi/button/lid/LID0/state", "state: open\n");
         assert_eq!(
-            all(&c),
-            (
-                (Some(true), Some(true), Some(false)),
-                Some("wolos".into()),
-                Some(crate::power::Lid::Sleep)
-            )
+            (c.network_time(), c.lid()),
+            (Some(true), Some(crate::power::Lid::Sleep))
         );
     }
 

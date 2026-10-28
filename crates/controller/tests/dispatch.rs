@@ -279,24 +279,53 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     assert_eq!(run("update apply", &mut env), 64);
     assert_eq!(run("update apply --yes", &mut env), 77);
     assert!(env.execs.is_empty());
+    // Running wolos-a; wolos-b holds the previous restore point; pacman fails in the new slot.
+    let cmdline = (
+        std::path::PathBuf::from("/proc/cmdline"),
+        "root=LABEL=wolos rootflags=subvol=@wolos-a rw\n".to_string(),
+    );
+    let bootctl = (
+        "bootctl list --json=short".to_string(),
+        r#"[{"id":"wolos-a.conf","isSelected":true},{"id":"wolos-b.conf"}]"#.to_string(),
+    );
     let mut env = FakeEnv {
         root: true,
         exec_codes: vec![0, 0, 1],
+        files: vec![cmdline.clone()],
+        captures: vec![bootctl.clone()],
         ..Default::default()
     };
-    assert_eq!(run("update apply be1 --yes", &mut env), 1);
-    assert_eq!(env.execs[0], ["bectl", "create", "be1"]);
-    assert_eq!(env.execs[2][0], "pkg");
-    assert!(
-        env.execs[3..]
-            .iter()
-            .any(|e| e.contains(&"destroy".to_string())),
-        "{:?}",
-        env.execs
+    assert_eq!(run("update apply wolos-b 2026/11/02 --yes", &mut env), 1);
+    let ran: Vec<String> = env.execs.iter().map(|e| e.join(" ")).collect();
+    assert_eq!(ran[0], "btrfs subvolume delete /run/wolos/top/@wolos-b");
+    assert_eq!(ran[1], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
+    assert!(ran[2].starts_with("sed -i "), "{ran:?}");
+    assert_eq!(
+        ran[3..],
+        [
+            "btrfs subvolume delete /run/wolos/top/@wolos-b",
+            "rm -f /efi/loader/entries/wolos-b+3.conf"
+        ],
+        "failed: the new slot is removed"
     );
-    let mut env = FakeEnv::default();
-    run("update plan be2", &mut env);
-    assert!(env.out.starts_with("bectl create be2\n"));
+    // Never the running slot; the other one by default.
+    let mut env = FakeEnv {
+        files: vec![cmdline],
+        captures: vec![bootctl],
+        ..Default::default()
+    };
+    assert_eq!(run("update plan wolos-a", &mut env), 64);
+    run("update plan", &mut env);
+    assert!(
+        env.out
+            .contains("btrfs subvolume snapshot / /run/wolos/top/@wolos-b\n"),
+        "{}",
+        env.out
+    );
+    assert!(
+        env.out
+            .contains("arch-chroot /run/wolos/top/@wolos-b pacman -Syu --noconfirm\n")
+    );
 }
 
 #[test]

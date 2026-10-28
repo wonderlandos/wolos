@@ -465,7 +465,7 @@ fn admin_failures_and_wrong_answers() {
 #[test]
 fn changes_without_a_session_are_refused() {
     for (tool, args) in [
-        ("restore_activate", json!({"be": "wol-before-update-1"})),
+        ("restore_activate", json!({"be": "wolos-b"})),
         ("appearance_set", json!({"mode": "dark"})),
     ] {
         let mut e = FakeEnv {

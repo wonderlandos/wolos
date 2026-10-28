@@ -6,7 +6,7 @@ use serde::Deserialize;
 
 pub const MAX_PASSES: u32 = 5;
 
-/// `/usr/local/etc/wolos/glass.json`. Every field optional; missing or bad file = defaults.
+/// `/etc/wolos/glass.json`. Every field optional; missing or bad file = defaults.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct GlassConfig {

@@ -1,0 +1,13 @@
+[Unit]
+Description=WolOS unattended install (wolos.autoinstall=<disk>)
+ConditionKernelCommandLine=wolos.autoinstall
+After=local-fs.target systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/autoinstall
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+#!/bin/sh
+# "Install WolOS" from the live desktop (ADR 0009, ADR 0013): the Install WolOS app (disk, erase
+# warning, progress, Restart); it runs /usr/lib/wolos/install-run as root through sudo, which the
+# live image allows without a password.
+exec /usr/bin/wol-installer "$@"

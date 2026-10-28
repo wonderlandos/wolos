@@ -1,1 +1,0 @@
-{"label": "org.wol.admin", "program": ["/usr/local/bin/wol-admind"], "keepAlive": true, "throttleSeconds": 2, "qos": "user-initiated"}

@@ -1,0 +1,11 @@
+[Unit]
+Description=WolOS power policy for the power source and mode (wol power apply)
+After=wolos-hw.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/wol power apply
+
+[Install]
+WantedBy=multi-user.target

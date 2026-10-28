@@ -188,7 +188,7 @@ pub fn displays_conf(current: Option<&str>, rule: &str) -> String {
 /// User hyprland.conf with a `source` line for the fragments; None when already present.
 pub fn ensure_source(user_conf: Option<&str>, fragments_glob: &str) -> Option<String> {
     let line = format!("source = {fragments_glob}");
-    let cur = user_conf.unwrap_or("source = /usr/local/share/wolos/hypr/hyprland.conf\n");
+    let cur = user_conf.unwrap_or("source = /usr/share/wolos/hypr/hyprland.conf\n");
     if cur.lines().any(|l| l.trim() == line) {
         return None;
     }
@@ -307,7 +307,7 @@ mod tests {
         assert_eq!(c.matches("monitor = ").count(), 2);
         assert!(c.ends_with("monitor = eDP-1,1920x1080@60.00,auto,1.5\n"));
         let s = ensure_source(None, "/h/.config/hypr/wolos/*.conf").unwrap();
-        assert!(s.starts_with("source = /usr/local/share/wolos/hypr/hyprland.conf\n"));
+        assert!(s.starts_with("source = /usr/share/wolos/hypr/hyprland.conf\n"));
         assert_eq!(
             ensure_source(Some(&s), "/h/.config/hypr/wolos/*.conf"),
             None

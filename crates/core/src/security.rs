@@ -1,64 +1,68 @@
 //! Settings > Privacy & Security backend: the firewall, the kernel hardening WolOS ships and what
-//! each app permission really enforces on FreeBSD (archicture/modules/security.md).
+//! each app permission really enforces (archicture/modules/security.md).
 
-/// Kernel hardening shipped in `/etc/sysctl.conf.local` (desktop/overlay, test-checked):
-/// (sysctl, value, why). ASLR is already the FreeBSD 15 default (`kern.elf64.aslr.enable=1`).
+/// Kernel hardening shipped in [`HARDENING_FILE`] (desktop/overlay, test-checked):
+/// (sysctl, value, why). ASLR is already the Linux default (`kernel.randomize_va_space=2`).
 pub const HARDENING: &[(&str, &str, &str)] = &[
     (
-        "security.bsd.see_other_uids",
-        "0",
-        "accounts cannot list each other's processes (command lines can hold secrets)",
+        "kernel.kptr_restrict",
+        "2",
+        "kernel addresses stay hidden from every account (exploits need them)",
     ),
     (
-        "security.bsd.see_other_gids",
-        "0",
-        "nor the processes of groups they are not in",
-    ),
-    (
-        "security.bsd.unprivileged_read_msgbuf",
-        "0",
+        "kernel.dmesg_restrict",
+        "1",
         "the kernel log (addresses, devices, USB serials) is for administrators",
     ),
     (
-        "security.bsd.hardlink_check_uid",
+        "kernel.yama.ptrace_scope",
+        "1",
+        "apps can debug only their own children, not read other running apps' memory",
+    ),
+    (
+        "kernel.unprivileged_bpf_disabled",
+        "1",
+        "only administrators load BPF programs into the kernel",
+    ),
+    (
+        "fs.protected_hardlinks",
         "1",
         "no hard links to other accounts' files (link tricks in shared folders)",
     ),
     (
-        "security.bsd.hardlink_check_gid",
+        "fs.protected_symlinks",
         "1",
-        "nor to files of groups the account is not in",
+        "no following other accounts' symlinks in shared folders like /tmp",
     ),
     (
-        "kern.randompid",
+        "net.ipv4.tcp_syncookies",
         "1",
-        "process IDs cannot be guessed (PID races against helpers)",
+        "a flood of half-open connections cannot exhaust the network stack",
     ),
 ];
 
-/// rc.conf settings WolOS ships for security (image/rcconf.sh and image/installerconfig, test-checked).
-pub const RC_DEFAULTS: &[(&str, &str, &str)] = &[
-    ("pf_enable", "YES", "the firewall is on from the first boot"),
+/// Where [`HARDENING`] is set at boot (systemd-sysctl).
+pub const HARDENING_FILE: &str = "/etc/sysctl.d/90-wolos.conf";
+
+/// Units WolOS ships enabled or disabled for security: (unit, enabled, why).
+pub const UNIT_DEFAULTS: &[(&str, bool, &str)] = &[
     (
-        "pf_rules",
-        crate::sharing::PF_RULES,
-        "the WolOS ruleset: nothing comes in unasked",
+        "nftables.service",
+        true,
+        "the firewall is on from the first boot",
     ),
-    (
-        "syslogd_flags",
-        "-ss",
-        "the system log listens on no network socket",
-    ),
-    ("sendmail_enable", "NONE", "no mail daemon"),
-    ("clear_tmp_enable", "YES", "/tmp starts empty at every boot"),
+    ("sshd.service", false, "no inbound remote login by default"),
 ];
+
+/// Syslog daemons that could send the log over the network (WolOS ships journald only).
+pub const NETWORK_LOGGERS: &[&str] = &["rsyslog.service", "syslog-ng@default.service"];
 
 /// One hardening setting as the kernel has it now.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Check {
     pub key: String,
     pub want: String,
-    /// None: unknown (not FreeBSD, or the sysctl is missing).
+    /// None: unknown (the sysctl is missing or unreadable).
     pub now: Option<String>,
 }
 
@@ -71,14 +75,19 @@ impl Check {
 /// Probe: fixed argv -> stdout, None when it failed (wol-admind's and the CLI's runners).
 pub type Probe<'a> = &'a dyn Fn(&[&str]) -> Option<String>;
 
-/// [`HARDENING`] against the running kernel (`sysctl -n`).
+/// `/proc/sys` path of a sysctl key.
+pub fn proc_sys(key: &str) -> String {
+    format!("/proc/sys/{}", key.replace('.', "/"))
+}
+
+/// [`HARDENING`] against the running kernel (`/proc/sys`).
 pub fn hardening(probe: Probe) -> Vec<Check> {
     HARDENING
         .iter()
         .map(|(k, v, _)| Check {
             key: (*k).into(),
             want: (*v).into(),
-            now: probe(&["sysctl", "-n", k])
+            now: probe(&["cat", &proc_sys(k)])
                 .map(|o| o.trim().to_owned())
                 .filter(|o| !o.is_empty()),
         })
@@ -88,43 +97,55 @@ pub fn hardening(probe: Probe) -> Vec<Check> {
 /// What Privacy & Security shows.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Status {
-    /// Firewall on at boot (`pf_enable`); None: unknown.
+    /// Firewall on at boot (nftables.service enabled); None: unknown.
     pub firewall: Option<bool>,
-    /// pf filtering now (`pfctl -s info`, administrators only); None: not known to this account.
+    /// nftables loaded now (`systemctl is-active`); None: unknown.
     pub firewall_running: Option<bool>,
     /// Remote Login (sshd) on at boot.
     pub remote_login: Option<bool>,
-    /// The system log listens on no network socket (`syslogd -ss`).
+    /// No syslog daemon that could send the log over the network ([`NETWORK_LOGGERS`]).
     pub system_log_private: bool,
     pub hardening: Vec<Check>,
 }
 
-/// `pfctl -s info` -> filtering on (`Status: Enabled ...`).
-pub fn parse_pf_info(text: &str) -> Option<bool> {
-    let l = text.lines().find(|l| l.starts_with("Status: "))?;
-    Some(l["Status: ".len()..].starts_with("Enabled"))
+/// `systemctl is-active` output -> running.
+pub fn parse_active(text: &str) -> Option<bool> {
+    match text.trim() {
+        "active" | "reloading" => Some(true),
+        "inactive" | "failed" | "deactivating" => Some(false),
+        _ => None,
+    }
 }
 
 pub fn status(probe: Probe) -> Status {
-    let rc =
-        |var: &str| probe(&["sysrc", "-n", var]).and_then(|o| crate::sharing::parse_rc_yes(&o));
+    let unit = |u: &str| {
+        probe(&["systemctl", "show", "-p", "UnitFileState", "--value", u])
+            .and_then(|o| crate::sharing::parse_enabled(&o))
+    };
     Status {
-        firewall: rc("pf_enable"),
-        firewall_running: probe(&["pfctl", "-s", "info"]).and_then(|o| parse_pf_info(&o)),
-        remote_login: rc("sshd_enable"),
-        system_log_private: probe(&["sysrc", "-n", "syslogd_flags"])
-            .is_some_and(|f| f.split_whitespace().any(|w| w == "-ss")),
+        firewall: unit("nftables.service"),
+        firewall_running: probe(&[
+            "systemctl",
+            "show",
+            "-p",
+            "ActiveState",
+            "--value",
+            "nftables.service",
+        ])
+        .and_then(|o| parse_active(&o)),
+        remote_login: unit("sshd.service"),
+        system_log_private: NETWORK_LOGGERS.iter().all(|u| unit(u) == Some(false)),
         hardening: hardening(probe),
     }
 }
 
-/// How a privacy permission is enforced on FreeBSD. Settings shows the honest wording.
+/// How a privacy permission is enforced. Settings shows the honest wording.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Enforcement {
     /// The compositor refuses it (Hyprland permissions, [`HYPR_PERMISSIONS`]).
     Compositor,
-    /// Recorded and shown to helpers that ask; FreeBSD cannot stop an app that ignores it.
+    /// Recorded and shown to helpers that ask; nothing stops an app that ignores it yet.
     Advisory,
 }
 
@@ -159,12 +180,12 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
     (
         "microphone",
         Enforcement::Advisory,
-        "/dev/dsp plays and records on the same device, so recording cannot be split off",
+        "PipeWire gives the microphone to every app of the account; there is no per-app gate yet",
     ),
     (
         "location",
         Enforcement::Advisory,
-        "FreeBSD has no location service; nothing reports a position",
+        "WolOS ships no location service; nothing reports a position",
     ),
     (
         "files-outside-home",
@@ -247,15 +268,22 @@ mod tests {
         assert_eq!(keys.len(), HARDENING.len());
         for (k, v, why) in HARDENING {
             assert!(
-                k.starts_with("security.bsd.") || k.starts_with("kern."),
+                ["kernel.", "fs.", "net."].iter().any(|p| k.starts_with(p)),
                 "{k}"
             );
             assert!(v.parse::<i64>().is_ok(), "{k}={v}");
             assert!(!why.is_empty() && !why.contains('\n'), "{k}: one line");
         }
         assert!(
-            !keys.contains(&"security.bsd.unprivileged_proc_debug"),
-            "own-process debugging stays (developers); other accounts' never was allowed"
+            !keys.contains(&"kernel.yama.ptrace_scope") || {
+                let v = HARDENING.iter().find(|h| h.0 == "kernel.yama.ptrace_scope");
+                v.is_some_and(|h| h.1 == "1")
+            },
+            "debugging own children stays (developers)"
+        );
+        assert_eq!(
+            proc_sys("kernel.yama.ptrace_scope"),
+            "/proc/sys/kernel/yama/ptrace_scope"
         );
     }
 
@@ -274,14 +302,27 @@ mod tests {
     #[test]
     fn status_reports_the_running_system() {
         const MACHINE: &[(&str, &str)] = &[
-            ("sysctl -n security.bsd.see_other_uids", "0\n"),
-            ("sysctl -n kern.randompid", "0\n"),
-            ("sysrc -n pf_enable", "YES\n"),
-            ("sysrc -n sshd_enable", "NO\n"),
-            ("sysrc -n syslogd_flags", "-ss\n"),
+            ("cat /proc/sys/kernel/kptr_restrict", "2\n"),
+            ("cat /proc/sys/kernel/dmesg_restrict", "0\n"),
             (
-                "pfctl -s info",
-                "Status: Enabled for 0 days 00:12:01           Debug: Urgent\n\nState Table\n",
+                "systemctl show -p UnitFileState --value nftables.service",
+                "enabled\n",
+            ),
+            (
+                "systemctl show -p ActiveState --value nftables.service",
+                "active\n",
+            ),
+            (
+                "systemctl show -p UnitFileState --value sshd.service",
+                "disabled\n",
+            ),
+            (
+                "systemctl show -p UnitFileState --value rsyslog.service",
+                "\n",
+            ),
+            (
+                "systemctl show -p UnitFileState --value syslog-ng@default.service",
+                "\n",
             ),
         ];
         let st = status(&probe(MACHINE));
@@ -295,17 +336,17 @@ mod tests {
             (Some(true), Some(true), Some(false), true)
         );
         let get = |k: &str| st.hardening.iter().find(|c| c.key == k).unwrap();
-        assert!(get("security.bsd.see_other_uids").ok());
+        assert!(get("kernel.kptr_restrict").ok());
         assert!(
-            !get("kern.randompid").ok(),
-            "set at boot by sysctl.conf.local"
+            !get("kernel.dmesg_restrict").ok(),
+            "set at boot by sysctl.d"
         );
-        assert_eq!(get("security.bsd.see_other_gids").now, None);
+        assert_eq!(get("fs.protected_symlinks").now, None);
         let user = status(&probe(&[]));
         assert_eq!((user.firewall, user.firewall_running), (None, None));
         assert!(!user.system_log_private);
-        assert_eq!(parse_pf_info("Status: Disabled for 0 days\n"), Some(false));
-        assert_eq!(parse_pf_info("pfctl: /dev/pf: Permission denied\n"), None);
+        assert_eq!(parse_active("failed\n"), Some(false));
+        assert_eq!(parse_active("Permission denied"), None);
     }
 
     #[test]

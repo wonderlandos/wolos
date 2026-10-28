@@ -1,7 +1,5 @@
-//! wine-proton defaults per GPU vendor. Defaults only: a variable already in the environment
+//! wine defaults per GPU vendor. Defaults only: a variable already in the environment
 //! (Steam launch options, the shell) wins.
-use wol_core::games::wine::{Sync, Version, sync};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Vendor {
     Intel,
@@ -53,17 +51,13 @@ pub const MESA: [(&str, &str); 1] = [("MESA_VK_WSI_PRESENT_MODE", "mailbox")];
 /// NVIDIA driver: keep the shader cache past its 128 MiB default trim (large games recompile).
 pub const NVIDIA: [(&str, &str); 1] = [("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", "1")];
 
-/// Defaults for a vendor and wine-proton release.
-pub fn defaults(v: Vendor, release: Option<Version>) -> Vec<(&'static str, &'static str)> {
+/// Defaults for a vendor. No sync variable: wine 11 dropped esync and uses ntsync when the kernel has it.
+pub fn defaults(v: Vendor) -> Vec<(&'static str, &'static str)> {
     let mut d: Vec<(&str, &str)> = COMMON.to_vec();
     match v {
         Vendor::Intel | Vendor::Amd => d.extend(MESA),
         Vendor::Nvidia => d.extend(NVIDIA),
         Vendor::Other => {}
-    }
-    // esync is the fastest sync wine-proton has on FreeBSD (10.x); 11.x ignores it.
-    if release.is_none_or(|r| sync(r) == Sync::Esync) {
-        d.push(("WINEESYNC", "1"));
     }
     d
 }
@@ -90,32 +84,22 @@ mod tests {
 
     #[test]
     fn presets_table() {
-        let v10 = Version::parse("wine-10.0");
-        let v11 = Version::parse("wine-11.0");
-        let keys = |v, r| -> Vec<&str> { defaults(v, r).iter().map(|kv| kv.0).collect() };
+        let keys = |v| -> Vec<&str> { defaults(v).iter().map(|kv| kv.0).collect() };
         let base = ["WINEDEBUG", "STAGING_SHARED_MEMORY", "DXVK_LOG_PATH"];
-        for (vendor, release, extra) in [
-            (
-                Vendor::Intel,
-                v10,
-                &["MESA_VK_WSI_PRESENT_MODE", "WINEESYNC"][..],
-            ),
-            (Vendor::Amd, v11, &["MESA_VK_WSI_PRESENT_MODE"]),
-            (
-                Vendor::Nvidia,
-                v10,
-                &["__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", "WINEESYNC"],
-            ),
-            (Vendor::Other, None, &["WINEESYNC"]),
+        for (vendor, extra) in [
+            (Vendor::Intel, &["MESA_VK_WSI_PRESENT_MODE"][..]),
+            (Vendor::Amd, &["MESA_VK_WSI_PRESENT_MODE"]),
+            (Vendor::Nvidia, &["__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"]),
+            (Vendor::Other, &[]),
         ] {
             let want: Vec<&str> = base.iter().chain(extra).copied().collect();
-            assert_eq!(keys(vendor, release), want, "{vendor:?} {release:?}");
+            assert_eq!(keys(vendor), want, "{vendor:?}");
         }
         assert!(
-            !defaults(Vendor::Intel, v10)
+            !defaults(Vendor::Intel)
                 .iter()
-                .any(|kv| kv.0 == "WINEFSYNC" || kv.0.starts_with("PROTON_")),
-            "native wine reads no fsync and no PROTON_* knobs"
+                .any(|kv| kv.0.contains("SYNC") || kv.0.starts_with("PROTON_")),
+            "wine 11 picks ntsync itself; native wine reads no PROTON_* knobs"
         );
     }
 }

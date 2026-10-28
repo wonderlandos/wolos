@@ -1,0 +1,12 @@
+[Unit]
+Description=WolOS GPU: panel brightness once the display driver is up
+After=wolos-hw.service
+Before=wold.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/wolos/gpu
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+#!/bin/sh
+# WolOS installer: print the disks it may erase, one per line (/dev/...).
+# Never the disk we booted from (the live medium under /run/archiso/bootmnt), a CD, a loop or zram
+# device, or a read-only disk.
+set -u
+boot=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null)
+media=
+if [ -n "$boot" ]; then
+  media=$(lsblk -no PKNAME -p "$boot" 2>/dev/null | head -1)
+  [ -n "$media" ] || media=$boot
+fi
+lsblk -dnpbo NAME,SIZE,TYPE,RO | while read -r name size type ro; do
+  [ "$type" = disk ] && [ "$ro" = 0 ] || continue
+  case $name in /dev/zram* | /dev/loop* | /dev/sr*) continue ;; esac
+  [ "$name" = "$media" ] && continue
+  echo "$name"
+done

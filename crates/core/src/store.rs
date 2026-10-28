@@ -1,5 +1,5 @@
-//! App Store catalog: curated desktop apps mapped to FreeBSD packages, install plans for wol-admind
-//! (`pkg-install`), `pkg search` parsing. Pure; the shell runs reads off the UI thread.
+//! App Store catalog: curated desktop apps mapped to Arch packages, install plans for wol-admind
+//! (`pkg-install`), `pacman -Ss` parsing. Pure; the shell runs reads off the UI thread.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Category {
@@ -26,14 +26,6 @@ impl Category {
     }
 }
 
-/// Extra system setup an app needs besides its packages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Setup {
-    None,
-    /// Linux binary compatibility (Steam, Proton): enable and start linux64 first.
-    Linux,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct App {
     pub id: &'static str,
@@ -46,7 +38,6 @@ pub struct App {
     /// .desktop basename (no extension): Open launches it, its presence means installed.
     pub desktop: &'static str,
     pub packages: &'static [&'static str],
-    pub setup: Setup,
 }
 
 const fn app(
@@ -66,7 +57,6 @@ const fn app(
         icon,
         desktop,
         packages,
-        setup: Setup::None,
     }
 }
 
@@ -99,7 +89,7 @@ pub const CATALOG: [App; 40] = [
         Work,
         "libreoffice-startcenter",
         "libreoffice-startcenter",
-        &["libreoffice"],
+        &["libreoffice-fresh"],
     ),
     app(
         "chromium",
@@ -153,7 +143,7 @@ pub const CATALOG: [App; 40] = [
         Work,
         "Nextcloud",
         "com.nextcloud.desktopclient.nextcloud",
-        &["nextcloudclient"],
+        &["nextcloud-client"],
     ),
     app(
         "evolution",
@@ -265,18 +255,15 @@ pub const CATALOG: [App; 40] = [
         &["scribus"],
     ),
     // Play
-    App {
-        setup: Setup::Linux,
-        ..app(
+    app(
             "steam",
             "Steam",
             "Thousands of games, one library",
             Play,
             "steam",
             "steam",
-            &["linux_base-rl9", "linux-steam-utils"],
-        )
-    },
+            &["steam"],
+    ),
     app(
         "vlc",
         "VLC",
@@ -366,7 +353,7 @@ pub const CATALOG: [App; 40] = [
         Develop,
         "vscode",
         "code-oss",
-        &["vscode"],
+        &["code"],
     ),
     app(
         "godot",
@@ -553,7 +540,7 @@ pub fn search(term: &str) -> Vec<&'static App> {
         .collect()
 }
 
-/// pkg origin-free package name: `[A-Za-z0-9][A-Za-z0-9._+-]*`, 1..=64.
+/// pacman package name: `[A-Za-z0-9][A-Za-z0-9._+-]*`, 1..=64.
 pub fn is_pkg_name(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()
@@ -565,43 +552,55 @@ pub fn is_pkg_name(s: &str) -> bool {
 
 /// Fixed argv steps that install a catalog id or plain package name. None if neither.
 pub fn install_plan(target: &str) -> Option<Vec<Vec<String>>> {
-    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-    let mut steps = Vec::new();
     let pkgs: Vec<&str> = match get(target) {
-        Some(a) => {
-            if a.setup == Setup::Linux {
-                steps.push(s(&["sysrc", "linux_enable=YES"]));
-                steps.push(s(&["service", "linux", "start"]));
-            }
-            a.packages.to_vec()
-        }
+        Some(a) => a.packages.to_vec(),
         None if is_pkg_name(target) => vec![target],
         None => return None,
     };
-    let mut i = s(&["pkg", "install", "-y"]);
-    i.extend(pkgs.iter().map(|p| p.to_string()));
-    steps.push(i);
-    Some(steps)
+    Some(vec![pacman("-S", "--needed", &pkgs)])
 }
 
-/// A `pkg search` hit that is not in the catalog.
+/// Fixed argv step that removes a catalog id or plain package name, with its unused dependencies.
+pub fn remove_plan(target: &str) -> Option<Vec<Vec<String>>> {
+    let pkgs: Vec<&str> = match get(target) {
+        Some(a) => a.packages.to_vec(),
+        None if is_pkg_name(target) => vec![target],
+        None => return None,
+    };
+    Some(vec![pacman("-Rns", "", &pkgs)])
+}
+
+fn pacman(op: &str, extra: &str, pkgs: &[&str]) -> Vec<String> {
+    let mut v = vec!["pacman".to_string(), op.into()];
+    if !extra.is_empty() {
+        v.push(extra.into());
+    }
+    v.push("--noconfirm".into());
+    v.extend(pkgs.iter().map(|p| p.to_string()));
+    v
+}
+
+/// A `pacman -Ss` hit that is not in the catalog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PkgHit {
     pub name: String,
     pub summary: String,
 }
 
-/// `pkg search -q -L name -S name <term>`-style lines: "name-1.2.3   comment". Catalog packages dropped.
+/// `pacman -Ss` output: "repo/name 1.2.3-1" then an indented description. Catalog packages dropped.
 pub fn parse_pkg_search(text: &str) -> Vec<PkgHit> {
     let mut v: Vec<PkgHit> = Vec::new();
-    for l in text.lines() {
-        let mut it = l.splitn(2, char::is_whitespace);
-        let (Some(nv), rest) = (it.next(), it.next()) else {
+    let mut lines = text.lines();
+    while let Some(l) = lines.next() {
+        if l.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let summary = lines.next().unwrap_or("").trim();
+        let Some(head) = l.split_whitespace().next() else {
             continue;
         };
-        let name = nv.rsplit_once('-').map_or(nv, |(n, _)| n);
-        if name.is_empty()
-            || !is_pkg_name(name)
+        let name = head.rsplit_once('/').map_or(head, |(_, n)| n);
+        if !is_pkg_name(name)
             || CATALOG.iter().any(|a| a.packages.contains(&name))
             || v.iter().any(|h| h.name == name)
         {
@@ -609,7 +608,7 @@ pub fn parse_pkg_search(text: &str) -> Vec<PkgHit> {
         }
         v.push(PkgHit {
             name: name.into(),
-            summary: rest.unwrap_or("").trim().into(),
+            summary: summary.into(),
         });
     }
     v
@@ -688,29 +687,26 @@ mod tests {
 
     #[test]
     fn install_plans() {
+        let p = |v: &[&str]| vec![v.iter().map(|x| x.to_string()).collect::<Vec<_>>()];
         assert_eq!(
             install_plan("gimp").unwrap(),
-            vec![vec!["pkg", "install", "-y", "gimp"]]
+            p(&["pacman", "-S", "--needed", "--noconfirm", "gimp"])
         );
-        let steam = install_plan("steam").unwrap();
-        assert_eq!(steam[0], ["sysrc", "linux_enable=YES"]);
-        assert_eq!(steam[1], ["service", "linux", "start"]);
         assert_eq!(
-            steam[2],
-            [
-                "pkg",
-                "install",
-                "-y",
-                "linux_base-rl9",
-                "linux-steam-utils"
-            ]
+            install_plan("steam").unwrap(),
+            p(&["pacman", "-S", "--needed", "--noconfirm", "steam"])
         );
         assert_eq!(
             install_plan("htop").unwrap(),
-            vec![vec!["pkg", "install", "-y", "htop"]]
+            p(&["pacman", "-S", "--needed", "--noconfirm", "htop"])
+        );
+        assert_eq!(
+            remove_plan("gimp").unwrap(),
+            p(&["pacman", "-Rns", "--noconfirm", "gimp"])
         );
         for bad in ["", "-f", "a b", "x;rm", "../x"] {
             assert_eq!(install_plan(bad), None, "{bad}");
+            assert_eq!(remove_plan(bad), None, "{bad}");
         }
     }
 
@@ -718,7 +714,7 @@ mod tests {
     fn search_and_pkg_hits() {
         assert_eq!(search("PHOTO").first().map(|a| a.id), Some("gimp"));
         assert!(search("  ").is_empty());
-        let t = "gimp-2.10.38   GNU Image Manipulation Program\nhtop-3.3.0     Better top(1)\nhtop-3.3.0     dup\n";
+        let t = "extra/gimp 3.0.4-1\n    GNU Image Manipulation Program\nextra/htop 3.3.0-1\n    Better top(1)\nextra/htop 3.3.0-1\n    dup\n";
         assert_eq!(
             parse_pkg_search(t),
             vec![PkgHit {

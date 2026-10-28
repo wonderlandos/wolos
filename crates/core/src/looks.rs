@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Shipped presets (`<id>.json`).
-pub const SYSTEM_DIR: &str = "/usr/local/share/wolos/looks";
+pub const SYSTEM_DIR: &str = "/usr/share/wolos/looks";
 /// The user's presets, relative to `$XDG_CONFIG_HOME`.
 pub const USER_DIR: &str = "wolos/looks";
 /// Preset id of the shipped defaults.
@@ -568,7 +568,7 @@ mod tests {
     }
 
     const SHIPPED_CONF: &str =
-        include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/hyprland.conf");
+        include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 
     /// Writing the defaults changes nothing: every value equals the shipped hyprland.conf.
     #[test]
@@ -772,7 +772,7 @@ mod tests {
     fn shipped_presets() {
         let dir = PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../desktop/overlay/usr/local/share/wolos/looks"
+            "/../../desktop/overlay/usr/share/wolos/looks"
         ));
         let mut n = 0;
         for e in std::fs::read_dir(&dir).unwrap().flatten() {

@@ -30,9 +30,8 @@ fn laptop() -> HardwareSnapshot {
     HardwareSnapshot {
         devices: vec![
             Device {
-                driver: Some("drmn0".into()),
-                loader: vec!["cpu_microcode_load=\"YES\"".into()],
-                rc: vec!["powerd_enable=\"NO\"".into()],
+                driver: Some("intel_pstate".into()),
+                klds: vec!["coretemp".into()],
                 ..dev(
                     Kind::Cpu,
                     "Intel Core i5",
@@ -42,7 +41,7 @@ fn laptop() -> HardwareSnapshot {
                 )
             },
             Device {
-                driver: Some("iwlwifi0".into()),
+                driver: Some("iwlwifi".into()),
                 ..dev(Kind::Wifi, "Intel AX211", State::Ready, &[], &[])
             },
             dev(
@@ -50,7 +49,7 @@ fn laptop() -> HardwareSnapshot {
                 "Intel Bluetooth",
                 State::NeedsFirmware,
                 &[],
-                &["iwmbt-firmware"],
+                &["linux-firmware-intel"],
             ),
         ],
     }
@@ -72,11 +71,11 @@ fn list_is_a_table_on_a_tty_and_json_otherwise() {
     assert_eq!(run("hw", &mut env), 0);
     let lines: Vec<&str> = env.out.lines().collect();
     assert!(lines[0].starts_with("KIND") && lines[0].contains("STATE"));
-    assert!(lines[1].starts_with("cpu          needs-driver    drmn0            Intel Core i5"));
+    assert!(lines[1].starts_with("cpu          needs-driver    intel_pstate     Intel Core i5"));
     assert_eq!(lines[2].trim(), "fix Intel Core i5");
     assert!(
         env.out
-            .contains("wifi         ready           iwlwifi0         Intel AX211\n")
+            .contains("wifi         ready           iwlwifi          Intel AX211\n")
     );
     let mut env = FakeEnv {
         hw: vec![laptop()],
@@ -108,7 +107,10 @@ fn status_lists_problems_and_the_fix() {
     assert_eq!(v["ready"], false);
     assert_eq!(v["problems"].as_array().unwrap().len(), 2);
     assert_eq!(v["fix"]["load"], serde_json::json!(["coretemp"]));
-    assert_eq!(v["fix"]["install"], serde_json::json!(["iwmbt-firmware"]));
+    assert_eq!(
+        v["fix"]["install"],
+        serde_json::json!(["linux-firmware-intel"])
+    );
     let mut env = FakeEnv {
         tty: true,
         hw: vec![fixed()],
@@ -134,8 +136,9 @@ fn fix_loads_modules_through_admind_and_installs_packages_only_with_yes() {
     );
     assert!(env.out.contains("loaded coretemp\n"));
     assert!(
-        env.out
-            .contains("missing packages: iwmbt-firmware\ninstall them with: wol hw fix --yes\n")
+        env.out.contains(
+            "missing packages: linux-firmware-intel\ninstall them with: wol hw fix --yes\n"
+        )
     );
     assert!(env.execs.is_empty(), "root actions only through wol-admind");
     // --yes: packages too. Password on stdin when admind asks, never argv.
@@ -157,10 +160,10 @@ fn fix_loads_modules_through_admind_and_installs_packages_only_with_yes() {
         [
             "hw-load\x001\0coretemp\0",
             "hw-load\x001\0coretemp\0s3cret-pw",
-            "pkg-install\x001\0iwmbt-firmware\0",
+            "pkg-install\x001\0linux-firmware-intel\0",
         ]
     );
-    assert!(env.out.contains("installed iwmbt-firmware\n"));
+    assert!(env.out.contains("installed linux-firmware-intel\n"));
     // Nothing to do.
     let mut env = FakeEnv {
         hw: vec![fixed()],
@@ -171,7 +174,7 @@ fn fix_loads_modules_through_admind_and_installs_packages_only_with_yes() {
 }
 
 #[test]
-fn boot_loads_modules_writes_tunables_and_publishes_the_snapshot() {
+fn boot_writes_module_files_loads_modules_and_publishes_the_snapshot() {
     let mut env = FakeEnv {
         root: false,
         hw: vec![laptop()],
@@ -186,27 +189,20 @@ fn boot_loads_modules_writes_tunables_and_publishes_the_snapshot() {
         ..Default::default()
     };
     assert_eq!(run("hw boot", &mut env), 0);
-    assert_eq!(env.execs, vec![vec!["kldload", "-n", "coretemp"]]);
+    assert_eq!(env.execs, vec![vec!["modprobe", "coretemp"]]);
     let paths: Vec<String> = env
         .written
         .iter()
         .map(|w| w.0.display().to_string())
         .collect();
-    assert_eq!(
-        paths,
-        [
-            "/boot/loader.conf.d/wolos-hw.conf",
-            "/etc/rc.conf.d/powerd",
-            SNAPSHOT_PATH
-        ]
-    );
-    assert!(env.written[1].1.ends_with("powerd_enable=\"NO\"\n"));
+    assert_eq!(paths, ["/etc/modules-load.d/wolos-hw.conf", SNAPSHOT_PATH]);
+    assert!(env.written[0].1.ends_with("\ncoretemp\n"));
     // The published snapshot is the one read after loading modules.
-    let published: HardwareSnapshot = serde_json::from_str(&env.written[2].1).unwrap();
+    let published: HardwareSnapshot = serde_json::from_str(&env.written[1].1).unwrap();
     assert_eq!(published, fixed());
-    assert!(env.out.starts_with("wolos_hw: kldload coretemp\n"));
+    assert!(env.out.contains("wolos_hw: modprobe coretemp\n"));
     assert!(env.out.ends_with("wolos_hw: 1 devices, 0 need attention\n"));
-    // A failing kldload is reported, boot goes on.
+    // A failing modprobe is reported, boot goes on.
     let mut env = FakeEnv {
         root: true,
         hw: vec![laptop()],
@@ -214,7 +210,7 @@ fn boot_loads_modules_writes_tunables_and_publishes_the_snapshot() {
         ..Default::default()
     };
     assert_eq!(run("hw boot", &mut env), 0);
-    assert!(env.out.contains("wolos_hw: kldload coretemp failed\n"));
+    assert!(env.out.contains("wolos_hw: modprobe coretemp failed\n"));
     assert!(
         env.out
             .contains("wolos_hw: bluetooth Intel Bluetooth: fix Intel Bluetooth\n")
@@ -222,16 +218,16 @@ fn boot_loads_modules_writes_tunables_and_publishes_the_snapshot() {
 }
 
 #[test]
-fn boot_sets_a_modules_tunables_with_kenv_before_loading_it() {
-    // nvidia-drm reads hw.nvidiadrm.modeset at load: the boot that loads it needs KMS too.
+fn boot_writes_modprobe_options_before_loading_the_module() {
+    // nvidia_drm reads modeset only at load: the options file must exist before modprobe runs.
     let gpu = HardwareSnapshot {
         devices: vec![Device {
-            loader: vec!["hw.nvidiadrm.modeset=\"1\"".into()],
+            loader: vec!["options nvidia_drm modeset=1 fbdev=1".into()],
             ..dev(
                 Kind::Gpu,
                 "NVIDIA GeForce",
                 State::NeedsDriver,
-                &["nvidia-modeset", "nvidia-drm"],
+                &["nvidia_modeset", "nvidia_drm"],
                 &[],
             )
         }],
@@ -239,34 +235,41 @@ fn boot_sets_a_modules_tunables_with_kenv_before_loading_it() {
     let mut env = FakeEnv {
         root: true,
         hw: vec![gpu, fixed()],
-        exec_codes: vec![0, 0, 0],
+        exec_codes: vec![0, 0],
         ..Default::default()
     };
     assert_eq!(run("hw boot", &mut env), 0);
     assert_eq!(
         env.execs,
         vec![
-            vec!["kenv", "hw.nvidiadrm.modeset=1"],
-            vec!["kldload", "-n", "nvidia-modeset"],
-            vec!["kldload", "-n", "nvidia-drm"],
+            vec!["modprobe", "nvidia_modeset"],
+            vec!["modprobe", "nvidia_drm"],
         ]
     );
-    assert!(
-        env.out
-            .starts_with("wolos_hw: kenv hw.nvidiadrm.modeset=1\n")
+    assert_eq!(
+        env.written[0],
+        (
+            PathBuf::from("/etc/modprobe.d/wolos-hw.conf"),
+            format!(
+                "{}options nvidia_drm modeset=1 fbdev=1\n",
+                wol_core::hardware::HEADER
+            )
+        )
     );
+    let wrote = env.out.find("wrote /etc/modprobe.d").unwrap();
+    assert!(wrote < env.out.find("modprobe nvidia_modeset").unwrap());
 }
 
 #[test]
 fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
-    // wolos_firstboot (network up): the catalogue names the package (NVIDIA 595 or 580 branch).
+    // First boot (network up): the catalogue names the NVIDIA driver packages.
     let need = HardwareSnapshot {
         devices: vec![dev(
             Kind::Gpu,
             "NVIDIA GeForce",
             State::NeedsDriver,
             &[],
-            &["nvidia-drm-kmod"],
+            &["nvidia-open"],
         )],
     };
     let installed = HardwareSnapshot {
@@ -274,7 +277,7 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
             Kind::Gpu,
             "NVIDIA GeForce",
             State::NeedsDriver,
-            &["nvidia-drm"],
+            &["nvidia_drm"],
             &[],
         )],
     };
@@ -288,8 +291,8 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
     assert_eq!(
         env.execs,
         vec![
-            vec!["pkg", "install", "-y", "nvidia-drm-kmod"],
-            vec!["kldload", "-n", "nvidia-drm"],
+            vec!["pacman", "-S", "--needed", "--noconfirm", "nvidia-open"],
+            vec!["modprobe", "nvidia_drm"],
         ]
     );
     // Offline or a failing install: reported, boot goes on with what is there.
@@ -300,10 +303,7 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
         ..Default::default()
     };
     assert_eq!(run("hw boot --online", &mut env), 0);
-    assert!(
-        env.out
-            .contains("wolos_hw: pkg install nvidia-drm-kmod failed\n")
-    );
+    assert!(env.out.contains("wolos_hw: pacman -S nvidia-open failed\n"));
     // Without --online (every boot): never touches the network.
     let mut env = FakeEnv {
         root: true,
@@ -313,7 +313,7 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
                 "NVIDIA GeForce",
                 State::NeedsDriver,
                 &[],
-                &["nvidia-drm-kmod"],
+                &["nvidia-open"],
             )],
         }],
         ..Default::default()
@@ -337,7 +337,7 @@ fn helpers_may_read_hardware_but_not_fix_it() {
     assert!(find_tool("hw_boot").is_none());
 }
 
-/// Network up (dhclient-exit-hooks, root): an online-only driver missing since first boot is
+/// Network up (NetworkManager dispatcher, root): an online-only driver missing since first boot is
 /// installed once per boot, without loading it (the next boot does); the session reads the result.
 #[test]
 fn network_up_installs_a_pending_driver_once_and_leaves_the_result() {
@@ -349,7 +349,7 @@ fn network_up_installs_a_pending_driver_once_and_leaves_the_result() {
             "NVIDIA GeForce",
             State::NeedsDriver,
             &[],
-            &["nvidia-drm-kmod"],
+            &["nvidia-open"],
         )],
     };
     let result = |env: &FakeEnv| -> Option<OnlineInstall> {
@@ -368,14 +368,20 @@ fn network_up_installs_a_pending_driver_once_and_leaves_the_result() {
         assert_eq!(run("hw online", &mut env), 0);
         assert_eq!(
             env.execs,
-            vec![vec!["pkg", "install", "-y", "nvidia-drm-kmod"]]
+            vec![vec![
+                "pacman",
+                "-S",
+                "--needed",
+                "--noconfirm",
+                "nvidia-open"
+            ]]
         );
         let r = result(&env).expect("result written");
         assert_eq!(
             r,
             OnlineInstall {
                 at: env.now_secs(),
-                packages: vec!["nvidia-drm-kmod".into()],
+                packages: vec!["nvidia-open".into()],
                 ok,
                 graphics: true,
             }
@@ -387,7 +393,7 @@ fn network_up_installs_a_pending_driver_once_and_leaves_the_result() {
             "Settings sees the new state"
         );
     }
-    // Already tried this boot (/var/run is cleared at boot), first boot still running (its own
+    // Already tried this boot (/run is cleared at boot), first boot still running (its own
     // `wol hw boot --online` installs), or nothing pending: nothing runs, nothing is written.
     for (files, hw) in [
         (

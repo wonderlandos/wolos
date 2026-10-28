@@ -1,0 +1,116 @@
+# WolOS system zshrc: every interactive zsh. Upgrades replace this file; your settings go in
+# ~/.zshrc (read after this one, never touched by WolOS).
+#
+# Prompt colours follow the WolOS theme: `wol theme` may write
+#   ${XDG_CONFIG_HOME:-~/.config}/wolos/toolkits/zsh/colors.zsh
+# setting any of WOLOS_PROMPT_ACCENT WOLOS_PROMPT_MUTED WOLOS_PROMPT_OK WOLOS_PROMPT_ERROR
+# WOLOS_PROMPT_SUGGEST to a zsh colour (%F{...}: name, 0-255 or #rrggbb). Unset = terminal palette.
+
+# Plugins: Arch package paths (WOLOS_ZSH_PLUGINS: tests point it at a fixture).
+_wolos_share=${WOLOS_ZSH_PLUGINS:-/usr/share/zsh/plugins}
+
+# History: large, shared between open terminals, no duplicates, space-prefixed lines stay private.
+HISTFILE=${HISTFILE:-$HOME/.zsh_history}
+HISTSIZE=50000
+SAVEHIST=50000
+setopt EXTENDED_HISTORY SHARE_HISTORY HIST_IGNORE_DUPS HIST_EXPIRE_DUPS_FIRST
+setopt HIST_IGNORE_SPACE HIST_REDUCE_BLANKS HIST_VERIFY
+
+setopt AUTO_CD INTERACTIVE_COMMENTS NO_BEEP COMPLETE_IN_WORD ALWAYS_TO_END PROMPT_SUBST
+
+# Colours: ls --color with LS_COLORS; the same scheme for completion lists.
+export CLICOLOR=1
+: ${LS_COLORS:=di=34:ln=35:so=32:pi=33:ex=31:bd=34;46:cd=34;43:su=30;41:sg=30;46:tw=30;42:ow=30;43}
+export LS_COLORS
+alias ls='ls --color=auto' ll='ls -lh' la='ls -lAh' grep='grep --color=auto'
+
+_wolos_colors=${XDG_CONFIG_HOME:-$HOME/.config}/wolos/toolkits/zsh/colors.zsh
+[[ -r $_wolos_colors ]] && source "$_wolos_colors"
+: ${WOLOS_PROMPT_ACCENT:=magenta} ${WOLOS_PROMPT_MUTED:=8} ${WOLOS_PROMPT_OK:=default}
+: ${WOLOS_PROMPT_ERROR:=red} ${WOLOS_PROMPT_SUGGEST:=8}
+# #rrggbb on a terminal without truecolor: nearest palette entry.
+[[ $COLORTERM == (truecolor|24bit) ]] || zmodload zsh/nearcolor 2>/dev/null
+
+# Keys: emacs bindings plus Home/End/Insert/Delete, Ctrl/Alt-arrows by word, Up/Down search history
+# by the typed prefix. terminfo entries plus the literal foot/xterm/vt sequences.
+bindkey -e
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+_wolos_bind() {
+  local widget=$1 seq
+  shift
+  for seq in "$@"; do
+    [[ -n $seq ]] && bindkey -- "$seq" "$widget"
+  done
+}
+_wolos_bind beginning-of-line "${terminfo[khome]}" '^[[H' '^[OH' '^[[1~' '^[[7~'
+_wolos_bind end-of-line "${terminfo[kend]}" '^[[F' '^[OF' '^[[4~' '^[[8~'
+_wolos_bind delete-char "${terminfo[kdch1]}" '^[[3~'
+_wolos_bind overwrite-mode "${terminfo[kich1]}" '^[[2~'
+_wolos_bind backward-word '^[[1;5D' '^[[1;3D' '^[^[[D'
+_wolos_bind forward-word '^[[1;5C' '^[[1;3C' '^[^[[C'
+_wolos_bind kill-word '^[[3;5~' '^[[3;3~'
+_wolos_bind backward-kill-word '^[^?'
+_wolos_bind up-line-or-beginning-search "${terminfo[kcuu1]}" '^[[A' '^[OA'
+_wolos_bind down-line-or-beginning-search "${terminfo[kcud1]}" '^[[B' '^[OB'
+_wolos_bind reverse-menu-complete "${terminfo[kcbt]}" '^[[Z'
+# foot sends ^H for Ctrl-Backspace (plain Backspace is ^?); other terminals may send ^H for Backspace.
+[[ $TERM == foot* ]] && _wolos_bind backward-kill-word '^H'
+unfunction _wolos_bind
+
+# Completion: menu you can arrow through, case-insensitive, partial words (f.b -> foo.bar).
+# zsh-completions installs into site-functions, already on $fpath.
+zmodload zsh/complist
+autoload -Uz compinit
+_wolos_cache=${XDG_CACHE_HOME:-$HOME/.cache}/zsh
+[[ -d $_wolos_cache ]] || mkdir -p "$_wolos_cache"
+# Full scan + security audit at most once a day (new packages' completions); otherwise the
+# compiled dump: ~1 ms instead of ~20 ms per new terminal.
+() {
+  setopt local_options extended_glob
+  local dump=$_wolos_cache/zcompdump-$ZSH_VERSION
+  if [[ -n $dump(#qN.mh-20) ]]; then
+    compinit -C -d "$dump"
+  else
+    compinit -i -d "$dump"
+    zcompile "$dump" 2>/dev/null
+  fi
+}
+zstyle ':completion:*' menu select
+zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
+zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
+zstyle ':completion:*' group-name ''
+zstyle ':completion:*:descriptions' format "%F{$WOLOS_PROMPT_MUTED}%d%f"
+zstyle ':completion:*' use-cache on
+zstyle ':completion:*' cache-path "$_wolos_cache/compcache"
+bindkey -M menuselect "${terminfo[kcbt]:-^[[Z}" reverse-menu-complete
+
+# Prompt: directory, git branch, one symbol (accent after success, red after a failure). user@host
+# only over SSH. Pure zsh: no extra process unless the directory is in a git work tree.
+autoload -Uz vcs_info add-zsh-hook
+zstyle ':vcs_info:*' enable git
+zstyle ':vcs_info:git:*' formats ' %b'
+zstyle ':vcs_info:git:*' actionformats ' %b|%a'
+_wolos_vcs() { vcs_info }
+add-zsh-hook precmd _wolos_vcs
+_wolos_sym='%(!.#.%#)'
+[[ $TERM == (foot*|*256color*|*-direct) ]] && _wolos_sym='%(!.#.❯)'
+PROMPT=
+[[ -n $SSH_CONNECTION ]] && PROMPT="%F{$WOLOS_PROMPT_MUTED}%n@%m%f "
+PROMPT+="%F{$WOLOS_PROMPT_ACCENT}%(4~|.../%3~|%~)%f"
+PROMPT+="%F{$WOLOS_PROMPT_MUTED}"'${vcs_info_msg_0_}'"%f "
+PROMPT+="%(?.%F{$WOLOS_PROMPT_OK}.%F{$WOLOS_PROMPT_ERROR})$_wolos_sym%f "
+unset _wolos_sym
+
+# Autosuggestions (grey, from history; Right/End accepts), then syntax highlighting last.
+if [[ -r $_wolos_share/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then
+  ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE="fg=$WOLOS_PROMPT_SUGGEST"
+  ZSH_AUTOSUGGEST_BUFFER_MAX_SIZE=40
+  ZSH_AUTOSUGGEST_MANUAL_REBIND=1
+  source "$_wolos_share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+fi
+if [[ -r $_wolos_share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
+  source "$_wolos_share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+fi
+unset _wolos_share _wolos_colors _wolos_cache

@@ -1,33 +1,26 @@
 # image
 
-WolOS installer/live USB (amd64, UEFI+BIOS) built from official `FreeBSD-15.1-RELEASE-amd64-memstick.img`.
+WolOS live + installer ISO on Arch Linux packages pinned to one Arch Linux Archive date (ADR 0016, 0017).
 
-| command | where | free disk (checked) |
-|---|---|---|
-| `image/vm/build-in-vm.sh` | Linux host: boots FreeBSD 15.1 BASIC-CLOUDINIT VM, runs everything inside | 40 GB in `$WOLOS_VM` (default `~/WolOS-vm`) |
-| `WOLOS_SRC=/usr/src image/build.sh` | FreeBSD 15.1 host, root | 20 GB in `$WOLOS_WORK` (+ kernel 12 GB) |
-| `image/vm/up.sh` | Linux host: fetch+boot VM, ssh ready, `/work` (vtbd1, sparse `work.raw`) mounted, deps; idempotent | 20 GB |
-| `image/vm/update-disk.sh [--dry-run]` | Linux host: updates the installed `~/WolOS-vm/test/disk.raw` in place into a new boot environment (old BE = fallback; homes, accounts, rc.conf kept). Refuses while a VM uses the disk | ~6 GB (work.raw) |
-| `image/vm/run.sh` / `image/vm/ssh.sh` | boot VM (KVM, virtio, OVMF if found, VNC :0, SSH 2222) / run as root | - |
+| Path | What |
+|---|---|
+| `arch/` | mkarchiso profile (releng-based): `snapshot`, `pacman.conf` (`[wolos]` first, then core/extra/multilib at the snapshot), `packages.x86_64`, systemd-boot entries (live, Install WolOS), live-only `airootfs` |
+| `arch/wolos-update-slot` | wrapper over `wol update apply`: update into the other slot, boot it next |
+| `repo/build.sh` | signed `[wolos]` repo: `linux-wolos` (`kernel/`), `hyprland-wolos` (0.56.2 + `hyprland/patches`), `wolos-system`, `wolos-base` |
+| `repo/wolos-system/` | Rust binaries (`build-rust.sh`), Hyprland plugins, `desktop/overlay`, `files/`, design |
+| `repo/wolos-base/` | one versioned base: kernel, headers, uutils coreutils, sudo-rs, bsdtar, zsh, systemd; `base.manifest` |
+| `files/` | systemd units + preset, sysusers, tmpfiles, sysctl.d, udev, plymouth theme, installer (`usr/lib/wolos`) |
+| `build.sh` | `[wolos]` repo if missing -> staged profile -> `mkarchiso` (or `podman` `archlinux:base-devel`) -> ISO + release manifest |
+| `release-manifest.sh` | `{snapshot, repo_revision, image, sha256, size}` |
+| `vm/` | QEMU/KVM + OVMF + virtio-gpu: `build.sh`, `run.sh` (live), `test-install.sh` (unattended), `run-installed.sh`, `run-gpu.sh` (host iGPU) |
 
-Output: `WolOS-15.1-amd64.img`. Write: `dd if=WolOS-15.1-amd64.img of=/dev/daX bs=1m`.
+Build (host with archiso, ~20 GB free in `~/WolOS-vm`):
 
-build.sh steps:
-1. fetch memstick `.img.xz` + `CHECKSUM.SHA256-*`, verify sha256 of `.xz` and `.img`.
-2. copy, grow to `WOLOS_IMG_SIZE` (12g), mdconfig, resize partition, growfs, mount.
-3. stage `wolos.txz`: `pkg -r` of `packages-base.txt` + `desktop/packages.txt`; `desktop/overlay/`; `design/{icons,wallpapers,tokens}`;
-   Rust workspace (`build-rust.sh`: wold wol-admind wol wol-login wol-run wol-shell wol-spotlight wol-control-center wol-lock wol-settings wol-loginwindow; wol-authcheck 4555 in libexec); compositor = pkg `hyprland` (or fork, `hyprland/`); `files/` (rc.d/wold, rc.d/wolos_firstboot);
-   WolKernel + wolos_qos if `WOLOS_SRC` set. Added to `usr/freebsd-dist/MANIFEST`.
-4. `/etc/installerconfig`: asks disk only, ZFS GPT BIOS+UEFI, `zroot/ROOT/default` (boot environments).
-5. live root (`WOLOS_LIVE=1`): extract wolos.txz, rc.conf, rw fstab, `/firstboot`.
+```sh
+WOLOS_SIGN_KEY=<gpg id> image/vm/build.sh        # or WOLOS_UNSIGNED=1 for a local test repo
+WOLOS_KEEP_DISK=1 image/vm/test-install.sh       # -> ~/WolOS-vm/test/disk.raw, checks.txt
+image/vm/run-installed.sh
+```
 
-First boot (`wolos_firstboot`): pciconf GPU -> kld_list i915kms | amdgpu | nvidia-drm; linux_base-rl9 + linux-steam-utils; bsddialog user creation if none.
-| `hyprland/build-fork.sh` | optional fork build (`WOLOS_HYPR_FORK=1`, URL/ref env, `patches/`) | 3 GB |
-
-VM (`$WOLOS_VM`, default `~/WolOS-vm`):
-- runs detached (`qemu -daemonize`, pid `vm.pid`); stays up after scripts exit. Stop: `kill $(cat ~/WolOS-vm/vm.pid)` or `image/vm/ssh.sh poweroff`.
-- start again: `image/vm/up.sh` (or `run.sh`). Shell: `image/vm/ssh.sh [cmd]` (root, key `vmkey`, port 2222).
-- provisioning: nuageinit runs on first boot only; `rm ~/WolOS-vm/*.qcow2` + `up.sh` reprovisions from kept `.xz`.
-- root login: seed `runcmd` sets `PermitRootLogin prohibit-password` (FreeBSD default is `no`).
-- no `qemu-img` on host: up.sh grows root live to `WOLOS_ROOT_SIZE` (20G) via monitor `block_resize` + growfs; src/obj on `/work`.
-- GPU: no DRM device in the VM (FreeBSD drm-kmod has no virtio-gpu DRM driver), so Hyprland cannot start; use `Hyprland --verify-config`.
+Move a release to a newer snapshot: change `arch/snapshot` and the dates in both `pacman.conf` files, rebuild, run `test-install.sh`.
+Boot chain and installer: `archicture/modules/boot.md`.

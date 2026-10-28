@@ -1,27 +1,27 @@
 {
   "grants": [
     {
-      "app": "/usr/local/bin/wlrctl",
+      "app": "/usr/bin/wlrctl",
       "capability": "window-list"
     },
     {
-      "app": "/usr/local/bin/wayvnc",
+      "app": "/usr/bin/wayvnc",
       "capability": "screen-capture"
     },
     {
-      "app": "/usr/local/bin/wayvnc",
+      "app": "/usr/bin/wayvnc",
       "capability": "input-injection"
     },
     {
-      "app": "/usr/local/bin/wl-paste",
+      "app": "/usr/bin/wl-paste",
       "capability": "clipboard-history"
     },
     {
-      "app": "/usr/local/bin/grim",
+      "app": "/usr/bin/grim",
       "capability": "screen-capture"
     },
     {
-      "app": "/usr/local/bin/slurp",
+      "app": "/usr/bin/slurp",
       "capability": "shell-layer"
     }
   ],

@@ -10,11 +10,11 @@ fn read(p: &str) -> String {
 
 #[test]
 fn wol_files_open_in_the_app_store() {
-    let mime = read("desktop/overlay/usr/local/share/mime/packages/wolos-package.xml");
+    let mime = read("desktop/overlay/usr/share/mime/packages/wolos-package.xml");
     assert!(mime.contains(&format!(r#"<mime-type type="{}">"#, shared::package::MIME)));
     assert!(mime.contains(r#"<glob pattern="*.wol"/>"#));
     assert!(mime.contains(r#"<alias type="application/x-wol"/>"#));
-    let d = read("desktop/overlay/usr/local/share/applications/org.wolos.store.desktop");
+    let d = read("desktop/overlay/usr/share/applications/org.wolos.store.desktop");
     let line = |k: &str| {
         d.lines()
             .find_map(|l| l.strip_prefix(&format!("{k}=")))
@@ -38,7 +38,7 @@ fn wol_files_open_in_the_app_store() {
             .any(|b| b.trim_end_matches(';') == "wol-store"),
         "{bins}"
     );
-    let pkgs = read("image/files/usr/local/libexec/wolos/install-pkgs");
-    assert!(pkgs.contains("update-mime-database /usr/local/share/mime"));
-    assert!(pkgs.contains("update-desktop-database -q /usr/local/share/applications"));
+    // pacman hooks refresh the desktop database; the MIME database after the package install.
+    let inst = read("image/repo/wolos-system/wolos-system.install");
+    assert!(inst.contains("update-mime-database /usr/share/mime"));
 }

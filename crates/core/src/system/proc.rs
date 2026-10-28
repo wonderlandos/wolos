@@ -1,89 +1,96 @@
-//! Process table as struct-of-arrays from FreeBSD `kern.proc.proc` (no ps fork), refreshed in place.
-//! Steady-state sampling allocates nothing: arrays grow only with the process count, names are cached
-//! per (pid, start time), users per uid. CPU% = runtime delta / wall delta per process (100 = one core).
+//! Process table as struct-of-arrays from Linux `/proc/[pid]/stat` (no ps fork), refreshed in place.
+//! Steady-state sampling allocates nothing in the sampler: arrays grow only with the process count, names
+//! are cached per (pid, start time), users per uid. CPU% = runtime delta / wall delta per process (100 = one core).
 //! Sequential on purpose: IaraOS measured a fork/join of table || totals slower (totals cost ~7 us).
 use std::collections::HashMap;
 
-/// FreeBSD 15 amd64 `struct kinfo_proc` layout (sys/user.h). ki_structsize is checked per record.
+/// One process record, decoded from `/proc/[pid]/stat`.
 pub mod table {
-    pub const KINFO_SIZE: usize = 1088;
-    pub const COMM_OFFSET: usize = 447;
-    pub const COMM_LEN: usize = 20;
+    /// Linux TASK_COMM_LEN.
+    pub const COMM_LEN: usize = 16;
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct Row {
         pub pid: i32,
         pub ppid: i32,
         pub uid: i32,
+        /// Linux state letter (R S D T t Z I X).
         pub stat: u8,
         pub rss_pages: i64,
         pub vsize: i64,
         pub runtime_us: i64,
+        /// Since boot; identifies a pid across reuse.
         pub start_us: i64,
         pub nice: i8,
         pub threads: i32,
     }
 
-    fn i32_at(r: &[u8], o: usize) -> i32 {
-        i32::from_le_bytes([r[o], r[o + 1], r[o + 2], r[o + 3]])
-    }
-    fn i64_at(r: &[u8], o: usize) -> i64 {
-        let mut b = [0u8; 8];
-        b.copy_from_slice(&r[o..o + 8]);
-        i64::from_le_bytes(b)
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct Rec {
+        pub row: Row,
+        comm: [u8; COMM_LEN],
+        comm_len: u8,
     }
 
-    /// Records in `t`, or None when length or any ki_structsize does not match this layout.
-    pub fn count(t: &[u8]) -> Option<usize> {
-        if !t.len().is_multiple_of(KINFO_SIZE) {
-            return None;
+    impl Rec {
+        pub fn new(row: Row, comm: &[u8]) -> Self {
+            let mut r = Self {
+                row,
+                ..Default::default()
+            };
+            let n = comm.len().min(COMM_LEN);
+            r.comm[..n].copy_from_slice(&comm[..n]);
+            r.comm_len = n as u8;
+            r
         }
-        let n = t.len() / KINFO_SIZE;
-        (0..n)
-            .all(|i| i32_at(t, i * KINFO_SIZE) == KINFO_SIZE as i32)
-            .then_some(n)
-    }
-
-    pub fn row(t: &[u8], i: usize) -> Row {
-        let r = &t[i * KINFO_SIZE..(i + 1) * KINFO_SIZE];
-        Row {
-            pid: i32_at(r, 72),
-            ppid: i32_at(r, 76),
-            uid: i32_at(r, 168),
-            stat: r[388],
-            rss_pages: i64_at(r, 264),
-            vsize: i64_at(r, 256),
-            runtime_us: i64_at(r, 328),
-            start_us: i64_at(r, 336) * 1_000_000 + i64_at(r, 344),
-            nice: r[389] as i8,
-            threads: i32_at(r, 596),
+        pub fn comm(&self) -> &[u8] {
+            &self.comm[..self.comm_len as usize]
         }
     }
 
-    /// ki_comm bytes (no NUL).
-    pub fn comm(t: &[u8], i: usize) -> &[u8] {
-        let c = &t[i * KINFO_SIZE + COMM_OFFSET..i * KINFO_SIZE + COMM_OFFSET + COMM_LEN];
-        let end = c.iter().position(|b| *b == 0).unwrap_or(c.len());
-        &c[..end]
+    fn num(f: &[u8]) -> Option<i64> {
+        std::str::from_utf8(f).ok()?.parse().ok()
     }
 
-    /// Encode a row (tests and fakes).
-    pub fn write(dst: &mut [u8], r: &Row, comm: &str, structsize: i32) {
-        dst[..4].copy_from_slice(&structsize.to_le_bytes());
-        dst[72..76].copy_from_slice(&r.pid.to_le_bytes());
-        dst[76..80].copy_from_slice(&r.ppid.to_le_bytes());
-        dst[168..172].copy_from_slice(&r.uid.to_le_bytes());
-        dst[256..264].copy_from_slice(&r.vsize.to_le_bytes());
-        dst[264..272].copy_from_slice(&r.rss_pages.to_le_bytes());
-        dst[328..336].copy_from_slice(&r.runtime_us.to_le_bytes());
-        dst[336..344].copy_from_slice(&(r.start_us / 1_000_000).to_le_bytes());
-        dst[344..352].copy_from_slice(&(r.start_us % 1_000_000).to_le_bytes());
-        dst[388] = r.stat;
-        dst[389] = r.nice as u8;
-        dst[596..600].copy_from_slice(&r.threads.to_le_bytes());
-        let c = comm.as_bytes();
-        let n = c.len().min(COMM_LEN - 1);
-        dst[COMM_OFFSET..COMM_OFFSET + n].copy_from_slice(&c[..n]);
+    /// `/proc/[pid]/stat`; `tck` = clock ticks per second. Allocation-free. None when malformed.
+    pub fn parse_stat(text: &[u8], uid: i32, tck: i64) -> Option<Rec> {
+        let open = text.iter().position(|c| *c == b'(')?;
+        let close = text.iter().rposition(|c| *c == b')')?;
+        let pid = num(text[..open].trim_ascii())?;
+        let comm = text.get(open + 1..close)?;
+        // Fields after ") ": state(3) ppid(4) ... utime(14) stime(15) .. nice(19) threads(20) .. start(22) vsize(23) rss(24).
+        let mut f = [0i64; 22];
+        let mut state = b'?';
+        for (i, w) in text
+            .get(close + 1..)?
+            .split(|c| c.is_ascii_whitespace())
+            .filter(|w| !w.is_empty())
+            .take(22)
+            .enumerate()
+        {
+            if i == 0 {
+                state = w[0];
+            } else {
+                f[i] = num(w)?;
+            }
+        }
+        let tck = tck.max(1);
+        let us = |t: i64| t * 1_000_000 / tck;
+        Some(Rec::new(
+            Row {
+                pid: pid as i32,
+                ppid: f[1] as i32,
+                uid,
+                stat: state,
+                rss_pages: f[21],
+                vsize: f[20],
+                runtime_us: us(f[11] + f[12]),
+                start_us: us(f[19]),
+                nice: f[16] as i8,
+                threads: f[17] as i32,
+            },
+            comm,
+        ))
     }
 }
 
@@ -98,8 +105,8 @@ pub struct SystemTotals {
 
 /// Where samples come from. Must not allocate in steady state.
 pub trait ProcSource {
-    /// Raw kinfo_proc table into `buf` (grow only when too small); returns length.
-    fn procs(&mut self, buf: &mut Vec<u8>) -> Option<usize>;
+    /// Process records into `buf` (grow only when too small); returns count.
+    fn procs(&mut self, buf: &mut Vec<table::Rec>) -> Option<usize>;
     /// Monotonic microseconds.
     fn now_us(&self) -> i64;
     fn page_size(&self) -> i64;
@@ -139,7 +146,7 @@ struct Prev {
 /// Struct-of-arrays process table. Not thread-safe: one sampler per consumer.
 pub struct ProcessSampler<S: ProcSource> {
     src: S,
-    table: Vec<u8>,
+    table: Vec<table::Rec>,
     pub pid: Vec<i32>,
     pub ppid: Vec<i32>,
     pub uid: Vec<i32>,
@@ -198,15 +205,15 @@ impl<S: ProcSource> ProcessSampler<S> {
         self.count
     }
 
-    /// FreeBSD ki_stat: SIDL 1, SRUN 2, SSLEEP 3, SSTOP 4, SZOMB 5, SWAIT 6, SLOCK 7.
+    /// Linux state letter: R running, S sleeping, D disk wait, T/t stopped, Z zombie, I idle.
     pub fn state(&self, i: usize) -> ProcessState {
         match self.stat[i] {
-            2 => ProcessState::Running,
-            3 => ProcessState::Sleeping,
-            4 => ProcessState::Stopped,
-            5 => ProcessState::Zombie,
-            6 => ProcessState::Idle,
-            7 => ProcessState::Waiting,
+            b'R' => ProcessState::Running,
+            b'S' => ProcessState::Sleeping,
+            b'D' => ProcessState::Waiting,
+            b'T' | b't' => ProcessState::Stopped,
+            b'Z' | b'X' => ProcessState::Zombie,
+            b'I' => ProcessState::Idle,
             _ => ProcessState::Unknown,
         }
     }
@@ -254,7 +261,7 @@ impl<S: ProcSource> ProcessSampler<S> {
             0.0
         };
         self.prev_totals = self.totals;
-        let Some(n) = len.and_then(|l| table::count(&self.table[..l])) else {
+        let Some(n) = len.filter(|l| *l <= self.table.len()) else {
             self.count = 0;
             return false;
         };
@@ -263,7 +270,8 @@ impl<S: ProcSource> ProcessSampler<S> {
         let page = self.src.page_size();
         self.cur.clear();
         for i in 0..n {
-            let r = table::row(&self.table, i);
+            let rec = self.table[i];
+            let r = rec.row;
             self.pid[i] = r.pid;
             self.ppid[i] = r.ppid;
             self.uid[i] = r.uid;
@@ -274,7 +282,7 @@ impl<S: ProcSource> ProcessSampler<S> {
             self.start_us[i] = r.start_us;
             self.stat[i] = r.stat;
             self.nice[i] = r.nice;
-            let comm = table::comm(&self.table, i);
+            let comm = rec.comm();
             let prev = self.prev.remove(&r.pid).filter(|p| p.start == r.start_us);
             self.cpu_percent[i] = match &prev {
                 Some(p) if wall > 0 => {
@@ -338,73 +346,78 @@ impl<S: ProcSource> ProcessSampler<S> {
     }
 }
 
-/// Product source: kern.proc.proc, kern.cp_time, vm.stats page counts. FreeBSD only.
-#[cfg(target_os = "freebsd")]
-pub struct FreeBsdProcSource {
+/// Product source: `/proc/[pid]/stat`, `/proc/stat`, `/proc/meminfo`.
+pub struct LinuxProcSource {
+    tck: i64,
     page: i64,
     passwd: Option<HashMap<i32, String>>,
     start: std::time::Instant,
+    path: String,
+    text: Vec<u8>,
 }
 
-#[cfg(target_os = "freebsd")]
-impl Default for FreeBsdProcSource {
+impl Default for LinuxProcSource {
     fn default() -> Self {
-        let mut b = [0u8; 8];
-        let page = super::sysctl::read_into("hw.pagesize", &mut b).map_or(4096, |n| match n {
-            4 => i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
-            _ => i64::from_ne_bytes(b),
-        });
+        // SAFETY: sysconf has no preconditions.
+        let (tck, page) = unsafe {
+            (
+                libc::sysconf(libc::_SC_CLK_TCK),
+                libc::sysconf(libc::_SC_PAGESIZE),
+            )
+        };
         Self {
-            page,
+            tck: if tck > 0 { tck } else { 100 },
+            page: if page > 0 { page } else { 4096 },
             passwd: None,
             start: std::time::Instant::now(),
+            path: String::with_capacity(32),
+            text: Vec::with_capacity(1024),
         }
     }
 }
 
-#[cfg(target_os = "freebsd")]
-impl ProcSource for FreeBsdProcSource {
-    fn procs(&mut self, buf: &mut Vec<u8>) -> Option<usize> {
-        let mib = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PROC];
-        for _ in 0..4 {
-            if !buf.is_empty() {
-                let mut len: libc::size_t = buf.len();
-                // SAFETY: sysctl writes at most len bytes into buf.
-                let r = unsafe {
-                    libc::sysctl(
-                        mib.as_ptr(),
-                        3,
-                        buf.as_mut_ptr().cast(),
-                        &mut len,
-                        std::ptr::null(),
-                        0,
-                    )
-                };
-                if r == 0 {
-                    return Some(len);
-                }
-                if std::io::Error::last_os_error().raw_os_error() != Some(libc::ENOMEM) {
-                    return None;
-                }
-            }
-            let mut need: libc::size_t = 0;
-            // SAFETY: size query with a null buffer.
-            let r = unsafe {
-                libc::sysctl(
-                    mib.as_ptr(),
-                    3,
-                    std::ptr::null_mut(),
-                    &mut need,
-                    std::ptr::null(),
-                    0,
-                )
+impl LinuxProcSource {
+    fn read(&mut self, path: &str) -> bool {
+        use std::io::Read;
+        self.text.clear();
+        std::fs::File::open(path)
+            .and_then(|mut f| f.read_to_end(&mut self.text))
+            .is_ok()
+    }
+}
+
+impl ProcSource for LinuxProcSource {
+    fn procs(&mut self, buf: &mut Vec<table::Rec>) -> Option<usize> {
+        use std::fmt::Write;
+        use std::os::unix::fs::MetadataExt;
+        let mut n = 0;
+        for e in std::fs::read_dir("/proc").ok()?.flatten() {
+            let name = e.file_name();
+            let Some(pid) = name
+                .to_str()
+                .filter(|s| s.bytes().all(|c| c.is_ascii_digit()))
+            else {
+                continue;
             };
-            if r != 0 || need == 0 {
-                return None;
+            let uid = e.metadata().map_or(-1, |m| m.uid() as i32);
+            self.path.clear();
+            let _ = write!(self.path, "/proc/{pid}/stat");
+            let path = std::mem::take(&mut self.path);
+            let ok = self.read(&path);
+            self.path = path;
+            let Some(rec) = ok
+                .then(|| table::parse_stat(&self.text, uid, self.tck))
+                .flatten()
+            else {
+                continue;
+            };
+            if n == buf.len() {
+                buf.resize(64.max(n + n / 4), table::Rec::default());
             }
-            buf.resize(need + need / 4 + table::KINFO_SIZE, 0);
+            buf[n] = rec;
+            n += 1;
         }
-        None
+        Some(n)
     }
     fn now_us(&self) -> i64 {
         self.start.elapsed().as_micros() as i64
@@ -413,27 +426,19 @@ impl ProcSource for FreeBsdProcSource {
         self.page
     }
     fn totals(&mut self, t: &mut SystemTotals) {
-        use super::sysctl::read_into;
-        let mut b = [0u8; 40];
-        if read_into("kern.cp_time", &mut b) == Some(40) {
-            let v =
-                |i: usize| i64::from_ne_bytes(b[i * 8..i * 8 + 8].try_into().unwrap_or_default());
-            t.cpu_total = (0..5).map(v).sum();
-            t.cpu_busy = t.cpu_total - v(4);
+        if self.read("/proc/stat")
+            && let Some(c) = std::str::from_utf8(&self.text)
+                .ok()
+                .and_then(super::stats::CpuTimes::parse_proc_stat)
+        {
+            t.cpu_busy = c.busy;
+            t.cpu_total = c.total;
         }
-        let i = |n: &str| {
-            let mut b = [0u8; 8];
-            read_into(n, &mut b).map_or(0, |n| {
-                if n == 4 {
-                    i64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
-                } else {
-                    i64::from_ne_bytes(b)
-                }
-            })
-        };
-        t.mem_total = i("vm.stats.vm.v_page_count") * self.page;
-        t.mem_used = t.mem_total
-            - (i("vm.stats.vm.v_free_count") + i("vm.stats.vm.v_inactive_count")) * self.page;
+        if self.read("/proc/meminfo") {
+            let m = super::stats::MemoryStats::parse_meminfo(&String::from_utf8_lossy(&self.text));
+            t.mem_total = m.total;
+            t.mem_used = m.used;
+        }
     }
     fn user_name(&mut self, uid: i32) -> Option<String> {
         let p = self.passwd.get_or_insert_with(|| {
@@ -450,29 +455,24 @@ impl ProcSource for FreeBsdProcSource {
     }
 }
 
-/// Fake kinfo_proc table for tests and non-FreeBSD hosts.
+/// Scripted process table for tests.
 #[derive(Default)]
 pub struct FakeProcSource {
-    pub table: Vec<u8>,
+    pub table: Vec<table::Rec>,
     pub now: i64,
     pub sys: SystemTotals,
     pub user_lookups: usize,
+    /// /proc unreadable.
     pub broken: bool,
 }
 
-/// (pid, runtime_us, start_sec, comm, uid, rss_pages, stat)
+/// (pid, runtime_us, start_sec, comm, uid, rss_pages, stat letter)
 pub type FakeProc<'a> = (i32, i64, i64, &'a str, i32, i64, u8);
 
 impl FakeProcSource {
     pub fn set(&mut self, rows: &[FakeProc]) {
         self.table.clear();
-        self.table.resize(rows.len() * table::KINFO_SIZE, 0);
-        let size = if self.broken {
-            1000
-        } else {
-            table::KINFO_SIZE as i32
-        };
-        for (i, &(pid, runtime_us, start, comm, uid, rss_pages, stat)) in rows.iter().enumerate() {
+        for &(pid, runtime_us, start, comm, uid, rss_pages, stat) in rows {
             let r = table::Row {
                 pid,
                 runtime_us,
@@ -482,20 +482,18 @@ impl FakeProcSource {
                 stat,
                 ..Default::default()
             };
-            table::write(
-                &mut self.table[i * table::KINFO_SIZE..(i + 1) * table::KINFO_SIZE],
-                &r,
-                comm,
-                size,
-            );
+            self.table.push(table::Rec::new(r, comm.as_bytes()));
         }
     }
 }
 
 impl ProcSource for FakeProcSource {
-    fn procs(&mut self, buf: &mut Vec<u8>) -> Option<usize> {
+    fn procs(&mut self, buf: &mut Vec<table::Rec>) -> Option<usize> {
+        if self.broken {
+            return None;
+        }
         if buf.len() < self.table.len() {
-            buf.resize(self.table.len(), 0);
+            buf.resize(self.table.len(), table::Rec::default());
         }
         buf[..self.table.len()].copy_from_slice(&self.table);
         Some(self.table.len())
@@ -524,7 +522,7 @@ mod tests {
     use super::*;
 
     fn p(pid: i32, rt: i64) -> FakeProc<'static> {
-        (pid, rt, 100, "sh", 0, 1, 3)
+        (pid, rt, 100, "sh", 0, 1, b'S')
     }
     fn mk() -> ProcessSampler<FakeProcSource> {
         ProcessSampler::new(FakeProcSource::default())
@@ -534,11 +532,46 @@ mod tests {
     }
 
     #[test]
+    fn parses_proc_pid_stat_fixture() {
+        // Real /proc/[pid]/stat line (Arch, kernel 6.x); comm may hold spaces and parens.
+        let line = b"1234 (Web Content (x)) S 1 1234 1234 0 -1 4194560 5000 0 10 0 250 50 0 0 20 0 27 0 9000 3221225472 51200 18446744073709551615 1 1 0 0 0 0 0 4096 0 0 0 0 17 3 0 0 0 0 0\n";
+        let r = table::parse_stat(line, 1001, 100).unwrap();
+        assert_eq!(r.comm(), b"Web Content (x)");
+        assert_eq!(
+            r.row,
+            table::Row {
+                pid: 1234,
+                ppid: 1,
+                uid: 1001,
+                stat: b'S',
+                rss_pages: 51200,
+                vsize: 3_221_225_472,
+                runtime_us: 3_000_000,
+                start_us: 90_000_000,
+                nice: 0,
+                threads: 27,
+            }
+        );
+        assert!(table::parse_stat(b"garbage", 0, 100).is_none());
+        assert!(table::parse_stat(b"12 (x) S 1 x", 0, 100).is_none());
+    }
+
+    #[test]
+    fn real_proc_table_has_this_process() {
+        let mut s = ProcessSampler::new(LinuxProcSource::default());
+        assert!(s.sample());
+        let me = std::process::id() as i32;
+        let i = s.pid[..s.count()].iter().position(|x| *x == me).unwrap();
+        assert!(s.rss_bytes[i] > 0 && s.threads[i] >= 1);
+        assert!(s.totals.mem_total > 0 && s.totals.cpu_total > 0);
+    }
+
+    #[test]
     fn first_sample_decodes_rows_with_zero_cpu() {
         let mut s = mk();
         s.source().set(&[
-            (1, 5_000_000, 100, "init", 0, 3, 2),
-            (42, 0, 100, "fish", 1002, 1, 3),
+            (1, 5_000_000, 100, "init", 0, 3, b'R'),
+            (42, 0, 100, "fish", 1002, 1, b'S'),
         ]);
         assert!(s.sample());
         assert_eq!(s.count(), 2);
@@ -575,20 +608,20 @@ mod tests {
     #[test]
     fn reused_pid_with_new_start_is_new_process_and_exec_renames() {
         let mut s = mk();
-        s.source().set(&[(7, 9_000_000, 100, "old", 0, 1, 3)]);
+        s.source().set(&[(7, 9_000_000, 100, "old", 0, 1, b'S')]);
         s.source().now = 1_000_000;
         s.sample();
-        s.source().set(&[(7, 100_000, 200, "new", 0, 1, 3)]);
+        s.source().set(&[(7, 100_000, 200, "new", 0, 1, b'S')]);
         s.source().now = 2_000_000;
         s.sample();
         assert_eq!((s.cpu_percent[0], s.name[0].as_str()), (0.0, "new"));
-        s.source().set(&[(7, 100_000, 200, "vim", 0, 1, 3)]);
+        s.source().set(&[(7, 100_000, 200, "vim", 0, 1, b'S')]);
         s.sample();
         assert_eq!(s.name[0], "vim");
     }
 
     #[test]
-    fn wrong_layout_fails_closed() {
+    fn unreadable_table_fails_closed() {
         let mut s = mk();
         s.source().broken = true;
         s.source().set(&[p(7, 0)]);
@@ -621,9 +654,9 @@ mod tests {
     fn sort_orders_index_without_moving_rows() {
         let mut s = mk();
         s.source().set(&[
-            (1, 0, 100, "b", 0, 5, 3),
-            (2, 0, 100, "c", 0, 9, 3),
-            (3, 0, 100, "a", 0, 1, 3),
+            (1, 0, 100, "b", 0, 5, b'S'),
+            (2, 0, 100, "c", 0, 9, b'S'),
+            (3, 0, 100, "a", 0, 1, b'S'),
         ]);
         s.sample();
         let mut ix = vec![0; 3];

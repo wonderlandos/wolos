@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# UAPI headers from the same WolKernel tree as linux-wolos (ADR 0017): replaces Arch's linux-api-headers.
+# _ref and the extra patches must match kernel/linux-wolos/PKGBUILD for the same release.
+pkgname=linux-wolos-api-headers
+pkgver=7.3.0
+pkgrel=1
+_ref=83f32c773255720a661aa45d83e36278135f23f5
+pkgdesc='Kernel headers sanitized for use in userspace (WolKernel)'
+arch=(any)
+url='https://github.com/wonderlandos/linux'
+license=(GPL-2.0-only)
+makedepends=(git rsync)
+provides=("linux-api-headers=$pkgver")
+conflicts=(linux-api-headers)
+replaces=(linux-api-headers)
+source=("linux::git+https://github.com/wonderlandos/linux.git#commit=$_ref")
+sha256sums=(SKIP)
+
+prepare() {
+  cd linux
+  # Extra patches from $WOLOS_OVERLAY when present, same order as linux-wolos.
+  if [ -n "${WOLOS_OVERLAY:-}" ] && [ -d "$WOLOS_OVERLAY/kernel/linux/patches" ]; then
+    for p in "$WOLOS_OVERLAY"/kernel/linux/patches/*.patch; do
+      [ -e "$p" ] || continue
+      patch -Np1 < "$p" || { echo "extra patch does not apply: $p" >&2; exit 3; }
+    done
+  fi
+}
+
+build() {
+  cd linux
+  make mrproper
+}
+
+package() {
+  cd linux
+  make INSTALL_HDR_PATH="$pkgdir/usr" headers_install
+  # libdrm ships the drm headers (as on Arch).
+  rm -r "$pkgdir/usr/include/drm"
+}

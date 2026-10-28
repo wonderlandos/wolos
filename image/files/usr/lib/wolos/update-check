@@ -1,0 +1,43 @@
+#!/bin/sh
+# Daily update check (wolos-update-check.timer, wol_core::update::check). The timer runs it hourly;
+# it checks at most once every 20 hours, so a computer asleep at night still checks once a day.
+# `update-check now` checks regardless. It only looks: installing is Software Update (wol update).
+# Findings in $D, readable by every account (the shell notifies from them):
+#   pkg      packages with a newer version at the pinned snapshot and in [wolos] (checkupdates)
+#   audit    installed packages with a known vulnerability (arch-audit -q)
+#   kernels  installed package names (pacman -Qq): kernels besides linux-wolos are reported
+#   base     the latest release manifest; base.sig its signature in hex (verified when read)
+#   checked  when the check finished (seconds since 1970)
+set -u
+D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
+URL=${WOLOS_RELEASE_URL:-https://wonderlandos.github.io/releases/latest/release.json}
+EVERY=72000
+now=$(date +%s)
+last=$(cat "$D/checked" 2>/dev/null)
+case $last in '' | *[!0-9]*) last=0 ;; esac
+[ "${1:-}" = now ] || [ $((now - last)) -ge $EVERY ] || exit 0
+umask 022
+mkdir -p "$D" || exit 1
+# checkupdates: 0 updates listed, 2 none; anything else (offline) leaves no stamp: the next hour tries.
+checkupdates --nocolor >"$D/pkg.new" 2>/dev/null
+case $? in
+0 | 2) mv "$D/pkg.new" "$D/pkg" ;;
+*) rm -f "$D/pkg.new"; exit 0 ;;
+esac
+# Exit 1 also means "found some"; an empty list from a failed run keeps the last one.
+arch-audit -q >"$D/audit.new" 2>/dev/null
+st=$?
+if [ $st -eq 0 ] || [ -s "$D/audit.new" ]; then mv "$D/audit.new" "$D/audit"; else rm -f "$D/audit.new"; fi
+pacman -Qq >"$D/kernels" 2>/dev/null
+if curl -fsSL -o "$D/base.new" "$URL" 2>/dev/null &&
+	curl -fsSL "$URL.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
+	[ -s "$D/base.sig.new" ]; then
+	mv "$D/base.new" "$D/base"
+	mv "$D/base.sig.new" "$D/base.sig"
+else
+	rm -f "$D/base.new" "$D/base.sig.new"
+fi
+date +%s >"$D/checked"
+chmod 644 "$D/pkg" "$D/checked"
+chmod 644 "$D/audit" "$D/kernels" "$D/base" "$D/base.sig" 2>/dev/null
+exit 0

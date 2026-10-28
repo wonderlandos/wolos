@@ -1,16 +1,14 @@
-//! wol-run: compat launcher. `.wol` bundle -> resolved target -> launch plan (argv, env, kernel
-//! modules); Windows programs and Steam games on native wine-proton ([`exe`], [`steam`]).
+//! wol-run: launcher. `.wol` bundle -> resolved target -> launch plan (argv, env); Windows
+//! programs on native wine or umu-launcher ([`exe`]). Steam games do not come here: Steam runs
+//! its own Proton.
 pub mod dlls;
 pub mod exe;
-pub mod steam;
 pub mod tuning;
 pub mod wine;
 
 use shared::bundle::{Abi, Target};
 use std::collections::BTreeMap;
 
-pub const LINUX_ROOT: &str = "/compat/linux";
-pub const LINUX_MODULES: [&str; 1] = ["linux64"];
 /// Under `$HOME`: one Proton prefix per bundle id.
 pub const PREFIXES: &str = ".local/share/wolos/prefixes";
 
@@ -21,13 +19,12 @@ pub struct LaunchPlan {
     /// `env` is the whole environment (Steam's Linux-side variables are gone).
     pub env_clear: bool,
     pub cwd: Option<String>,
-    pub modules: Vec<String>,
     /// Proton closes std handles that are regular files (ntdll "handle for fd N is seekable"), so
     /// seekable stdout/stderr go through a pipe that wol-run copies into the original file.
     pub relay_seekable_stdio: bool,
 }
 
-/// wine-proton for a bundle's Proton target: loader and [`tuning::defaults`].
+/// The runner for a bundle's Proton target: loader and its default variables.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proton {
     pub loader: String,
@@ -45,15 +42,14 @@ pub fn plan(
     let dir = bundle_dir.trim_end_matches('/');
     let entry = format!("{dir}/{}", target.entry);
     let mut env = BTreeMap::new();
-    let (argv, modules): (Vec<String>, &[&str]) = match target.abi {
-        Abi::FreeBsdNative => (vec![entry], &[]),
+    let argv = match target.abi {
+        Abi::FreeBsdNative => vec![entry],
         Abi::Linux => {
-            // Linux ELF runs via the linux64 ABI (kernel brands it); bundled libs first.
+            // A Linux ELF runs natively; bundled libs first.
             env.insert("LD_LIBRARY_PATH".into(), format!("{dir}/lib"));
-            (vec![entry], &LINUX_MODULES)
+            vec![entry]
         }
         Abi::Proton => {
-            // Native FreeBSD wine-proton: no Linux ABI.
             let data = format!("{}/{PREFIXES}/{app_id}", home.trim_end_matches('/'));
             env.extend(
                 proton
@@ -62,15 +58,13 @@ pub fn plan(
                     .map(|(k, v)| ((*k).into(), (*v).into())),
             );
             env.insert("WINEPREFIX".into(), format!("{data}/pfx"));
-            env.insert("STEAM_COMPAT_DATA_PATH".into(), data);
-            (vec![proton.loader.clone(), entry], &[])
+            vec![proton.loader.clone(), entry]
         }
     };
     LaunchPlan {
         relay_seekable_stdio: target.abi == Abi::Proton,
         argv: argv.into_iter().chain(args.iter().cloned()).collect(),
         env,
-        modules: modules.iter().map(|m| (*m).into()).collect(),
         ..Default::default()
     }
 }
@@ -85,15 +79,12 @@ pub fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
 }
 
-/// What this machine can run: Linux ABI root present, wine-proton (or `WOL_WINE`) present.
+/// What this machine can run: Linux programs always, Windows ones when wine or umu is there.
 pub fn host_caps(wine: &wine::Wine) -> wol_core::bundle::HostCaps {
-    let linux = std::path::Path::new(LINUX_ROOT).join("bin").exists();
     wol_core::bundle::HostCaps {
         arch: wol_core::bundle::host_arch().into(),
-        linux_compat: linux,
-        proton: wine
-            .loader(std::path::Path::new("/"), None, &wine::RealFs)
-            .is_some_and(|l| l.exists()),
+        linux_compat: true,
+        proton: wine.runner(&wine::RealFs).is_some(),
     }
 }
 
@@ -134,13 +125,17 @@ pub fn prepare(
             format!("{}: no target runs on this machine", info.id),
         )
     })?;
-    let entry = std::path::Path::new(dir).join(&target.entry);
-    let loader = wine
-        .loader(std::path::Path::new(home), Some(&entry), &wine::RealFs)
-        .unwrap_or_else(|| wine.root.join("bin/wine"));
+    let runner = wine.runner(&wine::RealFs);
     let proton = Proton {
-        loader: loader.to_string_lossy().into_owned(),
-        defaults: tuning::defaults(wine.vendor, wine.version),
+        loader: runner
+            .as_ref()
+            .map_or(wine.bin.as_path(), wine::Runner::path)
+            .to_string_lossy()
+            .into_owned(),
+        defaults: runner.map_or_else(
+            || tuning::defaults(wine.vendor),
+            |r| r.defaults(wine.vendor),
+        ),
     };
     Ok(plan(dir, target, &info.id, home, args, &proton))
 }
@@ -219,15 +214,16 @@ mod tests {
 
     fn proton() -> Proton {
         Proton {
-            loader: "/usr/local/wine-proton/bin/wine".into(),
-            defaults: tuning::defaults(tuning::Vendor::Intel, None),
+            loader: "/usr/bin/wine".into(),
+            defaults: tuning::defaults(tuning::Vendor::Intel),
         }
     }
 
     fn test_wine() -> wine::Wine {
         wine::Wine {
-            root: "/usr/local/wine-proton".into(),
-            forced: None,
+            bin: "/usr/bin/wine".into(),
+            umu: None,
+            forced: false,
             version: None,
             vendor: tuning::Vendor::Other,
         }
@@ -245,7 +241,7 @@ mod tests {
             &proton(),
         );
         assert_eq!(native.argv, ["/Apps/A.wol/bin/app", "--x"]);
-        assert!(native.env.is_empty() && native.modules.is_empty());
+        assert!(native.env.is_empty());
 
         let linux = plan(
             "/Apps/A.wol",
@@ -256,7 +252,6 @@ mod tests {
             &proton(),
         );
         assert_eq!(linux.argv, ["/Apps/A.wol/bin/app"]);
-        assert_eq!(linux.modules, ["linux64"]);
         assert_eq!(
             linux.env.get("LD_LIBRARY_PATH").map(String::as_str),
             Some("/Apps/A.wol/lib")
@@ -270,20 +265,11 @@ mod tests {
             &args,
             &proton(),
         );
-        assert_eq!(
-            p.argv,
-            [
-                "/usr/local/wine-proton/bin/wine",
-                "/Apps/A.wol/bin/app",
-                "--x"
-            ]
-        );
-        assert!(p.modules.is_empty(), "native wine-proton: no Linux ABI");
+        assert_eq!(p.argv, ["/usr/bin/wine", "/Apps/A.wol/bin/app", "--x"]);
         for (k, v) in proton().defaults {
             assert_eq!(p.env.get(k).map(String::as_str), Some(v), "{k}");
         }
         let data = "/home/u/.local/share/wolos/prefixes/org.a";
-        assert_eq!(p.env["STEAM_COMPAT_DATA_PATH"], data);
         assert_eq!(p.env["WINEPREFIX"], format!("{data}/pfx"));
     }
 
@@ -320,22 +306,21 @@ mod tests {
             linux_compat: linux,
             proton,
         };
-        // (host, chosen entry, kernel modules the plan needs)
+        // (host, chosen entry)
         let cases = [
-            (host(true, true), Ok(("a", vec!["linux64"]))),
-            (host(true, false), Ok(("a", vec!["linux64"]))),
-            // wine-proton is native: no Linux ABI needed for the Windows entry.
-            (host(false, true), Ok(("a.exe", vec![]))),
+            (host(true, true), Ok("a")),
+            (host(true, false), Ok("a")),
+            (host(false, true), Ok("a.exe")),
             (host(false, false), Err(ErrorCode::Unsupported)),
         ];
         for (h, want) in cases {
             let got = prepare(dir, &h, &test_wine(), "/home/u", &[])
                 .map(|p| {
                     let entry = p.argv.last().unwrap().rsplit('/').next().unwrap();
-                    (entry.to_owned(), p.modules)
+                    entry.to_owned()
                 })
                 .map_err(|e| e.code);
-            let want = want.map(|(e, m)| (e.to_owned(), m.into_iter().map(String::from).collect()));
+            let want = want.map(str::to_owned);
             assert_eq!(got, want, "{h:?}");
         }
         assert_eq!(

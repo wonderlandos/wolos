@@ -1,5 +1,5 @@
 //! Firefox chrome stylesheet from one resolved theme. Loaded as a user sheet by the AutoConfig
-//! script `/usr/local/lib/firefox/wolos.cfg` (nsIStyleSheetService; reloaded when the file
+//! script `/usr/lib/firefox/wolos.cfg` (nsIStyleSheetService; reloaded when the file
 //! changes), so it needs no profile and survives new profiles and updates. Every rule sits in an
 //! `@-moz-document` block: the browser window and the new-tab page only, never web pages.
 
@@ -277,7 +277,7 @@ mod tests {
 
     fn overlay(rel: &str) -> String {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../desktop/overlay/usr/local/lib/firefox")
+            .join("../../desktop/overlay/usr/lib/firefox")
             .join(rel);
         std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
     }

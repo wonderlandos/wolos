@@ -1,1 +1,0 @@
-{"label": "org.wol.login", "program": ["/usr/local/bin/wol-login"], "keepAlive": true, "throttleSeconds": 2, "qos": "user-interactive"}

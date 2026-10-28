@@ -453,7 +453,7 @@ mod tests {
         for v in tools().iter().filter(|v| v.access() == Some(Admin)) {
             let mut words: Vec<&str> = v.cmd.path.to_vec();
             for a in v.cmd.args.iter().filter(|a| !a.optional) {
-                words.push(if a.name == "be" { "wol-1" } else { "Home" });
+                words.push(if a.name == "be" { "wolos-a" } else { "Home" });
             }
             let inv = crate::cli::parse(&words).unwrap();
             assert!(approval(&inv, None).is_ok(), "{}", v.tool());

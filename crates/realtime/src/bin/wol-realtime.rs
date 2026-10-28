@@ -9,7 +9,7 @@ use realtime::{
 };
 use shared::errors::ErrorCode;
 
-const GLASS: &str = "/usr/local/etc/wolos/glass.json";
+const GLASS: &str = "/etc/wolos/glass.json";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

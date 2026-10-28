@@ -1,4 +1,4 @@
-//! `wol power`: status, apply (devd on AC changes, rc.d `wolos_power` at boot and resume), mode,
+//! `wol power`: status, apply (udev on AC changes, systemd `wolos-power` at boot and resume), mode,
 //! sleep, and the suspend hook that locks every session first. Policy in `wol_core::power::policy`.
 use crate::cli::Invocation;
 use crate::run::{Env, admin_send, emit_json, fail};
@@ -58,20 +58,16 @@ fn status(env: &mut dyn Env, json: bool) -> i32 {
         (policy::Source::Ac, None) => "power adapter".into(),
     };
     let cpu = match (st.cpu, st.epp) {
-        (policy::Cpu::Epp, Some(e)) => format!("Speed Shift, energy preference {e}"),
-        (policy::Cpu::Powerd, _) => "powerd".into(),
+        (policy::Cpu::Epp, Some(e)) => format!("power profiles, energy preference {e}"),
         _ => "fixed (nothing to steer)".into(),
     };
     let mut t = format!("source: {source}\nmode: {}\ncpu: {cpu}\n", st.mode.name());
-    if let Some(c) = &st.cx_lowest {
-        t.push_str(&format!("idle states: down to {c}\n"));
-    }
     if let Some(l) = st.lid {
         t.push_str(&format!("lid: {}\n", wol_core::power::lid_value(l)));
     }
     t.push_str(&format!(
         "sleep: {}\n",
-        if st.sleep { "S3" } else { "not supported" }
+        if st.sleep { "suspend" } else { "not supported" }
     ));
     if !st.wifi_power_save.is_empty() {
         t.push_str(&format!(
@@ -83,8 +79,8 @@ fn status(env: &mut dyn Env, json: bool) -> i32 {
     0
 }
 
-/// Root: the plan for the saved mode and the power source now; the laptop lid default. Never fails
-/// boot or devd: problems are printed, the exit status is 0.
+/// Root: the plan for the saved mode and the power source now. Never fails boot or udev: problems
+/// are printed, the exit status is 0.
 fn apply(env: &mut dyn Env) -> i32 {
     if !env.is_root() {
         env.err("wol: power apply needs root (wol power mode changes the mode)\n");
@@ -92,11 +88,7 @@ fn apply(env: &mut dyn Env) -> i32 {
     }
     let f = facts(env);
     let mode = state(env).mode;
-    let mut argv = policy::plan(&f, mode).argv();
-    let local = env.read_file(Path::new(wol_core::power::SYSCTL_LOCAL));
-    if let Some((k, v)) = policy::lid_default(&f, local.as_deref()) {
-        argv.push(vec!["sysctl".into(), format!("{k}={v}")]);
-    }
+    let argv = policy::plan(&f, mode).argv();
     for a in &argv {
         match env.exec(a) {
             Ok(0) => env.out(&format!("wolos_power: {}\n", a.join(" "))),
@@ -114,10 +106,8 @@ fn apply(env: &mut dyn Env) -> i32 {
     0
 }
 
-/// Sleep now (S3). Accounts in group operator may (`/dev/acpi` is root:operator 0664); the lock is
-/// on screen before the machine sleeps (rc.suspend -> `wolos_power suspend`).
 /// Sleep, restart or shut down: root runs it, everyone else asks wol-admind (no password for
-/// the person at the computer). Sleep locks every session first (rc.suspend: `power suspend`).
+/// the person at the computer). Sleep locks every session first (system-sleep hook: `power suspend`).
 fn session_power(env: &mut dyn Env, verb: &str) -> i32 {
     if env.is_root() {
         let argv = wol_core::admin::session_power_argv(verb).unwrap_or_default();
@@ -151,9 +141,9 @@ fn idle(env: &mut dyn Env, i: Idle) -> i32 {
     }
 }
 
-/// Root, from rc.suspend (KEYWORD suspend) before the kernel sleeps: every desktop session that
-/// asks for the password after sleep (Settings > Lock Screen) gets its lock now. rc.suspend then
-/// syncs and waits 3 s before it lets the kernel continue, so the lock is drawn first.
+/// Root, from the systemd-sleep hook (`pre`) before the kernel sleeps: every desktop session that
+/// asks for the password after sleep (Settings > Lock Screen) gets its lock now. The hook then
+/// waits before it lets the kernel continue, so the lock is drawn first.
 fn suspend(env: &mut dyn Env) -> i32 {
     if !env.is_root() {
         env.err("wol: power suspend needs root\n");

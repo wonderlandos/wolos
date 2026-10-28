@@ -1,7 +1,7 @@
 //! launchd-style jobs: one JSON file per job in [`JOBS_DIR`], wold control socket wire.
 use serde::{Deserialize, Serialize};
 
-pub const JOBS_DIR: &str = "/usr/local/etc/wolos/jobs";
+pub const JOBS_DIR: &str = "/etc/wolos/jobs";
 pub const SOCKET: &str = "/var/run/wold.sock";
 
 /// Job definition. `run_at_load = false` = on demand (`wol start <label>`).

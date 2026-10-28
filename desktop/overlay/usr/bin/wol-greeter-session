@@ -1,0 +1,13 @@
+#!/bin/sh
+# Login window display, started by wol-login (root). Hyprland refuses root, so the compositor and
+# wol-loginwindow both run as _wollogin (video group; DRM via seatd).
+# `setup` (first boot, no user yet): the setup assistant instead of the login window (ADR 0004).
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export XDG_RUNTIME_DIR=/var/run/wol-login HOME=/var/run/wol-login XDG_SESSION_TYPE=wayland
+# GTK cairo renderer: small static screens, no GPU renderer dependency before login (Setup never
+# mapped with the default renderer on a passthrough iGPU).
+export GSK_RENDERER=${GSK_RENDERER:-cairo}
+install -d -o _wollogin -g _wollogin -m 0700 "$XDG_RUNTIME_DIR" "$HOME/.cache"   # .cache: Hyprland crash reports
+conf=login
+[ "${1:-}" = setup ] && conf=setup
+exec setpriv --reuid=_wollogin --regid=_wollogin --init-groups Hyprland -c /usr/share/wolos/hypr/$conf.conf

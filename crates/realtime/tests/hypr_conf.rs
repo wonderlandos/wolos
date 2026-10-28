@@ -5,8 +5,7 @@
 use realtime::anim::{Animation, Bezier};
 use realtime::titlebar::{self, Button};
 
-const CONF: &str =
-    include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/hyprland.conf");
+const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 
 fn value(key: &str) -> String {
     CONF.lines()
@@ -172,7 +171,7 @@ fn every_wol_hypr_build_allows_private_access() {
 /// ".conf ... removed in 0.57"). Customers must never see compositor nags.
 #[test]
 fn session_starts_hyprland_without_nag_banners() {
-    let session = include_str!("../../../desktop/overlay/usr/local/bin/wol-session");
+    let session = include_str!("../../../desktop/overlay/usr/bin/wol-session");
     let launch = session
         .lines()
         .rev()
@@ -199,11 +198,11 @@ fn greeter_compositors_show_no_nag_banners() {
     for (name, conf) in [
         (
             "login.conf",
-            include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/login.conf"),
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/login.conf"),
         ),
         (
             "setup.conf",
-            include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/setup.conf"),
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/setup.conf"),
         ),
     ] {
         for key in [
@@ -250,9 +249,9 @@ fn activation_raises_the_window() {
 fn desktop_conf_sources_the_perf_defaults() {
     assert!(
         CONF.lines()
-            .any(|l| l.trim() == "source = /usr/local/share/wolos/hypr/wolos-perf.conf")
+            .any(|l| l.trim() == "source = /usr/share/wolos/hypr/wolos-perf.conf")
     );
-    let perf = include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/wolos-perf.conf");
+    let perf = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos-perf.conf");
     assert!(perf.contains("vfr = true") && perf.contains("damage_tracking = 2"));
 }
 
@@ -260,7 +259,7 @@ fn desktop_conf_sources_the_perf_defaults() {
 /// cairo did. Session GTK apps use cairo until a GPU renderer is proven on hardware.
 #[test]
 fn session_gtk_uses_a_proven_renderer() {
-    let session = include_str!("../../../desktop/overlay/usr/local/bin/wol-session");
+    let session = include_str!("../../../desktop/overlay/usr/bin/wol-session");
     assert!(
         session
             .lines()
@@ -271,8 +270,7 @@ fn session_gtk_uses_a_proven_renderer() {
 /// Live: fontconfig resolved "monospace" to Font Awesome (foot drew icon-font capitals).
 #[test]
 fn monospace_resolves_to_jetbrains_mono() {
-    let fc =
-        include_str!("../../../desktop/overlay/usr/local/etc/fonts/conf.d/50-wolos-fonts.conf");
+    let fc = include_str!("../../../desktop/overlay/etc/fonts/conf.d/50-wolos-fonts.conf");
     let compact: String = fc.split_whitespace().collect();
     assert!(compact.contains("<family>monospace</family><prefer><family>JetBrainsMono</family>"));
 }
@@ -281,7 +279,7 @@ fn monospace_resolves_to_jetbrains_mono() {
 /// cairo. Login window and Setup are small static screens: cairo, no GPU dependency before login.
 #[test]
 fn greeter_gtk_uses_cairo() {
-    let g = include_str!("../../../desktop/overlay/usr/local/bin/wol-greeter-session");
+    let g = include_str!("../../../desktop/overlay/usr/bin/wol-greeter-session");
     assert!(
         g.lines()
             .any(|l| l.trim() == "export GSK_RENDERER=${GSK_RENDERER:-cairo}")

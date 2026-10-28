@@ -68,11 +68,9 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
-| Linux compat | linux64 + linux_base + steam-utils + wine-proton, and every setting the client checks, in the image | - | OK | Games |
 | Get Steam | Steam in Launchpad, Spotlight and the App Store (Open); `steam://` links open it | - | OK | Games |
 | Steam first run | `wol games steam`: "Getting Steam ready" notification, `lsu-bootstrap`, then Steam's own updater window; offline: "Steam couldn't download…" | notification | OK (host-tested, not yet on hardware) | Games |
-| Proton in Steam | WolOS Proton refreshed at every start; the user picks it once per game (Properties > Compatibility) | - | OK (one choice per game) | Games |
-| Windows .exe | double-click runs it on wine-proton in its own prefix (`wol-run --exe`) | none while a new prefix is made | NO-FEEDBACK | Games |
+| Windows .exe | double-click runs it on wine (or umu-launcher) in its own prefix (`wol-run --exe`) | none while a new prefix is made | NO-FEEDBACK | Games |
 | NVIDIA | `linux-nvidia-libs` not installed by `wol hw`; the notification points to `wol games doctor` | notification | TERMINAL | Kernel/hardware |
 
 ## J6 Plug in

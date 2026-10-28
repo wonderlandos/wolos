@@ -72,63 +72,78 @@ pub fn exit_code(status: i32) -> i32 {
     }
 }
 
-/// Become the reaper of every descendant (FreeBSD procctl, Linux subreaper). Best effort.
+/// Become the reaper of every descendant (Linux child subreaper). Best effort.
 pub fn acquire() -> bool {
-    #[cfg(target_os = "freebsd")]
-    // SAFETY: procctl on our own pid with no data.
-    unsafe {
-        libc::procctl(
-            libc::P_PID,
-            libc::getpid() as libc::id_t,
-            libc::PROC_REAP_ACQUIRE,
-            std::ptr::null_mut(),
-        ) == 0
-    }
     #[cfg(target_os = "linux")]
     // SAFETY: prctl with integer arguments.
     unsafe {
         libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0
     }
-    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+    #[cfg(not(target_os = "linux"))]
     false
 }
 
-/// `struct procctl_reaper_kill` (sys/procctl.h); not exported by libc.
-#[cfg(target_os = "freebsd")]
-#[repr(C)]
-struct ReaperKill {
-    rk_sig: libc::c_int,
-    rk_flags: libc::c_uint,
-    rk_subtree: libc::pid_t,
-    rk_killed: libc::c_uint,
-    rk_fpid: libc::pid_t,
-    rk_pad0: [libc::c_uint; 15],
+/// Every descendant of `root` in a `(pid, ppid)` table (orphans re-parent to the subreaper, so
+/// the table holds the whole subtree).
+pub fn descendants(root: i32, table: &[(i32, i32)]) -> Vec<i32> {
+    let mut out = Vec::new();
+    let mut frontier = vec![root];
+    while let Some(parent) = frontier.pop() {
+        for &(pid, ppid) in table {
+            if ppid == parent && pid != root && !out.contains(&pid) {
+                out.push(pid);
+                frontier.push(pid);
+            }
+        }
+    }
+    out
 }
 
-/// FreeBSD: signal the whole reaper subtree. Returns false where unsupported.
+/// `(pid, ppid)` from `/proc/<pid>/stat` text (the command may contain spaces and parentheses).
+pub fn parse_stat(text: &str) -> Option<(i32, i32)> {
+    let pid = text.split_whitespace().next()?.parse().ok()?;
+    let rest = &text[text.rfind(')')? + 1..];
+    let ppid = rest.split_whitespace().nth(1)?.parse().ok()?;
+    Some((pid, ppid))
+}
+
+/// Signal the whole subtree under this process (read from /proc). False when none was signalled.
 pub fn kill_all(sig: i32) -> bool {
-    #[cfg(target_os = "freebsd")]
-    // SAFETY: procctl with a zeroed, correctly typed reap_kill struct.
-    unsafe {
-        let mut rk: ReaperKill = std::mem::zeroed();
-        rk.rk_sig = sig;
-        libc::procctl(
-            libc::P_PID,
-            libc::getpid() as libc::id_t,
-            libc::PROC_REAP_KILL,
-            (&raw mut rk).cast(),
-        ) == 0
-    }
-    #[cfg(not(target_os = "freebsd"))]
-    {
-        let _ = sig;
-        false
-    }
+    let table: Vec<(i32, i32)> = std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| std::fs::read_to_string(e.path().join("stat")).ok())
+        .filter_map(|t| parse_stat(&t))
+        .collect();
+    let me = std::process::id() as i32;
+    let pids = descendants(me, &table);
+    // SAFETY: kill(2) on pids read from /proc; a pid that already exited just fails.
+    let sent = pids
+        .iter()
+        .filter(|p| unsafe { libc::kill(**p, sig) } == 0)
+        .count();
+    sent > 0
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subtree_from_the_process_table() {
+        let t = [(10, 1), (11, 10), (12, 11), (13, 1), (14, 12)];
+        let mut d = descendants(10, &t);
+        d.sort();
+        assert_eq!(d, [11, 12, 14]);
+        assert!(descendants(99, &t).is_empty());
+        assert_eq!(
+            parse_stat("42 (a (b) c) S 7 42 42 0 -1"),
+            Some((42, 7)),
+            "command with spaces and parens"
+        );
+        assert_eq!(parse_stat("garbage"), None);
+    }
 
     #[test]
     fn delivery_before_and_after_registration() {

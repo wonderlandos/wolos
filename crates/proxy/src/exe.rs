@@ -1,10 +1,12 @@
 //! `wol-run --exe <file.exe|file.msi> [args]`: double-click a Windows program. Each program gets
-//! its own prefix, named by its path; it runs on native wine-proton from its own directory.
-use crate::wine::{EnvInput, Fs, Wine, WinePlan, pick_dlls, proton_dirs, wine_env};
-use crate::{LaunchPlan, PREFIXES, dlls, steam, tuning};
+//! its own prefix, named by its path; it runs on native wine (or umu-launcher) from its own
+//! directory.
+use crate::wine::{EnvInput, Fs, Runner, Wine, WinePlan, pick_dlls, proton_dirs, wine_env};
+use crate::{LaunchPlan, PREFIXES, dlls};
 use shared::errors::{ErrorCode, WolError};
 use std::collections::BTreeMap;
 use std::path::Path;
+use wol_core::games::steam;
 
 /// FNV-1a 64: stable across Rust releases (unlike `DefaultHasher`).
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -55,54 +57,59 @@ pub fn plan(
         vec![file]
     };
     tail.extend(args.iter().cloned());
-    let loader = wine
-        .loader(home, (!msi).then_some(path), fs)
-        .ok_or_else(|| {
-            WolError::new(
-                ErrorCode::NotFound,
-                "wine-proton is not installed: sudo pkg install -y wine-proton",
-            )
-        })?;
+    let runner = wine.runner(fs).ok_or_else(|| {
+        WolError::new(
+            ErrorCode::NotFound,
+            "wine is not installed: sudo pacman -S wine",
+        )
+    })?;
     let prefix = home.join(PREFIXES).join(exe_id(path)).join("pfx");
-    let dirs = proton_dirs(
-        &steam::steam_libraries(&BTreeMap::new(), home, fs),
-        wine.version,
-        fs,
-    );
-    let sources = pick_dlls(incoming, wine.vendor, &dirs, fs);
+    // Proton (umu) brings its own DXVK; wine gets the copy from a Proton Steam installed.
+    let sources = match runner {
+        Runner::Wine(_) => pick_dlls(
+            incoming,
+            wine.vendor,
+            &proton_dirs(&steam_libraries(home, fs), fs),
+            fs,
+        ),
+        Runner::Umu(_) => vec![],
+    };
     let (copies, names) = dlls::plan(&sources, &|d| fs.list(d), &prefix);
-    let defaults = tuning::defaults(wine.vendor, wine.version);
+    let defaults = runner.defaults(wine.vendor);
     let env = wine_env(&EnvInput {
         incoming,
-        loader: &loader,
         prefix: &prefix,
         defaults: &defaults,
         dlls: &names,
-        steam: false,
     });
     Ok(WinePlan {
         summary: format!(
-            "wol-run: {} in {} ({} DLLs native-first)",
+            "wol-run: {} in {} ({}, {} DLLs native-first)",
             path.display(),
             prefix.display(),
+            runner.name(),
             names.len()
         ),
-        launch: Some(LaunchPlan {
-            argv: std::iter::once(loader.to_string_lossy().into_owned())
+        launch: LaunchPlan {
+            argv: std::iter::once(runner.path().to_string_lossy().into_owned())
                 .chain(tail)
                 .collect(),
             env,
             env_clear: true,
             cwd: path.parent().map(|d| d.to_string_lossy().into_owned()),
             relay_seekable_stdio: true,
-            ..Default::default()
-        }),
-        loader,
+        },
+        ensure_prefix: matches!(runner, Runner::Wine(_)),
+        runner: Some(runner),
         prefix,
-        ensure_prefix: true,
         copies,
-        ..Default::default()
     })
+}
+
+/// Libraries of the Steam client (DXVK lookup): the client's and every `libraryfolders.vdf` entry.
+fn steam_libraries(home: &Path, fs: &dyn Fs) -> Vec<std::path::PathBuf> {
+    let root = steam::steam_root(home, &|p| fs.exists(p));
+    steam::libraries(&root, &|p| fs.read(p))
 }
 
 #[cfg(test)]
@@ -127,25 +134,33 @@ mod tests {
         assert!(exe_id(Path::new("/x/\u{fc}.exe")).starts_with("exe-app-"));
     }
 
+    fn wine(umu: bool) -> Wine {
+        Wine {
+            bin: "/usr/bin/wine".into(),
+            umu: umu.then(|| "/usr/bin/umu-run".into()),
+            forced: false,
+            version: Version::parse("wine-11.20"),
+            vendor: Vendor::Amd,
+        }
+    }
+
+    fn incoming() -> BTreeMap<String, String> {
+        [("WOL_DXVK_DIR", "/opt/dxvk"), ("PATH", "/usr/bin")]
+            .iter()
+            .map(|(k, v)| ((*k).into(), (*v).into()))
+            .collect()
+    }
+
     #[test]
     fn exe_and_msi_plans() {
-        let w = Wine {
-            root: "/usr/local/wine-proton".into(),
-            forced: None,
-            version: Version::parse("wine-11.0"),
-            vendor: Vendor::Amd,
-        };
+        let w = wine(true);
         let fs = FakeFs::with(&[
-            ("/usr/local/wine-proton/bin/wine", b""),
+            ("/usr/bin/wine", b""),
             ("/home/ana/Downloads/app.exe", b"MZ"),
             ("/home/ana/Downloads/tool.msi", b""),
             ("/opt/dxvk/x64/dxgi.dll", b""),
         ]);
-        let incoming: BTreeMap<String, String> =
-            [("WOL_DXVK_DIR", "/opt/dxvk"), ("PATH", "/usr/bin")]
-                .iter()
-                .map(|(k, v)| ((*k).into(), (*v).into()))
-                .collect();
+        let incoming = incoming();
         let home = Path::new("/home/ana");
         let p = plan(
             Path::new("/home/ana/Downloads/app.exe"),
@@ -156,27 +171,20 @@ mod tests {
             &fs,
         )
         .unwrap();
-        let l = p.launch.as_ref().unwrap();
+        let l = &p.launch;
         assert_eq!(
             l.argv,
-            [
-                "/usr/local/wine-proton/bin/wine",
-                "/home/ana/Downloads/app.exe",
-                "-x"
-            ]
+            ["/usr/bin/wine", "/home/ana/Downloads/app.exe", "-x"]
         );
         assert_eq!(l.cwd.as_deref(), Some("/home/ana/Downloads"));
         let id = exe_id(Path::new("/home/ana/Downloads/app.exe"));
         assert_eq!(p.prefix, home.join(PREFIXES).join(&id).join("pfx"));
+        assert!(p.ensure_prefix);
         assert_eq!(l.env["WINEDLLOVERRIDES"], "dxgi=n,b");
         assert_eq!(l.env["MESA_VK_WSI_PRESENT_MODE"], "mailbox");
-        assert!(
-            !l.env.contains_key("WINEESYNC"),
-            "wine-proton 11 has no esync"
-        );
-        assert!(!l.env.contains_key("DISABLE_VK_LAYER_VALVE_steam_overlay_1"));
+        assert!(!l.env.contains_key("WINEESYNC"));
+        assert!(!l.env.contains_key("GAMEID"), "umu only");
         assert_eq!(p.copies.len(), 1);
-        assert!(!p.wait_server);
         let m = plan(
             Path::new("/home/ana/Downloads/tool.msi"),
             &[],
@@ -187,7 +195,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            &m.launch.unwrap().argv[1..],
+            &m.launch.argv[1..],
             ["msiexec", "/i", "/home/ana/Downloads/tool.msi"]
         );
         for bad in ["relative.exe", "/home/ana/missing.exe"] {
@@ -198,5 +206,46 @@ mod tests {
                 ErrorCode::NotFound
             );
         }
+    }
+
+    #[test]
+    fn umu_runs_the_program_when_wine_is_missing() {
+        let fs = FakeFs::with(&[
+            ("/usr/bin/umu-run", b""),
+            ("/home/ana/g/app.exe", b"MZ"),
+            ("/opt/dxvk/x64/dxgi.dll", b""),
+        ]);
+        let p = plan(
+            Path::new("/home/ana/g/app.exe"),
+            &[],
+            &incoming(),
+            &wine(true),
+            Path::new("/home/ana"),
+            &fs,
+        )
+        .unwrap();
+        assert_eq!(p.launch.argv, ["/usr/bin/umu-run", "/home/ana/g/app.exe"]);
+        assert_eq!(p.launch.env["GAMEID"], "umu-default");
+        assert!(p.launch.env["WINEPREFIX"].ends_with("/pfx"));
+        assert!(
+            !p.ensure_prefix && p.copies.is_empty(),
+            "Proton owns the prefix and DLLs"
+        );
+
+        let err = plan(
+            Path::new("/home/ana/g/app.exe"),
+            &[],
+            &incoming(),
+            &wine(false),
+            Path::new("/home/ana"),
+            &FakeFs::with(&[("/home/ana/g/app.exe", b"MZ")]),
+        )
+        .unwrap_err();
+        assert_eq!(err.code, ErrorCode::NotFound);
+        assert!(
+            err.message.contains("sudo pacman -S wine"),
+            "{}",
+            err.message
+        );
     }
 }
