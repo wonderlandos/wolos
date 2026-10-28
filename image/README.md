@@ -33,3 +33,14 @@ Boot chain and installer: `archicture/modules/boot.md`.
 - `.github/workflows/packages.yml` (push to `main`): rebuilds the changed packages in an archlinux container and publishes the repo as the assets of the `repo-<snapshot>` release.
 - `.github/workflows/iso.yml` (tag `v*` or manual): `mkarchiso` in a privileged container; the tag's release, marked latest, carries the ISO, `.sha256`, `release.json` and `release.json.sig`.
 - Users: `wolos-update-check.timer` fetches `releases/latest/download/release.json` (+ `.sig`); Software Update or `wolos-update-slot` runs `wol update apply` into the other slot at that snapshot, and the running slot stays the restore point.
+
+## Userland and GNU
+
+- Done in `wolos-base`: uutils-coreutils (as `coreutils`), sudo-rs (as `sudo`), bsdtar. The image lists no `gcc`, `texinfo`, `man-pages` or `base-devel` (tested in `image_gaming_audio.rs`); `base` does not pull them.
+- Kept on purpose: glibc and gcc-libs (Steam, Proton, NVIDIA), bash (pacman hooks), GNU findutils, diffutils, tar (no uutils package at the snapshot; pacman/dkms scripts need them), `man-db` + `less` (small, used by `wol --help`).
+- Not done: busybox/toybox. Arch packages depend on the GNU names, a second provider would add conflicts for no size gain.
+- Recommendation: revisit when `uutils-findutils` and `uutils-diffutils` reach `extra`; add them to `wolos-base` `provides`/`conflicts` then.
+
+## Tuning
+
+`files/usr/lib/sysctl.d/70-wolos-performance.conf`, `systemd/*.conf.d/70-wolos-limits.conf`, `etc/security/limits.d`, and the PipeWire/WirePlumber drop-ins under `files/usr/share` hold the game and audio defaults (values from CachyOS-Settings and Bazzite). PipeWire's minimum quantum is 64 frames so VMs keep working. No `PROTON_*` defaults are set globally: each is game-specific, so `wol games` sets them per title.

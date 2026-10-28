@@ -87,6 +87,7 @@ jobs:
           path: |
             out/pkgcache
             out/cargo
+            out/sccache
           key: wolos-pkgs-${{ steps.plan.outputs.tag }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: wolos-pkgs-${{ steps.plan.outputs.tag }}-
 
@@ -96,11 +97,11 @@ jobs:
           WOLOS_REPO_ONLY: ${{ steps.plan.outputs.only }}
           GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
         run: |
-          mkdir -p out/pkgcache out/cargo
+          mkdir -p out/pkgcache out/cargo out/sccache
           docker run --rm -v "$PWD:/src" -w /src \
-            -v "$PWD/out/pkgcache:/var/cache/pacman/pkg" -v "$PWD/out/cargo:/home/builder/.cargo" \
+            -v "$PWD/out/pkgcache:/var/cache/pacman/pkg" -v "$PWD/out/cargo:/home/builder/.cargo" -v "$PWD/out/sccache:/home/builder/.cache/sccache" \
             -e WOLOS_REPO_ONLY -e GPG_KEY archlinux:base-devel bash -euo pipefail -c '
-              pacman -Syu --noconfirm --needed git sudo devtools rust clang
+              pacman -Syu --noconfirm --needed git sudo devtools rust clang mold sccache
               useradd -m builder; echo "builder ALL=(root) NOPASSWD: /usr/bin/pacman" > /etc/sudoers.d/builder
               chown -R builder /src /home/builder
               ov=; [ -d /src/wolos-overlay ] && ov=/src/wolos-overlay

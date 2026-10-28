@@ -29,3 +29,18 @@ wol_core = { path = "crates/core", package = "core" }
 # Vendored with a one-line idle-exit fix (archicture/adr/0006-vendored-blocking-idle-exit.md).
 [patch.crates-io]
 blocking = { path = "third_party/blocking" }
+
+# Release: thin LTO keeps most of fat LTO's speed at a fraction of the link time; 8 units trade a little
+# code quality for parallel codegen (default is 16 without LTO, 1 with fat LTO).
+[profile.release]
+lto = "thin"
+codegen-units = 8
+strip = "debuginfo"
+
+# Dev: our crates stay fast to rebuild, dependencies (image, crypto, gtk bindings) are optimised once
+# and cached; line tables are enough for backtraces.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 2

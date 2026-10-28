@@ -17,11 +17,11 @@ makedepends=(git rsync)
 provides=("linux-api-headers=$_linux")
 conflicts=(linux-api-headers)
 replaces=(linux-api-headers)
-source=("linux::git+https://github.com/wonderlandos/linux.git#commit=$_ref")
+source=("linux-$_ref.tar.gz::https://github.com/wonderlandos/linux/archive/$_ref.tar.gz")
 sha256sums=(SKIP)
 
 prepare() {
-  cd linux
+  cd linux-$_ref
   # Extra patches from $WOLOS_OVERLAY when present, same order as linux-wolos.
   if [ -n "${WOLOS_OVERLAY:-}" ] && [ -d "$WOLOS_OVERLAY/kernel/linux/patches" ]; then
     for p in "$WOLOS_OVERLAY"/kernel/linux/patches/*.patch; do
@@ -32,12 +32,12 @@ prepare() {
 }
 
 build() {
-  cd linux
+  cd linux-$_ref
   make mrproper
 }
 
 package() {
-  cd linux
+  cd linux-$_ref
   make INSTALL_HDR_PATH="$pkgdir/usr" headers_install
   # libdrm ships the drm headers (as on Arch).
   rm -r "$pkgdir/usr/include/drm"
