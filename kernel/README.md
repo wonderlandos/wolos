@@ -3,8 +3,9 @@
 **WolKernel 1.0 (7.3)**: WolKernel release 1.0 on Linux 7.3. The product version comes first, the Linux base is always shown in parentheses.
 `VERSION` is the single source (`wolkernel=`, `linux=`): both PKGBUILDs read it (pkgver `1.0+7.3`, epoch 1) and `uname -v` shows it.
 
-WolKernel (package `linux-wolos`, ADR 0016/0017) = github.com/wonderlandos/linux at a pinned stable ref + `conf/wolos.config` over Arch's x86_64 config.
-Extra patches come from `$WOLOS_OVERLAY/kernel/linux/patches` when present.
+WolKernel (package `linux-wolos`, ADR 0016/0017) = the `wolos` branch of github.com/wonderlandos/linux (upstream stable + the WolKernel patches, see `README.wolos.md` there) at the commit in `linux-wolos/ref`, over Arch's x86_64 config.
+Config: the fork's `kernel/configs/wolos.config`, then `conf/wolos.config` merged on top. `conf/wolos.config` is the working copy: changes land here first and are then copied to the fork (CI reports drift).
+Extra patches from `$WOLOS_OVERLAY/kernel/linux/patches` apply only when that variable is set. Fork tags: `wolkernel-1.0-7.3`.
 
 | path | what |
 |---|---|
@@ -30,7 +31,7 @@ Measured (7.3.0, `make olddefconfig`): Arch 6332 modules / 3247 built-in options
 |---|---|
 | `linux-wolos/ref` | pinned fork commit (bump it to move the kernel) |
 | `linux-wolos/PKGBUILD` | `makepkg -s`: `linux-wolos` + `linux-wolos-headers` (DKMS, e.g. `nvidia-open-dkms`) |
-| `linux-wolos/prepare.sh` | extra patches in name order (no fuzz; exit 3 if one does not apply), fragment merge, `make olddefconfig` |
+| `linux-wolos/prepare.sh` | extra patches in name order (no fuzz; exit 3 if one does not apply), fork fragment then ours, `make olddefconfig` |
 | `linux-wolos/config.x86_64` | Arch `linux` config at the snapshot (`7.2.11.arch1-1`) |
 
 Published only in `[wolos]` (`image/repo/build.sh`); the ISO never ships Arch `linux`. Other kernels installed with pacman get their own boot entry; `linux-wolos` stays the default.
