@@ -136,6 +136,7 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::TimeZone => ok(n == 1 && timezones::is_valid(a[0])),
         AdminAction::PkgUpgrade | AdminAction::PkgRefresh | AdminAction::Revoke => ok(n == 0),
         AdminAction::PkgInstall => ok(n == 1 && crate::store::install_plan(a[0]).is_some()),
+        AdminAction::PkgRemove => ok(n == 1 && crate::store::remove_plan(a[0]).is_some()),
         AdminAction::PowerMode => ok(n == 1 && power::policy::Mode::parse(a[0]).is_some()),
         AdminAction::BootEnvironment => ok(n == 1 && crate::update::is_valid_be(a[0])),
         AdminAction::HwLoad => ok(n == 1 && crate::hardware::is_catalogue_kld(a[0])),
@@ -287,6 +288,11 @@ pub fn plan_with(
             &power::policy::facts(probe),
         )?,
         AdminAction::PkgInstall => crate::store::install_plan(&a[0])
+            .unwrap_or_default()
+            .into_iter()
+            .map(AdminStep::Run)
+            .collect(),
+        AdminAction::PkgRemove => crate::store::remove_plan(&a[0])
             .unwrap_or_default()
             .into_iter()
             .map(AdminStep::Run)
@@ -623,6 +629,9 @@ mod tests {
             (PkgInstall, &["htop"], true),
             (PkgInstall, &["-y"], false),
             (PkgInstall, &["a", "b"], false),
+            (PkgRemove, &["gimp"], true),
+            (PkgRemove, &["-dd"], false),
+            (PkgRemove, &[], false),
             (BootEnvironment, &["wolos-a"], true),
             (BootEnvironment, &["default"], false),
             (BootEnvironment, &["-F"], false),
@@ -686,6 +695,7 @@ mod tests {
                 &["steam"],
                 "pacman -S --needed --noconfirm steam",
             ),
+            (PkgRemove, &["gimp"], "pacman -Rns --noconfirm gimp"),
             (
                 WifiJoin,
                 &["wlan0", "Home"],

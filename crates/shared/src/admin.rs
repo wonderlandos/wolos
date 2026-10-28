@@ -24,6 +24,8 @@ pub enum AdminAction {
     Revoke,
     /// App Store: one catalog id or pkg name (`wol_core::store`).
     PkgInstall,
+    /// App Store: remove one catalog id or package name with its unused dependencies.
+    PkgRemove,
     /// Low Power Mode: `low` or `auto` (powerd flags).
     PowerMode,
     /// Boot this boot environment next (restore point; `wol_core::update::be`).
@@ -78,6 +80,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::PkgRefresh, "pkg-refresh"),
     (AdminAction::Revoke, "revoke"),
     (AdminAction::PkgInstall, "pkg-install"),
+    (AdminAction::PkgRemove, "pkg-remove"),
     (AdminAction::PowerMode, "power-mode"),
     (AdminAction::BootEnvironment, "boot-environment"),
     (AdminAction::HwLoad, "hw-load"),

@@ -521,6 +521,11 @@ impl Controls {
         self.admin(AdminAction::PkgInstall, &[target], pw)
     }
 
+    /// App Store: remove a catalog id or package name (slow; worker thread).
+    pub fn pkg_remove(&self, target: &str, pw: &str) -> Result<(), ControlError> {
+        self.admin(AdminAction::PkgRemove, &[target], pw)
+    }
+
     pub fn pkg_upgrade(&self, pw: &str) -> Result<(), ControlError> {
         self.admin(AdminAction::PkgUpgrade, &[], pw)
     }
