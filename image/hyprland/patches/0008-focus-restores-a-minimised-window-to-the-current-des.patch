@@ -1,0 +1,80 @@
+From b21964f5bc0d1562393295b70a368756204b7832 Mon Sep 17 00:00:00 2001
+From: kleeedolinux <71413974+kleeedolinux@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 13:07:14 -0300
+Subject: [PATCH 8/9] focus: restores a minimised window to the current desktop
+
+Dock click or app activation on a special:hidden window opened it as an overlay; macOS brings it back.
+---
+ src/desktop/state/FocusState.cpp |  8 ++++++++
+ src/helpers/WolosWindow.hpp      | 15 +++++++++++++++
+ tests/helpers/WolosWindow.cpp    | 12 ++++++++++++
+ 3 files changed, 35 insertions(+)
+ create mode 100644 src/helpers/WolosWindow.hpp
+ create mode 100644 tests/helpers/WolosWindow.cpp
+
+diff --git a/src/desktop/state/FocusState.cpp b/src/desktop/state/FocusState.cpp
+index 172da08..f57efba 100644
+--- a/src/desktop/state/FocusState.cpp
++++ b/src/desktop/state/FocusState.cpp
+@@ -1,4 +1,6 @@
+ #include "FocusState.hpp"
++#include "GlobalWindowController.hpp"
++#include "../../helpers/WolosWindow.hpp"
+ #include "../view/Window.hpp"
+ #include "../../Compositor.hpp"
+ #include "../../protocols/XDGShell.hpp"
+@@ -158,6 +160,12 @@ void CFocusState::rawWindowFocus(PHLWINDOW pWindow, eFocusReason reason, SP<CWLS
+     if (pWindow->m_pinned)
+         pWindow->m_workspace = m_focusMonitor->m_activeWorkspace;
+ 
++    // WolOS: focusing a minimised window (Dock click, focuswindow, app activation) restores it to the
++    // current desktop, like macOS, instead of opening special:hidden as an overlay.
++    if (pWindow->m_workspace && m_focusMonitor && m_focusMonitor->m_activeWorkspace &&
++        WolosWindow::restoresOnFocus(pWindow->m_workspace->m_isSpecialWorkspace, pWindow->m_workspace->m_name))
++        Desktop::globalWindowController()->moveWindowToWorkspace(pWindow, m_focusMonitor->m_activeWorkspace);
++
+     const auto PMONITOR = pWindow->m_monitor.lock();
+ 
+     if (!pWindow->m_workspace || !pWindow->m_workspace->isVisible()) {
+diff --git a/src/helpers/WolosWindow.hpp b/src/helpers/WolosWindow.hpp
+new file mode 100644
+index 0000000..015088e
+--- /dev/null
++++ b/src/helpers/WolosWindow.hpp
+@@ -0,0 +1,15 @@
++#pragma once
++
++// WolOS window policy (macOS behaviour). Pure functions: tested in tests/helpers/WolosWindow.cpp.
++
++#include <string_view>
++
++namespace WolosWindow {
++    // Where minimise parks windows (xdg set_minimized, the shell's Minimise and Hide items).
++    inline constexpr std::string_view HIDDEN = "special:hidden";
++
++    // Focusing a window parked in HIDDEN brings it back to the current desktop.
++    inline bool restoresOnFocus(bool special, std::string_view workspaceName) {
++        return special && workspaceName == HIDDEN;
++    }
++}
+diff --git a/tests/helpers/WolosWindow.cpp b/tests/helpers/WolosWindow.cpp
+new file mode 100644
+index 0000000..7146be9
+--- /dev/null
++++ b/tests/helpers/WolosWindow.cpp
+@@ -0,0 +1,12 @@
++#include <helpers/WolosWindow.hpp>
++
++#include <gtest/gtest.h>
++
++using namespace WolosWindow;
++
++TEST(WolosWindow, focusRestoresOnlyMinimisedWindows) {
++    EXPECT_TRUE(restoresOnFocus(true, "special:hidden"));
++    EXPECT_FALSE(restoresOnFocus(true, "special:scratchpad")); // a user scratchpad still opens as an overlay
++    EXPECT_FALSE(restoresOnFocus(false, "special:hidden"));    // a regular workspace with that name
++    EXPECT_FALSE(restoresOnFocus(false, "1"));
++}
+-- 
+2.54.0
+
