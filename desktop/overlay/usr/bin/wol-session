@@ -31,9 +31,13 @@ command -v xdg-user-dirs-update >/dev/null 2>&1 && xdg-user-dirs-update
 if command -v wol-realtime >/dev/null 2>&1; then
 	eval "$(wol-realtime gpu env)"
 fi
-# GTK 4: cairo renderer until a GPU renderer is proven on real hardware (the default never mapped
-# the shell, Setup or login windows on the passthrough iGPU). A user override wins.
-export GSK_RENDERER=${GSK_RENDERER:-cairo}
+# GTK 4 renderer: ngl (GPU, Mesa) wherever a DRM render node exists, the big win on Linux; cairo only
+# without one (software GL, VMs). Cairo was a FreeBSD passthrough workaround. A user override wins.
+if ls /dev/dri/renderD* >/dev/null 2>&1; then
+	export GSK_RENDERER=${GSK_RENDERER:-ngl}
+else
+	export GSK_RENDERER=${GSK_RENDERER:-cairo}
+fi
 # GTK 3: client-side title bars everywhere, so apps without a header bar still get the traffic lights.
 export GTK_CSD=${GTK_CSD:-1}
 # start-hyprland: the 0.56 watchdog launcher (restarts on crash; no "started without" banner).
