@@ -137,7 +137,7 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
     assert_eq!(code, Some(2));
     assert!(out.ends_with("refuse in-use\n"), "{out}");
     assert!(
-        !log(&d).contains("sgdisk") && !log(&d).contains("mkfs"),
+        !log(&d).contains("repart") && !log(&d).contains("mkfs"),
         "the check only reads"
     );
 }
@@ -148,11 +148,8 @@ fn install(d: &Path, disk: &str) -> Output {
     let t = d.join("target");
     fs::create_dir_all(&t).unwrap();
     for (n, body) in [
-        ("sgdisk", ""),
-        ("partprobe", ""),
+        ("systemd-repart", ""),
         ("udevadm", ""),
-        ("mkfs.fat", ""),
-        ("mkfs.btrfs", ""),
         ("mount", ""),
         ("umount", ""),
         ("btrfs", ""),
@@ -216,16 +213,24 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
             assert!(!line.contains(other), "touched {other}: {line}");
         }
     }
-    assert!(l.contains("sgdisk --zap-all /dev/nvme0n1"), "{l}");
-    assert!(l.contains("-t 1:ef00") && l.contains("-t 2:8304"), "{l}");
-    assert!(l.contains("mkfs.fat -F 32 -n WOLOS /dev/nvme0n1p1"), "{l}");
-    assert!(l.contains("mkfs.btrfs -f -L WolOS /dev/nvme0n1p2"), "{l}");
-    let subvols: Vec<&str> = l
+    // systemd-repart lays out the disk from declarative definitions: ESP + btrfs root with the
+    // slot subvolumes, nothing hand-partitioned.
+    let repart = l
         .lines()
-        .filter_map(|x| x.strip_prefix("btrfs subvolume create "))
-        .map(|x| x.rsplit('/').next().unwrap())
-        .collect();
-    assert_eq!(subvols, ["@wolos-a", "@home", "@var"], "{l}");
+        .find(|x| x.starts_with("systemd-repart "))
+        .unwrap_or_else(|| panic!("no systemd-repart: {l}"));
+    assert!(
+        repart.contains("--empty=force") && repart.contains("--dry-run=no"),
+        "{repart}"
+    );
+    assert!(repart.ends_with(" /dev/nvme0n1"), "{repart}");
+    assert!(
+        repart.contains("--definitions=") && repart.contains("repart.d"),
+        "{repart}"
+    );
+    for gone in ["sgdisk", "mkfs.", "btrfs subvolume create", "partprobe"] {
+        assert!(!l.contains(gone), "{gone} is systemd-repart's job: {l}");
+    }
     assert!(l.contains("subvol=@wolos-a"), "{l}");
     assert!(l.contains("bootctl --esp-path="), "{l}");
     let t = d.join("target");
@@ -306,6 +311,35 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     );
 }
 
+/// The partition definitions: an exact 1 GiB ESP (vfat) and a btrfs root filling the rest with
+/// `@wolos-a` `@home` `@var` as subvolumes, made when the file system is made.
+#[test]
+fn repart_definitions_describe_esp_and_slot_root() {
+    let esp = read("image/files/usr/lib/wolos/repart.d/10-esp.conf");
+    for want in [
+        "Type=esp",
+        "Format=vfat",
+        "Label=WOLOS",
+        "SizeMinBytes=1G",
+        "SizeMaxBytes=1G",
+    ] {
+        assert!(esp.lines().any(|x| x == want), "esp lacks {want}:\n{esp}");
+    }
+    let root = read("image/files/usr/lib/wolos/repart.d/20-root.conf");
+    for want in [
+        "Type=root",
+        "Format=btrfs",
+        "Label=WolOS",
+        "MakeDirectories=/@wolos-a /@home /@var",
+        "Subvolumes=/@wolos-a /@home /@var",
+    ] {
+        assert!(
+            root.lines().any(|x| x == want),
+            "root lacks {want}:\n{root}"
+        );
+    }
+}
+
 #[test]
 fn a_refused_disk_is_left_exactly_as_it_was() {
     let d = scratch("refused");
@@ -313,7 +347,7 @@ fn a_refused_disk_is_left_exactly_as_it_was() {
     assert_eq!(o.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&o.stdout).contains("wolos-install: failed 0 not a disk"));
     let l = log(&d);
-    for w in ["sgdisk", "mkfs", "btrfs", "unsquashfs", "bootctl"] {
+    for w in ["systemd-repart", "mkfs", "btrfs", "unsquashfs", "bootctl"] {
         assert!(!l.contains(w), "{w} ran on a refused disk: {l}");
     }
 }
