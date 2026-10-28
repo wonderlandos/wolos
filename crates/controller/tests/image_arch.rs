@@ -80,7 +80,8 @@ fn snapshot_is_one_archive_date() {
 }
 
 /// pacman reads only the snapshot date; `[wolos]` comes first so linux-wolos and the WolOS
-/// packages win over same-named Arch ones. No mirrorlist: nothing rolls in between releases.
+/// packages win over same-named Arch ones. Arch servers inline (nothing rolls in between
+/// releases); `[wolos]` and `[wolos-cachy]` read the dated wolos-mirrorlist (ADR 0019).
 #[test]
 fn pacman_conf_is_pinned_and_wolos_comes_first() {
     let date = snapshot().replace('-', "/");
@@ -98,19 +99,23 @@ fn pacman_conf_is_pinned_and_wolos_comes_first() {
             .lines()
             .filter_map(|l| l.strip_prefix("Server = "))
             .collect();
-        assert_eq!(servers.len(), 4, "{f}");
-        for s in &servers[1..] {
+        assert_eq!(servers.len(), 3, "{f}");
+        for s in &servers {
             assert_eq!(
                 *s,
                 format!("https://archive.archlinux.org/repos/{date}/$repo/os/$arch"),
                 "{f}"
             );
         }
-        assert!(
-            servers[0].contains(&snapshot()),
-            "{f}: [wolos] at the release"
+        let inc: Vec<&str> = c.lines().filter(|l| l.contains("Include")).collect();
+        assert_eq!(
+            inc,
+            [
+                "Include = /etc/pacman.d/wolos-mirrorlist",
+                "#Include = /etc/pacman.d/wolos-mirrorlist"
+            ],
+            "{f}: only [wolos] and the gated [wolos-cachy]"
         );
-        assert!(!c.contains("Include"), "{f}: no mirrorlist");
         assert!(c.contains("SigLevel = Required"), "{f}: signed packages");
     }
 }
@@ -370,7 +375,7 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
     );
     let log = fs::read_to_string(d.join("log")).unwrap();
     let mk = log.lines().filter(|l| l.starts_with("makepkg")).count();
-    assert_eq!(mk, 4, "{log}");
+    assert_eq!(mk, 5, "{log}");
     let built: Vec<&str> = log
         .lines()
         .filter_map(|l| l.strip_prefix("built "))
@@ -380,6 +385,7 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
         [
             "linux-wolos",
             "hyprland-wolos",
+            "wolos-mirrorlist",
             "wolos-system",
             "wolos-base"
         ]

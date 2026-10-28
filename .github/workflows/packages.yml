@@ -1,6 +1,7 @@
 # [wolos] pacman repo: rebuild the packages whose directories changed (image/repo/changed.sh, plus
 # every package that depends on them) in an archlinux container, keep the rest from the last
-# publish, and publish the repo as the assets of the `repo-<snapshot>` release.
+# publish, and publish the repo as the assets of the `wolos-<snapshot>` release (`$repo-<date>`, the
+# primary server in wolos-mirrorlist).
 # Signing: secret WOLOS_GPG_KEY (armored gpg secret key); without it the repo is unsigned.
 # Extra patches from $WOLOS_OVERLAY when present (vars.WOLOS_OVERLAY_REPO + secrets.WOLOS_OVERLAY_TOKEN).
 name: packages
@@ -64,10 +65,10 @@ jobs:
           ONLY_INPUT: ${{ inputs.only }}
         run: |
           snap=$(tr -d '[:space:]' < image/arch/snapshot)
-          echo "tag=repo-$snap" >> "$GITHUB_OUTPUT"
+          echo "tag=wolos-$snap" >> "$GITHUB_OUTPUT"
           mkdir -p out/repo/x86_64
           # The last publish: kept packages and the commit it was built from.
-          if gh release download "repo-$snap" --dir out/repo/x86_64 2>/dev/null; then
+          if gh release download "wolos-$snap" --dir out/repo/x86_64 2>/dev/null; then
             base=$(cat out/repo/x86_64/revision-commit 2>/dev/null || true)
           fi
           if [ -n "${ONLY_INPUT:-}" ]; then

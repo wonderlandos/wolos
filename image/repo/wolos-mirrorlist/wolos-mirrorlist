@@ -1,0 +1,6 @@
+# WolOS mirrors for [wolos] and [wolos-cachy] at release 2026-10-20 ($repo = the repo name).
+# `wol mirror rank` orders them by latency; `wol update` moves the date with each release.
+# Primary: the release assets of github.com/wonderlandos/wolos.
+Server = https://github.com/wonderlandos/wolos/releases/download/$repo-2026-10-20
+# More mirrors.
+Server = https://repo.wolos.org/2026-10-20/$repo/$arch
