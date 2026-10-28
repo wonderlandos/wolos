@@ -52,6 +52,7 @@ fn package_table_is_in_dependency_order() {
             "flatpak-wolos",
             "wolos-mirrorlist",
             "wolos-system",
+            "wolos-keyring",
             "wolos-base"
         ]
     );

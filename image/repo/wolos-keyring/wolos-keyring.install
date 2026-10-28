@@ -1,0 +1,9 @@
+post_install() {
+  if [ -x usr/bin/pacman-key ] && [ -d etc/pacman.d/gnupg ]; then
+    usr/bin/pacman-key --populate wolos
+  fi
+}
+
+post_upgrade() {
+  post_install
+}

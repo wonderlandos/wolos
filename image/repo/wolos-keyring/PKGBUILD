@@ -1,0 +1,18 @@
+# wolos-keyring: the keys pacman trusts for [wolos] and [wolos-cachy] (ADR 0019): the WolOS repo
+# signing key (image/repo/wolos-repo.pub.asc) and the upstream x86-64-v3 package key pinned in
+# image/repo/cachy-trusted. The install script populates them into the system keyring.
+pkgname=wolos-keyring
+pkgver=2026.10.28
+pkgrel=1
+pkgdesc='WolOS package signing keys'
+arch=(any)
+url='https://github.com/wonderlandos/wolos'
+license=(BSD-2-Clause)
+install=wolos-keyring.install
+source=(wolos.gpg wolos-trusted)
+sha256sums=(SKIP SKIP)
+
+package() {
+  install -Dm644 wolos.gpg "$pkgdir/usr/share/pacman/keyrings/wolos.gpg"
+  install -Dm644 wolos-trusted "$pkgdir/usr/share/pacman/keyrings/wolos-trusted"
+}
