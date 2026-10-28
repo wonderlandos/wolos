@@ -82,8 +82,16 @@ fn digits_after(s: &str, prefix: &str, min: usize, max: usize) -> bool {
         && s.starts_with(prefix)
         && s[prefix.len()..].bytes().all(|b| b.is_ascii_digit())
 }
+/// A network interface name as the kernel accepts it (`dev_valid_name`):
+/// 1..=15 bytes, not `.`/`..`, no `/`, `:` or whitespace. Control bytes and a
+/// leading `-` are refused too, so the name can never read as an option.
 fn iface(s: &str) -> bool {
-    digits_after(s, "wlan", 4, 9)
+    (1..=15).contains(&s.len())
+        && s != "."
+        && s != ".."
+        && !s.starts_with('-')
+        && s.bytes()
+            .all(|b| b.is_ascii_graphic() && b != b'/' && b != b':')
 }
 fn pcm(s: &str) -> bool {
     digits_after(s, "pcm", 3, 7)
@@ -602,6 +610,34 @@ mod tests {
     }
 
     #[test]
+    fn iface_follows_kernel_netdev_names() {
+        for ok in [
+            "wlan0",
+            "wlp2s0",
+            "wlx00c0ca123456",
+            "wlp0s20f3",
+            "a",
+            "x".repeat(15).as_str(),
+        ] {
+            assert!(iface(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            ".",
+            "..",
+            "wl/an0",
+            "wl an0",
+            "wlan0\n",
+            "wl:an0",
+            "x".repeat(16).as_str(),
+            "-wlan0",
+            "wlan0\t",
+        ] {
+            assert!(!iface(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
     fn allow_list_table() {
         let long = "x".repeat(200);
         let cases: &[(AdminAction, &[&str], bool)] = &[
@@ -613,7 +649,7 @@ mod tests {
             (AudioDefault, &["-pcm1"], false),
             (WifiPower, &["wlan0", "on"], true),
             (WifiPower, &["wlan0", "off"], true),
-            (WifiPower, &["em0", "off"], false),
+            (WifiPower, &["em/0", "off"], false),
             (WifiPower, &["wlan0", "destroy"], false),
             (WifiPower, &["wlan0 down", "on"], false),
             (WifiJoin, &["wlan0", "Home"], true),
@@ -936,7 +972,7 @@ mod tests {
             (BtForget, &["00:11:22:aa:bb:cc"], true),
             (BtForget, &["all"], false),
             (WifiForget, &["wlan0", "Home"], true),
-            (WifiForget, &["em0", "Home"], false),
+            (WifiForget, &["wl an0", "Home"], false),
             (WifiForget, &["wlan0", "Ho\"me"], true),
             (WifiForget, &["wlan0", "Ho\nme"], false),
             (WifiForget, &["wlan0"], false),
