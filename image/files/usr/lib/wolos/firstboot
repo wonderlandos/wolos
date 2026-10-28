@@ -6,6 +6,8 @@
 set -u
 log() { echo "wolos-firstboot: $*"; logger -t wolos-firstboot "$*" 2>/dev/null || :; }
 D=${WOLOS_STATE:-/var/lib/wolos}
+# [wolos-cachy] matches this processor (ADR 0019; a disk moved to another machine is re-gated).
+wol mirror gate --yes >/dev/null || log "wol mirror gate failed"
 if wol hw boot --online; then
   mkdir -p "$D" && touch "$D/firstboot-done"
 else

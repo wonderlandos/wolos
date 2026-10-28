@@ -2,6 +2,7 @@
 # wolos-base (ADR 0017, [wolos]): Arch base + linux-wolos (+ headers for DKMS such as nvidia-open-dkms)
 # + uutils coreutils, sudo-rs, bsdtar, zsh, systemd and the wol tools, at one release version.
 wolos-base
+wolos-mirrorlist
 linux-firmware
 intel-ucode
 amd-ucode

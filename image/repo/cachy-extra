@@ -1,0 +1,7 @@
+# Extra roots for [wolos-cachy] (ADR 0019) besides the image's package lists, one per line:
+# runtimes [wolos] packages depend on and common tools people install right away.
+gtk4
+libadwaita
+gtk4-layer-shell
+python
+ffmpeg

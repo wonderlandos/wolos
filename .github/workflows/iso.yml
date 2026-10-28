@@ -1,6 +1,7 @@
 # WolOS release image: mkarchiso (image/build.sh) in a privileged archlinux container, from the
-# [wolos] repo the packages workflow published (built here if there is none yet). A tag `v*`
-# publishes the ISO, its .sha256 and release.json (+ release.json.sig) as the latest GitHub
+# [wolos] repo the packages workflow published (built here if there is none yet). A tag `v*` first
+# refreshes [wolos-cachy] (image/repo/mirror-cachy.sh, ADR 0019) as the `wolos-cachy-<snapshot>`
+# release, then publishes the ISO, its .sha256 and release.json (+ release.json.sig) as the latest GitHub
 # release: release.json is what `update-check` and `wol update` read. A manual run keeps the files
 # as a workflow artifact.
 # Signing: secret WOLOS_RELEASE_KEY (Ed25519 PEM, the package key), WOLOS_GPG_KEY for a rebuilt repo.
@@ -51,11 +52,52 @@ jobs:
           snap=$(tr -d '[:space:]' < image/arch/snapshot)
           echo "snap=$snap" >> "$GITHUB_OUTPUT"
           mkdir -p out/repo/x86_64
-          if gh release download "repo-$snap" --dir out/repo/x86_64 && [ -s out/repo/x86_64/wolos.db ]; then
+          if gh release download "wolos-$snap" --dir out/repo/x86_64 && [ -s out/repo/x86_64/wolos.db ]; then
             cp out/repo/x86_64/revision out/repo/revision 2>/dev/null || true
           else
             rm -rf out/repo/x86_64/*   # none yet: image/build.sh builds it
           fi
+
+      - name: The [wolos-cachy] repo (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+        run: |
+          tag=wolos-cachy-${{ steps.repo.outputs.snap }}
+          mkdir -p out/cachy/x86_64
+          # Resume: verified packages of the last refresh are kept, the rest is downloaded.
+          gh release download "$tag" --dir out/cachy/x86_64 --pattern '*.pkg.tar.zst' 2>/dev/null || true
+          docker run --rm -v "$PWD:/src" -w /src -e GPG_KEY archlinux:base-devel bash -euo pipefail -c '
+            pacman -Syu --noconfirm --needed curl gnupg libarchive
+            git config --global --add safe.directory "*"
+            # Upstream signing keys by the fingerprints pinned in image/repo/cachy-trusted.
+            g=$(mktemp -d)
+            gpg --homedir "$g" --batch --keyserver hkps://keyserver.ubuntu.com --recv-keys $(cut -d: -f1 image/repo/cachy-trusted)
+            gpg --homedir "$g" --batch --export > /tmp/upstream.gpg
+            if [ -n "$GPG_KEY" ]; then
+              echo "$GPG_KEY" | gpg --batch --import
+              export WOLOS_SIGN_KEY=$(gpg --list-secret-keys --with-colons | awk -F: "/^fpr/ {print \$10; exit}")
+            else
+              export WOLOS_UNSIGNED=1
+            fi
+            WOLOS_CACHY_KEY=/tmp/upstream.gpg WOLOS_CACHY_DIR=/src/out/cachy image/repo/mirror-cachy.sh
+          '
+          sudo chown -R "$(id -u)" out/cachy
+          cat out/cachy/sizes.txt >> "$GITHUB_STEP_SUMMARY"
+          cd out/cachy/x86_64
+          for l in wolos-cachy.db wolos-cachy.files wolos-cachy.db.sig wolos-cachy.files.sig; do
+            [ -L "$l" ] && cp --remove-destination "$(readlink -f "$l")" "$l"
+          done
+          rm -f ./*.pkg.tar.zst.sig   # inside the database
+          if find . -type f -size +2047M | grep -q .; then echo "::error::asset over 2 GiB"; exit 1; fi
+          n=$(ls | wc -l); [ "$n" -le 1000 ] || { echo "::error::$n assets, GitHub keeps 1000"; exit 1; }
+          echo "[wolos-cachy] $n assets, $(du -cb . | tail -1 | cut -f1) bytes" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --title "[wolos-cachy] repo ($tag)" --notes "pacman repository" --latest=false
+          gh release upload "$tag" --clobber ./*
+          gh release view "$tag" --json assets -q '.assets[].name' | while read -r a; do
+            [ -e "$a" ] || gh release delete-asset "$tag" "$a" --yes
+          done
 
       - name: Cache pacman packages
         uses: actions/cache@v4
@@ -71,7 +113,7 @@ jobs:
           url=https://github.com/${{ github.repository }}/releases/download/$TAG
           mkdir -p out/pkgcache
           docker run --rm --privileged -v "$PWD:/src" -w /src -v "$PWD/out/pkgcache:/var/cache/pacman/pkg" \
-            -e GPG_KEY -e WOLOS_IMAGE_URL="$url" archlinux:latest bash -euo pipefail -c '
+            -e GPG_KEY -e WOLOS_IMAGE_URL="$url" -e WOLOS_CACHY_DIR=/src/out/cachy archlinux:latest bash -euo pipefail -c '
               pacman -Syu --noconfirm --needed archiso git base-devel sudo rust clang
               git config --global --add safe.directory "*"
               if [ ! -s out/repo/x86_64/wolos.db ]; then

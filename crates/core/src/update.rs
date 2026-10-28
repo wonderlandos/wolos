@@ -18,8 +18,10 @@ pub const KERNEL: &str = "vmlinuz-linux-wolos";
 pub const INITRAMFS: &str = "initramfs-linux-wolos.img";
 /// Boot counting: tries before systemd-boot falls back to the other slot.
 pub const TRIES: u32 = 3;
-/// pacman mirrorlist `wol` owns: one Arch Linux Archive date (`/repos/YYYY/MM/DD/`).
-pub const MIRRORLIST: &str = "/etc/pacman.d/mirrorlist";
+/// pacman.conf: the Arch repos at one Arch Linux Archive date (`/repos/YYYY/MM/DD/`).
+pub const PACMAN_CONF: &str = crate::mirror::PACMAN_CONF;
+/// `[wolos]` and `[wolos-cachy]` servers, at the same release date (`YYYY-MM-DD`, ADR 0019).
+pub const MIRRORLIST: &str = crate::mirror::MIRRORLIST;
 
 /// Pending package names from `pacman -Qu` (`name old -> new`); None when output unknown.
 /// Inside one release only `[wolos]` moves: everything else is pinned to the snapshot date.
@@ -127,6 +129,17 @@ pub fn plan(slot: &str, replace: bool, date: Option<&str>) -> Option<Vec<Step>> 
             "-i",
             "-E",
             &format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
+            &format!("{root}{PACMAN_CONF}"),
+        ]));
+        // [wolos] and [wolos-cachy] move with Arch: all three repos at one release date.
+        steps.push(v(&[
+            "sed",
+            "-i",
+            "-E",
+            &format!(
+                "s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{}#g",
+                d.replace('/', "-")
+            ),
             &format!("{root}{MIRRORLIST}"),
         ]));
     }
@@ -312,7 +325,9 @@ mod tests {
                 "btrfs subvolume delete /run/wolos/top/@wolos-b",
                 "btrfs subvolume snapshot / /run/wolos/top/@wolos-b",
                 "sed -i -E s#/repos/[0-9]{4}/[0-9]{2}/[0-9]{2}/#/repos/2026/11/02/# \
-/run/wolos/top/@wolos-b/etc/pacman.d/mirrorlist",
+/run/wolos/top/@wolos-b/etc/pacman.conf",
+                "sed -i -E s#[0-9]{4}-[0-9]{2}-[0-9]{2}#2026-11-02#g \
+/run/wolos/top/@wolos-b/etc/pacman.d/wolos-mirrorlist",
                 "arch-chroot /run/wolos/top/@wolos-b pacman -Syu --noconfirm",
                 "arch-chroot /run/wolos/top/@wolos-b mkinitcpio -P",
                 "mkdir -p /efi/wolos-b",
@@ -330,7 +345,7 @@ mod tests {
         );
         assert!(!first.iter().any(|s| s.to_string().starts_with("sed ")));
         assert!(
-            matches!(&p[7], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
+            matches!(&p[8], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
         );
         for (slot, date) in [("x", None), ("wolos-a", Some("2026-11-02")), ("", None)] {
             assert!(plan(slot, false, date).is_none(), "{slot} {date:?}");
