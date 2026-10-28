@@ -62,6 +62,12 @@ pub enum AdminAction {
     WifiForget,
     /// `sleep`, `restart` or `shutdown` from the session menu.
     SessionPower,
+    /// System-wide Flatpak app: `<app-id> <permission> allow|deny`, or `<app-id> reset`.
+    FlatpakOverride,
+    /// Install one Flathub app for every account: `<app-id>`.
+    FlatpakInstall,
+    /// Remove one system-wide Flatpak app: `<app-id>`.
+    FlatpakRemove,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -99,6 +105,9 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::BtForget, "bt-forget"),
     (AdminAction::WifiForget, "wifi-forget"),
     (AdminAction::SessionPower, "session-power"),
+    (AdminAction::FlatpakOverride, "flatpak-override"),
+    (AdminAction::FlatpakInstall, "flatpak-install"),
+    (AdminAction::FlatpakRemove, "flatpak-remove"),
 ];
 
 impl AdminAction {

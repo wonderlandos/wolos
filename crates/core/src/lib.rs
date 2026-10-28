@@ -6,6 +6,7 @@ pub mod bluetooth;
 pub mod bundle;
 pub mod consent;
 pub mod controls;
+pub mod flatpak;
 pub mod games;
 pub mod hardware;
 pub mod home_crypt;

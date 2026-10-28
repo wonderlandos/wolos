@@ -1,7 +1,7 @@
 //! wol-admind allow-list (IaraOS ADR 0026): validation, fixed argv / whole-file steps, policy. Pure.
 use crate::settings::{appearance, idle, keybinds, timezones, users};
-use crate::wifi;
 use crate::{bluetooth, power, printers, sharing};
+use crate::{flatpak, wifi};
 use shared::admin::{AdminAction, AdminRequest};
 use std::collections::HashMap;
 
@@ -182,6 +182,17 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
             ok(n == 2 && iface(a[0]) && wifi::validate(a[1], None).is_none())
         }
         AdminAction::SessionPower => ok(n == 1 && session_power_argv(a[0]).is_some()),
+        AdminAction::FlatpakOverride => ok(flatpak::is_app_id(a.first().copied().unwrap_or(""))
+            && match &a[1..] {
+                ["reset"] => true,
+                [perm, v] => {
+                    flatpak::Perm::parse(perm).is_some() && (*v == "allow" || *v == "deny")
+                }
+                _ => false,
+            }),
+        AdminAction::FlatpakInstall | AdminAction::FlatpakRemove => {
+            ok(n == 1 && flatpak::is_app_id(a[0]))
+        }
         _ => invalid(),
     }
 }
@@ -358,6 +369,29 @@ pub fn plan_with(
         AdminAction::SessionPower => {
             vec![argv(session_power_argv(&a[0]).unwrap_or_default())]
         }
+        AdminAction::FlatpakOverride => vec![AdminStep::Run(match a[1].as_str() {
+            "reset" => flatpak::reset_argv(flatpak::Scope::System, &a[0]),
+            perm => flatpak::Perm::parse(perm)
+                .map(|p| p.override_argv(flatpak::Scope::System, &a[0], a[2] == "allow"))
+                .unwrap_or_default(),
+        })],
+        AdminAction::FlatpakInstall => vec![argv(&[
+            "flatpak",
+            "install",
+            "--system",
+            "--noninteractive",
+            "-y",
+            flatpak::REMOTE,
+            &a[0],
+        ])],
+        AdminAction::FlatpakRemove => vec![argv(&[
+            "flatpak",
+            "uninstall",
+            "--system",
+            "--noninteractive",
+            "-y",
+            &a[0],
+        ])],
     })
 }
 
@@ -630,6 +664,32 @@ mod tests {
             (PkgInstall, &["-y"], false),
             (PkgInstall, &["a", "b"], false),
             (PkgRemove, &["gimp"], true),
+            (
+                FlatpakOverride,
+                &["org.gimp.GIMP", "filesystems=home", "deny"],
+                true,
+            ),
+            (
+                FlatpakOverride,
+                &["org.gimp.GIMP", "filesystems=home", "allow"],
+                true,
+            ),
+            (FlatpakOverride, &["org.gimp.GIMP", "reset"], true),
+            (
+                FlatpakOverride,
+                &["org.gimp.GIMP", "--filesystem=/", "allow"],
+                false,
+            ),
+            (
+                FlatpakOverride,
+                &["org.gimp.GIMP", "filesystems=home", "maybe"],
+                false,
+            ),
+            (FlatpakOverride, &["--user", "reset"], false),
+            (FlatpakOverride, &[], false),
+            (FlatpakInstall, &["org.gimp.GIMP"], true),
+            (FlatpakInstall, &["gimp"], false),
+            (FlatpakRemove, &["-y"], false),
             (PkgRemove, &["-dd"], false),
             (PkgRemove, &[], false),
             (BootEnvironment, &["wolos-a"], true),
@@ -715,6 +775,26 @@ mod tests {
                 "pacman -S --needed --noconfirm steam",
             ),
             (PkgRemove, &["gimp"], "pacman -Rns --noconfirm gimp"),
+            (
+                FlatpakOverride,
+                &["org.gimp.GIMP", "shared=network", "deny"],
+                "flatpak override --system --unshare=network org.gimp.GIMP",
+            ),
+            (
+                FlatpakOverride,
+                &["org.gimp.GIMP", "reset"],
+                "flatpak override --system --reset org.gimp.GIMP",
+            ),
+            (
+                FlatpakInstall,
+                &["org.gimp.GIMP"],
+                "flatpak install --system --noninteractive -y flathub org.gimp.GIMP",
+            ),
+            (
+                FlatpakRemove,
+                &["org.gimp.GIMP"],
+                "flatpak uninstall --system --noninteractive -y org.gimp.GIMP",
+            ),
             (WifiJoin, &["wlan0", "Home"], "nmcli dev wifi connect Home"),
             (Appearance, &["dark"], "write /etc/wolos/appearance"),
             (Idle, &["60"], "write /etc/wolos/idle.json"),
