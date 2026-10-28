@@ -1,4 +1,4 @@
-//! Wi-Fi: wpa_supplicant.conf editing and input validation (FreeBSD).
+//! Wi-Fi: wpa_supplicant.conf editing and input validation (to be replaced by NetworkManager, see archicture/modules/wifi.md).
 pub const CONF_PATH: &str = "/etc/wpa_supplicant.conf";
 
 /// dBm to 0..100 (-100 dBm = 0, -50 dBm and above = 100).

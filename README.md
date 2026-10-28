@@ -36,8 +36,8 @@ Then a Setup Assistant greets you: language, Wi-Fi, your account, light or dark.
 
 ## Every app just opens.
 
-Native FreeBSD app? It runs. Linux app? It runs. Windows game? It runs.
-WolOS picks the best build automatically — **native → Linux → Proton** — and our kernel speaks Linux's `futex_waitv`, the call Steam and Proton games live on.
+WolOS app? It runs. Linux app? It runs. Windows game? It runs.
+WolOS picks the best build automatically — **native → Linux → Proton** — and WolKernel is built for Steam and Proton games (`futex_waitv`).
 
 ## Fast. And it stays fast.
 
@@ -62,12 +62,12 @@ Built from the best of what already works, then tuned until it disappears.
 
 | | |
 |---|---|
-| **Kernel** | FreeBSD 15.1 + WolOS patches: Linux `futex_waitv`, fast `sysret`, futex spin, QoS scheduling |
+| **Kernel** | WolKernel: Linux with WolOS scheduling and QoS |
 | **Window server** | Our Hyprland fork: per-frame animations, macOS window behaviour, `wol-hypr` plugin |
 | **System** | One Rust system API: `wold`, `wol-admind`, `wol-login`, `wol` |
 | **Shell** | Rust + GTK 4: menu bar, Dock, Spotlight, Control Center, Lock, Settings, App Store, Setup |
 
-Every screenshot above is real WolOS on FreeBSD 15.1, rendered by the shipping code.
+Every screenshot above is real WolOS on Arch Linux, rendered by the shipping code.
 
 **Build:** `image/vm/build-in-vm.sh` → `image/vm/test-install.sh` · **Develop:** `cargo test --workspace` · **Architecture:** [`archicture/`](archicture/)
 
