@@ -148,7 +148,11 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
     };
     let long = matches!(
         req.action,
-        AdminAction::PkgUpgrade | AdminAction::PkgInstall | AdminAction::PkgRemove
+        AdminAction::PkgUpgrade
+            | AdminAction::PkgInstall
+            | AdminAction::PkgRemove
+            | AdminAction::FlatpakInstall
+            | AdminAction::FlatpakRemove
     );
     steps.iter().all(|s| match s {
         AdminStep::Run(argv) => os.run(argv, long),
