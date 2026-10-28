@@ -1,3 +1,13 @@
 # WolKernel userspace interfaces removed versus Arch's stock kernel (read by `wol doctor`).
 # Format: <kind> <name> <reason>
 config X86_X32_ABI legacy
+config LEGACY_VSYSCALL legacy (glibc < 2.14 static binaries; boot with vsyscall=xonly to restore)
+config X86_MPPARSE legacy (pre-ACPI MP tables)
+config BLK_DEV_FD legacy (/dev/fd0; USB floppies still work)
+config PARPORT legacy (/dev/parport*, /dev/lp*)
+config PCMCIA legacy (16-bit PC Card and CardBus slots)
+config AF_RXRPC legacy (AF_RXRPC sockets, AFS)
+config TIPC legacy (AF_TIPC sockets)
+config RDS legacy (AF_RDS sockets)
+config PHONET legacy (AF_PHONET sockets)
+config IEEE802154 legacy (AF_IEEE802154 sockets)
