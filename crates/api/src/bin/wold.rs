@@ -69,7 +69,11 @@ fn spawn_qos() {
     };
     let allowed = shared::sys::canonical(qos::REALTIME_EXE);
     let tracker = Arc::new(Mutex::new(shared::qos::ForegroundTracker::default()));
-    eprintln!("wold: qos listening on {}", shared::qos::SOCKET);
+    let n = qos::hint_defaults(Path::new(qos::HINTS));
+    eprintln!(
+        "wold: qos listening on {} ({n} kernel hints)",
+        shared::qos::SOCKET
+    );
     std::thread::spawn(move || {
         for conn in listener.incoming().flatten() {
             let mut exe = [0u8; 1024];
