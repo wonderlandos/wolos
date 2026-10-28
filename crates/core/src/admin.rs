@@ -102,6 +102,24 @@ fn binds(json: &str) -> Option<String> {
     }
 }
 
+/// NetworkManager join (the image ships NetworkManager): the password goes on stdin, never argv.
+fn nm_join(ssid: &str, password: Option<&str>, hidden: bool) -> AdminStep {
+    let mut v = vec!["nmcli", "dev", "wifi", "connect", ssid];
+    if hidden {
+        v.extend(["hidden", "yes"]);
+    }
+    match password {
+        Some(p) => {
+            v.extend(["passwd-file", "/dev/stdin"]);
+            AdminStep::RunInput {
+                argv: v.iter().map(|s| (*s).to_owned()).collect(),
+                input: format!("802-11-wireless-security.psk:{p}\n"),
+            }
+        }
+        None => argv(&v),
+    }
+}
+
 /// Error text, or None when allowed.
 pub fn validate(r: &AdminRequest) -> Option<String> {
     let a: Vec<&str> = r.args.iter().map(String::as_str).collect();
@@ -228,23 +246,12 @@ pub fn plan_with(
     }
     let a = &r.args;
     Ok(match r.action {
-        AdminAction::WifiJoin => vec![
-            AdminStep::Write {
-                path: wifi::CONF_PATH.into(),
-                mode: 0o600,
-                content: WriteContent::WifiUpsert {
-                    ssid: a[1].clone(),
-                    password: a.get(2).filter(|p| !p.is_empty()).cloned(),
-                    hidden: a.get(3).is_some_and(|h| h == "hidden"),
-                },
-            },
-            argv(&["wpa_cli", "-i", &a[0], "reconfigure"]),
-        ],
-        AdminAction::WifiPower => vec![argv(&[
-            "ifconfig",
-            &a[0],
-            if a[1] == "on" { "up" } else { "down" },
-        ])],
+        AdminAction::WifiJoin => vec![nm_join(
+            &a[1],
+            a.get(2).filter(|p| !p.is_empty()).map(String::as_str),
+            a.get(3).is_some_and(|h| h == "hidden"),
+        )],
+        AdminAction::WifiPower => vec![argv(&["nmcli", "radio", "wifi", &a[1]])],
         AdminAction::Bluetooth => {
             vec![argv(&[
                 "service",
@@ -347,14 +354,7 @@ pub fn plan_with(
             .map(|s| argv(&s))
             .into_iter()
             .collect(),
-        AdminAction::WifiForget => vec![
-            AdminStep::Write {
-                path: wifi::CONF_PATH.into(),
-                mode: 0o600,
-                content: WriteContent::WifiRemove { ssid: a[1].clone() },
-            },
-            argv(&["wpa_cli", "-i", &a[0], "reconfigure"]),
-        ],
+        AdminAction::WifiForget => vec![argv(&["nmcli", "connection", "delete", "id", &a[1]])],
         AdminAction::SessionPower => {
             vec![argv(session_power_argv(&a[0]).unwrap_or_default())]
         }
@@ -659,6 +659,25 @@ mod tests {
     }
 
     #[test]
+    fn wifi_join_uses_networkmanager_with_password_on_stdin() {
+        let p = plan(&r(WifiJoin, &["wlan0", "Home", "password1"])).unwrap();
+        let AdminStep::RunInput { argv, input } = &p[0] else {
+            panic!("{p:?}")
+        };
+        assert_eq!(
+            argv.join(" "),
+            "nmcli dev wifi connect Home passwd-file /dev/stdin"
+        );
+        assert_eq!(input, "802-11-wireless-security.psk:password1\n");
+        assert!(!argv.iter().any(|a| a.contains("password1")));
+        let p = plan(&r(WifiJoin, &["wlan0", "Attic", "", "hidden"])).unwrap();
+        assert!(
+            matches!(&p[0], AdminStep::Run(v) if v.join(" ") == "nmcli dev wifi connect Attic hidden yes")
+        );
+        assert!(!format!("{p:?}").contains("wpa"), "no wpa_supplicant left");
+    }
+
+    #[test]
     fn plan_maps_to_fixed_argv() {
         let show = |s: &AdminStep| match s {
             AdminStep::Run(v) => v.join(" "),
@@ -670,7 +689,7 @@ mod tests {
             (SessionPower, &["sleep"], "systemctl suspend"),
             (SessionPower, &["restart"], "systemctl reboot"),
             (SessionPower, &["shutdown"], "systemctl poweroff"),
-            (WifiPower, &["wlan0", "off"], "ifconfig wlan0 down"),
+            (WifiPower, &["wlan0", "off"], "nmcli radio wifi off"),
             (Bluetooth, &["on"], "service bluetooth onestart ubt0"),
             (
                 UserAdd,
@@ -696,11 +715,7 @@ mod tests {
                 "pacman -S --needed --noconfirm steam",
             ),
             (PkgRemove, &["gimp"], "pacman -Rns --noconfirm gimp"),
-            (
-                WifiJoin,
-                &["wlan0", "Home"],
-                "write /etc/wpa_supplicant.conf; wpa_cli -i wlan0 reconfigure",
-            ),
+            (WifiJoin, &["wlan0", "Home"], "nmcli dev wifi connect Home"),
             (Appearance, &["dark"], "write /etc/wolos/appearance"),
             (Idle, &["60"], "write /etc/wolos/idle.json"),
             (Revoke, &[], ""),
@@ -924,7 +939,7 @@ mod tests {
                 WifiForget,
                 &["wlan0", "Home"],
                 &[],
-                "write /etc/wpa_supplicant.conf; wpa_cli -i wlan0 reconfigure",
+                "nmcli connection delete id Home",
             ),
         ];
         for (a, args, facts, want) in cases {
@@ -957,13 +972,6 @@ mod tests {
         assert_eq!(mode, 0o644);
         let (c, _) = content(Consent, &["/usr/bin/grim", "screen-capture", "deny"]);
         assert!(crate::consent::parse(&c.render(Some(cur))).is_empty());
-        let (c, mode) = content(WifiForget, &["wlan0", "Home"]);
-        let wpa = "ctrl_interface=/var/run/wpa_supplicant\n\nnetwork={\n\tssid=\"Home\"\n\tpsk=\"pw123456\"\n}\nnetwork={\n\tssid=\"Work\"\n\tkey_mgmt=NONE\n}\n";
-        assert_eq!(
-            c.render(Some(wpa)),
-            "ctrl_interface=/var/run/wpa_supplicant\n\nnetwork={\n\tssid=\"Work\"\n\tkey_mgmt=NONE\n}\n"
-        );
-        assert_eq!(mode, 0o600);
     }
 
     /// A printer URI may carry credentials (`ipp://user:pass@host`): never logged.
@@ -992,21 +1000,6 @@ mod tests {
         assert_eq!(
             (content.render(None).as_str(), *mode),
             (r#"{"lock_after_secs":60}"#, 0o644)
-        );
-        let p = plan(&r(WifiJoin, &["wlan0", "Home", "password1"])).unwrap();
-        let AdminStep::Write { content, mode, .. } = &p[0] else {
-            panic!()
-        };
-        assert_eq!(*mode, 0o600);
-        assert!(content.render(None).contains("psk=\"password1\""));
-        let p = plan(&requests::wifi_join_hidden("wlan0", "Attic", None)).unwrap();
-        let AdminStep::Write { content, .. } = &p[0] else {
-            panic!()
-        };
-        assert!(
-            content
-                .render(None)
-                .ends_with("\tssid=\"Attic\"\n\tscan_ssid=1\n\tkey_mgmt=NONE\n\tpriority=10\n}\n")
         );
     }
 
