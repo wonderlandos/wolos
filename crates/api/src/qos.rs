@@ -1,6 +1,7 @@
 //! QoS service: applies `shared::qos::QosClass` policy; frontmost app boosting from wol-realtime.
 use shared::qos::{ForegroundTracker, QosClass, SchedPolicy, parse_foreground};
 use std::io::Read;
+use std::path::Path;
 
 /// Sets a process's scheduling class. Implementations must not allocate on success.
 pub trait Applier: Send + Sync {
@@ -48,8 +49,41 @@ pub fn linux(class: QosClass) -> Linux {
     }
 }
 
-/// i915 foreground pid (WolOS kernel patch, ADR 0008); absent on a stock kernel: no-op.
-pub const I915_FG_PID: &str = "/sys/module/i915/parameters/wol_fg_pid";
+/// WolKernel hint interface (README.wolos.md in the kernel tree); absent on a stock kernel: no-op.
+/// `foreground_pid` feeds the frontmost-app CPU floor, timer slack and the i915 waitboost.
+pub const HINTS: &str = "/sys/kernel/wolos";
+
+/// Session policy wold sets at start: the frontmost app runs at least at half capacity with exact
+/// timers (Wine/Proton frame limiters wake on time); background threads coalesce wakeups by 50 ms.
+pub const HINT_DEFAULTS: [(&str, i64); 3] = [
+    ("foreground_uclamp_min", 512),
+    ("foreground_timerslack_ns", 0),
+    ("background_timerslack_ns", 50_000_000),
+];
+
+/// Write one hint (an existing file only; sysfs never creates). True when written.
+pub fn hint(dir: &Path, name: &str, value: i64) -> bool {
+    use std::io::Write;
+    let mut buf = [0u8; 24];
+    let mut w = &mut buf[..];
+    if write!(w, "{value}").is_err() {
+        return false;
+    }
+    let n = 24 - w.len();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(dir.join(name))
+        .and_then(|mut f| f.write_all(&buf[..n]))
+        .is_ok()
+}
+
+/// Apply [`HINT_DEFAULTS`]; returns how many the kernel took.
+pub fn hint_defaults(dir: &Path) -> usize {
+    HINT_DEFAULTS
+        .iter()
+        .filter(|(f, v)| hint(dir, f, *v))
+        .count()
+}
 
 /// Real policy: every thread of the process (Linux priorities are per thread).
 pub struct Sched;
@@ -69,16 +103,7 @@ impl Applier for Sched {
     }
 
     fn gpu_foreground(&self, pid: i32) {
-        use std::io::Write;
-        let mut buf = [0u8; 12];
-        let mut w = &mut buf[..];
-        if write!(w, "{pid}").is_err() {
-            return;
-        }
-        let n = 12 - w.len();
-        if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(I915_FG_PID) {
-            let _ = f.write_all(&buf[..n]);
-        }
+        hint(Path::new(HINTS), "foreground_pid", pid.into());
     }
 }
 
@@ -234,6 +259,39 @@ pub mod tests {
         let t = Mutex::new(ForegroundTracker::default());
         serve(&b"foreground 10\nforeground 20\nforeground 0\n"[..], &t, &r);
         assert_eq!(*r.0.lock().unwrap(), vec![10, 20]);
+    }
+
+    #[test]
+    fn kernel_hints_name_the_frontmost_app_and_set_the_session_policy() {
+        let dir = std::env::temp_dir().join(format!("wol-hints-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (f, _) in HINT_DEFAULTS {
+            std::fs::write(dir.join(f), "").unwrap();
+        }
+        std::fs::write(dir.join("foreground_pid"), "").unwrap();
+        assert_eq!(hint_defaults(&dir), HINT_DEFAULTS.len());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("foreground_uclamp_min")).unwrap(),
+            "512"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("foreground_timerslack_ns")).unwrap(),
+            "0"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("background_timerslack_ns")).unwrap(),
+            "50000000"
+        );
+        assert!(hint(&dir, "foreground_pid", 4242));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("foreground_pid")).unwrap(),
+            "4242"
+        );
+        // A stock kernel has no /sys/kernel/wolos: nothing is written, nothing fails.
+        let none = dir.join("absent");
+        assert_eq!(hint_defaults(&none), 0);
+        assert!(!hint(&none, "foreground_pid", 1));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
