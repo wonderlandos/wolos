@@ -39,6 +39,37 @@ pub const NATIVE_XML: [&str; 2] = [
 /// Width the details page shows screenshots at; the closest thumbnail wins.
 pub const SHOT_WIDTH: u32 = 752;
 
+/// Where a downloaded screenshot is kept: `<cache>/wolos/store/<fnv-1a of the url>.<ext>`.
+/// None for anything but an https URL.
+pub fn shot_cache(cache_home: &str, url: &str) -> Option<String> {
+    if !url.starts_with("https://") || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return None;
+    }
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in url.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    let ext = match url
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some(e @ ("png" | "jpg" | "jpeg" | "webp")) => e.to_owned(),
+        _ => "png".into(),
+    };
+    Some(format!("{cache_home}/wolos/store/{h:016x}.{ext}"))
+}
+
+/// `$XDG_CACHE_HOME`, else `~/.cache`.
+pub fn cache_home() -> String {
+    std::env::var("XDG_CACHE_HOME")
+        .ok()
+        .filter(|d| d.starts_with('/'))
+        .unwrap_or_else(|| format!("{}/.cache", std::env::var("HOME").unwrap_or_default()))
+}
+
 /// The component whose `<id>` is `id`.
 pub fn by_id(xml: &str, id: &str) -> Option<Details> {
     component(xml, &format!("<id>{}</id>", escape(id)))
@@ -346,6 +377,28 @@ mod tests {
         assert_eq!(d.name, "A & B!");
         assert_eq!(d.developer.as_deref(), Some("Ann"));
         assert!(d.screenshots.is_empty() && d.description.is_empty());
+    }
+
+    #[test]
+    fn screenshots_cache_by_url() {
+        let a = shot_cache("/home/ann/.cache", "https://dl.flathub.org/a_752.png").unwrap();
+        assert!(a.starts_with("/home/ann/.cache/wolos/store/") && a.ends_with(".png"));
+        assert_eq!(
+            shot_cache("/c", "https://dl.flathub.org/a_752.png"),
+            shot_cache("/c", "https://dl.flathub.org/a_752.png")
+        );
+        assert_ne!(
+            shot_cache("/c", "https://x/a.png"),
+            shot_cache("/c", "https://x/b.png")
+        );
+        assert!(
+            shot_cache("/c", "https://x/a.JPG")
+                .unwrap()
+                .ends_with(".jpg")
+        );
+        assert!(shot_cache("/c", "https://x/a").unwrap().ends_with(".png"));
+        assert_eq!(shot_cache("/c", "http://x/a.png"), None);
+        assert_eq!(shot_cache("/c", "file:///etc/passwd"), None);
     }
 
     #[test]
