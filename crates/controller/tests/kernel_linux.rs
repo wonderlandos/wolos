@@ -69,6 +69,17 @@ fn recipe_builds_the_fork_at_the_recorded_commit() {
     ] {
         assert!(p.contains(want), "PKGBUILD lacks {want}");
     }
+    // The WolKernel patches live on the fork's wolos branch; no default patch directory
+    // (they would apply twice).
+    assert!(
+        !p.contains("../wolos-overlay"),
+        "PKGBUILD defaults to a patch dir"
+    );
+    let h = read("kernel/linux-wolos-api-headers/PKGBUILD");
+    assert!(
+        h.contains(&format!("_ref={commit}")),
+        "api headers pin another commit"
+    );
     let st = Command::new("bash")
         .arg("-n")
         .arg(repo("kernel/linux-wolos/PKGBUILD"))
@@ -157,6 +168,9 @@ fn prepare_applies_extra_patches_in_order_then_merges_the_fragment() {
         "--- a/hello.c\n+++ b/hello.c\n@@ -1 +1,2 @@\n one\n+two\n",
     )
     .unwrap();
+    // The fork carries its own copy of the fragment: merged first, ours on top.
+    fs::create_dir_all(src.join("kernel/configs")).unwrap();
+    fs::write(src.join("kernel/configs/wolos.config"), "CONFIG_FORK=y\n").unwrap();
     let o = prepare(&d, &src, &bin, "overlay");
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(
@@ -174,6 +188,11 @@ fn prepare_applies_extra_patches_in_order_then_merges_the_fragment() {
     assert!(l.trim_end().ends_with("make olddefconfig"), "{l}");
     let cfg = fs::read_to_string(src.join(".config")).unwrap();
     assert!(cfg.starts_with("CONFIG_HZ_300=y") && cfg.contains("CONFIG_HZ_1000=y"));
+    let fork = cfg.find("CONFIG_FORK=y").expect("fork fragment merged");
+    assert!(
+        fork < cfg.find("CONFIG_HZ_1000=y").unwrap(),
+        "ours goes last"
+    );
     // A patch that no longer applies stops the build.
     fs::write(src.join("hello.c"), "other\n").unwrap();
     assert_eq!(prepare(&d, &src, &bin, "overlay").status.code(), Some(3));
@@ -182,4 +201,184 @@ fn prepare_applies_extra_patches_in_order_then_merges_the_fragment() {
     let o = prepare(&d, &src, &bin, "none");
     assert!(o.status.success());
     assert!(String::from_utf8_lossy(&o.stdout).contains("extra patches: 0"));
+}
+
+/// kernel/VERSION is the one place the product version lives: "WolKernel 1.0 (7.3)" =
+/// WolKernel release + the Linux base in parentheses. PKGBUILDs, uname -v and the README follow it.
+#[test]
+fn version_has_one_source_and_shows_the_linux_base_in_parentheses() {
+    let v = read("kernel/VERSION");
+    let get = |k: &str| {
+        v.lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}=")))
+            .unwrap_or_else(|| panic!("VERSION lacks {k}="))
+            .to_string()
+    };
+    let (wk, linux) = (get("wolkernel"), get("linux"));
+    assert_eq!((wk.as_str(), linux.as_str()), ("1.0", "7.3"));
+    let shown = format!("WolKernel {wk} ({linux})");
+    assert!(
+        read("kernel/README.md").contains(&shown),
+        "README lacks {shown}"
+    );
+    for pkg in [
+        "kernel/linux-wolos/PKGBUILD",
+        "kernel/linux-wolos-api-headers/PKGBUILD",
+    ] {
+        let p = read(pkg);
+        assert!(p.contains("VERSION"), "{pkg} does not read kernel/VERSION");
+        assert!(!p.contains("pkgver=7."), "{pkg} hard-codes the version");
+        let dir = repo(pkg).parent().unwrap().to_path_buf();
+        let out = Command::new("bash")
+            .arg("-c")
+            .arg("startdir=$PWD; source ./PKGBUILD >/dev/null; echo \"$pkgver|${KBUILD_BUILD_VERSION:-}\"")
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&out.stdout);
+        let (pv, uv) = out.trim().split_once('|').unwrap();
+        assert_eq!(pv, format!("{wk}+{linux}"), "{pkg} pkgver");
+        if pkg.ends_with("linux-wolos/PKGBUILD") {
+            assert!(uv.contains(&shown), "uname -v lacks {shown}: {uv:?}");
+        }
+    }
+}
+
+fn option_set(c: &str, opt: &str) -> bool {
+    c.lines().any(|l| l == opt)
+}
+
+/// Desktop tuning and debloat: what the fragment must set, and what it must never switch off
+/// (Steam/Proton, Flatpak, Docker, KVM, DKMS, laptops).
+#[test]
+fn fragment_tunes_for_desktops_and_keeps_compatibility() {
+    let c = read("kernel/conf/wolos.config");
+    for want in [
+        "CONFIG_NTSYNC=m",
+        "CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y",
+        "CONFIG_LRU_GEN_ENABLED=y",
+        "CONFIG_TCP_CONG_BBR=y",
+        "CONFIG_DEFAULT_BBR=y",
+        "CONFIG_LEGACY_VSYSCALL_NONE=y",
+        "# CONFIG_PCMCIA is not set",
+        "# CONFIG_BLK_DEV_FD is not set",
+        "# CONFIG_PARPORT is not set",
+        "# CONFIG_FB_VESA is not set",
+        "CONFIG_DRM_SIMPLEDRM=y",
+        "CONFIG_ZRAM=m",
+        "CONFIG_NR_CPUS=512",
+    ] {
+        assert!(option_set(&c, want), "wolos.config lacks {want}");
+    }
+    for keep in [
+        "IA32_EMULATION",
+        "MODIFY_LDT_SYSCALL",
+        "BINFMT_MISC",
+        "OVERLAY_FS",
+        "USER_NS",
+        "KVM",
+        "KVM_INTEL",
+        "KVM_AMD",
+        "MODULES",
+        "MODVERSIONS",
+        "VETH",
+        "BRIDGE",
+        "FUTEX",
+        "IO_URING",
+        "SECCOMP",
+        "DRM_I915",
+        "DRM_AMDGPU",
+        "DRM_XE",
+        "IWLWIFI",
+        "BT",
+        "THINKPAD_ACPI",
+        "ACPI_BATTERY",
+    ] {
+        let off = format!("# CONFIG_{keep} is not set");
+        assert!(!option_set(&c, &off), "wolos.config turns off {keep}");
+    }
+    assert!(!option_set(&c, "CONFIG_IA32_EMULATION_DEFAULT_DISABLED=y"));
+    // Every removed userspace interface is listed for `wol doctor`.
+    let abi = read("kernel/abi-removed.txt");
+    for name in ["X86_X32_ABI", "LEGACY_VSYSCALL"] {
+        assert!(
+            abi.lines()
+                .any(|l| l.split_whitespace().nth(1) == Some(name)),
+            "abi-removed.txt lacks {name}"
+        );
+    }
+}
+
+/// Userspace half of the tuning: sysctl values, I/O schedulers and zram defaults ship in the image.
+#[test]
+fn image_ships_memory_and_latency_sysctls_and_zram() {
+    let s = read("image/files/usr/lib/sysctl.d/70-wolos-performance.conf");
+    for kv in [
+        "vm.swappiness = 100",
+        "vm.page-cluster = 0",
+        "vm.vfs_cache_pressure = 50",
+        "vm.dirty_bytes = 268435456",
+        "vm.dirty_background_bytes = 67108864",
+        "kernel.nmi_watchdog = 0",
+    ] {
+        assert!(s.lines().any(|l| l == kv), "sysctl lacks {kv}");
+    }
+    let z = read("image/files/usr/lib/systemd/zram-generator.conf");
+    assert!(z.contains("[zram0]") && z.contains("compression-algorithm = zstd"));
+    for f in ["image/arch/packages.x86_64", "image/packages-base.txt"] {
+        assert!(
+            read(f).lines().any(|l| l == "zram-generator"),
+            "{f} lacks zram-generator"
+        );
+    }
+    let t = read("image/files/usr/lib/tmpfiles.d/70-wolos-performance.conf");
+    assert!(
+        t.contains("/sys/kernel/mm/lru_gen/min_ttl_ms")
+            && t.contains("transparent_hugepage/defrag")
+    );
+    let u = read("image/files/usr/lib/udev/rules.d/60-wolos-ioscheduler.rules");
+    assert!(u.contains("none") && u.contains("bfq"));
+}
+
+/// Build options for developers and CI: CPU level (generic default, x86-64-v3 flavour), Clang ThinLTO,
+/// a fast build of only the loaded modules, ccache and parallel make.
+#[test]
+fn recipe_has_build_flavours_and_fast_developer_builds() {
+    let p = read("kernel/linux-wolos/PKGBUILD");
+    for want in [
+        "_march=${_march:-generic}",
+        "x86-64-v3",
+        "_use_llvm_lto=${_use_llvm_lto:-none}",
+        "LTO_CLANG_THIN",
+        "LLVM=1",
+        "_localmodcfg",
+        "localmodconfig",
+        "modprobed.db",
+        "ccache",
+        "MAKEFLAGS",
+        "nproc",
+    ] {
+        assert!(p.contains(want), "PKGBUILD lacks {want}");
+    }
+}
+
+/// CI builds the kernel in an Arch container and releases packages on wolkernel-* tags.
+#[test]
+fn workflow_builds_and_releases_the_kernel() {
+    let w = read(".github/workflows/kernel.yml");
+    for want in [
+        "archlinux",
+        "wolkernel-*",
+        "ccache",
+        "actions/cache",
+        "makepkg",
+        "gh release create",
+        "df -h",
+    ] {
+        assert!(w.contains(want), "kernel.yml lacks {want}");
+    }
+    let low = w.to_lowercase();
+    for word in ["private", "proprietary", "closed", "cachyos", "overlay"] {
+        assert!(!low.contains(word), "kernel.yml mentions {word}");
+    }
 }
