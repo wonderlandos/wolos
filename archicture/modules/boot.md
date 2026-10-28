@@ -30,7 +30,7 @@ Not signed in this beta. `install-check` reads the `SecureBoot` EFI variable; th
 |---|---|---|
 | list | `install-disks` | never the live medium, CDs, loop, zram or read-only disks |
 | check | `install-check <disk>` | read-only; `refuse not-listed/too-small/in-use`; `os Windows/Linux/macOS/FreeBSD` from GPT types and filesystems; `secureboot on` |
-| write | `install-run <disk>` | all checks before `sgdisk --zap-all`; only the picked disk and its partitions are named; sleep and lid held off |
+| write | `install-run <disk>` | all checks before `systemd-repart --empty=force`; only the picked disk and its partitions are named; sleep and lid held off |
 | verify | `install-run` | entry, kernel and initramfs on the ESP and fstab before `done` |
 
 Unattended: `wolos.autoinstall=<disk>` on the live command line (`wolos-autoinstall.service`), then power off.

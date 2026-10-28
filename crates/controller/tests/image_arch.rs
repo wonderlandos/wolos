@@ -125,7 +125,6 @@ fn packages_are_arch_names_with_linux_wolos_only() {
         "amd-ucode",
         "mkinitcpio-archiso",
         "btrfs-progs",
-        "gptfdisk",
         "dosfstools",
         "plymouth",
         "nftables",

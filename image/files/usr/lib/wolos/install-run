@@ -1,6 +1,6 @@
 #!/bin/sh
-# Install WolOS (ADR 0013, ADR 0016): erase <disk> and install, as root (the live image lets its
-# user run this with sudo, no password). GPT: ESP (1 GiB, /efi) + one btrfs partition with
+# Install WolOS (ADR 0013, ADR 0016, ADR 0018): erase <disk> and install, as root (the live image
+# lets its user run this with sudo, no password). GPT from repart.d via systemd-repart: ESP (1 GiB, /efi) + one btrfs partition with
 # subvolumes @wolos-a (this system), @home and @var; the first update creates @wolos-b. The live
 # root (airootfs.sfs) is copied into @wolos-a without the live-only files, and systemd-boot starts it
 # with boot counting (three tries).
@@ -34,20 +34,14 @@ part() { case $disk in *[0-9]) echo "${disk}p$1" ;; *) echo "$disk$1" ;; esac; }
 say prepare 0 "Preparing to install on $disk"
 
 say disk 5 "Erasing $disk"
-sgdisk --zap-all "$disk" >/dev/null &&
-  sgdisk -n 1:0:+1G -t 1:ef00 -c 1:WOLOS_ESP -n 2:0:0 -t 2:8304 -c 2:WolOS "$disk" >/dev/null ||
+# systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
+systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >/dev/null ||
   fail "could not partition $disk"
-partprobe "$disk" 2>/dev/null; udevadm settle 2>/dev/null
+udevadm settle 2>/dev/null
 esp=$(part 1); root=$(part 2)
-mkfs.fat -F 32 -n WOLOS "$esp" >/dev/null && mkfs.btrfs -f -L WolOS "$root" >/dev/null || fail "could not format $disk"
 ruuid=$(blkid -s UUID -o value "$root"); euuid=$(blkid -s UUID -o value "$esp")
-mkdir -p "$T" && mount "$root" "$T" || fail "could not mount the new system"
-for s in @wolos-a @home @var; do
-  btrfs subvolume create "$T/$s" >/dev/null || fail "could not create $s"
-done
-umount "$T"
 O=compress=zstd:1,noatime
-mount -o "subvol=@wolos-a,$O" "$root" "$T" || fail "could not mount @wolos-a"
+mkdir -p "$T" && mount -o "subvol=@wolos-a,$O" "$root" "$T" || fail "could not mount @wolos-a"
 mkdir -p "$T/home" "$T/var" "$T/efi"
 mount -o "subvol=@home,$O" "$root" "$T/home" && mount -o "subvol=@var,$O" "$root" "$T/var" &&
   mount "$esp" "$T/efi" || fail "could not mount the new system"
