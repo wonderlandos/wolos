@@ -92,6 +92,12 @@ jobs:
           key: wolos-pkgs-${{ steps.plan.outputs.tag }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: wolos-pkgs-${{ steps.plan.outputs.tag }}-
 
+      - name: Fetch the pinned kernel source
+        run: |
+          c=$(cat kernel/linux-wolos/ref)
+          curl -fsSL --retry 8 --retry-delay 30 --retry-all-errors \
+            -o "kernel/linux-wolos/linux-$c.tar.gz" "https://github.com/wonderlandos/linux/archive/$c.tar.gz"
+
       - name: Build in an archlinux container
         if: steps.plan.outputs.only != ''
         env:

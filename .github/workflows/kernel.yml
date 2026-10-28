@@ -41,6 +41,15 @@ jobs:
           key: ccache-${{ matrix.march }}-${{ hashFiles('kernel/linux-wolos/ref', 'kernel/conf/wolos.config', 'kernel/linux-wolos/config.x86_64') }}
           restore-keys: ccache-${{ matrix.march }}-
 
+      # Fetched before makepkg (which uses the file): parallel jobs hitting archive/ get HTTP 429.
+      - name: Fetch the pinned kernel source
+        run: |
+          c=$(cat kernel/linux-wolos/ref)
+          # archive/ keeps the linux-<commit>/ top directory the PKGBUILD expects; back off on 429.
+          sleep $(( RANDOM % 30 ))
+          curl -fsSL --retry 8 --retry-delay 30 --retry-all-errors \
+            -o "kernel/linux-wolos/linux-$c.tar.gz" "https://github.com/wonderlandos/linux/archive/$c.tar.gz"
+
       - name: Build in Arch Linux
         run: |
           docker run --rm -v "$PWD:/w" -w /w -e _march=${{ matrix.march }} archlinux:base-devel bash -euxc '
@@ -51,11 +60,11 @@ jobs:
             su build -c "cd /w/kernel/linux-wolos && CCACHE_DIR=/w/.ccache CCACHE_MAXSIZE=5G makepkg --noconfirm --nodeps"
             ccache -d /w/.ccache -s
             # The fork carries its own copy of the fragment; ours must match it (SPDX line aside).
-            if ! diff <(sed 1d kernel/conf/wolos.config) <(sed 1d kernel/linux-wolos/src/linux/kernel/configs/wolos.config); then
+            if ! diff <(sed 1d kernel/conf/wolos.config) <(sed 1d kernel/linux-wolos/src/linux-$(cat kernel/linux-wolos/ref)/kernel/configs/wolos.config); then
               echo "::warning::kernel/conf/wolos.config differs from the fork copy (ours is merged last)"
             fi
             echo "modules: $(find kernel/linux-wolos/pkg -name "*.ko*" | wc -l)"
-            echo "built-in options: $(grep -c "=y" kernel/linux-wolos/src/linux/.config)"
+            echo "built-in options: $(grep -c "=y" kernel/linux-wolos/src/linux-$(cat kernel/linux-wolos/ref)/.config)"
           '
           df -h /
 
