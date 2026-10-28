@@ -249,6 +249,30 @@ pub const TREE: &[Cmd] = &[
         "Boot the given (or the previous) restore point next (administrator)",
     ),
     cmd(
+        &["mirror", "status"],
+        "mirror.status",
+        &[],
+        "Package mirrors, CPU level and whether [wolos-cachy] is on",
+    ),
+    cmd(
+        &["mirror", "rank"],
+        "mirror.rank",
+        &[],
+        "Probe the mirrors in parallel, fastest first (--yes writes the order, root)",
+    ),
+    cmd(
+        &["mirror", "gate"],
+        "mirror.gate",
+        &[],
+        "Turn [wolos-cachy] on only where the CPU runs x86-64-v3 builds (root, --yes)",
+    ),
+    cmd(
+        &["mirror", "kernel"],
+        "mirror.kernel",
+        &[],
+        "System kernel package for this CPU",
+    ),
+    cmd(
         &["gpu", "env"],
         "gpu.env",
         &[],

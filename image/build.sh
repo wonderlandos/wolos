@@ -26,7 +26,7 @@ rm -rf "$P"; cp -a "$IMG/arch" "$P"
 cat "$IMG/arch/packages.x86_64" "$REPO/desktop/packages.txt" | sed 's/#.*//' | tr -s ' \t' '\n' | grep . > "$P/packages.x86_64"
 awk -v srv="Server = file://$RD/\$arch" '
   /^\[/ { sect = $0 }
-  sect == "[wolos]" && /^Server = / { print "SigLevel = Optional TrustAll"; print srv; next }
+  sect == "[wolos]" && /^(Server|Include) = / { print "SigLevel = Optional TrustAll"; print srv; next }
   { print }' "$IMG/arch/pacman.conf" > "$P/pacman.conf"
 A=$P/airootfs
 mkdir -p "$A/etc/wolos" "$A/etc/sysusers.d" "$A/etc/sudoers.d" "$A/etc/tmpfiles.d"
@@ -65,5 +65,6 @@ $S rm -rf "$WORK/work"   # disk: the pacstrap root is in the squashfs now
 # 4. Release manifest next to the ISO.
 ISO=$(ls -t "$OUT"/wolos-*.iso | head -1)
 REV=$(cat "$RD/revision" 2>/dev/null || git -C "$REPO" rev-parse --short HEAD)
-"$IMG/release-manifest.sh" "$ISO" "$SNAP" "$REV" "${WOLOS_IMAGE_URL:-https://github.com/wonderlandos/wolos/releases/download/$SNAP}" > "${ISO%.iso}.json"
+"$IMG/release-manifest.sh" "$ISO" "$SNAP" "$REV" "${WOLOS_IMAGE_URL:-https://github.com/wonderlandos/wolos/releases/download/$SNAP}" \
+  "" "" "$(cat "${WOLOS_CACHY_DIR:-$WORK/cachy}/revision" 2>/dev/null || :)" > "${ISO%.iso}.json"
 echo "image: $ISO  manifest: ${ISO%.iso}.json"

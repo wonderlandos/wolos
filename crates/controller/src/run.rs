@@ -17,6 +17,9 @@ pub const GPU_BIN: &str = "wol-realtime";
 const PASSWORD_TRIES: usize = 3;
 
 /// Side effects `wol` needs.
+/// Server latency probe in ms, shareable across threads (`wol mirror rank`).
+pub type Prober = Box<dyn Fn(&str) -> Option<u64> + Sync + Send>;
+
 pub trait Env {
     fn out(&mut self, s: &str);
     fn err(&mut self, s: &str);
@@ -51,6 +54,10 @@ pub trait Env {
             Ok(0) | Err(_) => None,
             Ok(_) => Some(l),
         }
+    }
+    /// Server latency probe in ms (`wol mirror rank`); shareable across threads.
+    fn prober(&self) -> Prober {
+        Box::new(crate::mirror::curl_probe)
     }
     /// Hardware detected now with driver/firmware status (`wol hw`).
     fn hardware(&mut self) -> shared::hardware::HardwareSnapshot {
@@ -191,6 +198,9 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
         "update.rollback" => crate::verbs::rollback(env, inv.get("be")),
+        "mirror.status" | "mirror.rank" | "mirror.gate" | "mirror.kernel" => {
+            crate::mirror::run(env, inv.action, inv.flag("yes"), json)
+        }
         "gpu.env" => exec(env, &[GPU_BIN.into(), "gpu".into(), "env".into()]),
         "gpu.hyprconf" => exec(env, &[GPU_BIN.into(), "gpu".into(), "hyprconf".into()]),
         "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" => {
@@ -919,6 +929,14 @@ impl Env for FakeEnv {
             0
         } else {
             self.exec_codes.remove(0)
+        })
+    }
+    /// `probe <url>` captures give the latency in ms; none = unreachable.
+    fn prober(&self) -> Prober {
+        let c = self.captures.clone();
+        Box::new(move |u| {
+            let k = format!("probe {u}");
+            c.iter().find(|x| x.0 == k)?.1.trim().parse().ok()
         })
     }
     fn capture(&mut self, argv: &[&str]) -> Option<String> {

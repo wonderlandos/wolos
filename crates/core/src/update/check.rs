@@ -27,6 +27,9 @@ pub struct Manifest {
     pub snapshot: String,
     /// `[wolos]` repo revision.
     pub wolos_repo: String,
+    /// `[wolos-cachy]` snapshot revision (optimized builds frozen at the release; ADR 0019).
+    #[serde(default)]
+    pub cachy: String,
     /// linux-wolos package version.
     pub kernel: String,
     /// Installer image and its sha256.
@@ -205,6 +208,9 @@ mod tests {
             m.kernel, "6.17.3.wolos1-1",
             "records the linux-wolos version"
         );
+        assert_eq!(m.cachy, "", "older manifests have no [wolos-cachy]");
+        let c = RELEASE.replace(r#""kernel""#, r#""cachy":"20261102-ab12","kernel""#);
+        assert_eq!(Manifest::parse(&c).unwrap().cachy, "20261102-ab12");
         for bad in [
             "",
             "{}",

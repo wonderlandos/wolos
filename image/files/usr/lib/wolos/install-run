@@ -72,6 +72,14 @@ UUID=$ruuid /var btrfs subvol=/@var,$O 0 0
 UUID=$euuid /efi vfat umask=0077,shortname=winnt 0 2
 EOF
 
+# [wolos-cachy] only where the CPU runs its x86-64-v3 builds; linux-wolos-v3 (same boot files) replaces
+# linux-wolos when a repo offers it, before the initramfs is built (ADR 0019). Offline: next update.
+arch-chroot "$T" wol mirror gate --yes >/dev/null 2>&1 || :
+arch-chroot "$T" pacman -Sy >/dev/null 2>&1 || :
+if [ "$(arch-chroot "$T" wol mirror kernel 2>/dev/null)" = linux-wolos-v3 ]; then
+  arch-chroot "$T" pacman -S --noconfirm linux-wolos-v3 >/dev/null 2>&1 || :
+fi
+
 say boot 70 "Making $disk start WolOS"
 mkdir -p "$T/etc/mkinitcpio.d" "$T/boot"
 for m in "$T"/usr/lib/modules/*/; do
