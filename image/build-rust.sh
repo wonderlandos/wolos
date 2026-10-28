@@ -21,7 +21,7 @@ command -v sccache >/dev/null && export RUSTC_WRAPPER=sccache
 eval cargo build --release --workspace --locked $F
 B=${CARGO_TARGET_DIR:-$REPO/target}/release
 mkdir -p "$DEST/usr/bin" "$DEST/usr/lib"
-for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-spotlight wol-control-center wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store; do
+for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-spotlight wol-control-center wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-flatpak-consent; do
   [ -x "$B/$b" ] || { echo "build-rust.sh: binary $b not produced" >&2; exit 1; }
   install -m 755 "$B/$b" "$DEST/usr/bin/$b"
 done
