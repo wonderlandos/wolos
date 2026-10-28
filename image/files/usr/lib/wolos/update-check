@@ -10,7 +10,7 @@
 #   checked  when the check finished (seconds since 1970)
 set -u
 D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
-URL=${WOLOS_RELEASE_URL:-https://wonderlandos.github.io/releases/latest/release.json}
+URL=${WOLOS_RELEASE_URL:-https://github.com/wonderlandos/wolos/releases/latest/download/release.json}
 EVERY=72000
 now=$(date +%s)
 last=$(cat "$D/checked" 2>/dev/null)

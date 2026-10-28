@@ -1,0 +1,136 @@
+# [wolos] pacman repo: rebuild the packages whose directories changed (image/repo/changed.sh, plus
+# every package that depends on them) in an archlinux container, keep the rest from the last
+# publish, and publish the repo as the assets of the `repo-<snapshot>` release.
+# Signing: secret WOLOS_GPG_KEY (armored gpg secret key); without it the repo is unsigned.
+# Extra patches from $WOLOS_OVERLAY when present (vars.WOLOS_OVERLAY_REPO + secrets.WOLOS_OVERLAY_TOKEN).
+name: packages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - kernel/linux-wolos/**
+      - image/**
+      - crates/**
+      - plugins/**
+      - desktop/**
+      - design
+      - Cargo.toml
+      - Cargo.lock
+      - CHANGELOG.md
+  workflow_dispatch:
+    inputs:
+      only:
+        description: Packages to rebuild (space separated; empty = changed since the last publish)
+        required: false
+
+concurrency:
+  group: packages
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  repo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+      OVERLAY_REPO: ${{ vars.WOLOS_OVERLAY_REPO }}
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
+          sudo docker image prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Extra patches (when present)
+        if: env.OVERLAY_REPO != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.OVERLAY_REPO }}
+          token: ${{ secrets.WOLOS_OVERLAY_TOKEN }}
+          path: wolos-overlay
+
+      - name: Packages to build
+        id: plan
+        env:
+          ONLY_INPUT: ${{ inputs.only }}
+        run: |
+          snap=$(tr -d '[:space:]' < image/arch/snapshot)
+          echo "tag=repo-$snap" >> "$GITHUB_OUTPUT"
+          mkdir -p out/repo/x86_64
+          # The last publish: kept packages and the commit it was built from.
+          if gh release download "repo-$snap" --dir out/repo/x86_64 2>/dev/null; then
+            base=$(cat out/repo/x86_64/revision-commit 2>/dev/null || true)
+          fi
+          if [ -n "${ONLY_INPUT:-}" ]; then
+            only=$ONLY_INPUT
+          elif [ -n "${base:-}" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            only=$(git diff --name-only "$base" HEAD | image/repo/changed.sh)
+          else
+            only=$(awk '!/^#/ && NF {printf "%s ", $1}' image/repo/packages)   # first publish: all
+          fi
+          echo "only=$only" >> "$GITHUB_OUTPUT"
+          echo "build: ${only:-nothing}"
+
+      - name: Cache pacman packages and cargo
+        if: steps.plan.outputs.only != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            out/pkgcache
+            out/cargo
+          key: wolos-pkgs-${{ steps.plan.outputs.tag }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: wolos-pkgs-${{ steps.plan.outputs.tag }}-
+
+      - name: Build in an archlinux container
+        if: steps.plan.outputs.only != ''
+        env:
+          WOLOS_REPO_ONLY: ${{ steps.plan.outputs.only }}
+          GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+        run: |
+          mkdir -p out/pkgcache out/cargo
+          docker run --rm -v "$PWD:/src" -w /src \
+            -v "$PWD/out/pkgcache:/var/cache/pacman/pkg" -v "$PWD/out/cargo:/home/builder/.cargo" \
+            -e WOLOS_REPO_ONLY -e GPG_KEY archlinux:base-devel bash -euo pipefail -c '
+              pacman -Syu --noconfirm --needed git sudo devtools rust clang
+              useradd -m builder; echo "builder ALL=(root) NOPASSWD: /usr/bin/pacman" > /etc/sudoers.d/builder
+              chown -R builder /src /home/builder
+              ov=; [ -d /src/wolos-overlay ] && ov=/src/wolos-overlay
+              sudo -u builder -H env WOLOS_REPO_ONLY="$WOLOS_REPO_ONLY" GPG_KEY="$GPG_KEY" WOLOS_OVERLAY="$ov" bash -euo pipefail -c "
+                git config --global --add safe.directory \"*\"
+                if [ -n \"\$GPG_KEY\" ]; then
+                  echo \"\$GPG_KEY\" | gpg --batch --import
+                  export WOLOS_SIGN_KEY=\$(gpg --list-secret-keys --with-colons | awk -F: \"/^fpr/ {print \\\$10; exit}\")
+                else
+                  export WOLOS_UNSIGNED=1
+                fi
+                [ -n \"\$WOLOS_OVERLAY\" ] || unset WOLOS_OVERLAY
+                WOLOS_INSTALL_DEPS=1 WOLOS_WORK=/src/out/work WOLOS_REPO_DIR=/src/out/repo image/repo/build.sh
+              "'
+
+      - name: Publish the repo
+        if: steps.plan.outputs.only != ''
+        run: |
+          tag=${{ steps.plan.outputs.tag }}
+          cd out/repo/x86_64
+          git -C "$GITHUB_WORKSPACE" rev-parse HEAD > revision-commit
+          cp ../revision revision
+          # repo-add leaves symlinks; release assets must be files (pacman reads wolos.db).
+          for l in wolos.db wolos.files wolos.db.sig wolos.files.sig; do
+            [ -L "$l" ] && cp --remove-destination "$(readlink -f "$l")" "$l"
+          done
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" --title "[wolos] repo ($tag)" --notes "pacman repository" --latest=false
+          gh release upload "$tag" --clobber ./*
+          # Drop assets of package versions that are no longer in the repo.
+          gh release view "$tag" --json assets -q '.assets[].name' | while read -r a; do
+            [ -e "$a" ] || gh release delete-asset "$tag" "$a" --yes
+          done
