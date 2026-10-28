@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 fn read(p: &str) -> String {
-    let f = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(p);
+    let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(p);
     std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
 
@@ -91,12 +93,32 @@ fn end_user_image_has_no_toolchain_or_gnu_docs() {
         read("image/arch/packages.x86_64"),
         read("image/packages-base.txt")
     );
-    for banned in ["gcc", "texinfo", "man-pages", "base-devel", "make", "autoconf"] {
+    for banned in [
+        "gcc",
+        "texinfo",
+        "man-pages",
+        "base-devel",
+        "make",
+        "autoconf",
+    ] {
         assert!(
-            !all.lines().any(|l| l.split_whitespace().next() == Some(banned)),
+            !all.lines()
+                .any(|l| l.split_whitespace().next() == Some(banned)),
             "{banned} ships on the image"
         );
     }
+}
+
+#[test]
+fn rust_builds_use_mold_and_sccache_when_present() {
+    let b = read("image/build-rust.sh");
+    assert!(b.contains("command -v mold") && b.contains("-fuse-ld=mold"));
+    assert!(b.contains("command -v sccache") && b.contains("RUSTC_WRAPPER"));
+    let w = read(".github/workflows/packages.yml");
+    assert!(w.contains("mold") && w.contains("sccache") && w.contains("out/sccache"));
+    let c = read("Cargo.toml");
+    assert!(c.contains("[profile.release]") && c.contains("lto = \"thin\""));
+    assert!(c.contains("[profile.dev.package.\"*\"]"));
 }
 
 #[test]
