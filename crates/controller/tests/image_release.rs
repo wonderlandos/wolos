@@ -49,6 +49,7 @@ fn package_table_is_in_dependency_order() {
         [
             "linux-wolos",
             "hyprland-wolos",
+            "flatpak-wolos",
             "wolos-system",
             "wolos-base"
         ]

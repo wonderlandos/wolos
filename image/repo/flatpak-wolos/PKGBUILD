@@ -1,0 +1,53 @@
+# flatpak-wolos: Flatpak 1.16.6 (the snapshot's version) from the WolOS fork's `wolos` branch at the
+# commit in ./ref: reflinked copies, unused runtimes removed after uninstall/update (--keep-unused to
+# keep them), and the consent hook that Settings > Privacy reads. Packaging follows Arch's flatpak.
+pkgname=flatpak-wolos
+pkgver=1.16.6.wolos1
+pkgrel=1
+epoch=1
+pkgdesc='Linux application sandboxing and distribution framework, WolOS build'
+arch=(x86_64)
+url='https://github.com/wonderlandos/flatpak'
+license=(LGPL-2.1-or-later)
+depends=(appstream bash bubblewrap curl dbus dconf fuse3 gdk-pixbuf2 glib2 glibc gpgme json-glib
+  libarchive libgcc libmalcontent libseccomp libxau libxml2 ostree libostree-1.so polkit python
+  python-gobject systemd systemd-libs wayland xdg-dbus-proxy xdg-desktop-portal xdg-utils zstd)
+makedepends=(glib2-devel gobject-introspection meson python-packaging python-pyparsing
+  wayland-protocols)
+provides=(flatpak="1:${pkgver%.wolos*}" libflatpak.so)
+conflicts=(flatpak)
+_commit=$(<"$startdir/ref")
+_srcname=flatpak-$_commit
+# A tarball of the pinned commit (libglnx and the schema compiler are vendored; bwrap and the
+# D-Bus proxy come from the system).
+source=(
+  "$_srcname.tar.gz::$url/archive/$_commit.tar.gz"
+  https://dl.flathub.org/repo/flathub.flatpakrepo
+)
+sha256sums=(SKIP SKIP)
+
+build() {
+  arch-meson "$_srcname" build \
+    -D selinux_module=disabled \
+    -D system_bubblewrap=bwrap \
+    -D system_dbus_proxy=xdg-dbus-proxy \
+    -D gtkdoc=disabled \
+    -D docbook_docs=disabled \
+    -D tests=false
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dt "$pkgdir/usr/share/flatpak/remotes.d" -m644 flathub.flatpakrepo
+  install -Dm644 /dev/stdin "$pkgdir/etc/profile.d/flatpak-bindir.sh" <<'SH'
+if [ -n "$XDG_DATA_HOME" ] && [ -d "$XDG_DATA_HOME/flatpak/exports/bin" ]; then
+  append_path "$XDG_DATA_HOME/flatpak/exports/bin"
+elif [ -n "$HOME" ] && [ -d "$HOME/.local/share/flatpak/exports/bin" ]; then
+  append_path "$HOME/.local/share/flatpak/exports/bin"
+fi
+if [ -d /var/lib/flatpak/exports/bin ]; then
+  append_path /var/lib/flatpak/exports/bin
+fi
+SH
+}
