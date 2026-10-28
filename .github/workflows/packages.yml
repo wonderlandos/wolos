@@ -31,6 +31,7 @@ concurrency:
 
 permissions:
   contents: write
+  id-token: write   # AWS build cluster (OIDC), when vars.AWS_ROLE_ARN is set
 
 jobs:
   repo:
@@ -94,19 +95,21 @@ jobs:
 
       # BTF generation (pahole over all of vmlinux) peaks above the runner's 16 GB RAM.
       - name: Add swap
+        if: vars.AWS_ROLE_ARN == ''
         run: |
           sudo swapoff -a || true
           sudo fallocate -l 16G /mnt/wolos-swap && sudo chmod 600 /mnt/wolos-swap
           sudo mkswap /mnt/wolos-swap >/dev/null && sudo swapon /mnt/wolos-swap && free -g
 
       - name: Fetch the pinned kernel source
+        if: vars.AWS_ROLE_ARN == ''
         run: |
           c=$(cat kernel/linux-wolos/ref)
           curl -fsSL --retry 8 --retry-delay 30 --retry-all-errors \
             -o "kernel/linux-wolos/linux-$c.tar.gz" "https://github.com/wonderlandos/linux/archive/$c.tar.gz"
 
       - name: Build in an archlinux container
-        if: steps.plan.outputs.only != ''
+        if: steps.plan.outputs.only != '' && vars.AWS_ROLE_ARN == ''
         env:
           WOLOS_REPO_ONLY: ${{ steps.plan.outputs.only }}
           GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
@@ -130,6 +133,47 @@ jobs:
                 [ -n \"\$WOLOS_OVERLAY\" ] || unset WOLOS_OVERLAY
                 WOLOS_INSTALL_DEPS=1 WOLOS_WORK=/src/out/work WOLOS_REPO_DIR=/src/out/repo image/repo/build.sh
               "'
+
+      # The build cluster (wonderlandos/wolos-build): every package its own host share, independent
+      # packages at once. Packages come back unsigned; signing stays here with the key.
+      - name: AWS credentials
+        if: steps.plan.outputs.only != '' && vars.AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Build on the build cluster
+        if: steps.plan.outputs.only != '' && vars.AWS_ROLE_ARN != ''
+        env:
+          CLUSTER: ${{ vars.CLUSTER }}
+          TASK_DEF: ${{ vars.TASK_DEF }}
+          CAPACITY: ${{ vars.CAPACITY }}
+          BUCKET: ${{ vars.BUCKET }}
+        run: |
+          WOLOS_REPO_DIR=out/repo image/ci/aws-build.sh pkg out/built ${{ steps.plan.outputs.only }}
+          for p in ${{ steps.plan.outputs.only }}; do rm -f out/repo/x86_64/"$p"-[0-9]*.pkg.tar.zst*; done
+          cp out/built/*.pkg.tar.zst out/repo/x86_64/
+          echo "built on the cluster: $(cd out/built && ls *.pkg.tar.zst | tr '\n' ' ')" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sign and index
+        if: steps.plan.outputs.only != '' && vars.AWS_ROLE_ARN != ''
+        env:
+          GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+        run: |
+          # image/repo/build.sh with an empty package list only signs and runs repo-add.
+          docker run --rm -v "$PWD:/src" -w /src -e GPG_KEY archlinux:base-devel bash -euo pipefail -c '
+            pacman -Sy --noconfirm --needed git gnupg
+            git config --global --add safe.directory "*"
+            if [ -n "$GPG_KEY" ]; then
+              echo "$GPG_KEY" | gpg --batch --import
+              export WOLOS_SIGN_KEY=$(gpg --list-secret-keys --with-colons | awk -F: "/^fpr/ {print \$10; exit}")
+            else
+              export WOLOS_UNSIGNED=1
+            fi
+            WOLOS_REPO_ONLY=" " WOLOS_WORK=/src/out/work WOLOS_REPO_DIR=/src/out/repo image/repo/build.sh
+          '
+          sudo chown -R "$(id -u)" out
 
       - name: Publish the repo
         if: steps.plan.outputs.only != ''

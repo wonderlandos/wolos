@@ -19,6 +19,7 @@ concurrency:
 
 permissions:
   contents: write
+  id-token: write   # AWS build cluster (OIDC), when vars.AWS_ROLE_ARN is set
 
 jobs:
   iso:
@@ -54,6 +55,7 @@ jobs:
           mkdir -p out/repo/x86_64
           if gh release download "wolos-$snap" --dir out/repo/x86_64 && [ -s out/repo/x86_64/wolos.db ]; then
             cp out/repo/x86_64/revision out/repo/revision 2>/dev/null || true
+            echo "have=1" >> "$GITHUB_OUTPUT"
           else
             rm -rf out/repo/x86_64/*   # none yet: image/build.sh builds it
           fi
@@ -106,6 +108,7 @@ jobs:
           key: wolos-iso-${{ steps.repo.outputs.snap }}
 
       - name: mkarchiso in an archlinux container
+        if: vars.AWS_ROLE_ARN == '' || steps.repo.outputs.have != '1'
         env:
           GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
           TAG: ${{ github.ref_name }}
@@ -134,6 +137,26 @@ jobs:
               fi
               WOLOS_WORK=/src/out/work WOLOS_REPO_DIR=/src/out/repo image/build.sh
             '
+
+      # The build cluster: mkarchiso on a whole host, from the published repo.
+      - name: AWS credentials
+        if: vars.AWS_ROLE_ARN != '' && steps.repo.outputs.have == '1'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: mkarchiso on the build cluster
+        if: vars.AWS_ROLE_ARN != '' && steps.repo.outputs.have == '1'
+        env:
+          CLUSTER: ${{ vars.CLUSTER }}
+          TASK_DEF_ISO: ${{ vars.TASK_DEF_ISO }}
+          CAPACITY: ${{ vars.CAPACITY }}
+          BUCKET: ${{ vars.BUCKET }}
+          WOLOS_IMAGE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: |
+          [ -d out/cachy/x86_64 ] && export WOLOS_CACHY_DIR=out/cachy
+          WOLOS_REPO_DIR=out/repo image/ci/aws-build.sh iso out/work/out
 
       - name: Release files
         env:
