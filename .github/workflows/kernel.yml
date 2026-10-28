@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# WolKernel (kernel/README.md): builds linux-wolos in an Arch Linux container on every kernel change;
+# a wolkernel-* tag (e.g. wolkernel-1.0-7.3) also publishes the packages as a GitHub release.
+name: kernel
+
+on:
+  push:
+    branches: [main]
+    paths: [kernel/**, .github/workflows/kernel.yml]
+    tags: ['wolkernel-*']
+  pull_request:
+    paths: [kernel/**, .github/workflows/kernel.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        march: [generic, v3]
+    steps:
+      - name: Free disk space (a kernel build needs about 40 GB)
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ matrix.march }}-${{ hashFiles('kernel/linux-wolos/ref', 'kernel/conf/wolos.config', 'kernel/linux-wolos/config.x86_64') }}
+          restore-keys: ccache-${{ matrix.march }}-
+
+      - name: Build in Arch Linux
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w -e _march=${{ matrix.march }} archlinux:base-devel bash -euxc '
+            pacman -Syu --noconfirm --needed ccache git bc cpio gettext libelf pahole perl python rust \
+              rust-bindgen rust-src xmlto xxhash xz zstd
+            useradd -m build
+            chown -R build /w
+            su build -c "cd /w/kernel/linux-wolos && CCACHE_DIR=/w/.ccache CCACHE_MAXSIZE=5G makepkg --noconfirm --nodeps"
+            ccache -d /w/.ccache -s
+            # The fork carries its own copy of the fragment; ours must match it (SPDX line aside).
+            if ! diff <(sed 1d kernel/conf/wolos.config) <(sed 1d kernel/linux-wolos/src/linux/kernel/configs/wolos.config); then
+              echo "::warning::kernel/conf/wolos.config differs from the fork copy (ours is merged last)"
+            fi
+            echo "modules: $(find kernel/linux-wolos/pkg -name "*.ko*" | wc -l)"
+            echo "built-in options: $(grep -c "=y" kernel/linux-wolos/src/linux/.config)"
+          '
+          df -h /
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-wolos-${{ matrix.march }}
+          path: kernel/linux-wolos/*.pkg.tar.zst
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/wolkernel-')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: pkgs
+          merge-multiple: true
+      - name: Publish the packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" pkgs/*.pkg.tar.zst --repo "$GITHUB_REPOSITORY" \
+            --title "WolKernel $(echo "$GITHUB_REF_NAME" | sed -E 's/^wolkernel-([^-]+)-(.+)$/\1 (\2)/')" \
+            --notes "Packages: linux-wolos (every x86-64 PC), linux-wolos-v3 (AVX2 CPUs), headers for DKMS."
