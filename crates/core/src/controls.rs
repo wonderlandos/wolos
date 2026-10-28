@@ -565,7 +565,7 @@ impl Controls {
 
 /// Run argv with `input` on stdin; stdout when it exits 0 within `timeout`.
 pub fn run_with_input(argv: &[&str], input: &str, timeout: std::time::Duration) -> Option<String> {
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::process::{Command, Stdio};
     let (file, args) = argv.split_first()?;
     let mut child = Command::new(file)
@@ -578,30 +578,7 @@ pub fn run_with_input(argv: &[&str], input: &str, timeout: std::time::Duration) 
     if let Some(mut i) = child.stdin.take() {
         let _ = i.write_all(input.as_bytes());
     }
-    let mut out = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut s = Vec::new();
-        let _ = out.read_to_end(&mut s);
-        s
-    });
-    let start = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Some(s),
-            Ok(None) if start.elapsed() < timeout => {
-                std::thread::sleep(std::time::Duration::from_millis(10))
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    }?;
-    let bytes = reader.join().ok()?;
-    status
-        .success()
-        .then(|| String::from_utf8_lossy(&bytes).into_owned())
+    crate::system::wait_output(child, timeout)
 }
 
 /// One wol-admind round trip. None when the daemon is not running. Long actions (pkg) may take minutes.

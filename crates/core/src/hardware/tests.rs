@@ -372,6 +372,22 @@ fn empty_host_has_no_devices() {
 }
 
 #[test]
+fn package_list_and_pci_names_are_read_concurrently() {
+    let h = adl_host("");
+    h.command_delay(std::time::Duration::from_millis(150));
+    let t = std::time::Instant::now();
+    let fan = read(&h);
+    assert!(
+        t.elapsed() < std::time::Duration::from_millis(290),
+        "{:?}",
+        t.elapsed()
+    );
+    h.command_delay(std::time::Duration::ZERO);
+    assert_eq!(fan, read(&h), "same snapshot, same order");
+    assert!(!fan.devices.is_empty());
+}
+
+#[test]
 fn real_host_lists_its_cpu() {
     let s = read(&crate::system::PosixHost);
     let cpu = s.devices.iter().find(|d| d.kind == Kind::Cpu);

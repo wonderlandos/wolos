@@ -278,13 +278,27 @@ pub fn gather(
 ) -> Facts {
     let has = |p: &str| exists(h, Path::new(p));
     let wine = has("/usr/bin/wine").then(|| "/usr/bin/wine".to_string());
-    let wine_version = wine
-        .as_ref()
-        .and_then(|w| h.run(&[w, "--version"]))
-        .and_then(|t| wine::Version::parse(&t));
-    let vulkan = h
-        .run_slow(&["vulkaninfo", "--summary"])
-        .map(|t| parse_vulkaninfo(&t));
+    // The three commands are independent (vulkaninfo alone takes tens of ms): fork/join.
+    let ((wine_version, vulkan), groups) = shared::par::join(
+        || {
+            shared::par::join(
+                || {
+                    wine.as_ref()
+                        .and_then(|w| h.run(&[w, "--version"]))
+                        .and_then(|t| wine::Version::parse(&t))
+                },
+                || {
+                    h.run_slow(&["vulkaninfo", "--summary"])
+                        .map(|t| parse_vulkaninfo(&t))
+                },
+            )
+        },
+        || {
+            h.run(&["id", "-Gn"])
+                .map(|t| t.split_whitespace().map(String::from).collect())
+                .unwrap_or_default()
+        },
+    );
     let mut gpu_vendors: Vec<&'static str> = h
         .read_text(shared::hardware::SNAPSHOT_PATH)
         .and_then(|t| serde_json::from_str::<shared::hardware::HardwareSnapshot>(&t).ok())
@@ -310,10 +324,7 @@ pub fn gather(
         .and_then(|t| parse_nvidia_version(&t));
     Facts {
         user: var("USER").unwrap_or_default(),
-        groups: h
-            .run(&["id", "-Gn"])
-            .map(|t| t.split_whitespace().map(String::from).collect())
-            .unwrap_or_default(),
+        groups,
         multilib: h
             .read_text(PACMAN_CONF)
             .is_some_and(|t| multilib_enabled(&t)),

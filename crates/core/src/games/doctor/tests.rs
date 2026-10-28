@@ -234,3 +234,14 @@ fn steam_blockers_are_client_checks() {
         "the 32-bit client needs lib32-nvidia-utils"
     );
 }
+
+#[test]
+fn wine_vulkan_and_groups_are_probed_concurrently() {
+    let h = ready_host();
+    let seq = facts(&h);
+    let d = std::time::Duration::from_millis(150);
+    h.command_delay(d);
+    let t = std::time::Instant::now();
+    assert_eq!(facts(&h), seq, "same facts");
+    assert!(t.elapsed() < d * 2, "{:?} for 3 commands", t.elapsed());
+}

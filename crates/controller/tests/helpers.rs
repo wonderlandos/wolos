@@ -494,3 +494,33 @@ fn api_json_is_the_catalogue() {
             .any(|x| x["command"] == "wol mcp" && x["helpers"] == false)
     );
 }
+
+/// `network` and `wifi` ask NetworkManager, ip and bluetoothctl side by side, not one after another.
+#[test]
+fn network_and_wifi_probe_concurrently() {
+    let d = std::time::Duration::from_millis(150);
+    let host = Arc::new(wol_core::system::fake::FakeHost::linux());
+    host.command("nmcli radio wifi", "enabled\n")
+        .command_delay(d);
+    let mut e = FakeEnv {
+        home: temp_home("netpar"),
+        host: Some(host.clone()),
+        ..Default::default()
+    };
+    let t = std::time::Instant::now();
+    assert_eq!(run("wifi --json", &mut e), 0, "{}", e.err);
+    assert!(t.elapsed() < d * 2 - d / 4, "wifi {:?}", t.elapsed());
+    assert_eq!(json_out(&e)["on"], true);
+    let seq = host.ran().len();
+    let t = std::time::Instant::now();
+    e.out.clear();
+    assert_eq!(run("network --json", &mut e), 0, "{}", e.err);
+    let n = (host.ran().len() - seq) as u32;
+    assert!(n >= 4, "{n} probes");
+    assert!(
+        t.elapsed() < d * (n - 1),
+        "network {:?} for {n} probes",
+        t.elapsed()
+    );
+    assert_eq!(json_out(&e)["wifi"]["on"], true);
+}
