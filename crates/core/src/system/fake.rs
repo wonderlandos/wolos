@@ -16,6 +16,7 @@ struct State {
     ran: Vec<String>,
     load: Option<Load>,
     root: bool,
+    delay: std::time::Duration,
 }
 
 /// Files, symlinks, commands ("file arg arg" -> stdout); sysctls only for the transitional FreeBSD paths.
@@ -41,6 +42,11 @@ impl FakeHost {
     }
     fn st(&self) -> std::sync::MutexGuard<'_, State> {
         self.s.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    /// Every command takes `d` (outside the lock, so concurrent runs overlap): proves fan-out.
+    pub fn command_delay(&self, d: std::time::Duration) -> &Self {
+        self.st().delay = d;
+        self
     }
     pub fn file(&self, path: &str, text: &str) -> &Self {
         self.st().files.insert(path.into(), text.into());
@@ -100,11 +106,15 @@ impl Host for FakeHost {
     }
     fn run(&self, argv: &[&str]) -> Option<String> {
         let key = argv.join(" ");
+        let delay = self.st().delay;
+        std::thread::sleep(delay);
         let mut s = self.st();
         s.ran.push(key.clone());
         s.commands.get(&key).cloned()
     }
     fn run_slow(&self, argv: &[&str]) -> Option<String> {
+        let delay = self.st().delay;
+        std::thread::sleep(delay);
         self.st().slow.get(&argv.join(" ")).cloned()
     }
     fn sysctl_i64(&self, name: &str) -> Option<i64> {

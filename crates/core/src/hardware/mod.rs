@@ -332,11 +332,13 @@ pub fn context(host: &dyn Host) -> Ctx {
     }
 }
 
-fn pci(host: &dyn Host, ctx: &Ctx, out: &mut Vec<Device>) {
-    let names = host
-        .run(&["lspci", "-mm"])
+fn pci_names(host: &dyn Host) -> Vec<(String, String)> {
+    host.run(&["lspci", "-mm"])
         .map(|t| parse::lspci_names(&t))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+fn pci(host: &dyn Host, ctx: &Ctx, names: &[(String, String)], out: &mut Vec<Device>) {
     for p in host.list_dir("/sys/bus/pci/devices") {
         let id = |f: &str| {
             host.read_text(&format!("{p}/{f}"))
@@ -412,10 +414,11 @@ fn usb(host: &dyn Host, ctx: &Ctx, out: &mut Vec<Device>) {
 
 /// Snapshot of the hardware present now. Never fails: missing sources give fewer devices.
 pub fn read(host: &dyn Host) -> HardwareSnapshot {
-    let ctx = context(host);
+    // The two commands (package list, PCI names) are independent: run them side by side.
+    let (ctx, names) = shared::par::join(|| context(host), || pci_names(host));
     let mut devices: Vec<Device> = Vec::new();
     devices.extend(cpu(host, &ctx));
-    pci(host, &ctx, &mut devices);
+    pci(host, &ctx, &names, &mut devices);
     usb(host, &ctx, &mut devices);
     for p in host.list_dir("/sys/bus/acpi/devices") {
         let classes = host
