@@ -13,6 +13,7 @@ pub mod hyprprefs;
 pub mod jobs;
 pub mod journal;
 pub mod looks;
+pub mod mirror;
 pub mod netinfo;
 pub mod package;
 pub mod power;
