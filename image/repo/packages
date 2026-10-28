@@ -1,0 +1,6 @@
+# The [wolos] repo, one package per line in build order: NAME DIR LOCAL-DEPS(comma, - for none) PATHS...
+# PATHS are the repo paths (prefixes) whose change rebuilds NAME; changed.sh adds every user of it.
+linux-wolos    kernel/linux-wolos          -                                       kernel/linux-wolos/
+hyprland-wolos image/repo/hyprland-wolos   -                                       image/repo/hyprland-wolos/ image/hyprland/patches/
+wolos-system   image/repo/wolos-system     hyprland-wolos                          image/repo/wolos-system/ crates/ plugins/ desktop/ design/ image/files/ image/hw/ image/build-rust.sh image/hyprland/build-plugins.sh image/arch/wolos-update-slot Cargo.toml Cargo.lock CHANGELOG.md LICENSE
+wolos-base     image/repo/wolos-base       linux-wolos,hyprland-wolos,wolos-system  image/repo/wolos-base/ image/repo/base-manifest.sh image/arch/snapshot image/arch/pacman.conf

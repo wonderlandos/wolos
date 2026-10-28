@@ -311,8 +311,8 @@ fn release_manifest_names_snapshot_repo_image_and_hash() {
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(v["snapshot"], "2026-10-20");
-    assert_eq!(v["repo_revision"], "r42");
+    assert_eq!(v["snapshot"], "2026/10/20");
+    assert_eq!(v["wolos_repo"], "r42");
     assert_eq!(v["image"], "https://example.org/img/wolos-0.11-x86_64.iso");
     // sha256("iso bytes")
     let sum = Command::new("sha256sum").arg(&iso).output().unwrap();
