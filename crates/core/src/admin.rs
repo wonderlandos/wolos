@@ -814,7 +814,7 @@ mod tests {
             (
                 PkgInstall,
                 &["steam"],
-                "pacman -S --needed --noconfirm steam",
+                "pacman -S --needed --noprogressbar --noconfirm steam",
             ),
             (PkgRemove, &["gimp"], "pacman -Rns --noconfirm gimp"),
             (
