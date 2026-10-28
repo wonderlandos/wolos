@@ -114,7 +114,6 @@ fn every_compositor_starts_on_black_with_the_lock_kept_across_crashes() {
     }
 }
 
-/// Runs rc.d/wolos_quiet start with a stub rc.subr and a fake `sysctl kern.console`.
 /// Boot splash: the WolOS mark (plymouth theme image) is a small 8-bit RGBA PNG.
 #[test]
 fn splash_is_the_wolos_mark() {
