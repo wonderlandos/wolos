@@ -1,0 +1,92 @@
+From e009d8291033cd73b4c6b494b9e788fec5db3b43 Mon Sep 17 00:00:00 2001
+From: kleeedolinux <71413974+kleeedolinux@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 13:07:14 -0300
+Subject: [PATCH 7/9] layer-shell: content commits damage only what changed;
+ quiet backdrop commits keep the cached blur
+
+A menu bar clock tick repainted (and re-blurred) the whole bar; surface damage alone is exact.
+---
+ src/desktop/view/LayerSurface.cpp | 15 ++++++++++++---
+ src/helpers/WolosPerf.hpp         | 10 ++++++++++
+ tests/helpers/WolosPerf.cpp       | 14 ++++++++++++++
+ 3 files changed, 36 insertions(+), 3 deletions(-)
+
+diff --git a/src/desktop/view/LayerSurface.cpp b/src/desktop/view/LayerSurface.cpp
+index 2143d5a..e142045 100644
+--- a/src/desktop/view/LayerSurface.cpp
++++ b/src/desktop/view/LayerSurface.cpp
+@@ -16,6 +16,7 @@
+ #include "../../managers/fullscreen/FullscreenController.hpp"
+ #include "../../event/EventBus.hpp"
+ #include "../../state/MonitorState.hpp"
++#include "../../helpers/WolosPerf.hpp"
+ 
+ using namespace Desktop;
+ using namespace Desktop::View;
+@@ -305,11 +306,19 @@ void CLayerSurface::onCommit() {
+     if (!PMONITOR)
+         return;
+ 
+-    if (m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND || m_layer == ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM)
++    // WolOS: a content-only commit (same size, no layer-shell state) is damaged precisely by damageSurface below;
++    // it no longer repaints the whole layer, and the cached blur is redone only when a backdrop layer really changed.
++    const auto& SURFSTATE = m_layerSurface->m_surface->m_current;
++    const auto  NEWSIZE   = SURFSTATE.scale == 1 && PMONITOR->m_scale != 1.f && SURFSTATE.viewport.hasDestination ? SURFSTATE.viewport.destination : SURFSTATE.size;
++    const bool  FULL      = WolosPerf::layerCommitNeedsFullDamage(m_layerSurface->m_current.committed != 0, NEWSIZE != m_geometry.size());
++
++    if (WolosPerf::layerCommitDirtiesBlur(m_layer, FULL, !m_wlSurface->computeDamage().empty()))
+         PMONITOR->m_blurFBDirty = true;
+ 
+-    CBox geomFixed = {m_geometry.x, m_geometry.y, m_geometry.width, m_geometry.height};
+-    g_pHyprRenderer->damageBox(geomFixed);
++    if (FULL) {
++        CBox geomFixed = {m_geometry.x, m_geometry.y, m_geometry.width, m_geometry.height};
++        g_pHyprRenderer->damageBox(geomFixed);
++    }
+ 
+     if (m_layerSurface->m_current.committed != 0) {
+         if (m_layerSurface->m_current.committed & CLayerShellResource::eCommittedState::STATE_LAYER && m_layerSurface->m_current.layer != m_layer) {
+diff --git a/src/helpers/WolosPerf.hpp b/src/helpers/WolosPerf.hpp
+index 8dc3992..ecbe865 100644
+--- a/src/helpers/WolosPerf.hpp
++++ b/src/helpers/WolosPerf.hpp
+@@ -24,4 +24,14 @@ namespace WolosPerf {
+         return std::clamp(remaining, 50, CURSOR_HEARTBEAT_MS);
+     }
+ 
++    // A layer commit repaints its whole box only when its geometry or layer-shell state changed;
++    // otherwise the surface damage is exact.
++    inline bool layerCommitNeedsFullDamage(bool layerStateCommitted, bool sizeChanged) {
++        return layerStateCommitted || sizeChanged;
++    }
++
++    // The cached blur samples background (0) and bottom (1) layers: redo it only when one of them changed.
++    inline bool layerCommitDirtiesBlur(int layer, bool fullDamage, bool hasSurfaceDamage) {
++        return layer <= 1 && (fullDamage || hasSurfaceDamage);
++    }
+ }
+diff --git a/tests/helpers/WolosPerf.cpp b/tests/helpers/WolosPerf.cpp
+index bc91519..c350a8c 100644
+--- a/tests/helpers/WolosPerf.cpp
++++ b/tests/helpers/WolosPerf.cpp
+@@ -29,3 +29,17 @@ TEST(WolosPerf, cursorTickerSleepsUntilTimeout) {
+     for (auto c : cases)
+         EXPECT_EQ(cursorTickerDelayMs(c.timeoutS, c.hidden, c.sinceMoveS), c.ms) << c.timeoutS << " " << c.sinceMoveS;
+ }
++
++TEST(WolosPerf, layerContentCommitIsDamagedPrecisely) {
++    EXPECT_FALSE(layerCommitNeedsFullDamage(false, false)); // clock tick in the menu bar
++    EXPECT_TRUE(layerCommitNeedsFullDamage(true, false));   // anchor/margin/layer changed
++    EXPECT_TRUE(layerCommitNeedsFullDamage(false, true));   // resized
++}
++
++TEST(WolosPerf, blurCacheSurvivesQuietBackdropCommits) {
++    EXPECT_FALSE(layerCommitDirtiesBlur(0, false, false)); // wallpaper frame-callback commit, no pixels changed
++    EXPECT_TRUE(layerCommitDirtiesBlur(0, false, true));   // wallpaper changed
++    EXPECT_TRUE(layerCommitDirtiesBlur(1, true, false));   // bottom layer moved
++    EXPECT_FALSE(layerCommitDirtiesBlur(2, true, true));   // top layers are not in the blur cache
++}
++
+-- 
+2.54.0
+

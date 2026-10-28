@@ -1,0 +1,62 @@
+From 960b103a3082b5007802539685147da89a0a79e8 Mon Sep 17 00:00:00 2001
+From: kleeedolinux <71413974+kleeedolinux@users.noreply.github.com>
+Date: Wed, 28 Oct 2026 13:07:14 -0300
+Subject: [PATCH 9/9] direct-scanout: auto mode also covers fullscreen video
+ and tearing-hint games
+
+Upstream auto scans out content-type game only; browser video and Proton games kept a composite pass.
+---
+ src/helpers/WolosPerf.hpp   | 5 +++++
+ src/output/Monitor.cpp      | 3 ++-
+ tests/helpers/WolosPerf.cpp | 6 ++++++
+ 3 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/src/helpers/WolosPerf.hpp b/src/helpers/WolosPerf.hpp
+index ecbe865..ed0dc9a 100644
+--- a/src/helpers/WolosPerf.hpp
++++ b/src/helpers/WolosPerf.hpp
+@@ -34,4 +34,9 @@ namespace WolosPerf {
+     inline bool layerCommitDirtiesBlur(int layer, bool fullDamage, bool hasSurfaceDamage) {
+         return layer <= 1 && (fullDamage || hasSurfaceDamage);
+     }
++    // render:direct_scanout = 2 scans out fullscreen games (upstream: content-type game only), video players
++    // (content-type video) and windows that asked for tearing (games without a content type, e.g. Proton).
++    inline bool autoScanoutAllows(bool contentGame, bool contentVideo, bool tearingHint) {
++        return contentGame || contentVideo || tearingHint;
++    }
+ }
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+index e69d8dd..f060b5b 100644
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -1,3 +1,4 @@
++#include "../helpers/WolosPerf.hpp"
+ #include "Monitor.hpp"
+ #include "../helpers/MiscFunctions.hpp"
+ #include "../macros.hpp"
+@@ -2034,7 +2035,7 @@ uint16_t CMonitor::isDSBlocked(bool full) {
+             reasons |= DS_BLOCK_WINDOWED;
+             if (!full)
+                 return reasons;
+-        } else if (FSWINDOW->getContentType() != CONTENT_TYPE_GAME) {
++        } else if (!WolosPerf::autoScanoutAllows(FSWINDOW->getContentType() == CONTENT_TYPE_GAME, FSWINDOW->getContentType() == CONTENT_TYPE_VIDEO, FSWINDOW->m_tearingHint)) {
+             reasons |= DS_BLOCK_CONTENT;
+             if (!full)
+                 return reasons;
+diff --git a/tests/helpers/WolosPerf.cpp b/tests/helpers/WolosPerf.cpp
+index c350a8c..677b169 100644
+--- a/tests/helpers/WolosPerf.cpp
++++ b/tests/helpers/WolosPerf.cpp
+@@ -43,3 +43,9 @@ TEST(WolosPerf, blurCacheSurvivesQuietBackdropCommits) {
+     EXPECT_FALSE(layerCommitDirtiesBlur(2, true, true));   // top layers are not in the blur cache
+ }
+ 
++TEST(WolosPerf, autoScanoutCoversGamesAndVideo) {
++    EXPECT_TRUE(autoScanoutAllows(true, false, false));   // wp_content_type game
++    EXPECT_TRUE(autoScanoutAllows(false, true, false));   // mpv, browser fullscreen video
++    EXPECT_TRUE(autoScanoutAllows(false, false, true));   // Proton game: tearing hint, no content type
++    EXPECT_FALSE(autoScanoutAllows(false, false, false)); // a fullscreen editor keeps composition
++}
+-- 
+2.54.0
+
