@@ -43,6 +43,12 @@ fn wayland_latency_defaults_are_tuned() {
 fn session_gtk_renderer_is_gpu_when_a_render_node_exists() {
     let s = read("desktop/overlay/usr/bin/wol-session");
     assert!(s.contains("/dev/dri/renderD"), "no render node probe");
-    assert!(s.contains("GSK_RENDERER=${GSK_RENDERER:-ngl}"), "ngl not default");
-    assert!(s.contains("GSK_RENDERER=${GSK_RENDERER:-cairo}"), "no cairo fallback");
+    assert!(
+        s.contains("GSK_RENDERER=${GSK_RENDERER:-ngl}"),
+        "ngl not default"
+    );
+    assert!(
+        s.contains("GSK_RENDERER=${GSK_RENDERER:-cairo}"),
+        "no cairo fallback"
+    );
 }

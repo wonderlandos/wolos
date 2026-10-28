@@ -256,13 +256,13 @@ pub const CATALOG: [App; 40] = [
     ),
     // Play
     app(
-            "steam",
-            "Steam",
-            "Thousands of games, one library",
-            Play,
-            "steam",
-            "steam",
-            &["steam"],
+        "steam",
+        "Steam",
+        "Thousands of games, one library",
+        Play,
+        "steam",
+        "steam",
+        &["steam"],
     ),
     app(
         "vlc",
