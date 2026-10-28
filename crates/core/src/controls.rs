@@ -564,7 +564,41 @@ impl Controls {
     }
 
     pub fn pkg_upgrade(&self, pw: &str) -> Result<(), ControlError> {
-        self.admin(AdminAction::PkgUpgrade, &[], pw)
+        self.admin(AdminAction::PkgUpgrade, &[], pw)?;
+        self.flatpak_update()
+    }
+
+    /// App Store: a Flathub app for this account (no password; the consent sheet asks).
+    pub fn flatpak_install(&self, app_id: &str) -> Result<(), ControlError> {
+        self.flatpak_run(app_id, crate::flatpak::install_argv)
+    }
+
+    pub fn flatpak_remove(&self, app_id: &str) -> Result<(), ControlError> {
+        self.flatpak_run(app_id, crate::flatpak::remove_argv)
+    }
+
+    fn flatpak_run(&self, app_id: &str, f: fn(&str) -> Vec<String>) -> Result<(), ControlError> {
+        if !crate::flatpak::is_app_id(app_id) {
+            return Err(ControlError::Invalid);
+        }
+        let argv = f(app_id);
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        self.ok(self.host.run_slow(&a))
+    }
+
+    /// Software Update: this account's Flatpak apps too. Nothing installed = nothing to do.
+    pub fn flatpak_update(&self) -> Result<(), ControlError> {
+        let list = crate::flatpak::installed_argv();
+        let l: Vec<&str> = list.iter().map(String::as_str).collect();
+        let none = self
+            .run(&l)
+            .is_none_or(|t| crate::flatpak::parse_ids(&t).is_empty());
+        if none {
+            return Ok(());
+        }
+        let argv = crate::flatpak::update_argv();
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        self.ok(self.host.run_slow(&a))
     }
 
     /// Restore: start from boot environment `name` next time (`bectl activate`).
@@ -751,6 +785,25 @@ mod tests {
             wlan: "wlan0".into(),
         };
         (h, c, log)
+    }
+
+    #[test]
+    fn flatpak_store_actions_run_as_the_user() {
+        let (h, c, _) = controls();
+        assert_eq!(c.flatpak_update(), Ok(()), "no flatpak apps: nothing to do");
+        h.slow(
+            "flatpak install --user --noninteractive -y flathub org.kde.krita",
+            "",
+        )
+        .command(
+            "flatpak list --app --columns=application",
+            "org.kde.krita\n",
+        )
+        .slow("flatpak update --user --noninteractive -y", "");
+        assert_eq!(c.flatpak_install("org.kde.krita"), Ok(()));
+        assert_eq!(c.flatpak_remove("org.kde.krita"), Err(ControlError::Failed));
+        assert_eq!(c.flatpak_install("-y"), Err(ControlError::Invalid));
+        assert_eq!(c.flatpak_update(), Ok(()));
     }
 
     #[test]
