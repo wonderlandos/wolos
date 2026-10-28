@@ -9,10 +9,10 @@ sof-firmware
 mkinitcpio
 mkinitcpio-archiso
 plymouth
-# Installer and A/B slots: GPT, ESP, btrfs, systemd-boot (in systemd), unsquash of the live root.
+# Installer and A/B slots: systemd-repart and systemd-boot (in systemd) with btrfs-progs and
+# dosfstools for the file systems, unsquash of the live root.
 arch-install-scripts
 btrfs-progs
-gptfdisk
 dosfstools
 squashfs-tools
 efibootmgr

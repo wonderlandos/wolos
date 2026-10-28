@@ -1,0 +1,9 @@
+# 0018 - Installer disk layout from systemd-repart
+Status: accepted. Builds on 0013 and 0016.
+Context: `install-run` partitioned, formatted and made the btrfs subvolumes by hand (sgdisk, mkfs.fat, mkfs.btrfs, a mount + `btrfs subvolume create` loop). We want libraries and standard tools to do this, not our own code.
+Options:
+- archinstall `--config --silent`: rejected. It pacstraps from the network (the install copies the live root offline; the unattended test has no network), writes its own boot entries and fstab (no A/B slots, no boot counting) and its JSON schema changes between releases. We would keep most of our steps and add a moving dependency.
+- Rust crates (gptman, MIT/Apache; sys-mount): rejected for now. They replace two sgdisk lines with a new binary plus tests, and still leave mkfs and subvolumes to subprocesses. More code, not less.
+- systemd-repart (in systemd, already on the image; run as a program): chosen. Two declarative files in `/usr/lib/wolos/repart.d` describe the whole disk: a 1 GiB vfat ESP and a btrfs root with `@wolos-a`, `@home`, `@var` as subvolumes (`Subvolumes=`). One call `systemd-repart --empty=force --dry-run=no --definitions=... <disk>` replaces partitioning, formatting, kernel re-read and the subvolume loop. GPT type GUIDs come from its names (`esp`, `root`), not codes we typed.
+Decision: the installer lays out the disk with systemd-repart. Everything after it stays: unsquash of the live root, live-only file removal, fstab, kernel cmdline, mkinitcpio, `bootctl install`, `esp-sync` (counted entries, slot a). `gptfdisk` leaves the package list; `btrfs-progs` and `dosfstools` stay (repart calls their mkfs).
+Consequences: the disk check (`install-check`) still runs before the first write. The layout changes in repart.d, tested in `tests/image_install.rs`. Needs systemd >= 255 and btrfs-progs >= 6.7.
