@@ -75,29 +75,79 @@ pub const RUN_TIMEOUT: Duration = Duration::from_secs(2);
 #[derive(Default, Debug, Clone, Copy)]
 pub struct PosixHost;
 
-/// Run argv, capture stdout, kill after `timeout`. Never a shell.
+/// `cat FILE` and `ls DIR` with one absolute path, answered in-process with the tools' stdout
+/// (`ls`: names without dot entries, byte order, one per line). Outer None: not a built-in.
+pub fn builtin(argv: &[&str]) -> Option<Option<String>> {
+    let [tool, path] = argv else { return None };
+    if !path.starts_with('/') {
+        return None;
+    }
+    match *tool {
+        "cat" => Some(
+            std::fs::read(path)
+                .ok()
+                .map(|b| String::from_utf8_lossy(&b).into_owned()),
+        ),
+        "ls" => Some(match std::fs::read_dir(path) {
+            Ok(rd) => {
+                let mut names: Vec<String> = rd
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| !n.starts_with('.'))
+                    .collect();
+                names.sort_unstable();
+                Some(names.iter().map(|n| format!("{n}\n")).collect())
+            }
+            Err(_) => std::fs::metadata(path).ok().map(|_| format!("{path}\n")),
+        }),
+        _ => None,
+    }
+}
+
+/// Run argv, capture stdout, kill after `timeout`. Never a shell; `cat`/`ls` probes never fork
+/// ([`builtin`]).
 pub fn run_with_timeout(argv: &[&str], timeout: Duration) -> Option<String> {
-    use std::io::Read;
     use std::process::{Command, Stdio};
+    if let Some(out) = builtin(argv) {
+        return out;
+    }
     let (file, args) = argv.split_first()?;
-    let mut child = Command::new(file)
+    let child = Command::new(file)
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    let mut out = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
+    wait_output(child, timeout)
+}
+
+/// Stdout of a spawned child (stdout piped) when it exits 0 within `timeout`; killed otherwise.
+/// Wakes on stdout EOF instead of polling, so a short command costs its own run time only.
+pub fn wait_output(mut child: std::process::Child, timeout: Duration) -> Option<String> {
+    use std::io::Read;
+    let deadline = std::time::Instant::now() + timeout;
+    let Some(mut out) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut s = Vec::new();
         let _ = out.read_to_end(&mut s);
-        s
+        let _ = tx.send(s);
     });
-    let start = std::time::Instant::now();
+    let bytes = rx.recv_timeout(timeout).ok();
+    // EOF usually means exit; spin briefly for the reap, bounded by the same deadline.
+    let mut nap = Duration::from_micros(50);
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Some(s),
-            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(5)),
+        match (bytes.is_some(), child.try_wait()) {
+            (true, Ok(Some(s))) => break Some(s),
+            (true, Ok(None)) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(nap);
+                nap = (nap * 2).min(Duration::from_millis(5));
+            }
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -105,7 +155,7 @@ pub fn run_with_timeout(argv: &[&str], timeout: Duration) -> Option<String> {
             }
         }
     }?;
-    let bytes = reader.join().ok()?;
+    let bytes = bytes?;
     status
         .success()
         .then(|| String::from_utf8_lossy(&bytes).into_owned())
@@ -403,5 +453,71 @@ mod tests {
             None
         );
         assert!(t.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn posix_run_returns_as_soon_as_the_child_exits() {
+        // A sleep-poll loop costs every short command its poll interval (was 5 ms each).
+        let t = std::time::Instant::now();
+        for _ in 0..20 {
+            assert!(run_with_timeout(&["true"], RUN_TIMEOUT).is_some());
+        }
+        assert!(t.elapsed() < Duration::from_millis(80), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn posix_run_is_bounded_when_a_grandchild_keeps_stdout_open() {
+        let t = std::time::Instant::now();
+        assert_eq!(
+            run_with_timeout(
+                &["sh", "-c", "sleep 5 & echo hi"],
+                Duration::from_millis(200)
+            ),
+            None
+        );
+        assert!(t.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn cat_and_ls_are_answered_in_process_like_the_tools() {
+        let d = std::env::temp_dir().join(format!("wol-builtin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("b-dir/wireless")).unwrap();
+        std::fs::write(d.join("a"), "1\n").unwrap();
+        std::fs::write(d.join("C_up"), "x").unwrap();
+        std::fs::write(d.join(".hidden"), "").unwrap();
+        let p = |n: &str| d.join(n).to_string_lossy().into_owned();
+        let tool = |argv: &[&str]| {
+            let o = std::process::Command::new(argv[0])
+                .args(&argv[1..])
+                .env("LC_ALL", "C")
+                .output()
+                .unwrap();
+            o.status
+                .success()
+                .then(|| String::from_utf8_lossy(&o.stdout).into_owned())
+        };
+        let cases = [
+            ("cat", "a"),
+            ("cat", "missing"),
+            ("cat", ""),
+            ("ls", ""),
+            ("ls", "b-dir/wireless"),
+            ("ls", "missing"),
+            ("ls", "a"),
+        ];
+        for (t, f) in cases {
+            let path = p(f);
+            let argv = [t, path.as_str()];
+            assert_eq!(builtin(&argv), Some(tool(&argv)), "{argv:?}");
+        }
+        assert_eq!(
+            builtin(&["cat", "-n", &p("a")]),
+            None,
+            "options go to the tool"
+        );
+        assert_eq!(builtin(&["cat", "relative"]), None);
+        assert_eq!(builtin(&["echo", "hi"]), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
