@@ -580,6 +580,15 @@ fn pacman(op: &str, extra: &str, pkgs: &[&str]) -> Vec<String> {
     v
 }
 
+/// Read-only repo search for words the catalog misses; None for empty or option-like terms.
+pub fn search_argv(term: &str) -> Option<Vec<String>> {
+    let t = term.trim();
+    if t.is_empty() || t.starts_with('-') {
+        return None;
+    }
+    Some(vec!["pacman".into(), "-Ss".into(), "--".into(), t.into()])
+}
+
 /// A `pacman -Ss` hit that is not in the catalog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PkgHit {
@@ -708,6 +717,14 @@ mod tests {
             assert_eq!(install_plan(bad), None, "{bad}");
             assert_eq!(remove_plan(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn search_runs_pacman_not_pkg() {
+        let v = search_argv(" photo ").unwrap();
+        assert_eq!(v, ["pacman", "-Ss", "--", "photo"]);
+        assert_eq!(search_argv("  "), None);
+        assert_eq!(search_argv("-Syu"), None);
     }
 
     #[test]
