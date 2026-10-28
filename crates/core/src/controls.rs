@@ -314,6 +314,43 @@ impl Controls {
         out.map(|_| ()).ok_or(ControlError::Failed)
     }
 
+    // ---- Flatpak ----
+
+    /// Turns one recorded Flatpak permission on or off (`perm`), or back to what the app asked
+    /// for (`None`). A user install changes as the user; a system one goes through wol-admind.
+    pub fn flatpak_override(
+        &self,
+        scope: crate::flatpak::Scope,
+        app_id: &str,
+        perm: Option<&str>,
+        allow: bool,
+        pw: &str,
+    ) -> Result<(), ControlError> {
+        use crate::flatpak::{Perm, Scope, is_app_id, reset_argv};
+        let parsed = perm.map(Perm::parse);
+        if !is_app_id(app_id) || parsed.as_ref().is_some_and(Option::is_none) {
+            return Err(ControlError::Invalid);
+        }
+        match scope {
+            Scope::System => {
+                let verdict = if allow { "allow" } else { "deny" };
+                let args: Vec<&str> = match perm {
+                    Some(p) => vec![app_id, p, verdict],
+                    None => vec![app_id, "reset"],
+                };
+                self.admin(AdminAction::FlatpakOverride, &args, pw)
+            }
+            Scope::User => {
+                let argv = match parsed.flatten() {
+                    Some(p) => p.override_argv(Scope::User, app_id, allow),
+                    None => reset_argv(Scope::User, app_id),
+                };
+                let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+                self.ok(self.run(&a))
+            }
+        }
+    }
+
     // ---- Wi-Fi ----
 
     /// NetworkManager radio switch.
@@ -714,6 +751,51 @@ mod tests {
             wlan: "wlan0".into(),
         };
         (h, c, log)
+    }
+
+    #[test]
+    fn flatpak_overrides_per_scope() {
+        use crate::flatpak::Scope;
+        let (h, c, log) = controls();
+        h.command(
+            "flatpak override --user --unshare=network org.gimp.GIMP",
+            "",
+        )
+        .command("flatpak override --user --reset org.gimp.GIMP", "");
+        assert_eq!(
+            c.flatpak_override(
+                Scope::User,
+                "org.gimp.GIMP",
+                Some("shared=network"),
+                false,
+                ""
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            c.flatpak_override(Scope::User, "org.gimp.GIMP", None, true, ""),
+            Ok(())
+        );
+        assert_eq!(
+            c.flatpak_override(
+                Scope::System,
+                "org.gimp.GIMP",
+                Some("devices=all"),
+                true,
+                "pw"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            log.lock().unwrap().last().unwrap(),
+            r#"admin flatpak-override ["org.gimp.GIMP", "devices=all", "allow"] pw=pw"#
+        );
+        for (id, perm) in [("gimp", None), ("org.gimp.GIMP", Some("--socket=x11"))] {
+            assert_eq!(
+                c.flatpak_override(Scope::User, id, perm, true, ""),
+                Err(ControlError::Invalid)
+            );
+        }
     }
 
     #[test]
