@@ -61,3 +61,37 @@ fn the_repo_builds_it() {
     assert_eq!(f[1], "image/repo/flatpak-wolos");
     assert!(f[3..].contains(&"image/repo/flatpak-wolos/"), "{line}");
 }
+
+/// Every session finds the consent helper: systemd's environment.d, read for user sessions.
+#[test]
+fn sessions_point_flatpak_at_the_consent_helper() {
+    let t = read("desktop/overlay/usr/lib/environment.d/60-wolos-flatpak.conf");
+    let line = format!(
+        "{}={}",
+        wol_core::flatpak::HELPER_ENV,
+        wol_core::flatpak::HELPER
+    );
+    assert!(t.lines().any(|l| l == line), "{t}");
+    let build = read("image/build-rust.sh");
+    let list = build
+        .lines()
+        .find(|l| l.starts_with("for b in wold"))
+        .unwrap();
+    assert!(
+        list.split_whitespace()
+            .any(|b| b.trim_end_matches(';') == "wol-flatpak-consent"),
+        "the helper is built and installed: {list}"
+    );
+}
+
+/// Flathub is there from the first boot, system-wide, with its signing key.
+#[test]
+fn flathub_is_a_system_remote() {
+    let t = read("desktop/overlay/etc/flatpak/remotes.d/flathub.flatpakrepo");
+    assert!(t.starts_with("[Flatpak Repo]\n"), "{t}");
+    for want in ["Url=https://dl.flathub.org/repo/", "GPGKey="] {
+        assert!(t.lines().any(|l| l.starts_with(want)), "lacks {want}");
+    }
+    let key = t.lines().find_map(|l| l.strip_prefix("GPGKey=")).unwrap();
+    assert!(key.len() > 1000, "a whole key, not a stub");
+}
