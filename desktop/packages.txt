@@ -82,6 +82,9 @@ baobab
 # Games (archicture/modules/games.md): native Steam (multilib) and Wine for Windows programs.
 steam
 wine
+gamemode               # games can run through gamemoderun
+lib32-gamemode
+rtkit                  # realtime audio threads (PipeWire)
 # Terminal: zsh for every account (/etc/zshrc), sudo for wheel (sudoers.d/wolos)
 zsh-autosuggestions
 zsh-syntax-highlighting
