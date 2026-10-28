@@ -15,6 +15,9 @@ if [ -n "${WOLOS_VENDOR:-}" ]; then
   F="$F --offline --config 'source.crates-io.replace-with=\"vendored\"' --config 'source.vendored.directory=\"$WOLOS_VENDOR\"'"
 fi
 # shellcheck disable=SC2086
+# Faster link and cached rebuilds when the tools are installed (CI, developer machines).
+command -v mold >/dev/null && command -v clang >/dev/null && export RUSTFLAGS="${RUSTFLAGS:-} -C linker=clang -C link-arg=-fuse-ld=mold"
+command -v sccache >/dev/null && export RUSTC_WRAPPER=sccache
 eval cargo build --release --workspace --locked $F
 B=${CARGO_TARGET_DIR:-$REPO/target}/release
 mkdir -p "$DEST/usr/bin" "$DEST/usr/lib"
