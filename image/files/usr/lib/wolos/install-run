@@ -60,6 +60,7 @@ userdel -R "$T" live 2>/dev/null || :
 [ ! -f "$T/etc/wolos/shell.json.pacnew" ] || mv "$T/etc/wolos/shell.json.pacnew" "$T/etc/wolos/shell.json"
 # The package database belongs to the slot, not the shared @var (pacman.conf DBPath).
 if [ -d "$T/var/lib/pacman/local" ]; then
+  [ ! -L "$T/usr/lib/pacman" ] || rm "$T/usr/lib/pacman"   # the live root's link
   mkdir -p "$T/usr/lib/pacman" && mv "$T/var/lib/pacman/local" "$T/usr/lib/pacman/local" || fail "could not move the package database"
 fi
 echo a > "$T/etc/wolos/slot"

@@ -35,7 +35,9 @@ awk -v srv="Server = file://$RD/\$arch" '
   sect == "[wolos]" && /^(Server|Include) = / { print "SigLevel = Never"; print srv; next }
   { print }' "$IMG/arch/pacman.conf" > "$P/pacman.conf"
 A=$P/airootfs
-mkdir -p "$A/etc/wolos" "$A/etc/sysusers.d" "$A/etc/sudoers.d" "$A/etc/tmpfiles.d"
+mkdir -p "$A/etc/wolos" "$A/etc/sysusers.d" "$A/etc/sudoers.d" "$A/etc/tmpfiles.d" "$A/usr/lib"
+# The live root's DBPath (/usr/lib/pacman) reaches the database pacstrap wrote.
+ln -sfn ../../var/lib/pacman "$A/usr/lib/pacman"
 echo "$SNAP" > "$A/etc/wolos/snapshot"
 # Live desktop (ADR 0009): `live` logs in automatically; it may run the installer as root, no password.
 cat > "$A/etc/sysusers.d/wolos-live.conf" <<'EOF'

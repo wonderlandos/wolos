@@ -8,7 +8,7 @@
 # passed in WOLOS_BASE_MANIFEST) and the os-release of this release.
 pkgname=wolos-base
 pkgver=$(awk '/^## [0-9]/ {print $2; exit}' "$startdir/../../../CHANGELOG.md")
-pkgrel=2
+pkgrel=3
 pkgdesc='WolOS base system: kernel, headers and userland of one release'
 arch=(x86_64)
 url='https://github.com/wonderlandos/wolos'
