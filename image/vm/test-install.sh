@@ -28,11 +28,15 @@ truncate -s 32G install.raw; truncate -s 17G other.raw
 head -c 64M /dev/urandom | dd of=other.raw conv=notrunc status=none
 other_before=$(sha256sum other.raw | cut -d' ' -f1)
 cp "$OVMF/OVMF_VARS.4m.fd" vars.fd
+# GL display when this QEMU has it (qemu-ui-egl-headless); plain virtio-vga otherwise (the QMP
+# screendump works with either).
+GPU="-device virtio-vga-gl -display egl-headless"
+qemu-system-x86_64 -display help 2>/dev/null | grep -q egl-headless || GPU="-device virtio-vga -display none"
 vm() { # extra qemu args...
   qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -machine q35 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.4m.fd" -drive if=pflash,format=raw,file=vars.fd \
     -drive file=install.raw,if=virtio,format=raw,discard=unmap -drive file=other.raw,if=virtio,format=raw \
-    -nic none -device virtio-vga-gl -display egl-headless -qmp unix:qmp.sock,server,nowait "$@"
+    -nic none $GPU -qmp unix:qmp.sock,server,nowait "$@"
 }
 # 1. Install: vda = install.raw, vdb = bystander. Powers off when done (timeout 30 min).
 vm -cdrom "$ISO" -kernel kernel -initrd initrd \
