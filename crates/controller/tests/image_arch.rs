@@ -530,4 +530,6 @@ fn base_manifest_lists_every_file_with_its_hash() {
         out,
         format!("{}  /usr/bin/ls\n", sum.split_whitespace().next().unwrap())
     );
+    // shadow's newuidmap carries a file capability: restoring it needs root, the builder is not.
+    assert!(read("image/repo/base-manifest.sh").contains("--no-xattrs"));
 }
