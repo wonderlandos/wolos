@@ -8,7 +8,7 @@ _linux=$(sed -n 's/^linux=//p' "$startdir/../VERSION")
 epoch=1
 pkgver=$_wk+$_linux
 pkgrel=1
-_ref=001adab0b7c8455e4a2c3c7cee9eefae4ff7ec7f
+_ref=eb68e491b6e7f079e885d3ff98ae6677da01e505
 pkgdesc="Kernel headers sanitized for use in userspace (WolKernel $_wk ($_linux))"
 arch=(any)
 url='https://github.com/wonderlandos/linux'
