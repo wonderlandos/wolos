@@ -62,6 +62,15 @@ while read -r -u 3 name dir deps _; do
   fi
 done 3< "$HERE/packages"
 
+# Release assets cannot hold ':' or '+' (GitHub turns both into '.'): name the files that way
+# before indexing, so the database names what the release serves (an epoch is linux-wolos-1:...).
+for p in "$PKGDEST"/*[:+]*.pkg.tar.zst; do
+  [ -e "$p" ] || continue
+  q=$PKGDEST/$(basename "$p" | tr ':+' '..')
+  mv -f "$p" "$q"
+  if [ -e "$p.sig" ]; then mv -f "$p.sig" "$q.sig"; fi
+done
+
 # Sign packages, then the database.
 if [ -n "$KEY" ]; then
   for p in "$PKGDEST"/*.pkg.tar.zst; do
