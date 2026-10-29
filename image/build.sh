@@ -26,10 +26,13 @@ rm -rf "$P"; cp -a "$IMG/arch" "$P"
 cat "$IMG/arch/packages.x86_64" "$REPO/desktop/packages.txt" | sed 's/#.*//' | tr -s ' \t' '\n' | grep . > "$P/packages.x86_64"
 # No DBPath for the build: pacstrap writes the database to its usual place on the build host, and
 # install-run moves it into the slot (/usr/lib/pacman, as airootfs/etc/pacman.conf says).
+# [wolos] is this build's own local repo (file://): read as is, so the build host's keyring is not
+# touched; the installed system's pacman.conf checks every signature.
 awk -v srv="Server = file://$RD/\$arch" '
   /^DBPath/ { next }
   /^\[/ { sect = $0 }
-  sect == "[wolos]" && /^(Server|Include) = / { print "SigLevel = Optional TrustAll"; print srv; next }
+  sect == "[wolos]" && /^SigLevel/ { next }
+  sect == "[wolos]" && /^(Server|Include) = / { print "SigLevel = Never"; print srv; next }
   { print }' "$IMG/arch/pacman.conf" > "$P/pacman.conf"
 A=$P/airootfs
 mkdir -p "$A/etc/wolos" "$A/etc/sysusers.d" "$A/etc/sudoers.d" "$A/etc/tmpfiles.d"

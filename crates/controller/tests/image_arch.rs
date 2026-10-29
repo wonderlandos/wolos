@@ -247,6 +247,17 @@ fn build_stages_the_profile_from_the_local_repo() {
     // pacstrap writes the database where pacman puts it on any host (install-run moves it into
     // the slot): the build's pacman.conf has no DBPath, the installed system's keeps it.
     assert!(!pc.contains("DBPath"), "{pc}");
+    let wolos = pc
+        .split("\n[wolos]\n")
+        .nth(1)
+        .unwrap()
+        .split("\n[")
+        .next()
+        .unwrap();
+    assert!(
+        wolos.contains("SigLevel = Never") && wolos.matches("SigLevel").count() == 1,
+        "{wolos}"
+    );
     // The installed system's pacman.conf keeps the published [wolos] server.
     let ac = fs::read_to_string(p.join("airootfs/etc/pacman.conf")).unwrap();
     assert!(!ac.contains("file://"));
