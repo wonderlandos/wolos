@@ -9,7 +9,9 @@ R=$(cd "$(dirname "$0")/.." && pwd)
 ISO=${1:?ISO}; SNAP=${2:?SNAPSHOT}; REV=${3:?REVISION}; URL=${4:?BASE_URL}
 CACHY=${7:-}
 VER=${5:-$(awk '/^## [0-9]/ {print $2; exit}' "$R/CHANGELOG.md")}
-KV=${6:-$(awk -F= '/^pkgver=/ {v = $2} /^pkgrel=/ {r = $2} END {print v "-" r}' "$R/kernel/linux-wolos/PKGBUILD")}
+# linux-wolos's full version: epoch:wolkernel+linux-pkgrel (kernel/VERSION is the single source).
+KV=${6:-$(awk -F= 'FNR == NR { k[$1] = $2; next } /^epoch=/ {e = $2} /^pkgrel=/ {r = $2}
+  END {print (e ? e ":" : "") k["wolkernel"] "+" k["linux"] "-" r}' "$R/kernel/VERSION" "$R/kernel/linux-wolos/PKGBUILD")}
 sum=$(sha256sum "$ISO" | cut -d' ' -f1)
 size=$(stat -c %s "$ISO")
 printf '{"version":"%s","snapshot":"%s","wolos_repo":"%s","cachy":"%s","kernel":"%s","image":"%s/%s","sha256":"%s","size":%s}\n' \

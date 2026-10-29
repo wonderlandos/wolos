@@ -125,6 +125,30 @@ fn release_manifest_is_what_updates_read() {
     assert_eq!(m.wolos_repo, "r42");
     assert_eq!(m.kernel, "7.3.0-1");
     assert_eq!(m.image, "https://example.org/img/wolos-0.11.2-x86_64.iso");
+    // Without one given, the kernel is linux-wolos's full version: kernel/VERSION, epoch, pkgrel.
+    let o = Command::new("bash")
+        .arg(repo("image/release-manifest.sh"))
+        .args([
+            iso.to_str().unwrap(),
+            "2026-10-20",
+            "r42",
+            "https://example.org/img",
+        ])
+        .output()
+        .unwrap();
+    let m =
+        wol_core::update::check::Manifest::parse(&String::from_utf8(o.stdout).unwrap()).unwrap();
+    let v = read("kernel/VERSION");
+    let get = |k: &str| {
+        v.lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}=")))
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(
+        m.kernel,
+        format!("1:{}+{}-1", get("wolkernel"), get("linux"))
+    );
 }
 
 /// sign-release.sh: raw Ed25519 over the file bytes, the signature `wol update` verifies.
