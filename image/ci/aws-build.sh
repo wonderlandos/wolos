@@ -52,18 +52,52 @@ wait_all() {
   fi
 }
 
+# lost <arn...>: packages whose host went away under them (Spot reclaim): no exit code at all.
+lost() {
+  aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$@" \
+    --query 'tasks[?containers[0].exitCode==null].overrides.containerOverrides[0].environment[?name==`PKG`].value|[]' \
+    --output text
+}
+
+# wave <package...>: build them at once; a package whose host was reclaimed runs once more.
+wave() {
+  local try p cpu mem tasks
+  for try in 1 2; do
+    tasks=()
+    for p in "$@"; do
+      read -r cpu mem < <(python3 -c "import sys; sys.path.insert(0, '$HERE'); import plan; print(*plan.size('$p'))")
+      tasks+=("$(start "$TASK_DEF" "$cpu" "$mem" "$(kv MODE pkg)" "$(kv PKG "$p")" "$(kv RUN "$run")" "$(kv BUCKET "$BUCKET")")")
+      echo "  $p: ${tasks[-1]##*/}"
+    done
+    until aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "${tasks[@]}" 2>/dev/null; do :; done
+    local again; again=$(lost "${tasks[@]}")
+    if [ "$try" = 1 ] && [ -n "$again" ] && [ "$again" != None ]; then
+      # A real failure next to a reclaimed host still fails the wave.
+      local bad
+      bad=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "${tasks[@]}" \
+        --query 'tasks[?containers[0].exitCode!=null && containers[0].exitCode!=`0`].[overrides.containerOverrides[0].environment[?name==`PKG`].value|[0],containers[0].exitCode]' \
+        --output text)
+      if [ -n "$bad" ]; then
+        echo "failed: $bad (logs: aws logs tail /wolos-build)" >&2
+        return 1
+      fi
+      echo "  host reclaimed under: $again; building them again"
+      # shellcheck disable=SC2086 # one package name per word
+      set -- $again
+      continue
+    fi
+    wait_all "${tasks[@]}"
+    return
+  done
+}
+
 t0=$(date +%s)
 case $mode in
 pkg)
   python3 "$HERE/plan.py" "$REPO/image/repo/packages" "$@" | while read -r wave; do
     echo "== wave: $wave"
-    tasks=()
-    for p in $wave; do
-      read -r cpu mem < <(python3 -c "import sys; sys.path.insert(0, '$HERE'); import plan; print(*plan.size('$p'))")
-      tasks+=("$(start "$TASK_DEF" "$cpu" "$mem" "$(kv MODE pkg)" "$(kv PKG "$p")" "$(kv RUN "$run")" "$(kv BUCKET "$BUCKET")")")
-      echo "  $p: ${tasks[-1]##*/}"
-    done
-    wait_all "${tasks[@]}"
+    # shellcheck disable=SC2086 # one package name per word
+    wave $wave
   done
   aws s3 sync --quiet "$s3/out/" "$out/"
   ;;
