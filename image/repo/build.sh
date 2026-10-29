@@ -34,7 +34,9 @@ build() {
     (cd "$2" && PKGDEST=$PKGDEST makechrootpkg -c -r "$WOLOS_CHROOT" "${inst[@]}")
   else
     if [ "${WOLOS_INSTALL_DEPS:-0}" = 1 ]; then # fresh container: local deps are not in any repo yet
-      local d; for d in ${3//,/ }; do [ "$d" = - ] || sudo pacman -U --noconfirm --needed "$PKGDEST/$d"-*.pkg.tar.zst; done
+      # yes: a local package that replaces an Arch one (wolos-system: default-cursors) asks to remove
+      # it, and --noconfirm answers no.
+      local d; for d in ${3//,/ }; do [ "$d" = - ] || { yes | sudo pacman -U --needed "$PKGDEST/$d"-*.pkg.tar.zst || [ "${PIPESTATUS[1]}" = 0 ]; }; done
     fi
     (cd "$2" && makepkg --syncdeps --noconfirm --cleanbuild --force)
   fi
