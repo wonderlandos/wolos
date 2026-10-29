@@ -247,12 +247,6 @@ fn build_stages_the_profile_from_the_local_repo() {
     // pacstrap writes the database where pacman puts it on any host (install-run moves it into
     // the slot): the build's pacman.conf has no DBPath, the installed system's keeps it.
     assert!(!pc.contains("DBPath"), "{pc}");
-    // The live root keeps its database where pacstrap wrote it; /usr/lib/pacman (the conf's
-    // DBPath) points there, and install-run makes it a directory of the slot.
-    let link = std::fs::read_link(d.join("profile/airootfs/usr/lib/pacman")).unwrap();
-    assert_eq!(link, PathBuf::from("../../var/lib/pacman"));
-    let inst = read("image/files/usr/lib/wolos/install-run");
-    assert!(inst.contains("[ ! -L \"$T/usr/lib/pacman\" ] || rm \"$T/usr/lib/pacman\""));
     let wolos = pc
         .split("\n[wolos]\n")
         .nth(1)
@@ -267,7 +261,11 @@ fn build_stages_the_profile_from_the_local_repo() {
     // The installed system's pacman.conf keeps the published [wolos] server.
     let ac = fs::read_to_string(p.join("airootfs/etc/pacman.conf")).unwrap();
     assert!(!ac.contains("file://"));
-    assert!(ac.contains("\nDBPath = /usr/lib/pacman/\n"));
+    assert!(
+        !ac.contains("\nDBPath"),
+        "install-run names it on the installed system"
+    );
+    assert!(!d.join("profile/airootfs/usr/lib/pacman").exists());
     // Live-only files; everything else comes from the wolos-system package (a file in both would
     // stop pacstrap: airootfs is copied first).
     for f in [
