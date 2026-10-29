@@ -33,7 +33,7 @@ def waves(pkgs, only):
 
 
 # CPU units per task (1024 = 1 vCPU): the kernel takes a whole host, the rest share one.
-SIZES = {"linux-wolos": (31744, 58000), "wolos-system": (16384, 28000)}  # 32-vCPU hosts
+SIZES = {"linux-wolos": (63488, 110000), "wolos-system": (16384, 28000)}  # 64-vCPU hosts
 DEFAULT_SIZE = (8192, 16000)
 
 
