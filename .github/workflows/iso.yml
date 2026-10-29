@@ -26,7 +26,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      GH_TOKEN: ${{ github.token }}
+      # Releases (repo, ISO, release.json) live in a public repo anyone can download from:
+      # vars.WOLOS_RELEASES_REPO with a token that may write there (this repo when unset).
+      GH_REPO: ${{ vars.WOLOS_RELEASES_REPO || github.repository }}
+      GH_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN || github.token }}
       OVERLAY_REPO: ${{ vars.WOLOS_OVERLAY_REPO }}
     steps:
       - name: Free disk space
@@ -113,7 +116,7 @@ jobs:
           GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
           TAG: ${{ github.ref_name }}
         run: |
-          url=https://github.com/${{ github.repository }}/releases/download/$TAG
+          url=https://github.com/${{ vars.WOLOS_RELEASES_REPO || github.repository }}/releases/download/$TAG
           mkdir -p out/pkgcache
           docker run --rm --privileged -v "$PWD:/src" -w /src -v "$PWD/out/pkgcache:/var/cache/pacman/pkg" \
             -e GPG_KEY -e WOLOS_IMAGE_URL="$url" -e WOLOS_CACHY_DIR=/src/out/cachy archlinux:latest bash -euo pipefail -c '
@@ -153,7 +156,7 @@ jobs:
           TASK_DEF_ISO: ${{ vars.TASK_DEF_ISO }}
           CAPACITY: ${{ vars.CAPACITY }}
           BUCKET: ${{ vars.BUCKET }}
-          WOLOS_IMAGE_URL: https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          WOLOS_IMAGE_URL: https://github.com/${{ vars.WOLOS_RELEASES_REPO || github.repository }}/releases/download/${{ github.ref_name }}
         run: |
           [ -d out/cachy/x86_64 ] && export WOLOS_CACHY_DIR=out/cachy
           WOLOS_REPO_DIR=out/repo image/ci/aws-build.sh iso out/work/out

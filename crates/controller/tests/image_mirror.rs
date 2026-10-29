@@ -74,7 +74,7 @@ fn repos_in_order_with_the_wolos_mirrorlist() {
     assert_eq!(
         s[1],
         format!(
-            "https://github.com/wonderlandos/wolos/releases/download/$repo-{}",
+            "https://github.com/wonderlandos/wolos-packages/releases/download/$repo-{}",
             snapshot()
         ),
         "fallback = the release assets the CDN pulls from"
