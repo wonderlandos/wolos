@@ -102,7 +102,7 @@ pkg)
   aws s3 sync --quiet "$s3/out/" "$out/"
   ;;
 iso)
-  arn=$(start "$TASK_DEF_ISO" 31744 57600 "$(kv MODE iso)" "$(kv RUN "$run")" "$(kv BUCKET "$BUCKET")" \
+  arn=$(start "$TASK_DEF_ISO" 64512 115200 "$(kv MODE iso)" "$(kv RUN "$run")" "$(kv BUCKET "$BUCKET")" \
     "$(kv WOLOS_IMAGE_URL "${WOLOS_IMAGE_URL:-}")")
   echo "== iso: ${arn##*/}"
   wait_all "$arn"
