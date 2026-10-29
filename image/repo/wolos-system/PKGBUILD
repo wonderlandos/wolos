@@ -3,7 +3,7 @@
 # image/files (systemd units, installer, helpers) and design (icons, wallpapers, illustrations).
 pkgname=wolos-system
 pkgver=$(awk '/^## [0-9]/ {print $2; exit}' "$startdir/../../../CHANGELOG.md")
-pkgrel=4
+pkgrel=5
 pkgdesc='WolOS system services, shell and desktop defaults'
 arch=(x86_64)
 url='https://github.com/wonderlandos/wolos'

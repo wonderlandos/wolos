@@ -1,6 +1,7 @@
 #!/bin/sh
 # Start a WolOS session: Hyprland with WolOS defaults (user file sources the system file).
 export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=Hyprland XDG_CURRENT_DESKTOP=Hyprland
+export LIBSEAT_BACKEND=seatd   # seatd (seat group), as the login window
 if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
 	XDG_RUNTIME_DIR=/var/run/user/$(id -u)
 	mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"

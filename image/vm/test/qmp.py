@@ -13,7 +13,10 @@ S={'"':'apostrophe','_':'minus',':':'semicolon','|':'backslash','>':'dot','<':'c
 def send(keys): cmd('send-key',{'keys':[{'type':'qcode','data':k} for k in keys],'hold-time':30}); time.sleep(.09)
 a=sys.argv[1]
 if a=='shot':
-    cmd('screendump',{'filename':T+'/q.ppm'})
+    # A failed dump (GL scanout: "no surface") must fail here, never reuse an old frame.
+    if os.path.exists(T+'/q.ppm'): os.remove(T+'/q.ppm')
+    r=cmd('screendump',{'filename':T+'/q.ppm'})
+    if 'error' in r: sys.exit('screendump: '+r['error']['desc'])
     from PIL import Image; Image.open(T+'/q.ppm').save(sys.argv[2])
 elif a=='keys':
     for ch in sys.argv[2]:

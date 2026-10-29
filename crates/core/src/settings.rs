@@ -72,11 +72,11 @@ pub mod users {
     /// Login shell of every account WolOS creates (Setup Assistant, Settings > Accounts, live user).
     /// The zsh package registers it in /etc/shells. root keeps bash.
     pub const LOGIN_SHELL: &str = "/usr/bin/zsh";
-    /// Groups of every account: video (cameras, GPU render nodes).
-    pub const ACCOUNT_GROUPS: &str = "video,input,audio";
+    /// Groups of every account: seat (the display, through seatd), video (cameras, GPU render nodes).
+    pub const ACCOUNT_GROUPS: &str = "seat,video,input,audio";
     /// Administrators, like the Setup Assistant's account: wheel (sudo via /etc/sudoers.d,
     /// wol-admind). USB sticks mount through udisks for every session.
-    pub const ACCOUNT_GROUPS_ADMIN: &str = "wheel,video,input,audio";
+    pub const ACCOUNT_GROUPS_ADMIN: &str = "wheel,seat,video,input,audio";
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Account {
@@ -304,12 +304,12 @@ mod tests {
         }
         assert_eq!(
             users::add_argv("bob", "B:b", true).unwrap().join(" "),
-            "useradd -m -c Bb -s /usr/bin/zsh -G wheel,video,input,audio bob"
+            "useradd -m -c Bb -s /usr/bin/zsh -G wheel,seat,video,input,audio bob"
         );
         // Admins match the Setup Assistant's account; everyone gets cameras (group video).
         assert_eq!(
             users::add_argv("ann", "Ann", false).unwrap().join(" "),
-            "useradd -m -c Ann -s /usr/bin/zsh -G video,input,audio ann"
+            "useradd -m -c Ann -s /usr/bin/zsh -G seat,video,input,audio ann"
         );
         assert!(users::remove_argv("x y").is_none());
     }

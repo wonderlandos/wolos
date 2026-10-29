@@ -168,11 +168,20 @@ fn boot_order_hw_first_then_gpu_firstboot_and_wold() {
             .iter()
             .any(|a| a == "network-online.target")
     );
+    // The login window never waits for the network: first boot's drivers come in the background.
     assert!(
-        values(&fb, "Unit", "Before")
+        !values(&fb, "Unit", "Before")
             .iter()
             .any(|a| a == "wold.service")
     );
+    // NetworkManager alone: systemd-networkd's wait-online held boot for two minutes.
+    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    for off in [
+        "systemd-networkd.service",
+        "systemd-networkd-wait-online.service",
+    ] {
+        assert!(preset.contains(&format!("\ndisable {off}\n")), "{off}");
+    }
     let w = unit("wold.service");
     assert_eq!(values(&w, "Service", "Restart"), ["always"]);
     assert!(
@@ -195,6 +204,29 @@ fn login_window_user_comes_from_sysusers() {
     let s = read("image/files/usr/lib/sysusers.d/wolos.conf");
     assert!(s.lines().any(|l| l.starts_with("u _wollogin 911 ")), "{s}");
     assert!(s.lines().any(|l| l == "m _wollogin video"), "{s}");
+    // seatd hands the display only to the seat group (Arch's seatd).
+    assert!(s.lines().any(|l| l == "m _wollogin seat"), "{s}");
+    for f in [
+        "desktop/overlay/usr/bin/wol-greeter-session",
+        "desktop/overlay/usr/bin/wol-session",
+    ] {
+        assert!(read(f).contains("export LIBSEAT_BACKEND=seatd"), "{f}");
+    }
+    assert!(
+        wol_core::settings::users::ACCOUNT_GROUPS
+            .split(',')
+            .any(|g| g == "seat")
+    );
+}
+
+/// No text console for people: no getty on the screen, no VT on Ctrl+Alt+F<n>.
+#[test]
+fn no_text_console_for_users() {
+    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    assert!(preset.contains("\ndisable getty@.service\n"), "{preset}");
+    let l = read("image/files/usr/lib/systemd/logind.conf.d/wolos.conf");
+    assert!(l.contains("NAutoVTs=0") && l.contains("ReserveVT=0"), "{l}");
+    assert!(controller::login::CONSOLE == "/dev/tty1");
 }
 
 /// Hardening and no core files in home folders (a crashed compositor left a 27 MB core in ~).

@@ -3,7 +3,6 @@ Description=WolOS first boot: drivers only the internet has (NVIDIA), once
 ConditionPathExists=!/var/lib/wolos/firstboot-done
 After=wolos-hw.service network-online.target
 Wants=network-online.target
-Before=wold.service
 
 [Service]
 Type=oneshot

@@ -28,12 +28,10 @@ truncate -s 32G install.raw; truncate -s 17G other.raw
 head -c 64M /dev/urandom | dd of=other.raw conv=notrunc status=none
 other_before=$(sha256sum other.raw | cut -d' ' -f1)
 cp "$OVMF/OVMF_VARS.4m.fd" vars.fd
-# GL display when this QEMU has it (qemu-ui-egl-headless); plain virtio-vga otherwise (the QMP
-# screendump works with either).
-GPU="-device virtio-vga-gl -display egl-headless"
-qemu-system-x86_64 -display help 2>/dev/null | grep -q egl-headless || GPU="-device virtio-vga -display none"
+# 2D virtio-vga: QMP screendump cannot read a GL scanout ("no surface"); Hyprland runs on Mesa.
+GPU="-device virtio-vga -display none"
 vm() { # extra qemu args...
-  qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -machine q35 \
+  exec qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -machine q35 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.4m.fd" -drive if=pflash,format=raw,file=vars.fd \
     -drive file=install.raw,if=virtio,format=raw,discard=unmap -drive file=other.raw,if=virtio,format=raw \
     -nic none $GPU -qmp unix:qmp.sock,server,nowait "$@"
@@ -47,7 +45,7 @@ wait $qpid; kill $tpid 2>/dev/null
 # 2. Boot the installed disk alone; screenshot after a minute (the login window or Setup).
 vm -serial file:serial-boot.log &
 qpid=$!; sleep 90
-python3 "$H/qmp.py" "$T" shot shot.png 2>/dev/null || :
+rm -f shot.png; python3 "$H/qmp.py" "$T" shot shot.png || :
 kill $qpid 2>/dev/null; wait $qpid 2>/dev/null
 other_after=$(sha256sum other.raw | cut -d' ' -f1)
 sfdisk -d install.raw > parts.txt 2>/dev/null
@@ -57,7 +55,7 @@ b() { if eval "$2"; then echo "BOOT PASS $1"; else echo "BOOT FAIL $1"; fi; }
   b "installer said done" "grep -q 'wolos-install: done' serial-install.log"
   b "bystander disk byte-identical" '[ "$other_before" = "$other_after" ]'
   b "ESP + root partitions" "grep -qi 'type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B' parts.txt && grep -qi 'type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709' parts.txt"
-  b "installed disk boots (screenshot)" "[ -s shot.png ]"
+  b "installed disk boots (fresh screenshot)" "[ -s shot.png ]"
 } > checks.txt
 grep '^BOOT ' checks.txt
 rm -f other.raw kernel initrd

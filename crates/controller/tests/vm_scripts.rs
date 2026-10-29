@@ -89,11 +89,18 @@ fn vms_use_ovmf_kvm_and_virtio_gpu() {
             "-enable-kvm",
             "OVMF_CODE.4m.fd",
             "OVMF_VARS.4m.fd",
-            "virtio-vga-gl",
             "${WOLOS_VM:-$HOME/WolOS-vm}",
         ] {
             assert!(t.contains(want), "{s} lacks {want}");
         }
+        // Interactive VMs draw with GL; the unattended test takes QMP screenshots, which cannot
+        // read a GL scanout, so it uses the 2D device.
+        let gpu = if s.ends_with("test-install.sh") {
+            "-device virtio-vga "
+        } else {
+            "virtio-vga-gl"
+        };
+        assert!(t.contains(gpu), "{s} lacks {gpu}");
     }
 }
 
