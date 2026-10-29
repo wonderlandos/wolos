@@ -24,7 +24,10 @@ fi
 # 2. Stage the profile: base + desktop packages, [wolos] read from the local repo for this build.
 rm -rf "$P"; cp -a "$IMG/arch" "$P"
 cat "$IMG/arch/packages.x86_64" "$REPO/desktop/packages.txt" | sed 's/#.*//' | tr -s ' \t' '\n' | grep . > "$P/packages.x86_64"
+# No DBPath for the build: pacstrap writes the database to its usual place on the build host, and
+# install-run moves it into the slot (/usr/lib/pacman, as airootfs/etc/pacman.conf says).
 awk -v srv="Server = file://$RD/\$arch" '
+  /^DBPath/ { next }
   /^\[/ { sect = $0 }
   sect == "[wolos]" && /^(Server|Include) = / { print "SigLevel = Optional TrustAll"; print srv; next }
   { print }' "$IMG/arch/pacman.conf" > "$P/pacman.conf"
