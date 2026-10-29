@@ -9,9 +9,13 @@ arch=(x86_64)
 url='https://github.com/wonderlandos/wolos'
 license=(BSD-2-Clause GPL-3.0-or-later CC-BY-NC-ND-4.0)
 depends=(hyprland-wolos gtk4 gtk4-layer-shell libadwaita pam systemd)
+# Our cursor theme is the default one (usr/share/icons/default).
+provides=(default-cursors)
+conflicts=(default-cursors)
+replaces=(default-cursors)
 makedepends=(cargo clang mold sccache pkgconf hyprland-wolos git)
 options=(!debug !lto)
-backup=(etc/wolos/shell.json etc/sudoers.d/wolos etc/pam.d/wol-login etc/nftables.conf
+backup=(etc/wolos/shell.json etc/sudoers.d/wolos etc/pam.d/wol-login etc/wolos/nftables.conf
   etc/zshrc etc/zprofile)
 install=wolos-system.install
 _repo=$(cd "$startdir/../../.." && pwd)

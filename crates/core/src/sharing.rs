@@ -3,7 +3,7 @@
 use crate::system::Host;
 
 /// The ruleset nftables.service loads (block in, pass out; desktop/overlay).
-pub const FIREWALL_RULES: &str = "/etc/nftables.conf";
+pub const FIREWALL_RULES: &str = "/etc/wolos/nftables.conf";
 
 /// One RFC 1123 label, lowercase: 1..=63 of `[a-z0-9-]`, no `-` at either end.
 pub fn is_valid_hostname(s: &str) -> bool {

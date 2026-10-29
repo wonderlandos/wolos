@@ -432,7 +432,10 @@ fn hyprland_fork_and_system_package_recipes() {
     }
     // makepkg finds local sources only beside the PKGBUILD: the patches are applied from $startdir.
     let source = h.lines().find(|l| l.starts_with("source=")).unwrap();
-    assert!(!source.contains("patch"), "patches listed in source: {source}");
+    assert!(
+        !source.contains("patch"),
+        "patches listed in source: {source}"
+    );
     assert!(h.contains("\"$startdir\"/../../hyprland/patches/"));
     let w = read("image/repo/wolos-system/PKGBUILD");
     for want in [
@@ -532,4 +535,21 @@ fn base_manifest_lists_every_file_with_its_hash() {
     );
     // shadow's newuidmap carries a file capability: restoring it needs root, the builder is not.
     assert!(read("image/repo/base-manifest.sh").contains("--no-xattrs"));
+}
+
+/// wolos-system installs next to the Arch base: a file another package owns makes pacman refuse
+/// it, unless wolos-system replaces that package.
+#[test]
+fn wolos_system_files_do_not_collide_with_arch_packages() {
+    assert!(
+        !repo("desktop/overlay/etc/nftables.conf").exists(),
+        "nftables owns it"
+    );
+    let p = read("image/repo/wolos-system/PKGBUILD");
+    assert!(
+        p.contains("provides=(default-cursors)"),
+        "default-cursors owns icons/default"
+    );
+    assert!(p.contains("conflicts=(default-cursors)"));
+    assert!(p.contains("etc/wolos/nftables.conf") && !p.contains(" etc/nftables.conf"));
 }

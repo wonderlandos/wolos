@@ -4,7 +4,7 @@ On from the first boot (ADR 0015). Code: `wol_core::security` (defaults, status)
 `wol security [--json]` shows the state; `wol firewall on|off|status` changes the firewall through wol-admind.
 
 ## Defaults
-- Firewall: nftables, `/etc/nftables.conf`, `nftables.service` enabled.
+- Firewall: nftables, `/etc/wolos/nftables.conf` (loaded by a `nftables.service` drop-in), `nftables.service` enabled.
   - Inbound dropped except replies, ping, DHCP, IPv6 neighbour discovery and mDNS. Outbound allowed.
 - No remote login: `sshd.service` stays disabled until Sharing turns it on.
 - The log stays local: journald only, no network syslog daemon.
