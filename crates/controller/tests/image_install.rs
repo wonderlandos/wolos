@@ -168,7 +168,7 @@ fn install(d: &Path, disk: &str) -> Output {
              echo kernel > $R/usr/lib/modules/7.3.0-wolos/vmlinuz\necho linux-wolos > $R/usr/lib/modules/7.3.0-wolos/pkgbase\n\
              touch $R/etc/sysusers.d/wolos-live.conf $R/etc/sudoers.d/wolos-live $R/etc/wolos/login.json $R/etc/wolos-live \
              $R/etc/mkinitcpio.conf.d/archiso.conf\necho live > $R/etc/wolos/shell.json\necho pkg > $R/etc/wolos/shell.json.pacnew\n\
-             echo 2026-10-20 > $R/etc/wolos/snapshot",
+             echo 2026-10-20 > $R/etc/wolos/snapshot\nprintf '[options]\\nHoldPkg = pacman\\n' > $R/etc/pacman.conf",
         ),
         (
             "arch-chroot",
@@ -255,6 +255,10 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     assert_eq!(fs::read_to_string(t.join("etc/wolos/slot")).unwrap(), "a\n");
     // The package database moves from the shared @var into the slot (pacman.conf DBPath).
     assert!(t.join("usr/lib/pacman/local").is_dir() && !t.join("var/lib/pacman/local").exists());
+    assert_eq!(
+        fs::read_to_string(t.join("etc/pacman.conf")).unwrap(),
+        "[options]\nDBPath = /usr/lib/pacman/\nHoldPkg = pacman\n"
+    );
     let cmdline = fs::read_to_string(t.join("etc/kernel/cmdline")).unwrap();
     assert!(
         cmdline.starts_with("root=UUID=1111-2222 rootflags=subvol=@wolos-a rw quiet splash"),
@@ -407,15 +411,13 @@ fn esp_sync_gives_other_kernels_their_own_entry() {
 }
 
 /// The pacman database lives in the slot (/usr), not in the shared @var: each slot knows its own
-/// packages.
+/// packages. The live root keeps pacman's default (/var/lib/pacman, where pacstrap writes, and
+/// pacman resolves DBPath on the build host); install-run moves it and names it in pacman.conf.
 #[test]
 fn pacman_database_stays_in_the_slot() {
-    for f in [
-        "image/arch/pacman.conf",
-        "image/arch/airootfs/etc/pacman.conf",
-    ] {
-        assert!(read(f).contains("\nDBPath = /usr/lib/pacman/\n"), "{f}");
-    }
+    assert!(read("image/arch/pacman.conf").contains("\nDBPath = /usr/lib/pacman/\n"));
+    assert!(!read("image/arch/airootfs/etc/pacman.conf").contains("\nDBPath"));
+    assert!(read("image/files/usr/lib/wolos/install-run").contains("DBPath = /usr/lib/pacman/"));
 }
 
 /// Unattended VM install: `wolos.autoinstall=<disk>` on the live command line.
