@@ -1,0 +1,7 @@
+# WolOS: every zsh reads this first (Arch's zsh reads /etc/zsh/; no package owns this file, and
+# /etc/zsh/zprofile from zsh already loads /etc/profile).
+# No first-run wizard: zsh's newuser script calls this function instead when it is defined.
+zsh-newuser-install() { :; }
+# Interactive shells: the WolOS setup (prompt, history, keys, plugins), read before ~/.zshrc.
+[[ -o interactive && -r ${WOLOS_ZSHRC:-/usr/share/wolos/zsh/zshrc} ]] &&
+	source "${WOLOS_ZSHRC:-/usr/share/wolos/zsh/zshrc}"

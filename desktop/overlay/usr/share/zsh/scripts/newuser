@@ -1,2 +1,0 @@
-# WolOS: no zsh first-run wizard (zsh sources this site script instead of its own newuser);
-# /etc/zshrc is the default setup and ~/.zshrc stays optional.

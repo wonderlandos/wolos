@@ -1,5 +1,5 @@
-# WolOS system zshrc: every interactive zsh. Upgrades replace this file; your settings go in
-# ~/.zshrc (read after this one, never touched by WolOS).
+# WolOS system zshrc: every interactive zsh (from /etc/zsh/zshenv). Upgrades replace this file;
+# your settings go in ~/.zshrc (read after this one, never touched by WolOS).
 #
 # Prompt colours follow the WolOS theme: `wol theme` may write
 #   ${XDG_CONFIG_HOME:-~/.config}/wolos/toolkits/zsh/colors.zsh
