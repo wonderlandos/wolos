@@ -582,6 +582,7 @@ fn wolos_system_files_do_not_collide_with_arch_packages() {
         ("usr/share/zsh/scripts/newuser", "zsh"),
         ("etc/zsh/zshrc", "grml-zsh-config"),
         ("etc/zsh/zprofile", "zsh"),
+        ("usr/share/applications/steam.desktop", "steam"),
     ] {
         for tree in ["desktop/overlay", "image/files"] {
             assert!(
@@ -597,4 +598,16 @@ fn wolos_system_files_do_not_collide_with_arch_packages() {
     );
     assert!(p.contains("conflicts=(default-cursors)"));
     assert!(p.contains("etc/wolos/nftables.conf") && !p.contains(" etc/nftables.conf"));
+    // os-release is wolos-base's (its hook names the system); wolos-system leaves it out.
+    assert!(p.contains("rm \"$pkgdir/usr/share/wolos/os-release\""));
+    // Our Steam entry replaces the steam package's through a hook, as os-release does.
+    let h = read("image/files/usr/share/libalpm/hooks/wolos-steam-entry.hook");
+    assert!(
+        h.contains("Target = usr/share/applications/steam.desktop"),
+        "{h}"
+    );
+    assert!(
+        h.contains("/usr/share/wolos/applications/steam.desktop"),
+        "{h}"
+    );
 }

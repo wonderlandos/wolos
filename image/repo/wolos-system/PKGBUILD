@@ -30,6 +30,7 @@ package() {
   cp -a "$srcdir/stage/." "$pkgdir/"
   (cd "$_repo/desktop/overlay" && tar --exclude ./usr/local -cf - .) | tar -C "$pkgdir" --no-same-owner -xf -
   (cd "$_repo/image/files" && cp -a --no-preserve=ownership . "$pkgdir/")
+  rm "$pkgdir/usr/share/wolos/os-release"   # wolos-base owns it
   install -Dm755 "$_repo/image/hw/verify-gpu.sh" "$pkgdir/usr/lib/wolos/verify-gpu.sh"
   install -Dm755 "$_repo/image/arch/wolos-update-slot" "$pkgdir/usr/bin/wolos-update-slot"
   local d=$_repo/design
