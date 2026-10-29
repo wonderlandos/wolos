@@ -16,7 +16,7 @@ replaces=(default-cursors)
 makedepends=(cargo clang mold sccache pkgconf hyprland-wolos git)
 options=(!debug !lto)
 backup=(etc/wolos/shell.json etc/sudoers.d/wolos etc/pam.d/wol-login etc/wolos/nftables.conf
-  etc/zshrc etc/zprofile)
+  etc/zsh/zshenv)
 install=wolos-system.install
 _repo=$(cd "$startdir/../../.." && pwd)
 

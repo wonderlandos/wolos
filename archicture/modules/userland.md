@@ -22,7 +22,7 @@ Default apps: `/usr/local/share/applications/mimeapps.list` (`~/.config/mimeapps
 
 | What | Where |
 |---|---|
-| zsh for accounts WolOS creates (`users::LOGIN_SHELL`); root keeps `/bin/sh` | `/usr/local/etc/{zshrc,zprofile}`, skel `.zshrc` (comments only), `/usr/local/share/zsh/scripts/newuser` (no wizard) |
+| zsh for accounts WolOS creates (`users::LOGIN_SHELL`); root keeps `/bin/sh` | `/etc/zsh/zshenv` (no wizard; loads `/usr/share/wolos/zsh/zshrc` in interactive shells), skel `.zshrc` (comments only) |
 | sudo for `%wheel` | `/usr/local/etc/sudoers.d/wolos` (0440) |
 | Groups | admins `wheel,video,operator`, standard accounts `video` (operator can read raw disks) |
 | User folders | `xdg-user-dirs-update` in `wol-session` |

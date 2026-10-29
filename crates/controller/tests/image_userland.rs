@@ -139,17 +139,45 @@ fn every_account_logs_in_to_zsh_and_root_keeps_sh() {
         skel.lines().all(|l| l.starts_with('#')),
         "skel .zshrc is comments only"
     );
-    // zsh's newuser module sources SITESCRIPT_DIR/newuser before the wizard script.
-    let newuser = read("desktop/overlay/usr/share/zsh/scripts/newuser");
+    // Arch's zsh reads /etc/zsh/; zshenv is the one file there no package owns. zsh's newuser
+    // script calls zsh-newuser-install when it is defined: a no-op means no first-run wizard.
+    let env = read("desktop/overlay/etc/zsh/zshenv");
     assert!(
-        newuser.lines().all(|l| l.starts_with('#')) && !newuser.contains("zsh-newuser-install"),
+        env.contains("zsh-newuser-install() { :; }"),
         "no zsh first-run wizard"
+    );
+    for gone in ["etc/zshrc", "etc/zprofile", "usr/share/zsh/scripts/newuser"] {
+        assert!(
+            !repo(&format!("desktop/overlay/{gone}")).exists(),
+            "{gone}: not read, or zsh's"
+        );
+    }
+    let Some(zsh) = zsh() else { return };
+    let d = sandbox("zshenv", &[]);
+    fs::write(d.join("rc"), "WOL_RC=loaded\n").unwrap();
+    let run = |flags: &str| {
+        let probe = format!(
+            "source {}; print -r -- \"rc=${{WOL_RC:-none}} $(whence -w zsh-newuser-install)\"",
+            repo("desktop/overlay/etc/zsh/zshenv").display()
+        );
+        let o = Command::new(zsh)
+            .args([flags, "-c", &probe])
+            .env("WOLOS_ZSHRC", d.join("rc"))
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    assert_eq!(run("-fi"), "rc=loaded zsh-newuser-install: function");
+    assert_eq!(
+        run("-f"),
+        "rc=none zsh-newuser-install: function",
+        "scripts skip the setup"
     );
 }
 
 #[test]
 fn system_zshrc_loads_plugins_theme_colours_and_keys() {
-    let rc = "desktop/overlay/etc/zshrc";
+    let rc = "desktop/overlay/usr/share/wolos/zsh/zshrc";
     let text = read(rc);
     // Arch package paths (zsh-autosuggestions, zsh-syntax-highlighting).
     for p in [
@@ -164,7 +192,7 @@ fn system_zshrc_loads_plugins_theme_colours_and_keys() {
         eprintln!("zsh not on this host: zshrc run skipped");
         return;
     };
-    for f in [rc, "desktop/overlay/etc/zprofile"] {
+    for f in [rc, "desktop/overlay/etc/zsh/zshenv"] {
         let st = Command::new(zsh).arg("-n").arg(repo(f)).status().unwrap();
         assert!(st.success(), "zsh -n {f}");
     }

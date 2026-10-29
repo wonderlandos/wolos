@@ -48,6 +48,7 @@ fn package_table_is_in_dependency_order() {
         seen,
         [
             "linux-wolos",
+            "linux-wolos-api-headers",
             "hyprland-wolos",
             "flatpak-wolos",
             "wolos-mirrorlist",
@@ -88,7 +89,7 @@ fn changed_paths_rebuild_the_package_and_its_users() {
         "linux-wolos wolos-base"
     );
     assert_eq!(
-        changed("crates/core/src/update.rs\ndesktop/overlay/etc/zshrc\n"),
+        changed("crates/core/src/update.rs\ndesktop/overlay/usr/share/wolos/zsh/zshrc\n"),
         "wolos-system wolos-base"
     );
     assert_eq!(

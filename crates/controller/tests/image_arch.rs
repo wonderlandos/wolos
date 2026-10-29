@@ -542,10 +542,21 @@ fn base_manifest_lists_every_file_with_its_hash() {
 /// it, unless wolos-system replaces that package.
 #[test]
 fn wolos_system_files_do_not_collide_with_arch_packages() {
-    assert!(
-        !repo("desktop/overlay/etc/nftables.conf").exists(),
-        "nftables owns it"
-    );
+    // Paths Arch packages own (checked against core.files and extra.files of the snapshot).
+    for (path, owner) in [
+        ("etc/nftables.conf", "nftables"),
+        ("etc/xdg/foot/foot.ini", "foot"),
+        ("usr/share/zsh/scripts/newuser", "zsh"),
+        ("etc/zsh/zshrc", "grml-zsh-config"),
+        ("etc/zsh/zprofile", "zsh"),
+    ] {
+        for tree in ["desktop/overlay", "image/files"] {
+            assert!(
+                !repo(&format!("{tree}/{path}")).exists(),
+                "{path} is {owner}'s"
+            );
+        }
+    }
     let p = read("image/repo/wolos-system/PKGBUILD");
     assert!(
         p.contains("provides=(default-cursors)"),
