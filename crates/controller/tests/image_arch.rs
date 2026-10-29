@@ -247,6 +247,8 @@ fn build_stages_the_profile_from_the_local_repo() {
     // pacstrap writes the database where pacman puts it on any host (install-run moves it into
     // the slot): the build's pacman.conf has no DBPath, the installed system's keeps it.
     assert!(!pc.contains("DBPath"), "{pc}");
+    // The CI builder has the tree without .git: the revision comes from the repo, or "local".
+    assert!(read("image/build.sh").contains("rev-parse --short HEAD 2>/dev/null || echo local"));
     let wolos = pc
         .split("\n[wolos]\n")
         .nth(1)

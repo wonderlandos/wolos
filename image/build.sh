@@ -70,7 +70,8 @@ $S rm -rf "$WORK/work"   # disk: the pacstrap root is in the squashfs now
 
 # 4. Release manifest next to the ISO.
 ISO=$(ls -t "$OUT"/wolos-*.iso | head -1)
-REV=$(cat "$RD/revision" 2>/dev/null || git -C "$REPO" rev-parse --short HEAD)
+REV=$({ cat "$RD/revision" "$RD/x86_64/revision" 2>/dev/null || :; } | head -1)
+[ -n "$REV" ] || REV=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo local)
 "$IMG/release-manifest.sh" "$ISO" "$SNAP" "$REV" "${WOLOS_IMAGE_URL:-https://github.com/wonderlandos/wolos-packages/releases/download/$SNAP}" \
   "" "" "$(cat "${WOLOS_CACHY_DIR:-$WORK/cachy}/revision" 2>/dev/null || :)" > "${ISO%.iso}.json"
 echo "image: $ISO  manifest: ${ISO%.iso}.json"
