@@ -92,6 +92,9 @@ fn every_unit_runs_a_shipped_program_and_is_enabled_by_the_preset() {
     let mut n = 0;
     for f in fs::read_dir(repo(UNITS)).unwrap().flatten() {
         let name = f.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".d") {
+            continue; // drop-ins for Arch's units (nftables.service.d)
+        }
         let u = fs::read_to_string(f.path()).unwrap();
         assert!(u.contains("[Unit]\nDescription="), "{name}");
         if name.ends_with(".service") {
@@ -376,7 +379,20 @@ fn dark_panel_backlight_is_raised() {
 /// Settings > Network > Firewall: nothing comes in unasked except what a desktop needs.
 #[test]
 fn firewall_blocks_unasked_traffic_in() {
-    let n = read("desktop/overlay/etc/nftables.conf");
+    // Our rules, not Arch's /etc/nftables.conf (nftables owns it): the unit loads them by drop-in.
+    let n = read("desktop/overlay/etc/wolos/nftables.conf");
+    let unit = read("image/files/usr/lib/systemd/system/nftables.service.d/wolos.conf");
+    for want in [
+        "ExecStart=\n",
+        "ExecStart=/usr/bin/nft -f /etc/wolos/nftables.conf",
+        "ExecReload=\n",
+    ] {
+        assert!(unit.contains(want), "nftables drop-in lacks {want:?}");
+    }
+    assert_eq!(
+        wol_core::sharing::FIREWALL_RULES,
+        "/etc/wolos/nftables.conf"
+    );
     for want in [
         "flush ruleset",
         "type filter hook input priority filter; policy drop;",
