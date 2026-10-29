@@ -16,3 +16,7 @@ enable avahi-daemon.service
 enable systemd-timesyncd.service
 enable udisks2.service
 enable seatd.service
+# NetworkManager runs the network; no text console on the screen (WolOS login window on tty1).
+disable systemd-networkd.service
+disable systemd-networkd-wait-online.service
+disable getty@.service

@@ -579,8 +579,8 @@ pub fn handoff_wait(from_setup: bool) -> std::time::Duration {
     std::time::Duration::from_secs(if from_setup { 600 } else { 2 })
 }
 
-/// Console (ttyv0) the notice is drawn on when the login window cannot start.
-pub const CONSOLE: &str = "/dev/ttyv0";
+/// Console (tty1) the notice is drawn on when the login window cannot start.
+pub const CONSOLE: &str = "/dev/tty1";
 
 /// Written to ttyv0 before each compositor starts (ADR 0012): vt(4) redraws it whenever no
 /// compositor holds the screen, so it must be plain black, with no text and no cursor.
@@ -1066,7 +1066,7 @@ broken:line
         assert!(argv.ends_with(" alice"), "{argv}");
         assert!(argv.contains(" -s /usr/bin/zsh "), "zsh: {argv}");
         assert!(
-            argv.contains(" -G wheel,video,input,audio "),
+            argv.contains(" -G wheel,seat,video,input,audio "),
             "administrator (wheel): {argv}"
         );
         assert_eq!(
@@ -1108,7 +1108,7 @@ broken:line
                     "-s",
                     "/usr/bin/zsh",
                     "-G",
-                    "wheel,video,input,audio",
+                    "wheel,seat,video,input,audio",
                     "alice"
                 ]
                 .map(String::from)

@@ -796,7 +796,7 @@ mod tests {
             (
                 UserAdd,
                 &["bob", "Bob B", "yes", "s3cret-pw"],
-                "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,video,input,audio bob; chpasswd <stdin",
+                "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video,input,audio bob; chpasswd <stdin",
             ),
             (UserRemove, &["bob"], "userdel -r bob"),
             (
