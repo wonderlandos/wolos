@@ -73,3 +73,29 @@ fn cdn_push_leaves_big_packages_to_the_pull_through() {
         "{push}"
     );
 }
+
+/// What people download (the [wolos] repo, the ISO, release.json) is published where anyone can
+/// read it: the releases repo, never this one's own releases.
+#[test]
+fn releases_go_to_the_public_releases_repo() {
+    for wf in [
+        ".github/workflows/packages.yml",
+        ".github/workflows/iso.yml",
+    ] {
+        let w = read(wf);
+        assert!(
+            w.contains("GH_REPO: ${{ vars.WOLOS_RELEASES_REPO || github.repository }}"),
+            "{wf}"
+        );
+        assert!(!w.contains("${{ github.repository }}/releases"), "{wf}");
+    }
+    for f in [
+        "image/repo/wolos-mirrorlist/wolos-mirrorlist",
+        "image/files/usr/lib/wolos/update-check",
+        "image/build.sh",
+    ] {
+        let s = read(f);
+        assert!(!s.contains("wonderlandos/wolos/releases"), "{f}");
+        assert!(s.contains("wonderlandos/wolos-packages/releases"), "{f}");
+    }
+}

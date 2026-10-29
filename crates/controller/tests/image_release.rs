@@ -170,7 +170,8 @@ fn release_signature_verifies_with_the_package_keys() {
 #[test]
 fn update_check_reads_the_published_release() {
     let check = read("image/files/usr/lib/wolos/update-check");
-    let url = "https://github.com/wonderlandos/wolos/releases/latest/download/release.json";
+    let url =
+        "https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json";
     assert!(check.contains(url), "update-check URL");
     let iso = read(".github/workflows/iso.yml");
     for want in [

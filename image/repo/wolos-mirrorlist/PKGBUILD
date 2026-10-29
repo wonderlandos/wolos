@@ -2,7 +2,7 @@
 # release's snapshot (image/arch/snapshot); `wol update` moves it, `wol mirror rank` reorders it.
 pkgname=wolos-mirrorlist
 pkgver=2026.10.20
-pkgrel=1
+pkgrel=2
 pkgdesc='WolOS package mirror list'
 arch=(any)
 url='https://github.com/wonderlandos/wolos'

@@ -3,6 +3,6 @@
 # Primary: the WolOS CDN (keeps packages cached, fetches new ones from the release assets).
 Server = https://wolos.squareweb.app/$repo-2026-10-20
 # Fallback: the release assets of github.com/wonderlandos/wolos.
-Server = https://github.com/wonderlandos/wolos/releases/download/$repo-2026-10-20
+Server = https://github.com/wonderlandos/wolos-packages/releases/download/$repo-2026-10-20
 # More mirrors.
 Server = https://repo.wolos.org/2026-10-20/$repo/$arch

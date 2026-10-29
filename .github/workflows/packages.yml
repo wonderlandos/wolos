@@ -38,7 +38,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     env:
-      GH_TOKEN: ${{ github.token }}
+      # Releases (repo, ISO, release.json) live in a public repo anyone can download from:
+      # vars.WOLOS_RELEASES_REPO with a token that may write there (this repo when unset).
+      GH_REPO: ${{ vars.WOLOS_RELEASES_REPO || github.repository }}
+      GH_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN || github.token }}
       OVERLAY_REPO: ${{ vars.WOLOS_OVERLAY_REPO }}
     steps:
       - name: Free disk space
