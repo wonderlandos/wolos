@@ -43,7 +43,7 @@ fn steam_and_wine_are_native_packages() {
 
 #[test]
 fn steam_opens_through_wol_games_steam() {
-    let d = read(&format!("{APPS}/steam.desktop"));
+    let d = read("desktop/overlay/usr/share/wolos/applications/steam.desktop");
     assert_eq!(key(&d, "Exec"), "wol games steam %u");
     let inv = parse(&["games", "steam", "steam://rungameid/620"]).unwrap();
     assert_eq!(inv.action, "games.steam");

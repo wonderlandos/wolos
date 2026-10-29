@@ -1,0 +1,13 @@
+# Steam opens through `wol games steam` (first-run notice, Proton): our entry replaces the
+# steam package's one whenever either package is installed or upgraded.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = usr/share/applications/steam.desktop
+Target = usr/share/wolos/applications/steam.desktop
+
+[Action]
+Description = Opening Steam through WolOS...
+When = PostTransaction
+Exec = /bin/sh -c '[ ! -e /usr/share/applications/steam.desktop ] || install -m644 /usr/share/wolos/applications/steam.desktop /usr/share/applications/steam.desktop'
