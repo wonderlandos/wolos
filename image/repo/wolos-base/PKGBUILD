@@ -19,8 +19,10 @@ provides=('coreutils=9.12' 'sudo')
 conflicts=('coreutils' 'sudo')
 backup=()
 install=wolos-base.install
-source=(os-release::../../files/usr/share/wolos/os-release wolos-os-release.hook)
-sha256sums=(SKIP SKIP)
+# os-release comes from the tree ($startdir/../../files): makepkg finds local sources only beside
+# the PKGBUILD.
+source=(wolos-os-release.hook)
+sha256sums=(SKIP)
 
 # GNU coreutils 9.12 program names; uutils-coreutils ships each as uu-<name>.
 _coreutils=('[' b2sum base32 base64 basename basenc cat chgrp chmod chown chroot cksum comm cp csplit
@@ -41,7 +43,7 @@ package() {
   done
   # os-release of this release: /etc/os-release is written from it by the hook (filesystem owns
   # /usr/lib/os-release and the /etc symlink).
-  sed "s/@VERSION@/$pkgver/g" "$srcdir/os-release" | install -Dm644 /dev/stdin "$pkgdir/usr/share/wolos/os-release"
+  sed "s/@VERSION@/$pkgver/g" "$startdir/../../files/usr/share/wolos/os-release" | install -Dm644 /dev/stdin "$pkgdir/usr/share/wolos/os-release"
   install -Dm644 "$srcdir/wolos-os-release.hook" "$pkgdir/usr/share/libalpm/hooks/wolos-os-release.hook"
   echo "$pkgver" | install -Dm644 /dev/stdin "$pkgdir/usr/share/wolos/base.version"
   # Manifest last: it hashes the base packages and this package's own files.
