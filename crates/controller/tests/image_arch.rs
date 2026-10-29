@@ -344,7 +344,8 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
         &[
             (
                 "makepkg",
-                "echo \"built $(basename \"$PWD\")\" >> \"$(dirname \"$0\")/../log\"\nbsdtar --zstd -cf \"$PKGDEST/$(basename \"$PWD\")-1-1-x86_64.pkg.tar.zst\" -T /dev/null",
+                // linux-wolos has an epoch: its file name holds ':' and '+'.
+                "echo \"built $(basename \"$PWD\")\" >> \"$(dirname \"$0\")/../log\"\nv=1-1; [ \"$(basename \"$PWD\")\" = linux-wolos ] && v='1:1.0+7.3-1'\nbsdtar --zstd -cf \"$PKGDEST/$(basename \"$PWD\")-$v-x86_64.pkg.tar.zst\" -T /dev/null",
             ),
             ("repo-add", ""),
             ("pacman", ""),
@@ -409,10 +410,21 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
         "wolos-base",
     ] {
         assert!(add.contains(p), "{p} not added: {add}");
+        let v = if p == "linux-wolos" {
+            "1.1.0.7.3-1"
+        } else {
+            "1-1"
+        };
         assert!(
-            d.join(format!("repo/x86_64/{p}-1-1-x86_64.pkg.tar.zst"))
-                .exists()
+            d.join(format!("repo/x86_64/{p}-{v}-x86_64.pkg.tar.zst"))
+                .exists(),
+            "{p}-{v}"
         );
+    }
+    // Release assets cannot hold ':' or '+': indexed under the names the release serves.
+    for f in fs::read_dir(d.join("repo/x86_64")).unwrap().flatten() {
+        let n = f.file_name().to_string_lossy().into_owned();
+        assert!(!n.contains([':', '+']), "{n}");
     }
     let s = read("image/repo/build.sh");
     assert!(s.contains("--sign") && s.contains("gpg --detach-sign"));
