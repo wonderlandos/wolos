@@ -61,3 +61,15 @@ fn cluster_packages_are_signed_before_publishing() {
     assert!(at("Build on the build cluster") < at("Sign and index"));
     assert!(at("Sign and index") < at("Publish the repo"));
 }
+
+/// The CDN host refuses uploads over 100 MB: the kernel package is left to the CDN's pull-through
+/// from the release, never uploaded.
+#[test]
+fn cdn_push_leaves_big_packages_to_the_pull_through() {
+    let wf = read(".github/workflows/packages.yml");
+    let push = wf.split("name: Push the repo to the CDN").nth(1).unwrap();
+    assert!(
+        push.contains("stat -c %s") && push.contains("-lt 99000000"),
+        "{push}"
+    );
+}

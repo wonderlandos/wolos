@@ -207,7 +207,11 @@ jobs:
           tag=${{ steps.plan.outputs.tag }}
           cd out/repo/x86_64
           up() { curl -fsS --retry 3 -T "$1" -H "Authorization: Bearer $CDN_TOKEN" "$CDN_URL/$tag/$1"; }
-          for f in *.pkg.tar.*; do up "$f"; done
+          # The host takes uploads up to 100 MB; bigger packages (the kernel) the CDN pulls from the
+          # release on the first download and keeps.
+          for f in *.pkg.tar.*; do
+            if [ "$(stat -c %s "$f")" -lt 99000000 ]; then up "$f"; else echo "$f: pulled by the CDN"; fi
+          done
           for f in revision revision-commit wolos.files wolos.files.sig wolos.db wolos.db.sig; do
             [ -e "$f" ] && up "$f"
           done
