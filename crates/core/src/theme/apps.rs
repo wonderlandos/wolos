@@ -868,7 +868,7 @@ mod tests {
         }
     }
 
-    /// Contract with the system zshrc (`/etc/zshrc`): it sources
+    /// Contract with the system zshrc (`/usr/share/wolos/zsh/zshrc`): it sources
     /// `toolkits/zsh/colors.zsh` and reads `WOLOS_PROMPT_*` as `#rrggbb`.
     #[test]
     fn zsh_prompt_colours() {

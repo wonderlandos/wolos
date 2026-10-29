@@ -85,7 +85,7 @@ wine
 gamemode               # games can run through gamemoderun
 lib32-gamemode
 rtkit                  # realtime audio threads (PipeWire)
-# Terminal: zsh for every account (/etc/zshrc), sudo for wheel (sudoers.d/wolos)
+# Terminal: zsh for every account (/etc/zsh/zshenv), sudo for wheel (sudoers.d/wolos)
 zsh-autosuggestions
 zsh-syntax-highlighting
 zsh-completions
