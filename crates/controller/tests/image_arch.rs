@@ -489,6 +489,12 @@ fn wolos_base_is_one_versioned_base() {
     for keep in ["glibc", "gcc-libs", "bash"] {
         assert!(!b.contains(&format!("conflicts=('{keep}")), "{keep} stays");
     }
+    // makepkg resolves no `../` source: the tree's os-release is read from $startdir.
+    assert!(
+        !b.lines()
+            .any(|l| l.starts_with("source=") && l.contains("../"))
+    );
+    assert!(b.contains("\"$startdir/../../files/usr/share/wolos/os-release\""));
     let os = read("image/files/usr/share/wolos/os-release");
     assert!(os.contains("ID=wolos") && os.contains("ID_LIKE=arch"));
     assert!(
