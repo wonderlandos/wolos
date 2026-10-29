@@ -480,3 +480,66 @@ fn automatic_updates_download_daily_and_apps_update_per_account() {
     );
     assert_eq!(wol_core::update::auto::APPS_TIMER, "wolos-app-update.timer");
 }
+
+/// Error reports (Settings > Privacy, off until turned on): a failed unit or a crash is sent once,
+/// as {kind, version, kernel, detail}; nothing else leaves the machine.
+#[test]
+fn reports_send_new_failures_once_and_only_when_on() {
+    let d = scratch("reports");
+    let conf = d.join("reports.conf");
+    let osr = d.join("os-release");
+    fs::write(&osr, "NAME=WolOS\nVERSION_ID=0.11.2\n").unwrap();
+    let path = fakes(
+        &d,
+        &[
+            (
+                "systemctl",
+                "echo 'wold.service loaded failed failed WolOS daemon'",
+            ),
+            (
+                "coredumpctl",
+                "echo 'Thu 2026-10-29 18:00:01 UTC 4242 1000 1000 SIGSEGV present /usr/bin/wol-shell 1.2M'",
+            ),
+            ("curl", "cat >> \"$(dirname \"$0\")/../sent\""),
+            ("uname", "echo 7.3.0-1-wolos"),
+        ],
+    );
+    let run = || {
+        let st = Command::new("sh")
+            .arg(repo("image/files/usr/lib/wolos/report"))
+            .env("PATH", &path)
+            .env("WOLOS_REPORTS_CONF", &conf)
+            .env("WOLOS_REPORTS_STATE", d.join("state"))
+            .env("WOLOS_OS_RELEASE", &osr)
+            .status()
+            .unwrap();
+        assert!(st.success());
+    };
+    run();
+    assert!(!log(&d).contains("curl"), "off by default");
+    fs::write(&conf, "send=1\n").unwrap();
+    run();
+    let sent = fs::read_to_string(d.join("sent")).unwrap();
+    let lines: Vec<&str> = sent.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            r#"{"kind":"unit-failed","version":"0.11.2","kernel":"7.3.0-1-wolos","detail":"wold.service"}"#,
+            r#"{"kind":"crash","version":"0.11.2","kernel":"7.3.0-1-wolos","detail":"wol-shell SIGSEGV"}"#,
+        ]
+    );
+    assert!(log(&d).contains("https://wolos.squareweb.app/report"));
+    run();
+    assert_eq!(
+        fs::read_to_string(d.join("sent")).unwrap(),
+        sent,
+        "sent once"
+    );
+    let t = unit("wolos-report.timer");
+    assert_eq!(values(&t, "Timer", "OnCalendar"), ["hourly"]);
+    let s = unit("wolos-report.service");
+    assert_eq!(
+        values(&s, "Service", "ExecStart"),
+        ["/usr/lib/wolos/report"]
+    );
+}

@@ -1,0 +1,9 @@
+[Unit]
+Description=WolOS error reports (sent only when turned on in Settings)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/report
+Nice=10
+IOSchedulingClass=idle

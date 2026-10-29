@@ -1,0 +1,39 @@
+#!/bin/sh
+# Error reports (wolos-report.timer, hourly), sent only when Settings > Privacy turned them on
+# (send=1 in /etc/wolos/reports.conf). Each new failure goes once as
+#   {"kind":"unit-failed"|"crash","version":<WolOS>,"kernel":<uname -r>,"detail":<unit | program signal>}
+# Nothing else: no logs, no user or host names, no address beyond the connection itself.
+# State in $S: units (failing at the last run; a unit is sent again only after it recovered),
+# crashes (coredumps already sent, by time and pid).
+set -u
+CONF=${WOLOS_REPORTS_CONF:-/etc/wolos/reports.conf}
+S=${WOLOS_REPORTS_STATE:-/var/lib/wolos/reports}
+URL=${WOLOS_REPORTS_URL:-https://wolos.squareweb.app/report}
+grep -qx 'send=1' "$CONF" 2>/dev/null || exit 0
+mkdir -p "$S" || exit 1
+touch "$S/units" "$S/crashes"
+ver=$(sed -n 's/^VERSION_ID=//p' "${WOLOS_OS_RELEASE:-/etc/os-release}" | tr -d '"')
+kernel=$(uname -r)
+# Only characters that need no JSON escaping.
+safe() { printf '%s' "$1" | tr -cd 'A-Za-z0-9@._: -' | cut -c1-200; }
+send() {
+	printf '{"kind":"%s","version":"%s","kernel":"%s","detail":"%s"}\n' \
+		"$1" "$(safe "$ver")" "$(safe "$kernel")" "$(safe "$2")" |
+		curl -fsS -m 10 -H 'Content-Type: application/json' --data-binary @- "$URL" >/dev/null 2>&1
+}
+
+systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' >"$S/units.now"
+while IFS= read -r u; do
+	grep -qxF "$u" "$S/units" || send unit-failed "$u" || { rm -f "$S/units.now"; exit 0; }
+done <"$S/units.now"
+mv "$S/units.now" "$S/units"
+
+# TIME (4 fields) PID UID GID SIG COREFILE EXE SIZE
+coredumpctl list --no-legend --no-pager -q 2>/dev/null | tail -20 |
+	awk 'NF >= 11 {print $2 "T" $3 "-" $5, $(NF-1), $8}' | while read -r key exe sig; do
+	grep -qxF "$key" "$S/crashes" && continue
+	send crash "${exe##*/} $sig" || exit 0
+	echo "$key" >>"$S/crashes"
+done
+tail -200 "$S/crashes" >"$S/crashes.new" && mv "$S/crashes.new" "$S/crashes"
+exit 0
