@@ -1,0 +1,4 @@
+# wol-admin (crates/controller wol-authcheck --admin, for wol-admind): an administrator's password
+# before a privileged change in Settings.
+auth		include		system-auth
+account		include		system-auth

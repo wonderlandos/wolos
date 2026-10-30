@@ -1,0 +1,3 @@
+# wol-lock (crates/controller wol-authcheck): the lock screen checks the session user's password.
+auth		include		system-auth
+account		include		system-auth
