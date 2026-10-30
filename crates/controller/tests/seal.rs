@@ -72,16 +72,15 @@ fn apply_enables_verity_records_digests_and_makes_the_slot_read_only() {
     let dig = env
         .written
         .iter()
-        .find(|w| w.0 == PathBuf::from("/efi/wolos-b/verity"))
+        .find(|w| w.0 == std::path::Path::new("/efi/wolos-b/verity"))
         .unwrap();
     assert_eq!(dig.1.trim(), m.root_digest());
     let last = env.execs.last().unwrap().join(" ");
     assert_eq!(last, format!("btrfs property set -ts {r} ro true"));
     assert!(
-        env.execs
+        !env.execs
             .iter()
-            .any(|e| e.join(" ") == "fsverity enable ".to_owned() + &r + "/usr/bin/tool")
-            == false,
+            .any(|e| e.join(" ") == "fsverity enable ".to_owned() + &r + "/usr/bin/tool"),
         "already measured: no enable"
     );
 }
@@ -119,7 +118,7 @@ fn boot_check_with_a_tampered_manifest_tells_the_person() {
     assert!(
         env.written
             .iter()
-            .any(|w| w.0 == PathBuf::from(wol_core::seal::NOTICE))
+            .any(|w| w.0 == std::path::Path::new(wol_core::seal::NOTICE))
     );
 }
 

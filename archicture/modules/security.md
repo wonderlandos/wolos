@@ -26,6 +26,11 @@ On from the first boot (ADR 0015). Code: `wol_core::security` (defaults, status)
   Any failure deletes the new slot. The running slot stays the restore point and the fallback.
 - Packages the person installed with pacman come along (the slot is a copy, not an image).
   Other kernels are allowed, reported by `wol update status` and `wol games doctor`, never removed.
+- `pacman -S/-R/-U` on the sealed system (`/usr/local/bin/pacman`, runs `/usr/bin/pacman`): the change goes into a layer
+  (systemd-sysext, merged over `/usr` at once; `/etc` and the package database stay live), live with no restart; the next
+  `wol update apply` folds the layers into the new slot. Kernel, initramfs and systemd packages and `-Syu` go to the pending
+  slot instead (taking effect at the next restart; a second change stacks on it); queries pass through. A failed change leaves nothing.
+- Developer mode: `wol seal off` (root) makes the running system writable and stops the boot check until the next update.
 - `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones.
 
 ## Error reports (off by default)

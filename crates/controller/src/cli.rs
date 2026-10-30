@@ -261,6 +261,24 @@ pub const TREE: &[Cmd] = &[
         "Boot check: the running slot matches what was sealed, else the other slot starts",
     ),
     cmd(
+        &["seal", "off"],
+        "seal.off",
+        &[],
+        "Developer mode: make the system writable again and stop checking it (root)",
+    ),
+    cmd(
+        &["layers", "fold"],
+        "layers.fold",
+        &[opt("a"), opt("b"), opt("c")],
+        "Update: copy live-installed packages into the new slot (root)",
+    ),
+    cmd(
+        &["pkg"],
+        "pkg",
+        &[rest("args")],
+        "pacman for the sealed system: wol pkg -- -S name (installs are live at once)",
+    ),
+    cmd(
         &["encrypt", "decide"],
         "encrypt.decide",
         &[opt("a")],

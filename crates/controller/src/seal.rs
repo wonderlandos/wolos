@@ -61,7 +61,7 @@ pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
         let mode = std::os::unix::fs::PermissionsExt::mode(
             &std::fs::metadata(&f)
                 .map(|m| m.permissions())
-                .unwrap_or_else(|_| std::fs::Permissions::from_mode(0)),
+                .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o0)),
         );
         if !seal::wants_verity(&rel, mode, &head[..n]) {
             continue;
