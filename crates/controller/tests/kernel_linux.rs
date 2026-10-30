@@ -18,6 +18,24 @@ fn scratch(name: &str) -> PathBuf {
     d
 }
 
+/// Sealed slots need fs-verity (btrfs supports it when the kernel does) and an overlay for /etc;
+/// encrypted disks need dm-crypt and the TPM drivers.
+#[test]
+fn fragment_has_verity_overlay_and_disk_encryption() {
+    let c = read("kernel/conf/wolos.config");
+    for on in [
+        "CONFIG_FS_VERITY=y",
+        "CONFIG_OVERLAY_FS=y",
+        "CONFIG_DM_CRYPT=y",
+        "CONFIG_TCG_TPM=y",
+        "CONFIG_TCG_CRB=y",
+    ] {
+        assert!(c.lines().any(|l| l == on), "wolos.config lacks {on}");
+    }
+    assert!(c.lines().any(|l| l == "CONFIG_BTRFS_FS=y"));
+    assert!(!c.contains("# CONFIG_FS_VERITY is not set"));
+}
+
 #[test]
 fn fragment_sets_the_desktop_options_each_with_a_reason() {
     let c = read("kernel/conf/wolos.config");
@@ -401,6 +419,7 @@ fn fragment_trims_unused_code_and_supports_apple_devices() {
         "CONFIG_HID_BATTERY_STRENGTH=y",
         "CONFIG_HIDRAW=y",
         "CONFIG_FUSE_FS=m",
+        "CONFIG_APFS_FS=m",
         "CONFIG_TUN=m",
     ] {
         assert!(c.lines().any(|l| l == on), "wolos.config lacks {on}");
