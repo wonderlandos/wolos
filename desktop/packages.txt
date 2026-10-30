@@ -38,6 +38,10 @@ dconf
 pipewire
 pipewire-pulse
 pipewire-alsa
+pipewire-jack
+pipewire-v4l2
+pipewire-libcamera
+gst-plugin-pipewire
 lib32-pipewire
 wireplumber
 playerctl
@@ -108,5 +112,6 @@ gvfs-afc
 libheif
 # AirPlay speakers as sound outputs.
 pipewire-zeroconf
+shairport-sync           # AirPlay audio receiver into PipeWire
 ntfs-3g
 exfatprogs

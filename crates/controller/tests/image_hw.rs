@@ -110,3 +110,26 @@ fn iphone_and_airplay_work_offline() {
         assert!(pkgs.iter().any(|x| x == p), "{p} ships offline");
     }
 }
+
+/// One sound server: JACK apps, cameras (V4L2 apps), GStreamer players and AirPlay from an
+/// iPhone all go through PipeWire, so one volume and one device list cover everything.
+#[test]
+fn pipewire_carries_all_audio_and_video() {
+    let pkgs = shipped();
+    for p in [
+        "pipewire-jack",
+        "pipewire-v4l2",
+        "pipewire-libcamera",
+        "gst-plugin-pipewire",
+        "shairport-sync",
+    ] {
+        assert!(pkgs.iter().any(|x| x == p), "{p} ships offline");
+    }
+    for p in ["jack2", "pulseaudio"] {
+        assert!(!pkgs.iter().any(|x| x == p), "{p} would be a second sound server");
+    }
+    let f = "image/files/usr/share/pipewire/pipewire.conf.d/71-wolos-airplay.conf";
+    let conf = std::fs::read_to_string(format!("{}/../../{f}", env!("CARGO_MANIFEST_DIR")))
+        .unwrap_or_default();
+    assert!(conf.contains("libpipewire-module-raop-discover"), "{f}: AirPlay speakers listed");
+}
