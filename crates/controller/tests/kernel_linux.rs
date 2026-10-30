@@ -193,6 +193,27 @@ fn prepare_applies_extra_patches_in_order_then_merges_the_fragment() {
         fork < cfg.find("CONFIG_HZ_1000=y").unwrap(),
         "ours goes last"
     );
+    // A patch the fork already carries (it moved into the tree) is skipped, not a failure.
+    let carried = d.join("carried/kernel/linux/patches");
+    fs::create_dir_all(&carried).unwrap();
+    fs::write(
+        carried.join("0001-c.patch"),
+        "--- a/hello.c\n+++ b/hello.c\n@@ -1,2 +1,2 @@\n one\n-two\n+three\n",
+    )
+    .unwrap();
+    let o = prepare(&d, &src, &bin, "carried");
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        o.status.success(),
+        "{out}{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(out.contains("already in tree: 0001-c.patch"), "{out}");
+    assert!(out.contains("extra patches: 0"), "{out}");
+    assert_eq!(
+        fs::read_to_string(src.join("hello.c")).unwrap(),
+        "one\nthree\n"
+    );
     // A patch that no longer applies stops the build.
     fs::write(src.join("hello.c"), "other\n").unwrap();
     assert_eq!(prepare(&d, &src, &bin, "overlay").status.code(), Some(3));
@@ -320,6 +341,8 @@ fn image_ships_memory_and_latency_sysctls_and_zram() {
         "vm.dirty_bytes = 268435456",
         "vm.dirty_background_bytes = 67108864",
         "kernel.nmi_watchdog = 0",
+        "kernel.sched_autogroup_enabled = 0",
+        "kernel.watchdog_thresh = 30",
     ] {
         assert!(s.lines().any(|l| l == kv), "sysctl lacks {kv}");
     }
@@ -338,6 +361,50 @@ fn image_ships_memory_and_latency_sysctls_and_zram() {
     );
     let u = read("image/files/usr/lib/udev/rules.d/60-wolos-ioscheduler.rules");
     assert!(u.contains("none") && u.contains("bfq"));
+    // A slow USB stick has its own strict dirty budget: copying to it never stalls the NVMe.
+    let w = read("image/files/usr/lib/udev/rules.d/70-wolos-usb-writeback.rules");
+    for want in [
+        "ENV{ID_BUS}==\"usb\"",
+        "ATTR{removable}==\"1\"",
+        "ATTR{bdi/strict_limit}=\"1\"",
+        "ATTR{bdi/max_bytes}=\"33554432\"",
+    ] {
+        assert!(w.contains(want), "usb writeback rule lacks {want}");
+    }
+}
+
+/// Lean core and Apple hardware: options the fragment turns off or on.
+#[test]
+fn fragment_trims_unused_code_and_supports_apple_devices() {
+    let c = read("kernel/conf/wolos.config");
+    for off in [
+        "ACPI_DEBUG",
+        "SECURITY_SMACK",
+        "SECURITY_TOMOYO",
+        "SECURITY_IPE",
+        "SECURITY_SAFESETID",
+        "SECURITY_LOADPIN",
+        "FUNCTION_ERROR_INJECTION",
+        "MMIOTRACE",
+        "HWLAT_TRACER",
+        "OSNOISE_TRACER",
+        "TIMERLAT_TRACER",
+        "SCHED_STACK_END_CHECK",
+    ] {
+        let line = format!("# CONFIG_{off} is not set");
+        assert!(c.lines().any(|l| l == line), "wolos.config keeps {off}");
+    }
+    for on in [
+        "CONFIG_USB_IPHETH=m",
+        "CONFIG_HID_APPLE=m",
+        "CONFIG_HID_MAGICMOUSE=m",
+        "CONFIG_HID_BATTERY_STRENGTH=y",
+        "CONFIG_HIDRAW=y",
+        "CONFIG_FUSE_FS=m",
+        "CONFIG_TUN=m",
+    ] {
+        assert!(c.lines().any(|l| l == on), "wolos.config lacks {on}");
+    }
 }
 
 /// Build options for developers and CI: CPU level (generic default, x86-64-v3 flavour), Clang ThinLTO,
