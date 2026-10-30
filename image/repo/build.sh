@@ -21,13 +21,14 @@ export PKGDEST=$RD/x86_64
 mkdir -p "$PKGDEST" "$WORK"
 
 # NAME DIR: makechrootpkg in a clean chroot ($WOLOS_CHROOT, devtools) for a self-contained recipe;
-# makepkg on this host for one that reads the source tree (../ or $startdir/..), as CI does in a
-# fresh container. Local deps already built go into the chroot with -I.
+# makepkg on this host for one that reads the source tree (../ or $startdir/..) or checks source
+# signatures (keys/pgp: imported here, makepkg only reads the keyring), as CI does in a fresh
+# container. Local deps already built go into the chroot with -I.
 build() {
   case " ${WOLOS_REPO_ONLY:-$1} " in *" $1 "*) ;; *) return 0 ;; esac
   rm -f "$PKGDEST/$1"-[0-9]*.pkg.tar.zst "$PKGDEST/$1"-[0-9]*.pkg.tar.zst.sig
   if [ -n "${WOLOS_CHROOT:-}" ] && command -v makechrootpkg >/dev/null &&
-    ! grep -q '\.\./' "$2/PKGBUILD"; then
+    ! grep -q '\.\./' "$2/PKGBUILD" && [ ! -d "$2/keys/pgp" ]; then
     [ -d "$WOLOS_CHROOT/root" ] || mkarchroot "$WOLOS_CHROOT/root" base-devel
     local inst=() d
     for d in ${3//,/ }; do [ "$d" = - ] || inst+=(-I "$(ls "$PKGDEST/$d"-[0-9]*.pkg.tar.zst | head -1)"); done
@@ -38,6 +39,7 @@ build() {
       # --noconfirm alone answers no to that, and takes the default everywhere else.
       local d; for d in ${3//,/ }; do [ "$d" = - ] || sudo pacman -U --noconfirm --ask 4 --needed "$PKGDEST/$d"-*.pkg.tar.zst; done
     fi
+    [ -d "$2/keys/pgp" ] && gpg --batch --quiet --import "$2"/keys/pgp/*.asc
     (cd "$2" && makepkg --syncdeps --noconfirm --cleanbuild --force)
   fi
 }

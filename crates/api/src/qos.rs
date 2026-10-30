@@ -425,7 +425,7 @@ pub mod tests {
         for (pid, comm, adj) in [
             ("10", "Hyprland\n", "0\n"),
             ("11", "wol-shell\n", "0\n"),
-            ("12", "firefox\n", "0\n"),
+            ("12", "helium\n", "0\n"),
             ("13", "Hyprland\n", "-900\n"),
             ("self", "Hyprland\n", "0\n"),
         ] {

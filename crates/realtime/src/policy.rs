@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn ordinary_apps_get_nothing_privileged_by_default() {
-        let app = id("/usr/bin/firefox");
+        let app = id("/usr/bin/helium");
         for cap in [
             Capability::ShellLayer,
             Capability::WindowList,
@@ -120,7 +120,7 @@ mod tests {
             LIBEXEC
         ));
         assert!(!allowed(
-            &id("/usr/bin/firefox"),
+            &id("/usr/bin/helium"),
             Capability::ScreenCapture,
             &grants,
             LIBEXEC

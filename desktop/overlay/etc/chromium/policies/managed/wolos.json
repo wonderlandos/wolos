@@ -1,6 +1,10 @@
 {
+  "BackgroundModeEnabled": false,
   "BrowserSignin": 0,
+  "DefaultBrowserSettingEnabled": false,
+  "FeedbackSurveysEnabled": false,
   "MetricsReportingEnabled": false,
   "PromotionalTabsEnabled": false,
-  "SyncDisabled": true
+  "SyncDisabled": true,
+  "UrlKeyedAnonymizedDataCollectionEnabled": false
 }

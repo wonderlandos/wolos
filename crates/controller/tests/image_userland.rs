@@ -1,5 +1,5 @@
 //! Everyday userland from the real-GPU run: sudo for administrators, zsh for every account, user
-//! folders, unlocked keyring, printing, removable media and default apps (Firefox the browser).
+//! folders, unlocked keyring, printing, removable media and default apps (Helium the browser).
 //! Scripts run on the host with fakes.
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, path::PathBuf, process::Command};
 
@@ -85,7 +85,7 @@ fn image_ships_the_everyday_userland() {
         "baobab",
         "gnome-text-editor",
         "eog",
-        "firefox",
+        "helium-browser",
     ] {
         assert!(pkgs.iter().any(|x| x == p), "packages.txt lacks {p}");
     }
@@ -317,12 +317,13 @@ fn printing_and_removable_media_are_on() {
 }
 
 #[test]
-fn firefox_and_the_dock_apps_open_their_files_by_default() {
+fn helium_and_the_dock_apps_open_their_files_by_default() {
     let mime = read("desktop/overlay/usr/share/applications/mimeapps.list");
     for t in [
-        "x-scheme-handler/http=firefox.desktop;",
-        "x-scheme-handler/https=firefox.desktop;",
-        "text/html=firefox.desktop;",
+        "x-scheme-handler/http=helium.desktop;",
+        "x-scheme-handler/https=helium.desktop;",
+        "text/html=helium.desktop;",
+        "application/xhtml+xml=helium.desktop;",
         "x-scheme-handler/mailto=org.gnome.Geary.desktop;",
         "inode/directory=org.gnome.Nautilus.desktop;",
         "application/pdf=org.gnome.Papers.desktop;",
@@ -334,6 +335,6 @@ fn firefox_and_the_dock_apps_open_their_files_by_default() {
     ] {
         assert!(mime.lines().any(|l| l == t), "mimeapps.list lacks {t}");
     }
-    assert!(!mime.to_lowercase().contains("helium"));
+    assert!(!mime.to_lowercase().contains("firefox"));
     assert!(mime.starts_with('#') && mime.contains("\n[Default Applications]\n"));
 }

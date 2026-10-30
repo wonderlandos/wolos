@@ -1,10 +1,10 @@
 # WolOS default apps (GLib/xdg-utils read $XDG_DATA_DIRS/applications/mimeapps.list).
 # Users' choices (~/.config/mimeapps.list) override these.
 [Default Applications]
-x-scheme-handler/http=firefox.desktop;
-x-scheme-handler/https=firefox.desktop;
-text/html=firefox.desktop;
-application/xhtml+xml=firefox.desktop;
+x-scheme-handler/http=helium.desktop;
+x-scheme-handler/https=helium.desktop;
+text/html=helium.desktop;
+application/xhtml+xml=helium.desktop;
 x-scheme-handler/mailto=org.gnome.Geary.desktop;
 inode/directory=org.gnome.Nautilus.desktop;
 application/pdf=org.gnome.Papers.desktop;
