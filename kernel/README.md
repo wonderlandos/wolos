@@ -19,7 +19,7 @@ What users notice versus Arch's `linux`:
 - The app in front goes first. wold writes its pid to `/sys/kernel/wolos/foreground_pid` on every switch; the kernel then gives it a CPU floor (`foreground_uclamp_min`, 512), exact timers (`foreground_timerslack_ns`, 0: Wine/Proton frame limiters wake on time), the i915 waitboost and the top `scx_wolos` slot. Background threads coalesce wakeups (`background_timerslack_ns`, 50 ms).
 - Removed (`abi-removed.txt`): the x32 ABI, legacy PTYs and the vsyscall page (boot with `vsyscall=xonly` for pre-2011 static binaries), plus pre-2010 PC hardware (PCMCIA/CardBus, floppy, parallel port, gameport, 1990s PCI NICs, pre-ACPI MP tables), the VESA/EFI framebuffers (simpledrm covers boot), cluster sockets (RDS, TIPC, RxRPC/AFS) and raw-flash filesystems. Datacenter-only drivers are not built.
 - Module ABI is stable within a release line (CONFIG_MODVERSIONS): vendor modules built once keep loading until the next line.
-- `uname -r` ends in `-wolos`; `uname -v` reads `#1 WolKernel 1.0 (7.3) SMP PREEMPT_DYNAMIC <date>`.
+- `uname -r` ends in `-wolos`; `uname -v` reads `#1 WolKernel 1.0 Linux 7.3 SMP PREEMPT_DYNAMIC <date>`.
 
 What is in 1.0 (each has an off switch; table with sources in `README.wolos.md` on the fork):
 
