@@ -231,7 +231,10 @@ fn no_text_console_for_users() {
     // session's VT read every key typed on the desktop, passwords included.
     let install = read("image/repo/wolos-system/wolos-system.install");
     for hook in ["post_install() {", "post_upgrade() {"] {
-        let body = install.split(hook).nth(1).and_then(|b| b.split("\n}").next());
+        let body = install
+            .split(hook)
+            .nth(1)
+            .and_then(|b| b.split("\n}").next());
         assert!(
             body.is_some_and(|b| b.contains("systemctl mask getty@tty1.service")),
             "{hook} must mask getty@tty1: {install}"
@@ -614,7 +617,9 @@ fn every_pam_service_the_code_opens_has_its_file() {
         // correct password then reads "Incorrect password": the person is locked out of their own
         // session. pam_unix's failure delay throttles guessing instead.
         assert!(
-            !auth.iter().any(|l| l.contains("system-") || l.contains("faillock")),
+            !auth
+                .iter()
+                .any(|l| l.contains("system-") || l.contains("faillock")),
             "{s}: auth must not lock the account out: {pam}"
         );
     }
