@@ -42,6 +42,8 @@ pub enum AdminAction {
     Hostname,
     /// Remote Login: `on` or `off` (sshd).
     RemoteLogin,
+    /// AirPlay Receiver: `on` or `off` (shairport-sync).
+    AirPlayReceiver,
     /// Firewall: `on` or `off` (pf with the WolOS ruleset).
     Firewall,
     /// Lid closed: `sleep` or `nothing`.
@@ -97,6 +99,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::Ntp, "ntp"),
     (AdminAction::Hostname, "hostname"),
     (AdminAction::RemoteLogin, "remote-login"),
+    (AdminAction::AirPlayReceiver, "airplay-receiver"),
     (AdminAction::Firewall, "firewall"),
     (AdminAction::Lid, "lid"),
     (AdminAction::PrinterAdd, "printer-add"),
@@ -251,6 +254,7 @@ mod tests {
             "ntp",
             "hostname",
             "remote-login",
+            "airplay-receiver",
             "firewall",
             "lid",
             "printer-add",

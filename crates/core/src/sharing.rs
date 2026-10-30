@@ -42,6 +42,14 @@ pub fn remote_login(h: &dyn Host) -> Option<bool> {
     enabled(h, "sshd.service")
 }
 
+/// The AirPlay receiver service (shairport-sync, shipped with the audio stack).
+pub const AIRPLAY_UNIT: &str = "shairport-sync.service";
+
+/// AirPlay Receiver on at boot.
+pub fn airplay_receiver(h: &dyn Host) -> Option<bool> {
+    enabled(h, AIRPLAY_UNIT)
+}
+
 /// Firewall (nftables) on at boot.
 pub fn firewall(h: &dyn Host) -> Option<bool> {
     enabled(h, "nftables.service")
@@ -51,6 +59,18 @@ pub fn firewall(h: &dyn Host) -> Option<bool> {
 mod tests {
     use super::*;
     use crate::system::fake::FakeHost;
+
+    #[test]
+    fn airplay_receiver_reads_the_unit_state() {
+        let h = FakeHost::new(false);
+        assert_eq!(airplay_receiver(&h), None, "no systemd: unknown");
+        h.command(
+            "systemctl show -p UnitFileState --value shairport-sync.service",
+            "enabled\n",
+        );
+        assert_eq!(airplay_receiver(&h), Some(true));
+        assert_eq!(parse_enabled("disabled"), Some(false));
+    }
 
     #[test]
     fn hostname_is_one_rfc1123_label() {
