@@ -575,3 +575,29 @@ fn reports_send_new_failures_once_and_only_when_on() {
         ["/usr/lib/wolos/report"]
     );
 }
+
+#[test]
+fn every_pam_service_the_code_opens_has_its_file() {
+    // Linux-PAM falls back to /etc/pam.d/other (deny) for a missing service: a lock screen that
+    // rejects every password. Services: the `c"wol-..."` names wol-login and wol-authcheck open.
+    let mut services = vec![];
+    for src in [
+        "crates/controller/src/bin/wol-login.rs",
+        "crates/controller/src/bin/wol-authcheck.rs",
+    ] {
+        for part in read(src).split("c\"wol-").skip(1) {
+            services.push(format!("wol-{}", part.split('"').next().unwrap()));
+        }
+    }
+    for s in ["wol-login", "wol-lock", "wol-admin"] {
+        assert!(services.iter().any(|x| x == s), "{s} not found in the code");
+    }
+    for s in &services {
+        let pam = read(&format!("desktop/overlay/etc/pam.d/{s}"));
+        assert!(
+            pam.lines()
+                .any(|l| l.starts_with("auth") && l.contains("system-")),
+            "{s}: no auth stack"
+        );
+    }
+}
