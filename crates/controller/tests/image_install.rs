@@ -295,6 +295,7 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
         cmdline.starts_with("root=UUID=1111-2222 rootflags=subvol=@wolos-a ro quiet splash"),
         "{cmdline}"
     );
+    assert!(cmdline.contains(" audit=0 "), "{cmdline}");
     let fstab = fs::read_to_string(t.join("etc/fstab")).unwrap();
     for want in [
         "UUID=1111-2222 /home btrfs subvol=/@home,",

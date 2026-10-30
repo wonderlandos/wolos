@@ -88,7 +88,7 @@ echo a > "$T/etc/wolos/slot"
 mkdir -p "$T/etc/kernel"
 # The slot is sealed (read-only) at the end: it boots ro. Encrypted: the initramfs unlocks the volume.
 if [ "$unlock" = off ]; then rootword="root=UUID=$ruuid"; else rootword=$(wol encrypt words "$luuid" "$unlock"); fi
-echo "$rootword rootflags=subvol=@wolos-a ro quiet splash loglevel=3 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0" > "$T/etc/kernel/cmdline"
+echo "$rootword rootflags=subvol=@wolos-a ro quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0" > "$T/etc/kernel/cmdline"
 cat > "$T/etc/fstab" <<EOF
 # WolOS: / is the slot the boot entry names (rootflags=subvol=@wolos-a or @wolos-b).
 UUID=$ruuid /home btrfs subvol=/@home,$O 0 0
