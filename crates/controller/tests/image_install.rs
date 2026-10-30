@@ -144,6 +144,10 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
 
 /// A full install against fakes: target root in a temp dir, mount/umount do nothing.
 fn install(d: &Path, disk: &str) -> Output {
+    install_with(d, disk, "off")
+}
+
+fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
     disks_fakes(d);
     let t = d.join("target");
     fs::create_dir_all(&t).unwrap();
@@ -154,6 +158,12 @@ fn install(d: &Path, disk: &str) -> Output {
         ("umount", ""),
         ("btrfs", ""),
         ("sync", ""),
+        ("cryptsetup", ""),
+        (
+            "wol",
+            "case \"$*\" in\n\"encrypt decide\"*) [ \"$WOLOS_TEST_UNLOCK\" = refuse ] && exit 1; echo ${WOLOS_TEST_UNLOCK:-off} ;;\n\
+             \"encrypt words\"*) echo \"rd.luks.name=$3=wolosroot root=/dev/mapper/wolosroot\" ;;\nesac",
+        ),
         ("userdel", ""),
         ("bootctl", ""),
         (
@@ -187,6 +197,8 @@ fn install(d: &Path, disk: &str) -> Output {
         .env("WOLOS_TEST_MOUNTS", d.join("mounts"))
         .env("WOLOS_EFIVARS", d.join("efivars"))
         .env("WOLOS_NO_INHIBIT", "1")
+        .env("WOLOS_TEST_UNLOCK", unlock)
+        .env("WOLOS_KEYDIR", d.join("keys"))
         .output()
         .unwrap()
 }
@@ -234,6 +246,25 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     assert!(l.contains("subvol=@wolos-a"), "{l}");
     assert!(l.contains("bootctl --esp-path="), "{l}");
     let t = d.join("target");
+    // Sealed after everything is written: the digest goes next to the slot's kernel on the ESP.
+    assert!(
+        l.contains(&format!(
+            "wol seal apply {} {}/efi/wolos-a/verity",
+            t.display(),
+            t.display()
+        )),
+        "{l}"
+    );
+    assert!(
+        !l.contains("cryptsetup"),
+        "plain install: no encryption: {l}"
+    );
+    // /etc stays writable on the read-only slot.
+    let fstab0 = fs::read_to_string(t.join("etc/fstab")).unwrap();
+    assert!(
+        fstab0.contains("overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper"),
+        "{fstab0}"
+    );
     // Live-only files are gone; the package's shell.json comes back.
     for gone in [
         "etc/sysusers.d/wolos-live.conf",
@@ -261,7 +292,7 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     );
     let cmdline = fs::read_to_string(t.join("etc/kernel/cmdline")).unwrap();
     assert!(
-        cmdline.starts_with("root=UUID=1111-2222 rootflags=subvol=@wolos-a rw quiet splash"),
+        cmdline.starts_with("root=UUID=1111-2222 rootflags=subvol=@wolos-a ro quiet splash"),
         "{cmdline}"
     );
     let fstab = fs::read_to_string(t.join("etc/fstab")).unwrap();
@@ -502,4 +533,64 @@ fn a_boot_that_reaches_the_login_window_blesses_the_slot() {
     }
     let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
     assert!(preset.lines().any(|l| l == "enable wolos-boot-ok.service"));
+}
+
+/// Encrypt disk: LUKS2 definitions, the volume opened with a throw-away key, the real unlock
+/// enrolled by `wol encrypt`, the boot entry names the mapper device and nothing secret is logged.
+#[test]
+fn encrypted_install_unlocks_through_the_initramfs() {
+    let d = scratch("crypt");
+    let o = install_with(&d, "/dev/nvme0n1", "tpm2");
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let l = log(&d);
+    assert!(
+        o.status.success(),
+        "{out}{}{l}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let repart = l
+        .lines()
+        .find(|x| x.starts_with("systemd-repart "))
+        .unwrap();
+    assert!(
+        repart.contains("repart.d-crypt") && repart.contains("--key-file="),
+        "{repart}"
+    );
+    assert!(l.contains("cryptsetup open --key-file="), "{l}");
+    assert!(
+        l.contains("mount -o subvol=@wolos-a,compress=zstd:1,noatime /dev/mapper/wolosroot"),
+        "{l}"
+    );
+    assert!(l.contains("wol encrypt hooks "), "{l}");
+    let enroll = l
+        .lines()
+        .find(|x| x.starts_with("wol encrypt enroll "))
+        .unwrap();
+    assert!(
+        enroll.contains("/dev/nvme0n1p2 ") && enroll.ends_with(" tpm2"),
+        "{enroll}"
+    );
+    let cmdline = fs::read_to_string(d.join("target/etc/kernel/cmdline")).unwrap();
+    assert!(
+        cmdline.starts_with("rd.luks.name=1111-2222=wolosroot root=/dev/mapper/wolosroot rootflags=subvol=@wolos-a ro"),
+        "{cmdline}"
+    );
+    assert!(!d.join("keys").exists(), "the throw-away key is removed");
+    let crypt = read("image/files/usr/lib/wolos/repart.d-crypt/20-root.conf");
+    assert!(
+        crypt.lines().any(|x| x == "Encrypt=key-file")
+            && crypt.lines().any(|x| x == "Format=btrfs")
+    );
+}
+
+#[test]
+fn encryption_that_cannot_be_set_up_stops_before_any_write() {
+    let d = scratch("crypt-refused");
+    let o = install_with(&d, "/dev/nvme0n1", "refuse");
+    assert_eq!(o.status.code(), Some(2));
+    let l = log(&d);
+    assert!(
+        !l.contains("systemd-repart") && !l.contains("cryptsetup"),
+        "{l}"
+    );
 }

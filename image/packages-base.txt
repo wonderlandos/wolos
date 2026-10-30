@@ -12,6 +12,8 @@ plymouth
 # Installer and A/B slots: GPT, ESP, btrfs, systemd-boot (in systemd), unsquash of the live root.
 arch-install-scripts
 btrfs-progs
+cryptsetup
+fsverity-utils
 gptfdisk
 dosfstools
 squashfs-tools

@@ -197,6 +197,12 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "update.status" => update_status(env, json),
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
+        "seal.apply" => crate::seal::apply(env, inv),
+        "seal.check" => crate::seal::check(env),
+        "encrypt.decide" => crate::seal::decide(env, inv),
+        "encrypt.enroll" => crate::seal::enroll(env, inv),
+        "encrypt.words" => crate::seal::words(env, inv),
+        "encrypt.hooks" => crate::seal::hooks(env, inv),
         "update.rollback" => crate::verbs::rollback(env, inv.get("be")),
         "mirror.status" | "mirror.rank" | "mirror.gate" | "mirror.kernel" => {
             crate::mirror::run(env, inv.action, inv.flag("yes"), json)
@@ -745,7 +751,8 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let replace = env
         .capture(&up::be::LIST_ARGV)
         .is_some_and(|t| up::be::parse(&t).iter().any(|b| b.name == slot));
-    let Some(steps) = up::plan(&slot, replace, date.as_deref()) else {
+    let cmdline = env.read_file(Path::new("/proc/cmdline"));
+    let Some(steps) = up::plan_for(&slot, replace, date.as_deref(), cmdline.as_deref()) else {
         return fail(
             env,
             ErrorCode::Usage,

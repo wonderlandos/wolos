@@ -249,6 +249,42 @@ pub const TREE: &[Cmd] = &[
         "Boot the given (or the previous) restore point next (administrator)",
     ),
     cmd(
+        &["seal", "apply"],
+        "seal.apply",
+        &[opt("root"), opt("digestfile")],
+        "Make a system slot read-only and record fs-verity digests (root)",
+    ),
+    cmd(
+        &["seal", "check"],
+        "seal.check",
+        &[],
+        "Boot check: the running slot matches what was sealed, else the other slot starts",
+    ),
+    cmd(
+        &["encrypt", "decide"],
+        "encrypt.decide",
+        &[opt("a")],
+        "Disk encryption for the installer: off, tpm2 or passphrase",
+    ),
+    cmd(
+        &["encrypt", "enroll"],
+        "encrypt.enroll",
+        &[opt("a"), opt("b"), opt("c"), opt("d")],
+        "Installer: enroll TPM2 or passphrase and a recovery key (root)",
+    ),
+    cmd(
+        &["encrypt", "words"],
+        "encrypt.words",
+        &[opt("a"), opt("b")],
+        "Installer: kernel command line words that unlock the disk",
+    ),
+    cmd(
+        &["encrypt", "hooks"],
+        "encrypt.hooks",
+        &[opt("a")],
+        "Installer: add the unlock hook to an mkinitcpio config",
+    ),
+    cmd(
         &["mirror", "status"],
         "mirror.status",
         &[],

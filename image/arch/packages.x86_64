@@ -15,6 +15,8 @@ plymouth
 # dosfstools for the file systems, unsquash of the live root.
 arch-install-scripts
 btrfs-progs
+cryptsetup
+fsverity-utils
 dosfstools
 squashfs-tools
 efibootmgr

@@ -1,0 +1,15 @@
+[Unit]
+Description=Check the system files against their seal; a mismatch starts the previous version
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+ConditionPathExists=/usr/lib/wolos/verity.manifest
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/wol seal check
+# Exit 1 = the check failed and said so; boot goes on, or restarts into the other slot.
+SuccessExitStatus=1
+
+[Install]
+WantedBy=sysinit.target
