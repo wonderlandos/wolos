@@ -81,7 +81,7 @@ file-roller
 baobab
 # Games (archicture/modules/games.md): native Steam (multilib) and Wine for Windows programs.
 steam
-wine
+umu-launcher
 gamemode               # games can run through gamemoderun
 lib32-gamemode
 rtkit                  # realtime audio threads (PipeWire)
