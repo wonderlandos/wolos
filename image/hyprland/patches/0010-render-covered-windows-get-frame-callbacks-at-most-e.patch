@@ -1,0 +1,265 @@
+From 3e3686b45e138c63030517f314964b2c41a6ac70 Mon Sep 17 00:00:00 2001
+From: klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 11:50:47 -0300
+Subject: [PATCH 10/12] render: covered windows get frame callbacks at most
+ every 33 ms or 2 updates when more than 10 windows are open
+
+New misc keys: throttle_occluded, throttle_window_count, throttle_occlusion_cutoff, throttle_freeze_ms,
+throttle_freeze_updates, reconfigure_ack_timeout_ms, frame_deadline.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/config/values/ConfigValues.cpp |  8 ++++
+ src/helpers/WolosPerf.hpp          | 65 ++++++++++++++++++++++++++++++
+ src/render/Renderer.cpp            | 61 ++++++++++++++++++++++++++++
+ src/render/Renderer.hpp            |  5 +++
+ tests/helpers/WolosPerf.cpp        | 35 ++++++++++++++++
+ 5 files changed, 174 insertions(+)
+
+diff --git a/src/config/values/ConfigValues.cpp b/src/config/values/ConfigValues.cpp
+index 4954aeb..1679991 100644
+--- a/src/config/values/ConfigValues.cpp
++++ b/src/config/values/ConfigValues.cpp
+@@ -508,6 +508,14 @@ std::vector<SP<IValue>> Values::getConfigValues() {
+                 {.min = 1, .max = 3600}),
+         MS<Bool>("misc:middle_click_paste", "whether to enable middle-click-paste (aka primary selection)", true),
+         MS<Int>("misc:render_unfocused_fps", "the maximum limit for renderunfocused windows' fps in the background", 15, {.min = 1, .max = 120}),
++        MS<Bool>("misc:throttle_occluded", "withhold frame callbacks from covered windows while many windows are open", true),
++        MS<Int>("misc:throttle_window_count", "throttling starts when more than this many windows are mapped", 10, {.min = 0, .max = 1000}),
++        MS<Float>("misc:throttle_occlusion_cutoff", "a window with less than this visible fraction counts as occluded", 0.2F, {.min = 0, .max = 1}),
++        MS<Float>("misc:throttle_freeze_ms", "an occluded window gets a frame callback at least this often (ms)", 33.3F, {.min = 1, .max = 1000}),
++        MS<Int>("misc:throttle_freeze_updates", "or after this many skipped frame opportunities, whichever comes first", 2, {.min = 1, .max = 60}),
++        MS<Int>("misc:reconfigure_ack_timeout_ms", "longest wait for clients to ack a resized output before rendering on (0 = do not wait)", 250,
++                {.min = 0, .max = 5000}),
++        MS<Float>("misc:frame_deadline", "fraction of the frame interval a render may take before it counts as late", 0.95F, {.min = 0.1F, .max = 1}),
+         MS<Bool>("misc:disable_xdg_env_checks", "disable the warning if XDG environment is externally managed", false),
+         MS<Bool>("misc:disable_hyprland_guiutils_check", "disable the warning if hyprland-guiutils is missing", false),
+         MS<Bool>("misc:disable_watchdog_warning", "whether to disable the warning about not using start-hyprland.", false),
+diff --git a/src/helpers/WolosPerf.hpp b/src/helpers/WolosPerf.hpp
+index ed0dc9a..0fe433b 100644
+--- a/src/helpers/WolosPerf.hpp
++++ b/src/helpers/WolosPerf.hpp
+@@ -4,6 +4,7 @@
+ 
+ #include <algorithm>
+ #include <chrono>
++#include <vector>
+ 
+ namespace WolosPerf {
+     // Slow safety tick for the cursor-hiding check (was a fixed 2 Hz poll).
+@@ -39,4 +40,68 @@ namespace WolosPerf {
+     inline bool autoScanoutAllows(bool contentGame, bool contentVideo, bool tearingHint) {
+         return contentGame || contentVideo || tearingHint;
+     }
++
++    // Surface frame throttling. A window that is (almost) fully covered, while many windows compete, only
++    // gets a frame callback every `freezeMs` or after `freezeUpdates` skipped opportunities, whichever is first.
++    struct SRect {
++        double x = 0, y = 0, w = 0, h = 0;
++    };
++    struct SThrottleConfig {
++        bool   enabled        = true;
++        int    windowCount    = 10;   // throttle only when MORE windows than this are mapped
++        double cutoff         = 0.2;  // visible fraction below this counts as occluded
++        double freezeMs       = 33.3; // longest stretch without a frame callback
++        int    freezeUpdates  = 2;    // longest run of skipped callbacks
++    };
++    struct SThrottleState {
++        double sinceSentMs = 1e9;
++        int    skipped     = 0;
++    };
++
++    // Fraction of `self` not covered by any rectangle in `above`. Coordinate-compressed grid: exact, O(n^3) for n occluders.
++    inline double visibleFraction(const SRect& self, const std::vector<SRect>& above) {
++        if (self.w <= 0 || self.h <= 0)
++            return 0;
++        std::vector<double> xs{self.x, self.x + self.w}, ys{self.y, self.y + self.h};
++        auto                clampx = [&](double v) { return std::clamp(v, self.x, self.x + self.w); };
++        auto                clampy = [&](double v) { return std::clamp(v, self.y, self.y + self.h); };
++        for (const auto& r : above) {
++            xs.push_back(clampx(r.x));
++            xs.push_back(clampx(r.x + r.w));
++            ys.push_back(clampy(r.y));
++            ys.push_back(clampy(r.y + r.h));
++        }
++        std::sort(xs.begin(), xs.end());
++        std::sort(ys.begin(), ys.end());
++        double visible = 0;
++        for (size_t i = 0; i + 1 < xs.size(); ++i) {
++            for (size_t j = 0; j + 1 < ys.size(); ++j) {
++                const double cx = (xs[i] + xs[i + 1]) / 2, cy = (ys[j] + ys[j + 1]) / 2;
++                if (xs[i + 1] <= xs[i] || ys[j + 1] <= ys[j])
++                    continue;
++                bool covered = false;
++                for (const auto& r : above)
++                    if (cx >= r.x && cx < r.x + r.w && cy >= r.y && cy < r.y + r.h) {
++                        covered = true;
++                        break;
++                    }
++                if (!covered)
++                    visible += (xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j]);
++            }
++        }
++        return visible / (self.w * self.h);
++    }
++
++    // True when the surface gets its frame callback now. `elapsedMs` is the time since the previous opportunity.
++    inline bool allowFrameCallback(SThrottleState& st, double visible, int mappedWindows, double elapsedMs, const SThrottleConfig& c) {
++        st.sinceSentMs += elapsedMs;
++        const bool throttled = c.enabled && mappedWindows > c.windowCount && visible < c.cutoff;
++        if (!throttled || st.sinceSentMs >= c.freezeMs || st.skipped >= c.freezeUpdates) {
++            st.sinceSentMs = 0;
++            st.skipped     = 0;
++            return true;
++        }
++        st.skipped++;
++        return false;
++    }
+ }
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index 06a1b6f..375e820 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -2511,12 +2511,73 @@ void IHyprRenderer::renderWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace
+ }
+ 
+ void IHyprRenderer::sendFrameEventsToWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& now) {
++    static auto PTHROTTLE   = CConfigValue<Config::INTEGER>("misc:throttle_occluded");
++    static auto PCOUNT      = CConfigValue<Config::INTEGER>("misc:throttle_window_count");
++    static auto PCUTOFF     = CConfigValue<Config::FLOAT>("misc:throttle_occlusion_cutoff");
++    static auto PFREEZEMS   = CConfigValue<Config::FLOAT>("misc:throttle_freeze_ms");
++    static auto PFREEZEUPD  = CConfigValue<Config::INTEGER>("misc:throttle_freeze_updates");
++
++    const WolosPerf::SThrottleConfig CFG{
++        .enabled = *PTHROTTLE, .windowCount = sc<int>(*PCOUNT), .cutoff = *PCUTOFF, .freezeMs = *PFREEZEMS, .freezeUpdates = sc<int>(*PFREEZEUPD)};
++
++    const auto                       elapsedMs = std::chrono::duration<double, std::milli>(now - m_wolosLastFrameEvents).count();
++    m_wolosLastFrameEvents                     = now;
++
++    // Windows in stacking order, bottom first: whatever comes after a window can cover it.
++    std::vector<PHLWINDOW> mapped;
++    for (const auto& w : Desktop::windowState()->windows())
++        if (w->aliveAndVisible() && w->m_monitor == pMonitor)
++            mapped.emplace_back(w);
++    const int  COUNT = sc<int>(mapped.size());
++    const auto FS    = CFG.enabled && COUNT > CFG.windowCount ? Fullscreen::controller()->getFullscreenWindow(pWorkspace, true) : nullptr;
++
++    std::unordered_map<const void*, WolosPerf::SThrottleState> seen;
++    bool                                                       skipChildren = false;
++
+     for (const auto& view : Desktop::View::getViewsForWorkspace(pWorkspace)) {
+         if (!view->aliveAndVisible())
+             continue;
+ 
++        if (view->type() == Desktop::View::VIEW_TYPE_WINDOW) {
++            skipChildren = false;
++            if (CFG.enabled && COUNT > CFG.windowCount) {
++                const auto WPTR = Hyprutils::Memory::dynamicPointerCast<Desktop::View::CWindow>(view);
++                const auto W    = WPTR.get();
++                double     visible = 1.0;
++                if (FS && FS.get() != W)
++                    visible = 0.0; // something fullscreen covers the whole workspace
++                else {
++                    const auto               BOX = W->getWindowMainSurfaceBox();
++                    std::vector<WolosPerf::SRect> above;
++                    bool                     after = false;
++                    for (const auto& o : mapped) {
++                        if (o.get() == W) {
++                            after = true;
++                            continue;
++                        }
++                        if (after && o->m_workspace == pWorkspace && o->opaque()) {
++                            const auto OB = o->getWindowMainSurfaceBox();
++                            above.push_back(WolosPerf::SRect{OB.x, OB.y, OB.w, OB.h});
++                        }
++                    }
++                    visible = WolosPerf::visibleFraction(WolosPerf::SRect{BOX.x, BOX.y, BOX.w, BOX.h}, above);
++                }
++                auto& st = m_wolosThrottle[W];
++                skipChildren = !WolosPerf::allowFrameCallback(st, visible, COUNT, elapsedMs, CFG);
++                seen[W]      = st;
++            } else
++                m_wolosThrottle.clear();
++        } else if (view->type() == Desktop::View::VIEW_TYPE_LAYER_SURFACE || view->type() == Desktop::View::VIEW_TYPE_LOCK_SCREEN)
++            skipChildren = false;
++
++        if (skipChildren)
++            continue;
++
+         view->wlSurface()->resource()->frame(now);
+     }
++
++    if (!seen.empty())
++        m_wolosThrottle = std::move(seen); // drops entries of windows that are gone
+ }
+ 
+ void IHyprRenderer::setSurfaceScanoutMode(SP<CWLSurfaceResource> surface, PHLMONITOR monitor) {
+diff --git a/src/render/Renderer.hpp b/src/render/Renderer.hpp
+index fcb1ff1..de1a9d0 100644
+--- a/src/render/Renderer.hpp
++++ b/src/render/Renderer.hpp
+@@ -21,6 +21,8 @@
+ #include "./pass/TextureMatteElement.hpp"
+ #include "./pass/TransformedWindowPassElement.hpp"
+ #include "types.hpp"
++#include "../helpers/WolosPerf.hpp"
++#include <unordered_map>
+ #include "../output/Monitor.hpp"
+ #include "../desktop/state/Fadeout.hpp"
+ #include "../desktop/view/LayerSurface.hpp"
+@@ -306,6 +308,9 @@ namespace Render {
+         std::vector<SP<IRenderbuffer>> m_renderbuffers;
+         std::vector<PHLWINDOWREF>      m_renderUnfocused;
+         SP<CEventLoopTimer>            m_renderUnfocusedTimer;
++        // WolOS: per-window frame-callback throttle state (see WolosPerf.hpp)
++        std::unordered_map<const void*, WolosPerf::SThrottleState> m_wolosThrottle;
++        Time::steady_tp                m_wolosLastFrameEvents = Time::steadyNow();
+ 
+         friend class CRenderPass;
+         friend class Render::GL::CHyprOpenGLImpl;
+diff --git a/tests/helpers/WolosPerf.cpp b/tests/helpers/WolosPerf.cpp
+index 677b169..2d9b030 100644
+--- a/tests/helpers/WolosPerf.cpp
++++ b/tests/helpers/WolosPerf.cpp
+@@ -49,3 +49,38 @@ TEST(WolosPerf, autoScanoutCoversGamesAndVideo) {
+     EXPECT_TRUE(autoScanoutAllows(false, false, true));   // Proton game: tearing hint, no content type
+     EXPECT_FALSE(autoScanoutAllows(false, false, false)); // a fullscreen editor keeps composition
+ }
++
++TEST(WolosPerf, visibleFractionSubtractsOverlappingOccluders) {
++    SRect self{0, 0, 100, 100};
++    EXPECT_DOUBLE_EQ(visibleFraction(self, {}), 1.0);
++    EXPECT_DOUBLE_EQ(visibleFraction(self, {{0, 0, 100, 100}}), 0.0);
++    EXPECT_DOUBLE_EQ(visibleFraction(self, {{0, 0, 50, 100}}), 0.5);
++    EXPECT_DOUBLE_EQ(visibleFraction(self, {{0, 0, 50, 100}, {25, 0, 50, 100}}), 0.25); // overlap counted once
++    EXPECT_DOUBLE_EQ(visibleFraction(self, {{-50, -50, 300, 300}}), 0.0);                // larger than self
++    EXPECT_DOUBLE_EQ(visibleFraction(self, {{200, 200, 10, 10}}), 1.0);                  // elsewhere
++}
++
++TEST(WolosPerf, occludedSurfacesAreFrozenForTwoUpdatesOrAboutThirtyThreeMs) {
++    SThrottleConfig c;
++    SThrottleState  st;
++    EXPECT_TRUE(allowFrameCallback(st, 0.0, 11, 16.6, c));  // first opportunity always delivers
++    EXPECT_FALSE(allowFrameCallback(st, 0.0, 11, 16.6, c)); // frozen
++    EXPECT_FALSE(allowFrameCallback(st, 0.0, 11, 16.6, c)); // 33.2 ms, 2 skipped
++    EXPECT_TRUE(allowFrameCallback(st, 0.0, 11, 16.6, c));  // 2 updates reached
++    SThrottleState st2;
++    allowFrameCallback(st2, 0.0, 11, 1.0, c);
++    EXPECT_FALSE(allowFrameCallback(st2, 0.0, 11, 10.0, c));
++    EXPECT_TRUE(allowFrameCallback(st2, 0.0, 11, 23.4, c)); // 33.4 ms >= 33.3
++}
++
++TEST(WolosPerf, throttleNeedsManyWindowsAndLowVisibility) {
++    SThrottleConfig c;
++    SThrottleState  st;
++    allowFrameCallback(st, 1.0, 20, 16.0, c);
++    EXPECT_TRUE(allowFrameCallback(st, 1.0, 20, 16.0, c));  // visible window: never throttled
++    EXPECT_TRUE(allowFrameCallback(st, 0.19, 10, 16.0, c)); // exactly 10 windows: not "more than 10"
++    EXPECT_TRUE(allowFrameCallback(st, 0.2, 20, 16.0, c));  // at the cutoff: still visible
++    EXPECT_FALSE(allowFrameCallback(st, 0.19, 20, 1.0, c)); // below the cutoff with 20 windows
++    c.enabled = false;
++    EXPECT_TRUE(allowFrameCallback(st, 0.0, 20, 1.0, c));
++}
+-- 
+2.54.0
+

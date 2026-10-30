@@ -1,0 +1,158 @@
+From 7302240cc625110d6bbf9995472c2b8e18d44c7e Mon Sep 17 00:00:00 2001
+From: klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 11:51:21 -0300
+Subject: [PATCH 11/12] output: after a mode change, rendering waits at most
+ 250 ms for clients to ack their new size
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/helpers/WolosPerf.hpp   | 28 ++++++++++++++++++++++++++++
+ src/output/Monitor.cpp      |  3 +++
+ src/output/Monitor.hpp      |  3 +++
+ src/render/Renderer.cpp     | 26 ++++++++++++++++++++++++++
+ tests/helpers/WolosPerf.cpp | 16 ++++++++++++++++
+ 5 files changed, 76 insertions(+)
+
+diff --git a/src/helpers/WolosPerf.hpp b/src/helpers/WolosPerf.hpp
+index 0fe433b..7f96ad6 100644
+--- a/src/helpers/WolosPerf.hpp
++++ b/src/helpers/WolosPerf.hpp
+@@ -7,6 +7,9 @@
+ #include <vector>
+ 
+ namespace WolosPerf {
++    inline double nowMs() {
++        return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
++    }
+     // Slow safety tick for the cursor-hiding check (was a fixed 2 Hz poll).
+     inline constexpr int CURSOR_HEARTBEAT_MS = 5000;
+ 
+@@ -104,4 +107,29 @@ namespace WolosPerf {
+         st.skipped++;
+         return false;
+     }
++
++    // Output reconfigure barrier: after a mode change, rendering waits for clients to ack their new size,
++    // but never longer than `timeoutMs`.
++    struct SReconfigureBarrier {
++        bool   active  = false;
++        double startMs = 0;
++
++        void   begin(double nowMs) {
++            active  = true;
++            startMs = nowMs;
++        }
++        // True while the render should still wait. Releases itself when nobody is pending or the time is up.
++        bool hold(double nowMs, int pendingClients, double timeoutMs) {
++            if (!active)
++                return false;
++            if (pendingClients <= 0 || timeoutMs <= 0 || nowMs - startMs >= timeoutMs) {
++                active = false;
++                return false;
++            }
++            return true;
++        }
++        double remainingMs(double nowMs, double timeoutMs) const {
++            return std::max(1.0, timeoutMs - (nowMs - startMs));
++        }
++    };
+ }
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+index f060b5b..4b0f45c 100644
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -1079,6 +1079,9 @@ bool CMonitor::applyMonitorRule(Config::CMonitorRule&& pMonitorRule) {
+ 
+     m_events.modeChanged.emit();
+ 
++    if (OLD_PIXEL_SIZE != m_pixelSize)
++        m_wolosReconfigure.begin(WolosPerf::nowMs());
++
+     return true;
+ }
+ 
+diff --git a/src/output/Monitor.hpp b/src/output/Monitor.hpp
+index 945fecd..a376d8c 100644
+--- a/src/output/Monitor.hpp
++++ b/src/output/Monitor.hpp
+@@ -4,6 +4,7 @@
+ #include <stack>
+ #include <vector>
+ #include "../SharedDefs.hpp"
++#include "../helpers/WolosPerf.hpp"
+ #include "../helpers/MiscFunctions.hpp"
+ #include "../helpers/WLClasses.hpp"
+ #include <array>
+@@ -117,6 +118,8 @@ namespace Monitor {
+ 
+         SP<CEventLoopTimer>         m_dpmsRetryTimer;
+ 
++        WolosPerf::SReconfigureBarrier m_wolosReconfigure;
++        SP<CEventLoopTimer>         m_wolosReconfigureTimer;
+         bool                        m_pendingFrame    = false; // if we schedule a frame during rendering, reschedule it after
+         bool                        m_renderingActive = false;
+ 
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index 375e820..725b09f 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -2040,6 +2040,32 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
+         return;
+     }
+ 
++    // After a mode change, give clients up to misc:reconfigure_ack_timeout_ms to ack their resized surfaces.
++    if (pMonitor->m_wolosReconfigure.active) {
++        static auto PACKMS = CConfigValue<Config::INTEGER>("misc:reconfigure_ack_timeout_ms");
++        int         pending = 0;
++        for (const auto& w : Desktop::windowState()->windows())
++            if (w->aliveAndVisible() && w->m_monitor == pMonitor && !w->m_isX11 && !w->m_pendingSizeAcks.empty())
++                pending++;
++        const double NOWMS = WolosPerf::nowMs();
++        if (pMonitor->m_wolosReconfigure.hold(NOWMS, pending, *PACKMS)) {
++            // a client commit schedules a frame too; the timer guarantees one at the deadline
++            if (!pMonitor->m_wolosReconfigureTimer || !pMonitor->m_wolosReconfigureTimer->armed()) {
++                if (pMonitor->m_wolosReconfigureTimer)
++                    g_pEventLoopManager->removeTimer(pMonitor->m_wolosReconfigureTimer);
++                pMonitor->m_wolosReconfigureTimer = makeShared<CEventLoopTimer>(
++                    std::chrono::milliseconds(sc<int>(pMonitor->m_wolosReconfigure.remainingMs(NOWMS, *PACKMS))),
++                    [mon = PHLMONITORREF{pMonitor}](SP<CEventLoopTimer>, void*) {
++                        if (mon)
++                            mon->scheduleFrame();
++                    },
++                    nullptr);
++                g_pEventLoopManager->addTimer(pMonitor->m_wolosReconfigureTimer);
++            }
++            return;
++        }
++    }
++
+     if (!*PDAMAGEBLINK)
+         damageBlinkCleanup = 0;
+ 
+diff --git a/tests/helpers/WolosPerf.cpp b/tests/helpers/WolosPerf.cpp
+index 2d9b030..629881b 100644
+--- a/tests/helpers/WolosPerf.cpp
++++ b/tests/helpers/WolosPerf.cpp
+@@ -84,3 +84,19 @@ TEST(WolosPerf, throttleNeedsManyWindowsAndLowVisibility) {
+     c.enabled = false;
+     EXPECT_TRUE(allowFrameCallback(st, 0.0, 20, 1.0, c));
+ }
++
++TEST(WolosPerf, reconfigureWaitsForAcksButNeverPast250ms) {
++    SReconfigureBarrier b;
++    EXPECT_FALSE(b.hold(0, 3, 250)); // nothing started
++    b.begin(1000);
++    EXPECT_TRUE(b.hold(1010, 2, 250));
++    EXPECT_TRUE(b.hold(1249, 1, 250));
++    EXPECT_FALSE(b.hold(1250, 1, 250)); // timed out
++    EXPECT_FALSE(b.hold(1251, 1, 250)); // stays released
++    b.begin(2000);
++    EXPECT_FALSE(b.hold(2005, 0, 250)); // all clients acked
++    b.begin(3000);
++    EXPECT_FALSE(b.hold(3001, 5, 0));   // timeout 0 disables waiting
++    b.begin(4000);
++    EXPECT_DOUBLE_EQ(b.remainingMs(4100, 250), 150.0);
++}
+-- 
+2.54.0
+

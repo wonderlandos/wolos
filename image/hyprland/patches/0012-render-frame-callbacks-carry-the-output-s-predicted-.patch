@@ -1,0 +1,153 @@
+From fdae84b66b8a731a657867b155d8fde0d6edc5fa Mon Sep 17 00:00:00 2001
+From: klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 11:51:27 -0300
+Subject: [PATCH 12/12] render: frame callbacks carry the output's predicted
+ next present time; late-render deadline is misc:frame_deadline of the frame
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/helpers/WolosPerf.hpp            | 30 ++++++++++++++++++++++++++++
+ src/output/Monitor.cpp               |  1 +
+ src/output/Monitor.hpp               |  1 +
+ src/output/MonitorFrameScheduler.cpp |  4 +++-
+ src/render/Renderer.cpp              |  6 +++++-
+ tests/helpers/WolosPerf.cpp          | 17 ++++++++++++++++
+ 6 files changed, 57 insertions(+), 2 deletions(-)
+
+diff --git a/src/helpers/WolosPerf.hpp b/src/helpers/WolosPerf.hpp
+index 7f96ad6..5b3c20f 100644
+--- a/src/helpers/WolosPerf.hpp
++++ b/src/helpers/WolosPerf.hpp
+@@ -4,6 +4,7 @@
+ 
+ #include <algorithm>
+ #include <chrono>
++#include <cmath>
+ #include <vector>
+ 
+ namespace WolosPerf {
+@@ -132,4 +133,33 @@ namespace WolosPerf {
+             return std::max(1.0, timeoutMs - (nowMs - startMs));
+         }
+     };
++
++    // Per-output present prediction from presentation feedback. Frame callbacks carry the predicted next present
++    // time (monotonic per output), so client animations advance to what will be on screen.
++    struct SPresentPredictor {
++        double lastPresentMs = 0; // last reported present time
++        double intervalMs    = 0; // reported refresh interval
++        double lastGivenMs   = 0;
++
++        void   onPresented(double presentMs, double refreshIntervalMs) {
++            lastPresentMs = presentMs;
++            intervalMs    = refreshIntervalMs;
++        }
++        // First present strictly after `nowMs`; `nowMs` itself when no feedback arrived yet.
++        double next(double nowMs) {
++            double t = nowMs;
++            if (intervalMs > 0.5 && lastPresentMs > 0) {
++                const double n = std::floor((nowMs - lastPresentMs) / intervalMs) + 1;
++                t              = lastPresentMs + std::max(0.0, n) * intervalMs;
++            }
++            t           = std::max(t, lastGivenMs);
++            lastGivenMs = t;
++            return t;
++        }
++    };
++
++    // A render that has taken longer than this share of the frame interval counts as late.
++    inline bool renderMissedDeadline(double renderedMs, float refreshHz, double deadline) {
++        return refreshHz > 0 && renderedMs >= deadline * 1000.0 / refreshHz;
++    }
+ }
+diff --git a/src/output/Monitor.cpp b/src/output/Monitor.cpp
+index 4b0f45c..5047332 100644
+--- a/src/output/Monitor.cpp
++++ b/src/output/Monitor.cpp
+@@ -161,6 +161,7 @@ void CMonitor::onConnect(bool noRule) {
+         }
+ 
+         PROTO::presentation->onPresented(m_self.lock(), ts, event.refresh, event.seq, flags);
++        m_wolosPresent.onPresented(ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6, event.refresh / 1e6);
+ 
+         if (m_zoomAnimFrameCounter < 5) {
+             m_zoomAnimFrameCounter++;
+diff --git a/src/output/Monitor.hpp b/src/output/Monitor.hpp
+index a376d8c..54b8dbc 100644
+--- a/src/output/Monitor.hpp
++++ b/src/output/Monitor.hpp
+@@ -119,6 +119,7 @@ namespace Monitor {
+         SP<CEventLoopTimer>         m_dpmsRetryTimer;
+ 
+         WolosPerf::SReconfigureBarrier m_wolosReconfigure;
++        WolosPerf::SPresentPredictor   m_wolosPresent;
+         SP<CEventLoopTimer>         m_wolosReconfigureTimer;
+         bool                        m_pendingFrame    = false; // if we schedule a frame during rendering, reschedule it after
+         bool                        m_renderingActive = false;
+diff --git a/src/output/MonitorFrameScheduler.cpp b/src/output/MonitorFrameScheduler.cpp
+index 9299bfb..b68de21 100644
+--- a/src/output/MonitorFrameScheduler.cpp
++++ b/src/output/MonitorFrameScheduler.cpp
+@@ -25,7 +25,9 @@ void CMonitorFrameScheduler::onSyncFired() {
+     // Sync fired: reset submitted state, set as rendered. Check the last render time. If we are running
+     // late, we will instantly render here.
+ 
+-    if (std::chrono::duration_cast<std::chrono::microseconds>(hrc::now() - m_lastRenderBegun).count() / 1000.F < 1000.F / PMONITOR->m_refreshRate) {
++    static auto PDEADLINE = CConfigValue<Config::FLOAT>("misc:frame_deadline");
++
++    if (!WolosPerf::renderMissedDeadline(std::chrono::duration_cast<std::chrono::microseconds>(hrc::now() - m_lastRenderBegun).count() / 1000.0, PMONITOR->m_refreshRate, *PDEADLINE)) {
+         // we are in. Frame is valid. We can just render as normal.
+         Log::logger->log(Log::TRACE, "CMonitorFrameScheduler: {} -> onSyncFired, didn't miss.", PMONITOR->m_name);
+         m_renderAtFrame = true;
+diff --git a/src/render/Renderer.cpp b/src/render/Renderer.cpp
+index 725b09f..304d120 100644
+--- a/src/render/Renderer.cpp
++++ b/src/render/Renderer.cpp
+@@ -2546,6 +2546,10 @@ void IHyprRenderer::sendFrameEventsToWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE
+     const WolosPerf::SThrottleConfig CFG{
+         .enabled = *PTHROTTLE, .windowCount = sc<int>(*PCOUNT), .cutoff = *PCUTOFF, .freezeMs = *PFREEZEMS, .freezeUpdates = sc<int>(*PFREEZEUPD)};
+ 
++    // Callbacks carry the output's predicted next present time (from presentation feedback), not "now".
++    const auto PREDICTEDMS = pMonitor->m_wolosPresent.next(WolosPerf::nowMs());
++    const auto predicted   = now + std::chrono::duration_cast<Time::steady_dur>(std::chrono::duration<double, std::milli>(PREDICTEDMS - WolosPerf::nowMs()));
++
+     const auto                       elapsedMs = std::chrono::duration<double, std::milli>(now - m_wolosLastFrameEvents).count();
+     m_wolosLastFrameEvents                     = now;
+ 
+@@ -2599,7 +2603,7 @@ void IHyprRenderer::sendFrameEventsToWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE
+         if (skipChildren)
+             continue;
+ 
+-        view->wlSurface()->resource()->frame(now);
++        view->wlSurface()->resource()->frame(predicted);
+     }
+ 
+     if (!seen.empty())
+diff --git a/tests/helpers/WolosPerf.cpp b/tests/helpers/WolosPerf.cpp
+index 629881b..930d3e4 100644
+--- a/tests/helpers/WolosPerf.cpp
++++ b/tests/helpers/WolosPerf.cpp
+@@ -100,3 +100,20 @@ TEST(WolosPerf, reconfigureWaitsForAcksButNeverPast250ms) {
+     b.begin(4000);
+     EXPECT_DOUBLE_EQ(b.remainingMs(4100, 250), 150.0);
+ }
++
++TEST(WolosPerf, nextPresentFollowsTheOutputsRefreshGrid) {
++    SPresentPredictor p;
++    EXPECT_DOUBLE_EQ(p.next(100.0), 100.0); // no feedback yet: now
++    p.onPresented(1000.0, 16.0);
++    EXPECT_DOUBLE_EQ(p.next(1005.0), 1016.0);
++    EXPECT_DOUBLE_EQ(p.next(1020.0), 1032.0);
++    EXPECT_DOUBLE_EQ(p.next(1031.0), 1032.0); // never goes backwards
++    p.onPresented(1048.0, 8.0);               // mode change to 125 Hz
++    EXPECT_DOUBLE_EQ(p.next(1049.0), 1056.0);
++}
++
++TEST(WolosPerf, renderDeadlineIs95PercentOfTheFrame) {
++    EXPECT_FALSE(renderMissedDeadline(15.0, 60.F, 0.95)); // 15.83 ms budget
++    EXPECT_TRUE(renderMissedDeadline(15.9, 60.F, 0.95));
++    EXPECT_FALSE(renderMissedDeadline(100.0, 0.F, 0.95)); // unknown refresh: never late
++}
+-- 
+2.54.0
+
