@@ -28,6 +28,9 @@ Frontmost QoS and placement: `plugins/wol-hypr` + `crates/realtime` C ABI (`wol_
 | Content-only layer commits (menu bar clock, Dock badge) damage only the changed pixels; quiet backdrop commits keep the cached blur | `blur.rs` (redo on backdrop change) | `CLayerSurface::onCommit` | patch 0007 | not measured (needs GPU run) |
 | Focusing a minimised window (Dock click, `focuswindow`, app activation) restores it to the current desktop | - | `CFocusState::fullWindowFocus`, `WolosWindow.hpp` | patch 0008 | - |
 | `direct_scanout = 2` also scans out fullscreen video (content-type video) and tearing-hint games | `backend_drm.rs` | `CMonitor::isDSBlocked` | patch 0009 | not measured (needs GPU run) |
+| Covered windows get frame callbacks every 33.3 ms or 2 updates once more than 10 windows are open (`misc:throttle_*`) | - | `sendFrameEventsToWorkspace`, `WolosPerf::allowFrameCallback` | patch 0010 | not measured |
+| After a mode change, rendering waits at most 250 ms for clients to ack their new size (`misc:reconfigure_ack_timeout_ms`) | - | `renderMonitor`, `SReconfigureBarrier` | patch 0011 | not measured |
+| Frame callbacks carry the output's predicted next present time; a render past 95 % of the frame is late (`misc:frame_deadline`) | - | `SPresentPredictor`, `CMonitorFrameScheduler::onSyncFired` | patch 0012 | not measured |
 | Active window raised; CSD apps tagged `wol-csd`; placement after layout | - | `window.active`, `window.open`, `window.openLate` hooks | plugin | - |
 
 Measurement: Linux host (CachyOS), nested Wayland backend, 1280x800, one static alacritty window,

@@ -334,3 +334,57 @@ fn setup_and_login_redraw_whole_frames() {
         );
     }
 }
+
+/// The fork throttles covered windows, bounds the output-reconfigure wait and schedules against the
+/// predicted present time; the shipped conf states the tuned values explicitly.
+#[test]
+fn compositor_frame_policy_is_configured() {
+    let perf = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos-perf.conf");
+    let misc = &perf[perf.find("misc {").unwrap()..];
+    let misc = &misc[..misc.find("\n}").unwrap()];
+    let get = |k: &str| -> f64 {
+        misc.lines()
+            .find_map(|l| {
+                let l = l.split('#').next().unwrap().trim();
+                l.strip_prefix(k)?
+                    .trim()
+                    .strip_prefix('=')?
+                    .trim()
+                    .replace("true", "1")
+                    .parse()
+                    .ok()
+            })
+            .unwrap_or_else(|| panic!("misc:{k} missing"))
+    };
+    assert_eq!(get("throttle_occluded"), 1.0);
+    assert_eq!(get("throttle_window_count"), 10.0);
+    assert_eq!(get("throttle_occlusion_cutoff"), 0.2);
+    assert_eq!(get("throttle_freeze_ms"), 33.3);
+    assert_eq!(get("throttle_freeze_updates"), 2.0);
+    assert_eq!(get("reconfigure_ack_timeout_ms"), 250.0);
+    assert_eq!(get("frame_deadline"), 0.95);
+}
+
+/// The keys must exist in the fork, or Hyprland reports a config error at login.
+#[test]
+fn fork_registers_the_frame_policy_keys() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/patches");
+    let patches: String = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    for k in [
+        "misc:throttle_occluded",
+        "misc:throttle_window_count",
+        "misc:throttle_occlusion_cutoff",
+        "misc:throttle_freeze_ms",
+        "misc:throttle_freeze_updates",
+        "misc:reconfigure_ack_timeout_ms",
+        "misc:frame_deadline",
+    ] {
+        assert!(
+            patches.contains(&format!("+        MS<")) && patches.contains(&format!("\"{k}\"")),
+            "{k}"
+        );
+    }
+}
