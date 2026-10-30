@@ -57,7 +57,9 @@ b() { if eval "$2"; then echo "BOOT PASS $1"; else echo "BOOT FAIL $1"; fi; }
   b "installer said done" "grep -q 'wolos-install: done' serial-install.log"
   b "bystander disk byte-identical" '[ "$other_before" = "$other_after" ]'
   b "ESP + root partitions" "grep -qi 'type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B' parts.txt && grep -qi 'type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709' parts.txt"
-  b "installed disk boots (its login on serial + fresh screenshot)" "grep -aq 'login:' serial-boot.log && [ -s shot.png ]"
+  # The installed system has no serial console: the firmware's line proves the disk booted, and a
+  # UI screenshot has thousands of colors (firmware and text screens a handful).
+  b "installed disk boots (boot manager + UI screenshot)" "grep -aq 'starting Boot.*Linux Boot Manager' serial-boot.log && python3 -c \"import sys;from PIL import Image;sys.exit(len(Image.open('shot.png').convert('RGB').getcolors(1<<24))<1000)\""
 } > checks.txt
 grep '^BOOT ' checks.txt
 rm -f other.raw kernel initrd

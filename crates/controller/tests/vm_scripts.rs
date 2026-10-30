@@ -119,9 +119,10 @@ fn install_test_is_unattended_and_proves_the_bystander_disk_untouched() {
         "sfdisk -d",
         "WOLOS_KEEP_DISK",
         "$T/disk.raw",
-        // Booted means the installed system's own login on serial, not just any screenshot
-        // (firmware's "no bootable device" screen is a screenshot too).
-        "login:' serial-boot.log",
+        // Booted means the firmware started the disk's boot manager and the screen shows a UI,
+        // not just any screenshot (firmware's "no bootable device" screen is a screenshot too).
+        "Linux Boot Manager",
+        "getcolors",
         // One VM at a time: a leftover VM on the same disk and sockets starves the install.
         "pgrep -x qemu-system-x86",
     ] {
