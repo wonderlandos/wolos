@@ -133,13 +133,19 @@ mod tests {
     fn the_notice_shows_once_per_plug() {
         let a = Phone { serial: "A".into() };
         let b = Phone { serial: "B".into() };
-        assert_eq!(arrived(&[], &[a.clone()]), [a.clone()]);
+        assert_eq!(arrived(&[], std::slice::from_ref(&a)), vec![a.clone()]);
         assert!(
-            arrived(&[a.clone()], &[a.clone()]).is_empty(),
+            arrived(std::slice::from_ref(&a), std::slice::from_ref(&a)).is_empty(),
             "still plugged"
         );
-        assert_eq!(arrived(&[a.clone()], &[a.clone(), b.clone()]), [b]);
-        assert!(arrived(&[a], &[]).is_empty(), "unplugging says nothing");
+        assert_eq!(
+            arrived(std::slice::from_ref(&a), &[a.clone(), b.clone()]),
+            [b]
+        );
+        assert!(
+            arrived(std::slice::from_ref(&a), &[]).is_empty(),
+            "unplugging says nothing"
+        );
         assert_eq!(NOTICE_TITLE, "iPhone connected");
         assert!(NOTICE_BODY.contains("Trust"));
     }
