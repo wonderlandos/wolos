@@ -14,6 +14,8 @@ OVMF=${WOLOS_OVMF:-/usr/share/edk2/x64}
 command -v qemu-system-x86_64 >/dev/null || { echo "$0: qemu-system-x86_64 missing (pacman -S qemu-desktop)" >&2; exit 1; }
 [ -f "$OVMF/OVMF_CODE.4m.fd" ] || { echo "$0: no OVMF in $OVMF (pacman -S edk2-ovmf)" >&2; exit 1; }
 mkdir -p "$T"
+# One VM at a time: another VM on the same disk and sockets starves the install (15 GB hosts).
+pgrep -x qemu-system-x86 >/dev/null && { echo "test-install: another QEMU VM is running" >&2; exit 1; }
 if [ "${1:-}" = --build ]; then "$REPO/image/vm/build.sh" || exit 1; shift; fi
 ISO=${1:-$(ls -t "$VM"/out/wolos-*.iso 2>/dev/null | head -1)}
 [ -f "$ISO" ] || { echo "test-install: no ISO in $VM/out" >&2; exit 1; }
@@ -55,7 +57,7 @@ b() { if eval "$2"; then echo "BOOT PASS $1"; else echo "BOOT FAIL $1"; fi; }
   b "installer said done" "grep -q 'wolos-install: done' serial-install.log"
   b "bystander disk byte-identical" '[ "$other_before" = "$other_after" ]'
   b "ESP + root partitions" "grep -qi 'type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B' parts.txt && grep -qi 'type=4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709' parts.txt"
-  b "installed disk boots (fresh screenshot)" "[ -s shot.png ]"
+  b "installed disk boots (its login on serial + fresh screenshot)" "grep -aq 'login:' serial-boot.log && [ -s shot.png ]"
 } > checks.txt
 grep '^BOOT ' checks.txt
 rm -f other.raw kernel initrd
