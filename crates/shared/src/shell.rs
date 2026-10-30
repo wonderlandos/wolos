@@ -14,6 +14,8 @@ pub const PANELS: &[&str] = &[
     "widgets",
     // ⌥⌘Esc picker.
     "force-quit",
+    // ⇧⌘/: every keyboard shortcut on one sheet.
+    "shortcuts",
     // `show` moves the keyboard into the bar or the Dock (⌃F2, ⌃F3), `hide` gives it back.
     "menubar",
     "dock",
