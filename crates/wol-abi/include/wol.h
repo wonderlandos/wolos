@@ -39,12 +39,12 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 0
+#define WOL_VERSION_MINOR 1
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
 uint32_t wol_version(void);
-/* Runtime version as static text, "1.0.0". */
+/* Runtime version as static text, "1.1.0". */
 const char *wol_version_string(void);
 
 /* ---- Status and errors ---- */
@@ -152,6 +152,71 @@ wol_status wol_button_create(wol_context *context, const char *label, size_t len
 wol_status wol_widget_add_child(wol_widget *parent, wol_widget *child, wol_error **error);
 wol_widget *wol_widget_retain(wol_widget *widget);
 void wol_widget_release(wol_widget *widget);
+
+/* ---- 1.1: more Kit parts (WOL_1.1; check wol_version() >= 0x010100) ----
+ * A change made through these calls redraws the window the part is in, if it is shown.
+ * Change callbacks run after the person changed the value (read it with the getters). */
+
+typedef void (*wol_change_fn)(wol_widget *widget, void *user_data);
+typedef void (*wol_window_fn)(wol_window *window, void *user_data);
+
+/* Side by side. Spacing: 0, 4, 8, 12, 16 or 24. */
+wol_status wol_row_create(wol_context *context, uint32_t spacing, wol_widget **out, wol_error **error);
+/* Rows with separators, scrolling when long. */
+wol_status wol_list_create(wol_context *context, wol_widget **out, wol_error **error);
+/* Takes the free space in a row or stack. */
+wol_status wol_spacer_create(wol_context *context, wol_widget **out, wol_error **error);
+/* One line of text; starts empty. on_change may be NULL. */
+wol_status wol_text_field_create(wol_context *context, const char *placeholder, size_t len,
+                                 wol_change_fn on_change, void *user_data, wol_widget **out,
+                                 wol_error **error);
+/* label may be empty. on is 0 or 1. on_change may be NULL. */
+wol_status wol_toggle_create(wol_context *context, const char *label, size_t len, int32_t on,
+                             wol_change_fn on_change, void *user_data, wol_widget **out,
+                             wol_error **error);
+/* min < max, min <= value <= max. on_change may be NULL. */
+wol_status wol_slider_create(wol_context *context, double min, double max, double value,
+                             wol_change_fn on_change, void *user_data, wol_widget **out,
+                             wol_error **error);
+/* source: an icon name ("weather-clear-symbolic") or an absolute path to a .png, .svg or .jpg.
+ * size: 16, 24, 32, 48, 64, 96 or 128. */
+wol_status wol_image_create(wol_context *context, const char *source, size_t len, uint32_t size,
+                            wol_widget **out, wol_error **error);
+/* Label text, button label or text field text. */
+wol_status wol_widget_set_text(wol_widget *widget, const char *text, size_t len, wol_error **error);
+wol_status wol_widget_copy_text(const wol_widget *widget, wol_string **out, wol_error **error);
+/* 1 when on; 0 when off or not a toggle. */
+int32_t wol_toggle_get_on(const wol_widget *widget);
+wol_status wol_toggle_set_on(wol_widget *widget, int32_t on, wol_error **error);
+/* 0 when not a slider. */
+double wol_slider_get_value(const wol_widget *widget);
+wol_status wol_slider_set_value(wol_widget *widget, double value, wol_error **error);
+/* Called when the person closes the window. NULL removes it. */
+wol_status wol_window_set_close_handler(wol_window *window, wol_window_fn on_close, void *user_data,
+                                        wol_error **error);
+/* Takes the window off screen; wol_window_show brings it back. */
+wol_status wol_window_close(wol_window *window, wol_error **error);
+
+/* ---- 1.1: notifications with buttons (permission: notifications) ---- */
+
+typedef struct wol_notification wol_notification;
+/* key is borrowed for the call. */
+typedef void (*wol_action_fn)(wol_notification *notification, const wol_string *key, void *user_data);
+
+/* Nothing is shown until wol_notification_send. */
+wol_status wol_notification_create(wol_context *context, const char *title, size_t title_len,
+                                   const char *body, size_t body_len, wol_notification **out,
+                                   wol_error **error);
+/* Up to 3 buttons. key: 1-32 of [a-z0-9_-], unique; key "default" is a click on the
+ * notification itself. */
+wol_status wol_notification_add_action(wol_notification *notification, const char *key, size_t key_len,
+                                       const char *label, size_t label_len, wol_error **error);
+wol_status wol_notification_set_action_handler(wol_notification *notification, wol_action_fn on_action,
+                                               void *user_data, wol_error **error);
+/* The handler runs inside wol_context_dispatch while the notification is alive. */
+wol_status wol_notification_send(wol_notification *notification, wol_error **error);
+wol_notification *wol_notification_retain(wol_notification *notification);
+void wol_notification_release(wol_notification *notification);
 
 #ifdef __cplusplus
 }

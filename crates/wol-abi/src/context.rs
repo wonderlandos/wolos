@@ -4,10 +4,11 @@
 //! libwol by polling `wol_context_get_fd` and calling dispatch when it is readable.
 use crate::client;
 use crate::error::{Error, Result, Status, UserData, guard, input, need, wol_error, wol_status};
-use crate::kit::{self, wol_widget};
+use crate::kit::{self, wol_widget, wol_window};
+use crate::notify::{self, wol_notification};
 use crate::string::{borrow, into_raw, release, retain, wol_string};
 use shared::events::Event;
-use shared::view::FromHost;
+use shared::view::{FromHost, ToHost};
 use std::collections::{HashMap, VecDeque};
 use std::ffi::{c_char, c_int, c_void};
 use std::io::BufReader;
@@ -31,16 +32,9 @@ pub const MAX_APP_ID: usize = 128;
 
 pub type wol_event_fn = Option<unsafe extern "C" fn(*const wol_event, UserData)>;
 
-/// Reverse-DNS app id: `org.example.hello`.
+/// Reverse-DNS app id: `org.example.hello` (the Kit host checks the same rule).
 pub fn is_app_id(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= MAX_APP_ID
-        && s.contains('.')
-        && !s.starts_with('.')
-        && !s.ends_with('.')
-        && !s.contains("..")
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    s.len() <= MAX_APP_ID && shared::view::is_app_id(s)
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -89,6 +83,7 @@ pub struct wol_subscription {
 }
 
 pub struct wol_context {
+    app_id: String,
     config_home: PathBuf,
     wold: PathBuf,
     kit_path: Option<PathBuf>,
@@ -98,6 +93,8 @@ pub struct wol_context {
     bus: Mutex<Option<UnixStream>>,
     kit: Mutex<Option<UnixStream>>,
     widgets: Mutex<HashMap<u32, Weak<wol_widget>>>,
+    windows: Mutex<HashMap<u32, Weak<wol_window>>>,
+    notes: Mutex<HashMap<u32, Weak<wol_notification>>>,
     next_id: AtomicU32,
 }
 
@@ -158,6 +155,7 @@ impl wol_context {
         }
         let (wake_r, wake_w) = pipe()?;
         Ok(Self {
+            app_id: app_id.into(),
             config_home: crate::system::config_home(),
             wold: client::wold_socket(),
             kit_path: client::kit_socket(),
@@ -170,6 +168,8 @@ impl wol_context {
             bus: Mutex::default(),
             kit: Mutex::default(),
             widgets: Mutex::default(),
+            windows: Mutex::default(),
+            notes: Mutex::default(),
             next_id: AtomicU32::new(1),
         })
     }
@@ -192,7 +192,20 @@ impl wol_context {
         m.insert(w.id(), Arc::downgrade(w));
     }
 
-    fn ensure_bus(&self) -> Result<()> {
+    pub(crate) fn register_window(&self, w: &Arc<wol_window>) {
+        let mut m = lock(&self.windows);
+        m.retain(|_, w| w.strong_count() > 0);
+        m.insert(w.id(), Arc::downgrade(w));
+    }
+
+    /// `id` is wold's notification id.
+    pub(crate) fn register_note(&self, id: u32, n: &Arc<wol_notification>) {
+        let mut m = lock(&self.notes);
+        m.retain(|_, n| n.strong_count() > 0);
+        m.insert(id, Arc::downgrade(n));
+    }
+
+    pub(crate) fn ensure_bus(&self) -> Result<()> {
         let mut bus = lock(&self.bus);
         if bus.is_none() {
             let s = client::subscribe(&self.wold).map_err(|_| {
@@ -226,6 +239,11 @@ impl wol_context {
             let path = self.kit_path.as_ref().ok_or_else(gone)?;
             let s = UnixStream::connect(path).map_err(|_| gone())?;
             let _ = s.set_write_timeout(Some(client::TIMEOUT));
+            let hello = ToHost::Hello {
+                app: self.app_id.clone(),
+            };
+            (&s).write_all(hello.to_line().as_bytes())
+                .map_err(|_| gone())?;
             spawn_reader(
                 s.try_clone().map_err(|_| gone())?,
                 self.mailbox.clone(),
@@ -295,6 +313,16 @@ impl wol_context {
         let items: Vec<Incoming> = lock(&self.mailbox.queue).drain(..).collect();
         for item in items {
             match item {
+                Incoming::Event(e) if e.topic.as_str() == "notification-action" => {
+                    if let Some(Event::NotificationAction { id, key, .. }) =
+                        Event::parse(e.json.as_str())
+                    {
+                        let n = lock(&self.notes).get(&id).and_then(Weak::upgrade);
+                        if let Some(n) = n {
+                            notify::pressed(&n, &key);
+                        }
+                    }
+                }
                 Incoming::Event(e) => {
                     let subs: Vec<Arc<wol_subscription>> = {
                         let mut all = lock(&self.subs);
@@ -311,13 +339,25 @@ impl wol_context {
                         }
                     }
                 }
-                Incoming::Kit(FromHost::Clicked { widget, .. }) => {
-                    let w = lock(&self.widgets).get(&widget).and_then(Weak::upgrade);
+                Incoming::Kit(FromHost::Closed { window }) => {
+                    let w = lock(&self.windows).get(&window).and_then(Weak::upgrade);
                     if let Some(w) = w {
-                        kit::clicked(&w);
+                        kit::closed(&w);
                     }
                 }
-                Incoming::Kit(FromHost::Closed { .. }) => {}
+                Incoming::Kit(e) => {
+                    let id = match &e {
+                        FromHost::Clicked { widget, .. }
+                        | FromHost::Edited { widget, .. }
+                        | FromHost::Toggled { widget, .. }
+                        | FromHost::Slid { widget, .. } => *widget,
+                        FromHost::Closed { .. } => continue,
+                    };
+                    let w = lock(&self.widgets).get(&id).and_then(Weak::upgrade);
+                    if let Some(w) = w {
+                        kit::from_host(&w, &e);
+                    }
+                }
             }
         }
         Ok(())

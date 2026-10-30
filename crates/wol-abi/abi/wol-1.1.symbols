@@ -1,0 +1,22 @@
+# libwol 1.1 exports (WOL_1.1). Never edit a shipped line.
+wol_image_create@WOL_1.1
+wol_list_create@WOL_1.1
+wol_notification_add_action@WOL_1.1
+wol_notification_create@WOL_1.1
+wol_notification_release@WOL_1.1
+wol_notification_retain@WOL_1.1
+wol_notification_send@WOL_1.1
+wol_notification_set_action_handler@WOL_1.1
+wol_row_create@WOL_1.1
+wol_slider_create@WOL_1.1
+wol_slider_get_value@WOL_1.1
+wol_slider_set_value@WOL_1.1
+wol_spacer_create@WOL_1.1
+wol_text_field_create@WOL_1.1
+wol_toggle_create@WOL_1.1
+wol_toggle_get_on@WOL_1.1
+wol_toggle_set_on@WOL_1.1
+wol_widget_copy_text@WOL_1.1
+wol_widget_set_text@WOL_1.1
+wol_window_close@WOL_1.1
+wol_window_set_close_handler@WOL_1.1

@@ -2,7 +2,7 @@
 //! changes; new ones are only added, under a new version node (WOL_1.1, ...).
 //! - every symbol in `abi/wol-*.symbols` is exported by `libwol.so` with that version
 //! - every exported symbol is in a baseline, the linker map and `include/wol.h`; nothing else leaks
-//! - every declaration of `abi/wol-1.0.h` (the 1.0 header snapshot) is still in `include/wol.h`
+//! - every declaration of each `abi/wol-1.x.h` header snapshot is still in `include/wol.h`
 //! - `include/wol.h` prototypes and `#define`s match the Rust exports and constants exactly
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -197,6 +197,7 @@ fn c_type(rust: &str) -> String {
         "u32" => "uint32_t",
         "i32" => "int32_t",
         "u64" => "uint64_t",
+        "f64" => "double",
         other => other,
     }
     .to_owned()
@@ -307,7 +308,11 @@ fn shipped_declarations_never_change() {
                     p.display()
                 );
             }
-            for def in snap.lines().filter(|l| l.starts_with("#define WOL_")) {
+            // Every value but the version (which says which header this is) is forever.
+            for def in snap
+                .lines()
+                .filter(|l| l.starts_with("#define WOL_") && !l.starts_with("#define WOL_VERSION_"))
+            {
                 assert!(read("include/wol.h").lines().any(|l| l == def), "{def}");
             }
         }
@@ -323,4 +328,5 @@ fn detectors_catch_changes() {
     assert_eq!(c_type("*mut *mut wol_error"), "wol_error**");
     assert_eq!(c_type("*const c_char"), "const char*");
     assert_eq!(c_type("*const wol_string"), "const wol_string*");
+    assert_eq!(c_type("f64"), "double");
 }

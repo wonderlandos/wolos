@@ -43,14 +43,18 @@ fn main() {
     {
         let (jobs, bus) = (jobs.clone(), bus.clone());
         let grants = Arc::new(api::portal::ConsentFile(wol_core::consent::FILE.into()));
+        let notes = Arc::new(api::portal::Notes::default());
         let listener =
             server::bind(Path::new(shared::jobs::SOCKET), 0o666).expect("bind control socket");
         eprintln!("wold: control listening on {}", shared::jobs::SOCKET);
         std::thread::spawn(move || {
             for conn in listener.incoming().flatten() {
                 let peer = shared::sys::peer(&conn);
-                let (jobs, bus, grants) = (jobs.clone(), bus.clone(), grants.clone());
-                std::thread::spawn(move || server::serve(conn, peer, &*jobs, &bus, &*grants));
+                let (jobs, bus, grants, notes) =
+                    (jobs.clone(), bus.clone(), grants.clone(), notes.clone());
+                std::thread::spawn(move || {
+                    server::serve(conn, peer, &*jobs, &bus, &*grants, &notes)
+                });
             }
         });
     }

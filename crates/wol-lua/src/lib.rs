@@ -78,6 +78,7 @@ impl Services for Live {
             &shared::portal::Call::NotificationPost {
                 title: title.into(),
                 body: body.into(),
+                actions: Vec::new(),
             },
         );
         if a.ok {

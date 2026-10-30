@@ -14,7 +14,11 @@ pub fn caller(peer: Option<shared::sys::Peer>) -> Option<Caller> {
     let mut buf = [0u8; 4096];
     let n = shared::sys::executable(p.pid, &mut buf)?;
     let app = std::str::from_utf8(&buf[..n]).ok()?.to_owned();
-    app.starts_with('/').then_some(Caller { uid: p.uid, app })
+    app.starts_with('/').then_some(Caller {
+        uid: p.uid,
+        pid: p.pid,
+        app,
+    })
 }
 
 /// Serve one control connection. `peer` comes from peer credentials.
@@ -24,8 +28,10 @@ pub fn serve(
     jobs: &dyn JobTable,
     bus: &Bus<UnixStream>,
     grants: &dyn Grants,
+    notes: &portal::Notes,
 ) {
     let uid = peer.map(|p| p.uid);
+    let who = peer.map(|p| (p.uid, p.pid));
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
     let mut line = String::new();
     let mut reader = BufReader::new(stream.try_clone().expect("clone socket"));
@@ -41,12 +47,12 @@ pub fn serve(
     match &req {
         Some(JobRequest::Subscribe) => {
             let _ = stream.set_read_timeout(None);
-            bus.subscribe(None, stream);
+            bus.subscribe(None, who, stream);
         }
         Some(JobRequest::SubscribeAccount) => match (uid, caller(peer)) {
             (Some(uid), Some(c)) if grants.shows_notifications(&c.app) => {
                 let _ = stream.set_read_timeout(None);
-                bus.subscribe(Some(uid), stream);
+                bus.subscribe(Some(uid), who, stream);
             }
             _ => {
                 let mut w = &stream;
@@ -63,7 +69,7 @@ pub fn serve(
             }
         }
         Some(JobRequest::Call(json)) => {
-            let answer = portal::handle(json, caller(peer).as_ref(), grants, bus);
+            let answer = portal::handle(json, caller(peer).as_ref(), grants, bus, notes);
             let mut w = &stream;
             let _ = w.write_all(answer.to_line().as_bytes());
         }
@@ -131,7 +137,7 @@ mod tests {
     fn call(line: &str, bus: &Bus<UnixStream>) -> UnixStream {
         let (srv, mut cli) = UnixStream::pair().unwrap();
         cli.write_all(line.as_bytes()).unwrap();
-        serve(srv, me(), &Empty, bus, &AllowAll);
+        serve(srv, me(), &Empty, bus, &AllowAll, &portal::Notes::default());
         cli
     }
 
@@ -165,6 +171,8 @@ mod tests {
             app: "/usr/bin/bank".into(),
             title: "t".into(),
             body: String::new(),
+            id: 1,
+            actions: Vec::new(),
         };
         drop(call(&format!("publish {}", forged.to_line()), &bus));
         let mut r = BufReader::new(&sub);
@@ -178,7 +186,7 @@ mod tests {
         )
         .read_to_string(&mut out)
         .unwrap();
-        assert_eq!(out, "{\"ok\":true}\n");
+        assert_eq!(out, "{\"ok\":true,\"id\":1}\n");
         sub.set_nonblocking(false).unwrap();
         r.read_line(&mut line).unwrap();
         let Some(Event::Notification { app, uid, .. }) = Event::parse(&line) else {
@@ -196,7 +204,7 @@ mod tests {
         let bus = Bus::default();
         let (srv, mut cli) = UnixStream::pair().unwrap();
         cli.write_all(b"subscribe account\n").unwrap();
-        serve(srv, me(), &Empty, &bus, &Strict);
+        serve(srv, me(), &Empty, &bus, &Strict, &portal::Notes::default());
         let mut out = String::new();
         cli.read_to_string(&mut out).unwrap();
         assert!(out.contains("permission denied"), "{out}");
