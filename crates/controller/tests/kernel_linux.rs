@@ -278,7 +278,14 @@ fn version_has_one_source_and_shows_the_linux_base_in_parentheses() {
         let (pv, uv) = out.trim().split_once('|').unwrap();
         assert_eq!(pv, format!("{wk}+{linux}"), "{pkg} pkgver");
         if pkg.ends_with("linux-wolos/PKGBUILD") {
-            assert!(uv.contains(&shown), "uname -v lacks {shown}: {uv:?}");
+            // kbuild pastes KBUILD_BUILD_VERSION unquoted into a shell line (the bzImage "is
+            // ready" message): parentheses or quotes there stop the build.
+            let plain = format!("WolKernel {wk} Linux {linux}");
+            assert!(uv.contains(&plain), "uname -v lacks {plain}: {uv:?}");
+            assert!(
+                !uv.contains(['(', ')', '\'', '"']),
+                "uname -v breaks kbuild: {uv:?}"
+            );
         }
     }
 }

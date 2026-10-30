@@ -65,8 +65,8 @@ sha256sums=(SKIP SKIP SKIP SKIP)
 
 export KBUILD_BUILD_HOST=wolos
 export KBUILD_BUILD_USER=$pkgbase
-# uname -v: "#1 WolKernel 1.0 (7.3) SMP PREEMPT_DYNAMIC <date>".
-export KBUILD_BUILD_VERSION="$pkgrel WolKernel $_wk ($_linux)"
+# uname -v: "#1 WolKernel 1.0 Linux 7.3 SMP PREEMPT_DYNAMIC <date>" (no parentheses: kbuild pastes it into a shell line).
+export KBUILD_BUILD_VERSION="$pkgrel WolKernel $_wk Linux $_linux"
 export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
 
 prepare() {
