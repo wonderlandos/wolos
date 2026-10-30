@@ -315,3 +315,22 @@ fn window_animations_take_about_a_fifth_of_a_second() {
         assert!((1.8..=2.2).contains(&speed), "{l}");
     }
 }
+
+/// Live (VM, virtio-gpu): with damage tracking on, Hyprland never repainted the last frame of a
+/// Setup page fade, so the previous page stayed half-visible behind the next one until Setup
+/// closed. Setup and the login screen redraw whole frames; they are short-lived and mostly still.
+#[test]
+fn setup_and_login_redraw_whole_frames() {
+    for f in ["setup.conf", "login.conf"] {
+        let conf = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../desktop/overlay/usr/share/wolos/hypr")
+                .join(f),
+        )
+        .unwrap();
+        assert!(
+            conf.lines().any(|l| l.trim() == "damage_tracking = 0"),
+            "{f}: damage_tracking = 0"
+        );
+    }
+}
