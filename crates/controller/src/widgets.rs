@@ -263,6 +263,7 @@ fn add(env: &mut dyn Env, kind: &str, size: Option<&str>) -> i32 {
         col,
         row,
         options: Default::default(),
+        display: None,
     });
     if let Err(e) = write_desktop(env, &desk) {
         return fail(env, ErrorCode::Failed, &e);

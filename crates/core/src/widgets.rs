@@ -512,6 +512,7 @@ mod tests {
             col: 1,
             row: 0,
             options: Options::default(),
+            display: None,
         });
         save_desktop(&p, &d).unwrap();
         assert_eq!(load_desktop(&p).0, d);

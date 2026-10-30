@@ -196,6 +196,7 @@ mod tests {
             col,
             row,
             options: Options::default(),
+            display: None,
         }
     }
 
