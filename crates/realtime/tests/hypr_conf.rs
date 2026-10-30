@@ -295,3 +295,23 @@ fn shell_output_is_logged() {
             == r#"exec-once = sh -c 'exec wol-shell 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#)
     );
 }
+
+/// Window open, close and resize settle in about 0.2 s (2 in Hyprland's 100 ms units): longer
+/// reads as lag when dragging a window edge.
+#[test]
+fn window_animations_take_about_a_fifth_of_a_second() {
+    let conf = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf"),
+    )
+    .unwrap();
+    for name in ["windowsIn", "windowsOut", "windowsMove"] {
+        let l = conf
+            .lines()
+            .map(str::trim)
+            .find(|l| l.starts_with(&format!("animation = {name},")))
+            .unwrap_or_else(|| panic!("{name}"));
+        let speed: f32 = l.split(',').nth(2).unwrap().trim().parse().unwrap();
+        assert!((1.8..=2.2).contains(&speed), "{l}");
+    }
+}
