@@ -383,7 +383,7 @@ fn fork_registers_the_frame_policy_keys() {
         "misc:frame_deadline",
     ] {
         assert!(
-            patches.contains(&format!("+        MS<")) && patches.contains(&format!("\"{k}\"")),
+            patches.contains("+        MS<") && patches.contains(&format!("\"{k}\"")),
             "{k}"
         );
     }

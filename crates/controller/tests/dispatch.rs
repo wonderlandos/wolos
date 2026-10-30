@@ -291,7 +291,7 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     );
     let mut env = FakeEnv {
         root: true,
-        exec_codes: vec![0, 0, 1],
+        exec_codes: vec![0, 0, 0, 1],
         files: vec![cmdline.clone()],
         captures: vec![bootctl.clone()],
         ..Default::default()
@@ -300,9 +300,10 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     let ran: Vec<String> = env.execs.iter().map(|e| e.join(" ")).collect();
     assert_eq!(ran[0], "btrfs subvolume delete /run/wolos/top/@wolos-b");
     assert_eq!(ran[1], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
-    assert!(ran[2].starts_with("sed -i "), "{ran:?}");
+    assert_eq!(ran[2], "wol layers fold /run/wolos/top/@wolos-b");
+    assert!(ran[3].starts_with("sed -i "), "{ran:?}");
     assert_eq!(
-        ran[3..],
+        ran[4..],
         [
             "btrfs subvolume delete /run/wolos/top/@wolos-b",
             "rm -f /efi/loader/entries/wolos-b+3.conf"
@@ -325,7 +326,7 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     );
     assert!(
         env.out
-            .contains("arch-chroot /run/wolos/top/@wolos-b pacman -Syu --noconfirm\n")
+            .contains("arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm\n")
     );
 }
 
