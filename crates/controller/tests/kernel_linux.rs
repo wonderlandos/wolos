@@ -107,6 +107,31 @@ fn recipe_builds_the_fork_at_the_recorded_commit() {
 }
 
 #[test]
+fn a_new_fork_commit_ships_under_a_new_pkgrel() {
+    // The package mirror keys files by name: the same version with new contents would be
+    // served stale next to a fresh signature. 1:1.0+7.3-1 was fork 3f88c73.
+    let commit = read("kernel/linux-wolos/ref").trim().to_string();
+    for p in [
+        "kernel/linux-wolos/PKGBUILD",
+        "kernel/linux-wolos-api-headers/PKGBUILD",
+    ] {
+        let rel: u32 = read(p)
+            .lines()
+            .find_map(|l| l.strip_prefix("pkgrel="))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{p} has no numeric pkgrel"));
+        if commit != "3f88c73ec9e6a0c8fe14a3c9a124a23630f59db9" {
+            assert!(
+                rel >= 2,
+                "{p}: fork moved past the -1 build but pkgrel is {rel}"
+            );
+        }
+    }
+    // f60fabe9: lazy audit pairs the syscall entry and exit hooks (no auditsc warning).
+    assert_ne!(commit, "3f88c73ec9e6a0c8fe14a3c9a124a23630f59db9");
+}
+
+#[test]
 fn freebsd_kernel_parts_are_gone() {
     for p in [
         "kernel/conf/WolKernel",

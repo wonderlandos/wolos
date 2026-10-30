@@ -28,7 +28,7 @@ _wk=$(sed -n 's/^wolkernel=//p' "$startdir/../VERSION")
 _linux=$(sed -n 's/^linux=//p' "$startdir/../VERSION")
 epoch=1
 pkgver=$_wk+$_linux
-pkgrel=1
+pkgrel=2
 pkgdesc="WolKernel $_wk ($_linux)"
 url='https://github.com/wonderlandos/linux'
 arch=(x86_64)

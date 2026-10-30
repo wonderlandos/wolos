@@ -201,6 +201,8 @@ fn profile_boots_linux_wolos_quietly_with_an_install_entry() {
     for e in [&live, &inst] {
         assert!(e.contains("vmlinuz-linux-wolos") && e.contains("initramfs-linux-wolos.img"));
         assert!(e.contains(" quiet splash ") && e.contains("loglevel=3"));
+        // No audit userspace and no SELinux/AppArmor: the kernel audit stays off.
+        assert!(e.contains(" audit=0 "), "{e}");
     }
     assert!(inst.contains("wolos.install=1") && !live.contains("wolos.install"));
     assert!(read("image/arch/efiboot/loader/loader.conf").contains("timeout 0"));

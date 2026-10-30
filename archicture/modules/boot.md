@@ -20,7 +20,7 @@ A boot is good when `wolos-boot-ok.service` sees wold (login window) up, before 
 Three failed boots: systemd-boot falls back to the other slot.
 
 ## Quiet boot
-Kernel `quiet splash loglevel=3 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0`; plymouth theme `wolos` (the mark on black) in a systemd initramfs.
+Kernel `quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0`; plymouth theme `wolos` (the mark on black) in a systemd initramfs.
 
 ## Secure Boot
 Not signed in this beta. `install-check` reads the `SecureBoot` EFI variable; the Install WolOS app shows `install::SECURE_BOOT_TEXT`.
