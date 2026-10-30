@@ -7,6 +7,8 @@
 
 pub mod auto;
 pub mod check;
+pub mod layers;
+pub mod pkg;
 
 /// The two root slots (btrfs subvolumes `@wolos-a`, `@wolos-b`).
 pub const SLOTS: [&str; 2] = ["wolos-a", "wolos-b"];
@@ -131,63 +133,146 @@ pub fn plan_for(
     date: Option<&str>,
     cmdline: Option<&str>,
 ) -> Option<Vec<Step>> {
-    if !is_valid_be(slot) || date.is_some_and(|d| !is_snapshot_date(d)) {
+    if date.is_some_and(|d| !is_snapshot_date(d)) {
+        return None;
+    }
+    let release = date.unwrap_or("current").to_owned();
+    let date = date.map(str::to_owned);
+    let prep = move |root: &str| -> Vec<Step> {
+        let Some(d) = &date else {
+            return Vec::new();
+        };
+        let sed = |expr: String, file: &str| {
+            Step::Run(
+                ["sed", "-i", "-E", &expr, &format!("{root}{file}")]
+                    .map(String::from)
+                    .to_vec(),
+            )
+        };
+        vec![
+            sed(
+                format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
+                PACMAN_CONF,
+            ),
+            // [wolos] and [wolos-cachy] move with Arch: all three repos at one release date.
+            sed(
+                format!(
+                    "s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{}#g",
+                    d.replace('/', "-")
+                ),
+                MIRRORLIST,
+            ),
+        ]
+    };
+    build(&Build {
+        slot,
+        from: Base::Running { replace },
+        prep: &prep,
+        pacman: &["-Syu", "--noconfirm"],
+        release: &release,
+        cmdline,
+    })
+}
+
+/// Scratch subvolume a stacked transaction is built in (the pending slot stays until it is done).
+pub const SCRATCH: &str = "wolos-tx";
+/// The real pacman (the `pacman` on PATH is the transaction wrapper, `/usr/local/bin`).
+pub const PACMAN: &str = "/usr/bin/pacman";
+
+/// What a new slot starts from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Base {
+    /// A copy of the running root; `replace`: the slot holds an old restore point, deleted first.
+    Running { replace: bool },
+    /// A copy of the slot itself (it waits for its first boot): the change stacks onto it.
+    Pending,
+}
+
+/// One change to a slot: the one implementation `wol update` and the pacman wrapper share.
+pub struct Build<'a> {
+    pub slot: &'a str,
+    pub from: Base,
+    /// Steps between the snapshot and pacman, given the working root (repo dates).
+    pub prep: &'a dyn Fn(&str) -> Vec<Step>,
+    /// Arguments of the real pacman, run in the slot.
+    pub pacman: &'a [&'a str],
+    pub release: &'a str,
+    pub cmdline: Option<&'a str>,
+}
+
+/// Snapshot, change, rebuild the initramfs, seal, write the entry, boot it next.
+pub fn build(b: &Build) -> Option<Vec<Step>> {
+    let slot = b.slot;
+    if !is_valid_be(slot) {
         return None;
     }
     let v = |a: &[&str]| Step::Run(a.iter().map(|s| (*s).to_owned()).collect());
     let root = format!("{TOP}/@{slot}");
+    let work = match b.from {
+        Base::Running { .. } => root.clone(),
+        Base::Pending => format!("{TOP}/@{SCRATCH}"),
+    };
     let mut steps = Vec::new();
-    if replace {
-        steps.push(v(&["btrfs", "subvolume", "delete", &root]));
+    match b.from {
+        Base::Running { replace } => {
+            if replace {
+                steps.push(v(&["btrfs", "subvolume", "delete", &root]));
+            }
+            steps.push(v(&["btrfs", "subvolume", "snapshot", "/", &work]));
+        }
+        Base::Pending => steps.push(v(&["btrfs", "subvolume", "snapshot", &root, &work])),
     }
-    steps.push(v(&["btrfs", "subvolume", "snapshot", "/", &root]));
-    if let Some(d) = date {
-        steps.push(v(&[
-            "sed",
-            "-i",
-            "-E",
-            &format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
-            &format!("{root}{PACMAN_CONF}"),
-        ]));
-        // [wolos] and [wolos-cachy] move with Arch: all three repos at one release date.
-        steps.push(v(&[
-            "sed",
-            "-i",
-            "-E",
-            &format!(
-                "s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{}#g",
-                d.replace('/', "-")
-            ),
-            &format!("{root}{MIRRORLIST}"),
-        ]));
-    }
-    steps.push(v(&["arch-chroot", &root, "pacman", "-Syu", "--noconfirm"]));
-    steps.push(v(&["arch-chroot", &root, "mkinitcpio", "-P"]));
+    // Packages installed live since: their files and database entries come along, then the
+    // layers are cleared from the copy.
+    steps.push(v(&["wol", "layers", "fold", &work]));
+    steps.extend((b.prep)(&work));
+    let mut chroot = vec!["arch-chroot", &work, PACMAN];
+    chroot.extend(b.pacman);
+    steps.push(v(&chroot));
+    steps.push(v(&["arch-chroot", &work, "mkinitcpio", "-P"]));
     let esp = format!("{ESP}/{slot}");
     steps.push(v(&["mkdir", "-p", &esp]));
     steps.push(v(&[
         "cp",
-        &format!("{root}/boot/{KERNEL}"),
-        &format!("{root}/boot/{INITRAMFS}"),
+        &format!("{work}/boot/{KERNEL}"),
+        &format!("{work}/boot/{INITRAMFS}"),
         &esp,
     ]));
     steps.push(v(&[
         "wol",
         "seal",
         "apply",
-        &root,
+        &work,
         &crate::seal::digest_file(slot),
     ]));
+    if b.from == Base::Pending {
+        // The first change stays until the second one is complete and sealed.
+        steps.push(v(&["btrfs", "subvolume", "delete", &root]));
+        steps.push(v(&["mv", &work, &root]));
+    }
     steps.push(Step::Write {
         path: entry_file(slot),
         text: entry_with(
             slot,
-            date.unwrap_or("current"),
-            &crate::encrypt::slot_options(cmdline, slot),
+            b.release,
+            &crate::encrypt::slot_options(b.cmdline, slot),
         ),
     });
     steps.push(v(&["bootctl", "set-default", &format!("{slot}.conf")]));
     Some(steps)
+}
+
+/// After a failed step: a stacked change only loses its scratch copy.
+pub fn rollback_from(slot: &str, from: Base) -> Vec<Vec<String>> {
+    match from {
+        Base::Running { .. } => rollback(slot),
+        Base::Pending => vec![vec![
+            "btrfs".into(),
+            "subvolume".into(),
+            "delete".into(),
+            format!("{TOP}/@{SCRATCH}"),
+        ]],
+    }
 }
 
 /// After a failed step: delete the half-made slot and its entry.
@@ -353,11 +438,12 @@ mod tests {
             [
                 "btrfs subvolume delete /run/wolos/top/@wolos-b",
                 "btrfs subvolume snapshot / /run/wolos/top/@wolos-b",
+                "wol layers fold /run/wolos/top/@wolos-b",
                 "sed -i -E s#/repos/[0-9]{4}/[0-9]{2}/[0-9]{2}/#/repos/2026/11/02/# \
 /run/wolos/top/@wolos-b/etc/pacman.conf",
                 "sed -i -E s#[0-9]{4}-[0-9]{2}-[0-9]{2}#2026-11-02#g \
 /run/wolos/top/@wolos-b/etc/pacman.d/wolos-mirrorlist",
-                "arch-chroot /run/wolos/top/@wolos-b pacman -Syu --noconfirm",
+                "arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm",
                 "arch-chroot /run/wolos/top/@wolos-b mkinitcpio -P",
                 "mkdir -p /efi/wolos-b",
                 "cp /run/wolos/top/@wolos-b/boot/vmlinuz-linux-wolos \
@@ -375,7 +461,7 @@ mod tests {
         );
         assert!(!first.iter().any(|s| s.to_string().starts_with("sed ")));
         assert!(
-            matches!(&p[9], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
+            matches!(&p[10], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
         );
         for (slot, date) in [("x", None), ("wolos-a", Some("2026-11-02")), ("", None)] {
             assert!(plan(slot, false, date).is_none(), "{slot} {date:?}");
@@ -388,7 +474,11 @@ mod tests {
             Some("root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rw"),
         )
         .unwrap();
-        let Step::Write { text, .. } = enc.last().unwrap().clone() else {
+        let Some(Step::Write { text, .. }) = enc
+            .iter()
+            .find(|s| matches!(s, Step::Write { .. }))
+            .cloned()
+        else {
             panic!()
         };
         assert!(text.contains("options root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rootflags=subvol=@wolos-b ro "), "{text}");
@@ -401,7 +491,7 @@ mod tests {
                 .iter()
                 .position(|s| s.to_string().starts_with("cp "))
                 .unwrap()
-                && seal + 2 == enc.len()
+                && seal + 3 == enc.len()
         );
         let r: Vec<String> = rollback("wolos-b").iter().map(|a| a.join(" ")).collect();
         assert_eq!(

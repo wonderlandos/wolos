@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod mirror;
 pub mod packages;
 pub mod pam;
+pub mod pkg;
 pub mod power;
 pub mod run;
 pub mod seal;

@@ -2,6 +2,7 @@
 enable wold.service
 enable wolos-boot-ok.service
 enable wolos-verity-check.service
+enable systemd-sysext.service
 enable wolos-hw.service
 enable wolos-gpu.service
 enable wolos-firstboot.service

@@ -25,6 +25,9 @@ for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-spotli
   [ -x "$B/$b" ] || { echo "build-rust.sh: binary $b not produced" >&2; exit 1; }
   install -m 755 "$B/$b" "$DEST/usr/bin/$b"
 done
+# pacman for the sealed system: first on PATH, runs the real /usr/bin/pacman (layers, ADR 0016).
+[ -x "$B/pacman" ] || { echo "build-rust.sh: binary pacman not produced" >&2; exit 1; }
+install -Dm755 "$B/pacman" "$DEST/usr/local/bin/pacman"
 [ -x "$B/wol-authcheck" ] || { echo "build-rust.sh: binary wol-authcheck not produced" >&2; exit 1; }
 # setuid root: checks a password for wol-login and wol-admind (fakeroot in makepkg records root).
 install -m 4755 "$B/wol-authcheck" "$DEST/usr/lib/wol-authcheck"

@@ -17,6 +17,10 @@ name = "wol"
 path = "src/bin/wol.rs"
 
 [[bin]]
+name = "pacman"
+path = "src/bin/pacman.rs"
+
+[[bin]]
 name = "wol-login"
 path = "src/bin/wol-login.rs"
 
