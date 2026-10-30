@@ -1,0 +1,24 @@
+# libFuzzer targets (cargo-fuzz layout): `cargo +nightly fuzz run ipc_decode`.
+# Its own workspace: kept out of the main build and lockfile.
+[package]
+name = "wolos-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "BSD-2-Clause"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+shared = { path = "../crates/shared" }
+
+[[bin]]
+name = "ipc_decode"
+path = "fuzz_targets/ipc_decode.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

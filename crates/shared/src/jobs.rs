@@ -62,8 +62,12 @@ pub enum JobRequest {
     Stop(String),
     /// Stream events (`shared::events`) until the client disconnects.
     Subscribe,
+    /// Also this account's events (notifications): only the session's notification shower.
+    SubscribeAccount,
     /// Publish one `shared::events::Event` JSON line to subscribers.
     Publish(String),
+    /// libwol service call (`shared::portal::Call` JSON, decoded and checked by wold).
+    Call(String),
 }
 
 impl JobRequest {
@@ -72,10 +76,12 @@ impl JobRequest {
         match f.as_slice() {
             ["list"] => Some(Self::List),
             ["subscribe"] => Some(Self::Subscribe),
+            ["subscribe", "account"] => Some(Self::SubscribeAccount),
             ["publish", ..] => {
                 let json = line.trim().strip_prefix("publish")?.trim();
                 crate::events::Event::parse(json).map(|_| Self::Publish(json.into()))
             }
+            ["call", ..] => Some(Self::Call(line.trim().strip_prefix("call")?.trim().into())),
             ["start", l] => Some(Self::Start((*l).into())),
             ["stop", l] => Some(Self::Stop((*l).into())),
             _ => None,
@@ -86,7 +92,9 @@ impl JobRequest {
         match self {
             Self::List => "list".into(),
             Self::Subscribe => "subscribe".into(),
+            Self::SubscribeAccount => "subscribe account".into(),
             Self::Publish(j) => format!("publish {j}"),
+            Self::Call(j) => format!("call {j}"),
             Self::Start(l) => format!("start {l}"),
             Self::Stop(l) => format!("stop {l}"),
         }
@@ -141,6 +149,8 @@ mod tests {
             ("list", Some(JobRequest::List)),
             (" list \n", Some(JobRequest::List)),
             ("subscribe", Some(JobRequest::Subscribe)),
+            ("subscribe account", Some(JobRequest::SubscribeAccount)),
+            ("subscribe all", None),
             ("start a", Some(JobRequest::Start("a".into()))),
             ("stop a", Some(JobRequest::Stop("a".into()))),
             ("start", None),
@@ -153,6 +163,12 @@ mod tests {
                 )),
             ),
             ("publish nope", None),
+            (
+                "call {\"call\":\"notification.post\",\"title\":\"a b\"}\n",
+                Some(JobRequest::Call(
+                    "{\"call\":\"notification.post\",\"title\":\"a b\"}".into(),
+                )),
+            ),
         ] {
             assert_eq!(JobRequest::parse(line), want, "{line}");
             if let Some(r) = want {
@@ -160,6 +176,7 @@ mod tests {
             }
         }
         assert!(!JobRequest::List.needs_root() && JobRequest::Stop("a".into()).needs_root());
+        assert!(!JobRequest::Call(String::new()).needs_root());
     }
 
     #[test]

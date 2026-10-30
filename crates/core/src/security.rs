@@ -147,6 +147,8 @@ pub enum Enforcement {
     Compositor,
     /// Recorded and shown to helpers that ask; nothing stops an app that ignores it yet.
     Advisory,
+    /// wold refuses the call (libwol services, ADR 0020).
+    System,
 }
 
 /// Privacy permissions: [`crate::consent::CAPABILITIES`] plus the devices and places an app may
@@ -156,6 +158,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         "screen-capture",
         Enforcement::Compositor,
         "only the system's screenshot and recording tools copy the screen directly; apps go through the portal, which asks which screen to share",
+    ),
+    (
+        "notifications",
+        Enforcement::System,
+        "apps post notifications through WolOS, which checks your choice before showing one",
     ),
     (
         "input-injection",
@@ -358,6 +365,11 @@ mod tests {
             assert_eq!(enforcement(c), Some(Enforcement::Advisory), "{c}");
         }
         assert_eq!(enforcement("screen-capture"), Some(Enforcement::Compositor));
+        assert_eq!(enforcement("notifications"), Some(Enforcement::System));
+        assert!(crate::consent::is_valid_grant(
+            "/usr/bin/x",
+            "notifications"
+        ));
         assert_eq!(enforcement("teleport"), None);
         for (c, _, why) in PERMISSIONS {
             assert!(!why.is_empty() && !why.contains('\n'), "{c}");
