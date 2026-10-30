@@ -8,6 +8,7 @@ Rule: prefer upstream ports + config over new code.
 |---|---|
 | `adr/` | decisions |
 | `modules/system-api.md` | System API topics + invariants |
+| `modules/abi.md` | libwol: the app API (`wol.h`, `libwol.so.1`), ABI rules, planned families, Lua widgets (ADR 0020) |
 | `modules/intel-graphics.md` | i915 firmware, tunables, VA-API/Vulkan stack |
 | `modules/hardware.md` | hardware catalogue, `wol hw`, `wolos-hw.service`, shipped firmware, 15.1 gaps |
 | `modules/ux-journeys.md` | 13 user journeys with verdicts and owners; error copy rules (`shell::copy`, lint) |
