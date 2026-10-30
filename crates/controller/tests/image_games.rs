@@ -24,11 +24,13 @@ fn key<'a>(desktop: &'a str, k: &str) -> &'a str {
 const APPS: &str = "desktop/overlay/usr/share/applications";
 
 #[test]
-fn steam_and_wine_are_native_packages() {
+fn steam_and_umu_are_native_packages() {
     let p = read("desktop/packages.txt");
+    // .exe outside Steam runs on umu-launcher (Proton, 1 MB); wine (600 MB) installs on demand.
+    assert!(!p.lines().any(|l| l.trim() == "wine"), "wine in the image");
     for want in [
         "steam",
-        "wine",
+        "umu-launcher",
         "lib32-mesa",
         "lib32-vulkan-intel",
         "lib32-vulkan-radeon",

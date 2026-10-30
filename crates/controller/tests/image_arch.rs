@@ -621,3 +621,14 @@ fn wolos_system_files_do_not_collide_with_arch_packages() {
         "{h}"
     );
 }
+
+#[test]
+fn iso_fits_one_release_asset() {
+    // Release assets max out at 2 GiB: xz with the x86 filter packs binaries tighter than zstd,
+    // and GPU drivers load from the squashfs after switch_root instead of from the initramfs.
+    let p = read("image/arch/profiledef.sh");
+    assert!(p.contains("'-comp' 'xz' '-Xbcj' 'x86'"), "{p}");
+    let hooks = read("image/arch/airootfs/etc/mkinitcpio.conf.d/archiso.conf");
+    let hooks = hooks.lines().find(|l| l.starts_with("HOOKS=")).unwrap();
+    assert!(!hooks.split(['(', ' ', ')']).any(|h| h == "kms"), "{hooks}");
+}
