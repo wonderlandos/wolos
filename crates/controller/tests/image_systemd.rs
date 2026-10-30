@@ -601,3 +601,13 @@ fn every_pam_service_the_code_opens_has_its_file() {
         );
     }
 }
+
+#[test]
+fn one_mdns_stack() {
+    // avahi answers .local (printers, AirPlay, Bonjour); resolved doing it too makes both unreliable.
+    let d = read("image/files/usr/lib/systemd/resolved.conf.d/wolos.conf");
+    assert!(
+        d.contains("[Resolve]\n") && d.contains("MulticastDNS=no"),
+        "{d}"
+    );
+}
