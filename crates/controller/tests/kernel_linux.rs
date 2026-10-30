@@ -306,6 +306,13 @@ fn fragment_tunes_for_desktops_and_keeps_compatibility() {
         "CONFIG_DRM_SIMPLEDRM=y",
         "CONFIG_ZRAM=m",
         "CONFIG_NR_CPUS=512",
+        // Fork code: lazy audit syscall work, int $0x80 only for 32-bit tasks, retbleed stuffing
+        // on Intel without eIBRS.
+        "CONFIG_WOLOS_AUDIT_LAZY=y",
+        "CONFIG_WOLOS_NO_INT80_64=y",
+        "CONFIG_WOLOS_RETBLEED_STUFF=y",
+        // Extra series: CPU floor right after an input event.
+        "CONFIG_WOLOS_INPUT_BOOST=y",
     ] {
         assert!(option_set(&c, want), "wolos.config lacks {want}");
     }
@@ -339,7 +346,7 @@ fn fragment_tunes_for_desktops_and_keeps_compatibility() {
     assert!(!option_set(&c, "CONFIG_IA32_EMULATION_DEFAULT_DISABLED=y"));
     // Every removed userspace interface is listed for `wol doctor`.
     let abi = read("kernel/abi-removed.txt");
-    for name in ["X86_X32_ABI", "LEGACY_VSYSCALL"] {
+    for name in ["X86_X32_ABI", "LEGACY_VSYSCALL", "WOLOS_NO_INT80_64"] {
         assert!(
             abi.lines()
                 .any(|l| l.split_whitespace().nth(1) == Some(name)),
