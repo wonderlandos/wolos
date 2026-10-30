@@ -613,14 +613,24 @@ fn every_pam_service_the_code_opens_has_its_file() {
             auth.iter().any(|l| l.contains("pam_unix.so")),
             "{s}: no password check"
         );
-        // pam_faillock (system-auth) locks the account for 10 minutes after 3 typos and the
-        // correct password then reads "Incorrect password": the person is locked out of their own
-        // session. pam_unix's failure delay throttles guessing instead.
+        // Arch's system-auth locks for 10 minutes after 3 typos, and the correct password then
+        // reads "Incorrect password". WolOS still stops guessing, but forgives typos: 10 failures
+        // lock for 60 s. No system-auth include, so the Arch default never applies here.
+        assert!(!auth.iter().any(|l| l.contains("system-")), "{s}: {pam}");
+        for stage in ["preauth", "authfail"] {
+            assert!(
+                auth.iter().any(|l| l.contains("pam_faillock.so")
+                    && l.contains(stage)
+                    && l.contains("deny=10")
+                    && l.contains("unlock_time=60")),
+                "{s}: no forgiving pam_faillock {stage}: {pam}"
+            );
+        }
+        // The account phase clears the count after a success, so typos never add up over days.
         assert!(
-            !auth
-                .iter()
-                .any(|l| l.contains("system-") || l.contains("faillock")),
-            "{s}: auth must not lock the account out: {pam}"
+            pam.lines()
+                .any(|l| l.starts_with("account") && l.contains("pam_faillock.so")),
+            "{s}: failures never reset: {pam}"
         );
     }
 }
