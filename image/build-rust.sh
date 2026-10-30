@@ -28,3 +28,6 @@ done
 [ -x "$B/wol-authcheck" ] || { echo "build-rust.sh: binary wol-authcheck not produced" >&2; exit 1; }
 # setuid root: checks a password for wol-login and wol-admind (fakeroot in makepkg records root).
 install -m 4755 "$B/wol-authcheck" "$DEST/usr/lib/wol-authcheck"
+# Root-only session runner for wol-login (PAM session, then the user's login shell).
+[ -x "$B/wol-session-pam" ] || { echo "build-rust.sh: binary wol-session-pam not produced" >&2; exit 1; }
+install -m 755 "$B/wol-session-pam" "$DEST/usr/lib/wol-session-pam"

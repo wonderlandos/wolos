@@ -177,7 +177,8 @@ fn session_starts_hyprland_without_nag_banners() {
         .rev()
         .find(|l| l.starts_with("exec "))
         .unwrap();
-    assert_eq!(launch, "exec dbus-run-session -- start-hyprland");
+    // On the user bus inside a logind session, else a private bus: always through start-hyprland.
+    assert_eq!(launch, "exec ${bus:+$bus --} start-hyprland");
     // hyprland-guiutils is not in the image: its "missing" banner must be off.
     assert_eq!(value("disable_hyprland_guiutils_check"), "true");
     let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/patches");

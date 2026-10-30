@@ -35,7 +35,16 @@ unsafe extern "C" {
     fn pam_authenticate(h: *mut c_void, flags: c_int) -> c_int;
     fn pam_acct_mgmt(h: *mut c_void, flags: c_int) -> c_int;
     fn pam_end(h: *mut c_void, status: c_int) -> c_int;
+    fn pam_set_item(h: *mut c_void, item: c_int, value: *const c_void) -> c_int;
+    fn pam_putenv(h: *mut c_void, name_value: *const c_char) -> c_int;
+    fn pam_getenvlist(h: *mut c_void) -> *mut *mut c_char;
+    fn pam_setcred(h: *mut c_void, flags: c_int) -> c_int;
+    fn pam_open_session(h: *mut c_void, flags: c_int) -> c_int;
+    fn pam_close_session(h: *mut c_void, flags: c_int) -> c_int;
 }
+const PAM_TTY: c_int = 3;
+const PAM_ESTABLISH_CRED: c_int = 0x2;
+const PAM_DELETE_CRED: c_int = 0x4;
 unsafe extern "C" {
     fn getuid() -> u32;
     fn getpwuid_r(
@@ -153,5 +162,86 @@ pub fn authenticate(service: &CStr, user: &CStr, password: &[u8]) -> Auth {
         Auth::Ok
     } else {
         Auth::Denied
+    }
+}
+
+/// An open PAM session (already authenticated user): closed, credentials deleted, on drop.
+pub struct Session {
+    h: *mut c_void,
+    /// The environment the modules set (pam_systemd: XDG_RUNTIME_DIR, XDG_SESSION_ID).
+    pub env: Vec<String>,
+}
+
+/// pam_acct_mgmt, pam_setcred and pam_open_session for `user` on `tty`; `env` (`NAME=value`) goes
+/// to the modules first (pam_systemd reads XDG_SESSION_TYPE, XDG_SEAT, XDG_VTNR). Root only.
+pub fn open_session(service: &CStr, user: &CStr, tty: &CStr, env: &[&str]) -> Option<Session> {
+    let call = Call {
+        password: b"",
+        user,
+    };
+    let conv = PamConv {
+        conv: converse,
+        data: (&call as *const Call).cast_mut().cast(),
+    };
+    let mut h = std::ptr::null_mut();
+    // SAFETY: valid C strings; `conv` and `call` outlive every PAM call that may converse (all
+    // conversation happens before this function returns: session modules do not prompt).
+    if unsafe { pam_start(service.as_ptr(), user.as_ptr(), &conv, &mut h) } != PAM_SUCCESS {
+        return None;
+    }
+    let fail = |h, rc| {
+        // SAFETY: `h` came from pam_start.
+        unsafe { pam_end(h, rc) };
+        None
+    };
+    // SAFETY: `h` from pam_start; strings are copied by libpam.
+    let mut rc = unsafe { pam_set_item(h, PAM_TTY, tty.as_ptr().cast()) };
+    for e in env {
+        let Ok(e) = CString::new(*e) else {
+            return fail(h, PAM_BUF_ERR);
+        };
+        if rc == PAM_SUCCESS {
+            rc = unsafe { pam_putenv(h, e.as_ptr()) };
+        }
+    }
+    if rc == PAM_SUCCESS {
+        rc = unsafe { pam_acct_mgmt(h, PAM_SILENT) };
+    }
+    if rc == PAM_SUCCESS {
+        rc = unsafe { pam_setcred(h, PAM_ESTABLISH_CRED | PAM_SILENT) };
+    }
+    if rc == PAM_SUCCESS {
+        rc = unsafe { pam_open_session(h, PAM_SILENT) };
+    }
+    if rc != PAM_SUCCESS {
+        return fail(h, rc);
+    }
+    let mut out = vec![];
+    // SAFETY: NULL-terminated array of malloc'd strings, all owned by us.
+    let list = unsafe { pam_getenvlist(h) };
+    if !list.is_null() {
+        let mut i = 0;
+        loop {
+            let p = unsafe { *list.add(i) };
+            if p.is_null() {
+                break;
+            }
+            out.push(unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned());
+            unsafe { free(p.cast()) };
+            i += 1;
+        }
+        unsafe { free(list.cast()) };
+    }
+    Some(Session { h, env: out })
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        // SAFETY: `h` is the open handle from open_session, ended exactly once here.
+        unsafe {
+            let rc = pam_close_session(self.h, PAM_SILENT);
+            pam_setcred(self.h, PAM_DELETE_CRED | PAM_SILENT);
+            pam_end(self.h, rc);
+        }
     }
 }

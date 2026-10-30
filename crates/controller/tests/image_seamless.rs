@@ -133,3 +133,41 @@ fn every_gtk3_window_draws_the_kit_traffic_lights() {
     let s = read("desktop/overlay/usr/bin/wol-session");
     assert!(s.contains("export GTK_CSD=${GTK_CSD:-1}"), "{s}");
 }
+
+#[test]
+fn logind_session_runs_on_the_user_bus() {
+    // wol-session-pam's session has user@.service: its bus carries PipeWire, the portals and the
+    // polkit agent; a private dbus-run-session bus would hide the session from all of them.
+    let d = sandbox(
+        "userbus",
+        &[
+            (
+                "dbus-run-session",
+                "#!/bin/sh\necho private >> \"$HOME/log\"\n",
+            ),
+            (
+                "start-hyprland",
+                "#!/bin/sh\necho \"hyprland $DBUS_SESSION_BUS_ADDRESS\" >> \"$HOME/log\"\n",
+            ),
+        ],
+    );
+    let (home, rt) = (d.join("home"), d.join("rt"));
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&rt).unwrap();
+    let _bus = std::os::unix::net::UnixListener::bind(rt.join("bus")).unwrap();
+    let st = Command::new("sh")
+        .arg(repo("desktop/overlay/usr/bin/wol-session"))
+        .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+        .env("HOME", &home)
+        .env("XDG_RUNTIME_DIR", &rt)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env_remove("DBUS_SESSION_BUS_ADDRESS")
+        .env_remove("WOL_SESSION_LOCKED")
+        .status()
+        .unwrap();
+    assert!(st.success());
+    assert_eq!(
+        fs::read_to_string(home.join("log")).unwrap(),
+        format!("hyprland unix:path={}/bus\n", rt.display())
+    );
+}

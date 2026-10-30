@@ -21,5 +21,9 @@ name = "wol-login"
 path = "src/bin/wol-login.rs"
 
 [[bin]]
+name = "wol-session-pam"
+path = "src/bin/wol-session-pam.rs"
+
+[[bin]]
 name = "wol-authcheck"
 path = "src/bin/wol-authcheck.rs"
