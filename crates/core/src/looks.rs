@@ -555,6 +555,21 @@ fn write_atomic(p: &Path, text: &str) -> Result<(), PresetError> {
         .map_err(|e| PresetError::Io(e.to_string()))
 }
 
+/// The theme's `glass` token with its alpha multiplied by a look's `glass` (Liquid Glass 0.8 is
+/// more see-through, Light 1.2 more solid): a CSS override for the menu bar, Dock and Control
+/// Center. None when nothing changes or the token is not `rgba(...)`.
+pub fn glass_css(token: &str, glass: f32) -> Option<String> {
+    if (glass - 1.0).abs() < 0.005 {
+        return None;
+    }
+    let inner = token.trim().strip_prefix("rgba(")?.strip_suffix(')')?;
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+    let [r, g, b, a] = parts[..] else { return None };
+    let a: f32 = a.parse().ok()?;
+    let a = round2((a * glass).clamp(0.3, 1.0));
+    Some(format!("* {{ --glass: rgba({r},{g},{b},{a}); }}\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,6 +586,21 @@ mod tests {
         include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 
     /// Writing the defaults changes nothing: every value equals the shipped hyprland.conf.
+    #[test]
+    fn glass_scales_the_theme_alpha() {
+        let t = "rgba(36,36,42,0.84)";
+        assert_eq!(glass_css(t, 1.0), None);
+        assert_eq!(
+            glass_css(t, 0.8).as_deref(),
+            Some("* { --glass: rgba(36,36,42,0.67); }\n")
+        );
+        assert_eq!(
+            glass_css(t, 1.2).as_deref(),
+            Some("* { --glass: rgba(36,36,42,1); }\n")
+        );
+        assert_eq!(glass_css("#242428", 0.8), None);
+    }
+
     #[test]
     fn defaults_equal_the_shipped_conf() {
         // "a, 1, 4, b" == "a,1,4.0,b": compare comma fields, numbers as numbers.
