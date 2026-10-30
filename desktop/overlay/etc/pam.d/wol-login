@@ -1,5 +1,10 @@
 # wol-login (crates/controller): pam_authenticate + pam_acct_mgmt for the login window.
-auth		include		system-local-login
+# Auth is system-login's minus pam_faillock (see wol-lock).
+auth		required	pam_shells.so
+auth		requisite	pam_nologin.so
+auth		required	pam_unix.so
+auth		optional	pam_permit.so
+auth		required	pam_env.so
 account		include		system-local-login
 session		include		system-local-login
 password	include		system-local-login
