@@ -4,11 +4,15 @@ post_install() {
   systemctl preset wold.service wolos-hw.service wolos-gpu.service wolos-firstboot.service \
     wolos-power.service wolos-update-check.timer nftables.service NetworkManager.service \
     bluetooth.service cups.socket avahi-daemon.service systemd-timesyncd.service udisks2.service seatd.service >/dev/null 2>&1 || :
+  # Arch's systemd enables getty@tty1 on install: tty1 is the login window and session VT.
+  systemctl mask getty@tty1.service >/dev/null 2>&1 || :
   udevadm control --reload >/dev/null 2>&1 || :
   plymouth-set-default-theme wolos >/dev/null 2>&1 || :
   update-mime-database /usr/share/mime >/dev/null 2>&1 || :
 }
 post_upgrade() {
+  # Arch's systemd enables getty@tty1 on install: tty1 is the login window and session VT.
+  systemctl mask getty@tty1.service >/dev/null 2>&1 || :
   systemd-sysusers wolos.conf
   systemd-tmpfiles --create wolos.conf
 }

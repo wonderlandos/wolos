@@ -227,6 +227,16 @@ fn no_text_console_for_users() {
     let l = read("image/files/usr/lib/systemd/logind.conf.d/wolos.conf");
     assert!(l.contains("NAutoVTs=0") && l.contains("ReserveVT=0"), "{l}");
     assert!(controller::login::CONSOLE == "/dev/tty1");
+    // Arch's systemd post_install enables getty@tty1 directly (no preset): a login prompt on the
+    // session's VT read every key typed on the desktop, passwords included.
+    let install = read("image/repo/wolos-system/wolos-system.install");
+    for hook in ["post_install() {", "post_upgrade() {"] {
+        let body = install.split(hook).nth(1).and_then(|b| b.split("\n}").next());
+        assert!(
+            body.is_some_and(|b| b.contains("systemctl mask getty@tty1.service")),
+            "{hook} must mask getty@tty1: {install}"
+        );
+    }
 }
 
 /// Hardening and no core files in home folders (a crashed compositor left a 27 MB core in ~).
@@ -595,10 +605,17 @@ fn every_pam_service_the_code_opens_has_its_file() {
     }
     for s in &services {
         let pam = read(&format!("desktop/overlay/etc/pam.d/{s}"));
+        let auth: Vec<&str> = pam.lines().filter(|l| l.starts_with("auth")).collect();
         assert!(
-            pam.lines()
-                .any(|l| l.starts_with("auth") && l.contains("system-")),
-            "{s}: no auth stack"
+            auth.iter().any(|l| l.contains("pam_unix.so")),
+            "{s}: no password check"
+        );
+        // pam_faillock (system-auth) locks the account for 10 minutes after 3 typos and the
+        // correct password then reads "Incorrect password": the person is locked out of their own
+        // session. pam_unix's failure delay throttles guessing instead.
+        assert!(
+            !auth.iter().any(|l| l.contains("system-") || l.contains("faillock")),
+            "{s}: auth must not lock the account out: {pam}"
         );
     }
 }

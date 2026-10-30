@@ -1,3 +1,5 @@
 # wol-lock (crates/controller wol-authcheck): the lock screen checks the session user's password.
-auth		include		system-auth
+# No pam_faillock: three typos must never lock a person out of their own session; pam_unix's
+# failure delay throttles guessing.
+auth		required	pam_unix.so
 account		include		system-auth
