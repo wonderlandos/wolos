@@ -286,7 +286,7 @@ impl Looks {
             kv("animations:enabled", b(l.animations && !reduce_motion)),
             anim("windowsIn", 2.2, curve_in, style_in),
             anim("windowsOut", 1.8, "wolIn", style_out),
-            anim("windowsMove", 4.0, "spring", ""),
+            anim("windowsMove", 2.0, "spring", ""),
             anim("fade", 3.0, "ease", ""),
             anim("layers", 3.0, "ease", "fade"),
             anim("workspaces", 5.0, "ease", ws),
