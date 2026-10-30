@@ -65,16 +65,18 @@ pub enum Builtin {
     Music,
     Battery,
     System,
+    WorldClock,
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 6] = [
+    pub const ALL: [Builtin; 7] = [
         Builtin::Clock,
         Builtin::Calendar,
         Builtin::Weather,
         Builtin::Music,
         Builtin::Battery,
         Builtin::System,
+        Builtin::WorldClock,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -84,6 +86,7 @@ impl Builtin {
             Builtin::Music => "music",
             Builtin::Battery => "battery",
             Builtin::System => "system",
+            Builtin::WorldClock => "world-clock",
         }
     }
     pub fn name(self) -> &'static str {
@@ -94,6 +97,7 @@ impl Builtin {
             Builtin::Music => "Music",
             Builtin::Battery => "Batteries",
             Builtin::System => "System",
+            Builtin::WorldClock => "World Clock",
         }
     }
     pub fn description(self) -> &'static str {
@@ -104,6 +108,7 @@ impl Builtin {
             Builtin::Music => "What is playing, with controls.",
             Builtin::Battery => "Charge of this computer and connected devices.",
             Builtin::System => "Processor and memory use.",
+            Builtin::WorldClock => "The time in the cities you choose.",
         }
     }
     pub fn parse(s: &str) -> Option<Builtin> {
@@ -193,6 +198,9 @@ pub struct Options {
     pub place: Option<Place>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub units: Option<Units>,
+    /// World Clock: IANA zones, in the order shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cities: Option<Vec<String>>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -339,6 +347,7 @@ mod tests {
         for (src, want) in [
             ("clock", Kind::Builtin(Builtin::Clock)),
             ("system", Kind::Builtin(Builtin::System)),
+            ("world-clock", Kind::Builtin(Builtin::WorldClock)),
             ("custom:game-friends", Kind::Custom("game-friends".into())),
             ("custom:Bad_Id", Kind::Unknown("custom:Bad_Id".into())),
             ("custom:", Kind::Unknown("custom:".into())),
@@ -348,6 +357,15 @@ mod tests {
             assert_eq!(k, want, "{src}");
             assert_eq!(k.id(), src);
         }
+    }
+
+    #[test]
+    fn world_clock_cities_round_trip() {
+        let o: Options = serde_json::from_str(r#"{"cities":["Asia/Tokyo"],"x":1}"#).unwrap();
+        assert_eq!(o.cities.as_deref(), Some(&["Asia/Tokyo".to_string()][..]));
+        let back = serde_json::to_value(&o).unwrap();
+        assert_eq!(back, serde_json::json!({"cities":["Asia/Tokyo"],"x":1}));
+        assert!(Options::default().is_empty());
     }
 
     #[test]
