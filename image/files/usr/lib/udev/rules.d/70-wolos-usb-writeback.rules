@@ -1,0 +1,4 @@
+# WolOS: a slow USB stick or SD card gets its own 32 MB dirty budget (strict), so a big copy to it
+# never throttles writes to the internal disk (kernel/README.md).
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_BUS}=="usb", ATTR{bdi/strict_limit}="1", ATTR{bdi/max_bytes}="33554432"
+ACTION=="add|change", SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ATTR{removable}=="1", ATTR{bdi/strict_limit}="1", ATTR{bdi/max_bytes}="33554432"
