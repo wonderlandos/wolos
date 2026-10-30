@@ -66,10 +66,11 @@ pub enum Builtin {
     Battery,
     System,
     WorldClock,
+    Timer,
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 7] = [
+    pub const ALL: [Builtin; 8] = [
         Builtin::Clock,
         Builtin::Calendar,
         Builtin::Weather,
@@ -77,6 +78,7 @@ impl Builtin {
         Builtin::Battery,
         Builtin::System,
         Builtin::WorldClock,
+        Builtin::Timer,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -87,6 +89,7 @@ impl Builtin {
             Builtin::Battery => "battery",
             Builtin::System => "system",
             Builtin::WorldClock => "world-clock",
+            Builtin::Timer => "timer",
         }
     }
     pub fn name(self) -> &'static str {
@@ -98,6 +101,7 @@ impl Builtin {
             Builtin::Battery => "Batteries",
             Builtin::System => "System",
             Builtin::WorldClock => "World Clock",
+            Builtin::Timer => "Timer",
         }
     }
     pub fn description(self) -> &'static str {
@@ -109,6 +113,7 @@ impl Builtin {
             Builtin::Battery => "Charge of this computer and connected devices.",
             Builtin::System => "Processor and memory use.",
             Builtin::WorldClock => "The time in the cities you choose.",
+            Builtin::Timer => "Focus sessions with breaks, a countdown or a stopwatch.",
         }
     }
     pub fn parse(s: &str) -> Option<Builtin> {
@@ -201,6 +206,9 @@ pub struct Options {
     /// World Clock: IANA zones, in the order shown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cities: Option<Vec<String>>,
+    /// Timer: "focus", "stopwatch", or countdown minutes ("10").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timer: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -348,6 +356,7 @@ mod tests {
             ("clock", Kind::Builtin(Builtin::Clock)),
             ("system", Kind::Builtin(Builtin::System)),
             ("world-clock", Kind::Builtin(Builtin::WorldClock)),
+            ("timer", Kind::Builtin(Builtin::Timer)),
             ("custom:game-friends", Kind::Custom("game-friends".into())),
             ("custom:Bad_Id", Kind::Unknown("custom:Bad_Id".into())),
             ("custom:", Kind::Unknown("custom:".into())),
@@ -366,6 +375,8 @@ mod tests {
         let back = serde_json::to_value(&o).unwrap();
         assert_eq!(back, serde_json::json!({"cities":["Asia/Tokyo"],"x":1}));
         assert!(Options::default().is_empty());
+        let t: Options = serde_json::from_str(r#"{"timer":"stopwatch"}"#).unwrap();
+        assert_eq!(t.timer.as_deref(), Some("stopwatch"));
     }
 
     #[test]
