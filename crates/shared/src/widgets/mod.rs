@@ -68,10 +68,11 @@ pub enum Builtin {
     System,
     WorldClock,
     Timer,
+    Note,
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 8] = [
+    pub const ALL: [Builtin; 9] = [
         Builtin::Clock,
         Builtin::Calendar,
         Builtin::Weather,
@@ -80,6 +81,7 @@ impl Builtin {
         Builtin::System,
         Builtin::WorldClock,
         Builtin::Timer,
+        Builtin::Note,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -91,6 +93,7 @@ impl Builtin {
             Builtin::System => "system",
             Builtin::WorldClock => "world-clock",
             Builtin::Timer => "timer",
+            Builtin::Note => "note",
         }
     }
     pub fn name(self) -> &'static str {
@@ -103,6 +106,7 @@ impl Builtin {
             Builtin::System => "System",
             Builtin::WorldClock => "World Clock",
             Builtin::Timer => "Timer",
+            Builtin::Note => "Note",
         }
     }
     pub fn description(self) -> &'static str {
@@ -115,6 +119,7 @@ impl Builtin {
             Builtin::System => "Processor and memory use.",
             Builtin::WorldClock => "The time in the cities you choose.",
             Builtin::Timer => "Focus sessions with breaks, a countdown or a stopwatch.",
+            Builtin::Note => "A note on the desktop. Click it to write.",
         }
     }
     pub fn parse(s: &str) -> Option<Builtin> {
@@ -210,6 +215,9 @@ pub struct Options {
     /// Timer: "focus", "stopwatch", or countdown minutes ("10").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer: Option<String>,
+    /// Note: what it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -361,6 +369,7 @@ mod tests {
             ("system", Kind::Builtin(Builtin::System)),
             ("world-clock", Kind::Builtin(Builtin::WorldClock)),
             ("timer", Kind::Builtin(Builtin::Timer)),
+            ("note", Kind::Builtin(Builtin::Note)),
             ("custom:game-friends", Kind::Custom("game-friends".into())),
             ("custom:Bad_Id", Kind::Unknown("custom:Bad_Id".into())),
             ("custom:", Kind::Unknown("custom:".into())),
@@ -381,6 +390,8 @@ mod tests {
         assert!(Options::default().is_empty());
         let t: Options = serde_json::from_str(r#"{"timer":"stopwatch"}"#).unwrap();
         assert_eq!(t.timer.as_deref(), Some("stopwatch"));
+        let n: Options = serde_json::from_str(r#"{"text":"Milk\nEggs"}"#).unwrap();
+        assert_eq!(n.text.as_deref(), Some("Milk\nEggs"));
     }
 
     #[test]
