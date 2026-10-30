@@ -16,6 +16,8 @@ pub const PANELS: &[&str] = &[
     "force-quit",
     // ⇧⌘/: every keyboard shortcut on one sheet.
     "shortcuts",
+    // Files dropped on the desktop, kept to drag out again.
+    "shelf",
     // `show` moves the keyboard into the bar or the Dock (⌃F2, ⌃F3), `hide` gives it back.
     "menubar",
     "dock",
@@ -144,6 +146,15 @@ impl Approval {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_drop_shelf_can_be_toggled() {
+        assert!(PANELS.contains(&"shelf"));
+        let mut names = PANELS.to_vec();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), PANELS.len(), "each panel name once");
+    }
 
     #[test]
     fn approval_wire_round_trip() {
