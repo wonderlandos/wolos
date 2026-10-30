@@ -31,11 +31,15 @@ pub const LINKS: [&str; 9] = [
 /// rereads the user gtk.css, so a new name per WolOS theme restyles running apps live.
 pub const GTK3_THEME_DIR: &str = "gtk3-theme";
 pub const GTK3_THEME_CSS: &str = "gtk3-theme/gtk-3.0/gtk.css";
+/// The same colours as the dark variant: GTK 3 loads it under prefer-dark and libhandy falls back
+/// to Adwaita in dark mode when a theme has none.
+pub const GTK3_THEME_DARK_CSS: &str = "gtk3-theme/gtk-3.0/gtk-dark.css";
 /// adw-gtk3 install dir (`image/fetch-theme.sh`).
 pub const ADW_GTK3_DIR: &str = "/usr/share/themes";
 
+/// `WolOS-<id>-gtk3`: never ends in `-dark`, which libhandy strips and then cannot find.
 pub fn gtk3_theme_name(t: &ResolvedTheme) -> String {
-    format!("WolOS-{}", t.id)
+    format!("WolOS-{}-gtk3", t.id)
 }
 
 /// Generated files linked into `$XDG_DATA_HOME` at the same relative path.
@@ -173,6 +177,11 @@ fn token<'a>(t: &'a ResolvedTheme, k: &str) -> &'a str {
 }
 
 pub fn render(t: &ResolvedTheme, dir: &Path) -> Vec<File> {
+    let gtk3 = format!(
+        "@import url(\"file://{ADW_GTK3_DIR}/{}/gtk-3.0/gtk.css\");\n{}",
+        gtk3_theme(t.variant == Variant::Dark),
+        gtk3_css(t)
+    );
     vec![
         File {
             rel: "Kvantum/kvantum.kvconfig",
@@ -200,11 +209,11 @@ pub fn render(t: &ResolvedTheme, dir: &Path) -> Vec<File> {
         },
         File {
             rel: GTK3_THEME_CSS,
-            text: format!(
-                "@import url(\"file://{ADW_GTK3_DIR}/{}/gtk-3.0/gtk.css\");\n{}",
-                gtk3_theme(t.variant == Variant::Dark),
-                gtk3_css(t)
-            ),
+            text: gtk3.clone(),
+        },
+        File {
+            rel: GTK3_THEME_DARK_CSS,
+            text: gtk3,
         },
         File {
             rel: "gtk-3.0/settings.ini",
@@ -833,7 +842,7 @@ mod tests {
             assert!(gtk3.contains(&format!("@define-color accent_bg_color {accent};")));
             let ini3 = file(&f, "gtk-3.0/settings.ini");
             assert!(
-                ini3.contains(&format!("gtk-theme-name=WolOS-{id}\n")),
+                ini3.contains(&format!("gtk-theme-name=WolOS-{id}-gtk3\n")),
                 "{id}"
             );
             for ini in [ini3, file(&f, "gtk-4.0/settings.ini")] {
@@ -926,6 +935,22 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// libhandy apps (Image Viewer, Mail) strip a `-dark` suffix from gtk-theme-name and, in dark
+    /// mode, need the theme's `gtk-dark.css`; either missing and they fall back to Adwaita.
+    #[test]
+    fn libhandy_apps_keep_the_theme() {
+        for id in ["wol-dark", "wol-light", "nord"] {
+            let t = theme(id);
+            assert!(!gtk3_theme_name(&t).ends_with("-dark"), "{id}");
+            let f = render(&t, Path::new("/x"));
+            assert_eq!(
+                file(&f, GTK3_THEME_DARK_CSS),
+                file(&f, GTK3_THEME_CSS),
+                "{id}"
+            );
+        }
+    }
+
     /// GTK 3 reads the user gtk.css once; a theme is reloaded whenever its name changes. Colours
     /// live in a GTK 3 theme named after the WolOS theme, so every switch restyles running GTK 3
     /// apps (and Helium's GTK mode) live; the user gtk.css carries no colours to shadow it.
@@ -949,12 +974,13 @@ mod tests {
                 "{id}"
             );
             assert!(
-                file(&f, "gtk-3.0/settings.ini").contains(&format!("gtk-theme-name=WolOS-{id}\n"))
+                file(&f, "gtk-3.0/settings.ini")
+                    .contains(&format!("gtk-theme-name=WolOS-{id}-gtk3\n"))
             );
             assert!(gsettings(&t).contains(&(
                 "org.gnome.desktop.interface",
                 "gtk-theme",
-                format!("WolOS-{id}")
+                format!("WolOS-{id}-gtk3")
             )));
         }
         let root = std::env::temp_dir().join(format!("wol-gtk3th-{}", std::process::id()));
@@ -964,10 +990,11 @@ mod tests {
             install(&theme(id), &tk, &cfg).unwrap();
             link_data(&theme(id), &tk, &data).unwrap();
         }
-        let css = std::fs::read_to_string(data.join("themes/WolOS-nord/gtk-3.0/gtk.css")).unwrap();
+        let css =
+            std::fs::read_to_string(data.join("themes/WolOS-nord-gtk3/gtk-3.0/gtk.css")).unwrap();
         assert!(css.contains("WolOS nord"));
         assert!(
-            !data.join("themes/WolOS-wol-light").exists(),
+            !data.join("themes/WolOS-wol-light-gtk3").exists(),
             "previous name pruned"
         );
         std::fs::remove_dir_all(root).unwrap();
@@ -1046,7 +1073,7 @@ mod tests {
             |v: &[(&str, &str, String)], k: &str| v.iter().find(|x| x.1 == k).unwrap().2.clone();
         assert_eq!(get(&l, "color-scheme"), "default");
         assert_eq!(get(&d, "color-scheme"), "prefer-dark");
-        assert_eq!(get(&d, "gtk-theme"), "WolOS-wol-dark");
+        assert_eq!(get(&d, "gtk-theme"), "WolOS-wol-dark-gtk3");
         assert_eq!(get(&l, "accent-color"), "purple");
         assert_eq!(get(&l, "button-layout"), "close,minimize,maximize:");
         assert_eq!(get(&l, "font-name"), "Inter 11");
