@@ -1,6 +1,7 @@
 //! Desktop widgets contract (archicture/adr/0010-desktop-widgets.md): the per-user layout file
 //! `$XDG_CONFIG_HOME/wolos/widgets.json` and the widget package schema (`manifest`).
 //! Compatibility: unknown keys and kinds survive a load/save round trip; positions are grid cells.
+pub mod displays;
 pub mod grid;
 pub mod manifest;
 pub mod template;
@@ -229,6 +230,9 @@ pub struct Placed {
     pub row: u16,
     #[serde(default, skip_serializing_if = "Options::is_empty")]
     pub options: Options,
+    /// The display it lives on (`displays`); None: the main display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
 }
 
 /// Network access the user allowed for one widget package (http sources).
@@ -442,6 +446,7 @@ mod tests {
             col: 2,
             row: 1,
             options: Options::default(),
+            display: None,
         });
         let j = d.to_json();
         assert!(!j.contains("options") && !j.contains("grants"), "{j}");
