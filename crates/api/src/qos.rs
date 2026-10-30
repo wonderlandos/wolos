@@ -99,12 +99,33 @@ impl Applier for Sched {
             any = true;
             set_thread(tid, l)
         });
-        ok && any
+        let oom = oom_adj(class).is_none_or(|adj| set_oom_adj(pid, adj));
+        ok && any && oom
     }
 
     fn gpu_foreground(&self, pid: i32) {
         hint(Path::new(HINTS), "foreground_pid", pid.into());
     }
+}
+
+/// Per process (not per thread). Stack buffers only: no allocation.
+fn set_oom_adj(pid: i32, adj: i16) -> bool {
+    use std::io::Write;
+    let (mut path, mut val) = ([0u8; 40], [0u8; 8]);
+    let mut p = &mut path[..];
+    let mut v = &mut val[..];
+    if write!(p, "/proc/{pid}/oom_score_adj").is_err() || write!(v, "{adj}").is_err() {
+        return false;
+    }
+    let (pn, vn) = (40 - p.len(), 8 - v.len());
+    let Ok(path) = std::str::from_utf8(&path[..pn]) else {
+        return false;
+    };
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|mut f| f.write_all(&val[..vn]))
+        .is_ok()
 }
 
 fn set_thread(tid: i32, l: Linux) -> bool {
@@ -201,6 +222,42 @@ pub fn serve(
             filled = 0; // overlong line: drop it
         }
     }
+}
+
+/// OOM bias per class (`/proc/<pid>/oom_score_adj`): Background work dies first. Raising needs no
+/// privilege. None: leave the process's value alone.
+pub fn oom_adj(class: QosClass) -> Option<i16> {
+    (class == QosClass::Background).then_some(300)
+}
+
+/// Session processes the OOM killer must spare (a dead compositor ends the whole session).
+pub const SESSION_COMMS: [&[u8]; 2] = [b"Hyprland", b"wol-shell"];
+pub const SESSION_OOM_ADJ: i16 = -900;
+
+/// Give every [`SESSION_COMMS`] process under `proc_dir` [`SESSION_OOM_ADJ`]; idempotent (only
+/// writes values that differ). Returns how many were written.
+pub fn protect_session(proc_dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(proc_dir) else {
+        return 0;
+    };
+    let want = SESSION_OOM_ADJ.to_string();
+    entries
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.parse::<u32>().is_ok())
+        })
+        .filter(|e| {
+            std::fs::read(e.path().join("comm"))
+                .is_ok_and(|c| SESSION_COMMS.contains(&c.trim_ascii_end()))
+        })
+        .filter(|e| {
+            let adj = e.path().join("oom_score_adj");
+            std::fs::read_to_string(&adj).is_ok_and(|v| v.trim() != want)
+                && std::fs::write(&adj, &want).is_ok()
+        })
+        .count()
 }
 
 /// Only the realtime agent may boost (canonical executable path of the peer).
@@ -341,12 +398,49 @@ pub mod tests {
         let nice = unsafe { libc::getpriority(libc::PRIO_PROCESS, pid as _) };
         let background = Sched.apply(pid, QosClass::Background);
         let policy = unsafe { libc::sched_getscheduler(pid) };
+        let oom = std::fs::read_to_string(format!("/proc/{pid}/oom_score_adj")).unwrap_or_default();
         child.kill().ok();
         child.wait().ok();
         assert!(utility && nice == 10, "utility={utility} nice={nice}");
         assert!(background && policy == libc::SCHED_IDLE, "policy={policy}");
+        assert_eq!(oom.trim(), "300", "Background raises oom_score_adj");
         assert!(!Sched.apply(i32::MAX, QosClass::Utility));
         assert!(!Sched.apply(0, QosClass::Utility));
+    }
+
+    #[test]
+    fn background_is_first_for_the_oom_killer() {
+        use QosClass::*;
+        assert_eq!(oom_adj(Background), Some(300));
+        for c in [UserInteractive, UserInitiated, Default, Utility] {
+            assert_eq!(oom_adj(c), None, "{c:?}");
+        }
+    }
+
+    /// Fake /proc: compositor and shell get -900 once; other processes are untouched.
+    #[test]
+    fn session_is_protected_from_the_oom_killer() {
+        let d = std::env::temp_dir().join(format!("wol-qos-oom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for (pid, comm, adj) in [
+            ("10", "Hyprland\n", "0\n"),
+            ("11", "wol-shell\n", "0\n"),
+            ("12", "firefox\n", "0\n"),
+            ("13", "Hyprland\n", "-900\n"),
+            ("self", "Hyprland\n", "0\n"),
+        ] {
+            std::fs::create_dir_all(d.join(pid)).unwrap();
+            std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+            std::fs::write(d.join(pid).join("oom_score_adj"), adj).unwrap();
+        }
+        let adj = |pid: &str| std::fs::read_to_string(d.join(pid).join("oom_score_adj")).unwrap();
+        assert_eq!(protect_session(&d), 2);
+        assert_eq!(adj("10").trim(), "-900");
+        assert_eq!(adj("11").trim(), "-900");
+        assert_eq!(adj("12").trim(), "0");
+        assert_eq!(adj("self").trim(), "0", "only numeric pid dirs");
+        assert_eq!(protect_session(&d), 0, "idempotent");
+        std::fs::remove_dir_all(&d).ok();
     }
 
     #[test]
