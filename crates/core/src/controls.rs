@@ -623,6 +623,11 @@ impl Controls {
         crate::sharing::remote_login(&*self.host)
     }
 
+    /// AirPlay Receiver (shairport-sync) on at boot (`airplay-receiver`).
+    pub fn airplay_receiver(&self) -> Option<bool> {
+        crate::sharing::airplay_receiver(&*self.host)
+    }
+
     /// Firewall (pf) on at boot (`firewall`).
     pub fn firewall(&self) -> Option<bool> {
         crate::sharing::firewall(&*self.host)

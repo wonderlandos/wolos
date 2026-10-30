@@ -17,6 +17,19 @@ pub struct ShellPrefs {
     pub show_date: bool,
     pub dock_autohide: bool,
     pub dock_magnify: bool,
+    /// Milliseconds the pointer rests at the edge before an autohidden Dock shows.
+    pub dock_autohide_delay_ms: u32,
+    /// Dock icon size in pixels.
+    pub dock_tile_size: u32,
+    /// Show recently used apps in the Dock.
+    pub dock_show_recents: bool,
+    /// Minimize effect speed as a percentage of its time scale (50 = 0.5).
+    pub dock_minimize_speed_pct: u8,
+    /// Spotlight: milliseconds a slower provider (the file index) waits after a keystroke before
+    /// its rows may be merged in (`priority_index_delay_ms`).
+    pub priority_index_delay_ms: u32,
+    /// Spotlight: slower providers answering later than this after a keystroke are left out.
+    pub spotlight_slow_timeout_ms: u32,
     /// Settings > Control Center: which optional modules show.
     pub control_center: ControlCenterPrefs,
 }
@@ -28,8 +41,32 @@ impl Default for ShellPrefs {
             show_date: true,
             dock_autohide: false,
             dock_magnify: true,
+            dock_autohide_delay_ms: 0,
+            dock_tile_size: TILE_SIZE.2,
+            dock_show_recents: true,
+            dock_minimize_speed_pct: 50,
+            priority_index_delay_ms: 0,
+            spotlight_slow_timeout_ms: 400,
             control_center: ControlCenterPrefs::default(),
         }
+    }
+}
+
+/// Dock icon size: (min, max, default) pixels.
+pub const TILE_SIZE: (u32, u32, u32) = (32, 96, 56);
+/// Longest autohide delay Settings offers.
+pub const AUTOHIDE_DELAY_MAX_MS: u32 = 5000;
+
+impl ShellPrefs {
+    pub fn tile_size(&self) -> u32 {
+        self.dock_tile_size.clamp(TILE_SIZE.0, TILE_SIZE.1)
+    }
+    pub fn autohide_delay_ms(&self) -> u32 {
+        self.dock_autohide_delay_ms.min(AUTOHIDE_DELAY_MAX_MS)
+    }
+    /// Minimize effect time scale, 0.1 to 2.0 (1.0 = the stock duration).
+    pub fn minimize_time_scale(&self) -> f64 {
+        f64::from(self.dock_minimize_speed_pct.clamp(10, 200)) / 100.0
     }
 }
 
@@ -257,6 +294,33 @@ mod tests {
         };
         assert_eq!(ShellPrefs::parse(Some(&p.to_json())), p);
         assert!(ShellPrefs::parse(Some(r#"{"show_date":false}"#)).dock_magnify);
+    }
+
+    #[test]
+    fn spotlight_keys_default() {
+        let d = ShellPrefs::default();
+        assert_eq!(d.priority_index_delay_ms, 0);
+        assert_eq!(d.spotlight_slow_timeout_ms, 400);
+        let p = ShellPrefs::parse(Some(r#"{"priority_index_delay_ms":50}"#));
+        assert_eq!(p.priority_index_delay_ms, 50);
+    }
+
+    #[test]
+    fn dock_keys_default_and_clamp() {
+        let d = ShellPrefs::default();
+        assert_eq!(d.dock_autohide_delay_ms, 0);
+        assert_eq!(d.dock_tile_size, 56);
+        assert!(d.dock_show_recents);
+        assert_eq!(d.dock_minimize_speed_pct, 50, "time scale 0.5");
+        assert_eq!(d.minimize_time_scale(), 0.5);
+        let old = ShellPrefs::parse(Some(r#"{"dock_autohide":true}"#));
+        assert_eq!(old.dock_tile_size, 56);
+        let wild = ShellPrefs::parse(Some(
+            r#"{"dock_tile_size":4000,"dock_autohide_delay_ms":999999,"dock_minimize_speed_pct":0}"#,
+        ));
+        assert_eq!(wild.tile_size(), TILE_SIZE.1);
+        assert_eq!(wild.autohide_delay_ms(), AUTOHIDE_DELAY_MAX_MS);
+        assert_eq!(wild.minimize_time_scale(), 0.1);
     }
 
     #[test]

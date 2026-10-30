@@ -170,9 +170,10 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
             ok(n == 2 && is_wol_path(a[0]) && (a[1] == "signed" || a[1] == "unsigned"))
         }
         AdminAction::WolRemove => ok(n == 1 && shared::package::is_app_id(a[0])),
-        AdminAction::Ntp | AdminAction::RemoteLogin | AdminAction::Firewall => {
-            ok(n == 1 && on_off(a[0]))
-        }
+        AdminAction::Ntp
+        | AdminAction::RemoteLogin
+        | AdminAction::Firewall
+        | AdminAction::AirPlayReceiver => ok(n == 1 && on_off(a[0])),
         AdminAction::Hostname => ok(n == 1 && sharing::is_valid_hostname(a[0])),
         AdminAction::Lid => ok(n == 1 && (a[0] == "sleep" || a[0] == "nothing")),
         AdminAction::AutoUpdate => ok(n == 1 && on_off(a[0])),
@@ -335,6 +336,7 @@ pub fn plan_with(
         ])],
         AdminAction::RemoteLogin => service_steps("sshd.service", a[0] == "on"),
         AdminAction::Firewall => service_steps("nftables.service", a[0] == "on"),
+        AdminAction::AirPlayReceiver => service_steps(crate::sharing::AIRPLAY_UNIT, a[0] == "on"),
         AdminAction::Hostname => vec![argv(&["hostnamectl", "set-hostname", &a[0]])],
         AdminAction::AutoUpdate => vec![write(
             crate::update::auto::FILE,
@@ -937,6 +939,10 @@ mod tests {
             (RemoteLogin, &["start"], false),
             (Firewall, &["off"], true),
             (Firewall, &["on", "x"], false),
+            (AirPlayReceiver, &["on"], true),
+            (AirPlayReceiver, &["off"], true),
+            (AirPlayReceiver, &["start"], false),
+            (AirPlayReceiver, &[], false),
             (Lid, &["sleep"], true),
             (Lid, &["nothing"], true),
             (Lid, &["S5"], false),
@@ -1010,6 +1016,18 @@ mod tests {
                 &["off"],
                 &[],
                 "systemctl disable --now sshd.service",
+            ),
+            (
+                AirPlayReceiver,
+                &["on"],
+                &[],
+                "systemctl enable --now shairport-sync.service",
+            ),
+            (
+                AirPlayReceiver,
+                &["off"],
+                &[],
+                "systemctl disable --now shairport-sync.service",
             ),
             (
                 Hostname,
@@ -1200,6 +1218,7 @@ mod tests {
             (PkgUpgrade, false),
             (UserAdd, false),
             (Firewall, false),
+            (AirPlayReceiver, false),
             (Consent, false),
             (HwLoad, false),
             (RemoteLogin, false),
