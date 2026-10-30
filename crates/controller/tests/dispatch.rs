@@ -159,7 +159,8 @@ fn theme_set_writes_every_toolkit() {
     ] {
         assert!(read(p.clone()).contains(want), "{}: {want}", p.display());
     }
-    let gtk3 = read(data.join("themes/WolOS-retro-82/gtk-3.0/gtk.css"));
+    // WolOS-<id>-gtk3: libhandy strips a -dark suffix (wol_core::theme::apps::gtk3_theme_name).
+    let gtk3 = read(data.join("themes/WolOS-retro-82-gtk3/gtk-3.0/gtk.css"));
     assert!(gtk3.contains("@define-color accent_bg_color #faa968;"));
     for css in [gtk3, read(home.join("gtk-3.0/gtk.css"))] {
         for bad in ["-gtk-icon-size", ":root", "var(", "color-mix("] {
@@ -169,7 +170,7 @@ fn theme_set_writes_every_toolkit() {
     assert!(
         env.execs
             .iter()
-            .any(|a| a.len() == 5 && a[3] == "gtk-theme" && a[4] == "WolOS-retro-82"),
+            .any(|a| a.len() == 5 && a[3] == "gtk-theme" && a[4] == "WolOS-retro-82-gtk3"),
         "a new GTK 3 theme name per WolOS theme: running GTK 3 apps reload"
     );
     // Helium (Chromium GTK mode) reads exactly these: GTK 3 theme, portal accent and scheme.
