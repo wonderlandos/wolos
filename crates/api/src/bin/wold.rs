@@ -33,6 +33,13 @@ fn main() {
     jobs.start_at_load();
 
     spawn_qos();
+    // The compositor and shell start after wold: re-check every few seconds (idempotent).
+    std::thread::spawn(|| {
+        loop {
+            qos::protect_session(Path::new("/proc"));
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    });
     {
         let (jobs, bus) = (jobs.clone(), bus.clone());
         let listener =
