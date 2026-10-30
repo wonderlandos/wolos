@@ -100,5 +100,13 @@ nss-mdns
 # Removable media: udisks2 (mounts under /run/media/<user>), gvfs for Files, NTFS and exFAT.
 udisks2
 gvfs
+# iPhone and iPad: photos (HEIC) and files in Files, USB internet sharing, pairing.
+usbmuxd
+libimobiledevice
+ifuse
+gvfs-afc
+libheif
+# AirPlay speakers as sound outputs.
+pipewire-zeroconf
 ntfs-3g
 exfatprogs

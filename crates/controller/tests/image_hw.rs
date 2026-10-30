@@ -93,3 +93,20 @@ fn every_catalogue_package_ships_offline_or_is_listed_as_not_shipped() {
         "NVIDIA stays an online install"
     );
 }
+
+/// An iPhone plugged in shows its photos and files, shares its internet and pairs; AirPlay
+/// speakers show up as outputs. All from the official repos, nothing to set up.
+#[test]
+fn iphone_and_airplay_work_offline() {
+    let pkgs = shipped();
+    for p in [
+        "usbmuxd",
+        "libimobiledevice",
+        "ifuse",
+        "gvfs-afc",
+        "libheif",
+        "pipewire-zeroconf",
+    ] {
+        assert!(pkgs.iter().any(|x| x == p), "{p} ships offline");
+    }
+}
