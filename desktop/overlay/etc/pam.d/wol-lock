@@ -1,5 +1,8 @@
 # wol-lock (crates/controller wol-authcheck): the lock screen checks the session user's password.
-# No pam_faillock: three typos must never lock a person out of their own session; pam_unix's
-# failure delay throttles guessing.
-auth		required	pam_unix.so
+# Typos are forgiven (Arch's system-auth locks 10 minutes after 3): 10 failures lock for 60 s.
+auth		required	pam_faillock.so preauth deny=10 unlock_time=60
+auth		[success=1 default=bad]	pam_unix.so
+auth		[default=die]	pam_faillock.so authfail deny=10 unlock_time=60
+auth		optional	pam_permit.so
+account		required	pam_faillock.so
 account		include		system-auth
