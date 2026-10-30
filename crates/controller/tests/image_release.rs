@@ -51,6 +51,7 @@ fn package_table_is_in_dependency_order() {
             "linux-wolos-api-headers",
             "hyprland-wolos",
             "flatpak-wolos",
+            "helium-browser",
             "wolos-mirrorlist",
             "wolos-system",
             "wolos-keyring",
@@ -139,6 +140,11 @@ fn release_manifest_is_what_updates_read() {
     let m =
         wol_core::update::check::Manifest::parse(&String::from_utf8(o.stdout).unwrap()).unwrap();
     let v = read("kernel/VERSION");
+    // The kernel package's release bumps on rebuilds of the same source.
+    let pkgrel = read("kernel/linux-wolos/PKGBUILD")
+        .lines()
+        .find_map(|l| l.strip_prefix("pkgrel=").map(str::to_string))
+        .unwrap();
     let get = |k: &str| {
         v.lines()
             .find_map(|l| l.strip_prefix(&format!("{k}=")))
@@ -147,7 +153,7 @@ fn release_manifest_is_what_updates_read() {
     };
     assert_eq!(
         m.kernel,
-        format!("1:{}+{}-1", get("wolkernel"), get("linux"))
+        format!("1:{}+{}-{}", get("wolkernel"), get("linux"), pkgrel)
     );
 }
 
