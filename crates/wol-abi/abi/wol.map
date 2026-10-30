@@ -46,3 +46,28 @@ WOL_1.0 {
   local:
     *;
 };
+
+WOL_1.1 {
+  global:
+    wol_image_create;
+    wol_list_create;
+    wol_notification_add_action;
+    wol_notification_create;
+    wol_notification_release;
+    wol_notification_retain;
+    wol_notification_send;
+    wol_notification_set_action_handler;
+    wol_row_create;
+    wol_slider_create;
+    wol_slider_get_value;
+    wol_slider_set_value;
+    wol_spacer_create;
+    wol_text_field_create;
+    wol_toggle_create;
+    wol_toggle_get_on;
+    wol_toggle_set_on;
+    wol_widget_copy_text;
+    wol_widget_set_text;
+    wol_window_close;
+    wol_window_set_close_handler;
+} WOL_1.0;

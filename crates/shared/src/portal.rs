@@ -7,6 +7,28 @@ use serde::{Deserialize, Serialize};
 pub const MAX_LINE: usize = 16 * 1024;
 pub const MAX_TITLE: usize = 256;
 pub const MAX_BODY: usize = 4096;
+/// Buttons a notification may carry (the banner shows two; the rest are in the list).
+pub const MAX_ACTIONS: usize = 3;
+pub const MAX_ACTION_KEY: usize = 32;
+pub const MAX_ACTION_LABEL: usize = 64;
+
+/// A notification button: `key` comes back to the app when it is pressed. Key `default` is a
+/// click on the banner itself.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NoteAction {
+    pub key: String,
+    pub label: String,
+}
+
+/// What wold checks before a call runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Need {
+    /// A consent grant for the caller's executable (`wol_core::consent::CAPABILITIES`).
+    Grant(&'static str),
+    /// The caller is the session's notification shower (the shell).
+    Shower,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "call", deny_unknown_fields)]
@@ -17,7 +39,12 @@ pub enum Call {
         title: String,
         #[serde(default)]
         body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        actions: Vec<NoteAction>,
     },
+    /// The person pressed a notification button (from the shell): wold tells the app that posted it.
+    #[serde(rename = "notification.answer")]
+    NotificationAnswer { id: u32, key: String },
 }
 
 /// Why a call did not happen. Same numbers as `wol_status` in `wol.h`.
@@ -37,6 +64,9 @@ pub struct Answer {
     pub code: Option<Code>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// What the call made (a notification's id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u32>,
 }
 
 impl Answer {
@@ -45,6 +75,7 @@ impl Answer {
             ok: true,
             code: None,
             message: None,
+            id: None,
         }
     }
 
@@ -53,6 +84,7 @@ impl Answer {
             ok: false,
             code: Some(code),
             message: Some(message.into()),
+            id: None,
         }
     }
 
@@ -76,6 +108,14 @@ impl Answer {
     }
 }
 
+/// `[a-z0-9_-]{1,32}`.
+pub fn action_key_ok(k: &str) -> bool {
+    !k.is_empty()
+        && k.len() <= MAX_ACTION_KEY
+        && k.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
 fn clean(s: &str, max: usize, newlines: bool) -> bool {
     s.len() <= max
         && !s
@@ -84,16 +124,47 @@ fn clean(s: &str, max: usize, newlines: bool) -> bool {
 }
 
 impl Call {
-    /// Capability (`wol_core::consent::CAPABILITIES`) the caller needs.
-    pub fn capability(&self) -> &'static str {
+    pub fn need(&self) -> Need {
         match self {
-            Self::NotificationPost { .. } => "notifications",
+            Self::NotificationPost { .. } => Need::Grant("notifications"),
+            Self::NotificationAnswer { .. } => Need::Shower,
         }
     }
 
     pub fn validate(&self) -> Result<(), String> {
         match self {
-            Self::NotificationPost { title, body } => {
+            Self::NotificationAnswer { key, .. } => {
+                if !action_key_ok(key) {
+                    return Err(
+                        "An action key is up to 32 lowercase letters, digits, '-' or '_'.".into(),
+                    );
+                }
+                Ok(())
+            }
+            Self::NotificationPost {
+                title,
+                body,
+                actions,
+            } => {
+                if actions.len() > MAX_ACTIONS {
+                    return Err(format!("A notification has at most {MAX_ACTIONS} buttons."));
+                }
+                for (i, a) in actions.iter().enumerate() {
+                    if !action_key_ok(&a.key) {
+                        return Err(
+                            "An action key is up to 32 lowercase letters, digits, '-' or '_'."
+                                .into(),
+                        );
+                    }
+                    if a.label.trim().is_empty() || !clean(&a.label, MAX_ACTION_LABEL, false) {
+                        return Err(format!(
+                            "A button label is one line of 1 to {MAX_ACTION_LABEL} bytes."
+                        ));
+                    }
+                    if actions[..i].iter().any(|b| b.key == a.key) {
+                        return Err(format!("The action key \"{}\" is used twice.", a.key));
+                    }
+                }
                 if title.trim().is_empty() {
                     return Err("A notification needs a title.".into());
                 }
@@ -139,6 +210,7 @@ mod tests {
         Call::NotificationPost {
             title: t.into(),
             body: b.into(),
+            actions: Vec::new(),
         }
     }
 
@@ -183,10 +255,54 @@ mod tests {
     }
 
     #[test]
+    fn actions_and_answers() {
+        let act = |k: &str, l: &str| NoteAction {
+            key: k.into(),
+            label: l.into(),
+        };
+        let with = |actions: Vec<NoteAction>| Call::NotificationPost {
+            title: "t".into(),
+            body: String::new(),
+            actions,
+        };
+        assert!(
+            with(vec![act("reply", "Reply"), act("default", "Open")])
+                .validate()
+                .is_ok()
+        );
+        for bad in [
+            vec![act("Bad Key", "x")],
+            vec![act("a", "")],
+            vec![act("a", "x"), act("a", "y")],
+            vec![act("a", "1"), act("b", "2"), act("c", "3"), act("d", "4")],
+        ] {
+            assert!(with(bad.clone()).validate().is_err(), "{bad:?}");
+        }
+        let c = with(vec![act("ok", "OK")]);
+        assert_eq!(Call::decode(c.encode().as_bytes()), Ok(c));
+        assert_eq!(
+            post("t", "").encode(),
+            r#"{"call":"notification.post","title":"t","body":""}"#,
+            "1.0 wire unchanged without actions"
+        );
+        let a = Call::NotificationAnswer {
+            id: 3,
+            key: "ok".into(),
+        };
+        assert_eq!(Call::decode(a.encode().as_bytes()), Ok(a.clone()));
+        assert_eq!(a.need(), Need::Shower);
+        assert_eq!(post("t", "").need(), Need::Grant("notifications"));
+        let mut ok = Answer::ok();
+        ok.id = Some(7);
+        assert_eq!(ok.to_line(), "{\"ok\":true,\"id\":7}\n");
+        assert_eq!(Answer::parse(&ok.to_line()), ok);
+    }
+
+    #[test]
     fn encode_roundtrips_and_names_capability() {
         let c = post("Build done", "3 warnings");
         assert_eq!(Call::decode(c.encode().as_bytes()), Ok(c.clone()));
-        assert_eq!(c.capability(), "notifications");
+        assert_eq!(c.need(), Need::Grant("notifications"));
     }
 
     #[test]

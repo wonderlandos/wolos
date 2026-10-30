@@ -96,12 +96,14 @@ mod tests {
         let bad = Call::NotificationPost {
             title: String::new(),
             body: String::new(),
+            actions: Vec::new(),
         };
         let a = call(Path::new("/nonexistent/wold.sock"), &bad);
         assert_eq!(a.code, Some(Code::InvalidArgument));
         let ok = Call::NotificationPost {
             title: "t".into(),
             body: String::new(),
+            actions: Vec::new(),
         };
         let a = call(Path::new("/nonexistent/wold.sock"), &ok);
         assert_eq!(a.code, Some(Code::Unavailable));
@@ -121,6 +123,7 @@ mod tests {
         let c = Call::NotificationPost {
             title: "t".into(),
             body: "b".into(),
+            actions: Vec::new(),
         };
         assert!(call(&p, &c).ok);
         assert_eq!(t.join().unwrap(), format!("call {}\n", c.encode()));

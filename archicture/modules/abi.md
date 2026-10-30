@@ -16,7 +16,7 @@ One API for apps from any language: `wol.h` + `libwol.so.1`. Code: `crates/wol-a
 | Event loop | poll `wol_context_get_fd`, then `wol_context_dispatch(ctx, 0, &err)` |
 | Stability | symbols versioned by `abi/wol.map`; never removed or changed, only added in a new node |
 
-Adding API: implement + test, declare in `include/wol.h`, add the symbol to a new node in `abi/wol.map` and to `abi/wol-<version>.symbols`, snapshot the header as `abi/wol-<version>.h` at release. `cargo test -p wol-abi` checks all of it, links `libwol.so.1` with `link.sh` and runs `tests/c/hello.c`.
+Adding API: implement + test, declare in `include/wol.h`, add the symbol to a new node in `abi/wol.map` and to `abi/wol-<version>.symbols`, snapshot the header as `abi/wol-<version>.h` at release. `cargo test -p wol-abi` checks all of it, links `libwol.so.1` with `link.sh` and runs `tests/c/hello.c` (1.0) and `tests/c/parts.c` (1.1) against fake wold and Kit hosts. Version defines are the only lines a newer header changes.
 
 Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/release/libwol.a <dir>` (the map alone decides exports). Install `libwol.so.1` and `wol.h`.
 
@@ -33,8 +33,8 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 |---|---|---|---|
 | 1 | core: version, errors, strings, context, event loop, subscriptions | `wol_version`, `wol_error_`, `wol_string_`, `wol_context_`, `wol_subscribe`, `wol_event_` | 1.0 |
 | 2 | system facts, appearance, accent | `wol_system_info_` | 1.0 (change events: topic `theme`) |
-| 3 | notifications | `wol_notification_` | 1.0 post; next: actions, replace, withdraw |
-| 4 | app, windows, Kit parts | `wol_window_`, `wol_stack_`, `wol_label_`, `wol_button_`, `wol_widget_` | 1.0 model; next: Kit host in the shell, row, spacer, text field, toggle, slider, image, list, menus, close events |
+| 3 | notifications | `wol_notification_` | 1.0 post; 1.1 buttons (`_create`, `_add_action`, `_set_action_handler`, `_send`); next: replace, withdraw |
+| 4 | app, windows, Kit parts | `wol_window_`, `wol_stack_`, `wol_label_`, `wol_button_`, `wol_widget_`, `wol_row_`, `wol_list_`, `wol_spacer_`, `wol_text_field_`, `wol_toggle_`, `wol_slider_`, `wol_image_` | 1.0 stack, label, button; 1.1 row, list, spacer, text field, toggle, slider, image, `set_text`/`copy_text`, value getters and setters, close handler and `wol_window_close`; next: menus, toolbars |
 | 5 | IPC between apps: typed messages, services, app topics | `wol_message_`, `wol_endpoint_`, `wol_publish` | next: routed by wold, grant per peer app |
 | 6 | files and portals: open/save panels, granted file handles (fd passing) | `wol_file_`, `wol_panel_` | |
 | 7 | settings and app preferences | `wol_prefs_` | |
@@ -51,7 +51,9 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 
 ## Event topics (`wol_subscribe`)
 
-JSON is the `shared::events` line: `theme` `{"event":"theme","id":"wol-dark-blue"}`, `workspace` `{"event":"workspace","name":"2"}`, `active-window` `{"event":"active-window","class":"…","title":"…","pid":7}`, `open-window`, `close-window`, `job`. Notifications go only to the shell.
+JSON is the `shared::events` line: `theme` `{"event":"theme","id":"wol-dark-blue"}`, `workspace` `{"event":"workspace","name":"2"}`, `active-window` `{"event":"active-window","class":"…","title":"…","pid":7}`, `open-window`, `close-window`, `job`. Notifications go only to the shell; a pressed notification button goes only to the process that posted it, and runs the handler set with `wol_notification_set_action_handler`.
+
+Kit parts: a change made through the API redraws the window the part is in (if shown); a change the person made is recorded first, then the part's change callback runs, so getters inside it read the new value.
 
 ## Lua widgets (`crates/wol-lua`)
 

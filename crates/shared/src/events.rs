@@ -30,12 +30,37 @@ pub enum Event {
         state: String,
     },
     /// A libwol app's notification (ADR 0020), made by wold after its permission check. Reaches only
-    /// subscribers of account `uid` (and root); `app` is the caller's executable as the kernel saw it.
+    /// the notification shower of account `uid`; `app` is the caller's executable as the kernel saw
+    /// it. `id` is wold's; a pressed button goes back as [`Event::NotificationAction`].
     Notification {
         uid: u32,
         app: String,
         title: String,
         body: String,
+        #[serde(default)]
+        id: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        actions: Vec<crate::portal::NoteAction>,
+    },
+    /// A notification button pressed: reaches only process `pid` (the one that posted `id`).
+    NotificationAction {
+        uid: u32,
+        pid: i32,
+        id: u32,
+        key: String,
+    },
+}
+
+/// Who may receive an event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Audience {
+    Everyone,
+    /// The notification shower of this account.
+    Account(u32),
+    /// The subscriber connection of this process (and account).
+    Process {
+        uid: u32,
+        pid: i32,
     },
 }
 
@@ -50,17 +75,20 @@ impl Event {
         serde_json::from_str(line.trim()).ok()
     }
 
-    /// Account that may receive it; None = every subscriber.
-    pub fn audience(&self) -> Option<u32> {
+    pub fn audience(&self) -> Audience {
         match self {
-            Self::Notification { uid, .. } => Some(*uid),
-            _ => None,
+            Self::Notification { uid, .. } => Audience::Account(*uid),
+            Self::NotificationAction { uid, pid, .. } => Audience::Process {
+                uid: *uid,
+                pid: *pid,
+            },
+            _ => Audience::Everyone,
         }
     }
 
     /// `publish` from a client: only window and session events; wold makes the rest itself.
     pub fn client_may_publish(&self) -> bool {
-        !matches!(self, Self::Notification { .. } | Self::Job { .. })
+        self.audience() == Audience::Everyone && !matches!(self, Self::Job { .. })
     }
 
     /// Wire name (`event` field): the topic libwol subscribes to.
@@ -73,6 +101,7 @@ impl Event {
             Self::Theme { .. } => "theme",
             Self::Job { .. } => "job",
             Self::Notification { .. } => "notification",
+            Self::NotificationAction { .. } => "notification-action",
         }
     }
 }
@@ -103,12 +132,25 @@ mod tests {
             app: "/usr/bin/foo".into(),
             title: "t".into(),
             body: String::new(),
+            id: 1,
+            actions: Vec::new(),
         };
-        assert_eq!(n.audience(), Some(1000));
+        assert_eq!(n.audience(), Audience::Account(1000));
         assert!(!n.client_may_publish());
+        let a = Event::NotificationAction {
+            uid: 1000,
+            pid: 42,
+            id: 1,
+            key: "ok".into(),
+        };
+        assert_eq!(a.audience(), Audience::Process { uid: 1000, pid: 42 });
+        assert!(!a.client_may_publish());
         let w = Event::Workspace { name: "1".into() };
-        assert_eq!((w.audience(), w.client_may_publish()), (None, true));
-        for e in [n, w] {
+        assert_eq!(
+            (w.audience(), w.client_may_publish()),
+            (Audience::Everyone, true)
+        );
+        for e in [n, a, w] {
             let line = e.to_line();
             assert!(
                 line.contains(&format!("\"event\":\"{}\"", e.topic())),

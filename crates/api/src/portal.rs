@@ -3,16 +3,49 @@
 //! Grants are the consent database the person controls in Settings > Privacy & Security.
 use crate::bus::Bus;
 use shared::events::Event;
-use shared::portal::{Answer, Call, Code};
+use shared::portal::{Answer, Call, Code, Need};
+use std::collections::VecDeque;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 /// The calling process as the kernel reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Caller {
     pub uid: u32,
+    pub pid: i32,
     /// Canonical executable path.
     pub app: String,
+}
+
+/// Recent notifications: id -> (account, process that posted it), so a pressed button reaches
+/// only that process. Bounded: the oldest are forgotten.
+#[derive(Default)]
+pub struct Notes {
+    /// Last id given, and (id, uid, pid) newest last.
+    inner: Mutex<(u32, VecDeque<Note>)>,
+}
+
+type Note = (u32, u32, i32);
+
+pub const NOTES_KEPT: usize = 1024;
+
+impl Notes {
+    fn add(&self, uid: u32, pid: i32) -> u32 {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        g.0 = g.0.wrapping_add(1).max(1);
+        let id = g.0;
+        if g.1.len() == NOTES_KEPT {
+            g.1.pop_front();
+        }
+        g.1.push_back((id, uid, pid));
+        id
+    }
+
+    fn owner(&self, id: u32, uid: u32) -> Option<i32> {
+        let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        g.1.iter().find(|n| n.0 == id && n.1 == uid).map(|n| n.2)
+    }
 }
 
 pub trait Grants {
@@ -56,6 +89,7 @@ pub fn handle<W: Write + Send>(
     caller: Option<&Caller>,
     grants: &dyn Grants,
     bus: &Bus<W>,
+    notes: &Notes,
 ) -> Answer {
     let call = match Call::decode(json.as_bytes()) {
         Ok(c) => c,
@@ -67,27 +101,61 @@ pub fn handle<W: Write + Send>(
             "WolOS could not tell which app asked, so it did nothing.",
         );
     };
-    if !grants.granted(&caller.app, call.capability()) {
+    let allowed = match call.need() {
+        Need::Grant(cap) => grants.granted(&caller.app, cap),
+        Need::Shower => grants.shows_notifications(&caller.app),
+    };
+    if !allowed {
         return Answer::err(
             Code::PermissionDenied,
-            format!(
-                "Notifications are off for {}. Turn them on in System Settings > Privacy & Security.",
-                name(&caller.app)
-            ),
+            match call.need() {
+                Need::Grant(_) => format!(
+                    "Notifications are off for {}. Turn them on in System Settings > Privacy & Security.",
+                    name(&caller.app)
+                ),
+                Need::Shower => "Only the desktop answers notifications.".into(),
+            },
         );
     }
     match call {
-        Call::NotificationPost { title, body } => {
+        Call::NotificationPost {
+            title,
+            body,
+            actions,
+        } => {
+            let id = notes.add(caller.uid, caller.pid);
             let e = Event::Notification {
                 uid: caller.uid,
                 app: caller.app.clone(),
                 title,
                 body,
+                id,
+                actions,
             };
             if bus.publish(&e) == 0 {
                 return Answer::err(
                     Code::Unavailable,
                     "Notifications cannot be shown right now: the desktop is not running.",
+                );
+            }
+            let mut a = Answer::ok();
+            a.id = Some(id);
+            a
+        }
+        Call::NotificationAnswer { id, key } => {
+            let Some(pid) = notes.owner(id, caller.uid) else {
+                return Answer::err(Code::InvalidArgument, "No such notification.");
+            };
+            let e = Event::NotificationAction {
+                uid: caller.uid,
+                pid,
+                id,
+                key,
+            };
+            if bus.publish(&e) == 0 {
+                return Answer::err(
+                    Code::Unavailable,
+                    "The app that posted it is not listening.",
                 );
             }
             Answer::ok()
@@ -106,8 +174,8 @@ mod tests {
         fn granted(&self, app: &str, cap: &str) -> bool {
             self.0.iter().any(|(a, c)| *a == app && *c == cap)
         }
-        fn shows_notifications(&self, _: &str) -> bool {
-            false
+        fn shows_notifications(&self, app: &str) -> bool {
+            app == "/usr/bin/wol-shell"
         }
     }
 
@@ -116,6 +184,7 @@ mod tests {
     fn caller(app: &str) -> Caller {
         Caller {
             uid: 1000,
+            pid: 4242,
             app: app.into(),
         }
     }
@@ -138,8 +207,8 @@ mod tests {
         for (json, who, want) in cases {
             let bus = Bus::default();
             let (s, p) = UnixStream::pair().unwrap();
-            bus.subscribe(Some(1000), s);
-            let a = handle(json, who, &grants, &bus);
+            bus.subscribe(Some(1000), None, s);
+            let a = handle(json, who, &grants, &bus, &Notes::default());
             assert_eq!(a.code, want, "{json} {who:?}");
             p.set_nonblocking(true).unwrap();
             let mut line = String::new();
@@ -150,7 +219,13 @@ mod tests {
                 "only an allowed call reaches the bus"
             );
         }
-        let a = handle(POST, Some(&bad), &grants, &Bus::<UnixStream>::default());
+        let a = handle(
+            POST,
+            Some(&bad),
+            &grants,
+            &Bus::<UnixStream>::default(),
+            &Notes::default(),
+        );
         assert_eq!(
             a.message.as_deref(),
             Some(
@@ -163,9 +238,11 @@ mod tests {
     fn delivered_event_names_the_kernel_identity() {
         let bus = Bus::default();
         let (s, p) = UnixStream::pair().unwrap();
-        bus.subscribe(Some(1000), s);
+        bus.subscribe(Some(1000), None, s);
         let grants = Fixed(&[("/usr/bin/good", "notifications")]);
-        assert!(handle(POST, Some(&caller("/usr/bin/good")), &grants, &bus).ok);
+        let notes = Notes::default();
+        let a = handle(POST, Some(&caller("/usr/bin/good")), &grants, &bus, &notes);
+        assert_eq!(a.id, Some(1));
         let mut line = String::new();
         BufReader::new(p).read_line(&mut line).unwrap();
         assert_eq!(
@@ -175,11 +252,86 @@ mod tests {
                 app: "/usr/bin/good".into(),
                 title: "Done".into(),
                 body: "ok".into(),
+                id: 1,
+                actions: Vec::new(),
             })
         );
         let nobody = Bus::<UnixStream>::default();
-        let a = handle(POST, Some(&caller("/usr/bin/good")), &grants, &nobody);
+        let a = handle(
+            POST,
+            Some(&caller("/usr/bin/good")),
+            &grants,
+            &nobody,
+            &notes,
+        );
         assert_eq!(a.code, Some(Code::Unavailable));
+    }
+
+    #[test]
+    fn a_pressed_button_reaches_only_the_poster() {
+        let bus = Bus::default();
+        let grants = Fixed(&[("/usr/bin/good", "notifications")]);
+        let notes = Notes::default();
+        let (shower, _s) = UnixStream::pair().unwrap();
+        bus.subscribe(Some(1000), None, shower);
+        let (app, app_peer) = UnixStream::pair().unwrap();
+        bus.subscribe(None, Some((1000, 4242)), app);
+        let (other, other_peer) = UnixStream::pair().unwrap();
+        bus.subscribe(None, Some((1000, 9)), other);
+        let post =
+            r#"{"call":"notification.post","title":"Hi","actions":[{"key":"ok","label":"OK"}]}"#;
+        let id = handle(post, Some(&caller("/usr/bin/good")), &grants, &bus, &notes)
+            .id
+            .unwrap();
+        let answer = format!(r#"{{"call":"notification.answer","id":{id},"key":"ok"}}"#);
+        let a = handle(
+            &answer,
+            Some(&caller("/usr/bin/good")),
+            &grants,
+            &bus,
+            &notes,
+        );
+        assert_eq!(
+            a.code,
+            Some(Code::PermissionDenied),
+            "apps cannot press buttons"
+        );
+        let mut shell = caller("/usr/bin/wol-shell");
+        shell.pid = 1;
+        assert!(handle(&answer, Some(&shell), &grants, &bus, &notes).ok);
+        let mut line = String::new();
+        BufReader::new(&app_peer).read_line(&mut line).unwrap();
+        assert_eq!(
+            Event::parse(&line),
+            Some(Event::NotificationAction {
+                uid: 1000,
+                pid: 4242,
+                id,
+                key: "ok".into()
+            })
+        );
+        other_peer.set_nonblocking(true).unwrap();
+        let mut none = String::new();
+        let _ = BufReader::new(&other_peer).read_line(&mut none);
+        assert_eq!(none, "");
+        shell.uid = 1001;
+        let a = handle(&answer, Some(&shell), &grants, &bus, &notes);
+        assert_eq!(
+            a.code,
+            Some(Code::InvalidArgument),
+            "another account's note"
+        );
+    }
+
+    #[test]
+    fn notes_are_bounded() {
+        let n = Notes::default();
+        let first = n.add(1, 1);
+        for _ in 0..NOTES_KEPT {
+            n.add(1, 2);
+        }
+        assert_eq!(n.owner(first, 1), None);
+        assert_eq!(n.owner(first + 1, 1), Some(2));
     }
 
     #[test]
