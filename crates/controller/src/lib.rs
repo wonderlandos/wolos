@@ -12,6 +12,7 @@ pub mod packages;
 pub mod pam;
 pub mod power;
 pub mod run;
+pub mod seal;
 pub mod security;
 pub mod verbs;
 pub mod widgets;

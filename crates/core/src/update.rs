@@ -82,9 +82,14 @@ pub fn other_slot(running: &str) -> Option<&'static str> {
 
 /// systemd-boot entry for `slot` (written as `<slot>+3.conf`: boot counting).
 pub fn entry(slot: &str, release: &str) -> String {
+    entry_with(slot, release, &crate::encrypt::slot_options(None, slot))
+}
+
+/// Same, with the kernel command line (`root=`/`rd.luks.*` of an encrypted system carried over).
+pub fn entry_with(slot: &str, release: &str, options: &str) -> String {
     format!(
         "title WolOS\nversion {release}\nlinux /{slot}/{KERNEL}\ninitrd /{slot}/{INITRAMFS}\n\
-options root=LABEL=wolos rootflags=subvol=@{slot} rw quiet splash\n"
+options {options}\n"
     )
 }
 
@@ -114,6 +119,18 @@ impl std::fmt::Display for Step {
 /// (None = same release, `[wolos]` fixes only). The default entry always boots linux-wolos;
 /// kernels the person added with pacman stay installed.
 pub fn plan(slot: &str, replace: bool, date: Option<&str>) -> Option<Vec<Step>> {
+    plan_for(slot, replace, date, None)
+}
+
+/// [`plan`] on a running system whose `/proc/cmdline` is `cmdline`: the new slot's entry keeps its
+/// root words (an encrypted disk stays unlockable). The finished slot is sealed (read-only,
+/// fs-verity digests recorded on the ESP) before its entry exists.
+pub fn plan_for(
+    slot: &str,
+    replace: bool,
+    date: Option<&str>,
+    cmdline: Option<&str>,
+) -> Option<Vec<Step>> {
     if !is_valid_be(slot) || date.is_some_and(|d| !is_snapshot_date(d)) {
         return None;
     }
@@ -154,9 +171,20 @@ pub fn plan(slot: &str, replace: bool, date: Option<&str>) -> Option<Vec<Step>> 
         &format!("{root}/boot/{INITRAMFS}"),
         &esp,
     ]));
+    steps.push(v(&[
+        "wol",
+        "seal",
+        "apply",
+        &root,
+        &crate::seal::digest_file(slot),
+    ]));
     steps.push(Step::Write {
         path: entry_file(slot),
-        text: entry(slot, date.unwrap_or("current")),
+        text: entry_with(
+            slot,
+            date.unwrap_or("current"),
+            &crate::encrypt::slot_options(cmdline, slot),
+        ),
     });
     steps.push(v(&["bootctl", "set-default", &format!("{slot}.conf")]));
     Some(steps)
@@ -334,6 +362,7 @@ mod tests {
                 "mkdir -p /efi/wolos-b",
                 "cp /run/wolos/top/@wolos-b/boot/vmlinuz-linux-wolos \
 /run/wolos/top/@wolos-b/boot/initramfs-linux-wolos.img /efi/wolos-b",
+                "wol seal apply /run/wolos/top/@wolos-b /efi/wolos-b/verity",
                 "write /efi/loader/entries/wolos-b+3.conf",
                 "bootctl set-default wolos-b.conf",
             ]
@@ -346,11 +375,34 @@ mod tests {
         );
         assert!(!first.iter().any(|s| s.to_string().starts_with("sed ")));
         assert!(
-            matches!(&p[8], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
+            matches!(&p[9], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
         );
         for (slot, date) in [("x", None), ("wolos-a", Some("2026-11-02")), ("", None)] {
             assert!(plan(slot, false, date).is_none(), "{slot} {date:?}");
         }
+        // An encrypted system's new entry keeps the unlock words; the slot is read-only.
+        let enc = plan_for(
+            "wolos-b",
+            false,
+            None,
+            Some("root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rw"),
+        )
+        .unwrap();
+        let Step::Write { text, .. } = enc.last().unwrap().clone() else {
+            panic!()
+        };
+        assert!(text.contains("options root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rootflags=subvol=@wolos-b ro "), "{text}");
+        let seal = enc
+            .iter()
+            .position(|s| s.to_string().starts_with("wol seal apply"))
+            .unwrap();
+        assert!(
+            seal > enc
+                .iter()
+                .position(|s| s.to_string().starts_with("cp "))
+                .unwrap()
+                && seal + 2 == enc.len()
+        );
         let r: Vec<String> = rollback("wolos-b").iter().map(|a| a.join(" ")).collect();
         assert_eq!(
             r,
