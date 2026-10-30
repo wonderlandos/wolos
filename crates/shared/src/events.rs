@@ -29,6 +29,14 @@ pub enum Event {
         label: String,
         state: String,
     },
+    /// A libwol app's notification (ADR 0020), made by wold after its permission check. Reaches only
+    /// subscribers of account `uid` (and root); `app` is the caller's executable as the kernel saw it.
+    Notification {
+        uid: u32,
+        app: String,
+        title: String,
+        body: String,
+    },
 }
 
 impl Event {
@@ -40,6 +48,32 @@ impl Event {
 
     pub fn parse(line: &str) -> Option<Self> {
         serde_json::from_str(line.trim()).ok()
+    }
+
+    /// Account that may receive it; None = every subscriber.
+    pub fn audience(&self) -> Option<u32> {
+        match self {
+            Self::Notification { uid, .. } => Some(*uid),
+            _ => None,
+        }
+    }
+
+    /// `publish` from a client: only window and session events; wold makes the rest itself.
+    pub fn client_may_publish(&self) -> bool {
+        !matches!(self, Self::Notification { .. } | Self::Job { .. })
+    }
+
+    /// Wire name (`event` field): the topic libwol subscribes to.
+    pub fn topic(&self) -> &'static str {
+        match self {
+            Self::ActiveWindow { .. } => "active-window",
+            Self::OpenWindow { .. } => "open-window",
+            Self::CloseWindow { .. } => "close-window",
+            Self::Workspace { .. } => "workspace",
+            Self::Theme { .. } => "theme",
+            Self::Job { .. } => "job",
+            Self::Notification { .. } => "notification",
+        }
     }
 }
 
@@ -60,5 +94,26 @@ mod tests {
         );
         assert_eq!(Event::parse(&e.to_line()), Some(e));
         assert_eq!(Event::parse("{\"event\":\"nope\"}"), None);
+    }
+
+    #[test]
+    fn notification_is_scoped_and_not_forgeable() {
+        let n = Event::Notification {
+            uid: 1000,
+            app: "/usr/bin/foo".into(),
+            title: "t".into(),
+            body: String::new(),
+        };
+        assert_eq!(n.audience(), Some(1000));
+        assert!(!n.client_may_publish());
+        let w = Event::Workspace { name: "1".into() };
+        assert_eq!((w.audience(), w.client_may_publish()), (None, true));
+        for e in [n, w] {
+            let line = e.to_line();
+            assert!(
+                line.contains(&format!("\"event\":\"{}\"", e.topic())),
+                "{line}"
+            );
+        }
     }
 }

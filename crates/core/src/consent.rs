@@ -1,5 +1,6 @@
-//! Compositor consent database for Settings > Privacy: which app may use which privileged
-//! protocol. Same file and shape the compositor reads (`realtime::policy::Consent`):
+//! Consent database for Settings > Privacy: which app may use which privileged protocol or WolOS
+//! service. Same file and shape the compositor (`realtime::policy::Consent`) and wold (libwol
+//! services, ADR 0020) read:
 //! `{"grants":[{"app":"<canonical path>","capability":"<name>"}]}`. Malformed = no grants.
 use crate::system::Host;
 use serde_json::{Map, Value, json};
@@ -7,8 +8,9 @@ use serde_json::{Map, Value, json};
 pub const FILE: &str = "/etc/wolos/consent.json";
 
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
-pub const CAPABILITIES: [&str; 4] = [
+pub const CAPABILITIES: [&str; 5] = [
     "screen-capture",
+    "notifications",
     "input-injection",
     "clipboard-history",
     "window-list",
