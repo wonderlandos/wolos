@@ -44,10 +44,17 @@ export GTK_CSD=${GTK_CSD:-1}
 # start-hyprland: the 0.56 watchdog launcher (restarts on crash; no "started without" banner).
 # After a crash it restarts Hyprland locked behind this lock screen (WolOS fork, ADR 0012).
 export WOLOS_CRASH_LOCK_CMD="wol-lock --startup"
+# logind session (wol-session-pam): user@.service's bus carries PipeWire, the portals and the polkit
+# agent. Without one (a test, another launcher) a private bus.
+bus=dbus-run-session
+if [ -S "$XDG_RUNTIME_DIR/bus" ]; then
+	export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+	bus=
+fi
 # Single-account boot (wol-login): Hyprland starts locked, nothing of the session shows before the
 # password. The variable stops here; apps never see it.
 if [ "${WOL_SESSION_LOCKED:-}" = 1 ]; then
 	unset WOL_SESSION_LOCKED
-	exec dbus-run-session -- start-hyprland -- --locked-cmd "$WOLOS_CRASH_LOCK_CMD"
+	exec ${bus:+$bus --} start-hyprland -- --locked-cmd "$WOLOS_CRASH_LOCK_CMD"
 fi
-exec dbus-run-session -- start-hyprland
+exec ${bus:+$bus --} start-hyprland

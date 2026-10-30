@@ -364,20 +364,20 @@ pub fn runtime_dir(u: &LoginUser) -> String {
     format!("/var/run/user/{}", u.uid)
 }
 
-/// `su -l` as root applies setusercontext(LOGIN_SETALL): groups, uid, login.conf env, HOME, cwd.
+/// Root helper that opens the user's PAM session (service [`SESSION_PAM_SERVICE`]: pam_systemd
+/// makes the logind session, /run/user and user@.service) and runs a command in the user's login
+/// shell: `wol-session-pam USER COMMAND`.
+pub const SESSION_PAM: &str = "/usr/lib/wol-session-pam";
+pub const SESSION_PAM_SERVICE: &std::ffi::CStr = c"wol-login";
+
 /// `locked`: wol-session starts Hyprland locked behind wol-lock (ADR 0012).
 pub fn session_command(u: &LoginUser, locked: bool) -> Option<Vec<String>> {
     let lock = if locked { "WOL_SESSION_LOCKED=1 " } else { "" };
     valid_name(&u.name).then(|| {
         vec![
-            "/usr/bin/su".into(),
-            "-l".into(),
+            SESSION_PAM.into(),
             u.name.clone(),
-            "-c".into(),
-            format!(
-                "exec env XDG_RUNTIME_DIR={} {lock}{SESSION}",
-                runtime_dir(u)
-            ),
+            format!("exec env {lock}{SESSION}"),
         ]
     })
 }
@@ -1277,23 +1277,24 @@ broken:line
     }
 
     #[test]
-    fn session_runs_through_su_with_private_runtime_dir() {
+    fn session_opens_a_pam_session_as_the_user() {
+        // wol-session-pam: PAM session (pam_systemd: logind session, /run/user, user@.service with
+        // PipeWire and the portals), then the user's login shell runs wol-session.
         let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/bin/zsh");
         assert_eq!(runtime_dir(&zoe), "/var/run/user/1002");
-        let su = |env: &str| {
+        let argv = |env: &str| {
             [
-                "/usr/bin/su".to_string(),
-                "-l".into(),
+                SESSION_PAM.to_string(),
                 "zoe".into(),
-                "-c".into(),
-                format!("exec env XDG_RUNTIME_DIR=/var/run/user/1002 {env}/usr/bin/wol-session"),
+                format!("exec env {env}/usr/bin/wol-session"),
             ]
         };
-        assert_eq!(session_command(&zoe, false).unwrap(), su(""));
+        assert_eq!(SESSION_PAM, "/usr/lib/wol-session-pam");
+        assert_eq!(session_command(&zoe, false).unwrap(), argv(""));
         // Locked start (ADR 0012): wol-session starts Hyprland locked with wol-lock.
         assert_eq!(
             session_command(&zoe, true).unwrap(),
-            su("WOL_SESSION_LOCKED=1 ")
+            argv("WOL_SESSION_LOCKED=1 ")
         );
         assert!(session_command(&user("a;b", 1, "", "", ""), false).is_none());
     }

@@ -584,6 +584,7 @@ fn every_pam_service_the_code_opens_has_its_file() {
     for src in [
         "crates/controller/src/bin/wol-login.rs",
         "crates/controller/src/bin/wol-authcheck.rs",
+        "crates/controller/src/login.rs",
     ] {
         for part in read(src).split("c\"wol-").skip(1) {
             services.push(format!("wol-{}", part.split('"').next().unwrap()));
