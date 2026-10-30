@@ -6,7 +6,7 @@ Source: `crates/core/src/theme/{apps,scaffold,firefox,sourceview,helium,kvantum}
 |---|---|---|
 | GTK 4 / libadwaita | `gtk-4.0/gtk.css`: `--*-color`, `--wol-*` tokens, then the Kit scaffold `theme/adwaita.css` (toolbar, source list, cards, controls, sheets) | light/dark + accent preset via portal; palette on app restart |
 | GTK 3 (adw-gtk3) | GTK theme `$XDG_DATA_HOME/themes/WolOS-<id>` (`@import` adw-gtk3 + colours + `@wol_*` tokens + Kit scaffold `theme/adw-gtk3.css`); `gtk-3.0/gtk.css` holds no colours | yes: new `gtk-theme` name per theme, GTK 3 reloads |
-| Helium (Chromium GTK mode) | `/usr/local/share/helium/initial_preferences`, `/usr/local/etc/helium/policies/managed/wolos.json` (static) | yes: GTK 3 theme + portal `color-scheme`, `accent-color` |
+| Helium (Chromium GTK mode) | `/usr/share/helium/initial_preferences` (linked from `/opt/helium`), `/etc/chromium/policies/managed/wolos.json` (static) | yes: GTK 3 theme + portal `color-scheme`, `accent-color` |
 | Firefox | `firefox/wolos-chrome.css`, loaded by `/usr/local/lib/firefox/wolos.cfg` (AutoConfig, user sheet) | yes: polled, re-registered on change |
 | Qt | qt6ct palette + Kvantum `WolOS` | on app restart |
 | foot | `foot/foot.ini` | new windows |

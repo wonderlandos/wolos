@@ -4,6 +4,7 @@ linux-wolos    kernel/linux-wolos          -                                    
 linux-wolos-api-headers kernel/linux-wolos-api-headers -                         kernel/linux-wolos-api-headers/ kernel/linux-wolos/ref kernel/VERSION
 hyprland-wolos image/repo/hyprland-wolos   -                                       image/repo/hyprland-wolos/ image/hyprland/patches/
 flatpak-wolos  image/repo/flatpak-wolos    -                                       image/repo/flatpak-wolos/
+helium-browser image/repo/helium-browser -                                      image/repo/helium-browser/
 wolos-mirrorlist image/repo/wolos-mirrorlist -                                     image/repo/wolos-mirrorlist/ image/arch/snapshot
 wolos-system   image/repo/wolos-system     hyprland-wolos                          image/repo/wolos-system/ crates/ plugins/ desktop/ design/ image/files/ image/hw/ image/build-rust.sh image/hyprland/build-plugins.sh image/arch/wolos-update-slot Cargo.toml Cargo.lock CHANGELOG.md LICENSE
 wolos-keyring  image/repo/wolos-keyring    -                                       image/repo/wolos-keyring/ image/repo/wolos-repo.pub.asc image/repo/cachy-trusted

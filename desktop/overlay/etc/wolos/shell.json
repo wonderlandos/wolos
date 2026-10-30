@@ -9,7 +9,7 @@
   ],
   "clockFormat": "%a %d %b %H:%M",
   "dock": [
-    { "id": "org.mozilla.firefox", "name": "Firefox", "icon": "firefox", "exec": ["firefox"] },
+    { "id": "helium", "name": "Helium", "icon": "helium", "exec": ["helium"] },
     { "id": "org.gnome.Nautilus", "name": "Files", "icon": "org.gnome.Nautilus", "exec": ["nautilus"] },
     { "id": "org.codeberg.dnkl.foot", "name": "Terminal", "icon": "foot", "exec": ["foot"] },
     { "id": "org.gnome.TextEditor", "name": "Text Editor", "icon": "org.gnome.TextEditor", "exec": ["gnome-text-editor"] },

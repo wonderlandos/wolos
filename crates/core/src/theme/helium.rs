@@ -14,13 +14,15 @@ use serde_json::json;
 pub struct BrowserPaths {
     pub bin: &'static str,
     pub policies_dir: &'static str,
-    /// Read next to the real executable on first run of a new profile.
+    /// Read next to the real executable on first run of a new profile: the package links
+    /// `/opt/helium/initial_preferences` here.
     pub initial_prefs: &'static str,
 }
 
 pub const HELIUM: BrowserPaths = BrowserPaths {
     bin: "/usr/bin/helium",
-    policies_dir: "/etc/helium/policies/managed",
+    // Helium reads Chromium's managed-policy directory (strings in the 0.20.2.1 binary).
+    policies_dir: "/etc/chromium/policies/managed",
     initial_prefs: "/usr/share/helium/initial_preferences",
 };
 /// Our file in `HELIUM.policies_dir`.
@@ -46,7 +48,11 @@ pub fn policies() -> String {
         "MetricsReportingEnabled": false,
         "BrowserSignin": 0,
         "SyncDisabled": true,
-        "PromotionalTabsEnabled": false
+        "PromotionalTabsEnabled": false,
+        "UrlKeyedAnonymizedDataCollectionEnabled": false,
+        "FeedbackSurveysEnabled": false,
+        "BackgroundModeEnabled": false,
+        "DefaultBrowserSettingEnabled": false
     });
     serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"
 }
@@ -77,6 +83,15 @@ mod tests {
         let p: serde_json::Value = serde_json::from_str(&policies()).unwrap();
         assert_eq!(p["MetricsReportingEnabled"], false);
         assert_eq!(p["SyncDisabled"], true);
+        // No telemetry, surveys or default-browser nagging (WolOS ships Helium as the default).
+        for k in [
+            "UrlKeyedAnonymizedDataCollectionEnabled",
+            "FeedbackSurveysEnabled",
+            "BackgroundModeEnabled",
+            "DefaultBrowserSettingEnabled",
+        ] {
+            assert_eq!(p[k], false, "{k}");
+        }
         assert!(
             p.get("BrowserThemeColor").is_none(),
             "would override GTK mode"
@@ -94,6 +109,18 @@ mod tests {
             conf.lines()
                 .any(|l| l == "org.freedesktop.impl.portal.Settings=gtk")
         );
+    }
+
+    /// The wrapper names the desktop file that sets the Wayland app-id the Dock matches.
+    #[test]
+    fn package_contract_matches_the_recipe() {
+        let pkg = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../image/repo/helium-browser/PKGBUILD"),
+        )
+        .unwrap();
+        assert!(pkg.contains(HELIUM.bin));
+        assert!(pkg.contains("/opt/helium/initial_preferences"));
+        assert!(HELIUM.policies_dir.starts_with("/etc/chromium/"));
     }
 
     /// The image ships both files at the package paths; `WOL_REGEN=1` rewrites them.

@@ -145,7 +145,7 @@ fn packages_are_arch_names_with_linux_wolos_only() {
         "bluez",
         "udisks2",
         "steam",
-        "firefox",
+        "helium-browser",
         "inter-font",
         "adw-gtk-theme",
     ] {
@@ -170,6 +170,7 @@ fn packages_are_arch_names_with_linux_wolos_only() {
         "pipewire-spa-oss",
         "fusefs-ntfs",
         "nvidia-open",
+        "firefox",
     ] {
         assert!(!p.iter().any(|x| x == gone), "{gone} is not shipped");
     }
@@ -360,6 +361,7 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
     for p in [
         "image/repo/wolos-system/PKGBUILD",
         "image/repo/hyprland-wolos/PKGBUILD",
+        "image/repo/helium-browser/PKGBUILD",
         "image/repo/wolos-base/PKGBUILD",
         "image/repo/base-manifest.sh",
     ] {
@@ -403,7 +405,7 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
     );
     let log = fs::read_to_string(d.join("log")).unwrap();
     let mk = log.lines().filter(|l| l.starts_with("makepkg")).count();
-    assert_eq!(mk, 8, "{log}");
+    assert_eq!(mk, 9, "{log}");
     let built: Vec<&str> = log
         .lines()
         .filter_map(|l| l.strip_prefix("built "))
@@ -415,6 +417,7 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
             "linux-wolos-api-headers",
             "hyprland-wolos",
             "flatpak-wolos",
+            "helium-browser",
             "wolos-mirrorlist",
             "wolos-system",
             "wolos-keyring",
@@ -633,4 +636,77 @@ fn iso_fits_one_release_asset() {
     let hooks = read("image/arch/airootfs/etc/mkinitcpio.conf.d/archiso.conf");
     let hooks = hooks.lines().find(|l| l.starts_with("HOOKS=")).unwrap();
     assert!(!hooks.split(['(', ' ', ')']).any(|h| h == "kms"), "{hooks}");
+}
+
+/// Helium (the default browser) is the official x86_64 tarball repackaged: pinned version and
+/// checksum, signature checked against the release key pinned by fingerprint, Wayland wrapper.
+#[test]
+fn helium_browser_is_the_signed_official_tarball_repackaged() {
+    let pkg = read("image/repo/helium-browser/PKGBUILD");
+    bash_n("image/repo/helium-browser/PKGBUILD");
+    bash_n("image/repo/helium-browser/helium.sh");
+    assert!(pkg.contains("pkgname=helium-browser"));
+    assert!(pkg.contains("pkgver=0.20.2.1"));
+    assert!(pkg.contains("helium-${pkgver}-x86_64_linux.tar.xz"));
+    assert!(pkg.contains(".tar.xz.asc"));
+    // The release key (docs: README "Signature"), by fingerprint; its file is makepkg's keys/pgp.
+    let fpr = "BE677C1989D35EAB2C5F26C9351601AD01D6378E";
+    assert!(
+        pkg.contains(&format!("validpgpkeys=('{fpr}'")),
+        "validpgpkeys"
+    );
+    let key = read(&format!("image/repo/helium-browser/keys/pgp/{fpr}.asc"));
+    assert!(key.starts_with("-----BEGIN PGP PUBLIC KEY BLOCK-----"));
+    // sha256sums: the tarball is pinned (first), the .asc is checked by gpg (SKIP), and the two
+    // files beside the recipe carry their hash.
+    let sums = pkg
+        .split("sha256sums=(")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap();
+    let hashes: Vec<&str> = sums
+        .split_whitespace()
+        .map(|w| w.trim_matches('\''))
+        .collect();
+    assert_eq!(hashes.len(), 4, "{sums}");
+    assert_eq!(
+        hashes[0],
+        "ba92acb27ec6cda36a8b948e2154009aaee0d633222ad244be25e736a143e6fa"
+    );
+    assert_eq!(hashes[1], "SKIP", "the .asc is verified, not hashed");
+    for h in [hashes[0], hashes[2], hashes[3]] {
+        assert!(
+            h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()),
+            "{h}"
+        );
+    }
+    for want in [
+        "/opt/helium",
+        "/usr/bin/helium",
+        "helium.desktop",
+        "hicolor",
+    ] {
+        assert!(pkg.contains(want), "PKGBUILD lacks {want}");
+    }
+    // Wrapper: Wayland by default, Wayland app-id `helium` (the Dock's running dot), VA-API only
+    // with a render node, per-user flags file.
+    let w = read("image/repo/helium-browser/helium.sh");
+    for want in [
+        "--ozone-platform-hint=auto",
+        "CHROME_DESKTOP=helium.desktop",
+        "/dev/dri/renderD",
+        "AcceleratedVideoDecodeLinuxGL",
+        "exec /opt/helium/helium-wrapper",
+        "helium-flags.conf",
+    ] {
+        assert!(w.contains(want), "helium.sh lacks {want}");
+    }
+    // Built with the other [wolos] packages, rebuilt when its recipe changes.
+    let list = read("image/repo/packages");
+    assert!(
+        list.lines()
+            .any(|l| l.starts_with("helium-browser ") && l.contains("image/repo/helium-browser/"))
+    );
 }

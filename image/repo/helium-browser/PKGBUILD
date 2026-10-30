@@ -1,0 +1,49 @@
+# helium-browser: Helium (Chromium based), the WolOS default browser. The official x86_64 release
+# tarball repackaged: its signature is checked by makepkg against the release key pinned in
+# validpgpkeys (README "Signature" of github.com/imputnet/helium-linux; the key is in keys/pgp).
+# Installs to /opt/helium, the launcher /usr/bin/helium (Wayland, VA-API, app-id `helium`), the
+# desktop file and the icon. WolOS settings (policies, first-run preferences) come from wolos-system.
+pkgname=helium-browser
+pkgver=0.20.2.1
+pkgrel=1
+pkgdesc='Helium web browser (Chromium based), WolOS default'
+arch=(x86_64)
+url='https://github.com/imputnet/helium-linux'
+license=(GPL-3.0-or-later)
+depends=(alsa-lib at-spi2-core cairo dbus expat fontconfig gtk3 hicolor-icon-theme libcups libdrm
+  libva libxkbcommon mesa nspr nss pango ttf-liberation xdg-utils)
+optdepends=('libpulse: audio through PulseAudio (PipeWire is the default)'
+  'kdialog: Qt file dialogs')
+provides=(web-browser)
+options=(!strip !debug)
+source=("$url/releases/download/${pkgver}/helium-${pkgver}-x86_64_linux.tar.xz"
+  "$url/releases/download/${pkgver}/helium-${pkgver}-x86_64_linux.tar.xz.asc"
+  helium.sh
+  helium.desktop)
+noextract=("helium-${pkgver}-x86_64_linux.tar.xz")
+sha256sums=('ba92acb27ec6cda36a8b948e2154009aaee0d633222ad244be25e736a143e6fa'
+  'SKIP'
+  '277831c63240fd5df462011605fbd08b712c696868c9c068913829144caa68fd'
+  'ad06f6b2c2fefbe45324ff3235841b608474adcead24665bd9c879e8707b0918')
+validpgpkeys=('BE677C1989D35EAB2C5F26C9351601AD01D6378E') # Helium signing key <helium@imput.net>
+
+prepare() {
+  bsdtar -xf "helium-${pkgver}-x86_64_linux.tar.xz"
+}
+
+package() {
+  local _dir="$srcdir/helium-${pkgver}-x86_64_linux"
+  install -d "$pkgdir/opt/helium"
+  cp -a "$_dir/." "$pkgdir/opt/helium/"
+  # Ours replace the tarball's: the launcher sets the app-id, the desktop file names it.
+  rm -f "$pkgdir/opt/helium/helium.desktop" "$pkgdir/opt/helium/product_logo_256.png" \
+    "$pkgdir/opt/helium/apparmor.cfg"
+  # Chromium's sandbox needs unprivileged user namespaces (linux-wolos has them); no setuid helper.
+  install -Dm755 helium.sh "$pkgdir/usr/bin/helium"
+  install -Dm644 helium.desktop "$pkgdir/usr/share/applications/helium.desktop"
+  install -Dm644 "$_dir/product_logo_256.png" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/helium.png"
+  install -Dm644 "$_dir/product_logo_256.png" "$pkgdir/usr/share/pixmaps/helium.png"
+  # First-run preferences are read next to the executable: wolos-system ships the file.
+  ln -s /usr/share/helium/initial_preferences "$pkgdir/opt/helium/initial_preferences"
+}
