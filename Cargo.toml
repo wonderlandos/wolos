@@ -8,6 +8,8 @@ members = [
     "crates/proxy",
     "crates/controller",
     "crates/shell",
+    "crates/wol-abi",
+    "crates/wol-lua",
 ]
 
 [workspace.package]

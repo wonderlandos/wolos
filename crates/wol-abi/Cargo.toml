@@ -1,0 +1,19 @@
+[package]
+name = "wol-abi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "libwol: the WolOS app API behind a stable C ABI (wol.h, libwol.so.1)"
+
+[lib]
+name = "wol"
+# libwol.so.1 is linked from the staticlib by link.sh, so abi/wol.map alone decides the exports
+# (a cdylib would also get rustc's own unversioned export list).
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+shared.workspace = true
+wol_core.workspace = true
+libc.workspace = true
+serde_json.workspace = true

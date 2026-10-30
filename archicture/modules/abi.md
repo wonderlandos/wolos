@@ -1,0 +1,81 @@
+# libwol: the app API (ADR 0020)
+
+One API for apps from any language: `wol.h` + `libwol.so.1`. Code: `crates/wol-abi` (C ABI over Rust), `crates/wol-lua` (Lua widgets), wire contracts in `shared::portal` (app -> wold) and `shared::view` (app <-> Kit host), wold side in `api::portal`.
+
+## Rules (header comment has the full text)
+
+| Rule | Means |
+|---|---|
+| Opaque handles | no struct layout is public, ever |
+| `_create` / `_copy` | you own a reference: `_release` it |
+| `_get_` | borrowed, lives as long as its argument |
+| Strings | UTF-8 + length in; NUL-terminated + length out |
+| Errors | `wol_status` return; `wol_error **` filled only on failure, with a sentence to show |
+| Threads | retain/release anywhere; the rest one thread at a time per context |
+| Callbacks | `void *user_data`; run only inside `wol_context_dispatch`; must not unwind |
+| Event loop | poll `wol_context_get_fd`, then `wol_context_dispatch(ctx, 0, &err)` |
+| Stability | symbols versioned by `abi/wol.map`; never removed or changed, only added in a new node |
+
+Adding API: implement + test, declare in `include/wol.h`, add the symbol to a new node in `abi/wol.map` and to `abi/wol-<version>.symbols`, snapshot the header as `abi/wol-<version>.h` at release. `cargo test -p wol-abi` checks all of it, links `libwol.so.1` with `link.sh` and runs `tests/c/hello.c`.
+
+Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/release/libwol.a <dir>` (the map alone decides exports). Install `libwol.so.1` and `wol.h`.
+
+## Security
+
+- libwol has no privilege. In-process: reading the person's own settings and world-readable facts. Everything else is a `shared::portal::Call` to wold, decided with the kernel's peer identity and the consent grants (Settings > Privacy & Security, `/etc/wolos/consent.json`).
+- No telemetry. libwol opens the wold socket and the Kit host socket (`$XDG_RUNTIME_DIR/wol-kit.sock`) and nothing else.
+- Every argument is checked (NULL, length, UTF-8, control characters, ranges). Panics stop at the boundary as `WOL_ERR_INTERNAL`.
+- Decoders: `shared/tests/portal_fuzz.rs` (every `cargo test`) and `fuzz/` (`cargo +nightly fuzz run ipc_decode`).
+
+## Surface: what is in, what comes, in order
+
+| # | Family | Prefix | State |
+|---|---|---|---|
+| 1 | core: version, errors, strings, context, event loop, subscriptions | `wol_version`, `wol_error_`, `wol_string_`, `wol_context_`, `wol_subscribe`, `wol_event_` | 1.0 |
+| 2 | system facts, appearance, accent | `wol_system_info_` | 1.0 (change events: topic `theme`) |
+| 3 | notifications | `wol_notification_` | 1.0 post; next: actions, replace, withdraw |
+| 4 | app, windows, Kit parts | `wol_window_`, `wol_stack_`, `wol_label_`, `wol_button_`, `wol_widget_` | 1.0 model; next: Kit host in the shell, row, spacer, text field, toggle, slider, image, list, menus, close events |
+| 5 | IPC between apps: typed messages, services, app topics | `wol_message_`, `wol_endpoint_`, `wol_publish` | next: routed by wold, grant per peer app |
+| 6 | files and portals: open/save panels, granted file handles (fd passing) | `wol_file_`, `wol_panel_` | |
+| 7 | settings and app preferences | `wol_prefs_` | |
+| 8 | clipboard | `wol_clipboard_` | |
+| 9 | search: Spotlight providers and queries | `wol_search_` | |
+| 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | |
+| 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | |
+| 12 | audio: output, volume, now playing | `wol_audio_` | |
+| 13 | devices: USB, Bluetooth, iPhone | `wol_device_` | per-device grant |
+| 14 | sharing and WolConnect: share sheet, nearby devices | `wol_share_` | |
+| 15 | services: the app's background jobs (wold, per account) | `wol_service_` | grant `background` |
+| 16 | packages: installed apps, ask to install | `wol_package_` | through wol-admind |
+| 17 | accounts: who is signed in, name, picture | `wol_account_` | |
+
+## Event topics (`wol_subscribe`)
+
+JSON is the `shared::events` line: `theme` `{"event":"theme","id":"wol-dark-blue"}`, `workspace` `{"event":"workspace","name":"2"}`, `active-window` `{"event":"active-window","class":"…","title":"…","pid":7}`, `open-window`, `close-window`, `job`. Notifications go only to the shell.
+
+## Lua widgets (`crates/wol-lua`)
+
+A widget is one file in `~/.config/wolos/widgets/<id>.lua` (id: lowercase letters, digits, `-`), reloaded when it changes. Example: `crates/wol-lua/widgets/clock.lua`.
+
+```lua
+return wol.widget {
+  name = "Counter", refresh = 0, permissions = { "notifications" },
+  render = function()
+    return wol.row { spacing = 8, wol.label { "Hello" }, wol.spacer(),
+      wol.button { label = "Ping", on_click = function() wol.notify("Ping", "from Lua") end } }
+  end,
+}
+```
+
+| API | Gives |
+|---|---|
+| `wol.stack{spacing=, ...}`, `wol.row{...}`, `wol.label{text, role=}`, `wol.button{label=, on_click=}`, `wol.spacer()` | view tree parts (roles: display, large, title, body, secondary, caption) |
+| `wol.now()` | `{year, month, day, weekday (1 = Monday), hour, minute, second}` |
+| `wol.system()` | `{os_name, os_version, kernel, appearance, accent, accent_rgb}` |
+| `wol.notify(title, body)` | only with `permissions = {"notifications"}`; returns ok, message |
+
+Sandbox: string, table, math, utf8; no io, os, require, debug, load, bytecode; 16 MiB; 5 M instructions per load, render or click. Services appear after the file loads.
+
+## Other languages
+
+All call the same `wol.h`. Swift: a module map over `wol.h` (`import Wol`). Crystal: `@[Link("wol")] lib LibWol` with the prototypes. .NET languages: P/Invoke on `libwol.so.1`. Strings go as pointer + byte length, so no language needs NUL-terminated buffers.
