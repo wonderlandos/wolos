@@ -321,7 +321,7 @@ pub fn name_of(dispatcher: &str, args: &str) -> Option<(&'static str, Group)> {
 
 use Group as G;
 /// (dispatcher, args, name, group) for every shipped bind (desktop conf + tiling set).
-const NAMES: [(&str, &str, &str, Group); 84] = [
+const NAMES: [(&str, &str, &str, Group); 85] = [
     (
         "exec",
         "wol-spotlight",
@@ -479,6 +479,12 @@ const NAMES: [(&str, &str, &str, Group); 84] = [
         "exec",
         "wol shell hide banners",
         "Dismiss notification banners",
+        G::System,
+    ),
+    (
+        "exec",
+        "wol shell hide transient",
+        "Close menus and panels",
         G::System,
     ),
     ("exec", "wol-app copy", "Copy", G::Commands),

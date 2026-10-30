@@ -19,6 +19,8 @@ pub const PANELS: &[&str] = &[
     "dock",
     // `hide` dismisses every banner on screen (Esc).
     "banners",
+    // `hide` closes every transient panel, Spotlight and the widget gallery (Esc).
+    "transient",
 ];
 
 /// `approve <json>` on wol-shell.sock: a helper (`wol mcp`, a `WOL_HELPER` script) asks before a
