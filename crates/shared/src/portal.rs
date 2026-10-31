@@ -29,12 +29,16 @@ pub const MAX_PREF_KEY: usize = 64;
 pub const MAX_PREF_VALUE: usize = 4096;
 pub const MAX_PREFS: usize = 256;
 
+/// A panel's title; a suggested file name.
+pub const MAX_NAME: usize = 255;
+
 /// Every capability a [`Call`] can need (`wol_core::consent::CAPABILITIES`), test-checked.
 pub const CAPABILITIES: &[&str] = &[
     "notifications",
     "clipboard-read",
     "clipboard-write",
     "app-preferences",
+    "file-panels",
 ];
 
 /// What wold checks before a call runs.
@@ -87,6 +91,12 @@ pub enum Call {
     /// The keys the calling app has set.
     #[serde(rename = "prefs.keys")]
     PrefsKeys {},
+    /// Let the person pick a file; only that file reaches the app, as an open descriptor.
+    #[serde(rename = "panel.open")]
+    PanelOpen { title: String },
+    /// Let the person pick where to save; the app gets that file, opened for writing.
+    #[serde(rename = "panel.save")]
+    PanelSave { title: String, name: String },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -107,8 +117,17 @@ pub enum Call {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "ask", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Ask {
+    /// A file panel. Answer: `{"name": ...}` with the open file attached, or `{"cancelled": true}`.
+    Panel {
+        save: bool,
+        title: String,
+        #[serde(default)]
+        name: String,
+    },
     ClipboardRead,
-    ClipboardWrite { text: String },
+    ClipboardWrite {
+        text: String,
+    },
 }
 
 /// Why a call did not happen. Same numbers as `wol_status` in `wol.h`.
@@ -198,6 +217,15 @@ fn clean(s: &str, max: usize, newlines: bool) -> bool {
             .any(|c| c.is_control() && !(newlines && c == '\n'))
 }
 
+fn panel_title(t: &str) -> Result<(), String> {
+    if !clean(t, MAX_TITLE, false) {
+        return Err(format!(
+            "A panel title is one line of at most {MAX_TITLE} bytes."
+        ));
+    }
+    Ok(())
+}
+
 /// `[A-Za-z0-9._-]{1,64}`.
 fn pref_key(k: &str) -> Result<(), String> {
     let ok = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-');
@@ -219,6 +247,7 @@ impl Call {
             | Self::PrefsSet { .. }
             | Self::PrefsRemove { .. }
             | Self::PrefsKeys {} => Need::Grant("app-preferences"),
+            Self::PanelOpen { .. } | Self::PanelSave { .. } => Need::Grant("file-panels"),
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -251,6 +280,16 @@ impl Call {
                 if value.len() > MAX_PREF_VALUE || value.contains('\0') {
                     return Err(format!(
                         "A preference is at most {MAX_PREF_VALUE} bytes, with no NUL."
+                    ));
+                }
+                Ok(())
+            }
+            Self::PanelOpen { title } => panel_title(title),
+            Self::PanelSave { title, name } => {
+                panel_title(title)?;
+                if name.is_empty() || name.contains('/') || !clean(name, MAX_NAME, false) {
+                    return Err(format!(
+                        "A file name is 1 to {MAX_NAME} bytes, with no '/'."
                     ));
                 }
                 Ok(())
@@ -491,6 +530,30 @@ mod tests {
         };
         assert!(long.validate().is_err());
         assert!(Call::decode(br#"{"call":"prefs.get","key":"k","app":"/usr/bin/x"}"#).is_err());
+    }
+
+    #[test]
+    fn panel_calls() {
+        let o = Call::PanelOpen {
+            title: "Open a report".into(),
+        };
+        assert_eq!(Call::decode(o.encode().as_bytes()), Ok(o.clone()));
+        assert_eq!(o.need(), Need::Grant("file-panels"));
+        let save = |t: &str, n: &str| Call::PanelSave {
+            title: t.into(),
+            name: n.into(),
+        };
+        assert!(save("Save", "report.txt").validate().is_ok());
+        for bad in [
+            save("Save", ""),
+            save("Save", "../up"),
+            save("Save", "a\nb"),
+            save("a\nb", "x"),
+            save(&"t".repeat(MAX_TITLE + 1), "x"),
+            save("t", &"n".repeat(MAX_NAME + 1)),
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 4
+  WOL_VERSION_MINOR = 5
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -29,6 +29,7 @@ lib LibWol
   struct Menu; opaque : UInt8; end
   struct Toolbar; opaque : UInt8; end
   struct Info; opaque : UInt8; end
+  struct File; opaque : UInt8; end
 
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
@@ -133,4 +134,10 @@ lib LibWol
   fun wol_prefs_set_string(context : Context*, key : UInt8*, key_len : LibC::SizeT, value : UInt8*, value_len : LibC::SizeT, error : Error**) : Status
   fun wol_prefs_remove(context : Context*, key : UInt8*, key_len : LibC::SizeT, error : Error**) : Status
   fun wol_prefs_copy_keys(context : Context*, out_ : Info**, error : Error**) : Status
+  fun wol_panel_open(context : Context*, title : UInt8*, title_len : LibC::SizeT, out_ : File**, error : Error**) : Status
+  fun wol_panel_save(context : Context*, title : UInt8*, title_len : LibC::SizeT, name : UInt8*, name_len : LibC::SizeT, out_ : File**, error : Error**) : Status
+  fun wol_file_get_fd(file : File*) : Int32
+  fun wol_file_get_name(file : File*) : String*
+  fun wol_file_retain(file : File*) : File*
+  fun wol_file_release(file : File*)
 end

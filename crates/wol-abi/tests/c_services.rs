@@ -4,6 +4,7 @@
 use serde_json::json;
 use shared::portal::{Answer, Call, Code};
 use std::io::{BufRead, BufReader, Write};
+use std::os::fd::AsFd;
 use std::os::unix::net::UnixListener;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -17,6 +18,7 @@ type Calls = Arc<Mutex<Vec<Call>>>;
 fn fake_wold(path: &Path, f: fn(&Call, usize) -> Answer) -> Calls {
     let calls: Calls = Arc::default();
     let l = UnixListener::bind(path).unwrap();
+    let path = path.to_owned();
     let c = calls.clone();
     std::thread::spawn(move || {
         for conn in l.incoming().flatten() {
@@ -29,6 +31,15 @@ fn fake_wold(path: &Path, f: fn(&Call, usize) -> Answer) -> Calls {
                 all.push(call.clone());
                 f(&call, all.len())
             };
+            if a.data.as_ref().is_some_and(|d| d.get("name").is_some()) {
+                let file = std::fs::File::options()
+                    .read(true)
+                    .write(true)
+                    .open(path.with_file_name("picked.txt"))
+                    .unwrap();
+                shared::sys::send_with_fd(&conn, a.to_line().as_bytes(), file.as_fd()).unwrap();
+                continue;
+            }
             (&conn).write_all(a.to_line().as_bytes()).unwrap();
         }
     });
@@ -39,6 +50,7 @@ fn fake_wold(path: &Path, f: fn(&Call, usize) -> Answer) -> Calls {
 fn run(name: &str, f: fn(&Call, usize) -> Answer) -> (Vec<String>, Vec<Call>) {
     let dir = cprog::temp(name);
     let exe = cprog::build(name, &dir, common::lib_dir());
+    std::fs::write(dir.join("picked.txt"), "from the panel").unwrap();
     let calls = fake_wold(&dir.join("wold.sock"), f);
     let out = cprog::run(&exe, &dir);
     let _ = std::fs::remove_dir_all(dir);
@@ -114,4 +126,24 @@ fn prefs() {
             },
         ]
     );
+}
+
+#[test]
+fn panels() {
+    let (out, calls) = run("panels", |c, _| match c {
+        Call::PanelOpen { title } if title == "Open" => Answer::with(json!({"name": "picked.txt"})),
+        Call::PanelOpen { .. } => Answer::with(json!({"cancelled": true})),
+        _ => Answer::with(json!({"name": "picked.txt"})),
+    });
+    assert_eq!(
+        out,
+        [
+            "name: picked.txt",
+            "read: from the panel",
+            "cancelled: null",
+            "wrote: picked.txt",
+            "bad name: 1"
+        ]
+    );
+    assert_eq!(calls.len(), 3);
 }
