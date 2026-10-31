@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 3
+  WOL_VERSION_MINOR = 4
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -28,6 +28,7 @@ lib LibWol
   struct Notification; opaque : UInt8; end
   struct Menu; opaque : UInt8; end
   struct Toolbar; opaque : UInt8; end
+  struct Info; opaque : UInt8; end
 
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
@@ -119,4 +120,17 @@ lib LibWol
   fun wol_window_set_toolbar(window : Window*, toolbar : Toolbar*, error : Error**) : Status
   fun wol_clipboard_copy_text(context : Context*, out_ : String**, error : Error**) : Status
   fun wol_clipboard_set_text(context : Context*, text : UInt8*, len : LibC::SizeT, error : Error**) : Status
+  fun wol_info_get(info : Info*, key : UInt8*, key_len : LibC::SizeT) : Info*
+  fun wol_info_get_count(info : Info*) : LibC::SizeT
+  fun wol_info_get_item(info : Info*, index : LibC::SizeT) : Info*
+  fun wol_info_get_text(info : Info*) : String*
+  fun wol_info_get_number(info : Info*, out_ : Float64*) : Int32
+  fun wol_info_get_bool(info : Info*) : Int32
+  fun wol_info_get_json(info : Info*) : String*
+  fun wol_info_retain(info : Info*) : Info*
+  fun wol_info_release(info : Info*)
+  fun wol_prefs_copy_string(context : Context*, key : UInt8*, key_len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wol_prefs_set_string(context : Context*, key : UInt8*, key_len : LibC::SizeT, value : UInt8*, value_len : LibC::SizeT, error : Error**) : Status
+  fun wol_prefs_remove(context : Context*, key : UInt8*, key_len : LibC::SizeT, error : Error**) : Status
+  fun wol_prefs_copy_keys(context : Context*, out_ : Info**, error : Error**) : Status
 end

@@ -76,3 +76,42 @@ fn clipboard() {
         "invalid calls never left the library"
     );
 }
+
+#[test]
+fn prefs() {
+    let (out, calls) = run("prefs", |c, _| match c {
+        Call::PrefsGet { key } if key == "width" => Answer::with(json!({"value": "640"})),
+        Call::PrefsGet { .. } => Answer::with(json!({})),
+        Call::PrefsKeys {} => Answer::with(json!(["height", "width"])),
+        _ => Answer::ok(),
+    });
+    assert_eq!(
+        out,
+        [
+            "width: 640",
+            "missing: null",
+            "keys: 2 height width [\"height\",\"width\"]",
+            "bad key: 1",
+            "long value: 1"
+        ]
+    );
+    assert_eq!(
+        calls,
+        [
+            Call::PrefsSet {
+                key: "width".into(),
+                value: "640".into()
+            },
+            Call::PrefsGet {
+                key: "width".into()
+            },
+            Call::PrefsGet {
+                key: "nothing".into()
+            },
+            Call::PrefsKeys {},
+            Call::PrefsRemove {
+                key: "width".into()
+            },
+        ]
+    );
+}

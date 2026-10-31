@@ -98,3 +98,20 @@ WOL_1.3 {
     wol_clipboard_copy_text;
     wol_clipboard_set_text;
 } WOL_1.2;
+
+WOL_1.4 {
+  global:
+    wol_info_get;
+    wol_info_get_bool;
+    wol_info_get_count;
+    wol_info_get_item;
+    wol_info_get_json;
+    wol_info_get_number;
+    wol_info_get_text;
+    wol_info_release;
+    wol_info_retain;
+    wol_prefs_copy_keys;
+    wol_prefs_copy_string;
+    wol_prefs_remove;
+    wol_prefs_set_string;
+} WOL_1.3;

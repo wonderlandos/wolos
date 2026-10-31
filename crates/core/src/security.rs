@@ -209,6 +209,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "apps ask WolOS to change the clipboard, which checks your choice first",
     ),
+    (
+        "app-preferences",
+        Enforcement::System,
+        "WolOS keeps each app's preferences apart and checks your choice before reading or changing them",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

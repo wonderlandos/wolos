@@ -1,0 +1,14 @@
+# libwol 1.4 exports (WOL_1.4). Never edit a shipped line.
+wol_info_get@WOL_1.4
+wol_info_get_bool@WOL_1.4
+wol_info_get_count@WOL_1.4
+wol_info_get_item@WOL_1.4
+wol_info_get_json@WOL_1.4
+wol_info_get_number@WOL_1.4
+wol_info_get_text@WOL_1.4
+wol_info_release@WOL_1.4
+wol_info_retain@WOL_1.4
+wol_prefs_copy_keys@WOL_1.4
+wol_prefs_copy_string@WOL_1.4
+wol_prefs_remove@WOL_1.4
+wol_prefs_set_string@WOL_1.4

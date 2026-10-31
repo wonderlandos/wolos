@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 3
+#define WOL_VERSION_MINOR 4
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -276,6 +276,47 @@ wol_status wol_clipboard_copy_text(wol_context *context, wol_string **out, wol_e
 /* Up to 48 KiB, no NUL byte. Permission: clipboard-write. */
 wol_status wol_clipboard_set_text(wol_context *context, const char *text, size_t len,
                                   wol_error **error);
+
+/* ---- 1.4: answers, preferences (WOL_1.4) ---- */
+
+/*
+ * wol_info: a service's answer, one read-only tree. A getter takes NULL and answers NULL or 0, so
+ * lookups chain: wol_info_get_text(wol_info_get(info, "name", 4)). What a getter returns is
+ * borrowed from its argument. The keys of each answer are listed with the call; more can appear
+ * in a later version, and your code must ignore the ones it does not know.
+ */
+typedef struct wol_info wol_info;
+
+/* Field `key` of an object; NULL when there is none. */
+const wol_info *wol_info_get(const wol_info *info, const char *key, size_t key_len);
+/* Items in a list; 0 for anything else. */
+size_t wol_info_get_count(const wol_info *info);
+const wol_info *wol_info_get_item(const wol_info *info, size_t index);
+/* The text of a string; NULL for anything else. */
+const wol_string *wol_info_get_text(const wol_info *info);
+/* 1 and *out set for a number; 0 for anything else. */
+int wol_info_get_number(const wol_info *info, double *out);
+/* 1 for true; 0 for anything else. */
+int wol_info_get_bool(const wol_info *info);
+/* The whole value as JSON. */
+const wol_string *wol_info_get_json(const wol_info *info);
+wol_info *wol_info_retain(wol_info *info);
+void wol_info_release(wol_info *info);
+
+/*
+ * Preferences of this app, for this account; no app can reach another's. Permission:
+ * app-preferences. A key is 1 to 64 letters, digits, '.', '_' or '-'; a value up to 4 KiB, no
+ * NUL; 256 keys per app.
+ */
+/* *out is NULL, and the call succeeds, when the key is not set. */
+wol_status wol_prefs_copy_string(wol_context *context, const char *key, size_t key_len,
+                                 wol_string **out, wol_error **error);
+wol_status wol_prefs_set_string(wol_context *context, const char *key, size_t key_len,
+                                const char *value, size_t value_len, wol_error **error);
+wol_status wol_prefs_remove(wol_context *context, const char *key, size_t key_len,
+                            wol_error **error);
+/* A list of strings. */
+wol_status wol_prefs_copy_keys(wol_context *context, wol_info **out, wol_error **error);
 
 #ifdef __cplusplus
 }

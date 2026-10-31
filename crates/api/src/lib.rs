@@ -7,6 +7,7 @@ pub mod memsaver;
 pub mod os;
 pub mod packages;
 pub mod portal;
+pub mod prefs;
 pub mod qos;
 pub mod reaper;
 pub mod server;

@@ -39,7 +39,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 8 | clipboard | `wol_clipboard_` | 1.3 `_copy_text`, `_set_text`: grants `clipboard-read`, `clipboard-write` |
 | 5 | IPC between apps: typed messages, services, app topics | `wol_message_`, `wol_endpoint_`, `wol_publish` | next: routed by wold, grant per peer app |
 | 6 | files and portals: open/save panels, granted file handles (fd passing) | `wol_file_`, `wol_panel_` | |
-| 7 | settings and app preferences | `wol_prefs_` | |
+| 7 | settings and app preferences | `wol_prefs_` | 1.4 `_copy_string`, `_set_string`, `_remove`, `_copy_keys`: grant `app-preferences`; per account and executable, kept by wold |
 | 9 | search: Spotlight providers and queries | `wol_search_` | |
 | 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | |
 | 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | |
@@ -48,6 +48,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 14 | sharing and WolConnect: share sheet, nearby devices | `wol_share_` | |
 | 15 | services: the app's background jobs (wold, per account) | `wol_service_` | grant `background` |
 | 16 | packages: installed apps, ask to install | `wol_package_` | through wol-admind |
+| 18 | answers: one read-only tree for what a service returns | `wol_info_` | 1.4 |
 | 17 | accounts: who is signed in, name, picture | `wol_account_` | |
 
 ## Event topics (`wol_subscribe`)
