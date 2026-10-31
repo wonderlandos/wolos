@@ -7,6 +7,9 @@ require "./sources"
 require "./ui"
 require "./flatpak"
 require "./aur"
+require "./aur_guard"
+require "./aur_hook"
+require "./scan"
 require "./recipe"
 require "./completions"
 
@@ -102,7 +105,7 @@ module Wopkg
           wopkg list                (-Q)   what is installed
           wopkg history | rollback <id|system>
           wopkg channel [stable|beta|nightly] | pause [days] | resume
-          wopkg appimage add <url|file> | wopkg aur review <pkg> | wopkg recipe build|install|remove <name>
+          wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg recipe build|install|remove <name>
           wopkg completions zsh|bash|fish
 
         Options: -y (do not ask), --json (for tools).
@@ -364,6 +367,9 @@ module Wopkg
           recipe_install(n) unless @a.check
         end
       end
+      if (n = aur.installed.size) > 0 && !@a.json && (@a.only.nil? || want?("aur"))
+        note "#{n} AUR package#{n == 1 ? "" : "s"} built here: AUR updates never run on their own. Read and update them with `wopkg aur update`."
+      end
       if @a.json
         emit({"changes" => summary, "checked_only" => @a.check})
       elsif summary.empty?
@@ -438,24 +444,110 @@ module Wopkg
 
     def aur_cmd
       sub, pkg = @a.targets[0]?, @a.targets[1]?
-      raise UsageError.new("wopkg aur review <package>") unless sub == "review" && pkg
-      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
-      text = Aur.review_text(aur.repo(pkg), aur.reviewed(pkg))
-      STDOUT.puts(text.empty? ? "Nothing changed since you last accepted #{pkg}." : text)
+      case sub
+      when "review"
+        pkg || raise UsageError.new("wopkg aur review <package>")
+        aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+        text = aur.review_text(pkg, AurGuard.head(aur.repo(pkg)))
+        STDOUT.puts(text.empty? ? "Nothing changed since the version you installed." : text)
+      when "update"
+        (pkg ? [pkg] : aur.installed).each { |n| aur_install(n, true) }
+        say "No AUR packages built by wopkg yet." if pkg.nil? && aur.installed.empty?
+      else
+        raise UsageError.new("wopkg aur review <package> | wopkg aur update [package]")
+      end
     end
 
-    def aur_install(pkg : String)
+    private def show_findings(fs : Array(AurGuard::Finding))
+      fs.each do |f|
+        mark = f.severity.refuse? ? "Stop" : (f.severity.warn? ? "Look" : "Note")
+        STDERR.puts "  #{mark}: #{f.text}"
+      end
+    end
+
+    # Every AUR build: pinned commit, TLS metadata, hostile-until-read checks, sandbox, inspection,
+    # malware scan, then wold. Never unattended, and -y does not answer these questions.
+    def aur_install(pkg : String, update : Bool = false)
       aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
-      text = Aur.review_text(aur.repo(pkg), aur.reviewed(pkg))
-      STDOUT.puts(text.empty? ? "Nothing changed since you last accepted #{pkg}." : text)
-      raise Failure.new(1, "Not built.") unless text.empty? || UI.confirm("Build #{pkg} from what is shown above?", false)
-      aur.accept(pkg)
-      log = "#{aur.repo(pkg)}/.build.log"
-      note "Building #{pkg} in a sandbox (sources with network, the build without)..."
-      files = aur.build(pkg, log)
+      dir = aur.repo(pkg)
+      raise Failure.new(5, "#{pkg} contains symbolic links, so it was not built.") unless Aur.symlinks(dir).empty?
+      commit = AurGuard.head(dir)
+      prev = aur.installed_commit(pkg)
+      return say("#{pkg} is up to date (#{commit[0, 12]}).") if update && prev == commit
+      meta = begin
+        aur.meta(pkg)
+      rescue e
+        raise Failure.new(3, "The AUR did not answer over a secure connection (#{e.message}), so #{pkg} was not built.")
+      end
+      log = "#{dir}/.build.log"
+      File.delete?(log)
+      si = aur.srcinfo(pkg, log)
+      pkgbuild = File.read("#{dir}/PKGBUILD")
+      inst = Dir.children(dir).select(&.ends_with?(".install")).sort.map { |f| File.read("#{dir}/#{f}") }.join("\n")
+      inst = nil if inst.empty?
+      findings = AurGuard.scan(pkgbuild, inst, si) + AurGuard.meta_findings(meta, aur.stored_meta(pkg), Time.utc)
+      findings += AurGuard.update_findings(AurGuard.files_at(dir, prev), AurGuard.files_at(dir, commit)) if prev && prev != commit
+      STDOUT.puts aur.review_text(pkg, commit)
+      note "#{UI.bold(pkg)} from the AUR, commit #{commit[0, 12]}#{meta.maintainer ? ", maintained by #{meta.maintainer}" : ", with no maintainer"}. The AUR is not reviewed by WolOS: anyone can publish there."
+      show_findings(findings)
+      note UI.dim(AurGuard::DISCLAIMER)
+      skips, hard = findings.select { |f| f.severity.refuse? }.partition { |f| f.kind == :skip }
+      raise Failure.new(5, "#{pkg} was not built: #{hard.first.text}") unless hard.empty?
+      unless skips.empty?
+        raise Failure.new(1, "Not built.") unless UI.confirm_strict("A source has no checksum. Build #{pkg} anyway?")
+      end
+      note Sandbox.describe(true).sub("This step", "Fetching") + " " + Sandbox.describe(false).sub("This step", "The build")
+      ok = AurGuard.needs_explicit_yes?(findings) ? UI.confirm_strict("Something changed that needs your decision. Build #{pkg} from what is shown above?") : UI.confirm("Build #{pkg} from what is shown above?", false)
+      raise Failure.new(1, "Not built.") unless ok
+      raise Failure.new(5, "#{dir} changed after you read it, so nothing was built.") unless AurGuard.pinned?(dir, commit)
+      aur.fetch_sources(pkg, log)
+      if Scan.needed?("aur")
+        note "Checking the downloads for known malware (takes about ten seconds)..."
+        v = Scan.run([dir + "/.src"])
+        scan_gate(v, "the downloaded sources")
+      end
+      raise Failure.new(5, "#{dir} changed while it was fetched, so nothing was built.") unless AurGuard.pinned?(dir, commit)
+      note "Building #{pkg} in a sandbox as an unprivileged throwaway user..."
+      files, trace = aur.compile(pkg, log)
       raise Failure.new(3, "#{pkg} built no package. See #{log}.") if files.empty?
+      files.each do |f|
+        fs = AurGuard.inspect_file(f)
+        show_findings(fs)
+        raise Failure.new(5, "#{File.basename(f)} was not installed: #{fs.find(&.severity.refuse?).not_nil!.text}") if AurGuard.blocked?(fs)
+        if sc = AurGuard.scriptlet_of(f)
+          STDOUT.puts "==> install script, runs as the administrator\n#{sc}"
+          raise Failure.new(1, "Not installed.") unless UI.confirm_strict("Run this install script as the administrator?")
+        elsif AurGuard.needs_explicit_yes?(fs)
+          raise Failure.new(1, "Not installed.") unless UI.confirm_strict("The built package changes how updates run. Install it?")
+        end
+        hv = AurHook.check(dir, f, trace)
+        hv.evidence.each { |e| STDERR.puts "  #{hv.pass? ? "Note" : "Look"}: #{e}" }
+        raise Failure.new(5, "#{File.basename(f)} was not installed: the package analyser blocked it.") if hv.block?
+        if hv.flag? && !UI.confirm_strict("The package analyser flagged this build. Install it anyway?")
+          raise Failure.new(1, "Not installed.")
+        end
+      end
+      if Scan.needed?("aur")
+        note "Checking the built package for known malware..."
+        scan_gate(Scan.run(files), "the built package")
+      end
       files.each { |f| core.system_call({"call" => "package.install-file", "path" => f}.to_json) }
-      record("aur", "install", pkg, nil, nil, {"type" => "run", "argv" => ["wopkg", "remove", pkg]})
+      aur.write_provenance(pkg, commit, si, meta, files)
+      record("aur", update ? "update" : "install", pkg, prev.try(&.[0, 12]), commit[0, 12], {"type" => "run", "argv" => ["wopkg", "remove", pkg]})
+      say "Installed #{pkg} (AUR #{commit[0, 12]})."
+    end
+
+    # One plain sentence for a hit, which stops the install unless the person overrides on purpose;
+    # a missing or old signature database says so instead of implying a clean result.
+    private def scan_gate(v : Scan::Verdict, what : String)
+      if v.infected?
+        STDERR.puts v.message
+        unless Scan.may_continue?(v, UI.confirm_strict("Install anyway, against ClamAV's warning?"))
+          raise Failure.new(5, v.message)
+        end
+      elsif !v.clean?
+        note v.message
+      end
     end
 
     def recipe_cmd

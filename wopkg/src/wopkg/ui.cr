@@ -70,6 +70,12 @@ module Wopkg
     end
 
     # "Install firefox 140.0-1 from Arch (extra)? [Y/n]" -> true for yes (Enter is yes).
+    # For risky choices: only the word "yes" counts. -y never answers it, Enter means no.
+    def self.confirm_strict(q : String, input = STDIN) : Bool
+      STDERR.print "#{q} Type yes to go on: "
+      input.gets.try(&.strip.downcase) == "yes"
+    end
+
     def self.confirm(q : String, yes : Bool, input = STDIN) : Bool
       return true if yes
       STDERR.print "#{q} [Y/n] "
