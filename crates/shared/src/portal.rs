@@ -61,6 +61,7 @@ pub const CAPABILITIES: &[&str] = &[
     "account-info",
     "ipc",
     "devices",
+    "share",
 ];
 
 /// A row a search provider offers: `key` comes back to the app when the person opens it.
@@ -210,6 +211,9 @@ pub enum Call {
     /// A USB device's descriptor, passed with the answer.
     #[serde(rename = "device.open")]
     DeviceOpen { vendor: u32, product: u32 },
+    /// Offer text for the person to send somewhere.
+    #[serde(rename = "share.text")]
+    ShareText { title: String, text: String },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -247,6 +251,11 @@ pub enum Ask {
     },
     /// Search for an app, as `{"results": [{"title", "kind"}]}`.
     Search {
+        text: String,
+    },
+    /// Let the person choose where `text` goes, as `{"done": "copied", "saved" or "cancelled"}`.
+    Share {
+        title: String,
         text: String,
     },
     ClipboardRead,
@@ -425,6 +434,7 @@ impl Call {
             Self::IpcSend { .. } => Need::Peer,
             Self::DeviceList {} => Need::Grant("devices"),
             Self::DeviceOpen { .. } => Need::Device,
+            Self::ShareText { .. } => Need::Grant("share"),
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -527,6 +537,15 @@ impl Call {
                     return Err("A USB vendor or product is a 16-bit number.".into());
                 }
                 Ok(())
+            }
+            Self::ShareText { title, text } => {
+                if title.trim().is_empty() || !clean(title, MAX_TITLE, false) {
+                    return Err(format!("A title is one line of 1 to {MAX_TITLE} bytes."));
+                }
+                if text.is_empty() {
+                    return Err("There is nothing to share.".into());
+                }
+                message_body(text)
             }
             Self::SessionAnswer { error, .. } => {
                 if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
@@ -895,6 +914,20 @@ mod tests {
         for (vendor, product) in [(0x1_0000, 1), (1, 0x1_0000), (u32::MAX, u32::MAX)] {
             assert!(Call::DeviceOpen { vendor, product }.validate().is_err());
         }
+    }
+
+    #[test]
+    fn share_calls() {
+        let c = |title: &str, text: &str| Call::ShareText {
+            title: title.into(),
+            text: text.into(),
+        };
+        assert_eq!(c("A note", "two\nlines").validate(), Ok(()));
+        assert_eq!(c("t", "x").need(), Need::Grant("share"));
+        for bad in [c("", "x"), c("a\nb", "x"), c("t", ""), c("t", "a\0b")] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
+        assert!(c("t", &"x".repeat(MAX_MESSAGE + 1)).validate().is_err());
     }
 
     #[test]

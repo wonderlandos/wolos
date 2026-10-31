@@ -179,3 +179,8 @@ WOL_1.12 {
     wol_device_copy_list;
     wol_device_open;
 } WOL_1.11;
+
+WOL_1.13 {
+  global:
+    wol_share_text;
+} WOL_1.12;

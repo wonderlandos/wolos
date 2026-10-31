@@ -134,6 +134,9 @@ unsafe class Services
         Ok(wol_device_open(ctx, 1133, 2, &f, &err));
         Console.WriteLine($"opened: {Text(wol_file_get_name(f))}");
         wol_file_release(f);
+        Ok(wol_share_text(ctx, title.Ptr, title.Len, body.Ptr, body.Len, &str, &err));
+        Console.WriteLine($"shared: {Text(str)}");
+        wol_string_release(str);
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);

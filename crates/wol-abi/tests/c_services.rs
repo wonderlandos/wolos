@@ -308,3 +308,16 @@ fn device() {
         ]
     );
 }
+
+#[test]
+fn share() {
+    let (out, calls) = run("share", |_, _| Answer::with(json!({"done": "copied"})));
+    assert_eq!(out, ["done: copied", "no title: 1"]);
+    assert_eq!(
+        calls,
+        [Call::ShareText {
+            title: "A note".into(),
+            text: "two\nlines".into()
+        }]
+    );
+}
