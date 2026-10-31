@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Daily signature update (ADR 0022): downloads the signed bundle from the WolOS release channel and
+# Daily signature update (ADR 0024): downloads the signed bundle from the WolOS release channel and
 # hands it to `wol-xguard rules install`, which refuses anything unsigned, older or altered.
 # Nothing about this computer is sent: it is a plain download.
 set -u

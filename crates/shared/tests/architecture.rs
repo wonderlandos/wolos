@@ -41,7 +41,7 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 "core" => dep == "shared",
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
                 "wol-lua" => ["shared", "core", "wol-abi"].contains(&dep.as_str()),
-                // wopkg checks what it is about to install (ADR 0022).
+                // wopkg checks what it is about to install (ADR 0024).
                 "wopkg" => ["shared", "core", "xguard"].contains(&dep.as_str()),
                 // The App Store links the package core directly (ADR 0021); the desktop runs Lua
                 // widgets (ADR 0020).

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! The C boundary (ADR 0022 on ADR 0020's rules): opaque handle, UTF-8 with lengths, results as the
+//! The C boundary (ADR 0024 on ADR 0020's rules): opaque handle, UTF-8 with lengths, results as the
 //! JSON of [`crate::Report`], panics stopped here, out-pointers written only on success.
 use crate::{Engine, Limits, Report};
 use std::ffi::c_char;
