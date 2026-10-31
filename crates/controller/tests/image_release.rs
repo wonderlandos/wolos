@@ -54,6 +54,7 @@ fn package_table_is_in_dependency_order() {
             "helium-browser",
             "wolos-mirrorlist",
             "wolos-system",
+            "wopkg",
             "wolos-keyring",
             "wolos-base"
         ]
@@ -91,7 +92,7 @@ fn changed_paths_rebuild_the_package_and_its_users() {
     );
     assert_eq!(
         changed("crates/core/src/update.rs\ndesktop/overlay/usr/share/wolos/zsh/zshrc\n"),
-        "wolos-system wolos-base"
+        "wolos-system wopkg wolos-base"
     );
     assert_eq!(
         changed("image/hyprland/patches/x.patch\n"),
