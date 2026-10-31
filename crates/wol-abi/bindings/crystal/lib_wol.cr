@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 7
+  WOL_VERSION_MINOR = 8
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -146,4 +146,7 @@ lib LibWol
   fun wol_assertion_retain(assertion : Assertion*) : Assertion*
   fun wol_assertion_release(assertion : Assertion*)
   fun wol_network_copy_info(context : Context*, out_ : Info**, error : Error**) : Status
+  fun wol_audio_copy_info(context : Context*, out_ : Info**, error : Error**) : Status
+  fun wol_audio_set_volume(context : Context*, percent : UInt32, error : Error**) : Status
+  fun wol_audio_set_muted(context : Context*, muted : Int32, error : Error**) : Status
 end

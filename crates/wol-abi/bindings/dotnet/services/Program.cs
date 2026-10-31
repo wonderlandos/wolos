@@ -83,6 +83,12 @@ unsafe class Services
         Ok(wol_network_copy_info(ctx, &info, &err));
         Console.WriteLine($"online: {wol_info_get_bool(Field(info, "online"))} {Text(wol_info_get_text(Field(wol_info_get_item(Field(info, "interfaces"), 0), "kind")))}");
         wol_info_release(info);
+        Ok(wol_audio_copy_info(ctx, &info, &err));
+        wol_info_get_number(Field(info, "volume"), &percent);
+        Console.WriteLine($"volume: {(int)percent} {Text(wol_info_get_text(Field(Field(info, "now_playing"), "title")))}");
+        wol_info_release(info);
+        Ok(wol_audio_set_volume(ctx, 30, &err));
+        Ok(wol_audio_set_muted(ctx, 1, &err));
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);

@@ -45,6 +45,8 @@ pub const CAPABILITIES: &[&str] = &[
     "power-info",
     "keep-awake",
     "network-info",
+    "audio-info",
+    "audio-control",
 ];
 
 /// What wold checks before a call runs.
@@ -112,6 +114,13 @@ pub enum Call {
     /// Whether the machine is online and how: no address, MAC or network name.
     #[serde(rename = "network.info")]
     NetworkInfo {},
+    /// Output volume and what is playing.
+    #[serde(rename = "audio.info")]
+    AudioInfo {},
+    #[serde(rename = "audio.set-volume")]
+    AudioSetVolume { percent: u8 },
+    #[serde(rename = "audio.set-muted")]
+    AudioSetMuted { muted: bool },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -138,6 +147,14 @@ pub enum Ask {
         title: String,
         #[serde(default)]
         name: String,
+    },
+    /// Output volume and what is playing, as `{"volume", "muted", "now_playing"}`.
+    AudioInfo,
+    AudioSetVolume {
+        percent: u8,
+    },
+    AudioSetMuted {
+        muted: bool,
     },
     ClipboardRead,
     ClipboardWrite {
@@ -266,6 +283,10 @@ impl Call {
             Self::PowerInfo {} => Need::Grant("power-info"),
             Self::PowerKeepAwake { .. } => Need::Grant("keep-awake"),
             Self::NetworkInfo {} => Need::Grant("network-info"),
+            Self::AudioInfo {} => Need::Grant("audio-info"),
+            Self::AudioSetVolume { .. } | Self::AudioSetMuted { .. } => {
+                Need::Grant("audio-control")
+            }
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -322,6 +343,13 @@ impl Call {
                 Ok(())
             }
             Self::NetworkInfo {} => Ok(()),
+            Self::AudioInfo {} | Self::AudioSetMuted { .. } => Ok(()),
+            Self::AudioSetVolume { percent } => {
+                if *percent > 100 {
+                    return Err("A volume is 0 to 100.".into());
+                }
+                Ok(())
+            }
             Self::SessionAnswer { error, .. } => {
                 if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
                     return Err("A desktop answer's message is short text.".into());
@@ -598,6 +626,17 @@ mod tests {
             };
             assert!(c.validate().is_err(), "{reason}");
         }
+    }
+
+    #[test]
+    fn audio_calls() {
+        let v = Call::AudioSetVolume { percent: 40 };
+        assert_eq!(Call::decode(v.encode().as_bytes()), Ok(v.clone()));
+        assert_eq!(v.need(), Need::Grant("audio-control"));
+        assert_eq!(Call::AudioInfo {}.need(), Need::Grant("audio-info"));
+        assert!(Call::AudioSetVolume { percent: 101 }.validate().is_err());
+        assert!(Call::decode(br#"{"call":"audio.set-volume","percent":300}"#).is_err());
+        assert!(Call::decode(br#"{"call":"audio.set-muted","muted":1}"#).is_err());
     }
 
     #[test]

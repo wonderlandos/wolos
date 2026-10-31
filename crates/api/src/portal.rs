@@ -292,6 +292,8 @@ fn doing(capability: &str) -> Option<&'static str> {
         "power-info" => "see the battery",
         "keep-awake" => "keep this computer awake",
         "network-info" => "see the network state",
+        "audio-info" => "see the volume and what is playing",
+        "audio-control" => "change the volume",
         _ => return None,
     })
 }
@@ -491,6 +493,15 @@ fn decide<W: Write + Send>(
             }
         }
         Call::NetworkInfo {} => Answer::with(crate::facts::network(&*st.host)),
+        Call::AudioInfo {} => st.asks.ask(bus, caller.uid, Ask::AudioInfo, ASK_TIMEOUT),
+        Call::AudioSetVolume { percent } => {
+            let ask = Ask::AudioSetVolume { percent };
+            st.asks.ask(bus, caller.uid, ask, ASK_TIMEOUT)
+        }
+        Call::AudioSetMuted { muted } => {
+            let ask = Ask::AudioSetMuted { muted };
+            st.asks.ask(bus, caller.uid, ask, ASK_TIMEOUT)
+        }
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),
@@ -991,6 +1002,25 @@ mod tests {
         let g = Fixed(&[]);
         let a = handle(line, Some(&caller("/usr/bin/a")), &g, &bus, &st);
         assert_eq!(a.code, Some(Code::PermissionDenied));
+    }
+
+    #[test]
+    fn reading_audio_does_not_allow_changing_it() {
+        let s = Arc::new((Bus::<UnixStream>::default(), State::default()));
+        let g = Fixed(&[("/usr/bin/a", "audio-info")]);
+        let a = caller("/usr/bin/a");
+        let set = r#"{"call":"audio.set-volume","percent":10}"#;
+        assert_eq!(
+            handle(set, Some(&a), &g, &s.0, &s.1).code,
+            Some(Code::PermissionDenied)
+        );
+        let t = shell(s.clone(), 1000, |ask| {
+            assert_eq!(ask, Ask::AudioInfo);
+            r#"{"call":"session.answer","id":ID,"data":{"volume":40,"muted":false}}"#.into()
+        });
+        let got = handle(r#"{"call":"audio.info"}"#, Some(&a), &g, &s.0, &s.1);
+        assert_eq!(got.data.unwrap()["volume"], 40);
+        t.join().unwrap();
     }
 
     #[test]

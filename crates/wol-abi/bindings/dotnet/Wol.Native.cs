@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 7;
+    public const int WOL_VERSION_MINOR = 8;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -142,4 +142,7 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern IntPtr wol_assertion_retain(IntPtr assertion);
     [DllImport(Lib)] public static extern void wol_assertion_release(IntPtr assertion);
     [DllImport(Lib)] public static extern int wol_network_copy_info(IntPtr context, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_audio_copy_info(IntPtr context, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_audio_set_volume(IntPtr context, uint percent, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_audio_set_muted(IntPtr context, int muted, IntPtr* error);
 }
