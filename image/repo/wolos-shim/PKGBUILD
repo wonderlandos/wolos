@@ -15,7 +15,7 @@ options=(!strip !debug)
 source=("https://kojipkgs.fedoraproject.org/packages/shim/$pkgver/$_fedrel/x86_64/shim-x64-$pkgver-$_fedrel.x86_64.rpm"
   "shim-COPYRIGHT::https://raw.githubusercontent.com/rhboot/shim/$pkgver/COPYRIGHT")
 noextract=("shim-x64-$pkgver-$_fedrel.x86_64.rpm")
-sha256sums=('4badee0c00c4c41a53f41c8a2dd566dca815ca051f1d2fba92490d0a0194f5c3' '15edf527919ddcb2f514ab9d16ad07ef219e4bb490e0b79560be510f0c159cc2')
+sha256sums=('0a119f3488e5da27ca55c1864ee8e131afa5ecf27689385ba09b805eb00dd608' '15edf527919ddcb2f514ab9d16ad07ef219e4bb490e0b79560be510f0c159cc2')
 
 check() {
   bsdtar -xf "shim-x64-$pkgver-$_fedrel.x86_64.rpm"
