@@ -409,6 +409,35 @@ impl Calls<'_, '_> {
             .map(|x| x.1)
     }
 
+    /// `with open("pkg/__version__.py") as f: exec(f.read())`: how a Python package reads its
+    /// own version. The file is in the tree and nothing is downloaded.
+    fn version_file(&self, n: Node) -> bool {
+        if self.lang != Lang::Python {
+            return false;
+        }
+        let mut at = n.parent();
+        while let Some(p) = at {
+            if p.kind() == "with_statement" {
+                let t = self.text(p).to_ascii_lowercase();
+                let head = t.split(":\n").next().unwrap_or("");
+                return head.contains("open(")
+                    && !head.contains("urlopen")
+                    && [
+                        "version",
+                        "__about__",
+                        "__init__",
+                        "pkg_info",
+                        "_info",
+                        "_meta",
+                    ]
+                    .iter()
+                    .any(|w| head.contains(w));
+            }
+            at = p.parent();
+        }
+        false
+    }
+
     fn call(&mut self, n: Node) -> Val {
         let callee = self.callee(n);
         let args = self.args(n);
@@ -442,6 +471,7 @@ impl Calls<'_, '_> {
             .unwrap_or(&callee)
             .to_owned();
         match does {
+            Some(Does::Code) if self.version_file(n) => Val::default(),
             Some(Does::Code) => {
                 let v = args.first().map(|a| self.eval(*a)).unwrap_or_default();
                 let proc = self.w.process(&name, loc.clone());

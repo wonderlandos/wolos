@@ -6,16 +6,18 @@ use crate::langs::{self, Lang};
 use crate::shell::{Scope, Walker};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tree_sitter::Node;
 
 const MAX_FILE: u64 = 2_000_000;
 /// Generated `configure` scripts run long, and they are exactly where a build hides things.
 const MAX_CONFIGURE: u64 = 8_000_000;
 const MAX_FILES: usize = 20_000;
 /// Bump when analysis changes, so old cached graphs are not reused.
-const CACHE_VERSION: u32 = 2;
+const CACHE_VERSION: u32 = 3;
 const SKIP_DIRS: &[&str] = &[
     ".git",
     ".hg",
@@ -419,15 +421,184 @@ fn make_to_shell(line: &str) -> String {
     out
 }
 
-fn make(w: &mut Walker, text: &str, file: &str) -> bool {
+/// What the build asks `make` for. Recipes of other targets (lint, release, docs) never run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct MakeCalls {
+    /// Unknown, so every recipe counts: no package text, or a target only known at run time.
+    all: bool,
+    /// `make` with no target: the file's first rule.
+    default: bool,
+    targets: BTreeSet<String>,
+}
+
+impl MakeCalls {
+    fn key(&self) -> String {
+        let t: Vec<&str> = self.targets.iter().map(String::as_str).collect();
+        format!("{} {} {}", self.all, self.default, t.join(" "))
+    }
+
+    /// Reads every `make` command in `text`.
+    fn read(&mut self, text: &str) {
+        for line in text.lines() {
+            let line = line.trim_start();
+            if line.starts_with('#') {
+                continue;
+            }
+            let spaced = line.replace(['"', '\'', ',', '[', ']'], " ");
+            let mut it = spaced.split_whitespace().peekable();
+            while let Some(t) = it.next() {
+                if !matches!(
+                    t.trim_start_matches(['(', '@', '-', '+']),
+                    "make" | "gmake" | "$(MAKE)" | "${MAKE}" | "$MAKE"
+                ) {
+                    continue;
+                }
+                let mut named = false;
+                while let Some(a) = it.next() {
+                    if matches!(a, "&&" | "||" | ";" | "|" | ")") {
+                        break;
+                    }
+                    if matches!(a, "-C" | "-f" | "-j" | "-l" | "--directory" | "--file") {
+                        it.next();
+                    } else if a.starts_with('-') || a.contains('=') {
+                    } else if a.contains(['$', '`', '*']) {
+                        self.all = true;
+                    } else {
+                        named = true;
+                        self.targets
+                            .insert(a.trim_end_matches([';', ')']).to_owned());
+                    }
+                    if a.ends_with(';') {
+                        break;
+                    }
+                }
+                self.default |= !named;
+            }
+        }
+    }
+}
+
+/// The value of `$(X)` and `${X}` in `word`, as far as the file's plain assignments tell.
+fn make_expand(word: &str, vars: &HashMap<String, String>, depth: u8) -> String {
+    let mut out = word.to_owned();
+    for (open, close) in [("$(", ')'), ("${", '}')] {
+        while let Some(at) = out.find(open) {
+            let Some(end) = out[at..].find(close) else {
+                return out;
+            };
+            let name = &out[at + 2..at + end];
+            let Some(v) = vars.get(name).filter(|_| depth < 6) else {
+                return out;
+            };
+            let v = make_expand(v, vars, depth + 1);
+            out.replace_range(at..at + end + 1, &v);
+        }
+    }
+    out
+}
+
+/// One rule's text: targets, prerequisites, recipe.
+fn make_rule(body: &str) -> (Vec<String>, String, String) {
+    let joined = body.replace("\\\n", " ");
+    let (head, recipe) = joined.split_once('\n').unwrap_or((&joined, ""));
+    let (targets, rest) = head.split_once(':').unwrap_or((head, ""));
+    let rest = rest.split(';').next().unwrap_or("").replace('|', " ");
+    (
+        targets.split_whitespace().map(str::to_owned).collect(),
+        rest.trim_start_matches(':').to_owned(),
+        recipe.to_owned(),
+    )
+}
+
+/// Start bytes of the rules a build can run; None when that cannot be told.
+fn reached_rules(root: Node, text: &str, calls: &MakeCalls) -> Option<HashSet<usize>> {
+    if calls.all {
+        return None;
+    }
+    let mut vars: HashMap<String, String> = HashMap::new();
+    for l in text.lines().filter(|l| !l.starts_with('\t')) {
+        let l = l.trim_start_matches("export ");
+        if let Some((k, v)) = l.split_once('=') {
+            let k = k.trim_end_matches([':', '+', '?', ' ']).trim();
+            if !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+            {
+                let e = vars.entry(k.to_owned()).or_default();
+                e.push(' ');
+                e.push_str(v.trim());
+            }
+        }
+    }
+    let mut rules = Vec::new();
+    let mut stack = vec![root];
+    while let Some(n) = stack.pop() {
+        if n.kind() == "rule" {
+            let (t, pre, rec) = make_rule(n.utf8_text(text.as_bytes()).unwrap_or(""));
+            rules.push((n.start_byte(), t, pre, rec));
+        } else {
+            let mut c = n.walk();
+            stack.extend(n.named_children(&mut c));
+        }
+    }
+    rules.sort_by_key(|r| r.0);
+    let mut want = calls.targets.clone();
+    if calls.default
+        && let Some(t) = rules
+            .iter()
+            .flat_map(|r| &r.1)
+            .find(|t| !t.starts_with('.') && !t.contains('%'))
+    {
+        want.insert(t.clone());
+    }
+    let mut seen = HashSet::new();
+    loop {
+        let before = seen.len();
+        for (at, t, pre, rec) in &rules {
+            let hit = t.iter().any(|x| {
+                let e = make_expand(x, &vars, 0);
+                x.contains('%') || e.contains('$') || e.split_whitespace().any(|w| want.contains(w))
+            });
+            if !hit || !seen.insert(*at) {
+                continue;
+            }
+            for w in pre.split_whitespace() {
+                let e = make_expand(w, &vars, 0);
+                if e.contains('$') {
+                    return None;
+                }
+                want.extend(e.split_whitespace().map(str::to_owned));
+            }
+            let mut more = MakeCalls::default();
+            more.read(rec);
+            if more.all {
+                return None;
+            }
+            want.extend(more.targets);
+        }
+        if seen.len() == before {
+            return Some(seen);
+        }
+    }
+}
+
+fn make(w: &mut Walker, text: &str, file: &str, calls: &MakeCalls) -> bool {
     let lang = tree_sitter_make::LANGUAGE.into();
     let Some(tree) = langs::parse(&lang, text) else {
         return false;
     };
+    let reached = reached_rules(tree.root_node(), text, calls);
     let mut stack = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
         let line = n.start_position().row as u32 + 1;
         let body = n.utf8_text(text.as_bytes()).unwrap_or("");
+        if n.kind() == "rule"
+            && reached
+                .as_ref()
+                .is_some_and(|r| !r.contains(&n.start_byte()))
+        {
+            continue;
+        }
         match n.kind() {
             "recipe_line" => w.snippet(&make_to_shell(body), file, line, Stage::Upstream),
             "shell_function" => {
@@ -567,7 +738,7 @@ struct Entry {
     truncated: bool,
 }
 
-fn analyse(rel: &str, r: Role, text: &str) -> Entry {
+fn analyse(rel: &str, r: Role, text: &str, calls: &MakeCalls) -> Entry {
     let mut graph = Graph::new();
     let mut w = Walker::new(&mut graph, Scope::default());
     w.enter_file(rel, Stage::Upstream);
@@ -586,7 +757,7 @@ fn analyse(rel: &str, r: Role, text: &str) -> Entry {
             }
         }
         Role::Code(lang) => ok = langs::walk(lang, text, rel, Stage::Upstream, &mut w, None),
-        Role::Make => ok = make(&mut w, text, rel),
+        Role::Make => ok = make(&mut w, text, rel, calls),
         Role::Cmake => ok = cmake(&mut w, text, rel),
         Role::Npm => npm(&mut w, text, rel),
         Role::Backend => ok = langs::walk(Lang::Python, text, rel, Stage::Upstream, &mut w, None),
@@ -603,17 +774,19 @@ fn analyse(rel: &str, r: Role, text: &str) -> Entry {
     Entry { graph, truncated }
 }
 
-fn cache_path(dir: &Path, rel: &str, bytes: &[u8]) -> PathBuf {
+fn cache_path(dir: &Path, rel: &str, bytes: &[u8], calls: &str) -> PathBuf {
     let mut h = Sha256::new();
     h.update(CACHE_VERSION.to_le_bytes());
     h.update(rel.as_bytes());
+    h.update([0]);
+    h.update(calls.as_bytes());
     h.update([0]);
     h.update(bytes);
     let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
     dir.join(format!("{hex}.json"))
 }
 
-fn one(root: &Path, rel: &str, r: Role, o: &Options) -> Option<(Entry, bool)> {
+fn one(root: &Path, rel: &str, r: Role, o: &Options, calls: &MakeCalls) -> Option<(Entry, bool)> {
     let p = root.join(rel);
     let cap = if rel.ends_with("configure") {
         MAX_CONFIGURE
@@ -624,7 +797,12 @@ fn one(root: &Path, rel: &str, r: Role, o: &Options) -> Option<(Entry, bool)> {
         return None;
     }
     let bytes = std::fs::read(&p).ok()?;
-    let at = o.cache.as_ref().map(|d| cache_path(d, rel, &bytes));
+    let key = if r == Role::Make {
+        calls.key()
+    } else {
+        String::new()
+    };
+    let at = o.cache.as_ref().map(|d| cache_path(d, rel, &bytes, &key));
     if let Some(mut e) = at
         .as_ref()
         .and_then(|c| std::fs::read(c).ok())
@@ -633,7 +811,7 @@ fn one(root: &Path, rel: &str, r: Role, o: &Options) -> Option<(Entry, bool)> {
         e.graph.reindex();
         return Some((e, true));
     }
-    let e = analyse(rel, r, &String::from_utf8_lossy(&bytes));
+    let e = analyse(rel, r, &String::from_utf8_lossy(&bytes), calls);
     if let (Some(c), Ok(json)) = (at, serde_json::to_vec(&e)) {
         if let Some(d) = c.parent() {
             let _ = std::fs::create_dir_all(d);
@@ -651,6 +829,19 @@ fn one(root: &Path, rel: &str, r: Role, o: &Options) -> Option<(Entry, bool)> {
 pub fn scan(root: &Path, o: &Options) -> Scan {
     let (mut files, too_many) = collect(root);
     keep_reached(root, &mut files, &o.mention);
+    let mut calls = MakeCalls::default();
+    calls.all = o.mention.is_empty();
+    calls.read(&o.mention);
+    for (rel, r) in &files {
+        // `configure` probes make with its own throwaway files.
+        let probes = matches!(r, Role::Lines) || rel.ends_with("configure");
+        if !matches!(r, Role::Make) && !probes {
+            calls.read(&String::from_utf8_lossy(
+                &std::fs::read(root.join(rel)).unwrap_or_default(),
+            ));
+        }
+    }
+    let calls = &calls;
     let jobs = if o.jobs > 0 {
         o.jobs
     } else {
@@ -667,7 +858,7 @@ pub fn scan(root: &Path, o: &Options) -> Scan {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some((rel, r)) = files.get(i) else { break };
-                    let e = one(root, rel, *r, o);
+                    let e = one(root, rel, *r, o, calls);
                     if let Ok(mut d) = done.lock() {
                         d[i] = e;
                     }
@@ -691,4 +882,45 @@ pub fn scan(root: &Path, o: &Options) -> Scan {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod make_reach {
+    use super::*;
+
+    fn calls(text: &str) -> MakeCalls {
+        let mut c = MakeCalls::default();
+        c.read(text);
+        c
+    }
+
+    fn reached(mk: &str, c: &MakeCalls) -> Option<usize> {
+        let lang = tree_sitter_make::LANGUAGE.into();
+        let tree = langs::parse(&lang, mk).unwrap();
+        reached_rules(tree.root_node(), mk, c).map(|s| s.len())
+    }
+
+    const MK: &str = "BIN = app\nall: $(BIN)\n$(BIN): main.c\n\tcc main.c\ninstall:\n\tcp app /usr\nlint:\n\tgo run x@latest\n";
+
+    #[test]
+    fn a_recipe_nothing_asks_for_does_not_run() {
+        assert_eq!(
+            reached(MK, &calls("  make\n  make DESTDIR=x install\n")),
+            Some(3)
+        );
+        assert_eq!(reached(MK, &calls("cmake --build .\n")), Some(0));
+    }
+
+    #[test]
+    fn a_target_known_only_at_run_time_keeps_them_all() {
+        assert!(calls("make $goal\n").all);
+        assert_eq!(reached(MK, &calls("make $goal\n")), None);
+    }
+
+    #[test]
+    fn the_command_ends_where_the_shell_says() {
+        let c = calls("make -C sub all && rm x\nsubprocess.run([\"make\", \"dist\"])\n");
+        assert!(c.targets.contains("all") && c.targets.contains("dist"));
+        assert!(!c.targets.contains("rm") && !c.targets.contains("sub"));
+    }
 }
