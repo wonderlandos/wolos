@@ -22,7 +22,8 @@ authors = ["Julia Klee"]
 [workspace.dependencies]
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: parsed numbers are exact, so an accepted wire line re-encodes to the same value.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # .wol signatures and hashes (ADR 0011).
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
 sha2 = "0.10"
