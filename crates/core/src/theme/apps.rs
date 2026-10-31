@@ -384,8 +384,9 @@ fn titlebutton(suffix: &str) -> String {
 }
 
 /// GTK 3 traffic lights: the circle is the 12 px button (GTK 3 centres titlebuttons). Chromium's
-/// GTK mode renders only the button background under GTK 3, and GTK 3 has no `-gtk-icon-size`:
-/// the 16 px icon is pulled to 12 px by a negative margin and scaled, transparent until hover.
+/// GTK mode renders only the button background under GTK 3, so the glyph is a hover background:
+/// that way GTK 3 apps and Helium (default browser) show the same one. Chromium styles each button
+/// on its own, so unlike GTK 4 only the hovered light shows its glyph. The real icon stays hidden.
 /// GTK 3 and Chromium place buttons at header padding + margins, 6 px apart.
 fn gtk3_traffic_lights(t: &ResolvedTheme) -> String {
     let side = (LIGHT_PITCH - LIGHT_SIZE - GTK3_BUTTON_SPACING) / 2;
@@ -394,21 +395,22 @@ fn gtk3_traffic_lights(t: &ResolvedTheme) -> String {
         "{} {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; margin: 0 {side}px; padding: 0; border: none; border-radius: 999px; background-image: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }}\n\
          {} {{ margin-left: {first}px; }}\n\
          {} {{ margin: -2px; padding: 0; color: transparent; background: none; box-shadow: none; -gtk-icon-transform: scale(0.6); }}\n\
-         {} {{ color: rgba(0,0,0,0.55); }}\n",
+",
         titlebutton(""),
         titlebutton(".close"),
         titlebutton(" image"),
-        titlebutton(":hover image"),
     );
-    for (class, tok) in [
-        ("close", "danger"),
-        ("minimize", "warning"),
-        ("maximize", "success"),
+    for (class, tok, glyph) in [
+        ("close", "danger", "window-close-symbolic"),
+        ("minimize", "warning", "list-remove-symbolic"),
+        ("maximize", "success", "list-add-symbolic"),
     ] {
         s += &format!(
-            "{} {{ background-color: {}; }}\n",
+            "{} {{ background-color: {}; }}\n\
+             {} {{ color: rgba(0,0,0,0.55); background-image: -gtk-icontheme(\"{glyph}\"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }}\n",
             titlebutton(&format!(".{class}")),
-            token(t, tok)
+            token(t, tok),
+            titlebutton(&format!(".{class}:hover")),
         );
     }
     s
@@ -730,6 +732,21 @@ mod tests {
             !gtk3.contains("titlebutton.close image"),
             "no circle on the image"
         );
+        // Chromium paints the background only, so that is where the hover glyph has to be.
+        for (class, glyph) in [
+            ("close", "window-close-symbolic"),
+            ("minimize", "list-remove-symbolic"),
+            ("maximize", "list-add-symbolic"),
+        ] {
+            assert!(
+                gtk3.contains(&format!(
+                    "{} {{ color: rgba(0,0,0,0.55); background-image: -gtk-icontheme(\"{glyph}\");",
+                    titlebutton(&format!(".{class}:hover"))
+                )),
+                "{class} glyph on hover"
+            );
+        }
+        assert!(!gtk3.contains(":hover image"), "one glyph, not two");
         assert!(file(&f, "gtk-4.0/gtk.css").contains("windowcontrols { border-spacing: 10px; }"));
         // Header bar (bleeds 1 px past the window) pads 17, controls inset 1: close covers x 17..28,
         // y 20..31 of the window, the Kit golden's pixels (measured on nautilus and calculator).
