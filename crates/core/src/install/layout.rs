@@ -13,7 +13,7 @@ pub const MIN_ROOT: u64 = 16_000_000_000;
 pub const ROOMY_ROOT: u64 = 40_000_000_000;
 /// A new startup partition.
 pub const ESP_BYTES: u64 = GIB;
-/// Free room an existing startup partition needs for WolOS's two kernels (measured: ADR 0023).
+/// Free room an existing startup partition needs for WolOS's two kernels (an estimate, not yet measured on a real ESP).
 pub const ESP_FREE_NEEDED: u64 = 500 * MIB;
 /// Room left to another system beyond what it uses today.
 pub const SPARE_BYTES: u64 = 4 * GIB;
