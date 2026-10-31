@@ -172,7 +172,7 @@ mod tests {
         for want in [
             format!(
                 ".toolbar {{ min-height: {}px; padding: 0 {}px;",
-                m::TOOLBAR_HEIGHT,
+                m::KIT_TOOLBAR_HEIGHT,
                 m::TOOLBAR_PADDING
             ),
             format!(
