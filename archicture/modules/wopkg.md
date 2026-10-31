@@ -13,6 +13,8 @@ One tool for every source. `wopkg` (Crystal CLI, `wopkg/`) drives `libwopkg` (`c
 | `recipe` | `wopkg/recipes/*/recipe.toml` | recipe name | `~/.local` | rebuild when the version changes |
 | `aur` | AUR metadata dump | package name | sandboxed build, then `package.install-file` | rebuild; always `unreviewed` |
 
+`catalog` is Arch's AppStream (`archlinux-appstream-data`). It installs nothing: it ties a package name to an AppStream id, so search can find a package by its app's name and one app shows once. Sources join only when their ids agree. In the October 2026 data, 604 of Arch's 1401 apps share an id with Flathub; the rest stay separate entries, and a package without metadata never joins by name. `wopkg pin <name>` keeps a package out of `wopkg update` (`package.update-holding` passes `--ignore`); `wopkg update <name>` updates one app.
+
 `wopkg audit <pkg>` checks an AUR package out and reads it with `wopkg-aurlaws` without building it (see [aurlaws](aurlaws.md)). The same analyser runs after the sandboxed build, on the files, the built package and the trace.
 
 Search ranks exact name, prefix, word, summary; ties by the source order above. One result per app (`key`), each listing every source.

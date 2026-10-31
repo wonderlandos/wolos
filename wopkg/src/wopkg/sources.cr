@@ -53,7 +53,7 @@ module Wopkg
     end
 
     # The index update request for libwopkg (`wopkg_index_update`).
-    # Arch's AppStream, the same data GNOME Software reads: which package is which app.
+    # Arch's AppStream: which package is which app.
     CATALOGS = %w(core extra multilib)
     FLATHUB  = "https://dl.flathub.org/repo/appstream/#{ARCH}/appstream.xml.gz"
 
