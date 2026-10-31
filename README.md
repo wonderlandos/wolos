@@ -5,72 +5,48 @@
 
 <p align="center"><img src="assets/desktop.png" alt="The WolOS desktop"></p>
 
-Every PC deserves to feel like this. Calm. Fast. Obvious.
-No terminal. No config files. No homework. You turn it on, and it works.
+WolOS is an open source desktop operating system for ordinary PCs. It is built on Arch Linux packages, with a Rust system API, a GTK 4 shell (menu bar, Dock, Spotlight, Control Center, Settings, App Store, Setup Assistant), a Hyprland-based window server, and WolKernel, a Linux kernel tuned for foreground responsiveness and Steam/Proton games. Updates land in a new ZFS boot environment, so the old system is one reboot away.
 
----
+> Active development. The image installs offline and boots; the full desktop is still being proven on real hardware. Expect rough edges.
 
-## Hello.
+<p align="center"><img src="assets/setup.png" width="49%" alt="Setup Assistant"> <img src="assets/spotlight.png" width="49%" alt="Spotlight"></p>
 
-<p align="center"><img src="assets/setup.png" width="49%" alt="Setup Assistant"> <img src="assets/login.png" width="49%" alt="Login window"></p>
+## What is in this repo
 
-Boot the USB stick. Pick a disk. That's the installer — offline, one question, done.
-Then a Setup Assistant greets you: language, Wi-Fi, your account, light or dark. A minute later you're home.
-
-## Everything where your hands expect it.
-
-<p align="center"><img src="assets/spotlight.png" width="49%" alt="Spotlight"> <img src="assets/control-center.png" width="49%" alt="Control Center"></p>
-
-**Spotlight** — `Super+Space`, type, Enter. Apps, files, settings.
-**Control Center** — Wi-Fi, Bluetooth, Focus, Dark Mode, sound, screenshots. One click away.
-**The Dock**, the **menu bar**, **notifications**, **traffic-light windows** that spring open. `Super` is `Cmd`. You already know how to use it.
-
-<p align="center"><img src="assets/notification.png" width="49%" alt="Notifications"> <img src="assets/lock.png" width="49%" alt="Lock screen"></p>
-
-## One place to change anything.
-
-<p align="center"><img src="assets/settings.png" width="49%" alt="System Settings"> <img src="assets/app-store.png" width="49%" alt="App Store"></p>
-
-**System Settings** changes the real system — appearance, accent, displays, sound, network, accounts.
-**App Store** installs Firefox, LibreOffice, Blender, VLC and more with one click. And your Firefox, LibreOffice and GTK/Qt apps all wear the same look.
-
-## Every app just opens.
-
-WolOS app? It runs. Linux app? It runs. Windows game? It runs.
-WolOS picks the best build automatically — **native → Linux → Proton** — and WolKernel is built for Steam and Proton games (`futex_waitv`).
-
-## Fast. And it stays fast.
-
-| | |
+| Path | What |
 |---|---|
-| Open Control Center, App Switcher, Mission Control | **~30 ms** to first frame |
-| Spotlight, per keystroke | **0.6 ms** |
-| Compositor at idle | **0.06 ms** of CPU per second |
-| `futex_waitv` round trip | **0.19 µs** |
+| `crates/` | Rust workspace: system API and daemons (`wold`, `wol-admind`, `wol-login`, `wol`), the GTK 4 shell (`crates/shell`), shared libraries |
+| `kernel/` | WolKernel packaging for `linux-wolos`: config fragment, version, removed-ABI list, UAPI headers |
+| `image/` | Live and installer ISO, the `[wolos]` package repo recipes, QEMU test scripts |
+| `desktop/`, `plugins/` | Desktop overlay and window server plugins |
+| `archicture/` | Architecture notes and decision records |
+| `design/`, `assets/` | Brand and design art (see License) |
 
-The app in front gets priority — from the window server straight into the kernel scheduler. The screen redraws only what changed, and sleeps when nothing moves.
+Related repositories:
 
-## Updates that can't break your machine.
+- Kernel fork: https://github.com/wonderlandos/linux (the `wolos` branch holds the WolKernel patches, all public)
+- Website: https://github.com/wonderlandos/site
 
-Every update lands in a new ZFS boot environment. If anything goes wrong, the old system is one reboot away.
+## Build
 
----
+Develop: `cargo test --workspace`
 
-## Under the hood
+Image (host with archiso, about 20 GB free), as documented in [`image/README.md`](image/README.md):
 
-Built from the best of what already works, then tuned until it disappears.
+```sh
+WOLOS_UNSIGNED=1 image/vm/build.sh     # local test repo and ISO
+WOLOS_KEEP_DISK=1 image/vm/test-install.sh
+image/vm/run-installed.sh
+```
 
-| | |
-|---|---|
-| **Kernel** | WolKernel: Linux with WolOS scheduling and QoS |
-| **Window server** | Our Hyprland fork: per-frame animations, macOS window behaviour, `wol-hypr` plugin |
-| **System** | One Rust system API: `wold`, `wol-admind`, `wol-login`, `wol` |
-| **Shell** | Rust + GTK 4: menu bar, Dock, Spotlight, Control Center, Lock, Settings, App Store, Setup |
+See `kernel/README.md` for the kernel and `archicture/` for how the pieces fit.
 
-Every screenshot above is real WolOS on Arch Linux, rendered by the shipping code.
+## Contributing
 
-**Build:** `image/vm/build-in-vm.sh` → `image/vm/test-install.sh` · **Develop:** `cargo test --workspace` · **Architecture:** [`archicture/`](archicture/)
+Issues and pull requests are welcome. Run `cargo test --workspace` before sending a change, keep changes focused, and say what you tested.
 
-> Early. The image installs offline and boots; the full desktop is being proven on real hardware now.
+## License
 
-**License:** BSD-2-Clause; the shell is GPL-3.0-or-later; brand art is CC BY-NC-ND 4.0 (share it to talk about WolOS; ask for anything else). See [`COPYRIGHT`](COPYRIGHT). © 2026 Julia Klee.
+Under [`COPYRIGHT`](COPYRIGHT), as of today: BSD-2-Clause for everything not listed below (`LICENSE`); the shell (`crates/shell/`) is GPL-3.0-or-later; `design/` and `assets/` are CC BY-NC-ND 4.0; `third_party/blocking/` is Apache-2.0 OR MIT. The WolOS name and logo are trademarks of Julia Klee; forks should use their own name and art.
+
+Copyright (c) 2026 Julia Klee.
