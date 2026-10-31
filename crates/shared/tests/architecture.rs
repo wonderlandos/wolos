@@ -1,11 +1,19 @@
-//! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi, wopkg}.
+//! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi, wopkg, xguard}.
 //! libwopkg (ADR 0021): `wopkg` is the package core's stable C ABI, an adaptor like `wol-abi`.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
 use std::collections::BTreeMap;
 use std::process::Command;
 
-const ADAPTORS: [&str; 6] = ["api", "realtime", "proxy", "controller", "wol-abi", "wopkg"];
-const REQUIRED: [&str; 9] = [
+const ADAPTORS: [&str; 7] = [
+    "api",
+    "realtime",
+    "proxy",
+    "controller",
+    "wol-abi",
+    "wopkg",
+    "xguard",
+];
+const REQUIRED: [&str; 10] = [
     "shared",
     "core",
     "api",
@@ -15,6 +23,7 @@ const REQUIRED: [&str; 9] = [
     "wol-abi",
     "wol-lua",
     "wopkg",
+    "xguard",
 ];
 
 /// Rule violations for a package -> workspace-dependencies graph.

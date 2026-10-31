@@ -1,0 +1,41 @@
+[package]
+name = "xguard"
+version.workspace = true
+edition.workspace = true
+license = "GPL-2.0-or-later"
+authors.workspace = true
+description = "libxguard: on-demand and first-use malware checks with a shared, memory-mapped signature database (ADR 0022)"
+
+[lib]
+name = "xguard"
+# libxguard.so.1 is linked from the staticlib by link.sh (abi/xguard.map decides the exports);
+# the rlib is for Rust callers (wopkg, the daemon).
+crate-type = ["staticlib", "rlib"]
+
+[[bin]]
+name = "wol-xguard"
+path = "src/bin/wol-xguard.rs"
+
+[features]
+# YARA-X rule sets. Only the wol-xguard binary turns it on: its worker is the one process that loads them.
+yara = ["dep:yara-x"]
+
+[dependencies]
+shared.workspace = true
+wol_core.workspace = true
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+md-5 = "0.10"
+memchr = "2.8"
+memmap2 = "0.9"
+flate2 = "1.1"
+ruzstd = "0.8"
+lzma-rs = "0.3"
+backhand = { version = "0.21", default-features = false, features = ["gzip", "zstd", "xz"] }
+yara-x = { version = "1.22", optional = true, default-features = false, features = ["pe-module", "elf-module", "hash-module", "math-module", "string-module", "time-module", "test_proto2-module"] }
+
+[dev-dependencies]
+aho-corasick = "1"
+daachorse = "1"
