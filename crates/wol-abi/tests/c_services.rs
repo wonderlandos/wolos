@@ -167,3 +167,14 @@ fn power() {
         ]
     );
 }
+
+#[test]
+fn network() {
+    let (out, calls) = run("network", |_, _| {
+        Answer::with(json!({
+            "online": true, "interfaces": [{"name": "wlan0", "kind": "wifi", "up": true}]
+        }))
+    });
+    assert_eq!(out, ["online: 1 1", "wlan0 wifi", "null out: 1"]);
+    assert_eq!(calls, [Call::NetworkInfo {}]);
+}

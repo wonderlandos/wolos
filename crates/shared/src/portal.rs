@@ -44,6 +44,7 @@ pub const CAPABILITIES: &[&str] = &[
     "file-panels",
     "power-info",
     "keep-awake",
+    "network-info",
 ];
 
 /// What wold checks before a call runs.
@@ -108,6 +109,9 @@ pub enum Call {
     /// Keep the machine awake until this connection closes.
     #[serde(rename = "power.keep-awake")]
     PowerKeepAwake { reason: String },
+    /// Whether the machine is online and how: no address, MAC or network name.
+    #[serde(rename = "network.info")]
+    NetworkInfo {},
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -261,6 +265,7 @@ impl Call {
             Self::PanelOpen { .. } | Self::PanelSave { .. } => Need::Grant("file-panels"),
             Self::PowerInfo {} => Need::Grant("power-info"),
             Self::PowerKeepAwake { .. } => Need::Grant("keep-awake"),
+            Self::NetworkInfo {} => Need::Grant("network-info"),
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -316,6 +321,7 @@ impl Call {
                 }
                 Ok(())
             }
+            Self::NetworkInfo {} => Ok(()),
             Self::SessionAnswer { error, .. } => {
                 if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
                     return Err("A desktop answer's message is short text.".into());

@@ -291,6 +291,7 @@ fn doing(capability: &str) -> Option<&'static str> {
         "file-panels" => "show file panels",
         "power-info" => "see the battery",
         "keep-awake" => "keep this computer awake",
+        "network-info" => "see the network state",
         _ => return None,
     })
 }
@@ -489,6 +490,7 @@ fn decide<W: Write + Send>(
                 }
             }
         }
+        Call::NetworkInfo {} => Answer::with(crate::facts::network(&*st.host)),
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),
@@ -979,6 +981,16 @@ mod tests {
         drop(gone);
         assert_eq!(live.load(SeqCst), shared::portal::MAX_HOLDS - 1);
         assert!(run(&a).0.ok, "a released hold can be taken again");
+    }
+
+    #[test]
+    fn network_facts_need_their_grant() {
+        let st = State::default();
+        let bus = Bus::<UnixStream>::default();
+        let line = r#"{"call":"network.info"}"#;
+        let g = Fixed(&[]);
+        let a = handle(line, Some(&caller("/usr/bin/a")), &g, &bus, &st);
+        assert_eq!(a.code, Some(Code::PermissionDenied));
     }
 
     #[test]

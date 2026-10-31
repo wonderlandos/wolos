@@ -42,7 +42,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 7 | settings and app preferences | `wol_prefs_` | 1.4 `_copy_string`, `_set_string`, `_remove`, `_copy_keys`: grant `app-preferences`; per account and executable, kept by wold |
 | 9 | search: Spotlight providers and queries | `wol_search_` | |
 | 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | 1.6 `_copy_info` (grant `power-info`), `_keep_awake` and `wol_assertion_` (grant `keep-awake`): a logind inhibitor that lasts as long as the app's connection to wold |
-| 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | |
+| 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | 1.7 `_copy_info`: grant `network-info`; online, and interface names and kinds, never an address or a network name |
 | 12 | audio: output, volume, now playing | `wol_audio_` | |
 | 13 | devices: USB, Bluetooth, iPhone | `wol_device_` | per-device grant |
 | 14 | sharing and WolConnect: share sheet, nearby devices | `wol_share_` | |
@@ -95,4 +95,4 @@ All call the same `wol.h`; strings go as pointer + byte length, so no language n
 - Crystal: `crystal/lib_wol.cr`, `@[Link("wol")] lib LibWol`.
 - .NET (C#, F#, Alice): `dotnet/Wol.Native.cs`, P/Invoke on `libwol.so.1`; `Utf8.cs` hands strings over as pointer + length.
 
-Crystal and .NET declarations are generated from `wol.h` (`tests/common/bindgen.rs`) and the test fails when they differ. For a new ABI version: edit `wol.h`, run `WOL_BLESS=1 cargo test -p wol-abi --test bindings`, then add the new calls to `parts` in C, Swift, Crystal and C#. A missing toolchain skips its language; `WOL_BINDINGS_REQUIRED=1` makes that an error.
+Crystal and .NET declarations are generated from `wol.h` (`tests/common/bindgen.rs`) and the test fails when they differ. For a new ABI version: edit `wol.h`, run `WOL_BLESS=1 cargo test -p wol-abi --test bindings`, then add the new calls to a C test and to `services` in Swift, Crystal and C# (`tests/common/services.rs` checks them all). A missing toolchain skips its language; `WOL_BINDINGS_REQUIRED=1` makes that an error.

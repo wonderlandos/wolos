@@ -80,6 +80,9 @@ unsafe class Services
         Ok(wol_power_keep_awake(ctx, reason.Ptr, reason.Len, &held, &err));
         wol_assertion_release(held);
         Console.WriteLine("held");
+        Ok(wol_network_copy_info(ctx, &info, &err));
+        Console.WriteLine($"online: {wol_info_get_bool(Field(info, "online"))} {Text(wol_info_get_text(Field(wol_info_get_item(Field(info, "interfaces"), 0), "kind")))}");
+        wol_info_release(info);
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);

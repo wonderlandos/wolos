@@ -18,7 +18,8 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 20] = [
+const SEEDS: [&str; 21] = [
+    r#"{"call":"network.info"}"#,
     r#"{"call":"power.info"}"#,
     r#"{"call":"power.keep-awake","reason":"Exporting"}"#,
     r#"{"call":"panel.open","title":"Open"}"#,

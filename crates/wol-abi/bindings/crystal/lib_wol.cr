@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 6
+  WOL_VERSION_MINOR = 7
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -145,4 +145,5 @@ lib LibWol
   fun wol_power_keep_awake(context : Context*, reason : UInt8*, reason_len : LibC::SizeT, out_ : Assertion**, error : Error**) : Status
   fun wol_assertion_retain(assertion : Assertion*) : Assertion*
   fun wol_assertion_release(assertion : Assertion*)
+  fun wol_network_copy_info(context : Context*, out_ : Info**, error : Error**) : Status
 end

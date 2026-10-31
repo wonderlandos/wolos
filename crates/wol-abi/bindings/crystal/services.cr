@@ -81,4 +81,7 @@ held = Pointer(LibWol::Assertion).null
 ok LibWol.wol_power_keep_awake(ctx, reason, reason.bytesize, pointerof(held), pointerof(err))
 LibWol.wol_assertion_release(held)
 puts "held"
+ok LibWol.wol_network_copy_info(ctx, pointerof(info), pointerof(err))
+puts "online: #{LibWol.wol_info_get_bool(field(info, "online"))} #{str(LibWol.wol_info_get_text(field(LibWol.wol_info_get_item(field(info, "interfaces"), 0), "kind")))}"
+LibWol.wol_info_release(info)
 LibWol.wol_context_release(ctx)
