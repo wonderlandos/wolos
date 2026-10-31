@@ -1,12 +1,10 @@
-//! The Memory Saver loop: adopt app processes into scopes, keep each process in its role group,
-//! run the policy per app and apply its actions. One `tick` every couple of seconds and on every
-//! focus change; everything it touches goes through [`Sys`].
+//! The Memory Saver loop: adopt app processes into scopes, run the policy per app and apply its
+//! actions. One `tick` every couple of seconds and on every focus change; everything it touches
+//! goes through [`Sys`].
 use super::{Sys, procs};
 use shared::memsaver::{AppState, AppStatus, Snapshot, Status};
 use std::collections::{BTreeMap, HashMap};
 use wol_core::memsaver::app::{self, Action, Config, Facts, Phase};
-use wol_core::memsaver::ceiling::{Ceiling, Sample, Step, Tune};
-use wol_core::memsaver::role::{self, Role};
 
 /// Ask systemd again after this long if the scope did not show up.
 const ADOPT_RETRY_MS: u64 = 10_000;
@@ -14,23 +12,12 @@ const ADOPT_RETRY_MS: u64 = 10_000;
 const IDLE_CPU: f32 = 1.0;
 const IDLE_MS: u64 = 60_000;
 
-struct Group {
-    role: Role,
-    ceiling: Option<Ceiling>,
-    cpu: Option<(u64, u64)>,
-}
-
 struct App {
     id: String,
-    /// Our own `app-wol-*` scope (Delegate=yes): role groups inside. Otherwise one group.
-    delegated: bool,
     /// Has shown a window: only those are ever saved (helpers started at login are left alone).
     windowed: bool,
     phase: Phase,
-    groups: BTreeMap<String, Group>,
-    roles: HashMap<i32, Role>,
     games: HashMap<i32, bool>,
-    chromium: bool,
     before: u64,
     cpu: Option<(u64, u64)>,
     last_busy: u64,
@@ -44,7 +31,6 @@ struct Session {
 pub struct Engine<S: Sys> {
     pub sys: S,
     cfg: Config,
-    tune: Tune,
     session: Option<Session>,
     snap: Snapshot,
     apps: BTreeMap<String, App>,
@@ -62,11 +48,10 @@ fn pct(prev: Option<(u64, u64)>, now_ms: u64, usec: u64) -> f32 {
 }
 
 impl<S: Sys> Engine<S> {
-    pub fn new(sys: S, cfg: Config, tune: Tune) -> Self {
+    pub fn new(sys: S, cfg: Config) -> Self {
         Engine {
             sys,
             cfg,
-            tune,
             session: None,
             snap: Snapshot::default(),
             apps: BTreeMap::new(),
@@ -191,30 +176,13 @@ impl<S: Sys> Engine<S> {
         }
         for (scope, id, windowed) in found {
             let app = self.apps.entry(scope.clone()).or_insert_with(|| {
-                let delegated = scope
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|n| n.starts_with("app-wol-"));
-                // Left over from an earlier wold: no ceiling, not frozen.
+                // Left over from an earlier wold: not frozen.
                 let _ = self.sys.freeze(&scope, false);
-                let mut groups = BTreeMap::new();
-                for r in role::ALL {
-                    let g = format!("{scope}/{}", r.name());
-                    if delegated && self.sys.exists(&g) {
-                        self.sys.set_high(&g, None);
-                        groups.insert(g, Group::new(r));
-                    }
-                }
-                self.sys.set_high(&scope, None);
                 App {
                     id: shared::memsaver::app_id(&id),
-                    delegated,
                     windowed: false,
                     phase: Phase::Active,
-                    groups,
-                    roles: HashMap::new(),
                     games: HashMap::new(),
-                    chromium: false,
                     before: 0,
                     cpu: None,
                     last_busy: 0,
@@ -231,8 +199,8 @@ impl<S: Sys> Engine<S> {
         let Some(mut app) = self.apps.remove(scope) else {
             return;
         };
-        let pids = self.arrange(scope, &mut app);
         if app.windowed {
+            let pids = self.sys.procs(scope);
             let usec = self.sys.cpu_usec(scope);
             if pct(app.cpu, now, usec) > IDLE_CPU || app.cpu.is_none() {
                 app.last_busy = now;
@@ -241,10 +209,7 @@ impl<S: Sys> Engine<S> {
             let facts = self.facts(&mut app, &pids, now);
             let (phase, action) = app.phase.step(&facts, now, &self.cfg);
             app.phase = phase;
-            self.apply(scope, &mut app, action, &pids, now);
-            if matches!(app.phase, Phase::Saving { .. }) {
-                self.tune_groups(scope, &mut app, now);
-            }
+            self.apply(scope, &mut app, action, pids);
         }
         self.apps.insert(scope.to_owned(), app);
     }
@@ -271,83 +236,12 @@ impl<S: Sys> Engine<S> {
         }
     }
 
-    /// Put every process of a delegated scope into its role group; returns all its pids.
-    fn arrange(&mut self, scope: &str, app: &mut App) -> Vec<i32> {
-        let mut placed: Vec<(String, i32)> = self
-            .sys
-            .procs(scope)
-            .into_iter()
-            .map(|p| (scope.to_owned(), p))
-            .collect();
-        for g in app.groups.keys() {
-            placed.extend(self.sys.procs(g).into_iter().map(|p| (g.clone(), p)));
-        }
-        let pids: Vec<i32> = placed.iter().map(|x| x.1).collect();
-        app.roles.retain(|p, _| pids.contains(p));
-        if !app.delegated {
-            if app.groups.is_empty() {
-                app.groups
-                    .insert(scope.to_owned(), Group::new(Role::Native));
-            }
-            return pids;
-        }
-        let new: Vec<(i32, Vec<String>)> = pids
-            .iter()
-            .filter(|p| !app.roles.contains_key(p))
-            .map(|p| (*p, self.sys.argv(*p)))
-            .collect();
-        if !app.chromium && new.iter().any(|(_, a)| role::is_chromium_child(a)) {
-            app.chromium = true;
-            // Classified before the first child showed up: the untyped one is the browser.
-            app.roles.retain(|_, r| *r != Role::Native);
-        }
-        for (p, a) in new {
-            app.roles.insert(p, role::role(&a, app.chromium));
-        }
-        for p in &pids {
-            if !app.roles.contains_key(p) {
-                let a = self.sys.argv(*p);
-                app.roles.insert(*p, role::role(&a, app.chromium));
-            }
-        }
-        for (dir, p) in &placed {
-            let r = app.roles[p];
-            let want = format!("{scope}/{}", r.name());
-            if *dir == want {
-                continue;
-            }
-            if !app.groups.contains_key(&want) {
-                if !self.sys.mkdir(&want) {
-                    continue;
-                }
-                app.groups.insert(want.clone(), Group::new(r));
-            }
-            self.sys.attach(&want, *p);
-        }
-        if self.sys.procs(scope).is_empty() {
-            self.sys.enable_memory(scope);
-        }
-        pids
-    }
-
-    fn apply(&mut self, scope: &str, app: &mut App, action: Action, pids: &[i32], now: u64) {
+    fn apply(&mut self, scope: &str, app: &mut App, action: Action, pids: Vec<i32>) {
         match action {
             Action::None => {}
             Action::Save => {
                 app.before = self.sys.current(scope);
-                let mut grouped = 0;
-                for (g, grp) in app.groups.iter_mut() {
-                    grp.start(&self.sys, g, true);
-                    grouped += self.sys.current(g);
-                }
-                // Pages charged before the processes moved into their groups.
-                if app.delegated {
-                    let orphan = self.sys.current(scope).saturating_sub(grouped);
-                    if orphan > 0 {
-                        self.sys.reclaim(scope, orphan);
-                    }
-                }
-                self.sys.pageout(scope, pids.to_vec());
+                self.sys.give_back(scope, app.before, pids);
                 eprintln!(
                     "wold: memsaver saving {} ({} MiB)",
                     app.id,
@@ -356,72 +250,14 @@ impl<S: Sys> Engine<S> {
             }
             Action::Nap => {
                 self.sys.freeze(scope, true);
+                let held = self.sys.current(scope);
+                self.sys.give_back(scope, held, pids);
+                eprintln!("wold: memsaver napping {}", app.id);
             }
-            Action::Restore { prefetch } => {
+            Action::Restore => {
                 self.sys.cancel(scope);
                 self.sys.freeze(scope, false);
-                for (g, grp) in app.groups.iter_mut() {
-                    self.sys.set_high(g, None);
-                    grp.ceiling = None;
-                }
-                if prefetch {
-                    // Compositor-facing processes first: GPU, browser, then the rest.
-                    let mut order: Vec<i32> = pids.to_vec();
-                    order.sort_by_key(|p| match app.roles.get(p) {
-                        Some(Role::Gpu) => 0,
-                        Some(Role::Main | Role::Native) => 1,
-                        Some(Role::Renderer) => 2,
-                        _ => 3,
-                    });
-                    self.sys.prefetch(order);
-                }
-                let _ = now;
             }
-        }
-    }
-
-    fn tune_groups(&mut self, scope: &str, app: &mut App, now: u64) {
-        let mut release = false;
-        for (g, grp) in app.groups.iter_mut() {
-            let n = self.sys.procs(g).len() as u32;
-            if n == 0 {
-                continue;
-            }
-            if grp.ceiling.is_none() {
-                grp.start(&self.sys, g, false); // a role that appeared while saving
-            }
-            let usec = self.sys.cpu_usec(g);
-            let cpu = pct(grp.cpu, now, usec);
-            grp.cpu = Some((now, usec));
-            let procs = if grp.role == Role::Native { 1 } else { n };
-            let sample = Sample {
-                now_ms: now,
-                cpu,
-                current: self.sys.current(g),
-                procs,
-                psi_some10: self.sys.pressure(g),
-            };
-            let Some(c) = grp.ceiling.as_mut() else {
-                continue;
-            };
-            match c.tick(sample, &self.tune) {
-                Step::Hold => {}
-                Step::Set(l) => {
-                    self.sys.set_high(g, Some(l));
-                }
-                Step::Release => release = true,
-            }
-        }
-        if release {
-            for (g, grp) in app.groups.iter_mut() {
-                self.sys.set_high(g, None);
-                grp.ceiling = None;
-            }
-            if let Phase::Saving { since } = app.phase {
-                app.phase = Phase::Released { since };
-            }
-            self.sys.cancel(scope);
-            eprintln!("wold: memsaver released {} (memory pressure)", app.id);
         }
     }
 
@@ -432,6 +268,7 @@ impl<S: Sys> Engine<S> {
         };
         for (scope, app) in self.apps.iter().filter(|(_, a)| a.windowed) {
             let memory = self.sys.current(scope);
+            let pids = self.sys.procs(scope);
             let state = if !self.snap.enabled {
                 AppState::Active
             } else if self.snap.exclude.contains(&app.id) {
@@ -439,17 +276,12 @@ impl<S: Sys> Engine<S> {
             } else if app.games.values().any(|g| *g) {
                 AppState::Game
             } else if app.phase == Phase::Active
-                && self
-                    .snap
-                    .playing
-                    .iter()
-                    .any(|p| app.roles.contains_key(p) || self.sys.procs(scope).contains(p))
+                && self.snap.playing.iter().any(|p| pids.contains(p))
             {
                 AppState::Playing
             } else {
                 app.phase.state()
             };
-            let pids = self.pids(scope, app);
             let swap = self.sys.swapped(&pids);
             let saved = if matches!(app.phase, Phase::Saving { .. } | Phase::Napping { .. }) {
                 app.before.saturating_sub(memory).max(swap)
@@ -466,51 +298,6 @@ impl<S: Sys> Engine<S> {
             });
         }
         st
-    }
-
-    /// Every process of the app, role groups included.
-    fn pids(&self, scope: &str, app: &App) -> Vec<i32> {
-        let groups = app.groups.keys().map(String::as_str);
-        let mut pids: Vec<i32> = std::iter::once(scope)
-            .chain(groups)
-            .flat_map(|g| self.sys.procs(g))
-            .collect();
-        pids.sort_unstable();
-        pids.dedup();
-        pids
-    }
-}
-
-impl Group {
-    fn new(role: Role) -> Group {
-        Group {
-            role,
-            ceiling: None,
-            cpu: None,
-        }
-    }
-
-    /// First ceiling for this group (its role's floor, or half of a native app); `reclaim`:
-    /// push what is over it to zram now instead of waiting for allocations to hit it.
-    fn start(&mut self, sys: &impl Sys, g: &str, reclaim: bool) {
-        let n = sys.procs(g).len() as u32;
-        let cur = sys.current(g);
-        let (c, procs) = match self.role.band() {
-            Some((start, max)) => (Ceiling::new(start, max), n),
-            None => {
-                let s = role::native_ceiling(cur);
-                (Ceiling::new(s, s * 2), 1)
-            }
-        };
-        if n == 0 && self.role != Role::Native {
-            return;
-        }
-        let limit = c.limit(procs);
-        if reclaim && cur > limit {
-            sys.reclaim(g, cur - limit);
-        }
-        sys.set_high(g, Some(limit));
-        self.ceiling = Some(c);
     }
 }
 

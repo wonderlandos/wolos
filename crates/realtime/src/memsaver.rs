@@ -1,4 +1,4 @@
-//! Memory Saver session side (ADR 0022): what Hyprland shows, what plays, and the user's choices,
+//! Memory Saver session side (ADR 0025): what Hyprland shows, what plays, and the user's choices,
 //! sent to wold as one `shared::memsaver` snapshot line whenever it changes.
 use shared::memsaver::{Snapshot, Window};
 use std::io::Write;

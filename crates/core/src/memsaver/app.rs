@@ -1,5 +1,5 @@
 //! One app's Memory Saver life: in use -> background grace period -> saving -> (App Nap) ->
-//! restored the moment it is used again. Pure: facts and a clock in, an action out.
+//! back in use. Pure: facts and a clock in, an action out.
 use shared::memsaver::AppState;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,32 +38,20 @@ pub struct Facts {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
     Active,
-    Waiting {
-        since: u64,
-    },
-    Saving {
-        since: u64,
-    },
-    Napping {
-        since: u64,
-    },
-    /// Saving gave up under pressure; nothing more until the app is used again.
-    Released {
-        since: u64,
-    },
+    Waiting { since: u64 },
+    Saving { since: u64 },
+    Napping { since: u64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     None,
-    /// Push cold pages to zram (memory.reclaim) and start the role ceilings.
+    /// Give memory back, once: what the app faults back in is what it uses.
     Save,
-    /// Freeze the app (cgroup.freeze).
+    /// Freeze the app (cgroup.freeze) and give back what it refaulted.
     Nap,
-    /// Thaw, drop every ceiling; `prefetch`: bring compressed pages back ahead of use.
-    Restore {
-        prefetch: bool,
-    },
+    /// Thaw and stop giving back. Pages return as they are touched.
+    Restore,
 }
 
 /// Why the app is left alone, if it is.
@@ -86,7 +74,6 @@ impl Phase {
             Phase::Waiting { .. } => AppState::Waiting,
             Phase::Saving { .. } => AppState::Saving,
             Phase::Napping { .. } => AppState::Napping,
-            Phase::Released { .. } => AppState::Released,
         }
     }
 
@@ -94,10 +81,9 @@ impl Phase {
     fn since(self) -> Option<u64> {
         match self {
             Phase::Active => None,
-            Phase::Waiting { since }
-            | Phase::Saving { since }
-            | Phase::Napping { since }
-            | Phase::Released { since } => Some(since),
+            Phase::Waiting { since } | Phase::Saving { since } | Phase::Napping { since } => {
+                Some(since)
+            }
         }
     }
 
@@ -105,9 +91,7 @@ impl Phase {
         let hands_off = !f.enabled || f.in_use || guard(f).is_some();
         if hands_off {
             let act = match self {
-                Phase::Saving { .. } | Phase::Napping { .. } | Phase::Released { .. } => {
-                    Action::Restore { prefetch: f.in_use }
-                }
+                Phase::Saving { .. } | Phase::Napping { .. } => Action::Restore,
                 Phase::Active | Phase::Waiting { .. } => Action::None,
             };
             return (Phase::Active, act);
@@ -168,10 +152,7 @@ mod tests {
         ]);
         assert_eq!(
             acts,
-            vec![
-                (31_000, Action::Save),
-                (41_000, Action::Restore { prefetch: true })
-            ]
+            vec![(31_000, Action::Save), (41_000, Action::Restore)]
         );
         assert_eq!(end, Phase::Active);
     }
@@ -208,14 +189,11 @@ mod tests {
             assert_eq!(guard(&guarded), Some(state));
             let (acts, _) = replay(&[(0, guarded), (60_000, guarded), (600_000, guarded)]);
             assert!(acts.is_empty(), "{state:?}: {acts:?}");
-            // Saving, then starts playing in the background: restored, but no prefetch needed.
+            // Saving, then starts playing in the background: restored.
             let (acts, end) = replay(&[(0, bg()), (31_000, bg()), (32_000, guarded)]);
             assert_eq!(
                 acts,
-                vec![
-                    (31_000, Action::Save),
-                    (32_000, Action::Restore { prefetch: false })
-                ]
+                vec![(31_000, Action::Save), (32_000, Action::Restore)]
             );
             assert_eq!(end, Phase::Active);
         }
@@ -230,10 +208,7 @@ mod tests {
         let (acts, _) = replay(&[(0, bg()), (30_000, bg()), (35_000, off), (99_000, off)]);
         assert_eq!(
             acts,
-            vec![
-                (30_000, Action::Save),
-                (35_000, Action::Restore { prefetch: false })
-            ]
+            vec![(30_000, Action::Save), (35_000, Action::Restore)]
         );
     }
 
@@ -272,25 +247,6 @@ mod tests {
                 },
             ),
         ]);
-        assert_eq!(
-            acts.last(),
-            Some(&(10 * min + 1, Action::Restore { prefetch: true }))
-        );
-    }
-
-    #[test]
-    fn released_apps_wait_to_be_used() {
-        let c = Config::default();
-        let p = Phase::Released { since: 0 };
-        assert_eq!(p.step(&bg(), 99_000, &c), (p, Action::None));
-        assert_eq!(p.state(), AppState::Released);
-        let used = Facts {
-            in_use: true,
-            ..bg()
-        };
-        assert_eq!(
-            p.step(&used, 99_001, &c),
-            (Phase::Active, Action::Restore { prefetch: true })
-        );
+        assert_eq!(acts.last(), Some(&(10 * min + 1, Action::Restore)));
     }
 }

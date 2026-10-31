@@ -1,7 +1,7 @@
-//! process_madvise over a process's anonymous and memfd mappings. MADV_WILLNEED brings a restored
-//! app's compressed pages back before it touches them: the kernel reads every swapped page of those
-//! ranges into the swap cache, so the first frames take minor faults instead of one zram decompress
-//! per fault. MADV_PAGEOUT sends a background app's pages the other way.
+//! Page out a background app with process_madvise (MADV_PAGEOUT) over its anonymous and memfd
+//! mappings. This works wherever the pages were charged, which memory.reclaim on the app's scope
+//! cannot do for pages touched before the app was adopted: charges do not move with a process.
+//! Only pages this process alone maps go; anything else stays for memory.reclaim.
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -49,9 +49,9 @@ fn split(r: &[(usize, usize)]) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// `advice` every range of `pid` until `stop`. Returns the bytes advised (0 when the process is
+/// Page out every range of `pid` until `stop`. Returns the bytes advised (0 when the process is
 /// gone or the kernel refuses). Runs on a worker thread: a large app takes a while.
-fn advise(proc: &Path, pid: i32, advice: i32, stop: &AtomicBool) -> usize {
+pub fn pageout(proc: &Path, pid: i32, stop: &AtomicBool) -> usize {
     let Ok(maps) = std::fs::read_to_string(proc.join(pid.to_string()).join("maps")) else {
         return 0;
     };
@@ -81,7 +81,7 @@ fn advise(proc: &Path, pid: i32, advice: i32, stop: &AtomicBool) -> usize {
                 fd,
                 iov.as_ptr(),
                 iov.len(),
-                advice,
+                libc::MADV_PAGEOUT,
                 0,
             )
         };
@@ -92,18 +92,6 @@ fn advise(proc: &Path, pid: i32, advice: i32, stop: &AtomicBool) -> usize {
     // SAFETY: fd is ours.
     unsafe { libc::close(fd) };
     done
-}
-
-/// Bring `pid`'s compressed pages back ahead of use.
-pub fn prefetch(proc: &Path, pid: i32) -> usize {
-    advise(proc, pid, libc::MADV_WILLNEED, &AtomicBool::new(false))
-}
-
-/// Push `pid`'s pages out: this works wherever they were charged, which memory.reclaim on the app's
-/// scope cannot do for pages touched before the app was adopted (charges do not move with a
-/// process). Only pages this process alone maps go.
-pub fn pageout(proc: &Path, pid: i32, stop: &AtomicBool) -> usize {
-    advise(proc, pid, libc::MADV_PAGEOUT, stop)
 }
 
 /// VmSwap of a process in bytes, 0 when it is gone.
@@ -168,19 +156,19 @@ mod tests {
         assert!(ranges("garbage\n").is_empty());
     }
 
-    /// A real child: the call goes through (a fresh process has nothing swapped, so nothing
-    /// changes for it) and a missing pid is 0.
+    /// A real child: the call goes through and a missing pid is 0.
     #[test]
-    fn advises_a_real_child() {
+    fn pages_out_a_real_child() {
+        let stop = AtomicBool::new(false);
         let mut child = std::process::Command::new("sleep")
             .arg("5")
             .spawn()
             .unwrap();
-        let n = prefetch(Path::new("/proc"), child.id() as i32);
+        let n = pageout(Path::new("/proc"), child.id() as i32, &stop);
         child.kill().ok();
         child.wait().ok();
-        // Kernels before 5.10 lack process_madvise; WILLNEED needs 6.0+. Either way: no crash.
+        // Kernels before 5.10 lack process_madvise, and it needs privilege: either way, no crash.
         let _ = n;
-        assert_eq!(prefetch(Path::new("/proc"), i32::MAX), 0);
+        assert_eq!(pageout(Path::new("/proc"), i32::MAX, &stop), 0);
     }
 }

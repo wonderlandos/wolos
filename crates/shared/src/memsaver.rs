@@ -1,5 +1,5 @@
-//! Memory Saver wire (ADR 0022): wol-realtime -> wold, one snapshot line per change on [`SOCKET`];
-//! wold -> everyone, the [`Status`] JSON at [`STATUS`]. Inspired by memory-sentry (yanlvl99).
+//! Memory Saver wire (ADR 0025): wol-realtime -> wold, one snapshot line per change on [`SOCKET`];
+//! wold -> everyone, the [`Status`] JSON at [`STATUS`].
 use serde::{Deserialize, Serialize};
 
 /// wol-realtime -> wold (root): what the session shows and plays, and the user's choices.
@@ -129,12 +129,10 @@ pub enum AppState {
     Active,
     /// In the background, inside the grace period.
     Waiting,
-    /// Memory given back; ceilings follow what the app does.
+    /// Memory given back.
     Saving,
     /// Paused (App Nap).
     Napping,
-    /// The app needed its memory back while in the background (pressure): left alone until used.
-    Released,
     /// Never touched: excluded by the user.
     Excluded,
     /// Never touched: playing sound or using the camera or microphone.
