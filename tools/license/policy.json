@@ -13,6 +13,7 @@
     "third_party/**",
     "desktop/overlay/usr/share/wolos/gtk-*/*.css",
     "desktop/overlay/usr/share/wolos/gtk3-theme/**",
+    "desktop/overlay/usr/share/wolos/firefox/wolos-chrome.css",
     "**/vendor/**",
     "**/target/**",
     "**/.git/**",

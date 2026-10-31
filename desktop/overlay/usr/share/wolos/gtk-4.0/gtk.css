@@ -57,6 +57,7 @@
   --wol-warning: #ff9500;
   --wol-danger: #ff3b30;
 }
+/* SPDX-License-Identifier: BSD-2-Clause */
 /* WolOS scaffold for libadwaita / GTK 4 apps: the Kit AppWindow (crates/shell/src/kit/kit.css) drawn on
    their widgets. Colours are the theme tokens (--wol-*, :root above); at-signs wrap a shared::theme::scaffold
    metric. This sheet loads at user priority, which beats every app stylesheet whatever the selector, so
