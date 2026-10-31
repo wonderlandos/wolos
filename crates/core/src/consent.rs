@@ -8,12 +8,17 @@ use serde_json::{Map, Value, json};
 pub const FILE: &str = "/etc/wolos/consent.json";
 
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
-pub const CAPABILITIES: [&str; 21] = [
+pub const CAPABILITIES: [&str; 25] = [
     "screen-capture",
     "notifications",
     "input-injection",
     "clipboard-history",
     "window-list",
+    // System packages through wold (ADR 0021, `shared::packages::GRANTS`).
+    "packages-install",
+    "packages-remove",
+    "packages-update",
+    "packages-unreviewed",
     "clipboard-read",
     "clipboard-write",
     "app-preferences",

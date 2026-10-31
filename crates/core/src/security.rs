@@ -180,6 +180,26 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         "window titles go to helpers that ask through WolOS",
     ),
     (
+        "packages-install",
+        Enforcement::System,
+        "only WolOS's system service installs system apps, and it checks your choice first",
+    ),
+    (
+        "packages-remove",
+        Enforcement::System,
+        "only WolOS's system service removes system apps, and it checks your choice first",
+    ),
+    (
+        "packages-update",
+        Enforcement::System,
+        "only WolOS's system service updates the system, and only to a release WolOS signed",
+    ),
+    (
+        "packages-unreviewed",
+        Enforcement::System,
+        "apps built on this computer are installed only by WolOS's system service, after your choice",
+    ),
+    (
         "camera",
         Enforcement::Advisory,
         "/dev/video* belong to group video, which every account needs for graphics too",
@@ -446,6 +466,9 @@ mod tests {
         }
         assert_eq!(enforcement("screen-capture"), Some(Enforcement::Compositor));
         assert_eq!(enforcement("notifications"), Some(Enforcement::System));
+        for g in shared::packages::GRANTS {
+            assert_eq!(enforcement(g), Some(Enforcement::System), "{g}");
+        }
         assert!(crate::consent::is_valid_grant(
             "/usr/bin/x",
             "notifications"
