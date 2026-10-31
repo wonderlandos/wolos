@@ -154,6 +154,11 @@ pub fn persistence(p: &str) -> bool {
     home.is_some_and(|h| HOME_PERSISTENCE.iter().any(|d| is_or_under(h, d)))
 }
 
+/// A file that does nothing until something enables it, while it sits in a package's own list.
+pub fn inert_in_package(p: &str) -> bool {
+    p.starts_with("$pkgdir") && installed(p).contains("/systemd/")
+}
+
 /// A build may scribble here without leaving its folders in any way that matters.
 fn scratch(p: &str) -> bool {
     p.starts_with("pipe:")

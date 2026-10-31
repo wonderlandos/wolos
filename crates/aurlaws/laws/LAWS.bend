@@ -156,6 +156,9 @@ law undeclared_persistence_found:
 law undeclared_persistence_clean:
   {R.check(graph([on(R.Node{1, [R.Copies{}]}, R.Writes{}, shipped_unit(), 1)])) == [] : List<&2, R.Law>}
 
+law removing_a_startup_file_starts_nothing:
+  {R.check(graph([on(R.Node{1, [R.Removes{}]}, R.Writes{}, autostart(), 1)])) == [] : List<&2, R.Law>}
+
 law a_mode_change_starts_nothing:
   {R.check(graph([on(R.Node{1, [R.Perms{}]}, R.Writes{}, autostart(), 1)])) == [] : List<&2, R.Law>}
 

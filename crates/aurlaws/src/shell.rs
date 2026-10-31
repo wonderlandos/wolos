@@ -530,13 +530,8 @@ impl<'g> Walker<'g> {
                 | "expansion"
                 | "simple_expansion"
                 | "command_substitution" => {
-                    let v = self.word(c);
-                    if v.text.contains('/') {
-                        let proc = self.process("test", self.loc(c));
-                        let p = self.path(&v.text);
-                        let f = self.file_node(&p, self.loc(c));
-                        self.g.edge(f, proc, E::Reads, self.loc(c));
-                    }
+                    // Asked about, not opened. A substitution in the word still runs.
+                    self.word(c);
                 }
                 _ => stack.extend(Self::children(c)),
             }
@@ -1141,7 +1136,7 @@ impl<'g> Walker<'g> {
                 return self.plain("(a command in a variable)", &args, loc);
             }
             let proc = self.process("(dynamic command)", loc.clone());
-            self.g.mark_unresolved(proc);
+            self.dark(proc);
             self.feed(std::slice::from_ref(&name), proc, &loc);
             self.feed(&args, proc, &loc);
             for t in &name.taints {
@@ -1272,8 +1267,11 @@ impl<'g> Walker<'g> {
             "sha256sum" | "sha512sum" | "sha1sum" | "sha224sum" | "sha384sum" | "md5sum"
             | "b2sum" | "cksum" | "gpg" | "gpg2" | "minisign" | "cosign" | "signify"
             | "pacman-key" => self.verify(&b, &args, loc),
-            "base64" | "base32" | "basenc" | "xxd" | "uudecode" | "openssl" | "tr" | "rev" => {
-                self.decode(&b, &args, loc)
+            "base64" | "base32" | "basenc" | "xxd" | "uudecode" | "openssl" | "tr" | "rev"
+            | "xz" | "gzip" | "bzip2" | "zstd" | "lzma" | "zcat" | "xzcat" | "bzcat"
+            | "zstdcat" | "gunzip" | "unxz" => self.decode(&b, &args, loc),
+            "test" | "[" => {
+                self.process(&b, loc);
             }
             "eval" => {
                 let proc = self.process("eval", loc.clone());
@@ -1718,12 +1716,17 @@ impl<'g> Walker<'g> {
             "base64" | "base32" => flag(&["-d", "-D", "--decode", "-di", "-id"]),
             "basenc" => flag(&["-d", "--decode"]),
             "xxd" => flag(&["-r", "-ps", "-rp", "-r -p"]) && flag(&["-r", "-rp"]),
-            "uudecode" | "rev" => true,
+            "uudecode" | "rev" | "zcat" | "xzcat" | "bzcat" | "zstdcat" | "gunzip" | "unxz" => true,
+            "xz" | "gzip" | "bzip2" | "zstd" | "lzma" => {
+                flag(&["-d", "-dc", "-cd", "-dk", "--decompress"])
+            }
             "openssl" => flag(&["-d"]) || flag(&["-decrypt"]),
             // A byte-for-byte swap hides text; case folding and deleting characters do not.
             "tr" => {
                 let sets: Vec<&Val> = args.iter().filter(|a| !a.text.starts_with('-')).collect();
-                !flag(&["-d", "-s", "-c", "-cd", "-dc"])
+                // Libtool's macros swap bytes all over; what they feed is not hidden text.
+                !self.lenient
+                    && !flag(&["-d", "-s", "-c", "-cd", "-dc"])
                     && sets.len() >= 2
                     && !sets.iter().any(|a| {
                         a.text.contains("[:") || a.text.contains("a-z") || a.text.contains("A-Z")
@@ -1780,8 +1783,8 @@ impl<'g> Walker<'g> {
         if v.complete {
             let (line, text) = (loc.as_ref().map(|l| l.line), v.text.clone());
             self.walk_text(&text, line);
-        } else if !assignment_only(&v.text) && !v.local && !(self.lenient && v.taints.is_empty()) {
-            self.g.mark_unresolved(proc);
+        } else if !assignment_only(&v.text) && !v.local {
+            self.dark(proc);
         }
     }
 
@@ -1910,7 +1913,7 @@ impl<'g> Walker<'g> {
                             self.walk_text(&t, line);
                             self.stdin = Some(i);
                         }
-                        None => self.g.mark_unresolved(proc),
+                        None => self.dark(proc),
                     }
                 }
                 if let Some(o) = self.stdout {
@@ -1935,7 +1938,7 @@ impl<'g> Walker<'g> {
                     let line = loc.as_ref().map(|l| l.line).unwrap_or(0);
                     crate::langs::inline(self.g, b, &code.text, &self.file, line, self.stage, proc);
                 } else {
-                    self.g.mark_unresolved(proc);
+                    self.dark(proc);
                 }
             }
             self.connect_stdio(proc, &loc);
@@ -1954,7 +1957,7 @@ impl<'g> Walker<'g> {
             self.exec_file(&f, proc, &loc);
         } else if let Some(i) = self.stdin {
             self.g.edge(i, proc, E::Executes, loc.clone());
-            self.g.mark_unresolved(proc);
+            self.dark(proc);
         }
         self.connect_stdio(proc, &loc);
     }
@@ -1966,10 +1969,17 @@ impl<'g> Walker<'g> {
         self.connect_stdio(proc, &loc);
     }
 
+    /// This process runs something the walk cannot see.
+    fn dark(&mut self, proc: NodeId) {
+        if !self.lenient {
+            self.g.mark_unresolved(proc);
+        }
+    }
+
     /// `f` is run by `proc`: tie its content in, and follow it if it is a helper we hold.
     fn exec_file(&mut self, f: &Val, proc: NodeId, loc: &Option<Loc>) {
         if !f.complete {
-            self.g.mark_unresolved(proc);
+            self.dark(proc);
             return;
         }
         let p = self.path(&f.text);
@@ -2177,11 +2187,20 @@ impl<'g> Walker<'g> {
                 let creates = matches!(b, "tar" | "bsdtar")
                     && (bundled || args.iter().any(|a| a.text == "--create"));
                 if creates {
-                    if let Some((out, inputs)) = pos.split_first() {
-                        write(self, &out.text, &loc);
-                        for a in inputs {
-                            read(self, &a.text, &loc);
+                    // Without `f` the archive goes to stdout, and every word is an input.
+                    let to_file = args
+                        .first()
+                        .is_some_and(|a| !a.text.starts_with("--") && a.text.contains('f'))
+                        || args.iter().any(|a| a.text == "-f" || a.text == "--file");
+                    let inputs = match pos.split_first() {
+                        Some((out, rest)) if to_file => {
+                            write(self, &out.text, &loc);
+                            rest
                         }
+                        _ => &pos[..],
+                    };
+                    for a in inputs {
+                        read(self, &a.text, &loc);
                     }
                     return;
                 }

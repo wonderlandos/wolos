@@ -258,3 +258,54 @@ fn bin_packages_need_a_checksum() {
     );
     assert_eq!(laws(&good, None), []);
 }
+
+#[test]
+fn asking_whether_a_file_exists_is_not_reading_it() {
+    assert_eq!(
+        laws(
+            &pkg("build() { test -f ~/.ssh/id_rsa; [ -e ~/.aws/credentials ] && true; }"),
+            None
+        ),
+        []
+    );
+}
+
+#[test]
+fn removing_a_startup_file_starts_nothing() {
+    assert_eq!(
+        laws(
+            &pkg("package() { rm -f \"$pkgdir/etc/xdg/autostart/x.desktop\"; }"),
+            None
+        ),
+        []
+    );
+}
+
+#[test]
+fn a_unit_in_the_package_is_declared_until_something_enables_it() {
+    assert_eq!(
+        laws(
+            &pkg("package() { echo x > \"$pkgdir/usr/lib/systemd/system/x.service\"; }"),
+            None
+        ),
+        []
+    );
+    assert_eq!(
+        laws(
+            &pkg(""),
+            Some("post_install() { systemctl enable x.service; }\n")
+        ),
+        [L::UndeclaredPersistence]
+    );
+}
+
+#[test]
+fn what_runs_on_its_own_from_the_package_must_come_from_the_sources() {
+    assert_eq!(
+        laws(
+            &pkg("package() { echo x > \"$pkgdir/etc/profile.d/x.sh\"; }"),
+            None
+        ),
+        [L::UndeclaredPersistence]
+    );
+}

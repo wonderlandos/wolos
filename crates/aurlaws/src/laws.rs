@@ -243,8 +243,11 @@ impl<'a> View<'a> {
                     let steps = vec![self.step(e.src, e.loc.clone()), self.step(e.dst, None)];
                     let path = &d.key;
                     let scriptlet = s.stage == Stage::Scriptlet;
-                    let content = !matches!(s.label.as_str(), "chmod" | "chown" | "chgrp");
-                    if content && paths::persistence(path) {
+                    let content = !matches!(
+                        s.label.as_str(),
+                        "chmod" | "chown" | "chgrp" | "rm" | "rmdir"
+                    );
+                    if content && paths::persistence(path) && !paths::inert_in_package(path) {
                         let shipped = path.starts_with("$pkgdir") && self.from_sources(e.src);
                         if !shipped {
                             add(
