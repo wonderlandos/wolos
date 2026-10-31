@@ -1,6 +1,12 @@
 {
   "default": "GPL-2.0-or-later",
-  "rewrite_from": ["BSD-2-Clause", "GPL-3.0-or-later", "GPL-3.0-only", "GPL-3.0"],
+  "rewrite_from": [
+    "BSD-2-Clause",
+    "GPL-3.0-or-later",
+    "GPL-3.0-only",
+    "GPL-3.0",
+    "GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception"
+  ],
   "head_lines": 12,
   "max_bytes": 2000000,
   "skip": [
@@ -8,11 +14,18 @@
     "**/vendor/**",
     "**/target/**",
     "**/.git/**",
-    "LICENSE", "LICENSE.*", "**/LICENSE", "**/LICENSE.*", "COPYRIGHT", "**/NOTICE", "**/NOTICE.*",
+    "LICENSE",
+    "LICENSE.*",
+    "**/LICENSE",
+    "**/LICENSE.*",
+    "COPYRIGHT",
+    "**/NOTICE",
+    "**/NOTICE.*",
     "LICENSES/**",
     "tools/license/staged/**",
     "**/*.patch",
-    "**/Cargo.lock", "**/*.lock",
+    "**/Cargo.lock",
+    "**/*.lock",
     "assets/**",
     "site/**",
     "design/**",
@@ -20,54 +33,148 @@
     "wopkg/recipes/**",
     "kernel/linux-wolos/ref"
   ],
-  "unskip": ["design/tools/**"],
+  "unskip": [
+    "design/tools/**"
+  ],
   "accept": [],
   "expected": [
-    {"glob": "crates/wol-abi/**", "spdx": "GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception"},
-    {"glob": "crates/shared/**", "spdx": "GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception"}
+    {
+      "glob": "crates/wol-abi/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/shared/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/core/**",
+      "spdx": "BSD-2-Clause"
+    }
   ],
   "code": {
-    "rs": "//", "js": "//", "mjs": "//", "cpp": "//", "cc": "//", "hpp": "//",
-    "c": "/*", "h": "/*", "css": "/*",
-    "cr": "#", "sh": "#", "bash": "#", "py": "#", "rb": "#", "mk": "#",
+    "rs": "//",
+    "js": "//",
+    "mjs": "//",
+    "cpp": "//",
+    "cc": "//",
+    "hpp": "//",
+    "c": "/*",
+    "h": "/*",
+    "css": "/*",
+    "cr": "#",
+    "sh": "#",
+    "bash": "#",
+    "py": "#",
+    "rb": "#",
+    "mk": "#",
     "lua": "--"
   },
-  "code_names": {"Makefile": "#", "PKGBUILD": "#"},
+  "code_names": {
+    "Makefile": "#",
+    "PKGBUILD": "#"
+  },
   "fields": [
-    {"glob": "Cargo.toml", "kind": "toml"},
-    {"glob": "fuzz/Cargo.toml", "kind": "toml"},
-    {"glob": "crates/shell/Cargo.toml", "kind": "toml"},
-    {"glob": "wopkg/shard.yml", "kind": "yaml"},
-    {"glob": "image/repo/wolos-*/PKGBUILD", "kind": "pkgbuild"},
-    {"glob": "image/repo/wopkg/PKGBUILD", "kind": "pkgbuild"}
+    {
+      "glob": "Cargo.toml",
+      "kind": "toml"
+    },
+    {
+      "glob": "fuzz/Cargo.toml",
+      "kind": "toml"
+    },
+    {
+      "glob": "crates/shell/Cargo.toml",
+      "kind": "toml"
+    },
+    {
+      "glob": "wopkg/shard.yml",
+      "kind": "yaml"
+    },
+    {
+      "glob": "image/repo/wolos-*/PKGBUILD",
+      "kind": "pkgbuild"
+    },
+    {
+      "glob": "image/repo/wopkg/PKGBUILD",
+      "kind": "pkgbuild"
+    }
   ],
-  "field_from": ["BSD-2-Clause", "GPL-3.0-or-later"],
+  "field_from": [
+    "BSD-2-Clause",
+    "GPL-3.0-or-later"
+  ],
   "docs": [
-    {"file": "README.md",
-     "old": "**License:** BSD-2-Clause; the shell is GPL-3.0-or-later; brand art is CC BY-NC-ND 4.0",
-     "new": "**License:** GPL-2.0-or-later; brand art is CC BY-NC-ND 4.0"},
-    {"file": "archicture/adr/0020-libwol-stable-abi.md",
-     "old": "libwol and `wol.h` are BSD-2-Clause, usable by apps of any license.",
-     "new": "libwol and `wol.h` are GPL-2.0-or-later with an interface exception (`LICENSES/AdditionRef-WolOS-libwol-exception.txt`), usable by apps of any license."},
-    {"file": "archicture/adr/0020-libwol-stable-abi.md",
-     "old": "(`shared::view`, BSD)",
-     "new": "(`shared::view`)"},
-    {"file": "archicture/adr/0021-wopkg.md",
-     "old": "(Rust, `crates/wopkg`, BSD)",
-     "new": "(Rust, `crates/wopkg`)"},
-    {"file": "crates/shell/NOTICE",
-     "old": "Licensed under GPL-3.0-or-later (see LICENSE).",
-     "new": "Licensed under GPL-2.0-or-later (see LICENSE)."},
-    {"file": "design/README.md",
-     "old": "`tools/` is BSD-2-Clause;",
-     "new": "`tools/` is GPL-2.0-or-later;"},
-    {"file": "design/LICENSE",
-     "old": "`tools/` is BSD-2-Clause (each file's SPDX line)",
-     "new": "`tools/` is GPL-2.0-or-later (each file's SPDX line)"}
+    {
+      "file": "README.md",
+      "old": "**License:** BSD-2-Clause; the shell is GPL-3.0-or-later; brand art is CC BY-NC-ND 4.0 (share it to talk about WolOS; ask for anything else).",
+      "new": "**License:** GPL-2.0-or-later; libwol (`crates/wol-abi`, `crates/shared`, `crates/core`) is BSD-2-Clause; brand art is under the Wonderland Brand License 1.0 (`design/LICENSE`)."
+    },
+    {
+      "file": "archicture/adr/0021-wopkg.md",
+      "old": "(Rust, `crates/wopkg`, BSD)",
+      "new": "(Rust, `crates/wopkg`)"
+    },
+    {
+      "file": "crates/shell/NOTICE",
+      "old": "Licensed under GPL-3.0-or-later (see LICENSE).",
+      "new": "Licensed under GPL-2.0-or-later (see LICENSE)."
+    },
+    {
+      "file": "design/README.md",
+      "old": "`tools/` is BSD-2-Clause;",
+      "new": "`tools/` is GPL-2.0-or-later;"
+    },
+    {
+      "file": "design/LICENSE",
+      "old": "`tools/` is BSD-2-Clause (each file's SPDX line)",
+      "new": "`tools/` is GPL-2.0-or-later (each file's SPDX line)"
+    },
+    {
+      "file": "crates/core/Cargo.toml",
+      "old": "license.workspace = true",
+      "new": "license = \"BSD-2-Clause\""
+    },
+    {
+      "file": "crates/shared/Cargo.toml",
+      "old": "license.workspace = true",
+      "new": "license = \"BSD-2-Clause\""
+    },
+    {
+      "file": "crates/wol-abi/Cargo.toml",
+      "old": "license.workspace = true",
+      "new": "license = \"BSD-2-Clause\""
+    },
+    {
+      "file": "design/LICENSE",
+      "old": "Licensor: Julia Klee and her company (with affiliates and successors)",
+      "new": "Licensor: Julia Klee (with successors)"
+    },
+    {
+      "file": "image/repo/wolos-system/PKGBUILD",
+      "old": "CC-BY-NC-ND-4.0",
+      "new": "LicenseRef-Wonderland-Brand-1.0"
+    }
   ],
   "copy": [
-    {"from": "tools/license/staged/LICENSE", "to": "LICENSE"},
-    {"from": "tools/license/staged/COPYRIGHT", "to": "COPYRIGHT"},
-    {"from": "tools/license/staged/LICENSE.shell", "to": "crates/shell/LICENSE"}
+    {
+      "from": "tools/license/staged/LICENSE",
+      "to": "LICENSE"
+    },
+    {
+      "from": "tools/license/staged/COPYRIGHT",
+      "to": "COPYRIGHT"
+    },
+    {
+      "from": "tools/license/staged/LICENSE.shell",
+      "to": "crates/shell/LICENSE"
+    },
+    {
+      "from": "tools/license/staged/LICENSE.bsd",
+      "to": "LICENSES/BSD-2-Clause.txt"
+    },
+    {
+      "from": "tools/license/staged/LICENSE.assets",
+      "to": "assets/LICENSE"
+    }
   ]
 }
