@@ -23,6 +23,15 @@ fn temp_home(name: &str) -> PathBuf {
 
 const STEAM: &str = wol_core::games::doctor::STEAM_BIN;
 
+/// What `wol games steam` runs: Steam's children malloc on huge pages.
+fn steam_argv(url: &[&str]) -> Vec<String> {
+    ["/usr/bin/env", "GLIBC_TUNABLES=glibc.malloc.hugetlb=1", STEAM]
+        .iter()
+        .chain(url)
+        .map(|s| s.to_string())
+        .collect()
+}
+
 /// Arch with everything Steam and Windows games need; `groups` from `id -Gn`.
 fn ready_host(groups: &str) -> FakeHost {
     let h = FakeHost::new(false);
@@ -123,7 +132,7 @@ fn steam_first_start_downloads_the_client_then_starts_it() {
         e.execs,
         [
             note(notice::PREPARING),
-            vec![STEAM.to_string(), "steam://install/3658110".to_string()],
+            steam_argv(&["steam://install/3658110"]),
         ]
     );
     assert!(e.out.is_empty(), "{}", e.out);
@@ -131,7 +140,7 @@ fn steam_first_start_downloads_the_client_then_starts_it() {
     bootstrapped(&h, &home);
     let mut e = env(&home, h, true);
     assert_eq!(run("games steam", &mut e), 0);
-    assert_eq!(e.execs, [[STEAM]]);
+    assert_eq!(e.execs, [steam_argv(&[])]);
     let _ = std::fs::remove_dir_all(&home);
 }
 

@@ -85,6 +85,9 @@ fn no_rc_d_or_usr_local_left_in_the_image() {
     }
 }
 
+/// From util-linux in the base system, not built here.
+const BASE_PROGRAMS: [&str; 1] = ["mount"];
+
 #[test]
 fn every_unit_runs_a_shipped_program_and_is_enabled_by_the_preset() {
     let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
@@ -102,7 +105,9 @@ fn every_unit_runs_a_shipped_program_and_is_enabled_by_the_preset() {
             for exec in values(&u, "Service", "ExecStart").iter().take(1) {
                 let exec = exec.trim_start_matches(['-', '@', '+']);
                 let ok = if let Some(b) = exec.strip_prefix("/usr/bin/") {
-                    rust.contains(&format!(" {b} ")) || rust.contains(&format!(" {b};"))
+                    rust.contains(&format!(" {b} "))
+                        || rust.contains(&format!(" {b};"))
+                        || BASE_PROGRAMS.contains(&b)
                 } else {
                     repo(&format!("image/files{exec}")).exists()
                 };
