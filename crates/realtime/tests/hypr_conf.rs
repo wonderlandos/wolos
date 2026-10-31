@@ -44,13 +44,14 @@ fn hyprbars_lights_match_kit_order_colour_and_spacing() {
         .collect();
     // Kit light/dark colours; ±12 per channel (measure.py) must hold for both themes.
     let kit = [
-        ("killactive", [(255, 59, 48), (255, 69, 58)]),
-        ("special:hidden", [(255, 149, 0), (255, 159, 10)]),
-        ("fullscreen", [(52, 199, 89), (48, 209, 88)]),
+        ("close", [(255, 59, 48), (255, 69, 58)]),
+        ("minimize", [(255, 149, 0), (255, 159, 10)]),
+        ("zoom", [(52, 199, 89), (48, 209, 88)]),
     ];
     assert_eq!(buttons.len(), 3);
     for (b, (action, themes)) in buttons.iter().zip(kit) {
-        assert!(b[3].contains(action), "order: {b:?} should be {action}");
+        // The patched hyprbars runs these on the bar's own window (image/hyprland/hyprbars).
+        assert_eq!(b[3], action, "order: {b:?} should be {action}");
         assert_eq!(b[1], titlebar::BUTTON.to_string());
         let c = rgb(&b[0]);
         for t in themes {
@@ -67,14 +68,56 @@ fn hyprbars_lights_match_kit_order_colour_and_spacing() {
     let centre = |b| titlebar::button_origin(b).0 as f32 + titlebar::BUTTON as f32 / 2.0;
     assert!((centre(Button::Close) - 22.5).abs() <= 1.0);
     assert!((centre(Button::Minimize) - centre(Button::Close) - 22.0).abs() <= 1.0);
-    assert!(value("on_double_click").contains("fullscreen 1"));
+    assert_eq!(value("on_double_click"), "zoom");
+    // macOS: hovering any light shows the glyphs on all three (titlebar::Hover).
+    assert_eq!(value("icon_on_hover"), "true");
+    for (b, glyph) in buttons.iter().zip(["×", "−", "+"]) {
+        assert_eq!(b[2], glyph, "{b:?}");
+        assert!(
+            b.len() == 5 && b[4].starts_with("rgba("),
+            "glyph colour: {b:?}"
+        );
+    }
 }
 
+/// Exactly one set of lights per window (realtime::chrome); wol-hypr tags what gets no strip.
 #[test]
-fn client_drawn_title_bars_get_no_hyprbars() {
+fn lights_exceptions_follow_the_chrome_policy() {
+    let rules: Vec<&str> = CONF.lines().map(str::trim).collect();
+    assert!(rules.contains(&"windowrule = match:tag wol-lights-none, hyprbars:no_bar on"));
+    assert!(rules.contains(&"windowrule = match:tag wol-lights-close, hyprbars:buttons 1"));
+    assert!(!CONF.contains("wol-csd"));
+    let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
+    assert!(plugin.contains("wol_window_lights(") && plugin.contains("wol-lights-none"));
+    assert!(plugin.contains("wol-lights-close"));
+}
+
+/// Live: dragging a window by its title bar and letting go over the menu bar or the Dock left
+/// the drag running: the window stuck to the pointer and clicks went nowhere. The bar that
+/// started a press or drag must see its release wherever it happens.
+#[test]
+fn hyprbars_is_patched_and_the_patch_ends_drags_anywhere() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/hyprbars");
+    let patches: String = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    let added = |s: &str| patches.lines().any(|l| l.starts_with('+') && l.contains(s));
+    assert!(added(
+        "m_bDragPending || m_bDraggingThis || m_bCancelledDown || m_pressedButton >= 0"
+    ));
+    assert!(added("\"hyprbars:buttons\""));
+    assert!(added("d[\"closewindow\"](ADDR)"));
+    // Live: hover changed only while rendering, so a pointer that stopped after one motion over a
+    // light got no glyphs (a hardware cursor makes no frame). Input decides, rendering reads.
+    assert!(added("void CHyprBar::sampleHover()") && added("wol_lights_hover(m_hover"));
+    let removed = |s: &str| patches.lines().any(|l| l.starts_with('-') && l.contains(s));
+    assert!(removed("m_iButtonHoverState ^= (1 << i);"));
+    assert!(!added("m_iButtonHoverState") && !added("m_bButtonHovered"));
+    let build = include_str!("../../../image/hyprland/build-plugins.sh");
     assert!(
-        CONF.lines()
-            .any(|l| l.trim() == "windowrule = match:tag wol-csd, hyprbars:no_bar on")
+        build.contains("hyprland/hyprbars/*.patch"),
+        "build-plugins.sh applies the patches"
     );
 }
 
