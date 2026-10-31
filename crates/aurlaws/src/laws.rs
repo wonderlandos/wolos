@@ -22,6 +22,8 @@ pub enum LawId {
     BinChecksumUpstream,
     UnexplainedNewEdge,
     ObservedMismatch,
+    /// Something could not be read or trusted, so the answer rests on less than it should.
+    IncompleteEvidence,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -74,16 +76,23 @@ fn network(g: &Graph, n: NodeId) -> bool {
 pub(crate) struct View<'a> {
     pub g: &'a Graph,
     pub meta: &'a Meta,
+    /// The built package's own list, when there is one: the truest answer to "what is declared".
+    pub package_files: &'a [String],
     into: Vec<Vec<u32>>,
 }
 
 impl<'a> View<'a> {
-    pub fn new(g: &'a Graph, meta: &'a Meta) -> Self {
+    pub fn new(g: &'a Graph, meta: &'a Meta, package_files: &'a [String]) -> Self {
         let mut into = vec![Vec::new(); g.nodes.len()];
         for (i, e) in g.edges.iter().enumerate() {
             into[e.dst as usize].push(i as u32);
         }
-        View { g, meta, into }
+        View {
+            g,
+            meta,
+            package_files,
+            into,
+        }
     }
 
     fn checked_before(&self, n: NodeId, seq: u32) -> bool {
@@ -161,7 +170,11 @@ impl<'a> View<'a> {
     /// A scriptlet may change what its package installs, the package's own folders, and nothing else.
     fn declared(&self, p: &str) -> bool {
         let g = self.g;
-        if g.find(&format!("$pkgdir{p}")).is_some()
+        if self
+            .package_files
+            .iter()
+            .any(|f| f == p || f.starts_with(&format!("{p}/")))
+            || g.find(&format!("$pkgdir{p}")).is_some()
             || self
                 .meta
                 .backup
@@ -230,7 +243,8 @@ impl<'a> View<'a> {
                     let steps = vec![self.step(e.src, e.loc.clone()), self.step(e.dst, None)];
                     let path = &d.key;
                     let scriptlet = s.stage == Stage::Scriptlet;
-                    if paths::persistence(path) {
+                    let content = !matches!(s.label.as_str(), "chmod" | "chown" | "chgrp");
+                    if content && paths::persistence(path) {
                         let shipped = path.starts_with("$pkgdir") && self.from_sources(e.src);
                         if !shipped {
                             add(
@@ -604,4 +618,9 @@ pub(crate) fn diff(new: &Graph, old: &Graph, explained: &[String]) -> Vec<Findin
         }
     }
     out
+}
+
+/// A gap in what was read, as a finding: what was not seen must not read as clean.
+pub(crate) fn incomplete(what: String) -> Finding {
+    finding(LawId::IncompleteEvidence, what, Vec::new())
 }

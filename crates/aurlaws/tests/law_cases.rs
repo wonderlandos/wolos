@@ -136,6 +136,36 @@ fn persistence_must_be_declared() {
 }
 
 #[test]
+fn a_folder_for_persistence_is_not_itself_persistence() {
+    assert_eq!(
+        laws(
+            &pkg(
+                "package() { install -d \"$pkgdir/etc/profile.d\"; mkdir -p \"$pkgdir/usr/lib/systemd/system\"; }"
+            ),
+            None
+        ),
+        []
+    );
+}
+
+#[test]
+fn a_release_on_the_projects_own_code_host_repo_is_upstream() {
+    let p = format!(
+        "pkgname=aerion-bin\npkgver=1\npkgrel=1\narch=(x86_64)\nurl=https://aerion.3df.io\nsource=(https://github.com/hkdb/aerion/releases/download/v1/aerion-linux.tar.gz)\nsha256sums=({SUM})\n"
+    );
+    assert_eq!(laws(&p, None), []);
+    let raw = format!(
+        "pkgname=demo-bin\npkgver=1\npkgrel=1\narch=(x86_64)\nurl=https://github.com/acme/demo\nsource=(https://raw.githubusercontent.com/acme/demo/abc/icon.png)\nsha256sums=({SUM})\n"
+    );
+    assert_eq!(laws(&raw, None), []);
+    // The name of the file proves nothing: only the repo counts.
+    let other = format!(
+        "pkgname=demo-bin\npkgver=1\npkgrel=1\narch=(x86_64)\nurl=https://example.org\nsource=(https://github.com/stranger/patches/releases/download/v1/demo.tar.gz)\nsha256sums=({SUM})\n"
+    );
+    assert_eq!(laws(&other, None), [L::SourceOffUpstream]);
+}
+
+#[test]
 fn postinstall_stays_off_the_network() {
     let got = laws(
         &pkg(""),

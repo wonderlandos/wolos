@@ -415,3 +415,28 @@ pub fn parse(trace: &str, stage: Stage, file: &str) -> Graph {
     }
     r.g
 }
+
+/// Why this trace cannot be trusted, if it cannot. The trace sits in a folder the build can write,
+/// so a hostile build may have emptied, overwritten or punched holes in it.
+pub fn damage(trace: &str, g: &Graph) -> Option<String> {
+    if trace.trim().is_empty() {
+        return Some("The build trace is empty, so what the build did was not seen.".to_owned());
+    }
+    if trace.contains('\0') {
+        return Some(
+            "The build trace has holes in it, so part of what the build did was not seen."
+                .to_owned(),
+        );
+    }
+    if !trace
+        .lines()
+        .any(|l| l.contains(" execve(") && l.ends_with("= 0"))
+    {
+        return Some(
+            "The build trace shows no program starting, so it is not a trace of this build."
+                .to_owned(),
+        );
+    }
+    g.find("$startdir/.trace")
+        .map(|_| "The build touched its own trace, so the trace cannot be trusted.".to_owned())
+}
