@@ -47,7 +47,10 @@ fn main() {
     {
         let (jobs, bus) = (jobs.clone(), bus.clone());
         let grants = Arc::new(api::portal::ConsentFile(wol_core::consent::FILE.into()));
-        let state = Arc::new(api::portal::State::default());
+        let state = Arc::new(api::portal::State {
+            background: Box::new(api::services::AppJobs::new(ctx.clone())),
+            ..Default::default()
+        });
         let listener =
             server::bind(Path::new(shared::jobs::SOCKET), 0o666).expect("bind control socket");
         eprintln!("wold: control listening on {}", shared::jobs::SOCKET);

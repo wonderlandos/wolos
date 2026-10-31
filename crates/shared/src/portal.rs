@@ -44,6 +44,11 @@ pub const MAX_ENDPOINT: usize = 64;
 pub const MAX_PEER: usize = 1024;
 pub const MAX_MESSAGE: usize = 24 * 1024;
 
+/// Services one account can run.
+pub const MAX_SERVICES: usize = 8;
+/// The argument a service's program gets: this and its name.
+pub const SERVICE_FLAG: &str = "--wol-service=";
+
 /// Every capability a [`Call`] can need (`wol_core::consent::CAPABILITIES`), test-checked.
 pub const CAPABILITIES: &[&str] = &[
     "notifications",
@@ -62,6 +67,7 @@ pub const CAPABILITIES: &[&str] = &[
     "ipc",
     "devices",
     "share",
+    "background",
 ];
 
 /// A row a search provider offers: `key` comes back to the app when the person opens it.
@@ -214,6 +220,13 @@ pub enum Call {
     /// Offer text for the person to send somewhere.
     #[serde(rename = "share.text")]
     ShareText { title: String, text: String },
+    /// Run the caller's own executable as a service called `name`.
+    #[serde(rename = "service.start")]
+    ServiceStart { name: String },
+    #[serde(rename = "service.stop")]
+    ServiceStop { name: String },
+    #[serde(rename = "service.status")]
+    ServiceStatus { name: String },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -435,6 +448,9 @@ impl Call {
             Self::DeviceList {} => Need::Grant("devices"),
             Self::DeviceOpen { .. } => Need::Device,
             Self::ShareText { .. } => Need::Grant("share"),
+            Self::ServiceStart { .. } | Self::ServiceStop { .. } | Self::ServiceStatus { .. } => {
+                Need::Grant("background")
+            }
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -547,6 +563,9 @@ impl Call {
                 }
                 message_body(text)
             }
+            Self::ServiceStart { name }
+            | Self::ServiceStop { name }
+            | Self::ServiceStatus { name } => endpoint_name(name),
             Self::SessionAnswer { error, .. } => {
                 if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
                     return Err("A desktop answer's message is short text.".into());
@@ -928,6 +947,21 @@ mod tests {
             assert!(bad.validate().is_err(), "{bad:?}");
         }
         assert!(c("t", &"x".repeat(MAX_MESSAGE + 1)).validate().is_err());
+    }
+
+    #[test]
+    fn service_calls() {
+        let c = Call::ServiceStart {
+            name: "sync".into(),
+        };
+        assert_eq!(c.need(), Need::Grant("background"));
+        assert_eq!(Call::decode(c.encode().as_bytes()), Ok(c.clone()));
+        for bad in ["", "a b", "../x", "--flag\n"] {
+            let c = Call::ServiceStop { name: bad.into() };
+            assert!(c.validate().is_err(), "{bad:?}");
+        }
+        let extra = r#"{"call":"service.start","name":"s","program":"/bin/sh"}"#;
+        assert!(Call::decode(extra.as_bytes()).is_err(), "only a name");
     }
 
     #[test]

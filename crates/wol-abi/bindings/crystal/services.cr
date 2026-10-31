@@ -141,4 +141,9 @@ LibWol.wol_file_release(f)
 ok LibWol.wol_share_text(ctx, title, title.bytesize, body, body.bytesize, pointerof(text), pointerof(err))
 puts "shared: #{str(text)}"
 LibWol.wol_string_release(text)
+ok LibWol.wol_service_start(ctx, key, key.bytesize, pointerof(err))
+ok LibWol.wol_service_copy_status(ctx, key, key.bytesize, pointerof(info), pointerof(err))
+puts "service: #{str(LibWol.wol_info_get_text(field(info, "state")))}"
+LibWol.wol_info_release(info)
+ok LibWol.wol_service_stop(ctx, key, key.bytesize, pointerof(err))
 LibWol.wol_context_release(ctx)
