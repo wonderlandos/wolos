@@ -22,6 +22,8 @@ struct C {
     frozen: bool,
     refused: u64,
     killed: bool,
+    oom_kills: u64,
+    tasks: u64,
 }
 
 #[derive(Default)]
@@ -122,6 +124,12 @@ impl Sys for Model {
     fn kill(&self, cg: &str) -> bool {
         self.set(cg, |c| c.killed = true);
         true
+    }
+    fn oom_kills(&self, cg: &str) -> u64 {
+        self.cg(cg).oom_kills
+    }
+    fn tasks(&self, cg: &str) -> u64 {
+        self.cg(cg).tasks
     }
     fn adopt(&self, args: &[String]) -> bool {
         let name = args[7].clone();
@@ -415,5 +423,43 @@ fn a_quiet_app_at_its_limit_is_left_alone() {
         e.sys.set(SCOPE, |c| c.refused = i * 100);
         e.tick(i * 2000);
     }
+    assert!(!e.sys.cg(SCOPE).killed);
+}
+
+#[test]
+fn a_memory_bomb_that_keeps_refilling_is_killed() {
+    let mut e = adopted();
+    for (i, n) in [0, 2, 3, 5].into_iter().enumerate() {
+        e.sys.set(SCOPE, |c| c.oom_kills = n);
+        e.tick(2000 * (i as u64 + 1));
+    }
+    assert!(e.sys.cg(SCOPE).killed);
+}
+
+const SLICE: &str = "/user.slice/user-1000.slice";
+
+fn slice_storm(e: &mut Engine<Model>, full: u64) {
+    e.sys.set(SCOPE, |c| c.tasks = 5000);
+    for i in 1..4 {
+        e.sys.set(SLICE, |c| {
+            c.tasks = full;
+            c.refused = i * 50_000;
+        });
+        e.tick(2000 * i);
+    }
+}
+
+#[test]
+fn a_full_slice_loses_its_biggest_app() {
+    let mut e = adopted();
+    slice_storm(&mut e, procs::USER_TASKS);
+    assert!(e.sys.cg(SCOPE).killed, "its scope is below its own limit");
+    assert!(!e.sys.cg(SESSION).killed);
+}
+
+#[test]
+fn one_app_at_its_own_limit_is_not_a_full_slice() {
+    let mut e = adopted();
+    slice_storm(&mut e, procs::APP_TASKS as u64);
     assert!(!e.sys.cg(SCOPE).killed);
 }

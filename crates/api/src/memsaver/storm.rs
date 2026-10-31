@@ -27,9 +27,52 @@ impl Storm {
     }
 }
 
+/// One app's OOM kills that count as a loop, over this many ticks. A browser that loses a tab or
+/// two at its memory limit stays; something that refills the limit as fast as it dies does not.
+pub const OOM_KILLS: u64 = 4;
+pub const OOM_TICKS: usize = 5;
+
+#[derive(Debug, Default)]
+pub struct OomLoop {
+    seen: Option<u64>,
+    recent: [u64; OOM_TICKS],
+    at: usize,
+}
+
+impl OomLoop {
+    /// Feed memory.events `oom_kill` once a tick; true when the scope should die.
+    pub fn step(&mut self, kills: u64) -> bool {
+        let delta = kills.saturating_sub(self.seen.unwrap_or(kills));
+        self.seen = Some(kills);
+        self.recent[self.at] = delta;
+        self.at = (self.at + 1) % OOM_TICKS;
+        self.recent.iter().sum::<u64>() >= OOM_KILLS
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn oom(steps: &[u64]) -> Vec<bool> {
+        let mut s = OomLoop::default();
+        steps.iter().map(|k| s.step(*k)).collect()
+    }
+
+    #[test]
+    fn repeated_oom_kills_are_a_loop() {
+        assert_eq!(oom(&[0, 2, 3, 5]), [false, false, false, true]);
+    }
+
+    #[test]
+    fn one_lost_tab_is_not_a_loop() {
+        assert!(oom(&[0, 1, 1, 2, 2, 3, 3, 3, 3, 3, 4]).iter().all(|k| !k));
+    }
+
+    #[test]
+    fn kills_from_before_we_watched_do_not_count() {
+        assert_eq!(oom(&[50, 50, 50]), [false, false, false]);
+    }
 
     fn run(steps: &[u64]) -> Vec<bool> {
         let mut s = Storm::default();

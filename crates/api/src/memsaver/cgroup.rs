@@ -48,6 +48,21 @@ pub fn refused(dir: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// Processes the OOM killer took from this cgroup and below (`oom_kill` in memory.events).
+pub fn oom_kills(dir: &Path) -> u64 {
+    std::fs::read_to_string(dir.join("memory.events"))
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("oom_kill ")?.trim().parse().ok())
+        })
+        .unwrap_or(0)
+}
+
+pub fn tasks(dir: &Path) -> u64 {
+    read_u64(dir, "pids.current").unwrap_or(0)
+}
+
 /// Kill everything in the cgroup, descendants included, in one step.
 pub fn kill(dir: &Path) -> bool {
     write(dir, "cgroup.kill", "1").is_ok()

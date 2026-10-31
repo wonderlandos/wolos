@@ -30,6 +30,10 @@ pub trait Sys {
     fn refused(&self, cg: &str) -> u64;
     /// cgroup.kill.
     fn kill(&self, cg: &str) -> bool;
+    /// memory.events `oom_kill`.
+    fn oom_kills(&self, cg: &str) -> u64;
+    /// pids.current.
+    fn tasks(&self, cg: &str) -> u64;
     /// Ask systemd for a scope (busctl argv from [`procs::adopt_args`]).
     fn adopt(&self, args: &[String]) -> bool;
     /// Reclaim `bytes` from the scope and page out `pids`, in the background: returns at once.
@@ -100,6 +104,12 @@ impl Sys for Real {
     }
     fn kill(&self, cg: &str) -> bool {
         cgroup::kill(&self.dir(cg))
+    }
+    fn oom_kills(&self, cg: &str) -> u64 {
+        cgroup::oom_kills(&self.dir(cg))
+    }
+    fn tasks(&self, cg: &str) -> u64 {
+        cgroup::tasks(&self.dir(cg))
     }
     fn adopt(&self, args: &[String]) -> bool {
         std::process::Command::new("busctl")
