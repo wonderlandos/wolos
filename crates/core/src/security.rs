@@ -269,6 +269,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "apps ask WolOS, which lists device names without serial numbers or addresses",
     ),
+    (
+        "share",
+        Enforcement::System,
+        "WolOS shows the person what would be shared, and nothing leaves until they pick where it goes",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.
