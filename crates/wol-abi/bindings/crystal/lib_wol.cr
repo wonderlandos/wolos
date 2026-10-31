@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 9
+  WOL_VERSION_MINOR = 10
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -158,4 +158,5 @@ lib LibWol
   fun wol_search_reply_add(reply : SearchReply*, key : UInt8*, key_len : LibC::SizeT, title : UInt8*, title_len : LibC::SizeT, detail : UInt8*, detail_len : LibC::SizeT, error : Error**) : Status
   fun wol_search_provider_retain(provider : SearchProvider*) : SearchProvider*
   fun wol_search_provider_release(provider : SearchProvider*)
+  fun wol_account_copy_info(context : Context*, out_ : Info**, error : Error**) : Status
 end

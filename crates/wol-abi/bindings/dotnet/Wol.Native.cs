@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 9;
+    public const int WOL_VERSION_MINOR = 10;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -154,4 +154,5 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern int wol_search_reply_add(IntPtr reply, byte* key, nuint key_len, byte* title, nuint title_len, byte* detail, nuint detail_len, IntPtr* error);
     [DllImport(Lib)] public static extern IntPtr wol_search_provider_retain(IntPtr provider);
     [DllImport(Lib)] public static extern void wol_search_provider_release(IntPtr provider);
+    [DllImport(Lib)] public static extern int wol_account_copy_info(IntPtr context, IntPtr* @out, IntPtr* error);
 }
