@@ -1,8 +1,8 @@
 # WolOS release image: mkarchiso (image/build.sh) in a privileged archlinux container, from the
 # [wolos] repo the packages workflow published (built here if there is none yet). A tag `v*` first
 # refreshes [wolos-cachy] (image/repo/mirror-cachy.sh, ADR 0019) as the `wolos-cachy-<snapshot>`
-# release, then publishes the ISO, its .sha256 and release.json (+ release.json.sig) as the latest GitHub
-# release: release.json is what `update-check` and `wol update` read. A manual run keeps the files
+# release, then publishes the ISO, its .sha256 and release.json (+ release.json.sig) as the latest release
+# of vars.WOLOS_RELEASES_REPO: release.json is what `update-check` and `wol update` read. A manual run keeps the files
 # as a workflow artifact.
 # Signing: secret WOLOS_RELEASE_KEY (Ed25519 PEM, the package key), WOLOS_GPG_KEY for a rebuilt repo.
 name: iso
@@ -168,16 +168,19 @@ jobs:
           fi
           cat dist/release.json
 
+      # In $GH_REPO, where update-check reads releases/latest/download/release.json and the CDN
+      # pulls <tag>/<file> from (the action published to this repo instead, which neither reads).
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          make_latest: true
-          files: |
-            dist/*.iso
-            dist/*.sha256
-            dist/release.json
-            dist/release.json.sig
+        env:
+          TAG: ${{ github.ref_name }}
+          SNAP: ${{ steps.repo.outputs.snap }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --title "WolOS ${TAG#v}" --latest               --notes "WolOS ${TAG#v}: the ISO, its .sha256 and release.json. Packages and the kernel source: release wolos-$SNAP."
+          gh release upload "$TAG" --clobber dist/*.iso dist/*.sha256 dist/release.json
+          [ ! -e dist/release.json.sig ] || gh release upload "$TAG" --clobber dist/release.json.sig
+          gh release edit "$TAG" --latest
 
       - name: Keep the image (manual run)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}

@@ -220,10 +220,14 @@ fn update_check_reads_the_published_release() {
         "release.json.sig",
         ".sha256",
         "concurrency:",
-        "make_latest",
+        "gh release create",
+        "--latest",
     ] {
         assert!(iso.contains(want), "iso.yml lacks {want}");
     }
+    // Published in the releases repo the check reads (GH_REPO), not in this one.
+    assert!(iso.contains("GH_REPO: ${{ vars.WOLOS_RELEASES_REPO"), "iso.yml GH_REPO");
+    assert!(!iso.contains("action-gh-release"), "iso.yml publishes with the action");
 }
 
 #[test]
