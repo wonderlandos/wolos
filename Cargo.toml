@@ -11,6 +11,7 @@ members = [
     "crates/wol-abi",
     "crates/wol-lua",
     "crates/wopkg",
+    "crates/xguard",
     "crates/aurlaws",
 ]
 
