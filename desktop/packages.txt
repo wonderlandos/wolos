@@ -110,6 +110,8 @@ libimobiledevice
 ifuse
 gvfs-afc
 libheif
+# Bluetooth headphones: AAC, LDAC and aptX codecs for PipeWire.
+pipewire-audio
 # AirPlay speakers as sound outputs.
 pipewire-zeroconf
 shairport-sync           # AirPlay audio receiver into PipeWire
