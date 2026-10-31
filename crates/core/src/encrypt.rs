@@ -13,6 +13,8 @@ pub enum Mode {
     Auto,
     Yes,
     No,
+    /// A password at every start, even where a TPM2 could unlock it.
+    Passphrase,
 }
 
 impl Mode {
@@ -21,6 +23,7 @@ impl Mode {
             "auto" => Some(Mode::Auto),
             "yes" | "on" => Some(Mode::Yes),
             "no" | "off" => Some(Mode::No),
+            "passphrase" => Some(Mode::Passphrase),
             _ => None,
         }
     }
@@ -56,12 +59,12 @@ pub fn default_on(tpm2: bool) -> bool {
 pub fn decide(mode: Mode, tpm2: bool, passphrase: Option<&str>) -> Result<Unlock, Refusal> {
     let on = match mode {
         Mode::Auto => default_on(tpm2),
-        m => m == Mode::Yes,
+        m => m != Mode::No,
     };
     if !on {
         return Ok(Unlock::Off);
     }
-    if tpm2 {
+    if tpm2 && mode != Mode::Passphrase {
         return Ok(Unlock::Tpm2);
     }
     match passphrase {
@@ -183,6 +186,15 @@ mod tests {
         assert_eq!(decide(Mode::Auto, false, None), Ok(Unlock::Off));
         assert_eq!(decide(Mode::No, true, None), Ok(Unlock::Off));
         assert_eq!(decide(Mode::Yes, true, None), Ok(Unlock::Tpm2));
+        assert_eq!(
+            decide(Mode::Passphrase, true, Some("correct horse")),
+            Ok(Unlock::Passphrase),
+            "the person chose a password over the chip"
+        );
+        assert_eq!(
+            decide(Mode::Passphrase, true, None),
+            Err(Refusal::NeedPassphrase)
+        );
     }
 
     #[test]

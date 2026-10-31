@@ -303,6 +303,42 @@ pub const TREE: &[Cmd] = &[
         "Installer: add the unlock hook to an mkinitcpio config",
     ),
     cmd(
+        &["install", "info"],
+        "install.info",
+        &[opt("plan")],
+        "Installer: a plan's disk and encryption as shell assignments (root)",
+    ),
+    cmd(
+        &["install", "probe"],
+        "install.probe",
+        &[opt("disk")],
+        "Installer: what is on a disk, as JSON; reads only (root)",
+    ),
+    cmd(
+        &["install", "check"],
+        "install.check",
+        &[opt("plan")],
+        "Installer: check a plan against the disk as it is now; writes nothing (root)",
+    ),
+    cmd(
+        &["install", "layout"],
+        "install.layout",
+        &[opt("plan"), opt("key")],
+        "Installer: partition and format as the plan says; prints where things went (root)",
+    ),
+    cmd(
+        &["install", "settings"],
+        "install.settings",
+        &[opt("plan"), opt("root")],
+        "Installer: language, keyboard and time zone of the new system (root)",
+    ),
+    cmd(
+        &["install", "account"],
+        "install.account",
+        &[opt("plan"), opt("root"), opt("passfile")],
+        "Installer: create the account in the new system (root)",
+    ),
+    cmd(
         &["mirror", "status"],
         "mirror.status",
         &[],

@@ -138,32 +138,7 @@ pub fn plan_for(
     }
     let release = date.unwrap_or("current").to_owned();
     let date = date.map(str::to_owned);
-    let prep = move |root: &str| -> Vec<Step> {
-        let Some(d) = &date else {
-            return Vec::new();
-        };
-        let sed = |expr: String, file: &str| {
-            Step::Run(
-                ["sed", "-i", "-E", &expr, &format!("{root}{file}")]
-                    .map(String::from)
-                    .to_vec(),
-            )
-        };
-        vec![
-            sed(
-                format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
-                PACMAN_CONF,
-            ),
-            // [wolos] and [wolos-cachy] move with Arch: all three repos at one release date.
-            sed(
-                format!(
-                    "s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{}#g",
-                    d.replace('/', "-")
-                ),
-                MIRRORLIST,
-            ),
-        ]
-    };
+    let prep = move |root: &str| repo_date_steps(date.as_deref(), root);
     build(&Build {
         slot,
         from: Base::Running { replace },
@@ -172,6 +147,50 @@ pub fn plan_for(
         release: &release,
         cmdline,
     })
+}
+
+/// Moves the repos in `root` to release date `d`.
+fn repo_date_steps(d: Option<&str>, root: &str) -> Vec<Step> {
+    let Some(d) = d else {
+        return Vec::new();
+    };
+    let sed = |expr: String, file: &str| {
+        Step::Run(
+            ["sed", "-i", "-E", &expr, &format!("{root}{file}")]
+                .map(String::from)
+                .to_vec(),
+        )
+    };
+    vec![
+        sed(
+            format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
+            PACMAN_CONF,
+        ),
+        // [wolos] and [wolos-cachy] move with Arch: all three repos at one release date.
+        sed(
+            format!(
+                "s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{}#g",
+                d.replace('/', "-")
+            ),
+            MIRRORLIST,
+        ),
+    ]
+}
+
+/// Marks a system installed with one copy (a layout without btrfs, ADR 0023).
+pub const SINGLE_COPY: &str = "/etc/wolos/single-copy";
+
+/// Steps to update a one-copy system: in place, with nothing to go back to and no seal. The
+/// pacman hooks rebuild the initramfs and sync the startup partition.
+pub fn plan_in_place(date: Option<&str>) -> Option<Vec<Step>> {
+    if date.is_some_and(|d| !is_snapshot_date(d)) {
+        return None;
+    }
+    let mut steps = repo_date_steps(date, "");
+    steps.push(Step::Run(
+        [PACMAN, "-Syu", "--noconfirm"].map(String::from).to_vec(),
+    ));
+    Some(steps)
 }
 
 /// Scratch subvolume a stacked transaction is built in (the pending slot stays until it is done).
@@ -380,6 +399,23 @@ pub mod be {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_copy_updates_in_place_with_no_snapshot_and_no_seal() {
+        let steps: Vec<String> = plan_in_place(Some("2026/11/01"))
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(steps[0].starts_with("sed") && steps.last().unwrap().contains("pacman -Syu"));
+        assert!(
+            !steps
+                .iter()
+                .any(|s| s.contains("btrfs") || s.contains("seal"))
+        );
+        assert_eq!(plan_in_place(None).unwrap().len(), 1);
+        assert!(plan_in_place(Some("soon")).is_none());
+    }
 
     #[test]
     fn pending_table() {

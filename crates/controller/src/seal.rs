@@ -163,7 +163,7 @@ pub fn decide(env: &mut dyn Env, inv: &Invocation) -> i32 {
         return fail(
             env,
             ErrorCode::Usage,
-            "usage: wol encrypt decide auto|yes|no",
+            "usage: wol encrypt decide auto|yes|no|passphrase",
         );
     };
     let tpm_dir = env

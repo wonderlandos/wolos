@@ -14,6 +14,7 @@ pub mod games;
 pub mod hardware;
 pub mod home_crypt;
 pub mod hyprprefs;
+pub mod install;
 pub mod iphone;
 pub mod jobs;
 pub mod journal;
