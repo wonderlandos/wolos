@@ -1,0 +1,185 @@
+# SPDX-License-Identifier: GPL-2.0-only
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Subject: mm: clear large user folios on idle CPUs
+
+clear_contig_highpages() hands folios of at least wolos_bend.clear_min_kb
+(4 MiB: 1 GiB hugetlb, large hugetlbfs/memfd fills) to
+bend_clear_user_highpages(), which clears them in 512 KiB pieces on the
+faulting CPU and idle CPUs. Smaller folios and wolos_bend.enable=0 keep
+the serial loop.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+Small folios pay one compare and one branch in the hook.
+
+---
+diff --git a/include/linux/wolos_bend.h b/include/linux/wolos_bend.h
+index 7e8678a4cdb..ec47df22a4f 100644
+--- a/include/linux/wolos_bend.h
++++ b/include/linux/wolos_bend.h
+@@ -133,16 +133,29 @@ bool bend_set_enabled(bool on);
+ 
+ struct page;
+ #ifdef CONFIG_WOLOS_BEND
++/* Smallest folio (pages) cleared in parallel; UINT_MAX while off. */
++extern unsigned int bend_clear_min_pages;
+ /* Piece size for a parallel clear of @nr pages; 0 = clear serially. */
+ unsigned long bend_clear_pages_grain(unsigned long nr);
+-/* Clears @nr pages on idle CPUs and returns true, or returns false. */
+-bool bend_clear_user_highpages(struct page *page, unsigned long addr, unsigned int nr);
++bool __bend_clear_user_highpages(struct page *page, unsigned long addr, unsigned int nr);
++void bend_clear_update(void);
++
++/* Clears @nr pages on idle CPUs and returns true, or returns false.
++ * Small folios cost one compare and one branch. */
++static inline bool bend_clear_user_highpages(struct page *page, unsigned long addr,
++					     unsigned int nr)
++{
++	if (likely(nr < READ_ONCE(bend_clear_min_pages)))
++		return false;
++	return __bend_clear_user_highpages(page, addr, nr);
++}
+ #else
+ static inline bool bend_clear_user_highpages(struct page *page, unsigned long addr,
+ 					     unsigned int nr)
+ {
+ 	return false;
+ }
++static inline void bend_clear_update(void) { }
+ #endif
+ 
+ #endif /* _LINUX_WOLOS_BEND_H */
+diff --git a/lib/wolos_bend/bend.c b/lib/wolos_bend/bend.c
+index 19ee122c848..de2a1cf6b2a 100644
+--- a/lib/wolos_bend/bend.c
++++ b/lib/wolos_bend/bend.c
+@@ -20,7 +20,21 @@
+ #define MODULE_PARAM_PREFIX "wolos_bend."
+ 
+ static bool enable = true;
+-module_param(enable, bool, 0644);
++
++static int enable_set(const char *val, const struct kernel_param *kp)
++{
++	int ret = param_set_bool(val, kp);
++
++	if (!ret)
++		bend_clear_update();
++	return ret;
++}
++
++static const struct kernel_param_ops enable_ops = {
++	.set = enable_set,
++	.get = param_get_bool,
++};
++module_param_cb(enable, &enable_ops, &enable, 0644);
+ MODULE_PARM_DESC(enable, "Run fork/join pieces on idle CPUs (0: serial)");
+ 
+ bool bend_enabled(void)
+@@ -31,7 +45,10 @@ EXPORT_SYMBOL_GPL(bend_enabled);
+ 
+ bool bend_set_enabled(bool on)
+ {
+-	return xchg(&enable, on);
++	bool was = xchg(&enable, on);
++
++	bend_clear_update();
++	return was;
+ }
+ EXPORT_SYMBOL_GPL(bend_set_enabled);
+ 
+diff --git a/lib/wolos_bend/bend_kunit.c b/lib/wolos_bend/bend_kunit.c
+index 3048a36488a..127ae44271b 100644
+--- a/lib/wolos_bend/bend_kunit.c
++++ b/lib/wolos_bend/bend_kunit.c
+@@ -502,9 +502,14 @@ static void clear_policy(struct kunit *t)
+ 	KUNIT_EXPECT_EQ(t, bend_clear_pages_grain(SZ_4M / PAGE_SIZE), 512 / kb);
+ 	KUNIT_EXPECT_EQ(t, bend_clear_pages_grain(SZ_1G / PAGE_SIZE), 512 / kb);
+ 	KUNIT_EXPECT_EQ(t, bend_clear_pages_grain(1), 0);
++	/* fast path: one compare against bend_clear_min_pages */
++	KUNIT_EXPECT_EQ(t, bend_clear_min_pages, SZ_4M / PAGE_SIZE);
+ 	bend_set_enabled(false);
+ 	KUNIT_EXPECT_EQ(t, bend_clear_pages_grain(SZ_1G / PAGE_SIZE), 0);
++	KUNIT_EXPECT_EQ(t, bend_clear_min_pages, UINT_MAX);
++	KUNIT_EXPECT_FALSE(t, bend_clear_user_highpages(NULL, 0, UINT_MAX - 1));
+ 	bend_set_enabled(was);
++	KUNIT_EXPECT_EQ(t, bend_clear_min_pages, SZ_4M / PAGE_SIZE);
+ }
+ 
+ static void clear_zeroes(struct kunit *t)
+diff --git a/lib/wolos_bend/clear.c b/lib/wolos_bend/clear.c
+index 17901500c81..8f30b618bf5 100644
+--- a/lib/wolos_bend/clear.c
++++ b/lib/wolos_bend/clear.c
+@@ -6,6 +6,7 @@
+ #include <linux/highmem.h>
+ #include <linux/mm.h>
+ #include <linux/moduleparam.h>
++#include <linux/sizes.h>
+ #include <linux/wolos_bend.h>
+ 
+ #undef MODULE_PARAM_PREFIX
+@@ -13,7 +14,30 @@
+ 
+ /* Below this many KiB the clear stays on the faulting CPU (0: never split). */
+ static unsigned int clear_min_kb = 4096;
+-module_param(clear_min_kb, uint, 0644);
++unsigned int bend_clear_min_pages __read_mostly = SZ_4M / PAGE_SIZE;
++
++void bend_clear_update(void)
++{
++	unsigned int kb = READ_ONCE(clear_min_kb);
++
++	WRITE_ONCE(bend_clear_min_pages, kb && bend_enabled() ?
++		   max(1u, kb / (unsigned int)(PAGE_SIZE / SZ_1K)) : UINT_MAX);
++}
++
++static int clear_min_set(const char *val, const struct kernel_param *kp)
++{
++	int ret = param_set_uint(val, kp);
++
++	if (!ret)
++		bend_clear_update();
++	return ret;
++}
++
++static const struct kernel_param_ops clear_min_ops = {
++	.set = clear_min_set,
++	.get = param_get_uint,
++};
++module_param_cb(clear_min_kb, &clear_min_ops, &clear_min_kb, 0644);
+ MODULE_PARM_DESC(clear_min_kb, "Clear user folios of at least this size on idle CPUs (KiB, 0 off)");
+ 
+ static unsigned int clear_grain_kb = 512;
+@@ -50,7 +74,7 @@ unsigned long bend_clear_pages_grain(unsigned long nr)
+ 	return grain;
+ }
+ 
+-bool bend_clear_user_highpages(struct page *page, unsigned long addr, unsigned int nr)
++bool __bend_clear_user_highpages(struct page *page, unsigned long addr, unsigned int nr)
+ {
+ 	struct bend_clear c = { .page = page, .addr = addr };
+ 	struct bend_job job = { .fn = bend_clear_fn, .arg = &c, .start = 0, .end = nr };
+diff --git a/mm/memory.c b/mm/memory.c
+index 797d39572a0..f4c2a6dc4f7 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -89,6 +89,7 @@
+ #include "pgalloc-track.h"
+ #include "internal.h"
+ #include "swap.h"
++#include <linux/wolos_bend.h>
+ 
+ #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
+ #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
+@@ -7499,6 +7500,10 @@ static void clear_contig_highpages(struct page *page, unsigned long addr,
+ 
+ 	might_sleep();
+ 
++	/* Large folios: the pieces run on idle CPUs too. */
++	if (bend_clear_user_highpages(page, addr, nr_pages))
++		return;
++
+ 	for (i = 0; i < nr_pages; i += count) {
+ 		cond_resched();
+ 

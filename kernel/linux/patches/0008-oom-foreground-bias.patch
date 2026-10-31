@@ -1,0 +1,43 @@
+From 5ef0e938016d9f05e3a4cdcaecbe7e10f65385bd Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 03:59:28 -0300
+Subject: [PATCH 8/8] mm/oom: kill background work before the app in front
+
+Badness of the foreground tgid (wolos hints) is divided by 4; SCHED_IDLE
+tasks gain totalpages/8. oom_score_adj applies on top as before.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ mm/oom_kill.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/mm/oom_kill.c b/mm/oom_kill.c
+index 5d48bd862..87d6894c5 100644
+--- a/mm/oom_kill.c
++++ b/mm/oom_kill.c
+@@ -19,6 +19,8 @@
+  */
+ 
+ #include <linux/oom.h>
++#include <linux/wolos.h>
++#include <linux/wolos_policy.h>
+ #include <linux/mm.h>
+ #include <linux/err.h>
+ #include <linux/gfp.h>
+@@ -229,6 +231,12 @@ long oom_badness(struct task_struct *p, unsigned long totalpages)
+ 		mm_pgtables_bytes(p->mm) / PAGE_SIZE;
+ 	task_unlock(p);
+ 
++	/* WolKernel: background first, the app in front last. */
++	points = wolos_oom_bias(points, totalpages,
++				wolos_foreground_tgid() > 0 &&
++				p->tgid == wolos_foreground_tgid(),
++				p->policy == SCHED_IDLE);
++
+ 	/* Normalize to oom_score_adj units */
+ 	adj *= totalpages / OOM_SCORE_ADJ_MAX;
+ 	points += adj;
+-- 
+2.54.0
+

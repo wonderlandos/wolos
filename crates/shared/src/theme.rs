@@ -42,8 +42,8 @@ pub const SCALE: [(&str, &str); 16] = [
 /// stylesheet and the Hyprland config to these values.
 pub mod scaffold {
     pub const TOOLBAR_HEIGHT: i32 = 52;
-/// Kit's own toolbar, under the 28 px compositor strip.
-pub const KIT_TOOLBAR_HEIGHT: i32 = 36;
+    /// Kit's own toolbar, under the 28 px compositor strip.
+    pub const KIT_TOOLBAR_HEIGHT: i32 = 36;
     /// Toolbar side padding.
     pub const TOOLBAR_PADDING: i32 = 16;
     pub const SIDEBAR_WIDTH: i32 = 220;

@@ -1,5 +1,5 @@
 //! linux-wolos (ADR 0016): the WolOS kernel fork at a pinned commit + Arch's config at the snapshot +
-//! `kernel/conf/wolos.config` + extra patches from `$WOLOS_OVERLAY/kernel/linux/patches` when present.
+//! `kernel/conf/wolos.config` + extra patches from `$WOLOS_TREE/kernel/linux/patches` when present.
 //! The kernel builds with makepkg; these tests pin what the recipe and its prepare step must do.
 use std::{fs, path::PathBuf, process::Command};
 
@@ -83,7 +83,7 @@ fn recipe_builds_the_fork_at_the_recorded_commit() {
         "wolos.config",
         "config.x86_64",
         "prepare.sh",
-        "WOLOS_OVERLAY",
+        "WOLOS_TREE",
     ] {
         assert!(p.contains(want), "PKGBUILD lacks {want}");
     }
@@ -184,7 +184,7 @@ fn prepare(
         .arg(src)
         .arg(d.join("base.config"))
         .arg(repo("kernel/conf/wolos.config"))
-        .env("WOLOS_OVERLAY", d.join(ov))
+        .env("WOLOS_TREE", d.join(ov))
         .env(
             "PATH",
             format!("{}:{}", bin.display(), std::env::var("PATH").unwrap()),
@@ -260,7 +260,7 @@ fn prepare_applies_extra_patches_in_order_then_merges_the_fragment() {
     // A patch that no longer applies stops the build.
     fs::write(src.join("hello.c"), "other\n").unwrap();
     assert_eq!(prepare(&d, &src, &bin, "overlay").status.code(), Some(3));
-    // No overlay: the fork as is, zero extra patches.
+    // No patch directory: the fork as is, zero extra patches.
     fs::write(src.join("hello.c"), "one\n").unwrap();
     let o = prepare(&d, &src, &bin, "none");
     assert!(o.status.success());
@@ -547,4 +547,33 @@ fn workflow_builds_and_releases_the_kernel() {
     for word in ["private", "proprietary", "closed", "cachyos", "overlay"] {
         assert!(!low.contains(word), "kernel.yml mentions {word}");
     }
+}
+
+/// The kernel series lives in this tree and every patch states its license.
+#[test]
+fn kernel_patches_are_here_and_gpl_2_only() {
+    let mut n = 0;
+    for dir in [
+        "kernel/linux/patches",
+        "kernel/freebsd/drm/patches",
+        "kernel/freebsd/patches",
+    ] {
+        for e in std::fs::read_dir(repo(dir)).unwrap().flatten() {
+            if e.path().extension().is_none_or(|x| x != "patch") {
+                continue;
+            }
+            n += 1;
+            let t = std::fs::read_to_string(e.path()).unwrap();
+            let head = t.split("\ndiff ").next().unwrap();
+            assert!(
+                head.contains("SPDX-License-Identifier: GPL-2.0-only"),
+                "{}",
+                e.path().display()
+            );
+            assert!(!t.contains("gmail.com"), "{}", e.path().display());
+        }
+    }
+    assert!(n >= 20, "only {n} patches");
+    assert!(read("kernel/linux-wolos/PKGBUILD").contains("WOLOS_TREE="));
+    assert!(read("kernel/linux-wolos-api-headers/PKGBUILD").contains("/../linux/patches"));
 }

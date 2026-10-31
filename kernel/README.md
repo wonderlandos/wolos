@@ -5,7 +5,7 @@
 
 WolKernel (package `linux-wolos`, ADR 0016/0017) = the `wolos` branch of github.com/wonderlandos/linux (upstream stable + the WolKernel patches, see `README.wolos.md` there) at the commit in `linux-wolos/ref`, over Arch's x86_64 config.
 Config: the fork's `kernel/configs/wolos.config`, then `conf/wolos.config` merged on top. `conf/wolos.config` is the working copy: changes land here first and are then copied to the fork (CI reports drift).
-Extra patches from `$WOLOS_OVERLAY/kernel/linux/patches` apply only when that variable is set. Fork tags: `wolkernel-1.0-7.3`.
+The series in `linux/patches/` applies on top (`SERIES.md`, GPL-2.0-only). Fork tags: `wolkernel-1.0-7.3`.
 
 | path | what |
 |---|---|

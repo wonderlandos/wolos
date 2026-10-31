@@ -1,0 +1,208 @@
+From cd7bb77bd2fda8e5f233f0bc856543ee71e1df73 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 03:20:00 -0300
+Subject: [PATCH] futex: adaptive FUTEX_WAIT spin
+
+Spin only when nothing else is runnable on this CPU, and scale the
+budget by a per-bucket score: a wakeup during the spin raises it, a
+timeout halves it. Long waits stop burning futex.spin_ns per sleep;
+quick hand-offs keep spinning. KUnit: wolos_futex_spin.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ init/Kconfig              |  5 +++++
+ kernel/futex/Makefile     |  1 +
+ kernel/futex/core.c       |  1 +
+ kernel/futex/futex.h      | 27 ++++++++++++++++++++++
+ kernel/futex/spin_kunit.c | 47 +++++++++++++++++++++++++++++++++++++++
+ kernel/futex/waitwake.c   | 30 +++++++++++++++++++++----
+ 6 files changed, 107 insertions(+), 4 deletions(-)
+ create mode 100644 kernel/futex/spin_kunit.c
+
+diff --git a/init/Kconfig b/init/Kconfig
+index b31aa298c..2f598100f 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1702,6 +1702,11 @@ config FUTEX_PI
+ 	depends on FUTEX && RT_MUTEXES
+ 	default y
+ 
++config FUTEX_SPIN_KUNIT_TEST
++	tristate "KUnit test for the WolKernel adaptive futex spin" if !KUNIT_ALL_TESTS
++	depends on FUTEX && KUNIT
++	default KUNIT_ALL_TESTS
++
+ config FUTEX_PRIVATE_HASH
+ 	bool
+ 	depends on FUTEX && !BASE_SMALL && MMU
+diff --git a/kernel/futex/Makefile b/kernel/futex/Makefile
+index dce70f8a3..3094cc60f 100644
+--- a/kernel/futex/Makefile
++++ b/kernel/futex/Makefile
+@@ -3,3 +3,4 @@
+ CONTEXT_ANALYSIS := y
+ 
+ obj-y += core.o syscalls.o pi.o requeue.o waitwake.o
++obj-$(CONFIG_FUTEX_SPIN_KUNIT_TEST) += spin_kunit.o
+diff --git a/kernel/futex/core.c b/kernel/futex/core.c
+index a240638f6..019320033 100644
+--- a/kernel/futex/core.c
++++ b/kernel/futex/core.c
+@@ -1596,6 +1596,7 @@ static void futex_hash_bucket_init(struct futex_hash_bucket *fhb)
+ 	atomic_set(&fhb->waiters, 0);
+ 	plist_head_init(&fhb->chain);
+ 	spin_lock_init(&fhb->lock);
++	fhb->spin_score = FUTEX_SPIN_SCORE_MAX;
+ }
+ 
+ #define FH_CUSTOM	0x01
+diff --git a/kernel/futex/futex.h b/kernel/futex/futex.h
+index f00f0863e..3ffa01ddd 100644
+--- a/kernel/futex/futex.h
++++ b/kernel/futex/futex.h
+@@ -152,8 +152,35 @@ struct futex_hash_bucket {
+ 	atomic_t waiters;
+ 	spinlock_t lock;
+ 	struct plist_head chain;
++	unsigned int spin_score;	/* WolKernel adaptive spin, see futex_spin_next() */
+ } ____cacheline_aligned_in_smp;
+ 
++/*
++ * WolKernel adaptive FUTEX_WAIT spin. Each bucket keeps a score in
++ * [0, FUTEX_SPIN_SCORE_MAX]. The spin budget is spin_ns scaled by the score;
++ * a spin that ends in a wakeup raises it, one that times out halves it, so
++ * buckets with long waits stop wasting CPU and quick hand-offs keep spinning.
++ * Pure functions so KUnit can check them (spin_kunit.c).
++ */
++#define FUTEX_SPIN_SCORE_MAX	8U
++
++static inline u64 futex_spin_budget(unsigned int spin_ns, unsigned int score,
++				    bool cpu_alone)
++{
++	if (!spin_ns || !cpu_alone || !score)
++		return 0;
++	if (score > FUTEX_SPIN_SCORE_MAX)
++		score = FUTEX_SPIN_SCORE_MAX;
++	return (u64)spin_ns * score / FUTEX_SPIN_SCORE_MAX;
++}
++
++static inline unsigned int futex_spin_next(unsigned int score, bool woke)
++{
++	if (woke)
++		return score >= FUTEX_SPIN_SCORE_MAX ? FUTEX_SPIN_SCORE_MAX : score + 1;
++	return score / 2;
++}
++
+ /*
+  * Priority Inheritance state:
+  */
+diff --git a/kernel/futex/spin_kunit.c b/kernel/futex/spin_kunit.c
+new file mode 100644
+index 000000000..57b3007a1
+--- /dev/null
++++ b/kernel/futex/spin_kunit.c
+@@ -0,0 +1,47 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/* KUnit: WolKernel adaptive FUTEX_WAIT spin policy (futex_spin_budget/next). */
++#include <kunit/test.h>
++#include "futex.h"
++
++static void budget_off_cases(struct kunit *t)
++{
++	KUNIT_EXPECT_EQ(t, futex_spin_budget(0, 8, true), 0ULL);
++	KUNIT_EXPECT_EQ(t, futex_spin_budget(4000, 0, true), 0ULL);
++	/* another runnable task on this CPU: never spin */
++	KUNIT_EXPECT_EQ(t, futex_spin_budget(4000, 8, false), 0ULL);
++}
++
++static void budget_scales_with_score(struct kunit *t)
++{
++	KUNIT_EXPECT_EQ(t, futex_spin_budget(4000, 8, true), 4000ULL);
++	KUNIT_EXPECT_EQ(t, futex_spin_budget(4000, 4, true), 2000ULL);
++	KUNIT_EXPECT_EQ(t, futex_spin_budget(4000, 1, true), 500ULL);
++	KUNIT_EXPECT_EQ(t, futex_spin_budget(4000, 99, true), 4000ULL);
++}
++
++static void score_moves(struct kunit *t)
++{
++	unsigned int s = FUTEX_SPIN_SCORE_MAX;
++	int i;
++
++	KUNIT_EXPECT_EQ(t, futex_spin_next(s, true), FUTEX_SPIN_SCORE_MAX);
++	for (i = 0; i < 4; i++)
++		s = futex_spin_next(s, false);
++	KUNIT_EXPECT_EQ(t, s, 0U);	/* 8->4->2->1->0: four timeouts stop spinning */
++	s = futex_spin_next(s, true);
++	KUNIT_EXPECT_EQ(t, s, 1U);
++}
++
++static struct kunit_case futex_spin_cases[] = {
++	KUNIT_CASE(budget_off_cases),
++	KUNIT_CASE(budget_scales_with_score),
++	KUNIT_CASE(score_moves),
++	{}
++};
++
++static struct kunit_suite futex_spin_suite = {
++	.name = "wolos_futex_spin",
++	.test_cases = futex_spin_cases,
++};
++kunit_test_suite(futex_spin_suite);
++MODULE_LICENSE("GPL");
+diff --git a/kernel/futex/waitwake.c b/kernel/futex/waitwake.c
+index f8e2fd973..1c6cc6610 100644
+--- a/kernel/futex/waitwake.c
++++ b/kernel/futex/waitwake.c
+@@ -2,6 +2,8 @@
+ 
+ #include <linux/moduleparam.h>
+ #include <linux/sched/clock.h>
++#include <linux/random.h>
++#include <linux/sched/stat.h>
+ #include <linux/plist.h>
+ #include <linux/sched/task.h>
+ #include <linux/sched/signal.h>
+@@ -382,15 +384,35 @@ module_param_named(spin_ns, futex_spin_ns, uint, 0644);
+ 
+ static void futex_spin_wait(struct futex_q *q)
+ {
+-	unsigned int ns = READ_ONCE(futex_spin_ns);
+-	u64 end;
++	struct futex_hash_bucket *hb;
++	spinlock_t *lock;
++	unsigned int score;
++	u64 budget, end;
++	bool woke;
+ 
+-	if (!ns || num_online_cpus() < 2)
++	if (num_online_cpus() < 2)
+ 		return;
+-	end = local_clock() + ns;
++	lock = READ_ONCE(q->lock_ptr);
++	if (!lock)	/* already woken */
++		return;
++	hb = container_of(lock, struct futex_hash_bucket, lock);
++	score = READ_ONCE(hb->spin_score);
++	/* Never steal the CPU from a runnable task, often the lock holder. */
++	budget = futex_spin_budget(READ_ONCE(futex_spin_ns), score,
++				   single_task_running());
++	if (!budget) {
++		/* Periodic retry so a decayed bucket can recover. */
++		if (!score && !(get_random_u32() & 63))
++			WRITE_ONCE(hb->spin_score, 1);
++		return;
++	}
++	end = local_clock() + budget;
+ 	while (!plist_node_empty(&q->list) && !need_resched() &&
+ 	       !signal_pending(current) && local_clock() < end)
+ 		cpu_relax();
++	woke = plist_node_empty(&q->list);
++	if (futex_spin_next(score, woke) != score)
++		WRITE_ONCE(hb->spin_score, futex_spin_next(score, woke));
+ }
+ 
+ void futex_do_wait(struct futex_q *q, struct hrtimer_sleeper *timeout)
+-- 
+2.54.0
+

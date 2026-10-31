@@ -1,0 +1,51 @@
+From d78b0eaa53cf462191fa1a4e7f4d4a2df73f38a4 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 03:59:28 -0300
+Subject: [PATCH 7/8] vt: kbd_event returns early when a graphical session owns
+ the keyboard
+
+In K_OFF + KD_GRAPHICS the compositor reads evdev. Keep key_down for
+the switch back, skip the keymap, LED tasklet and console work per key.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ drivers/tty/vt/keyboard.c | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/tty/vt/keyboard.c b/drivers/tty/vt/keyboard.c
+index ef4a19aeb..f9b8d930a 100644
+--- a/drivers/tty/vt/keyboard.c
++++ b/drivers/tty/vt/keyboard.c
+@@ -46,6 +46,7 @@
+ #include <linux/tty.h>
+ #include <linux/uaccess.h>
+ #include <linux/vt_kern.h>
++#include <linux/wolos_policy.h>
+ 
+ #include <asm/irq_regs.h>
+ 
+@@ -1583,6 +1584,20 @@ static void kbd_keycode(unsigned int keycode, int down, bool hw_raw)
+ static void kbd_event(struct input_handle *handle, unsigned int event_type,
+ 		      unsigned int event_code, int value)
+ {
++	struct vc_data *vc = vc_cons[fg_console].d;
++
++	/*
++	 * WolKernel: a graphical session (K_OFF + KD_GRAPHICS) reads evdev
++	 * itself. Track key_down for the switch back to a text VT, skip the
++	 * keymap, the LED tasklet and the console work.
++	 */
++	if (vc && wolos_kbd_bypass(kbd_table[fg_console].kbdmode == VC_OFF,
++				   vc->vc_mode == KD_GRAPHICS)) {
++		if (event_type == EV_KEY && event_code <= KEY_MAX)
++			assign_bit(event_code, key_down, value);
++		return;
++	}
++
+ 	/* We are called with interrupts disabled, just take the lock */
+ 	scoped_guard(spinlock, &kbd_event_lock) {
+ 		if (event_type == EV_MSC && event_code == MSC_RAW &&
+-- 
+2.54.0
+

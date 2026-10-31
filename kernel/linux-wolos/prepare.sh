@@ -1,6 +1,6 @@
 #!/bin/sh
 # linux-wolos prepare step (PKGBUILD prepare()): SRC BASECONFIG FRAGMENT.
-# 1. Extra patches from $WOLOS_OVERLAY/kernel/linux/patches when present, in name order (patch -Np1, no fuzz).
+# 1. The series in $WOLOS_TREE/kernel/linux/patches, in name order (patch -Np1, no fuzz).
 #    A patch the tree already carries is skipped; one that does not apply stops with exit 3.
 # 2. BASECONFIG (Arch config.x86_64) + the fork's kernel/configs/wolos.config when present + FRAGMENT
 #    (kernel/conf/wolos.config, merged last so it wins), then make olddefconfig.
@@ -10,7 +10,7 @@ BASE=$(cd "$(dirname "$BASE")" && pwd)/$(basename "$BASE")
 FRAG=$(cd "$(dirname "$FRAG")" && pwd)/$(basename "$FRAG")
 cd "$SRC"
 n=0
-for p in "${WOLOS_OVERLAY:-/nonexistent}"/kernel/linux/patches/*.patch; do
+for p in "${WOLOS_TREE:-/nonexistent}"/kernel/linux/patches/*.patch; do
   [ -f "$p" ] || continue
   if patch -Rp1 -s --fuzz=0 --dry-run < "$p" >/dev/null 2>&1; then
     echo "extra patch already in tree: ${p##*/}"

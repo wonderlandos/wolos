@@ -1,0 +1,126 @@
+From 5a7f93ca21b0742f6b09053a9fe480ab16f19d10 Mon Sep 17 00:00:00 2001
+From: kleeedolinux <71413974+kleeedolinux@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 05:07:25 +0000
+Subject: [PATCH] lib/wolos_bend: fork/join is safe from reclaim
+
+Reclaim paths need to join helpers: bend_wq gets WQ_MEM_RECLAIM so a
+queued helper always runs, and the per-run state uses GFP_NOWAIT, so a
+caller in reclaim never recurses; without memory the job runs serially.
+
+KUnit fork_join_in_reclaim forks under the fs_reclaim map and with
+PF_MEMALLOC; lockdep reported the old GFP_KERNEL allocation.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ lib/wolos_bend/bend.c       | 11 +++++++----
+ lib/wolos_bend/bend_kunit.c | 31 +++++++++++++++++++++++++++++++
+ 2 files changed, 38 insertions(+), 4 deletions(-)
+
+diff --git a/lib/wolos_bend/bend.c b/lib/wolos_bend/bend.c
+index de2a1cf6b2a..19c93ebe5b1 100644
+--- a/lib/wolos_bend/bend.c
++++ b/lib/wolos_bend/bend.c
+@@ -309,6 +309,9 @@ struct bend_run {
+ 
+ static struct workqueue_struct *bend_wq;
+ 
++/* Callers may be in reclaim; without memory the job just runs serially. */
++#define BEND_RUN_GFP	(GFP_NOWAIT | __GFP_NOWARN)
++
+ static void bend_account(struct bend_run *r, unsigned long n)
+ {
+ 	if (atomic_long_sub_return(n, &r->remaining) == 0)
+@@ -426,7 +429,7 @@ int bend_fork_join(const struct bend_job *job)
+ 		want = min_t(int, want, job->max_workers);
+ 	if (!bend_enabled() || !bend_wq || want < 2)
+ 		goto serial;
+-	r = kzalloc(sizeof(*r), GFP_KERNEL | __GFP_NOWARN);
++	r = kzalloc(sizeof(*r), BEND_RUN_GFP);
+ 	if (!r)
+ 		goto serial;
+ 
+@@ -436,12 +439,12 @@ int bend_fork_join(const struct bend_job *job)
+ 	atomic_long_set(&r->remaining, units);
+ 	init_completion(&r->done);
+ 	for (i = 0; i <= n; i++) {
+-		struct bend_worker *w = kmalloc(sizeof(*w), GFP_KERNEL | __GFP_NOWARN);
++		struct bend_worker *w = kmalloc(sizeof(*w), BEND_RUN_GFP);
+ 
+ 		if (!w)
+ 			break;
+ 		bend_deque_init(&w->dq);
+-		bend_arena_init(&w->arena, GFP_KERNEL | __GFP_NOWARN);
++		bend_arena_init(&w->arena, BEND_RUN_GFP);
+ 		INIT_WORK(&w->work, bend_helper);
+ 		w->run = r;
+ 		w->cpu = i ? cpus[i - 1] : this;
+@@ -480,7 +483,7 @@ EXPORT_SYMBOL_GPL(bend_fork_join);
+ 
+ static int __init bend_init(void)
+ {
+-	bend_wq = alloc_workqueue("wolos_bend", WQ_PERCPU, 0);
++	bend_wq = alloc_workqueue("wolos_bend", WQ_PERCPU | WQ_MEM_RECLAIM, 0);
+ 	return bend_wq ? 0 : -ENOMEM;
+ }
+ core_initcall(bend_init);
+diff --git a/lib/wolos_bend/bend_kunit.c b/lib/wolos_bend/bend_kunit.c
+index 127ae44271b..f0bd1848dd2 100644
+--- a/lib/wolos_bend/bend_kunit.c
++++ b/lib/wolos_bend/bend_kunit.c
+@@ -12,7 +12,9 @@
+ #include <linux/mm.h>
+ #include <linux/sizes.h>
+ #include <linux/kthread.h>
++#include <linux/panic.h>
+ #include <linux/random.h>
++#include <linux/sched/mm.h>
+ #include <linux/slab.h>
+ #include <linux/wolos_bend.h>
+ 
+@@ -457,6 +459,34 @@ static void fork_join_parallel(struct kunit *t)
+ 	KUNIT_EXPECT_GT(t, cpumask_weight(&c->cpus), 1);
+ }
+ 
++/* Reclaim may fork and join: no allocation that reclaims, a queue with a rescuer. */
++static void fork_join_in_reclaim(struct kunit *t)
++{
++	struct fj_ctx *c = kunit_kzalloc(t, sizeof(*c), GFP_KERNEL);
++	struct bend_job job = { .fn = fj_fn, .start = 0, .end = 2048, .grain = 8 };
++	bool warned = test_taint(TAINT_WARN);
++	unsigned int noreclaim;
++	int i;
++
++	KUNIT_ASSERT_NOT_NULL(t, c);
++	c->hits = kunit_kcalloc(t, 2048, sizeof(*c->hits), GFP_KERNEL);
++	KUNIT_ASSERT_NOT_NULL(t, c->hits);
++	spin_lock_init(&c->lock);
++	job.arg = c;
++	/* Direct reclaim's lock map: lockdep reports any GFP_KERNEL under it. */
++	fs_reclaim_acquire(GFP_KERNEL);
++	bend_fork_join(&job);
++	fs_reclaim_release(GFP_KERNEL);
++	/* kswapd's flag: flushing a queue without a rescuer warns. */
++	noreclaim = memalloc_noreclaim_save();
++	bend_fork_join(&job);
++	memalloc_noreclaim_restore(noreclaim);
++	for (i = 0; i < 2048; i++)
++		KUNIT_EXPECT_EQ(t, atomic_read(&c->hits[i]), 2);
++	KUNIT_EXPECT_TRUE(t, debug_locks);
++	KUNIT_EXPECT_EQ(t, test_taint(TAINT_WARN), warned);
++}
++
+ /* Several callers at once: jobs never mix. */
+ static int fj_many(int i, void *p)
+ {
+@@ -547,6 +577,7 @@ static struct kunit_case bend_cases[] = {
+ 	KUNIT_CASE_SLOW(pool_stress),
+ 	KUNIT_CASE(fork_join_cover),
+ 	KUNIT_CASE(fork_join_parallel),
++	KUNIT_CASE(fork_join_in_reclaim),
+ 	KUNIT_CASE_SLOW(fork_join_concurrent),
+ 	KUNIT_CASE(clear_policy),
+ 	KUNIT_CASE(clear_zeroes),
+-- 
+2.56.0
+

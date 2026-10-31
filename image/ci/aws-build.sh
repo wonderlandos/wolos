@@ -5,7 +5,7 @@
 # run and stop after it.
 #   aws-build.sh pkg <out dir> <package...>   built packages (unsigned) into <out dir>
 #   aws-build.sh iso <out dir>                the ISO and its release manifest into <out dir>
-# Inputs: this tree (with submodules; extra patches in ./wolos-overlay when present), the kept
+# Inputs: this tree (with submodules), the kept
 # packages in $WOLOS_REPO_DIR/x86_64 (local deps; for iso: the signed repo), [wolos-cachy] from
 # $WOLOS_CACHY_DIR when set (iso).
 # Env: CLUSTER, TASK_DEF, TASK_DEF_ISO, CAPACITY, BUCKET (repository variables), AWS credentials.
@@ -17,7 +17,6 @@ s3=s3://$BUCKET/runs/$run
 mkdir -p "$out"
 
 echo "== source -> $s3"
-# Extra patches travel as ./wolos-overlay (where CI checks them out); the builder finds them there.
 tar -C "$REPO" --exclude=./out --exclude=./target --exclude=.git -I 'zstd -T0' -cf - . |
   aws s3 cp --quiet - "$s3/src.tar.zst"
 rd=${WOLOS_REPO_DIR:-$REPO/out/repo}/x86_64

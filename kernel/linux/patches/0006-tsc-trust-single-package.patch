@@ -1,0 +1,55 @@
+From 4bb52534fcc4a81d86407404d38b1797d6865166 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 03:59:28 -0300
+Subject: [PATCH 6/8] x86/tsc: trust the TSC on one-package bare metal with an
+ invariant TSC
+
+The stock rule needs TSC_ADJUST, which keeps the clocksource watchdog
+(2 Hz HPET reads, possible demotion to HPET under load) on for many AMD
+desktops. Boot and hotplug sync checks stay; tsc=watchdog restores it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ arch/x86/kernel/tsc.c | 18 +++++++++++++-----
+ 1 file changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kernel/tsc.c b/arch/x86/kernel/tsc.c
+index 723347e2c..9fc4c9b42 100644
+--- a/arch/x86/kernel/tsc.c
++++ b/arch/x86/kernel/tsc.c
+@@ -15,6 +15,7 @@
+ #include <linux/percpu.h>
+ #include <linux/timex.h>
+ #include <linux/static_key.h>
++#include <linux/wolos_policy.h>
+ #include <linux/static_call.h>
+ 
+ #include <asm/cpuid/api.h>
+@@ -1240,11 +1241,18 @@ static void __init check_system_tsc_reliable(void)
+ 	 *    modifications
+ 	 *  - not more than four packages
+ 	 */
+-	if (boot_cpu_has(X86_FEATURE_CONSTANT_TSC) &&
+-	    boot_cpu_has(X86_FEATURE_NONSTOP_TSC) &&
+-	    boot_cpu_has(X86_FEATURE_TSC_ADJUST) &&
+-	    topology_max_packages() <= 4)
+-		tsc_disable_clocksource_watchdog();
++	{
++		struct wolos_tsc_facts f = {
++			.constant = boot_cpu_has(X86_FEATURE_CONSTANT_TSC),
++			.nonstop = boot_cpu_has(X86_FEATURE_NONSTOP_TSC),
++			.tsc_adjust = boot_cpu_has(X86_FEATURE_TSC_ADJUST),
++			.hypervisor = boot_cpu_has(X86_FEATURE_HYPERVISOR),
++			.packages = topology_max_packages(),
++		};
++
++		if (wolos_tsc_trusted(&f))
++			tsc_disable_clocksource_watchdog();
++	}
+ }
+ 
+ /*
+-- 
+2.54.0
+

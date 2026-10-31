@@ -1,0 +1,33 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Repo guard (installed as pre-commit and pre-push by tools/hooks/install.sh).
+# Refuses local-only paths and files that hold a credential.
+set -eu
+RE='^(strategy/|CLAUDE[.]local[.]md$)|(^|/)demo-account[.]txt$'
+SECRET='AKIA[0-9A-Z]{16}|-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|xox[abprs]-[0-9A-Za-z-]{10,}|sk-ant-[A-Za-z0-9_-]{20,}'
+Z=0000000000000000000000000000000000000000
+# stdin: git raw diff lines; prints offending paths.
+check() {
+  awk -F'\t' '/^:/{split($1,f," "); print f[4] "\t" $2}' | sort -u | while IFS="$(printf '\t')" read -r blob path; do
+    if printf %s "$path" | grep -qE "$RE" || git cat-file blob "$blob" | grep -qIE "$SECRET"; then
+      printf '%s\n' "$path"
+    fi
+  done
+}
+refuse() { echo "$1: refused, local-only content or a credential:" >&2; sort -u >&2; exit 1; }
+case "$(basename "$0")" in
+pre-commit)
+  bad=$(git diff --cached --raw --no-abbrev --diff-filter=ACMR | check)
+  [ -z "$bad" ] || echo "$bad" | refuse pre-commit ;;
+pre-push)
+  out=
+  while read -r lref lsha rref rsha; do
+    [ "$lsha" = "$Z" ] && continue
+    if [ "$rsha" = "$Z" ]; then revs=$(git rev-list "$lsha" --not --remotes); else revs=$(git rev-list "$rsha..$lsha"); fi
+    raw=$(for c in $revs; do git diff-tree -r -m --root --no-commit-id --raw --no-abbrev --diff-filter=ACMR "$c"; done)
+    out="$out$(printf '%s\n' "$raw" | check)
+"
+  done
+  bad=$(printf %s "$out" | sed '/^$/d')
+  [ -z "$bad" ] || echo "$bad" | refuse pre-push ;;
+esac

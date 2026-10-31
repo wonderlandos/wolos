@@ -1,0 +1,38 @@
+From c1593cdaa61e596302f8bbb57204f0d8b86183bc Mon Sep 17 00:00:00 2001
+From: kleeedolinux <71413974+kleeedolinux@users.noreply.github.com>
+Date: Sat, 31 Oct 2026 03:41:22 +0000
+Subject: [PATCH] x86/entry: leave thread_info.status alone on 64-bit syscall
+ exit
+
+Every return to user space cleared TS_COMPAT with a read-modify-write,
+which dirties the first cacheline of task_struct on each 64-bit syscall.
+That line also holds __state, on_cpu and thread_info.cpu, read by wakers
+and by mutex owner spinners. Write the field only when a bit is set.
+
+perf c2c, perf bench epoll wait on a 48-core host: 976 of 14741 HITMs
+landed on this line before, and it leaves the top lines after. epoll,
+pipe, futex and syscall throughput do not change beyond noise.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ arch/x86/include/asm/entry-common.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/entry-common.h b/arch/x86/include/asm/entry-common.h
+index 3fed46bd968..3d1c56982ef 100644
+--- a/arch/x86/include/asm/entry-common.h
++++ b/arch/x86/include/asm/entry-common.h
+@@ -78,7 +78,8 @@ static inline void arch_exit_to_user_mode_prepare(struct pt_regs *regs,
+ 	 * special case only applies after poking regs and before the
+ 	 * very next return to user mode.
+ 	 */
+-	current_thread_info()->status &= ~(TS_COMPAT | TS_I386_REGS_POKED);
++	if (unlikely(current_thread_info()->status & (TS_COMPAT | TS_I386_REGS_POKED)))
++		current_thread_info()->status &= ~(TS_COMPAT | TS_I386_REGS_POKED);
+ #endif
+ 
+ 	/* Avoid unnecessary reads of 'x86_ibpb_exit_to_user' */
+-- 
+2.56.0
+

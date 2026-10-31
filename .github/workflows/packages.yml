@@ -3,7 +3,6 @@
 # publish, and publish the repo as the assets of the `wolos-<snapshot>` release (`$repo-<date>`, the
 # primary server in wolos-mirrorlist).
 # Signing: secret WOLOS_GPG_KEY (armored gpg secret key); without it the repo is unsigned.
-# Extra patches from $WOLOS_OVERLAY when present (vars.WOLOS_OVERLAY_REPO + secrets.WOLOS_OVERLAY_TOKEN).
 name: packages
 
 on:
@@ -42,7 +41,6 @@ jobs:
       # vars.WOLOS_RELEASES_REPO with a token that may write there (this repo when unset).
       GH_REPO: ${{ vars.WOLOS_RELEASES_REPO || github.repository }}
       GH_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN || github.token }}
-      OVERLAY_REPO: ${{ vars.WOLOS_OVERLAY_REPO }}
     steps:
       - name: Free disk space
         if: vars.AWS_ROLE_ARN == ''   # the cluster builds; the runner only signs and publishes
@@ -55,14 +53,6 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-
-      - name: Extra patches (when present)
-        if: env.OVERLAY_REPO != ''
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.OVERLAY_REPO }}
-          token: ${{ secrets.WOLOS_OVERLAY_TOKEN }}
-          path: wolos-overlay
 
       - name: Packages to build
         id: plan
@@ -125,8 +115,7 @@ jobs:
               pacman -Syu --noconfirm --needed git sudo devtools rust clang mold sccache
               useradd -m builder; echo "builder ALL=(root) NOPASSWD: /usr/bin/pacman" > /etc/sudoers.d/builder
               chown -R builder /src /home/builder
-              ov=; [ -d /src/wolos-overlay ] && ov=/src/wolos-overlay
-              sudo -u builder -H env WOLOS_REPO_ONLY="$WOLOS_REPO_ONLY" GPG_KEY="$GPG_KEY" WOLOS_OVERLAY="$ov" bash -euo pipefail -c "
+              sudo -u builder -H env WOLOS_REPO_ONLY="$WOLOS_REPO_ONLY" GPG_KEY="$GPG_KEY" bash -euo pipefail -c "
                 git config --global --add safe.directory \"*\"
                 if [ -n \"\$GPG_KEY\" ]; then
                   echo \"\$GPG_KEY\" | gpg --batch --import
@@ -134,7 +123,6 @@ jobs:
                 else
                   export WOLOS_UNSIGNED=1
                 fi
-                [ -n \"\$WOLOS_OVERLAY\" ] || unset WOLOS_OVERLAY
                 WOLOS_INSTALL_DEPS=1 WOLOS_WORK=/src/out/work WOLOS_REPO_DIR=/src/out/repo image/repo/build.sh
               "'
 

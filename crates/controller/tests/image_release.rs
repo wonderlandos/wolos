@@ -241,16 +241,16 @@ fn packages_workflow_builds_changed_dirs_in_an_arch_container() {
     }
 }
 
-/// CI runs without extra patches: the steps that use them skip when $WOLOS_OVERLAY is absent.
+/// CI builds from this tree alone: kernel patches included, no second checkout.
 #[test]
-fn workflows_free_disk_and_build_without_extra_patches() {
+fn workflows_free_disk_and_need_no_second_checkout() {
     for f in [
         ".github/workflows/packages.yml",
         ".github/workflows/iso.yml",
     ] {
         let s = read(f);
         assert!(s.contains("Free disk space"), "{f}");
-        assert!(s.contains("WOLOS_OVERLAY"), "{f}");
+        assert!(!s.contains("WOLOS_OVERLAY"), "{f}");
         let low = s.to_lowercase();
         for word in ["private", "proprietary", "closed", "competitor", "strategy"] {
             assert!(!low.contains(word), "{f}: {word}");

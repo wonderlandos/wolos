@@ -22,13 +22,11 @@ sha256sums=(SKIP)
 
 prepare() {
   cd linux-$_ref
-  # Extra patches from $WOLOS_OVERLAY when present, same order as linux-wolos.
-  if [ -n "${WOLOS_OVERLAY:-}" ] && [ -d "$WOLOS_OVERLAY/kernel/linux/patches" ]; then
-    for p in "$WOLOS_OVERLAY"/kernel/linux/patches/*.patch; do
-      [ -e "$p" ] || continue
-      patch -Np1 < "$p" || { echo "extra patch does not apply: $p" >&2; exit 3; }
-    done
-  fi
+  # The kernel series, same order as linux-wolos.
+  for p in "$startdir"/../linux/patches/*.patch; do
+    [ -e "$p" ] || continue
+    patch -Np1 < "$p" || { echo "kernel patch does not apply: $p" >&2; exit 3; }
+  done
 }
 
 build() {
