@@ -216,3 +216,23 @@ fn the_graph_is_written_on_request() {
     assert!(std::fs::read_to_string(dot).unwrap().starts_with("digraph"));
     assert!(std::fs::read_to_string(svg).unwrap().starts_with("<svg"));
 }
+
+#[test]
+fn the_report_names_the_graph_only_when_it_was_written() {
+    let d = dir("graphkey", NOISY);
+    let graph_of = |f: &Path| -> serde_json::Value {
+        let o = Command::new(bin())
+            .arg("--dir")
+            .arg(&d)
+            .arg("--graph")
+            .arg(f)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap()["graph"].clone()
+    };
+    let good = d.join("g.svg");
+    assert_eq!(graph_of(&good), good.to_str().unwrap());
+    assert!(graph_of(&d.join("no-such-folder/g.svg")).is_null());
+}
