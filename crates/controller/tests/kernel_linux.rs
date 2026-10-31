@@ -378,7 +378,13 @@ fn fragment_tunes_for_desktops_and_keeps_compatibility() {
     assert!(!option_set(&c, "CONFIG_IA32_EMULATION_DEFAULT_DISABLED=y"));
     // Every removed userspace interface is listed for `wol doctor`.
     let abi = read("kernel/abi-removed.txt");
-    for name in ["X86_X32_ABI", "LEGACY_VSYSCALL", "WOLOS_NO_INT80_64"] {
+    for name in [
+        "X86_X32_ABI",
+        "LEGACY_VSYSCALL",
+        "WOLOS_NO_INT80_64",
+        "LOOP_CHANGE_FD",
+        "IPV6_ADDRFORM",
+    ] {
         assert!(
             abi.lines()
                 .any(|l| l.split_whitespace().nth(1) == Some(name)),
@@ -418,6 +424,11 @@ fn image_ships_memory_and_latency_sysctls_and_zram() {
     );
     let u = read("image/files/usr/lib/udev/rules.d/60-wolos-ioscheduler.rules");
     assert!(u.contains("none") && u.contains("bfq"));
+    assert!(
+        u.lines()
+            .any(|l| l.contains("nvme") && l.contains("ATTR{queue/read_ahead_kb}=\"256\"")),
+        "NVMe read_ahead_kb default"
+    );
     // A slow USB stick has its own strict dirty budget: copying to it never stalls the NVMe.
     let w = read("image/files/usr/lib/udev/rules.d/70-wolos-usb-writeback.rules");
     for want in [
