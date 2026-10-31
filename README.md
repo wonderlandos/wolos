@@ -1,15 +1,15 @@
 <p align="center"><img src="design/brand/wolos-mark.svg" width="96" alt="WolOS"></p>
 
 <h1 align="center">WolOS</h1>
-<p align="center"><b>The Mac experience. On the PC you already own.</b></p>
+<p align="center"><b>A calm, simple desktop. On the PC you already own.</b></p>
 
 <p align="center"><img src="assets/desktop.png" alt="The WolOS desktop"></p>
 
-WolOS is an open source desktop operating system for ordinary PCs. It is built on Arch Linux packages, with a Rust system API, a GTK 4 shell (menu bar, Dock, Spotlight, Control Center, Settings, App Store, Setup Assistant), a Hyprland-based window server, and WolKernel, a Linux kernel tuned for foreground responsiveness and Steam/Proton games. Updates land in a new ZFS boot environment, so the old system is one reboot away.
+WolOS is an open source desktop operating system for ordinary PCs. It is built on Arch Linux packages, with a Rust system API, a GTK 4 shell (menu bar, Dock, Search, Control Center, Settings, Store, Setup Assistant), a Hyprland-based window server, and WolKernel, a Linux kernel tuned for foreground responsiveness and Steam/Proton games. Updates land in a new ZFS boot environment, so the old system is one reboot away.
 
 > Active development. The image installs offline and boots; the full desktop is still being proven on real hardware. Expect rough edges.
 
-<p align="center"><img src="assets/setup.png" width="49%" alt="Setup Assistant"> <img src="assets/spotlight.png" width="49%" alt="Spotlight"></p>
+<p align="center"><img src="assets/setup.png" width="49%" alt="Setup Assistant"> <img src="assets/spotlight.png" width="49%" alt="Search"></p>
 
 ## What is in this repo
 
