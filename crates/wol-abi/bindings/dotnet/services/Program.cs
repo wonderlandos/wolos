@@ -107,6 +107,9 @@ unsafe class Services
         wol_search_provider_release(provider);
         GC.KeepAlive(onQuery);
         GC.KeepAlive(onOpen);
+        Ok(wol_account_copy_info(ctx, &info, &err));
+        Console.WriteLine($"account: {Text(wol_info_get_text(Field(info, "name")))}");
+        wol_info_release(info);
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);

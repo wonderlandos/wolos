@@ -154,3 +154,8 @@ WOL_1.9 {
     wol_search_query;
     wol_search_reply_add;
 } WOL_1.8;
+
+WOL_1.10 {
+  global:
+    wol_account_copy_info;
+} WOL_1.9;

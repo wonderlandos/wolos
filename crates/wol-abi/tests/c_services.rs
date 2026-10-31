@@ -241,3 +241,12 @@ fn search() {
         ]
     );
 }
+
+#[test]
+fn account() {
+    let (out, calls) = run("account", |_, _| {
+        Answer::with(json!({"name": "alice", "full_name": "Alice Liddell"}))
+    });
+    assert_eq!(out, ["Alice Liddell (alice)", "null out: 1"]);
+    assert_eq!(calls, [Call::AccountInfo {}]);
+}
