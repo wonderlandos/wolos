@@ -149,22 +149,18 @@ class Relicense(unittest.TestCase):
         R.run(self.root, self.pol, apply=True)
         self.assertEqual(self.read("archicture/adr/0020-libwol-stable-abi.md"), before)
 
-    def test_brand_license_everywhere_and_no_company(self):
+    def test_brand_files_stay_as_they_are(self):
         R.run(self.root, self.pol, apply=True)
-        self.assertNotIn("her company", self.read("design/LICENSE"))
-        self.assertEqual(self.read("LICENSES/Wonderland-Brand-1.0.md"), self.read("design/LICENSE"))
-        self.assertEqual(self.read("assets/LICENSE"), "brand pointer\n")
-        self.assertEqual(self.read("LICENSES/BSD-2-Clause.txt"), "BSD text\n")
-        self.assertIn(BRAND, self.read("image/repo/wolos-system/PKGBUILD"))
-        self.assertNotIn("CC-BY-NC-ND", self.read("image/repo/wolos-system/PKGBUILD"))
-        self.assertNotIn("CC BY-NC-ND", self.read("README.md"))
+        self.assertIn("her company", self.read("design/LICENSE"))
+        self.assertEqual(self.read("assets/LICENSE"), "CC\n")
 
     def test_staged_copyright_matches_the_decisions(self):
         text = (Path(R.HERE) / "staged" / "COPYRIGHT").read_text()
         self.assertNotIn("exception", text)
-        self.assertNotIn("CC BY-NC-ND", text)
+        self.assertIn("CC BY-NC-ND", text)
         self.assertIn("`crates/core/`", text)
-        self.assertNotIn("written permission to use them", text)
+        self.assertIn("`kernel/scx_wolos/`", text)
+        self.assertIn("GPL-2.0-only", text)
 
     def test_third_party_patches_art_and_data_are_untouched(self):
         before = snapshot(self.root)
@@ -189,12 +185,12 @@ class Relicense(unittest.TestCase):
         R.run(self.root, self.pol, apply=True)
         self.assertIn(f'license = "{G}"', self.read("Cargo.toml"))
         self.assertIn(f'license = "{G}"', self.read("crates/shell/Cargo.toml"))
-        self.assertIn(f"license=({G} {BRAND})", self.read("image/repo/wolos-system/PKGBUILD"))
+        self.assertNotIn(BRAND, self.read("image/repo/wolos-system/PKGBUILD"))
         self.assertIn(f"license: {G}", self.read("wopkg/shard.yml"))
 
     def test_docs_and_staged_copies(self):
         R.run(self.root, self.pol, apply=True)
-        self.assertEqual(self.read("README.md"), f"**License:** {G}; libwol (`crates/wol-abi`, `crates/shared`, `crates/core`) is {BSD}; brand art is under the Wonderland Brand License 1.0 (`design/LICENSE`). See COPYRIGHT.\n")
+        self.assertEqual(self.read("README.md"), f"**License:** {G}; libwol (`crates/wol-abi`, `crates/shared`, `crates/core`) is {BSD}; kernel patches are GPL-2.0-only; brand art is CC BY-NC-ND 4.0 (share it to talk about WolOS; ask for anything else). See COPYRIGHT.\n")
         self.assertEqual(self.read("LICENSE"), "GPL text\n")
         self.assertEqual(self.read("COPYRIGHT"), "new table\n")
         self.assertEqual(self.read("crates/shell/LICENSE"), "shell GPL text\n")

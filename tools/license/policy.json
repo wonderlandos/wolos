@@ -49,6 +49,14 @@
     {
       "glob": "crates/core/**",
       "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "kernel/scx_wolos/**",
+      "spdx": "GPL-2.0-only"
+    },
+    {
+      "glob": "kernel/freebsd/**",
+      "spdx": "GPL-2.0-only"
     }
   ],
   "code": {
@@ -107,7 +115,7 @@
     {
       "file": "README.md",
       "old": "**License:** BSD-2-Clause; the shell is GPL-3.0-or-later; brand art is CC BY-NC-ND 4.0 (share it to talk about WolOS; ask for anything else).",
-      "new": "**License:** GPL-2.0-or-later; libwol (`crates/wol-abi`, `crates/shared`, `crates/core`) is BSD-2-Clause; brand art is under the Wonderland Brand License 1.0 (`design/LICENSE`)."
+      "new": "**License:** GPL-2.0-or-later; libwol (`crates/wol-abi`, `crates/shared`, `crates/core`) is BSD-2-Clause; kernel patches are GPL-2.0-only; brand art is CC BY-NC-ND 4.0 (share it to talk about WolOS; ask for anything else)."
     },
     {
       "file": "archicture/adr/0021-wopkg.md",
@@ -143,16 +151,6 @@
       "file": "crates/wol-abi/Cargo.toml",
       "old": "license.workspace = true",
       "new": "license = \"BSD-2-Clause\""
-    },
-    {
-      "file": "design/LICENSE",
-      "old": "Licensor: Julia Klee and her company (with affiliates and successors)",
-      "new": "Licensor: Julia Klee (with successors)"
-    },
-    {
-      "file": "image/repo/wolos-system/PKGBUILD",
-      "old": "CC-BY-NC-ND-4.0",
-      "new": "LicenseRef-Wonderland-Brand-1.0"
     }
   ],
   "copy": [
@@ -171,14 +169,6 @@
     {
       "from": "tools/license/staged/LICENSE.bsd",
       "to": "LICENSES/BSD-2-Clause.txt"
-    },
-    {
-      "from": "tools/license/staged/LICENSE.assets",
-      "to": "assets/LICENSE"
-    },
-    {
-      "from": "design/LICENSE",
-      "to": "LICENSES/Wonderland-Brand-1.0.md"
     }
   ]
 }
