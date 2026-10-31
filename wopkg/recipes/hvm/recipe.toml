@@ -1,0 +1,22 @@
+# HVM2: a massively parallel interaction-combinator runtime (HigherOrderCO).
+name = "hvm"
+version = "2.0.22"
+summary = "Massively parallel runtime for interaction combinators (HVM2)"
+license = "Apache-2.0"
+homepage = "https://github.com/HigherOrderCO/HVM"
+needs = ["cargo", "cc"]
+
+[[source]]
+url = "https://static.crates.io/crates/hvm/hvm-2.0.22.crate"
+sha256 = "3fafa02949c005e70869074ac9db489ad92eaf92c78b4dcf6c0b45d98982c08d"
+
+[fetch]
+run = ["cargo fetch --locked"]
+
+[build]
+# The C runtime is compiled by build.rs; a failed C build only warns upstream, so check the log.
+# No nvcc inside the sandbox: a CPU build, the same on every machine.
+run = ["cargo build --release --locked --offline 2>&1 | tee cargo.log", "! grep -q 'Failed to compile' cargo.log"]
+
+[install]
+bin = ["target/release/hvm"]

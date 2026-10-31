@@ -7,5 +7,6 @@ flatpak-wolos  image/repo/flatpak-wolos    -                                    
 helium-browser image/repo/helium-browser -                                      image/repo/helium-browser/
 wolos-mirrorlist image/repo/wolos-mirrorlist -                                     image/repo/wolos-mirrorlist/ image/arch/snapshot
 wolos-system   image/repo/wolos-system     hyprland-wolos                          image/repo/wolos-system/ crates/ plugins/ desktop/ design/ image/files/ image/hw/ image/build-rust.sh image/hyprland/build-plugins.sh image/arch/wolos-update-slot Cargo.toml Cargo.lock CHANGELOG.md LICENSE
+wopkg          image/repo/wopkg            -                                       image/repo/wopkg/ wopkg/ crates/wopkg/ crates/shared/ crates/core/ Cargo.toml Cargo.lock
 wolos-keyring  image/repo/wolos-keyring    -                                       image/repo/wolos-keyring/ image/repo/wolos-repo.pub.asc image/repo/cachy-trusted
 wolos-base     image/repo/wolos-base       linux-wolos,linux-wolos-api-headers,hyprland-wolos,wolos-system  image/repo/wolos-base/ image/repo/base-manifest.sh image/arch/snapshot image/arch/pacman.conf

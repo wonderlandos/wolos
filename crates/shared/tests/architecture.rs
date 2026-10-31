@@ -1,10 +1,11 @@
-//! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi}.
+//! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi, wopkg}.
+//! libwopkg (ADR 0021): `wopkg` is the package core's stable C ABI, an adaptor like `wol-abi`.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
 use std::collections::BTreeMap;
 use std::process::Command;
 
-const ADAPTORS: [&str; 5] = ["api", "realtime", "proxy", "controller", "wol-abi"];
-const REQUIRED: [&str; 8] = [
+const ADAPTORS: [&str; 6] = ["api", "realtime", "proxy", "controller", "wol-abi", "wopkg"];
+const REQUIRED: [&str; 9] = [
     "shared",
     "core",
     "api",
@@ -13,6 +14,7 @@ const REQUIRED: [&str; 8] = [
     "controller",
     "wol-abi",
     "wol-lua",
+    "wopkg",
 ];
 
 /// Rule violations for a package -> workspace-dependencies graph.
@@ -30,6 +32,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 "core" => dep == "shared",
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
                 "wol-lua" => ["shared", "core", "wol-abi"].contains(&dep.as_str()),
+                // The App Store links the package core directly (ADR 0021); the desktop runs Lua
+                // widgets (ADR 0020).
+                "shell" => ["shared", "core", "wopkg", "wol-lua"].contains(&dep.as_str()),
                 // other members (e.g. shell) may use core + shared only
                 _ => dep == "shared" || dep == "core",
             };
@@ -97,9 +102,13 @@ fn violations_table() {
         (&[("shell", &["api"])], &["shell -> api"]),
         (&[("wol-abi", &["core", "shared"])], &[]),
         (&[("wol-abi", &["api"])], &["wol-abi -> api"]),
+        (&[("wopkg", &["core", "shared"])], &[]),
+        (&[("wopkg", &["api"])], &["wopkg -> api"]),
         (&[("wol-lua", &["wol-abi", "core", "shared"])], &[]),
         (&[("wol-lua", &["api"])], &["wol-lua -> api"]),
         (&[("shell", &["wol-abi"])], &["shell -> wol-abi"]),
+        (&[("shell", &["wopkg", "core"])], &[]),
+        (&[("shell", &["wol-lua"])], &[]),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

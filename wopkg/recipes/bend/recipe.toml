@@ -1,0 +1,21 @@
+# Bend: a high-level, massively parallel programming language on HVM2 (bend-lang.org).
+name = "bend"
+version = "0.2.38"
+summary = "Massively parallel high-level programming language (runs on HVM2)"
+license = "Apache-2.0"
+homepage = "https://github.com/HigherOrderCO/Bend"
+# `bend run-c` compiles generated C at run time, so a C compiler is needed then too.
+needs = ["cargo", "cc"]
+
+[[source]]
+url = "https://static.crates.io/crates/bend-lang/bend-lang-0.2.38.crate"
+sha256 = "6f1dae7b59ec1e63c21c9b632043b06342366660e7989cdb30a2186c2c385f1a"
+
+[fetch]
+run = ["cargo fetch --locked"]
+
+[build]
+run = ["cargo build --release --locked --offline"]
+
+[install]
+bin = ["target/release/bend"]

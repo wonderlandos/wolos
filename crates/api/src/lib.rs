@@ -5,6 +5,7 @@ pub mod control;
 pub mod jobfiles;
 pub mod os;
 pub mod portal;
+pub mod packages;
 pub mod qos;
 pub mod reaper;
 pub mod server;

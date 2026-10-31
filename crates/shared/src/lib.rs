@@ -8,6 +8,7 @@ pub mod jobs;
 pub mod login;
 pub mod package;
 pub mod par;
+pub mod packages;
 pub mod portal;
 pub mod qos;
 pub mod shell;

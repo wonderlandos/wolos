@@ -1,0 +1,10 @@
+name: wopkg
+version: 0.1.0
+description: WolOS package tool, one CLI for pacman, Flatpak, AppImage, AUR, .wol and recipes (ADR 0021)
+authors:
+  - Julia Klee
+license: BSD-2-Clause
+crystal: ">= 1.12.0"
+targets:
+  wopkg:
+    main: src/wopkg.cr
