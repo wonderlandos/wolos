@@ -9,14 +9,15 @@ WolOS is an open source desktop operating system for ordinary PCs. It is built o
 
 > Active development. The image installs offline and boots; the full desktop is still being proven on real hardware. Expect rough edges.
 
-<p align="center"><img src="assets/setup.png" width="49%" alt="Setup Assistant"> <img src="assets/spotlight.png" width="49%" alt="Search"></p>
+<p align="center"><img src="assets/setup.png" width="49%" alt="Setup Assistant"> <img src="assets/search.png" width="49%" alt="Search"></p>
 
 ## What is in this repo
 
 | Path | What |
 |---|---|
-| `crates/` | Rust workspace: system API and daemons (`wold`, `wol-admind`, `wol-login`, `wol`), the GTK 4 shell (`crates/shell`), shared libraries |
-| `kernel/` | WolKernel packaging for `linux-wolos`: config fragment, version, removed-ABI list, UAPI headers |
+| `crates/` | Rust workspace: system API and daemons (`wold`, `wol-admind`, `wol-login`, `wol`), the GTK 4 shell (`crates/shell`), libwol, the app API behind a stable C ABI (`crates/wol-abi`), shared libraries |
+| `wopkg/` | `wopkg`, the package tool for every source (ADR 0021), on `libwopkg` (`crates/wopkg`) |
+| `kernel/` | WolKernel for `linux-wolos`: the patch series, config fragment, version, removed-ABI list, UAPI headers |
 | `image/` | Live and installer ISO, the `[wolos]` package repo recipes, QEMU test scripts |
 | `desktop/`, `plugins/` | Desktop overlay and window server plugins |
 | `archicture/` | Architecture notes and decision records |
@@ -47,6 +48,6 @@ Issues and pull requests are welcome. Run `cargo test --workspace` before sendin
 
 ## License
 
-Under [`COPYRIGHT`](COPYRIGHT), as of today: BSD-2-Clause for everything not listed below (`LICENSE`); the shell (`crates/shell/`) is GPL-3.0-or-later; `design/` and `assets/` are CC BY-NC-ND 4.0; `third_party/blocking/` is Apache-2.0 OR MIT. The WolOS name and logo are trademarks of Julia Klee; forks should use their own name and art.
+Under [`COPYRIGHT`](COPYRIGHT): GPL-2.0-or-later for everything not listed below (`LICENSE`); libwol (`crates/wol-abi/`, `crates/shared/`, `crates/core/`) is BSD-2-Clause; the kernel patches (`kernel/linux/patches/`) are GPL-2.0-only; `design/` and `assets/` are CC BY-NC-ND 4.0; `third_party/blocking/` is Apache-2.0 OR MIT. Each source file names its license in an `SPDX-License-Identifier` line. The WolOS name and logo are trademarks of Julia Klee; forks should use their own name and art.
 
 Copyright (c) 2026 Julia Klee.
