@@ -77,6 +77,9 @@ def Laws.undeclared_persistence_found():
 def Laws.undeclared_persistence_clean():
   {==}
 
+def Laws.removing_a_startup_file_starts_nothing():
+  {==}
+
 def Laws.a_mode_change_starts_nothing():
   {==}
 
