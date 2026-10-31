@@ -6,6 +6,7 @@ pub mod events;
 pub mod hardware;
 pub mod jobs;
 pub mod login;
+pub mod memsaver;
 pub mod package;
 pub mod par;
 pub mod packages;

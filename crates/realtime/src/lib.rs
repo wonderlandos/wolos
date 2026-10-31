@@ -13,6 +13,7 @@ pub mod gpu_tune;
 pub mod hypr;
 pub mod identity;
 pub mod idle;
+pub mod memsaver;
 pub mod placement;
 pub mod policy;
 pub mod power;
