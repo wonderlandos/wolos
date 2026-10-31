@@ -1,8 +1,48 @@
 //! Single owner of `waitpid`: every exit (job roots and reparented orphans) is reaped here and
 //! delivered to whoever registered the pid. Exits that arrive before registration are kept.
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Held across spawn and register, and around each `waitpid`, so that a child cannot be reaped
+/// before anyone has said it is theirs.
+static SPAWNING: Mutex<()> = Mutex::new(());
+
+/// The one reaper of this process.
+pub fn global() -> &'static Arc<Reaper> {
+    static R: OnceLock<Arc<Reaper>> = OnceLock::new();
+    R.get_or_init(Arc::default)
+}
+
+/// Run a command to its end and give its exit code, whichever of `wait` and the reaper gets to
+/// it first. `Command::status` alone loses that race and reports a failed child that succeeded.
+pub fn run(cmd: &mut std::process::Command) -> i32 {
+    let held = SPAWNING.lock().unwrap_or_else(|p| p.into_inner());
+    let Ok(mut child) = cmd.spawn() else {
+        return 127;
+    };
+    let pid = child.id() as i32;
+    let rx = global().register(pid);
+    drop(held);
+    loop {
+        if let Ok(code) = rx.try_recv() {
+            return code;
+        }
+        match child.try_wait() {
+            Ok(Some(s)) => {
+                global().forget(pid);
+                return s.code().unwrap_or(127);
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
+            // The reaper has it, so its answer is on the way.
+            Err(_) => {
+                return rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap_or(127);
+            }
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Reaper {
@@ -31,6 +71,12 @@ impl Reaper {
         rx
     }
 
+    /// Stop waiting for `pid`.
+    pub fn forget(&self, pid: i32) {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        g.waiting.remove(&pid);
+    }
+
     /// `known` = the pid belongs to a job (orphans are dropped instead of kept).
     pub fn exited(&self, pid: i32, code: i32, known: bool) {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
@@ -50,8 +96,10 @@ impl Reaper {
         let mut n = 0;
         loop {
             let mut status = 0;
+            let held = SPAWNING.lock().unwrap_or_else(|p| p.into_inner());
             // SAFETY: waitpid with a valid out pointer.
             let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+            drop(held);
             if pid <= 0 {
                 return n;
             }

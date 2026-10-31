@@ -340,6 +340,7 @@ module Wopkg
         return update_one(one)
       end
       summary = [] of String
+      failed = nil.as(Failure?)
       pins = Pins.read("#{state}/pins")
       (core.index_update(index_request) rescue nil) if @a.only.nil? || want?("pacman")
       if want?("system")
@@ -371,7 +372,11 @@ module Wopkg
             core.system_call((pins.empty? ? {"call" => "package.change", "verb" => "update", "names" => [] of String} : {"call" => "package.update-holding", "hold" => pins}).to_json)
             summary << "system packages"
           rescue e : Failure
-            note e.message.to_s unless e.code == 3 && @a.only.nil?
+            if e.code == 3 && @a.only.nil?
+              # No system service here: other sources can still update.
+            else
+              failed = e
+            end
           end
         end
       end
@@ -409,11 +414,12 @@ module Wopkg
       end
       if @a.json
         emit({"changes" => summary, "checked_only" => @a.check})
-      elsif summary.empty?
-        say "Everything is up to date."
-      else
+      elsif !summary.empty?
         say "#{@a.check ? "Updates available" : "Updated"}: #{summary.join(", ")}."
+      elsif failed.nil?
+        say "Everything is up to date."
       end
+      raise failed if failed
     end
 
     def history

@@ -27,13 +27,11 @@ pub struct Host;
 
 impl System for Host {
     fn run(&self, argv: &[String]) -> i32 {
-        std::process::Command::new(&argv[0])
-            .args(&argv[1..])
-            .stdin(std::process::Stdio::null())
-            .status()
-            .ok()
-            .and_then(|s| s.code())
-            .unwrap_or(127)
+        crate::reaper::run(
+            std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .stdin(std::process::Stdio::null()),
+        )
     }
 
     fn stage(&self, path: &str, uid: u32) -> Option<String> {

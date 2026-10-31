@@ -284,6 +284,10 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
         fstab0.contains("overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper"),
         "{fstab0}"
     );
+    assert!(
+        fstab0.contains(" /run/wolos/top btrfs subvolid=5,noauto,x-systemd.automount"),
+        "{fstab0}"
+    );
     // Live-only files are gone; the package's shell.json comes back.
     for gone in [
         "etc/sysusers.d/wolos-live.conf",

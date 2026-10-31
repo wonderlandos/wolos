@@ -137,6 +137,8 @@ echo "$rootwords quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.sho
   if [ "$slots" = two ]; then
     [ -n "$home_dev" ] || echo "UUID=$ruuid /home btrfs subvol=/@home,$O 0 0"
     [ -n "$var_dev" ] || echo "UUID=$ruuid /var btrfs subvol=/@var,$O 0 0"
+    # The btrfs top level, for updates that build the next slot; mounted only while one needs it.
+    echo "UUID=$ruuid /run/wolos/top btrfs subvolid=5,noauto,x-systemd.automount,x-systemd.idle-timeout=60,$O 0 0"
   fi
   echo "UUID=$euuid /efi vfat umask=0077,shortname=winnt 0 2"
   [ -z "$extra_fstab" ] || echo "$extra_fstab"

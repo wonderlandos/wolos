@@ -72,7 +72,7 @@ impl Context {
         });
         Ok(Context {
             apps: c.apps_dir.unwrap_or(home.join("Applications")),
-            pacman_local: c.pacman_local.unwrap_or("/var/lib/pacman/local".into()),
+            pacman_local: c.pacman_local.unwrap_or_else(default_pacman_local),
             flatpak_dirs: c.flatpak_dirs.unwrap_or(vec![
                 home.join(".local/share/flatpak"),
                 "/var/lib/flatpak".into(),
@@ -200,5 +200,38 @@ mod tests {
         .unwrap();
         assert_eq!(c.apps, Path::new("/h/Applications"));
         assert!(c.index_dir().ends_with("wopkg/index"));
+    }
+}
+
+/// The installed-package database: pacman.conf's `DBPath` (an installed slot keeps it in
+/// `/usr/lib/pacman`, ADR 0016), else pacman's default.
+fn default_pacman_local() -> PathBuf {
+    let conf = std::fs::read_to_string("/etc/pacman.conf").unwrap_or_default();
+    pacman_local_from(&conf)
+}
+
+fn pacman_local_from(conf: &str) -> PathBuf {
+    conf.lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim() == "DBPath").then(|| PathBuf::from(v.trim()).join("local"))
+        })
+        .unwrap_or("/var/lib/pacman/local".into())
+}
+
+#[cfg(test)]
+mod pacman_db_tests {
+    use super::pacman_local_from;
+    use std::path::Path;
+
+    #[test]
+    fn names_the_database_pacman_conf_names() {
+        let c = "[options]\n#DBPath = /nope/\nDBPath = /usr/lib/pacman/\n";
+        assert_eq!(pacman_local_from(c), Path::new("/usr/lib/pacman/local"));
+        assert_eq!(
+            pacman_local_from("[options]\n"),
+            Path::new("/var/lib/pacman/local")
+        );
     }
 }

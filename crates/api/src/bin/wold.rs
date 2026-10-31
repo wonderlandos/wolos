@@ -24,7 +24,7 @@ fn main() {
             qos: Box::new(qos::Sched),
             pid_dir,
         }),
-        reaper: Arc::default(),
+        reaper: reaper::global().clone(),
         stopping: Arc::new(AtomicBool::new(false)),
         epoch: std::time::Instant::now(),
     });
