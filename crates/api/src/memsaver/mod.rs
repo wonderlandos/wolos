@@ -6,6 +6,7 @@ pub mod cgroup;
 pub mod engine;
 pub mod pageout;
 pub mod procs;
+pub mod storm;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,10 @@ pub trait Sys {
     fn current(&self, cg: &str) -> u64;
     fn cpu_usec(&self, cg: &str) -> u64;
     fn freeze(&self, cg: &str, frozen: bool) -> bool;
+    /// pids.events `max`.
+    fn refused(&self, cg: &str) -> u64;
+    /// cgroup.kill.
+    fn kill(&self, cg: &str) -> bool;
     /// Ask systemd for a scope (busctl argv from [`procs::adopt_args`]).
     fn adopt(&self, args: &[String]) -> bool;
     /// Reclaim `bytes` from the scope and page out `pids`, in the background: returns at once.
@@ -89,6 +94,12 @@ impl Sys for Real {
     }
     fn freeze(&self, cg: &str, frozen: bool) -> bool {
         cgroup::freeze(&self.dir(cg), frozen)
+    }
+    fn refused(&self, cg: &str) -> u64 {
+        cgroup::refused(&self.dir(cg))
+    }
+    fn kill(&self, cg: &str) -> bool {
+        cgroup::kill(&self.dir(cg))
     }
     fn adopt(&self, args: &[String]) -> bool {
         std::process::Command::new("busctl")
