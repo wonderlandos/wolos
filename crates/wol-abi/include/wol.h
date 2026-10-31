@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 4
+#define WOL_VERSION_MINOR 5
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -317,6 +317,28 @@ wol_status wol_prefs_remove(wol_context *context, const char *key, size_t key_le
                             wol_error **error);
 /* A list of strings. */
 wol_status wol_prefs_copy_keys(wol_context *context, wol_info **out, wol_error **error);
+
+/* ---- 1.5: files and panels (WOL_1.5) ---- */
+
+/*
+ * The person picks; the app gets that one file, already open, and no path. Permission:
+ * file-panels. These calls wait for the person, up to ten minutes. *out is NULL, and the call
+ * succeeds, when the person cancels.
+ */
+typedef struct wol_file wol_file;
+
+/* An open file, for reading. `title` may be empty. */
+wol_status wol_panel_open(wol_context *context, const char *title, size_t title_len,
+                          wol_file **out, wol_error **error);
+/* A file to write, emptied. `name` is the suggestion: a file name, no '/'. */
+wol_status wol_panel_save(wol_context *context, const char *title, size_t title_len,
+                          const char *name, size_t name_len, wol_file **out, wol_error **error);
+/* The descriptor, owned by `file`: dup it to keep it past wol_file_release. */
+int wol_file_get_fd(const wol_file *file);
+/* The file's name, without its folder. */
+const wol_string *wol_file_get_name(const wol_file *file);
+wol_file *wol_file_retain(wol_file *file);
+void wol_file_release(wol_file *file);
 
 #ifdef __cplusplus
 }

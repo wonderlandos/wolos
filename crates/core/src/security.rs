@@ -214,6 +214,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "WolOS keeps each app's preferences apart and checks your choice before reading or changing them",
     ),
+    (
+        "file-panels",
+        Enforcement::System,
+        "apps ask WolOS to show a panel, and only the file you pick reaches the app",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.
