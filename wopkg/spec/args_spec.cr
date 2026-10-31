@@ -38,4 +38,8 @@ describe Wopkg::Args do
     expect_raises(Wopkg::UsageError, /--to goes with/) { Wopkg::Args.parse(%w(search x --to 1.1)) }
     expect_raises(Wopkg::UsageError, /needs a value/) { Wopkg::Args.parse(%w(update --to)) }
   end
+
+  it "knows audit" do
+    Wopkg::Args.parse(["audit", "foo"]).verb.should eq("audit")
+  end
 end

@@ -13,6 +13,8 @@ One tool for every source. `wopkg` (Crystal CLI, `wopkg/`) drives `libwopkg` (`c
 | `recipe` | `wopkg/recipes/*/recipe.toml` | recipe name | `~/.local` | rebuild when the version changes |
 | `aur` | AUR metadata dump | package name | sandboxed build, then `package.install-file` | rebuild; always `unreviewed` |
 
+`wopkg audit <pkg>` checks an AUR package out and reads it with `wopkg-aurlaws` without building it (see [aurlaws](aurlaws.md)). The same analyser runs after the sandboxed build, on the files, the built package and the trace.
+
 Search ranks exact name, prefix, word, summary; ties by the source order above. One result per app (`key`), each listing every source.
 
 ## JSON documents
