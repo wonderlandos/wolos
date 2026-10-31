@@ -331,6 +331,30 @@ fn packages_workflow_signs_prebuilt_packages_without_a_build() {
         got.contains("only=-\n") && got.contains("build=\n"),
         "{got}"
     );
+    let o = Command::new("bash")
+        .arg("-euo")
+        .arg("pipefail")
+        .arg("-c")
+        .arg(&body)
+        .current_dir(&src)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                t.join("bin").display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .env("ONLY_INPUT", "cdn")
+        .env("GITHUB_OUTPUT", t.join("cdn.txt"))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let got = fs::read_to_string(t.join("cdn.txt")).unwrap();
+    assert!(
+        got.contains("cdn=1\n") && got.contains("only=\n") && got.contains("build=\n"),
+        "{got}"
+    );
     for step in [
         "      - name: AWS credentials",
         "      - name: Build on the build cluster",
@@ -374,4 +398,34 @@ fn iso_workflow_signs_a_prebuilt_image_without_building() {
     assert!(files.contains("sha256sum -c"));
     assert!(files.contains("image/sign-release.sh"));
     assert!(step("Publish the release").contains(r#"[ "$PREBUILT" = 1 ] || gh release upload"#));
+}
+
+/// Without WOLOS_RELEASES_TOKEN, github.token cannot write to the releases repo (HTTP 403): both
+/// workflows keep the signed files as an artifact instead of failing, and the CDN gets the repo
+/// only once the release holds it (`only=cdn` pushes the release as it is).
+#[test]
+fn workflows_keep_signed_files_when_they_cannot_write_the_releases_repo() {
+    for f in [
+        ".github/workflows/packages.yml",
+        ".github/workflows/iso.yml",
+    ] {
+        let s = read(f);
+        assert!(
+            s.contains(r#"[ -z "$RELEASES_TOKEN" ] && [ "$GH_REPO" != "$GITHUB_REPOSITORY" ]"#),
+            "{f}"
+        );
+        assert!(s.contains("steps.publish.outputs.published == '0'"), "{f}");
+        assert!(s.contains("actions/upload-artifact"), "{f}");
+    }
+    let p = read(".github/workflows/packages.yml");
+    let cdn = p
+        .split("      - name: Push the repo to the CDN")
+        .nth(1)
+        .unwrap();
+    let cond = cdn.lines().nth(1).unwrap();
+    assert!(
+        cond.contains("steps.publish.outputs.published == '1'")
+            && cond.contains("steps.plan.outputs.cdn == '1'"),
+        "{cond}"
+    );
 }

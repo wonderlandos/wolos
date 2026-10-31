@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: Packages to rebuild (space separated; empty = changed since the last publish; - = none, sign and index the release's packages)
+        description: Packages to rebuild (space separated; empty = changed since the last publish; - = none, sign and index the release's packages; cdn = only push the release to the CDN)
         required: false
 
 concurrency:
@@ -66,7 +66,9 @@ jobs:
           if gh release download "wolos-$snap" --dir out/repo/x86_64 2>/dev/null; then
             base=$(cat out/repo/x86_64/revision-commit 2>/dev/null || true)
           fi
-          if [ "${ONLY_INPUT:-}" = - ]; then
+          if [ "${ONLY_INPUT:-}" = cdn ]; then
+            only=; echo "cdn=1" >> "$GITHUB_OUTPUT"   # the release as it is, to the CDN
+          elif [ "${ONLY_INPUT:-}" = - ]; then
             only=-   # built on a build host and put on the release unsigned: sign, index, publish
           elif [ -n "${ONLY_INPUT:-}" ]; then
             only=$ONLY_INPUT
@@ -171,7 +173,10 @@ jobs:
           sudo chown -R "$(id -u)" out
 
       - name: Publish the repo
+        id: publish
         if: steps.plan.outputs.only != ''
+        env:
+          RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
         run: |
           tag=${{ steps.plan.outputs.tag }}
           cd out/repo/x86_64
@@ -181,6 +186,12 @@ jobs:
           for l in wolos.db wolos.files wolos.db.sig wolos.files.sig; do
             [ -L "$l" ] && cp --remove-destination "$(readlink -f "$l")" "$l"
           done
+          if [ -z "$RELEASES_TOKEN" ] && [ "$GH_REPO" != "$GITHUB_REPOSITORY" ]; then
+            # github.token cannot write to another repository (HTTP 403): without
+            # WOLOS_RELEASES_TOKEN the signed files stay as this run's artifact, to upload by hand.
+            echo "::warning::no WOLOS_RELEASES_TOKEN: $GH_REPO not written; files kept as an artifact"
+            echo "published=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           gh release view "$tag" >/dev/null 2>&1 ||
             gh release create "$tag" --title "[wolos] repo ($tag)" --notes "pacman repository" --latest=false
           gh release upload "$tag" --clobber ./*
@@ -188,11 +199,21 @@ jobs:
           gh release view "$tag" --json assets -q '.assets[].name' | while read -r a; do
             [ -e "$a" ] || gh release delete-asset "$tag" "$a" --yes
           done
+          echo "published=1" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the signed repo (no releases token)
+        if: steps.publish.outputs.published == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolos-repo
+          path: out/repo/x86_64/
+          retention-days: 7
 
       # The CDN mirror (wonderlandos/wolos-cdn) keeps the same paths as the release: <tag>/<file>.
       # Packages first, databases last, so a client never sees a database naming a missing file.
+      # Only once the release holds every file (only=cdn: the release as downloaded).
       - name: Push the repo to the CDN
-        if: steps.plan.outputs.only != ''
+        if: (steps.plan.outputs.only != '' && steps.publish.outputs.published == '1') || steps.plan.outputs.cdn == '1'
         env:
           CDN_TOKEN: ${{ secrets.WOLOS_CDN_TOKEN }}
           CDN_URL: ${{ vars.WOLOS_CDN_URL }}

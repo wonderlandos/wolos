@@ -201,17 +201,37 @@ jobs:
       # In $GH_REPO, where update-check reads releases/latest/download/release.json and the CDN
       # pulls <tag>/<file> from (the action published to this repo instead, which neither reads).
       - name: Publish the release
+        id: publish
         if: startsWith(github.ref, 'refs/tags/v')
         env:
+          RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
           TAG: ${{ github.ref_name }}
           SNAP: ${{ steps.repo.outputs.snap }}
           PREBUILT: ${{ steps.pre.outputs.prebuilt }}
         run: |
+          if [ -z "$RELEASES_TOKEN" ] && [ "$GH_REPO" != "$GITHUB_REPOSITORY" ]; then
+            # github.token cannot write to another repository (HTTP 403): without
+            # WOLOS_RELEASES_TOKEN the signed files stay as this run's artifact, to upload by hand.
+            echo "::warning::no WOLOS_RELEASES_TOKEN: $GH_REPO not written; files kept as an artifact"
+            echo "published=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
           gh release view "$TAG" >/dev/null 2>&1 ||
             gh release create "$TAG" --title "WolOS ${TAG#v}" --latest               --notes "WolOS ${TAG#v}: the ISO, its .sha256 and release.json. Packages and the kernel source: release wolos-$SNAP."
           [ "$PREBUILT" = 1 ] || gh release upload "$TAG" --clobber dist/*.iso dist/*.sha256 dist/release.json
           [ ! -e dist/release.json.sig ] || gh release upload "$TAG" --clobber dist/release.json.sig
           gh release edit "$TAG" --latest
+          echo "published=1" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the signed files (no releases token)
+        if: steps.publish.outputs.published == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolos-release
+          path: |
+            dist/release.json
+            dist/release.json.sig
+            dist/*.sha256
+          retention-days: 7
 
       - name: Keep the image (manual run)
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
