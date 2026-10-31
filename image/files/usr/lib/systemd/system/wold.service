@@ -9,7 +9,7 @@ Restart=always
 RestartSec=1
 # SIGTERM to wold first: it stops every job tree (children first), then exits.
 KillMode=mixed
-ExecStopPost=/usr/bin/rm -f /run/wold.sock /run/wol-qos.sock
+ExecStopPost=/usr/bin/rm -f /run/wold.sock /run/wol-qos.sock /run/wol-memsaver.sock /run/wol-memsaver.json
 
 [Install]
 WantedBy=multi-user.target
