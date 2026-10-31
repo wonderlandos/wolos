@@ -1,6 +1,7 @@
 //! The Memory Saver loop: adopt app processes into scopes, run the policy per app and apply its
 //! actions. One `tick` every couple of seconds and on every focus change; everything it touches
 //! goes through [`Sys`].
+use super::storm::Storm;
 use super::{Sys, procs};
 use shared::memsaver::{AppState, AppStatus, Snapshot, Status};
 use std::collections::{BTreeMap, HashMap};
@@ -21,6 +22,7 @@ struct App {
     before: u64,
     cpu: Option<(u64, u64)>,
     last_busy: u64,
+    storm: Storm,
 }
 
 struct Session {
@@ -186,6 +188,7 @@ impl<S: Sys> Engine<S> {
                     before: 0,
                     cpu: None,
                     last_busy: 0,
+                    storm: Storm::default(),
                 }
             });
             if windowed && !app.windowed {
@@ -199,6 +202,12 @@ impl<S: Sys> Engine<S> {
         let Some(mut app) = self.apps.remove(scope) else {
             return;
         };
+        if app.storm.step(self.sys.refused(scope)) {
+            eprintln!("wold: fork storm in {}, killing its scope", app.id);
+            self.sys.kill(scope);
+            self.apps.insert(scope.to_owned(), app);
+            return;
+        }
         if app.windowed {
             let pids = self.sys.procs(scope);
             let usec = self.sys.cpu_usec(scope);

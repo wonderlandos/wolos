@@ -20,6 +20,8 @@ struct C {
     current: u64,
     cpu: u64,
     frozen: bool,
+    refused: u64,
+    killed: bool,
 }
 
 #[derive(Default)]
@@ -114,6 +116,13 @@ impl Sys for Model {
         self.set(cg, |c| c.frozen = frozen);
         true
     }
+    fn refused(&self, cg: &str) -> u64 {
+        self.cg(cg).refused
+    }
+    fn kill(&self, cg: &str) -> bool {
+        self.set(cg, |c| c.killed = true);
+        true
+    }
     fn adopt(&self, args: &[String]) -> bool {
         let name = args[7].clone();
         let n: usize = args[12].parse().unwrap();
@@ -194,7 +203,7 @@ fn a_window_moves_its_whole_app_into_its_own_scope() {
     assert_eq!(m.adopted.len(), 1, "asked systemd once");
     let args = m.adopted[0].join(" ");
     assert!(
-        args.contains("app-wol-code-20.scope fail 6 PIDs au 5 20 21 24 22 23"),
+        args.contains("app-wol-code-20.scope fail 9 PIDs au 5 20 21 24 22 23"),
         "{args}"
     );
     assert!(args.contains("BindsTo as 1 session-2.scope"), "{args}");
@@ -383,4 +392,28 @@ fn app_nap_freezes_hidden_idle_apps_gives_back_again_and_thaws_on_focus() {
     e.snapshot(s);
     e.tick(11 * 60_000 + 10);
     assert!(!e.sys.cg(SCOPE).frozen);
+}
+
+#[test]
+fn a_fork_storm_kills_its_own_scope_and_nothing_else() {
+    let mut e = adopted();
+    let refused = |e: &Engine<Model>, n| e.sys.set(SCOPE, |c| c.refused = n);
+    e.tick(2000);
+    refused(&e, 50_000);
+    e.tick(4000);
+    assert!(!e.sys.cg(SCOPE).killed, "one tick can be a burst");
+    refused(&e, 100_000);
+    e.tick(6000);
+    assert!(e.sys.cg(SCOPE).killed);
+    assert!(!e.sys.cg(SESSION).killed);
+}
+
+#[test]
+fn a_quiet_app_at_its_limit_is_left_alone() {
+    let mut e = adopted();
+    for i in 1..20 {
+        e.sys.set(SCOPE, |c| c.refused = i * 100);
+        e.tick(i * 2000);
+    }
+    assert!(!e.sys.cg(SCOPE).killed);
 }

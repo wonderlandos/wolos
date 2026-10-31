@@ -37,6 +37,22 @@ pub fn cpu_usec(dir: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// Forks the pids limit refused so far (`max` in pids.events).
+pub fn refused(dir: &Path) -> u64 {
+    std::fs::read_to_string(dir.join("pids.events"))
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("max ")?.trim().parse().ok())
+        })
+        .unwrap_or(0)
+}
+
+/// Kill everything in the cgroup, descendants included, in one step.
+pub fn kill(dir: &Path) -> bool {
+    write(dir, "cgroup.kill", "1").is_ok()
+}
+
 pub fn procs(dir: &Path) -> Vec<i32> {
     std::fs::read_to_string(dir.join("cgroup.procs"))
         .map(|s| s.lines().filter_map(|l| l.trim().parse().ok()).collect())

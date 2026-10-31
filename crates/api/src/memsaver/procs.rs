@@ -121,8 +121,14 @@ pub fn scope_name(app: &str, pid: i32) -> String {
     format!("app-wol-{}-{pid}.scope", shared::memsaver::app_id(app))
 }
 
+/// Tasks one app may hold: far above a browser with many tabs or a `make -j` (ADR 0026).
+pub const APP_TASKS: u32 = 8192;
+/// One app's share of RAM (80%) and of swap (25%), as systemd's u32 scale.
+pub const APP_MEMORY_SCALE: u32 = 3435973836;
+pub const APP_SWAP_SCALE: u32 = 1073741823;
+
 /// `busctl` argv that makes the system manager adopt `pids` into a new scope in the user's slice,
-/// stopped with the login session (`BindsTo`).
+/// stopped with the login session (`BindsTo`), under the limits of one app.
 pub fn adopt_args(name: &str, uid: u32, session: &str, pids: &[i32], app: &str) -> Vec<String> {
     let mut a: Vec<String> = [
         "--system",
@@ -135,7 +141,7 @@ pub fn adopt_args(name: &str, uid: u32, session: &str, pids: &[i32], app: &str) 
     ]
     .map(String::from)
     .into();
-    a.extend([name.into(), "fail".into(), "6".into()]);
+    a.extend([name.into(), "fail".into(), "9".into()]);
     a.extend(["PIDs".into(), "au".into(), pids.len().to_string()]);
     a.extend(pids.iter().map(i32::to_string));
     a.extend(["Slice".into(), "s".into(), format!("user-{uid}.slice")]);
@@ -148,6 +154,17 @@ pub fn adopt_args(name: &str, uid: u32, session: &str, pids: &[i32], app: &str) 
         "CollectMode".into(),
         "s".into(),
         "inactive-or-failed".into(),
+    ]);
+    a.extend(["TasksMax".into(), "t".into(), APP_TASKS.to_string()]);
+    a.extend([
+        "MemoryMaxScale".into(),
+        "u".into(),
+        APP_MEMORY_SCALE.to_string(),
+    ]);
+    a.extend([
+        "MemorySwapMaxScale".into(),
+        "u".into(),
+        APP_SWAP_SCALE.to_string(),
     ]);
     a.extend(["BindsTo".into(), "as".into(), "1".into(), session.into()]);
     a.extend(["After".into(), "as".into(), "1".into(), session.into()]);
@@ -276,11 +293,18 @@ pub mod tests {
             "{s}"
         );
         assert!(
-            s.contains("StartTransientUnit ssa(sv)a(sa(sv)) app-wol-code_-_oss-20.scope fail 6 PIDs au 2 20 21 Slice s user-1000.slice Description"),
+            s.contains("StartTransientUnit ssa(sv)a(sa(sv)) app-wol-code_-_oss-20.scope fail 9 PIDs au 2 20 21 Slice s user-1000.slice Description"),
             "{s}"
         );
         assert!(
             s.contains("BindsTo as 1 session-2.scope After as 1 session-2.scope"),
+            "{s}"
+        );
+        // One app cannot take the desktop with it (ADR 0026).
+        assert!(
+            s.contains(
+                "TasksMax t 8192 MemoryMaxScale u 3435973836 MemorySwapMaxScale u 1073741823"
+            ),
             "{s}"
         );
         // The property count matches the properties given.
@@ -289,6 +313,9 @@ pub mod tests {
             "Slice",
             "Description",
             "CollectMode",
+            "TasksMax",
+            "MemoryMaxScale",
+            "MemorySwapMaxScale",
             "BindsTo",
             "After",
         ];
