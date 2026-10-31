@@ -33,6 +33,27 @@ On from the first boot (ADR 0015). Code: `wol_core::security` (defaults, status)
 - Developer mode: `wol seal off` (root) makes the running system writable and stops the boot check until the next update.
 - `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones.
 
+## Malware check (ADR 0024)
+A layer of protection against known malware. Code: `crates/xguard`, `wol_core::malware`. Runs on this computer only: no file, hash or verdict leaves it, and sample submission does not exist.
+
+Threat model:
+- Covers: a known bad file arriving as a download, on a removable disk, as an AppImage, `.wol`, Windows program, or a program marked executable under `/home`, `/tmp` and removable disks, and whatever wopkg is about to install.
+- Does not cover: new or altered malware with no signature, and an attacker already running on the computer, who can stop nothing here without root but can also do harm without ever opening a new file.
+- Ways past the first-use check, known and accepted: code run by an interpreter (`python x.py`, `wine x.exe` from a terminal; double-click goes through the check), `dlopen` and `mmap` of a file that was never executed, code in `memfd`, and packed Windows programs (no unpacker runs).
+- The signature database is data from public lists. Formats read in part: hashes, section hashes and plain patterns are read; bytecode, targets that need normalised text, HTML or mail, alternatives, negations and regular expressions are left out and counted at build time. See the ADR for the numbers.
+
+How it works:
+- `wolos-xguard.service`: holds `FAN_OPEN_EXEC_PERM` on the mounts in scope and `FAN_OPEN_PERM` on tagged files. Files outside scope, and the sealed root, cost nothing.
+- Tag: `user.wolos.quarantine`, set when a file lands in a Downloads folder, or `user.xdg.origin.url`, set by browsers, and by curl and wget through the shipped `.curlrc` and `.wgetrc`.
+- Verdict: a clean file gets an evictable kernel ignore mark, removed by the kernel when the file changes. The verdict store (`/var/lib/wolos/xguard/verdicts`) keeps file identity and sha256, or the fs-verity digest when there is one, so a restart reads nothing again.
+- Fails open: the guard dying, or any check it cannot finish, lets the file run. A stopped file needs a signature match; nothing else stops anything.
+- Two engines: the mapped database in the guard; rule sets (YARA-X) only in a short-lived worker with no privileges, for tagged files, removable disks, Windows programs, AppImages and `.wol`.
+- Background pass: `wolos-xguard-sweep.timer`, on mains power and while everyone is away and no game runs, at idle priority. It stops at the first sign of activity.
+- Updates: `wolos-xguard-update.timer` downloads a signed bundle; `wol-xguard rules install` refuses anything unsigned, older or altered, then the guard restarts so files are looked at again.
+- People see nothing unless a file is stopped: then one notification, and a row in Settings > Privacy & Security with Move to Trash and a deliberate Open Anyway. Each account's list is readable by that account only. `wol security`, `wol security scan <path>`, `wol security allow <path>`.
+
+For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `wol-xguard scan --json [--rules DIR] PATH`, exit 0 clean, 1 found, 2 incomplete, 3 could not run. Archives, AppImages and `.wol` are read in memory, never unpacked to disk. The report gives `verdict`, `findings`, `skipped` and `signatures_age_days`, so a caller can treat old signatures as it likes.
+
 ## Error reports (off by default)
 - `/usr/lib/wolos/report` (`wolos-report.timer`, hourly) sends only when `/etc/wolos/reports.conf` has `send=1`.
 - Each new failed unit or coredump goes once to `https://wolos.squareweb.app/report`:
@@ -64,6 +85,7 @@ Advisory means a grant is recorded and shown to helpers that ask. An app that ig
 | wold | starts and restarts system jobs | its job files |
 | wol-admind | runs a fixed allow-list of actions (`AdminAction`), each validated, audited, with a password unless it is an everyday change by the account at the computer | a Unix socket, peer uid from the kernel |
 | wol-login | checks passwords (PAM), starts sessions, opens encrypted homes | the login window's socket |
+| wol-xguard guard | answers first-use checks, reads the files it is asked about | kernel events, file content, a Unix socket with file descriptors, peer uid from the kernel |
 | systemd units and timers | `wol power apply`, `update-check` | none |
 
 No Capsicum or jails yet. Each daemon runs argv lists it builds itself (never a shell with user text). Each parses only its own small wire format.

@@ -1,4 +1,4 @@
-# The background malware pass (ADR 0022): lowest priority, stops by itself on any activity.
+# The background malware pass (ADR 0024): lowest priority, stops by itself on any activity.
 [Unit]
 Description=WolOS background malware check
 ConditionACPower=true

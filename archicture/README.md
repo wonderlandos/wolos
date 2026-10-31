@@ -20,5 +20,5 @@ Rule: prefer upstream ports + config over new code.
 | `modules/packages.md` | `.wol` format, keys and trust, `wol install/remove/list/search`, index, factory (ADR 0011) |
 | `modules/games.md` | native Steam and Proton, `wol games`, `.exe` double-click on wine or umu |
 | `modules/power.md` | power policy per power source and mode, sleep and lock, battery alerts, `wol power` (ADR 0014) |
-| `modules/security.md` | firewall, hardening, daily update check, encrypted homes, app permissions, what runs as root (ADR 0015) |
+| `modules/security.md` | firewall, hardening, daily update check, malware check, encrypted homes, app permissions, what runs as root (ADR 0015, 0024) |
 | `modules/boot.md` | quiet boot, ESP layout and firmware entry, GRUB/rEFInd, Secure Boot, install safety checks |

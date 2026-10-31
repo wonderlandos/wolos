@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Why the matcher is hand-written (ADR 0022): its speed and memory against general multi-pattern
+//! Why the matcher is hand-written (ADR 0024): its speed and memory against general multi-pattern
 //! automatons, on the same literal anchors.
 //! Usage: matcher_bench <ndb-file> <file-list> [limit]
 use std::time::Instant;

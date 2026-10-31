@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! libxguard (ADR 0022): checks a file against signed signature data, without a resident scanner.
+//! libxguard (ADR 0024): checks a file against signed signature data, without a resident scanner.
 //! `automaton` + `db`: the memory-mapped signature file; `sigs`: reads public signature lists;
 //! `scan`: one file's bytes and the stable [`Report`]; `walk`: files and what is packed in them.
 pub mod automaton;

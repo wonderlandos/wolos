@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# libxguard.so.1 from the Rust staticlib (ADR 0022): exports and symbol versions come only from
+# libxguard.so.1 from the Rust staticlib (ADR 0024): exports and symbol versions come only from
 # abi/xguard.map, the soname is the ABI major. Usage: link.sh <libxguard.a> <out-dir>
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)

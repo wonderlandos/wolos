@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* libxguard: scan a file or bytes, and what is packed inside, in memory (ADR 0022).
+/* libxguard: scan a file or bytes, and what is packed inside, in memory (ADR 0024).
  * Results are JSON documents; new fields are only added:
  * {"verdict":"clean|found|incomplete","findings":[{"name","how","path"}],"skipped":[{"path","why"}],
  *  "files":n,"bytes":n,"sha256":"hex","signatures_built":unix,"signatures_age_days":n|null,

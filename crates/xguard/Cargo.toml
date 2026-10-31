@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license = "GPL-2.0-or-later"
 authors.workspace = true
-description = "libxguard: on-demand and first-use malware checks with a shared, memory-mapped signature database (ADR 0022)"
+description = "libxguard: on-demand and first-use malware checks with a shared, memory-mapped signature database (ADR 0024)"
 
 [lib]
 name = "xguard"
