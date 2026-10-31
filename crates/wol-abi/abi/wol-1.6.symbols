@@ -1,0 +1,5 @@
+# libwol 1.6 exports (WOL_1.6). Never edit a shipped line.
+wol_assertion_release@WOL_1.6
+wol_assertion_retain@WOL_1.6
+wol_power_copy_info@WOL_1.6
+wol_power_keep_awake@WOL_1.6

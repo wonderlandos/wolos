@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 5
+  WOL_VERSION_MINOR = 6
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -30,6 +30,7 @@ lib LibWol
   struct Toolbar; opaque : UInt8; end
   struct Info; opaque : UInt8; end
   struct File; opaque : UInt8; end
+  struct Assertion; opaque : UInt8; end
 
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
@@ -140,4 +141,8 @@ lib LibWol
   fun wol_file_get_name(file : File*) : String*
   fun wol_file_retain(file : File*) : File*
   fun wol_file_release(file : File*)
+  fun wol_power_copy_info(context : Context*, out_ : Info**, error : Error**) : Status
+  fun wol_power_keep_awake(context : Context*, reason : UInt8*, reason_len : LibC::SizeT, out_ : Assertion**, error : Error**) : Status
+  fun wol_assertion_retain(assertion : Assertion*) : Assertion*
+  fun wol_assertion_release(assertion : Assertion*)
 end

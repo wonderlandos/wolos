@@ -32,6 +32,9 @@ pub const MAX_PREFS: usize = 256;
 /// A panel's title; a suggested file name.
 pub const MAX_NAME: usize = 255;
 
+/// Keep-awake holds per account.
+pub const MAX_HOLDS: usize = 16;
+
 /// Every capability a [`Call`] can need (`wol_core::consent::CAPABILITIES`), test-checked.
 pub const CAPABILITIES: &[&str] = &[
     "notifications",
@@ -39,6 +42,8 @@ pub const CAPABILITIES: &[&str] = &[
     "clipboard-write",
     "app-preferences",
     "file-panels",
+    "power-info",
+    "keep-awake",
 ];
 
 /// What wold checks before a call runs.
@@ -97,6 +102,12 @@ pub enum Call {
     /// Let the person pick where to save; the app gets that file, opened for writing.
     #[serde(rename = "panel.save")]
     PanelSave { title: String, name: String },
+    /// Battery and power state.
+    #[serde(rename = "power.info")]
+    PowerInfo {},
+    /// Keep the machine awake until this connection closes.
+    #[serde(rename = "power.keep-awake")]
+    PowerKeepAwake { reason: String },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -248,6 +259,8 @@ impl Call {
             | Self::PrefsRemove { .. }
             | Self::PrefsKeys {} => Need::Grant("app-preferences"),
             Self::PanelOpen { .. } | Self::PanelSave { .. } => Need::Grant("file-panels"),
+            Self::PowerInfo {} => Need::Grant("power-info"),
+            Self::PowerKeepAwake { .. } => Need::Grant("keep-awake"),
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -290,6 +303,15 @@ impl Call {
                 if name.is_empty() || name.contains('/') || !clean(name, MAX_NAME, false) {
                     return Err(format!(
                         "A file name is 1 to {MAX_NAME} bytes, with no '/'."
+                    ));
+                }
+                Ok(())
+            }
+            Self::PowerInfo {} => Ok(()),
+            Self::PowerKeepAwake { reason } => {
+                if reason.trim().is_empty() || !clean(reason, MAX_TITLE, false) {
+                    return Err(format!(
+                        "A reason is one line of 1 to {MAX_TITLE} bytes: the person sees it."
                     ));
                 }
                 Ok(())
@@ -553,6 +575,22 @@ mod tests {
             save("t", &"n".repeat(MAX_NAME + 1)),
         ] {
             assert!(bad.validate().is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn power_calls() {
+        let k = Call::PowerKeepAwake {
+            reason: "Exporting".into(),
+        };
+        assert_eq!(Call::decode(k.encode().as_bytes()), Ok(k.clone()));
+        assert_eq!(k.need(), Need::Grant("keep-awake"));
+        assert_eq!(Call::PowerInfo {}.need(), Need::Grant("power-info"));
+        for reason in ["", " ", "a\nb", &"x".repeat(MAX_TITLE + 1)] {
+            let c = Call::PowerKeepAwake {
+                reason: reason.into(),
+            };
+            assert!(c.validate().is_err(), "{reason}");
         }
     }
 
