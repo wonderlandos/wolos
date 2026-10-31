@@ -309,7 +309,7 @@ mod tests {
         ] {
             assert!(cfg.contains(&want), "{want}");
         }
-        let policies = overlay("distribution/policies.json");
+        let policies = config("policies.json");
         let v: serde_json::Value = serde_json::from_str(&policies).unwrap();
         assert_eq!(
             v["policies"]["DisplayBookmarksToolbar"], "never",

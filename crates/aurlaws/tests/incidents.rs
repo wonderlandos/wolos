@@ -139,6 +139,7 @@ fn no_fixture_points_at_a_real_address() {
                 || host.ends_with(".invalid")
                 || host == "example.org"
                 || host == "github.com" && w.contains("github.com/example")
+                || host == "gitlab.com" && w.contains("gitlab.com/example")
                 || host.starts_with('$');
             assert!(fine, "{w}");
         }
