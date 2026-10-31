@@ -110,7 +110,7 @@ impl<'a> View<'a> {
                 s.vcs
                     && s.name == node.label
                     && s.url.as_deref().is_some_and(|u| {
-                        crate::hosts::same_project(&self.meta.url, u, &self.meta.pkgnames)
+                        hosts::on_upstream(&self.meta.url, u, &self.meta.pkgnames, false)
                     })
             })
     }
@@ -258,8 +258,14 @@ impl<'a> View<'a> {
                             );
                         }
                     }
+                    // Without the built package's list, a mode change on an unlisted file says nothing.
+                    let metadata = matches!(
+                        s.label.as_str(),
+                        "chmod" | "chown" | "chgrp" | "setcap" | "chattr"
+                    );
                     if scriptlet {
-                        if path.starts_with('/')
+                        if !(metadata && self.package_files.is_empty())
+                            && path.starts_with('/')
                             && !paths::harmless(path)
                             && !paths::persistence(path)
                             && !self.declared(path)
@@ -347,7 +353,11 @@ impl<'a> View<'a> {
                 label: url.clone(),
                 loc: Some(loc.clone()),
             };
-            if !hosts::on_upstream(&m.url, url, &m.pkgnames) {
+            let summed = s
+                .sum
+                .as_deref()
+                .is_some_and(|x| !x.is_empty() && x != "SKIP");
+            if !hosts::on_upstream(&m.url, url, &m.pkgnames, s.pinned || summed) {
                 let sentence = format!(
                     "{loc} downloads {url}, which is not on the project's declared home {}.",
                     m.url
@@ -406,7 +416,8 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
     let mut out = Vec::new();
     let g = v.g;
     let mut explained: HashSet<NodeId> = HashSet::new();
-    let mut seen: HashSet<(LawId, NodeId)> = HashSet::new();
+    // One origin is one question, however many later steps run it.
+    let mut seen: HashSet<(LawId, String)> = HashSet::new();
     for (i, e) in g.edges.iter().enumerate() {
         if e.kind != E::Executes {
             continue;
@@ -431,8 +442,9 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
         let blocked = v.checked_before(e.src, e.seq) || v.declared_vcs(e.src);
         if let (Some(p), false) = (path, blocked) {
             explained.insert(sink);
-            if seen.insert((LawId::FetchExecuteUnverified, sink)) {
-                let (s, path) = v.narrate(&p);
+            let (s, path) = v.narrate(&p);
+            let origin = path.first().map(|x| x.node.clone()).unwrap_or_default();
+            if seen.insert((LawId::FetchExecuteUnverified, origin)) {
                 out.push(finding(
                     LawId::FetchExecuteUnverified,
                     format!("{s}, and no checksum checks it first."),
@@ -445,8 +457,9 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
             .map(hit)
         {
             explained.insert(sink);
-            if seen.insert((LawId::DecodeExecute, sink)) {
-                let (s, path) = v.narrate(&p);
+            let (s, path) = v.narrate(&p);
+            let origin = path.first().map(|x| x.node.clone()).unwrap_or_default();
+            if seen.insert((LawId::DecodeExecute, origin)) {
                 out.push(finding(
                     LawId::DecodeExecute,
                     format!("{s}, so decoded data is run as code."),
@@ -463,6 +476,9 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
                 .as_ref()
                 .map(|l| l.to_string())
                 .unwrap_or_else(|| "an unknown place".into());
+            if !seen.insert((LawId::UnresolvedDynamic, at.clone())) {
+                continue;
+            }
             let sentence = format!(
                 "{} at {at} runs text this analysis cannot resolve, so what it does is unknown.",
                 n.label

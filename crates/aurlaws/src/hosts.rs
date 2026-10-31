@@ -56,6 +56,14 @@ fn repo(url: &str) -> Option<(String, String)> {
     Some((owner, name))
 }
 
+fn canonical(h: &str) -> &str {
+    if ALIASES.contains(&h) {
+        "github.com"
+    } else {
+        h
+    }
+}
+
 fn on_code_host(h: &str) -> bool {
     let r = registrable(h);
     ALIASES.contains(&h) || CODE_HOSTS.iter().any(|c| registrable(c) == r)
@@ -93,9 +101,14 @@ const MIRRORS: &[&str] = &[
 ];
 
 /// May this source URL serve a package that declares `declared` as its home?
-pub fn on_upstream(declared: &str, source: &str, pkgnames: &[String]) -> bool {
+/// On the declared host under another owner counts only when a checksum or commit pins it: the
+/// host is right, and the pin says the bytes are the ones the maintainer saw.
+pub fn on_upstream(declared: &str, source: &str, pkgnames: &[String], pinned: bool) -> bool {
     let Some(h) = host(source) else { return true };
     if host(declared).is_none() || same_project(declared, source, pkgnames) {
+        return true;
+    }
+    if pinned && host(declared).is_some_and(|d| canonical(&d) == canonical(&h)) {
         return true;
     }
     MIRRORS
