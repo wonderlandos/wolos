@@ -29,7 +29,7 @@ What is in 1.0 (each has an off switch; table with sources in `README.wolos.md` 
 | frontmost app | CPU floor and exact timers for the app in front, timer coalescing behind (WolOS code) |
 | locks | futex spins briefly before sleeping (`futex.spin_ns`); `selftests/wolos/futex_pingpong` measures it |
 | games | NTSYNC and futex_waitv built in; split-lock mitigation off; i915 frame-deadline boost |
-| memory | zram first (lz4/zstd, writeback, `page-cluster` 0), MGLRU working-set protection, no watermark boosting or proactive compaction, THP on request |
+| memory | zswap in front of zram (lz4/zstd, writeback, `page-cluster` 0), MGLRU working-set protection, no watermark boosting or proactive compaction, THP on request |
 | disk | ADIOS I/O scheduler by default; none on NVMe, BFQ on spinning disks (udev) |
 | network | BBRv3 with fq by default, MPTCP and WireGuard built in |
 | graphics | AMD color management (HDR) properties; parallel CPU bring-up at boot |

@@ -506,6 +506,7 @@ fn config_turns_on_the_scheduler_patches() {
         "CONFIG_SCHED_PROXY_EXEC=y",
         "CONFIG_WOLOS_SHIELD=y",
         "CONFIG_SERIAL_8250_RUNTIME_UARTS=4",
+        "CONFIG_ZSWAP_DEFAULT_ON=y",
     ] {
         assert!(c.lines().any(|l| l == on), "wolos.config lacks {on}");
     }
