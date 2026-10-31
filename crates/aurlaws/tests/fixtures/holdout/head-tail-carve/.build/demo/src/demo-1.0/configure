@@ -1,0 +1,2 @@
+#!/bin/sh
+head -c 900 tests/files/data.bin | tail -c 300 | sh

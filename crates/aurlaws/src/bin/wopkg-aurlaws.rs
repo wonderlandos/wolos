@@ -188,6 +188,7 @@ fn main() {
     {
         said.push("No checksum list from upstream was found, so the binary was not compared with what upstream published.".to_owned());
     }
+    let mut drawn = None;
     if let Some(g) = graph {
         let text = if g.ends_with(".dot") {
             render::dot(&r.graph, &r.findings)
@@ -196,6 +197,8 @@ fn main() {
         };
         if std::fs::write(&g, text).is_err() {
             said.push(format!("The graph could not be written to {g}."));
+        } else {
+            drawn = Some(g);
         }
     }
     let mut evidence: Vec<String> = r.findings.iter().map(|f| f.sentence.clone()).collect();
@@ -213,6 +216,6 @@ fn main() {
     } else {
         "pass"
     };
-    let out = serde_json::json!({"verdict": verdict, "evidence": evidence, "findings": r.findings, "notes": r.notes, "meta": r.meta});
+    let out = serde_json::json!({"verdict": verdict, "evidence": evidence, "findings": r.findings, "notes": r.notes, "meta": r.meta, "graph": drawn});
     println!("{out}");
 }
