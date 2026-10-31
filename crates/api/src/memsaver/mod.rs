@@ -7,7 +7,10 @@ pub mod engine;
 pub mod prefetch;
 pub mod procs;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 /// Everything the engine does to the system, so its logic runs against a model in tests.
 /// Cgroup arguments are cgroup paths (`/user.slice/...`), not filesystem paths.
@@ -34,12 +37,20 @@ pub trait Sys {
     fn adopt(&self, args: &[String]) -> bool;
     /// Prefetch these processes' memory (in the background; returns at once).
     fn prefetch(&self, pids: Vec<i32>);
+    /// Page out these processes' memory (in the background; returns at once).
+    fn pageout(&self, scope: &str, pids: Vec<i32>);
+    /// Stop a [`Sys::pageout`] of this scope.
+    fn cancel(&self, scope: &str);
+    /// Bytes of these processes that are compressed away (swap), wherever they were charged.
+    fn swapped(&self, pids: &[i32]) -> u64;
 }
 
 /// The real system: /proc, /sys/fs/cgroup and busctl.
 pub struct Real {
     pub proc: PathBuf,
     pub root: PathBuf,
+    /// Running page-outs by scope: their stop flags.
+    paging: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl Default for Real {
@@ -47,6 +58,7 @@ impl Default for Real {
         Real {
             proc: "/proc".into(),
             root: cgroup::ROOT.into(),
+            paging: Mutex::default(),
         }
     }
 }
@@ -131,6 +143,47 @@ impl Sys for Real {
                 t.elapsed().as_millis()
             );
         });
+    }
+    fn pageout(&self, scope: &str, pids: Vec<i32>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        self.paging
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(scope.to_owned(), stop.clone());
+        let proc = self.proc.clone();
+        std::thread::spawn(move || {
+            // The compression runs on this thread: it must not compete with what is in use.
+            // SAFETY: setpriority on the calling thread (who = 0) with plain integers.
+            unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) };
+            let t = std::time::Instant::now();
+            let bytes: usize = pids
+                .iter()
+                .map(|p| prefetch::pageout(&proc, *p, &stop))
+                .sum();
+            eprintln!(
+                "wold: memsaver paged out {} MiB of ranges in {} ms{}",
+                bytes >> 20,
+                t.elapsed().as_millis(),
+                if stop.load(Ordering::Relaxed) {
+                    " (stopped)"
+                } else {
+                    ""
+                }
+            );
+        });
+    }
+    fn cancel(&self, scope: &str) {
+        if let Some(stop) = self
+            .paging
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(scope)
+        {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+    fn swapped(&self, pids: &[i32]) -> u64 {
+        pids.iter().map(|p| prefetch::swapped(&self.proc, *p)).sum()
     }
 }
 

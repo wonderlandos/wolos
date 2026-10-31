@@ -63,10 +63,15 @@ impl Role {
     }
 }
 
+/// argv words: Chromium rewrites its process title, so its /proc cmdline is one spaced string.
+fn words(argv: &[String]) -> impl Iterator<Item = &str> {
+    argv.iter().flat_map(|a| a.split_ascii_whitespace())
+}
+
 /// Role of one process from its argv. `chromium_app`: some process of the same app carries a
 /// `--type=` switch, so an untyped process is the browser process, not a native app.
 pub fn role(argv: &[String], chromium_app: bool) -> Role {
-    if argv.first().is_some_and(|a| {
+    if words(argv).next().is_some_and(|a| {
         a.rsplit('/')
             .next()
             .unwrap_or(a)
@@ -75,7 +80,7 @@ pub fn role(argv: &[String], chromium_app: bool) -> Role {
         return Role::Crashpad;
     }
     let switch = |name: &str| {
-        argv.iter()
+        words(argv)
             .skip(1)
             .find_map(|a| a.strip_prefix(name)?.strip_prefix('='))
     };
@@ -97,7 +102,7 @@ pub fn role(argv: &[String], chromium_app: bool) -> Role {
 
 /// True when this argv belongs to a Chromium-style child (has `--type=`).
 pub fn is_chromium_child(argv: &[String]) -> bool {
-    argv.iter().skip(1).any(|a| a.starts_with("--type="))
+    words(argv).skip(1).any(|a| a.starts_with("--type="))
 }
 
 /// Native apps: half of what they hold when they go to the background, never below 64 MiB.
@@ -108,6 +113,43 @@ pub fn native_ceiling(current: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Chromium rewrites its process title: /proc/<pid>/cmdline is one space-joined string.
+    #[test]
+    fn roles_survive_chromiums_rewritten_process_title() {
+        let cases = [
+            (
+                "/usr/lib/chromium/chromium --type=renderer --lang=en",
+                Role::Renderer,
+            ),
+            (
+                "/usr/lib/chromium/chromium --type=gpu-process --flag",
+                Role::Gpu,
+            ),
+            (
+                "/usr/lib/electron/electron --type=zygote --no-sandbox",
+                Role::Zygote,
+            ),
+            (
+                "/opt/x/x --type=utility --utility-sub-type=audio.mojom.AudioService",
+                Role::Audio,
+            ),
+            (
+                "/opt/x/x --type=utility --utility-sub-type=network.mojom.NetworkService",
+                Role::Utility,
+            ),
+            (
+                "/opt/x/chrome_crashpad_handler --monitor-self",
+                Role::Crashpad,
+            ),
+        ];
+        for (title, want) in cases {
+            let argv = vec![title.to_string()];
+            assert_eq!(role(&argv, true), want, "{title}");
+        }
+        assert!(is_chromium_child(&[cases[0].0.to_string()]));
+        assert!(!is_chromium_child(&["/usr/bin/foot --title x".to_string()]));
+    }
 
     fn argv(s: &str) -> Vec<String> {
         s.split(' ').map(String::from).collect()
