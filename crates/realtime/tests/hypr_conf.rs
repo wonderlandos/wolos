@@ -304,9 +304,11 @@ fn own_frame_windows_see_zoom_change_state() {
     assert!(added("->setMaximized(true);"));
     // Dropping the map-time state instead gives clients shadow margins: windows land 10 to 20 px
     // off and clipped (measured on Helium and libadwaita).
-    assert!(!patches
-        .lines()
-        .any(|l| l.starts_with('-') && l.contains("m_toplevel->setMaximized(true);")));
+    assert!(
+        !patches
+            .lines()
+            .any(|l| l.starts_with('-') && l.contains("m_toplevel->setMaximized(true);"))
+    );
 }
 
 #[test]

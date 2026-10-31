@@ -601,7 +601,11 @@ pub fn strip_argv(t: &ResolvedTheme) -> Vec<Vec<String>> {
     ]
     .into_iter()
     .filter_map(|(key, value)| {
-        Some(["hyprctl", "keyword", key, &value?].map(String::from).to_vec())
+        Some(
+            ["hyprctl", "keyword", key, &value?]
+                .map(String::from)
+                .to_vec(),
+        )
     })
     .collect()
 }

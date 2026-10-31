@@ -10,25 +10,25 @@
 // The C boundary takes a pointer and a length per string.
 #![allow(clippy::too_many_arguments)]
 
+pub mod account;
+pub mod audio;
 pub mod client;
 pub mod clipboard;
 pub mod context;
-pub mod error;
-pub mod service;
-pub mod share;
 pub mod device;
-pub mod message;
-pub mod account;
-pub mod search;
-pub mod audio;
-pub mod network;
-pub mod power;
+pub mod error;
 pub mod file;
-pub mod prefs;
 pub mod info;
 pub mod kit;
 pub mod menu;
+pub mod message;
+pub mod network;
 pub mod notify;
+pub mod power;
+pub mod prefs;
+pub mod search;
+pub mod service;
+pub mod share;
 pub mod string;
 pub mod system;
 

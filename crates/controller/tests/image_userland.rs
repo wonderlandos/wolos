@@ -349,7 +349,8 @@ fn sudo_works_on_every_system() {
         let pam = read(&format!("desktop/overlay/etc/pam.d/{service}"));
         for kind in ["auth", "account", "session"] {
             assert!(
-                pam.lines().any(|l| l.starts_with(kind) && l.ends_with("system-auth")),
+                pam.lines()
+                    .any(|l| l.starts_with(kind) && l.ends_with("system-auth")),
                 "{service}: {kind}"
             );
         }
@@ -373,7 +374,10 @@ fn the_live_desktop_never_locks_itself() {
 fn the_image_leaves_the_firefox_folder_alone() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     assert!(!root.join("desktop/overlay/usr/lib/firefox").exists());
-    assert!(root.join("image/repo/wolos-browser-config/PKGBUILD").is_file());
+    assert!(
+        root.join("image/repo/wolos-browser-config/PKGBUILD")
+            .is_file()
+    );
     for list in ["image/repo/packages", "image/arch/packages.x86_64"] {
         let t = std::fs::read_to_string(root.join(list)).unwrap();
         assert!(!t.contains("wolos-browser-config"), "{list}");

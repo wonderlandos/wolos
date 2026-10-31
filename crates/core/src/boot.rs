@@ -260,7 +260,10 @@ mod tests {
         assert_eq!(choose(&g, true), Tier::OwnKeys);
         assert!(!needs_key_screen(Tier::OwnKeys, &g));
         assert_eq!(words(Tier::OwnKeys, &g), "", "its module could never load");
-        let h = Firmware { first_stage: true, ..g };
+        let h = Firmware {
+            first_stage: true,
+            ..g
+        };
         assert!(needs_key_screen(Tier::OwnKeys, &h));
         assert_eq!(words(Tier::OwnKeys, &h), protected_words(Tier::OwnKeys));
     }

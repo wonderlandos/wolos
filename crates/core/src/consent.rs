@@ -222,7 +222,13 @@ mod tests {
         let g = peer_grant("/usr/bin/notes");
         assert_eq!(peer_of(&g), Some("/usr/bin/notes"));
         assert!(is_valid_grant("/usr/bin/mail", &g));
-        for bad in ["ipc:", "ipc:notes", "ipc:/usr/../etc/x", "ipc:/a\nb", "other:/a"] {
+        for bad in [
+            "ipc:",
+            "ipc:notes",
+            "ipc:/usr/../etc/x",
+            "ipc:/a\nb",
+            "other:/a",
+        ] {
             assert!(!is_valid_grant("/usr/bin/mail", bad), "{bad}");
         }
     }
@@ -233,7 +239,12 @@ mod tests {
         assert_eq!(g, "device:046d:c52b");
         assert_eq!(device_of(&g), Some("046d:c52b"));
         assert!(is_valid_grant("/usr/bin/mail", &g));
-        for bad in ["device:", "device:46d:c52b", "device:046D:c52b", "device:046d:c52b:1"] {
+        for bad in [
+            "device:",
+            "device:46d:c52b",
+            "device:046D:c52b",
+            "device:046d:c52b:1",
+        ] {
             assert!(!is_valid_grant("/usr/bin/mail", bad), "{bad}");
         }
     }

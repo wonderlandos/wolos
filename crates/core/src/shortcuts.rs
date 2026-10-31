@@ -322,12 +322,7 @@ pub fn name_of(dispatcher: &str, args: &str) -> Option<(&'static str, Group)> {
 use Group as G;
 /// (dispatcher, args, name, group) for every shipped bind (desktop conf + tiling set).
 const NAMES: [(&str, &str, &str, Group); 86] = [
-    (
-        "exec",
-        "wol-search",
-        "Show Search",
-        G::Search,
-    ),
+    ("exec", "wol-search", "Show Search", G::Search),
     ("exec", "foot", "Open Terminal", G::Apps),
     ("exec", "nautilus", "Open Files", G::Apps),
     ("exec", "wol-settings", "Open System Settings", G::Apps),
@@ -356,12 +351,7 @@ const NAMES: [(&str, &str, &str, Group); 86] = [
         "Switch between light and dark",
         G::System,
     ),
-    (
-        "exec",
-        "wol shell toggle overview",
-        "Overview",
-        G::Overview,
-    ),
+    ("exec", "wol shell toggle overview", "Overview", G::Overview),
     ("workspace", "e-1", "Move left a space", G::Overview),
     ("workspace", "e+1", "Move right a space", G::Overview),
     ("workspace", "1", "Switch to Desktop 1", G::Overview),
@@ -891,11 +881,7 @@ mod tests {
                 spot.group,
                 spot.combo.as_ref().unwrap().label()
             ),
-            (
-                "Show Search",
-                Group::Search,
-                "⌘Space".to_string()
-            )
+            ("Show Search", Group::Search, "⌘Space".to_string())
         );
         assert!(d.iter().filter(|s| s.group == Group::Tiling).count() >= 8);
         let drag = d.iter().find(|s| s.bind.flags == "m").unwrap();
@@ -1034,13 +1020,8 @@ mod tests {
     fn include_round_trip() {
         let d = defaults(SHIPPED, TILING);
         let mut o = Overrides::default();
-        o.assign(
-            &d,
-            "exec wol-search",
-            Some(c("SUPER ALT", "Space")),
-            false,
-        )
-        .unwrap();
+        o.assign(&d, "exec wol-search", Some(c("SUPER ALT", "Space")), false)
+            .unwrap();
         o.assign(&d, "exec wol-settings", None, false).unwrap();
         o.add_custom(
             &d,

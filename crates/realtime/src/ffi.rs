@@ -343,7 +343,11 @@ mod tests {
         assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 2, 0, 0) }, 0);
         assert_eq!(unsafe { wol_window_lights(c"steam".as_ptr(), 3, 0, 0) }, 0);
         assert_eq!(unsafe { wol_window_lights(std::ptr::null(), 1, 0, 0) }, 3);
-        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 9, 0, 0) }, 3, "unknown: ours");
+        assert_eq!(
+            unsafe { wol_window_lights(class.as_ptr(), 9, 0, 0) },
+            3,
+            "unknown: ours"
+        );
     }
 
     #[test]

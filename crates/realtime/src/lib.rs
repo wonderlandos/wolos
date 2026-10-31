@@ -1,8 +1,8 @@
 //! Compositor scene core: z-ordered surfaces, occlusion culling, damage tracking.
 pub mod anim;
 pub mod bus;
-pub mod chrome;
 pub mod cache;
+pub mod chrome;
 pub mod ffi;
 pub mod frame_stats;
 pub mod frontmost;

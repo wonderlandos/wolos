@@ -25,11 +25,15 @@ const STEAM: &str = wol_core::games::doctor::STEAM_BIN;
 
 /// What `wol games steam` runs: Steam's children malloc on huge pages.
 fn steam_argv(url: &[&str]) -> Vec<String> {
-    ["/usr/bin/env", "GLIBC_TUNABLES=glibc.malloc.hugetlb=1", STEAM]
-        .iter()
-        .chain(url)
-        .map(|s| s.to_string())
-        .collect()
+    [
+        "/usr/bin/env",
+        "GLIBC_TUNABLES=glibc.malloc.hugetlb=1",
+        STEAM,
+    ]
+    .iter()
+    .chain(url)
+    .map(|s| s.to_string())
+    .collect()
 }
 
 /// Arch with everything Steam and Windows games need; `groups` from `id -Gn`.

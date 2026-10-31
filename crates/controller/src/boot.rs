@@ -66,7 +66,11 @@ pub fn password(env: &mut dyn Env) -> i32 {
 
 /// `wol boot enroll`: queue the key again; the steps follow.
 pub fn enroll(env: &mut dyn Env) -> i32 {
-    match env.capture(&["/usr/lib/wolos/boot-enroll"]).as_deref().map(str::trim) {
+    match env
+        .capture(&["/usr/lib/wolos/boot-enroll"])
+        .as_deref()
+        .map(str::trim)
+    {
         Some("enrolled") => env.out("This computer's key is already enrolled.\n"),
         Some(_) => {
             env.out("Restart to finish.\n");
@@ -74,7 +78,13 @@ pub fn enroll(env: &mut dyn Env) -> i32 {
                 env.out(&format!("{s}\n"));
             }
         }
-        None => return fail(env, ErrorCode::Failed, "the key could not be queued; run this as root"),
+        None => {
+            return fail(
+                env,
+                ErrorCode::Failed,
+                "the key could not be queued; run this as root",
+            );
+        }
     }
     0
 }

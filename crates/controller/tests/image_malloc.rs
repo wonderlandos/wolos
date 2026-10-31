@@ -19,8 +19,17 @@ fn services_and_sessions_get_a_bigger_malloc_tcache() {
         "image/files/usr/lib/systemd/user.conf.d/70-wolos-malloc.conf",
     ] {
         let s = read(f);
-        assert!(s.lines().any(|l| l.trim() == "[Manager]"), "{f} lacks [Manager]");
-        assert!(s.lines().any(|l| l.trim() == TUNABLE), "{f} lacks `{TUNABLE}`");
-        assert!(!s.contains("hugetlb"), "{f}: hugetlb raised RSS for no gain");
+        assert!(
+            s.lines().any(|l| l.trim() == "[Manager]"),
+            "{f} lacks [Manager]"
+        );
+        assert!(
+            s.lines().any(|l| l.trim() == TUNABLE),
+            "{f} lacks `{TUNABLE}`"
+        );
+        assert!(
+            !s.contains("hugetlb"),
+            "{f}: hugetlb raised RSS for no gain"
+        );
     }
 }

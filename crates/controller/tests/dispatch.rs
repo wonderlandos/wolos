@@ -139,12 +139,21 @@ fn theme_set_colours_the_title_strip() {
             .find(|a| a[..2] == ["hyprctl", "keyword"] && a[2] == "plugin:hyprbars:bar_color")
             .map(|a| a[3].clone())
     };
-    assert_eq!(run("theme set catppuccin-latte", &mut env), 0, "{}", env.err);
+    assert_eq!(
+        run("theme set catppuccin-latte", &mut env),
+        0,
+        "{}",
+        env.err
+    );
     assert_eq!(bar(&env).as_deref(), Some("rgba(eff1f5e6)"));
     assert!(
-        env.execs
-            .iter()
-            .any(|a| a[..] == ["hyprctl", "keyword", "plugin:hyprbars:col.text", "rgba(4c4f69ff)"]),
+        env.execs.iter().any(|a| a[..]
+            == [
+                "hyprctl",
+                "keyword",
+                "plugin:hyprbars:col.text",
+                "rgba(4c4f69ff)"
+            ]),
         "{:?}",
         env.execs
     );
