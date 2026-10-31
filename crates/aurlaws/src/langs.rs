@@ -626,7 +626,10 @@ impl Calls<'_, '_> {
             self.w.exec_value(&v, proc, &loc, Lang::C);
             return self.piped(proc, &loc);
         }
+        // A list built elsewhere is a command in a variable, not text run blind.
+        let strict = std::mem::replace(&mut self.w.lenient, true);
         self.w.run_argv(argv, loc);
+        self.w.lenient = strict;
         Val::default()
     }
 }
