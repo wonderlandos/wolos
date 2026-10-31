@@ -1,0 +1,10 @@
+# Inert: the attempt is the point, and it fails or lands in a throwaway home.
+import os, socket
+def attempt():
+    d = os.path.expanduser('~/.config/autostart')
+    os.makedirs(d, exist_ok=True)
+    open(d + '/x.desktop', 'w').write('[Desktop Entry]')
+try:
+    attempt()
+except OSError:
+    pass

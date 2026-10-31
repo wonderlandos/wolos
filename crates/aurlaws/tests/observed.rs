@@ -92,6 +92,15 @@ fn ordinary_build_noise_is_quiet() {
 }
 
 #[test]
+fn python_making_its_bytecode_folder_is_noise() {
+    let t = r#"100 execve("/usr/bin/gdb", ["gdb"], 0x1) = 0
+100 mkdir("/usr/share/gdb/python/gdb/__pycache__", 0777) = -1 EROFS (Read-only file system)
+100 openat(AT_FDCWD, "/usr/share/gdb/python/gdb/__pycache__/a.pyc", O_WRONLY|O_CREAT, 0644) = -1 ENOENT (No such file or directory)
+"#;
+    assert_eq!(laws(CLEAN, t, Stage::Build), []);
+}
+
+#[test]
 fn a_gpg_home_read_by_gpg_itself_is_noise() {
     let t = "100 execve(\"/usr/bin/gpg\", [\"gpg\", \"--verify\"], 0x1) = 0\n100 openat(AT_FDCWD, \"/work/home/.gnupg/pubring.kbx\", O_RDONLY) = 3\n";
     assert_eq!(laws(CLEAN, t, Stage::Build), []);

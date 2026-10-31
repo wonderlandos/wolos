@@ -175,7 +175,7 @@ impl Run<'_> {
 
     fn write(&mut self, pid: u32, p: &str, line: u32) {
         // Python's bytecode cache is an attempt on every import, and nothing else.
-        if p.contains("/__pycache__/") || paths::harmless(p) {
+        if p.contains("/__pycache__/") || p.ends_with("/__pycache__") || paths::harmless(p) {
             return;
         }
         let proc = self.proc(pid, line);

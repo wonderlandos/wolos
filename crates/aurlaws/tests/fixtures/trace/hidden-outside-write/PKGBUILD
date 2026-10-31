@@ -1,0 +1,15 @@
+# Inert test fixture, run only in the offline sandbox. Its helper touches nothing that matters.
+pkgname=hidden-outside-write
+pkgver=1.0
+pkgrel=1
+arch=(any)
+url=https://example.org/demo
+license=(GPL-2.0-or-later)
+source=(tool.dat)
+sha256sums=(SKIP)
+build() {
+  python3 "$srcdir/tool.dat"
+}
+package() {
+  install -Dm644 "$srcdir/tool.dat" "$pkgdir/usr/share/demo/tool.dat"
+}

@@ -1,0 +1,8 @@
+# Inert: the attempt is the point, and it fails or lands in a throwaway home.
+import os, socket
+def attempt():
+    open('out.txt', 'w').write('hello')
+try:
+    attempt()
+except OSError:
+    pass
