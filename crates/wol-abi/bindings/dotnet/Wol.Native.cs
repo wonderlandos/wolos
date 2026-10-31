@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 4;
+    public const int WOL_VERSION_MINOR = 5;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -131,4 +131,10 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern int wol_prefs_set_string(IntPtr context, byte* key, nuint key_len, byte* value, nuint value_len, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_prefs_remove(IntPtr context, byte* key, nuint key_len, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_prefs_copy_keys(IntPtr context, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_panel_open(IntPtr context, byte* title, nuint title_len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_panel_save(IntPtr context, byte* title, nuint title_len, byte* name, nuint name_len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_file_get_fd(IntPtr file);
+    [DllImport(Lib)] public static extern IntPtr wol_file_get_name(IntPtr file);
+    [DllImport(Lib)] public static extern IntPtr wol_file_retain(IntPtr file);
+    [DllImport(Lib)] public static extern void wol_file_release(IntPtr file);
 }

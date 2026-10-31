@@ -3,7 +3,9 @@
 use crate::error::{Error, Result, Status};
 use serde_json::Value;
 use shared::portal::{Answer, Call, Code};
+use shared::sys::FdReader;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -36,26 +38,44 @@ fn unavailable() -> Answer {
 }
 
 /// One service call: validated here first, decided by wold.
-pub fn call(socket: &Path, call: &Call) -> Answer {
+pub fn call(socket: &Path, c: &Call) -> Answer {
+    call_for(socket, c, TIMEOUT).0
+}
+
+/// A call that may wait for the person, with the file wold attached to its answer.
+pub fn call_for(socket: &Path, call: &Call, wait: Duration) -> (Answer, Option<OwnedFd>) {
+    match exchange(socket, call, wait) {
+        Ok(got) => got,
+        Err(a) => (a, None),
+    }
+}
+
+fn exchange(
+    socket: &Path,
+    call: &Call,
+    wait: Duration,
+) -> std::result::Result<(Answer, Option<OwnedFd>), Answer> {
     if let Err(m) = call.validate() {
-        return Answer::err(Code::InvalidArgument, m);
+        return Err(Answer::err(Code::InvalidArgument, m));
     }
     let line = call.encode();
     if line.len() > shared::portal::MAX_LINE {
-        return Answer::err(Code::InvalidArgument, "The request is too long.");
+        return Err(Answer::err(
+            Code::InvalidArgument,
+            "The request is too long.",
+        ));
     }
     let Ok(mut s) = UnixStream::connect(socket) else {
-        return unavailable();
+        return Err(unavailable());
     };
-    let _ = s.set_read_timeout(Some(TIMEOUT));
+    let _ = s.set_read_timeout(Some(wait));
     let _ = s.set_write_timeout(Some(TIMEOUT));
     if s.write_all(format!("call {line}\n").as_bytes()).is_err() {
-        return unavailable();
+        return Err(unavailable());
     }
-    match read_line(&mut BufReader::new(s)) {
-        Some(line) => Answer::parse(&line),
-        None => unavailable(),
-    }
+    let mut r = BufReader::new(FdReader::new(s));
+    let answer = read_line(&mut r).ok_or_else(unavailable)?;
+    Ok((Answer::parse(&answer), r.get_mut().fd.take()))
 }
 
 /// A call whose answer is only yes or no.

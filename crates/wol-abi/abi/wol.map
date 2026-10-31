@@ -115,3 +115,13 @@ WOL_1.4 {
     wol_prefs_remove;
     wol_prefs_set_string;
 } WOL_1.3;
+
+WOL_1.5 {
+  global:
+    wol_file_get_fd;
+    wol_file_get_name;
+    wol_file_release;
+    wol_file_retain;
+    wol_panel_open;
+    wol_panel_save;
+} WOL_1.4;

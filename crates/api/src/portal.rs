@@ -6,6 +6,7 @@ use shared::events::Event;
 use shared::portal::{Answer, Ask, Call, Code, Need};
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
+use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -77,6 +78,8 @@ impl Notes {
 pub const ASK_TIMEOUT: Duration = Duration::from_secs(4);
 /// Calls waiting for the desktop at once.
 pub const ASKS_KEPT: usize = 64;
+/// How long a file panel may stay open.
+pub const PANEL_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Calls waiting for the desktop: each [`Ask`] goes to the shell of the caller's account, and the
 /// `session.answer` with its id wakes the call. An answer counts only from that account.
@@ -94,7 +97,7 @@ struct AskTable {
 
 struct Waiting {
     uid: u32,
-    answer: Option<Answer>,
+    answer: Option<(Answer, Option<OwnedFd>)>,
 }
 
 impl Asks {
@@ -110,10 +113,24 @@ impl Asks {
         ask: Ask,
         timeout: Duration,
     ) -> Answer {
+        self.ask_for_file(bus, uid, ask, timeout).0
+    }
+
+    /// [`Asks::ask`], with the file the desktop attached to its answer.
+    pub fn ask_for_file<W: Write + Send>(
+        &self,
+        bus: &Bus<W>,
+        uid: u32,
+        ask: Ask,
+        timeout: Duration,
+    ) -> (Answer, Option<OwnedFd>) {
         let id = {
             let mut t = self.lock();
             if t.waiting.len() >= ASKS_KEPT {
-                return Answer::err(Code::Unavailable, "The desktop is busy. Try again.");
+                return (
+                    Answer::err(Code::Unavailable, "The desktop is busy. Try again."),
+                    None,
+                );
             }
             t.last = t.last.wrapping_add(1).max(1);
             let id = t.last;
@@ -122,7 +139,10 @@ impl Asks {
         };
         if bus.publish(&Event::SessionAsk { uid, id, ask }) == 0 {
             self.lock().waiting.remove(&id);
-            return Answer::err(Code::Unavailable, "The desktop is not running.");
+            return (
+                Answer::err(Code::Unavailable, "The desktop is not running."),
+                None,
+            );
         }
         let end = Instant::now() + timeout;
         let mut t = self.lock();
@@ -133,7 +153,10 @@ impl Asks {
             let left = end.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 t.waiting.remove(&id);
-                return Answer::err(Code::Unavailable, "The desktop did not answer.");
+                return (
+                    Answer::err(Code::Unavailable, "The desktop did not answer."),
+                    None,
+                );
             }
             t = self
                 .answered
@@ -144,11 +167,16 @@ impl Asks {
         t.waiting
             .remove(&id)
             .and_then(|w| w.answer)
-            .unwrap_or_else(|| Answer::err(Code::Internal, "The desktop's answer was lost."))
+            .unwrap_or_else(|| {
+                (
+                    Answer::err(Code::Internal, "The desktop's answer was lost."),
+                    None,
+                )
+            })
     }
 
     /// The desktop of `uid` answers ask `id`.
-    fn answer(&self, uid: u32, id: u32, a: Answer) -> Answer {
+    fn answer(&self, uid: u32, id: u32, a: Answer, file: Option<OwnedFd>) -> Answer {
         let mut t = self.lock();
         let Some(w) = t
             .waiting
@@ -157,7 +185,7 @@ impl Asks {
         else {
             return Answer::err(Code::InvalidArgument, "Nothing is waiting for that answer.");
         };
-        w.answer = Some(a);
+        w.answer = Some((a, file));
         self.answered.notify_all();
         Answer::ok()
     }
@@ -211,6 +239,7 @@ fn doing(capability: &str) -> Option<&'static str> {
         "clipboard-read" => "read the clipboard",
         "clipboard-write" => "change the clipboard",
         "app-preferences" => "keep preferences",
+        "file-panels" => "show file panels",
         _ => return None,
     })
 }
@@ -227,14 +256,63 @@ fn denial(capability: &str, app: &str) -> String {
     }
 }
 
-/// One call line's JSON -> answer. Nothing happens unless the call decodes, the caller is known
-/// and the caller's executable holds the call's capability.
+/// What goes back besides the answer line.
+#[derive(Default)]
+pub struct Extra {
+    /// Sent to the caller with the answer.
+    pub file: Option<OwnedFd>,
+}
+
+fn panel<W: Write + Send>(
+    st: &State,
+    bus: &Bus<W>,
+    caller: &Caller,
+    extra: &mut Extra,
+    save: bool,
+    title: String,
+    name: String,
+) -> Answer {
+    let ask = Ask::Panel { save, title, name };
+    let (a, file) = st.asks.ask_for_file(bus, caller.uid, ask, PANEL_TIMEOUT);
+    extra.file = file;
+    a
+}
+
+/// [`respond`] for a call with nothing attached and nothing but an answer to send.
 pub fn handle<W: Write + Send>(
     json: &str,
     caller: Option<&Caller>,
     grants: &dyn Grants,
     bus: &Bus<W>,
     st: &State,
+) -> Answer {
+    respond(json, caller, grants, bus, st, None).0
+}
+
+/// One call line's JSON -> answer. Nothing happens unless the call decodes, the caller is known
+/// and the caller's executable holds the call's capability. `attached` is a descriptor that came
+/// with the line; only an answer from the desktop uses it.
+pub fn respond<W: Write + Send>(
+    json: &str,
+    caller: Option<&Caller>,
+    grants: &dyn Grants,
+    bus: &Bus<W>,
+    st: &State,
+    attached: Option<OwnedFd>,
+) -> (Answer, Extra) {
+    let mut extra = Extra::default();
+    let a = decide(json, caller, grants, bus, st, attached, &mut extra);
+    (a, extra)
+}
+
+fn decide<W: Write + Send>(
+    json: &str,
+    caller: Option<&Caller>,
+    grants: &dyn Grants,
+    bus: &Bus<W>,
+    st: &State,
+    attached: Option<OwnedFd>,
+    extra: &mut Extra,
 ) -> Answer {
     let notes = &st.notes;
     let call = match Call::decode(json.as_bytes()) {
@@ -336,12 +414,14 @@ pub fn handle<W: Write + Send>(
         Call::PrefsSet { key, value } => st.prefs.set(caller.uid, &caller.app, key, value),
         Call::PrefsRemove { key } => st.prefs.remove(caller.uid, &caller.app, &key),
         Call::PrefsKeys {} => st.prefs.keys(caller.uid, &caller.app),
+        Call::PanelOpen { title } => panel(st, bus, caller, extra, false, title, String::new()),
+        Call::PanelSave { title, name } => panel(st, bus, caller, extra, true, title, name),
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),
                 None => data.map_or_else(Answer::ok, Answer::with),
             };
-            st.asks.answer(caller.uid, id, a)
+            st.asks.answer(caller.uid, id, a, attached)
         }
         Call::NotificationAnswer { id, key } => {
             let Some(pid) = notes.owner(id, caller.uid) else {

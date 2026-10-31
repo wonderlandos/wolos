@@ -1,0 +1,7 @@
+# libwol 1.5 exports (WOL_1.5). Never edit a shipped line.
+wol_file_get_fd@WOL_1.5
+wol_file_get_name@WOL_1.5
+wol_file_release@WOL_1.5
+wol_file_retain@WOL_1.5
+wol_panel_open@WOL_1.5
+wol_panel_save@WOL_1.5

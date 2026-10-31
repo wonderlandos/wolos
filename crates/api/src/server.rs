@@ -5,7 +5,9 @@ use crate::packages;
 use crate::portal::{self, Caller, Grants};
 use shared::events::Event;
 use shared::jobs::{JobRequest, Reply};
+use shared::sys::{FdReader, send_with_fd};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::AsFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 
@@ -35,7 +37,7 @@ pub fn serve(
     let who = peer.map(|p| (p.uid, p.pid));
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(5)));
     let mut line = String::new();
-    let mut reader = BufReader::new(stream.try_clone().expect("clone socket"));
+    let mut reader = BufReader::new(FdReader::new(stream.try_clone().expect("clone socket")));
     if reader
         .by_ref()
         .take(64 * 1024)
@@ -44,6 +46,7 @@ pub fn serve(
     {
         return;
     }
+    let attached = reader.get_mut().fd.take();
     let req = JobRequest::parse(&line);
     match &req {
         Some(JobRequest::Subscribe) => {
@@ -81,7 +84,13 @@ pub fn serve(
                     &packages::Host,
                 )
             } else {
-                portal::handle(json, who.as_ref(), grants, bus, state)
+                let (answer, extra) =
+                    portal::respond(json, who.as_ref(), grants, bus, state, attached);
+                if let Some(file) = extra.file {
+                    let _ = send_with_fd(&stream, answer.to_line().as_bytes(), file.as_fd());
+                    return;
+                }
+                answer
             };
             let mut w = &stream;
             let _ = w.write_all(answer.to_line().as_bytes());
@@ -235,6 +244,52 @@ mod tests {
         let mut other = String::new();
         let _ = BufReader::new(&plain).read_line(&mut other);
         assert_eq!(other, "", "plain subscribers never see notifications");
+    }
+
+    #[test]
+    fn a_panel_hands_the_app_only_the_file_the_desktop_attached() {
+        let bus = Bus::default();
+        let state = portal::State::default();
+        let sub = call("subscribe account\n", &bus);
+        let path = std::env::temp_dir().join(format!("wol-panel-{}", std::process::id()));
+        std::fs::write(&path, "picked").unwrap();
+        std::thread::scope(|t| {
+            let (srv, mut app) = UnixStream::pair().unwrap();
+            app.write_all(b"call {\"call\":\"panel.open\",\"title\":\"Open\"}\n")
+                .unwrap();
+            t.spawn(|| serve(srv, me(), &Empty, &bus, &AllowAll, &state));
+
+            let mut line = String::new();
+            BufReader::new(&sub).read_line(&mut line).unwrap();
+            let Some(Event::SessionAsk { id, ask, .. }) = Event::parse(&line) else {
+                panic!("{line}")
+            };
+            assert_eq!(
+                ask,
+                shared::portal::Ask::Panel {
+                    save: false,
+                    title: "Open".into(),
+                    name: String::new()
+                }
+            );
+            let (srv, desktop) = UnixStream::pair().unwrap();
+            let file = std::fs::File::open(&path).unwrap();
+            let reply = format!(
+                "call {{\"call\":\"session.answer\",\"id\":{id},\"data\":{{\"name\":\"a.txt\"}}}}\n"
+            );
+            send_with_fd(&desktop, reply.as_bytes(), file.as_fd()).unwrap();
+            serve(srv, me(), &Empty, &bus, &AllowAll, &state);
+            let mut r = BufReader::new(FdReader::new(app.try_clone().unwrap()));
+            let mut got = String::new();
+            r.read_line(&mut got).unwrap();
+            assert_eq!(got, "{\"ok\":true,\"data\":{\"name\":\"a.txt\"}}\n");
+            let mut text = String::new();
+            std::fs::File::from(r.get_mut().fd.take().unwrap())
+                .read_to_string(&mut text)
+                .unwrap();
+            assert_eq!(text, "picked");
+        });
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
