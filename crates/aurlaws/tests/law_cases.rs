@@ -309,3 +309,82 @@ fn what_runs_on_its_own_from_the_package_must_come_from_the_sources() {
         [L::UndeclaredPersistence]
     );
 }
+
+fn off_home(url: &str, source: &str, sum: &str) -> bool {
+    let p = format!(
+        "pkgname=brave-bin\npkgver=1\npkgrel=1\narch=(x86_64)\nurl={url}\nsource=({source})\nsha256sums=({sum})\n"
+    );
+    laws(&p, None).contains(&L::SourceOffUpstream)
+}
+
+#[test]
+fn a_maker_on_a_shared_host_is_still_the_maker() {
+    assert!(!off_home(
+        "https://brave.com",
+        "https://github.com/brave/brave-browser/releases/download/v1/b.tar.gz",
+        SUM
+    ));
+    assert!(!off_home(
+        "https://sinelaw.github.io/fresh/",
+        "https://github.com/sinelaw/fresh/archive/1.tar.gz",
+        SUM
+    ));
+    assert!(!off_home(
+        "https://github.com/acme/brave",
+        "https://patch-diff.githubusercontent.com/raw/acme/brave/pull/2.patch",
+        SUM
+    ));
+}
+
+#[test]
+fn a_second_domain_counts_only_with_a_pin() {
+    assert!(!off_home(
+        "https://slack.com/downloads",
+        "https://downloads.slack-edge.com/a.deb",
+        SUM
+    ));
+    assert!(off_home(
+        "https://slack.com/downloads",
+        "https://downloads.slack-edge.com/a.deb",
+        "SKIP"
+    ));
+}
+
+#[test]
+fn a_stranger_stays_off_home_however_the_file_is_named() {
+    assert!(off_home(
+        "https://brave.com",
+        "https://github.com/mallory/brave-patch/releases/download/v1/b.tar.gz",
+        SUM
+    ));
+    assert!(off_home(
+        "https://brave.com",
+        "http://203.0.113.9/brave/brave-browser.tar.gz",
+        SUM
+    ));
+    assert!(off_home(
+        "https://brave.com",
+        "https://cdn.invalid/brave-bin.tar.gz",
+        SUM
+    ));
+}
+
+#[test]
+fn a_licence_is_paperwork() {
+    assert!(!off_home(
+        "https://brave.com",
+        "https://code.example.org/docs/LICENSE.md",
+        "SKIP"
+    ));
+    let p = "pkgname=brave-bin\npkgver=1\npkgrel=1\narch=(x86_64)\nurl=https://brave.com\nsource=(https://brave.com/LICENSE)\nsha256sums=(SKIP)\n";
+    assert_eq!(laws(p, None), []);
+}
+
+#[test]
+fn a_helper_is_read_as_what_it_is() {
+    let p = "pkgname=demo\npkgver=1\npkgrel=1\narch=(any)\nurl=https://example.org\nsource=(https://example.org/a.tar.gz patcher.php)\nsha256sums=(SUM SUM)\nbuild() { php patcher.php; }\n".replace("SUM", SUM);
+    let php = "<?php\n$a = file_get_contents($argv[1]);\nfile_put_contents($argv[1], $a);\n";
+    let files = std::collections::HashMap::from([("patcher.php".to_owned(), php.to_owned())]);
+    let r = aurlaws::judge_with(&p, &files, &aurlaws::Evidence::default());
+    assert!(r.findings.is_empty(), "{:?}", r.findings);
+}

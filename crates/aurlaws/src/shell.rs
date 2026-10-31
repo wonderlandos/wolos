@@ -1267,6 +1267,17 @@ impl<'g> Walker<'g> {
             "sha256sum" | "sha512sum" | "sha1sum" | "sha224sum" | "sha384sum" | "md5sum"
             | "b2sum" | "cksum" | "gpg" | "gpg2" | "minisign" | "cosign" | "signify"
             | "pacman-key" => self.verify(&b, &args, loc),
+            "head" | "tail" if args.iter().any(|a| a.text.starts_with("-c")) => {
+                self.decode(&b, &args, loc)
+            }
+            "sed"
+                if !self.lenient
+                    && !args
+                        .iter()
+                        .any(|a| a.text.starts_with("-i") || a.text == "--in-place") =>
+            {
+                self.rewrite(&args, loc)
+            }
             "base64" | "base32" | "basenc" | "xxd" | "uudecode" | "openssl" | "tr" | "rev"
             | "xz" | "gzip" | "bzip2" | "zstd" | "lzma" | "zcat" | "xzcat" | "bzcat"
             | "zstdcat" | "gunzip" | "unxz" => self.decode(&b, &args, loc),
@@ -1716,7 +1727,9 @@ impl<'g> Walker<'g> {
             "base64" | "base32" => flag(&["-d", "-D", "--decode", "-di", "-id"]),
             "basenc" => flag(&["-d", "--decode"]),
             "xxd" => flag(&["-r", "-ps", "-rp", "-r -p"]) && flag(&["-r", "-rp"]),
-            "uudecode" | "rev" | "zcat" | "xzcat" | "bzcat" | "zstdcat" | "gunzip" | "unxz" => true,
+            // Cutting bytes out of a file is how a script hides in a data file.
+            "uudecode" | "rev" | "zcat" | "xzcat" | "bzcat" | "zstdcat" | "gunzip" | "unxz"
+            | "head" | "tail" => true,
             "xz" | "gzip" | "bzip2" | "zstd" | "lzma" => {
                 flag(&["-d", "-dc", "-cd", "-dk", "--decompress"])
             }
@@ -1772,6 +1785,30 @@ impl<'g> Walker<'g> {
                 };
                 self.write_stdout_text(folded);
             }
+        }
+    }
+
+    /// `sed` writing a new file changes text on its way through, like any other decoder.
+    fn rewrite(&mut self, args: &[Val], loc: Option<Loc>) {
+        let proc = self.process("sed", loc.clone());
+        self.feed(args, proc, &loc);
+        let pos = positional(args);
+        if pos.len() >= 2 {
+            let p = self.path(&pos[pos.len() - 1].text);
+            let f = self.file_node(&p, loc.clone());
+            // Editing a script leaves a script. Turning data into one is what hides code.
+            let code = ["py", "sh", "bash", "pl", "rb", "js", "in"]
+                .contains(&p.rsplit('.').next().unwrap_or(""));
+            self.g.edge(
+                f,
+                proc,
+                if code { E::Reads } else { E::Decodes },
+                loc.clone(),
+            );
+        }
+        self.connect_stdio(proc, &loc);
+        if let Some(i) = self.stdin {
+            self.g.edge(i, proc, E::Decodes, loc);
         }
     }
 
@@ -1924,6 +1961,14 @@ impl<'g> Walker<'g> {
     }
 
     fn interpreter(&mut self, b: &str, args: &[Val], loc: Option<Loc>) {
+        if let Some(i) = args.iter().position(|a| a.text == "-m") {
+            if matches!(
+                args.get(i + 1).map(|a| a.text.as_str()),
+                Some("pip" | "pip3")
+            ) {
+                return self.registry("pip", &args[i + 2..], loc);
+            }
+        }
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
         let code_flag = args
@@ -1936,7 +1981,10 @@ impl<'g> Walker<'g> {
                 }
                 if code.complete {
                     let line = loc.as_ref().map(|l| l.line).unwrap_or(0);
-                    crate::langs::inline(self.g, b, &code.text, &self.file, line, self.stage, proc);
+                    let file = self.file.clone();
+                    if crate::langs::inline(self.g, b, &code.text, &file, Some(line), self.stage) {
+                        self.dark(proc);
+                    }
                 } else {
                     self.dark(proc);
                 }
@@ -1979,6 +2027,10 @@ impl<'g> Walker<'g> {
     /// `f` is run by `proc`: tie its content in, and follow it if it is a helper we hold.
     fn exec_file(&mut self, f: &Val, proc: NodeId, loc: &Option<Loc>) {
         if !f.complete {
+            // `source <(curl ...)`: what flowed in is what runs.
+            for t in &f.taints {
+                self.g.edge(*t, proc, E::Executes, loc.clone());
+            }
             self.dark(proc);
             return;
         }
@@ -1995,7 +2047,36 @@ impl<'g> Walker<'g> {
             && self.walked_helpers.insert(name.clone())
         {
             let text = self.scope.helpers[&name].clone();
-            self.follow(&name, &text);
+            self.read_helper(&name, &text, proc);
+        }
+    }
+
+    /// Read a file the package carries as what it is. Only shell goes to the shell parser, and a
+    /// file run directly that is no script at all cannot be read: that is a finding.
+    fn read_helper(&mut self, name: &str, text: &str, proc: NodeId) {
+        let runner = self.g.nodes[proc as usize].label.clone();
+        let line = text.lines().next().unwrap_or("");
+        let bang = line.strip_prefix("#!").map(str::to_owned);
+        let shellish = |s: &str| s.split(['/', ' ']).any(|w| SHELLS.contains(&w));
+        let other = |s: &str| s.split(['/', ' ']).find(|w| interp(w)).map(str::to_owned);
+        if SHELLS.contains(&runner.as_str()) || runner == "source" {
+            self.follow(name, text);
+        } else if interp(&runner) {
+            self.foreign(&runner, name, text, proc);
+        } else if bang.as_deref().is_some_and(shellish)
+            || (bang.is_none() && (name.ends_with(".sh") || name.ends_with(".bash")))
+        {
+            self.follow(name, text);
+        } else if let Some(i) = bang.as_deref().and_then(other) {
+            self.foreign(&i, name, text, proc);
+        } else {
+            self.dark(proc);
+        }
+    }
+
+    fn foreign(&mut self, interp: &str, name: &str, text: &str, proc: NodeId) {
+        if crate::langs::inline(self.g, interp, text, name, None, self.stage) {
+            self.dark(proc);
         }
     }
 
@@ -2096,6 +2177,18 @@ impl<'g> Walker<'g> {
                         | "--no-index"
                 )
             });
+        // Installing from an address fetches a package and runs its install code at once.
+        if installing && !locked {
+            for a in args
+                .iter()
+                .skip(1)
+                .filter(|a| a.text.contains("://") && !a.text.contains("sha256="))
+            {
+                let id = self.url(&a.text, loc.clone());
+                self.g.edge(id, proc, E::Fetches, loc.clone());
+                self.g.edge(id, proc, E::Executes, loc.clone());
+            }
+        }
         if installing && !locked {
             self.notes.push(Note {
                 text: format!("{b} {sub} downloads and may run code that no lockfile pins"),

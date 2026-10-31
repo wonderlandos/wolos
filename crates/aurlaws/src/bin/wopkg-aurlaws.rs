@@ -6,6 +6,7 @@
 //! no `block`: a broken law asks for review, and the person decides.
 //! A separate process on purpose: it reads hostile text, and a crash here cannot pass a package.
 use aurlaws::graph::Stage;
+use aurlaws::laws::{LawId, Origin, Severity};
 use aurlaws::{Evidence, Verdict, observed, render, upstream};
 use std::collections::HashMap;
 use std::path::Path;
@@ -24,8 +25,9 @@ fn text_files(dir: &Path) -> HashMap<String, String> {
             continue;
         }
         if e.metadata().is_ok_and(|m| m.len() < MAX_FILE) {
-            if let Ok(t) = std::fs::read_to_string(e.path()) {
-                out.insert(name, t);
+            // A binary stays listed, so that running it can be seen as running what cannot be read.
+            if let Ok(b) = std::fs::read(e.path()) {
+                out.insert(name, String::from_utf8_lossy(&b).into_owned());
             }
         }
     }
@@ -211,11 +213,24 @@ fn main() {
         None => format!("{}.", n.text),
     }));
     evidence.push(r.disclaimer.clone());
-    let verdict = if r.verdict == Verdict::NeedsReview {
-        "flag"
-    } else {
-        "pass"
+    let blocked = r.findings.iter().any(|f| {
+        f.law == LawId::CredentialToNetwork
+            || (f.origin == Origin::Observed && f.severity == Severity::High)
+    });
+    let (verdict, state) = match (blocked, r.verdict == Verdict::NeedsReview) {
+        (true, _) => ("block", "Blocked"),
+        (_, true) => ("flag", "Needs Review"),
+        _ => ("pass", "No Law Broken"),
     };
-    let out = serde_json::json!({"verdict": verdict, "evidence": evidence, "findings": r.findings, "notes": r.notes, "meta": r.meta, "graph": drawn});
+    let mut flags: Vec<(LawId, usize)> = Vec::new();
+    for f in &r.findings {
+        match flags.iter_mut().find(|x| x.0 == f.law) {
+            Some(x) => x.1 += 1,
+            None => flags.push((f.law, 1)),
+        }
+    }
+    flags.sort_by_key(|x| (x.0.severity(), x.0));
+    let flags: Vec<_> = flags.iter().map(|(l, n)| serde_json::json!({"law": l, "title": l.title(), "severity": l.severity(), "count": n})).collect();
+    let out = serde_json::json!({"verdict": verdict, "state": state, "flags": flags, "evidence": evidence, "findings": r.findings, "notes": r.notes, "meta": r.meta, "graph": drawn});
     println!("{out}");
 }

@@ -115,21 +115,24 @@ pub fn term(r: &Report, package_files: &[String]) -> String {
             .as_deref()
             .is_some_and(|x| !x.is_empty() && x != "SKIP");
         let mut t = Vec::new();
-        if !hosts::on_upstream(&m.url, url, &m.pkgnames, s.pinned || summed) {
+        let paper = hosts::paperwork(url) && hosts::paperwork(&s.name);
+        if !paper && !hosts::on_upstream(&m.url, url, &m.pkgnames, s.pinned || summed) {
             t.push("R.OffHome{}");
         }
-        if bin && !s.vcs && !summed {
+        if bin && !s.vcs && !summed && !paper {
             t.push("R.NoSum{}");
         }
         if !t.is_empty() {
             extra.push(format!("R.Node{{{}, [{}]}}", base + k as u32, t.join(", ")));
         }
     }
+    let mut more = base + m.sources.len() as u32;
     if r.truncated {
-        extra.push(format!(
-            "R.Node{{{}, [R.Gap{{}}]}}",
-            base + m.sources.len() as u32
-        ));
+        extra.push(format!("R.Node{{{more}, [R.Gap{{}}]}}"));
+    }
+    for _ in crate::laws::stray_fetches(&r.graph, m) {
+        more += 1;
+        extra.push(format!("R.Node{{{more}, [R.OffHome{{}}]}}"));
     }
     let _ = write!(tagged, "R.Graph{{[{}], [", extra.join(", "));
     let mut first = true;

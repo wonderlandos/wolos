@@ -15,7 +15,7 @@ const MAX_FILE: u64 = 2_000_000;
 const MAX_CONFIGURE: u64 = 8_000_000;
 const MAX_FILES: usize = 20_000;
 /// Bump when analysis changes, so old cached graphs are not reused.
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 const SKIP_DIRS: &[&str] = &[
     ".git",
     ".hg",
@@ -133,6 +133,91 @@ fn role(rel: &str) -> Option<Role> {
     })
 }
 
+/// Files a build runs on its way in. A helper they call is judged by what flows, as a build
+/// system is; these are judged in full.
+fn entry(rel: &str) -> bool {
+    matches!(
+        rel.rsplit('/').next().unwrap_or(rel),
+        "setup.py"
+            | "build.py"
+            | "install.py"
+            | "wscript"
+            | "noxfile.py"
+            | "build.rs"
+            | "install.js"
+            | "postinstall.js"
+            | "preinstall.js"
+            | "build.js"
+    )
+}
+
+/// C that runs before `main` whether or not anyone calls it, the way the xz backdoor hooked in.
+fn runs_before_main(rel: &str, path: &Path) -> bool {
+    let ext = rel.rsplit_once('.').map_or("", |x| x.1);
+    if !matches!(ext, "c" | "cc" | "cpp" | "cxx")
+        || rel
+            .rsplit_once('/')
+            .is_some_and(|x| x.0.split('/').any(idle))
+    {
+        return false;
+    }
+    let small = std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_FILE);
+    small
+        && std::fs::read(path).is_ok_and(|b| {
+            let t = String::from_utf8_lossy(&b);
+            t.contains("__attribute__") && (t.contains("constructor") || t.contains("ifunc"))
+        })
+}
+
+/// Modules `setup.py` imports from the source tree run with it, however quiet their names.
+fn local_imports(root: &Path, files: &mut Vec<(String, Role)>) {
+    let mut queue: Vec<String> = files
+        .iter()
+        .filter(|(r, _)| r.rsplit('/').next() == Some("setup.py"))
+        .map(|(r, _)| r.clone())
+        .collect();
+    let mut left = 50;
+    while let Some(rel) = queue.pop() {
+        let Ok(text) = std::fs::read_to_string(root.join(&rel)) else {
+            continue;
+        };
+        let dir = rel.rsplit_once('/').map_or("", |x| x.0).to_owned();
+        for l in text.lines() {
+            let l = l.trim();
+            let mods: Vec<&str> = if let Some(r) = l.strip_prefix("from ") {
+                r.split_whitespace().next().into_iter().collect()
+            } else if let Some(r) = l.strip_prefix("import ") {
+                r.split(',')
+                    .filter_map(|m| m.split_whitespace().next())
+                    .collect()
+            } else {
+                continue;
+            };
+            for m in mods {
+                let stem = m.trim_start_matches('.').replace('.', "/");
+                let at = |p: String| {
+                    if dir.is_empty() {
+                        p
+                    } else {
+                        format!("{dir}/{p}")
+                    }
+                };
+                for c in [at(format!("{stem}.py")), at(format!("{stem}/__init__.py"))] {
+                    if left > 0
+                        && !stem.is_empty()
+                        && root.join(&c).is_file()
+                        && !files.iter().any(|(r, _)| *r == c)
+                    {
+                        left -= 1;
+                        files.push((c.clone(), Role::Code(Lang::Python)));
+                        queue.push(c);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn collect(root: &Path) -> (Vec<(String, Role)>, usize) {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -155,7 +240,9 @@ fn collect(root: &Path) -> (Vec<(String, Role)>, usize) {
                     .unwrap_or(&p)
                     .to_string_lossy()
                     .replace('\\', "/");
-                if let Some(r) = role(&rel) {
+                let found = role(&rel)
+                    .or_else(|| runs_before_main(&rel, &p).then_some(Role::Code(Lang::C)));
+                if let Some(r) = found {
                     if out.len() >= MAX_FILES {
                         too_many += 1;
                     } else {
@@ -165,6 +252,7 @@ fn collect(root: &Path) -> (Vec<(String, Role)>, usize) {
             }
         }
     }
+    local_imports(root, &mut out);
     out.sort_by(|a, b| a.0.cmp(&b.0));
     (out, too_many)
 }
@@ -363,7 +451,7 @@ fn analyse(rel: &str, r: Role, text: &str) -> Entry {
     w.enter_file(rel, Stage::Upstream);
     // Build systems pass commands through variables all the way down, so here only what can be
     // traced flowing into them is judged. A PKGBUILD gets no such allowance.
-    w.lenient = !matches!(r, Role::Code(_));
+    w.lenient = !(matches!(r, Role::Code(_)) && entry(rel));
     let mut ok = true;
     match r {
         Role::Shell => w.walk_file(text, rel, Stage::Upstream),

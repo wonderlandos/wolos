@@ -664,20 +664,70 @@ pub fn inline(
     interp: &str,
     code: &str,
     file: &str,
-    line: u32,
+    line: Option<u32>,
     stage: Stage,
-    _proc: NodeId,
-) {
+) -> bool {
     let lang = match interp {
         x if x.starts_with("python") => Lang::Python,
         "node" | "nodejs" | "deno" | "bun" => Lang::Js,
-        _ => return,
+        _ => return inline_shell(g, code, file, line, stage),
     };
     let mut sub = Graph::new();
     let mut w = Walker::new(&mut sub, Scope::default());
-    if !walk(lang, code, file, stage, &mut w, Some(line)) {
+    if !walk(lang, code, file, stage, &mut w, line) {
         w.truncated = true;
     }
     drop(w);
     g.merge(&sub);
+    false
+}
+
+/// For languages with no parser here: the commands they spell out are shell, and those are read.
+fn inline_shell(g: &mut Graph, code: &str, file: &str, line: Option<u32>, stage: Stage) -> bool {
+    let (commands, blind) = embedded_shell(code);
+    let mut sub = Graph::new();
+    let mut w = Walker::new(&mut sub, Scope::default());
+    for c in &commands {
+        w.snippet(c, file, line.unwrap_or(1), stage);
+    }
+    drop(w);
+    g.merge(&sub);
+    blind
+}
+
+/// Commands held in Perl, Ruby or PHP text, and whether any call hides what it runs.
+pub fn embedded_shell(code: &str) -> (Vec<String>, bool) {
+    let mut out: Vec<String> = code
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    let mut blind = false;
+    let word = |c: Option<char>| {
+        c.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '@')
+    };
+    for kw in [
+        "system",
+        "exec",
+        "popen",
+        "shell_exec",
+        "passthru",
+        "qx",
+        "%x",
+        "eval",
+    ] {
+        for (at, _) in code.match_indices(kw) {
+            if word(code[..at].chars().next_back()) || word(code[at + kw.len()..].chars().next()) {
+                continue;
+            }
+            let rest = code[at + kw.len()..].trim_start_matches([' ', '(', '{', '[']);
+            let quote = rest.chars().next().filter(|c| matches!(c, '"' | '\''));
+            match quote.and_then(|q| rest[1..].find(q).map(|end| &rest[1..end + 1])) {
+                Some(body) if kw != "eval" => out.push(body.to_owned()),
+                _ => blind = true,
+            }
+        }
+    }
+    (out, blind)
 }

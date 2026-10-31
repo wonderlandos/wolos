@@ -26,6 +26,56 @@ pub enum LawId {
     IncompleteEvidence,
 }
 
+/// How much a broken law says. The state a package gets follows from this and from what showed it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Severity {
+    High,
+    Medium,
+    Low,
+}
+
+impl LawId {
+    /// The flag's name on every surface.
+    pub fn title(self) -> &'static str {
+        match self {
+            LawId::FetchExecuteUnverified => "Runs a Download Unchecked",
+            LawId::DecodeExecute => "Runs Hidden Code",
+            LawId::UnresolvedDynamic => "Runs Code That Can't Be Read",
+            LawId::WriteOutsidePackage => "Writes Outside Its Folders",
+            LawId::ReadCredentials => "Reads Secrets",
+            LawId::CredentialToNetwork => "Sends Secrets Out",
+            LawId::ScriptletUndeclaredFile => "Changes Files It Doesn't Own",
+            LawId::SourceOffUpstream => "Downloads From Another Site",
+            LawId::UndeclaredPersistence => "Starts Itself Again",
+            LawId::PostinstallNetwork => "Uses the Network While Installing",
+            LawId::BinChecksumUpstream => "Binary Not Tied to Upstream",
+            LawId::UnexplainedNewEdge => "New Behaviour in This Version",
+            LawId::ObservedMismatch => "Did What It Didn't Say",
+            LawId::IncompleteEvidence => "Not Fully Read",
+        }
+    }
+
+    pub fn severity(self) -> Severity {
+        match self {
+            LawId::FetchExecuteUnverified
+            | LawId::DecodeExecute
+            | LawId::ReadCredentials
+            | LawId::CredentialToNetwork
+            | LawId::PostinstallNetwork
+            | LawId::ObservedMismatch => Severity::High,
+            LawId::WriteOutsidePackage
+            | LawId::ScriptletUndeclaredFile
+            | LawId::UndeclaredPersistence
+            | LawId::BinChecksumUpstream
+            | LawId::UnexplainedNewEdge => Severity::Medium,
+            LawId::UnresolvedDynamic | LawId::SourceOffUpstream | LawId::IncompleteEvidence => {
+                Severity::Low
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Step {
     pub node: String,
@@ -37,6 +87,8 @@ pub struct Step {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Finding {
     pub law: LawId,
+    pub title: &'static str,
+    pub severity: Severity,
     /// The exact path, in one plain sentence, with file and line.
     pub sentence: String,
     pub path: Vec<Step>,
@@ -55,6 +107,8 @@ pub enum Origin {
 fn finding(law: LawId, sentence: String, path: Vec<Step>) -> Finding {
     Finding {
         law,
+        title: law.title(),
+        severity: law.severity(),
         sentence,
         path,
         origin: Origin::Static,
@@ -360,7 +414,8 @@ impl<'a> View<'a> {
                 .sum
                 .as_deref()
                 .is_some_and(|x| !x.is_empty() && x != "SKIP");
-            if !hosts::on_upstream(&m.url, url, &m.pkgnames, s.pinned || summed) {
+            let paper = hosts::paperwork(url) && hosts::paperwork(&s.name);
+            if !paper && !hosts::on_upstream(&m.url, url, &m.pkgnames, s.pinned || summed) {
                 let sentence = format!(
                     "{loc} downloads {url}, which is not on the project's declared home {}.",
                     m.url
@@ -372,12 +427,25 @@ impl<'a> View<'a> {
                 ));
             }
             let unsummed = s.sum.as_deref().is_none_or(|x| x.is_empty() || x == "SKIP");
-            if bin && !s.vcs && unsummed {
+            if bin && !s.vcs && unsummed && !paper {
                 let sentence = format!(
                     "{loc} downloads the binary {url} with no checksum, so nothing ties it to what upstream published."
                 );
                 out.push(finding(LawId::BinChecksumUpstream, sentence, vec![step]));
             }
+        }
+        for (n, loc) in stray_fetches(self.g, m) {
+            let node = &self.g.nodes[n as usize];
+            let at = loc.as_ref().map(|l| format!("{l} ")).unwrap_or_default();
+            let sentence = format!(
+                "{at}downloads {} during the build, which is not on the project's declared home {}.",
+                node.label, m.url
+            );
+            out.push(finding(
+                LawId::SourceOffUpstream,
+                sentence,
+                vec![self.step(n, loc)],
+            ));
         }
     }
 
@@ -413,6 +481,28 @@ impl<'a> View<'a> {
         }
         (parts.join(", then "), steps)
     }
+}
+
+/// Trees the package's own scripts clone by themselves, off the declared home: a source in all
+/// but name. A plain download has its own laws, which follow where the file goes.
+pub(crate) fn stray_fetches(g: &Graph, m: &Meta) -> Vec<(NodeId, Option<Loc>)> {
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for e in &g.edges {
+        let (s, d) = (&g.nodes[e.src as usize], &g.nodes[e.dst as usize]);
+        if e.kind == E::Fetches
+            && s.kind == K::Url
+            && d.kind == K::Process
+            && matches!(d.label.as_str(), "git" | "svn" | "hg")
+            && !matches!(d.stage, Stage::Upstream | Stage::Scriptlet)
+            && !s.label.contains('$')
+            && !hosts::on_upstream(&m.url, &s.label, &m.pkgnames, false)
+            && seen.insert(e.src)
+        {
+            out.push((e.src, e.loc.clone()));
+        }
+    }
+    out
 }
 
 pub(crate) fn check(v: &View) -> Vec<Finding> {

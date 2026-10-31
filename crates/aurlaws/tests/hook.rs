@@ -236,3 +236,28 @@ fn the_report_names_the_graph_only_when_it_was_written() {
     assert_eq!(graph_of(&good), good.to_str().unwrap());
     assert!(graph_of(&d.join("no-such-folder/g.svg")).is_null());
 }
+
+#[test]
+fn every_answer_has_one_state_and_named_flags() {
+    let v = run(&dir("state", NOISY), None);
+    assert_eq!(v["state"], "Needs Review", "{v}");
+    let f = &v["flags"][0];
+    assert!(
+        f["title"].is_string() && f["severity"].is_string() && f["count"].as_u64().unwrap() >= 1,
+        "{v}"
+    );
+    assert!(v["findings"][0]["severity"].is_string());
+    let quiet = run(&dir("state2", QUIET), None);
+    assert_eq!(quiet["state"], "No Law Broken", "{quiet}");
+    assert_eq!(quiet["flags"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn a_secret_seen_leaving_is_blocked() {
+    let d = dir("block", QUIET);
+    let t = d.join("t");
+    std::fs::write(&t, "100 execve(\"/usr/bin/sh\", [\"sh\"], 0x1) = 0\n100 openat(AT_FDCWD, \"/work/home/.ssh/id_rsa\", O_RDONLY) = 3\n100 connect(4, {sa_family=AF_INET, sin_port=htons(443), sin_addr=inet_addr(\"203.0.113.5\")}, 16) = 0\n").unwrap();
+    let v = run(&d, Some(&t));
+    assert_eq!(v["verdict"], "block", "{v}");
+    assert_eq!(v["state"], "Blocked");
+}
