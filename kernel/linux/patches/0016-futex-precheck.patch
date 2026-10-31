@@ -1,7 +1,7 @@
-From 10304733c5bf2d7633b9aa282cd066afbdad2d13 Mon Sep 17 00:00:00 2001
+From 7ce5b223fb53ec93c11bf102b7c0d9bd16191711 Mon Sep 17 00:00:00 2001
 From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 15:52:47 -0300
-Subject: [PATCH 13/13] futex: a value that already differs returns before
+Subject: [PATCH 16/21] futex: a value that already differs returns before
  hashing
 
 FUTEX_WAIT and futex_waitv hashed the key and took the bucket lock

@@ -1,7 +1,7 @@
-From d1ddfdfa3448040e595ac1ecd1d33d6c18b98052 Mon Sep 17 00:00:00 2001
+From 6cd6ea60fae18ae5dbce6f195eda932fdee3b4c5 Mon Sep 17 00:00:00 2001
 From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 15:49:45 -0300
-Subject: [PATCH 11/13] futex: adaptive spin holds RCU across the bucket access
+Subject: [PATCH 14/21] futex: adaptive spin holds RCU across the bucket access
 
 futex_spin_wait() derives the hash bucket from q->lock_ptr and writes
 its spin_score after spinning. A private hash replaced by a concurrent

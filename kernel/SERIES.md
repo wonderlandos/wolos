@@ -22,10 +22,15 @@ The fork carries the former 0001-0003 (bounded futex spin, `/sys/kernel/wolos` h
 | 0007-vt-kbd-graphics-bypass | input | `kbd_event` returns early in K_OFF + KD_GRAPHICS (compositor session): no keymap, LED tasklet or console work per key; key_down kept | none upstream |
 | 0008-oom-foreground-bias | memory | OOM badness: foreground tgid /4, SCHED_IDLE + RAM/8; oom_score_adj on top | none upstream |
 | 0009-input-boost | input/cpufreq | input handler on key/button devices opens a `wolos_input_boost.ms` (100 ms) window, rate-limited 50 ms; schedutil floors CPUs at `floor_pct` (60%); `wolos_input_boost_chain` for GPU drivers; KUnit `wolos_policy` input_boost | Android cpu-boost idea, none upstream |
-| 0010-slub-sheaf-scale | memory | sheaf capacity x `slub_sheaf_scale` (1..4, default 2; 1 = stock); hackbench socket +4% vs scale 1 on one binary, not shown kept vs base; KUnit `wolos_slub_sheaf` | none upstream |
-| 0011-futex-spin-rcu | sync | 0004's spin holds RCU across the bucket access (a rehash frees the old hash by RCU) | fix to 0004 |
-| 0012-futex-waitv-inline | sync | `futex_waitv` on up to 4 futexes uses an on-stack vector, no kzalloc per call; `futex.waitv_inline=0`; KUnit `wolos_futex_spin` | none upstream |
-| 0013-futex-precheck | sync | FUTEX_WAIT and `futex_waitv` read the word first: a mismatch returns before hashing; `futex.precheck=0`; KUnit `wolos_futex_spin` | none upstream |
+| 0010-pipe-wake-check | ipc | skip the wait-queue lock when nobody sleeps; `pipe.wake_check=0`; single-thread write+read 4% faster; KUnit `wolos_pipe_wake` | none upstream |
+| 0011-sem-one-lock-read | ipc | GETVAL, GETPID, GETNCNT, GETZCNT take one semaphore's lock; `sem.read_one_lock=0`; semops next to a reader 13x; KUnit `wolos_sem_read` | none upstream |
+| 0012-slub-sheaf-scale | memory | sheaf capacity x `slub_sheaf_scale` (1..4, default 2; 1 = stock); hackbench socket +4% vs scale 1 on one binary, not shown against base; KUnit `wolos_slub_sheaf` | none upstream |
+| 0013-ntsync-inline-wait | sync | waits on up to 4 entries use a cache-aligned on-stack queue; `ntsync.inline_wait=0`; signaled waits 4.5% faster, blocking ping-pong 5% slower before the alignment, aligned version not measured; KUnit `wolos_ntsync_q` | none upstream |
+| 0014-futex-spin-rcu | sync | 0004's spin holds RCU across the bucket access | fix to 0004 |
+| 0015-futex-waitv-inline | sync | `futex_waitv` on up to 4 futexes uses an on-stack vector; `futex.waitv_inline=0`; KUnit `wolos_futex_spin` | none upstream |
+| 0016-futex-precheck | sync | FUTEX_WAIT and `futex_waitv` read the word first; `futex.precheck=0`; KUnit `wolos_futex_spin` | none upstream |
+| 0017-futex-waitv-spin | sync | adaptive spin for `futex_waitv`; `futex.waitv_spin=0`; waitv ping-pong 3350 to about 285 ns | none upstream |
+| 0018-futex-waitv-scan | sync | `futex_waitv` answers a mismatch in one user access window; any odd entry or fault takes the full path, so an invalid address after a mismatch, or an unreadable one before it, keeps its -EINVAL/-EFAULT (fixes 0016); `futex.precheck=0`; KUnit `wolos_futex_spin` waitv_scan_*, selftest `futex_waitv_semantics` | fix to 0016 |
 | 0030-wolos-bend | lib | `lib/wolos_bend`: CAS link/subst, Chase-Lev deques with batched stealing, worker arenas, generation-checked index pools, fork/join on idle CPUs; KUnit `wolos_bend` (UML, 4 CPUs) | WolOS-only |
 | 0031-clear-large-folios-parallel | memory | folios of 4 MiB and up clear on idle CPUs: 1 GiB first touch 91.7 to 24.1 ms idle, no gain with every CPU busy, 2 MiB THP unchanged; smaller folios pay one compare | none upstream |
 | 0032-syscall-exit-status-store | entry | no write to `thread_info.status` on 64-bit syscall exit unless a bit is set: `perf c2c` shows no more HITMs on the first `task_struct` line (976 of 14741 in `perf bench epoll wait`); throughput unchanged within noise | candidate |

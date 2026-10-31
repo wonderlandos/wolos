@@ -1,0 +1,96 @@
+From 8bba6a972121ce3f6adb1a8d85496f378dbb0610 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 15:53:06 -0300
+Subject: [PATCH 17/21] futex: adaptive spin for futex_waitv before it sleeps
+
+futex_waitv slept at once while FUTEX_WAIT already spins briefly when
+the CPU has nothing else to run. Use the same budget and per-bucket
+score (first futex's bucket) and spin until any futex of the vector is
+woken. Off: futex.waitv_spin=0, or futex.spin_ns=0 for both.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ kernel/futex/waitwake.c | 60 ++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 56 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/futex/waitwake.c b/kernel/futex/waitwake.c
+index d25d2130057..9fae31d9914 100644
+--- a/kernel/futex/waitwake.c
++++ b/kernel/futex/waitwake.c
+@@ -609,16 +609,68 @@ int futex_wait_multiple_setup(struct futex_vector *vs, int count, int *woken)
+  * Sleep if and only if the timeout hasn't expired and no futex on the list has
+  * been woken up.
+  */
++static bool futex_any_woken(struct futex_vector *vs, unsigned int count)
++{
++	for (; count; count--, vs++) {
++		if (!READ_ONCE(vs->q.lock_ptr))
++			return true;
++	}
++	return false;
++}
++
++/*
++ * WolKernel: the FUTEX_WAIT adaptive spin for futex_waitv() too, scored on
++ * the first futex's bucket. Wine/Proton fsync hand-offs between game threads
++ * land within a few microseconds. Off: futex.waitv_spin=0 (or spin_ns=0).
++ */
++static bool futex_waitv_spin_on __read_mostly = true;
++module_param_named(waitv_spin, futex_waitv_spin_on, bool, 0644);
++
++static void futex_spin_wait_multiple(struct futex_vector *vs, unsigned int count)
++{
++	struct futex_hash_bucket *hb;
++	spinlock_t *lock;
++	unsigned int score;
++	u64 budget, end;
++	bool woke;
++
++	if (!READ_ONCE(futex_waitv_spin_on) || num_online_cpus() < 2)
++		return;
++	/* A private hash is freed by RCU after a rehash: keep hb valid. */
++	guard(rcu)();
++	lock = READ_ONCE(vs[0].q.lock_ptr);
++	if (!lock)
++		return;
++	hb = container_of(lock, struct futex_hash_bucket, lock);
++	score = READ_ONCE(hb->spin_score);
++	budget = futex_spin_budget(READ_ONCE(futex_spin_ns), score,
++				   single_task_running());
++	if (!budget) {
++		if (!score && !(get_random_u32() & 63))
++			WRITE_ONCE(hb->spin_score, 1);
++		return;
++	}
++	end = local_clock() + budget;
++	while (!futex_any_woken(vs, count) && !need_resched() &&
++	       !signal_pending(current) && local_clock() < end)
++		cpu_relax();
++	woke = futex_any_woken(vs, count);
++	if (futex_spin_next(score, woke) != score)
++		WRITE_ONCE(hb->spin_score, futex_spin_next(score, woke));
++}
++
+ static void futex_sleep_multiple(struct futex_vector *vs, unsigned int count,
+ 				 struct hrtimer_sleeper *to)
+ {
+ 	if (to && !hrtimer_sleeper_task_get(to))
+ 		return;
+ 
+-	for (; count; count--, vs++) {
+-		if (!READ_ONCE(vs->q.lock_ptr))
+-			return;
+-	}
++	if (futex_any_woken(vs, count))
++		return;
++
++	futex_spin_wait_multiple(vs, count);
++	if (futex_any_woken(vs, count))
++		return;
+ 
+ 	schedule();
+ }
+-- 
+2.56.0
+

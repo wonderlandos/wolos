@@ -1,7 +1,7 @@
-From cd7ca20a638c4402d110e6f2fbbcda3ccb4f5e6f Mon Sep 17 00:00:00 2001
+From d3755aa512d4ba7fac0b839db1af1d467ecb67b7 Mon Sep 17 00:00:00 2001
 From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
 Date: Fri, 30 Oct 2026 14:31:53 -0300
-Subject: [PATCH 10/13] mm/slub: slub_sheaf_scale, bigger per-CPU sheaves
+Subject: [PATCH 12/21] mm/slub: slub_sheaf_scale, bigger per-CPU sheaves
 
 The sheaf base capacity (60/26/12/4 by object size) mirrors the old
 per-CPU partial sizing. Desktop churn drains a 26-object sheaf in a few

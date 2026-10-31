@@ -1,0 +1,198 @@
+From e1d951645d314f27134648d1eb0bd8b096251068 Mon Sep 17 00:00:00 2001
+From: Julia Klee <71413974+kleeedolinux@users.noreply.github.com>
+Date: Fri, 30 Oct 2026 14:10:07 -0300
+Subject: [PATCH 11/21] ipc/sem: one-semaphore semctl reads take only that
+ semaphore's lock
+
+GETVAL, GETPID, GETNCNT and GETZCNT took sem_perm.lock, walked every
+sem->lock in complexmode_enter() and forced the next ten simple semops
+onto the global lock. Take the per-semaphore lock like a single-sop
+semop instead; in simple mode the global pending lists are empty.
+Off: /sys/module/sem/parameters/read_one_lock=0. KUnit: wolos_sem_read.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+SPDX-License-Identifier: GPL-2.0-only
+---
+ init/Kconfig    |  5 ++++
+ ipc/sem.c       | 31 ++++++++++++++++++---
+ ipc/sem_kunit.c | 73 +++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 105 insertions(+), 4 deletions(-)
+ create mode 100644 ipc/sem_kunit.c
+
+diff --git a/init/Kconfig b/init/Kconfig
+index a91a948e0f7..bbb9131b229 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -297,6 +297,11 @@ config SYSVIPC_COMPAT
+ 	def_bool y
+ 	depends on COMPAT && SYSVIPC
+ 
++config SEM_READ_KUNIT_TEST
++	bool "KUnit test for the WolKernel one-semaphore semctl reads" if !KUNIT_ALL_TESTS
++	depends on SYSVIPC && KUNIT=y
++	default KUNIT_ALL_TESTS
++
+ config POSIX_MQUEUE
+ 	bool "POSIX Message Queues"
+ 	depends on NET
+diff --git a/ipc/sem.c b/ipc/sem.c
+index 5ec41de7e85..ef08df3ce7d 100644
+--- a/ipc/sem.c
++++ b/ipc/sem.c
+@@ -87,6 +87,7 @@
+ #include <linux/sched/wake_q.h>
+ #include <linux/nospec.h>
+ #include <linux/rhashtable.h>
++#include <linux/moduleparam.h>
+ 
+ #include <linux/uaccess.h>
+ #include "util.h"
+@@ -379,6 +380,18 @@ static void complexmode_tryleave(struct sem_array *sma)
+ }
+ 
+ #define SEM_GLOBAL_LOCK	(-1)
++
++/*
++ * WolKernel: GETVAL, GETPID, GETNCNT and GETZCNT read one semaphore, so they
++ * take that semaphore's lock like a single-sop semop instead of the whole
++ * array. Before, each call took sem_perm.lock, walked every sem->lock in
++ * complexmode_enter() and forced the next USE_GLOBAL_LOCK_HYSTERESIS simple
++ * semops onto the global lock. In simple mode the global pending lists are
++ * empty (unmerge_queues), so count_semcnt() sees the same queues.
++ * Off: /sys/module/sem/parameters/read_one_lock=0.
++ */
++static bool sem_read_one_lock __read_mostly = true;
++module_param_named(read_one_lock, sem_read_one_lock, bool, 0644);
+ /*
+  * If the request contains only one semaphore operation, and there are
+  * no complex transactions pending, lock only the semaphore involved.
+@@ -1407,7 +1420,7 @@ static int semctl_main(struct ipc_namespace *ns, int semid, int semnum,
+ {
+ 	struct sem_array *sma;
+ 	struct sem *curr;
+-	int err, nsems;
++	int err, nsems, locknum = SEM_GLOBAL_LOCK;
+ 	ushort fast_sem_io[SEMMSL_FAST];
+ 	ushort *sem_io = fast_sem_io;
+ 	DEFINE_WAKE_Q(wake_q);
+@@ -1532,13 +1545,19 @@ static int semctl_main(struct ipc_namespace *ns, int semid, int semnum,
+ 	if (semnum < 0 || semnum >= nsems)
+ 		goto out_rcu_wakeup;
+ 
+-	sem_lock(sma, NULL, -1);
++	semnum = array_index_nospec(semnum, nsems);
++	if (READ_ONCE(sem_read_one_lock)) {
++		struct sembuf one = { .sem_num = semnum };
++
++		locknum = sem_lock(sma, &one, 1);
++	} else {
++		sem_lock(sma, NULL, -1);
++	}
+ 	if (!ipc_valid_object(&sma->sem_perm)) {
+ 		err = -EIDRM;
+ 		goto out_unlock;
+ 	}
+ 
+-	semnum = array_index_nospec(semnum, nsems);
+ 	curr = &sma->sems[semnum];
+ 
+ 	switch (cmd) {
+@@ -1557,7 +1576,7 @@ static int semctl_main(struct ipc_namespace *ns, int semid, int semnum,
+ 	}
+ 
+ out_unlock:
+-	sem_unlock(sma, -1);
++	sem_unlock(sma, locknum);
+ out_rcu_wakeup:
+ 	rcu_read_unlock();
+ 	wake_up_q(&wake_q);
+@@ -2482,3 +2501,7 @@ static int sysvipc_sem_proc_show(struct seq_file *s, void *it)
+ 	return 0;
+ }
+ #endif
++
++#ifdef CONFIG_SEM_READ_KUNIT_TEST
++#include "sem_kunit.c"
++#endif
+diff --git a/ipc/sem_kunit.c b/ipc/sem_kunit.c
+new file mode 100644
+index 00000000000..6796c8a5523
+--- /dev/null
++++ b/ipc/sem_kunit.c
+@@ -0,0 +1,73 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * KUnit for the WolKernel one-semaphore semctl reads (included from ipc/sem.c).
++ * A GETVAL/GETPID/GETNCNT/GETZCNT must return the right value and must not
++ * push the array into global-lock mode (use_global_lock stays 0).
++ */
++#include <kunit/test.h>
++
++static int sem_kunit_global_mode(struct kunit *test, int id)
++{
++	struct sem_array *sma;
++	int v;
++
++	rcu_read_lock();
++	sma = sem_obtain_object_check(current->nsproxy->ipc_ns, id);
++	KUNIT_ASSERT_FALSE(test, IS_ERR(sma));
++	v = READ_ONCE(sma->use_global_lock);
++	rcu_read_unlock();
++	return v;
++}
++
++static void sem_kunit_op(struct kunit *test, int id, short num, short op)
++{
++	struct sembuf b = { .sem_num = num, .sem_op = op };
++
++	KUNIT_ASSERT_EQ(test, __do_semtimedop(id, &b, 1, NULL,
++					      current->nsproxy->ipc_ns), 0);
++}
++
++static void sem_read_keeps_simple_mode(struct kunit *test)
++{
++	struct ipc_namespace *ns = current->nsproxy->ipc_ns;
++	bool saved = sem_read_one_lock;
++	int id, i;
++
++	id = ksys_semget(IPC_PRIVATE, 3, 0600);
++	KUNIT_ASSERT_GE(test, id, 0);
++	/* A new array starts in global mode; simple ops count it down to 0. */
++	for (i = 0; i <= USE_GLOBAL_LOCK_HYSTERESIS; i++)
++		sem_kunit_op(test, id, 1, 1);
++	KUNIT_ASSERT_EQ(test, sem_kunit_global_mode(test, id), 0);
++
++	sem_read_one_lock = true;
++	KUNIT_EXPECT_EQ(test, semctl_main(ns, id, 1, GETVAL, NULL),
++			USE_GLOBAL_LOCK_HYSTERESIS + 1);
++	KUNIT_EXPECT_EQ(test, semctl_main(ns, id, 0, GETVAL, NULL), 0);
++	KUNIT_EXPECT_EQ(test, semctl_main(ns, id, 1, GETPID, NULL),
++			task_tgid_vnr(current));
++	KUNIT_EXPECT_EQ(test, semctl_main(ns, id, 2, GETNCNT, NULL), 0);
++	KUNIT_EXPECT_EQ(test, semctl_main(ns, id, 2, GETZCNT, NULL), 0);
++	KUNIT_EXPECT_EQ(test, semctl_main(ns, id, 3, GETVAL, NULL), -EINVAL);
++	KUNIT_EXPECT_EQ(test, sem_kunit_global_mode(test, id), 0);
++
++	/* Off: the stock whole-array lock, which re-enters global mode. */
++	sem_read_one_lock = false;
++	KUNIT_EXPECT_EQ(test, semctl_main(ns, id, 1, GETVAL, NULL),
++			USE_GLOBAL_LOCK_HYSTERESIS + 1);
++	KUNIT_EXPECT_GT(test, sem_kunit_global_mode(test, id), 0);
++	sem_read_one_lock = saved;
++
++	KUNIT_EXPECT_EQ(test, ksys_semctl(id, 0, IPC_RMID, 0, IPC_64), 0);
++}
++
++static struct kunit_case sem_read_cases[] = {
++	KUNIT_CASE(sem_read_keeps_simple_mode),
++	{}
++};
++
++static struct kunit_suite sem_read_suite = {
++	.name = "wolos_sem_read",
++	.test_cases = sem_read_cases,
++};
++kunit_test_suite(sem_read_suite);
+-- 
+2.56.0
+
