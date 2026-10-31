@@ -64,9 +64,9 @@ if [ "$tier" = own-keys ]; then
   rm -rf "$C"
 fi
 if [ "$screen" = yes ]; then
-  mokutil --generate-hash="$(wol boot password)" > "$K/mokpw"
-  mokutil --import "$S/db.der" --hash-file "$K/mokpw" >/dev/null 2>&1 || :
-  rm -f "$K/mokpw"
+  # Also on the startup partition: the key screen can enroll it from there if the queue is ever lost.
+  cp "$S/db.der" "$ESP/EFI/wolos/wolos-key.cer"
+  WOLOS_SB_DIR=$S sh "$here/boot-enroll" >/dev/null 2>&1 || :   # the first boot tries again
 fi
 wol boot note "$tier" "$screen" > "$NOTE"
 echo "$tier"

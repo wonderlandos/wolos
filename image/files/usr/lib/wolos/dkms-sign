@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# dkms sign_file: sign a module built on this computer with this computer's key (ADR 0025). The key
+# reaches RAM only for the signature. Called as: dkms-sign HASH KEY CERT MODULE.
+# Env: WOLOS_SB_DIR, WOLOS_SIGN_FILE (sign-file of the kernel being built for).
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+S=${WOLOS_SB_DIR:-/var/lib/wolos/secureboot}
+[ -f "$S/db.der" ] || exit 0
+K=$(sh "$here/boot-keys" open)
+trap 'sh "$here/boot-keys" close' EXIT
+tool=${WOLOS_SIGN_FILE:-$(ls /usr/lib/modules/*/build/scripts/sign-file | head -1)}
+"$tool" sha256 "$K/db.key" "$S/db.der" "$4"

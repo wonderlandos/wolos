@@ -255,6 +255,12 @@ pub const TREE: &[Cmd] = &[
         "First boot: bind the disk key to this computer's firmware state (root)",
     ),
     cmd(
+        &["boot", "enroll"],
+        "boot.enroll",
+        &[],
+        "Queue this computer's key for the firmware's key screen (root)",
+    ),
+    cmd(
         &["boot", "password"],
         "boot.password",
         &[],

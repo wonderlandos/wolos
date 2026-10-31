@@ -191,11 +191,12 @@ fn a_firmware_that_refuses_the_keys_leaves_a_system_that_starts() {
 fn the_image_carries_the_tools_and_the_first_stage_stays_pinned() {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let list = std::fs::read_to_string(format!("{root}/image/arch/packages.x86_64")).unwrap();
-    for p in ["systemd-ukify", "sbctl", "mokutil", "wolos-shim"] {
+    for p in ["systemd-ukify", "sbctl", "mokutil"] {
         assert!(list.lines().any(|l| l == p), "{p}");
     }
+    assert!(!list.lines().any(|l| l == "wolos-shim"), "not in an image");
     let repo = std::fs::read_to_string(format!("{root}/image/repo/packages")).unwrap();
-    assert!(repo.lines().any(|l| l.starts_with("wolos-shim ")));
+    assert!(!repo.lines().any(|l| l.starts_with("wolos-shim ")), "not in the repo");
     let b = std::fs::read_to_string(format!("{root}/image/repo/wolos-shim/PKGBUILD")).unwrap();
     assert!(!b.contains("SKIP"), "every source is pinned");
     assert!(b.contains("351e131d3c4a636704e9cae7d1296baf8a05beca9922cfebbfa48933c9bf1ad3"));
@@ -219,4 +220,65 @@ fn the_sealed_system_can_not_enable_units_at_first_start() {
     ] {
         assert!(i.contains(u), "{u} is enabled when the package installs");
     }
+}
+
+#[test]
+fn a_module_built_here_is_signed_with_this_computers_key() {
+    let d = std::env::temp_dir().join(format!("wol-dkms-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(d.join("bin")).unwrap();
+    fs::create_dir_all(d.join("sb")).unwrap();
+    fs::write(d.join("sb/db.der"), "cert").unwrap();
+    fs::write(d.join("sb/db.key"), "key").unwrap();
+    fake(&d, "sign-file", "");
+    let out = Command::new("sh")
+        .arg(lib("dkms-sign"))
+        .args(["sha512", "/ignored.key", "/ignored.der", "/m.ko"])
+        .env("WOLOS_SB_DIR", d.join("sb"))
+        .env("WOLOS_SB_RUN", d.join("run"))
+        .env("WOLOS_TPM_DIR", d.join("no-tpm"))
+        .env("WOLOS_SIGN_FILE", d.join("bin/sign-file"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let log = fs::read_to_string(d.join("log")).unwrap();
+    assert!(log.contains(&format!("sha256 {}/db.key {}/db.der /m.ko", d.join("run").display(), d.join("sb").display())), "{log}");
+    assert!(!d.join("run/db.key").exists(), "the key leaves RAM after signing");
+}
+
+fn enroll(name: &str, test_key: &str) -> (PathBuf, std::process::Output) {
+    let d = std::env::temp_dir().join(format!("wol-enroll-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(d.join("bin")).unwrap();
+    fs::create_dir_all(d.join("sb")).unwrap();
+    fs::write(d.join("sb/db.der"), "cert").unwrap();
+    fake(&d, "mokutil", &format!("case \"$*\" in --test-key*) echo '{test_key}' ;; --generate-hash*) echo '$6$h' ;; esac"));
+    fake(&d, "wol", "case \"$*\" in 'boot password') echo boot ;; esac");
+    let o = Command::new("sh")
+        .arg(lib("boot-enroll"))
+        .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+        .env("WOLOS_SB_DIR", d.join("sb"))
+        .output()
+        .unwrap();
+    (d, o)
+}
+
+#[test]
+fn enrollment_queues_itself_and_the_blue_screen_waits_for_the_person() {
+    let (d, o) = enroll("q", "not enrolled");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "queued\n");
+    let l = fs::read_to_string(d.join("log")).unwrap();
+    assert!(l.contains("mokutil --generate-hash=boot"), "{l}");
+    assert!(l.contains(&format!("--import {}/db.der --hash-file", d.join("sb").display())), "{l}");
+    assert!(l.contains("mokutil --timeout -1"), "no ten second race: {l}");
+}
+
+#[test]
+fn an_enrolled_key_is_left_alone() {
+    let (d, o) = enroll("done", "db.der is already enrolled");
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "enrolled\n");
+    let l = fs::read_to_string(d.join("log")).unwrap();
+    assert!(!l.contains("--import"), "{l}");
+    assert!(d.join("sb/enrolled").exists(), "the first-boot unit stops asking");
 }

@@ -1,0 +1,13 @@
+[Unit]
+Description=Queue this computer's key for the firmware's key screen
+ConditionPathExists=/usr/share/wolos/shim/shimx64.efi
+ConditionPathExists=/var/lib/wolos/secureboot/db.der
+ConditionPathExists=!/var/lib/wolos/secureboot/enrolled
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/boot-enroll
+
+[Install]
+WantedBy=multi-user.target

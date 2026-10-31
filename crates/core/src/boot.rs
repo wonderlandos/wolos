@@ -28,6 +28,8 @@ pub struct Firmware {
     pub third_party_ca: bool,
     /// A GPU that needs a module built outside the kernel tree.
     pub out_of_tree: bool,
+    /// This system carries a signed first stage, so the key screen can appear at all.
+    pub first_stage: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +71,7 @@ pub fn choose(fw: &Firmware, want: bool) -> Tier {
     }
     if fw.setup_mode {
         Tier::OwnKeys
-    } else if fw.third_party_ca {
+    } else if fw.third_party_ca && fw.first_stage {
         Tier::Mok
     } else if fw.secure_boot {
         Tier::Firmware
@@ -81,7 +83,16 @@ pub fn choose(fw: &Firmware, want: bool) -> Tier {
 /// The key screen is needed once: for the tier itself, or because a module built on this machine
 /// can only be trusted through it (the kernel takes module keys from there, not from `db`).
 pub fn needs_key_screen(tier: Tier, fw: &Firmware) -> bool {
-    tier == Tier::Mok || (tier == Tier::OwnKeys && fw.out_of_tree)
+    tier == Tier::Mok || (tier == Tier::OwnKeys && fw.out_of_tree && fw.first_stage)
+}
+
+/// The words for this computer. Own keys never reach the kernel's module keyring: with a GPU driver
+/// built here and no key screen to enroll through, enforcement would stop the driver loading.
+pub fn words(tier: Tier, fw: &Firmware) -> &'static str {
+    if tier == Tier::OwnKeys && fw.out_of_tree && !fw.first_stage {
+        return "";
+    }
+    protected_words(tier)
 }
 
 /// Kernel command line words of a protected chain.
@@ -122,12 +133,13 @@ pub fn note(tier: Tier) -> &'static str {
 /// The blue screen, explained before it appears. Steps name what the firmware shows.
 pub fn key_screen_steps() -> Vec<String> {
     vec![
-        "The next screen is blue and comes from your computer's firmware, not from WolOS. It \
-         waits ten seconds, so have this page in mind."
+        "After the restart a blue screen appears. It comes from your computer's firmware, not \
+         from WolOS, and it waits for you."
             .into(),
         "Press a key, choose Enroll MOK, then Continue, then Yes.".into(),
         format!("When it asks for a password, type {MOK_PASSWORD}. Nothing shows while you type."),
         "Choose Reboot. You will not see this screen again.".into(),
+        "Missed it? Run wol boot enroll and restart.".into(),
     ]
 }
 
@@ -229,7 +241,28 @@ mod tests {
             setup_mode,
             third_party_ca,
             out_of_tree: false,
+            first_stage: true,
         }
+    }
+
+    #[test]
+    fn the_key_screen_needs_a_first_stage_on_this_system() {
+        let mut f = fw(false, false, true);
+        f.first_stage = false;
+        assert_eq!(choose(&f, true), Tier::Off);
+        f.secure_boot = true;
+        assert_eq!(choose(&f, true), Tier::Firmware);
+        let g = Firmware {
+            setup_mode: true,
+            out_of_tree: true,
+            ..f
+        };
+        assert_eq!(choose(&g, true), Tier::OwnKeys);
+        assert!(!needs_key_screen(Tier::OwnKeys, &g));
+        assert_eq!(words(Tier::OwnKeys, &g), "", "its module could never load");
+        let h = Firmware { first_stage: true, ..g };
+        assert!(needs_key_screen(Tier::OwnKeys, &h));
+        assert_eq!(words(Tier::OwnKeys, &h), protected_words(Tier::OwnKeys));
     }
 
     #[test]

@@ -105,6 +105,7 @@ fn check(d: &Path, disk: &str) -> (Option<i32>, String) {
 fn check_names_other_systems_and_refuses_unsafe_disks() {
     let d = scratch("check");
     disks_fakes(&d);
+    fake(&d, "wol", "echo firmware");
     // Windows (Microsoft basic data + reserved) and Linux partitions on the big disk.
     fs::write(
         d.join("parts"),
@@ -122,7 +123,7 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
     assert_eq!(code, Some(0), "{out}");
     assert_eq!(
         out,
-        "size 1000204886016\nos Windows\nos Linux\nsecureboot on\n"
+        "size 1000204886016\nos Windows\nos Linux\nboot firmware\n"
     );
     assert_eq!(
         check(&d, "/dev/sdb").1,

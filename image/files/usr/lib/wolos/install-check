@@ -3,7 +3,8 @@
 # before anything is written, and by the Install WolOS app to word its warning. One fact per line:
 #   size <bytes>
 #   os <Windows|Linux|macOS|FreeBSD>   another system lives on this disk (GPT types, filesystems)
-#   secureboot on                      firmware Secure Boot is on: the installed WolOS won't start
+#   boot <tier>                        the protection this computer gets (`wol boot detect`);
+#                                      `firmware`: a firmware setting must change first
 #   refuse <not-listed|too-small|in-use>
 # Exit 0: may erase. 2: refused (the boot medium, a missing disk, too small, a mounted partition).
 set -u
@@ -28,9 +29,7 @@ lsblk -nlpo PARTTYPE,FSTYPE "$disk" 2>/dev/null | awk '
     else if (t ~ /^(516e7cb6-6ecf-11d6-8ff8-00022d09712b|516e7cba-6ecf-11d6-8ff8-00022d09712b)$/ || f == "zfs_member" || f == "ufs") os["FreeBSD"] = 1
   }
   END { n = split("Windows Linux macOS FreeBSD", names, " "); for (i = 1; i <= n; i++) if (names[i] in os) print "os " names[i] }'
-# EFI global variable SecureBoot: 4 attribute bytes, then the value. Absent: BIOS boot or off.
-sb=${WOLOS_EFIVARS:-/sys/firmware/efi/efivars}/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
-[ -r "$sb" ] && [ "$(od -An -tu1 -j4 -N1 "$sb" | tr -d ' ')" = 1 ] && echo "secureboot on"
+echo "boot $(wol boot detect)"
 [ "$bytes" -ge "$MIN_BYTES" ] || { echo "refuse too-small"; rc=2; }
 # A partition of it still mounted (a USB disk opened in Files): install-run unmounts those first.
 if findmnt -rno SOURCE | awk -v d="$disk" '$1 == d || (index($1, d) == 1 && substr($1, length(d) + 1) ~ /^p?[0-9]+$/) {f = 1} END {exit !f}'; then
