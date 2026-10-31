@@ -19,23 +19,26 @@ remaster() { # base.iso bin_dir: this tree's installer on the base image
   local base=$1 bin=$2 r=$W/root
   sudo rm -rf "$r"; xorriso -osirrox on -indev "$base" -extract /wolos/x86_64/airootfs.sfs "$W/base.sfs" 2>/dev/null
   sudo unsquashfs -q -f -d "$r" "$W/base.sfs" >/dev/null || exit 1
-  sudo install -m 755 "$bin/wol" "$bin/wol-installer" "$bin/install_scenario" "$r/usr/bin/"
-  sudo cp -r "$REPO"/image/files/usr/lib/wolos/. "$r/usr/lib/wolos/"
+  sudo install -m 755 "$bin/wol" "$bin/wol-installer" "$bin/wol-shell" "$bin/install_scenario" "$r/usr/bin/"
+  sudo cp -r "$REPO"/image/files/. "$r/"
   sudo chmod 755 "$r"/usr/lib/wolos/*
-  sudo cp "$REPO/desktop/overlay/usr/share/wolos/hypr/installer.conf" "$r/usr/share/wolos/hypr/"
+  sudo cp "$REPO"/desktop/overlay/usr/share/wolos/hypr/{installer,hyprland}.conf "$r/usr/share/wolos/hypr/"
   sudo cp -r "$REPO"/image/arch/airootfs/etc/systemd/system/. "$r/etc/systemd/system/"
   sudo cp "$H/installer/wolos-e2e" "$r/usr/lib/wolos/wolos-e2e"
   sudo cp "$H/installer/wolos-e2e.service" "$r/etc/systemd/system/"
   sudo ln -sf ../wolos-e2e.service "$r/etc/systemd/system/multi-user.target.wants/wolos-e2e.service"
   sudo sed -i '$a m live seat' "$r/etc/sysusers.d/wolos-live.conf"
+  sudo install -m 440 "$REPO/desktop/overlay/etc/sudoers" "$r/etc/sudoers"
+  sudo cp "$REPO"/desktop/overlay/etc/pam.d/sudo* "$r/etc/pam.d/"
   echo 'live ALL=(root) NOPASSWD: /usr/lib/wolos/install-run, /usr/lib/wolos/install-check, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff' | sudo tee "$r/etc/sudoers.d/wolos-live" >/dev/null
-  # An image older than the package list: its tools from this host's cache.
-  sudo pacman -Sw --noconfirm --needed xfsprogs ntfsprogs libntfs-3g liburcu >/dev/null || exit 1
-  local pkg
-  for pkg in xfsprogs ntfsprogs libntfs-3g liburcu; do
-    sudo bsdtar -xf "$(ls -t /var/cache/pacman/pkg/$pkg-[0-9]*.pkg.tar.zst | head -1)" -C "$r" usr || exit 1
-  done
-  [ -x "$r/usr/bin/ntfsresize" ] && [ -x "$r/usr/bin/mkfs.xfs" ] || exit 1
+  # An image older than the package list: the newer tools, without moving what it already has.
+  local db=$r/var/lib/pacman
+  [ -d "$db/local" ] || db=$r/usr/lib/pacman
+  sudo cp -r /var/lib/pacman/sync "$db/"
+  sudo pacman -Sdd --noconfirm --needed --root "$r" --dbpath "$db" --hookdir "$W" --noscriptlet --overwrite '*' \
+    xfsprogs ntfsprogs liburcu systemd-ukify python python-pefile sbctl mokutil >/dev/null || exit 1
+  sudo rm -rf "$db/sync"
+  [ -x "$r/usr/bin/ntfsresize" ] && [ -x "$r/usr/bin/mkfs.xfs" ] && [ -x "$r/usr/bin/ukify" ] || exit 1
   sudo rm -f "$W/new.sfs"
   sudo mksquashfs "$r" "$W/new.sfs" -comp zstd -Xcompression-level 3 -quiet -noappend || exit 1
   sudo chown "$(id -u)" "$W/new.sfs"
@@ -127,7 +130,7 @@ vm() { # dir extra-args...
   qemu-system-x86_64 $accel -smp 4 -m 6G -machine q35 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF/OVMF_CODE.4m.fd" -drive if=pflash,format=raw,file="$d/vars.fd" \
     -drive file="$d/disk.raw",if=virtio,format=raw,discard=unmap \
-    -nic none -device virtio-vga -display none -qmp "unix:$d/qmp.sock,server,nowait" ${TPM_ARGS:-} "$@"
+    -nic none -device virtio-vga -device qemu-xhci -device usb-tablet -display none -qmp "unix:$d/qmp.sock,server,nowait" ${TPM_ARGS:-} "$@"
 }
 
 tpm_start() { # dir: a TPM2 that lives through install and boot

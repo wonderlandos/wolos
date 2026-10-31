@@ -2,7 +2,7 @@
 # applied in name order. Packaging follows Arch's hyprland 0.56.2-4. Map: archicture/modules/hyprland-fork.md
 pkgname=hyprland-wolos
 pkgver=0.56.2
-pkgrel=1
+pkgrel=2
 pkgdesc='Hyprland compositor with the WolOS patches'
 arch=(x86_64)
 url='https://github.com/hyprwm/Hyprland'

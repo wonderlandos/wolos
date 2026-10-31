@@ -1,4 +1,4 @@
-# QMP helper for the test VM: shot <png> | keys <text> | key <qcode[-qcode]>...
+# QMP helper for the test VM: shot <png> | keys <text> | key <qcode[-qcode]>... | click <x> <y>
 import socket,sys,json,os,time
 T=sys.argv.pop(1)   # test dir (qmp.sock)
 s=socket.socket(socket.AF_UNIX);s.connect(T+'/qmp.sock');f=s.makefile('rw');f.readline()
@@ -24,5 +24,12 @@ elif a=='keys':
         elif ch in S: send(['shift',S[ch]])
         elif ch.isupper(): send(['shift',ch.lower()])
         else: send([ch])
+elif a=='click':   # click X Y, screen pixels (needs -device usb-tablet)
+    W,H=1280,800
+    x,y=int(sys.argv[2]),int(sys.argv[3])
+    cmd('input-send-event',{'events':[{'type':'abs','data':{'axis':'x','value':x*32767//W}},{'type':'abs','data':{'axis':'y','value':y*32767//H}}]})
+    time.sleep(.4)
+    for down in (True,False):
+        cmd('input-send-event',{'events':[{'type':'btn','data':{'button':'left','down':down}}]}); time.sleep(.1)
 elif a=='key':
     for k in sys.argv[2:]: send(k.split('-')); time.sleep(.2)

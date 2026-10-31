@@ -15,7 +15,7 @@ conflicts=(default-cursors)
 replaces=(default-cursors)
 makedepends=(cargo clang mold sccache pkgconf hyprland-wolos git)
 options=(!debug !lto)
-backup=(etc/wolos/shell.json etc/sudoers.d/wolos etc/pam.d/wol-login etc/wolos/nftables.conf
+backup=(etc/sudoers etc/wolos/shell.json etc/sudoers.d/wolos etc/pam.d/wol-login etc/wolos/nftables.conf
   etc/zsh/zshenv)
 install=wolos-system.install
 _repo=$(cd "$startdir/../../.." && pwd)
@@ -45,6 +45,7 @@ package() {
       [ ! -f "$f" ] || install -Dm644 -t "$pkgdir/usr/share/wolos/illustrations" "$f"
     done
   done
+  chmod 440 "$pkgdir/etc/sudoers"
   chmod 440 "$pkgdir/etc/sudoers.d/wolos"
   chmod 755 "$pkgdir"/usr/lib/wolos/* "$pkgdir"/usr/bin/*
   # Rust and GPL-3.0 shell licenses travel with the package.

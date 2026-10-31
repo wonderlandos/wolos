@@ -49,11 +49,6 @@ echo 'd /home/live 0700 live live -' > "$A/etc/tmpfiles.d/wolos-live.conf"
 echo 'live ALL=(root) NOPASSWD: /usr/lib/wolos/install-run, /usr/lib/wolos/install-check, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff' > "$A/etc/sudoers.d/wolos-live"
 printf '%s\n' '{"autologin":"live"}' > "$A/etc/wolos/login.json"
 touch "$A/etc/wolos-live"
-# "Install WolOS" first in the live dock (shell.json is a backup file of wolos-system: this copy wins).
-sed 's|"dock": \[|"dock": [\
-    { "id": "org.wolos.install", "name": "Install WolOS", "icon": "system-software-install", "exec": ["/usr/lib/wolos/wol-install"] },|' \
-  "$REPO/desktop/overlay/etc/wolos/shell.json" > "$A/etc/wolos/shell.json"
-grep -q org.wolos.install "$A/etc/wolos/shell.json" || die "live dock patch failed"
 if [ "${WOLOS_STAGE_ONLY:-0}" = 1 ]; then echo "profile: $P"; exit 0; fi
 
 # 3. mkarchiso (root) on the host, or in a container.

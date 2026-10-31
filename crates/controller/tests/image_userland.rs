@@ -111,7 +111,7 @@ fn administrators_can_sudo() {
             .contains(r#"chmod 440 "$pkgdir/etc/sudoers.d/wolos""#),
         "sudoers drop-in must be 0440"
     );
-    // sudo-rs reads /etc/sudoers, whose Arch default ends with `@includedir /etc/sudoers.d`.
+    // sudo-rs reads /etc/sudoers, ours (sudo_works_on_every_system).
     // visudo validates the syntax where the host has it.
     if let Ok(out) = Command::new("visudo").arg("-csf").arg(repo(p)).output() {
         assert!(
@@ -337,4 +337,32 @@ fn helium_and_the_dock_apps_open_their_files_by_default() {
     }
     assert!(!mime.to_lowercase().contains("firefox"));
     assert!(mime.starts_with('#') && mime.contains("\n[Default Applications]\n"));
+}
+
+/// sudo-rs ships no /etc/sudoers and no PAM service: without ours every sudo fails, and with it
+/// the disk page of the live installer ("No disk found") and an administrator's first command.
+#[test]
+fn sudo_works_on_every_system() {
+    let sudoers = read("desktop/overlay/etc/sudoers");
+    assert!(sudoers.lines().any(|l| l == "@includedir /etc/sudoers.d"));
+    for service in ["sudo", "sudo-i"] {
+        let pam = read(&format!("desktop/overlay/etc/pam.d/{service}"));
+        for kind in ["auth", "account", "session"] {
+            assert!(
+                pam.lines().any(|l| l.starts_with(kind) && l.ends_with("system-auth")),
+                "{service}: {kind}"
+            );
+        }
+    }
+    let pkg = read("image/repo/wolos-system/PKGBUILD");
+    assert!(pkg.contains(r#"chmod 440 "$pkgdir/etc/sudoers""#));
+    assert!(pkg.contains("backup=(etc/sudoers "));
+}
+
+/// The live user has no password: a lock screen after five idle minutes could not be left.
+#[test]
+fn the_live_desktop_never_locks_itself() {
+    let hypr = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+    let line = hypr.lines().find(|l| l.contains("exec hypridle")).unwrap();
+    assert!(line.contains("[ -e /etc/wolos-live ] && exit"), "{line}");
 }

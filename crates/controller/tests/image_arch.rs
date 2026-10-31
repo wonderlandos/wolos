@@ -357,10 +357,9 @@ fn build_stages_the_profile_from_the_local_repo() {
             .trim(),
         snapshot()
     );
-    // The live dock gets "Install WolOS" (shell.json is a backup file: the live copy wins).
-    let shell = fs::read_to_string(p.join("airootfs/etc/wolos/shell.json")).unwrap();
-    let v: serde_json::Value = serde_json::from_str(&shell).unwrap();
-    assert_eq!(v["dock"][0]["id"], "org.wolos.install");
+    // The mark gives the live dock "Install WolOS" (apps::pins); shell.json stays the package's.
+    assert!(p.join("airootfs/etc/wolos-live").exists());
+    assert!(!p.join("airootfs/etc/wolos/shell.json").exists());
     assert!(
         !p.join("airootfs/usr/lib/systemd/system/wold.service")
             .exists()

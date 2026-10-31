@@ -14,8 +14,10 @@ if [ "$s" = medium ]; then
   systemctl poweroff; exit
 fi
 mkdir -p "$D"
-sh $L/install-check /dev/vda --probe > "$D/probe.json"
+# As the app does: the live user, through sudo.
+as_live() { runuser -u live -- sudo -n "$@"; }
+as_live $L/install-check /dev/vda --probe > "$D/probe.json"
 install_scenario "$s" "$D/probe.json" "$D/plan" > /dev/ttyS0 2>&1 || { echo "wolos-install: failed 0 scenario" > /dev/ttyS0; systemctl poweroff; exit; }
 # The serial port is opened for each line: a getty starting on it hangs up whoever held it open.
-sh $L/install-run --plan "$D/plan/plan.json" 2>&1 | while IFS= read -r l; do echo "$l" > /dev/ttyS0; done
+as_live $L/install-run --plan "$D/plan/plan.json" 2>&1 | while IFS= read -r l; do echo "$l" > /dev/ttyS0; done
 systemctl poweroff

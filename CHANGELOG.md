@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.11.2
+- `sudo` works: sudo-rs ships no `/etc/sudoers` and no PAM service, so every sudo failed, for administrators too, and the live installer found no disk. WolOS now ships both.
+- The live desktop has Install WolOS first in the dock and in Spotlight, and never locks itself.
 - Secure Boot (ADR 0025): every computer makes its own boot keys at install. In Setup Mode they join Microsoft's in the firmware; otherwise one key screen at first start; with neither, WolOS still starts and says so. Each slot boots one signed image holding kernel, initramfs and command line, with kernel lockdown and module signature checks on. The disk key follows signed kernels, so updates keep unlocking and a changed kernel, command line or initramfs does not. An older slot can't be started once it is retired.
 - A failed update now really rolls back: three failed starts fall back to the other slot. Before, the loader kept starting the failed slot.
 - The system file check runs on every start, in 0.4 s instead of 7 s. A sealed system gets its machine id at install, so D-Bus starts.

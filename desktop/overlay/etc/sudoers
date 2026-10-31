@@ -1,0 +1,3 @@
+# WolOS: sudo-rs ships no sudoers; the rules live in sudoers.d.
+root ALL=(ALL:ALL) ALL
+@includedir /etc/sudoers.d
