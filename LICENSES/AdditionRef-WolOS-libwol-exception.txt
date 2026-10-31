@@ -1,0 +1,44 @@
+WolOS libwol interface exception
+SPDX identifier: AdditionRef-WolOS-libwol-exception
+DRAFT: wording to be reviewed by a lawyer before the first release that carries it.
+
+Additional permission under the GNU General Public License, version 2 or (at your
+option) any later version, for the files that name this exception in their
+SPDX-License-Identifier line.
+
+NOTE! This copyright does not cover programs that use libwol through its public
+interface. Such a program is not a derivative work of libwol merely because it uses
+it, and it may be distributed under any license its author chooses, including
+licenses that are not free software licenses.
+
+1. The public interface is:
+   a. the header wol.h and its versioned snapshots (abi/wol-*.h);
+   b. the symbols exported by the shared library libwol.so (soname libwol.so.1) as
+      listed in abi/wol.map and abi/wol-*.symbols;
+   c. the wire formats libwol speaks to the system and to the desktop (JSON lines on
+      the system socket; view trees sent to the desktop as data);
+   d. bindings for other languages that only declare, wrap or call (a) to (c).
+
+2. You may build a program against the public interface, link it with libwol.so as a
+   shared library, load libwol.so at run time, or talk the wire formats directly, and
+   distribute the result under terms of your choice. You must still follow the
+   license of libwol itself for libwol itself: keep its notices, and give the source
+   of libwol and of any change you make to libwol when you distribute it.
+
+3. This exception does not cover:
+   a. changes to files that carry this exception: they stay under the license above;
+   b. code copied or translated from libwol's implementation into your program,
+      including a copy of libwol linked into your executable instead of the shared
+      library;
+   c. the desktop shell and the Kit parts: they stay under the plain license and are
+      not part of the public interface.
+
+4. Widgets and apps are not derivative works of WolOS because they run on it. A Lua
+   widget file that WolOS loads, and a .wol app bundle, belong to their authors and
+   may carry any license. Using the interface in (1), the sandbox and the services
+   WolOS offers to them does not make them part of WolOS.
+
+5. If you modify a file that carries this exception, you may delete this exception
+   from your version of the file, but you are not required to.
+
+Trademarks are not licensed here or by the GPL. See COPYRIGHT.
