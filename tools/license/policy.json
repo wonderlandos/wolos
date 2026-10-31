@@ -11,6 +11,8 @@
   "max_bytes": 2000000,
   "skip": [
     "third_party/**",
+    "desktop/overlay/usr/share/wolos/gtk-*/*.css",
+    "desktop/overlay/usr/share/wolos/gtk3-theme/**",
     "**/vendor/**",
     "**/target/**",
     "**/.git/**",

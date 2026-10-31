@@ -173,7 +173,7 @@ impl Header {
     pub fn crystal(&self) -> String {
         let kw = ["out", "in", "end", "type", "self", "begin", "alias"];
         let mut s = String::from(
-            "# SPDX-License-Identifier: GPL-2.0-or-later\n\
+            "# SPDX-License-Identifier: BSD-2-Clause\n\
              # Generated from include/wol.h by crates/wol-abi/tests/bindings.rs; do not edit.\n\
              # Regenerate: WOL_BLESS=1 cargo test -p wol-abi --test bindings\n\
              @[Link(\"wol\")]\nlib LibWol\n",
@@ -267,7 +267,7 @@ impl Header {
             }
         };
         let mut s = String::from(
-            "// SPDX-License-Identifier: GPL-2.0-or-later\n\
+            "// SPDX-License-Identifier: BSD-2-Clause\n\
              // Generated from include/wol.h by crates/wol-abi/tests/bindings.rs; do not edit.\n\
              // Regenerate: WOL_BLESS=1 cargo test -p wol-abi --test bindings\n\
              using System;\nusing System.Runtime.InteropServices;\n\nnamespace Wol;\n\n\
