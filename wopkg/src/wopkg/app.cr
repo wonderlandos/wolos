@@ -230,6 +230,7 @@ module Wopkg
       when "pacman"
         core.system_call({"call" => "package.change", "verb" => "install", "names" => [id]}.to_json)
       when "flatpak"
+        Flatpak.remote_add_argv(s["repo"].as_s).try { |a| Flatpak.run(a) }
         unsigned = Flatpak.unsigned_remotes(Flatpak.capture(Flatpak::REMOTES_ARGV) || "")
         raise Failure.new(5, "The #{s["repo"].as_s} remote does not check signatures, so nothing was installed from it.") if unsigned.includes?(s["repo"].as_s)
         Flatpak.run(Flatpak.install_argv(s["repo"].as_s, id)) || raise Failure.new(3, "Flatpak could not install #{hit["name"].as_s}.")

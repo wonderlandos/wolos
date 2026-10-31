@@ -15,6 +15,8 @@ pub const SYSTEM_DIR: &str = "/var/lib/flatpak";
 /// Below `$HOME`.
 pub const USER_DIR: &str = ".local/share/flatpak";
 pub const REMOTE: &str = "flathub";
+/// Flathub's own description of itself, with its signing key.
+pub const REMOTE_URL: &str = "https://dl.flathub.org/repo/flathub.flatpakrepo";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
@@ -494,6 +496,18 @@ pub fn parse_search(text: &str, native: impl Fn(&Hit) -> bool) -> Vec<Hit> {
 /// The package name a native build of `hit` would most likely carry (`org.gimp.GIMP` -> `gimp`).
 pub fn native_guess(hit: &Hit) -> String {
     hit.id.rsplit('.').next().unwrap_or("").to_lowercase()
+}
+
+/// Adds Flathub for this account; nothing changes when it is there already.
+pub fn remote_add_argv() -> Vec<String> {
+    argv(&[
+        "flatpak",
+        "remote-add",
+        "--user",
+        "--if-not-exists",
+        REMOTE,
+        REMOTE_URL,
+    ])
 }
 
 /// Install for this account only: no administrator password, the consent sheet still asks.

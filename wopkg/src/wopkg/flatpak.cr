@@ -3,6 +3,13 @@ module Wopkg
   # Flatpak apps for the person (`--user`): no privilege. Flatpak checks GPG on every pull; wopkg
   # refuses a remote that has it turned off.
   module Flatpak
+    FLATHUB_REPO = "https://dl.flathub.org/repo/flathub.flatpakrepo"
+
+    # Flathub is added for this account the first time it is used. Other remotes are the person's.
+    def self.remote_add_argv(remote : String) : Array(String)?
+      ["flatpak", "remote-add", "--user", "--if-not-exists", remote, FLATHUB_REPO] if remote == "flathub"
+    end
+
     def self.install_argv(remote : String, id : String) : Array(String)
       ["flatpak", "install", "--user", "--noninteractive", "-y", remote, id]
     end
