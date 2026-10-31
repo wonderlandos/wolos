@@ -5,6 +5,7 @@ pub mod catalog;
 pub mod cli;
 pub mod games;
 pub mod hw;
+pub mod install;
 pub mod login;
 pub mod mcp;
 pub mod mirror;

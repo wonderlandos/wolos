@@ -202,6 +202,8 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "seal.off" => crate::pkg::seal_off(env),
         "layers.fold" => crate::pkg::fold(env, inv),
         "pkg" => crate::pkg::pkg_verb(env, inv),
+        "install.info" | "install.probe" | "install.check" | "install.layout"
+        | "install.settings" | "install.account" => crate::install::verb(env, inv),
         "encrypt.decide" => crate::seal::decide(env, inv),
         "encrypt.enroll" => crate::seal::enroll(env, inv),
         "encrypt.words" => crate::seal::words(env, inv),
@@ -730,6 +732,7 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
 /// (`wol_core::update::plan`); the release defaults to the one the daily check found.
 fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     use wol_core::update::{self as up, Step};
+    let one_copy = env.read_file(Path::new(up::SINGLE_COPY)).is_some();
     let running = env
         .read_file(Path::new("/proc/cmdline"))
         .and_then(|c| up::running_slot(&c));
@@ -755,7 +758,12 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
         .capture(&up::be::LIST_ARGV)
         .is_some_and(|t| up::be::parse(&t).iter().any(|b| b.name == slot));
     let cmdline = env.read_file(Path::new("/proc/cmdline"));
-    let Some(steps) = up::plan_for(&slot, replace, date.as_deref(), cmdline.as_deref()) else {
+    let planned = if one_copy {
+        up::plan_in_place(date.as_deref())
+    } else {
+        up::plan_for(&slot, replace, date.as_deref(), cmdline.as_deref())
+    };
+    let Some(steps) = planned else {
         return fail(
             env,
             ErrorCode::Usage,
