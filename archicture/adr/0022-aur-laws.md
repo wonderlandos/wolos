@@ -7,7 +7,7 @@ Decision:
 - `crates/aurlaws` turns a package into a graph with tree-sitter and never runs it. Nodes: sources, URLs, files, env vars, commands, functions, processes, sockets. Edges follow data: fetches, writes, reads, executes, decodes, sends, plus verifies and calls.
 - A traced build gives the same graph shape from what really happened. A difference between the two is a signal.
 - Laws are contracts over graphs, in `crates/aurlaws/laws/LAWS.bend`, with evidence in `PROOF.bend`, run with `bend PROOF.bend`. The file is named `LAWS.bend` because Bend refuses dotted module names such as `AUR.LAWS.bend`.
-- The checker that ships is Rust. Over 984 graphs it took 2.82 ms; Bend 2 took 2.01 s on 4 threads. `rules.bend` stays as the proof, and a conformance run holds the two to the same answers. Bend is a development tool only.
+- The checker that ships is Rust. Over 1768 graphs it took 3.84 ms; Bend 2 took 1.73 s, both on 4 threads. `rules.bend` stays as the proof, and a conformance run holds the two to the same answers. Bend is a development tool only.
 - wopkg gets one call that returns a verdict plus evidence. The install flow stays with wopkg.
 - A broken law means "needs review". No broken law means only that, never "safe".
 
