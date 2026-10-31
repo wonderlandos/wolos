@@ -111,9 +111,12 @@ fn every_unit_runs_a_shipped_program_and_is_enabled_by_the_preset() {
         }
         // Timers and services started by a timer are enabled through the timer.
         let wanted = !values(&u, "Install", "WantedBy").is_empty();
+        // Off until the person opts in: the preset has to say so, or systemd's default applies.
+        let opt_in = name == "wolos-clam-update.timer";
         if wanted {
+            let word = if opt_in { "disable" } else { "enable" };
             assert!(
-                preset.lines().any(|l| l == format!("enable {name}")),
+                preset.lines().any(|l| l == format!("{word} {name}")),
                 "{name} not in the preset"
             );
         }

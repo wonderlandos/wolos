@@ -39,7 +39,11 @@ fn scan(args: &[String]) -> i32 {
     let dir = dir.unwrap_or_else(xguard::rules_dir);
     let e = Engine::open(&dir).unwrap_or_else(|m| die(&m));
     let extra = deep(&dir);
-    let mut worst = 0;
+    let clam = xguard::clam::socket(
+        std::env::var_os(xguard::clam::SOCKET_ENV).map(PathBuf::from),
+        Path::new(xguard::clam::DB_DIR),
+    );
+    let (mut worst, mut found) = (0, false);
     for p in paths {
         // `-`: the file is on standard input (the guard passes it this way, with no path to open).
         let opened = if p == "-" {
@@ -51,9 +55,23 @@ fn scan(args: &[String]) -> i32 {
         } else {
             std::fs::File::open(&p)
         };
-        let mut f = opened.unwrap_or_else(|m| die(&format!("{p}: {m}")));
-        let r: Report = xguard::scan_file(&e, &mut f, &p, extra.as_deref(), Limits::default())
+        // One unreadable file must not cost the caller the answers for the rest.
+        let mut f = match opened {
+            Ok(f) => f,
+            Err(m) => {
+                eprintln!("wol-xguard: {p}: {m}");
+                worst = worst.max(3);
+                continue;
+            }
+        };
+        let mut r: Report = xguard::scan_file(&e, &mut f, &p, extra.as_deref(), Limits::default())
             .unwrap_or_else(|m| die(&format!("{p}: {m}")));
+        if let Some(s) = &clam {
+            use std::io::Seek;
+            let _ = f.rewind();
+            let a = xguard::clam::ask(s, &f, xguard::clam::WAIT);
+            xguard::clam::merge(&mut r, a, &p);
+        }
         if json {
             println!("{}", serde_json::to_string(&r).unwrap_or_default());
         } else {
@@ -69,14 +87,14 @@ fn scan(args: &[String]) -> i32 {
                     .for_each(|s| println!("{}: not read: {}", s.path, s.why)),
             }
         }
+        found |= r.verdict == Verdict::Found;
         worst = worst.max(match r.verdict {
-            Verdict::Clean => 0,
             Verdict::Incomplete => 2,
-            Verdict::Found => 1,
+            _ => 0,
         });
     }
     let _ = std::io::stdout().flush();
-    worst
+    if found { 1 } else { worst }
 }
 
 fn build(args: &[String]) -> i32 {

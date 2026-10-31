@@ -1,0 +1,18 @@
+# The only program that links libclamav (ADR 0027). No network, no write access, gone when idle.
+[Unit]
+Description=WolOS full malware check
+ConditionPathExists=/var/lib/wolos/xguard/clamav
+Requires=wolos-clam.socket
+
+[Service]
+ExecStart=/usr/bin/wol-xguard-clam serve --idle 120
+User=_xguard
+CapabilityBoundingSet=
+NoNewPrivileges=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+Nice=5
+OOMScoreAdjust=500
+MemoryMax=2G

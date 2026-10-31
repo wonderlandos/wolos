@@ -353,7 +353,8 @@ impl Shared {
         {
             let _ = j.file.seek(SeekFrom::Start(0));
             if let Some(r) = deep_scan(w, &self.o.rules, &j.file) {
-                ran_deep = true;
+                // An unfinished deep look stays clean for now, and is looked at again.
+                ran_deep = r.verdict != crate::Verdict::Incomplete;
                 found = r.findings.first().map(|f| f.name.clone());
             }
         }

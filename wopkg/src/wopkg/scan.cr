@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
+require "json"
+
 module Wopkg
-  # The malware scan step (ADR 0021). The engine belongs to the `xguard` stream; until its library
-  # lands this runs `clamscan` as a separate process with ClamAV's signature data. ClamAV is GPL, so it is
-  # never linked and stays an optional dependency. Repository packages that pacman already verifies
-  # are not scanned, so normal installs stay fast.
+  # The malware scan step (ADR 0021, 0026). `wol-xguard scan --json` reads archives in memory and asks
+  # ClamAV in its own process when the person turned the full signatures on; `clamscan` is the
+  # fallback off WolOS. Neither is linked. Repository packages that pacman already verifies are not
+  # scanned, so normal installs stay fast.
   module Scan
     enum Kind
       Clean
@@ -56,7 +58,40 @@ module Wopkg
       Process.find_executable("clamscan")
     end
 
-    def self.run(paths : Array(String), clamscan : String? = find_clamscan, db : String = "/var/lib/clamav", now : Time = Time.utc) : Verdict
+    def self.find_xguard : String?
+      Process.find_executable("wol-xguard")
+    end
+
+    # One report per line, exit 0 clean, 1 found, 2 incomplete, 3 could not run.
+    def self.run_xguard(paths : Array(String), xguard : String, now : Time = Time.utc) : Verdict
+      hits = [] of String
+      age = nil.as(Int64?)
+      incomplete = false
+      paths.each do |p|
+        buf = IO::Memory.new
+        status = Process.run(xguard, ["scan", "--json", p], output: buf, error: Process::Redirect::Close)
+        return Verdict.new(Kind::Unavailable, [] of String, "The malware check could not run, so this download was not checked.") if status.exit_code == 3
+        r = JSON.parse(buf.to_s.lines.first? || "{}")
+        r["findings"]?.try(&.as_a.each { |f| hits << f["name"].as_s })
+        age = r["signatures_age_days"]?.try(&.as_i64?) || age
+        incomplete ||= status.exit_code == 2
+      end
+      hits = hits.uniq
+      if !hits.empty?
+        Verdict.new(Kind::Infected, hits, "The malware check found #{hits.join(", ")} in the download, so nothing was installed.")
+      elsif incomplete
+        Verdict.new(Kind::Unavailable, [] of String, "Part of this download could not be checked for malware.")
+      elsif (a = age) && a > STALE_DAYS
+        Verdict.new(Kind::Stale, [] of String, "Nothing was found, but the signatures are #{a} days old, so this is not a clean result.")
+      else
+        Verdict.new(Kind::Clean, [] of String, "No known malware found.")
+      end
+    end
+
+    def self.run(paths : Array(String), clamscan : String? = find_clamscan, db : String = "/var/lib/clamav", now : Time = Time.utc, xguard : String? = find_xguard) : Verdict
+      if xguard
+        return run_xguard(paths, xguard, now)
+      end
       unless clamscan
         return Verdict.new(Kind::Unavailable, [] of String, "ClamAV is not installed, so this download was not checked for malware.")
       end

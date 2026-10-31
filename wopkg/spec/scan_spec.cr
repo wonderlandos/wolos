@@ -12,7 +12,39 @@ def fake_clamscan(dir : String, body : String) : String
   path
 end
 
+# A stand-in for wol-xguard: one report line per path.
+def fake_xguard(dir : String, line : String, code : Int32) : String
+  path = "#{dir}/wol-xguard"
+  File.write(path, "#!/bin/sh\necho '#{line}'\nexit #{code}\n")
+  File.chmod(path, 0o755)
+  path
+end
+
 describe Wopkg::Scan do
+  it "uses the WolOS check first and names what it found" do
+    d = File.tempname("wopkg-xg")
+    Dir.mkdir_p(d)
+    bin = fake_xguard(d, %({"verdict":"found","findings":[{"name":"Win.Test-1","how":"clamav","path":"a"}],"signatures_age_days":0}), 1)
+    v = Scan.run(["#{d}/a"], clamscan: nil, xguard: bin)
+    v.infected?.should be_true
+    v.hits.should eq(["Win.Test-1"])
+    FileUtils.rm_rf(d)
+  end
+
+  it "never calls an incomplete or old result clean" do
+    d = File.tempname("wopkg-xg")
+    Dir.mkdir_p(d)
+    bin = fake_xguard(d, %({"verdict":"incomplete","findings":[],"signatures_age_days":0}), 2)
+    Scan.run(["#{d}/a"], clamscan: nil, xguard: bin).unavailable?.should be_true
+    bin = fake_xguard(d, %({"verdict":"clean","findings":[],"signatures_age_days":40}), 0)
+    Scan.run(["#{d}/a"], clamscan: nil, xguard: bin).stale?.should be_true
+    bin = fake_xguard(d, %({"verdict":"clean","findings":[],"signatures_age_days":1}), 0)
+    Scan.run(["#{d}/a"], clamscan: nil, xguard: bin).clean?.should be_true
+    bin = fake_xguard(d, "", 3)
+    Scan.run(["#{d}/a"], clamscan: nil, xguard: bin).unavailable?.should be_true
+    FileUtils.rm_rf(d)
+  end
+
   it "scans third-party installs and skips what a signed repository already vouches for" do
     Scan.needed?("aur").should be_true
     Scan.needed?("appimage").should be_true
@@ -29,7 +61,7 @@ describe Wopkg::Scan do
     bin = fake_clamscan(d, %(echo "$LAST: OK"; echo; echo "Infected files: 0"; exit 0))
     File.write("#{d}/f", "x")
     File.write("#{d}/daily.cvd", "db")
-    v = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc)
+    v = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc, xguard: nil)
     v.clean?.should be_true
     v.message.should contain("No known malware")
     FileUtils.rm_rf(d)
@@ -41,7 +73,7 @@ describe Wopkg::Scan do
     bin = fake_clamscan(d, %(echo "$LAST: Unix.Trojan.Chaos-1 FOUND"; echo "Infected files: 1"; exit 1))
     File.write("#{d}/f", "x")
     File.write("#{d}/daily.cvd", "db")
-    v = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc)
+    v = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc, xguard: nil)
     v.infected?.should be_true
     v.hits.should eq(["Unix.Trojan.Chaos-1"])
     v.message.should eq("ClamAV found Unix.Trojan.Chaos-1 in the download, so nothing was installed.")
@@ -50,7 +82,7 @@ describe Wopkg::Scan do
   end
 
   it "says so when ClamAV is not installed, instead of implying a clean result" do
-    v = Scan.run(["/nonexistent"], clamscan: nil, db: "/nonexistent", now: Time.utc)
+    v = Scan.run(["/nonexistent"], clamscan: nil, db: "/nonexistent", now: Time.utc, xguard: nil)
     v.unavailable?.should be_true
     v.clean?.should be_false
     v.message.should contain("not installed")
@@ -62,18 +94,18 @@ describe Wopkg::Scan do
     Dir.mkdir_p(d)
     bin = fake_clamscan(d, %(echo "$LAST: OK"; exit 0))
     File.write("#{d}/f", "x")
-    missing = Scan.run(["#{d}/f"], clamscan: bin, db: "#{d}/none", now: Time.utc)
+    missing = Scan.run(["#{d}/f"], clamscan: bin, db: "#{d}/none", now: Time.utc, xguard: nil)
     missing.unavailable?.should be_true
     missing.message.should contain("signature")
     File.write("#{d}/daily.cvd", "db")
     File.utime(Time.utc - 30.days, Time.utc - 30.days, "#{d}/daily.cvd")
-    old = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc)
+    old = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc, xguard: nil)
     old.stale?.should be_true
     old.clean?.should be_false
     old.message.should contain("30 days")
     old.message.should contain("not a clean result")
     File.utime(Time.utc, Time.utc, "#{d}/daily.cvd")
-    Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc).clean?.should be_true
+    Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc, xguard: nil).clean?.should be_true
     FileUtils.rm_rf(d)
   end
 
@@ -83,7 +115,7 @@ describe Wopkg::Scan do
     bin = fake_clamscan(d, %(echo "ERROR: Can't open file" >&2; exit 2))
     File.write("#{d}/f", "x")
     File.write("#{d}/daily.cld", "db")
-    v = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc)
+    v = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc, xguard: nil)
     v.clean?.should be_false
     v.unavailable?.should be_true
     FileUtils.rm_rf(d)

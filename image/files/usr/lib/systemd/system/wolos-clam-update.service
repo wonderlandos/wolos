@@ -1,0 +1,17 @@
+[Unit]
+Description=WolOS full malware signatures: fetch and prepare
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/clam-update
+# Files trusted under the old signatures are looked at again.
+ExecStartPost=+/usr/bin/systemctl try-restart wolos-clam.service wolos-xguard.service
+User=_xguard
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/wolos/xguard
+Nice=10
+IOSchedulingClass=idle

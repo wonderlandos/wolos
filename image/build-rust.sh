@@ -29,6 +29,9 @@ done
 eval cargo build --release -p xguard --features yara --bin wol-xguard --locked $F
 [ -x "$B/wol-xguard" ] || { echo "build-rust.sh: binary wol-xguard not produced" >&2; exit 1; }
 install -m 755 "$B/wol-xguard" "$DEST/usr/bin/wol-xguard"
+# ClamAV stays in its own program: the only one that links libclamav (ADR 0027).
+eval cargo build --release -p xguard-clam --features libclamav --bin wol-xguard-clam --locked $F
+install -m 755 "$B/wol-xguard-clam" "$DEST/usr/bin/wol-xguard-clam"
 "$REPO/crates/xguard/rules/build.sh" "$B/wol-xguard" "$DEST/usr/share/wolos/xguard"
 # pacman for the sealed system: first on PATH, runs the real /usr/bin/pacman (layers, ADR 0016).
 [ -x "$B/pacman" ] || { echo "build-rust.sh: binary pacman not produced" >&2; exit 1; }

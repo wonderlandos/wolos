@@ -13,13 +13,11 @@ Restart=on-failure
 RestartSec=2
 CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER
 NoNewPrivileges=yes
-PrivateNetwork=yes
-ProtectSystem=strict
-ReadWritePaths=/var/lib/wolos/xguard
+# No option here may give it a mount namespace (ProtectSystem, PrivateTmp, PrivateNetwork...): kernel
+# marks hold on mounts, and in a namespace of its own it would watch copies nobody else uses.
 RuntimeDirectory=wolos
 RuntimeDirectoryPreserve=yes
-ProtectKernelTunables=yes
-ProtectControlGroups=yes
+# Keeps it off the network, in place of PrivateNetwork.
 RestrictAddressFamilies=AF_UNIX
 MemoryMax=512M
 

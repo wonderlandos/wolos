@@ -154,6 +154,13 @@ impl Engine {
             .filter(|p| p.extension().is_some_and(|e| e == "xgdb"))
             .collect();
         files.sort();
+        // What was built here goes with the system's own; an explicit folder stays alone.
+        if dir == std::path::Path::new(crate::RULES_DIR)
+            || dir == std::path::Path::new(crate::SHIPPED_DIR)
+        {
+            let local = std::path::Path::new(crate::LOCAL_DIR).join("full.xgdb");
+            files.extend(local.exists().then_some(local));
+        }
         let dbs = files
             .iter()
             .map(|p| Db::open(p).map_err(|e| format!("{}: {e}", p.display())))

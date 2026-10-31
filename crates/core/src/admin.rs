@@ -173,6 +173,7 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::Ntp
         | AdminAction::RemoteLogin
         | AdminAction::Firewall
+        | AdminAction::MalwareSignatures
         | AdminAction::AirPlayReceiver => ok(n == 1 && on_off(a[0])),
         AdminAction::Hostname => ok(n == 1 && sharing::is_valid_hostname(a[0])),
         AdminAction::Lid => ok(n == 1 && (a[0] == "sleep" || a[0] == "nothing")),
@@ -336,6 +337,10 @@ pub fn plan_with(
         ])],
         AdminAction::RemoteLogin => service_steps("sshd.service", a[0] == "on"),
         AdminAction::Firewall => service_steps("nftables.service", a[0] == "on"),
+        AdminAction::MalwareSignatures => crate::malware::clam_argvs(a[0] == "on")
+            .into_iter()
+            .map(AdminStep::Run)
+            .collect(),
         AdminAction::AirPlayReceiver => service_steps(crate::sharing::AIRPLAY_UNIT, a[0] == "on"),
         AdminAction::Hostname => vec![argv(&["hostnamectl", "set-hostname", &a[0]])],
         AdminAction::AutoUpdate => vec![write(
@@ -939,6 +944,8 @@ mod tests {
             (RemoteLogin, &["start"], false),
             (Firewall, &["off"], true),
             (Firewall, &["on", "x"], false),
+            (MalwareSignatures, &["on"], true),
+            (MalwareSignatures, &["maybe"], false),
             (AirPlayReceiver, &["on"], true),
             (AirPlayReceiver, &["off"], true),
             (AirPlayReceiver, &["start"], false),
@@ -1218,6 +1225,7 @@ mod tests {
             (PkgUpgrade, false),
             (UserAdd, false),
             (Firewall, false),
+            (MalwareSignatures, false),
             (AirPlayReceiver, false),
             (Consent, false),
             (HwLoad, false),

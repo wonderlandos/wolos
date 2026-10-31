@@ -49,7 +49,11 @@ fn start(base: &Path, tag: &str) -> Guard {
         }]
     ));
     std::fs::write(dir.join("rules/test.xgdb"), b.build(1, 1)).unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_wol-xguard"))
+    // The deep worker runs as nobody, so the program must be where nobody can reach it, like /usr/bin.
+    let exe = std::env::temp_dir().join(format!("wol-xguard-test-{tag}"));
+    std::fs::copy(env!("CARGO_BIN_EXE_wol-xguard"), &exe).unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let child = Command::new(&exe)
         .arg("guard")
         .arg("--state")
         .arg(dir.join("state"))
@@ -251,4 +255,57 @@ fn xattr(p: &Path, name: &str) -> bool {
     };
     // SAFETY: size 0 asks for the length only.
     unsafe { libc::getxattr(c.as_ptr(), n.as_ptr(), std::ptr::null_mut(), 0) >= 0 }
+}
+
+/// The real ClamAV process behind the guard: `XGUARD_CLAM_BIN` is the binary built with libclamav.
+#[test]
+fn real_clamav_stops_what_only_it_knows_and_a_clean_file_is_asked_once() {
+    let Some(base) = root() else { return };
+    let Some(bin) = std::env::var_os("XGUARD_CLAM_BIN") else {
+        eprintln!("XGUARD_CLAM_BIN not set: not tested here");
+        return;
+    };
+    let d = base.join("clam-db");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        d.join("t.ndb"),
+        "Test.Only.Clam:0:*:4f4e4c592d434c414d2d4b4e4f57532d54484953\n",
+    )
+    .unwrap();
+    let sock = d.join("sock");
+    let mut serve = Command::new(bin)
+        .args(["serve", "--idle", "120", "--db"])
+        .arg(&d)
+        .arg("--socket")
+        .arg(&sock)
+        .spawn()
+        .unwrap();
+    wait(|| sock.exists());
+    std::thread::sleep(Duration::from_millis(500));
+    // SAFETY: the test runs single-threaded here (--test-threads=1), before the guard starts.
+    unsafe { std::env::set_var(xguard::clam::SOCKET_ENV, &sock) };
+    let g = start(&base, "clam");
+    let dl = g.dir.join("dl/setup.exe");
+    script(&dl, "ONLY-CLAM-KNOWS-THIS");
+    std::thread::sleep(Duration::from_millis(300));
+    let denied = exec(&dl);
+    let clean = g.dir.join("dl/tool.exe");
+    script(&clean, "harmless");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(exec(&clean), Ok(7), "clean through ClamAV");
+    let before = scanned(&g);
+    for _ in 0..20 {
+        assert_eq!(exec(&clean), Ok(7));
+    }
+    let after = scanned(&g);
+    let found = std::fs::read_to_string(g.dir.join("state/findings-0.json")).unwrap_or_default();
+    serve.kill().ok();
+    serve.wait().ok();
+    // SAFETY: as above.
+    unsafe { std::env::remove_var(xguard::clam::SOCKET_ENV) };
+    assert_eq!(denied, Err(libc::EPERM), "{found}");
+    assert!(found.contains("Test.Only.Clam"), "{found}");
+    assert_eq!(before, after, "the clean file is not read again");
 }

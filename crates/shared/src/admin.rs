@@ -46,6 +46,8 @@ pub enum AdminAction {
     AirPlayReceiver,
     /// Firewall: `on` or `off` (pf with the WolOS ruleset).
     Firewall,
+    /// Full malware signatures: `on` or `off` (fetched by freshclam on this computer, ADR 0026).
+    MalwareSignatures,
     /// Lid closed: `sleep` or `nothing`.
     Lid,
     /// `<queue> <device uri>`: driverless CUPS queue.
@@ -101,6 +103,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::RemoteLogin, "remote-login"),
     (AdminAction::AirPlayReceiver, "airplay-receiver"),
     (AdminAction::Firewall, "firewall"),
+    (AdminAction::MalwareSignatures, "malware-signatures"),
     (AdminAction::Lid, "lid"),
     (AdminAction::PrinterAdd, "printer-add"),
     (AdminAction::PrinterRemove, "printer-remove"),
@@ -256,6 +259,7 @@ mod tests {
             "remote-login",
             "airplay-receiver",
             "firewall",
+            "malware-signatures",
             "lid",
             "printer-add",
             "printer-remove",
