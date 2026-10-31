@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The laws of `laws/LAWS.bend`, run over a graph. Each answers with the exact path it found.
-use crate::graph::{Edge, EdgeKind as E, Graph, Loc, NodeId, NodeKind as K};
+use crate::graph::{Edge, EdgeKind as E, Graph, Loc, NodeId, NodeKind as K, Stage};
 use crate::pkgbuild::Meta;
+use crate::{hosts, paths};
 use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
 
@@ -11,6 +12,16 @@ pub enum LawId {
     FetchExecuteUnverified,
     DecodeExecute,
     UnresolvedDynamic,
+    WriteOutsidePackage,
+    ReadCredentials,
+    CredentialToNetwork,
+    ScriptletUndeclaredFile,
+    SourceOffUpstream,
+    UndeclaredPersistence,
+    PostinstallNetwork,
+    BinChecksumUpstream,
+    UnexplainedNewEdge,
+    ObservedMismatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -31,7 +42,10 @@ pub struct Finding {
 
 /// Edges content can move along.
 fn flows(k: E) -> bool {
-    matches!(k, E::Fetches | E::Writes | E::Reads | E::Decodes | E::Executes)
+    matches!(
+        k,
+        E::Fetches | E::Writes | E::Reads | E::Decodes | E::Executes
+    )
 }
 
 fn network(g: &Graph, n: NodeId) -> bool {
@@ -64,12 +78,23 @@ impl<'a> View<'a> {
     fn declared_vcs(&self, n: NodeId) -> bool {
         let node = &self.g.nodes[n as usize];
         node.kind == K::Source
-            && self.meta.sources.iter().any(|s| s.vcs && s.name == node.label && s.url.as_deref().is_some_and(|u| crate::hosts::same_project(&self.meta.url, u, &self.meta.pkgnames)))
+            && self.meta.sources.iter().any(|s| {
+                s.vcs
+                    && s.name == node.label
+                    && s.url.as_deref().is_some_and(|u| {
+                        crate::hosts::same_project(&self.meta.url, u, &self.meta.pkgnames)
+                    })
+            })
     }
 
     /// Walk backwards from `start` to the first edge or node `goal` accepts, without crossing a
     /// node `stop` rejects. The result reads source first.
-    fn back(&self, start: NodeId, stop: impl Fn(NodeId) -> bool, goal: impl Fn(&Edge, NodeId) -> bool) -> Option<Vec<u32>> {
+    fn back(
+        &self,
+        start: NodeId,
+        stop: impl Fn(NodeId) -> bool,
+        goal: impl Fn(&Edge, NodeId) -> bool,
+    ) -> Option<Vec<u32>> {
         let mut parent: Vec<Option<u32>> = vec![None; self.g.nodes.len()];
         let mut seen = HashSet::from([start]);
         let mut q = VecDeque::from([start]);
@@ -99,7 +124,223 @@ impl<'a> View<'a> {
 
     fn step(&self, n: NodeId, loc: Option<Loc>) -> Step {
         let node = &self.g.nodes[n as usize];
-        Step { node: node.key.clone(), label: node.label.clone(), loc: loc.or_else(|| node.loc.clone()) }
+        Step {
+            node: node.key.clone(),
+            label: node.label.clone(),
+            loc: loc.or_else(|| node.loc.clone()),
+        }
+    }
+
+    fn at(e: &Edge, n: &crate::graph::Node) -> String {
+        e.loc
+            .as_ref()
+            .or(n.loc.as_ref())
+            .map(|l| format!(" at {l}"))
+            .unwrap_or_default()
+    }
+
+    /// A scriptlet may change what its package installs, the package's own folders, and nothing else.
+    fn declared(&self, p: &str) -> bool {
+        let g = self.g;
+        if g.find(&format!("$pkgdir{p}")).is_some()
+            || self
+                .meta
+                .backup
+                .iter()
+                .any(|b| format!("/{}", b.trim_start_matches('/')) == p)
+        {
+            return true;
+        }
+        let parent = format!("$pkgdir{p}/");
+        if g.nodes.iter().any(|n| n.key.starts_with(&parent)) {
+            return true;
+        }
+        self.meta.pkgnames.iter().any(|n| {
+            let core = n.trim_end_matches("-git").trim_end_matches("-bin");
+            [
+                "/opt/",
+                "/usr/share/",
+                "/usr/lib/",
+                "/etc/",
+                "/var/lib/",
+                "/var/log/",
+                "/var/cache/",
+            ]
+            .iter()
+            .any(|d| {
+                [n.as_str(), core].iter().any(|x| {
+                    p.strip_prefix(*d)
+                        .is_some_and(|r| r == *x || r.starts_with(&format!("{x}/")))
+                })
+            })
+        })
+    }
+
+    /// Did this writer copy the file from the package's own sources?
+    fn from_sources(&self, proc: NodeId) -> bool {
+        self.into[proc as usize].iter().any(|&i| {
+            let e = &self.g.edges[i as usize];
+            e.kind == E::Reads && self.g.nodes[e.src as usize].key.starts_with("$srcdir/")
+        })
+    }
+
+    fn check_files(&self, out: &mut Vec<Finding>) {
+        let g = self.g;
+        let mut seen: HashSet<(LawId, NodeId)> = HashSet::new();
+        let mut add = |law: LawId, n: NodeId, sentence: String, path: Vec<Step>| {
+            if seen.insert((law, n)) {
+                out.push(Finding {
+                    law,
+                    sentence,
+                    path,
+                });
+            }
+        };
+        for e in &g.edges {
+            let (s, d) = (&g.nodes[e.src as usize], &g.nodes[e.dst as usize]);
+            match e.kind {
+                E::Reads | E::Decodes if s.kind == K::File => {
+                    if let Some(what) = paths::credential(&s.key) {
+                        let at = Self::at(e, d);
+                        add(
+                            LawId::ReadCredentials,
+                            e.src,
+                            format!("{} reads {} ({what}){at}.", d.label, s.label),
+                            vec![self.step(e.src, None), self.step(e.dst, e.loc.clone())],
+                        );
+                    }
+                }
+                E::Writes if d.kind == K::File && s.kind == K::Process => {
+                    let at = Self::at(e, s);
+                    let steps = vec![self.step(e.src, e.loc.clone()), self.step(e.dst, None)];
+                    let path = &d.key;
+                    let scriptlet = s.stage == Stage::Scriptlet;
+                    if paths::persistence(path) {
+                        let shipped = path.starts_with("$pkgdir") && self.from_sources(e.src);
+                        if !shipped {
+                            add(
+                                LawId::UndeclaredPersistence,
+                                e.dst,
+                                format!(
+                                    "{} writes {}{at}, which starts again by itself, and the package does not declare it.",
+                                    s.label, d.label
+                                ),
+                                steps.clone(),
+                            );
+                        }
+                    }
+                    if scriptlet {
+                        if path.starts_with('/')
+                            && !paths::harmless(path)
+                            && !paths::persistence(path)
+                            && !self.declared(path)
+                        {
+                            add(
+                                LawId::ScriptletUndeclaredFile,
+                                e.dst,
+                                format!(
+                                    "{} changes {}{at} as the administrator, and the package does not declare that file.",
+                                    s.label, d.label
+                                ),
+                                steps,
+                            );
+                        }
+                    } else if s.stage != Stage::Upstream && paths::outside_package(path) {
+                        add(
+                            LawId::WriteOutsidePackage,
+                            e.dst,
+                            format!(
+                                "{} writes {}{at}, outside the package and source folders.",
+                                s.label, d.label
+                            ),
+                            steps,
+                        );
+                    }
+                }
+                E::Fetches | E::Sends => {
+                    let (proc, peer) = if e.kind == E::Fetches {
+                        (e.dst, s)
+                    } else {
+                        (e.src, d)
+                    };
+                    let p = &g.nodes[proc as usize];
+                    if p.stage == Stage::Scriptlet && p.kind == K::Process {
+                        let at = Self::at(e, p);
+                        add(
+                            LawId::PostinstallNetwork,
+                            proc,
+                            format!(
+                                "{} contacts {}{at} while the package installs, as the administrator.",
+                                p.label, peer.label
+                            ),
+                            vec![self.step(proc, e.loc.clone())],
+                        );
+                    }
+                }
+                _ => {}
+            }
+            if e.kind == E::Sends {
+                let hit = self.back(
+                    e.src,
+                    |_| false,
+                    |x, src| {
+                        flows(x.kind)
+                            && g.nodes[src as usize].kind == K::File
+                            && paths::credential(&g.nodes[src as usize].key).is_some()
+                    },
+                );
+                if let Some(mut p) = hit {
+                    p.push(g.edges.iter().position(|x| std::ptr::eq(x, e)).unwrap_or(0) as u32);
+                    let (s2, path) = self.narrate(&p);
+                    let first = path.first().map(|x| x.label.clone()).unwrap_or_default();
+                    add(
+                        LawId::CredentialToNetwork,
+                        e.dst,
+                        format!("{first} is secret, and {s2}."),
+                        path,
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_sources(&self, out: &mut Vec<Finding>) {
+        let m = self.meta;
+        let bin = m.pkgnames.iter().any(|n| n.ends_with("-bin"));
+        for s in &m.sources {
+            let Some(url) = &s.url else { continue };
+            let loc = Loc {
+                file: "PKGBUILD".into(),
+                line: s.line,
+            };
+            let step = Step {
+                node: format!("url:{url}"),
+                label: url.clone(),
+                loc: Some(loc.clone()),
+            };
+            if !hosts::on_upstream(&m.url, url, &m.pkgnames) {
+                let sentence = format!(
+                    "{loc} downloads {url}, which is not on the project's declared home {}.",
+                    m.url
+                );
+                out.push(Finding {
+                    law: LawId::SourceOffUpstream,
+                    sentence,
+                    path: vec![step.clone()],
+                });
+            }
+            let unsummed = s.sum.as_deref().is_none_or(|x| x.is_empty() || x == "SKIP");
+            if bin && !s.vcs && unsummed {
+                let sentence = format!(
+                    "{loc} downloads the binary {url} with no checksum, so nothing ties it to what upstream published."
+                );
+                out.push(Finding {
+                    law: LawId::BinChecksumUpstream,
+                    sentence,
+                    path: vec![step],
+                });
+            }
+        }
     }
 
     /// One clause per hop, in plain words.
@@ -113,11 +354,18 @@ impl<'a> View<'a> {
                 steps.push(self.step(e.src, s.loc.clone()));
             }
             steps.push(self.step(e.dst, e.loc.clone()));
-            let at = e.loc.as_ref().or(d.loc.as_ref()).map(|l| format!(" at {l}")).unwrap_or_default();
+            let at = e
+                .loc
+                .as_ref()
+                .or(d.loc.as_ref())
+                .map(|l| format!(" at {l}"))
+                .unwrap_or_default();
             let hidden = |l: &str| l == "a pipe";
             match e.kind {
                 E::Fetches => parts.push(format!("{} downloads {}{at}", d.label, s.label)),
-                E::Writes if d.kind == K::File && !hidden(&d.label) => parts.push(format!("{} saves it as {}{at}", s.label, d.label)),
+                E::Writes if d.kind == K::File && !hidden(&d.label) => {
+                    parts.push(format!("{} saves it as {}{at}", s.label, d.label))
+                }
                 E::Reads if d.kind == K::Process => parts.push(format!("{} reads it{at}", d.label)),
                 E::Decodes => parts.push(format!("{} decodes it{at}", d.label)),
                 E::Executes => parts.push(format!("{} runs it{at}", d.label)),
@@ -148,29 +396,58 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
         // The executed thing may itself be the network, as with `nc -e`.
         let direct = network(g, e.src).then(|| vec![edge]);
         let path = direct.or_else(|| {
-            v.back(e.src, |n| v.checked_before(n, e.seq) || v.declared_vcs(n), |x, src| network(g, src) && x.kind == E::Fetches).map(hit)
+            v.back(
+                e.src,
+                |n| v.checked_before(n, e.seq) || v.declared_vcs(n),
+                |x, src| network(g, src) && x.kind == E::Fetches,
+            )
+            .map(hit)
         });
         let blocked = v.checked_before(e.src, e.seq) || v.declared_vcs(e.src);
         if let (Some(p), false) = (path, blocked) {
             explained.insert(sink);
             if seen.insert((LawId::FetchExecuteUnverified, sink)) {
                 let (s, path) = v.narrate(&p);
-                out.push(Finding { law: LawId::FetchExecuteUnverified, sentence: format!("{s}, and no checksum checks it first."), path });
+                out.push(Finding {
+                    law: LawId::FetchExecuteUnverified,
+                    sentence: format!("{s}, and no checksum checks it first."),
+                    path,
+                });
             }
         }
-        if let Some(p) = v.back(e.src, |_| false, |x, _| x.kind == E::Decodes).map(hit) {
+        if let Some(p) = v
+            .back(e.src, |_| false, |x, _| x.kind == E::Decodes)
+            .map(hit)
+        {
             explained.insert(sink);
             if seen.insert((LawId::DecodeExecute, sink)) {
                 let (s, path) = v.narrate(&p);
-                out.push(Finding { law: LawId::DecodeExecute, sentence: format!("{s}, so decoded data is run as code."), path });
+                out.push(Finding {
+                    law: LawId::DecodeExecute,
+                    sentence: format!("{s}, so decoded data is run as code."),
+                    path,
+                });
             }
         }
     }
+    v.check_files(&mut out);
+    v.check_sources(&mut out);
     for (i, n) in g.nodes.iter().enumerate() {
         if n.kind == K::Process && n.unresolved && !explained.contains(&(i as NodeId)) {
-            let at = n.loc.as_ref().map(|l| l.to_string()).unwrap_or_else(|| "an unknown place".into());
-            let sentence = format!("{} at {at} runs text this analysis cannot resolve, so what it does is unknown.", n.label);
-            out.push(Finding { law: LawId::UnresolvedDynamic, sentence, path: vec![v.step(i as NodeId, n.loc.clone())] });
+            let at = n
+                .loc
+                .as_ref()
+                .map(|l| l.to_string())
+                .unwrap_or_else(|| "an unknown place".into());
+            let sentence = format!(
+                "{} at {at} runs text this analysis cannot resolve, so what it does is unknown.",
+                n.label
+            );
+            out.push(Finding {
+                law: LawId::UnresolvedDynamic,
+                sentence,
+                path: vec![v.step(i as NodeId, n.loc.clone())],
+            });
         }
     }
     out
