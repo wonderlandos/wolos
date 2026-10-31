@@ -35,10 +35,12 @@ fn main() {
     let saver = Arc::new(memsaver::Service::new(shared::memsaver::STATUS));
     spawn_memsaver(saver.clone());
     spawn_qos(saver.clone());
-    // The compositor and shell start after wold: re-check every few seconds (idempotent).
+    // The compositor, shell and shader precompilers start after wold: re-check every few seconds
+    // (idempotent).
     std::thread::spawn(|| {
         loop {
             qos::protect_session(Path::new("/proc"));
+            qos::tag_precompile(Path::new("/proc"), &qos::Sched);
             std::thread::sleep(std::time::Duration::from_secs(5));
         }
     });
