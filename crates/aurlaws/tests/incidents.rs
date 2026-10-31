@@ -135,6 +135,9 @@ fn no_fixture_points_at_a_real_address() {
                 || host.starts_with("203.0.113.")
                 || host.starts_with("198.51.100.")
                 || host == "example.net"
+                || host.ends_with(".example.net")
+                || host.ends_with(".example.org")
+                || host.ends_with(".example.com")
                 || host.ends_with(".github.io") && host.starts_with("example-")
                 || host.ends_with(".invalid")
                 || host == "example.org"
