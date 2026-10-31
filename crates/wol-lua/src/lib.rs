@@ -14,6 +14,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// What [`Services::system`] returns (libwol's system facts).
+pub use wol::system::Info as SystemInfo;
+
 pub const DEFAULT_REFRESH: u32 = 60;
 pub const MAX_REFRESH: u32 = 86_400;
 /// Permissions a widget may declare (libwol services that need one).

@@ -82,6 +82,7 @@ fn kind_name(k: &Kind, pkgs: &[Package]) -> String {
             .iter()
             .find(|p| &p.id == id)
             .map_or_else(|| id.clone(), |p| p.name().into()),
+        Kind::Lua(id) => id.clone(),
         Kind::Unknown(s) => s.clone(),
     }
 }
@@ -95,6 +96,8 @@ fn sizes_of(k: &Kind, pkgs: &[Package]) -> Option<Vec<Size>> {
             .find(|p| &p.id == id)
             .and_then(|p| p.manifest.as_ref().ok())
             .map(|m| m.sizes.clone()),
+        // A Lua widget draws itself at any size.
+        Kind::Lua(_) => Some(Size::ALL.to_vec()),
         Kind::Unknown(_) => None,
     }
 }
@@ -193,6 +196,14 @@ fn size_ids(s: &[Size]) -> Vec<&'static str> {
 fn parse_kind(s: &str, pkgs: &[Package]) -> Result<Kind, String> {
     if let Some(b) = Builtin::parse(s) {
         return Ok(Kind::Builtin(b));
+    }
+    if s.starts_with(shared::widgets::LUA_PREFIX) {
+        return match Kind::parse(s) {
+            k @ Kind::Lua(_) => Ok(k),
+            _ => Err(format!(
+                "'{s}' is not a Lua widget: lua:<file name>, for ~/.config/wolos/widgets/<file name>.lua"
+            )),
+        };
     }
     let id = s.strip_prefix(CUSTOM_PREFIX).unwrap_or(s);
     match pkgs.iter().find(|p| p.id == id) {
