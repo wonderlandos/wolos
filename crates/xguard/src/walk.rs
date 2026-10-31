@@ -452,12 +452,59 @@ mod tests {
     fn engine() -> Engine {
         Engine::new(vec![test_db()])
     }
+    /// A real filesystem image holding one file. None: mksquashfs is not on this computer.
+    fn squashfs(comp: &str, d: &[u8]) -> Option<Vec<u8>> {
+        let dir = std::env::temp_dir().join(format!("xg-sq-{}-{comp}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("in/usr/bin")).unwrap();
+        std::fs::write(dir.join("in/usr/bin/tool"), d).unwrap();
+        let img = dir.join("img");
+        let made = std::process::Command::new("mksquashfs")
+            .arg(dir.join("in"))
+            .arg(&img)
+            .args(["-comp", comp, "-noappend", "-quiet", "-no-progress"])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .ok()?;
+        assert!(made.success(), "{comp}");
+        let out = std::fs::read(&img).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        Some(out)
+    }
+    /// An ELF-64 header whose section headers end where the filesystem starts.
+    fn behind_runtime(fs: &[u8]) -> Vec<u8> {
+        let mut d = vec![0u8; 8192];
+        d[..6].copy_from_slice(b"\x7fELF\x02\x01");
+        d[40..48].copy_from_slice(&4096u64.to_le_bytes());
+        d[58..60].copy_from_slice(&64u16.to_le_bytes());
+        d[60..62].copy_from_slice(&64u16.to_le_bytes());
+        d.extend_from_slice(fs);
+        d
+    }
     fn scan(d: &[u8]) -> Report {
         scan_bytes(&engine(), d, "in", None, Limits::default())
     }
     fn found(r: &Report) -> Vec<String> {
         r.findings.iter().map(|f| f.path.clone()).collect()
     }
+    #[test]
+    fn appimages_are_read_inside_for_each_compression() {
+        for comp in ["gzip", "zstd", "xz"] {
+            let Some(fs) = squashfs(comp, EICAR) else {
+                eprintln!("mksquashfs missing: not tested here");
+                return;
+            };
+            let inside = |r: Report| r.findings.iter().any(|f| f.path.ends_with("usr/bin/tool"));
+            assert!(inside(scan(&fs)), "{comp}: bare image");
+            assert!(inside(scan(&behind_runtime(&fs))), "{comp}: as an AppImage");
+            let clean = squashfs(comp, b"nothing to see").unwrap();
+            assert!(
+                scan(&behind_runtime(&clean)).findings.is_empty(),
+                "{comp}: clean"
+            );
+        }
+    }
+
     fn gz(d: &[u8]) -> Vec<u8> {
         let mut w = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         w.write_all(d).unwrap();

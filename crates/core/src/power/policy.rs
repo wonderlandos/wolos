@@ -356,10 +356,15 @@ pub fn idle_acts(i: Idle, source: Source, sleep: bool) -> bool {
     source == Source::Battery && (i == Idle::DisplayOff || sleep)
 }
 
-/// hypridle listener blocks for [`idle_acts`].
+/// After this long the person counts as away: background work may use the computer.
+pub const AWAY_SECS: u32 = 300;
+/// Marker in the session's runtime folder while the person is away.
+pub const AWAY_FLAG: &str = "wolos-idle";
+
+/// hypridle listener blocks for [`idle_acts`], and the away marker.
 pub fn hypridle_listeners() -> String {
     format!(
-        "listener {{\n    timeout = {BATTERY_DISPLAY_OFF_SECS}\n    on-timeout = wol power idle display-off\n    on-resume = hyprctl dispatch dpms on\n}}\nlistener {{\n    timeout = {BATTERY_SLEEP_SECS}\n    on-timeout = wol power idle sleep\n}}\n"
+        "listener {{\n    timeout = {AWAY_SECS}\n    on-timeout = touch \"$XDG_RUNTIME_DIR/{AWAY_FLAG}\"\n    on-resume = rm -f \"$XDG_RUNTIME_DIR/{AWAY_FLAG}\"\n}}\nlistener {{\n    timeout = {BATTERY_DISPLAY_OFF_SECS}\n    on-timeout = wol power idle display-off\n    on-resume = hyprctl dispatch dpms on\n}}\nlistener {{\n    timeout = {BATTERY_SLEEP_SECS}\n    on-timeout = wol power idle sleep\n}}\n"
     )
 }
 
@@ -682,6 +687,10 @@ mod tests {
         let l = hypridle_listeners();
         assert!(l.contains("timeout = 120\n    on-timeout = wol power idle display-off"));
         assert!(l.contains("timeout = 600\n    on-timeout = wol power idle sleep"));
+        assert!(
+            l.contains("timeout = 300\n    on-timeout = touch \"$XDG_RUNTIME_DIR/wolos-idle\"")
+        );
+        assert!(l.contains("on-resume = rm -f \"$XDG_RUNTIME_DIR/wolos-idle\""));
         assert!(
             !l.contains("wol-lock"),
             "the lock listener stays the Lock pane's"
