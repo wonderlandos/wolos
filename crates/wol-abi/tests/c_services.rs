@@ -321,3 +321,21 @@ fn share() {
         }]
     );
 }
+
+#[test]
+fn service() {
+    let (out, calls) = run("service", |c, _| match c {
+        Call::ServiceStatus { .. } => Answer::with(json!({"state": "running"})),
+        _ => Answer::ok(),
+    });
+    assert_eq!(out, ["state: running", "bad name: 1"]);
+    let name = || "sync".to_owned();
+    assert_eq!(
+        calls,
+        [
+            Call::ServiceStart { name: name() },
+            Call::ServiceStatus { name: name() },
+            Call::ServiceStop { name: name() },
+        ]
+    );
+}

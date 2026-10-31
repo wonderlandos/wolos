@@ -274,6 +274,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "WolOS shows the person what would be shared, and nothing leaves until they pick where it goes",
     ),
+    (
+        "background",
+        Enforcement::System,
+        "WolOS runs only the app's own program, as your account, until the app or the computer stops it",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

@@ -46,7 +46,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 12 | audio: output, volume, now playing | `wol_audio_` | 1.8 `_copy_info` (grant `audio-info`), `_set_volume`, `_set_muted` (grant `audio-control`), run by the desktop |
 | 13 | devices: USB, Bluetooth, iPhone | `wol_device_` | 1.12 `_copy_list` (grant `devices`), `_open` (grant `device:<vendor>:<product>` per device): wold opens the USB node and passes the descriptor, never for a keyboard, disk or hub |
 | 14 | sharing and WolConnect: share sheet, nearby devices | `wol_share_` | 1.13 `_text`: grant `share`; the person sees the text and chooses copy or save. Nearby devices: next, once wold finds them |
-| 15 | services: the app's background jobs (wold, per account) | `wol_service_` | grant `background` |
+| 15 | services: the app's background jobs (wold, per account) | `wol_service_` | 1.14 `_start`, `_stop`, `_copy_status`: grant `background`; wold supervises the caller's own executable as the account, never a program the app names |
 | 16 | packages: installed apps, ask to install | `wol_package_` | through wol-admind |
 | 18 | answers: one read-only tree for what a service returns | `wol_info_` | 1.4 |
 | 17 | accounts: who is signed in, name, picture | `wol_account_` | 1.10 `_copy_info`: grant `account-info`; the caller's own account, from the kernel's uid. Accounts have no picture yet |
