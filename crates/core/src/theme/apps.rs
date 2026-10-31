@@ -357,7 +357,7 @@ fn traffic_lights(t: &ResolvedTheme, button: &str, classes: [&str; 3]) -> String
     let mut s = format!(
         "{button} {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; padding: 0; margin: 0; border: none; background: none; box-shadow: none; }}\n\
          {button} image {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }}\n\
-         {button}:hover image {{ color: rgba(0,0,0,0.55); }}\n"
+         windowcontrols:hover > button image {{ color: rgba(0,0,0,0.55); }}\n"
     );
     for (class, tok) in classes.iter().zip(["danger", "warning", "success"]) {
         s += &format!(
@@ -696,6 +696,10 @@ mod tests {
             t.tokens["danger"]
         )));
         assert!(gtk4.contains("min-width: 12px; min-height: 12px;"));
+        assert!(
+            gtk4.contains("windowcontrols:hover > button image { color: rgba(0,0,0,0.55); }"),
+            "hovering any light shows the glyphs on all three"
+        );
         assert!(
             gtk4.contains("color: transparent;"),
             "glyph hidden until hover"
