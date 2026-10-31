@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.11.2
+- One app cannot take the desktop with it (ADR 0026): each app has task and memory limits, the session keeps its memory and CPU share, and a fork storm is killed within seconds, on its own. A memory bomb used to stop new programs for 95 s; now they start in 3.5 ms.
 - Memory Saver (ADR 0025): a background app gives its memory back to zram 30 s after it stops being used, and takes it back as it runs. Sound, video, games and the apps you exclude are left alone. On by default, with its row in Settings.
 - Shader precompile (`fossilize_replay`) runs in the Background class, so a game keeps its frames during a replay. Steam's children malloc on transparent huge pages (`wol games steam`): shader compiles take 8% less time for 11% more memory.
 - Malware check (ADR 0024, archicture/modules/security.md): a layer of protection against known malware, on this computer only. Downloads, removable disks, AppImages, `.wol`, Windows programs and new programs are checked the first time they open; a clean file is never read again until it changes. Nothing appears when nothing is wrong. A stopped file gets one sentence, Move to Trash, and a deliberate Open Anyway in Settings > Privacy & Security. Signature updates are signed. `wol security scan`, and `libxguard.so.1` or `wol-xguard scan --json` for installers. New malware can get past it.
