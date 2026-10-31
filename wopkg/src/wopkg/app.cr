@@ -75,6 +75,7 @@ module Wopkg
       when "resume"      then File.delete?("#{state}/pause"); say "Automatic system updates are back on."
       when "appimage"    then appimage
       when "aur"         then aur_cmd
+      when "audit"       then audit
       when "recipe"      then recipe_cmd
       end
       0
@@ -105,7 +106,7 @@ module Wopkg
           wopkg list                (-Q)   what is installed
           wopkg history | rollback <id|system>
           wopkg channel [stable|beta|nightly] | pause [days] | resume
-          wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg recipe build|install|remove <name>
+          wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg audit <pkg> | wopkg recipe build|install|remove <name>
           wopkg completions zsh|bash|fish
 
         Options: -y (do not ask), --json (for tools).
@@ -456,6 +457,21 @@ module Wopkg
       else
         raise UsageError.new("wopkg aur review <package> | wopkg aur update [package]")
       end
+    end
+
+    # What an AUR package's files say, read and never run. Nothing here builds or installs.
+    def audit
+      pkg = @a.targets.first? || raise UsageError.new("wopkg audit <package>")
+      raise UsageError.new("#{pkg} is not a package name.") unless Aur.valid?(pkg)
+      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+      dir = aur.repo(pkg)
+      graph = "#{cache}/aurlaws/#{pkg}.svg"
+      Dir.mkdir_p(File.dirname(graph))
+      a = AurHook.audit(dir, graph)
+      return STDOUT.puts(a.raw) if @a.json && !a.raw.empty?
+      a.verdict.evidence.each { |e| say e }
+      say AurHook.summary(a.verdict)
+      say "Graph: #{graph}" if File.exists?(graph)
     end
 
     private def show_findings(fs : Array(AurGuard::Finding))

@@ -38,6 +38,30 @@ module Wopkg
       ENV["WOPKG_AURLAWS"]? || Process.find_executable("wopkg-aurlaws")
     end
 
+    record Audit, verdict : Verdict, raw : String
+
+    # What the analyser's answer means, in the words every surface uses.
+    def self.summary(v : Verdict) : String
+      case v.kind
+      when Kind::Pass        then "No law broken. That does not mean the package is safe."
+      when Kind::Flag, Kind::Block then "Needs review."
+      else                        "Not checked."
+      end
+    end
+
+    # The package's files alone, before anything is built. `graph` receives the picture.
+    def self.audit(dir : String, graph : String?, analyser : String? = find) : Audit
+      return Audit.new(Verdict.new(Kind::Unavailable, [NOT_CHECKED]), "") unless analyser
+      args = ["--dir", dir]
+      args.concat(["--graph", graph]) if graph
+      args << "--json"
+      buf = IO::Memory.new
+      ok = Process.run(analyser, args, output: buf, error: Process::Redirect::Close).success?
+      Audit.new(ok ? parse(buf.to_s) : Verdict.new(Kind::Unavailable, [NOT_CHECKED]), buf.to_s)
+    rescue
+      Audit.new(Verdict.new(Kind::Unavailable, [NOT_CHECKED]), "")
+    end
+
     def self.check(dir : String, artifact : String, trace : String?, analyser : String? = find) : Verdict
       return Verdict.new(Kind::Unavailable, [NOT_CHECKED]) unless analyser
       args = ["--dir", dir, "--artifact", artifact]
@@ -46,7 +70,13 @@ module Wopkg
       buf = IO::Memory.new
       ok = Process.run(analyser, args, output: buf, error: Process::Redirect::Close).success?
       return Verdict.new(Kind::Unavailable, [NOT_CHECKED]) unless ok
-      j = JSON.parse(buf.to_s)
+      parse(buf.to_s)
+    rescue
+      Verdict.new(Kind::Unavailable, [NOT_CHECKED])
+    end
+
+    private def self.parse(text : String) : Verdict
+      j = JSON.parse(text)
       kind = case j["verdict"]?.try(&.as_s?)
              when "pass"  then Kind::Pass
              when "flag"  then Kind::Flag
