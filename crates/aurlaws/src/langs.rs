@@ -65,7 +65,6 @@ fn table(lang: Lang) -> &'static [(&'static str, Does)] {
         Lang::Python => &[
             ("exec", Code),
             ("eval", Code),
-            ("compile", Code),
             ("os.system", Shell),
             ("os.popen", Shell),
             ("subprocess.getoutput", Shell),
@@ -433,10 +432,8 @@ impl Calls<'_, '_> {
             {
                 None
             }
-            (Lang::Python, Some(Does::Code)) if self.text(n).starts_with("compile") => {
-                let kids = args.clone();
-                return self.union(&kids);
-            }
+            // `re.compile` and `model.eval()` are methods; the builtins stand alone.
+            (Lang::Python, Some(Does::Code)) if callee.contains('.') => None,
             (_, d) => d,
         };
         let name = callee
