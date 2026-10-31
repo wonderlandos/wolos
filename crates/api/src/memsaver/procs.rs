@@ -1,4 +1,4 @@
-//! /proc facts Memory Saver needs: a process's cgroup, owner, parent, argv, and whether it is a
+//! /proc facts Memory Saver needs: a process's cgroup, owner, parent, and whether it is a
 //! game or a session component that must never be touched. `proc` is the /proc root (tests: a
 //! temp directory laid out the same way).
 use std::path::Path;
@@ -44,18 +44,6 @@ pub fn comm(proc: &Path, pid: i32) -> String {
         .unwrap_or_default()
 }
 
-/// argv from /proc/<pid>/cmdline (NUL separated).
-pub fn argv(proc: &Path, pid: i32) -> Vec<String> {
-    std::fs::read(proc.join(pid.to_string()).join("cmdline"))
-        .map(|raw| {
-            raw.split(|b| *b == 0)
-                .filter(|a| !a.is_empty())
-                .map(|a| String::from_utf8_lossy(a).into_owned())
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// (real uid, parent pid) from /proc/<pid>/status.
 pub fn owner_and_parent(proc: &Path, pid: i32) -> Option<(u32, i32)> {
     let s = std::fs::read_to_string(proc.join(pid.to_string()).join("status")).ok()?;
@@ -77,7 +65,7 @@ pub fn session_scope(cg: &str) -> Option<(u32, &str)> {
 }
 
 /// The app scope a cgroup belongs to: the path up to and including the first `app-*.scope`
-/// component under a user slice (role children inside it are cut off).
+/// component under a user slice.
 pub fn app_scope(cg: &str) -> Option<&str> {
     if !cg.starts_with("/user.slice/") {
         return None;
@@ -133,8 +121,8 @@ pub fn scope_name(app: &str, pid: i32) -> String {
     format!("app-wol-{}-{pid}.scope", shared::memsaver::app_id(app))
 }
 
-/// `busctl` argv that makes the system manager adopt `pids` into a new delegated scope in the
-/// user's slice, stopped with the login session (`BindsTo`).
+/// `busctl` argv that makes the system manager adopt `pids` into a new scope in the user's slice,
+/// stopped with the login session (`BindsTo`).
 pub fn adopt_args(name: &str, uid: u32, session: &str, pids: &[i32], app: &str) -> Vec<String> {
     let mut a: Vec<String> = [
         "--system",
@@ -147,11 +135,10 @@ pub fn adopt_args(name: &str, uid: u32, session: &str, pids: &[i32], app: &str) 
     ]
     .map(String::from)
     .into();
-    a.extend([name.into(), "fail".into(), "7".into()]);
+    a.extend([name.into(), "fail".into(), "6".into()]);
     a.extend(["PIDs".into(), "au".into(), pids.len().to_string()]);
     a.extend(pids.iter().map(i32::to_string));
     a.extend(["Slice".into(), "s".into(), format!("user-{uid}.slice")]);
-    a.extend(["Delegate".into(), "b".into(), "true".into()]);
     a.extend([
         "Description".into(),
         "s".into(),
@@ -269,7 +256,6 @@ pub mod tests {
         );
         assert_eq!(owner_and_parent(&d, 22), Some((1000, 21)));
         assert_eq!(comm(&d, 20), "code");
-        assert_eq!(argv(&d, 21), vec!["/opt/code/code", "--type=zygote"]);
         assert_eq!(cgroup(&d, 20).as_deref(), Some("/s"));
         assert!(!is_game(&d, 20));
         assert!(is_game(&d, 30) && is_game(&d, 31) && is_game(&d, 32));
@@ -280,7 +266,7 @@ pub mod tests {
     }
 
     #[test]
-    fn adoption_asks_systemd_for_a_delegated_scope_bound_to_the_session() {
+    fn adoption_asks_systemd_for_a_scope_bound_to_the_session() {
         let name = scope_name("Code - OSS", 20);
         assert_eq!(name, "app-wol-code_-_oss-20.scope");
         let a = adopt_args(&name, 1000, "session-2.scope", &[20, 21], "code");
@@ -290,7 +276,7 @@ pub mod tests {
             "{s}"
         );
         assert!(
-            s.contains("StartTransientUnit ssa(sv)a(sa(sv)) app-wol-code_-_oss-20.scope fail 7 PIDs au 2 20 21 Slice s user-1000.slice Delegate b true"),
+            s.contains("StartTransientUnit ssa(sv)a(sa(sv)) app-wol-code_-_oss-20.scope fail 6 PIDs au 2 20 21 Slice s user-1000.slice Description"),
             "{s}"
         );
         assert!(
@@ -301,7 +287,6 @@ pub mod tests {
         let props = [
             "PIDs",
             "Slice",
-            "Delegate",
             "Description",
             "CollectMode",
             "BindsTo",

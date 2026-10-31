@@ -1,10 +1,10 @@
-//! Memory Saver in wold (ADR 0022): every app gets its own delegated systemd scope with one child
-//! cgroup per process role; background apps give memory back to zram (memory.reclaim) under
-//! adaptive role ceilings (memory.high) and get it back on focus (ceilings off, prefetch).
-//! Policy: `wol_core::memsaver`. Session facts: `shared::memsaver` snapshots from wol-realtime.
+//! Memory Saver in wold (ADR 0025): every app gets its own systemd scope; a background app gives
+//! its memory back to zram once (memory.reclaim on the scope, process_madvise on each process) and
+//! faults it in as it runs. Policy: `wol_core::memsaver`. Session facts: `shared::memsaver`
+//! snapshots from wol-realtime.
 pub mod cgroup;
 pub mod engine;
-pub mod prefetch;
+pub mod pageout;
 pub mod procs;
 
 use std::collections::HashMap;
@@ -18,28 +18,18 @@ pub trait Sys {
     fn cgroup(&self, pid: i32) -> Option<String>;
     fn owner_and_parent(&self, pid: i32) -> Option<(u32, i32)>;
     fn comm(&self, pid: i32) -> String;
-    fn argv(&self, pid: i32) -> Vec<String>;
     fn is_game(&self, pid: i32) -> bool;
     fn parents(&self) -> Vec<(i32, i32)>;
     fn exists(&self, cg: &str) -> bool;
     fn procs(&self, cg: &str) -> Vec<i32>;
-    fn mkdir(&self, cg: &str) -> bool;
-    fn attach(&self, cg: &str, pid: i32) -> bool;
-    fn enable_memory(&self, cg: &str) -> bool;
     fn current(&self, cg: &str) -> u64;
-    fn swap(&self, cg: &str) -> u64;
     fn cpu_usec(&self, cg: &str) -> u64;
-    fn pressure(&self, cg: &str) -> f32;
-    fn set_high(&self, cg: &str, bytes: Option<u64>) -> bool;
-    fn reclaim(&self, cg: &str, bytes: u64) -> bool;
     fn freeze(&self, cg: &str, frozen: bool) -> bool;
     /// Ask systemd for a scope (busctl argv from [`procs::adopt_args`]).
     fn adopt(&self, args: &[String]) -> bool;
-    /// Prefetch these processes' memory (in the background; returns at once).
-    fn prefetch(&self, pids: Vec<i32>);
-    /// Page out these processes' memory (in the background; returns at once).
-    fn pageout(&self, scope: &str, pids: Vec<i32>);
-    /// Stop a [`Sys::pageout`] of this scope.
+    /// Reclaim `bytes` from the scope and page out `pids`, in the background: returns at once.
+    fn give_back(&self, scope: &str, bytes: u64, pids: Vec<i32>);
+    /// Stop a [`Sys::give_back`] of this scope.
     fn cancel(&self, scope: &str);
     /// Bytes of these processes that are compressed away (swap), wherever they were charged.
     fn swapped(&self, pids: &[i32]) -> u64;
@@ -79,9 +69,6 @@ impl Sys for Real {
     fn comm(&self, pid: i32) -> String {
         procs::comm(&self.proc, pid)
     }
-    fn argv(&self, pid: i32) -> Vec<String> {
-        procs::argv(&self.proc, pid)
-    }
     fn is_game(&self, pid: i32) -> bool {
         procs::is_game(&self.proc, pid)
     }
@@ -94,33 +81,11 @@ impl Sys for Real {
     fn procs(&self, cg: &str) -> Vec<i32> {
         cgroup::procs(&self.dir(cg))
     }
-    fn mkdir(&self, cg: &str) -> bool {
-        let d = self.dir(cg);
-        d.is_dir() || std::fs::create_dir(&d).is_ok()
-    }
-    fn attach(&self, cg: &str, pid: i32) -> bool {
-        cgroup::attach(&self.dir(cg), pid)
-    }
-    fn enable_memory(&self, cg: &str) -> bool {
-        cgroup::enable_memory(&self.dir(cg))
-    }
     fn current(&self, cg: &str) -> u64 {
         cgroup::current(&self.dir(cg))
     }
-    fn swap(&self, cg: &str) -> u64 {
-        cgroup::swap(&self.dir(cg))
-    }
     fn cpu_usec(&self, cg: &str) -> u64 {
         cgroup::cpu_usec(&self.dir(cg))
-    }
-    fn pressure(&self, cg: &str) -> f32 {
-        cgroup::pressure(&self.dir(cg))
-    }
-    fn set_high(&self, cg: &str, bytes: Option<u64>) -> bool {
-        cgroup::set_high(&self.dir(cg), bytes)
-    }
-    fn reclaim(&self, cg: &str, bytes: u64) -> bool {
-        cgroup::reclaim(&self.dir(cg), bytes).is_some()
     }
     fn freeze(&self, cg: &str, frozen: bool) -> bool {
         cgroup::freeze(&self.dir(cg), frozen)
@@ -132,38 +97,27 @@ impl Sys for Real {
             .status()
             .is_ok_and(|s| s.success())
     }
-    fn prefetch(&self, pids: Vec<i32>) {
-        let proc = self.proc.clone();
-        std::thread::spawn(move || {
-            let t = std::time::Instant::now();
-            let bytes: usize = pids.iter().map(|p| prefetch::prefetch(&proc, *p)).sum();
-            eprintln!(
-                "wold: memsaver prefetched {} MiB in {} ms",
-                bytes >> 20,
-                t.elapsed().as_millis()
-            );
-        });
-    }
-    fn pageout(&self, scope: &str, pids: Vec<i32>) {
+    fn give_back(&self, scope: &str, bytes: u64, pids: Vec<i32>) {
         let stop = Arc::new(AtomicBool::new(false));
         self.paging
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .insert(scope.to_owned(), stop.clone());
-        let proc = self.proc.clone();
+        let (proc, dir) = (self.proc.clone(), self.dir(scope));
         std::thread::spawn(move || {
             // The compression runs on this thread: it must not compete with what is in use.
             // SAFETY: setpriority on the calling thread (who = 0) with plain integers.
             unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) };
             let t = std::time::Instant::now();
-            let bytes: usize = pids
+            reclaim(&dir, bytes, &stop);
+            let paged: usize = pids
                 .iter()
-                .map(|p| prefetch::pageout(&proc, *p, &stop))
+                .map(|p| pageout::pageout(&proc, *p, &stop))
                 .sum();
             eprintln!(
-                "wold: memsaver paged out {} MiB of ranges in {} ms{}",
-                bytes >> 20,
+                "wold: memsaver gave back in {} ms ({} MiB of ranges){}",
                 t.elapsed().as_millis(),
+                paged >> 20,
                 if stop.load(Ordering::Relaxed) {
                     " (stopped)"
                 } else {
@@ -183,7 +137,22 @@ impl Sys for Real {
         }
     }
     fn swapped(&self, pids: &[i32]) -> u64 {
-        pids.iter().map(|p| prefetch::swapped(&self.proc, *p)).sum()
+        pids.iter().map(|p| pageout::swapped(&self.proc, *p)).sum()
+    }
+}
+
+/// Reclaim in steps so `stop` is seen quickly; a step that barely helps means only hot or shared
+/// pages are left.
+fn reclaim(dir: &Path, bytes: u64, stop: &AtomicBool) {
+    const STEP: u64 = 64 << 20;
+    let mut left = bytes;
+    while left > 0 && !stop.load(Ordering::Relaxed) {
+        let before = cgroup::current(dir);
+        cgroup::reclaim(dir, left.min(STEP));
+        if before.saturating_sub(cgroup::current(dir)) < STEP / 4 {
+            break;
+        }
+        left = left.saturating_sub(STEP);
     }
 }
 
@@ -215,11 +184,7 @@ fn now_ms() -> u64 {
 impl Service {
     pub fn new(status: impl Into<PathBuf>) -> Self {
         Service {
-            engine: std::sync::Mutex::new(engine::Engine::new(
-                Real::default(),
-                Default::default(),
-                Default::default(),
-            )),
+            engine: std::sync::Mutex::new(engine::Engine::new(Real::default(), Default::default())),
             front: Default::default(),
             ticker: Default::default(),
             status: status.into(),
@@ -307,7 +272,7 @@ impl Service {
         let _ = write_status(&self.status, &st);
     }
 
-    /// wold is stopping: no app keeps a ceiling or stays frozen.
+    /// wold is stopping: no app stays frozen.
     pub fn shutdown(&self) {
         let st = self.engine().disconnect(now_ms());
         let _ = write_status(&self.status, &st);

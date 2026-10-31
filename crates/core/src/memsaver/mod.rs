@@ -1,9 +1,6 @@
-//! Memory Saver (ADR 0022): background apps give their memory back and get it back the moment
-//! they are used again (App Nap + memory compressor). Policy only; wold applies it to cgroups.
-//! Inspired by memory-sentry (yanlvl99): per-role ceilings with CPU feedback, here with PSI too.
+//! Memory Saver (ADR 0025): background apps give their memory back and fault it in as they use it
+//! again (App Nap + memory compressor). Policy only; wold applies it.
 pub mod app;
-pub mod ceiling;
-pub mod role;
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

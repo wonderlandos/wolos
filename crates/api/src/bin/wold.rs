@@ -82,7 +82,7 @@ fn main() {
     }
 }
 
-/// Frontmost boost plus Memory Saver: the app coming to the front gets its memory back at once.
+/// Frontmost boost plus Memory Saver: the app coming to the front stops giving memory back.
 struct Boost(Arc<memsaver::Service>);
 
 impl qos::Applier for Boost {
