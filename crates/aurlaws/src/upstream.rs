@@ -106,7 +106,11 @@ fn role(rel: &str) -> Option<Role> {
             "tools" | "scripts" | "build" | "buildtools" | "build-aux"
         )
     });
-    let generator = ["gen", "mk", "build"].iter().any(|p| name.starts_with(p));
+    let stem = name.split('.').next().unwrap_or(name);
+    let generator = matches!(stem, "gen" | "generate" | "build" | "mkall")
+        || ["gen_", "gen-", "mk_", "mk-", "build_", "build-"]
+            .iter()
+            .any(|p| stem.starts_with(p));
     let ext = name.rsplit_once('.').map(|x| x.1).unwrap_or("");
     Some(match (name, ext) {
         ("package.json", _) => Role::Npm,
