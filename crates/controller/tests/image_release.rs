@@ -342,3 +342,36 @@ fn packages_workflow_signs_prebuilt_packages_without_a_build() {
         );
     }
 }
+
+/// A tag whose release already holds an image built on a build host (the cluster had no
+/// capacity): no second build; the image must match release.json, which is then signed.
+#[test]
+fn iso_workflow_signs_a_prebuilt_image_without_building() {
+    let iso = read(".github/workflows/iso.yml");
+    let step = |name: &str| {
+        iso.split(&format!("      - name: {name}"))
+            .nth(1)
+            .unwrap_or_else(|| panic!("iso.yml: no step {name}"))
+            .split("\n      - name:")
+            .next()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(step("A prebuilt image (tag)").contains("--pattern release.json"));
+    for build in [
+        "The [wolos-cachy] repo (tag)",
+        "mkarchiso in an archlinux container",
+        "AWS credentials",
+        "mkarchiso on the build cluster",
+    ] {
+        assert!(
+            step(build).contains("steps.pre.outputs.prebuilt != '1'"),
+            "{build} runs for a prebuilt image"
+        );
+    }
+    let files = step("Release files");
+    assert!(files.contains(r#"m["sha256"]"#) && files.contains(r#"m["size"]"#));
+    assert!(files.contains("sha256sum -c"));
+    assert!(files.contains("image/sign-release.sh"));
+    assert!(step("Publish the release").contains(r#"[ "$PREBUILT" = 1 ] || gh release upload"#));
+}

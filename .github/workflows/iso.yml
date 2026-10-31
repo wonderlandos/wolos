@@ -53,8 +53,21 @@ jobs:
             rm -rf out/repo/x86_64/*   # none yet: image/build.sh builds it
           fi
 
-      - name: The [wolos-cachy] repo (tag)
+      # When the build cluster has no capacity: image/build.sh on a build host, its ISO, .sha256 and
+      # release.json uploaded to the tag's release. This run then checks and signs them.
+      - name: A prebuilt image (tag)
+        id: pre
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          if gh release download "$TAG" --dir dist --pattern release.json 2>/dev/null; then
+            echo "prebuilt=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: The [wolos-cachy] repo (tag)
+        if: startsWith(github.ref, 'refs/tags/v') && steps.pre.outputs.prebuilt != '1'
         env:
           GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
         run: |
@@ -95,13 +108,14 @@ jobs:
           done
 
       - name: Cache pacman packages
+        if: steps.pre.outputs.prebuilt != '1'
         uses: actions/cache@v4
         with:
           path: out/pkgcache
           key: wolos-iso-${{ steps.repo.outputs.snap }}
 
       - name: mkarchiso in an archlinux container
-        if: vars.AWS_ROLE_ARN == '' || steps.repo.outputs.have != '1'
+        if: steps.pre.outputs.prebuilt != '1' && (vars.AWS_ROLE_ARN == '' || steps.repo.outputs.have != '1')
         env:
           GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
           TAG: ${{ github.ref_name }}
@@ -131,14 +145,14 @@ jobs:
 
       # The build cluster: mkarchiso on a whole host, from the published repo.
       - name: AWS credentials
-        if: vars.AWS_ROLE_ARN != '' && steps.repo.outputs.have == '1'
+        if: steps.pre.outputs.prebuilt != '1' && vars.AWS_ROLE_ARN != '' && steps.repo.outputs.have == '1'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: mkarchiso on the build cluster
-        if: vars.AWS_ROLE_ARN != '' && steps.repo.outputs.have == '1'
+        if: steps.pre.outputs.prebuilt != '1' && vars.AWS_ROLE_ARN != '' && steps.repo.outputs.have == '1'
         env:
           CLUSTER: ${{ vars.CLUSTER }}
           TASK_DEF_ISO: ${{ vars.TASK_DEF_ISO }}
@@ -152,13 +166,29 @@ jobs:
       - name: Release files
         env:
           KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+          PREBUILT: ${{ steps.pre.outputs.prebuilt }}
+          TAG: ${{ github.ref_name }}
         run: |
-          sudo chown -R "$(id -u)" out
           mkdir -p dist
-          iso=$(ls -t out/work/out/wolos-*.iso | head -1)
-          mv "$iso" dist/
-          cp "${iso%.iso}.json" dist/release.json   # release-manifest.sh, written by image/build.sh
-          (cd dist && sha256sum "$(basename "$iso")" > "$(basename "$iso").sha256")
+          if [ "$PREBUILT" = 1 ]; then
+            # The image the manifest names, from the release, must have the manifest's hash and size.
+            iso=$(python3 -c 'import json; print(json.load(open("dist/release.json"))["image"].rsplit("/", 1)[1])')
+            gh release download "$TAG" --dir dist --pattern "$iso" --pattern "$iso.sha256" --clobber
+            python3 - "dist/$iso" <<'PY'
+          import hashlib, json, os, sys
+          m = json.load(open("dist/release.json")); f = sys.argv[1]; h = hashlib.sha256()
+          with open(f, "rb") as r:
+              for b in iter(lambda: r.read(1 << 20), b""): h.update(b)
+          assert h.hexdigest() == m["sha256"] and os.path.getsize(f) == m["size"], "image does not match release.json"
+          PY
+            (cd dist && sha256sum -c "$iso.sha256")
+          else
+            sudo chown -R "$(id -u)" out
+            iso=$(ls -t out/work/out/wolos-*.iso | head -1)
+            mv "$iso" dist/
+            cp "${iso%.iso}.json" dist/release.json   # release-manifest.sh, written by image/build.sh
+            (cd dist && sha256sum "$(basename "$iso")" > "$(basename "$iso").sha256")
+          fi
           if [ -n "$KEY" ]; then
             printf '%s\n' "$KEY" > "$RUNNER_TEMP/release.pem"
             image/sign-release.sh dist/release.json "$RUNNER_TEMP/release.pem"
@@ -175,10 +205,11 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           SNAP: ${{ steps.repo.outputs.snap }}
+          PREBUILT: ${{ steps.pre.outputs.prebuilt }}
         run: |
           gh release view "$TAG" >/dev/null 2>&1 ||
             gh release create "$TAG" --title "WolOS ${TAG#v}" --latest               --notes "WolOS ${TAG#v}: the ISO, its .sha256 and release.json. Packages and the kernel source: release wolos-$SNAP."
-          gh release upload "$TAG" --clobber dist/*.iso dist/*.sha256 dist/release.json
+          [ "$PREBUILT" = 1 ] || gh release upload "$TAG" --clobber dist/*.iso dist/*.sha256 dist/release.json
           [ ! -e dist/release.json.sig ] || gh release upload "$TAG" --clobber dist/release.json.sig
           gh release edit "$TAG" --latest
 
