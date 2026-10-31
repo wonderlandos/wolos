@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 3;
+    public const int WOL_VERSION_MINOR = 4;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -118,4 +118,17 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern int wol_window_set_toolbar(IntPtr window, IntPtr toolbar, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_clipboard_copy_text(IntPtr context, IntPtr* @out, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_clipboard_set_text(IntPtr context, byte* text, nuint len, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_info_get(IntPtr info, byte* key, nuint key_len);
+    [DllImport(Lib)] public static extern nuint wol_info_get_count(IntPtr info);
+    [DllImport(Lib)] public static extern IntPtr wol_info_get_item(IntPtr info, nuint index);
+    [DllImport(Lib)] public static extern IntPtr wol_info_get_text(IntPtr info);
+    [DllImport(Lib)] public static extern int wol_info_get_number(IntPtr info, double* @out);
+    [DllImport(Lib)] public static extern int wol_info_get_bool(IntPtr info);
+    [DllImport(Lib)] public static extern IntPtr wol_info_get_json(IntPtr info);
+    [DllImport(Lib)] public static extern IntPtr wol_info_retain(IntPtr info);
+    [DllImport(Lib)] public static extern void wol_info_release(IntPtr info);
+    [DllImport(Lib)] public static extern int wol_prefs_copy_string(IntPtr context, byte* key, nuint key_len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_prefs_set_string(IntPtr context, byte* key, nuint key_len, byte* value, nuint value_len, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_prefs_remove(IntPtr context, byte* key, nuint key_len, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_prefs_copy_keys(IntPtr context, IntPtr* @out, IntPtr* error);
 }

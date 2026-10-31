@@ -167,6 +167,7 @@ impl Asks {
 #[derive(Default)]
 pub struct State {
     pub notes: Notes,
+    pub prefs: crate::prefs::Prefs,
     pub asks: Asks,
 }
 
@@ -209,6 +210,7 @@ fn doing(capability: &str) -> Option<&'static str> {
     Some(match capability {
         "clipboard-read" => "read the clipboard",
         "clipboard-write" => "change the clipboard",
+        "app-preferences" => "keep preferences",
         _ => return None,
     })
 }
@@ -330,6 +332,10 @@ pub fn handle<W: Write + Send>(
             st.asks
                 .ask(bus, caller.uid, Ask::ClipboardWrite { text }, ASK_TIMEOUT)
         }
+        Call::PrefsGet { key } => st.prefs.get(caller.uid, &caller.app, &key),
+        Call::PrefsSet { key, value } => st.prefs.set(caller.uid, &caller.app, key, value),
+        Call::PrefsRemove { key } => st.prefs.remove(caller.uid, &caller.app, &key),
+        Call::PrefsKeys {} => st.prefs.keys(caller.uid, &caller.app),
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),
@@ -732,6 +738,39 @@ mod tests {
             .ask(&bus, 1000, Ask::ClipboardRead, Duration::from_millis(20));
         assert_eq!(got.code, Some(Code::Unavailable));
         assert!(s.asks.lock().waiting.is_empty());
+    }
+
+    #[test]
+    fn prefs_need_the_grant_and_are_the_callers_own() {
+        let root = std::env::temp_dir().join(format!("wol-portal-prefs-{}", std::process::id()));
+        let st = State {
+            prefs: crate::prefs::Prefs::at(&root),
+            ..State::default()
+        };
+        let bus = Bus::<UnixStream>::default();
+        let g = Fixed(&[
+            ("/usr/bin/a", "app-preferences"),
+            ("/usr/bin/b", "app-preferences"),
+        ]);
+        let run = |json: &str, app: &str| handle(json, Some(&caller(app)), &g, &bus, &st);
+        let set = r#"{"call":"prefs.set","key":"k","value":"v"}"#;
+        let get = r#"{"call":"prefs.get","key":"k"}"#;
+        assert_eq!(run(set, "/usr/bin/c").code, Some(Code::PermissionDenied));
+        assert!(run(set, "/usr/bin/a").ok);
+        assert_eq!(
+            run(get, "/usr/bin/a").data,
+            Some(serde_json::json!({"value": "v"}))
+        );
+        assert_eq!(run(get, "/usr/bin/b").data, Some(serde_json::json!({})));
+        assert_eq!(
+            run(
+                r#"{"call":"prefs.get","key":"../../etc/passwd"}"#,
+                "/usr/bin/a"
+            )
+            .code,
+            Some(Code::InvalidArgument)
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

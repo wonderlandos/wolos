@@ -18,7 +18,11 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 12] = [
+const SEEDS: [&str; 16] = [
+    r#"{"call":"prefs.get","key":"window.width"}"#,
+    r#"{"call":"prefs.set","key":"k","value":"v"}"#,
+    r#"{"call":"prefs.remove","key":"k"}"#,
+    r#"{"call":"prefs.keys"}"#,
     r#"{"call":"clipboard.read"}"#,
     r#"{"call":"clipboard.write","text":"hello\nworld"}"#,
     r#"{"call":"session.answer","id":4,"data":{"text":"hi"}}"#,

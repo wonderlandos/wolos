@@ -24,8 +24,18 @@ pub struct NoteAction {
     pub label: String,
 }
 
+/// App preferences: a key, its value, keys per app.
+pub const MAX_PREF_KEY: usize = 64;
+pub const MAX_PREF_VALUE: usize = 4096;
+pub const MAX_PREFS: usize = 256;
+
 /// Every capability a [`Call`] can need (`wol_core::consent::CAPABILITIES`), test-checked.
-pub const CAPABILITIES: &[&str] = &["notifications", "clipboard-read", "clipboard-write"];
+pub const CAPABILITIES: &[&str] = &[
+    "notifications",
+    "clipboard-read",
+    "clipboard-write",
+    "app-preferences",
+];
 
 /// What wold checks before a call runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +77,16 @@ pub enum Call {
     /// Put text on the clipboard.
     #[serde(rename = "clipboard.write")]
     ClipboardWrite { text: String },
+    /// A preference of the calling app (its own: wold takes the app from the kernel).
+    #[serde(rename = "prefs.get")]
+    PrefsGet { key: String },
+    #[serde(rename = "prefs.set")]
+    PrefsSet { key: String, value: String },
+    #[serde(rename = "prefs.remove")]
+    PrefsRemove { key: String },
+    /// The keys the calling app has set.
+    #[serde(rename = "prefs.keys")]
+    PrefsKeys {},
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -178,12 +198,27 @@ fn clean(s: &str, max: usize, newlines: bool) -> bool {
             .any(|c| c.is_control() && !(newlines && c == '\n'))
 }
 
+/// `[A-Za-z0-9._-]{1,64}`.
+fn pref_key(k: &str) -> Result<(), String> {
+    let ok = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-');
+    if k.is_empty() || k.len() > MAX_PREF_KEY || !k.bytes().all(ok) {
+        return Err(format!(
+            "A preference key is 1 to {MAX_PREF_KEY} letters, digits, '.', '_' or '-'."
+        ));
+    }
+    Ok(())
+}
+
 impl Call {
     pub fn need(&self) -> Need {
         match self {
             Self::NotificationPost { .. }
             | Self::NotificationReplace { .. }
             | Self::NotificationWithdraw { .. } => Need::Grant("notifications"),
+            Self::PrefsGet { .. }
+            | Self::PrefsSet { .. }
+            | Self::PrefsRemove { .. }
+            | Self::PrefsKeys {} => Need::Grant("app-preferences"),
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -205,6 +240,17 @@ impl Call {
                 if text.len() > MAX_CLIPBOARD || text.contains('\0') {
                     return Err(format!(
                         "Clipboard text is at most {MAX_CLIPBOARD} bytes, with no NUL."
+                    ));
+                }
+                Ok(())
+            }
+            Self::PrefsKeys {} => Ok(()),
+            Self::PrefsGet { key } | Self::PrefsRemove { key } => pref_key(key),
+            Self::PrefsSet { key, value } => {
+                pref_key(key)?;
+                if value.len() > MAX_PREF_VALUE || value.contains('\0') {
+                    return Err(format!(
+                        "A preference is at most {MAX_PREF_VALUE} bytes, with no NUL."
                     ));
                 }
                 Ok(())
@@ -425,6 +471,26 @@ mod tests {
         assert_eq!(Answer::parse(&done.to_line()), done);
         let line = serde_json::to_string(&Ask::ClipboardRead).unwrap();
         assert_eq!(line, r#"{"ask":"clipboard-read"}"#);
+    }
+
+    #[test]
+    fn prefs_calls() {
+        let s = Call::PrefsSet {
+            key: "window.width".into(),
+            value: "any text\n".into(),
+        };
+        assert_eq!(Call::decode(s.encode().as_bytes()), Ok(s.clone()));
+        assert_eq!(s.need(), Need::Grant("app-preferences"));
+        for key in ["", "a/b", "../x", "a b", "é", &"k".repeat(MAX_PREF_KEY + 1)] {
+            let c = Call::PrefsGet { key: key.into() };
+            assert!(c.validate().is_err(), "{key}");
+        }
+        let long = Call::PrefsSet {
+            key: "k".into(),
+            value: "x".repeat(MAX_PREF_VALUE + 1),
+        };
+        assert!(long.validate().is_err());
+        assert!(Call::decode(br#"{"call":"prefs.get","key":"k","app":"/usr/bin/x"}"#).is_err());
     }
 
     #[test]
