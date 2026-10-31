@@ -1,0 +1,26 @@
+# libwopkg 1.0 exports (ADR 0021). Never edit a shipped line: add abi/wopkg-1.1.symbols for new ones.
+wopkg_appimage_inspect@WOPKG_1.0
+wopkg_appimage_install@WOPKG_1.0
+wopkg_appimage_remove@WOPKG_1.0
+wopkg_appimage_update@WOPKG_1.0
+wopkg_complete@WOPKG_1.0
+wopkg_context_create@WOPKG_1.0
+wopkg_context_release@WOPKG_1.0
+wopkg_error_get_code@WOPKG_1.0
+wopkg_error_get_message@WOPKG_1.0
+wopkg_error_release@WOPKG_1.0
+wopkg_fetch@WOPKG_1.0
+wopkg_history@WOPKG_1.0
+wopkg_history_record@WOPKG_1.0
+wopkg_index_update@WOPKG_1.0
+wopkg_info@WOPKG_1.0
+wopkg_installed@WOPKG_1.0
+wopkg_release_plan@WOPKG_1.0
+wopkg_rollback@WOPKG_1.0
+wopkg_search@WOPKG_1.0
+wopkg_string_get_bytes@WOPKG_1.0
+wopkg_string_release@WOPKG_1.0
+wopkg_system_call@WOPKG_1.0
+wopkg_verify@WOPKG_1.0
+wopkg_version@WOPKG_1.0
+wopkg_version_string@WOPKG_1.0

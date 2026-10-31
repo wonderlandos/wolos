@@ -4,6 +4,8 @@
 wolos-keyring
 wolos-base
 wolos-mirrorlist
+# wopkg: apps from every source, one command (ADR 0021).
+wopkg
 linux-firmware
 intel-ucode
 amd-ucode

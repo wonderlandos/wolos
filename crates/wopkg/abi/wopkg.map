@@ -1,0 +1,31 @@
+/* libwopkg symbol versions (ADR 0021). A shipped node never changes: new symbols go in a new node. */
+WOPKG_1.0 {
+  global:
+    wopkg_appimage_inspect;
+    wopkg_appimage_install;
+    wopkg_appimage_remove;
+    wopkg_appimage_update;
+    wopkg_complete;
+    wopkg_context_create;
+    wopkg_context_release;
+    wopkg_error_get_code;
+    wopkg_error_get_message;
+    wopkg_error_release;
+    wopkg_fetch;
+    wopkg_history;
+    wopkg_history_record;
+    wopkg_index_update;
+    wopkg_info;
+    wopkg_installed;
+    wopkg_release_plan;
+    wopkg_rollback;
+    wopkg_search;
+    wopkg_string_get_bytes;
+    wopkg_string_release;
+    wopkg_system_call;
+    wopkg_verify;
+    wopkg_version;
+    wopkg_version_string;
+  local:
+    *;
+};
