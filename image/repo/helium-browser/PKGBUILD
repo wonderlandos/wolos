@@ -24,7 +24,7 @@ source=("$url/releases/download/${pkgver}/helium-${pkgver}-x86_64_linux.tar.xz"
 noextract=("helium-${pkgver}-x86_64_linux.tar.xz")
 sha256sums=('ba92acb27ec6cda36a8b948e2154009aaee0d633222ad244be25e736a143e6fa'
   'SKIP'
-  '277831c63240fd5df462011605fbd08b712c696868c9c068913829144caa68fd'
+  '9a371bcaaf92211f1c569fcbf272f02619c2cd0cd182b5e2cfb1b71392ad5b2c'
   'ad06f6b2c2fefbe45324ff3235841b608474adcead24665bd9c879e8707b0918')
 validpgpkeys=('BE677C1989D35EAB2C5F26C9351601AD01D6378E') # Helium signing key <helium@imput.net>
 
