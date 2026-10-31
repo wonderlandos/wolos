@@ -829,8 +829,10 @@ fn one(root: &Path, rel: &str, r: Role, o: &Options, calls: &MakeCalls) -> Optio
 pub fn scan(root: &Path, o: &Options) -> Scan {
     let (mut files, too_many) = collect(root);
     keep_reached(root, &mut files, &o.mention);
-    let mut calls = MakeCalls::default();
-    calls.all = o.mention.is_empty();
+    let mut calls = MakeCalls {
+        all: o.mention.is_empty(),
+        ..Default::default()
+    };
     calls.read(&o.mention);
     for (rel, r) in &files {
         // `configure` probes make with its own throwaway files.

@@ -6,7 +6,7 @@ set -u
 B=${B:-/work/target/release}; O=/tmp/shots; rm -rf $O; mkdir -p $O; chmod 777 $O
 id wolt >/dev/null 2>&1 || pw useradd wolt -m -c "Wol Tester" -s /bin/sh
 echo wolpass | pw usermod wolt -h 0
-install -m 4755 -o root $B/wol-authcheck /usr/local/libexec/wol-authcheck
+install -m 4755 -o root $B/wol-authcheck /usr/lib/wol-authcheck
 service wold onestop >/dev/null 2>&1; pkill -x wold; sleep 1; ($B/wold >/tmp/wold.log 2>&1 &)
 pkill -u wolt; sleep 1
 cat > /tmp/shell-user.sh <<EOS

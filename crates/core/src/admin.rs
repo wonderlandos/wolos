@@ -160,7 +160,10 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
             && users::is_valid_password(a[3])),
         AdminAction::UserRemove => ok(n == 1 && users::is_valid_name(a[0]) && a[0] != "root"),
         AdminAction::TimeZone => ok(n == 1 && timezones::is_valid(a[0])),
-        AdminAction::PkgUpgrade | AdminAction::PkgRefresh | AdminAction::Revoke => ok(n == 0),
+        AdminAction::PkgUpgrade
+        | AdminAction::PkgRefresh
+        | AdminAction::Revoke
+        | AdminAction::AurOpen => ok(n == 0),
         AdminAction::PkgInstall => ok(n == 1 && crate::store::install_plan(a[0]).is_some()),
         AdminAction::PkgRemove => ok(n == 1 && crate::store::remove_plan(a[0]).is_some()),
         AdminAction::PowerMode => ok(n == 1 && power::policy::Mode::parse(a[0]).is_some()),
@@ -310,7 +313,10 @@ pub fn plan_with(
         // Inside the pinned release only `[wolos]` moves; a new release is a new root slot.
         AdminAction::PkgUpgrade => vec![argv(&["pacman", "-Syu", "--noconfirm"])],
         // Revoke: the daemon handles it. Packages: verified and planned by the daemon itself.
-        AdminAction::Revoke | AdminAction::WolInstall | AdminAction::WolRemove => vec![],
+        AdminAction::Revoke
+        | AdminAction::AurOpen
+        | AdminAction::WolInstall
+        | AdminAction::WolRemove => vec![],
         AdminAction::PowerMode => power_steps(
             power::policy::Mode::parse(&a[0]).unwrap_or_default(),
             &power::policy::facts(probe),
@@ -481,7 +487,8 @@ pub fn user_level_ok(r: &AdminRequest, uid: u32, sessions: &[u32]) -> bool {
 
 /// An unsigned `.wol` install is approved with the password every time (never the cache).
 pub fn needs_fresh_password(r: &AdminRequest) -> bool {
-    r.action == AdminAction::WolInstall && r.args.get(1).is_some_and(|t| t == "unsigned")
+    r.action == AdminAction::AurOpen
+        || r.action == AdminAction::WolInstall && r.args.get(1).is_some_and(|t| t == "unsigned")
 }
 
 /// Absolute `.wol` path without `..` or control characters.
