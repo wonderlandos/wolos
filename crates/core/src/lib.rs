@@ -19,6 +19,7 @@ pub mod iphone;
 pub mod jobs;
 pub mod journal;
 pub mod looks;
+pub mod malware;
 pub mod memsaver;
 pub mod mirror;
 pub mod nearby;

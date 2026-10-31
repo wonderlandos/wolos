@@ -3,15 +3,20 @@
 //! `automaton` + `db`: the memory-mapped signature file; `sigs`: reads public signature lists;
 //! `scan`: one file's bytes and the stable [`Report`]; `walk`: files and what is packed in them.
 pub mod automaton;
+pub mod bundle;
+pub mod ctl;
 pub mod db;
 pub mod ffi;
+pub mod guard;
 pub mod scan;
 pub mod sigs;
+pub mod store;
+pub mod sweep;
 pub mod walk;
 #[cfg(feature = "yara")]
 pub mod yara;
 
-pub use scan::{Deep, Engine, Finding, Report, Skipped, Verdict};
+pub use scan::{Deep, Engine, Finding, Kind, Report, Skipped, Verdict, hexs};
 pub use walk::{Limits, scan_bytes, scan_file};
 
 /// Signatures delivered by updates.

@@ -2,7 +2,7 @@ post_install() {
   systemd-sysusers wolos.conf
   systemd-tmpfiles --create wolos.conf
   systemctl preset wold.service wolos-hw.service wolos-gpu.service wolos-firstboot.service \
-    wolos-power.service wolos-update-check.timer nftables.service NetworkManager.service \
+    wolos-power.service wolos-update-check.timer wolos-xguard.service wolos-xguard-update.timer wolos-xguard-sweep.timer nftables.service NetworkManager.service \
     bluetooth.service cups.socket avahi-daemon.service systemd-timesyncd.service udisks2.service seatd.service >/dev/null 2>&1 || :
   # Arch's systemd enables getty@tty1 on install: tty1 is the login window and session VT.
   systemctl mask getty@tty1.service >/dev/null 2>&1 || :

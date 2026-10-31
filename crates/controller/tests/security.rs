@@ -68,3 +68,52 @@ fn status_shows_firewall_and_hardening() {
             .contains("fs.protected_symlinks: ? (want 1, differs)\n")
     );
 }
+
+#[test]
+fn status_names_the_malware_check_and_what_it_stopped() {
+    let mut env = FakeEnv {
+        tty: true,
+        captures: vec![
+            c("id -u", "1000\n"),
+            c(
+                "systemctl show -p ActiveState --value wolos-xguard.service",
+                "active\n",
+            ),
+        ],
+        files: vec![
+            (
+                "/usr/share/wolos/xguard/bundle.json".into(),
+                r#"{"version":3,"built":500,"files":[]}"#.into(),
+            ),
+            (
+                "/var/lib/wolos/xguard/findings-1000.json".into(),
+                r#"[{"path":"/home/a/bad","name":"Win.Test","sha256":"","when":9,"uid":1000}]"#
+                    .into(),
+            ),
+        ],
+        ..FakeEnv::default()
+    };
+    assert_eq!(run("security", &mut env), 0);
+    assert!(
+        env.out.contains("malware check: on, signatures from today"),
+        "{}",
+        env.out
+    );
+    assert!(
+        env.out.contains("stopped: /home/a/bad (Win.Test)"),
+        "{}",
+        env.out
+    );
+}
+
+#[test]
+fn scan_and_allow_hand_over_to_the_check_and_keep_its_answer() {
+    for (line, verb) in [("security scan /x", "scan"), ("security allow /x", "allow")] {
+        let mut env = FakeEnv {
+            exec_codes: vec![1],
+            ..FakeEnv::default()
+        };
+        assert_eq!(run(line, &mut env), 1, "{line}");
+        assert_eq!(env.execs[0], ["wol-xguard", verb, "/x"]);
+    }
+}

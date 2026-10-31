@@ -496,7 +496,19 @@ pub const TREE: &[Cmd] = &[
         &["security"],
         "security.status",
         &[],
-        "Firewall, remote login and kernel hardening",
+        "Firewall, remote login, kernel hardening and the malware check",
+    ),
+    cmd(
+        &["security", "scan"],
+        "security.scan",
+        &[arg("path")],
+        "Check a file, and what is packed inside it, against known malware",
+    ),
+    cmd(
+        &["security", "allow"],
+        "security.allow",
+        &[arg("path")],
+        "Open Anyway: let a file the malware check stopped run on this computer",
     ),
     Cmd {
         path: &["power", "idle"],

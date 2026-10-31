@@ -57,6 +57,9 @@ fn main() {
                 usage()
             };
             let path = std::path::absolute(file).unwrap_or_else(|_| file.into());
+            if let Some(e) = proxy::exe::refused(proxy::exe::check(&path), &path) {
+                fail(e);
+            }
             let wine = proxy::wine::Wine::detect(&var);
             run_wine(proxy::exe::plan(
                 &path,

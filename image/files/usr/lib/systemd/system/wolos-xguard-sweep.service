@@ -1,0 +1,20 @@
+# The background malware pass (ADR 0022): lowest priority, stops by itself on any activity.
+[Unit]
+Description=WolOS background malware check
+ConditionACPower=true
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/wol-xguard sweep
+User=_xguard
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_CHOWN
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN
+PrivateNetwork=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/wolos/xguard
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+OOMScoreAdjust=300
+MemoryHigh=512M

@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Daily signature update (ADR 0022): downloads the signed bundle from the WolOS release channel and
+# hands it to `wol-xguard rules install`, which refuses anything unsigned, older or altered.
+# Nothing about this computer is sent: it is a plain download.
+set -u
+URL=${WOLOS_XGUARD_URL:-https://github.com/wonderlandos/wolos-packages/releases/download/signatures}
+T=$(mktemp -d) || exit 1
+trap 'rm -rf "$T"' EXIT
+curl -fsSL -o "$T/bundle.json" "$URL/bundle.json" 2>/dev/null || exit 0
+curl -fsSL -o "$T/bundle.json.sig" "$URL/bundle.json.sig" 2>/dev/null || exit 0
+for f in $(sed 's/"name":"/\n/g' "$T/bundle.json" | sed -n '2,$s/".*//p'); do
+	case $f in */* | .*) exit 1 ;; esac
+	curl -fsSL -o "$T/$f" "$URL/$f" 2>/dev/null || exit 0
+done
+wol-xguard rules install "$T" || exit 0
+# Files trusted under the old signatures are looked at again.
+systemctl try-restart wolos-xguard.service

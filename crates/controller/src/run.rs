@@ -219,7 +219,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         }
         a if a.starts_with("games.") => crate::games::execute(inv, env),
         a if a.starts_with("power.") => crate::power::execute(inv, env),
-        a if a.starts_with("firewall.") || a == "security.status" => {
+        a if a.starts_with("firewall.") || a.starts_with("security.") => {
             crate::security::execute(inv, env)
         }
         "package.install" | "package.remove" | "package.list" | "package.search"

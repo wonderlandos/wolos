@@ -33,6 +33,32 @@ pub fn exe_id(path: &Path) -> String {
     )
 }
 
+/// Windows programs are opened by wine, not started by the kernel, so the first-use check is asked
+/// for here: exit 1 from `wol-xguard check` means it found something. Anything else lets the
+/// program start: a missing check never stops an app.
+pub fn refused(check_exit: Option<i32>, path: &Path) -> Option<WolError> {
+    (check_exit == Some(1)).then(|| {
+        WolError::new(
+            ErrorCode::Failed,
+            format!(
+                "{} was stopped: it matches known malware. See Privacy & Security in Settings.",
+                path.display()
+            ),
+        )
+    })
+}
+
+/// Exit code of `wol-xguard check <path>`.
+pub fn check(path: &Path) -> Option<i32> {
+    std::process::Command::new("wol-xguard")
+        .arg("check")
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .ok()?
+        .code()
+}
+
 pub fn plan(
     path: &Path,
     args: &[String],
@@ -115,6 +141,16 @@ fn steam_libraries(home: &Path, fs: &dyn Fs) -> Vec<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_finding_stops_a_windows_program() {
+        let p = Path::new("/home/a/setup.exe");
+        let found_stops_it = refused(Some(1), p).expect("stopped");
+        assert!(found_stops_it.to_string().contains("setup.exe"));
+        for other in [Some(0), Some(2), Some(3), None] {
+            assert!(refused(other, p).is_none(), "{other:?}");
+        }
+    }
     use crate::tuning::Vendor;
     use crate::wine::fake::FakeFs;
     use wol_core::games::wine::Version;

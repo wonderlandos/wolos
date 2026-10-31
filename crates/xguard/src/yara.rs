@@ -8,18 +8,19 @@ use std::path::Path;
 /// Compiled rules in a rules folder.
 pub const FILE: &str = "rules.yxc";
 
-pub struct Rules {
-    rules: Box<yara_x::Rules>,
-    scanner: RefCell<Option<yara_x::Scanner<'static>>>,
-}
+/// Loaded rules; each thread scans through its own [`Session`].
+pub struct Rules(yara_x::Rules);
+
+/// One thread's scanner.
+pub struct Session<'a>(RefCell<yara_x::Scanner<'a>>);
 
 impl Rules {
     pub fn from_bytes(b: &[u8]) -> Option<Self> {
-        let rules = Box::new(yara_x::Rules::deserialize(b).ok()?);
-        Some(Self {
-            rules,
-            scanner: RefCell::new(None),
-        })
+        yara_x::Rules::deserialize(b).ok().map(Self)
+    }
+
+    pub fn session(&self) -> Session<'_> {
+        Session(RefCell::new(yara_x::Scanner::new(&self.0)))
     }
 
     /// None: no rules there, or they do not load.
@@ -28,16 +29,9 @@ impl Rules {
     }
 }
 
-impl Deep for Rules {
+impl Deep for Session<'_> {
     fn matches(&self, data: &[u8]) -> Vec<String> {
-        let mut slot = self.scanner.borrow_mut();
-        let s = slot.get_or_insert_with(|| {
-            // SAFETY: the box never moves out of self, and the field order drops the scanner first
-            // is not relied on: `scanner` is declared after `rules` and cleared in Drop.
-            let r: &'static yara_x::Rules = unsafe { &*std::ptr::from_ref(self.rules.as_ref()) };
-            yara_x::Scanner::new(r)
-        });
-        s.scan(data).map_or_else(
+        self.0.borrow_mut().scan(data).map_or_else(
             |_| Vec::new(),
             |r| {
                 r.matching_rules()
@@ -45,12 +39,6 @@ impl Deep for Rules {
                     .collect()
             },
         )
-    }
-}
-
-impl Drop for Rules {
-    fn drop(&mut self) {
-        self.scanner.get_mut().take();
     }
 }
 
@@ -77,7 +65,8 @@ mod tests {
         let src = r#"rule TestRule { strings: $a = "EICAR-STANDARD" condition: $a }"#;
         let (b, refused) = compile(&[("t".into(), src.into())]).unwrap();
         assert_eq!(refused, 0);
-        let r = Rules::from_bytes(&b).unwrap();
+        let rules = Rules::from_bytes(&b).unwrap();
+        let r = rules.session();
         assert_eq!(r.matches(b"x EICAR-STANDARD x"), ["TestRule"]);
         assert!(r.matches(b"nothing").is_empty());
         assert_eq!(
@@ -96,6 +85,9 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(refused, 1);
-        assert_eq!(Rules::from_bytes(&b).unwrap().matches(b"x"), ["A"]);
+        assert_eq!(
+            Rules::from_bytes(&b).unwrap().session().matches(b"x"),
+            ["A"]
+        );
     }
 }

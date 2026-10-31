@@ -1,0 +1,27 @@
+# The first-use malware check (ADR 0022). Holds one kernel mark on /home, /tmp and removable disks;
+# anything it cannot do, it allows.
+[Unit]
+Description=WolOS first-use malware check
+After=local-fs.target
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+ExecStart=/usr/bin/wol-xguard guard
+Restart=on-failure
+RestartSec=2
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER
+NoNewPrivileges=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/wolos/xguard
+RuntimeDirectory=wolos
+RuntimeDirectoryPreserve=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
