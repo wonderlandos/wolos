@@ -5,6 +5,7 @@ pub mod graph;
 pub mod hosts;
 pub mod langs;
 pub mod laws;
+pub mod paths;
 pub mod pkgbuild;
 pub mod shell;
 
@@ -38,8 +39,25 @@ fn judge(p: pkgbuild::Parsed) -> Report {
         let v = laws::View::new(&p.graph, &p.meta);
         laws::check(&v)
     };
-    let verdict = if findings.is_empty() { Verdict::NoLawBroken } else { Verdict::NeedsReview };
-    Report { verdict, findings, notes: p.notes, truncated: p.truncated, disclaimer: DISCLAIMER.to_owned(), graph: p.graph, meta: p.meta }
+    let verdict = if findings.is_empty() {
+        Verdict::NoLawBroken
+    } else {
+        Verdict::NeedsReview
+    };
+    Report {
+        verdict,
+        findings,
+        notes: p.notes,
+        truncated: p.truncated,
+        disclaimer: DISCLAIMER.to_owned(),
+        graph: p.graph,
+        meta: p.meta,
+    }
+}
+
+/// Judge a PKGBUILD and the text files beside it.
+pub fn judge_files(pkgbuild: &str, files: &HashMap<String, String>) -> Report {
+    judge(pkgbuild::parse(pkgbuild, files))
 }
 
 /// Judge a PKGBUILD held in memory, with its `.install` text as `demo.install`.

