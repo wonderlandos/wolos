@@ -103,7 +103,7 @@ impl<'a> View<'a> {
     }
 
     /// A floating VCS source on the project's own host is declared tracking, not a stray download.
-    fn declared_vcs(&self, n: NodeId) -> bool {
+    pub(crate) fn declared_vcs(&self, n: NodeId) -> bool {
         let node = &self.g.nodes[n as usize];
         node.kind == K::Source
             && self.meta.sources.iter().any(|s| {
@@ -168,7 +168,7 @@ impl<'a> View<'a> {
     }
 
     /// A scriptlet may change what its package installs, the package's own folders, and nothing else.
-    fn declared(&self, p: &str) -> bool {
+    pub(crate) fn declared(&self, p: &str) -> bool {
         let g = self.g;
         if self
             .package_files
@@ -209,7 +209,7 @@ impl<'a> View<'a> {
     }
 
     /// Did this writer copy the file from the package's own sources?
-    fn from_sources(&self, proc: NodeId) -> bool {
+    pub(crate) fn from_sources(&self, proc: NodeId) -> bool {
         self.into[proc as usize].iter().any(|&i| {
             let e = &self.g.edges[i as usize];
             e.kind == E::Reads && self.g.nodes[e.src as usize].key.starts_with("$srcdir/")
@@ -224,7 +224,7 @@ impl<'a> View<'a> {
                 out.push(finding(law, sentence, path));
             }
         };
-        for e in &g.edges {
+        for (i, e) in g.edges.iter().enumerate() {
             let (s, d) = (&g.nodes[e.src as usize], &g.nodes[e.dst as usize]);
             match e.kind {
                 E::Reads | E::Decodes if s.kind == K::File => {
@@ -325,7 +325,7 @@ impl<'a> View<'a> {
                     },
                 );
                 if let Some(mut p) = hit {
-                    p.push(g.edges.iter().position(|x| std::ptr::eq(x, e)).unwrap_or(0) as u32);
+                    p.push(i as u32);
                     let (s2, path) = self.narrate(&p);
                     let first = path.first().map(|x| x.label.clone()).unwrap_or_default();
                     add(
@@ -669,6 +669,14 @@ pub fn published(m: &Meta, list: &[(String, String)]) -> Vec<Finding> {
         }
     }
     out
+}
+
+/// The static laws again over a finished report, to time the checker alone.
+pub fn recheck(r: &crate::Report) -> Vec<Finding> {
+    let v = View::new(&r.graph, &r.meta, &[]);
+    let mut f = check(&v);
+    v.check_sources(&mut f);
+    f
 }
 
 /// A gap in what was read, as a finding: what was not seen must not read as clean.
