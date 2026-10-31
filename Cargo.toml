@@ -12,6 +12,7 @@ members = [
     "crates/wol-lua",
     "crates/wopkg",
     "crates/xguard",
+    "crates/xguard-clam",
     "crates/aurlaws",
 ]
 

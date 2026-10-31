@@ -1,0 +1,10 @@
+# ClamAV starts when something asks (ADR 0027), and only once the person fetched the signatures.
+[Unit]
+Description=WolOS full malware check, on demand
+
+[Socket]
+ListenStream=/run/wolos/clam.sock
+SocketMode=0666
+
+[Install]
+WantedBy=sockets.target

@@ -1,4 +1,4 @@
-//! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi, wopkg, xguard}.
+//! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi, wopkg, xguard, xguard-clam}.
 //! libwopkg (ADR 0021): `wopkg` is the package core's stable C ABI, an adaptor like `wol-abi`.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
 use std::collections::BTreeMap;
@@ -13,7 +13,7 @@ const ADAPTORS: [&str; 7] = [
     "wopkg",
     "xguard",
 ];
-const REQUIRED: [&str; 10] = [
+const REQUIRED: [&str; 11] = [
     "shared",
     "core",
     "api",
@@ -24,6 +24,7 @@ const REQUIRED: [&str; 10] = [
     "wol-lua",
     "wopkg",
     "xguard",
+    "xguard-clam",
 ];
 
 /// Rule violations for a package -> workspace-dependencies graph.
@@ -41,6 +42,8 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 "core" => dep == "shared",
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
                 "wol-lua" => ["shared", "core", "wol-abi"].contains(&dep.as_str()),
+                // Links only libc and libclamav: a GPL-2.0-only program stays alone (ADR 0026).
+                "xguard-clam" => false,
                 // wopkg checks what it is about to install (ADR 0024).
                 "wopkg" => ["shared", "core", "xguard"].contains(&dep.as_str()),
                 // The App Store links the package core directly (ADR 0021); the desktop runs Lua

@@ -1,0 +1,56 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The full malware signatures (ADR 0027): runs only after the person turned them on in Settings.
+# The data comes straight from the ClamAV project to this computer, and is never in the image.
+# After a fetch the lean signature file is rebuilt here, so everyday checks use it too.
+# Usage: clam-update | clam-update off
+set -u
+STATE=${XGUARD_STATE:-/var/lib/wolos/xguard}
+DB=$STATE/clamav
+LOCAL=$STATE/local
+J=$STATE/clam-state.json
+
+if [ "${1:-}" = off ]; then
+	rm -rf "$DB" "$LOCAL" "$J"
+	systemctl stop wolos-clam.service 2>/dev/null
+	systemctl try-restart wolos-xguard.service 2>/dev/null
+	exit 0
+fi
+
+mkdir -p "$DB" "$LOCAL"
+C=$(mktemp) || exit 1
+trap 'rm -f "$C"; rm -rf "$T"' EXIT
+T=$(mktemp -d) || exit 1
+printf 'DatabaseDirectory %s\nDatabaseOwner %s\nDatabaseMirror database.clamav.net\nForeground yes\nLogSyslog no\n' "$DB" "$(id -un)" >"$C"
+
+fail() {
+	if [ -f "$J" ]; then
+		sed -i 's/"failed":false/"failed":true/' "$J"
+	else
+		printf '{"failed":true}\n' >"$J"
+	fi
+	exit "$1"
+}
+
+${FRESHCLAM:-freshclam} --config-file="$C" --quiet --no-warnings || fail 1
+
+# `ClamAV-VDB:date:version:signatures:...` in the first 512 bytes of each file.
+field() { head -c 512 "$1" | tr -d '\0' | cut -d: -f"$2"; }
+version=0 signatures=0
+for n in main daily; do
+	f=$DB/$n.cvd
+	[ -f "$f" ] || f=$DB/$n.cld
+	[ -f "$f" ] || fail 1
+	s=$(field "$f" 4)
+	signatures=$((signatures + ${s:-0}))
+	[ "$n" = daily ] && version=$(field "$f" 3)
+	mkdir -p "$T/$n"
+	tail -c +513 "$f" | tar -xzf - -C "$T/$n" 2>/dev/null || tail -c +513 "$f" | tar -xf - -C "$T/$n" || fail 1
+done
+chmod -R u+rw "$T"
+(cd "$T" && ${WOL_XGUARD:-wol-xguard} rules build "$LOCAL/full.xgdb.new" "$version" main daily) >/dev/null || fail 1
+mv "$LOCAL/full.xgdb.new" "$LOCAL/full.xgdb"
+printf '{"version":%s,"signatures":%s,"updated":%s,"failed":false}\n' "$version" "$signatures" "$(date +%s)" >"$J.new"
+mv "$J.new" "$J"
+systemctl try-restart wolos-clam.service wolos-xguard.service 2>/dev/null
+exit 0

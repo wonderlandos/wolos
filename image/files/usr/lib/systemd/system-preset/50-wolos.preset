@@ -14,6 +14,9 @@ enable wolos-report.timer
 enable wolos-xguard.service
 enable wolos-xguard-update.timer
 enable wolos-xguard-sweep.timer
+enable wolos-clam.socket
+# Only the person turns this on, in Settings: it downloads third-party data.
+disable wolos-clam-update.timer
 enable NetworkManager.service
 enable bluetooth.service
 enable nftables.service

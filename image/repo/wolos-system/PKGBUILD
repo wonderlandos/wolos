@@ -8,7 +8,7 @@ pkgdesc='WolOS system services, shell and desktop defaults'
 arch=(x86_64)
 url='https://github.com/wonderlandos/wolos'
 license=(BSD-2-Clause GPL-3.0-or-later CC-BY-NC-ND-4.0)
-depends=(hyprland-wolos gtk4 gtk4-layer-shell libadwaita pam systemd)
+depends=(hyprland-wolos gtk4 gtk4-layer-shell libadwaita pam systemd clamav)
 # Our cursor theme is the default one (usr/share/icons/default).
 provides=(default-cursors)
 conflicts=(default-cursors)

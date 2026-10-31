@@ -4,6 +4,7 @@
 //! `scan`: one file's bytes and the stable [`Report`]; `walk`: files and what is packed in them.
 pub mod automaton;
 pub mod bundle;
+pub mod clam;
 pub mod ctl;
 pub mod db;
 pub mod ffi;
@@ -23,6 +24,9 @@ pub use walk::{Limits, scan_bytes, scan_file};
 pub const RULES_DIR: &str = "/var/lib/wolos/xguard/rules";
 /// Signatures the system shipped with.
 pub const SHIPPED_DIR: &str = "/usr/share/wolos/xguard";
+
+/// Lean signatures built on this computer from the data the person opted into (ADR 0027).
+pub const LOCAL_DIR: &str = "/var/lib/wolos/xguard/local";
 
 /// The newest signatures on this machine: delivered ones, else the shipped ones.
 pub fn rules_dir() -> std::path::PathBuf {

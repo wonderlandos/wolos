@@ -49,6 +49,12 @@ fn malware_lines(s: &wol_core::malware::Status) -> String {
         None => "no signatures".to_string(),
     };
     let mut t = format!("malware check: {}, {age}\n", on_off(s.on, "unknown"));
+    if s.full.on {
+        t.push_str(&format!(
+            "full signatures: on, version {}, {} signatures\n",
+            s.full.version, s.full.signatures
+        ));
+    }
     for b in &s.blocked {
         t.push_str(&format!("stopped: {} ({})\n", b.path, b.name));
     }
