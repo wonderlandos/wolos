@@ -85,4 +85,10 @@ Sandbox: string, table, math, utf8; no io, os, require, debug, load, bytecode; 1
 
 ## Other languages
 
-All call the same `wol.h`. Swift: a module map over `wol.h` (`import Wol`). Crystal: `@[Link("wol")] lib LibWol` with the prototypes. .NET languages: P/Invoke on `libwol.so.1`. Strings go as pointer + byte length, so no language needs NUL-terminated buffers.
+All call the same `wol.h`; strings go as pointer + byte length, so no language needs NUL-terminated buffers. Bindings live in `crates/wol-abi/bindings/`, each with a `hello` (notification, event) and a `parts` (Kit parts, button, notification buttons) that `tests/bindings.rs` builds and runs against the same fake wold and Kit host as the C programs:
+
+- Swift: `swift/module.modulemap` over `wol.h` (`import Wol`); no generated code, the header is the binding.
+- Crystal: `crystal/lib_wol.cr`, `@[Link("wol")] lib LibWol`.
+- .NET (C#, F#, Alice): `dotnet/Wol.Native.cs`, P/Invoke on `libwol.so.1`; `Utf8.cs` hands strings over as pointer + length.
+
+Crystal and .NET declarations are generated from `wol.h` (`tests/common/bindgen.rs`) and the test fails when they differ. For a new ABI version: edit `wol.h`, run `WOL_BLESS=1 cargo test -p wol-abi --test bindings`, then add the new calls to `parts` in C, Swift, Crystal and C#. A missing toolchain skips its language; `WOL_BINDINGS_REQUIRED=1` makes that an error.
