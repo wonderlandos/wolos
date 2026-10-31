@@ -1,0 +1,13 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=demo-patched-bin
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org/demo
+license=(GPL-2.0-or-later)
+source=("demo.tar.gz::https://example.org/demo.tar.gz" "patches::git+https://github.com/example/patches.git")
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000 SKIP)
+build() {
+  cd patches
+  ./install.sh
+}

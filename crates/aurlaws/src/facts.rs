@@ -55,7 +55,7 @@ pub fn term(r: &Report, package_files: &[String]) -> String {
                 if paths::outside_package(&n.key) {
                     t.push("R.Outside{}");
                 }
-                if paths::persistence(&n.key) {
+                if paths::persistence(&n.key) && !paths::inert_in_package(&n.key) {
                     t.push("R.Autostart{}");
                 }
                 if n.key.starts_with("$pkgdir") {
@@ -83,6 +83,9 @@ pub fn term(r: &Report, package_files: &[String]) -> String {
                 }
                 if matches!(n.label.as_str(), "chmod" | "chown" | "chgrp") {
                     t.push("R.Perms{}");
+                }
+                if matches!(n.label.as_str(), "rm" | "rmdir") {
+                    t.push("R.Removes{}");
                 }
                 if matches!(n.label.as_str(), "setcap" | "chattr") {
                     t.push("R.Caps{}");
