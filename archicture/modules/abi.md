@@ -25,6 +25,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 - libwol has no privilege. In-process: reading the person's own settings and world-readable facts. Everything else is a `shared::portal::Call` to wold, decided with the kernel's peer identity and the consent grants (Settings > Privacy & Security, `/etc/wolos/consent.json`).
 - No telemetry. libwol opens the wold socket and the Kit host socket (`$XDG_RUNTIME_DIR/wol-kit.sock`) and nothing else.
 - Every argument is checked (NULL, length, UTF-8, control characters, ranges). Panics stop at the boundary as `WOL_ERR_INTERNAL`.
+- A call that needs the person's session (clipboard, panels, audio) is checked by wold first, then asked of the shell of the caller's account (`Event::SessionAsk`, `Call::SessionAnswer`). wold matches each answer to a waiting ask of that account; a call waits at most a few seconds, and at most 64 wait at once.
 - Decoders: `shared/tests/portal_fuzz.rs` (every `cargo test`) and `fuzz/` (`cargo +nightly fuzz run ipc_decode`).
 
 ## Surface: what is in, what comes, in order
@@ -35,10 +36,10 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 2 | system facts, appearance, accent | `wol_system_info_` | 1.0 (change events: topic `theme`) |
 | 3 | notifications | `wol_notification_` | 1.0 post; 1.1 buttons (`_create`, `_add_action`, `_set_action_handler`, `_send`); 1.2 `_replace`, `_withdraw` (only the process that posted it) |
 | 4 | app, windows, Kit parts | `wol_window_`, `wol_stack_`, `wol_label_`, `wol_button_`, `wol_widget_`, `wol_row_`, `wol_list_`, `wol_spacer_`, `wol_text_field_`, `wol_toggle_`, `wol_slider_`, `wol_image_`, `wol_menu_`, `wol_toolbar_` | 1.0 stack, label, button; 1.1 row, list, spacer, text field, toggle, slider, image, `set_text`/`copy_text`, value getters and setters, close handler and `wol_window_close`; 1.2 menus (`wol_window_add_menu`) and toolbars (`wol_window_set_toolbar`) |
+| 8 | clipboard | `wol_clipboard_` | 1.3 `_copy_text`, `_set_text`: grants `clipboard-read`, `clipboard-write` |
 | 5 | IPC between apps: typed messages, services, app topics | `wol_message_`, `wol_endpoint_`, `wol_publish` | next: routed by wold, grant per peer app |
 | 6 | files and portals: open/save panels, granted file handles (fd passing) | `wol_file_`, `wol_panel_` | |
 | 7 | settings and app preferences | `wol_prefs_` | |
-| 8 | clipboard | `wol_clipboard_` | |
 | 9 | search: Spotlight providers and queries | `wol_search_` | |
 | 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | |
 | 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | |

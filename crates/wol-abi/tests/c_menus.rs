@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
 //! libwol 1.2 from C: `tests/c/menus.c` against fake wold and Kit hosts on the real `shared` wires.
 use shared::portal::{Answer, Call};
 use shared::view::{FromHost, Menu, MenuEntry, Node, ToHost, Tool};

@@ -3,11 +3,12 @@
 //! Grants are the consent database the person controls in Settings > Privacy & Security.
 use crate::bus::Bus;
 use shared::events::Event;
-use shared::portal::{Answer, Call, Code, Need};
-use std::collections::VecDeque;
+use shared::portal::{Answer, Ask, Call, Code, Need};
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 /// The calling process as the kernel reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,6 +73,103 @@ impl Notes {
     }
 }
 
+/// How long a call waits for the desktop to answer (under libwol's own read timeout).
+pub const ASK_TIMEOUT: Duration = Duration::from_secs(4);
+/// Calls waiting for the desktop at once.
+pub const ASKS_KEPT: usize = 64;
+
+/// Calls waiting for the desktop: each [`Ask`] goes to the shell of the caller's account, and the
+/// `session.answer` with its id wakes the call. An answer counts only from that account.
+#[derive(Default)]
+pub struct Asks {
+    table: Mutex<AskTable>,
+    answered: Condvar,
+}
+
+#[derive(Default)]
+struct AskTable {
+    last: u32,
+    waiting: HashMap<u32, Waiting>,
+}
+
+struct Waiting {
+    uid: u32,
+    answer: Option<Answer>,
+}
+
+impl Asks {
+    fn lock(&self) -> std::sync::MutexGuard<'_, AskTable> {
+        self.table.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Ask the desktop of `uid` and wait for it, at most `timeout`.
+    pub fn ask<W: Write + Send>(
+        &self,
+        bus: &Bus<W>,
+        uid: u32,
+        ask: Ask,
+        timeout: Duration,
+    ) -> Answer {
+        let id = {
+            let mut t = self.lock();
+            if t.waiting.len() >= ASKS_KEPT {
+                return Answer::err(Code::Unavailable, "The desktop is busy. Try again.");
+            }
+            t.last = t.last.wrapping_add(1).max(1);
+            let id = t.last;
+            t.waiting.insert(id, Waiting { uid, answer: None });
+            id
+        };
+        if bus.publish(&Event::SessionAsk { uid, id, ask }) == 0 {
+            self.lock().waiting.remove(&id);
+            return Answer::err(Code::Unavailable, "The desktop is not running.");
+        }
+        let end = Instant::now() + timeout;
+        let mut t = self.lock();
+        loop {
+            if t.waiting.get(&id).is_some_and(|w| w.answer.is_some()) {
+                break;
+            }
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                t.waiting.remove(&id);
+                return Answer::err(Code::Unavailable, "The desktop did not answer.");
+            }
+            t = self
+                .answered
+                .wait_timeout(t, left)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
+        }
+        t.waiting
+            .remove(&id)
+            .and_then(|w| w.answer)
+            .unwrap_or_else(|| Answer::err(Code::Internal, "The desktop's answer was lost."))
+    }
+
+    /// The desktop of `uid` answers ask `id`.
+    fn answer(&self, uid: u32, id: u32, a: Answer) -> Answer {
+        let mut t = self.lock();
+        let Some(w) = t
+            .waiting
+            .get_mut(&id)
+            .filter(|w| w.uid == uid && w.answer.is_none())
+        else {
+            return Answer::err(Code::InvalidArgument, "Nothing is waiting for that answer.");
+        };
+        w.answer = Some(a);
+        self.answered.notify_all();
+        Answer::ok()
+    }
+}
+
+/// What the portal keeps between calls.
+#[derive(Default)]
+pub struct State {
+    pub notes: Notes,
+    pub asks: Asks,
+}
+
 pub trait Grants {
     fn granted(&self, app: &str, capability: &str) -> bool;
     /// May receive the account's notifications (`subscribe account`).
@@ -106,6 +204,27 @@ fn name(app: &str) -> &str {
         .unwrap_or(app)
 }
 
+/// What a denied app was trying to do, for "<app> is not allowed to ...".
+fn doing(capability: &str) -> Option<&'static str> {
+    Some(match capability {
+        "clipboard-read" => "read the clipboard",
+        "clipboard-write" => "change the clipboard",
+        _ => return None,
+    })
+}
+
+fn denial(capability: &str, app: &str) -> String {
+    let app = name(app);
+    match doing(capability) {
+        Some(what) => format!(
+            "{app} is not allowed to {what}. Allow it in System Settings > Privacy & Security."
+        ),
+        None => format!(
+            "Notifications are off for {app}. Turn them on in System Settings > Privacy & Security."
+        ),
+    }
+}
+
 /// One call line's JSON -> answer. Nothing happens unless the call decodes, the caller is known
 /// and the caller's executable holds the call's capability.
 pub fn handle<W: Write + Send>(
@@ -113,8 +232,9 @@ pub fn handle<W: Write + Send>(
     caller: Option<&Caller>,
     grants: &dyn Grants,
     bus: &Bus<W>,
-    notes: &Notes,
+    st: &State,
 ) -> Answer {
+    let notes = &st.notes;
     let call = match Call::decode(json.as_bytes()) {
         Ok(c) => c,
         Err(m) => return Answer::err(Code::InvalidArgument, m),
@@ -133,10 +253,7 @@ pub fn handle<W: Write + Send>(
         return Answer::err(
             Code::PermissionDenied,
             match call.need() {
-                Need::Grant(_) => format!(
-                    "Notifications are off for {}. Turn them on in System Settings > Privacy & Security.",
-                    name(&caller.app)
-                ),
+                Need::Grant(cap) => denial(cap, &caller.app),
                 Need::Shower => "Only the desktop answers notifications.".into(),
             },
         );
@@ -206,6 +323,20 @@ pub fn handle<W: Write + Send>(
             });
             Answer::ok()
         }
+        Call::ClipboardRead {} => st
+            .asks
+            .ask(bus, caller.uid, Ask::ClipboardRead, ASK_TIMEOUT),
+        Call::ClipboardWrite { text } => {
+            st.asks
+                .ask(bus, caller.uid, Ask::ClipboardWrite { text }, ASK_TIMEOUT)
+        }
+        Call::SessionAnswer { id, error, data } => {
+            let a = match error {
+                Some(m) => Answer::err(Code::Unavailable, m),
+                None => data.map_or_else(Answer::ok, Answer::with),
+            };
+            st.asks.answer(caller.uid, id, a)
+        }
         Call::NotificationAnswer { id, key } => {
             let Some(pid) = notes.owner(id, caller.uid) else {
                 return Answer::err(Code::InvalidArgument, "No such notification.");
@@ -232,6 +363,7 @@ mod tests {
     use super::*;
     use std::io::{BufRead, BufReader};
     use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
 
     struct Fixed(&'static [(&'static str, &'static str)]);
     impl Grants for Fixed {
@@ -272,7 +404,7 @@ mod tests {
             let bus = Bus::default();
             let (s, p) = UnixStream::pair().unwrap();
             bus.subscribe(Some(1000), None, s);
-            let a = handle(json, who, &grants, &bus, &Notes::default());
+            let a = handle(json, who, &grants, &bus, &State::default());
             assert_eq!(a.code, want, "{json} {who:?}");
             p.set_nonblocking(true).unwrap();
             let mut line = String::new();
@@ -288,7 +420,7 @@ mod tests {
             Some(&bad),
             &grants,
             &Bus::<UnixStream>::default(),
-            &Notes::default(),
+            &State::default(),
         );
         assert_eq!(
             a.message.as_deref(),
@@ -304,7 +436,7 @@ mod tests {
         let (s, p) = UnixStream::pair().unwrap();
         bus.subscribe(Some(1000), None, s);
         let grants = Fixed(&[("/usr/bin/good", "notifications")]);
-        let notes = Notes::default();
+        let notes = State::default();
         let a = handle(POST, Some(&caller("/usr/bin/good")), &grants, &bus, &notes);
         assert_eq!(a.id, Some(1));
         let mut line = String::new();
@@ -336,7 +468,7 @@ mod tests {
     fn a_pressed_button_reaches_only_the_poster() {
         let bus = Bus::default();
         let grants = Fixed(&[("/usr/bin/good", "notifications")]);
-        let notes = Notes::default();
+        let notes = State::default();
         let (shower, _s) = UnixStream::pair().unwrap();
         bus.subscribe(Some(1000), None, shower);
         let (app, app_peer) = UnixStream::pair().unwrap();
@@ -406,7 +538,7 @@ mod tests {
             ("/usr/bin/other", "notifications"),
             ("/usr/bin/nobody", "camera"),
         ]);
-        let notes = Notes::default();
+        let notes = State::default();
         let good = caller("/usr/bin/good");
         let run = |json: &str, who: &Caller| handle(json, Some(who), &grants, &bus, &notes);
         let id = run(POST, &good).id.unwrap();
@@ -459,6 +591,147 @@ mod tests {
             "once"
         );
         assert_eq!(run(&replace, &good).code, Some(Code::InvalidArgument));
+    }
+
+    #[test]
+    fn every_capability_is_grantable_refused_by_wold_and_explained() {
+        for c in shared::portal::CAPABILITIES {
+            assert!(wol_core::consent::CAPABILITIES.contains(c), "{c}");
+            assert_eq!(
+                wol_core::security::enforcement(c),
+                Some(wol_core::security::Enforcement::System),
+                "{c}"
+            );
+            assert!(*c == "notifications" || doing(c).is_some(), "{c}");
+        }
+    }
+
+    /// A shell: answers its first ask with the line `f` makes, as account `uid`.
+    fn shell(
+        s: Arc<(Bus<UnixStream>, State)>,
+        uid: u32,
+        f: impl Fn(Ask) -> String + Send + 'static,
+    ) -> std::thread::JoinHandle<()> {
+        let (a, b) = UnixStream::pair().unwrap();
+        s.0.subscribe(Some(uid), None, a);
+        std::thread::spawn(move || {
+            let mut r = BufReader::new(b);
+            let mut line = String::new();
+            while r.read_line(&mut line).is_ok_and(|n| n > 0) {
+                if let Some(Event::SessionAsk { id, ask, .. }) = Event::parse(&line) {
+                    let answer = f(ask).replace("ID", &id.to_string());
+                    let mut me = caller("/usr/bin/wol-shell");
+                    me.uid = uid;
+                    handle(&answer, Some(&me), &Fixed(&[]), &s.0, &s.1);
+                    return;
+                }
+                line.clear();
+            }
+        })
+    }
+
+    #[test]
+    fn clipboard_goes_through_the_desktop_of_the_callers_account() {
+        let s = Arc::new((Bus::<UnixStream>::default(), State::default()));
+        let grants = Fixed(&[
+            ("/usr/bin/reader", "clipboard-read"),
+            ("/usr/bin/writer", "clipboard-write"),
+        ]);
+        let (reader, writer) = (caller("/usr/bin/reader"), caller("/usr/bin/writer"));
+        let read = r#"{"call":"clipboard.read"}"#;
+        let write = r#"{"call":"clipboard.write","text":"hi"}"#;
+        let a = handle(write, Some(&reader), &grants, &s.0, &s.1);
+        assert_eq!(a.code, Some(Code::PermissionDenied));
+        assert_eq!(
+            a.message.as_deref(),
+            Some(
+                "reader is not allowed to change the clipboard. Allow it in System Settings > \
+                 Privacy & Security."
+            )
+        );
+        assert_eq!(
+            handle(read, Some(&writer), &grants, &s.0, &s.1).code,
+            Some(Code::PermissionDenied)
+        );
+        assert_eq!(
+            handle(read, Some(&reader), &grants, &s.0, &s.1).code,
+            Some(Code::Unavailable),
+            "no desktop"
+        );
+        let t = shell(s.clone(), 1000, |ask| {
+            assert_eq!(ask, Ask::ClipboardRead);
+            r#"{"call":"session.answer","id":ID,"data":{"text":"copied"}}"#.into()
+        });
+        let (other, seen) = UnixStream::pair().unwrap();
+        s.0.subscribe(Some(1001), None, other);
+        let a = handle(read, Some(&reader), &grants, &s.0, &s.1);
+        assert_eq!(a.data, Some(serde_json::json!({"text": "copied"})));
+        t.join().unwrap();
+        assert_eq!(next(&seen), None, "another account's desktop saw nothing");
+    }
+
+    #[test]
+    fn only_a_waiting_ask_of_that_account_takes_an_answer() {
+        let s = Arc::new((Bus::<UnixStream>::default(), State::default()));
+        let g = Fixed(&[("/usr/bin/reader", "clipboard-read")]);
+        let forged = r#"{"call":"session.answer","id":1,"data":{"text":"x"}}"#;
+        let desktop = caller("/usr/bin/wol-shell");
+        let a = handle(forged, Some(&desktop), &g, &s.0, &s.1);
+        assert_eq!(a.code, Some(Code::InvalidArgument), "nothing waits");
+        let a = handle(forged, Some(&caller("/usr/bin/reader")), &g, &s.0, &s.1);
+        assert_eq!(a.code, Some(Code::PermissionDenied), "apps cannot answer");
+
+        let t = shell(s.clone(), 1000, |_| {
+            r#"{"call":"session.answer","id":ID,"error":"The clipboard is empty."}"#.into()
+        });
+        let a = handle(
+            r#"{"call":"clipboard.read"}"#,
+            Some(&caller("/usr/bin/reader")),
+            &g,
+            &s.0,
+            &s.1,
+        );
+        assert_eq!(a.code, Some(Code::Unavailable));
+        assert_eq!(a.message.as_deref(), Some("The clipboard is empty."));
+        t.join().unwrap();
+        assert!(s.1.asks.lock().waiting.is_empty());
+
+        let (a1, _b1) = UnixStream::pair().unwrap();
+        s.0.subscribe(Some(1000), None, a1);
+        let s2 = s.clone();
+        let w = std::thread::spawn(move || {
+            s2.1.asks
+                .ask(&s2.0, 1000, Ask::ClipboardRead, Duration::from_secs(10))
+        });
+        let id = loop {
+            if let Some(i) = s.1.asks.lock().waiting.keys().next() {
+                break *i;
+            }
+            std::thread::yield_now();
+        };
+        let line = format!(r#"{{"call":"session.answer","id":{id},"data":{{"text":"z"}}}}"#);
+        let mut stranger = desktop.clone();
+        stranger.uid = 1001;
+        assert_eq!(
+            handle(&line, Some(&stranger), &g, &s.0, &s.1).code,
+            Some(Code::InvalidArgument),
+            "another account's desktop"
+        );
+        assert!(handle(&line, Some(&desktop), &g, &s.0, &s.1).ok);
+        assert!(w.join().unwrap().ok);
+    }
+
+    #[test]
+    fn an_ask_nobody_answers_times_out_and_is_forgotten() {
+        let s = State::default();
+        let bus = Bus::default();
+        let (a, _b) = UnixStream::pair().unwrap();
+        bus.subscribe(Some(1000), None, a);
+        let got = s
+            .asks
+            .ask(&bus, 1000, Ask::ClipboardRead, Duration::from_millis(20));
+        assert_eq!(got.code, Some(Code::Unavailable));
+        assert!(s.asks.lock().waiting.is_empty());
     }
 
     #[test]

@@ -199,6 +199,16 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::Advisory,
         "Unix permissions apply; apps run as the account, without a per-app sandbox",
     ),
+    (
+        "clipboard-read",
+        Enforcement::System,
+        "apps ask WolOS for the text you copied, which checks your choice before handing it over",
+    ),
+    (
+        "clipboard-write",
+        Enforcement::System,
+        "apps ask WolOS to change the clipboard, which checks your choice first",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

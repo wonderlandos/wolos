@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
 //! Compile a C test program against `wol.h` and the built `libwol.so.1`, and run it with the
 //! sockets of a fake wold and Kit host.
 #![allow(dead_code)]

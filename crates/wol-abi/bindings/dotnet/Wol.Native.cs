@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 1;
+    public const int WOL_VERSION_MINOR = 3;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -31,6 +31,10 @@ public static unsafe class Native
     public delegate void wol_window_fn(IntPtr window, IntPtr user_data);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void wol_action_fn(IntPtr notification, IntPtr key, IntPtr user_data);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void wol_menu_fn(IntPtr menu, IntPtr key, IntPtr user_data);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void wol_toolbar_fn(IntPtr toolbar, IntPtr key, IntPtr user_data);
 
     [DllImport(Lib)] public static extern uint wol_version();
     [DllImport(Lib)] public static extern byte* wol_version_string();
@@ -95,4 +99,23 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern int wol_notification_send(IntPtr notification, IntPtr* error);
     [DllImport(Lib)] public static extern IntPtr wol_notification_retain(IntPtr notification);
     [DllImport(Lib)] public static extern void wol_notification_release(IntPtr notification);
+    [DllImport(Lib)] public static extern int wol_notification_replace(IntPtr notification, byte* title, nuint title_len, byte* body, nuint body_len, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_notification_withdraw(IntPtr notification, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_menu_create(IntPtr context, byte* title, nuint len, wol_menu_fn on_choose, IntPtr user_data, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_menu_add_item(IntPtr menu, byte* key, nuint key_len, byte* label, nuint label_len, byte* shortcut, nuint shortcut_len, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_menu_add_separator(IntPtr menu, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_menu_set_enabled(IntPtr menu, byte* key, nuint key_len, int enabled, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_menu_set_checked(IntPtr menu, byte* key, nuint key_len, int @checked, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_menu_retain(IntPtr menu);
+    [DllImport(Lib)] public static extern void wol_menu_release(IntPtr menu);
+    [DllImport(Lib)] public static extern int wol_window_add_menu(IntPtr window, IntPtr menu, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_toolbar_create(IntPtr context, wol_toolbar_fn on_choose, IntPtr user_data, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_toolbar_add_button(IntPtr toolbar, byte* key, nuint key_len, byte* label, nuint label_len, byte* icon, nuint icon_len, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_toolbar_add_spacer(IntPtr toolbar, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_toolbar_set_enabled(IntPtr toolbar, byte* key, nuint key_len, int enabled, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_toolbar_retain(IntPtr toolbar);
+    [DllImport(Lib)] public static extern void wol_toolbar_release(IntPtr toolbar);
+    [DllImport(Lib)] public static extern int wol_window_set_toolbar(IntPtr window, IntPtr toolbar, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_clipboard_copy_text(IntPtr context, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_clipboard_set_text(IntPtr context, byte* text, nuint len, IntPtr* error);
 }
