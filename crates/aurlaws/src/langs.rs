@@ -171,7 +171,14 @@ fn table(lang: Lang) -> &'static [(&'static str, Does)] {
             ("env::home_dir", Home),
             ("base64::decode", Decode),
         ],
-        Lang::C => &[("system", Shell), ("popen", Shell), ("execl", Argv), ("execlp", Argv), ("fopen", Open), ("getenv", Home)],
+        Lang::C => &[
+            ("system", Shell),
+            ("popen", Shell),
+            ("execl", Argv),
+            ("execlp", Argv),
+            ("fopen", Open),
+            ("getenv", Home),
+        ],
     }
 }
 
@@ -193,7 +200,10 @@ impl Calls<'_, '_> {
     }
 
     fn loc(&self, n: Node) -> Option<Loc> {
-        Some(Loc { file: self.file.clone(), line: self.at.unwrap_or(n.start_position().row as u32 + 1) })
+        Some(Loc {
+            file: self.file.clone(),
+            line: self.at.unwrap_or(n.start_position().row as u32 + 1),
+        })
     }
 
     fn named(n: Node<'_>) -> Vec<Node<'_>> {
@@ -214,7 +224,15 @@ impl Calls<'_, '_> {
 
     fn visit_inner(&mut self, n: Node) {
         match n.kind() {
-            "assignment" | "assignment_expression" | "variable_declarator" | "let_declaration" | "init_declarator" | "short_var_declaration" | "assignment_statement" | "var_spec" | "const_spec" => {
+            "assignment"
+            | "assignment_expression"
+            | "variable_declarator"
+            | "let_declaration"
+            | "init_declarator"
+            | "short_var_declaration"
+            | "assignment_statement"
+            | "var_spec"
+            | "const_spec" => {
                 let (name, value) = (self.target(n), self.value(n));
                 if let (Some(name), Some(v)) = (name, value) {
                     let val = self.eval(v);
@@ -229,12 +247,12 @@ impl Calls<'_, '_> {
                 self.eval(n);
             }
             "comment" | "line_comment" | "block_comment" => {
-                if self.lang == Lang::Go {
-                    if let Some(cmd) = self.text(n).strip_prefix("//go:generate ") {
-                        let (cmd, line) = (cmd.to_owned(), n.start_position().row as u32 + 1);
-                        let file = self.file.clone();
-                        self.w.snippet(&cmd, &file, line, Stage::Upstream);
-                    }
+                if self.lang == Lang::Go
+                    && let Some(cmd) = self.text(n).strip_prefix("//go:generate ")
+                {
+                    let (cmd, line) = (cmd.to_owned(), n.start_position().row as u32 + 1);
+                    let file = self.file.clone();
+                    self.w.snippet(&cmd, &file, line, Stage::Upstream);
                 }
             }
             _ => {
@@ -251,8 +269,14 @@ impl Calls<'_, '_> {
 
     fn target(&self, n: Node) -> Option<String> {
         let t = Self::field(n, &["left", "name", "pattern", "declarator"])?;
-        let s = self.text(t).trim_start_matches('*').trim_start_matches("mut ").trim();
-        s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_').then(|| s.to_owned())
+        let s = self
+            .text(t)
+            .trim_start_matches('*')
+            .trim_start_matches("mut ")
+            .trim();
+        s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+            .then(|| s.to_owned())
     }
 
     fn value<'t>(&self, n: Node<'t>) -> Option<Node<'t>> {
@@ -262,16 +286,34 @@ impl Calls<'_, '_> {
     fn literal(&self, n: Node) -> Option<String> {
         let t = self.text(n);
         match n.kind() {
-            "string" | "string_literal" | "interpreted_string_literal" | "raw_string_literal" | "template_string" => {
-                let has_hole = Self::named(n).iter().any(|c| matches!(c.kind(), "interpolation" | "template_substitution"));
+            "string"
+            | "string_literal"
+            | "interpreted_string_literal"
+            | "raw_string_literal"
+            | "template_string" => {
+                let has_hole = Self::named(n)
+                    .iter()
+                    .any(|c| matches!(c.kind(), "interpolation" | "template_substitution"));
                 if has_hole {
                     return None;
                 }
                 let body = t.trim_start_matches(|c: char| c.is_ascii_alphabetic());
                 let q = body.chars().next()?;
                 let triple: String = std::iter::repeat_n(q, 3).collect();
-                let inner = if body.starts_with(&triple) && body.len() >= 6 { &body[3..body.len() - 3] } else if body.len() >= 2 { &body[1..body.len() - 1] } else { "" };
-                Some(inner.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"").replace("\\'", "'"))
+                let inner = if body.starts_with(&triple) && body.len() >= 6 {
+                    &body[3..body.len() - 3]
+                } else if body.len() >= 2 {
+                    &body[1..body.len() - 1]
+                } else {
+                    ""
+                };
+                Some(
+                    inner
+                        .replace("\\n", "\n")
+                        .replace("\\t", "\t")
+                        .replace("\\\"", "\"")
+                        .replace("\\'", "'"),
+                )
             }
             _ => None,
         }
@@ -303,7 +345,11 @@ impl Calls<'_, '_> {
             return Val::known(&s);
         }
         match n.kind() {
-            "identifier" => self.vars.get(self.text(n)).cloned().unwrap_or_else(|| Val::unknown(self.text(n).to_owned())),
+            "identifier" => self
+                .vars
+                .get(self.text(n))
+                .cloned()
+                .unwrap_or_else(|| Val::unknown(self.text(n).to_owned())),
             "call" | "call_expression" | "new_expression" => self.call(n),
             "binary_operator" | "binary_expression" => {
                 let parts = Self::named(n);
@@ -316,7 +362,15 @@ impl Calls<'_, '_> {
                 }
                 out
             }
-            "parenthesized_expression" | "await_expression" | "try_expression" | "reference_expression" | "unary_expression" if n.named_child_count() == 1 => n.named_child(0).map(|c| self.eval(c)).unwrap_or_default(),
+            "parenthesized_expression"
+            | "await_expression"
+            | "try_expression"
+            | "reference_expression"
+            | "unary_expression"
+                if n.named_child_count() == 1 =>
+            {
+                n.named_child(0).map(|c| self.eval(c)).unwrap_or_default()
+            }
             _ => {
                 let kids = Self::named(n);
                 self.union(&kids)
@@ -326,18 +380,33 @@ impl Calls<'_, '_> {
 
     fn args<'t>(&self, n: Node<'t>) -> Vec<Node<'t>> {
         let a = Self::field(n, &["arguments"]);
-        a.map(|a| Self::named(a).into_iter().filter(|c| c.kind() != "comment").collect()).unwrap_or_default()
+        a.map(|a| {
+            Self::named(a)
+                .into_iter()
+                .filter(|c| c.kind() != "comment")
+                .collect()
+        })
+        .unwrap_or_default()
     }
 
     fn callee(&self, n: Node) -> String {
         let f = Self::field(n, &["function", "constructor"]);
-        f.map(|f| self.text(f).split_whitespace().collect::<String>()).unwrap_or_default()
+        f.map(|f| self.text(f).split_whitespace().collect::<String>())
+            .unwrap_or_default()
     }
 
     /// The longest table entry the callee ends with, on a name boundary.
     fn meaning(&self, callee: &str) -> Option<Does> {
         let t = table(self.lang);
-        t.iter().filter(|(k, _)| callee == *k || callee.strip_suffix(k).is_some_and(|p| p.ends_with(['.', ':']))).max_by_key(|(k, _)| k.len()).map(|x| x.1)
+        t.iter()
+            .filter(|(k, _)| {
+                callee == *k
+                    || callee
+                        .strip_suffix(k)
+                        .is_some_and(|p| p.ends_with(['.', ':']))
+            })
+            .max_by_key(|(k, _)| k.len())
+            .map(|x| x.1)
     }
 
     fn call(&mut self, n: Node) -> Val {
@@ -347,13 +416,31 @@ impl Calls<'_, '_> {
         let does = self.meaning(&callee);
         let does = match (self.lang, does) {
             // `regex.exec()` and `obj.exec()` are not child_process.
-            (Lang::Js, Some(Does::Shell | Does::Argv)) if !(self.child_process || callee.contains("child_process")) => None,
-            (Lang::Js, Some(Does::Decode)) if callee.ends_with("Buffer.from") && !args.iter().any(|a| matches!(self.text(*a).trim_matches(['"', '\'']), "base64" | "hex" | "base64url")) => None,
+            (Lang::Js, Some(Does::Shell | Does::Argv))
+                if !(self.child_process || callee.contains("child_process")) =>
+            {
+                None
+            }
+            (Lang::Js, Some(Does::Decode))
+                if callee.ends_with("Buffer.from")
+                    && !args.iter().any(|a| {
+                        matches!(
+                            self.text(*a).trim_matches(['"', '\'']),
+                            "base64" | "hex" | "base64url"
+                        )
+                    }) =>
+            {
+                None
+            }
             // `re.compile` and `model.eval()` are methods; the builtins stand alone.
             (Lang::Python, Some(Does::Code)) if callee.contains('.') => None,
             (_, d) => d,
         };
-        let name = callee.rsplit(['.', ':']).next().unwrap_or(&callee).to_owned();
+        let name = callee
+            .rsplit(['.', ':'])
+            .next()
+            .unwrap_or(&callee)
+            .to_owned();
         match does {
             Some(Does::Code) => {
                 let v = args.first().map(|a| self.eval(*a)).unwrap_or_default();
@@ -385,7 +472,14 @@ impl Calls<'_, '_> {
                 let rest: Vec<Node> = args.iter().skip(1).copied().collect();
                 let body = self.union(&rest);
                 let proc = self.w.process(&name, loc.clone());
-                let url = self.w.url_node(if v.complete { &v.text } else { "an address the script computes" }, loc.clone());
+                let url = self.w.url_node(
+                    if v.complete {
+                        &v.text
+                    } else {
+                        "an address the script computes"
+                    },
+                    loc.clone(),
+                );
                 self.w.g.edge(url, proc, E::Fetches, loc.clone());
                 for t in v.taints.iter().chain(&body.taints) {
                     self.w.g.edge(*t, proc, E::Reads, loc.clone());
@@ -395,8 +489,15 @@ impl Calls<'_, '_> {
             }
             Some(Does::Open) => {
                 let path = args.first().map(|a| self.eval(*a)).unwrap_or_default();
-                let mode = args.get(1).map(|a| self.text(*a).to_owned()).unwrap_or_default();
-                if mode.contains(['w', 'a', 'x', '+']) { self.file_write(&path, &name, &loc) } else { self.file_read(&path, &name, &loc) }
+                let mode = args
+                    .get(1)
+                    .map(|a| self.text(*a).to_owned())
+                    .unwrap_or_default();
+                if mode.contains(['w', 'a', 'x', '+']) {
+                    self.file_write(&path, &name, &loc)
+                } else {
+                    self.file_read(&path, &name, &loc)
+                }
             }
             Some(Does::Read) => {
                 let path = args.first().map(|a| self.eval(*a)).unwrap_or_default();
@@ -479,7 +580,9 @@ impl Calls<'_, '_> {
                 argv.push(s.eval(a));
             }
         };
-        let shell_true = args.iter().any(|a| a.kind() == "keyword_argument" && self.text(*a).replace(' ', "") == "shell=True");
+        let shell_true = args.iter().any(|a| {
+            a.kind() == "keyword_argument" && self.text(*a).replace(' ', "") == "shell=True"
+        });
         for a in args {
             flatten(self, *a, &mut argv);
         }
@@ -489,7 +592,10 @@ impl Calls<'_, '_> {
         let single_string = argv.len() == 1 && argv[0].text.contains(' ');
         let mut up = n.parent();
         while let Some(p) = up {
-            if !matches!(p.kind(), "field_expression" | "call_expression" | "arguments") {
+            if !matches!(
+                p.kind(),
+                "field_expression" | "call_expression" | "arguments"
+            ) {
                 break;
             }
             if p.kind() == "call_expression" {
@@ -526,16 +632,41 @@ impl Calls<'_, '_> {
 }
 
 /// Read one file's calls into the graph.
-pub fn walk(lang: Lang, text: &str, file: &str, stage: Stage, w: &mut Walker, at: Option<u32>) -> bool {
-    let Some(tree) = parse(&lang.grammar(), text) else { return false };
+pub fn walk(
+    lang: Lang,
+    text: &str,
+    file: &str,
+    stage: Stage,
+    w: &mut Walker,
+    at: Option<u32>,
+) -> bool {
+    let Some(tree) = parse(&lang.grammar(), text) else {
+        return false;
+    };
     w.enter_file(file, stage);
-    let mut c = Calls { lang, src: text, file: file.to_owned(), vars: HashMap::new(), child_process: text.contains("child_process"), depth: 0, w, at };
+    let mut c = Calls {
+        lang,
+        src: text,
+        file: file.to_owned(),
+        vars: HashMap::new(),
+        child_process: text.contains("child_process"),
+        depth: 0,
+        w,
+        at,
+    };
     c.visit(tree.root_node());
     true
 }
 
 /// Code given on an interpreter's command line, such as `python -c`.
-pub fn inline(g: &mut Graph, interp: &str, code: &str, file: &str, line: Option<u32>, stage: Stage) -> bool {
+pub fn inline(
+    g: &mut Graph,
+    interp: &str,
+    code: &str,
+    file: &str,
+    line: Option<u32>,
+    stage: Stage,
+) -> bool {
     let lang = match interp {
         x if x.starts_with("python") => Lang::Python,
         "node" | "nodejs" | "deno" | "bun" => Lang::Js,
@@ -566,10 +697,26 @@ fn inline_shell(g: &mut Graph, code: &str, file: &str, line: Option<u32>, stage:
 
 /// Commands held in Perl, Ruby or PHP text, and whether any call hides what it runs.
 pub fn embedded_shell(code: &str) -> (Vec<String>, bool) {
-    let mut out: Vec<String> = code.split('`').skip(1).step_by(2).map(str::to_owned).collect();
+    let mut out: Vec<String> = code
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
     let mut blind = false;
-    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '@');
-    for kw in ["system", "exec", "popen", "shell_exec", "passthru", "qx", "%x", "eval"] {
+    let word = |c: Option<char>| {
+        c.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '@')
+    };
+    for kw in [
+        "system",
+        "exec",
+        "popen",
+        "shell_exec",
+        "passthru",
+        "qx",
+        "%x",
+        "eval",
+    ] {
         for (at, _) in code.match_indices(kw) {
             if word(code[..at].chars().next_back()) || word(code[at + kw.len()..].chars().next()) {
                 continue;

@@ -7,8 +7,8 @@ use crate::shell::{Scope, Walker};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const MAX_FILE: u64 = 2_000_000;
 /// Generated `configure` scripts run long, and they are exactly where a build hides things.
@@ -16,7 +16,14 @@ const MAX_CONFIGURE: u64 = 8_000_000;
 const MAX_FILES: usize = 20_000;
 /// Bump when analysis changes, so old cached graphs are not reused.
 const CACHE_VERSION: u32 = 2;
-const SKIP_DIRS: &[&str] = &[".git", ".hg", ".svn", "node_modules", "target", "__pycache__"];
+const SKIP_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    "__pycache__",
+];
 
 #[derive(Clone, Debug, Default)]
 pub struct Options {
@@ -41,7 +48,10 @@ impl Scan {
     pub fn gaps(&self) -> Vec<String> {
         let mut out = Vec::new();
         if self.skipped > 0 {
-            out.push(format!("{} upstream build scripts were too big to read, so they were not judged.", self.skipped));
+            out.push(format!(
+                "{} upstream build scripts were too big to read, so they were not judged.",
+                self.skipped
+            ));
         }
         if self.truncated > 0 {
             out.push(format!("{} upstream build scripts went past the analyser's limits, so part of them was not read.", self.truncated));
@@ -65,7 +75,23 @@ enum Role {
 /// and the trace is what would show it.
 fn idle(d: &str) -> bool {
     let d = d.to_ascii_lowercase();
-    d.starts_with("test") || d.starts_with(".git") || d.starts_with(".circleci") || matches!(d.as_str(), "ci" | "t" | "examples" | "example" | "docs" | "doc" | "demo" | "demos" | "bench" | "benchmarks" | "docker" | "packaging")
+    d.starts_with("test")
+        || d.starts_with(".git")
+        || d.starts_with(".circleci")
+        || matches!(
+            d.as_str(),
+            "ci" | "t"
+                | "examples"
+                | "example"
+                | "docs"
+                | "doc"
+                | "demo"
+                | "demos"
+                | "bench"
+                | "benchmarks"
+                | "docker"
+                | "packaging"
+        )
 }
 
 fn role(rel: &str) -> Option<Role> {
@@ -74,18 +100,29 @@ fn role(rel: &str) -> Option<Role> {
     if dir.split('/').any(idle) {
         return None;
     }
-    let tooling = dir.split('/').any(|d| matches!(d, "tools" | "scripts" | "build" | "buildtools" | "build-aux"));
+    let tooling = dir.split('/').any(|d| {
+        matches!(
+            d,
+            "tools" | "scripts" | "build" | "buildtools" | "build-aux"
+        )
+    });
     let stem = name.split('.').next().unwrap_or(name);
-    let generator = matches!(stem, "gen" | "generate" | "build" | "mkall") || ["gen_", "gen-", "mk_", "mk-", "build_", "build-"].iter().any(|p| stem.starts_with(p));
+    let generator = matches!(stem, "gen" | "generate" | "build" | "mkall")
+        || ["gen_", "gen-", "mk_", "mk-", "build_", "build-"]
+            .iter()
+            .any(|p| stem.starts_with(p));
     let ext = name.rsplit_once('.').map(|x| x.1).unwrap_or("");
     Some(match (name, ext) {
         ("package.json", _) => Role::Npm,
         ("CMakeLists.txt", _) | (_, "cmake") => Role::Cmake,
-        ("Makefile" | "makefile" | "GNUmakefile" | "Makefile.am" | "Makefile.in", _) | (_, "mk") => Role::Make,
+        ("Makefile" | "makefile" | "GNUmakefile" | "Makefile.am" | "Makefile.in", _)
+        | (_, "mk") => Role::Make,
         ("configure" | "autogen.sh" | "bootstrap", _) => Role::Shell,
         (_, "sh" | "bash") if tooling || dir.is_empty() => Role::Shell,
         ("configure.ac" | "configure.in", _) | (_, "m4") => Role::Lines,
-        ("setup.py" | "build.py" | "install.py" | "wscript" | "noxfile.py", _) => Role::Code(Lang::Python),
+        ("setup.py" | "build.py" | "install.py" | "wscript" | "noxfile.py", _) => {
+            Role::Code(Lang::Python)
+        }
         ("build.rs", _) => Role::Code(Lang::Rust),
         (_, "py") if tooling => Role::Code(Lang::Python),
         ("install.js" | "postinstall.js" | "preinstall.js" | "build.js", _) => Role::Code(Lang::Js),
@@ -99,43 +136,78 @@ fn role(rel: &str) -> Option<Role> {
 /// Files a build runs on its way in. A helper they call is judged by what flows, as a build
 /// system is; these are judged in full.
 fn entry(rel: &str) -> bool {
-    matches!(rel.rsplit('/').next().unwrap_or(rel), "setup.py" | "build.py" | "install.py" | "wscript" | "noxfile.py" | "build.rs" | "install.js" | "postinstall.js" | "preinstall.js" | "build.js")
+    matches!(
+        rel.rsplit('/').next().unwrap_or(rel),
+        "setup.py"
+            | "build.py"
+            | "install.py"
+            | "wscript"
+            | "noxfile.py"
+            | "build.rs"
+            | "install.js"
+            | "postinstall.js"
+            | "preinstall.js"
+            | "build.js"
+    )
 }
 
 /// C that runs before `main` whether or not anyone calls it, the way the xz backdoor hooked in.
 fn runs_before_main(rel: &str, path: &Path) -> bool {
     let ext = rel.rsplit_once('.').map_or("", |x| x.1);
-    if !matches!(ext, "c" | "cc" | "cpp" | "cxx") || rel.rsplit_once('/').is_some_and(|x| x.0.split('/').any(idle)) {
+    if !matches!(ext, "c" | "cc" | "cpp" | "cxx")
+        || rel
+            .rsplit_once('/')
+            .is_some_and(|x| x.0.split('/').any(idle))
+    {
         return false;
     }
     let small = std::fs::metadata(path).is_ok_and(|m| m.len() <= MAX_FILE);
-    small && std::fs::read(path).is_ok_and(|b| {
-        let t = String::from_utf8_lossy(&b);
-        t.contains("__attribute__") && (t.contains("constructor") || t.contains("ifunc"))
-    })
+    small
+        && std::fs::read(path).is_ok_and(|b| {
+            let t = String::from_utf8_lossy(&b);
+            t.contains("__attribute__") && (t.contains("constructor") || t.contains("ifunc"))
+        })
 }
 
 /// Modules `setup.py` imports from the source tree run with it, however quiet their names.
 fn local_imports(root: &Path, files: &mut Vec<(String, Role)>) {
-    let mut queue: Vec<String> = files.iter().filter(|(r, _)| r.rsplit('/').next() == Some("setup.py")).map(|(r, _)| r.clone()).collect();
+    let mut queue: Vec<String> = files
+        .iter()
+        .filter(|(r, _)| r.rsplit('/').next() == Some("setup.py"))
+        .map(|(r, _)| r.clone())
+        .collect();
     let mut left = 50;
     while let Some(rel) = queue.pop() {
-        let Ok(text) = std::fs::read_to_string(root.join(&rel)) else { continue };
+        let Ok(text) = std::fs::read_to_string(root.join(&rel)) else {
+            continue;
+        };
         let dir = rel.rsplit_once('/').map_or("", |x| x.0).to_owned();
         for l in text.lines() {
             let l = l.trim();
             let mods: Vec<&str> = if let Some(r) = l.strip_prefix("from ") {
                 r.split_whitespace().next().into_iter().collect()
             } else if let Some(r) = l.strip_prefix("import ") {
-                r.split(',').filter_map(|m| m.split_whitespace().next()).collect()
+                r.split(',')
+                    .filter_map(|m| m.split_whitespace().next())
+                    .collect()
             } else {
                 continue;
             };
             for m in mods {
                 let stem = m.trim_start_matches('.').replace('.', "/");
-                let at = |p: String| if dir.is_empty() { p } else { format!("{dir}/{p}") };
+                let at = |p: String| {
+                    if dir.is_empty() {
+                        p
+                    } else {
+                        format!("{dir}/{p}")
+                    }
+                };
                 for c in [at(format!("{stem}.py")), at(format!("{stem}/__init__.py"))] {
-                    if left > 0 && !stem.is_empty() && root.join(&c).is_file() && !files.iter().any(|(r, _)| *r == c) {
+                    if left > 0
+                        && !stem.is_empty()
+                        && root.join(&c).is_file()
+                        && !files.iter().any(|(r, _)| *r == c)
+                    {
                         left -= 1;
                         files.push((c.clone(), Role::Code(Lang::Python)));
                         queue.push(c);
@@ -151,7 +223,9 @@ fn collect(root: &Path) -> (Vec<(String, Role)>, usize) {
     let mut stack = vec![root.to_path_buf()];
     let mut too_many = 0;
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let Ok(t) = e.file_type() else { continue };
             let name = e.file_name();
@@ -161,8 +235,13 @@ fn collect(root: &Path) -> (Vec<(String, Role)>, usize) {
                 }
             } else if t.is_file() {
                 let p = e.path();
-                let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
-                let found = role(&rel).or_else(|| runs_before_main(&rel, &p).then_some(Role::Code(Lang::C)));
+                let rel = p
+                    .strip_prefix(root)
+                    .unwrap_or(&p)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let found = role(&rel)
+                    .or_else(|| runs_before_main(&rel, &p).then_some(Role::Code(Lang::C)));
                 if let Some(r) = found {
                     if out.len() >= MAX_FILES {
                         too_many += 1;
@@ -207,7 +286,10 @@ fn make_to_shell(line: &str) -> String {
                     }
                     name.push(x);
                 }
-                out.push_str(&format!("${{{}}}", name.replace(|c: char| !(c.is_alphanumeric() || c == '_'), "_")));
+                out.push_str(&format!(
+                    "${{{}}}",
+                    name.replace(|c: char| !(c.is_alphanumeric() || c == '_'), "_")
+                ));
             }
             _ => out.push('$'),
         }
@@ -217,7 +299,9 @@ fn make_to_shell(line: &str) -> String {
 
 fn make(w: &mut Walker, text: &str, file: &str) -> bool {
     let lang = tree_sitter_make::LANGUAGE.into();
-    let Some(tree) = langs::parse(&lang, text) else { return false };
+    let Some(tree) = langs::parse(&lang, text) else {
+        return false;
+    };
     let mut stack = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
         let line = n.start_position().row as u32 + 1;
@@ -225,7 +309,10 @@ fn make(w: &mut Walker, text: &str, file: &str) -> bool {
         match n.kind() {
             "recipe_line" => w.snippet(&make_to_shell(body), file, line, Stage::Upstream),
             "shell_function" => {
-                let inner = body.trim_start_matches("$(shell").trim_start_matches("${shell").trim_end_matches([')', '}']);
+                let inner = body
+                    .trim_start_matches("$(shell")
+                    .trim_start_matches("${shell")
+                    .trim_end_matches([')', '}']);
                 w.snippet(&make_to_shell(inner), file, line, Stage::Upstream);
             }
             _ => {
@@ -238,28 +325,62 @@ fn make(w: &mut Walker, text: &str, file: &str) -> bool {
     true
 }
 
-const CMAKE_STOP: &[&str] = &["WORKING_DIRECTORY", "OUTPUT_VARIABLE", "ERROR_VARIABLE", "RESULT_VARIABLE", "OUTPUT_QUIET", "ERROR_QUIET", "OUTPUT_FILE", "ERROR_FILE", "TIMEOUT", "DEPENDS", "COMMENT", "BYPRODUCTS", "OUTPUT", "VERBATIM", "USES_TERMINAL", "COMMAND_ERROR_IS_FATAL", "OUTPUT_STRIP_TRAILING_WHITESPACE", "ERROR_STRIP_TRAILING_WHITESPACE", "MAIN_DEPENDENCY", "ALL"];
+const CMAKE_STOP: &[&str] = &[
+    "WORKING_DIRECTORY",
+    "OUTPUT_VARIABLE",
+    "ERROR_VARIABLE",
+    "RESULT_VARIABLE",
+    "OUTPUT_QUIET",
+    "ERROR_QUIET",
+    "OUTPUT_FILE",
+    "ERROR_FILE",
+    "TIMEOUT",
+    "DEPENDS",
+    "COMMENT",
+    "BYPRODUCTS",
+    "OUTPUT",
+    "VERBATIM",
+    "USES_TERMINAL",
+    "COMMAND_ERROR_IS_FATAL",
+    "OUTPUT_STRIP_TRAILING_WHITESPACE",
+    "ERROR_STRIP_TRAILING_WHITESPACE",
+    "MAIN_DEPENDENCY",
+    "ALL",
+];
 
 fn cmake(w: &mut Walker, text: &str, file: &str) -> bool {
     let lang = tree_sitter_cmake::LANGUAGE.into();
-    let Some(tree) = langs::parse(&lang, text) else { return false };
+    let Some(tree) = langs::parse(&lang, text) else {
+        return false;
+    };
     let mut stack = vec![tree.root_node()];
     while let Some(n) = stack.pop() {
         if n.kind() == "normal_command" {
             let line = n.start_position().row as u32 + 1;
             let mut c = n.walk();
             let kids: Vec<_> = n.named_children(&mut c).collect();
-            let name = kids.first().and_then(|k| k.utf8_text(text.as_bytes()).ok()).unwrap_or("").to_ascii_lowercase();
+            let name = kids
+                .first()
+                .and_then(|k| k.utf8_text(text.as_bytes()).ok())
+                .unwrap_or("")
+                .to_ascii_lowercase();
             let mut args: Vec<String> = Vec::new();
             for k in &kids[1.min(kids.len())..] {
                 let mut c2 = k.walk();
                 for a in k.named_children(&mut c2) {
-                    args.push(a.utf8_text(text.as_bytes()).unwrap_or("").trim_matches('"').to_owned());
+                    args.push(
+                        a.utf8_text(text.as_bytes())
+                            .unwrap_or("")
+                            .trim_matches('"')
+                            .to_owned(),
+                    );
                 }
             }
             match name.as_str() {
                 "file" if args.first().is_some_and(|a| a == "DOWNLOAD") => {
-                    let hashed = args.iter().any(|a| a == "EXPECTED_HASH" || a == "EXPECTED_MD5");
+                    let hashed = args
+                        .iter()
+                        .any(|a| a == "EXPECTED_HASH" || a == "EXPECTED_MD5");
                     if let (Some(url), Some(dest)) = (args.get(1), args.get(2)) {
                         w.download(url, dest, hashed, file, line);
                     }
@@ -292,14 +413,27 @@ fn cmake(w: &mut Walker, text: &str, file: &str) -> bool {
     true
 }
 
-const LIFECYCLE: &[&str] = &["preinstall", "install", "postinstall", "prepare", "prepublish"];
+const LIFECYCLE: &[&str] = &[
+    "preinstall",
+    "install",
+    "postinstall",
+    "prepare",
+    "prepublish",
+];
 
 fn npm(w: &mut Walker, text: &str, file: &str) {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else { return };
-    let Some(s) = v.get("scripts").and_then(|s| s.as_object()) else { return };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(text) else {
+        return;
+    };
+    let Some(s) = v.get("scripts").and_then(|s| s.as_object()) else {
+        return;
+    };
     for k in LIFECYCLE {
         if let Some(cmd) = s.get(*k).and_then(|c| c.as_str()) {
-            let line = text.lines().position(|l| l.contains(&format!("\"{k}\""))).map_or(1, |i| i as u32 + 1);
+            let line = text
+                .lines()
+                .position(|l| l.contains(&format!("\"{k}\"")))
+                .map_or(1, |i| i as u32 + 1);
             w.snippet(cmd, file, line, Stage::Upstream);
         }
     }
@@ -351,13 +485,21 @@ fn cache_path(dir: &Path, rel: &str, bytes: &[u8]) -> PathBuf {
 
 fn one(root: &Path, rel: &str, r: Role, o: &Options) -> Option<(Entry, bool)> {
     let p = root.join(rel);
-    let cap = if rel.ends_with("configure") { MAX_CONFIGURE } else { MAX_FILE };
+    let cap = if rel.ends_with("configure") {
+        MAX_CONFIGURE
+    } else {
+        MAX_FILE
+    };
     if std::fs::metadata(&p).ok()?.len() > cap {
         return None;
     }
     let bytes = std::fs::read(&p).ok()?;
     let at = o.cache.as_ref().map(|d| cache_path(d, rel, &bytes));
-    if let Some(mut e) = at.as_ref().and_then(|c| std::fs::read(c).ok()).and_then(|b| serde_json::from_slice::<Entry>(&b).ok()) {
+    if let Some(mut e) = at
+        .as_ref()
+        .and_then(|c| std::fs::read(c).ok())
+        .and_then(|b| serde_json::from_slice::<Entry>(&b).ok())
+    {
         e.graph.reindex();
         return Some((e, true));
     }
@@ -378,7 +520,14 @@ fn one(root: &Path, rel: &str, r: Role, o: &Options) -> Option<(Entry, bool)> {
 /// Read every build script under `root`.
 pub fn scan(root: &Path, o: &Options) -> Scan {
     let (files, too_many) = collect(root);
-    let jobs = if o.jobs > 0 { o.jobs } else { std::thread::available_parallelism().map_or(1, |n| n.get()).min(8) }.min(files.len().max(1));
+    let jobs = if o.jobs > 0 {
+        o.jobs
+    } else {
+        std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(8)
+    }
+    .min(files.len().max(1));
     let next = AtomicUsize::new(0);
     let done: Mutex<Vec<Option<(Entry, bool)>>> = Mutex::new(files.iter().map(|_| None).collect());
     std::thread::scope(|s| {
@@ -395,7 +544,10 @@ pub fn scan(root: &Path, o: &Options) -> Scan {
             });
         }
     });
-    let mut out = Scan { skipped: too_many, ..Scan::default() };
+    let mut out = Scan {
+        skipped: too_many,
+        ..Scan::default()
+    };
     for e in done.into_inner().unwrap_or_default() {
         match e {
             Some((e, cached)) => {

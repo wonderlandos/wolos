@@ -28,15 +28,15 @@ pub fn normalize(p: &str) -> String {
             _ => {}
         }
     }
-    if let Some(r) = clean.strip_prefix("/work/home") {
-        if r.is_empty() || r.starts_with('/') {
-            return format!("$HOME{r}");
-        }
+    if let Some(r) = clean.strip_prefix("/work/home")
+        && (r.is_empty() || r.starts_with('/'))
+    {
+        return format!("$HOME{r}");
     }
-    if let Some(r) = clean.strip_prefix("/work") {
-        if r.is_empty() || r.starts_with('/') {
-            return format!("$startdir{r}");
-        }
+    if let Some(r) = clean.strip_prefix("/work")
+        && (r.is_empty() || r.starts_with('/'))
+    {
+        return format!("$startdir{r}");
     }
     clean
 }
@@ -90,7 +90,9 @@ fn quoted(s: &str, n: usize) -> Option<String> {
 /// Tools that read their own settings under the sandbox's empty home on every run.
 fn own_config(label: &str, path: &str) -> bool {
     match label {
-        "gpg" | "gpg2" | "gpgv" | "gpg-agent" | "dirmngr" | "gpgconf" | "gpgsm" | "keyboxd" => path.contains("/.gnupg"),
+        "gpg" | "gpg2" | "gpgv" | "gpg-agent" | "dirmngr" | "gpgconf" | "gpgsm" | "keyboxd" => {
+            path.contains("/.gnupg")
+        }
         "npm" | "npx" | "pnpm" | "yarn" => path.contains("/.npmrc"),
         "cargo" | "rustc" => path.contains("/.cargo/credentials"),
         "git" | "git-remote-https" | "git-remote-http" => path.contains("/.git-credentials"),
@@ -120,7 +122,10 @@ struct Run<'a> {
 
 impl Run<'_> {
     fn loc(&self, line: u32) -> Option<Loc> {
-        Some(Loc { file: self.file.to_owned(), line })
+        Some(Loc {
+            file: self.file.to_owned(),
+            line,
+        })
     }
 
     fn proc(&mut self, pid: u32, line: u32) -> NodeId {
@@ -138,7 +143,11 @@ impl Run<'_> {
         if path.starts_with('/') {
             return normalize(path);
         }
-        let base = dir.and_then(|d| self.t.fds.get(&(pid, d))).or_else(|| self.t.cwd.get(&pid)).cloned().unwrap_or_else(|| "/work".to_owned());
+        let base = dir
+            .and_then(|d| self.t.fds.get(&(pid, d)))
+            .or_else(|| self.t.cwd.get(&pid))
+            .cloned()
+            .unwrap_or_else(|| "/work".to_owned());
         normalize(&format!("{base}/{path}"))
     }
 
@@ -209,7 +218,11 @@ impl Run<'_> {
         if addr.starts_with("127.") || addr == "::1" || addr == "0.0.0.0" {
             return;
         }
-        let port = args.split("htons(").nth(1).and_then(|r| r.split(')').next()).unwrap_or("?");
+        let port = args
+            .split("htons(")
+            .nth(1)
+            .and_then(|r| r.split(')').next())
+            .unwrap_or("?");
         let proc = self.proc(pid, line);
         let key = format!("sock:{addr}:{port}");
         let label = format!("{addr}:{port}");
@@ -229,24 +242,40 @@ impl Run<'_> {
         self.t.execs += 1;
         let key = format!("obs:{}:{pid}:{}", self.file, self.t.execs);
         let loc = self.loc(line);
-        let id = self.g.node(K::Process, &key, &label, loc.clone(), self.stage);
-        let c = self.g.node(K::Command, &format!("cmd:{label}"), &label, None, self.stage);
+        let id = self
+            .g
+            .node(K::Process, &key, &label, loc.clone(), self.stage);
+        let c = self.g.node(
+            K::Command,
+            &format!("cmd:{label}"),
+            &label,
+            None,
+            self.stage,
+        );
         self.g.edge(c, id, E::Calls, loc);
         if let Some(parent) = self.t.proc_of.insert(pid, id) {
             self.g.edge(parent, id, E::Calls, None);
         }
         let p = self.resolve(pid, None, &path);
-        if !p.starts_with("/usr/") && !p.starts_with("/bin/") {
-            if let Some(f) = self.file(&p, line) {
-                self.link(f, id, E::Executes, line);
-            }
+        if !p.starts_with("/usr/")
+            && !p.starts_with("/bin/")
+            && let Some(f) = self.file(&p, line)
+        {
+            self.link(f, id, E::Executes, line);
         }
     }
 
     fn syscall(&mut self, pid: u32, name: &str, args: &str, ret: &str, line: u32) {
         let ok = !ret.starts_with('-');
-        let num = ret.split_whitespace().next().and_then(|x| x.parse::<i64>().ok());
-        let dirfd = || args.split(',').next().and_then(|x| x.trim().parse::<i64>().ok());
+        let num = ret
+            .split_whitespace()
+            .next()
+            .and_then(|x| x.parse::<i64>().ok());
+        let dirfd = || {
+            args.split(',')
+                .next()
+                .and_then(|x| x.trim().parse::<i64>().ok())
+        };
         match name {
             "execve" | "execveat" if ok => self.exec(pid, args, line),
             "clone" | "clone3" | "fork" | "vfork" => {
@@ -262,7 +291,18 @@ impl Run<'_> {
             }
             "chdir" if ok => {
                 if let Some(p) = quoted(args, 0) {
-                    let dir = if p.starts_with('/') { p } else { format!("{}/{p}", self.t.cwd.get(&pid).cloned().unwrap_or_else(|| "/work".into())) };
+                    let dir = if p.starts_with('/') {
+                        p
+                    } else {
+                        format!(
+                            "{}/{p}",
+                            self.t
+                                .cwd
+                                .get(&pid)
+                                .cloned()
+                                .unwrap_or_else(|| "/work".into())
+                        )
+                    };
                     self.t.cwd.insert(pid, squash(&dir));
                 }
             }
@@ -270,17 +310,25 @@ impl Run<'_> {
                 let Some(raw) = quoted(args, 0) else { return };
                 let at = (name != "open" && name != "creat").then(dirfd).flatten();
                 let p = self.resolve(pid, at, &raw);
-                let writes = name == "creat" || args.contains("O_WRONLY") || args.contains("O_RDWR") || args.contains("O_CREAT") || args.contains("O_TRUNC") || args.contains("O_APPEND");
+                let writes = name == "creat"
+                    || args.contains("O_WRONLY")
+                    || args.contains("O_RDWR")
+                    || args.contains("O_CREAT")
+                    || args.contains("O_TRUNC")
+                    || args.contains("O_APPEND");
                 if writes {
                     self.write(pid, &p, line);
                 } else {
                     self.read(pid, &p, ok, line);
                 }
                 if let Some(fd) = num.filter(|n| *n >= 0) {
-                    self.t.fds.insert((pid, fd), squash(&raw_abs(&raw, self.t.cwd.get(&pid))));
+                    self.t
+                        .fds
+                        .insert((pid, fd), squash(&raw_abs(&raw, self.t.cwd.get(&pid))));
                 }
             }
-            "stat" | "lstat" | "access" | "faccessat" | "faccessat2" | "newfstatat" | "statx" | "readlink" | "readlinkat" | "getdents64" => {
+            "stat" | "lstat" | "access" | "faccessat" | "faccessat2" | "newfstatat" | "statx"
+            | "readlink" | "readlinkat" | "getdents64" => {
                 if let Some(raw) = quoted(args, 0) {
                     let p = self.resolve(pid, None, &raw);
                     if paths::credential(&p).is_some() {
@@ -288,14 +336,23 @@ impl Run<'_> {
                     }
                 }
             }
-            "unlink" | "unlinkat" | "mkdir" | "mkdirat" | "rmdir" | "chmod" | "fchmodat" | "fchmodat2" | "chown" | "lchown" | "fchownat" | "truncate" | "mknod" | "mknodat" | "utimensat" => {
+            "unlink" | "unlinkat" | "mkdir" | "mkdirat" | "rmdir" | "chmod" | "fchmodat"
+            | "fchmodat2" | "chown" | "lchown" | "fchownat" | "truncate" | "mknod" | "mknodat"
+            | "utimensat" => {
                 if let Some(raw) = quoted(args, 0) {
                     let p = self.resolve(pid, None, &raw);
                     self.write(pid, &p, line);
                 }
             }
             "rename" | "renameat" | "renameat2" | "link" | "linkat" | "symlink" | "symlinkat" => {
-                let target = if name.starts_with("symlink") || name.starts_with("link") || name.starts_with("rename") { 1 } else { 0 };
+                let target = if name.starts_with("symlink")
+                    || name.starts_with("link")
+                    || name.starts_with("rename")
+                {
+                    1
+                } else {
+                    0
+                };
                 if let Some(raw) = quoted(args, target) {
                     let p = self.resolve(pid, None, &raw);
                     self.write(pid, &p, line);
@@ -308,16 +365,29 @@ impl Run<'_> {
 }
 
 fn raw_abs(raw: &str, cwd: Option<&String>) -> String {
-    if raw.starts_with('/') { raw.to_owned() } else { format!("{}/{raw}", cwd.map_or("/work", |c| c.as_str())) }
+    if raw.starts_with('/') {
+        raw.to_owned()
+    } else {
+        format!("{}/{raw}", cwd.map_or("/work", |c| c.as_str()))
+    }
 }
 
 /// One traced run as a graph. Lines that do not parse are skipped, never fatal.
 pub fn parse(trace: &str, stage: Stage, file: &str) -> Graph {
-    let mut r = Run { g: Graph::new(), t: Trace::default(), stage, file };
+    let mut r = Run {
+        g: Graph::new(),
+        t: Trace::default(),
+        stage,
+        file,
+    };
     for (i, raw) in trace.lines().enumerate() {
         let line = i as u32 + 1;
-        let Some((pid, rest)) = raw.split_once(' ') else { continue };
-        let Ok(pid) = pid.parse::<u32>() else { continue };
+        let Some((pid, rest)) = raw.split_once(' ') else {
+            continue;
+        };
+        let Ok(pid) = pid.parse::<u32>() else {
+            continue;
+        };
         let rest = rest.trim_start();
         if let Some(head) = rest.strip_suffix("<unfinished ...>") {
             r.t.pending.insert(pid, head.trim_end().to_owned());
@@ -325,15 +395,23 @@ pub fn parse(trace: &str, stage: Stage, file: &str) -> Graph {
         }
         let joined;
         let text = if let Some(tail) = rest.strip_prefix("<... ") {
-            let Some((_, after)) = tail.split_once("resumed>") else { continue };
-            let Some(head) = r.t.pending.remove(&pid) else { continue };
+            let Some((_, after)) = tail.split_once("resumed>") else {
+                continue;
+            };
+            let Some(head) = r.t.pending.remove(&pid) else {
+                continue;
+            };
             joined = format!("{head}{after}");
             joined.as_str()
         } else {
             rest
         };
-        let Some((name, tail)) = text.split_once('(') else { continue };
-        let Some((args, ret)) = tail.rsplit_once(" = ") else { continue };
+        let Some((name, tail)) = text.split_once('(') else {
+            continue;
+        };
+        let Some((args, ret)) = tail.rsplit_once(" = ") else {
+            continue;
+        };
         r.syscall(pid, name, args, ret.trim(), line);
     }
     r.g
@@ -346,10 +424,20 @@ pub fn damage(trace: &str, g: &Graph) -> Option<String> {
         return Some("The build trace is empty, so what the build did was not seen.".to_owned());
     }
     if trace.contains('\0') {
-        return Some("The build trace has holes in it, so part of what the build did was not seen.".to_owned());
+        return Some(
+            "The build trace has holes in it, so part of what the build did was not seen."
+                .to_owned(),
+        );
     }
-    if !trace.lines().any(|l| l.contains(" execve(") && l.ends_with("= 0")) {
-        return Some("The build trace shows no program starting, so it is not a trace of this build.".to_owned());
+    if !trace
+        .lines()
+        .any(|l| l.contains(" execve(") && l.ends_with("= 0"))
+    {
+        return Some(
+            "The build trace shows no program starting, so it is not a trace of this build."
+                .to_owned(),
+        );
     }
-    g.find("$startdir/.trace").map(|_| "The build touched its own trace, so the trace cannot be trusted.".to_owned())
+    g.find("$startdir/.trace")
+        .map(|_| "The build touched its own trace, so the trace cannot be trusted.".to_owned())
 }

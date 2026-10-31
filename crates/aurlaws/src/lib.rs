@@ -63,11 +63,26 @@ fn judge(mut p: pkgbuild::Parsed, ev: &Evidence) -> Report {
         findings.extend(laws::diff(&p.graph, old, &ev.explained));
     }
     if p.truncated {
-        findings.push(laws::incomplete("The package's files went past the analyser's limits, so part of them was not read.".to_owned()));
+        findings.push(laws::incomplete(
+            "The package's files went past the analyser's limits, so part of them was not read."
+                .to_owned(),
+        ));
     }
     findings.extend(ev.gaps.iter().cloned().map(laws::incomplete));
-    let verdict = if findings.is_empty() { Verdict::NoLawBroken } else { Verdict::NeedsReview };
-    Report { verdict, findings, notes: p.notes, truncated: p.truncated, disclaimer: DISCLAIMER.to_owned(), graph: p.graph, meta: p.meta }
+    let verdict = if findings.is_empty() {
+        Verdict::NoLawBroken
+    } else {
+        Verdict::NeedsReview
+    };
+    Report {
+        verdict,
+        findings,
+        notes: p.notes,
+        truncated: p.truncated,
+        disclaimer: DISCLAIMER.to_owned(),
+        graph: p.graph,
+        meta: p.meta,
+    }
 }
 
 /// What is known beyond the files: traced runs, and the version accepted before.

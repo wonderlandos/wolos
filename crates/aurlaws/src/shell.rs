@@ -26,16 +26,27 @@ pub struct Val {
 
 impl Val {
     fn lit(s: &str) -> Self {
-        Val { text: s.to_owned(), complete: true, ..Val::default() }
+        Val {
+            text: s.to_owned(),
+            complete: true,
+            ..Val::default()
+        }
     }
     pub fn known(s: &str) -> Self {
         Self::lit(s)
     }
     pub fn unknown(s: String) -> Self {
-        Val { text: s, ..Val::default() }
+        Val {
+            text: s,
+            ..Val::default()
+        }
     }
     pub fn tainted(n: NodeId) -> Self {
-        Val { text: "(computed)".into(), taints: vec![n], ..Val::default() }
+        Val {
+            text: "(computed)".into(),
+            taints: vec![n],
+            ..Val::default()
+        }
     }
     pub fn append(&mut self, o: Val) {
         self.push(o);
@@ -123,10 +134,61 @@ pub fn is_url(s: &str) -> bool {
 }
 
 const SHELLS: &[&str] = &["sh", "bash", "dash", "zsh", "ksh", "ash", "fish"];
-const INTERPRETERS: &[&str] = &["python", "python2", "python3", "perl", "ruby", "node", "nodejs", "php", "lua", "tclsh", "deno", "bun"];
-const WRAPPERS: &[&str] = &["sudo", "doas", "pkexec", "env", "nohup", "command", "builtin", "exec", "time", "fakeroot", "setsid", "nice", "ionice", "chronic", "stdbuf", "arch-nspawn"];
-const BUILD_TOOLS: &[&str] = &["make", "gmake", "ninja", "cmake", "meson", "scons", "cargo", "go", "gcc", "g++", "cc", "c++", "clang", "clang++", "autoreconf", "automake", "autoconf", "qmake", "qmake6", "mvn", "gradle", "ant", "dotnet", "zig", "nimble", "dune", "stack", "cabal"];
-const NET_TOOLS: &[&str] = &["nc", "ncat", "netcat", "socat", "telnet", "ssh", "sftp", "ftp", "tftp"];
+const INTERPRETERS: &[&str] = &[
+    "python", "python2", "python3", "perl", "ruby", "node", "nodejs", "php", "lua", "tclsh",
+    "deno", "bun",
+];
+const WRAPPERS: &[&str] = &[
+    "sudo",
+    "doas",
+    "pkexec",
+    "env",
+    "nohup",
+    "command",
+    "builtin",
+    "exec",
+    "time",
+    "fakeroot",
+    "setsid",
+    "nice",
+    "ionice",
+    "chronic",
+    "stdbuf",
+    "arch-nspawn",
+];
+const BUILD_TOOLS: &[&str] = &[
+    "make",
+    "gmake",
+    "ninja",
+    "cmake",
+    "meson",
+    "scons",
+    "cargo",
+    "go",
+    "gcc",
+    "g++",
+    "cc",
+    "c++",
+    "clang",
+    "clang++",
+    "autoreconf",
+    "automake",
+    "autoconf",
+    "qmake",
+    "qmake6",
+    "mvn",
+    "gradle",
+    "ant",
+    "dotnet",
+    "zig",
+    "nimble",
+    "dune",
+    "stack",
+    "cabal",
+];
+const NET_TOOLS: &[&str] = &[
+    "nc", "ncat", "netcat", "socat", "telnet", "ssh", "sftp", "ftp", "tftp",
+];
 
 impl<'g> Walker<'g> {
     pub fn new(g: &'g mut Graph, scope: Scope) -> Self {
@@ -140,7 +202,13 @@ impl<'g> Walker<'g> {
             stage: Stage::Parse,
             fixed_line: None,
             line_base: 0,
-            env: HashMap::from([("BASH_SOURCE".to_owned(), Var { vals: vec![Val::lit("$startdir/PKGBUILD")], node: None })]),
+            env: HashMap::from([(
+                "BASH_SOURCE".to_owned(),
+                Var {
+                    vals: vec![Val::lit("$startdir/PKGBUILD")],
+                    node: None,
+                },
+            )]),
             env_line: HashMap::new(),
             funcs: HashMap::new(),
             called: HashMap::new(),
@@ -165,23 +233,55 @@ impl<'g> Walker<'g> {
     /// Set the sources once they are known, and put them in the graph.
     pub fn declare_sources(&mut self, sources: Vec<SourceEntry>, file: &str) {
         for s in &sources {
-            let loc = Some(Loc { file: file.to_owned(), line: s.line });
-            let src = self.g.node(K::Source, &format!("src:{}", s.name), &s.name, loc.clone(), Stage::Prepare);
-            let f = self.g.node(K::File, &format!("$srcdir/{}", s.name), &s.name, loc.clone(), Stage::Prepare);
+            let loc = Some(Loc {
+                file: file.to_owned(),
+                line: s.line,
+            });
+            let src = self.g.node(
+                K::Source,
+                &format!("src:{}", s.name),
+                &s.name,
+                loc.clone(),
+                Stage::Prepare,
+            );
+            let f = self.g.node(
+                K::File,
+                &format!("$srcdir/{}", s.name),
+                &s.name,
+                loc.clone(),
+                Stage::Prepare,
+            );
             match &s.url {
                 Some(u) => {
-                    let n = self.g.node(K::Url, &format!("url:{u}"), u, loc.clone(), Stage::Prepare);
+                    let n =
+                        self.g
+                            .node(K::Url, &format!("url:{u}"), u, loc.clone(), Stage::Prepare);
                     self.g.edge(n, src, E::Fetches, loc.clone());
                 }
                 None => {
-                    let n = self.g.node(K::File, &format!("$startdir/{}", s.name), &s.name, loc.clone(), Stage::Prepare);
+                    let n = self.g.node(
+                        K::File,
+                        &format!("$startdir/{}", s.name),
+                        &s.name,
+                        loc.clone(),
+                        Stage::Prepare,
+                    );
                     self.g.edge(n, src, E::Reads, loc.clone());
                 }
             }
             self.g.edge(src, f, E::Writes, loc.clone());
-            let checked = s.pinned || s.sum.as_deref().is_some_and(|x| !x.is_empty() && x != "SKIP");
+            let checked = s.pinned
+                || s.sum
+                    .as_deref()
+                    .is_some_and(|x| !x.is_empty() && x != "SKIP");
             if checked {
-                let c = self.g.node(K::Command, "check:makepkg", "makepkg's checksum", loc.clone(), Stage::Prepare);
+                let c = self.g.node(
+                    K::Command,
+                    "check:makepkg",
+                    "makepkg's checksum",
+                    loc.clone(),
+                    Stage::Prepare,
+                );
                 self.g.edge(c, src, E::Verifies, loc.clone());
             }
         }
@@ -197,7 +297,9 @@ impl<'g> Walker<'g> {
 
     /// Walk one function by name, as the phase that runs it. Missing functions are nothing.
     pub fn walk_function(&mut self, name: &str, stage: Stage, cwd: &str) {
-        let Some((body, line)) = self.funcs.get(name).cloned() else { return };
+        let Some((body, line)) = self.funcs.get(name).cloned() else {
+            return;
+        };
         self.stage = stage;
         self.cwd = cwd.to_owned();
         let saved = self.enter(name, line);
@@ -209,7 +311,12 @@ impl<'g> Walker<'g> {
 
     /// Functions nothing called. A dynamic call could still reach them, so they are read too.
     pub fn walk_uncalled(&mut self, stage: Stage) {
-        let names: Vec<String> = self.funcs.keys().filter(|n| !self.called.contains_key(*n)).cloned().collect();
+        let names: Vec<String> = self
+            .funcs
+            .keys()
+            .filter(|n| !self.called.contains_key(*n))
+            .cloned()
+            .collect();
         let mut names = names;
         names.sort();
         for n in names {
@@ -225,7 +332,10 @@ impl<'g> Walker<'g> {
     }
 
     pub fn var_values(&self, name: &str) -> Vec<String> {
-        self.env.get(name).map(|v| v.vals.iter().map(|x| x.text.clone()).collect()).unwrap_or_default()
+        self.env
+            .get(name)
+            .map(|v| v.vals.iter().map(|x| x.text.clone()).collect())
+            .unwrap_or_default()
     }
 
     pub fn var_line(&self, name: &str) -> u32 {
@@ -233,12 +343,24 @@ impl<'g> Walker<'g> {
     }
 
     fn enter(&mut self, name: &str, line: u32) -> (Option<NodeId>, String) {
-        let loc = Some(Loc { file: self.file.clone(), line });
-        let f = self.g.node(K::Function, &format!("fn:{}:{name}", self.file), name, loc.clone(), self.stage);
+        let loc = Some(Loc {
+            file: self.file.clone(),
+            line,
+        });
+        let f = self.g.node(
+            K::Function,
+            &format!("fn:{}:{name}", self.file),
+            name,
+            loc.clone(),
+            self.stage,
+        );
         if let Some(p) = self.func {
             self.g.edge(p, f, E::Calls, loc);
         }
-        let saved = (self.func, std::mem::replace(&mut self.func_name, name.to_owned()));
+        let saved = (
+            self.func,
+            std::mem::replace(&mut self.func_name, name.to_owned()),
+        );
         self.func = Some(f);
         saved
     }
@@ -289,8 +411,13 @@ impl<'g> Walker<'g> {
     }
 
     fn loc(&self, n: Node) -> Option<Loc> {
-        let line = self.fixed_line.unwrap_or(n.start_position().row as u32 + 1 + self.line_base);
-        Some(Loc { file: self.file.clone(), line })
+        let line = self
+            .fixed_line
+            .unwrap_or(n.start_position().row as u32 + 1 + self.line_base);
+        Some(Loc {
+            file: self.file.clone(),
+            line,
+        })
     }
 
     fn stmt(&mut self, n: Node) {
@@ -313,7 +440,11 @@ impl<'g> Walker<'g> {
         match n.kind() {
             "comment" | "heredoc_body" | "heredoc_start" | "heredoc_end" => {}
             "function_definition" => {
-                let (Some(name), Some(body)) = (n.child_by_field_name("name"), n.child_by_field_name("body")) else { return };
+                let (Some(name), Some(body)) =
+                    (n.child_by_field_name("name"), n.child_by_field_name("body"))
+                else {
+                    return;
+                };
                 let name = self.text(name).to_owned();
                 let text: Rc<str> = Rc::from(self.text(body));
                 let line = body.start_position().row as u32 + 1 + self.line_base;
@@ -333,7 +464,24 @@ impl<'g> Walker<'g> {
             "command" => self.command(n),
             "pipeline" => self.pipeline(n),
             "redirected_statement" => self.redirected(n),
-            "if_statement" | "elif_clause" | "else_clause" | "while_statement" | "until_statement" | "case_statement" | "case_item" | "do_group" | "compound_statement" | "subshell" | "program" | "list" | "negated_command" | "test_command" | "ternary_expression" | "binary_expression" | "unary_expression" | "parenthesized_expression" => {
+            "if_statement"
+            | "elif_clause"
+            | "else_clause"
+            | "while_statement"
+            | "until_statement"
+            | "case_statement"
+            | "case_item"
+            | "do_group"
+            | "compound_statement"
+            | "subshell"
+            | "program"
+            | "list"
+            | "negated_command"
+            | "test_command"
+            | "ternary_expression"
+            | "binary_expression"
+            | "unary_expression"
+            | "parenthesized_expression" => {
                 if n.kind() == "test_command" {
                     self.test(n);
                     return;
@@ -352,7 +500,12 @@ impl<'g> Walker<'g> {
                     self.stmt(b);
                 }
             }
-            "command_substitution" | "process_substitution" | "string" | "concatenation" | "expansion" | "simple_expansion" => {
+            "command_substitution"
+            | "process_substitution"
+            | "string"
+            | "concatenation"
+            | "expansion"
+            | "simple_expansion" => {
                 self.word(n);
             }
             _ => {
@@ -370,7 +523,13 @@ impl<'g> Walker<'g> {
         let mut stack = Self::children(n);
         while let Some(c) = stack.pop() {
             match c.kind() {
-                "word" | "string" | "raw_string" | "concatenation" | "expansion" | "simple_expansion" | "command_substitution" => {
+                "word"
+                | "string"
+                | "raw_string"
+                | "concatenation"
+                | "expansion"
+                | "simple_expansion"
+                | "command_substitution" => {
                     // Asked about, not opened. A substitution in the word still runs.
                     self.word(c);
                 }
@@ -381,7 +540,10 @@ impl<'g> Walker<'g> {
     }
 
     fn for_loop(&mut self, n: Node) {
-        let name = n.child_by_field_name("variable").map(|v| self.text(v).to_owned()).unwrap_or_default();
+        let name = n
+            .child_by_field_name("variable")
+            .map(|v| self.text(v).to_owned())
+            .unwrap_or_default();
         let mut c = n.walk();
         let vals: Vec<Node> = n.children_by_field_name("value", &mut c).collect();
         let mut items = Vec::new();
@@ -393,13 +555,21 @@ impl<'g> Walker<'g> {
                 items.push(w);
             }
         }
-        let Some(body) = n.child_by_field_name("body") else { return };
+        let Some(body) = n.child_by_field_name("body") else {
+            return;
+        };
         if items.is_empty() {
             items.push(Val::unknown(format!("${{{name}}}")));
         }
         items.truncate(MAX_LOOP);
         for it in items {
-            self.env.insert(name.clone(), Var { vals: vec![it], node: None });
+            self.env.insert(
+                name.clone(),
+                Var {
+                    vals: vec![it],
+                    node: None,
+                },
+            );
             self.stmt(body);
         }
     }
@@ -412,7 +582,12 @@ impl<'g> Walker<'g> {
     }
 
     fn assign(&mut self, n: Node, append: bool) {
-        let (Some(name), value) = (n.child_by_field_name("name"), n.child_by_field_name("value")) else { return };
+        let (Some(name), value) = (
+            n.child_by_field_name("name"),
+            n.child_by_field_name("value"),
+        ) else {
+            return;
+        };
         let name = self.text(name).to_owned();
         let name = name.split('[').next().unwrap_or("").to_owned();
         let append = append || self.text(n).contains("+=");
@@ -442,9 +617,19 @@ impl<'g> Walker<'g> {
 
     fn set_var(&mut self, name: &str, mut vals: Vec<Val>, append: bool, loc: Option<Loc>) {
         let taints: Vec<NodeId> = vals.iter().flat_map(|v| v.taints.iter().copied()).collect();
-        let mut var = if append { self.env.remove(name).unwrap_or_default() } else { Var::default() };
+        let mut var = if append {
+            self.env.remove(name).unwrap_or_default()
+        } else {
+            Var::default()
+        };
         if !taints.is_empty() {
-            let id = self.g.node(K::Env, &format!("var:{}:{name}", self.func_name), name, loc.clone(), self.stage);
+            let id = self.g.node(
+                K::Env,
+                &format!("var:{}:{name}", self.func_name),
+                name,
+                loc.clone(),
+                self.stage,
+            );
             for t in taints {
                 self.g.edge(t, id, E::Writes, loc.clone());
             }
@@ -456,7 +641,10 @@ impl<'g> Walker<'g> {
 
     fn lookup(&self, name: &str) -> Val {
         if let Some(v) = self.env.get(name) {
-            let mut out = Val { complete: true, ..Val::default() };
+            let mut out = Val {
+                complete: true,
+                ..Val::default()
+            };
             for (i, x) in v.vals.iter().enumerate() {
                 if i > 0 {
                     out.text.push(' ');
@@ -473,9 +661,9 @@ impl<'g> Walker<'g> {
             "PWD" => Val::lit(&self.cwd.clone()),
             "CARCH" => Val::lit("x86_64"),
             "SHELL" | "CONFIG_SHELL" => Val::lit("sh"),
-            "CC" | "CXX" | "CPP" | "LD" | "AR" | "RANLIB" | "STRIP" | "MAKE" | "AWK" | "SED" | "GREP" | "EGREP" | "FGREP" | "RM" | "CP" | "MV" | "LN" | "LN_S" | "MKDIR_P" | "INSTALL" | "ECHO" => {
-                Val::lit(&name.to_ascii_lowercase())
-            }
+            "CC" | "CXX" | "CPP" | "LD" | "AR" | "RANLIB" | "STRIP" | "MAKE" | "AWK" | "SED"
+            | "GREP" | "EGREP" | "FGREP" | "RM" | "CP" | "MV" | "LN" | "LN_S" | "MKDIR_P"
+            | "INSTALL" | "ECHO" => Val::lit(&name.to_ascii_lowercase()),
             _ => Val::unknown(format!("${{{name}}}")),
         }
     }
@@ -506,20 +694,27 @@ impl<'g> Walker<'g> {
                         s.push(c);
                     }
                 }
-                if let Some(r) = s.strip_prefix('~') {
-                    if r.is_empty() || r.starts_with('/') {
-                        s = format!("$HOME{r}");
-                    }
+                if let Some(r) = s.strip_prefix('~')
+                    && (r.is_empty() || r.starts_with('/'))
+                {
+                    s = format!("$HOME{r}");
                 }
                 Val::lit(&s)
             }
             "raw_string" => Val::lit(self.text(n).trim_matches('\'')),
             "ansi_c_string" => {
-                let t = self.text(n).trim_start_matches('$').trim_matches('\'').to_owned();
+                let t = self
+                    .text(n)
+                    .trim_start_matches('$')
+                    .trim_matches('\'')
+                    .to_owned();
                 Val::lit(&unescape(&t))
             }
             "string" | "concatenation" => {
-                let mut out = Val { complete: true, ..Val::default() };
+                let mut out = Val {
+                    complete: true,
+                    ..Val::default()
+                };
                 let quoted = n.kind() == "string";
                 let start = n.start_byte() + usize::from(quoted);
                 let end = n.end_byte() - usize::from(quoted);
@@ -550,7 +745,10 @@ impl<'g> Walker<'g> {
             "command_substitution" | "process_substitution" => self.substitution(n),
             "arithmetic_expansion" => Val::lit("0"),
             "array" => {
-                let mut out = Val { complete: true, ..Val::default() };
+                let mut out = Val {
+                    complete: true,
+                    ..Val::default()
+                };
                 for c in Self::children(n) {
                     let v = self.word(c);
                     out.push(v);
@@ -571,8 +769,18 @@ impl<'g> Walker<'g> {
         self.stdout = saved.0;
         self.cwd = saved.1;
         match self.pipe_text.get(&pipe) {
-            Some(t) => Val { text: t.trim_end_matches('\n').to_owned(), complete: true, taints: vec![pipe], local: false },
-            None => Val { text: "$(...)".into(), complete: false, taints: vec![pipe], local: false },
+            Some(t) => Val {
+                text: t.trim_end_matches('\n').to_owned(),
+                complete: true,
+                taints: vec![pipe],
+                local: false,
+            },
+            None => Val {
+                text: "$(...)".into(),
+                complete: false,
+                taints: vec![pipe],
+                local: false,
+            },
         }
     }
 
@@ -582,19 +790,25 @@ impl<'g> Walker<'g> {
         if inner.starts_with('!') {
             return Val::unknown(t.to_owned());
         }
-        if let Some(name) = inner.strip_prefix('#') {
-            if !name.is_empty() {
-                return Val::lit("0");
-            }
+        if let Some(name) = inner.strip_prefix('#')
+            && !name.is_empty()
+        {
+            return Val::lit("0");
         }
-        let end = inner.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(inner.len());
+        let end = inner
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(inner.len());
         let (name, rest) = inner.split_at(end);
         if rest.starts_with('[') {
             let idx = rest.trim_start_matches('[').split(']').next().unwrap_or("");
             if let Some(v) = self.env.get(name) {
                 return match idx {
                     "@" | "*" => self.lookup(name),
-                    i => v.vals.get(i.parse::<usize>().unwrap_or(0)).cloned().unwrap_or_else(|| Val::unknown(t.to_owned())),
+                    i => v
+                        .vals
+                        .get(i.parse::<usize>().unwrap_or(0))
+                        .cloned()
+                        .unwrap_or_else(|| Val::unknown(t.to_owned())),
                 };
             }
             return Val::unknown(t.to_owned());
@@ -605,16 +819,34 @@ impl<'g> Walker<'g> {
         }
         let arg = |skip: usize| rest.get(skip..).unwrap_or("").to_owned();
         let default = |s: String| -> Val {
-            if s.contains('$') { Val::unknown(s) } else { Val::lit(&s) }
+            if s.contains('$') {
+                Val::unknown(s)
+            } else {
+                Val::lit(&s)
+            }
         };
-        if !v.complete && !(rest.starts_with(":-") || rest.starts_with('-') || rest.starts_with(":=")) {
-            return Val { text: t.to_owned(), taints: v.taints, ..Val::default() };
+        if !v.complete
+            && !(rest.starts_with(":-") || rest.starts_with('-') || rest.starts_with(":="))
+        {
+            return Val {
+                text: t.to_owned(),
+                taints: v.taints,
+                ..Val::default()
+            };
         }
         if rest.starts_with(":-") || rest.starts_with(":=") {
-            return if v.complete && !v.text.is_empty() { v } else { default(arg(2)) };
+            return if v.complete && !v.text.is_empty() {
+                v
+            } else {
+                default(arg(2))
+            };
         }
         if rest.starts_with(":+") {
-            return if v.complete && !v.text.is_empty() { default(arg(2)) } else { Val::lit("") };
+            return if v.complete && !v.text.is_empty() {
+                default(arg(2))
+            } else {
+                Val::lit("")
+            };
         }
         if rest.starts_with(':') {
             return Val::unknown(t.to_owned());
@@ -638,7 +870,11 @@ impl<'g> Walker<'g> {
             if from.contains(['*', '?', '[']) {
                 return Val::unknown(t.to_owned());
             }
-            v.text = if all { v.text.replace(from, to) } else { v.text.replacen(from, to, 1) };
+            v.text = if all {
+                v.text.replace(from, to)
+            } else {
+                v.text.replacen(from, to, 1)
+            };
         } else {
             return Val::unknown(t.to_owned());
         }
@@ -657,7 +893,11 @@ impl<'g> Walker<'g> {
         let mut prev = outer.0;
         for (i, c) in parts.iter().enumerate() {
             let last = i + 1 == parts.len();
-            let next = if last { outer.1 } else { Some(self.pipe(self.loc(*c))) };
+            let next = if last {
+                outer.1
+            } else {
+                Some(self.pipe(self.loc(*c)))
+            };
             self.stdin = prev;
             self.stdout = next;
             self.stmt(*c);
@@ -674,14 +914,33 @@ impl<'g> Walker<'g> {
         for c in Self::children(n) {
             match c.kind() {
                 "file_redirect" => {
-                    let op = self.text(c).trim_start_matches(|x: char| x.is_ascii_digit()).to_owned();
-                    let Some(dest) = c.child_by_field_name("destination").or_else(|| c.named_child(c.named_child_count().saturating_sub(1))) else { continue };
+                    let op = self
+                        .text(c)
+                        .trim_start_matches(|x: char| x.is_ascii_digit())
+                        .to_owned();
+                    let Some(dest) = c
+                        .child_by_field_name("destination")
+                        .or_else(|| c.named_child(c.named_child_count().saturating_sub(1)))
+                    else {
+                        continue;
+                    };
                     let v = self.word(dest);
-                    if v.text.is_empty() || v.text == "1" || v.text == "2" || v.text == "/dev/null" {
+                    if v.text.is_empty() || v.text == "1" || v.text == "2" || v.text == "/dev/null"
+                    {
                         continue;
                     }
-                    if let Some(r) = v.text.strip_prefix("/dev/tcp/").or_else(|| v.text.strip_prefix("/dev/udp/")) {
-                        let id = self.g.node(K::Socket, &format!("sock:{r}"), r, loc.clone(), self.stage);
+                    if let Some(r) = v
+                        .text
+                        .strip_prefix("/dev/tcp/")
+                        .or_else(|| v.text.strip_prefix("/dev/udp/"))
+                    {
+                        let id = self.g.node(
+                            K::Socket,
+                            &format!("sock:{r}"),
+                            r,
+                            loc.clone(),
+                            self.stage,
+                        );
                         self.stdin = Some(id);
                         self.stdout = Some(id);
                         continue;
@@ -703,7 +962,10 @@ impl<'g> Walker<'g> {
                     for b in c.named_children(&mut c2) {
                         if b.kind() == "heredoc_body" {
                             body.push_str(self.text(b));
-                        } else if b.kind() == "pipeline" || b.kind() == "command" || b.kind() == "list" {
+                        } else if b.kind() == "pipeline"
+                            || b.kind() == "command"
+                            || b.kind() == "list"
+                        {
                             pre.push(b);
                         }
                     }
@@ -764,7 +1026,9 @@ impl<'g> Walker<'g> {
         for a in assigns {
             self.assign(a, false);
         }
-        let Some(name) = n.child_by_field_name("name") else { return };
+        let Some(name) = n.child_by_field_name("name") else {
+            return;
+        };
         let name_node = name.named_child(0).unwrap_or(name);
         let nv = self.word(name_node);
         let mut c = n.walk();
@@ -785,7 +1049,9 @@ impl<'g> Walker<'g> {
         *c += 1;
         let key = format!("proc:{k}:{c}");
         let id = self.g.node(K::Process, &key, name, loc.clone(), self.stage);
-        let cmd = self.g.node(K::Command, &format!("cmd:{name}"), name, None, self.stage);
+        let cmd = self
+            .g
+            .node(K::Command, &format!("cmd:{name}"), name, None, self.stage);
         self.g.edge(cmd, id, E::Calls, loc.clone());
         if let Some(f) = self.func {
             self.g.edge(f, id, E::Calls, loc);
@@ -801,7 +1067,11 @@ impl<'g> Walker<'g> {
     }
 
     fn file_node(&mut self, path: &str, loc: Option<Loc>) -> NodeId {
-        let scriptlet_path = if self.stage == Stage::Scriptlet && path.starts_with('/') { Some(format!("$pkgdir{path}")) } else { None };
+        let scriptlet_path = if self.stage == Stage::Scriptlet && path.starts_with('/') {
+            Some(format!("$pkgdir{path}"))
+        } else {
+            None
+        };
         if let Some(id) = scriptlet_path.and_then(|p| self.g.find(&p)) {
             return id;
         }
@@ -809,7 +1079,15 @@ impl<'g> Walker<'g> {
             return id;
         }
         let id = self.g.node(K::File, path, path, loc.clone(), self.stage);
-        let tree = self.trees.iter().find(|(p, _)| path.len() > p.len() && path.starts_with(p.as_str()) && path.as_bytes()[p.len()] == b'/').map(|x| x.1);
+        let tree = self
+            .trees
+            .iter()
+            .find(|(p, _)| {
+                path.len() > p.len()
+                    && path.starts_with(p.as_str())
+                    && path.as_bytes()[p.len()] == b'/'
+            })
+            .map(|x| x.1);
         if let Some(t) = tree {
             self.g.edge(t, id, E::Writes, loc);
         }
@@ -872,7 +1150,9 @@ impl<'g> Walker<'g> {
         for _ in 0..8 {
             let b = base(&cmd).to_owned();
             if WRAPPERS.contains(&b.as_str()) {
-                while args.first().is_some_and(|a| a.text.starts_with('-') || (b == "env" && a.text.contains('='))) {
+                while args.first().is_some_and(|a| {
+                    a.text.starts_with('-') || (b == "env" && a.text.contains('='))
+                }) {
                     args.remove(0);
                 }
                 if args.is_empty() {
@@ -899,51 +1179,67 @@ impl<'g> Walker<'g> {
         let b = base(&cmd).to_owned();
         match b.as_str() {
             "cd" | "pushd" => {
-                if let Some(a) = args.iter().find(|a| !a.text.starts_with('-')) {
-                    if a.complete {
-                        self.cwd = self.path(&a.text);
-                    }
+                if let Some(a) = args.iter().find(|a| !a.text.starts_with('-'))
+                    && a.complete
+                {
+                    self.cwd = self.path(&a.text);
                 }
             }
-            "popd" | ":" | "true" | "false" | "exit" | "return" | "set" | "shopt" | "export" | "unset" | "local" | "shift" | "wait" | "trap" | "read" | "msg" | "msg2" | "warning" | "plain" | "error" => {
-                if b == "read" {
-                    if let Some(a) = args.iter().rfind(|a| !a.text.starts_with('-')) {
-                        let n = a.text.clone();
-                        if let Some(i) = self.stdin {
-                            let mut v = Val::unknown("$(read)".into());
-                            v.taints.push(i);
-                            self.set_var(&n, vec![v], false, loc);
-                        }
+            "popd" | ":" | "true" | "false" | "exit" | "return" | "set" | "shopt" | "export"
+            | "unset" | "local" | "shift" | "wait" | "trap" | "read" | "msg" | "msg2"
+            | "warning" | "plain" | "error" => {
+                if b == "read"
+                    && let Some(a) = args.iter().rfind(|a| !a.text.starts_with('-'))
+                {
+                    let n = a.text.clone();
+                    if let Some(i) = self.stdin {
+                        let mut v = Val::unknown("$(read)".into());
+                        v.taints.push(i);
+                        self.set_var(&n, vec![v], false, loc);
                     }
                 }
-                if b == "export" {
-                    return;
-                }
+                if b == "export" {}
             }
             "dirname" | "basename" => {
                 let proc = self.process(&b, loc.clone());
                 self.feed(&args, proc, &loc);
                 self.connect_stdio(proc, &loc);
-                let known = args.iter().find(|a| !a.text.starts_with('-')).filter(|a| a.complete).map(|a| {
-                    let t = a.text.trim_end_matches('/');
-                    if b == "basename" { base(t).to_owned() } else { t.rsplit_once('/').map_or(".".to_owned(), |x| x.0.to_owned()) }
-                });
+                let known = args
+                    .iter()
+                    .find(|a| !a.text.starts_with('-'))
+                    .filter(|a| a.complete)
+                    .map(|a| {
+                        let t = a.text.trim_end_matches('/');
+                        if b == "basename" {
+                            base(t).to_owned()
+                        } else {
+                            t.rsplit_once('/')
+                                .map_or(".".to_owned(), |x| x.0.to_owned())
+                        }
+                    });
                 self.write_stdout_text(known);
             }
             "echo" | "printf" => {
                 let proc = self.process(&b, loc.clone());
                 self.feed(&args, proc, &loc);
                 self.connect_stdio(proc, &loc);
-                let hex = args.iter().any(|a| a.text.contains("\\x") || a.text.contains("\\0"));
-                let vals: Vec<&Val> = args.iter().filter(|a| !(b == "echo" && a.text.starts_with('-'))).collect();
+                let hex = args
+                    .iter()
+                    .any(|a| a.text.contains("\\x") || a.text.contains("\\0"));
+                let vals: Vec<&Val> = args
+                    .iter()
+                    .filter(|a| !(b == "echo" && a.text.starts_with('-')))
+                    .collect();
                 if vals.iter().all(|a| a.complete) {
-                    let t = vals.iter().map(|a| a.text.as_str()).collect::<Vec<_>>().join(" ");
+                    let t = vals
+                        .iter()
+                        .map(|a| a.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ");
                     self.write_stdout_text(Some(if hex { unescape(&t) } else { format!("{t}\n") }));
                 }
-                if hex {
-                    if let Some(o) = self.stdout {
-                        self.g.edge(proc, o, E::Decodes, loc);
-                    }
+                if hex && let Some(o) = self.stdout {
+                    self.g.edge(proc, o, E::Decodes, loc);
                 }
             }
             "cat" if args.is_empty() => {
@@ -952,20 +1248,44 @@ impl<'g> Walker<'g> {
                 let t = self.stdin_text();
                 self.write_stdout_text(t);
             }
-            "curl" | "wget" | "aria2c" | "lwp-download" | "http" | "https" | "fetch" => self.fetch(&b, &args, loc),
+            "curl" | "wget" | "aria2c" | "lwp-download" | "http" | "https" | "fetch" => {
+                self.fetch(&b, &args, loc)
+            }
             "git" | "svn" | "hg" => self.vcs(&b, &args, loc),
-            "scp" | "rsync" if args.iter().any(|a| a.text.contains(':') && !a.text.starts_with('-')) => self.remote_copy(&b, &args, loc),
+            "scp" | "rsync"
+                if args
+                    .iter()
+                    .any(|a| a.text.contains(':') && !a.text.starts_with('-')) =>
+            {
+                self.remote_copy(&b, &args, loc)
+            }
             x if NET_TOOLS.contains(&x) => self.net_tool(x, &args, loc),
-            "sha256sum" | "sha512sum" | "sha1sum" | "sha224sum" | "sha384sum" | "md5sum" | "b2sum" | "cksum" | "gpg" | "gpg2" | "minisign" | "cosign" | "signify" | "pacman-key" => self.verify(&b, &args, loc),
-            "head" | "tail" if args.iter().any(|a| a.text.starts_with("-c")) => self.decode(&b, &args, loc),
-            "sed" if !self.lenient && !args.iter().any(|a| a.text.starts_with("-i") || a.text == "--in-place") => self.rewrite(&args, loc),
-            "base64" | "base32" | "basenc" | "xxd" | "uudecode" | "openssl" | "tr" | "rev" | "xz" | "gzip" | "bzip2" | "zstd" | "lzma" | "zcat" | "xzcat" | "bzcat" | "zstdcat" | "gunzip" | "unxz" => self.decode(&b, &args, loc),
+            "sha256sum" | "sha512sum" | "sha1sum" | "sha224sum" | "sha384sum" | "md5sum"
+            | "b2sum" | "cksum" | "gpg" | "gpg2" | "minisign" | "cosign" | "signify"
+            | "pacman-key" => self.verify(&b, &args, loc),
+            "head" | "tail" if args.iter().any(|a| a.text.starts_with("-c")) => {
+                self.decode(&b, &args, loc)
+            }
+            "sed"
+                if !self.lenient
+                    && !args
+                        .iter()
+                        .any(|a| a.text.starts_with("-i") || a.text == "--in-place") =>
+            {
+                self.rewrite(&args, loc)
+            }
+            "base64" | "base32" | "basenc" | "xxd" | "uudecode" | "openssl" | "tr" | "rev"
+            | "xz" | "gzip" | "bzip2" | "zstd" | "lzma" | "zcat" | "xzcat" | "bzcat"
+            | "zstdcat" | "gunzip" | "unxz" => self.decode(&b, &args, loc),
             "test" | "[" => {
                 self.process(&b, loc);
             }
             "eval" => {
                 let proc = self.process("eval", loc.clone());
-                let mut v = Val { complete: true, ..Val::default() };
+                let mut v = Val {
+                    complete: true,
+                    ..Val::default()
+                };
                 for (i, a) in args.iter().enumerate() {
                     if i > 0 {
                         v.text.push(' ');
@@ -991,19 +1311,40 @@ impl<'g> Walker<'g> {
                     self.g.edge(proc, f, E::Writes, loc.clone());
                 }
             }
-            "cp" | "mv" | "ln" | "install" | "rsync" | "dd" | "tee" | "touch" | "mkdir" | "rm" | "rmdir" | "sed" | "patch" | "tar" | "bsdtar" | "unzip" | "ar" | "7z" | "cpio" | "unsquashfs" | "bsdcpio" => self.file_tool(&b, &args, loc),
-            "systemctl" | "crontab" | "at" | "loginctl" | "launchctl" => self.persist(&b, &args, loc),
-            "npm" | "yarn" | "pnpm" | "pip" | "pip3" | "gem" | "bundle" | "composer" => self.registry(&b, &args, loc),
-            "find" if args.iter().any(|a| a.text == "-exec" || a.text == "-execdir") => {
-                let i = args.iter().position(|a| a.text.starts_with("-exec")).unwrap_or(0);
-                let mut inner: Vec<Val> = args[i + 1..].iter().filter(|a| a.text != ";" && a.text != "+" && a.text != "\\;").cloned().collect();
+            "cp" | "mv" | "ln" | "install" | "rsync" | "dd" | "tee" | "touch" | "mkdir" | "rm"
+            | "rmdir" | "sed" | "patch" | "tar" | "bsdtar" | "unzip" | "ar" | "7z" | "cpio"
+            | "unsquashfs" | "bsdcpio" => self.file_tool(&b, &args, loc),
+            "systemctl" | "crontab" | "at" | "loginctl" | "launchctl" => {
+                self.persist(&b, &args, loc)
+            }
+            "npm" | "yarn" | "pnpm" | "pip" | "pip3" | "gem" | "bundle" | "composer" => {
+                self.registry(&b, &args, loc)
+            }
+            "find"
+                if args
+                    .iter()
+                    .any(|a| a.text == "-exec" || a.text == "-execdir") =>
+            {
+                let i = args
+                    .iter()
+                    .position(|a| a.text.starts_with("-exec"))
+                    .unwrap_or(0);
+                let mut inner: Vec<Val> = args[i + 1..]
+                    .iter()
+                    .filter(|a| a.text != ";" && a.text != "+" && a.text != "\\;")
+                    .cloned()
+                    .collect();
                 if !inner.is_empty() {
                     let n = inner.remove(0);
                     self.run(n, inner, loc);
                 }
             }
             "xargs" => {
-                let mut inner: Vec<Val> = args.iter().filter(|a| !a.text.starts_with('-')).cloned().collect();
+                let mut inner: Vec<Val> = args
+                    .iter()
+                    .filter(|a| !a.text.starts_with('-'))
+                    .cloned()
+                    .collect();
                 if !inner.is_empty() {
                     let n = inner.remove(0);
                     self.run(n, inner, loc);
@@ -1020,16 +1361,25 @@ impl<'g> Walker<'g> {
         *n += 1;
         let first = *n <= MAX_CALLS;
         let saved = self.enter(name, f.1);
-        if let (Some(id), l) = (self.func, loc) {
-            if let Some(p) = saved.0 {
-                self.g.edge(p, id, E::Calls, l);
-            }
+        if let (Some(id), l) = (self.func, loc)
+            && let Some(p) = saved.0
+        {
+            self.g.edge(p, id, E::Calls, l);
         }
         if first {
             let mut old = Vec::new();
             for (i, a) in args.into_iter().enumerate() {
                 let key = (i + 1).to_string();
-                old.push((key.clone(), self.env.insert(key, Var { vals: vec![a], node: None })));
+                old.push((
+                    key.clone(),
+                    self.env.insert(
+                        key,
+                        Var {
+                            vals: vec![a],
+                            node: None,
+                        },
+                    ),
+                ));
             }
             self.walk_body(&f.0, f.1);
             for (k, v) in old {
@@ -1064,7 +1414,8 @@ impl<'g> Walker<'g> {
     fn fetch(&mut self, b: &str, args: &[Val], loc: Option<Loc>) {
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
-        let (mut out, mut remote_name, mut urls, mut uploads) = (None, false, Vec::new(), Vec::new());
+        let (mut out, mut remote_name, mut urls, mut uploads) =
+            (None, false, Vec::new(), Vec::new());
         let mut i = 0;
         while i < args.len() {
             let a = &args[i];
@@ -1080,17 +1431,53 @@ impl<'g> Walker<'g> {
                 out = Some(Val::lit(v));
             } else if t == "--remote-name" {
                 remote_name = true;
-            } else if matches!(t, "-d" | "--data" | "--data-binary" | "--data-raw" | "--data-urlencode" | "-F" | "--form" | "-T" | "--upload-file" | "--post-file" | "--body-file") {
+            } else if matches!(
+                t,
+                "-d" | "--data"
+                    | "--data-binary"
+                    | "--data-raw"
+                    | "--data-urlencode"
+                    | "-F"
+                    | "--form"
+                    | "-T"
+                    | "--upload-file"
+                    | "--post-file"
+                    | "--body-file"
+            ) {
                 if let Some(n) = next {
-                    uploads.push((n.clone(), matches!(t, "-T" | "--upload-file" | "--post-file" | "--body-file")));
+                    uploads.push((
+                        n.clone(),
+                        matches!(t, "-T" | "--upload-file" | "--post-file" | "--body-file"),
+                    ));
                 }
                 i += 2;
                 continue;
-            } else if let Some(v) = long_value("--post-file").or_else(|| long_value("--upload-file")) {
+            } else if let Some(v) =
+                long_value("--post-file").or_else(|| long_value("--upload-file"))
+            {
                 uploads.push((Val::lit(v), true));
             } else if let Some(v) = long_value("--data-binary").or_else(|| long_value("--data")) {
                 uploads.push((Val::lit(v), false));
-            } else if matches!(t, "-A" | "-H" | "-e" | "-u" | "-x" | "-b" | "-c" | "-m" | "-w" | "-X" | "-U" | "--header" | "--user-agent" | "--retry" | "--connect-timeout" | "--max-time" | "--proxy" | "--cookie") {
+            } else if matches!(
+                t,
+                "-A" | "-H"
+                    | "-e"
+                    | "-u"
+                    | "-x"
+                    | "-b"
+                    | "-c"
+                    | "-m"
+                    | "-w"
+                    | "-X"
+                    | "-U"
+                    | "--header"
+                    | "--user-agent"
+                    | "--retry"
+                    | "--connect-timeout"
+                    | "--max-time"
+                    | "--proxy"
+                    | "--cookie"
+            ) {
                 i += 2;
                 continue;
             } else if t.starts_with('-') && !t.starts_with("--") {
@@ -1126,7 +1513,11 @@ impl<'g> Walker<'g> {
         for (u, whole_file) in uploads {
             self.feed(std::slice::from_ref(&u), proc, &loc);
             // `-d @file` and `-F x=@file` name a file; plain `-d x=1` is data.
-            let body = if whole_file { Some(u.text.as_str()) } else { u.text.split_once('@').map(|x| x.1) };
+            let body = if whole_file {
+                Some(u.text.as_str())
+            } else {
+                u.text.split_once('@').map(|x| x.1)
+            };
             if let Some(body) = body {
                 let p = self.path(body);
                 let f = self.file_node(&p, loc.clone());
@@ -1146,7 +1537,10 @@ impl<'g> Walker<'g> {
         } else {
             let target = match out {
                 Some(o) => o.text,
-                None => urls.first().map(|u| base(&u.text).to_owned()).unwrap_or_default(),
+                None => urls
+                    .first()
+                    .map(|u| base(&u.text).to_owned())
+                    .unwrap_or_default(),
             };
             let p = self.path(&target);
             let f = self.file_node(&p, loc.clone());
@@ -1160,13 +1554,26 @@ impl<'g> Walker<'g> {
 
     fn vcs(&mut self, b: &str, args: &[Val], loc: Option<Loc>) {
         let sub = args.first().map(|a| a.text.as_str()).unwrap_or("");
-        if !matches!(sub, "clone" | "fetch" | "pull" | "checkout" | "co" | "submodule" | "push" | "archive" | "ls-remote") {
+        if !matches!(
+            sub,
+            "clone"
+                | "fetch"
+                | "pull"
+                | "checkout"
+                | "co"
+                | "submodule"
+                | "push"
+                | "archive"
+                | "ls-remote"
+        ) {
             return self.plain(b, args, loc);
         }
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
         let pos = positional(&args[1..]);
-        let url = pos.iter().find(|a| is_url(&a.text) || a.text.contains('@') && a.text.contains(':'));
+        let url = pos
+            .iter()
+            .find(|a| is_url(&a.text) || a.text.contains('@') && a.text.contains(':'));
         if let Some(u) = url {
             let id = self.url(&u.text, loc.clone());
             if sub == "push" {
@@ -1174,7 +1581,12 @@ impl<'g> Walker<'g> {
             } else {
                 self.g.edge(id, proc, E::Fetches, loc.clone());
             }
-            let dir = pos.iter().rev().find(|a| !std::ptr::eq(**a, *u)).map(|a| a.text.clone()).unwrap_or_else(|| base(&u.text).trim_end_matches(".git").to_owned());
+            let dir = pos
+                .iter()
+                .rev()
+                .find(|a| !std::ptr::eq(**a, *u))
+                .map(|a| a.text.clone())
+                .unwrap_or_else(|| base(&u.text).trim_end_matches(".git").to_owned());
             let p = self.path(&dir);
             let f = self.file_node(&p, loc.clone());
             self.g.edge(proc, f, E::Writes, loc.clone());
@@ -1188,7 +1600,9 @@ impl<'g> Walker<'g> {
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
         let pos = positional(args);
-        let Some((dst, srcs)) = pos.split_last() else { return };
+        let Some((dst, srcs)) = pos.split_last() else {
+            return;
+        };
         if dst.text.contains(':') {
             for s in srcs {
                 let p = self.path(&s.text);
@@ -1213,12 +1627,26 @@ impl<'g> Walker<'g> {
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
         let pos = positional(args);
-        let peer = pos.iter().map(|a| a.text.as_str()).collect::<Vec<_>>().join(":");
-        let id = self.g.node(K::Socket, &format!("sock:{peer}"), &peer, loc.clone(), self.stage);
+        let peer = pos
+            .iter()
+            .map(|a| a.text.as_str())
+            .collect::<Vec<_>>()
+            .join(":");
+        let id = self.g.node(
+            K::Socket,
+            &format!("sock:{peer}"),
+            &peer,
+            loc.clone(),
+            self.stage,
+        );
         self.g.edge(id, proc, E::Fetches, loc.clone());
         self.g.edge(proc, id, E::Sends, loc.clone());
         // `nc -e /bin/sh host port` hands the shell to the peer.
-        if args.iter().any(|a| matches!(a.text.as_str(), "-e" | "-c" | "--exec" | "--sh-exec")) || args.iter().any(|a| a.text.contains("EXEC:")) {
+        if args
+            .iter()
+            .any(|a| matches!(a.text.as_str(), "-e" | "-c" | "--exec" | "--sh-exec"))
+            || args.iter().any(|a| a.text.contains("EXEC:"))
+        {
             self.g.edge(id, proc, E::Executes, loc.clone());
         }
         self.connect_stdio(proc, &loc);
@@ -1228,10 +1656,17 @@ impl<'g> Walker<'g> {
     fn verify(&mut self, b: &str, args: &[Val], loc: Option<Loc>) {
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
-        let checks = args.iter().any(|a| matches!(a.text.as_str(), "-c" | "--check" | "--verify" | "-V" | "verify" | "verify-blob"));
+        let checks = args.iter().any(|a| {
+            matches!(
+                a.text.as_str(),
+                "-c" | "--check" | "--verify" | "-V" | "verify" | "verify-blob"
+            )
+        });
         if !checks && self.in_test == 0 {
             if b.starts_with("gpg") {
-                let decrypts = args.iter().any(|a| matches!(a.text.as_str(), "-d" | "--decrypt"));
+                let decrypts = args
+                    .iter()
+                    .any(|a| matches!(a.text.as_str(), "-d" | "--decrypt"));
                 if decrypts {
                     self.connect_stdio(proc, &loc);
                     if let Some(o) = self.stdout {
@@ -1289,20 +1724,31 @@ impl<'g> Walker<'g> {
             "basenc" => flag(&["-d", "--decode"]),
             "xxd" => flag(&["-r", "-ps", "-rp", "-r -p"]) && flag(&["-r", "-rp"]),
             // Cutting bytes out of a file is how a script hides in a data file.
-            "uudecode" | "rev" | "zcat" | "xzcat" | "bzcat" | "zstdcat" | "gunzip" | "unxz" | "head" | "tail" => true,
-            "xz" | "gzip" | "bzip2" | "zstd" | "lzma" => flag(&["-d", "-dc", "-cd", "-dk", "--decompress"]),
+            "uudecode" | "rev" | "zcat" | "xzcat" | "bzcat" | "zstdcat" | "gunzip" | "unxz"
+            | "head" | "tail" => true,
+            "xz" | "gzip" | "bzip2" | "zstd" | "lzma" => {
+                flag(&["-d", "-dc", "-cd", "-dk", "--decompress"])
+            }
             "openssl" => flag(&["-d"]) || flag(&["-decrypt"]),
             // A byte-for-byte swap hides text; case folding and deleting characters do not.
             "tr" => {
                 let sets: Vec<&Val> = args.iter().filter(|a| !a.text.starts_with('-')).collect();
                 // Libtool's macros swap bytes all over; what they feed is not hidden text.
-                !self.lenient && !flag(&["-d", "-s", "-c", "-cd", "-dc"]) && sets.len() >= 2 && !sets.iter().any(|a| a.text.contains("[:") || a.text.contains("a-z") || a.text.contains("A-Z"))
+                !self.lenient
+                    && !flag(&["-d", "-s", "-c", "-cd", "-dc"])
+                    && sets.len() >= 2
+                    && !sets.iter().any(|a| {
+                        a.text.contains("[:") || a.text.contains("a-z") || a.text.contains("A-Z")
+                    })
             }
             _ => false,
         };
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
-        let inputs: Vec<&Val> = positional(args).into_iter().filter(|a| path_like(&a.text) || (b == "base64" && !a.text.is_empty())).collect();
+        let inputs: Vec<&Val> = positional(args)
+            .into_iter()
+            .filter(|a| path_like(&a.text) || (b == "base64" && !a.text.is_empty()))
+            .collect();
         let has_stdin = self.stdin.is_some();
         for a in inputs {
             if b == "tr" {
@@ -1310,7 +1756,12 @@ impl<'g> Walker<'g> {
             }
             let p = self.path(&a.text);
             let f = self.file_node(&p, loc.clone());
-            self.g.edge(f, proc, if decoding { E::Decodes } else { E::Reads }, loc.clone());
+            self.g.edge(
+                f,
+                proc,
+                if decoding { E::Decodes } else { E::Reads },
+                loc.clone(),
+            );
         }
         self.connect_stdio(proc, &loc);
         if decoding {
@@ -1320,7 +1771,12 @@ impl<'g> Walker<'g> {
             if let Some(t) = self.stdin_text() {
                 let folded = match b {
                     "base64" => unbase64(&t),
-                    "rev" => Some(t.lines().map(|l| l.chars().rev().collect::<String>()).collect::<Vec<_>>().join("\n")),
+                    "rev" => Some(
+                        t.lines()
+                            .map(|l| l.chars().rev().collect::<String>())
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ),
                     _ => None,
                 };
                 self.write_stdout_text(folded);
@@ -1337,8 +1793,14 @@ impl<'g> Walker<'g> {
             let p = self.path(&pos[pos.len() - 1].text);
             let f = self.file_node(&p, loc.clone());
             // Editing a script leaves a script. Turning data into one is what hides code.
-            let code = ["py", "sh", "bash", "pl", "rb", "js", "in"].contains(&p.rsplit('.').next().unwrap_or(""));
-            self.g.edge(f, proc, if code { E::Reads } else { E::Decodes }, loc.clone());
+            let code = ["py", "sh", "bash", "pl", "rb", "js", "in"]
+                .contains(&p.rsplit('.').next().unwrap_or(""));
+            self.g.edge(
+                f,
+                proc,
+                if code { E::Reads } else { E::Decodes },
+                loc.clone(),
+            );
         }
         self.connect_stdio(proc, &loc);
         if let Some(i) = self.stdin {
@@ -1361,7 +1823,13 @@ impl<'g> Walker<'g> {
 
     /// Text run by another language's call. Shell text is read as shell; a language's own code
     /// held in a string goes to that language.
-    pub(crate) fn exec_value(&mut self, v: &Val, proc: NodeId, loc: &Option<Loc>, lang: crate::langs::Lang) {
+    pub(crate) fn exec_value(
+        &mut self,
+        v: &Val,
+        proc: NodeId,
+        loc: &Option<Loc>,
+        lang: crate::langs::Lang,
+    ) {
         use crate::langs::Lang;
         if v.complete && matches!(lang, Lang::Python | Lang::Js) {
             let line = loc.as_ref().map_or(0, |l| l.line);
@@ -1374,7 +1842,13 @@ impl<'g> Walker<'g> {
 
     /// A value spelled out in the script itself, as the origin of a decode.
     pub(crate) fn literal_source(&mut self, loc: &Option<Loc>) -> NodeId {
-        self.g.node(K::Env, &format!("literal:{}", self.file), "data in the script", loc.clone(), self.stage)
+        self.g.node(
+            K::Env,
+            &format!("literal:{}", self.file),
+            "data in the script",
+            loc.clone(),
+            self.stage,
+        )
     }
 
     pub(crate) fn url_node(&mut self, u: &str, loc: Option<Loc>) -> NodeId {
@@ -1416,14 +1890,20 @@ impl<'g> Walker<'g> {
 
     pub(crate) fn argv_text(&mut self, argv: Vec<String>, file: &str, line: u32) {
         self.file = file.to_owned();
-        let loc = Some(Loc { file: file.to_owned(), line });
+        let loc = Some(Loc {
+            file: file.to_owned(),
+            line,
+        });
         self.run_argv(argv.iter().map(|a| Val::lit(a)).collect(), loc);
     }
 
     /// A download a build system does itself.
     pub(crate) fn download(&mut self, url: &str, dest: &str, hashed: bool, file: &str, line: u32) {
         self.file = file.to_owned();
-        let loc = Some(Loc { file: file.to_owned(), line });
+        let loc = Some(Loc {
+            file: file.to_owned(),
+            line,
+        });
         let proc = self.process("download", loc.clone());
         let u = self.url(url, loc.clone());
         self.g.edge(u, proc, E::Fetches, loc.clone());
@@ -1437,7 +1917,10 @@ impl<'g> Walker<'g> {
 
     fn shell(&mut self, b: &str, args: &[Val], loc: Option<Loc>) {
         let proc = self.process(b, loc.clone());
-        let dash_c = args.iter().position(|a| a.text == "-c" || (a.text.starts_with('-') && !a.text.starts_with("--") && a.text.ends_with('c')));
+        let dash_c = args.iter().position(|a| {
+            a.text == "-c"
+                || (a.text.starts_with('-') && !a.text.starts_with("--") && a.text.ends_with('c'))
+        });
         if let Some(i) = dash_c {
             if let Some(code) = args.get(i + 1) {
                 self.exec_text(&code.clone(), proc, &loc);
@@ -1474,14 +1957,19 @@ impl<'g> Walker<'g> {
     }
 
     fn interpreter(&mut self, b: &str, args: &[Val], loc: Option<Loc>) {
-        if let Some(i) = args.iter().position(|a| a.text == "-m") {
-            if matches!(args.get(i + 1).map(|a| a.text.as_str()), Some("pip" | "pip3")) {
-                return self.registry("pip", &args[i + 2..], loc);
-            }
+        if let Some(i) = args.iter().position(|a| a.text == "-m")
+            && matches!(
+                args.get(i + 1).map(|a| a.text.as_str()),
+                Some("pip" | "pip3")
+            )
+        {
+            return self.registry("pip", &args[i + 2..], loc);
         }
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
-        let code_flag = args.iter().position(|a| matches!(a.text.as_str(), "-c" | "-e" | "-E" | "-r" | "--eval"));
+        let code_flag = args
+            .iter()
+            .position(|a| matches!(a.text.as_str(), "-c" | "-e" | "-E" | "-r" | "--eval"));
         if let Some(i) = code_flag {
             if let Some(code) = args.get(i + 1).cloned() {
                 for t in &code.taints {
@@ -1501,8 +1989,13 @@ impl<'g> Walker<'g> {
             return;
         }
         let pos = positional(args);
-        let first = pos.iter().find(|a| !a.text.starts_with('-')).map(|a| (*a).clone());
-        if first.as_ref().is_some_and(|f| base(&f.text) == "setup.py") || b.starts_with("python") && args.iter().any(|a| a.text == "-m") {
+        let first = pos
+            .iter()
+            .find(|a| !a.text.starts_with('-'))
+            .map(|a| (*a).clone());
+        if first.as_ref().is_some_and(|f| base(&f.text) == "setup.py")
+            || b.starts_with("python") && args.iter().any(|a| a.text == "-m")
+        {
             self.exec_tree(proc, &loc);
         } else if let Some(f) = first {
             self.exec_file(&f, proc, &loc);
@@ -1545,7 +2038,10 @@ impl<'g> Walker<'g> {
         }
         let name = base(&p).to_owned();
         let inside = p.starts_with("$srcdir/") || p.starts_with("$startdir/");
-        if inside && self.scope.helpers.contains_key(&name) && self.walked_helpers.insert(name.clone()) {
+        if inside
+            && self.scope.helpers.contains_key(&name)
+            && self.walked_helpers.insert(name.clone())
+        {
             let text = self.scope.helpers[&name].clone();
             self.read_helper(&name, &text, proc);
         }
@@ -1563,7 +2059,9 @@ impl<'g> Walker<'g> {
             self.follow(name, text);
         } else if interp(&runner) {
             self.foreign(&runner, name, text, proc);
-        } else if bang.as_deref().is_some_and(shellish) || (bang.is_none() && (name.ends_with(".sh") || name.ends_with(".bash"))) {
+        } else if bang.as_deref().is_some_and(shellish)
+            || (bang.is_none() && (name.ends_with(".sh") || name.ends_with(".bash")))
+        {
             self.follow(name, text);
         } else if let Some(i) = bang.as_deref().and_then(other) {
             self.foreign(&i, name, text, proc);
@@ -1579,7 +2077,10 @@ impl<'g> Walker<'g> {
     }
 
     fn follow(&mut self, name: &str, text: &str) {
-        let (file, line) = (std::mem::replace(&mut self.file, name.to_owned()), self.fixed_line.take());
+        let (file, line) = (
+            std::mem::replace(&mut self.file, name.to_owned()),
+            self.fixed_line.take(),
+        );
         let src = std::mem::replace(&mut self.src, Rc::from(text));
         let base_line = std::mem::replace(&mut self.line_base, 0);
         self.parse_and_walk();
@@ -1591,12 +2092,31 @@ impl<'g> Walker<'g> {
 
     /// Declared sources a path inside `$srcdir` plausibly came from.
     fn sources_of(&self, path: &str) -> Vec<NodeId> {
-        let Some(rel) = path.strip_prefix("$srcdir/") else { return Vec::new() };
+        let Some(rel) = path.strip_prefix("$srcdir/") else {
+            return Vec::new();
+        };
         let first = rel.split('/').next().unwrap_or(rel);
-        let trees: Vec<&SourceEntry> = self.scope.sources.iter().filter(|s| s.url.is_some() && (s.vcs || is_archive(&s.name))).collect();
-        let exact: Vec<&SourceEntry> = self.scope.sources.iter().filter(|s| s.name == rel || (s.vcs && s.name == first) || (is_archive(&s.name) && stem(&s.name) == first)).collect();
+        let trees: Vec<&SourceEntry> = self
+            .scope
+            .sources
+            .iter()
+            .filter(|s| s.url.is_some() && (s.vcs || is_archive(&s.name)))
+            .collect();
+        let exact: Vec<&SourceEntry> = self
+            .scope
+            .sources
+            .iter()
+            .filter(|s| {
+                s.name == rel
+                    || (s.vcs && s.name == first)
+                    || (is_archive(&s.name) && stem(&s.name) == first)
+            })
+            .collect();
         let chosen = if !exact.is_empty() { exact } else { trees };
-        chosen.iter().filter_map(|s| self.g.find(&format!("src:{}", s.name))).collect()
+        chosen
+            .iter()
+            .filter_map(|s| self.g.find(&format!("src:{}", s.name)))
+            .collect()
     }
 
     fn exec_tree(&mut self, proc: NodeId, loc: &Option<Loc>) {
@@ -1612,12 +2132,24 @@ impl<'g> Walker<'g> {
         self.exec_tree(proc, &loc);
         self.connect_stdio(proc, &loc);
         let networked = match b {
-            "cargo" => args.first().is_some_and(|a| matches!(a.text.as_str(), "fetch" | "build" | "install" | "run" | "test")) && !args.iter().any(|a| matches!(a.text.as_str(), "--locked" | "--frozen" | "--offline")),
+            "cargo" => {
+                args.first().is_some_and(|a| {
+                    matches!(
+                        a.text.as_str(),
+                        "fetch" | "build" | "install" | "run" | "test"
+                    )
+                }) && !args
+                    .iter()
+                    .any(|a| matches!(a.text.as_str(), "--locked" | "--frozen" | "--offline"))
+            }
             "go" => args.first().is_some_and(|a| a.text == "get"),
             _ => false,
         };
         if networked {
-            self.notes.push(Note { text: format!("{b} may download code that no lockfile pins"), loc });
+            self.notes.push(Note {
+                text: format!("{b} may download code that no lockfile pins"),
+                loc,
+            });
         }
     }
 
@@ -1627,18 +2159,37 @@ impl<'g> Walker<'g> {
         self.exec_tree(proc, &loc);
         self.connect_stdio(proc, &loc);
         let sub = args.first().map(|a| a.text.as_str()).unwrap_or("install");
-        let installing = matches!(sub, "install" | "i" | "add" | "update") || (b == "yarn" && !matches!(sub, "run" | "build"));
-        let locked = sub == "ci" || args.iter().any(|a| matches!(a.text.as_str(), "--frozen-lockfile" | "--immutable" | "--require-hashes" | "--ignore-scripts" | "--offline" | "--no-index"));
+        let installing = matches!(sub, "install" | "i" | "add" | "update")
+            || (b == "yarn" && !matches!(sub, "run" | "build"));
+        let locked = sub == "ci"
+            || args.iter().any(|a| {
+                matches!(
+                    a.text.as_str(),
+                    "--frozen-lockfile"
+                        | "--immutable"
+                        | "--require-hashes"
+                        | "--ignore-scripts"
+                        | "--offline"
+                        | "--no-index"
+                )
+            });
         // Installing from an address fetches a package and runs its install code at once.
         if installing && !locked {
-            for a in args.iter().skip(1).filter(|a| a.text.contains("://") && !a.text.contains("sha256=")) {
+            for a in args
+                .iter()
+                .skip(1)
+                .filter(|a| a.text.contains("://") && !a.text.contains("sha256="))
+            {
                 let id = self.url(&a.text, loc.clone());
                 self.g.edge(id, proc, E::Fetches, loc.clone());
                 self.g.edge(id, proc, E::Executes, loc.clone());
             }
         }
         if installing && !locked {
-            self.notes.push(Note { text: format!("{b} {sub} downloads and may run code that no lockfile pins"), loc });
+            self.notes.push(Note {
+                text: format!("{b} {sub} downloads and may run code that no lockfile pins"),
+                loc,
+            });
         }
     }
 
@@ -1646,9 +2197,16 @@ impl<'g> Walker<'g> {
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
         self.connect_stdio(proc, &loc);
-        let sub = args.iter().find(|a| !a.text.starts_with('-')).map(|a| a.text.as_str()).unwrap_or("");
+        let sub = args
+            .iter()
+            .find(|a| !a.text.starts_with('-'))
+            .map(|a| a.text.as_str())
+            .unwrap_or("");
         let target = match (b, sub) {
-            ("systemctl", "enable" | "reenable" | "link" | "preset" | "add-wants") => args.iter().rfind(|a| !a.text.starts_with('-')).map(|a| format!("/etc/systemd/system/enabled/{}", a.text)),
+            ("systemctl", "enable" | "reenable" | "link" | "preset" | "add-wants") => args
+                .iter()
+                .rfind(|a| !a.text.starts_with('-'))
+                .map(|a| format!("/etc/systemd/system/enabled/{}", a.text)),
             ("crontab", _) => Some("/var/spool/cron/crontab".to_owned()),
             ("at", _) => Some("/var/spool/at/job".to_owned()),
             ("loginctl", "enable-linger") => Some("/var/lib/systemd/linger/user".to_owned()),
@@ -1677,7 +2235,11 @@ impl<'g> Walker<'g> {
             w.g.edge(f, proc, E::Reads, loc.clone());
             f
         };
-        let target_dir = args.iter().position(|a| a.text == "-t" || a.text == "--target-directory").and_then(|i| args.get(i + 1)).map(|a| a.text.clone());
+        let target_dir = args
+            .iter()
+            .position(|a| a.text == "-t" || a.text == "--target-directory")
+            .and_then(|i| args.get(i + 1))
+            .map(|a| a.text.clone());
         match b {
             "tee" | "touch" | "mkdir" | "rm" | "rmdir" => {
                 for a in &pos {
@@ -1694,7 +2256,9 @@ impl<'g> Walker<'g> {
                 }
             }
             "sed" => {
-                let inplace = args.iter().any(|a| a.text.starts_with("-i") || a.text == "--in-place");
+                let inplace = args
+                    .iter()
+                    .any(|a| a.text.starts_with("-i") || a.text == "--in-place");
                 for a in pos.iter().skip(1) {
                     if inplace {
                         write(self, &a.text, &loc);
@@ -1706,11 +2270,17 @@ impl<'g> Walker<'g> {
             "patch" => {}
             "tar" | "bsdtar" | "unzip" | "ar" | "7z" | "cpio" | "unsquashfs" | "bsdcpio" => {
                 // Only the first word bundles flags: `tar czf out in`, never a file named `src`.
-                let bundled = args.first().is_some_and(|a| !a.text.starts_with("--") && a.text.trim_start_matches('-').contains('c'));
-                let creates = matches!(b, "tar" | "bsdtar") && (bundled || args.iter().any(|a| a.text == "--create"));
+                let bundled = args.first().is_some_and(|a| {
+                    !a.text.starts_with("--") && a.text.trim_start_matches('-').contains('c')
+                });
+                let creates = matches!(b, "tar" | "bsdtar")
+                    && (bundled || args.iter().any(|a| a.text == "--create"));
                 if creates {
                     // Without `f` the archive goes to stdout, and every word is an input.
-                    let to_file = args.first().is_some_and(|a| !a.text.starts_with("--") && a.text.contains('f')) || args.iter().any(|a| a.text == "-f" || a.text == "--file");
+                    let to_file = args
+                        .first()
+                        .is_some_and(|a| !a.text.starts_with("--") && a.text.contains('f'))
+                        || args.iter().any(|a| a.text == "-f" || a.text == "--file");
                     let inputs = match pos.split_first() {
                         Some((out, rest)) if to_file => {
                             write(self, &out.text, &loc);
@@ -1723,9 +2293,17 @@ impl<'g> Walker<'g> {
                     }
                     return;
                 }
-                let dir = args.iter().position(|a| matches!(a.text.as_str(), "-C" | "-d" | "--directory")).and_then(|i| args.get(i + 1)).map(|a| self.path(&a.text)).unwrap_or_else(|| self.cwd.clone());
+                let dir = args
+                    .iter()
+                    .position(|a| matches!(a.text.as_str(), "-C" | "-d" | "--directory"))
+                    .and_then(|i| args.get(i + 1))
+                    .map(|a| self.path(&a.text))
+                    .unwrap_or_else(|| self.cwd.clone());
                 let tree = self.file_node(&dir, loc.clone());
-                for a in pos.iter().filter(|a| path_like(&a.text) || is_archive(&a.text)) {
+                for a in pos
+                    .iter()
+                    .filter(|a| path_like(&a.text) || is_archive(&a.text))
+                {
                     read(self, &a.text, &loc);
                 }
                 self.g.edge(proc, tree, E::Writes, loc.clone());
@@ -1738,7 +2316,15 @@ impl<'g> Walker<'g> {
                         let name = base(&a.text).to_owned();
                         write(self, &format!("{d}/{name}"), &loc);
                     }
-                } else if b == "install" && args.iter().any(|a| a.text == "-d" || (a.text.starts_with('-') && !a.text.starts_with("--") && a.text.contains('d') && !a.text.contains("D"))) {
+                } else if b == "install"
+                    && args.iter().any(|a| {
+                        a.text == "-d"
+                            || (a.text.starts_with('-')
+                                && !a.text.starts_with("--")
+                                && a.text.contains('d')
+                                && !a.text.contains("D"))
+                    })
+                {
                     for a in &pos {
                         write(self, &a.text, &loc);
                     }
@@ -1749,7 +2335,11 @@ impl<'g> Walker<'g> {
                     }
                     if srcs.len() > 1 || dst_text.ends_with('/') {
                         for s in srcs {
-                            write(self, &format!("{}/{}", dst_text.trim_end_matches('/'), base(&s.text)), &loc);
+                            write(
+                                self,
+                                &format!("{}/{}", dst_text.trim_end_matches('/'), base(&s.text)),
+                                &loc,
+                            );
                         }
                     } else {
                         write(self, &dst_text, &loc);
@@ -1761,7 +2351,8 @@ impl<'g> Walker<'g> {
 }
 
 fn interp(x: &str) -> bool {
-    INTERPRETERS.contains(&x) || (x.starts_with("python") && x[6..].bytes().all(|b| b.is_ascii_digit() || b == b'.'))
+    INTERPRETERS.contains(&x)
+        || (x.starts_with("python") && x[6..].bytes().all(|b| b.is_ascii_digit() || b == b'.'))
 }
 
 fn positional(args: &[Val]) -> Vec<&Val> {
@@ -1771,9 +2362,27 @@ fn positional(args: &[Val]) -> Vec<&Val> {
 /// Positionals, skipping the values of the options these tools take.
 fn positional_opts<'v>(b: &str, args: &'v [Val]) -> Vec<&'v Val> {
     let takes: &[&str] = match b {
-        "install" => &["-m", "--mode", "-o", "--owner", "-g", "--group", "-t", "--target-directory", "-S", "--suffix"],
+        "install" => &[
+            "-m",
+            "--mode",
+            "-o",
+            "--owner",
+            "-g",
+            "--group",
+            "-t",
+            "--target-directory",
+            "-S",
+            "--suffix",
+        ],
         "cp" | "mv" | "ln" => &["-t", "--target-directory", "-S"],
-        "tar" | "bsdtar" => &["-C", "--directory", "-f", "--file", "--exclude", "--strip-components"],
+        "tar" | "bsdtar" => &[
+            "-C",
+            "--directory",
+            "-f",
+            "--file",
+            "--exclude",
+            "--strip-components",
+        ],
         "unzip" => &["-d", "-x"],
         "sed" => &["-e", "-f"],
         "tee" | "touch" | "mkdir" | "rm" => &["-m", "--mode", "-r", "-d"],
@@ -1787,7 +2396,10 @@ fn positional_opts<'v>(b: &str, args: &'v [Val]) -> Vec<&'v Val> {
             continue;
         }
         if takes.contains(&a.text.as_str()) {
-            skip = !matches!((b, a.text.as_str()), ("tee" | "touch" | "mkdir" | "rm", "-r" | "-d"));
+            skip = !matches!(
+                (b, a.text.as_str()),
+                ("tee" | "touch" | "mkdir" | "rm", "-r" | "-d")
+            );
             if matches!(b, "tar" | "bsdtar") && (a.text == "-f" || a.text == "--file") {
                 skip = false;
             }
@@ -1799,7 +2411,10 @@ fn positional_opts<'v>(b: &str, args: &'v [Val]) -> Vec<&'v Val> {
     }
     if matches!(b, "tar" | "bsdtar") {
         // The first bundled word (`xf`, `czf`) is flags, not a file.
-        if out.first().is_some_and(|a| a.text.len() <= 6 && !a.text.contains('.') && !a.text.contains('/')) {
+        if out
+            .first()
+            .is_some_and(|a| a.text.len() <= 6 && !a.text.contains('.') && !a.text.contains('/'))
+        {
             out.remove(0);
         }
     }
@@ -1817,11 +2432,36 @@ pub fn path_like(s: &str) -> bool {
 
 pub fn is_archive(n: &str) -> bool {
     let n = n.to_ascii_lowercase();
-    [".tar", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tbz", ".tbz2", ".tar.zst", ".tar.lz", ".tar.lz4", ".zip", ".7z", ".deb", ".rpm", ".whl", ".crate", ".gem", ".appimage"].iter().any(|e| n.ends_with(e))
+    [
+        ".tar",
+        ".tar.gz",
+        ".tgz",
+        ".tar.xz",
+        ".txz",
+        ".tar.bz2",
+        ".tbz",
+        ".tbz2",
+        ".tar.zst",
+        ".tar.lz",
+        ".tar.lz4",
+        ".zip",
+        ".7z",
+        ".deb",
+        ".rpm",
+        ".whl",
+        ".crate",
+        ".gem",
+        ".appimage",
+    ]
+    .iter()
+    .any(|e| n.ends_with(e))
 }
 
 pub fn stem(n: &str) -> &str {
-    for e in [".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz", ".tar.lz4", ".tgz", ".txz", ".tbz2", ".tbz", ".tar", ".zip", ".7z", ".crate"] {
+    for e in [
+        ".tar.gz", ".tar.xz", ".tar.bz2", ".tar.zst", ".tar.lz", ".tar.lz4", ".tgz", ".txz",
+        ".tbz2", ".tbz", ".tar", ".zip", ".7z", ".crate",
+    ] {
         if let Some(s) = n.strip_suffix(e) {
             return s;
         }
@@ -1832,8 +2472,17 @@ pub fn stem(n: &str) -> &str {
 /// `eval a=\$b` only moves a value around: no substitution inside, so nothing new runs.
 fn assignment_only(t: &str) -> bool {
     let t = t.trim();
-    let Some((name, rest)) = t.split_once('=') else { return false };
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b == b'{' || b == b'}') && !rest.contains("$(") && !rest.contains('`') && !rest.contains(';') && !rest.contains('|')
+    let Some((name, rest)) = t.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b == b'{' || b == b'}')
+        && !rest.contains("$(")
+        && !rest.contains('`')
+        && !rest.contains(';')
+        && !rest.contains('|')
 }
 
 fn normalize(p: &str) -> String {
@@ -1854,11 +2503,16 @@ fn normalize(p: &str) -> String {
             x => parts.push(x),
         }
     }
-    format!("{root}{}", parts.join("/")).trim_end_matches('/').to_owned()
+    format!("{root}{}", parts.join("/"))
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 fn unslash(s: &str) -> String {
-    s.replace("\\\"", "\"").replace("\\$", "$").replace("\\`", "`").replace("\\\\", "\\")
+    s.replace("\\\"", "\"")
+        .replace("\\$", "$")
+        .replace("\\`", "`")
+        .replace("\\\\", "\\")
 }
 
 fn unescape(s: &str) -> String {
@@ -1869,7 +2523,9 @@ fn unescape(s: &str) -> String {
         if b[i] == b'\\' && i + 1 < b.len() {
             match b[i + 1] {
                 b'x' => {
-                    let h = s.get(i + 2..i + 4).and_then(|h| u8::from_str_radix(h, 16).ok());
+                    let h = s
+                        .get(i + 2..i + 4)
+                        .and_then(|h| u8::from_str_radix(h, 16).ok());
                     if let Some(v) = h {
                         out.push(v);
                         i += 4;

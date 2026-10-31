@@ -45,10 +45,10 @@ fn load(dir: &Path) -> Option<Report> {
     let mut files = HashMap::new();
     for e in std::fs::read_dir(dir).ok()?.flatten() {
         let n = e.file_name().to_string_lossy().into_owned();
-        if n.ends_with(".install") {
-            if let Ok(t) = std::fs::read_to_string(e.path()) {
-                files.insert(n, t);
-            }
+        if n.ends_with(".install")
+            && let Ok(t) = std::fs::read_to_string(e.path())
+        {
+            files.insert(n, t);
         }
     }
     Some(judge_files(&String::from_utf8_lossy(&raw), &files))
@@ -56,19 +56,29 @@ fn load(dir: &Path) -> Option<Report> {
 
 fn line(r: &Report) -> String {
     let set: BTreeSet<usize> = r.findings.iter().map(|f| f.law as usize).collect();
-    set.iter().map(|i| facts::LAW_NAMES[*i]).collect::<Vec<_>>().join(",")
+    set.iter()
+        .map(|i| facts::LAW_NAMES[*i])
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// A balanced fork-join tree over `lo..hi`, callees first, as Bend's scheduler wants it.
 fn tree(b: &mut String, lo: usize, hi: usize, n: usize) {
     if hi - lo == 1 {
-        let _ = writeln!(b, "def t{lo}_{hi}() -> String:\n  show(R.check(g{}()))\n", lo % n);
+        let _ = writeln!(
+            b,
+            "def t{lo}_{hi}() -> String:\n  show(R.check(g{}()))\n",
+            lo % n
+        );
         return;
     }
     let mid = lo + (hi - lo) / 2;
     tree(b, lo, mid, n);
     tree(b, mid, hi, n);
-    let _ = writeln!(b, "def t{lo}_{hi}() -> String:\n  x y = t{lo}_{mid}() t{mid}_{hi}()\n  x ++ y\n");
+    let _ = writeln!(
+        b,
+        "def t{lo}_{hi}() -> String:\n  x y = t{lo}_{mid}() t{mid}_{hi}()\n  x ++ y\n"
+    );
 }
 
 fn time(reports: &[Report], repeat: usize, threads: usize) -> f64 {
@@ -92,7 +102,10 @@ fn time(reports: &[Report], repeat: usize, threads: usize) -> f64 {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (out, repeat) = (Path::new(&args[0]), args[1].parse::<usize>().unwrap());
-    let reports: Vec<Report> = args[2..].iter().filter_map(|d| load(Path::new(d))).collect();
+    let reports: Vec<Report> = args[2..]
+        .iter()
+        .filter_map(|d| load(Path::new(d)))
+        .collect();
     let mut b = String::from("import Base\nimport ./rules.bend as R\n\n");
     b.push_str(TAIL);
     b.push('\n');
@@ -113,7 +126,9 @@ fn main() {
     std::fs::write(out.join("rust.txt"), rust).unwrap();
     println!("{} packages, {total} graphs", reports.len());
     for t in [1, 4] {
-        let ms = (0..5).map(|_| time(&reports, repeat, t)).fold(f64::MAX, f64::min);
+        let ms = (0..5)
+            .map(|_| time(&reports, repeat, t))
+            .fold(f64::MAX, f64::min);
         println!("rust check, {t} threads: {ms:.2} ms");
     }
 }

@@ -25,7 +25,7 @@ Every finding is a plain sentence with its file and line, or its trace line.
 
 ## Numbers
 
-Rules frozen at commit `d61e821`, then measured once on data written or sampled afterwards. I wrote both the fixtures and the laws, so read recall as an upper bound. "Benign" means popular and unverified. The precision figure depends on an artificial mix of bad and good packages.
+Rules frozen at commit `d61e821`, then measured once on data written or sampled afterwards. One author wrote both the fixtures and the laws, so read recall as an upper bound. "Benign" means popular and unverified. The precision figure depends on an artificial mix of bad and good packages.
 
 | Set | Result |
 |---|---|
