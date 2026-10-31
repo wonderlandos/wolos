@@ -43,3 +43,18 @@ fn wol_files_open_in_the_app_store() {
     let inst = read("image/repo/wolos-system/wolos-system.install");
     assert!(inst.contains("update-mime-database /usr/share/mime"));
 }
+
+/// wolos-base builds without installing its depends: they are the installed system's, and
+/// wolos-system's /etc/sudoers clashes with the build host's sudo (its pacman -U failed in CI
+/// containers and build chroots).
+#[test]
+fn repo_build_makes_wolos_base_without_installing_its_depends() {
+    let b = read("image/repo/build.sh");
+    assert!(
+        b.contains("WOLOS_NODEPS=1 WOLOS_BASE_MANIFEST="),
+        "wolos-base without --nodeps"
+    );
+    assert!(b.contains(r#"[ "${WOLOS_NODEPS:-0}" = 1 ] && deps=--nodeps"#));
+    assert!(b.contains(r#"makepkg "$deps""#));
+    assert!(b.contains(r#"[ "${WOLOS_INSTALL_DEPS:-0}" = 1 ] && [ "$deps" = --syncdeps ]"#));
+}

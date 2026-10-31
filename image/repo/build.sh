@@ -35,13 +35,16 @@ build() {
     for d in ${3//,/ }; do [ "$d" = - ] || inst+=(-I "$(ls "$PKGDEST/$d"-[0-9]*.pkg.tar.zst | head -1)"); done
     (cd "$2" && PKGDEST=$PKGDEST makechrootpkg -c -r "$WOLOS_CHROOT" "${inst[@]}")
   else
-    if [ "${WOLOS_INSTALL_DEPS:-0}" = 1 ]; then # fresh container: local deps are not in any repo yet
+    # WOLOS_NODEPS=1 (wolos-base): its depends are the installed system's, nothing it builds with,
+    # and wolos-system's /etc/sudoers clashes with the build host's sudo.
+    local deps=--syncdeps; [ "${WOLOS_NODEPS:-0}" = 1 ] && deps=--nodeps
+    if [ "${WOLOS_INSTALL_DEPS:-0}" = 1 ] && [ "$deps" = --syncdeps ]; then # fresh container: local deps are not in any repo yet
       # --ask 4: remove an Arch package a local one replaces (wolos-system: default-cursors);
       # --noconfirm alone answers no to that, and takes the default everywhere else.
       local d; for d in ${3//,/ }; do [ "$d" = - ] || sudo pacman -U --noconfirm --ask 4 --needed "$PKGDEST/$d"-*.pkg.tar.zst; done
     fi
     [ -d "$2/keys/pgp" ] && gpg --batch --quiet --import "$2"/keys/pgp/*.asc
-    (cd "$2" && makepkg --syncdeps --noconfirm --cleanbuild --force)
+    (cd "$2" && makepkg "$deps" --noconfirm --cleanbuild --force)
   fi
 }
 
@@ -59,7 +62,7 @@ while read -r -u 3 name dir deps _; do
     fakeroot -- pacman -Syw --noconfirm --config "$conf" --dbpath "$WORK/pacdb" --cachedir "$WORK/pkgcache" $base_parts
     "$HERE/base-manifest.sh" "$WORK"/pkgcache/*.pkg.tar.zst "$PKGDEST"/linux-wolos-*.pkg.tar.zst \
       "$PKGDEST"/wolos-system-*.pkg.tar.zst > "$WORK/base.manifest"
-    WOLOS_BASE_MANIFEST=$WORK/base.manifest build "$name" "$REPO/$dir" "$deps"
+    WOLOS_NODEPS=1 WOLOS_BASE_MANIFEST=$WORK/base.manifest build "$name" "$REPO/$dir" "$deps"
   else
     build "$name" "$REPO/$dir" "$deps"
   fi
