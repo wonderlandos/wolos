@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception */
 /* clipboard: libwol 1.3 from C. Run by tests/c_services.rs. */
 #include <stdio.h>
 #include <string.h>

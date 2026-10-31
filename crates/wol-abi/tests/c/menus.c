@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception */
 /* menus: libwol 1.2 menus, toolbars, notification replace and withdraw from C. Run by
  * tests/c_menus.rs. */
 #include <stdio.h>

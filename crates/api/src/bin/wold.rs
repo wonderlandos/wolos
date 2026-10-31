@@ -52,8 +52,8 @@ fn main() {
         std::thread::spawn(move || {
             for conn in listener.incoming().flatten() {
                 let peer = shared::sys::peer(&conn);
-                let (jobs, bus, grants, notes) =
-                    (jobs.clone(), bus.clone(), grants.clone(), notes.clone());
+                let (jobs, bus, grants, state) =
+                    (jobs.clone(), bus.clone(), grants.clone(), state.clone());
                 std::thread::spawn(move || {
                     server::serve(conn, peer, &*jobs, &bus, &*grants, &state)
                 });
