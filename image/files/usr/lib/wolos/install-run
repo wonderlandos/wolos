@@ -197,6 +197,9 @@ if [ -n "$plan" ]; then
   rm -f "$plandir/account-password" "$plandir/disk-password"
 fi
 tr -d - < /proc/sys/kernel/random/uuid > "$T/etc/machine-id"
+# The real machine-id means no first boot for systemd, and a sealed slot could not take the presets
+# then anyway: they go on here (layers merge at boot, NetworkManager runs).
+systemctl --root="$T" preset-all >/dev/null 2>&1 || fail "could not enable the system services"
 arch-chroot "$T" pacman-key --init >/dev/null 2>&1 && arch-chroot "$T" pacman-key --populate >/dev/null 2>&1 ||
   say settings 92 "package keys: set up on first update"
 
