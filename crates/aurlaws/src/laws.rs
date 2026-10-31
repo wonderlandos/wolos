@@ -38,6 +38,25 @@ pub struct Finding {
     /// The exact path, in one plain sentence, with file and line.
     pub sentence: String,
     pub path: Vec<Step>,
+    pub origin: Origin,
+}
+
+/// Which graph showed it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    #[default]
+    Static,
+    Observed,
+}
+
+fn finding(law: LawId, sentence: String, path: Vec<Step>) -> Finding {
+    Finding {
+        law,
+        sentence,
+        path,
+        origin: Origin::Static,
+    }
 }
 
 /// Edges content can move along.
@@ -189,11 +208,7 @@ impl<'a> View<'a> {
         let mut seen: HashSet<(LawId, NodeId)> = HashSet::new();
         let mut add = |law: LawId, n: NodeId, sentence: String, path: Vec<Step>| {
             if seen.insert((law, n)) {
-                out.push(Finding {
-                    law,
-                    sentence,
-                    path,
-                });
+                out.push(finding(law, sentence, path));
             }
         };
         for e in &g.edges {
@@ -304,7 +319,7 @@ impl<'a> View<'a> {
         }
     }
 
-    fn check_sources(&self, out: &mut Vec<Finding>) {
+    pub(crate) fn check_sources(&self, out: &mut Vec<Finding>) {
         let m = self.meta;
         let bin = m.pkgnames.iter().any(|n| n.ends_with("-bin"));
         for s in &m.sources {
@@ -323,22 +338,18 @@ impl<'a> View<'a> {
                     "{loc} downloads {url}, which is not on the project's declared home {}.",
                     m.url
                 );
-                out.push(Finding {
-                    law: LawId::SourceOffUpstream,
+                out.push(finding(
+                    LawId::SourceOffUpstream,
                     sentence,
-                    path: vec![step.clone()],
-                });
+                    vec![step.clone()],
+                ));
             }
             let unsummed = s.sum.as_deref().is_none_or(|x| x.is_empty() || x == "SKIP");
             if bin && !s.vcs && unsummed {
                 let sentence = format!(
                     "{loc} downloads the binary {url} with no checksum, so nothing ties it to what upstream published."
                 );
-                out.push(Finding {
-                    law: LawId::BinChecksumUpstream,
-                    sentence,
-                    path: vec![step],
-                });
+                out.push(finding(LawId::BinChecksumUpstream, sentence, vec![step]));
             }
         }
     }
@@ -408,11 +419,11 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
             explained.insert(sink);
             if seen.insert((LawId::FetchExecuteUnverified, sink)) {
                 let (s, path) = v.narrate(&p);
-                out.push(Finding {
-                    law: LawId::FetchExecuteUnverified,
-                    sentence: format!("{s}, and no checksum checks it first."),
+                out.push(finding(
+                    LawId::FetchExecuteUnverified,
+                    format!("{s}, and no checksum checks it first."),
                     path,
-                });
+                ));
             }
         }
         if let Some(p) = v
@@ -422,16 +433,15 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
             explained.insert(sink);
             if seen.insert((LawId::DecodeExecute, sink)) {
                 let (s, path) = v.narrate(&p);
-                out.push(Finding {
-                    law: LawId::DecodeExecute,
-                    sentence: format!("{s}, so decoded data is run as code."),
+                out.push(finding(
+                    LawId::DecodeExecute,
+                    format!("{s}, so decoded data is run as code."),
                     path,
-                });
+                ));
             }
         }
     }
     v.check_files(&mut out);
-    v.check_sources(&mut out);
     for (i, n) in g.nodes.iter().enumerate() {
         if n.kind == K::Process && n.unresolved && !explained.contains(&(i as NodeId)) {
             let at = n
@@ -443,11 +453,154 @@ pub(crate) fn check(v: &View) -> Vec<Finding> {
                 "{} at {at} runs text this analysis cannot resolve, so what it does is unknown.",
                 n.label
             );
-            out.push(Finding {
-                law: LawId::UnresolvedDynamic,
+            out.push(finding(
+                LawId::UnresolvedDynamic,
                 sentence,
-                path: vec![v.step(i as NodeId, n.loc.clone())],
-            });
+                vec![v.step(i as NodeId, n.loc.clone())],
+            ));
+        }
+    }
+    out
+}
+
+fn step_of(g: &Graph, n: NodeId) -> Step {
+    let node = &g.nodes[n as usize];
+    Step {
+        node: node.key.clone(),
+        label: node.label.clone(),
+        loc: node.loc.clone(),
+    }
+}
+
+/// What the run did that the package's text never said. Absence from the static graph is the signal.
+pub(crate) fn mismatch(stat: &Graph, obs: &Graph) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let says_network = stat
+        .edges
+        .iter()
+        .any(|e| e.kind == E::Fetches && stat.nodes[e.dst as usize].kind == K::Process);
+    for e in &obs.edges {
+        let (s, d) = (&obs.nodes[e.src as usize], &obs.nodes[e.dst as usize]);
+        let at = e
+            .loc
+            .as_ref()
+            .map(|l| format!(" at {l}"))
+            .unwrap_or_default();
+        let hit = match e.kind {
+            E::Reads
+                if s.kind == K::File
+                    && paths::credential(&s.key).is_some()
+                    && stat.find(&s.key).is_none() =>
+            {
+                Some((
+                    e.src,
+                    format!(
+                        "{} read {}{at}, which nothing in the package's files says it does.",
+                        d.label, s.label
+                    ),
+                ))
+            }
+            E::Writes
+                if d.kind == K::File
+                    && (paths::outside_package(&d.key) || paths::persistence(&d.key))
+                    && stat.find(&d.key).is_none() =>
+            {
+                Some((
+                    e.dst,
+                    format!(
+                        "{} wrote {}{at}, which nothing in the package's files says it does.",
+                        s.label, d.label
+                    ),
+                ))
+            }
+            E::Sends if d.kind == K::Socket && s.stage != Stage::Prepare && !says_network => {
+                Some((
+                    e.dst,
+                    format!(
+                        "{} tried to reach {}{at}, and nothing in the package's files says it uses the network.",
+                        s.label, d.label
+                    ),
+                ))
+            }
+            _ => None,
+        };
+        if let Some((n, sentence)) = hit {
+            if seen.insert(n) {
+                let mut f = finding(LawId::ObservedMismatch, sentence, vec![step_of(obs, n)]);
+                f.origin = Origin::Observed;
+                out.push(f);
+            }
+        }
+    }
+    out
+}
+
+/// The version out of a key, and a VCS fragment with it, so a bump is not a change.
+fn plain(key: &str, ver: &str) -> String {
+    let k = key.split('#').next().unwrap_or(key);
+    if ver.is_empty() {
+        k.to_owned()
+    } else {
+        k.replace(ver, "$pkgver")
+    }
+}
+
+/// Edges that matter when they appear between versions, and checks that vanish.
+pub(crate) fn diff(new: &Graph, old: &Graph, explained: &[String]) -> Vec<Finding> {
+    let edge_key = |g: &Graph, e: &Edge| {
+        (
+            e.kind,
+            plain(&g.nodes[e.src as usize].key, &g.pkgver),
+            plain(&g.nodes[e.dst as usize].key, &g.pkgver),
+        )
+    };
+    let before: HashSet<_> = old.edges.iter().map(|e| edge_key(old, e)).collect();
+    let after: HashSet<_> = new.edges.iter().map(|e| edge_key(new, e)).collect();
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for e in &new.edges {
+        let (s, d) = (&new.nodes[e.src as usize], &new.nodes[e.dst as usize]);
+        let scriptlet = s.stage == Stage::Scriptlet || d.stage == Stage::Scriptlet;
+        let wanted = matches!(e.kind, E::Fetches | E::Executes | E::Decodes | E::Sends)
+            || (scriptlet && matches!(e.kind, E::Reads | E::Writes));
+        if !wanted || before.contains(&edge_key(new, e)) {
+            continue;
+        }
+        // Name the thing, not the process: one new URL is one question, however many edges it adds.
+        let (anchor, other) = if s.kind == K::Process { (d, s) } else { (s, d) };
+        let key = plain(&anchor.key, &new.pkgver);
+        if explained.iter().any(|x| *x == key || *x == anchor.key) || !seen.insert(key) {
+            continue;
+        }
+        let at = e
+            .loc
+            .as_ref()
+            .map(|l| format!(" at {l}"))
+            .unwrap_or_default();
+        let sentence = format!(
+            "{} now touches {}{at}, which the accepted version did not, and nobody has explained why.",
+            other.label, anchor.label
+        );
+        out.push(finding(
+            LawId::UnexplainedNewEdge,
+            sentence,
+            vec![step_of(new, e.src), step_of(new, e.dst)],
+        ));
+    }
+    for e in old.edges.iter().filter(|e| e.kind == E::Verifies) {
+        let k = edge_key(old, e);
+        if !after.contains(&k) && !explained.contains(&k.2) && seen.insert(k.2.clone()) {
+            let d = &old.nodes[e.dst as usize];
+            let sentence = format!(
+                "{} had a checksum in the accepted version and has none now, and nobody has explained why.",
+                d.label
+            );
+            out.push(finding(
+                LawId::UnexplainedNewEdge,
+                sentence,
+                vec![step_of(old, e.dst)],
+            ));
         }
     }
     out
