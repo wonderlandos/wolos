@@ -57,14 +57,7 @@ const PERSISTENCE_DIRS: &[&str] = &[
     "/usr/share/libalpm/hooks",
 ];
 
-const PERSISTENCE_FILES: &[&str] = &[
-    "/etc/crontab",
-    "/etc/anacrontab",
-    "/etc/profile",
-    "/etc/bash.bashrc",
-    "/etc/rc.local",
-    "/etc/ld.so.preload",
-];
+const PERSISTENCE_FILES: &[&str] = &["/etc/crontab", "/etc/anacrontab", "/etc/profile", "/etc/bash.bashrc", "/etc/rc.local", "/etc/ld.so.preload"];
 
 const HOME_PERSISTENCE: &[&str] = &[
     ".bashrc",
@@ -82,32 +75,15 @@ const HOME_PERSISTENCE: &[&str] = &[
     ".ssh/authorized_keys",
 ];
 
-const TOOL_CACHES: &[&str] = &[
-    ".cache",
-    ".cargo",
-    ".rustup",
-    ".npm",
-    ".node-gyp",
-    ".yarn",
-    ".pnpm-store",
-    ".gradle",
-    ".m2",
-    ".nuget",
-    ".dotnet",
-    ".local/share/pnpm",
-    "go",
-];
+const TOOL_CACHES: &[&str] = &[".cache", ".cargo", ".rustup", ".npm", ".node-gyp", ".yarn", ".pnpm-store", ".gradle", ".m2", ".nuget", ".dotnet", ".local/share/pnpm", "go"];
 
 /// Paths inside the build's own folders are its own files, whatever they are called.
 pub fn inside_build(p: &str) -> bool {
-    ["$srcdir", "$pkgdir", "$startdir"]
-        .iter()
-        .any(|r| p == *r || p.strip_prefix(r).is_some_and(|x| x.starts_with('/')))
+    ["$srcdir", "$pkgdir", "$startdir"].iter().any(|r| p == *r || p.strip_prefix(r).is_some_and(|x| x.starts_with('/')))
 }
 
 fn is_or_under(p: &str, dir: &str) -> bool {
-    p.strip_prefix(dir)
-        .is_some_and(|r| r.is_empty() || r.starts_with('/'))
+    p.strip_prefix(dir).is_some_and(|r| r.is_empty() || r.starts_with('/'))
 }
 
 /// `$pkgdir/etc/x` is `/etc/x` once installed.
@@ -120,37 +96,17 @@ pub fn credential(p: &str) -> Option<&'static str> {
     if inside_build(p) {
         return None;
     }
-    CREDENTIALS
-        .iter()
-        .find(|(c, _)| {
-            if c.ends_with('/') {
-                p.contains(c)
-            } else {
-                p.contains(c)
-                    && !p[p.find(c).unwrap_or(0) + c.len()..]
-                        .starts_with(|x: char| x.is_alphanumeric())
-            }
-        })
-        .map(|x| x.1)
+    CREDENTIALS.iter().find(|(c, _)| if c.ends_with('/') { p.contains(c) } else { p.contains(c) && !p[p.find(c).unwrap_or(0) + c.len()..].starts_with(|x: char| x.is_alphanumeric()) }).map(|x| x.1)
 }
 
 /// Does something here start again by itself after a reboot or login?
 pub fn persistence(p: &str) -> bool {
     let i = installed(p);
-    let in_dir = PERSISTENCE_DIRS.iter().any(|d| {
-        i.strip_prefix(d)
-            .is_some_and(|r| r.len() > 1 && r.starts_with('/'))
-    });
+    let in_dir = PERSISTENCE_DIRS.iter().any(|d| i.strip_prefix(d).is_some_and(|r| r.len() > 1 && r.starts_with('/')));
     if in_dir || PERSISTENCE_FILES.contains(&i) {
         return true;
     }
-    let home = i
-        .strip_prefix("$HOME/")
-        .or_else(|| i.strip_prefix("/root/"))
-        .or_else(|| {
-            i.strip_prefix("/home/")
-                .and_then(|r| r.split_once('/').map(|x| x.1))
-        });
+    let home = i.strip_prefix("$HOME/").or_else(|| i.strip_prefix("/root/")).or_else(|| i.strip_prefix("/home/").and_then(|r| r.split_once('/').map(|x| x.1)));
     home.is_some_and(|h| HOME_PERSISTENCE.iter().any(|d| is_or_under(h, d)))
 }
 
@@ -161,15 +117,11 @@ pub fn inert_in_package(p: &str) -> bool {
 
 /// A build may scribble here without leaving its folders in any way that matters.
 fn scratch(p: &str) -> bool {
-    p.starts_with("pipe:")
-        || ["/tmp", "/var/tmp", "/dev", "/proc", "/run/user"]
-            .iter()
-            .any(|d| is_or_under(p, d))
+    p.starts_with("pipe:") || ["/tmp", "/var/tmp", "/dev", "/proc", "/run/user"].iter().any(|d| is_or_under(p, d))
 }
 
 fn tool_cache(p: &str) -> bool {
-    p.strip_prefix("$HOME/")
-        .is_some_and(|h| TOOL_CACHES.iter().any(|d| is_or_under(h, d)))
+    p.strip_prefix("$HOME/").is_some_and(|h| TOOL_CACHES.iter().any(|d| is_or_under(h, d)))
 }
 
 /// A write a build has no business making. Paths we could not resolve are not judged here.

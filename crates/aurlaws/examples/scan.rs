@@ -6,9 +6,7 @@ use std::path::Path;
 
 fn text_files(dir: &Path) -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return out;
-    };
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') || name == "PKGBUILD" || !e.path().is_file() {
@@ -26,9 +24,7 @@ fn text_files(dir: &Path) -> HashMap<String, String> {
 fn main() {
     for d in std::env::args().skip(1) {
         let dir = Path::new(&d);
-        let Ok(p) = std::fs::read_to_string(dir.join("PKGBUILD")) else {
-            continue;
-        };
+        let Ok(p) = std::fs::read_to_string(dir.join("PKGBUILD")) else { continue };
         let t = std::time::Instant::now();
         let r = aurlaws::judge_files(&p, &text_files(dir));
         let line = serde_json::json!({

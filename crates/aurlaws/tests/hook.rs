@@ -52,7 +52,7 @@ fn pass_says_what_it_means_and_never_more() {
     assert_eq!(v["verdict"], "pass", "{v}");
     let e = v["evidence"].to_string().to_lowercase();
     assert!(e.contains("no law"), "{e}");
-    assert!(e.contains("does not mean"), "{e}");
+    assert!(e.contains("no promise"), "{e}");
 }
 
 #[test]

@@ -7,22 +7,7 @@ use crate::{Report, hosts, paths};
 use std::fmt::Write;
 
 /// In the order of `type Law` in `laws/rules.bend`.
-pub const LAW_NAMES: [&str; 14] = [
-    "FetchExecuteUnverified",
-    "DecodeExecute",
-    "UnresolvedDynamic",
-    "WriteOutsidePackage",
-    "ReadCredentials",
-    "CredentialToNetwork",
-    "ScriptletUndeclaredFile",
-    "SourceOffUpstream",
-    "UndeclaredPersistence",
-    "PostinstallNetwork",
-    "BinChecksumUpstream",
-    "UnexplainedNewEdge",
-    "ObservedMismatch",
-    "IncompleteEvidence",
-];
+pub const LAW_NAMES: [&str; 14] = ["FetchExecuteUnverified", "DecodeExecute", "UnresolvedDynamic", "WriteOutsidePackage", "ReadCredentials", "CredentialToNetwork", "ScriptletUndeclaredFile", "SourceOffUpstream", "UndeclaredPersistence", "PostinstallNetwork", "BinChecksumUpstream", "UnexplainedNewEdge", "ObservedMismatch", "IncompleteEvidence"];
 
 fn hop(k: E) -> Option<&'static str> {
     Some(match k {
@@ -61,11 +46,7 @@ pub fn term(r: &Report, package_files: &[String]) -> String {
                 if n.key.starts_with("$pkgdir") {
                     t.push("R.Packaged{}");
                 }
-                if n.key.starts_with('/')
-                    && !paths::harmless(&n.key)
-                    && !paths::persistence(&n.key)
-                    && !v.declared(&n.key)
-                {
+                if n.key.starts_with('/') && !paths::harmless(&n.key) && !paths::persistence(&n.key) && !v.declared(&n.key) {
                     t.push("R.Foreign{}");
                 }
             }
@@ -110,10 +91,7 @@ pub fn term(r: &Report, package_files: &[String]) -> String {
     let bin = m.pkgnames.iter().any(|n| n.ends_with("-bin"));
     for (k, s) in m.sources.iter().enumerate() {
         let Some(url) = &s.url else { continue };
-        let summed = s
-            .sum
-            .as_deref()
-            .is_some_and(|x| !x.is_empty() && x != "SKIP");
+        let summed = s.sum.as_deref().is_some_and(|x| !x.is_empty() && x != "SKIP");
         let mut t = Vec::new();
         let paper = hosts::paperwork(url) && hosts::paperwork(&s.name);
         if !paper && !hosts::on_upstream(&m.url, url, &m.pkgnames, s.pinned || summed) {
@@ -143,22 +121,8 @@ pub fn term(r: &Report, package_files: &[String]) -> String {
             tagged.push_str(", ");
         }
         first = false;
-        let _ = write!(
-            tagged,
-            "R.Edge{{{}, {}, {h}, {}}}",
-            node(e.src),
-            node(e.dst),
-            e.seq
-        );
+        let _ = write!(tagged, "R.Edge{{{}, {}, {h}, {}}}", node(e.src), node(e.dst), e.seq);
     }
-    let _ = write!(
-        tagged,
-        "], {}}}",
-        if package_files.is_empty() {
-            "False{}"
-        } else {
-            "True{}"
-        }
-    );
+    let _ = write!(tagged, "], {}}}", if package_files.is_empty() { "False{}" } else { "True{}" });
     tagged
 }

@@ -117,5 +117,5 @@ fn nothing_ever_says_safe() {
     assert_eq!(r.verdict, Verdict::NoLawBroken);
     let text = serde_json::to_string(&r).unwrap().to_lowercase();
     assert!(!text.contains("\"safe\""), "{text}");
-    assert!(r.disclaimer.contains("does not mean"), "{}", r.disclaimer);
+    assert!(r.disclaimer.contains("no promise"), "{}", r.disclaimer);
 }

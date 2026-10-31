@@ -16,9 +16,7 @@ const MAX_FILE: u64 = 1_000_000;
 
 fn text_files(dir: &Path) -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return out;
-    };
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') || name == "PKGBUILD" || !e.path().is_file() {
@@ -36,23 +34,10 @@ fn text_files(dir: &Path) -> HashMap<String, String> {
 
 /// The built package's paths and install script, read with bsdtar and never unpacked.
 fn artifact(path: &str) -> Option<(Vec<String>, Option<String>)> {
-    let o = Command::new("bsdtar")
-        .args(["-tf", path])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())?;
+    let o = Command::new("bsdtar").args(["-tf", path]).output().ok().filter(|o| o.status.success())?;
     let list = String::from_utf8_lossy(&o.stdout);
-    let files = list
-        .lines()
-        .filter(|l| !l.starts_with('.'))
-        .map(|l| format!("/{}", l.trim_end_matches('/')))
-        .collect();
-    let script = Command::new("bsdtar")
-        .args(["-xOf", path, ".INSTALL"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success() && !o.stdout.is_empty())
-        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    let files = list.lines().filter(|l| !l.starts_with('.')).map(|l| format!("/{}", l.trim_end_matches('/'))).collect();
+    let script = Command::new("bsdtar").args(["-xOf", path, ".INSTALL"]).output().ok().filter(|o| o.status.success() && !o.stdout.is_empty()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
     Some((files, script))
 }
 
@@ -62,40 +47,19 @@ fn published(dir: &Path, extra: Option<&str>) -> Option<Vec<(String, String)>> {
     if let Ok(rd) = std::fs::read_dir(dir.join(".src")) {
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().to_ascii_lowercase();
-            if n.contains("sha256sum")
-                || n.contains("sha512sum")
-                || n.starts_with("checksums")
-                || n.ends_with(".sha256")
-                || n.ends_with(".sha512")
-            {
+            if n.contains("sha256sum") || n.contains("sha512sum") || n.starts_with("checksums") || n.ends_with(".sha256") || n.ends_with(".sha512") {
                 paths.push(e.path());
             }
         }
     }
     let mut out = Vec::new();
     for p in &paths {
-        let Ok(t) = std::fs::read_to_string(p) else {
-            continue;
-        };
-        let stem = p
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let Ok(t) = std::fs::read_to_string(p) else { continue };
+        let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         for l in t.lines().take(10_000) {
             let mut w = l.split_whitespace();
-            let Some(sum) = w
-                .next()
-                .filter(|s| s.len() >= 32 || s.bytes().all(|b| b.is_ascii_hexdigit()))
-            else {
-                continue;
-            };
-            let name = w.next().map(|n| {
-                n.trim_start_matches('*')
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(n)
-                    .to_owned()
-            });
+            let Some(sum) = w.next().filter(|s| s.len() >= 32 || s.bytes().all(|b| b.is_ascii_hexdigit())) else { continue };
+            let name = w.next().map(|n| n.trim_start_matches('*').rsplit('/').next().unwrap_or(n).to_owned());
             out.push((sum.to_owned(), name.unwrap_or_else(|| stem.clone())));
         }
     }
@@ -103,15 +67,12 @@ fn published(dir: &Path, extra: Option<&str>) -> Option<Vec<(String, String)>> {
 }
 
 fn usage() -> ! {
-    eprintln!(
-        "usage: wopkg-aurlaws --dir DIR [--artifact FILE] [--trace FILE] [--graph FILE] [--published FILE] [--cache DIR] --json"
-    );
+    eprintln!("usage: wopkg-aurlaws --dir DIR [--artifact FILE] [--trace FILE] [--graph FILE] [--published FILE] [--cache DIR] --json");
     std::process::exit(2);
 }
 
 fn main() {
-    let (mut dir, mut art, mut trace, mut graph, mut sums, mut cache) =
-        (None, None, None, None, None, None);
+    let (mut dir, mut art, mut trace, mut graph, mut sums, mut cache) = (None, None, None, None, None, None);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -142,9 +103,7 @@ fn main() {
                 files.insert("built package's install script".to_owned() + ".install", s);
             }
         }
-        Some((a, None)) => said.push(format!(
-            "The built package {a} could not be read, so its file list was not used."
-        )),
+        Some((a, None)) => said.push(format!("The built package {a} could not be read, so its file list was not used.")),
         None => said.push("No built package was given, so its file list was not used.".to_owned()),
     }
     match trace {
@@ -155,29 +114,16 @@ fn main() {
                 ev.gaps.extend(observed::damage(&text, &g));
                 ev.observed.push(g);
             }
-            Err(_) => ev.gaps.push(format!(
-                "The build trace {t} is missing, so what the build did was not seen."
-            )),
+            Err(_) => ev.gaps.push(format!("The build trace {t} is missing, so what the build did was not seen.")),
         },
-        None => said.push(
-            "The build was not traced, so only what the package's files say was judged.".to_owned(),
-        ),
+        None => said.push("The build was not traced, so only what the package's files say was judged.".to_owned()),
     }
-    let mut trees: Vec<_> = std::fs::read_dir(dir.join(".build"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path().join("src"))
-        .filter(|p| p.is_dir())
-        .collect();
+    let mut trees: Vec<_> = std::fs::read_dir(dir.join(".build")).into_iter().flatten().flatten().map(|e| e.path().join("src")).filter(|p| p.is_dir()).collect();
     trees.sort();
     if trees.is_empty() {
         said.push("The upstream source was not read, because it is not unpacked here.".to_owned());
     }
-    let opts = upstream::Options {
-        cache: cache.map(Into::into),
-        jobs: 0,
-    };
+    let opts = upstream::Options { cache: cache.map(Into::into), jobs: 0 };
     for t in &trees {
         let scan = upstream::scan(t, &opts);
         ev.gaps.extend(scan.gaps());
@@ -185,18 +131,12 @@ fn main() {
     }
     ev.published = published(dir, sums.as_deref());
     let r = aurlaws::judge_with(&pkgbuild, &files, &ev);
-    if r.meta.pkgnames.iter().any(|n| n.ends_with("-bin"))
-        && ev.published.as_ref().is_none_or(|l| l.is_empty())
-    {
+    if r.meta.pkgnames.iter().any(|n| n.ends_with("-bin")) && ev.published.as_ref().is_none_or(|l| l.is_empty()) {
         said.push("No checksum list from upstream was found, so the binary was not compared with what upstream published.".to_owned());
     }
     let mut drawn = None;
     if let Some(g) = graph {
-        let text = if g.ends_with(".dot") {
-            render::dot(&r.graph, &r.findings)
-        } else {
-            render::svg(&r.graph, &r.findings)
-        };
+        let text = if g.ends_with(".dot") { render::dot(&r.graph, &r.findings) } else { render::svg(&r.graph, &r.findings) };
         if std::fs::write(&g, text).is_err() {
             said.push(format!("The graph could not be written to {g}."));
         } else {
@@ -213,10 +153,7 @@ fn main() {
         None => format!("{}.", n.text),
     }));
     evidence.push(r.disclaimer.clone());
-    let blocked = r.findings.iter().any(|f| {
-        f.law == LawId::CredentialToNetwork
-            || (f.origin == Origin::Observed && f.severity == Severity::High)
-    });
+    let blocked = r.findings.iter().any(|f| f.law == LawId::CredentialToNetwork || (f.origin == Origin::Observed && f.severity == Severity::High));
     let (verdict, state) = match (blocked, r.verdict == Verdict::NeedsReview) {
         (true, _) => ("block", "Blocked"),
         (_, true) => ("flag", "Needs Review"),
