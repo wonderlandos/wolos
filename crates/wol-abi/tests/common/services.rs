@@ -35,6 +35,7 @@ fn answer(c: &Call) -> Answer {
         Call::SearchQuery { .. } => {
             Answer::with(json!({"results": [{"title": "Notes", "kind": "App"}]}))
         }
+        Call::AccountInfo {} => Answer::with(json!({"name": "alice", "full_name": "Alice"})),
         _ => Answer::ok(),
     }
 }
@@ -122,6 +123,7 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "found: 1",
             "asked: term",
             "open: note-1",
+            "account: alice",
         ]
     );
     let names: Vec<String> = calls
@@ -156,6 +158,7 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "search.query",
             "search.provide",
             "search.reply",
+            "account.info",
         ]
     );
 }

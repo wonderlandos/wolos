@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 9
+#define WOL_VERSION_MINOR 10
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -412,6 +412,14 @@ wol_status wol_search_reply_add(wol_search_reply *reply, const char *key, size_t
                                 size_t detail_len, wol_error **error);
 wol_search_provider *wol_search_provider_retain(wol_search_provider *provider);
 void wol_search_provider_release(wol_search_provider *provider);
+
+/* ---- 1.10: accounts (WOL_1.10) ---- */
+
+/*
+ * The account running this app, and no other. Permission: account-info.
+ * Keys: name, full_name (the name when the account has no other).
+ */
+wol_status wol_account_copy_info(wol_context *context, wol_info **out, wol_error **error);
 
 #ifdef __cplusplus
 }

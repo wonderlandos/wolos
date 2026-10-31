@@ -109,4 +109,7 @@ provider = Pointer(LibWol::SearchProvider).null
 ok LibWol.wol_search_provide(ctx, on_query, on_open, nil, pointerof(provider), pointerof(err))
 100.times { break if Found.opened; ok LibWol.wol_context_dispatch(ctx, 100, pointerof(err)) }
 LibWol.wol_search_provider_release(provider)
+ok LibWol.wol_account_copy_info(ctx, pointerof(info), pointerof(err))
+puts "account: #{str(LibWol.wol_info_get_text(field(info, "name")))}"
+LibWol.wol_info_release(info)
 LibWol.wol_context_release(ctx)

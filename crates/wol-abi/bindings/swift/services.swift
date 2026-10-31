@@ -95,4 +95,7 @@ ok(wol_search_provide(ctx, { _, r, t, _ in
 }, { _, k, _ in print("open: \(text(k))"); opened = true }, nil, &provider, &err))
 for _ in 0..<100 where !opened { ok(wol_context_dispatch(ctx, 100, &err)) }
 wol_search_provider_release(provider)
+ok(wol_account_copy_info(ctx, &info, &err))
+print("account: \(text(wol_info_get_text(field(info, "name"))))")
+wol_info_release(info)
 wol_context_release(ctx)

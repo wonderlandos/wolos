@@ -254,6 +254,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "only apps you allow are asked for search rows, and each sees only the text of the search",
     ),
+    (
+        "account-info",
+        Enforcement::System,
+        "apps ask WolOS, which answers only about the account running them",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

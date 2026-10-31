@@ -49,7 +49,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 15 | services: the app's background jobs (wold, per account) | `wol_service_` | grant `background` |
 | 16 | packages: installed apps, ask to install | `wol_package_` | through wol-admind |
 | 18 | answers: one read-only tree for what a service returns | `wol_info_` | 1.4 |
-| 17 | accounts: who is signed in, name, picture | `wol_account_` | |
+| 17 | accounts: who is signed in, name, picture | `wol_account_` | 1.10 `_copy_info`: grant `account-info`; the caller's own account, from the kernel's uid. Accounts have no picture yet |
 
 ## Event topics (`wol_subscribe`)
 

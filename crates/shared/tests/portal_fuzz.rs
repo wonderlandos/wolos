@@ -18,7 +18,8 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 29] = [
+const SEEDS: [&str; 30] = [
+    r#"{"call":"account.info"}"#,
     r#"{"call":"search.query","text":"note"}"#,
     r#"{"call":"search.provide"}"#,
     r#"{"call":"search.reply","id":1,"results":[{"key":"a","title":"A note"}]}"#,

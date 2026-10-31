@@ -302,6 +302,7 @@ fn doing(capability: &str) -> Option<&'static str> {
         "audio-control" => "change the volume",
         "search" => "search",
         "search-provider" => "add search results",
+        "account-info" => "read your account name",
         _ => return None,
     })
 }
@@ -548,6 +549,13 @@ fn decide<W: Write + Send>(
             });
             Answer::ok()
         }
+        Call::AccountInfo {} => std::fs::read_to_string("/etc/passwd")
+            .ok()
+            .and_then(|t| crate::facts::account(&t, caller.uid))
+            .map_or_else(
+                || Answer::err(Code::Unavailable, "This account has no name."),
+                Answer::with,
+            ),
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),

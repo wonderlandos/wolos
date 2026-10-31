@@ -53,6 +53,7 @@ pub const CAPABILITIES: &[&str] = &[
     "audio-control",
     "search",
     "search-provider",
+    "account-info",
 ];
 
 /// A row a search provider offers: `key` comes back to the app when the person opens it.
@@ -173,6 +174,9 @@ pub enum Call {
     /// The person opened a provider's row (from Spotlight).
     #[serde(rename = "search.open")]
     SearchOpen { provider: i32, key: String },
+    /// The caller's own account.
+    #[serde(rename = "account.info")]
+    AccountInfo {},
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -346,6 +350,7 @@ impl Call {
             Self::SearchQuery { .. } => Need::Grant("search"),
             Self::SearchProvide {} | Self::SearchReply { .. } => Need::Grant("search-provider"),
             Self::SearchCollect { .. } | Self::SearchOpen { .. } => Need::Spotlight,
+            Self::AccountInfo {} => Need::Grant("account-info"),
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -428,6 +433,7 @@ impl Call {
                 }
                 Ok(())
             }
+            Self::AccountInfo {} => Ok(()),
             Self::SessionAnswer { error, .. } => {
                 if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
                     return Err("A desktop answer's message is short text.".into());

@@ -27,6 +27,17 @@ pub fn power(h: &dyn Host) -> Value {
     v
 }
 
+/// The account `uid` from a passwd file: its login and the full name, nothing else of the line.
+pub fn account(passwd: &str, uid: u32) -> Option<Value> {
+    let line = passwd.lines().find_map(|l| {
+        let f: Vec<&str> = l.split(':').collect();
+        (f.len() >= 5 && f[2].parse() == Ok(uid)).then_some(f)
+    })?;
+    let full = line[4].split(',').next().unwrap_or_default();
+    let full = if full.is_empty() { line[0] } else { full };
+    Some(json!({ "name": line[0], "full_name": full }))
+}
+
 pub fn network(h: &dyn Host) -> Value {
     let n = netinfo::read(h);
     let kind = |k: IfKind| match k {
@@ -78,6 +89,20 @@ impl Inhibit for Logind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_account_is_named_by_its_uid_alone() {
+        let t = "root:x:0:0:root:/root:/bin/bash\n\
+                 alice:x:1000:1000:Alice Liddell,Room 1,,:/home/alice:/bin/zsh\n\
+                 bob:x:1001:1001::/home/bob:/bin/zsh\n";
+        assert_eq!(
+            account(t, 1000),
+            Some(json!({"name": "alice", "full_name": "Alice Liddell"}))
+        );
+        assert_eq!(account(t, 1001).unwrap()["full_name"], "bob");
+        assert_eq!(account(t, 7), None);
+        assert_eq!(account("not a line\n", 0), None);
+    }
     use wol_core::system::fake::FakeHost;
 
     #[test]
