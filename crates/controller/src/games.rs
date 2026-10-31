@@ -105,7 +105,32 @@ fn launch(env: &mut dyn Env, url: Option<&str>) -> i32 {
         }
         notify(env, notice::PREPARING);
     }
-    let mut argv = vec![doctor::STEAM_BIN.to_string()];
+    crate::run::exec(env, &steam_argv(url))
+}
+
+/// Malloc on transparent huge pages for Steam's children: Mesa's shader compilers run in them.
+const STEAM_TUNABLES: &str = "GLIBC_TUNABLES=glibc.malloc.hugetlb=1";
+
+fn steam_argv(url: Option<&str>) -> Vec<String> {
+    let mut argv = vec![
+        "/usr/bin/env".to_string(),
+        STEAM_TUNABLES.to_string(),
+        doctor::STEAM_BIN.to_string(),
+    ];
     argv.extend(url.map(String::from));
-    crate::run::exec(env, &argv)
+    argv
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steam_compiles_shaders_on_huge_pages() {
+        let argv = steam_argv(Some("steam://rungameid/620"));
+        assert_eq!(argv[0], "/usr/bin/env");
+        assert_eq!(argv[1], "GLIBC_TUNABLES=glibc.malloc.hugetlb=1");
+        assert_eq!(argv[2], doctor::STEAM_BIN);
+        assert_eq!(argv[3], "steam://rungameid/620");
+    }
 }
