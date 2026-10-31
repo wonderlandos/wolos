@@ -92,6 +92,16 @@ fn lights_exceptions_follow_the_chrome_policy() {
     assert!(plugin.contains("wol-lights-close"));
 }
 
+/// Live: un-zooming put a window back where the layout first saw it, not where wol-hypr placed it:
+/// 26 px off on Wayland, and at 0,0 on Xwayland (which maps there) with the title bar and its
+/// buttons above the screen. Placement has to go through the layout so it remembers the box.
+#[test]
+fn placement_goes_through_the_layout() {
+    let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
+    assert!(plugin.contains("g_layoutManager->setTargetGeom("));
+    assert!(!plugin.contains("setPositionGlobal"));
+}
+
 /// Live: dragging a window by its title bar and letting go over the menu bar or the Dock left
 /// the drag running: the window stuck to the pointer and clicks went nowhere. The bar that
 /// started a press or drag must see its release wherever it happens.
