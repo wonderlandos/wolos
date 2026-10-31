@@ -7,7 +7,7 @@ use shared::portal::{Answer, Ask, Call, Code, Need};
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::os::fd::OwnedFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 use wol_core::system::Host;
@@ -308,6 +308,7 @@ fn doing(capability: &str) -> Option<&'static str> {
         "search-provider" => "add search results",
         "account-info" => "read your account name",
         "ipc" => "send or receive messages from other apps",
+        "devices" => "use connected devices",
         _ => return None,
     })
 }
@@ -399,6 +400,9 @@ fn decide<W: Write + Send>(
         Need::Grant(cap) => grants.granted(&caller.app, cap),
         Need::Shower => grants.shows_notifications(&caller.app),
         Need::Spotlight => caller.app == SPOTLIGHT,
+        Need::Device => call.device().is_some_and(|(v, p)| {
+            grants.granted(&caller.app, &wol_core::consent::device_grant(v, p))
+        }),
         Need::Peer => call
             .peer()
             .is_some_and(|p| grants.granted(&caller.app, &wol_core::consent::peer_grant(p))),
@@ -411,6 +415,7 @@ fn decide<W: Write + Send>(
                 Need::Shower => "Only the desktop answers notifications.".into(),
                 Need::Spotlight => "Only Spotlight collects search results.".into(),
                 Need::Peer => denial("ipc", &caller.app),
+                Need::Device => denial("devices", &caller.app),
             },
         );
     }
@@ -598,6 +603,20 @@ fn decide<W: Write + Send>(
             let hears = |app: &str| grants.granted(app, &grant);
             st.endpoints.publish(bus, caller, &topic, &body, hears);
             Answer::ok()
+        }
+        Call::DeviceList {} => Answer::with(crate::devices::list(
+            Path::new(crate::devices::USB_SYSFS),
+            &*st.host,
+        )),
+        Call::DeviceOpen { vendor, product } => {
+            let (sys, nodes) = (crate::devices::USB_SYSFS, crate::devices::USB_NODES);
+            match crate::devices::open(Path::new(sys), Path::new(nodes), vendor, product) {
+                Ok((name, file)) => {
+                    extra.file = Some(file.into());
+                    Answer::with(serde_json::json!({ "name": name }))
+                }
+                Err(m) => Answer::err(Code::Unavailable, m),
+            }
         }
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
@@ -1194,6 +1213,31 @@ mod tests {
         drop(extra);
         let nobody = send("/usr/bin/notes", &mail);
         assert_eq!(nobody.code, Some(Code::Unavailable));
+    }
+
+    #[test]
+    fn opening_a_device_needs_a_grant_for_that_device() {
+        let st = State::default();
+        let bus = Bus::<UnixStream>::default();
+        let g = Fixed(&[
+            ("/usr/bin/a", "device:1234:5678"),
+            ("/usr/bin/b", "devices"),
+        ]);
+        let open = |who: &str, vendor: u32| {
+            let line = format!(r#"{{"call":"device.open","vendor":{vendor},"product":22136}}"#);
+            handle(&line, Some(&caller(who)), &g, &bus, &st).code
+        };
+        assert_eq!(
+            open("/usr/bin/a", 0x1234),
+            Some(Code::Unavailable),
+            "allowed: gone"
+        );
+        assert_eq!(open("/usr/bin/a", 0x1235), Some(Code::PermissionDenied));
+        assert_eq!(
+            open("/usr/bin/b", 0x1234),
+            Some(Code::PermissionDenied),
+            "listing only"
+        );
     }
 
     #[test]

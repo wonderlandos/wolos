@@ -1,0 +1,3 @@
+# libwol 1.12 exports (WOL_1.12). Never edit a shipped line.
+wol_device_copy_list@WOL_1.12
+wol_device_open@WOL_1.12

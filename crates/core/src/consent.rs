@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 pub const FILE: &str = "/etc/wolos/consent.json";
 
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
-pub const CAPABILITIES: [&str; 18] = [
+pub const CAPABILITIES: [&str; 19] = [
     "screen-capture",
     "notifications",
     "input-injection",
@@ -27,11 +27,14 @@ pub const CAPABILITIES: [&str; 18] = [
     "search-provider",
     "account-info",
     "ipc",
+    "devices",
 ];
 
 const MAX_APP: usize = 1024;
 /// Before the app in a grant for one peer: the holder may send that app messages.
 const PEER: &str = "ipc:";
+/// Before the device in a grant for one USB device.
+const DEVICE: &str = "device:";
 
 /// The grant that lets an app send messages to `peer`.
 pub fn peer_grant(peer: &str) -> String {
@@ -41,6 +44,20 @@ pub fn peer_grant(peer: &str) -> String {
 /// The app a grant lets its holder send messages to.
 pub fn peer_of(capability: &str) -> Option<&str> {
     capability.strip_prefix(PEER)
+}
+
+/// The grant that lets an app open USB device `vendor`:`product`.
+pub fn device_grant(vendor: u32, product: u32) -> String {
+    format!("{DEVICE}{vendor:04x}:{product:04x}")
+}
+
+/// The device a grant lets its holder open, as `vendor:product`.
+pub fn device_of(capability: &str) -> Option<&str> {
+    let d = capability.strip_prefix(DEVICE)?;
+    let hex = |s: &[u8]| s.len() == 4 && s.iter().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    d.split_once(':')
+        .is_some_and(|(v, p)| hex(v.as_bytes()) && hex(p.as_bytes()))
+        .then_some(d)
 }
 
 /// Canonical absolute path: no empty, `.` or `..` segment, no control characters.
@@ -55,7 +72,10 @@ fn is_app(app: &str) -> bool {
 
 /// An app, and a capability from [`CAPABILITIES`] or a grant for one peer app.
 pub fn is_valid_grant(app: &str, capability: &str) -> bool {
-    is_app(app) && (CAPABILITIES.contains(&capability) || peer_of(capability).is_some_and(is_app))
+    is_app(app)
+        && (CAPABILITIES.contains(&capability)
+            || peer_of(capability).is_some_and(is_app)
+            || device_of(capability).is_some())
 }
 
 /// (app, capability) pairs; a file that is not exactly the documented shape grants nothing.
@@ -196,6 +216,17 @@ mod tests {
         assert_eq!(peer_of(&g), Some("/usr/bin/notes"));
         assert!(is_valid_grant("/usr/bin/mail", &g));
         for bad in ["ipc:", "ipc:notes", "ipc:/usr/../etc/x", "ipc:/a\nb", "other:/a"] {
+            assert!(!is_valid_grant("/usr/bin/mail", bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_device_grant_names_one_device() {
+        let g = device_grant(0x46d, 0xc52b);
+        assert_eq!(g, "device:046d:c52b");
+        assert_eq!(device_of(&g), Some("046d:c52b"));
+        assert!(is_valid_grant("/usr/bin/mail", &g));
+        for bad in ["device:", "device:46d:c52b", "device:046D:c52b", "device:046d:c52b:1"] {
             assert!(!is_valid_grant("/usr/bin/mail", bad), "{bad}");
         }
     }

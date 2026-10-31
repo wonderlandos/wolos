@@ -173,3 +173,9 @@ WOL_1.11 {
     wol_message_send;
     wol_publish;
 } WOL_1.10;
+
+WOL_1.12 {
+  global:
+    wol_device_copy_list;
+    wol_device_open;
+} WOL_1.11;

@@ -128,6 +128,12 @@ unsafe class Services
         Ok(wol_publish(ctx, key.Ptr, key.Len, hello.Ptr, hello.Len, &err));
         wol_endpoint_release(door);
         GC.KeepAlive(onMessage);
+        Ok(wol_device_copy_list(ctx, &info, &err));
+        Console.WriteLine($"device: {Text(wol_info_get_text(Field(wol_info_get_item(Field(info, "devices"), 0), "name")))}");
+        wol_info_release(info);
+        Ok(wol_device_open(ctx, 1133, 2, &f, &err));
+        Console.WriteLine($"opened: {Text(wol_file_get_name(f))}");
+        wol_file_release(f);
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);
