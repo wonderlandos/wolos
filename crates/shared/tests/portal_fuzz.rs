@@ -105,3 +105,21 @@ fn decoders_survive_mutations() {
     );
     check(deep.as_bytes());
 }
+
+/// libFuzzer crash `ipc_decode` (2026-10-31): without exact float parsing a slider value came back one
+/// ulp off after `to_line`, so an accepted line did not round-trip.
+#[test]
+fn slider_values_round_trip_exactly() {
+    for v in [
+        "1.7976002080423562e308",
+        "1.7976931348623157e308",
+        "5e-324",
+        "2.2250738585072011e-308",
+        "0.1",
+        "123456789012345678e-5",
+    ] {
+        let line = format!(r#"{{"event":"slid","window":1,"widget":2,"value":{v}}}"#);
+        let e = FromHost::parse(&line).expect("finite value accepted");
+        assert_eq!(FromHost::parse(&e.to_line()), Some(e), "{v}");
+    }
+}
