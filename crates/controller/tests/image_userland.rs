@@ -366,3 +366,16 @@ fn the_live_desktop_never_locks_itself() {
     let line = hypr.lines().find(|l| l.contains("exec hypridle")).unwrap();
     assert!(line.contains("[ -e /etc/wolos-live ] && exit"), "{line}");
 }
+
+/// The image changes nothing inside Firefox's own folder; the config waits in its own package,
+/// and that package has no mark in its name and is not in the image.
+#[test]
+fn the_image_leaves_the_firefox_folder_alone() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert!(!root.join("desktop/overlay/usr/lib/firefox").exists());
+    assert!(root.join("image/repo/wolos-browser-config/PKGBUILD").is_file());
+    for list in ["image/repo/packages", "image/arch/packages.x86_64"] {
+        let t = std::fs::read_to_string(root.join(list)).unwrap();
+        assert!(!t.contains("wolos-browser-config"), "{list}");
+    }
+}

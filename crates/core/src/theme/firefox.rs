@@ -1,5 +1,5 @@
 //! Firefox chrome stylesheet from one resolved theme. Loaded as a user sheet by the AutoConfig
-//! script `/usr/lib/firefox/wolos.cfg` (nsIStyleSheetService; reloaded when the file
+//! script of `wolos-browser-config`, a package the image does not ship (`wolos.cfg` (nsIStyleSheetService; reloaded when the file
 //! changes), so it needs no profile and survives new profiles and updates. Every rule sits in an
 //! `@-moz-document` block: the browser window and the new-tab page only, never web pages.
 
@@ -275,9 +275,9 @@ mod tests {
         }
     }
 
-    fn overlay(rel: &str) -> String {
+    fn config(rel: &str) -> String {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../desktop/overlay/usr/lib/firefox")
+            .join("../../image/repo/wolos-browser-config")
             .join(rel);
         std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
     }
@@ -285,7 +285,7 @@ mod tests {
     /// AutoConfig in the install dir: no profile path, survives new profiles and updates.
     #[test]
     fn autoconfig_loads_the_generated_sheet() {
-        let js = overlay("defaults/pref/autoconfig.js");
+        let js = config("autoconfig.js");
         for want in [
             "pref(\"general.config.filename\", \"wolos.cfg\");",
             "pref(\"general.config.obscure_value\", 0);",
@@ -293,7 +293,7 @@ mod tests {
         ] {
             assert!(js.contains(want), "{want}");
         }
-        let cfg = overlay("wolos.cfg");
+        let cfg = config("wolos.cfg");
         assert!(cfg.starts_with("//"), "AutoConfig skips the first line");
         for want in [
             format!("\"wolos/toolkits/{CSS}\""),
