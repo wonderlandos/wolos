@@ -10,6 +10,7 @@
 #include <hyprland/src/protocols/XDGShell.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/xwayland/XSurface.hpp>
 #include <format>
 #include <time.h>
 #include "../../crates/realtime/include/wol_realtime.h"
@@ -18,32 +19,67 @@ inline HANDLE PHANDLE = nullptr;
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 
-// GTK4/libadwaita apps never create an xdg-decoration object: they draw their own title bar.
-static bool drawsOwnTitlebar(PHLWINDOW w) {
+// What the window told us about its frame, as wol_window_lights reads it (crates/realtime chrome.rs).
+static int32_t decorationOf(PHLWINDOW w) {
+    if (w->m_isX11)
+        return w->m_X11DoesntWantBorders ? 4 : 3;
     const auto xdg = w->m_xdgSurface.lock();
     const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
-    return top && !PROTO::xdgDecoration->m_decorations.contains(top->m_resource->resource());
+    if (!top)
+        return 1;
+    // GTK 3/4 and libadwaita never create an xdg-decoration object.
+    const auto it = PROTO::xdgDecoration->m_decorations.find(top->m_resource->resource());
+    if (it == PROTO::xdgDecoration->m_decorations.end())
+        return 0;
+    return it->second->mostRecentlyRequested == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE ? 2 : 1;
 }
 
+static bool isTransient(PHLWINDOW w) {
+    if (w->m_isX11)
+        return w->m_xwaylandSurface && (w->m_xwaylandSurface->m_parent || w->m_xwaylandSurface->m_transient || w->isModal());
+    const auto xdg = w->m_xdgSurface.lock();
+    const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
+    return top && top->m_parent;
+}
+
+static bool isFixedSize(PHLWINDOW w) {
+    if (w->m_isX11) {
+        const auto h = w->m_xwaylandSurface ? w->m_xwaylandSurface->m_sizeHints.get() : nullptr;
+        return h && h->min_width > 0 && h->min_height > 0 && (h->min_width == h->max_width || h->min_height == h->max_height);
+    }
+    const auto xdg = w->m_xdgSurface.lock();
+    const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
+    if (!top)
+        return false;
+    const auto& s = top->m_current;
+    return s.minSize.x > 1 && s.minSize.y > 1 && (s.minSize.x == s.maxSize.x || s.minSize.y == s.maxSize.y);
+}
+
+static int32_t lightsOf(PHLWINDOW w) {
+    return wol_window_lights(w->m_class.c_str(), decorationOf(w), isTransient(w), isFixedSize(w));
+}
+
+// `wol-lights-*` tags (hyprland.conf windowrules): no strip on windows that draw their own buttons,
+// close only on fixed-size dialogs.
 static void onOpen(PHLWINDOW w) {
     if (!w) return;
-    // `windowrule = match:tag wol-csd, hyprbars:no_bar on` keeps hyprbars off them (no double bar).
-    const bool csd = drawsOwnTitlebar(w);
-    if (csd)
-        HyprlandAPI::invokeHyprctlCommand("dispatch", std::format("tagwindow +wol-csd address:0x{:x}", (uintptr_t)w.get()));
+    const auto lights = lightsOf(w);
+    const char* tag   = lights == 0 ? "wol-lights-none" : lights == 1 ? "wol-lights-close" : nullptr;
+    if (tag)
+        HyprlandAPI::invokeHyprctlCommand("dispatch", std::format("tagwindow +{} address:0x{:x}", tag, (uintptr_t)w.get()));
 }
 
 // After mapWindow's layout recalc (window.open is too early: the layout re-centres the window).
 static void onOpenLate(PHLWINDOW w) {
     if (!w || !w->m_isFloating || !w->layoutTarget()) return;
-    const bool csd = drawsOwnTitlebar(w);
+    const bool bar = lightsOf(w) != 0;
     auto mon = w->m_monitor.lock();
     if (!mon) return;
     int32_t x = 0, y = 0;
     const auto sz = w->m_realSize->goal();
     const auto zone = mon->logicalBoxMinusReserved(); // below the menu bar, above the dock
     wol_place((int32_t)sz.x, (int32_t)sz.y, (int32_t)zone.x, (int32_t)zone.y, (int32_t)zone.w, (int32_t)zone.h,
-              csd ? 0 : wol_titlebar_height(), 0, 0, 0, &x, &y);
+              bar ? wol_titlebar_height() : 0, 0, 0, 0, &x, &y);
     w->layoutTarget()->setPositionGlobal(CBox{Vector2D(x, y), sz});
 }
 

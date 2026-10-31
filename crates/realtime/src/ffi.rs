@@ -68,6 +68,75 @@ pub extern "C" fn wol_titlebar_hit(width: i32, x: i32, y: i32) -> i32 {
     }
 }
 
+/// Window buttons for a new window (`chrome::lights`): 0 none, 1 close only, 3 all.
+/// `decoration`: 0 no xdg-decoration, 1 server side, 2 client side, 3 X11, 4 bare X11 window;
+/// anything else counts as server side. `class` may be null.
+///
+/// # Safety
+/// `class` must be null or a NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_window_lights(
+    class: *const std::ffi::c_char,
+    decoration: i32,
+    transient: i32,
+    fixed_size: i32,
+) -> i32 {
+    use crate::chrome::{self, Decoration};
+    let class = if class.is_null() {
+        ""
+    } else {
+        // SAFETY: caller contract above.
+        unsafe { std::ffi::CStr::from_ptr(class) }
+            .to_str()
+            .unwrap_or("")
+    };
+    let decoration = match decoration {
+        0 => Decoration::None,
+        2 => Decoration::Client,
+        3 => Decoration::X11,
+        4 => Decoration::X11Bare,
+        _ => Decoration::Server,
+    };
+    chrome::lights(chrome::Facts {
+        class,
+        decoration,
+        transient: transient != 0,
+        fixed_size: fixed_size != 0,
+    }) as i32
+}
+
+/// `titlebar::light_at`: 0 close, 1 minimise, 2 zoom, -1 none.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_lights_at(count: i32, x: i32, y: i32) -> i32 {
+    use crate::titlebar::{Button, light_at};
+    match light_at(count, x, y) {
+        Some(Button::Close) => 0,
+        Some(Button::Minimize) => 1,
+        Some(Button::Zoom) => 2,
+        None => -1,
+    }
+}
+
+/// `titlebar::over_lights`.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_lights_over(count: i32, x: i32, y: i32) -> i32 {
+    crate::titlebar::over_lights(count, x, y) as i32
+}
+
+/// `titlebar::Hover::next` on the bits the bar keeps (start at 0).
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_lights_hover(state: u32, over: i32, held: i32) -> u32 {
+    crate::titlebar::Hover::from_bits(state)
+        .next(over != 0, held != 0)
+        .bits()
+}
+
+/// `titlebar::Hover::glyphs` of those bits: 1 shows the glyphs on every light.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_lights_glyphs(state: u32) -> i32 {
+    crate::titlebar::Hover::from_bits(state).glyphs() as i32
+}
+
 /// Title bar height in logical px.
 #[unsafe(no_mangle)]
 pub extern "C" fn wol_titlebar_height() -> i32 {
@@ -258,6 +327,22 @@ mod tests {
             "the zone gets the placement margin (live: windows touched the menu bar zone)"
         );
         assert_eq!(wol_qos_foreground(0), 0);
+        assert_eq!(wol_lights_at(3, 67, 14), 2);
+        assert_eq!(wol_lights_at(1, 67, 14), -1);
+        assert_eq!(wol_lights_over(3, 34, 14), 1);
+        assert_eq!(wol_lights_over(3, 300, 14), 0);
+        let on = wol_lights_hover(0, 1, 0);
+        assert_eq!(wol_lights_glyphs(on), 1);
+        assert_eq!(wol_lights_glyphs(wol_lights_hover(on, 0, 0)), 0);
+        assert_eq!(wol_lights_glyphs(wol_lights_hover(on, 0, 1)), 1);
+        let class = c"org.gnome.Nautilus";
+        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 0, 0, 0) }, 0);
+        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 1, 1, 1) }, 1);
+        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 1, 0, 0) }, 3);
+        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 2, 0, 0) }, 0);
+        assert_eq!(unsafe { wol_window_lights(c"steam".as_ptr(), 3, 0, 0) }, 0);
+        assert_eq!(unsafe { wol_window_lights(std::ptr::null(), 1, 0, 0) }, 3);
+        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 9, 0, 0) }, 3, "unknown: ours");
     }
 
     #[test]
