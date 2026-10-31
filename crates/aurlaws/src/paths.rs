@@ -36,11 +36,15 @@ const CREDENTIALS: &[(&str, &str)] = &[
     ("/etc/sudoers", "system privileges"),
 ];
 
-const PERSISTENCE: &[&str] = &[
-    "/etc/cron",
+/// What sits inside these starts by itself. The folders alone do nothing.
+const PERSISTENCE_DIRS: &[&str] = &[
+    "/etc/cron.d",
+    "/etc/cron.hourly",
+    "/etc/cron.daily",
+    "/etc/cron.weekly",
+    "/etc/cron.monthly",
     "/var/spool/cron",
     "/var/spool/at",
-    "/etc/anacrontab",
     "/etc/systemd/system",
     "/etc/systemd/user",
     "/usr/lib/systemd/system",
@@ -48,13 +52,18 @@ const PERSISTENCE: &[&str] = &[
     "/var/lib/systemd/linger",
     "/etc/xdg/autostart",
     "/etc/profile.d",
+    "/etc/init.d",
+    "/etc/pacman.d/hooks",
+    "/usr/share/libalpm/hooks",
+];
+
+const PERSISTENCE_FILES: &[&str] = &[
+    "/etc/crontab",
+    "/etc/anacrontab",
     "/etc/profile",
     "/etc/bash.bashrc",
     "/etc/rc.local",
-    "/etc/init.d",
     "/etc/ld.so.preload",
-    "/etc/pacman.d/hooks",
-    "/usr/share/libalpm/hooks",
 ];
 
 const HOME_PERSISTENCE: &[&str] = &[
@@ -128,10 +137,11 @@ pub fn credential(p: &str) -> Option<&'static str> {
 /// Does something here start again by itself after a reboot or login?
 pub fn persistence(p: &str) -> bool {
     let i = installed(p);
-    if PERSISTENCE
-        .iter()
-        .any(|d| is_or_under(i, d) || i.starts_with(&format!("{d}.")))
-    {
+    let in_dir = PERSISTENCE_DIRS.iter().any(|d| {
+        i.strip_prefix(d)
+            .is_some_and(|r| r.len() > 1 && r.starts_with('/'))
+    });
+    if in_dir || PERSISTENCE_FILES.contains(&i) {
         return true;
     }
     let home = i
