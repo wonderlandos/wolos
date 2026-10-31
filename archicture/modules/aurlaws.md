@@ -25,18 +25,27 @@ Every finding is a plain sentence with its file and line, or its trace line.
 
 ## Numbers
 
-Rules frozen at commit `d61e821`, then measured once on data written or sampled afterwards. One author wrote both the fixtures and the laws, so read recall as an upper bound. "Benign" means popular and unverified. The precision figure depends on an artificial mix of bad and good packages.
+Rules frozen at commit `3201717`. The seed for the new set (`tests/fixtures/holdout3.seed`) was committed first, then both sets were scored once. One author wrote both the fixtures and the laws, so read recall as an upper bound. "Benign" means popular and not known to be bad, not reviewed. The sets of the earlier freeze were not the same packages, and the new benign set is less popular (the 3000 most popular unused bases), so the two freezes compare by shape, not to the decimal.
 
-| Set | Result |
-|---|---|
-| New held-out malicious fixtures, 40 | 30 flagged (75.0%), 27 by the law they name (67.5%) |
-| New popular packages, 300 | 59 flagged (19.7%), 17 for `source_off_upstream` alone |
-| Precision on those two sets | 30 of 89 (33.7%) |
-| Old held-out fixtures, 28, now seen | 28 of 28 by the right law; 19 flagged before the fixes |
-| Old popular packages, 237, now seen | 32 flagged (13.5%); 61 before the fixes |
-| Traced test split, 36 | 22 built; 1 false finding; build time x2.35 median, on a KASAN kernel, so not a general figure |
+| Measure | Freeze `d61e821`, new data then | Freeze `3201717`, new data now |
+|---|---|---|
+| Malicious fixtures, 40 flagged | 30 (75.0%) | 32 (80.0%) |
+| Flagged by the law they name | 27 (67.5%) | 26 (65.0%) |
+| Popular packages, 300 flagged | 59 (19.7%) | 44 (14.7%) |
+| `source_off_upstream` alone | 17 | 14 |
+| High severity | 13 | 8 |
+| Blocked | not recorded | 0 |
+| Precision on the two sets | 30 of 89 (33.7%) | 32 of 76 (42.1%) |
 
-Missed by the frozen rules: `awk` `system()`, a `build.rs` running what the environment names, `cargo install --git`, `dd` carving, `go run` of a remote module, here-strings, `meson` `run_command`, a patch that adds a fetch, a PEP 517 backend, and `perl` opening a pipe.
+Precision uses an artificial base rate: real uploads are nearly all benign. Time per package: 4 ms median, 144 ms at the 95th percentile, 3.42 s at most.
+
+The first freeze's sets, now seen and fixed against: 38 of 40 flagged, 35 by the right law; 40 of 300 flagged (13.3%). That row is training data, not a result.
+
+Traced test split, 36 packages, at `3201717`: 22 built, 1 false finding (`anydesk-bin`). Build time x2.31 median on a KASAN kernel, so not a general figure.
+
+At the same freeze the Rust checker and the Bend laws agree on all 261 corpus graphs, the proofs check, and all 9 mutants that changed a rule broke a proof.
+
+Missed by the frozen rules: a clone of a stranger's repo run by `make`, an environment dump, `find -exec`, `gradle` exec, Lua `execute`, Node `fetch` into `eval`, a CMake patch, `printf` octal. A `build.rs` that runs what the environment names is still missed; the other misses of the earlier set are fixed.
 
 ## Limits
 
@@ -45,6 +54,6 @@ Missed by the frozen rules: `awk` `system()`, a `build.rs` running what the envi
 - A traced build reads process and file calls. Data through a pipe between processes is not followed.
 - The trace lives in the build folder, and the build can write there. A clean trace from a hostile build means little.
 - Upstream code is read leniently: only what runs in the build counts. Idle directories are not read.
-- Reaching the network is not a mismatch when the package's own readable code opens a socket, so a helper that dials out in plain sight passes the trace check.
+- Reaching the network is not a mismatch when the package's own files name a URL that a process fetches, so a helper with its address in plain sight passes the trace check.
 - AUR `-bin` packages have upstream sums compared only when `.src` or `--published` gives them.
 - Scriptlets are read, not traced.
