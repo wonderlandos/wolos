@@ -9,17 +9,18 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 command -v cargo >/dev/null || { echo "build-rust.sh: cargo missing (pacman -S rust)" >&2; exit 1; }
 cd "$REPO"
 [ -f Cargo.toml ] || { echo "build-rust.sh: no workspace Cargo.toml in $REPO" >&2; exit 1; }
-# Real shell surfaces (layer-shell + session-lock) when the C library is present (gtk4-layer-shell).
-F=; pkg-config --exists gtk4-layer-shell-0 && F="--features shell/layer-shell"
+# F: options for every cargo call; S: real shell surfaces (layer-shell + session-lock) when the C
+# library is present (gtk4-layer-shell), for the workspace build only (`-p xguard` has no shell).
+F=; S=; pkg-config --exists gtk4-layer-shell-0 && S="--features shell/layer-shell"
 if [ -n "${WOLOS_VENDOR:-}" ]; then
   [ -d "$WOLOS_VENDOR" ] || { echo "build-rust.sh: WOLOS_VENDOR=$WOLOS_VENDOR missing" >&2; exit 1; }
-  F="$F --offline --config 'source.crates-io.replace-with=\"vendored\"' --config 'source.vendored.directory=\"$WOLOS_VENDOR\"'"
+  F="--offline --config 'source.crates-io.replace-with=\"vendored\"' --config 'source.vendored.directory=\"$WOLOS_VENDOR\"'"
 fi
 # shellcheck disable=SC2086
 # Faster link and cached rebuilds when the tools are installed (CI, developer machines).
 command -v mold >/dev/null && command -v clang >/dev/null && export RUSTFLAGS="${RUSTFLAGS:-} -C linker=clang -C link-arg=-fuse-ld=mold"
 command -v sccache >/dev/null && export RUSTC_WRAPPER=sccache
-eval cargo build --release --workspace --locked $F
+eval cargo build --release --workspace --locked $S $F
 B=${CARGO_TARGET_DIR:-$REPO/target}/release
 mkdir -p "$DEST/usr/bin" "$DEST/usr/lib"
 for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-control-center wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-flatpak-consent wol-analyze wol-kit-host; do
