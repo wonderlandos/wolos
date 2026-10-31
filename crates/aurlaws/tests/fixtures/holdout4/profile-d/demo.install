@@ -1,0 +1,3 @@
+post_install() {
+  echo 'y' > /etc/profile.d/y.sh
+}

@@ -1,0 +1,9 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=ipv6-source
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org
+license=(MIT)
+source=(http://[2001:db8::1]/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)

