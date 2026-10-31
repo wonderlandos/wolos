@@ -175,6 +175,7 @@ pub fn parse(pkgbuild: &str, files: &HashMap<String, String>) -> Parsed {
         drop(s);
         graph.merge(&sub);
     }
+    graph.pkgver = meta.pkgver.clone();
     Parsed {
         graph,
         meta,

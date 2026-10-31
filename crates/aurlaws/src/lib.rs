@@ -5,6 +5,7 @@ pub mod graph;
 pub mod hosts;
 pub mod langs;
 pub mod laws;
+pub mod observed;
 pub mod paths;
 pub mod pkgbuild;
 pub mod shell;
@@ -34,11 +35,24 @@ pub struct Report {
     pub meta: pkgbuild::Meta,
 }
 
-fn judge(p: pkgbuild::Parsed) -> Report {
-    let findings = {
+fn judge(p: pkgbuild::Parsed, ev: &Evidence) -> Report {
+    let mut findings = {
         let v = laws::View::new(&p.graph, &p.meta);
-        laws::check(&v)
+        let mut f = laws::check(&v);
+        v.check_sources(&mut f);
+        f
     };
+    for obs in &ev.observed {
+        let v = laws::View::new(obs, &p.meta);
+        findings.extend(laws::check(&v).into_iter().map(|mut f| {
+            f.origin = laws::Origin::Observed;
+            f
+        }));
+        findings.extend(laws::mismatch(&p.graph, obs));
+    }
+    if let Some(old) = &ev.previous {
+        findings.extend(laws::diff(&p.graph, old, &ev.explained));
+    }
     let verdict = if findings.is_empty() {
         Verdict::NoLawBroken
     } else {
@@ -55,16 +69,30 @@ fn judge(p: pkgbuild::Parsed) -> Report {
     }
 }
 
-/// Judge a PKGBUILD and the text files beside it.
-pub fn judge_files(pkgbuild: &str, files: &HashMap<String, String>) -> Report {
-    judge(pkgbuild::parse(pkgbuild, files))
+/// What is known beyond the files: traced runs, and the version accepted before.
+#[derive(Clone, Debug, Default)]
+pub struct Evidence {
+    pub observed: Vec<graph::Graph>,
+    pub previous: Option<graph::Graph>,
+    /// Node keys a person has explained, so their new edges stop being findings.
+    pub explained: Vec<String>,
 }
 
-/// Judge a PKGBUILD held in memory, with its `.install` text as `demo.install`.
-pub fn audit_text(pkgbuild: &str, install: Option<&str>) -> Report {
+/// `audit_text`, with what is known beyond the files.
+pub fn audit_text_with(pkgbuild: &str, install: Option<&str>, ev: &Evidence) -> Report {
     let mut files = HashMap::new();
     if let Some(i) = install {
         files.insert("demo.install".to_owned(), i.to_owned());
     }
-    judge(pkgbuild::parse(pkgbuild, &files))
+    judge(pkgbuild::parse(pkgbuild, &files), ev)
+}
+
+/// Judge a PKGBUILD and the text files beside it.
+pub fn judge_files(pkgbuild: &str, files: &HashMap<String, String>) -> Report {
+    judge(pkgbuild::parse(pkgbuild, files), &Evidence::default())
+}
+
+/// Judge a PKGBUILD held in memory, with its `.install` text as `demo.install`.
+pub fn audit_text(pkgbuild: &str, install: Option<&str>) -> Report {
+    audit_text_with(pkgbuild, install, &Evidence::default())
 }

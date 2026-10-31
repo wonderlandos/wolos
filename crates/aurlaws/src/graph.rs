@@ -95,6 +95,9 @@ pub struct Edge {
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    /// The version in the keys, so two versions' graphs can be compared.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pkgver: String,
     #[serde(skip)]
     index: HashMap<String, NodeId>,
     #[serde(skip)]
