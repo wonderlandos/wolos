@@ -1,0 +1,12 @@
+/* libxguard symbol versions (ADR 0022). A shipped node never changes: new symbols go in a new node. */
+XGUARD_1.0 {
+  global:
+    xguard_abi_version;
+    xguard_engine_create;
+    xguard_engine_release;
+    xguard_scan_memory;
+    xguard_scan_path;
+    xguard_string_release;
+  local:
+    *;
+};
