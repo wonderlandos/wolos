@@ -256,7 +256,8 @@ impl Header {
     /// P/Invoke declarations for .NET (`Wol.Native`), names exactly as in the header.
     pub fn dotnet(&self) -> String {
         let kw = [
-            "out", "string", "event", "ref", "in", "params", "object", "base", "lock",
+            "out", "string", "checked", "default", "class", "fixed", "is", "as", "this", "new",
+            "event", "ref", "in", "params", "object", "base", "lock",
         ];
         let id = |n: &str| {
             if kw.contains(&n) {

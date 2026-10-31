@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 1
+  WOL_VERSION_MINOR = 3
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -26,12 +26,16 @@ lib LibWol
   struct Window; opaque : UInt8; end
   struct Widget; opaque : UInt8; end
   struct Notification; opaque : UInt8; end
+  struct Menu; opaque : UInt8; end
+  struct Toolbar; opaque : UInt8; end
 
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
   alias ChangeFn = Widget*, Void* -> Void
   alias WindowFn = Window*, Void* -> Void
   alias ActionFn = Notification*, String*, Void* -> Void
+  alias MenuFn = Menu*, String*, Void* -> Void
+  alias ToolbarFn = Toolbar*, String*, Void* -> Void
 
   fun wol_version() : UInt32
   fun wol_version_string() : UInt8*
@@ -96,4 +100,23 @@ lib LibWol
   fun wol_notification_send(notification : Notification*, error : Error**) : Status
   fun wol_notification_retain(notification : Notification*) : Notification*
   fun wol_notification_release(notification : Notification*)
+  fun wol_notification_replace(notification : Notification*, title : UInt8*, title_len : LibC::SizeT, body : UInt8*, body_len : LibC::SizeT, error : Error**) : Status
+  fun wol_notification_withdraw(notification : Notification*, error : Error**) : Status
+  fun wol_menu_create(context : Context*, title : UInt8*, len : LibC::SizeT, on_choose : MenuFn, user_data : Void*, out_ : Menu**, error : Error**) : Status
+  fun wol_menu_add_item(menu : Menu*, key : UInt8*, key_len : LibC::SizeT, label : UInt8*, label_len : LibC::SizeT, shortcut : UInt8*, shortcut_len : LibC::SizeT, error : Error**) : Status
+  fun wol_menu_add_separator(menu : Menu*, error : Error**) : Status
+  fun wol_menu_set_enabled(menu : Menu*, key : UInt8*, key_len : LibC::SizeT, enabled : Int32, error : Error**) : Status
+  fun wol_menu_set_checked(menu : Menu*, key : UInt8*, key_len : LibC::SizeT, checked : Int32, error : Error**) : Status
+  fun wol_menu_retain(menu : Menu*) : Menu*
+  fun wol_menu_release(menu : Menu*)
+  fun wol_window_add_menu(window : Window*, menu : Menu*, error : Error**) : Status
+  fun wol_toolbar_create(context : Context*, on_choose : ToolbarFn, user_data : Void*, out_ : Toolbar**, error : Error**) : Status
+  fun wol_toolbar_add_button(toolbar : Toolbar*, key : UInt8*, key_len : LibC::SizeT, label : UInt8*, label_len : LibC::SizeT, icon : UInt8*, icon_len : LibC::SizeT, error : Error**) : Status
+  fun wol_toolbar_add_spacer(toolbar : Toolbar*, error : Error**) : Status
+  fun wol_toolbar_set_enabled(toolbar : Toolbar*, key : UInt8*, key_len : LibC::SizeT, enabled : Int32, error : Error**) : Status
+  fun wol_toolbar_retain(toolbar : Toolbar*) : Toolbar*
+  fun wol_toolbar_release(toolbar : Toolbar*)
+  fun wol_window_set_toolbar(window : Window*, toolbar : Toolbar*, error : Error**) : Status
+  fun wol_clipboard_copy_text(context : Context*, out_ : String**, error : Error**) : Status
+  fun wol_clipboard_set_text(context : Context*, text : UInt8*, len : LibC::SizeT, error : Error**) : Status
 end
