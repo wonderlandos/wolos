@@ -1,8 +1,9 @@
-//! Bring a restored app's compressed pages back before it touches them: process_madvise
-//! (MADV_WILLNEED) over its anonymous and memfd mappings. The kernel reads every swapped page of
-//! those ranges into the swap cache, so the first frames take minor faults instead of one zram
-//! decompress per fault.
+//! process_madvise over a process's anonymous and memfd mappings. MADV_WILLNEED brings a restored
+//! app's compressed pages back before it touches them: the kernel reads every swapped page of those
+//! ranges into the swap cache, so the first frames take minor faults instead of one zram decompress
+//! per fault. MADV_PAGEOUT sends a background app's pages the other way.
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Writable private anonymous ranges (heap, stacks, `[anon:...]`, JS heaps) and memfd/shm
 /// mappings from /proc/<pid>/maps text.
@@ -33,21 +34,38 @@ pub fn ranges(maps: &str) -> Vec<(usize, usize)> {
         .collect()
 }
 
-/// WILLNEED every range of `pid`. Returns the bytes advised (0 when the process is gone or the
-/// kernel refuses). Runs on a worker thread: it can take a few hundred ms for a large app.
-pub fn prefetch(proc: &Path, pid: i32) -> usize {
+/// Advise at most this much per range and this many ranges per call, so `stop` is seen quickly.
+const MAX_RANGE: usize = 32 << 20;
+const IOVECS: usize = 64;
+
+fn split(r: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    r.iter()
+        .flat_map(|&(a, n)| {
+            (0..n.div_ceil(MAX_RANGE)).map(move |i| {
+                let off = i * MAX_RANGE;
+                (a + off, MAX_RANGE.min(n - off))
+            })
+        })
+        .collect()
+}
+
+/// `advice` every range of `pid` until `stop`. Returns the bytes advised (0 when the process is
+/// gone or the kernel refuses). Runs on a worker thread: a large app takes a while.
+fn advise(proc: &Path, pid: i32, advice: i32, stop: &AtomicBool) -> usize {
     let Ok(maps) = std::fs::read_to_string(proc.join(pid.to_string()).join("maps")) else {
         return 0;
     };
-    let r = ranges(&maps);
+    let r = split(&ranges(&maps));
     // SAFETY: pidfd_open takes a pid and flags; the fd is closed below.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) } as i32;
     if fd < 0 {
         return 0;
     }
     let mut done = 0;
-    // UIO_MAXIOV (1024) ranges per call.
-    for chunk in r.chunks(1024) {
+    for chunk in r.chunks(IOVECS) {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
         let iov: Vec<libc::iovec> = chunk
             .iter()
             .map(|(a, n)| libc::iovec {
@@ -63,7 +81,7 @@ pub fn prefetch(proc: &Path, pid: i32) -> usize {
                 fd,
                 iov.as_ptr(),
                 iov.len(),
-                libc::MADV_WILLNEED,
+                advice,
                 0,
             )
         };
@@ -76,9 +94,54 @@ pub fn prefetch(proc: &Path, pid: i32) -> usize {
     done
 }
 
+/// Bring `pid`'s compressed pages back ahead of use.
+pub fn prefetch(proc: &Path, pid: i32) -> usize {
+    advise(proc, pid, libc::MADV_WILLNEED, &AtomicBool::new(false))
+}
+
+/// Push `pid`'s pages out: this works wherever they were charged, which memory.reclaim on the app's
+/// scope cannot do for pages touched before the app was adopted (charges do not move with a
+/// process). Only pages this process alone maps go.
+pub fn pageout(proc: &Path, pid: i32, stop: &AtomicBool) -> usize {
+    advise(proc, pid, libc::MADV_PAGEOUT, stop)
+}
+
+/// VmSwap of a process in bytes, 0 when it is gone.
+pub fn swapped(proc: &Path, pid: i32) -> u64 {
+    std::fs::read_to_string(proc.join(pid.to_string()).join("status"))
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("VmSwap:"))
+                .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
+        })
+        .map_or(0, |kib| kib << 10)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_ranges_are_cut_so_a_cancel_is_seen_quickly() {
+        let m = MAX_RANGE;
+        assert_eq!(split(&[(0, 10)]), [(0, 10)]);
+        assert_eq!(split(&[(4096, m)]), [(4096, m)]);
+        assert_eq!(
+            split(&[(0, 2 * m + 1), (1 << 40, 5)]),
+            [(0, m), (m, m), (2 * m, 1), (1 << 40, 5)]
+        );
+    }
+
+    #[test]
+    fn vmswap_is_read_from_status_and_a_gone_process_has_none() {
+        let d = std::env::temp_dir().join(format!("wol-swapped-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("7")).unwrap();
+        std::fs::write(d.join("7/status"), "Name:\tx\nVmSwap:\t    2048 kB\n").unwrap();
+        assert_eq!(swapped(&d, 7), 2 << 20);
+        assert_eq!(swapped(&d, 8), 0);
+        std::fs::remove_dir_all(d).unwrap();
+    }
 
     #[test]
     fn picks_anonymous_and_shared_memory_ranges() {

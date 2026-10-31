@@ -13,9 +13,6 @@ const ADOPT_RETRY_MS: u64 = 10_000;
 /// App Nap: idle means under 1 % of a core for a minute.
 const IDLE_CPU: f32 = 1.0;
 const IDLE_MS: u64 = 60_000;
-/// Processes started by these are apps (Dock, Spotlight, key bindings): adopted at launch, so
-/// their memory is charged to their own scope from the first page.
-const SPAWNERS: [&str; 2] = ["Hyprland", "wol-shell"];
 
 struct Group {
     role: Role,
@@ -42,7 +39,6 @@ struct App {
 struct Session {
     uid: u32,
     scope: String,
-    cgroup: String,
 }
 
 pub struct Engine<S: Sys> {
@@ -92,7 +88,6 @@ impl<S: Sys> Engine<S> {
         self.session = Some(Session {
             uid,
             scope: scope.to_owned(),
-            cgroup: cg.clone(),
         });
         true
     }
@@ -130,57 +125,49 @@ impl<S: Sys> Engine<S> {
         self.status()
     }
 
+    /// Windows not in a scope of ours yet: their whole process tree goes into a new one. The
+    /// tree, not the cgroup: Chromium and Electron move their browser process into a user manager
+    /// scope on their own and leave the zygote and renderers in the session.
     fn adopt(&mut self, now: u64) {
         let Some(s) = &self.session else { return };
-        let (uid, scope, sess_cg) = (s.uid, s.scope.clone(), s.cgroup.clone());
+        let (uid, scope) = (s.uid, s.scope.clone());
         self.asked
             .retain(|_, (t, _, _)| now.saturating_sub(*t) < 6 * ADOPT_RETRY_MS);
-        let mut want: Vec<(i32, String)> = self
+        let home = format!("/user.slice/user-{uid}.slice/");
+        let sys = &self.sys;
+        let movable = |pid: i32| {
+            sys.cgroup(pid)
+                .is_some_and(|c| c.starts_with(&home) && !c.contains("/app-wol-"))
+                && sys.owner_and_parent(pid).map(|o| o.0) == Some(uid)
+                && !procs::NEVER.contains(&sys.comm(pid).as_str())
+        };
+        let want: Vec<(i32, String)> = self
             .snap
             .windows
             .iter()
-            .filter(|w| self.sys.cgroup(w.pid).as_deref() == Some(sess_cg.as_str()))
+            .filter(|w| movable(w.pid))
             .map(|w| (w.pid, w.app.clone()))
             .collect();
-        let in_session = self.sys.procs(&sess_cg);
-        let parents = if want.is_empty() && in_session.len() <= 1 {
-            Vec::new()
-        } else {
-            self.sys.parents()
-        };
-        let parent_of = |pid: i32| parents.iter().find(|(p, _)| *p == pid).map(|x| x.1);
-        for pid in &in_session {
-            let spawned =
-                parent_of(*pid).is_some_and(|pp| SPAWNERS.contains(&self.sys.comm(pp).as_str()));
-            if spawned && !want.iter().any(|(p, _)| p == pid) {
-                want.push((*pid, self.sys.comm(*pid)));
-            }
+        if want.is_empty() {
+            return;
         }
+        let parents = sys.parents();
         for (pid, app) in want {
             let recent = self
                 .asked
                 .get(&pid)
                 .is_some_and(|(t, _, _)| now.saturating_sub(*t) < ADOPT_RETRY_MS);
-            let comm = self.sys.comm(pid);
-            if recent
-                || procs::NEVER.contains(&comm.as_str())
-                || self.sys.owner_and_parent(pid).map(|o| o.0) != Some(uid)
-            {
+            if recent {
                 continue;
             }
             let pids: Vec<i32> = procs::tree(pid, &parents)
                 .into_iter()
-                .filter(|p| in_session.contains(p))
-                .filter(|p| !procs::NEVER.contains(&self.sys.comm(*p).as_str()))
+                .filter(|p| movable(*p))
                 .collect();
-            let pids = if pids.is_empty() { vec![pid] } else { pids };
             let name = procs::scope_name(&app, pid);
-            let cg = format!("/user.slice/user-{uid}.slice/{name}");
+            let cg = format!("{home}{name}");
             let id = shared::memsaver::app_id(&app);
-            if self
-                .sys
-                .adopt(&procs::adopt_args(&name, uid, &scope, &pids, &id))
-            {
+            if sys.adopt(&procs::adopt_args(&name, uid, &scope, &pids, &id)) {
                 eprintln!("wold: memsaver adopted {id} ({} processes)", pids.len());
             }
             self.asked.insert(pid, (now, cg, id));
@@ -360,6 +347,7 @@ impl<S: Sys> Engine<S> {
                         self.sys.reclaim(scope, orphan);
                     }
                 }
+                self.sys.pageout(scope, pids.to_vec());
                 eprintln!(
                     "wold: memsaver saving {} ({} MiB)",
                     app.id,
@@ -370,6 +358,7 @@ impl<S: Sys> Engine<S> {
                 self.sys.freeze(scope, true);
             }
             Action::Restore { prefetch } => {
+                self.sys.cancel(scope);
                 self.sys.freeze(scope, false);
                 for (g, grp) in app.groups.iter_mut() {
                     self.sys.set_high(g, None);
@@ -431,9 +420,9 @@ impl<S: Sys> Engine<S> {
             if let Phase::Saving { since } = app.phase {
                 app.phase = Phase::Released { since };
             }
+            self.sys.cancel(scope);
             eprintln!("wold: memsaver released {} (memory pressure)", app.id);
         }
-        let _ = scope;
     }
 
     fn status(&self) -> Status {
@@ -460,8 +449,10 @@ impl<S: Sys> Engine<S> {
             } else {
                 app.phase.state()
             };
+            let pids = self.pids(scope, app);
+            let swap = self.sys.swapped(&pids);
             let saved = if matches!(app.phase, Phase::Saving { .. } | Phase::Napping { .. }) {
-                app.before.saturating_sub(memory)
+                app.before.saturating_sub(memory).max(swap)
             } else {
                 0
             };
@@ -471,10 +462,22 @@ impl<S: Sys> Engine<S> {
                 state,
                 saved,
                 memory,
-                swap: self.sys.swap(scope),
+                swap,
             });
         }
         st
+    }
+
+    /// Every process of the app, role groups included.
+    fn pids(&self, scope: &str, app: &App) -> Vec<i32> {
+        let groups = app.groups.keys().map(String::as_str);
+        let mut pids: Vec<i32> = std::iter::once(scope)
+            .chain(groups)
+            .flat_map(|g| self.sys.procs(g))
+            .collect();
+        pids.sort_unstable();
+        pids.dedup();
+        pids
     }
 }
 

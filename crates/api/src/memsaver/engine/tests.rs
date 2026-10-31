@@ -33,6 +33,9 @@ struct M {
     adopted: Vec<Vec<String>>,
     reclaimed: Vec<(String, u64)>,
     prefetched: Vec<Vec<i32>>,
+    paged: Vec<(String, Vec<i32>)>,
+    cancelled: Vec<String>,
+    swapped: BTreeMap<i32, u64>,
 }
 
 #[derive(Default)]
@@ -175,6 +178,16 @@ impl Sys for Model {
     }
     fn prefetch(&self, pids: Vec<i32>) {
         self.0.borrow_mut().prefetched.push(pids);
+    }
+    fn pageout(&self, scope: &str, pids: Vec<i32>) {
+        self.0.borrow_mut().paged.push((scope.into(), pids));
+    }
+    fn cancel(&self, scope: &str) {
+        self.0.borrow_mut().cancelled.push(scope.into());
+    }
+    fn swapped(&self, pids: &[i32]) -> u64 {
+        let m = self.0.borrow();
+        pids.iter().filter_map(|p| m.swapped.get(p)).sum()
     }
 }
 
@@ -355,8 +368,32 @@ fn busy_renderers_at_their_ceiling_get_more_room() {
     );
 }
 
+/// Chromium and Electron move their browser process into a user manager scope at startup; the
+/// zygote and renderers stay behind in the session. The whole tree belongs to the app.
 #[test]
-fn processes_started_from_the_dock_are_adopted_at_launch_but_saved_only_once_they_show_a_window() {
+fn an_app_that_moved_itself_to_a_user_scope_is_adopted_with_the_children_it_left_behind() {
+    let mut e = session();
+    let own = "/user.slice/user-1000.slice/user@1000.service/app.slice/app-code-20.scope";
+    e.sys.set(own, |_| {});
+    e.sys.0.borrow_mut().procs.get_mut(&20).unwrap().cg = own.into();
+    e.snapshot(snap(20, false));
+    e.tick(0);
+    e.tick(1);
+    for (pid, r) in [
+        (20, "main"),
+        (21, "zygote"),
+        (22, "renderer"),
+        (23, "renderer"),
+        (24, "gpu"),
+    ] {
+        assert_eq!(e.sys.where_is(pid), group(r), "pid {pid}");
+    }
+    assert_eq!(e.sys.where_is(10), SESSION, "the compositor stays");
+    assert_eq!(e.sys.0.borrow().adopted.len(), 1, "asked systemd once");
+}
+
+#[test]
+fn processes_without_a_window_are_left_where_they_are() {
     let m = Model::default();
     m.add(10, 1, "Hyprland", "Hyprland");
     m.add(11, 10, "wol-realtime", "wol-realtime");
@@ -369,17 +406,67 @@ fn processes_started_from_the_dock_are_adopted_at_launch_but_saved_only_once_the
         enabled: true,
         ..Snapshot::default()
     });
-    e.tick(0);
-    let slack = "/user.slice/user-1000.slice/app-wol-slack-30.scope";
-    for (pid, why) in [(12, "shell"), (40, "audio"), (11, "agent")] {
-        assert_eq!(e.sys.where_is(pid), SESSION, "{why} never moves");
+    let st = e.tick(0);
+    for pid in [12, 30, 40, 11] {
+        assert_eq!(e.sys.where_is(pid), SESSION);
     }
-    assert_eq!(e.sys.where_is(30), format!("{slack}/native"));
+    assert!(st.apps.is_empty());
+    assert!(e.sys.0.borrow().adopted.is_empty());
+}
+
+#[test]
+fn only_the_users_own_slice_is_adopted_from() {
+    let mut e = session();
+    let system = "/system.slice/foo.service";
+    e.sys.set(system, |_| {});
+    e.sys.0.borrow_mut().procs.get_mut(&20).unwrap().cg = system.into();
+    e.snapshot(snap(20, false));
+    e.tick(0);
+    assert_eq!(e.sys.where_is(20), system);
+    assert!(e.sys.0.borrow().adopted.is_empty());
+}
+
+/// Pages touched before adoption stay charged to the session: memory.reclaim on the scope cannot
+/// see them, so every process also pages out its own memory, and focus stops that at once.
+#[test]
+fn background_apps_page_out_every_process_and_stop_the_moment_they_are_used() {
+    let mut e = adopted();
+    e.snapshot(snap(99, false));
+    e.tick(1_000);
+    e.tick(40_000);
+    {
+        let m = e.sys.0.borrow();
+        assert_eq!(m.paged.len(), 1);
+        let mut pids = m.paged[0].1.clone();
+        pids.sort_unstable();
+        assert_eq!(m.paged[0].0, SCOPE);
+        assert_eq!(pids, [20, 21, 22, 23, 24]);
+        assert!(m.cancelled.is_empty());
+    }
+    e.snapshot(snap(20, true));
+    e.tick(41_000);
+    assert_eq!(e.sys.0.borrow().cancelled, [SCOPE]);
+    assert_eq!(e.sys.0.borrow().prefetched.len(), 1);
+}
+
+#[test]
+fn saved_counts_what_was_compressed_away_wherever_it_was_charged() {
+    let mut e = adopted();
+    e.snapshot(snap(99, false));
+    e.tick(1_000);
     e.sys
-        .set(&format!("{slack}/native"), |c| c.current = 400 * MIB);
-    let st = e.tick(600_000);
-    assert!(st.apps.is_empty(), "no window yet: not managed");
-    assert!(e.sys.0.borrow().reclaimed.is_empty());
+        .0
+        .borrow_mut()
+        .swapped
+        .extend([(20, 300 * MIB), (22, 900 * MIB)]);
+    let st = e.tick(40_000);
+    let code = st.apps.iter().find(|a| a.app == "code").unwrap();
+    assert_eq!(code.saved, 1200 * MIB);
+    assert_eq!(code.swap, 1200 * MIB);
+    assert_eq!(st.saved, 1200 * MIB);
+    e.snapshot(snap(20, true));
+    let st = e.tick(41_000);
+    assert_eq!(st.saved, 0, "in use: nothing is being saved");
 }
 
 #[test]
