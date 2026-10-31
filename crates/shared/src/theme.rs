@@ -41,7 +41,7 @@ pub const SCALE: [(&str, &str); 16] = [
 /// app themes (`wol_core::theme::apps`, GTK 3/4, Firefox) draw the same geometry. Tests hold the Kit
 /// stylesheet and the Hyprland config to these values.
 pub mod scaffold {
-    pub const TOOLBAR_HEIGHT: i32 = 52;
+    pub const TOOLBAR_HEIGHT: i32 = 36;
     /// Toolbar side padding.
     pub const TOOLBAR_PADDING: i32 = 16;
     pub const SIDEBAR_WIDTH: i32 = 220;

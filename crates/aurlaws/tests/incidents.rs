@@ -131,7 +131,8 @@ fn no_fixture_points_at_a_real_address() {
         {
             let Some(i) = w.find("://") else { continue };
             let host = w[i + 3..].split(['/', ':']).next().unwrap();
-            let fine = host.starts_with("203.0.113.")
+            let fine = w[i + 3..].starts_with("[2001:db8:") // IPv6 documentation range
+                || host.starts_with("203.0.113.")
                 || host.starts_with("198.51.100.")
                 || host == "example.net"
                 || host.ends_with(".github.io") && host.starts_with("example-")
