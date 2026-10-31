@@ -22,6 +22,7 @@ fsverity-utils
 dosfstools
 e2fsprogs
 xfsprogs
+ntfsprogs
 squashfs-tools
 efibootmgr
 pacman-contrib
