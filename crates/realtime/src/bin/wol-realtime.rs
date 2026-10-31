@@ -4,8 +4,8 @@
 //! wol-hypr (hyprctl `wolstats`). `power show` / `power set [--pl1 W] [--pl2 W]`: Intel RAPL package
 //! limits (root, cpuctl). Thin composition root.
 use realtime::{
-    bus::Publisher, glass::GlassConfig, gpu_env, gpu_probe, gpu_select, gpu_tune, hypr, power,
-    qos::Qos,
+    bus::Publisher, glass::GlassConfig, gpu_env, gpu_probe, gpu_select, gpu_tune, hypr, memsaver,
+    power, qos::Qos,
 };
 use shared::errors::ErrorCode;
 
@@ -118,6 +118,25 @@ fn events() {
     };
     let mut qos = Qos::default();
     let mut bus = Publisher::new(shared::jobs::SOCKET, std::io::stdout());
+    // Memory Saver: a snapshot round on every compositor event (bounded: never blocks, no alloc).
+    let (kick, rounds) = std::sync::mpsc::sync_channel::<()>(1);
+    std::thread::spawn(move || {
+        memsaver::run(
+            rounds,
+            |cmd| hypr::request(cmd).ok(),
+            |argv| {
+                let out = std::process::Command::new(argv[0])
+                    .args(&argv[1..])
+                    .stderr(std::process::Stdio::null())
+                    .output()
+                    .ok()?;
+                out.status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+            },
+            wol_core::theme::config_home(),
+        )
+    });
     let lookup = || {
         hypr::request("j/activewindow")
             .ok()
@@ -130,6 +149,7 @@ fn events() {
             qos.foreground(pid);
         },
         |e| {
+            let _ = kick.try_send(());
             bus.send(e);
         },
     );
