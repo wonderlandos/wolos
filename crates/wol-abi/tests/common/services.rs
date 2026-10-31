@@ -25,6 +25,9 @@ fn answer(c: &Call) -> Answer {
         Call::PowerInfo {} => Answer::with(json!({
             "on_battery": true, "low_power": false, "battery": {"percent": 71, "charging": false}
         })),
+        Call::NetworkInfo {} => Answer::with(json!({
+            "online": true, "interfaces": [{"name": "eth0", "kind": "ethernet", "up": true}]
+        })),
         _ => Answer::ok(),
     }
 }
@@ -80,6 +83,7 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "panel: a.txt from the panel",
             "battery: 71 1",
             "held",
+            "online: 1 ethernet",
         ]
     );
     let names: Vec<String> = calls
@@ -107,6 +111,7 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "panel.save",
             "power.info",
             "power.keep-awake",
+            "network.info",
         ]
     );
 }

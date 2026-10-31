@@ -229,6 +229,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "apps ask WolOS to hold the machine awake, which checks your choice first and lets go when the app ends",
     ),
+    (
+        "network-info",
+        Enforcement::System,
+        "apps ask WolOS whether the computer is online, which checks your choice first and never says where you are",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

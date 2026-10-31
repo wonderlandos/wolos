@@ -133,3 +133,8 @@ WOL_1.6 {
     wol_power_copy_info;
     wol_power_keep_awake;
 } WOL_1.5;
+
+WOL_1.7 {
+  global:
+    wol_network_copy_info;
+} WOL_1.6;

@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 pub const FILE: &str = "/etc/wolos/consent.json";
 
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
-pub const CAPABILITIES: [&str; 11] = [
+pub const CAPABILITIES: [&str; 12] = [
     "screen-capture",
     "notifications",
     "input-injection",
@@ -20,6 +20,7 @@ pub const CAPABILITIES: [&str; 11] = [
     "file-panels",
     "power-info",
     "keep-awake",
+    "network-info",
 ];
 
 const MAX_APP: usize = 1024;

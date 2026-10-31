@@ -72,4 +72,7 @@ var held: OpaquePointer?
 ok(wol_power_keep_awake(ctx, reason, n(reason), &held, &err))
 wol_assertion_release(held)
 print("held")
+ok(wol_network_copy_info(ctx, &info, &err))
+print("online: \(wol_info_get_bool(field(info, "online"))) \(text(wol_info_get_text(field(wol_info_get_item(field(info, "interfaces"), 0), "kind"))))")
+wol_info_release(info)
 wol_context_release(ctx)
