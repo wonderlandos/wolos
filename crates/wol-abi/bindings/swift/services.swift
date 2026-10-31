@@ -98,4 +98,20 @@ wol_search_provider_release(provider)
 ok(wol_account_copy_info(ctx, &info, &err))
 print("account: \(text(wol_info_get_text(field(info, "name"))))")
 wol_info_release(info)
+var seen = false
+let peer = "/usr/bin/peer", hello = "hello"
+var door: OpaquePointer?
+ok(wol_endpoint_create(ctx, key, n(key), { _, m, _ in
+    print("message: \(text(wol_message_get_body(m))) \(text(wol_message_get_from(m)))")
+    let pong = "pong"
+    var e: OpaquePointer?
+    _ = wol_message_reply(m, pong, n(pong), &e)
+    seen = true
+}, nil, &door, &err))
+ok(wol_message_send(ctx, peer, n(peer), key, n(key), hello, n(hello), &str, &err))
+print("reply: \(text(str))")
+wol_string_release(str)
+for _ in 0..<100 where !seen { ok(wol_context_dispatch(ctx, 100, &err)) }
+ok(wol_publish(ctx, key, n(key), hello, n(hello), &err))
+wol_endpoint_release(door)
 wol_context_release(ctx)

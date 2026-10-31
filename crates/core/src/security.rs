@@ -259,6 +259,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "apps ask WolOS, which answers only about the account running them",
     ),
+    (
+        "ipc",
+        Enforcement::System,
+        "WolOS routes each message, checks that you allowed that pair of apps and tells the receiver who sent it",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

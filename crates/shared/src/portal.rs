@@ -39,6 +39,11 @@ pub const MAX_HOLDS: usize = 16;
 pub const MAX_RESULTS: usize = 32;
 pub const MAX_RESULT_KEY: usize = 128;
 
+/// An endpoint's name, an app's path, and a message between apps: twice its size still fits a line.
+pub const MAX_ENDPOINT: usize = 64;
+pub const MAX_PEER: usize = 1024;
+pub const MAX_MESSAGE: usize = 24 * 1024;
+
 /// Every capability a [`Call`] can need (`wol_core::consent::CAPABILITIES`), test-checked.
 pub const CAPABILITIES: &[&str] = &[
     "notifications",
@@ -54,6 +59,7 @@ pub const CAPABILITIES: &[&str] = &[
     "search",
     "search-provider",
     "account-info",
+    "ipc",
 ];
 
 /// A row a search provider offers: `key` comes back to the app when the person opens it.
@@ -90,6 +96,8 @@ pub enum Need {
     Shower,
     /// The caller is Spotlight.
     Spotlight,
+    /// The caller was allowed to reach [`Call::peer`].
+    Peer,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +185,22 @@ pub enum Call {
     /// The caller's own account.
     #[serde(rename = "account.info")]
     AccountInfo {},
+    /// Receive messages under `name` until this connection closes.
+    #[serde(rename = "ipc.listen")]
+    IpcListen { name: String },
+    /// Send to endpoint `name` of the app `peer` (its path), and wait for the reply.
+    #[serde(rename = "ipc.send")]
+    IpcSend {
+        peer: String,
+        name: String,
+        body: String,
+    },
+    /// Answer message `id`.
+    #[serde(rename = "ipc.reply")]
+    IpcReply { id: u32, body: String },
+    /// Hand `body` to the endpoints named `topic` of apps that allowed this one.
+    #[serde(rename = "ipc.publish")]
+    IpcPublish { topic: String, body: String },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -309,6 +333,25 @@ fn clean(s: &str, max: usize, newlines: bool) -> bool {
             .any(|c| c.is_control() && !(newlines && c == '\n'))
 }
 
+fn endpoint_name(n: &str) -> Result<(), String> {
+    let ok = |b: u8| b.is_ascii_alphanumeric() || b".-_".contains(&b);
+    if n.is_empty() || n.len() > MAX_ENDPOINT || !n.bytes().all(ok) {
+        return Err(format!(
+            "A name is 1 to {MAX_ENDPOINT} letters, digits, '.', '_' or '-'."
+        ));
+    }
+    Ok(())
+}
+
+fn message_body(b: &str) -> Result<(), String> {
+    if !clean(b, MAX_MESSAGE, true) {
+        return Err(format!(
+            "A message is at most {MAX_MESSAGE} bytes, with no control characters but newlines."
+        ));
+    }
+    Ok(())
+}
+
 fn panel_title(t: &str) -> Result<(), String> {
     if !clean(t, MAX_TITLE, false) {
         return Err(format!(
@@ -330,6 +373,14 @@ fn pref_key(k: &str) -> Result<(), String> {
 }
 
 impl Call {
+    /// The app this call reaches, for [`Need::Peer`].
+    pub fn peer(&self) -> Option<&str> {
+        match self {
+            Self::IpcSend { peer, .. } => Some(peer),
+            _ => None,
+        }
+    }
+
     pub fn need(&self) -> Need {
         match self {
             Self::NotificationPost { .. }
@@ -351,6 +402,10 @@ impl Call {
             Self::SearchProvide {} | Self::SearchReply { .. } => Need::Grant("search-provider"),
             Self::SearchCollect { .. } | Self::SearchOpen { .. } => Need::Spotlight,
             Self::AccountInfo {} => Need::Grant("account-info"),
+            Self::IpcListen { .. } | Self::IpcReply { .. } | Self::IpcPublish { .. } => {
+                Need::Grant("ipc")
+            }
+            Self::IpcSend { .. } => Need::Peer,
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -434,6 +489,19 @@ impl Call {
                 Ok(())
             }
             Self::AccountInfo {} => Ok(()),
+            Self::IpcListen { name } => endpoint_name(name),
+            Self::IpcSend { peer, name, body } => {
+                if !peer.starts_with('/') || !clean(peer, MAX_PEER, false) {
+                    return Err("A peer is an app's full path.".into());
+                }
+                endpoint_name(name)?;
+                message_body(body)
+            }
+            Self::IpcReply { body, .. } => message_body(body),
+            Self::IpcPublish { topic, body } => {
+                endpoint_name(topic)?;
+                message_body(body)
+            }
             Self::SessionAnswer { error, .. } => {
                 if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
                     return Err("A desktop answer's message is short text.".into());
@@ -759,6 +827,34 @@ mod tests {
         };
         assert!(many.validate().is_err());
         assert!(Call::SearchQuery { text: " ".into() }.validate().is_err());
+    }
+
+    #[test]
+    fn ipc_calls() {
+        let send = |peer: &str, name: &str, body: &str| Call::IpcSend {
+            peer: peer.into(),
+            name: name.into(),
+            body: body.into(),
+        };
+        let c = send("/usr/bin/notes", "greet", "hello\nthere");
+        assert_eq!(c.validate(), Ok(()));
+        assert_eq!(c.need(), Need::Peer);
+        assert_eq!(c.peer(), Some("/usr/bin/notes"));
+        assert_eq!(Call::decode(c.encode().as_bytes()), Ok(c));
+        let long = "x".repeat(MAX_MESSAGE + 1);
+        for bad in [
+            send("notes", "greet", "b"),
+            send("/a\nb", "greet", "b"),
+            send("/a", "", "b"),
+            send("/a", "a b", "b"),
+            send("/a", "../x", "b"),
+            send("/a", "greet", "a\0b"),
+            send("/a", "greet", &long),
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?}");
+        }
+        let at_most = send("/a", "greet", &"\"".repeat(MAX_MESSAGE));
+        assert!(at_most.encode().len() < MAX_LINE, "fits once escaped");
     }
 
     #[test]

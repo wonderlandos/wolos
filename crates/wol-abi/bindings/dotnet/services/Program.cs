@@ -110,6 +110,24 @@ unsafe class Services
         Ok(wol_account_copy_info(ctx, &info, &err));
         Console.WriteLine($"account: {Text(wol_info_get_text(Field(info, "name")))}");
         wol_info_release(info);
+        using Utf8 peer = new("/usr/bin/peer"), hello = new("hello"), pong = new("pong");
+        bool seen = false;
+        wol_message_fn onMessage = (_, m, _) =>
+        {
+            Console.WriteLine($"message: {Text(wol_message_get_body(m))} {Text(wol_message_get_from(m))}");
+            IntPtr e = 0;
+            wol_message_reply(m, pong.Ptr, pong.Len, &e);
+            seen = true;
+        };
+        IntPtr door = 0;
+        Ok(wol_endpoint_create(ctx, key.Ptr, key.Len, onMessage, 0, &door, &err));
+        Ok(wol_message_send(ctx, peer.Ptr, peer.Len, key.Ptr, key.Len, hello.Ptr, hello.Len, &str, &err));
+        Console.WriteLine($"reply: {Text(str)}");
+        wol_string_release(str);
+        for (int i = 0; i < 100 && !seen; i++) Ok(wol_context_dispatch(ctx, 100, &err));
+        Ok(wol_publish(ctx, key.Ptr, key.Len, hello.Ptr, hello.Len, &err));
+        wol_endpoint_release(door);
+        GC.KeepAlive(onMessage);
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);
