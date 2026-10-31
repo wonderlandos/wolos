@@ -40,7 +40,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 5 | IPC between apps: typed messages, services, app topics | `wol_message_`, `wol_endpoint_`, `wol_publish` | next: routed by wold, grant per peer app |
 | 6 | files and portals: open/save panels, granted file handles (fd passing) | `wol_file_`, `wol_panel_` | 1.5 `wol_panel_open`, `wol_panel_save`, `wol_file_get_fd`, `_get_name`: grant `file-panels`; the desktop opens the person's pick and the descriptor is passed on, so wold never opens a path for an app |
 | 7 | settings and app preferences | `wol_prefs_` | 1.4 `_copy_string`, `_set_string`, `_remove`, `_copy_keys`: grant `app-preferences`; per account and executable, kept by wold |
-| 9 | search: Spotlight providers and queries | `wol_search_` | |
+| 9 | search: Spotlight providers and queries | `wol_search_` | 1.9 `_query` (grant `search`); `_provide`, `_reply_add` (grant `search-provider`): wold asks only that account's providers, for 200 ms, each as its own process |
 | 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | 1.6 `_copy_info` (grant `power-info`), `_keep_awake` and `wol_assertion_` (grant `keep-awake`): a logind inhibitor that lasts as long as the app's connection to wold |
 | 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | 1.7 `_copy_info`: grant `network-info`; online, and interface names and kinds, never an address or a network name |
 | 12 | audio: output, volume, now playing | `wol_audio_` | 1.8 `_copy_info` (grant `audio-info`), `_set_volume`, `_set_muted` (grant `audio-control`), run by the desktop |

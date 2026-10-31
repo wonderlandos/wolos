@@ -1,0 +1,6 @@
+# libwol 1.9 exports (WOL_1.9). Never edit a shipped line.
+wol_search_provide@WOL_1.9
+wol_search_provider_release@WOL_1.9
+wol_search_provider_retain@WOL_1.9
+wol_search_query@WOL_1.9
+wol_search_reply_add@WOL_1.9

@@ -81,6 +81,8 @@ pub const ASK_TIMEOUT: Duration = Duration::from_secs(4);
 pub const ASKS_KEPT: usize = 64;
 /// How long a file panel may stay open.
 pub const PANEL_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long a search waits for the apps that provide rows.
+pub const PROVIDER_WAIT: Duration = Duration::from_millis(200);
 
 /// Calls waiting for the desktop: each [`Ask`] goes to the shell of the caller's account, and the
 /// `session.answer` with its id wakes the call. An answer counts only from that account.
@@ -229,6 +231,7 @@ pub struct Held {
 pub struct State {
     pub notes: Notes,
     pub prefs: crate::prefs::Prefs,
+    pub searches: crate::search::Searches,
     pub asks: Asks,
     pub holds: Holds,
     pub host: Box<dyn Host>,
@@ -239,6 +242,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             prefs: Default::default(),
+            searches: Default::default(),
             notes: Default::default(),
             asks: Default::default(),
             holds: Default::default(),
@@ -256,6 +260,8 @@ pub trait Grants {
 
 /// Programs that show notifications: the shell.
 pub const SHOWERS: [&str; 1] = ["/usr/bin/wol-shell"];
+/// The one program that collects apps' rows, and so shows them to the person.
+pub const SPOTLIGHT: &str = "/usr/bin/wol-spotlight";
 
 /// `wol_core::consent::FILE`, read on every call so a change in Settings applies at once.
 pub struct ConsentFile(pub PathBuf);
@@ -294,6 +300,8 @@ fn doing(capability: &str) -> Option<&'static str> {
         "network-info" => "see the network state",
         "audio-info" => "see the volume and what is playing",
         "audio-control" => "change the volume",
+        "search" => "search",
+        "search-provider" => "add search results",
         _ => return None,
     })
 }
@@ -384,6 +392,7 @@ fn decide<W: Write + Send>(
     let allowed = match call.need() {
         Need::Grant(cap) => grants.granted(&caller.app, cap),
         Need::Shower => grants.shows_notifications(&caller.app),
+        Need::Spotlight => caller.app == SPOTLIGHT,
     };
     if !allowed {
         return Answer::err(
@@ -391,6 +400,7 @@ fn decide<W: Write + Send>(
             match call.need() {
                 Need::Grant(cap) => denial(cap, &caller.app),
                 Need::Shower => "Only the desktop answers notifications.".into(),
+                Need::Spotlight => "Only Spotlight collects search results.".into(),
             },
         );
     }
@@ -501,6 +511,42 @@ fn decide<W: Write + Send>(
         Call::AudioSetMuted { muted } => {
             let ask = Ask::AudioSetMuted { muted };
             st.asks.ask(bus, caller.uid, ask, ASK_TIMEOUT)
+        }
+        Call::SearchQuery { text } => {
+            st.asks
+                .ask(bus, caller.uid, Ask::Search { text }, ASK_TIMEOUT)
+        }
+        Call::SearchProvide {} => {
+            if !st.holds.take(caller.uid) {
+                return Answer::err(Code::Unavailable, "Too many search providers are running.");
+            }
+            extra.hold = Some(Held {
+                uid: caller.uid,
+                _guard: Box::new(st.searches.register(caller)),
+            });
+            Answer::ok()
+        }
+        Call::SearchReply { id, results } => {
+            if st.searches.reply(caller, id, results) {
+                Answer::ok()
+            } else {
+                Answer::err(Code::InvalidArgument, "Nothing is waiting for that reply.")
+            }
+        }
+        Call::SearchCollect { text } => {
+            let rows = st.searches.collect(bus, caller.uid, &text, PROVIDER_WAIT);
+            Answer::with(serde_json::json!({ "results": rows }))
+        }
+        Call::SearchOpen { provider, key } => {
+            if !st.searches.is_provider(caller.uid, provider) {
+                return Answer::err(Code::InvalidArgument, "That app stopped providing results.");
+            }
+            bus.publish(&Event::SearchOpen {
+                uid: caller.uid,
+                pid: provider,
+                key,
+            });
+            Answer::ok()
         }
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
@@ -1021,6 +1067,50 @@ mod tests {
         let got = handle(r#"{"call":"audio.info"}"#, Some(&a), &g, &s.0, &s.1);
         assert_eq!(got.data.unwrap()["volume"], 40);
         t.join().unwrap();
+    }
+
+    #[test]
+    fn providing_search_needs_its_grant_and_ends_with_the_connection() {
+        let st = State::default();
+        let bus = Bus::<UnixStream>::default();
+        let g = Fixed(&[("/usr/bin/a", "search-provider")]);
+        let line = r#"{"call":"search.provide"}"#;
+        let run = |who: &Caller| respond(line, Some(who), &g, &bus, &st, None);
+        assert_eq!(
+            run(&caller("/usr/bin/b")).0.code,
+            Some(Code::PermissionDenied)
+        );
+        let a = caller("/usr/bin/a");
+        let (ans, extra) = run(&a);
+        assert!(ans.ok);
+        assert!(st.searches.is_provider(a.uid, a.pid));
+        drop(extra);
+        assert!(!st.searches.is_provider(a.uid, a.pid));
+    }
+
+    #[test]
+    fn only_spotlight_collects_or_opens_rows() {
+        let st = State::default();
+        let bus = Bus::<UnixStream>::default();
+        let g = Fixed(&[("/usr/bin/a", "search-provider")]);
+        for line in [
+            r#"{"call":"search.collect","text":"secret"}"#,
+            r#"{"call":"search.open","provider":1,"key":"k"}"#,
+        ] {
+            let a = handle(line, Some(&caller("/usr/bin/a")), &g, &bus, &st);
+            assert_eq!(a.code, Some(Code::PermissionDenied), "{line}");
+            let shell = handle(line, Some(&caller(SHOWERS[0])), &g, &bus, &st);
+            assert_eq!(shell.code, Some(Code::PermissionDenied), "{line}");
+        }
+        let spot = caller(SPOTLIGHT);
+        let a = handle(
+            r#"{"call":"search.collect","text":"q"}"#,
+            Some(&spot),
+            &g,
+            &bus,
+            &st,
+        );
+        assert_eq!(a.data, Some(serde_json::json!({"results": []})));
     }
 
     #[test]

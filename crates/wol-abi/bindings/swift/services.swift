@@ -81,4 +81,18 @@ print("volume: \(Int(percent)) \(text(wol_info_get_text(field(field(info, "now_p
 wol_info_release(info)
 ok(wol_audio_set_volume(ctx, 30, &err))
 ok(wol_audio_set_muted(ctx, 1, &err))
+var opened = false
+let term = "term"
+ok(wol_search_query(ctx, term, n(term), &info, &err))
+print("found: \(wol_info_get_count(field(info, "results")))")
+wol_info_release(info)
+var provider: OpaquePointer?
+ok(wol_search_provide(ctx, { _, r, t, _ in
+    let k = "note-1", title = "A note"
+    var e: OpaquePointer?
+    _ = wol_search_reply_add(r, k, n(k), title, n(title), nil, 0, &e)
+    print("asked: \(text(t))")
+}, { _, k, _ in print("open: \(text(k))"); opened = true }, nil, &provider, &err))
+for _ in 0..<100 where !opened { ok(wol_context_dispatch(ctx, 100, &err)) }
+wol_search_provider_release(provider)
 wol_context_release(ctx)

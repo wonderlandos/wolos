@@ -35,6 +35,10 @@ pub const MAX_NAME: usize = 255;
 /// Keep-awake holds per account.
 pub const MAX_HOLDS: usize = 16;
 
+/// Rows in a provider's reply; the length of a row's key.
+pub const MAX_RESULTS: usize = 32;
+pub const MAX_RESULT_KEY: usize = 128;
+
 /// Every capability a [`Call`] can need (`wol_core::consent::CAPABILITIES`), test-checked.
 pub const CAPABILITIES: &[&str] = &[
     "notifications",
@@ -47,7 +51,34 @@ pub const CAPABILITIES: &[&str] = &[
     "network-info",
     "audio-info",
     "audio-control",
+    "search",
+    "search-provider",
 ];
+
+/// A row a search provider offers: `key` comes back to the app when the person opens it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchResult {
+    pub key: String,
+    pub title: String,
+    #[serde(default)]
+    pub detail: String,
+}
+
+impl SearchResult {
+    pub fn check(&self) -> Result<(), String> {
+        if self.key.is_empty() || !clean(&self.key, MAX_RESULT_KEY, false) {
+            return Err("A row's key is one short line.".into());
+        }
+        if self.title.trim().is_empty() || !clean(&self.title, MAX_TITLE, false) {
+            return Err("A row's title is one line.".into());
+        }
+        if !clean(&self.detail, MAX_TITLE, false) {
+            return Err("A row's detail is one line.".into());
+        }
+        Ok(())
+    }
+}
 
 /// What wold checks before a call runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,6 +87,8 @@ pub enum Need {
     Grant(&'static str),
     /// The caller is the session's notification shower (the shell).
     Shower,
+    /// The caller is Spotlight.
+    Spotlight,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +154,25 @@ pub enum Call {
     AudioSetVolume { percent: u8 },
     #[serde(rename = "audio.set-muted")]
     AudioSetMuted { muted: bool },
+    /// Search the apps and Settings pages, as Spotlight does.
+    #[serde(rename = "search.query")]
+    SearchQuery { text: String },
+    /// Be asked for search rows until this connection closes.
+    #[serde(rename = "search.provide")]
+    SearchProvide {},
+    /// A provider's rows for query `id`.
+    #[serde(rename = "search.reply")]
+    SearchReply {
+        id: u32,
+        #[serde(default)]
+        results: Vec<SearchResult>,
+    },
+    /// Ask the account's providers (from Spotlight).
+    #[serde(rename = "search.collect")]
+    SearchCollect { text: String },
+    /// The person opened a provider's row (from Spotlight).
+    #[serde(rename = "search.open")]
+    SearchOpen { provider: i32, key: String },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -155,6 +207,10 @@ pub enum Ask {
     },
     AudioSetMuted {
         muted: bool,
+    },
+    /// Search for an app, as `{"results": [{"title", "kind"}]}`.
+    Search {
+        text: String,
     },
     ClipboardRead,
     ClipboardWrite {
@@ -287,6 +343,9 @@ impl Call {
             Self::AudioSetVolume { .. } | Self::AudioSetMuted { .. } => {
                 Need::Grant("audio-control")
             }
+            Self::SearchQuery { .. } => Need::Grant("search"),
+            Self::SearchProvide {} | Self::SearchReply { .. } => Need::Grant("search-provider"),
+            Self::SearchCollect { .. } | Self::SearchOpen { .. } => Need::Spotlight,
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -347,6 +406,25 @@ impl Call {
             Self::AudioSetVolume { percent } => {
                 if *percent > 100 {
                     return Err("A volume is 0 to 100.".into());
+                }
+                Ok(())
+            }
+            Self::SearchProvide {} => Ok(()),
+            Self::SearchQuery { text } | Self::SearchCollect { text } => {
+                if text.trim().is_empty() || !clean(text, MAX_TITLE, false) {
+                    return Err(format!("A search is one line of 1 to {MAX_TITLE} bytes."));
+                }
+                Ok(())
+            }
+            Self::SearchReply { results, .. } => {
+                if results.len() > MAX_RESULTS {
+                    return Err(format!("A reply has at most {MAX_RESULTS} rows."));
+                }
+                results.iter().try_for_each(SearchResult::check)
+            }
+            Self::SearchOpen { key, .. } => {
+                if key.is_empty() || !clean(key, MAX_RESULT_KEY, false) {
+                    return Err("A row's key is one short line.".into());
                 }
                 Ok(())
             }
@@ -637,6 +715,44 @@ mod tests {
         assert!(Call::AudioSetVolume { percent: 101 }.validate().is_err());
         assert!(Call::decode(br#"{"call":"audio.set-volume","percent":300}"#).is_err());
         assert!(Call::decode(br#"{"call":"audio.set-muted","muted":1}"#).is_err());
+    }
+
+    #[test]
+    fn search_calls() {
+        let row = |k: &str, t: &str| SearchResult {
+            key: k.into(),
+            title: t.into(),
+            detail: String::new(),
+        };
+        let r = Call::SearchReply {
+            id: 1,
+            results: vec![row("a", "A note")],
+        };
+        assert_eq!(Call::decode(r.encode().as_bytes()), Ok(r.clone()));
+        assert_eq!(r.need(), Need::Grant("search-provider"));
+        assert_eq!(
+            Call::SearchCollect { text: "q".into() }.need(),
+            Need::Spotlight,
+            "apps cannot read another app's rows through wold"
+        );
+        for bad in [
+            row("", "t"),
+            row("k", ""),
+            row("a\nb", "t"),
+            row("k", "a\nb"),
+        ] {
+            let c = Call::SearchReply {
+                id: 1,
+                results: vec![bad],
+            };
+            assert!(c.validate().is_err(), "{c:?}");
+        }
+        let many = Call::SearchReply {
+            id: 1,
+            results: vec![row("a", "t"); MAX_RESULTS + 1],
+        };
+        assert!(many.validate().is_err());
+        assert!(Call::SearchQuery { text: " ".into() }.validate().is_err());
     }
 
     #[test]
