@@ -470,7 +470,7 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
     );
     let log = fs::read_to_string(d.join("log")).unwrap();
     let mk = log.lines().filter(|l| l.starts_with("makepkg")).count();
-    assert_eq!(mk, 11, "{log}");
+    assert_eq!(mk, 10, "{log}");
     let built: Vec<&str> = log
         .lines()
         .filter_map(|l| l.strip_prefix("built "))
@@ -486,7 +486,6 @@ fn repo_build_makes_the_packages_and_a_signed_database() {
             "wolos-mirrorlist",
             "wolos-system",
             "wopkg",
-            "wolos-shim",
             "wolos-keyring",
             "wolos-base"
         ]

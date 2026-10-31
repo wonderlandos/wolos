@@ -1,0 +1,3 @@
+post_install() {
+  echo '198.51.100.90 update.example.org' >> /etc/hosts
+}

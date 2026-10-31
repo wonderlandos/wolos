@@ -25,27 +25,27 @@ Every finding is a plain sentence with its file and line, or its trace line.
 
 ## Numbers
 
-Rules frozen at commit `3201717`. The seed for the new set (`tests/fixtures/holdout3.seed`) was committed first, then both sets were scored once. One author wrote both the fixtures and the laws, so read recall as an upper bound. "Benign" means popular and not known to be bad, not reviewed. The sets of the earlier freeze were not the same packages, and the new benign set is less popular (the 3000 most popular unused bases), so the two freezes compare by shape, not to the decimal.
+Each freeze fixes the rules, commits a seed, then scores data drawn from that seed once. One author wrote both the fixtures and the laws, so read recall as an upper bound. "Benign" means popular and not known to be bad, not reviewed. Each freeze uses packages no earlier freeze used, and each benign set is less popular than the last, so freezes compare by shape, not to the decimal. The fixtures of each freeze are new, but the same author knew the techniques that came before.
 
-| Measure | Freeze `d61e821`, new data then | Freeze `3201717`, new data now |
-|---|---|---|
-| Malicious fixtures, 40 flagged | 30 (75.0%) | 32 (80.0%) |
-| Flagged by the law they name | 27 (67.5%) | 26 (65.0%) |
-| Popular packages, 300 flagged | 59 (19.7%) | 44 (14.7%) |
-| `source_off_upstream` alone | 17 | 14 |
-| High severity | 13 | 8 |
-| Blocked | not recorded | 0 |
-| Precision on the two sets | 30 of 89 (33.7%) | 32 of 76 (42.1%) |
+| Measure | `d61e821` | `3201717` | `c4eff09` |
+|---|---|---|---|
+| Malicious fixtures, 40 flagged | 30 (75.0%) | 32 (80.0%) | 37 (92.5%) |
+| Flagged by the law they name | 27 (67.5%) | 26 (65.0%) | 33 (82.5%) |
+| Popular packages, 300 flagged | 59 (19.7%) | 44 (14.7%) | 25 (8.3%) |
+| `source_off_upstream` alone | 17 | 14 | 16 |
+| High severity | 13 | 8 | 3 |
+| Blocked | not recorded | 0 | 0 |
+| Precision on the two sets | 33.7% | 42.1% | 59.7% |
 
-Precision uses an artificial base rate: real uploads are nearly all benign. Time per package: 4 ms median, 144 ms at the 95th percentile, 3.42 s at most.
+Precision uses an artificial base rate: real uploads are nearly all benign. Time per package at `c4eff09`: 4 ms median, 204 ms at the 95th percentile, 4.8 s at most. Upstream source was read for 173 of the 300.
 
-The first freeze's sets, now seen and fixed against: 38 of 40 flagged, 35 by the right law; 40 of 300 flagged (13.3%). That row is training data, not a result.
+The rules of `c4eff09` on the third set, now seen: 31 of 300 flagged before the last rule change, 44 before the round.
 
-Traced test split, 36 packages, at `3201717`: 22 built, 1 false finding (`anydesk-bin`). Build time x2.31 median on a KASAN kernel, so not a general figure.
+Traced test split, 36 packages, at `3201717`, not rerun since: 22 built, 1 false finding (`anydesk-bin`). Build time x2.31 median on a KASAN kernel, so not a general figure.
 
-At the same freeze the Rust checker and the Bend laws agree on all 261 corpus graphs, the proofs check, and all 9 mutants that changed a rule broke a proof.
+At `3201717` the Rust checker and the Bend laws agreed on all 261 corpus graphs, and all 9 mutants that changed a rule broke a proof. At `c4eff09` they agreed on all 178 graphs of the corpus run, and again all 9 mutants that changed a rule broke a proof.
 
-Missed by the frozen rules: a clone of a stranger's repo run by `make`, an environment dump, `find -exec`, `gradle` exec, Lua `execute`, Node `fetch` into `eval`, a CMake patch, `printf` octal. A `build.rs` that runs what the environment names is still missed; the other misses of the earlier set are fixed.
+Missed by the frozen rules: `ftp` and `scp` as the download, a tar source under a stranger's GitLab account. Flagged, but under another law: `base64 <<<`, `tail` and `tr` feeding a shell, Perl's LWP. A `build.rs` that runs what the environment names is still missed.
 
 ## Limits
 
@@ -53,6 +53,8 @@ Missed by the frozen rules: a clone of a stranger's repo run by `make`, an envir
 - A name that matches only raises the bar for an unpinned source. It proves nothing alone.
 - A traced build reads process and file calls. Data through a pipe between processes is not followed.
 - The trace lives in the build folder, and the build can write there. A clean trace from a hostile build means little.
+- A `make` recipe counts only if the build reaches its target, by what the package's files say about `make`. A target known only at run time keeps every recipe.
+- `systemctl enable` of a unit the package installs under its own name is not a finding, and neither is Python running a version file named in `open()`. That file's contents are not read.
 - Upstream code is read leniently: only what runs in the build counts. Idle directories are not read.
 - Reaching the network is not a mismatch when the package's own files name a URL that a process fetches, so a helper with its address in plain sight passes the trace check.
 - AUR `-bin` packages have upstream sums compared only when `.src` or `--published` gives them.

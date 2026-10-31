@@ -24,10 +24,12 @@ fn efivars(name: &str, sb: u8, setup: u8, db: &[u8]) -> PathBuf {
 }
 
 fn env_for(d: &Path) -> FakeEnv {
+    let _ = std::fs::write(d.join("shimx64.efi"), "");
     FakeEnv {
         vars: vec![
             ("WOLOS_EFIVARS".into(), d.display().to_string()),
             ("WOLOS_PCI_DIR".into(), d.join("none").display().to_string()),
+            ("WOLOS_SHIM_DIR".into(), d.display().to_string()),
         ],
         ..Default::default()
     }
@@ -55,6 +57,17 @@ fn detect_reads_the_firmware() {
         assert_eq!(run(line, &mut e), 0, "{}", e.err);
         assert_eq!(e.out.trim(), want, "{name}");
     }
+}
+
+#[test]
+fn enroll_retries_with_one_command_and_says_what_comes_next() {
+    let d = efivars("en", 1, 0, b"");
+    let mut e = env_for(&d);
+    e.captures
+        .push(("/usr/lib/wolos/boot-enroll".into(), "queued\n".into()));
+    assert_eq!(run("boot enroll", &mut e), 0, "{}", e.err);
+    assert!(e.out.contains("Restart"), "{}", e.out);
+    assert!(e.out.contains("type boot"), "{}", e.out);
 }
 
 #[test]

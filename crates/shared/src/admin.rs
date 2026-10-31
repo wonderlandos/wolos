@@ -26,6 +26,8 @@ pub enum AdminAction {
     PkgInstall,
     /// App Store: remove one catalog id or package name with its unused dependencies.
     PkgRemove,
+    /// App Store: open the AUR tab. Changes nothing; the answer is the password check itself.
+    AurOpen,
     /// Low Power Mode: `low` or `auto` (powerd flags).
     PowerMode,
     /// Boot this boot environment next (restore point; `wol_core::update::be`).
@@ -93,6 +95,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::Revoke, "revoke"),
     (AdminAction::PkgInstall, "pkg-install"),
     (AdminAction::PkgRemove, "pkg-remove"),
+    (AdminAction::AurOpen, "aur-open"),
     (AdminAction::PowerMode, "power-mode"),
     (AdminAction::BootEnvironment, "boot-environment"),
     (AdminAction::HwLoad, "hw-load"),

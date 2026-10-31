@@ -318,7 +318,20 @@ impl<'a> View<'a> {
                         s.label.as_str(),
                         "chmod" | "chown" | "chgrp" | "rm" | "rmdir"
                     );
-                    if content && paths::persistence(path) && !paths::inert_in_package(path) {
+                    // `systemctl enable` of a unit the package itself installs, named for it.
+                    let own_unit = scriptlet
+                        && path.starts_with("/etc/systemd/system/enabled/")
+                        && self.named_for_package(path)
+                        && {
+                            let u = path.rsplit('/').next().unwrap_or("");
+                            let u = u.strip_suffix(".service").unwrap_or(u);
+                            self.declared(&format!("/usr/lib/systemd/system/{u}.service"))
+                        };
+                    if content
+                        && !own_unit
+                        && paths::persistence(path)
+                        && !paths::inert_in_package(path)
+                    {
                         let shipped = path.starts_with("$pkgdir") && self.fed_by_sources(e.src);
                         if !shipped {
                             add(
@@ -341,6 +354,9 @@ impl<'a> View<'a> {
                     // that runs.
                     let tidy = s.label == "mkdir"
                         || matches!(s.label.as_str(), "rm" | "rmdir")
+                            && self.named_for_package(path)
+                        || s.label == "ln"
+                            && path.starts_with("/usr/bin/")
                             && self.named_for_package(path);
                     if scriptlet {
                         if !tidy

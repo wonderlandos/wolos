@@ -33,6 +33,9 @@ fn firmware(env: &dyn Env) -> Firmware {
     let pci = env
         .var("WOLOS_PCI_DIR")
         .unwrap_or_else(|| "/sys/bus/pci/devices".into());
+    let shim = env
+        .var("WOLOS_SHIM_DIR")
+        .unwrap_or_else(|| "/usr/share/wolos/shim".into());
     let flag = |n: &str| efi_var(&vars, n, boot::EFI_GLOBAL).is_some_and(|v| boot::efi_bool(&v));
     Firmware {
         uefi: vars.is_dir(),
@@ -41,6 +44,7 @@ fn firmware(env: &dyn Env) -> Firmware {
         third_party_ca: efi_var(&vars, "db", boot::EFI_DB)
             .is_some_and(|d| boot::has_third_party_ca(&d)),
         out_of_tree: out_of_tree(Path::new(&pci)),
+        first_stage: Path::new(&shim).join("shimx64.efi").is_file(),
     }
 }
 
@@ -57,6 +61,21 @@ fn tier_arg(env: &mut dyn Env, inv: &Invocation) -> Result<Tier, i32> {
 /// `wol boot password`: the word for the firmware's key screen.
 pub fn password(env: &mut dyn Env) -> i32 {
     env.out(&format!("{}\n", boot::MOK_PASSWORD));
+    0
+}
+
+/// `wol boot enroll`: queue the key again; the steps follow.
+pub fn enroll(env: &mut dyn Env) -> i32 {
+    match env.capture(&["/usr/lib/wolos/boot-enroll"]).as_deref().map(str::trim) {
+        Some("enrolled") => env.out("This computer's key is already enrolled.\n"),
+        Some(_) => {
+            env.out("Restart to finish.\n");
+            for s in boot::key_screen_steps() {
+                env.out(&format!("{s}\n"));
+            }
+        }
+        None => return fail(env, ErrorCode::Failed, "the key could not be queued; run this as root"),
+    }
     0
 }
 
@@ -83,7 +102,7 @@ pub fn key_screen(env: &mut dyn Env, inv: &Invocation) -> i32 {
 pub fn words(env: &mut dyn Env, inv: &Invocation) -> i32 {
     match tier_arg(env, inv) {
         Ok(t) => {
-            env.out(&format!("{}\n", boot::protected_words(t)));
+            env.out(&format!("{}\n", boot::words(t, &firmware(env))));
             0
         }
         Err(c) => c,

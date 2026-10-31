@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Queue this computer's key for the firmware's key screen (ADR 0025): the installer, the first boot
+# and `wol boot enroll` all land here, and nobody types anything in a terminal. The next start shows
+# the blue screen, which waits for the person. Prints `queued` or `enrolled`.
+# Env: WOLOS_SB_DIR.
+set -eu
+S=${WOLOS_SB_DIR:-/var/lib/wolos/secureboot}
+case $(mokutil --test-key "$S/db.der" 2>&1 || :) in
+*"already enrolled"*)
+  : > "$S/enrolled"
+  echo enrolled
+  exit 0
+  ;;
+esac
+h=$(mktemp)
+trap 'rm -f "$h"' EXIT
+mokutil --generate-hash="$(wol boot password)" > "$h"
+mokutil --import "$S/db.der" --hash-file "$h"
+mokutil --timeout -1
+echo queued

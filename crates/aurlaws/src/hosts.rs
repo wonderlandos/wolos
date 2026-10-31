@@ -3,7 +3,8 @@
 
 /// The lowercase host of a URL, without VCS prefix, credentials or port.
 pub fn host(url: &str) -> Option<String> {
-    if url.starts_with("file://") {
+    // `local://` is a file the person brings; makepkg downloads nothing.
+    if url.starts_with("file://") || url.starts_with("local://") {
         return None;
     }
     let rest = url.split_once("://")?.1;
@@ -220,6 +221,9 @@ const MIRRORS: &[&str] = &[
     "files.pythonhosted.org",
     "pypi.io",
     "pypi.org",
+    "pypi.python.org",
+    "cpan.org",
+    "metacpan.org",
     "static.crates.io",
     "crates.io",
     "registry.npmjs.org",
@@ -272,6 +276,10 @@ fn related(declared: &str, source: &str, pkgnames: &[String], pinned: bool) -> b
     if pages_owner(&b).is_some_and(|o| repo(declared).is_some_and(|d| d.0 == o)) {
         return true;
     }
+    // `iriun.gitlab.io` for iriun.com. Anyone can take a name there, so only with a pin.
+    if pinned && pages_owner(&b).is_some_and(|o| home.iter().any(|w| w == o)) {
+        return true;
+    }
     if on_code_host(&b) {
         return repo(source).is_some_and(|(owner, name)| {
             kin(&owner, &home, &pkg, pinned)
@@ -283,6 +291,10 @@ fn related(declared: &str, source: &str, pkgnames: &[String], pinned: bool) -> b
     // The same name under another ending is how a look-alike is made, so that alone is not kin.
     let label = site.split('.').next().unwrap_or("");
     if pinned && hosted_project(declared).is_some_and(|p| p == label) {
+        return true;
+    }
+    // The account named on the declared code host owns this domain too: `~maker` and maker.com.
+    if pinned && on_code_host(&a) && repo(declared).is_some_and(|d| d.0 == label) {
         return true;
     }
     pinned && !home.iter().any(|w| w == label) && kin(label, &home, &pkg, true)

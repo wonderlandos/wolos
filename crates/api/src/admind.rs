@@ -285,7 +285,7 @@ pub fn caller_may_read(file_uid: u32, mode: u32, caller: Option<u32>) -> bool {
 pub struct RealOs;
 
 /// Helper contract: run as root with `--admin <user>`, password on stdin, exit 0 = authenticated.
-pub const AUTHCHECK: &str = "/usr/local/libexec/wol-authcheck";
+pub const AUTHCHECK: &str = "/usr/lib/wol-authcheck";
 
 impl AdminOs for RealOs {
     fn passwd(&self) -> String {
@@ -971,6 +971,48 @@ mod tests {
     }
 
     /// Unsigned needs the password every time, even with a cached authorization.
+    #[test]
+    fn opening_the_aur_always_checks_the_password() {
+        let os = Fake::default();
+        let mut cache = AuthCache::default();
+        let ann = Some(Caller {
+            uid: 1001,
+            session: 7,
+        });
+        let open = |pw: &[u8]| {
+            encode(
+                &AdminRequest {
+                    action: AdminAction::AurOpen,
+                    args: vec![],
+                },
+                pw,
+            )
+        };
+        assert_eq!(
+            handle(&open(b""), ann, &mut cache, &os),
+            AdminReply::NeedsAuth
+        );
+        assert_eq!(
+            handle(&open(b"bad"), ann, &mut cache, &os),
+            AdminReply::Denied
+        );
+        assert_eq!(handle(&open(b"good"), ann, &mut cache, &os), AdminReply::Ok);
+        // A password given a moment ago does not open it again.
+        assert_eq!(
+            handle(&open(b""), ann, &mut cache, &os),
+            AdminReply::NeedsAuth
+        );
+        let bob = Some(Caller {
+            uid: 1002,
+            session: 8,
+        });
+        assert_eq!(
+            handle(&open(b"good"), bob, &mut cache, &os),
+            AdminReply::NotAdmin
+        );
+        assert!(os.ran.borrow().is_empty());
+    }
+
     #[test]
     fn wol_install_unsigned_needs_a_fresh_password() {
         let os = pkg_os();

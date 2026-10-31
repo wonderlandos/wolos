@@ -49,3 +49,10 @@ GRUB of another system: copy `/usr/share/wolos/boot/41_wolos` to its `/etc/grub.
 
 Unattended: `wolos.autoinstall=<disk>` on the live command line (`wolos-autoinstall.service`), then power off.
 Tests: `crates/controller/tests/image_install.rs` (fake tools). VM: `image/vm/test-install.sh` (bystander disk, `BOOT PASS|FAIL`). `image/vm/test-installer.sh`: Windows-like and Linux-like disks, real partitioning on loop devices (`layouts`) and whole installs in a VM (`run`).
+
+## Key enrollment
+
+`wol boot enroll` queues this computer's key with `mokutil --import` and sets the key screen to wait.
+`boot-setup` runs it during install and `wolos-mok-enroll.service` repeats it at each start until the
+key is enrolled. The password comes from `wol boot password`. Images carry no first-stage loader, so
+this path needs one supplied locally: without it `wol boot detect` never reports `mok`.

@@ -199,6 +199,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "update.plan" | "update.apply" => update(env, inv),
         "encrypt.rebind" => crate::seal::rebind(env),
         "boot.password" => crate::boot::password(env),
+        "boot.enroll" => crate::boot::enroll(env),
         "boot.detect" => crate::boot::detect(env, inv),
         "boot.key_screen" => crate::boot::key_screen(env, inv),
         "boot.words" => crate::boot::words(env, inv),
