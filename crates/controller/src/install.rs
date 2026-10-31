@@ -78,7 +78,8 @@ pub fn read_table(t: &mut dyn Tools, path: &str) -> Option<Disk> {
             "--json",
             "-b",
             "-o",
-            "PATH,SIZE,MODEL,FSTYPE,LABEL,UUID,MOUNTPOINTS",
+            // NAME: without it lsblk prints a flat list, no partitions under their disk.
+            "NAME,PATH,SIZE,MODEL,FSTYPE,LABEL,UUID,MOUNTPOINTS",
             path,
         ],
         None,
@@ -145,7 +146,7 @@ pub fn probe(t: &mut dyn Tools, path: &str) -> Option<Disk> {
         match p.fstype.as_str() {
             "ntfs" => {
                 let o = t.run(
-                    &["ntfsresize", "--info", "--no-progress-bars", &p.path],
+                    &["ntfsresize", "--info", "--no-progress-bar", &p.path],
                     None,
                 );
                 let text = format!("{}\n{}", o.stdout, o.stderr);
@@ -761,7 +762,16 @@ mod tests {
         .to_string()
     }
 
-    fn lsblk(d: &Disk) -> String {
+    const NTFSRESIZE_OPTIONS: &[&str] = &[
+        "--info",
+        "--no-action",
+        "--force",
+        "--size",
+        "--no-progress-bar",
+    ];
+
+    /// As the real one: partitions come as children only when NAME is a column, else as a flat list.
+    fn lsblk(d: &Disk, argv: &[&str]) -> String {
         let kids: Vec<serde_json::Value> = d
             .parts
             .iter()
@@ -769,8 +779,16 @@ mod tests {
                 serde_json::json!({"path":p.path,"size":p.sectors*d.sector,"fstype":p.fstype,"label":p.label,"uuid":p.fsuuid,"mountpoints":[null]})
             })
             .collect();
-        serde_json::json!({"blockdevices":[{"path":d.path,"size":d.bytes,"model":"QEMU","children":kids}]})
-            .to_string()
+        let tree = argv.iter().any(|a| a.split(',').any(|c| c == "NAME"));
+        let top = serde_json::json!({"path":d.path,"size":d.bytes,"model":"QEMU"});
+        let all = if tree {
+            let mut top = top;
+            top["children"] = kids.into();
+            vec![top]
+        } else {
+            std::iter::once(top).chain(kids).collect()
+        };
+        serde_json::json!({ "blockdevices": all }).to_string()
     }
 
     impl Fake {
@@ -812,8 +830,20 @@ mod tests {
                     stderr: "no".into(),
                 };
             }
+            // The real ntfsresize stops at an option it doesn't know.
+            if argv[0] == "ntfsresize"
+                && argv
+                    .iter()
+                    .any(|a| a.starts_with("--") && !NTFSRESIZE_OPTIONS.contains(a))
+            {
+                return Out {
+                    ok: false,
+                    stdout: String::new(),
+                    stderr: format!("{line}: unrecognized option"),
+                };
+            }
             match argv {
-                ["lsblk", ..] => ok(lsblk(&self.d)),
+                ["lsblk", ..] => ok(lsblk(&self.d, argv)),
                 ["sfdisk", "--json", ..] => ok(table(&self.d)),
                 ["sfdisk", "--no-tell-kernel", "-N", n, _] => {
                     let n: u32 = n.parse().unwrap();
@@ -1025,7 +1055,7 @@ mod tests {
                 match a[0] {
                     "lsblk" => Out {
                         ok: true,
-                        stdout: lsblk(&d),
+                        stdout: lsblk(&d, a),
                         stderr: String::new(),
                     },
                     "sfdisk" => Out {

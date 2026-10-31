@@ -120,6 +120,47 @@ fn pacman_conf_is_pinned_and_wolos_comes_first() {
     }
 }
 
+/// `wol install` runs real tools that its tests fake: each one has to reach the image. A tool that
+/// isn't listed here fails, so a new one can't arrive without its package.
+#[test]
+fn every_tool_wol_install_runs_ships_in_the_image() {
+    const OWNERS: &[(&str, &[&str])] = &[
+        ("arch-install-scripts", &["arch-chroot"]),
+        ("btrfs-progs", &["btrfs", "mkfs.btrfs"]),
+        ("dosfstools", &["mkfs.vfat"]),
+        (
+            "e2fsprogs",
+            &["dumpe2fs", "e2fsck", "mkfs.ext4", "resize2fs"],
+        ),
+        ("ntfsprogs", &["ntfsresize"]),
+        ("xfsprogs", &["mkfs.xfs", "xfs_growfs"]),
+        // base: coreutils, systemd, util-linux.
+        (
+            "wolos-base",
+            &[
+                "blkid", "cat", "df", "lsblk", "mkdir", "mkswap", "mount", "partx", "sfdisk",
+                "udevadm", "umount",
+            ],
+        ),
+    ];
+    let source = read("crates/controller/src/install.rs");
+    let live = source.split("#[cfg(test)]").next().unwrap();
+    let live = live.replace("= [\"", "&[\"");
+    let listed = packages();
+    let mut seen = 0;
+    for call in live.split("&[\"").skip(1) {
+        let tool = call.split('"').next().unwrap();
+        let owner = OWNERS.iter().find(|(_, tools)| tools.contains(&tool));
+        let (package, _) = owner.unwrap_or_else(|| panic!("{tool}: which package ships it?"));
+        assert!(
+            listed.iter().any(|p| p == package),
+            "{tool} needs {package}"
+        );
+        seen += 1;
+    }
+    assert!(seen > 20, "the scan found {seen} tool calls");
+}
+
 #[test]
 fn packages_are_arch_names_with_linux_wolos_only() {
     let p = packages();

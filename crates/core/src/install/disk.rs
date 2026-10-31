@@ -268,7 +268,7 @@ fn partition_number(node: &str) -> u32 {
 }
 
 /// `sfdisk --json <disk>` (None: no partition table) and
-/// `lsblk --json -b -o PATH,SIZE,MODEL,FSTYPE,LABEL,UUID,MOUNTPOINTS <disk>`.
+/// `lsblk --json -b -o NAME,PATH,SIZE,MODEL,FSTYPE,LABEL,UUID,MOUNTPOINTS <disk>`.
 pub fn parse(sfdisk: Option<&str>, lsblk: &str) -> Option<Disk> {
     let ls: LsOut = serde_json::from_str(lsblk).ok()?;
     let top = ls.blockdevices.first()?;
@@ -326,7 +326,7 @@ pub fn parse(sfdisk: Option<&str>, lsblk: &str) -> Option<Disk> {
     Some(d)
 }
 
-/// `ntfsresize --info --force --no-progress-bars <part>`: bytes it could shrink to.
+/// `ntfsresize --info --no-progress-bar <part>`: bytes it could shrink to.
 pub fn parse_ntfsresize(out: &str) -> Option<u64> {
     let rest = out.split("You might resize at ").nth(1)?;
     rest.split_whitespace().next()?.parse().ok()
