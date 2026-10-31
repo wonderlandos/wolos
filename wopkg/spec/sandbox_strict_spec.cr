@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 require "spec"
+require "./userns"
 require "../src/wopkg/sandbox"
 
 describe Wopkg::Sandbox, "untrusted builds" do
@@ -37,12 +38,11 @@ describe Wopkg::Sandbox, "untrusted builds" do
   end
 
   it "really runs as nobody, without the caller's home, in a real sandbox", tags: "sandbox" do
-    next unless Process.find_executable("bwrap")
+    next unless sandbox_runs?
     dir = File.tempname("wopkg-strict")
     Dir.mkdir_p("#{dir}/src")
     log = "#{dir}/log"
     ok = Wopkg::Sandbox.run(dir, "test \"$(id -u)\" = 65534 && test ! -e #{ENV["HOME"]}/.bashrc && echo nobody > /work/src/out", false, log, strict: true)
-    next unless ok || !File.read(log).includes?("Operation not permitted") # no user namespaces here
     ok.should be_true
     File.read("#{dir}/src/out").should eq("nobody\n")
   end

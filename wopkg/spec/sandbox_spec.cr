@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 require "spec"
+require "./userns"
 require "../src/wopkg/sandbox"
 
 describe Wopkg::Sandbox do
@@ -16,7 +17,7 @@ describe Wopkg::Sandbox do
   end
 
   it "really has no network and no home inside", tags: "sandbox" do
-    next unless Process.find_executable("bwrap")
+    next unless sandbox_runs?
     dir = File.tempname("wopkg-sb")
     Dir.mkdir_p("#{dir}/src")
     log = "#{dir}/log"
