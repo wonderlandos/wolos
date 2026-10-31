@@ -91,6 +91,24 @@ fn the_fresh_held_out_fixtures_never_lose_ground() {
     assert!(flagged >= 38, "{flagged}");
 }
 
+/// The third held-out set: seed committed first, scored once at the third freeze.
+#[test]
+fn the_third_held_out_fixtures_never_lose_ground() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/holdout3");
+    let mut flagged = 0;
+    for e in std::fs::read_dir(root).unwrap().flatten() {
+        let o = Command::new(env!("CARGO_BIN_EXE_wopkg-aurlaws"))
+            .arg("--dir")
+            .arg(e.path())
+            .arg("--json")
+            .output()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+        flagged += i32::from(v["verdict"] != "pass");
+    }
+    assert!(flagged >= 32, "{flagged}");
+}
+
 #[test]
 fn no_fixture_points_at_a_real_address() {
     fn walk(d: &Path, out: &mut Vec<String>) {
@@ -114,6 +132,9 @@ fn no_fixture_points_at_a_real_address() {
             let Some(i) = w.find("://") else { continue };
             let host = w[i + 3..].split(['/', ':']).next().unwrap();
             let fine = host.starts_with("203.0.113.")
+                || host.starts_with("198.51.100.")
+                || host == "example.net"
+                || host.ends_with(".github.io") && host.starts_with("example-")
                 || host.ends_with(".invalid")
                 || host == "example.org"
                 || host == "github.com" && w.contains("github.com/example")

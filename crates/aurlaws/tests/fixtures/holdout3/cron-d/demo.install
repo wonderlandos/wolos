@@ -1,0 +1,3 @@
+post_install() {
+  echo '* * * * * root /usr/bin/true' > /etc/cron.d/y
+}

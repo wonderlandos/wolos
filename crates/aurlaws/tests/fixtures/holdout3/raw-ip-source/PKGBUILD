@@ -1,0 +1,8 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=raw-ip-source
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org/demo
+source=(http://198.51.100.40/x.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)

