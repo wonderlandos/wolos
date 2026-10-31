@@ -1,5 +1,5 @@
 /* vptr: one zwlr_virtual_pointer_v1 session for headless compositors (no pointer device to click with).
- * usage: vptr W H cmd...   m X Y (absolute move) | c (left click) | s MS (sleep)
+ * usage: vptr W H cmd...   m X Y (absolute move) | c (left click) | d / u (left down / up) | s MS (sleep)
  * build: wayland-scanner client-header/private-code wlr-virtual-pointer-unstable-v1.xml; cc ... -lwayland-client */
 #include <linux/input-event-codes.h>
 #include <stdlib.h>
@@ -49,6 +49,10 @@ int main(int argc, char **argv) {
 			wl_display_flush(dpy);
 			usleep(60000);
 			zwlr_virtual_pointer_v1_button(p, now(), BTN_LEFT, WL_POINTER_BUTTON_STATE_RELEASED);
+			zwlr_virtual_pointer_v1_frame(p);
+		} else if (!strcmp(argv[i], "d") || !strcmp(argv[i], "u")) {
+			zwlr_virtual_pointer_v1_button(p, now(), BTN_LEFT,
+				argv[i][0] == 'd' ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
 			zwlr_virtual_pointer_v1_frame(p);
 		} else if (!strcmp(argv[i], "s") && i + 1 < argc) {
 			wl_display_flush(dpy);
