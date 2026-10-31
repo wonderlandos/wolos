@@ -2,8 +2,11 @@
 //! `wol_info`: what a service call answers, as one read-only tree (ADR 0020, 1.4). A service can
 //! say more over time (a new key) without a new symbol; the keys are listed in `wol.h`.
 //! Every getter accepts NULL and answers NULL or 0, so lookups chain.
-use crate::string::{into_raw, release, retain, wol_string};
+use crate::context::wol_context;
+use crate::error::{Result, need};
+use crate::string::{borrow, into_raw, release, retain, wol_string};
 use serde_json::Value;
+use shared::portal::Call;
 use std::collections::BTreeMap;
 use std::ffi::{c_char, c_int};
 use std::ptr::null;
@@ -42,6 +45,22 @@ impl wol_info {
     pub fn out(v: &Value) -> *mut Self {
         into_raw(Self::new(v))
     }
+}
+
+/// A call whose data the app reads as a `wol_info`.
+///
+/// # Safety
+/// `context` is live; `out` writable or NULL.
+pub(crate) unsafe fn copy_info(
+    context: *mut wol_context,
+    call: &Call,
+    out: *mut *mut wol_info,
+) -> Result<()> {
+    need(out, "out")?;
+    let ctx = unsafe { borrow(context) }?;
+    let data = crate::client::data(ctx.wold(), call)?;
+    unsafe { *out = wol_info::out(&data) };
+    Ok(())
 }
 
 /// Field `key` of an object; NULL when there is none. Borrowed from `info`.

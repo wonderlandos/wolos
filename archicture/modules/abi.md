@@ -41,7 +41,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 6 | files and portals: open/save panels, granted file handles (fd passing) | `wol_file_`, `wol_panel_` | 1.5 `wol_panel_open`, `wol_panel_save`, `wol_file_get_fd`, `_get_name`: grant `file-panels`; the desktop opens the person's pick and the descriptor is passed on, so wold never opens a path for an app |
 | 7 | settings and app preferences | `wol_prefs_` | 1.4 `_copy_string`, `_set_string`, `_remove`, `_copy_keys`: grant `app-preferences`; per account and executable, kept by wold |
 | 9 | search: Spotlight providers and queries | `wol_search_` | |
-| 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | |
+| 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | 1.6 `_copy_info` (grant `power-info`), `_keep_awake` and `wol_assertion_` (grant `keep-awake`): a logind inhibitor that lasts as long as the app's connection to wold |
 | 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | |
 | 12 | audio: output, volume, now playing | `wol_audio_` | |
 | 13 | devices: USB, Bluetooth, iPhone | `wol_device_` | per-device grant |

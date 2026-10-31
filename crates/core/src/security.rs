@@ -219,6 +219,16 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "apps ask WolOS to show a panel, and only the file you pick reaches the app",
     ),
+    (
+        "power-info",
+        Enforcement::System,
+        "apps ask WolOS for the battery level, which checks your choice first",
+    ),
+    (
+        "keep-awake",
+        Enforcement::System,
+        "apps ask WolOS to hold the machine awake, which checks your choice first and lets go when the app ends",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

@@ -2,6 +2,7 @@
 pub mod admind;
 pub mod bus;
 pub mod control;
+pub mod facts;
 pub mod jobfiles;
 pub mod memsaver;
 pub mod os;

@@ -125,3 +125,11 @@ WOL_1.5 {
     wol_panel_open;
     wol_panel_save;
 } WOL_1.4;
+
+WOL_1.6 {
+  global:
+    wol_assertion_release;
+    wol_assertion_retain;
+    wol_power_copy_info;
+    wol_power_keep_awake;
+} WOL_1.5;

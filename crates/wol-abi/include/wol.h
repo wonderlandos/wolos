@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 5
+#define WOL_VERSION_MINOR 6
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -339,6 +339,26 @@ int wol_file_get_fd(const wol_file *file);
 const wol_string *wol_file_get_name(const wol_file *file);
 wol_file *wol_file_retain(wol_file *file);
 void wol_file_release(wol_file *file);
+
+/* ---- 1.6: power (WOL_1.6) ---- */
+
+/*
+ * Permission: power-info. Keys: on_battery (bool), low_power (bool), and on a machine with a
+ * battery: battery { percent (number), charging (bool), full (bool), minutes_left (number, when
+ * known) }.
+ */
+wol_status wol_power_copy_info(wol_context *context, wol_info **out, wol_error **error);
+
+/*
+ * Keep this computer from sleeping until the assertion is released or the process ends.
+ * Permission: keep-awake. `reason` is one line the person can see. An account holds at most 16.
+ */
+typedef struct wol_assertion wol_assertion;
+
+wol_status wol_power_keep_awake(wol_context *context, const char *reason, size_t reason_len,
+                                wol_assertion **out, wol_error **error);
+wol_assertion *wol_assertion_retain(wol_assertion *assertion);
+void wol_assertion_release(wol_assertion *assertion);
 
 #ifdef __cplusplus
 }

@@ -10,6 +10,7 @@ use std::os::fd::OwnedFd;
 use std::path::PathBuf;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
+use wol_core::system::Host;
 
 /// The calling process as the kernel reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,12 +192,60 @@ impl Asks {
     }
 }
 
-/// What the portal keeps between calls.
+/// Connections holding something, per account.
 #[derive(Default)]
+pub struct Holds(Mutex<HashMap<u32, usize>>);
+
+impl Holds {
+    fn take(&self, uid: u32) -> bool {
+        let mut g = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        let n = g.entry(uid).or_default();
+        if *n >= shared::portal::MAX_HOLDS {
+            return false;
+        }
+        *n += 1;
+        true
+    }
+
+    /// The connection of a [`Held`] closed.
+    pub fn give(&self, uid: u32) {
+        let mut g = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(n) = g.get_mut(&uid) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                g.remove(&uid);
+            }
+        }
+    }
+}
+
+/// Lives as long as the caller's connection.
+pub struct Held {
+    pub uid: u32,
+    _guard: Box<dyn Send>,
+}
+
+/// What the portal keeps between calls.
 pub struct State {
     pub notes: Notes,
     pub prefs: crate::prefs::Prefs,
     pub asks: Asks,
+    pub holds: Holds,
+    pub host: Box<dyn Host>,
+    pub inhibit: Box<dyn crate::facts::Inhibit>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            prefs: Default::default(),
+            notes: Default::default(),
+            asks: Default::default(),
+            holds: Default::default(),
+            host: Box::new(wol_core::system::PosixHost),
+            inhibit: Box::new(crate::facts::Logind),
+        }
+    }
 }
 
 pub trait Grants {
@@ -240,6 +289,8 @@ fn doing(capability: &str) -> Option<&'static str> {
         "clipboard-write" => "change the clipboard",
         "app-preferences" => "keep preferences",
         "file-panels" => "show file panels",
+        "power-info" => "see the battery",
+        "keep-awake" => "keep this computer awake",
         _ => return None,
     })
 }
@@ -261,6 +312,8 @@ fn denial(capability: &str, app: &str) -> String {
 pub struct Extra {
     /// Sent to the caller with the answer.
     pub file: Option<OwnedFd>,
+    /// Kept until the caller's connection closes.
+    pub hold: Option<Held>,
 }
 
 fn panel<W: Write + Send>(
@@ -416,6 +469,26 @@ fn decide<W: Write + Send>(
         Call::PrefsKeys {} => st.prefs.keys(caller.uid, &caller.app),
         Call::PanelOpen { title } => panel(st, bus, caller, extra, false, title, String::new()),
         Call::PanelSave { title, name } => panel(st, bus, caller, extra, true, title, name),
+        Call::PowerInfo {} => Answer::with(crate::facts::power(&*st.host)),
+        Call::PowerKeepAwake { reason } => {
+            let refused = |m: &str| Answer::err(Code::Unavailable, m);
+            if !st.holds.take(caller.uid) {
+                return refused("Too many apps are keeping this computer awake.");
+            }
+            match st.inhibit.hold(name(&caller.app), &reason) {
+                Some(guard) => {
+                    extra.hold = Some(Held {
+                        uid: caller.uid,
+                        _guard: guard,
+                    });
+                    Answer::ok()
+                }
+                None => {
+                    st.holds.give(caller.uid);
+                    refused("WolOS could not keep this computer awake.")
+                }
+            }
+        }
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),
@@ -851,6 +924,61 @@ mod tests {
             Some(Code::InvalidArgument)
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    struct Counting(Arc<std::sync::atomic::AtomicUsize>);
+    struct Token(Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for Token {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    impl crate::facts::Inhibit for Counting {
+        fn hold(&self, _: &str, _: &str) -> Option<Box<dyn Send>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(Box::new(Token(self.0.clone())))
+        }
+    }
+
+    #[test]
+    fn keep_awake_needs_the_grant_and_is_bounded_per_account() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let live: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
+        let st = State {
+            inhibit: Box::new(Counting(live.clone())),
+            ..State::default()
+        };
+        let bus = Bus::<UnixStream>::default();
+        let g = Fixed(&[("/usr/bin/a", "keep-awake")]);
+        let line = r#"{"call":"power.keep-awake","reason":"Exporting"}"#;
+        let run = |who: &Caller| respond(line, Some(who), &g, &bus, &st, None);
+        assert_eq!(
+            run(&caller("/usr/bin/b")).0.code,
+            Some(Code::PermissionDenied)
+        );
+        assert_eq!(live.load(SeqCst), 0);
+        let a = caller("/usr/bin/a");
+        let mut held: Vec<Held> = Vec::new();
+        for _ in 0..shared::portal::MAX_HOLDS {
+            let (ans, extra) = run(&a);
+            assert!(ans.ok);
+            held.push(extra.hold.unwrap());
+        }
+        assert_eq!(
+            run(&a).0.code,
+            Some(Code::Unavailable),
+            "one account's limit"
+        );
+        let mut other = a.clone();
+        other.uid = 1001;
+        let (ok, extra) = run(&other);
+        assert!(ok.ok, "another account has its own");
+        st.holds.give(extra.hold.unwrap().uid);
+        let gone = held.pop().unwrap();
+        st.holds.give(gone.uid);
+        drop(gone);
+        assert_eq!(live.load(SeqCst), shared::portal::MAX_HOLDS - 1);
+        assert!(run(&a).0.ok, "a released hold can be taken again");
     }
 
     #[test]

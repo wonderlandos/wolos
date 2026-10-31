@@ -86,6 +86,14 @@ pub fn serve(
             } else {
                 let (answer, extra) =
                     portal::respond(json, who.as_ref(), grants, bus, state, attached);
+                if let Some(held) = extra.hold {
+                    let _ = (&stream).write_all(answer.to_line().as_bytes());
+                    hold_until_closed(&stream);
+                    let uid = held.uid;
+                    drop(held);
+                    state.holds.give(uid);
+                    return;
+                }
                 if let Some(file) = extra.file {
                     let _ = send_with_fd(&stream, answer.to_line().as_bytes(), file.as_fd());
                     return;
@@ -102,6 +110,13 @@ pub fn serve(
     }
 }
 
+/// Until the caller closes the connection or dies. Whatever it sends is thrown away, up to a limit
+/// that ends the hold: this thread does nothing else.
+fn hold_until_closed(stream: &UnixStream) {
+    let _ = stream.set_read_timeout(None);
+    let _ = std::io::copy(&mut stream.take(4096), &mut std::io::sink());
+}
+
 /// Bind a socket path (stale file removed) with mode `mode`.
 pub fn bind(path: &Path, mode: u32) -> std::io::Result<UnixListener> {
     use std::os::unix::fs::PermissionsExt;
@@ -115,6 +130,8 @@ pub fn bind(path: &Path, mode: u32) -> std::io::Result<UnixListener> {
 mod tests {
     use super::*;
     use shared::jobs::JobStatus;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     struct Empty;
     impl JobTable for Empty {
@@ -290,6 +307,41 @@ mod tests {
             assert_eq!(text, "picked");
         });
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_hold_ends_when_the_connection_closes() {
+        struct Flag(Arc<AtomicBool>);
+        impl Drop for Flag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        struct Fake(Arc<AtomicBool>);
+        impl crate::facts::Inhibit for Fake {
+            fn hold(&self, _: &str, _: &str) -> Option<Box<dyn Send>> {
+                Some(Box::new(Flag(self.0.clone())))
+            }
+        }
+        let let_go: Arc<AtomicBool> = Arc::default();
+        let bus = Bus::default();
+        let state = portal::State {
+            inhibit: Box::new(Fake(let_go.clone())),
+            ..portal::State::default()
+        };
+        std::thread::scope(|t| {
+            let (srv, mut app) = UnixStream::pair().unwrap();
+            app.write_all(b"call {\"call\":\"power.keep-awake\",\"reason\":\"x\"}\n")
+                .unwrap();
+            let h = t.spawn(|| serve(srv, me(), &Empty, &bus, &AllowAll, &state));
+            let mut line = String::new();
+            BufReader::new(&app).read_line(&mut line).unwrap();
+            assert_eq!(line, "{\"ok\":true}\n");
+            assert!(!let_go.load(Ordering::SeqCst), "held while connected");
+            drop(app);
+            h.join().unwrap();
+        });
+        assert!(let_go.load(Ordering::SeqCst));
     }
 
     #[test]

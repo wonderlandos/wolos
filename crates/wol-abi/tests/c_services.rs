@@ -147,3 +147,23 @@ fn panels() {
     );
     assert_eq!(calls.len(), 3);
 }
+
+#[test]
+fn power() {
+    let (out, calls) = run("power", |c, _| match c {
+        Call::PowerInfo {} => Answer::with(json!({
+            "on_battery": true, "low_power": false, "battery": {"percent": 71, "charging": false}
+        })),
+        _ => Answer::ok(),
+    });
+    assert_eq!(out, ["battery: 1 71 1", "held: 1", "no reason: 1"]);
+    assert_eq!(
+        calls,
+        [
+            Call::PowerInfo {},
+            Call::PowerKeepAwake {
+                reason: "Exporting a video".into()
+            }
+        ]
+    );
+}
