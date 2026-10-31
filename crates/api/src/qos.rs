@@ -258,6 +258,26 @@ pub fn oom_adj(class: QosClass) -> Option<i16> {
     (class == QosClass::Background).then_some(300)
 }
 
+/// The numeric pid directories under `proc_dir` whose `comm` is one of `comms`.
+fn procs_named<'a>(
+    proc_dir: &Path,
+    comms: &'a [&[u8]],
+) -> impl Iterator<Item = std::fs::DirEntry> + 'a {
+    std::fs::read_dir(proc_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.parse::<u32>().is_ok())
+        })
+        .filter(move |e| {
+            std::fs::read(e.path().join("comm"))
+                .is_ok_and(|c| comms.contains(&c.trim_ascii_end()))
+        })
+}
+
 /// Session processes the OOM killer must spare (a dead compositor ends the whole session).
 pub const SESSION_COMMS: [&[u8]; 2] = [b"Hyprland", b"wol-shell"];
 pub const SESSION_OOM_ADJ: i16 = -900;
@@ -265,26 +285,25 @@ pub const SESSION_OOM_ADJ: i16 = -900;
 /// Give every [`SESSION_COMMS`] process under `proc_dir` [`SESSION_OOM_ADJ`]; idempotent (only
 /// writes values that differ). Returns how many were written.
 pub fn protect_session(proc_dir: &Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(proc_dir) else {
-        return 0;
-    };
     let want = SESSION_OOM_ADJ.to_string();
-    entries
-        .flatten()
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| n.parse::<u32>().is_ok())
-        })
-        .filter(|e| {
-            std::fs::read(e.path().join("comm"))
-                .is_ok_and(|c| SESSION_COMMS.contains(&c.trim_ascii_end()))
-        })
+    procs_named(proc_dir, &SESSION_COMMS)
         .filter(|e| {
             let adj = e.path().join("oom_score_adj");
             std::fs::read_to_string(&adj).is_ok_and(|v| v.trim() != want)
                 && std::fs::write(&adj, &want).is_ok()
         })
+        .count()
+}
+
+/// Shader precompilers, as the kernel truncates them in `comm`.
+pub const PRECOMPILE_COMMS: [&[u8]; 1] = [b"fossilize_repla"];
+
+/// Put every [`PRECOMPILE_COMMS`] process under `proc_dir` in [`QosClass::Background`]. Re-applying
+/// is harmless and threads inherit it. Returns how many were tagged.
+pub fn tag_precompile(proc_dir: &Path, applier: &dyn Applier) -> usize {
+    procs_named(proc_dir, &PRECOMPILE_COMMS)
+        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|pid| applier.apply(*pid, QosClass::Background))
         .count()
 }
 
@@ -512,6 +531,30 @@ pub mod tests {
         assert_eq!(adj("12").trim(), "0");
         assert_eq!(adj("self").trim(), "0", "only numeric pid dirs");
         assert_eq!(protect_session(&d), 0, "idempotent");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn shader_precompile_runs_in_the_background() {
+        let d = std::env::temp_dir().join(format!("wol-qos-foz-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for (pid, comm) in [
+            ("20", "fossilize_repla\n"),
+            ("21", "fossilize_repla\n"),
+            ("22", "cs2\n"),
+            ("self", "fossilize_repla\n"),
+        ] {
+            std::fs::create_dir_all(d.join(pid)).unwrap();
+            std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+        }
+        let r = Recorder(Mutex::new(Vec::with_capacity(8)));
+        assert_eq!(tag_precompile(&d, &r), 2);
+        let mut got = r.0.lock().unwrap().clone();
+        got.sort();
+        assert_eq!(
+            got,
+            [(20, QosClass::Background), (21, QosClass::Background)]
+        );
         std::fs::remove_dir_all(&d).ok();
     }
 
