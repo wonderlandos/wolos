@@ -8,11 +8,14 @@ udevadm settle
 if [ "$s" = medium ]; then
   # The disk this system started from must not be listed, must not be installable.
   m=$(lsblk -no PKNAME -p "$(findmnt -no SOURCE /run/archiso/bootmnt)" | head -1)
-  sh $L/install-disks | grep -qx "$m" || sh $L/install-run "$m" | grep -q 'not a disk' && echo medium-refused > /dev/ttyS0
+  if sh $L/install-disks | grep -qx "$m"; then echo medium-listed > /dev/ttyS0
+  elif sh $L/install-run "$m" | grep -q 'not a disk'; then echo medium-refused > /dev/ttyS0
+  else echo medium-accepted > /dev/ttyS0; fi
   systemctl poweroff; exit
 fi
 mkdir -p "$D"
 sh $L/install-check /dev/vda --probe > "$D/probe.json"
 install_scenario "$s" "$D/probe.json" "$D/plan" > /dev/ttyS0 2>&1 || { echo "wolos-install: failed 0 scenario" > /dev/ttyS0; systemctl poweroff; exit; }
-sh $L/install-run --plan "$D/plan/plan.json" 2>&1 | tee /dev/ttyS0 | tail -3 > /dev/null
+# The serial port is opened for each line: a getty starting on it hangs up whoever held it open.
+sh $L/install-run --plan "$D/plan/plan.json" 2>&1 | while IFS= read -r l; do echo "$l" > /dev/ttyS0; done
 systemctl poweroff

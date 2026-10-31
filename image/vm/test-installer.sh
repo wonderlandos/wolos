@@ -29,8 +29,13 @@ remaster() { # base.iso bin_dir: this tree's installer on the base image
   sudo ln -sf ../wolos-e2e.service "$r/etc/systemd/system/multi-user.target.wants/wolos-e2e.service"
   sudo sed -i '$a m live seat' "$r/etc/sysusers.d/wolos-live.conf"
   echo 'live ALL=(root) NOPASSWD: /usr/lib/wolos/install-run, /usr/lib/wolos/install-check, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff' | sudo tee "$r/etc/sudoers.d/wolos-live" >/dev/null
-  sudo pacman --noconfirm --needed --root "$r" --dbpath "$r/var/lib/pacman" -S xfsprogs ntfsprogs >/dev/null 2>&1 ||
-    sudo pacman --noconfirm --needed --root "$r" --dbpath "$r/usr/lib/pacman" -S xfsprogs ntfsprogs >/dev/null 2>&1 || :
+  # An image older than the package list: its tools from this host's cache.
+  sudo pacman -Sw --noconfirm --needed xfsprogs ntfsprogs libntfs-3g liburcu >/dev/null || exit 1
+  local pkg
+  for pkg in xfsprogs ntfsprogs libntfs-3g liburcu; do
+    sudo bsdtar -xf "$(ls -t /var/cache/pacman/pkg/$pkg-[0-9]*.pkg.tar.zst | head -1)" -C "$r" usr || exit 1
+  done
+  [ -x "$r/usr/bin/ntfsresize" ] && [ -x "$r/usr/bin/mkfs.xfs" ] || exit 1
   sudo rm -f "$W/new.sfs"
   sudo mksquashfs "$r" "$W/new.sfs" -comp zstd -Xcompression-level 3 -quiet -noappend || exit 1
   sudo chown "$(id -u)" "$W/new.sfs"
@@ -131,12 +136,13 @@ label() { blkid -o value -s LABEL "$ISO"; }
 install_in_vm() { # dir scenario
   local d=$1 s=$2 start=$SECONDS
   timeout "${WOLOS_E2E_INSTALL_S:-1500}" bash -c "$(declare -f vm); OVMF=$OVMF TPM_ARGS='${TPM_ARGS:-}'; vm $d -cdrom $ISO -kernel $W/kernel -initrd $W/initrd \
-    -append 'archisobasedir=wolos archisolabel=$(label) wolos.e2e=$s wolos.try console=ttyS0' -serial file:$d/install.log"
+    -append 'archisobasedir=wolos archisolabel=$(label) wolos.e2e=$s wolos.try console=ttyS0 quiet audit=0' -serial file:$d/install.log"
   echo "$s: install took $((SECONDS - start)) s" | tee "$d/took"
 }
 
 boot_in_vm() { # dir scenario: up, a screenshot, a clean stop
   local d=$1 s=$2
+  [ "$s" != tpm ] || tpm_start "$d"   # swtpm ends with the VM that used it; its state stays
   vm "$d" -serial "file:$d/boot.log" & local q=$!
   if [ "$s" = password ]; then
     for t in 1 2 3 4; do sleep 15; python3 "$H/qmp.py" "$d" shot "$d/unlock$t.png"; python3 "$H/qmp.py" "$d" keys $'white rabbit\n'; done
@@ -246,7 +252,7 @@ medium() { # the installer's own medium is refused
   S=medium; local d=$W/$S; rm -rf "$d"; mkdir -p "$d"; cp "$OVMF/OVMF_VARS.4m.fd" "$d/vars.fd"
   mk_disk blank "$d/disk.raw"
   timeout 300 bash -c "$(declare -f vm); OVMF=$OVMF; vm $d -drive file=$ISO,if=virtio,format=raw,readonly=off,snapshot=on -kernel $W/kernel -initrd $W/initrd \
-    -append 'archisobasedir=wolos archisolabel=$(label) wolos.e2e=medium wolos.try console=ttyS0' -serial file:$d/install.log"
+    -append 'archisobasedir=wolos archisolabel=$(label) wolos.e2e=medium wolos.try console=ttyS0 quiet audit=0' -serial file:$d/install.log"
   say "boot medium refused" "grep -aq 'medium-refused' '$d/install.log'"
 }
 
