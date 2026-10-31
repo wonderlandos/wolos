@@ -36,7 +36,9 @@ pub enum EdgeKind {
 }
 
 /// When a node's code runs. `Scriptlet` runs as root on the person's machine.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
     /// Top level of a PKGBUILD: runs whenever makepkg reads the file.
@@ -105,7 +107,14 @@ impl Graph {
     }
 
     /// The node for `key`, created on first sight. The first location wins.
-    pub fn node(&mut self, kind: NodeKind, key: &str, label: &str, loc: Option<Loc>, stage: Stage) -> NodeId {
+    pub fn node(
+        &mut self,
+        kind: NodeKind,
+        key: &str,
+        label: &str,
+        loc: Option<Loc>,
+        stage: Stage,
+    ) -> NodeId {
         if let Some(&id) = self.index.get(key) {
             return id;
         }
@@ -132,9 +141,20 @@ impl Graph {
 
     pub fn edge(&mut self, src: NodeId, dst: NodeId, kind: EdgeKind, loc: Option<Loc>) {
         self.seq += 1;
-        let dup = self.edges.iter().rev().take(64).any(|e| e.src == src && e.dst == dst && e.kind == kind);
+        let dup = self
+            .edges
+            .iter()
+            .rev()
+            .take(64)
+            .any(|e| e.src == src && e.dst == dst && e.kind == kind);
         if !dup {
-            self.edges.push(Edge { src, dst, kind, loc, seq: self.seq });
+            self.edges.push(Edge {
+                src,
+                dst,
+                kind,
+                loc,
+                seq: self.seq,
+            });
         }
     }
 
@@ -152,13 +172,23 @@ impl Graph {
             })
             .collect();
         for e in &other.edges {
-            self.edge(map[e.src as usize], map[e.dst as usize], e.kind, e.loc.clone());
+            self.edge(
+                map[e.src as usize],
+                map[e.dst as usize],
+                e.kind,
+                e.loc.clone(),
+            );
         }
     }
 
     /// Rebuild the key index after deserialising.
     pub fn reindex(&mut self) {
-        self.index = self.nodes.iter().enumerate().map(|(i, n)| (n.key.clone(), i as NodeId)).collect();
+        self.index = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.key.clone(), i as NodeId))
+            .collect();
         self.seq = self.edges.iter().map(|e| e.seq).max().unwrap_or(0);
     }
 
