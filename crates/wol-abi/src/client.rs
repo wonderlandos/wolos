@@ -96,6 +96,28 @@ pub fn data(socket: &Path, c: &Call) -> Result<Value> {
     }
 }
 
+/// A call that holds something for as long as the returned connection stays open.
+pub fn hold(socket: &Path, c: &Call) -> Result<UnixStream> {
+    if let Err(m) = c.validate() {
+        return Err(Error::invalid(m));
+    }
+    let refused = |a: Answer| {
+        Error::new(
+            a.code.map_or(Status::Internal, Into::into),
+            a.message.unwrap_or_default(),
+        )
+    };
+    let mut s = UnixStream::connect(socket).map_err(|_| refused(unavailable()))?;
+    s.set_read_timeout(Some(TIMEOUT))
+        .and_then(|()| s.set_write_timeout(Some(TIMEOUT)))
+        .and_then(|()| s.write_all(format!("call {}\n", c.encode()).as_bytes()))
+        .map_err(|_| refused(unavailable()))?;
+    let reader = s.try_clone().map_err(|_| refused(unavailable()))?;
+    let line = read_line(&mut BufReader::new(reader)).ok_or_else(|| refused(unavailable()))?;
+    let a = Answer::parse(&line);
+    if a.ok { Ok(s) } else { Err(refused(a)) }
+}
+
 /// Event stream from wold (`shared::events` lines).
 pub fn subscribe(socket: &Path) -> std::io::Result<UnixStream> {
     let mut s = UnixStream::connect(socket)?;
