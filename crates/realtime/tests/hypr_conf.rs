@@ -290,6 +290,26 @@ fn fork_makes_client_minimise_real() {
 /// Live: `focuswindow` (switcher, menu actions) focused a floating window but left it behind
 /// another; wol-hypr raises the window that becomes active.
 #[test]
+fn own_frame_windows_see_zoom_change_state() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/patches");
+    let patches: String = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    let added = |s: &str| patches.lines().any(|l| l.starts_with('+') && l.contains(s));
+    // Live on Helium 0.20.2.1: the zoom button zoomed once and then did nothing, because every
+    // window stays "maximized" from its first map and so zooming changed no state.
+    assert!(added("wantsClientSide(TOPLEVEL->wlToplevel())"));
+    assert!(added("TOPLEVEL->setMaximized(false);"));
+    assert!(added("->setMaximized(true);"));
+    // Dropping the map-time state instead gives clients shadow margins: windows land 10 to 20 px
+    // off and clipped (measured on Helium and libadwaita).
+    assert!(!patches
+        .lines()
+        .any(|l| l.starts_with('-') && l.contains("m_toplevel->setMaximized(true);")));
+}
+
+#[test]
 fn activation_raises_the_window() {
     let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
     let hook = &plugin[plugin.find("static void onActive").unwrap()..];

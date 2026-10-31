@@ -1,0 +1,80 @@
+From: kleeedolinux <71413974+kleeedolinux@users.noreply.github.com>
+Subject: [PATCH] xdg-shell: own-frame windows see zoom change state
+
+Every toplevel stays maximized from its first map so that it draws no shadow
+margins, so zooming changes no state a client can see. Chromium and Electron
+then ignore their next zoom click: Helium zoomed once and could not be
+restored. Windows that asked for a client-side frame get the state dropped for
+one configure. GTK never creates a decoration object and is not affected.
+
+---
+--- a/src/desktop/view/Window.cpp
++++ b/src/desktop/view/Window.cpp
+@@ -45,6 +45,8 @@
+ #include "../../managers/eventLoop/EventLoopTimer.hpp"
+ #include "../../protocols/XDGShell.hpp"
+ #include "../../protocols/core/Compositor.hpp"
++#include "../../protocols/XDGDecoration.hpp"
++#include "../../managers/eventLoop/EventLoopManager.hpp"
+ #include "../../protocols/core/Subcompositor.hpp"
+ #include "../../protocols/ContentType.hpp"
+ #include "../../protocols/LayerShell.hpp"
+@@ -1444,6 +1446,20 @@
+                 Fullscreen::controller()->setFullscreenMode(window, std::nullopt, Fullscreen::FSMODE_NONE);
+             else if (CLIENT_STATE == Fullscreen::FSMODE_NONE)
+                 Fullscreen::controller()->setFullscreenMode(window, std::nullopt, Fullscreen::FSMODE_MAXIMIZED);
++
++            // WolOS: every toplevel stays "maximized" from its first map so that it draws no shadow
++            // margins, so zooming changes no state a client can see. Chromium and Electron then
++            // ignore their next zoom click. Windows with their own frame get the state dropped
++            // for one configure.
++            const auto TOPLEVEL = m_xdgSurface ? m_xdgSurface->m_toplevel.lock() : nullptr;
++            if (TOPLEVEL && PROTO::xdgDecoration->wantsClientSide(TOPLEVEL->wlToplevel())) {
++                TOPLEVEL->setMaximized(false);
++                g_pEventLoopManager->doLater([w = m_self] {
++                    const auto W = w.lock();
++                    if (W && W->m_xdgSurface && W->m_xdgSurface->m_toplevel)
++                        W->m_xdgSurface->m_toplevel->setMaximized(true);
++                });
++            }
+         }
+     }
+ }
+--- a/src/protocols/XDGDecoration.hpp
++++ b/src/protocols/XDGDecoration.hpp
+@@ -26,6 +26,12 @@
+ 
+ class CXDGDecorationProtocol : public IWaylandProtocol {
+   public:
++    // WolOS: this toplevel asked to draw its own frame.
++    bool wantsClientSide(wl_resource* toplevel) {
++        const auto it = m_decorations.find(toplevel);
++        return it != m_decorations.end() && it->second->mostRecentlyRequested == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
++    }
++
+     CXDGDecorationProtocol(const wl_interface* iface, const int& ver, const std::string& name);
+ 
+     virtual void bindManager(wl_client* client, void* data, uint32_t ver, uint32_t id);
+--- a/src/protocols/XDGShell.cpp
++++ b/src/protocols/XDGShell.cpp
+@@ -360,6 +360,10 @@
+     return m_owner->scheduleConfigure();
+ }
+ 
++wl_resource* CXDGToplevelResource::wlToplevel() {
++    return m_resource->resource();
++}
++
+ uint32_t CXDGToplevelResource::setMaximized(bool maximized) {
+     bool set = std::ranges::find(m_pendingApply.states, XDG_TOPLEVEL_STATE_MAXIMIZED) != m_pendingApply.states.end();
+ 
+--- a/src/protocols/XDGShell.hpp
++++ b/src/protocols/XDGShell.hpp
+@@ -115,6 +115,7 @@
+ 
+     // schedule a configure event
+     uint32_t setSize(const Vector2D& size);
++    wl_resource* wlToplevel(); // WolOS
+     uint32_t setMaximized(bool maximized);
+     uint32_t setFullscreen(bool fullscreen);
+     uint32_t setActive(bool active);
