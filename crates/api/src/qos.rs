@@ -62,11 +62,13 @@ pub fn linux(class: QosClass) -> Linux {
 pub const HINTS: &str = "/sys/kernel/wolos";
 
 /// Session policy wold sets at start: the frontmost app runs at least at half capacity with exact
-/// timers (Wine/Proton frame limiters wake on time); background threads coalesce wakeups by 50 ms.
-pub const HINT_DEFAULTS: [(&str, i64); 3] = [
+/// timers (Wine/Proton frame limiters wake on time); background threads coalesce wakeups by 50 ms;
+/// its busiest thread keeps a core to itself.
+pub const HINT_DEFAULTS: [(&str, i64); 4] = [
     ("foreground_uclamp_min", 512),
     ("foreground_timerslack_ns", 0),
     ("background_timerslack_ns", 50_000_000),
+    ("shield", 1),
 ];
 
 /// Write one hint (an existing file only; sysfs never creates). True when written.
@@ -381,6 +383,10 @@ pub mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.join("foreground_timerslack_ns")).unwrap(),
             "0"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("shield")).unwrap(),
+            "1"
         );
         assert_eq!(
             std::fs::read_to_string(dir.join("background_timerslack_ns")).unwrap(),

@@ -498,6 +498,19 @@ fn recipe_has_build_flavours_and_fast_developer_builds() {
     }
 }
 
+/// Scheduler patches on, four 8250 ports probed at boot instead of 32.
+#[test]
+fn config_turns_on_the_scheduler_patches() {
+    let c = read("kernel/conf/wolos.config");
+    for on in [
+        "CONFIG_SCHED_PROXY_EXEC=y",
+        "CONFIG_WOLOS_SHIELD=y",
+        "CONFIG_SERIAL_8250_RUNTIME_UARTS=4",
+    ] {
+        assert!(c.lines().any(|l| l == on), "wolos.config lacks {on}");
+    }
+}
+
 /// A branch profile feeds the next build: AutoFDO and Propeller stay off without one.
 #[test]
 fn recipe_takes_autofdo_and_propeller_profiles() {
