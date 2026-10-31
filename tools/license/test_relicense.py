@@ -52,6 +52,7 @@ FILES = {
     "archicture/adr/0020-libwol-stable-abi.md": "libwol and `wol.h` are BSD-2-Clause, usable by apps of any license. (`shared::view`, BSD)\n",
     "design/LICENSE": "Licensor: Julia Klee and her company (with affiliates and successors)\n",
     "assets/LICENSE": "CC\n",
+    "LICENSES/MIT.txt": "mit\n",
     "tools/license/staged/LICENSE.bsd": "BSD text\n",
     "tools/license/staged/LICENSE.assets": "brand pointer\n",
     "LICENSE": "BSD 2-Clause License\n",
