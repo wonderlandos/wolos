@@ -14,7 +14,7 @@ depends=(hyprland-wolos gtk4 gtk4-layer-shell libadwaita pam systemd clamav)
 provides=(default-cursors)
 conflicts=(default-cursors)
 replaces=(default-cursors)
-makedepends=(cargo clang mold sccache pkgconf hyprland-wolos git)
+makedepends=(cargo clang mold sccache pkgconf hyprland-wolos git nautilus)
 options=(!debug !lto)
 backup=(etc/sudoers etc/wolos/shell.json etc/sudoers.d/wolos etc/pam.d/wol-login etc/wolos/nftables.conf
   etc/zsh/zshenv)

@@ -27,11 +27,13 @@ fn deep(dir: &Path) -> Option<Box<dyn xguard::Deep>> {
 }
 
 fn scan(args: &[String]) -> i32 {
-    let (mut json, mut dir, mut paths) = (false, None, Vec::new());
+    let (mut json, mut need_clam, mut dir, mut paths) = (false, false, None, Vec::new());
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
+            // ClamAV must answer: without it the result is Incomplete, not clean.
+            "--clamav" => need_clam = true,
             "--rules" => dir = it.next().map(PathBuf::from),
             p => paths.push(p.to_owned()),
         }
@@ -70,6 +72,9 @@ fn scan(args: &[String]) -> i32 {
             use std::io::Seek;
             let _ = f.rewind();
             let a = xguard::clam::ask(s, &f, xguard::clam::WAIT);
+            xguard::clam::merge(&mut r, a, &p);
+        } else if need_clam {
+            let a = xguard::clam::Answer::NotRun("no signatures on this computer".into());
             xguard::clam::merge(&mut r, a, &p);
         }
         if json {

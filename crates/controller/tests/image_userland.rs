@@ -384,3 +384,24 @@ fn the_image_leaves_the_firefox_folder_alone() {
         assert!(!t.contains("wolos-browser-config"), "{list}");
     }
 }
+
+#[test]
+fn files_offers_clamav_and_the_action_can_only_start_wol_analyze() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
+    let c = read("image/nautilus/wolos-analyze.c");
+    assert!(c.contains("\"Analyze with ClamAV\""));
+    assert!(c.contains("\"wol-analyze\""));
+    let rust = read("image/build-rust.sh");
+    assert!(rust.contains(" wol-analyze"));
+    assert!(rust.contains("nautilus/wolos-analyze.c"));
+    let pkg = read("image/repo/wolos-system/PKGBUILD");
+    assert!(
+        pkg.lines()
+            .any(|l| l.starts_with("makedepends=") && l.contains("nautilus"))
+    );
+    // Off stays off: nothing here may reach the switch.
+    let window = read("crates/shell/src/ui/analyze.rs");
+    assert!(!window.contains("malware-signatures"));
+    assert!(!c.contains("malware-signatures"));
+}
