@@ -45,7 +45,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
-| Find App Store | `wol-store` not built into the image, no Dock/menu/Spotlight entry | - | STUCK | Packages |
+| Find App Store | `wol-store` not built into the image, no Dock/menu/Search entry | - | STUCK | Packages |
 | Search | catalogue at once, `pkg search` later, no spinner, offline = "No results" | none | NO-FEEDBACK | Packages |
 | Get | ring, no cancel, no % | ring | SLOW | Packages |
 | Fails | was "X was not installed. The change did not work. Try again."; now `copy::install` ("…Check that you're online, then try again.") | sentence | OK (copy) / cause lost | UX / Packages |
@@ -69,7 +69,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
-| Get Steam | Steam in Launchpad, Spotlight and the App Store (Open); `steam://` links open it | - | OK | Games |
+| Get Steam | Steam in Apps, Search and the App Store (Open); `steam://` links open it | - | OK | Games |
 | Steam first run | `wol games steam`: "Getting Steam ready" notification, `lsu-bootstrap`, then Steam's own updater window; offline: "Steam couldn't download…" | notification | OK (host-tested, not yet on hardware) | Games |
 | Windows .exe | double-click runs it on wine (or umu-launcher) in its own prefix (`wol-run --exe`) | none while a new prefix is made | NO-FEEDBACK | Games |
 | NVIDIA | `linux-nvidia-libs` not installed by `wol hw`; the notification points to `wol games doctor` | notification | TERMINAL | Kernel/hardware |
@@ -115,13 +115,13 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Recording | no indicator; stop = reopen toolbar | - | STUCK | Shell |
 | Non-English account | saves to new English folders | - | STUCK | Shell |
 
-## J10 Spotlight
+## J10 Search
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
 | ⌘Space | new process per open | not measured | SLOW risk | Shell |
 | Apps | ranked, 8 rows | instant | OK | - |
-| Files | names under `$HOME` (no hidden, no build output), listed by the shell at login and hourly, again when Spotlight opens on a list older than 30 s; < 50 ms per keystroke on 200 000 names (tested) | instant | OK | Shell |
+| Files | names under `$HOME` (no hidden, no build output), listed by the shell at login and hourly, again when Search opens on a list older than 30 s; < 50 ms per keystroke on 200 000 names (tested) | instant | OK | Shell |
 | Settings | every pane and sub-page under the name Settings opens; pane words ("dark", "menu bar") find it (tested) | instant | OK | Shell |
 | No result | "No results for “…”" + "Search the web for “…”" (Return opens the browser) | sentence | OK | Shell |
 | Click away | stays open with the keyboard | none | NO-FEEDBACK | Shell |
@@ -149,7 +149,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 
 | Surface | Verdict | Owner |
 |---|---|---|
-| Control Center, Spotlight, approval, lock, setup, capture, switcher | OK | - |
+| Control Center, Search, approval, lock, setup, capture, switcher | OK | - |
 | Menu bar ⌃F2, Dock ⌃F3 (arrows move, Return opens, Esc gives the keyboard back); banners: Esc or a swipe dismisses | OK | - |
 | Notification Center: Esc closes; nothing focusable inside yet | NO-FEEDBACK | Shell |
 | Super is ⌘: ⌘C/V/X/Z/⇧Z/A/S/O/P/F/G/T/W/N/R/L/+/−/0 reach the app as its Ctrl key (a terminal's Ctrl+Shift+C/V); no system shortcut takes a plain ⌘ letter (`hypr_conf.rs`) | OK | - |

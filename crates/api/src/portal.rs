@@ -267,7 +267,7 @@ pub trait Grants {
 /// Programs that show notifications: the shell.
 pub const SHOWERS: [&str; 1] = ["/usr/bin/wol-shell"];
 /// The one program that collects apps' rows, and so shows them to the person.
-pub const SPOTLIGHT: &str = "/usr/bin/wol-spotlight";
+pub const SEARCHBAR: &str = "/usr/bin/wol-search";
 
 /// `wol_core::consent::FILE`, read on every call so a change in Settings applies at once.
 pub struct ConsentFile(pub PathBuf);
@@ -403,7 +403,7 @@ fn decide<W: Write + Send>(
     let allowed = match call.need() {
         Need::Grant(cap) => grants.granted(&caller.app, cap),
         Need::Shower => grants.shows_notifications(&caller.app),
-        Need::Spotlight => caller.app == SPOTLIGHT,
+        Need::Search => caller.app == SEARCHBAR,
         Need::Device => call.device().is_some_and(|(v, p)| {
             grants.granted(&caller.app, &wol_core::consent::device_grant(v, p))
         }),
@@ -417,7 +417,7 @@ fn decide<W: Write + Send>(
             match call.need() {
                 Need::Grant(cap) => denial(cap, &caller.app),
                 Need::Shower => "Only the desktop answers notifications.".into(),
-                Need::Spotlight => "Only Spotlight collects search results.".into(),
+                Need::Search => "Only Search collects search results.".into(),
                 Need::Peer => denial("ipc", &caller.app),
                 Need::Device => denial("devices", &caller.app),
             },
@@ -1179,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn only_spotlight_collects_or_opens_rows() {
+    fn only_searchbar_collects_or_opens_rows() {
         let st = State::default();
         let bus = Bus::<UnixStream>::default();
         let g = Fixed(&[("/usr/bin/a", "search-provider")]);
@@ -1192,7 +1192,7 @@ mod tests {
             let shell = handle(line, Some(&caller(SHOWERS[0])), &g, &bus, &st);
             assert_eq!(shell.code, Some(Code::PermissionDenied), "{line}");
         }
-        let spot = caller(SPOTLIGHT);
+        let spot = caller(SEARCHBAR);
         let a = handle(
             r#"{"call":"search.collect","text":"q"}"#,
             Some(&spot),

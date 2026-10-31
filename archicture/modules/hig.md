@@ -74,4 +74,4 @@ Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`
 | Insets | a glass panel or Control Center module insets its drawn content unequally on any side, or a card/sheet/list has left != right or top != bottom (> 1 px). Measured through layout-only boxes, so a stretched card with centred rows fails. Panels and modules pad with the one `--inset` token. |
 
 `WOL_DEBUG_LAYOUT=1` outlines widgets; `WOL_LAYOUT_CHECK=exit` exits 1 on any issue (CI and golden tests).
-Every surface (menu bar, dock, Control Center, Spotlight, lock, login, every Settings page) has golden screenshots at its sizes, passes the layout check, and was visually reviewed by the author before commit.
+Every surface (menu bar, dock, Control Center, Search, lock, login, every Settings page) has golden screenshots at its sizes, passes the layout check, and was visually reviewed by the author before commit.

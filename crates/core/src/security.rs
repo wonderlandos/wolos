@@ -307,7 +307,7 @@ pub fn enforcement(capability: &str) -> Option<Enforcement> {
 }
 
 /// Programs that may copy the screen (and see the pointer in it) directly: the portal (it asks
-/// which screen to share), the shell and its screenshot, recording and Mission Control tools.
+/// which screen to share), the shell and its screenshot, recording and Overview tools.
 pub const SCREENCOPY_SYSTEM: &[&str] = &[
     "/usr/lib/xdg-desktop-portal-hyprland",
     "/usr/bin/grim",

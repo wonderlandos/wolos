@@ -19,7 +19,7 @@ sleep 3; export WAYLAND_DISPLAY=wayland-1 SWAYSOCK=\$(ls \$XDG_RUNTIME_DIR/sway-
 eval \$(dbus-launch --sh-syntax)
 \$B/wol-shell > /tmp/hlu-shell.log 2>&1 &
 sleep 6; grim \$O/01-desktop.png
-(\$B/wol-spotlight >/dev/null 2>&1 &); sleep 3; wtype -s 40 x -k BackSpace term; sleep 2; grim \$O/02-spotlight.png; pkill -f wol-spotlight; sleep 1
+(\$B/wol-search >/dev/null 2>&1 &); sleep 3; wtype -s 40 x -k BackSpace term; sleep 2; grim \$O/02-searchbar.png; pkill -f wol-search; sleep 1
 \$B/wol shell show control-center; sleep 2; grim \$O/03-control-center.png; \$B/wol shell hide control-center; sleep 1
 (\$B/wol-settings >/dev/null 2>&1 &); (zenity --info --text "WolOS" >/dev/null 2>&1 &); sleep 4
 \$B/wol shell show switcher; sleep 2; grim \$O/04-switcher.png; \$B/wol shell hide switcher; pkill zenity; pkill -f wol-settings; sleep 1

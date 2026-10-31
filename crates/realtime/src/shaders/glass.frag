@@ -1,4 +1,4 @@
-// Liquid glass over the blurred backdrop: rounded-rect SDF mask, edge lensing along the SDF
+// Glass over the blurred backdrop: rounded-rect SDF mask, edge lensing along the SDF
 // normal, chromatic split at the rim, saturation boost, tint, specular rim light.
 // Same SDF as glass::sdf_rounded_rect (unit-tested there).
 uniform vec2 size;

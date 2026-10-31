@@ -555,7 +555,7 @@ fn write_atomic(p: &Path, text: &str) -> Result<(), PresetError> {
         .map_err(|e| PresetError::Io(e.to_string()))
 }
 
-/// The theme's `glass` token with its alpha multiplied by a look's `glass` (Liquid Glass 0.8 is
+/// The theme's `glass` token with its alpha multiplied by a look's `glass` (Glass 0.8 is
 /// more see-through, Light 1.2 more solid): a CSS override for the menu bar, Dock and Control
 /// Center. None when nothing changes or the token is not `rgba(...)`.
 pub fn glass_css(token: &str, glass: f32) -> Option<String> {

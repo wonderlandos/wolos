@@ -25,11 +25,11 @@ pub struct ShellPrefs {
     pub dock_show_recents: bool,
     /// Minimize effect speed as a percentage of its time scale (50 = 0.5).
     pub dock_minimize_speed_pct: u8,
-    /// Spotlight: milliseconds a slower provider (the file index) waits after a keystroke before
+    /// Search: milliseconds a slower provider (the file index) waits after a keystroke before
     /// its rows may be merged in (`priority_index_delay_ms`).
     pub priority_index_delay_ms: u32,
-    /// Spotlight: slower providers answering later than this after a keystroke are left out.
-    pub spotlight_slow_timeout_ms: u32,
+    /// Search: slower providers answering later than this after a keystroke are left out.
+    pub searchbar_slow_timeout_ms: u32,
     /// Settings > Control Center: which optional modules show.
     pub control_center: ControlCenterPrefs,
 }
@@ -46,7 +46,7 @@ impl Default for ShellPrefs {
             dock_show_recents: true,
             dock_minimize_speed_pct: 50,
             priority_index_delay_ms: 0,
-            spotlight_slow_timeout_ms: 400,
+            searchbar_slow_timeout_ms: 400,
             control_center: ControlCenterPrefs::default(),
         }
     }
@@ -297,10 +297,10 @@ mod tests {
     }
 
     #[test]
-    fn spotlight_keys_default() {
+    fn searchbar_keys_default() {
         let d = ShellPrefs::default();
         assert_eq!(d.priority_index_delay_ms, 0);
-        assert_eq!(d.spotlight_slow_timeout_ms, 400);
+        assert_eq!(d.searchbar_slow_timeout_ms, 400);
         let p = ShellPrefs::parse(Some(r#"{"priority_index_delay_ms":50}"#));
         assert_eq!(p.priority_index_delay_ms, 50);
     }

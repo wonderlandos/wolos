@@ -14,13 +14,13 @@ Probes: `design/tools/perf/build.sh` builds `dmg` (screencopy region hash per fr
 | wol-shell RSS | - | ~110 MB | same |
 | Super+Tab to first frame | < 100 ms | 31.1 median / 32.5 p95 | `latency.py` (30 runs) |
 | Control Center click to frame | < 100 ms | 27.0 / 36.8 | same |
-| Mission Control (Super+Up) | < 100 ms | 31.6 / 32.3 | same |
+| Overview (Super+Up) | < 100 ms | 31.6 / 32.3 | same |
 | Volume OSD | < 100 ms | 36.2 / 37.0 | same |
-| Spotlight keystroke to frame | < 100 ms | 15.4 / 24.3 | same |
-| Spotlight keystroke compute | < 16 ms | 0.58 / 0.94 | `WOL_SHELL_TIMING=1` log |
+| Search keystroke to frame | < 100 ms | 15.4 / 24.3 | same |
+| Search keystroke compute | < 16 ms | 0.58 / 0.94 | `WOL_SHELL_TIMING=1` log |
 | Control Center x200 RSS growth | < 5 MB | -0.9 MB | `leak.py` |
 | Switcher x200 RSS growth | < 5 MB | +0.5 MB | same |
-| Spotlight x200 | no leftover process | 200/200 exited | same |
+| Search x200 | no leftover process | 200/200 exited | same |
 | wol-shell start to wallpaper+dock+menu bar mapped | - | ~237 ms | `session_start.py LOG -- wol-session` |
 | Session login to full desktop | - | ~2.54 s nested (see notes) | same |
 

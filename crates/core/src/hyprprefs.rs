@@ -645,7 +645,7 @@ mod tests {
         let mut o = sc::Overrides::default();
         o.assign(
             &d,
-            "exec wol-spotlight",
+            "exec wol-search",
             sc::Combo::parse("SUPER ALT", "Space"),
             false,
         )
@@ -830,8 +830,8 @@ mod tests {
         let defaults = shortcut_defaults(&host);
         let shot = defaults
             .iter()
-            .find(|s| s.name == "Show Spotlight search")
-            .expect("spotlight shortcut")
+            .find(|s| s.name == "Show Search")
+            .expect("searchbar shortcut")
             .clone();
         let mut o = load_overrides(&h);
         let k = shortcuts::Combo::parse("SUPER SHIFT", "K").unwrap();

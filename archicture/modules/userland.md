@@ -15,7 +15,7 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | Notes | gnote | `org.gnome.Gnote` |
 | Terminal | foot | `foot` |
 
-Launchpad also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor, Image Viewer (eog) from their `.desktop` files; a pinned app appears once, under its WolOS name.
+Apps also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor, Image Viewer (eog) from their `.desktop` files; a pinned app appears once, under its WolOS name.
 Default apps: `/usr/local/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins).
 
 ## System

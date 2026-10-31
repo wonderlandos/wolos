@@ -116,7 +116,7 @@ fn doctor_reports_ready_and_each_fix() {
     assert!(!e.out.contains("fix: \n"), "checks that pass print no fix");
 }
 
-/// From the Dock or Launchpad (no terminal): a notification on the first start, then Steam's
+/// From the Dock or Apps (no terminal): a notification on the first start, then Steam's
 /// own updater window.
 #[test]
 fn steam_first_start_downloads_the_client_then_starts_it() {

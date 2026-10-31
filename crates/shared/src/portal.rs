@@ -102,8 +102,8 @@ pub enum Need {
     Grant(&'static str),
     /// The caller is the session's notification shower (the shell).
     Shower,
-    /// The caller is Spotlight.
-    Spotlight,
+    /// The caller is Search.
+    Search,
     /// The caller was allowed to reach [`Call::peer`].
     Peer,
     /// The caller was allowed to open [`Call::device`].
@@ -173,7 +173,7 @@ pub enum Call {
     AudioSetVolume { percent: u8 },
     #[serde(rename = "audio.set-muted")]
     AudioSetMuted { muted: bool },
-    /// Search the apps and Settings pages, as Spotlight does.
+    /// Search the apps and Settings pages, as Search does.
     #[serde(rename = "search.query")]
     SearchQuery { text: String },
     /// Be asked for search rows until this connection closes.
@@ -186,10 +186,10 @@ pub enum Call {
         #[serde(default)]
         results: Vec<SearchResult>,
     },
-    /// Ask the account's providers (from Spotlight).
+    /// Ask the account's providers (from Search).
     #[serde(rename = "search.collect")]
     SearchCollect { text: String },
-    /// The person opened a provider's row (from Spotlight).
+    /// The person opened a provider's row (from Search).
     #[serde(rename = "search.open")]
     SearchOpen { provider: i32, key: String },
     /// The caller's own account.
@@ -439,7 +439,7 @@ impl Call {
             }
             Self::SearchQuery { .. } => Need::Grant("search"),
             Self::SearchProvide {} | Self::SearchReply { .. } => Need::Grant("search-provider"),
-            Self::SearchCollect { .. } | Self::SearchOpen { .. } => Need::Spotlight,
+            Self::SearchCollect { .. } | Self::SearchOpen { .. } => Need::Search,
             Self::AccountInfo {} => Need::Grant("account-info"),
             Self::IpcListen { .. } | Self::IpcReply { .. } | Self::IpcPublish { .. } => {
                 Need::Grant("ipc")
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(r.need(), Need::Grant("search-provider"));
         assert_eq!(
             Call::SearchCollect { text: "q".into() }.need(),
-            Need::Spotlight,
+            Need::Search,
             "apps cannot read another app's rows through wold"
         );
         for bad in [

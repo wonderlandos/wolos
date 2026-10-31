@@ -60,7 +60,7 @@ pub fn report(all: &[Check]) -> String {
     t
 }
 
-/// Started from the Dock, Launchpad or Spotlight nobody reads stdout: say it in a notification.
+/// Started from the Dock, Apps or Search nobody reads stdout: say it in a notification.
 fn notify(env: &mut dyn Env, (title, body): notice::Notice) {
     if env.stdout_tty() {
         return;

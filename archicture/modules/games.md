@@ -9,8 +9,8 @@ Steam is the native Arch package from `[multilib]` (ADR 0016). Windows games run
 | `wol games steam [url]` | `crates/controller/src/games.rs` | checks what the client needs; first start: a notification; then `/usr/bin/steam [url]` |
 | `wol games doctor [--json]` | `crates/core/src/games/doctor.rs` | every check with the exact fix; exits 1 when one fails; JSON when not a TTY |
 | `/usr/bin/wol-run --exe <file> ...` | `crates/proxy/src/exe.rs` | opens a `.exe` (`.msi` through `msiexec /i`) with one prefix per program; wine gets DXVK/vkd3d-proton copied from a Proton in the Steam library, umu brings its own |
-| `steam.desktop` | `desktop/overlay/.../applications` | Launchpad, Spotlight, App Store "Open", `steam://` links: `wol games steam %u` |
-| Notifications | `crates/core/src/games/notice.rs` | what a Dock or Launchpad start says; bodies pass `shell::copy::lint` |
+| `steam.desktop` | `desktop/overlay/.../applications` | Apps, Search, App Store "Open", `steam://` links: `wol games steam %u` |
+| Notifications | `crates/core/src/games/notice.rs` | what a Dock or Apps start says; bodies pass `shell::copy::lint` |
 
 ## Doctor checks
 

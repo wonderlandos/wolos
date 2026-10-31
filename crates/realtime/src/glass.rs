@@ -1,4 +1,4 @@
-//! Liquid-glass policy and parameters (ADR 0018). Pure: config + facts in, plan out.
+//! Glass policy and parameters (ADR 0018). Pure: config + facts in, plan out.
 //! The GLES passes live in the binary (`blur.rs`); this module decides what they do.
 
 use crate::Rect;
@@ -29,7 +29,7 @@ pub struct Blur {
     pub downscale: u32,
 }
 
-/// Liquid-glass look. Lengths in logical px.
+/// Glass look. Lengths in logical px.
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(default)]
 pub struct Glass {

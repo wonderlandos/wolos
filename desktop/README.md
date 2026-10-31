@@ -28,9 +28,9 @@ key (Ctrl+C; a terminal's Ctrl+Shift+C), see `shell::appmenu::send`.
 | ⌘+ / ⌘− / ⌘0 | Zoom In / Out / Actual Size |
 | ⌃⌘Space | Emoji & Symbols |
 | ⌘Q / ⌘H / ⌥⌘H / ⌘M | Quit / Hide / Hide Others / Minimize |
-| ⌘Space | Spotlight |
+| ⌘Space | Search |
 | ⌘Tab | App switcher |
-| ⌃↑ (⌘↑) | Mission Control |
+| ⌃↑ (⌘↑) | Overview |
 | ⌃⌘Q | Lock |
 | ⌥⌘Esc | Force Quit Applications |
 | ⌃F2 / ⌃F3 | Keyboard into the menu bar / the Dock (Esc gives it back) |

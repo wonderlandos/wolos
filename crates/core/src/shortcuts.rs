@@ -173,7 +173,7 @@ pub struct Bind {
 }
 
 impl Bind {
-    /// `keyword` value / include right-hand side: "SUPER, Space, exec, wol-spotlight".
+    /// `keyword` value / include right-hand side: "SUPER, Space, exec, wol-search".
     pub fn value(&self, combo: &Combo) -> String {
         let mut s = format!("{}, {}, {}", combo.hypr_mods(), combo.key, self.dispatcher);
         if !self.args.is_empty() {
@@ -251,8 +251,8 @@ pub fn parse(conf: &str) -> Vec<Bind> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Group {
-    Spotlight,
-    MissionControl,
+    Search,
+    Overview,
     Windows,
     Tiling,
     Apps,
@@ -267,8 +267,8 @@ pub enum Group {
 
 impl Group {
     pub const ALL: [Group; 11] = [
-        Group::Spotlight,
-        Group::MissionControl,
+        Group::Search,
+        Group::Overview,
         Group::Windows,
         Group::Tiling,
         Group::Apps,
@@ -281,8 +281,8 @@ impl Group {
     ];
     pub fn title(self) -> &'static str {
         match self {
-            Group::Spotlight => "Spotlight",
-            Group::MissionControl => "Mission Control",
+            Group::Search => "Search",
+            Group::Overview => "Overview",
             Group::Windows => "Windows",
             Group::Tiling => "Tiling",
             Group::Apps => "Apps",
@@ -324,9 +324,9 @@ use Group as G;
 const NAMES: [(&str, &str, &str, Group); 86] = [
     (
         "exec",
-        "wol-spotlight",
-        "Show Spotlight search",
-        G::Spotlight,
+        "wol-search",
+        "Show Search",
+        G::Search,
     ),
     ("exec", "foot", "Open Terminal", G::Apps),
     ("exec", "nautilus", "Open Files", G::Apps),
@@ -359,15 +359,15 @@ const NAMES: [(&str, &str, &str, Group); 86] = [
     (
         "exec",
         "wol shell toggle overview",
-        "Mission Control",
-        G::MissionControl,
+        "Overview",
+        G::Overview,
     ),
-    ("workspace", "e-1", "Move left a space", G::MissionControl),
-    ("workspace", "e+1", "Move right a space", G::MissionControl),
-    ("workspace", "1", "Switch to Desktop 1", G::MissionControl),
-    ("workspace", "2", "Switch to Desktop 2", G::MissionControl),
-    ("workspace", "3", "Switch to Desktop 3", G::MissionControl),
-    ("workspace", "4", "Switch to Desktop 4", G::MissionControl),
+    ("workspace", "e-1", "Move left a space", G::Overview),
+    ("workspace", "e+1", "Move right a space", G::Overview),
+    ("workspace", "1", "Switch to Desktop 1", G::Overview),
+    ("workspace", "2", "Switch to Desktop 2", G::Overview),
+    ("workspace", "3", "Switch to Desktop 3", G::Overview),
+    ("workspace", "4", "Switch to Desktop 4", G::Overview),
     ("exec", "wol shell show switcher", "Switch apps", G::Windows),
     (
         "exec",
@@ -884,7 +884,7 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), d.len(), "ids unique");
-        let spot = d.iter().find(|s| s.id == "exec wol-spotlight").unwrap();
+        let spot = d.iter().find(|s| s.id == "exec wol-search").unwrap();
         assert_eq!(
             (
                 spot.name.as_str(),
@@ -892,8 +892,8 @@ mod tests {
                 spot.combo.as_ref().unwrap().label()
             ),
             (
-                "Show Spotlight search",
-                Group::Spotlight,
+                "Show Search",
+                Group::Search,
                 "⌘Space".to_string()
             )
         );
@@ -907,7 +907,7 @@ mod tests {
         assert!(!vol.editable);
         for g in [
             Group::Screenshots,
-            Group::MissionControl,
+            Group::Overview,
             Group::Windows,
             Group::Apps,
             Group::Commands,
@@ -940,7 +940,7 @@ mod tests {
     fn conflicts_and_swap() {
         let d = defaults(SHIPPED, TILING);
         let mut o = Overrides::default();
-        let spot = "exec wol-spotlight";
+        let spot = "exec wol-search";
         let term = "exec foot";
         let taken = c("SUPER", "Return");
         match o.assign(&d, spot, Some(taken.clone()), false) {
@@ -1036,7 +1036,7 @@ mod tests {
         let mut o = Overrides::default();
         o.assign(
             &d,
-            "exec wol-spotlight",
+            "exec wol-search",
             Some(c("SUPER ALT", "Space")),
             false,
         )
@@ -1093,7 +1093,7 @@ mod tests {
         let d = defaults(SHIPPED, TILING);
         let before = active(&effective(&d, &Overrides::default()), false);
         let mut o = Overrides::default();
-        o.assign(&d, "exec wol-spotlight", Some(c("SUPER", "Return")), true)
+        o.assign(&d, "exec wol-search", Some(c("SUPER", "Return")), true)
             .unwrap();
         let after = active(&effective(&d, &o), false);
         assert_eq!(
@@ -1101,7 +1101,7 @@ mod tests {
             [
                 "keyword unbind SUPER,Space",
                 "keyword unbind SUPER,Return",
-                "keyword bind SUPER,Return,exec,wol-spotlight",
+                "keyword bind SUPER,Return,exec,wol-search",
                 "keyword bind SUPER,Space,exec,foot",
             ]
         );

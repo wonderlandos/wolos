@@ -1,4 +1,4 @@
-# 0005 - Mission Control is a wol-shell layer surface
+# 0005 - Overview is a wol-shell layer surface
 Status: accepted
 Context: hyprexpo is not in the hyprland-plugins pin (7644cec: borders-plus-plus, csgo-vulkan-fix, hyprbars, hyprfocus only). Moving the pin drags the plugin ABI forward with it. hyprexpo also draws with its own config values, not our CSS tokens, and has no desktops strip or titles.
 Decision: `wol shell toggle|show|hide overview` shows a full-screen overlay layer surface (`ui/overview.rs`): blurred wallpaper, desktops strip, the current desktop's windows in an aspect-preserving grid (`overview::grid`). Thumbnails come from `wol-window-shot <address>` (hyprland_toplevel_export_v1, one frame per window, covered or not); app icon until it arrives. Super+Up and 3-finger swipe up open it.

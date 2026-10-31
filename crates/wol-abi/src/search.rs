@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
-//! Search (ADR 0020, 1.9): an app can search what Spotlight searches, and can answer Spotlight
+//! Search (ADR 0020, 1.9): an app can search what Search searches, and can answer Search
 //! with rows of its own. A provider lasts as long as its connection to wold; its callbacks run
 //! inside `wol_context_dispatch`.
 use crate::client;
