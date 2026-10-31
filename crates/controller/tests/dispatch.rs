@@ -125,6 +125,34 @@ fn theme_set_restyles_third_party_apps() {
     );
 }
 
+/// The compositor's title strip follows the theme, so it is not dark on a light desktop.
+#[test]
+fn theme_set_colours_the_title_strip() {
+    let home = temp_home("strip");
+    let mut env = FakeEnv {
+        home: home.clone(),
+        ..Default::default()
+    };
+    let bar = |env: &FakeEnv| {
+        env.execs
+            .iter()
+            .find(|a| a[..2] == ["hyprctl", "keyword"] && a[2] == "plugin:hyprbars:bar_color")
+            .map(|a| a[3].clone())
+    };
+    assert_eq!(run("theme set catppuccin-latte", &mut env), 0, "{}", env.err);
+    assert_eq!(bar(&env).as_deref(), Some("rgba(eff1f5e6)"));
+    assert!(
+        env.execs
+            .iter()
+            .any(|a| a[..] == ["hyprctl", "keyword", "plugin:hyprbars:col.text", "rgba(4c4f69ff)"]),
+        "{:?}",
+        env.execs
+    );
+    env.execs.clear();
+    assert_eq!(run("theme set lumon", &mut env), 0, "{}", env.err);
+    assert_eq!(bar(&env).as_deref(), Some("rgba(16242de6)"));
+}
+
 /// `wol theme set <id>` in a fresh HOME writes every toolkit's files from that theme.
 #[test]
 fn theme_set_writes_every_toolkit() {

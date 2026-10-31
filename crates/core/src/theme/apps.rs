@@ -589,6 +589,23 @@ pub fn gsettings_argv(t: &ResolvedTheme) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The compositor's title strip (hyprbars reads these live; hyprland.conf holds only a default).
+pub fn strip_argv(t: &ResolvedTheme) -> Vec<Vec<String>> {
+    let rgba = |token: &str, alpha: &str| {
+        let hex = t.tokens.get(token)?.strip_prefix('#')?;
+        (hex.len() == 6).then(|| format!("rgba({hex}{alpha})"))
+    };
+    [
+        ("plugin:hyprbars:bar_color", rgba("surface", "e6")),
+        ("plugin:hyprbars:col.text", rgba("text", "ff")),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| {
+        Some(["hyprctl", "keyword", key, &value?].map(String::from).to_vec())
+    })
+    .collect()
+}
+
 /// Session/shell entry: resolve `id`, install the user toolkit files, push gsettings (blocking;
 /// call off the UI thread). gsettings failures are ignored (not every host has it).
 pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
@@ -599,7 +616,7 @@ pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
     if let Some(data) = data_home(|k| std::env::var(k).ok()) {
         link_data(&t, &user_dir(config_home), &data).map_err(|e| e.to_string())?;
     }
-    for a in gsettings_argv(&t) {
+    for a in gsettings_argv(&t).into_iter().chain(strip_argv(&t)) {
         let _ = std::process::Command::new(&a[0])
             .args(&a[1..])
             .stdout(std::process::Stdio::null())

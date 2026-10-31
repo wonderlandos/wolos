@@ -543,7 +543,7 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     {
         env.err(&format!("wol: app themes: {e}\n"));
     }
-    for argv in apps::gsettings_argv(t) {
+    for argv in apps::gsettings_argv(t).into_iter().chain(apps::strip_argv(t)) {
         let _ = env.exec(&argv);
     }
 }
