@@ -460,6 +460,29 @@ fn a_plan_the_disk_no_longer_matches_writes_nothing() {
 
 /// The partition definitions: an exact 1 GiB ESP (vfat) and a btrfs root filling the rest with
 /// `@wolos-a` `@home` `@var` as subvolumes, made when the file system is made.
+/// `install-run` hands repart one directory: each must describe the whole disk.
+#[test]
+fn an_encrypted_erase_still_makes_a_startup_partition() {
+    for dir in ["repart.d", "repart.d-crypt"] {
+        let path = lib(dir);
+        let mut names: Vec<_> = fs::read_dir(&path)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        names.sort();
+        let kinds: Vec<String> = names
+            .iter()
+            .map(|p| fs::read_to_string(p).unwrap())
+            .collect();
+        assert_eq!(kinds.len(), 2, "{dir}");
+        assert!(
+            kinds[0].contains("Type=esp"),
+            "{dir}: the startup partition comes first"
+        );
+        assert!(kinds[1].contains("Type=root"), "{dir}: then the system");
+    }
+}
+
 #[test]
 fn repart_definitions_describe_esp_and_slot_root() {
     let esp = read("image/files/usr/lib/wolos/repart.d/10-esp.conf");

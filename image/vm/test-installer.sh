@@ -5,7 +5,7 @@
 # as the app. Boot counting proves the boot: the entry is blessed only when the system came up.
 # Usage: image/vm/test-installer.sh remaster BASE.iso BIN_DIR | image/vm/test-installer.sh run SCENARIO...
 #        image/vm/test-installer.sh layouts BIN_DIR NAME...   (real partitioning on loop devices, no VM)
-# Scenarios: erase alongside-windows alongside-linux manual manual-ext4 password tpm medium
+# Scenarios: erase alongside-windows alongside-linux manual manual-ext4 password encrypted-alongside tpm medium
 # Env: WOLOS_E2E (work dir), WOLOS_OVMF, WOLOS_E2E_INSTALL_S, WOLOS_E2E_BOOT_S (longer without /dev/kvm).
 # Needs: qemu, edk2-ovmf, swtpm, sudo, squashfs-tools, xorriso.
 set -u
@@ -78,6 +78,11 @@ mk_windows_inner() {
 
 mk_linux_inner() {
   sudo mkfs.vfat -F32 -n ESP "${LOOP}p1" >/dev/null
+  local e=$D.mnt; mkdir -p "$e"
+  sudo mount "${LOOP}p1" "$e"; sudo mkdir -p "$e/EFI/fedora"
+  sudo dd if=/dev/urandom of="$e/EFI/fedora/grubx64.efi" bs=1M count=4 status=none
+  sudo sha256sum "$e/EFI/fedora/grubx64.efi" | cut -d' ' -f1 > "$D.esp"
+  sudo umount "$e"
   sudo mkfs.ext4 -q -L linuxroot "${LOOP}p2"
   sudo mkfs.ext4 -q -L linuxhome "${LOOP}p3"
   sudo mkswap -q "${LOOP}p4"
@@ -144,7 +149,7 @@ boot_in_vm() { # dir scenario: up, a screenshot, a clean stop
   local d=$1 s=$2
   [ "$s" != tpm ] || tpm_start "$d"   # swtpm ends with the VM that used it; its state stays
   vm "$d" -serial "file:$d/boot.log" & local q=$!
-  if [ "$s" = password ]; then
+  if [ "$s" = password ] || [ "$s" = encrypted-alongside ]; then
     for t in 1 2 3 4; do sleep 15; python3 "$H/qmp.py" "$d" shot "$d/unlock$t.png"; python3 "$H/qmp.py" "$d" keys $'white rabbit\n'; done
   fi
   sleep "${WOLOS_E2E_BOOT_S:-150}"
@@ -172,8 +177,8 @@ say() { if eval "$2"; then echo "E2E PASS $S: $1"; else echo "E2E FAIL $S: $1"; 
 
 untouched() { # the partitions this scenario must never write
   case $S in
-    alongside-windows) echo 1 2 ;;
-    alongside-linux) echo 1 2 4 ;;
+    alongside-windows | encrypted-alongside) echo 1 2 ;;
+    alongside-linux) echo 2 4 ;;   # its startup partition is shared on purpose: see kept_checks
     manual*) echo 4 ;;
   esac
 }
@@ -196,8 +201,11 @@ kept_checks() { # dir hashes-before: what the person kept is still there
   local d=$1
   [ -z "$(untouched)" ] || say "partitions nobody chose byte-identical" "[ \"$2\" = \"\$(kept_hashes '$d')\" ]"
   case $S in
-    alongside-windows) file_hash "$d" 3 "ntfs-3g -o ro" Users/Alice/keep.bin ;;
-    alongside-linux | manual*) file_hash "$d" 3 "mount -o ro" alice/keep.bin ;;
+    alongside-windows | encrypted-alongside) file_hash "$d" 3 "ntfs-3g -o ro" Users/Alice/keep.bin ;;
+    alongside-linux | manual*)
+      file_hash "$d" 1 "mount -o ro" EFI/fedora/grubx64.efi
+      say "the other system's startup files intact" "cmp -s '$d/disk.raw.esp' '$d/keep.after'"
+      file_hash "$d" 3 "mount -o ro" alice/keep.bin ;;
     *) return ;;
   esac
   say "the person's file intact" "cmp -s '$d/disk.raw.keep' '$d/keep.after'"
@@ -210,6 +218,7 @@ scenario() { # name
   case $S in
     erase|password|tpm) mk_disk blank "$d/disk.raw" ;;
     alongside-windows) mk_disk windows "$d/disk.raw"; plan=alongside ;;
+    encrypted-alongside) mk_disk windows "$d/disk.raw" ;;
     alongside-linux) mk_disk linux "$d/disk.raw"; plan=alongside ;;
     manual|manual-ext4) mk_disk linux "$d/disk.raw" ;;
   esac
