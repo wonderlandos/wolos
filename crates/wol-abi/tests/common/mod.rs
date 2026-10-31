@@ -84,3 +84,4 @@ pub fn build(name: &str, dir: &Path) -> PathBuf {
 }
 pub mod bindgen;
 pub mod fakes;
+pub mod services;
