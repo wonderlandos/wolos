@@ -31,7 +31,8 @@ Not signed in this beta. `install-check` reads the `SecureBoot` EFI variable; th
 | list | `install-disks` | never the live medium, CDs, loop, zram or read-only disks |
 | check | `install-check <disk>` | read-only; `refuse not-listed/too-small/in-use`; `os Windows/Linux/macOS/FreeBSD` from GPT types and filesystems; `secureboot on` |
 | write | `install-run <disk>` | all checks before `systemd-repart --empty=force`; only the picked disk and its partitions are named; sleep and lid held off |
+| plan | `install-run --plan FILE` (ADR 0023) | the disk must still match the plan's fingerprint; Alongside and Manual go through `wol install layout`, which names only the partitions in the plan and reads the table back after every step |
 | verify | `install-run` | entry, kernel and initramfs on the ESP and fstab before `done` |
 
 Unattended: `wolos.autoinstall=<disk>` on the live command line (`wolos-autoinstall.service`), then power off.
-Tests: `crates/controller/tests/image_install.rs` (fake tools). VM: `image/vm/test-install.sh` (bystander disk, `BOOT PASS|FAIL`).
+Tests: `crates/controller/tests/image_install.rs` (fake tools). VM: `image/vm/test-install.sh` (bystander disk, `BOOT PASS|FAIL`). `image/vm/test-installer.sh`: Windows-like and Linux-like disks, real partitioning on loop devices (`layouts`) and whole installs in a VM (`run`).

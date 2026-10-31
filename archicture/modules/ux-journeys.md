@@ -17,8 +17,9 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
 | Live boot | black screen (`boot_mute`), up to 10 s Wi-Fi wait | none | NO-FEEDBACK | Image |
-| Install WolOS (dock) | terminal window, bsddialog disk list (`ada0 465G`), "ALL DATA on ada0 will be erased" | text, counter | TERMINAL, JARGON | First-run |
-| Install ends | `sysrc` lines, "Press Enter to close."; no restart, no "remove the stick" | none | STUCK | First-run |
+| Boot choice | Install WolOS or Try WolOS; Install is also an app on the live desktop | instant | OK | First-run |
+| Install WolOS | one step per page: language and keyboard, time zone, disk, Erase, Alongside or Manual, encryption, account, summary of every change, progress | each problem one sentence on its page | OK | First-run |
+| Install ends | recovery key once when encrypted, Restart | Pocket Watch, step, time left | OK | First-run |
 | First boot | black; NVIDIA driver only online, before Wi-Fi exists | none | NO-FEEDBACK | Kernel/hardware |
 | Setup: Language, Keyboard, Wi-Fi, Account, Appearance | 5 cards (11 answers incl. disk + erase) vs 4 promised | instant | OK (count over) | First-run |
 | Keyboard card | check mark on U.S. after picking pt_BR; layout not applied while typing the password | - | STUCK risk | First-run |
