@@ -28,18 +28,43 @@ const CODE_HOSTS: &[&str] = &[
     "codeberg.org",
     "bitbucket.org",
     "sr.ht",
-    "git.sr.ht",
     "gitee.com",
 ];
 
-/// `owner/repo` on a shared code host, where the host alone says nothing about the project.
-fn owner(url: &str) -> Option<String> {
+/// GitHub serves a repo's files from these too; the path still starts with owner and repo.
+const ALIASES: &[&str] = &[
+    "raw.githubusercontent.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+];
+
+/// `(owner, repo)` on a shared code host, where the host alone says nothing about the project.
+fn repo(url: &str) -> Option<(String, String)> {
     let rest = url.split_once("://")?.1;
-    let mut p = rest.split('/');
+    let mut p = rest.split(['/', '#', '?']);
     p.next()?;
-    p.next()
-        .filter(|o| !o.is_empty())
-        .map(|o| o.to_ascii_lowercase())
+    let owner = p
+        .next()
+        .filter(|o| !o.is_empty())?
+        .trim_start_matches('~')
+        .to_ascii_lowercase();
+    let name = p
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(".git")
+        .to_ascii_lowercase();
+    Some((owner, name))
+}
+
+fn on_code_host(h: &str) -> bool {
+    let r = registrable(h);
+    ALIASES.contains(&h) || CODE_HOSTS.iter().any(|c| registrable(c) == r)
+}
+
+fn core(name: &str) -> String {
+    name.trim_end_matches("-git")
+        .trim_end_matches("-bin")
+        .to_ascii_lowercase()
 }
 
 /// Registries and distro mirrors that host other projects' releases as their job.
@@ -79,32 +104,19 @@ pub fn on_upstream(declared: &str, source: &str, pkgnames: &[String]) -> bool {
 }
 
 /// The same site, or the same owner on a shared code host, or a repo named after the package.
+/// A file's name proves nothing, because anyone can name a file anything.
 pub fn same_project(declared: &str, source: &str, pkgnames: &[String]) -> bool {
     let (Some(a), Some(b)) = (host(declared), host(source)) else {
         return false;
     };
-    let shared = CODE_HOSTS.iter().any(|c| registrable(c) == registrable(&b));
-    if !shared {
+    if !on_code_host(&b) {
         return registrable(&a) == registrable(&b);
     }
-    if registrable(&a) == registrable(&b) && owner(declared) == owner(source) {
+    let Some((owner, name)) = repo(source) else {
+        return false;
+    };
+    if on_code_host(&a) && repo(declared).is_some_and(|d| d.0 == owner) {
         return true;
     }
-    let tail = source
-        .split('#')
-        .next()
-        .unwrap_or("")
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .unwrap_or("")
-        .trim_end_matches(".git")
-        .to_ascii_lowercase();
-    pkgnames.iter().any(|n| {
-        let core = n
-            .trim_end_matches("-git")
-            .trim_end_matches("-bin")
-            .to_ascii_lowercase();
-        tail == core
-    })
+    pkgnames.iter().any(|n| core(n) == name)
 }
