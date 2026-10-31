@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// services: every libwol call added since 1.2, in Swift (ADR 0020). Built and run by tests/bindings.rs.
+import Glibc
+import Wol
+
+func text(_ s: OpaquePointer?) -> String { String(cString: wol_string_get_bytes(s, nil)) }
+func ok(_ status: Int32) { precondition(status == WOL_OK, "libwol status \(status)") }
+func n(_ s: String) -> Int { s.utf8.count }
+func field(_ i: OpaquePointer?, _ key: String) -> OpaquePointer? { wol_info_get(i, key, n(key)) }
+
+var ctx: OpaquePointer?, err: OpaquePointer?
+let app = "org.example.services"
+ok(wol_context_create(app, n(app), &ctx, &err))
+
+let file = "File", open = "open", save = "Open", key = "width", value = "640"
+let title = "Copying", body = "1 of 5", shortcut = "cmd+o", icon = "document-open-symbolic", reason = "Exporting"
+
+var menu: OpaquePointer?
+ok(wol_menu_create(ctx, file, n(file), { _, _, _ in }, nil, &menu, &err))
+ok(wol_menu_add_item(menu, open, n(open), save, n(save), shortcut, n(shortcut), &err))
+ok(wol_menu_add_separator(menu, &err))
+ok(wol_menu_set_checked(menu, open, n(open), 1, &err))
+wol_menu_release(menu)
+print("menu")
+var bar: OpaquePointer?
+ok(wol_toolbar_create(ctx, { _, _, _ in }, nil, &bar, &err))
+ok(wol_toolbar_add_button(bar, open, n(open), save, n(save), icon, n(icon), &err))
+ok(wol_toolbar_add_spacer(bar, &err))
+wol_toolbar_release(bar)
+print("toolbar")
+
+var note: OpaquePointer?
+ok(wol_notification_create(ctx, title, n(title), body, n(body), &note, &err))
+ok(wol_notification_send(note, &err))
+ok(wol_notification_replace(note, title, n(title), value, n(value), &err))
+ok(wol_notification_withdraw(note, &err))
+wol_notification_release(note)
+print("note")
+
+var str: OpaquePointer?
+ok(wol_clipboard_set_text(ctx, value, n(value), &err))
+ok(wol_clipboard_copy_text(ctx, &str, &err))
+print("clipboard: \(text(str))")
+wol_string_release(str)
+
+ok(wol_prefs_set_string(ctx, key, n(key), value, n(value), &err))
+ok(wol_prefs_copy_string(ctx, key, n(key), &str, &err))
+print("pref: \(text(str))")
+wol_string_release(str)
+var keys: OpaquePointer?
+ok(wol_prefs_copy_keys(ctx, &keys, &err))
+print("keys: \(wol_info_get_count(keys)) \(text(wol_info_get_text(wol_info_get_item(keys, 1))))")
+wol_info_release(keys)
+ok(wol_prefs_remove(ctx, key, n(key), &err))
+
+var f: OpaquePointer?
+ok(wol_panel_open(ctx, save, n(save), &f, &err))
+var buf = [UInt8](repeating: 0, count: 64)
+let got = read(wol_file_get_fd(f), &buf, 64)
+print("panel: \(text(wol_file_get_name(f))) \(String(decoding: buf[0..<got], as: UTF8.self))")
+wol_file_release(f)
+ok(wol_panel_save(ctx, save, n(save), key, n(key), &f, &err))
+wol_file_release(f)
+
+var info: OpaquePointer?
+ok(wol_power_copy_info(ctx, &info, &err))
+var percent = 0.0
+_ = wol_info_get_number(field(field(info, "battery"), "percent"), &percent)
+print("battery: \(Int(percent)) \(wol_info_get_bool(field(info, "on_battery")))")
+wol_info_release(info)
+var held: OpaquePointer?
+ok(wol_power_keep_awake(ctx, reason, n(reason), &held, &err))
+wol_assertion_release(held)
+print("held")
+wol_context_release(ctx)
