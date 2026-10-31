@@ -8,7 +8,7 @@ Every app window is `AppWindow` (`crates/shell/src/kit`). No app builds its own 
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ ● ● ●  [‹ ›]  Title               [actions] [search] │  Toolbar (52px, glass, draggable)
+│ [‹ ›]                             [actions] [search] │  Toolbar (36px, glass, draggable), under the 28px compositor strip
 ├────────────┬─────────────────────────────────────────┤
 │ Sidebar    │ Content                                 │
 │ 220px      │ (List / Grid / Detail / Editor)         │
