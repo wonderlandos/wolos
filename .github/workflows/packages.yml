@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: Packages to rebuild (space separated; empty = changed since the last publish)
+        description: Packages to rebuild (space separated; empty = changed since the last publish; - = none, sign and index the release's packages)
         required: false
 
 concurrency:
@@ -66,7 +66,9 @@ jobs:
           if gh release download "wolos-$snap" --dir out/repo/x86_64 2>/dev/null; then
             base=$(cat out/repo/x86_64/revision-commit 2>/dev/null || true)
           fi
-          if [ -n "${ONLY_INPUT:-}" ]; then
+          if [ "${ONLY_INPUT:-}" = - ]; then
+            only=-   # built on a build host and put on the release unsigned: sign, index, publish
+          elif [ -n "${ONLY_INPUT:-}" ]; then
             only=$ONLY_INPUT
           elif [ -n "${base:-}" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
             only=$(git diff --name-only "$base" HEAD | image/repo/changed.sh)
@@ -74,7 +76,8 @@ jobs:
             only=$(awk '!/^#/ && NF {printf "%s ", $1}' image/repo/packages)   # first publish: all
           fi
           echo "only=$only" >> "$GITHUB_OUTPUT"
-          echo "build: ${only:-nothing}"
+          build=${only#-}; echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "build: ${build:-nothing}"
 
       - name: Cache pacman packages and cargo
         if: steps.plan.outputs.only != ''
@@ -129,14 +132,14 @@ jobs:
       # The build cluster (wonderlandos/wolos-build): every package its own host share, independent
       # packages at once. Packages come back unsigned; signing stays here with the key.
       - name: AWS credentials
-        if: steps.plan.outputs.only != '' && vars.AWS_ROLE_ARN != ''
+        if: steps.plan.outputs.build != '' && vars.AWS_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Build on the build cluster
-        if: steps.plan.outputs.only != '' && vars.AWS_ROLE_ARN != ''
+        if: steps.plan.outputs.build != '' && vars.AWS_ROLE_ARN != ''
         env:
           CLUSTER: ${{ vars.CLUSTER }}
           TASK_DEF: ${{ vars.TASK_DEF }}

@@ -226,8 +226,14 @@ fn update_check_reads_the_published_release() {
         assert!(iso.contains(want), "iso.yml lacks {want}");
     }
     // Published in the releases repo the check reads (GH_REPO), not in this one.
-    assert!(iso.contains("GH_REPO: ${{ vars.WOLOS_RELEASES_REPO"), "iso.yml GH_REPO");
-    assert!(!iso.contains("action-gh-release"), "iso.yml publishes with the action");
+    assert!(
+        iso.contains("GH_REPO: ${{ vars.WOLOS_RELEASES_REPO"),
+        "iso.yml GH_REPO"
+    );
+    assert!(
+        !iso.contains("action-gh-release"),
+        "iso.yml publishes with the action"
+    );
 }
 
 #[test]
@@ -272,4 +278,67 @@ fn image_trusts_the_ci_release_key() {
     assert!(keys.len() >= 2, "{keys:?}");
     let pem = std::fs::read_to_string(dir.join("wolos-2026b.pub")).unwrap();
     assert!(keys.contains(&wol_core::package::public_key(&pem).unwrap()));
+}
+
+/// `only: -` signs, indexes and publishes what the release holds (packages built on a build host)
+/// without building anything, on the cluster or in the container.
+#[test]
+fn packages_workflow_signs_prebuilt_packages_without_a_build() {
+    let p = read(".github/workflows/packages.yml");
+    let step = p.split("      - name: Packages to build").nth(1).unwrap();
+    let step = step.split("\n      - name:").next().unwrap();
+    let body: String = step
+        .split("run: |\n")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .map(|l| l.strip_prefix("          ").unwrap_or(l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let t = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("packages-plan");
+    let _ = fs::remove_dir_all(&t);
+    fs::create_dir_all(t.join("bin")).unwrap();
+    let gh = t.join("bin/gh");
+    fs::write(&gh, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&gh, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let src = t.join("src");
+    for f in ["image/arch/snapshot", "image/repo/packages"] {
+        fs::create_dir_all(src.join(f).parent().unwrap()).unwrap();
+        fs::copy(repo(f), src.join(f)).unwrap();
+    }
+    let out = t.join("out.txt");
+    let o = Command::new("bash")
+        .arg("-euo")
+        .arg("pipefail")
+        .arg("-c")
+        .arg(&body)
+        .current_dir(&src)
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                t.join("bin").display(),
+                std::env::var("PATH").unwrap()
+            ),
+        )
+        .env("ONLY_INPUT", "-")
+        .env("GITHUB_OUTPUT", &out)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let got = fs::read_to_string(&out).unwrap();
+    assert!(
+        got.contains("only=-\n") && got.contains("build=\n"),
+        "{got}"
+    );
+    for step in [
+        "      - name: AWS credentials",
+        "      - name: Build on the build cluster",
+    ] {
+        let cond = p.split(step).nth(1).unwrap().lines().nth(1).unwrap();
+        assert!(
+            cond.contains("steps.plan.outputs.build != ''"),
+            "{step}: {cond}"
+        );
+    }
 }
