@@ -123,6 +123,8 @@ pub fn scope_name(app: &str, pid: i32) -> String {
 
 /// Tasks one app may hold: far above a browser with many tabs or a `make -j` (ADR 0026).
 pub const APP_TASKS: u32 = 8192;
+/// Tasks of one user (`user-.slice.d`): a few apps at their limit.
+pub const USER_TASKS: u64 = 16384;
 /// One app's share of RAM (80%) and of swap (25%), as systemd's u32 scale.
 pub const APP_MEMORY_SCALE: u32 = 3435973836;
 pub const APP_SWAP_SCALE: u32 = 1073741823;

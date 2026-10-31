@@ -1,7 +1,7 @@
 //! The Memory Saver loop: adopt app processes into scopes, run the policy per app and apply its
 //! actions. One `tick` every couple of seconds and on every focus change; everything it touches
 //! goes through [`Sys`].
-use super::storm::Storm;
+use super::storm::{OomLoop, Storm};
 use super::{Sys, procs};
 use shared::memsaver::{AppState, AppStatus, Snapshot, Status};
 use std::collections::{BTreeMap, HashMap};
@@ -23,6 +23,7 @@ struct App {
     cpu: Option<(u64, u64)>,
     last_busy: u64,
     storm: Storm,
+    oom: OomLoop,
 }
 
 struct Session {
@@ -38,6 +39,7 @@ pub struct Engine<S: Sys> {
     apps: BTreeMap<String, App>,
     /// pid -> (asked at, scope cgroup, app id)
     asked: HashMap<i32, (u64, String, String)>,
+    slice_storm: Storm,
 }
 
 fn pct(prev: Option<(u64, u64)>, now_ms: u64, usec: u64) -> f32 {
@@ -58,6 +60,7 @@ impl<S: Sys> Engine<S> {
             snap: Snapshot::default(),
             apps: BTreeMap::new(),
             asked: HashMap::new(),
+            slice_storm: Storm::default(),
         }
     }
 
@@ -109,7 +112,23 @@ impl<S: Sys> Engine<S> {
             }
             self.run_app(&scope, now);
         }
+        self.run_slice();
         self.status()
+    }
+
+    /// Several apps can fill the user's slice with none at its own limit: the refused forks then
+    /// count on the slice, and the session is refused too. The biggest app goes.
+    fn run_slice(&mut self) {
+        let Some(s) = &self.session else { return };
+        let slice = format!("/user.slice/user-{}.slice", s.uid);
+        let storm = self.slice_storm.step(self.sys.refused(&slice));
+        if !storm || self.sys.tasks(&slice) < procs::USER_TASKS * 95 / 100 {
+            return;
+        }
+        if let Some(big) = self.apps.keys().max_by_key(|a| self.sys.tasks(a)) {
+            eprintln!("wold: user slice full, killing {big}");
+            self.sys.kill(big);
+        }
     }
 
     /// Windows not in a scope of ours yet: their whole process tree goes into a new one. The
@@ -189,6 +208,7 @@ impl<S: Sys> Engine<S> {
                     cpu: None,
                     last_busy: 0,
                     storm: Storm::default(),
+                    oom: OomLoop::default(),
                 }
             });
             if windowed && !app.windowed {
@@ -202,8 +222,11 @@ impl<S: Sys> Engine<S> {
         let Some(mut app) = self.apps.remove(scope) else {
             return;
         };
-        if app.storm.step(self.sys.refused(scope)) {
-            eprintln!("wold: fork storm in {}, killing its scope", app.id);
+        let storm = app.storm.step(self.sys.refused(scope));
+        let oom = app.oom.step(self.sys.oom_kills(scope));
+        if storm || oom {
+            let what = if storm { "fork storm" } else { "OOM loop" };
+            eprintln!("wold: {what} in {}, killing its scope", app.id);
             self.sys.kill(scope);
             self.apps.insert(scope.to_owned(), app);
             return;

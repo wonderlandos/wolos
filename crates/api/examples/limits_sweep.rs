@@ -1,6 +1,7 @@
-//! The fork storm rule alone, for the limits test guest (image/vm/test/limits), where there is no
-//! compositor for Memory Saver's engine to follow. wold runs the same `Storm` every tick.
-use api::memsaver::{cgroup, storm::Storm};
+//! Memory Saver's kill rules alone, for the limits test guest (image/vm/test/limits), where there
+//! is no compositor for its engine to follow. wold runs the same `Storm` and `OomLoop` every tick.
+use api::memsaver::storm::{OomLoop, Storm};
+use api::memsaver::{cgroup, procs};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -19,13 +20,24 @@ fn scopes(root: &Path) -> Vec<PathBuf> {
 
 fn main() {
     let root = PathBuf::from("/sys/fs/cgroup/user.slice/user-1000.slice");
-    let mut seen: HashMap<PathBuf, Storm> = HashMap::new();
+    let mut seen: HashMap<PathBuf, (Storm, OomLoop)> = HashMap::new();
+    let mut slice = Storm::default();
     loop {
         for s in scopes(&root) {
-            if seen.entry(s.clone()).or_default().step(cgroup::refused(&s)) {
+            let (storm, oom) = seen.entry(s.clone()).or_default();
+            let hot = storm.step(cgroup::refused(&s));
+            if oom.step(cgroup::oom_kills(&s)) || hot {
                 println!("E storm {}", s.display());
                 cgroup::kill(&s);
             }
+        }
+        let storm = slice.step(cgroup::refused(&root));
+        if storm
+            && cgroup::tasks(&root) >= procs::USER_TASKS * 95 / 100
+            && let Some(big) = scopes(&root).iter().max_by_key(|s| cgroup::tasks(s))
+        {
+            println!("E slice-full {}", big.display());
+            cgroup::kill(big);
         }
         std::thread::sleep(api::memsaver::TICK);
     }

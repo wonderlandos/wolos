@@ -12,9 +12,10 @@ ev() { echo "E $(cut -d' ' -f1 /proc/uptime) $*"; }
 ev start kind=$kind mode=$mode mem=$(free -m | awk 'NR==2{print $2}')
 
 # Properties memsaver::procs::adopt_args adds after this stream (test: image_limits).
+tasks=$(sed -n 's/.*\bkbtasks=\([0-9]*\).*/\1/p' /proc/cmdline)
 extra=()
 if [ "$mode" = after ]; then
-	extra=(TasksMax t 8192 MemoryMaxScale u 3435973836 MemorySwapMaxScale u 1073741823)
+	extra=(TasksMax t "${tasks:-8192}" MemoryMaxScale u 3435973836 MemorySwapMaxScale u 1073741823)
 fi
 adopt() { # NAME PID: the same StartTransientUnit wold's Memory Saver sends for a new window.
 	local session=$(cut -d: -f3 /proc/$(pgrep -ox comp)/cgroup | xargs basename)
@@ -59,29 +60,44 @@ load) # False kills: a parallel build next to a browser-like tree, both in windo
 	sleep 2; ev done; poweroff -f;;
 esac
 
-mkfifo $K/go
-as_user bash -c 'cd; exec '$K'/kb '$kind' 90 < '$K'/go' &
-bp=$!
-adopt app-wol-bomb-$bp.scope $bp
-sc=/sys/fs/cgroup/user.slice/user-1000.slice/app-wol-bomb-$bp.scope
-( mkfifo $K/z; exec 8<>$K/z; U=/sys/fs/cgroup/user.slice/user-1000.slice
-  for i in 1 2 3 4 5 6 7 8; do read -t 2 <&8
-	echo "D1 slice cur=$(<$U/pids.current) max=$(<$U/pids.max) ev=$(<$U/pids.events)"
-	echo "D2 scope cur=$(<$sc/pids.current) max=$(<$sc/pids.max) ev=$(<$sc/pids.events)"
-	echo "D3 userslice cur=$(</sys/fs/cgroup/user.slice/pids.current) nr=$(</proc/loadavg)"
-  done ) &ev go
-echo go > $K/go &
+# kbtrace: the kernel's call graph of the stand-in compositor's forks, kept until the kill.
+if grep -q kbtrace /proc/cmdline; then
+	T=/sys/kernel/tracing
+	echo 40000 > $T/buffer_size_kb
+	echo function_graph > $T/current_tracer
+	echo kernel_clone > $T/set_graph_function
+	for t in /proc/$(pgrep -ox comp)/task/*; do echo "${t##*/}" >> $T/set_ftrace_pid; done
+	echo 1 > $T/tracing_on
+fi
+# window3: three windows, so the slice fills with none of them at its own limit.
+n=1 k=$kind
+[ "$kind" = window3 ] && n=3 k=fork
+scopes=()
+for i in $(seq $n); do
+	mkfifo $K/go$i
+	as_user bash -c 'cd; exec '$K'/kb '$k' 90 < '$K'/go'$i &
+	bp=$!
+	adopt app-wol-bomb-$bp.scope $bp
+	scopes+=(/sys/fs/cgroup/user.slice/user-1000.slice/app-wol-bomb-$bp.scope)
+done
+alive() { for s in "${scopes[@]}"; do [ -d "$s" ] && return 0; done; return 1; }
+ev go
+for i in $(seq $n); do echo go > $K/go$i & done
 for i in $(seq 20); do
 	sleep 1
-	[ -d $sc ] || { ev scope-gone-auto after=${i}s; break; }
+	alive || { ev scope-gone-auto after=${i}s; break; }
 done
-if [ -d $sc ]; then
-	echo 1 > $sc/cgroup.kill; ev kill
-	for i in $(seq 100); do
-		[ "$(cat $sc/pids.current 2>/dev/null || echo 0)" -le 0 ] && break
-		sleep 0.1
-	done
-	ev dead pids=$(cat $sc/pids.current 2>/dev/null)
+if alive; then
+	if grep -q kbtrace /proc/cmdline; then
+		echo 0 > /sys/kernel/tracing/tracing_on
+		echo "TRACE-START"
+		awk -F'|' '{ match($2, /^ */); if (RLENGTH <= 8) print }' /sys/kernel/tracing/trace | tail -140
+		echo "TRACE-END"
+	fi
+	for s in "${scopes[@]}"; do echo 1 > "$s"/cgroup.kill; done
+	ev kill
+	for i in $(seq 100); do alive || break; sleep 0.1; done
+	ev dead
 fi
 sleep 8
 ev cleanup
