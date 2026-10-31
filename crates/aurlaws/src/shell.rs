@@ -20,6 +20,8 @@ pub struct Val {
     pub complete: bool,
     /// Graph nodes whose content flows into this value.
     pub taints: Vec<NodeId>,
+    /// Came from a file in the tree, so running it is judged by that file, not as unknown text.
+    pub local: bool,
 }
 
 impl Val {
@@ -27,15 +29,27 @@ impl Val {
         Val {
             text: s.to_owned(),
             complete: true,
-            taints: Vec::new(),
+            ..Val::default()
         }
     }
-    fn unknown(s: String) -> Self {
+    pub fn known(s: &str) -> Self {
+        Self::lit(s)
+    }
+    pub fn unknown(s: String) -> Self {
         Val {
             text: s,
-            complete: false,
-            taints: Vec::new(),
+            ..Val::default()
         }
+    }
+    pub fn tainted(n: NodeId) -> Self {
+        Val {
+            text: "(computed)".into(),
+            taints: vec![n],
+            ..Val::default()
+        }
+    }
+    pub fn append(&mut self, o: Val) {
+        self.push(o);
     }
     fn push(&mut self, o: Val) {
         self.text.push_str(&o.text);
@@ -79,7 +93,8 @@ pub struct Walker<'g> {
     pub g: &'g mut Graph,
     pub notes: Vec<Note>,
     pub truncated: bool,
-    pub env_out: HashMap<String, Vec<String>>,
+    /// Commands in variables are the norm here, so only what flows into them is judged.
+    pub lenient: bool,
     src: Rc<str>,
     file: String,
     stage: Stage,
@@ -181,13 +196,19 @@ impl<'g> Walker<'g> {
             g,
             notes: Vec::new(),
             truncated: false,
-            env_out: HashMap::new(),
+            lenient: false,
             src: Rc::from(""),
             file: String::new(),
             stage: Stage::Parse,
             fixed_line: None,
             line_base: 0,
-            env: HashMap::new(),
+            env: HashMap::from([(
+                "BASH_SOURCE".to_owned(),
+                Var {
+                    vals: vec![Val::lit("$startdir/PKGBUILD")],
+                    node: None,
+                },
+            )]),
             env_line: HashMap::new(),
             funcs: HashMap::new(),
             called: HashMap::new(),
@@ -644,6 +665,10 @@ impl<'g> Walker<'g> {
             "srcdir" | "pkgdir" | "startdir" | "HOME" => Val::lit(&format!("${name}")),
             "PWD" => Val::lit(&self.cwd.clone()),
             "CARCH" => Val::lit("x86_64"),
+            "SHELL" | "CONFIG_SHELL" => Val::lit("sh"),
+            "CC" | "CXX" | "CPP" | "LD" | "AR" | "RANLIB" | "STRIP" | "MAKE" | "AWK" | "SED"
+            | "GREP" | "EGREP" | "FGREP" | "RM" | "CP" | "MV" | "LN" | "LN_S" | "MKDIR_P"
+            | "INSTALL" | "ECHO" => Val::lit(&name.to_ascii_lowercase()),
             _ => Val::unknown(format!("${{{name}}}")),
         }
     }
@@ -753,11 +778,13 @@ impl<'g> Walker<'g> {
                 text: t.trim_end_matches('\n').to_owned(),
                 complete: true,
                 taints: vec![pipe],
+                local: false,
             },
             None => Val {
                 text: "$(...)".into(),
                 complete: false,
                 taints: vec![pipe],
+                local: false,
             },
         }
     }
@@ -808,8 +835,8 @@ impl<'g> Walker<'g> {
         {
             return Val {
                 text: t.to_owned(),
-                complete: false,
                 taints: v.taints,
+                ..Val::default()
             };
         }
         if rest.starts_with(":-") || rest.starts_with(":=") {
@@ -1021,7 +1048,7 @@ impl<'g> Walker<'g> {
         self.run(nv, args, loc);
     }
 
-    fn process(&mut self, name: &str, loc: Option<Loc>) -> NodeId {
+    pub(crate) fn process(&mut self, name: &str, loc: Option<Loc>) -> NodeId {
         let k = format!("{}:{}:{name}", self.file, self.func_name);
         let c = self.counts.entry(k.clone()).or_insert(0);
         *c += 1;
@@ -1110,6 +1137,9 @@ impl<'g> Walker<'g> {
     /// One command with its words evaluated.
     fn run(&mut self, name: Val, mut args: Vec<Val>, loc: Option<Loc>) {
         if !name.complete {
+            if self.lenient && name.taints.is_empty() {
+                return self.plain("(a command in a variable)", &args, loc);
+            }
             let proc = self.process("(dynamic command)", loc.clone());
             self.g.mark_unresolved(proc);
             self.feed(std::slice::from_ref(&name), proc, &loc);
@@ -1176,6 +1206,25 @@ impl<'g> Walker<'g> {
                 if b == "export" {
                     return;
                 }
+            }
+            "dirname" | "basename" => {
+                let proc = self.process(&b, loc.clone());
+                self.feed(&args, proc, &loc);
+                self.connect_stdio(proc, &loc);
+                let known = args
+                    .iter()
+                    .find(|a| !a.text.starts_with('-'))
+                    .filter(|a| a.complete)
+                    .map(|a| {
+                        let t = a.text.trim_end_matches('/');
+                        if b == "basename" {
+                            base(t).to_owned()
+                        } else {
+                            t.rsplit_once('/')
+                                .map_or(".".to_owned(), |x| x.0.to_owned())
+                        }
+                    });
+                self.write_stdout_text(known);
             }
             "echo" | "printf" => {
                 let proc = self.process(&b, loc.clone());
@@ -1731,8 +1780,102 @@ impl<'g> Walker<'g> {
         if v.complete {
             let (line, text) = (loc.as_ref().map(|l| l.line), v.text.clone());
             self.walk_text(&text, line);
-        } else if !assignment_only(&v.text) {
+        } else if !assignment_only(&v.text) && !v.local && !(self.lenient && v.taints.is_empty()) {
             self.g.mark_unresolved(proc);
+        }
+    }
+
+    /// Text run by another language's call. Shell text is read as shell; a language's own code
+    /// held in a string goes to that language.
+    pub(crate) fn exec_value(
+        &mut self,
+        v: &Val,
+        proc: NodeId,
+        loc: &Option<Loc>,
+        lang: crate::langs::Lang,
+    ) {
+        use crate::langs::Lang;
+        if v.complete && matches!(lang, Lang::Python | Lang::Js) {
+            let line = loc.as_ref().map_or(0, |l| l.line);
+            let file = self.file.clone();
+            crate::langs::walk(lang, &v.text.clone(), &file, self.stage, self, Some(line));
+            return;
+        }
+        self.exec_text(v, proc, loc);
+    }
+
+    /// A value spelled out in the script itself, as the origin of a decode.
+    pub(crate) fn literal_source(&mut self, loc: &Option<Loc>) -> NodeId {
+        self.g.node(
+            K::Env,
+            &format!("literal:{}", self.file),
+            "data in the script",
+            loc.clone(),
+            self.stage,
+        )
+    }
+
+    pub(crate) fn url_node(&mut self, u: &str, loc: Option<Loc>) -> NodeId {
+        self.url(u, loc)
+    }
+
+    pub(crate) fn pipe_node(&mut self, loc: Option<Loc>) -> NodeId {
+        self.pipe(loc)
+    }
+
+    pub(crate) fn path_of(&self, p: &str) -> String {
+        self.path(p)
+    }
+
+    pub(crate) fn file_at(&mut self, p: &str, loc: Option<Loc>) -> NodeId {
+        self.file_node(p, loc)
+    }
+
+    /// Set the file and stage that locations and new nodes belong to.
+    pub fn enter_file(&mut self, file: &str, stage: Stage) {
+        self.file = file.to_owned();
+        self.stage = stage;
+        self.func_name = file.to_owned();
+    }
+
+    /// Shell text out of another file's format, pinned to that file's line.
+    pub fn snippet(&mut self, text: &str, file: &str, line: u32, stage: Stage) {
+        self.file = file.to_owned();
+        self.stage = stage;
+        self.walk_text(text, Some(line));
+    }
+
+    pub(crate) fn run_argv(&mut self, mut argv: Vec<Val>, loc: Option<Loc>) {
+        if !argv.is_empty() {
+            let name = argv.remove(0);
+            self.run(name, argv, loc);
+        }
+    }
+
+    pub(crate) fn argv_text(&mut self, argv: Vec<String>, file: &str, line: u32) {
+        self.file = file.to_owned();
+        let loc = Some(Loc {
+            file: file.to_owned(),
+            line,
+        });
+        self.run_argv(argv.iter().map(|a| Val::lit(a)).collect(), loc);
+    }
+
+    /// A download a build system does itself.
+    pub(crate) fn download(&mut self, url: &str, dest: &str, hashed: bool, file: &str, line: u32) {
+        self.file = file.to_owned();
+        let loc = Some(Loc {
+            file: file.to_owned(),
+            line,
+        });
+        let proc = self.process("download", loc.clone());
+        let u = self.url(url, loc.clone());
+        self.g.edge(u, proc, E::Fetches, loc.clone());
+        let p = self.path(dest);
+        let f = self.file_node(&p, loc.clone());
+        self.g.edge(proc, f, E::Writes, loc.clone());
+        if hashed {
+            self.g.edge(proc, f, E::Verifies, loc);
         }
     }
 
