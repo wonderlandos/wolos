@@ -1,0 +1,14 @@
+[Unit]
+Description=WolOS installer VM test (wolos.e2e=<scenario>)
+ConditionKernelCommandLine=wolos.e2e
+After=local-fs.target systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /usr/lib/wolos/wolos-e2e
+Environment=PATH=/usr/bin:/usr/sbin
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
