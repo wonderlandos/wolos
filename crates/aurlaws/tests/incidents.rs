@@ -126,9 +126,9 @@ fn no_fixture_points_at_a_real_address() {
         &mut files,
     );
     for t in files {
-        for w in
-            t.split(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '(' || c == ')')
-        {
+        for w in t.split(|c: char| {
+            c.is_whitespace() || c == '"' || c == '\'' || c == '(' || c == ')' || c == '\\'
+        }) {
             let Some(i) = w.find("://") else { continue };
             let host = w[i + 3..].split(['/', ':']).next().unwrap();
             let fine = w[i + 3..].starts_with("[2001:db8:") // IPv6 documentation range
