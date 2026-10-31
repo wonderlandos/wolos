@@ -1,0 +1,21 @@
+WolOS. Copyright (c) 2026 Julia Klee.
+
+| Path | License |
+|---|---|
+| everything not listed below | GPL-2.0-or-later (`LICENSE`) |
+| `crates/wol-abi/`, `crates/shared/` | GPL-2.0-or-later with the libwol interface exception (`LICENSES/AdditionRef-WolOS-libwol-exception.txt`) |
+| `crates/shell/` | GPL-2.0-or-later (`crates/shell/LICENSE`) |
+| `design/` (except `design/tools/`, `design/icons/store/`) | CC BY-NC-ND 4.0 (`design/LICENSE`) |
+| `design/tools/` | GPL-2.0-or-later |
+| `design/icons/store/` | each icon's own license (`design/icons/store/LICENSES.md`) |
+| `assets/` | CC BY-NC-ND 4.0 (`assets/LICENSE`) |
+| `*.patch` | the license of the files each patch changes (`image/hyprland/patches/`: BSD-3-Clause) |
+| `crates/shell/protocols/` | BSD-3-Clause (notice kept in each file) |
+| `third_party/blocking/` | Apache-2.0 OR MIT |
+
+Each source file names its license in an `SPDX-License-Identifier` line; the license texts are in `LICENSES/`.
+
+"WolOS", the WolOS logo, wordmark and glyph are trademarks of Julia Klee. The GPL does not grant
+rights to them. Talking about WolOS with them is welcome (non-commercial, credited). Forks and
+products need Julia Klee's written permission to use them; otherwise build with your own name and art.
+Other permissions (commercial, modified art): ask Julia Klee, github.com/wonderlandos.
