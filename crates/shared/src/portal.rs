@@ -42,6 +42,19 @@ pub enum Call {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         actions: Vec<NoteAction>,
     },
+    /// New text and buttons for a notification this process posted.
+    #[serde(rename = "notification.replace")]
+    NotificationReplace {
+        id: u32,
+        title: String,
+        #[serde(default)]
+        body: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        actions: Vec<NoteAction>,
+    },
+    /// Take back a notification this process posted.
+    #[serde(rename = "notification.withdraw")]
+    NotificationWithdraw { id: u32 },
     /// The person pressed a notification button (from the shell): wold tells the app that posted it.
     #[serde(rename = "notification.answer")]
     NotificationAnswer { id: u32, key: String },
@@ -126,7 +139,9 @@ fn clean(s: &str, max: usize, newlines: bool) -> bool {
 impl Call {
     pub fn need(&self) -> Need {
         match self {
-            Self::NotificationPost { .. } => Need::Grant("notifications"),
+            Self::NotificationPost { .. }
+            | Self::NotificationReplace { .. }
+            | Self::NotificationWithdraw { .. } => Need::Grant("notifications"),
             Self::NotificationAnswer { .. } => Need::Shower,
         }
     }
@@ -141,10 +156,17 @@ impl Call {
                 }
                 Ok(())
             }
+            Self::NotificationWithdraw { .. } => Ok(()),
             Self::NotificationPost {
                 title,
                 body,
                 actions,
+            }
+            | Self::NotificationReplace {
+                title,
+                body,
+                actions,
+                ..
             } => {
                 if actions.len() > MAX_ACTIONS {
                     return Err(format!("A notification has at most {MAX_ACTIONS} buttons."));
@@ -296,6 +318,32 @@ mod tests {
         ok.id = Some(7);
         assert_eq!(ok.to_line(), "{\"ok\":true,\"id\":7}\n");
         assert_eq!(Answer::parse(&ok.to_line()), ok);
+    }
+
+    #[test]
+    fn replace_and_withdraw() {
+        let r = Call::NotificationReplace {
+            id: 3,
+            title: "Copying 2 of 5".into(),
+            body: String::new(),
+            actions: Vec::new(),
+        };
+        assert_eq!(Call::decode(r.encode().as_bytes()), Ok(r.clone()));
+        assert_eq!(r.need(), Need::Grant("notifications"));
+        let w = Call::NotificationWithdraw { id: 3 };
+        assert_eq!(Call::decode(w.encode().as_bytes()), Ok(w.clone()));
+        assert_eq!(w.need(), Need::Grant("notifications"));
+        for bad in [
+            r#"{"call":"notification.replace","id":1,"title":" "}"#,
+            r#"{"call":"notification.replace","id":-1,"title":"x"}"#,
+            r#"{"call":"notification.replace","title":"x"}"#,
+            r#"{"call":"notification.replace","id":1,"title":"a
+b"}"#,
+            r#"{"call":"notification.withdraw"}"#,
+            r#"{"call":"notification.withdraw","id":1,"app":"x"}"#,
+        ] {
+            assert!(Call::decode(bad.as_bytes()).is_err(), "{bad}");
+        }
     }
 
     #[test]

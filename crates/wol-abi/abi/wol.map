@@ -71,3 +71,24 @@ WOL_1.1 {
     wol_window_close;
     wol_window_set_close_handler;
 } WOL_1.0;
+
+WOL_1.2 {
+  global:
+    wol_menu_add_item;
+    wol_menu_add_separator;
+    wol_menu_create;
+    wol_menu_release;
+    wol_menu_retain;
+    wol_menu_set_checked;
+    wol_menu_set_enabled;
+    wol_notification_replace;
+    wol_notification_withdraw;
+    wol_toolbar_add_button;
+    wol_toolbar_add_spacer;
+    wol_toolbar_create;
+    wol_toolbar_release;
+    wol_toolbar_retain;
+    wol_toolbar_set_enabled;
+    wol_window_add_menu;
+    wol_window_set_toolbar;
+} WOL_1.1;

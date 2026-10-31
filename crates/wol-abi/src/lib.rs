@@ -7,17 +7,20 @@
 //! optional error object from every call that can fail; callbacks take `user_data` and run only
 //! inside `wol_context_dispatch`. The library holds no privilege: services go through wold.
 #![allow(non_camel_case_types)]
+// The C boundary takes a pointer and a length per string.
+#![allow(clippy::too_many_arguments)]
 
 pub mod client;
 pub mod context;
 pub mod error;
 pub mod kit;
+pub mod menu;
 pub mod notify;
 pub mod string;
 pub mod system;
 
 /// libwol's own version (not the WolOS version): major.minor.patch, packed 0xMMmmpp.
-pub const VERSION: (u32, u32, u32) = (1, 1, 0);
+pub const VERSION: (u32, u32, u32) = (1, 2, 0);
 
 /// Every `#define` in `wol.h` (test-checked against the header).
 pub mod abi {
@@ -48,10 +51,10 @@ pub extern "C" fn wol_version() -> u32 {
     (VERSION.0 << 16) | (VERSION.1 << 8) | VERSION.2
 }
 
-/// "1.1.0", static.
+/// "1.2.0", static.
 #[unsafe(no_mangle)]
 pub extern "C" fn wol_version_string() -> *const std::ffi::c_char {
-    c"1.1.0".as_ptr()
+    c"1.2.0".as_ptr()
 }
 
 #[cfg(test)]
@@ -61,6 +64,6 @@ mod tests {
         let s = unsafe { std::ffi::CStr::from_ptr(super::wol_version_string()) };
         let v = super::VERSION;
         assert_eq!(s.to_str().unwrap(), format!("{}.{}.{}", v.0, v.1, v.2));
-        assert_eq!(super::wol_version(), 0x01_01_00);
+        assert_eq!(super::wol_version(), (v.0 << 16) | (v.1 << 8) | v.2);
     }
 }

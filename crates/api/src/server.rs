@@ -210,6 +210,7 @@ mod tests {
             body: String::new(),
             id: 1,
             actions: Vec::new(),
+            replace: false,
         };
         drop(call(&format!("publish {}", forged.to_line()), &bus));
         let mut r = BufReader::new(&sub);

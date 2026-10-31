@@ -345,13 +345,23 @@ impl wol_context {
                         kit::closed(&w);
                     }
                 }
+                Incoming::Kit(FromHost::Chose {
+                    window,
+                    source,
+                    key,
+                }) => {
+                    let w = lock(&self.windows).get(&window).and_then(Weak::upgrade);
+                    if let Some(w) = w {
+                        kit::chosen(&w, source, &key);
+                    }
+                }
                 Incoming::Kit(e) => {
                     let id = match &e {
                         FromHost::Clicked { widget, .. }
                         | FromHost::Edited { widget, .. }
                         | FromHost::Toggled { widget, .. }
                         | FromHost::Slid { widget, .. } => *widget,
-                        FromHost::Closed { .. } => continue,
+                        FromHost::Closed { .. } | FromHost::Chose { .. } => continue,
                     };
                     let w = lock(&self.widgets).get(&id).and_then(Weak::upgrade);
                     if let Some(w) = w {

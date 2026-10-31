@@ -22,29 +22,53 @@ pub struct Caller {
 /// only that process. Bounded: the oldest are forgotten.
 #[derive(Default)]
 pub struct Notes {
-    /// Last id given, and (id, uid, pid) newest last.
+    /// Last id given, and the notes, newest last.
     inner: Mutex<(u32, VecDeque<Note>)>,
 }
 
-type Note = (u32, u32, i32);
+struct Note {
+    id: u32,
+    uid: u32,
+    pid: i32,
+    app: String,
+}
 
 pub const NOTES_KEPT: usize = 1024;
 
 impl Notes {
-    fn add(&self, uid: u32, pid: i32) -> u32 {
+    fn add(&self, c: &Caller) -> u32 {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         g.0 = g.0.wrapping_add(1).max(1);
         let id = g.0;
         if g.1.len() == NOTES_KEPT {
             g.1.pop_front();
         }
-        g.1.push_back((id, uid, pid));
+        g.1.push_back(Note {
+            id,
+            uid: c.uid,
+            pid: c.pid,
+            app: c.app.clone(),
+        });
         id
     }
 
     fn owner(&self, id: u32, uid: u32) -> Option<i32> {
         let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        g.1.iter().find(|n| n.0 == id && n.1 == uid).map(|n| n.2)
+        g.1.iter()
+            .find(|n| n.id == id && n.uid == uid)
+            .map(|n| n.pid)
+    }
+
+    /// Did this very process post `id`? (Executable too: a pid can be reused.)
+    fn posted_by(&self, id: u32, c: &Caller) -> bool {
+        let g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        g.1.iter()
+            .any(|n| n.id == id && n.uid == c.uid && n.pid == c.pid && n.app == c.app)
+    }
+
+    fn forget(&self, id: u32) {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        g.1.retain(|n| n.id != id);
     }
 }
 
@@ -123,7 +147,7 @@ pub fn handle<W: Write + Send>(
             body,
             actions,
         } => {
-            let id = notes.add(caller.uid, caller.pid);
+            let id = notes.add(caller);
             let e = Event::Notification {
                 uid: caller.uid,
                 app: caller.app.clone(),
@@ -131,6 +155,7 @@ pub fn handle<W: Write + Send>(
                 body,
                 id,
                 actions,
+                replace: false,
             };
             if bus.publish(&e) == 0 {
                 return Answer::err(
@@ -141,6 +166,45 @@ pub fn handle<W: Write + Send>(
             let mut a = Answer::ok();
             a.id = Some(id);
             a
+        }
+        Call::NotificationReplace {
+            id,
+            title,
+            body,
+            actions,
+        } => {
+            if !notes.posted_by(id, caller) {
+                return Answer::err(Code::InvalidArgument, "No such notification.");
+            }
+            let e = Event::Notification {
+                uid: caller.uid,
+                app: caller.app.clone(),
+                title,
+                body,
+                id,
+                actions,
+                replace: true,
+            };
+            if bus.publish(&e) == 0 {
+                return Answer::err(
+                    Code::Unavailable,
+                    "Notifications cannot be shown right now: the desktop is not running.",
+                );
+            }
+            let mut a = Answer::ok();
+            a.id = Some(id);
+            a
+        }
+        Call::NotificationWithdraw { id } => {
+            if !notes.posted_by(id, caller) {
+                return Answer::err(Code::InvalidArgument, "No such notification.");
+            }
+            notes.forget(id);
+            bus.publish(&Event::NotificationWithdrawn {
+                uid: caller.uid,
+                id,
+            });
+            Answer::ok()
         }
         Call::NotificationAnswer { id, key } => {
             let Some(pid) = notes.owner(id, caller.uid) else {
@@ -254,6 +318,7 @@ mod tests {
                 body: "ok".into(),
                 id: 1,
                 actions: Vec::new(),
+                replace: false,
             })
         );
         let nobody = Bus::<UnixStream>::default();
@@ -323,12 +388,97 @@ mod tests {
         );
     }
 
+    /// The next event on a subscriber, if any.
+    fn next(p: &UnixStream) -> Option<Event> {
+        p.set_nonblocking(true).unwrap();
+        let mut line = String::new();
+        BufReader::new(p).read_line(&mut line).ok()?;
+        Event::parse(&line)
+    }
+
+    #[test]
+    fn only_the_poster_replaces_or_withdraws() {
+        let bus = Bus::default();
+        let (shower, shown) = UnixStream::pair().unwrap();
+        bus.subscribe(Some(1000), None, shower);
+        let grants = Fixed(&[
+            ("/usr/bin/good", "notifications"),
+            ("/usr/bin/other", "notifications"),
+            ("/usr/bin/nobody", "camera"),
+        ]);
+        let notes = Notes::default();
+        let good = caller("/usr/bin/good");
+        let run = |json: &str, who: &Caller| handle(json, Some(who), &grants, &bus, &notes);
+        let id = run(POST, &good).id.unwrap();
+        assert!(matches!(
+            next(&shown),
+            Some(Event::Notification { replace: false, .. })
+        ));
+
+        let replace = format!(r#"{{"call":"notification.replace","id":{id},"title":"New"}}"#);
+        let withdraw = format!(r#"{{"call":"notification.withdraw","id":{id}}}"#);
+        let mut other_pid = good.clone();
+        other_pid.pid = 7;
+        let mut other_uid = good.clone();
+        other_uid.uid = 1001;
+        let cases: [(&Caller, Code); 4] = [
+            (&caller("/usr/bin/other"), Code::InvalidArgument),
+            (&other_pid, Code::InvalidArgument),
+            (&other_uid, Code::InvalidArgument),
+            (&caller("/usr/bin/nobody"), Code::PermissionDenied),
+        ];
+        for (who, want) in cases {
+            for json in [&replace, &withdraw] {
+                assert_eq!(run(json, who).code, Some(want), "{json} {who:?}");
+            }
+        }
+        assert_eq!(next(&shown), None, "nothing reached the desktop");
+
+        let a = run(&replace, &good);
+        assert_eq!((a.ok, a.id), (true, Some(id)));
+        assert_eq!(
+            next(&shown),
+            Some(Event::Notification {
+                uid: 1000,
+                app: "/usr/bin/good".into(),
+                title: "New".into(),
+                body: String::new(),
+                id,
+                actions: Vec::new(),
+                replace: true,
+            })
+        );
+        assert!(run(&withdraw, &good).ok);
+        assert_eq!(
+            next(&shown),
+            Some(Event::NotificationWithdrawn { uid: 1000, id })
+        );
+        assert_eq!(
+            run(&withdraw, &good).code,
+            Some(Code::InvalidArgument),
+            "once"
+        );
+        assert_eq!(run(&replace, &good).code, Some(Code::InvalidArgument));
+    }
+
     #[test]
     fn notes_are_bounded() {
         let n = Notes::default();
-        let first = n.add(1, 1);
+        let (a, b) = (
+            Caller {
+                uid: 1,
+                pid: 1,
+                app: "/a".into(),
+            },
+            Caller {
+                uid: 1,
+                pid: 2,
+                app: "/a".into(),
+            },
+        );
+        let first = n.add(&a);
         for _ in 0..NOTES_KEPT {
-            n.add(1, 2);
+            n.add(&b);
         }
         assert_eq!(n.owner(first, 1), None);
         assert_eq!(n.owner(first + 1, 1), Some(2));

@@ -110,6 +110,7 @@ mod tests {
             body: String::new(),
             id: 1,
             actions: Vec::new(),
+            replace: false,
         };
         assert_eq!(bus.publish(&n), 1);
         let got: Vec<bool> = peers
