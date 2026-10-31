@@ -97,6 +97,14 @@ pub fn argv(verb: Verb, names: &[String]) -> Vec<String> {
     a
 }
 
+/// Is this call line one of wopkg's (`package.*`, `system.*`)? Everything else is a libwol call.
+pub fn is_package_call(json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(json.trim())
+        .ok()
+        .and_then(|v| v.get("call")?.as_str().map(str::to_owned))
+        .is_some_and(|c| c.starts_with("package.") || c.starts_with("system."))
+}
+
 fn denied(grant: &str, app: &str) -> Answer {
     let what = match grant {
         "packages-install" => "install system apps",
@@ -240,6 +248,21 @@ mod tests {
     }
 
     const APP: &str = "/usr/bin/wopkg";
+
+    #[test]
+    fn only_package_and_system_calls_are_ours() {
+        for (line, ours) in [
+            (
+                r#"{"call":"package.change","verb":"install","names":["a"]}"#,
+                true,
+            ),
+            (r#"{"call":"system.rollback"}"#, true),
+            (r#"{"call":"notification.post","title":"x"}"#, false),
+            ("not json", false),
+        ] {
+            assert_eq!(is_package_call(line), ours, "{line}");
+        }
+    }
 
     #[test]
     fn decisions() {

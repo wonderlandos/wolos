@@ -1,6 +1,7 @@
 //! Socket glue for wold: one request line per connection; `subscribe` keeps the connection.
 use crate::bus::Bus;
 use crate::control::{JobTable, handle};
+use crate::packages;
 use crate::portal::{self, Caller, Grants};
 use shared::events::Event;
 use shared::jobs::{JobRequest, Reply};
@@ -69,7 +70,19 @@ pub fn serve(
             }
         }
         Some(JobRequest::Call(json)) => {
-            let answer = portal::handle(json, caller(peer).as_ref(), grants, bus, notes);
+            let who = caller(peer);
+            let answer = if packages::is_package_call(json) {
+                // ADR 0021: wopkg's system changes; the same consent grants, the real machine.
+                let c = who.as_ref().map(|c| (c.uid, c.app.as_str()));
+                packages::handle(
+                    json,
+                    c,
+                    &|app, cap| grants.granted(app, cap),
+                    &packages::Host,
+                )
+            } else {
+                portal::handle(json, who.as_ref(), grants, bus, notes)
+            };
             let mut w = &stream;
             let _ = w.write_all(answer.to_line().as_bytes());
         }
@@ -125,6 +138,30 @@ mod tests {
         fn shows_notifications(&self, _: &str) -> bool {
             false
         }
+    }
+
+    struct Deny;
+    impl Grants for Deny {
+        fn granted(&self, _: &str, _: &str) -> bool {
+            false
+        }
+        fn shows_notifications(&self, _: &str) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn package_calls_reach_the_package_service_and_need_their_grant() {
+        let bus = Bus::default();
+        let (srv, mut cli) = UnixStream::pair().unwrap();
+        cli.write_all(
+            b"call {\"call\":\"package.change\",\"verb\":\"install\",\"names\":[\"vim\"]}\n",
+        )
+        .unwrap();
+        serve(srv, me(), &Empty, &bus, &Deny, &portal::Notes::default());
+        let mut out = String::new();
+        cli.read_to_string(&mut out).unwrap();
+        assert!(out.contains("not allowed to install system apps"), "{out}");
     }
 
     fn me() -> Option<shared::sys::Peer> {
