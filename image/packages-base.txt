@@ -18,6 +18,7 @@ gptfdisk
 dosfstools
 e2fsprogs
 xfsprogs
+ntfsprogs
 squashfs-tools
 efibootmgr
 pacman-contrib
