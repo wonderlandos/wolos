@@ -384,10 +384,7 @@ pub mod tests {
             std::fs::read_to_string(dir.join("foreground_timerslack_ns")).unwrap(),
             "0"
         );
-        assert_eq!(
-            std::fs::read_to_string(dir.join("shield")).unwrap(),
-            "1"
-        );
+        assert_eq!(std::fs::read_to_string(dir.join("shield")).unwrap(), "1");
         assert_eq!(
             std::fs::read_to_string(dir.join("background_timerslack_ns")).unwrap(),
             "50000000"
