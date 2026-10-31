@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 6
+#define WOL_VERSION_MINOR 7
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -359,6 +359,15 @@ wol_status wol_power_keep_awake(wol_context *context, const char *reason, size_t
                                 wol_assertion **out, wol_error **error);
 wol_assertion *wol_assertion_retain(wol_assertion *assertion);
 void wol_assertion_release(wol_assertion *assertion);
+
+/* ---- 1.7: network (WOL_1.7) ---- */
+
+/*
+ * Permission: network-info. Keys: online (bool), interfaces (list of { name, kind: "ethernet",
+ * "wifi" or "other", up (bool) }). No address, hardware address or network name: an app does not
+ * learn where the person is.
+ */
+wol_status wol_network_copy_info(wol_context *context, wol_info **out, wol_error **error);
 
 #ifdef __cplusplus
 }

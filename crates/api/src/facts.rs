@@ -3,6 +3,7 @@
 //! gets what it needs to adapt, and no more: no MAC address, IP address or network name.
 use serde_json::{Value, json};
 use std::process::{Child, Command, Stdio};
+use wol_core::netinfo::{self, IfKind};
 use wol_core::power::{self, Charge, Profile};
 use wol_core::system::Host;
 
@@ -24,6 +25,21 @@ pub fn power(h: &dyn Host) -> Value {
         }
     }
     v
+}
+
+pub fn network(h: &dyn Host) -> Value {
+    let n = netinfo::read(h);
+    let kind = |k: IfKind| match k {
+        IfKind::Ethernet => "ethernet",
+        IfKind::WiFi => "wifi",
+        IfKind::Other => "other",
+    };
+    let interfaces: Vec<Value> = n
+        .interfaces
+        .iter()
+        .map(|i| json!({"name": i.name, "kind": kind(i.kind), "up": i.up}))
+        .collect();
+    json!({"online": n.gateway.is_some(), "interfaces": interfaces})
 }
 
 /// Keeps the machine awake while the value lives.
@@ -63,6 +79,28 @@ impl Inhibit for Logind {
 mod tests {
     use super::*;
     use wol_core::system::fake::FakeHost;
+
+    #[test]
+    fn network_says_how_not_where() {
+        let h = FakeHost::linux();
+        h.command(
+            "ip -j addr",
+            r#"[{"ifname":"eth0","operstate":"UP","address":"aa:bb:cc:dd:ee:ff","link_type":"ether",
+                "addr_info":[{"family":"inet","local":"192.168.1.5","prefixlen":24}]}]"#,
+        );
+        h.command(
+            "ip route show default",
+            "default via 192.168.1.1 dev eth0\n",
+        );
+        let v = network(&h);
+        assert_eq!(v["online"], true);
+        assert_eq!(v["interfaces"][0]["name"], "eth0");
+        let text = v.to_string();
+        assert!(
+            !text.contains("aa:bb") && !text.contains("192.168"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn a_desktop_has_no_battery() {
