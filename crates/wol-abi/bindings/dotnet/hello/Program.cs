@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 // hello: a WolOS app in C# on libwol (ADR 0020). Built and run by tests/bindings.rs.
 using System.Runtime.InteropServices;
 using Wol;

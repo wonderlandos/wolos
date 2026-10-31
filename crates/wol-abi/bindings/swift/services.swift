@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 // services: every libwol call added since 1.2, in Swift (ADR 0020). Built and run by tests/bindings.rs.
 import Glibc
 import Wol

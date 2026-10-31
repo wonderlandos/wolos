@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # helium-browser: Helium (Chromium based), the WolOS default browser. The official x86_64 release
 # tarball repackaged: its signature is checked by makepkg against the release key pinned in
 # validpgpkeys (README "Signature" of github.com/imputnet/helium-linux; the key is in keys/pgp).

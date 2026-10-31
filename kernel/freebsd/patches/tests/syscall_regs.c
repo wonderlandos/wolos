@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Linux syscall ABI: every register except rax (result), rcx and r11 survives `syscall`.
  * Guards kernel/patches/0002 (SYSRET fast return for Linux syscalls).

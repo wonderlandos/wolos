@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wopkg_context`: paths and network policy for one caller, from a JSON config with defaults
 //! for the person running it. Holds no privilege.
 use crate::ffi::{Error, Result};

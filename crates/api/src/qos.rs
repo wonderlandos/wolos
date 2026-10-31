@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! QoS service: applies `shared::qos::QosClass` policy; frontmost app boosting from wol-realtime.
 use shared::qos::{ForegroundTracker, QosClass, SchedPolicy, parse_foreground};
 use std::io::Read;

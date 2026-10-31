@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build the WolOS live + installer ISO (x86_64, UEFI) with mkarchiso from image/arch (ADR 0016).
 # Host: Arch (or CachyOS) with archiso; without mkarchiso it runs in an archlinux podman container.
 # Steps: [wolos] repo (image/repo/build.sh, skipped when $WOLOS_REPO_DIR has a database) -> staged

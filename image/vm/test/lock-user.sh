@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Installed disk: lock/unlock as a Setup-created user on headless sway (no GPU). Run after flows.sh prep + Setup.
 #   root: mkdir -m 777 /tmp/lk; daemon -f su <user> -c "cd; sh lock-user.sh > /tmp/lk/result.txt 2>&1"  (PW=<password>)
 # su -l hangs on the serial console (resizewin); use plain su.

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Test-only stand-in for /usr/local/bin/wol-greeter-session on a GPU-less VM: same user, same apps, but
 # headless sway (pixman) instead of Hyprland. Installed by flows.sh on a throwaway copy of the disk.
 export PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/bin:/usr/sbin:/sbin

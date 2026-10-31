@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS native-boot GPU proof. Run as root on real hardware after booting WolOS (USB or installed):
 #   sh /usr/local/libexec/wolos/verify-gpu.sh      (or image/hw/verify-gpu.sh from a checkout)
 # Writes /var/log/wolos-gpu-report.txt (send it back). Read-only except: loads lindebugfs/cpuctl,

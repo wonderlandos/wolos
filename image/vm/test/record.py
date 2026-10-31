@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Record the test VM's screen to a video: QMP screendump at a fixed rate, then ffmpeg.
 # Usage: python3 record.py <test dir with qmp.sock> <out.mp4> [seconds=60] [fps=10]
 # Frames go to <test dir>/frames; the VM keeps running. Another client can drive it (qmp.py keys).

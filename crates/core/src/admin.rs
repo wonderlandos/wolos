@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! wol-admind allow-list (IaraOS ADR 0026): validation, fixed argv / whole-file steps, policy. Pure.
 use crate::settings::{appearance, idle, keybinds, timezones, users};
 use crate::{bluetooth, power, printers, sharing};

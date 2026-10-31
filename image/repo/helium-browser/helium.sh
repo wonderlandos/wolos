@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # /usr/bin/helium: the official launcher with WolOS defaults. Wayland when the session is one
 # (Hyprland), the app-id `helium` (Dock running dot, menu bar name), hardware video decode when
 # the machine has a GPU render node. Flags, whitespace separated, from /etc/helium-flags.conf then

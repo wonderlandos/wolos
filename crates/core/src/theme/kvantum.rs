@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Kvantum (Qt) theme from WolOS tokens: `WolOS.kvconfig` + `WolOS.svg`. Controls are 9-slice
 //! SVG elements (`<element>-<state>[-<side>]`), 6 px rounded like the kit; flat tabs with an accent
 //! underline; transient (overlay) scrollbars; accent selection, checks, sliders and progress.

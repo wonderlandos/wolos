@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-run: launcher. `.wol` bundle -> resolved target -> launch plan (argv, env); Windows
 //! programs on native wine or umu-launcher ([`exe`]). Steam games do not come here: Steam runs
 //! its own Proton.

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS installer: may <disk> be erased? Reads only (never writes a disk). Run by install-run
 # before anything is written, and by the Install WolOS app to word its warning. One fact per line:
 #   size <bytes>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wold (job supervisor, control socket, event bus, QoS) and wol-admind. Mains are thin.
 pub mod admind;
 pub mod bus;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Theme catalog and resolver (IaraOS ADR 0016). Contract data lives in `shared::theme`.
 pub mod accent;
 pub mod apps;

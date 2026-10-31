@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Job definitions (`*.json` in the jobs dir) and pid files for crash-restart cleanup.
 use shared::jobs::JobSpec;
 use std::path::{Path, PathBuf};

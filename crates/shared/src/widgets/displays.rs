@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Which display a desktop widget lives on. `widgets.json` stays one file: each placed widget
 //! may name its display (`display`), matched by the display's description (stable across ports)
 //! or its connector. A widget without one, or whose display is not plugged in, shows on the main

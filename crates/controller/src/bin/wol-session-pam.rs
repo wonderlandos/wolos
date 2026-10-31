@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-session-pam USER COMMAND: wol-login's session runner (root). Opens USER's PAM session
 //! (pam_systemd: the logind session on seat0, /run/user, user@.service with PipeWire and the
 //! portals), runs COMMAND in USER's login shell with the session's environment, closes the session

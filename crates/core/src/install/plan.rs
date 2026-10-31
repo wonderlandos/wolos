@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! The whole install as one file (ADR 0023): the Install WolOS app writes a [`Plan`], `install-run`
 //! carries it out. [`changes`] is what the summary page shows, so what the person reads and what
 //! runs come from the same data. Passwords are side files, never in the plan.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Unified search: substring scan per segment, one ranked result per app (grouping key) with every
 //! source that has it, best source first.
 use super::segment::Segment;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! WolOS mirrors (ADR 0019): repo order in pacman.conf, the wolos-mirrorlist package, the
 //! [wolos-cachy] CPU gate (`wol mirror`), mirror-cachy.sh against local fixture databases, the
 //! release workflows and manifest.

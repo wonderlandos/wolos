@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Automatic updates (wolos-update-download.timer, wol_core::update::auto): check, then download the
 # pending packages into pacman's cache so Update Now is quick. Never installs: that stays Software
 # Update, which saves a restore point first. Off when $WOLOS_AUTO_UPDATE says download=off.

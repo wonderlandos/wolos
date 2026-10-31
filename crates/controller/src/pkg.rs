@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `pacman` on a sealed system (`/usr/local/bin/pacman`, also `wol pkg -- ARGS`). Queries go
 //! straight to the real pacman. A change is made in a layer that is live at once; kernel,
 //! initramfs and init packages are made in the pending slot instead. The decisions live in

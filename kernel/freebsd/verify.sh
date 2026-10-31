@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Called by the public kernel/build.sh after installkernel: DIR = the installed /boot/kernel.
 # Fails when a promise of the kernel page is missing from the built kernel (tests/check.sh maps them).
 set -eu

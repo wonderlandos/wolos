@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build the [wolos] pacman repo from image/repo/packages, in its order: linux-wolos
 # (kernel/linux-wolos), hyprland-wolos, wolos-system, then wolos-base (ADR 0017: its manifest hashes
 # every base file, so it is built last), each signed, and a signed database.

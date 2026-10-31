@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! libwopkg (ADR 0021, archicture/modules/wopkg.md): the fast and security-critical core of wopkg
 //! behind a stable C ABI (`include/wopkg.h`, `libwopkg.so.1`, symbols versioned by
 //! `abi/wopkg.map`). Requests and results are JSON documents; new fields are only ever added.

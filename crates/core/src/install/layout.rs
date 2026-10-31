@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! What the installer will do to a disk (ADR 0023). A [`Layout`] is what the person chose; `compile`
 //! turns it into [`Op`]s, or a [`Refusal`]. Only partitions the layout names are ever touched:
 //! [`verify`] checks that independently of `compile`, and [`unchanged`] checks it again against the

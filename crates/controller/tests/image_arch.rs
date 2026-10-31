@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The Arch Linux image (ADR 0016): mkarchiso profile `image/arch`, pinned to one Arch Linux Archive
 //! date, `[wolos]` before the Arch repos, linux-wolos only, the `[wolos]` repo build and the release
 //! manifest. Scripts run against fakes; nothing here needs root or the network.

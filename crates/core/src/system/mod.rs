@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! System API: what the shell and `wol sys` read about the machine (see archicture/modules/system-api.md).
 //! Per topic: pure parser (fixture-tested) + a read through [`Host`]. Snapshots are cached per topic.
 pub mod fake;

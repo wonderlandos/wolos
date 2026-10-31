@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wold portal (ADR 0020): libwol service calls. The library is unprivileged and asks; wold decides.
 //! Who asks comes from the kernel (peer uid, executable of the peer pid), never from the message.
 //! Grants are the consent database the person controls in Settings > Privacy & Security.

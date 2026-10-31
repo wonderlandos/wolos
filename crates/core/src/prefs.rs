@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! User desktop preferences written by Settings: shell prefs (menu bar, Dock), Hyprland keyboard/display
 //! fragments, hypridle config. Pure render/parse; callers write files and reload.
 use std::collections::HashMap;

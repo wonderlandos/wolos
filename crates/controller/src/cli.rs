@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol` command tree as data + parser (IaraOS Iara.Cli.Core). Compatibility: every invocation in the
 //! desktop configs is a row in `compat_table`; never rename, add aliases.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wine defaults per GPU vendor. Defaults only: a variable already in the environment
 //! (Steam launch options, the shell) wins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

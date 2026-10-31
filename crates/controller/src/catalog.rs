@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Helper catalogue: the `wol` command tree ([`TREE`]) plus what each verb may touch. One source:
 //! `wol api --json` prints it, `wol mcp` lists and calls exactly these verbs through the same
 //! parser and handlers as the CLI. A verb is open to helpers only when listed in [`HELPER_VERBS`];

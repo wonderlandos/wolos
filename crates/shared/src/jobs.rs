@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! launchd-style jobs: one JSON file per job in [`JOBS_DIR`], wold control socket wire.
 use serde::{Deserialize, Serialize};
 

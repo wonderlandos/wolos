@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! The stability guarantee of libwol (ADR 0020). A shipped symbol or declaration never goes away or
 //! changes; new ones are only added, under a new version node (WOL_1.1, ...).
 //! - every symbol in `abi/wol-*.symbols` is exported by `libwol.so` with that version

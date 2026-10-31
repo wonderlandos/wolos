@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Downloads (ADR 0021): HTTPS only (loopback HTTP when a test allows it), several at once, resumed
 //! from `<dest>.part` with `Range`, checked against size and SHA-256 before the rename. A failed
 //! check deletes the part: nothing unverified ever lands at `dest`.

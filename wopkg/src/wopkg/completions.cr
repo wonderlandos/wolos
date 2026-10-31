@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 module Wopkg
   # Shell completion scripts. Package names come from `wopkg __complete <prefix>`, a prefix scan of
   # the local index (no network, a few milliseconds).

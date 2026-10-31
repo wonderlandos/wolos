@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Boot counting (wolos-boot-ok.service): this boot is good once wold, which runs the login window,
 # has stayed up for a few seconds. A failure leaves the try counter; three such boots fall back.
 sleep "${WOLOS_BOOT_OK_WAIT:-5}"

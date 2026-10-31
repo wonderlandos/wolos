@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Package and release pipeline: `image/repo/packages` (build order + local deps), `changed.sh`
 //! (changed paths -> packages to rebuild), the release manifest `wol update` reads and its
 //! signature, and the CI workflows that build the `[wolos]` repo and the ISO.

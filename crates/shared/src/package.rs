@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! `.wol` package file, index and paths (ADR 0011, archicture/modules/packages.md). Wire names and
 //! paths are compatibility contract.
 

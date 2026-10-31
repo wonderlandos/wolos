@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Pure parsers for Linux device sources: sysfs attribute files, `lspci -mm`, `/proc/modules`,
 //! `modules.dep`, `/proc/cpuinfo`, ACPI modaliases, `pacman -Qq`.
 use std::collections::HashSet;

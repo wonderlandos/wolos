@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: BSD-2-Clause */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* smoke: libwopkg from C (ADR 0021). Built and run by tests/c_smoke.rs with argv[1] = a config
  * JSON and argv[2] = an index update request JSON. Prints one line per step. */
 #include <stdio.h>

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wolos-base (ADR 0017): WolKernel + its UAPI headers + the base userland at one WolOS release.
 # Non-GNU tools take the GNU names (uutils coreutils, sudo-rs) and stand in for the GNU packages
 # through provides/conflicts, so `base`, `base-devel` and everything that depends on coreutils or
@@ -12,7 +13,7 @@ pkgrel=7
 pkgdesc='WolOS base system: kernel, headers and userland of one release'
 arch=(x86_64)
 url='https://github.com/wonderlandos/wolos'
-license=(BSD-2-Clause)
+license=(GPL-2.0-or-later)
 depends=('base' 'linux-wolos' 'linux-wolos-headers' 'linux-wolos-api-headers' 'uutils-coreutils'
   'sudo-rs' 'libarchive' 'zsh' 'systemd' 'wolos-system' 'glibc' 'gcc-libs' 'bash')
 provides=('coreutils=9.12' 'sudo')

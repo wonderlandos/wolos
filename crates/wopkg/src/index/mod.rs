@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The search index (ADR 0021): one memory-mapped segment per source, rebuilt only when its input
 //! changed. A segment holds TSV records and a lowercase haystack; search scans the haystack with
 //! memchr's `memmem`, ranks hits and groups them into one result per app.

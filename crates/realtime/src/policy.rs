@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Who may use privileged compositor protocols (ADR 0013). Pure: identity + grants in, decision out.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

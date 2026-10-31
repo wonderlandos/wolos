@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Job restart policy and process trees (wold). Wire/schema in `shared::jobs`.
 use shared::jobs::JobSpec;
 use std::collections::{HashMap, HashSet};

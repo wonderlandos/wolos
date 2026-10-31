@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! glibc malloc keeps 64 chunks per thread-cache bin (glibc default: 7) for every service and
 //! user session: +26% on a 16-thread request/JSON workload at the same RSS. hugetlb stays off
 //! (it raised RSS 4-12x for no gain).

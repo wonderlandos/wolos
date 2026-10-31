@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Mutation fuzzing of the wold call decoder and the Kit host wire (ADR 0020), deterministic so it runs
 //! in every `cargo test`. Seeds are valid lines; each round flips, inserts, deletes, truncates or
 //! splices bytes. Invariants: never panics; anything accepted is valid and round-trips.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Steam facts for programs that run outside Steam: where the client and its libraries live, and
 //! which Proton installs in them carry DXVK/vkd3d-proton. Steam itself is the native package
 //! (`/usr/bin/steam`) and manages Proton; nothing here installs or launches anything for it.

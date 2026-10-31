@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Cross-check (ADR 0011): files made by the factory's `wol-port pack`/`sign` (openssl key)
 //! verify with `wol_core::package`. Regenerate with wol-packages `tools/wol-port`.
 use std::path::Path;

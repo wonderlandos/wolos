@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol` console, `wol-login`, `wol-authcheck`: pure logic here, thin mains in `src/bin/`.
 pub mod approve;
 pub mod authcheck;

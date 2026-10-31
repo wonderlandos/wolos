@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wold takes SIGCHLD with `sigwait`. FreeBSD discards a signal whose action is "ignore" at delivery,
 //! and SIGCHLD's default action is ignore (kern.sig_discard_ign), so a blocked SIG_DFL SIGCHLD never
 //! became pending: exited jobs stayed zombies and were never restarted (installed disk: wol-login

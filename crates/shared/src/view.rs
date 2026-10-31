@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Kit view trees (ADR 0020): what an app window or a Lua widget shows, as data. libwol and the Lua
 //! runtime build them; the Kit host (the shell) draws them with Kit parts and sends clicks back.
 //! Wire: one JSON object per line, [`ToHost`] from the app, [`FromHost`] from the host.

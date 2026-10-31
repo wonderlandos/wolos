@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Devices (ADR 0020, 1.12): a list, and a USB device opened by wold under a grant for that
 //! device. The descriptor comes back as a `wol_file`; the app never gets a path.
 use crate::context::wol_context;

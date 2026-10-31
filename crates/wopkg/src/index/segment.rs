@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Segment file: `WOPKGSG1`, record count, input fingerprint, TSV records, lowercase haystack
 //! (one line per record), then record and haystack offsets (u32 LE). Written to `<path>.tmp` and
 //! renamed, so a reader sees the old or the new segment, never half of one.

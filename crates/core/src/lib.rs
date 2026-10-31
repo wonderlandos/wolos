@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! WolOS domain logic (port of IaraOS Iara.Core). Pure where possible; OS access via `system::Host`.
 pub mod admin;
 pub mod appstream;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Downloads tidy: sort loose files into kind folders (Images, Documents, ...). Dry run first: the
 //! plan carries an id, and only that exact plan is applied. Only regular files directly inside a
 //! folder strictly inside the home; never hidden or partial downloads; never replaces a file;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Event bus: `subscribe` connections receive every published `shared::events::Event` line, except
 //! events for one account or process (`Event::audience`): account events reach only subscribers
 //! wold admitted for that account (`subscribe account`, the notification shower); process events

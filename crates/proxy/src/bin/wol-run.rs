@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-run <App.wol> [args...]: run a bundle with its best target (native > linux > proton).
 //! wol-run --exe <file.exe|file.msi> [args...]: a Windows program in its own prefix.
 use std::collections::BTreeMap;

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 module Wopkg
   # Flatpak apps for the person (`--user`): no privilege. Flatpak checks GPG on every pull; wopkg
   # refuses a remote that has it turned off.

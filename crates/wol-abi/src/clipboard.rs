@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Clipboard (ADR 0020, 1.3): service calls. wold checks the grant and asks the person's desktop;
 //! libwol never touches the session itself.
 use crate::client;

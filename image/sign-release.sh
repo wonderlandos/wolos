@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # sign-release.sh FILE KEY.pem: FILE.sig = raw Ed25519 signature of FILE's bytes (64 bytes), the
 # form `wol update` verifies release.json with (the package keys, wol_core::package::verify_index).
 set -euo pipefail

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! App Store details from AppStream catalogue XML: Flathub's local copy (`flatpak` keeps it under
 //! `appstream/flathub/<arch>/active/`) and Arch's `/usr/share/swcatalog/xml/*.xml.gz`. Reads only
 //! the untranslated text, the screenshot closest to the details page width and the cached icon.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Assistants & Automation: what helpers (`wol mcp` clients, scripts) may do and what they did.
 //! - [`policy`]: off switch + allow/deny per capability (`$XDG_CONFIG_HOME/wolos/helpers.json`).
 //! - [`audit`]: every helper action (`$XDG_STATE_HOME/wolos/actions.jsonl`).

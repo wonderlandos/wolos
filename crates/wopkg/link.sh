@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # libwopkg.so.1 from the Rust staticlib (ADR 0021): exports and symbol versions come only from
 # abi/wopkg.map, the soname is the ABI major. Usage: link.sh <libwopkg.a> <out-dir>
 set -eu

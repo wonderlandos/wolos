@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The Memory Saver loop: adopt app processes into scopes, run the policy per app and apply its
 //! actions. One `tick` every couple of seconds and on every focus change; everything it touches
 //! goes through [`Sys`].

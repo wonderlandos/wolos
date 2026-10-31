@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Error reports (wolos-report.timer, hourly), sent only when Settings > Privacy turned them on
 # (send=1 in /etc/wolos/reports.conf). Each new failure goes once as
 #   {"kind":"unit-failed"|"crash","version":<WolOS>,"kernel":<uname -r>,"detail":<unit | program signal>}

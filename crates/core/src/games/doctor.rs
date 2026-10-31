@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! `wol games doctor`: what Steam and Windows games need on this machine, each with the exact
 //! fix. Steam is the native Arch package (multilib); Proton comes through Steam; wine is native.
 //! [`gather`] reads facts through [`Host`]; [`checks`] is pure.

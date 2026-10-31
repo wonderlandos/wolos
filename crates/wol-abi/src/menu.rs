@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Window menus and toolbars (ADR 0020, 1.2): data the Kit host draws, like the parts in `kit`.
 //! The host sends back the key chosen; libwol runs the handler only for a key the app added.
 use crate::context::{lock, wol_context};

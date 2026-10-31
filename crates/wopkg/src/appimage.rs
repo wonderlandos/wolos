@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! AppImages as first-class apps: adopt or install into `~/Applications`, read the embedded update
 //! information (`.upd_info`) and signature (`.sha256_sig`, `.sig_key`), update by zsync delta,
 //! keep the previous file for rollback. Runs as the person; the AppImage itself is never executed.

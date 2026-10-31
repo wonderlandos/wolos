@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Pure parts of `wol-login` (IaraOS ADR 0024): passwd parsing, auth request framing, login flow, session plan.
 
 pub use shared::login::SOCKET;

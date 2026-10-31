@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Who is using the app (ADR 0020, 1.10): a service call about the caller's own account. wold
 //! takes the account from the kernel, so an app cannot ask about another.
 use crate::context::wol_context;

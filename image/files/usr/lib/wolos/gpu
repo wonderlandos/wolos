@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS GPU (wolos-gpu.service): the display driver for this boot's GPU is loaded before this by
 # wolos-hw.service (`wol hw boot`). Here: a panel handed over at brightness 0 (VFIO passthrough,
 # some firmware) shows nothing, so raise it to 80 %; never lower one.

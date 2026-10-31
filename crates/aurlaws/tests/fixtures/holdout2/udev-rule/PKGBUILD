@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Inert test fixture: nothing here is ever run, and every address is reserved or fake.
 pkgname=udev-rule
 pkgver=1.0

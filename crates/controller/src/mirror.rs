@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol mirror status|rank|gate|kernel` (ADR 0019): the WolOS mirrors and the `[wolos-cachy]` CPU
 //! gate. Logic in `wol_core::mirror`; this reads the files, probes and writes.
 use crate::run::{Env, fail};

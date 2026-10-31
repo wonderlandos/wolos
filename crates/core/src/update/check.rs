@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Daily update check results. `update-check` (systemd timer, root) refreshes the pinned pacman
 //! databases, lists `[wolos]` package fixes and known vulnerabilities (`arch-audit`), fetches the
 //! signed release manifest and leaves its findings in [`DIR`], readable by every account; the

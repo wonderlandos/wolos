@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # shellcheck disable=SC2034
 # WolOS live + installer ISO (mkarchiso, releng-based). Staged and run by image/build.sh.
 iso_name="wolos"

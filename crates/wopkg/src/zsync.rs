@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! zsync delta downloads (AppImage updates): the `.zsync` control file lists a weak rolling sum and
 //! a truncated MD4 per block of the new file. Blocks found anywhere in the old file are copied,
 //! only the rest is fetched with `Range`, and the result must match the control file's SHA-1.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Index update: fetch every source's input (conditional GET, in parallel), then rebuild only the
 //! segments whose input changed (size + mtime + parser version), also in parallel.
 use crate::context::Context;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol games`: doctor and the one-click Steam launch.
 use controller::cli::parse;
 use controller::games::STEAM_ICON;

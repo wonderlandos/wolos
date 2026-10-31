@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Accent colours as theme variants (theme contract, IaraOS ADR 0016): `wol-<light|dark>-<accent>` extends the
 //! WolOS base theme and overrides `accent` + `accentText`. `wol-auto-<accent>` follows the system appearance.
 //! `accentText` is white unless that misses the contrast rule; then the darkest text that passes.

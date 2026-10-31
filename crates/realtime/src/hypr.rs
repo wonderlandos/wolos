@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Hyprland IPC: `.socket.sock` (requests, e.g. `j/activewindow`) and `.socket2.sock`
 //! (events, one `name>>data` line each). Pure parsers + thin socket helpers.
 use shared::events::Event;

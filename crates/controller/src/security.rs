@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol firewall on|off|status` and `wol security`: the firewall through wol-admind, and what
 //! Privacy & Security shows (wol_core::security).
 use crate::cli::Invocation;

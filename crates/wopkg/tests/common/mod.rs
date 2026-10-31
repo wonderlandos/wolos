@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! libwopkg.so.1 for the tests, linked once per test binary by `link.sh` from the staticlib this
 //! `cargo test` just built.
 use std::path::{Path, PathBuf};

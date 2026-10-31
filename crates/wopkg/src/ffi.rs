@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The C boundary (ADR 0021 on ADR 0020's rules): status codes, the error object, strings, and the
 //! guards every export goes through: input checks, panics caught, out-pointers written only on success.
 use std::ffi::{c_char, c_void};

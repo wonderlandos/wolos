@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Network state (ADR 0020, 1.7): a service call.
 use crate::context::wol_context;
 use crate::error::{guard, wol_error, wol_status};

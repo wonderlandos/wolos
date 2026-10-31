@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 module Wopkg
   # Builds (recipes, AUR) run inside bubblewrap: the system read-only, only the build folder
   # writable, a fresh /tmp, no home, no session bus, and no network unless the step is the fetch

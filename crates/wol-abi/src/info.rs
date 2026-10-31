@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! `wol_info`: what a service call answers, as one read-only tree (ADR 0020, 1.4). A service can
 //! say more over time (a new key) without a new symbol; the keys are listed in `wol.h`.
 //! Every getter accepts NULL and answers NULL or 0, so lookups chain.

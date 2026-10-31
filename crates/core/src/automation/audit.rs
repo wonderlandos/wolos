@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Helper audit log: one JSON object per action in `$XDG_STATE_HOME/wolos/actions.jsonl`, newest
 //! last. Secrets (passwords) are never recorded. Bounded: past [`MAX_BYTES`] the newest half stays.
 use serde::{Deserialize, Serialize};

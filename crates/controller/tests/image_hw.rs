@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Hardware catalogue vs the Arch image: drivers the old boot scripts chose are still in the
 //! catalogue (udev autoloads them by modalias), and every catalogue package ships offline
 //! (`image/arch/packages.x86_64`, `desktop/packages.txt`) or is listed as not shipped.

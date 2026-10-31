@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Login window <-> wol-login socket wire (IaraOS ADR 0024, WolOS ADR 0003).
 //! Auth: `user\n` + password. Commands: `!verb\n` (+ body); `!` never starts an account name.
 //! Reply: one line `ok|denied|error`.

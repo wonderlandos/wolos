@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Low-level OS access (Linux). Ported from IaraOS iara-sys.
 //! Safe wrappers only; no allocation on hot paths.
 

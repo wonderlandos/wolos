@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 // parts: the Kit parts, a button and notification buttons from C#. Run by tests/bindings.rs.
 using System.Runtime.InteropServices;
 using Wol;

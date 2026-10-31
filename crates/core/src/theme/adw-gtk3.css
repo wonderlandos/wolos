@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
 /* WolOS Kit scaffold for GTK 3 apps (adw-gtk3 underneath). Colours are theme tokens (wol_ + token), metrics
    wrap a shared::theme::scaffold name in at-signs. GTK 3 CSS only: no custom properties, no color-mix. */
 

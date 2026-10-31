@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Release manifest: ISO SNAPSHOT(YYYY-MM-DD) REPO_REVISION BASE_URL [VERSION KERNEL CACHY] -> release.json
 # on stdout, the form `wol update` reads (wol_core::update::check::Manifest): version, snapshot
 # (YYYY/MM/DD, the Arch Linux Archive path), wolos_repo, cachy ([wolos-cachy]

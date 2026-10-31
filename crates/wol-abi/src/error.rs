@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Status codes, the error object, and the guards every export goes through: input checks,
 //! panics caught at the boundary, out-pointers written only on success.
 use std::ffi::{c_char, c_void};

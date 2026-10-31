@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `pacman` on a sealed system: layers for ordinary packages, the pending slot for the kernel,
 //! straight pass-through for queries; `wol seal off`; `wol layers fold`.
 use controller::cli::parse;

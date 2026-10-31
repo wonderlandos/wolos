@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-admind (root, wold job org.wol.admin): runs only the admin allow-list. One client at a time.
 use api::admind::{Caller, RealOs, handle, session_of};
 use std::io::{Read, Write};

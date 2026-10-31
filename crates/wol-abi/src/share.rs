@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Sharing (ADR 0020, 1.13): the person sees what an app wants to share and picks where it goes.
 //! The app learns only what was done.
 use crate::client;

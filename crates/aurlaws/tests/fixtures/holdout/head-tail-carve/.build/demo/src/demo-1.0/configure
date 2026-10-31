@@ -1,2 +1,3 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 head -c 900 tests/files/data.bin | tail -c 300 | sh

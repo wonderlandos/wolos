@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolKernel KMI: freeze exported symbols + CRCs per release line (like Android GKI).
 #   kmi.sh extract O        > wolkernel-<line>.symvers   (at the first release of a line)
 #   kmi.sh check O BASELINE                               (every build of that line; exit 1 = KMI break)

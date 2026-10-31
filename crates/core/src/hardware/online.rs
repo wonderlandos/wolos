@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! A driver only the internet has (NVIDIA: not in the offline repo) that could not be installed at
 //! first boot. `wol hw online` installs it once per boot, the first time the network comes up
 //! (NetworkManager dispatcher), and leaves the result in [`ONLINE_PATH`]; the session turns a new

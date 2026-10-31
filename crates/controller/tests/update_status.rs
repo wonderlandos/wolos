@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol update status`: what the daily check found (wol_core::update::check), for any account.
 use controller::cli::parse;
 use controller::run::{FakeEnv, execute};

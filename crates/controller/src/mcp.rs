@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol mcp`: Model Context Protocol server on stdin/stdout (JSON-RPC 2.0, one message per line;
 //! no network listener). Tools are the helper catalogue ([`catalog::tools`]); a call builds the same
 //! argv the CLI takes and runs the same handlers, so CLI and MCP cannot drift. Every call passes

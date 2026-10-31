@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! cgroup v2 files Memory Saver reads and writes. Every function takes the cgroup directory, so
 //! tests run against a plain temp directory.
 use std::io::Write;

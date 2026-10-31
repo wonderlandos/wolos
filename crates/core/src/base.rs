@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! The WolOS base (ADR 0017): `wolos-base` ships a manifest of every base file
 //! (`<sha256>  <path>` per line, like `sha256sum`); `wol base verify` reports the files that
 //! changed or went missing, like `freebsd-update IDS`. Pure: the caller hashes files.

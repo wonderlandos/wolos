@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Minimal PAM client (libpam on FreeBSD and Linux): password-only conversation, no echo, no logging.
 #![allow(unsafe_code)]
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! flatpak-wolos: Flatpak from the WolOS fork's `wolos` branch at the commit in `ref`, built from a
 //! tarball like linux-wolos, replacing Arch's flatpak and listed in the [wolos] repo.
 use std::{fs, path::PathBuf, process::Command};

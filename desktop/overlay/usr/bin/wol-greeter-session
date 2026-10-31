@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Login window display, started by wol-login (root). Hyprland refuses root, so the compositor and
 # wol-loginwindow both run as _wollogin (seat and video groups; DRM via seatd).
 # `setup` (first boot, no user yet): the setup assistant instead of the login window (ADR 0004).

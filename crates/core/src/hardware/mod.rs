@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Generic hardware: detect -> match the [`catalog`] -> driver + firmware + quirks -> status.
 //! One path for boot (`wol hw boot`), `wol hw`, Settings and scripts. Reads go through [`Host`]
 //! (sysfs, /proc, `lspci -mm`, `pacman -Qq`; 2 s timeout per command, never a shell); matching,

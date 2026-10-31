@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Shell socket contract: panel names `wol shell toggle|show|hide <panel>` accepts.
 pub const PANELS: &[&str] = &[
     "switcher",

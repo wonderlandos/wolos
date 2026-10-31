@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Printers for Settings: CUPS queues (lpstat), discovery (lpinfo) and lpadmin argv for wol-admind.
 use crate::system::Host;
 

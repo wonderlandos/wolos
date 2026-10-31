@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Nearby sharing discovery records: the mDNS instance name and the `n` TXT value a phone reads
 //! to show this computer in its share sheet. Pure encode/decode; wold advertises them.
 

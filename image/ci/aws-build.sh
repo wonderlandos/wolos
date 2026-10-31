@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build [wolos] packages or the image on the ECS build cluster (wonderlandos/wolos-build): one task
 # per package, independent packages at the same time (image/ci/plan.py waves). Hosts start for the
 # run and stop after it.

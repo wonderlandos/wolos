@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol install|remove|list|search`, `wol update apps` (ADR 0011, archicture/modules/packages.md).
 //! `.wol` files and index apps go to wol-admind `wol-install` after a local check; App Store
 //! catalogue ids and plain pkg names go to `pkg-install`. The daemon verifies again on its own copy.

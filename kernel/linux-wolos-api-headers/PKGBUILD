@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # UAPI headers from the same WolKernel tree as linux-wolos (ADR 0017): replaces Arch's linux-api-headers.
 # _ref must match kernel/linux-wolos/ref (the fork's wolos branch, which carries the WolKernel patches).
 pkgname=linux-wolos-api-headers

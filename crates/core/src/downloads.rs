@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! The Dock's Downloads stack: where Downloads is (xdg-user-dirs) and its newest files.
 
 /// One file in the stack.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Audio (ADR 0020, 1.8): service calls. wold checks the grant and the desktop acts: sound belongs
 //! to the person's session, not to the system.
 use crate::client;

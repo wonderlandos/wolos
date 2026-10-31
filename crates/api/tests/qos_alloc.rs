@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The QoS hot path (parse + switch + apply) allocates nothing in steady state.
 use api::qos::{Applier, serve};
 use shared::qos::{ForegroundTracker, QosClass};

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS first boot (wolos-firstboot.service, once): driver packages not on the image (NVIDIA: the
 # hardware catalogue picks nvidia-open-dkms) are installed online and loaded before the login window.
 # wolos-hw.service (`wol hw boot`) loads drivers on every later boot. The first user is created by

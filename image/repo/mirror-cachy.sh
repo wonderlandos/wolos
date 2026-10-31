@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build [wolos-cachy] (ADR 0019): x86-64-v3 builds of the image's packages, frozen at the release.
 # Roots = image/arch/packages.x86_64 + desktop/packages.txt + image/repo/cachy-extra; their
 # dependency closure is resolved in the Arch repos at image/arch/snapshot. A package is taken from

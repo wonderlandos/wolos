@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol seal` and `wol encrypt`: the installer and updater call these (logic in wol_core).
 use controller::cli::parse;
 use controller::run::{FakeEnv, execute};

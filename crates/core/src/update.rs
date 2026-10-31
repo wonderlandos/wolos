@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! System update with A/B root slots (ADR 0016): snapshot the running root into the other slot,
 //! pin it to the new release's Arch Linux Archive date, `pacman -Syu` inside it, rebuild its
 //! initramfs, signed kernel image and boot entry (boot counting), boot it next. A failed slot falls

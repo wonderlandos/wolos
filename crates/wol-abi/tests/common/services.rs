@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! The `services` program every language binding must pass: each call added since 1.2 against a
 //! fake wold on the real `shared::portal` wire.
 #![allow(dead_code)]

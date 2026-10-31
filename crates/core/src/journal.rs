@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Settings journal: every user settings change records the files' text before and after, so any
 //! change can be undone (`wol undo`, `wol history`, Settings > Restore). Writers: Settings,
 //! Control Center, `wol`, helpers (`wol mcp`). One JSON object per line in

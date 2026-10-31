@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Fork/join parallelism in Bend's style (ADR 0014): write divide and conquer; independent halves run in parallel.
 
 mod range;

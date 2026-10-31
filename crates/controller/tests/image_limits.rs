@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! One app cannot take the desktop with it (ADR 0027): the defaults that keep the session alive
 //! under a fork bomb or a memory bomb. image/vm/test/limits proves them in a guest.
 use std::path::PathBuf;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Memory Saver (ADR 0026): background apps give their memory back and fault it in as they use it
 //! again (App Nap + memory compressor). Policy only; wold applies it.
 pub mod app;

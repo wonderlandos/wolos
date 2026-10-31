@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # changed.sh < PATHS: the [wolos] packages to rebuild for these changed repo paths (one per line,
 # e.g. `git diff --name-only A B`), each package plus every package that depends on it, on one line
 # in build order (image/repo/packages). Prints nothing when no package is touched.

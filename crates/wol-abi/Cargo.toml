@@ -2,7 +2,7 @@
 name = "wol-abi"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "BSD-2-Clause"
 authors.workspace = true
 description = "libwol: the WolOS app API behind a stable C ABI (wol.h, libwol.so.1)"
 

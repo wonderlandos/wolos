@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol`: WolOS console. Thin main; logic in `controller::{cli, run}`.
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();

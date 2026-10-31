@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! When to refresh a window's fallback snapshot (used if a client dies without a clean close).
 //! Captures cost a full window render (CPU on Pixman), so take them when content has settled.
 

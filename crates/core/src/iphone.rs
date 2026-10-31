@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! iPhone attach: the usbmuxd `ListDevices` exchange and what a newly plugged phone shows.
 //! Pure: callers own the socket and the notification. Wire: 16-byte little-endian header
 //! (length, version 1, message type 8 = plist, tag) then an XML plist body.

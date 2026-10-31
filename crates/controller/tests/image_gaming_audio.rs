@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Wine/Proton and PipeWire defaults ship as plain config values (ported from the CachyOS and
 //! Bazzite settings): kernel limits, file-descriptor limits, realtime audio, Bluetooth codecs.
 use std::path::PathBuf;

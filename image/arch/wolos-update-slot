@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wolos-update-slot [SNAPSHOT YYYY-MM-DD]: update WolOS into the other slot and start it on the next boot.
 # A thin wrapper: `wol update apply SLOT [DATE]` snapshots the running root into the inactive slot,
 # repoints its pacman.conf at DATE (default: the newest tested release), runs pacman -Syu inside it,

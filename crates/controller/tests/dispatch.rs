@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every action against a recording fake (IaraOS DispatchTests).
 use controller::cli::{TREE, parse};
 use controller::run::{FakeEnv, execute};

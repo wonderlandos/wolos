@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Sealed system volume: after an install or an update the slot's subvolume is read-only and
 //! every executable and library under /usr/bin and /usr/lib carries fs-verity. The sealed
 //! files' digests go to a manifest inside the slot; the manifest's own digest (the root digest)

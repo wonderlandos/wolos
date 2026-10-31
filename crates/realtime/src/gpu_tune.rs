@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! GPU tuning contract (ADR 0007): what the GPU can do (`GpuCaps`) and what it is doing
 //! (`GpuSample`). Plain data; backends read text the driver already exposes. Missing counters are
 //! `None`, never faked.

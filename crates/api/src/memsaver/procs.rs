@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! /proc facts Memory Saver needs: a process's cgroup, owner, parent, and whether it is a
 //! game or a session component that must never be touched. `proc` is the /proc root (tests: a
 //! temp directory laid out the same way).

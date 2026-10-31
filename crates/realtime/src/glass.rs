@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Glass policy and parameters (ADR 0018). Pure: config + facts in, plan out.
 //! The GLES passes live in the binary (`blur.rs`); this module decides what they do.
 

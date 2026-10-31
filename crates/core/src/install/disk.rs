@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! What is on a disk, as the installer sees it (ADR 0023): the partition table from `sfdisk --json`,
 //! file systems and mounts from `lsblk --json`, and read-only facts a probe adds (how small a file
 //! system can get, what system lives on it). Partitions are named by their GPT UUID, never by a

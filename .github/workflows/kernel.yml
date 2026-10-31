@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolKernel (kernel/README.md): builds linux-wolos in an Arch Linux container on every kernel change;
 # a wolkernel-* tag (e.g. wolkernel-1.0-7.3) also publishes the packages as a GitHub release.
 name: kernel

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Helper-facing CLI verbs against a recording fake: settings journal + undo, Downloads tidy,
 //! restore points (bectl fixtures), admin password flow, named scripts under the helper policy.
 use controller::cli::parse;

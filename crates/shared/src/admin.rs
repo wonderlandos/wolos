@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Admin actions + wire (ADR 0026 in IaraOS). Wire on [`SOCKET`]:
 //! `action NUL count NUL arg1 NUL ... argN NUL password`; reply one ASCII line.
 

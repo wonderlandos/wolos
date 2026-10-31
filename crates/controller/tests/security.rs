@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol firewall` and `wol security` (wol_core::security).
 use controller::cli::parse;
 use controller::run::{FakeEnv, execute};

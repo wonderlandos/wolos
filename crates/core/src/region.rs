@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Date & time (zone, network time) and language choices for Settings > General.
 use crate::system::Host;
 

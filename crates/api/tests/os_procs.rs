@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Real process trees (own test binary: the lib tests reap with waitpid(-1)).
 use std::time::{Duration, Instant};
 

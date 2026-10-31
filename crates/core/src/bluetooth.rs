@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Bluetooth for Settings: BlueZ through bluetoothctl (no root: the person at the computer may
 //! pair, connect and forget). The hcsecd.conf helpers stay until wol-admind drops `bt-pair`.
 use crate::system::Host;

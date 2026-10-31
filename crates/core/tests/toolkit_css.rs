@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Every theme's GTK 4 and GTK 3 stylesheets parse cleanly in the real toolkits: GTK skips a rule
 //! it cannot parse, and a skipped rule is a silent hole in the WolOS look. Parsed with PyGObject
 //! (GTK 3 and GTK 4 cannot share a process); no display needed.

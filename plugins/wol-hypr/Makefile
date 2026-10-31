@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Needs hyprland headers (pkg-config hyprland). Builds against librealtime.a.
 CXX ?= c++
 # -fno-access-control: reads Hyprland privates (xdg-decoration map) to spot client-drawn title bars.

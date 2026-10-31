@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! History: one JSON line per change in `<state>/history.jsonl`, written before the change is
 //! reported done. Undo is either a file swap libwopkg does itself (AppImages) or a command the
 //! caller runs (Flatpak commit, system restore slot).

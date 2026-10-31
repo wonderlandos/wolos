@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-login (root, wold job `org.wol.login`, IaraOS ADR 0024): greeter -> authenticating -> session -> greeter.
 //! Privileged steps: PAM check for the `_wollogin` UI, then the user session via `su -l`. Passwords never logged.
 use controller::authcheck::{Auth, wipe};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Effects & Looks: how windows look (corners, blur, transparency, borders, shadows, gaps, motion) as
 //! Hyprland keywords in the managed include (`hyprprefs`), and Looks presets that set them all at once.
 //! Presets are data files: shipped in [`SYSTEM_DIR`], the user's own in [`USER_DIR`] (import/export).

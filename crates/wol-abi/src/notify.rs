@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Notifications: a service call. wold checks the app's permission and hands the notification to
 //! the person's session; libwol only validates and asks. A pressed button comes back from wold as
 //! a `notification-action` event for this process only, and runs the handler inside dispatch.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! DXVK, vkd3d-proton and dxvk-nvapi for a prefix. Native wine ships none of them; wol-run copies
 //! their Windows DLLs into `system32`/`syswow64` and loads them native-first, as Proton does.
 use std::path::{Path, PathBuf};

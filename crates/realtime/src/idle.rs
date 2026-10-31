@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Idle lock policy. Pure: activity and time in, "lock now" out.
 //! Config: /etc/wolos/idle.json `{ "lock_after_secs": 300 }` (0 = never).
 

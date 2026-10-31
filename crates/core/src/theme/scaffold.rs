@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! The Kit AppWindow scaffold for third-party toolkits: `adwaita.css` (libadwaita / GTK 4) maps the
 //! WolOS toolbar, sidebar, cards, controls, menus and sheets onto their widgets. The sheets name
 //! colours as theme tokens (`var(--wol-*)`) and metrics as `@NAME@` (`shared::theme::scaffold`), so

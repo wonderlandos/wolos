@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Control Center extras: battery, Now Playing (MPRIS via playerctl), Bluetooth devices, keyboard
 //! backlight, Low Power Mode, accessibility (Hyprland options), Night Shift probe, default route.
 //! Same shape as the parent module: pure parsers (fixture-tested) + sysfs reads and fixed argv.

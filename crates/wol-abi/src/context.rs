@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! `wol_context`: one per app (or per thread that drives libwol). Owns the connections, the event
 //! queue and the wake-up fd. Reader threads only queue; callbacks run only inside
 //! `wol_context_dispatch`, on the thread that calls it, so any language's event loop can drive

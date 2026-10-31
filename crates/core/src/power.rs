@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Battery details (`/sys/class/power_supply`), energy profile (platform profile / cpufreq EPP)
 //! and lid action (systemd-logind) for Settings > Battery.
 //! The automatic AC/battery policy is [`policy`].

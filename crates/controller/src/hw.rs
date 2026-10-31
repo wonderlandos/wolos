@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol hw`: hardware list, status, fix, and the boot step (`wolos-hw.service`). Logic in
 //! `wol_core::hardware`; root changes through wol-admind (`hw-load`, `pkg-install`).
 use crate::cli::Invocation;

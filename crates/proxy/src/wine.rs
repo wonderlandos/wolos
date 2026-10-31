@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Windows programs outside Steam (`--exe`, bundles with a Proton target): the facts wol-run
 //! reads, the environment it builds, the plan (prefix, DLLs, argv) and its executor. The runner
 //! is the native `wine` package or, when wine is not installed, umu-launcher.

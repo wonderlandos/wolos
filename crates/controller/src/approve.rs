@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Helper gate (archicture/modules/automation.md), one for `wol mcp` and `WOL_HELPER` scripts:
 //! policy first; reads run; a change asks on screen (wol-shell's approval sheet) unless the user
 //! chose Always Allow for that helper; administrator changes ask for the password every time and

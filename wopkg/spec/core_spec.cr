@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 require "spec"
 require "file_utils"
 require "../src/wopkg/core"

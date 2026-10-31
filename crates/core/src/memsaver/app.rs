@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! One app's Memory Saver life: in use -> background grace period -> saving -> (App Nap) ->
 //! back in use. Pure: facts and a clock in, an action out.
 use shared::memsaver::AppState;

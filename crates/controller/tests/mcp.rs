@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol mcp` protocol (JSON-RPC 2.0 over stdio) against a recording fake: initialize, tools/list
 //! generated from the catalogue, tools/call happy path, policy refusals, and approvals: changes
 //! ask on screen first, administrator changes run only in the shell.

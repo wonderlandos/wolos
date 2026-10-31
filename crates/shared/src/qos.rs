@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! QoS classes. Raw values are ABI (kernel + wire); never renumber.
 
 /// macOS-style QoS class. `as u8` is the raw ABI value.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! cargo run --release --example par_bench: sequential vs fork/join on a compute-heavy map-reduce.
 use std::time::Instant;
 

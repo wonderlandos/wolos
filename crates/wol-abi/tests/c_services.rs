@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! The service families from C (ADR 0020): each `tests/c/<family>.c` runs against a fake wold that
 //! answers on the real `shared::portal` wire. wold's own decisions are tested in `api::portal`.
 use serde_json::json;

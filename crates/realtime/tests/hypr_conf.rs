@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The desktop hyprland.conf drives hyprbars and window animations; it must agree with the
 //! realtime geometry/curves and the kit (12 px lights, close centre 22.5 px in, 22 px apart).
 //! Live 0.56.2: lights were green-yellow-red, 20 px apart, CSD apps got a second bar, and the

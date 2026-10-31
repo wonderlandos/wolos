@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol games`: the games doctor and one-click Steam. Logic in
 //! `wol_core::games` (archicture/modules/games.md).
 use crate::cli::Invocation;

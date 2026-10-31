@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Event bus client: `subscribe` on the wold socket, then `shared::events::Event` per line.
 use shared::events::Event;
 use std::io::{BufRead, BufReader, Write};

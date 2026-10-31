@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! libwol -> wold service calls (ADR 0020): `call <json>` on the wold socket, one [`Answer`] line back.
 //! wold decides with the caller's identity from the kernel (peer pid -> executable), never from the
 //! message. Every field is bounded and checked here, on both sides.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Single owner of `waitpid`: every exit (job roots and reparented orphans) is reaped here and
 //! delivered to whoever registered the pid. Exits that arrive before registration are kept.
 use std::collections::HashMap;

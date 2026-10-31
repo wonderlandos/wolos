@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Security defaults the image ships (wol_core::security, archicture/modules/security.md): the
 //! firewall on from the first boot, kernel hardening, the system log off the network and the
 //! compositor's privacy rules.

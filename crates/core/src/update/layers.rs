@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Live installs: the sealed slot stays read-only, a package change lands in a layer. The real
 //! pacman runs in a chroot whose `/usr` is an overlay over the live one (`/etc` and
 //! `/var/lib/pacman` are the live, writable ones), the overlay's upper directory is a

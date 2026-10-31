@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // wol-hypr: thin Hyprland plugin. All policy lives in Rust (crates/realtime, C ABI wol_realtime.h).
 #include <filesystem>
 #include <hyprland/src/plugins/PluginAPI.hpp>

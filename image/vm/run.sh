@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Boot the newest WolOS ISO (live desktop) in QEMU/KVM: OVMF, virtio-vga-gl (Hyprland runs), a window.
 # Usage: image/vm/run.sh [ISO]   Env: WOLOS_VM (default ~/WolOS-vm), WOLOS_MEM (6G), WOLOS_DISPLAY (gtk,gl=on).
 set -eu

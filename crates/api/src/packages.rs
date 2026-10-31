@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wold system package service (ADR 0021): wopkg asks, wold decides with the caller's executable
 //! (from the kernel) and the consent grant the call names, then runs the sealed-system pacman
 //! (`wol pkg --`, `controller::pkg`: live layer, pending slot for kernel/initramfs/init) or the A/B

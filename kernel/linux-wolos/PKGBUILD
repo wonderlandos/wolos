@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # linux-wolos: the WolOS kernel fork (github.com/wonderlandos/linux, branch wolos: the WolKernel patches)
 # at the commit in ./ref, Arch's config.x86_64 from the snapshot (vendored next to this file) + the fork's
 # kernel/configs/wolos.config + kernel/conf/wolos.config, plus extra patches from

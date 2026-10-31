@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! What `wol games steam` tells someone who opened Steam from the Dock, Apps or Search
 //! (no terminal): one notification, title + body. Bodies follow HIG §3 and pass
 //! `shell::copy::lint` (crates/shell/tests/copy_lint.rs).

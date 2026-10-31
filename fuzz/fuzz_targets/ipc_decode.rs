@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wold call decoder and Kit host wire (ADR 0020) under libFuzzer. Same invariants as
 //! `crates/shared/tests/portal_fuzz.rs`: never panic; anything accepted is valid and round-trips.
 #![no_main]

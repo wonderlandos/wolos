@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Unattended install (VM tests, image/vm/test-install.sh): `wolos.autoinstall=<disk>` on the live
 # kernel command line erases <disk>, installs WolOS and powers off. Progress goes to the console.
 set -u

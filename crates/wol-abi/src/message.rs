@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Messages between apps (ADR 0020, 1.11), routed by wold. An app is addressed by its executable
 //! and an endpoint name; wold checks the grant for that one peer and tells the receiver who sent
 //! each message. Callbacks run inside `wol_context_dispatch`.

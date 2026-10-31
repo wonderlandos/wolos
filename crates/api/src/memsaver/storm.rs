@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Fork storms: a scope that sits at its pids limit and keeps asking is not an app doing work.
 //! pids.events `max` counts refused forks. A build or a browser at the limit backs off; only a
 //! runaway loop is refused thousands of times a tick, tick after tick.

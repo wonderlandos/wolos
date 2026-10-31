@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build the repo Rust workspace (cargo build --release) and install WolOS binaries into DEST.
 # Usage: image/build-rust.sh DEST   (run by the wolos-system PKGBUILD; needs cargo, pkgconf, GTK4 deps)
 # Env: CARGO_TARGET_DIR (default target/), WOLOS_VENDOR (vendored crates: build offline).

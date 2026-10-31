@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS shell on headless sway (pixman, no GPU), build VM, as root. Shots land in /tmp/shots.
 # Needs: wol binaries in $B (built --features shell/layer-shell), sway grim wtype zenity, user wolt / wolpass.
 # Input: wol-shell.sock (`wol shell ...`), wtype (first key of a wtype run can be dropped: lead with x BackSpace).

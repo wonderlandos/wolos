@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Lua widgets, headless: a script is loaded, rendered into a Kit view tree, clicked, reloaded.
 use shared::view::{Node, Role};
 use std::cell::RefCell;

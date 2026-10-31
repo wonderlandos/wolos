@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Which GPU composites the desktop. Pure: device facts in, choice out.
 //!
 //! Rule: composite on the GPU that drives the display (usually the integrated GPU / APU on hybrid

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Per-frame compositor timing ring (ADR 0007, memory-bandwidth #1/#5). wol-hypr records one
 //! `Frame` per rendered monitor frame; `wol-realtime hypr stats` reads `Stats` through hyprctl.
 //! Bytes are derived, not counted: damage_px x 4 B x 2 (read + write) x passes.

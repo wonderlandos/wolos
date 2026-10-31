@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # systemd-sleep hook (PHASE ACTION): before sleep every session that asks for the password after
 # sleep is locked (wol power suspend); after resume the power policy is applied again.
 case $1 in

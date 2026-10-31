@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! New-window placement (macOS rule): a fresh toplevel fits the usable area (below the menu bar,
 //! above the dock, inside a margin), is centred, or cascaded from the previous window of the same
 //! app, and is never placed off screen. Positions are the client area; the title bar sits above it.

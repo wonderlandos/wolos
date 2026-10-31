@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! Power (ADR 0020, 1.6): service calls. A keep-awake lasts as long as its connection to wold, so
 //! a process that dies gives it up without any cleanup.
 use crate::client;

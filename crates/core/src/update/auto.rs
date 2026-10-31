@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Automatic updates (Settings > Software Update). The system half is
 //! `wolos-update-download.timer`: it checks and downloads pending packages into pacman's cache
 //! unless [`FILE`] says `download=off` (installing stays Software Update, with a restore point).

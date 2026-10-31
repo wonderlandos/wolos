@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! "About this computer": /etc/os-release, /proc/cpuinfo, /proc/meminfo, /proc/sys/kernel.
 use super::{Host, pairs};
 

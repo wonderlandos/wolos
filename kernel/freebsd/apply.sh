@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Do the patches apply to what the public build fetches? Applies kernel/freebsd/patches (in name order) to
 # the files they touch at REF, and kernel/freebsd/drm/patches to drm-kmod at the tag kernel/freebsd/drm/build.sh pins.
 # Usage: tests/apply.sh [REF] [PUBLIC]   REF default releng/15.1 (the branch fetch-src.sh clones),

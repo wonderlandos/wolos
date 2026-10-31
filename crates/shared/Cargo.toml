@@ -2,7 +2,7 @@
 name = "shared"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "BSD-2-Clause"
 authors.workspace = true
 
 [dependencies]

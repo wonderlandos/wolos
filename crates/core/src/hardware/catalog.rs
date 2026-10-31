@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! The hardware catalogue: device ids -> Linux driver, kernel modules, Arch firmware/driver packages,
 //! modprobe options, quirks. Data only. Sources: kernel driver id tables (i915/xe, amdgpu/radeon,
 //! iwlwifi, rtw88/rtw89, ath1xk, mt76), Arch linux-firmware split packages, NVIDIA open-module support

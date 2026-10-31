@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Stats (cpu, mem, load, uptime), disks, temperatures, GPUs. The 1 Hz sample never forks:
 //! /proc/stat, /proc/meminfo, /proc/uptime.
 use super::{Host, Load, pairs};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol-run --exe <file.exe|file.msi> [args]`: double-click a Windows program. Each program gets
 //! its own prefix, named by its path; it runs on native wine (or umu-launcher) from its own
 //! directory.

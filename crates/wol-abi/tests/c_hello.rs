@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! A C program on libwol (ADR 0020): `tests/c/hello.c` is compiled with `cc` against `include/wol.h`,
 //! linked against the built `libwol.so.1` (by soname), and run against a fake wold and a fake Kit
 //! host speaking the real `shared` wires. Proves the C ABI end to end: strings, errors, system

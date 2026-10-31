@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Frontmost window for the shell's menu bar. Written to `$XDG_RUNTIME_DIR/wol-active` on change,
 //! one line in `wlrctl toplevel list state:active` format (`<app_id>: <title>`), empty when no
 //! window is active. The shell stats the file instead of forking wlrctl every second.

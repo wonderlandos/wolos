@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol seal apply|check` and `wol encrypt ...`: the installer and updater call these; the
 //! decisions live in `wol_core::seal` and `wol_core::encrypt`. Secrets are files, never arguments.
 use crate::cli::Invocation;

@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Screen zoom around the pointer (Hyprland cursor:zoom_factor). Bound to ⌥⌘8 / ⌥⌘= / ⌥⌘- in the shipped
 # hyprland.conf (System Settings > Keyboard > Shortcuts > Accessibility). Usage: wol-zoom in|out|toggle
 state="${XDG_RUNTIME_DIR:-/tmp}/wol-zoom"

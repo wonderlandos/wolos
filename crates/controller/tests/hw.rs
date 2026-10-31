@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol hw`: list/status/fix/boot against the recording fake.
 use controller::cli::parse;
 use controller::run::{FakeEnv, execute};

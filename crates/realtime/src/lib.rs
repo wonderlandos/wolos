@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Compositor scene core: z-ordered surfaces, occlusion culling, damage tracking.
 pub mod anim;
 pub mod bus;

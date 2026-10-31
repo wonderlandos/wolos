@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * futex_waitv(2) conformance test + ping-pong latency, for kernel/patches/0001.
  * Build (on a Linux host): cc -O2 -static -pthread -o futex_waitv futex_waitv.c

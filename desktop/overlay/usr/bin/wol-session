@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Start a WolOS session: Hyprland with WolOS defaults (user file sources the system file).
 export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=Hyprland XDG_CURRENT_DESKTOP=Hyprland
 export LIBSEAT_BACKEND=seatd   # seatd (seat group), as the login window

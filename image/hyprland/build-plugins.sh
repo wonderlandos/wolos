@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build hyprbars (hyprland-plugins, commit pinned for the installed Hyprland, + image/hyprland/hyprbars patches)
 # + plugins/wol-hypr
 # against the installed hyprland-wolos headers; install into STAGE/usr/lib/hyprland/plugins/.

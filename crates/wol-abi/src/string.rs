@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! `wol_string`: immutable, reference-counted UTF-8 with a length (and a trailing NUL for C).
 use crate::error::{Result, guard, input, need, quiet, wol_error, wol_status, write_len};
 use std::ffi::c_char;

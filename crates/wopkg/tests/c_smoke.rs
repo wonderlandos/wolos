@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! libwopkg from C (ADR 0021): `tests/c/smoke.c` is compiled with `cc` against `include/wopkg.h`,
 //! linked against the built `libwopkg.so.1` by soname, and run on a local pacman database and a
 //! Flathub AppStream file: context, index update with progress, unified search, completion, errors.

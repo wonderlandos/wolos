@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Desktop widgets contract (archicture/adr/0010-desktop-widgets.md): the per-user layout file
 //! `$XDG_CONFIG_HOME/wolos/widgets.json` and the widget package schema (`manifest`).
 //! Compatibility: unknown keys and kinds survive a load/save round trip; positions are grid cells.

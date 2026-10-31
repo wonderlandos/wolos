@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! AirPods and other Bluetooth headphones: the AAC, LDAC and aptX codecs come from pipewire-audio.
 
 fn shipped() -> Vec<String> {

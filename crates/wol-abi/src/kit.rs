@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Windows and Kit parts as data (ADR 0020). libwol keeps a tree of parts and sends it to the Kit
 //! host (the shell) as a `shared::view` message; the host draws it with the Kit and sends what the
 //! person does back. Apps link only this BSD library; the Kit itself stays in the host process.

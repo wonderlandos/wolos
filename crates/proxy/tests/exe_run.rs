@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol-run --exe` end to end on the build host: a fake wine (`WOL_WINE`) records its argv and
 //! environment, so the prefix step, the DLL copy and the program launch are all visible.
 use std::path::{Path, PathBuf};

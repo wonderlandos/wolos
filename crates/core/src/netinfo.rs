@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Network facts for Settings > Network and Wi-Fi: interfaces, addresses, DNS, gateway, known networks.
 use crate::system::Host;
 

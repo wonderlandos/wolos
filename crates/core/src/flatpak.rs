@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Flatpak apps next to native ones: the consent helper's arguments, the grants it records
 //! (`{"grants":[{"app":"<install dir>/app/<id>","capability":"flatpak:<perm>"}]}`), the words
 //! Settings and the consent sheet show, and the `flatpak` argv that turns one permission off or on

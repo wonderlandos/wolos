@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Firefox chrome stylesheet from one resolved theme. Loaded as a user sheet by the AutoConfig
 //! script of `wolos-browser-config`, a package the image does not ship (`wolos.cfg` (nsIStyleSheetService; reloaded when the file
 //! changes), so it needs no profile and survives new profiles and updates. Every rule sits in an

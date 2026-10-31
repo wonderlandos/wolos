@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! WolOS package mirrors (ADR 0019): repo order `[wolos]` -> `[wolos-cachy]` -> Arch, the CPU gate
 //! for `[wolos-cachy]` (x86-64-v3 builds), and latency ranking of `/etc/pacman.d/wolos-mirrorlist`.
 //! Pure: the caller reads files and probes servers.

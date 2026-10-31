@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Which program a client is (ADR 0013): peer pid -> executable and arguments -> policy identity.
 
 use crate::policy::{Identity, identity_from};

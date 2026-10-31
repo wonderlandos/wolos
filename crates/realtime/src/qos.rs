@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Frontmost-app QoS hand-off (macOS app boosting): tell wold which process is in front.
 //! Wire: `shared::qos` — one line `foreground <pid>` on `shared::qos::SOCKET`.
 //! Hot path is allocation-free: stack buffer, repeats dropped, nonblocking writes.

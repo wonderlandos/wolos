@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 module Wopkg
   # The TOML subset recipes use: `key = value` with strings ("basic" and 'literal'), integers,
   # booleans and arrays (across lines); `[table]` and `[[array of tables]]`; `#` comments.

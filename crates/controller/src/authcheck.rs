@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Pure parts of `wol-authcheck`: stdin password framing, PAM conversation policy, exit codes.
 
 /// Longest password accepted from stdin (bytes, excluding the trailing newline).

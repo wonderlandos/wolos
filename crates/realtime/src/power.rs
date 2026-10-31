@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Intel RAPL package power limits (MSR 0x610 PKG_POWER_LIMIT, units in MSR 0x606).
 //! Pure decode/encode; I/O is `gpu_tune::cpuctl_msr` + `cpucontrol -m 0x610=<v>` in the binary.
 //! The effective limit is the lower of this MSR and the MCHBAR mirror (firmware-owned, not touched).

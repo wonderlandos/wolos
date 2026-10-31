@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Build waves from image/repo/packages: each wave only needs packages from earlier waves.
 
 Line format: NAME DIR LOCAL-DEPS(comma, - for none) PATHS...

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* vptr: one zwlr_virtual_pointer_v1 session for headless compositors (no pointer device to click with).
  * usage: vptr W H cmd...   m X Y (absolute move) | c (left click) | d / u (left down / up) | s MS (sleep)
  * build: wayland-scanner client-header/private-code wlr-virtual-pointer-unstable-v1.xml; cc ... -lwayland-client */

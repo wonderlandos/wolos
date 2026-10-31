@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 typedef void *HANDLE; typedef unsigned long DWORD;
 __declspec(dllimport) HANDLE __stdcall GetStdHandle(DWORD);
 __declspec(dllimport) int __stdcall WriteFile(HANDLE, const void *, DWORD, DWORD *, void *);

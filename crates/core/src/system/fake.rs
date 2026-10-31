@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Fixture-driven [`Host`] for tests (also used by other crates' tests).
 use super::{Host, Load};
 use std::collections::HashMap;

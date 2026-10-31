@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Settings > Privacy & Security backend: the firewall, the kernel hardening WolOS ships and what
 //! each app permission really enforces (archicture/modules/security.md).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Real OS side of wold: spawn jobs (QoS at spawn), stop process trees, signal handling.
 use crate::qos::Applier;
 use crate::supervisor::Runner;

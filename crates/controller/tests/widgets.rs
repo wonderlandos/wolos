@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol widgets`: list, add, remove, reload, validate against the recording fake and a temp home.
 use controller::cli::parse;
 use controller::run::{FakeEnv, execute};

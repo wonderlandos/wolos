@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `.wol` double-click wiring in the image (ADR 0011): MIME type, App Store handler, caches.
 use std::{fs, path::PathBuf};
 

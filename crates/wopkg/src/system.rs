@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The bridge to wold for system changes (ADR 0021): one `shared::packages::PackageCall` per
 //! connection, one `shared::portal::Answer` back. libwopkg never runs anything as root.
 use crate::context::Context;

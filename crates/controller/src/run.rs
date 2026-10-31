@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol` actions. All I/O goes through [`Env`], so every action is testable with [`FakeEnv`].
 use crate::cli::{Invocation, help};
 use shared::admin::{self as wire, AdminAction, AdminReply, AdminRequest};

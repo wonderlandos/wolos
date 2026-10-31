@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wopkg: one package tool for every source (ADR 0021). The Crystal CLI (wopkg/) on libwopkg
 # (crates/wopkg, stable C ABI, libwopkg.so.1), built from this repo; shell completions and the
 # official recipes ship with it.
@@ -7,7 +8,7 @@ pkgrel=1
 pkgdesc='WolOS package tool: pacman repos, Flatpak, AppImage, recipes and AUR in one command'
 arch=(x86_64)
 url='https://github.com/wonderlandos/wolos'
-license=(BSD-2-Clause)
+license=(GPL-2.0-or-later)
 depends=(gc pcre2 openssl zlib gcc-libs glibc bubblewrap git gnupg libarchive)
 optdepends=('flatpak: Flatpak apps' 'base-devel: building AUR packages' 'wolos-system: malware check of third-party downloads' 'strace: system-call trace of AUR builds')
 makedepends=(cargo crystal)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! libwol.so.1 for the tests, linked once per test binary by `link.sh` from the staticlib this
 //! `cargo test` just built.
 #![allow(dead_code)]

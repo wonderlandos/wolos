@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Power policy: the power source picks the profile, Low Power / High Power Mode is the user's
 //! override. Pure: facts from read-only probes + the saved state in, a plan of fixed argv out.
 //! `wol power apply` (udev on AC changes, systemd at boot and resume) and wol-admind `power-mode`

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Desktop controls for Control Center and Settings: Wi-Fi, audio, brightness, Bluetooth, displays, Night Shift.
 //! Per topic: pure parser (fixture-tested) + fixed argv per platform. Reads go through [`Host`] (2 s timeout);
 //! callers cache and call off the UI thread. Root changes go through wol-admind ([`shared::admin`]).

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # flatpak-wolos: Flatpak 1.16.6 (the snapshot's version) from the WolOS fork's `wolos` branch at the
 # commit in ./ref: reflinked copies, unused runtimes removed after uninstall/update (--keep-unused to
 # keep them), and the consent hook that Settings > Privacy reads. Packaging follows Arch's flatpak.

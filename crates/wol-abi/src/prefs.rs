@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! App preferences (ADR 0020, 1.4): service calls. wold keeps them per account and executable, so
 //! an app sees only its own and cannot name another's.
 use crate::client;

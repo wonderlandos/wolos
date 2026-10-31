@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* C ABI of crates/realtime (librealtime.a). Keep in sync with src/ffi.rs (checked by test). */
 #ifndef WOL_REALTIME_H
 #define WOL_REALTIME_H

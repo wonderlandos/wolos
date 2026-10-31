@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! VM scripts on a Linux host (ADR 0016): QEMU/KVM with OVMF and virtio-gpu (GL), so Hyprland runs
 //! in the VM. build.sh fails fast short of disk; test-install.sh installs unattended from the ISO
 //! (wolos.autoinstall) next to a bystander disk that must come out byte-identical.

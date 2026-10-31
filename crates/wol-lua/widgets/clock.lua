@@ -1,4 +1,4 @@
--- SPDX-License-Identifier: BSD-2-Clause
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Clock: the time, big, and the date under it. Copy to ~/.config/wolos/widgets/ to change it;
 -- the desktop reloads it when the file changes.
 local days = { "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" }

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-admind request handling (IaraOS ADR 0026): allow-list only, judged by peer credentials.
 use shared::admin::{AdminAction, AdminReply, decode};
 use std::path::{Path, PathBuf};

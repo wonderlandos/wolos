@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! `.wol` bundle `Info.json` schema (ADR 0003 in IaraOS). Wire names are compatibility contract.
 use serde::{Deserialize, Serialize};
 

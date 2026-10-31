@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Event bus wire: `subscribe` on the wold socket, then one JSON object per line.
 use serde::{Deserialize, Serialize};
 

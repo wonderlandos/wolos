@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Settings > General > Sharing and Network > Firewall: computer name, Remote Login (sshd) and
 //! the firewall (nftables). Reads go through [`Host`]; changes through wol-admind.
 use crate::system::Host;

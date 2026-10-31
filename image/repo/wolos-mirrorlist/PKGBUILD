@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wolos-mirrorlist: where pacman finds [wolos] and [wolos-cachy] (ADR 0019). The date is the
 # release's snapshot (image/arch/snapshot); `wol update` moves it, `wol mirror rank` reorders it.
 pkgname=wolos-mirrorlist
@@ -6,7 +7,7 @@ pkgrel=2
 pkgdesc='WolOS package mirror list'
 arch=(any)
 url='https://github.com/wonderlandos/wolos'
-license=(BSD-2-Clause)
+license=(GPL-2.0-or-later)
 backup=(etc/pacman.d/wolos-mirrorlist)
 source=(wolos-mirrorlist)
 sha256sums=(SKIP)

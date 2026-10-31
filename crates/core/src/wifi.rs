@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Wi-Fi: wpa_supplicant.conf editing and input validation (to be replaced by NetworkManager, see archicture/modules/wifi.md).
 pub const CONF_PATH: &str = "/etc/wpa_supplicant.conf";
 

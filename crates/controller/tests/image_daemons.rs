@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every daemon the shell and `wol` talk to starts at boot on the image. wol-admind shipped as a binary
 //! only (no job, a launcher left off and pointing at the wrong path): every admin action failed.
 //! wold itself is a systemd unit enabled by the WolOS preset (ADR 0016).

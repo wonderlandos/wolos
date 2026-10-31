@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Socket glue for wold: one request line per connection; `subscribe` keeps the connection.
 use crate::bus::Bus;
 use crate::control::{JobTable, handle};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Keyboard shortcuts for System Settings > Keyboard > Shortcuts. The shipped Hyprland conf is the single
 //! source of truth for defaults; every bind gets a human name and group here. User changes and custom
 //! shortcuts live in `wolos/shortcuts.json`, render to the managed include `hypr/wolos/shortcuts.conf`

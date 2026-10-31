@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! WolOS-managed Hyprland include (`hypr/wolos/settings.conf`): typed desktop prefs from System Settings
 //! rendered as `category:key = value` one-liners (the same names `hyprctl keyword` takes), plus the minimal
 //! command batch that applies a change live. Never touches the user's own hyprland.conf; never reloads.

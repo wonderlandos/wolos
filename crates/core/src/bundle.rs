@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Bundle target resolver: freebsd-native > linux > proton. Proton targets run on the native
 //! FreeBSD wine-proton build, so they need no Linux ABI.
 use shared::bundle::{Abi, Info, Target};

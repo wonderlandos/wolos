@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! File panels (ADR 0020, 1.5): the person picks, the desktop opens the file as them, and the
 //! descriptor comes back through wold. The app never gets a path.
 use crate::client;

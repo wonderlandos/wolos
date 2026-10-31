@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Helper policy: `$XDG_CONFIG_HOME/wolos/helpers.json` =
 //! `{"enabled": true, "deny": ["files"], "always": {"Claude": ["appearance"]}}`.
 //! No file = on, nothing denied (connecting a helper is the opt-in). Malformed = off (fail closed,

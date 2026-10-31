@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Test helpers: temp dirs and a loopback HTTP/1.1 server with Range and ETag support.
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;

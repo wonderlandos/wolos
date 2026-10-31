@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Transactional pacman. The running slot is sealed read-only: a change goes into a live layer
 //! ([`super::layers`]); only kernel, initramfs and init packages are made in a copy of the system: [`classify`] decides whether an invocation changes anything,
 //! [`plan`] builds the steps through the same [`super::build`] the system update uses, and a

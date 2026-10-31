@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Install progress for the App Store: pacman (`--noprogressbar`) and `flatpak install
 //! --noninteractive` output -> a percentage, published as a small file the Store polls.
 //! System installs (wol-admind) write under [`SYSTEM_DIR`]; this account's Flatpak installs under

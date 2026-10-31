@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-authcheck: setuid-root helper for the lock screen (IaraOS ADR 0023).
 //! Reads a password from stdin, checks it with PAM service `wol-lock` for the user of the real uid,
 //! and answers with the exit code only (0 ok, 1 denied, 2 error). No environment, no output.

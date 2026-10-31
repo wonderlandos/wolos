@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! System settings files edited by wol-admind: appearance, keybinds, idle, users, time zones.
 use std::collections::BTreeMap;
 

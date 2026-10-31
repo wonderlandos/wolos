@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! GtkSourceView 5 style schemes (gnome-text-editor and every GtkSourceView app) from the theme.
 //! A light/dark pair linked by metadata, so the editor follows the system appearance live: the
 //! active theme fills its own variant, the WolOS base theme the other. Every syntax colour reads

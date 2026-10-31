@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol widgets`: what is on the desktop, add and remove, reload the shell, and validate a widget
 //! package (archicture/modules/widgets.md). The layout file and packages go through
 //! `wol_core::widgets`, the same code the desktop uses; a running shell rereads them on `reload`.

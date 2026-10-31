@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Session lock policy (ext-session-lock-v1, ADR 0022). Pure: events in, phase out.
 //!
 //! Unlocked -> Locking (a locker asked) -> Locked (a cleared frame was shown) -> Unlocked

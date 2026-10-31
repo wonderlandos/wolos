@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! System facts an app may read without asking: OS name and version, kernel, appearance and accent.
 //! All of it is the person's own settings or world-readable files, so no service call is needed.
 use crate::context::wol_context;

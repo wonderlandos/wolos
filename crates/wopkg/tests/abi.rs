@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The stability guarantee of libwopkg (ADR 0021). A shipped symbol or declaration never goes away or
 //! changes; new ones are only added, under a new version node (WOPKG_1.1, ...).
 //! - every symbol in `abi/wopkg-*.symbols` is exported by `libwopkg.so` with that version

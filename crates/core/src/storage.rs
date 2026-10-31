@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Startup disk usage for Settings > General > Storage and About: the root filesystem
 //! (`findmnt`), whether it sits on LUKS (`lsblk`), and the root slots kept as restore points
 //! (`update::be`). Every source runs unprivileged; df is the fallback.

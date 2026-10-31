@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Releases and channels (ADR 0022): versions `MAJOR.MINOR.PATCH[-pre]`, signed channel feeds
 //! (`stable`, `beta`, `nightly`), staged rollout by a stable per-machine bucket, pause, and the
 //! plan `wopkg update` follows. Never plans a downgrade: going back is a rollback.

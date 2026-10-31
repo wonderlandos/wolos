@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Page out a background app with process_madvise (MADV_PAGEOUT) over its anonymous and memfd
 //! mappings. This works wherever the pages were charged, which memory.reclaim on the app's scope
 //! cannot do for pages touched before the app was adopted: charges do not move with a process.

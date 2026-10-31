@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wopkg (ADR 0021) ships in the image: built in the `[wolos]` repo from `wopkg/` and
 //! `crates/wopkg`, installed by the image, with libwopkg, its header, completions for zsh, bash and
 //! fish, and the official recipes with their index.

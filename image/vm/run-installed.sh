@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Boot the installed disk ($WOLOS_VM/test/disk.raw from WOLOS_KEEP_DISK=1 image/vm/test-install.sh) in
 # QEMU/KVM with OVMF and virtio-vga-gl. Serial console in $T/serial-installed.log.
 # Env: WOLOS_VM (default ~/WolOS-vm), WOLOS_MEM (6G), WOLOS_DISPLAY (gtk,gl=on; egl-headless for CI).

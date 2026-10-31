@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! The boot chain (ADR 0025). Firmware facts decide the protection tier; the chain, the kernel
 //! command line words and the words shown to the person follow from it. Pure: the `wol boot`
 //! verbs read the firmware variables and run the tools.

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception */
+/* SPDX-License-Identifier: BSD-2-Clause */
 /* panels: libwol 1.5 from C. Run by tests/c_services.rs. */
 #define _POSIX_C_SOURCE 200809L
 #include <stdio.h>

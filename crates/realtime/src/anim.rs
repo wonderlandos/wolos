@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Window animation curves. Pure: time in, visual state out.
 
 /// How a window looks at one instant of an animation. Applied by the renderer on top of its layout.

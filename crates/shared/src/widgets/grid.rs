@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Desktop widget grid: cells of `cell` px, `gap` apart, `margin` from the area edge. Positions
 //! are cells (stable across resolutions); drops snap to the nearest free cell.
 use super::{Placed, Size};

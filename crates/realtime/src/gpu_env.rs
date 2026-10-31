@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Apply gpu_select + glass parameters to a Hyprland session. Pure: facts in, env/config text out.
 //! `wol-realtime gpu env` prints [`session_env`], `gpu offload` [`offload_env`] (one app on the
 //! discrete GPU: `eval "$(wol-realtime gpu offload)"; exec app`), `gpu hyprconf` [`hyprland_fragment`].

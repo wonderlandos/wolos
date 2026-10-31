@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! App Store catalog: curated desktop apps mapped to Arch packages, install plans for wol-admind
 //! (`pkg-install`), `pacman -Ss` parsing. Pure; the shell runs reads off the UI thread.
 

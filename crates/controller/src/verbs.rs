@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Verbs for people, scripts and helpers alike (archicture/modules/automation.md): appearance,
 //! audio, display, network, focus, apps, windows, files, history/undo, restore, helpers, api, mcp.
 //! Reads print JSON with `--json` or when stdout is not a terminal; setters print the new state.

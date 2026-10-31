@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! End to end through a real Unix socket: `wol mcp` (the built binary) -> fake wol-shell on
 //! `$XDG_RUNTIME_DIR/wol-shell.sock` -> answer -> the change runs (or not) -> audit log.
 //! The child gets a temp home and an empty PATH: nothing touches this machine's desktop.

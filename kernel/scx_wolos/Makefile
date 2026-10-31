@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 # Builds scx_wolos against a WolKernel tree (headers only; no Linux source lives here).
 #   make KSRC=/path/to/linux [VMLINUX_BTF=/sys/kernel/btf/vmlinux]
 KSRC ?= $(HOME)/WolOS-vm/kernel-src

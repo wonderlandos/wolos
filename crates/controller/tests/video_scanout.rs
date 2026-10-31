@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Memory-bandwidth #2: fullscreen buffers go straight to a KMS plane and browser video is decoded
 //! by VA-API into dmabufs (NV12 1.5 B/px, no CPU copy) instead of software RGBA.
 use std::path::PathBuf;

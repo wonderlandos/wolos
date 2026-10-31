@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! libwol (ADR 0020, archicture/modules/abi.md): the WolOS app API. One C ABI (`include/wol.h`,
 //! `libwol.so.1`, symbols versioned by `abi/wol.map`) over a Rust implementation; `tests/abi.rs`
 //! fails on any removed or changed symbol or declaration.

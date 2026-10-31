@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Safe Rust side of libwol: the sockets it talks to, with timeouts and bounded reads. The library
 //! has no privilege of its own; anything that acts for the app is a `shared::portal::Call` to wold.
 use crate::error::{Error, Result, Status};

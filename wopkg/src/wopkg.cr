@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wopkg: WolOS's package tool (ADR 0021, archicture/modules/wopkg.md).
 require "./wopkg/app"
 

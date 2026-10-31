@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! macOS title bar geometry: where the traffic lights are and what a point hits. Pure, no rendering.
 
 pub const HEIGHT: i32 = 28;

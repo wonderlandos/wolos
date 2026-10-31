@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception */
+/* SPDX-License-Identifier: BSD-2-Clause */
 /* audio: libwol 1.8 from C. Run by tests/c_services.rs. */
 #include <stdio.h>
 #include <string.h>

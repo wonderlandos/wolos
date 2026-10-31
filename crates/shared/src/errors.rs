@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Stable error codes shared by CLI exit status, wire replies and logs. Values and exit codes are ABI.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

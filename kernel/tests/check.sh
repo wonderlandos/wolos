@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Kernel series contract (Arch/Linux layout): the WolKernel extra series, scx_wolos and the KMI tools,
 # with the markers the public build relies on. KSRC=<fork checkout> also applies the series on its HEAD.
 set -eu

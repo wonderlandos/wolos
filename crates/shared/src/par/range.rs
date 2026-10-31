@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Index-range fork/join (Iara.Par `For`/`Reduce`, ADR 0017 in IaraOS): split only by grain, so the
 //! combine tree is fixed and results are deterministic. Cancellation skips remaining leaves.
 use super::{fork_budget, join};

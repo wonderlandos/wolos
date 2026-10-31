@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
 # Called by the public kernel/drm/build.sh: DIR = OUT/boot/modules with the built i915kms.ko.
 set -eu
 D=$1; fail=0

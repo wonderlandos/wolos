@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wol-screenshot full|region|clip|window X,Y WxH|record|record-region|stop [--dir D] [--delay N]
 # Prints the saved file's path. Default dir the Desktop (recordings ~/Movies). The banner names
 # the folder and shows the picture as its thumbnail.

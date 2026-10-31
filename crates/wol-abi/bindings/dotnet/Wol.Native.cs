@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 // Generated from include/wol.h by crates/wol-abi/tests/bindings.rs; do not edit.
 // Regenerate: WOL_BLESS=1 cargo test -p wol-abi --test bindings
 using System;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol power`: status, apply (root), mode (wol-admind), battery idle steps, the suspend lock.
 use controller::cli::{POWER_MODES, parse};
 use controller::run::{FakeEnv, execute};

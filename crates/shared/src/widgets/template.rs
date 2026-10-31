@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! `{{path}}` bindings in widget layouts. A path walks the data JSON: `user.name`, `friends[0].name`,
 //! `friends.0.name`; `friends.length` counts an array. Inside a list item, `item` is the current element.
 use serde_json::Value;

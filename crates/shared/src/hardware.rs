@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Hardware status contract (`wol hw list --json`, [`SNAPSHOT_PATH`], Settings, scripts, AI helpers).
 //! Built by `wol_core::hardware` from the catalogue; one [`Device`] per detected piece of hardware.
 use serde::{Deserialize, Serialize};

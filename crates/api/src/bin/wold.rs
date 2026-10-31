@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wold [jobs-dir]: launchd-style supervisor. Composition root: load jobs, wire services, run.
 use api::{bus::Bus, jobfiles, memsaver, os, qos, reaper, server, supervisor};
 use std::path::{Path, PathBuf};

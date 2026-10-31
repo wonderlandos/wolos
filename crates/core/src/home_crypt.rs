@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! "Encrypt my files": the account's home is a systemd-homed LUKS home (`homectl`), encrypted
 //! under the login password. At boot it stays locked; the login window activates it with the
 //! password it has just checked, and logging out deactivates it again when nothing still uses it.

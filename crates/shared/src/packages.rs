@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! wopkg -> wold system package calls (ADR 0021): `call <json>` on the wold socket, one
 //! `portal::Answer` line back. Each call names the consent grant it needs; wold checks it against
 //! the caller's executable from the kernel. Every field is bounded and checked on both sides: a

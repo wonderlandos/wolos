@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Headless sway (wlroots headless + pixman, no GPU) for WolOS screenshots on FreeBSD. VM-side.
 # usage: hl.sh start | hl.sh shot <app> <png> [wait]
 export XDG_RUNTIME_DIR=/tmp/hlrt XDG_CONFIG_DIRS=/usr/local/etc/xdg

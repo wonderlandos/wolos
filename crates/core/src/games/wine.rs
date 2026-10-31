@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! wine on Arch: the native `wine` package (WoW64: one `/usr/bin/wine` runs 32- and 64-bit
 //! programs) for Windows programs outside Steam, or umu-launcher when wine is not installed.
 //! Steam games use the Proton that Steam installs; nothing here touches them.

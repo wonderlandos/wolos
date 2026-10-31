@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+  <!-- SPDX-License-Identifier: BSD-2-Clause -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>

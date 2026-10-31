@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS installer: print the disks it may erase, one per line (/dev/...).
 # Never the disk we booted from (the live medium under /run/archiso/bootmnt), a CD, a loop or zram
 # device, or a read-only disk.

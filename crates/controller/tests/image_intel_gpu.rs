@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Intel iGPU stack on first boot: firmware + user-space packages offline, i915 tunables, session env,
 //! native-boot proof script. Evidence: archicture/modules/intel-graphics.md.
 use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};

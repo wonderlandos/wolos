@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! One supervisor per job: start/stop on request, restart per `wol_core::jobs::next_start`.
 use crate::control::JobTable;
 use crate::reaper::Reaper;

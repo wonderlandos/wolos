@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wold control endpoint (launchctl): anyone may list; only root may start or stop.
 use shared::jobs::{JobRequest, JobStatus, Reply};
 

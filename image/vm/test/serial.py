@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # send lines to the test VM serial console, print what comes back
 import socket,sys,time,os
 s=socket.socket(socket.AF_UNIX);s.connect(os.path.join(sys.argv.pop(1),'serial.sock'));s.settimeout(1)

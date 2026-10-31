@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Helium (default browser, Chromium) follows the WolOS theme through Chromium's GTK mode: the
 //! window colours come from the GTK 3 theme `WolOS-<id>` (reloaded live, see `apps`), light/dark
 //! and the accent preset from the settings portal, window buttons from the compositor.

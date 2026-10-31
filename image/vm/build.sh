@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build the WolOS ISO on this Linux host into $WOLOS_VM/out (image/build.sh: [wolos] repo + mkarchiso,
 # or an archlinux podman container). Fails fast when the host is short of disk.
 # Env: WOLOS_VM (default ~/WolOS-vm), WOLOS_NEED_MB (default 20000), plus image/build.sh's.

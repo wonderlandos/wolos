@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Source inputs -> records: pacman sync databases (tar, gzip or zstd), Flathub AppStream XML
 //! (`.gz` or plain), the AUR metadata dump (`packages-meta-v1.json[.gz]`), the `.wol` index
 //! (`index.json`, ADR 0011), the recipe index and the AppImage feed.

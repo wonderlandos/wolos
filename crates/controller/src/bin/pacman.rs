@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `/usr/local/bin/pacman`: pacman for a sealed system. Logic in `controller::pkg`.
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();

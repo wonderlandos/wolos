@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* CRT-free Windows Vulkan probe (image/vm/test/games.sh): winevulkan -> the host's Vulkan ICD,
    the path DXVK and vkd3d-proton take. No window. Prints the devices; exit 0 = at least one,
    1 = vkCreateInstance refused, 2 = no device. Build: clang --target=x86_64-pc-windows-msvc. */

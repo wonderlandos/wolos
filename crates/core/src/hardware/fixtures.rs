@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Linux fixtures recorded on an Alder Lake-P laptop (ThinkPad-class, Arch kernel 6.x): sysfs ids,
 //! driver links, `lspci -mm`, `/proc/modules`, `modules.dep`, `/proc/cpuinfo`.
 use crate::system::fake::FakeHost;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol power`: status, apply (udev on AC changes, systemd `wolos-power` at boot and resume), mode,
 //! sleep, and the suspend hook that locks every session first. Policy in `wol_core::power::policy`.
 use crate::cli::Invocation;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Consent database for Settings > Privacy: which app may use which privileged protocol or WolOS
 //! service. Same file and shape the compositor (`realtime::policy::Consent`) and wold (libwol
 //! services, ADR 0020) read:

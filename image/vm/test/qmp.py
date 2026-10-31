@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # QMP helper for the test VM: shot <png> | keys <text> | key <qcode[-qcode]>... | click <x> <y>
 import socket,sys,json,os,time
 T=sys.argv.pop(1)   # test dir (qmp.sock)

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # hyprland-wolos: Hyprland 0.56.2 (the snapshot's version) + the WolOS patches in image/hyprland/patches,
 # applied in name order. Packaging follows Arch's hyprland 0.56.2-4. Map: archicture/modules/hyprland-fork.md
 pkgname=hyprland-wolos

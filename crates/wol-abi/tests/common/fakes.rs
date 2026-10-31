@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! Fake wold and fake Kit host speaking the real `shared` wires, and the checks every language binding
 //! must pass (C, Swift, Crystal, .NET run the same programs). ADR 0020.
 #![allow(dead_code)]

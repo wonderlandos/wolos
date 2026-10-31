@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wopkg = this Crystal CLI + libwopkg (crates/wopkg). `make` builds both into build/, `make spec` runs
 # the Crystal specs against the freshly linked library. -j4 and a 6 GiB cap keep shared hosts usable.
 ROOT := $(abspath ..)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Lua desktop widgets (ADR 0020, archicture/modules/abi.md): a widget is one `.lua` file that
 //! returns `wol.widget { name, refresh, permissions, render }`. `render` returns a Kit view tree
 //! (`shared::view::Node`) built with `wol.stack`, `wol.row`, `wol.label`, `wol.button`, `wol.spacer`;

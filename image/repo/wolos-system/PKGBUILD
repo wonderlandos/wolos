@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
 # wolos-system: everything WolOS adds to the Arch base, from this repo: the Rust binaries
 # (image/build-rust.sh), Hyprland plugins (image/hyprland/build-plugins.sh), desktop/overlay,
 # image/files (systemd units, installer, helpers) and design (icons, wallpapers, illustrations).
@@ -7,7 +8,7 @@ pkgrel=7
 pkgdesc='WolOS system services, shell and desktop defaults'
 arch=(x86_64)
 url='https://github.com/wonderlandos/wolos'
-license=(BSD-2-Clause GPL-3.0-or-later CC-BY-NC-ND-4.0)
+license=(GPL-2.0-or-later CC-BY-NC-ND-4.0)
 depends=(hyprland-wolos gtk4 gtk4-layer-shell libadwaita pam systemd clamav)
 # Our cursor theme is the default one (usr/share/icons/default).
 provides=(default-cursors)

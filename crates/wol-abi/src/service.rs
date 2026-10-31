@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later WITH AdditionRef-WolOS-libwol-exception
+// SPDX-License-Identifier: BSD-2-Clause
 //! An app's background jobs (ADR 0020, 1.14). wold runs the app's own executable as the account,
 //! so a name is all an app gives.
 use crate::client;

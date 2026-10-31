@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! One picture from power-on to the desktop (ADR 0012): loader splash, black console, locked start,
 //! compositor colours. Scripts run against fakes; configs are checked line by line.
 use std::fs;

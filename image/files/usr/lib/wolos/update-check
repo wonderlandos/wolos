@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Daily update check (wolos-update-check.timer, wol_core::update::check). The timer runs it hourly;
 # it checks at most once every 20 hours, so a computer asleep at night still checks once a day.
 # `update-check now` checks regardless. It only looks: installing is Software Update (wol update).

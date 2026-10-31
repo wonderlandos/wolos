@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Unattended install test of the newest WolOS ISO in a throwaway QEMU/KVM VM (UEFI, no network):
 # the ISO's kernel boots with wolos.autoinstall=/dev/vda (installs and powers off), then the
 # installed disk boots on its own. A bystander disk (other.raw, random head) stays attached and must

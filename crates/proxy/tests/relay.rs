@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Proton (ntdll "handle for fd N is seekable": closes it) drops std handles that are regular files, so
 //! `wol-run app.wol > log` printed nothing. Proton plans relay seekable stdout/stderr through pipes.
 use std::collections::BTreeMap;

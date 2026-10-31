@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Widget package schema: `<packages dir>/<id>/widget.json`. A layout is a tree of Kit primitives
 //! with `{{path}}` bindings into the JSON the `source` returns. Validation collects every problem
 //! with its JSON path, so an author fixes them all in one pass. Keys starting with `_` are comments.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! "Encrypt disk" at install: LUKS2 (argon2id) under btrfs. The disk is formatted with a
 //! throw-away random key; that key unlocks the volume to enroll the real ones (TPM2 when the
 //! machine has one, the person's passphrase otherwise, always a recovery key shown once), then

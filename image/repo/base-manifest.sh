@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # base-manifest.sh PKG...: "sha256  /path" for every regular file and symlink in the given pacman
 # packages, sorted by path (ADR 0017: `wol base verify` checks the installed base against it).
 # Package metadata (.PKGINFO, .MTREE, .BUILDINFO, .INSTALL) is not a system file.

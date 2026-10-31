@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # linux-wolos prepare step (PKGBUILD prepare()): SRC BASECONFIG FRAGMENT.
 # 1. The series in $WOLOS_TREE/kernel/linux/patches, in name order (patch -Np1, no fuzz).
 #    A patch the tree already carries is skipped; one that does not apply stops with exit 3.

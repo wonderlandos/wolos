@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! C ABI for the wol-hypr Hyprland plugin. Header: `include/wol_realtime.h` (kept in sync by test).
 //! All functions are pure or best effort, never panic across the boundary, never allocate per call
 //! (except the first `wol_qos_foreground`, which creates the connection).

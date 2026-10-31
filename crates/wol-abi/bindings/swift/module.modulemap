@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 // Swift sees wol.h through this module map: `import Wol`. Put wol.h and this file in one include
 // directory and pass it with `-I`. A header change reaches Swift with no other step.
 module Wol [system] {

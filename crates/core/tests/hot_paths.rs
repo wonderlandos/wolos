@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Perf invariants (IaraOS StatsHotPathTests, ProcessSamplerTests): timing + allocation bounds.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;

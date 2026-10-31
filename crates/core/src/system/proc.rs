@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Process table as struct-of-arrays from Linux `/proc/[pid]/stat` (no ps fork), refreshed in place.
 //! Steady-state sampling allocates nothing in the sampler: arrays grow only with the process count, names
 //! are cached per (pid, start time), users per uid. CPU% = runtime delta / wall delta per process (100 = one core).

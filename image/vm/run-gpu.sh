@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Boot the installed WolOS disk with the host Intel iGPU passed through (laptop panel shows WolOS).
 # Host must be booted with: intel_iommu=on iommu=pt vfio-pci.ids=<igpu id> modprobe.blacklist=i915,xe
 # (rEFInd entry "WolOS GPU passthrough"). Keyboard via evdev, USB mice and (if isolated) Wi-Fi passed through.

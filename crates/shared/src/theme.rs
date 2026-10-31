@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Theme contract (IaraOS ADR 0016): 13 semantic color tokens, fixed scale, validation rules.
 
 /// The only values a theme may change. Order is stable.

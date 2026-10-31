@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Install WolOS (ADR 0013, ADR 0016, ADR 0018): erase <disk> and install, as root (the live image
 # lets its user run this with sudo, no password). GPT from repart.d via systemd-repart: ESP (1 GiB, /efi) + one btrfs partition with
 # subvolumes @wolos-a (this system), @home and @var; the first update creates @wolos-b. The live

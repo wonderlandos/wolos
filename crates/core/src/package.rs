@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! `.wol` package files (ADR 0011, archicture/modules/packages.md): read and verify the ustar
 //! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `pacman -U` install.
 use shared::bundle::{INFO_FILE, Info};

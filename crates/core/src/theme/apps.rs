@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-2-Clause
 //! Third-party app theming from one resolved WolOS theme: GTK4/libadwaita, GTK3 (adw-gtk3),
 //! Qt (qt6ct Fusion palette, Kvantum), foot, Firefox (`firefox`), GtkSourceView (`sourceview`),
 //! zsh colours. Pure renderers + `install` (files under a toolkit dir, linked into

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Find the machine's GPUs (render nodes) and the facts `gpu_select` needs, from /dev/dri and
 //! /sys/class/drm (i915, xe, amdgpu, nouveau, nvidia-drm, virtio_gpu).
 

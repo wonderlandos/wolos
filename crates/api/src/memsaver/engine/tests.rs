@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Engine behaviour against an in-memory model of /proc, cgroupfs and systemd.
 use super::*;
 use shared::memsaver::Window;
