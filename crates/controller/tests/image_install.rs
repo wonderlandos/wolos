@@ -712,6 +712,8 @@ fn installer_scripts_parse() {
         "esp-sync",
         "boot-keys",
         "boot-setup",
+        "boot-enroll",
+        "dkms-sign",
         "autoinstall",
         "wol-install",
     ] {
