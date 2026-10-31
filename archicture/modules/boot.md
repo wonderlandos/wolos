@@ -54,5 +54,5 @@ Tests: `crates/controller/tests/image_install.rs` (fake tools). VM: `image/vm/te
 
 `wol boot enroll` queues this computer's key with `mokutil --import` and sets the key screen to wait.
 `boot-setup` runs it during install and `wolos-mok-enroll.service` repeats it at each start until the
-key is enrolled. The password comes from `wol boot password`. Images carry no first-stage loader, so
-this path needs one supplied locally: without it `wol boot detect` never reports `mok`.
+key is enrolled. The password comes from `wol boot password`. The image carries the first stage in
+`wolos-shim`: a system without it never reports `mok`.

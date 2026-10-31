@@ -56,6 +56,7 @@ fn package_table_is_in_dependency_order() {
             "wolos-mirrorlist",
             "wolos-system",
             "wopkg",
+            "wolos-shim",
             "wolos-keyring",
             "wolos-base"
         ]

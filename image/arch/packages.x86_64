@@ -29,6 +29,7 @@ efibootmgr
 systemd-ukify
 sbctl
 mokutil
+wolos-shim
 pacman-contrib
 # Hardware and networking.
 networkmanager

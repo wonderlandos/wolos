@@ -2,8 +2,6 @@
 # wolos-shim (ADR 0025): the first stage most PCs already trust, and the firmware's key screen,
 # for computers whose keys can't be changed. Fedora's signed build, byte for byte: nothing here is
 # rebuilt or altered, so its signatures and its own identity stay true. Pinned by hash.
-# A local build only: not in image/repo/packages and not in any image. Without it the key screen
-# tier is simply not offered (`wol boot detect`).
 pkgname=wolos-shim
 pkgver=16.1
 _fedrel=7

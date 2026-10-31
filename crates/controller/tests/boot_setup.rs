@@ -191,15 +191,20 @@ fn a_firmware_that_refuses_the_keys_leaves_a_system_that_starts() {
 fn the_image_carries_the_tools_and_the_first_stage_stays_pinned() {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let list = std::fs::read_to_string(format!("{root}/image/arch/packages.x86_64")).unwrap();
-    for p in ["systemd-ukify", "sbctl", "mokutil"] {
+    for p in ["systemd-ukify", "sbctl", "mokutil", "wolos-shim"] {
         assert!(list.lines().any(|l| l == p), "{p}");
     }
-    assert!(!list.lines().any(|l| l == "wolos-shim"), "not in an image");
     let repo = std::fs::read_to_string(format!("{root}/image/repo/packages")).unwrap();
-    assert!(
-        !repo.lines().any(|l| l.starts_with("wolos-shim ")),
-        "not in the repo"
-    );
+    assert!(repo.lines().any(|l| l.starts_with("wolos-shim ")));
+    let notice = std::fs::read_to_string(format!("{root}/NOTICE")).unwrap();
+    for line in [
+        "Copyright 2012 Red Hat, Inc <mjg@redhat.com>",
+        "Redistribution and use in source and binary forms, with or without",
+        "OF THE POSSIBILITY OF SUCH DAMAGE.",
+        "Corporation.",
+    ] {
+        assert!(notice.lines().any(|l| l == line), "{line}");
+    }
     let b = std::fs::read_to_string(format!("{root}/image/repo/wolos-shim/PKGBUILD")).unwrap();
     assert!(!b.contains("SKIP"), "every source is pinned");
     assert!(b.contains("351e131d3c4a636704e9cae7d1296baf8a05beca9922cfebbfa48933c9bf1ad3"));
