@@ -27,7 +27,7 @@ module Wopkg
       "sources" => "sources", "history" => "history",
       "rollback" => "rollback", "undo" => "rollback",
       "channel" => "channel", "pause" => "pause", "resume" => "resume",
-      "appimage" => "appimage", "aur" => "aur", "recipe" => "recipe",
+      "appimage" => "appimage", "aur" => "aur", "audit" => "audit", "recipe" => "recipe",
       "completions" => "completions", "__complete" => "__complete", "__fetch" => "__fetch",
       "version" => "version", "help" => "help",
     }

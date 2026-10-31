@@ -3,7 +3,7 @@ module Wopkg
   # Shell completion scripts. Package names come from `wopkg __complete <prefix>`, a prefix scan of
   # the local index (no network, a few milliseconds).
   module Completions
-    VERBS = %w(install remove update search info list sync sources history rollback channel pause resume appimage aur recipe completions version help)
+    VERBS = %w(install remove update search info list sync sources history rollback channel pause resume appimage aur audit recipe completions version help)
     NAMED = %w(install remove info)
 
     def self.zsh : String

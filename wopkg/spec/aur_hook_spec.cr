@@ -42,4 +42,21 @@ describe Wopkg::AurHook do
     AurHook.check("/p", "/a", nil, analyser: nil).evidence.first.should contain("not checked")
     FileUtils.rm_rf(d)
   end
+
+  it "audits the folder alone, asks for the graph, and hands back the analyser's own words" do
+    d = File.tempname("wopkg-hook")
+    Dir.mkdir_p(d)
+    bin = fake_analyser(d, %(echo "$@" > #{d}/args; echo '{"verdict":"flag","evidence":["curl runs it"]}'))
+    a = AurHook.audit("/pkg", "/out/x.svg", analyser: bin)
+    a.verdict.flag?.should be_true
+    a.raw.should contain("curl runs it")
+    File.read("#{d}/args").strip.should eq("--dir /pkg --graph /out/x.svg --json")
+    FileUtils.rm_rf(d)
+  end
+
+  it "says what an audit means and never more" do
+    AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Pass, [] of String)).should eq("No law broken. That does not mean the package is safe.")
+    AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Flag, [] of String)).should eq("Needs review.")
+    AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Unavailable, [] of String)).should eq("Not checked.")
+  end
 end
