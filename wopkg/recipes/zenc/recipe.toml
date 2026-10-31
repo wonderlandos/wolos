@@ -1,0 +1,21 @@
+# Zen C: a modern systems language that compiles to C (`zc`).
+name = "zenc"
+version = "0.4.4"
+summary = "Zen C, a systems programming language that compiles to readable C (zc)"
+license = "MIT"
+homepage = "https://github.com/Zuhaitz-dev/zenc-lang"
+needs = ["make", "cc"]
+
+[[source]]
+url = "https://github.com/Zuhaitz-dev/zenc-lang/archive/refs/tags/v0.4.4.tar.gz"
+sha256 = "c4ed42e6ff9fe7c34dafc898bfba85a89082d6d46301af309a54b61facbf4798"
+file = "zenc-lang-0.4.4.tar.gz"
+
+[build]
+# The tarball has no git history: name the version. The standard library path is compiled in,
+# so build for the final prefix and install into the staging one.
+run = ["make GIT_VERSION=0.4.4 PREFIX=\"$TARGET_PREFIX\" zc"]
+
+[install]
+# zc is already built (make sees it up to date), so this only copies, now into the staging prefix.
+run = ["make GIT_VERSION=0.4.4 PREFIX=/work/out install"]

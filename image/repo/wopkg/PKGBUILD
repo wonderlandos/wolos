@@ -1,0 +1,45 @@
+# wopkg: one package tool for every source (ADR 0021). The Crystal CLI (wopkg/) on libwopkg
+# (crates/wopkg, stable C ABI, libwopkg.so.1), built from this repo; shell completions and the
+# official recipes ship with it.
+pkgname=wopkg
+pkgver=$(sed -n 's/^version: //p' "$startdir/../../../wopkg/shard.yml")
+pkgrel=1
+pkgdesc='WolOS package tool: pacman repos, Flatpak, AppImage, recipes and AUR in one command'
+arch=(x86_64)
+url='https://github.com/wonderlandos/wolos'
+license=(BSD-2-Clause)
+depends=(gc pcre2 openssl zlib gcc-libs glibc bubblewrap git gnupg libarchive)
+optdepends=('flatpak: Flatpak apps' 'base-devel: building AUR packages')
+makedepends=(cargo crystal)
+options=(!debug !lto)
+_repo=$(cd "$startdir/../../.." && pwd)
+
+build() {
+  cd "$_repo"
+  CARGO_TARGET_DIR=$srcdir/target cargo build -p wopkg --release --locked -j4
+  crates/wopkg/link.sh "$srcdir/target/release/libwopkg.a" "$srcdir/lib"
+  cd wopkg
+  crystal build --release --no-debug src/wopkg.cr -o "$srcdir/wopkg" --link-flags "-L$srcdir/lib"
+  for s in zsh bash fish; do LD_LIBRARY_PATH=$srcdir/lib "$srcdir/wopkg" completions $s > "$srcdir/wopkg.$s"; done
+}
+
+check() {
+  cd "$_repo/wopkg"
+  crystal spec --link-flags "-L$srcdir/lib -Wl,-rpath,$srcdir/lib"
+}
+
+package() {
+  install -Dm755 "$srcdir/wopkg" "$pkgdir/usr/bin/wopkg"
+  install -Dm755 "$srcdir/lib/libwopkg.so.1" "$pkgdir/usr/lib/libwopkg.so.1"
+  ln -s libwopkg.so.1 "$pkgdir/usr/lib/libwopkg.so"
+  install -Dm644 "$_repo/crates/wopkg/include/wopkg.h" "$pkgdir/usr/include/wopkg.h"
+  install -Dm644 "$srcdir/wopkg.zsh" "$pkgdir/usr/share/zsh/site-functions/_wopkg"
+  install -Dm644 "$srcdir/wopkg.bash" "$pkgdir/usr/share/bash-completion/completions/wopkg"
+  install -Dm644 "$srcdir/wopkg.fish" "$pkgdir/usr/share/fish/vendor_completions.d/wopkg.fish"
+  local r
+  for r in "$_repo"/wopkg/recipes/*/recipe.toml; do
+    install -Dm644 "$r" "$pkgdir/usr/share/wopkg/recipes/$(basename "$(dirname "$r")")/recipe.toml"
+  done
+  (cd "$_repo/wopkg" && LD_LIBRARY_PATH=$srcdir/lib "$srcdir/wopkg" recipe index recipes) > "$pkgdir/usr/share/wopkg/recipes/index.json"
+  install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
