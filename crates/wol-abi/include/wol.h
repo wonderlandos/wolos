@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 1
+#define WOL_VERSION_MINOR 2
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -217,6 +217,57 @@ wol_status wol_notification_set_action_handler(wol_notification *notification, w
 wol_status wol_notification_send(wol_notification *notification, wol_error **error);
 wol_notification *wol_notification_retain(wol_notification *notification);
 void wol_notification_release(wol_notification *notification);
+
+/* ---- 1.2: replace and withdraw (WOL_1.2; check wol_version() >= 0x010200) ---- */
+
+/* New text. Already sent: it changes on screen, buttons kept. Not sent yet: used when sent. Only
+ * the process that posted a notification can change it. */
+wol_status wol_notification_replace(wol_notification *notification, const char *title, size_t title_len,
+                                    const char *body, size_t body_len, wol_error **error);
+/* Takes it off the screen and out of Notification Center. Nothing happens if it was never sent. */
+wol_status wol_notification_withdraw(wol_notification *notification, wol_error **error);
+
+/* ---- 1.2: menus and toolbars ----
+ * What the person chooses comes back as a key, inside wol_context_dispatch.
+ * Keys: 1-32 of [a-z0-9_-], unique in their menu or toolbar. Labels: one line, up to 64 bytes.
+ * A change redraws the window, if it is shown. */
+
+typedef struct wol_menu wol_menu;
+typedef struct wol_toolbar wol_toolbar;
+/* key is borrowed for the call. */
+typedef void (*wol_menu_fn)(wol_menu *menu, const wol_string *key, void *user_data);
+typedef void (*wol_toolbar_fn)(wol_toolbar *toolbar, const wol_string *key, void *user_data);
+
+wol_status wol_menu_create(wol_context *context, const char *title, size_t len, wol_menu_fn on_choose,
+                           void *user_data, wol_menu **out, wol_error **error);
+/* shortcut: "cmd+s", "cmd+shift+n", "alt+f4"; NULL with 0 for none. Up to 48 entries. */
+wol_status wol_menu_add_item(wol_menu *menu, const char *key, size_t key_len, const char *label,
+                             size_t label_len, const char *shortcut, size_t shortcut_len,
+                             wol_error **error);
+wol_status wol_menu_add_separator(wol_menu *menu, wol_error **error);
+wol_status wol_menu_set_enabled(wol_menu *menu, const char *key, size_t key_len, int32_t enabled,
+                                wol_error **error);
+wol_status wol_menu_set_checked(wol_menu *menu, const char *key, size_t key_len, int32_t checked,
+                                wol_error **error);
+wol_menu *wol_menu_retain(wol_menu *menu);
+void wol_menu_release(wol_menu *menu);
+/* Adds it to the window's menu bar, after the others. A menu goes on one window; up to 8. */
+wol_status wol_window_add_menu(wol_window *window, wol_menu *menu, wol_error **error);
+
+wol_status wol_toolbar_create(wol_context *context, wol_toolbar_fn on_choose, void *user_data,
+                              wol_toolbar **out, wol_error **error);
+/* icon: an icon name, or NULL with 0 to show the label. The label is the tooltip either way. */
+wol_status wol_toolbar_add_button(wol_toolbar *toolbar, const char *key, size_t key_len,
+                                  const char *label, size_t label_len, const char *icon, size_t icon_len,
+                                  wol_error **error);
+/* Pushes what follows to the far side. Up to 16 buttons and spacers. */
+wol_status wol_toolbar_add_spacer(wol_toolbar *toolbar, wol_error **error);
+wol_status wol_toolbar_set_enabled(wol_toolbar *toolbar, const char *key, size_t key_len, int32_t enabled,
+                                   wol_error **error);
+wol_toolbar *wol_toolbar_retain(wol_toolbar *toolbar);
+void wol_toolbar_release(wol_toolbar *toolbar);
+/* A window has one toolbar, a toolbar goes on one window. NULL removes it. */
+wol_status wol_window_set_toolbar(wol_window *window, wol_toolbar *toolbar, wol_error **error);
 
 #ifdef __cplusplus
 }
