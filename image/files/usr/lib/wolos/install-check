@@ -13,6 +13,8 @@ disk=${1:-}
 if [ -z "$disk" ] || ! sh "$here/install-disks" | grep -qx -- "$disk"; then
   echo "refuse not-listed"; exit 2
 fi
+# --probe: everything the app shows about this disk, as JSON (reads only).
+[ "${2:-}" != --probe ] || exec wol install probe "$disk"
 rc=0
 bytes=$(lsblk -dnpbo NAME,SIZE,TYPE,RO | awk -v d="$disk" '$1 == d {print $2}')
 case $bytes in '' | *[!0-9]*) bytes=0 ;; esac

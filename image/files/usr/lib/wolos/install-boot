@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# WolOS installer: make the disk start the new system (ADR 0023). The one place that knows which
+# loader WolOS uses: install-run calls only this. Slot a of WOLOS_ROOT, ESP at WOLOS_ESP.
+# WOLOS_OTHER_SYSTEMS non-empty: another system shares the disk, so the menu shows for a moment.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+bootctl --esp-path="$WOLOS_ESP" install >/dev/null 2>&1 || exit 1
+sh "$here/esp-sync" --new || exit 1
+mkdir -p "$WOLOS_ESP/loader"
+t=0
+[ -z "${WOLOS_OTHER_SYSTEMS:-}" ] || t=3
+printf 'default wolos-a.conf\ntimeout %s\nconsole-mode keep\neditor no\n' "$t" > "$WOLOS_ESP/loader/loader.conf"
