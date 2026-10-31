@@ -10,8 +10,15 @@ fn root() -> PathBuf {
 }
 
 fn sha256(p: &Path) -> String {
-    let o = Command::new("sha256sum").arg(p).output().expect("sha256sum runs");
-    String::from_utf8_lossy(&o.stdout).split_whitespace().next().unwrap_or("").to_owned()
+    let o = Command::new("sha256sum")
+        .arg(p)
+        .output()
+        .expect("sha256sum runs");
+    String::from_utf8_lossy(&o.stdout)
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_owned()
 }
 
 #[test]

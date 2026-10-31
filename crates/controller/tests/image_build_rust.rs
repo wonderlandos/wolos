@@ -53,6 +53,9 @@ for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search
     let calls = fs::read_to_string(&log).unwrap_or_default();
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!err.contains("does not contain this feature"), "{err}");
-    assert!(calls.contains("--workspace") && calls.contains("shell/layer-shell"), "{calls}");
+    assert!(
+        calls.contains("--workspace") && calls.contains("shell/layer-shell"),
+        "{calls}"
+    );
     assert!(calls.contains("-p xguard-clam"), "{calls}\n{err}");
 }
