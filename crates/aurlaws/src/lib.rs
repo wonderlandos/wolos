@@ -9,6 +9,7 @@ pub mod observed;
 pub mod paths;
 pub mod pkgbuild;
 pub mod shell;
+pub mod upstream;
 
 pub use laws::{Finding, LawId, Step};
 use serde::Serialize;
@@ -35,7 +36,10 @@ pub struct Report {
     pub meta: pkgbuild::Meta,
 }
 
-fn judge(p: pkgbuild::Parsed, ev: &Evidence) -> Report {
+fn judge(mut p: pkgbuild::Parsed, ev: &Evidence) -> Report {
+    for g in &ev.upstream {
+        p.graph.merge(g);
+    }
     let mut findings = {
         let v = laws::View::new(&p.graph, &p.meta, &ev.package_files);
         let mut f = laws::check(&v);
@@ -87,6 +91,8 @@ pub struct Evidence {
     pub package_files: Vec<String>,
     /// Evidence that should exist and does not, in plain sentences.
     pub gaps: Vec<String>,
+    /// Graphs of the upstream source's build scripts.
+    pub upstream: Vec<graph::Graph>,
 }
 
 /// `audit_text`, with what is known beyond the files.
