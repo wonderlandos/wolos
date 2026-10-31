@@ -168,6 +168,14 @@ fn add_places_in_the_nearest_free_cell_and_reloads_the_shell() {
     assert!(e.err.contains("no widget"), "{}", e.err);
     assert_ne!(run("widgets add clock huge", &mut e), 0);
     assert!(e.written.is_empty());
+
+    // A Lua widget file, by kind (ADR 0020); any size.
+    let mut e = env("add-lua", &[]);
+    assert_eq!(run("widgets add lua:clock medium", &mut e), 0, "{}", e.err);
+    let w = written(&e).widgets[0].clone();
+    assert_eq!((w.kind, w.size), (Kind::Lua("clock".into()), Size::Medium));
+    let mut e = env("add-lua-bad", &[]);
+    assert_ne!(run("widgets add lua:../x", &mut e), 0);
 }
 
 #[test]

@@ -55,9 +55,14 @@ JSON is the `shared::events` line: `theme` `{"event":"theme","id":"wol-dark-blue
 
 Kit parts: a change made through the API redraws the window the part is in (if shown); a change the person made is recorded first, then the part's change callback runs, so getters inside it read the new value.
 
+## Kit host and notifications in the shell
+
+- `wol-shell` listens on `$XDG_RUNTIME_DIR/wol-kit.sock` (0600, own account) and starts one `wol-kit-host` per app connection: the app's windows carry its own window class, and a broken app takes down only its host. Protocol rules: `shell::app_host` (hello first, at most 16 windows, 256 KiB lines); drawing: `shell::ui::app_view` (a new tree of the same shape updates parts in place).
+- `shell::app_notices` subscribes to wold as the account's notification shower and posts each app notification to the session notification server (banners, Notification Center, Focus); a pressed button goes back to wold as `notification.answer`.
+
 ## Lua widgets (`crates/wol-lua`)
 
-A widget is one file in `~/.config/wolos/widgets/<id>.lua` (id: lowercase letters, digits, `-`), reloaded when it changes. Example: `crates/wol-lua/widgets/clock.lua`.
+A widget is one file in `~/.config/wolos/widgets/<id>.lua` (id: lowercase letters, digits, `-`), reloaded when it changes. On the desktop it is kind `lua:<id>` (`wol widgets add lua:<id>`); it renders at its `refresh` on the desktop widget timer and after a click (`shell::ui::lua_widgets`). Example: `crates/wol-lua/widgets/clock.lua`.
 
 ```lua
 return wol.widget {

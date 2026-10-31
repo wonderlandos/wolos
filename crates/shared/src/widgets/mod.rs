@@ -19,6 +19,8 @@ pub const MANIFEST_FILE: &str = "widget.json";
 pub const VERSION: u32 = 1;
 /// Prefix of custom widget kinds in the layout file: `custom:<package id>`.
 pub const CUSTOM_PREFIX: &str = "custom:";
+/// Prefix of Lua widget kinds: `lua:<file id>` for `~/.config/wolos/widgets/<file id>.lua`.
+pub const LUA_PREFIX: &str = "lua:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -133,6 +135,8 @@ pub enum Kind {
     Builtin(Builtin),
     /// Package id under the widget package dirs.
     Custom(String),
+    /// A Lua widget file (`wol_lua`), by its id.
+    Lua(String),
     Unknown(String),
 }
 
@@ -140,6 +144,13 @@ impl Kind {
     pub fn parse(s: &str) -> Kind {
         if let Some(b) = Builtin::parse(s) {
             return Kind::Builtin(b);
+        }
+        if let Some(id) = s.strip_prefix(LUA_PREFIX) {
+            return if is_package_id(id) {
+                Kind::Lua(id.into())
+            } else {
+                Kind::Unknown(s.into())
+            };
         }
         match s.strip_prefix(CUSTOM_PREFIX) {
             Some(id) if is_package_id(id) => Kind::Custom(id.into()),
@@ -150,6 +161,7 @@ impl Kind {
         match self {
             Kind::Builtin(b) => b.id().into(),
             Kind::Custom(id) => format!("{CUSTOM_PREFIX}{id}"),
+            Kind::Lua(id) => format!("{LUA_PREFIX}{id}"),
             Kind::Unknown(s) => s.clone(),
         }
     }
@@ -310,7 +322,7 @@ impl Desktop {
     pub fn new_id(&self, kind: &Kind) -> String {
         let base = match kind {
             Kind::Builtin(b) => b.id().to_string(),
-            Kind::Custom(id) | Kind::Unknown(id) => id.clone(),
+            Kind::Custom(id) | Kind::Lua(id) | Kind::Unknown(id) => id.clone(),
         };
         (1..)
             .map(|n| {
@@ -373,6 +385,8 @@ mod tests {
             ("custom:game-friends", Kind::Custom("game-friends".into())),
             ("custom:Bad_Id", Kind::Unknown("custom:Bad_Id".into())),
             ("custom:", Kind::Unknown("custom:".into())),
+            ("lua:clock", Kind::Lua("clock".into())),
+            ("lua:../x", Kind::Unknown("lua:../x".into())),
             ("notes", Kind::Unknown("notes".into())),
         ] {
             let k = Kind::parse(src);
