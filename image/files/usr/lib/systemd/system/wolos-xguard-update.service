@@ -1,0 +1,9 @@
+[Unit]
+Description=WolOS malware signature update (signed, checked before use)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/xguard-update
+Nice=10
+IOSchedulingClass=idle

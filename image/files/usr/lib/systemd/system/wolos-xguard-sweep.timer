@@ -1,0 +1,10 @@
+[Unit]
+Description=Background malware check when the computer is free
+
+[Timer]
+OnBootSec=30min
+OnUnitInactiveSec=30min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
