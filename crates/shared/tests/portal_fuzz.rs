@@ -18,7 +18,11 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 30] = [
+const SEEDS: [&str; 34] = [
+    r#"{"call":"ipc.listen","name":"greet"}"#,
+    r#"{"call":"ipc.send","peer":"/usr/bin/a","name":"greet","body":"hi"}"#,
+    r#"{"call":"ipc.reply","id":1,"body":"hi"}"#,
+    r#"{"call":"ipc.publish","topic":"news","body":"hi"}"#,
     r#"{"call":"account.info"}"#,
     r#"{"call":"search.query","text":"note"}"#,
     r#"{"call":"search.provide"}"#,

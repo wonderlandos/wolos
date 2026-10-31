@@ -83,6 +83,8 @@ pub const ASKS_KEPT: usize = 64;
 pub const PANEL_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long a search waits for the apps that provide rows.
 pub const PROVIDER_WAIT: Duration = Duration::from_millis(200);
+/// How long a message waits for its reply; libwol's own wait for wold is longer.
+pub const MESSAGE_WAIT: Duration = Duration::from_secs(3);
 
 /// Calls waiting for the desktop: each [`Ask`] goes to the shell of the caller's account, and the
 /// `session.answer` with its id wakes the call. An answer counts only from that account.
@@ -232,6 +234,7 @@ pub struct State {
     pub notes: Notes,
     pub prefs: crate::prefs::Prefs,
     pub searches: crate::search::Searches,
+    pub endpoints: crate::ipc::Endpoints,
     pub asks: Asks,
     pub holds: Holds,
     pub host: Box<dyn Host>,
@@ -243,6 +246,7 @@ impl Default for State {
         Self {
             prefs: Default::default(),
             searches: Default::default(),
+            endpoints: Default::default(),
             notes: Default::default(),
             asks: Default::default(),
             holds: Default::default(),
@@ -303,6 +307,7 @@ fn doing(capability: &str) -> Option<&'static str> {
         "search" => "search",
         "search-provider" => "add search results",
         "account-info" => "read your account name",
+        "ipc" => "send or receive messages from other apps",
         _ => return None,
     })
 }
@@ -394,6 +399,9 @@ fn decide<W: Write + Send>(
         Need::Grant(cap) => grants.granted(&caller.app, cap),
         Need::Shower => grants.shows_notifications(&caller.app),
         Need::Spotlight => caller.app == SPOTLIGHT,
+        Need::Peer => call
+            .peer()
+            .is_some_and(|p| grants.granted(&caller.app, &wol_core::consent::peer_grant(p))),
     };
     if !allowed {
         return Answer::err(
@@ -402,6 +410,7 @@ fn decide<W: Write + Send>(
                 Need::Grant(cap) => denial(cap, &caller.app),
                 Need::Shower => "Only the desktop answers notifications.".into(),
                 Need::Spotlight => "Only Spotlight collects search results.".into(),
+                Need::Peer => denial("ipc", &caller.app),
             },
         );
     }
@@ -556,6 +565,40 @@ fn decide<W: Write + Send>(
                 || Answer::err(Code::Unavailable, "This account has no name."),
                 Answer::with,
             ),
+        Call::IpcListen { name } => {
+            if !st.holds.take(caller.uid) {
+                return Answer::err(Code::Unavailable, "Too many apps are listening.");
+            }
+            let Some(l) = st.endpoints.listen(caller, &name) else {
+                st.holds.give(caller.uid);
+                return Answer::err(Code::InvalidArgument, "This app already listens there.");
+            };
+            extra.hold = Some(Held {
+                uid: caller.uid,
+                _guard: Box::new(l),
+            });
+            Answer::ok()
+        }
+        Call::IpcSend { peer, name, body } => {
+            let to = (peer.as_str(), name.as_str());
+            match st.endpoints.send(bus, caller, to, body, MESSAGE_WAIT) {
+                Ok(body) => Answer::with(serde_json::json!({ "body": body })),
+                Err(m) => Answer::err(Code::Unavailable, m),
+            }
+        }
+        Call::IpcReply { id, body } => {
+            if st.endpoints.reply(caller, id, body) {
+                Answer::ok()
+            } else {
+                Answer::err(Code::InvalidArgument, "Nothing is waiting for that reply.")
+            }
+        }
+        Call::IpcPublish { topic, body } => {
+            let grant = wol_core::consent::peer_grant(&caller.app);
+            let hears = |app: &str| grants.granted(app, &grant);
+            st.endpoints.publish(bus, caller, &topic, &body, hears);
+            Answer::ok()
+        }
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),
@@ -1119,6 +1162,38 @@ mod tests {
             &st,
         );
         assert_eq!(a.data, Some(serde_json::json!({"results": []})));
+    }
+
+    #[test]
+    fn a_message_needs_a_grant_for_that_peer() {
+        let st = State::default();
+        let bus = Bus::<UnixStream>::default();
+        let g = Fixed(&[
+            ("/usr/bin/notes", "ipc"),
+            ("/usr/bin/mail", "ipc:/usr/bin/notes"),
+        ]);
+        let (notes, mail) = (caller("/usr/bin/notes"), caller("/usr/bin/mail"));
+        let listen = r#"{"call":"ipc.listen","name":"greet"}"#;
+        let (ans, extra) = respond(listen, Some(&notes), &g, &bus, &st, None);
+        assert!(ans.ok);
+        let denied = respond(listen, Some(&mail), &g, &bus, &st, None).0;
+        assert_eq!(
+            denied.code,
+            Some(Code::PermissionDenied),
+            "listening needs ipc"
+        );
+        let send = |to: &str, who: &Caller| {
+            let line = format!(r#"{{"call":"ipc.send","peer":"{to}","name":"greet","body":"x"}}"#);
+            handle(&line, Some(who), &g, &bus, &st)
+        };
+        let other = send("/usr/bin/shell", &mail);
+        assert_eq!(other.code, Some(Code::PermissionDenied), "another peer");
+        assert!(other.message.unwrap().contains("not allowed"));
+        let reverse = send("/usr/bin/mail", &notes);
+        assert_eq!(reverse.code, Some(Code::PermissionDenied), "one way");
+        drop(extra);
+        let nobody = send("/usr/bin/notes", &mail);
+        assert_eq!(nobody.code, Some(Code::Unavailable));
     }
 
     #[test]

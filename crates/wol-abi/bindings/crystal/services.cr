@@ -112,4 +112,24 @@ LibWol.wol_search_provider_release(provider)
 ok LibWol.wol_account_copy_info(ctx, pointerof(info), pointerof(err))
 puts "account: #{str(LibWol.wol_info_get_text(field(info, "name")))}"
 LibWol.wol_info_release(info)
+class Inbox
+  class_property seen = false
+end
+peer, hello = "/usr/bin/peer", "hello"
+on_message = ->(e : LibWol::Endpoint*, m : LibWol::Message*, d : Void*) {
+  puts "message: #{str(LibWol.wol_message_get_body(m))} #{str(LibWol.wol_message_get_from(m))}"
+  x = Pointer(LibWol::Error).null
+  pong = "pong"
+  LibWol.wol_message_reply(m, pong, pong.bytesize, pointerof(x))
+  Inbox.seen = true
+  nil
+}
+door = Pointer(LibWol::Endpoint).null
+ok LibWol.wol_endpoint_create(ctx, key, key.bytesize, on_message, nil, pointerof(door), pointerof(err))
+ok LibWol.wol_message_send(ctx, peer, peer.bytesize, key, key.bytesize, hello, hello.bytesize, pointerof(text), pointerof(err))
+puts "reply: #{str(text)}"
+LibWol.wol_string_release(text)
+100.times { break if Inbox.seen; ok LibWol.wol_context_dispatch(ctx, 100, pointerof(err)) }
+ok LibWol.wol_publish(ctx, key, key.bytesize, hello, hello.bytesize, pointerof(err))
+LibWol.wol_endpoint_release(door)
 LibWol.wol_context_release(ctx)

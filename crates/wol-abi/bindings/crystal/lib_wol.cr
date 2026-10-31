@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 10
+  WOL_VERSION_MINOR = 11
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -33,6 +33,8 @@ lib LibWol
   struct Assertion; opaque : UInt8; end
   struct SearchProvider; opaque : UInt8; end
   struct SearchReply; opaque : UInt8; end
+  struct Endpoint; opaque : UInt8; end
+  struct Message; opaque : UInt8; end
 
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
@@ -43,6 +45,7 @@ lib LibWol
   alias ToolbarFn = Toolbar*, String*, Void* -> Void
   alias SearchFn = SearchProvider*, SearchReply*, String*, Void* -> Void
   alias SearchOpenFn = SearchProvider*, String*, Void* -> Void
+  alias MessageFn = Endpoint*, Message*, Void* -> Void
 
   fun wol_version() : UInt32
   fun wol_version_string() : UInt8*
@@ -159,4 +162,14 @@ lib LibWol
   fun wol_search_provider_retain(provider : SearchProvider*) : SearchProvider*
   fun wol_search_provider_release(provider : SearchProvider*)
   fun wol_account_copy_info(context : Context*, out_ : Info**, error : Error**) : Status
+  fun wol_endpoint_create(context : Context*, name : UInt8*, len : LibC::SizeT, on_message : MessageFn, user_data : Void*, out_ : Endpoint**, error : Error**) : Status
+  fun wol_endpoint_retain(endpoint : Endpoint*) : Endpoint*
+  fun wol_endpoint_release(endpoint : Endpoint*)
+  fun wol_message_send(context : Context*, peer : UInt8*, peer_len : LibC::SizeT, name : UInt8*, name_len : LibC::SizeT, body : UInt8*, body_len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wol_message_get_from(message : Message*) : String*
+  fun wol_message_get_body(message : Message*) : String*
+  fun wol_message_reply(message : Message*, body : UInt8*, len : LibC::SizeT, error : Error**) : Status
+  fun wol_message_retain(message : Message*) : Message*
+  fun wol_message_release(message : Message*)
+  fun wol_publish(context : Context*, topic : UInt8*, topic_len : LibC::SizeT, body : UInt8*, body_len : LibC::SizeT, error : Error**) : Status
 end

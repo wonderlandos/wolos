@@ -1,0 +1,11 @@
+# libwol 1.11 exports (WOL_1.11). Never edit a shipped line.
+wol_endpoint_create@WOL_1.11
+wol_endpoint_release@WOL_1.11
+wol_endpoint_retain@WOL_1.11
+wol_message_get_body@WOL_1.11
+wol_message_get_from@WOL_1.11
+wol_message_release@WOL_1.11
+wol_message_reply@WOL_1.11
+wol_message_retain@WOL_1.11
+wol_message_send@WOL_1.11
+wol_publish@WOL_1.11

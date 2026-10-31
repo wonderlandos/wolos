@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 10
+#define WOL_VERSION_MINOR 11
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -420,6 +420,48 @@ void wol_search_provider_release(wol_search_provider *provider);
  * Keys: name, full_name (the name when the account has no other).
  */
 wol_status wol_account_copy_info(wol_context *context, wol_info **out, wol_error **error);
+
+/* ---- 1.11: messages between apps (WOL_1.11) ---- */
+
+/*
+ * An app is addressed by its full path, which no other app can take, and an endpoint name. wold
+ * routes every message and tells the receiver who sent it. Only apps of one account talk.
+ *
+ * Listen under `name` (letters, digits, '.', '_', '-'): permission ipc. One process of an app per
+ * name; it listens until the endpoint is released or the process ends. `on_message` runs inside
+ * wol_context_dispatch; the message is borrowed for the call, and wol_message_retain keeps it to
+ * reply later. Reply within 3 seconds.
+ */
+typedef struct wol_endpoint wol_endpoint;
+typedef struct wol_message wol_message;
+typedef void (*wol_message_fn)(wol_endpoint *endpoint, wol_message *message, void *user_data);
+
+wol_status wol_endpoint_create(wol_context *context, const char *name, size_t len,
+                               wol_message_fn on_message, void *user_data, wol_endpoint **out,
+                               wol_error **error);
+wol_endpoint *wol_endpoint_retain(wol_endpoint *endpoint);
+void wol_endpoint_release(wol_endpoint *endpoint);
+
+/*
+ * Send up to 24 KiB of text and wait for the reply. Needs the grant ipc:<peer>, for that one app.
+ * Blocks: an app must not send to itself on the thread that dispatches.
+ */
+wol_status wol_message_send(wol_context *context, const char *peer, size_t peer_len,
+                            const char *name, size_t name_len, const char *body, size_t body_len,
+                            wol_string **out, wol_error **error);
+const wol_string *wol_message_get_from(const wol_message *message);
+const wol_string *wol_message_get_body(const wol_message *message);
+wol_status wol_message_reply(const wol_message *message, const char *body, size_t len,
+                             wol_error **error);
+wol_message *wol_message_retain(wol_message *message);
+void wol_message_release(wol_message *message);
+
+/*
+ * Hand `body` to the endpoints named `topic` of every app holding the grant ipc:<this app>.
+ * Permission: ipc. Those messages take no reply, and the publisher is not told who heard.
+ */
+wol_status wol_publish(wol_context *context, const char *topic, size_t topic_len, const char *body,
+                       size_t body_len, wol_error **error);
 
 #ifdef __cplusplus
 }

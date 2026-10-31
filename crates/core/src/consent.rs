@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 pub const FILE: &str = "/etc/wolos/consent.json";
 
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
-pub const CAPABILITIES: [&str; 17] = [
+pub const CAPABILITIES: [&str; 18] = [
     "screen-capture",
     "notifications",
     "input-injection",
@@ -26,20 +26,36 @@ pub const CAPABILITIES: [&str; 17] = [
     "search",
     "search-provider",
     "account-info",
+    "ipc",
 ];
 
 const MAX_APP: usize = 1024;
+/// Before the app in a grant for one peer: the holder may send that app messages.
+const PEER: &str = "ipc:";
 
-/// Canonical absolute path (no empty, `.` or `..` segment, no control characters) and a capability
-/// from [`CAPABILITIES`].
-pub fn is_valid_grant(app: &str, capability: &str) -> bool {
-    CAPABILITIES.contains(&capability)
-        && app.len() <= MAX_APP
+/// The grant that lets an app send messages to `peer`.
+pub fn peer_grant(peer: &str) -> String {
+    format!("{PEER}{peer}")
+}
+
+/// The app a grant lets its holder send messages to.
+pub fn peer_of(capability: &str) -> Option<&str> {
+    capability.strip_prefix(PEER)
+}
+
+/// Canonical absolute path: no empty, `.` or `..` segment, no control characters.
+fn is_app(app: &str) -> bool {
+    app.len() <= MAX_APP
         && app.strip_prefix('/').is_some_and(|rest| {
             rest.split('/')
                 .all(|s| !s.is_empty() && s != "." && s != "..")
         })
         && !app.chars().any(char::is_control)
+}
+
+/// An app, and a capability from [`CAPABILITIES`] or a grant for one peer app.
+pub fn is_valid_grant(app: &str, capability: &str) -> bool {
+    is_app(app) && (CAPABILITIES.contains(&capability) || peer_of(capability).is_some_and(is_app))
 }
 
 /// (app, capability) pairs; a file that is not exactly the documented shape grants nothing.
@@ -172,6 +188,16 @@ mod tests {
             &format!("/{}", "a".repeat(1024)),
             "window-list"
         ));
+    }
+
+    #[test]
+    fn a_peer_grant_names_one_app() {
+        let g = peer_grant("/usr/bin/notes");
+        assert_eq!(peer_of(&g), Some("/usr/bin/notes"));
+        assert!(is_valid_grant("/usr/bin/mail", &g));
+        for bad in ["ipc:", "ipc:notes", "ipc:/usr/../etc/x", "ipc:/a\nb", "other:/a"] {
+            assert!(!is_valid_grant("/usr/bin/mail", bad), "{bad}");
+        }
     }
 
     #[test]

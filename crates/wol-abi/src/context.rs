@@ -96,6 +96,7 @@ pub struct wol_context {
     windows: Mutex<HashMap<u32, Weak<wol_window>>>,
     notes: Mutex<HashMap<u32, Weak<wol_notification>>>,
     search: Mutex<Weak<crate::search::wol_search_provider>>,
+    endpoints: Mutex<HashMap<String, Weak<crate::message::wol_endpoint>>>,
     next_id: AtomicU32,
 }
 
@@ -172,6 +173,7 @@ impl wol_context {
             windows: Mutex::default(),
             notes: Mutex::default(),
             search: Mutex::default(),
+            endpoints: Mutex::default(),
             next_id: AtomicU32::new(1),
         })
     }
@@ -213,6 +215,12 @@ impl wol_context {
 
     pub(crate) fn set_search_provider(&self, p: &Arc<crate::search::wol_search_provider>) {
         *lock(&self.search) = Arc::downgrade(p);
+    }
+
+    pub(crate) fn register_endpoint(&self, name: String, e: &Arc<crate::message::wol_endpoint>) {
+        let mut m = lock(&self.endpoints);
+        m.retain(|_, w| w.strong_count() > 0);
+        m.insert(name, Arc::downgrade(e));
     }
 
     pub(crate) fn ensure_bus(&self) -> Result<()> {
@@ -328,6 +336,21 @@ impl wol_context {
                         (Event::parse(e.json.as_str()), self.search_provider())
                     {
                         crate::search::asked(&p, id, &text);
+                    }
+                }
+                Incoming::Event(e) if e.topic.as_str() == "message" => {
+                    if let Some(Event::Message {
+                        id,
+                        from,
+                        name,
+                        body,
+                        ..
+                    }) = Event::parse(e.json.as_str())
+                    {
+                        let to = lock(&self.endpoints).get(&name).and_then(Weak::upgrade);
+                        if let Some(to) = to {
+                            crate::message::delivered(&to, id, &from, &body);
+                        }
                     }
                 }
                 Incoming::Event(e) if e.topic.as_str() == "search-open" => {

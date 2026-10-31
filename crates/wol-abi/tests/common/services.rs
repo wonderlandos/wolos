@@ -36,6 +36,7 @@ fn answer(c: &Call) -> Answer {
             Answer::with(json!({"results": [{"title": "Notes", "kind": "App"}]}))
         }
         Call::AccountInfo {} => Answer::with(json!({"name": "alice", "full_name": "Alice"})),
+        Call::IpcSend { .. } => Answer::with(json!({"body": "pong"})),
         _ => Answer::ok(),
     }
 }
@@ -53,6 +54,14 @@ pub fn search_event(c: &Call) -> Option<Event> {
             uid: 1000,
             pid: 1,
             key: r.key.clone(),
+        }),
+        Call::IpcSend { name, body, .. } => Some(Event::Message {
+            uid: 1000,
+            pid: 1,
+            id: 9,
+            from: "/usr/bin/sender".into(),
+            name: name.clone(),
+            body: body.clone(),
         }),
         _ => None,
     }
@@ -124,6 +133,8 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "asked: term",
             "open: note-1",
             "account: alice",
+            "reply: pong",
+            "message: hello /usr/bin/sender",
         ]
     );
     let names: Vec<String> = calls
@@ -159,6 +170,10 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "search.provide",
             "search.reply",
             "account.info",
+            "ipc.listen",
+            "ipc.send",
+            "ipc.reply",
+            "ipc.publish",
         ]
     );
 }

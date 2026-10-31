@@ -159,3 +159,17 @@ WOL_1.10 {
   global:
     wol_account_copy_info;
 } WOL_1.9;
+
+WOL_1.11 {
+  global:
+    wol_endpoint_create;
+    wol_endpoint_release;
+    wol_endpoint_retain;
+    wol_message_get_body;
+    wol_message_get_from;
+    wol_message_release;
+    wol_message_reply;
+    wol_message_retain;
+    wol_message_send;
+    wol_publish;
+} WOL_1.10;

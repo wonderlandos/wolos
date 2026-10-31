@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 10;
+    public const int WOL_VERSION_MINOR = 11;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -39,6 +39,8 @@ public static unsafe class Native
     public delegate void wol_search_fn(IntPtr provider, IntPtr reply, IntPtr text, IntPtr user_data);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void wol_search_open_fn(IntPtr provider, IntPtr key, IntPtr user_data);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void wol_message_fn(IntPtr endpoint, IntPtr message, IntPtr user_data);
 
     [DllImport(Lib)] public static extern uint wol_version();
     [DllImport(Lib)] public static extern byte* wol_version_string();
@@ -155,4 +157,14 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern IntPtr wol_search_provider_retain(IntPtr provider);
     [DllImport(Lib)] public static extern void wol_search_provider_release(IntPtr provider);
     [DllImport(Lib)] public static extern int wol_account_copy_info(IntPtr context, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_endpoint_create(IntPtr context, byte* name, nuint len, wol_message_fn on_message, IntPtr user_data, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_endpoint_retain(IntPtr endpoint);
+    [DllImport(Lib)] public static extern void wol_endpoint_release(IntPtr endpoint);
+    [DllImport(Lib)] public static extern int wol_message_send(IntPtr context, byte* peer, nuint peer_len, byte* name, nuint name_len, byte* body, nuint body_len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_message_get_from(IntPtr message);
+    [DllImport(Lib)] public static extern IntPtr wol_message_get_body(IntPtr message);
+    [DllImport(Lib)] public static extern int wol_message_reply(IntPtr message, byte* body, nuint len, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_message_retain(IntPtr message);
+    [DllImport(Lib)] public static extern void wol_message_release(IntPtr message);
+    [DllImport(Lib)] public static extern int wol_publish(IntPtr context, byte* topic, nuint topic_len, byte* body, nuint body_len, IntPtr* error);
 }

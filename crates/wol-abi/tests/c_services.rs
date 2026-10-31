@@ -250,3 +250,33 @@ fn account() {
     assert_eq!(out, ["Alice Liddell (alice)", "null out: 1"]);
     assert_eq!(calls, [Call::AccountInfo {}]);
 }
+
+#[test]
+fn message() {
+    let (out, calls) = run("message", |c, _| match c {
+        Call::IpcSend { .. } => Answer::with(json!({"body": "pong"})),
+        _ => Answer::ok(),
+    });
+    assert_eq!(out, ["reply: pong", "got hello from /usr/bin/sender"]);
+    assert_eq!(
+        calls,
+        [
+            Call::IpcListen {
+                name: "greet".into()
+            },
+            Call::IpcSend {
+                peer: "/usr/bin/peer".into(),
+                name: "greet".into(),
+                body: "hello".into()
+            },
+            Call::IpcReply {
+                id: 9,
+                body: "pong".into()
+            },
+            Call::IpcPublish {
+                topic: "news".into(),
+                body: "item".into()
+            },
+        ]
+    );
+}
