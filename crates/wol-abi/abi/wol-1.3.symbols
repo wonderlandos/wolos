@@ -1,0 +1,3 @@
+# libwol 1.3 exports (WOL_1.3). Never edit a shipped line.
+wol_clipboard_copy_text@WOL_1.3
+wol_clipboard_set_text@WOL_1.3

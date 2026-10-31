@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 2
+#define WOL_VERSION_MINOR 3
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -268,6 +268,14 @@ wol_toolbar *wol_toolbar_retain(wol_toolbar *toolbar);
 void wol_toolbar_release(wol_toolbar *toolbar);
 /* A window has one toolbar, a toolbar goes on one window. NULL removes it. */
 wol_status wol_window_set_toolbar(wol_window *window, wol_toolbar *toolbar, wol_error **error);
+
+/* ---- 1.3: clipboard (WOL_1.3) ---- */
+
+/* The text on the clipboard. Permission: clipboard-read. */
+wol_status wol_clipboard_copy_text(wol_context *context, wol_string **out, wol_error **error);
+/* Up to 48 KiB, no NUL byte. Permission: clipboard-write. */
+wol_status wol_clipboard_set_text(wol_context *context, const char *text, size_t len,
+                                  wol_error **error);
 
 #ifdef __cplusplus
 }

@@ -2,9 +2,12 @@
 //! wold decides with the caller's identity from the kernel (peer pid -> executable), never from the
 //! message. Every field is bounded and checked here, on both sides.
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Largest call line wold reads.
-pub const MAX_LINE: usize = 16 * 1024;
+pub const MAX_LINE: usize = 60 * 1024;
+/// Clipboard text through wold.
+pub const MAX_CLIPBOARD: usize = 48 * 1024;
 pub const MAX_TITLE: usize = 256;
 pub const MAX_BODY: usize = 4096;
 /// Buttons a notification may carry (the banner shows two; the rest are in the list).
@@ -20,6 +23,9 @@ pub struct NoteAction {
     pub key: String,
     pub label: String,
 }
+
+/// Every capability a [`Call`] can need (`wol_core::consent::CAPABILITIES`), test-checked.
+pub const CAPABILITIES: &[&str] = &["notifications", "clipboard-read", "clipboard-write"];
 
 /// What wold checks before a call runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,9 +61,34 @@ pub enum Call {
     /// Take back a notification this process posted.
     #[serde(rename = "notification.withdraw")]
     NotificationWithdraw { id: u32 },
+    /// The text on the clipboard.
+    #[serde(rename = "clipboard.read")]
+    ClipboardRead {},
+    /// Put text on the clipboard.
+    #[serde(rename = "clipboard.write")]
+    ClipboardWrite { text: String },
+    /// The desktop's reply to an [`Ask`] (from the shell).
+    #[serde(rename = "session.answer")]
+    SessionAnswer {
+        id: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<Value>,
+    },
     /// The person pressed a notification button (from the shell): wold tells the app that posted it.
     #[serde(rename = "notification.answer")]
     NotificationAnswer { id: u32, key: String },
+}
+
+/// What wold asks the person's desktop to do once a call passed its check: wold is a system
+/// daemon, so anything of the session runs in the shell. Reaches only the shell of the caller's
+/// account (`Event::SessionAsk`); the shell replies with [`Call::SessionAnswer`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "ask", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Ask {
+    ClipboardRead,
+    ClipboardWrite { text: String },
 }
 
 /// Why a call did not happen. Same numbers as `wol_status` in `wol.h`.
@@ -80,6 +111,9 @@ pub struct Answer {
     /// What the call made (a notification's id).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<u32>,
+    /// What the call returns, when it returns more than an id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 impl Answer {
@@ -89,7 +123,14 @@ impl Answer {
             code: None,
             message: None,
             id: None,
+            data: None,
         }
+    }
+
+    pub fn with(data: Value) -> Self {
+        let mut a = Self::ok();
+        a.data = Some(data);
+        a
     }
 
     pub fn err(code: Code, message: impl Into<String>) -> Self {
@@ -98,6 +139,7 @@ impl Answer {
             code: Some(code),
             message: Some(message.into()),
             id: None,
+            data: None,
         }
     }
 
@@ -142,7 +184,9 @@ impl Call {
             Self::NotificationPost { .. }
             | Self::NotificationReplace { .. }
             | Self::NotificationWithdraw { .. } => Need::Grant("notifications"),
-            Self::NotificationAnswer { .. } => Need::Shower,
+            Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
+            Self::ClipboardRead {} => Need::Grant("clipboard-read"),
+            Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
         }
     }
 
@@ -156,7 +200,21 @@ impl Call {
                 }
                 Ok(())
             }
-            Self::NotificationWithdraw { .. } => Ok(()),
+            Self::NotificationWithdraw { .. } | Self::ClipboardRead {} => Ok(()),
+            Self::ClipboardWrite { text } => {
+                if text.len() > MAX_CLIPBOARD || text.contains('\0') {
+                    return Err(format!(
+                        "Clipboard text is at most {MAX_CLIPBOARD} bytes, with no NUL."
+                    ));
+                }
+                Ok(())
+            }
+            Self::SessionAnswer { error, .. } => {
+                if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
+                    return Err("A desktop answer's message is short text.".into());
+                }
+                Ok(())
+            }
             Self::NotificationPost {
                 title,
                 body,
@@ -318,6 +376,55 @@ mod tests {
         ok.id = Some(7);
         assert_eq!(ok.to_line(), "{\"ok\":true,\"id\":7}\n");
         assert_eq!(Answer::parse(&ok.to_line()), ok);
+    }
+
+    #[test]
+    fn clipboard_calls() {
+        let w = Call::ClipboardWrite {
+            text: "two\nlines\ttab é".into(),
+        };
+        assert_eq!(Call::decode(w.encode().as_bytes()), Ok(w.clone()));
+        assert_eq!(w.need(), Need::Grant("clipboard-write"));
+        let r = Call::decode(br#"{"call":"clipboard.read"}"#).unwrap();
+        assert_eq!(r, Call::ClipboardRead {});
+        assert_eq!(r.need(), Need::Grant("clipboard-read"));
+        assert!(
+            Call::ClipboardWrite {
+                text: "x".repeat(MAX_CLIPBOARD + 1)
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Call::ClipboardWrite {
+                text: "a\0b".into()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(Call::decode(br#"{"call":"clipboard.read","uid":0}"#).is_err());
+    }
+
+    #[test]
+    fn session_answers_come_only_from_the_desktop() {
+        let a = Call::SessionAnswer {
+            id: 1,
+            error: None,
+            data: Some(serde_json::json!({"text": "hi"})),
+        };
+        assert_eq!(Call::decode(a.encode().as_bytes()), Ok(a.clone()));
+        assert_eq!(a.need(), Need::Shower);
+        let long = Call::SessionAnswer {
+            id: 1,
+            error: Some("x".repeat(MAX_BODY + 1)),
+            data: None,
+        };
+        assert!(long.validate().is_err());
+        let done = Answer::with(serde_json::json!({"text": "hi"}));
+        assert_eq!(done.to_line(), "{\"ok\":true,\"data\":{\"text\":\"hi\"}}\n");
+        assert_eq!(Answer::parse(&done.to_line()), done);
+        let line = serde_json::to_string(&Ask::ClipboardRead).unwrap();
+        assert_eq!(line, r#"{"ask":"clipboard-read"}"#);
     }
 
     #[test]

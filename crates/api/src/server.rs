@@ -29,7 +29,7 @@ pub fn serve(
     jobs: &dyn JobTable,
     bus: &Bus<UnixStream>,
     grants: &dyn Grants,
-    notes: &portal::Notes,
+    state: &portal::State,
 ) {
     let uid = peer.map(|p| p.uid);
     let who = peer.map(|p| (p.uid, p.pid));
@@ -81,7 +81,7 @@ pub fn serve(
                     &packages::Host,
                 )
             } else {
-                portal::handle(json, who.as_ref(), grants, bus, notes)
+                portal::handle(json, who.as_ref(), grants, bus, state)
             };
             let mut w = &stream;
             let _ = w.write_all(answer.to_line().as_bytes());
@@ -158,7 +158,7 @@ mod tests {
             b"call {\"call\":\"package.change\",\"verb\":\"install\",\"names\":[\"vim\"]}\n",
         )
         .unwrap();
-        serve(srv, me(), &Empty, &bus, &Deny, &portal::Notes::default());
+        serve(srv, me(), &Empty, &bus, &Deny, &portal::State::default());
         let mut out = String::new();
         cli.read_to_string(&mut out).unwrap();
         assert!(out.contains("not allowed to install system apps"), "{out}");
@@ -174,7 +174,7 @@ mod tests {
     fn call(line: &str, bus: &Bus<UnixStream>) -> UnixStream {
         let (srv, mut cli) = UnixStream::pair().unwrap();
         cli.write_all(line.as_bytes()).unwrap();
-        serve(srv, me(), &Empty, bus, &AllowAll, &portal::Notes::default());
+        serve(srv, me(), &Empty, bus, &AllowAll, &portal::State::default());
         cli
     }
 
@@ -242,7 +242,7 @@ mod tests {
         let bus = Bus::default();
         let (srv, mut cli) = UnixStream::pair().unwrap();
         cli.write_all(b"subscribe account\n").unwrap();
-        serve(srv, me(), &Empty, &bus, &Strict, &portal::Notes::default());
+        serve(srv, me(), &Empty, &bus, &Strict, &portal::State::default());
         let mut out = String::new();
         cli.read_to_string(&mut out).unwrap();
         assert!(out.contains("permission denied"), "{out}");

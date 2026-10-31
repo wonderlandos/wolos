@@ -92,3 +92,9 @@ WOL_1.2 {
     wol_window_add_menu;
     wol_window_set_toolbar;
 } WOL_1.1;
+
+WOL_1.3 {
+  global:
+    wol_clipboard_copy_text;
+    wol_clipboard_set_text;
+} WOL_1.2;

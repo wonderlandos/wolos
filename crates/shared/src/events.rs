@@ -46,6 +46,13 @@ pub enum Event {
         replace: bool,
     },
     /// The app took notification `id` back: same audience as [`Event::Notification`].
+    /// wold asks the desktop of account `uid` to do something a checked call needs. `id` goes back
+    /// in `portal::Call::SessionAnswer`.
+    SessionAsk {
+        uid: u32,
+        id: u32,
+        ask: crate::portal::Ask,
+    },
     NotificationWithdrawn {
         uid: u32,
         id: u32,
@@ -85,9 +92,9 @@ impl Event {
 
     pub fn audience(&self) -> Audience {
         match self {
-            Self::Notification { uid, .. } | Self::NotificationWithdrawn { uid, .. } => {
-                Audience::Account(*uid)
-            }
+            Self::Notification { uid, .. }
+            | Self::NotificationWithdrawn { uid, .. }
+            | Self::SessionAsk { uid, .. } => Audience::Account(*uid),
             Self::NotificationAction { uid, pid, .. } => Audience::Process {
                 uid: *uid,
                 pid: *pid,
@@ -112,6 +119,7 @@ impl Event {
             Self::Job { .. } => "job",
             Self::Notification { .. } => "notification",
             Self::NotificationWithdrawn { .. } => "notification-withdrawn",
+            Self::SessionAsk { .. } => "session-ask",
             Self::NotificationAction { .. } => "notification-action",
         }
     }
@@ -153,6 +161,14 @@ mod tests {
             !n.to_line().contains("replace"),
             "1.1 wire unchanged for a first post"
         );
+        let ask = Event::SessionAsk {
+            uid: 1000,
+            id: 1,
+            ask: crate::portal::Ask::ClipboardRead,
+        };
+        assert_eq!(ask.audience(), Audience::Account(1000));
+        assert!(!ask.client_may_publish(), "apps cannot forge an ask");
+        assert_eq!(Event::parse(&ask.to_line()), Some(ask));
         let gone = Event::NotificationWithdrawn { uid: 1000, id: 1 };
         assert_eq!(gone.audience(), Audience::Account(1000));
         assert!(!gone.client_may_publish());

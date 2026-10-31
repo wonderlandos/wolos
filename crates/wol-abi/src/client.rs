@@ -1,5 +1,7 @@
 //! Safe Rust side of libwol: the sockets it talks to, with timeouts and bounded reads. The library
 //! has no privilege of its own; anything that acts for the app is a `shared::portal::Call` to wold.
+use crate::error::{Error, Result, Status};
+use serde_json::Value;
 use shared::portal::{Answer, Call, Code};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -38,19 +40,39 @@ pub fn call(socket: &Path, call: &Call) -> Answer {
     if let Err(m) = call.validate() {
         return Answer::err(Code::InvalidArgument, m);
     }
+    let line = call.encode();
+    if line.len() > shared::portal::MAX_LINE {
+        return Answer::err(Code::InvalidArgument, "The request is too long.");
+    }
     let Ok(mut s) = UnixStream::connect(socket) else {
         return unavailable();
     };
     let _ = s.set_read_timeout(Some(TIMEOUT));
     let _ = s.set_write_timeout(Some(TIMEOUT));
-    if s.write_all(format!("call {}\n", call.encode()).as_bytes())
-        .is_err()
-    {
+    if s.write_all(format!("call {line}\n").as_bytes()).is_err() {
         return unavailable();
     }
     match read_line(&mut BufReader::new(s)) {
         Some(line) => Answer::parse(&line),
         None => unavailable(),
+    }
+}
+
+/// A call whose answer is only yes or no.
+pub fn run(socket: &Path, c: &Call) -> Result<()> {
+    data(socket, c).map(|_| ())
+}
+
+/// A call's data (`null` when it has none), or why it failed.
+pub fn data(socket: &Path, c: &Call) -> Result<Value> {
+    let a = call(socket, c);
+    if a.ok {
+        Ok(a.data.unwrap_or(Value::Null))
+    } else {
+        Err(Error::new(
+            a.code.map_or(Status::Internal, Into::into),
+            a.message.unwrap_or_default(),
+        ))
     }
 }
 
