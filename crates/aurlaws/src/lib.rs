@@ -8,6 +8,7 @@ pub mod laws;
 pub mod observed;
 pub mod paths;
 pub mod pkgbuild;
+pub mod render;
 pub mod shell;
 pub mod upstream;
 
@@ -54,6 +55,9 @@ fn judge(mut p: pkgbuild::Parsed, ev: &Evidence) -> Report {
         }));
         findings.extend(laws::mismatch(&p.graph, obs));
     }
+    if let Some(list) = &ev.published {
+        findings.extend(laws::published(&p.meta, list));
+    }
     if let Some(old) = &ev.previous {
         findings.extend(laws::diff(&p.graph, old, &ev.explained));
     }
@@ -93,6 +97,8 @@ pub struct Evidence {
     pub gaps: Vec<String>,
     /// Graphs of the upstream source's build scripts.
     pub upstream: Vec<graph::Graph>,
+    /// Checksums upstream published, as (sum, file name). `None` means no list was found.
+    pub published: Option<Vec<(String, String)>>,
 }
 
 /// `audit_text`, with what is known beyond the files.

@@ -636,6 +636,41 @@ pub(crate) fn diff(new: &Graph, old: &Graph, explained: &[String]) -> Vec<Findin
     out
 }
 
+/// A `-bin` package's checksums against upstream's own list. A file the list does not name is not
+/// compared. Only sums of the same length are, so a sha512 list says nothing about a sha256 array.
+pub fn published(m: &Meta, list: &[(String, String)]) -> Vec<Finding> {
+    if !m.pkgnames.iter().any(|n| n.ends_with("-bin")) {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for s in &m.sources {
+        let Some(sum) = s.sum.as_deref().filter(|x| !x.is_empty() && *x != "SKIP") else {
+            continue;
+        };
+        let theirs: Vec<&str> = list
+            .iter()
+            .filter(|(p, n)| *n == s.name && p.len() == sum.len())
+            .map(|(p, _)| p.as_str())
+            .collect();
+        if !theirs.is_empty() && !theirs.iter().any(|p| p.eq_ignore_ascii_case(sum)) {
+            let step = Step {
+                node: format!("src:{}", s.name),
+                label: s.name.clone(),
+                loc: Some(Loc {
+                    file: "PKGBUILD".to_owned(),
+                    line: s.line,
+                }),
+            };
+            let sentence = format!(
+                "{} is pinned to a checksum that is not the one upstream published.",
+                s.name
+            );
+            out.push(finding(LawId::BinChecksumUpstream, sentence, vec![step]));
+        }
+    }
+    out
+}
+
 /// A gap in what was read, as a finding: what was not seen must not read as clean.
 pub(crate) fn incomplete(what: String) -> Finding {
     finding(LawId::IncompleteEvidence, what, Vec::new())
