@@ -18,7 +18,12 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 24] = [
+const SEEDS: [&str; 29] = [
+    r#"{"call":"search.query","text":"note"}"#,
+    r#"{"call":"search.provide"}"#,
+    r#"{"call":"search.reply","id":1,"results":[{"key":"a","title":"A note"}]}"#,
+    r#"{"call":"search.collect","text":"n"}"#,
+    r#"{"call":"search.open","provider":7,"key":"a"}"#,
     r#"{"call":"audio.info"}"#,
     r#"{"call":"audio.set-volume","percent":40}"#,
     r#"{"call":"audio.set-muted","muted":true}"#,

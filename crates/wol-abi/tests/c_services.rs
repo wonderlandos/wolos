@@ -21,11 +21,17 @@ fn fake_wold(path: &Path, f: fn(&Call, usize) -> Answer) -> Calls {
     let path = path.to_owned();
     let c = calls.clone();
     std::thread::spawn(move || {
+        let mut listener = None;
         for conn in l.incoming().flatten() {
             let mut line = String::new();
             BufReader::new(&conn).read_line(&mut line).unwrap();
+            if line.trim() == "subscribe" {
+                listener = Some(conn);
+                continue;
+            }
             let json = line.trim().strip_prefix("call ").unwrap();
             let call = Call::decode(json.as_bytes()).unwrap();
+            let event = common::services::search_event(&call);
             let a = {
                 let mut all = c.lock().unwrap();
                 all.push(call.clone());
@@ -41,6 +47,9 @@ fn fake_wold(path: &Path, f: fn(&Call, usize) -> Answer) -> Calls {
                 continue;
             }
             (&conn).write_all(a.to_line().as_bytes()).unwrap();
+            if let (Some(e), Some(mut l)) = (event, listener.as_ref()) {
+                l.write_all(e.to_line().as_bytes()).unwrap();
+            }
         }
     });
     calls
@@ -192,6 +201,43 @@ fn audio() {
             Call::AudioInfo {},
             Call::AudioSetVolume { percent: 20 },
             Call::AudioSetMuted { muted: false },
+        ]
+    );
+}
+
+#[test]
+fn search() {
+    let (out, calls) = run("search", |c, _| match c {
+        Call::SearchQuery { .. } => {
+            Answer::with(json!({"results": [{"title": "Notes", "kind": "Application"}]}))
+        }
+        _ => Answer::ok(),
+    });
+    assert_eq!(
+        out,
+        [
+            "found: 1 Notes",
+            "twice: 1",
+            "asked: term",
+            "no title: 1",
+            "open: note-1"
+        ]
+    );
+    assert_eq!(
+        calls,
+        [
+            Call::SearchQuery {
+                text: "term".into()
+            },
+            Call::SearchProvide {},
+            Call::SearchReply {
+                id: 5,
+                results: vec![shared::portal::SearchResult {
+                    key: "note-1".into(),
+                    title: "A note".into(),
+                    detail: "Notes".into()
+                }]
+            },
         ]
     );
 }

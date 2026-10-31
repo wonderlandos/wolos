@@ -3,6 +3,7 @@
 //! fake wold on the real `shared::portal` wire.
 #![allow(dead_code)]
 use serde_json::json;
+use shared::events::Event;
 use shared::portal::{Answer, Call};
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::AsFd;
@@ -31,7 +32,28 @@ fn answer(c: &Call) -> Answer {
         Call::AudioInfo {} => Answer::with(json!({
             "volume": 40, "muted": false, "now_playing": {"title": "Song", "playing": true}
         })),
+        Call::SearchQuery { .. } => {
+            Answer::with(json!({"results": [{"title": "Notes", "kind": "App"}]}))
+        }
         _ => Answer::ok(),
+    }
+}
+
+/// What wold sends a provider next: the query, then the person opening its row.
+pub fn search_event(c: &Call) -> Option<Event> {
+    match c {
+        Call::SearchProvide {} => Some(Event::SearchQuery {
+            uid: 1000,
+            pid: 1,
+            id: 5,
+            text: "term".into(),
+        }),
+        Call::SearchReply { results, .. } => results.first().map(|r| Event::SearchOpen {
+            uid: 1000,
+            pid: 1,
+            key: r.key.clone(),
+        }),
+        _ => None,
     }
 }
 
@@ -43,12 +65,18 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
     let l = UnixListener::bind(dir.join("wold.sock")).unwrap();
     let seen = calls.clone();
     std::thread::spawn(move || {
+        let mut listener = None;
         for conn in l.incoming().flatten() {
             let mut line = String::new();
             BufReader::new(&conn).read_line(&mut line).unwrap();
+            if line.trim() == "subscribe" {
+                listener = Some(conn);
+                continue;
+            }
             let json = line.trim().strip_prefix("call ").unwrap();
             let call = Call::decode(json.as_bytes()).unwrap();
             let a = answer(&call);
+            let event = search_event(&call);
             seen.lock().unwrap().push(call);
             if a.data.as_ref().is_some_and(|d| d.get("name").is_some()) {
                 let f = std::fs::File::options()
@@ -60,6 +88,9 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
                 continue;
             }
             (&conn).write_all(a.to_line().as_bytes()).unwrap();
+            if let (Some(e), Some(mut l)) = (event, listener.as_ref()) {
+                l.write_all(e.to_line().as_bytes()).unwrap();
+            }
         }
     });
     let out = cmd
@@ -88,6 +119,9 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "held",
             "online: 1 ethernet",
             "volume: 40 Song",
+            "found: 1",
+            "asked: term",
+            "open: note-1",
         ]
     );
     let names: Vec<String> = calls
@@ -119,6 +153,9 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "audio.info",
             "audio.set-volume",
             "audio.set-muted",
+            "search.query",
+            "search.provide",
+            "search.reply",
         ]
     );
 }

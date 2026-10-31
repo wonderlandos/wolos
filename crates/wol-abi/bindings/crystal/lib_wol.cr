@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 8
+  WOL_VERSION_MINOR = 9
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -31,6 +31,8 @@ lib LibWol
   struct Info; opaque : UInt8; end
   struct File; opaque : UInt8; end
   struct Assertion; opaque : UInt8; end
+  struct SearchProvider; opaque : UInt8; end
+  struct SearchReply; opaque : UInt8; end
 
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
@@ -39,6 +41,8 @@ lib LibWol
   alias ActionFn = Notification*, String*, Void* -> Void
   alias MenuFn = Menu*, String*, Void* -> Void
   alias ToolbarFn = Toolbar*, String*, Void* -> Void
+  alias SearchFn = SearchProvider*, SearchReply*, String*, Void* -> Void
+  alias SearchOpenFn = SearchProvider*, String*, Void* -> Void
 
   fun wol_version() : UInt32
   fun wol_version_string() : UInt8*
@@ -149,4 +153,9 @@ lib LibWol
   fun wol_audio_copy_info(context : Context*, out_ : Info**, error : Error**) : Status
   fun wol_audio_set_volume(context : Context*, percent : UInt32, error : Error**) : Status
   fun wol_audio_set_muted(context : Context*, muted : Int32, error : Error**) : Status
+  fun wol_search_query(context : Context*, text : UInt8*, len : LibC::SizeT, out_ : Info**, error : Error**) : Status
+  fun wol_search_provide(context : Context*, on_query : SearchFn, on_open : SearchOpenFn, user_data : Void*, out_ : SearchProvider**, error : Error**) : Status
+  fun wol_search_reply_add(reply : SearchReply*, key : UInt8*, key_len : LibC::SizeT, title : UInt8*, title_len : LibC::SizeT, detail : UInt8*, detail_len : LibC::SizeT, error : Error**) : Status
+  fun wol_search_provider_retain(provider : SearchProvider*) : SearchProvider*
+  fun wol_search_provider_release(provider : SearchProvider*)
 end

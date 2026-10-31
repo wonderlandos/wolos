@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 8;
+    public const int WOL_VERSION_MINOR = 9;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -35,6 +35,10 @@ public static unsafe class Native
     public delegate void wol_menu_fn(IntPtr menu, IntPtr key, IntPtr user_data);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void wol_toolbar_fn(IntPtr toolbar, IntPtr key, IntPtr user_data);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void wol_search_fn(IntPtr provider, IntPtr reply, IntPtr text, IntPtr user_data);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void wol_search_open_fn(IntPtr provider, IntPtr key, IntPtr user_data);
 
     [DllImport(Lib)] public static extern uint wol_version();
     [DllImport(Lib)] public static extern byte* wol_version_string();
@@ -145,4 +149,9 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern int wol_audio_copy_info(IntPtr context, IntPtr* @out, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_audio_set_volume(IntPtr context, uint percent, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_audio_set_muted(IntPtr context, int muted, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_search_query(IntPtr context, byte* text, nuint len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_search_provide(IntPtr context, wol_search_fn on_query, wol_search_open_fn on_open, IntPtr user_data, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_search_reply_add(IntPtr reply, byte* key, nuint key_len, byte* title, nuint title_len, byte* detail, nuint detail_len, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_search_provider_retain(IntPtr provider);
+    [DllImport(Lib)] public static extern void wol_search_provider_release(IntPtr provider);
 }

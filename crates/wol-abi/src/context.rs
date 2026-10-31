@@ -95,6 +95,7 @@ pub struct wol_context {
     widgets: Mutex<HashMap<u32, Weak<wol_widget>>>,
     windows: Mutex<HashMap<u32, Weak<wol_window>>>,
     notes: Mutex<HashMap<u32, Weak<wol_notification>>>,
+    search: Mutex<Weak<crate::search::wol_search_provider>>,
     next_id: AtomicU32,
 }
 
@@ -170,6 +171,7 @@ impl wol_context {
             widgets: Mutex::default(),
             windows: Mutex::default(),
             notes: Mutex::default(),
+            search: Mutex::default(),
             next_id: AtomicU32::new(1),
         })
     }
@@ -203,6 +205,14 @@ impl wol_context {
         let mut m = lock(&self.notes);
         m.retain(|_, n| n.strong_count() > 0);
         m.insert(id, Arc::downgrade(n));
+    }
+
+    pub(crate) fn search_provider(&self) -> Option<Arc<crate::search::wol_search_provider>> {
+        lock(&self.search).upgrade()
+    }
+
+    pub(crate) fn set_search_provider(&self, p: &Arc<crate::search::wol_search_provider>) {
+        *lock(&self.search) = Arc::downgrade(p);
     }
 
     pub(crate) fn ensure_bus(&self) -> Result<()> {
@@ -313,6 +323,20 @@ impl wol_context {
         let items: Vec<Incoming> = lock(&self.mailbox.queue).drain(..).collect();
         for item in items {
             match item {
+                Incoming::Event(e) if e.topic.as_str() == "search-query" => {
+                    if let (Some(Event::SearchQuery { id, text, .. }), Some(p)) =
+                        (Event::parse(e.json.as_str()), self.search_provider())
+                    {
+                        crate::search::asked(&p, id, &text);
+                    }
+                }
+                Incoming::Event(e) if e.topic.as_str() == "search-open" => {
+                    if let (Some(Event::SearchOpen { key, .. }), Some(p)) =
+                        (Event::parse(e.json.as_str()), self.search_provider())
+                    {
+                        crate::search::opened(&p, &key);
+                    }
+                }
                 Incoming::Event(e) if e.topic.as_str() == "notification-action" => {
                     if let Some(Event::NotificationAction { id, key, .. }) =
                         Event::parse(e.json.as_str())

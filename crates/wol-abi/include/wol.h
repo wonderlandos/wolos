@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 8
+#define WOL_VERSION_MINOR 9
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -379,6 +379,39 @@ wol_status wol_audio_copy_info(wol_context *context, wol_info **out, wol_error *
 /* 0 to 100. Permission: audio-control. */
 wol_status wol_audio_set_volume(wol_context *context, uint32_t percent, wol_error **error);
 wol_status wol_audio_set_muted(wol_context *context, int32_t muted, wol_error **error);
+
+/* ---- 1.9: search (WOL_1.9) ---- */
+
+/*
+ * Search the apps and Settings pages. Permission: search. Key: results (list of { title, kind }).
+ */
+wol_status wol_search_query(wol_context *context, const char *text, size_t len, wol_info **out,
+                            wol_error **error);
+
+/*
+ * Add rows of your own to Spotlight. Permission: search-provider, and the person is told the app
+ * sees what they type there. One provider per context; it lasts until released or the process ends.
+ * `on_query` adds rows to `reply` and returns; a reply is valid only during that call, and has
+ * at most 32 rows. `on_open` gets the key of a row the person opened and may be NULL. Both run
+ * inside wol_context_dispatch, so dispatch often: a slow app's rows are left out.
+ */
+typedef struct wol_search_provider wol_search_provider;
+typedef struct wol_search_reply wol_search_reply;
+typedef void (*wol_search_fn)(wol_search_provider *provider, wol_search_reply *reply,
+                              const wol_string *text, void *user_data);
+typedef void (*wol_search_open_fn)(wol_search_provider *provider, const wol_string *key,
+                                   void *user_data);
+
+wol_status wol_search_provide(wol_context *context, wol_search_fn on_query,
+                              wol_search_open_fn on_open, void *user_data,
+                              wol_search_provider **out, wol_error **error);
+/* `key` comes back to on_open, up to 128 bytes. `title` and `detail` are one line each. Spotlight
+ * shows them with the app's name, which wold takes from the kernel. */
+wol_status wol_search_reply_add(wol_search_reply *reply, const char *key, size_t key_len,
+                                const char *title, size_t title_len, const char *detail,
+                                size_t detail_len, wol_error **error);
+wol_search_provider *wol_search_provider_retain(wol_search_provider *provider);
+void wol_search_provider_release(wol_search_provider *provider);
 
 #ifdef __cplusplus
 }

@@ -57,6 +57,19 @@ pub enum Event {
         uid: u32,
         id: u32,
     },
+    /// A search for provider process `pid`; `id` goes back in `portal::Call::SearchReply`.
+    SearchQuery {
+        uid: u32,
+        pid: i32,
+        id: u32,
+        text: String,
+    },
+    /// The person opened row `key` of provider process `pid`.
+    SearchOpen {
+        uid: u32,
+        pid: i32,
+        key: String,
+    },
     /// A notification button pressed: reaches only process `pid` (the one that posted `id`).
     NotificationAction {
         uid: u32,
@@ -95,7 +108,9 @@ impl Event {
             Self::Notification { uid, .. }
             | Self::NotificationWithdrawn { uid, .. }
             | Self::SessionAsk { uid, .. } => Audience::Account(*uid),
-            Self::NotificationAction { uid, pid, .. } => Audience::Process {
+            Self::NotificationAction { uid, pid, .. }
+            | Self::SearchQuery { uid, pid, .. }
+            | Self::SearchOpen { uid, pid, .. } => Audience::Process {
                 uid: *uid,
                 pid: *pid,
             },
@@ -119,6 +134,8 @@ impl Event {
             Self::Job { .. } => "job",
             Self::Notification { .. } => "notification",
             Self::NotificationWithdrawn { .. } => "notification-withdrawn",
+            Self::SearchQuery { .. } => "search-query",
+            Self::SearchOpen { .. } => "search-open",
             Self::SessionAsk { .. } => "session-ask",
             Self::NotificationAction { .. } => "notification-action",
         }
@@ -142,6 +159,28 @@ mod tests {
         );
         assert_eq!(Event::parse(&e.to_line()), Some(e));
         assert_eq!(Event::parse("{\"event\":\"nope\"}"), None);
+    }
+
+    #[test]
+    fn a_search_reaches_one_process_and_cannot_be_forged() {
+        let (uid, pid) = (1000, 7);
+        for e in [
+            Event::SearchQuery {
+                uid,
+                pid,
+                id: 1,
+                text: "q".into(),
+            },
+            Event::SearchOpen {
+                uid,
+                pid,
+                key: "k".into(),
+            },
+        ] {
+            assert_eq!(e.audience(), Audience::Process { uid, pid });
+            assert!(!e.client_may_publish());
+            assert_eq!(Event::parse(&e.to_line()), Some(e));
+        }
     }
 
     #[test]

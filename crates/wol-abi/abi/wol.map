@@ -145,3 +145,12 @@ WOL_1.8 {
     wol_audio_set_muted;
     wol_audio_set_volume;
 } WOL_1.7;
+
+WOL_1.9 {
+  global:
+    wol_search_provide;
+    wol_search_provider_release;
+    wol_search_provider_retain;
+    wol_search_query;
+    wol_search_reply_add;
+} WOL_1.8;
