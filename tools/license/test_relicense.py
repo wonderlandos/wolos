@@ -152,6 +152,7 @@ class Relicense(unittest.TestCase):
     def test_brand_license_everywhere_and_no_company(self):
         R.run(self.root, self.pol, apply=True)
         self.assertNotIn("her company", self.read("design/LICENSE"))
+        self.assertEqual(self.read("LICENSES/Wonderland-Brand-1.0.md"), self.read("design/LICENSE"))
         self.assertEqual(self.read("assets/LICENSE"), "brand pointer\n")
         self.assertEqual(self.read("LICENSES/BSD-2-Clause.txt"), "BSD text\n")
         self.assertIn(BRAND, self.read("image/repo/wolos-system/PKGBUILD"))

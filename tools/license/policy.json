@@ -175,6 +175,10 @@
     {
       "from": "tools/license/staged/LICENSE.assets",
       "to": "assets/LICENSE"
+    },
+    {
+      "from": "design/LICENSE",
+      "to": "LICENSES/Wonderland-Brand-1.0.md"
     }
   ]
 }
