@@ -7,7 +7,7 @@ _wk=$(sed -n 's/^wolkernel=//p' "$startdir/../VERSION")
 _linux=$(sed -n 's/^linux=//p' "$startdir/../VERSION")
 epoch=1
 pkgver=$_wk+$_linux
-pkgrel=2
+pkgrel=3
 _ref=f60fabe90ab2b963951f29aecbae33736b63be70
 pkgdesc="Kernel headers sanitized for use in userspace (WolKernel $_wk ($_linux))"
 arch=(any)
