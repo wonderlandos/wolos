@@ -309,6 +309,7 @@ fn doing(capability: &str) -> Option<&'static str> {
         "account-info" => "read your account name",
         "ipc" => "send or receive messages from other apps",
         "devices" => "use connected devices",
+        "share" => "share text",
         _ => return None,
     })
 }
@@ -617,6 +618,10 @@ fn decide<W: Write + Send>(
                 }
                 Err(m) => Answer::err(Code::Unavailable, m),
             }
+        }
+        Call::ShareText { title, text } => {
+            let ask = Ask::Share { title, text };
+            st.asks.ask(bus, caller.uid, ask, PANEL_TIMEOUT)
         }
         Call::SessionAnswer { id, error, data } => {
             let a = match error {

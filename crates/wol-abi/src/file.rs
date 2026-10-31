@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// A little over wold's own wait, so wold's answer arrives first.
-const PANEL_WAIT: Duration = Duration::from_secs(610);
+pub(crate) const PANEL_WAIT: Duration = Duration::from_secs(610);
 
 pub struct wol_file {
     fd: OwnedFd,

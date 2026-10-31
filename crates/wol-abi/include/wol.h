@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 12
+#define WOL_VERSION_MINOR 13
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -479,6 +479,16 @@ wol_status wol_device_copy_list(wol_context *context, wol_info **out, wol_error 
  */
 wol_status wol_device_open(wol_context *context, uint32_t vendor, uint32_t product, wol_file **out,
                            wol_error **error);
+
+/* ---- 1.13: sharing (WOL_1.13) ---- */
+
+/*
+ * Offer up to 24 KiB of text. Permission: share. The desktop shows the person the title and the
+ * text, and they choose to copy it, save it to a file or cancel: blocks until they do. `out` says
+ * which: "copied", "saved" or "cancelled". The app never learns where a file was saved.
+ */
+wol_status wol_share_text(wol_context *context, const char *title, size_t title_len,
+                          const char *text, size_t text_len, wol_string **out, wol_error **error);
 
 #ifdef __cplusplus
 }

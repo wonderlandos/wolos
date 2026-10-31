@@ -138,4 +138,7 @@ LibWol.wol_info_release(info)
 ok LibWol.wol_device_open(ctx, 1133, 2, pointerof(f), pointerof(err))
 puts "opened: #{str(LibWol.wol_file_get_name(f))}"
 LibWol.wol_file_release(f)
+ok LibWol.wol_share_text(ctx, title, title.bytesize, body, body.bytesize, pointerof(text), pointerof(err))
+puts "shared: #{str(text)}"
+LibWol.wol_string_release(text)
 LibWol.wol_context_release(ctx)
