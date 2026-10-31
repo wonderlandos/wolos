@@ -31,6 +31,9 @@ pub enum PackageCall {
     /// System packages from the configured repos (signed; pacman checks them).
     #[serde(rename = "package.change")]
     Change { verb: Verb, names: Vec<String> },
+    /// Update everything except the packages the person pinned.
+    #[serde(rename = "package.update-holding")]
+    UpdateHolding { hold: Vec<String> },
     /// A package built on this machine (AUR, recipe): unreviewed, its own grant.
     #[serde(rename = "package.install-file")]
     InstallFile { path: String },
@@ -75,6 +78,7 @@ impl PackageCall {
             Self::Change {
                 verb: Verb::Update, ..
             } => "packages-update",
+            Self::UpdateHolding { .. } => "packages-update",
             Self::InstallFile { .. } => "packages-unreviewed",
             Self::SystemUpdate { .. } | Self::SystemChannel { .. } | Self::SystemRollback {} => {
                 "packages-update"
@@ -96,6 +100,12 @@ impl PackageCall {
                         "“{}” is not a package name.",
                         n.chars().take(MAX_NAME).collect::<String>()
                     ));
+                }
+                Ok(())
+            }
+            Self::UpdateHolding { hold } => {
+                if hold.len() > MAX_NAMES || !hold.iter().all(|n| name_ok(n)) {
+                    return Err("That is not a list of package names.".into());
                 }
                 Ok(())
             }

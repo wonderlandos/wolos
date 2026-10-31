@@ -52,6 +52,7 @@ wf-recorder
 wl-clipboard
 libnotify
 # Portals / auth / themes / fonts
+archlinux-appstream-data
 xdg-desktop-portal
 xdg-desktop-portal-gtk
 lxqt-policykit

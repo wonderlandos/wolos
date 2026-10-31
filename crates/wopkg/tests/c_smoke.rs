@@ -34,12 +34,13 @@ fn c_program_searches_two_sources() {
     .unwrap();
     std::fs::write(d.join("extra.db"), gz.finish().unwrap()).unwrap();
     std::fs::write(d.join("appstream.xml"), r#"<components><component type="desktop-application"><id>org.mozilla.firefox</id><name>Firefox</name><summary>Browser</summary><bundle type="flatpak">app/org.mozilla.firefox/x86_64/stable</bundle></component></components>"#).unwrap();
+    std::fs::write(d.join("arch.xml"), r#"<components><component type="desktop-application"><id>org.mozilla.firefox</id><pkgname>firefox</pkgname><name>Firefox</name></component></components>"#).unwrap();
     let config = format!(
         r#"{{"home":"{0}","cache_dir":"{0}/cache","state_dir":"{0}/state","pacman_local":"{0}/none"}}"#,
         d.display()
     );
     let req = format!(
-        r#"{{"sources":[{{"name":"extra","kind":"pacman","path":"{0}/extra.db"}},{{"name":"flathub","kind":"flatpak","path":"{0}/appstream.xml"}}]}}"#,
+        r#"{{"sources":[{{"name":"extra","kind":"pacman","path":"{0}/extra.db"}},{{"name":"appstream-extra","kind":"catalog","path":"{0}/arch.xml"}},{{"name":"flathub","kind":"flatpak","path":"{0}/appstream.xml"}}]}}"#,
         d.display()
     );
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -77,7 +78,7 @@ fn c_program_searches_two_sources() {
     let search: serde_json::Value =
         serde_json::from_str(line("search:").trim_start_matches("search: ")).unwrap();
     let r = &search["results"][0];
-    assert_eq!(r["key"], "firefox");
+    assert_eq!(r["key"], "org.mozilla.firefox");
     let kinds: Vec<&str> = r["sources"]
         .as_array()
         .unwrap()

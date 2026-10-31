@@ -97,6 +97,15 @@ pub fn argv(verb: Verb, names: &[String]) -> Vec<String> {
     a
 }
 
+/// A full update that leaves pinned packages where they are.
+pub fn argv_holding(hold: &[String]) -> Vec<String> {
+    let mut a = argv(Verb::Update, &[]);
+    if !hold.is_empty() {
+        a.push(format!("--ignore={}", hold.join(",")));
+    }
+    a
+}
+
 /// Is this call line one of wopkg's (`package.*`, `system.*`)? Everything else is a libwol call.
 pub fn is_package_call(json: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(json.trim())
@@ -153,6 +162,7 @@ pub fn handle(
     };
     match call {
         PackageCall::Change { verb, names } => ran(argv(verb, &names), "The change"),
+        PackageCall::UpdateHolding { hold } => ran(argv_holding(&hold), "The update"),
         PackageCall::InstallFile { path } => match sys.stage(&path, uid) {
             Some(copy) => ran(
                 s(&[WOL, "pkg", "--", "-U", "--noconfirm", "--", &copy]),
@@ -211,6 +221,21 @@ pub fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pinned_package_is_held_through_a_full_update() {
+        let a = argv_holding(&["firefox".into(), "gimp".into()]);
+        assert_eq!(
+            a[a.len() - 3..],
+            ["-Syu", "--noconfirm", "--ignore=firefox,gimp"]
+        );
+        assert!(argv_holding(&[]).last().is_some_and(|x| x == "--noconfirm"));
+        let bad = PackageCall::UpdateHolding {
+            hold: vec!["--root=/x".into()],
+        };
+        assert!(bad.validate().is_err());
+        assert_eq!(bad.grant(), "packages-update");
+    }
     use std::cell::RefCell;
 
     #[derive(Default)]

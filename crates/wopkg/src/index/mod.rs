@@ -17,6 +17,8 @@ pub enum Kind {
     Appimage,
     Recipe,
     Aur,
+    /// Arch's AppStream: which package is which app. Names an app, installs nothing itself.
+    Catalog,
 }
 
 impl Kind {
@@ -28,6 +30,7 @@ impl Kind {
             Kind::Appimage => "appimage",
             Kind::Recipe => "recipe",
             Kind::Aur => "aur",
+            Kind::Catalog => "catalog",
         }
     }
     pub fn parse(s: &str) -> Option<Kind> {
@@ -38,6 +41,7 @@ impl Kind {
             Kind::Appimage,
             Kind::Recipe,
             Kind::Aur,
+            Kind::Catalog,
         ]
         .into_iter()
         .find(|k| k.name() == s)
@@ -127,22 +131,11 @@ impl Record {
             Kind::Flatpak => 4,
             Kind::Appimage => 5,
             Kind::Recipe => 6,
+            Kind::Catalog => 6,
             Kind::Aur => 7,
         }
     }
 }
-
-/// Words a Flatpak id often ends with that do not name the app.
-const GENERIC: [&str; 8] = [
-    "client",
-    "desktop",
-    "app",
-    "application",
-    "gui",
-    "main",
-    "linux",
-    "launcher",
-];
 
 /// Grouping key from a package name: lowercase, AUR packaging suffixes dropped.
 pub fn package_key(name: &str) -> String {
@@ -157,17 +150,10 @@ pub fn package_key(name: &str) -> String {
     n
 }
 
-/// Grouping key of a Flatpak app: the id's last part (`org.mozilla.firefox` -> `firefox`) unless that
-/// is a generic word, then the display name without spaces.
-pub fn flatpak_key(id: &str, name: &str) -> String {
-    let last = id.rsplit('.').next().unwrap_or(id).to_lowercase();
-    if !last.is_empty() && !GENERIC.contains(&last.as_str()) {
-        return last;
-    }
-    name.to_lowercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join("-")
+/// Grouping key of anything with an AppStream id: the id itself, so that two sources are one app
+/// only when their metadata says so. A name alone never joins them.
+pub fn app_key(id: &str) -> String {
+    id.trim_end_matches(".desktop").to_lowercase()
 }
 
 #[cfg(test)]
@@ -193,17 +179,11 @@ mod tests {
     }
 
     #[test]
-    fn keys_group_the_same_app() {
-        let cases = [
-            (package_key("Visual-Studio-Code-Bin"), "visual-studio-code"),
-            (package_key("paru-git"), "paru"),
-            (package_key("-bin"), "-bin"),
-            (flatpak_key("org.mozilla.firefox", "Firefox"), "firefox"),
-            (flatpak_key("com.spotify.Client", "Spotify"), "spotify"),
-            (flatpak_key("org.gnome.Desktop", "GNOME Desk"), "gnome-desk"),
-        ];
-        for (got, want) in cases {
-            assert_eq!(got, want);
-        }
+    fn an_app_key_is_its_appstream_id() {
+        assert_eq!(app_key("org.mozilla.firefox"), "org.mozilla.firefox");
+        assert_eq!(
+            app_key("org.gnome.Calculator.desktop"),
+            "org.gnome.calculator"
+        );
     }
 }

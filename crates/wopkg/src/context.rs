@@ -168,6 +168,7 @@ impl Installed {
             Kind::Wol => self.wol.contains(&r.id),
             Kind::Appimage => self.appimages.contains(&r.name),
             Kind::Recipe => self.recipes.contains(&r.id),
+            Kind::Catalog => self.pacman.contains(&r.id),
         }
     }
 }

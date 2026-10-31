@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
+require "./pins"
 require "json"
 require "http/client"
 require "./core"
@@ -69,6 +70,8 @@ module Wopkg
       when "remove"      then @a.targets.each { |t| remove(t) }
       when "update"      then update
       when "history"     then history
+      when "pin"         then pin(true)
+      when "unpin"       then pin(false)
       when "rollback"    then rollback(@a.targets.first)
       when "channel"     then channel
       when "pause"       then pause
@@ -105,6 +108,7 @@ module Wopkg
           wopkg sync                (-Sy)  refresh the search index
           wopkg list                (-Q)   what is installed
           wopkg history | rollback <id|system>
+          wopkg pin|unpin <name>           keep a package at its version through updates
           wopkg channel [stable|beta|nightly] | pause [days] | resume
           wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg audit <pkg> | wopkg recipe build|install|remove <name>
           wopkg completions zsh|bash|fish
@@ -304,8 +308,39 @@ module Wopkg
     end
 
     # One command for everything: WolOS release, system packages, Flatpaks, AppImages, .wol, recipes.
+    def pin(on : Bool)
+      name = @a.targets.first? || raise UsageError.new("wopkg #{on ? "pin" : "unpin"} <package>")
+      raise UsageError.new("#{name} is not a package name.") unless Aur.valid?(name)
+      Pins.set("#{state}/pins", name, on)
+      say on ? "#{name} stays at its version." : "#{name} updates again."
+    end
+
+    # One installed app, from the source it came from.
+    def update_one(name : String)
+      ensure_index
+      hit = core.info(name)
+      s = hit["sources"].as_a.find(&.["installed"].as_bool) || raise Failure.new(6, "#{name} is not installed.")
+      id = s["id"].as_s
+      raise Failure.new(5, "#{name} is pinned. Run wopkg unpin #{name} first.") if Pins.read("#{state}/pins").includes?(id)
+      case s["kind"].as_s
+      when "pacman"
+        core.system_call({"call" => "package.change", "verb" => "update", "names" => [id]}.to_json)
+      when "flatpak"
+        c = Flatpak.capture(Flatpak.commit_argv(id)).try(&.strip)
+        Flatpak.run(Flatpak.update_argv([id])) || raise Failure.new(3, "Flatpak could not update #{name}.")
+        record("flatpak", "update", id, c, nil, c ? {"type" => "run", "argv" => Flatpak.rollback_argv(id, c)} : nil)
+      else
+        raise Failure.new(6, "#{name} updates with wopkg update.")
+      end
+      say "Updated #{name}."
+    end
+
     def update
+      if (one = @a.targets.first?) && @a.to.nil?
+        return update_one(one)
+      end
       summary = [] of String
+      pins = Pins.read("#{state}/pins")
       (core.index_update(index_request) rescue nil) if @a.only.nil? || want?("pacman")
       if want?("system")
         plan = core.release_plan(({"to" => @a.to}.compact).to_json) rescue nil
@@ -333,7 +368,7 @@ module Wopkg
           summary << "#{n} system package#{n == 1 ? "" : "s"}" if n > 0
         else
           begin
-            core.system_call({"call" => "package.change", "verb" => "update", "names" => [] of String}.to_json)
+            core.system_call((pins.empty? ? {"call" => "package.change", "verb" => "update", "names" => [] of String} : {"call" => "package.update-holding", "hold" => pins}).to_json)
             summary << "system packages"
           rescue e : Failure
             note e.message.to_s unless e.code == 3 && @a.only.nil?
@@ -341,10 +376,11 @@ module Wopkg
         end
       end
       if want?("flatpak") && @a.to.nil? && (ids = Flatpak.capture(Flatpak::UPDATES_ARGV).try { |o| Flatpak.ids(o) }) && !ids.empty?
+        ids -= pins
         summary << "#{ids.size} Flatpak app#{ids.size == 1 ? "" : "s"}"
         unless @a.check
           commits = ids.to_h { |i| {i, Flatpak.capture(Flatpak.commit_argv(i)).try(&.strip)} }
-          if Flatpak.run(Flatpak.update_argv)
+          if !ids.empty? && Flatpak.run(pins.empty? ? Flatpak.update_argv : Flatpak.update_argv(ids))
             commits.each { |i, c| record("flatpak", "update", i, c, nil, c ? {"type" => "run", "argv" => Flatpak.rollback_argv(i, c)} : nil) }
           end
         end

@@ -53,6 +53,10 @@ module Wopkg
     end
 
     # The index update request for libwopkg (`wopkg_index_update`).
+    # Arch's AppStream, the same data GNOME Software reads: which package is which app.
+    CATALOGS = %w(core extra multilib)
+    FLATHUB  = "https://dl.flathub.org/repo/appstream/#{ARCH}/appstream.xml.gz"
+
     def self.request(repos : Array(Repo), appstream : String?, local : Bool, only : Array(String)? = nil) : String
       want = ->(k : String) { only.nil? || only.not_nil!.includes?(k) }
       JSON.build do |j|
@@ -76,8 +80,23 @@ module Wopkg
                   end
                 end
               end
-              if want.call("flatpak") && (fp = appstream)
-                j.object { j.field "name", "flathub"; j.field "kind", "flatpak"; j.field "path", fp }
+              if want.call("flatpak")
+                # Flatpak's own copy when it has one; the same public file otherwise.
+                j.object do
+                  j.field "name", "flathub"
+                  j.field "kind", "flatpak"
+                  if fp = appstream
+                    j.field "path", fp
+                  else
+                    j.field "url", FLATHUB
+                  end
+                end
+              end
+              if want.call("pacman")
+                CATALOGS.each do |r|
+                  path = "/usr/share/swcatalog/xml/#{r}.xml.gz"
+                  j.object { j.field "name", "appstream-#{r}"; j.field "kind", "catalog"; j.field "path", path } if File.exists?(path)
+                end
               end
               j.object { j.field "name", "aur"; j.field "kind", "aur"; j.field "url", AUR } if want.call("aur")
               j.object { j.field "name", "appimagehub"; j.field "kind", "appimage"; j.field "url", APPIMAGE } if want.call("appimage")

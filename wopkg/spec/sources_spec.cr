@@ -28,7 +28,7 @@ describe Wopkg::Sources do
     j = JSON.parse(Wopkg::Sources.request(repos, nil, false))
     j["prune"].as_bool.should be_true
     j["sources"][0]["url"].should eq("https://m/core/os/x86_64/core.db")
-    j["sources"].as_a.map(&.["kind"].as_s).should eq(%w(pacman aur appimage wol))
+    j["sources"].as_a.map(&.["kind"].as_s).should eq(%w(pacman flatpak aur appimage wol))
     k = JSON.parse(Wopkg::Sources.request(repos, nil, false, ["aur"]))
     k["prune"].as_bool.should be_false
     k["sources"].as_a.map(&.["name"].as_s).should eq(["aur"])

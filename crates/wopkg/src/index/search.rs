@@ -1,7 +1,7 @@
 //! Unified search: substring scan per segment, one ranked result per app (grouping key) with every
 //! source that has it, best source first.
-use super::Record;
 use super::segment::Segment;
+use super::{Kind, Record};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -84,10 +84,45 @@ pub fn search(
     }
     let joined = tokens.join(" ");
     let mut groups: HashMap<String, Hit> = HashMap::new();
+    // Arch's AppStream says which package is which app; nothing else joins two sources.
+    let mut app_of: HashMap<String, String> = HashMap::new();
+    for seg in segments {
+        if seg.record(0).is_some_and(|r| r.kind == Kind::Catalog) {
+            for r in (0..seg.len()).filter_map(|i| seg.record(i)) {
+                app_of.insert(r.id, r.key);
+            }
+        }
+    }
+    let packages = std::cell::OnceCell::new();
+    let package = |id: &str| -> Option<Record> {
+        let at: &HashMap<&str, (usize, usize)> = packages.get_or_init(|| {
+            let mut at = HashMap::new();
+            for (n, seg) in segments.iter().enumerate() {
+                if seg.record(0).is_some_and(|r| r.kind == Kind::Pacman) {
+                    at.extend((0..seg.len()).map(|i| (seg.name(i), (n, i))));
+                }
+            }
+            at
+        });
+        let &(n, i) = at.get(id)?;
+        segments[n].record(i)
+    };
     for seg in segments {
         for i in matches(seg, &tokens) {
-            let Some(r) = seg.record(i) else { continue };
+            let Some(mut r) = seg.record(i) else { continue };
             let s = score(&r, &joined);
+            // A catalogue hit stands for its package, found by the name people know it by.
+            if r.kind == Kind::Catalog {
+                match package(&r.id) {
+                    Some(real) => r = real,
+                    None => continue,
+                }
+            }
+            if r.kind == Kind::Pacman
+                && let Some(k) = app_of.get(&r.id)
+            {
+                r.key = k.clone();
+            }
             let src = Source {
                 installed: installed(&r),
                 record: r,
@@ -131,6 +166,9 @@ pub fn search(
 pub fn complete(segments: &[Segment], prefix: &str, limit: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for seg in segments {
+        if seg.record(0).is_some_and(|r| r.kind == Kind::Catalog) {
+            continue;
+        }
         for i in 0..seg.len() {
             let n = seg.name(i);
             if n.starts_with(prefix) && !n.contains(' ') {
@@ -146,8 +184,67 @@ pub fn complete(segments: &[Segment], prefix: &str, limit: usize) -> Vec<String>
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Kind, segment};
+    use super::super::segment;
     use super::*;
+
+    #[test]
+    fn two_sources_are_one_app_only_when_appstream_says_so() {
+        let d = crate::testutil::temp("search-ids");
+        let write = |name: &str, recs: Vec<Record>| {
+            segment::write(&d.join(name), "t", &recs).unwrap();
+            Segment::open(&d.join(name)).unwrap()
+        };
+        let segs = vec![
+            write(
+                "extra",
+                vec![
+                    rec(Kind::Pacman, "extra", "gimp", "gimp", "gimp", "Editor"),
+                    rec(Kind::Pacman, "extra", "krita", "krita", "krita", "Painter"),
+                ],
+            ),
+            write(
+                "flathub",
+                vec![
+                    rec(
+                        Kind::Flatpak,
+                        "flathub",
+                        "GIMP",
+                        "org.gimp.GIMP",
+                        "org.gimp.gimp",
+                        "Editor",
+                    ),
+                    rec(
+                        Kind::Flatpak,
+                        "flathub",
+                        "Krita",
+                        "org.kde.krita",
+                        "org.kde.krita",
+                        "Painter",
+                    ),
+                ],
+            ),
+            write(
+                "appstream-extra",
+                vec![rec(
+                    Kind::Catalog,
+                    "extra",
+                    "GNU Image Manipulation Program",
+                    "gimp",
+                    "org.gimp.gimp",
+                    "Editor",
+                )],
+            ),
+        ];
+        let hits = search(&segs, "gimp", 10, &|_| false);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].sources.len(), 2, "{hits:?}");
+        // Same word, no metadata tying them: two entries, never a guess.
+        assert_eq!(search(&segs, "krita", 10, &|_| false).len(), 2);
+        // The name people know finds the package.
+        let by_name = search(&segs, "manipulation", 10, &|_| false);
+        assert_eq!(by_name[0].sources[0].record.id, "gimp");
+        assert_eq!(by_name[0].sources[0].record.kind, Kind::Pacman);
+    }
 
     fn rec(kind: Kind, repo: &str, name: &str, id: &str, key: &str, summary: &str) -> Record {
         Record {

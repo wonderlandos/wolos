@@ -1,7 +1,7 @@
 //! Source inputs -> records: pacman sync databases (tar, gzip or zstd), Flathub AppStream XML
 //! (`.gz` or plain), the AUR metadata dump (`packages-meta-v1.json[.gz]`), the `.wol` index
 //! (`index.json`, ADR 0011), the recipe index and the AppImage feed.
-use super::{Kind, Record, flatpak_key, package_key};
+use super::{Kind, Record, app_key, package_key};
 use crate::ffi::{Error, Result};
 use std::io::{BufReader, Read};
 
@@ -160,13 +160,59 @@ fn entity(name: &str) -> String {
 
 /// Flathub AppStream (`appstream.xml[.gz]`): desktop and console applications.
 pub fn appstream(remote: &str, bytes: &[u8]) -> Result<Vec<Record>> {
+    Ok(components(bytes)?
+        .into_iter()
+        .filter_map(|(id, name, summary, version, bundle, _)| {
+            // Flatpak ref `app/<id>/<arch>/<branch>` names the installable id.
+            let app = bundle
+                .split('/')
+                .nth(1)
+                .map(str::to_owned)
+                .unwrap_or_else(|| id.trim_end_matches(".desktop").to_owned());
+            (!app.is_empty()).then(|| Record {
+                kind: Kind::Flatpak,
+                repo: remote.into(),
+                key: app_key(&id),
+                name: if name.is_empty() { app.clone() } else { name },
+                id: app,
+                version,
+                summary,
+                votes: 0,
+            })
+        })
+        .collect())
+}
+
+/// Arch's AppStream (`/usr/share/swcatalog/xml/<repo>.xml.gz`): each component names its package.
+pub fn arch_appstream(source: &str, bytes: &[u8]) -> Result<Vec<Record>> {
+    let repo = source.strip_prefix("appstream-").unwrap_or(source);
+    Ok(components(bytes)?
+        .into_iter()
+        .filter(|c| !c.0.is_empty() && !c.5.is_empty())
+        .map(|(id, name, summary, version, _, pkg)| Record {
+            kind: Kind::Catalog,
+            repo: repo.into(),
+            key: app_key(&id),
+            name: if name.is_empty() { pkg.clone() } else { name },
+            id: pkg,
+            version,
+            summary,
+            votes: 0,
+        })
+        .collect())
+}
+
+type Component = (String, String, String, String, String, String);
+
+/// AppStream's applications: id, name, summary, version, bundle, package name, trimmed.
+fn components(bytes: &[u8]) -> Result<Vec<Component>> {
     use quick_xml::events::Event;
     let xml = decompress(bytes)?;
     let mut r = quick_xml::Reader::from_reader(BufReader::new(&xml[..]));
     let mut buf = Vec::new();
     let mut out = Vec::new();
     let (mut depth, mut comp_depth) = (0usize, None::<usize>);
-    let mut cur: Option<(String, String, String, String, String)> = None; // id name summary version bundle
+    let mut cur: Option<Component> = None; // id name summary version bundle
     let mut field: Option<&'static str> = None;
     loop {
         match r.read_event_into(&mut buf) {
@@ -193,13 +239,14 @@ pub fn appstream(remote: &str, bytes: &[u8]) -> Result<Vec<Record>> {
                             cur = Some(Default::default());
                         }
                     }
-                    b"id" | b"name" | b"summary" | b"bundle"
+                    b"id" | b"name" | b"summary" | b"bundle" | b"pkgname"
                         if comp_depth == Some(depth - 1) && !lang =>
                     {
                         let f = match n.as_ref() {
                             b"id" => "id",
                             b"name" => "name",
                             b"summary" => "summary",
+                            b"pkgname" => "pkgname",
                             _ => "bundle",
                         };
                         // Only the first untranslated element of each kind counts.
@@ -208,6 +255,7 @@ pub fn appstream(remote: &str, bytes: &[u8]) -> Result<Vec<Record>> {
                                 "id" => &c.0,
                                 "name" => &c.1,
                                 "summary" => &c.2,
+                                "pkgname" => &c.5,
                                 _ => &c.4,
                             }
                             .is_empty()
@@ -218,7 +266,10 @@ pub fn appstream(remote: &str, bytes: &[u8]) -> Result<Vec<Record>> {
                     b"release" => {
                         if let Some(c) = cur.as_mut()
                             && c.3.is_empty()
-                            && let Some(v) = e.attributes().flatten().find(|a| a.key.as_ref() == b"version")
+                            && let Some(v) = e
+                                .attributes()
+                                .flatten()
+                                .find(|a| a.key.as_ref() == b"version")
                         {
                             c.3 = String::from_utf8_lossy(&v.value).into_owned();
                         }
@@ -249,6 +300,7 @@ pub fn appstream(remote: &str, bytes: &[u8]) -> Result<Vec<Record>> {
                         "id" => &mut c.0,
                         "name" => &mut c.1,
                         "summary" => &mut c.2,
+                        "pkgname" => &mut c.5,
                         _ => &mut c.4,
                     };
                     slot.push_str(&s);
@@ -257,32 +309,9 @@ pub fn appstream(remote: &str, bytes: &[u8]) -> Result<Vec<Record>> {
             Ok(Event::End(e)) => {
                 field = None;
                 if e.name().as_ref() == b"component" && comp_depth == Some(depth) {
-                    if let Some((id, name, summary, version, bundle)) = cur.take() {
-                        let (id, name, summary, bundle) = (
-                            id.trim().to_owned(),
-                            name.trim().to_owned(),
-                            summary.trim().to_owned(),
-                            bundle.trim().to_owned(),
-                        );
-                        // Flatpak ref `app/<id>/<arch>/<branch>` names the installable id.
-                        let app = bundle
-                            .split('/')
-                            .nth(1)
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| id.trim_end_matches(".desktop").to_owned());
-                        if !app.is_empty() {
-                            let name = if name.is_empty() { app.clone() } else { name };
-                            out.push(Record {
-                                kind: Kind::Flatpak,
-                                repo: remote.into(),
-                                key: flatpak_key(&app, &name),
-                                name,
-                                id: app,
-                                version,
-                                summary,
-                                votes: 0,
-                            });
-                        }
+                    if let Some((id, name, summary, version, bundle, pkg)) = cur.take() {
+                        let t = |x: String| x.trim().to_owned();
+                        out.push((t(id), t(name), t(summary), version, t(bundle), t(pkg)));
                     }
                     comp_depth = None;
                 }
@@ -510,6 +539,18 @@ mod tests {
     }
 
     #[test]
+    fn arch_appstream_ties_an_app_to_its_package() {
+        let xml = br#"<components><component type="desktop-application"><id>org.gimp.GIMP.desktop</id><pkgname>gimp</pkgname><name>GNU Image Manipulation Program</name><summary>Edit images</summary></component><component type="desktop-application"><id>no.package</id><name>X</name></component></components>"#;
+        let r = arch_appstream("appstream-extra", xml).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            (r[0].id.as_str(), r[0].key.as_str(), r[0].repo.as_str()),
+            ("gimp", "org.gimp.gimp", "extra")
+        );
+        assert_eq!(r[0].kind, Kind::Catalog);
+    }
+
+    #[test]
     fn flathub_appstream() {
         let xml = r#"<?xml version="1.0"?><components origin="flathub">
 <component type="desktop-application"><id>org.mozilla.firefox</id><name>Firefox</name><name xml:lang="de">Feuerfuchs</name>
@@ -524,11 +565,11 @@ mod tests {
         assert_eq!(r[0].summary, "Fast, Private & Safe Web Browser");
         assert_eq!(
             (r[0].id.as_str(), r[0].version.as_str(), r[0].key.as_str()),
-            ("org.mozilla.firefox", "140.0", "firefox")
+            ("org.mozilla.firefox", "140.0", "org.mozilla.firefox")
         );
         assert_eq!(
             (r[1].id.as_str(), r[1].key.as_str()),
-            ("com.spotify.Client", "spotify")
+            ("com.spotify.Client", "com.spotify.client")
         );
     }
 

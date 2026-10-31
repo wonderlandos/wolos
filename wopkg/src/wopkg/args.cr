@@ -25,6 +25,7 @@ module Wopkg
       "list" => "list", "ls" => "list",
       "sync" => "sync", "refresh" => "sync",
       "sources" => "sources", "history" => "history",
+      "pin" => "pin", "unpin" => "unpin",
       "rollback" => "rollback", "undo" => "rollback",
       "channel" => "channel", "pause" => "pause", "resume" => "resume",
       "appimage" => "appimage", "aur" => "aur", "audit" => "audit", "recipe" => "recipe",

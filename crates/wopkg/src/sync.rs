@@ -67,6 +67,7 @@ pub fn build(kind: Kind, name: &str, bytes: &[u8]) -> Result<Vec<crate::index::R
     match kind {
         Kind::Pacman => parse::pacman_db(name, bytes),
         Kind::Flatpak => parse::appstream(name, bytes),
+        Kind::Catalog => parse::arch_appstream(name, bytes),
         Kind::Aur => parse::aur(bytes),
         Kind::Wol => parse::wol_index(bytes),
         Kind::Recipe => parse::recipes(bytes),
