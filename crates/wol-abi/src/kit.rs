@@ -5,6 +5,7 @@
 //! recorded (the host already shows it).
 use crate::context::{lock, wol_context};
 use crate::error::{Error, Result, Status, UserData, guard, input, need, wol_error, wol_status};
+use crate::menu::{wol_menu, wol_toolbar};
 use crate::string::{borrow, into_raw, release, retain, wol_string};
 use shared::view::{FromHost, IMAGE_SIZES, MAX_TEXT, MAX_TITLE, Node, Role, SPACING, ToHost};
 use std::ffi::{c_char, c_void};
@@ -77,6 +78,8 @@ pub struct wol_window {
     content: Mutex<Option<Arc<wol_widget>>>,
     shown: AtomicBool,
     on_close: Mutex<Callback<wol_window>>,
+    menus: Mutex<Vec<Arc<wol_menu>>>,
+    toolbar: Mutex<Option<Arc<wol_toolbar>>>,
 }
 
 impl wol_window {
@@ -185,6 +188,49 @@ fn refresh(w: &wol_widget) {
     }
 }
 
+/// Redraw `win` if it is on screen (see [`refresh`]).
+pub(crate) fn refresh_window(win: &Arc<wol_window>) {
+    if win.shown.load(Ordering::Acquire) {
+        let _ = show(win);
+    }
+}
+
+pub(crate) fn add_menu(win: &Arc<wol_window>, menu: Arc<wol_menu>) -> Result<()> {
+    if lock(&win.menus).len() >= shared::view::MAX_MENUS {
+        return Err(Error::invalid(format!(
+            "A window has at most {} menus.",
+            shared::view::MAX_MENUS
+        )));
+    }
+    menu.attach(win)?;
+    lock(&win.menus).push(menu);
+    refresh_window(win);
+    Ok(())
+}
+
+pub(crate) fn set_toolbar(win: &Arc<wol_window>, toolbar: Option<Arc<wol_toolbar>>) -> Result<()> {
+    if let Some(t) = &toolbar {
+        t.attach(win)?;
+    }
+    if let Some(old) = std::mem::replace(&mut *lock(&win.toolbar), toolbar) {
+        old.detach();
+    }
+    refresh_window(win);
+    Ok(())
+}
+
+/// The person chose a menu item or a toolbar button of `win`.
+pub(crate) fn chosen(win: &Arc<wol_window>, source: u32, key: &str) {
+    let menu = lock(&win.menus).iter().find(|m| m.id() == source).cloned();
+    if let Some(m) = menu {
+        return crate::menu::menu_chosen(&m, key);
+    }
+    let toolbar = lock(&win.toolbar).clone().filter(|t| t.id() == source);
+    if let Some(t) = toolbar {
+        crate::menu::toolbar_chosen(&t, key);
+    }
+}
+
 /// Something the person did in the host: record it, then run the part's callback.
 pub(crate) fn from_host(w: &Arc<wol_widget>, e: &FromHost) {
     let cb = {
@@ -278,10 +324,15 @@ fn show(win: &Arc<wol_window>) -> Result<()> {
             children: Vec::new(),
         });
     content.validate().map_err(Error::invalid)?;
+    let menus: Vec<_> = lock(&win.menus).iter().map(|m| m.data()).collect();
+    let toolbar = lock(&win.toolbar).as_ref().map(|t| t.data());
+    shared::view::validate_chrome(&menus, toolbar.as_ref()).map_err(Error::invalid)?;
     let m = ToHost::Show {
         window: win.id,
         title: win.title.clone(),
         content,
+        menus,
+        toolbar,
     };
     win.context.send_kit(&m.to_line())?;
     win.context.register_window(win);
@@ -315,6 +366,8 @@ pub unsafe extern "C" fn wol_window_create(
             content: Mutex::default(),
             shown: AtomicBool::new(false),
             on_close: Mutex::default(),
+            menus: Mutex::default(),
+            toolbar: Mutex::default(),
         };
         unsafe { *out = into_raw(Arc::new(w)) };
         Ok(())

@@ -18,7 +18,10 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 6] = [
+const SEEDS: [&str; 9] = [
+    r#"{"call":"notification.replace","id":3,"title":"Two","body":"of five"}"#,
+    r#"{"call":"notification.withdraw","id":3}"#,
+    r#"{"op":"show","window":1,"title":"T","content":{"type":"spacer"},"menus":[{"id":2,"title":"File","entries":[{"type":"item","key":"open","label":"Open","shortcut":"cmd+o"},{"type":"separator"}]}],"toolbar":{"id":3,"tools":[{"type":"button","key":"save","label":"Save"},{"type":"spacer"}]}}"#,
     r#"{"call":"notification.post","title":"Build done","body":"3 warnings\nsee log"}"#,
     r#"{"call":"notification.post","title":"Hi"}"#,
     r#"{"op":"show","window":1,"title":"Hello","content":{"type":"stack","spacing":8,"children":[{"type":"label","text":"Hi","role":"title"},{"type":"button","id":1,"label":"OK"}]}}"#,

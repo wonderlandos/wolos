@@ -41,6 +41,14 @@ pub enum Event {
         id: u32,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         actions: Vec<crate::portal::NoteAction>,
+        /// New text for notification `id`, which is already showing.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        replace: bool,
+    },
+    /// The app took notification `id` back: same audience as [`Event::Notification`].
+    NotificationWithdrawn {
+        uid: u32,
+        id: u32,
     },
     /// A notification button pressed: reaches only process `pid` (the one that posted `id`).
     NotificationAction {
@@ -77,7 +85,9 @@ impl Event {
 
     pub fn audience(&self) -> Audience {
         match self {
-            Self::Notification { uid, .. } => Audience::Account(*uid),
+            Self::Notification { uid, .. } | Self::NotificationWithdrawn { uid, .. } => {
+                Audience::Account(*uid)
+            }
             Self::NotificationAction { uid, pid, .. } => Audience::Process {
                 uid: *uid,
                 pid: *pid,
@@ -101,6 +111,7 @@ impl Event {
             Self::Theme { .. } => "theme",
             Self::Job { .. } => "job",
             Self::Notification { .. } => "notification",
+            Self::NotificationWithdrawn { .. } => "notification-withdrawn",
             Self::NotificationAction { .. } => "notification-action",
         }
     }
@@ -134,9 +145,17 @@ mod tests {
             body: String::new(),
             id: 1,
             actions: Vec::new(),
+            replace: false,
         };
         assert_eq!(n.audience(), Audience::Account(1000));
         assert!(!n.client_may_publish());
+        assert!(
+            !n.to_line().contains("replace"),
+            "1.1 wire unchanged for a first post"
+        );
+        let gone = Event::NotificationWithdrawn { uid: 1000, id: 1 };
+        assert_eq!(gone.audience(), Audience::Account(1000));
+        assert!(!gone.client_may_publish());
         let a = Event::NotificationAction {
             uid: 1000,
             pid: 42,
@@ -150,7 +169,7 @@ mod tests {
             (w.audience(), w.client_may_publish()),
             (Audience::Everyone, true)
         );
-        for e in [n, a, w] {
+        for e in [n, a, w, gone] {
             let line = e.to_line();
             assert!(
                 line.contains(&format!("\"event\":\"{}\"", e.topic())),

@@ -1,6 +1,8 @@
 //! Notifications: a service call. wold checks the app's permission and hands the notification to
 //! the person's session; libwol only validates and asks. A pressed button comes back from wold as
 //! a `notification-action` event for this process only, and runs the handler inside dispatch.
+//! Replacing and withdrawing are service calls too: wold allows them only to the process that
+//! posted the notification.
 use crate::client;
 use crate::context::{lock, wol_context};
 use crate::error::{Error, Result, Status, UserData, guard, input, need, wol_error, wol_status};
@@ -11,6 +13,7 @@ use shared::portal::{
     action_key_ok,
 };
 use std::ffi::{c_char, c_void};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A button was pressed: the notification and the button's key (borrowed for the call).
@@ -19,8 +22,10 @@ pub type wol_action_fn =
 
 pub struct wol_notification {
     context: Arc<wol_context>,
-    title: String,
-    body: String,
+    title: Mutex<String>,
+    body: Mutex<String>,
+    /// wold's id once sent; 0 before that and after a withdraw.
+    id: AtomicU32,
     actions: Mutex<Vec<NoteAction>>,
     handler: Mutex<
         Option<(
@@ -108,8 +113,9 @@ pub unsafe extern "C" fn wol_notification_create(
         let body = input(body, body_len, MAX_BODY, "The body")?.to_owned();
         let n = wol_notification {
             context,
-            title,
-            body,
+            title: Mutex::new(title),
+            body: Mutex::new(body),
+            id: AtomicU32::new(0),
             actions: Mutex::default(),
             handler: Mutex::default(),
         };
@@ -192,9 +198,74 @@ pub unsafe extern "C" fn wol_notification_send(
         if !actions.is_empty() {
             n.context.ensure_bus()?;
         }
-        let id = post(&n.context, &n.title, &n.body, actions)?;
+        let (title, body) = (lock(&n.title).clone(), lock(&n.body).clone());
+        let id = post(&n.context, &title, &body, actions)?;
         if id != 0 {
             n.context.register_note(id, &n);
+        }
+        n.id.store(id, Ordering::Release);
+        Ok(())
+    })
+}
+
+/// New text. A notification already sent changes on screen, buttons kept; one not sent yet just
+/// has the new text when it is sent.
+///
+/// # Safety
+/// `notification` is live; `title`/`body` point at their lengths in bytes (or are NULL with 0);
+/// `error` writable or NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_notification_replace(
+    notification: *mut wol_notification,
+    title: *const c_char,
+    title_len: usize,
+    body: *const c_char,
+    body_len: usize,
+    error: *mut *mut wol_error,
+) -> wol_status {
+    guard(error, || {
+        let n = unsafe { borrow(notification) }?;
+        let title = input(title, title_len, MAX_TITLE, "The title")?;
+        let body = input(body, body_len, MAX_BODY, "The body")?;
+        let id = n.id.load(Ordering::Acquire);
+        if id != 0 {
+            let a = client::call(
+                n.context.wold(),
+                &Call::NotificationReplace {
+                    id,
+                    title: title.into(),
+                    body: body.into(),
+                    actions: lock(&n.actions).clone(),
+                },
+            );
+            if !a.ok {
+                return Err(answer_error(a));
+            }
+        }
+        *lock(&n.title) = title.into();
+        *lock(&n.body) = body.into();
+        Ok(())
+    })
+}
+
+/// Take it off the screen and out of Notification Center. Doing nothing if it was never sent.
+///
+/// # Safety
+/// `notification` is live; `error` writable or NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_notification_withdraw(
+    notification: *mut wol_notification,
+    error: *mut *mut wol_error,
+) -> wol_status {
+    guard(error, || {
+        let n = unsafe { borrow(notification) }?;
+        let id = n.id.swap(0, Ordering::AcqRel);
+        if id != 0 {
+            let a = client::call(n.context.wold(), &Call::NotificationWithdraw { id });
+            if !a.ok {
+                n.id.store(id, Ordering::Release);
+                return Err(answer_error(a));
+            }
         }
         Ok(())
     })

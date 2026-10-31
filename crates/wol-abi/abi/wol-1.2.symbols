@@ -1,0 +1,18 @@
+# libwol 1.2 exports (WOL_1.2). Never edit a shipped line.
+wol_menu_add_item@WOL_1.2
+wol_menu_add_separator@WOL_1.2
+wol_menu_create@WOL_1.2
+wol_menu_release@WOL_1.2
+wol_menu_retain@WOL_1.2
+wol_menu_set_checked@WOL_1.2
+wol_menu_set_enabled@WOL_1.2
+wol_notification_replace@WOL_1.2
+wol_notification_withdraw@WOL_1.2
+wol_toolbar_add_button@WOL_1.2
+wol_toolbar_add_spacer@WOL_1.2
+wol_toolbar_create@WOL_1.2
+wol_toolbar_release@WOL_1.2
+wol_toolbar_retain@WOL_1.2
+wol_toolbar_set_enabled@WOL_1.2
+wol_window_add_menu@WOL_1.2
+wol_window_set_toolbar@WOL_1.2
