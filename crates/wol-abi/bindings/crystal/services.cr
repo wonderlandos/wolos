@@ -84,4 +84,10 @@ puts "held"
 ok LibWol.wol_network_copy_info(ctx, pointerof(info), pointerof(err))
 puts "online: #{LibWol.wol_info_get_bool(field(info, "online"))} #{str(LibWol.wol_info_get_text(field(LibWol.wol_info_get_item(field(info, "interfaces"), 0), "kind")))}"
 LibWol.wol_info_release(info)
+ok LibWol.wol_audio_copy_info(ctx, pointerof(info), pointerof(err))
+LibWol.wol_info_get_number(field(info, "volume"), pointerof(percent))
+puts "volume: #{percent.to_i} #{str(LibWol.wol_info_get_text(field(field(info, "now_playing"), "title")))}"
+LibWol.wol_info_release(info)
+ok LibWol.wol_audio_set_volume(ctx, 30, pointerof(err))
+ok LibWol.wol_audio_set_muted(ctx, 1, pointerof(err))
 LibWol.wol_context_release(ctx)

@@ -138,3 +138,10 @@ WOL_1.7 {
   global:
     wol_network_copy_info;
 } WOL_1.6;
+
+WOL_1.8 {
+  global:
+    wol_audio_copy_info;
+    wol_audio_set_muted;
+    wol_audio_set_volume;
+} WOL_1.7;

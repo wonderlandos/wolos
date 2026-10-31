@@ -28,6 +28,9 @@ fn answer(c: &Call) -> Answer {
         Call::NetworkInfo {} => Answer::with(json!({
             "online": true, "interfaces": [{"name": "eth0", "kind": "ethernet", "up": true}]
         })),
+        Call::AudioInfo {} => Answer::with(json!({
+            "volume": 40, "muted": false, "now_playing": {"title": "Song", "playing": true}
+        })),
         _ => Answer::ok(),
     }
 }
@@ -84,6 +87,7 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "battery: 71 1",
             "held",
             "online: 1 ethernet",
+            "volume: 40 Song",
         ]
     );
     let names: Vec<String> = calls
@@ -112,6 +116,9 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "power.info",
             "power.keep-awake",
             "network.info",
+            "audio.info",
+            "audio.set-volume",
+            "audio.set-muted",
         ]
     );
 }

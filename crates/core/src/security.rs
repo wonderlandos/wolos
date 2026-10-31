@@ -234,6 +234,16 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "apps ask WolOS whether the computer is online, which checks your choice first and never says where you are",
     ),
+    (
+        "audio-info",
+        Enforcement::System,
+        "apps ask WolOS for the volume and what is playing, which checks your choice first",
+    ),
+    (
+        "audio-control",
+        Enforcement::System,
+        "apps ask WolOS to change the volume, which checks your choice first",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

@@ -43,7 +43,7 @@ Build: `cargo build --release -p wol-abi`, then `crates/wol-abi/link.sh target/r
 | 9 | search: Spotlight providers and queries | `wol_search_` | |
 | 10 | power: battery, power source, keep-awake assertions, Low Power Mode | `wol_power_` | 1.6 `_copy_info` (grant `power-info`), `_keep_awake` and `wol_assertion_` (grant `keep-awake`): a logind inhibitor that lasts as long as the app's connection to wold |
 | 11 | network: reachability, interfaces, Wi-Fi state | `wol_network_` | 1.7 `_copy_info`: grant `network-info`; online, and interface names and kinds, never an address or a network name |
-| 12 | audio: output, volume, now playing | `wol_audio_` | |
+| 12 | audio: output, volume, now playing | `wol_audio_` | 1.8 `_copy_info` (grant `audio-info`), `_set_volume`, `_set_muted` (grant `audio-control`), run by the desktop |
 | 13 | devices: USB, Bluetooth, iPhone | `wol_device_` | per-device grant |
 | 14 | sharing and WolConnect: share sheet, nearby devices | `wol_share_` | |
 | 15 | services: the app's background jobs (wold, per account) | `wol_service_` | grant `background` |

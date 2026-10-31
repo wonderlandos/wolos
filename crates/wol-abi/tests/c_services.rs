@@ -178,3 +178,20 @@ fn network() {
     assert_eq!(out, ["online: 1 1", "wlan0 wifi", "null out: 1"]);
     assert_eq!(calls, [Call::NetworkInfo {}]);
 }
+
+#[test]
+fn audio() {
+    let (out, calls) = run("audio", |c, _| match c {
+        Call::AudioInfo {} => Answer::with(json!({"volume": 55, "muted": true})),
+        _ => Answer::ok(),
+    });
+    assert_eq!(out, ["volume: 55 1 0", "set", "too loud: 1"]);
+    assert_eq!(
+        calls,
+        [
+            Call::AudioInfo {},
+            Call::AudioSetVolume { percent: 20 },
+            Call::AudioSetMuted { muted: false },
+        ]
+    );
+}
