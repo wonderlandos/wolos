@@ -11,12 +11,16 @@
 #                                which the installer may pick on matching CPUs. native = this machine only.
 #   _cc_o3=y                     -O3 instead of -O2 (larger kernel; measure before shipping).
 #   _use_llvm_lto=none|thin|full Clang + LLVM (LLVM=1) with ThinLTO or full LTO.
+#   _autofdo_profile=FILE        AutoFDO sample profile (llvm-profgen --kernel); needs _use_llvm_lto=thin|full.
+#   _propeller_prefix=PATH       Propeller profiles PATH_cc_profile.txt and PATH_ld_profile.txt; needs _use_llvm_lto=thin|full.
 #   _localmodcfg=y               developer build: only the modules in modprobed.db (~/.config/modprobed.db,
 #                                or $_modprobed_db), else the ones loaded now (localmodconfig). Minutes, not hours.
 # ccache is used when installed (CCACHE_DIR as usual). MAKEFLAGS defaults to -j$(nproc).
 _march=${_march:-generic}
 _cc_o3=${_cc_o3:-}
 _use_llvm_lto=${_use_llvm_lto:-none}
+_autofdo_profile=${_autofdo_profile:-}
+_propeller_prefix=${_propeller_prefix:-}
 _localmodcfg=${_localmodcfg:-}
 _modprobed_db=${_modprobed_db:-$HOME/.config/modprobed.db}
 export MAKEFLAGS=${MAKEFLAGS:--j$(nproc)}
@@ -49,7 +53,9 @@ _make() {
   if [ "$_use_llvm_lto" = none ]; then
     make CC="$_cc" KCFLAGS="$_kcflags" KRUSTFLAGS="${_krust:-}" "$@"
   else
-    make LLVM=1 LLVM_IAS=1 CC="$_cc" KCFLAGS="$_kcflags" KRUSTFLAGS="${_krust:-}" "$@"
+    make LLVM=1 LLVM_IAS=1 CC="$_cc" KCFLAGS="$_kcflags" KRUSTFLAGS="${_krust:-}" \
+      ${_autofdo_profile:+CLANG_AUTOFDO_PROFILE="$_autofdo_profile"} \
+      ${_propeller_prefix:+CLANG_PROPELLER_PROFILE_PREFIX="$_propeller_prefix"} "$@"
   fi
 }
 _commit=$(<"$startdir/ref")
@@ -78,6 +84,8 @@ prepare() {
     thin) scripts/config -d LTO_NONE -e LTO_CLANG_THIN ;;
     full) scripts/config -d LTO_NONE -e LTO_CLANG_FULL ;;
   esac
+  [ -z "$_autofdo_profile" ] || scripts/config -e AUTOFDO_CLANG
+  [ -z "$_propeller_prefix" ] || scripts/config -e PROPELLER_CLANG
   if [ -n "$_localmodcfg" ]; then
     if [ -f "$_modprobed_db" ]; then _make LSMOD="$_modprobed_db" localmodconfig </dev/null
     else _make localmodconfig </dev/null; fi

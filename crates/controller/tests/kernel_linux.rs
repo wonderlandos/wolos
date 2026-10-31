@@ -487,6 +487,22 @@ fn recipe_has_build_flavours_and_fast_developer_builds() {
     }
 }
 
+/// A branch profile feeds the next build: AutoFDO and Propeller stay off without one.
+#[test]
+fn recipe_takes_autofdo_and_propeller_profiles() {
+    let p = read("kernel/linux-wolos/PKGBUILD");
+    for want in [
+        "_autofdo_profile=${_autofdo_profile:-}",
+        "_propeller_prefix=${_propeller_prefix:-}",
+        "-e AUTOFDO_CLANG",
+        "-e PROPELLER_CLANG",
+        "CLANG_AUTOFDO_PROFILE=",
+        "CLANG_PROPELLER_PROFILE_PREFIX=",
+    ] {
+        assert!(p.contains(want), "PKGBUILD lacks {want}");
+    }
+}
+
 /// CI builds the kernel in an Arch container and releases packages on wolkernel-* tags.
 #[test]
 fn workflow_builds_and_releases_the_kernel() {

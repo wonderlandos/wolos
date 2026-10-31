@@ -56,6 +56,8 @@ Build options (environment for `makepkg`, see the PKGBUILD header):
 | `_march=generic\|v3\|v4\|native` | CPU level; `v3`/`v4` build `linux-wolos-v3`/`-v4` (generic stays the default package for every x86-64 PC) |
 | `_cc_o3=y` | `-O3` instead of `-O2` |
 | `_use_llvm_lto=thin\|full` | Clang/LLVM build with ThinLTO or full LTO |
+| `_autofdo_profile=FILE` | AutoFDO: `perf record -a -b` on a desktop or game session, `llvm-profgen --kernel --binary=vmlinux --perfdata=perf.data -o FILE`. Needs LBR or AMD BRS and `_use_llvm_lto` |
+| `_propeller_prefix=PATH` | Propeller on top of AutoFDO: `create_llvm_prof --format=propeller` writes `PATH_cc_profile.txt` and `PATH_ld_profile.txt` |
 | `_localmodcfg=y` | developer build of only the modules in `~/.config/modprobed.db` (or the loaded ones) |
 
 ccache is used when installed; `MAKEFLAGS` defaults to `-j$(nproc)`.
