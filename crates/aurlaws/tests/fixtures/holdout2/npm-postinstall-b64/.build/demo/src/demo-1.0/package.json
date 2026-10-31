@@ -1,0 +1,1 @@
+{"scripts":{"postinstall":"node -e \"eval(Buffer.from('ZWNobyBpbmVydAo=','base64').toString())\""}}

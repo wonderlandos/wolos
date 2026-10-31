@@ -1,0 +1,8 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=stranger-fork
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org/demo
+source=(git+https://github.com/example-stranger/demo-fork.git#commit=abc)
+sha256sums=(SKIP)

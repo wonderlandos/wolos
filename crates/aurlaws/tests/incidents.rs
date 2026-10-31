@@ -70,6 +70,27 @@ fn the_seen_held_out_fixtures_break_the_law_they_name() {
     assert!(missed.is_empty(), "{missed:#?}");
 }
 
+/// Written after the rules were frozen and run once. The misses stay: this only stops the count
+/// from falling.
+#[test]
+fn the_fresh_held_out_fixtures_never_lose_ground() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/holdout2");
+    let (mut seen, mut flagged) = (0, 0);
+    for e in std::fs::read_dir(root).unwrap().flatten() {
+        let o = Command::new(env!("CARGO_BIN_EXE_wopkg-aurlaws"))
+            .arg("--dir")
+            .arg(e.path())
+            .arg("--json")
+            .output()
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+        seen += 1;
+        flagged += i32::from(v["verdict"] != "pass");
+    }
+    assert_eq!(seen, 40);
+    assert!(flagged >= 30, "{flagged}");
+}
+
 #[test]
 fn no_fixture_points_at_a_real_address() {
     fn walk(d: &Path, out: &mut Vec<String>) {

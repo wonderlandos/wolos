@@ -1,0 +1,8 @@
+# Inert test fixture: nothing here is ever run, and every address is reserved or fake.
+pkgname=typo-domain
+pkgver=1.0
+pkgrel=1
+arch=(x86_64)
+url=https://example.org/demo
+source=(https://examp1e.invalid/demo.tar.gz)
+sha256sums=(0000000000000000000000000000000000000000000000000000000000000000)

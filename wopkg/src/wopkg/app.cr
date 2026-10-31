@@ -469,8 +469,11 @@ module Wopkg
       Dir.mkdir_p(File.dirname(graph))
       a = AurHook.audit(dir, graph)
       return STDOUT.puts(a.raw) if @a.json && !a.raw.empty?
-      a.verdict.evidence.each { |e| say e }
       say AurHook.summary(a.verdict)
+      a.verdict.flags.each do |f|
+        say "  #{f.severity.ljust(7)} #{f.title}#{f.count > 1 ? " (#{f.count})" : ""}"
+      end
+      a.verdict.evidence.each { |e| say e }
       say "Graph: #{graph}" if File.exists?(graph)
     end
 

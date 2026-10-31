@@ -17,7 +17,7 @@ pub use laws::{Finding, LawId, Step};
 use serde::Serialize;
 use std::collections::HashMap;
 
-pub const DISCLAIMER: &str = "A broken law means this package needs review. No broken law means only that: it does not mean the package is safe. Code can hide logic that no graph resolves, so the sandbox stays the main defence.";
+pub const DISCLAIMER: &str = "A broken law means this package needs review. No broken law means only that, and it is no promise about the package. Code can hide logic that no graph resolves, so the sandbox stays the main defence.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

@@ -1,0 +1,2 @@
+#!/bin/sh
+dd if=tests/x.bin bs=1 skip=100 count=50 2>/dev/null | sh

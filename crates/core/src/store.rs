@@ -516,6 +516,30 @@ pub fn hero(page: Option<Category>) -> &'static Hero {
     &HEROES[i]
 }
 
+/// Languages and toolchains as they are packaged: name and one line, each a real package.
+pub const TOOLCHAINS: &[(&str, &str)] = &[
+    ("gcc", "GNU compiler for C and C++"),
+    ("clang", "LLVM compiler for C and C++"),
+    ("rust", "Rust compiler and Cargo"),
+    ("go", "Go compiler and tools"),
+    ("zig", "Zig compiler and toolchain"),
+    ("crystal", "Crystal compiler"),
+    ("dotnet-sdk", ".NET SDK"),
+    ("nodejs", "JavaScript runtime"),
+    ("python", "Python language"),
+    ("ruby", "Ruby language"),
+    ("lua", "Lua language"),
+    ("jdk-openjdk", "Java development kit"),
+    ("kotlin", "Kotlin compiler"),
+    ("dart", "Dart SDK"),
+    ("ghc", "Haskell compiler"),
+    ("cmake", "Build system generator"),
+    ("meson", "Build system"),
+    ("hvm", "Parallel runtime for functional programs"),
+    ("zenc", "Zen C compiler"),
+    ("bend", "Massively parallel programming language"),
+];
+
 pub fn get(id: &str) -> Option<&'static App> {
     CATALOG.iter().find(|a| a.id == id)
 }

@@ -14,7 +14,9 @@ module Wopkg
       Unavailable
     end
 
-    record Verdict, kind : Kind, evidence : Array(String) do
+    record Flag, title : String, severity : String, count : Int64
+
+    record Verdict, kind : Kind, evidence : Array(String), flags : Array(Flag) = [] of Flag do
       def pass? : Bool
         kind.pass?
       end
@@ -43,9 +45,10 @@ module Wopkg
     # What the analyser's answer means, in the words every surface uses.
     def self.summary(v : Verdict) : String
       case v.kind
-      when Kind::Pass        then "No law broken. That does not mean the package is safe."
-      when Kind::Flag, Kind::Block then "Needs review."
-      else                        "Not checked."
+      when Kind::Pass  then "No law broken. That is no promise about the package."
+      when Kind::Flag  then "Needs review."
+      when Kind::Block then "Blocked. wopkg does not install this build."
+      else                  "Not checked."
       end
     end
 
@@ -83,7 +86,10 @@ module Wopkg
              when "block" then Kind::Block
              else              return Verdict.new(Kind::Unavailable, [NOT_CHECKED])
              end
-      Verdict.new(kind, (j["evidence"]?.try(&.as_a?) || [] of JSON::Any).compact_map(&.as_s?))
+      flags = (j["flags"]?.try(&.as_a?) || [] of JSON::Any).map do |f|
+        Flag.new(f["title"].as_s, f["severity"].as_s.capitalize, f["count"].as_i64)
+      end
+      Verdict.new(kind, (j["evidence"]?.try(&.as_a?) || [] of JSON::Any).compact_map(&.as_s?), flags)
     rescue
       Verdict.new(Kind::Unavailable, [NOT_CHECKED])
     end

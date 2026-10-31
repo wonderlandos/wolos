@@ -55,8 +55,18 @@ describe Wopkg::AurHook do
   end
 
   it "says what an audit means and never more" do
-    AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Pass, [] of String)).should eq("No law broken. That does not mean the package is safe.")
+    AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Pass, [] of String)).should eq("No law broken. That is no promise about the package.")
     AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Flag, [] of String)).should eq("Needs review.")
+    AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Block, [] of String)).should eq("Blocked. wopkg does not install this build.")
     AurHook.summary(AurHook::Verdict.new(AurHook::Kind::Unavailable, [] of String)).should eq("Not checked.")
+  end
+
+  it "keeps each law as a named flag with its severity" do
+    d = File.tempname("wopkg-hook")
+    Dir.mkdir_p(d)
+    doc = %({"verdict":"flag","evidence":[],"flags":[{"title":"Reads Secrets","severity":"high","count":2}]})
+    f = AurHook.check("/p", "/a", nil, analyser: fake_analyser(d, "echo '#{doc}'")).flags.first
+    {f.title, f.severity, f.count}.should eq({"Reads Secrets", "High", 2_i64})
+    FileUtils.rm_rf(d)
   end
 end
