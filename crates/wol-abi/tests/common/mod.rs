@@ -1,5 +1,6 @@
 //! libwol.so.1 for the tests, linked once per test binary by `link.sh` from the staticlib this
 //! `cargo test` just built.
+#![allow(dead_code)]
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -38,3 +39,48 @@ pub fn lib_dir() -> &'static Path {
         out
     })
 }
+
+/// A fresh directory for one test.
+pub fn temp(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("wol-abi-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+/// Compile `tests/c/<name>.c` against `wol.h` and the built `libwol.so.1`.
+pub fn build(name: &str, dir: &Path) -> PathBuf {
+    let lib = lib_dir();
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let exe = dir.join(name);
+    let cc = std::process::Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".into()))
+        .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-pedantic"])
+        .arg("-I")
+        .arg(manifest.join("include"))
+        .arg(manifest.join(format!("tests/c/{name}.c")))
+        .arg(format!("-L{}", lib.display()))
+        .arg("-lwol")
+        .arg(format!("-Wl,-rpath,{}", lib.display()))
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .expect("cc");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let needed = std::process::Command::new("readelf")
+        .env("LC_ALL", "C")
+        .args(["-d"])
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&needed.stdout).contains("[libwol.so.1]"),
+        "apps record the soname"
+    );
+    exe
+}
+pub mod bindgen;
+pub mod fakes;
