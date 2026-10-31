@@ -347,6 +347,117 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     );
 }
 
+/// A plan with the fake `wol` answering as the real one does.
+fn install_plan(d: &Path, wol: &str) -> (Output, PathBuf) {
+    install_with(d, "/dev/nvme0n1", "off");
+    let t = d.join("target");
+    let _ = fs::remove_dir_all(&t);
+    fs::create_dir_all(&t).unwrap();
+    let _ = fs::remove_file(d.join("log"));
+    fake(d, "wol", wol);
+    fake(d, "chown", "");
+    let dir = d.join("plan");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("plan.json"), "{}").unwrap();
+    fs::write(dir.join("account-password"), "pw\n").unwrap();
+    let o = Command::new("sh")
+        .arg(lib("install-run"))
+        .arg("--plan")
+        .arg(dir.join("plan.json"))
+        .env("WOLOS_INSTALL_PATH", path(d))
+        .env("WOLOS_INSTALL_ROOT", &t)
+        .env("WOLOS_SOURCE_SFS", d.join("airootfs.sfs"))
+        .env("WOLOS_TEST_PARTS", d.join("parts"))
+        .env("WOLOS_TEST_MOUNTS", d.join("mounts"))
+        .env("WOLOS_EFIVARS", d.join("efivars"))
+        .env("WOLOS_NO_INHIBIT", "1")
+        .env("WOLOS_KEYDIR", d.join("keys"))
+        .output()
+        .unwrap();
+    (o, t)
+}
+
+const WOL_ALONGSIDE: &str = "case \"$*\" in\n\
+\"install info\"*) printf \"disk=/dev/nvme0n1\\nwipe=0\\nWOLOS_ENCRYPT=no\\n\" ;;\n\
+\"encrypt decide\"*) echo off ;;\n\
+\"install layout\"*) printf \"esp=/dev/nvme0n1p5\\nroot=/dev/nvme0n1p6\\nfsdev=/dev/nvme0n1p6\\nslots=two\\nothers=1\\nhome_dev=/dev/nvme0n1p3\\nextra_fstab='UUID=H /home ext4 defaults 0 2'\\n\" ;;\n\
+esac";
+
+#[test]
+fn a_plan_keeps_its_hands_off_the_disk_layout_and_the_kept_home() {
+    let d = scratch("plan");
+    let (o, t) = install_plan(&d, WOL_ALONGSIDE);
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        o.status.success(),
+        "{out}{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let l = log(&d);
+    assert!(!l.contains("systemd-repart"), "only Erase uses it: {l}");
+    let at = |w: &str| l.find(w).unwrap_or_else(|| panic!("{w} in {l}"));
+    assert!(
+        at("wol install check") < at("wol install layout"),
+        "checked before any write"
+    );
+    // The kept /home is mounted only after everything that could write there, before the account.
+    assert!(at("mount /dev/nvme0n1p3") > at("wol install settings"));
+    assert!(at("mount /dev/nvme0n1p3") < at("wol install account"));
+    assert!(
+        !l.contains("subvol=@home"),
+        "/home has its own partition: {l}"
+    );
+    let fstab = fs::read_to_string(t.join("etc/fstab")).unwrap();
+    assert!(fstab.contains("UUID=H /home ext4 defaults 0 2"), "{fstab}");
+    assert!(!fstab.contains("subvol=/@home"), "{fstab}");
+    assert!(fstab.contains("subvol=/@var"), "{fstab}");
+    assert!(l.contains("wol seal apply"), "two slots stay sealed");
+    // Another system stays: the menu shows for a moment.
+    let loader = fs::read_to_string(t.join("efi/loader/loader.conf")).unwrap();
+    assert!(loader.contains("timeout 3"), "{loader}");
+    assert!(
+        !d.join("plan/account-password").exists(),
+        "no password stays behind"
+    );
+}
+
+#[test]
+fn a_layout_that_can_not_keep_two_copies_says_so_on_disk() {
+    let d = scratch("plan-one");
+    let wol = WOL_ALONGSIDE
+        .replace("slots=two", "slots=one")
+        .replace("home_dev=/dev/nvme0n1p3", "home_dev=")
+        .replace(
+            "extra_fstab='UUID=H /home ext4 defaults 0 2'",
+            "extra_fstab=",
+        );
+    let (o, t) = install_plan(&d, &wol);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let l = log(&d);
+    assert!(!l.contains("wol seal"), "nothing to seal: {l}");
+    assert!(t.join("etc/wolos/single-copy").exists());
+    let cmd = fs::read_to_string(t.join("etc/kernel/cmdline")).unwrap();
+    assert!(cmd.contains(" rw ") && !cmd.contains("subvol"), "{cmd}");
+    let fstab = fs::read_to_string(t.join("etc/fstab")).unwrap();
+    assert!(!fstab.contains("overlay"), "{fstab}");
+}
+
+#[test]
+fn a_plan_the_disk_no_longer_matches_writes_nothing() {
+    let d = scratch("plan-stale");
+    let wol = WOL_ALONGSIDE.replace(
+        "esac",
+        "\"install check\"*) echo refuse DiskChanged; exit 2 ;;\nesac",
+    );
+    let (o, _) = install_plan(&d, &wol);
+    assert_eq!(o.status.code(), Some(2));
+    let l = log(&d);
+    assert!(
+        !l.contains("install layout") && !l.contains("mount "),
+        "{l}"
+    );
+}
+
 /// The partition definitions: an exact 1 GiB ESP (vfat) and a btrfs root filling the rest with
 /// `@wolos-a` `@home` `@var` as subvolumes, made when the file system is made.
 #[test]

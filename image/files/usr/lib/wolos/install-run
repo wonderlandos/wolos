@@ -10,12 +10,27 @@
 # Encrypt disk: WOLOS_ENCRYPT=auto|yes|no (default auto: on when a TPM2 exists), WOLOS_PASSPHRASE_FILE (needed
 # without a TPM). LUKS2 under btrfs; the recovery key is left once in WOLOS_RECOVERY_OUT (mode 600).
 # The decisions are `wol encrypt ...` and `wol seal ...` (crates/core). The finished slot is sealed.
+# --plan FILE (ADR 0023): the Install WolOS app's choices: Erase, Alongside or Manual, language, zone and
+# account. Next to FILE: disk-password, account-password, and the recovery key once it exists.
+# Alongside and Manual partition through `wol install layout`, which never names a partition the
+# plan doesn't. The boot loader is `install-boot`.
 # Env (tests): WOLOS_INSTALL_PATH, WOLOS_INSTALL_ROOT (/mnt/wolos), WOLOS_SOURCE_SFS, WOLOS_NO_INHIBIT.
 set -u
 PATH=${WOLOS_INSTALL_PATH:-/usr/bin:/usr/sbin}; export PATH
 say() { echo "wolos-install: $*"; }
 disk=${1:-}
+plan=
 here=$(cd "$(dirname "$0")" && pwd)
+wipe=1
+if [ "$disk" = --plan ]; then
+  plan=${2:-}
+  info=$(wol install info "$plan") || { say failed 0 "the install plan can't be read"; exit 2; }
+  eval "$info"   # disk, wipe, WOLOS_ENCRYPT (shell-quoted by wol)
+  plandir=$(dirname "$plan")
+  [ ! -s "$plandir/disk-password" ] || WOLOS_PASSPHRASE_FILE=$plandir/disk-password
+  WOLOS_RECOVERY_OUT=$plandir/recovery-key
+  export WOLOS_ENCRYPT WOLOS_PASSPHRASE_FILE WOLOS_RECOVERY_OUT
+fi
 # Closing the lid or idling must not sleep the machine mid-install; the hold ends with the install.
 if [ "${WOLOS_NO_INHIBIT:-0}" != 1 ] && [ -z "${WOLOS_INHIBITED:-}" ] && command -v systemd-inhibit >/dev/null; then
   WOLOS_INHIBITED=1 exec systemd-inhibit --what=sleep:idle:handle-lid-switch --who="Install WolOS" \
@@ -27,6 +42,11 @@ fi
 # Every check before the first write: a refused disk is left exactly as it was.
 if [ -z "$disk" ] || ! sh "$here/install-check" "$disk" >/dev/null; then
   say failed 0 "not a disk the installer may erase: ${disk:-none}"
+  exit 2
+fi
+# A plan is checked against the disk as it is now: if anything changed since the summary, nothing runs.
+if [ -n "$plan" ] && ! wol install check "$plan"; then
+  say failed 0 "the disk is not what the plan was made for"
   exit 2
 fi
 T=${WOLOS_INSTALL_ROOT:-/mnt/wolos}
@@ -42,30 +62,49 @@ say prepare 0 "Preparing to install on $disk"
 unlock=$(wol encrypt decide "${WOLOS_ENCRYPT:-auto}") || { say failed 0 "disk encryption: a passphrase of 8 or more characters is needed"; exit 2; }
 KEYDIR=${WOLOS_KEYDIR:-/run/wolos/install-keys}
 
-say disk 5 "Erasing $disk"
-# systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
-if [ "$unlock" = off ]; then
-  systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >/dev/null ||
-    fail "could not partition $disk"
-else
-  # LUKS2: formatted with a throw-away random key (a file in RAM), replaced by the real ones below.
-  (umask 077 && mkdir -p "$KEYDIR" && head -c 64 /dev/urandom > "$KEYDIR/key") || fail "could not make the disk key"
-  systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d-crypt" \
-    --key-file="$KEYDIR/key" "$disk" >/dev/null || fail "could not partition $disk"
-fi
-udevadm settle 2>/dev/null
-esp=$(part 1); root=$(part 2); fsdev=$root
+# LUKS2: formatted with a throw-away random key (a file in RAM), replaced by the real ones below.
 if [ "$unlock" != off ]; then
-  luuid=$(blkid -s UUID -o value "$root")
-  cryptsetup open --key-file="$KEYDIR/key" "$root" wolosroot || fail "could not open the encrypted disk"
-  fsdev=/dev/mapper/wolosroot
+  (umask 077 && mkdir -p "$KEYDIR" && head -c 64 /dev/urandom > "$KEYDIR/key") || fail "could not make the disk key"
 fi
+slots=two home_dev= var_dev= extra_fstab= others=0
+if [ "$wipe" = 1 ]; then
+  say disk 5 "Erasing $disk"
+  # systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
+  if [ "$unlock" = off ]; then
+    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >/dev/null ||
+      fail "could not partition $disk"
+  else
+    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d-crypt" \
+      --key-file="$KEYDIR/key" "$disk" >/dev/null || fail "could not partition $disk"
+  fi
+  udevadm settle 2>/dev/null
+  esp=$(part 1); root=$(part 2); fsdev=$root
+  if [ "$unlock" != off ]; then
+    cryptsetup open --key-file="$KEYDIR/key" "$root" wolosroot || fail "could not open the encrypted disk"
+    fsdev=/dev/mapper/wolosroot
+  fi
+else
+  # Exact sectors, a shrink, someone else's partitions alongside: step by step, table checked each time.
+  say disk 5 "Changing the partitions on $disk"
+  (umask 077 && mkdir -p "$KEYDIR") && wol install layout "$plan" "$KEYDIR/key" > "$KEYDIR/layout.env" ||
+    fail "could not partition $disk"
+  . "$KEYDIR/layout.env"
+fi
+[ "$unlock" = off ] || luuid=$(blkid -s UUID -o value "$root")
 ruuid=$(blkid -s UUID -o value "$fsdev"); euuid=$(blkid -s UUID -o value "$esp")
 O=compress=zstd:1,noatime
-mkdir -p "$T" && mount -o "subvol=@wolos-a,$O" "$fsdev" "$T" || fail "could not mount @wolos-a"
-mkdir -p "$T/home" "$T/var" "$T/efi"
-mount -o "subvol=@home,$O" "$fsdev" "$T/home" && mount -o "subvol=@var,$O" "$fsdev" "$T/var" &&
-  mount "$esp" "$T/efi" || fail "could not mount the new system"
+mkdir -p "$T"
+if [ "$slots" = two ]; then
+  mount -o "subvol=@wolos-a,$O" "$fsdev" "$T" || fail "could not mount @wolos-a"
+  mkdir -p "$T/home" "$T/var" "$T/efi"
+  [ -n "$home_dev" ] || mount -o "subvol=@home,$O" "$fsdev" "$T/home" || fail "could not mount the new system"
+  [ -n "$var_dev" ] || mount -o "subvol=@var,$O" "$fsdev" "$T/var" || fail "could not mount the new system"
+else
+  mount "$fsdev" "$T" || fail "could not mount the new system"
+  mkdir -p "$T/home" "$T/var" "$T/efi"
+fi
+[ -z "$var_dev" ] || mount "$var_dev" "$T/var" || fail "could not mount the new system"
+mount "$esp" "$T/efi" || fail "could not mount the new system"
 
 say files 15 "Copying WolOS"
 unsquashfs -f -d "$T" "$SFS" >/dev/null || fail "could not copy the system"
@@ -75,7 +114,9 @@ rm -rf "$T/etc/sysusers.d/wolos-live.conf" "$T/etc/tmpfiles.d/wolos-live.conf" "
   "$T/etc/systemd/system/pacman-init.service" "$T/etc/systemd/system/etc-pacman.d-gnupg.mount" \
   "$T/etc/systemd/system/multi-user.target.wants/pacman-init.service" \
   "$T/etc/systemd/system/wolos-autoinstall.service" "$T/etc/systemd/system/multi-user.target.wants/wolos-autoinstall.service" \
-  "$T/etc/systemd/journald.conf.d/volatile-storage.conf" "$T/home/live"
+  "$T/etc/systemd/journald.conf.d/volatile-storage.conf" "$T/home/live" \
+  "$T/etc/systemd/system/wold.service.d" "$T/etc/systemd/system/wolos-installer.service" \
+  "$T/etc/systemd/system/multi-user.target.wants/wolos-installer.service"
 userdel -R "$T" live 2>/dev/null || :
 # The live dock's copy of shell.json gives way to the package's.
 [ ! -f "$T/etc/wolos/shell.json.pacnew" ] || mv "$T/etc/wolos/shell.json.pacnew" "$T/etc/wolos/shell.json"
@@ -88,16 +129,29 @@ echo a > "$T/etc/wolos/slot"
 mkdir -p "$T/etc/kernel"
 # The slot is sealed (read-only) at the end: it boots ro. Encrypted: the initramfs unlocks the volume.
 if [ "$unlock" = off ]; then rootword="root=UUID=$ruuid"; else rootword=$(wol encrypt words "$luuid" "$unlock"); fi
-echo "$rootword rootflags=subvol=@wolos-a ro quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0" > "$T/etc/kernel/cmdline"
-cat > "$T/etc/fstab" <<EOF
-# WolOS: / is the slot the boot entry names (rootflags=subvol=@wolos-a or @wolos-b).
-UUID=$ruuid /home btrfs subvol=/@home,$O 0 0
-UUID=$ruuid /var btrfs subvol=/@var,$O 0 0
-UUID=$euuid /efi vfat umask=0077,shortname=winnt 0 2
-# The slot is read-only: /etc stays writable, its changes live in the shared @var (they survive updates).
-overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,workdir=/var/lib/wolos/etc/work,x-systemd.requires-mounts-for=/var 0 0
-EOF
-mkdir -p "$T/var/lib/wolos/etc/upper" "$T/var/lib/wolos/etc/work"
+if [ "$slots" = two ]; then rootwords="$rootword rootflags=subvol=@wolos-a ro"; else rootwords="$rootword rw"; fi
+echo "$rootwords quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0" > "$T/etc/kernel/cmdline"
+{
+  echo "# WolOS: / is the slot the boot entry names (rootflags=subvol=@wolos-a or @wolos-b)."
+  if [ "$slots" = two ]; then
+    [ -n "$home_dev" ] || echo "UUID=$ruuid /home btrfs subvol=/@home,$O 0 0"
+    [ -n "$var_dev" ] || echo "UUID=$ruuid /var btrfs subvol=/@var,$O 0 0"
+  fi
+  echo "UUID=$euuid /efi vfat umask=0077,shortname=winnt 0 2"
+  [ -z "$extra_fstab" ] || echo "$extra_fstab"
+  if [ "$slots" = two ]; then
+    echo "# The slot is read-only: /etc stays writable, its changes live in the shared @var (they survive updates)."
+    echo "overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,workdir=/var/lib/wolos/etc/work,x-systemd.requires-mounts-for=/var 0 0"
+  fi
+} > "$T/etc/fstab"
+if [ "$slots" = two ]; then
+  mkdir -p "$T/var/lib/wolos/etc/upper" "$T/var/lib/wolos/etc/work"
+else
+  # One copy (ADR 0023): updates go in place, there is no seal to check.
+  : > "$T/etc/wolos/single-copy"
+fi
+# Folders for the partitions the plan mounts elsewhere.
+echo "$extra_fstab" | awk '$2 ~ /^\// {print $2}' | while read -r m; do mkdir -p "$T$m"; done
 if [ "$unlock" != off ]; then
   wol encrypt hooks "$T/etc/mkinitcpio.conf.d/wolos.conf" || fail "could not set the unlock hook"
   # Real keys in, throw-away key out; the recovery key is kept once for the installer to show.
@@ -124,22 +178,29 @@ for m in "$T"/usr/lib/modules/*/; do
 done
 [ -f "$T/boot/vmlinuz-linux-wolos" ] || fail "no linux-wolos kernel in the image"
 arch-chroot "$T" mkinitcpio -P >/dev/null 2>&1 || fail "could not build the initramfs"
-bootctl --esp-path="$T/efi" install >/dev/null 2>&1 || fail "could not install the boot loader"
-WOLOS_ROOT=$T WOLOS_ESP=$T/efi sh "$here/esp-sync" --new || fail "could not write the boot entry"
-mkdir -p "$T/efi/loader"
-printf 'default wolos-a.conf\ntimeout 0\nconsole-mode keep\neditor no\n' > "$T/efi/loader/loader.conf"
+WOLOS_ROOT=$T WOLOS_ESP=$T/efi WOLOS_OTHER_SYSTEMS=${others#0} sh "$here/install-boot" ||
+  fail "could not install the boot loader"
 
 say settings 90 "Settings"
 echo wolos > "$T/etc/hostname"
+if [ -n "$plan" ]; then
+  wol install settings "$plan" "$T" || fail "could not set the language and time zone"
+  # A kept /home goes on only now: nothing above ever writes to it.
+  [ -z "$home_dev" ] || mount "$home_dev" "$T/home" || fail "could not mount the new system"
+  wol install account "$plan" "$T" "$plandir/account-password" || fail "could not create the account"
+  rm -f "$plandir/account-password" "$plandir/disk-password"
+fi
 printf 'uninitialized\n' > "$T/etc/machine-id"
 arch-chroot "$T" pacman-key --init >/dev/null 2>&1 && arch-chroot "$T" pacman-key --populate >/dev/null 2>&1 ||
   say settings 92 "package keys: set up on first update"
 
 # Sealing: fs-verity on /usr executables and libraries, then the slot is read-only.
-wol seal apply "$T" "$T/efi/wolos-a/verity" >/dev/null || fail "could not seal the system"
+[ "$slots" = one ] || wol seal apply "$T" "$T/efi/wolos-a/verity" >/dev/null || fail "could not seal the system"
 say finish 98 "Checking the new system"
 for f in "efi/loader/entries/wolos-a+3.conf" "efi/wolos-a/vmlinuz-linux-wolos" "efi/wolos-a/initramfs-linux-wolos.img" "etc/fstab"; do
   [ -s "$T/$f" ] || fail "the new system did not check out: $f missing"
 done
 cleanup
+# The recovery key is the app's to show, then delete.
+[ -z "$plan" ] || [ ! -f "$plandir/recovery-key" ] || chown --reference="$plan" "$plandir/recovery-key"
 say done 100 "WolOS is installed on $disk"

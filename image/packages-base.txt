@@ -16,6 +16,8 @@ cryptsetup
 fsverity-utils
 gptfdisk
 dosfstools
+e2fsprogs
+xfsprogs
 squashfs-tools
 efibootmgr
 pacman-contrib

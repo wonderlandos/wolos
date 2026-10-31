@@ -43,9 +43,10 @@ u live 1000 "WolOS Live" /home/live /usr/bin/zsh
 m live wheel
 m live video
 m live input
+m live seat
 EOF
 echo 'd /home/live 0700 live live -' > "$A/etc/tmpfiles.d/wolos-live.conf"
-echo 'live ALL=(root) NOPASSWD: /usr/lib/wolos/install-run, /usr/lib/wolos/install-check' > "$A/etc/sudoers.d/wolos-live"
+echo 'live ALL=(root) NOPASSWD: /usr/lib/wolos/install-run, /usr/lib/wolos/install-check, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff' > "$A/etc/sudoers.d/wolos-live"
 printf '%s\n' '{"autologin":"live"}' > "$A/etc/wolos/login.json"
 touch "$A/etc/wolos-live"
 # "Install WolOS" first in the live dock (shell.json is a backup file of wolos-system: this copy wins).

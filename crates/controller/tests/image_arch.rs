@@ -198,14 +198,39 @@ fn profile_boots_linux_wolos_quietly_with_an_install_entry() {
         assert!(d.contains(want), "profiledef.sh lacks {want}");
     }
     let live = read("image/arch/efiboot/loader/entries/01-wolos.conf");
-    let inst = read("image/arch/efiboot/loader/entries/02-wolos-install.conf");
-    for e in [&live, &inst] {
+    let try_it = read("image/arch/efiboot/loader/entries/02-wolos-try.conf");
+    for e in [&live, &try_it] {
         assert!(e.contains("vmlinuz-linux-wolos") && e.contains("initramfs-linux-wolos.img"));
         assert!(e.contains(" quiet splash ") && e.contains("loglevel=3"));
         // No audit userspace and no SELinux/AppArmor: the kernel audit stays off.
         assert!(e.contains(" audit=0 "), "{e}");
     }
-    assert!(inst.contains("wolos.install=1") && !live.contains("wolos.install"));
+    assert!(try_it.contains(" wolos.try") && !live.contains("wolos.try"));
+    // The first screen is the light installer session; the desktop starts only when asked.
+    let first = read("image/arch/airootfs/etc/systemd/system/wolos-installer.service");
+    assert!(
+        first.contains("ConditionKernelCommandLine=!wolos.try"),
+        "{first}"
+    );
+    assert!(first.contains("ExecStart=/usr/lib/wolos/installer-session"));
+    assert!(
+        repo(
+            "image/arch/airootfs/etc/systemd/system/multi-user.target.wants/wolos-installer.service"
+        )
+        .is_symlink()
+    );
+    let wait = read("image/arch/airootfs/etc/systemd/system/wold.service.d/wolos-live.conf");
+    assert!(
+        wait.contains("|/run/wolos/try") && wait.contains("|wolos.try"),
+        "{wait}"
+    );
+    let session = read("image/files/usr/lib/wolos/installer-session");
+    assert!(
+        session.contains("hypr/installer.conf")
+            && session.contains("start --no-block wold.service")
+    );
+    let conf = read("desktop/overlay/usr/share/wolos/hypr/installer.conf");
+    assert!(conf.contains("wol-installer --boot") && !conf.contains("wol-shell"));
     assert!(read("image/arch/efiboot/loader/loader.conf").contains("timeout 0"));
     let preset = read("image/arch/airootfs/etc/mkinitcpio.d/linux-wolos.preset");
     assert!(preset.contains("/boot/vmlinuz-linux-wolos") && preset.contains("archiso"));
@@ -303,7 +328,7 @@ fn build_stages_the_profile_from_the_local_repo() {
     let sudo = fs::read_to_string(p.join("airootfs/etc/sudoers.d/wolos-live")).unwrap();
     assert_eq!(
         sudo.trim(),
-        "live ALL=(root) NOPASSWD: /usr/lib/wolos/install-run, /usr/lib/wolos/install-check"
+        "live ALL=(root) NOPASSWD: /usr/lib/wolos/install-run, /usr/lib/wolos/install-check, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff"
     );
 }
 

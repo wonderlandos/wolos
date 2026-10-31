@@ -1,0 +1,12 @@
+[Unit]
+Description=Install WolOS: the first screen of the live image (ADR 0023)
+ConditionKernelCommandLine=!wolos.try
+ConditionKernelCommandLine=!wolos.autoinstall
+After=seatd.service systemd-user-sessions.service wolos-hw.service wolos-gpu.service
+Wants=seatd.service
+
+[Service]
+ExecStart=/usr/lib/wolos/installer-session
+
+[Install]
+WantedBy=multi-user.target
