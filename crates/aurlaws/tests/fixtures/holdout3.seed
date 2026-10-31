@@ -1,0 +1,4 @@
+099f742991c63d0bdd717c14e13cb1c5
+# Third freeze. Benign sample: the 3000 most popular AUR bases not used before, ordered by
+# sha256("seed:base"), first 300. Malicious sample: the first 40 of the pool in mkhold3 ordered
+# by sha256("seed:name"). Both are drawn and written after this commit, then scored once.

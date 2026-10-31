@@ -161,10 +161,9 @@ impl<'a> View<'a> {
         let node = &self.g.nodes[n as usize];
         node.kind == K::Source
             && self.meta.sources.iter().any(|s| {
-                s.vcs
-                    && s.name == node.label
+                s.name == node.label
                     && s.url.as_deref().is_some_and(|u| {
-                        hosts::on_upstream(&self.meta.url, u, &self.meta.pkgnames, false)
+                        (s.vcs || u.starts_with("https://")) && on_home(self.meta, u, false)
                     })
             })
     }
@@ -222,8 +221,26 @@ impl<'a> View<'a> {
     }
 
     /// A scriptlet may change what its package installs, the package's own folders, and nothing else.
+    fn named_for_package(&self, p: &str) -> bool {
+        let p = p.to_ascii_lowercase();
+        hosts::words(&self.meta.pkgnames)
+            .iter()
+            .any(|w| p.contains(w.as_str()))
+    }
+
     pub(crate) fn declared(&self, p: &str) -> bool {
         let g = self.g;
+        // Vendors nest their folder: /opt/maker/scanner/product.
+        if p.starts_with("/opt/")
+            && p.split('/').any(|seg| {
+                self.meta
+                    .pkgnames
+                    .iter()
+                    .any(|n| n.trim_end_matches("-git").trim_end_matches("-bin") == seg)
+            })
+        {
+            return true;
+        }
         if self
             .package_files
             .iter()
@@ -320,8 +337,14 @@ impl<'a> View<'a> {
                         s.label.as_str(),
                         "chmod" | "chown" | "chgrp" | "setcap" | "chattr"
                     );
+                    // An empty folder, or the package clearing away its own name, changes nothing
+                    // that runs.
+                    let tidy = s.label == "mkdir"
+                        || matches!(s.label.as_str(), "rm" | "rmdir")
+                            && self.named_for_package(path);
                     if scriptlet {
-                        if !(metadata && self.package_files.is_empty())
+                        if !tidy
+                            && !(metadata && self.package_files.is_empty())
                             && path.starts_with('/')
                             && !paths::harmless(path)
                             && !paths::persistence(path)
@@ -415,7 +438,7 @@ impl<'a> View<'a> {
                 .as_deref()
                 .is_some_and(|x| !x.is_empty() && x != "SKIP");
             let paper = hosts::paperwork(url) && hosts::paperwork(&s.name);
-            if !paper && !hosts::on_upstream(&m.url, url, &m.pkgnames, s.pinned || summed) {
+            if !paper && !on_home(m, url, s.pinned || summed) {
                 let sentence = format!(
                     "{loc} downloads {url}, which is not on the project's declared home {}.",
                     m.url
@@ -483,6 +506,12 @@ impl<'a> View<'a> {
     }
 }
 
+/// Does this address belong to the project, or does its upstream name it as a submodule?
+pub(crate) fn on_home(m: &Meta, url: &str, pinned: bool) -> bool {
+    hosts::named_by_upstream(&m.submodules, url)
+        || hosts::on_upstream(&m.url, url, &m.pkgnames, pinned)
+}
+
 /// Trees the package's own scripts clone by themselves, off the declared home: a source in all
 /// but name. A plain download has its own laws, which follow where the file goes.
 pub(crate) fn stray_fetches(g: &Graph, m: &Meta) -> Vec<(NodeId, Option<Loc>)> {
@@ -496,7 +525,7 @@ pub(crate) fn stray_fetches(g: &Graph, m: &Meta) -> Vec<(NodeId, Option<Loc>)> {
             && matches!(d.label.as_str(), "git" | "svn" | "hg")
             && !matches!(d.stage, Stage::Upstream | Stage::Scriptlet)
             && !s.label.contains('$')
-            && !hosts::on_upstream(&m.url, &s.label, &m.pkgnames, false)
+            && !on_home(m, &s.label, false)
             && seen.insert(e.src)
         {
             out.push((e.src, e.loc.clone()));
@@ -599,10 +628,13 @@ fn step_of(g: &Graph, n: NodeId) -> Step {
 pub(crate) fn mismatch(stat: &Graph, obs: &Graph) -> Vec<Finding> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let says_network = stat
-        .edges
-        .iter()
-        .any(|e| e.kind == E::Fetches && stat.nodes[e.dst as usize].kind == K::Process);
+    // Only a named address says so. A socket call in readable code says the code dials out, not
+    // that the package told anyone where.
+    let says_network = stat.edges.iter().any(|e| {
+        e.kind == E::Fetches
+            && stat.nodes[e.dst as usize].kind == K::Process
+            && stat.nodes[e.src as usize].label.contains("://")
+    });
     for e in &obs.edges {
         let (s, d) = (&obs.nodes[e.src as usize], &obs.nodes[e.dst as usize]);
         let at = e

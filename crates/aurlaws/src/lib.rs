@@ -42,6 +42,7 @@ fn judge(mut p: pkgbuild::Parsed, ev: &Evidence) -> Report {
     for g in &ev.upstream {
         p.graph.merge(g);
     }
+    p.meta.submodules = ev.submodules.clone();
     let mut findings = {
         let v = laws::View::new(&p.graph, &p.meta, &ev.package_files);
         let mut f = laws::check(&v);
@@ -98,6 +99,8 @@ pub struct Evidence {
     pub gaps: Vec<String>,
     /// Graphs of the upstream source's build scripts.
     pub upstream: Vec<graph::Graph>,
+    /// Addresses upstream's own `.gitmodules` lists.
+    pub submodules: Vec<String>,
     /// Checksums upstream published, as (sum, file name). `None` means no list was found.
     pub published: Option<Vec<(String, String)>>,
 }

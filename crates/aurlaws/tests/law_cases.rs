@@ -188,7 +188,7 @@ fn a_floating_vcs_source_on_a_known_forge_is_declared_tracking() {
 fn one_origin_is_one_finding() {
     let r = audit_text(
         &pkg(
-            "source=(https://example.org/a.tar.gz)\nsha256sums=(SKIP)\nbuild() { cd a; meson setup b; meson compile -C b; meson test -C b; }",
+            "source=(http://example.org/a.tar.gz)\nsha256sums=(SKIP)\nbuild() { cd a; meson setup b; meson compile -C b; meson test -C b; }",
         ),
         None,
     );

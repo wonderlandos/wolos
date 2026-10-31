@@ -297,6 +297,7 @@ fn a_second_scan_reuses_the_cache_and_a_changed_file_does_not() {
     );
     let cache = d.join(".cache-test");
     let o = upstream::Options {
+        mention: String::new(),
         cache: Some(cache.clone()),
         ..upstream::Options::default()
     };

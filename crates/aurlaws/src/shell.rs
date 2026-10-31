@@ -186,6 +186,35 @@ const BUILD_TOOLS: &[&str] = &[
     "stack",
     "cabal",
 ];
+/// `go run` of a module address: a first path element with a dot, not a local path.
+fn remote_module(a: &str) -> bool {
+    !a.starts_with('.')
+        && !a.starts_with('-')
+        && a.split('/').next().is_some_and(|h| h.contains('.'))
+        && a.contains('/')
+}
+
+/// Shell text in `system("...")` or a piped `open(F, "...|")`.
+fn embedded_commands(code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (word, piped) in [("system(", false), ("open(", true)] {
+        let mut rest = code;
+        while let Some(at) = rest.find(word) {
+            rest = &rest[at + word.len()..];
+            let end = rest.find(')').unwrap_or(rest.len());
+            for q in rest[..end].split('"').skip(1).step_by(2) {
+                let t = q.trim();
+                if !piped {
+                    out.push(t.to_owned());
+                } else if let Some(c) = t.strip_suffix('|').or_else(|| t.strip_prefix('|')) {
+                    out.push(c.trim().to_owned());
+                }
+            }
+        }
+    }
+    out
+}
+
 const NET_TOOLS: &[&str] = &[
     "nc", "ncat", "netcat", "socat", "telnet", "ssh", "sftp", "ftp", "tftp",
 ];
@@ -979,7 +1008,7 @@ impl<'g> Walker<'g> {
                         for t in &v.taints {
                             self.g.edge(*t, p, E::Writes, loc.clone());
                         }
-                        if v.complete {
+                        if v.complete && v.taints.is_empty() {
                             self.pipe_text.insert(p, v.text);
                         }
                     }
@@ -1265,6 +1294,34 @@ impl<'g> Walker<'g> {
             | "pacman-key" => self.verify(&b, &args, loc),
             "head" | "tail" if args.iter().any(|a| a.text.starts_with("-c")) => {
                 self.decode(&b, &args, loc)
+            }
+            "dd" if args.iter().any(|a| a.text.starts_with("skip=")) => self.decode(&b, &args, loc),
+            "awk" | "gawk" | "mawk"
+                if args.iter().any(|a| !embedded_commands(&a.text).is_empty()) =>
+            {
+                self.process(&b, loc.clone());
+                self.run_embedded(&args, &loc);
+            }
+            "cargo"
+                if args.first().is_some_and(|a| a.text == "install")
+                    && args.iter().any(|a| a.text == "--git") =>
+            {
+                let at = args.iter().position(|a| a.text == "--git").unwrap_or(0);
+                let url = args.get(at + 1).map(|a| a.text.clone()).unwrap_or_default();
+                self.remote_run(&b, &url, loc);
+            }
+            "go" if args
+                .first()
+                .is_some_and(|a| matches!(a.text.as_str(), "run" | "install"))
+                && args.iter().skip(1).any(|a| remote_module(&a.text)) =>
+            {
+                let url = args
+                    .iter()
+                    .skip(1)
+                    .find(|a| remote_module(&a.text))
+                    .map(|a| format!("https://{}", a.text))
+                    .unwrap_or_default();
+                self.remote_run(&b, &url, loc);
             }
             "sed"
                 if !self.lenient
@@ -1725,7 +1782,7 @@ impl<'g> Walker<'g> {
             "xxd" => flag(&["-r", "-ps", "-rp", "-r -p"]) && flag(&["-r", "-rp"]),
             // Cutting bytes out of a file is how a script hides in a data file.
             "uudecode" | "rev" | "zcat" | "xzcat" | "bzcat" | "zstdcat" | "gunzip" | "unxz"
-            | "head" | "tail" => true,
+            | "head" | "tail" | "dd" => true,
             "xz" | "gzip" | "bzip2" | "zstd" | "lzma" => {
                 flag(&["-d", "-dc", "-cd", "-dk", "--decompress"])
             }
@@ -1972,6 +2029,9 @@ impl<'g> Walker<'g> {
             .position(|a| matches!(a.text.as_str(), "-c" | "-e" | "-E" | "-r" | "--eval"));
         if let Some(i) = code_flag {
             if let Some(code) = args.get(i + 1).cloned() {
+                if b == "perl" {
+                    self.run_embedded(std::slice::from_ref(&code), &loc);
+                }
                 for t in &code.taints {
                     self.g.edge(*t, proc, E::Executes, loc.clone());
                 }
@@ -2153,6 +2213,25 @@ impl<'g> Walker<'g> {
         }
     }
 
+    /// A tool that fetches an address and runs what it gets.
+    fn remote_run(&mut self, b: &str, url: &str, loc: Option<Loc>) {
+        let proc = self.process(b, loc.clone());
+        let id = self.url(url, loc.clone());
+        self.g.edge(id, proc, E::Fetches, loc.clone());
+        self.g.edge(id, proc, E::Executes, loc.clone());
+        self.connect_stdio(proc, &loc);
+    }
+
+    /// Commands quoted inside awk or Perl text.
+    fn run_embedded(&mut self, args: &[Val], loc: &Option<Loc>) {
+        let line = loc.as_ref().map(|l| l.line);
+        for a in args {
+            for c in embedded_commands(&a.text) {
+                self.walk_text(&c, line);
+            }
+        }
+    }
+
     fn registry(&mut self, b: &str, args: &[Val], loc: Option<Loc>) {
         let proc = self.process(b, loc.clone());
         self.feed(args, proc, &loc);
@@ -2208,7 +2287,14 @@ impl<'g> Walker<'g> {
                 .rfind(|a| !a.text.starts_with('-'))
                 .map(|a| format!("/etc/systemd/system/enabled/{}", a.text)),
             ("crontab", _) => Some("/var/spool/cron/crontab".to_owned()),
-            ("at", _) => Some("/var/spool/at/job".to_owned()),
+            ("at", s)
+                if (s.starts_with('-')
+                    || s.starts_with(|c: char| c.is_ascii_digit())
+                    || matches!(s, "now" | "noon" | "midnight" | "teatime" | "tomorrow"))
+                    && (!self.lenient || self.stdin.is_some()) =>
+            {
+                Some("/var/spool/at/job".to_owned())
+            }
             ("loginctl", "enable-linger") => Some("/var/lib/systemd/linger/user".to_owned()),
             _ => None,
         };

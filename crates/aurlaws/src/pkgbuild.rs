@@ -15,6 +15,25 @@ pub struct Meta {
     pub install: Vec<String>,
     pub backup: Vec<String>,
     pub sources: Vec<SourceEntry>,
+    /// Addresses upstream's own `.gitmodules` lists, when its source was read.
+    pub submodules: Vec<String>,
+}
+
+/// What a patch adds to a build script is build code, read as such.
+fn patched_commands(w: &mut Walker, name: &str, text: &str) {
+    let (mut shell, mut make) = (false, false);
+    for (i, l) in text.lines().enumerate() {
+        if let Some(p) = l.strip_prefix("+++ ") {
+            let t = p.split_whitespace().next().unwrap_or("");
+            let base = t.rsplit('/').next().unwrap_or(t);
+            make = base.starts_with("Makefile") || base.ends_with(".mk");
+            shell = base == "configure" || base.ends_with(".sh");
+        } else if let Some(add) = l.strip_prefix('+')
+            && (shell || make && add.starts_with('\t'))
+        {
+            w.snippet(add.trim(), name, i as u32 + 1, Stage::Upstream);
+        }
+    }
 }
 
 pub struct Parsed {
@@ -155,6 +174,7 @@ pub fn parse(pkgbuild: &str, files: &HashMap<String, String>) -> Parsed {
         install: install.clone(),
         backup: w.var_values("backup"),
         sources,
+        submodules: Vec::new(),
     };
     let mut notes = std::mem::take(&mut w.notes);
     truncated |= w.truncated;
@@ -174,6 +194,18 @@ pub fn parse(pkgbuild: &str, files: &HashMap<String, String>) -> Parsed {
         truncated |= s.truncated;
         drop(s);
         graph.merge(&sub);
+    }
+    for (name, text) in files {
+        if name.ends_with(".patch") || name.ends_with(".diff") {
+            let mut sub = Graph::new();
+            let mut s = Walker::new(&mut sub, Scope::default());
+            s.enter_file(name, Stage::Upstream);
+            s.lenient = true;
+            patched_commands(&mut s, name, text);
+            truncated |= s.truncated;
+            drop(s);
+            graph.merge(&sub);
+        }
     }
     graph.pkgver = meta.pkgver.clone();
     Parsed {

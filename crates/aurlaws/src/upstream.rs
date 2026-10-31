@@ -30,6 +30,8 @@ pub struct Options {
     pub cache: Option<PathBuf>,
     /// Worker threads; 0 means up to 8, as the machine allows.
     pub jobs: usize,
+    /// The package's own text: what it names, it may run.
+    pub mention: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -69,6 +71,10 @@ enum Role {
     Make,
     Cmake,
     Npm,
+    /// `run_command` lines of a `meson.build`.
+    Meson,
+    /// A build backend the tree itself provides (PEP 517): Python, judged in full.
+    Backend,
 }
 
 /// Folders a package build does not run: CI, tests, documents. A build can still reach into them,
@@ -114,6 +120,7 @@ fn role(rel: &str) -> Option<Role> {
     let ext = name.rsplit_once('.').map(|x| x.1).unwrap_or("");
     Some(match (name, ext) {
         ("package.json", _) => Role::Npm,
+        ("meson.build", _) => Role::Meson,
         ("CMakeLists.txt", _) | (_, "cmake") => Role::Cmake,
         ("Makefile" | "makefile" | "GNUmakefile" | "Makefile.am" | "Makefile.in", _)
         | (_, "mk") => Role::Make,
@@ -218,6 +225,111 @@ fn local_imports(root: &Path, files: &mut Vec<(String, Role)>) {
     }
 }
 
+/// The command in a `run_command('sh', '-c', '...')` line.
+fn meson_command(line: &str) -> Option<String> {
+    let rest = line.split_once("run_command(")?.1;
+    let q: Vec<&str> = rest.split('\'').skip(1).step_by(2).collect();
+    match q.as_slice() {
+        [_, "-c", c, ..] => Some((*c).to_owned()),
+        [] => None,
+        all => Some(all.join(" ")),
+    }
+}
+
+/// The module file a `pyproject.toml` names as its in-tree build backend.
+fn backend_file(text: &str, dir: &str) -> Option<String> {
+    let value = |key: &str| {
+        text.lines()
+            .find(|l| l.trim_start().starts_with(key))
+            .and_then(|l| l.split('"').nth(1))
+    };
+    let module = value("build-backend")?.split(':').next()?.replace('.', "/");
+    let path = value("backend-path")?;
+    let p = if dir.is_empty() {
+        format!("{path}/{module}.py")
+    } else {
+        format!("{dir}/{path}/{module}.py")
+    };
+    Some(p.replace("/./", "/").trim_start_matches("./").to_owned())
+}
+
+/// Scripts deep in a tree count only if something the build uses mentions them: the PKGBUILD, a
+/// build file, a top-level script, or a script already reached. A glob over the folder counts.
+fn keep_reached(root: &Path, files: &mut Vec<(String, Role)>, mention: &str) {
+    let gated = |rel: &str, r: Role| {
+        let inner = rel.strip_prefix("src/").unwrap_or(rel);
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        inner.matches('/').count() >= 2
+            && !matches!(name, "configure" | "autogen.sh" | "bootstrap")
+            && matches!(
+                r,
+                Role::Shell | Role::Code(Lang::Python | Lang::Js | Lang::Go)
+            )
+    };
+    let read = |rel: &str| std::fs::read(root.join(rel)).unwrap_or_default();
+    let mut text = mention.as_bytes().to_vec();
+    let mut waiting = Vec::new();
+    let mut kept = Vec::new();
+    for (rel, r) in files.drain(..) {
+        if gated(&rel, r) {
+            waiting.push((rel, r));
+        } else {
+            text.extend(read(&rel));
+            text.push(b'\n');
+            kept.push((rel, r));
+        }
+    }
+    let seen = |hay: &[u8], s: &str| hay.windows(s.len().max(1)).any(|w| w == s.as_bytes());
+    loop {
+        let (hit, rest): (Vec<_>, Vec<_>) =
+            waiting.into_iter().partition(|(rel, r): &(String, Role)| {
+                let mut parts = rel.rsplit('/');
+                let name = parts.next().unwrap_or(rel);
+                let dir = parts.next().unwrap_or("");
+                let word = match r {
+                    Role::Code(_) if !entry(rel) => name.rsplit_once('.').map_or(name, |x| x.0),
+                    _ => name,
+                };
+                seen(&text, word) || seen(&text, &format!("{dir}/*"))
+            });
+        waiting = rest;
+        if hit.is_empty() {
+            break;
+        }
+        for (rel, r) in hit {
+            text.extend(read(&rel));
+            text.push(b'\n');
+            kept.push((rel, r));
+        }
+    }
+    *files = kept;
+}
+
+/// What upstream's `.gitmodules` files list, near the top of a tree.
+pub fn submodules(root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![(root.to_path_buf(), 0)];
+    while let Some((d, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if depth < 2 && e.file_type().is_ok_and(|t| t.is_dir()) {
+                stack.push((p, depth + 1));
+            } else if e.file_name() == ".gitmodules"
+                && let Ok(t) = std::fs::read_to_string(&p)
+            {
+                out.extend(t.lines().filter_map(|l| {
+                    let (k, v) = l.split_once('=')?;
+                    (k.trim() == "url").then(|| v.trim().to_owned())
+                }));
+            }
+        }
+    }
+    out
+}
+
 fn collect(root: &Path) -> (Vec<(String, Role)>, usize) {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -242,6 +354,16 @@ fn collect(root: &Path) -> (Vec<(String, Role)>, usize) {
                     .replace('\\', "/");
                 let found = role(&rel)
                     .or_else(|| runs_before_main(&rel, &p).then_some(Role::Code(Lang::C)));
+                if e.file_name() == "pyproject.toml" {
+                    let dir = rel.strip_suffix("pyproject.toml").unwrap_or("");
+                    if let Some(f) = std::fs::read_to_string(&p)
+                        .ok()
+                        .and_then(|t| backend_file(&t, dir.trim_end_matches('/')))
+                        && root.join(&f).is_file()
+                    {
+                        out.push((f, Role::Backend));
+                    }
+                }
                 if let Some(r) = found {
                     if out.len() >= MAX_FILES {
                         too_many += 1;
@@ -451,7 +573,7 @@ fn analyse(rel: &str, r: Role, text: &str) -> Entry {
     w.enter_file(rel, Stage::Upstream);
     // Build systems pass commands through variables all the way down, so here only what can be
     // traced flowing into them is judged. A PKGBUILD gets no such allowance.
-    w.lenient = !(matches!(r, Role::Code(_)) && entry(rel));
+    w.lenient = !(matches!(r, Role::Code(_)) && entry(rel) || r == Role::Backend);
     let mut ok = true;
     match r {
         Role::Shell => w.walk_file(text, rel, Stage::Upstream),
@@ -467,6 +589,14 @@ fn analyse(rel: &str, r: Role, text: &str) -> Entry {
         Role::Make => ok = make(&mut w, text, rel),
         Role::Cmake => ok = cmake(&mut w, text, rel),
         Role::Npm => npm(&mut w, text, rel),
+        Role::Backend => ok = langs::walk(Lang::Python, text, rel, Stage::Upstream, &mut w, None),
+        Role::Meson => {
+            for (i, l) in text.lines().enumerate() {
+                if let Some(c) = meson_command(l) {
+                    w.snippet(&c, rel, i as u32 + 1, Stage::Upstream);
+                }
+            }
+        }
     }
     let truncated = w.truncated || !ok;
     drop(w);
@@ -519,7 +649,8 @@ fn one(root: &Path, rel: &str, r: Role, o: &Options) -> Option<(Entry, bool)> {
 
 /// Read every build script under `root`.
 pub fn scan(root: &Path, o: &Options) -> Scan {
-    let (files, too_many) = collect(root);
+    let (mut files, too_many) = collect(root);
+    keep_reached(root, &mut files, &o.mention);
     let jobs = if o.jobs > 0 {
         o.jobs
     } else {

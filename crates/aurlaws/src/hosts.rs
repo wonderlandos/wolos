@@ -32,6 +32,7 @@ const CODE_HOSTS: &[&str] = &[
     "bitbucket.org",
     "sr.ht",
     "gitee.com",
+    "googlesource.com",
 ];
 
 /// GitHub serves a repo's files from these too; the path still starts with owner and repo.
@@ -126,10 +127,45 @@ fn home_words(h: &str) -> Vec<String> {
         "netlify",
         "pages",
     ];
+    let site = registrable(h);
+    let name = site.split('.').next().unwrap_or("");
     h.split('.')
-        .filter(|l| l.len() >= 4 && !skip.contains(l))
+        .filter(|l| (l.len() >= 4 || *l == name) && !skip.contains(l))
         .map(str::to_owned)
         .collect()
+}
+
+/// The project a shared hosting page names: `enlightenment` in sourceforge.net/projects/enlightenment.
+fn hosted_project(declared: &str) -> Option<String> {
+    let path = declared.split_once("://")?.1;
+    let rest = path.split_once("sourceforge.net/projects/")?.1;
+    let p = rest.split(['/', '?', '#']).next()?;
+    (!p.is_empty()).then(|| p.to_ascii_lowercase())
+}
+
+/// A repo's public pages live on `owner.gitlab.io`.
+fn pages_owner(h: &str) -> Option<&str> {
+    h.strip_suffix(".gitlab.io")
+        .or_else(|| h.strip_suffix(".github.io"))
+        .filter(|o| !o.contains('.'))
+}
+
+/// `host/path` of a repository address, for comparing two ways of writing it.
+fn repo_path(url: &str) -> String {
+    let u = url.split_once("://").map(|x| x.1).unwrap_or(url);
+    let u = u.rsplit('@').next().unwrap_or(u);
+    u.split(['#', '?'])
+        .next()
+        .unwrap_or(u)
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_ascii_lowercase()
+}
+
+/// Is this source one of the submodules upstream's own `.gitmodules` lists?
+pub fn named_by_upstream(submodules: &[String], source: &str) -> bool {
+    let want = repo_path(source);
+    submodules.iter().any(|s| repo_path(s) == want)
 }
 
 fn squash(s: &str) -> String {
@@ -147,7 +183,12 @@ fn kin(name: &str, home: &[String], pkg: &[String], pinned: bool) -> bool {
     let exact = home.iter().chain(pkg).any(|w| x == *w || x == squash(w));
     let close = home
         .iter()
+        .filter(|w| w.len() >= 4)
         .any(|w| x.starts_with(w.as_str()) || (x.len() >= 5 && w.starts_with(x.as_str())))
+        || home
+            .iter()
+            .chain(pkg)
+            .any(|w| w.len() >= 5 && x.contains(w.as_str()))
         || pkg
             .iter()
             .any(|w| x.starts_with(w.as_str()) || plain.split('-').any(|t| t == w));
@@ -197,6 +238,7 @@ const MIRRORS: &[&str] = &[
     "freedesktop.org",
     "archlinux.org",
     "debian.org",
+    "debian.net",
     "ubuntu.com",
     "fedoraproject.org",
 ];
@@ -225,16 +267,35 @@ fn related(declared: &str, source: &str, pkgnames: &[String], pinned: bool) -> b
     let (Some(a), Some(b)) = (host(declared), host(source)) else {
         return false;
     };
-    let (home, pkg) = (home_words(&a), words(pkgnames));
+    let (mut home, pkg) = (home_words(&a), words(pkgnames));
+    home.extend(hosted_project(declared));
+    if pages_owner(&b).is_some_and(|o| repo(declared).is_some_and(|d| d.0 == o)) {
+        return true;
+    }
     if on_code_host(&b) {
-        return repo(source)
-            .is_some_and(|(owner, name)| kin(&owner, &home, &pkg, pinned) || home.contains(&name));
+        return repo(source).is_some_and(|(owner, name)| {
+            kin(&owner, &home, &pkg, pinned)
+                || home.contains(&name)
+                || pinned && named_by_maker(&owner, &name, &pkg)
+        });
     }
     let site = registrable(&b);
     // The same name under another ending is how a look-alike is made, so that alone is not kin.
     let label = site.split('.').next().unwrap_or("");
+    if pinned && hosted_project(declared).is_some_and(|p| p == label) {
+        return true;
+    }
     pinned && !home.iter().any(|w| w == label) && kin(label, &home, &pkg, true)
         || pinned && pkg.iter().any(|w| w == label)
+}
+
+/// `nordsecurity/nordvpn-linux` for nordvpn: the repo carries the product's word and the account
+/// starts the same way. A stranger's `brave-patch` has the word and not the account.
+fn named_by_maker(owner: &str, repo: &str, pkg: &[String]) -> bool {
+    repo.split('-').any(|t| {
+        pkg.iter()
+            .any(|w| w == t && w.len() >= 4 && owner.starts_with(&w[..4]))
+    })
 }
 
 /// The same site, or the same owner on a shared code host, or a repo named after the package.
@@ -252,5 +313,8 @@ pub fn same_project(declared: &str, source: &str, pkgnames: &[String]) -> bool {
     if on_code_host(&a) && repo(declared).is_some_and(|d| d.0 == owner) {
         return true;
     }
-    pkgnames.iter().any(|n| core(n) == name)
+    !name.is_empty()
+        && pkgnames
+            .iter()
+            .any(|n| core(n) == name || core(n).starts_with(&format!("{name}-")))
 }

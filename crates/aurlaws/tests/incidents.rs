@@ -88,7 +88,7 @@ fn the_fresh_held_out_fixtures_never_lose_ground() {
         flagged += i32::from(v["verdict"] != "pass");
     }
     assert_eq!(seen, 40);
-    assert!(flagged >= 30, "{flagged}");
+    assert!(flagged >= 38, "{flagged}");
 }
 
 #[test]
