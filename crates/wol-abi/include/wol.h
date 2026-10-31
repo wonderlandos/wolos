@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 11
+#define WOL_VERSION_MINOR 12
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -462,6 +462,23 @@ void wol_message_release(wol_message *message);
  */
 wol_status wol_publish(wol_context *context, const char *topic, size_t topic_len, const char *body,
                        size_t body_len, wol_error **error);
+
+/* ---- 1.12: devices (WOL_1.12) ---- */
+
+/*
+ * What is connected. Permission: devices. Key: devices, a list of { kind ("usb", "iphone" or
+ * "bluetooth"), name, can_open; USB also vendor, product; Bluetooth also connected }. Never a
+ * serial number or an address.
+ */
+wol_status wol_device_copy_list(wol_context *context, wol_info **out, wol_error **error);
+
+/*
+ * Open a USB device for this app: read and write the descriptor as usbfs. Needs the grant
+ * device:<vendor>:<product> (four hex digits each), for that one device. Keyboards and mice, disks
+ * and hubs are never handed out. The file's name is the device's.
+ */
+wol_status wol_device_open(wol_context *context, uint32_t vendor, uint32_t product, wol_file **out,
+                           wol_error **error);
 
 #ifdef __cplusplus
 }

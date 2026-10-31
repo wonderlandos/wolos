@@ -37,6 +37,8 @@ fn answer(c: &Call) -> Answer {
         }
         Call::AccountInfo {} => Answer::with(json!({"name": "alice", "full_name": "Alice"})),
         Call::IpcSend { .. } => Answer::with(json!({"body": "pong"})),
+        Call::DeviceList {} => Answer::with(json!({"devices": [{"name": "Scanner"}]})),
+        Call::DeviceOpen { .. } => Answer::with(json!({"name": "Scanner"})),
         _ => Answer::ok(),
     }
 }
@@ -135,6 +137,8 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "account: alice",
             "reply: pong",
             "message: hello /usr/bin/sender",
+            "device: Scanner",
+            "opened: Scanner",
         ]
     );
     let names: Vec<String> = calls
@@ -174,6 +178,8 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "ipc.send",
             "ipc.reply",
             "ipc.publish",
+            "device.list",
+            "device.open",
         ]
     );
 }

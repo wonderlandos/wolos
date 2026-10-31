@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 11
+  WOL_VERSION_MINOR = 12
   WOL_VERSION_PATCH = 0
   WOL_OK = 0
   WOL_ERR_INVALID_ARGUMENT = 1
@@ -172,4 +172,6 @@ lib LibWol
   fun wol_message_retain(message : Message*) : Message*
   fun wol_message_release(message : Message*)
   fun wol_publish(context : Context*, topic : UInt8*, topic_len : LibC::SizeT, body : UInt8*, body_len : LibC::SizeT, error : Error**) : Status
+  fun wol_device_copy_list(context : Context*, out_ : Info**, error : Error**) : Status
+  fun wol_device_open(context : Context*, vendor : UInt32, product : UInt32, out_ : File**, error : Error**) : Status
 end

@@ -132,4 +132,10 @@ LibWol.wol_string_release(text)
 100.times { break if Inbox.seen; ok LibWol.wol_context_dispatch(ctx, 100, pointerof(err)) }
 ok LibWol.wol_publish(ctx, key, key.bytesize, hello, hello.bytesize, pointerof(err))
 LibWol.wol_endpoint_release(door)
+ok LibWol.wol_device_copy_list(ctx, pointerof(info), pointerof(err))
+puts "device: #{str(LibWol.wol_info_get_text(field(LibWol.wol_info_get_item(field(info, "devices"), 0), "name")))}"
+LibWol.wol_info_release(info)
+ok LibWol.wol_device_open(ctx, 1133, 2, pointerof(f), pointerof(err))
+puts "opened: #{str(LibWol.wol_file_get_name(f))}"
+LibWol.wol_file_release(f)
 LibWol.wol_context_release(ctx)

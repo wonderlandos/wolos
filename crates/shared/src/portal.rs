@@ -60,6 +60,7 @@ pub const CAPABILITIES: &[&str] = &[
     "search-provider",
     "account-info",
     "ipc",
+    "devices",
 ];
 
 /// A row a search provider offers: `key` comes back to the app when the person opens it.
@@ -98,6 +99,8 @@ pub enum Need {
     Spotlight,
     /// The caller was allowed to reach [`Call::peer`].
     Peer,
+    /// The caller was allowed to open [`Call::device`].
+    Device,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +204,12 @@ pub enum Call {
     /// Hand `body` to the endpoints named `topic` of apps that allowed this one.
     #[serde(rename = "ipc.publish")]
     IpcPublish { topic: String, body: String },
+    /// The connected devices.
+    #[serde(rename = "device.list")]
+    DeviceList {},
+    /// A USB device's descriptor, passed with the answer.
+    #[serde(rename = "device.open")]
+    DeviceOpen { vendor: u32, product: u32 },
     /// The desktop's reply to an [`Ask`] (from the shell).
     #[serde(rename = "session.answer")]
     SessionAnswer {
@@ -373,6 +382,14 @@ fn pref_key(k: &str) -> Result<(), String> {
 }
 
 impl Call {
+    /// The USB device this call opens, for [`Need::Device`].
+    pub fn device(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::DeviceOpen { vendor, product } => Some((*vendor, *product)),
+            _ => None,
+        }
+    }
+
     /// The app this call reaches, for [`Need::Peer`].
     pub fn peer(&self) -> Option<&str> {
         match self {
@@ -406,6 +423,8 @@ impl Call {
                 Need::Grant("ipc")
             }
             Self::IpcSend { .. } => Need::Peer,
+            Self::DeviceList {} => Need::Grant("devices"),
+            Self::DeviceOpen { .. } => Need::Device,
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
@@ -501,6 +520,13 @@ impl Call {
             Self::IpcPublish { topic, body } => {
                 endpoint_name(topic)?;
                 message_body(body)
+            }
+            Self::DeviceList {} => Ok(()),
+            Self::DeviceOpen { vendor, product } => {
+                if *vendor > 0xffff || *product > 0xffff {
+                    return Err("A USB vendor or product is a 16-bit number.".into());
+                }
+                Ok(())
             }
             Self::SessionAnswer { error, .. } => {
                 if error.as_ref().is_some_and(|m| !clean(m, MAX_BODY, true)) {
@@ -855,6 +881,20 @@ mod tests {
         }
         let at_most = send("/a", "greet", &"\"".repeat(MAX_MESSAGE));
         assert!(at_most.encode().len() < MAX_LINE, "fits once escaped");
+    }
+
+    #[test]
+    fn device_calls() {
+        let c = Call::DeviceOpen {
+            vendor: 0x46d,
+            product: 0xc52b,
+        };
+        assert_eq!(c.need(), Need::Device);
+        assert_eq!(c.device(), Some((0x46d, 0xc52b)));
+        assert_eq!(c.validate(), Ok(()));
+        for (vendor, product) in [(0x1_0000, 1), (1, 0x1_0000), (u32::MAX, u32::MAX)] {
+            assert!(Call::DeviceOpen { vendor, product }.validate().is_err());
+        }
     }
 
     #[test]
