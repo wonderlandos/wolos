@@ -1,5 +1,5 @@
 [Unit]
-Description=Limit /dev/shm to a quarter of RAM (ADR 0026)
+Description=Limit /dev/shm to a quarter of RAM (ADR 0027)
 DefaultDependencies=no
 After=systemd-remount-fs.service
 Before=sysinit.target

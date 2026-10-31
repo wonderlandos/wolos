@@ -1,4 +1,4 @@
-# 0025 - Memory Saver
+# 0026 - Memory Saver
 Status: accepted
 
 Context: Electron and Chromium apps keep hundreds of megabytes while hidden. The goal is the App Nap and memory compressor behaviour: a background app gives its memory back, and a focused app is usable at once. The idea of doing this per app came from memory-sentry (yanlvl99). No code or numbers come from it.

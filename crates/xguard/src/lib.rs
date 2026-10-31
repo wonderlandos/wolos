@@ -25,7 +25,7 @@ pub const RULES_DIR: &str = "/var/lib/wolos/xguard/rules";
 /// Signatures the system shipped with.
 pub const SHIPPED_DIR: &str = "/usr/share/wolos/xguard";
 
-/// Lean signatures built on this computer from the data the person opted into (ADR 0027).
+/// Lean signatures built on this computer from the data the person opted into (ADR 0028).
 pub const LOCAL_DIR: &str = "/var/lib/wolos/xguard/local";
 
 /// The newest signatures on this machine: delivered ones, else the shipped ones.

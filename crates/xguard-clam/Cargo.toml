@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 # Our source; the binary built with `libclamav` links a GPL-2.0-only library and is GPL-2.0-only.
 license = "GPL-2.0-or-later"
-description = "wol-xguard-clam: ClamAV in its own process, asked through a socket (ADR 0027)"
+description = "wol-xguard-clam: ClamAV in its own process, asked through a socket (ADR 0028)"
 publish = false
 
 [[bin]]

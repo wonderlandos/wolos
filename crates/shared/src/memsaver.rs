@@ -1,4 +1,4 @@
-//! Memory Saver wire (ADR 0025): wol-realtime -> wold, one snapshot line per change on [`SOCKET`];
+//! Memory Saver wire (ADR 0026): wol-realtime -> wold, one snapshot line per change on [`SOCKET`];
 //! wold -> everyone, the [`Status`] JSON at [`STATUS`].
 use serde::{Deserialize, Serialize};
 

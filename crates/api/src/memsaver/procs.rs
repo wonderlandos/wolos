@@ -121,7 +121,7 @@ pub fn scope_name(app: &str, pid: i32) -> String {
     format!("app-wol-{}-{pid}.scope", shared::memsaver::app_id(app))
 }
 
-/// Tasks one app may hold: far above a browser with many tabs or a `make -j` (ADR 0026).
+/// Tasks one app may hold: far above a browser with many tabs or a `make -j` (ADR 0027).
 pub const APP_TASKS: u32 = 8192;
 /// One app's share of RAM (80%) and of swap (25%), as systemd's u32 scale.
 pub const APP_MEMORY_SCALE: u32 = 3435973836;
@@ -300,7 +300,7 @@ pub mod tests {
             s.contains("BindsTo as 1 session-2.scope After as 1 session-2.scope"),
             "{s}"
         );
-        // One app cannot take the desktop with it (ADR 0026).
+        // One app cannot take the desktop with it (ADR 0027).
         assert!(
             s.contains(
                 "TasksMax t 8192 MemoryMaxScale u 3435973836 MemorySwapMaxScale u 1073741823"

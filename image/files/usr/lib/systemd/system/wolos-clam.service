@@ -1,4 +1,4 @@
-# The only program that links libclamav (ADR 0027). No network, no write access, gone when idle.
+# The only program that links libclamav (ADR 0028). No network, no write access, gone when idle.
 [Unit]
 Description=WolOS full malware check
 ConditionPathExists=/var/lib/wolos/xguard/clamav

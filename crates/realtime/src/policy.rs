@@ -49,7 +49,7 @@ pub fn allowed(id: &Identity, cap: Capability, grants: &[(String, String)], libe
 }
 
 /// Identity of every X11 client: they all share one Xwayland connection, so none can be told apart
-/// and none is trusted (ADR 0025). Not a path, so it can never match a system component or a grant.
+/// and none is trusted. Not a path, so it can never match a system component or a grant.
 pub const XWAYLAND: &str = "xwayland";
 
 pub fn xwayland() -> Identity {

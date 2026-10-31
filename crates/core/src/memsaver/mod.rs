@@ -1,4 +1,4 @@
-//! Memory Saver (ADR 0025): background apps give their memory back and fault it in as they use it
+//! Memory Saver (ADR 0026): background apps give their memory back and fault it in as they use it
 //! again (App Nap + memory compressor). Policy only; wold applies it.
 pub mod app;
 

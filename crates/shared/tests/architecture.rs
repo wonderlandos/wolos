@@ -42,7 +42,7 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 "core" => dep == "shared",
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
                 "wol-lua" => ["shared", "core", "wol-abi"].contains(&dep.as_str()),
-                // Links only libc and libclamav: a GPL-2.0-only program stays alone (ADR 0026).
+                // Links only libc and libclamav: a GPL-2.0-only program stays alone (ADR 0028).
                 "xguard-clam" => false,
                 // wopkg checks what it is about to install (ADR 0024).
                 "wopkg" => ["shared", "core", "xguard"].contains(&dep.as_str()),

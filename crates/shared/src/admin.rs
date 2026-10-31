@@ -46,7 +46,7 @@ pub enum AdminAction {
     AirPlayReceiver,
     /// Firewall: `on` or `off` (pf with the WolOS ruleset).
     Firewall,
-    /// Full malware signatures: `on` or `off` (fetched by freshclam on this computer, ADR 0026).
+    /// Full malware signatures: `on` or `off` (fetched by freshclam on this computer, ADR 0028).
     MalwareSignatures,
     /// Lid closed: `sleep` or `nothing`.
     Lid,

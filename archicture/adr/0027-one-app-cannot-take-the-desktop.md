@@ -1,4 +1,4 @@
-# 0026 - One app cannot take the desktop with it
+# 0027 - One app cannot take the desktop with it
 Status: accepted
 
 Context: a fork bomb, a memory bomb or a full file table from a normal user must not freeze the desktop. Before this, app scopes had only systemd's default task limit, no memory limit, and the system-wide open file count was lower than one process's hard limit.

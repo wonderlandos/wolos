@@ -1,4 +1,4 @@
-//! Memory Saver in wold (ADR 0025): every app gets its own systemd scope; a background app gives
+//! Memory Saver in wold (ADR 0026): every app gets its own systemd scope; a background app gives
 //! its memory back to zram once (memory.reclaim on the scope, process_madvise on each process) and
 //! faults it in as it runs. Policy: `wol_core::memsaver`. Session facts: `shared::memsaver`
 //! snapshots from wol-realtime.
