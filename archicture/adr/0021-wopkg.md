@@ -13,4 +13,9 @@ Decision:
 - History: every change is a journal line (`~/.local/state/wopkg/history.jsonl`); AppImages keep the previous file, Flatpak the previous commit, the system its restore slot.
 Consequences: `.wol` payloads are pacman packages (ADR 0011), so a `.wol` install is a system change through wold, not a user install. Grants name the executable, so `packages-install` for `/usr/bin/wopkg` covers every script that runs wopkg (ADR 0020). Crystal is a build dependency of `wopkg` only.
 
-Measured (kbench6, 16 vCPU, Arch core/extra/multilib plus a 123k-package AUR dump and AppImage/Flathub indexes; mean of 20 runs, warm cache): `wopkg search firefox` 7 ms vs `pacman -Ss` 215 ms; `info firefox` 7 ms vs 208 ms. Index build: 142,074 records from 6 sources in 1.9 s cold, 0.33 s when nothing changed. Twelve package downloads (12 MB) from one mirror: 1.07 s with `wopkg` parallel fetch vs 9.2 s sequential curl. pacman's own `ParallelDownloads` and paru were not measured.
+Measured on a box nobody else used (c7i.4xlarge, 16 vCPU, Arch core/extra/multilib plus a 123k-package AUR dump and the AppImage/Flathub indexes; warm cache; Frankfurt mirror):
+- `wopkg search` 7-9 ms vs `pacman -Ss` 206-207 ms (firefox, "python numpy", gcc; mean of 30); `info firefox` 7.7 ms vs 199.6 ms.
+- Index: 142,075 records from 6 sources in 1.7 s cold, about 0.31 s when nothing changed.
+- `wopkg update --check` 0.51-0.56 s (index refresh, release plan, `pacman -Qu`) vs `pacman -Sy` + `-Qu` 0.69-0.71 s, three runs each.
+- 60 packages (57 MB), cold cache, three rounds: `wopkg` parallel fetch 1.6 s; `pacman -Sw` 14.3 s with `ParallelDownloads=1`, 5.1-5.5 s with 5 (the default), 2.8-2.9 s with 16. pacman's time includes its signature checks; the fetch checks size and SHA-256 only, so the pacman install that follows still verifies signatures.
+Not measured: paru (its install was refused by the sandbox policy), and `install` and `update` of apps end to end (system installs need wold on a sealed image; AppImage and Flatpak installs are covered by tests, not benchmarks).
