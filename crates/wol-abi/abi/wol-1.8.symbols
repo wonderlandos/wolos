@@ -1,0 +1,4 @@
+# libwol 1.8 exports (WOL_1.8). Never edit a shipped line.
+wol_audio_copy_info@WOL_1.8
+wol_audio_set_muted@WOL_1.8
+wol_audio_set_volume@WOL_1.8

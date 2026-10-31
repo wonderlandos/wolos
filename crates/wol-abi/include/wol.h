@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 7
+#define WOL_VERSION_MINOR 8
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -368,6 +368,17 @@ void wol_assertion_release(wol_assertion *assertion);
  * learn where the person is.
  */
 wol_status wol_network_copy_info(wol_context *context, wol_info **out, wol_error **error);
+
+/* ---- 1.8: audio (WOL_1.8) ---- */
+
+/*
+ * The default output. Permission: audio-info. Keys: volume (number, 0 to 100), muted (bool), and
+ * while something plays: now_playing { title, artist, player (text), playing (bool) }.
+ */
+wol_status wol_audio_copy_info(wol_context *context, wol_info **out, wol_error **error);
+/* 0 to 100. Permission: audio-control. */
+wol_status wol_audio_set_volume(wol_context *context, uint32_t percent, wol_error **error);
+wol_status wol_audio_set_muted(wol_context *context, int32_t muted, wol_error **error);
 
 #ifdef __cplusplus
 }
