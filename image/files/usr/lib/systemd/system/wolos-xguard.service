@@ -1,4 +1,4 @@
-# The first-use malware check (ADR 0022). Holds one kernel mark on /home, /tmp and removable disks;
+# The first-use malware check (ADR 0024). Holds one kernel mark on /home, /tmp and removable disks;
 # anything it cannot do, it allows.
 [Unit]
 Description=WolOS first-use malware check

@@ -1,4 +1,4 @@
-/* libxguard symbol versions (ADR 0022). A shipped node never changes: new symbols go in a new node. */
+/* libxguard symbol versions (ADR 0024). A shipped node never changes: new symbols go in a new node. */
 XGUARD_1.0 {
   global:
     xguard_abi_version;
