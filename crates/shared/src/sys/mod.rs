@@ -31,6 +31,12 @@ pub fn peer(stream: &impl AsRawFd) -> Option<Peer> {
     }
 }
 
+/// Effective uid of this process.
+pub fn euid() -> u32 {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
+
 /// Executable path of `pid` as bytes written into `buf`; returns the length. Does not allocate.
 pub fn executable(pid: i32, buf: &mut [u8]) -> Option<usize> {
     if pid <= 0 || buf.is_empty() {
@@ -87,6 +93,7 @@ mod tests {
         let p = peer(&a).unwrap();
         assert_eq!(p.pid, std::process::id() as i32);
         assert_eq!(p.uid, unsafe { libc::getuid() });
+        assert_eq!(euid(), p.uid);
     }
 
     #[test]
