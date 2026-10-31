@@ -10,7 +10,7 @@ pub trait Applier: Send + Sync {
     fn gpu_foreground(&self, _pid: i32) {}
 }
 
-/// Linux mapping of a class, per thread: (scheduler, nice, I/O class). The FreeBSD realtime class
+/// Linux mapping of a class, per thread: (scheduler, nice, I/O class, slice). The FreeBSD realtime class
 /// has no safe Linux twin (SCHED_RR can starve the compositor): it becomes the strongest nice
 /// boost until a sched_ext scheduler takes QoS over (ADR 0016).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +20,8 @@ pub struct Linux {
     pub nice: i8,
     /// ioprio_set value: IOPRIO_CLASS_IDLE, or best effort with the level nice implies.
     pub ioprio: i32,
+    /// EEVDF request size (`sched_attr.sched_runtime`), 0 = kernel default. Without scx_wolos.
+    pub slice_ns: u64,
 }
 
 const IOPRIO_CLASS_SHIFT: i32 = 13;
@@ -27,6 +29,9 @@ const IOPRIO_CLASS_BE: i32 = 2;
 const IOPRIO_CLASS_IDLE: i32 = 3;
 /// Strongest boost for UserInteractive (FreeBSD rtprio).
 pub const INTERACTIVE_NICE: i8 = -15;
+/// Slice of the two boosted classes: a shorter request waits less after every wakeup, and 2 ms
+/// still fits a frame's work in one go. Longer slices on nice 0 made heavy frames later.
+pub const BOOST_SLICE_NS: u64 = 2_000_000;
 
 pub fn linux(class: QosClass) -> Linux {
     let be = |nice: i8| (IOPRIO_CLASS_BE << IOPRIO_CLASS_SHIFT) | ((i32::from(nice) + 20) / 5);
@@ -35,16 +40,19 @@ pub fn linux(class: QosClass) -> Linux {
             idle: false,
             nice: INTERACTIVE_NICE,
             ioprio: be(INTERACTIVE_NICE),
+            slice_ns: BOOST_SLICE_NS,
         },
         SchedPolicy::Nice(n) => Linux {
             idle: false,
             nice: n,
             ioprio: be(n),
+            slice_ns: if n < 0 { BOOST_SLICE_NS } else { 0 },
         },
         SchedPolicy::IdPrio(_) => Linux {
             idle: true,
             nice: 19,
             ioprio: IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT,
+            slice_ns: 0,
         },
     }
 }
@@ -128,16 +136,36 @@ fn set_oom_adj(pid: i32, adj: i16) -> bool {
         .is_ok()
 }
 
+/// `struct sched_attr`, first version; the kernel leaves the uclamp fields alone.
+#[repr(C)]
+#[derive(Default)]
+struct SchedAttr {
+    size: u32,
+    policy: u32,
+    flags: u64,
+    nice: i32,
+    priority: u32,
+    runtime: u64,
+    deadline: u64,
+    period: u64,
+}
+
 fn set_thread(tid: i32, l: Linux) -> bool {
-    let param = libc::sched_param { sched_priority: 0 };
-    let policy = if l.idle {
-        libc::SCHED_IDLE
-    } else {
-        libc::SCHED_OTHER
+    let attr = SchedAttr {
+        size: size_of::<SchedAttr>() as u32,
+        policy: if l.idle {
+            libc::SCHED_IDLE
+        } else {
+            libc::SCHED_OTHER
+        } as u32,
+        nice: l.nice.into(),
+        runtime: l.slice_ns,
+        ..SchedAttr::default()
     };
-    // SAFETY: plain syscalls with integer arguments and a valid sched_param.
+    // SAFETY: plain syscalls with integer arguments and a valid sched_attr. setpriority stays for
+    // SCHED_IDLE, which ignores sched_nice.
     unsafe {
-        libc::sched_setscheduler(tid, policy, &param) == 0
+        libc::syscall(libc::SYS_sched_setattr, tid, &raw const attr, 0u32) == 0
             && libc::setpriority(libc::PRIO_PROCESS, tid as _, i32::from(l.nice)) == 0
             && libc::syscall(
                 libc::SYS_ioprio_set,
@@ -365,19 +393,21 @@ pub mod tests {
     fn linux_class_table() {
         use QosClass::*;
         let be = |level: i32| (2 << 13) | level;
-        for (c, idle, nice, io) in [
-            (UserInteractive, false, -15, be(1)),
-            (UserInitiated, false, -10, be(2)),
-            (Default, false, 0, be(4)),
-            (Utility, false, 10, be(6)),
-            (Background, true, 19, 3 << 13),
+        let ms = 1_000_000;
+        for (c, idle, nice, io, slice_ns) in [
+            (UserInteractive, false, -15, be(1), 2 * ms),
+            (UserInitiated, false, -10, be(2), 2 * ms),
+            (Default, false, 0, be(4), 0),
+            (Utility, false, 10, be(6), 0),
+            (Background, true, 19, 3 << 13, 0),
         ] {
             assert_eq!(
                 linux(c),
                 Linux {
                     idle,
                     nice,
-                    ioprio: io
+                    ioprio: io,
+                    slice_ns
                 },
                 "{c:?}"
             );
@@ -406,6 +436,48 @@ pub mod tests {
         assert_eq!(oom.trim(), "300", "Background raises oom_score_adj");
         assert!(!Sched.apply(i32::MAX, QosClass::Utility));
         assert!(!Sched.apply(0, QosClass::Utility));
+    }
+
+    /// The slice reaches EEVDF and a class without one drops it. A kernel before 6.12 ignores it.
+    #[test]
+    fn slice_is_set_and_cleared_on_a_real_child() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+        let quiet = linux(QosClass::Default);
+        let default = runtime_of(pid);
+        let set = set_thread(
+            pid,
+            Linux {
+                slice_ns: 2_000_000,
+                ..quiet
+            },
+        );
+        let with = runtime_of(pid);
+        let cleared = set_thread(pid, quiet);
+        let without = runtime_of(pid);
+        child.kill().ok();
+        child.wait().ok();
+        assert!(set && cleared);
+        assert_eq!((with, without), (2_000_000, default));
+    }
+
+    fn runtime_of(tid: i32) -> u64 {
+        let mut a = SchedAttr::default();
+        // SAFETY: a is a valid buffer of the size passed.
+        let r = unsafe {
+            libc::syscall(
+                libc::SYS_sched_getattr,
+                tid,
+                &raw mut a,
+                size_of::<SchedAttr>() as u32,
+                0u32,
+            )
+        };
+        assert_eq!(r, 0);
+        a.runtime
     }
 
     #[test]
