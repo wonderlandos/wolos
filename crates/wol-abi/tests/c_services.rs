@@ -280,3 +280,31 @@ fn message() {
         ]
     );
 }
+
+#[test]
+fn device() {
+    let (out, calls) = run("device", |c, _| match c {
+        Call::DeviceList {} => {
+            Answer::with(json!({"devices": [{"name": "Scanner", "vendor": 1133}]}))
+        }
+        _ => Answer::with(json!({"name": "Scanner"})),
+    });
+    assert_eq!(
+        out,
+        [
+            "Scanner 1133",
+            "opened Scanner: from the panel",
+            "bad id: 1"
+        ]
+    );
+    assert_eq!(
+        calls,
+        [
+            Call::DeviceList {},
+            Call::DeviceOpen {
+                vendor: 1133,
+                product: 2
+            }
+        ]
+    );
+}

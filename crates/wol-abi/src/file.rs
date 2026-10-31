@@ -20,7 +20,7 @@ pub struct wol_file {
     name: Arc<wol_string>,
 }
 
-fn panel(ctx: &wol_context, c: &Call) -> Result<*mut wol_file> {
+pub(crate) fn panel(ctx: &wol_context, c: &Call) -> Result<*mut wol_file> {
     let (a, fd) = client::call_for(ctx.wold(), c, PANEL_WAIT);
     if !a.ok {
         return Err(Error::new(

@@ -264,6 +264,11 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "WolOS routes each message, checks that you allowed that pair of apps and tells the receiver who sent it",
     ),
+    (
+        "devices",
+        Enforcement::System,
+        "apps ask WolOS, which lists device names without serial numbers or addresses",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.
