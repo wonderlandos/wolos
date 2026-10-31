@@ -1,4 +1,5 @@
 // wol-hypr: thin Hyprland plugin. All policy lives in Rust (crates/realtime, C ABI wol_realtime.h).
+#include <filesystem>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 // Targets Hyprland 0.56 (Event::bus(), desktop/view/Window.hpp, positionAnimation()).
 #include <hyprland/src/desktop/view/Window.hpp>
@@ -21,6 +22,13 @@ inline HANDLE PHANDLE = nullptr;
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 
 // What the window told us about its frame, as wol_window_lights reads it (crates/realtime chrome.rs).
+// Kit windows are GTK with no decorations and may carry any app id (hosted apps): the program tells.
+static bool isWolProgram(PHLWINDOW w) {
+    std::error_code ec;
+    const auto      exe = std::filesystem::read_symlink(std::format("/proc/{}/exe", w->getPID()), ec);
+    return !ec && exe.filename().string().starts_with("wol-");
+}
+
 static int32_t decorationOf(PHLWINDOW w) {
     if (w->m_isX11)
         return w->m_X11DoesntWantBorders ? 4 : 3;
@@ -31,7 +39,7 @@ static int32_t decorationOf(PHLWINDOW w) {
     // GTK 3/4 and libadwaita never create an xdg-decoration object.
     const auto it = PROTO::xdgDecoration->m_decorations.find(top->m_resource->resource());
     if (it == PROTO::xdgDecoration->m_decorations.end())
-        return 0;
+        return isWolProgram(w) ? 5 : 0;
     return it->second->mostRecentlyRequested == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE ? 2 : 1;
 }
 

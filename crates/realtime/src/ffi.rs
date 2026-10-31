@@ -95,6 +95,7 @@ pub unsafe extern "C" fn wol_window_lights(
         2 => Decoration::Client,
         3 => Decoration::X11,
         4 => Decoration::X11Bare,
+        5 => Decoration::Kit,
         _ => Decoration::Server,
     };
     chrome::lights(chrome::Facts {

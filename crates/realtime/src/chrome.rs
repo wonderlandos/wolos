@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Which windows get the WolOS window buttons (traffic lights) drawn by the compositor.
-//! Windows that draw their own controls keep them, styled as the same lights by the theme: GTK
-//! header bars, Firefox and Helium (`wol theme`), Kit windows (`button.light`). Windows with no
-//! controls of their own get ours in a title strip above their content, so there are never two
-//! sets and never none.
+//! The compositor owns the lights wherever an app gives up its own: Helium, Electron with a frame,
+//! Qt, X11 and Kit windows get them in a title strip above their content. Apps that cannot give
+//! theirs up keep them, styled as the same lights by the theme: GTK header bars, Firefox, frameless
+//! Electron. Those get no strip, so there are never two sets and never none.
 
 /// How the client answered xdg-decoration (or the X11 equivalent).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -12,13 +12,16 @@ pub enum Decoration {
     None,
     /// Asked for (or accepted) server-side decorations: Qt, foot, Electron with a frame.
     Server,
-    /// Explicitly asked for client-side: the app draws its own frame (Helium's custom frame,
-    /// Electron `frame: false`). It keeps its buttons.
+    /// Explicitly asked for client-side: the app draws its own frame (Electron `frame: false`).
+    /// It keeps its buttons.
     Client,
     /// Xwayland window that wants decorations.
     X11,
     /// Xwayland menu, tooltip, splash or override-redirect window.
     X11Bare,
+    /// A window of a `wol-*` program: Kit draws no window buttons. GTK has no way to ask for
+    /// server-side decorations and hosted apps keep their own app id, so the program tells.
+    Kit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,11 +61,11 @@ pub fn forces_own(class: &str) -> bool {
 pub fn lights(f: Facts) -> Lights {
     match f.decoration {
         Decoration::None | Decoration::Client | Decoration::X11Bare => return Lights::None,
-        Decoration::Server | Decoration::X11 => {}
+        Decoration::Server | Decoration::X11 | Decoration::Kit => {}
     }
     if forces_own(f.class) {
         Lights::None
-    } else if f.transient && f.fixed_size {
+    } else if f.fixed_size && (f.transient || f.decoration == Decoration::Kit) {
         Lights::Close
     } else {
         Lights::All
@@ -85,13 +88,13 @@ mod tests {
     /// Every app WolOS ships (desktop/packages.txt, Dock pins, mimeapps defaults, wol-shell apps)
     /// and how it decorates. `Lights::None` here means its own themed lights, not no lights.
     const SHIPPED: &[(&str, Decoration, Lights)] = &[
-        ("helium", Decoration::Client, Lights::None),
+        ("helium", Decoration::Server, Lights::All),
         ("org.gnome.Nautilus", Decoration::None, Lights::None),
         ("org.gnome.TextEditor", Decoration::None, Lights::None),
         ("org.gnome.Calculator", Decoration::None, Lights::None),
         ("io.bassi.Amberol", Decoration::None, Lights::None),
-        ("org.wolos.settings", Decoration::None, Lights::None),
-        ("org.wolos.store", Decoration::None, Lights::None),
+        ("org.wolos.settings", Decoration::Kit, Lights::All),
+        ("org.wolos.store", Decoration::Kit, Lights::All),
         ("foot", Decoration::Server, Lights::All),
     ];
 
@@ -103,8 +106,17 @@ mod tests {
     }
 
     #[test]
+    fn a_fixed_size_kit_window_only_closes() {
+        let f = Facts {
+            fixed_size: true,
+            ..app("org.wolos.flatpak-consent", Decoration::Kit)
+        };
+        assert_eq!(lights(f), Lights::Close);
+    }
+
+    #[test]
     fn a_window_with_no_controls_of_its_own_gets_ours() {
-        for d in [Decoration::Server, Decoration::X11] {
+        for d in [Decoration::Server, Decoration::X11, Decoration::Kit] {
             assert_eq!(lights(app("anything", d)), Lights::All, "{d:?}");
         }
     }

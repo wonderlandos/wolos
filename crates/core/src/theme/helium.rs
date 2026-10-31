@@ -1,6 +1,6 @@
 //! Helium (default browser, Chromium) follows the WolOS theme through Chromium's GTK mode: the
 //! window colours come from the GTK 3 theme `WolOS-<id>` (reloaded live, see `apps`), light/dark
-//! and the accent preset from the settings portal, window buttons from `gtk-decoration-layout`.
+//! and the accent preset from the settings portal, window buttons from the compositor.
 //! Both files here are system-wide and theme-independent, so they ship in the image; nothing is
 //! generated per user (a managed policy such as `BrowserThemeColor` would replace GTK mode with
 //! a single colour and could not follow a per-user theme).
@@ -28,14 +28,14 @@ pub const HELIUM: BrowserPaths = BrowserPaths {
 /// Our file in `HELIUM.policies_dir`.
 pub const POLICY_FILE: &str = "wolos.json";
 
-/// New profiles start in GTK mode, follow the system light/dark, draw their own (GTK-styled)
-/// title bar so the window buttons follow `gtk-decoration-layout`.
+/// New profiles start in GTK mode and follow the system light/dark. They use the system title
+/// bar: the compositor's strip, so Helium has the same window buttons as every other window.
 pub fn initial_preferences() -> String {
     let v = json!({
         "extensions": { "theme": { "system_theme": 1 } },
         "browser": {
             "theme": { "color_scheme2": 0 },
-            "custom_chrome_frame": true,
+            "custom_chrome_frame": false,
             "show_home_button": false
         }
     });
@@ -79,7 +79,7 @@ mod tests {
             v["browser"]["theme"]["color_scheme2"], 0,
             "BrowserColorScheme::kSystem"
         );
-        assert_eq!(v["browser"]["custom_chrome_frame"], true);
+        assert_eq!(v["browser"]["custom_chrome_frame"], false);
         let p: serde_json::Value = serde_json::from_str(&policies()).unwrap();
         assert_eq!(p["MetricsReportingEnabled"], false);
         assert_eq!(p["SyncDisabled"], true);
