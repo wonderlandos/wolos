@@ -43,7 +43,7 @@ The rules of `c4eff09` on the third set, now seen: 31 of 300 flagged before the 
 
 Traced test split, 36 packages, at `3201717`, not rerun since: 22 built, 1 false finding (`anydesk-bin`). Build time x2.31 median on a KASAN kernel, so not a general figure.
 
-At `3201717` the Rust checker and the Bend laws agreed on all 261 corpus graphs, and all 9 mutants that changed a rule broke a proof. Not rerun at `c4eff09`.
+At `3201717` the Rust checker and the Bend laws agreed on all 261 corpus graphs, and all 9 mutants that changed a rule broke a proof. At `c4eff09` they agreed on all 178 graphs of the corpus run, and again all 9 mutants that changed a rule broke a proof.
 
 Missed by the frozen rules: `ftp` and `scp` as the download, a tar source under a stranger's GitLab account. Flagged, but under another law: `base64 <<<`, `tail` and `tr` feeding a shell, Perl's LWP. A `build.rs` that runs what the environment names is still missed.
 
