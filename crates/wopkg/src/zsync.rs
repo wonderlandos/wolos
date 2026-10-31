@@ -144,23 +144,45 @@ pub fn make(data: &[u8], filename: &str, url: &str, blocksize: usize) -> Vec<u8>
 
 /// Which new-file blocks the old file already has: block index -> offset in `old`.
 pub fn known_blocks(c: &Control, old: &[u8]) -> HashMap<usize, usize> {
+    known_blocks_counting(c, old).0
+}
+
+/// [`known_blocks`] and how many strong (MD4) checks it ran. With short weak sums many positions
+/// look like a block by chance; when the file says two blocks in a row must match (`seq_matches`
+/// 2, what `zsyncmake` writes for big files) the next window has to look like the next block too,
+/// which removes almost all of those chance hits before the strong check.
+pub fn known_blocks_counting(c: &Control, old: &[u8]) -> (HashMap<usize, usize>, u64) {
     let bs = c.blocksize;
     let mut by_rsum: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, (r, _)) in c.blocks.iter().enumerate() {
         by_rsum.entry(*r).or_default().push(i);
     }
     let mut found: HashMap<usize, usize> = HashMap::new();
+    let mut strong = 0u64;
     if old.len() < bs {
-        return found;
+        return (found, strong);
     }
+    let pair = c.seq_matches == 2;
     let mut pos = 0usize;
     let mut rs = Rsum::of(&old[..bs]);
+    // The window one block ahead, kept in step with `rs` while it fits in the file.
+    let mut ahead = (pos + 2 * bs <= old.len()).then(|| Rsum::of(&old[bs..2 * bs]));
     while pos + bs <= old.len() {
         let mut jumped = false;
         if let Some(cands) = by_rsum.get(&rs.truncated(c.rsum_bytes)) {
-            let sum = md4(&old[pos..pos + bs]);
+            let mut sum: Option<[u8; 16]> = None;
             for &i in cands {
-                if c.blocks[i].1[..] == sum[..c.checksum_bytes] {
+                if pair
+                    && let (Some(a), Some((next, _))) = (ahead, c.blocks.get(i + 1))
+                    && a.truncated(c.rsum_bytes) != *next
+                {
+                    continue;
+                }
+                let s = *sum.get_or_insert_with(|| {
+                    strong += 1;
+                    md4(&old[pos..pos + bs])
+                });
+                if c.blocks[i].1[..] == s[..c.checksum_bytes] {
                     found.entry(i).or_insert(pos);
                     jumped = true;
                 }
@@ -169,15 +191,23 @@ pub fn known_blocks(c: &Control, old: &[u8]) -> HashMap<usize, usize> {
         if jumped && pos + 2 * bs <= old.len() {
             pos += bs;
             rs = Rsum::of(&old[pos..pos + bs]);
+            ahead = (pos + 2 * bs <= old.len()).then(|| Rsum::of(&old[pos + bs..pos + 2 * bs]));
             continue;
         }
         if pos + bs >= old.len() {
             break;
         }
         rs.roll(old[pos], old[pos + bs], bs);
+        ahead = match ahead {
+            Some(mut a) if pos + 2 * bs < old.len() => {
+                a.roll(old[pos + bs], old[pos + 2 * bs], bs);
+                Some(a)
+            }
+            _ => None,
+        };
         pos += 1;
     }
-    found
+    (found, strong)
 }
 
 /// Contiguous ranges of blocks still missing, as byte ranges of the new file (inclusive end).
@@ -384,5 +414,42 @@ pub mod tests {
             .is_err()
         );
         assert!(!d.join("bad").exists());
+    }
+
+    /// A control file as `zsyncmake` writes it for large files: `Hash-Lengths: 2,2,5`.
+    fn compact(data: &[u8], bs: usize) -> Control {
+        let mut c = parse(&make(data, "a", "a", bs)).unwrap();
+        c.seq_matches = 2;
+        c.rsum_bytes = 2;
+        c.checksum_bytes = 5;
+        for (r, s) in &mut c.blocks {
+            *r &= 0xffff;
+            s.truncate(5);
+        }
+        c
+    }
+
+    #[test]
+    fn short_weak_sums_do_not_make_the_scan_crawl() {
+        // With 2-byte sums about one position in 16 looks like a block; checking every one with the
+        // strong sum took 38 s on a 49 MB AppImage. Two matching blocks in a row are required.
+        let old = noise(8 << 20, 21);
+        let mut new = old.clone();
+        new[3_000_000..3_000_010].copy_from_slice(b"0123456789");
+        let c = compact(&new, 2048);
+        let (known, strong) = known_blocks_counting(&c, &old);
+        assert!(strong < 20_000, "strong checks: {strong}");
+        // Every block except those around the edit is found, none wrongly.
+        assert!(
+            known.len() >= c.blocks.len() - 4,
+            "{} of {}",
+            known.len(),
+            c.blocks.len()
+        );
+        for (&i, &at) in &known {
+            let s = i * 2048;
+            let n = 2048.min(new.len() - s);
+            assert_eq!(old[at..at + n], new[s..s + n]);
+        }
     }
 }

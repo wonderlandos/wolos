@@ -511,11 +511,14 @@ pub fn zsync_url(ctx: &Context, u: &UpdateInfo, api_base: &str) -> Result<String
                 .map_err(|_| Error::unavailable("GitHub's answer was cut off."))?;
             let v: serde_json::Value = serde_json::from_str(&body)
                 .map_err(|_| Error::unavailable("GitHub sent an unreadable answer."))?;
+            // More than one match happens (a re-spin next to the original); the shortest name is the
+            // plain one, which is the file its own control file describes.
             v["assets"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .find(|a| a["name"].as_str().is_some_and(|n| glob(file, n)))
+                .filter(|a| a["name"].as_str().is_some_and(|n| glob(file, n)))
+                .min_by_key(|a| a["name"].as_str().map_or(usize::MAX, str::len))
                 .and_then(|a| a["browser_download_url"].as_str().map(str::to_owned))
                 .ok_or_else(|| {
                     Error::new(
@@ -968,6 +971,26 @@ pub mod tests {
             std::fs::read(&path).unwrap(),
             srv_holder.1,
             "rollback restores the previous file"
+        );
+    }
+
+    #[test]
+    fn the_plain_zsync_wins_when_a_release_has_two_that_match() {
+        // Real release: `App-2.8-1-x86_64.AppImage.zsync` points at `App-2.8-x86_64.AppImage`.
+        let body = r#"{"assets":[
+          {"name":"App-2.8-1-x86_64.AppImage.zsync","browser_download_url":"https://e/App-2.8-1-x86_64.AppImage.zsync"},
+          {"name":"App-2.8-x86_64.AppImage.zsync","browser_download_url":"https://e/App-2.8-x86_64.AppImage.zsync"}]}"#;
+        let srv = crate::testutil::serve(vec![(
+            "/repos/o/r/releases/latest",
+            Served::bytes(body.as_bytes().to_vec()),
+        )]);
+        let d = temp("ai-glob");
+        let c = ctx(&d);
+        let u =
+            UpdateInfo::parse("gh-releases-zsync|o|r|latest|App-*x86_64.AppImage.zsync").unwrap();
+        assert_eq!(
+            zsync_url(&c, &u, &srv.url("")).unwrap(),
+            "https://e/App-2.8-x86_64.AppImage.zsync"
         );
     }
 }
