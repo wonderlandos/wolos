@@ -89,6 +89,24 @@ unsafe class Services
         wol_info_release(info);
         Ok(wol_audio_set_volume(ctx, 30, &err));
         Ok(wol_audio_set_muted(ctx, 1, &err));
+        using Utf8 term = new("term"), rowKey = new("note-1"), rowTitle = new("A note");
+        Ok(wol_search_query(ctx, term.Ptr, term.Len, &info, &err));
+        Console.WriteLine($"found: {wol_info_get_count(Field(info, "results"))}");
+        wol_info_release(info);
+        bool opened = false;
+        wol_search_fn onQuery = (_, r, t, _) =>
+        {
+            IntPtr e = 0;
+            wol_search_reply_add(r, rowKey.Ptr, rowKey.Len, rowTitle.Ptr, rowTitle.Len, null, 0, &e);
+            Console.WriteLine($"asked: {Text(t)}");
+        };
+        wol_search_open_fn onOpen = (_, row, _) => { Console.WriteLine($"open: {Text(row)}"); opened = true; };
+        IntPtr provider = 0;
+        Ok(wol_search_provide(ctx, onQuery, onOpen, 0, &provider, &err));
+        for (int i = 0; i < 100 && !opened; i++) Ok(wol_context_dispatch(ctx, 100, &err));
+        wol_search_provider_release(provider);
+        GC.KeepAlive(onQuery);
+        GC.KeepAlive(onOpen);
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);

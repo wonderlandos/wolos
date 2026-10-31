@@ -11,5 +11,6 @@ pub mod portal;
 pub mod prefs;
 pub mod qos;
 pub mod reaper;
+pub mod search;
 pub mod server;
 pub mod supervisor;

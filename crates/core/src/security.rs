@@ -244,6 +244,16 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "apps ask WolOS to change the volume, which checks your choice first",
     ),
+    (
+        "search",
+        Enforcement::System,
+        "apps ask WolOS to search, which checks your choice and hands back only titles",
+    ),
+    (
+        "search-provider",
+        Enforcement::System,
+        "only apps you allow are asked for search rows, and each sees only the text of the search",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.
