@@ -1,0 +1,19 @@
+WolOS
+Copyright (c) 2026 Julia Klee. See COPYRIGHT for the license of each part.
+
+WolOS is based on Arch Linux. It is an independent project, not affiliated with or endorsed by
+Arch Linux.
+
+WolOS is not affiliated with, endorsed by or sponsored by Apple Inc. macOS, AirPods, APFS and
+FileVault are trademarks of Apple Inc., named only to say what WolOS works with. Dock and Control
+Center are used here as generic words for parts of a desktop.
+
+Firefox is a trademark of the Mozilla Foundation. WolOS does not modify Firefox.
+
+Ideas credited, no code or values taken:
+- memory-sentry (yanlvl99): saving memory per app, the idea behind Memory Saver.
+- CachyOS-Settings: the idea of tuning a desktop's defaults.
+
+Built on, each under its own license: Linux, systemd, Hyprland, GTK, libadwaita, PipeWire, ClamAV,
+Crystal and the Rust crates listed in Cargo.lock. Components with their own terms are noted in
+third_party/, crates/shell/NOTICE and crates/core/src/theme/builtin/NOTICE.

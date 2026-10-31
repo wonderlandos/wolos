@@ -8,7 +8,7 @@ SECRET='AKIA[0-9A-Z]{16}|-----BEGIN ([A-Z0-9]+ )*PRIVATE KEY-----|gh[pousr]_[A-Z
 Z=0000000000000000000000000000000000000000
 # stdin: git raw diff lines; prints offending paths.
 check() {
-  awk -F'\t' '/^:/{split($1,f," "); print f[4] "\t" $2}' | sort -u | while IFS="$(printf '\t')" read -r blob path; do
+  awk -F'\t' '/^:/{split($1,f," "); if (f[2]!="160000") print f[4] "\t" $2}' | sort -u | while IFS="$(printf '\t')" read -r blob path; do
     if printf %s "$path" | grep -qE "$RE" || git cat-file blob "$blob" | grep -qIE "$SECRET"; then
       printf '%s\n' "$path"
     fi

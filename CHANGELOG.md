@@ -1,6 +1,11 @@
 # Changelog
 
 ## 0.11.2
+- Window title strip: follows light and dark. Kit windows show the title once, and strip plus toolbar take 64 px instead of 80.
+- The search window is `wol-search` and the app grid is Apps; a saved shortcut that named the old program needs setting again.
+- The image no longer adds files to Firefox's folder.
+- The kernel series and `scx_wolos` are in this repository, GPL-2.0-only.
+- Memory Saver switches flip back when they could not save. The installer's password fields show the Caps Lock note.
 - `sudo` works: sudo-rs ships no `/etc/sudoers` and no PAM service, so every sudo failed, for administrators too, and the live installer found no disk. WolOS now ships both.
 - The live desktop has Install WolOS first in the dock and in Search, and never locks itself.
 - Secure Boot (ADR 0025): every computer makes its own boot keys at install. In Setup Mode they join Microsoft's in the firmware; otherwise one key screen at first start; with neither, WolOS still starts and says so. Each slot boots one signed image holding kernel, initramfs and command line, with kernel lockdown and module signature checks on. The disk key follows signed kernels, so updates keep unlocking and a changed kernel, command line or initramfs does not. An older slot can't be started once it is retired.
