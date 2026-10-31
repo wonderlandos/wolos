@@ -8,7 +8,7 @@
 //!   (the same ones the C programs use) and must send and print the same things.
 //!
 //! A new ABI version: add the declarations to `wol.h`, run `WOL_BLESS=1 cargo test -p wol-abi --test
-//! bindings` to regenerate, then extend `parts` in each language for the new calls (and in C).
+//! bindings` to regenerate, then extend `services` in each language for the new calls (`common/services.rs` checks them).
 //! A language whose toolchain is not installed is skipped unless `WOL_BINDINGS_REQUIRED=1`.
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -16,6 +16,7 @@ use std::process::Command;
 mod common;
 use common::bindgen;
 use common::fakes::{run_hello, run_parts};
+use common::services::run_services;
 use common::temp;
 
 fn manifest() -> &'static Path {
@@ -222,4 +223,19 @@ fn hello_in_dotnet() {
 #[test]
 fn parts_in_dotnet() {
     each("dotnet", "parts", dotnet, run_parts);
+}
+
+#[test]
+fn services_in_crystal() {
+    each("crystal", "services", crystal, run_services);
+}
+
+#[test]
+fn services_in_swift() {
+    each("swift", "services", swift, run_services);
+}
+
+#[test]
+fn services_in_dotnet() {
+    each("dotnet", "services", dotnet, run_services);
 }
