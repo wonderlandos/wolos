@@ -8,6 +8,7 @@
 // Built with -fno-access-control: the decoration map and toplevel resource are private.
 #include <hyprland/src/protocols/XDGDecoration.hpp>
 #include <hyprland/src/protocols/XDGShell.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/layout/target/Target.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/xwayland/XSurface.hpp>
@@ -80,7 +81,8 @@ static void onOpenLate(PHLWINDOW w) {
     const auto zone = mon->logicalBoxMinusReserved(); // below the menu bar, above the dock
     wol_place((int32_t)sz.x, (int32_t)sz.y, (int32_t)zone.x, (int32_t)zone.y, (int32_t)zone.w, (int32_t)zone.h,
               bar ? wol_titlebar_height() : 0, 0, 0, 0, &x, &y);
-    w->layoutTarget()->setPositionGlobal(CBox{Vector2D(x, y), sz});
+    // Through the layout, which restores this box after zoom; moving the target directly is forgotten.
+    g_layoutManager->setTargetGeom(CBox{Vector2D(x, y), sz}, w->layoutTarget());
 }
 
 static void onActive(PHLWINDOW w) {
