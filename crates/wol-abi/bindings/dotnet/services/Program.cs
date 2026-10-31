@@ -137,6 +137,11 @@ unsafe class Services
         Ok(wol_share_text(ctx, title.Ptr, title.Len, body.Ptr, body.Len, &str, &err));
         Console.WriteLine($"shared: {Text(str)}");
         wol_string_release(str);
+        Ok(wol_service_start(ctx, key.Ptr, key.Len, &err));
+        Ok(wol_service_copy_status(ctx, key.Ptr, key.Len, &info, &err));
+        Console.WriteLine($"service: {Text(wol_info_get_text(Field(info, "state")))}");
+        wol_info_release(info);
+        Ok(wol_service_stop(ctx, key.Ptr, key.Len, &err));
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);

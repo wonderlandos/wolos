@@ -235,6 +235,7 @@ pub struct State {
     pub prefs: crate::prefs::Prefs,
     pub searches: crate::search::Searches,
     pub endpoints: crate::ipc::Endpoints,
+    pub background: Box<dyn crate::services::Background>,
     pub asks: Asks,
     pub holds: Holds,
     pub host: Box<dyn Host>,
@@ -246,6 +247,7 @@ impl Default for State {
         Self {
             prefs: Default::default(),
             searches: Default::default(),
+            background: Box::new(crate::services::NoBackground),
             endpoints: Default::default(),
             notes: Default::default(),
             asks: Default::default(),
@@ -310,6 +312,7 @@ fn doing(capability: &str) -> Option<&'static str> {
         "ipc" => "send or receive messages from other apps",
         "devices" => "use connected devices",
         "share" => "share text",
+        "background" => "run in the background",
         _ => return None,
     })
 }
@@ -623,6 +626,18 @@ fn decide<W: Write + Send>(
             let ask = Ask::Share { title, text };
             st.asks.ask(bus, caller.uid, ask, PANEL_TIMEOUT)
         }
+        Call::ServiceStart { name } => match st.background.start(caller, &name) {
+            Ok(()) => Answer::ok(),
+            Err(m) => Answer::err(Code::Unavailable, m),
+        },
+        Call::ServiceStop { name } => {
+            if st.background.stop(caller, &name) {
+                Answer::ok()
+            } else {
+                Answer::err(Code::InvalidArgument, "This app runs no such service.")
+            }
+        }
+        Call::ServiceStatus { name } => Answer::with(st.background.status(caller, &name)),
         Call::SessionAnswer { id, error, data } => {
             let a = match error {
                 Some(m) => Answer::err(Code::Unavailable, m),
@@ -1242,6 +1257,22 @@ mod tests {
             open("/usr/bin/b", 0x1234),
             Some(Code::PermissionDenied),
             "listing only"
+        );
+    }
+
+    #[test]
+    fn a_service_needs_its_grant() {
+        let st = State::default();
+        let bus = Bus::<UnixStream>::default();
+        let g = Fixed(&[("/usr/bin/a", "background")]);
+        let line = r#"{"call":"service.start","name":"sync"}"#;
+        let no = handle(line, Some(&caller("/usr/bin/b")), &g, &bus, &st);
+        assert_eq!(no.code, Some(Code::PermissionDenied));
+        let yes = handle(line, Some(&caller("/usr/bin/a")), &g, &bus, &st);
+        assert_eq!(
+            yes.code,
+            Some(Code::Unavailable),
+            "none in the default state"
         );
     }
 

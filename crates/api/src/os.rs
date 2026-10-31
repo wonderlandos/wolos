@@ -56,10 +56,31 @@ pub fn wait_signal() -> i32 {
     sig
 }
 
+/// `cmd` as account `uid`, in its home, with nothing of wold's environment. Std drops root's
+/// supplementary groups with the uid.
+fn as_account(cmd: &mut std::process::Command, uid: u32) -> std::io::Result<()> {
+    let passwd = std::fs::read_to_string("/etc/passwd")?;
+    let who = crate::services::identity(&passwd, uid).ok_or(std::io::ErrorKind::NotFound)?;
+    cmd.uid(uid)
+        .gid(who.gid)
+        .env_clear()
+        .env("HOME", &who.home)
+        .env("USER", &who.name)
+        .env("LOGNAME", &who.name)
+        .env("PATH", "/usr/local/bin:/usr/bin")
+        .env("XDG_RUNTIME_DIR", format!("/run/user/{uid}"))
+        .current_dir(&who.home)
+        .stdin(std::process::Stdio::null());
+    Ok(())
+}
+
 impl Runner for OsRunner {
     fn spawn(&self, spec: &JobSpec) -> std::io::Result<i32> {
         let mut cmd = std::process::Command::new(&spec.program[0]);
         cmd.args(&spec.program[1..]).process_group(0);
+        if let Some(uid) = spec.user {
+            as_account(&mut cmd, uid)?;
+        }
         // SAFETY: only async-signal-safe calls between fork and exec.
         unsafe {
             cmd.pre_exec(|| {
@@ -151,4 +172,37 @@ pub fn stop_all(running: &[i32]) {
         });
     }
     eprintln!("wold: stopped");
+}
+
+#[cfg(test)]
+mod account_tests {
+    use super::*;
+
+    /// Needs root, so not in the normal run: `sudo <test binary> --ignored runs_as_the_account`.
+    #[test]
+    #[ignore]
+    fn runs_as_the_account() {
+        let out = std::env::temp_dir().join(format!("wol-as-{}", std::process::id()));
+        let _ = std::fs::write(&out, "");
+        std::fs::set_permissions(&out, std::os::unix::fs::PermissionsExt::from_mode(0o666))
+            .unwrap();
+        let mut c = std::process::Command::new("/bin/sh");
+        let script = format!(
+            "{{ id -u; id -g; id -G; env | wc -l; }} > {}",
+            out.display()
+        );
+        c.args(["-c", &script]);
+        as_account(&mut c, 65534).unwrap();
+        c.current_dir("/");
+        assert!(c.status().unwrap().success());
+        let t = std::fs::read_to_string(&out).unwrap();
+        let _ = std::fs::remove_file(&out);
+        let lines: Vec<&str> = t.lines().collect();
+        assert_eq!(lines[0], "65534", "{t}");
+        assert_eq!(lines[1], lines[2], "no group but its own: {t}");
+        assert!(
+            lines[3].parse::<u32>().unwrap() <= 8,
+            "clean environment: {t}"
+        );
+    }
 }

@@ -1,0 +1,4 @@
+# libwol 1.14 exports (WOL_1.14). Never edit a shipped line.
+wol_service_copy_status@WOL_1.14
+wol_service_start@WOL_1.14
+wol_service_stop@WOL_1.14

@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 13
+#define WOL_VERSION_MINOR 14
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -489,6 +489,21 @@ wol_status wol_device_open(wol_context *context, uint32_t vendor, uint32_t produ
  */
 wol_status wol_share_text(wol_context *context, const char *title, size_t title_len,
                           const char *text, size_t text_len, wol_string **out, wol_error **error);
+
+/* ---- 1.14: services (WOL_1.14) ---- */
+
+/*
+ * Keep part of this app running. Permission: background. wold runs this app's own executable as
+ * the account, with the single argument --wol-service=<name>, a clean environment and background
+ * priority, and restarts it within 10 seconds if it exits, until the app stops it or the computer
+ * restarts. Names are letters, digits, '.', '_', '-'. An account runs at most 8 services.
+ * Starting one that runs does nothing. Only the app that started a service sees or stops it.
+ */
+wol_status wol_service_start(wol_context *context, const char *name, size_t len, wol_error **error);
+wol_status wol_service_stop(wol_context *context, const char *name, size_t len, wol_error **error);
+/* Keys: state ("running", "waiting" or "stopped"), starts, last_exit. */
+wol_status wol_service_copy_status(wol_context *context, const char *name, size_t len,
+                                   wol_info **out, wol_error **error);
 
 #ifdef __cplusplus
 }

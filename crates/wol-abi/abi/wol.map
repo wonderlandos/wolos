@@ -184,3 +184,10 @@ WOL_1.13 {
   global:
     wol_share_text;
 } WOL_1.12;
+
+WOL_1.14 {
+  global:
+    wol_service_copy_status;
+    wol_service_start;
+    wol_service_stop;
+} WOL_1.13;
