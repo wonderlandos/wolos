@@ -14,6 +14,7 @@ pub mod client;
 pub mod clipboard;
 pub mod context;
 pub mod error;
+pub mod message;
 pub mod account;
 pub mod search;
 pub mod audio;
@@ -29,7 +30,7 @@ pub mod string;
 pub mod system;
 
 /// libwol's own version (not the WolOS version): major.minor.patch, packed 0xMMmmpp.
-pub const VERSION: (u32, u32, u32) = (1, 10, 0);
+pub const VERSION: (u32, u32, u32) = (1, 11, 0);
 
 /// Every `#define` in `wol.h` (test-checked against the header).
 pub mod abi {
@@ -63,7 +64,7 @@ pub extern "C" fn wol_version() -> u32 {
 /// The version as text, static.
 #[unsafe(no_mangle)]
 pub extern "C" fn wol_version_string() -> *const std::ffi::c_char {
-    c"1.10.0".as_ptr()
+    c"1.11.0".as_ptr()
 }
 
 #[cfg(test)]

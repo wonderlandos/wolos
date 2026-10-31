@@ -70,6 +70,16 @@ pub enum Event {
         pid: i32,
         key: String,
     },
+    /// A message from another app of the account, for process `pid`. `from` is the sender's
+    /// executable as the kernel saw it; `id` 0 was published and takes no reply.
+    Message {
+        uid: u32,
+        pid: i32,
+        id: u32,
+        from: String,
+        name: String,
+        body: String,
+    },
     /// A notification button pressed: reaches only process `pid` (the one that posted `id`).
     NotificationAction {
         uid: u32,
@@ -110,7 +120,8 @@ impl Event {
             | Self::SessionAsk { uid, .. } => Audience::Account(*uid),
             Self::NotificationAction { uid, pid, .. }
             | Self::SearchQuery { uid, pid, .. }
-            | Self::SearchOpen { uid, pid, .. } => Audience::Process {
+            | Self::SearchOpen { uid, pid, .. }
+            | Self::Message { uid, pid, .. } => Audience::Process {
                 uid: *uid,
                 pid: *pid,
             },
@@ -136,6 +147,7 @@ impl Event {
             Self::NotificationWithdrawn { .. } => "notification-withdrawn",
             Self::SearchQuery { .. } => "search-query",
             Self::SearchOpen { .. } => "search-open",
+            Self::Message { .. } => "message",
             Self::SessionAsk { .. } => "session-ask",
             Self::NotificationAction { .. } => "notification-action",
         }
@@ -175,6 +187,14 @@ mod tests {
                 uid,
                 pid,
                 key: "k".into(),
+            },
+            Event::Message {
+                uid,
+                pid,
+                id: 1,
+                from: "/usr/bin/a".into(),
+                name: "greet".into(),
+                body: "hi".into(),
             },
         ] {
             assert_eq!(e.audience(), Audience::Process { uid, pid });
