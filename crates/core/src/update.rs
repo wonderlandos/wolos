@@ -1,6 +1,8 @@
 //! System update with A/B root slots (ADR 0016): snapshot the running root into the other slot,
 //! pin it to the new release's Arch Linux Archive date, `pacman -Syu` inside it, rebuild its
-//! initramfs and boot entry (boot counting), boot it next. Packages the person installed with
+//! initramfs, signed kernel image and boot entry (boot counting), boot it next. A failed slot falls
+//! back on its own: no default is pinned, the newest entry boots and a bad one sorts last.
+//! Packages the person installed with
 //! pacman come along: the slot is a copy of the running root, never an image.
 //! Pure: produces argv lists; the caller runs them in order and stops on the first failure,
 //! then runs [`rollback`] (the new slot is deleted; the running slot stays the restore point).
@@ -80,19 +82,6 @@ pub fn running_slot(cmdline: &str) -> Option<&'static str> {
 /// The slot that is not `running`.
 pub fn other_slot(running: &str) -> Option<&'static str> {
     is_valid_be(running).then(|| SLOTS.into_iter().find(|s| *s != running))?
-}
-
-/// systemd-boot entry for `slot` (written as `<slot>+3.conf`: boot counting).
-pub fn entry(slot: &str, release: &str) -> String {
-    entry_with(slot, release, &crate::encrypt::slot_options(None, slot))
-}
-
-/// Same, with the kernel command line (`root=`/`rd.luks.*` of an encrypted system carried over).
-pub fn entry_with(slot: &str, release: &str, options: &str) -> String {
-    format!(
-        "title WolOS\nversion {release}\nlinux /{slot}/{KERNEL}\ninitrd /{slot}/{INITRAMFS}\n\
-options {options}\n"
-    )
 }
 
 /// Entry file name with the boot counter.
@@ -219,7 +208,10 @@ pub struct Build<'a> {
     pub cmdline: Option<&'a str>,
 }
 
-/// Snapshot, change, rebuild the initramfs, seal, write the entry, boot it next.
+/// Builds the slot's signed kernel image and its counted boot entry.
+pub const ESP_SYNC: &str = "/usr/lib/wolos/esp-sync";
+
+/// Snapshot, change, rebuild the initramfs, seal, build the boot image, boot it next.
 pub fn build(b: &Build) -> Option<Vec<Step>> {
     let slot = b.slot;
     if !is_valid_be(slot) {
@@ -252,12 +244,6 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     let esp = format!("{ESP}/{slot}");
     steps.push(v(&["mkdir", "-p", &esp]));
     steps.push(v(&[
-        "cp",
-        &format!("{work}/boot/{KERNEL}"),
-        &format!("{work}/boot/{INITRAMFS}"),
-        &esp,
-    ]));
-    steps.push(v(&[
         "wol",
         "seal",
         "apply",
@@ -269,15 +255,21 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
         steps.push(v(&["btrfs", "subvolume", "delete", &root]));
         steps.push(v(&["mv", &work, &root]));
     }
-    steps.push(Step::Write {
-        path: entry_file(slot),
-        text: entry_with(
-            slot,
-            b.release,
-            &crate::encrypt::slot_options(b.cmdline, slot),
+    // After the seal: the signed image carries the slot's root digest.
+    steps.push(v(&[
+        "env",
+        &format!("WOLOS_ROOT={root}"),
+        &format!("WOLOS_SLOT={slot}"),
+        &format!("WOLOS_RELEASE={}", b.release),
+        &format!(
+            "WOLOS_CMDLINE={}",
+            crate::encrypt::slot_options(b.cmdline, slot)
         ),
-    });
-    steps.push(v(&["bootctl", "set-default", &format!("{slot}.conf")]));
+        ESP_SYNC,
+        "--new",
+    ]));
+    // A rollback the person chose earlier stops being the default: newest good entry boots.
+    steps.push(v(&["bootctl", "set-default", ""]));
     Some(steps)
 }
 
@@ -303,7 +295,12 @@ pub fn rollback(slot: &str) -> Vec<Vec<String>> {
             "delete".into(),
             format!("{TOP}/@{slot}"),
         ],
-        vec!["rm".into(), "-f".into(), entry_file(slot)],
+        vec![
+            "rm".into(),
+            "-f".into(),
+            entry_file(slot),
+            format!("{ESP}/EFI/wolos/{slot}.efi"),
+        ],
     ]
 }
 
@@ -353,7 +350,11 @@ pub mod be {
                     space: e["triesLeft"]
                         .as_u64()
                         .map_or_else(String::new, |t| format!("{t} tries left")),
-                    created: e["version"].as_str().unwrap_or("").into(),
+                    created: e["version"]
+                        .as_str()
+                        .map(|v| v.split_once('-').map_or(v, |(_, date)| date))
+                        .unwrap_or("")
+                        .into(),
                 })
             })
             .collect()
@@ -482,11 +483,12 @@ mod tests {
                 "arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm",
                 "arch-chroot /run/wolos/top/@wolos-b mkinitcpio -P",
                 "mkdir -p /efi/wolos-b",
-                "cp /run/wolos/top/@wolos-b/boot/vmlinuz-linux-wolos \
-/run/wolos/top/@wolos-b/boot/initramfs-linux-wolos.img /efi/wolos-b",
                 "wol seal apply /run/wolos/top/@wolos-b /efi/wolos-b/verity",
-                "write /efi/loader/entries/wolos-b+3.conf",
-                "bootctl set-default wolos-b.conf",
+                "env WOLOS_ROOT=/run/wolos/top/@wolos-b WOLOS_SLOT=wolos-b WOLOS_RELEASE=2026/11/02 \
+WOLOS_CMDLINE=root=LABEL=wolos rootflags=subvol=@wolos-b ro quiet splash \
+/usr/lib/wolos/esp-sync --new",
+                // No pinned default: the newest good entry boots, a bad one sorts last.
+                "bootctl set-default ",
             ]
         );
         // First update: no previous slot; same release: no new date.
@@ -496,9 +498,6 @@ mod tests {
             "btrfs subvolume snapshot / /run/wolos/top/@wolos-a"
         );
         assert!(!first.iter().any(|s| s.to_string().starts_with("sed ")));
-        assert!(
-            matches!(&p[10], Step::Write { text, .. } if *text == entry("wolos-b", "2026/11/02"))
-        );
         for (slot, date) in [("x", None), ("wolos-a", Some("2026-11-02")), ("", None)] {
             assert!(plan(slot, false, date).is_none(), "{slot} {date:?}");
         }
@@ -510,42 +509,29 @@ mod tests {
             Some("root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rw"),
         )
         .unwrap();
-        let Some(Step::Write { text, .. }) = enc
+        let sync = enc
             .iter()
-            .find(|s| matches!(s, Step::Write { .. }))
-            .cloned()
-        else {
-            panic!()
-        };
-        assert!(text.contains("options root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rootflags=subvol=@wolos-b ro "), "{text}");
+            .map(Step::to_string)
+            .find(|s| s.contains("esp-sync"))
+            .unwrap();
+        assert!(sync.contains("WOLOS_CMDLINE=root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rootflags=subvol=@wolos-b ro "), "{sync}");
         let seal = enc
             .iter()
             .position(|s| s.to_string().starts_with("wol seal apply"))
             .unwrap();
-        assert!(
-            seal > enc
-                .iter()
-                .position(|s| s.to_string().starts_with("cp "))
-                .unwrap()
-                && seal + 3 == enc.len()
+        assert_eq!(
+            seal + 3,
+            enc.len(),
+            "the kernel image is built from the sealed slot"
         );
         let r: Vec<String> = rollback("wolos-b").iter().map(|a| a.join(" ")).collect();
         assert_eq!(
             r,
             [
                 "btrfs subvolume delete /run/wolos/top/@wolos-b",
-                "rm -f /efi/loader/entries/wolos-b+3.conf"
+                "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
             ]
         );
-    }
-
-    #[test]
-    fn boot_entry_counts_tries() {
-        let e = entry("wolos-b", "2026/11/02");
-        assert!(e.contains("linux /wolos-b/vmlinuz-linux-wolos\n"));
-        assert!(e.contains("rootflags=subvol=@wolos-b "));
-        assert!(e.contains("version 2026/11/02\n"));
-        assert_eq!(entry_file("wolos-b"), "/efi/loader/entries/wolos-b+3.conf");
     }
 
     pub(crate) const BOOTCTL: &str = r#"[
@@ -582,6 +568,9 @@ mod tests {
         let booted = be::parse(&BOOTCTL.replace("\"isDefault\":true", "\"isDefault\":false"));
         assert_eq!(be::rollback_target(&booted).unwrap().name, "wolos-b");
         assert!(be::prune(&b, be::KEEP).is_empty());
+        // A generation leads the version so the newest sorts first; the date is what people see.
+        let gen_ = be::parse(&BOOTCTL.replace("2026/11/02", "7-2026.11.02"));
+        assert_eq!(gen_[1].created, "2026.11.02");
         assert_eq!(
             be::activate_argv("wolos-a").join(" "),
             "bootctl set-default wolos-a.conf"

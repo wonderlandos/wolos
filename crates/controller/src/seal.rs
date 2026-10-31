@@ -117,7 +117,13 @@ pub fn check(env: &mut dyn Env) -> i32 {
     let Some(slot) = cmdline.as_deref().and_then(update::running_slot) else {
         return 0;
     };
-    let Some(expected) = env.read_file(Path::new(&seal::digest_file(slot))) else {
+    // The signed command line carries the digest; the ESP copy is for systems from before it.
+    let signed = cmdline
+        .as_deref()
+        .and_then(|c| wol_core::boot::cmdline_word(c, "wolos.seal"))
+        .map(str::to_owned);
+    let Some(expected) = signed.or_else(|| env.read_file(Path::new(&seal::digest_file(slot))))
+    else {
         return 0; // never sealed (a system from before the seal): nothing to compare
     };
     let man = env
@@ -125,8 +131,21 @@ pub fn check(env: &mut dyn Env) -> i32 {
         .map(|t| seal::Manifest::parse(&t))
         .unwrap_or_default();
     let mut cache = std::collections::HashMap::new();
-    for p in man.0.keys() {
-        cache.insert(p.clone(), measure(env, &Path::new("/").join(p)));
+    let keys: Vec<&String> = man.0.keys().collect();
+    for chunk in keys.chunks(512) {
+        let paths: Vec<String> = chunk.iter().map(|p| format!("/{p}")).collect();
+        let argv = seal::measure_many_argv(&paths);
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        if let Some(out) = env.capture(&a) {
+            for (p, d) in seal::parse_measures(&out) {
+                cache.insert(p.trim_start_matches('/').to_owned(), Some(d));
+            }
+        } else {
+            // A file with no seal stops the whole run: ask for each one.
+            for p in chunk {
+                cache.insert((*p).clone(), measure(env, &Path::new("/").join(p)));
+            }
+        }
     }
     let v = seal::verify(&man, &expected, &|p| cache.get(p).cloned().flatten());
     if v == seal::Verdict::Ok {
@@ -217,7 +236,8 @@ pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let out = env
         .var("WOLOS_RECOVERY_OUT")
         .unwrap_or_else(|| "/run/wolos/recovery-key".into());
-    for (i, argv) in encrypt::enroll(part, key, unlock, inv.get("d"))
+    let tpm_pub = env.var("WOLOS_TPM_PUB");
+    for (i, argv) in encrypt::enroll(part, key, unlock, inv.get("d"), tpm_pub.as_deref())
         .iter()
         .enumerate()
     {
@@ -232,6 +252,37 @@ pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
             let _ =
                 std::fs::set_permissions(&out, std::os::unix::fs::PermissionsExt::from_mode(0o600));
         } else if env.exec(argv).unwrap_or(1) != 0 {
+            return fail(env, ErrorCode::Failed, &format!("{} failed", argv[0]));
+        }
+    }
+    0
+}
+
+/// `wol encrypt rebind` (first boot, wolos-tpm-bind.service): bind the disk key to the PCR values
+/// of this firmware state and drop the install key.
+pub fn rebind(env: &mut dyn Env) -> i32 {
+    let cmdline = env
+        .read_file(Path::new("/proc/cmdline"))
+        .unwrap_or_default();
+    let Some(uuid) = wol_core::boot::cmdline_word(&cmdline, "rd.luks.name")
+        .and_then(|w| w.split_once('=').map(|(u, _)| u.to_owned()))
+    else {
+        return 0;
+    };
+    let dir = Path::new(wol_core::boot::STATE_DIR);
+    let shim = env
+        .capture(&["ls", &format!("{}/EFI/wolos/shimx64.efi", update::ESP)])
+        .is_some();
+    let pcrs = wol_core::boot::tpm_pcrs(shim);
+    let key = dir.join("rebind.key");
+    let public = dir.join("tpm2-pcr-public.pem");
+    for argv in encrypt::rebind(
+        &format!("/dev/disk/by-uuid/{uuid}"),
+        &key.to_string_lossy(),
+        &public.to_string_lossy(),
+        pcrs,
+    ) {
+        if env.exec(&argv).unwrap_or(1) != 0 {
             return fail(env, ErrorCode::Failed, &format!("{} failed", argv[0]));
         }
     }

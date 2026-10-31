@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# For a GRUB that belongs to another system: copy to /etc/grub.d/ and run its config update. The
+# entry finds the WolOS startup partition by its own files and hands over to the WolOS loader, so
+# try counting and rollback keep working.
+cat <<'E'
+menuentry 'WolOS' --class wolos --class gnu-linux {
+	insmod part_gpt
+	insmod fat
+	insmod chain
+	search --no-floppy --file --set=root /EFI/wolos/wolos-a.efi
+	chainloader /EFI/systemd/systemd-bootx64.efi
+}
+E

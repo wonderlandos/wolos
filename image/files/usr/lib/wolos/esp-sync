@@ -1,42 +1,89 @@
 #!/bin/sh
-# Copy this slot's kernels and initramfs images to the ESP and write their systemd-boot entries
-# (pacman hook 95-wolos-esp after every kernel or initramfs change; the installer and updates
-# with --new). The slot is /etc/wolos/slot (a|b); options are /etc/kernel/cmdline.
-#   linux-wolos  -> wolos-<slot>[+tries].conf, the default entry with boot counting; a plain sync keeps
-#                   its name and counter, --new starts at three tries.
-#   other kernel -> wolos-<slot>-<pkgbase>.conf, its own entry (linux-zen, a self-built kernel).
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Build this slot's kernels into signed boot images on the ESP and write their entries (ADR 0025).
+# Pacman hook 95-wolos-esp after a kernel or initramfs change; the installer and updates with --new.
+#   linux-wolos  -> EFI/wolos/wolos-<slot>.efi, entry wolos-<slot>[+tries].conf: counted, sorted by
+#                   generation so the newest good slot boots and a bad one falls behind the other.
+#   other kernel -> EFI/wolos/wolos-<slot>-<pkgbase>.efi, entry wolos-<slot>-<pkgbase>.conf.
+# One image holds kernel, initramfs and command line, so one signature covers all three. Image names
+# never change: another boot manager (rEFInd, GRUB) points at them; the counter stays on the entry.
+# Env: WOLOS_ROOT (slot root), WOLOS_ESP (/efi), WOLOS_SLOT (wolos-a), WOLOS_CMDLINE, WOLOS_RELEASE,
+#      WOLOS_SB_DIR (keys, see boot-keys).
 set -eu
 R=${WOLOS_ROOT:-}
-ESP=${WOLOS_ESP:-$R/efi}
-[ -f "$R/etc/wolos/slot" ] || exit 0    # live system: no slot, nothing to sync
-slot=$(cat "$R/etc/wolos/slot")
-opts=$(cat "$R/etc/kernel/cmdline")
+new=${1:-}
+ESP=${WOLOS_ESP:-/efi}
+# A chroot has no ESP (a pacman run inside an update): the update builds the image itself.
+[ -n "${WOLOS_ESP:-}" ] || mountpoint -q /efi || exit 0
+slot=${WOLOS_SLOT:-}
+if [ -z "$slot" ] && [ -z "$R" ] && [ -r /proc/cmdline ]; then
+  slot=$(sed -n 's/.*subvol=\/*@\(wolos-[ab]\).*/\1/p' /proc/cmdline)
+fi
+if [ -z "$slot" ]; then
+  [ -f "$R/etc/wolos/slot" ] || exit 0    # live system: no slot, nothing to sync
+  slot=wolos-$(cat "$R/etc/wolos/slot")
+fi
+opts=${WOLOS_CMDLINE:-$(sed "s/subvol=@wolos-[ab]/subvol=@$slot/" "$R/etc/kernel/cmdline")}
 ver=$(cat "$R/usr/share/wolos/base.version" 2>/dev/null || :)
-E=$ESP/loader/entries; D=$ESP/wolos-$slot
+rel=$(printf '%s' "${WOLOS_RELEASE:-${ver:-current}}" | tr / .)
+S=${WOLOS_SB_DIR:-/var/lib/wolos/secureboot}
+E=$ESP/loader/entries; D=$ESP/EFI/wolos; old=$ESP/$slot
+here=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$E" "$D"
+
+# The newest generation on the ESP; a new slot goes one above it, so it sorts first.
+top=0
+for f in "$E"/wolos-[ab]*.conf; do
+  [ -f "$f" ] || continue
+  g=$(sed -n 's/^version \([0-9]*\)-.*/\1/p' "$f"); [ -n "$g" ] || continue
+  [ "$g" -le "$top" ] || top=$g
+done
+cur=$(ls "$E" | grep -E "^$slot(\+[0-9]+(-[0-9]+)?)?\.conf$" | head -1 || :)
+gen=$((top + 1))
+if [ "$new" != --new ] && [ -n "$cur" ]; then
+  g=$(sed -n 's/^version \([0-9]*\)-.*/\1/p' "$E/$cur"); [ -z "$g" ] || gen=$g
+fi
+
+words="$opts wolos.epoch=$gen"
+[ ! -s "$S/cmdline" ] || words="$words $(cat "$S/cmdline")"
+[ ! -r "$old/verity" ] || words="$words wolos.seal=$(cat "$old/verity")"
+
+K=
+if [ -f "$S/db.crt" ]; then
+  K=$(WOLOS_SB_DIR=$S sh "$here/boot-keys" open)
+  trap 'WOLOS_SB_DIR=$S sh "$here/boot-keys" close' EXIT
+fi
+
 for k in "$R"/boot/vmlinuz-*; do
   [ -f "$k" ] || continue
   kb=${k##*/vmlinuz-}
-  cp "$k" "$D/vmlinuz-$kb"
-  [ ! -f "$R/boot/initramfs-$kb.img" ] || cp "$R/boot/initramfs-$kb.img" "$D/initramfs-$kb.img"
   if [ "$kb" = linux-wolos ]; then
-    title=WolOS; key=wolos-$slot
-    cur=$(ls "$E" | grep -E "^wolos-$slot(\+[0-9]+(-[0-9]+)?)?\.conf$" | head -1 || :)
-    if [ "${1:-}" = --new ] || [ -z "$cur" ]; then
+    title="WolOS${ver:+ $ver}"; key=wolos; img=$slot
+    if [ "$new" = --new ] || [ -z "$cur" ]; then
       [ -z "$cur" ] || rm -f "$E/$cur"
-      name=wolos-$slot+3.conf
+      name=$slot+3.conf
     else
       name=$cur
     fi
   else
-    title="WolOS ($kb)"; key=wolos-$slot-$kb; name=wolos-$slot-$kb.conf
+    title="WolOS ($kb)"; key=wolos-$kb; img=$slot-$kb; name=$slot-$kb.conf
   fi
+  set -- --linux="$k" --cmdline="$words" --os-release="@$R/usr/lib/os-release" --output="$D/$img.efi.new"
+  [ ! -f "$R/boot/initramfs-$kb.img" ] || set -- "$@" --initrd="$R/boot/initramfs-$kb.img"
+  [ ! -f "$R/usr/share/wolos/boot/splash.bmp" ] || set -- "$@" --splash="$R/usr/share/wolos/boot/splash.bmp"
+  if [ -n "$K" ]; then
+    set -- "$@" --signtool=systemd-sbsign --no-sign-kernel --secureboot-private-key="$K/db.key" --secureboot-certificate="$S/db.crt" \
+      --pcr-private-key="$K/tpm2-pcr-private.pem" --pcr-public-key="$S/tpm2-pcr-public.pem" --phases=enter-initrd
+  fi
+  ukify build "$@" >/dev/null
+  mv -f "$D/$img.efi.new" "$D/$img.efi"
   {
     echo "title $title"
     echo "sort-key $key"
-    [ -z "$ver" ] || echo "version $ver"
-    echo "linux /wolos-$slot/vmlinuz-$kb"
-    echo "initrd /wolos-$slot/initramfs-$kb.img"
-    echo "options $opts"
-  } > "$E/$name"
+    echo "version $gen-$rel"
+    echo "uki /EFI/wolos/$img.efi"
+  } > "$E/$name.new"
+  mv -f "$E/$name.new" "$E/$name"
 done
+# The images replace the loose kernels of older systems.
+rm -f "$old"/vmlinuz-* "$old"/initramfs-*

@@ -1,0 +1,60 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# This machine's boot keys (ADR 0025). db signs the loader and kernel images, the second pair signs
+# the TPM policy for the disk key, PK and KEK own the firmware's key database. Made here, never
+# shipped: every machine has its own. With a TPM the private parts rest encrypted to that TPM and
+# exist in clear only in RAM while signing; without one they rest in a root-only directory, on the
+# encrypted volume when the disk is encrypted.
+#   boot-keys create     generate them (nothing happens when they exist)
+#   boot-keys open       decrypt to RAM, print the directory
+#   boot-keys close      wipe it
+# Env: WOLOS_SB_DIR (/var/lib/wolos/secureboot), WOLOS_SB_RUN (/run/wolos/sb), WOLOS_TPM_DIR.
+set -eu
+S=${WOLOS_SB_DIR:-/var/lib/wolos/secureboot}
+RUN=${WOLOS_SB_RUN:-/run/wolos/sb}
+PRIV="db.key tpm2-pcr-private.pem PK.key KEK.key"
+tpm=
+[ "$(cat "${WOLOS_TPM_DIR:-/sys/class/tpm/tpm0}/tpm_version_major" 2>/dev/null || :)" != 2 ] || tpm=1
+umask 077
+ram() { # never swapped, never on a disk
+  mkdir -p "$RUN"
+  mountpoint -q "$RUN" 2>/dev/null || mount -t ramfs -o mode=700 ramfs "$RUN" 2>/dev/null || :
+}
+case ${1:-} in
+create)
+  [ ! -f "$S/db.crt" ] || exit 0
+  mkdir -p "$S"; ram
+  for n in PK KEK db; do
+    openssl req -new -x509 -newkey rsa:2048 -nodes -days 7300 -sha256 -subj "/CN=WolOS $n/" \
+      -keyout "$RUN/$n.key" -out "$S/$n.crt" 2>/dev/null
+  done
+  openssl x509 -in "$S/db.crt" -outform der -out "$S/db.der"
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$RUN/tpm2-pcr-private.pem" 2>/dev/null
+  openssl pkey -in "$RUN/tpm2-pcr-private.pem" -pubout -out "$S/tpm2-pcr-public.pem" 2>/dev/null
+  for f in $PRIV; do
+    if [ -n "$tpm" ]; then
+      systemd-creds encrypt --with-key=tpm2 --name="$f" "$RUN/$f" "$S/$f.cred"
+    else
+      cp "$RUN/$f" "$S/$f"
+    fi
+  done
+  ;;
+open)
+  ram
+  for f in $PRIV; do
+    [ ! -f "$RUN/$f" ] || continue
+    if [ -f "$S/$f.cred" ]; then
+      systemd-creds decrypt --with-key=tpm2 --name="$f" "$S/$f.cred" "$RUN/$f"
+    elif [ -f "$S/$f" ]; then
+      cp "$S/$f" "$RUN/$f"
+    fi
+  done
+  echo "$RUN"
+  ;;
+close)
+  for f in $PRIV; do
+    [ ! -f "$RUN/$f" ] || shred -u "$RUN/$f" 2>/dev/null || rm -f "$RUN/$f"
+  done
+  ;;
+*) echo "usage: boot-keys create|open|close" >&2; exit 64 ;;
+esac

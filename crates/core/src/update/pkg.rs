@@ -315,10 +315,10 @@ mod tests {
             .unwrap();
         let entry = t
             .iter()
-            .position(|x| x == "write /efi/loader/entries/wolos-b+3.conf")
+            .position(|x| x.ends_with("esp-sync --new"))
             .unwrap();
         assert!(seal < entry);
-        assert_eq!(t.last().unwrap(), "bootctl set-default wolos-b.conf");
+        assert_eq!(t.last().unwrap(), "bootctl set-default ");
         assert!(!t.iter().any(|x| x.contains("delete")));
     }
 

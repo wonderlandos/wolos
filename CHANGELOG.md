@@ -1,6 +1,10 @@
 # Changelog
 
 ## 0.11.2
+- Secure Boot (ADR 0025): every computer makes its own boot keys at install. In Setup Mode they join Microsoft's in the firmware; otherwise one key screen at first start; with neither, WolOS still starts and says so. Each slot boots one signed image holding kernel, initramfs and command line, with kernel lockdown and module signature checks on. The disk key follows signed kernels, so updates keep unlocking and a changed kernel, command line or initramfs does not. An older slot can't be started once it is retired.
+- A failed update now really rolls back: three failed starts fall back to the other slot. Before, the loader kept starting the failed slot.
+- The system file check runs on every start, in 0.4 s instead of 7 s. A sealed system gets its machine id at install, so D-Bus starts.
+- rEFInd and GRUB of another system can start WolOS (`/usr/share/wolos/boot/41_wolos`).
 - AUR laws (ADR 0022, archicture/modules/aurlaws.md): `wopkg audit <pkg>` reads a package's files and code as a graph and checks them against named laws, each with a severity. Every package gets one state: No Law Broken, Needs Review, Blocked or Not Checked. No state says a package is safe. On 40 fresh malicious fixtures, 30 were flagged; on 300 fresh popular packages, 59 were flagged, so expect to read findings on packages that are fine.
 - App Store: the AUR has its own tab, off until you turn it on, with the risk first and a legend for every state and severity. AUR installs stay in Terminal. Develop lists SDKs and toolchains.
 - App Store: tiles say where an app comes from. One app is one entry, joined by AppStream id, and its page lists every source and version, picks which one Get installs, and offers update, Keep This Version and Roll Back. Two sources with no shared id stay two entries.

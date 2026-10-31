@@ -7,23 +7,36 @@ Subvolumes: `@wolos-a` (installed system), `@home`, `@var`; the first update cre
 The pacman database lives in the slot (`DBPath = /usr/lib/pacman/`), so each slot knows its own packages.
 
 ## Boot entries
-systemd-boot, `timeout 0` (hold a key for the menu), `default wolos-a.conf` (the slot booting next).
-`/usr/lib/wolos/esp-sync` (pacman hook `95-wolos-esp`, installer, updates with `--new`) copies `/boot/vmlinuz-*` and initramfs images to `/efi/wolos-<slot>/` and writes:
+systemd-boot, `timeout 0` (3 with another system on the disk), no `default`: entries share a sort key and sort by generation, so the newest good slot boots (ADR 0025).
+`/usr/lib/wolos/esp-sync` (pacman hook `95-wolos-esp`, `boot-setup`, updates with `--new`) builds one image per kernel in `EFI/wolos/` and writes:
 
-| Entry | Kernel | Notes |
+| Entry | Image | Notes |
 |---|---|---|
-| `wolos-<slot>+3.conf` | linux-wolos | default; three tries (boot counting) |
-| `wolos-<slot>-<pkgbase>.conf` | any other kernel installed with pacman | own entry, never the default |
+| `wolos-<slot>+3.conf` | `wolos-<slot>.efi` | three tries; `version <generation>-<release>` |
+| `wolos-<slot>-<pkgbase>.conf` | `wolos-<slot>-<pkgbase>.efi` | any other kernel installed with pacman |
 
-Options come from `/etc/kernel/cmdline`; the slot from `/etc/wolos/slot`.
-A boot is good when `wolos-boot-ok.service` sees wold (login window) up, before `boot-complete.target`; `systemd-bless-boot` then drops the counter.
-Three failed boots: systemd-boot falls back to the other slot.
+Words come from `/etc/kernel/cmdline`, the slot from `/etc/wolos/slot`; `wolos.epoch=`, the tier's words and `wolos.seal=` are added inside the image.
+A boot is good when `wolos-boot-ok.service` sees wold (login window) up, before `boot-complete.target`; `systemd-bless-boot` then drops the counter and `wol boot bless` moves the epoch floor.
+Three failed boots: the entry sorts last and the other slot boots.
 
 ## Quiet boot
 Kernel `quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0`; plymouth theme `wolos` (the mark on black) in a systemd initramfs.
 
 ## Secure Boot
-Not signed in this beta. `install-check` reads the `SecureBoot` EFI variable; the Install WolOS app shows `install::SECURE_BOOT_TEXT`.
+ADR 0025. `install-boot` runs `boot-setup ROOT ESP` after the seal; it prints the tier and writes plain words to `/run/wolos/boot-note` (the Install app shows that file).
+
+| Tier | When | First stage |
+|---|---|---|
+| `own-keys` | Setup Mode | our loader, signed with this computer's key, enrolled next to Microsoft's |
+| `mok` | third-party CA in `db` | `wolos-shim`, then our signed loader as `grubx64.efi`; one key screen, word `boot` |
+| `off` | neither, or `WOLOS_SECURE=no` | unsigned |
+| `firmware` | Secure Boot on, nothing above fits | a firmware setting must change |
+
+Keys: `/var/lib/wolos/secureboot` (`boot-keys create|open|close`). `boot-setup / /efi --enroll` turns protection on later. `wol boot status` prints the JSON Settings reads. The firmware menu entry and tamper proofs are in `image/vm/test/`.
+
+## Other boot managers
+rEFInd finds `EFI/systemd/systemd-bootx64.efi` and `EFI/wolos/*.efi` on its own. Pick the first: it keeps try counting and rollback.
+GRUB of another system: copy `/usr/share/wolos/boot/41_wolos` to its `/etc/grub.d/` and run its config update.
 
 ## Install safety
 | Step | Script | Guarantee |

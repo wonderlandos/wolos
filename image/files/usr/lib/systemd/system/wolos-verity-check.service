@@ -7,6 +7,7 @@ ConditionPathExists=/usr/lib/wolos/verity.manifest
 
 [Service]
 Type=oneshot
+ExecStart=/usr/bin/wol boot check
 ExecStart=/usr/bin/wol seal check
 # Exit 1 = the check failed and said so; boot goes on, or restarts into the other slot.
 SuccessExitStatus=1

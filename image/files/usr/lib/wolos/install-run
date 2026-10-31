@@ -3,7 +3,8 @@
 # lets its user run this with sudo, no password). GPT from repart.d via systemd-repart: ESP (1 GiB, /efi) + one btrfs partition with
 # subvolumes @wolos-a (this system), @home and @var; the first update creates @wolos-b. The live
 # root (airootfs.sfs) is copied into @wolos-a without the live-only files, and systemd-boot starts it
-# with boot counting (three tries).
+# with boot counting (three tries). boot-setup picks the Secure Boot tier and leaves the words for
+# the person in WOLOS_BOOT_NOTE (ADR 0022).
 # Progress on stdout, one line per step: "wolos-install: <stage> <percent> <message>", stages
 # prepare disk files boot settings finish done failed.
 # Exit: 0 installed, 1 the install stopped, 2 not a disk the installer may erase.
@@ -156,8 +157,12 @@ if [ "$unlock" != off ]; then
   wol encrypt hooks "$T/etc/mkinitcpio.conf.d/wolos.conf" || fail "could not set the unlock hook"
   # Real keys in, throw-away key out; the recovery key is kept once for the installer to show.
   mkdir -p -m 700 "$(dirname "${WOLOS_RECOVERY_OUT:-/run/wolos/recovery-key}")"
-  wol encrypt enroll "$root" "$KEYDIR/key" "$unlock" ${WOLOS_PASSPHRASE_FILE:+"$WOLOS_PASSPHRASE_FILE"} ||
-    fail "could not set up the disk unlock"
+  # The disk key follows this machine's signed kernels; the first boot adds the firmware state.
+  SB=$T/var/lib/wolos/secureboot
+  WOLOS_SB_DIR=$SB sh "$here/boot-keys" create || fail "could not make this computer's keys"
+  WOLOS_TPM_PUB=$SB/tpm2-pcr-public.pem wol encrypt enroll "$root" "$KEYDIR/key" "$unlock" \
+    ${WOLOS_PASSPHRASE_FILE:+"$WOLOS_PASSPHRASE_FILE"} || fail "could not set up the disk unlock"
+  [ "$unlock" != tpm2 ] || cp "$KEYDIR/key" "$SB/rebind.key" || fail "could not keep the first-boot key"
 fi
 
 # [wolos-cachy] only where the CPU runs its x86-64-v3 builds; linux-wolos-v3 (same boot files) replaces
@@ -178,8 +183,7 @@ for m in "$T"/usr/lib/modules/*/; do
 done
 [ -f "$T/boot/vmlinuz-linux-wolos" ] || fail "no linux-wolos kernel in the image"
 arch-chroot "$T" mkinitcpio -P >/dev/null 2>&1 || fail "could not build the initramfs"
-WOLOS_ROOT=$T WOLOS_ESP=$T/efi WOLOS_OTHER_SYSTEMS=${others#0} sh "$here/install-boot" ||
-  fail "could not install the boot loader"
+mkdir -p "$T/efi/wolos-a"
 
 say settings 90 "Settings"
 echo wolos > "$T/etc/hostname"
@@ -190,14 +194,17 @@ if [ -n "$plan" ]; then
   wol install account "$plan" "$T" "$plandir/account-password" || fail "could not create the account"
   rm -f "$plandir/account-password" "$plandir/disk-password"
 fi
-printf 'uninitialized\n' > "$T/etc/machine-id"
+tr -d - < /proc/sys/kernel/random/uuid > "$T/etc/machine-id"
 arch-chroot "$T" pacman-key --init >/dev/null 2>&1 && arch-chroot "$T" pacman-key --populate >/dev/null 2>&1 ||
   say settings 92 "package keys: set up on first update"
 
 # Sealing: fs-verity on /usr executables and libraries, then the slot is read-only.
 [ "$slots" = one ] || wol seal apply "$T" "$T/efi/wolos-a/verity" >/dev/null || fail "could not seal the system"
+# After the seal: the signed image carries its digest.
+WOLOS_ROOT=$T WOLOS_ESP=$T/efi WOLOS_OTHER_SYSTEMS=${others#0} WOLOS_BOOT_DISK=$disk sh "$here/install-boot" >/dev/null ||
+  fail "could not install the boot loader"
 say finish 98 "Checking the new system"
-for f in "efi/loader/entries/wolos-a+3.conf" "efi/wolos-a/vmlinuz-linux-wolos" "efi/wolos-a/initramfs-linux-wolos.img" "etc/fstab"; do
+for f in "efi/loader/entries/wolos-a+3.conf" "efi/EFI/wolos/wolos-a.efi" "etc/fstab"; do
   [ -s "$T/$f" ] || fail "the new system did not check out: $f missing"
 done
 cleanup

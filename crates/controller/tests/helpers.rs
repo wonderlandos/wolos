@@ -245,7 +245,7 @@ fn first_update_has_no_previous_slot_to_replace() {
     let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
     assert_eq!(ran[0], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
     assert!(!ran.iter().any(|r| r.contains("delete")), "{ran:?}");
-    assert_eq!(ran.last().unwrap(), "bootctl set-default wolos-b.conf");
+    assert_eq!(ran.last().unwrap(), "bootctl set-default ");
     assert!(e.out.contains("updated into wolos-b"));
 }
 

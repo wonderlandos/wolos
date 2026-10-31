@@ -25,6 +25,11 @@ xfsprogs
 ntfsprogs
 squashfs-tools
 efibootmgr
+# Signed boot images and this computer's boot keys.
+systemd-ukify
+sbctl
+mokutil
+wolos-shim
 pacman-contrib
 # Hardware and networking.
 networkmanager

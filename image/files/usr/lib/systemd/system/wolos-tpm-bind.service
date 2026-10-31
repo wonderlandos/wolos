@@ -1,0 +1,12 @@
+[Unit]
+Description=Bind the disk key to this computer's firmware state (first boot)
+ConditionPathExists=/var/lib/wolos/secureboot/rebind.key
+After=local-fs.target
+Before=wolos-boot-ok.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/wol encrypt rebind
+
+[Install]
+WantedBy=multi-user.target

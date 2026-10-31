@@ -306,7 +306,7 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
         ran[4..],
         [
             "btrfs subvolume delete /run/wolos/top/@wolos-b",
-            "rm -f /efi/loader/entries/wolos-b+3.conf"
+            "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
         ],
         "failed: the new slot is removed"
     );

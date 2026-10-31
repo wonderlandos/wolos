@@ -1,0 +1,72 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Make the installed system start and pick its protection (ADR 0025). install-run calls this once the
+# slot is sealed; `boot-setup / /efi --enroll` on a running system turns protection on later.
+#   boot-setup ROOT ESP [--enroll]
+# Prints the tier. What to tell the person goes to $WOLOS_BOOT_NOTE; the Install app shows that file
+# before the restart.
+# Env: WOLOS_SECURE=no (the person turned protection off), WOLOS_SB_DIR, WOLOS_BOOT_NOTE, WOLOS_BOOT_DISK.
+set -eu
+T=${1%/}; ESP=$2; mode=${3:-}
+here=$(cd "$(dirname "$0")" && pwd)
+S=${WOLOS_SB_DIR:-$T/var/lib/wolos/secureboot}
+NOTE=${WOLOS_BOOT_NOTE:-/run/wolos/boot-note}
+export WOLOS_SB_DIR=$S
+tier=$(wol boot detect "${WOLOS_SECURE:-yes}")
+screen=$(wol boot key-screen "$tier")
+mkdir -p "$S" "$(dirname "$NOTE")" "$ESP/EFI/wolos" "$ESP/loader"
+sh "$here/boot-keys" create
+echo "$tier" > "$S/tier"
+wol boot words "$tier" > "$S/cmdline"
+K=$(sh "$here/boot-keys" open)
+trap 'sh "$here/boot-keys" close' EXIT
+
+signed() { # SRC DST: a loader signed with this machine's key
+  "${WOLOS_SBSIGN:-/usr/lib/systemd/systemd-sbsign}" sign --private-key="$K/db.key" --certificate="$S/db.crt" --output="$2" "$1" >/dev/null 2>&1
+}
+[ "$mode" = --enroll ] || bootctl --esp-path="$ESP" install >/dev/null 2>&1
+L=$T/usr/lib/systemd/boot/efi/systemd-bootx64.efi
+signed "$L" "$ESP/EFI/systemd/systemd-bootx64.efi"
+if [ "$screen" = yes ]; then
+  # The first stage the firmware already trusts starts our loader under the name it looks for, and
+  # carries the firmware's key screen. Neither binary is altered.
+  Z=$T/usr/share/wolos/shim
+  for d in EFI/wolos EFI/BOOT; do
+    cp "$Z/shimx64.efi" "$Z/mmx64.efi" "$ESP/$d/"
+    signed "$L" "$ESP/$d/grubx64.efi"
+  done
+  cp "$Z/shimx64.efi" "$ESP/EFI/BOOT/BOOTX64.EFI"
+  [ -z "${WOLOS_BOOT_DISK:-}" ] || efibootmgr --create --disk "$WOLOS_BOOT_DISK" --part 1 --label WolOS \
+    --loader '\EFI\wolos\shimx64.efi' >/dev/null 2>&1 || :
+else
+  signed "$L" "$ESP/EFI/BOOT/BOOTX64.EFI"
+fi
+# No default: entries sort by generation, so a slot out of tries falls behind the other (ADR 0025).
+printf 'timeout %s\nconsole-mode keep\neditor no\n' "${WOLOS_OTHER_SYSTEMS:+3}${WOLOS_OTHER_SYSTEMS:-0}" > "$ESP/loader/loader.conf"
+if [ "$mode" != --enroll ]; then
+  WOLOS_ROOT=$T WOLOS_ESP=$ESP sh "$here/esp-sync" --new
+else
+  sh "$here/esp-sync"
+fi
+
+# Enrollment comes last: a firmware that refuses leaves a system that starts, without protection.
+K=$(sh "$here/boot-keys" open)   # esp-sync wiped them when it finished
+if [ "$tier" = own-keys ]; then
+  C=$K/sbctl
+  for n in PK KEK db; do
+    mkdir -p "$C/keys/$n"; cp "$K/$n.key" "$C/keys/$n/$n.key"; cp "$S/$n.crt" "$C/keys/$n/$n.pem"
+  done
+  printf %s "$(cat /proc/sys/kernel/random/uuid)" > "$C/GUID"   # sbctl refuses a trailing newline
+  printf 'keydir: %s/keys\nguid: %s/GUID\n' "$C" "$C" > "$C/sbctl.conf"
+  sbctl --config "$C/sbctl.conf" --disable-landlock enroll-keys --microsoft >/dev/null 2>&1 || {
+    tier=off; echo off > "$S/tier"; : > "$S/cmdline"
+  }
+  rm -rf "$C"
+fi
+if [ "$screen" = yes ]; then
+  mokutil --generate-hash="$(wol boot password)" > "$K/mokpw"
+  mokutil --import "$S/db.der" --hash-file "$K/mokpw" >/dev/null 2>&1 || :
+  rm -f "$K/mokpw"
+fi
+wol boot note "$tier" "$screen" > "$NOTE"
+echo "$tier"

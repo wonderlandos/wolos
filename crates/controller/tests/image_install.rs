@@ -147,6 +147,14 @@ fn install(d: &Path, disk: &str) -> Output {
     install_with(d, disk, "off")
 }
 
+/// Tool fakes that leave the file a later step expects.
+const OPENSSL: &str =
+    "while [ $# -gt 0 ]; do case $1 in -keyout|-out) echo x > \"$2\"; shift ;; esac; shift; done";
+const SBSIGN: &str =
+    "for a; do case $a in --output=*) echo signed > \"${a#--output=}\" ;; esac; done";
+const UKIFY: &str =
+    "for a; do case $a in --output=*) echo image > \"${a#--output=}\" ;; esac; done";
+
 fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
     disks_fakes(d);
     let t = d.join("target");
@@ -162,10 +170,17 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         (
             "wol",
             "case \"$*\" in\n\"encrypt decide\"*) [ \"$WOLOS_TEST_UNLOCK\" = refuse ] && exit 1; echo ${WOLOS_TEST_UNLOCK:-off} ;;\n\
-             \"encrypt words\"*) echo \"rd.luks.name=$3=wolosroot root=/dev/mapper/wolosroot\" ;;\nesac",
+             \"encrypt words\"*) echo \"rd.luks.name=$3=wolosroot root=/dev/mapper/wolosroot\" ;;\n\
+             \"boot detect\"*) echo off ;;\n\"boot key-screen\"*) echo no ;;\n\"boot note\"*) echo note ;;\nesac",
         ),
         ("userdel", ""),
-        ("bootctl", ""),
+        (
+            "bootctl",
+            "mkdir -p \"${2#--esp-path=}/EFI/systemd\" \"${2#--esp-path=}/EFI/BOOT\"",
+        ),
+        ("openssl", OPENSSL),
+        ("sbsign-fake", SBSIGN),
+        ("ukify", UKIFY),
         (
             "blkid",
             "case \"$*\" in *nvme0n1p1*) echo AAAA-BBBB ;; *) echo 1111-2222 ;; esac",
@@ -199,6 +214,10 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         .env("WOLOS_NO_INHIBIT", "1")
         .env("WOLOS_TEST_UNLOCK", unlock)
         .env("WOLOS_KEYDIR", d.join("keys"))
+        .env("WOLOS_SB_RUN", d.join("sbrun"))
+        .env("WOLOS_TPM_DIR", d.join("no-tpm"))
+        .env("WOLOS_BOOT_NOTE", d.join("note"))
+        .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .output()
         .unwrap()
 }
@@ -313,25 +332,31 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     // systemd-boot: slot a, three tries, quiet; kernel and initramfs next to it on the ESP.
     let esp = t.join("efi");
     let entry = fs::read_to_string(esp.join("loader/entries/wolos-a+3.conf")).unwrap();
+    assert!(entry.contains("uki /EFI/wolos/wolos-a.efi"), "{entry}");
     assert!(
-        entry.contains("linux /wolos-a/vmlinuz-linux-wolos"),
-        "{entry}"
+        !entry.contains("options "),
+        "the image holds the command line: {entry}"
     );
+    assert!(esp.join("EFI/wolos/wolos-a.efi").exists());
+    let ukify = l.lines().find(|x| x.starts_with("ukify ")).unwrap();
+    assert!(ukify.contains(cmdline.trim()), "{ukify}");
+    assert!(ukify.contains("wolos.epoch=1"), "{ukify}");
+    // The signature covers kernel, initramfs and command line; the seal's digest is in it.
     assert!(
-        entry.contains("initrd /wolos-a/initramfs-linux-wolos.img"),
-        "{entry}"
+        ukify.contains("--secureboot-private-key=") && ukify.contains("--pcr-private-key="),
+        "{ukify}"
     );
-    assert!(
-        entry.contains(&format!("options {}", cmdline.trim())),
-        "{entry}"
-    );
-    assert!(esp.join("wolos-a/vmlinuz-linux-wolos").exists());
-    assert!(esp.join("wolos-a/initramfs-linux-wolos.img").exists());
     let loader = fs::read_to_string(esp.join("loader/loader.conf")).unwrap();
     assert!(
-        loader.contains("default wolos-a.conf") && loader.contains("timeout 0"),
-        "{loader}"
+        !loader.contains("default") && loader.contains("timeout 0"),
+        "a pinned default would keep booting a failed slot: {loader}"
     );
+    let order = |s: &str| l.find(s).unwrap_or_else(|| panic!("{s}: {l}"));
+    assert!(
+        order("wol seal apply") < order("ukify "),
+        "the image carries the digest"
+    );
+    assert_eq!(fs::read_to_string(d.join("note")).unwrap().trim(), "note");
     // Progress for the app, one line per step, ending in done.
     let stages: Vec<&str> = out
         .lines()
@@ -372,6 +397,10 @@ fn install_plan(d: &Path, wol: &str) -> (Output, PathBuf) {
         .env("WOLOS_EFIVARS", d.join("efivars"))
         .env("WOLOS_NO_INHIBIT", "1")
         .env("WOLOS_KEYDIR", d.join("keys"))
+        .env("WOLOS_SB_RUN", d.join("sbrun"))
+        .env("WOLOS_TPM_DIR", d.join("no-tpm"))
+        .env("WOLOS_BOOT_NOTE", d.join("note"))
+        .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .output()
         .unwrap();
     (o, t)
@@ -380,6 +409,8 @@ fn install_plan(d: &Path, wol: &str) -> (Output, PathBuf) {
 const WOL_ALONGSIDE: &str = "case \"$*\" in\n\
 \"install info\"*) printf \"disk=/dev/nvme0n1\\nwipe=0\\nWOLOS_ENCRYPT=no\\n\" ;;\n\
 \"encrypt decide\"*) echo off ;;\n\
+\"boot detect\"*) echo off ;;\n\
+\"boot key-screen\"*) echo no ;;\n\
 \"install layout\"*) printf \"esp=/dev/nvme0n1p5\\nroot=/dev/nvme0n1p6\\nfsdev=/dev/nvme0n1p6\\nslots=two\\nothers=1\\nhome_dev=/dev/nvme0n1p3\\nextra_fstab='UUID=H /home ext4 defaults 0 2'\\n\" ;;\n\
 esac";
 
@@ -545,12 +576,16 @@ fn esp_sync_gives_other_kernels_their_own_entry() {
     }
     // An earlier counted entry for slot b keeps its name (and counter) on a plain sync.
     fs::write(esp.join("loader/entries/wolos-b+1-2.conf"), "old").unwrap();
+    fake(&d, "ukify", UKIFY);
+    fs::create_dir_all(d.join("sb")).unwrap();
     let run = |args: &[&str]| {
         let st = Command::new("sh")
             .arg(lib("esp-sync"))
             .args(args)
             .env("WOLOS_ROOT", &root)
             .env("WOLOS_ESP", &esp)
+            .env("WOLOS_SB_DIR", d.join("sb"))
+            .env("PATH", path(&d))
             .status()
             .unwrap();
         assert!(st.success());
@@ -558,17 +593,44 @@ fn esp_sync_gives_other_kernels_their_own_entry() {
     run(&[]);
     let e = esp.join("loader/entries");
     let main = fs::read_to_string(e.join("wolos-b+1-2.conf")).unwrap();
-    assert!(
-        main.contains("linux /wolos-b/vmlinuz-linux-wolos") && main.contains("sort-key wolos-b")
-    );
+    assert!(main.contains("uki /EFI/wolos/wolos-b.efi") && main.contains("sort-key wolos\n"));
     let zen = fs::read_to_string(e.join("wolos-b-linux-zen.conf")).unwrap();
     assert!(
-        zen.contains("linux /wolos-b/vmlinuz-linux-zen") && zen.contains("title WolOS (linux-zen)")
+        zen.contains("uki /EFI/wolos/wolos-b-linux-zen.efi")
+            && zen.contains("title WolOS (linux-zen)")
+            && zen.contains("sort-key wolos-linux-zen"),
+        "{zen}"
     );
-    assert!(esp.join("wolos-b/initramfs-linux-zen.img").exists());
-    // --new: a fresh slot, three tries again.
+    assert!(esp.join("EFI/wolos/wolos-b-linux-zen.efi").exists());
+    assert!(main.contains("version 1-"), "first generation: {main}");
+    // A plain sync keeps the generation.
+    run(&[]);
+    assert!(
+        fs::read_to_string(e.join("wolos-b+1-2.conf"))
+            .unwrap()
+            .contains("version 1-")
+    );
+    // --new: a fresh slot, three tries again, one generation above every other entry: the
+    // loader's sort is what boots it, and what falls back from it.
+    fs::write(e.join("wolos-a.conf"), "title A\nversion 6-x\n").unwrap();
     run(&["--new"]);
     assert!(e.join("wolos-b+3.conf").exists() && !e.join("wolos-b+1-2.conf").exists());
+    assert!(
+        fs::read_to_string(e.join("wolos-b+3.conf"))
+            .unwrap()
+            .contains("version 7-")
+    );
+    // The slot's sealed digest and the tier's words end up inside the signed image.
+    fs::create_dir_all(esp.join("wolos-b")).unwrap();
+    fs::write(esp.join("wolos-b/verity"), "abcd").unwrap();
+    fs::write(d.join("sb/cmdline"), "lockdown=integrity\n").unwrap();
+    run(&[]);
+    let u = log(&d);
+    let last = u.lines().rfind(|x| x.contains("linux-wolos")).unwrap();
+    assert!(
+        last.contains("wolos.seal=abcd") && last.contains("lockdown=integrity"),
+        "{last}"
+    );
     let hook = read("image/files/usr/share/libalpm/hooks/95-wolos-esp.hook");
     assert!(
         hook.contains("Exec = /usr/lib/wolos/esp-sync")
@@ -643,6 +705,8 @@ fn installer_scripts_parse() {
         "install-check",
         "install-disks",
         "esp-sync",
+        "boot-keys",
+        "boot-setup",
         "autoinstall",
         "wol-install",
     ] {
@@ -712,6 +776,13 @@ fn encrypted_install_unlocks_through_the_initramfs() {
     );
     assert!(!d.join("keys").exists(), "the throw-away key is removed");
     let crypt = read("image/files/usr/lib/wolos/repart.d-crypt/20-root.conf");
+    // The slot is sealed: a machine id written at first boot would never reach the disk.
+    assert!(!read("image/files/usr/lib/wolos/install-run").contains("uninitialized"));
+    assert_eq!(
+        read("image/files/usr/lib/wolos/repart.d-crypt/10-esp.conf"),
+        read("image/files/usr/lib/wolos/repart.d/10-esp.conf"),
+        "an encrypted disk starts from the same startup partition"
+    );
     assert!(
         crypt.lines().any(|x| x == "Encrypt=key-file")
             && crypt.lines().any(|x| x == "Format=btrfs")

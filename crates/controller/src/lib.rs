@@ -1,6 +1,7 @@
 //! `wol` console, `wol-login`, `wol-authcheck`: pure logic here, thin mains in `src/bin/`.
 pub mod approve;
 pub mod authcheck;
+pub mod boot;
 pub mod catalog;
 pub mod cli;
 pub mod games;

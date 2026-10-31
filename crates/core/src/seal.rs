@@ -31,6 +31,22 @@ pub fn enable_argv(path: &str) -> Vec<String> {
 pub fn measure_argv(path: &str) -> Vec<String> {
     ["fsverity", "measure", path].map(String::from).to_vec()
 }
+/// One process for many files: the check runs on every boot, and a process per file costs seconds.
+pub fn measure_many_argv(paths: &[String]) -> Vec<String> {
+    let mut a = vec!["fsverity".to_owned(), "measure".to_owned()];
+    a.extend_from_slice(paths);
+    a
+}
+/// `(path, digest)` of each `sha256:<hex> <path>` line.
+pub fn parse_measures(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let (d, p) = l.split_once(' ')?;
+            Some((p.to_owned(), parse_measure(d)?))
+        })
+        .collect()
+}
+
 /// The slot's subvolume becomes read-only (`btrfs property set -ts <root> ro true`).
 pub fn seal_argv(root: &str) -> Vec<String> {
     ["btrfs", "property", "set", "-ts", root, "ro", "true"]
@@ -170,6 +186,17 @@ mod tests {
             enable_argv("/x/usr/bin/a").join(" "),
             "fsverity enable /x/usr/bin/a"
         );
+    }
+
+    #[test]
+    fn one_process_measures_many_files() {
+        let d = "a".repeat(64);
+        assert_eq!(
+            measure_many_argv(&["/a".into(), "/b".into()]),
+            ["fsverity", "measure", "/a", "/b"]
+        );
+        let got = parse_measures(&format!("sha256:{d} /usr/bin/a b\nsha512:ff /c\n"));
+        assert_eq!(got, [("/usr/bin/a b".to_owned(), d)]);
     }
 
     #[test]

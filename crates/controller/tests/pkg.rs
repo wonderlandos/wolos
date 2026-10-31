@@ -96,7 +96,7 @@ fn the_kernel_goes_to_the_pending_slot() {
         "{l:?}"
     );
     assert!(l.contains(&"arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -S nvidia".into()));
-    assert!(l.contains(&"bootctl set-default wolos-b.conf".into()));
+    assert!(l.contains(&"bootctl set-default ".into()));
     assert!(!l.contains(&"systemd-sysext refresh".into()));
     assert_eq!(
         env.out,

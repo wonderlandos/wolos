@@ -86,7 +86,15 @@ pub fn repart_flags(keyfile: &str) -> Vec<String> {
 /// Commands after partitioning, each run in order; all must succeed. `part`: the LUKS partition,
 /// `key`: the throw-away key file, `pass`: the passphrase file (Unlock::Passphrase).
 /// The recovery key comes on stdout of the `--recovery-key` step (the caller keeps it once).
-pub fn enroll(part: &str, key: &str, unlock: Unlock, pass: Option<&str>) -> Vec<Vec<String>> {
+/// `tpm_pub`: the machine's TPM policy key. The disk then follows any kernel it signed, and `key`
+/// stays until the first boot, which binds the firmware state ([`rebind`]).
+pub fn enroll(
+    part: &str,
+    key: &str,
+    unlock: Unlock,
+    pass: Option<&str>,
+    tpm_pub: Option<&str>,
+) -> Vec<Vec<String>> {
     let unlock_key = format!("--unlock-key-file={key}");
     let mut s = vec![v(&[
         "systemd-cryptenroll",
@@ -95,13 +103,27 @@ pub fn enroll(part: &str, key: &str, unlock: Unlock, pass: Option<&str>) -> Vec<
         part,
     ])];
     match (unlock, pass) {
-        (Unlock::Tpm2, _) => s.push(v(&[
-            "systemd-cryptenroll",
-            "--tpm2-device=auto",
-            "--tpm2-pcrs=7",
-            &unlock_key,
-            part,
-        ])),
+        (Unlock::Tpm2, _) => match tpm_pub {
+            Some(p) => {
+                s.push(v(&[
+                    "systemd-cryptenroll",
+                    "--tpm2-device=auto",
+                    "--tpm2-pcrs=",
+                    &format!("--tpm2-public-key={p}"),
+                    "--tpm2-public-key-pcrs=11",
+                    &unlock_key,
+                    part,
+                ]));
+                return s;
+            }
+            None => s.push(v(&[
+                "systemd-cryptenroll",
+                "--tpm2-device=auto",
+                "--tpm2-pcrs=7",
+                &unlock_key,
+                part,
+            ])),
+        },
         (Unlock::Passphrase, Some(p)) => s.push(v(&[
             "cryptsetup",
             "luksAddKey",
@@ -121,6 +143,25 @@ pub fn enroll(part: &str, key: &str, unlock: Unlock, pass: Option<&str>) -> Vec<
         key,
     ]));
     s
+}
+
+/// First boot: the firmware's keys are final, so PCR values read now are the ones later boots
+/// will show. Replaces the TPM slot, then the install key goes.
+pub fn rebind(part: &str, key: &str, tpm_pub: &str, pcrs: &str) -> Vec<Vec<String>> {
+    vec![
+        v(&[
+            "systemd-cryptenroll",
+            "--wipe-slot=tpm2",
+            "--tpm2-device=auto",
+            &format!("--tpm2-pcrs={pcrs}"),
+            &format!("--tpm2-public-key={tpm_pub}"),
+            "--tpm2-public-key-pcrs=11",
+            &format!("--unlock-key-file={key}"),
+            part,
+        ]),
+        v(&["cryptsetup", "luksRemoveKey", "--batch-mode", part, key]),
+        v(&["rm", "-f", key]),
+    ]
 }
 
 pub fn open_argv(part: &str, key: &str) -> Vec<String> {
@@ -219,7 +260,7 @@ mod tests {
 
     #[test]
     fn enrollment_order_and_no_secret_in_arguments() {
-        let t: Vec<String> = enroll("/dev/sda2", "/run/k", Unlock::Tpm2, None)
+        let t: Vec<String> = enroll("/dev/sda2", "/run/k", Unlock::Tpm2, None, None)
             .iter()
             .map(|a| a.join(" "))
             .collect();
@@ -235,10 +276,48 @@ mod tests {
             t[2],
             "cryptsetup luksRemoveKey --batch-mode /dev/sda2 /run/k"
         );
-        let p = enroll("/dev/sda2", "/run/k", Unlock::Passphrase, Some("/run/p"));
+        let p = enroll(
+            "/dev/sda2",
+            "/run/k",
+            Unlock::Passphrase,
+            Some("/run/p"),
+            None,
+        );
         assert!(p[1].join(" ").starts_with("cryptsetup luksAddKey"));
         assert_eq!(p.last().unwrap()[1], "luksRemoveKey");
-        assert_eq!(enroll("/d", "/k", Unlock::Passphrase, Some("/p")).len(), 3);
+        assert_eq!(
+            enroll("/d", "/k", Unlock::Passphrase, Some("/p"), None).len(),
+            3
+        );
+    }
+
+    /// PCR 7 at install is not PCR 7 at the first real boot (the keys change it), so the disk key
+    /// starts on the signed kernel policy and binds PCR 7 from inside the first boot.
+    #[test]
+    fn a_signed_policy_survives_updates_and_binds_the_firmware_state_at_first_boot() {
+        let t: Vec<String> = enroll("/d", "/k", Unlock::Tpm2, None, Some("/p.pem"))
+            .iter()
+            .map(|a| a.join(" "))
+            .collect();
+        assert_eq!(
+            t[1],
+            "systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs= --tpm2-public-key=/p.pem \
+--tpm2-public-key-pcrs=11 --unlock-key-file=/k /d"
+        );
+        assert_eq!(t.len(), 2, "the install key stays for the first boot");
+        let r: Vec<String> = rebind("/d", "/k", "/p.pem", "7+14")
+            .iter()
+            .map(|a| a.join(" "))
+            .collect();
+        assert_eq!(
+            r,
+            [
+                "systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7+14 \
+--tpm2-public-key=/p.pem --tpm2-public-key-pcrs=11 --unlock-key-file=/k /d",
+                "cryptsetup luksRemoveKey --batch-mode /d /k",
+                "rm -f /k"
+            ]
+        );
     }
 
     #[test]

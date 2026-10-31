@@ -4,6 +4,7 @@ pub mod appstream;
 pub mod automation;
 pub mod base;
 pub mod bluetooth;
+pub mod boot;
 pub mod bundle;
 pub mod consent;
 pub mod controls;
