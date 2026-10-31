@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
 # Inert test fixture, run only in the offline sandbox. Its helper touches nothing that matters.
 pkgname=hidden-autostart
 pkgver=1.0
