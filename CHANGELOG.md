@@ -1,6 +1,7 @@
 # Changelog
 
 ## 0.11.4
+- Boot splash: the WolOS mark from power-on, also on the live ISO (it showed the Arch Linux splash: the theme was set before plymouth was installed). Upgrades switch systems that kept the Arch splash.
 - Virtual machines: VirtualBox, VMware, SPICE and QEMU guest support, each started only under its own hypervisor. In VirtualBox the screen follows the window size (VBoxClient --vmsvga).
 
 ## 0.11.3

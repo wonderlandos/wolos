@@ -477,6 +477,16 @@ fn boot_shows_only_the_wolos_splash() {
     );
     let i = read("image/repo/wolos-system/wolos-system.install");
     assert!(i.contains("plymouth-set-default-theme wolos"));
+    // The theme is set by the scriptlet, so plymouth must be there first (pacstrap order), and
+    // an upgrade sets it where it never took.
+    let pb = read("image/repo/wolos-system/PKGBUILD");
+    let deps = pb.lines().find(|l| l.starts_with("depends=(")).unwrap();
+    assert!(
+        deps.split(['(', ' ', ')']).any(|d| d == "plymouth"),
+        "{deps}"
+    );
+    let up = i.split("post_upgrade()").nth(1).unwrap();
+    assert!(up.contains("plymouth-set-default-theme wolos"), "{up}");
 }
 
 /// Automatic updates (Settings > Software Update): a daily system timer checks and downloads

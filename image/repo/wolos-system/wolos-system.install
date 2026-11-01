@@ -11,6 +11,9 @@ post_install() {
   update-mime-database /usr/share/mime >/dev/null 2>&1 || :
 }
 post_upgrade() {
+  # Systems installed before plymouth came first still show the Arch splash: the WolOS one.
+  grep -q "^Theme=wolos" /etc/plymouth/plymouthd.conf 2>/dev/null ||
+    plymouth-set-default-theme wolos >/dev/null 2>&1 || :
   # Arch's systemd enables getty@tty1 on install: tty1 is the login window and session VT.
   systemctl mask getty@tty1.service >/dev/null 2>&1 || :
   systemd-sysusers wolos.conf
