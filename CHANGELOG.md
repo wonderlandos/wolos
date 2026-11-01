@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.11.4
+- Virtual machines: VirtualBox, VMware, SPICE and QEMU guest support, each started only under its own hypervisor. In VirtualBox the screen follows the window size (VBoxClient --vmsvga).
+
 ## 0.11.3
 - WolKernel 1:1.0+7.3-4: the series in `kernel/linux/patches` through 0034 (kernel/SERIES.md): futex spinning, prechecks and inline vectors for `futex_waitv`, pipe and semaphore wake paths, SLUB sheaf sizing, ntsync inline waits, large folios cleared on idle CPUs, and the syscall exit fixes. Each has a runtime off switch.
 - Arch Linux snapshot 2026-10-31.

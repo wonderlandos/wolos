@@ -589,7 +589,7 @@ fn wolos_base_is_one_versioned_base() {
         "'zsh'",
         "'systemd'",
         "'wolos-system'",
-        "provides=('coreutils=9.12' 'sudo')",
+        "provides=('coreutils=9.12' 'sudo' 'VIRTUALBOX-GUEST-MODULES')",
         "conflicts=('coreutils' 'sudo')",
         "usr/share/wolos/base.manifest",
         "os-release",
@@ -693,6 +693,40 @@ fn wolos_system_files_do_not_collide_with_arch_packages() {
         h.contains("/usr/share/wolos/applications/steam.desktop"),
         "{h}"
     );
+}
+
+#[test]
+fn vm_guest_tools_start_only_in_their_hypervisor() {
+    let pkgs = read("image/arch/packages.x86_64");
+    for p in [
+        "virtualbox-guest-utils",
+        "open-vm-tools",
+        "spice-vdagent",
+        "qemu-guest-agent",
+    ] {
+        assert!(pkgs.lines().any(|l| l.trim() == p), "{p} not in the image");
+    }
+    // The units gate themselves (ConditionVirtualization=oracle / vmware): enabled everywhere.
+    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    let wants = "image/arch/airootfs/etc/systemd/system/multi-user.target.wants";
+    for u in ["vboxservice.service", "vmtoolsd.service"] {
+        assert!(
+            preset.lines().any(|l| l == format!("enable {u}")),
+            "{u} not preset"
+        );
+        let l = fs::read_link(repo(wants).join(u)).expect("live symlink");
+        assert_eq!(l, Path::new("/usr/lib/systemd/system").join(u));
+    }
+    // VBoxClient --vmsvga only under VirtualBox, in every Hyprland session.
+    for c in ["hyprland", "installer", "setup", "login"] {
+        let s = read(&format!("desktop/overlay/usr/share/wolos/hypr/{c}.conf"));
+        assert!(
+            s.contains(r#"[ "$(systemd-detect-virt)" = oracle ] && exec VBoxClient --vmsvga"#),
+            "{c}.conf"
+        );
+    }
+    // The kernel has the VirtualBox modules: no Arch `linux` pulled in for them.
+    assert!(read("image/repo/wolos-base/PKGBUILD").contains("'VIRTUALBOX-GUEST-MODULES'"));
 }
 
 #[test]

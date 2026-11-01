@@ -16,7 +16,8 @@ url='https://github.com/wonderlandos/wolos'
 license=(GPL-2.0-or-later)
 depends=('base' 'linux-wolos' 'linux-wolos-headers' 'linux-wolos-api-headers' 'uutils-coreutils'
   'sudo-rs' 'libarchive' 'zsh' 'systemd' 'wolos-system' 'glibc' 'gcc-libs' 'bash')
-provides=('coreutils=9.12' 'sudo')
+# linux-wolos builds vboxguest, vboxsf and vboxvideo (virtualbox-guest-utils asks for them).
+provides=('coreutils=9.12' 'sudo' 'VIRTUALBOX-GUEST-MODULES')
 conflicts=('coreutils' 'sudo')
 backup=()
 install=wolos-base.install

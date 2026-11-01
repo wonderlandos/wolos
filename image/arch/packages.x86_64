@@ -45,3 +45,10 @@ dkms
 zram-generator
 less
 man-db
+# Guest support in virtual machines, each started only under its own hypervisor
+# (ConditionVirtualization in the units, systemd-detect-virt in the session): VirtualBox resize
+# and clipboard (VBoxService, VBoxClient --vmsvga), VMware tools, SPICE agent, QEMU guest agent.
+virtualbox-guest-utils
+open-vm-tools
+spice-vdagent
+qemu-guest-agent

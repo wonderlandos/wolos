@@ -27,6 +27,10 @@ enable avahi-daemon.service
 enable systemd-timesyncd.service
 enable udisks2.service
 enable seatd.service
+# Virtual machines: each runs only under its own hypervisor (ConditionVirtualization=oracle,
+# vmware); the QEMU guest agent and SPICE agent start from udev when their port is there.
+enable vboxservice.service
+enable vmtoolsd.service
 # NetworkManager runs the network; no text console on the screen (WolOS login window on tty1).
 disable systemd-networkd.service
 disable systemd-networkd-wait-online.service
