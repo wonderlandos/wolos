@@ -35,7 +35,15 @@ if command -v wol-realtime >/dev/null 2>&1; then
 fi
 # GTK 4 renderer: ngl (GPU, Mesa) wherever a DRM render node exists, the big win on Linux; cairo only
 # without one (software GL, VMs). Cairo was a FreeBSD passthrough workaround. A user override wins.
-if ls /dev/dri/renderD* >/dev/null 2>&1; then
+# vmwgfx (VirtualBox VMSVGA, VMware) has a render node, but Hyprland refuses GTK's GL buffers
+# ("invalid arguments for wl_surface.attach"): wol-shell and every wol-lock die at once, black screen.
+vmwgfx=
+for d in /sys/class/drm/renderD*/device/driver; do
+	[ "$(basename "$(readlink "$d" 2>/dev/null)")" = vmwgfx ] && vmwgfx=1
+done
+if [ -n "$vmwgfx" ]; then
+	export GSK_RENDERER=${GSK_RENDERER:-cairo}
+elif ls /dev/dri/renderD* >/dev/null 2>&1; then
 	export GSK_RENDERER=${GSK_RENDERER:-ngl}
 else
 	export GSK_RENDERER=${GSK_RENDERER:-cairo}
