@@ -18,5 +18,33 @@ tools/build-rust.sh /tmp/stage         # what the wolos-system recipe runs (bina
 ```
 
 A push to `main` runs `ci.yml` and asks wolos-pkgbuilds to pin the new commit (a pull request there).
-Merging that pull request builds the changed packages on ECS and publishes them to `[wolos-testing]`.
-A tag in wolos-iso makes the release image. Commands: wolos-build's `BUILD.md`.
+Merging that pull request builds the changed packages on ECS (unsigned, into S3).
+Publishing is one button here, because the signing keys live only in this repo
+(`.github/workflows/publish.yml`, it calls the reusable workflows of the other repos with
+`secrets: inherit`):
+
+```sh
+gh workflow run publish.yml -R wonderlandos/wolos -f what=packages -f run=<build run prefix>   # sign -> [wolos-testing]
+gh workflow run publish.yml -R wonderlandos/wolos -f what=promote                               # [wolos-testing] -> [wolos]
+gh workflow run publish.yml -R wonderlandos/wolos -f what=iso -f run=vX.Y.Z                     # the release image
+gh workflow run publish.yml -R wonderlandos/wolos -f what=cdn -f run=<run>                      # after a hand upload
+```
+
+## The whole picture
+
+| Repo | Holds | Builds on |
+|---|---|---|
+| [wolos](https://github.com/wonderlandos/wolos) | the OS code (Rust crates, desktop, files), the signing keys, the publish button | GitHub runner: tests only |
+| [wolos-shell](https://github.com/wonderlandos/wolos-shell), [wolos-brand](https://github.com/wonderlandos/wolos-brand) | the shell (GPL-3.0) and the brand art, submodules of wolos | - |
+| [linux](https://github.com/wonderlandos/linux) | WolKernel: branch `wolos-7.3` = Linux 7.3 + one commit per WolOS patch; releases are tags `wolkernel-<v>-7.3`; old topic work as `archive/*` tags | - |
+| [wolos-pkgbuilds](https://github.com/wonderlandos/wolos-pkgbuilds) | one PKGBUILD per package, the kernel included | AWS ECS (clean chroot, Spot hosts, ccache in S3) |
+| [wolos-iso](https://github.com/wonderlandos/wolos-iso) | the archiso profile, VM install tests, release scripts | AWS ECS (from the published repo only) |
+| wolos-build (private) | the one build tool `wolos-build` + the ECS farm (terraform) + the builder image | - |
+| [wolos-packages](https://github.com/wonderlandos/wolos-packages), wolos-cdn | the published pacman repo (release assets) and its CDN mirror | - |
+
+```
+wolos ──pin──> wolos-pkgbuilds ──ECS──> S3 (unsigned) ──publish (keys in wolos)──> [wolos-testing] ──promote──> [wolos]
+linux tag ──┘                                                                              └──> wolos-iso ──ECS──> ISO
+```
+
+Commands of the tool: wolos-build's `BUILD.md`. Decision record: `docs/adr/0029`.
