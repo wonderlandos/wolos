@@ -92,6 +92,25 @@ fn locked_start_hands_hyprland_the_lock_screen() {
     sh_n("desktop/overlay/usr/bin/wol-session");
 }
 
+/// VirtualBox VMSVGA showed no pointer: `cursor:no_hardware_cursors = 2` keeps the cursor plane on
+/// every non-NVIDIA GPU, vmwgfx included. In a VM each compositor draws the pointer, and keeps
+/// doing so after `hyprctl reload` (`exec`, not `exec-once`); the theme is one that ships.
+#[test]
+fn every_compositor_draws_the_pointer_in_a_vm_with_a_shipped_theme() {
+    let vm = "exec = sh -c 'systemd-detect-virt -q --vm && hyprctl keyword cursor:no_hardware_cursors 1'";
+    for f in [
+        "hyprland.conf",
+        "login.conf",
+        "setup.conf",
+        "installer.conf",
+    ] {
+        let c = read(&format!("desktop/overlay/usr/share/wolos/hypr/{f}"));
+        assert!(c.lines().any(|l| l.starts_with(vm)), "{f}");
+        assert!(c.contains("\nenv = XCURSOR_THEME,Adwaita\n"), "{f}");
+        assert!(c.contains("\nenv = XCURSOR_SIZE,24\n"), "{f}");
+    }
+}
+
 #[test]
 fn every_compositor_starts_on_black_with_the_lock_kept_across_crashes() {
     let desktop = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
