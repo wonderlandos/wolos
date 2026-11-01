@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//! WolOS lives in three source repos: wolos (code), wolos-pkgbuilds (recipes), wolos-iso (image).
+//! Contract tests read files by their repo path, whichever repo holds them. `root()` is one
+//! directory with the three trees overlaid (symlinks; the repo running the tests wins a clash,
+//! directories present in several are merged). Siblings: $WOLOS_SRC, $WOLOS_PKGBUILDS, $WOLOS_ISO,
+//! else ../wolos, ../wolos-pkgbuilds, ../wolos-iso next to this repo (CI checks them out there).
+//! A missing sibling is not an error here: the test that needs its file fails naming the path.
+#![allow(dead_code)]
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
+
+/// This repo's root, from the crate that includes this module.
+const UP: &str = "../..";
+
+fn overlay(src: &Path, dst: &Path) {
+    let Ok(entries) = fs::read_dir(src) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        if name == ".git" || name == "target" {
+            continue;
+        }
+        let to = dst.join(&name);
+        match fs::symlink_metadata(&to) {
+            Err(_) => std::os::unix::fs::symlink(e.path(), &to).unwrap(),
+            // Both have this directory: a real one with the entries of each.
+            Ok(m) if m.file_type().is_symlink() && to.is_dir() && e.path().is_dir() => {
+                let first = fs::read_link(&to).unwrap();
+                fs::remove_file(&to).unwrap();
+                fs::create_dir(&to).unwrap();
+                overlay(&first, &to);
+                overlay(&e.path(), &to);
+            }
+            Ok(m) if m.is_dir() && e.path().is_dir() => overlay(&e.path(), &to),
+            Ok(_) => {} // a file: the earlier repo keeps it
+        }
+    }
+}
+
+/// The overlaid tree as a string (for `format!("{}/path", root_str())`).
+pub fn root_str() -> &'static str {
+    static ROOT: OnceLock<String> = OnceLock::new();
+    ROOT.get_or_init(|| {
+        let own = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(UP)
+            .canonicalize()
+            .unwrap();
+        let parent = own.parent().unwrap().to_path_buf();
+        let u = std::env::temp_dir().join(format!("wolos-tree-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&u);
+        fs::create_dir_all(&u).unwrap();
+        overlay(&own, &u);
+        for (var, dir) in [
+            ("WOLOS_SRC", "wolos"),
+            ("WOLOS_PKGBUILDS", "wolos-pkgbuilds"),
+            ("WOLOS_ISO", "wolos-iso"),
+        ] {
+            let r = std::env::var_os(var).map_or_else(|| parent.join(dir), PathBuf::from);
+            match r.canonicalize() {
+                Ok(r) if r != own => overlay(&r, &u),
+                _ => {}
+            }
+        }
+        u.to_string_lossy().into_owned()
+    })
+}
+
+pub fn root() -> PathBuf {
+    PathBuf::from(root_str())
+}

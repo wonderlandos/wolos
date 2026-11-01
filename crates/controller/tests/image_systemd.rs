@@ -1,28 +1,33 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! WolOS on systemd (ADR 0016): the rc.d scripts became units in image/files/usr/lib/systemd, devd
+//! WolOS on systemd (ADR 0016): the rc.d scripts became units in files/usr/lib/systemd, devd
 //! became udev, cron became a timer, dhclient hooks became a NetworkManager dispatcher script,
 //! sysctl.conf.local became sysctl.d. Scripts run against fakes; units are checked key by key.
+#![allow(dead_code, unused_imports)]
+#[path = "support/siblings.rs"]
+mod siblings;
+
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
-
 fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+    siblings::root()
         .join(p)
 }
+
 fn read(p: &str) -> String {
     fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
+
 fn scratch(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("wol-systemd-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
     d
 }
-const UNITS: &str = "image/files/usr/lib/systemd/system";
+
+const UNITS: &str = "files/usr/lib/systemd/system";
 
 /// Values of KEY in SECTION of a unit file.
 fn values(unit: &str, section: &str, key: &str) -> Vec<String> {
@@ -41,9 +46,11 @@ fn values(unit: &str, section: &str, key: &str) -> Vec<String> {
     }
     v
 }
+
 fn unit(name: &str) -> String {
     read(&format!("{UNITS}/{name}"))
 }
+
 /// Fake commands in DIR/bin that log "name args" to DIR/log; returns PATH.
 fn fakes(d: &Path, names: &[(&str, &str)]) -> String {
     let bin = d.join("bin");
@@ -62,6 +69,7 @@ fn fakes(d: &Path, names: &[(&str, &str)]) -> String {
     }
     format!("{}:/usr/bin:/bin", bin.display())
 }
+
 fn log(d: &Path) -> String {
     fs::read_to_string(d.join("log")).unwrap_or_default()
 }
@@ -69,9 +77,9 @@ fn log(d: &Path) -> String {
 #[test]
 fn no_rc_d_or_usr_local_left_in_the_image() {
     for gone in [
-        "image/files/etc/rc.d",
-        "image/files/usr/local",
-        "image/files/boot",
+        "files/etc/rc.d",
+        "files/usr/local",
+        "files/boot",
         "crates/api/rc.d",
         "desktop/overlay/etc/rc.conf.d",
         "desktop/overlay/etc/sysctl.conf.local",
@@ -91,8 +99,8 @@ const BASE_PROGRAMS: [&str; 1] = ["mount"];
 
 #[test]
 fn every_unit_runs_a_shipped_program_and_is_enabled_by_the_preset() {
-    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
-    let rust = read("image/build-rust.sh");
+    let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
+    let rust = read("tools/build-rust.sh");
     let mut n = 0;
     for f in fs::read_dir(repo(UNITS)).unwrap().flatten() {
         let name = f.file_name().to_string_lossy().into_owned();
@@ -110,7 +118,7 @@ fn every_unit_runs_a_shipped_program_and_is_enabled_by_the_preset() {
                         || rust.contains(&format!(" {b};"))
                         || BASE_PROGRAMS.contains(&b)
                 } else {
-                    repo(&format!("image/files{exec}")).exists()
+                    repo(&format!("files{exec}")).exists()
                 };
                 assert!(ok, "{name}: ExecStart {exec} is not shipped");
             }
@@ -184,7 +192,7 @@ fn boot_order_hw_first_then_gpu_firstboot_and_wold() {
             .any(|a| a == "wold.service")
     );
     // NetworkManager alone: systemd-networkd's wait-online held boot for two minutes.
-    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
     for off in [
         "systemd-networkd.service",
         "systemd-networkd-wait-online.service",
@@ -200,7 +208,7 @@ fn boot_order_hw_first_then_gpu_firstboot_and_wold() {
     );
     // SIGTERM stops every job tree before wold exits; its sockets go with it.
     assert_eq!(values(&w, "Service", "KillMode"), ["mixed"]);
-    let fbs = read("image/files/usr/lib/wolos/firstboot");
+    let fbs = read("files/usr/lib/wolos/firstboot");
     assert!(
         fbs.contains("wol hw boot --online")
             && fbs.contains("/var/lib/wolos}")
@@ -210,7 +218,7 @@ fn boot_order_hw_first_then_gpu_firstboot_and_wold() {
 
 #[test]
 fn login_window_user_comes_from_sysusers() {
-    let s = read("image/files/usr/lib/sysusers.d/wolos.conf");
+    let s = read("files/usr/lib/sysusers.d/wolos.conf");
     assert!(s.lines().any(|l| l.starts_with("u _wollogin 911 ")), "{s}");
     assert!(s.lines().any(|l| l == "m _wollogin video"), "{s}");
     // seatd hands the display only to the seat group (Arch's seatd).
@@ -231,14 +239,14 @@ fn login_window_user_comes_from_sysusers() {
 /// No text console for people: no getty on the screen, no VT on Ctrl+Alt+F<n>.
 #[test]
 fn no_text_console_for_users() {
-    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
     assert!(preset.contains("\ndisable getty@.service\n"), "{preset}");
-    let l = read("image/files/usr/lib/systemd/logind.conf.d/wolos.conf");
+    let l = read("files/usr/lib/systemd/logind.conf.d/wolos.conf");
     assert!(l.contains("NAutoVTs=0") && l.contains("ReserveVT=0"), "{l}");
     assert!(controller::login::CONSOLE == "/dev/tty1");
     // Arch's systemd post_install enables getty@tty1 directly (no preset): a login prompt on the
     // session's VT read every key typed on the desktop, passwords included.
-    let install = read("image/repo/wolos-system/wolos-system.install");
+    let install = read("wolos-system/wolos-system.install");
     for hook in ["post_install() {", "post_upgrade() {"] {
         let body = install
             .split(hook)
@@ -254,7 +262,7 @@ fn no_text_console_for_users() {
 /// Hardening and no core files in home folders (a crashed compositor left a 27 MB core in ~).
 #[test]
 fn sysctl_hardening_and_no_core_files() {
-    let s = read("image/files/usr/lib/sysctl.d/90-wolos.conf");
+    let s = read("files/usr/lib/sysctl.d/90-wolos.conf");
     for kv in [
         "kernel.dmesg_restrict = 1",
         "kernel.kptr_restrict = 2",
@@ -277,14 +285,14 @@ fn sysctl_hardening_and_no_core_files() {
         }
         prev = l;
     }
-    let c = read("image/files/usr/lib/systemd/coredump.conf.d/wolos.conf");
+    let c = read("files/usr/lib/systemd/coredump.conf.d/wolos.conf");
     assert!(c.contains("Storage=none") && c.contains("ProcessSizeMax=0"));
 }
 
 /// The power policy follows the AC adapter (udev) and locks sessions before sleep (system-sleep).
 #[test]
 fn power_follows_the_adapter_and_sleep() {
-    let r = read("image/files/usr/lib/udev/rules.d/90-wolos-power.rules");
+    let r = read("files/usr/lib/udev/rules.d/90-wolos-power.rules");
     assert!(
         r.contains(r#"SUBSYSTEM=="power_supply""#)
             && r.contains(r#"ATTR{type}=="Mains""#)
@@ -295,7 +303,7 @@ fn power_follows_the_adapter_and_sleep() {
     let path = fakes(&d, &[("wol", "")]);
     for (phase, want) in [("pre", "wol power suspend"), ("post", "wol power apply")] {
         let st = Command::new("sh")
-            .arg(repo("image/files/usr/lib/systemd/system-sleep/wolos-power"))
+            .arg(repo("files/usr/lib/systemd/system-sleep/wolos-power"))
             .arg(phase)
             .arg("suspend")
             .env("PATH", &path)
@@ -365,7 +373,7 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
         };
         let path = fakes(&d, &[("checkupdates", body)]);
         let mut c = Command::new("sh");
-        c.arg(repo("image/files/usr/lib/wolos/update-check"))
+        c.arg(repo("files/usr/lib/wolos/update-check"))
             .env("PATH", &path)
             .env("WOLOS_UPDATES", &out);
         if let Some(a) = arg {
@@ -419,7 +427,7 @@ fn dark_panel_backlight_is_raised() {
     }
     let path = fakes(&d, &[("logger", "")]);
     let st = Command::new("sh")
-        .arg(repo("image/files/usr/lib/wolos/gpu"))
+        .arg(repo("files/usr/lib/wolos/gpu"))
         .env("PATH", &path)
         .env("WOLOS_BACKLIGHT_DIR", &bl)
         .status()
@@ -435,7 +443,7 @@ fn dark_panel_backlight_is_raised() {
 fn firewall_blocks_unasked_traffic_in() {
     // Our rules, not Arch's /etc/nftables.conf (nftables owns it): the unit loads them by drop-in.
     let n = read("desktop/overlay/etc/wolos/nftables.conf");
-    let unit = read("image/files/usr/lib/systemd/system/nftables.service.d/wolos.conf");
+    let unit = read("files/usr/lib/systemd/system/nftables.service.d/wolos.conf");
     for want in [
         "ExecStart=\n",
         "ExecStart=/usr/bin/nft -f /etc/wolos/nftables.conf",
@@ -463,32 +471,6 @@ fn firewall_blocks_unasked_traffic_in() {
     assert!(!n.contains("tcp dport"), "no open TCP port by default");
 }
 
-/// One picture from power-on to the desktop (ADR 0012): plymouth with the WolOS theme, quiet kernel.
-#[test]
-fn boot_shows_only_the_wolos_splash() {
-    let p = read("image/files/usr/share/plymouth/themes/wolos/wolos.plymouth");
-    assert!(
-        p.contains("ModuleName=script")
-            && p.contains("ScriptFile=/usr/share/plymouth/themes/wolos/wolos.script")
-    );
-    let s = read("image/files/usr/share/plymouth/themes/wolos/wolos.script");
-    assert!(
-        s.contains("Image(\"wolos.png\")") && s.contains("Window.SetBackgroundTopColor(0, 0, 0)")
-    );
-    let i = read("image/repo/wolos-system/wolos-system.install");
-    assert!(i.contains("plymouth-set-default-theme wolos"));
-    // The theme is set by the scriptlet, so plymouth must be there first (pacstrap order), and
-    // an upgrade sets it where it never took.
-    let pb = read("image/repo/wolos-system/PKGBUILD");
-    let deps = pb.lines().find(|l| l.starts_with("depends=(")).unwrap();
-    assert!(
-        deps.split(['(', ' ', ')']).any(|d| d == "plymouth"),
-        "{deps}"
-    );
-    let up = i.split("post_upgrade()").nth(1).unwrap();
-    assert!(up.contains("plymouth-set-default-theme wolos"), "{up}");
-}
-
 /// Automatic updates (Settings > Software Update): a daily system timer checks and downloads
 /// into pacman's cache unless /etc/wolos/auto-update says `download=off`; it never installs.
 /// App updates are a per-account user timer that Settings enables.
@@ -508,7 +490,7 @@ fn automatic_updates_download_daily_and_apps_update_per_account() {
     let path = fakes(&d, &[("wol", ""), ("pacman", "")]);
     let run = || {
         let st = Command::new("sh")
-            .arg(repo("image/files/usr/lib/wolos/update-download"))
+            .arg(repo("files/usr/lib/wolos/update-download"))
             .env("PATH", &path)
             .env("WOLOS_AUTO_UPDATE", &conf)
             .status()
@@ -527,7 +509,7 @@ fn automatic_updates_download_daily_and_apps_update_per_account() {
     assert_eq!(log(&d), "", "download=off: nothing runs");
     assert!(!log(&d).contains("-Syu"), "never installs");
 
-    let user = "image/files/usr/lib/systemd/user";
+    let user = "files/usr/lib/systemd/user";
     let ut = read(&format!("{user}/wolos-app-update.timer"));
     assert_eq!(values(&ut, "Timer", "OnCalendar"), ["daily"]);
     assert_eq!(values(&ut, "Install", "WantedBy"), ["timers.target"]);
@@ -570,7 +552,7 @@ fn reports_send_new_failures_once_and_only_when_on() {
     );
     let run = || {
         let st = Command::new("sh")
-            .arg(repo("image/files/usr/lib/wolos/report"))
+            .arg(repo("files/usr/lib/wolos/report"))
             .env("PATH", &path)
             .env("WOLOS_REPORTS_CONF", &conf)
             .env("WOLOS_REPORTS_STATE", d.join("state"))
@@ -657,7 +639,7 @@ fn every_pam_service_the_code_opens_has_its_file() {
 #[test]
 fn one_mdns_stack() {
     // avahi answers .local (printers, AirPlay, Bonjour); resolved doing it too makes both unreliable.
-    let d = read("image/files/usr/lib/systemd/resolved.conf.d/wolos.conf");
+    let d = read("files/usr/lib/systemd/resolved.conf.d/wolos.conf");
     assert!(
         d.contains("[Resolve]\n") && d.contains("MulticastDNS=no"),
         "{d}"

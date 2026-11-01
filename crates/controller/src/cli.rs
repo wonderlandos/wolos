@@ -435,7 +435,7 @@ pub const TREE: &[Cmd] = &[
         &[],
         "Hyprland render config fragment",
     ),
-    // Hardware: drivers, firmware, quirks (wol_core::hardware, archicture/modules/hardware.md).
+    // Hardware: drivers, firmware, quirks (wol_core::hardware, docs/modules/hardware.md).
     cmd(
         &["hw"],
         "hw.list",
@@ -476,7 +476,7 @@ pub const TREE: &[Cmd] = &[
         help: "Network came up: install a driver first boot could not (dhclient hook, root)",
         hidden: true,
     },
-    // Games (wol_core::games, archicture/modules/games.md).
+    // Games (wol_core::games, docs/modules/games.md).
     cmd(
         &["games"],
         "games.doctor",
@@ -495,7 +495,7 @@ pub const TREE: &[Cmd] = &[
         &[opt("url")],
         "Start Steam (downloads it the first time); optional steam:// link",
     ),
-    // Power (wol_core::power::policy, archicture/modules/power.md).
+    // Power (wol_core::power::policy, docs/modules/power.md).
     cmd(
         &["power"],
         "power.status",
@@ -528,7 +528,7 @@ pub const TREE: &[Cmd] = &[
         &[],
         "Shut down now",
     ),
-    // Firewall and Privacy & Security (wol_core::security, archicture/modules/security.md).
+    // Firewall and Privacy & Security (wol_core::security, docs/modules/security.md).
     cmd(
         &["firewall"],
         "firewall.status",
@@ -587,7 +587,7 @@ pub const TREE: &[Cmd] = &[
         help: "rc.suspend: lock every session before the machine sleeps (root)",
         hidden: true,
     },
-    // Desktop widgets (archicture/modules/widgets.md): the layout file and widget packages.
+    // Desktop widgets (docs/modules/widgets.md): the layout file and widget packages.
     cmd(
         &["widgets"],
         "widgets.list",
@@ -624,7 +624,7 @@ pub const TREE: &[Cmd] = &[
         &[arg("package")],
         "Check a widget package (id or folder): schema, source, every binding",
     ),
-    // One interface for people, scripts and helpers (archicture/modules/automation.md).
+    // One interface for people, scripts and helpers (docs/modules/automation.md).
     cmd(
         &["api"],
         "api",
@@ -835,7 +835,7 @@ pub const TREE: &[Cmd] = &[
         &[],
         "What helpers did, newest first",
     ),
-    // Apps: .wol packages, the App Store catalogue, pkg (archicture/modules/packages.md).
+    // Apps: .wol packages, the App Store catalogue, pkg (docs/modules/packages.md).
     cmd(
         &["install"],
         "package.install",

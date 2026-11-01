@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! image/build-rust.sh with layer-shell present: each cargo call asks only for features of the
+//! tools/build-rust.sh with layer-shell present: each cargo call asks only for features of the
 //! packages it builds (cargo refuses `-p xguard --features shell/layer-shell`, which stopped the
 //! wolos-system build). A stub cargo records the calls and fails the way cargo does.
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::Command;
-
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -43,7 +42,7 @@ for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search
     );
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let o = Command::new("sh")
-        .arg(root().join("image/build-rust.sh"))
+        .arg(root().join("tools/build-rust.sh"))
         .arg(t.join("dest"))
         .env("PATH", path)
         .env("CARGO_TARGET_DIR", &target)

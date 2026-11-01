@@ -278,7 +278,7 @@ mod tests {
 
     fn config(rel: &str) -> String {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../image/repo/wolos-browser-config")
+            .join("../../desktop/browser-config")
             .join(rel);
         std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
     }

@@ -2,7 +2,7 @@
 //! The hardware catalogue: device ids -> Linux driver, kernel modules, Arch firmware/driver packages,
 //! modprobe options, quirks. Data only. Sources: kernel driver id tables (i915/xe, amdgpu/radeon,
 //! iwlwifi, rtw88/rtw89, ath1xk, mt76), Arch linux-firmware split packages, NVIDIA open-module support
-//! list (Turing and newer). archicture/modules/hardware.md.
+//! list (Turing and newer). docs/modules/hardware.md.
 use super::{BASE, Bus, Entry};
 use shared::hardware::Kind::*;
 

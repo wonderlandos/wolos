@@ -10,7 +10,7 @@ WolOS. Copyright (c) 2026 Julia Klee.
 | `design/tools/` | GPL-2.0-or-later |
 | `design/icons/store/` | each icon's own license (`design/icons/store/LICENSES.md`) |
 | `assets/` | CC BY-NC-ND 4.0 (`assets/LICENSE`) |
-| other `*.patch` | the license of the files each patch changes (`image/hyprland/patches/`: BSD-3-Clause) |
+| other `*.patch` | the license of the files each patch changes (`wolos-pkgbuilds/hyprland-wolos/patches/`: BSD-3-Clause) |
 | `crates/shell/protocols/` | BSD-3-Clause (notice kept in each file) |
 | `third_party/blocking/` | Apache-2.0 OR MIT |
 

@@ -5,7 +5,7 @@
 fn the_guard_unit_stays_in_the_mount_namespace_everyone_else_uses() {
     let unit = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../image/files/usr/lib/systemd/system/wolos-xguard.service"
+        "/../../files/usr/lib/systemd/system/wolos-xguard.service"
     );
     let text = std::fs::read_to_string(unit).unwrap();
     for option in [

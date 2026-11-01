@@ -5,7 +5,6 @@
 //! open animation used a 400 ms overshooting spring instead of our ease-out.
 use realtime::anim::{Animation, Bezier};
 use realtime::titlebar::{self, Button};
-
 const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 
 fn value(key: &str) -> String {
@@ -51,7 +50,7 @@ fn hyprbars_lights_match_kit_order_colour_and_spacing() {
     ];
     assert_eq!(buttons.len(), 3);
     for (b, (action, themes)) in buttons.iter().zip(kit) {
-        // The patched hyprbars runs these on the bar's own window (image/hyprland/hyprbars).
+        // The patched hyprbars runs these on the bar's own window (desktop/hyprland/hyprbars).
         assert_eq!(b[3], action, "order: {b:?} should be {action}");
         assert_eq!(b[1], titlebar::BUTTON.to_string());
         let c = rgb(&b[0]);
@@ -108,7 +107,7 @@ fn placement_goes_through_the_layout() {
 /// started a press or drag must see its release wherever it happens.
 #[test]
 fn hyprbars_is_patched_and_the_patch_ends_drags_anywhere() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/hyprbars");
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../desktop/hyprland/hyprbars");
     let patches: String = std::fs::read_dir(dir)
         .unwrap()
         .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
@@ -125,7 +124,7 @@ fn hyprbars_is_patched_and_the_patch_ends_drags_anywhere() {
     let removed = |s: &str| patches.lines().any(|l| l.starts_with('-') && l.contains(s));
     assert!(removed("m_iButtonHoverState ^= (1 << i);"));
     assert!(!added("m_iButtonHoverState") && !added("m_bButtonHovered"));
-    let build = include_str!("../../../image/hyprland/build-plugins.sh");
+    let build = include_str!("../../../desktop/hyprland/build-plugins.sh");
     assert!(
         build.contains("hyprland/hyprbars/*.patch"),
         "build-plugins.sh applies the patches"
@@ -215,35 +214,10 @@ fn every_wol_hypr_build_allows_private_access() {
     // main.cpp reads the private xdg-decoration map; a build without the flag fails to compile.
     for build in [
         include_str!("../../../plugins/wol-hypr/Makefile"),
-        include_str!("../../../image/hyprland/build-plugins.sh"),
+        include_str!("../../../desktop/hyprland/build-plugins.sh"),
     ] {
         assert!(build.contains("-fno-access-control"));
     }
-}
-
-/// Live: two Hyprland banners on a fresh session ("started without start-hyprland",
-/// ".conf ... removed in 0.57"). Customers must never see compositor nags.
-#[test]
-fn session_starts_hyprland_without_nag_banners() {
-    let session = include_str!("../../../desktop/overlay/usr/bin/wol-session");
-    let launch = session
-        .lines()
-        .rev()
-        .find(|l| l.starts_with("exec "))
-        .unwrap();
-    // On the user bus inside a logind session, else a private bus: always through start-hyprland.
-    assert_eq!(launch, "exec ${bus:+$bus --} start-hyprland");
-    // hyprland-guiutils is not in the image: its "missing" banner must be off.
-    assert_eq!(value("disable_hyprland_guiutils_check"), "true");
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/patches");
-    let patches: String = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
-        .collect();
-    assert!(
-        patches.lines().any(|l| l.starts_with('-') && l.contains("TXT_KEY_NOTIF_OUTDATED_CONFIG), CHyprColor")),
-        "fork patch must drop the .conf deprecation notification (0.56 pin keeps .conf)"
-    );
 }
 
 /// Live (iGPU passthrough): the setup and login screens run Hyprland directly (wol-login restarts
@@ -272,44 +246,6 @@ fn greeter_compositors_show_no_nag_banners() {
             );
         }
     }
-}
-
-/// Live: libadwaita drew Text Editor's minimise light disabled; Hyprland 0.56 never advertised
-/// the minimise capability and ignored set_minimized.
-#[test]
-fn fork_makes_client_minimise_real() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/patches");
-    let patches: String = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
-        .collect();
-    let added = |s: &str| patches.lines().any(|l| l.starts_with('+') && l.contains(s));
-    assert!(added("XDG_TOPLEVEL_WM_CAPABILITIES_MINIMIZE"));
-    assert!(added("requestsMinimize") && added("special:hidden"));
-}
-
-/// Live: `focuswindow` (switcher, menu actions) focused a floating window but left it behind
-/// another; wol-hypr raises the window that becomes active.
-#[test]
-fn own_frame_windows_see_zoom_change_state() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/patches");
-    let patches: String = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
-        .collect();
-    let added = |s: &str| patches.lines().any(|l| l.starts_with('+') && l.contains(s));
-    // Live on Helium 0.20.2.1: the zoom button zoomed once and then did nothing, because every
-    // window stays "maximized" from its first map and so zooming changed no state.
-    assert!(added("wantsClientSide(TOPLEVEL->wlToplevel())"));
-    assert!(added("TOPLEVEL->setMaximized(false);"));
-    assert!(added("->setMaximized(true);"));
-    // Dropping the map-time state instead gives clients shadow margins: windows land 10 to 20 px
-    // off and clipped (measured on Helium and libadwaita).
-    assert!(
-        !patches
-            .lines()
-            .any(|l| l.starts_with('-') && l.contains("m_toplevel->setMaximized(true);"))
-    );
 }
 
 #[test]
@@ -439,28 +375,4 @@ fn compositor_frame_policy_is_configured() {
     assert_eq!(get("throttle_freeze_updates"), 2.0);
     assert_eq!(get("reconfigure_ack_timeout_ms"), 250.0);
     assert_eq!(get("frame_deadline"), 0.95);
-}
-
-/// The keys must exist in the fork, or Hyprland reports a config error at login.
-#[test]
-fn fork_registers_the_frame_policy_keys() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/hyprland/patches");
-    let patches: String = std::fs::read_dir(dir)
-        .unwrap()
-        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
-        .collect();
-    for k in [
-        "misc:throttle_occluded",
-        "misc:throttle_window_count",
-        "misc:throttle_occlusion_cutoff",
-        "misc:throttle_freeze_ms",
-        "misc:throttle_freeze_updates",
-        "misc:reconfigure_ack_timeout_ms",
-        "misc:frame_deadline",
-    ] {
-        assert!(
-            patches.contains("+        MS<") && patches.contains(&format!("\"{k}\"")),
-            "{k}"
-        );
-    }
 }

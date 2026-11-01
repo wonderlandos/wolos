@@ -1,5 +1,5 @@
 {
-  "_comment": "Example custom widget. Copy this folder to ~/.local/share/wolos/widgets/<your-id>/ and edit. Guide: archicture/modules/widgets.md",
+  "_comment": "Example custom widget. Copy this folder to ~/.local/share/wolos/widgets/<your-id>/ and edit. Guide: docs/modules/widgets.md",
   "name": "Game Friends",
   "description": "Which friends are online, and what they play.",
   "icon": "input-gaming-symbolic",

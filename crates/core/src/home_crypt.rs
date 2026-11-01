@@ -2,7 +2,7 @@
 //! "Encrypt my files": the account's home is a systemd-homed LUKS home (`homectl`), encrypted
 //! under the login password. At boot it stays locked; the login window activates it with the
 //! password it has just checked, and logging out deactivates it again when nothing still uses it.
-//! Off by default until it is proven on hardware (archicture/modules/security.md).
+//! Off by default until it is proven on hardware (docs/modules/security.md).
 //!
 //! Pure: commands for the caller to run (wol-login, the Setup Assistant plan). Passwords travel
 //! on stdin or in the environment homectl reads (`PASSWORD`, `NEWPASSWORD`), never as arguments.

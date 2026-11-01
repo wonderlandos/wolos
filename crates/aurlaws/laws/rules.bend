@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # The checker: laws over a graph of facts. The parsers and the path and host tables decide what a
-# node is; this decides what the shape of the graph means. See archicture/adr/0022-aur-laws.md.
+# node is; this decides what the shape of the graph means. See docs/adr/0022-aur-laws.md.
 import Base
 
 type Hop is Data:

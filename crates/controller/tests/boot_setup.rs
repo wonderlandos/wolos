@@ -6,12 +6,12 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-
 fn lib(n: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../image/files/usr/lib/wolos")
+        .join("../../files/usr/lib/wolos")
         .join(n)
 }
+
 fn fake(d: &Path, name: &str, body: &str) {
     let p = d.join("bin").join(name);
     fs::write(
@@ -185,49 +185,6 @@ fn a_firmware_that_refuses_the_keys_leaves_a_system_that_starts() {
     assert_eq!(out, "off");
     assert_eq!(fs::read_to_string(d.join("sb/tier")).unwrap().trim(), "off");
     assert_eq!(fs::read_to_string(d.join("sb/cmdline")).unwrap().trim(), "");
-}
-
-#[test]
-fn the_image_carries_the_tools_and_the_first_stage_stays_pinned() {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let list = std::fs::read_to_string(format!("{root}/image/arch/packages.x86_64")).unwrap();
-    for p in ["systemd-ukify", "sbctl", "mokutil", "wolos-shim"] {
-        assert!(list.lines().any(|l| l == p), "{p}");
-    }
-    let repo = std::fs::read_to_string(format!("{root}/image/repo/packages")).unwrap();
-    assert!(repo.lines().any(|l| l.starts_with("wolos-shim ")));
-    let notice = std::fs::read_to_string(format!("{root}/NOTICE")).unwrap();
-    for line in [
-        "Copyright 2012 Red Hat, Inc <mjg@redhat.com>",
-        "Redistribution and use in source and binary forms, with or without",
-        "OF THE POSSIBILITY OF SUCH DAMAGE.",
-        "Corporation.",
-    ] {
-        assert!(notice.lines().any(|l| l == line), "{line}");
-    }
-    let b = std::fs::read_to_string(format!("{root}/image/repo/wolos-shim/PKGBUILD")).unwrap();
-    assert!(!b.contains("SKIP"), "every source is pinned");
-    assert!(b.contains("351e131d3c4a636704e9cae7d1296baf8a05beca9922cfebbfa48933c9bf1ad3"));
-    assert!(
-        !b.contains("sbsign"),
-        "the first stage is shipped as it was signed"
-    );
-}
-
-#[test]
-fn the_sealed_system_can_not_enable_units_at_first_start() {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let i = std::fs::read_to_string(format!(
-        "{root}/image/repo/wolos-system/wolos-system.install"
-    ))
-    .unwrap();
-    for u in [
-        "wolos-verity-check.service",
-        "wolos-tpm-bind.service",
-        "wolos-boot-ok.service",
-    ] {
-        assert!(i.contains(u), "{u} is enabled when the package installs");
-    }
 }
 
 #[test]

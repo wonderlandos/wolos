@@ -3,7 +3,7 @@ Type=Application
 Name=Windows App
 Comment=Opens Windows programs and installers
 Icon=application-x-executable
-# Native wine-proton, one prefix per program (archicture/modules/games.md).
+# Native wine-proton, one prefix per program (docs/modules/games.md).
 Exec=wol-run --exe %f
 Terminal=false
 NoDisplay=true

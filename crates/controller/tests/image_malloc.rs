@@ -3,7 +3,6 @@
 //! user session: +26% on a 16-thread request/JSON workload at the same RSS. hugetlb stays off
 //! (it raised RSS 4-12x for no gain).
 use std::path::PathBuf;
-
 fn read(p: &str) -> String {
     let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -16,8 +15,8 @@ const TUNABLE: &str = "DefaultEnvironment=GLIBC_TUNABLES=glibc.malloc.tcache_cou
 #[test]
 fn services_and_sessions_get_a_bigger_malloc_tcache() {
     for f in [
-        "image/files/usr/lib/systemd/system.conf.d/70-wolos-malloc.conf",
-        "image/files/usr/lib/systemd/user.conf.d/70-wolos-malloc.conf",
+        "files/usr/lib/systemd/system.conf.d/70-wolos-malloc.conf",
+        "files/usr/lib/systemd/user.conf.d/70-wolos-malloc.conf",
     ] {
         let s = read(f);
         assert!(

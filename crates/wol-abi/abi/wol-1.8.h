@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 Julia Klee */
 /*
- * wol.h: the WolOS app API (libwol.so.1). ADR 0020, archicture/modules/abi.md.
+ * wol.h: the WolOS app API (libwol.so.1). ADR 0020, docs/modules/abi.md.
  *
  * Stability: a declaration here never changes or goes away once shipped; new ones are only
  * added (symbol versions WOL_1.0, WOL_1.1, ...). Check wol_version() at run time before using

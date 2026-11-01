@@ -1,8 +1,0 @@
-# WolOS mirrors for [wolos] and [wolos-cachy] at release 2026-10-31 ($repo = the repo name).
-# `wol mirror rank` orders them by latency; `wol update` moves the date with each release.
-# Primary: the WolOS CDN (keeps packages cached, fetches new ones from the release assets).
-Server = https://wolos.squareweb.app/$repo-2026-10-31
-# Fallback: the release assets of github.com/wonderlandos/wolos.
-Server = https://github.com/wonderlandos/wolos-packages/releases/download/$repo-2026-10-31
-# More mirrors.
-Server = https://repo.wolos.org/2026-10-31/$repo/$arch

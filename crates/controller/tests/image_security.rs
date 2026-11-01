@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Security defaults the image ships (wol_core::security, archicture/modules/security.md): the
+//! Security defaults the image ships (wol_core::security, docs/modules/security.md): the
 //! firewall on from the first boot, kernel hardening, the system log off the network and the
 //! compositor's privacy rules.
 use std::fs;
 use std::path::{Path, PathBuf};
 use wol_core::security::{HYPR_PERMISSIONS, hypr_permissions};
-
 fn repo(p: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(p)
 }

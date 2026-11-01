@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Language bindings for the C ABI (ADR 0020, archicture/modules/abi.md "Other languages"): Swift, Crystal
+//! Language bindings for the C ABI (ADR 0020, docs/modules/abi.md "Other languages"): Swift, Crystal
 //! and .NET. Two guards against drift:
 //! - The Crystal `lib LibWol` and the .NET P/Invoke class are generated from `include/wol.h`
 //!   (`common/bindgen.rs`) and must equal the checked-in files; Swift imports the header itself through
@@ -12,13 +12,12 @@
 //! A language whose toolchain is not installed is skipped unless `WOL_BINDINGS_REQUIRED=1`.
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
 mod common;
+
 use common::bindgen;
 use common::fakes::{run_hello, run_parts};
 use common::services::run_services;
 use common::temp;
-
 fn manifest() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
 }

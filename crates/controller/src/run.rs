@@ -142,7 +142,7 @@ fn inline(v: &serde_json::Value) -> String {
 }
 
 pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
-    // A named script is a helper: policy + audit log (archicture/modules/automation.md).
+    // A named script is a helper: policy + audit log (docs/modules/automation.md).
     if let (Some(name), Some(rule)) = (env.var("WOL_HELPER"), crate::catalog::rule_of(inv)) {
         return crate::verbs::as_script(inv, env, &name, rule);
     }

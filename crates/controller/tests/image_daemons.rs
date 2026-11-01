@@ -4,7 +4,6 @@
 //! wold itself is a systemd unit enabled by the WolOS preset (ADR 0016).
 use shared::jobs::JobSpec;
 use std::{fs, path::PathBuf};
-
 fn repo(p: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -51,7 +50,7 @@ fn boot_jobs() -> Vec<JobSpec> {
 }
 
 fn installed(bin: &str) -> bool {
-    read("image/build-rust.sh")
+    read("tools/build-rust.sh")
         .lines()
         .find(|l| l.trim_start().starts_with("for b in wold "))
         .is_some_and(|l| l.split_whitespace().any(|w| w.trim_end_matches(';') == bin))
@@ -67,16 +66,16 @@ fn every_daemon_starts_at_boot() {
     );
     let jobs = boot_jobs();
     for d in &ds {
-        assert!(installed(d), "{d}: not installed by image/build-rust.sh");
+        assert!(installed(d), "{d}: not installed by tools/build-rust.sh");
         let path = format!("/usr/bin/{d}");
         if d == "wold" {
             // wold is the supervisor: a systemd unit, enabled on live and installed systems.
-            let unit = read("image/files/usr/lib/systemd/system/wold.service");
+            let unit = read("files/usr/lib/systemd/system/wold.service");
             assert!(
                 unit.contains(&format!("ExecStart={path} /etc/wolos/jobs")),
                 "{unit}"
             );
-            let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+            let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
             assert!(preset.lines().any(|l| l == "enable wold.service"));
             continue;
         }
@@ -97,5 +96,5 @@ fn admin_daemon_is_a_wold_job_only() {
     assert_eq!(job.program, ["/usr/bin/wol-admind"]);
     // One mechanism: no second launcher (rc.d script or unit) for the same socket.
     assert!(!repo("crates/api/rc.d").exists());
-    assert!(!repo("image/files/usr/lib/systemd/system/wol-admind.service").exists());
+    assert!(!repo("files/usr/lib/systemd/system/wol-admind.service").exists());
 }

@@ -3,7 +3,7 @@
 # The signature data a system ships with. Usage: build.sh <wol-xguard> <out-dir> [VERSION]
 # Downloads replace it (ADR 0024). Extra sources: rule folders in $XGUARD_RULES, signature lists in
 # $XGUARD_LISTS (each keeps its own license, listed in NOTICES). The result is unsigned: a shipped
-# copy is covered by the image's own seal; `rules bundle` + image/sign-release.sh make an update.
+# copy is covered by the image's own seal; `rules bundle` + wolos-iso/release/sign-release.sh make an update.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 bin=$1

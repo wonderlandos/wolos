@@ -2,29 +2,18 @@
 //! Everyday userland from the real-GPU run: sudo for administrators, zsh for every account, user
 //! folders, unlocked keyring, printing, removable media and default apps (Helium the browser).
 //! Scripts run on the host with fakes.
-use std::{fs, os::unix::fs::PermissionsExt, path::Path, path::PathBuf, process::Command};
+#![allow(dead_code, unused_imports)]
+#[path = "support/siblings.rs"]
+mod siblings;
 
+use std::{fs, os::unix::fs::PermissionsExt, path::Path, path::PathBuf, process::Command};
 fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+    siblings::root()
         .join(p)
 }
 
 fn read(p: &str) -> String {
     fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
-
-fn packages() -> Vec<String> {
-    ["image/arch/packages.x86_64", "desktop/packages.txt"]
-        .iter()
-        .flat_map(|f| {
-            read(f)
-                .lines()
-                .filter_map(|l| l.split('#').next())
-                .flat_map(|l| l.split_whitespace().map(String::from).collect::<Vec<_>>())
-                .collect::<Vec<_>>()
-        })
-        .collect()
 }
 
 /// Fresh temp dir with executable fakes `(name, body)` in `bin/`.
@@ -55,84 +44,15 @@ fn zsh() -> Option<&'static str> {
 }
 
 #[test]
-fn image_ships_the_everyday_userland() {
-    let pkgs = packages();
-    for p in [
-        "zsh-autosuggestions",
-        "zsh-syntax-highlighting",
-        "zsh-completions",
-        "xdg-user-dirs",
-        "gnome-keyring",
-        "cups",
-        "cups-filters",
-        "avahi",
-        "nss-mdns",
-        "udisks2",
-        "gvfs",
-        "ntfs-3g",
-        "exfatprogs",
-        "nautilus",
-        "geary",
-        "amberol",
-        "shotwell",
-        "gnome-calendar",
-        "gnote",
-        "gnome-calculator",
-        "gnome-clocks",
-        "papers",
-        "celluloid",
-        "mpv",
-        "file-roller",
-        "baobab",
-        "gnome-text-editor",
-        "eog",
-        "helium-browser",
-    ] {
-        assert!(pkgs.iter().any(|x| x == p), "packages.txt lacks {p}");
-    }
-    // Weather is the WolOS desktop widget: gnome-weather needs geoclue and gjs + spidermonkey (~55 MB).
-    assert!(!pkgs.iter().any(|x| x == "gnome-weather"));
-    // sudo-rs and zsh come with wolos-base (ADR 0017).
-    let base = read("image/repo/wolos-base/PKGBUILD");
-    assert!(base.contains("'sudo-rs'") && base.contains("'zsh'"));
-}
-
-#[test]
-fn administrators_can_sudo() {
-    // Setup made an admin (group wheel) but the stock sudoers has no %wheel rule.
-    let p = "desktop/overlay/etc/sudoers.d/wolos";
-    let rules: Vec<String> = read(p)
-        .lines()
-        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-        .map(String::from)
-        .collect();
-    assert_eq!(rules, ["%wheel ALL=(ALL:ALL) ALL"]);
-    assert!(
-        read("image/repo/wolos-system/PKGBUILD")
-            .contains(r#"chmod 440 "$pkgdir/etc/sudoers.d/wolos""#),
-        "sudoers drop-in must be 0440"
-    );
-    // sudo-rs reads /etc/sudoers, ours (sudo_works_on_every_system).
-    // visudo validates the syntax where the host has it.
-    if let Ok(out) = Command::new("visudo").arg("-csf").arg(repo(p)).output() {
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    }
-}
-
-#[test]
 fn every_account_logs_in_to_zsh_and_root_keeps_sh() {
     assert!(wol_core::settings::users::LOGIN_SHELL.ends_with("/bin/zsh"));
-    let b = read("image/build.sh");
+    let b = read("build.sh");
     let live = b.lines().find(|l| l.starts_with("u live ")).unwrap();
     assert!(live.ends_with(" /usr/bin/zsh"), "{live}");
     // root keeps bash (base system): a broken desktop package must not lock out recovery.
     assert!(
         !b.contains("usermod root") && !b.contains("chsh"),
-        "image/build.sh changes root's shell"
+        "build.sh changes root's shell"
     );
     // Users' own files: only skel (new accounts) and system-level rc files, never ~/.zshrc.
     let skel = read("desktop/overlay/usr/share/skel/dot.zshrc");
@@ -310,7 +230,7 @@ fn session_creates_user_folders_and_finishes_the_keyring() {
 /// Printing and removable media are on in live and installed systems (the WolOS preset).
 #[test]
 fn printing_and_removable_media_are_on() {
-    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
     for u in ["cups.socket", "avahi-daemon.service", "udisks2.service"] {
         assert!(preset.lines().any(|l| l == format!("enable {u}")), "{u}");
     }
@@ -340,68 +260,10 @@ fn helium_and_the_dock_apps_open_their_files_by_default() {
     assert!(mime.starts_with('#') && mime.contains("\n[Default Applications]\n"));
 }
 
-/// sudo-rs ships no /etc/sudoers and no PAM service: without ours every sudo fails, and with it
-/// the disk page of the live installer ("No disk found") and an administrator's first command.
-#[test]
-fn sudo_works_on_every_system() {
-    let sudoers = read("desktop/overlay/etc/sudoers");
-    assert!(sudoers.lines().any(|l| l == "@includedir /etc/sudoers.d"));
-    for service in ["sudo", "sudo-i"] {
-        let pam = read(&format!("desktop/overlay/etc/pam.d/{service}"));
-        for kind in ["auth", "account", "session"] {
-            assert!(
-                pam.lines()
-                    .any(|l| l.starts_with(kind) && l.ends_with("system-auth")),
-                "{service}: {kind}"
-            );
-        }
-    }
-    let pkg = read("image/repo/wolos-system/PKGBUILD");
-    assert!(pkg.contains(r#"chmod 440 "$pkgdir/etc/sudoers""#));
-    assert!(pkg.contains("backup=(etc/sudoers "));
-}
-
 /// The live user has no password: a lock screen after five idle minutes could not be left.
 #[test]
 fn the_live_desktop_never_locks_itself() {
     let hypr = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
     let line = hypr.lines().find(|l| l.contains("exec hypridle")).unwrap();
     assert!(line.contains("[ -e /etc/wolos-live ] && exit"), "{line}");
-}
-
-/// The image changes nothing inside Firefox's own folder; the config waits in its own package,
-/// and that package has no mark in its name and is not in the image.
-#[test]
-fn the_image_leaves_the_firefox_folder_alone() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    assert!(!root.join("desktop/overlay/usr/lib/firefox").exists());
-    assert!(
-        root.join("image/repo/wolos-browser-config/PKGBUILD")
-            .is_file()
-    );
-    for list in ["image/repo/packages", "image/arch/packages.x86_64"] {
-        let t = std::fs::read_to_string(root.join(list)).unwrap();
-        assert!(!t.contains("wolos-browser-config"), "{list}");
-    }
-}
-
-#[test]
-fn files_offers_clamav_and_the_action_can_only_start_wol_analyze() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let read = |p: &str| std::fs::read_to_string(root.join(p)).unwrap();
-    let c = read("image/nautilus/wolos-analyze.c");
-    assert!(c.contains("\"Analyze with ClamAV\""));
-    assert!(c.contains("\"wol-analyze\""));
-    let rust = read("image/build-rust.sh");
-    assert!(rust.contains(" wol-analyze"));
-    assert!(rust.contains("nautilus/wolos-analyze.c"));
-    let pkg = read("image/repo/wolos-system/PKGBUILD");
-    assert!(
-        pkg.lines()
-            .any(|l| l.starts_with("makedepends=") && l.contains("nautilus"))
-    );
-    // Off stays off: nothing here may reach the switch.
-    let window = read("crates/shell/src/ui/analyze.rs");
-    assert!(!window.contains("malware-signatures"));
-    assert!(!c.contains("malware-signatures"));
 }

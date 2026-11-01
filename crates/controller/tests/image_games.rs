@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The image ships what the Steam client checks before it starts, a Steam launcher that runs
 //! `wol games steam`, and a handler that opens Windows programs on Wine.
+#![allow(dead_code, unused_imports)]
+#[path = "support/siblings.rs"]
+mod siblings;
+
 use controller::cli::parse;
 use controller::games::STEAM_ICON;
 use std::path::PathBuf;
-
 fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+    siblings::root()
         .join(p)
 }
 
@@ -25,26 +27,6 @@ fn key<'a>(desktop: &'a str, k: &str) -> &'a str {
 const APPS: &str = "desktop/overlay/usr/share/applications";
 
 #[test]
-fn steam_and_umu_are_native_packages() {
-    let p = read("desktop/packages.txt");
-    // .exe outside Steam runs on umu-launcher (Proton, 1 MB); wine (600 MB) installs on demand.
-    assert!(!p.lines().any(|l| l.trim() == "wine"), "wine in the image");
-    for want in [
-        "steam",
-        "umu-launcher",
-        "lib32-mesa",
-        "lib32-vulkan-intel",
-        "lib32-vulkan-radeon",
-    ] {
-        assert!(
-            p.lines().any(|l| l.split_whitespace().next() == Some(want)),
-            "{want}"
-        );
-    }
-    assert!(read("image/arch/pacman.conf").contains("\n[multilib]\n"));
-}
-
-#[test]
 fn steam_opens_through_wol_games_steam() {
     let d = read("desktop/overlay/usr/share/wolos/applications/steam.desktop");
     assert_eq!(key(&d, "Exec"), "wol games steam %u");
@@ -59,7 +41,7 @@ fn steam_opens_through_wol_games_steam() {
     let name = icon.rsplit('/').next().unwrap();
     assert!(repo(&format!("design/icons/store/{name}")).exists());
     assert!(
-        read("image/repo/wolos-system/PKGBUILD").contains("$pkgdir/usr/share/wolos/store-icons")
+        read("wolos-system/PKGBUILD").contains("$pkgdir/usr/share/wolos/store-icons")
     );
 }
 

@@ -85,7 +85,7 @@ mod tests {
         }
     }
 
-    /// Every app WolOS ships (desktop/packages.txt, Dock pins, mimeapps defaults, wol-shell apps)
+    /// Every app WolOS ships (wolos-iso/profile/packages.desktop, Dock pins, mimeapps defaults, wol-shell apps)
     /// and how it decorates. `Lights::None` here means its own themed lights, not no lights.
     const SHIPPED: &[(&str, Decoration, Lights)] = &[
         ("helium", Decoration::Server, Lights::All),

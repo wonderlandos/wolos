@@ -1,0 +1,11 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Unattended install (VM tests, wolos-iso/tests/test-install.sh): `wolos.autoinstall=<disk>` on the live
+# kernel command line erases <disk>, installs WolOS and powers off. Progress goes to the console.
+set -u
+disk=
+for w in $(cat "${WOLOS_CMDLINE:-/proc/cmdline}"); do
+  case $w in wolos.autoinstall=*) disk=${w#*=} ;; esac
+done
+[ -n "$disk" ] || exit 0
+"${WOLOS_INSTALL_RUN:-/usr/lib/wolos/install-run}" "$disk" && systemctl poweroff

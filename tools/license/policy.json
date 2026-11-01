@@ -35,7 +35,7 @@
     "design/**",
     "crates/shell/protocols/**",
     "wopkg/recipes/**",
-    "kernel/linux-wolos/ref"
+    "wolos-pkgbuilds/linux-wolos/ref"
   ],
   "unskip": [
     "design/tools/**"
@@ -103,11 +103,11 @@
       "kind": "yaml"
     },
     {
-      "glob": "image/repo/wolos-*/PKGBUILD",
+      "glob": "wolos-pkgbuilds/wolos-*/PKGBUILD",
       "kind": "pkgbuild"
     },
     {
-      "glob": "image/repo/wopkg/PKGBUILD",
+      "glob": "wolos-pkgbuilds/wopkg/PKGBUILD",
       "kind": "pkgbuild"
     }
   ],
@@ -122,7 +122,7 @@
       "new": "**License:** GPL-2.0-or-later; libwol (`crates/wol-abi`, `crates/shared`, `crates/core`) is BSD-2-Clause; kernel patches are GPL-2.0-only; brand art is CC BY-NC-ND 4.0 (share it to talk about WolOS; ask for anything else)."
     },
     {
-      "file": "archicture/adr/0021-wopkg.md",
+      "file": "docs/adr/0021-wopkg.md",
       "old": "(Rust, `crates/wopkg`, BSD)",
       "new": "(Rust, `crates/wopkg`)"
     },

@@ -19,7 +19,7 @@ try ok      docs/keys.md 'an ssh private key is not named here'
 try refused strategy/x.md 'plan'
 try refused CLAUDE.local.md 'notes'
 try refused test/demo-account.txt 'x'
-try refused image/vm/test/demo-account.txt 'x'
+try refused tests/test/demo-account.txt 'x'
 try refused a/key1 "AKIA$A16"
 try refused a/key2 "$B OPENSSH PRIVATE KEY-----"
 try refused a/key3 "$B PRIVATE KEY-----"

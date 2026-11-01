@@ -33,7 +33,7 @@ sha2 = "0.10"
 shared = { path = "crates/shared" }
 wol_core = { path = "crates/core", package = "core" }
 
-# Vendored with a one-line idle-exit fix (archicture/adr/0006-vendored-blocking-idle-exit.md).
+# Vendored with a one-line idle-exit fix (docs/adr/0006-vendored-blocking-idle-exit.md).
 [patch.crates-io]
 blocking = { path = "third_party/blocking" }
 

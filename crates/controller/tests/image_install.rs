@@ -10,24 +10,27 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output},
 };
-
 fn repo(p: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(p)
 }
+
 fn read(p: &str) -> String {
     fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
+
 fn lib(name: &str) -> PathBuf {
-    repo(&format!("image/files/usr/lib/wolos/{name}"))
+    repo(&format!("files/usr/lib/wolos/{name}"))
 }
+
 fn scratch(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("wol-install-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(d.join("bin")).unwrap();
     d
 }
+
 fn fake(d: &Path, name: &str, body: &str) {
     let p = d.join("bin").join(name);
     let log = d.join("log");
@@ -41,9 +44,11 @@ fn fake(d: &Path, name: &str, body: &str) {
     .unwrap();
     fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
 }
+
 fn log(d: &Path) -> String {
     fs::read_to_string(d.join("log")).unwrap_or_default()
 }
+
 fn path(d: &Path) -> String {
     format!("{}:/usr/bin:/bin", d.join("bin").display())
 }
@@ -152,8 +157,10 @@ fn install(d: &Path, disk: &str) -> Output {
 /// Tool fakes that leave the file a later step expects.
 const OPENSSL: &str =
     "while [ $# -gt 0 ]; do case $1 in -keyout|-out) echo x > \"$2\"; shift ;; esac; shift; done";
+
 const SBSIGN: &str =
     "for a; do case $a in --output=*) echo signed > \"${a#--output=}\" ;; esac; done";
+
 const UKIFY: &str =
     "for a; do case $a in --output=*) echo image > \"${a#--output=}\" ;; esac; done";
 
@@ -522,7 +529,7 @@ fn an_encrypted_erase_still_makes_a_startup_partition() {
 
 #[test]
 fn repart_definitions_describe_esp_and_slot_root() {
-    let esp = read("image/files/usr/lib/wolos/repart.d/10-esp.conf");
+    let esp = read("files/usr/lib/wolos/repart.d/10-esp.conf");
     for want in [
         "Type=esp",
         "Format=vfat",
@@ -532,7 +539,7 @@ fn repart_definitions_describe_esp_and_slot_root() {
     ] {
         assert!(esp.lines().any(|x| x == want), "esp lacks {want}:\n{esp}");
     }
-    let root = read("image/files/usr/lib/wolos/repart.d/20-root.conf");
+    let root = read("files/usr/lib/wolos/repart.d/20-root.conf");
     for want in [
         "Type=root",
         "Format=btrfs",
@@ -637,71 +644,11 @@ fn esp_sync_gives_other_kernels_their_own_entry() {
         last.contains("wolos.seal=abcd") && last.contains("lockdown=integrity"),
         "{last}"
     );
-    let hook = read("image/files/usr/share/libalpm/hooks/95-wolos-esp.hook");
+    let hook = read("files/usr/share/libalpm/hooks/95-wolos-esp.hook");
     assert!(
         hook.contains("Exec = /usr/lib/wolos/esp-sync")
             && hook.contains("Target = usr/lib/modules/*/vmlinuz")
     );
-}
-
-/// The pacman database lives in the slot (/usr), not in the shared @var: each slot knows its own
-/// packages. The live root keeps pacman's default (/var/lib/pacman, where pacstrap writes, and
-/// pacman resolves DBPath on the build host); install-run moves it and names it in pacman.conf.
-#[test]
-fn pacman_database_stays_in_the_slot() {
-    assert!(read("image/arch/pacman.conf").contains("\nDBPath = /usr/lib/pacman/\n"));
-    assert!(!read("image/arch/airootfs/etc/pacman.conf").contains("\nDBPath"));
-    assert!(read("image/files/usr/lib/wolos/install-run").contains("DBPath = /usr/lib/pacman/"));
-}
-
-/// Unattended VM install: `wolos.autoinstall=<disk>` on the live command line.
-#[test]
-fn autoinstall_from_the_kernel_command_line() {
-    let u = read("image/arch/airootfs/etc/systemd/system/wolos-autoinstall.service");
-    assert!(u.contains("ConditionKernelCommandLine=wolos.autoinstall"));
-    assert!(u.contains("ExecStart=/usr/lib/wolos/autoinstall"));
-    assert!(repo("image/arch/airootfs/etc/systemd/system/multi-user.target.wants/wolos-autoinstall.service")
-        .symlink_metadata()
-        .is_ok());
-    let d = scratch("auto");
-    fake(&d, "systemctl", "");
-    fake(&d, "install-run", "");
-    fs::write(
-        d.join("cmdline"),
-        "quiet splash wolos.autoinstall=/dev/vda console=ttyS0\n",
-    )
-    .unwrap();
-    let st = Command::new("sh")
-        .arg(repo("image/files/usr/lib/wolos/autoinstall"))
-        .env("PATH", path(&d))
-        .env("WOLOS_CMDLINE", d.join("cmdline"))
-        .env("WOLOS_INSTALL_RUN", d.join("bin/install-run"))
-        .status()
-        .unwrap();
-    assert!(st.success());
-    assert_eq!(log(&d), "install-run /dev/vda\nsystemctl poweroff\n");
-}
-
-/// wolos-update-slot: a thin wrapper; the update itself (snapshot the running root into the other
-/// slot, repoint pacman, pacman -Syu, initramfs + counted entry, next boot) is `wol update apply`.
-#[test]
-fn update_slot_is_wol_update_apply() {
-    let d = scratch("upd");
-    fake(&d, "wol", "");
-    fake(&d, "findmnt", "echo rw,relatime,subvol=/@wolos-a");
-    let st = Command::new("sh")
-        .arg(repo("image/arch/wolos-update-slot"))
-        .arg("2026-11-20")
-        .env("PATH", path(&d))
-        .status()
-        .unwrap();
-    assert!(st.success());
-    assert_eq!(
-        log(&d),
-        "findmnt -no OPTIONS /\nwol update apply @wolos-b 2026/11/20 --yes\n"
-    );
-    let w = read("image/repo/wolos-system/PKGBUILD");
-    assert!(w.contains("image/arch/wolos-update-slot"));
 }
 
 #[test]
@@ -729,7 +676,7 @@ fn installer_scripts_parse() {
 /// systemd-bless-boot then drops the try counter. Three boots that never get there fall back.
 #[test]
 fn a_boot_that_reaches_the_login_window_blesses_the_slot() {
-    let u = read("image/files/usr/lib/systemd/system/wolos-boot-ok.service");
+    let u = read("files/usr/lib/systemd/system/wolos-boot-ok.service");
     for want in [
         "Requires=wold.service",
         "After=wold.service",
@@ -738,7 +685,7 @@ fn a_boot_that_reaches_the_login_window_blesses_the_slot() {
     ] {
         assert!(u.lines().any(|l| l == want), "wolos-boot-ok lacks {want}");
     }
-    let preset = read("image/files/usr/lib/systemd/system-preset/50-wolos.preset");
+    let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
     assert!(preset.lines().any(|l| l == "enable wolos-boot-ok.service"));
 }
 
@@ -783,12 +730,12 @@ fn encrypted_install_unlocks_through_the_initramfs() {
         "{cmdline}"
     );
     assert!(!d.join("keys").exists(), "the throw-away key is removed");
-    let crypt = read("image/files/usr/lib/wolos/repart.d-crypt/20-root.conf");
+    let crypt = read("files/usr/lib/wolos/repart.d-crypt/20-root.conf");
     // The slot is sealed: a machine id written at first boot would never reach the disk.
-    assert!(!read("image/files/usr/lib/wolos/install-run").contains("uninitialized"));
+    assert!(!read("files/usr/lib/wolos/install-run").contains("uninitialized"));
     assert_eq!(
-        read("image/files/usr/lib/wolos/repart.d-crypt/10-esp.conf"),
-        read("image/files/usr/lib/wolos/repart.d/10-esp.conf"),
+        read("files/usr/lib/wolos/repart.d-crypt/10-esp.conf"),
+        read("files/usr/lib/wolos/repart.d/10-esp.conf"),
         "an encrypted disk starts from the same startup partition"
     );
     assert!(

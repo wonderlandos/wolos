@@ -359,7 +359,7 @@ pub fn aur(bytes: &[u8]) -> Result<Vec<Record>> {
         .collect())
 }
 
-/// `.wol` index (`archicture/modules/packages.md`).
+/// `.wol` index (`docs/modules/packages.md`).
 pub fn wol_index(bytes: &[u8]) -> Result<Vec<Record>> {
     let idx = std::str::from_utf8(bytes)
         .ok()
@@ -397,7 +397,7 @@ struct RecipeEntry {
     summary: String,
 }
 
-/// Recipe index (`{"recipes":[{"name","version","summary"}]}`, `archicture/modules/wopkg.md`).
+/// Recipe index (`{"recipes":[{"name","version","summary"}]}`, `docs/modules/wopkg.md`).
 pub fn recipes(bytes: &[u8]) -> Result<Vec<Record>> {
     let r: Recipes = serde_json::from_slice(bytes)
         .map_err(|_| Error::untrusted("The recipe list is damaged."))?;

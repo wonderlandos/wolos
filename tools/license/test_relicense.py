@@ -23,7 +23,7 @@ FILES = {
     "crates/wol-abi/src/lib.rs": "//! libwol\n",
     "crates/wol-abi/tests/new.rs": "// SPDX-License-Identifier: GPL-2.0-or-later\nfn t() {}\n",
     "crates/api/ok.c": f"/* SPDX-License-Identifier: {G} */\nint x;\n",
-    "image/build.sh": "#!/bin/sh\nset -e\n",
+    "wolos-iso/build.sh": "#!/bin/sh\nset -e\n",
     "image/old.sh": "#!/bin/sh\n# SPDX-License-Identifier: BSD-2-Clause\nset -e\n",
     "tools/win.py": "import os\r\nprint(1)\r\n",
     "crates/api/data.json": "{}\n",
@@ -31,15 +31,15 @@ FILES = {
     "crates/api/etc.conf": "# SPDX-License-Identifier: BSD-2-Clause\nkey=1\n",
     "third_party/blocking/src/lib.rs": "// SPDX-License-Identifier: Apache-2.0 OR MIT\n",
     "third_party/blocking/src/other.rs": "fn x() {}\n",
-    "image/hyprland/patches/0001.patch": "+// SPDX-License-Identifier: BSD-3-Clause\n",
+    "wolos-pkgbuilds/hyprland-wolos/patches/0001.patch": "+// SPDX-License-Identifier: BSD-3-Clause\n",
     "crates/api/src/vendored.rs": "// SPDX-License-Identifier: BSD-3-Clause\n// Copyright (c) someone else\n",
     "design/wallpapers/x.svg": "<svg/>\n",
     "design/tools/gen.py": "# SPDX-License-Identifier: BSD-2-Clause\nprint(1)\n",
     "Cargo.toml": '[workspace.package]\nlicense = "BSD-2-Clause"\n',
     "crates/shell/Cargo.toml": '[package]\nlicense = "GPL-3.0-or-later"\n',
     "third_party/blocking/Cargo.toml": 'license = "Apache-2.0 OR MIT"\n',
-    "image/repo/wolos-system/PKGBUILD": "# x\nlicense=(BSD-2-Clause GPL-3.0-or-later CC-BY-NC-ND-4.0)\n",
-    "image/repo/hyprland-wolos/PKGBUILD": "# x\nlicense=(BSD-3-Clause)\n",
+    "wolos-pkgbuilds/wolos-system/PKGBUILD": "# x\nlicense=(BSD-2-Clause GPL-3.0-or-later CC-BY-NC-ND-4.0)\n",
+    "wolos-pkgbuilds/hyprland-wolos/PKGBUILD": "# x\nlicense=(BSD-3-Clause)\n",
     "wopkg/shard.yml": "name: wopkg\nlicense: BSD-2-Clause\n",
     "wopkg/recipes/bend/recipe.toml": 'license = "Apache-2.0"\n',
     "README.md": README_OLD + " See COPYRIGHT.\n",
@@ -49,7 +49,7 @@ FILES = {
     "crates/core/Cargo.toml": '[package]\nlicense.workspace = true\n',
     "crates/shared/Cargo.toml": '[package]\nlicense.workspace = true\n',
     "crates/wol-abi/Cargo.toml": '[package]\nlicense.workspace = true\n',
-    "archicture/adr/0020-libwol-stable-abi.md": "libwol and `wol.h` are BSD-2-Clause, usable by apps of any license. (`shared::view`, BSD)\n",
+    "docs/adr/0020-libwol-stable-abi.md": "libwol and `wol.h` are BSD-2-Clause, usable by apps of any license. (`shared::view`, BSD)\n",
     "design/LICENSE": "Licensor: Julia Klee and her company (with affiliates and successors)\n",
     "assets/LICENSE": "CC\n",
     "LICENSES/MIT.txt": "mit\n",
@@ -126,7 +126,7 @@ class Relicense(unittest.TestCase):
     def test_headers_by_style_and_shebang(self):
         R.run(self.root, self.pol, apply=True)
         self.assertEqual(self.read("crates/api/src/lib.rs"), f"// SPDX-License-Identifier: {G}\n//! Core.\npub fn f() {{}}\n")
-        self.assertEqual(self.read("image/build.sh"), f"#!/bin/sh\n# SPDX-License-Identifier: {G}\nset -e\n")
+        self.assertEqual(self.read("wolos-iso/build.sh"), f"#!/bin/sh\n# SPDX-License-Identifier: {G}\nset -e\n")
         self.assertEqual(self.read("image/old.sh"), f"#!/bin/sh\n# SPDX-License-Identifier: {G}\nset -e\n")
         self.assertEqual(self.read("crates/api/etc.conf"), f"# SPDX-License-Identifier: {G}\nkey=1\n")
 
@@ -145,9 +145,9 @@ class Relicense(unittest.TestCase):
             self.assertIn(f'license = "{BSD}"', self.read(f"crates/{c}/Cargo.toml"), c)
 
     def test_adr_keeps_saying_bsd(self):
-        before = self.read("archicture/adr/0020-libwol-stable-abi.md")
+        before = self.read("docs/adr/0020-libwol-stable-abi.md")
         R.run(self.root, self.pol, apply=True)
-        self.assertEqual(self.read("archicture/adr/0020-libwol-stable-abi.md"), before)
+        self.assertEqual(self.read("docs/adr/0020-libwol-stable-abi.md"), before)
 
     def test_brand_files_stay_as_they_are(self):
         R.run(self.root, self.pol, apply=True)
@@ -167,7 +167,7 @@ class Relicense(unittest.TestCase):
         R.run(self.root, self.pol, apply=True)
         after = snapshot(self.root)
         for rel in ["third_party/blocking/src/lib.rs", "third_party/blocking/src/other.rs",
-                    "third_party/blocking/Cargo.toml", "image/hyprland/patches/0001.patch",
+                    "third_party/blocking/Cargo.toml", "wolos-pkgbuilds/hyprland-wolos/patches/0001.patch",
                     "design/wallpapers/x.svg", "crates/api/data.json", "crates/api/notes.md",
                     "wopkg/recipes/bend/recipe.toml",
                     "crates/api/src/vendored.rs"]:
@@ -175,7 +175,7 @@ class Relicense(unittest.TestCase):
 
     def test_packaged_software_license_field_is_kept(self):
         R.run(self.root, self.pol, apply=True)
-        self.assertIn("license=(BSD-3-Clause)", self.read("image/repo/hyprland-wolos/PKGBUILD"))
+        self.assertIn("license=(BSD-3-Clause)", self.read("wolos-pkgbuilds/hyprland-wolos/PKGBUILD"))
 
     def test_design_tools_move_but_art_does_not(self):
         R.run(self.root, self.pol, apply=True)
@@ -185,7 +185,7 @@ class Relicense(unittest.TestCase):
         R.run(self.root, self.pol, apply=True)
         self.assertIn(f'license = "{G}"', self.read("Cargo.toml"))
         self.assertIn(f'license = "{G}"', self.read("crates/shell/Cargo.toml"))
-        self.assertNotIn(BRAND, self.read("image/repo/wolos-system/PKGBUILD"))
+        self.assertNotIn(BRAND, self.read("wolos-pkgbuilds/wolos-system/PKGBUILD"))
         self.assertIn(f"license: {G}", self.read("wopkg/shard.yml"))
 
     def test_docs_and_staged_copies(self):

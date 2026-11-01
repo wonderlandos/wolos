@@ -112,15 +112,11 @@ mod tests {
         );
     }
 
-    /// The wrapper names the desktop file that sets the Wayland app-id the Dock matches.
+    /// The paths the package must keep (it lives in wolos-pkgbuilds: its tools/lint.sh checks the
+    /// recipe has `/usr/bin/helium` and `/opt/helium/initial_preferences`).
     #[test]
-    fn package_contract_matches_the_recipe() {
-        let pkg = std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../image/repo/helium-browser/PKGBUILD"),
-        )
-        .unwrap();
-        assert!(pkg.contains(HELIUM.bin));
-        assert!(pkg.contains("/opt/helium/initial_preferences"));
+    fn package_contract_paths() {
+        assert_eq!(HELIUM.bin, "/usr/bin/helium");
         assert!(HELIUM.policies_dir.starts_with("/etc/chromium/"));
     }
 

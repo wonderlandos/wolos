@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `.wol` double-click wiring in the image (ADR 0011): MIME type, App Store handler, caches.
-use std::{fs, path::PathBuf};
+#![allow(dead_code, unused_imports)]
+#[path = "support/siblings.rs"]
+mod siblings;
 
+use std::{fs, path::PathBuf};
 fn read(p: &str) -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
+    let path = siblings::root()
         .join(p);
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
@@ -29,7 +31,7 @@ fn wol_files_open_in_the_app_store() {
             .any(|m| m == shared::package::MIME)
     );
     // The binary ships, and the MIME and desktop caches see the overlay files.
-    let rust = read("image/build-rust.sh");
+    let rust = read("tools/build-rust.sh");
     let bins = rust
         .lines()
         .find(|l| l.starts_with("for b in wold "))
@@ -40,21 +42,6 @@ fn wol_files_open_in_the_app_store() {
         "{bins}"
     );
     // pacman hooks refresh the desktop database; the MIME database after the package install.
-    let inst = read("image/repo/wolos-system/wolos-system.install");
+    let inst = read("wolos-system/wolos-system.install");
     assert!(inst.contains("update-mime-database /usr/share/mime"));
-}
-
-/// wolos-base builds without installing its depends: they are the installed system's, and
-/// wolos-system's /etc/sudoers clashes with the build host's sudo (its pacman -U failed in CI
-/// containers and build chroots).
-#[test]
-fn repo_build_makes_wolos_base_without_installing_its_depends() {
-    let b = read("image/repo/build.sh");
-    assert!(
-        b.contains("WOLOS_NODEPS=1 WOLOS_BASE_MANIFEST="),
-        "wolos-base without --nodeps"
-    );
-    assert!(b.contains(r#"[ "${WOLOS_NODEPS:-0}" = 1 ] && deps=--nodeps"#));
-    assert!(b.contains(r#"makepkg "$deps""#));
-    assert!(b.contains(r#"[ "${WOLOS_INSTALL_DEPS:-0}" = 1 ] && [ "$deps" = --syncdeps ]"#));
 }

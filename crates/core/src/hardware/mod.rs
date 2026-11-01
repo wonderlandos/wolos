@@ -2,7 +2,7 @@
 //! Generic hardware: detect -> match the [`catalog`] -> driver + firmware + quirks -> status.
 //! One path for boot (`wol hw boot`), `wol hw`, Settings and scripts. Reads go through [`Host`]
 //! (sysfs, /proc, `lspci -mm`, `pacman -Qq`; 2 s timeout per command, never a shell); matching,
-//! status and the boot plan are pure. See archicture/modules/hardware.md.
+//! status and the boot plan are pure. See docs/modules/hardware.md.
 pub mod catalog;
 #[cfg(test)]
 mod fixtures;

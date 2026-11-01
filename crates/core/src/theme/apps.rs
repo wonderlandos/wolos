@@ -47,7 +47,7 @@ pub fn gtk3_theme_name(t: &ResolvedTheme) -> String {
 pub const DATA_LINKS: [&str; 2] = super::sourceview::FILES;
 /// Sourced by the system zshrc from `$XDG_CONFIG_HOME/wolos/toolkits/` (prompt colours).
 pub const SHELL_COLORS: &str = "zsh/colors.zsh";
-/// System copy rendered from the default theme (`image/build.sh`); users get their own under
+/// System copy rendered from the default theme (`wolos-iso/build.sh`); users get their own under
 /// `$XDG_CONFIG_HOME/wolos/toolkits`.
 pub const SYSTEM_DIR: &str = "/usr/share/wolos";
 /// Shipped icon theme (`design/icons`, inherits Adwaita); the catalog's `iconTheme` names themes

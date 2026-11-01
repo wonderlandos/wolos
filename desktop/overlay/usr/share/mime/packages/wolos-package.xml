@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- .wol app packages (archicture/adr/0011-wol-packages.md): double-click opens the App Store. -->
+<!-- .wol app packages (docs/adr/0011-wol-packages.md): double-click opens the App Store. -->
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-wolos-package">
     <comment>WolOS app package</comment>

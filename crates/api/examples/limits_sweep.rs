@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Memory Saver's kill rules alone, for the limits test guest (image/vm/test/limits), where there
+//! Memory Saver's kill rules alone, for the limits test guest (wolos-iso/tests/test/limits), where there
 //! is no compositor for its engine to follow. wold runs the same `Storm` and `OomLoop` every tick.
 use api::memsaver::storm::{OomLoop, Storm};
 use api::memsaver::{cgroup, procs};

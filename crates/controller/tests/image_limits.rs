@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! One app cannot take the desktop with it (ADR 0027): the defaults that keep the session alive
-//! under a fork bomb or a memory bomb. image/vm/test/limits proves them in a guest.
+//! under a fork bomb or a memory bomb. wolos-iso/tests/test/limits proves them in a guest.
 use std::path::PathBuf;
-
 fn read(p: &str) -> String {
     let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -17,7 +16,7 @@ fn has(file: &str, lines: &[&str]) {
     }
 }
 
-const SYS: &str = "image/files/usr/lib/systemd/system";
+const SYS: &str = "files/usr/lib/systemd/system";
 
 #[test]
 fn the_session_is_protected_from_its_apps() {
@@ -61,7 +60,7 @@ fn background_services_of_the_user_are_capped_together() {
 #[test]
 fn files_are_limited_by_memory_not_by_a_shared_count() {
     has(
-        "image/files/usr/lib/sysctl.d/70-wolos-performance.conf",
+        "files/usr/lib/sysctl.d/70-wolos-performance.conf",
         &["fs.file-max = 9223372036854775807"],
     );
 }
@@ -80,7 +79,7 @@ fn tmpfs_cannot_take_most_of_ram() {
         &["ExecStart=/usr/bin/mount -o remount,size=25%% /dev/shm"],
     );
     has(
-        "image/files/usr/lib/systemd/system-preset/50-wolos.preset",
+        "files/usr/lib/systemd/system-preset/50-wolos.preset",
         &["enable wolos-shm-limit.service"],
     );
 }

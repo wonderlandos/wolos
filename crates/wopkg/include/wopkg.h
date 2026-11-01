@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* libwopkg: WolOS's package core (ADR 0021, archicture/modules/wopkg.md).
+/* libwopkg: WolOS's package core (ADR 0021, docs/modules/wopkg.md).
  * Rules (ADR 0020): handles are opaque; strings are UTF-8 with a length; every call that can fail
  * returns a wopkg_status and, if `error` is not NULL, a wopkg_error the caller releases; results
  * are wopkg_string JSON documents the caller releases; progress callbacks run on the calling

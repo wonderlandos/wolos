@@ -5,7 +5,6 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-
 fn repo(p: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(p)
 }
@@ -113,19 +112,6 @@ fn every_compositor_starts_on_black_with_the_lock_kept_across_crashes() {
             "{f}: cursor hidden until the window maps"
         );
     }
-}
-
-/// Boot splash: the WolOS mark (plymouth theme image) is a small 8-bit RGBA PNG.
-#[test]
-fn splash_is_the_wolos_mark() {
-    let w = read("image/repo/wolos-system/PKGBUILD");
-    assert!(w.contains("design/brand/wolos-splash.png") || w.contains("$d/brand/wolos-splash.png"));
-    let png = fs::read(repo("design/brand/wolos-splash.png")).unwrap();
-    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
-    let be = |i: usize| u32::from_be_bytes(png[i..i + 4].try_into().unwrap());
-    let (w, h) = (be(16), be(20));
-    assert!(w <= 480 && h <= 480, "{w}x{h}");
-    assert_eq!((png[24], png[25]), (8, 6), "8-bit RGBA");
 }
 
 /// Hyprland draws no title bars: GTK 3 apps without a header bar (Shotwell) lost their traffic lights.

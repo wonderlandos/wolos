@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol games`: the games doctor and one-click Steam. Logic in
-//! `wol_core::games` (archicture/modules/games.md).
+//! `wol_core::games` (docs/modules/games.md).
 use crate::cli::Invocation;
 use crate::run::{Env, fail};
 use shared::errors::ErrorCode;
 use wol_core::games::doctor::{self, Check, Status};
 use wol_core::games::notice;
 
-/// Steam's App Store icon (design/icons/store, installed by image/build.sh).
+/// Steam's App Store icon (design/icons/store, installed by wolos-iso/build.sh).
 pub const STEAM_ICON: &str = "/usr/share/wolos/store-icons/steam.svg";
 
 pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {

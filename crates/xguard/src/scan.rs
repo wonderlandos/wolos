@@ -106,7 +106,7 @@ pub enum Verdict {
     Incomplete,
 }
 
-/// The stable scan result (`archicture/modules/security.md`). New fields are only added.
+/// The stable scan result (`docs/modules/security.md`). New fields are only added.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Report {
     pub verdict: Verdict,

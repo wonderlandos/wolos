@@ -15,7 +15,7 @@ Ideas credited, no code or values taken:
 
 Tuning values shared with other distributions, no code taken:
 - CachyOS-Settings: the idea of tuning a desktop's defaults, and some of the sysctl and limits
-  values in image/files.
+  values in files.
 
 Built on, each under its own license: Linux, systemd, Hyprland, GTK, libadwaita, PipeWire, ClamAV,
 Crystal and the Rust crates listed in Cargo.lock. Components with their own terms are noted in

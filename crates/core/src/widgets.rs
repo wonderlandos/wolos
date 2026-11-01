@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Widget packages and their data sources (archicture/modules/widgets.md). The shell and
+//! Widget packages and their data sources (docs/modules/widgets.md). The shell and
 //! `wol widgets` both load packages and run sources through here, so they behave the same.
 //! Sources run as the user, off the UI thread: command (timeout, CPU limit, nice, own process group,
 //! output cap), file (package or home), http (only with a grant for its host; `fetch`/`curl`).

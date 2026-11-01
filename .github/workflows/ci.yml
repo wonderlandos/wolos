@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The OS code: cargo test of the workspace and shellcheck, on every pull request and push. The
+# contract tests that read packaging or image files (crates/controller/tests/support/siblings.rs)
+# find wolos-pkgbuilds and wolos-iso checked out next to this repo.
+# On a push to main, wolos-pkgbuilds is told (repository_dispatch `wolos-main`) to pin the recipes
+# built from wolos to this commit: its bump.yml opens a pull request. Nothing is built here.
+# Secret: WOLOS_PKGBUILDS_TOKEN (may send repository_dispatch to wonderlandos/wolos-pkgbuilds).
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Toolchain and the libraries the workspace links
+        run: |
+          pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell \
+            pam clamav nautilus crystal shellcheck python
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          path: wolos
+      - uses: actions/checkout@v4
+        with:
+          repository: wonderlandos/wolos-pkgbuilds
+          path: wolos-pkgbuilds
+      - uses: actions/checkout@v4
+        with:
+          repository: wonderlandos/wolos-iso
+          path: wolos-iso
+      - name: cargo test
+        working-directory: wolos
+        run: cargo test --workspace --locked
+      - name: shellcheck
+        working-directory: wolos
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck -S error
+
+  dispatch:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask wolos-pkgbuilds to pin this commit
+        env:
+          GH_TOKEN: ${{ secrets.WOLOS_PKGBUILDS_TOKEN }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::error::WOLOS_PKGBUILDS_TOKEN is not set"; exit 1; }
+          gh api repos/wonderlandos/wolos-pkgbuilds/dispatches -f event_type=wolos-main \
+            -f "client_payload[sha]=$GITHUB_SHA"
