@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Sign and publish, by hand from main. The signing keys (WOLOS_GPG_KEY, WOLOS_RELEASE_KEY,
+# WOLOS_CDN_TOKEN; WOLOS_SB_* and WOLOS_RELEASES_TOKEN when set) live only in this repo, so the
+# reusable workflows of wolos-pkgbuilds and wolos-iso run from here (secrets: inherit; OIDC subject
+# = wolos main, trusted by vars.AWS_ROLE_ARN). Inputs come from S3 (s3://$BUCKET/runs/<run>/).
+#   what=packages run=<ECS run id>: sign the unsigned packages of a wolos-pkgbuilds build.yml run
+#       (its log: "== wolos-pkgbuilds -> s3://.../runs/<run>") into [wolos-testing].
+#   what=promote: [wolos-testing] -> [wolos] (after the release passed its VM test).
+#   what=iso run=<vX.Y.Z>: the release of that wolos-iso tag: [wolos-cachy], ISO, release.json.
+#   what=cdn run=<run>: push a signed repo to the CDN after main uploaded it by hand.
+# Without WOLOS_RELEASES_TOKEN nothing is written to the releases repo: the run ends with a
+# ::notice:: holding the exact upload command for main's gh login (and the what=cdn step after it).
+# Variables (this repo): AWS_ROLE_ARN, AWS_REGION, BUCKET, CLUSTER, TASK_DEF_ISO, CAPACITY,
+# WOLOS_CDN_URL, WOLOS_RELEASES_REPO, WOLOS_SB_LAYOUT.
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      what:
+        description: packages | promote | iso | cdn
+        type: choice
+        options: [packages, promote, iso, cdn]
+        required: true
+      run:
+        description: S3 run id (packages, cdn) or release tag vX.Y.Z (iso); empty for promote
+        required: false
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # AWS (S3, ECR, the cluster) over OIDC
+
+jobs:
+  packages:
+    if: inputs.what == 'packages'
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@main
+    with:
+      run: ${{ inputs.run }}
+      mode: sign
+    secrets: inherit
+  cdn:
+    if: inputs.what == 'cdn'
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@main
+    with:
+      run: ${{ inputs.run }}
+      mode: cdn
+    secrets: inherit
+  promote:
+    if: inputs.what == 'promote'
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/promote.yml@main
+    secrets: inherit
+  iso:
+    if: inputs.what == 'iso'
+    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@main
+    with:
+      tag: ${{ inputs.run }}
+    secrets: inherit
