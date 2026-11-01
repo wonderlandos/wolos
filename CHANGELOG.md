@@ -1,6 +1,8 @@
 # Changelog
 
 ## 0.11.4
+- Analyze with ClamAV: the "not ready" window shows its information icon (it named one the WolOS theme does not ship).
+- Install and Try: the welcome card fits small and scaled screens (1024x600, 1366x768, a VM window): the installer, setup and login screens run at scale 1 like the desktop, and a screen smaller than the card scrolls instead of cutting off the buttons.
 - Boot splash: the WolOS mark from power-on, also on the live ISO (it showed the Arch Linux splash: the theme was set before plymouth was installed). Upgrades switch systems that kept the Arch splash.
 - Virtual machines: VirtualBox, VMware, SPICE and QEMU guest support, each started only under its own hypervisor. In VirtualBox the screen follows the window size (VBoxClient --vmsvga).
 

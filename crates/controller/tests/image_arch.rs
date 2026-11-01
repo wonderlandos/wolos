@@ -696,6 +696,17 @@ fn wolos_system_files_do_not_collide_with_arch_packages() {
 }
 
 #[test]
+fn every_hyprland_session_runs_at_scale_one() {
+    // The installer, setup and login sessions use the desktop's monitor rule: an automatic scale
+    // made the logical screen smaller than the welcome card in a VM.
+    let want = "monitor = , preferred, auto, 1";
+    for c in ["hyprland", "installer", "setup", "login"] {
+        let s = read(&format!("desktop/overlay/usr/share/wolos/hypr/{c}.conf"));
+        assert!(s.lines().any(|l| l == want), "{c}.conf lacks {want}");
+    }
+}
+
+#[test]
 fn vm_guest_tools_start_only_in_their_hypervisor() {
     let pkgs = read("image/arch/packages.x86_64");
     for p in [
