@@ -64,6 +64,11 @@ else
 fi
 S=; [ "$(id -u)" = 0 ] || S=sudo
 $S rm -rf "$WORK/work"   # disk: the pacstrap root is in the squashfs now
+# Secure Boot layout (ADR 0025, image/sb-layout.sh): shim, then systemd-boot, then one UKI. Off
+# until the WolOS Secure Boot key exists; iso.yml signs it with WOLOS_SB_KEY / WOLOS_SB_CERT.
+if [ "${WOLOS_SB_LAYOUT:-0}" = 1 ]; then
+  $S "$IMG/sb-layout.sh" layout "$(ls -t "$OUT"/wolos-*.iso | head -1)" "$RD"
+fi
 
 # 4. Release manifest next to the ISO.
 ISO=$(ls -t "$OUT"/wolos-*.iso | head -1)

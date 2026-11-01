@@ -26,6 +26,49 @@ WolOS boots from A/B slots with systemd-boot (ADR 0016). Secure Boot had to be o
 - Updates sign on the computer, so its key is on it. That is the price of needing no vendor key; the TPM and the encrypted volume guard it.
 - Module signatures: `db` keys reach only the kernel's `.platform` keyring, MOK keys reach `.machine`. Out-of-tree modules (NVIDIA) on `own-keys` also need the key screen once.
 - `lockdown=integrity` blocks hibernation and raw MSR writes.
-- The live ISO is unsigned: install with Secure Boot off or in Setup Mode.
+- The live ISO is unsigned: install with Secure Boot off or in Setup Mode, until the live image key below exists.
+
+## Live ISO with Secure Boot on (prepared, off until the key exists)
+The installed system needs no vendor key; a live ISO that boots with Secure Boot on does: one WolOS
+key that signs only the live image's second stage and UKI. Shim (unchanged, Microsoft-signed) is the
+first stage, so a PC with the usual keys starts it, and MokManager enrols the WolOS certificate once.
+
+- **Layout** (`image/sb-layout.sh layout`, `WOLOS_SB_LAYOUT=1 image/build.sh`): `EFI/BOOT/BOOTX64.EFI`
+  is the pinned `shimx64.efi`, `EFI/BOOT/mmx64.efi` is MokManager, systemd-boot is
+  `EFI/BOOT/grubx64.efi` (the name shim starts), and the kernel, initramfs and both entries are one
+  UKI with two profiles, Install WolOS and Try WolOS, `EFI/Linux/wolos.efi`. Unsigned it boots with
+  Secure Boot off.
+- **Signing** (`image/sb-layout.sh sign ISO KEY CERT`, iso.yml when `WOLOS_SB_KEY` and `WOLOS_SB_CERT`
+  are set): systemd-boot and the UKI are signed, `/wolos-secureboot.cer` (DER) is on the EFI partition
+  for MokManager's "Enroll key from disk". iso.yml then runs `image/vm/test-secureboot.sh`: OVMF in
+  secure mode with the PC keys and the certificate in MokList must boot to the live system.
+- **First boot with Secure Boot on:** shim cannot verify systemd-boot yet and opens MokManager:
+  Enroll key from disk, `wolos-secureboot.cer`, confirm, reboot. Later boots go straight through.
+- **The key** is a trust root: only the owner makes it, offline, and it signs nothing but live images.
+
+Making the key (owner, once, on an offline machine with `openssl`):
+
+```sh
+umask 077; mkdir wolos-sb && cd wolos-sb
+openssl req -new -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+  -subj "/CN=WolOS Live Image Secure Boot 2026/O=WolOS/" \
+  -addext "extendedKeyUsage=codeSigning" -keyout wolos-sb.key -out wolos-sb.crt
+openssl x509 -in wolos-sb.crt -noout -fingerprint -sha256
+# Offline backup of the key, encrypted (keep the passphrase apart from it):
+openssl pkey -in wolos-sb.key -aes256 -out wolos-sb.key.enc
+```
+
+Adding it (from a computer with `gh` signed in as a wonderlandos owner; the key leaves the offline
+machine only into the secret):
+
+```sh
+gh secret set WOLOS_SB_KEY  -R wonderlandos/wolos < wolos-sb.key
+gh secret set WOLOS_SB_CERT -R wonderlandos/wolos < wolos-sb.crt
+gh variable set WOLOS_SB_LAYOUT -R wonderlandos/wolos --body 1
+shred -u wolos-sb.key   # the plain copy; wolos-sb.key.enc stays offline
+```
+
+Box builds (AWS) then build with `WOLOS_SB_LAYOUT=1 image/build.sh`; the tag's iso.yml run signs the
+image, boots it with Secure Boot on, and uploads the signed image with its new hash.
 
 

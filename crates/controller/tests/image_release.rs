@@ -397,7 +397,11 @@ fn iso_workflow_signs_a_prebuilt_image_without_building() {
     assert!(files.contains(r#"m["sha256"]"#) && files.contains(r#"m["size"]"#));
     assert!(files.contains("sha256sum -c"));
     assert!(files.contains("image/sign-release.sh"));
-    assert!(step("Publish the release").contains(r#"[ "$PREBUILT" = 1 ] || gh release upload"#));
+    // Uploaded again only when Secure Boot signing changed the prebuilt image.
+    assert!(
+        step("Publish the release")
+            .contains(r#"if [ "$PREBUILT" != 1 ] || [ "$SB_SIGNED" = 1 ]; then"#)
+    );
 }
 
 /// Without WOLOS_RELEASES_TOKEN, github.token cannot write to the releases repo (HTTP 403): both

@@ -696,6 +696,68 @@ fn wolos_system_files_do_not_collide_with_arch_packages() {
 }
 
 #[test]
+fn live_iso_secure_boot_layout_is_ready_and_off() {
+    // shim first (the pinned build), systemd-boot second, one UKI: behind WOLOS_SB_LAYOUT, off.
+    let b = read("image/build.sh");
+    assert!(
+        b.contains(r#"if [ "${WOLOS_SB_LAYOUT:-0}" = 1 ]; then"#),
+        "no switch"
+    );
+    assert!(b.contains(r#""$IMG/sb-layout.sh" layout"#));
+    let l = read("image/sb-layout.sh");
+    let shim = read("image/repo/wolos-shim/PKGBUILD");
+    for f in ["shimx64.efi", "mmx64.efi"] {
+        let pin = shim
+            .lines()
+            .find(|x| x.contains(f) && x.contains("sha256sum -c"))
+            .unwrap();
+        let sha = pin
+            .split('"')
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap();
+        assert!(
+            l.contains(sha),
+            "sb-layout.sh does not pin {f} as wolos-shim does"
+        );
+    }
+    for want in [
+        "::/EFI/BOOT/BOOTX64.EFI",
+        "::/EFI/BOOT/grubx64.efi",
+        "::/EFI/BOOT/mmx64.efi",
+        "::/EFI/Linux/wolos.efi",
+        "::/wolos-secureboot.cer",
+        "--join-profile",
+    ] {
+        assert!(l.contains(want), "sb-layout.sh lacks {want}");
+    }
+    // iso.yml signs and boots it only with both secrets; the switch is a repository variable.
+    let w = read(".github/workflows/iso.yml");
+    for want in [
+        "WOLOS_SB_LAYOUT: ${{ vars.WOLOS_SB_LAYOUT || '0' }}",
+        "SB_KEY: ${{ secrets.WOLOS_SB_KEY }}",
+        r#"if [ -n "$SB_KEY" ] && [ -n "$SB_CERT" ]; then"#,
+        "image/sb-layout.sh sign",
+        "image/vm/test-secureboot.sh",
+    ] {
+        assert!(w.contains(want), "iso.yml lacks {want}");
+    }
+    // Without the certificate the Secure Boot test reports a skip and passes.
+    let out = Command::new("bash")
+        .arg(repo("image/vm/test-secureboot.sh"))
+        .arg("/nonexistent.iso")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("SKIP"));
+    // The owner's steps to make the key are written down.
+    let adr = read("archicture/adr/0025-signed-boot.md");
+    assert!(adr.contains("gh secret set WOLOS_SB_KEY") && adr.contains("openssl req -new -x509"));
+}
+
+#[test]
 fn every_hyprland_session_runs_at_scale_one() {
     // The installer, setup and login sessions use the desktop's monitor rule: an automatic scale
     // made the logical screen smaller than the welcome card in a VM.

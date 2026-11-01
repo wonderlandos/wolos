@@ -5,6 +5,8 @@
 # of vars.WOLOS_RELEASES_REPO: release.json is what `update-check` and `wol update` read. A manual run keeps the files
 # as a workflow artifact.
 # Signing: secret WOLOS_RELEASE_KEY (Ed25519 PEM, the package key), WOLOS_GPG_KEY for a rebuilt repo.
+# Secure Boot (ADR 0025): vars.WOLOS_SB_LAYOUT=1 builds the shim layout (image/sb-layout.sh); secrets
+# WOLOS_SB_KEY / WOLOS_SB_CERT (PEM) sign it and test it with Secure Boot on. Unset: unsigned.
 name: iso
 
 on:
@@ -29,6 +31,7 @@ jobs:
       # vars.WOLOS_RELEASES_REPO with a token that may write there (this repo when unset).
       GH_REPO: ${{ vars.WOLOS_RELEASES_REPO || github.repository }}
       GH_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN || github.token }}
+      WOLOS_SB_LAYOUT: ${{ vars.WOLOS_SB_LAYOUT || '0' }}
     steps:
       - name: Free disk space
         run: |
@@ -123,7 +126,7 @@ jobs:
           url=https://github.com/${{ vars.WOLOS_RELEASES_REPO || github.repository }}/releases/download/$TAG
           mkdir -p out/pkgcache
           docker run --rm --privileged -v "$PWD:/src" -w /src -v "$PWD/out/pkgcache:/var/cache/pacman/pkg" \
-            -e GPG_KEY -e WOLOS_IMAGE_URL="$url" -e WOLOS_CACHY_DIR=/src/out/cachy archlinux:latest bash -euo pipefail -c '
+            -e GPG_KEY -e WOLOS_IMAGE_URL="$url" -e WOLOS_CACHY_DIR=/src/out/cachy -e WOLOS_SB_LAYOUT archlinux:latest bash -euo pipefail -c '
               pacman -Syu --noconfirm --needed archiso git base-devel sudo rust clang
               git config --global --add safe.directory "*"
               if [ ! -s out/repo/x86_64/wolos.db ]; then
@@ -164,8 +167,11 @@ jobs:
           WOLOS_REPO_DIR=out/repo image/ci/aws-build.sh iso out/work/out
 
       - name: Release files
+        id: files
         env:
           KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+          SB_KEY: ${{ secrets.WOLOS_SB_KEY }}
+          SB_CERT: ${{ secrets.WOLOS_SB_CERT }}
           PREBUILT: ${{ steps.pre.outputs.prebuilt }}
           TAG: ${{ github.ref_name }}
         run: |
@@ -189,6 +195,31 @@ jobs:
             cp "${iso%.iso}.json" dist/release.json   # release-manifest.sh, written by image/build.sh
             (cd dist && sha256sum "$(basename "$iso")" > "$(basename "$iso").sha256")
           fi
+          # Secure Boot: sign systemd-boot and the UKI of the shim layout, then boot the image in
+          # OVMF with Secure Boot on. The image changes, so its hash, size and manifest follow and
+          # a prebuilt image is uploaded again.
+          if [ -n "$SB_KEY" ] && [ -n "$SB_CERT" ]; then
+            iso=$(python3 -c 'import json; print(json.load(open("dist/release.json"))["image"].rsplit("/", 1)[1])')
+            (umask 077; printf '%s\n' "$SB_KEY" > "$RUNNER_TEMP/sb.key"; printf '%s\n' "$SB_CERT" > "$RUNNER_TEMP/sb.crt")
+            docker run --rm --device /dev/kvm -v "$PWD:/src" -v "$RUNNER_TEMP:/keys" -w /src archlinux:latest bash -euo pipefail -c "
+              pacman -Sy --noconfirm --needed mtools sbsigntools openssl python util-linux qemu-base edk2-ovmf virt-firmware >/dev/null
+              image/sb-layout.sh sign dist/$iso /keys/sb.key /keys/sb.crt
+              image/vm/test-secureboot.sh dist/$iso /keys/sb.crt"
+            rm -f "$RUNNER_TEMP/sb.key"
+            sudo chown -R "$(id -u)" dist
+            (cd dist && sha256sum "$iso" > "$iso.sha256")
+            python3 - "dist/$iso" <<'PY'
+          import hashlib, json, os, sys
+          f = sys.argv[1]; m = json.load(open("dist/release.json")); h = hashlib.sha256()
+          with open(f, "rb") as r:
+              for b in iter(lambda: r.read(1 << 20), b""): h.update(b)
+          m["sha256"], m["size"] = h.hexdigest(), os.path.getsize(f)
+          json.dump(m, open("dist/release.json", "w"), separators=(",", ":"))
+          PY
+            echo "sb_signed=1" >> "$GITHUB_OUTPUT"
+          elif [ "$WOLOS_SB_LAYOUT" = 1 ]; then
+            echo "::warning::WOLOS_SB_LAYOUT=1 without WOLOS_SB_KEY/WOLOS_SB_CERT: the image boots with Secure Boot off only"
+          fi
           if [ -n "$KEY" ]; then
             printf '%s\n' "$KEY" > "$RUNNER_TEMP/release.pem"
             image/sign-release.sh dist/release.json "$RUNNER_TEMP/release.pem"
@@ -208,6 +239,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           SNAP: ${{ steps.repo.outputs.snap }}
           PREBUILT: ${{ steps.pre.outputs.prebuilt }}
+          SB_SIGNED: ${{ steps.files.outputs.sb_signed }}
         run: |
           if [ -z "$RELEASES_TOKEN" ] && [ "$GH_REPO" != "$GITHUB_REPOSITORY" ]; then
             # github.token cannot write to another repository (HTTP 403): without
@@ -217,7 +249,10 @@ jobs:
           fi
           gh release view "$TAG" >/dev/null 2>&1 ||
             gh release create "$TAG" --title "WolOS ${TAG#v}" --latest               --notes "WolOS ${TAG#v}: the ISO, its .sha256 and release.json. Packages and the kernel source: release wolos-$SNAP."
-          [ "$PREBUILT" = 1 ] || gh release upload "$TAG" --clobber dist/*.iso dist/*.sha256 dist/release.json
+          # A prebuilt image is on the release already, unless Secure Boot signing changed it.
+          if [ "$PREBUILT" != 1 ] || [ "$SB_SIGNED" = 1 ]; then
+            gh release upload "$TAG" --clobber dist/*.iso dist/*.sha256 dist/release.json
+          fi
           [ ! -e dist/release.json.sig ] || gh release upload "$TAG" --clobber dist/release.json.sig
           gh release edit "$TAG" --latest
           echo "published=1" >> "$GITHUB_OUTPUT"
@@ -231,6 +266,14 @@ jobs:
             dist/release.json
             dist/release.json.sig
             dist/*.sha256
+          retention-days: 7
+
+      - name: Keep the Secure Boot signed image (no releases token)
+        if: steps.publish.outputs.published == '0' && steps.files.outputs.sb_signed == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolos-release-image
+          path: dist/*.iso
           retention-days: 7
 
       - name: Keep the image (manual run)
