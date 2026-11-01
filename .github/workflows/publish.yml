@@ -8,6 +8,9 @@
 #   what=promote: [wolos-testing] -> [wolos] (after the release passed its VM test).
 #   what=iso run=<vX.Y.Z>: the release of that wolos-iso tag: [wolos-cachy], ISO, release.json.
 #   what=cdn run=<run>: push a signed repo to the CDN after main uploaded it by hand.
+#   what=iso-s3 run=<S3 run id> tag=<vX.Y.Z>: publish an ISO already built and VM-tested on the build
+#       box (s3://$BUCKET/runs/<run>/: the .iso and its manifest .json) as a pre-release of this repo:
+#       the manifest's image URL points at that release, release.json is signed (WOLOS_RELEASE_KEY).
 # Without WOLOS_RELEASES_TOKEN nothing is written to the releases repo: the run ends with a
 # ::notice:: holding the exact upload command for main's gh login (and the what=cdn step after it).
 # Variables (this repo): AWS_ROLE_ARN, AWS_REGION, BUCKET, CLUSTER, TASK_DEF_ISO, CAPACITY,
@@ -18,12 +21,15 @@ on:
   workflow_dispatch:
     inputs:
       what:
-        description: packages | promote | iso | cdn
+        description: packages | promote | iso | cdn | iso-s3
         type: choice
-        options: [packages, promote, iso, cdn]
+        options: [packages, promote, iso, cdn, iso-s3]
         required: true
       run:
-        description: S3 run id (packages, cdn) or release tag vX.Y.Z (iso); empty for promote
+        description: S3 run id (packages, cdn, iso-s3) or release tag vX.Y.Z (iso); empty for promote
+        required: false
+      tag:
+        description: release tag vX.Y.Z (iso-s3 only)
         required: false
 
 concurrency:
@@ -59,3 +65,49 @@ jobs:
     with:
       tag: ${{ inputs.run }}
     secrets: inherit
+  iso-s3:
+    if: inputs.what == 'iso-s3'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the release of this repo
+      id-token: write   # S3 over OIDC
+    env:
+      RUN: ${{ inputs.run }}
+      TAG: ${{ inputs.tag }}
+      BUCKET: ${{ vars.BUCKET }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Inputs
+        run: |
+          case $RUN in ''|*/*|*' '*) echo "::error::run '$RUN' is not an S3 run id"; exit 1 ;; esac
+          case $TAG in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "::error::tag '$TAG' is not vX.Y.Z"; exit 1 ;; esac
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: ISO, manifest, signature
+        env:
+          RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+        run: |
+          [ -n "$RELEASE_KEY" ] || { echo "::error::WOLOS_RELEASE_KEY is not set: release.json would be unsigned"; exit 1; }
+          mkdir -p out && aws s3 sync --quiet "s3://$BUCKET/runs/$RUN/" out/
+          iso=$(ls out/*.iso); [ "$(ls out/*.iso | wc -l)" = 1 ] || { echo "::error::need exactly one .iso in runs/$RUN"; exit 1; }
+          name=${iso##*/}; man=${iso%.iso}.json
+          [ "$(sha256sum "$iso" | cut -d' ' -f1)" = "$(jq -r .sha256 "$man")" ] || { echo "::error::$name does not match its manifest"; exit 1; }
+          [ "$(stat -c %s "$iso")" -lt 2147483648 ] || { echo "::error::$name is over 2 GiB (GitHub asset limit)"; exit 1; }
+          jq --arg u "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name" '.image = $u' "$man" > out/release.json
+          ( umask 077; echo "$RELEASE_KEY" > "$RUNNER_TEMP/release.pem" )
+          openssl pkeyutl -sign -rawin -inkey "$RUNNER_TEMP/release.pem" -in out/release.json -out out/release.json.sig
+          rm -f "$RUNNER_TEMP/release.pem"
+          [ "$(stat -c %s out/release.json.sig)" = 64 ] || { echo "::error::WOLOS_RELEASE_KEY is not an Ed25519 key"; exit 1; }
+          (cd out && sha256sum "$name" > "$name.sha256")
+          echo "iso=$iso" >> "$GITHUB_ENV"; echo "name=$name" >> "$GITHUB_ENV"
+          cat out/release.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Release
+        run: |
+          ver=$(jq -r .version out/release.json)
+          notes="Test build of WolOS $ver: built from [wolos-testing] and VM-tested (unattended install + boot) on the build box. Kernel $(jq -r .kernel out/release.json). sha256 in $name.sha256; release.json is signed."
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease --target main \
+            --title "WolOS $ver (test build)" --notes "$notes" \
+            "$iso" "out/$name.sha256" out/release.json out/release.json.sig
+          echo "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name" | tee -a "$GITHUB_STEP_SUMMARY"
