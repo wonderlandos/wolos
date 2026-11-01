@@ -5,12 +5,12 @@ WolOS. Copyright (c) 2026 Julia Klee.
 | everything not listed below | GPL-2.0-or-later (`LICENSE`) |
 | `crates/wol-abi/`, `crates/shared/`, `crates/core/` | BSD-2-Clause (`LICENSES/BSD-2-Clause.txt`) |
 | `crates/shell/` | GPL-2.0-or-later (`crates/shell/LICENSE`) |
-| `kernel/linux/patches/`, `kernel/scx_wolos/`, `kernel/freebsd/` | GPL-2.0-only (`LICENSES/GPL-2.0-only.txt`) |
+| `kernel/scx_wolos/` | GPL-2.0-only (`LICENSES/GPL-2.0-only.txt`) |
 | `design/` (except `design/tools/`, `design/icons/store/`) | CC BY-NC-ND 4.0 (`design/LICENSE`) |
 | `design/tools/` | GPL-2.0-or-later |
 | `design/icons/store/` | each icon's own license (`design/icons/store/LICENSES.md`) |
 | `assets/` | CC BY-NC-ND 4.0 (`assets/LICENSE`) |
-| other `*.patch` | the license of the files each patch changes (`wolos-pkgbuilds/hyprland-wolos/patches/`: BSD-3-Clause) |
+| other `*.patch` | the license of the files each patch changes (`wolos-pkgbuilds/hyprland-wolos/*.patch`: BSD-3-Clause) |
 | `crates/shell/protocols/` | BSD-3-Clause (notice kept in each file) |
 | `third_party/blocking/` | Apache-2.0 OR MIT |
 

@@ -1,7 +1,7 @@
 # Hyprland fork
 
-Base: upstream `v0.56.2` (FreeBSD port `x11-wm/hyprland` 0.56.2). Build: wolos-pkgbuilds `hyprland-wolos/` (PKGBUILD + `patches/`).
-Patches: `wolos-pkgbuilds/hyprland-wolos/patches/NNNN-*.patch`, applied in order. Config: `desktop/overlay/usr/local/share/wolos/hypr/wolos-perf.conf` (sourced by the desktop conf).
+Base: upstream `v0.56.2` (FreeBSD port `x11-wm/hyprland` 0.56.2). Build: wolos-pkgbuilds `hyprland-wolos/` (PKGBUILD + the `NNNN-*.patch` files beside it).
+Patches: `wolos-pkgbuilds/hyprland-wolos/NNNN-*.patch`, applied in order. Config: `desktop/overlay/usr/local/share/wolos/hypr/wolos-perf.conf` (sourced by the desktop conf).
 Frontmost QoS and placement: `plugins/wol-hypr` + `crates/realtime` C ABI (`wol_realtime.h`), not a patch.
 
 | Optimization | IaraOS source | Hyprland mechanism | Status | Measured |
@@ -31,6 +31,7 @@ Frontmost QoS and placement: `plugins/wol-hypr` + `crates/realtime` C ABI (`wol_
 | Covered windows get frame callbacks every 33.3 ms or 2 updates once more than 10 windows are open (`misc:throttle_*`) | - | `sendFrameEventsToWorkspace`, `WolosPerf::allowFrameCallback` | patch 0010 | not measured |
 | After a mode change, rendering waits at most 250 ms for clients to ack their new size (`misc:reconfigure_ack_timeout_ms`) | - | `renderMonitor`, `SReconfigureBarrier` | patch 0011 | not measured |
 | Frame callbacks carry the output's predicted next present time; a render past 95 % of the frame is late (`misc:frame_deadline`) | - | `SPresentPredictor`, `CMonitorFrameScheduler::onSyncFired` | patch 0012 | not measured |
+| A crashed locker leaves the screen black while wol-lock brings a new one (no "lockscreen app died" page), and a new lock takes over an unconfirmed one (`misc:allow_session_lock_restore`, ADR 0012) | - | `shallConsiderLockMissing`, session-lock takeover | patch 0014 | - |
 | Active window raised; CSD apps tagged `wol-csd`; placement after layout | - | `window.active`, `window.open`, `window.openLate` hooks | plugin | - |
 
 Measurement: Linux host (CachyOS), nested Wayland backend, 1280x800, one static alacritty window,

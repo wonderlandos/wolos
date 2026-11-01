@@ -126,7 +126,7 @@ fn hyprbars_is_patched_and_the_patch_ends_drags_anywhere() {
     assert!(!added("m_iButtonHoverState") && !added("m_bButtonHovered"));
     let build = include_str!("../../../desktop/hyprland/build-plugins.sh");
     assert!(
-        build.contains("hyprland/hyprbars/*.patch"),
+        build.contains("\"$HERE\"/hyprbars/*.patch"),
         "build-plugins.sh applies the patches"
     );
 }
