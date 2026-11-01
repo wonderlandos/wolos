@@ -629,10 +629,11 @@ pub fn create_account(t: &mut dyn Tools, root: &Path, a: &NewAccount) -> bool {
 /// Shell assignments for install-run.
 pub fn info_text(p: &Plan) -> String {
     format!(
-        "disk={}\nwipe={}\nWOLOS_ENCRYPT={}\n",
+        "disk={}\nwipe={}\nWOLOS_ENCRYPT={}\naccount={}\n",
         sh_quote(&p.disk),
         u8::from(p.layout.wipe),
-        p.protect.word()
+        p.protect.word(),
+        sh_quote(p.account.as_ref().map_or("", |a| a.name.as_str()))
     )
 }
 

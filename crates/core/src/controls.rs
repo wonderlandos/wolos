@@ -554,6 +554,12 @@ impl Controls {
         self.admin(AdminAction::UserAdd, &[name, full_name, a, password], pw)
     }
 
+    /// New account password (`pw`: the caller's current one, asked every time). The disk's
+    /// password slot follows when this account opens the disk (`wol encrypt password`).
+    pub fn change_password(&self, name: &str, new: &str, pw: &str) -> Result<(), ControlError> {
+        self.admin(AdminAction::UserPassword, &[name, new], pw)
+    }
+
     /// App Store: catalog id or package name (slow; worker thread).
     pub fn pkg_install(&self, target: &str, pw: &str) -> Result<(), ControlError> {
         self.admin(AdminAction::PkgInstall, &[target], pw)

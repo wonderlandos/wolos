@@ -48,6 +48,21 @@ pub trait Env {
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
         self.exec(argv)
     }
+    /// Like `exec`, with one secret in the child's environment (`$PASSWORD`, `$NEWPASSWORD` for
+    /// systemd-cryptenroll), never in its arguments. Refused where there is no child to give it to.
+    fn exec_secret(&mut self, argv: &[String], var: &str, secret: &str) -> io::Result<i32> {
+        let _ = (argv, var, secret);
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
+    /// Payload of the `user` key `desc` in root's user keyring (systemd's password cache).
+    fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
+        let _ = desc;
+        None
+    }
+    /// Drop that key once used.
+    fn keyring_forget(&mut self, desc: &str) {
+        let _ = desc;
+    }
     /// One raw line from stdin; None at end of input (`wol mcp`).
     fn read_line(&mut self) -> Option<String> {
         let mut l = String::new();
@@ -199,6 +214,8 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
         "encrypt.rebind" => crate::seal::rebind(env),
+        "encrypt.reseal" => crate::seal::reseal(env),
+        "encrypt.password" => crate::seal::password(env, inv),
         "boot.password" => crate::boot::password(env),
         "boot.enroll" => crate::boot::enroll(env),
         "boot.detect" => crate::boot::detect(env, inv),
@@ -822,6 +839,29 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
 /// Real side effects.
 pub struct RealEnv;
 
+const KEYCTL_SEARCH: libc::c_long = 10;
+const KEYCTL_READ: libc::c_long = 11;
+const KEYCTL_INVALIDATE: libc::c_long = 21;
+const KEY_SPEC_USER_KEYRING: libc::c_long = -4;
+
+/// keyctl(KEYCTL_SEARCH, @u, "user", desc): the key's serial.
+fn keyring_search(desc: &str) -> Option<libc::c_long> {
+    let ty = std::ffi::CString::new("user").ok()?;
+    let d = std::ffi::CString::new(desc).ok()?;
+    // SAFETY: NUL-terminated strings that outlive the call; destination keyring 0 = none.
+    let id = unsafe {
+        libc::syscall(
+            libc::SYS_keyctl,
+            KEYCTL_SEARCH,
+            KEY_SPEC_USER_KEYRING,
+            ty.as_ptr(),
+            d.as_ptr(),
+            0 as libc::c_long,
+        )
+    };
+    (id > 0).then_some(id)
+}
+
 impl Env for RealEnv {
     fn out(&mut self, s: &str) {
         use io::Write;
@@ -860,6 +900,36 @@ impl Env for RealEnv {
             .args(&argv[1..])
             .status()?;
         Ok(st.code().unwrap_or(1))
+    }
+    fn exec_secret(&mut self, argv: &[String], var: &str, secret: &str) -> io::Result<i32> {
+        let st = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .env(var, secret)
+            .status()?;
+        Ok(st.code().unwrap_or(1))
+    }
+    fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
+        let id = keyring_search(desc)?;
+        let mut buf = vec![0u8; 4096];
+        // SAFETY: KEYCTL_READ writes at most buf.len() bytes into buf.
+        let n = unsafe {
+            libc::syscall(
+                libc::SYS_keyctl,
+                KEYCTL_READ,
+                id,
+                buf.as_mut_ptr(),
+                buf.len(),
+            )
+        };
+        let n = usize::try_from(n).ok()?;
+        buf.truncate(n.min(4096));
+        Some(buf)
+    }
+    fn keyring_forget(&mut self, desc: &str) {
+        if let Some(id) = keyring_search(desc) {
+            // SAFETY: plain integer arguments.
+            unsafe { libc::syscall(libc::SYS_keyctl, KEYCTL_INVALIDATE, id) };
+        }
     }
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
         use std::os::fd::AsFd;
@@ -923,6 +993,10 @@ pub struct FakeEnv {
     pub hw: Vec<shared::hardware::HardwareSnapshot>,
     /// Files replaced through `write_file`.
     pub written: Vec<(PathBuf, String)>,
+    /// (variable, secret) given to `exec_secret`, in order.
+    pub secrets: Vec<(String, String)>,
+    /// Root's user keyring: (description, payload).
+    pub keys: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Default)]
@@ -962,6 +1036,16 @@ impl Env for FakeEnv {
         } else {
             self.exec_codes.remove(0)
         })
+    }
+    fn exec_secret(&mut self, argv: &[String], var: &str, secret: &str) -> io::Result<i32> {
+        self.secrets.push((var.into(), secret.into()));
+        self.exec(argv)
+    }
+    fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
+        self.keys.iter().find(|k| k.0 == desc).map(|k| k.1.clone())
+    }
+    fn keyring_forget(&mut self, desc: &str) {
+        self.keys.retain(|k| k.0 != desc);
     }
     /// `probe <url>` captures give the latency in ms; none = unreachable.
     fn prober(&self) -> Prober {

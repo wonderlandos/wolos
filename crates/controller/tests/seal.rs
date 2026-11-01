@@ -186,3 +186,130 @@ fn enroll_keeps_the_recovery_key_in_a_file_and_never_in_arguments() {
     assert!(!cmds.join("\n").contains("abcd-efgh"));
     assert!(!env.out.contains("abcd") && !env.err.contains("abcd"));
 }
+
+const CMDLINE: &str = "root=/dev/mapper/wolosroot rd.luks.name=U-1=wolosroot quiet\n";
+
+/// The chip refused (Secure Boot turned off: PCR 7 changed), the person typed their password:
+/// systemd-cryptsetup's cached copy unlocks the volume once more and the TPM slot is sealed to the
+/// state measured now, so the next start is automatic. The secret is never an argument.
+#[test]
+fn reseal_binds_the_chip_again_with_what_was_typed_and_forgets_it() {
+    let mut env = FakeEnv {
+        files: vec![
+            (PathBuf::from("/proc/cmdline"), CMDLINE.into()),
+            (
+                PathBuf::from("/var/lib/wolos/secureboot/tpm2-pcr-public.pem"),
+                "PEM".into(),
+            ),
+        ],
+        keys: vec![("cryptsetup".into(), b"wrong\0hunter2 horse\0".to_vec())],
+        exec_codes: vec![0],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt reseal", &mut env), 0, "{}", env.err);
+    assert_eq!(
+        env.execs[0].join(" "),
+        "systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 \
+--tpm2-public-key=/var/lib/wolos/secureboot/tpm2-pcr-public.pem --tpm2-public-key-pcrs=11 \
+/dev/disk/by-uuid/U-1"
+    );
+    assert_eq!(
+        env.secrets,
+        [("PASSWORD".to_string(), "hunter2 horse".to_string())],
+        "the last try is the one that opened the disk"
+    );
+    assert!(env.keys.is_empty(), "the cached secret is dropped");
+    assert!(!env.execs.concat().join(" ").contains("hunter2"));
+}
+
+#[test]
+fn reseal_does_nothing_when_the_chip_opened_the_disk() {
+    let mut chip = FakeEnv {
+        files: vec![(PathBuf::from("/proc/cmdline"), CMDLINE.into())],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt reseal", &mut chip), 0);
+    assert!(chip.execs.is_empty());
+    let mut plain = FakeEnv {
+        keys: vec![("cryptsetup".into(), b"pw\0".to_vec())],
+        ..Default::default()
+    };
+    assert_eq!(
+        run("encrypt reseal", &mut plain),
+        0,
+        "not an encrypted disk"
+    );
+    assert!(plain.execs.is_empty());
+    let mut refused = FakeEnv {
+        files: vec![(PathBuf::from("/proc/cmdline"), CMDLINE.into())],
+        keys: vec![("cryptsetup".into(), b"a\0b\0".to_vec())],
+        exec_codes: vec![1, 1],
+        ..Default::default()
+    };
+    assert_ne!(run("encrypt reseal", &mut refused), 0);
+    assert_eq!(refused.execs.len(), 2, "every try");
+    assert_eq!(
+        refused.execs[0].join(" "),
+        "systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 /dev/disk/by-uuid/U-1",
+        "no policy key on this machine: PCR 7 alone"
+    );
+    assert!(refused.keys.is_empty());
+}
+
+/// The disk's fallback is the account password: a new password replaces that slot (the chip
+/// unlocks it), only for the account the installer named.
+#[test]
+fn a_new_account_password_replaces_the_disk_password_slot() {
+    let files = || {
+        vec![
+            (PathBuf::from("/proc/cmdline"), CMDLINE.into()),
+            (
+                PathBuf::from("/var/lib/wolos/disk-unlock-user"),
+                "ann\n".into(),
+            ),
+        ]
+    };
+    let mut env = FakeEnv {
+        files: files(),
+        root: true,
+        stdin: vec!["new secret pw".into()],
+        exec_codes: vec![1],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt password ann", &mut env), 0, "{}", env.err);
+    assert_eq!(
+        env.execs[0].join(" "),
+        "systemd-cryptenroll --unlock-tpm2-device=auto --wipe-slot=password --password \
+/dev/disk/by-uuid/U-1"
+    );
+    assert_eq!(
+        env.secrets,
+        [("NEWPASSWORD".to_string(), "new secret pw".to_string())]
+    );
+    assert!(
+        env.err.contains("previous password"),
+        "a refused chip is said, never fails the account change"
+    );
+    let mut other = FakeEnv {
+        files: files(),
+        root: true,
+        stdin: vec!["bobs pw".into()],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt password bob", &mut other), 0);
+    assert!(
+        other.execs.is_empty(),
+        "someone else's password never opens the disk"
+    );
+    let mut no_marker = FakeEnv {
+        files: vec![(PathBuf::from("/proc/cmdline"), CMDLINE.into())],
+        root: true,
+        stdin: vec!["x".into()],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt password ann", &mut no_marker), 0);
+    assert!(
+        no_marker.execs.is_empty(),
+        "a passphrase disk keeps its own"
+    );
+}

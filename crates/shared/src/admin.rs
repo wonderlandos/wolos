@@ -18,6 +18,9 @@ pub enum AdminAction {
     Idle,
     UserAdd,
     UserRemove,
+    /// `<name> <new password>`: the account password and, for the account that opens the disk,
+    /// its LUKS password slot. The request's password is the caller's current one, every time.
+    UserPassword,
     TimeZone,
     PkgUpgrade,
     /// Refresh the package catalogue (`pkg update`) so an update check reads current data.
@@ -90,6 +93,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::Idle, "idle"),
     (AdminAction::UserAdd, "user-add"),
     (AdminAction::UserRemove, "user-remove"),
+    (AdminAction::UserPassword, "user-password"),
     (AdminAction::TimeZone, "timezone"),
     (AdminAction::PkgUpgrade, "pkg-upgrade"),
     (AdminAction::PkgRefresh, "pkg-refresh"),

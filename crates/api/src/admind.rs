@@ -98,9 +98,12 @@ pub fn handle(
         && session > 0
         && uid.is_some_and(|u| cache.valid(u, session, os.now()));
     let user_level = known.is_some_and(|u| wol_core::admin::user_level_ok(&req, u, &os.sessions()));
+    // Anyone may change their own password, with the current one (fresh: never the cache).
+    let own_password = req.action == AdminAction::UserPassword
+        && user.as_ref().is_some_and(|(n, _)| *n == req.args[0]);
     match decide(
         known,
-        admin || user_level,
+        admin || user_level || own_password,
         cached || user_level,
         !pw.is_empty(),
     ) {
@@ -703,6 +706,38 @@ mod tests {
         assert_eq!(
             handle(&nopw, ROOT, &mut AuthCache::default(), &os),
             AdminReply::Invalid
+        );
+    }
+
+    /// Changing a password: anyone their own, always with the current one; someone else's only
+    /// an administrator. The account and the disk slot get the new one on stdin.
+    #[test]
+    fn a_password_change_needs_the_current_password_every_time() {
+        let os = Fake::default();
+        let mut cache = AuthCache::default();
+        let mine = req(AdminAction::UserPassword, &["ann", "n3w-passw0rd"]);
+        assert_eq!(
+            handle(&encode(&mine, b"good"), ANN, &mut cache, &os),
+            AdminReply::Ok
+        );
+        assert_eq!(os.ran.borrow()[0], ["chpasswd"]);
+        assert_eq!(os.ran.borrow()[1], ["wol", "encrypt", "password", "ann"]);
+        assert_eq!(*os.stdin.borrow(), ["ann:n3w-passw0rd\n", "n3w-passw0rd\n"]);
+        assert!(os.log.borrow().iter().all(|l| !l.contains("n3w")));
+        assert_eq!(
+            handle(&encode(&mine, b""), ANN, &mut cache, &os),
+            AdminReply::NeedsAuth,
+            "a password given a moment ago does not change it again"
+        );
+        let bobs = req(AdminAction::UserPassword, &["bob", "n3w-passw0rd"]);
+        assert_eq!(
+            handle(&encode(&bobs, b"wrong"), BOB, &mut cache, &os),
+            AdminReply::Denied,
+            "not an administrator, but his own: the password decides"
+        );
+        assert_eq!(
+            handle(&encode(&mine, b"good"), BOB, &mut cache, &os),
+            AdminReply::NotAdmin
         );
     }
 

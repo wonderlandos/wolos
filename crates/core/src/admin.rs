@@ -160,6 +160,10 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
             && (a[2] == "yes" || a[2] == "no")
             && users::is_valid_password(a[3])),
         AdminAction::UserRemove => ok(n == 1 && users::is_valid_name(a[0]) && a[0] != "root"),
+        AdminAction::UserPassword => ok(n == 2
+            && users::is_valid_name(a[0])
+            && a[0] != "root"
+            && users::is_valid_password(a[1])),
         AdminAction::TimeZone => ok(n == 1 && timezones::is_valid(a[0])),
         AdminAction::PkgUpgrade
         | AdminAction::PkgRefresh
@@ -310,6 +314,20 @@ pub fn plan_with(
         AdminAction::UserRemove => vec![AdminStep::Run(
             users::remove_argv(&a[0]).unwrap_or_default(),
         )],
+        // The account first; then the disk's password slot follows it (only for the account the
+        // installer named; `wol encrypt password` never fails the change).
+        AdminAction::UserPassword => vec![
+            AdminStep::RunInput {
+                argv: users::password_argv(&a[0]).unwrap_or_default(),
+                input: format!("{}:{}\n", a[0], a[1]),
+            },
+            AdminStep::RunInput {
+                argv: ["wol", "encrypt", "password", &a[0]]
+                    .map(String::from)
+                    .to_vec(),
+                input: format!("{}\n", a[1]),
+            },
+        ],
         AdminAction::TimeZone => vec![AdminStep::Run(timezones::set_argv(&a[0]))],
         AdminAction::PkgRefresh => vec![argv(&["pacman", "-Sy"])],
         // Inside the pinned release only `[wolos]` moves; a new release is a new root slot.
@@ -494,6 +512,7 @@ pub fn user_level_ok(r: &AdminRequest, uid: u32, sessions: &[u32]) -> bool {
 /// An unsigned `.wol` install is approved with the password every time (never the cache).
 pub fn needs_fresh_password(r: &AdminRequest) -> bool {
     r.action == AdminAction::AurOpen
+        || r.action == AdminAction::UserPassword
         || r.action == AdminAction::WolInstall && r.args.get(1).is_some_and(|t| t == "unsigned")
 }
 
@@ -516,7 +535,9 @@ pub fn describe(r: &AdminRequest) -> String {
             r.args.get(1).map_or("", String::as_str)
         ),
         AdminAction::Keybinds => name.into(),
-        AdminAction::UserAdd => format!("{name} {}", r.args.first().map_or("", String::as_str)),
+        AdminAction::UserAdd | AdminAction::UserPassword => {
+            format!("{name} {}", r.args.first().map_or("", String::as_str))
+        }
         AdminAction::PrinterAdd if r.args.len() == 2 => {
             format!("{name} {} {}", r.args[0], without_userinfo(&r.args[1]))
         }
@@ -1182,6 +1203,38 @@ mod tests {
         assert_eq!(
             describe(&r(UserAdd, &["bob", "Bob", "no", "s3cret-pw"])),
             "user-add bob"
+        );
+    }
+
+    /// One path changes the account password and the disk's password slot with it.
+    #[test]
+    fn a_new_password_reaches_the_account_and_the_disk_on_stdin_only() {
+        assert!(validate(&r(UserPassword, &["ann", "new-s3cret"])).is_none());
+        assert!(validate(&r(UserPassword, &["ann", "short"])).is_some());
+        assert!(validate(&r(UserPassword, &["root", "new-s3cret"])).is_some());
+        assert!(validate(&r(UserPassword, &["-G", "new-s3cret"])).is_some());
+        let p = plan(&r(UserPassword, &["ann", "new-s3cret"])).unwrap();
+        let steps: Vec<(String, String)> = p
+            .iter()
+            .map(|s| match s {
+                AdminStep::RunInput { argv, input } => (argv.join(" "), input.clone()),
+                _ => panic!("secrets only on stdin"),
+            })
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                ("chpasswd".into(), "ann:new-s3cret\n".into()),
+                ("wol encrypt password ann".into(), "new-s3cret\n".into())
+            ]
+        );
+        assert_eq!(
+            describe(&r(UserPassword, &["ann", "new-s3cret"])),
+            "user-password ann"
+        );
+        assert!(
+            needs_fresh_password(&r(UserPassword, &["ann", "new-s3cret"])),
+            "an open session alone never changes the password"
         );
     }
 

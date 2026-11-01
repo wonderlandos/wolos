@@ -259,22 +259,100 @@ pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
     0
 }
 
-/// `wol encrypt rebind` (first boot, wolos-tpm-bind.service): bind the disk key to the PCR values
-/// of this firmware state and drop the install key.
-pub fn rebind(env: &mut dyn Env) -> i32 {
-    let cmdline = env
-        .read_file(Path::new("/proc/cmdline"))
-        .unwrap_or_default();
-    let Some(uuid) = wol_core::boot::cmdline_word(&cmdline, "rd.luks.name")
+/// The encrypted root's LUKS UUID from `rd.luks.name=` (None: not encrypted).
+fn luks_uuid(env: &dyn Env) -> Option<String> {
+    let cmdline = env.read_file(Path::new("/proc/cmdline"))?;
+    wol_core::boot::cmdline_word(&cmdline, "rd.luks.name")
         .and_then(|w| w.split_once('=').map(|(u, _)| u.to_owned()))
-    else {
-        return 0;
-    };
-    let dir = Path::new(wol_core::boot::STATE_DIR);
+}
+
+/// The PCRs this machine's chain measures: shim adds PCR 14.
+fn pcrs(env: &mut dyn Env) -> &'static str {
     let shim = env
         .capture(&["ls", &format!("{}/EFI/wolos/shimx64.efi", update::ESP)])
         .is_some();
-    let pcrs = wol_core::boot::tpm_pcrs(shim);
+    wol_core::boot::tpm_pcrs(shim)
+}
+
+/// `wol encrypt reseal` (every boot, wolos-tpm-reseal.service). When the chip refused the disk
+/// (Secure Boot turned off, new firmware: PCR 7 changed), the person typed their password or the
+/// recovery key, and systemd-cryptsetup left it in root's keyring ([`encrypt::PASSWORD_CACHE_KEY`]).
+/// That secret unlocks the volume once more to seal the key to the state measured now: the next
+/// start is automatic again. Nothing typed (the chip opened it): nothing to do.
+pub fn reseal(env: &mut dyn Env) -> i32 {
+    let Some(uuid) = luks_uuid(env) else {
+        return 0;
+    };
+    let Some(raw) = env.keyring_read(encrypt::PASSWORD_CACHE_KEY) else {
+        return 0;
+    };
+    let tries = encrypt::parse_cache(&raw);
+    let public = Path::new(wol_core::boot::STATE_DIR).join("tpm2-pcr-public.pem");
+    let public = public.to_string_lossy().into_owned();
+    let has_pub = env.read_file(Path::new(&public)).is_some();
+    let pcrs = pcrs(env);
+    let argv = encrypt::reseal(
+        &format!("/dev/disk/by-uuid/{uuid}"),
+        has_pub.then_some(public.as_str()),
+        pcrs,
+    );
+    // The last try is the one that opened the disk; earlier ones were wrong.
+    let ok = tries
+        .iter()
+        .rev()
+        .any(|t| env.exec_secret(&argv, "PASSWORD", t).unwrap_or(1) == 0);
+    env.keyring_forget(encrypt::PASSWORD_CACHE_KEY);
+    if !ok {
+        return fail(
+            env,
+            ErrorCode::Failed,
+            "the disk key could not be bound to this computer again",
+        );
+    }
+    env.out("the disk opens with the security chip again\n");
+    0
+}
+
+/// `wol encrypt password USER` (wol-admind's user-password action, after chpasswd, as root): the
+/// new password on stdin. Only the account the installer gave the disk's password slot
+/// ([`encrypt::UNLOCK_USER_FILE`]); the chip unlocks the volume for the change. Never fails the
+/// password change itself: the chip and the recovery key still open the disk. `passwd` in a
+/// terminal does not come here, so the slot keeps the previous password then.
+pub fn password(env: &mut dyn Env, inv: &Invocation) -> i32 {
+    let (Some(user), Some(owner)) = (
+        inv.get("a"),
+        env.read_file(Path::new(encrypt::UNLOCK_USER_FILE)),
+    ) else {
+        return 0;
+    };
+    if !env.is_root() || user != owner.trim() {
+        return 0;
+    }
+    let Some(uuid) = luks_uuid(env) else {
+        return 0;
+    };
+    let Some(pw) = env.stdin_line() else {
+        return 0;
+    };
+    let pw = pw.trim_end_matches(['\0', '\n']);
+    if pw.is_empty() {
+        return 0;
+    }
+    let argv = encrypt::password_argv(&format!("/dev/disk/by-uuid/{uuid}"));
+    if env.exec_secret(&argv, "NEWPASSWORD", pw).unwrap_or(1) != 0 {
+        env.err("wol encrypt: the disk still opens with the previous password\n");
+    }
+    0
+}
+
+/// `wol encrypt rebind` (first boot, wolos-tpm-bind.service): bind the disk key to the PCR values
+/// of this firmware state and drop the install key.
+pub fn rebind(env: &mut dyn Env) -> i32 {
+    let Some(uuid) = luks_uuid(env) else {
+        return 0;
+    };
+    let dir = Path::new(wol_core::boot::STATE_DIR);
+    let pcrs = pcrs(env);
     let key = dir.join("rebind.key");
     let public = dir.join("tpm2-pcr-public.pem");
     for argv in encrypt::rebind(

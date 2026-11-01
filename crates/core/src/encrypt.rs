@@ -103,36 +103,46 @@ pub fn enroll(
         &unlock_key,
         part,
     ])];
-    match (unlock, pass) {
-        (Unlock::Tpm2, _) => match tpm_pub {
-            Some(p) => {
-                s.push(v(&[
-                    "systemd-cryptenroll",
-                    "--tpm2-device=auto",
-                    "--tpm2-pcrs=",
-                    &format!("--tpm2-public-key={p}"),
-                    "--tpm2-public-key-pcrs=11",
-                    &unlock_key,
-                    part,
-                ]));
-                return s;
-            }
-            None => s.push(v(&[
-                "systemd-cryptenroll",
-                "--tpm2-device=auto",
-                "--tpm2-pcrs=7",
-                &unlock_key,
-                part,
-            ])),
-        },
-        (Unlock::Passphrase, Some(p)) => s.push(v(&[
+    let add_pass = |p: &str| {
+        v(&[
             "cryptsetup",
             "luksAddKey",
             "--batch-mode",
             &format!("--key-file={key}"),
             part,
             p,
-        ])),
+        ])
+    };
+    match (unlock, pass) {
+        (Unlock::Tpm2, _) => {
+            // The fallback when the chip refuses (firmware or Secure Boot changed): the person's
+            // own account password, never a shared one. Then the recovery key.
+            if let Some(p) = pass {
+                s.push(add_pass(p));
+            }
+            match tpm_pub {
+                Some(p) => {
+                    s.push(v(&[
+                        "systemd-cryptenroll",
+                        "--tpm2-device=auto",
+                        "--tpm2-pcrs=",
+                        &format!("--tpm2-public-key={p}"),
+                        "--tpm2-public-key-pcrs=11",
+                        &unlock_key,
+                        part,
+                    ]));
+                    return s;
+                }
+                None => s.push(v(&[
+                    "systemd-cryptenroll",
+                    "--tpm2-device=auto",
+                    "--tpm2-pcrs=7",
+                    &unlock_key,
+                    part,
+                ])),
+            }
+        }
+        (Unlock::Passphrase, Some(p)) => s.push(add_pass(p)),
         _ => {}
     }
     // The throw-away key goes last: nothing but the real ones opens the disk afterwards.
@@ -163,6 +173,52 @@ pub fn rebind(part: &str, key: &str, tpm_pub: &str, pcrs: &str) -> Vec<Vec<Strin
         v(&["cryptsetup", "luksRemoveKey", "--batch-mode", part, key]),
         v(&["rm", "-f", key]),
     ]
+}
+
+/// Kernel keyring entry (`user` type, root's user keyring) where systemd-cryptsetup caches what
+/// was typed at the unlock prompt (`password-cache=yes`, the default; about 150 s). Present after
+/// boot only when the chip did not unlock the disk: the password or recovery key was typed.
+pub const PASSWORD_CACHE_KEY: &str = "cryptsetup";
+
+/// The account whose password is the disk's fallback slot (written by the installer, TPM disks only).
+pub const UNLOCK_USER_FILE: &str = "/var/lib/wolos/disk-unlock-user";
+
+/// The keyring entry's payload: NUL-separated, one per try (wrong tries too).
+pub fn parse_cache(raw: &[u8]) -> Vec<String> {
+    raw.split(|b| *b == 0)
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| std::str::from_utf8(p).ok().map(str::to_owned))
+        .collect()
+}
+
+/// After a boot the chip refused: seal the disk key again to the firmware state measured now, so
+/// the next start is automatic again. Same policy as [`rebind`]; the typed secret unlocks it
+/// (`$PASSWORD`, never an argument). The enrollment happens before the old TPM slot is wiped.
+pub fn reseal(part: &str, tpm_pub: Option<&str>, pcrs: &str) -> Vec<String> {
+    let mut a = v(&[
+        "systemd-cryptenroll",
+        "--wipe-slot=tpm2",
+        "--tpm2-device=auto",
+        &format!("--tpm2-pcrs={pcrs}"),
+    ]);
+    if let Some(p) = tpm_pub {
+        a.push(format!("--tpm2-public-key={p}"));
+        a.push("--tpm2-public-key-pcrs=11".into());
+    }
+    a.push(part.into());
+    a
+}
+
+/// The account password changed: replace the disk's password slot (the chip unlocks it; the new
+/// password on `$NEWPASSWORD`). The recovery key and the TPM slot stay.
+pub fn password_argv(part: &str) -> Vec<String> {
+    v(&[
+        "systemd-cryptenroll",
+        "--unlock-tpm2-device=auto",
+        "--wipe-slot=password",
+        "--password",
+        part,
+    ])
 }
 
 pub fn open_argv(part: &str, key: &str) -> Vec<String> {
@@ -319,6 +375,38 @@ mod tests {
                 "rm -f /k"
             ]
         );
+    }
+
+    /// The chip refusing (Secure Boot turned off changes PCR 7) must not leave only the 64-character
+    /// recovery key: the account password opens the disk too, and the next boot is automatic again.
+    #[test]
+    fn a_tpm_disk_also_opens_with_the_account_password_and_is_sealed_again_after_it() {
+        for tpm_pub in [None, Some("/p.pem")] {
+            let t: Vec<String> = enroll("/d", "/k", Unlock::Tpm2, Some("/run/pw"), tpm_pub)
+                .iter()
+                .map(|a| a.join(" "))
+                .collect();
+            assert!(t[0].starts_with("systemd-cryptenroll --recovery-key"));
+            assert_eq!(
+                t[1], "cryptsetup luksAddKey --batch-mode --key-file=/k /d /run/pw",
+                "a file, never the password itself"
+            );
+            assert!(t[2].contains("--tpm2-device=auto"));
+        }
+        assert_eq!(
+            reseal("/d", Some("/p.pem"), "7+14").join(" "),
+            "systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7+14 --tpm2-public-key=/p.pem --tpm2-public-key-pcrs=11 /d"
+        );
+        assert_eq!(
+            reseal("/d", None, "7").join(" "),
+            "systemd-cryptenroll --wipe-slot=tpm2 --tpm2-device=auto --tpm2-pcrs=7 /d"
+        );
+        assert_eq!(
+            password_argv("/d").join(" "),
+            "systemd-cryptenroll --unlock-tpm2-device=auto --wipe-slot=password --password /d"
+        );
+        assert_eq!(parse_cache(b"wrong\0right pass\0"), ["wrong", "right pass"]);
+        assert!(parse_cache(b"").is_empty());
     }
 
     #[test]

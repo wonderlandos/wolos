@@ -1,0 +1,15 @@
+[Unit]
+Description=Let the security chip unlock the disk again after a start it refused
+Documentation=file:///usr/share/doc/wolos/modules/security.md
+# Only after a start where the password or recovery key was typed: systemd-cryptsetup caches it in
+# root's user keyring ("cryptsetup", about 150 s). `wol encrypt reseal` finds nothing otherwise.
+ConditionKernelCommandLine=rd.luks.name
+After=cryptsetup.target local-fs.target wolos-tpm-bind.service
+Before=wolos-boot-ok.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/wol encrypt reseal
+
+[Install]
+WantedBy=multi-user.target

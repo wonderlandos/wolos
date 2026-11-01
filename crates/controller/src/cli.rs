@@ -256,6 +256,18 @@ pub const TREE: &[Cmd] = &[
         "First boot: bind the disk key to this computer's firmware state (root)",
     ),
     cmd(
+        &["encrypt", "reseal"],
+        "encrypt.reseal",
+        &[],
+        "After a start the chip refused: bind the disk key to the firmware state again (root)",
+    ),
+    cmd(
+        &["encrypt", "password"],
+        "encrypt.password",
+        &[opt("a")],
+        "wol-admind: USER's new password (stdin) also opens the disk (root)",
+    ),
+    cmd(
         &["boot", "enroll"],
         "boot.enroll",
         &[],

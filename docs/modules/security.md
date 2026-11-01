@@ -63,6 +63,20 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
   `kind`, WolOS version, kernel, `detail` (unit name, or program and signal). No logs, user or host names.
 - Turn on: `echo send=1 | sudo tee /etc/wolos/reports.conf`. A Settings > Privacy switch comes next.
 
+## Disk unlock (TPM disks)
+- Order at start: the security chip (TPM2), then the account's own password, then the 64-character
+  recovery key. systemd-cryptsetup asks once; the password and the recovery key both answer it.
+- The password slot is the installer account's password (`install-run`, `wol encrypt enroll ... PASSFILE`),
+  never a shared one; the account is named in `/var/lib/wolos/disk-unlock-user`.
+- After a start the chip refused (Secure Boot turned off, new firmware: PCR 7 changed),
+  `wolos-tpm-reseal.service` (`wol encrypt reseal`) binds the chip again to the PCRs measured now. The
+  secret comes from systemd-cryptsetup's password cache: what was typed stays ~150 s in root's
+  user keyring as the `user` key `cryptsetup` (`password-cache=yes`, the default). It goes to
+  systemd-cryptenroll as `$PASSWORD`, then the key is invalidated. Nothing typed: nothing happens.
+- Changing the password in Settings (wol-admind `user-password`, the current password every time)
+  also replaces the disk slot (`wol encrypt password USER`, unlocked by the chip). `passwd` in a
+  terminal does not: the disk keeps the previous password (the chip and the recovery key still work).
+
 ## Encrypted homes (off by default)
 - `home_crypt`: a systemd-homed LUKS home (`homectl create --identity=-`, record and password on stdin).
 - wol-login activates it with the password it has just checked (`PASSWORD` in homectl's

@@ -427,6 +427,53 @@ const WOL_ALONGSIDE: &str = "case \"$*\" in\n\
 \"install layout\"*) printf \"esp=/dev/nvme0n1p5\\nroot=/dev/nvme0n1p6\\nfsdev=/dev/nvme0n1p6\\nslots=two\\nothers=1\\nhome_dev=/dev/nvme0n1p3\\nextra_fstab='UUID=H /home ext4 defaults 0 2'\\n\" ;;\n\
 esac";
 
+const WOL_TPM_PLAN: &str = "case \"$*\" in\n\
+\"install info\"*) printf \"disk=/dev/nvme0n1\\nwipe=1\\nWOLOS_ENCRYPT=yes\\naccount='ann'\\n\" ;;\n\
+\"encrypt decide\"*) echo tpm2 ;;\n\
+\"encrypt words\"*) echo \"rd.luks.name=$3=wolosroot root=/dev/mapper/wolosroot\" ;;\n\
+\"encrypt enroll\"*) cat \"$6\" > \"$WOLOS_KEYDIR/../fallback-seen\" ;;\n\
+\"boot detect\"*) echo off ;;\n\
+\"boot key-screen\"*) echo no ;;\n\
+\"boot note\"*) echo note ;;\n\
+esac";
+
+/// A TPM disk the chip later refuses (Secure Boot turned off changes PCR 7) still opens with the
+/// account's own password, not only the 64-character recovery key.
+#[test]
+fn a_tpm_disk_gets_the_account_password_as_its_fallback() {
+    let d = scratch("plan-tpm");
+    let (o, t) = install_plan(&d, WOL_TPM_PLAN);
+    let l = log(&d);
+    assert!(
+        o.status.success(),
+        "{}{}{l}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let enroll = l
+        .lines()
+        .find(|x| x.starts_with("wol encrypt enroll "))
+        .unwrap();
+    assert!(
+        enroll.contains(" tpm2 ") && enroll.ends_with("/fallback"),
+        "{enroll}"
+    );
+    assert!(
+        !l.split_whitespace().any(|w| w == "pw"),
+        "the password is a file, never an argument: {l}"
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("fallback-seen")).unwrap(),
+        "pw",
+        "what the person types: no newline"
+    );
+    assert_eq!(
+        fs::read_to_string(t.join("var/lib/wolos/disk-unlock-user")).unwrap(),
+        "ann\n"
+    );
+    assert!(!d.join("keys").exists(), "the copy goes with the keys");
+}
+
 #[test]
 fn a_plan_keeps_its_hands_off_the_disk_layout_and_the_kept_home() {
     let d = scratch("plan");

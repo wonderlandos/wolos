@@ -27,7 +27,7 @@ wipe=1
 if [ "$disk" = --plan ]; then
   plan=${2:-}
   info=$(wol install info "$plan") || { say failed 0 "the install plan can't be read"; exit 2; }
-  eval "$info"   # disk, wipe, WOLOS_ENCRYPT (shell-quoted by wol)
+  eval "$info"   # disk, wipe, WOLOS_ENCRYPT, account (shell-quoted by wol)
   plandir=$(dirname "$plan")
   [ ! -s "$plandir/disk-password" ] || WOLOS_PASSPHRASE_FILE=$plandir/disk-password
   WOLOS_RECOVERY_OUT=$plandir/recovery-key
@@ -163,8 +163,16 @@ if [ "$unlock" != off ]; then
   # The disk key follows this machine's signed kernels; the first boot adds the firmware state.
   SB=$T/var/lib/wolos/secureboot
   WOLOS_SB_DIR=$SB sh "$here/boot-keys" create || fail "could not make this computer's keys"
+  # When the chip refuses (Secure Boot or firmware changed), the account's own password opens the
+  # disk before the recovery key is needed; never a shared one. Kept in sync by `wol encrypt password`.
+  fallback=
+  if [ "$unlock" = tpm2 ] && [ -n "${account:-}" ] && [ -s "${plandir:-/nonexistent}/account-password" ]; then
+    (umask 077 && printf %s "$(cat "$plandir/account-password")" > "$KEYDIR/fallback") && fallback=$KEYDIR/fallback
+  fi
+  if [ "$unlock" = tpm2 ]; then pass=$fallback; else pass=${WOLOS_PASSPHRASE_FILE:-}; fi
   WOLOS_TPM_PUB=$SB/tpm2-pcr-public.pem wol encrypt enroll "$root" "$KEYDIR/key" "$unlock" \
-    ${WOLOS_PASSPHRASE_FILE:+"$WOLOS_PASSPHRASE_FILE"} || fail "could not set up the disk unlock"
+    ${pass:+"$pass"} || fail "could not set up the disk unlock"
+  [ -z "$fallback" ] || echo "$account" > "$T/var/lib/wolos/disk-unlock-user" || fail "could not set up the disk unlock"
   [ "$unlock" != tpm2 ] || cp "$KEYDIR/key" "$SB/rebind.key" || fail "could not keep the first-boot key"
 fi
 
