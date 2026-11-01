@@ -177,3 +177,28 @@ fn logind_session_runs_on_the_user_bus() {
         format!("hyprland unix:path={}/bus\n", rt.display())
     );
 }
+
+/// VirtualBox (VMSVGA): Install WolOS opens without kit::Reveal, so a hidden
+/// pointer in installer.conf never came back.
+#[test]
+fn the_installer_compositor_never_hides_the_pointer() {
+    let c = read("desktop/overlay/usr/share/wolos/hypr/installer.conf");
+    assert_eq!(value(&c, "cursor", "invisible"), None, "installer.conf");
+}
+
+/// vmwgfx (VirtualBox VMSVGA, VMware) has a render node, but Hyprland drops GTK's GL clients there
+/// (wol-shell and every wol-lock died: black screen). Cairo wins over ngl on vmwgfx.
+#[test]
+fn vmwgfx_sessions_draw_gtk_with_cairo() {
+    let s = read("desktop/overlay/usr/bin/wol-session");
+    let probe = s
+        .find("/sys/class/drm/renderD*/device/driver")
+        .expect("no render node driver probe");
+    let vmw = s[probe..].find("= vmwgfx ]").expect("no vmwgfx check") + probe;
+    let cairo = s[vmw..]
+        .find("GSK_RENDERER=${GSK_RENDERER:-cairo}")
+        .expect("vmwgfx not cairo")
+        + vmw;
+    let ngl = s.find("GSK_RENDERER=${GSK_RENDERER:-ngl}").expect("no ngl");
+    assert!(cairo < ngl, "the vmwgfx cairo branch must come before ngl");
+}
