@@ -114,11 +114,26 @@ fn update_check_reads_the_published_release() {
     let url =
         "https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json";
     assert!(check.contains(url), "update-check URL");
+    // wolos-iso release.yml is reusable: only wolos publish.yml (what=iso, the repo holding the
+    // keys) calls it, one publish at a time. No tag push or dispatch of its own.
     let iso = read(".github/workflows/release.yml");
+    assert!(iso.contains("workflow_call"), "release.yml is not reusable");
+    assert!(
+        !iso.contains("workflow_dispatch") && !iso.contains("tags:"),
+        "release.yml has a trigger of its own"
+    );
+    let publish = read(".github/workflows/publish.yml");
     for want in [
-        "tags:",
-        "'v*'",
-        "workflow_dispatch",
+        "uses: wonderlandos/wolos-iso/.github/workflows/release.yml@",
+        "secrets: inherit",
+        "concurrency:",
+        "iso-s3",
+    ] {
+        assert!(publish.contains(want), "publish.yml lacks {want}");
+    }
+    // what=iso-s3 publishes a pre-release in wolos: never the latest release update-check reads.
+    assert!(publish.contains("--prerelease"), "iso-s3 is not a pre-release");
+    for want in [
         "archlinux",
         "mkarchiso",
         "release-manifest.sh",
@@ -126,7 +141,6 @@ fn update_check_reads_the_published_release() {
         "release.json",
         "release.json.sig",
         ".sha256",
-        "concurrency:",
         "gh release create",
         "--latest",
     ] {
@@ -141,6 +155,26 @@ fn update_check_reads_the_published_release() {
         !iso.contains("action-gh-release"),
         "release.yml publishes with the action"
     );
+}
+
+/// release.json as published (wolos v0.11.4, what=iso-s3): pretty-printed, with `size` and an
+/// image URL in wonderlandos/wolos releases. `wol update` reads it.
+#[test]
+fn published_release_json_parses() {
+    let text = r#"{
+  "version": "0.11.4",
+  "snapshot": "2026/10/31",
+  "wolos_repo": "20261101-af08675",
+  "cachy": "",
+  "kernel": "1:1.0+7.3-5",
+  "image": "https://github.com/wonderlandos/wolos/releases/download/v0.11.4/wolos-2026.11.01-x86_64.iso",
+  "sha256": "1f4fe65c7c196484d30c3e34b5b79a6ba468664714416988be2635826b5b7cb5",
+  "size": 2106126336
+}
+"#;
+    let m = wol_core::update::check::Manifest::parse(text).expect("v0.11.4 release.json");
+    assert_eq!(m.version, "0.11.4");
+    assert!(m.image.ends_with("/v0.11.4/wolos-2026.11.01-x86_64.iso"));
 }
 
 /// The release key CI signs with (secret WOLOS_RELEASE_KEY) is one of the keys updates trust.
