@@ -52,8 +52,18 @@ printf '%s\n' '{"autologin":"live"}' > "$A/etc/wolos/login.json"
 touch "$A/etc/wolos-live"
 if [ "${WOLOS_STAGE_ONLY:-0}" = 1 ]; then echo "profile: $P"; exit 0; fi
 
+# A killed mkarchiso leaves pacstrap's mounts (devtmpfs, proc, sys, efivarfs) in the work dir:
+# unmount them first, and never let rm cross into another file system (the host's /dev).
+clean_work() {
+  local s=; [ "$(id -u)" = 0 ] || s=sudo
+  [ -e "$WORK/work" ] || return 0
+  findmnt -rn -o TARGET | awk -v w="$WORK/work/" 'index($0, w) == 1' | sort -r |
+    while read -r m; do $s umount -l "$m"; done
+  $s rm -rf --one-file-system "$WORK/work"
+}
+
 # 3. mkarchiso (root) on the host, or in a container.
-OUT=$WORK/out; rm -rf "$WORK/work"; mkdir -p "$OUT"
+OUT=$WORK/out; clean_work; mkdir -p "$OUT"
 if command -v mkarchiso >/dev/null && [ "${WOLOS_PODMAN:-0}" != 1 ]; then
   S=; [ "$(id -u)" = 0 ] || S=sudo
   $S mkarchiso -v -w "$WORK/work" -o "$OUT" "$P"
@@ -63,7 +73,7 @@ else
     bash -c "pacman -Sy --noconfirm archiso >/dev/null && mkarchiso -v -w '$WORK/work' -o '$OUT' '$P'"
 fi
 S=; [ "$(id -u)" = 0 ] || S=sudo
-$S rm -rf "$WORK/work"   # disk: the pacstrap root is in the squashfs now
+clean_work   # disk: the pacstrap root is in the squashfs now
 # Secure Boot layout (ADR 0025, image/sb-layout.sh): shim, then systemd-boot, then one UKI. Off
 # until the WolOS Secure Boot key exists; iso.yml signs it with WOLOS_SB_KEY / WOLOS_SB_CERT.
 if [ "${WOLOS_SB_LAYOUT:-0}" = 1 ]; then

@@ -803,6 +803,25 @@ fn vm_guest_tools_start_only_in_their_hypervisor() {
 }
 
 #[test]
+fn the_work_dir_is_removed_without_crossing_mounts() {
+    // A killed mkarchiso left pacstrap's devtmpfs mounted in the work dir; a plain rm -rf then
+    // deleted the host's device nodes. Mounts go first, and rm stays on one file system.
+    let b = read("image/build.sh");
+    assert!(b.contains(r#"rm -rf --one-file-system "$WORK/work""#));
+    assert!(b.contains(r#"umount -l "$m""#));
+    let plain = b
+        .lines()
+        .filter(|l| {
+            l.contains("rm -rf") && l.contains("$WORK/work") && !l.contains("--one-file-system")
+        })
+        .count();
+    assert_eq!(
+        plain, 0,
+        "a plain rm -rf of the work dir is left in image/build.sh"
+    );
+}
+
+#[test]
 fn iso_fits_one_release_asset() {
     // Release assets max out at 2 GiB: xz with the x86 filter packs binaries tighter than zstd,
     // and GPU drivers load from the squashfs after switch_root instead of from the initramfs.
