@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.5
+- VirtualBox (VMSVGA): the desktop starts after install. GTK used GL on the vmwgfx render node, Hyprland rejected its buffers, the shell died and the start-up lock respawned behind a black screen; on vmwgfx WolOS now renders with cairo.
+- Install WolOS shows the mouse pointer (the installer hid it and never showed it again).
+- Disk unlock: when the TPM refuses (for example after Secure Boot was switched), your account password unlocks the disk before the recovery key, and the next start is automatic again (the TPM slot is sealed again). Changing the password in Settings keeps the disk password in step.
+- The lock screen comes back when it crashes, without giving up, and a crash never shows the compositor's stock page.
+- VMs draw the pointer themselves (no cursor plane on vmwgfx), with the WolOS cursor theme in every session.
+- The live ISO no longer prints "memdisk not found" at start.
+- Built the new way: one recipe repository (wolos-pkgbuilds), clean-chroot builds on the AWS build farm, signed from this repository, ISO tested in QEMU and VirtualBox.
+
 ## 0.11.4
 - Image build: the work directory is cleared without crossing into mounts a stopped build left behind (it could delete the build host's /dev).
 - Secure Boot for the live ISO, prepared: shim first, systemd-boot second and one signed UKI with Install and Try (image/sb-layout.sh, ADR 0025), off until the WolOS live image key exists. With Secure Boot on, the ISO still needs it turned off for now.
