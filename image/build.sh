@@ -71,4 +71,7 @@ REV=$({ cat "$RD/revision" "$RD/x86_64/revision" 2>/dev/null || :; } | head -1)
 [ -n "$REV" ] || REV=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo local)
 "$IMG/release-manifest.sh" "$ISO" "$SNAP" "$REV" "${WOLOS_IMAGE_URL:-https://github.com/wonderlandos/wolos-packages/releases/download/$SNAP}" \
   "" "" "$(cat "${WOLOS_CACHY_DIR:-$WORK/cachy}/revision" 2>/dev/null || :)" > "${ISO%.iso}.json"
+# A release asset is at most 2 GiB: the ISO is one download, never split.
+SZ=$(stat -c %s "$ISO")
+[ "$SZ" -le $((2047 * 1024 * 1024)) ] || die "$ISO is $SZ bytes, over the 2047 MiB release asset limit"
 echo "image: $ISO  manifest: ${ISO%.iso}.json"

@@ -1,8 +1,9 @@
 # Changelog
 
 ## 0.11.3
-- WolKernel 1:1.0+7.3-3: the series in `kernel/linux/patches` through 0034 (kernel/SERIES.md): futex spinning, prechecks and inline vectors for `futex_waitv`, pipe and semaphore wake paths, SLUB sheaf sizing, ntsync inline waits, large folios cleared on idle CPUs, and the syscall exit fixes. Each has a runtime off switch.
+- WolKernel 1:1.0+7.3-4: the series in `kernel/linux/patches` through 0034 (kernel/SERIES.md): futex spinning, prechecks and inline vectors for `futex_waitv`, pipe and semaphore wake paths, SLUB sheaf sizing, ntsync inline waits, large folios cleared on idle CPUs, and the syscall exit fixes. Each has a runtime off switch.
 - Arch Linux snapshot 2026-10-31.
+- linux-wolos-headers ships `vmlinux` without debug info (BTF kept), as Arch does: 390 MB less on disk, and the ISO stays one 2 GiB download.
 - Window title strip: follows light and dark. Kit windows show the title once, and strip plus toolbar take 64 px instead of 80.
 - The search window is `wol-search` and the app grid is Apps; a saved shortcut that named the old program needs setting again.
 - The image no longer adds files to Firefox's folder.

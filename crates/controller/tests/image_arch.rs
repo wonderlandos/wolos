@@ -704,6 +704,17 @@ fn iso_fits_one_release_asset() {
     let hooks = read("image/arch/airootfs/etc/mkinitcpio.conf.d/archiso.conf");
     let hooks = hooks.lines().find(|l| l.starts_with("HOOKS=")).unwrap();
     assert!(!hooks.split(['(', ' ', ')']).any(|h| h == "kms"), "{hooks}");
+    // The headers' vmlinux loses its DWARF (BTF stays), and the build stops on an oversized ISO.
+    let k = read("kernel/linux-wolos/PKGBUILD");
+    assert!(
+        k.contains(r#"strip -v --strip-debug "$builddir/vmlinux""#),
+        "vmlinux not stripped"
+    );
+    let b = read("image/build.sh");
+    assert!(
+        b.contains("$((2047 * 1024 * 1024))"),
+        "no ISO size limit in image/build.sh"
+    );
 }
 
 /// Helium (the default browser) is the official x86_64 tarball repackaged: pinned version and
