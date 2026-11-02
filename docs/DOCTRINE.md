@@ -54,7 +54,7 @@ Some of the loudest voices around tools we build on have spoken about people in 
 
 ## 7. Enforcement
 
-The maintainers apply this doctrine. The project lead has the final say.
+Sanctions are decided by the project's authority: today Julia Klee as lead, in the future the councils or maintainers the project formally appoints. Maintainers act on their behalf, and the authority's decision is final.
 
 To report a problem, email **conduct@wolos.org**. If the problem is public and not sensitive, you can also open an issue on the issue tracker. Tell us what happened, where, and when. Links and screenshots help.
 
