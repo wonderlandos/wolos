@@ -66,7 +66,7 @@ fn exchange(
             "The request is too long.",
         ));
     }
-    let Ok(mut s) = UnixStream::connect(socket) else {
+    let Ok(mut s) = shared::jobs::connect(socket) else {
         return Err(unavailable());
     };
     let _ = s.set_read_timeout(Some(wait));
@@ -108,7 +108,7 @@ pub fn hold(socket: &Path, c: &Call) -> Result<UnixStream> {
             a.message.unwrap_or_default(),
         )
     };
-    let mut s = UnixStream::connect(socket).map_err(|_| refused(unavailable()))?;
+    let mut s = shared::jobs::connect(socket).map_err(|_| refused(unavailable()))?;
     s.set_read_timeout(Some(TIMEOUT))
         .and_then(|()| s.set_write_timeout(Some(TIMEOUT)))
         .and_then(|()| s.write_all(format!("call {}\n", c.encode()).as_bytes()))
@@ -121,7 +121,7 @@ pub fn hold(socket: &Path, c: &Call) -> Result<UnixStream> {
 
 /// Event stream from wold (`shared::events` lines).
 pub fn subscribe(socket: &Path) -> std::io::Result<UnixStream> {
-    let mut s = UnixStream::connect(socket)?;
+    let mut s = shared::jobs::connect(socket)?;
     s.set_write_timeout(Some(TIMEOUT))?;
     s.write_all(b"subscribe\n")?;
     Ok(s)
@@ -181,6 +181,7 @@ mod tests {
         let l = UnixListener::bind(&p).unwrap();
         let t = std::thread::spawn(move || {
             let (s, _) = l.accept().unwrap();
+            shared::jobs::greet(&s).unwrap();
             let line = read_line(&mut BufReader::new(&s)).unwrap();
             (&s).write_all(Answer::ok().to_line().as_bytes()).unwrap();
             line

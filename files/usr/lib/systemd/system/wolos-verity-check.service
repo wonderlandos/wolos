@@ -11,6 +11,19 @@ ExecStart=/usr/bin/wol boot check
 ExecStart=/usr/bin/wol seal check
 # Exit 1 = the check failed and said so; boot goes on, or restarts into the other slot.
 SuccessExitStatus=1
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): reads /usr against the seal and may switch the boot entry on the ESP; before sysinit (no PrivateTmp).
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectHome=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX
 
 [Install]
 WantedBy=sysinit.target

@@ -7,7 +7,9 @@ use std::sync::Arc;
 /// Largest string an app may hand libwol.
 pub const MAX: usize = 1 << 20;
 
+#[repr(C)]
 pub struct wol_string {
+    tag: crate::handle::Tag<wol_string>,
     /// Text bytes and a NUL that is not counted.
     bytes: Vec<u8>,
 }
@@ -17,7 +19,10 @@ impl wol_string {
         let mut bytes = Vec::with_capacity(s.len() + 1);
         bytes.extend_from_slice(s.as_bytes());
         bytes.push(0);
-        Arc::new(Self { bytes })
+        Arc::new(Self {
+            tag: crate::handle::Tag::new(),
+            bytes,
+        })
     }
 
     pub fn as_str(&self) -> &str {
@@ -33,8 +38,9 @@ pub(crate) fn into_raw<T>(a: Arc<T>) -> *mut T {
 
 /// # Safety
 /// `p` is NULL or a live handle of type `T` from libwol.
-pub(crate) unsafe fn retain<T>(p: *mut T) -> *mut T {
-    if !p.is_null() {
+pub(crate) unsafe fn retain<T: crate::handle::Tagged>(p: *mut T) -> *mut T {
+    // SAFETY: NULL or a libwol handle (contract); the tag is checked before anything else.
+    if unsafe { crate::handle::live(p.cast_const()) }.is_some() {
         // SAFETY: `p` came from Arc::into_raw and is live (contract).
         unsafe { Arc::increment_strong_count(p.cast_const()) };
     }
@@ -43,8 +49,9 @@ pub(crate) unsafe fn retain<T>(p: *mut T) -> *mut T {
 
 /// # Safety
 /// `p` is NULL or a handle the caller owns a reference to.
-pub(crate) unsafe fn release<T>(p: *mut T) {
-    if !p.is_null() {
+pub(crate) unsafe fn release<T: crate::handle::Tagged>(p: *mut T) {
+    // SAFETY: NULL or a libwol handle (contract); a released or foreign pointer is ignored.
+    if unsafe { crate::handle::live(p.cast_const()) }.is_some() {
         // SAFETY: the caller gives up one reference it owns (contract).
         drop(unsafe { Arc::from_raw(p.cast_const()) });
     }
@@ -52,9 +59,14 @@ pub(crate) unsafe fn release<T>(p: *mut T) {
 
 /// # Safety
 /// `p` is NULL or a live handle of type `T`.
-pub(crate) unsafe fn borrow<'a, T>(p: *const T) -> Result<&'a T> {
-    // SAFETY: NULL or live (contract).
-    unsafe { p.as_ref() }.ok_or_else(|| crate::error::Error::invalid("A handle is NULL."))
+pub(crate) unsafe fn borrow<'a, T: crate::handle::Tagged>(p: *const T) -> Result<&'a T> {
+    if p.is_null() {
+        return Err(crate::error::Error::invalid("A handle is NULL."));
+    }
+    // SAFETY: a libwol handle per the contract; its tag is checked before use.
+    unsafe { crate::handle::live(p) }.ok_or_else(|| {
+        crate::error::Error::invalid("A handle is not a live object of the expected type.")
+    })
 }
 
 /// # Safety
@@ -82,14 +94,16 @@ pub unsafe extern "C" fn wol_string_get_bytes(
     string: *const wol_string,
     len: *mut usize,
 ) -> *const c_char {
-    quiet(c"".as_ptr(), || match unsafe { string.as_ref() } {
-        Some(s) => {
-            write_len(len, s.bytes.len() - 1);
-            s.bytes.as_ptr().cast()
-        }
-        None => {
-            write_len(len, 0);
-            c"".as_ptr()
+    quiet(c"".as_ptr(), || {
+        match unsafe { crate::handle::live(string) } {
+            Some(s) => {
+                write_len(len, s.bytes.len() - 1);
+                s.bytes.as_ptr().cast()
+            }
+            None => {
+                write_len(len, 0);
+                c"".as_ptr()
+            }
         }
     })
 }
@@ -112,6 +126,7 @@ pub unsafe extern "C" fn wol_string_release(string: *mut wol_string) {
 mod tests {
     use super::*;
 
+    #[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
     #[test]
     fn create_get_retain_release() {
         let mut s: *mut wol_string = std::ptr::null_mut();
@@ -136,3 +151,5 @@ mod tests {
         unsafe { wol_string_release(std::ptr::null_mut()) };
     }
 }
+
+crate::handle::tagged!(wol_string, 0x4f7b8cafad6b462f);

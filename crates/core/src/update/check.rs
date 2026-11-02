@@ -28,7 +28,8 @@ pub struct Manifest {
     pub snapshot: String,
     /// `[wolos]` repo revision.
     pub wolos_repo: String,
-    /// `[wolos-cachy]` snapshot revision (optimized builds frozen at the release; ADR 0019).
+    /// Former `[wolos-cachy]` snapshot revision. Always empty since ADR 0030 (the `[cachyos-*-v3]`
+    /// sections are not republished); kept so older manifests still parse.
     #[serde(default)]
     pub cachy: String,
     /// linux-wolos package version.
@@ -145,8 +146,11 @@ impl Updates {
     }
 }
 
-fn unhex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) {
+/// Hex text to bytes; None on an odd length, a non-hex digit or a non-ASCII character (never
+/// panics on runtime text: `get` instead of slicing).
+pub fn unhex(s: &str) -> Option<Vec<u8>> {
+    // Hex digits only: `from_str_radix` alone would take a sign ("+f").
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..s.len())
@@ -209,7 +213,7 @@ mod tests {
             m.kernel, "6.17.3.wolos1-1",
             "records the linux-wolos version"
         );
-        assert_eq!(m.cachy, "", "older manifests have no [wolos-cachy]");
+        assert_eq!(m.cachy, "", "manifests have no cachy field (ADR 0030)");
         let c = RELEASE.replace(r#""kernel""#, r#""cachy":"20261102-ab12","kernel""#);
         assert_eq!(Manifest::parse(&c).unwrap().cachy, "20261102-ab12");
         for bad in [
@@ -290,5 +294,15 @@ mod tests {
         );
         assert_eq!(Updates::read_with(&d, &[[9; 32]]).unwrap().base, None);
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// CORE-7 / R2C-21: hex digits only, never a slice that panics on a multi-byte character.
+    #[test]
+    fn unhex_takes_only_hex_digits() {
+        assert_eq!(unhex("00ff"), Some(vec![0, 255]));
+        assert_eq!(unhex(""), Some(vec![]));
+        for bad in ["+1", "-1", "0", "zz", "\u{e9}a", "a\u{e9}", " 1"] {
+            assert_eq!(unhex(bad), None, "{bad:?}");
+        }
     }
 }

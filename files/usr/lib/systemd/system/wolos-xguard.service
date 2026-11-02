@@ -20,6 +20,15 @@ RuntimeDirectoryPreserve=yes
 # Keeps it off the network, in place of PrivateNetwork.
 RestrictAddressFamilies=AF_UNIX
 MemoryMax=512M
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): fanotify (CAP_SYS_ADMIN) on every mount and reads every home: no mount namespace (no Protect*/Private* that makes one, crates/xguard/tests/units.rs); AF_UNIX only already set.
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectHostname=yes
+# No MemoryDenyWriteExecute: the deep scan it forks (wol-xguard scan) inherits the filter, and
+# YARA-X turns its rules into machine code at load time (wasmtime), which the filter forbids (audit S4).
 
 [Install]
 WantedBy=multi-user.target

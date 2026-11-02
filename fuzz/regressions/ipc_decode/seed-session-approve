@@ -1,0 +1,1 @@
+{"call":"session.approve","approval":{"helper":"Claude Desktop","tool":"wifi off","request":{"action":"wifi","on":false}}}

@@ -139,7 +139,7 @@ pub fn inspect(path: &Path) -> Result<Inspect> {
     let mut zeroed = b.clone();
     for n in [".sha256_sig", ".sig_key"] {
         if let Some(&(o, len)) = s.get(n)
-            && let Some(r) = zeroed.get_mut(o..o + len)
+            && let Some(r) = o.checked_add(len).and_then(|e| zeroed.get_mut(o..e))
         {
             r.fill(0);
         }
@@ -241,7 +241,16 @@ pub struct App {
     /// Where it came from when installed by URL.
     #[serde(default)]
     pub url: Option<String>,
+    /// Newest `MTime:` an update's control file had: an older one is refused (audit A14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime: Option<i64>,
+    /// SHA-256 of the files earlier updates replaced: serving one of them again is a downgrade.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub superseded: Vec<String>,
 }
+
+/// Replaced versions remembered per app.
+const SUPERSEDED: usize = 32;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Registry {
@@ -435,6 +444,8 @@ pub fn install(
         key_pin: info.key_pin.clone(),
         signed,
         url: r.url.clone(),
+        mtime: None,
+        superseded: Vec::new(),
     };
     reg.upsert(app.clone());
     reg.save(ctx)?;
@@ -637,6 +648,8 @@ pub fn adopt(ctx: &Context) -> Vec<String> {
             key_pin: info.key_pin,
             signed: info.signed,
             url: None,
+            mtime: None,
+            superseded: Vec::new(),
         });
         added.push(name);
     }
@@ -721,6 +734,23 @@ fn update_one(
     if cur_sha1 == c.sha1 {
         return Ok(UpdateState::UpToDate);
     }
+    // Version floor: never go back to something older than what an update already brought. Once
+    // there is a floor, a control file without MTime counts as older (audit S12): the server
+    // chooses what the file says, so leaving the date out must not skip the check. The installed
+    // copy matching the control file's SHA-1 (up to date, above) is the only pass without one.
+    match (a.mtime, c.mtime) {
+        (Some(floor), Some(m)) if m < floor => {
+            return Err(Error::untrusted(
+                "The update server offers an older version than the one installed. It was not installed.",
+            ));
+        }
+        (Some(_), None) => {
+            return Err(Error::untrusted(
+                "The update server no longer says how new its version is, so it cannot be told from an older one. It was not installed.",
+            ));
+        }
+        _ => {}
+    }
     if check_only {
         return Ok(UpdateState::Available { size: c.length });
     }
@@ -741,6 +771,12 @@ fn update_one(
         let _ = std::fs::remove_file(&new);
         return Err(e);
     }
+    if a.superseded.contains(&info.sha256) {
+        let _ = std::fs::remove_file(&new);
+        return Err(Error::untrusted(
+            "The update is a version this app was already updated from. It was not installed.",
+        ));
+    }
     make_exec(&new)?;
     let prev = backup_path(&a.path);
     let _ = std::fs::remove_file(&prev);
@@ -753,6 +789,12 @@ fn update_one(
     let mut na = a.clone();
     na.sha256 = info.sha256.clone();
     na.update = info.update_raw.clone().or(na.update);
+    na.mtime = c.mtime.max(a.mtime);
+    if !na.superseded.contains(&a.sha256) {
+        na.superseded.push(a.sha256.clone());
+    }
+    let extra = na.superseded.len().saturating_sub(SUPERSEDED);
+    na.superseded.drain(..extra);
     if na.key_pin.is_none() {
         na.key_pin = info.key_pin.clone();
         na.signed = info.signed;
@@ -972,6 +1014,108 @@ pub mod tests {
             std::fs::read(&path).unwrap(),
             srv_holder.1,
             "rollback restores the previous file"
+        );
+        let reg = Registry::load(&c);
+        assert_eq!(
+            reg.apps[0].superseded.len(),
+            1,
+            "v1 is remembered as replaced"
+        );
+    }
+
+    /// Audit A14: an update may not bring back a version that was already replaced, nor one whose
+    /// control file is older than the last one applied.
+    #[test]
+    fn downgrades_are_refused() {
+        let d = temp("ai-downgrade");
+        let c = ctx(&d);
+        let v1 = fake_appimage(&crate::zsync::tests::noise(20_000, 5), &[]);
+        let v2 = fake_appimage(&crate::zsync::tests::noise(20_000, 6), &[]);
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        drop(l);
+        // A control file for v1 with an MTime (zsyncmake writes one; `make` does not).
+        let raw = crate::zsync::make(&v1, "A", "A.AppImage", 2048);
+        let cut = raw
+            .windows(2)
+            .position(|w| {
+                w == b"
+
+"
+            })
+            .unwrap();
+        let head = String::from_utf8_lossy(&raw[..cut]).replacen(
+            "SHA-1:",
+            "MTime: Mon, 02 Nov 2026 01:00:00 +0000
+SHA-1:",
+            1,
+        );
+        let z = [head.as_bytes(), &raw[cut..]].concat();
+        let _srv = crate::testutil::serve_on(
+            port,
+            vec![
+                ("/A.AppImage", Served::bytes(v1.clone())),
+                ("/A.AppImage.zsync", Served::bytes(z)),
+                ("/plain.zsync", Served::bytes(raw.clone())),
+            ],
+        );
+        std::fs::create_dir_all(&c.apps).unwrap();
+        let path = c.apps.join("A.AppImage");
+        std::fs::write(&path, &v2).unwrap();
+        let sha = |b: &[u8]| crate::fetch::hex(&Sha256::digest(b));
+        let mut reg = Registry::default();
+        let base = App {
+            name: "A".into(),
+            path: path.clone(),
+            sha256: sha(&v2),
+            update: Some(format!("zsync|http://127.0.0.1:{port}/A.AppImage.zsync")),
+            key_pin: None,
+            signed: false,
+            url: None,
+            mtime: None,
+            superseded: vec![sha(&v1)],
+        };
+        reg.upsert(base.clone());
+        reg.save(&c).unwrap();
+        let r = update(&c, &UpdateRequest::default(), &mut |_| {}).unwrap();
+        let UpdateState::Failed { message } = &r[0].state else {
+            panic!("{:?}", r[0].state)
+        };
+        assert!(message.contains("already updated from"), "{message}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            v2,
+            "the installed file stays"
+        );
+        // Same server, but the last update had a newer control file.
+        reg.upsert(App {
+            superseded: Vec::new(),
+            mtime: Some(1_900_000_000),
+            ..base.clone()
+        });
+        reg.save(&c).unwrap();
+        let r = update(&c, &UpdateRequest::default(), &mut |_| {}).unwrap();
+        let UpdateState::Failed { message } = &r[0].state else {
+            panic!("{:?}", r[0].state)
+        };
+        assert!(message.contains("older version"), "{message}");
+        // Audit S12: with a floor set, a control file that leaves MTime out is refused too.
+        reg.upsert(App {
+            superseded: Vec::new(),
+            mtime: Some(1_700_000_000),
+            update: Some(format!("zsync|http://127.0.0.1:{port}/plain.zsync")),
+            ..base
+        });
+        reg.save(&c).unwrap();
+        let r = update(&c, &UpdateRequest::default(), &mut |_| {}).unwrap();
+        let UpdateState::Failed { message } = &r[0].state else {
+            panic!("{:?}", r[0].state)
+        };
+        assert!(message.contains("cannot be told"), "{message}");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            v2,
+            "the installed file stays"
         );
     }
 

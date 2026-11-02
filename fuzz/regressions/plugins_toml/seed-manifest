@@ -1,0 +1,7 @@
+schema = 1
+id = "org.example.x"
+name = "X"
+version = "1.0"
+[[menubar]]
+id = "a"
+script = "a.lua"

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# WolOS revoked signing keys (audit A13). A key listed here is never trusted, even if a *.pub
+# file for it is present in this directory. Format: one key per line, the raw 32-byte Ed25519
+# public key as 64 lowercase hex characters, a space, and the reason up to the end of the line.
+# Lines starting with # and empty lines are ignored. Checked by crates/controller/tests/keys.rs.

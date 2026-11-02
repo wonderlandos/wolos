@@ -62,10 +62,51 @@ pub struct Segment {
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        b.get(at..at.checked_add(4)?)?.try_into().ok()?,
+    ))
 }
 fn u64_at(b: &[u8], at: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(b.get(at..at + 8)?.try_into().ok()?))
+    Some(u64::from_le_bytes(
+        b.get(at..at.checked_add(8)?)?.try_into().ok()?,
+    ))
+}
+
+/// Where the parts of a segment file are. Every range is inside the file.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Layout {
+    pub n: usize,
+    pub fp: (usize, usize),
+    pub recs: (usize, usize),
+    pub hay: (usize, usize),
+    pub offs: usize,
+}
+
+/// Checks a segment file's header and sizes with checked arithmetic. Pure: the fuzz entry point.
+pub fn layout(b: &[u8]) -> Option<Layout> {
+    if b.get(..8)? != MAGIC {
+        return None;
+    }
+    let n = usize::try_from(u32_at(b, 8)?).ok()?;
+    let fl = usize::try_from(u32_at(b, 12)?).ok()?;
+    let fp = (16, 16usize.checked_add(fl)?);
+    let rl = usize::try_from(u64_at(b, fp.1)?).ok()?;
+    let r0 = fp.1.checked_add(8)?;
+    let recs = (r0, r0.checked_add(rl)?);
+    let hl = usize::try_from(u64_at(b, recs.1)?).ok()?;
+    let h0 = recs.1.checked_add(8)?;
+    let hay = (h0, h0.checked_add(hl)?);
+    let offs = hay.1;
+    if b.len() != offs.checked_add(n.checked_mul(8)?)? {
+        return None;
+    }
+    Some(Layout {
+        n,
+        fp,
+        recs,
+        hay,
+        offs,
+    })
 }
 
 impl Segment {
@@ -73,28 +114,14 @@ impl Segment {
         let f = std::fs::File::open(path).ok()?;
         // SAFETY: segments are replaced by rename, never written in place, so the mapping stays valid.
         let map = unsafe { memmap2::Mmap::map(&f) }.ok()?;
-        let b = &map[..];
-        if b.get(..8)? != MAGIC {
-            return None;
-        }
-        let n = u32_at(b, 8)? as usize;
-        let fl = u32_at(b, 12)? as usize;
-        let fp = (16, 16 + fl);
-        let rl = u64_at(b, fp.1)? as usize;
-        let recs = (fp.1 + 8, fp.1 + 8 + rl);
-        let hl = u64_at(b, recs.1)? as usize;
-        let hay = (recs.1 + 8, recs.1 + 8 + hl);
-        let offs = hay.1;
-        if b.len() != offs.checked_add(n.checked_mul(8)?)? {
-            return None;
-        }
+        let l = layout(&map[..])?;
         Some(Segment {
             map,
-            n,
-            fp,
-            recs,
-            hay,
-            offs,
+            n: l.n,
+            fp: l.fp,
+            recs: l.recs,
+            hay: l.hay,
+            offs: l.offs,
         })
     }
 
@@ -106,15 +133,26 @@ impl Segment {
     }
 
     pub fn fingerprint(&self) -> &str {
-        std::str::from_utf8(&self.map[self.fp.0..self.fp.1]).unwrap_or("")
+        self.map
+            .get(self.fp.0..self.fp.1)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .unwrap_or("")
     }
 
     pub fn haystack(&self) -> &[u8] {
-        &self.map[self.hay.0..self.hay.1]
+        self.map.get(self.hay.0..self.hay.1).unwrap_or_default()
     }
 
     fn off(&self, table: usize, i: usize) -> usize {
-        u32_at(&self.map, self.offs + table * self.n * 4 + i * 4).unwrap_or(0) as usize
+        // `table` is 0 or 1 and `i` < n, so this stays below offs + 8n (checked in `layout`).
+        let at = table
+            .checked_mul(self.n)
+            .and_then(|t| t.checked_add(i))
+            .and_then(|k| k.checked_mul(4))
+            .and_then(|k| k.checked_add(self.offs));
+        at.and_then(|at| u32_at(&self.map, at))
+            .and_then(|v| usize::try_from(v).ok())
+            .unwrap_or(0)
     }
 
     /// Record index whose haystack line holds byte `pos`.
@@ -140,11 +178,11 @@ impl Segment {
         } else {
             h.len()
         };
-        &h[s..e.saturating_sub(1).max(s)]
+        h.get(s..e.saturating_sub(1).max(s)).unwrap_or_default()
     }
 
     pub fn record(&self, i: usize) -> Option<Record> {
-        let r = &self.map[self.recs.0..self.recs.1];
+        let r = self.map.get(self.recs.0..self.recs.1)?;
         let s = self.off(0, i);
         let e = if i + 1 < self.n {
             self.off(0, i + 1)
@@ -156,9 +194,13 @@ impl Segment {
 
     /// TSV name field of record `i`, without decoding the rest (completions).
     pub fn name(&self, i: usize) -> &str {
-        let r = &self.map[self.recs.0..self.recs.1];
-        let s = self.off(0, i);
-        let line = &r[s..];
+        let Some(line) = self
+            .map
+            .get(self.recs.0..self.recs.1)
+            .and_then(|r| r.get(self.off(0, i)..))
+        else {
+            return "";
+        };
         let mut f = line.splitn(4, |b| *b == b'\t');
         f.next();
         f.next();
@@ -183,6 +225,36 @@ mod tests {
             summary: format!("The {name} tool"),
             key: name.into(),
             votes: 0,
+        }
+    }
+
+    #[test]
+    fn crafted_headers_are_refused() {
+        let mut b = MAGIC.to_vec();
+        b.extend_from_slice(&u32::MAX.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&u64::MAX.to_le_bytes());
+        assert!(layout(&b).is_none());
+        let mut b = MAGIC.to_vec();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&0u64.to_le_bytes());
+        b.extend_from_slice(&(u64::MAX - 4).to_le_bytes());
+        assert!(layout(&b).is_none());
+        assert!(layout(b"").is_none());
+        // fuzz/regressions/wopkg_parsers/segment-offset-overflow: a record length that puts
+        // the next field at usize::MAX - 3.
+        let mut b = MAGIC.to_vec();
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&0u32.to_le_bytes());
+        b.extend_from_slice(&(u64::MAX - 27).to_le_bytes());
+        assert!(layout(&b).is_none());
+        assert!(u32_at(&b, usize::MAX - 1).is_none());
+        assert!(u64_at(&b, usize::MAX - 3).is_none());
+        let fuzz = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fuzz/regressions/wopkg_parsers/segment-offset-overflow");
+        if let Ok(bytes) = std::fs::read(fuzz) {
+            let _ = layout(&bytes);
         }
     }
 

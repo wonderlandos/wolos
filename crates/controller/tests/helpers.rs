@@ -450,13 +450,23 @@ fn script_admin_verbs_run_only_in_the_shell() {
         ..Default::default()
     };
     e.admin.lock().unwrap().replies = vec![AdminReply::Ok];
-    e.replies = vec![Answer::Done.line()];
+    // R2C-6: asked through wold (`session.approve`), which carries the shell's answer as data.
+    e.replies = vec![format!(
+        "{}\n",
+        serde_json::json!({"ok": true, "data": Answer::Done})
+    )];
     assert_eq!(run("wifi off", &mut e), 0, "{}", e.err);
     assert!(
         e.admin.lock().unwrap().sent.is_empty(),
         "the script never talks to wol-admind"
     );
-    assert!(String::from_utf8_lossy(&e.requests[0].1).contains(r#""action":"wifi","on":false"#));
+    assert_eq!(e.requests[0].0, std::path::Path::new(shared::jobs::SOCKET));
+    let sent = String::from_utf8_lossy(&e.requests[0].1);
+    assert!(
+        sent.starts_with("call {\"call\":\"session.approve\""),
+        "{sent}"
+    );
+    assert!(sent.contains(r#""action":"wifi","on":false"#));
 }
 
 #[test]

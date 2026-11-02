@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-xguard: the command behind `wol security scan`, the first-use guard and rule builds.
-//!   wol-xguard scan [--json] [--rules DIR] PATH...   exit 0 clean, 1 found, 2 incomplete, 3 error
+//!   wol-xguard scan [--json] [--stream] [--rules DIR] PATH...   exit 0 clean, 1 found, 2 incomplete, 3 error
 //!   wol-xguard guard [--state D] [--rules D] [--scope M]... [--downloads D]...  the first-use guard
 //!   wol-xguard check|allow PATH   ask the guard about a file; Open Anyway
 //!   wol-xguard sweep              the background pass
@@ -17,30 +17,69 @@ fn die(m: &str) -> ! {
     std::process::exit(3)
 }
 
-fn deep(dir: &Path) -> Option<Box<dyn xguard::Deep>> {
+/// The rule sets in `dir`. Err: a rules file is there but does not load (a sandbox that forbids
+/// making code, audit S4, or a damaged file): the scan must not then say "nothing found".
+fn deep(dir: &Path) -> Result<Option<Box<dyn xguard::Deep>>, ()> {
     #[cfg(feature = "yara")]
-    if let Some(y) = xguard::yara::Rules::open(&dir.join(xguard::yara::FILE)) {
-        return Some(Box::new(Box::leak(Box::new(y)).session()));
+    {
+        let file = dir.join(xguard::yara::FILE);
+        if let Some(y) = xguard::yara::Rules::open(&file) {
+            return Ok(Some(Box::new(Box::leak(Box::new(y)).session())));
+        }
+        if file.exists() {
+            eprintln!(
+                "wol-xguard: {}: the rule sets do not load; results are incomplete",
+                file.display()
+            );
+            return Err(());
+        }
     }
     let _ = dir;
-    None
+    Ok(None)
+}
+
+/// No rules file at all in `dir` (as opposed to one that does not load).
+fn deep_missing(dir: &Path) -> bool {
+    #[cfg(feature = "yara")]
+    return !dir.join(xguard::yara::FILE).exists();
+    #[cfg(not(feature = "yara"))]
+    {
+        let _ = dir;
+        true
+    }
+}
+
+/// The value of `--rules`: present, not another flag, an existing directory. A missing value
+/// must not swallow the next path, and a typo must not silently mean "no signatures".
+fn rules_arg(v: Option<&String>) -> PathBuf {
+    match v {
+        Some(d) if !d.starts_with('-') && Path::new(d).is_dir() => PathBuf::from(d),
+        Some(d) => die(&format!("--rules {d}: not a directory")),
+        None => die("--rules needs a directory"),
+    }
 }
 
 fn scan(args: &[String]) -> i32 {
     let (mut json, mut need_clam, mut dir, mut paths) = (false, false, None, Vec::new());
+    let mut stream = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
             // ClamAV must answer: without it the result is Incomplete, not clean.
             "--clamav" => need_clam = true,
-            "--rules" => dir = it.next().map(PathBuf::from),
+            // The guard's deep check of a file above its memory cap: pieces, never whole (R2C-4).
+            "--stream" => stream = true,
+            "--rules" => dir = Some(rules_arg(it.next())),
             p => paths.push(p.to_owned()),
         }
     }
     let dir = dir.unwrap_or_else(xguard::rules_dir);
     let e = Engine::open(&dir).unwrap_or_else(|m| die(&m));
-    let extra = deep(&dir);
+    let (extra, rules_ok) = match deep(&dir) {
+        Ok(d) => (d, true),
+        Err(()) => (None, false),
+    };
     let clam = xguard::clam::socket(
         std::env::var_os(xguard::clam::SOCKET_ENV).map(PathBuf::from),
         Path::new(xguard::clam::DB_DIR),
@@ -66,8 +105,21 @@ fn scan(args: &[String]) -> i32 {
                 continue;
             }
         };
-        let mut r: Report = xguard::scan_file(&e, &mut f, &p, extra.as_deref(), Limits::default())
-            .unwrap_or_else(|m| die(&format!("{p}: {m}")));
+        let scanned = if stream {
+            xguard::walk::scan_stream(&e, &mut f, &p, extra.as_deref())
+        } else {
+            xguard::scan_file(&e, &mut f, &p, extra.as_deref(), Limits::default())
+        };
+        let mut r: Report = scanned.unwrap_or_else(|m| die(&format!("{p}: {m}")));
+        if !rules_ok {
+            r.skipped.push(xguard::Skipped {
+                path: p.clone(),
+                why: xguard::guard::RULES_DID_NOT_LOAD.into(),
+            });
+            if r.verdict == Verdict::Clean {
+                r.verdict = Verdict::Incomplete;
+            }
+        }
         if let Some(s) = &clam {
             use std::io::Seek;
             let _ = f.rewind();
@@ -154,7 +206,7 @@ fn guard(args: &[String]) -> i32 {
     while let (Some(k), Some(v)) = (it.next(), it.next()) {
         match k.as_str() {
             "--state" => o.state = v.into(),
-            "--rules" => o.rules = v.into(),
+            "--rules" => o.rules = rules_arg(Some(v)),
             "--scope" => o.scope.push(v.into()),
             "--downloads" => o.downloads.push(v.into()),
             "--socket" => o.socket = v.into(),
@@ -180,6 +232,8 @@ fn ask(verb: &str, args: &[String]) -> i32 {
             println!("{}", r.name);
             1
         }
+        // The guard could not finish the check (see its log): like an incomplete scan.
+        Ok(r) if r.state == "unchecked" => 2,
         Ok(_) => 0,
         Err(_) if verb == "check" => scan(std::slice::from_ref(path)),
         Err(m) => die(&m.to_string()),
@@ -246,8 +300,12 @@ fn sweep(args: &[String]) -> i32 {
             return;
         }
         let name = p.to_string_lossy();
+        // Rule sets that do not load: the pass still hashes and matches, but the file is not
+        // remembered as deeply checked, so a later pass looks again (audit S4).
+        let mut rules_ok = true;
         let Ok(r) = DEEP.with(|c| {
-            let extra = c.get_or_init(|| deep(&dir));
+            let extra = c.get_or_init(|| deep(&dir).ok().flatten());
+            rules_ok = extra.is_some() || !cfg!(feature = "yara") || deep_missing(&dir);
             xguard::scan_file(&e, &mut f, &name, extra.as_deref(), Limits::default())
         }) else {
             return;
@@ -267,7 +325,7 @@ fn sweep(args: &[String]) -> i32 {
             xguard::store::Entry {
                 state,
                 rules,
-                deep: true,
+                deep: rules_ok,
                 sha,
             },
         );

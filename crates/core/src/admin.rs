@@ -165,10 +165,14 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
             && a[0] != "root"
             && users::is_valid_password(a[1])),
         AdminAction::TimeZone => ok(n == 1 && timezones::is_valid(a[0])),
-        AdminAction::PkgUpgrade
-        | AdminAction::PkgRefresh
+        // Audit S2: optional holds, the packages a full update leaves where they are (pins).
+        AdminAction::PkgUpgrade => {
+            ok(n <= shared::packages::MAX_NAMES && a.iter().all(|x| shared::packages::name_ok(x)))
+        }
+        AdminAction::PkgRefresh
         | AdminAction::Revoke
-        | AdminAction::AurOpen => ok(n == 0),
+        | AdminAction::AurOpen
+        | AdminAction::BootEnroll => ok(n == 0),
         AdminAction::PkgInstall => ok(n == 1 && crate::store::install_plan(a[0]).is_some()),
         AdminAction::PkgRemove => ok(n == 1 && crate::store::remove_plan(a[0]).is_some()),
         AdminAction::PowerMode => ok(n == 1 && power::policy::Mode::parse(a[0]).is_some()),
@@ -331,7 +335,12 @@ pub fn plan_with(
         AdminAction::TimeZone => vec![AdminStep::Run(timezones::set_argv(&a[0]))],
         AdminAction::PkgRefresh => vec![argv(&["pacman", "-Sy"])],
         // Inside the pinned release only `[wolos]` moves; a new release is a new root slot.
-        AdminAction::PkgUpgrade => vec![argv(&["pacman", "-Syu", "--noconfirm"])],
+        // Holds (validated package names) stay at their version: `--ignore=a,b`.
+        AdminAction::PkgUpgrade if a.is_empty() => vec![argv(&["pacman", "-Syu", "--noconfirm"])],
+        AdminAction::PkgUpgrade => {
+            let hold = format!("--ignore={}", a.join(","));
+            vec![argv(&["pacman", "-Syu", "--noconfirm", &hold])]
+        }
         // Revoke: the daemon handles it. Packages: verified and planned by the daemon itself.
         AdminAction::Revoke
         | AdminAction::AurOpen
@@ -355,6 +364,8 @@ pub fn plan_with(
             vec![AdminStep::Run(crate::update::be::activate_argv(&a[0]))]
         }
         AdminAction::HwLoad => vec![argv(&["modprobe", &a[0]])],
+        // Queues the key once (prints `enrolled` and changes nothing when it is already in db).
+        AdminAction::BootEnroll => vec![argv(&["wol", "boot", "enroll"])],
         AdminAction::Ntp => vec![argv(&[
             "timedatectl",
             "set-ntp",
@@ -509,11 +520,86 @@ pub fn user_level_ok(r: &AdminRequest, uid: u32, sessions: &[u32]) -> bool {
         && !(ends_sessions && sessions.iter().any(|s| *s != uid))
 }
 
-/// An unsigned `.wol` install is approved with the password every time (never the cache).
+/// When an administrator request may use the session's cached authorization ([`AuthCache`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fresh {
+    /// The session's recent password is enough.
+    Cached,
+    /// The password is typed for this request, every time.
+    Always,
+    /// Fresh only for an unsigned `.wol` (`<path> unsigned`).
+    WhenUnsigned,
+}
+
+/// The fresh-password matrix (audit A8/B9): every [`AdminAction`] has one row. Accounts, remote
+/// access, the firewall, app consent, Flatpak permissions, what boots next and Secure Boot keys
+/// are changes a borrowed unlocked session must not make without the password. An action missing
+/// here is treated as [`Fresh::Always`]; `every_action_is_classified` fails the build instead.
+pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
+    use AdminAction as A;
+    use Fresh::{Always, Cached, WhenUnsigned};
+    &[
+        (A::WifiJoin, Cached),
+        (A::WifiPower, Cached),
+        (A::Bluetooth, Cached),
+        (A::AudioDefault, Cached),
+        (A::Appearance, Cached),
+        (A::Keybinds, Cached),
+        (A::Idle, Cached),
+        (A::UserAdd, Always),
+        (A::UserRemove, Always),
+        (A::UserPassword, Always),
+        (A::TimeZone, Cached),
+        (A::PkgUpgrade, Cached),
+        (A::PkgRefresh, Cached),
+        (A::Revoke, Cached),
+        (A::PkgInstall, Cached),
+        (A::PkgRemove, Cached),
+        (A::AurOpen, Always),
+        (A::PowerMode, Cached),
+        (A::BootEnvironment, Always),
+        (A::HwLoad, Cached),
+        (A::WolInstall, WhenUnsigned),
+        (A::WolRemove, Cached),
+        (A::Ntp, Cached),
+        (A::Hostname, Cached),
+        (A::RemoteLogin, Always),
+        (A::AirPlayReceiver, Cached),
+        (A::Firewall, Always),
+        (A::MalwareSignatures, Cached),
+        (A::Lid, Cached),
+        (A::PrinterAdd, Cached),
+        (A::PrinterRemove, Cached),
+        (A::PrinterDefault, Cached),
+        (A::Consent, Always),
+        (A::BtPair, Cached),
+        (A::BtForget, Cached),
+        (A::WifiForget, Cached),
+        (A::SessionPower, Cached),
+        (A::FlatpakOverride, Always),
+        (A::FlatpakInstall, Cached),
+        (A::FlatpakRemove, Cached),
+        (A::AutoUpdate, Cached),
+        (A::BootEnroll, Always),
+    ]
+};
+
+/// The row of `a` in [`FRESH_PASSWORD`]; [`Fresh::Always`] when it has none.
+pub fn fresh_rule(a: AdminAction) -> Fresh {
+    FRESH_PASSWORD
+        .iter()
+        .find(|(x, _)| *x == a)
+        .map_or(Fresh::Always, |(_, f)| *f)
+}
+
+/// True when `r` must be approved with a password typed for it, never the cache
+/// ([`FRESH_PASSWORD`]).
 pub fn needs_fresh_password(r: &AdminRequest) -> bool {
-    r.action == AdminAction::AurOpen
-        || r.action == AdminAction::UserPassword
-        || r.action == AdminAction::WolInstall && r.args.get(1).is_some_and(|t| t == "unsigned")
+    match fresh_rule(r.action) {
+        Fresh::Cached => false,
+        Fresh::Always => true,
+        Fresh::WhenUnsigned => r.args.get(1).is_some_and(|t| t == "unsigned"),
+    }
 }
 
 /// Absolute `.wol` path without `..` or control characters.
@@ -733,6 +819,9 @@ mod tests {
             (TimeZone, &["-r"], false),
             (PkgUpgrade, &[], true),
             (PkgUpgrade, &["-f"], false),
+            (PkgUpgrade, &["firefox", "gimp"], true),
+            (PkgUpgrade, &["firefox", "--root=/x"], false),
+            (PkgUpgrade, &["a,b"], false),
             (PkgRefresh, &[], true),
             (PkgRefresh, &["x"], false),
             (Revoke, &[], true),
@@ -841,6 +930,11 @@ mod tests {
                 "timedatectl set-timezone Europe/Lisbon",
             ),
             (PkgUpgrade, &[], "pacman -Syu --noconfirm"),
+            (
+                PkgUpgrade,
+                &["firefox", "gimp"],
+                "pacman -Syu --noconfirm --ignore=firefox,gimp",
+            ),
             (PkgRefresh, &[], "pacman -Sy"),
             (
                 BootEnvironment,
@@ -878,12 +972,18 @@ mod tests {
             (Idle, &["60"], "write /etc/wolos/idle.json"),
             (Revoke, &[], ""),
             (HwLoad, &["i2c_hid_acpi"], "modprobe i2c_hid_acpi"),
+            (BootEnroll, &[], "wol boot enroll"),
         ];
         for (a, args, want) in cases {
             let steps = plan(&r(*a, args)).unwrap();
             assert_eq!(steps.iter().map(show).collect::<Vec<_>>().join("; "), *want);
         }
         assert!(plan(&r(PkgUpgrade, &["-f"])).is_err());
+        assert!(plan(&r(BootEnroll, &["--force"])).is_err());
+        assert!(
+            !is_user_level(BootEnroll),
+            "Secure Boot setup is an administrator's change"
+        );
     }
 
     fn shown(steps: &[AdminStep]) -> String {
@@ -1236,6 +1336,35 @@ mod tests {
             needs_fresh_password(&r(UserPassword, &["ann", "new-s3cret"])),
             "an open session alone never changes the password"
         );
+    }
+
+    #[test]
+    fn every_action_is_classified() {
+        for a in AdminAction::ALL {
+            let rows = FRESH_PASSWORD.iter().filter(|(x, _)| *x == a).count();
+            assert_eq!(rows, 1, "{a:?} needs exactly one row in FRESH_PASSWORD");
+        }
+        assert_eq!(FRESH_PASSWORD.len(), AdminAction::ALL.len());
+        for a in [
+            UserAdd,
+            UserRemove,
+            UserPassword,
+            RemoteLogin,
+            Firewall,
+            Consent,
+            FlatpakOverride,
+            BootEnvironment,
+            AurOpen,
+            BootEnroll,
+        ] {
+            assert_eq!(fresh_rule(a), Fresh::Always, "{a:?}");
+        }
+        assert!(!needs_fresh_password(&r(WolInstall, &["/a.wol", "signed"])));
+        assert!(needs_fresh_password(&r(
+            WolInstall,
+            &["/a.wol", "unsigned"]
+        )));
+        assert!(!needs_fresh_password(&r(PkgUpgrade, &[])));
     }
 
     #[test]

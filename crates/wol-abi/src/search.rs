@@ -26,7 +26,9 @@ pub type wol_search_fn = Option<
 pub type wol_search_open_fn =
     Option<unsafe extern "C" fn(*mut wol_search_provider, *const wol_string, UserData)>;
 
+#[repr(C)]
 pub struct wol_search_provider {
+    tag: crate::handle::Tag<wol_search_provider>,
     context: Arc<wol_context>,
     on_query: wol_search_fn,
     on_open: wol_search_open_fn,
@@ -34,13 +36,16 @@ pub struct wol_search_provider {
     _held: UnixStream,
 }
 
+#[repr(C)]
 pub struct wol_search_reply {
+    tag: crate::handle::Tag<wol_search_reply>,
     results: Mutex<Vec<SearchResult>>,
 }
 
 /// wold asks this provider.
 pub(crate) fn asked(p: &Arc<wol_search_provider>, id: u32, text: &str) {
     let reply = wol_search_reply {
+        tag: crate::handle::Tag::new(),
         results: Mutex::default(),
     };
     if let Some(f) = p.on_query {
@@ -116,6 +121,7 @@ pub unsafe extern "C" fn wol_search_provide(
         context.ensure_bus()?;
         let held = client::hold(context.wold(), &Call::SearchProvide {})?;
         let p = Arc::new(wol_search_provider {
+            tag: crate::handle::Tag::new(),
             context: context.clone(),
             on_query,
             on_open,
@@ -143,8 +149,8 @@ pub unsafe extern "C" fn wol_search_reply_add(
     error: *mut *mut wol_error,
 ) -> wol_status {
     guard(error, || {
-        let r =
-            unsafe { reply.as_ref() }.ok_or_else(|| Error::invalid("reply must not be NULL."))?;
+        let r = unsafe { crate::handle::live(reply) }
+            .ok_or_else(|| Error::invalid("reply must not be NULL."))?;
         let row = SearchResult {
             key: input(key, key_len, MAX_RESULT_KEY, "The key")?.to_owned(),
             title: input(title, title_len, MAX_TITLE, "The title")?.to_owned(),
@@ -177,3 +183,7 @@ pub unsafe extern "C" fn wol_search_provider_retain(
 pub unsafe extern "C" fn wol_search_provider_release(provider: *mut wol_search_provider) {
     unsafe { release(provider) }
 }
+
+crate::handle::tagged!(wol_search_provider, 0x7665d2c07ad85d52);
+
+crate::handle::tagged!(wol_search_reply, 0x5367867706ebbac5);

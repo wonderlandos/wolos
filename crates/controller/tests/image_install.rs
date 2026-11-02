@@ -31,13 +31,22 @@ fn scratch(name: &str) -> PathBuf {
     d
 }
 
+/// The read-only `wol install` verbs scripts take disk facts from run for real in every fake
+/// `wol` (audit3 R2B-16/19): install-check and install-run parse no lsblk output themselves.
+const REAL_WOL: &str = "case \"$*\" in \"install facts\"* | \"install mounts\"* | \"install hostname\"*) exec @WOL@ \"$@\" ;; esac";
+
 fn fake(d: &Path, name: &str, body: &str) {
     let p = d.join("bin").join(name);
     let log = d.join("log");
+    let real = if name == "wol" {
+        REAL_WOL.replace("@WOL@", env!("CARGO_BIN_EXE_wol")) + "\n"
+    } else {
+        String::new()
+    };
     fs::write(
         &p,
         format!(
-            "#!/bin/sh\necho \"{name} $*\" >> {}\n{body}\n",
+            "#!/bin/sh\necho \"{name} $*\" >> {}\n{real}{body}\n",
             log.display()
         ),
     )
@@ -58,21 +67,45 @@ const LSBLK: &str = "/dev/nvme0n1 512110190592 disk 0\n/dev/sda 1000204886016 di
 /dev/sdb 32010928128 disk 0\n/dev/loop0 900000000 loop 1\n/dev/sr0 1000000 rom 0\n\
 /dev/zram0 8000000000 disk 0\n/dev/sdc 64000000000 disk 1\n";
 
+/// `lsblk --json` for one disk, as `wol install facts|mounts` asks: its size from [`LSBLK`], one
+/// partition per line of `$WOLOS_TEST_PARTS` (`<type> [<fstype>]`), one mounted volume per line
+/// of `$WOLOS_TEST_MOUNTS` (`[SWAP]` for a swap partition).
+const LSBLK_JSON: &str = r#"*--json*) for a; do l=$a; done
+  z=$(printf '@LSBLK@' | while read -r n s _; do [ "$n" = "$l" ] && echo "$s"; done)
+  printf '{"blockdevices":[{"path":"%s","size":%s,"children":[' "$l" "${z:-0}"
+  i=0
+  if [ -f "$WOLOS_TEST_PARTS" ]; then
+    while read -r t f; do
+      i=$((i + 1)); [ "$i" = 1 ] || printf ,
+      printf '{"path":"%sp%s","parttype":"%s","fstype":"%s","mountpoints":[null]}' "$l" "$i" "$t" "$f"
+    done < "$WOLOS_TEST_PARTS"
+  fi
+  if [ -f "$WOLOS_TEST_MOUNTS" ]; then
+    while read -r m; do
+      i=$((i + 1)); [ "$i" = 1 ] || printf ,
+      printf '{"path":"%sp%s","fstype":"ext4","mountpoints":["%s"]}' "$l" "$i" "$m"
+    done < "$WOLOS_TEST_MOUNTS"
+  fi
+  printf ']}]}\n' ;;"#;
+
 fn disks_fakes(d: &Path) {
     fake(
         d,
         "lsblk",
         &format!(
-            "case \"$*\" in\n*-dnpbo*) printf '{}' ;;\n*PKNAME*) echo /dev/sdb ;;\n\
-             *PARTTYPE*) cat \"$WOLOS_TEST_PARTS\" 2>/dev/null ;;\nesac",
+            "case \"$*\" in\n{}\n*-dnpbo*) printf '{}' ;;\n*PKNAME*) echo /dev/sdb ;;\n*PARTN*) echo 1 ;;\nesac",
+            LSBLK_JSON.replace("@LSBLK@", &LSBLK.replace('\n', "\\n")),
             LSBLK.replace('\n', "\\n")
         ),
     );
     fake(
         d,
         "findmnt",
-        "case \"$*\" in\n*bootmnt*) echo /dev/sdb1 ;;\n*SOURCE*) cat \"$WOLOS_TEST_MOUNTS\" 2>/dev/null ;;\nesac",
+        "case \"$*\" in\n*bootmnt*) echo /dev/sdb1 ;;\nesac",
     );
+    // The live kernel command line: no archisolabel, so the label lookup finds nothing.
+    fs::write(d.join("cmdline"), "quiet\n").unwrap();
+    fs::create_dir_all(d.join("efivars")).unwrap();
 }
 
 #[test]
@@ -82,12 +115,37 @@ fn boot_medium_loop_cd_zram_and_read_only_disks_are_never_targets() {
     let o = Command::new("sh")
         .arg(lib("install-disks"))
         .env("PATH", path(&d))
+        .env("WOLOS_CMDLINE", d.join("cmdline"))
         .output()
         .unwrap();
     assert!(o.status.success());
     assert_eq!(
         String::from_utf8_lossy(&o.stdout),
         "/dev/nvme0n1\n/dev/sda\n"
+    );
+    // A disk the ISO's label names (a persistent live USB) or one with the live system on it is
+    // the medium too, whatever bootmnt says.
+    fs::write(d.join("cmdline"), "archisolabel=WOLOS_X quiet\n").unwrap();
+    fake(&d, "blkid", "case \"$*\" in *-L*) echo /dev/sda3 ;; esac");
+    fake(
+        &d,
+        "lsblk",
+        &format!(
+            "case \"$*\" in\n*-dnpbo*) printf '{}' ;;\n*PKNAME*sda3*) echo /dev/sda ;;\n*PKNAME*) echo /dev/sdb ;;\n\
+             *MOUNTPOINTS*nvme0n1*) echo /run/archiso/cowspace ;;\nesac",
+            LSBLK.replace('\n', "\\n")
+        ),
+    );
+    let o = Command::new("sh")
+        .arg(lib("install-disks"))
+        .env("PATH", path(&d))
+        .env("WOLOS_CMDLINE", d.join("cmdline"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout),
+        "",
+        "nothing left to erase"
     );
 }
 
@@ -99,6 +157,7 @@ fn check(d: &Path, disk: &str) -> (Option<i32>, String) {
         .env("WOLOS_TEST_PARTS", d.join("parts"))
         .env("WOLOS_TEST_MOUNTS", d.join("mounts"))
         .env("WOLOS_EFIVARS", d.join("efivars"))
+        .env("WOLOS_CMDLINE", d.join("cmdline"))
         .output()
         .unwrap();
     (
@@ -112,14 +171,14 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
     let d = scratch("check");
     disks_fakes(&d);
     fake(&d, "wol", "echo firmware");
-    // Windows (Microsoft basic data + reserved) and Linux partitions on the big disk.
+    // Windows (Microsoft basic data + reserved) and a locked Linux volume (LUKS on a basic data
+    // partition: some Linux's, not unknown) on the big disk.
     fs::write(
         d.join("parts"),
         "e3c9e316-0b5c-4db8-817d-f92df00215ae\nebd0a0a2-b9e5-4433-87c0-68b6b72699c7 ntfs\n\
-         0fc63daf-8483-4772-8e79-3d69d8477de4 ext4\n",
+         ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 crypto_LUKS\n",
     )
     .unwrap();
-    fs::create_dir_all(d.join("efivars")).unwrap();
     fs::write(
         d.join("efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"),
         [6u8, 0, 0, 0, 1],
@@ -129,8 +188,24 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
     assert_eq!(code, Some(0), "{out}");
     assert_eq!(
         out,
-        "size 1000204886016\nos Windows\nos Linux\nboot firmware\n"
+        "size 1000204886016\nos Windows\nos Linux\nbitlocker no\nboot firmware\n"
     );
+    // BitLocker named (audit3 R2B-9): its recovery key is asked for after a key change.
+    fs::write(
+        d.join("parts"),
+        "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 BitLocker\n",
+    )
+    .unwrap();
+    assert_eq!(
+        check(&d, "/dev/sda").1,
+        "size 1000204886016\nos Windows\nbitlocker yes\nboot firmware\n"
+    );
+    fs::write(
+        d.join("parts"),
+        "e3c9e316-0b5c-4db8-817d-f92df00215ae\nebd0a0a2-b9e5-4433-87c0-68b6b72699c7 ntfs\n\
+         ebd0a0a2-b9e5-4433-87c0-68b6b72699c7 crypto_LUKS\n",
+    )
+    .unwrap();
     assert_eq!(
         check(&d, "/dev/sdb").1,
         "refuse not-listed\n",
@@ -138,8 +213,15 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
     );
     assert_eq!(check(&d, "/dev/sdx").1, "refuse not-listed\n");
     assert_eq!(check(&d, "").0, Some(2));
-    // A mounted partition of the disk (opened in Files): refused until install-run lets it go.
-    fs::write(d.join("mounts"), "/dev/sda2\n").unwrap();
+    // Started without UEFI: the installed system could never boot here.
+    fs::remove_dir_all(d.join("efivars")).unwrap();
+    let (code, out) = check(&d, "/dev/sda");
+    assert_eq!(code, Some(2));
+    assert!(out.ends_with("refuse bios\n"), "{out}");
+    fs::create_dir_all(d.join("efivars")).unwrap();
+    // Anything mounted from the disk (a partition opened in Files, a btrfs subvolume, an opened
+    // encrypted volume: lsblk lists them all): refused until install-run lets it go.
+    fs::write(d.join("mounts"), "/run/media/live/usb\n").unwrap();
     let (code, out) = check(&d, "/dev/sda");
     assert_eq!(code, Some(2));
     assert!(out.ends_with("refuse in-use\n"), "{out}");
@@ -173,6 +255,7 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         ("udevadm", ""),
         ("mount", ""),
         ("umount", ""),
+        ("swapoff", ""),
         ("btrfs", ""),
         ("sync", ""),
         ("cryptsetup", ""),
@@ -180,9 +263,15 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
             "wol",
             "case \"$*\" in\n\"encrypt decide\"*) [ \"$WOLOS_TEST_UNLOCK\" = refuse ] && exit 1; echo ${WOLOS_TEST_UNLOCK:-off} ;;\n\
              \"encrypt words\"*) echo \"rd.luks.name=$3=wolosroot root=/dev/mapper/wolosroot\" ;;\n\
+             \"encrypt enroll\"*) [ -z \"$6\" ] || cat \"$6\" > \"$WOLOS_KEYDIR/../pass-seen\" ;;\n\
              \"boot detect\"*) echo off ;;\n\"boot key-screen\"*) echo no ;;\n\"boot note\"*) echo note ;;\nesac",
         ),
         ("userdel", ""),
+        // Offline unless the test leaves a default route next to the fakes.
+        (
+            "ip",
+            "case \"$*\" in *-4*) cat \"${0%/bin/ip}/route\" 2>/dev/null ;; esac",
+        ),
         (
             "bootctl",
             "mkdir -p \"${2#--esp-path=}/EFI/systemd\" \"${2#--esp-path=}/EFI/BOOT\"",
@@ -211,8 +300,12 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
     ] {
         fake(d, n, body);
     }
-    Command::new("sh")
-        .arg(lib("install-run"))
+    let mut c = Command::new("sh");
+    // A passphrase file next to the fakes is the autoinstall's wolos.passphrase= file.
+    if d.join("passphrase").exists() {
+        c.env("WOLOS_PASSPHRASE_FILE", d.join("passphrase"));
+    }
+    c.arg(lib("install-run"))
         .arg(disk)
         .env("WOLOS_INSTALL_PATH", path(d))
         .env("WOLOS_INSTALL_ROOT", &t)
@@ -227,6 +320,8 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         .env("WOLOS_TPM_DIR", d.join("no-tpm"))
         .env("WOLOS_BOOT_NOTE", d.join("note"))
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
+        .env("WOLOS_INSTALL_LOG", d.join("install.log"))
+        .env("WOLOS_RESULT_DIR", d.join("results"))
         .output()
         .unwrap()
 }
@@ -245,10 +340,12 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     let l = log(&d);
     // Only the picked disk and its partitions are ever named (read-only queries may name the
     // boot medium to leave it out).
-    for line in l
-        .lines()
-        .filter(|x| !x.starts_with("lsblk ") && !x.starts_with("findmnt "))
-    {
+    for line in l.lines().filter(|x| {
+        !x.starts_with("lsblk ")
+            && !x.starts_with("findmnt ")
+            && !x.starts_with("wol install facts ")
+            && !x.starts_with("wol install mounts ")
+    }) {
         for other in ["/dev/sda", "/dev/sdb", "/dev/sdc"] {
             assert!(!line.contains(other), "touched {other}: {line}");
         }
@@ -370,34 +467,131 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
         "the image carries the digest"
     );
     assert_eq!(fs::read_to_string(d.join("note")).unwrap().trim(), "note");
-    // Progress for the app, one line per step, ending in done.
-    let stages: Vec<&str> = out
+    // Progress for the app, one line per step with its percent, ending in done.
+    let stages: Vec<(&str, &str)> = out
         .lines()
         .filter_map(|x| x.strip_prefix("wolos-install: "))
-        .map(|x| x.split(' ').next().unwrap())
+        .map(|x| {
+            let mut w = x.split(' ');
+            (w.next().unwrap(), w.next().unwrap())
+        })
         .collect();
     assert_eq!(
         stages,
         [
-            "prepare", "disk", "files", "boot", "settings", "finish", "done"
+            ("prepare", "0"),
+            ("disk", "5"),
+            ("files", "15"),
+            ("keys", "40"),
+            ("initramfs", "70"),
+            ("settings", "90"),
+            ("seal", "92"),
+            ("boot", "95"),
+            ("done", "100"),
         ],
         "{out}"
+    );
+    // Nothing a tool says reaches stdout; the log keeps it, and the system keeps the log.
+    assert!(
+        out.lines().all(|x| x.starts_with("wolos-install: ")),
+        "{out}"
+    );
+    let installed_log = fs::read_to_string(t.join("var/log/wolos-install.log")).unwrap();
+    assert!(
+        installed_log.contains("wolos-install: files 15"),
+        "{installed_log}"
+    );
+    // The ESP's device goes to boot-setup, which asks it for the partition number.
+    assert!(l.contains("lsblk -no PARTN /dev/nvme0n1p1"), "{l}");
+    // Defaults without a plan: host name wolos, zram swap, no auto-login.
+    assert_eq!(
+        fs::read_to_string(t.join("etc/hostname")).unwrap(),
+        "wolos\n"
+    );
+    assert!(!t.join("etc/systemd/zram-generator.conf").exists());
+    assert!(!t.join("etc/wolos/login.json").exists());
+    assert!(
+        !l.contains("wol mirror gate") && !l.contains("pacman -Sy"),
+        "offline: no mirror step to wait for: {l}"
+    );
+}
+
+/// A stop says which stage and carries the tool's own words, and the log stays where the app
+/// (or the person) can find it.
+#[test]
+fn a_stop_names_the_stage_and_the_real_error() {
+    let d = scratch("stop");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    fake(
+        &d,
+        "unsquashfs",
+        "echo 'FATAL ERROR: write failed: No space left on device' >&2; exit 1",
+    );
+    let t = d.join("target");
+    let _ = fs::remove_dir_all(&t);
+    fs::create_dir_all(&t).unwrap();
+    let _ = fs::remove_file(d.join("log"));
+    let o = Command::new("sh")
+        .arg(lib("install-run"))
+        .arg("/dev/nvme0n1")
+        .env("WOLOS_INSTALL_PATH", path(&d))
+        .env("WOLOS_INSTALL_ROOT", &t)
+        .env("WOLOS_SOURCE_SFS", d.join("airootfs.sfs"))
+        .env("WOLOS_TEST_PARTS", d.join("parts"))
+        .env("WOLOS_TEST_MOUNTS", d.join("mounts"))
+        .env("WOLOS_EFIVARS", d.join("efivars"))
+        .env("WOLOS_NO_INHIBIT", "1")
+        .env("WOLOS_KEYDIR", d.join("keys"))
+        .env("WOLOS_SB_RUN", d.join("sbrun"))
+        .env("WOLOS_TPM_DIR", d.join("no-tpm"))
+        .env("WOLOS_BOOT_NOTE", d.join("note"))
+        .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
+        .env("WOLOS_INSTALL_LOG", d.join("install.log"))
+        .env("WOLOS_RESULT_DIR", d.join("results"))
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let last = out.lines().last().unwrap();
+    assert!(
+        last.starts_with("wolos-install: fail files could not copy the system: "),
+        "{out}"
+    );
+    assert!(last.contains("No space left on device"), "{last}");
+    assert!(!last.contains('|'), "one line, no pipes: {last}");
+    assert!(
+        fs::read_to_string(d.join("install.log"))
+            .unwrap()
+            .contains("No space left on device")
+    );
+    assert!(
+        !log(&d).contains("mkinitcpio"),
+        "nothing runs after the stop"
     );
 }
 
 /// A plan with the fake `wol` answering as the real one does.
 fn install_plan(d: &Path, wol: &str) -> (Output, PathBuf) {
+    install_plan_on(d, wol, |_| {})
+}
+
+/// [`install_plan`], with `prep` run on the target and the plan folder just before install-run
+/// (what an earlier system left on the reused startup partition, what sits next to the plan).
+fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, PathBuf) {
     install_with(d, "/dev/nvme0n1", "off");
     let t = d.join("target");
     let _ = fs::remove_dir_all(&t);
     fs::create_dir_all(&t).unwrap();
     let _ = fs::remove_file(d.join("log"));
+    let _ = fs::remove_dir_all(d.join("results"));
     fake(d, "wol", wol);
     fake(d, "chown", "");
     let dir = d.join("plan");
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("plan.json"), "{}").unwrap();
     fs::write(dir.join("account-password"), "pw\n").unwrap();
+    prep(d);
     let o = Command::new("sh")
         .arg(lib("install-run"))
         .arg("--plan")
@@ -414,6 +608,7 @@ fn install_plan(d: &Path, wol: &str) -> (Output, PathBuf) {
         .env("WOLOS_TPM_DIR", d.join("no-tpm"))
         .env("WOLOS_BOOT_NOTE", d.join("note"))
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
+        .env("WOLOS_RESULT_DIR", d.join("results"))
         .output()
         .unwrap();
     (o, t)
@@ -424,14 +619,14 @@ const WOL_ALONGSIDE: &str = "case \"$*\" in\n\
 \"encrypt decide\"*) echo off ;;\n\
 \"boot detect\"*) echo off ;;\n\
 \"boot key-screen\"*) echo no ;;\n\
-\"install layout\"*) printf \"esp=/dev/nvme0n1p5\\nroot=/dev/nvme0n1p6\\nfsdev=/dev/nvme0n1p6\\nslots=two\\nothers=1\\nhome_dev=/dev/nvme0n1p3\\nextra_fstab='UUID=H /home ext4 defaults 0 2'\\n\" ;;\n\
+\"install layout\"*) printf \"esp=/dev/nvme0n1p5\\nroot=/dev/nvme0n1p6\\nfsdev=/dev/nvme0n1p6\\nslots=two\\nothers=1\\nesp_reused=1\\nhome_dev=/dev/nvme0n1p3\\nextra_fstab=UUID=H /home ext4 defaults 0 2\\n\" ;;\n\
 esac";
 
 const WOL_TPM_PLAN: &str = "case \"$*\" in\n\
-\"install info\"*) printf \"disk=/dev/nvme0n1\\nwipe=1\\nWOLOS_ENCRYPT=yes\\naccount='ann'\\n\" ;;\n\
+\"install info\"*) printf \"disk=/dev/nvme0n1\\nwipe=1\\nWOLOS_ENCRYPT=yes\\naccount=ann\\nWOLOS_HOSTNAME=anns-pc\\nWOLOS_AUTOLOGIN=yes\\nWOLOS_SWAP=swapfile:4\\n\" ;;\n\
 \"encrypt decide\"*) echo tpm2 ;;\n\
 \"encrypt words\"*) echo \"rd.luks.name=$3=wolosroot root=/dev/mapper/wolosroot\" ;;\n\
-\"encrypt enroll\"*) cat \"$6\" > \"$WOLOS_KEYDIR/../fallback-seen\" ;;\n\
+\"encrypt enroll\"*) cat \"$6\" > \"$WOLOS_KEYDIR/../fallback-seen\"; echo KEY-1 > \"$WOLOS_RECOVERY_OUT\" ;;\n\
 \"boot detect\"*) echo off ;;\n\
 \"boot key-screen\"*) echo no ;;\n\
 \"boot note\"*) echo note ;;\n\
@@ -455,8 +650,8 @@ fn a_tpm_disk_gets_the_account_password_as_its_fallback() {
         .find(|x| x.starts_with("wol encrypt enroll "))
         .unwrap();
     assert!(
-        enroll.contains(" tpm2 ") && enroll.ends_with("/fallback"),
-        "{enroll}"
+        enroll.contains(" tpm2 ") && enroll.ends_with("/plan/account-password"),
+        "the app's file, read as typed by wol (encrypt::typed_secret): {enroll}"
     );
     assert!(
         !l.split_whitespace().any(|w| w == "pw"),
@@ -464,14 +659,83 @@ fn a_tpm_disk_gets_the_account_password_as_its_fallback() {
     );
     assert_eq!(
         fs::read_to_string(d.join("fallback-seen")).unwrap(),
-        "pw",
-        "what the person types: no newline"
+        "pw\n",
+        "install-run passes the file through; the one reading of it is wol's"
     );
     assert_eq!(
         fs::read_to_string(t.join("var/lib/wolos/disk-unlock-user")).unwrap(),
         "ann\n"
     );
     assert!(!d.join("keys").exists(), "the copy goes with the keys");
+    // The plan's other choices: host name, auto-login for the account, a swap file instead of zram.
+    assert_eq!(
+        fs::read_to_string(t.join("etc/hostname")).unwrap(),
+        "anns-pc\n"
+    );
+    assert_eq!(
+        fs::read_to_string(t.join("etc/wolos/login.json")).unwrap(),
+        "{\"autologin\":\"ann\"}\n"
+    );
+    assert!(
+        l.contains(&format!(
+            "btrfs filesystem mkswapfile --size 4g {}/var/swap/swapfile",
+            t.display()
+        )),
+        "a btrfs swap file is made without copy-on-write: {l}"
+    );
+    let fstab = fs::read_to_string(t.join("etc/fstab")).unwrap();
+    assert!(
+        fstab.contains("/var/swap/swapfile none swap defaults 0 0"),
+        "{fstab}"
+    );
+    assert!(
+        fs::read_to_string(t.join("etc/systemd/zram-generator.conf"))
+            .unwrap()
+            .starts_with('#'),
+        "zram off when a swap file was chosen"
+    );
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let (keys, encrypt) = (
+        out.find("wolos-install: keys 40").unwrap(),
+        out.find("wolos-install: encrypt 45").unwrap(),
+    );
+    assert!(
+        keys < encrypt,
+        "the keys come before the disk unlock: {out}"
+    );
+}
+
+/// A plan the check refuses (a settings value, a reserved account name, a weak password) stops
+/// before the erase, with the reason.
+#[test]
+fn a_plan_the_check_refuses_writes_nothing() {
+    let d = scratch("plan-refused");
+    let wol = WOL_ALONGSIDE.replace(
+        "esac",
+        "\"install check\"*) echo refuse ReservedName; exit 2 ;;\nesac",
+    );
+    let (o, _) = install_plan(&d, &wol);
+    assert_eq!(o.status.code(), Some(2));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        out.contains("wolos-install: fail prepare the disk is not what the plan was made for (refuse ReservedName)"),
+        "{out}"
+    );
+    let l = log(&d);
+    assert!(
+        !l.contains("install layout") && !l.contains("unsquashfs"),
+        "{l}"
+    );
+    assert!(
+        !d.join("plan/install.log").exists(),
+        "nothing is written into the caller's folder"
+    );
+    assert!(
+        fs::read_to_string(d.join("results/log"))
+            .unwrap()
+            .contains("refuse ReservedName"),
+        "the log is in the results folder"
+    );
 }
 
 #[test]
@@ -493,6 +757,11 @@ fn a_plan_keeps_its_hands_off_the_disk_layout_and_the_kept_home() {
     );
     // The kept /home is mounted only after everything that could write there, before the account.
     assert!(at("mount /dev/nvme0n1p3") > at("wol install settings"));
+    // The keymap is in the initramfs the disk password is typed in (audit2 B1).
+    assert!(
+        at("wol install settings") < at("mkinitcpio -P"),
+        "vconsole.conf before the initramfs: {l}"
+    );
     assert!(at("mount /dev/nvme0n1p3") < at("wol install account"));
     assert!(
         !l.contains("subvol=@home"),
@@ -512,16 +781,140 @@ fn a_plan_keeps_its_hands_off_the_disk_layout_and_the_kept_home() {
     );
 }
 
+/// audit2 B1: `mkinitcpio -P` baked the live default keymap (us) into the initramfs because the
+/// plan's settings (etc/vconsole.conf) were written only at 90 %: a German or French disk
+/// password could never be typed at the start prompt.
+#[test]
+fn the_keyboard_is_set_before_the_initramfs_is_built() {
+    let run = read("files/usr/lib/wolos/install-run");
+    let at = |w: &str| {
+        run.lines()
+            .position(|x| x.trim_start().starts_with(w))
+            .unwrap_or_else(|| panic!("{w} not in install-run"))
+    };
+    assert!(at("wol install settings") < at("arch-chroot \"$T\" mkinitcpio -P"));
+    assert!(at("arch-chroot \"$T\" mkinitcpio -P") < at("wol install account"));
+    assert_eq!(
+        run.matches("wol install settings").count(),
+        1,
+        "written once, before the initramfs"
+    );
+}
+
+/// audit2 B4: `echo 'white rabbit' > passphrase` made the LUKS key "white rabbit\n", which no
+/// one can type at the prompt. What reaches the disk is the passphrase without the line end.
+#[test]
+fn a_passphrase_file_ending_in_a_newline_opens_the_disk_with_what_is_typed() {
+    for (name, file) in [("lf", "white rabbit\n"), ("crlf", "white rabbit\r\n")] {
+        let d = scratch(&format!("pass-{name}"));
+        fs::write(d.join("passphrase"), file).unwrap();
+        let o = install_with(&d, "/dev/nvme0n1", "passphrase");
+        assert!(
+            o.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        );
+        // install-run passes the file through; `wol encrypt enroll` reads it as typed
+        // (tests/install_secret.rs: what reaches the disk is "white rabbit").
+        assert_eq!(
+            fs::read_to_string(d.join("pass-seen")).unwrap(),
+            file,
+            "{name}"
+        );
+        let enroll = log(&d)
+            .lines()
+            .find(|x| x.starts_with("wol encrypt enroll "))
+            .unwrap()
+            .to_owned();
+        assert!(enroll.ends_with("/passphrase"), "{enroll}");
+        assert!(!d.join("keys").exists(), "the copy goes with the keys");
+        assert_eq!(
+            fs::read_to_string(d.join("passphrase")).unwrap(),
+            file,
+            "untouched"
+        );
+    }
+}
+
+/// audit2 B5: Erase Disk on a disk with Windows kept the 3-second menu for a system that is gone.
+#[test]
+fn an_erased_disk_shows_no_menu_for_the_systems_it_had() {
+    let d = scratch("erase-windows");
+    fs::write(
+        d.join("parts"),
+        "e3c9e316-0b5c-4db8-817d-f92df00215ae\nebd0a0a2-b9e5-4433-87c0-68b6b72699c7 ntfs\n",
+    )
+    .unwrap();
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    let loader = fs::read_to_string(d.join("target/efi/loader/loader.conf")).unwrap();
+    assert!(loader.contains("timeout 0"), "{loader}");
+}
+
+/// audit2 B11: the online kernel swap was `timeout 600 pacman -S`: a slow mirror killed it halfway,
+/// leaving pacman's lock (and half a kernel) sealed into the slot. Now only the download is bounded;
+/// a download cut short leaves no lock and the install goes on with the image's kernel.
+#[test]
+fn a_kernel_download_cut_short_leaves_no_lock_in_the_slot() {
+    let d = scratch("v3-timeout");
+    let t = d.join("target");
+    fs::write(d.join("route"), "default via 10.0.2.2 dev eth0\n").unwrap();
+    // Every bounded step "times out" the way timeout(1) does, after pacman took its lock.
+    fake(
+        &d,
+        "timeout",
+        "case \"$*\" in\n*'mirror kernel'*) echo linux-wolos-v3 ;;\n\
+         *pacman*) mkdir -p \"$WOLOS_INSTALL_ROOT/usr/lib/pacman\"; : > \"$WOLOS_INSTALL_ROOT/usr/lib/pacman/db.lck\"; exit 124 ;;\n\
+         *) exit 124 ;;\nesac",
+    );
+    let o = install_with(&d, "/dev/nvme0n1", "off");
+    let l = log(&d);
+    assert!(
+        o.status.success(),
+        "{}{l}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    assert!(l.contains("pacman -Sw --noconfirm linux-wolos-v3"), "{l}");
+    assert!(
+        !l.contains("pacman -S --noconfirm linux-wolos-v3"),
+        "no swap without the whole download: {l}"
+    );
+    assert!(
+        !t.join("usr/lib/pacman/db.lck").exists(),
+        "the lock is gone"
+    );
+    // Downloaded in full: the swap itself runs to the end, without a timeout.
+    let _ = fs::remove_dir_all(&t);
+    fs::create_dir_all(&t).unwrap();
+    let _ = fs::remove_file(d.join("log"));
+    fake(
+        &d,
+        "timeout",
+        "case \"$*\" in\n*'mirror kernel'*) echo linux-wolos-v3 ;;\n*) exit 0 ;;\nesac",
+    );
+    let o = install_with(&d, "/dev/nvme0n1", "off");
+    let l = log(&d);
+    assert!(o.status.success(), "{l}");
+    assert!(
+        l.lines().any(|x| x.starts_with("arch-chroot ")
+            && x.ends_with("pacman -S --noconfirm linux-wolos-v3")),
+        "{l}"
+    );
+    assert!(
+        !l.lines()
+            .any(|x| x.starts_with("timeout ") && x.contains("pacman -S --noconfirm")),
+        "the transaction is never killed: {l}"
+    );
+}
+
 #[test]
 fn a_layout_that_can_not_keep_two_copies_says_so_on_disk() {
     let d = scratch("plan-one");
     let wol = WOL_ALONGSIDE
         .replace("slots=two", "slots=one")
         .replace("home_dev=/dev/nvme0n1p3", "home_dev=")
-        .replace(
-            "extra_fstab='UUID=H /home ext4 defaults 0 2'",
-            "extra_fstab=",
-        );
+        .replace("extra_fstab=UUID=H /home ext4 defaults 0 2", "extra_fstab=");
     let (o, t) = install_plan(&d, &wol);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let l = log(&d);
@@ -606,7 +999,7 @@ fn a_refused_disk_is_left_exactly_as_it_was() {
     let d = scratch("refused");
     let o = install(&d, "/dev/sdb");
     assert_eq!(o.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&o.stdout).contains("wolos-install: failed 0 not a disk"));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("wolos-install: fail prepare not a disk"));
     let l = log(&d);
     for w in ["systemd-repart", "mkfs", "btrfs", "unsquashfs", "bootctl"] {
         assert!(!l.contains(w), "{w} ran on a refused disk: {l}");
@@ -727,6 +1120,8 @@ fn a_boot_that_reaches_the_login_window_blesses_the_slot() {
     for want in [
         "Requires=wold.service",
         "After=wold.service",
+        // audit3 R2B-8: bless after the key screen's unit rewrote the same entries.
+        "After=wolos-mok-enroll.service",
         "Before=boot-complete.target",
         "RequiredBy=boot-complete.target",
     ] {
@@ -777,6 +1172,7 @@ fn encrypted_install_unlocks_through_the_initramfs() {
         "{cmdline}"
     );
     assert!(!d.join("keys").exists(), "the throw-away key is removed");
+    assert!(out.contains("wolos-install: encrypt 45 "), "{out}");
     let crypt = read("files/usr/lib/wolos/repart.d-crypt/20-root.conf");
     // The slot is sealed: a machine id written at first boot would never reach the disk.
     assert!(!read("files/usr/lib/wolos/install-run").contains("uninitialized"));
@@ -800,5 +1196,287 @@ fn encryption_that_cannot_be_set_up_stops_before_any_write() {
     assert!(
         !l.contains("systemd-repart") && !l.contains("cryptsetup"),
         "{l}"
+    );
+}
+
+/// audit3 R2B-1: install-run is a root helper the live user starts with sudo; it must never
+/// create, replace or change the owner of anything in the plan's folder, which that user owns.
+/// The log and the recovery key go to a folder it makes itself; `install-check --result` hands
+/// them out, the key once.
+#[test]
+fn results_land_in_a_folder_the_installer_made_never_next_to_the_plan() {
+    let d = scratch("results");
+    fs::create_dir_all(d.join("elsewhere")).unwrap();
+    fs::write(d.join("elsewhere/precious"), "keep\n").unwrap();
+    let (o, _) = install_plan_on(&d, WOL_TPM_PLAN, |d| {
+        // What a caller could leave at the result names: a file and a link to something of root's.
+        fs::write(d.join("plan/install.log"), "decoy\n").unwrap();
+        std::os::unix::fs::symlink(d.join("elsewhere/precious"), d.join("plan/recovery-key"))
+            .unwrap();
+        // And at the results folder's own name: a link to another folder.
+        std::os::unix::fs::symlink(d.join("elsewhere"), d.join("results")).unwrap();
+    });
+    assert!(
+        o.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("plan/install.log")).unwrap(),
+        "decoy\n"
+    );
+    assert!(
+        fs::symlink_metadata(d.join("plan/recovery-key"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("elsewhere/precious")).unwrap(),
+        "keep\n"
+    );
+    assert!(
+        !d.join("elsewhere/recovery-key").exists(),
+        "the link was not followed"
+    );
+    assert!(!log(&d).contains("chown"), "{}", log(&d));
+    let r = d.join("results");
+    let meta = fs::symlink_metadata(&r).unwrap();
+    assert!(meta.is_dir(), "a folder of its own, not the link");
+    assert_eq!(meta.permissions().mode() & 0o777, 0o700);
+    assert_eq!(
+        fs::read_to_string(r.join("recovery-key")).unwrap(),
+        "KEY-1\n"
+    );
+    assert!(
+        fs::read_to_string(r.join("log"))
+            .unwrap()
+            .contains("wolos-install: done 100")
+    );
+    let result = || {
+        let o = Command::new("sh")
+            .arg(lib("install-check"))
+            .arg("--result")
+            .env("WOLOS_RESULT_DIR", &r)
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let first = result();
+    assert!(first.starts_with("recovery-key KEY-1\nlog "), "{first}");
+    assert!(first.contains("\nlog wolos-install: done 100"), "{first}");
+    let second = result();
+    assert!(!second.contains("recovery-key"), "shown once: {second}");
+    assert!(second.starts_with("log "), "{second}");
+}
+
+/// audit3 R2B-12: Windows keeps the hardware clock in local time; a WolOS next to it does too.
+#[test]
+fn the_clock_is_kept_the_windows_way_while_windows_stays() {
+    let d = scratch("adjtime");
+    let wol = WOL_ALONGSIDE
+        .replace("others=1", "others=1\\nwindows=1\\nbitlocker=1")
+        .replace(
+            "\"boot detect\"*) echo off ;;",
+            "\"boot detect\"*) echo \"seen windows=$WOLOS_WINDOWS bitlocker=$WOLOS_BITLOCKER shared=$WOLOS_ESP_SHARED\" >> \"${0%/bin/wol}/log\"; echo off ;;",
+        );
+    let (o, t) = install_plan(&d, &wol);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    assert_eq!(
+        fs::read_to_string(t.join("etc/adjtime")).unwrap(),
+        "0.0 0 0\n0\nLOCAL\n"
+    );
+    // boot-setup hears it from the plan: Windows stays (tier), BitLocker (note), shared ESP.
+    let l = log(&d);
+    assert!(
+        l.contains("seen windows=yes bitlocker=yes shared=yes"),
+        "{l}"
+    );
+    let d = scratch("adjtime-erase");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    assert!(!d.join("target/etc/adjtime").exists(), "no Windows: UTC");
+}
+
+/// audit3 R2B-5: the startup files of a WolOS the plan replaces are cleared before ours go on;
+/// any other WolOS's are still refused.
+#[test]
+fn an_old_wolos_on_the_reused_startup_partition_is_cleared_first() {
+    let old = |d: &Path| {
+        let e = d.join("target/efi");
+        fs::create_dir_all(e.join("EFI/wolos")).unwrap();
+        fs::create_dir_all(e.join("loader/entries")).unwrap();
+        fs::create_dir_all(e.join("wolos-b")).unwrap();
+        fs::write(e.join("EFI/wolos/wolos-a.efi"), "old").unwrap();
+        fs::write(e.join("EFI/wolos/wolos-b.efi"), "old").unwrap();
+        fs::write(e.join("loader/entries/wolos-b+1.conf"), "old").unwrap();
+        fs::write(e.join("loader/entries/fedora.conf"), "theirs").unwrap();
+    };
+    let d = scratch("esp-wolos");
+    let wol = WOL_ALONGSIDE.replace("others=1", "others=1\\nesp_wolos=1");
+    let (o, t) = install_plan_on(&d, &wol, old);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    let e = t.join("efi");
+    assert!(!e.join("EFI/wolos/wolos-b.efi").exists());
+    assert!(!e.join("wolos-b").exists());
+    assert!(!e.join("loader/entries/wolos-b+1.conf").exists());
+    assert_eq!(
+        fs::read_to_string(e.join("loader/entries/fedora.conf")).unwrap(),
+        "theirs"
+    );
+    assert!(e.join("loader/entries/wolos-a+3.conf").exists());
+    let d = scratch("esp-wolos-kept");
+    let (o, _) = install_plan_on(&d, WOL_ALONGSIDE, old);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&o.stdout).contains("another WolOS already starts"),
+        "{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+}
+
+/// audit3 R2B-14 (STANDARDS 2: no eval): the install path runs no generated text as shell; what
+/// `wol install info|layout` print is read as KEY=VALUE lines against a list of keys.
+/// verify-gpu.sh is a manual diagnostic whose eval runs its own constant setup strings.
+#[test]
+fn the_installer_scripts_run_no_generated_shell() {
+    let dir = repo("files/usr/lib/wolos");
+    let mut checked = 0;
+    for e in fs::read_dir(&dir).unwrap() {
+        let p = e.unwrap().path();
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        if !p.is_file() || name == "verify-gpu.sh" {
+            continue;
+        }
+        let text = fs::read_to_string(&p).unwrap();
+        if !text.starts_with("#!") {
+            continue;
+        }
+        checked += 1;
+        for (n, line) in text.lines().enumerate() {
+            let code = line.split(" #").next().unwrap_or("").trim_start();
+            if code.starts_with('#') {
+                continue;
+            }
+            let words: Vec<&str> = code
+                .split(|c: char| c.is_whitespace() || c == ';' || c == '&' || c == '|')
+                .collect();
+            assert!(
+                !words.contains(&"eval") && !words.contains(&"source"),
+                "{name}:{}: {line}",
+                n + 1
+            );
+            assert!(
+                !code.starts_with(". ") && !code.contains("; . ") && !code.contains("&& . "),
+                "{name}:{}: sources a file: {line}",
+                n + 1
+            );
+        }
+    }
+    assert!(checked > 10, "{checked}");
+    let run = read("files/usr/lib/wolos/install-run");
+    assert!(
+        run.contains("take info <<EOF") && run.contains("take layout < \"$KEYDIR/layout.env\"")
+    );
+}
+
+/// audit3 R2B-17: sizes live in wol_core::install::layout; the scripts and repart definitions that
+/// repeat them are checked against it.
+#[test]
+fn the_scripts_sizes_are_the_layouts() {
+    use wol_core::install::layout::{ESP_BYTES, MIN_ROOT};
+    let check = read("files/usr/lib/wolos/install-check");
+    let min = check
+        .lines()
+        .find_map(|l| l.strip_prefix("MIN_BYTES="))
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap();
+    assert_eq!(min, MIN_ROOT);
+    for dir in ["repart.d", "repart.d-crypt"] {
+        let esp = read(&format!("files/usr/lib/wolos/{dir}/10-esp.conf"));
+        let size = |k: &str| {
+            esp.lines()
+                .find_map(|l| l.strip_prefix(k))
+                .and_then(|v| v.strip_suffix('G'))
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(|g| g << 30)
+        };
+        assert_eq!(size("SizeMinBytes="), Some(ESP_BYTES), "{dir}");
+        assert_eq!(size("SizeMaxBytes="), Some(ESP_BYTES), "{dir}");
+    }
+}
+
+/// audit3 R2B-8: a kill of every process rooted at the target never reaches the live system.
+#[test]
+fn the_cleanup_of_stray_processes_never_targets_the_live_root() {
+    let run = read("files/usr/lib/wolos/install-run");
+    let body = &run[run.find("stray() {").unwrap()..];
+    let body = &body[..body.find("\n}").unwrap()];
+    let guard = body.find("[ \"${T%/}\" != \"\" ] || return 0").unwrap();
+    assert!(guard < body.find("kill -9").unwrap(), "{body}");
+    assert!(run.contains("rm -rf \"${KEYDIR:?}\""));
+    assert!(run.contains("rm -rf \"${R:?}\""));
+}
+
+/// audit3 R2B-19: a swap partition on the picked disk is switched off, not "unmounted"; the live
+/// medium's own mounts stay. Facts come from `wol install mounts`.
+#[test]
+fn what_is_in_use_on_the_disk_is_let_go_of_swap_too() {
+    let d = scratch("in-use");
+    fs::write(
+        d.join("mounts"),
+        "/run/media/live/usb\n[SWAP]\n/run/archiso/cowspace\n",
+    )
+    .unwrap();
+    let o = install(&d, "/dev/nvme0n1");
+    // The fakes do not really let go, so install-check still refuses: what matters is the order.
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&o.stdout)
+    );
+    let l = log(&d);
+    assert!(l.contains("umount /run/media/live/usb"), "{l}");
+    assert!(l.contains("swapoff /dev/nvme0n1p2"), "{l}");
+    assert!(
+        !l.contains("umount [SWAP]") && !l.contains("umount /run/archiso"),
+        "{l}"
+    );
+    let run = read("files/usr/lib/wolos/install-run");
+    let check = read("files/usr/lib/wolos/install-check");
+    for (name, text) in [("install-run", &run), ("install-check", &check)] {
+        assert!(!text.contains("lsblk"), "{name} reads lsblk itself");
+        assert!(!text.contains("e3c9e316"), "{name} copies a partition type");
+    }
+    assert!(check.contains("wol install facts") && check.contains("wol install mounts"));
+}
+
+/// audit3 R2B-18: the computer name follows one rule (wol_core::settings::hostname), the one
+/// Settings uses: an autoinstall's name is checked by `wol install hostname`.
+#[test]
+fn the_autoinstall_name_follows_the_settings_rule() {
+    for (given, kept) in [
+        ("anns-pc", "anns-pc"),
+        ("Anns.PC", "wolos"),
+        ("a;reboot", "wolos"),
+    ] {
+        let o = Command::new(env!("CARGO_BIN_EXE_wol"))
+            .args(["install", "hostname", given])
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            format!("{kept}\n"),
+            "{given}"
+        );
+    }
+    assert!(
+        read("files/usr/lib/wolos/install-run")
+            .contains("wol install hostname \"$WOLOS_HOSTNAME\"")
     );
 }

@@ -12,7 +12,9 @@ use std::ffi::{c_char, c_int};
 use std::ptr::null;
 use std::sync::Arc;
 
+#[repr(C)]
 pub struct wol_info {
+    tag: crate::handle::Tag<wol_info>,
     json: Arc<wol_string>,
     text: Option<Arc<wol_string>>,
     number: Option<f64>,
@@ -29,6 +31,7 @@ impl wol_info {
                 .collect::<BTreeMap<_, _>>()
         };
         Arc::new(Self {
+            tag: crate::handle::Tag::new(),
             json: wol_string::new(&v.to_string()),
             text: v.as_str().map(wol_string::new),
             number: v.as_f64(),
@@ -73,7 +76,7 @@ pub unsafe extern "C" fn wol_info_get(
     key: *const c_char,
     key_len: usize,
 ) -> *const wol_info {
-    let Some(i) = (unsafe { info.as_ref() }) else {
+    let Some(i) = (unsafe { crate::handle::live(info) }) else {
         return null();
     };
     let Ok(key) = crate::error::input(key, key_len, 256, "The key") else {
@@ -88,7 +91,7 @@ pub unsafe extern "C" fn wol_info_get(
 /// `info` is NULL or live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_info_get_count(info: *const wol_info) -> usize {
-    unsafe { info.as_ref() }.map_or(0, |i| i.items.len())
+    unsafe { crate::handle::live(info) }.map_or(0, |i| i.items.len())
 }
 
 /// Item `index` of a list; NULL past the end. Borrowed from `info`.
@@ -97,7 +100,7 @@ pub unsafe extern "C" fn wol_info_get_count(info: *const wol_info) -> usize {
 /// `info` is NULL or live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_info_get_item(info: *const wol_info, index: usize) -> *const wol_info {
-    unsafe { info.as_ref() }
+    unsafe { crate::handle::live(info) }
         .and_then(|i| i.items.get(index))
         .map_or(null(), Arc::as_ptr)
 }
@@ -108,7 +111,7 @@ pub unsafe extern "C" fn wol_info_get_item(info: *const wol_info, index: usize) 
 /// `info` is NULL or live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_info_get_text(info: *const wol_info) -> *const wol_string {
-    unsafe { info.as_ref() }
+    unsafe { crate::handle::live(info) }
         .and_then(|i| i.text.as_ref())
         .map_or(null(), Arc::as_ptr)
 }
@@ -120,7 +123,7 @@ pub unsafe extern "C" fn wol_info_get_text(info: *const wol_info) -> *const wol_
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_info_get_number(info: *const wol_info, out: *mut f64) -> c_int {
     match (
-        unsafe { info.as_ref() }.and_then(|i| i.number),
+        unsafe { crate::handle::live(info) }.and_then(|i| i.number),
         out.is_null(),
     ) {
         (Some(n), false) => {
@@ -137,7 +140,7 @@ pub unsafe extern "C" fn wol_info_get_number(info: *const wol_info, out: *mut f6
 /// `info` is NULL or live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_info_get_bool(info: *const wol_info) -> c_int {
-    unsafe { info.as_ref() }.is_some_and(|i| i.yes) as c_int
+    unsafe { crate::handle::live(info) }.is_some_and(|i| i.yes) as c_int
 }
 
 /// The whole value as JSON. Borrowed from `info`.
@@ -146,7 +149,7 @@ pub unsafe extern "C" fn wol_info_get_bool(info: *const wol_info) -> c_int {
 /// `info` is NULL or live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_info_get_json(info: *const wol_info) -> *const wol_string {
-    unsafe { info.as_ref() }.map_or(null(), |i| Arc::as_ptr(&i.json))
+    unsafe { crate::handle::live(info) }.map_or(null(), |i| Arc::as_ptr(&i.json))
 }
 
 /// # Safety
@@ -199,3 +202,5 @@ mod tests {
         }
     }
 }
+
+crate::handle::tagged!(wol_info, 0x982aa73ac6239a7e);

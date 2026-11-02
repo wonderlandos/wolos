@@ -6,13 +6,9 @@ use crate::system::Host;
 /// The ruleset nftables.service loads (block in, pass out; desktop/overlay).
 pub const FIREWALL_RULES: &str = "/etc/wolos/nftables.conf";
 
-/// One RFC 1123 label, lowercase: 1..=63 of `[a-z0-9-]`, no `-` at either end.
+/// The computer name rule, [`crate::settings::hostname::is_valid`] (one rule, audit3 R2B-18).
 pub fn is_valid_hostname(s: &str) -> bool {
-    (1..=63).contains(&s.len())
-        && !s.starts_with('-')
-        && !s.ends_with('-')
-        && s.bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    crate::settings::hostname::is_valid(s)
 }
 
 /// Unit file state (`systemctl show -p UnitFileState --value <unit>`): enabled at boot or not;

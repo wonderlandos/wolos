@@ -2,7 +2,6 @@
 //! Event bus client: `subscribe` on the wold socket, then `shared::events::Event` per line.
 use shared::events::Event;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 /// Parse a stream of event lines; bad lines are skipped.
@@ -14,7 +13,7 @@ pub fn parse_stream(r: impl BufRead) -> impl Iterator<Item = Event> {
 
 /// Subscribe on `socket` (normally `shared::jobs::SOCKET`).
 pub fn subscribe(socket: &Path) -> std::io::Result<impl Iterator<Item = Event>> {
-    let mut s = UnixStream::connect(socket)?;
+    let mut s = shared::jobs::connect(socket)?;
     s.write_all(b"subscribe\n")?;
     Ok(parse_stream(BufReader::new(s)))
 }
@@ -43,7 +42,7 @@ impl<W: Write> Publisher<W> {
     pub fn send(&mut self, e: &Event) -> bool {
         let line =
             shared::jobs::JobRequest::Publish(e.to_line().trim_end().to_owned()).line() + "\n";
-        let sent = UnixStream::connect(&self.socket)
+        let sent = shared::jobs::connect(&self.socket)
             .and_then(|mut s| s.write_all(line.as_bytes()))
             .is_ok();
         if !sent {
@@ -91,6 +90,7 @@ mod tests {
         let l = std::os::unix::net::UnixListener::bind(&path).unwrap();
         let t = std::thread::spawn(move || {
             let (mut c, _) = l.accept().unwrap();
+            shared::jobs::greet(&c).unwrap();
             let mut req = [0u8; 10];
             c.read_exact(&mut req).unwrap();
             assert_eq!(&req, b"subscribe\n");
@@ -126,10 +126,16 @@ mod tests {
         let path = dir.join("w.sock");
         let _ = std::fs::remove_file(&path);
         let l = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let wold = std::thread::spawn(move || {
+            let (c, _) = l.accept().unwrap();
+            shared::jobs::greet(&c).unwrap();
+            let mut got = String::new();
+            (&c).read_to_string(&mut got).unwrap();
+            got
+        });
         let mut p = Publisher::new(&path, Vec::new());
         assert!(p.send(&e));
-        let mut got = String::new();
-        l.accept().unwrap().0.read_to_string(&mut got).unwrap();
+        let got = wold.join().unwrap();
         assert_eq!(
             shared::jobs::JobRequest::parse(&got),
             Some(shared::jobs::JobRequest::Publish(

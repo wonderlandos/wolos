@@ -63,7 +63,9 @@ enum Kind {
     },
 }
 
+#[repr(C)]
 pub struct wol_widget {
+    tag: crate::handle::Tag<wol_widget>,
     id: u32,
     kind: Mutex<Kind>,
     /// In a container or a window already.
@@ -72,7 +74,9 @@ pub struct wol_widget {
     window: Mutex<Weak<wol_window>>,
 }
 
+#[repr(C)]
 pub struct wol_window {
+    tag: crate::handle::Tag<wol_window>,
     id: u32,
     title: String,
     context: Arc<wol_context>,
@@ -277,10 +281,9 @@ pub(crate) fn closed(win: &Arc<wol_window>) {
 }
 
 /// An owned Arc from a borrowed handle (+1).
-pub(crate) fn arc_of<T>(p: *mut T) -> Result<Arc<T>> {
-    if p.is_null() {
-        return Err(Error::invalid("A handle is NULL."));
-    }
+pub(crate) fn arc_of<T: crate::handle::Tagged>(p: *mut T) -> Result<Arc<T>> {
+    // SAFETY: NULL or a libwol handle (contract); the tag is checked first.
+    unsafe { crate::string::borrow(p.cast_const()) }?;
     // SAFETY: live handle from Arc::into_raw (contract); we take a new reference.
     unsafe {
         Arc::increment_strong_count(p.cast_const());
@@ -298,6 +301,7 @@ pub(crate) fn text(ptr: *const c_char, len: usize, max: usize, what: &str) -> Re
 
 fn make(ctx: &wol_context, kind: Kind, out: *mut *mut wol_widget) {
     let w = Arc::new(wol_widget {
+        tag: crate::handle::Tag::new(),
         id: ctx.next_id(),
         kind: Mutex::new(kind),
         placed: AtomicBool::new(false),
@@ -361,6 +365,7 @@ pub unsafe extern "C" fn wol_window_create(
             return Err(Error::invalid("A window title is one line."));
         }
         let w = wol_window {
+            tag: crate::handle::Tag::new(),
             id: context.next_id(),
             title: title.into(),
             context,
@@ -1126,3 +1131,7 @@ mod tests {
         }
     }
 }
+
+crate::handle::tagged!(wol_widget, 0xc2021534ce29dd62);
+
+crate::handle::tagged!(wol_window, 0xa5864965c5a02062);

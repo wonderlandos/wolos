@@ -2,13 +2,33 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Queue this computer's key for the firmware's key screen (ADR 0025): the installer, the first boot
 # and `wol boot enroll` all land here, and nobody types anything in a terminal. The next start shows
-# the blue screen, which waits for the person. Prints `queued` or `enrolled`.
-# Env: WOLOS_SB_DIR.
+# the blue screen, which waits for the person. Prints `queued` or `enrolled`. While the screen is
+# still to come, /run/wolos/mok-pending exists (the Setup assistant's first-boot card reads it).
+# A Firmware-tier install (Secure Boot trusted only Windows, the key-screen chain laid out anyway)
+# whose key is now enrolled starts through that chain: it moves to the mok tier, its words
+# (lockdown=integrity module.sig_enforce=1) go into the boot images, and the tier file says so;
+# unless the person turned protection off at install ($S/want is `no`, audit3 R2B-8): then the key
+# is only marked enrolled and the tier stays.
+# Env: WOLOS_SB_DIR, WOLOS_RUN_DIR (/run/wolos); WOLOS_ROOT, WOLOS_ESP for esp-sync (tests).
 set -eu
 S=${WOLOS_SB_DIR:-/var/lib/wolos/secureboot}
+R=${WOLOS_RUN_DIR:-/run/wolos}
+here=$(cd "$(dirname "$0")" && pwd)
 case $(mokutil --test-key "$S/db.der" 2>&1 || :) in
 *"already enrolled"*)
+  if [ "$(cat "$S/tier" 2>/dev/null || :)" = firmware ] && [ "$(cat "$S/want" 2>/dev/null || :)" != no ]; then
+    # Images first, tier last: a failed rebuild leaves the firmware tier and its images as they were.
+    if [ -f "$S/cmdline" ]; then cp "$S/cmdline" "$S/cmdline.was"; else : > "$S/cmdline.was"; fi
+    wol boot words mok > "$S/cmdline"
+    if ! WOLOS_SB_DIR=$S sh "$here/esp-sync" >&2; then
+      mv "$S/cmdline.was" "$S/cmdline"
+      echo "boot-enroll: could not rebuild the boot images for the enrolled key" >&2
+      exit 1
+    fi
+    echo mok > "$S/tier"; rm -f "$S/cmdline.was"
+  fi
   : > "$S/enrolled"
+  rm -f "$S/key-screen" "$R/mok-pending"
   echo enrolled
   exit 0
   ;;
@@ -18,4 +38,5 @@ trap 'rm -f "$h"' EXIT
 mokutil --generate-hash="$(wol boot password)" > "$h"
 mokutil --import "$S/db.der" --hash-file "$h"
 mokutil --timeout -1
+mkdir -p "$R" 2>/dev/null && : > "$R/mok-pending" || :
 echo queued

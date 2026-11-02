@@ -1,11 +1,66 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Unattended install (VM tests, wolos-iso/tests/test-install.sh): `wolos.autoinstall=<disk>` on the live
-# kernel command line erases <disk>, installs WolOS and powers off. Progress goes to the console.
+# Unattended install (VM tests, wolos-iso/tests/test-install.sh): words on the live kernel command line.
+#   wolos.autoinstall=<disk>        erase <disk>, install WolOS, power off. Progress goes to the console.
+#   wolos.encrypt=no|tpm|passphrase the disk's protection (default no: an unattended TPM install on
+#                                   real hardware would leave a disk nobody holds a key for)
+#   wolos.passphrase=LABEL:path     the passphrase, a file on the partition with that label
+#   wolos.plan=LABEL:path           instead of a plain erase: a plan directory (plan.json and its
+#                                   side files, as the Install app writes them) on that partition
+#   wolos.hostname=, wolos.autologin=yes, wolos.swap=none|zram|swapfile:<GiB>   as the app's pages
+#   wolos.recovery=console          print the recovery key on the console when done (tests only);
+#                                   it comes from install-run's results (`install-check --result`)
+# Env (tests): WOLOS_CMDLINE, WOLOS_INSTALL_RUN, WOLOS_INSTALL_CHECK, WOLOS_AUTOINSTALL_DIR.
 set -u
-disk=
+disk='' encrypt=no pass='' plan='' recovery=''
 for w in $(cat "${WOLOS_CMDLINE:-/proc/cmdline}"); do
-  case $w in wolos.autoinstall=*) disk=${w#*=} ;; esac
+  case $w in
+    wolos.autoinstall=*) disk=${w#*=} ;;
+    wolos.encrypt=*) encrypt=${w#*=} ;;
+    wolos.passphrase=*) pass=${w#*=} ;;
+    wolos.plan=*) plan=${w#*=} ;;
+    wolos.hostname=*) WOLOS_HOSTNAME=${w#*=}; export WOLOS_HOSTNAME ;;
+    wolos.autologin=*) WOLOS_AUTOLOGIN=${w#*=}; export WOLOS_AUTOLOGIN ;;
+    wolos.swap=*) WOLOS_SWAP=${w#*=}; export WOLOS_SWAP ;;
+    wolos.recovery=*) recovery=${w#*=} ;;
+  esac
 done
 [ -n "$disk" ] || exit 0
-"${WOLOS_INSTALL_RUN:-/usr/lib/wolos/install-run}" "$disk" && systemctl poweroff
+D=${WOLOS_AUTOINSTALL_DIR:-/run/wolos/autoinstall}
+mkdir -p "$D" 2>/dev/null && chmod 700 "$D" 2>/dev/null || :
+fetch() { # LABEL:path dest: copy a file from the labelled partition (read-only, mounted for a moment)
+  label=${1%%:*}; path=${1#*:}; dev=$(blkid -L "$label") || return 1
+  m=$D/mnt; mkdir -p "$m"
+  mount -o ro "$dev" "$m" || return 1
+  if [ -d "$m/$path" ]; then cp -r "$m/$path/." "$2"; else cp "$m/$path" "$2"; fi; rc=$?
+  umount "$m"; rmdir "$m" 2>/dev/null
+  return $rc
+}
+case $encrypt in
+  no | off) WOLOS_ENCRYPT=no ;;
+  tpm | yes) WOLOS_ENCRYPT=yes ;;
+  passphrase) WOLOS_ENCRYPT=passphrase ;;
+  *) echo "wolos-install: fail prepare wolos.encrypt=$encrypt: no, tpm or passphrase"; exit 2 ;;
+esac
+export WOLOS_ENCRYPT
+if [ -n "$pass" ]; then
+  fetch "$pass" "$D/passphrase" || { echo "wolos-install: fail prepare wolos.passphrase=$pass: not found"; exit 2; }
+  WOLOS_PASSPHRASE_FILE=$D/passphrase; export WOLOS_PASSPHRASE_FILE
+fi
+if [ -n "$plan" ]; then
+  mkdir -p "$D/plan"
+  fetch "$plan" "$D/plan" && [ -s "$D/plan/plan.json" ] || { echo "wolos-install: fail prepare wolos.plan=$plan: no plan.json"; exit 2; }
+  set -- --plan "$D/plan/plan.json"
+else
+  set -- "$disk"
+fi
+rc=0
+"${WOLOS_INSTALL_RUN:-/usr/lib/wolos/install-run}" "$@" || rc=$?
+if [ "$rc" = 0 ]; then
+  if [ "$recovery" = console ]; then
+    "${WOLOS_INSTALL_CHECK:-/usr/lib/wolos/install-check}" --result |
+      sed -n 's/^recovery-key \(..*\)$/wolos-install: recovery \1/p'
+  fi
+  systemctl poweroff
+fi
+exit $rc

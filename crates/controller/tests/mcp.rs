@@ -239,16 +239,39 @@ fn theme_get_happy_path() {
     );
 }
 
-/// The approve lines sent to the shell socket (other requests, e.g. `reload`, skipped).
+/// The approve lines sent to the shell socket (other requests, e.g. `reload`, skipped), and the
+/// administrator approvals asked through wold (`session.approve`, R2C-6).
 fn approvals(env: &FakeEnv) -> Vec<Approval> {
     env.requests
         .iter()
-        .filter(|r| r.0 == std::path::Path::new("/run/u/wol-shell.sock"))
         .filter_map(|r| {
             let l = String::from_utf8(r.1.clone()).unwrap();
-            Approval::parse(l.strip_prefix("approve ")?)
+            if r.0 == std::path::Path::new("/run/u/wol-shell.sock") {
+                return Approval::parse(l.strip_prefix("approve ")?);
+            }
+            via_wold(&r.0, &l)
         })
         .collect()
+}
+
+/// An approval the helper asked wold to show (R2C-6).
+fn via_wold(sock: &std::path::Path, line: &str) -> Option<Approval> {
+    if sock != std::path::Path::new(shared::jobs::SOCKET) {
+        return None;
+    }
+    match shared::portal::Call::decode(line.strip_prefix("call ")?.trim().as_bytes()).ok()? {
+        shared::portal::Call::SessionApprove { approval } => Some(approval),
+        _ => None,
+    }
+}
+
+/// wold's reply carrying the sheet's answer.
+fn wold(a: Answer) -> String {
+    format!(
+        "{}
+",
+        json!({"ok": true, "data": a})
+    )
 }
 
 fn text(r: &Value) -> &str {
@@ -403,7 +426,7 @@ fn bad_arguments_are_tool_errors() {
 #[test]
 fn admin_tool_runs_in_the_shell_after_the_password() {
     let mut e = env("admin");
-    e.replies = vec![Answer::Done.line()];
+    e.replies = vec![wold(Answer::Done)];
     let mut s = init(&mut e);
     let r = call(
         &mut s,
@@ -429,6 +452,14 @@ fn admin_tool_runs_in_the_shell_after_the_password() {
         e.admin.lock().unwrap().sent.is_empty(),
         "no wol-admind request from the helper"
     );
+    // R2C-6: asked through wold, never on the shell socket directly.
+    assert!(
+        e.requests
+            .iter()
+            .all(|r| r.0 == std::path::Path::new(shared::jobs::SOCKET)),
+        "{:?}",
+        e.requests.iter().map(|r| &r.0).collect::<Vec<_>>()
+    );
     let log = std::fs::read_to_string(e.home.join("state/wolos/actions.jsonl")).unwrap();
     assert!(
         log.contains("\"approved\"") && !log.contains("hunter22"),
@@ -442,15 +473,32 @@ fn admin_tool_runs_in_the_shell_after_the_password() {
 fn admin_failures_and_wrong_answers() {
     for (reply, says, outcome) in [
         (
-            Answer::Failed {
+            wold(Answer::Failed {
                 message: "Wi-Fi hardware is off".into(),
-            }
-            .line(),
+            }),
             "Wi-Fi hardware is off",
             "failed",
         ),
-        (Answer::AllowOnce.line(), "could not ask", "refused"),
-        (Answer::Deny.line(), "declined", "declined"),
+        (wold(Answer::AllowOnce), "could not ask", "refused"),
+        (wold(Answer::Deny), "declined", "declined"),
+        (
+            format!(
+                "{}
+",
+                json!({"ok": false, "code": "unavailable", "message": shared::portal::BUSY})
+            ),
+            "already waiting",
+            "refused",
+        ),
+        (
+            format!(
+                "{}
+",
+                json!({"ok": false, "code": "permission-denied", "message": "no"})
+            ),
+            "could not ask",
+            "refused",
+        ),
     ] {
         let mut e = env("adminfail");
         e.replies = vec![reply.clone()];
@@ -561,4 +609,118 @@ fn serve_reads_lines_until_eof() {
     assert_eq!(lines.len(), 2, "{}", e.out);
     assert_eq!(lines[1]["id"], 2);
     assert_eq!(lines[1]["result"]["isError"], false);
+}
+
+/// Optional modules (ADR 0032): list, status and `hw compute` are reads; `enable` asks with the
+/// `apps` capability and a plain sentence, then runs the user step here; install and remove are not
+/// tools until the shell can run their approval.
+#[test]
+fn modules_tools_follow_the_gate() {
+    let mut e = env("modules");
+    let dir = e.home.join("modules");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("dev.json"),
+        r#"{"id":"dev","name":"Developer","summary":"Tools","category":"developer","size_mb":9,
+            "packages":["git"],"post":["/usr/lib/wolos/modules-enable-dev"]}"#,
+    )
+    .unwrap();
+    e.vars.push((
+        controller::modules::DIR_VAR.into(),
+        dir.to_string_lossy().into_owned(),
+    ));
+    e.captures = vec![("pacman -Qq".into(), "wolos-module-dev\n".into())];
+    let mut s = init(&mut e);
+    let names: Vec<String> = catalog::tools().iter().map(|v| v.tool()).collect();
+    for t in [
+        "modules",
+        "modules_list",
+        "modules_status",
+        "modules_enable",
+        "hw_compute",
+    ] {
+        assert!(names.contains(&t.to_string()), "{t}");
+    }
+    for t in ["modules_install", "modules_remove"] {
+        assert!(
+            !names.contains(&t.to_string()),
+            "{t} needs an on-screen approval the shell runs first"
+        );
+    }
+    let r = call(&mut s, &mut e, "modules_list", json!({}));
+    assert_eq!(r["isError"], false, "{r}");
+    let items = r["structuredContent"]["items"].as_array().unwrap();
+    assert_eq!(items[0]["id"], "dev");
+    assert_eq!(
+        (
+            items[0]["installed"].as_bool(),
+            items[0]["enabled"].as_bool()
+        ),
+        (Some(true), Some(false))
+    );
+    assert!(approvals(&e).is_empty(), "reads never ask");
+
+    e.replies = vec![Answer::AllowOnce.line()];
+    let r = call(&mut s, &mut e, "modules_enable", json!({"id": "dev"}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(r["structuredContent"]["enabled"], true);
+    assert_eq!(
+        approvals(&e),
+        [Approval {
+            helper: "Claude Desktop".into(),
+            tool: "modules enable".into(),
+            request: ApprovalRequest::Change {
+                capability: "apps".into(),
+                what: "finish setting up the “dev” module".into(),
+            },
+        }]
+    );
+    assert_eq!(e.execs, [["/usr/lib/wolos/modules-enable-dev"]]);
+    let saved = std::fs::read_to_string(e.home.join("state/wolos/modules.json")).unwrap();
+    assert!(saved.contains("\"dev\""), "{saved}");
+
+    let r = call(&mut s, &mut e, "hw_compute", json!({}));
+    assert_eq!(r["isError"], false, "{r}");
+    let backend = r["structuredContent"]["backend"].as_str().unwrap();
+    assert!(
+        ["cuda", "rocm", "vulkan", "cpu"].contains(&backend),
+        "{backend}"
+    );
+    let a = audit(&e);
+    assert_eq!(
+        a.iter()
+            .map(|x| x["tool"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["modules list", "modules enable", "hw compute"]
+    );
+    assert_eq!(a[1]["result"], "approved");
+}
+
+/// R2C-6: every administrator helper verb is asked through wold, which names the helper by its
+/// kernel executable; the shell would refuse it from a same-account process directly.
+#[test]
+fn every_admin_tool_is_asked_through_wold() {
+    for (tool, args) in [
+        ("wifi_on", json!({})),
+        ("wifi_off", json!({})),
+        ("wifi_join", json!({"ssid": "Home", "password": "hunter22"})),
+        ("bluetooth_on", json!({})),
+        ("bluetooth_off", json!({})),
+        ("restore_activate", json!({"be": "wolos-b"})),
+    ] {
+        let mut e = env("viawold");
+        e.replies = vec![wold(Answer::Done)];
+        let mut s = init(&mut e);
+        let r = call(&mut s, &mut e, tool, args);
+        assert_eq!(r["isError"], false, "{tool}: {r}");
+        let a = approvals(&e);
+        assert_eq!(a.len(), 1, "{tool}");
+        assert!(a[0].request.is_admin(), "{tool}");
+        assert!(
+            e.requests
+                .iter()
+                .all(|q| q.0 == std::path::Path::new(shared::jobs::SOCKET)),
+            "{tool}: nothing on the shell socket"
+        );
+    }
 }

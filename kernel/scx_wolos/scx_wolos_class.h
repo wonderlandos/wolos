@@ -38,6 +38,30 @@ static inline int wolos_class(unsigned int policy, unsigned int umin, unsigned i
 	return C_DEFAULT;
 }
 
+/*
+ * Audit A19: uclamp_min can be raised by any unprivileged task, so it alone must not buy a high
+ * class. @grant is the class the root loader's `boosted` map gives the task's process (-1: none);
+ * @grants_on says that map is in use. With grants on, an ungranted task is capped at default and
+ * a granted one at its grant. With no map (fallback) uclamp is capped at foreground. Either way a
+ * task in a high class that keeps running for WOLOS_HOG_NS per burst drops to default, so a
+ * boosted loop cannot starve the rest.
+ */
+#define WOLOS_HOG_NS		(2 * WOLOS_LONG_RUN_NS)	/* 16 ms average burst */
+#define WOLOS_GRANTS_KEY	0			/* map key present = grants in use */
+
+static inline int wolos_class_guarded(int c, int grant, int grants_on,
+				      unsigned long long avg_burst)
+{
+	int cap = grants_on ? (grant >= C_INTERACTIVE && grant < C_NR ? grant : C_DEFAULT) :
+			      C_FOREGROUND;
+
+	if (c < cap)
+		c = cap;
+	if (c < C_DEFAULT && avg_burst >= WOLOS_HOG_NS)
+		c = C_DEFAULT;
+	return c;
+}
+
 /* Queue per class: interactive and foreground never share a queue with batch work. */
 static inline int wolos_class_dsq(int c)
 {

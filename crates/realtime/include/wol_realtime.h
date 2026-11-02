@@ -37,6 +37,20 @@ int32_t wol_titlebar_button_origin(int32_t button, int32_t *x, int32_t *y);
    has_prev != 0 cascades from (px, py). */
 int32_t wol_place(int32_t w, int32_t h, int32_t ax, int32_t ay, int32_t aw, int32_t ah,
                   int32_t bar, int32_t has_prev, int32_t px, int32_t py, int32_t *x, int32_t *y);
+/* Client size for a new window: w x h fitted into the zone (title bar `bar` included), min/max
+   from the toplevel (0 = unset). */
+int32_t wol_fit(int32_t w, int32_t h, int32_t min_w, int32_t min_h, int32_t max_w, int32_t max_h,
+                int32_t ax, int32_t ay, int32_t aw, int32_t ah, int32_t bar, int32_t *out_w,
+                int32_t *out_h);
+/* Dialog position centred on its parent's client rect (px, py, pw, ph), kept in the zone. */
+int32_t wol_centre(int32_t w, int32_t h, int32_t px, int32_t py, int32_t pw, int32_t ph,
+                   int32_t ax, int32_t ay, int32_t aw, int32_t ah, int32_t bar, int32_t *x,
+                   int32_t *y);
+/* An open window after the zone changed: client box in/out through x, y, w, h (non-null).
+   1 when it changed, 0 when it already fit. */
+int32_t wol_refit(int32_t min_w, int32_t min_h, int32_t max_w, int32_t max_h, int32_t ax,
+                  int32_t ay, int32_t aw, int32_t ah, int32_t bar, int32_t *x, int32_t *y,
+                  int32_t *w, int32_t *h);
 
 /* Frontmost pid -> wold QoS boost. 1 sent, 0 dropped/unavailable. */
 int32_t wol_qos_foreground(int32_t pid);

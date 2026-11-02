@@ -113,7 +113,7 @@ impl Sys for Real {
         cgroup::tasks(&self.dir(cg))
     }
     fn adopt(&self, args: &[String]) -> bool {
-        std::process::Command::new("busctl")
+        crate::privileged::privileged_command("busctl")
             .args(args)
             .stdout(std::process::Stdio::null())
             .status()

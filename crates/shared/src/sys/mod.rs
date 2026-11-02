@@ -143,6 +143,83 @@ pub fn recv_with_fd(
     Ok((n, fd))
 }
 
+/// SO_PASSCRED on or off (ADR 0033). While it is on when a peer writes, the kernel attaches the
+/// writing process's credentials to those bytes and [`recv_with_pid`] reports them. Err as setsockopt.
+pub fn set_passcred(sock: &impl AsRawFd, on: bool) -> std::io::Result<()> {
+    let v: libc::c_int = on.into();
+    // SAFETY: setsockopt reads one c_int from a live local of the stated size.
+    let r = unsafe {
+        libc::setsockopt(
+            sock.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PASSCRED,
+            (&raw const v).cast(),
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    if r == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// One read on a socket with [`set_passcred`] on: (bytes read, pid of the process that wrote
+/// them, as the kernel recorded at write time). The pid is None when no credentials came with the
+/// bytes (written before SO_PASSCRED was set). Descriptors a peer attached are closed.
+pub fn recv_with_pid(sock: &impl AsRawFd, buf: &mut [u8]) -> std::io::Result<(usize, Option<i32>)> {
+    use std::os::fd::FromRawFd;
+    let mut control = Control::zeroed();
+    let mut iov = libc::iovec {
+        iov_base: buf.as_mut_ptr().cast(),
+        iov_len: buf.len(),
+    };
+    // SAFETY: msghdr is plain data, zero is valid.
+    let mut m: libc::msghdr = unsafe { std::mem::zeroed() };
+    m.msg_iov = &raw mut iov;
+    m.msg_iovlen = 1;
+    m.msg_control = control.0.as_mut_ptr().cast();
+    m.msg_controllen = control.0.len() as _;
+    let n = loop {
+        // SAFETY: `iov` and `control` are live and as long as `m` says.
+        let n = unsafe { libc::recvmsg(sock.as_raw_fd(), &raw mut m, libc::MSG_CMSG_CLOEXEC) };
+        if n >= 0 {
+            break n as usize;
+        }
+        let e = std::io::Error::last_os_error();
+        if e.kind() != std::io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    };
+    let mut pid = None;
+    // SAFETY: the kernel wrote `msg_controllen` bytes of well-formed headers into `control`, and
+    // CMSG_NXTHDR stays inside them. A credentials message of at least CMSG_LEN(ucred) holds one
+    // ucred; a rights message holds (len - CMSG_LEN(0)) / 4 descriptors this process now owns.
+    unsafe {
+        let mut c = libc::CMSG_FIRSTHDR(&raw const m);
+        while !c.is_null() {
+            let len = (*c).cmsg_len as usize;
+            let data = libc::CMSG_DATA(c);
+            if (*c).cmsg_level == libc::SOL_SOCKET {
+                let ucred = std::mem::size_of::<libc::ucred>() as u32;
+                if (*c).cmsg_type == libc::SCM_CREDENTIALS && len >= libc::CMSG_LEN(ucred) as usize
+                {
+                    pid = Some(data.cast::<libc::ucred>().read_unaligned().pid);
+                } else if (*c).cmsg_type == libc::SCM_RIGHTS {
+                    let fds = len.saturating_sub(libc::CMSG_LEN(0) as usize) / 4;
+                    for i in 0..fds {
+                        drop(std::os::fd::OwnedFd::from_raw_fd(
+                            data.cast::<i32>().add(i).read_unaligned(),
+                        ));
+                    }
+                }
+            }
+            c = libc::CMSG_NXTHDR(&raw const m, c);
+        }
+    }
+    Ok((n, pid))
+}
+
 /// Reads a socket and keeps the first descriptor that arrives with the bytes.
 pub struct FdReader<S> {
     sock: S,

@@ -70,15 +70,53 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// Opaque error object; `wopkg_error_release` frees it.
 #[allow(non_camel_case_types)]
+#[repr(C)]
 pub struct wopkg_error {
+    magic: u64,
     status: Status,
     message: Vec<u8>,
 }
 
 /// Opaque immutable UTF-8 string (a JSON document for most results) with a trailing NUL.
 #[allow(non_camel_case_types)]
+#[repr(C)]
 pub struct wopkg_string {
+    magic: u64,
     bytes: Vec<u8>,
+}
+
+// Audit B7: every handle starts with a per-type magic, checked before use and overwritten on
+// drop, so a released, foreign or wrong-type pointer is refused instead of used.
+const ERROR_MAGIC: u64 = 0x5750_4b45_5252_0001;
+const STRING_MAGIC: u64 = 0x5750_4b53_5452_0001;
+const DEAD: u64 = 0xdead_dead_dead_dead;
+
+impl Drop for wopkg_error {
+    fn drop(&mut self) {
+        self.magic = DEAD;
+    }
+}
+
+impl Drop for wopkg_string {
+    fn drop(&mut self) {
+        self.magic = DEAD;
+    }
+}
+
+/// `p` as a live handle whose first field is `magic`, else None.
+///
+/// # Safety
+/// `p` is NULL or points at readable memory at least the size of a `u64`.
+unsafe fn live<'a, T>(p: *const T, magic: u64) -> Option<&'a T> {
+    if p.is_null() || !p.is_aligned() {
+        return None;
+    }
+    // SAFETY: the magic is the first field of every `repr(C)` handle; read before trusting `T`.
+    if unsafe { std::ptr::read(p.cast::<u64>()) } != magic {
+        return None;
+    }
+    // SAFETY: the magic says this is a live `T`.
+    Some(unsafe { &*p })
 }
 
 /// `void (*)(const char *json, size_t len, void *user_data)`: progress, on the calling thread.
@@ -112,6 +150,7 @@ pub(crate) fn guard(error: *mut *mut wopkg_error, f: impl FnOnce() -> Result<()>
                 let mut message = e.message.replace('\0', " ").into_bytes();
                 message.push(0);
                 let obj = Box::new(wopkg_error {
+                    magic: ERROR_MAGIC,
                     status: e.status,
                     message,
                 });
@@ -123,6 +162,7 @@ pub(crate) fn guard(error: *mut *mut wopkg_error, f: impl FnOnce() -> Result<()>
     }
 }
 
+#[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
 /// UTF-8 input with an explicit length; NULL only with length 0.
 pub(crate) fn input<'a>(ptr: *const c_char, len: usize, max: usize, what: &str) -> Result<&'a str> {
     if ptr.is_null() {
@@ -163,7 +203,12 @@ pub(crate) fn give(out: *mut *mut wopkg_string, text: String) {
     let mut bytes = text.into_bytes();
     bytes.push(0);
     // SAFETY: checked with `need` by the caller.
-    unsafe { *out = Box::into_raw(Box::new(wopkg_string { bytes })) };
+    unsafe {
+        *out = Box::into_raw(Box::new(wopkg_string {
+            magic: STRING_MAGIC,
+            bytes,
+        }))
+    };
 }
 
 pub(crate) fn give_json(out: *mut *mut wopkg_string, v: &impl serde::Serialize) -> Result<()> {
@@ -192,14 +237,16 @@ pub unsafe extern "C" fn wopkg_string_get_bytes(
     string: *const wopkg_string,
     len: *mut usize,
 ) -> *const c_char {
-    quiet(c"".as_ptr(), || match unsafe { string.as_ref() } {
-        Some(s) => {
-            write_len(len, s.bytes.len() - 1);
-            s.bytes.as_ptr().cast()
-        }
-        None => {
-            write_len(len, 0);
-            c"".as_ptr()
+    quiet(c"".as_ptr(), || {
+        match unsafe { live(string, STRING_MAGIC) } {
+            Some(s) => {
+                write_len(len, s.bytes.len() - 1);
+                s.bytes.as_ptr().cast()
+            }
+            None => {
+                write_len(len, 0);
+                c"".as_ptr()
+            }
         }
     })
 }
@@ -208,7 +255,8 @@ pub unsafe extern "C" fn wopkg_string_get_bytes(
 /// `string` is NULL or a string the caller owns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wopkg_string_release(string: *mut wopkg_string) {
-    if !string.is_null() {
+    // SAFETY: NULL or a libwopkg handle (contract); the magic is checked first.
+    if unsafe { live(string, STRING_MAGIC) }.is_some() {
         // SAFETY: from Box::into_raw in `give` (contract).
         drop(unsafe { Box::from_raw(string) });
     }
@@ -218,7 +266,8 @@ pub unsafe extern "C" fn wopkg_string_release(string: *mut wopkg_string) {
 /// `error` is NULL or came from libwopkg.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wopkg_error_get_code(error: *const wopkg_error) -> wopkg_status {
-    unsafe { error.as_ref() }.map_or(Status::InvalidArgument as wopkg_status, |e| e.status as i32)
+    unsafe { live(error, ERROR_MAGIC) }
+        .map_or(Status::InvalidArgument as wopkg_status, |e| e.status as i32)
 }
 
 /// # Safety
@@ -228,7 +277,7 @@ pub unsafe extern "C" fn wopkg_error_get_message(
     error: *const wopkg_error,
     len: *mut usize,
 ) -> *const c_char {
-    quiet(c"".as_ptr(), || match unsafe { error.as_ref() } {
+    quiet(c"".as_ptr(), || match unsafe { live(error, ERROR_MAGIC) } {
         Some(e) => {
             write_len(len, e.message.len() - 1);
             e.message.as_ptr().cast()
@@ -244,7 +293,8 @@ pub unsafe extern "C" fn wopkg_error_get_message(
 /// `error` is NULL or an error the caller owns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wopkg_error_release(error: *mut wopkg_error) {
-    if !error.is_null() {
+    // SAFETY: NULL or a libwopkg handle (contract); the magic is checked first.
+    if unsafe { live(error, ERROR_MAGIC) }.is_some() {
         // SAFETY: from Box::into_raw in `guard` (contract).
         drop(unsafe { Box::from_raw(error) });
     }
@@ -254,6 +304,7 @@ pub unsafe extern "C" fn wopkg_error_release(error: *mut wopkg_error) {
 mod tests {
     use super::*;
 
+    #[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
     #[test]
     fn errors_and_strings_cross_the_boundary() {
         let mut e: *mut wopkg_error = std::ptr::null_mut();

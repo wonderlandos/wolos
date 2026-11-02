@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Audit B7: raw slices from C pointers only inside the boundary helpers, which carry an
+# #[allow(clippy::disallowed_methods)] next to their // SAFETY: comment.
+disallowed-methods = [
+    { path = "std::slice::from_raw_parts", reason = "build slices from C pointers only in the FFI wrappers (error::input, ffi::text)" },
+    { path = "std::slice::from_raw_parts_mut", reason = "build slices from C pointers only in the FFI wrappers" },
+]

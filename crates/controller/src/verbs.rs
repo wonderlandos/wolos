@@ -495,10 +495,7 @@ pub fn desktop_name(text: &str) -> Option<(String, bool)> {
 
 /// Desktop file for an app id (`org.gnome.TextEditor`) or its visible name (`Text Editor`).
 fn find_app(env: &dyn Env, app: &str) -> Option<PathBuf> {
-    let home = env.home();
-    let data_home = env
-        .var("XDG_DATA_HOME")
-        .map_or_else(|| home.join(".local/share"), PathBuf::from);
+    let data_home = env.data_home();
     let dirs = env
         .var("XDG_DATA_DIRS")
         .unwrap_or_else(|| "/usr/share:/usr/share".into());

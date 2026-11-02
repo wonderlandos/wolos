@@ -123,7 +123,7 @@ fn send(pid: i32, sig: i32) -> bool {
 
 /// TERM a process and its descendants (children first), KILL survivors after 3 s.
 pub fn stop_tree(root: i32) {
-    let ps = wol_core::system::run_with_timeout(
+    let ps = crate::privileged::capture(
         &[&["ps"], &wol_core::jobs::PS_ARGS[..]].concat(),
         wol_core::system::RUN_TIMEOUT,
     )

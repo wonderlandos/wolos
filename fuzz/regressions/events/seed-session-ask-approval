@@ -1,0 +1,1 @@
+{"type":"session-ask","uid":1000,"id":7,"ask":{"ask":"approval","approval":{"helper":"/usr/bin/wol","tool":"Claude: wifi off","request":{"action":"wifi-join","ssid":"Home","password":"hunter22"}}}}

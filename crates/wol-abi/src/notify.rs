@@ -21,7 +21,9 @@ use std::sync::{Arc, Mutex};
 pub type wol_action_fn =
     Option<unsafe extern "C" fn(*mut wol_notification, *const wol_string, UserData)>;
 
+#[repr(C)]
 pub struct wol_notification {
+    tag: crate::handle::Tag<wol_notification>,
     context: Arc<wol_context>,
     title: Mutex<String>,
     body: Mutex<String>,
@@ -113,6 +115,7 @@ pub unsafe extern "C" fn wol_notification_create(
         let title = input(title, title_len, MAX_TITLE, "The title")?.to_owned();
         let body = input(body, body_len, MAX_BODY, "The body")?.to_owned();
         let n = wol_notification {
+            tag: crate::handle::Tag::new(),
             context,
             title: Mutex::new(title),
             body: Mutex::new(body),
@@ -348,3 +351,5 @@ mod tests {
         }
     }
 }
+
+crate::handle::tagged!(wol_notification, 0x1106fc2c82885fd5);

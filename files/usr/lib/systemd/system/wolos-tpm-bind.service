@@ -7,6 +7,20 @@ Before=wolos-boot-ok.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/wol encrypt rebind
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): systemd-cryptenroll writes the LUKS header and talks to the TPM device; udev over netlink.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.12.0 (unreleased)
+A consolidation release: the same desktop, made solid. Not tagged until wave 2 lands and every
+package is built on our own build farm; then all four repositories are tagged together (ADR 0029).
+
+Release and build
+- One build path (ADR 0029): code in `wolos`, recipes in `wolos-pkgbuilds`, the image in `wolos-iso`, the build tool and farm in `wolos-build`; every package is built in a clean chroot and the ISO only from the published repo.
+- The build forge (milestones M1-M3): one build machine with a shared package and compiler cache, a prepared clean chroot and prefetched sources, so a rebuild reuses what did not change.
+- Packages come from a CDN (ADR 0030): the WolOS repo is served by CloudFront with GitHub as the fallback, and the CachyOS x86-64-v3 repos are reached through a redirect to a ranked CachyOS mirror instead of a WolOS copy. To do before the release: remove the last CachyOS republishing paths (the image README and release workflow, the publish workflow, the mirror list and the client's mirror code still name it).
+- The release pins one Arch Linux snapshot date for the whole system (set at release).
+- Version numbers agree: the code is 0.12.0 everywhere.
+
+Installer
+- The US International keyboard (and other layouts with a variant) no longer stops the install at 90%.
+- The installer finds a TPM the same way the encryption step does, so a machine with an old TPM is not offered TPM unlock that then fails.
+- The account password must be long enough before it becomes a disk password.
+- When an install fails you see what failed: every step writes to a log that is kept on the installed system.
+- The live USB stick and disks in use are no longer offered as targets; other systems on a disk are named correctly.
+- Your keyboard layout is applied before you type the start-up (disk) password, so the password you type at start is the one you chose.
+- When WolOS is installed next to Windows, the last page tells you how to choose Windows at start.
+- "Look Again" checks the disks once more after you plug one in or free space.
+- When the installer refuses to go on, the Failed page explains why and what to do.
+- Your recovery key is never written next to the plan the installer keeps in your account.
+- Next to a Windows that uses BitLocker, the installer warns you before Secure Boot changes that Windows will ask once for its BitLocker recovery key, and says how to avoid it; next to Windows it prefers the one-time key screen over replacing the computer's keys.
+- A Windows that is hibernated or was shut down with Fast Startup is refused, so its files cannot be damaged; shut it down fully and try again.
+- You can install WolOS again next to Windows over an earlier WolOS.
+- Next to Windows the clock keeps local time, as Windows does.
+- Other systems on the computer stay in the start menu after the install.
+- The Secure Boot page says in plain words which startup setting to change and what the blue key screen asks.
+- When the recovery key cannot be read at the end of an encrypted install, a page says so and lets you try again before you restart.
+
+Boot and Secure Boot
+- The boot loader menu can no longer be edited at start (`editor no`).
+- On a computer that uses the WolOS key through shim, the next start goes to shim first, so a refused boot entry never shows first; the EFI partition is found by its real number, not assumed to be the first.
+- The state of Secure Boot setup is reported per machine (own keys, MOK, firmware or off); the image's own Secure Boot signing stays off until the WolOS image key exists.
+- On a computer that trusts WolOS only through its firmware keys, Secure Boot switches itself to the stronger setup by itself after the key has been enrolled.
+
+Desktop
+- Control Center no longer closes itself as it opens; Settings opened from a link goes to the right page in the running window.
+- The menu bar keeps the current app's name while a panel has the keyboard; Log Out and Shut Down do different things again.
+- Clicking a running app in the Dock brings its window back instead of starting a second copy.
+- Search no longer says "Search Search" and waits for you to stop typing before it searches.
+- The desktop reconnects to the window server after it restarts, and no shell call to it can freeze the screen.
+- Desktop & Dock lost two controls that did nothing.
+- Spaces shortcuts moved to Ctrl+Alt (Ctrl+Alt+1..4 and Ctrl+Alt+arrows), so Ctrl+1..4 and Ctrl+arrows go back to your apps.
+- Shift+Super+V opens clipboard history.
+- Esc no longer starts two helpers at once.
+- Panels no longer close when you switch from one to another.
+- Overview works the first time you open it and brings the window you click to the front.
+- In a narrow window you can bring the Settings sidebar back.
+- Notification Center has a Clear button and keeps a limited number of notifications.
+- Switching from one panel to another works every time.
+- Banners wait while a game or video is full screen and show after you leave it.
+- Esc and Super no longer start a helper program in every app you use.
+- Overview always shows four desktops.
+- Force Quit and Overview open over full-screen games, and Esc closes them.
+- Desktop widgets written in Lua are stopped when they take too long.
+
+Security
+- Apps talking to the system service are identified the moment they connect, and the two sides confirm each other with a handshake before any request, so a program can no longer borrow another program's permissions.
+- A permission to change packages is now a permission to ask: every change made as root shows a sheet on your screen, and nothing happens until you confirm it.
+- The most sensitive actions (accounts, remote login, firewall, permissions, boot environments) always ask for your password, even right after you typed it.
+- Every command the system runs as root starts with a clean environment, so settings an app left behind cannot change what it does.
+- System services run in a sandbox by default and see only what they need.
+- Everything read from files, sockets and plugins has limits on size and depth, and the readers are fuzz-tested.
+- The supply chain is pinned (build actions, container images, package sources) and audited on every change.
+- Coding standards and an independent audit after each change are part of how WolOS is built.
+- The Wonderland Doctrine, our code of conduct, was published.
+- A program running in your account can no longer answer the system's confirmation sheets for you.
+- Every package change made through pacman asks for your password.
+- The malware check refuses a file it could not scan instead of letting it through; open it again in a moment.
+- `--help` on any `wol` command only shows help and never runs the command.
+- Apps you install after a system update has been prepared, but before you restart into it, are kept when the new system starts.
+- Large downloads are checked for malware in pieces, with a time limit.
+- Admin tools started by the desktop ask through the system service, which names the program asking, before the desktop shows a confirmation.
+- Packages waiting to be installed and pending confirmations have limits, so a program cannot fill memory with them.
+- Package index downloads replace the old index only when complete.
+- Root logins start with a clean environment.
+- The coding standards gained checks that may only get better, never worse: window server calls, user-facing sentences, crash-on-error calls, slow work on the desktop's main thread, Esc handling and style classes.
+
+Audio
+- Automatic input level for the microphone really turns on.
+- Microphone volume is set on the device itself.
+
 ## 0.11.5
 - VirtualBox (VMSVGA): the desktop starts after install. GTK used GL on the vmwgfx render node, Hyprland rejected its buffers, the shell died and the start-up lock respawned behind a black screen; on vmwgfx WolOS now renders with cairo.
 - Install WolOS shows the mouse pointer (the installer hid it and never showed it again).
@@ -69,7 +152,7 @@
 - Package mirrors (ADR 0019): `[wolos]`, then `[wolos-cachy]` (x86-64-v3 builds of the same Arch versions, frozen at each release, on only on CPUs that run them), then Arch at the release date. `wol mirror status|rank|gate|kernel`; `wol update` moves all three repos together.
 - One picture from power-on to the desktop (ADR 0012): the WolOS mark replaces the loader's kernel splash, boot text never reaches a video console (rc.d `wolos_quiet`; serial consoles stay readable), every compositor starts black and every first window fades in from black and out to it. One account: its session starts directly behind the lock screen (no login window hop). The Hyprland fork hides the desktop under a lock taken over at boot or after a crash; `wol-lock` respawns a crashed lock screen and never unlocks on its own; Ctrl+Alt+Fn cannot show a console. The start-up lock opens the login keyring. `grep wolos-boot /var/log/messages` lists each boot stage with its time. If passwords can't be checked, the lock screen says so and offers Restart.
 - Setup Assistant, redone (ADR 0013): the Welcome art, then four questions on one card each: Language & Region (language and keyboard on one page, guessed from the time zone and console keymap; the keyboard applies at once, so the password is typed on it), Wi-Fi (scanned by wol-login, skipped on a wired machine, a wrong password says so), Create Your Account (full name fills the account name; colour for the avatar; administrator with zsh and sudo), Appearance (Light, Dark or Auto, and three looks), then You're All Set and Get Started fades into the desktop. Return continues, Escape goes back; every problem is one sentence on the page that has it.
-- Install WolOS is an app (ADR 0013): pick the disk by name and size, a clear erase warning, Erase and Install, progress with the Pocket Watch, the step it is on and the time left (the screen stays on and closing the lid does not sleep the machine meanwhile), then Restart into Setup. It runs the boot menu's installer without a terminal or a password (the live user may run `libexec/wolos/install-run` with sudo): GPT with EFI and BIOS boot, ZFS with boot environments, the system, the boot loader, the apps. Each step reports `wolos-install: <stage> <percent> <message>`; a stop says where it stopped, cleans up and offers Try Again.
+- Install WolOS is an app (ADR 0013): pick the disk by name and size, a clear erase warning, Erase and Install, progress with the Pocket Watch, the step it is on and the time left (the screen stays on and closing the lid does not sleep the machine meanwhile), then Restart into Setup. It runs the boot menu's installer without a terminal or a password (the live user may run `libexec/wolos/install-run` with sudo): GPT with EFI and BIOS boot, ZFS with boot environments (FreeBSD era; since the Arch base, ADR 0016, the install is btrfs with A/B boot slots, ADR 0018 and 0025), the system, the boot loader, the apps. Each step reports `wolos-install: <stage> <percent> <message>`; a stop says where it stopped, cleans up and offers Try Again.
 - Error copy in one place (`shell::copy`, archicture/modules/ux-journeys.md): every failure sentence says what happened and what to do; `tests/copy_lint.rs` bans raw error text (errno, exit codes, paths, program names, "failed") and `{e}` outside logs. Fixed: Software Update said "Make sure pkg is installed"; App Store said "X was not installed. The change did not work"; auth messages without a full stop.
 - Wi-Fi join (FreeBSD) waits up to 20 s for the network instead of reporting success after `wpa_cli reconfigure`: a refused password is `WrongPassword` ("“Home” didn't accept that password. Check it and try again."), not a false "Connected" or the administrator sheet; a password of the wrong length says "8 to 63 characters".
 - App menu: Force Quit <App> ends every window of a frozen app (Hyprland `killwindow`; `wol-app force-quit`).

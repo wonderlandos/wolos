@@ -57,23 +57,88 @@ fn fetch(env: &mut dyn Env, url: &str, dest: &Path) -> bool {
     env.exec_quiet(&argv).is_ok_and(|c| c == 0)
 }
 
+/// A unique name next to `dest` for one download (R2C-23): two runs never write the same file,
+/// and the final name only ever holds a complete, verified copy.
+fn part_of(dest: &Path) -> PathBuf {
+    let nonce = shared::jobs::new_nonce()
+        .unwrap_or_else(|_| format!("{}-{}", std::process::id(), shared::sys::monotonic_ns()));
+    let mut n = dest.file_name().unwrap_or_default().to_os_string();
+    n.push(format!(".{nonce}.part"));
+    dest.with_file_name(n)
+}
+
+/// Take a freshly downloaded index (and its signature, when it came) into the cache: only when
+/// it verifies and parses, then both renamed over the cached pair (R2C-10). Err: the fresh copy
+/// was not good; the cached pair is untouched. The downloads are removed either way.
+fn adopt(
+    dir: &Path,
+    fresh: &Path,
+    fresh_sig: Option<&Path>,
+    keys: &[[u8; 32]],
+    required: bool,
+) -> Result<(), String> {
+    let (file, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
+    let done = (|| {
+        let text = std::fs::read(fresh).map_err(|_| "the download is missing".to_owned())?;
+        let s = fresh_sig.and_then(|p| std::fs::read(p).ok());
+        package::verify_fetched_index(&text, s.as_deref(), keys, required)?;
+        Index::parse(&String::from_utf8_lossy(&text))?;
+        // The cached signature belongs to the cached index: replace it, or drop it with it.
+        match fresh_sig.filter(|_| s.is_some()) {
+            Some(p) => std::fs::rename(p, &sig).map_err(|e| e.to_string())?,
+            None => {
+                let _ = std::fs::remove_file(&sig);
+            }
+        }
+        std::fs::rename(fresh, &file).map_err(|e| e.to_string())
+    })();
+    let _ = std::fs::remove_file(fresh);
+    if let Some(p) = fresh_sig {
+        let _ = std::fs::remove_file(p);
+    }
+    done
+}
+
 /// Fresh index, else the cached copy; None when there is neither. A bad signature or a malformed
-/// index is an error, never "no index".
+/// index is an error, never "no index". A fresh copy replaces the cached pair only once it
+/// verified (R2C-10): a failed or bad download leaves the last good pair in place.
 fn index(env: &mut dyn Env) -> Result<Option<Index>, String> {
     let dir = cache_dir(env);
     let _ = std::fs::create_dir_all(&dir);
     let url = env.var(INDEX_VAR).unwrap_or_else(|| INDEX_URL.into());
     let (file, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
-    if !fetch(env, &url, &file) {
+    let keys = keys(env);
+    let mark = dir.join(package::INDEX_SIGNED_MARK);
+    let required = package::index_sig_required(
+        !keys.is_empty(),
+        env.var(INDEX_VAR).is_some(),
+        mark.exists(),
+    );
+    let (fresh, fresh_sig) = (part_of(&file), part_of(&sig));
+    if !fetch(env, &url, &fresh) {
+        let _ = std::fs::remove_file(&fresh);
         env.err("wol: index unavailable, using the cached copy\n");
-    } else if !fetch(env, &format!("{url}{INDEX_SIG_SUFFIX}"), &sig) {
-        let _ = std::fs::remove_file(&sig);
+    } else {
+        let got_sig = fetch(env, &format!("{url}{INDEX_SIG_SUFFIX}"), &fresh_sig);
+        let s = got_sig.then_some(fresh_sig.as_path());
+        if fresh.exists()
+            && let Err(e) = adopt(&dir, &fresh, s, &keys, required)
+        {
+            env.err(&format!(
+                "wol: the downloaded index was not used ({e}); using the cached copy\n"
+            ));
+        }
+        let _ = std::fs::remove_file(&fresh);
+        let _ = std::fs::remove_file(&fresh_sig);
     }
     let Ok(text) = std::fs::read(&file) else {
         return Ok(None);
     };
     let sig = std::fs::read(&sig).ok();
-    package::verify_index(&text, sig.as_deref(), &keys(env))?;
+    if let Trust::Signed(_) = package::verify_fetched_index(&text, sig.as_deref(), &keys, required)?
+    {
+        let _ = std::fs::write(&mark, ""); // only tightens the next check
+    }
     Index::parse(&String::from_utf8_lossy(&text)).map(Some)
 }
 
@@ -91,6 +156,14 @@ fn install(env: &mut dyn Env, app: &str) -> i32 {
     }
     let found = match index(env) {
         Ok(i) => i.and_then(|i| package::find(&i, app).cloned()),
+        // R2C-10: a plain package name still installs from the signed repos (wol-admind asks
+        // for the password); only an index app needs the index.
+        Err(e) if contract::is_pkg_name(app) && !contract::is_app_id(app) => {
+            env.err(&format!(
+                "wol: package index: {e}; installing '{app}' from the system repositories\n"
+            ));
+            None
+        }
         Err(e) => return fail(env, ErrorCode::Invalid, &format!("package index: {e}")),
     };
     match found {
@@ -477,5 +550,121 @@ mod tests {
         let (mut e3, _) = env("rm-missing");
         assert_ne!(run(&mut e3, "remove nothing"), 0);
         assert!(e3.requests.is_empty());
+    }
+
+    /// R2C-10: a signature download that fails keeps the last good pair, and a plain package
+    /// name still installs when the index cannot be used.
+    #[test]
+    fn a_failed_signature_download_keeps_the_cached_pair() {
+        let bytes = wol("2.0", Some(&SEED));
+        let (mut e, home) = env("sigfail");
+        index_with(&home, "2.0", &bytes);
+        let cache = home.join(".cache/wolos/packages");
+        std::fs::write(cache.join("wol-fixture-2.0.wol"), &bytes).unwrap();
+        assert_eq!(run(&mut e, "install org.wolos.Fixture"), 0, "{}", e.err);
+        assert!(cache.join("index.signed").exists());
+        let mut again = FakeEnv {
+            home: home.clone(),
+            vars: e.vars.clone(),
+            replies: vec!["ok\n".into()],
+            exec_codes: vec![0, 22], // the index downloads, its signature does not
+            ..FakeEnv::default()
+        };
+        assert_eq!(
+            run(&mut again, "install org.wolos.Fixture"),
+            0,
+            "{}",
+            again.err
+        );
+        assert!(
+            cache.join("index.json.sig").exists(),
+            "the good signature stays"
+        );
+        assert_eq!(sent(&again).len(), 1);
+        // No usable index at all (signature gone after a signed one): pacman names still work,
+        // index app ids do not (they need the index).
+        std::fs::remove_file(cache.join("index.json.sig")).unwrap();
+        let mut plain = FakeEnv {
+            home: home.clone(),
+            vars: e.vars.clone(),
+            replies: vec!["ok\n".into()],
+            ..FakeEnv::default()
+        };
+        assert_eq!(run(&mut plain, "install htop"), 0, "{}", plain.err);
+        assert_eq!(sent(&plain), ["pkg-install htop"]);
+        assert!(plain.err.contains("system repositories"), "{}", plain.err);
+        // Nothing is left behind under a download name.
+        let parts = std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .filter(|f| f.file_name().to_string_lossy().ends_with(".part"))
+            .count();
+        assert_eq!(parts, 0);
+    }
+
+    /// R2C-10/R2C-23: a fresh pair replaces the cache only when it verifies.
+    #[test]
+    fn a_fresh_index_is_taken_only_when_it_verifies() {
+        let (_e, home) = env("adopt");
+        let bytes = wol("2.0", Some(&SEED));
+        index_with(&home, "2.0", &bytes);
+        let cache = home.join(".cache/wolos/packages");
+        let keys = vec![wol_core::package::public_of(&SEED)];
+        let good = std::fs::read(cache.join("index.json")).unwrap();
+        let good_sig = std::fs::read(cache.join("index.json.sig")).unwrap();
+        let text: &[u8] = br#"{"format":1,"packages":[]}"#;
+        // A fresh index with a signature by another key: refused, the cache is untouched.
+        let (fresh, fresh_sig) = (cache.join("i.part"), cache.join("s.part"));
+        std::fs::write(&fresh, text).unwrap();
+        std::fs::write(&fresh_sig, sign(&[9; 32], text)).unwrap();
+        assert!(adopt(&cache, &fresh, Some(&fresh_sig), &keys, true).is_err());
+        assert_eq!(std::fs::read(cache.join("index.json")).unwrap(), good);
+        assert_eq!(
+            std::fs::read(cache.join("index.json.sig")).unwrap(),
+            good_sig
+        );
+        assert!(!fresh.exists() && !fresh_sig.exists());
+        // No signature while one is required: refused too.
+        std::fs::write(&fresh, text).unwrap();
+        assert!(adopt(&cache, &fresh, None, &keys, true).is_err());
+        assert_eq!(std::fs::read(cache.join("index.json")).unwrap(), good);
+        // A good pair replaces both.
+        std::fs::write(&fresh, text).unwrap();
+        std::fs::write(&fresh_sig, sign(&SEED, text)).unwrap();
+        assert!(adopt(&cache, &fresh, Some(&fresh_sig), &keys, true).is_ok());
+        assert_eq!(std::fs::read(cache.join("index.json")).unwrap(), text);
+        assert_ne!(
+            std::fs::read(cache.join("index.json.sig")).unwrap(),
+            good_sig
+        );
+    }
+
+    #[test]
+    fn a_stripped_index_signature_is_refused() {
+        // CORE-8: once a cache held a signed index, an index without its .sig is an error.
+        let bytes = wol("2.0", Some(&SEED));
+        let (mut e, home) = env("strip");
+        index_with(&home, "2.0", &bytes);
+        let cache = home.join(".cache/wolos/packages");
+        std::fs::write(cache.join("wol-fixture-2.0.wol"), &bytes).unwrap();
+        assert_eq!(run(&mut e, "install org.wolos.Fixture"), 0, "{}", e.err);
+        assert!(cache.join("index.signed").exists());
+        std::fs::remove_file(cache.join("index.json.sig")).unwrap();
+        let mut again = FakeEnv {
+            home: home.clone(),
+            vars: e.vars.clone(),
+            replies: vec!["ok\n".into()],
+            ..FakeEnv::default()
+        };
+        assert_ne!(run(&mut again, "install org.wolos.Fixture"), 0);
+        assert!(again.requests.is_empty(), "{:?}", again.requests);
+        // The official index with trusted keys installed: never unsigned, even on a new cache.
+        let (mut off, home) = env("official");
+        off.vars.retain(|(k, _)| k != INDEX_VAR);
+        index_with(&home, "2.0", &bytes);
+        std::fs::remove_file(home.join(".cache/wolos/packages/index.json.sig")).unwrap();
+        assert_ne!(run(&mut off, "install org.wolos.Fixture"), 0);
+        assert!(off.requests.is_empty());
+        assert!(off.err.contains("signature"), "{}", off.err);
     }
 }

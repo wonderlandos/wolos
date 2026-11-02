@@ -14,6 +14,7 @@ fn fake_wold(path: &Path, calls: Arc<Mutex<Vec<Call>>>) {
     let l = UnixListener::bind(path).unwrap();
     std::thread::spawn(move || {
         for conn in l.incoming().flatten() {
+            shared::jobs::greet(&conn).unwrap();
             let mut line = String::new();
             BufReader::new(&conn).read_line(&mut line).unwrap();
             let json = line.trim().strip_prefix("call ").unwrap();

@@ -115,6 +115,11 @@ pub trait Env {
     fn home(&self) -> PathBuf {
         PathBuf::from(self.var("HOME").unwrap_or_default())
     }
+    /// `$XDG_DATA_HOME` when set and non-empty, else `home()/.local/share`.
+    fn data_home(&self) -> PathBuf {
+        wol_core::theme::apps::data_home(|k| self.var(k))
+            .unwrap_or_else(|| self.home().join(".local/share"))
+    }
     /// Who acts (journal, audit log): `cli`, `script:<WOL_HELPER>`, `mcp:<client>`.
     fn actor(&self) -> String {
         self.var("WOL_HELPER")
@@ -157,6 +162,12 @@ fn inline(v: &serde_json::Value) -> String {
 }
 
 pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
+    // `--help` is a global flag: print the usage of this path and run nothing (CLI-1:
+    // `wol power shutdown --help` must not shut down).
+    if inv.flag("help") {
+        env.out(&help(&inv.path));
+        return 0;
+    }
     // A named script is a helper: policy + audit log (docs/modules/automation.md).
     if let (Some(name), Some(rule)) = (env.var("WOL_HELPER"), crate::catalog::rule_of(inv)) {
         return crate::verbs::as_script(inv, env, &name, rule);
@@ -229,9 +240,11 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "seal.check" => crate::seal::check(env),
         "seal.off" => crate::pkg::seal_off(env),
         "layers.fold" => crate::pkg::fold(env, inv),
+        "layers.clear" => crate::pkg::clear(env),
         "pkg" => crate::pkg::pkg_verb(env, inv),
         "install.info" | "install.probe" | "install.check" | "install.layout"
-        | "install.settings" | "install.account" => crate::install::verb(env, inv),
+        | "install.settings" | "install.account" | "install.facts" | "install.mounts"
+        | "install.hostname" => crate::install::verb(env, inv),
         "encrypt.decide" => crate::seal::decide(env, inv),
         "encrypt.enroll" => crate::seal::enroll(env, inv),
         "encrypt.words" => crate::seal::words(env, inv),
@@ -242,10 +255,13 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         }
         "gpu.env" => exec(env, &[GPU_BIN.into(), "gpu".into(), "env".into()]),
         "gpu.hyprconf" => exec(env, &[GPU_BIN.into(), "gpu".into(), "hyprconf".into()]),
-        "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" => {
+        "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" | "hw.compute" => {
             crate::hw::execute(inv, env)
         }
+        "audio.doctor" | "audio.reset" | "audio.appmix" => crate::audio_doctor::execute(inv, env),
         a if a.starts_with("games.") => crate::games::execute(inv, env),
+        a if a.starts_with("modules.") => crate::modules::execute(inv, env),
+        a if a.starts_with("plugin.") => crate::plugin::execute(inv, env),
         a if a.starts_with("power.") => crate::power::execute(inv, env),
         a if a.starts_with("firewall.") || a.starts_with("security.") => {
             crate::security::execute(inv, env)
@@ -785,14 +801,20 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
         .get("release")
         .map(String::from)
         .or_else(|| update_snapshot(env).and_then(|u| u.snapshot));
-    let replace = env
-        .capture(&up::be::LIST_ARGV)
-        .is_some_and(|t| up::be::parse(&t).iter().any(|b| b.name == slot));
+    let bes = up::be::parse(&env.capture(&up::be::LIST_ARGV).unwrap_or_default());
+    let there = bes.iter().find(|b| b.name == slot);
+    // A slot that waits for its first boot (a kernel installed with pacman) is built on, not
+    // replaced: the update stacks onto it (CORE-6).
+    let from = match there {
+        Some(b) if b.next_boot && !b.active => up::Base::Pending,
+        Some(_) => up::Base::Running { replace: true },
+        None => up::Base::Running { replace: false },
+    };
     let cmdline = env.read_file(Path::new("/proc/cmdline"));
     let planned = if one_copy {
         up::plan_in_place(date.as_deref())
     } else {
-        up::plan_for(&slot, replace, date.as_deref(), cmdline.as_deref())
+        up::plan_from(&slot, from, date.as_deref(), cmdline.as_deref())
     };
     let Some(steps) = planned else {
         return fail(
@@ -822,13 +844,17 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
             Step::Write { path, text } => i32::from(env.write_file(Path::new(path), text).is_err()),
         };
         if code != 0 {
-            for r in up::rollback(&slot) {
+            for r in up::rollback_from(&slot, from) {
                 let _ = env.exec(&r);
             }
             return fail(
                 env,
                 ErrorCode::Failed,
-                &format!("{s} failed ({code}); slot {slot} removed"),
+                &if from == up::Base::Pending {
+                    format!("{s} failed ({code}); slot {slot} kept as it was")
+                } else {
+                    format!("{s} failed ({code}); slot {slot} removed")
+                },
             );
         }
     }
@@ -887,7 +913,12 @@ impl Env for RealEnv {
     }
     fn request_wait(&mut self, socket: &Path, req: &[u8], secs: u32) -> io::Result<String> {
         use io::{Read, Write};
-        let mut s = std::os::unix::net::UnixStream::connect(socket)?;
+        // wold's control socket greets first (ADR 0033); other sockets do not.
+        let mut s = if socket == jobs_socket(self) {
+            shared::jobs::connect(socket)?
+        } else {
+            std::os::unix::net::UnixStream::connect(socket)?
+        };
         s.set_read_timeout(Some(std::time::Duration::from_secs(secs.into())))?;
         s.write_all(req)?;
         s.shutdown(std::net::Shutdown::Write)?;

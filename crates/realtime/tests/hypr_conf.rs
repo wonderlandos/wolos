@@ -107,7 +107,10 @@ fn placement_goes_through_the_layout() {
 /// started a press or drag must see its release wherever it happens.
 #[test]
 fn hyprbars_is_patched_and_the_patch_ends_drags_anywhere() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../desktop/hyprland/hyprbars");
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../desktop/hyprland/hyprbars"
+    );
     let patches: String = std::fs::read_dir(dir)
         .unwrap()
         .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
@@ -131,6 +134,10 @@ fn hyprbars_is_patched_and_the_patch_ends_drags_anywhere() {
     );
 }
 
+/// Position and size of a new floating window come from wol-hypr (realtime placement.rs): the
+/// conf's `size` rule hit dialogs and fixed-size windows, which flashed at the wrong size; a
+/// dialog centres on its parent (`wol_centre`), a window keeps its own size cut to fit (`wol_fit`),
+/// the next window of an app cascades (previous window passed to `wol_place`).
 #[test]
 fn plugin_owns_floating_placement() {
     assert!(
@@ -138,6 +145,73 @@ fn plugin_owns_floating_placement() {
             .lines()
             .any(|l| l.trim().starts_with("windowrule") && l.contains(", move "))
     );
+    let float = &CONF[CONF.find("name = wol-float\n").unwrap()..];
+    let float = &float[..float.find('}').unwrap()];
+    assert!(!float.contains("size ="), "conf sizes windows: {float}");
+    let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
+    for call in [
+        "wol_fit(",
+        "wol_centre(",
+        "wol_place(",
+        "isTransient(w) ? parentOf(w)",
+        "previousOfClass(w)",
+    ] {
+        assert!(plugin.contains(call), "{call}");
+    }
+}
+
+/// Zoom (`fullscreen 1`) fills the band between the menu bar and the Dock exactly: the Dock
+/// reserves the shelf only (shell ui::dock::exclusive_zone), and a maximised workspace has no gaps
+/// and no rounding. Live: a 12 px gap and a 36 px band above the shelf.
+#[test]
+fn zoomed_windows_fill_the_band_between_menu_bar_and_dock() {
+    assert!(
+        CONF.lines()
+            .any(|l| l.trim() == "workspace = f[1], gapsout:0, gapsin:0, rounding:false"),
+        "maximised workspace rule"
+    );
+}
+
+/// Inactive windows look inactive: grey lights, a flatter bar and a dimmer title on the window
+/// without focus; the hyprbars patch adds the two colours and tracks focus for all three.
+#[test]
+fn inactive_windows_look_inactive() {
+    for key in [
+        "inactive_button_color",
+        "bar_color_inactive",
+        "col.text_inactive",
+    ] {
+        assert!(value(key).starts_with("rgba("), "{key}");
+    }
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../desktop/hyprland/hyprbars"
+    );
+    let patches: String = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    let added = |s: &str| patches.lines().any(|l| l.starts_with('+') && l.contains(s));
+    assert!(
+        added("plugin:hyprbars:bar_color_inactive") && added("plugin:hyprbars:col.text_inactive")
+    );
+    assert!(
+        added("m_bTitleColorChanged = true;"),
+        "a focus change re-renders the title"
+    );
+}
+
+/// The usable area changes live (VBoxClient resizes the guest display with the VM window, the
+/// Dock hides or returns): open floating windows are refit and zoomed windows recalculated.
+#[test]
+fn display_or_dock_changes_refit_open_windows() {
+    let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
+    assert!(plugin.contains("m_events.render.pre.listen("));
+    assert!(plugin.contains("wol_refit(") && plugin.contains("recalculateMonitor("));
+    let header = include_str!("../include/wol_realtime.h");
+    for f in ["wol_fit(", "wol_centre(", "wol_refit("] {
+        assert!(header.contains(f), "{f}");
+    }
 }
 
 #[test]
@@ -248,12 +322,42 @@ fn greeter_compositors_show_no_nag_banners() {
     }
 }
 
+/// A focus the user asked for (click, keybind, focuswindow, switcher) raises the floating window;
+/// focus that merely follows the desktop (pointer, workspace switch, the fallback after a close)
+/// leaves the order alone, as macOS does.
 #[test]
 fn activation_raises_the_window() {
     let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
     let hook = &plugin[plugin.find("static void onActive").unwrap()..];
     let hook = &hook[..hook.find("\n}").unwrap()];
     assert!(hook.contains("alterzorder top"), "{hook}");
+    assert!(hook.contains("raisesOnFocus(reason)"), "{hook}");
+    let filter = &plugin[plugin.find("static bool raisesOnFocus").unwrap()..];
+    let filter = &filter[..filter.find("\n}").unwrap()];
+    for yes in [
+        "FOCUS_REASON_CLICK",
+        "FOCUS_REASON_DISPATCH_FOCUSWINDOW",
+        "FOCUS_REASON_KEYBIND",
+    ] {
+        assert!(filter.contains(yes), "{yes}");
+    }
+    for no in [
+        "FOCUS_REASON_FFM",
+        "FOCUS_REASON_WORKSPACE_CHANGE",
+        "FOCUS_REASON_UNMAP_WINDOW_FLOATING",
+    ] {
+        assert!(!filter.contains(no), "{no} must not raise");
+    }
+}
+
+/// ⇧⌘H showed special:hidden (every minimised window at once) as an overlay; minimised windows
+/// come back through the Dock, the switcher or activation (fork patch 0008).
+#[test]
+fn no_shortcut_shows_the_hidden_workspace() {
+    assert!(!CONF.lines().any(|l| {
+        let l = l.split('#').next().unwrap();
+        l.contains("togglespecialworkspace") && l.contains("hidden")
+    }));
 }
 
 /// Live perf run: the perf defaults (vfr, damage tracking, cached blur, HW cursor) were installed

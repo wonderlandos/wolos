@@ -10,11 +10,15 @@
 //!   open mark of their own, removed once checked.
 //!
 //! Anything that goes wrong here allows the file: a guard must never stop the computer from
-//! working. When this process ends, the kernel lets every waiting call through.
+//! working. One exception (audit S4): a download whose deep check could not run at all (the
+//! worker died, or its rule sets do not load) is refused for now and not remembered, so the next
+//! open asks again; the reason goes to the log. When this process ends, the kernel lets every
+//! waiting call through.
 use crate::ctl::{self, Reply};
 use crate::scan::{Engine, kind, now};
 use crate::store::{Entry, FileId, State, Store};
 use crate::{Kind, hexs};
+use md5::Md5;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use std::io::Read;
@@ -52,17 +56,52 @@ pub const STATUS: &str = "status.json";
 
 /// Above this an untagged file runs at once and is checked in the background.
 const LARGE: u64 = 1 << 30;
+/// Largest file held in memory whole and handed to the deep worker whole; above it the lean pass
+/// streams in [`PIECE`]s, the worker runs the rule sets over pieces (`scan --stream`, R2C-4) and
+/// the sweep does the whole-file look later (audit S8). Each of the [`THREADS`]
+/// may hold one in the guard and one in its worker at once: [`MEMORY_NEED`] must fit the unit's
+/// `MemoryMax` (crates/xguard/tests/units.rs).
+pub const WHOLE: u64 = 64 << 20;
+/// One read of the streamed lean pass, and the bytes kept across reads so a pattern that spans
+/// two reads is still seen.
+const PIECE: usize = 8 << 20;
+const OVERLAP: usize = 1 << 20;
+/// Room for the mapped signatures, the compiled YARA rules in a worker and the heap.
+pub const RESERVE: u64 = 128 << 20;
+/// Most memory the guard and its workers use together.
+pub const MEMORY_NEED: u64 = THREADS as u64 * 2 * WHOLE + RESERVE;
+/// The `why` of a scan whose rule sets did not load: the deep check did not run.
+pub const RULES_DID_NOT_LOAD: &str = "the rule sets did not load";
 /// The database stays mapped this long after the last scan.
 const LINGER: Duration = Duration::from_secs(30);
 /// Findings kept for the page.
 const KEEP: usize = 50;
-const THREADS: usize = 3;
+pub const THREADS: usize = 3;
 
 /// What the guard needs to do on a kernel question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Answer {
     Allow,
     Deny,
+    /// Refused now, not remembered: the check could not run (audit S4). The next open asks again.
+    Unchecked,
+}
+
+/// A deep check that did not answer: refuse a download for now, let anything else run (it is
+/// remembered as not deep, so the sweep looks again). A caller on the socket counts as a
+/// download: it hears "unchecked", not "clean".
+pub fn on_deep_failure(tagged: bool) -> Answer {
+    if tagged {
+        Answer::Unchecked
+    } else {
+        Answer::Allow
+    }
+}
+
+/// The deep worker's report, or None when it did not really look (its rule sets did not load).
+pub fn usable(r: crate::Report) -> Option<crate::Report> {
+    let broken = r.skipped.iter().any(|s| s.why == RULES_DID_NOT_LOAD);
+    (!broken).then_some(r)
 }
 
 /// Remembered verdict -> answer, or None to scan.
@@ -238,13 +277,55 @@ fn set_tag(fd: RawFd) {
     unsafe { libc::fsetxattr(fd, c.as_ptr(), v.as_ptr().cast(), v.len(), 0) };
 }
 
-/// Spawn one deep scan: a fresh process with no privileges, the file on its standard input.
-fn deep_scan(worker: &Path, rules: &Path, file: &std::fs::File) -> Option<crate::Report> {
+/// First 16 bytes of a digest: the cache key.
+fn key16(sha: &[u8; 32]) -> [u8; 16] {
+    let mut k = [0; 16];
+    k.copy_from_slice(&sha[..16]);
+    k
+}
+
+/// What a `check`/`allow` caller may hand over: a regular file no larger than the cap. A FIFO,
+/// socket or device (`/dev/zero`) would block or never end, so it is refused before any read.
+pub fn checkable(file: &std::fs::File) -> Result<u64, &'static str> {
+    use std::os::unix::fs::FileTypeExt;
+    let m = file.metadata().map_err(|_| "cannot stat")?;
+    let t = m.file_type();
+    if !t.is_file() || t.is_fifo() || t.is_char_device() || t.is_block_device() || t.is_socket() {
+        return Err("not a regular file");
+    }
+    if m.len() > LARGE {
+        return Err("too large");
+    }
+    Ok(m.len())
+}
+
+/// Longest one deep scan may take (R2C-5). The kernel holds the opener until the guard answers,
+/// and there are only [`THREADS`] workers: past this the worker is killed and the file is
+/// treated like a deep check that did not run ([`on_deep_failure`]).
+pub const DEEP_DEADLINE: Duration = Duration::from_secs(60);
+/// Most a worker may write on its standard output (one JSON report line).
+const DEEP_OUT: u64 = 1 << 20;
+
+/// How one deep scan ended.
+#[derive(Debug)]
+pub enum DeepOutcome {
+    Report(crate::Report),
+    /// The worker did not start, died, wrote no usable report, or its rules did not load.
+    Failed,
+    /// The worker ran past the deadline and was killed.
+    TimedOut,
+}
+
+/// The worker's command: a fresh process with no privileges. `stream`: the file is above
+/// [`WHOLE`], the worker reads it in pieces (R2C-4).
+fn deep_command(worker: &Path, rules: &Path, stream: bool) -> std::process::Command {
     use std::os::unix::process::CommandExt;
-    let clone = file.try_clone().ok()?;
     let mut c = std::process::Command::new(worker);
-    c.args(["scan", "--json", "--rules"]).arg(rules).arg("-");
-    c.stdin(clone).stderr(std::process::Stdio::null());
+    c.args(["scan", "--json"]);
+    if stream {
+        c.arg("--stream");
+    }
+    c.arg("--rules").arg(rules).arg("-");
     // SAFETY: prctl and setresuid are async-signal-safe.
     unsafe {
         c.pre_exec(|| {
@@ -253,8 +334,117 @@ fn deep_scan(worker: &Path, rules: &Path, file: &std::fs::File) -> Option<crate:
         });
     }
     c.uid(65534).gid(65534);
-    let out = c.output().ok()?;
-    serde_json::from_slice(out.stdout.split(|b| *b == b'\n').next()?).ok()
+    c
+}
+
+/// Run a deep-scan command with the file on its standard input and wait at most `deadline`
+/// (R2C-5). The guard keeps the `Child`: only it is ever killed, never a pid by number.
+pub fn run_deep(
+    mut c: std::process::Command,
+    file: &std::fs::File,
+    deadline: Duration,
+) -> DeepOutcome {
+    use std::process::Stdio;
+    let Ok(clone) = file.try_clone() else {
+        return DeepOutcome::Failed;
+    };
+    c.stdin(clone).stdout(Stdio::piped()).stderr(Stdio::null());
+    let Ok(mut child) = c.spawn() else {
+        return DeepOutcome::Failed;
+    };
+    // The report is read on its own thread so a full pipe never stalls the wait below.
+    let reader = child.stdout.take().map(|out| {
+        std::thread::spawn(move || {
+            let mut v = Vec::new();
+            let _ = out.take(DEEP_OUT).read_to_end(&mut v);
+            v
+        })
+    });
+    let start = Instant::now();
+    let timed_out = loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break false,
+            Ok(None) if start.elapsed() >= deadline => break true,
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(_) => break true,
+        }
+    };
+    if timed_out {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    let out = reader.and_then(|r| r.join().ok()).unwrap_or_default();
+    if timed_out {
+        return DeepOutcome::TimedOut;
+    }
+    out.split(|b| *b == b'\n')
+        .next()
+        .and_then(|l| serde_json::from_slice(l).ok())
+        .and_then(usable)
+        .map_or(DeepOutcome::Failed, DeepOutcome::Report)
+}
+
+/// What a deep check means for the answer: `Ok((finding, ran_deep))` to go on, or `Err(answer)`
+/// to answer now without remembering. `streamed`: the file was read in pieces, so even a clean
+/// result is remembered as not deep and the sweep looks again with the whole file.
+pub fn after_deep(
+    o: DeepOutcome,
+    download: bool,
+    streamed: bool,
+) -> Result<(Option<String>, bool), Answer> {
+    match o {
+        DeepOutcome::Report(r) => {
+            let finished = r.verdict != crate::Verdict::Incomplete && !streamed;
+            Ok((r.findings.first().map(|f| f.name.clone()), finished))
+        }
+        DeepOutcome::Failed | DeepOutcome::TimedOut => match on_deep_failure(download) {
+            Answer::Allow => Ok((None, false)),
+            a => Err(a),
+        },
+    }
+}
+
+/// Patterns piece by piece with an overlap, and the whole-file hashes from streamed digests:
+/// memory stays at one [`PIECE`] whatever the size (audit S8). Reads at most [`LARGE`].
+fn stream(e: &Engine, f: &mut std::fs::File, path: &str) -> Option<(Vec<String>, [u8; 32])> {
+    let mut r = f.take(LARGE);
+    let (mut buf, mut keep) = (vec![0u8; PIECE + OVERLAP], 0usize);
+    let (mut md5, mut sha, mut size) = (Md5::new(), Sha256::new(), 0u64);
+    let mut names = Vec::new();
+    loop {
+        let mut got = 0;
+        while keep + got < buf.len() {
+            match r.read(&mut buf[keep + got..]) {
+                Ok(0) => break,
+                Ok(n) => got += n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => return None,
+            }
+        }
+        if got == 0 {
+            break;
+        }
+        let end = keep + got;
+        md5.update(&buf[keep..end]);
+        sha.update(&buf[keep..end]);
+        size += got as u64;
+        names.extend(
+            e.findings(&buf[..end], None, path)
+                .into_iter()
+                .map(|f| f.name),
+        );
+        keep = OVERLAP.min(end);
+        buf.copy_within(end - keep..end, 0);
+    }
+    let sha = <[u8; 32]>::from(sha.finalize());
+    let md5 = <[u8; 16]>::from(md5.finalize());
+    match e.hash_findings(size, &md5, &sha, path) {
+        None => return Some((Vec::new(), sha)),
+        Some(h) => names.extend(h.into_iter().map(|f| f.name)),
+    }
+    names.sort();
+    names.dedup();
+    Some((names, sha))
 }
 
 impl Shared {
@@ -271,15 +461,25 @@ impl Shared {
         g.0.clone()
     }
 
-    /// Read a whole file (first use only), hash and match it. None: unreadable or no signatures.
-    fn lean(&self, f: &mut std::fs::File, path: &str) -> Option<(Vec<String>, [u8; 32])> {
+    /// Hash and match a file (first use only): whole in memory up to [`WHOLE`], streamed above.
+    /// The flag says it was read whole (only then may the deep worker look). None: unreadable or
+    /// no signatures.
+    fn lean(&self, f: &mut std::fs::File, path: &str) -> Option<(Vec<String>, [u8; 32], bool)> {
+        use std::io::{Seek, SeekFrom};
         let e = self.engine()?;
         self.counters.scanned.fetch_add(1, Relaxed);
         let mut d = Vec::new();
-        f.read_to_end(&mut d).ok()?;
+        // Never more than the cap, whatever the file claims: it may grow while being read.
+        (&mut *f).take(WHOLE + 1).read_to_end(&mut d).ok()?;
+        if d.len() as u64 > WHOLE {
+            drop(d);
+            f.seek(SeekFrom::Start(0)).ok()?;
+            let (names, sha) = stream(&e, f, path)?;
+            return Some((names, sha, false));
+        }
         let sha = <[u8; 32]>::from(Sha256::digest(&d));
         let names = e.findings(&d, Some(&sha), path);
-        Some((names.into_iter().map(|f| f.name).collect(), sha))
+        Some((names.into_iter().map(|f| f.name).collect(), sha, true))
     }
 
     fn block(&self, path: &str, name: &str, sha: &[u8], uid: u32) {
@@ -301,10 +501,11 @@ impl Shared {
     /// Open Anyway: this content runs from now on, on this machine.
     fn allow(&self, j: &mut Job) -> (Answer, String) {
         let path = path_of(j.file.as_raw_fd());
-        let (Ok(id), Some((_, sha))) = (FileId::of(&j.file), self.lean(&mut j.file, &path)) else {
+        let (Ok(id), Some((_, sha, _))) = (FileId::of(&j.file), self.lean(&mut j.file, &path))
+        else {
             return (Answer::Allow, String::new());
         };
-        let key: [u8; 16] = sha[..16].try_into().expect("16 bytes");
+        let key = key16(&sha);
         self.put(&id, State::Allowed, 0, true, key);
         let mut l = self.findings.lock().unwrap_or_else(|p| p.into_inner());
         let uid = l.iter().find(|b| b.path == path).map(|b| b.uid);
@@ -328,14 +529,15 @@ impl Shared {
         let tagged = is_tagged(fd);
         let asked = j.reply.is_some();
         let deep = asked || needs_deep(tagged, is_removable(&path), &head, &path);
-        if id.size > LARGE && !deep {
+        // Above the cap nothing is read in the guard, asked or not: the sweep looks later.
+        if id.size > LARGE {
             return (Answer::Allow, String::new());
         }
-        let Some((names, sha)) = self.lean(&mut j.file, &path) else {
+        let Some((names, sha, whole)) = self.lean(&mut j.file, &path) else {
             return (Answer::Allow, String::new());
         };
         let rules = self.rules_version.load(Relaxed) as u32;
-        let key: [u8; 16] = sha[..16].try_into().expect("16 bytes");
+        let key = key16(&sha);
         let known = self
             .store
             .lock()
@@ -352,10 +554,36 @@ impl Shared {
             && let Some(w) = &self.o.worker
         {
             let _ = j.file.seek(SeekFrom::Start(0));
-            if let Some(r) = deep_scan(w, &self.o.rules, &j.file) {
-                // An unfinished deep look stays clean for now, and is looked at again.
-                ran_deep = r.verdict != crate::Verdict::Incomplete;
-                found = r.findings.first().map(|f| f.name.clone());
+            // Above WHOLE the worker reads the file in pieces (R2C-4): a download is never
+            // allowed and remembered without the rule sets having looked at it.
+            let streamed = !whole;
+            let o = run_deep(
+                deep_command(w, &self.o.rules, streamed),
+                &j.file,
+                DEEP_DEADLINE,
+            );
+            match &o {
+                DeepOutcome::Report(r) if r.verdict == crate::Verdict::Incomplete => {
+                    eprintln!("wol-xguard: {path}: deep check incomplete, the sweep looks again");
+                }
+                DeepOutcome::Report(_) => {}
+                DeepOutcome::Failed => eprintln!(
+                    "wol-xguard: {path}: the deep check did not run (worker ended or its rule sets do not load)"
+                ),
+                DeepOutcome::TimedOut => eprintln!(
+                    "wol-xguard: {path}: the deep check took longer than {} s and was stopped",
+                    DEEP_DEADLINE.as_secs()
+                ),
+            }
+            match after_deep(o, tagged || asked, streamed) {
+                Ok((f, d)) => {
+                    found = f;
+                    ran_deep = d;
+                }
+                Err(a) => {
+                    eprintln!("wol-xguard: {path}: download refused until it can be checked");
+                    return (a, String::new());
+                }
             }
         }
         let state = if found.is_some() {
@@ -419,6 +647,7 @@ impl Shared {
         if let Some(r) = &j.reply {
             let state = match (a, j.allow) {
                 (Answer::Deny, _) => "found",
+                (Answer::Unchecked, _) => "unchecked",
                 (Answer::Allow, true) => "allowed",
                 (Answer::Allow, false) => "clean",
             };
@@ -443,11 +672,25 @@ impl Shared {
             }
             let Some(mut j) = q.pop_front() else { continue };
             drop(q);
-            let (a, name) = if j.allow {
-                self.allow(&mut j)
-            } else {
-                self.check(&mut j)
-            };
+            // A panic in a scan keeps this worker alive (without an answer the kernel would wait
+            // on the event forever). It answers like a deep check that did not run: a download
+            // is refused for now and asked about again, anything else is allowed (audit S4).
+            let (a, name) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if j.allow {
+                    self.allow(&mut j)
+                } else {
+                    self.check(&mut j)
+                }
+            }))
+            .unwrap_or_else(|_| {
+                let fd = j.file.as_raw_fd();
+                eprintln!("wol-xguard: {}: the check stopped on a bug", path_of(fd));
+                let asked = j.reply.is_some();
+                (
+                    on_deep_failure(!j.allow && (asked || is_tagged(fd))),
+                    String::new(),
+                )
+            });
             self.finish(&j, a, &name);
         }
     }
@@ -514,6 +757,9 @@ impl Shared {
             return;
         };
         let file = std::fs::File::from(fd);
+        if checkable(&file).is_err() {
+            return;
+        }
         let allow = match verb.as_str() {
             "check" => false,
             // Only the file's owner (or an administrator acting as root) may wave it through.
@@ -728,7 +974,17 @@ pub fn run(o: Options) -> Result<(), String> {
                 if m.fd >= 0 {
                     s.event(m.fd, m.mask);
                 }
-                at += m.event_len as usize;
+                // A length shorter than the header would loop forever; past the end, stop.
+                let Ok(len) = usize::try_from(m.event_len) else {
+                    break;
+                };
+                if len < size {
+                    break;
+                }
+                at = match at.checked_add(len) {
+                    Some(n) => n,
+                    None => break,
+                };
             }
         }
         if dirty && last.elapsed() >= Duration::from_secs(5) {
@@ -759,9 +1015,139 @@ mod tests {
         assert_eq!(from_store(None), None);
     }
 
+    /// Audit S4: a deep check that could not run refuses a download for now and is not
+    /// remembered; other files run.
+    #[test]
+    fn a_download_that_could_not_be_checked_is_refused_for_now() {
+        assert_eq!(on_deep_failure(true), Answer::Unchecked);
+        assert_eq!(on_deep_failure(false), Answer::Allow);
+        let report = |why: &str| crate::Report {
+            verdict: crate::Verdict::Incomplete,
+            findings: Vec::new(),
+            skipped: vec![crate::Skipped {
+                path: "-".into(),
+                why: why.into(),
+            }],
+            files: 1,
+            bytes: 0,
+            sha256: String::new(),
+            signatures_built: 0,
+            signatures_age_days: None,
+            signatures_versions: Vec::new(),
+        };
+        assert!(usable(report(RULES_DID_NOT_LOAD)).is_none());
+        assert!(usable(report("too large to unpack")).is_some());
+    }
+
+    /// Audit S8: what one check holds in memory stays far below the cap the unit sets.
+    #[test]
+    fn a_large_file_is_streamed_not_held() {
+        const { assert!(WHOLE < LARGE) };
+        const { assert!((PIECE + OVERLAP) as u64 <= WHOLE) };
+        const { assert!(MEMORY_NEED < 1 << 30) };
+    }
+
+    /// R2C-5: a deep scan that hangs is stopped at the deadline; a download is then refused for
+    /// now, anything else runs and is not remembered as deep.
+    #[test]
+    fn a_slow_deep_scan_is_stopped_at_the_deadline() {
+        let f = std::fs::File::open("/etc/passwd").unwrap();
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", "sleep 30"]);
+        let start = Instant::now();
+        let o = run_deep(c, &f, Duration::from_millis(500));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
+        assert!(matches!(o, DeepOutcome::TimedOut), "{o:?}");
+        assert_eq!(after_deep(o, true, false), Err(Answer::Unchecked));
+        assert_eq!(
+            after_deep(DeepOutcome::TimedOut, false, false),
+            Ok((None, false))
+        );
+        assert_eq!(
+            after_deep(DeepOutcome::Failed, true, true),
+            Err(Answer::Unchecked)
+        );
+    }
+
+    /// R2C-4: a download above WHOLE goes to the worker in stream mode; what its rules find is
+    /// refused, and a clean streamed look is not remembered as deep.
+    #[test]
+    fn a_large_download_gets_the_rule_sets_in_pieces() {
+        let report = |verdict, name: Option<&str>| crate::Report {
+            verdict,
+            findings: name
+                .map(|n| crate::Finding {
+                    name: n.into(),
+                    how: "rule".into(),
+                    path: "-".into(),
+                })
+                .into_iter()
+                .collect(),
+            skipped: Vec::new(),
+            files: 1,
+            bytes: 0,
+            sha256: String::new(),
+            signatures_built: 0,
+            signatures_age_days: None,
+            signatures_versions: Vec::new(),
+        };
+        let line = serde_json::to_string(&report(crate::Verdict::Found, Some("Evil"))).unwrap();
+        let dir = std::env::temp_dir().join(format!("xguard-deep-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let out = dir.join("report.json");
+        std::fs::write(&out, format!("{line}\n")).unwrap();
+        let f = std::fs::File::open("/etc/passwd").unwrap();
+        // A fake worker: it must be asked for pieces, reads its input, then reports.
+        let mut c = deep_command(Path::new("sh"), Path::new("/nonexistent"), true);
+        let argv: Vec<String> = c
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(argv.iter().any(|a| a == "--stream"), "{argv:?}");
+        c = std::process::Command::new("sh");
+        c.arg("-c")
+            .arg(format!("cat >/dev/null; cat {}", out.display()));
+        let o = run_deep(c, &f, Duration::from_secs(10));
+        assert_eq!(after_deep(o, true, true), Ok((Some("Evil".into()), false)));
+        let clean = DeepOutcome::Report(report(crate::Verdict::Clean, None));
+        assert_eq!(after_deep(clean, true, true), Ok((None, false)));
+        let whole = DeepOutcome::Report(report(crate::Verdict::Clean, None));
+        assert_eq!(after_deep(whole, true, false), Ok((None, true)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn what_earns_the_rule_sets_before_it_starts() {
         assert!(needs_deep(true, false, b"#!/bin/sh", "x"));
+    }
+
+    #[test]
+    fn check_refuses_what_is_not_a_regular_file() {
+        let start = Instant::now();
+        let zero = std::fs::File::open("/dev/zero");
+        assert!(zero.is_ok_and(|f| checkable(&f).is_err()));
+        let dir = std::env::temp_dir().join(format!("xguard-fifo-{}", std::process::id()));
+        let _ = std::fs::remove_file(&dir);
+        let c = std::ffi::CString::new(dir.as_os_str().as_encoded_bytes()).ok();
+        // SAFETY: valid NUL-terminated path.
+        let made = c.is_some_and(|c| unsafe { libc::mkfifo(c.as_ptr(), 0o600) } == 0);
+        assert!(made);
+        // O_NONBLOCK: opening a FIFO for reading with no writer must not wait.
+        use std::os::unix::fs::OpenOptionsExt;
+        let fifo = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&dir);
+        assert!(fifo.is_ok_and(|f| checkable(&f).is_err()));
+        let _ = std::fs::remove_file(&dir);
+        let reg =
+            std::fs::File::open("/etc/hostname").or_else(|_| std::fs::File::open("/etc/passwd"));
+        assert!(reg.is_ok_and(|f| checkable(&f).is_ok()));
+        assert!(start.elapsed() < Duration::from_secs(1));
         assert!(needs_deep(false, true, b"#!/bin/sh", "x"));
         assert!(needs_deep(false, false, b"MZ\x90", "x"));
         assert!(needs_deep(false, false, b"\x7fELF", "/home/a/App.AppImage"));

@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// WolOS polkit policy (audit A16/B6, ADR 0015, ADR 0026). Deny by default for WolOS: a WolOS
+// change is asked through wol-admind (password sheet) or wold (approval sheet), never through
+// polkit, so any org.wolos.* action is refused here even if a package ever ships one. Everything
+// else keeps upstream behaviour for administrators (wheel) and for the active local session;
+// a subject that is neither local and active nor an administrator gets no for every action
+// (no authentication prompt a remote or background process could answer). Root (uid 0) keeps
+// upstream behaviour: system daemons have no session, so local/active is false for them (audit S17).
+// crates/controller/tests/polkit.rs checks these properties.
+polkit.addRule(function (action, subject) {
+    if (action.id.indexOf("org.wolos.") === 0) {
+        return polkit.Result.NO;
+    }
+    if (subject.user === "root") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (subject.isInGroup("wheel")) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!subject.local || !subject.active) {
+        return polkit.Result.NO;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

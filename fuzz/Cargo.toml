@@ -1,4 +1,5 @@
-# libFuzzer targets (cargo-fuzz layout): `cargo +nightly fuzz run ipc_decode`.
+# libFuzzer targets (cargo-fuzz layout): `cargo +nightly fuzz run <target>`. regressions/<target>/
+# is replayed on stable by tools/ci/fuzz-replay.sh (ci.yml test job).
 # Its own workspace: kept out of the main build and lockfile.
 [package]
 name = "wolos-fuzz"
@@ -13,6 +14,11 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 shared = { path = "../crates/shared" }
+shell = { path = "../crates/shell" }
+wopkg = { path = "../crates/wopkg" }
+wol-lua = { path = "../crates/wol-lua" }
+wol = { path = "../crates/wol-abi", package = "wol-abi" }
+wol_core = { path = "../crates/core", package = "core" }
 
 [[bin]]
 name = "ipc_decode"
@@ -21,4 +27,71 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "events"
+path = "fuzz_targets/events.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "job_request"
+path = "fuzz_targets/job_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "approval"
+path = "fuzz_targets/approval.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hypr_ipc"
+path = "fuzz_targets/hypr_ipc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wopkg_parsers"
+path = "fuzz_targets/wopkg_parsers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plugins_toml"
+path = "fuzz_targets/plugins_toml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lua_loader"
+path = "fuzz_targets/lua_loader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "package_call"
+path = "fuzz_targets/package_call.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "core_parsers"
+path = "fuzz_targets/core_parsers.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
+
+# Same vendored crate as the main workspace (docs/adr/0006-vendored-blocking-idle-exit.md).
+[patch.crates-io]
+blocking = { path = "../third_party/blocking" }

@@ -17,8 +17,38 @@ pub const XGUARD_SCAN_DEEP: u32 = 1;
 /// The worker the deep flag runs.
 pub const WORKER: &str = "/usr/bin/wol-xguard";
 
-/// Opaque.
-pub struct XguardEngine(Engine);
+/// Opaque. `magic` comes first (`repr(C)`) and is checked on every call before the engine is
+/// used; drop overwrites it, so a released or foreign pointer is refused (audit B7).
+#[repr(C)]
+pub struct XguardEngine {
+    magic: u64,
+    engine: Engine,
+}
+
+const ENGINE_MAGIC: u64 = 0x5847_454e_4731_0001; // "XGENG1"
+const DEAD: u64 = 0xdead_dead_dead_dead;
+
+impl Drop for XguardEngine {
+    fn drop(&mut self) {
+        self.magic = DEAD;
+    }
+}
+
+/// The engine behind a handle, or None for NULL, misaligned, released or foreign pointers.
+///
+/// # Safety
+/// `e` is NULL or points at readable memory at least the size of a `u64`.
+unsafe fn engine<'a>(e: *const XguardEngine) -> Option<&'a Engine> {
+    if e.is_null() || !e.is_aligned() {
+        return None;
+    }
+    // SAFETY: `magic` is the first field; it is read before the rest is trusted.
+    if unsafe { std::ptr::read(e.cast::<u64>()) } != ENGINE_MAGIC {
+        return None;
+    }
+    // SAFETY: the magic says this is a live engine.
+    Some(unsafe { &(*e).engine })
+}
 
 /// A report from the worker: its JSON line. None when the worker is absent or failed.
 fn worker(exe: &str, path: &str, dir: Option<&str>) -> Option<Report> {
@@ -40,8 +70,13 @@ pub fn scan_path(e: &Engine, path: &str, deep: bool) -> Result<Report, String> {
     crate::scan_file(e, &mut f, path, None, Limits::default()).map_err(|m| m.to_string())
 }
 
+/// Longest path or name accepted across the boundary (PATH_MAX is 4096; names are shorter).
+const MAX_TEXT: usize = 64 * 1024;
+
+#[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
 unsafe fn text<'a>(p: *const c_char, len: usize) -> Option<&'a str> {
-    if p.is_null() {
+    // from_raw_parts is undefined above isize::MAX bytes; a path or name is never near that.
+    if p.is_null() || len > MAX_TEXT {
         return None;
     }
     // SAFETY: the caller promises `len` readable bytes.
@@ -95,7 +130,12 @@ pub unsafe extern "C" fn xguard_engine_create(
         match Engine::open(Path::new(&path)) {
             Ok(e) => {
                 // SAFETY: checked non-null above.
-                unsafe { *out = Box::into_raw(Box::new(XguardEngine(e))) };
+                unsafe {
+                    *out = Box::into_raw(Box::new(XguardEngine {
+                        magic: ENGINE_MAGIC,
+                        engine: e,
+                    }))
+                };
                 XGUARD_OK
             }
             Err(_) => XGUARD_UNAVAILABLE,
@@ -107,7 +147,8 @@ pub unsafe extern "C" fn xguard_engine_create(
 /// `e` is NULL or came from [`xguard_engine_create`], and is not used afterwards.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn xguard_engine_release(e: *mut XguardEngine) {
-    if !e.is_null() {
+    // SAFETY: per this function's contract; the magic is checked first.
+    if unsafe { engine(e) }.is_some() {
         // SAFETY: per this function's contract.
         drop(unsafe { Box::from_raw(e) });
     }
@@ -135,8 +176,10 @@ pub unsafe extern "C" fn xguard_scan_path(
         if e.is_null() || json.is_null() || json_len.is_null() {
             return XGUARD_INVALID_ARGUMENT;
         }
-        // SAFETY: non-null, live per the contract.
-        let e = unsafe { &(*e).0 };
+        // SAFETY: per the contract; the magic is checked before use.
+        let Some(e) = (unsafe { engine(e) }) else {
+            return XGUARD_INVALID_ARGUMENT;
+        };
         match scan_path(e, p, flags & XGUARD_SCAN_DEEP != 0).map(|r| serde_json::to_string(&r)) {
             // SAFETY: checked non-null above.
             Ok(Ok(s)) => unsafe { give(s, json, json_len) },
@@ -146,6 +189,7 @@ pub unsafe extern "C" fn xguard_scan_path(
     })
 }
 
+#[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
 /// Scan bytes already in memory, and what is packed inside them.
 ///
 /// # Safety
@@ -165,11 +209,20 @@ pub unsafe extern "C" fn xguard_scan_memory(
         let Some(n) = (unsafe { text(name, name_len) }) else {
             return XGUARD_INVALID_ARGUMENT;
         };
-        if e.is_null() || data.is_null() || json.is_null() || json_len.is_null() {
+        if e.is_null()
+            || data.is_null()
+            || json.is_null()
+            || json_len.is_null()
+            || len > isize::MAX.unsigned_abs()
+        {
             return XGUARD_INVALID_ARGUMENT;
         }
         // SAFETY: non-null and sized per the contract.
-        let (e, d) = unsafe { (&(*e).0, std::slice::from_raw_parts(data, len)) };
+        let Some(e) = (unsafe { engine(e) }) else {
+            return XGUARD_INVALID_ARGUMENT;
+        };
+        // SAFETY: non-null and sized per the contract.
+        let d = unsafe { std::slice::from_raw_parts(data, len) };
         let r = crate::scan_bytes(e, d, n, None, Limits::default());
         match serde_json::to_string(&r) {
             // SAFETY: checked non-null above.
@@ -205,6 +258,26 @@ mod tests {
         d
     }
 
+    #[test]
+    fn a_foreign_pointer_is_not_an_engine() {
+        let fake = [0u64; 8];
+        let (mut json, mut n) = (std::ptr::null_mut(), 0);
+        // SAFETY: the pointer is readable; the call must refuse it by its magic.
+        let rc = unsafe {
+            xguard_scan_memory(
+                fake.as_ptr().cast(),
+                b"ok".as_ptr(),
+                2,
+                c"m".as_ptr(),
+                1,
+                &mut json,
+                &mut n,
+            )
+        };
+        assert_eq!(rc, XGUARD_INVALID_ARGUMENT);
+    }
+
+    #[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
     #[test]
     fn create_scan_release_through_the_c_calls() {
         let d = rules();

@@ -85,6 +85,7 @@ pub enum Change {
     Format {
         name: String,
         mount: String,
+        encrypted: bool,
     },
     New {
         bytes: u64,
@@ -93,9 +94,11 @@ pub enum Change {
     },
     /// An existing startup partition gets WolOS's startup files.
     ReuseEsp,
+    /// `plain`: the install is encrypted but this volume, kept as it is, is not.
     Keep {
         name: String,
         mount: String,
+        plain: bool,
     },
     /// Stays exactly as it is.
     Untouched {
@@ -142,13 +145,14 @@ pub fn changes(l: &Layout, c: &Compiled, d: &Disk, protect: Protect) -> Vec<Chan
             v.push(Change::Format {
                 name: p.title(),
                 mount: a.mount.clone(),
+                encrypted: protect != Protect::Off && a.mount != "/efi",
             });
         }
     }
     for op in &c.ops {
         if let Op::Create { index, sectors, .. } = op {
             let mount = l.create[*index].mount.clone();
-            let encrypted = protect != Protect::Off && mount == "/";
+            let encrypted = protect != Protect::Off && mount != "/efi";
             v.push(Change::New {
                 bytes: sectors * d.sector,
                 mount,
@@ -163,21 +167,20 @@ pub fn changes(l: &Layout, c: &Compiled, d: &Disk, protect: Protect) -> Vec<Chan
             v.push(Change::Keep {
                 name: p.title(),
                 mount: a.mount.clone(),
+                plain: protect != Protect::Off,
             });
         }
     }
     if c.slots == Slots::One {
         v.push(Change::OneCopy);
     }
-    let named: Vec<&str> = l
-        .delete
-        .iter()
-        .chain(l.resize.iter().map(|r| &r.part))
-        .chain(l.assign.iter().map(|a| &a.part))
-        .map(String::as_str)
-        .collect();
+    // The systems that stay ([`Layout::stays_foreign`]), less the ones a Resize line already names.
     let mut seen = Vec::new();
-    for p in d.parts.iter().filter(|p| !named.contains(&p.uuid.as_str())) {
+    let untouched = d
+        .parts
+        .iter()
+        .filter(|p| l.stays_foreign(p) && !l.resize.iter().any(|r| r.part == p.uuid));
+    for p in untouched {
         if let Some(name) = p.system().filter(|n| !seen.contains(n)) {
             seen.push(name.clone());
             v.push(Change::Untouched { name });
@@ -240,6 +243,101 @@ pub fn alongside(d: &Disk, shrink: Option<(&str, u64)>) -> Layout {
     l
 }
 
+/// Replace: `part` is erased for the system; the startup partition is reused when it has room,
+/// else WolOS gets its own. A disk with no free gap for that one (the usual 100 MiB Windows
+/// startup partition, a full disk) gives it the tail of the replaced partition: a partition being
+/// reformatted shrinks without a file system shrink.
+pub fn replace(d: &Disk, part: &str) -> Layout {
+    let mut l = Layout::default();
+    l.assign.push(Assign {
+        part: part.to_string(),
+        mount: "/".into(),
+        format: Some(Fs::Btrfs),
+    });
+    if let Some(p) = reusable_esp(d) {
+        l.assign.push(Assign {
+            part: p.uuid.clone(),
+            mount: "/efi".into(),
+            format: None,
+        });
+        return l;
+    }
+    l.create.push(New {
+        bytes: Some(ESP_BYTES),
+        mount: "/efi".into(),
+        fs: Fs::Vfat,
+    });
+    let fits = room(
+        &Layout {
+            create: Vec::new(),
+            ..l.clone()
+        },
+        d,
+    )
+    .iter()
+    .any(|(_, sectors)| sectors * d.sector >= ESP_BYTES);
+    if let Some(p) = d.part(part).filter(|_| !fits) {
+        // A MiB more than the startup partition: the gap is cut to whole MiB on both ends.
+        let keep = d.bytes_of(p).saturating_sub(ESP_BYTES + MIB) / MIB * MIB;
+        l.resize.push(Resize {
+            part: part.to_string(),
+            bytes: keep,
+        });
+    }
+    l
+}
+
+/// The system the person must be told to start from the computer's startup menu (F12, F9, Esc)
+/// after this install: another system stays with its own startup partition while WolOS gets a new
+/// one (audit2 B3, audit3 R2B-11). systemd-boot lists only what is on its own startup partition,
+/// so that system is not in WolOS's menu. Its name as [`Disk::others_after`] gives it ("Windows",
+/// "Fedora Linux 41"), for a system that can start (Windows, or a Linux the probe found an
+/// os-release in); None: nothing to say (Erase Disk, a reused startup partition, nothing that
+/// starts stays). The Install app's summary and Done page say it.
+pub fn other_boot(l: &Layout, d: &Disk) -> Option<String> {
+    if l.wipe || !l.create.iter().any(|n| n.mount == "/efi") {
+        return None;
+    }
+    if !d.parts.iter().any(|p| p.is_esp() && l.stays(p)) {
+        return None;
+    }
+    // Only what can start: Windows, or a Linux whose os-release the probe read. A bare ext4
+    // data partition is "Linux" by its file system but starts nothing.
+    let starts: Vec<&Part> = d
+        .parts
+        .iter()
+        .filter(|p| l.stays_foreign(p))
+        .filter(|p| p.os.is_some() || p.system().as_deref() == Some("Windows"))
+        .collect();
+    // Windows first: it is the one whose own menu never lists WolOS either.
+    starts
+        .iter()
+        .find(|p| p.system().as_deref() == Some("Windows"))
+        .or(starts.first())
+        .and_then(|p| p.system())
+}
+
+/// [`other_boot`] for Windows only: `firmware-menu` when Windows is the system to start from the
+/// computer's startup menu. Kept for the app until it reads [`other_boot`].
+pub fn windows_boot(l: &Layout, d: &Disk) -> Option<&'static str> {
+    other_boot(l, d)
+        .filter(|s| s == "Windows")
+        .map(|_| "firmware-menu")
+}
+
+/// Windows stays on this disk after `l`: its clock convention (local time in the RTC) is kept and
+/// its BitLocker may ask for its recovery key after a Secure Boot key change (audit3 R2B-9/12).
+pub fn keeps_windows(l: &Layout, d: &Disk) -> bool {
+    d.others_after(l).iter().any(|s| s == "Windows")
+}
+
+/// A Windows that stays after `l` is protected by BitLocker ([`Part::bitlocker`]).
+pub fn keeps_bitlocker(l: &Layout, d: &Disk) -> bool {
+    d.parts
+        .iter()
+        .any(|p| p.bitlocker() && l.stays(p) && !l.assign.iter().any(|a| a.part == p.uuid))
+}
+
 /// What the slider moves between: the most and the least of `p` that can be kept so that WolOS
 /// still fits. None: there is no such size.
 pub fn alongside_range(d: &Disk, p: &Part) -> Option<(u64, u64)> {
@@ -263,6 +361,28 @@ pub fn alongside_range(d: &Disk, p: &Part) -> Option<(u64, u64)> {
         }
     }
     Some((lo, good))
+}
+
+/// A password typed at the disk's prompt, before any desktop exists, on the console keymap:
+/// printable ASCII is what every keymap types the same.
+pub fn console_typable(p: &str) -> bool {
+    p.chars().all(|c| (' '..='~').contains(&c))
+}
+
+/// Why the plan's passwords would not open the disk at the start prompt; None: they would.
+/// With the security chip the account password is the disk's own fallback (when a firmware
+/// change makes the chip refuse), so it must be typable there too (audit2 B9).
+/// `UntypablePassword` is the word `wol install check` refuses with; the app says
+/// `shell::copy::INSTALL_PASSPHRASE_ASCII` on the account password field.
+pub fn unlock_problem(protect: Protect, account_password: Option<&str>) -> Option<&'static str> {
+    match (protect, account_password) {
+        (Protect::Tpm, Some(pw))
+            if !crate::encrypt::typed_secret(pw.as_bytes()).is_ok_and(|t| console_typable(&t)) =>
+        {
+            Some("UntypablePassword")
+        }
+        _ => None,
+    }
 }
 
 /// xkb layout -> console keymap (the disk password is typed before any desktop exists).
@@ -319,6 +439,218 @@ mod tests {
             parts: vec![esp, win, linux],
             ..Disk::default()
         }
+    }
+
+    #[test]
+    fn with_the_chip_the_account_password_must_be_typable_at_the_start_prompt() {
+        assert_eq!(
+            unlock_problem(Protect::Tpm, Some("caf\u{e9}12345")),
+            Some("UntypablePassword")
+        );
+        assert_eq!(unlock_problem(Protect::Tpm, Some("cafe 12345~\n")), None);
+        assert_eq!(unlock_problem(Protect::Tpm, None), None, "no account");
+        // Without the chip the account password never opens the disk.
+        for p in [Protect::Off, Protect::Password] {
+            assert_eq!(unlock_problem(p, Some("caf\u{e9}12345")), None);
+        }
+        assert!(console_typable("Abc 123 ~!@#") && !console_typable("tab\there"));
+    }
+
+    #[test]
+    fn a_new_startup_partition_next_to_windows_is_said_how_windows_starts() {
+        let mut d = disk();
+        assert_eq!(
+            windows_boot(&alongside(&d, None), &d),
+            None,
+            "reused: in the menu"
+        );
+        assert_eq!(windows_boot(&Layout::erase(), &d), None, "Windows goes");
+        d.parts[0].free_bytes = Some(60 * MIB);
+        let l = alongside(&d, Some(("u2", 60 * GB)));
+        assert_eq!(windows_boot(&l, &d), Some("firmware-menu"));
+        let mut gone = l.clone();
+        gone.delete.push("u2".into());
+        assert_eq!(windows_boot(&gone, &d), None, "Windows deleted");
+        assert_eq!(
+            windows_boot(&replace(&d, "u2"), &d),
+            None,
+            "Windows replaced"
+        );
+        assert_eq!(windows_boot(&replace(&d, "u3"), &d), Some("firmware-menu"));
+    }
+
+    /// audit3 R2B-2: one "what stays" rule. Replacing the only other Linux leaves Windows alone on
+    /// the disk; a kept /home is WolOS's own, not another system; Erase keeps nothing.
+    #[test]
+    fn what_stays_is_one_rule_for_the_menu_the_summary_and_the_startup_hint() {
+        let d = disk();
+        assert_eq!(d.others_after(&replace(&d, "u3")), ["Windows"]);
+        assert_eq!(d.others_after(&replace(&d, "u2")), ["Fedora Linux 41"]);
+        assert!(d.others_after(&Layout::erase()).is_empty());
+        let mut home = alongside(&d, Some(("u2", 60 * GB)));
+        home.assign.push(Assign {
+            part: "u3".into(),
+            mount: "/home".into(),
+            format: None,
+        });
+        assert_eq!(
+            d.others_after(&home),
+            ["Windows"],
+            "a kept /home is WolOS's"
+        );
+        // Windows' helper partitions do not keep "Windows" alive once its system partition goes.
+        let mut msr = disk();
+        let mut r = part(4, 152, 1, "e3c9e316-0b5c-4db8-817d-f92df00215ae", "");
+        r.uuid = "u4".into();
+        msr.parts.push(r);
+        assert_eq!(msr.others_after(&replace(&msr, "u2")), ["Fedora Linux 41"]);
+        // The summary's "stays" lines are the same systems, less the one a Resize line names.
+        for l in [
+            alongside(&d, Some(("u2", 60 * GB))),
+            replace(&d, "u3"),
+            replace(&d, "u2"),
+            home,
+        ] {
+            let c = compile(&l, &d, false).unwrap_or_else(|r| panic!("{r:?} {l:?}"));
+            let untouched: Vec<String> = changes(&l, &c, &d, Protect::Off)
+                .into_iter()
+                .filter_map(|c| match c {
+                    Change::Untouched { name } => Some(name),
+                    _ => None,
+                })
+                .collect();
+            let resized: Vec<String> = l
+                .resize
+                .iter()
+                .filter_map(|r| d.part(&r.part).and_then(Part::system))
+                .collect();
+            let expect: Vec<String> = d
+                .others_after(&l)
+                .into_iter()
+                .filter(|s| !resized.contains(s))
+                .collect();
+            assert_eq!(untouched, expect, "{l:?}");
+        }
+    }
+
+    /// audit3 R2B-11: a Linux kept next to a new startup partition is named too, not only Windows.
+    #[test]
+    fn a_new_startup_partition_names_the_system_left_on_the_old_one() {
+        let mut d = disk();
+        d.parts[0].free_bytes = Some(60 * MIB);
+        assert_eq!(
+            other_boot(&replace(&d, "u2"), &d).as_deref(),
+            Some("Fedora Linux 41")
+        );
+        assert_eq!(
+            other_boot(&replace(&d, "u3"), &d).as_deref(),
+            Some("Windows")
+        );
+        assert_eq!(windows_boot(&replace(&d, "u2"), &d), None, "not Windows");
+        assert!(keeps_windows(&replace(&d, "u3"), &d));
+        assert!(!keeps_windows(&replace(&d, "u2"), &d));
+        assert!(!keeps_windows(&Layout::erase(), &d));
+        // A data partition with no system on it starts nothing: nothing to say.
+        let mut bare = d.clone();
+        bare.parts[2].os = None;
+        assert_eq!(other_boot(&replace(&bare, "u2"), &bare), None);
+        // Reused startup partition: systemd-boot lists what is on it, nothing to say.
+        let roomy = disk();
+        assert_eq!(other_boot(&replace(&roomy, "u2"), &roomy), None);
+    }
+
+    #[test]
+    fn bitlocker_is_known_only_while_its_windows_stays() {
+        let mut d = disk();
+        d.parts[1].fstype = "BitLocker".into();
+        d.parts[1].blocked = Some(Blocked::BitLocker);
+        assert!(keeps_bitlocker(&replace(&d, "u3"), &d));
+        assert!(!keeps_bitlocker(&replace(&d, "u2"), &d), "replaced");
+        assert!(!keeps_bitlocker(&Layout::erase(), &d));
+        assert!(
+            !keeps_bitlocker(&replace(&disk(), "u3"), &disk()),
+            "no BitLocker"
+        );
+    }
+
+    /// audit3 R2B-5: reinstalling WolOS next to Windows reuses the old WolOS's startup partition
+    /// when that WolOS goes; it is refused only while another WolOS system stays.
+    #[test]
+    fn an_old_wolos_startup_partition_is_reused_when_its_wolos_goes() {
+        let mut d = disk();
+        d.parts[0].wolos = true;
+        d.parts[2].os = None;
+        d.parts[2].fstype = "btrfs".into();
+        d.parts[2].name = "WolOS".into();
+        let l = replace(&d, "u3");
+        assert_eq!(l.assign[1].part, "u1", "{l:?}");
+        assert!(compile(&l, &d, true).is_ok(), "{:?}", compile(&l, &d, true));
+        let mut kept = d.clone();
+        let mut other = part(4, 152, 20, ROOT_TYPE, "crypto_LUKS");
+        other.label = "WolOS".into();
+        other.name = String::new();
+        kept.parts.push(other);
+        assert_eq!(
+            compile(&replace(&kept, "u3"), &kept, true),
+            Err(Refusal::EspHasWolos("u1".into()))
+        );
+    }
+
+    /// A full disk: Windows' 100 MiB startup partition (60 MiB free), Windows, a Linux to the end.
+    fn full_disk() -> Disk {
+        let mut esp = part(1, 0, 1, ESP_TYPE, "vfat");
+        esp.sectors = 100 * MIB / 512;
+        esp.free_bytes = Some(60 * MIB);
+        let mut win = part(2, 1, 100, "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", "ntfs");
+        win.min_bytes = Some(50 * GB);
+        let mut linux = part(3, 102, 60, DATA_TYPE, "ext4");
+        linux.os = Some("Fedora Linux 41".into());
+        let last = linux.start + linux.sectors - 1;
+        Disk {
+            path: "/dev/vda".into(),
+            bytes: (last + 34) * 512,
+            sector: 512,
+            table: Table::Gpt,
+            id: "t".into(),
+            first: 2048,
+            last,
+            parts: vec![esp, win, linux],
+            ..Disk::default()
+        }
+    }
+
+    /// audit2 B6: Replace on a full disk with a small Windows startup partition used to end in
+    /// "There isn't enough room for that" every time.
+    #[test]
+    fn replace_on_a_full_disk_gives_the_startup_partition_the_replaced_ones_tail() {
+        let d = full_disk();
+        assert!(reusable_esp(&d).is_none());
+        assert!(
+            room(&Layout::default(), &d)
+                .iter()
+                .all(|(_, s)| s * 512 < ESP_BYTES)
+        );
+        let l = replace(&d, "u3");
+        let c = compile(&l, &d, true).unwrap_or_else(|r| panic!("{r:?}"));
+        verify(&c, &l, &d).unwrap();
+        assert_eq!(l.resize.len(), 1, "{l:?}");
+        assert_eq!(l.resize[0].part, "u3");
+        assert!(c.root_bytes >= MIN_ROOT && c.root_bytes < d.bytes_of(&d.parts[2]));
+        // Windows and its startup partition are not touched.
+        assert_eq!(l.chosen().into_iter().collect::<Vec<_>>(), ["u3"]);
+        // With room to spare nothing shrinks; with a startup partition to reuse, nothing is made.
+        let roomy = disk();
+        let l = replace(&roomy, "u3");
+        assert!(l.resize.is_empty() && l.create.is_empty(), "{l:?}");
+        assert!(compile(&l, &roomy, false).is_ok());
+        let mut small = disk();
+        small.parts[0].free_bytes = Some(60 * MIB);
+        let l = replace(&small, "u3");
+        assert!(
+            l.resize.is_empty() && l.create.len() == 1,
+            "free tail: {l:?}"
+        );
+        assert!(compile(&l, &small, false).is_ok());
     }
 
     #[test]
@@ -455,6 +787,74 @@ mod tests {
         l.create[0].fs = Fs::Ext4;
         let c = compile(&l, &d, false).unwrap();
         assert!(changes(&l, &c, &d, Protect::Off).contains(&Change::OneCopy));
+    }
+
+    /// Encrypted install: new and erased volumes are encrypted too, a kept one is said to stay plain.
+    #[test]
+    fn the_summary_says_which_volumes_are_encrypted_and_which_stay_plain() {
+        let d = disk();
+        let mut l = alongside(&d, Some(("u2", 60 * GB)));
+        l.assign.push(Assign {
+            part: "u3".into(),
+            mount: "/home".into(),
+            format: None,
+        });
+        l.create.push(New {
+            bytes: Some(2 * GB),
+            mount: "swap".into(),
+            fs: Fs::Swap,
+        });
+        let c = compile(&l, &d, true).unwrap();
+        let ch = changes(&l, &c, &d, Protect::Password);
+        assert!(
+            ch.iter().any(
+                |c| matches!(c, Change::New { mount, encrypted: true, .. } if mount == "swap")
+            ),
+            "{ch:?}"
+        );
+        assert!(
+            ch.iter()
+                .any(|c| matches!(c, Change::Keep { mount, plain: true, .. } if mount == "/home")),
+            "{ch:?}"
+        );
+        let ch = changes(&l, &c, &d, Protect::Off);
+        assert!(
+            ch.iter().all(|c| !matches!(
+                c,
+                Change::New {
+                    encrypted: true,
+                    ..
+                } | Change::Keep { plain: true, .. }
+            )),
+            "{ch:?}"
+        );
+        // An erased volume is encrypted too; a new startup partition never is.
+        l.assign.retain(|a| a.mount != "/efi");
+        for a in l.assign.iter_mut().filter(|a| a.mount == "/home") {
+            a.format = Some(Fs::Ext4);
+        }
+        l.create.insert(
+            0,
+            New {
+                bytes: Some(GB),
+                mount: "/efi".into(),
+                fs: Fs::Vfat,
+            },
+        );
+        let c = compile(&l, &d, true).unwrap();
+        let ch = changes(&l, &c, &d, Protect::Tpm);
+        assert!(
+            ch.iter().any(
+                |c| matches!(c, Change::Format { mount, encrypted: true, .. } if mount == "/home")
+            ),
+            "{ch:?}"
+        );
+        assert!(
+            ch.iter().any(
+                |c| matches!(c, Change::New { mount, encrypted: false, .. } if mount == "/efi")
+            ),
+            "{ch:?}"
+        );
     }
 
     #[test]

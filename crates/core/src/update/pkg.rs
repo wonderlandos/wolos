@@ -92,8 +92,9 @@ pub fn classify(args: &[String]) -> Kind {
                 || has('c', "clean")
                 || has('w', "downloadonly");
             let upgrade = has('u', "sysupgrade");
+            // `-Syu vim` (Arch's install idiom) is a full upgrade too: it goes to the slot.
             (
-                if upgrade && targets.is_empty() {
+                if upgrade {
                     Verb::Upgrade
                 } else {
                     Verb::Install
@@ -185,7 +186,8 @@ pub fn done(c: &Change, route: Route) -> String {
         Route::Slot => " It takes effect at the next restart.",
     };
     match (c.verb, c.targets.is_empty()) {
-        (Verb::Upgrade, _) | (_, true) => format!("Updated the system.{tail}"),
+        (Verb::Upgrade, false) => format!("Updated the system and installed {names}.{tail}"),
+        (Verb::Upgrade, true) | (_, true) => format!("Updated the system.{tail}"),
         (Verb::Install, _) => format!("Installed {names}.{tail}"),
         (Verb::Remove, _) => format!("Removed {names}.{tail}"),
     }
@@ -230,6 +232,8 @@ mod tests {
             ("-Syyu --noconfirm", c(Verb::Upgrade, "")),
             ("--sync --refresh --sysupgrade", c(Verb::Upgrade, "")),
             ("-Sy vim", c(Verb::Install, "vim")),
+            ("-Syu vim", c(Verb::Upgrade, "vim")),
+            ("-Syu --needed vim git", c(Verb::Upgrade, "vim git")),
             ("-R vim", c(Verb::Remove, "vim")),
             ("-Rns vim", c(Verb::Remove, "vim")),
             (
@@ -394,6 +398,15 @@ mod tests {
             Route::Slot
         );
         assert_eq!(route(&ch(Verb::Upgrade, ""), &[]), Route::Slot);
+        // CORE-4: `pacman -Syu vim` is a full upgrade, never a layer.
+        let Kind::Change(syu) = classify(&a("-Syu vim")) else {
+            panic!("-Syu vim changes the system")
+        };
+        assert_eq!(route(&syu, &n("vim")), Route::Slot);
+        assert_eq!(
+            done(&syu, Route::Slot),
+            "Updated the system and installed vim. It takes effect at the next restart."
+        );
         assert_eq!(
             names_argv(&n("-S vim")).join(" "),
             "/usr/bin/pacman -S vim -p --print-format %n"

@@ -1,5 +1,7 @@
 # App theming (`wol theme set <id>`)
 
+Decision record: ADR 0031 (themes and layouts).
+
 Source: `crates/core/src/theme/{apps,scaffold,firefox,sourceview,helium,kvantum}.rs`. Files go to `$XDG_CONFIG_HOME/wolos/toolkits/` and are linked into `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` (a real user file is never replaced). The image ships the `wol-light` render under `/usr/local/share/wolos` (`WOL_REGEN=1 cargo test -p core` rewrites it).
 
 | Toolkit | Output | Live switch |

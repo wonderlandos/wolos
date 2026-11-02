@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! WolOS package mirrors (ADR 0019): repo order `[wolos]` -> `[wolos-cachy]` -> Arch, the CPU gate
-//! for `[wolos-cachy]` (x86-64-v3 builds), and latency ranking of `/etc/pacman.d/wolos-mirrorlist`.
-//! Pure: the caller reads files and probes servers.
+//! WolOS package mirrors (ADR 0030): repo order `[wolos]` -> CachyOS x86-64-v3 repos -> Arch, the
+//! CPU gate for the three `[cachyos-*-v3]` sections, and latency ranking of
+//! `/etc/pacman.d/wolos-mirrorlist` (the `[wolos]` servers only: the CachyOS sections have one
+//! server, the CDN's `/cachy/` redirect). Pure: the caller reads files and probes servers.
 
-/// Mirrorlist of `[wolos]` and `[wolos-cachy]` (package `wolos-mirrorlist`).
+/// Mirrorlist of `[wolos]` (package `wolos-mirrorlist`); the only one `rank` reorders.
 pub const MIRRORLIST: &str = "/etc/pacman.d/wolos-mirrorlist";
+/// Mirrorlist the three CachyOS sections include (same package): `https://<cdn>/cachy/$repo`.
+pub const CACHY_MIRRORLIST: &str = "/etc/pacman.d/wolos-cachy-mirrorlist";
 pub const PACMAN_CONF: &str = "/etc/pacman.conf";
-/// The optimized repo, on only when the CPU runs its builds.
-pub const CACHY_REPO: &str = "wolos-cachy";
-/// The x86-64 level the `[wolos-cachy]` builds need.
+/// The CachyOS x86-64-v3 repos, in `pacman.conf` order; on only when the CPU runs their builds.
+/// They roll (no archive) while Arch is pinned: see ADR 0030 for the caveat.
+pub const CACHY_REPOS: [&str; 3] = ["cachyos-v3", "cachyos-core-v3", "cachyos-extra-v3"];
+/// The x86-64 level the CachyOS v3 builds need.
 pub const CACHY_LEVEL: u8 = 3;
 /// Kernel built for x86-64-v3 (same boot files as linux-wolos, which it replaces).
 pub const KERNEL_V3: &str = "linux-wolos-v3";
@@ -40,26 +44,33 @@ pub fn x86_64_level(cpuinfo: &str) -> u8 {
     }
 }
 
-/// `[wolos-cachy]` on this CPU.
+/// The CachyOS v3 repos run on this CPU.
 pub fn cachy_supported(cpuinfo: &str) -> bool {
     x86_64_level(cpuinfo) >= CACHY_LEVEL
 }
 
-/// Whether `[wolos-cachy]` is enabled in `pacman.conf`.
-pub fn cachy_enabled(conf: &str) -> bool {
-    conf.lines().any(|l| l.trim() == format!("[{CACHY_REPO}]"))
+/// `[name]`: the header line of a repo section.
+fn header(repo: &str) -> String {
+    format!("[{repo}]")
 }
 
-/// `pacman.conf` with the `[wolos-cachy]` section on (uncommented) or off (`#`-commented).
+/// Whether the CachyOS repos are enabled in `pacman.conf`: all three sections on. A partial set
+/// (one edited by hand) counts as off; `gate` makes it whole again.
+pub fn cachy_enabled(conf: &str) -> bool {
+    CACHY_REPOS
+        .iter()
+        .all(|r| conf.lines().any(|l| l.trim() == header(r)))
+}
+
+/// `pacman.conf` with the three CachyOS sections on (uncommented) or off (`#`-commented).
 /// Idempotent; other sections stay as they are.
 pub fn gate(conf: &str, on: bool) -> String {
-    let head = format!("[{CACHY_REPO}]");
     let mut inside = false;
     let mut out = String::with_capacity(conf.len() + 8);
     for l in conf.lines() {
         let bare = l.trim_start_matches('#').trim();
         if bare.starts_with('[') {
-            inside = bare == head;
+            inside = CACHY_REPOS.iter().any(|r| bare == header(r));
         } else if bare.is_empty() {
             inside = false;
         }
@@ -174,23 +185,49 @@ ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave\nprocessor\t: 1\nflags\t\t: fp
     }
 
     const CONF: &str = "[options]\nSigLevel = Required\n\n[wolos]\nInclude = /etc/pacman.d/wolos-mirrorlist\n\n\
-# Optimized builds: on only on x86-64-v3 CPUs (`wol mirror gate`).\n#[wolos-cachy]\n#Include = /etc/pacman.d/wolos-mirrorlist\n\n\
+# Optimized builds: on only on x86-64-v3 CPUs (`wol mirror gate`).\n#[cachyos-v3]\n#Include = /etc/pacman.d/wolos-cachy-mirrorlist\n\n\
+#[cachyos-core-v3]\n#Include = /etc/pacman.d/wolos-cachy-mirrorlist\n\n\
+#[cachyos-extra-v3]\n#Include = /etc/pacman.d/wolos-cachy-mirrorlist\n\n\
 [core]\nServer = https://archive.archlinux.org/repos/2026/10/20/$repo/os/$arch\n";
 
     #[test]
-    fn gate_toggles_only_the_cachy_section() {
+    fn gate_toggles_only_the_three_cachyos_sections() {
         assert!(!cachy_enabled(CONF));
         let on = gate(CONF, true);
         assert!(cachy_enabled(&on));
-        assert!(
-            on.contains("\n[wolos-cachy]\nInclude = /etc/pacman.d/wolos-mirrorlist\n\n[core]\n")
-        );
+        for r in CACHY_REPOS {
+            assert!(
+                on.contains(&format!(
+                    "\n[{r}]\nInclude = /etc/pacman.d/wolos-cachy-mirrorlist\n\n"
+                )),
+                "{r}: {on}"
+            );
+        }
         assert!(on.contains("# Optimized builds"), "prose comment kept");
         assert_eq!(gate(&on, true), on, "idempotent");
         assert_eq!(gate(&on, false), CONF);
         assert_eq!(gate(CONF, false), CONF);
         let order: Vec<&str> = on.lines().filter(|l| l.starts_with('[')).collect();
-        assert_eq!(order, ["[options]", "[wolos]", "[wolos-cachy]", "[core]"]);
+        assert_eq!(
+            order,
+            [
+                "[options]",
+                "[wolos]",
+                "[cachyos-v3]",
+                "[cachyos-core-v3]",
+                "[cachyos-extra-v3]",
+                "[core]"
+            ]
+        );
+        // One section on by hand is not "on": the gate completes the set, or turns it all off.
+        let partial = CONF.replacen(
+            "#[cachyos-core-v3]\n#Include",
+            "[cachyos-core-v3]\nInclude",
+            1,
+        );
+        assert!(!cachy_enabled(&partial));
+        assert_eq!(gate(&partial, true), on);
+        assert_eq!(gate(&partial, false), CONF);
     }
 
     const LIST: &str = "# WolOS mirrors\nServer = https://a.example/$repo-2026-10-20\n\

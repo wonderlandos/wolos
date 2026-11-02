@@ -208,6 +208,39 @@ impl Engine {
         self.dbs.iter().any(|d| d.has_size(t, size))
     }
 
+    /// Whole-file hash findings for a file whose bytes the caller streamed instead of holding
+    /// them (`size`, its MD5 and SHA-256). None: the file is on an allow list.
+    pub fn hash_findings(
+        &self,
+        size: u64,
+        md5: &[u8; 16],
+        sha256: &[u8; 32],
+        path: &str,
+    ) -> Option<Vec<Finding>> {
+        let Ok(size) = u32::try_from(size) else {
+            return Some(Vec::new());
+        };
+        let hit = |t: Table, d: &[u8]| {
+            self.sized(t, size)
+                .then(|| self.table_hit(t, size, d))
+                .flatten()
+        };
+        if hit(Table::AllowMd5, md5).is_some() || hit(Table::AllowSha256, sha256).is_some() {
+            return None;
+        }
+        let mut out: Vec<Finding> = [hit(Table::Md5, md5), hit(Table::Sha256, sha256)]
+            .into_iter()
+            .flatten()
+            .map(|name| Finding {
+                name,
+                how: "hash".into(),
+                path: path.into(),
+            })
+            .collect();
+        out.dedup();
+        Some(out)
+    }
+
     /// Findings for one file's bytes, already hashed by `sha256`. Hashes are computed only when
     /// a signature of that size exists, so most files cost one table probe.
     pub fn findings(&self, data: &[u8], sha256: Option<&[u8]>, path: &str) -> Vec<Finding> {

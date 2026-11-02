@@ -2,6 +2,7 @@
 //! WolOS domain logic (port of IaraOS Iara.Core). Pure where possible; OS access via `system::Host`.
 pub mod admin;
 pub mod appstream;
+pub mod audio;
 pub mod automation;
 pub mod base;
 pub mod bluetooth;
@@ -24,12 +25,15 @@ pub mod looks;
 pub mod malware;
 pub mod memsaver;
 pub mod mirror;
+pub mod modules;
 pub mod nearby;
 pub mod netinfo;
 pub mod package;
+pub mod plugins;
 pub mod power;
 pub mod prefs;
 pub mod printers;
+pub mod privileged;
 pub mod progress;
 pub mod region;
 pub mod seal;

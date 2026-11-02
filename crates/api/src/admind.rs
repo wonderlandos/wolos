@@ -211,13 +211,18 @@ fn stage_and_install(
     allow_unsigned: bool,
     caller: Option<u32>,
 ) -> Result<(), String> {
-    let staged = dir.join("app.wol");
+    // Audit S15: names under the fresh staging directory go through safe_join, so a name that
+    // already exists there as a symlink out of the directory is refused, not written through.
+    let under = |name: &str| {
+        shared::safe_path::safe_join_str(dir, name).map_err(|e| format!("staging path: {e}"))
+    };
+    let staged = under("app.wol")?;
     os.copy_in(src, &staged, caller)?;
     let v = package::verify(&staged, &os.trusted_keys())?;
     if v.trust == Trust::Unsigned && !allow_unsigned {
         return Err("unsigned package; approve it as unsigned".into());
     }
-    let payload = dir.join(shared::package::PAYLOAD);
+    let payload = under(shared::package::PAYLOAD)?;
     package::extract(&staged, &v.payload, &payload).map_err(|e| e.to_string())?;
     let p = payload.to_str().ok_or("staging path not UTF-8")?;
     let (info, query) = (&v.info, |argv: Vec<String>| os.capture(&argv));
@@ -280,9 +285,32 @@ fn wol_remove(os: &dyn AdminOs, id: &str) -> bool {
 pub fn caller_may_read(file_uid: u32, mode: u32, caller: Option<u32>) -> bool {
     match caller {
         Some(0) => true,
-        Some(u) => file_uid == u || mode & 0o004 != 0,
+        Some(u) => (file_uid == u && mode & 0o400 != 0) || mode & 0o004 != 0,
         None => false,
     }
+}
+
+/// The caller could walk down to the file: every directory above it (uid, mode), from `/` to the
+/// parent, is searchable by the caller as owner (`u+x`) or as anyone (`o+x`). Group access is not
+/// granted (conservative: the daemon does not resolve the caller's groups). Audit A24: without
+/// this a world-readable file inside a private directory of another account would be copied.
+pub fn caller_may_reach(dirs: &[(u32, u32)], caller: Option<u32>) -> bool {
+    match caller {
+        Some(0) => true,
+        Some(u) => dirs
+            .iter()
+            .all(|&(owner, mode)| (owner == u && mode & 0o100 != 0) || mode & 0o001 != 0),
+        None => false,
+    }
+}
+
+/// A path the caller names is absolute, has no `..` or `.` parts and no empty parts.
+pub fn is_plain_absolute(path: &str) -> bool {
+    path.len() < 4096
+        && path.strip_prefix('/').is_some_and(|rest| {
+            rest.split('/')
+                .all(|c| !c.is_empty() && c != "." && c != ".." && !c.contains('\0'))
+        })
 }
 
 /// Real OS: fixed argv with timeouts, atomic writes, PAM via the wol-authcheck helper, syslog via logger(1).
@@ -300,10 +328,9 @@ impl AdminOs for RealOs {
     }
     fn authenticate(&self, user: &str, password: &[u8]) -> bool {
         use std::io::Write;
-        use std::process::{Command, Stdio};
-        let Ok(mut child) = Command::new(AUTHCHECK)
-            .args(["--admin", user])
-            .env_clear()
+        use std::process::Stdio;
+        let Ok(mut child) = crate::privileged::privileged_command(AUTHCHECK)
+            .args(["--admin", user]) // user checked by valid_name in authcheck
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -320,16 +347,21 @@ impl AdminOs for RealOs {
     fn run(&self, argv: &[String], long: bool) -> bool {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
         let t = std::time::Duration::from_secs(if long { 1800 } else { 30 });
-        wol_core::system::run_with_timeout(&argv, t).is_some()
+        crate::privileged::capture(&argv, t).is_some()
     }
     fn run_progress(&self, argv: &[String], kind: wol_core::progress::Kind, path: &str) -> bool {
-        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        wol_core::progress::run_tracked(&argv, kind, path, std::time::Duration::from_secs(1800))
+        let Some((prog, args)) = argv.split_first() else {
+            return false;
+        };
+        // Audit S14: the same cleared environment as every other root child.
+        let mut cmd = crate::privileged::privileged_command(prog);
+        cmd.args(args);
+        let t = std::time::Duration::from_secs(1800);
+        wol_core::progress::run_tracked_cmd(cmd, kind, path, t)
     }
     fn run_input(&self, argv: &[String], input: &str) -> bool {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        wol_core::controls::run_with_input(&argv, input, std::time::Duration::from_secs(30))
-            .is_some()
+        crate::privileged::capture_input(&argv, input, std::time::Duration::from_secs(30)).is_some()
     }
     fn write(&self, path: &str, mode: u32, text: &str) -> bool {
         atomic_write(std::path::Path::new(path), mode, text.as_bytes()).is_ok()
@@ -347,7 +379,7 @@ impl AdminOs for RealOs {
     }
     fn capture(&self, argv: &[String]) -> Option<String> {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        wol_core::system::run_with_timeout(&argv, std::time::Duration::from_secs(30))
+        crate::privileged::capture(&argv, std::time::Duration::from_secs(30))
     }
     fn wall_now(&self) -> u64 {
         std::time::SystemTime::now()
@@ -362,10 +394,13 @@ impl AdminOs for RealOs {
             .mode(0o700)
             .create(root)
             .ok()?;
+        // Audit S16: one fresh, unguessable directory per install; mkdir fails (EEXIST) rather
+        // than reuse a name, and copy_in creates the file inside with O_EXCL (create_new).
         let d = root.join(format!(
-            "{}-{}",
+            "{}-{}-{}",
             std::process::id(),
-            shared::sys::monotonic_ns()
+            shared::sys::monotonic_ns(),
+            shared::jobs::new_nonce().ok()?
         ));
         std::fs::DirBuilder::new().mode(0o700).create(&d).ok()?;
         Some(d)
@@ -373,6 +408,9 @@ impl AdminOs for RealOs {
     fn copy_in(&self, src: &str, dst: &Path, caller: Option<u32>) -> Result<(), String> {
         use std::io::Read;
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+        if !is_plain_absolute(src) {
+            return Err("package path is not a plain absolute path".into());
+        }
         let mut f = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
@@ -385,14 +423,31 @@ impl AdminOs for RealOs {
         if !caller_may_read(m.uid(), m.mode(), caller) {
             return Err("caller cannot read this file".into());
         }
+        // The directories of what was opened (the kernel's path of the descriptor, symlinks in
+        // the parents resolved), not of the name the caller sent.
+        use std::os::fd::AsRawFd;
+        let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd()))
+            .map_err(|e| e.to_string())?;
+        let mut dirs = Vec::new();
+        for d in real.ancestors().skip(1) {
+            let dm = std::fs::metadata(d).map_err(|e| e.to_string())?;
+            dirs.push((dm.uid(), dm.mode()));
+        }
+        if !caller_may_reach(&dirs, caller) {
+            return Err("caller cannot reach this file".into());
+        }
         let mut out = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(dst)
             .map_err(|e| e.to_string())?;
-        std::io::copy(&mut (&mut f).take(shared::package::MAX_SIZE), &mut out)
+        // One byte past the cap tells a file that grew after the check from one that fits.
+        let n = std::io::copy(&mut (&mut f).take(shared::package::MAX_SIZE + 1), &mut out)
             .map_err(|e| e.to_string())?;
+        if n > shared::package::MAX_SIZE {
+            return Err("package file grew past the size limit while copying".into());
+        }
         out.sync_all().map_err(|e| e.to_string())
     }
     fn trusted_keys(&self) -> Vec<[u8; 32]> {
@@ -403,7 +458,7 @@ impl AdminOs for RealOs {
     }
     fn log(&self, text: &str) {
         eprintln!("wol-admind: {text}");
-        let _ = wol_core::system::run_with_timeout(
+        let _ = crate::privileged::capture(
             &[
                 "logger",
                 "-p",
@@ -443,21 +498,32 @@ impl AdminOs for RealOs {
     }
 }
 
-/// temp file + fsync + rename, then mode. Parent dir must exist.
+/// temp file + fsync + rename, then mode. Parent dir must exist. The temp name is unique per
+/// call (pid and a random nonce) and created with `O_EXCL | O_NOFOLLOW`, so two writers never
+/// share one temp file and a planted link is never followed (R2C-23). Removed on failure.
 pub fn atomic_write(path: &std::path::Path, mode: u32, data: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let tmp = path.with_extension(format!("wol-tmp-{}", std::process::id()));
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(mode)
-        .open(&tmp)?;
-    f.write_all(data)?;
-    f.sync_all()?;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
-    std::fs::rename(&tmp, path)
+    let nonce = shared::jobs::new_nonce()?;
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".wol-tmp-{}-{nonce}", std::process::id()));
+    let tmp = path.with_file_name(name);
+    let done = (|| {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(mode)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
+        std::fs::rename(&tmp, path)
+    })();
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done
 }
 
 /// Session id of `pid`, -1 if unknown.
@@ -629,6 +695,28 @@ mod tests {
                 String::from_utf8_lossy(data)
             );
         }
+    }
+
+    /// Finish Secure Boot setup from System Settings: an administrator's password, then the one
+    /// fixed command (`wol boot enroll`, which prints `enrolled` and changes nothing when the key
+    /// is already in db, so asking twice is harmless).
+    #[test]
+    fn boot_enroll_needs_the_admin_password_and_runs_the_verb() {
+        let os = Fake::default();
+        let mut cache = AuthCache::default();
+        let none = encode(&req(AdminAction::BootEnroll, &[]), b"");
+        let good = encode(&req(AdminAction::BootEnroll, &[]), b"good");
+        assert_eq!(handle(&none, ANN, &mut cache, &os), AdminReply::NeedsAuth);
+        assert_eq!(handle(&good, BOB, &mut cache, &os), AdminReply::NotAdmin);
+        assert_eq!(handle(&good, ANN, &mut cache, &os), AdminReply::Ok);
+        assert_eq!(handle(&good, ANN, &mut cache, &os), AdminReply::Ok);
+        let ran: Vec<String> = os.ran.borrow().iter().map(|v| v.join(" ")).collect();
+        assert_eq!(ran, ["wol boot enroll", "wol boot enroll"]);
+        let with_arg = encode(&req(AdminAction::BootEnroll, &["--force"]), b"good");
+        assert_eq!(
+            handle(&with_arg, ROOT, &mut cache, &Fake::default()),
+            AdminReply::Invalid
+        );
     }
 
     #[test]
@@ -1110,12 +1198,36 @@ mod tests {
             (1002, 0o644, Some(1001), true),
             (0, 0o600, Some(0), true),
             (0, 0o600, None, false),
+            (1001, 0o044, Some(1001), true),
+            (1001, 0o040, Some(1001), false),
         ] {
             assert_eq!(
                 caller_may_read(owner, mode, caller),
                 ok,
                 "{owner} {mode:o} {caller:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_file_inside_a_private_directory_is_not_reachable() {
+        let root = (0, 0o755);
+        let home = (0, 0o755);
+        let mine = (1001, 0o700);
+        let theirs = (1002, 0o700);
+        assert!(caller_may_reach(&[mine, home, root], Some(1001)));
+        assert!(!caller_may_reach(&[theirs, home, root], Some(1001)));
+        assert!(!caller_may_reach(&[(1002, 0o750), home, root], Some(1001)));
+        assert!(caller_may_reach(&[theirs, home, root], Some(0)));
+        assert!(!caller_may_reach(&[root], None));
+        for (p, ok) in [
+            ("/home/a/x.wol", true),
+            ("/home/a/../b/x.wol", false),
+            ("home/a/x.wol", false),
+            ("/home//a", false),
+            ("/home/./a", false),
+        ] {
+            assert_eq!(is_plain_absolute(p), ok, "{p}");
         }
     }
 }

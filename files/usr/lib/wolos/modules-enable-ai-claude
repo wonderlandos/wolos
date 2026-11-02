@@ -1,0 +1,14 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Claude Code module, user step (`post` of /usr/share/wolos/modules/ai-claude.json, run as the person
+# by `wol modules enable ai-claude`, ADR 0032): registers the `wol mcp` server with Claude Code for
+# this user (`claude mcp add --scope user wolos -- wol mcp`), so the agent acts on WolOS only through
+# the helper gate and its on-screen approval. Needs the `claude` the claude-code recipe installed.
+# Idempotent: an existing `wolos` server is left as it is. Exit 0 when done, 1 when a step failed.
+set -eu
+: "${HOME:?}"
+PATH="$HOME/.local/bin:$PATH"
+command -v claude >/dev/null 2>&1 || { echo "modules-enable-ai-claude: claude is not installed" >&2; exit 1; }
+if ! claude mcp get wolos >/dev/null 2>&1; then
+  claude mcp add --scope user wolos -- wol mcp
+fi

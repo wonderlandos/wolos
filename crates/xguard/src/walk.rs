@@ -400,8 +400,34 @@ pub fn scan_file(
         f.read_to_end(&mut d)?;
         return Ok(scan_bytes(e, &d, name, deep, lim));
     }
+    pieces(e, f, name, deep, PIECE)
+}
+
+/// One read of [`scan_stream`] (with its overlap): what the guard's worker holds at once.
+pub const STREAM_PIECE: usize = 32 << 20;
+
+/// The guard's deep check of a file too large to hold (R2C-4): signatures and the rule sets
+/// over overlapping pieces of [`STREAM_PIECE`], nothing unpacked. Found, or Incomplete (the
+/// sweep looks again with the whole file).
+pub fn scan_stream(
+    e: &Engine,
+    f: &mut std::fs::File,
+    name: &str,
+    deep: Option<&dyn Deep>,
+) -> std::io::Result<Report> {
+    pieces(e, f, name, deep, STREAM_PIECE)
+}
+
+/// Overlapping pieces of `piece` bytes: hashes, patterns and (when given) the rule sets.
+fn pieces(
+    e: &Engine,
+    f: &mut std::fs::File,
+    name: &str,
+    deep: Option<&dyn Deep>,
+    piece: usize,
+) -> std::io::Result<Report> {
     let mut r = e.blank(now());
-    let (mut buf, mut keep) = (vec![0u8; PIECE], 0);
+    let (mut buf, mut keep) = (vec![0u8; piece], 0);
     let mut sha = Sha256::new();
     loop {
         let n = read_full(f, &mut buf[keep..])?;
@@ -411,6 +437,17 @@ pub fn scan_file(
         sha.update(&buf[keep..keep + n]);
         r.bytes += n as u64;
         r.findings.extend(e.findings(&buf[..keep + n], None, name));
+        if let Some(d) = deep {
+            for m in d.matches(&buf[..keep + n]) {
+                if !r.findings.iter().any(|f| f.name == m) {
+                    r.findings.push(Finding {
+                        name: m,
+                        how: "rule".into(),
+                        path: name.into(),
+                    });
+                }
+            }
+        }
         if r.findings.len() >= FINDINGS_MAX {
             break;
         }
@@ -651,5 +688,38 @@ mod tests {
         .unwrap();
         std::fs::remove_file(&p).ok();
         assert_eq!(r.verdict, Verdict::Found);
+    }
+
+    /// R2C-4: a 65 MiB download (above the guard's WHOLE) whose rule match sits past 64 MiB and
+    /// across a piece boundary is found by the streamed deep check.
+    #[test]
+    fn a_large_download_is_matched_by_the_rules_in_pieces() {
+        struct D;
+        impl Deep for D {
+            fn matches(&self, data: &[u8]) -> Vec<String> {
+                if memchr::memmem::find(data, b"BAD-PAYLOAD-MARK").is_some() {
+                    vec!["Rule.Bad".into()]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+        let p = std::env::temp_dir().join(format!("xguard-stream-{}", std::process::id()));
+        let mut d = vec![0u8; 65 << 20];
+        // Straddles the boundary of the third piece (each piece holds STREAM_PIECE bytes).
+        let at = 2 * STREAM_PIECE - 8;
+        d[at..at + 16].copy_from_slice(b"BAD-PAYLOAD-MARK");
+        std::fs::write(&p, &d).unwrap();
+        drop(d);
+        let mut f = std::fs::File::open(&p).unwrap();
+        let r = scan_stream(&engine(), &mut f, "-", Some(&D)).unwrap();
+        assert_eq!(r.verdict, Verdict::Found, "{r:?}");
+        assert_eq!(r.findings[0].name, "Rule.Bad");
+        assert_eq!(r.bytes, 65 << 20);
+        // Nothing found in pieces is not "clean": the sweep looks again.
+        let mut f = std::fs::File::open(&p).unwrap();
+        let r = scan_stream(&engine(), &mut f, "-", None).unwrap();
+        assert_eq!(r.verdict, Verdict::Incomplete);
+        std::fs::remove_file(&p).ok();
     }
 }

@@ -193,10 +193,21 @@ pub fn decide(env: &mut dyn Env, inv: &Invocation) -> i32 {
         env.read_file(&Path::new(&tpm_dir).join("tpm_version_major"))
             .as_deref(),
     );
-    let pass = env
+    // What enroll adds is what is checked here: the same reading of the file (audit3 R2B-6).
+    let pass = match env
         .var("WOLOS_PASSPHRASE_FILE")
-        .and_then(|f| env.read_file(Path::new(&f)))
-        .map(|p| p.trim_end_matches('\n').to_owned());
+        .and_then(|f| crate::install::secret_file(env, Path::new(&f)))
+    {
+        Some(Ok(p)) => Some(p),
+        Some(Err(e)) => {
+            return fail(
+                env,
+                ErrorCode::Usage,
+                &format!("the passphrase file is not typed text ({e:?})"),
+            );
+        }
+        None => None,
+    };
     match encrypt::decide(mode, tpm, pass.as_deref()) {
         Ok(u) => {
             env.out(match u {
@@ -219,8 +230,15 @@ pub fn decide(env: &mut dyn Env, inv: &Invocation) -> i32 {
     }
 }
 
+/// Where install-run's results live: a directory it creates, root's only (audit3 R2B-1). The
+/// Install app reads them through `install-check --result`.
+pub const INSTALL_RESULTS: &str = "/run/wolos/install";
+
 /// `wol encrypt enroll PART KEYFILE tpm2|passphrase [PASSFILE]`: the recovery key goes to
-/// $WOLOS_RECOVERY_OUT (mode 600, shown once by the installer), never to a log.
+/// $WOLOS_RECOVERY_OUT (default [`INSTALL_RESULTS`]`/recovery-key`, mode 600, shown once by the
+/// installer), never to a log. PASSFILE is read as typed ([`encrypt::typed_secret`]); what is
+/// added to the disk is that, kept for the moment in a file next to KEYFILE (install-run's key
+/// directory, root's, gone with it).
 pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let (Some(part), Some(key), Some(u)) = (inv.get("a"), inv.get("b"), inv.get("c")) else {
         return fail(
@@ -236,9 +254,56 @@ pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
     };
     let out = env
         .var("WOLOS_RECOVERY_OUT")
-        .unwrap_or_else(|| "/run/wolos/recovery-key".into());
+        .unwrap_or_else(|| format!("{INSTALL_RESULTS}/recovery-key"));
     let tpm_pub = env.var("WOLOS_TPM_PUB");
-    for (i, argv) in encrypt::enroll(part, key, unlock, inv.get("d"), tpm_pub.as_deref())
+    let typed = Path::new(key).with_file_name("typed");
+    let pass = match inv
+        .get("d")
+        .map(|f| crate::install::secret_file(env, Path::new(f)))
+    {
+        None => None,
+        Some(Some(Ok(p))) => {
+            if env.write_file(&typed, &p).is_err() {
+                return fail(env, ErrorCode::Failed, "could not read the password file");
+            }
+            let _ = std::fs::set_permissions(
+                &typed,
+                std::os::unix::fs::PermissionsExt::from_mode(0o600),
+            );
+            Some(typed.to_string_lossy().into_owned())
+        }
+        Some(Some(Err(e))) => {
+            return fail(
+                env,
+                ErrorCode::Usage,
+                &format!("the password file is not typed text ({e:?})"),
+            );
+        }
+        Some(None) => return fail(env, ErrorCode::NotFound, "no such password file"),
+    };
+    let rc = enroll_steps(
+        env,
+        part,
+        key,
+        unlock,
+        pass.as_deref(),
+        tpm_pub.as_deref(),
+        &out,
+    );
+    let _ = std::fs::remove_file(&typed);
+    rc
+}
+
+fn enroll_steps(
+    env: &mut dyn Env,
+    part: &str,
+    key: &str,
+    unlock: encrypt::Unlock,
+    pass: Option<&str>,
+    tpm_pub: Option<&str>,
+    out: &str,
+) -> i32 {
+    for (i, argv) in encrypt::enroll(part, key, unlock, pass, tpm_pub)
         .iter()
         .enumerate()
     {
@@ -247,11 +312,11 @@ pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
             let Some(rk) = env.capture(&a) else {
                 return fail(env, ErrorCode::Failed, "could not create the recovery key");
             };
-            if env.write_file(Path::new(&out), &rk).is_err() {
+            if env.write_file(Path::new(out), &rk).is_err() {
                 return fail(env, ErrorCode::Failed, "could not keep the recovery key");
             }
             let _ =
-                std::fs::set_permissions(&out, std::os::unix::fs::PermissionsExt::from_mode(0o600));
+                std::fs::set_permissions(out, std::os::unix::fs::PermissionsExt::from_mode(0o600));
         } else if env.exec(argv).unwrap_or(1) != 0 {
             return fail(env, ErrorCode::Failed, &format!("{} failed", argv[0]));
         }

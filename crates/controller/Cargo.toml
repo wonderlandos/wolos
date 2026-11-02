@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+wol_lua = { path = "../wol-lua", package = "wol-lua" }
 shared.workspace = true
 wol_core.workspace = true
 serde.workspace = true

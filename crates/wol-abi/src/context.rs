@@ -42,7 +42,9 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+#[repr(C)]
 pub struct wol_event {
+    tag: crate::handle::Tag<wol_event>,
     topic: Arc<wol_string>,
     json: Arc<wol_string>,
 }
@@ -50,6 +52,7 @@ pub struct wol_event {
 impl wol_event {
     pub fn new(topic: &str, json: &str) -> Self {
         Self {
+            tag: crate::handle::Tag::new(),
             topic: wol_string::new(topic),
             json: wol_string::new(json),
         }
@@ -76,14 +79,18 @@ impl Mailbox {
     }
 }
 
+#[repr(C)]
 pub struct wol_subscription {
+    tag: crate::handle::Tag<wol_subscription>,
     topic: String,
     callback: unsafe extern "C" fn(*const wol_event, UserData),
     user_data: usize,
     active: AtomicBool,
 }
 
+#[repr(C)]
 pub struct wol_context {
+    tag: crate::handle::Tag<wol_context>,
     app_id: String,
     config_home: PathBuf,
     wold: PathBuf,
@@ -158,6 +165,7 @@ impl wol_context {
         }
         let (wake_r, wake_w) = pipe()?;
         Ok(Self {
+            tag: crate::handle::Tag::new(),
             app_id: app_id.into(),
             config_home: crate::system::config_home(),
             wold: client::wold_socket(),
@@ -296,6 +304,7 @@ impl wol_context {
         }
         self.ensure_bus()?;
         let s = Arc::new(wol_subscription {
+            tag: crate::handle::Tag::new(),
             topic: topic.into(),
             callback,
             user_data: user_data as usize,
@@ -518,14 +527,14 @@ pub unsafe extern "C" fn wol_subscription_release(subscription: *mut wol_subscri
 /// `event` is NULL or live. Borrowed from `event`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_event_get_topic(event: *const wol_event) -> *const wol_string {
-    unsafe { event.as_ref() }.map_or(std::ptr::null(), |e| Arc::as_ptr(&e.topic))
+    unsafe { crate::handle::live(event) }.map_or(std::ptr::null(), |e| Arc::as_ptr(&e.topic))
 }
 
 /// # Safety
 /// `event` is NULL or live. Borrowed from `event`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_event_get_json(event: *const wol_event) -> *const wol_string {
-    unsafe { event.as_ref() }.map_or(std::ptr::null(), |e| Arc::as_ptr(&e.json))
+    unsafe { crate::handle::live(event) }.map_or(std::ptr::null(), |e| Arc::as_ptr(&e.json))
 }
 
 /// # Safety
@@ -575,6 +584,7 @@ mod tests {
         }
         let ctx = wol_context::new("org.example.t").unwrap();
         let s = Arc::new(wol_subscription {
+            tag: crate::handle::Tag::new(),
             topic: "theme".into(),
             callback: on,
             user_data: 7,
@@ -623,3 +633,9 @@ mod tests {
         assert_eq!(e.status, Status::Unavailable);
     }
 }
+
+crate::handle::tagged!(wol_event, 0x87af5723601bdc8a);
+
+crate::handle::tagged!(wol_subscription, 0x9cc65fd037023b53);
+
+crate::handle::tagged!(wol_context, 0xa6c6bbf7ca4a3089);

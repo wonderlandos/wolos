@@ -6,8 +6,7 @@ mod siblings;
 
 use std::{fs, path::PathBuf};
 fn read(p: &str) -> String {
-    let path = siblings::root()
-        .join(p);
+    let path = siblings::root().join(p);
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
 

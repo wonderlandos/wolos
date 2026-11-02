@@ -1,5 +1,7 @@
 # VM graphics (WolOS desktop in QEMU)
 
+Decision record: none yet.
+
 Result: no full Hyprland desktop in a VM on FreeBSD 15.1. Desktop proof needs real hardware (USB boot) or iGPU passthrough (`wolos-iso/tests/run-gpu.sh`).
 
 | Option | Tried | Result | Evidence |
@@ -14,6 +16,10 @@ Works without a GPU (app shots only, not the desktop):
 |---|---|
 | GTK apps | `wolos-iso/tests/test/headless.sh start`, then `shot <app> <png>` (sway `WLR_BACKENDS=headless WLR_RENDERER=pixman`, grim) |
 | Linux GL apps | Xwayland in that sway; Linux llvmpipe glxgears via wol-run |
+
+## Linux VMs (VirtualBox, QEMU): cursor and scanout
+
+`hyprland.conf` runs `hyprctl keyword cursor:no_hardware_cursors 1` when `systemd-detect-virt --vm` succeeds: VM GPUs (vmwgfx, virtio) put no pointer on a cursor plane. The pointer is then composited into every frame, so direct scanout of a fullscreen game or video never engages in a VM. This is expected; scanout and `hyprctl wolstats` numbers come from real hardware only (docs/modules/performance.md).
 
 ## Passthrough panel (VBT)
 OVMF gives the guest no IGD OpRegion and the iGPU has no ROM, so i915 logs `Failed to find VBIOS tables (VBT)` and the eDP panel stays dark.

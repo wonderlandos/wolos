@@ -5,6 +5,117 @@ use serde::{Deserialize, Serialize};
 pub const JOBS_DIR: &str = "/etc/wolos/jobs";
 pub const SOCKET: &str = "/var/run/wold.sock";
 
+/// First word of the identity handshake (ADR 0033): wold sends `hello <nonce>` before it reads
+/// anything, and the client's first line must be the same `hello <nonce>`. A request written before
+/// wold accepted the connection therefore never counts, so a process cannot connect, exec() into
+/// another binary and have its pre-written request run under that binary's identity.
+pub const HELLO: &str = "hello";
+
+/// How long either side waits for the other's hello.
+pub const HELLO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Longest hello line (bytes, newline included): `hello ` plus 32 hex digits, with slack.
+const MAX_HELLO: usize = 64;
+
+/// A fresh 128-bit nonce as 32 lowercase hex digits. Err if the kernel's random source is unreadable.
+pub fn new_nonce() -> std::io::Result<String> {
+    use std::io::Read;
+    let mut b = [0u8; 16];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut b)?;
+    Ok(b.iter().map(|x| format!("{x:02x}")).collect())
+}
+
+/// The hello line for `nonce`, newline included.
+pub fn hello_line(nonce: &str) -> String {
+    format!("{HELLO} {nonce}\n")
+}
+
+/// Server side: send a fresh hello on `s`; returns the line the client must echo first.
+pub fn send_hello(s: &std::os::unix::net::UnixStream) -> std::io::Result<String> {
+    use std::io::Write;
+    let line = hello_line(&new_nonce()?);
+    (&*s).write_all(line.as_bytes())?;
+    Ok(line)
+}
+
+/// Client side: read wold's hello (byte by byte, so nothing after it is consumed) within
+/// [`HELLO_TIMEOUT`] and echo it. Err if wold sent no well-formed hello: do not send the request.
+pub fn answer_hello(s: &std::os::unix::net::UnixStream) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    let before = s.read_timeout()?;
+    s.set_read_timeout(Some(HELLO_TIMEOUT))?;
+    let mut line = Vec::with_capacity(MAX_HELLO);
+    let mut byte = [0u8; 1];
+    while line.last() != Some(&b'\n') {
+        if line.len() >= MAX_HELLO || (&*s).read(&mut byte)? == 0 {
+            return Err(std::io::Error::other("wold did not greet the connection"));
+        }
+        line.extend_from_slice(&byte);
+    }
+    s.set_read_timeout(before)?;
+    let ok = std::str::from_utf8(&line).ok().and_then(|l| {
+        let nonce = l
+            .strip_prefix(HELLO)?
+            .strip_prefix(' ')?
+            .strip_suffix('\n')?;
+        (!nonce.is_empty() && nonce.bytes().all(|b| b.is_ascii_alphanumeric())).then_some(())
+    });
+    if ok.is_none() {
+        return Err(std::io::Error::other("wold's greeting was not a hello"));
+    }
+    (&*s).write_all(&line)
+}
+
+/// Server side in one step, for wold: send a hello and read the client's echo (byte by byte, so
+/// the request after it stays unread). Err if the echo does not match, or if any byte of it was
+/// written by another process than the one the kernel recorded at connect (SO_PEERCRED). The
+/// writer comes from SCM_CREDENTIALS: SO_PASSCRED is on before the hello goes out, so the kernel
+/// stamps every byte the client writes with the writing process (an unprivileged sender cannot
+/// claim another pid). That closes the fork gap of ADR 0033: a process that connects, forks and
+/// execs a trusted binary before accept cannot have the child answer for it. Clients need nothing
+/// extra: [`answer_hello`] is a plain write.
+pub fn greet(s: &std::os::unix::net::UnixStream) -> std::io::Result<()> {
+    let before = s.read_timeout()?;
+    s.set_read_timeout(Some(HELLO_TIMEOUT))?;
+    let peer = crate::sys::peer(s)
+        .filter(|p| p.pid > 0)
+        .ok_or_else(|| std::io::Error::other("the kernel did not say who connected"))?;
+    crate::sys::set_passcred(s, true)?;
+    let hello = send_hello(s)?;
+    let mut line = Vec::with_capacity(MAX_HELLO);
+    let mut byte = [0u8; 1];
+    while line.last() != Some(&b'\n') {
+        if line.len() >= MAX_HELLO {
+            return Err(std::io::Error::other("the client did not answer the hello"));
+        }
+        let (n, pid) = crate::sys::recv_with_pid(s, &mut byte)?;
+        if n == 0 {
+            return Err(std::io::Error::other("the client did not answer the hello"));
+        }
+        if pid != Some(peer.pid) {
+            return Err(std::io::Error::other(
+                "the hello was answered by another process than the one that connected",
+            ));
+        }
+        line.extend_from_slice(&byte);
+    }
+    // Off again: later reads (FdReader) expect only descriptors in the control data.
+    crate::sys::set_passcred(s, false)?;
+    if line != hello.as_bytes() {
+        return Err(std::io::Error::other("the client did not answer the hello"));
+    }
+    s.set_read_timeout(before)
+}
+
+/// Connect to wold's control socket at `path` and complete the handshake; then write the request.
+pub fn connect(
+    path: impl AsRef<std::path::Path>,
+) -> std::io::Result<std::os::unix::net::UnixStream> {
+    let s = std::os::unix::net::UnixStream::connect(path)?;
+    answer_hello(&s)?;
+    Ok(s)
+}
+
 /// Job definition. `run_at_load = false` = on demand (`wol start <label>`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -128,6 +239,69 @@ impl Reply {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_hello_round_trips_and_a_bad_greeting_is_refused() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::net::UnixStream;
+        let (srv, cli) = UnixStream::pair().unwrap();
+        let line = send_hello(&srv).unwrap();
+        assert_eq!(line.len(), "hello ".len() + 32 + 1);
+        answer_hello(&cli).unwrap();
+        (&cli).write_all(b"list\n").unwrap();
+        let mut r = BufReader::new(&srv);
+        let mut got = String::new();
+        r.read_line(&mut got).unwrap();
+        assert_eq!(got, line, "the echo comes first");
+        got.clear();
+        r.read_line(&mut got).unwrap();
+        assert_eq!(got, "list\n", "nothing after the hello was eaten");
+
+        let (srv, cli) = UnixStream::pair().unwrap();
+        (&srv).write_all(b"[]\n").unwrap();
+        assert!(answer_hello(&cli).is_err());
+        assert_ne!(new_nonce().unwrap(), new_nonce().unwrap());
+    }
+
+    /// The server side checks who wrote the echo: the process that connected (here this one,
+    /// from another thread) passes, and the request after it stays unread.
+    #[test]
+    fn greet_accepts_the_echo_from_the_connecting_process() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+        let (srv, cli) = UnixStream::pair().unwrap();
+        let h = std::thread::spawn(move || {
+            answer_hello(&cli).unwrap();
+            (&cli).write_all(b"list\n").unwrap();
+            cli
+        });
+        greet(&srv).unwrap();
+        let _cli = h.join().unwrap();
+        let mut rest = [0u8; 5];
+        (&srv).read_exact(&mut rest).unwrap();
+        assert_eq!(&rest, b"list\n");
+    }
+
+    /// ADR 0033 fork gap: the socket's other end is handed to another process (here `sh`, as its
+    /// stdin and stdout), which answers the hello. SO_PEERCRED names this process,
+    /// SCM_CREDENTIALS names the shell, so the connection is refused.
+    #[test]
+    fn greet_refuses_an_echo_from_another_process() {
+        use std::os::unix::net::UnixStream;
+        use std::process::{Command, Stdio};
+        let (srv, cli) = UnixStream::pair().unwrap();
+        let input = std::os::fd::OwnedFd::from(cli.try_clone().unwrap());
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", r#"read l; printf '%s\n' "$l"; sleep 2"#])
+            .stdin(Stdio::from(input))
+            .stdout(Stdio::from(std::os::fd::OwnedFd::from(cli)))
+            .spawn()
+            .unwrap();
+        let e = greet(&srv).unwrap_err();
+        assert!(e.to_string().contains("another process"), "{e}");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
     use super::*;
 
     #[test]

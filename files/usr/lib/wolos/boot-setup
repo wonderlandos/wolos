@@ -4,8 +4,17 @@
 # slot is sealed; `boot-setup / /efi --enroll` on a running system turns protection on later.
 #   boot-setup ROOT ESP [--enroll]
 # Prints the tier. What to tell the person goes to $WOLOS_BOOT_NOTE; the Install app shows that file
-# before the restart.
-# Env: WOLOS_SECURE=no (the person turned protection off), WOLOS_SB_DIR, WOLOS_BOOT_NOTE, WOLOS_BOOT_DISK.
+# before the restart. $WOLOS_SB_DIR/key-screen exists when the firmware's key screen is still to come
+# (wolos-mok-enroll.service runs only then).
+# Env: WOLOS_SECURE=no (the person turned protection off; kept in $S/want so a later key
+#      enrolment does not turn it on behind their back), WOLOS_SB_DIR, WOLOS_BOOT_NOTE,
+#      WOLOS_BOOT_DISK and WOLOS_ESP_DEV (the ESP's device: its disk and partition number make the
+#      firmware entry; found from the mount when unset). From install-run's plan (audit3 R2B-4,
+#      R2B-9): WOLOS_ESP_SHARED=yes|no (the startup partition is another system's too; unset: an
+#      older caller, a fallback loader already there decides), WOLOS_WINDOWS=yes (Windows stays:
+#      `wol boot detect` prefers the key screen over own keys), WOLOS_BITLOCKER=yes (the note says
+#      what BitLocker will ask). On a shared partition another Linux gets a menu entry
+#      (loader/entries/<vendor>.conf, its shim or GRUB chainloaded; audit3 R2B-11).
 set -eu
 T=${1%/}; ESP=$2; mode=${3:-}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -17,32 +26,110 @@ screen=$(wol boot key-screen "$tier")
 mkdir -p "$S" "$(dirname "$NOTE")" "$ESP/EFI/wolos" "$ESP/loader"
 sh "$here/boot-keys" create
 echo "$tier" > "$S/tier"
+case ${WOLOS_SECURE:-yes} in no) echo no ;; *) echo yes ;; esac > "$S/want"
 wol boot words "$tier" > "$S/cmdline"
 K=$(sh "$here/boot-keys" open)
 trap 'sh "$here/boot-keys" close' EXIT
 
-signed() { # SRC DST: a loader signed with this machine's key
-  "${WOLOS_SBSIGN:-/usr/lib/systemd/systemd-sbsign}" sign --private-key="$K/db.key" --certificate="$S/db.crt" --output="$2" "$1" >/dev/null 2>&1
+# The ESP as the firmware names it: disk and partition number, never assumed to be partition 1
+# (alongside another system it is the fourth or fifth).
+espdev=${WOLOS_ESP_DEV:-$(findmnt -no SOURCE "$ESP" 2>/dev/null || :)}
+disk=${WOLOS_BOOT_DISK:-}
+partn=
+if [ -n "$espdev" ]; then
+  partn=$(lsblk -no PARTN "$espdev" 2>/dev/null | awk 'NF' | head -1 || :)
+  [ -n "$disk" ] || disk=$(lsblk -no PKNAME -p "$espdev" 2>/dev/null | awk 'NF' | head -1 || :)
+fi
+
+signed() { # SRC DST: a loader signed with this machine's key (stdout is the tier; tools talk to the log)
+  "${WOLOS_SBSIGN:-/usr/lib/systemd/systemd-sbsign}" sign --private-key="$K/db.key" --certificate="$S/db.crt" --output="$2" "$1" >&2
 }
-[ "$mode" = --enroll ] || bootctl --esp-path="$ESP" install >/dev/null 2>&1
 L=$T/usr/lib/systemd/boot/efi/systemd-bootx64.efi
+FB=$ESP/EFI/BOOT/BOOTX64.EFI
+# A startup partition another system already starts from (Install Alongside reusing it): its
+# fallback loader (EFI/BOOT) and its menu settings (loader.conf: default, timeout) stay its own.
+# Decided once at install ($S/esp-shared), from the plan; --enroll later keeps the answer.
+if [ "$mode" != --enroll ]; then
+  rm -f "$S/esp-shared"
+  case ${WOLOS_ESP_SHARED:-} in
+    yes) : > "$S/esp-shared" ;;
+    no) ;;
+    *) if [ -f "$FB" ]; then : > "$S/esp-shared"; fi ;;
+  esac
+fi
+shared=no; [ ! -e "$S/esp-shared" ] || shared=yes
+kept=
+if [ "$shared" = yes ] && [ -f "$FB" ]; then
+  kept=$(mktemp) && cp "$FB" "$kept"
+fi
+if [ "$mode" != --enroll ]; then
+  if [ "$screen" = yes ]; then
+    # No "Linux Boot Manager" firmware entry: with Secure Boot on it would be refused (our loader is
+    # signed with a key the firmware does not know yet) and, first in the order, show the firmware's
+    # error screen. The shim entry below is the one the firmware starts.
+    bootctl --esp-path="$ESP" install --no-variables >&2
+  else
+    bootctl --esp-path="$ESP" install >&2
+  fi
+fi
+# bootctl install always writes the fallback: on a shared partition the other system's comes back.
+if [ -n "$kept" ]; then
+  cp "$kept" "$FB" && rm -f "$kept"
+fi
 signed "$L" "$ESP/EFI/systemd/systemd-bootx64.efi"
 if [ "$screen" = yes ]; then
   # The first stage the firmware already trusts starts our loader under the name it looks for, and
-  # carries the firmware's key screen. Neither binary is altered.
+  # carries the firmware's key screen. Neither binary is altered. On a shared partition only
+  # EFI/wolos: another system's shim in EFI/BOOT loads its own grubx64.efi from there.
   Z=$T/usr/share/wolos/shim
-  for d in EFI/wolos EFI/BOOT; do
+  dirs=EFI/wolos; [ "$shared" = yes ] || dirs="EFI/wolos EFI/BOOT"
+  for d in $dirs; do
+    mkdir -p "$ESP/$d"
     cp "$Z/shimx64.efi" "$Z/mmx64.efi" "$ESP/$d/"
     signed "$L" "$ESP/$d/grubx64.efi"
   done
-  cp "$Z/shimx64.efi" "$ESP/EFI/BOOT/BOOTX64.EFI"
-  [ -z "${WOLOS_BOOT_DISK:-}" ] || efibootmgr --create --disk "$WOLOS_BOOT_DISK" --part 1 --label WolOS \
-    --loader '\EFI\wolos\shimx64.efi' >/dev/null 2>&1 || :
-else
-  signed "$L" "$ESP/EFI/BOOT/BOOTX64.EFI"
+  [ "$shared" = yes ] || cp "$Z/shimx64.efi" "$FB"
+  if [ -n "$disk" ]; then
+    # One WolOS entry, pointing at shim, first in the order and the very next thing the firmware
+    # starts: the key screen is what the person sees after the restart, nothing else.
+    for n in $(efibootmgr 2>/dev/null | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\{0,1\} WolOS$/\1/p'); do
+      efibootmgr --quiet --bootnum "$n" --delete-bootnum >/dev/null 2>&1 || :
+    done
+    efibootmgr --create --disk "$disk" --part "${partn:-1}" --label WolOS \
+      --loader '\EFI\wolos\shimx64.efi' >/dev/null 2>&1 || :
+    n=$(efibootmgr 2>/dev/null | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\{0,1\} WolOS$/\1/p' | head -1 || :)
+    [ -z "$n" ] || efibootmgr --quiet --bootnext "$n" >/dev/null 2>&1 || :
+  fi
+elif [ "$shared" = no ]; then
+  signed "$L" "$FB"
 fi
 # No default: entries sort by generation, so a slot out of tries falls behind the other (ADR 0025).
-printf 'timeout %s\nconsole-mode keep\neditor no\n' "${WOLOS_OTHER_SYSTEMS:+3}${WOLOS_OTHER_SYSTEMS:-0}" > "$ESP/loader/loader.conf"
+# A shared partition keeps the other system's loader.conf; it only gets a moment to choose in.
+LC=$ESP/loader/loader.conf
+if [ "$shared" = yes ] && [ -s "$LC" ]; then
+  grep -q '^[[:space:]]*timeout[[:space:]]' "$LC" || printf 'timeout 3\n' >> "$LC"
+else
+  printf 'timeout %s\nconsole-mode keep\neditor no\n' "${WOLOS_OTHER_SYSTEMS:+3}${WOLOS_OTHER_SYSTEMS:-0}" > "$LC"
+fi
+# Another Linux on a shared startup partition: systemd-boot finds Windows by itself, never another
+# distribution's shim or GRUB. One entry each (no sort-key: WolOS's entries, which have one, stay
+# first), chainloaded from the same partition; an entry of that name already there stays as it is.
+if [ "$shared" = yes ] && [ "$mode" != --enroll ]; then
+  mkdir -p "$ESP/loader/entries"
+  for v in "$ESP"/EFI/*/; do
+    v=${v%/}; v=${v##*/}
+    case $v in '' | .* | *[!A-Za-z0-9._-]*) continue ;; esac
+    case $(printf %s "$v" | tr '[:upper:]' '[:lower:]') in boot | systemd | wolos | microsoft | linux | tools) continue ;; esac
+    f=
+    for l in shimx64.efi grubx64.efi; do
+      if [ -f "$ESP/EFI/$v/$l" ]; then f=$l; break; fi
+    done
+    e=$ESP/loader/entries/$v.conf
+    [ -n "$f" ] && [ ! -e "$e" ] || continue
+    t=$(printf %s "$v" | cut -c1 | tr '[:lower:]' '[:upper:]')$(printf %s "$v" | cut -c2-)
+    printf 'title %s\nefi /EFI/%s/%s\n' "$t" "$v" "$f" > "$e"
+  done
+fi
 if [ "$mode" != --enroll ]; then
   WOLOS_ROOT=$T WOLOS_ESP=$ESP sh "$here/esp-sync" --new
 else
@@ -58,14 +145,26 @@ if [ "$tier" = own-keys ]; then
   done
   printf %s "$(cat /proc/sys/kernel/random/uuid)" > "$C/GUID"   # sbctl refuses a trailing newline
   printf 'keydir: %s/keys\nguid: %s/GUID\n' "$C" "$C" > "$C/sbctl.conf"
-  sbctl --config "$C/sbctl.conf" --disable-landlock enroll-keys --microsoft >/dev/null 2>&1 || {
-    tier=off; echo off > "$S/tier"; : > "$S/cmdline"
-  }
+  enrolled=yes
+  sbctl --config "$C/sbctl.conf" --disable-landlock enroll-keys --microsoft >/dev/null 2>&1 || enrolled=no
+  # Trust the firmware's answer, not sbctl's exit code: still in Setup Mode means nothing went in.
+  if [ "$enrolled" = yes ] && sbctl --config "$C/sbctl.conf" status 2>/dev/null | grep -qi 'setup mode:.*enabled'; then
+    enrolled=no
+  fi
   rm -rf "$C"
+  if [ "$enrolled" = no ]; then
+    # Off: the images must not carry lockdown=integrity (their modules would be refused) and the
+    # words of a chain this computer never got. The entry keeps its name and counter.
+    tier=off; echo off > "$S/tier"; : > "$S/cmdline"
+    WOLOS_ROOT=$T WOLOS_ESP=$ESP sh "$here/esp-sync"
+    K=$(sh "$here/boot-keys" open)
+  fi
 fi
+rm -f "$S/key-screen"
 if [ "$screen" = yes ]; then
   # Also on the startup partition: the key screen can enroll it from there if the queue is ever lost.
   cp "$S/db.der" "$ESP/EFI/wolos/wolos-key.cer"
+  : > "$S/key-screen"
   WOLOS_SB_DIR=$S sh "$here/boot-enroll" >/dev/null 2>&1 || :   # the first boot tries again
 fi
 wol boot note "$tier" "$screen" > "$NOTE"

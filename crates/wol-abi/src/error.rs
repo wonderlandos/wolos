@@ -51,7 +51,9 @@ impl Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Opaque error object. Owned by the caller after a failed call; `wol_error_release` frees it.
+#[repr(C)]
 pub struct wol_error {
+    tag: crate::handle::Tag<wol_error>,
     status: Status,
     /// Message bytes with a trailing NUL (not counted in its length).
     message: Vec<u8>,
@@ -72,6 +74,7 @@ pub(crate) fn guard(error: *mut *mut wol_error, f: impl FnOnce() -> Result<()>) 
                 let mut message = e.message.replace('\0', " ").into_bytes();
                 message.push(0);
                 let obj = Box::new(wol_error {
+                    tag: crate::handle::Tag::new(),
                     status: e.status,
                     message,
                 });
@@ -88,6 +91,7 @@ pub(crate) fn quiet<T>(fallback: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(fallback)
 }
 
+#[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
 /// UTF-8 input with an explicit length. NULL is allowed only with length 0 (the empty string).
 pub(crate) fn input<'a>(ptr: *const c_char, len: usize, max: usize, what: &str) -> Result<&'a str> {
     if ptr.is_null() {
@@ -129,7 +133,8 @@ pub(crate) type UserData = *mut c_void;
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_error_get_code(error: *const wol_error) -> wol_status {
     // SAFETY: NULL or a live error object (contract).
-    unsafe { error.as_ref() }.map_or(Status::InvalidArgument as wol_status, |e| e.status as i32)
+    unsafe { crate::handle::live(error) }
+        .map_or(Status::InvalidArgument as wol_status, |e| e.status as i32)
 }
 
 /// # Safety
@@ -140,7 +145,7 @@ pub unsafe extern "C" fn wol_error_get_message(
     len: *mut usize,
 ) -> *const c_char {
     // SAFETY: NULL or a live error object (contract).
-    match unsafe { error.as_ref() } {
+    match unsafe { crate::handle::live(error) } {
         Some(e) => {
             write_len(len, e.message.len() - 1);
             e.message.as_ptr().cast()
@@ -156,7 +161,8 @@ pub unsafe extern "C" fn wol_error_get_message(
 /// `error` is NULL or an error libwol handed out, released once.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_error_release(error: *mut wol_error) {
-    if !error.is_null() {
+    // SAFETY: NULL or a libwol handle (contract); a released or foreign pointer is ignored.
+    if unsafe { crate::handle::live(error.cast_const()) }.is_some() {
         // SAFETY: made by Box::into_raw in `guard`, released once (contract).
         drop(unsafe { Box::from_raw(error) });
     }
@@ -166,6 +172,7 @@ pub unsafe extern "C" fn wol_error_release(error: *mut wol_error) {
 mod tests {
     use super::*;
 
+    #[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
     #[test]
     fn guard_fills_error_only_on_failure_and_catches_panics() {
         let mut e: *mut wol_error = std::ptr::null_mut();
@@ -193,3 +200,5 @@ mod tests {
         assert!(input(p, 2, 64, "x").is_err(), "cut inside é");
     }
 }
+
+crate::handle::tagged!(wol_error, 0x23b92804ec19d6e8);

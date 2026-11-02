@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, Write};
 
 pub fn call(ctx: &Context, c: &PackageCall) -> Result<()> {
     c.validate().map_err(Error::invalid)?;
-    let mut s = std::os::unix::net::UnixStream::connect(&ctx.wold).map_err(|_| {
+    let mut s = shared::jobs::connect(&ctx.wold).map_err(|_| {
         Error::unavailable("WolOS's system service is not running, so the system was not changed.")
     })?;
     s.write_all(format!("call {}\n", c.encode()).as_bytes())
@@ -55,6 +55,7 @@ mod tests {
                 ),
             ] {
                 let (c, _) = l.accept().unwrap();
+                shared::jobs::greet(&c).unwrap();
                 let mut line = String::new();
                 BufReader::new(&c).read_line(&mut line).unwrap();
                 got.push(line);

@@ -1,0 +1,18 @@
+{
+  "id": "ai-sessions",
+  "name": "Sessions",
+  "summary": "Reopen last time's terminals and agents where they were: zellij inside a boot, wol sessions across boots",
+  "icon": "wolos-module-sessions-symbolic",
+  "category": "ai",
+  "size_mb": 15,
+  "packages": [
+    "zellij",
+    "foot"
+  ],
+  "flatpaks": [],
+  "recipes": [],
+  "mise": [],
+  "post": [],
+  "offline": true,
+  "needs": []
+}

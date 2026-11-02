@@ -2,6 +2,7 @@
 //! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi, wopkg, xguard, xguard-clam}.
 //! libwopkg (ADR 0021): `wopkg` is the package core's stable C ABI, an adaptor like `wol-abi`.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
+//! Plugins (ADR 0031): `controller` may use `wol-lua` too, so `wol plugin check|run` runs plugin Lua headless.
 use std::collections::BTreeMap;
 use std::process::Command;
 
@@ -41,6 +42,8 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
             let ok = match pkg.as_str() {
                 "shared" => false,
                 "core" => dep == "shared",
+                // `wol plugin check|run` loads and renders plugin Lua without a display (ADR 0031).
+                "controller" => ["shared", "core", "wol-lua"].contains(&dep.as_str()),
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
                 "wol-lua" => ["shared", "core", "wol-abi"].contains(&dep.as_str()),
                 // Links only libc and libclamav: a GPL-2.0-only program stays alone (ADR 0028).
@@ -124,6 +127,9 @@ fn violations_table() {
         (&[("shell", &["wol-abi"])], &["shell -> wol-abi"]),
         (&[("shell", &["wopkg", "core"])], &[]),
         (&[("shell", &["wol-lua"])], &[]),
+        (&[("controller", &["wol-lua", "core", "shared"])], &[]),
+        (&[("controller", &["wol-abi"])], &["controller -> wol-abi"]),
+        (&[("controller", &["api"])], &["controller -> api"]),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

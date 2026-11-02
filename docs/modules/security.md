@@ -8,9 +8,16 @@ On from the first boot (ADR 0015). Code: `wol_core::security` (defaults, status)
   - Inbound dropped except replies, ping, DHCP, IPv6 neighbour discovery and mDNS. Outbound allowed.
 - No remote login: `sshd.service` stays disabled until Sharing turns it on.
 - The log stays local: journald only, no network syslog daemon.
-- Kernel hardening (`/etc/sysctl.d/90-wolos.conf`, one reason per line): `kernel.kptr_restrict=2`,
-  `dmesg_restrict`, `yama.ptrace_scope=1` (own children only), `unprivileged_bpf_disabled`,
-  `fs.protected_hardlinks/symlinks`, `net.ipv4.tcp_syncookies`. `wol security` reads them from /proc/sys.
+- Kernel hardening (`/usr/lib/sysctl.d/90-wolos.conf`, one reason per line): `kernel.dmesg_restrict=1`
+  (the kernel log is for administrators), `kernel.kptr_restrict=2` (kernel addresses hidden),
+  `kernel.yama.ptrace_scope=1` (own children only), `kernel.sysrq=0` (no debugger key chord),
+  `fs.protected_hardlinks/symlinks=1`, `fs.protected_fifos/regular=1` (no link or FIFO tricks in
+  shared sticky folders such as /tmp), `fs.suid_dumpable=0` (no core files from setuid programs),
+  `kernel.unprivileged_bpf_disabled=1` (only administrators load BPF), `net.core.bpf_jit_harden=1`
+  (constant blinding for ordinary accounts' BPF), `net.ipv4.tcp_syncookies=1` (half-open floods),
+  `kernel.kexec_load_disabled=1` (no kernel swap without a firmware restart). The same file raises
+  `vm.max_map_count` for games. `wol security` reads them from /proc/sys; **CI** the controller test sysctl_docs
+  fails when this line names a setting no file sets.
 
 ## Updates (ADR 0016, 0017)
 - A systemd timer runs `/usr/lib/wolos/update-check` hourly; it checks at most every 20 h:
@@ -27,9 +34,14 @@ On from the first boot (ADR 0015). Code: `wol_core::security` (defaults, status)
 - Packages the person installed with pacman come along (the slot is a copy, not an image).
   Other kernels are allowed, reported by `wol update status` and `wol games doctor`, never removed.
 - `pacman -S/-R/-U` on the sealed system (`/usr/local/bin/pacman`, runs `/usr/bin/pacman`): the change goes into a layer
-  (systemd-sysext, merged over `/usr` at once; `/etc` and the package database stay live), live with no restart; the next
-  `wol update apply` folds the layers into the new slot. Kernel, initramfs and systemd packages and `-Syu` go to the pending
-  slot instead (taking effect at the next restart; a second change stacks on it); queries pass through. A failed change leaves nothing.
+  (systemd-sysext, merged over `/usr` at once; `/etc` stays live), live with no restart. The package database is per slot,
+  where pacman.conf's `DBPath` puts it (`/usr/lib/pacman` on an installed slot), so a layer carries its own database
+  entries. The next `wol update apply` folds the layers into the new slot (`wol layers fold`, named in the slot's
+  `/etc/wolos/folded-layers`); the live layers stay while the old slot runs, and `wol layers clear` removes them after the
+  new slot is blessed (a good boot, `boot-ok`). Kernel, initramfs and systemd packages and `-Syu` (also `-Syu <pkg>`) go to
+  the pending slot instead (taking effect at the next restart; a second change stacks on it); queries pass through.
+  A change that fails before pacman commits leaves nothing; one that fails after pacman committed keeps its layer, which
+  merges at the next restart.
 - Developer mode: `wol seal off` (root) makes the running system writable and stops the boot check until the next update.
 - `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones.
 
@@ -46,7 +58,8 @@ How it works:
 - `wolos-xguard.service`: holds `FAN_OPEN_EXEC_PERM` on the mounts in scope and `FAN_OPEN_PERM` on tagged files. Files outside scope, and the sealed root, cost nothing.
 - Tag: `user.wolos.quarantine`, set when a file lands in a Downloads folder, or `user.xdg.origin.url`, set by browsers, and by curl and wget through the shipped `.curlrc` and `.wgetrc`.
 - Verdict: a clean file gets an evictable kernel ignore mark, removed by the kernel when the file changes. The verdict store (`/var/lib/wolos/xguard/verdicts`) keeps file identity and sha256, or the fs-verity digest when there is one, so a restart reads nothing again.
-- Fails open: the guard dying, or any check it cannot finish, lets the file run. A stopped file needs a signature match; nothing else stops anything.
+- Fails open, except for downloads: the guard dying, or a check it cannot finish, lets the file run. A stopped file needs a signature match. The one exception (audit S4): when the deep check cannot run at all on a tagged download (its worker ended or the rule sets did not load), the file is refused for now with the answer `unchecked`; that is not remembered, so the next open asks again.
+- Size: a file up to 64 MiB is read whole and may get the deep check; a larger one is scanned in pieces (hashes and patterns, streamed with an overlap so a pattern across two pieces is still seen), and its deep check is left to the background pass.
 - Engines: the mapped database in the guard; rule sets (YARA-X) only in a short-lived worker with no privileges, for tagged files, removable disks, Windows programs, AppImages and `.wol`; and, after the person opts in, ClamAV for the same files.
 - Full signatures, off by default: a switch in Privacy & Security enables `wolos-clam-update.timer`. freshclam fetches the data to this computer; it is never in the image. `wol-xguard-clam` is the only program that links libclamav; it starts on demand from `wolos-clam.socket`, takes 1 GB while loaded, and exits after 120 idle seconds. Off deletes the data.
 - `wol-analyze`, from Files' right-click (`desktop/nautilus/wolos-analyze.c`), runs `wol-xguard scan --clamav`: without an answer from ClamAV the result is Incomplete, never clean. With the signatures off it checks nothing and offers Settings; only the switch there turns them on.

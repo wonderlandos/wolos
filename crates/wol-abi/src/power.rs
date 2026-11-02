@@ -11,7 +11,9 @@ use std::ffi::c_char;
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 
+#[repr(C)]
 pub struct wol_assertion {
+    tag: crate::handle::Tag<wol_assertion>,
     _held: UnixStream,
 }
 
@@ -43,7 +45,12 @@ pub unsafe extern "C" fn wol_power_keep_awake(
         let ctx = unsafe { borrow(context) }?;
         let reason = input(reason, reason_len, MAX_TITLE, "The reason")?.to_owned();
         let held = client::hold(ctx.wold(), &Call::PowerKeepAwake { reason })?;
-        unsafe { *out = into_raw(Arc::new(wol_assertion { _held: held })) };
+        unsafe {
+            *out = into_raw(Arc::new(wol_assertion {
+                tag: crate::handle::Tag::new(),
+                _held: held,
+            }))
+        };
         Ok(())
     })
 }
@@ -61,3 +68,5 @@ pub unsafe extern "C" fn wol_assertion_retain(assertion: *mut wol_assertion) -> 
 pub unsafe extern "C" fn wol_assertion_release(assertion: *mut wol_assertion) {
     unsafe { release(assertion) }
 }
+
+crate::handle::tagged!(wol_assertion, 0x5762d0944d050942);

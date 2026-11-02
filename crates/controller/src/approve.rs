@@ -71,21 +71,19 @@ pub fn decide(
         tool: tool.into(),
         request,
     };
-    let Some(rt) = env.var("XDG_RUNTIME_DIR") else {
-        return Verdict::Stop(Outcome::Refused, NO_SESSION.into());
-    };
-    let sock = Path::new(&rt).join(SHELL_SOCKET);
-    let answer = match env.request_wait(&sock, a.line().as_bytes(), APPROVAL_WAIT_SECS) {
-        Ok(reply) => Answer::parse(&reply),
-        Err(e)
-            if matches!(
-                e.kind(),
-                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-            ) =>
-        {
-            Some(Answer::TimedOut)
+    let answer = if admin {
+        // R2C-6: an administrator change is asked through wold, which shows it to this account's
+        // shell naming this process by its kernel executable; the shell runs it after the
+        // password. The shell takes administrator sheets from no same-account process directly.
+        match via_wold(env, a) {
+            Ok(a) => a,
+            Err(stop) => return stop,
         }
-        Err(_) => return Verdict::Stop(Outcome::Refused, NO_SESSION.into()),
+    } else {
+        match on_shell_socket(env, &a) {
+            Ok(a) => a,
+            Err(stop) => return stop,
+        }
     };
     let nothing = "Nothing changed.";
     match (answer, admin) {
@@ -124,4 +122,64 @@ pub fn decide(
             format!("WolOS could not ask on screen. {nothing}"),
         ),
     }
+}
+
+/// wold's control socket (`WOL_JOBS_SOCKET` in tests), as `crate::run` reaches it.
+fn wold_socket(env: &dyn Env) -> std::path::PathBuf {
+    env.var("WOL_JOBS_SOCKET")
+        .map_or_else(|| shared::jobs::SOCKET.into(), std::path::PathBuf::from)
+}
+
+/// A user-level consent sheet: straight to this account's shell (`approve` on its socket).
+fn on_shell_socket(env: &mut dyn Env, a: &Approval) -> Result<Option<Answer>, Verdict> {
+    let Some(rt) = env.var("XDG_RUNTIME_DIR") else {
+        return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into()));
+    };
+    let sock = Path::new(&rt).join(SHELL_SOCKET);
+    match env.request_wait(&sock, a.line().as_bytes(), APPROVAL_WAIT_SECS) {
+        Ok(reply) => Ok(Answer::parse(&reply)),
+        Err(e) if timed_out(&e) => Ok(Some(Answer::TimedOut)),
+        Err(_) => Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
+    }
+}
+
+fn timed_out(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    )
+}
+
+/// An administrator sheet through wold (`session.approve`): the sheet's answer, as the shell gave
+/// it to wold. wold's own refusals map to the same outcomes as the shell's.
+fn via_wold(env: &mut dyn Env, a: Approval) -> Result<Option<Answer>, Verdict> {
+    use shared::portal::{Answer as Reply, BUSY, Call, NO_ANSWER, NOT_RUNNING};
+    // No session in this environment: nobody could see a sheet.
+    if env.var("XDG_RUNTIME_DIR").is_none() {
+        return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into()));
+    }
+    let call = Call::SessionApprove { approval: a };
+    if let Err(e) = call.validate() {
+        return Err(Verdict::Stop(Outcome::Failed, e));
+    }
+    let line = format!("call {}\n", call.encode());
+    let sock = wold_socket(env);
+    // wold waits APPROVAL_WAIT_SECS for the shell; give its answer a moment more to arrive.
+    let reply = match env.request_wait(&sock, line.as_bytes(), APPROVAL_WAIT_SECS + 5) {
+        Ok(r) => r,
+        Err(e) if timed_out(&e) => return Ok(Some(Answer::TimedOut)),
+        Err(_) => return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
+    };
+    let Ok(r) = serde_json::from_str::<Reply>(reply.trim()) else {
+        return Ok(None);
+    };
+    if r.ok {
+        return Ok(r.data.and_then(|d| serde_json::from_value(d).ok()));
+    }
+    Ok(match r.message.as_deref() {
+        Some(BUSY) => Some(Answer::Busy),
+        Some(NO_ANSWER) => Some(Answer::TimedOut),
+        Some(NOT_RUNNING) => return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
+        _ => None,
+    })
 }

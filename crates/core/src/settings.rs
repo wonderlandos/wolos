@@ -128,7 +128,10 @@ pub mod users {
 
     /// Setup assistant / wol-login account rules (ADR 0004).
     const MAX_PASSWORD: usize = 512;
-    const RESERVED: [&str; 12] = [
+    /// Names an account can never take: WolOS's own (`live` is the installer session, `wolos` the
+    /// product, `_wollogin` and `_xguard` service users) and the Arch system users (`systemd-*`
+    /// covers systemd-network, -resolve, -timesync, -journal-remote, -coredump, -oom).
+    const RESERVED: [&str; 23] = [
         "root",
         "toor",
         "daemon",
@@ -141,7 +144,23 @@ pub mod users {
         "news",
         "man",
         "_wollogin",
+        "_xguard",
+        "live",
+        "wolos",
+        "http",
+        "mail",
+        "ftp",
+        "dbus",
+        "polkitd",
+        "rtkit",
+        "seatd",
+        "git",
     ];
+
+    /// A reserved account name ([`RESERVED`], or any `systemd-*` user).
+    pub fn is_reserved(name: &str) -> bool {
+        RESERVED.contains(&name) || name.starts_with("systemd-")
+    }
     pub const MAX_FIELD: usize = 64;
 
     fn plain(s: &str) -> bool {
@@ -155,10 +174,7 @@ pub mod users {
             .strip_suffix(".UTF-8")
             .and_then(|l| l.split_once('_'));
         let checks = [
-            (
-                "name",
-                is_valid_name(&a.name) && !RESERVED.contains(&a.name.as_str()),
-            ),
+            ("name", is_valid_name(&a.name) && !is_reserved(&a.name)),
             ("full name", plain(&a.full_name)),
             ("hint", plain(&a.hint) && a.hint != a.password),
             (
@@ -234,6 +250,23 @@ pub mod users {
 
     pub fn remove_argv(name: &str) -> Option<Vec<String>> {
         is_valid_name(name).then(|| ["userdel", "-r", name].map(String::from).to_vec())
+    }
+}
+
+/// The computer name (audit3 R2B-18): one rule for the Install app, `wol install` (plan and
+/// autoinstall), Settings > Sharing and wol-admind's Hostname action.
+pub mod hostname {
+    /// The name WolOS uses when none is given or the given one is not valid.
+    pub const DEFAULT: &str = "wolos";
+
+    /// One RFC 1123 label, lowercase: 1..=63 of `[a-z0-9-]`, no `-` at either end. False for
+    /// anything else (dots, capitals, spaces, shell characters, non-ASCII).
+    pub fn is_valid(s: &str) -> bool {
+        (1..=63).contains(&s.len())
+            && !s.starts_with('-')
+            && !s.ends_with('-')
+            && s.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
     }
 }
 
@@ -313,6 +346,42 @@ mod tests {
             "useradd -m -c Ann -s /usr/bin/zsh -G seat,video,input,audio ann"
         );
         assert!(users::remove_argv("x y").is_none());
+    }
+
+    /// The system's own users can never be chosen as an account (the live session's `live`, the
+    /// Arch daemons' users, every `systemd-*`); ordinary names stay free.
+    #[test]
+    fn reserved_names() {
+        for n in [
+            "root",
+            "live",
+            "wolos",
+            "_xguard",
+            "_wollogin",
+            "http",
+            "mail",
+            "ftp",
+            "dbus",
+            "polkitd",
+            "rtkit",
+            "seatd",
+            "git",
+            "nobody",
+            "systemd-network",
+            "systemd-resolve",
+            "systemd-timesync",
+            "systemd-oom",
+        ] {
+            assert!(users::is_reserved(n), "{n}");
+        }
+        for n in ["alice", "klee", "live2", "systemd", "wolos-fan", "mailman"] {
+            assert!(!users::is_reserved(n), "{n}");
+        }
+        let a = shared::login::NewAccount {
+            name: "live".into(),
+            ..Default::default()
+        };
+        assert_eq!(users::validate_account(&a), Err("name"));
     }
 
     #[test]

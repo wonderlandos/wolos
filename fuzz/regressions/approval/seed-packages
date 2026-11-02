@@ -1,0 +1,1 @@
+{"helper":"/usr/bin/wopkg","tool":"wopkg packages-install","request":{"action":"packages","verb":"update-holding","names":["firefox"]}}

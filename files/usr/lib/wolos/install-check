@@ -3,13 +3,31 @@
 # WolOS installer: may <disk> be erased? Reads only (never writes a disk). Run by install-run
 # before anything is written, and by the Install WolOS app to word its warning. One fact per line:
 #   size <bytes>
-#   os <Windows|Linux|macOS|FreeBSD>   another system lives on this disk (GPT types, filesystems)
+#   os <Windows|Linux|macOS|FreeBSD>   another system lives on this disk (GPT types, filesystems;
+#                                      a LUKS or LVM volume is some Linux's)
+#   bitlocker <yes|no>                 with `os Windows`: a BitLocker volume is on this disk (its
+#                                      recovery key is asked for after a Secure Boot key change)
 #   boot <tier>                        the protection this computer gets (`wol boot detect`);
 #                                      `firmware`: a firmware setting must change first
-#   refuse <not-listed|too-small|in-use>
-# Exit 0: may erase. 2: refused (the boot medium, a missing disk, too small, a mounted partition).
+#   refuse <not-listed|too-small|in-use|bios>
+# Exit 0: may erase. 2: refused (the boot medium, a missing disk, too small, a mounted partition,
+# a computer started without UEFI: the installed system boots through its EFI partition only).
+#   install-check --result   what the last install-run left for the Install app (audit3 R2B-1),
+#                            from the folder it made (root's only): `recovery-key <key>` once (the
+#                            key is deleted as it is handed out), then the log, `log <line>` each.
+#                            The sudo rule that lets the live user run this check covers it.
+# Env (tests): WOLOS_EFIVARS, WOLOS_RESULT_DIR.
 set -u
-MIN_BYTES=16000000000   # crate shell install::MIN_BYTES
+MIN_BYTES=16000000000   # wol_core::install::layout::MIN_ROOT (image_install.rs checks they agree)
+if [ "${1:-}" = --result ]; then
+  R=${WOLOS_RESULT_DIR:-/run/wolos/install}
+  if [ -f "$R/recovery-key" ] && [ ! -L "$R/recovery-key" ]; then
+    printf 'recovery-key %s\n' "$(cat "$R/recovery-key")"
+    rm -f "$R/recovery-key"
+  fi
+  if [ -f "$R/log" ] && [ ! -L "$R/log" ]; then sed 's/^/log /' "$R/log"; fi
+  exit 0
+fi
 here=$(dirname "$0")
 disk=${1:-}
 if [ -z "$disk" ] || ! sh "$here/install-disks" | grep -qx -- "$disk"; then
@@ -18,22 +36,20 @@ fi
 # --probe: everything the app shows about this disk, as JSON (reads only).
 [ "${2:-}" != --probe ] || exec wol install probe "$disk"
 rc=0
-bytes=$(lsblk -dnpbo NAME,SIZE,TYPE,RO | awk -v d="$disk" '$1 == d {print $2}')
-case $bytes in '' | *[!0-9]*) bytes=0 ;; esac
-echo "size $bytes"
-lsblk -nlpo PARTTYPE,FSTYPE "$disk" 2>/dev/null | awk '
-  {
-    t = tolower($1); f = tolower($2)
-    if (t ~ /^(e3c9e316-0b5c-4db8-817d-f92df00215ae|de94bba4-06d1-4d40-a16a-bfd50179d6ac)$/ || f == "ntfs" || f == "bitlocker") os["Windows"] = 1
-    else if (t ~ /^(0fc63daf-8483-4772-8e79-3d69d8477de4|4f68bce3-e8cd-4db1-96e7-fbcaf984b709|933ac7e1-2eb4-4f13-b844-0e14e2aef915|0657fd6d-a4ab-43c4-84e5-0933c84b4f4f|e6d6d379-f507-44c2-a23c-238f2a3df928|a19d880f-05fc-4d3b-a006-743f0f84911e)$/ || f ~ /^(ext[234]|btrfs|xfs|f2fs|swap)$/) os["Linux"] = 1
-    else if (t ~ /^(48465300-0000-11aa-aa11-00306543ecac|7c3457ef-0000-11aa-aa11-00306543ecac)$/ || f ~ /^(apfs|hfsplus)$/) os["macOS"] = 1
-    else if (t ~ /^(516e7cb6-6ecf-11d6-8ff8-00022d09712b|516e7cba-6ecf-11d6-8ff8-00022d09712b)$/ || f == "zfs_member" || f == "ufs") os["FreeBSD"] = 1
-  }
-  END { n = split("Windows Linux macOS FreeBSD", names, " "); for (i = 1; i <= n; i++) if (names[i] in os) print "os " names[i] }'
+# The facts come from the disk model (wol_core::install::disk::facts, `wol install facts`), never
+# from a copy of its partition types here (audit3 R2B-16/19).
+facts=$(wol install facts "$disk") || facts=
+printf '%s\n' "$facts" | grep -E '^(size|os|bitlocker) ' || :
+bytes=$(printf '%s\n' "$facts" | sed -n 's/^size \([0-9][0-9]*\)$/\1/p')
+[ -n "$bytes" ] || { bytes=0; echo "size 0"; }
 echo "boot $(wol boot detect)"
 [ "$bytes" -ge "$MIN_BYTES" ] || { echo "refuse too-small"; rc=2; }
-# A partition of it still mounted (a USB disk opened in Files): install-run unmounts those first.
-if findmnt -rno SOURCE | awk -v d="$disk" '$1 == d || (index($1, d) == 1 && substr($1, length(d) + 1) ~ /^p?[0-9]+$/) {f = 1} END {exit !f}'; then
+# Started without UEFI (BIOS, CSM): the installed system has no way to boot on this computer.
+[ -d "${WOLOS_EFIVARS:-/sys/firmware/efi/efivars}" ] || { echo "refuse bios"; rc=2; }
+# Anything on it still mounted, through a btrfs subvolume or an opened encrypted volume too (a USB
+# disk opened in Files): install-run unmounts those first.
+# A swap partition on it counts too (`swap <device>`).
+if [ -n "$(wol install mounts "$disk" || echo unknown)" ]; then
   echo "refuse in-use"; rc=2
 fi
 exit $rc

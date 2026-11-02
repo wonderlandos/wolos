@@ -1,0 +1,28 @@
+# PowerShell: Microsoft's release tarball for Linux x64 (no Arch package; ADR 0032, console module).
+# The tarball is self-contained (.NET runtime inside) and has no top folder, so it unpacks into
+# /work/src. The recipe stages it under lib/powershell and writes a launcher that knows its final
+# home ($TARGET_PREFIX, ~/.local). Microsoft publishes the SHA-256 in the release's hashes.sha256.
+name = "powershell"
+version = "7.6.9"
+summary = "PowerShell 7 (pwsh), Microsoft's cross-platform shell"
+license = "MIT"
+homepage = "https://github.com/PowerShell/PowerShell"
+needs = ["sh"]
+
+[[source]]
+url = "https://github.com/PowerShell/PowerShell/releases/download/v7.6.9/powershell-7.6.9-linux-x64.tar.gz"
+sha256 = "1da6d6d6035d651f20e70ddee7c4c15ac6ab8b9fb40ee92240d91263f28a884b"
+
+[build]
+run = [
+  "test -f pwsh",
+  "mkdir -p \"$PREFIX/lib/powershell\" \"$PREFIX/bin\"",
+  "cp -a . \"$PREFIX/lib/powershell/\"",
+  "chmod 755 \"$PREFIX/lib/powershell/pwsh\"",
+  "printf '%s\\n' '#!/bin/sh' \"exec '$TARGET_PREFIX/lib/powershell/pwsh' \\\"\\$@\\\"\" > \"$PREFIX/bin/pwsh\"",
+  "chmod 755 \"$PREFIX/bin/pwsh\"",
+]
+
+[install]
+# Everything is staged already; the launcher must exist and be executable.
+run = ["test -x \"$PREFIX/bin/pwsh\"", "test -x \"$PREFIX/lib/powershell/pwsh\""]

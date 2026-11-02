@@ -1,5 +1,7 @@
 # Everyday userland
 
+Decision record: ADR 0016 (Arch base; mature ports under WolOS names).
+
 Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.rs`, `crates/shell/tests/pins_installed.rs`.
 
 ## Apps

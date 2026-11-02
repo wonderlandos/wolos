@@ -148,9 +148,29 @@ fn encryption_default_follows_the_tpm() {
     };
     assert_eq!(run("encrypt decide auto", &mut with), 0);
     assert_eq!(with.out, "tpm2\n");
+    // Encrypted by default (core/src/encrypt.rs default_on): no TPM means a passphrase is
+    // needed, never a plain disk by accident; with one, auto unlocks with it.
     let mut none = FakeEnv::default();
-    assert_eq!(run("encrypt decide auto", &mut none), 0);
-    assert_eq!(none.out, "off\n");
+    assert_ne!(run("encrypt decide auto", &mut none), 0);
+    assert!(
+        none.out.is_empty() && none.err.contains("passphrase"),
+        "{}",
+        none.err
+    );
+    let pass = std::env::temp_dir().join(format!("wol-pass-{}", std::process::id()));
+    let mut typed = FakeEnv {
+        vars: vec![(
+            "WOLOS_PASSPHRASE_FILE".into(),
+            pass.to_string_lossy().into_owned(),
+        )],
+        files: vec![(pass.clone(), "correct horse\n".into())],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt decide auto", &mut typed), 0);
+    assert_eq!(typed.out, "passphrase\n");
+    let mut no = FakeEnv::default();
+    assert_eq!(run("encrypt decide no", &mut no), 0);
+    assert_eq!(no.out, "off\n");
     let mut need = FakeEnv::default();
     assert_ne!(run("encrypt decide yes", &mut need), 0);
     assert!(need.err.contains("passphrase"));

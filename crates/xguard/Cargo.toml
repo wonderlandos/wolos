@@ -31,7 +31,7 @@ md-5 = "0.10"
 memchr = "2.8"
 memmap2 = "0.9"
 flate2 = "1.1"
-ruzstd = "0.8"
+ruzstd = "0.9.1"
 lzma-rs = "0.3"
 backhand = { version = "0.21", default-features = false, features = ["gzip", "zstd", "xz"] }
 yara-x = { version = "1.22", optional = true, default-features = false, features = ["pe-module", "elf-module", "hash-module", "math-module", "string-module", "time-module", "test_proto2-module"] }

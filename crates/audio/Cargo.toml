@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wol-audio: the sound service behind Settings > Sound and Control Center (docs/modules/audio.md).
+# One PipeWire main loop on its own thread (pipewire-rs); the model and every rule are pure and
+# tested against a fake backend: `cargo test -p audio --no-default-features` needs no libpipewire.
+[package]
+name = "audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "wol_audio"
+
+[features]
+default = ["pw"]
+# The real backend: libpipewire-0.3 headers at build time (pipewire-sys runs bindgen, so clang too).
+pw = ["dep:pipewire"]
+
+[dependencies]
+wol_core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Rust bindings for libpipewire (MIT). 0.10.1 = libspa 0.10; MSRV 1.80; needs libpipewire >= 0.3.
+pipewire = { version = "0.10.1", optional = true }

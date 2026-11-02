@@ -1,5 +1,5 @@
 # 0011 - .wol packages: one signed file around a pkg(8) package
-Status: accepted
+Status: superseded by 0021 (wopkg) on the 0016 pacman base. Kept as the FreeBSD-era record.
 Context: Many open-source desktop apps are not in FreeBSD pkg. Porting them by hand is slow; running Linux builds needs the Linux ABI. pkg(8) already resolves dependencies, tracks files, runs triggers and removes cleanly; a second file database would drift. `shared::bundle::Info` (`Info.json`, targets) already describes `.wol` bundles for `wol-run`.
 Decision:
 - A `.wol` file is a ustar archive with exactly these regular-file members, in order: `Info.json`, `icon.png` (optional), `payload.pkg` (a `pkg create` package, prefix `/usr/local`), `SHA256`, `SHA256.sig` (optional). Format: `archicture/modules/packages.md`.

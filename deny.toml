@@ -1,0 +1,57 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# cargo deny check (ci.yml lint job; audit section C). Advisories from RustSec, licenses that may be
+# combined with a GPL-2.0-or-later work, duplicate versions reported, crates only from crates.io.
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+# Ignored advisories go here as { id = "RUSTSEC-YYYY-NNNN", reason = "<issue, date to look again>" }.
+ignore = [
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: pulled by zbus 5, no maintained alternative (2026-11-02, review 2027-02-01)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: pulled by zbus 5, no maintained alternative (2026-11-02, review 2027-02-01)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: pulled by zbus 5, no maintained alternative (2026-11-02, review 2027-02-01)" },
+    { id = "RUSTSEC-2026-0391", reason = "backhand pins zstd 0.13; no release with 0.14 yet (backhand 0.25.5 still on zstd 0.13.4 / zstd-safe 7.4; 2026-11-02, review 2026-12-01)" },
+    { id = "RUSTSEC-2026-0398", reason = "backhand pins zstd 0.13; no release with 0.14 yet (2026-11-02, review 2026-12-01)" },
+    { id = "RUSTSEC-2026-0403", reason = "backhand pins zstd 0.13; no release with 0.14 yet (2026-11-02, review 2026-12-01)" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# GPL-2.0-or-later-compatible. Apache-2.0 (also with the LLVM exception) is GPL-3.0-compatible,
+# which the "or later" allows for the combined work. Only licences in use are listed: add one with a reason.
+allow = [
+    "GPL-2.0-or-later",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+
+[licenses.private]
+# The workspace's own crates (publish = false or no registry) are GPL-2.0-or-later by Cargo.toml.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+# The workspace crates depend on each other by path (no version): reported, not failed. Marking them
+# publish = false would let deny apply allow-wildcard-paths.
+wildcards = "warn"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# No git dependencies today (Cargo.lock has none); a new one is added here by name with a reason.
+allow-git = []

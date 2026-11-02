@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wolos.org/schemas/plugin.schema.json",
+  "title": "WolOS shell plugin manifest (plugin.toml, schema 1)",
+  "description": "ADR 0031, docs/modules/plugins.md. The same rules as shared::plugins::parse; keys not listed here are a load error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "name", "version", "license"],
+  "properties": {
+    "schema": { "const": 1 },
+    "id": {
+      "type": "string",
+      "description": "Reverse-DNS or user.name id of lowercase labels; also the folder name. org.wolos.* is reserved.",
+      "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
+      "maxLength": 64
+    },
+    "name": { "$ref": "#/$defs/label" },
+    "version": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._,+~-]*$", "maxLength": 64 },
+    "author": { "type": "string", "maxLength": 40 },
+    "license": { "$ref": "#/$defs/label", "description": "SPDX id, like MIT or GPL-2.0-or-later." },
+    "description": { "type": "string", "maxLength": 120 },
+    "min_wolos": { "type": "string", "pattern": "^[0-9]{1,4}\\.[0-9]{1,4}(\\.[0-9]{1,4})?$" },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["notifications", "run", "http", "clipboard", "open", "toggles"] }
+    },
+    "menubar": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "script"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "script": { "$ref": "#/$defs/luaFile" },
+          "side": { "enum": ["left", "centre", "right"], "default": "right" }
+        }
+      }
+    },
+    "dock": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "icon", "exec"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "name": { "$ref": "#/$defs/label" },
+          "icon": { "$ref": "#/$defs/icon" },
+          "exec": { "$ref": "#/$defs/argv" }
+        }
+      }
+    },
+    "widget": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "script"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "script": { "$ref": "#/$defs/luaFile" },
+          "sizes": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "enum": ["small", "medium", "large"] },
+            "default": ["small", "medium", "large"]
+          }
+        }
+      }
+    },
+    "panel": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "script"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "script": { "$ref": "#/$defs/luaFile" },
+          "anchor": { "enum": ["top", "bottom", "left", "right", "centre"], "default": "top" }
+        }
+      }
+    },
+    "search": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "script"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "script": { "$ref": "#/$defs/luaFile" },
+          "kind": { "enum": ["results", "command"], "default": "results" },
+          "prefix": { "type": "string", "minLength": 1, "maxLength": 8, "pattern": "^\\S+$", "description": "Only with kind = command." }
+        }
+      }
+    },
+    "tile": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "icon", "label", "toggle"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "icon": { "$ref": "#/$defs/icon" },
+          "label": { "$ref": "#/$defs/label" },
+          "toggle": { "$ref": "#/$defs/entryId", "description": "A [[toggle]] id of this plugin." }
+        }
+      }
+    },
+    "toggle": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "on", "off"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "on": { "$ref": "#/$defs/argv" },
+          "off": { "$ref": "#/$defs/argv" }
+        }
+      }
+    },
+    "hotkey": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "default", "exec"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "default": {
+            "type": "string",
+            "description": "super+shift+s: modifiers from super, ctrl, alt, shift (each once), then a key, f1..f24 or a key name. The user may rebind it.",
+            "pattern": "^((super|ctrl|alt|shift)\\+)*([a-z0-9]|f[0-9]{1,2}|[a-z_]{2,16})$"
+          },
+          "exec": { "$ref": "#/$defs/argv" },
+          "group": { "$ref": "#/$defs/label", "description": "Heading in Settings > Keyboard; default: the plugin name." }
+        }
+      }
+    },
+    "webapp": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "url", "icon"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "name": { "$ref": "#/$defs/label" },
+          "url": { "type": "string", "pattern": "^https?://\\S+$" },
+          "icon": { "$ref": "#/$defs/icon" },
+          "profile": { "enum": ["shared", "own"], "default": "shared" }
+        }
+      }
+    },
+    "theme": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "file": { "$ref": "#/$defs/jsonFile", "description": "A theme.json (shared::theme tokens, optional extends)." }
+        }
+      }
+    },
+    "look": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "file": { "$ref": "#/$defs/jsonFile", "description": "A look JSON (wol_core::looks)." }
+        }
+      }
+    },
+    "hypr": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId" },
+          "file": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\\.conf$",
+            "maxLength": 128,
+            "description": "keyword = value lines; only windowrule, layerrule, bezier, animation."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "entryId": { "type": "string", "pattern": "^[a-z0-9_-]{1,32}$", "description": "Unique in the plugin." },
+    "label": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^\\p{Cc}]*\\S[^\\p{Cc}]*$" },
+    "argv": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "A command as a list: program, then arguments. Never a shell line."
+    },
+    "icon": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^([A-Za-z0-9._-]+|[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\\.(png|svg))$",
+      "description": "A symbolic icon name, or a .png or .svg in the plugin folder."
+    },
+    "luaFile": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\\.lua$",
+      "description": "A Lua file in the plugin folder; no .. or absolute paths."
+    },
+    "jsonFile": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\\.json$"
+    }
+  }
+}

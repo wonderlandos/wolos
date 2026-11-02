@@ -26,7 +26,8 @@ pub const INITRAMFS: &str = "initramfs-linux-wolos.img";
 pub const TRIES: u32 = 3;
 /// pacman.conf: the Arch repos at one Arch Linux Archive date (`/repos/YYYY/MM/DD/`).
 pub const PACMAN_CONF: &str = crate::mirror::PACMAN_CONF;
-/// `[wolos]` and `[wolos-cachy]` servers, at the same release date (`YYYY-MM-DD`, ADR 0019).
+/// `[wolos]` servers, at the release date (`YYYY-MM-DD`, ADR 0019). The `[cachyos-*-v3]` sections
+/// have their own mirrorlist (`/etc/pacman.d/wolos-cachy-mirrorlist`, ADR 0030) and are not dated.
 pub const MIRRORLIST: &str = crate::mirror::MIRRORLIST;
 
 /// Pending package names from `pacman -Qu` (`name old -> new`); None when output unknown.
@@ -123,6 +124,18 @@ pub fn plan_for(
     date: Option<&str>,
     cmdline: Option<&str>,
 ) -> Option<Vec<Step>> {
+    plan_from(slot, Base::Running { replace }, date, cmdline)
+}
+
+/// [`plan_for`] from a chosen base: [`Base::Pending`] stacks the update onto a slot that waits
+/// for its first boot (a kernel installed with pacman), so the update keeps that change instead
+/// of replacing the slot with a fresh copy of the running root. None on a bad slot or date.
+pub fn plan_from(
+    slot: &str,
+    from: Base,
+    date: Option<&str>,
+    cmdline: Option<&str>,
+) -> Option<Vec<Step>> {
     if date.is_some_and(|d| !is_snapshot_date(d)) {
         return None;
     }
@@ -131,7 +144,7 @@ pub fn plan_for(
     let prep = move |root: &str| repo_date_steps(date.as_deref(), root);
     build(&Build {
         slot,
-        from: Base::Running { replace },
+        from,
         prep: &prep,
         pacman: &["-Syu", "--noconfirm"],
         release: &release,
@@ -156,7 +169,7 @@ fn repo_date_steps(d: Option<&str>, root: &str) -> Vec<Step> {
             format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
             PACMAN_CONF,
         ),
-        // [wolos] and [wolos-cachy] move with Arch: all three repos at one release date.
+        // [wolos] moves with Arch: both at one release date (the [cachyos-*-v3] mirrorlist has no date).
         sed(
             format!(
                 "s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{}#g",
@@ -486,7 +499,7 @@ mod tests {
                 "mkdir -p /efi/wolos-b",
                 "wol seal apply /run/wolos/top/@wolos-b /efi/wolos-b/verity",
                 "env WOLOS_ROOT=/run/wolos/top/@wolos-b WOLOS_SLOT=wolos-b WOLOS_RELEASE=2026/11/02 \
-WOLOS_CMDLINE=root=LABEL=wolos rootflags=subvol=@wolos-b ro quiet splash \
+WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
 /usr/lib/wolos/esp-sync --new",
                 // No pinned default: the newest good entry boots, a bad one sorts last.
                 "bootctl set-default ",

@@ -233,6 +233,11 @@ impl DesktopPrefs {
             s.push_str(&format!("{k} = {v}\n"));
         }
         s.push_str(&format!("env = XCURSOR_SIZE,{}\n", self.cursor_size));
+        // Hyprland's own pointer (hyprcursor) and the apps' (Xcursor) agree on theme and size.
+        s.push_str(&format!(
+            "env = HYPRCURSOR_THEME,{CURSOR_THEME}\nenv = HYPRCURSOR_SIZE,{}\n",
+            self.cursor_size
+        ));
         if let Some(l) = self
             .language
             .as_deref()
@@ -260,6 +265,32 @@ impl DesktopPrefs {
         }
         out
     }
+}
+
+/// Commands that move every toolkit's pointer to `size` at once; `setcursor` changes only the
+/// compositor's. GTK and libadwaita read gsettings, Xwayland apps the X resource database.
+pub fn cursor_sync(size: u32) -> Vec<Vec<String>> {
+    let argv = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let px = size.to_string();
+    let xrdb =
+        format!("printf 'Xcursor.size: {size}\\nXcursor.theme: {CURSOR_THEME}\\n' | xrdb -merge -");
+    vec![
+        argv(&[
+            "gsettings",
+            "set",
+            "org.gnome.desktop.interface",
+            "cursor-size",
+            px.as_str(),
+        ]),
+        argv(&[
+            "gsettings",
+            "set",
+            "org.gnome.desktop.interface",
+            "cursor-theme",
+            CURSOR_THEME,
+        ]),
+        argv(&["sh", "-c", xrdb.as_str()]),
+    ]
 }
 
 /// `hyprctl -j clients` -> dispatches that tile (or float) the windows already open, so a tiling switch
@@ -385,6 +416,12 @@ pub fn apply_desktop(
         ));
     }
     send(host, &cmds);
+    if new.cursor_size != old.cursor_size {
+        for c in cursor_sync(new.cursor_size) {
+            let argv: Vec<&str> = c.iter().map(String::as_str).collect();
+            let _ = host.run(&argv);
+        }
+    }
     Ok(cmds)
 }
 
@@ -576,6 +613,8 @@ mod tests {
         for line in [
             "animations:enabled = false\n",
             "env = XCURSOR_SIZE,24\n",
+            "env = HYPRCURSOR_THEME,Adwaita\n",
+            "env = HYPRCURSOR_SIZE,24\n",
             "env = LANG,pt_BR.UTF-8\n",
             "exec-once = foot\n",
         ] {
@@ -703,6 +742,52 @@ mod tests {
             .filter_map(|l| l.strip_prefix("hyprctl --batch "))
             .flat_map(|b| b.split(" ; ").map(str::to_owned).collect::<Vec<_>>())
             .collect()
+    }
+
+    /// Live: Settings > Accessibility > Cursor size changed the compositor's pointer (`setcursor`)
+    /// while GTK apps and Xwayland kept the old size until the next login.
+    #[test]
+    fn cursor_size_reaches_every_toolkit() {
+        let cmds = cursor_sync(32);
+        assert_eq!(
+            cmds[0],
+            [
+                "gsettings",
+                "set",
+                "org.gnome.desktop.interface",
+                "cursor-size",
+                "32"
+            ]
+        );
+        assert_eq!(cmds[1][4], "Adwaita");
+        assert!(cmds[2][2].contains("Xcursor.size: 32") && cmds[2][2].contains("xrdb -merge"));
+        let h = home("cursor");
+        let host = FakeHost::new(true);
+        let old = load_desktop(&h);
+        apply_desktop(
+            &host,
+            &h,
+            &DesktopPrefs {
+                cursor_size: 32,
+                ..old.clone()
+            },
+        )
+        .unwrap();
+        let ran = host.ran();
+        assert!(
+            ran.iter()
+                .any(|l| l == "gsettings set org.gnome.desktop.interface cursor-size 32"),
+            "{ran:?}"
+        );
+        assert!(ran.iter().any(|l| l.contains("xrdb -merge")), "{ran:?}");
+        assert!(batch(&host).contains(&"setcursor Adwaita 32".to_string()));
+        apply_desktop(&host, &h, &old).unwrap(); // back to 24
+        let host = FakeHost::new(true);
+        apply_desktop(&host, &h, &old).unwrap();
+        assert!(
+            !host.ran().iter().any(|l| l.starts_with("gsettings")),
+            "same size: no toolkit commands"
+        );
     }
 
     #[test]

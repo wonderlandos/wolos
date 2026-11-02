@@ -1,5 +1,7 @@
 # Assistants & Automation
 
+Decision record: ADR 0020 (capabilities, approval, identity from the kernel).
+
 One door for people, scripts and AI helpers: the `wol` command tree. Helpers never get more than the user could approve on screen.
 
 ## Who is a helper

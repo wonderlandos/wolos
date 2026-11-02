@@ -1,5 +1,7 @@
 # Hardware
 
+Decision record: ADR 0016 (Arch base; firmware from Arch packages).
+
 One catalogue (`crates/core/src/hardware/catalog.rs`) decides, per device, the Linux driver, kernel modules, Arch firmware/driver packages and modprobe options. Boot, `wol hw` and helpers read the same table; no shell scripts pick drivers.
 
 ## Detection (`wol_core::hardware::read`, Host trait, 2 s per command, never a shell)

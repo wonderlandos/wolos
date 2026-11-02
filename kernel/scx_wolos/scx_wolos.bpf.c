@@ -72,9 +72,35 @@ struct {
 	__type(value, struct task_ctx);
 } task_ctxs SEC(".maps");
 
-static __always_inline int task_class(const struct task_struct *p)
+/*
+ * tgid -> highest class it may take (C_INTERACTIVE or C_FOREGROUND). Written only by the root
+ * loader through the map pinned at /sys/fs/bpf/wolos/boosted (0600); key WOLOS_GRANTS_KEY
+ * present means grants are in use. See wolos_class_guarded() (audit A19).
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__uint(key_size, sizeof(u32));
+	__uint(value_size, sizeof(u32));
+	__uint(max_entries, 4096);
+} boosted SEC(".maps");
+
+static struct task_ctx *task_ctx(struct task_struct *p);
+
+static __always_inline int task_class(struct task_struct *p)
 {
-	return wolos_class(p->policy, p->uclamp_req[0].value, p->uclamp_req[1].value);
+	int c = wolos_class(p->policy, p->uclamp_req[0].value, p->uclamp_req[1].value);
+	u32 key = WOLOS_GRANTS_KEY, tgid = p->tgid;
+	struct task_ctx *t;
+	u32 *g;
+	int grant = -1;
+
+	if (c >= C_DEFAULT)
+		return c;
+	int on = bpf_map_lookup_elem(&boosted, &key) != NULL;
+	if (on && (g = bpf_map_lookup_elem(&boosted, &tgid)))
+		grant = *g;
+	t = task_ctx(p);
+	return wolos_class_guarded(c, grant, on, t ? t->avg_burst : 0);
 }
 
 static struct task_ctx *task_ctx(struct task_struct *p)

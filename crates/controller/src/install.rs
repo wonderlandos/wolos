@@ -12,7 +12,9 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use wol_core::install::disk::{self, Blocked, Disk, Part};
 use wol_core::install::layout::{Compiled, Fs, Layout, Op, Slots, Target, unchanged};
-use wol_core::install::plan::{Plan, console_keymap};
+use wol_core::install::plan::{
+    Plan, console_keymap, keeps_bitlocker, keeps_windows, unlock_problem,
+};
 use wol_core::{encrypt, region};
 
 /// Where a probe looks inside a file system, and where btrfs is opened to shrink it.
@@ -133,6 +135,10 @@ fn look_inside(t: &mut dyn Tools, p: &mut Part) {
             p.used_bytes = Some(used);
             p.free_bytes = Some(free);
         }
+        // Another WolOS's startup files: the layout refuses to reuse this one (Refusal::EspHasWolos).
+        p.wolos = t
+            .run(&["test", "-e", &format!("{LOOK}/EFI/wolos")], None)
+            .ok;
     } else {
         p.os = os_of(t, LOOK);
     }
@@ -199,16 +205,47 @@ pub struct Applied {
     pub var: String,
     /// fstab lines beyond what install-run writes.
     pub fstab: Vec<String>,
-    /// Another system stays on this disk.
+    /// crypttab lines for the encrypted volumes beyond the system (`<name> UUID=<luks> <key file> luks`):
+    /// install-run writes them and puts the install key at each key file, inside the encrypted system.
+    pub crypttab: Vec<String>,
+    /// Another system stays on this disk ([`Disk::others_after`]): the menu waits a moment.
     pub others: bool,
+    /// The startup partition is an existing one, kept as it is (`Change::ReuseEsp`): boot-setup
+    /// keeps its fallback loader and menu settings when another system stays too (audit3 R2B-4).
+    pub esp_reused: bool,
+    /// That reused startup partition holds the startup files of a WolOS this layout replaces
+    /// (`compile` refuses it while one stays): install-run clears them first (audit3 R2B-5).
+    pub esp_wolos: bool,
+    /// Windows stays on this disk: the clock stays in local time, BitLocker may ask for its key.
+    pub windows: bool,
+    /// That Windows is protected by BitLocker.
+    pub bitlocker: bool,
 }
 
-fn sh_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
+/// Where the install key of an extra encrypted volume lives in the new system (systemd-cryptsetup
+/// reads crypttab's third field; the system volume unlocks first, so the file is never in the open).
+pub const KEY_DIR: &str = "/etc/cryptsetup-keys.d";
+
+/// Device-mapper name of an encrypted volume: the system is `wolosroot` (`encrypt::MAPPER`), the
+/// others `wolos` + their folder (`woloshome`, `wolosvar`, `wolosswap`, `wolosgames`).
+pub fn mapper_for(mount: &str) -> String {
+    match mount {
+        "/" => encrypt::MAPPER.to_string(),
+        "swap" => "wolosswap".to_string(),
+        m => format!("wolos{}", m.trim_start_matches('/').replace('/', "-")),
+    }
+}
+
+/// One `KEY=VALUE` line for install-run, which reads them against a list of keys and never runs
+/// them as shell (audit3 R2B-14): the value is taken literally to the end of the line, so a line
+/// end inside it would start a new key and is turned into a space.
+fn kv(k: &str, v: &str) -> String {
+    format!("{k}={}\n", v.replace(['\n', '\r'], " "))
 }
 
 impl Applied {
-    /// Shell assignments install-run sources.
+    /// `KEY=VALUE` lines install-run reads: one value per line, `extra_fstab` and
+    /// `extra_crypttab` once per line of theirs.
     pub fn env(&self) -> String {
         let mut s = String::new();
         for (k, v) in [
@@ -218,17 +255,24 @@ impl Applied {
             ("home_dev", &self.home),
             ("var_dev", &self.var),
         ] {
-            s.push_str(&format!("{k}={}\n", sh_quote(v)));
+            s.push_str(&kv(k, v));
         }
-        s.push_str(&format!(
-            "slots={}\n",
-            if self.slots_two { "two" } else { "one" }
-        ));
-        s.push_str(&format!("others={}\n", u8::from(self.others)));
-        s.push_str(&format!(
-            "extra_fstab={}\n",
-            sh_quote(&self.fstab.join("\n"))
-        ));
+        s.push_str(&kv("slots", if self.slots_two { "two" } else { "one" }));
+        for (k, b) in [
+            ("others", self.others),
+            ("esp_reused", self.esp_reused),
+            ("esp_wolos", self.esp_wolos),
+            ("windows", self.windows),
+            ("bitlocker", self.bitlocker),
+        ] {
+            s.push_str(&kv(k, if b { "1" } else { "0" }));
+        }
+        for l in &self.fstab {
+            s.push_str(&kv("extra_fstab", l));
+        }
+        for l in &self.crypttab {
+            s.push_str(&kv("extra_crypttab", l));
+        }
         s
     }
 }
@@ -439,10 +483,15 @@ fn step(r: &mut Run, op: &Op, l: &Layout, key: &str) -> Result<(), Stop> {
                     ],
                     None,
                 )?;
-                let open = encrypt::open_argv(&path, key);
+                let name = mapper_for(&mount);
+                let open = if mount == "/" {
+                    encrypt::open_argv(&path, key)
+                } else {
+                    vec!["cryptsetup".into(), "open".into(), k, path, name.clone()]
+                };
                 let a: Vec<&str> = open.iter().map(String::as_str).collect();
                 r.must(&a, None)?;
-                format!("/dev/mapper/{}", encrypt::MAPPER)
+                format!("/dev/mapper/{name}")
             } else {
                 path
             };
@@ -481,10 +530,9 @@ pub fn apply(
         read_table(r.t, &before.path).ok_or_else(|| Stop::Step("the disk can't be read".into()))?;
     let mut a = Applied {
         slots_two: c.slots == Slots::Two,
-        others: before
-            .parts
-            .iter()
-            .any(|p| !l.delete.contains(&p.uuid) && p.system().is_some()),
+        others: !before.others_after(l).is_empty(),
+        windows: keeps_windows(l, before),
+        bitlocker: keeps_bitlocker(l, before),
         ..Applied::default()
     };
     for m in &c.mounts {
@@ -495,11 +543,12 @@ pub fn apply(
         if path.is_empty() {
             return Err(Stop::Step(format!("nothing to mount at {}", m.path)));
         }
+        let locked = c
+            .ops
+            .iter()
+            .any(|o| matches!(o, Op::Format { target, encrypt: true, .. } if *target == m.target));
         match m.path.as_str() {
             "/" => {
-                let locked = c.ops.iter().any(|o| {
-                    matches!(o, Op::Format { target, encrypt: true, .. } if *target == m.target)
-                });
                 a.fsdev = if locked {
                     format!("/dev/mapper/{}", encrypt::MAPPER)
                 } else {
@@ -507,17 +556,36 @@ pub fn apply(
                 };
                 a.root = path;
             }
-            "/efi" => a.esp = path,
+            "/efi" => {
+                if let Target::Existing(id) = &m.target {
+                    a.esp_reused = !m.format;
+                    a.esp_wolos = !m.format && before.part(id).is_some_and(|p| p.wolos);
+                }
+                a.esp = path;
+            }
             other => {
-                let uuid = r.must(&["blkid", "-s", "UUID", "-o", "value", &path], None)?;
+                // Encrypted: the file system lives on the mapper device; crypttab opens it at boot
+                // with the key install-run leaves in the (encrypted) system.
+                let dev = if locked {
+                    let name = mapper_for(other);
+                    let luks = r.must(&["blkid", "-s", "UUID", "-o", "value", &path], None)?;
+                    a.crypttab.push(format!(
+                        "{name} UUID={} {KEY_DIR}/{name}.key luks",
+                        luks.trim()
+                    ));
+                    format!("/dev/mapper/{name}")
+                } else {
+                    path
+                };
+                let uuid = r.must(&["blkid", "-s", "UUID", "-o", "value", &dev], None)?;
                 let uuid = uuid.trim().to_string();
                 a.fstab.push(match other {
                     "swap" => format!("UUID={uuid} none swap defaults 0 0"),
                     _ => format!("UUID={uuid} {other} {} defaults 0 2", m.fs.word()),
                 });
                 match other {
-                    "/home" => a.home = path,
-                    "/var" => a.var = path,
+                    "/home" => a.home = dev,
+                    "/var" => a.var = dev,
                     _ => {}
                 }
             }
@@ -556,12 +624,24 @@ pub fn read_plan(text: &str) -> Option<Plan> {
     serde_json::from_str(text).ok()
 }
 
+/// An xkb layout as the Install app offers them: `us`, `us(intl)`, `de(nodeadkeys)`, `latam`.
+/// Same rule as the account's keymap (`settings::users::validate_account`).
+pub fn is_valid_keyboard(k: &str) -> bool {
+    (2..=16).contains(&k.len())
+        && k.bytes()
+            .all(|b| b.is_ascii_lowercase() || b == b'(' || b == b')')
+        && k.bytes().next().is_some_and(|b| b.is_ascii_lowercase())
+        && k.matches('(').count() == k.matches(')').count()
+        && k.matches('(').count() <= 1
+        && !k.ends_with("()")
+}
+
 /// Files of the new system's language, keyboard and time zone. None: the plan's values are not
 /// ones WolOS knows (the plan file is input: nothing from it reaches a path unchecked).
 pub fn settings_files(p: &Plan) -> Option<Vec<(String, String)>> {
     if !region::is_valid_locale(&p.locale)
         || !wol_core::settings::timezones::is_valid(&p.zone)
-        || !p.keyboard.bytes().all(|b| b.is_ascii_lowercase())
+        || !is_valid_keyboard(&p.keyboard)
     {
         return None;
     }
@@ -626,24 +706,162 @@ pub fn create_account(t: &mut dyn Tools, root: &Path, a: &NewAccount) -> bool {
     true
 }
 
-/// Shell assignments for install-run.
-pub fn info_text(p: &Plan) -> String {
-    format!(
-        "disk={}\nwipe={}\nWOLOS_ENCRYPT={}\naccount={}\n",
-        sh_quote(&p.disk),
-        u8::from(p.layout.wipe),
-        p.protect.word(),
-        sh_quote(p.account.as_ref().map_or("", |a| a.name.as_str()))
-    )
+/// The computer name rule: [`wol_core::settings::hostname::is_valid`], the one Settings uses.
+pub fn is_valid_hostname(h: &str) -> bool {
+    wol_core::settings::hostname::is_valid(h)
 }
 
-fn plan_of(env: &mut dyn Env, inv: &Invocation) -> Option<Plan> {
+/// `WOLOS_SWAP`: `none`, `zram` or `swapfile:<GiB>` (1-64).
+pub fn is_valid_swap(s: &str) -> bool {
+    match s {
+        "none" | "zram" => true,
+        _ => s
+            .strip_prefix("swapfile:")
+            .and_then(|n| n.parse::<u32>().ok())
+            .is_some_and(|n| (1..=64).contains(&n)),
+    }
+}
+
+/// The plan's choices beyond the disk, read from its JSON by key so a plan written before they
+/// existed still runs: `hostname`, `autologin` (bool), `swap`. Anything unknown becomes the default.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Extras {
+    pub hostname: String,
+    pub autologin: bool,
+    pub swap: String,
+}
+
+impl Default for Extras {
+    fn default() -> Extras {
+        Extras {
+            hostname: "wolos".into(),
+            autologin: false,
+            swap: "zram".into(),
+        }
+    }
+}
+
+impl Extras {
+    pub fn from_json(text: &str) -> Extras {
+        let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        let mut e = Extras::default();
+        if let Some(h) = v.get("hostname").and_then(|h| h.as_str())
+            && is_valid_hostname(h)
+        {
+            e.hostname = h.into();
+        }
+        if let Some(a) = v.get("autologin").and_then(|a| a.as_bool()) {
+            e.autologin = a;
+        }
+        if let Some(s) = v.get("swap").and_then(|s| s.as_str())
+            && is_valid_swap(s)
+        {
+            e.swap = s.into();
+        }
+        e
+    }
+}
+
+/// `KEY=VALUE` lines for install-run (read like [`Applied::env`], never run).
+pub fn info_text(p: &Plan, x: &Extras) -> String {
+    [
+        kv("disk", &p.disk),
+        kv("wipe", if p.layout.wipe { "1" } else { "0" }),
+        kv("WOLOS_ENCRYPT", p.protect.word()),
+        kv(
+            "account",
+            p.account.as_ref().map_or("", |a| a.name.as_str()),
+        ),
+        kv("WOLOS_HOSTNAME", &x.hostname),
+        kv("WOLOS_AUTOLOGIN", if x.autologin { "yes" } else { "no" }),
+        kv("WOLOS_SWAP", &x.swap),
+    ]
+    .concat()
+}
+
+/// Everything about a plan that would otherwise fail after the disk is erased (install-run runs
+/// `wol install check` before its first write): settings WolOS can write, an account name no
+/// system user of the live image (and so of the new system) already has, a password the Setup
+/// Assistant would accept. `passwd`: the live `/etc/passwd`; `password`: the side file's content.
+pub fn plan_problem(p: &Plan, passwd: &str, password: Option<&str>) -> Option<&'static str> {
+    if settings_files(p).is_none() {
+        return Some("BadSettings");
+    }
+    if let Some(a) = &p.account {
+        if !wol_core::settings::users::is_valid_name(&a.name) {
+            return Some("BadName");
+        }
+        if login::find(passwd, &a.name).is_some() {
+            return Some("ReservedName");
+        }
+        let typed = password.and_then(|w| encrypt::typed_secret(w.as_bytes()).ok());
+        if !typed
+            .as_deref()
+            .is_some_and(wol_core::settings::users::is_valid_password)
+        {
+            return Some("WeakPassword");
+        }
+        if let Some(why) = unlock_problem(p.protect, password) {
+            return Some(why);
+        }
+    }
+    None
+}
+
+/// A secret's file read through [`encrypt::typed_secret`] (one line end off, text only). None:
+/// no such file.
+pub fn secret_file(env: &dyn Env, p: &Path) -> Option<Result<String, encrypt::BadSecret>> {
+    match env.read_file(p) {
+        Some(t) => Some(encrypt::typed_secret(t.as_bytes())),
+        None => std::fs::read(p).ok().map(|b| encrypt::typed_secret(&b)),
+    }
+}
+
+fn plan_of(env: &mut dyn Env, inv: &Invocation) -> Option<(Plan, String)> {
     let f = inv.get("plan")?;
-    read_plan(&env.read_file(Path::new(f))?)
+    let text = env.read_file(Path::new(f))?;
+    Some((read_plan(&text)?, text))
+}
+
+/// `lsblk` for [`disk::facts`]: the disk and everything on it, never opened.
+pub fn read_facts(t: &mut dyn Tools, path: &str) -> Option<disk::Facts> {
+    let ls = t.run(
+        &["lsblk", "--json", "-b", "-o", disk::FACTS_LSBLK, path],
+        None,
+    );
+    ls.ok.then(|| disk::facts(&ls.stdout)).flatten()
+}
+
+/// The read-only verbs scripts take disk facts from (audit3 R2B-16/19), and the computer name
+/// rule (R2B-18). Any user may run them: they open nothing and write nothing.
+fn read_only(env: &mut dyn Env, inv: &Invocation, t: &mut dyn Tools) -> Option<i32> {
+    match inv.action {
+        "install.facts" | "install.mounts" => {
+            let Some(f) = inv.get("disk").and_then(|d| read_facts(t, d)) else {
+                return Some(fail(env, ErrorCode::NotFound, "no such disk"));
+            };
+            env.out(&if inv.action == "install.facts" {
+                f.lines()
+            } else {
+                f.mount_lines()
+            });
+            Some(0)
+        }
+        "install.hostname" => {
+            let name = inv.get("name").unwrap_or_default();
+            let ok = wol_core::settings::hostname::is_valid(name);
+            env.out(&format!("{}\n", if ok { name } else { "wolos" }));
+            Some(0)
+        }
+        _ => None,
+    }
 }
 
 /// `wol install ...`.
 pub fn verb(env: &mut dyn Env, inv: &Invocation) -> i32 {
+    if let Some(rc) = read_only(env, inv, &mut Real) {
+        return rc;
+    }
     if !env.is_root() {
         return fail(env, ErrorCode::Denied, "the installer needs root");
     }
@@ -655,12 +873,12 @@ pub fn verb(env: &mut dyn Env, inv: &Invocation) -> i32 {
         env.out(&serde_json::to_string(&d).unwrap_or_default());
         return 0;
     }
-    let Some(plan) = plan_of(env, inv) else {
+    let Some((plan, text)) = plan_of(env, inv) else {
         return fail(env, ErrorCode::Usage, "no readable plan file");
     };
     match inv.action {
         "install.info" => {
-            env.out(&info_text(&plan));
+            env.out(&info_text(&plan, &Extras::from_json(&text)));
             0
         }
         "install.check" | "install.layout" => {
@@ -675,6 +893,21 @@ pub fn verb(env: &mut dyn Env, inv: &Invocation) -> i32 {
                 }
             };
             if inv.action == "install.check" {
+                let plandir = Path::new(inv.get("plan").unwrap_or_default())
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_default();
+                let passwd = env.read_file(Path::new("/etc/passwd")).unwrap_or_default();
+                let password = match secret_file(env, &plandir.join("account-password")) {
+                    Some(Ok(p)) => Some(p),
+                    // Not typed text: no password the Setup Assistant would take.
+                    Some(Err(_)) => Some(String::new()),
+                    None => None,
+                };
+                if let Some(why) = plan_problem(&plan, &passwd, password.as_deref()) {
+                    env.out(&format!("refuse {why}\n"));
+                    return 2;
+                }
                 return 0;
             }
             let key = inv.get("key").unwrap_or_default();
@@ -714,11 +947,21 @@ pub fn verb(env: &mut dyn Env, inv: &Invocation) -> i32 {
         }
         "install.account" => {
             let root = Path::new(inv.get("root").unwrap_or_default());
-            let pass = inv
+            let pass = match inv
                 .get("passfile")
-                .and_then(|f| env.read_file(Path::new(f)));
-            let pass = pass.unwrap_or_default();
-            let Some(a) = new_account(&plan, pass.trim_end_matches('\n')) else {
+                .and_then(|f| secret_file(env, Path::new(f)))
+            {
+                Some(Ok(p)) => p,
+                Some(Err(e)) => {
+                    return fail(
+                        env,
+                        ErrorCode::Usage,
+                        &format!("the account password file is not typed text ({e:?})"),
+                    );
+                }
+                None => String::new(),
+            };
+            let Some(a) = new_account(&plan, &pass) else {
                 return 0;
             };
             i32::from(!create_account(&mut t, root, &a))
@@ -896,6 +1139,12 @@ mod tests {
                     ok(String::new())
                 }
                 ["blkid", ..] => ok("FS-UUID\n".into()),
+                // A path is there when `cat` knows it (same suffix table).
+                ["test", "-e", p] => Out {
+                    ok: self.cat.iter().any(|(k, _)| p.ends_with(k)),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                },
                 ["cat", p] => {
                     let hit = self.cat.iter().find(|(k, _)| p.ends_with(k));
                     match hit {
@@ -1009,6 +1258,7 @@ mod tests {
         assert_eq!(got.parts[3].min_bytes, Some(4_096_000_000));
         assert_eq!(got.parts[3].used_bytes, Some(1_100_000 * 4096));
         assert_eq!(got.parts[0].free_bytes, Some(700_000_000));
+        assert!(!got.parts[0].wolos, "an empty startup partition");
         for l in &f.log {
             let w = l.split(' ').next().unwrap();
             assert!(
@@ -1022,7 +1272,8 @@ mod tests {
                     "mount",
                     "umount",
                     "cat",
-                    "df"
+                    "df",
+                    "test"
                 ]
                 .contains(&w),
                 "{l}"
@@ -1172,6 +1423,84 @@ mod tests {
         assert!(w.contains("mkfs.btrfs -f -L WolOS /dev/mapper/wolosroot"));
         assert_eq!(a.fsdev, "/dev/mapper/wolosroot");
         assert_eq!(a.root, "/dev/vda5");
+        assert!(
+            a.crypttab.is_empty(),
+            "only the system: nothing for crypttab"
+        );
+    }
+
+    /// Encrypted install with a new /home and swap: each gets its own LUKS volume under its own
+    /// mapper name, the file system goes on the mapper device, and install-run gets a crypttab line
+    /// per volume (the key file lives in the encrypted system). The startup partition stays plain.
+    #[test]
+    fn encrypted_extra_volumes_get_their_own_lock_and_a_crypttab_line() {
+        let d = windows();
+        let mut l = alongside();
+        l.create[1].bytes = Some(40 * GB);
+        l.create.push(New {
+            bytes: Some(20 * GB),
+            mount: "/home".into(),
+            fs: Fs::Ext4,
+        });
+        l.create.push(New {
+            bytes: Some(2 * GB),
+            mount: "swap".into(),
+            fs: Fs::Swap,
+        });
+        let c = compile(&l, &d, true).unwrap();
+        let mut f = Fake::new(d.clone());
+        let a = apply(&mut f, &l, &c, &d, "/run/k").unwrap();
+        let w = f.writes().join("\n");
+        for (dev, name) in [("/dev/vda6", "woloshome"), ("/dev/vda7", "wolosswap")] {
+            assert!(w.contains(&format!("--key-file=/run/k {dev}")), "{w}");
+            assert!(
+                w.contains(&format!("cryptsetup open --key-file=/run/k {dev} {name}")),
+                "{w}"
+            );
+        }
+        assert!(
+            w.contains("mkfs.ext4 -F -L Home /dev/mapper/woloshome"),
+            "{w}"
+        );
+        assert!(w.contains("mkswap -L Swap /dev/mapper/wolosswap"), "{w}");
+        assert!(
+            w.contains("mkfs.vfat -F 32 -n WOLOS /dev/vda4"),
+            "plain ESP: {w}"
+        );
+        assert!(
+            !w.contains("/dev/vda4 wolos"),
+            "the startup partition is never locked: {w}"
+        );
+        assert_eq!(a.home, "/dev/mapper/woloshome");
+        assert_eq!(
+            a.fstab,
+            [
+                "UUID=FS-UUID /home ext4 defaults 0 2",
+                "UUID=FS-UUID none swap defaults 0 0"
+            ]
+        );
+        assert_eq!(
+            a.crypttab,
+            [
+                "woloshome UUID=FS-UUID /etc/cryptsetup-keys.d/woloshome.key luks",
+                "wolosswap UUID=FS-UUID /etc/cryptsetup-keys.d/wolosswap.key luks"
+            ]
+        );
+        let env = a.env();
+        assert!(env.contains("home_dev=/dev/mapper/woloshome\n"), "{env}");
+        assert!(
+            env.contains("extra_crypttab=woloshome UUID=FS-UUID /etc/cryptsetup-keys.d/woloshome.key luks\nextra_crypttab=wolosswap"),
+            "{env}"
+        );
+        // Not encrypted: plain partitions, no crypttab.
+        let c = compile(&l, &d, false).unwrap();
+        let mut f = Fake::new(d.clone());
+        let a = apply(&mut f, &l, &c, &d, "/run/k").unwrap();
+        assert!(!f.writes().join("\n").contains("cryptsetup"));
+        assert_eq!(a.home, "/dev/vda6");
+        assert!(a.crypttab.is_empty());
+        assert!(!a.env().contains("extra_crypttab"), "{}", a.env());
+        assert_eq!(mapper_for("/games"), "wolosgames");
     }
 
     #[test]
@@ -1224,7 +1553,7 @@ mod tests {
         );
         let env = a.env();
         assert!(
-            env.contains("slots=one\n") && env.contains("home_dev='/dev/vda2'\n"),
+            env.contains("slots=one\n") && env.contains("home_dev=/dev/vda2\n"),
             "{env}"
         );
     }
@@ -1251,6 +1580,38 @@ mod tests {
         let a = apply(&mut f, &l, &c, &d, "k").unwrap();
         assert_eq!(a.esp, "/dev/vda1");
         assert!(!f.writes().join("\n").contains("mkfs.vfat"));
+        // The plan decides "shared" for boot-setup, not a file on the partition (audit3 R2B-4).
+        assert!(a.esp_reused && a.others && a.windows && !a.esp_wolos && !a.bitlocker);
+        let env = a.env();
+        for w in [
+            "esp_reused=1\n",
+            "others=1\n",
+            "windows=1\n",
+            "esp_wolos=0\n",
+        ] {
+            assert!(env.contains(w), "{w}: {env}");
+        }
+    }
+
+    /// audit3 R2B-2: replacing the only other system leaves no menu timeout behind; Windows'
+    /// recovery partition alone is no system. R2B-5: an old WolOS startup partition is reused and
+    /// install-run is told to clear it.
+    #[test]
+    fn replacing_the_only_other_system_leaves_nothing_to_choose() {
+        let mut d = windows();
+        d.parts[0].free_bytes = Some(800_000_000);
+        d.parts[0].wolos = true;
+        d.parts[1].fstype = "btrfs".into();
+        d.parts[1].kind = DATA_TYPE.into();
+        d.parts[1].name = "WolOS".into();
+        let l = wol_core::install::plan::replace(&d, "u2");
+        let c = compile(&l, &d, false).unwrap_or_else(|r| panic!("{r:?}"));
+        let mut f = Fake::new(d.clone());
+        let a = apply(&mut f, &l, &c, &d, "k").unwrap();
+        assert!(!a.others, "{a:?}");
+        assert!(!a.windows);
+        assert!(a.esp_reused && a.esp_wolos, "{a:?}");
+        assert!(a.env().contains("others=0\n"), "{}", a.env());
     }
 
     #[test]
@@ -1276,6 +1637,134 @@ mod tests {
         p.zone = "UTC".into();
         p.locale = "x; rm".into();
         assert!(settings_files(&p).is_none());
+    }
+
+    /// The default US layout the app ships is `us(intl)`: a plan with it must install.
+    #[test]
+    fn xkb_layouts_with_a_variant_install() {
+        for ok in ["us", "us(intl)", "de(nodeadkeys)", "latam", "ch(fr)"] {
+            assert!(is_valid_keyboard(ok), "{ok}");
+        }
+        for bad in [
+            "", "u", "US", "us(intl", "us)", "us()", "a(b)(c)", "../x", "us intl",
+        ] {
+            assert!(!is_valid_keyboard(bad), "{bad}");
+        }
+        let p = Plan {
+            locale: "en_US.UTF-8".into(),
+            keyboard: "us(intl)".into(),
+            zone: "UTC".into(),
+            ..Plan::default()
+        };
+        let f = settings_files(&p).unwrap();
+        assert_eq!(f[1].1, "KEYMAP=us\n", "the console has no dead keys");
+    }
+
+    #[test]
+    fn plan_problems_are_found_before_the_first_write() {
+        let passwd = "root:x:0:0::/root:/bin/sh\nlive:x:1000:1000::/home/live:/bin/zsh\n\
+                      _xguard:x:970:970::/:/usr/bin/nologin\n";
+        let mut p = Plan {
+            locale: "en_US.UTF-8".into(),
+            keyboard: "us".into(),
+            zone: "UTC".into(),
+            account: Some(Account {
+                name: "alice".into(),
+                full_name: "Alice".into(),
+                tone: "green".into(),
+            }),
+            ..Plan::default()
+        };
+        assert_eq!(plan_problem(&p, passwd, Some("curiouser\n")), None);
+        assert_eq!(
+            plan_problem(&p, passwd, Some("short\n")),
+            Some("WeakPassword")
+        );
+        assert_eq!(plan_problem(&p, passwd, None), Some("WeakPassword"));
+        for taken in ["live", "_xguard", "root"] {
+            p.account.as_mut().unwrap().name = taken.into();
+            assert_eq!(
+                plan_problem(&p, passwd, Some("curiouser")),
+                Some("ReservedName"),
+                "{taken} exists on the live image, so on the new system"
+            );
+        }
+        // With the chip the account password is the disk's fallback, typed at the start prompt.
+        p.account.as_mut().unwrap().name = "alice".into();
+        p.protect = Protect::Tpm;
+        assert_eq!(
+            plan_problem(&p, passwd, Some("caf\u{e9}12345\n")),
+            Some("UntypablePassword")
+        );
+        assert_eq!(plan_problem(&p, passwd, Some("curiouser\n")), None);
+        p.protect = Protect::Password;
+        assert_eq!(plan_problem(&p, passwd, Some("caf\u{e9}12345\n")), None);
+        p.account.as_mut().unwrap().name = "Alice".into();
+        assert_eq!(plan_problem(&p, passwd, Some("curiouser")), Some("BadName"));
+        p.account = None;
+        assert_eq!(
+            plan_problem(&p, passwd, None),
+            None,
+            "no account: nothing to check"
+        );
+        p.keyboard = "US".into();
+        assert_eq!(plan_problem(&p, passwd, None), Some("BadSettings"));
+    }
+
+    #[test]
+    fn the_plans_extras_reach_install_run_checked_with_defaults() {
+        let d = Extras::default();
+        assert_eq!(
+            (d.hostname.as_str(), d.autologin, d.swap.as_str()),
+            ("wolos", false, "zram")
+        );
+        assert_eq!(Extras::from_json("{}"), d);
+        assert_eq!(Extras::from_json("not json"), d);
+        let x =
+            Extras::from_json(r#"{"hostname":"alices-pc","autologin":true,"swap":"swapfile:8"}"#);
+        assert_eq!(
+            (x.hostname.as_str(), x.autologin, x.swap.as_str()),
+            ("alices-pc", true, "swapfile:8")
+        );
+        // A bad value falls back rather than reaching a shell line.
+        let bad = Extras::from_json(
+            r#"{"hostname":"bad host;rm","autologin":"yes","swap":"swapfile:0"}"#,
+        );
+        assert_eq!(bad, d);
+        for ok in ["pc", "alice-pc", "x1"] {
+            assert!(is_valid_hostname(ok), "{ok}");
+        }
+        // One rule with Settings > Sharing (audit3 R2B-18): one lowercase label.
+        let long = "x".repeat(64);
+        for bad in [
+            "",
+            "-pc",
+            "pc-",
+            "a..b",
+            "a.b.c",
+            "Alice-PC",
+            "a_b",
+            "é",
+            long.as_str(),
+        ] {
+            assert!(!is_valid_hostname(bad), "{bad}");
+        }
+        assert!(is_valid_swap("none") && is_valid_swap("zram") && is_valid_swap("swapfile:1"));
+        assert!(
+            !is_valid_swap("swapfile:65") && !is_valid_swap("swapfile") && !is_valid_swap("file")
+        );
+        let p = Plan {
+            disk: "/dev/vda".into(),
+            account: Some(Account {
+                name: "alice".into(),
+                ..Account::default()
+            }),
+            ..Plan::default()
+        };
+        assert_eq!(
+            info_text(&p, &x),
+            "disk=/dev/vda\nwipe=0\nWOLOS_ENCRYPT=no\naccount=alice\nWOLOS_HOSTNAME=alices-pc\nWOLOS_AUTOLOGIN=yes\nWOLOS_SWAP=swapfile:8\n"
+        );
     }
 
     #[test]

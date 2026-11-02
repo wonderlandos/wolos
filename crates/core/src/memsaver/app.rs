@@ -105,6 +105,11 @@ impl Phase {
             Phase::Saving { .. } if f.nap && f.hidden && f.idle && away >= c.nap_after_ms => {
                 (Phase::Napping { since }, Action::Nap)
             }
+            // App Nap switched off, or a window of it shows again: thaw now (CORE2-1). Memory
+            // Saver is still on, so the app waits the delay again before it gives memory back.
+            Phase::Napping { .. } if !(f.nap && f.hidden) => {
+                (Phase::Waiting { since: now }, Action::Restore)
+            }
             p => (p, Action::None),
         }
     }
@@ -249,5 +254,46 @@ mod tests {
             ),
         ]);
         assert_eq!(acts.last(), Some(&(10 * min + 1, Action::Restore)));
+    }
+
+    #[test]
+    fn switching_app_nap_off_thaws_a_napping_app() {
+        let nap = Facts {
+            nap: true,
+            idle: true,
+            ..bg()
+        };
+        let off = Facts { nap: false, ..nap };
+        let min = 60_000;
+        let (acts, end) = replay(&[
+            (0, nap),
+            (30_000, nap),
+            (10 * min, nap),
+            (10 * min + 1, off),
+            (10 * min + 2, off),
+        ]);
+        assert_eq!(
+            acts,
+            vec![
+                (30_000, Action::Save),
+                (10 * min, Action::Nap),
+                (10 * min + 1, Action::Restore)
+            ]
+        );
+        assert_eq!(
+            end,
+            Phase::Waiting {
+                since: 10 * min + 1
+            }
+        );
+        // Still in the background with Memory Saver on: memory is given back again after the delay.
+        let (acts, _) = replay(&[
+            (0, nap),
+            (30_000, nap),
+            (10 * min, nap),
+            (10 * min + 1, off),
+            (10 * min + 1 + 30_000, off),
+        ]);
+        assert_eq!(acts.last(), Some(&(10 * min + 1 + 30_000, Action::Save)));
     }
 }

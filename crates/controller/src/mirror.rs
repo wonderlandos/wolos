@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! `wol mirror status|rank|gate|kernel` (ADR 0019): the WolOS mirrors and the `[wolos-cachy]` CPU
-//! gate. Logic in `wol_core::mirror`; this reads the files, probes and writes.
+//! `wol mirror status|rank|gate|kernel` (ADR 0030): the `[wolos]` mirrors and the CPU gate of the
+//! CachyOS x86-64-v3 sections. Logic in `wol_core::mirror`; this reads the files, probes, writes.
 use crate::run::{Env, fail};
 use shared::errors::ErrorCode;
 use std::path::Path;
@@ -44,7 +44,7 @@ fn status(env: &mut dyn Env, json: bool) -> i32 {
         return 0;
     }
     let mut s = format!(
-        "CPU x86-64-v{}; [wolos-cachy] {}{}\n",
+        "CPU x86-64-v{}; [cachyos-*-v3] {}{}\n",
         m::x86_64_level(&cpu),
         if m::cachy_enabled(&conf) { "on" } else { "off" },
         if m::cachy_supported(&cpu) {
@@ -60,7 +60,8 @@ fn status(env: &mut dyn Env, json: bool) -> i32 {
     0
 }
 
-/// Probe every server in parallel; print fastest first; `--yes` (root) writes the new order.
+/// Probe every `[wolos]` server in parallel; print fastest first; `--yes` (root) writes the new
+/// order. The CachyOS sections are not ranked: their one server is the CDN redirect.
 fn rank(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     let list = read(env, m::MIRRORLIST);
     let servers = m::servers(&list);
@@ -102,7 +103,7 @@ fn rank(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     }
 }
 
-/// `[wolos-cachy]` on exactly when the CPU runs x86-64-v3 builds (installer, first boot).
+/// The CachyOS v3 sections on exactly when the CPU runs x86-64-v3 builds (installer, first boot).
 fn gate(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     let on = m::cachy_supported(&cpuinfo(env));
     let conf = read(env, m::PACMAN_CONF);
@@ -128,9 +129,9 @@ fn gate(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     }
     let state = if on { "on" } else { "off" };
     if json || !env.stdout_tty() {
-        env.out(&format!("{}\n", serde_json::json!({"wolos_cachy": state})));
+        env.out(&format!("{}\n", serde_json::json!({"cachyos": state})));
     } else {
-        env.out(&format!("[wolos-cachy] {state}\n"));
+        env.out(&format!("[cachyos-*-v3] {state}\n"));
     }
     0
 }
@@ -144,12 +145,13 @@ fn kernel(env: &mut dyn Env) -> i32 {
     0
 }
 
-/// Real probe: time to the first byte of the server's database, curl, 5 s at most.
+/// Real probe: time to the first byte of the server's database, curl, 5 s at most. `-L`: the CDN
+/// and the release assets answer with redirects (pacman follows them too).
 pub fn curl_probe(url: &str) -> Option<u64> {
     let out = wol_core::system::run_with_timeout(
         &[
             "curl",
-            "-fsS",
+            "-fsSL",
             "-o",
             "/dev/null",
             "-r",

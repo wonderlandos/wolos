@@ -47,40 +47,82 @@ pub fn run(env: &mut dyn Env, args: &[String]) -> i32 {
             .unwrap_or_else(|| c.targets.clone())
     };
     let route = pkg::route(&c, &names);
-    let ok = match route {
+    let outcome = match route {
         pkg::Route::Layer => in_layer(env, args),
-        pkg::Route::Slot => in_slot(env, args, cmdline.as_deref()),
+        pkg::Route::Slot if in_slot(env, args, cmdline.as_deref()) => Outcome::Done,
+        pkg::Route::Slot => Outcome::Unchanged,
     };
-    if !ok {
-        return fail(env, ErrorCode::Failed, UNCHANGED);
-    }
-    env.out(&format!("{}\n", pkg::done(&c, route)));
+    let shown = match outcome {
+        Outcome::Unchanged => return fail(env, ErrorCode::Failed, UNCHANGED),
+        Outcome::Done => route,
+        // pacman committed into the layer; it merges at the next boot (CORE-5).
+        Outcome::AtRestart => pkg::Route::Slot,
+    };
+    env.out(&format!("{}\n", pkg::done(&c, shown)));
     0
 }
 
-fn in_layer(env: &mut dyn Env, args: &[String]) -> bool {
+/// How a change ended.
+enum Outcome {
+    /// Nothing was changed.
+    Unchanged,
+    Done,
+    /// pacman committed, the layer could not be merged now: it is kept and merges at boot.
+    AtRestart,
+}
+
+/// The live system's package database directory (`DBPath` of `/etc/pacman.conf`).
+fn live_db(env: &dyn Env) -> String {
+    layers::db_path(
+        &env.read_file(Path::new("/etc/pacman.conf"))
+            .unwrap_or_default(),
+    )
+}
+
+fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
     let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
-    let n = layers::next_index(&ls);
-    let q = [up::PACMAN.to_owned(), "-Q".into()];
-    let before = capture(env, &q).unwrap_or_default();
-    let abort = |env: &mut dyn Env| {
-        for a in layers::abort(n) {
-            let _ = env.exec(&a);
-        }
-        false
-    };
-    for s in layers::begin(n, args) {
-        if !run_step(env, &s) {
-            return abort(env);
+    let counter = env
+        .read_file(Path::new(layers::COUNTER))
+        .unwrap_or_default();
+    let folded = env
+        .read_file(&Path::new("/").join(layers::FOLDED))
+        .unwrap_or_default();
+    // R2C-1: a number is never handed out twice, even after `wol layers clear` removed it.
+    let n = layers::next_index(&ls, &counter, &folded);
+    let before = capture(env, &[up::PACMAN.to_owned(), "-Q".into()]).unwrap_or_default();
+    for (i, s) in layers::begin(n, args).iter().enumerate() {
+        // The first step creates /var/lib/wolos/layers; record the number right after it.
+        let ok = run_step(env, s)
+            && (i != 0
+                || env
+                    .write_file(
+                        Path::new(layers::COUNTER),
+                        &format!(
+                            "{n}
+"
+                        ),
+                    )
+                    .is_ok());
+        if !ok {
+            for a in layers::abort(n) {
+                let _ = env.exec(&a);
+            }
+            return Outcome::Unchanged;
         }
     }
-    let after = capture(env, &q).unwrap_or_default();
+    // Still mounted: the chroot shows the layer's database even under /usr (CORE-2).
+    let after_argv = layers::after_query(&live_db(env));
+    let after = capture(env, &after_argv).unwrap_or_default();
+    // pacman has committed: from here on the layer is the change and is never removed (CORE-5).
     for s in layers::finish(n, &layers::delta(&before, &after)) {
         if !run_step(env, &s) {
-            return abort(env);
+            env.err(&format!(
+                "wol pkg: {s} did not finish; the layer merges at the next boot\n"
+            ));
+            return Outcome::AtRestart;
         }
     }
-    true
+    Outcome::Done
 }
 
 fn in_slot(env: &mut dyn Env, args: &[String], cmdline: Option<&str>) -> bool {
@@ -129,7 +171,9 @@ pub fn seal_off(env: &mut dyn Env) -> i32 {
 }
 
 /// `wol layers fold ROOT [LAYERS [DB]]`: copy the live layers' files and package records into
-/// the new slot at ROOT, then clear its layers.
+/// the new slot at ROOT and name them in its folded list. The live layers stay (the running slot
+/// still uses them); `wol layers clear` removes them once ROOT boots (CORE-1). DB defaults to the
+/// live `DBPath`; the records land in ROOT's own `DBPath`, both read from pacman.conf (CORE-2).
 pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let Some(root) = inv.get("a").map(Path::new) else {
         return fail(
@@ -142,7 +186,8 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
         return fail(env, ErrorCode::Denied, "fold needs root");
     }
     let src = Path::new(inv.get("b").unwrap_or(layers::DIR));
-    let db = Path::new(inv.get("c").unwrap_or("/var/lib/pacman/local"));
+    let live_local = format!("{}/local", live_db(env));
+    let db = Path::new(inv.get("c").unwrap_or(&live_local));
     let names = layers::ordered(
         std::fs::read_dir(src)
             .map(|rd| {
@@ -153,9 +198,17 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
             .unwrap_or_default(),
     );
     let folded_path = root.join(layers::FOLDED);
-    let mut folded: Vec<String> = std::fs::read_to_string(&folded_path)
-        .map(|t| t.lines().map(str::to_owned).collect())
-        .unwrap_or_default();
+    let mut folded: Vec<String> = Vec::new();
+    for f in [layers::FOLDED, layers::LEGACY_FOLDED] {
+        for n in std::fs::read_to_string(root.join(f))
+            .unwrap_or_default()
+            .lines()
+        {
+            if layers::is_layer_name(n) && !folded.iter().any(|x| x == n) {
+                folded.push(n.to_owned());
+            }
+        }
+    }
     let mut recs = Vec::new();
     let todo: Vec<&String> = names.iter().filter(|n| !folded.contains(n)).collect();
     for n in todo {
@@ -175,7 +228,8 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
         folded.push(n.clone());
     }
     let (add, drop) = layers::db_changes(&recs);
-    let dest = root.join("var/lib/pacman/local");
+    let root_conf = std::fs::read_to_string(root.join("etc/pacman.conf")).unwrap_or_default();
+    let dest = root.join(layers::local_db(&root_conf).trim_start_matches('/'));
     let _ = std::fs::create_dir_all(&dest);
     for d in drop {
         for e in std::fs::read_dir(&dest).into_iter().flatten().flatten() {
@@ -185,6 +239,17 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
         }
     }
     for d in add {
+        // One record per package: the slot's older version of it goes.
+        for e in std::fs::read_dir(&dest).into_iter().flatten().flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n != d && layers::pkg_name(&n) == layers::pkg_name(&d) {
+                let _ = std::fs::remove_dir_all(e.path());
+            }
+        }
+        // A database under /usr came along with the layer's files already.
+        if !db.join(&d).is_dir() {
+            continue;
+        }
         let _ = std::fs::remove_dir_all(dest.join(&d));
         if copy_tree(&db.join(&d), &dest.join(&d)).is_err() {
             return fail(env, ErrorCode::Failed, "could not fold the package records");
@@ -194,8 +259,43 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
     if std::fs::write(&folded_path, folded.join("\n") + "\n").is_err() {
         return fail(env, ErrorCode::Failed, "could not record the folded layers");
     }
-    for n in names {
-        let _ = std::fs::remove_dir_all(root.join(layers::DIR.trim_start_matches('/')).join(n));
+    0
+}
+
+/// `wol layers clear`: on the slot that just booted, remove the live layers it already holds
+/// (its folded list), so they stop merging over its newer `/usr` (CORE-1). Nothing to clear: 0.
+pub fn clear(env: &mut dyn Env) -> i32 {
+    if !env.is_root() {
+        return fail(env, ErrorCode::Denied, "clear needs root");
+    }
+    let folded = env
+        .read_file(&Path::new("/").join(layers::FOLDED))
+        .unwrap_or_default();
+    let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
+    let steps = layers::clear_steps(&layers::to_clear(&folded, &ls));
+    for a in &steps {
+        if env.exec(a).unwrap_or(127) != 0 {
+            // The last step merges what is left: never leave the system unmerged.
+            if let Some(merge) = steps.last().filter(|m| *m != a) {
+                let _ = env.exec(merge);
+            }
+            return fail(env, ErrorCode::Failed, "could not clear the folded layers");
+        }
+    }
+    // R2C-1: the list is consumed once applied, so a later layer is never matched by it.
+    if !folded.trim().is_empty()
+        && env
+            .write_file(
+                &Path::new("/").join(layers::FOLDED),
+                layers::folded_after_clear(),
+            )
+            .is_err()
+    {
+        return fail(
+            env,
+            ErrorCode::Failed,
+            "could not record the cleared layers",
+        );
     }
     0
 }

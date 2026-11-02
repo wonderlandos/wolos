@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `pacman` on a sealed system: layers for ordinary packages, the pending slot for the kernel,
-//! straight pass-through for queries; `wol seal off`; `wol layers fold`.
+//! straight pass-through for queries; `wol seal off`; `wol layers fold|clear`; `wol update plan`
+//! on a pending slot.
 use controller::cli::parse;
 use controller::run::{FakeEnv, execute};
 use std::path::PathBuf;
@@ -150,10 +151,31 @@ fn developer_mode_and_unsealed_systems_use_the_real_pacman() {
     assert_eq!(lines(&user), ["/usr/bin/pacman -S vim"]);
 }
 
-#[test]
-fn fold_copies_layers_and_package_records_then_clears_them() {
-    let base = std::env::temp_dir().join(format!("wol-fold-{}", std::process::id()));
+fn fold(root: &std::path::Path, layers: &std::path::Path, db: &std::path::Path) -> FakeEnv {
+    let mut env = FakeEnv {
+        root: true,
+        ..Default::default()
+    };
+    let line = format!(
+        "layers fold {} {} {}",
+        root.display(),
+        layers.display(),
+        db.display()
+    );
+    let argv: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(execute(&parse(&argv).unwrap(), &mut env), 0, "{}", env.err);
+    env
+}
+
+fn scratch(name: &str) -> PathBuf {
+    let base = std::env::temp_dir().join(format!("wol-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
+    base
+}
+
+#[test]
+fn fold_copies_layers_and_package_records_and_keeps_the_live_layers() {
+    let base = scratch("fold");
     let (root, layers, db) = (base.join("slot"), base.join("layers"), base.join("db"));
     let l1 = layers.join("wolos-layer-0001");
     std::fs::create_dir_all(l1.join("usr/bin")).unwrap();
@@ -167,29 +189,318 @@ fn fold_copies_layers_and_package_records_then_clears_them() {
     std::fs::write(db.join("vim-9.1-1/files"), "usr/bin/vim\n").unwrap();
     std::fs::create_dir_all(root.join("usr/bin")).unwrap();
     std::fs::create_dir_all(root.join("var/lib/pacman/local/old-1-1")).unwrap();
-    std::fs::create_dir_all(root.join("var/lib/extensions/wolos-layer-0001")).unwrap();
-    let mut env = FakeEnv {
-        root: true,
-        ..Default::default()
-    };
-    let line = format!(
-        "layers fold {} {} {}",
-        root.display(),
-        layers.display(),
-        db.display()
-    );
-    let argv: Vec<&str> = line.split_whitespace().collect();
-    assert_eq!(execute(&parse(&argv).unwrap(), &mut env), 0, "{}", env.err);
+    fold(&root, &layers, &db);
     assert_eq!(
         std::fs::read_to_string(root.join("usr/bin/vim")).unwrap(),
         "vim"
     );
     assert!(root.join("var/lib/pacman/local/vim-9.1-1/files").exists());
     assert!(root.join("var/lib/pacman/local/old-1-1").exists());
-    assert!(!root.join("var/lib/extensions/wolos-layer-0001").exists());
+    // CORE-1: the live layer stays for the running slot; the new slot names it to clear at boot.
+    assert!(l1.join("usr/bin/vim").exists());
     assert_eq!(
-        std::fs::read_to_string(root.join("var/lib/wolos/folded")).unwrap(),
+        std::fs::read_to_string(root.join("etc/wolos/folded-layers")).unwrap(),
+        "wolos-layer-0001\n"
+    );
+    // Folded once: a second fold does not copy the layer again.
+    std::fs::write(root.join("usr/bin/vim"), "upgraded in the slot").unwrap();
+    fold(&root, &layers, &db);
+    assert_eq!(
+        std::fs::read_to_string(root.join("usr/bin/vim")).unwrap(),
+        "upgraded in the slot"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn fold_honours_a_folded_list_in_the_old_place() {
+    let base = scratch("fold-legacy");
+    let (root, layers, db) = (base.join("slot"), base.join("layers"), base.join("db"));
+    std::fs::create_dir_all(layers.join("wolos-layer-0001/usr/bin")).unwrap();
+    std::fs::write(layers.join("wolos-layer-0001/usr/bin/vim"), "old").unwrap();
+    std::fs::create_dir_all(root.join("var/lib/wolos")).unwrap();
+    std::fs::write(root.join("var/lib/wolos/folded"), "wolos-layer-0001\n").unwrap();
+    fold(&root, &layers, &db);
+    assert!(!root.join("usr/bin/vim").exists());
+    assert_eq!(
+        std::fs::read_to_string(root.join("etc/wolos/folded-layers")).unwrap(),
         "wolos-layer-0001\n"
     );
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn fold_keeps_the_database_where_the_slot_has_it() {
+    // CORE-2: an installed slot has DBPath = /usr/lib/pacman/; the layer carries its entries.
+    let base = scratch("fold-dbpath");
+    let (root, layers, db) = (base.join("slot"), base.join("layers"), base.join("db"));
+    let l1 = layers.join("wolos-layer-0001");
+    std::fs::create_dir_all(l1.join("usr/lib/pacman/local/vim-9.1-1")).unwrap();
+    std::fs::write(l1.join("usr/lib/pacman/local/vim-9.1-1/desc"), "vim 9.1").unwrap();
+    std::fs::write(
+        l1.join("wolos-layer.json"),
+        r#"{"installed":["vim-9.1-1"],"removed":["vim-9.0-1"]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(&db).unwrap();
+    std::fs::create_dir_all(root.join("etc")).unwrap();
+    std::fs::write(
+        root.join("etc/pacman.conf"),
+        "[options]\nDBPath = /usr/lib/pacman/\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("usr/lib/pacman/local/vim-9.0-1")).unwrap();
+    std::fs::create_dir_all(root.join("usr/lib/pacman/local/bash-5.2-1")).unwrap();
+    fold(&root, &layers, &db);
+    let local = root.join("usr/lib/pacman/local");
+    let mut entries: Vec<String> = std::fs::read_dir(&local)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort();
+    assert_eq!(entries, ["bash-5.2-1", "vim-9.1-1"]);
+    assert_eq!(
+        std::fs::read_to_string(local.join("vim-9.1-1/desc")).unwrap(),
+        "vim 9.1"
+    );
+    assert!(!root.join("var/lib/pacman/local").exists());
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn the_booted_slot_clears_the_layers_it_already_holds() {
+    // CORE-1: run at boot of the new slot; the layer it does not hold stays.
+    let mut env = FakeEnv {
+        root: true,
+        files: vec![(
+            PathBuf::from("/etc/wolos/folded-layers"),
+            "wolos-layer-0001\n".into(),
+        )],
+        captures: vec![(
+            "ls -1 /var/lib/extensions".into(),
+            "wolos-layer-0001\nwolos-layer-0002\n".into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("layers clear", &mut env), 0, "{}", env.err);
+    assert_eq!(
+        lines(&env),
+        [
+            "systemd-sysext unmerge",
+            "rm -rf /var/lib/extensions/wolos-layer-0001",
+            "rm -rf /var/lib/wolos/layers/wolos-layer-0001",
+            "systemd-sysext merge"
+        ]
+    );
+    // R2C-1: the folded list is consumed.
+    assert!(
+        env.written
+            .iter()
+            .any(|w| w.0 == std::path::Path::new("/etc/wolos/folded-layers") && w.1.is_empty()),
+        "{:?}",
+        env.written
+    );
+    let mut none = FakeEnv {
+        root: true,
+        ..Default::default()
+    };
+    assert_eq!(run("layers clear", &mut none), 0);
+    assert!(none.execs.is_empty());
+    let mut user = FakeEnv::default();
+    assert_ne!(run("layers clear", &mut user), 0);
+}
+
+#[test]
+fn a_layer_records_its_database_even_under_usr() {
+    // CORE-2: `pacman -Q` after the change reads the chroot's database (the layer's overlay).
+    let mut env = sealed("vim\n", IDLE);
+    env.files.push((
+        PathBuf::from("/etc/pacman.conf"),
+        "[options]\nDBPath = /usr/lib/pacman/\n".into(),
+    ));
+    env.captures
+        .push(("/usr/bin/pacman -Q".into(), "bash 5.2-1\n".into()));
+    env.captures.push((
+        "/usr/bin/pacman --dbpath /run/wolos/layer-root/usr/lib/pacman/ -Q".into(),
+        "bash 5.2-1\nvim 9.1-1\n".into(),
+    ));
+    assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
+    let rec = env
+        .written
+        .iter()
+        .find(|w| w.0.ends_with("wolos-layer-0002/wolos-layer.json"))
+        .unwrap();
+    assert!(rec.1.contains("\"installed\":[\"vim-9.1-1\"]"), "{}", rec.1);
+}
+
+#[test]
+fn a_layer_pacman_committed_is_kept_when_the_merge_fails() {
+    // CORE-5: mkdir, 3 mounts, pacman, umount, rm work ok; `systemd-sysext refresh` fails.
+    let mut env = sealed("vim\n", IDLE);
+    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 1];
+    assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
+    let l = lines(&env);
+    assert_eq!(l.last().unwrap(), "systemd-sysext refresh");
+    assert!(
+        !l.iter()
+            .any(|x| x.starts_with("rm -rf /var/lib/extensions/")),
+        "{l:?}"
+    );
+    assert!(
+        env.written
+            .iter()
+            .any(|w| w.0.ends_with("wolos-layer-0002/wolos-layer.json"))
+    );
+    assert_eq!(
+        env.out,
+        "Installed vim. It takes effect at the next restart.\n"
+    );
+}
+
+#[test]
+fn syu_with_a_target_goes_to_the_pending_slot() {
+    // CORE-4: `pacman -Syu vim` is a full upgrade.
+    let mut env = sealed("vim\n", IDLE);
+    assert_eq!(run("pkg -- -Syu vim", &mut env), 0, "{}", env.err);
+    let l = lines(&env);
+    assert!(
+        l.contains(&"btrfs subvolume snapshot / /run/wolos/top/@wolos-b".into()),
+        "{l:?}"
+    );
+    assert!(!l.contains(&"systemd-sysext refresh".into()));
+}
+
+#[test]
+fn a_system_update_stacks_onto_a_pending_slot() {
+    // CORE-6: `wol pkg` left a kernel in wolos-b for the next boot; the update keeps it.
+    let mut env = sealed("", PENDING);
+    assert_eq!(run("update plan", &mut env), 0, "{}", env.err);
+    let first = env.out.lines().next().unwrap_or_default().to_string();
+    assert_eq!(
+        first,
+        "btrfs subvolume snapshot /run/wolos/top/@wolos-b /run/wolos/top/@wolos-tx"
+    );
+    assert!(
+        env.out
+            .contains("mv /run/wolos/top/@wolos-tx /run/wolos/top/@wolos-b"),
+        "{}",
+        env.out
+    );
+    let mut idle = sealed("", IDLE);
+    assert_eq!(run("update plan", &mut idle), 0, "{}", idle.err);
+    assert!(
+        idle.out
+            .starts_with("btrfs subvolume snapshot / /run/wolos/top/@wolos-b\n"),
+        "{}",
+        idle.out
+    );
+}
+
+#[test]
+fn a_good_boot_clears_the_folded_layers() {
+    // CORE-1: the shipped boot check runs `wol layers clear` after the boot is blessed.
+    let p =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../files/usr/lib/wolos/boot-ok");
+    let t = std::fs::read_to_string(p).unwrap();
+    let bless = t.find("wol boot bless").unwrap();
+    let clear = t.find("\nwol layers clear").unwrap();
+    assert!(bless < clear, "{t}");
+}
+
+#[test]
+fn a_layer_made_after_a_clear_survives_the_next_clear() {
+    // R2C-1: fold named 0001-0003; the first good boot cleared them, so the extensions directory
+    // is empty. The next layer must not be 0001 (still in the folded list), and the second clear
+    // must not remove it.
+    let folded = "wolos-layer-0001
+wolos-layer-0002
+wolos-layer-0003
+";
+    let mut boot = FakeEnv {
+        root: true,
+        files: vec![(PathBuf::from("/etc/wolos/folded-layers"), folded.into())],
+        captures: vec![(
+            "ls -1 /var/lib/extensions".into(),
+            "wolos-layer-0001
+wolos-layer-0002
+wolos-layer-0003
+"
+            .into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("layers clear", &mut boot), 0, "{}", boot.err);
+    let after_clear = boot
+        .written
+        .iter()
+        .find(|w| w.0 == std::path::Path::new("/etc/wolos/folded-layers"))
+        .map(|w| w.1.clone())
+        .unwrap();
+
+    // Today: the list was consumed and the counter says 3. Worst case: the list was not
+    // consumed (an older clear) and no counter exists yet.
+    for (list, counter) in [
+        (
+            after_clear.as_str(),
+            Some(
+                "3
+",
+            ),
+        ),
+        (folded, None),
+    ] {
+        let mut env = sealed(
+            "vim
+", IDLE,
+        );
+        env.captures.retain(|c| c.0 != "ls -1 /var/lib/extensions");
+        env.captures
+            .push(("ls -1 /var/lib/extensions".into(), String::new()));
+        env.files
+            .push((PathBuf::from("/etc/wolos/folded-layers"), list.into()));
+        if let Some(c) = counter {
+            env.files
+                .push((PathBuf::from("/var/lib/wolos/layer-counter"), c.into()));
+        }
+        assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
+        let made: Vec<String> = env
+            .written
+            .iter()
+            .filter_map(|w| {
+                let p = w.0.to_string_lossy().into_owned();
+                p.strip_suffix("/wolos-layer.json")
+                    .map(|d| d.rsplit('/').next().unwrap_or_default().to_owned())
+            })
+            .collect();
+        assert_eq!(made.len(), 1, "{:?}", env.written);
+        let name = &made[0];
+        assert!(!folded.lines().any(|l| l == name), "{name} reused");
+        assert!(
+            env.written
+                .iter()
+                .any(|w| w.0 == std::path::Path::new("/var/lib/wolos/layer-counter")),
+            "{:?}",
+            env.written
+        );
+
+        let mut next = FakeEnv {
+            root: true,
+            files: vec![(PathBuf::from("/etc/wolos/folded-layers"), list.into())],
+            captures: vec![(
+                "ls -1 /var/lib/extensions".into(),
+                format!(
+                    "{name}
+"
+                ),
+            )],
+            ..Default::default()
+        };
+        assert_eq!(run("layers clear", &mut next), 0, "{}", next.err);
+        assert!(
+            !lines(&next).iter().any(|l| l.contains(name.as_str())),
+            "{:?}",
+            next.execs
+        );
+    }
 }

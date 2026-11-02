@@ -38,7 +38,7 @@ impl Qos {
         let n = shared::qos::format_foreground(pid, &mut buf);
         for _ in 0..2 {
             if self.conn.is_none() {
-                self.conn = UnixStream::connect(&self.socket).ok();
+                self.conn = shared::jobs::connect(&self.socket).ok();
                 if let Some(c) = &self.conn {
                     let _ = c.set_nonblocking(true);
                 }
@@ -69,14 +69,20 @@ mod tests {
         let path = dir.join("q.sock");
         let _ = std::fs::remove_file(&path);
         let l = UnixListener::bind(&path).unwrap();
+        let wold = std::thread::spawn(move || {
+            let (c, _) = l.accept().unwrap();
+            shared::jobs::greet(&c).unwrap();
+            let mut s = String::new();
+            (&c).read_to_string(&mut s).unwrap();
+            s
+        });
         let mut q = Qos::at(&path);
         assert!(q.foreground(10));
         assert!(!q.foreground(10));
         assert!(!q.foreground(0));
         assert!(q.foreground(11));
         drop(q);
-        let mut s = String::new();
-        l.accept().unwrap().0.read_to_string(&mut s).unwrap();
+        let s = wold.join().unwrap();
         assert_eq!(s, "foreground 10\nforeground 11\n");
         let _ = std::fs::remove_dir_all(&dir);
     }

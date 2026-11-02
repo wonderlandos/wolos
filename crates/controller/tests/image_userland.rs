@@ -8,8 +8,7 @@ mod siblings;
 
 use std::{fs, os::unix::fs::PermissionsExt, path::Path, path::PathBuf, process::Command};
 fn repo(p: &str) -> PathBuf {
-    siblings::root()
-        .join(p)
+    siblings::root().join(p)
 }
 
 fn read(p: &str) -> String {

@@ -10,6 +10,18 @@ RemainAfterExit=yes
 # Every boot (a disk moves between machines): load the drivers the hardware catalogue names, write
 # next-boot settings (microcode, vendor drivers), publish /run/wolos-hw.json for Settings and `wol hw`.
 ExecStart=/usr/bin/wol hw boot
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): loads drivers (CAP_SYS_MODULE) and writes /sys and /etc before sysinit: no ProtectKernel*, no ProtectSystem.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectHome=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
 
 [Install]
 WantedBy=sysinit.target

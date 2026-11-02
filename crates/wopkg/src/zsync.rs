@@ -20,6 +20,8 @@ pub struct Control {
     /// Relative or absolute URL of the new file.
     pub url: String,
     pub sha1: String,
+    /// `MTime:` of the new file as Unix seconds, when the control file has one.
+    pub mtime: Option<i64>,
     /// (rsum, checksum) per block, truncated as stored.
     pub blocks: Vec<(u32, Vec<u8>)>,
 }
@@ -64,6 +66,10 @@ fn md4(block: &[u8]) -> [u8; 16] {
     Md4::digest(block).into()
 }
 
+/// Largest file a control file may describe (1 TiB): keeps every offset product below `u64`.
+pub const MAX_LENGTH: u64 = 1 << 40;
+
+/// Parses a `.zsync` control file. Pure (no I/O): the fuzz entry point.
 pub fn parse(bytes: &[u8]) -> Result<Control> {
     let bad = || Error::untrusted("The update description is damaged.");
     let end = memchr::memmem::find(bytes, b"\n\n").ok_or_else(bad)?;
@@ -97,10 +103,14 @@ pub fn parse(bytes: &[u8]) -> Result<Control> {
         .filter(|s| s.len() == 40)
         .ok_or_else(bad)?
         .to_ascii_lowercase();
-    let n = length.div_ceil(blocksize as u64) as usize;
-    let table = &bytes[end + 2..];
+    if length > MAX_LENGTH {
+        return Err(bad());
+    }
+    let bs = u64::try_from(blocksize).map_err(|_| bad())?;
+    let n = usize::try_from(length.div_ceil(bs)).map_err(|_| bad())?;
+    let table = bytes.get(end + 2..).ok_or_else(bad)?;
     let per = rsum_bytes + checksum_bytes;
-    if table.len() < n * per {
+    if table.len() < n.checked_mul(per).ok_or_else(bad)? {
         return Err(bad());
     }
     let blocks = (0..n)
@@ -121,8 +131,50 @@ pub fn parse(bytes: &[u8]) -> Result<Control> {
         checksum_bytes,
         url: get("URL:").ok_or_else(bad)?,
         sha1,
+        mtime: get("MTime:").as_deref().and_then(rfc2822),
         blocks,
     })
+}
+
+/// `Tue, 03 Nov 2026 10:00:00 +0000` (what zsyncmake writes) to Unix seconds.
+pub fn rfc2822(s: &str) -> Option<i64> {
+    let s = s.split_once(',').map_or(s, |(_, r)| r).trim();
+    let mut it = s.split_ascii_whitespace();
+    let day: i64 = it.next()?.parse().ok()?;
+    let mon = it.next()?;
+    let month = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ]
+    .iter()
+    .position(|m| m.eq_ignore_ascii_case(mon))?;
+    let month = i64::try_from(month).ok()? + 1;
+    let year: i64 = it.next()?.parse().ok()?;
+    let mut hms = it.next()?.split(':').map(|v| v.parse::<i64>().ok());
+    let (h, m, sec) = (
+        hms.next()??,
+        hms.next()??,
+        hms.next().flatten().unwrap_or(0),
+    );
+    let zone = it.next().unwrap_or("+0000");
+    let (sign, z) = match zone.as_bytes().first() {
+        Some(b'-') => (-1, &zone[1..]),
+        Some(b'+') => (1, &zone[1..]),
+        _ => (1, "0000"),
+    };
+    let z: i64 = z.parse().ok()?;
+    if !(1..=31).contains(&day) || !(1970..=9999).contains(&year) || h > 23 || m > 59 || sec > 60 {
+        return None;
+    }
+    // Days from civil (Howard Hinnant), all values small: no overflow.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let offset = sign * ((z / 100) * 3600 + (z % 100) * 60);
+    Some(days * 86_400 + h * 3600 + m * 60 + sec - offset)
 }
 
 /// Write a `.zsync` control file for `data` (tests, and our own AppImage index).
@@ -265,16 +317,26 @@ pub fn build(
         .map_err(|_| Error::unavailable("The disk is full."))?;
     let bs = c.blocksize;
     let mut reused = 0u64;
+    let damaged = || Error::untrusted("The update description is damaged.");
+    let length = usize::try_from(c.length).map_err(|_| damaged())?;
     for (&i, &at) in &known {
-        let start = i * bs;
-        let n = bs.min(c.length as usize - start);
-        f.seek(SeekFrom::Start(start as u64))
-            .and_then(|_| f.write_all(&old_bytes[at..at + n]))
+        let start = i.checked_mul(bs).ok_or_else(damaged)?;
+        let n = bs.min(length.checked_sub(start).ok_or_else(damaged)?);
+        let end = at
+            .checked_add(n)
+            .filter(|e| *e <= old_bytes.len())
+            .ok_or_else(damaged)?;
+        let pos = u64::try_from(start).map_err(|_| damaged())?;
+        f.seek(SeekFrom::Start(pos))
+            .and_then(|_| f.write_all(&old_bytes[at..end]))
             .map_err(|_| Error::unavailable("The update cannot be written."))?;
-        reused += n as u64;
+        reused = reused.saturating_add(u64::try_from(n).map_err(|_| damaged())?);
     }
     let mut fetched = 0u64;
-    let total_missing: u64 = ranges.iter().map(|(s, e)| e - s + 1).sum();
+    let total_missing: u64 = ranges
+        .iter()
+        .map(|(s, e)| e.saturating_sub(*s).saturating_add(1))
+        .fold(0, u64::saturating_add);
     for (s, e) in &ranges {
         let resp = net
             .agent
@@ -286,24 +348,30 @@ pub fn build(
             })?;
         let status = resp.status().as_u16();
         let mut body = resp.into_body().into_reader();
-        let mut buf = vec![0u8; (e - s + 1) as usize];
-        if status == 206 {
-            body.read_exact(&mut buf)
-                .map_err(|_| Error::unavailable("The update download stopped. Try again."))?;
-        } else if status == 200 {
-            // No Range support: take the slice we need from the whole body.
+        let want = e
+            .checked_sub(*s)
+            .and_then(|d| d.checked_add(1))
+            .filter(|_| *e < c.length)
+            .ok_or_else(damaged)?;
+        if status == 200 {
+            // No Range support: skip to the slice we need in the whole body.
             std::io::copy(&mut body.by_ref().take(*s), &mut std::io::sink()).ok();
-            body.read_exact(&mut buf)
-                .map_err(|_| Error::unavailable("The update download stopped. Try again."))?;
-        } else {
+        } else if status != 206 {
             return Err(Error::unavailable(format!(
                 "The update server answered {status}."
             )));
         }
+        // Streamed straight to the file: a range can be most of a large AppImage.
         f.seek(SeekFrom::Start(*s))
-            .and_then(|_| f.write_all(&buf))
             .map_err(|_| Error::unavailable("The update cannot be written."))?;
-        fetched += buf.len() as u64;
+        let got = std::io::copy(&mut body.by_ref().take(want), &mut f)
+            .map_err(|_| Error::unavailable("The update cannot be written."))?;
+        if got != want {
+            return Err(Error::unavailable(
+                "The update download stopped. Try again.",
+            ));
+        }
+        fetched = fetched.saturating_add(want);
         progress(
             &serde_json::json!({"event":"bytes","url":file_url,"done":fetched,"total":total_missing}),
         );
@@ -353,6 +421,52 @@ pub mod tests {
                 x as u8
             })
             .collect()
+    }
+
+    #[test]
+    fn crafted_control_files_are_refused_not_overflowed() {
+        let head = |len: &str, bs: &str| {
+            format!(
+                "zsync: 0.6.2
+Filename: x
+Blocksize: {bs}
+Length: {len}
+Hash-Lengths: 2,4,16
+URL: x
+SHA-1: {}
+
+",
+                "0".repeat(40)
+            )
+            .into_bytes()
+        };
+        assert!(parse(&head(&u64::MAX.to_string(), "256")).is_err());
+        assert!(parse(&head(&(MAX_LENGTH + 1).to_string(), "256")).is_err());
+        // A huge length with no table behind it.
+        assert!(parse(&head(&MAX_LENGTH.to_string(), "256")).is_err());
+        assert!(parse(&head("100", "255")).is_err());
+        assert!(
+            parse(
+                b"
+
+"
+            )
+            .is_err()
+        );
+        assert!(parse(b"").is_err());
+        let mut ok = head("256", "256");
+        ok.extend_from_slice(&[0; 20]);
+        assert!(parse(&ok).is_ok());
+    }
+
+    #[test]
+    fn mtime_parses() {
+        assert_eq!(rfc2822("Thu, 01 Jan 1970 00:00:00 +0000"), Some(0));
+        assert_eq!(
+            rfc2822("Mon, 02 Nov 2026 01:00:00 +0100"),
+            Some(1_793_577_600)
+        );
+        assert_eq!(rfc2822("garbage"), None);
     }
 
     #[test]

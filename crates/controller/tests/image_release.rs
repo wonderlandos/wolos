@@ -13,8 +13,7 @@ use std::{
     process::{Command, Stdio},
 };
 fn repo(p: &str) -> PathBuf {
-    siblings::root()
-        .join(p)
+    siblings::root().join(p)
 }
 
 fn read(p: &str) -> String {
@@ -125,14 +124,23 @@ fn update_check_reads_the_published_release() {
     let publish = read(".github/workflows/publish.yml");
     for want in [
         "uses: wonderlandos/wolos-iso/.github/workflows/release.yml@",
-        "secrets: inherit",
+        // Audit A3: the keys go to the signing jobs by name, behind the `release` environment.
+        "environment: release",
+        "WOLOS_RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}",
         "concurrency:",
         "iso-s3",
     ] {
         assert!(publish.contains(want), "publish.yml lacks {want}");
     }
+    assert!(
+        !publish.contains("secrets: inherit"),
+        "publish.yml hands every secret to the called workflows"
+    );
     // what=iso-s3 publishes a pre-release in wolos: never the latest release update-check reads.
-    assert!(publish.contains("--prerelease"), "iso-s3 is not a pre-release");
+    assert!(
+        publish.contains("--prerelease"),
+        "iso-s3 is not a pre-release"
+    );
     for want in [
         "archlinux",
         "mkarchiso",

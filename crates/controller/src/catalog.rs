@@ -56,6 +56,7 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["audio", "volume"], Change, "sound"),
     hv(&["audio", "mute"], Change, "sound"),
     hv(&["audio", "unmute"], Change, "sound"),
+    hv(&["audio", "doctor"], Read, "read"),
     hv(&["display"], Read, "read"),
     hv(&["display", "brightness"], Change, "display"),
     hv(&["battery"], Read, "read"),
@@ -63,6 +64,7 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["hw"], Read, "read"),
     hv(&["hw", "list"], Read, "read"),
     hv(&["hw", "status"], Read, "read"),
+    hv(&["hw", "compute"], Read, "read"),
     hv(&["wifi"], Read, "read"),
     hv(&["wifi", "on"], Admin, "network"),
     hv(&["wifi", "off"], Admin, "network"),
@@ -86,6 +88,19 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["undo"], Change, "restore"),
     hv(&["restore", "list"], Read, "restore"),
     hv(&["restore", "activate"], Admin, "restore"),
+    // Optional modules (ADR 0032). install|remove are Admin verbs with capability `modules`; they
+    // join this list once `shared::shell::ApprovalRequest` has a Module variant the shell runs
+    // (`approval()` must map every Admin tool): until then only people run them (`wol modules
+    // install <id>`, same password path as `wol restore activate`).
+    hv(&["modules"], Read, "read"),
+    hv(&["modules", "list"], Read, "read"),
+    hv(&["modules", "status"], Read, "read"),
+    hv(&["modules", "enable"], Change, "apps"),
+    // Shell plugins (ADR 0031): helpers may look and check; `run` executes a plugin's Lua with
+    // the user's commands, so it stays for people and the Plugin Maker.
+    hv(&["plugin"], Read, "read"),
+    hv(&["plugin", "list"], Read, "read"),
+    hv(&["plugin", "check"], Read, "read"),
 ];
 
 /// A visible command and, when helpers may call it, its rule.
@@ -196,12 +211,20 @@ pub fn tool_json(v: &Verb) -> Value {
     let last = v.cmd.path.last().copied().unwrap_or("");
     let destructive = matches!(
         v.cmd.path,
-        ["files", "tidy"] | ["restore", "activate"] | ["undo"]
+        ["files", "tidy"] | ["restore", "activate"] | ["undo"] | ["modules", "remove"]
     );
     let idempotent = a == Read
         || matches!(
             last,
-            "set" | "on" | "off" | "mute" | "unmute" | "volume" | "brightness" | "activate"
+            "set"
+                | "on"
+                | "off"
+                | "mute"
+                | "unmute"
+                | "volume"
+                | "brightness"
+                | "activate"
+                | "enable"
         );
     json!({
         "name": v.tool(),
@@ -342,6 +365,7 @@ pub fn describe(inv: &Invocation) -> String {
         "screenshot" => "take a screenshot of the whole screen".into(),
         "windows.focus" => format!("bring the window “{}” forward", get("window")),
         "files.tidy" => "sort the files in Downloads into folders".into(),
+        "modules.enable" => format!("finish setting up the “{}” module", get("id")),
         "undo" => match inv.get("id") {
             Some(id) => format!("undo settings change #{id}"),
             None => "undo the last settings change".into(),
@@ -507,6 +531,10 @@ mod tests {
             ),
             (&["undo"], "undo the last settings change"),
             (&["undo", "4"], "undo settings change #4"),
+            (
+                &["modules", "enable", "dev"],
+                "finish setting up the “dev” module",
+            ),
         ] {
             assert_eq!(describe(&p(words)), want, "{words:?}");
         }

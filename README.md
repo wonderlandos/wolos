@@ -28,7 +28,7 @@ Related repositories:
 - Recipes: https://github.com/wonderlandos/wolos-pkgbuilds (every package, the kernel too)
 - Image: https://github.com/wonderlandos/wolos-iso (archiso profile, VM tests, release)
 - Kernel fork: https://github.com/wonderlandos/linux (the WolKernel patches, one commit each, all public)
-- Website: https://github.com/wonderlandos/site
+- Website source: https://github.com/wonderlandos/site (the manual, blog and packages API; deployed to Cloudflare Pages from `master`)
 
 ## Build
 

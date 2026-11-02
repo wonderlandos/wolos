@@ -1,0 +1,32 @@
+{
+  "id": "console",
+  "name": "Console",
+  "summary": "starship prompt, fzf history, zoxide, eza, bat, fd and ripgrep for zsh; fish, nushell and PowerShell themed alike; ghostty and kitty",
+  "icon": "wolos-module-console-symbolic",
+  "category": "console",
+  "size_mb": 260,
+  "packages": [
+    "starship",
+    "fzf",
+    "zoxide",
+    "eza",
+    "bat",
+    "fd",
+    "ripgrep",
+    "fish",
+    "nushell",
+    "zellij",
+    "ghostty",
+    "kitty"
+  ],
+  "flatpaks": [],
+  "recipes": [
+    "powershell"
+  ],
+  "mise": [],
+  "post": [],
+  "offline": false,
+  "needs": [
+    "network"
+  ]
+}

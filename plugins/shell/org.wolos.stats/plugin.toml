@@ -1,0 +1,27 @@
+# Stats: the reference plugin (ADR 0031, docs/modules/plugins.md). CPU and memory in the menu
+# bar with a popover, a desktop card, and a shortcut that opens btop.
+schema = 1
+id = "org.wolos.stats"
+name = "Stats"
+version = "1.0"
+author = "WolOS"
+license = "GPL-2.0-or-later"
+description = "CPU and memory in the menu bar, a desktop card, and a Top shortcut."
+min_wolos = "0.12"
+permissions = ["run"]
+
+[[menubar]]
+id = "bar"
+script = "bar.lua"
+side = "right"
+
+[[widget]]
+id = "card"
+script = "card.lua"
+sizes = ["small", "medium"]
+
+[[hotkey]]
+id = "top"
+default = "super+shift+t"
+exec = ["foot", "-e", "btop"]
+group = "Stats"

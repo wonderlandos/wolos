@@ -32,9 +32,7 @@ impl Package {
 
 /// `$XDG_DATA_HOME`, else `~/.local/share`.
 pub fn data_home() -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
+    crate::theme::apps::data_home(|k| std::env::var(k).ok())
         .unwrap_or_else(|| home().join(".local/share"))
 }
 

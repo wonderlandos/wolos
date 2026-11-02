@@ -80,6 +80,9 @@ pub enum AdminAction {
     FlatpakRemove,
     /// Automatic updates: download pending packages in the background, `on` or `off`.
     AutoUpdate,
+    /// Finish Secure Boot setup: queue this computer's key for the firmware's key screen
+    /// (`wol boot enroll`, ADR 0025). No arguments; idempotent (an enrolled key is left alone).
+    BootEnroll,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -125,6 +128,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::FlatpakInstall, "flatpak-install"),
     (AdminAction::FlatpakRemove, "flatpak-remove"),
     (AdminAction::AutoUpdate, "auto-update"),
+    (AdminAction::BootEnroll, "boot-enroll"),
 ];
 
 impl AdminAction {
@@ -278,6 +282,7 @@ mod tests {
             "wifi-forget",
             "session-power",
             "auto-update",
+            "boot-enroll",
         ] {
             assert_eq!(AdminAction::parse(n).map(AdminAction::name), Some(n));
         }

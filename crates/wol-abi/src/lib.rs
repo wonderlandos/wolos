@@ -7,6 +7,7 @@
 //! releases, `_get_` borrows from its argument; UTF-8 strings with lengths; a status code and an
 //! optional error object from every call that can fail; callbacks take `user_data` and run only
 //! inside `wol_context_dispatch`. The library holds no privilege: services go through wold.
+#![deny(unsafe_op_in_unsafe_fn)]
 #![allow(non_camel_case_types)]
 // The C boundary takes a pointer and a length per string.
 #![allow(clippy::too_many_arguments)]
@@ -19,6 +20,7 @@ pub mod context;
 pub mod device;
 pub mod error;
 pub mod file;
+pub mod handle;
 pub mod info;
 pub mod kit;
 pub mod menu;

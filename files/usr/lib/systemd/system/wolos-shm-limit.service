@@ -7,6 +7,19 @@ Before=sysinit.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/mount -o remount,size=25%% /dev/shm
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): remounts the host /dev/shm: any mount namespace (ProtectSystem, ProtectHome, PrivateTmp) would remount a private copy, so only non-mount restrictions.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+RestrictAddressFamilies=AF_UNIX
 
 [Install]
 WantedBy=sysinit.target

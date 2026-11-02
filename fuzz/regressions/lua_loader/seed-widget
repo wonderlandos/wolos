@@ -1,0 +1,1 @@
+return wol.widget { name = "x", render = function() return wol.text("hi") end }

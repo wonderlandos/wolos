@@ -2,11 +2,7 @@
 //! The Arch Linux image (ADR 0016): mkarchiso profile `wolos-iso/profile`, pinned to one Arch Linux Archive
 //! date, `[wolos]` before the Arch repos, linux-wolos only, the `[wolos]` repo build and the release
 //! manifest. Scripts run against fakes; nothing here needs root or the network.
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{fs, path::PathBuf};
 fn repo(p: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

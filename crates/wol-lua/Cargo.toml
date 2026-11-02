@@ -9,6 +9,8 @@ description = "Lua desktop widgets on libwol: sandboxed scripts that return Kit 
 [dependencies]
 shared.workspace = true
 wol-abi = { path = "../wol-abi" }
+# `wol.state`: Lua tables <-> the plugin's JSON state (workspace dependency, as in shared).
+serde_json.workspace = true
 libc.workspace = true
 # Lua 5.4, built from source (MIT): no system Lua needed, same interpreter everywhere.
 mlua = { version = "0.12", features = ["lua54", "vendored"] }

@@ -34,8 +34,10 @@ key (Ctrl+C; a terminal's Ctrl+Shift+C), see `shell::appmenu::send`.
 | ⌃⌘Q | Lock |
 | ⌥⌘Esc | Force Quit Applications |
 | ⌃F2 / ⌃F3 | Keyboard into the menu bar / the Dock (Esc gives it back) |
-| Esc | Also dismisses notification banners |
+| Esc | Closes menus and panels and dismisses notification banners |
+| ⇧⌘V | Clipboard history |
 | ⌘, / ⌘Return | Settings / Terminal |
 | ⇧⌘3/4/5 | Screenshot full / region / toolbar (saved to the Desktop) |
 | ⌃⌘F, ⌥⌘F | Fullscreen, float a tiled window |
-| Ctrl+Left/Right, 3-finger swipe | Switch space |
+| ⌃⌥←/→ (Ctrl+Alt+Left/Right), 3-finger swipe | Switch space |
+| ⌃⌥1..4 (Ctrl+Alt+1..4) | Go to Desktop 1..4 |

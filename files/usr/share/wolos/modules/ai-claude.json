@@ -1,0 +1,26 @@
+{
+  "id": "ai-claude",
+  "name": "Claude Code",
+  "summary": "Anthropic's coding agent in the terminal, acting on WolOS through wol mcp with on-screen approval and a WolOS skill",
+  "icon": "wolos-module-ai-symbolic",
+  "category": "ai",
+  "size_mb": 320,
+  "packages": [
+    "git",
+    "ripgrep",
+    "zellij"
+  ],
+  "flatpaks": [],
+  "recipes": [
+    "claude-code"
+  ],
+  "mise": [],
+  "post": [
+    "/usr/lib/wolos/modules-enable-ai-claude"
+  ],
+  "offline": false,
+  "needs": [
+    "network",
+    "anthropic-account"
+  ]
+}

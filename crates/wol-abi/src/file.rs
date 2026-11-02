@@ -15,7 +15,9 @@ use std::time::Duration;
 /// A little over wold's own wait, so wold's answer arrives first.
 pub(crate) const PANEL_WAIT: Duration = Duration::from_secs(610);
 
+#[repr(C)]
 pub struct wol_file {
+    tag: crate::handle::Tag<wol_file>,
     fd: OwnedFd,
     name: Arc<wol_string>,
 }
@@ -34,6 +36,7 @@ pub(crate) fn panel(ctx: &wol_context, c: &Call) -> Result<*mut wol_file> {
     }
     match (fd, data.get("name").and_then(|n| n.as_str())) {
         (Some(fd), Some(name)) => Ok(into_raw(Arc::new(wol_file {
+            tag: crate::handle::Tag::new(),
             fd,
             name: wol_string::new(name),
         }))),
@@ -91,14 +94,14 @@ pub unsafe extern "C" fn wol_panel_save(
 /// `file` is NULL or live.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_file_get_fd(file: *const wol_file) -> c_int {
-    unsafe { file.as_ref() }.map_or(-1, |f| f.fd.as_raw_fd())
+    unsafe { crate::handle::live(file) }.map_or(-1, |f| f.fd.as_raw_fd())
 }
 
 /// # Safety
 /// `file` is NULL or live. Borrowed from `file`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_file_get_name(file: *const wol_file) -> *const wol_string {
-    unsafe { file.as_ref() }.map_or(std::ptr::null(), |f| Arc::as_ptr(&f.name))
+    unsafe { crate::handle::live(file) }.map_or(std::ptr::null(), |f| Arc::as_ptr(&f.name))
 }
 
 /// # Safety
@@ -114,3 +117,5 @@ pub unsafe extern "C" fn wol_file_retain(file: *mut wol_file) -> *mut wol_file {
 pub unsafe extern "C" fn wol_file_release(file: *mut wol_file) {
     unsafe { release(file) }
 }
+
+crate::handle::tagged!(wol_file, 0x1c5c6e4550a2d958);

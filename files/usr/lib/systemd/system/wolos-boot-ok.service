@@ -2,6 +2,8 @@
 Description=WolOS boot is good: the login window supervisor is up (boot counting)
 Requires=wold.service
 After=wold.service
+# The key screen's unit may be rewriting the same boot entries bless does (audit3 R2B-8).
+After=wolos-mok-enroll.service
 Before=boot-complete.target
 DefaultDependencies=no
 
@@ -9,6 +11,19 @@ DefaultDependencies=no
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/lib/wolos/boot-ok
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): systemctl over AF_UNIX and wol boot bless on the ESP: no network, no namespaces beyond /home (DefaultDependencies=no: no PrivateTmp).
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectHome=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX
 
 [Install]
 RequiredBy=boot-complete.target

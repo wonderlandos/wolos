@@ -1,0 +1,30 @@
+{
+  "id": "dev",
+  "name": "Developer",
+  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij and rootless podman; ~/Work",
+  "icon": "wolos-module-dev-symbolic",
+  "category": "developer",
+  "size_mb": 900,
+  "packages": [
+    "git",
+    "github-cli",
+    "mise",
+    "code",
+    "lazygit",
+    "btop",
+    "zellij",
+    "podman",
+    "jq",
+    "ttf-jetbrains-mono-nerd"
+  ],
+  "flatpaks": [],
+  "recipes": [],
+  "mise": [],
+  "post": [
+    "/usr/lib/wolos/modules-enable-dev"
+  ],
+  "offline": false,
+  "needs": [
+    "network"
+  ]
+}

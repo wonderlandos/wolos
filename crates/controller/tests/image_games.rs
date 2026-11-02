@@ -9,8 +9,7 @@ use controller::cli::parse;
 use controller::games::STEAM_ICON;
 use std::path::PathBuf;
 fn repo(p: &str) -> PathBuf {
-    siblings::root()
-        .join(p)
+    siblings::root().join(p)
 }
 
 fn read(p: &str) -> String {
@@ -40,9 +39,7 @@ fn steam_opens_through_wol_games_steam() {
     assert_eq!(icon, STEAM_ICON);
     let name = icon.rsplit('/').next().unwrap();
     assert!(repo(&format!("design/icons/store/{name}")).exists());
-    assert!(
-        read("wolos-system/PKGBUILD").contains("$pkgdir/usr/share/wolos/store-icons")
-    );
+    assert!(read("wolos-system/PKGBUILD").contains("$pkgdir/usr/share/wolos/store-icons"));
 }
 
 #[test]

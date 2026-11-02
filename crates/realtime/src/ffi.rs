@@ -207,6 +207,120 @@ pub unsafe extern "C" fn wol_place(
     0
 }
 
+/// Client size for a new floating window: `placement::fit` of its `w`x`h` wish into the zone
+/// (ax, ay, aw, ah) minus the placement margin, title bar `bar` included. 0 in min/max = unset.
+///
+/// # Safety
+/// `out_w`, `out_h` must be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn wol_fit(
+    w: i32,
+    h: i32,
+    min_w: i32,
+    min_h: i32,
+    max_w: i32,
+    max_h: i32,
+    ax: i32,
+    ay: i32,
+    aw: i32,
+    ah: i32,
+    bar: i32,
+    out_w: *mut i32,
+    out_h: *mut i32,
+) -> i32 {
+    let area = crate::placement::usable((ax, ay, aw, ah), None);
+    let (rw, rh) = crate::placement::fit((w, h), (min_w, min_h), (max_w, max_h), area, bar);
+    // SAFETY: caller contract above.
+    unsafe {
+        if !out_w.is_null() {
+            *out_w = rw;
+        }
+        if !out_h.is_null() {
+            *out_h = rh;
+        }
+    }
+    0
+}
+
+/// Position for a dialog of `w`x`h` centred on its parent's client rect (px, py, pw, ph), kept in
+/// the zone (ax, ay, aw, ah) minus the placement margin (`placement::centre_on`).
+///
+/// # Safety
+/// `x`, `y` must be null or writable.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn wol_centre(
+    w: i32,
+    h: i32,
+    px: i32,
+    py: i32,
+    pw: i32,
+    ph: i32,
+    ax: i32,
+    ay: i32,
+    aw: i32,
+    ah: i32,
+    bar: i32,
+    x: *mut i32,
+    y: *mut i32,
+) -> i32 {
+    let area = crate::placement::usable((ax, ay, aw, ah), None);
+    let (rx, ry) = crate::placement::centre_on((w, h), (px, py, pw, ph), area, bar);
+    // SAFETY: caller contract above.
+    unsafe {
+        if !x.is_null() {
+            *x = rx;
+        }
+        if !y.is_null() {
+            *y = ry;
+        }
+    }
+    0
+}
+
+/// An open floating window after the zone changed (`placement::refit`): client box in/out through
+/// `x`, `y`, `w`, `h`. Returns 1 when the box changed, 0 when it already fit.
+///
+/// # Safety
+/// `x`, `y`, `w`, `h` must point to writable i32s.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn wol_refit(
+    min_w: i32,
+    min_h: i32,
+    max_w: i32,
+    max_h: i32,
+    ax: i32,
+    ay: i32,
+    aw: i32,
+    ah: i32,
+    bar: i32,
+    x: *mut i32,
+    y: *mut i32,
+    w: *mut i32,
+    h: *mut i32,
+) -> i32 {
+    if x.is_null() || y.is_null() || w.is_null() || h.is_null() {
+        return 0;
+    }
+    let area = crate::placement::usable((ax, ay, aw, ah), None);
+    // SAFETY: caller contract above.
+    unsafe {
+        let before = (*x, *y, *w, *h);
+        let (rx, ry, rw, rh) = crate::placement::refit(
+            (before.0, before.1),
+            (before.2, before.3),
+            (min_w, min_h),
+            (max_w, max_h),
+            area,
+            bar,
+        );
+        (*x, *y, *w, *h) = (rx, ry, rw, rh);
+        i32::from(before != (rx, ry, rw, rh))
+    }
+}
+
 static QOS: Mutex<Option<Qos>> = Mutex::new(None);
 
 /// Report the frontmost pid to wold (QoS UserInteractive boost). 1 = sent, 0 = dropped/unavailable.
@@ -327,6 +441,74 @@ mod tests {
                 None
             ),
             "the zone gets the placement margin (live: windows touched the menu bar zone)"
+        );
+        let (mut w, mut h) = (0, 0);
+        unsafe { wol_fit(1600, 1000, 0, 0, 0, 0, 0, 28, 1280, 692, 30, &mut w, &mut h) };
+        assert_eq!(
+            (w, h),
+            crate::placement::fit(
+                (1600, 1000),
+                (0, 0),
+                (0, 0),
+                crate::placement::usable((0, 28, 1280, 692), None),
+                30
+            )
+        );
+        unsafe {
+            wol_centre(
+                400, 300, 300, 200, 600, 400, 0, 28, 1280, 692, 30, &mut x, &mut y,
+            )
+        };
+        assert_eq!(
+            (x, y),
+            crate::placement::centre_on(
+                (400, 300),
+                (300, 200, 600, 400),
+                crate::placement::usable((0, 28, 1280, 692), None),
+                30
+            )
+        );
+        let (mut rx, mut ry, mut rw, mut rh) = (100, 100, 400, 300);
+        assert_eq!(
+            unsafe {
+                wol_refit(
+                    0, 0, 0, 0, 0, 28, 1280, 692, 30, &mut rx, &mut ry, &mut rw, &mut rh,
+                )
+            },
+            0,
+            "fits: unchanged"
+        );
+        assert_eq!((rx, ry, rw, rh), (100, 100, 400, 300));
+        (rx, ry) = (2000, 2000);
+        assert_eq!(
+            unsafe {
+                wol_refit(
+                    0, 0, 0, 0, 0, 28, 1280, 692, 30, &mut rx, &mut ry, &mut rw, &mut rh,
+                )
+            },
+            1
+        );
+        assert_eq!((rx, ry, rw, rh), (1272 - 400, 720 - 8 - 300, 400, 300));
+        assert_eq!(
+            unsafe {
+                wol_refit(
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    10,
+                    10,
+                    0,
+                    std::ptr::null_mut(),
+                    &mut ry,
+                    &mut rw,
+                    &mut rh,
+                )
+            },
+            0,
+            "null box: nothing to do"
         );
         assert_eq!(wol_qos_foreground(0), 0);
         assert_eq!(wol_lights_at(3, 67, 14), 2);

@@ -109,7 +109,12 @@ pub enum Need {
     Peer,
     /// The caller was allowed to open [`Call::device`].
     Device,
+    /// The caller is the helper gate ([`HELPER_GATE`]: `wol mcp`, `WOL_HELPER` scripts).
+    HelperGate,
 }
+
+/// The one executable that relays helper administrator changes ([`Call::SessionApprove`]).
+pub const HELPER_GATE: &str = "/usr/bin/wol";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "call", deny_unknown_fields)]
@@ -240,6 +245,48 @@ pub enum Call {
     /// The person pressed a notification button (from the shell): wold tells the app that posted it.
     #[serde(rename = "notification.answer")]
     NotificationAnswer { id: u32, key: String },
+    /// A helper's administrator change (R2C-6, from [`HELPER_GATE`]): wold shows it to the
+    /// caller's own session as [`Ask::Approval`], naming the caller by the executable the kernel
+    /// reported, and returns the sheet's [`crate::shell::Answer`] as `data`. The shell runs the
+    /// change through wol-admind after the password; no same-account process puts an
+    /// administrator sheet on screen by itself.
+    #[serde(rename = "session.approve")]
+    SessionApprove { approval: crate::shell::Approval },
+}
+
+/// wold's refusal when the desktop's ask table, the account's share or its approval share is full.
+pub const BUSY: &str = "The desktop is busy. Try again.";
+/// wold's refusal when no desktop of the account is subscribed.
+pub const NOT_RUNNING: &str = "The desktop is not running.";
+/// wold's refusal when the desktop did not answer within the call's wait.
+pub const NO_ANSWER: &str = "The desktop did not answer.";
+
+/// Longest helper name and tool text in a [`Call::SessionApprove`].
+pub const MAX_HELPER_TEXT: usize = 128;
+
+/// A helper's administrator change as wold relays it: one of the helper catalogue's admin kinds
+/// (Wi-Fi, a Wi-Fi network, Bluetooth, a restore point; system packages go through wopkg), with
+/// short one-line texts.
+fn helper_approval(a: &crate::shell::Approval) -> Result<(), String> {
+    use crate::shell::ApprovalRequest as R;
+    let line = |t: &str, max: usize| clean(t, max, false);
+    if !line(&a.helper, MAX_HELPER_TEXT) || !line(&a.tool, MAX_HELPER_TEXT) {
+        return Err(format!(
+            "A helper's name and tool are one line of at most {MAX_HELPER_TEXT} bytes."
+        ));
+    }
+    let ok = match &a.request {
+        R::Wifi { .. } | R::Bluetooth { .. } => true,
+        R::WifiJoin { ssid, password } => {
+            !ssid.is_empty() && line(ssid, 32) && password.as_ref().is_none_or(|p| line(p, 64))
+        }
+        R::BootEnvironment { name } => !name.is_empty() && line(name, MAX_HELPER_TEXT),
+        R::Packages { .. } | R::Change { .. } => false,
+    };
+    if !ok {
+        return Err("Only a helper's administrator change is asked this way.".into());
+    }
+    Ok(())
 }
 
 /// What wold asks the person's desktop to do once a call passed its check: wold is a system
@@ -275,6 +322,12 @@ pub enum Ask {
     ClipboardRead,
     ClipboardWrite {
         text: String,
+    },
+    /// wold's approval sheet for a system change an app asked for (ADR 0021, audit S1): the shell
+    /// shows it and answers with the sheet's [`crate::shell::Answer`] as `data`. wold takes the
+    /// answer only from the shower's kernel-verified executable, never from a socket it dials.
+    Approval {
+        approval: crate::shell::Approval,
     },
 }
 
@@ -453,6 +506,7 @@ impl Call {
                 Need::Grant("background")
             }
             Self::NotificationAnswer { .. } | Self::SessionAnswer { .. } => Need::Shower,
+            Self::SessionApprove { .. } => Need::HelperGate,
             Self::ClipboardRead {} => Need::Grant("clipboard-read"),
             Self::ClipboardWrite { .. } => Need::Grant("clipboard-write"),
         }
@@ -573,6 +627,7 @@ impl Call {
                 }
                 Ok(())
             }
+            Self::SessionApprove { approval } => helper_approval(approval),
             Self::NotificationPost {
                 title,
                 body,

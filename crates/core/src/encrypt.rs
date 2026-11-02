@@ -10,7 +10,7 @@ pub const MAPPER: &str = "wolosroot";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// On when a TPM2 exists.
+    /// On: TPM2 when the machine has one, else a passphrase is needed.
     Auto,
     Yes,
     No,
@@ -47,14 +47,40 @@ pub enum Refusal {
 
 pub const MIN_PASSPHRASE: usize = 8;
 
+/// Why a secret's file is not something a person typed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadSecret {
+    /// Not UTF-8 text.
+    NotText,
+    /// A control character (a tab, a second line, an escape): nobody types it at the prompt.
+    ControlCharacter,
+}
+
+/// The one reading of a password or passphrase file (audit3 R2B-6): what the person typed, from
+/// the file's bytes. One line end goes (`\n`, or `\r\n` from a Windows editor: what `echo`
+/// leaves), nothing else is trimmed, so the length checked is the length enrolled. Err: not
+/// text, or a control character left inside. `wol encrypt decide|enroll`, `wol install
+/// check|account` and `plan::unlock_problem` all read secrets through this.
+pub fn typed_secret(bytes: &[u8]) -> Result<String, BadSecret> {
+    let s = std::str::from_utf8(bytes).map_err(|_| BadSecret::NotText)?;
+    let s = s
+        .strip_suffix('\n')
+        .map_or(s, |t| t.strip_suffix('\r').unwrap_or(t));
+    if s.chars().any(char::is_control) {
+        return Err(BadSecret::ControlCharacter);
+    }
+    Ok(s.to_owned())
+}
+
 /// `/sys/class/tpm/tpm0/tpm_version_major` says 2.
 pub fn has_tpm2(version_major: Option<&str>) -> bool {
     version_major.is_some_and(|v| v.trim() == "2")
 }
 
-/// The Install app's checkbox default.
-pub fn default_on(tpm2: bool) -> bool {
-    tpm2
+/// The Install app's default: the disk is encrypted whether or not a TPM2 exists (with one the
+/// chip unlocks it, without one the person types a passphrase). Opting out stays possible.
+pub fn default_on(_tpm2: bool) -> bool {
+    true
 }
 
 pub fn decide(mode: Mode, tpm2: bool, passphrase: Option<&str>) -> Result<Unlock, Refusal> {
@@ -231,10 +257,11 @@ pub fn open_argv(part: &str, key: &str) -> Vec<String> {
     ])
 }
 
-/// Kernel command line words for the initramfs (`sd-encrypt`).
+/// Kernel command line words for the initramfs (`sd-encrypt`). `discard` either way: SSD TRIM
+/// reaches the disk through the encrypted volume, whatever unlocks it.
 pub fn cmdline_words(luks_uuid: &str, unlock: Unlock) -> String {
     let opts = if unlock == Unlock::Tpm2 {
-        "tpm2-device=auto"
+        "tpm2-device=auto,discard"
     } else {
         "discard"
     };
@@ -259,10 +286,11 @@ pub fn slot_options(running_cmdline: Option<&str>, slot: &str) -> String {
         .split_whitespace()
         .filter(|w| w.starts_with("root=") || w.starts_with("rd.luks."))
         .collect();
+    // The label repart.d/20-root.conf writes; by-label lookups are case-sensitive.
     let root = if keep.iter().any(|w| w.starts_with("root=")) {
         String::new()
     } else {
-        "root=LABEL=wolos ".into()
+        "root=LABEL=WolOS ".into()
     };
     format!(
         "{root}{} rootflags=subvol=@{slot} ro quiet splash",
@@ -278,11 +306,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn on_by_default_only_with_a_tpm() {
+    fn a_secret_is_what_was_typed() {
+        assert_eq!(
+            typed_secret(b"white rabbit\r\n").as_deref(),
+            Ok("white rabbit")
+        );
+        assert_eq!(
+            typed_secret(b"white rabbit\n").as_deref(),
+            Ok("white rabbit")
+        );
+        assert_eq!(typed_secret(b"white rabbit").as_deref(), Ok("white rabbit"));
+        assert_eq!(typed_secret(b"\n").as_deref(), Ok(""));
+        assert_eq!(
+            typed_secret("café au lait\n".as_bytes()).as_deref(),
+            Ok("café au lait")
+        );
+        assert_eq!(typed_secret(b"\xff"), Err(BadSecret::NotText));
+        assert_eq!(
+            typed_secret(b"two\nlines\n"),
+            Err(BadSecret::ControlCharacter)
+        );
+        assert_eq!(typed_secret(b"tab\there"), Err(BadSecret::ControlCharacter));
+        assert_eq!(typed_secret(b"pass\r"), Err(BadSecret::ControlCharacter));
+        // Eight typed characters stay eight: decide and enroll see the same secret.
+        let p = typed_secret(b"12345678\r\n").unwrap();
+        assert_eq!(
+            decide(Mode::Passphrase, false, Some(&p)),
+            Ok(Unlock::Passphrase)
+        );
+        let p = typed_secret(b"1234567\r\n").unwrap();
+        assert_eq!(
+            decide(Mode::Passphrase, false, Some(&p)),
+            Err(Refusal::TooShort)
+        );
+    }
+
+    #[test]
+    fn on_by_default_with_or_without_a_tpm() {
         assert!(has_tpm2(Some("2\n")) && !has_tpm2(Some("1")) && !has_tpm2(None));
+        assert!(default_on(true) && default_on(false));
         assert_eq!(decide(Mode::Auto, true, None), Ok(Unlock::Tpm2));
-        assert_eq!(decide(Mode::Auto, false, None), Ok(Unlock::Off));
+        assert_eq!(
+            decide(Mode::Auto, false, None),
+            Err(Refusal::NeedPassphrase),
+            "no chip: the person's passphrase, never a plain disk by accident"
+        );
+        assert_eq!(
+            decide(Mode::Auto, false, Some("correct horse")),
+            Ok(Unlock::Passphrase)
+        );
         assert_eq!(decide(Mode::No, true, None), Ok(Unlock::Off));
+        assert_eq!(
+            decide(Mode::No, false, None),
+            Ok(Unlock::Off),
+            "the opt-out"
+        );
         assert_eq!(decide(Mode::Yes, true, None), Ok(Unlock::Tpm2));
         assert_eq!(
             decide(Mode::Passphrase, true, Some("correct horse")),
@@ -413,9 +491,18 @@ mod tests {
     fn initramfs_and_boot_entry_words() {
         assert_eq!(
             cmdline_words("U-1", Unlock::Tpm2),
-            "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=tpm2-device=auto root=/dev/mapper/wolosroot"
+            "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=tpm2-device=auto,discard root=/dev/mapper/wolosroot"
         );
         assert!(cmdline_words("U-1", Unlock::Passphrase).contains("=discard"));
+        // TRIM reaches an SSD under a TPM install too (audit2 B15).
+        for u in [Unlock::Tpm2, Unlock::Passphrase] {
+            assert!(
+                cmdline_words("U-1", u)
+                    .split_whitespace()
+                    .any(|w| w.starts_with("rd.luks.options=") && w.ends_with("discard")),
+                "{u:?}"
+            );
+        }
         let h = hooks("HOOKS=(base systemd block filesystems fsck)");
         assert_eq!(h, "HOOKS=(base systemd block sd-encrypt filesystems fsck)");
         assert_eq!(hooks(&h), h);
@@ -426,7 +513,7 @@ mod tests {
         );
         assert_eq!(
             slot_options(None, "wolos-b"),
-            "root=LABEL=wolos rootflags=subvol=@wolos-b ro quiet splash"
+            "root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash"
         );
     }
 }

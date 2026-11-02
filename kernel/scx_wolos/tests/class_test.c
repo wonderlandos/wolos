@@ -34,6 +34,17 @@ int main(void)
 	CHECK(!wolos_class_preempts(C_DEFAULT, C_DEFAULT));
 	CHECK(!wolos_class_preempts(C_BACKGROUND, C_DEFAULT));
 	CHECK(wolos_class_dsq(C_DEFAULT) == DSQ_PCPU && wolos_class_dsq(C_UTILITY) == DSQ_PCPU);
+	/* A19: uclamp alone does not buy a high class. */
+	CHECK(wolos_class_guarded(C_INTERACTIVE, -1, 0, 0) == C_FOREGROUND);	/* no map: cap */
+	CHECK(wolos_class_guarded(C_FOREGROUND, -1, 0, 0) == C_FOREGROUND);
+	CHECK(wolos_class_guarded(C_INTERACTIVE, -1, 1, 0) == C_DEFAULT);	/* map, no grant */
+	CHECK(wolos_class_guarded(C_INTERACTIVE, C_INTERACTIVE, 1, 0) == C_INTERACTIVE);
+	CHECK(wolos_class_guarded(C_INTERACTIVE, C_FOREGROUND, 1, 0) == C_FOREGROUND);
+	CHECK(wolos_class_guarded(C_FOREGROUND, C_INTERACTIVE, 1, 0) == C_FOREGROUND);
+	CHECK(wolos_class_guarded(C_INTERACTIVE, 99, 1, 0) == C_DEFAULT);	/* bad value */
+	CHECK(wolos_class_guarded(C_INTERACTIVE, C_INTERACTIVE, 1, WOLOS_HOG_NS) == C_DEFAULT);
+	CHECK(wolos_class_guarded(C_FOREGROUND, -1, 0, WOLOS_HOG_NS) == C_DEFAULT);
+	CHECK(wolos_class_guarded(C_UTILITY, C_INTERACTIVE, 1, 0) == C_UTILITY);
 	/* Deadline request: a sleeper asks for its burst, a hog for the cap. */
 	CHECK(wolos_request(0, 0) == WOLOS_REQ_MIN);
 	CHECK(wolos_request(4000000, 0) == 4000000);

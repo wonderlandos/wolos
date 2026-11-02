@@ -1,4 +1,5 @@
-# ADR 0025: Signed boot with this computer's own keys
+# 0025 - Signed boot with this computer's own keys
+Status: accepted
 
 ## Context
 WolOS boots from A/B slots with systemd-boot (ADR 0016). Secure Boot had to be off, and the rollback of ADR 0016 did not work: `default wolos-b.conf` kept a slot that had used all its tries, so a bad update booted forever.
@@ -33,14 +34,14 @@ The installed system needs no vendor key; a live ISO that boots with Secure Boot
 key that signs only the live image's second stage and UKI. Shim (unchanged, Microsoft-signed) is the
 first stage, so a PC with the usual keys starts it, and MokManager enrols the WolOS certificate once.
 
-- **Layout** (`image/sb-layout.sh layout`, `WOLOS_SB_LAYOUT=1 image/build.sh`): `EFI/BOOT/BOOTX64.EFI`
+- **Layout** (`wolos-iso/release/sb-layout.sh layout`, `WOLOS_SB_LAYOUT=1 wolos-iso/build.sh`): `EFI/BOOT/BOOTX64.EFI`
   is the pinned `shimx64.efi`, `EFI/BOOT/mmx64.efi` is MokManager, systemd-boot is
   `EFI/BOOT/grubx64.efi` (the name shim starts), and the kernel, initramfs and both entries are one
   UKI with two profiles, Install WolOS and Try WolOS, `EFI/Linux/wolos.efi`. Unsigned it boots with
   Secure Boot off.
-- **Signing** (`image/sb-layout.sh sign ISO KEY CERT`, iso.yml when `WOLOS_SB_KEY` and `WOLOS_SB_CERT`
+- **Signing** (`wolos-iso/release/sb-layout.sh sign ISO KEY CERT`, wolos-iso `release.yml` when `WOLOS_SB_KEY` and `WOLOS_SB_CERT`
   are set): systemd-boot and the UKI are signed, `/wolos-secureboot.cer` (DER) is on the EFI partition
-  for MokManager's "Enroll key from disk". iso.yml then runs `image/vm/test-secureboot.sh`: OVMF in
+  for MokManager's "Enroll key from disk". `release.yml` then runs `wolos-iso/tests/test-secureboot.sh`: OVMF in
   secure mode with the PC keys and the certificate in MokList must boot to the live system.
 - **First boot with Secure Boot on:** shim cannot verify systemd-boot yet and opens MokManager:
   Enroll key from disk, `wolos-secureboot.cer`, confirm, reboot. Later boots go straight through.
@@ -68,7 +69,7 @@ gh variable set WOLOS_SB_LAYOUT -R wonderlandos/wolos --body 1
 shred -u wolos-sb.key   # the plain copy; wolos-sb.key.enc stays offline
 ```
 
-Box builds (AWS) then build with `WOLOS_SB_LAYOUT=1 image/build.sh`; the tag's iso.yml run signs the
+Box builds (AWS) then build with `WOLOS_SB_LAYOUT=1 wolos-iso/build.sh`; the tag's `release.yml` run signs the
 image, boots it with Secure Boot on, and uploads the signed image with its new hash.
 
 

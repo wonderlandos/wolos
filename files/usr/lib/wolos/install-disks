@@ -1,18 +1,28 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS installer: print the disks it may erase, one per line (/dev/...).
-# Never the disk we booted from (the live medium under /run/archiso/bootmnt), a CD, a loop or zram
-# device, or a read-only disk.
+# Never the disk we booted from (the live medium: whatever holds /run/archiso/bootmnt, carries the
+# ISO's label from the kernel command line, or has anything of the live system mounted), a CD, a
+# loop or zram device, or a read-only disk.
+# Env (tests): WOLOS_CMDLINE.
 set -u
-boot=$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null)
 media=
-if [ -n "$boot" ]; then
-  media=$(lsblk -no PKNAME -p "$boot" 2>/dev/null | head -1)
-  [ -n "$media" ] || media=$boot
-fi
-lsblk -dnpbo NAME,SIZE,TYPE,RO | while read -r name size type ro; do
+add_media() { # device: the disk that holds it
+  [ -n "$1" ] || return 0
+  pk=$(lsblk -no PKNAME -p "$1" 2>/dev/null | awk 'NF' | head -1)
+  media="$media ${pk:-$1}"
+}
+add_media "$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null)"
+for w in $(cat "${WOLOS_CMDLINE:-/proc/cmdline}" 2>/dev/null); do
+  case $w in archisolabel=*) add_media "$(blkid -L "${w#*=}" 2>/dev/null)" ;; esac
+done
+lsblk -dnpbo NAME,SIZE,TYPE,RO | while read -r name _ type ro; do
   [ "$type" = disk ] && [ "$ro" = 0 ] || continue
   case $name in /dev/zram* | /dev/loop* | /dev/sr*) continue ;; esac
-  [ "$name" = "$media" ] && continue
+  case " $media " in *" $name "*) continue ;; esac
+  # Something of the live system lives on it (a persistent live USB, the ISO on a data disk).
+  if lsblk -no MOUNTPOINTS "$name" 2>/dev/null | awk '$0 == "/" || $0 ~ /^\/run\/archiso/ {f = 1} END {exit !f}'; then
+    continue
+  fi
   echo "$name"
 done

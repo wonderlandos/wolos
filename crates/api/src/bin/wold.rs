@@ -9,6 +9,11 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| shared::jobs::JOBS_DIR.into());
     os::block_signals(); // before any thread: signals are taken synchronously below
+    // R2C-8: copies of package installs a previous wold left behind (crash, stop mid-sheet).
+    let swept = api::packages::sweep_staging(Path::new(api::packages::STAGING));
+    if swept > 0 {
+        eprintln!("wold: removed {swept} stale staged package copies");
+    }
     if !reaper::acquire() {
         eprintln!("wold: could not become reaper");
     }
@@ -56,12 +61,21 @@ fn main() {
             server::bind(Path::new(shared::jobs::SOCKET), 0o666).expect("bind control socket");
         eprintln!("wold: control listening on {}", shared::jobs::SOCKET);
         std::thread::spawn(move || {
+            // Concurrent connections (each a thread; holds last as long as the app): 64 per uid,
+            // 512 in total, so one account cannot exhaust wold's threads (audit A9/A10).
+            let quota = shared::bounded::Quota::new(64, 512);
             for conn in listener.incoming().flatten() {
-                let peer = shared::sys::peer(&conn);
+                // Identity now, at accept, not after the request was read (audit A2).
+                let peer = api::peer::PeerIdentity::capture(&conn);
+                let Some(slot) = peer.as_ref().and_then(|p| quota.admit(p.uid)) else {
+                    eprintln!("wold: refused a connection over its cap");
+                    continue;
+                };
                 let (jobs, bus, grants, state) =
                     (jobs.clone(), bus.clone(), grants.clone(), state.clone());
                 std::thread::spawn(move || {
-                    server::serve(conn, peer, &*jobs, &bus, &*grants, &state)
+                    server::serve(conn, peer, &*jobs, &bus, &*grants, &state);
+                    drop(slot);
                 });
             }
         });
@@ -110,18 +124,31 @@ fn spawn_memsaver(saver: Arc<memsaver::Service>) {
         std::thread::spawn(move || saver.run_ticker());
     }
     std::thread::spawn(move || {
+        // Only the realtime agent connects; a handful of connections at most.
+        let quota = shared::bounded::Quota::new(4, 4);
         for conn in listener.incoming().flatten() {
-            let mut exe = [0u8; 1024];
-            let peer = shared::sys::peer(&conn);
-            let ok = peer
-                .and_then(|p| shared::sys::executable(p.pid, &mut exe))
-                .is_some_and(|n| qos::peer_allowed(&exe[..n], &allowed));
-            let (true, Some(peer)) = (ok, peer) else {
+            let id = api::peer::PeerIdentity::capture(&conn);
+            let ok = id.as_ref().is_some_and(|p| {
+                p.still_same()
+                    && p.exe()
+                        .is_some_and(|e| qos::peer_allowed(e.as_bytes(), &allowed))
+            });
+            let (true, Some(id)) = (ok, id) else {
                 eprintln!("wold: memsaver refused peer");
                 continue;
             };
+            let Some(slot) = quota.admit(id.uid) else {
+                eprintln!("wold: memsaver refused a connection over its cap");
+                continue;
+            };
             let saver = saver.clone();
-            std::thread::spawn(move || saver.serve(conn, peer));
+            std::thread::spawn(move || {
+                // ADR 0033: greet first, as on the control socket.
+                if shared::jobs::greet(&conn).is_ok() {
+                    saver.serve(conn, id.peer());
+                }
+                drop(slot);
+            });
         }
     });
 }
@@ -139,18 +166,30 @@ fn spawn_qos(saver: Arc<memsaver::Service>) {
         shared::qos::SOCKET
     );
     std::thread::spawn(move || {
+        // Only the realtime agent connects; a handful of connections at most.
+        let quota = shared::bounded::Quota::new(4, 4);
         for conn in listener.incoming().flatten() {
-            let mut exe = [0u8; 1024];
-            let ok = shared::sys::peer(&conn)
-                .and_then(|p| shared::sys::executable(p.pid, &mut exe))
-                .is_some_and(|n| qos::peer_allowed(&exe[..n], &allowed));
-            if !ok {
+            let id = api::peer::PeerIdentity::capture(&conn);
+            let slot = id
+                .as_ref()
+                .filter(|p| {
+                    p.still_same()
+                        && p.exe()
+                            .is_some_and(|e| qos::peer_allowed(e.as_bytes(), &allowed))
+                })
+                .and_then(|p| quota.admit(p.uid));
+            let Some(slot) = slot else {
                 eprintln!("wold: qos refused peer");
                 continue;
-            }
+            };
             let tracker = tracker.clone();
             let boost = Boost(saver.clone());
-            std::thread::spawn(move || qos::serve(conn, &tracker, &boost));
+            std::thread::spawn(move || {
+                if shared::jobs::greet(&conn).is_ok() {
+                    qos::serve(conn, &tracker, &boost);
+                }
+                drop(slot);
+            });
         }
     });
 }

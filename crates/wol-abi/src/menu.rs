@@ -23,7 +23,9 @@ type Handler<T> = Option<(
     usize,
 )>;
 
+#[repr(C)]
 pub struct wol_menu {
+    tag: crate::handle::Tag<wol_menu>,
     id: u32,
     title: String,
     entries: Mutex<Vec<MenuEntry>>,
@@ -33,7 +35,9 @@ pub struct wol_menu {
     placed: AtomicBool,
 }
 
+#[repr(C)]
 pub struct wol_toolbar {
+    tag: crate::handle::Tag<wol_toolbar>,
     id: u32,
     tools: Mutex<Vec<Tool>>,
     handler: Handler<wol_toolbar>,
@@ -195,6 +199,7 @@ pub unsafe extern "C" fn wol_menu_create(
         let title = label_of(title, len, "The menu title")?;
         let on_choose = on_choose.ok_or_else(|| Error::invalid("A menu needs a callback."))?;
         let m = wol_menu {
+            tag: crate::handle::Tag::new(),
             id: ctx.next_id(),
             title,
             entries: Mutex::default(),
@@ -353,6 +358,7 @@ pub unsafe extern "C" fn wol_toolbar_create(
         let ctx = unsafe { borrow(context) }?;
         let on_choose = on_choose.ok_or_else(|| Error::invalid("A toolbar needs a callback."))?;
         let t = wol_toolbar {
+            tag: crate::handle::Tag::new(),
             id: ctx.next_id(),
             tools: Mutex::default(),
             handler: Some((on_choose, user_data as usize)),
@@ -682,3 +688,7 @@ mod tests {
         }
     }
 }
+
+crate::handle::tagged!(wol_menu, 0x54b46e1bd40646f1);
+
+crate::handle::tagged!(wol_toolbar, 0x13de167beeb37cbd);

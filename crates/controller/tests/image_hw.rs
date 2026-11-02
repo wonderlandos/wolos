@@ -2,8 +2,7 @@
 //! Hardware catalogue vs the Arch image: drivers the old boot scripts chose are still in the
 //! catalogue (udev autoloads them by modalias), and every catalogue package ships offline
 //! (`wolos-iso/profile/packages.x86_64`, `wolos-iso/profile/packages.desktop`) or is listed as not shipped.
-use std::{fs, path::PathBuf};
-use wol_core::hardware::{Bus, catalog::CATALOG, lookup};
+use wol_core::hardware::{Bus, lookup};
 #[test]
 fn catalogue_keeps_the_drivers_the_boot_scripts_loaded() {
     for (vendor, device, class, module) in [

@@ -12,18 +12,21 @@ pointer motion, presses, window updates and draw() sample one state (realtime ti
 geometry from titlebar too, so press and hover agree) and redraw from the event loop. All glyphs
 follow that one state. Glyph textures are kept per monitor scale.
 
+Inactive windows look inactive (macOS): bar_color_inactive and col.text_inactive colour the bar
+and the title of a window without focus (0 = unset, same as inactive_button_color); focus is
+tracked whatever the colours say, so a change redraws the lights and the title.
+
 --- a/hyprbars/barDeco.cpp
 +++ b/hyprbars/barDeco.cpp
-@@ -1,5 +1,8 @@
+@@ -1,4 +1,7 @@
  #include "barDeco.hpp"
- 
++
 +#include "wol_realtime.h"
 +#include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
-+
+ 
  #include <hyprland/src/Compositor.hpp>
  #include <hyprland/src/desktop/state/FocusState.hpp>
- #include <hyprland/src/desktop/state/WindowState.hpp>
-@@ -123,6 +126,14 @@ bool CHyprBar::inputIsValid() {
+@@ -123,6 +126,14 @@
  }
  
  void CHyprBar::onMouseButton(Event::SCallbackInfo& info, IPointer::SButtonEvent e) {
@@ -38,7 +41,7 @@ follow that one state. Glyph textures are kept per monitor scale.
      if (!inputIsValid())
          return;
  
-@@ -150,9 +161,8 @@ void CHyprBar::onTouchUp(Event::SCallbackInfo& info, ITouch::SUpEvent e) {
+@@ -150,9 +161,8 @@
  }
  
  void CHyprBar::onMouseMove(Vector2D coords) {
@@ -50,16 +53,17 @@ follow that one state. Glyph textures are kept per monitor scale.
  
      if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
          return;
-@@ -233,12 +243,16 @@ void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch:
+@@ -233,12 +243,16 @@
      info.cancelled   = true;
      m_bCancelledDown = true;
  
 -    if (doButtonPress(BARPADDING, BARBUTTONPADDING, HEIGHT, COORDS, BUTTONSRIGHT))
+-        return;
 +    if (const int B = buttonAt(COORDS); B >= 0) {
 +        m_pressedButton = B;
 +        m_bDragPending  = false;
 +        sampleHover();
-         return;
++        return;
 +    }
  
      if (!ON_DOUBLE_CLICK.empty() &&
@@ -69,15 +73,16 @@ follow that one state. Glyph textures are kept per monitor scale.
          m_bDragPending = false;
      } else {
          m_lastMouseDown = Time::steadyNow();
-@@ -247,9 +261,21 @@ void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch:
+@@ -247,8 +261,20 @@
  }
  
  void CHyprBar::handleUpEvent(Event::SCallbackInfo& info) {
 -    if (m_pWindow.lock() != Desktop::focusState()->window())
+-        return;
 +    const bool OWNSPRESS = m_bDragPending || m_bDraggingThis || m_bCancelledDown || m_pressedButton >= 0;
 +    if (!OWNSPRESS && m_pWindow.lock() != Desktop::focusState()->window())
-         return;
- 
++        return;
++
 +    if (m_pressedButton >= 0) {
 +        // macOS: a button acts on release over the same button; sliding off cancels.
 +        const int PRESSED = m_pressedButton;
@@ -88,42 +93,44 @@ follow that one state. Glyph textures are kept per monitor scale.
 +            runAction(g_pGlobalState->buttons[PRESSED].cmd);
 +        sampleHover();
 +    }
-+
+ 
      if (m_bCancelledDown)
          info.cancelled = true;
- 
-@@ -276,23 +302,84 @@ void CHyprBar::handleMovement() {
+@@ -276,27 +302,89 @@
      return;
  }
  
 -bool CHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButtonPadding, Config::INTEGER barHeight, Vector2D COORDS, const bool BUTTONSRIGHT) {
 -    //check if on a button
 -    float offset = barPadding;
-+size_t CHyprBar::buttonCount() {
-+    return std::min(m_maxButtons, g_pGlobalState->buttons.size());
-+}
- 
+-
 -    for (auto& b : g_pGlobalState->buttons) {
 -        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, barHeight};
 -        Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - barButtonPadding - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
-+size_t CHyprBar::shownButtons() {
-+    const auto PADDING = g_pGlobalState->config.barPadding->value();
-+    const auto GAP     = g_pGlobalState->config.barButtonPadding->value();
-+    return std::min(buttonCount(), getVisibleButtonCount(GAP, PADDING, assignedBoxGlobal().size(), 1.F));
-+}
- 
+-
 -        if (VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + barButtonPadding, currentPos.y + b.size)) {
 -            // hit on close
 -            g_pKeybindManager->m_dispatchers["exec"](b.cmd);
 -            return true;
 -        }
-+int CHyprBar::buttonAt(Vector2D COORDS) {
-+    return wol_lights_at((int)shownButtons(), (int)std::floor(COORDS.x), (int)std::floor(COORDS.y));
-+}
- 
+-
 -        offset += barButtonPadding + b.size;
 -    }
 -    return false;
++size_t CHyprBar::buttonCount() {
++    return std::min(m_maxButtons, g_pGlobalState->buttons.size());
++}
++
++size_t CHyprBar::shownButtons() {
++    const auto PADDING = g_pGlobalState->config.barPadding->value();
++    const auto GAP     = g_pGlobalState->config.barButtonPadding->value();
++    return std::min(buttonCount(), getVisibleButtonCount(GAP, PADDING, assignedBoxGlobal().size(), 1.F));
++}
++
++int CHyprBar::buttonAt(Vector2D COORDS) {
++    return wol_lights_at((int)shownButtons(), (int)std::floor(COORDS.x), (int)std::floor(COORDS.y));
++}
++
 +bool CHyprBar::pointerReachesBar() {
 +    if (m_hidden || !validMapped(m_pWindow))
 +        return false;
@@ -191,7 +198,13 @@ follow that one state. Glyph textures are kept per monitor scale.
  }
  
  void CHyprBar::renderBarTitle(const Vector2D& bufferSize, const float scale) {
-@@ -347,7 +434,7 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a)
+-    const auto COLORVAL         = g_pGlobalState->config.textColor->value();
++    const auto INACTIVEVAL      = g_pGlobalState->config.textColorInactive->value();
++    const auto COLORVAL         = !m_bWindowHasFocus && INACTIVEVAL > 0 ? INACTIVEVAL : g_pGlobalState->config.textColor->value();
+     const auto SIZE             = g_pGlobalState->config.barTextSize->value();
+     const auto WEIGHT           = g_pGlobalState->config.barTextWeight->value();
+     const auto FONT             = g_pGlobalState->config.barTextFont->value();
+@@ -347,7 +435,7 @@
      const auto INACTIVECOLOR    = g_pGlobalState->config.inactiveButtonColor->value();
  
      const bool BUTTONSRIGHT    = ALIGNBUTTONS != "left";
@@ -200,7 +213,7 @@ follow that one state. Glyph textures are kept per monitor scale.
      const bool INVALIDATEICONS = m_bButtonsDirty || m_bWindowSizeChanged;
  
      int        offset = BARPADDING * scale;
-@@ -360,8 +447,8 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a)
+@@ -360,8 +448,8 @@
  
          if (INACTIVECOLOR > 0) {
              color = m_bWindowHasFocus ? color : configColor(INACTIVECOLOR);
@@ -211,7 +224,7 @@ follow that one state. Glyph textures are kept per monitor scale.
          }
  
          color.a *= a;
-@@ -377,54 +464,41 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a)
+@@ -377,54 +465,41 @@
  }
  
  void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float a) {
@@ -227,19 +240,19 @@ follow that one state. Glyph textures are kept per monitor scale.
      const bool BUTTONSRIGHT = ALIGNBUTTONS != "left";
 -    const auto visibleCount = getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale);
 -    const auto COORDS       = cursorRelativeToBar();
-+    const auto visibleCount = std::min(buttonCount(), getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale));
-+    const int  SCALEKEY     = (int)std::round(scale * 100);
- 
+-
 -    int        offset        = BARPADDING * scale;
 -    float      noScaleOffset = BARPADDING;
++    const auto visibleCount = std::min(buttonCount(), getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale));
++    const int  SCALEKEY     = (int)std::round(scale * 100);
++
 +    int        offset = BARPADDING * scale;
  
      for (size_t i = 0; i < visibleCount; ++i) {
          auto&      button           = g_pGlobalState->buttons[i];
          const auto scaledButtonSize = button.size * scale;
          const auto scaledButtonsPad = BARBUTTONPADDING * scale;
-+        auto&      tex              = button.iconTex[SCALEKEY];
- 
+-
 -        // check if hovering here
 -        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
 -        Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - button.size - noScaleOffset : noScaleOffset), (BARBUF.y - button.size) / 2.0}.floor();
@@ -247,6 +260,8 @@ follow that one state. Glyph textures are kept per monitor scale.
 -        noScaleOffset += BARBUTTONPADDING + button.size;
 -
 -        if ((!button.iconTex || button.iconTex->m_texID == 0) && !button.icon.empty()) {
++        auto&      tex              = button.iconTex[SCALEKEY];
++
 +        if ((!tex || tex->m_texID == 0) && !button.icon.empty()) {
              // render icon
              auto fgcol = button.userfg ? button.fgcol : (button.bgcol.r + button.bgcol.g + button.bgcol.b < 1) ? CHyprColor(0xFFFFFFFF) : CHyprColor(0xFF000000);
@@ -261,15 +276,16 @@ follow that one state. Glyph textures are kept per monitor scale.
 -        const auto iconX = barBox->x + (BUTTONSRIGHT ? barBox->width - offset - scaledButtonSize / 2.0 : offset + scaledButtonSize / 2.0) - button.iconTex->m_size.x / 2.0;
 -        const auto iconY = barBox->y + barBox->height / 2.0 - button.iconTex->m_size.y / 2.0;
 -        CBox       pos   = {iconX, iconY, button.iconTex->m_size.x, button.iconTex->m_size.y};
+-
+-        if (!ICONONHOVER || (ICONONHOVER && m_iButtonHoverState > 0))
+-            g_pHyprOpenGL->renderTexture(button.iconTex, pos, {.a = a});
 +        if (tex && tex->m_texID != 0) {
 +            const auto iconX = barBox->x + (BUTTONSRIGHT ? barBox->width - offset - scaledButtonSize / 2.0 : offset + scaledButtonSize / 2.0) - tex->m_size.x / 2.0;
 +            const auto iconY = barBox->y + barBox->height / 2.0 - tex->m_size.y / 2.0;
 +            CBox       pos   = {iconX, iconY, tex->m_size.x, tex->m_size.y};
 +            g_pHyprOpenGL->renderTexture(tex, pos, {.a = a});
 +        }
- 
--        if (!ICONONHOVER || (ICONONHOVER && m_iButtonHoverState > 0))
--            g_pHyprOpenGL->renderTexture(button.iconTex, pos, {.a = a});
++
          offset += scaledButtonsPad + scaledButtonSize;
 -
 -        bool currentBit = (m_iButtonHoverState & (1 << i)) != 0;
@@ -281,18 +297,48 @@ follow that one state. Glyph textures are kept per monitor scale.
      }
  }
  
-@@ -444,6 +518,10 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
+@@ -443,6 +518,10 @@
+ 
      if (!PWINDOW->m_ruleApplicator->decorate().valueOrDefault())
          return;
- 
++
 +    // Any frame that shows the bar sees the truth: covers a window that moved or came back under a
 +    // still pointer, a workspace switch, a monitor change.
 +    sampleHover();
-+
+ 
      auto data = CBarPassElement::SBarData{this, a};
      g_pHyprRenderer->m_renderPass.add(makeUnique<CBarPassElement>(data));
- }
-@@ -597,6 +675,7 @@ eDecorationType CHyprBar::getDecorationType() {
+@@ -458,17 +537,18 @@
+     const auto  ALIGNBUTTONS      = g_pGlobalState->config.barButtonsAlignment->value();
+     const auto  ENABLETITLE       = g_pGlobalState->config.barTitleEnabled->value();
+     const auto  ENABLEBLUR        = g_pGlobalState->config.barBlur->value();
+-    const auto  INACTIVECOLOR     = g_pGlobalState->config.inactiveButtonColor->value();
+-
+-    if (INACTIVECOLOR > 0) {
+-        bool currentWindowFocus = PWINDOW == Desktop::focusState()->window();
+-        if (currentWindowFocus != m_bWindowHasFocus) {
+-            m_bWindowHasFocus = currentWindowFocus;
+-            m_bButtonsDirty   = true;
+-        }
+-    }
+-
+-    const CHyprColor DEST_COLOR = m_bForcedBarColor.value_or(configColor(BARCOLOR));
++    const auto  BARCOLORINACTIVE  = g_pGlobalState->config.barColorInactive->value();
++
++    // Focus is tracked whatever the colours say: a change redraws the lights (inactive_button_color),
++    // the title (col.text_inactive) and moves the bar colour (bar_color_inactive).
++    const bool  currentWindowFocus = PWINDOW == Desktop::focusState()->window();
++    if (currentWindowFocus != m_bWindowHasFocus) {
++        m_bWindowHasFocus    = currentWindowFocus;
++        m_bButtonsDirty      = true;
++        m_bTitleColorChanged = true;
++    }
++
++    const CHyprColor DEST_COLOR = m_bForcedBarColor.value_or(configColor(!m_bWindowHasFocus && BARCOLORINACTIVE > 0 ? BARCOLORINACTIVE : BARCOLOR));
+     if (DEST_COLOR != m_cRealBarColor->goal())
+         *m_cRealBarColor = DEST_COLOR;
+ 
+@@ -597,6 +677,7 @@
  }
  
  void CHyprBar::updateWindow(PHLWINDOW pWindow) {
@@ -300,7 +346,7 @@ follow that one state. Glyph textures are kept per monitor scale.
      damageEntire();
  }
  
-@@ -650,9 +729,16 @@ void CHyprBar::updateRules() {
+@@ -650,9 +731,16 @@
      m_bForcedBarColor   = std::nullopt;
      m_bForcedTitleColor = std::nullopt;
      m_hidden            = false;
@@ -317,7 +363,7 @@ follow that one state. Glyph textures are kept per monitor scale.
      if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pGlobalState->barColorRuleIdx))
          m_bForcedBarColor = CHyprColor(Config::ParserUtils::parseColor(PWINDOW->m_ruleApplicator->m_otherProps.props.at(g_pGlobalState->barColorRuleIdx)->effect).value_or(0));
      if (PWINDOW->m_ruleApplicator->m_otherProps.props.contains(g_pGlobalState->titleColorRuleIdx))
-@@ -663,29 +749,3 @@ void CHyprBar::updateRules() {
+@@ -663,29 +751,3 @@
      if (prevForcedTitleColor != m_bForcedTitleColor)
          m_bTitleColorChanged = true;
  }
@@ -349,7 +395,7 @@ follow that one state. Glyph textures are kept per monitor scale.
 -}
 --- a/hyprbars/barDeco.hpp
 +++ b/hyprbars/barDeco.hpp
-@@ -65,7 +65,6 @@ class CHyprBar : public IHyprWindowDecoration {
+@@ -65,7 +65,6 @@
      bool                       m_bWindowSizeChanged = false;
      bool                       m_hidden             = false;
      bool                       m_bTitleColorChanged = false;
@@ -357,7 +403,7 @@ follow that one state. Glyph textures are kept per monitor scale.
      bool                       m_bLastEnabledState  = false;
      bool                       m_bWindowHasFocus    = false;
      std::optional<CHyprColor>  m_bForcedBarColor;
-@@ -81,7 +80,6 @@ class CHyprBar : public IHyprWindowDecoration {
+@@ -81,7 +80,6 @@
      void                       renderBarTitle(const Vector2D& bufferSize, const float scale);
      void renderBarButtons(CBox* barBox, const float scale, const float a);
      void renderBarButtonsText(CBox* barBox, const float scale, const float a);
@@ -365,7 +411,7 @@ follow that one state. Glyph textures are kept per monitor scale.
  
      bool inputIsValid();
      void onMouseButton(Event::SCallbackInfo& info, IPointer::SButtonEvent e);
-@@ -93,7 +91,16 @@ class CHyprBar : public IHyprWindowDecoration {
+@@ -93,7 +91,16 @@
      void handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
      void handleUpEvent(Event::SCallbackInfo& info);
      void handleMovement();
@@ -383,7 +429,7 @@ follow that one state. Glyph textures are kept per monitor scale.
  
      CBox assignedBoxGlobal();
  
-@@ -110,10 +117,13 @@ class CHyprBar : public IHyprWindowDecoration {
+@@ -110,10 +117,13 @@
      bool                m_bTouchEv       = false;
      bool                m_bDragPending   = false;
      bool                m_bCancelledDown = false;
@@ -408,7 +454,7 @@ follow that one state. Glyph textures are kept per monitor scale.
  #include <hyprland/src/plugins/PluginAPI.hpp>
  #include <hyprland/src/render/Texture.hpp>
  #include <hyprland/src/config/values/types/BoolValue.hpp>
-@@ -17,7 +18,8 @@ struct SHyprButton {
+@@ -17,7 +18,8 @@
      CHyprColor           bgcol   = CHyprColor(0, 0, 0, 0);
      float                size    = 10;
      std::string          icon    = "";
@@ -418,17 +464,21 @@ follow that one state. Glyph textures are kept per monitor scale.
  };
  
  class CHyprBar;
-@@ -28,6 +30,7 @@ struct SGlobalState {
+@@ -28,9 +30,10 @@
      uint32_t                  nobarRuleIdx      = 0;
      uint32_t                  barColorRuleIdx   = 0;
      uint32_t                  titleColorRuleIdx = 0;
 +    uint32_t                  buttonsRuleIdx    = 0;
  
      struct {
-         SP<Config::Values::CColorValue>      barColor, textColor, inactiveButtonColor;
+-        SP<Config::Values::CColorValue>      barColor, textColor, inactiveButtonColor;
++        SP<Config::Values::CColorValue>      barColor, textColor, inactiveButtonColor, barColorInactive, textColorInactive;
+         SP<Config::Values::CIntValue>        barHeight;
+         SP<Config::Values::CIntValue>        barTextSize;
+         SP<Config::Values::CFontWeightValue> barTextWeight;
 --- a/hyprbars/main.cpp
 +++ b/hyprbars/main.cpp
-@@ -207,6 +207,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+@@ -207,6 +207,7 @@
      g_pGlobalState->nobarRuleIdx      = Desktop::Rule::windowEffects()->registerEffect("hyprbars:no_bar");
      g_pGlobalState->barColorRuleIdx   = Desktop::Rule::windowEffects()->registerEffect("hyprbars:bar_color");
      g_pGlobalState->titleColorRuleIdx = Desktop::Rule::windowEffects()->registerEffect("hyprbars:title_color");
@@ -436,9 +486,30 @@ follow that one state. Glyph textures are kept per monitor scale.
  
      static auto P  = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
      static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
-@@ -281,4 +282,5 @@ APICALL EXPORT void PLUGIN_EXIT() {
+@@ -215,6 +216,10 @@
+     g_pGlobalState->config.textColor           = makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text", "Change the text color", 0xffffffff);
+     g_pGlobalState->config.inactiveButtonColor = makeShared<Config::Values::CColorValue>(
+         "plugin:hyprbars:inactive_button_color", "Change the inactive button's color. 0x00000000 means unset", 0x00000000);
++    g_pGlobalState->config.barColorInactive =
++        makeShared<Config::Values::CColorValue>("plugin:hyprbars:bar_color_inactive", "Bar color of a window without focus. 0x00000000 means unset (bar_color)", 0x00000000);
++    g_pGlobalState->config.textColorInactive =
++        makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text_inactive", "Title color of a window without focus. 0x00000000 means unset (col.text)", 0x00000000);
+     g_pGlobalState->config.barHeight       = makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_height", "Change the bar's height", 15);
+     g_pGlobalState->config.barTextSize     = makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_text_size", "Change the bar's text size", 10);
+     g_pGlobalState->config.barTextWeight   = makeShared<Config::Values::CFontWeightValue>("plugin:hyprbars:bar_text_weight", "Bar's title text weight (e.g. \"bold\" or an integer 100-1000)", 400);
+@@ -236,6 +241,8 @@
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barColor);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.textColor);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.inactiveButtonColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barColorInactive);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.textColorInactive);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barHeight);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTextSize);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTextWeight);
+@@ -281,4 +288,5 @@
      Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->barColorRuleIdx);
      Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->titleColorRuleIdx);
      Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->nobarRuleIdx);
+-}
 +    Desktop::Rule::windowEffects()->unregisterEffect(g_pGlobalState->buttonsRuleIdx);
- }
++}

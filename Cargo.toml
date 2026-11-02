@@ -4,6 +4,7 @@ members = [
     "crates/shared",
     "crates/core",
     "crates/api",
+    "crates/audio",
     "crates/realtime",
     "crates/proxy",
     "crates/controller",
@@ -17,7 +18,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.10.0"
+version = "0.12.0"
 edition = "2024"
 license = "GPL-2.0-or-later"
 authors = ["Julia Klee"]

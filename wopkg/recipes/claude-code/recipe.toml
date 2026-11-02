@@ -1,0 +1,46 @@
+# Claude Code: Anthropic's native (standalone) build for Linux x64, stable channel (ADR 0032,
+# ai-claude module). Pinned to one release: binary, release manifest and the manifest's OpenPGP
+# signature are all fetched by sha256; the build step imports Anthropic's release key (fingerprint
+# 31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE, pinned here as a source too), verifies the
+# manifest signature, then checks the binary's checksum against the manifest's linux-x64 entry.
+# Claude Code updates itself afterwards (vendor-signed, user-side): Software Update labels it
+# "updates on its own". Proprietary: Anthropic's Commercial Terms of Service.
+name = "claude-code"
+version = "2.1.309"
+summary = "Claude Code, Anthropic's agentic coding tool for the terminal"
+license = "LicenseRef-Anthropic-Commercial-Terms"
+homepage = "https://docs.anthropic.com/en/docs/claude-code"
+needs = ["gpg", "sha256sum", "grep"]
+
+[[source]]
+url = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.309/linux-x64/claude"
+sha256 = "4d704a8aecbe038affa3000f498ae17c1b4f753add8facb8764120affc99b658"
+file = "claude"
+
+[[source]]
+url = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.309/manifest.json"
+sha256 = "8504633c7837099cefd2a995a433502717c360c155287b1ba92e6ec4d230093b"
+
+[[source]]
+url = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.309/manifest.json.sig"
+sha256 = "5f7b2cf3045b428d27f60dac2b3f46796da31cc37629afd09081200c2ebd627e"
+
+# Anthropic's release signing key (RSA 4096, created 2026-03-30) as served by keys.openpgp.org.
+[[source]]
+url = "https://keys.openpgp.org/vks/v1/by-fingerprint/31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+sha256 = "0942e9136bcb0c6dfec6ae1095ecc79dee709c4de547453cf87890254730a490"
+file = "anthropic-release-key.asc"
+
+[build]
+run = [
+  "mkdir -m 700 gnupg",
+  "gpg --batch --homedir ./gnupg --import anthropic-release-key.asc",
+  "gpg --batch --homedir ./gnupg --list-keys 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+  "gpg --batch --homedir ./gnupg --trust-model always --verify manifest.json.sig manifest.json",
+  "tr -d ' \\n' < manifest.json | grep -q '\"linux-x64\":{\"binary\":\"claude\",\"checksum\":\"4d704a8aecbe038affa3000f498ae17c1b4f753add8facb8764120affc99b658\"'",
+  "echo '4d704a8aecbe038affa3000f498ae17c1b4f753add8facb8764120affc99b658  claude' | sha256sum -c -",
+  "chmod 755 claude",
+]
+
+[install]
+bin = ["claude"]

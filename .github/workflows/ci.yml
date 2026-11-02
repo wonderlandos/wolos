@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The OS code: cargo test of the workspace and shellcheck, on every pull request and push. The
+# The OS code: cargo test of the workspace, shellcheck and the standards checks (docs/STANDARDS.md:
+# clippy, fmt, audit, script headers, ADR parts), on every pull request and push. The
 # contract tests that read packaging or image files (crates/controller/tests/support/siblings.rs)
 # find wolos-pkgbuilds and wolos-iso checked out next to this repo.
 # On a push to main, wolos-pkgbuilds is told (repository_dispatch `wolos-main`) to pin the recipes
@@ -18,30 +19,140 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    container: archlinux:latest
+    container: archlinux:latest@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 # bump: docker buildx imagetools inspect archlinux:latest
     steps:
       - name: Toolchain and the libraries the workspace links
         run: |
           pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell \
             pam clamav nautilus crystal shellcheck python
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
           path: wolos
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: wonderlandos/wolos-pkgbuilds
           path: wolos-pkgbuilds
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: wonderlandos/wolos-iso
           path: wolos-iso
       - name: cargo test
+        # The whole workspace, every target (includes crates/shared/tests/unsafe_ratchet.rs and the
+        # identity/exhaustion regression tests).
         working-directory: wolos
         run: cargo test --workspace --locked
+      - name: Fuzz regressions (fuzz/regressions/<target>/ replayed on stable, no fuzzing)
+        working-directory: wolos
+        run: bash tools/ci/fuzz-replay.sh
       - name: shellcheck
         working-directory: wolos
         run: git ls-files -z '*.sh' | xargs -0 shellcheck -S error
+
+  # docs/STANDARDS.md: the rules a machine can check. Separate from `test` so a style failure and a
+  # test failure are told apart at a glance; same image so clippy links what the workspace links.
+  lint:
+    runs-on: ubuntu-latest
+    container: archlinux:latest@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 # bump: docker buildx imagetools inspect archlinux:latest
+    steps:
+      - name: Toolchain, the libraries the workspace links, cargo-audit, shellcheck
+        run: |
+          pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell             pam clamav nautilus crystal shellcheck cargo-audit cargo-deny
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: cargo fmt
+        run: cargo fmt --all --check
+      - name: "cargo clippy (STANDARDS.md §1: -D warnings; the allow list lives here and in the document)"
+        run: >
+          cargo clippy --workspace --all-targets --locked --
+          -D warnings
+          -A clippy::too_many_arguments
+          -A clippy::type_complexity
+      - name: cargo audit (RustSec advisories against Cargo.lock)
+        # Ignored advisories go here as `--ignore RUSTSEC-YYYY-NNNN` with a comment: issue and the date to look again.
+        run: cargo audit --deny warnings
+      - name: cargo deny (advisories, licenses, bans, sources; deny.toml)
+        run: cargo deny --locked check
+      - name: "Shipped scripts: sh -n, SPDX and purpose header, shellcheck"
+        run: |
+          bash tools/check-headers.sh
+          find files/usr/lib/wolos desktop/overlay/usr/bin -type f -exec grep -lE '^#!/(usr/)?bin/(env )?(sh|bash)' {} +             | xargs -r shellcheck -S error
+      - name: "Decision records: Status, Context, Decision, Consequences"
+        run: bash tools/check-adrs.sh
+
+  # Supply chain (audit A3/A4/B11): every `uses:` pinned to a commit SHA, every image to a digest,
+  # in this repo and the two it checks out; actionlint on all their workflows.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: wolos
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: wonderlandos/wolos-pkgbuilds
+          path: wolos-pkgbuilds
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: wonderlandos/wolos-iso
+          path: wolos-iso
+      - name: Pin lint self-test (fixtures, no network)
+        run: python3 wolos/tools/ci/pin-lint.py --selftest
+      - name: Pin lint (uses @sha, images @sha256)
+        run: python3 wolos/tools/ci/pin-lint.py wolos wolos-pkgbuilds wolos-iso
+      - name: Pin lint online (each pinned SHA is an upstream tag or branch head; network)
+        run: python3 wolos/tools/ci/pin-lint.py --online wolos wolos-pkgbuilds wolos-iso
+      - name: actionlint (pinned release, checked by sha256)
+        run: |
+          v=1.7.12
+          curl -fsSLo "$RUNNER_TEMP/al.tgz" "https://github.com/rhysd/actionlint/releases/download/v$v/actionlint_${v}_linux_amd64.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/al.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/al.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -shellcheck= wolos/.github/workflows/*.yml wolos-pkgbuilds/.github/workflows/*.yml             wolos-iso/.github/workflows/*.yml
+
+  # libFuzzer smoke run (audit B10): 60 s per target on a pinned nightly. A crash fails the job;
+  # its input goes into fuzz/regressions/<target>/ so the test job replays it from then on.
+  fuzz:
+    runs-on: ubuntu-latest
+    container: archlinux:latest@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 # bump: docker buildx imagetools inspect archlinux:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader]
+    steps:
+      - name: Toolchain (nightly pinned), cargo-fuzz, the libraries the shell links
+        run: |
+          pacman -Syu --noconfirm --needed git rustup clang mold pkgconf gtk4 libadwaita gtk4-layer-shell pam
+          rustup toolchain install nightly-2026-11-01 --profile minimal
+          cargo +nightly-2026-11-01 install --locked cargo-fuzz@0.13.2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+      - name: cargo fuzz run ${{ matrix.target }} (60 s)
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$TARGET"
+          cargo +nightly-2026-11-01 fuzz run "$TARGET" "fuzz/corpus/$TARGET" "fuzz/regressions/$TARGET"             -- -max_total_time=60 -timeout=10 -rss_limit_mb=2048
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+
+  # systemd-analyze security (audit section C): every shipped service at exposure <= 5.0 (threshold
+  # 50). Informational (continue-on-error) until the unit hardening stream (H2) reports its units
+  # done; then drop continue-on-error so a regression fails.
+  units-security:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: systemd-analyze security --threshold=50
+        run: |
+          systemd-analyze --version | head -1
+          systemd-analyze security --offline=true --threshold=50 --no-pager             files/usr/lib/systemd/system/*.service
 
   dispatch:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

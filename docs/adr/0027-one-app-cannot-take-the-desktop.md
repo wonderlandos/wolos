@@ -12,7 +12,7 @@ Decision:
 - `fs.file-max` goes back to systemd's value. Open files are charged to the app's memory, so the limit is memory, not a count everyone shares.
 - `/tmp` and `/dev/shm` hold 25% of RAM each. Their pages outlive the app that wrote them.
 
-Measured in a throwaway guest (8 vCPU, 8 GB, WolKernel, btrfs, zram; `image/vm/test/limits`). Stand-in compositor at 120 Hz in the session scope, the bomb in a window scope, 20 s then killed:
+Measured in a throwaway guest (8 vCPU, 8 GB, WolKernel, btrfs, zram; `wolos-iso/tests/test/limits`). Stand-in compositor at 120 Hz in the session scope, the bomb in a window scope, 20 s then killed:
 
 | Attack | Before | After |
 |---|---|---|
@@ -26,3 +26,5 @@ Measured in a throwaway guest (8 vCPU, 8 GB, WolKernel, btrfs, zram; `image/vm/t
 Recovery after the kill took 1.0 s or less in every run after the change. `make -j16` beside a 4000-task browser-like tree: 4.91 s before, 5.00 s after, one run each, nothing killed.
 
 Limits: fork() from unrelated scopes returned EAGAIN with 16,000 tasks in one scope on the 8 GB guest, cause not found; 8192 stays under it. The table was measured before the OOM loop and full-slice kills existed. A full disk or a full tmpfs stays full until something deletes the files. inotify limits stay per user.
+
+Consequences: an app that needs more than 8192 tasks or 80% of RAM cannot get it on WolOS; the limits are systemd properties, so a future change is a drop-in and no code. `fs.file-max` and the tmpfs sizes differ from Arch's defaults (the drop-ins under `files/` are the record). The kill rules in `memsaver/storm.rs` have unit tests only until they run in a guest (see Limits).

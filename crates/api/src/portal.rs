@@ -78,8 +78,14 @@ impl Notes {
 
 /// How long a call waits for the desktop to answer (under libwol's own read timeout).
 pub const ASK_TIMEOUT: Duration = Duration::from_secs(4);
-/// Calls waiting for the desktop at once.
+/// Calls waiting for the desktop at once, all accounts together.
 pub const ASKS_KEPT: usize = 64;
+/// Calls of one account waiting at once (R2C-9): one account, or its frozen shell, never takes
+/// the whole table.
+pub const ASKS_PER_UID: usize = 8;
+/// Approval sheets (package and system changes) of one account waiting at once (R2C-9).
+pub const APPROVALS_PER_UID: usize = 2;
+pub use shared::portal::{BUSY, NO_ANSWER, NOT_RUNNING};
 /// How long a file panel may stay open.
 pub const PANEL_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long a search waits for the apps that provide rows.
@@ -103,6 +109,8 @@ struct AskTable {
 
 struct Waiting {
     uid: u32,
+    /// An approval sheet ([`Ask::Approval`]), counted against [`APPROVALS_PER_UID`].
+    approval: bool,
     answer: Option<(Answer, Option<OwnedFd>)>,
 }
 
@@ -130,25 +138,38 @@ impl Asks {
         ask: Ask,
         timeout: Duration,
     ) -> (Answer, Option<OwnedFd>) {
+        let approval = matches!(ask, Ask::Approval { .. });
         let id = {
             let mut t = self.lock();
-            if t.waiting.len() >= ASKS_KEPT {
-                return (
-                    Answer::err(Code::Unavailable, "The desktop is busy. Try again."),
-                    None,
-                );
+            let mine = t.waiting.values().filter(|w| w.uid == uid);
+            let (n, sheets) = mine.fold((0, 0), |(n, a), w| (n + 1, a + usize::from(w.approval)));
+            if t.waiting.len() >= ASKS_KEPT
+                || n >= ASKS_PER_UID
+                || (approval && sheets >= APPROVALS_PER_UID)
+            {
+                return (Answer::err(Code::Unavailable, BUSY), None);
             }
-            t.last = t.last.wrapping_add(1).max(1);
+            // Skip ids still waiting (after a wrap), so an answer never reaches the wrong call.
+            loop {
+                t.last = t.last.wrapping_add(1).max(1);
+                if !t.waiting.contains_key(&t.last) {
+                    break;
+                }
+            }
             let id = t.last;
-            t.waiting.insert(id, Waiting { uid, answer: None });
+            t.waiting.insert(
+                id,
+                Waiting {
+                    uid,
+                    approval,
+                    answer: None,
+                },
+            );
             id
         };
         if bus.publish(&Event::SessionAsk { uid, id, ask }) == 0 {
             self.lock().waiting.remove(&id);
-            return (
-                Answer::err(Code::Unavailable, "The desktop is not running."),
-                None,
-            );
+            return (Answer::err(Code::Unavailable, NOT_RUNNING), None);
         }
         let end = Instant::now() + timeout;
         let mut t = self.lock();
@@ -159,10 +180,7 @@ impl Asks {
             let left = end.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 t.waiting.remove(&id);
-                return (
-                    Answer::err(Code::Unavailable, "The desktop did not answer."),
-                    None,
-                );
+                return (Answer::err(Code::Unavailable, NO_ANSWER), None);
             }
             t = self
                 .answered
@@ -253,7 +271,8 @@ impl Default for State {
             notes: Default::default(),
             asks: Default::default(),
             holds: Default::default(),
-            host: Box::new(wol_core::system::PosixHost),
+            // Audit S14: commands wold runs for facts and devices get the cleared environment.
+            host: Box::new(crate::privileged::PrivilegedHost),
             inhibit: Box::new(crate::facts::Logind),
         }
     }
@@ -411,6 +430,7 @@ fn decide<W: Write + Send>(
         Need::Peer => call
             .peer()
             .is_some_and(|p| grants.granted(&caller.app, &wol_core::consent::peer_grant(p))),
+        Need::HelperGate => caller.app == shared::portal::HELPER_GATE && caller.uid != 0,
     };
     if !allowed {
         return Answer::err(
@@ -421,6 +441,9 @@ fn decide<W: Write + Send>(
                 Need::Search => "Only Search collects search results.".into(),
                 Need::Peer => denial("ipc", &caller.app),
                 Need::Device => denial("devices", &caller.app),
+                Need::HelperGate => {
+                    "Only the WolOS helper gate asks for administrator changes.".into()
+                }
             },
         );
     }
@@ -645,6 +668,19 @@ fn decide<W: Write + Send>(
                 None => data.map_or_else(Answer::ok, Answer::with),
             };
             st.asks.answer(caller.uid, id, a, attached)
+        }
+        Call::SessionApprove { approval } => {
+            // R2C-6: the sheet names the caller by the executable the kernel reported; the name
+            // the helper gave itself only goes to the audit text. The shell runs the change
+            // through wol-admind after the password and answers Done or Failed.
+            let approval = shared::shell::Approval {
+                tool: format!("{}: {}", approval.helper, approval.tool),
+                helper: caller.app.clone(),
+                request: approval.request,
+            };
+            let wait = Duration::from_secs(shared::shell::APPROVAL_WAIT_SECS.into());
+            st.asks
+                .ask(bus, caller.uid, Ask::Approval { approval }, wait)
         }
         Call::NotificationAnswer { id, key } => {
             let Some(pid) = notes.owner(id, caller.uid) else {
@@ -1041,6 +1077,154 @@ mod tests {
             .ask(&bus, 1000, Ask::ClipboardRead, Duration::from_millis(20));
         assert_eq!(got.code, Some(Code::Unavailable));
         assert!(s.asks.lock().waiting.is_empty());
+    }
+
+    /// R2C-6: a helper's administrator change reaches the caller's own shower as an approval
+    /// that names the helper gate by its kernel executable, and the sheet's answer comes back.
+    /// Only the helper gate may send it, only admin kinds, and only the shower answers it: a
+    /// same-account impostor's `session.answer` is refused and changes nothing.
+    #[test]
+    fn a_helper_admin_change_is_asked_through_wold() {
+        let s = Arc::new((Bus::<UnixStream>::default(), State::default()));
+        let g = Fixed(&[]);
+        let line = r#"{"call":"session.approve","approval":{"helper":"Claude Desktop","tool":"wifi off","request":{"action":"wifi","on":false}}}"#;
+        // Not the helper gate: refused before anything is shown.
+        let a = handle(line, Some(&caller("/usr/bin/python3")), &g, &s.0, &s.1);
+        assert_eq!(a.code, Some(Code::PermissionDenied));
+        let mut root = caller(shared::portal::HELPER_GATE);
+        root.uid = 0;
+        assert_eq!(
+            handle(line, Some(&root), &g, &s.0, &s.1).code,
+            Some(Code::PermissionDenied)
+        );
+        // A user-level change or a package change is not relayed.
+        for bad in [
+            r#"{"call":"session.approve","approval":{"helper":"h","tool":"t","request":{"action":"change","capability":"appearance","what":"x"}}}"#,
+            r#"{"call":"session.approve","approval":{"helper":"h","tool":"t","request":{"action":"packages","verb":"install","names":["vim"]}}}"#,
+            r#"{"call":"session.approve","approval":{"helper":"h
+x","tool":"t","request":{"action":"wifi","on":true}}}"#,
+        ] {
+            let a = handle(
+                bad,
+                Some(&caller(shared::portal::HELPER_GATE)),
+                &g,
+                &s.0,
+                &s.1,
+            );
+            assert_eq!(a.code, Some(Code::InvalidArgument), "{bad}");
+        }
+        assert!(s.1.asks.lock().waiting.is_empty());
+
+        let (mine, seen) = UnixStream::pair().unwrap();
+        assert!(s.0.subscribe(Some(1000), Some((1000, 1)), mine));
+        let s2 = s.clone();
+        let helper = std::thread::spawn(move || {
+            handle(
+                line,
+                Some(&caller(shared::portal::HELPER_GATE)),
+                &Fixed(&[]),
+                &s2.0,
+                &s2.1,
+            )
+        });
+        let mut got = String::new();
+        BufReader::new(&seen).read_line(&mut got).unwrap();
+        let Some(Event::SessionAsk {
+            uid: 1000,
+            id,
+            ask: Ask::Approval { approval },
+        }) = Event::parse(got.trim())
+        else {
+            panic!("{got}");
+        };
+        assert_eq!(
+            approval.helper,
+            shared::portal::HELPER_GATE,
+            "kernel executable"
+        );
+        assert_eq!(approval.tool, "Claude Desktop: wifi off");
+        assert_eq!(
+            approval.request,
+            shared::shell::ApprovalRequest::Wifi { on: false }
+        );
+        // A same-account impostor (not the shell's executable) cannot answer it.
+        let done = format!(r#"{{"call":"session.answer","id":{id},"data":{{"answer":"done"}}}}"#);
+        let a = handle(&done, Some(&caller("/usr/bin/python3")), &g, &s.0, &s.1);
+        assert_eq!(a.code, Some(Code::PermissionDenied));
+        assert!(
+            s.1.asks
+                .lock()
+                .waiting
+                .get(&id)
+                .is_some_and(|w| w.answer.is_none())
+        );
+        // The shower of another account cannot either.
+        let mut other = caller(SHOWERS[0]);
+        other.uid = 1001;
+        assert_eq!(
+            handle(&done, Some(&other), &g, &s.0, &s.1).code,
+            Some(Code::InvalidArgument)
+        );
+        // The account's shower answers; the helper hears the sheet's answer.
+        assert!(handle(&done, Some(&caller(SHOWERS[0])), &g, &s.0, &s.1).ok);
+        let a = helper.join().unwrap();
+        assert!(a.ok, "{a:?}");
+        assert_eq!(a.data, Some(serde_json::json!({"answer": "done"})));
+    }
+
+    /// R2C-9: one account's unanswered asks fill only its own share; another account still asks.
+    #[test]
+    fn one_account_cannot_starve_another() {
+        let s = Arc::new((Bus::<UnixStream>::default(), State::default()));
+        let mut keep = Vec::new();
+        for uid in [1000, 1001] {
+            let (a, b) = UnixStream::pair().unwrap();
+            assert!(s.0.subscribe(Some(uid), None, a));
+            keep.push(b);
+        }
+        let wait = Duration::from_secs(5);
+        let waiters: Vec<_> = (0..ASKS_PER_UID)
+            .map(|_| {
+                let s = s.clone();
+                std::thread::spawn(move || s.1.asks.ask(&s.0, 1000, Ask::ClipboardRead, wait))
+            })
+            .collect();
+        while s.1.asks.lock().waiting.len() < ASKS_PER_UID {
+            std::thread::yield_now();
+        }
+        let ninth = s.1.asks.ask(&s.0, 1000, Ask::ClipboardRead, wait);
+        assert_eq!(ninth.message.as_deref(), Some(BUSY));
+        // uid 1001 is still admitted: it waits (and times out) instead of hearing "busy".
+        let other =
+            s.1.asks
+                .ask(&s.0, 1001, Ask::ClipboardRead, Duration::from_millis(50));
+        assert_eq!(other.message.as_deref(), Some(NO_ANSWER));
+        // Approval sheets have their own, smaller share.
+        let approval = || Ask::Approval {
+            approval: shared::shell::Approval {
+                helper: "/usr/bin/x".into(),
+                tool: "t".into(),
+                request: shared::shell::ApprovalRequest::Change {
+                    capability: "packages-install".into(),
+                    what: "x".into(),
+                },
+            },
+        };
+        let sheets: Vec<_> = (0..APPROVALS_PER_UID)
+            .map(|_| {
+                let (s, a) = (s.clone(), approval());
+                std::thread::spawn(move || s.1.asks.ask(&s.0, 1001, a, wait))
+            })
+            .collect();
+        while s.1.asks.lock().waiting.len() < ASKS_PER_UID + APPROVALS_PER_UID {
+            std::thread::yield_now();
+        }
+        let third = s.1.asks.ask(&s.0, 1001, approval(), wait);
+        assert_eq!(third.message.as_deref(), Some(BUSY));
+        for w in waiters.into_iter().chain(sheets) {
+            assert_eq!(w.join().unwrap().message.as_deref(), Some(NO_ANSWER));
+        }
+        assert!(s.1.asks.lock().waiting.is_empty());
     }
 
     #[test]

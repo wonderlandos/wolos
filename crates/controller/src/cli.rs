@@ -106,6 +106,7 @@ pub const CAPABILITIES: &[&str] = &[
     "window-list",
     "files",
     "restore",
+    "modules",
 ];
 pub const GLOBAL_FLAGS: &[&str] = &["json", "yes", "help"];
 
@@ -346,6 +347,12 @@ pub const TREE: &[Cmd] = &[
         "Update: copy live-installed packages into the new slot (root)",
     ),
     cmd(
+        &["layers", "clear"],
+        "layers.clear",
+        &[],
+        "Boot: remove the live layers this slot already holds (root)",
+    ),
+    cmd(
         &["pkg"],
         "pkg",
         &[rest("args")],
@@ -412,10 +419,28 @@ pub const TREE: &[Cmd] = &[
         "Installer: create the account in the new system (root)",
     ),
     cmd(
+        &["install", "facts"],
+        "install.facts",
+        &[opt("disk")],
+        "Installer: a disk's facts as lines: size <bytes>, os <family>, bitlocker yes|no; reads only",
+    ),
+    cmd(
+        &["install", "mounts"],
+        "install.mounts",
+        &[opt("disk")],
+        "Installer: what of a disk is in use, as lines: mount <path> (deepest first), swap <device>",
+    ),
+    cmd(
+        &["install", "hostname"],
+        "install.hostname",
+        &[opt("name")],
+        "Installer: the computer name if valid (settings::hostname), else wolos",
+    ),
+    cmd(
         &["mirror", "status"],
         "mirror.status",
         &[],
-        "Package mirrors, CPU level and whether [wolos-cachy] is on",
+        "Package mirrors, CPU level and whether the [cachyos-*-v3] sections are on",
     ),
     cmd(
         &["mirror", "rank"],
@@ -427,7 +452,7 @@ pub const TREE: &[Cmd] = &[
         &["mirror", "gate"],
         "mirror.gate",
         &[],
-        "Turn [wolos-cachy] on only where the CPU runs x86-64-v3 builds (root, --yes)",
+        "Turn the [cachyos-*-v3] sections on only where the CPU runs x86-64-v3 builds (root, --yes)",
     ),
     cmd(
         &["mirror", "kernel"],
@@ -467,6 +492,12 @@ pub const TREE: &[Cmd] = &[
         "Devices that need a driver or firmware, and the fix",
     ),
     cmd(
+        &["hw", "compute"],
+        "hw.compute",
+        &[],
+        "GPU compute for local AI: backend (cuda, rocm, vulkan or cpu), VRAM and the GPU",
+    ),
+    cmd(
         &["hw", "fix"],
         "hw.fix",
         &[],
@@ -488,6 +519,43 @@ pub const TREE: &[Cmd] = &[
         help: "Network came up: install a driver first boot could not (dhclient hook, root)",
         hidden: true,
     },
+    // Optional modules (wol_core::modules, docs/modules/modules.md, ADR 0032).
+    cmd(
+        &["modules"],
+        "modules.list",
+        &[],
+        "Optional modules: AI, developer, creative and console stacks, and their state",
+    ),
+    cmd(
+        &["modules", "list"],
+        "modules.list",
+        &[],
+        "Every optional module: installed, enabled, pending or available",
+    ),
+    cmd(
+        &["modules", "status"],
+        "modules.status",
+        &[opt("id")],
+        "State of one module (or all): installed, enabled, pending, what it needs",
+    ),
+    cmd(
+        &["modules", "install"],
+        "modules.install",
+        &[arg("id")],
+        "Install a module's packages (administrator); then wol modules enable <id>",
+    ),
+    cmd(
+        &["modules", "remove"],
+        "modules.remove",
+        &[arg("id")],
+        "Remove a module's packages (administrator) and its user-side parts",
+    ),
+    cmd(
+        &["modules", "enable"],
+        "modules.enable",
+        &[arg("id")],
+        "Finish a module's setup for this user (recipes, mise tools, post step); repeatable",
+    ),
     // Games (wol_core::games, docs/modules/games.md).
     cmd(
         &["games"],
@@ -636,6 +704,66 @@ pub const TREE: &[Cmd] = &[
         &[arg("package")],
         "Check a widget package (id or folder): schema, source, every binding",
     ),
+    // Shell plugins (ADR 0031, docs/modules/plugins.md): folders with a plugin.toml.
+    cmd(
+        &["plugin"],
+        "plugin.list",
+        &[],
+        "Shell plugins: installed, on or off, problems",
+    ),
+    cmd(
+        &["plugin", "list"],
+        "plugin.list",
+        &[],
+        "Shell plugins: installed, on or off, problems",
+    ),
+    cmd(
+        &["plugin", "new"],
+        "plugin.new",
+        &[arg("id"), opt("kinds")],
+        "Scaffold a plugin that passes check (kinds: menubar,widget,panel,search,dock,tile,toggle,hotkey,webapp,theme,look,hypr)",
+    ),
+    cmd(
+        &["plugin", "check"],
+        "plugin.check",
+        &[arg("plugin")],
+        "Check a plugin (id or folder): manifest, files, Lua loads and renders, theme, Hyprland lines",
+    ),
+    cmd(
+        &["plugin", "run"],
+        "plugin.run",
+        &[
+            arg("plugin"),
+            choice("kind", &["menubar", "widget", "panel", "search"]),
+            opt("entry"),
+            opt("input"),
+        ],
+        "Render one entry headless as JSON (input: a button number to click first, or the search text)",
+    ),
+    cmd(
+        &["plugin", "enable"],
+        "plugin.enable",
+        &[arg("id")],
+        "Turn a plugin on and grant the permissions it declares",
+    ),
+    cmd(
+        &["plugin", "disable"],
+        "plugin.disable",
+        &[arg("id")],
+        "Turn a plugin off",
+    ),
+    cmd(
+        &["plugin", "remove"],
+        "plugin.remove",
+        &[arg("id")],
+        "Delete a user plugin folder and its state",
+    ),
+    cmd(
+        &["plugin", "pack"],
+        "plugin.pack",
+        &[arg("plugin"), opt("out")],
+        "Make <id>-<version>.wolplug (zstd tar of the folder with its SHA256 list) next to it or at out",
+    ),
     // One interface for people, scripts and helpers (docs/modules/automation.md).
     cmd(
         &["api"],
@@ -693,6 +821,25 @@ pub const TREE: &[Cmd] = &[
         "audio.unmute",
         &[],
         "Unmute the sound",
+    ),
+    // Sound stack (crates/audio, docs/modules/audio.md, docs/creators-audio.md).
+    cmd(
+        &["audio", "doctor"],
+        "audio.doctor",
+        &[],
+        "Sound check: services, inputs above 0 dB, buffers, dropouts, OBS pieces, with the fix",
+    ),
+    cmd(
+        &["audio", "reset"],
+        "audio.reset",
+        &[],
+        "Forget stored sound defaults and volumes, drop Pro Audio overrides, restart PipeWire (dry run; --yes does it)",
+    ),
+    cmd(
+        &["audio", "appmix"],
+        "audio.appmix",
+        &[choice("state", &["on", "off", "status"])],
+        "OBS: the \"WolOS App Mix\" output and \"Mic + App Mix\" source (pipewire-pulse modules, on demand)",
     ),
     cmd(&["display"], "display.get", &[], "Brightness and displays"),
     cmd(
@@ -1005,6 +1152,16 @@ pub fn parse<S: AsRef<str>>(argv: &[S]) -> Result<Invocation, ParseError> {
             return Err(ParseError::BadFlag(f.clone()));
         }
     }
+    // `--help` never runs the command: `run::execute` prints this path's usage, so the
+    // command's own arguments are not required (`wol jobs start --help`).
+    if flags.iter().any(|f| f == "help") {
+        return Ok(Invocation {
+            path: c.path.iter().map(|s| s.to_string()).collect(),
+            action: c.action,
+            args: vec![],
+            flags,
+        });
+    }
     let mut rest_words = words[c.path.len()..].iter();
     let mut args = Vec::new();
     for a in c.args {
@@ -1183,6 +1340,14 @@ mod tests {
             ("hw list --json", "hw.list --json"),
             ("hw status --json", "hw.status --json"),
             ("hw fix --yes", "hw.fix --yes"),
+            // Settings > Modules, the installer, firstboot (ADR 0032)
+            ("hw compute --json", "hw.compute --json"),
+            ("modules", "modules.list"),
+            ("modules list --json", "modules.list --json"),
+            ("modules status dev --json", "modules.status id=dev --json"),
+            ("modules install dev", "modules.install id=dev"),
+            ("modules remove dev", "modules.remove id=dev"),
+            ("modules enable dev", "modules.enable id=dev"),
             // steam.desktop, the App Store Steam entry, scripts
             ("games steam", "games.steam"),
             (

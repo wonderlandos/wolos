@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Sign and publish, by hand from main. The signing keys (WOLOS_GPG_KEY, WOLOS_RELEASE_KEY,
-# WOLOS_CDN_TOKEN; WOLOS_SB_* and WOLOS_RELEASES_TOKEN when set) live only in this repo, so the
-# reusable workflows of wolos-pkgbuilds and wolos-iso run from here (secrets: inherit; OIDC subject
-# = wolos main, trusted by vars.AWS_ROLE_ARN). Inputs come from S3 (s3://$BUCKET/runs/<run>/).
+# Sign and publish, by hand from main. The signing keys (WOLOS_GPG_KEY, WOLOS_RELEASE_KEY; WOLOS_SB_*
+# and WOLOS_RELEASES_TOKEN when set) live only in this repo, so the reusable workflows of
+# wolos-pkgbuilds and wolos-iso run from here (explicit secrets per job; OIDC subject = wolos main, trusted by
+# vars.AWS_ROLE_ARN, which may also write the CDN's bucket s3://wolos-repo and invalidate its
+# distribution). Inputs come from S3 (s3://$BUCKET/runs/<run>/).
 #   what=packages run=<ECS run id>: sign the unsigned packages of a wolos-pkgbuilds build.yml run
 #       (its log: "== wolos-pkgbuilds -> s3://.../runs/<run>") into [wolos-testing].
 #   what=promote: [wolos-testing] -> [wolos] (after the release passed its VM test).
 #   what=iso run=<vX.Y.Z>: the release of that wolos-iso tag: [wolos-cachy], ISO, release.json.
-#   what=cdn run=<run>: push a signed repo to the CDN after main uploaded it by hand.
+#   what=cdn run=<run>: copy a signed repo to the CDN's bucket after main uploaded it by hand.
 #   what=iso-s3 run=<S3 run id> tag=<vX.Y.Z>: publish an ISO already built and VM-tested on the build
 #       box (s3://$BUCKET/runs/<run>/: the .iso and its manifest .json) as a pre-release of this repo:
 #       the manifest's image URL points at that release, release.json is signed (WOLOS_RELEASE_KEY).
 # Without WOLOS_RELEASES_TOKEN nothing is written to the releases repo: the run ends with a
 # ::notice:: holding the exact upload command for main's gh login (and the what=cdn step after it).
 # Variables (this repo): AWS_ROLE_ARN, AWS_REGION, BUCKET, CLUSTER, TASK_DEF_ISO, CAPACITY,
-# WOLOS_CDN_URL, WOLOS_RELEASES_REPO, WOLOS_SB_LAYOUT.
+# WOLOS_CDN_DIST (CloudFront distribution id), WOLOS_REPO_BUCKET (default wolos-repo),
+# WOLOS_RELEASES_REPO, WOLOS_SB_LAYOUT.
 name: publish
 
 on:
@@ -43,31 +45,43 @@ permissions:
 jobs:
   packages:
     if: inputs.what == 'packages'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@main
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@5b38d990a752b7f03076c63584ff8006a6f0ca11 # main 2026-11-02; bump after each wolos-pkgbuilds push
     with:
       run: ${{ inputs.run }}
       mode: sign
-    secrets: inherit
+    secrets:
+      WOLOS_GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+      WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   cdn:
     if: inputs.what == 'cdn'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@main
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@5b38d990a752b7f03076c63584ff8006a6f0ca11 # main 2026-11-02; bump after each wolos-pkgbuilds push
     with:
       run: ${{ inputs.run }}
       mode: cdn
-    secrets: inherit
+    secrets:
+      WOLOS_GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+      WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   promote:
     if: inputs.what == 'promote'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/promote.yml@main
-    secrets: inherit
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/promote.yml@5b38d990a752b7f03076c63584ff8006a6f0ca11 # main 2026-11-02; bump after each wolos-pkgbuilds push
+    secrets:
+      WOLOS_GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+      WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   iso:
     if: inputs.what == 'iso'
-    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@main
+    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@3e66882b1b908ab2a4ceddb0129d18aca899f56e # main 2026-11-02; bump after each wolos-iso push
     with:
       tag: ${{ inputs.run }}
-    secrets: inherit
+    secrets:
+      WOLOS_RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+      WOLOS_SB_KEY: ${{ secrets.WOLOS_SB_KEY }}
+      WOLOS_SB_CERT: ${{ secrets.WOLOS_SB_CERT }}
+      WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   iso-s3:
     if: inputs.what == 'iso-s3'
     runs-on: ubuntu-latest
+    # Required reviewers: the lead configures them in Settings > Environments > release.
+    environment: release
     permissions:
       contents: write   # the release of this repo
       id-token: write   # S3 over OIDC
@@ -81,7 +95,7 @@ jobs:
         run: |
           case $RUN in ''|*/*|*' '*) echo "::error::run '$RUN' is not an S3 run id"; exit 1 ;; esac
           case $TAG in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "::error::tag '$TAG' is not vX.Y.Z"; exit 1 ;; esac
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}

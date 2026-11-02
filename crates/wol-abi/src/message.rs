@@ -16,14 +16,18 @@ use std::sync::Arc;
 pub type wol_message_fn =
     Option<unsafe extern "C" fn(*mut wol_endpoint, *mut wol_message, UserData)>;
 
+#[repr(C)]
 pub struct wol_endpoint {
+    tag: crate::handle::Tag<wol_endpoint>,
     context: Arc<wol_context>,
     on_message: wol_message_fn,
     user_data: usize,
     _held: UnixStream,
 }
 
+#[repr(C)]
 pub struct wol_message {
+    tag: crate::handle::Tag<wol_message>,
     context: Arc<wol_context>,
     id: u32,
     from: Arc<wol_string>,
@@ -34,6 +38,7 @@ pub struct wol_message {
 pub(crate) fn delivered(e: &Arc<wol_endpoint>, id: u32, from: &str, body: &str) {
     let Some(f) = e.on_message else { return };
     let m = Arc::new(wol_message {
+        tag: crate::handle::Tag::new(),
         context: e.context.clone(),
         id,
         from: wol_string::new(from),
@@ -51,7 +56,7 @@ pub(crate) fn delivered(e: &Arc<wol_endpoint>, id: u32, from: &str, body: &str) 
 
 fn message<'a>(m: *const wol_message) -> Result<&'a wol_message> {
     // SAFETY: the caller holds a reference (header contract).
-    unsafe { m.as_ref() }.ok_or_else(|| Error::invalid("message must not be NULL."))
+    unsafe { crate::handle::live(m) }.ok_or_else(|| Error::invalid("message must not be NULL."))
 }
 
 /// # Safety
@@ -77,6 +82,7 @@ pub unsafe extern "C" fn wol_endpoint_create(
         context.ensure_bus()?;
         let held = client::hold(context.wold(), &Call::IpcListen { name: name.clone() })?;
         let e = Arc::new(wol_endpoint {
+            tag: crate::handle::Tag::new(),
             context: context.clone(),
             on_message,
             user_data: user_data as usize,
@@ -135,14 +141,14 @@ pub unsafe extern "C" fn wol_message_send(
 /// `message` is NULL or live; the answer lives as long as the message.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_message_get_from(message: *const wol_message) -> *const wol_string {
-    unsafe { message.as_ref() }.map_or(std::ptr::null(), |m| Arc::as_ptr(&m.from))
+    unsafe { crate::handle::live(message) }.map_or(std::ptr::null(), |m| Arc::as_ptr(&m.from))
 }
 
 /// # Safety
 /// `message` is NULL or live; the answer lives as long as the message.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wol_message_get_body(message: *const wol_message) -> *const wol_string {
-    unsafe { message.as_ref() }.map_or(std::ptr::null(), |m| Arc::as_ptr(&m.body))
+    unsafe { crate::handle::live(message) }.map_or(std::ptr::null(), |m| Arc::as_ptr(&m.body))
 }
 
 /// # Safety
@@ -201,3 +207,7 @@ pub unsafe extern "C" fn wol_publish(
         client::run(context.wold(), &c)
     })
 }
+
+crate::handle::tagged!(wol_endpoint, 0xe239217c84c97ce3);
+
+crate::handle::tagged!(wol_message, 0x3283d3f0a55c475d);

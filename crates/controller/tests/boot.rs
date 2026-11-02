@@ -59,6 +59,44 @@ fn detect_reads_the_firmware() {
     }
 }
 
+/// audit3 R2B-9: Setup Mode next to Windows, with Microsoft's third-party CA still in db, gets the
+/// key screen (Windows' PCR 7 stays); the BitLocker line comes with a tier that changes the keys.
+#[test]
+fn next_to_windows_setup_mode_takes_the_key_screen_and_bitlocker_is_said() {
+    let ms = b"xx Microsoft Corporation UEFI CA 2011 xx";
+    let d = efivars("win-setup", 0, 1, ms);
+    let mut e = env_for(&d);
+    assert_eq!(run("boot detect yes", &mut e), 0, "{}", e.err);
+    assert_eq!(e.out.trim(), "own-keys", "no Windows: own keys");
+    let mut e = env_for(&d);
+    e.vars.push(("WOLOS_WINDOWS".into(), "yes".into()));
+    run("boot detect yes", &mut e);
+    assert_eq!(e.out.trim(), "mok", "Windows: the key screen");
+    let mut e = FakeEnv {
+        vars: vec![("WOLOS_BITLOCKER".into(), "yes".into())],
+        ..Default::default()
+    };
+    run("boot note own-keys no", &mut e);
+    assert!(
+        e.out.contains("BitLocker") && e.out.contains("recovery key"),
+        "{}",
+        e.out
+    );
+    let mut e = FakeEnv {
+        vars: vec![("WOLOS_BITLOCKER".into(), "yes".into())],
+        ..Default::default()
+    };
+    run("boot note mok yes", &mut e);
+    assert!(
+        !e.out.contains("BitLocker"),
+        "the key screen leaves db as it is: {}",
+        e.out
+    );
+    let mut e = FakeEnv::default();
+    run("boot note own-keys no", &mut e);
+    assert!(!e.out.contains("BitLocker"), "{}", e.out);
+}
+
 #[test]
 fn enroll_retries_with_one_command_and_says_what_comes_next() {
     let d = efivars("en", 1, 0, b"");
@@ -104,6 +142,27 @@ fn words_and_notes_for_the_installer() {
     let mut e = FakeEnv::default();
     run("boot note own-keys no", &mut e);
     assert!(!e.out.contains("Enroll MOK"), "{}", e.out);
+    // Firmware tier with the first stage laid out: only the firmware setting is left, then the
+    // key screen; no second install (audit2 B10).
+    let mut e = FakeEnv::default();
+    run("boot note firmware yes", &mut e);
+    assert!(
+        e.out.contains("third-party certificates")
+            && e.out.contains("Enroll MOK")
+            && !e.out.contains("install again"),
+        "{}",
+        e.out
+    );
+    let mut e = FakeEnv::default();
+    run("boot note firmware no", &mut e);
+    // No first stage laid out: turning Secure Boot off is the way in; never a second install.
+    assert!(
+        e.out.contains("turn Secure Boot off")
+            && !e.out.contains("install again")
+            && !e.out.contains("Enroll MOK"),
+        "{}",
+        e.out
+    );
     assert_eq!(run("boot words nonsense", &mut FakeEnv::default()), 64);
 }
 

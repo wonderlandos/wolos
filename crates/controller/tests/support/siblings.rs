@@ -5,6 +5,11 @@
 //! directories present in several are merged). Siblings: $WOLOS_SRC, $WOLOS_PKGBUILDS, $WOLOS_ISO,
 //! else ../wolos, ../wolos-pkgbuilds, ../wolos-iso next to this repo (CI checks them out there).
 //! A missing sibling is not an error here: the test that needs its file fails naming the path.
+//!
+//! One source, three byte-identical copies (the repos are separate git repos and stay
+//! self-contained): this file is the original; `wolos-iso/checks/tests/support/siblings.rs` and
+//! `wolos-pkgbuilds/checks/tests/support/siblings.rs` are verbatim copies, and each of those crates'
+//! `tests/siblings_copy.rs` fails when its copy differs from this one. Edit here, then copy.
 #![allow(dead_code)]
 use std::{
     fs,
@@ -12,11 +17,23 @@ use std::{
     sync::OnceLock,
 };
 
-/// This repo's root, from the crate that includes this module.
-const UP: &str = "../..";
+/// This repo's root: the nearest ancestor of the including crate that holds `LICENSE` (every repo
+/// root does, no crate directory does), so the same file works at any crate depth.
+fn repo_root() -> PathBuf {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .canonicalize()
+        .unwrap();
+    crate_dir
+        .ancestors()
+        .find(|d| d.join("LICENSE").is_file())
+        .unwrap_or(&crate_dir)
+        .to_path_buf()
+}
 
 fn overlay(src: &Path, dst: &Path) {
-    let Ok(entries) = fs::read_dir(src) else { return };
+    let Ok(entries) = fs::read_dir(src) else {
+        return;
+    };
     for e in entries.flatten() {
         let name = e.file_name();
         if name == ".git" || name == "target" {
@@ -43,10 +60,7 @@ fn overlay(src: &Path, dst: &Path) {
 pub fn root_str() -> &'static str {
     static ROOT: OnceLock<String> = OnceLock::new();
     ROOT.get_or_init(|| {
-        let own = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(UP)
-            .canonicalize()
-            .unwrap();
+        let own = repo_root();
         let parent = own.parent().unwrap().to_path_buf();
         let u = std::env::temp_dir().join(format!("wolos-tree-{}", std::process::id()));
         let _ = fs::remove_dir_all(&u);

@@ -2,6 +2,22 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Boot counting (wolos-boot-ok.service): this boot is good once wold, which runs the login window,
 # has stayed up for a few seconds. A failure leaves the try counter; three such boots fall back.
+# A good boot of a new slot also clears the live layers it already holds (`wol layers clear`,
+# its folded list): they stay until here so a slot that fails falls back to an old slot that
+# still has them.
+# `wol boot bless` rewrites loader/entries/wolos-*; wolos-mok-enroll.service may be rewriting the
+# same entries at this boot (a Firmware-tier install moving to the key-screen tier, boot-enroll ->
+# esp-sync), so bless waits for that unit to end, at most a minute (audit3 R2B-8).
+# Env (tests): WOLOS_BOOT_OK_WAIT (seconds wold must stay up, 5).
+set -eu
 sleep "${WOLOS_BOOT_OK_WAIT:-5}"
 systemctl is-active --quiet wold.service || exit 1
+n=0
+while [ "$n" -lt 60 ] &&
+  [ "$(systemctl show --property=ActiveState --value wolos-mok-enroll.service 2>/dev/null || :)" = activating ]; do
+  sleep 1; n=$((n + 1))
+done
+# Harmless if it fails: the floor and the titles are set again at the next good boot.
 wol boot bless || :
+# Harmless if it fails: the layers stay merged and the next good boot tries again.
+wol layers clear || :

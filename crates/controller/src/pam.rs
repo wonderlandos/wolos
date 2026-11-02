@@ -92,7 +92,10 @@ pub fn real_user() -> Option<CString> {
 
 /// Malloc'd NUL-terminated copy; PAM owns and frees it.
 fn cdup(bytes: &[u8]) -> *mut c_char {
-    let p = unsafe { calloc(bytes.len() + 1, 1) } as *mut u8;
+    let Some(len) = bytes.len().checked_add(1) else {
+        return std::ptr::null_mut();
+    };
+    let p = unsafe { calloc(len, 1) } as *mut u8;
     if !p.is_null() {
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len()) }
     }
@@ -105,38 +108,56 @@ extern "C" fn converse(
     resp: *mut *mut PamResponse,
     data: *mut c_void,
 ) -> c_int {
-    if !(1..=32).contains(&n) || msg.is_null() || resp.is_null() {
+    if !(1..=32).contains(&n) || msg.is_null() || resp.is_null() || data.is_null() {
         return PAM_CONV_ERR;
     }
     let call = unsafe { &*(data as *const Call) };
-    let n = n as usize;
+    let Ok(n) = usize::try_from(n) else {
+        return PAM_CONV_ERR;
+    };
     let r = unsafe { calloc(n, size_of::<PamResponse>()) } as *mut PamResponse;
     if r.is_null() {
         return PAM_BUF_ERR;
     }
+    #[allow(clippy::disallowed_methods)] // the C boundary wrapper (clippy.toml)
+    // Wipes and frees the answers given so far, then the array.
+    let undo = |upto: usize| {
+        for j in 0..upto {
+            let q = unsafe { (*r.add(j)).resp };
+            if !q.is_null() {
+                unsafe {
+                    wipe(std::slice::from_raw_parts_mut(
+                        q.cast(),
+                        CStr::from_ptr(q).count_bytes(),
+                    ));
+                    free(q.cast())
+                }
+            }
+        }
+        unsafe { free(r.cast()) };
+    };
     for i in 0..n {
-        let style = unsafe { (**msg.add(i)).style };
-        let p = match reply(style) {
+        let m = unsafe { *msg.add(i) };
+        if m.is_null() {
+            undo(i);
+            return PAM_CONV_ERR;
+        }
+        let style = unsafe { (*m).style };
+        let kind = reply(style);
+        let p = match kind {
             Reply::Password => cdup(call.password),
             Reply::User => cdup(call.user.to_bytes()),
             Reply::None => std::ptr::null_mut(),
             Reply::Fail => {
-                for j in 0..i {
-                    let q = unsafe { (*r.add(j)).resp };
-                    if !q.is_null() {
-                        unsafe {
-                            wipe(std::slice::from_raw_parts_mut(
-                                q.cast(),
-                                CStr::from_ptr(q).count_bytes(),
-                            ));
-                            free(q.cast())
-                        }
-                    }
-                }
-                unsafe { free(r.cast()) };
+                undo(i);
                 return PAM_CONV_ERR;
             }
         };
+        if p.is_null() && !matches!(kind, Reply::None) {
+            // calloc failed: an empty answer would be a wrong password, not an out-of-memory.
+            undo(i);
+            return PAM_BUF_ERR;
+        }
         unsafe { (*r.add(i)).resp = p };
     }
     unsafe { *resp = r };

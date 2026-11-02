@@ -22,10 +22,6 @@ pub struct ShellPrefs {
     pub dock_autohide_delay_ms: u32,
     /// Dock icon size in pixels.
     pub dock_tile_size: u32,
-    /// Show recently used apps in the Dock.
-    pub dock_show_recents: bool,
-    /// Minimize effect speed as a percentage of its time scale (50 = 0.5).
-    pub dock_minimize_speed_pct: u8,
     /// Search: milliseconds a slower provider (the file index) waits after a keystroke before
     /// its rows may be merged in (`priority_index_delay_ms`).
     pub priority_index_delay_ms: u32,
@@ -44,8 +40,6 @@ impl Default for ShellPrefs {
             dock_magnify: true,
             dock_autohide_delay_ms: 0,
             dock_tile_size: TILE_SIZE.2,
-            dock_show_recents: true,
-            dock_minimize_speed_pct: 50,
             priority_index_delay_ms: 0,
             searchbar_slow_timeout_ms: 400,
             control_center: ControlCenterPrefs::default(),
@@ -64,10 +58,6 @@ impl ShellPrefs {
     }
     pub fn autohide_delay_ms(&self) -> u32 {
         self.dock_autohide_delay_ms.min(AUTOHIDE_DELAY_MAX_MS)
-    }
-    /// Minimize effect time scale, 0.1 to 2.0 (1.0 = the stock duration).
-    pub fn minimize_time_scale(&self) -> f64 {
-        f64::from(self.dock_minimize_speed_pct.clamp(10, 200)) / 100.0
     }
 }
 
@@ -311,9 +301,6 @@ mod tests {
         let d = ShellPrefs::default();
         assert_eq!(d.dock_autohide_delay_ms, 0);
         assert_eq!(d.dock_tile_size, 56);
-        assert!(d.dock_show_recents);
-        assert_eq!(d.dock_minimize_speed_pct, 50, "time scale 0.5");
-        assert_eq!(d.minimize_time_scale(), 0.5);
         let old = ShellPrefs::parse(Some(r#"{"dock_autohide":true}"#));
         assert_eq!(old.dock_tile_size, 56);
         let wild = ShellPrefs::parse(Some(
@@ -321,7 +308,9 @@ mod tests {
         ));
         assert_eq!(wild.tile_size(), TILE_SIZE.1);
         assert_eq!(wild.autohide_delay_ms(), AUTOHIDE_DELAY_MAX_MS);
-        assert_eq!(wild.minimize_time_scale(), 0.1);
+        // A file from before audit2 A2-5 (the unused recents / minimise-speed keys) still loads.
+        let older = ShellPrefs::parse(Some(r#"{"dock_show_recents":false,"show_date":false}"#));
+        assert!(!older.show_date);
     }
 
     #[test]

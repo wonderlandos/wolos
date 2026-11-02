@@ -26,6 +26,9 @@ pub const PANELS: &[&str] = &[
     "banners",
     // `hide` closes every transient panel, Search and the widget gallery (Esc).
     "transient",
+    // `show` opens the session panel on its Log Out / Shut Down question (the WolOS menu).
+    "session-logout",
+    "session-shutdown",
 ];
 
 /// `approve <json>` on wol-shell.sock: a helper (`wol mcp`, a `WOL_HELPER` script) asks before a
@@ -67,6 +70,14 @@ pub enum ApprovalRequest {
     BootEnvironment {
         name: String,
     },
+    /// System packages for every account (wold, ADR 0021): `verb` is `install`, `remove`,
+    /// `update` (no names = everything) or `update-holding` (everything except `names`); the shell
+    /// runs it through wol-admind after the password.
+    Packages {
+        verb: String,
+        #[serde(default)]
+        names: Vec<String>,
+    },
     /// A user-level change the helper runs itself once allowed. `what` is the sentence end
     /// ("switch to Dark appearance"); `capability` is what Always Allow grants.
     Change {
@@ -85,6 +96,18 @@ impl ApprovalRequest {
             Self::Bluetooth { on } => format!("turn Bluetooth {}", onoff(on)),
             Self::BootEnvironment { name } => {
                 format!("start from the restore point “{name}” next time")
+            }
+            Self::Packages { verb, names } => {
+                let list = names.join(", ");
+                match (verb.as_str(), names.is_empty()) {
+                    ("install", _) => format!("install {list} for every account"),
+                    ("remove", _) => format!("remove {list} from this computer"),
+                    ("update-holding", false) => {
+                        format!("update all system apps except {list}")
+                    }
+                    (_, true) => "update all system apps".into(),
+                    _ => format!("update {list}"),
+                }
             }
             Self::Change { what, .. } => what.clone(),
         }
@@ -172,6 +195,31 @@ mod tests {
         let json = l.strip_prefix("approve ").unwrap();
         assert_eq!(Approval::parse(json), Some(a));
         assert_eq!(Approval::parse("{\"helper\":1}"), None);
+        let p = ApprovalRequest::Packages {
+            verb: "install".into(),
+            names: vec!["firefox".into()],
+        };
+        assert!(p.is_admin());
+        assert_eq!(p.describe(), "install firefox for every account");
+        let held = ApprovalRequest::Packages {
+            verb: "update-holding".into(),
+            names: vec!["firefox".into(), "gimp".into()],
+        };
+        assert!(held.is_admin());
+        assert_eq!(
+            held.describe(),
+            "update all system apps except firefox, gimp"
+        );
+        let line = Approval {
+            helper: "/usr/bin/wopkg".into(),
+            tool: "wopkg packages-install".into(),
+            request: p.clone(),
+        }
+        .line();
+        assert_eq!(
+            Approval::parse(line.strip_prefix("approve ").unwrap_or("")).map(|a| a.request),
+            Some(p)
+        );
         let j = ApprovalRequest::WifiJoin {
             ssid: "Home\nNet".into(),
             password: None,

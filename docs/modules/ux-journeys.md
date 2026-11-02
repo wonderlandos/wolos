@@ -1,5 +1,7 @@
 # UX journeys (audit 2026-10-27)
 
+Decision records: ADR 0013 (first run), ADR 0004 (setup assistant).
+
 Acceptance: `site/src/pages/Thesis.jsx` (Calm, Instant, Obvious, One look, No homework, Yours, Safe to tinker, AI-friendly not forced).
 Verdicts: OK, STUCK (no way forward without help), JARGON, TERMINAL, SLOW (> 1 s, no progress/cancel), NO-FEEDBACK (> 150 ms silent, or no confirmation).
 Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/tests/copy_lint.rs`.

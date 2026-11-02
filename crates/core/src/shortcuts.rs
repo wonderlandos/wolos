@@ -322,7 +322,7 @@ pub fn name_of(dispatcher: &str, args: &str) -> Option<(&'static str, Group)> {
 
 use Group as G;
 /// (dispatcher, args, name, group) for every shipped bind (desktop conf + tiling set).
-const NAMES: [(&str, &str, &str, Group); 86] = [
+const NAMES: [(&str, &str, &str, Group); 85] = [
     ("exec", "wol-search", "Show Search", G::Search),
     ("exec", "foot", "Open Terminal", G::Apps),
     ("exec", "nautilus", "Open Files", G::Apps),
@@ -364,12 +364,6 @@ const NAMES: [(&str, &str, &str, Group); 86] = [
         "exec",
         "wol shell show switcher-prev",
         "Switch apps backwards",
-        G::Windows,
-    ),
-    (
-        "exec",
-        "wol shell hide switcher",
-        "Finish switching apps",
         G::Windows,
     ),
     ("exec", "wol-app quit", "Quit app", G::Windows),
@@ -462,6 +456,12 @@ const NAMES: [(&str, &str, &str, Group); 86] = [
     ),
     (
         "exec",
+        "wol shell toggle clipboard",
+        "Show clipboard history",
+        G::System,
+    ),
+    (
+        "exec",
         "wol shell show menubar",
         "Move focus to the menu bar",
         G::System,
@@ -476,12 +476,6 @@ const NAMES: [(&str, &str, &str, Group); 86] = [
         "exec",
         "wol shell hide banners",
         "Dismiss notification banners",
-        G::System,
-    ),
-    (
-        "exec",
-        "wol shell hide transient",
-        "Close menus and panels",
         G::System,
     ),
     ("exec", "wol-app copy", "Copy", G::Commands),

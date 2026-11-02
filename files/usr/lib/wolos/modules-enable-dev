@@ -1,0 +1,15 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Developer module, user step (`post` of /usr/share/wolos/modules/dev.json, run as the person by
+# `wol modules enable dev`, ADR 0032): makes ~/Work, the default project tree, and turns on the
+# rootless podman socket for this user so tools that speak the Docker API find it.
+# Idempotent: running it again changes nothing. Exit 0 when done, 1 when a step failed (the module
+# is then not recorded as enabled and `wol modules enable dev` can be run again).
+set -eu
+: "${HOME:?}"
+mkdir -p "$HOME/Work"
+# No user manager (a console without a session, a container): the socket is only a convenience,
+# podman itself works without it.
+if systemctl --user show-environment >/dev/null 2>&1; then
+  systemctl --user enable --now podman.socket
+fi

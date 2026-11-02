@@ -7,80 +7,188 @@
 # with boot counting (three tries). boot-setup picks the Secure Boot tier and leaves the words for
 # the person in WOLOS_BOOT_NOTE (ADR 0022).
 # Progress on stdout, one line per step: "wolos-install: <stage> <percent> <message>", stages
-# prepare disk files boot settings finish done failed.
-# Exit: 0 installed, 1 the install stopped, 2 not a disk the installer may erase.
-# Encrypt disk: WOLOS_ENCRYPT=auto|yes|no (default auto: on when a TPM2 exists), WOLOS_PASSPHRASE_FILE (needed
-# without a TPM). LUKS2 under btrfs; the recovery key is left once in WOLOS_RECOVERY_OUT (mode 600).
+# prepare 0, disk 5, files 15, keys 40, encrypt 45, initramfs 70 (the plan's language, keyboard
+# and time zone go in first: the initramfs carries the console keymap), settings 90, seal 92,
+# boot 95, done 100. A stop is one line "wolos-install: fail <stage> <message>": the reason, then the last
+# lines of the log (one line, no pipes). Every tool's output goes to the log.
+# Results (audit3 R2B-1): the log and the recovery key go to /run/wolos/install/ (WOLOS_RESULT_DIR),
+# a folder this script makes anew, root's only (0700); never into the plan's folder, which belongs
+# to the caller. The Install app reads them with `install-check --result`, which hands the key out
+# once. The log is also copied to <target>/var/log/wolos-install.log when the install is done.
+# Exit: 0 installed, 1 the install stopped, 2 nothing was written (not a disk the installer may erase,
+# a plan the disk no longer matches, encryption that can't be set up).
+# Encrypt disk: WOLOS_ENCRYPT=auto|yes|no|passphrase (default auto: on; the TPM2 unlocks it when
+# there is one, else WOLOS_PASSPHRASE_FILE is needed). LUKS2 under btrfs; the recovery key is left
+# once in the results folder (recovery-key, mode 600).
 # The decisions are `wol encrypt ...` and `wol seal ...` (crates/core). The finished slot is sealed.
-# --plan FILE (ADR 0023): the Install WolOS app's choices: Erase, Alongside or Manual, language, zone and
-# account. Next to FILE: disk-password, account-password, and the recovery key once it exists.
-# Alongside and Manual partition through `wol install layout`, which never names a partition the
-# plan doesn't. The boot loader is `install-boot`.
-# Env (tests): WOLOS_INSTALL_PATH, WOLOS_INSTALL_ROOT (/mnt/wolos), WOLOS_SOURCE_SFS, WOLOS_NO_INHIBIT.
+# --plan FILE (ADR 0023): the Install WolOS app's choices: Erase, Alongside or Manual, language, zone,
+# account, host name, auto-login and swap. Next to FILE: disk-password and account-password (read,
+# then removed; nothing is written there). Alongside and Manual partition through `wol install
+# layout`, which never names a partition the plan doesn't. `wol install info` and `layout` answer
+# in KEY=VALUE lines, read against the keys each may set: generated text never runs as shell
+# (STANDARDS 2, audit3 R2B-14). The boot loader is `install-boot`; it learns from the plan whether
+# the startup partition is shared and whether Windows stays (WOLOS_ESP_SHARED, WOLOS_WINDOWS,
+# WOLOS_BITLOCKER; Windows on another disk of this computer counts too). Windows staying also keeps
+# the hardware clock in local time (/etc/adjtime LOCAL, audit3 R2B-12).
+# Without a plan (autoinstall) the same choices come from the environment: WOLOS_HOSTNAME (checked
+# by `wol install hostname`, default wolos), WOLOS_AUTOLOGIN=yes|no, WOLOS_SWAP=none|zram|swapfile:<GiB> (default zram).
+# Env (tests): WOLOS_INSTALL_PATH, WOLOS_INSTALL_ROOT (/mnt/wolos), WOLOS_SOURCE_SFS, WOLOS_NO_INHIBIT,
+# WOLOS_RESULT_DIR, WOLOS_INSTALL_LOG.
 set -u
 PATH=${WOLOS_INSTALL_PATH:-/usr/bin:/usr/sbin}; export PATH
-say() { echo "wolos-install: $*"; }
+# The results folder: whatever is at that name from an earlier run (or put there by anyone) goes,
+# and this run makes its own, so nothing in it was decided by someone else. Not makeable (a test
+# that is not root): a fresh private temp folder instead, said in the log.
+R=${WOLOS_RESULT_DIR:-/run/wolos/install}
+rm -rf "${R:?}"
+made=$(mkdir -p "${R%/*}" 2>&1 && (umask 077 && mkdir "$R") 2>&1) || { R=$(mktemp -d); echo "results in $R: $made" >&2; }
+# stdout is the progress protocol; everything the tools say goes to the log.
+LOG=${WOLOS_INSTALL_LOG:-$R/log}
+{ mkdir -p "$(dirname "$LOG")" && : > "$LOG"; } 2>/dev/null || LOG=$(mktemp)
+exec 2>>"$LOG"
+stage=prepare
+say() { stage=$1; echo "wolos-install: $*"; echo "wolos-install: $*" >&2; }
+# The log's last words, one line, no pipes: what really went wrong.
+why() {
+  tail -n 8 "$LOG" 2>/dev/null | grep -v '^wolos-install:' | tail -n 3 | tr -d '|' | tr '\n' ' ' |
+    sed 's/  */ /g; s/ *$//' | cut -c1-400
+}
+plan=; plandir=
+report() { # REASON: the fail line carries the reason and the real error
+  w=$(why)
+  say fail "$stage" "$*${w:+: $w}"
+}
+# Before any write: nothing to undo.
+refuse() { report "$*"; exit 2; }
 disk=${1:-}
-plan=
 here=$(cd "$(dirname "$0")" && pwd)
 wipe=1
+WOLOS_HOSTNAME=${WOLOS_HOSTNAME:-wolos}; WOLOS_AUTOLOGIN=${WOLOS_AUTOLOGIN:-no}; WOLOS_SWAP=${WOLOS_SWAP:-zram}
+account=${WOLOS_ACCOUNT:-}
+# What `wol install layout` says beyond the devices; an erase keeps none of it.
+others=0 esp_reused=0 esp_wolos=0 windows=0 bitlocker=0
+slots=two home_dev='' var_dev='' extra_fstab='' extra_crypttab=''
+nl='
+'
+take() { # info|layout: KEY=VALUE lines on stdin (controller install.rs info_text, Applied::env)
+  while IFS= read -r kv; do
+    case $kv in *=*) ;; *) continue ;; esac
+    k=${kv%%=*} v=${kv#*=}
+    case $1:$k in
+      info:disk) disk=$v ;;
+      info:wipe) wipe=$v ;;
+      info:WOLOS_ENCRYPT) WOLOS_ENCRYPT=$v ;;
+      info:account) account=$v ;;
+      info:WOLOS_HOSTNAME) WOLOS_HOSTNAME=$v ;;
+      info:WOLOS_AUTOLOGIN) WOLOS_AUTOLOGIN=$v ;;
+      info:WOLOS_SWAP) WOLOS_SWAP=$v ;;
+      layout:esp) esp=$v ;;
+      layout:root) root=$v ;;
+      layout:fsdev) fsdev=$v ;;
+      layout:slots) slots=$v ;;
+      layout:home_dev) home_dev=$v ;;
+      layout:var_dev) var_dev=$v ;;
+      layout:others) others=$v ;;
+      layout:esp_reused) esp_reused=$v ;;
+      layout:esp_wolos) esp_wolos=$v ;;
+      layout:windows) windows=$v ;;
+      layout:bitlocker) bitlocker=$v ;;
+      layout:extra_fstab) extra_fstab=${extra_fstab:+$extra_fstab$nl}$v ;;
+      layout:extra_crypttab) extra_crypttab=${extra_crypttab:+$extra_crypttab$nl}$v ;;
+      *) echo "install-run: $1 said $k, which is not one of its keys" >&2 ;;
+    esac
+  done
+}
 if [ "$disk" = --plan ]; then
   plan=${2:-}
-  info=$(wol install info "$plan") || { say failed 0 "the install plan can't be read"; exit 2; }
-  eval "$info"   # disk, wipe, WOLOS_ENCRYPT, account (shell-quoted by wol)
   plandir=$(dirname "$plan")
+  info=$(wol install info "$plan") || refuse "the install plan can't be read"
+  take info <<EOF
+$info
+EOF
   [ ! -s "$plandir/disk-password" ] || WOLOS_PASSPHRASE_FILE=$plandir/disk-password
-  WOLOS_RECOVERY_OUT=$plandir/recovery-key
-  export WOLOS_ENCRYPT WOLOS_PASSPHRASE_FILE WOLOS_RECOVERY_OUT
+  export WOLOS_ENCRYPT WOLOS_PASSPHRASE_FILE
 fi
+# The recovery key lands in the results folder only, whoever called (autoinstall too).
+WOLOS_RECOVERY_OUT=$R/recovery-key; export WOLOS_RECOVERY_OUT
+# The computer name: wol_core::settings::hostname, the rule Settings uses (audit3 R2B-18). A
+# plan's name was checked by `wol install info` already; the environment's (autoinstall) here.
+if [ -z "$plan" ]; then
+  WOLOS_HOSTNAME=$(wol install hostname "$WOLOS_HOSTNAME") || WOLOS_HOSTNAME=
+fi
+[ -n "$WOLOS_HOSTNAME" ] || WOLOS_HOSTNAME=wolos
 # Closing the lid or idling must not sleep the machine mid-install; the hold ends with the install.
 if [ "${WOLOS_NO_INHIBIT:-0}" != 1 ] && [ -z "${WOLOS_INHIBITED:-}" ] && command -v systemd-inhibit >/dev/null; then
   WOLOS_INHIBITED=1 exec systemd-inhibit --what=sleep:idle:handle-lid-switch --who="Install WolOS" \
     --why="Installing WolOS" "$0" "$@"
 fi
-# A USB disk opened in Files: let its partitions go first.
-[ -n "$disk" ] && findmnt -rno SOURCE,TARGET | awk -v d="$disk" 'index($1, d) == 1 && substr($1, length(d) + 1) ~ /^p?[0-9]+$/ {print $2}' |
-  sort -r | while read -r m; do umount "$m"; done
-# Every check before the first write: a refused disk is left exactly as it was.
-if [ -z "$disk" ] || ! sh "$here/install-check" "$disk" >/dev/null; then
-  say failed 0 "not a disk the installer may erase: ${disk:-none}"
-  exit 2
-fi
-# A plan is checked against the disk as it is now: if anything changed since the summary, nothing runs.
-if [ -n "$plan" ] && ! wol install check "$plan"; then
-  say failed 0 "the disk is not what the plan was made for"
-  exit 2
-fi
 T=${WOLOS_INSTALL_ROOT:-/mnt/wolos}
 SFS=${WOLOS_SOURCE_SFS:-/run/archiso/bootmnt/wolos/x86_64/airootfs.sfs}
+# A try before this one may have left its volume open and its mounts in place: let them go first.
+! mountpoint -q "$T" 2>/dev/null || umount -R "$T" || :
+! mountpoint -q /run/wolos/install-look 2>/dev/null || umount /run/wolos/install-look || :
+[ ! -e /dev/mapper/wolosroot ] || cryptsetup close wolosroot || :
+# Only a disk the installer lists at all; then its partitions mounted by the person (a USB disk
+# opened in Files) go first, never the live medium's. install-check then sees the disk as it is.
+if [ -z "$disk" ] || ! sh "$here/install-disks" | grep -qx -- "$disk"; then
+  refuse "not a disk the installer may erase: ${disk:-none}"
+fi
+# `wol install mounts`: deepest first; a swap partition on it is switched off (umount can't).
+wol install mounts "$disk" | while read -r what m; do
+  case $what:$m in
+    mount:/ | mount:/run/archiso*) ;;
+    mount:*) umount "$m" ;;
+    swap:*) swapoff "$m" ;;
+  esac
+done
+# Every check before the first write: a refused disk is left exactly as it was.
+facts=$(sh "$here/install-check" "$disk") || refuse "not a disk the installer may erase: $disk"
+others=$(printf '%s\n' "$facts" | grep -c '^os ')
+# Windows elsewhere on this computer (another disk) stays whatever happens here; its BitLocker
+# measures the Secure Boot keys boot-setup may change (audit3 R2B-9). Read only.
+elsewhere=no elsewhere_bitlocker=no
+for o in $(sh "$here/install-disks"); do
+  [ "$o" != "$disk" ] || continue
+  f=$(sh "$here/install-check" "$o") || :
+  case $nl$f$nl in *"${nl}os Windows$nl"*) elsewhere=yes ;; esac
+  case $nl$f$nl in *"${nl}bitlocker yes$nl"*) elsewhere_bitlocker=yes ;; esac
+done
+# A plan is checked against the disk as it is now: if anything changed since the summary, nothing runs.
+# The same check refuses what would otherwise fail after the erase (settings, account name, password).
+if [ -n "$plan" ]; then
+  verdict=$(wol install check "$plan") || refuse "the disk is not what the plan was made for${verdict:+ ($verdict)}"
+fi
 cleanup() {
   sync; umount -R "$T" 2>/dev/null || :
+  # The extra encrypted volumes (crypttab names), then the system.
+  for n in $(printf '%s\n' "${extra_crypttab:-}" | awk 'NF {print $1}'); do cryptsetup close "$n" 2>/dev/null || :; done
   [ "$unlock" = off ] || cryptsetup close wolosroot 2>/dev/null || :
-  rm -rf "$KEYDIR"
+  rm -rf "${KEYDIR:?}"
 }
-fail() { say failed 0 "$*"; cleanup; exit 1; }
+fail() { report "$*"; cleanup; exit 1; }
 part() { case $disk in *[0-9]) echo "${disk}p$1" ;; *) echo "$disk$1" ;; esac; }
 say prepare 0 "Preparing to install on $disk"
-unlock=$(wol encrypt decide "${WOLOS_ENCRYPT:-auto}") || { say failed 0 "disk encryption: a passphrase of 8 or more characters is needed"; exit 2; }
+unlock=$(wol encrypt decide "${WOLOS_ENCRYPT:-auto}") || refuse "disk encryption: a passphrase of 8 or more characters is needed"
 KEYDIR=${WOLOS_KEYDIR:-/run/wolos/install-keys}
 
 # LUKS2: formatted with a throw-away random key (a file in RAM), replaced by the real ones below.
 if [ "$unlock" != off ]; then
   (umask 077 && mkdir -p "$KEYDIR" && head -c 64 /dev/urandom > "$KEYDIR/key") || fail "could not make the disk key"
 fi
-slots=two home_dev= var_dev= extra_fstab= others=0
 if [ "$wipe" = 1 ]; then
   say disk 5 "Erasing $disk"
   # systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
   if [ "$unlock" = off ]; then
-    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >/dev/null ||
+    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >&2 ||
       fail "could not partition $disk"
   else
     systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d-crypt" \
-      --key-file="$KEYDIR/key" "$disk" >/dev/null || fail "could not partition $disk"
+      --key-file="$KEYDIR/key" "$disk" >&2 || fail "could not partition $disk"
   fi
-  udevadm settle 2>/dev/null
+  udevadm settle
   esp=$(part 1); root=$(part 2); fsdev=$root
+  # Erased: whatever install-check saw on the disk is gone, so no menu waits for it.
+  others=0
   if [ "$unlock" != off ]; then
     cryptsetup open --key-file="$KEYDIR/key" "$root" wolosroot || fail "could not open the encrypted disk"
     fsdev=/dev/mapper/wolosroot
@@ -90,8 +198,10 @@ else
   say disk 5 "Changing the partitions on $disk"
   (umask 077 && mkdir -p "$KEYDIR") && wol install layout "$plan" "$KEYDIR/key" > "$KEYDIR/layout.env" ||
     fail "could not partition $disk"
-  . "$KEYDIR/layout.env"
+  take layout < "$KEYDIR/layout.env"
 fi
+[ "$elsewhere" = no ] || windows=1
+[ "$elsewhere_bitlocker" = no ] || bitlocker=1
 [ "$unlock" = off ] || luuid=$(blkid -s UUID -o value "$root")
 ruuid=$(blkid -s UUID -o value "$fsdev"); euuid=$(blkid -s UUID -o value "$esp")
 O=compress=zstd:1,noatime
@@ -107,9 +217,18 @@ else
 fi
 [ -z "$var_dev" ] || mount "$var_dev" "$T/var" || fail "could not mount the new system"
 mount "$esp" "$T/efi" || fail "could not mount the new system"
+# A startup partition another WolOS used. The WolOS this plan replaces gives its startup files up
+# (`wol install layout` says esp_wolos=1 only when no WolOS system stays, audit3 R2B-5): they go
+# before ours are written. Any other: esp-sync would overwrite its wolos-a image, so it stops here.
+if [ "$wipe" != 1 ] && [ "$esp_wolos" = 1 ]; then
+  rm -rf "$T/efi/EFI/wolos" "$T/efi/wolos-a" "$T/efi/wolos-b" && rm -f "$T"/efi/loader/entries/wolos-*.conf ||
+    fail "could not clear the old WolOS startup files"
+elif [ "$wipe" != 1 ] && [ -e "$T/efi/EFI/wolos/wolos-a.efi" ]; then
+  fail "another WolOS already starts from this startup partition; choose a new one"
+fi
 
 say files 15 "Copying WolOS"
-unsquashfs -f -d "$T" "$SFS" >/dev/null || fail "could not copy the system"
+unsquashfs -f -d "$T" "$SFS" >&2 || fail "could not copy the system"
 # Live-only files: the live account, its autologin and installer rights, archiso boot bits.
 rm -rf "$T/etc/sysusers.d/wolos-live.conf" "$T/etc/tmpfiles.d/wolos-live.conf" "$T/etc/sudoers.d/wolos-live" \
   "$T/etc/wolos/login.json" "$T/etc/wolos-live" "$T/etc/mkinitcpio.conf.d/archiso.conf" \
@@ -119,7 +238,7 @@ rm -rf "$T/etc/sysusers.d/wolos-live.conf" "$T/etc/tmpfiles.d/wolos-live.conf" "
   "$T/etc/systemd/journald.conf.d/volatile-storage.conf" "$T/home/live" \
   "$T/etc/systemd/system/wold.service.d" "$T/etc/systemd/system/wolos-installer.service" \
   "$T/etc/systemd/system/multi-user.target.wants/wolos-installer.service"
-userdel -R "$T" live 2>/dev/null || :
+userdel -R "$T" live || :
 # The live dock's copy of shell.json gives way to the package's.
 [ ! -f "$T/etc/wolos/shell.json.pacnew" ] || mv "$T/etc/wolos/shell.json.pacnew" "$T/etc/wolos/shell.json"
 # The package database belongs to the slot, not the shared @var (pacman.conf DBPath).
@@ -156,35 +275,84 @@ else
 fi
 # Folders for the partitions the plan mounts elsewhere.
 echo "$extra_fstab" | awk '$2 ~ /^\// {print $2}' | while read -r m; do mkdir -p "$T$m"; done
+# The plan's other encrypted volumes (/home, /var, swap, folders): opened at boot by crypttab with
+# the install key, which lives only inside the encrypted system (crypttab's third field).
+if [ -n "$extra_crypttab" ]; then
+  mkdir -p "$T/etc/cryptsetup-keys.d" && chmod 700 "$T/etc/cryptsetup-keys.d" || fail "could not keep the volume keys"
+  echo "$extra_crypttab" | awk 'NF {print $1}' | while read -r n; do
+    install -m 400 "$KEYDIR/key" "$T/etc/cryptsetup-keys.d/$n.key" || exit 1
+  done || fail "could not keep the volume keys"
+  { echo "# WolOS: volumes beyond the system, unlocked with keys kept in the encrypted system."; echo "$extra_crypttab"; } > "$T/etc/crypttab" ||
+    fail "could not write crypttab"
+fi
+
+# This computer's keys sign its boot images and, with a TPM, its disk policy; made once, kept in
+# the shared @var (boot-setup finds them there).
+say keys 40 "Making this computer's keys"
+SB=$T/var/lib/wolos/secureboot
+WOLOS_SB_DIR=$SB sh "$here/boot-keys" create || fail "could not make this computer's keys"
 if [ "$unlock" != off ]; then
+  say encrypt 45 "Setting up the disk unlock"
   wol encrypt hooks "$T/etc/mkinitcpio.conf.d/wolos.conf" || fail "could not set the unlock hook"
   # Real keys in, throw-away key out; the recovery key is kept once for the installer to show.
-  mkdir -p -m 700 "$(dirname "${WOLOS_RECOVERY_OUT:-/run/wolos/recovery-key}")"
-  # The disk key follows this machine's signed kernels; the first boot adds the firmware state.
-  SB=$T/var/lib/wolos/secureboot
-  WOLOS_SB_DIR=$SB sh "$here/boot-keys" create || fail "could not make this computer's keys"
   # When the chip refuses (Secure Boot or firmware changed), the account's own password opens the
   # disk before the recovery key is needed; never a shared one. Kept in sync by `wol encrypt password`.
-  fallback=
+  # The files go to `wol encrypt enroll` as they are: it reads them as typed (one line end off,
+  # encrypt::typed_secret), the same reading `wol encrypt decide` checked (audit2 B4, audit3 R2B-6).
+  fallback= pass=
   if [ "$unlock" = tpm2 ] && [ -n "${account:-}" ] && [ -s "${plandir:-/nonexistent}/account-password" ]; then
-    (umask 077 && printf %s "$(cat "$plandir/account-password")" > "$KEYDIR/fallback") && fallback=$KEYDIR/fallback
+    fallback=1 pass=$plandir/account-password
   fi
-  if [ "$unlock" = tpm2 ]; then pass=$fallback; else pass=${WOLOS_PASSPHRASE_FILE:-}; fi
+  if [ "$unlock" != tpm2 ] && [ -n "${WOLOS_PASSPHRASE_FILE:-}" ]; then
+    pass=$WOLOS_PASSPHRASE_FILE
+  fi
   WOLOS_TPM_PUB=$SB/tpm2-pcr-public.pem wol encrypt enroll "$root" "$KEYDIR/key" "$unlock" \
     ${pass:+"$pass"} || fail "could not set up the disk unlock"
   [ -z "$fallback" ] || echo "$account" > "$T/var/lib/wolos/disk-unlock-user" || fail "could not set up the disk unlock"
   [ "$unlock" != tpm2 ] || cp "$KEYDIR/key" "$SB/rebind.key" || fail "could not keep the first-boot key"
 fi
 
-# [wolos-cachy] only where the CPU runs its x86-64-v3 builds; linux-wolos-v3 (same boot files) replaces
-# linux-wolos when a repo offers it, before the initramfs is built (ADR 0019). Offline: next update.
-arch-chroot "$T" wol mirror gate --yes >/dev/null 2>&1 || :
-arch-chroot "$T" pacman -Sy >/dev/null 2>&1 || :
-if [ "$(arch-chroot "$T" wol mirror kernel 2>/dev/null)" = linux-wolos-v3 ]; then
-  arch-chroot "$T" pacman -S --noconfirm linux-wolos-v3 >/dev/null 2>&1 || :
+# Language, keyboard and time zone before the initramfs: sd-vconsole bakes /etc/vconsole.conf into
+# it, and the disk password is typed with that keymap (audit2 B1). Its own stage, so a stop here is
+# named for what it was (audit3 R2B-8). The account comes at 90 %.
+if [ -n "$plan" ]; then
+  say settings 68 "Setting the language and keyboard"
+  wol install settings "$plan" "$T" || fail "could not set the language and time zone"
 fi
-
-say boot 70 "Making $disk start WolOS"
+say initramfs 70 "Building the startup image"
+# `wol mirror gate` turns the optimized x86-64-v3 repo sections on only where the CPU runs them (ADR
+# 0030); linux-wolos-v3 (same boot files) replaces linux-wolos when a repo offers it, before the
+# initramfs is built. Offline (no default
+# route): nothing to wait for, the next update does it; online: bounded, a slow mirror never stalls here.
+# A step cut short must not leave anything behind in the slot (audit2 B11): whatever it still runs
+# inside the target is stopped, and pacman's lock goes (it is sealed into the slot otherwise and
+# every later update says "unable to lock database").
+stray() {
+  # Never the live system itself: every process has / as its root.
+  [ "${T%/}" != "" ] || return 0
+  for r in "${WOLOS_PROC:-/proc}"/[0-9]*/root; do
+    [ "$(readlink "$r" 2>/dev/null || :)" = "$T" ] || continue
+    q=${r%/root}; kill -9 "${q##*/}" 2>/dev/null || :
+  done
+  rm -f "$T/usr/lib/pacman/db.lck" "$T/var/lib/pacman/db.lck"
+}
+bounded() { # SECONDS COMMAND...: a network step inside the target, at most SECONDS
+  secs=$1; shift
+  timeout -k 10 "$secs" arch-chroot "$T" "$@" >&2 && return 0
+  stray; return 1
+}
+if [ -n "$(ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null)" ]; then
+  bounded 60 wol mirror gate --yes || :
+  bounded 120 pacman -Sy || :
+  if [ "$(timeout 30 arch-chroot "$T" wol mirror kernel 2>/dev/null)" = linux-wolos-v3 ]; then
+    # Only the download is bounded (the slow, network part); the swap itself runs from the
+    # cache to the end: a transaction killed halfway would leave half a kernel in the slot.
+    if bounded 600 pacman -Sw --noconfirm linux-wolos-v3; then
+      arch-chroot "$T" pacman -S --noconfirm linux-wolos-v3 >&2 || fail "could not install the faster kernel"
+    fi
+  fi
+  [ ! -e "$T/usr/lib/pacman/db.lck" ] || fail "the package database was left locked"
+fi
 mkdir -p "$T/etc/mkinitcpio.d" "$T/boot"
 for m in "$T"/usr/lib/modules/*/; do
   [ -f "$m/pkgbase" ] && [ -f "$m/vmlinuz" ] || continue
@@ -193,35 +361,73 @@ for m in "$T"/usr/lib/modules/*/; do
   printf "PRESETS=('default')\nALL_kver='/boot/vmlinuz-%s'\ndefault_image='/boot/initramfs-%s.img'\n" "$kb" "$kb" > "$T/etc/mkinitcpio.d/$kb.preset"
 done
 [ -f "$T/boot/vmlinuz-linux-wolos" ] || fail "no linux-wolos kernel in the image"
-arch-chroot "$T" mkinitcpio -P >/dev/null 2>&1 || fail "could not build the initramfs"
+arch-chroot "$T" mkinitcpio -P >&2 || fail "could not build the initramfs"
 mkdir -p "$T/efi/wolos-a"
 
 say settings 90 "Settings"
-echo wolos > "$T/etc/hostname"
+echo "$WOLOS_HOSTNAME" > "$T/etc/hostname"
+# Windows keeps the hardware clock in local time; so does this system while Windows stays on this
+# computer, or each start of the other one shows the wrong time.
+if [ "$windows" = 1 ]; then
+  printf '0.0 0 0\n0\nLOCAL\n' > "$T/etc/adjtime" || fail "could not set the clock"
+fi
+# Swap: zram is the package default (zram-generator.conf in /usr/lib). No hibernation either way:
+# the kernel runs locked down (ADR 0025).
+mkdir -p "$T/etc/systemd"
+case $WOLOS_SWAP in
+  none) printf '# WolOS: no swap, chosen at install. Remove this file for the default (zram).\n' > "$T/etc/systemd/zram-generator.conf" ;;
+  swapfile:*)
+    gib=${WOLOS_SWAP#swapfile:}
+    case $gib in '' | *[!0-9]*) fail "swap: not a size: $WOLOS_SWAP" ;; esac
+    [ "$gib" -ge 1 ] && [ "$gib" -le 64 ] || fail "swap: not a size: $WOLOS_SWAP"
+    mkdir -p "$T/var/swap"
+    if [ "$slots" = two ]; then
+      # btrfs: a swap file must not be copy-on-write; mkswapfile makes it so.
+      btrfs filesystem mkswapfile --size "${gib}g" "$T/var/swap/swapfile" >&2 || fail "could not make the swap file"
+    else
+      { fallocate -l "${gib}G" "$T/var/swap/swapfile" && chmod 600 "$T/var/swap/swapfile" && mkswap "$T/var/swap/swapfile" >&2; } ||
+        fail "could not make the swap file"
+    fi
+    echo "/var/swap/swapfile none swap defaults 0 0" >> "$T/etc/fstab"
+    printf '# WolOS: a swap file was chosen at install instead of zram.\n' > "$T/etc/systemd/zram-generator.conf"
+    ;;
+  zram) ;;
+  *) fail "swap: not a choice: $WOLOS_SWAP" ;;
+esac
 if [ -n "$plan" ]; then
-  wol install settings "$plan" "$T" || fail "could not set the language and time zone"
   # A kept /home goes on only now: nothing above ever writes to it.
   [ -z "$home_dev" ] || mount "$home_dev" "$T/home" || fail "could not mount the new system"
   wol install account "$plan" "$T" "$plandir/account-password" || fail "could not create the account"
   rm -f "$plandir/account-password" "$plandir/disk-password"
 fi
+# Auto-login: the login window's file, the account's name (login::parse_config).
+if [ "$WOLOS_AUTOLOGIN" = yes ] && [ -n "$account" ]; then
+  mkdir -p "$T/etc/wolos" && printf '{"autologin":"%s"}\n' "$account" > "$T/etc/wolos/login.json" || fail "could not set auto-login"
+fi
 tr -d - < /proc/sys/kernel/random/uuid > "$T/etc/machine-id"
 # The real machine-id means no first boot for systemd, and a sealed slot could not take the presets
 # then anyway: they go on here (layers merge at boot, NetworkManager runs).
-systemctl --root="$T" preset-all >/dev/null 2>&1 || fail "could not enable the system services"
-arch-chroot "$T" pacman-key --init >/dev/null 2>&1 && arch-chroot "$T" pacman-key --populate >/dev/null 2>&1 ||
-  say settings 92 "package keys: set up on first update"
+systemctl --root="$T" preset-all >&2 || fail "could not enable the system services"
+arch-chroot "$T" pacman-key --init >&2 && arch-chroot "$T" pacman-key --populate >&2 ||
+  echo "package keys: set up on first update" >&2
 
 # Sealing: fs-verity on /usr executables and libraries, then the slot is read-only.
-[ "$slots" = one ] || wol seal apply "$T" "$T/efi/wolos-a/verity" >/dev/null || fail "could not seal the system"
+say seal 92 "Sealing the system"
+[ "$slots" = one ] || wol seal apply "$T" "$T/efi/wolos-a/verity" >&2 || fail "could not seal the system"
 # After the seal: the signed image carries its digest.
-WOLOS_ROOT=$T WOLOS_ESP=$T/efi WOLOS_OTHER_SYSTEMS=${others#0} WOLOS_BOOT_DISK=$disk sh "$here/install-boot" >/dev/null ||
+say boot 95 "Making $disk start WolOS"
+# The plan knows whether the startup partition is someone else's too (reused, another system
+# stays) and whether Windows stays: boot-setup asks no file on the partition (audit3 R2B-4, R2B-9).
+shared=no; [ "$esp_reused" != 1 ] || [ "$others" = 0 ] || shared=yes
+win=no; [ "$windows" != 1 ] || win=yes
+bl=no; [ "$bitlocker" != 1 ] || bl=yes
+WOLOS_ROOT=$T WOLOS_ESP=$T/efi WOLOS_ESP_DEV=$esp WOLOS_OTHER_SYSTEMS=${others#0} WOLOS_BOOT_DISK=$disk \
+  WOLOS_ESP_SHARED=$shared WOLOS_WINDOWS=$win WOLOS_BITLOCKER=$bl sh "$here/install-boot" >&2 ||
   fail "could not install the boot loader"
-say finish 98 "Checking the new system"
-for f in "efi/loader/entries/wolos-a+3.conf" "efi/EFI/wolos/wolos-a.efi" "etc/fstab"; do
+for f in "efi/loader/entries/wolos-a+3.conf" "efi/EFI/wolos/wolos-a.efi" "etc/fstab" "etc/hostname"; do
   [ -s "$T/$f" ] || fail "the new system did not check out: $f missing"
 done
+# The log stays with the system it describes.
+mkdir -p "$T/var/log" && cp "$LOG" "$T/var/log/wolos-install.log" || :
 cleanup
-# The recovery key is the app's to show, then delete.
-[ -z "$plan" ] || [ ! -f "$plandir/recovery-key" ] || chown --reference="$plan" "$plandir/recovery-key"
-say done 100 "WolOS is installed on $disk"
+say "done" 100 "WolOS is installed on $disk"

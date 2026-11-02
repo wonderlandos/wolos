@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol` console, `wol-login`, `wol-authcheck`: pure logic here, thin mains in `src/bin/`.
 pub mod approve;
+pub mod audio_doctor;
 pub mod authcheck;
 pub mod boot;
 pub mod catalog;
@@ -11,9 +12,11 @@ pub mod install;
 pub mod login;
 pub mod mcp;
 pub mod mirror;
+pub mod modules;
 pub mod packages;
 pub mod pam;
 pub mod pkg;
+pub mod plugin;
 pub mod power;
 pub mod run;
 pub mod seal;

@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-login (root, wold job `org.wol.login`, IaraOS ADR 0024): greeter -> authenticating -> session -> greeter.
 //! Privileged steps: PAM check for the `_wollogin` UI, then the user session via `su -l`. Passwords never logged.
+//! Every program it starts as root is built by `wol_core::privileged::privileged_command` (cleared
+//! environment, fixed PATH, `LC_ALL=C`; R2C-16). Two add one thing back, said at the line: the
+//! login window keeps the system `LANG` and has no `LC_ALL` (it speaks the person's language), and
+//! homectl gets the secrets it reads from its environment. `crates/controller/tests/privileged.rs`
+//! fails on a launch that bypasses it.
 use controller::authcheck::{Auth, wipe};
 use controller::login::*;
 use std::io::{Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::time::{Duration, Instant};
+use wol_core::privileged::{capture, capture_input, privileged_command};
 
 const PAM_SERVICE: &std::ffi::CStr = c"wol-login";
 const FAIL_DELAY: Duration = Duration::from_secs(2);
@@ -78,7 +84,7 @@ struct Marks {
 
 impl Marks {
     fn new() -> Self {
-        let console = Command::new("/sbin/sysctl")
+        let console = privileged_command("/sbin/sysctl")
             .args(["-n", "kern.console"])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
@@ -91,7 +97,7 @@ impl Marks {
 
     fn emit(&self, line: String) {
         println!("{line}");
-        let _ = Command::new("/usr/bin/logger")
+        let _ = privileged_command("/usr/bin/logger")
             .args(["-p", "user.notice", "-t", "wol-login", &line])
             .status();
         if self.serial {
@@ -168,7 +174,13 @@ fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut M
     let _ = listener.set_nonblocking(true);
     println!("wol-login: greeter");
     // First boot (no login user yet): the setup assistant instead of the login window (ADR 0004).
-    let mut cmd = Command::new(GREETER);
+    let mut cmd = privileged_command(GREETER);
+    // The login window speaks the system language: LANG passes, LC_ALL=C does not (its wrapper
+    // sets PATH, XDG_RUNTIME_DIR and HOME itself).
+    cmd.env_remove("LC_ALL");
+    if let Ok(lang) = std::env::var("LANG") {
+        cmd.env("LANG", lang);
+    }
     if flow.listed.is_empty() {
         cmd.arg("setup");
     }
@@ -302,7 +314,7 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
             let a = power_argv(p);
             println!("wol-login: {}", p.verb());
             reply(client, "ok", false);
-            if let Err(e) = Command::new(a[0]).args(&a[1..]).status() {
+            if let Err(e) = privileged_command(a[0]).args(&a[1..]).status() {
                 eprintln!("wol-login: {}: {e}", a[0]);
             }
             flow.phase
@@ -320,7 +332,7 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
 fn run_setup(a: &NewAccount) -> Option<LoginUser> {
     let run = |argv: &[String], stdin: &str| {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        wol_core::controls::run_with_input(&argv, stdin, Duration::from_secs(60)).is_some()
+        capture_input(&argv, stdin, Duration::from_secs(60)).is_some()
     };
     apply_setup(&setup_plan(a), std::path::Path::new("/"), run, || {
         find(&read(PASSWD_FILE), &a.name)
@@ -329,7 +341,7 @@ fn run_setup(a: &NewAccount) -> Option<LoginUser> {
 
 /// Asks NetworkManager for a fresh scan and lists what it heard.
 fn scan_wifi() -> Vec<shared::login::SeenNetwork> {
-    let out = Command::new("nmcli")
+    let out = privileged_command("nmcli")
         .args([
             "-t",
             "-f",
@@ -366,13 +378,13 @@ fn join_wifi(ssid: &str, password: Option<&str>) -> bool {
         return false;
     };
     steps.into_iter().all(|s| match s {
-        wol_core::admin::AdminStep::Run(argv) => Command::new(&argv[0])
+        wol_core::admin::AdminStep::Run(argv) => privileged_command(&argv[0])
             .args(&argv[1..])
             .status()
             .is_ok_and(|st| st.success()),
         wol_core::admin::AdminStep::RunInput { argv, input } => {
             let a: Vec<&str> = argv.iter().map(String::as_str).collect();
-            wol_core::controls::run_with_input(&a, &input, Duration::from_secs(60)).is_some()
+            capture_input(&a, &input, Duration::from_secs(60)).is_some()
         }
         wol_core::admin::AdminStep::Write {
             path,
@@ -396,7 +408,7 @@ fn reply(client: &mut UnixStream, answer: &str, delay: bool) {
 
 fn make_runtime_dir(user: &LoginUser) {
     let _ = std::fs::create_dir_all("/var/run/user");
-    let _ = Command::new("/usr/bin/install")
+    let _ = privileged_command("/usr/bin/install")
         .args([
             "-d",
             "-o",
@@ -420,7 +432,7 @@ fn start_keyring(user: &LoginUser, password: &[u8]) {
     };
     make_runtime_dir(user); // the daemon's control socket lives there
     let argv: Vec<&str> = cmd.iter().map(String::as_str).collect();
-    if wol_core::controls::run_with_input(&argv, pw, Duration::from_secs(10)).is_none() {
+    if capture_input(&argv, pw, Duration::from_secs(10)).is_none() {
         eprintln!("wol-login: {}: keyring daemon did not start", user.name);
     }
 }
@@ -432,7 +444,8 @@ fn run_session(user: &LoginUser, locked: bool, spawned: impl FnOnce()) -> bool {
         return false;
     };
     println!("wol-login: session {} ({})", user.name, user.uid);
-    let st = Command::new(&cmd[0])
+    // `su -l` builds the login environment of the account itself.
+    let st = privileged_command(&cmd[0])
         .args(&cmd[1..])
         .spawn()
         .and_then(|mut c| {
@@ -442,7 +455,7 @@ fn run_session(user: &LoginUser, locked: bool, spawned: impl FnOnce()) -> bool {
     println!("wol-login: session {} ended {st:?}", user.name);
     if std::path::Path::new(KEYRING_DAEMON).exists() {
         let stop = keyring_stop_command(user);
-        let _ = Command::new(&stop[0]).args(&stop[1..]).status();
+        let _ = privileged_command(&stop[0]).args(&stop[1..]).status();
     }
     lock_home(&user.name);
     st.is_ok_and(|s| s.success())
@@ -452,26 +465,24 @@ fn run_session(user: &LoginUser, locked: bool, spawned: impl FnOnce()) -> bool {
 fn home_state(name: &str) -> Option<wol_core::home_crypt::State> {
     let argv = wol_core::home_crypt::status_argv(name)?;
     let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-    wol_core::home_crypt::parse_status(
-        wol_core::system::run_with_timeout(&argv, Duration::from_secs(10)).as_deref(),
-    )
+    wol_core::home_crypt::parse_status(capture(&argv, Duration::from_secs(10)).as_deref())
 }
 
 fn run_crypt(c: &wol_core::home_crypt::Cmd) -> bool {
     let argv: Vec<&str> = c.argv.iter().map(String::as_str).collect();
     let t = Duration::from_secs(60);
     if !c.env.is_empty() {
-        // Secrets homectl reads from its environment (never argv).
-        return Command::new(&c.argv[0])
+        // Secrets homectl reads from its environment (never argv): the only variables added to
+        // the cleared environment.
+        return privileged_command(&c.argv[0])
             .args(&c.argv[1..])
             .envs(c.env.iter().map(|(k, v)| (k, v)))
-            .stdin(std::process::Stdio::null())
             .status()
             .is_ok_and(|s| s.success());
     }
     match &c.stdin {
-        Some(pw) => wol_core::controls::run_with_input(&argv, pw, t).is_some(),
-        None => wol_core::system::run_with_timeout(&argv, t).is_some(),
+        Some(pw) => capture_input(&argv, pw, t).is_some(),
+        None => capture(&argv, t).is_some(),
     }
 }
 
@@ -497,7 +508,9 @@ fn lock_home(name: &str) {
 }
 
 fn stop_tree(child: &mut Child) {
-    let ps = Command::new("ps").args(wol_core::jobs::PS_ARGS).output();
+    let ps = privileged_command("ps")
+        .args(wol_core::jobs::PS_ARGS)
+        .output();
     let pairs = ps
         .map(|o| wol_core::jobs::parse_ps_pairs(&String::from_utf8_lossy(&o.stdout)))
         .unwrap_or_default();

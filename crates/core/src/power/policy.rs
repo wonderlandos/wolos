@@ -56,7 +56,8 @@ impl State {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
-    /// Mains, or a desktop without a Mains power supply.
+    /// A charger is online (Mains or USB / USB-PD), or nothing says the battery is in use
+    /// (a desktop, a VM).
     #[default]
     Ac,
     Battery,
@@ -114,6 +115,21 @@ fn is_name(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
 }
 
+/// A `power_supply` `type` that charges the system: Mains, or USB / USB-C / USB-PD.
+fn is_charger(t: &str) -> bool {
+    matches!(t, "Mains" | "USB" | "USB_C" | "USB_PD" | "USB_PD_DRP")
+}
+
+/// Battery when the system battery is in use: a charger exists and none is online, or no
+/// charger is listed at all and the battery says `Discharging`; else AC.
+fn on_battery(charger: bool, on_ac: bool, system_battery: bool, discharging: bool) -> Source {
+    if system_battery && !on_ac && (charger || discharging) {
+        Source::Battery
+    } else {
+        Source::Ac
+    }
+}
+
 /// `probe`: fixed argv -> stdout, None when it failed (a missing file fails `cat` and `ls`).
 pub fn facts(probe: &dyn Fn(&[&str]) -> Option<String>) -> Facts {
     let text = |argv: &[&str]| probe(argv).map(|s| s.trim().to_owned());
@@ -126,15 +142,20 @@ pub fn facts(probe: &dyn Fn(&[&str]) -> Option<String>) -> Facts {
             .collect()
     };
     let profile = text(&PROFILE_ARGV).filter(|p| !p.is_empty());
-    let (mut mains, mut on_ac, mut battery) = (false, false, None);
+    let (mut charger, mut on_ac, mut battery) = (false, false, None);
+    let (mut system_battery, mut discharging) = (false, false);
     for n in names(&SUPPLIES_ARGV) {
         let f = |k: &str| text(&["cat", &format!("/sys/class/power_supply/{n}/{k}")]);
+        let device = f("scope").as_deref() == Some("Device");
         match f("type").as_deref() {
-            Some("Mains") => {
-                mains = true;
+            // A USB-C / USB-PD charger (`ucsi-source-psy-*`) counts like Mains (CORE2-2).
+            Some(t) if is_charger(t) && !device => {
+                charger = true;
                 on_ac |= f("online").as_deref() == Some("1");
             }
-            Some("Battery") if battery.is_none() && f("scope").as_deref() != Some("Device") => {
+            Some("Battery") if !system_battery && !device => {
+                system_battery = true;
+                discharging = f("status").as_deref() == Some("Discharging");
                 battery = f("capacity")
                     .and_then(|c| c.parse::<u8>().ok())
                     .filter(|c| *c <= 100);
@@ -160,11 +181,7 @@ pub fn facts(probe: &dyn Fn(&[&str]) -> Option<String>) -> Facts {
             Cpu::Fixed
         },
         profile,
-        source: if mains && !on_ac && battery.is_some() {
-            Source::Battery
-        } else {
-            Source::Ac
-        },
+        source: on_battery(charger, on_ac, system_battery, discharging),
         battery,
         lid: (!names(&LID_ARGV).is_empty()).then(|| {
             text(&LID_CONF_ARGV)
@@ -509,8 +526,71 @@ mod tests {
             }]
         );
         assert_eq!(odd.battery, None, "out of range");
-        assert_eq!(odd.source, Source::Ac, "no Mains supply: AC");
+        assert_eq!(
+            odd.source,
+            Source::Ac,
+            "no charger, no Discharging status: AC"
+        );
         assert_eq!(odd.lid, Some(Lid::Nothing));
+    }
+
+    #[test]
+    fn usb_pd_chargers_and_battery_status_decide_the_source() {
+        // CORE2-2: no Mains entry. The battery alone, discharging: battery.
+        const BAT_ONLY: &[(&str, &str)] = &[
+            ("ls /sys/class/power_supply", "BAT0\n"),
+            ("cat /sys/class/power_supply/BAT0/type", "Battery\n"),
+            ("cat /sys/class/power_supply/BAT0/status", "Discharging\n"),
+            ("cat /sys/class/power_supply/BAT0/capacity", "80\n"),
+        ];
+        assert_eq!(facts(&probe(BAT_ONLY)).source, Source::Battery);
+        // A USB-PD charger, online: AC.
+        const PD_ON: &[(&str, &str)] = &[
+            (
+                "ls /sys/class/power_supply",
+                "BAT0\nucsi-source-psy-USBC000:001\n",
+            ),
+            ("cat /sys/class/power_supply/BAT0/type", "Battery\n"),
+            ("cat /sys/class/power_supply/BAT0/status", "Charging\n"),
+            ("cat /sys/class/power_supply/BAT0/capacity", "80\n"),
+            (
+                "cat /sys/class/power_supply/ucsi-source-psy-USBC000:001/type",
+                "USB\n",
+            ),
+            (
+                "cat /sys/class/power_supply/ucsi-source-psy-USBC000:001/online",
+                "1\n",
+            ),
+        ];
+        assert_eq!(facts(&probe(PD_ON)).source, Source::Ac);
+        // The same port unplugged (online 0): battery, whatever the status says.
+        const PD_OFF: &[(&str, &str)] = &[
+            (
+                "ls /sys/class/power_supply",
+                "BAT0\nucsi-source-psy-USBC000:001\n",
+            ),
+            ("cat /sys/class/power_supply/BAT0/type", "Battery\n"),
+            ("cat /sys/class/power_supply/BAT0/capacity", "80\n"),
+            (
+                "cat /sys/class/power_supply/ucsi-source-psy-USBC000:001/type",
+                "USB\n",
+            ),
+            (
+                "cat /sys/class/power_supply/ucsi-source-psy-USBC000:001/online",
+                "0\n",
+            ),
+        ];
+        assert_eq!(facts(&probe(PD_OFF)).source, Source::Battery);
+        // A full battery with no charger entry: nothing says it is in use, AC.
+        const FULL: &[(&str, &str)] = &[
+            ("ls /sys/class/power_supply", "BAT0\n"),
+            ("cat /sys/class/power_supply/BAT0/type", "Battery\n"),
+            ("cat /sys/class/power_supply/BAT0/status", "Full\n"),
+            ("cat /sys/class/power_supply/BAT0/capacity", "100\n"),
+        ];
+        assert_eq!(facts(&probe(FULL)).source, Source::Ac);
+        assert!(is_charger("USB_PD") && is_charger("Mains"));
+        assert!(!is_charger("Battery") && !is_charger("Wireless"));
     }
 
     #[test]

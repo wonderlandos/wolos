@@ -124,7 +124,7 @@ impl Sender {
         }
         for _ in 0..2 {
             if self.conn.is_none() {
-                self.conn = UnixStream::connect(&self.socket).ok();
+                self.conn = shared::jobs::connect(&self.socket).ok();
             }
             match self.conn.as_mut().map(|c| c.write_all(line.as_bytes())) {
                 Some(Ok(())) => {
@@ -271,11 +271,17 @@ mod tests {
         };
         assert!(!s.send(&snap), "wold not running");
         let l = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let wold = std::thread::spawn(move || {
+            let (c, _) = l.accept().unwrap();
+            shared::jobs::greet(&c).unwrap();
+            let mut got = String::new();
+            (&c).read_to_string(&mut got).unwrap();
+            got
+        });
         assert!(s.send(&snap));
         assert!(!s.send(&snap), "unchanged");
         drop(s);
-        let mut got = String::new();
-        l.accept().unwrap().0.read_to_string(&mut got).unwrap();
+        let got = wold.join().unwrap();
         assert_eq!(got, snap.line());
         let _ = std::fs::remove_dir_all(&dir);
     }

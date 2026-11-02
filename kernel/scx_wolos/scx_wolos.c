@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <signal.h>
 #include <string.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <bpf/bpf.h>
 #include <scx/common.h>
 #include "scx_wolos.bpf.skel.h"
@@ -45,6 +47,23 @@ static void print_stats(struct scx_wolos *skel)
 	fflush(stdout);
 }
 
+/*
+ * The class grants map (audit A19), for wold through a root-only pin. Without it the scheduler
+ * falls back to capping uclamp at foreground. A stale pin from a previous run is replaced.
+ */
+#define GRANTS_DIR "/sys/fs/bpf/wolos"
+#define GRANTS_PIN GRANTS_DIR "/boosted"
+static void pin_grants(struct scx_wolos *skel)
+{
+	if (mkdir(GRANTS_DIR, 0700) && errno != EEXIST) {
+		fprintf(stderr, "scx_wolos: %s: %s (uclamp capped at foreground)\n", GRANTS_DIR, strerror(errno));
+		return;
+	}
+	unlink(GRANTS_PIN);
+	if (bpf_map__pin(skel->maps.boosted, GRANTS_PIN) || chmod(GRANTS_PIN, 0600))
+		fprintf(stderr, "scx_wolos: cannot pin %s (uclamp capped at foreground)\n", GRANTS_PIN);
+}
+
 int main(int argc, char **argv)
 {
 	struct scx_wolos *skel;
@@ -68,6 +87,7 @@ restart:
 	skel = SCX_OPS_OPEN(wolos_ops, scx_wolos);
 	SCX_OPS_LOAD(skel, wolos_ops, scx_wolos, uei);
 	link = SCX_OPS_ATTACH(skel, wolos_ops, scx_wolos);
+	pin_grants(skel);
 	while (!exit_req && !UEI_EXITED(skel, uei)) {
 		if (stats)
 			print_stats(skel);

@@ -1,13 +1,30 @@
 [Unit]
 Description=Queue this computer's key for the firmware's key screen
+# Only where the key screen is the way in (boot-setup leaves key-screen for the mok tier, and for
+# own keys with a module built here); own-keys and off installs never see MokManager.
 ConditionPathExists=/usr/share/wolos/shim/shimx64.efi
 ConditionPathExists=/var/lib/wolos/secureboot/db.der
+ConditionPathExists=/var/lib/wolos/secureboot/key-screen
 ConditionPathExists=!/var/lib/wolos/secureboot/enrolled
 After=local-fs.target
 
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/wolos/boot-enroll
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): mokutil writes EFI variables and /var/lib/wolos/secureboot; no network.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+RestrictAddressFamilies=AF_UNIX
 
 [Install]
 WantedBy=multi-user.target

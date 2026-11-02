@@ -9,6 +9,14 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/lib/wolos/firstboot
 TimeoutStartSec=10min
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): installs drivers with pacman (network, setuid download user, DKMS, modprobe, initramfs): only restrictions pacman and its hooks never need.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+ProtectHome=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
 
 [Install]
 WantedBy=multi-user.target

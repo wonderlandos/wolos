@@ -320,8 +320,36 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(hex(h.finalize().into()))
 }
 
-/// Every `*.pub` in `dir` that is an Ed25519 key, sorted by file name.
+/// The revocation list next to the keys (audit A13): one key per line as 64 lowercase hex
+/// characters, a space and the reason; `#` comments.
+pub const REVOKED_FILE: &str = "revoked.list";
+
+/// Keys listed in `text` (a [`REVOKED_FILE`]); malformed lines are skipped (an unreadable entry
+/// cannot revoke, the contract test refuses one in the shipped file).
+pub fn parse_revoked(text: &str) -> Vec<[u8; 32]> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let key = l.split_whitespace().next()?;
+            if key.len() != 64 {
+                return None;
+            }
+            let mut out = [0u8; 32];
+            for (i, b) in out.iter_mut().enumerate() {
+                *b = u8::from_str_radix(key.get(2 * i..2 * i + 2)?, 16).ok()?;
+            }
+            Some(out)
+        })
+        .collect()
+}
+
+/// Every `*.pub` in `dir` that is an Ed25519 key and not in `dir`/[`REVOKED_FILE`], sorted by
+/// file name. Empty when the directory is unreadable.
 pub fn read_keys(dir: &Path) -> Vec<[u8; 32]> {
+    let revoked = std::fs::read_to_string(dir.join(REVOKED_FILE))
+        .map(|t| parse_revoked(&t))
+        .unwrap_or_default();
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -333,6 +361,7 @@ pub fn read_keys(dir: &Path) -> Vec<[u8; 32]> {
     files
         .iter()
         .filter_map(|p| public_key(&std::fs::read_to_string(p).ok()?))
+        .filter(|k| !revoked.contains(k))
         .collect()
 }
 
@@ -480,6 +509,31 @@ pub fn verify_index(text: &[u8], sig: Option<&[u8]>, keys: &[[u8; 32]]) -> Resul
         .position(|k| verify_sig(k, text, &sig))
         .map(Trust::Signed)
         .ok_or_else(|| "index signature not from a trusted key".into())
+}
+
+/// Written next to the cached index once it verified as signed: from then on a missing
+/// `index.json.sig` is an error, never "unsigned" (CORE-8, a stripped signature is a downgrade).
+pub const INDEX_SIGNED_MARK: &str = "index.signed";
+
+/// A missing index signature is refused when trusted keys are installed and the index is the
+/// official one, or when this cache once held a signed index ([`INDEX_SIGNED_MARK`]). Only a
+/// developer index (`WOL_INDEX_URL`) on a cache that never saw a signature may be unsigned.
+pub fn index_sig_required(have_keys: bool, developer_url: bool, was_signed: bool) -> bool {
+    was_signed || (have_keys && !developer_url)
+}
+
+/// [`verify_index`] for a fetched index: when `required` ([`index_sig_required`]) a missing
+/// signature is an error instead of [`Trust::Unsigned`].
+pub fn verify_fetched_index(
+    text: &[u8],
+    sig: Option<&[u8]>,
+    keys: &[[u8; 32]],
+    required: bool,
+) -> Result<Trust, String> {
+    if sig.is_none() && required {
+        return Err("index signature missing".into());
+    }
+    verify_index(text, sig, keys)
 }
 
 /// curl into `dest` (fails on HTTP errors).
@@ -673,6 +727,27 @@ mod tests {
         std::fs::write(d.join("notes.txt"), pem).unwrap();
         std::fs::write(d.join("bad.pub"), "x").unwrap();
         assert_eq!(read_keys(&d).len(), 1);
+        // A revoked key is never trusted, even with its .pub still present.
+        let k = read_keys(&d)[0];
+        std::fs::write(
+            d.join(REVOKED_FILE),
+            format!(
+                "# list
+{} leaked 2026-11
+not-a-key x
+",
+                hex(k)
+            ),
+        )
+        .unwrap();
+        assert!(read_keys(&d).is_empty());
+        assert_eq!(
+            parse_revoked(
+                "zz short
+"
+            ),
+            Vec::<[u8; 32]>::new()
+        );
     }
 
     #[test]
@@ -870,5 +945,19 @@ mod tests {
         assert!(verify_index(b"{}", Some(&sig), &keys).is_err());
         assert!(verify_index(text, Some(&sig[..10]), &keys).is_err());
         assert!(verify_index(text, Some(&sig), &[public_of(&OTHER)]).is_err());
+        // CORE-8: a stripped signature is refused once a signature is expected.
+        assert!(verify_fetched_index(text, None, &keys, true).is_err());
+        assert_eq!(
+            verify_fetched_index(text, None, &keys, false),
+            Ok(Trust::Unsigned)
+        );
+        assert_eq!(
+            verify_fetched_index(text, Some(&sig), &keys, true),
+            Ok(Trust::Signed(0))
+        );
+        assert!(index_sig_required(true, false, false));
+        assert!(index_sig_required(false, true, true));
+        assert!(!index_sig_required(true, true, false));
+        assert!(!index_sig_required(false, false, false));
     }
 }

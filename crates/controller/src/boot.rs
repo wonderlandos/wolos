@@ -45,6 +45,8 @@ fn firmware(env: &dyn Env) -> Firmware {
             .is_some_and(|d| boot::has_third_party_ca(&d)),
         out_of_tree: out_of_tree(Path::new(&pci)),
         first_stage: Path::new(&shim).join("shimx64.efi").is_file(),
+        // install-run says so (WOLOS_WINDOWS=yes): Windows stays on this computer's disks.
+        windows: env.var("WOLOS_WINDOWS").as_deref() == Some("yes"),
     }
 }
 
@@ -119,12 +121,24 @@ pub fn words(env: &mut dyn Env, inv: &Invocation) -> i32 {
     }
 }
 
-/// `wol boot note TIER [yes|no]`: the note, then the key screen's steps when it will appear.
+/// `wol boot note TIER [yes|no]`: the note, the BitLocker line when a Windows with BitLocker
+/// stays and the tier changes its keys (`WOLOS_BITLOCKER=yes` from install-run), then the key
+/// screen's steps when it will appear.
 pub fn note(env: &mut dyn Env, inv: &Invocation) -> i32 {
     match tier_arg(env, inv) {
         Ok(t) => {
-            env.out(&format!("{}\n", boot::note(t)));
-            if inv.get("screen") == Some("yes") {
+            let screen = inv.get("screen") == Some("yes");
+            let note = if t == Tier::Firmware && screen {
+                boot::FIRMWARE_KEY_SCREEN_NOTE
+            } else {
+                boot::note(t)
+            };
+            env.out(&format!("{note}\n"));
+            let bitlocker = env.var("WOLOS_BITLOCKER").as_deref() == Some("yes");
+            if let Some(b) = boot::bitlocker_note(t, bitlocker) {
+                env.out(&format!("{b}\n"));
+            }
+            if screen {
                 for s in boot::key_screen_steps() {
                     env.out(&format!("{s}\n"));
                 }

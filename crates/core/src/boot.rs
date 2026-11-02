@@ -30,6 +30,9 @@ pub struct Firmware {
     pub out_of_tree: bool,
     /// This system carries a signed first stage, so the key screen can appear at all.
     pub first_stage: bool,
+    /// Windows lives on this computer and stays after the install. Its BitLocker measures the
+    /// Secure Boot keys (PCR 7): changing them makes it ask for its recovery key (audit3 R2B-9).
+    pub windows: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +64,9 @@ impl Tier {
 }
 
 /// The strongest chain this machine can run. `want`: the person kept Secure Boot protection on.
+/// Setup Mode gives own keys, except next to Windows when `db` already trusts the signed first
+/// stage: the key screen protects WolOS as well and leaves the keys Windows' BitLocker measures
+/// as they are (audit3 R2B-9).
 pub fn choose(fw: &Firmware, want: bool) -> Tier {
     if !fw.uefi || !want {
         return if fw.secure_boot {
@@ -69,9 +75,10 @@ pub fn choose(fw: &Firmware, want: bool) -> Tier {
             Tier::Off
         };
     }
-    if fw.setup_mode {
+    let mok = fw.third_party_ca && fw.first_stage;
+    if fw.setup_mode && !(fw.windows && mok) {
         Tier::OwnKeys
-    } else if fw.third_party_ca && fw.first_stage {
+    } else if mok {
         Tier::Mok
     } else if fw.secure_boot {
         Tier::Firmware
@@ -82,8 +89,15 @@ pub fn choose(fw: &Firmware, want: bool) -> Tier {
 
 /// The key screen is needed once: for the tier itself, or because a module built on this machine
 /// can only be trusted through it (the kernel takes module keys from there, not from `db`).
+/// Firmware tier: the signed first stage and the queued key are laid out anyway, so the one step
+/// left is the firmware setting, not a second install (audit2 B10).
 pub fn needs_key_screen(tier: Tier, fw: &Firmware) -> bool {
-    tier == Tier::Mok || (tier == Tier::OwnKeys && fw.out_of_tree && fw.first_stage)
+    match tier {
+        Tier::Mok => true,
+        Tier::Firmware => fw.first_stage,
+        Tier::OwnKeys => fw.out_of_tree && fw.first_stage,
+        Tier::Off => false,
+    }
 }
 
 /// The words for this computer. Own keys never reach the kernel's module keyring: with a GPU driver
@@ -113,7 +127,9 @@ pub fn note(tier: Tier) -> &'static str {
     match tier {
         Tier::OwnKeys => {
             "Secure Boot: this computer will trust only its own WolOS keys, plus Microsoft's so \
-             Windows and add-in cards keep working."
+             Windows and add-in cards keep working. Unsigned install media, this USB stick or \
+             ISO included, will no longer start on it: remove it once the screen goes dark \
+             after Restart."
         }
         Tier::Mok => {
             "Secure Boot: after the restart a blue screen asks once to accept this computer's \
@@ -124,10 +140,37 @@ pub fn note(tier: Tier) -> &'static str {
              someone changes the system while it is off. You can turn it on later in Settings."
         }
         Tier::Firmware => {
-            "Secure Boot is on and this computer only trusts Windows. In the firmware settings, \
-             allow third-party certificates or clear the Secure Boot keys, then install again."
+            "Secure Boot is on and this computer only trusts Windows, so WolOS can't start \
+             yet. Open your computer's startup settings (often F2, F10, F12 or Delete) and turn \
+             Secure Boot off."
         }
     }
+}
+
+/// The Firmware tier's note when the signed first stage is laid out ([`needs_key_screen`]): only
+/// the firmware setting is left, then the key screen ([`key_screen_steps`]) follows.
+/// Same steps as the installer's Secure Boot sheet (`copy::installer::SECURE_BOOT_TEXT`).
+pub const FIRMWARE_KEY_SCREEN_NOTE: &str = "Secure Boot is on and this computer only trusts \
+     Windows, so WolOS can't start yet. Open your computer's startup settings (often F2, F10, \
+     F12 or Delete) and allow third-party certificates, sometimes called Microsoft UEFI CA or \
+     Other OS. Then a blue screen asks once to accept this computer's WolOS key.";
+
+/// Said next to the tier's note when Windows stays with BitLocker on and the tier changes the
+/// Secure Boot keys ([`changes_windows_keys`]).
+pub const BITLOCKER_NOTE: &str = "Windows uses BitLocker. Have its recovery key ready \
+     (account.microsoft.com/devices/recoverykey): Windows asks for it once after this change.";
+
+/// The tier changes the Secure Boot keys Windows measures (PCR 7): own keys write them, the
+/// Firmware tier asks the person to allow third-party certificates. The key screen and Off leave
+/// them as they are.
+pub fn changes_windows_keys(tier: Tier) -> bool {
+    matches!(tier, Tier::OwnKeys | Tier::Firmware)
+}
+
+/// [`BITLOCKER_NOTE`] when `bitlocker` (a Windows with BitLocker stays) and the tier changes the
+/// keys it measures; None otherwise.
+pub fn bitlocker_note(tier: Tier, bitlocker: bool) -> Option<&'static str> {
+    (bitlocker && changes_windows_keys(tier)).then_some(BITLOCKER_NOTE)
 }
 
 /// The blue screen, explained before it appears. Steps name what the firmware shows.
@@ -242,7 +285,46 @@ mod tests {
             third_party_ca,
             out_of_tree: false,
             first_stage: true,
+            windows: false,
         }
+    }
+
+    /// audit3 R2B-9: own keys change PCR 7 and Windows' BitLocker then asks for its recovery key.
+    /// Next to Windows, with the signed first stage trusted, the key screen is chosen instead;
+    /// where own keys are the only protection, the note says what Windows will ask.
+    #[test]
+    fn next_to_windows_the_key_screen_is_preferred_over_own_keys() {
+        let windows = Firmware {
+            windows: true,
+            ..fw(false, true, true)
+        };
+        assert_eq!(choose(&windows, true), Tier::Mok);
+        assert_eq!(
+            choose(&fw(false, true, true), true),
+            Tier::OwnKeys,
+            "no Windows"
+        );
+        let empty_db = Firmware {
+            windows: true,
+            ..fw(false, true, false)
+        };
+        assert_eq!(
+            choose(&empty_db, true),
+            Tier::OwnKeys,
+            "nothing else protects"
+        );
+        let no_shim = Firmware {
+            first_stage: false,
+            ..windows
+        };
+        assert_eq!(choose(&no_shim, true), Tier::OwnKeys);
+        assert_eq!(bitlocker_note(Tier::OwnKeys, true), Some(BITLOCKER_NOTE));
+        assert_eq!(bitlocker_note(Tier::Firmware, true), Some(BITLOCKER_NOTE));
+        assert!(BITLOCKER_NOTE.contains("BitLocker"));
+        for t in [Tier::Mok, Tier::Off] {
+            assert_eq!(bitlocker_note(t, true), None, "{t:?} leaves the keys");
+        }
+        assert_eq!(bitlocker_note(Tier::OwnKeys, false), None);
     }
 
     #[test]
@@ -296,6 +378,26 @@ mod tests {
         assert!(!needs_key_screen(Tier::OwnKeys, &plain));
         assert!(needs_key_screen(Tier::OwnKeys, &nvidia));
         assert!(!needs_key_screen(Tier::Off, &nvidia));
+        // Firmware tier: shim and the queued key are laid out, the firmware setting is the one
+        // step left (audit2 B10); without a first stage there is nothing to lay out.
+        let trusts_windows_only = fw(true, false, false);
+        assert_eq!(choose(&trusts_windows_only, true), Tier::Firmware);
+        assert!(needs_key_screen(Tier::Firmware, &trusts_windows_only));
+        let no_shim = Firmware {
+            first_stage: false,
+            ..trusts_windows_only
+        };
+        assert!(!needs_key_screen(Tier::Firmware, &no_shim));
+        // Neither note sends the person to a second install or to clearing the keys (R2B-3):
+        // without a first stage the one way in is turning Secure Boot off.
+        for n in [FIRMWARE_KEY_SCREEN_NOTE, note(Tier::Firmware)] {
+            assert!(
+                !n.contains("install again") && !n.contains("clear the"),
+                "{n}"
+            );
+        }
+        assert!(FIRMWARE_KEY_SCREEN_NOTE.contains("third-party certificates"));
+        assert!(note(Tier::Firmware).contains("turn Secure Boot off"));
     }
 
     #[test]
@@ -334,6 +436,16 @@ mod tests {
             assert_eq!(Tier::parse(t.as_str()), Some(t));
             assert!(!note(t).is_empty());
         }
+        // After own keys go in, the firmware refuses the unsigned live medium: the surprise blue
+        // "Boot Manager" screen is averted by saying so before the restart.
+        // ...but only once the screen goes dark: the running live system still reads from it, so
+        // pulling it before Restart freezes the restart (audit2 B2).
+        let own = note(Tier::OwnKeys);
+        assert!(
+            own.contains("install media") && own.contains("screen goes dark"),
+            "{own}"
+        );
+        assert!(!own.contains("before restart"), "{own}");
         assert_eq!(Tier::parse("x"), None);
         assert!(protected_words(Tier::Mok).contains("lockdown=integrity"));
         assert!(protected_words(Tier::OwnKeys).contains("module.sig_enforce=1"));

@@ -1,5 +1,5 @@
 # 0017 - One base system: WolKernel and userland released together
-Status: accepted. Builds on 0016.
+Status: accepted; its build parts are replaced by 0029. Builds on 0016.
 Context: on BSD the kernel and base userland come from one tree with one version, so headers, tools and kernel always agree. A plain Arch system assembles them from unrelated packages.
 Decision:
 - `wolos-base` = WolKernel + its UAPI headers (`linux-wolos-api-headers` replaces `linux-api-headers`) + the base userland, built from this repo at one version and published together in `[wolos]`. `wolos-base` version = WolOS release; `uname -v` and `/etc/os-release` agree.

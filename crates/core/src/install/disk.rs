@@ -27,6 +27,16 @@ const FREEBSD_TYPES: [&str; 2] = [
     "516e7cb6-6ecf-11d6-8ff8-00022d09712b",
     "516e7cba-6ecf-11d6-8ff8-00022d09712b",
 ];
+/// Linux partition types beyond [`ROOT_TYPE`]: data, /home, swap, LVM, reserved.
+const LINUX_TYPES: [&str; 5] = [
+    DATA_TYPE,
+    HOME_TYPE,
+    SWAP_TYPE,
+    "e6d6d379-f507-44c2-a23c-238f2a3df928",
+    "a19d880f-05fc-4d3b-a006-743f0f84911e",
+];
+/// The families `install-check` names, in the order it prints them.
+pub const FAMILIES: [&str; 4] = ["Windows", "Linux", "macOS", "FreeBSD"];
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Table {
@@ -74,6 +84,10 @@ pub struct Part {
     pub used_bytes: Option<u64>,
     /// Bytes free inside the file system (probe, ESPs).
     pub free_bytes: Option<u64>,
+    /// A startup partition that already holds a WolOS (`EFI/wolos` inside; probe, ESPs). Adding a
+    /// second WolOS there would overwrite the first one's images.
+    #[serde(default)]
+    pub wolos: bool,
     /// Pretty name of the Linux system inside ("Ubuntu 24.04.1 LTS") (probe).
     pub os: Option<String>,
     pub blocked: Option<Blocked>,
@@ -84,18 +98,63 @@ impl Part {
         self.kind == ESP_TYPE
     }
 
-    /// The system this partition belongs to, as named for people.
+    /// Windows' reserved or recovery partition: part of a Windows, never one by itself.
+    pub fn is_windows_helper(&self) -> bool {
+        WINDOWS_TYPES.contains(&self.kind.as_str())
+    }
+
+    /// A WolOS system partition: `WolOS` as its GPT name (`layout::identity`, repart.d) or as
+    /// its file system label (`wol install layout` labels a reused one), on a file system WolOS
+    /// installs on or its LUKS2 volume.
+    pub fn is_wolos_root(&self) -> bool {
+        (self.name == "WolOS" || self.label == "WolOS")
+            && matches!(
+                self.fstype.as_str(),
+                "btrfs" | "ext4" | "xfs" | "crypto_LUKS"
+            )
+    }
+
+    /// The family of the system this partition belongs to ([`FAMILIES`]): [`Part::system`]
+    /// folded to Windows, macOS, FreeBSD or Linux (any other name, a Linux partition type, swap).
+    /// None: no system's (an empty or foreign data partition, a startup partition).
+    pub fn family(&self) -> Option<&'static str> {
+        match self.system().as_deref() {
+            Some("Windows") => Some("Windows"),
+            Some("macOS") => Some("macOS"),
+            Some("FreeBSD") => Some("FreeBSD"),
+            Some(_) => Some("Linux"),
+            None if LINUX_TYPES.contains(&self.kind.as_str()) || self.fstype == "swap" => {
+                Some("Linux")
+            }
+            None => None,
+        }
+    }
+
+    /// BitLocker protects this partition: blkid names the volume so, or the probe saw it.
+    pub fn bitlocker(&self) -> bool {
+        self.fstype == "BitLocker" || self.blocked == Some(Blocked::BitLocker)
+    }
+
+    /// The system this partition belongs to, as named for people. A locked volume (LUKS, LVM)
+    /// is some Linux's; ZFS alone is not FreeBSD's (Linux and FreeBSD both use it), so only the
+    /// FreeBSD partition types name FreeBSD.
     pub fn system(&self) -> Option<String> {
         let (t, f) = (self.kind.as_str(), self.fstype.as_str());
         if WINDOWS_TYPES.contains(&t) || matches!(f, "ntfs" | "BitLocker") {
             Some("Windows".into())
         } else if MACOS_TYPES.contains(&t) || matches!(f, "apfs" | "hfsplus") {
             Some("macOS".into())
-        } else if FREEBSD_TYPES.contains(&t) || matches!(f, "zfs_member" | "ufs") {
+        } else if FREEBSD_TYPES.contains(&t) || f == "ufs" {
             Some("FreeBSD".into())
         } else if let Some(os) = &self.os {
             Some(os.clone())
-        } else if t == ROOT_TYPE || matches!(f, "ext2" | "ext3" | "ext4" | "btrfs" | "xfs" | "f2fs")
+        } else if f == "crypto_LUKS" {
+            Some("Encrypted Linux".into())
+        } else if t == ROOT_TYPE
+            || matches!(
+                f,
+                "ext2" | "ext3" | "ext4" | "btrfs" | "xfs" | "f2fs" | "LVM2_member" | "zfs_member"
+            )
         {
             Some("Linux".into())
         } else {
@@ -103,10 +162,15 @@ impl Part {
         }
     }
 
-    /// What a person calls this partition.
+    /// What a person calls this partition. Windows' helper partitions are named as such, so a
+    /// disk with Windows never lists three partitions all called "Windows".
     pub fn title(&self) -> String {
         if self.is_esp() {
             "Startup partition".into()
+        } else if self.kind == WINDOWS_TYPES[0] {
+            "Windows reserved".into()
+        } else if self.kind == WINDOWS_TYPES[1] {
+            "Windows recovery".into()
         } else if let Some(s) = self.system() {
             s
         } else if !self.label.is_empty() {
@@ -241,6 +305,8 @@ struct LsOut {
 struct LsDev {
     path: Option<String>,
     size: Option<u64>,
+    #[serde(default)]
+    parttype: Option<String>,
     model: Option<String>,
     fstype: Option<String>,
     label: Option<String>,
@@ -326,6 +392,95 @@ pub fn parse(sfdisk: Option<&str>, lsblk: &str) -> Option<Disk> {
     Some(d)
 }
 
+/// What `install-check` says about a disk without opening anything (audit3 R2B-16/19): its size,
+/// the families of the systems on it, BitLocker, and what of it is in use. From
+/// `lsblk --json -b -o NAME,PATH,SIZE,PARTTYPE,FSTYPE,MOUNTPOINTS <disk>` ([`FACTS_LSBLK`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Facts {
+    pub bytes: u64,
+    /// [`FAMILIES`] present, in that order.
+    pub systems: Vec<&'static str>,
+    pub bitlocker: bool,
+    /// Mount points of anything on the disk (partitions, subvolumes, opened volumes), deepest first.
+    pub mounts: Vec<String>,
+    /// Devices on the disk in use as swap (`[SWAP]`).
+    pub swaps: Vec<String>,
+}
+
+/// The lsblk columns [`facts`] reads.
+pub const FACTS_LSBLK: &str = "NAME,PATH,SIZE,PARTTYPE,FSTYPE,MOUNTPOINTS";
+
+fn walk<'a>(d: &'a LsDev, out: &mut Vec<&'a LsDev>) {
+    out.push(d);
+    for c in &d.children {
+        walk(c, out);
+    }
+}
+
+/// [`Facts`] from lsblk's JSON (see [`FACTS_LSBLK`]); None: not lsblk's JSON for a disk.
+pub fn facts(lsblk: &str) -> Option<Facts> {
+    let ls: LsOut = serde_json::from_str(lsblk).ok()?;
+    let top = ls.blockdevices.first()?;
+    let mut f = Facts {
+        bytes: top.size?,
+        ..Facts::default()
+    };
+    let mut all = Vec::new();
+    for c in &top.children {
+        walk(c, &mut all);
+    }
+    let mut found = Vec::new();
+    for d in all.iter().copied() {
+        let p = Part {
+            kind: d.parttype.clone().unwrap_or_default().to_lowercase(),
+            fstype: d.fstype.clone().unwrap_or_default(),
+            ..Part::default()
+        };
+        found.extend(p.family());
+        f.bitlocker |= p.bitlocker();
+        for m in d.mountpoints.iter().flatten().filter(|m| !m.is_empty()) {
+            if m == "[SWAP]" {
+                f.swaps.extend(d.path.clone());
+            } else if !f.mounts.contains(m) {
+                f.mounts.push(m.clone());
+            }
+        }
+    }
+    f.systems = FAMILIES.into_iter().filter(|s| found.contains(s)).collect();
+    // Deepest first, so each unmount finds nothing mounted under it.
+    f.mounts.sort_by(|a, b| b.cmp(a));
+    Some(f)
+}
+
+impl Facts {
+    /// `install-check`'s lines: `size <bytes>`, `os <family>` each, `bitlocker yes|no` with Windows.
+    pub fn lines(&self) -> String {
+        let mut s = format!("size {}\n", self.bytes);
+        for o in &self.systems {
+            s.push_str(&format!("os {o}\n"));
+        }
+        if self.systems.contains(&"Windows") {
+            s.push_str(&format!(
+                "bitlocker {}\n",
+                if self.bitlocker { "yes" } else { "no" }
+            ));
+        }
+        s
+    }
+
+    /// `wol install mounts`: `mount <path>` (deepest first), then `swap <device>`.
+    pub fn mount_lines(&self) -> String {
+        let mut s = String::new();
+        for m in &self.mounts {
+            s.push_str(&format!("mount {m}\n"));
+        }
+        for w in &self.swaps {
+            s.push_str(&format!("swap {w}\n"));
+        }
+        s
+    }
+}
+
 /// `ntfsresize --info --no-progress-bar <part>`: bytes it could shrink to.
 pub fn parse_ntfsresize(out: &str) -> Option<u64> {
     let rest = out.split("You might resize at ").nth(1)?;
@@ -393,6 +548,50 @@ pub fn parse_os_release(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// audit3 R2B-16/19: install-check's facts from the disk model, not an awk copy of it.
+    #[test]
+    fn install_check_facts_come_from_the_disk_model() {
+        let ls = r#"{"blockdevices":[{"path":"/dev/sda","size":1000204886016,"children":[
+          {"path":"/dev/sda1","parttype":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B","fstype":"vfat","mountpoints":[null]},
+          {"path":"/dev/sda2","parttype":"e3c9e316-0b5c-4db8-817d-f92df00215ae","fstype":null,"mountpoints":[null]},
+          {"path":"/dev/sda3","parttype":"ebd0a0a2-b9e5-4433-87c0-68b6b72699c7","fstype":"BitLocker","mountpoints":[null]},
+          {"path":"/dev/sda4","parttype":"ebd0a0a2-b9e5-4433-87c0-68b6b72699c7","fstype":"crypto_LUKS","mountpoints":[null],
+           "children":[{"path":"/dev/mapper/x","fstype":"btrfs","mountpoints":["/run/media/live/x","/run/media/live/x/sub"]}]},
+          {"path":"/dev/sda5","parttype":"0657fd6d-a4ab-43c4-84e5-0933c84b4f4f","fstype":"swap","mountpoints":["[SWAP]"]},
+          {"path":"/dev/sda6","parttype":"ebd0a0a2-b9e5-4433-87c0-68b6b72699c7","fstype":"vfat","mountpoints":[null]}]}]}"#;
+        let f = facts(ls).unwrap();
+        assert_eq!(f.bytes, 1000204886016);
+        assert_eq!(f.systems, ["Windows", "Linux"]);
+        assert!(f.bitlocker);
+        assert_eq!(f.mounts, ["/run/media/live/x/sub", "/run/media/live/x"]);
+        assert_eq!(f.swaps, ["/dev/sda5"]);
+        assert_eq!(
+            f.lines(),
+            "size 1000204886016\nos Windows\nos Linux\nbitlocker yes\n"
+        );
+        assert_eq!(
+            f.mount_lines(),
+            "mount /run/media/live/x/sub\nmount /run/media/live/x\nswap /dev/sda5\n"
+        );
+        let blank = facts(r#"{"blockdevices":[{"path":"/dev/vdb","size":64000000000}]}"#).unwrap();
+        assert_eq!(blank.lines(), "size 64000000000\n");
+        assert_eq!(blank.mount_lines(), "");
+        assert_eq!(facts("not json"), None);
+        // macOS and FreeBSD by type; a plain FAT data partition is no system.
+        let p = |kind: &str, fs: &str| Part {
+            kind: kind.into(),
+            fstype: fs.into(),
+            ..Part::default()
+        };
+        assert_eq!(p(MACOS_TYPES[0], "").family(), Some("macOS"));
+        assert_eq!(p(FREEBSD_TYPES[1], "").family(), Some("FreeBSD"));
+        assert_eq!(
+            p("ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", "vfat").family(),
+            None
+        );
+        assert_eq!(p("", "zfs_member").family(), Some("Linux"));
+    }
 
     pub const SF: &str = r#"{"partitiontable":{"label":"gpt","id":"AAAA-1","device":"/dev/nvme0n1","unit":"sectors","firstlba":2048,"lastlba":1953525134,"sectorsize":512,"partitions":[
       {"node":"/dev/nvme0n1p1","start":2048,"size":204800,"type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B","uuid":"E1E1","name":"EFI system partition"},
@@ -474,6 +673,28 @@ mod tests {
         assert_eq!(p(DATA_TYPE, "").system(), None);
         assert_eq!(p(SWAP_TYPE, "swap").system(), None);
         assert_eq!(p(FREEBSD_TYPES[1], "").system().unwrap(), "FreeBSD");
+        assert_eq!(
+            p(FREEBSD_TYPES[0], "zfs_member").system().unwrap(),
+            "FreeBSD"
+        );
+        assert_eq!(
+            p(DATA_TYPE, "zfs_member").system().unwrap(),
+            "Linux",
+            "ZFS on a Linux partition is not FreeBSD"
+        );
+        assert_eq!(p(DATA_TYPE, "LVM2_member").system().unwrap(), "Linux");
+        assert_eq!(
+            p(DATA_TYPE, "crypto_LUKS").system().unwrap(),
+            "Encrypted Linux"
+        );
+        assert_eq!(p(DATA_TYPE, "crypto_LUKS").title(), "Encrypted Linux");
+        assert_eq!(p(WINDOWS_TYPES[0], "").title(), "Windows reserved");
+        assert_eq!(p(WINDOWS_TYPES[1], "ntfs").title(), "Windows recovery");
+        assert_eq!(
+            p(WINDOWS_TYPES[1], "ntfs").system().unwrap(),
+            "Windows",
+            "still Windows' for the summary"
+        );
         let mut ubuntu = p(DATA_TYPE, "ext4");
         ubuntu.os = Some("Ubuntu 24.04.1 LTS".into());
         assert_eq!(ubuntu.title(), "Ubuntu 24.04.1 LTS");

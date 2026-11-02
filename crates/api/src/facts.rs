@@ -2,7 +2,7 @@
 //! Machine facts for libwol's service calls (ADR 0020), said in the app API's own words. An app
 //! gets what it needs to adapt, and no more: no MAC address, IP address or network name.
 use serde_json::{Value, json};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use wol_core::netinfo::{self, IfKind};
 use wol_core::power::{self, Charge, Profile};
 use wol_core::system::Host;
@@ -72,7 +72,7 @@ impl Drop for Lock {
 
 impl Inhibit for Logind {
     fn hold(&self, app: &str, why: &str) -> Option<Box<dyn Send>> {
-        let child = Command::new("systemd-inhibit")
+        let child = crate::privileged::privileged_command("systemd-inhibit")
             .args(["--what=idle:sleep", "--mode=block"])
             .arg(format!("--who={app}"))
             .arg(format!("--why={why}"))

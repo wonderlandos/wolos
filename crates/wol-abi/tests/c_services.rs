@@ -23,6 +23,9 @@ fn fake_wold(path: &Path, f: fn(&Call, usize) -> Answer) -> Calls {
     std::thread::spawn(move || {
         let mut listener = None;
         for conn in l.incoming().flatten() {
+            if shared::jobs::greet(&conn).is_err() {
+                continue;
+            }
             let mut line = String::new();
             BufReader::new(&conn).read_line(&mut line).unwrap();
             if line.trim() == "subscribe" {

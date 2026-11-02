@@ -48,3 +48,9 @@ linux tag ──┘                                                             
 ```
 
 Commands of the tool: wolos-build's `BUILD.md`. Decision record: `docs/adr/0029`.
+
+Who tags: a release is one version tagged together on all four repos (`wolos`, `wolos-pkgbuilds`,
+`wolos-iso`, `wolos-build`) from wolos-build, after the ISO built from `[wolos-testing]` passed its VM
+tests (ADR 0029). The same `v<version>` tag in every repo names the code, the recipes, the image and
+the tool that built it. No repo tags on its own. (wolos-build has no `tag` command yet; until it
+does, the release manager runs `git tag -s v<version>` in each of the four repos at the tested commits.)

@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! QoS service: applies `shared::qos::QosClass` policy; frontmost app boosting from wol-realtime.
+//! It also keeps scx_wolos's class grants (audit A19/S11, kernel/scx_wolos/INTERFACE.md): the
+//! compositor and the shell may take the interactive class, the frontmost app the foreground
+//! class, and key 0 says grants are in use. Without the pinned map (stock kernel, scx_wolos not
+//! running) the grant calls do nothing.
 use shared::qos::{ForegroundTracker, QosClass, SchedPolicy, parse_foreground};
 use std::io::Read;
 use std::path::Path;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 /// Sets a process's scheduling class. Implementations must not allocate on success.
 pub trait Applier: Send + Sync {
@@ -111,6 +116,7 @@ impl Applier for Sched {
             set_thread(tid, l)
         });
         let oom = oom_adj(class).is_none_or(|adj| set_oom_adj(pid, adj));
+        grant_for(&PinnedMap(GRANTS_PIN), &SESSION_GRANTS, pid, class);
         ok && any && oom
     }
 
@@ -276,8 +282,7 @@ fn procs_named<'a>(
                 .is_some_and(|n| n.parse::<u32>().is_ok())
         })
         .filter(move |e| {
-            std::fs::read(e.path().join("comm"))
-                .is_ok_and(|c| comms.contains(&c.trim_ascii_end()))
+            std::fs::read(e.path().join("comm")).is_ok_and(|c| comms.contains(&c.trim_ascii_end()))
         })
 }
 
@@ -286,16 +291,286 @@ pub const SESSION_COMMS: [&[u8]; 2] = [b"Hyprland", b"wol-shell"];
 pub const SESSION_OOM_ADJ: i16 = -900;
 
 /// Give every [`SESSION_COMMS`] process under `proc_dir` [`SESSION_OOM_ADJ`]; idempotent (only
-/// writes values that differ). Returns how many were written.
+/// writes values that differ). Returns how many were written. On the real `/proc` it also gives
+/// them the interactive grant ([`grant_session`]).
 pub fn protect_session(proc_dir: &Path) -> usize {
     let want = SESSION_OOM_ADJ.to_string();
-    procs_named(proc_dir, &SESSION_COMMS)
+    let n = procs_named(proc_dir, &SESSION_COMMS)
         .filter(|e| {
             let adj = e.path().join("oom_score_adj");
             std::fs::read_to_string(&adj).is_ok_and(|v| v.trim() != want)
                 && std::fs::write(&adj, &want).is_ok()
         })
-        .count()
+        .count();
+    // A fake /proc (tests) names pids that are not real: they get no grant.
+    if proc_dir == Path::new("/proc") {
+        grant_session(proc_dir, &PinnedMap(GRANTS_PIN), &SESSION_GRANTS);
+    }
+    n
+}
+
+/// scx_wolos's grants map, pinned by its loader (kernel/scx_wolos/scx_wolos.c), NUL-terminated.
+pub const GRANTS_PIN: &[u8] = b"/sys/fs/bpf/wolos/boosted\0";
+/// Present: grants are in use (`WOLOS_GRANTS_KEY`, kernel/scx_wolos/scx_wolos_class.h).
+pub const GRANTS_KEY: u32 = 0;
+/// Highest class a granted process may take: `C_INTERACTIVE`, `C_FOREGROUND`.
+pub const GRANT_INTERACTIVE: u32 = 0;
+pub const GRANT_FOREGROUND: u32 = 1;
+/// Session processes tracked at once (a compositor and a shell per seat, with room to spare).
+pub const SESSION_SLOTS: usize = 8;
+
+/// tgid -> class writes into scx_wolos's grants map. Real: [`PinnedMap`]; tests: a fake.
+pub trait GrantMap {
+    /// Insert or replace; false when the map is absent or refuses.
+    fn update(&self, key: u32, value: u32) -> bool;
+    /// False when the map is absent or has no such key.
+    fn delete(&self, key: u32) -> bool;
+}
+
+/// Frontmost-app grants wold keeps track of at once (R2C-11); the oldest goes first past it.
+pub const FRONT_TRACKED: usize = 256;
+
+/// The tgids holding the session's interactive grant; the frontmost-app path leaves them alone.
+/// Also the frontmost-app grants wold wrote, so the next session tick removes those of processes
+/// that ended (R2C-11: a reused tgid never inherits one, and the map never fills up).
+pub struct SessionGrants([AtomicI32; SESSION_SLOTS], std::sync::Mutex<Vec<u32>>);
+
+impl SessionGrants {
+    pub const fn new() -> Self {
+        Self(
+            [const { AtomicI32::new(0) }; SESSION_SLOTS],
+            std::sync::Mutex::new(Vec::new()),
+        )
+    }
+
+    fn front(&self) -> std::sync::MutexGuard<'_, Vec<u32>> {
+        self.1.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    pub fn contains(&self, tgid: i32) -> bool {
+        tgid > 0 && self.0.iter().any(|s| s.load(Ordering::Relaxed) == tgid)
+    }
+}
+
+impl std::default::Default for SessionGrants {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static SESSION_GRANTS: SessionGrants = SessionGrants::new();
+
+/// The frontmost app's grant follows its class: boosted classes may take foreground, any other
+/// class loses the grant. Session processes keep theirs. True when the map took the change.
+pub fn grant_for(map: &dyn GrantMap, session: &SessionGrants, pid: i32, class: QosClass) -> bool {
+    let Ok(tgid) = u32::try_from(pid) else {
+        return false;
+    };
+    if tgid == GRANTS_KEY || session.contains(pid) {
+        return false;
+    }
+    match class {
+        QosClass::UserInteractive | QosClass::UserInitiated => {
+            if !map.update(tgid, GRANT_FOREGROUND) {
+                return false;
+            }
+            let mut front = session.front();
+            if !front.contains(&tgid) {
+                if front.len() >= FRONT_TRACKED {
+                    let oldest = front.remove(0);
+                    map.delete(oldest);
+                }
+                front.push(tgid);
+            }
+            true
+        }
+        _ => {
+            session.front().retain(|t| *t != tgid);
+            map.delete(tgid)
+        }
+    }
+}
+
+/// The compositor and the shell under `proc_dir` get the interactive grant, ones that ended lose
+/// it, and key 0 turns grants on once one is written (so the compositor is never capped by its
+/// own missing grant). Returns how many grants were written.
+pub fn grant_session(proc_dir: &Path, map: &dyn GrantMap, session: &SessionGrants) -> usize {
+    let now: Vec<i32> = procs_named(proc_dir, &SESSION_COMMS)
+        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|p| *p > 0)
+        .take(SESSION_SLOTS)
+        .collect();
+    for slot in &session.0 {
+        let old = slot.load(Ordering::Relaxed);
+        if old > 0 && !now.contains(&old) {
+            map.delete(old.unsigned_abs());
+            slot.store(0, Ordering::Relaxed);
+        }
+    }
+    let mut written = 0;
+    for pid in now {
+        if !map.update(pid.unsigned_abs(), GRANT_INTERACTIVE) {
+            continue;
+        }
+        written += 1;
+        if !session.contains(pid)
+            && let Some(free) = session.0.iter().find(|s| s.load(Ordering::Relaxed) == 0)
+        {
+            free.store(pid, Ordering::Relaxed);
+        }
+    }
+    // R2C-11: frontmost-app grants of processes that ended go.
+    session.front().retain(|t| {
+        let alive = proc_dir.join(t.to_string()).exists();
+        if !alive {
+            map.delete(*t);
+        }
+        alive
+    });
+    if written > 0 {
+        map.update(GRANTS_KEY, 0);
+    } else if session.0.iter().all(|s| s.load(Ordering::Relaxed) == 0) {
+        // No session process: grants are off until one runs again (R2C-11).
+        map.delete(GRANTS_KEY);
+    }
+    written
+}
+
+/// `BPF_MAP_TYPE_HASH`.
+const BPF_MAP_TYPE_HASH: u32 = 1;
+
+/// The grants map scx_wolos pins: a hash of 4-byte tgids to 4-byte grants. wold writes 4-byte
+/// keys and values, so a map of any other shape (a version skew) is never written (R2C-11).
+pub fn grants_shape_ok(map_type: u32, key_size: u32, value_size: u32) -> bool {
+    map_type == BPF_MAP_TYPE_HASH && key_size == 4 && value_size == 4
+}
+
+/// A BPF map pinned in bpffs, opened for each write: the loader re-pins a new map when it restarts,
+/// so a kept descriptor would write into one nobody reads. No allocation.
+pub struct PinnedMap(pub &'static [u8]);
+
+const BPF_MAP_UPDATE_ELEM: libc::c_long = 2;
+const BPF_MAP_DELETE_ELEM: libc::c_long = 3;
+const BPF_OBJ_GET: libc::c_long = 7;
+const BPF_OBJ_GET_INFO_BY_FD: libc::c_long = 15;
+
+/// `union bpf_attr` for BPF_OBJ_GET_INFO_BY_FD.
+#[repr(C, align(8))]
+struct InfoByFd {
+    bpf_fd: u32,
+    info_len: u32,
+    info: u64,
+}
+
+/// The head of `struct bpf_map_info`; the kernel fills no more than `info_len` bytes.
+#[repr(C)]
+#[derive(Default)]
+struct MapInfoHead {
+    map_type: u32,
+    id: u32,
+    key_size: u32,
+    value_size: u32,
+    max_entries: u32,
+    map_flags: u32,
+}
+
+/// `union bpf_attr` for BPF_OBJ_GET.
+#[repr(C, align(8))]
+struct ObjGet {
+    pathname: u64,
+    bpf_fd: u32,
+    file_flags: u32,
+}
+
+/// `union bpf_attr` for the element commands.
+#[repr(C, align(8))]
+struct Elem {
+    map_fd: u32,
+    pad: u32,
+    key: u64,
+    value: u64,
+    flags: u64,
+}
+
+impl PinnedMap {
+    fn with(&self, f: impl FnOnce(u32) -> bool) -> bool {
+        if self.0.last() != Some(&0) {
+            return false;
+        }
+        let attr = ObjGet {
+            pathname: self.0.as_ptr() as u64,
+            bpf_fd: 0,
+            file_flags: 0,
+        };
+        // SAFETY: bpf(2) reads a NUL-terminated path from `pathname`, which outlives the call.
+        let fd = unsafe {
+            libc::syscall(
+                libc::SYS_bpf,
+                BPF_OBJ_GET,
+                &raw const attr,
+                size_of::<ObjGet>() as u32,
+            )
+        };
+        let Ok(fd) = i32::try_from(fd) else {
+            return false;
+        };
+        if fd < 0 {
+            return false;
+        }
+        let ok = Self::shape_ok(fd.unsigned_abs()) && f(fd.unsigned_abs());
+        // SAFETY: closes the descriptor opened above.
+        unsafe { libc::close(fd) };
+        ok
+    }
+
+    /// Is the map behind `fd` the shape wold writes ([`grants_shape_ok`])?
+    fn shape_ok(fd: u32) -> bool {
+        let mut info = MapInfoHead::default();
+        let attr = InfoByFd {
+            bpf_fd: fd,
+            info_len: size_of::<MapInfoHead>() as u32,
+            info: std::ptr::from_mut(&mut info) as u64,
+        };
+        // SAFETY: bpf(2) writes at most `info_len` bytes into `info`, which outlives the call.
+        let r = unsafe {
+            libc::syscall(
+                libc::SYS_bpf,
+                BPF_OBJ_GET_INFO_BY_FD,
+                &raw const attr,
+                size_of::<InfoByFd>() as u32,
+            )
+        };
+        r == 0 && grants_shape_ok(info.map_type, info.key_size, info.value_size)
+    }
+
+    fn elem(fd: u32, cmd: libc::c_long, key: &u32, value: Option<&u32>) -> bool {
+        let attr = Elem {
+            map_fd: fd,
+            pad: 0,
+            key: std::ptr::from_ref(key) as u64,
+            value: value.map_or(0, |v| std::ptr::from_ref(v) as u64),
+            flags: 0, // BPF_ANY
+        };
+        // SAFETY: bpf(2) reads 4-byte key and value from pointers that outlive the call.
+        unsafe {
+            libc::syscall(
+                libc::SYS_bpf,
+                cmd,
+                &raw const attr,
+                size_of::<Elem>() as u32,
+            ) == 0
+        }
+    }
+}
+
+impl GrantMap for PinnedMap {
+    fn update(&self, key: u32, value: u32) -> bool {
+        self.with(|fd| Self::elem(fd, BPF_MAP_UPDATE_ELEM, &key, Some(&value)))
+    }
+
+    fn delete(&self, key: u32) -> bool {
+        self.with(|fd| Self::elem(fd, BPF_MAP_DELETE_ELEM, &key, None))
+    }
 }
 
 /// Shader precompilers, as the kernel truncates them in `comm`.
@@ -536,6 +811,143 @@ pub mod tests {
         assert_eq!(adj("self").trim(), "0", "only numeric pid dirs");
         assert_eq!(protect_session(&d), 0, "idempotent");
         std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A grants map in memory (audit S11).
+    #[derive(Default)]
+    struct FakeMap(Mutex<std::collections::BTreeMap<u32, u32>>);
+
+    impl GrantMap for FakeMap {
+        fn update(&self, key: u32, value: u32) -> bool {
+            self.0.lock().unwrap().insert(key, value);
+            true
+        }
+        fn delete(&self, key: u32) -> bool {
+            self.0.lock().unwrap().remove(&key).is_some()
+        }
+    }
+
+    /// Compositor and shell get the interactive grant, then key 0; ones that end lose it; the
+    /// frontmost app gets foreground and loses it when it goes back; the session keeps its grants.
+    #[test]
+    fn the_scheduler_hears_who_may_be_interactive() {
+        let d = std::env::temp_dir().join(format!("wol-qos-grants-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for (pid, comm) in [
+            ("10", "Hyprland\n"),
+            ("11", "wol-shell\n"),
+            ("12", "helium\n"),
+        ] {
+            std::fs::create_dir_all(d.join(pid)).unwrap();
+            std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+        }
+        let (map, session) = (FakeMap::default(), SessionGrants::new());
+        let grants = || map.0.lock().unwrap().clone();
+        assert_eq!(grant_session(&d, &map, &session), 2);
+        let want: std::collections::BTreeMap<u32, u32> = [
+            (GRANTS_KEY, 0),
+            (10, GRANT_INTERACTIVE),
+            (11, GRANT_INTERACTIVE),
+        ]
+        .into();
+        assert_eq!(grants(), want);
+        assert!(grant_for(&map, &session, 12, QosClass::UserInteractive));
+        assert_eq!(grants().get(&12), Some(&GRANT_FOREGROUND));
+        assert!(grant_for(&map, &session, 12, QosClass::Default));
+        assert_eq!(grants().get(&12), None);
+        // The shell coming to the front, or going back, keeps its interactive grant.
+        assert!(!grant_for(&map, &session, 11, QosClass::UserInteractive));
+        assert!(!grant_for(&map, &session, 11, QosClass::Default));
+        assert_eq!(grants().get(&11), Some(&GRANT_INTERACTIVE));
+        assert!(
+            !grant_for(&map, &session, 0, QosClass::UserInteractive),
+            "key 0 is the switch"
+        );
+        assert!(!grant_for(&map, &session, -1, QosClass::UserInteractive));
+        // The shell ends: its grant goes, the switch stays.
+        std::fs::remove_dir_all(d.join("11")).unwrap();
+        assert_eq!(grant_session(&d, &map, &session), 1);
+        assert_eq!(grants().get(&11), None);
+        assert_eq!(grants().get(&GRANTS_KEY), Some(&0));
+        assert!(!session.contains(11));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// R2C-11: a frontmost app that ended loses its row at the next tick (a reused tgid never
+    /// inherits it); with no session process key 0 goes; a map of another shape is never written.
+    #[test]
+    fn stale_grants_are_removed() {
+        let d = std::env::temp_dir().join(format!("wol-qos-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for (pid, comm) in [("10", "Hyprland\n"), ("20", "app\n"), ("21", "app\n")] {
+            std::fs::create_dir_all(d.join(pid)).unwrap();
+            std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+        }
+        let (map, session) = (FakeMap::default(), SessionGrants::new());
+        let grants = || map.0.lock().unwrap().clone();
+        assert_eq!(grant_session(&d, &map, &session), 1);
+        assert!(grant_for(&map, &session, 20, QosClass::UserInteractive));
+        assert!(grant_for(&map, &session, 21, QosClass::UserInteractive));
+        std::fs::remove_dir_all(d.join("20")).unwrap();
+        grant_session(&d, &map, &session);
+        assert_eq!(grants().get(&20), None, "ended while frontmost");
+        assert_eq!(grants().get(&21), Some(&GRANT_FOREGROUND));
+        assert_eq!(grants().get(&GRANTS_KEY), Some(&0));
+        // The session ends: its rows and key 0 go.
+        std::fs::remove_dir_all(d.join("10")).unwrap();
+        assert_eq!(grant_session(&d, &map, &session), 0);
+        assert_eq!(grants().get(&GRANTS_KEY), None);
+        assert_eq!(grants().get(&10), None);
+        // The tracked list never grows past its cap.
+        for t in 1000..1000 + FRONT_TRACKED as i32 + 5 {
+            grant_for(&map, &session, t, QosClass::UserInteractive);
+        }
+        assert_eq!(session.front().len(), FRONT_TRACKED);
+        assert_eq!(grants().get(&1000), None, "the oldest went with its row");
+        assert!(grants_shape_ok(BPF_MAP_TYPE_HASH, 4, 4));
+        assert!(!grants_shape_ok(BPF_MAP_TYPE_HASH, 4, 8));
+        assert!(!grants_shape_ok(BPF_MAP_TYPE_HASH, 8, 4));
+        assert!(!grants_shape_ok(2, 4, 4), "an array is not the grants map");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// No session yet: no grant, and key 0 stays off so nothing is capped.
+    #[test]
+    fn no_session_leaves_grants_off() {
+        let d = std::env::temp_dir().join(format!("wol-qos-nogrants-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let (map, session) = (FakeMap::default(), SessionGrants::new());
+        assert_eq!(grant_session(&d, &map, &session), 0);
+        assert!(map.0.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A machine without scx_wolos (no pin, or not root): every write is a quiet no-op.
+    #[test]
+    fn an_absent_grants_map_is_silent() {
+        let none = PinnedMap(b"/sys/fs/bpf/wolos-test-absent/boosted\0");
+        assert!(!none.update(1, GRANT_FOREGROUND));
+        assert!(!none.delete(1));
+        assert!(!PinnedMap(b"no-nul").update(1, 1));
+        let session = SessionGrants::new();
+        assert!(!grant_for(&none, &session, 1, QosClass::UserInteractive));
+    }
+
+    /// The constants mirror the scheduler: class order, the grants key and the pin path.
+    #[test]
+    fn grant_constants_match_scx_wolos() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../kernel/scx_wolos/");
+        let class = std::fs::read_to_string(format!("{root}scx_wolos_class.h")).unwrap();
+        assert!(class.contains("enum { C_INTERACTIVE, C_FOREGROUND,"));
+        assert!(
+            class
+                .lines()
+                .any(|l| l.starts_with("#define WOLOS_GRANTS_KEY") && l.contains("\t0\t"))
+        );
+        let loader = std::fs::read_to_string(format!("{root}scx_wolos.c")).unwrap();
+        assert!(loader.contains(r#"#define GRANTS_DIR "/sys/fs/bpf/wolos""#));
+        assert!(loader.contains(r#"#define GRANTS_PIN GRANTS_DIR "/boosted""#));
+        assert_eq!(GRANTS_PIN, b"/sys/fs/bpf/wolos/boosted\0");
     }
 
     #[test]

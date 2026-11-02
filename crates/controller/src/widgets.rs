@@ -30,15 +30,8 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
     }
 }
 
-fn data_home(env: &dyn Env) -> PathBuf {
-    env.var("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| env.home().join(".local/share"))
-}
-
 fn packages(env: &dyn Env) -> Vec<Package> {
-    cw::load_packages(&cw::package_dirs(&data_home(env)))
+    cw::load_packages(&cw::package_dirs(&env.data_home()))
 }
 
 fn layout_path(env: &dyn Env) -> PathBuf {

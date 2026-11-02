@@ -93,6 +93,53 @@ impl Layout {
         );
         s
     }
+
+    /// `p`'s contents survive this layout: it is not deleted and not reformatted (a shrink keeps
+    /// them). Erase Disk keeps nothing. The one "what stays" rule (audit3 R2B-2): the menu
+    /// timeout ([`Disk::others_after`]), `plan::other_boot` and `plan::changes` all ask it.
+    pub fn stays(&self, p: &Part) -> bool {
+        !self.wipe
+            && !self.delete.contains(&p.uuid)
+            && !self
+                .assign
+                .iter()
+                .any(|a| a.part == p.uuid && a.format.is_some())
+    }
+
+    /// `p` stays and still belongs to another system: WolOS gives it no job (a kept `/home` is
+    /// WolOS's own now) and it is not one of Windows' helper partitions (reserved, recovery),
+    /// which never start anything by themselves. False for anything that is no system's.
+    pub fn stays_foreign(&self, p: &Part) -> bool {
+        self.stays(p)
+            && !self.assign.iter().any(|a| a.part == p.uuid)
+            && !p.is_windows_helper()
+            && p.system().is_some()
+    }
+}
+
+impl Disk {
+    /// The other systems still on this disk once `l` has run, each once, in disk order: empty
+    /// after Erase Disk, or when the layout replaces or deletes every other system.
+    pub fn others_after(&self, l: &Layout) -> Vec<String> {
+        let mut v: Vec<String> = Vec::new();
+        for s in self
+            .parts
+            .iter()
+            .filter(|p| l.stays_foreign(p))
+            .filter_map(Part::system)
+        {
+            if !v.contains(&s) {
+                v.push(s);
+            }
+        }
+        v
+    }
+
+    /// A WolOS system partition (`WolOS` as its GPT name or file system label: install-run and
+    /// systemd-repart name it so) that stays under `l`: its startup files must not be replaced.
+    pub fn keeps_wolos(&self, l: &Layout) -> bool {
+        self.parts.iter().any(|p| p.is_wolos_root() && l.stays(p))
+    }
 }
 
 /// Where a mount or a format lands.
@@ -200,6 +247,13 @@ pub enum Refusal {
     RootMustFormat,
     /// Asked to erase a startup partition another system uses.
     EspInUse,
+    /// Asked to reuse a startup partition another WolOS already starts from (`EFI/wolos` there)
+    /// while that WolOS's system partition stays.
+    EspHasWolos(String),
+    /// Windows is hibernated or stopped by Fast Startup (`Blocked::NotShutDown`, this partition):
+    /// it still holds the partition table and its startup partition open, so only Erase Disk may
+    /// change this disk (audit3 R2B-10). `shell::copy::install_blocked(NotShutDown)` says why.
+    WindowsNotShutDown(String),
     /// That partition isn't a startup partition, or can't hold the kernels.
     NotAnEsp(String),
     BadMount(String),
@@ -314,6 +368,12 @@ fn check_mounts(l: &Layout, d: &Disk) -> Result<Vec<Mounted>, Refusal> {
             ("/efi", None) => {
                 if p.free_bytes.unwrap_or(0) < ESP_FREE_NEEDED {
                     return Err(Refusal::NotAnEsp(a.part.clone()));
+                }
+                // esp-sync would overwrite the other WolOS's wolos-a image: refused before any
+                // write while that WolOS stays. A WolOS this layout replaces gives its startup
+                // files up (install-run clears them, audit3 R2B-5).
+                if p.wolos && d.keeps_wolos(l) {
+                    return Err(Refusal::EspHasWolos(a.part.clone()));
                 }
                 Fs::Vfat
             }
@@ -533,6 +593,15 @@ pub fn compile(l: &Layout, d: &Disk, encrypt: bool) -> Result<Compiled, Refusal>
     if d.table != Table::Gpt && !blank {
         return Err(Refusal::NotGpt);
     }
+    // A hibernated Windows comes back to the table and startup partition it remembers: nothing
+    // short of Erase Disk changes either under it, whichever partition the layout names.
+    if let Some(p) = d
+        .parts
+        .iter()
+        .find(|p| p.blocked == Some(Blocked::NotShutDown))
+    {
+        return Err(Refusal::WindowsNotShutDown(p.uuid.clone()));
+    }
     check_names(l, d)?;
     let mounts = check_mounts(l, d)?;
     let (shrink, grow, kept) = resize_ops(l, d)?;
@@ -560,11 +629,15 @@ pub fn compile(l: &Layout, d: &Disk, encrypt: bool) -> Result<Compiled, Refusal>
             name: name.into(),
         });
     }
+    // Encryption covers every volume this install formats (the system, a new or erased /home,
+    // /var, swap, plain folders): one key, kept in the encrypted system for the extra volumes.
+    // The startup partition stays plain (firmware reads it), and so does a kept volume: nothing
+    // the plan does not format is ever rewritten (the summary says it stays unencrypted).
     for m in mounts.iter().filter(|m| m.format) {
         ops.push(Op::Format {
             target: m.target.clone(),
             fs: m.fs,
-            encrypt: encrypt && m.path == "/",
+            encrypt: encrypt && m.path != "/efi",
         });
     }
     let root = mounts
@@ -947,6 +1020,72 @@ mod tests {
     }
 
     #[test]
+    fn a_startup_partition_another_wolos_uses_is_refused_before_any_write() {
+        let mut d = windows();
+        d.parts[0].free_bytes = Some(ESP_FREE_NEEDED);
+        d.parts[0].wolos = true;
+        // That other WolOS's system partition, kept by the layouts below.
+        d.parts.push(Part {
+            number: 5,
+            path: "/dev/vda5".into(),
+            start: 783587328,
+            sectors: 41943040,
+            kind: ROOT_TYPE.into(),
+            uuid: "u5".into(),
+            name: "WolOS".into(),
+            fstype: "crypto_LUKS".into(),
+            fsuuid: "f5".into(),
+            ..Part::default()
+        });
+        let mut l = alongside();
+        l.create.remove(0);
+        l.assign.push(Assign {
+            part: "u1".into(),
+            mount: "/efi".into(),
+            format: None,
+        });
+        assert_eq!(
+            compile(&l, &d, false),
+            Err(Refusal::EspHasWolos("u1".into())),
+            "its EFI/wolos would be overwritten"
+        );
+        d.parts[0].wolos = false;
+        assert!(compile(&l, &d, false).is_ok());
+        // A new startup partition next to it is fine: nothing of the other WolOS is touched.
+        d.parts[0].wolos = true;
+        assert!(compile(&alongside(), &d, true).is_ok());
+        // That WolOS deleted (or replaced): its startup files are this install's to clear.
+        let mut gone = l.clone();
+        gone.delete.push("u5".into());
+        assert!(
+            compile(&gone, &d, false).is_ok(),
+            "{:?}",
+            compile(&gone, &d, false)
+        );
+    }
+
+    /// audit3 R2B-10: a hibernated (Fast Startup) Windows refuses every layout but Erase Disk,
+    /// not only the shrink: free space or another partition would still change its table and ESP.
+    #[test]
+    fn a_hibernated_windows_refuses_everything_but_erase() {
+        let mut d = windows();
+        d.parts[2].blocked = Some(Blocked::NotShutDown);
+        d.last += 40 * GB / 512;
+        d.bytes += 40 * GB;
+        let free = Layout {
+            create: vec![esp_new(), root_new(None)],
+            ..Layout::default()
+        };
+        assert_eq!(
+            compile(&free, &d, false),
+            Err(Refusal::WindowsNotShutDown("u3".into()))
+        );
+        assert!(compile(&Layout::erase(), &d, false).is_ok());
+        d.parts[2].blocked = None;
+        assert!(compile(&free, &d, false).is_ok());
+    }
+
+    #[test]
     fn keeping_home_formats_nothing_there() {
         let mut d = windows();
         d.parts[2].fstype = "ext4".into();
@@ -1015,6 +1154,87 @@ mod tests {
             })
             .collect();
         assert_eq!(enc, [true, true]);
+    }
+
+    /// With encryption on, every volume the plan formats is encrypted (a plain new /home next to an
+    /// encrypted system would leak what the person wanted protected); a kept volume is left as it
+    /// is, plain; the startup partition is always plain.
+    #[test]
+    fn encryption_covers_every_formatted_volume_and_leaves_kept_ones_alone() {
+        let mut d = windows();
+        // The MSR becomes a Linux /home that is kept; the recovery partition is erased for /var.
+        d.parts[1].fstype = "ext4".into();
+        d.parts[1].kind = DATA_TYPE.into();
+        let l = Layout {
+            resize: alongside().resize,
+            assign: vec![
+                Assign {
+                    part: "u2".into(),
+                    mount: "/home".into(),
+                    format: None,
+                },
+                Assign {
+                    part: "u4".into(),
+                    mount: "/var".into(),
+                    format: Some(Fs::Ext4),
+                },
+            ],
+            create: vec![
+                esp_new(),
+                root_new(Some(30 * GB)),
+                New {
+                    bytes: Some(2 * GB),
+                    mount: "swap".into(),
+                    fs: Fs::Swap,
+                },
+                New {
+                    bytes: Some(4 * GB),
+                    mount: "/games".into(),
+                    fs: Fs::Ext4,
+                },
+            ],
+            ..Layout::default()
+        };
+        let c = compile(&l, &d, true).unwrap();
+        let formats: Vec<(String, bool)> = c
+            .ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::Format {
+                    target, encrypt, ..
+                } => {
+                    let path = c
+                        .mounts
+                        .iter()
+                        .find(|m| m.target == *target)
+                        .map(|m| m.path.clone())
+                        .unwrap_or_default();
+                    Some((path, *encrypt))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            formats,
+            [
+                ("/var".to_string(), true),
+                ("/efi".to_string(), false),
+                ("/".to_string(), true),
+                ("swap".to_string(), true),
+                ("/games".to_string(), true),
+            ]
+        );
+        let kept = c.mounts.iter().find(|m| m.path == "/home").unwrap();
+        assert!(!kept.format, "kept: never formatted, so never encrypted");
+        // Encryption off: nothing is encrypted, the same volumes are formatted.
+        let plain = compile(&l, &d, false).unwrap();
+        assert!(
+            plain
+                .ops
+                .iter()
+                .all(|o| !matches!(o, Op::Format { encrypt: true, .. }))
+        );
+        assert_eq!(plain.ops.len(), c.ops.len());
     }
 
     #[test]

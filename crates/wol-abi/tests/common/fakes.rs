@@ -19,6 +19,7 @@ pub fn fake_wold(path: &Path, calls: Arc<Mutex<Vec<Call>>>) {
         for conn in l.incoming().flatten() {
             let calls = calls.clone();
             std::thread::spawn(move || {
+                shared::jobs::greet(&conn).unwrap();
                 let mut line = String::new();
                 BufReader::new(&conn).read_line(&mut line).unwrap();
                 let mut w = &conn;
@@ -95,6 +96,7 @@ pub fn fake_wold_actions(path: &Path, calls: Arc<Mutex<Vec<Call>>>) {
         for conn in l.incoming().flatten() {
             let calls = calls.clone();
             std::thread::spawn(move || {
+                shared::jobs::greet(&conn).unwrap();
                 let mut line = String::new();
                 BufReader::new(&conn).read_line(&mut line).unwrap();
                 let mut w = &conn;

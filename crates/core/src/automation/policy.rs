@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 pub const FILE: &str = "wolos/helpers.json";
 
 /// (id, Settings label). `screen-capture` and `window-list` are the compositor capability names.
-pub const CAPABILITIES: [(&str, &str); 12] = [
+pub const CAPABILITIES: [(&str, &str); 13] = [
     ("read", "See status and settings"),
     ("appearance", "Change appearance and wallpaper"),
     ("sound", "Change the volume"),
@@ -25,6 +25,7 @@ pub const CAPABILITIES: [(&str, &str); 12] = [
     ("window-list", "See and switch windows"),
     ("files", "Tidy the Downloads folder"),
     ("restore", "Undo changes and pick a restore point"),
+    ("modules", "Install or remove optional modules"),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

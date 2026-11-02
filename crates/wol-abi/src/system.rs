@@ -123,7 +123,9 @@ pub fn read(config_home: &Path) -> Info {
     }
 }
 
+#[repr(C)]
 pub struct wol_system_info {
+    tag: crate::handle::Tag<wol_system_info>,
     os_name: Arc<wol_string>,
     os_version: Arc<wol_string>,
     kernel: Arc<wol_string>,
@@ -135,6 +137,7 @@ pub struct wol_system_info {
 impl From<Info> for wol_system_info {
     fn from(i: Info) -> Self {
         Self {
+            tag: crate::handle::Tag::new(),
             os_name: wol_string::new(&i.os_name),
             os_version: wol_string::new(&i.os_version),
             kernel: wol_string::new(&i.kernel),
@@ -302,3 +305,5 @@ mod tests {
         assert!(!i.os_name.is_empty() && !i.kernel.is_empty());
     }
 }
+
+crate::handle::tagged!(wol_system_info, 0x1b9d92021f02971c);

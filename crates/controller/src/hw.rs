@@ -39,6 +39,19 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
             }
             0
         }
+        "hw.compute" => {
+            let s = env.hardware();
+            let c = compute(env, &s);
+            if json {
+                out_json(env, &serde_json::to_value(&c).unwrap_or_default());
+            } else {
+                env.out(&format!(
+                    "backend: {}\nvram_mb: {}\ngpu: {}\n",
+                    c.backend, c.vram_mb, c.gpu
+                ));
+            }
+            0
+        }
         "hw.fix" => fix(env, inv.flag("yes")),
         "hw.boot" => boot(env, inv.flag("online")),
         "hw.online" => online(env),
@@ -46,6 +59,109 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
             env.err(&format!("wol: no handler for {other}\n"));
             ErrorCode::Failed.exit()
         }
+    }
+}
+
+/// `wol hw compute --json` (ADR 0032): which local-AI backend package fits this machine.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Compute {
+    /// `cuda` | `rocm` | `vulkan` | `cpu`.
+    pub backend: &'static str,
+    /// Dedicated video memory in MiB; 0 when unknown (integrated, or no driver yet).
+    pub vram_mb: u64,
+    /// Catalogue name of the GPU, empty for `cpu`.
+    pub gpu: String,
+}
+
+/// AMD GPUs older than Vega (GCN 1-4, by PCI device id) have no ROCm support: Vulkan instead.
+/// Vega 10 (0x6860-0x687f), Vega 12 (0x69a0-0x69af), Vega 20 (0x66a0-0x66af) and every APU from
+/// Raven on (0x15xx, 0x16xx) sit outside these ranges.
+const AMD_PRE_VEGA: &[(u16, u16)] = &[
+    (0x1300, 0x131f),
+    (0x6600, 0x669f),
+    (0x66b0, 0x685f),
+    (0x6880, 0x699f),
+    (0x7300, 0x730f),
+    (0x9830, 0x98ff),
+];
+
+/// Rank of the backend a device gives: higher wins when a machine has several GPUs.
+fn backend_of(d: &Device) -> Option<(&'static str, u8)> {
+    if d.kind != shared::hardware::Kind::Gpu {
+        return None;
+    }
+    let has = |k: &str| d.klds.iter().any(|m| m == k);
+    // The catalogue gives `nvidia` to Turing and newer only; older cards get nouveau.
+    if has("nvidia") {
+        return Some(("cuda", 3));
+    }
+    if has("amdgpu") {
+        let dev =
+            d.id.split(':')
+                .nth(1)
+                .and_then(|h| u16::from_str_radix(h, 16).ok());
+        let pre_vega =
+            dev.is_some_and(|x| AMD_PRE_VEGA.iter().any(|(a, b)| (*a..=*b).contains(&x)));
+        return Some(if pre_vega { ("vulkan", 1) } else { ("rocm", 2) });
+    }
+    // Real Vulkan drivers; virtual GPUs (bochs, vmwgfx, virtio) would only give llvmpipe.
+    ["i915", "xe", "nouveau", "radeon"]
+        .iter()
+        .any(|k| has(k))
+        .then_some(("vulkan", 1))
+}
+
+/// The GPU that decides, and its backend: the best-ranked GPU device, else `cpu`.
+pub fn pick_gpu(s: &HardwareSnapshot) -> Option<(&Device, &'static str)> {
+    s.devices
+        .iter()
+        .filter_map(|d| backend_of(d).map(|(b, rank)| (d, b, rank)))
+        .max_by_key(|x| x.2)
+        .map(|(d, b, _)| (d, b))
+}
+
+/// MiB from `nvidia-smi --query-gpu=memory.total` ("8192") or sysfs `mem_info_vram_total` (bytes).
+pub fn parse_vram_mb(nvidia_smi: Option<&str>, sysfs_bytes: Option<&str>) -> u64 {
+    let smi = nvidia_smi
+        .and_then(|t| t.lines().next())
+        .and_then(|l| l.trim().parse::<u64>().ok());
+    if let Some(n) = smi {
+        return n;
+    }
+    sysfs_bytes
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .map_or(0, |b| b / (1024 * 1024))
+}
+
+/// Backend, VRAM and GPU name for the machine in `s`. VRAM: nvidia-smi for NVIDIA (the open driver
+/// has no sysfs size), `/sys/bus/pci/devices/<addr>/mem_info_vram_total` for amdgpu; else 0.
+pub fn compute(env: &mut dyn Env, s: &HardwareSnapshot) -> Compute {
+    let Some((d, backend)) = pick_gpu(s) else {
+        return Compute {
+            backend: "cpu",
+            vram_mb: 0,
+            gpu: String::new(),
+        };
+    };
+    let (location, gpu) = (d.location.clone(), d.name.clone());
+    let smi = (backend == "cuda")
+        .then(|| {
+            env.capture(&[
+                "nvidia-smi",
+                "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits",
+            ])
+        })
+        .flatten();
+    let sysfs = env.read_file(
+        &Path::new("/sys/bus/pci/devices")
+            .join(&location)
+            .join("mem_info_vram_total"),
+    );
+    Compute {
+        backend,
+        vram_mb: parse_vram_mb(smi.as_deref(), sysfs.as_deref()),
+        gpu,
     }
 }
 
