@@ -22,6 +22,8 @@ We want this to be fun: a place to build things, learn, play and make friends, n
 - Honest reviews. Point at the line, explain the problem, suggest a fix.
 - Mistakes, followed by a fix. Everybody breaks the build sometimes.
 
+Blunt is fine. Hard, direct, even harsh criticism of code, designs and decisions is welcome, and sometimes necessary. "This patch is wrong, and here is why" is a good review. Be blunt about the work, never about the human.
+
 ## 4. What is not welcome
 
 Some things are out, in every project space:
@@ -37,8 +39,6 @@ Some things are out, in every project space:
 - Spam and trolling: messages written only to start a fight.
 
 To be clear: racism, transphobia, homophobia and misogyny are included here, in any form.
-
-Criticising code is welcome. Attacking the person who wrote it is not.
 
 ## 5. Politics and words
 
@@ -73,4 +73,4 @@ Most problems end at step 1. Serious cases, such as threats, can go directly to 
 
 This doctrine applies in every WolOS space: code, issues, pull requests, reviews, commit messages, documentation, chat, mailing lists and events. It also applies to anyone who speaks or acts on behalf of the project, wherever they are.
 
-The maintainers may change this page. A change is a normal commit to `docs/DOCTRINE.md`, so the history is public.
+**Interpretation.** This page is interpreted and applied by the project's authority: today Julia Klee as lead, and in the future the councils or maintainers the project formally appoints. Their reading is final, and they can change this page. A change is a normal commit to `docs/DOCTRINE.md`, so the history is public.
