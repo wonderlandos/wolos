@@ -978,9 +978,10 @@ pub fn handle(
                     );
                 }
             };
+            // The running slot's release file has no image hash (wolos-base writes it): Running.
             let running = sys
                 .running_release()
-                .and_then(|t| wol_core::update::check::Manifest::parse(&t));
+                .and_then(|t| wol_core::update::check::Running::parse(&t));
             if running.is_some_and(|r| r.snapshot >= m.snapshot) {
                 return Answer::err(
                     Code::InvalidArgument,

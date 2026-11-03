@@ -97,7 +97,8 @@ impl AdminOs for Slow {
         user == "ann" && pw == b"good"
     }
     fn run(&self, argv: &[String], _: bool) -> bool {
-        if argv[0] == "pacman" {
+        // pacman, and the update check PkgRefresh runs (it refreshes a copy of the database).
+        if argv[0] == "pacman" || argv[0] == wol_core::update::check::SCRIPT {
             self.wait();
         }
         true

@@ -746,6 +746,16 @@ fn system_update_needs_a_signed_newer_release() {
         "no downgrades"
     );
     assert_eq!(f.ran.borrow().len(), 1);
+    // The running slot's own release file (wolos-base writes it, no image hash) counts too.
+    let g = Fake {
+        running: Some(r#"{"version":"2027.01","snapshot":"2027/01/10"}"#.into()),
+        ..yes(seed)
+    };
+    assert_eq!(
+        handle(&down, Some((1000, APP)), &all, &g).code,
+        Some(Code::InvalidArgument),
+        "no downgrades from a hash-less release file"
+    );
 }
 
 /// One tar header of `kind` for `name`, then the data, padded to whole blocks.

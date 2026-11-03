@@ -23,9 +23,15 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
 
 ## Updates (ADR 0016, 0017)
 - A systemd timer runs `/usr/lib/wolos/update-check` hourly; it checks at most every 20 h:
-  `pacman -Sy` (pinned snapshot), `pacman -Qu`, `arch-audit -q`, `pacman -Qq` (kernels), and the
-  signed release manifest (`release.json` + `.sig`, verified with the package keys when read).
+  `pacman -Sy` (pinned snapshot) and `pacman -Qu` against a temporary copy of the package database
+  (`local` linked, `sync` copied: the real one is on the read-only seal, ADR 0016), `arch-audit -q`,
+  `pacman -Qq` (kernels), and the signed release manifest (`release.json` + `.sig`, verified with
+  the package keys when read) from `https://wolos.squareweb.app/latest/`, or from the latest GitHub
+  release of wolos-packages when the CDN answers 404 or cannot be reached.
 - Findings go to `/var/lib/wolos/updates`, readable by every account. Never installs.
+  `wol update check` and Settings > Software Update > Check Now ask wol-admind (`pkg-refresh`) to
+  run the check now, then read the same files; a stamp older than the request means it could not
+  refresh, and an empty list is then never shown as "up to date".
 - Release manifest: version, Arch snapshot date, `[wolos]` revision, linux-wolos version, image URL and sha256.
 - Update Now (wol-admind `pkg-upgrade`) = `pacman -Syu` inside the release: only `[wolos]` moves.
 - A new release = `wol update apply` (root): btrfs snapshot of the running root into the other slot

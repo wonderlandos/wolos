@@ -24,8 +24,9 @@ use wol_core::package::{
 pub const MAX_INDEX: usize = 4 << 20;
 /// Entries kept from one index.
 pub const MAX_ENTRIES: usize = 5000;
-/// Where the index lives (the `wolos-plugins` repository's published files).
-pub const DEFAULT_URL: &str = "https://plugins.wolos.org/index.json";
+/// Where the index lives: the CDN, which the release tooling publishes it to (signed; an empty
+/// list until plugins are reviewed). e2e D5: the old host, plugins.wolos.org, never resolved.
+pub const DEFAULT_URL: &str = "https://cdn.wolos.org/plugins/index.json";
 const MAX_URL: usize = 512;
 const MAX_TEXT: usize = 200;
 
@@ -443,6 +444,18 @@ mod tests {
 
     fn index(plugins: Vec<serde_json::Value>) -> Vec<u8> {
         serde_json::to_vec(&serde_json::json!({"format": 1, "plugins": plugins})).unwrap()
+    }
+
+    /// The Store reads the list from the CDN over TLS; a signed empty list is a valid list (what
+    /// is published until plugins are reviewed), an unsigned one is not.
+    #[test]
+    fn the_list_comes_from_the_cdn_and_may_be_empty() {
+        assert_eq!(DEFAULT_URL, "https://cdn.wolos.org/plugins/index.json");
+        let text = index(vec![]);
+        let keys = [wol_core::package::public_of(&SEED)];
+        let sig = wol_core::package::sign(&SEED, &text);
+        assert!(verify(&text, Some(&sig), &keys).unwrap().plugins.is_empty());
+        assert!(verify(&text, None, &keys).is_err());
     }
 
     #[test]

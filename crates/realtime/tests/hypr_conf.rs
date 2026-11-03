@@ -602,3 +602,45 @@ fn x11_popups_are_left_where_they_open() {
         assert!(header.contains(f), "{f}");
     }
 }
+
+/// e2e D4: nothing started the session agent, so wold never heard that Memory Saver was on
+/// (status `enabled:false` while Settings showed it on). The session starts it, output logged.
+#[test]
+fn the_session_starts_the_realtime_agent() {
+    assert!(CONF.lines().any(|l| l.trim()
+        == r#"exec-once = sh -c 'exec wol-realtime >/dev/null 2>>"$XDG_RUNTIME_DIR/wol-realtime.log"'"#));
+}
+
+/// e2e D2: Night Light's program never ran, so every toggle failed. The session starts
+/// hyprsunset when the image has it, warm at once when Night Light was left on: the same state
+/// file and temperature `wol toggle` uses.
+#[test]
+fn the_session_starts_night_light_in_its_saved_state() {
+    use wol_core::toggles::{NIGHT_LIGHT_KELVIN, NIGHT_LIGHT_PROGRAM, Toggle, state_file};
+    let l = CONF
+        .lines()
+        .find(|l| {
+            l.starts_with("exec-once = ") && l.contains(&format!("exec {NIGHT_LIGHT_PROGRAM}"))
+        })
+        .expect("hyprsunset exec-once");
+    assert!(l.contains(&format!(
+        "command -v {NIGHT_LIGHT_PROGRAM} >/dev/null || exit 0"
+    )));
+    let s = std::path::Path::new("/S");
+    let rel = state_file(Toggle::NightLight, std::path::Path::new("/C"), s);
+    let rel = rel.strip_prefix(s).unwrap().display().to_string();
+    assert!(
+        l.contains(&format!(
+            "f=\"${{XDG_STATE_HOME:-$HOME/.local/state}}/{rel}\""
+        )),
+        "{l}"
+    );
+    assert!(l.contains(&format!(
+        "[ -e \"$f\" ] && exec {NIGHT_LIGHT_PROGRAM} -t {NIGHT_LIGHT_KELVIN} "
+    )));
+    // Off: true colours. hyprsunset 0.4 with no flag tints to 6000 K.
+    assert!(
+        l.contains(&format!("; exec {NIGHT_LIGHT_PROGRAM} -i ")),
+        "{l}"
+    );
+}
