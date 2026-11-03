@@ -972,6 +972,7 @@ fn rs_065_no_setting_weakens_hardening() {
         ("kernel.dmesg_restrict", "0"),
         ("kernel.unprivileged_bpf_disabled", "0"),
         ("kernel.kexec_load_disabled", "0"),
+        ("kernel.io_uring_disabled", "0"),
         ("fs.suid_dumpable", "1"),
         ("fs.suid_dumpable", "2"),
         ("fs.protected_symlinks", "0"),

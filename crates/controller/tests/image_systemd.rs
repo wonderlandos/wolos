@@ -271,6 +271,8 @@ fn sysctl_hardening_and_no_core_files() {
         "fs.protected_symlinks = 1",
         "fs.suid_dumpable = 0",
         "vm.max_map_count = 2147483642",
+        // Interim until the 7.3.1 kernel (audit8 cve #2): drop with the kernel bump.
+        "kernel.io_uring_disabled = 1",
     ] {
         assert!(s.lines().any(|l| l == kv), "sysctl.d lacks {kv}");
     }

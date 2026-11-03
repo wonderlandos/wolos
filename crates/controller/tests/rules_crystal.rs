@@ -97,7 +97,7 @@ const FIXTURES: &str = "crates/controller/tests/fixtures/crystal/";
 const AMEBA_VERSION: &str = "1.7.0";
 /// The Crystal release `shard.yml` asks for; the formatter output differs between releases, so a
 /// toolchain older than this is not a reference for RCR-004.
-const CRYSTAL_FLOOR: (u32, u32) = (1, 12);
+const CRYSTAL_FLOOR: (u32, u32) = (1, 22);
 
 // ---------------------------------------------------------------- repo access
 
