@@ -12,4 +12,4 @@ export GSK_RENDERER=${GSK_RENDERER:-cairo}
 install -d -o _wollogin -g _wollogin -m 0700 "$XDG_RUNTIME_DIR" "$HOME/.cache"   # .cache: compositor crash reports
 conf=login
 [ "${1:-}" = setup ] && conf=setup
-exec setpriv --reuid=_wollogin --regid=_wollogin --init-groups Hyprland -c /usr/share/wolos/hypr/$conf.conf
+exec setpriv --reuid=_wollogin --regid=_wollogin --init-groups Hyprland -c /usr/share/wolos/hypr/$conf.lua

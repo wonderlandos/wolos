@@ -479,14 +479,27 @@ fn settings_state(env: &mut dyn Env) -> Value {
     let home = env.config_home();
     let read = |p: &str| env.read_file(&home.join(p));
     let shell = prefs::ShellPrefs::parse(read(prefs::SHELL_FILE).as_deref());
-    let kb = read(&format!("{}/keyboard.conf", prefs::HYPR_DIR));
-    let (l, r) = prefs::parse_keyboard(kb.as_deref());
+    // desktop.json is the source of truth (Settings deletes keyboard.lua after its first save); the
+    // setup assistant's keyboard.lua only answers before that.
+    let desk = wol_core::hyprprefs::DesktopPrefs::from_files(
+        read(wol_core::hyprprefs::PREFS_FILE).as_deref(),
+        read(prefs::KEYBOARD_FILE).as_deref(),
+    );
+    let layout = desk
+        .layouts
+        .first()
+        .and_then(|l| prefs::LAYOUTS.iter().find(|x| x.0 == l))
+        .map_or(prefs::LAYOUTS[0].0, |x| x.0);
+    let rep = prefs::REPEATS
+        .iter()
+        .find(|x| x.1 == desk.repeat_rate)
+        .map_or(prefs::REPEATS[1].0, |x| x.0);
     let (lock, sleep) = prefs::parse_hypridle(read(prefs::IDLE_FILE).as_deref());
     json!({
         "appearance": theme_state(env, true),
         "do_not_disturb": focus_state(env)["do_not_disturb"],
         "shell": shell,
-        "keyboard": {"layout": prefs::LAYOUTS.get(l).map(|x| x.0), "repeat": prefs::REPEATS.get(r).map(|x| x.0)},
+        "keyboard": {"layout": layout, "repeat": rep},
         "lock_after_secs": lock,
         "lock_on_sleep": sleep,
     })
@@ -1579,5 +1592,41 @@ mod port_tests {
         assert_ne!(run(&mut e, "remind 99999 x"), 0);
         assert_ne!(run(&mut e, "remind 5"), 0);
         assert!(e.execs.is_empty());
+    }
+
+    /// The layout Settings shows comes from desktop.json; keyboard.lua (deleted after the first
+    /// Settings save) answers only before that.
+    #[test]
+    fn settings_reads_the_keyboard_through_the_desktop_prefs() {
+        let keyboard = |e: &mut FakeEnv| {
+            e.out.clear();
+            assert_eq!(run(e, "settings --json"), 0, "{}", e.err);
+            let v: Value = serde_json::from_str(&e.out).expect("json");
+            (
+                v["keyboard"]["layout"].as_str().map(str::to_owned),
+                v["keyboard"]["repeat"].as_str().map(str::to_owned),
+            )
+        };
+        let pair = |a: &str, b: &str| (Some(a.to_owned()), Some(b.to_owned()));
+        let mut e = fake();
+        assert_eq!(keyboard(&mut e), pair("us", "Normal"));
+        // First run: the setup assistant's file.
+        e.files.push((
+            PathBuf::from("/h/hypr/wolos/keyboard.lua"),
+            wol_core::prefs::keyboard_lua("br", 2).unwrap(),
+        ));
+        assert_eq!(keyboard(&mut e), pair("br", "Fast"));
+        // After a Settings save only desktop.json is left, and it wins over a stale keyboard.lua.
+        let d = wol_core::hyprprefs::DesktopPrefs {
+            layouts: vec!["us(intl)".into(), "br".into()],
+            repeat_rate: 15,
+            repeat_delay: 600,
+            ..Default::default()
+        };
+        e.files
+            .push((PathBuf::from("/h/wolos/desktop.json"), d.to_json()));
+        assert_eq!(keyboard(&mut e), pair("us(intl)", "Slow"));
+        e.files.remove(0);
+        assert_eq!(keyboard(&mut e), pair("us(intl)", "Slow"));
     }
 }

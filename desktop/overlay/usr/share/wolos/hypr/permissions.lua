@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- WolOS privacy (docs/modules/security.md): who may copy the screen, capture input
 -- or load compositor plugins. The Lua form of permissions.conf (wol_core::security::hypr_permissions).
 hl.config({

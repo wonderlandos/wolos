@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- WolOS system compositor defaults (the WolOS desktop feel). Loaded by ~/.config/hypr/hyprland.lua.
 -- Override anything by adding calls after the `require` in the user file.
 -- Lua configuration of the compositor 0.57 series (hyprland.conf is the 0.56 one, kept for v0.12.x);

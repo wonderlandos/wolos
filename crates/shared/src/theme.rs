@@ -117,11 +117,11 @@ pub const ANSI_NAMES: [&str; TERMINAL_COLORS] = [
     "brightCyan",
     "brightWhite",
 ];
-/// Under `$XDG_CONFIG_HOME`: compositor colours of the active theme, picked up by the user
-/// hyprland.conf's `hypr/wolos/*.conf` glob after the system default.
-pub const HYPR_THEME_FILE: &str = "hypr/wolos/theme.conf";
-/// The default theme's compositor colours, sourced by the shipped hyprland.conf.
-pub const SYSTEM_HYPR_THEME: &str = "/usr/share/wolos/hypr/wolos/theme.conf";
+/// Under `$XDG_CONFIG_HOME`: compositor colours of the active theme, loaded by the user
+/// hyprland.lua's `hypr/wolos/*.lua` after the system default.
+pub const HYPR_THEME_FILE: &str = "hypr/wolos/theme.lua";
+/// The default theme's compositor colours, loaded by the shipped hyprland.lua.
+pub const SYSTEM_HYPR_THEME: &str = "/usr/share/wolos/hypr/wolos/theme.lua";
 /// Under `$XDG_CONFIG_HOME`: user templates `<name>.tpl`, rendered on every theme switch.
 pub const TEMPLATES_DIR: &str = "wolos/themed";
 

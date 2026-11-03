@@ -610,7 +610,7 @@ mod tests {
             Some(None)
         );
         let r = reload_for(&e(vec![
-            f("hypr/wolos/keyboard.conf", Some("")),
+            f("hypr/wolos/keyboard.lua", Some("")),
             f("wolos/shell.json", Some("{}")),
         ]));
         assert!(r.hyprland && r.shell && r.theme.is_none());

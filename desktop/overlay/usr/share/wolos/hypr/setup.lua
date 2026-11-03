@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- Setup assistant compositor (wol-greeter-session setup, ADR 0004). Exiting wol-setup restarts the greeter.
 -- Scale 1 like the desktop session (hyprland.lua): without a rule the compositor picks a scale from
 -- the display's size, and a VM display at 1.5 left the welcome card taller than the screen.

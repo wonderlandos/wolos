@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- WolOS compositor performance defaults (compositor 0.57 series, Lua configuration).
 -- Ships in the desktop overlay; desktop hyprland.lua loads it:
 --   require("/usr/share/wolos/hypr/wolos-perf.lua")

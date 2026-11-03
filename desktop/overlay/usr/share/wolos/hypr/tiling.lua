@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- WolOS tiling shortcuts (the Lua form of tiling.conf). Not loaded directly: while System Settings >
 -- Desktop & Dock > Tile windows is on, Settings binds these (with any changes from Keyboard >
 -- Shortcuts) in the user's wolos/shortcuts file.

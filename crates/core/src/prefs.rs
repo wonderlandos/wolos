@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! User desktop preferences written by Settings: shell prefs (menu bar, Dock), compositor keyboard/display
-//! fragments, hypridle config. Pure render/parse; callers write files and reload.
+//! files (Lua, `hypr/wolos/*.lua`), hypridle config (the idle daemon's own `.conf`). Pure render/parse; callers write files and reload.
 use std::collections::HashMap;
 
 /// `$XDG_CONFIG_HOME/wolos/shell.json`; the shell rereads it on `reload` (wol-shell.sock).
 pub const SHELL_FILE: &str = "wolos/shell.json";
-/// `$XDG_CONFIG_HOME/hypr/wolos/<name>.conf`, sourced by the user hyprland.conf.
+/// `$XDG_CONFIG_HOME/hypr/wolos/<name>.lua`, loaded by the user hyprland.lua ([`USER_LUA`]).
 pub const HYPR_DIR: &str = "hypr/wolos";
-pub const HYPR_USER: &str = "hypr/hyprland.conf";
+pub const HYPR_USER: &str = "hypr/hyprland.lua";
+/// The keyboard file the setup assistant writes (first session, ADR 0004).
+pub const KEYBOARD_FILE: &str = "hypr/wolos/keyboard.lua";
+/// Settings > Displays: one `hl.monitor` per display.
+pub const DISPLAYS_FILE: &str = "hypr/wolos/displays.lua";
 /// `$XDG_CONFIG_HOME/hypr/hypridle.conf` (hypridle's default user path).
 pub const IDLE_FILE: &str = "hypr/hypridle.conf";
 
@@ -211,8 +215,9 @@ pub const LAYOUTS: [(&str, &str); 8] = [
 pub const REPEATS: [(&str, u32, u32); 3] =
     [("Slow", 15, 600), ("Normal", 25, 400), ("Fast", 40, 250)];
 
-/// `input { }` block for `keyboard.conf`. None for an unknown layout.
-pub fn keyboard_conf(layout: &str, repeat: usize) -> Option<String> {
+/// `keyboard.lua`: the layout and repeat as one `hl.config` call. None for an unknown layout.
+pub fn keyboard_lua(layout: &str, repeat: usize) -> Option<String> {
+    use crate::theme::hypr::lua_str;
     let (_, rate, delay) = REPEATS.get(repeat)?;
     let (kb, variant) = match layout.split_once('(') {
         Some((l, v)) => (l, v.trim_end_matches(')')),
@@ -220,26 +225,41 @@ pub fn keyboard_conf(layout: &str, repeat: usize) -> Option<String> {
     };
     LAYOUTS.iter().any(|l| l.0 == layout).then(|| {
         format!(
-            "# Written by WolOS Settings.\ninput {{\n    kb_layout = {kb}\n    kb_variant = {variant}\n    repeat_rate = {rate}\n    repeat_delay = {delay}\n}}\n"
+            "-- Written by WolOS Settings.\nhl.config({{\n    input = {{\n        kb_layout = {},\n        kb_variant = {},\n        repeat_rate = {rate},\n        repeat_delay = {delay},\n    }},\n}})\n",
+            lua_str(kb),
+            lua_str(variant)
         )
     })
 }
 
-/// Setup assistant `~/.config/wol/setup.json` (ADR 0004) -> `keyboard.conf`, normal repeat. None if unknown.
+/// Setup assistant `~/.config/wol/setup.json` (ADR 0004) -> `keyboard.lua`, normal repeat. None if unknown.
 pub fn setup_keyboard(setup_json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(setup_json).ok()?;
-    keyboard_conf(v.get("keymap")?.as_str()?, 1)
+    keyboard_lua(v.get("keymap")?.as_str()?, 1)
 }
 
 /// Setup assistant choices, relative to `$XDG_CONFIG_HOME`; renamed to `SETUP_APPLIED` once applied.
 pub const SETUP_FILE: &str = "wol/setup.json";
 pub const SETUP_APPLIED: &str = "wol/setup.applied.json";
 
+/// `key = value` lines, the value without a trailing `,` or quotes: `keyboard.lua` fields, and the
+/// `input { }` block of the older `keyboard.conf` (read once, [`crate::hyprprefs::retire_plan`]).
 fn kv(text: &str) -> HashMap<&str, &str> {
     crate::system::pairs(text, '=')
+        .into_iter()
+        .map(|(k, v)| {
+            let v = v.trim_end_matches(',').trim();
+            (
+                k,
+                v.strip_prefix('"')
+                    .and_then(|v| v.strip_suffix('"'))
+                    .unwrap_or(v),
+            )
+        })
+        .collect()
 }
 
-/// (layout index, repeat index) from `keyboard.conf`; defaults (U.S., Normal).
+/// (layout index, repeat index) from `keyboard.lua`; defaults (U.S., Normal).
 pub fn parse_keyboard(text: Option<&str>) -> (usize, usize) {
     let Some(t) = text else { return (0, 1) };
     let p = kv(t);
@@ -257,31 +277,101 @@ pub fn parse_keyboard(text: Option<&str>) -> (usize, usize) {
     (l, r)
 }
 
-/// `monitor = <rule>` lines for `displays.conf`, one per monitor (later rule for the same name wins).
-pub fn displays_conf(current: Option<&str>, rule: &str) -> String {
-    let name = rule.split(',').next().unwrap_or("");
-    let mut out = String::from("# Written by WolOS Settings.\n");
-    for l in current.unwrap_or("").lines() {
-        if let Some(r) = l.trim().strip_prefix("monitor = ")
-            && r.split(',').next() != Some(name)
-        {
-            out.push_str(&format!("monitor = {r}\n"));
+/// A monitor rule (`name,mode,position,scale[,key,value…]`, `controls::monitor_rule`) as the
+/// `hl.monitor` call that sets it. Each field is a string but `transform` and `bitdepth` (numbers).
+pub fn monitor_lua(rule: &str) -> String {
+    use crate::theme::hypr::lua_str;
+    let parts: Vec<&str> = rule.split(',').map(str::trim).collect();
+    let mut fields: Vec<String> = ["output", "mode", "position", "scale"]
+        .iter()
+        .zip(&parts)
+        .map(|(k, v)| format!("{k} = {}", lua_str(v)))
+        .collect();
+    for kv in parts.get(4..).unwrap_or_default().chunks(2) {
+        if let [k, v] = kv {
+            let number = matches!(*k, "transform" | "bitdepth") && v.parse::<u8>().is_ok();
+            fields.push(format!(
+                "{k} = {}",
+                if number { v.to_string() } else { lua_str(v) }
+            ));
         }
     }
-    out.push_str(&format!("monitor = {rule}\n"));
+    format!("hl.monitor({{ {} }})", fields.join(", "))
+}
+
+/// The monitor rules of `displays.lua` (`hl.monitor` lines, [`monitor_lua`]) or of the older
+/// `displays.conf` (`monitor = ` lines), in file order.
+pub fn monitor_rules(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for l in text.lines().map(str::trim) {
+        if let Some(r) = l.strip_prefix("monitor = ") {
+            out.push(r.trim().to_string());
+            continue;
+        }
+        let Some(body) = l
+            .strip_prefix("hl.monitor({ ")
+            .and_then(|b| b.strip_suffix(" })"))
+        else {
+            continue;
+        };
+        let mut vals = Vec::new();
+        for f in body.split(", ") {
+            let Some((k, v)) = f.split_once(" = ") else {
+                continue;
+            };
+            let v = v
+                .strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .unwrap_or(v);
+            match k {
+                "output" | "mode" | "position" | "scale" => vals.push(v.to_string()),
+                _ => vals.extend([k.to_string(), v.to_string()]),
+            }
+        }
+        out.push(vals.join(","));
+    }
     out
 }
 
-/// User hyprland.conf with a `source` line for the fragments; None when already present.
-pub fn ensure_source(user_conf: Option<&str>, fragments_glob: &str) -> Option<String> {
-    let line = format!("source = {fragments_glob}");
-    let cur = user_conf.unwrap_or("source = /usr/share/wolos/hypr/hyprland.conf\n");
-    if cur.lines().any(|l| l.trim() == line) {
+/// `displays.lua`: one `hl.monitor` per monitor (a later rule for the same name replaces it).
+pub fn displays_lua(current: Option<&str>, rule: &str) -> String {
+    let name = rule.split(',').next().unwrap_or("");
+    let mut out = String::from("-- Written by WolOS Settings.\n");
+    for r in monitor_rules(current.unwrap_or("")) {
+        if r.split(',').next() != Some(name) {
+            out.push_str(&monitor_lua(&r));
+            out.push('\n');
+        }
+    }
+    out.push_str(&monitor_lua(rule));
+    out.push('\n');
+    out
+}
+
+/// The line of the user hyprland.lua that loads the WolOS files ([`HYPR_DIR`], relative to it).
+pub const USER_REQUIRE: &str = "local ok, err = pcall(require, \"./wolos/*.lua\")";
+
+/// The user hyprland.lua `wol-session` writes: the system defaults, then the WolOS files (none yet
+/// is not an error, a broken one is).
+pub fn user_lua(share: &str) -> String {
+    format!(
+        "-- WolOS defaults. Add your overrides below.\nrequire(\"{share}/hypr/hyprland.lua\")\n{USER_REQUIRE}\n\
+         if not ok and not tostring(err):find(\"found no match\", 1, true) then\n    error(err, 0)\nend\n"
+    )
+}
+
+/// The user hyprland.lua with the [`USER_REQUIRE`] block; None when it is already there.
+pub fn ensure_require(user_lua_text: Option<&str>) -> Option<String> {
+    let Some(cur) = user_lua_text else {
+        return Some(user_lua("/usr/share/wolos"));
+    };
+    if cur.lines().any(|l| l.trim() == USER_REQUIRE) {
         return None;
     }
     let mut s = cur.trim_end_matches('\n').to_string();
     s.push_str(&format!(
-        "\n# WolOS Settings (keyboard, displays).\n{line}\n"
+        "\n-- WolOS Settings and theme (hypr/wolos).\n{USER_REQUIRE}\n\
+         if not ok and not tostring(err):find(\"found no match\", 1, true) then\n    error(err, 0)\nend\n"
     ));
     Some(s)
 }
@@ -396,31 +486,95 @@ mod tests {
     #[test]
     fn keyboard_round_trip() {
         for (l, r) in [(0, 1), (1, 0), (2, 2), (7, 1)] {
-            let c = keyboard_conf(LAYOUTS[l].0, r).unwrap();
+            let c = keyboard_lua(LAYOUTS[l].0, r).unwrap();
             assert_eq!(parse_keyboard(Some(&c)), (l, r), "{c}");
         }
-        assert!(
-            keyboard_conf("us(intl)", 1)
-                .unwrap()
-                .contains("kb_variant = intl\n")
-        );
-        assert_eq!(keyboard_conf("xx; exec", 1), None);
-        assert_eq!(keyboard_conf("us", 9), None);
+        let intl = keyboard_lua("us(intl)", 1).unwrap();
+        assert!(intl.contains("        kb_variant = \"intl\",\n"), "{intl}");
+        assert!(intl.contains("        repeat_rate = 25,\n"), "{intl}");
+        assert_eq!(keyboard_lua("xx; exec", 1), None);
+        assert_eq!(keyboard_lua("us", 9), None);
         assert_eq!(parse_keyboard(None), (0, 1));
+        // The older keyboard.conf block reads the same (the upgrade carries it over once).
+        let conf = "input {\n    kb_layout = br\n    kb_variant = \n    repeat_rate = 40\n    repeat_delay = 250\n}\n";
+        assert_eq!(parse_keyboard(Some(conf)), (2, 2));
     }
 
     #[test]
-    fn displays_and_source() {
-        let a = displays_conf(None, "eDP-1,1920x1080@60.00,auto,1");
-        let b = displays_conf(Some(&a), "HDMI-A-1,2560x1440@60.00,auto,1");
-        let c = displays_conf(Some(&b), "eDP-1,1920x1080@60.00,auto,1.5");
-        assert_eq!(c.matches("monitor = ").count(), 2);
-        assert!(c.ends_with("monitor = eDP-1,1920x1080@60.00,auto,1.5\n"));
-        let s = ensure_source(None, "/h/.config/hypr/wolos/*.conf").unwrap();
-        assert!(s.starts_with("source = /usr/share/wolos/hypr/hyprland.conf\n"));
+    fn displays_and_the_user_file() {
+        let a = displays_lua(None, "eDP-1,1920x1080@60.00,auto,1");
+        let b = displays_lua(Some(&a), "HDMI-A-1,2560x1440@60.00,1920x0,1");
+        let c = displays_lua(Some(&b), "eDP-1,1920x1080@60.00,auto,1.5");
+        assert_eq!(c.matches("hl.monitor(").count(), 2);
+        assert!(
+            c.ends_with(
+                "hl.monitor({ output = \"eDP-1\", mode = \"1920x1080@60.00\", position = \"auto\", scale = \"1.5\" })\n"
+            ),
+            "{c}"
+        );
         assert_eq!(
-            ensure_source(Some(&s), "/h/.config/hypr/wolos/*.conf"),
-            None
+            monitor_rules(&c),
+            [
+                "HDMI-A-1,2560x1440@60.00,1920x0,1",
+                "eDP-1,1920x1080@60.00,auto,1.5"
+            ]
+        );
+        let mirror = "HDMI-A-1,1920x1080@60.00,auto,1,mirror,eDP-1";
+        assert_eq!(
+            monitor_lua(mirror),
+            "hl.monitor({ output = \"HDMI-A-1\", mode = \"1920x1080@60.00\", position = \"auto\", scale = \"1\", mirror = \"eDP-1\" })"
+        );
+        assert_eq!(monitor_rules(&monitor_lua(mirror)), [mirror]);
+        assert_eq!(
+            monitor_lua("DP-1,preferred,auto,1,transform,1"),
+            "hl.monitor({ output = \"DP-1\", mode = \"preferred\", position = \"auto\", scale = \"1\", transform = 1 })"
+        );
+        // The older displays.conf lines read the same.
+        assert_eq!(
+            monitor_rules("# Written by WolOS Settings.\nmonitor = eDP-1,1920x1080@60.00,auto,1\n"),
+            ["eDP-1,1920x1080@60.00,auto,1"]
+        );
+        let s = ensure_require(None).unwrap();
+        assert_eq!(s, user_lua("/usr/share/wolos"));
+        assert_eq!(ensure_require(Some(&s)), None);
+        let mine = "require(\"/usr/share/wolos/hypr/hyprland.lua\")\nhl.bind(\"SUPER + B\", hl.dsp.exec_cmd(\"firefox\"))\n";
+        let added = ensure_require(Some(mine)).unwrap();
+        assert!(added.starts_with(mine), "the person's lines stay first");
+        assert_eq!(added.matches(USER_REQUIRE).count(), 1);
+        assert_eq!(ensure_require(Some(&added)), None);
+    }
+
+    /// wol-session writes the same user hyprland.lua as [`user_lua`] (with its `$share`).
+    #[test]
+    fn wol_session_writes_the_user_lua() {
+        let s = include_str!("../../../desktop/overlay/usr/bin/wol-session");
+        let body = s
+            .split("cat > \"$lua\" <<LUA\n")
+            .nth(1)
+            .and_then(|b| b.split("\nLUA\n").next())
+            .expect("wol-session writes hyprland.lua");
+        assert_eq!(format!("{body}\n"), user_lua("$share"));
+        // The compositor reads Lua only: the script writes no compositor .conf, it removes the old
+        // VM fragment.
+        assert!(!s.contains("<<CONF") && !s.contains("source = "), "{s}");
+        assert!(s.contains("rm -f \"${vmlua%.lua}.conf\""), "{s}");
+    }
+
+    /// The VM fragment `wol-session` writes, as the text the compositor loads.
+    #[test]
+    fn wol_session_writes_the_vm_fragment() {
+        let s = include_str!("../../../desktop/overlay/usr/bin/wol-session");
+        let lines: Vec<&str> = s
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("printf '%s\\n' "))
+            .filter(|l| l.contains("wol-session:"))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "'-- wol-session: this is a VM' 'hl.config({ cursor = { no_hardware_cursors = 1 } })' > \"$vmlua.tmp\"",
+                "'-- wol-session: not a VM' > \"$vmlua.tmp\"",
+            ]
         );
     }
 
@@ -499,11 +653,11 @@ mod tests {
     fn setup_keyboard_once() {
         let k = setup_keyboard(r#"{"keymap":"br","locale":"pt_BR.UTF-8","appearance":"auto"}"#)
             .unwrap();
-        assert!(k.contains("kb_layout = br\n"), "{k}");
+        assert!(k.contains("kb_layout = \"br\",\n"), "{k}");
         assert!(
             setup_keyboard(r#"{"keymap":"us(intl)"}"#)
                 .unwrap()
-                .contains("kb_variant = intl")
+                .contains("kb_variant = \"intl\"")
         );
         assert_eq!(setup_keyboard(r#"{"keymap":"xx"}"#), None);
         assert_eq!(setup_keyboard("junk"), None);

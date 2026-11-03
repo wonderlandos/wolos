@@ -12,13 +12,27 @@ use wol_core::security::{
 #[test]
 fn compositor_privacy_rules_ship_and_load() {
     let rel = format!("desktop/overlay{HYPR_PERMISSIONS}");
-    assert_eq!(read(&rel), hypr_permissions(), "{rel}: regenerate");
-    let conf = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
-    let source = format!("source = {HYPR_PERMISSIONS}");
-    let at = conf.find(&source).expect("hyprland.conf sources the rules");
-    let plugin = conf.find("\nplugin = ").unwrap();
-    assert!(at < plugin, "rules before the plugin lines");
-    for p in conf.lines().filter_map(|l| l.strip_prefix("plugin = ")) {
+    // The calls are the render's (the comment lines are the file's own).
+    let code = |t: &str| -> Vec<String> {
+        t.lines()
+            .filter(|l| !l.trim_start().starts_with("--"))
+            .map(String::from)
+            .collect()
+    };
+    assert_eq!(
+        code(&read(&rel)),
+        code(&hypr_permissions()),
+        "{rel}: regenerate"
+    );
+    let lua = read("desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+    let load = format!("\nrequire(\"{HYPR_PERMISSIONS}\")\n");
+    let at = lua.find(&load).expect("hyprland.lua loads the rules");
+    let plugin = lua.find("\nhl.plugin.load(").unwrap();
+    assert!(at < plugin, "rules before the plugins load");
+    for p in lua.lines().filter_map(|l| {
+        l.strip_prefix("hl.plugin.load(\"")
+            .and_then(|p| p.strip_suffix("\")"))
+    }) {
         assert!(
             p.starts_with(wol_core::security::PLUGIN_DIR) && p.ends_with(".so"),
             "{p}: plugins load only from the plugin folder"

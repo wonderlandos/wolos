@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- WolOS window buttons (hyprbars), loaded once by /usr/share/wolos/hypr/hyprland.lua.
 -- One quiet neutral circle for all three (the Kit's idle window control, a mid violet grey that
 -- reads on the light and the dark bar), ink glyphs close x, zoom [], minimise - shown while the

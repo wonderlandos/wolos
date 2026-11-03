@@ -243,7 +243,7 @@ pub fn render(t: &ResolvedTheme, dir: &Path) -> Vec<File> {
         },
         File {
             rel: super::hypr::HYPR_THEME_FILE,
-            text: super::hypr::conf(t),
+            text: super::hypr::lua(t),
         },
     ]
     .into_iter()
@@ -592,10 +592,10 @@ pub fn gsettings_argv(t: &ResolvedTheme) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// The compositor's colours, live (`hypr::argv`: the title strip and shadows; the same values
-/// as the `hypr/wolos/theme.conf` that `install` writes for the next start or reload).
+/// The compositor's colours, live (`hypr::lua_argv`: the title strip and shadows; the same calls
+/// as the `hypr/wolos/theme.lua` that `install` writes for the next start or reload).
 pub fn strip_argv(t: &ResolvedTheme) -> Vec<Vec<String>> {
-    super::hypr::argv(t)
+    super::hypr::lua_argv(t)
 }
 
 /// Session/shell entry: resolve `id`, install the user toolkit files, push gsettings (blocking;
@@ -658,7 +658,7 @@ pub fn link_data(t: &ResolvedTheme, dir: &Path, data_home: &Path) -> std::io::Re
 
 /// Writes every consumer (`generate::consumers`) into `dir` (atomic per file), links each of
 /// `LINKS` and the compositor theme file from `config_home` unless the user already has a real file
-/// or a link of their own there, makes sure the user hyprland.conf sources `hypr/wolos/*.conf`, and renders the user's
+/// or a link of their own there, makes sure the user hyprland.lua loads `hypr/wolos/*.lua`, and renders the user's
 /// templates (`templates`; a broken template is skipped, see `templates::install`).
 pub fn install(t: &ResolvedTheme, dir: &Path, config_home: &Path) -> std::io::Result<()> {
     for f in super::generate::consumers(t, dir) {
@@ -675,13 +675,12 @@ pub fn install(t: &ResolvedTheme, dir: &Path, config_home: &Path) -> std::io::Re
     Ok(())
 }
 
-/// The user hyprland.conf sources the WolOS fragments (`prefs::ensure_source`), so the theme file
-/// is read after the system default on the next start or reload. A hyprland.conf that is a link
+/// The user hyprland.lua loads the WolOS files (`prefs::ensure_require`), so the theme file
+/// is read after the system default on the next start or reload. A hyprland.lua that is a link
 /// (a dotfiles manager) stays a link: the line is written to the file it points at, and when that
 /// file cannot be written (a read-only store, a dangling link) it is left alone (audit C8-5).
 fn hypr_source(config_home: &Path) -> std::io::Result<()> {
     let user = config_home.join(crate::prefs::HYPR_USER);
-    let glob = config_home.join(crate::prefs::HYPR_DIR).join("*.conf");
     let linked = user.symlink_metadata().is_ok_and(|m| m.is_symlink());
     let target = if linked {
         match std::fs::canonicalize(&user) {
@@ -692,7 +691,7 @@ fn hypr_source(config_home: &Path) -> std::io::Result<()> {
         user
     };
     let cur = std::fs::read_to_string(&target).ok();
-    if let Some(text) = crate::prefs::ensure_source(cur.as_deref(), &glob.to_string_lossy()) {
+    if let Some(text) = crate::prefs::ensure_require(cur.as_deref()) {
         if let Some(d) = target.parent() {
             std::fs::create_dir_all(d)?;
         }
@@ -1211,12 +1210,12 @@ mod tests {
         assert_eq!(end.rsplit(',').next(), Some("close"), "close rightmost");
         let hypr = std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf"),
+                .join("../../desktop/overlay/usr/share/wolos/hypr/hyprland.lua"),
         )
         .unwrap();
         assert!(
             hypr.lines()
-                .any(|l| l.trim().replace(' ', "") == "bar_buttons_alignment=right"),
+                .any(|l| l.trim().replace(' ', "") == "bar_buttons_alignment=\"right\","),
             "the compositor row is right-aligned too"
         );
     }
@@ -1362,7 +1361,7 @@ mod tests {
     }
 
     /// C8-5: links the person made (a dotfiles manager) are kept, with their targets; a symlinked
-    /// hyprland.conf stays a link and its target gets the source line; WolOS's own links are
+    /// hyprland.lua stays a link and its target gets the `require` block; WolOS's own links are
     /// still refreshed.
     #[test]
     fn install_keeps_the_users_own_links() {
@@ -1373,10 +1372,10 @@ mod tests {
         std::fs::create_dir_all(cfg.join("hypr")).unwrap();
         std::fs::create_dir_all(&dot).unwrap();
         std::fs::write(dot.join("foot.ini"), "mine").unwrap();
-        let mine = "bind = $mod, B, exec, firefox\n";
-        std::fs::write(dot.join("hyprland.conf"), mine).unwrap();
+        let mine = "hl.bind(\"SUPER + B\", hl.dsp.exec_cmd(\"firefox\"))\n";
+        std::fs::write(dot.join("hyprland.lua"), mine).unwrap();
         std::os::unix::fs::symlink(dot.join("foot.ini"), cfg.join("foot/foot.ini")).unwrap();
-        std::os::unix::fs::symlink("../../dot/hyprland.conf", cfg.join("hypr/hyprland.conf"))
+        std::os::unix::fs::symlink("../../dot/hyprland.lua", cfg.join("hypr/hyprland.lua"))
             .unwrap();
         for id in ["wol-dark", "wol-light"] {
             install(&theme(id), &tk, &cfg).unwrap();
@@ -1387,15 +1386,15 @@ mod tests {
             std::fs::read_to_string(dot.join("foot.ini")).unwrap(),
             "mine"
         );
-        let hypr = cfg.join("hypr/hyprland.conf");
+        let hypr = cfg.join("hypr/hyprland.lua");
         assert!(
             hypr.symlink_metadata().unwrap().is_symlink(),
             "still a link"
         );
-        let text = std::fs::read_to_string(dot.join("hyprland.conf")).unwrap();
+        let text = std::fs::read_to_string(dot.join("hyprland.lua")).unwrap();
         assert!(text.starts_with(mine), "{text}");
-        let glob = format!("source = {}", cfg.join("hypr/wolos/*.conf").display());
-        assert_eq!(text.lines().filter(|l| *l == glob).count(), 1, "{text}");
+        let req = crate::prefs::USER_REQUIRE;
+        assert_eq!(text.lines().filter(|l| *l == req).count(), 1, "{text}");
         // Ours is refreshed: a link into the toolkit dir is remade, a dangling one too.
         let css = cfg.join("gtk-4.0/gtk.css");
         assert_eq!(
@@ -1409,38 +1408,41 @@ mod tests {
             std::fs::read_link(&css).unwrap(),
             tk.join("gtk-4.0/gtk.css")
         );
-        // A dangling hyprland.conf link of the person's is left as it is.
-        std::fs::remove_file(dot.join("hyprland.conf")).unwrap();
+        // A dangling hyprland.lua link of the person's is left as it is.
+        std::fs::remove_file(dot.join("hyprland.lua")).unwrap();
         install(&theme("wol-dark"), &tk, &cfg).unwrap();
         assert!(hypr.symlink_metadata().unwrap().is_symlink());
-        assert!(!dot.join("hyprland.conf").exists());
+        assert!(!dot.join("hyprland.lua").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// A switch writes the compositor colours where the user conf's fragment glob reads them, and
-    /// every console file; the user conf keeps its own lines and gets the `source` once.
+    /// A switch writes the compositor colours where the user hyprland.lua's `hypr/wolos/*.lua`
+    /// reads them, and every console file; the user file keeps its own lines and gets the
+    /// `require` once.
     #[test]
     fn install_feeds_hyprland_and_the_consoles() {
         let root = std::env::temp_dir().join(format!("wol-apps-hypr-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (tk, cfg) = (root.join("toolkits"), root.join("config"));
         std::fs::create_dir_all(cfg.join("hypr")).unwrap();
-        let mine = "source = /usr/share/wolos/hypr/hyprland.conf\nbind = $mod, B, exec, firefox\n";
-        std::fs::write(cfg.join("hypr/hyprland.conf"), mine).unwrap();
+        let mine = "require(\"/usr/share/wolos/hypr/hyprland.lua\")\nhl.bind(\"SUPER + B\", hl.dsp.exec_cmd(\"firefox\"))\n";
+        std::fs::write(cfg.join("hypr/hyprland.lua"), mine).unwrap();
         for _ in 0..2 {
             install(&theme("catppuccin-latte"), &tk, &cfg).unwrap();
         }
-        let user = std::fs::read_to_string(cfg.join("hypr/hyprland.conf")).unwrap();
+        let user = std::fs::read_to_string(cfg.join("hypr/hyprland.lua")).unwrap();
         assert!(user.starts_with(mine), "{user}");
-        let glob = format!("source = {}", cfg.join("hypr/wolos/*.conf").display());
-        assert_eq!(user.lines().filter(|l| *l == glob).count(), 1, "{user}");
+        let req = crate::prefs::USER_REQUIRE;
+        assert_eq!(user.lines().filter(|l| *l == req).count(), 1, "{user}");
         let hypr = cfg.join(super::super::hypr::HYPR_THEME_FILE);
+        assert!(hypr.to_string_lossy().ends_with("hypr/wolos/theme.lua"));
         assert!(hypr.symlink_metadata().unwrap().is_symlink());
         assert!(
             std::fs::read_to_string(&hypr)
                 .unwrap()
-                .contains("plugin:hyprbars:bar_color = rgba(eff1f5e6)\n")
+                .contains("hl.config({ [\"plugin.hyprbars.bar_color\"] = \"rgba(eff1f5e6)\" })")
         );
+
         for rel in super::super::console::FILES {
             assert!(tk.join(rel).is_file(), "{rel}");
         }
@@ -1501,6 +1503,7 @@ mod tests {
     /// The image ships the default theme's files (`desktop/overlay`); `WOL_REGEN=1` rewrites them.
     #[test]
     fn system_copy_is_the_default_render() {
+        const SPDX_LUA: &str = "-- SPDX-License-Identifier: GPL-2.0-or-later\n";
         let root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop/overlay/usr/share/wolos");
         // settings.ini names `WolOS-wol-light`: the system theme dir resolves it before any
@@ -1516,13 +1519,19 @@ mod tests {
         );
         for f in render(&theme("wol-light"), Path::new(SYSTEM_DIR)) {
             let p = root.join(f.rel);
+            // A shipped .lua file starts with its SPDX line; the render does not.
+            let shipped = if f.rel.ends_with(".lua") {
+                format!("{SPDX_LUA}{}", f.text)
+            } else {
+                f.text.clone()
+            };
             if std::env::var_os("WOL_REGEN").is_some() {
                 std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-                std::fs::write(&p, &f.text).unwrap();
+                std::fs::write(&p, &shipped).unwrap();
             }
             assert_eq!(
                 std::fs::read_to_string(&p).ok().as_deref(),
-                Some(f.text.as_str()),
+                Some(shipped.as_str()),
                 "{}",
                 f.rel
             );
