@@ -41,7 +41,9 @@ pub trait System {
     /// [`RUN_TIMEOUT`] and was stopped.
     fn run(&self, argv: &[String]) -> i32;
     /// Copy `path` into a fresh directory under [`STAGING`] if it is a regular file owned by
-    /// `uid`; the copy's path. None when the file is not the caller's or cannot be copied.
+    /// `uid` that `uid` can reach (every directory above it searchable,
+    /// [`crate::admind::caller_may_reach`]); the copy's path. None when the file is not the
+    /// caller's or cannot be copied.
     fn stage(&self, path: &str, uid: u32) -> Option<String>;
     /// Forget a copy [`System::stage`] made (after the install, or when the person said no).
     fn discard(&self, staged: &str);
@@ -145,6 +147,12 @@ impl System for Host<'_> {
         let mut f = shared::sys::open_named(path).ok()?;
         let md = f.metadata().ok()?;
         if !md.is_file() || md.uid() != uid {
+            return None;
+        }
+        // api-security 5: as for wol-admind's copy, the caller could walk down to the file
+        // (its own file kept inside another account's private directory is not the caller's).
+        let dirs = crate::admind::dirs_above(&f).ok()?;
+        if !crate::admind::caller_may_reach(&dirs, Some(uid)) {
             return None;
         }
         std::fs::DirBuilder::new()

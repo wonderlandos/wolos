@@ -222,12 +222,24 @@ fn maps_inject(maps: &str) -> bool {
     })
 }
 
+/// What the kernel appends to the `exe` link of a process whose executable was unlinked.
+const DELETED: &str = " (deleted)";
+
 /// `exe` of the process a `/proc/<pid>` descriptor pins, read through `/proc/self/fd` so the pid is
-/// never looked up again.
+/// never looked up again. An update that replaced the running binary leaves the link reading
+/// `<path> (deleted)` (api-security 3): that is still the app at `<path>`, so the suffix goes, but
+/// only when the running file really has no name left (link count 0). A program whose own name
+/// ends in ` (deleted)` keeps its whole name and is not taken for the one without the suffix.
 fn exe_of(dir: &std::fs::File) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
     let link = PathBuf::from(format!("/proc/self/fd/{}/exe", dir.as_raw_fd()));
-    let target = std::fs::read_link(link).ok()?;
-    let s = target.into_os_string().into_string().ok()?;
+    let target = std::fs::read_link(&link).ok()?;
+    let mut s = target.into_os_string().into_string().ok()?;
+    if let Some(path) = s.strip_suffix(DELETED)
+        && std::fs::metadata(&link).is_ok_and(|m| m.nlink() == 0)
+    {
+        s.truncate(path.len());
+    }
     (s.len() < MAX_EXE).then_some(s)
 }
 
@@ -358,8 +370,11 @@ mod tests {
                 std::thread::yield_now();
             }
             let id = PeerIdentity::of_process(i32::try_from(c.id()).unwrap(), &SHOWERS);
-            let dir = id.dir.as_ref().unwrap();
-            if exe_of(dir).is_some_and(|e| e.ends_with("sleep")) {
+            // Where unshare may not map the account (uid_map EPERM), it exits at once: the
+            // process is gone and there is nothing to judge.
+            if let Some(dir) = id.dir.as_ref()
+                && exe_of(dir).is_some_and(|e| e.ends_with("sleep"))
+            {
                 assert!(!same_mount_namespace(dir), "a mount namespace of its own");
                 assert!(id.injected());
             }
@@ -434,6 +449,69 @@ mod tests {
         assert!(id.caller().is_some());
         other.kill().unwrap();
         other.wait().unwrap();
+    }
+
+    /// api-security 3: an update replaced the binary an app is running (the old file unlinked).
+    /// The app is still identified by its path, before and after; a program whose own name ends
+    /// in ` (deleted)` is not taken for the one without the suffix.
+    #[test]
+    fn an_app_whose_binary_was_replaced_keeps_its_identity() {
+        // Next to the test binary: a directory files may be executed from.
+        let me = std::env::current_exe().unwrap();
+        let dir = me
+            .parent()
+            .unwrap()
+            .join(format!("peer-deleted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let start = |path: &std::path::Path| {
+            // Copied by cp(1): this process never holds the new file open for writing, so a
+            // child another test thread forks cannot keep it busy (ETXTBSY) at our exec.
+            let cp = std::process::Command::new("cp")
+                .arg("/bin/sleep")
+                .arg(path)
+                .status()
+                .unwrap();
+            assert!(cp.success());
+            std::process::Command::new(path)
+                .arg("10")
+                .env_clear()
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap()
+        };
+        let app = dir.join("app");
+        let mut c = start(&app);
+        let pid = i32::try_from(c.id()).unwrap();
+        let id = PeerIdentity::of_process(pid, &SHOWERS);
+        let path = app.to_string_lossy().into_owned();
+        assert_eq!(id.exe(), Some(path.as_str()));
+        std::fs::remove_file(&app).unwrap();
+        let raw = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap();
+        assert!(raw.to_string_lossy().ends_with(DELETED), "{raw:?}");
+        assert!(id.still_same(), "same process, same binary");
+        assert!(!id.changed());
+        assert_eq!(id.caller().map(|c| c.app), Some(path.clone()));
+        let late = PeerIdentity::of_process(pid, &SHOWERS);
+        assert_eq!(
+            late.exe(),
+            Some(path.as_str()),
+            "connected after the update"
+        );
+        let _ = c.kill();
+        let _ = c.wait();
+
+        let odd = dir.join("app (deleted)");
+        let mut c = start(&odd);
+        let id = PeerIdentity::of_process(i32::try_from(c.id()).unwrap(), &SHOWERS);
+        assert_eq!(
+            id.exe(),
+            Some(odd.to_string_lossy().as_ref()),
+            "its own name"
+        );
+        let _ = c.kill();
+        let _ = c.wait();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

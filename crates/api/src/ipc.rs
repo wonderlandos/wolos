@@ -30,7 +30,9 @@ struct Endpoint {
 
 struct Waiting {
     uid: u32,
+    /// The receiving process and its executable (api-security 4: a pid can be reused).
     to: i32,
+    app: String,
     reply: Option<String>,
 }
 
@@ -103,7 +105,7 @@ impl Endpoints {
                 .endpoints
                 .iter()
                 .find(|e| e.uid == c.uid && e.app == peer && e.name == name);
-            let Some(pid) = found.map(|e| e.pid) else {
+            let Some((pid, app)) = found.map(|e| (e.pid, e.app.clone())) else {
                 return Err("That app is not listening.");
             };
             if t.waiting.values().filter(|w| w.uid == c.uid).count() >= MAX_WAITING {
@@ -113,6 +115,7 @@ impl Endpoints {
             let w = Waiting {
                 uid: c.uid,
                 to: pid,
+                app,
                 reply: None,
             };
             t.waiting.insert(id, w);
@@ -144,13 +147,14 @@ impl Endpoints {
         }
     }
 
-    /// The process a message went to answers it, once. False otherwise.
+    /// The process a message went to answers it, once. False otherwise. (Executable too, as for
+    /// notifications: a pid can be reused.)
     pub fn reply(&self, c: &Caller, id: u32, body: String) -> bool {
         let mut t = lock(&self.0);
         let Some(w) = t.waiting.get_mut(&id) else {
             return false;
         };
-        if w.uid != c.uid || w.to != c.pid || w.reply.is_some() {
+        if w.uid != c.uid || w.to != c.pid || w.app != c.app || w.reply.is_some() {
             return false;
         }
         w.reply = Some(body);
@@ -236,6 +240,10 @@ mod tests {
         assert_eq!((from.as_str(), body.as_str()), (MAIL, "hi"));
         assert!(!e.reply(&app(1000, 20, MAIL), id, "x".into()), "not its");
         assert!(!e.reply(&app(1001, 10, NOTES), id, "x".into()), "account");
+        assert!(
+            !e.reply(&app(1000, 10, MAIL), id, "x".into()),
+            "pid reused by another app"
+        );
         assert!(e.reply(&notes, id, "hello".into()));
         assert!(!e.reply(&notes, id, "twice".into()));
         assert_eq!(t.join().unwrap(), Ok("hello".into()));
@@ -279,6 +287,7 @@ mod tests {
             let w = Waiting {
                 uid: 1000,
                 to: 10,
+                app: NOTES.into(),
                 reply: None,
             };
             lock(&e.0).waiting.insert(id + 100, w);
