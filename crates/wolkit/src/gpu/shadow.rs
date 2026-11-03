@@ -393,7 +393,7 @@ pub fn sample(atlas: &ShadowAtlas, p: &Placed, mx: u32, my: u32) -> u8 {
 mod tests {
     use super::*;
 
-    fn stretched_equals_full(cast: Rect, radii: [f32; 4], blur: f32) {
+    fn assert_stretched_equals_full(cast: Rect, radii: [f32; 4], blur: f32) {
         let mut a = ShadowAtlas::new(1024);
         let Some((p, ext)) = a.get(&cast, &radii, blur) else {
             panic!("{cast:?}: a shadow of this size has a prototype");
@@ -417,14 +417,14 @@ mod tests {
 
     #[test]
     fn stretched_prototype_equals_the_full_mask() {
-        stretched_equals_full(Rect::new(20.0, 30.0, 300.0, 120.0), [8.0; 4], 12.0);
-        stretched_equals_full(
+        assert_stretched_equals_full(Rect::new(20.0, 30.0, 300.0, 120.0), [8.0; 4], 12.0);
+        assert_stretched_equals_full(
             Rect::new(20.5, 30.25, 211.3, 97.6),
             [4.0, 9.0, 2.0, 0.0],
             7.0,
         );
-        stretched_equals_full(Rect::new(3.0, 4.0, 40.0, 30.0), [6.0; 4], 0.0);
-        stretched_equals_full(Rect::new(10.0, 10.0, 18.0, 400.0), [9.0; 4], 24.0);
+        assert_stretched_equals_full(Rect::new(3.0, 4.0, 40.0, 30.0), [6.0; 4], 0.0);
+        assert_stretched_equals_full(Rect::new(10.0, 10.0, 18.0, 400.0), [9.0; 4], 24.0);
     }
 
     #[test]

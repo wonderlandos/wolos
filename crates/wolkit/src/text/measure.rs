@@ -25,9 +25,34 @@ static ROOTS: OnceLock<(Vec<PathBuf>, PathBuf)> = OnceLock::new();
 
 /// Use the fonts under `roots` (their index cached in `index`) as the process's font set. Only
 /// remembered here: the index is read when the first window needs text. The first call wins;
-/// `wolkit_engine_create` makes it with the person's font folders.
+/// `wolkit_engine_create` makes it with the person's font folders, or for a headless engine with
+/// [`pinned_font_roots`] only.
 pub fn install(roots: &[PathBuf], index: &Path) {
     let _ = ROOTS.set((roots.to_vec(), index.to_path_buf()));
+}
+
+/// The one folder a headless engine reads fonts from: the UI face the goldens are made in (the
+/// distribution's Inter package), so a headless screenshot is the same on every machine that has
+/// it, whatever else is installed. [`PINNED_FONT_DIR_ENV`] names another folder (a checkout's own
+/// copy, a CI image).
+pub const PINNED_FONT_DIR: &str = "/usr/share/fonts/inter";
+
+/// The variable that overrides [`PINNED_FONT_DIR`] for headless engines.
+pub const PINNED_FONT_DIR_ENV: &str = "WOLKIT_FONT_DIR";
+
+/// The font roots of a headless engine (the environment as a lookup): only the pinned folder,
+/// never the person's or the system's font folders.
+pub fn pinned_font_roots(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
+    let dir = var(PINNED_FONT_DIR_ENV)
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| PathBuf::from(PINNED_FONT_DIR), PathBuf::from);
+    vec![dir]
+}
+
+/// The index cache of the pinned set: its own file next to `index` (the person's index), so the
+/// two sets do not overwrite each other's cache.
+pub fn pinned_index_path(index: &Path) -> PathBuf {
+    index.with_file_name("fonts-pinned.idx")
 }
 
 /// The process's font set. Without [`install`] it is empty: every glyph is the missing-glyph box,
@@ -223,6 +248,80 @@ impl TextCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn headless_fonts_come_only_from_the_pinned_folder() {
+        use std::ffi::OsString;
+        // Default: the one pinned folder, whatever HOME or the cache say.
+        let none = |k: &str| (k == "HOME").then(|| OsString::from("/home/p"));
+        assert_eq!(
+            pinned_font_roots(none),
+            vec![PathBuf::from(PINNED_FONT_DIR)]
+        );
+        // The override replaces it (an empty value is unset).
+        let over = |k: &str| (k == PINNED_FONT_DIR_ENV).then(|| OsString::from("/opt/fonts"));
+        assert_eq!(pinned_font_roots(over), vec![PathBuf::from("/opt/fonts")]);
+        let empty = |k: &str| (k == PINNED_FONT_DIR_ENV).then(OsString::new);
+        assert_eq!(
+            pinned_font_roots(empty),
+            vec![PathBuf::from(PINNED_FONT_DIR)]
+        );
+        assert_eq!(
+            pinned_index_path(Path::new("/c/wolkit/fonts.idx")),
+            PathBuf::from("/c/wolkit/fonts-pinned.idx")
+        );
+    }
+
+    #[test]
+    fn the_pinned_set_ignores_fonts_outside_its_folder() {
+        // Two folders with one copy of a system font: only the pinned one is indexed.
+        let Some(font) = ["/usr/share/fonts", "/usr/local/share/fonts"]
+            .iter()
+            .find_map(|d| first_font(Path::new(d)))
+        else {
+            return; // no font on this machine to copy
+        };
+        let base = std::env::temp_dir().join(format!("wolkit-pinned-{}", std::process::id()));
+        let (pinned, other) = (base.join("pinned"), base.join("other"));
+        std::fs::create_dir_all(&pinned).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::copy(&font, other.join(font.file_name().unwrap())).unwrap();
+        let env = |k: &str| (k == PINNED_FONT_DIR_ENV).then(|| pinned.clone().into_os_string());
+        let roots = pinned_font_roots(env);
+        let idx = pinned_index_path(&base.join("fonts.idx"));
+        let empty = TextSystem::with_system_fonts(&roots, &idx);
+        assert!(
+            empty.db.is_empty(),
+            "a font outside the pinned folder was loaded"
+        );
+        std::fs::copy(&font, pinned.join(font.file_name().unwrap())).unwrap();
+        let _ = std::fs::remove_file(&idx);
+        let one = TextSystem::with_system_fonts(&roots, &idx);
+        assert!(
+            !one.db.is_empty(),
+            "the pinned folder's font was not loaded"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn first_font(dir: &Path) -> Option<PathBuf> {
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            let mut children: Vec<PathBuf> = std::fs::read_dir(&d)
+                .ok()?
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .collect();
+            children.sort();
+            for p in children {
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().is_some_and(|e| e == "ttf" || e == "otf") {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    }
 
     #[test]
     fn a_repeated_measure_is_a_cache_hit() {

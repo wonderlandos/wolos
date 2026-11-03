@@ -7,16 +7,13 @@
 //! `benches/budgets.toml`. Limits are ceilings with CI noise in mind; lower them by hand after a
 //! forge run (the file is a ratchet).
 
-#![allow(dead_code)]
-
 use std::collections::HashMap;
-use std::time::Instant;
 
 pub struct Bench {
     pub group: &'static str,
     limits: HashMap<String, f64>,
     check: bool,
-    failures: Vec<String>,
+    pub(crate) failures: Vec<String>,
 }
 
 fn parse_budgets(text: &str) -> HashMap<String, f64> {
@@ -51,53 +48,13 @@ impl Bench {
         }
     }
 
-    /// Times `f` over `samples` batches of `iters` calls; reports ns per call (p50, p95).
-    pub fn time(
-        &mut self,
-        name: &str,
-        samples: usize,
-        iters: usize,
-        mut f: impl FnMut(),
-    ) -> (f64, f64) {
-        // Warm up.
-        for _ in 0..iters.min(64) {
-            f();
-        }
-        let mut v = Vec::with_capacity(samples);
-        for _ in 0..samples {
-            let t = Instant::now();
-            for _ in 0..iters {
-                f();
-            }
-            v.push(t.elapsed().as_nanos() as f64 / iters as f64);
-        }
-        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p50 = v[v.len() / 2];
-        let p95 = v[(v.len() * 95 / 100).min(v.len() - 1)];
-        println!(
-            "bench {}.{name} p50={p50:.0} p95={p95:.0} n={samples}x{iters}",
-            self.group
-        );
-        self.limit(name, p50);
-        (p50, p95)
-    }
-
     /// Records a plain number (counts, rates) and checks it against its limit.
     pub fn value(&mut self, name: &str, v: f64) {
         println!("bench {}.{name} value={v}", self.group);
         self.limit(name, v);
     }
 
-    /// Records a number that must be at least `min`.
-    pub fn at_least(&mut self, name: &str, v: f64, min: f64) {
-        println!("bench {}.{name} value={v} min={min}", self.group);
-        if v < min {
-            self.failures
-                .push(format!("{}.{name} = {v} is below {min}", self.group));
-        }
-    }
-
-    fn limit(&mut self, name: &str, v: f64) {
+    pub(crate) fn limit(&mut self, name: &str, v: f64) {
         if let Some(max) = self.limits.get(&format!("{}.{name}", self.group))
             && v > *max
         {

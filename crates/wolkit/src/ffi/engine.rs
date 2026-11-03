@@ -41,6 +41,23 @@ fn native_settings(
     (native, session)
 }
 
+/// The font roots and index cache an engine made with `flags` uses (the environment as a lookup):
+/// a headless engine reads only the pinned folder (`WOLKIT_FONT_DIR` overrides it), any other the
+/// person's font folders.
+fn font_set(
+    flags: u32,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> (Vec<std::path::PathBuf>, std::path::PathBuf) {
+    use crate::text::measure::{pinned_font_roots, pinned_index_path};
+    use crate::text::system::{default_font_roots, default_index_path};
+    let index = default_index_path(&var);
+    if flags & crate::abi::ENGINE_HEADLESS != 0 {
+        (pinned_font_roots(&var), pinned_index_path(&index))
+    } else {
+        (default_font_roots(&var), index)
+    }
+}
+
 /// `WOLKIT_VERSION_MAJOR << 16 | MINOR << 8 | PATCH`.
 #[unsafe(no_mangle)]
 pub extern "C" fn wolkit_version() -> u32 {
@@ -77,9 +94,10 @@ pub unsafe extern "C" fn wolkit_engine_create(
         let (native, session) = native_settings(var);
         crate::window::native::set_opt_in(native);
         crate::window::native::set_session(session);
-        // The person's fonts, indexed once per process (the first engine wins).
-        use crate::text::system::{default_font_roots, default_index_path};
-        crate::text::measure::install(&default_font_roots(var), &default_index_path(var));
+        // The fonts, indexed once per process (the first engine wins): the person's folders, or
+        // for a headless engine only the pinned folder, so its screenshots match on every machine.
+        let (roots, index) = font_set(flags, var);
+        crate::text::measure::install(&roots, &index);
         let h = Arc::new(wolkit_engine {
             tag: handle::Tag::new(),
             engine,
@@ -233,7 +251,7 @@ pub unsafe extern "C" fn wolkit_engine_set_environment(
 
 #[cfg(test)]
 mod tests {
-    use super::native_settings;
+    use super::{font_set, native_settings};
     use std::ffi::OsString;
 
     fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
@@ -264,5 +282,29 @@ mod tests {
         assert_eq!(s.activation_token.as_deref(), Some("tok"));
         let (_, none) = native_settings(env(&[]));
         assert!(none.locale.is_empty() && none.activation_token.is_none());
+    }
+
+    #[test]
+    fn a_headless_engine_reads_only_the_pinned_font_folder() {
+        use crate::text::measure::PINNED_FONT_DIR;
+        use std::path::PathBuf;
+        let home = [("HOME", "/home/p")];
+        let (roots, index) = font_set(crate::abi::ENGINE_HEADLESS, env(&home));
+        assert_eq!(roots, vec![PathBuf::from(PINNED_FONT_DIR)]);
+        assert_eq!(
+            index,
+            PathBuf::from("/home/p/.cache/wolkit/fonts-pinned.idx")
+        );
+        let over = [("HOME", "/home/p"), ("WOLKIT_FONT_DIR", "/ci/inter")];
+        let (roots, _) = font_set(crate::abi::ENGINE_HEADLESS, env(&over));
+        assert_eq!(roots, vec![PathBuf::from("/ci/inter")]);
+        // Any other engine keeps the person's folders and ignores the override.
+        let (roots, index) = font_set(0, env(&over));
+        assert!(
+            roots.contains(&PathBuf::from("/home/p/.local/share/fonts")),
+            "{roots:?}"
+        );
+        assert!(!roots.contains(&PathBuf::from("/ci/inter")));
+        assert_eq!(index, PathBuf::from("/home/p/.cache/wolkit/fonts.idx"));
     }
 }

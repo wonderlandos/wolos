@@ -5,6 +5,8 @@
 //! `cargo bench -p wolkit --bench layout [-- --check]`
 #[path = "../tests/support/layout.rs"]
 mod layout_support;
+#[path = "w3_support/timing.rs"]
+mod timing;
 #[path = "w3_support/mod.rs"]
 mod w3_support;
 

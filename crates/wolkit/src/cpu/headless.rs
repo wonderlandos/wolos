@@ -2,6 +2,9 @@
 //! The headless entry point: a laid-out scene in, RGBA bytes out. The scene is lowered to a
 //! display list with its resolved styles, real text and the token palette (`paint::scene`), and
 //! the reference rasteriser draws it onto the theme's surface colour.
+//! A headless engine's fonts come only from the pinned folder (`text::measure::PINNED_FONT_DIR`,
+//! `WOLKIT_FONT_DIR` overrides it; chosen in `wolkit_engine_create`), so its frames match across
+//! machines.
 
 use super::raster;
 use crate::env::Environment;

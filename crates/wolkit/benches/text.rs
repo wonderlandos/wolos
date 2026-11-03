@@ -4,8 +4,12 @@
 //!
 //! `cargo bench -p wolkit --bench text [-- --check]`
 
+#[path = "w3_support/floor.rs"]
+mod floor;
 #[path = "../tests/support/text.rs"]
 mod text_support;
+#[path = "w3_support/timing.rs"]
+mod timing;
 #[path = "w3_support/mod.rs"]
 mod w3_support;
 

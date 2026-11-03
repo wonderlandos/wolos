@@ -3,6 +3,8 @@
 //! (parent style, classes, state). Also the cost of compiling and loading a table.
 //!
 //! `cargo bench -p wolkit --bench style [-- --check]`
+#[path = "w3_support/timing.rs"]
+mod timing;
 #[path = "w3_support/mod.rs"]
 mod w3_support;
 
