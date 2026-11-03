@@ -281,8 +281,10 @@ brackets; `cargo test` runs in the `test` job).
   crate (code only: comments, strings and char literals stripped by a lexer; `src/` with the
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
   `BASELINE` row (that table is the record and its comment gives the reason for every raise;
-  the rows: wol-abi 473, wolkit 294, wopkg 94, realtime 32, xguard 65, controller 52, api 33,
-  core 13, xguard-clam 13, shared 17, shell 8, proxy 3, wol-lua 3, audio 0, aurlaws 0). A raise
+  the rows: wol-abi 473, wolkit 294, wopkg 94, realtime 32, xguard 65, controller 56, api 33,
+  core 13, xguard-clam 13, shared 17, shell 8, proxy 3, wol-lua 3, audio 0, aurlaws 0). Controller
+  went 52 -> 56 for the administrator password prompt on a terminal (`src/secret.rs`): std has
+  no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap and `_exit` in that handler. A raise
   is justified there and each new block has its `// SAFETY:` line (RR-012); lowering a count
   lowers the baseline in the same commit, and these numbers change in the same commit as the
   table (**CI** [test] `standards_quotes_the_baseline`). (C, R2C-19, audit8)

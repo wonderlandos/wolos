@@ -518,18 +518,26 @@ struct PlanReq {
 
 /// Release feed base: `<channel>.json` and `<channel>.json.sig` of every channel in the CDN's
 /// `latest/` folder, which the release tooling (wolos-build) writes after each publication is
-/// uploaded and verified, so it always holds every channel.
-pub const FEEDS: &str = "https://wolos.squareweb.app/latest";
-/// Where the feed is read when [`FEEDS`] answers 404 or cannot be reached: the same files as
-/// assets of the latest wolos-packages release on GitHub (it answers with a redirect to the
-/// asset; `fetch` follows it). Both are checked against the same keys.
-pub const FEEDS_FALLBACK: &str =
-    "https://github.com/wonderlandos/wolos-packages/releases/latest/download";
+/// uploaded and verified, so it always holds every channel. The CDN under the project's domain
+/// (`https://cdn.wolos.org/latest`, [`wol_core::cdn::LATEST`]).
+pub const FEEDS: &str = wol_core::cdn::LATEST[0];
+/// The same folder under the CDN server's own name (`https://wolos.squareweb.app/latest`): read
+/// when [`FEEDS`] answers 404 or cannot be reached (DNS not live yet).
+pub const FEEDS_MIRROR: &str = wol_core::cdn::LATEST[1];
+/// Where the feed is read when neither CDN name has it: the same files as assets of the latest
+/// wolos-packages release on GitHub (it answers with a redirect to the asset; `fetch` follows it).
+/// All are checked against the same keys.
+pub const FEEDS_FALLBACK: &str = wol_core::cdn::LATEST[2];
 
-/// Feed bases in the order tried: the request's own base alone, else the CDN then GitHub.
+/// Feed bases in the order tried: the request's own base alone, else [`FEEDS`], [`FEEDS_MIRROR`],
+/// [`FEEDS_FALLBACK`].
 fn feed_bases(base_url: Option<String>) -> Vec<String> {
     base_url.map_or_else(
-        || vec![FEEDS.to_owned(), FEEDS_FALLBACK.to_owned()],
+        || {
+            [FEEDS, FEEDS_MIRROR, FEEDS_FALLBACK]
+                .map(str::to_owned)
+                .to_vec()
+        },
         |b| vec![b],
     )
 }
@@ -753,20 +761,23 @@ mod tests {
         assert_eq!(wopkg_version(), 0x01_00_00);
     }
 
-    /// The default feed is the CDN's `latest/` folder, then the latest wolos-packages release's
-    /// assets on GitHub (`<channel>.json` and `.json.sig` appended), over TLS, with no trailing
-    /// slash to double. A request's own base is the only one tried.
+    /// The default feed is the CDN's `latest/` folder under the project's domain, then under the
+    /// server's own name, then the latest wolos-packages release's assets on GitHub
+    /// (`<channel>.json` and `.json.sig` appended), over TLS, with no trailing slash to double. A
+    /// request's own base is the only one tried.
     #[test]
     fn default_feed_is_the_cdn_then_the_latest_release_assets() {
-        assert_eq!(FEEDS, "https://wolos.squareweb.app/latest");
+        assert_eq!(FEEDS, "https://cdn.wolos.org/latest");
+        assert_eq!(FEEDS_MIRROR, "https://wolos.squareweb.app/latest");
         assert_eq!(
             FEEDS_FALLBACK,
             "https://github.com/wonderlandos/wolos-packages/releases/latest/download"
         );
-        for b in [FEEDS, FEEDS_FALLBACK] {
+        for b in [FEEDS, FEEDS_MIRROR, FEEDS_FALLBACK] {
             assert!(b.starts_with("https://") && !b.ends_with('/'), "{b}");
         }
-        assert_eq!(feed_bases(None), [FEEDS, FEEDS_FALLBACK]);
+        assert_eq!(feed_bases(None), [FEEDS, FEEDS_MIRROR, FEEDS_FALLBACK]);
+        assert_eq!(feed_bases(None), wol_core::cdn::LATEST);
         assert_eq!(
             feed_bases(Some("https://m.example/x".into())),
             ["https://m.example/x"]
@@ -805,6 +816,35 @@ mod tests {
             let f = release_feed(&c, &[first.clone(), good.url("")], "beta").unwrap();
             assert_eq!(f.releases[0].version, "1.1.0-beta.2", "{first}");
         }
+        // Three bases as shipped (cdn.wolos.org not live, wolos.squareweb.app without the file,
+        // GitHub with it): the third is read. The first that has the pair wins, later ones are
+        // never asked (`good` holds a pair that would not check against this state).
+        let _ = std::fs::remove_dir_all(c.cache.join("releases"));
+        let _ = std::fs::remove_dir_all(&c.state);
+        let down = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://127.0.0.1:{}", l.local_addr().unwrap().port())
+        };
+        empty.log.lock().unwrap().clear();
+        let f = release_feed(&c, &[down.clone(), empty.url(""), good.url("")], "beta").unwrap();
+        assert_eq!(f.releases[0].version, "1.1.0-beta.2");
+        assert_eq!(
+            empty.log.lock().unwrap().len(),
+            1,
+            "the 404 base is asked once"
+        );
+        let other = testutil::serve(vec![
+            ("/beta.json", testutil::Served::bytes(b"not json".to_vec())),
+            ("/beta.json.sig", testutil::Served::bytes(vec![0; 64])),
+        ]);
+        let _ = std::fs::remove_dir_all(c.cache.join("releases"));
+        let _ = std::fs::remove_dir_all(&c.state);
+        let f = release_feed(&c, &[good.url(""), other.url(""), down], "beta").unwrap();
+        assert_eq!(f.releases[0].version, "1.1.0-beta.2");
+        assert!(
+            other.log.lock().unwrap().is_empty(),
+            "a later base is never asked"
+        );
         // Signed with another key on the first base: refused, never read from the second.
         let forged = testutil::serve(vec![
             ("/beta.json", testutil::Served::bytes(feed.clone())),

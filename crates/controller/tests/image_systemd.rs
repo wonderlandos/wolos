@@ -565,8 +565,9 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
     assert!(stamp <= now + 60, "the new stamp is today's: {stamp}");
 }
 
-/// The release manifest and its signature come from the CDN; when it answers 404 (or cannot be
-/// reached) both come from GitHub's latest release instead, never one from each.
+/// The release manifest and its signature come from the CDN under cdn.wolos.org, else under the
+/// server's own name, else GitHub's latest release (`wol_core::cdn::latest`); a place that answers
+/// 404 (or cannot be reached) is skipped, and both files always come from one place.
 #[test]
 fn update_check_reads_the_release_from_the_cdn_then_github() {
     let d = scratch("release");
@@ -574,18 +575,25 @@ fn update_check_reads_the_release_from_the_cdn_then_github() {
     let db = slot_db(&d);
     let tmp = d.join("tmp");
     fs::create_dir_all(&tmp).unwrap();
-    // curl [options] [-o FILE] -- URL (get()): the CDN is down or serves CDN, GitHub serves GH.
-    let curl = |cdn: &str| {
+    let [cdn, mirror, github] =
+        <[String; 3]>::try_from(wol_core::cdn::latest("release.json")).unwrap();
+    // curl [options] [-o FILE] -- URL (get()): each CDN name is down or serves its own name,
+    // GitHub serves GH.
+    let curl = |primary: &str, second: &str| {
         format!(
             "o=; p=; for u; do [ \"$p\" = -o ] && o=$u; p=$u; done\n\
-             case $u in https://wolos.squareweb.app/*) {cdn} ;; *) b=GH ;; esac\n\
+             case $u in https://cdn.wolos.org/*) {primary} ;; https://wolos.squareweb.app/*) {second} ;; *) b=GH ;; esac\n\
              case $u in *.sig) printf '%s' \"$b-sig\" ;; *) printf '%s' \"$b\" > \"$o\" ;; esac"
         )
     };
-    for (cdn, want) in [("exit 22", "GH"), ("b=CDN", "CDN")] {
+    for (primary, second, want) in [
+        ("exit 6", "exit 22", "GH"),
+        ("exit 22", "b=MIRROR", "MIRROR"),
+        ("b=CDN", "b=MIRROR", "CDN"),
+    ] {
         let _ = fs::remove_dir_all(&out);
         let _ = fs::remove_file(d.join("log"));
-        let path = fakes(&d, &[("pacman", ""), ("curl", &curl(cdn))]);
+        let path = fakes(&d, &[("pacman", ""), ("curl", &curl(primary, second))]);
         let st = Command::new("sh")
             .arg(repo("files/usr/lib/wolos/update-check"))
             .arg("now")
@@ -607,14 +615,10 @@ fn update_check_reads_the_release_from_the_cdn_then_github() {
             .filter(|l| l.starts_with("curl "))
             .map(|l| l.rsplit(' ').next().unwrap().to_owned())
             .collect();
-        assert_eq!(gets[0], "https://wolos.squareweb.app/latest/release.json");
-        let github =
-            "https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json";
-        assert_eq!(
-            gets.iter().any(|u| u.starts_with(github)),
-            want == "GH",
-            "{gets:?}"
-        );
+        assert_eq!(gets[0], cdn, "{gets:?}");
+        let asked = |u: &str| gets.iter().any(|g| g.starts_with(u));
+        assert_eq!(asked(&mirror), want != "CDN", "{want}: {gets:?}");
+        assert_eq!(asked(&github), want == "GH", "{want}: {gets:?}");
     }
 }
 
@@ -911,7 +915,7 @@ fn reports_send_new_failures_once_and_only_when_on() {
             r#"{"kind":"crash","version":"0.11.2","kernel":"7.3.0-1-wolos","detail":"wol-shell SIGSEGV"}"#,
         ]
     );
-    assert!(log(&d).contains("https://wolos.squareweb.app/report"));
+    assert!(log(&d).contains(wol_core::cdn::REPORT[0]));
     run();
     assert_eq!(
         fs::read_to_string(d.join("sent")).unwrap(),

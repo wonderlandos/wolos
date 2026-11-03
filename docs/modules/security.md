@@ -81,7 +81,9 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 
 ## Error reports (off by default)
 - `/usr/lib/wolos/report` (`wolos-report.timer`, hourly) sends only when `/etc/wolos/reports.conf` has `send=1`.
-- Each new failed unit or coredump goes once to `https://wolos.squareweb.app/report`:
+- Each new failed unit or coredump goes once to `https://cdn.wolos.org/report`, or to the same
+  server under its own name `https://wolos.squareweb.app/report` when that cannot be reached
+  (`wol_core::cdn::REPORT`):
   `kind`, WolOS version, kernel, `detail` (unit name, or program and signal). No logs, user or host names.
 - Turn on: `echo send=1 | sudo tee /etc/wolos/reports.conf`. A Settings > Privacy switch comes next.
 

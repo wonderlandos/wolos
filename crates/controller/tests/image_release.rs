@@ -125,6 +125,11 @@ fn downloading_scripts_are_https_only_and_capped() {
             .count();
         assert_eq!(curls, 1, "{p}: one curl call, in get()");
     }
+    // The error report only posts, but over https only and bounded too.
+    let r = read("files/usr/lib/wolos/report");
+    for want in ["--proto =https", "--proto-redir =https", "--max-time"] {
+        assert!(r.contains(want), "report: {want}");
+    }
     let x = read("files/usr/lib/wolos/xguard-update");
     let at = |s: &str| x.find(s).unwrap_or_else(|| panic!("xguard-update: {s}"));
     assert!(
@@ -145,15 +150,20 @@ fn downloading_scripts_are_https_only_and_capped() {
     );
 }
 
-/// The check fetches from where releases are published: the CDN's `latest/` folder first (the
-/// release tooling writes it), GitHub's latest release when the CDN has none or is down; the
-/// feed (`wopkg::FEEDS`) in the same order.
+/// The check fetches from where releases are published: the CDN's `latest/` folder (the release
+/// tooling writes it) under cdn.wolos.org, then under the server's own name, then GitHub's latest
+/// release when the CDN has none or is down; the feed (`wopkg::FEEDS`) in the same order, both
+/// from `wol_core::cdn::LATEST` (tests/cdn_order.rs runs the order).
 #[test]
 fn update_check_reads_the_published_release() {
     let check = read("files/usr/lib/wolos/update-check");
     for (var, url) in [
         (
             "URL=${WOLOS_RELEASE_URL:-",
+            "https://cdn.wolos.org/latest/release.json}",
+        ),
+        (
+            "MIRROR=${WOLOS_RELEASE_MIRROR-",
             "https://wolos.squareweb.app/latest/release.json}",
         ),
         (
@@ -166,11 +176,13 @@ fn update_check_reads_the_published_release() {
             "update-check {var}"
         );
     }
-    assert!(check.contains("if release \"$URL\" || release \"$FALLBACK\"; then"));
-    // The manifest and the feeds share one folder.
+    assert!(
+        check.contains("if release \"$URL\" || release \"$MIRROR\" || release \"$FALLBACK\"; then")
+    );
+    // The manifest and the feeds share one folder, named in one place.
     assert!(
         read("crates/wopkg/src/lib.rs")
-            .contains("pub const FEEDS: &str = \"https://wolos.squareweb.app/latest\";"),
+            .contains("pub const FEEDS: &str = wol_core::cdn::LATEST[0];"),
         "wopkg::FEEDS"
     );
     // wolos-iso release.yml is reusable: only wolos publish.yml (what=iso, the repo holding the

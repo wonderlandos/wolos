@@ -11,10 +11,13 @@
 #   checked  when the check finished (seconds since 1970)
 set -u
 D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
-# The release manifest (and URL.sig) from the CDN's latest/ folder (the release tooling writes it);
-# GitHub's latest release carries the same two files and is read when the CDN answers 404 or an
-# error or cannot be reached. The signature is checked when the findings are read, whichever came.
-URL=${WOLOS_RELEASE_URL:-https://wolos.squareweb.app/latest/release.json}
+# The release manifest (and URL.sig) from the CDN's latest/ folder (the release tooling writes it),
+# tried in order (wol_core::cdn::latest): the CDN under the project's domain, the same server under
+# its own name (MIRROR), then GitHub's latest release, which carries the same two files (FALLBACK).
+# The next one is read when one answers 404 or an error or cannot be reached; an empty MIRROR or
+# FALLBACK is skipped. The signature is checked when the findings are read, whichever came.
+URL=${WOLOS_RELEASE_URL:-https://cdn.wolos.org/latest/release.json}
+MIRROR=${WOLOS_RELEASE_MIRROR-https://wolos.squareweb.app/latest/release.json}
 FALLBACK=${WOLOS_RELEASE_FALLBACK-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
 EVERY=72000
 now=$(date +%s)
@@ -76,7 +79,7 @@ release() {
 		get 4096 "$1.sig" | head -c 4096 | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
 		[ -s "$D/base.sig.new" ]
 }
-if release "$URL" || release "$FALLBACK"; then
+if release "$URL" || release "$MIRROR" || release "$FALLBACK"; then
 	mv "$D/base.new" "$D/base"
 	mv "$D/base.sig.new" "$D/base.sig"
 else
