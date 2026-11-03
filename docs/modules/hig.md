@@ -75,3 +75,70 @@ Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`
 
 `WOL_DEBUG_LAYOUT=1` outlines widgets; `WOL_LAYOUT_CHECK=exit` exits 1 on any issue (CI and golden tests).
 Every surface (menu bar, dock, Control Center, Search, lock, login, every Settings page) has golden screenshots at its sizes, passes the layout check, and was visually reviewed by the author before commit.
+
+## 7. Motion
+
+Motion says where a thing came from and where it went; it never makes the user wait. One library serves every shell surface: `crates/shell/src/kit/motion.rs` (curves, durations, springs, stagger: pure arithmetic) and `crates/shell/src/kit/anim.rs` (the frame clock and the `Animated` handle). The names, control points and durations are the theme contract that libWolkit apps use (`crates/wolkit/src/style/value.rs` `Ease`, `crates/wolkit/src/anim/mod.rs` `DURATIONS_NS`), so a shell panel and a Wolkit app move alike. `crates/shell/tests/motion.rs` holds both to this section.
+
+**Durations** (`kit::motion::Duration`, kit.css tokens):
+
+| Token | ms | For |
+|---|---|---|
+| `--motion-fast` (`Duration::Fast`) | 150 | hover, press, small toggles, anything leaving |
+| `--motion-normal` (`Duration::Normal`) | 250 | panels, popovers, banners entering, list rows, the Dock hover |
+| `--motion-slow` (`Duration::Slow`) | 400 | large surfaces: Overview, sheets, the wallpaper cross-fade |
+
+Nothing in the shell animates longer than 400 ms, and nothing waits on an animation to accept input.
+
+**Curves** (`kit::motion::Curve`, `Curve::at(t)` gives progress, `Curve::css()` the timing function):
+
+| Name | cubic-bezier | kit.css | Use |
+|---|---|---|---|
+| `ease` (`Curve::Ease`) | .2, .8, .2, 1 | `--ease-out` | entering and moving: fast start, soft landing (the default) |
+| `in` (`Curve::In`) | .4, 0, 1, 1 | `--ease-in` | leaving: slow start, gone at full speed |
+| `out` (`Curve::Out`) | 0, 0, .2, 1 | | a gentler entrance for large surfaces |
+| `in-out` (`Curve::InOut`) | .4, 0, .2, 1 | `--ease-in-out` | a surface that moves and stays on screen |
+| `linear` (`Curve::Linear`) | none | | progress and value-driven fades; never for movement |
+| `glass` (`Curve::Glass`) | .34, 1.56, .64, 1 | `--glass-spring` | outside the contract: a glass panel landing with a strong overshoot (peaks near 1.1) |
+| `overshoot` (`Curve::Overshoot`) | .22, 1.2, .36, 1 | | outside the contract: the compositor's `spring` bezier (window moves), a light overshoot |
+| `soft` (`Curve::Soft`) | .25, .1, .25, 1 | | outside the contract: the compositor's `ease` bezier (fades, layers, workspace slides) |
+
+The first five are the theme contract (`Curve::CONTRACT`, libWolkit's `Ease`). The last three name the curves already in use elsewhere so the compositor and the shell map onto one table; new shell code picks from the contract, and `glass`/`overshoot` are not monotonic. Enter with `ease`, leave with `in` one step faster (a panel opens in 250 ms and closes in 150 ms). `Motion::enter(d)` and `Motion::leave(d)` are those two.
+
+**Springs** (`kit::motion::Spring`) are for drops and drags only: things the hand moved and lets go (a dragged tile landing, the Dock magnify following the pointer, window open and close). A click or a hover is a curve, not a spring. Settle is the time a 0-to-1 move from rest takes to stay within 2% of its target.
+
+| Spring | Stiffness | Damping | Mass | Overshoot | Settle (2%) |
+|---|---|---|---|---|---|
+| `gentle` | 170 | 26 | 1 | none (ratio 1.0) | 450 ms |
+| `snappy` | 320 | 30 | 1 | slight (ratio 0.84) | 230 ms |
+| `bouncy` | 260 | 14 | 1 | visible (ratio 0.43) | 520 ms |
+| `window-open` | 385.5 | 31.4 | 1 | slight (ratio 0.80) | 200 ms |
+| `window-close` | 322.3 | 30.5 | 1 | slight (ratio 0.85) | 240 ms |
+
+`gentle`, `snappy` and `bouncy` are libWolkit's `spring:` presets; `window-open` and `window-close` are `kit::motion::window::OPEN`/`CLOSE` (`.spring()`). `Spring::step(state, target, dt)` is the integrator (240 Hz semi-implicit Euler, a stalled frame counts at most 250 ms).
+
+**Stagger** (`kit::motion::Stagger::new(n, gap_ms)`): rows of a list enter one after another, `Stagger::GAP_MS` (30 ms) apart, first row first (`delay_ms(i)`); they leave last row first (`delay_rev_ms(i)`). The whole spread is capped at 300 ms (`Stagger::MAX_SPREAD_MS`): a long list shrinks the gap and keeps the order. Banners, Notification Center rows and Control Center tiles stagger; menus and the Dock do not.
+
+**The clock and `Animated`.** Hand-made motion goes through `kit::anim::Animated`, one number (opacity, a translation, a scale) per handle:
+
+```rust
+use shell::kit::anim::{Animated, Motion};
+use shell::kit::motion::Duration;
+
+let fade = Animated::new(&panel, 0.0, {
+    let p = panel.clone();
+    move |v| p.set_opacity(v.into())
+});
+fade.connect_settled({ let w = window.clone(); move |v| if v == 0.0 { w.set_visible(false) } });
+fade.retarget(1.0, Motion::enter(Duration::Normal));   // open
+fade.retarget(0.0, Motion::leave(Duration::Fast));     // close, from wherever it is now
+```
+
+- **One clock per window.** `Animated::new(widget, ...)` joins the clock of the widget's window (`Clock::of`): one `add_tick_callback` on the root, installed while something moves and removed when nothing does. Create the handle after the widget is in its window. `Animated::on_clock` takes an explicit clock (several widgets in step).
+- **Interruptible.** `retarget` may come at any time: the value turns around from where it is (no jump back), a spring keeps its velocity (a tween hands its speed to a spring), and a retarget to the target it already heads for changes nothing, so a second hover or toggle never restarts the move. `retarget_after(target, motion, delay_ms)` takes a stagger delay; `set(v)` jumps; `finish()` ends the move at its target.
+- **`settled`** (`connect_settled`) runs once each time the value reaches its target, after the last `apply`: hide the window there, not on a timer.
+- **Nothing stuck.** When the window unmaps, its clock finishes every animation (values at their targets, `settled` runs).
+- **Reduce motion.** With Accessibility > Reduce motion on (`kit::motion::reduced()`, which also turns off GTK's CSS animations), every `retarget` jumps to its target at once and stagger delays are ignored; layout and state end the same, only the frames between go.
+- **Tests and goldens** use `Clock::manual()` and drive time with `clock.step(now_ns)`; `clock.set_reduced(Some(true))` checks the reduced path.
+
+**CSS.** Transitions and keyframes in kit.css use the tokens above and move `transform` and `opacity` only, never margins or padding (a margin per frame is a relayout of the whole window). The Dock bounce and the lock-screen shake are `translateY`/`translateX` keyframes.
