@@ -157,7 +157,8 @@ fn clamp_f(v: f32, (lo, hi): (f32, f32)) -> f32 {
     }
 }
 
-/// One keyword as a Lua call. `animation = name,on,speed,curve[,style]` becomes `hl.animation`; a
+/// One keyword as a Lua call. `animation = name,on,speed,curve[,style]` becomes `hl.animation`
+/// (a curve `spring:NAME` its `spring = NAME`, the compositor's own name for a spring curve); a
 /// gradient (`col 1 col 2 [angle]deg`) becomes `{ colors = {...}, angle = N }`.
 pub fn keyword_lua(k: &str, v: &str) -> String {
     use crate::theme::hypr::{lua_key, lua_set, lua_str, lua_value};
@@ -172,7 +173,10 @@ pub fn keyword_lua(k: &str, v: &str) -> String {
             s += &format!(", speed = {}", lua_value(speed));
         }
         if let Some(curve) = f.get(3) {
-            s += &format!(", bezier = {}", lua_str(curve));
+            match curve.strip_prefix("spring:") {
+                Some(spring) => s += &format!(", spring = {}", lua_str(spring)),
+                None => s += &format!(", bezier = {}", lua_str(curve)),
+            }
         }
         if let Some(style) = f.get(4) {
             s += &format!(", style = {}", lua_str(style));
@@ -180,8 +184,17 @@ pub fn keyword_lua(k: &str, v: &str) -> String {
         return s + " })";
     }
     let parts: Vec<&str> = v.split_whitespace().collect();
-    if k.contains("col.") && parts.len() > 1 && parts.iter().all(|p| p.starts_with("rgb") || p.ends_with("deg")) {
-        let colors: Vec<String> = parts.iter().filter(|p| p.starts_with("rgb")).map(|c| lua_str(c)).collect();
+    if k.contains("col.")
+        && parts.len() > 1
+        && parts
+            .iter()
+            .all(|p| p.starts_with("rgb") || p.ends_with("deg"))
+    {
+        let colors: Vec<String> = parts
+            .iter()
+            .filter(|p| p.starts_with("rgb"))
+            .map(|c| lua_str(c))
+            .collect();
         let angle = parts
             .iter()
             .find_map(|p| p.strip_suffix("deg"))
@@ -270,10 +283,22 @@ impl Looks {
         if border.len() > 1 {
             border.push(format!("{}deg", l.border_angle));
         }
-        let (style_in, curve_in) = match l.motion {
-            Motion::Zoom => ("popin 90%", "wolOut"),
-            Motion::Pop => ("popin 80%", "spring"),
-            Motion::Slide => ("slide", "wolOut"),
+        // The motion table (`realtime::anim`, the shell's curves and durations, HIG section 7;
+        // realtime's tests hold these literals to it). Durations in deciseconds at speed 1; the
+        // window springs settle in 1.9 and 2.3. A spring ignores the compositor's speed, so at
+        // any other speed windows open and close on the springs' bezier stand-ins (`ease` in,
+        // `in` out) over the scaled settle time.
+        let s = l.speed;
+        let springs = (s - 1.0).abs() < 0.005;
+        let (open, close) = if springs {
+            ("spring:window-open", "spring:window-close")
+        } else {
+            ("ease", "in")
+        };
+        let (style_in, curve_in, base_in) = match l.motion {
+            Motion::Zoom => ("popin 90%", open, 1.9),
+            Motion::Pop => ("popin 80%", "glass", 2.5),
+            Motion::Slide => ("slide", open, 1.9),
         };
         let style_out = match l.motion {
             Motion::Slide => "slide",
@@ -284,7 +309,6 @@ impl Looks {
             Switch::Vertical => "slidevert",
             Switch::Fade => "fade",
         };
-        let s = l.speed;
         let anim = |name: &str, base: f32, curve: &str, style: &str| {
             let tail = if style.is_empty() {
                 String::new()
@@ -323,13 +347,18 @@ impl Looks {
             kv("decoration:dim_inactive", b(l.dim_inactive)),
             kv("decoration:dim_strength", f(l.dim_strength)),
             kv("animations:enabled", b(l.animations && !reduce_motion)),
-            anim("windowsIn", 2.2, curve_in, style_in),
-            anim("windowsOut", 1.8, "wolIn", style_out),
-            anim("windowsMove", 2.0, "spring", ""),
-            anim("fade", 3.0, "ease", ""),
-            anim("layers", 3.0, "ease", "fade"),
-            anim("workspaces", 5.0, "ease", ws),
-            anim("specialWorkspace", 4.0, "ease", "slidevert"),
+            anim("windowsIn", base_in, curve_in, style_in),
+            anim("windowsOut", 2.3, close, style_out),
+            anim("windowsMove", 2.5, "overshoot", ""),
+            anim("fade", 2.5, "soft", ""),
+            anim("fadeIn", 2.5, "ease", ""),
+            anim("fadeOut", 1.5, "in", ""),
+            anim("layers", 2.5, "ease", "fade"),
+            anim("layersOut", 1.5, "in", "fade"),
+            anim("fadeLayersIn", 2.5, "ease", ""),
+            anim("fadeLayersOut", 1.5, "in", ""),
+            anim("workspaces", 4.0, "soft", ws),
+            anim("specialWorkspace", 4.0, "soft", "slidevert"),
         ]
     }
 
@@ -674,7 +703,8 @@ mod tests {
         ];
         for (k, v) in Looks::default().keywords(false, false) {
             let leaf = k.rsplit(':').next().unwrap();
-            if unset.contains(&leaf) {
+            // The 0.56 conf keeps its old curves until it goes; the Lua test below holds them.
+            if unset.contains(&leaf) || k == "animation" {
                 continue;
             }
             let want = norm(&v);
@@ -721,7 +751,11 @@ mod tests {
             .map(|l| l.replace("  ", " "))
             .collect();
         let d = Looks::default();
-        for ((k, v), lua) in d.keywords(false, false).iter().zip(d.keywords_lua(false, false)) {
+        for ((k, v), lua) in d
+            .keywords(false, false)
+            .iter()
+            .zip(d.keywords_lua(false, false))
+        {
             if k == "animation" {
                 let norm = |l: &str| l.replace(".0,", ",").replace(".0 ", " ");
                 assert!(
@@ -753,15 +787,25 @@ mod tests {
             "hl.config({ [\"general.gaps_out\"] = 12 })"
         );
         assert_eq!(
-            keyword_lua("animation", "windowsIn,1,1.1,wolOut,popin 90%"),
-            "hl.animation({ leaf = \"windowsIn\", enabled = true, speed = 1.1, bezier = \"wolOut\", style = \"popin 90%\" })"
+            keyword_lua("animation", "windowsIn,1,1.1,ease,popin 90%"),
+            "hl.animation({ leaf = \"windowsIn\", enabled = true, speed = 1.1, bezier = \"ease\", style = \"popin 90%\" })"
         );
         assert_eq!(
-            keyword_lua("animation", "fade,0,3.0,ease"),
-            "hl.animation({ leaf = \"fade\", enabled = false, speed = 3.0, bezier = \"ease\" })"
+            keyword_lua(
+                "animation",
+                "windowsOut,1,2.3,spring:window-close,popin 90%"
+            ),
+            "hl.animation({ leaf = \"windowsOut\", enabled = true, speed = 2.3, spring = \"window-close\", style = \"popin 90%\" })"
         );
         assert_eq!(
-            keyword_lua("general:col.active_border", "rgba(33ccffff) rgba(00ff99ee) 45deg"),
+            keyword_lua("animation", "fade,0,2.5,soft"),
+            "hl.animation({ leaf = \"fade\", enabled = false, speed = 2.5, bezier = \"soft\" })"
+        );
+        assert_eq!(
+            keyword_lua(
+                "general:col.active_border",
+                "rgba(33ccffff) rgba(00ff99ee) 45deg"
+            ),
             "hl.config({ [\"general.col.active_border\"] = { colors = { \"rgba(33ccffff)\", \"rgba(00ff99ee)\" }, angle = 45 } })"
         );
         assert_eq!(
@@ -769,7 +813,10 @@ mod tests {
             "hl.config({ [\"general.col.inactive_border\"] = \"rgba(595959aa)\" })"
         );
         let l = Looks::default();
-        assert_eq!(l.keywords_lua(true, true).len(), l.keywords(true, true).len());
+        assert_eq!(
+            l.keywords_lua(true, true).len(),
+            l.keywords(true, true).len()
+        );
     }
 
     #[test]
@@ -817,9 +864,21 @@ mod tests {
             .filter(|(k, _)| k == "animation")
             .map(|(_, v)| v)
             .collect();
-        assert_eq!(anims[0], "windowsIn,1,1.1,wolOut,slide");
-        assert_eq!(anims[1], "windowsOut,1,0.9,wolIn,slide");
-        assert_eq!(anims[5], "workspaces,1,2.5,ease,fade");
+        // Speed 2: the springs' bezier stand-ins over half their settle time.
+        assert_eq!(anims[0], "windowsIn,1,0.9,ease,slide");
+        assert_eq!(anims[1], "windowsOut,1,1.1,in,slide");
+        assert_eq!(anims[10], "workspaces,1,2.0,soft,fade");
+        let at_one: Vec<String> = Looks {
+            motion: Motion::Pop,
+            ..Default::default()
+        }
+        .keywords(false, false)
+        .into_iter()
+        .filter(|(k, _)| k == "animation")
+        .map(|(_, v)| v)
+        .collect();
+        assert_eq!(at_one[0], "windowsIn,1,2.5,glass,popin 80%");
+        assert_eq!(at_one[1], "windowsOut,1,2.3,spring:window-close,popin 90%");
         let one = Looks {
             border_colors: vec!["#fff".into()],
             ..Default::default()

@@ -114,18 +114,29 @@ hl.config({
 })
 
 hl.config({ animations = { enabled = true } })
--- Same curves and durations as crates/realtime/src/anim.rs (speed in deciseconds).
-hl.curve("wolOut", { type = "bezier", points = { { 0.2, 0.8 }, { 0.2, 1 } } })
-hl.curve("wolIn", { type = "bezier", points = { { 0.4, 0 }, { 1, 1 } } })
-hl.curve("spring", { type = "bezier", points = { { 0.22, 1.2 }, { 0.36, 1 } } })
-hl.curve("ease", { type = "bezier", points = { { 0.25, 0.1 }, { 0.25, 1 } } })
-hl.animation({ leaf = "windowsIn", enabled = true, speed = 2.2, bezier = "wolOut", style = "popin 90%" })
-hl.animation({ leaf = "windowsOut", enabled = true, speed = 1.8, bezier = "wolIn", style = "popin 90%" })
-hl.animation({ leaf = "windowsMove", enabled = true, speed = 2, bezier = "spring" })
-hl.animation({ leaf = "fade", enabled = true, speed = 3, bezier = "ease" })
-hl.animation({ leaf = "layers", enabled = true, speed = 3, bezier = "ease", style = "fade" })
-hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "ease", style = "slide" })
-hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4, bezier = "ease", style = "slidevert" })
+-- Generated from crates/realtime/src/anim.rs (the shell's curves and durations, HIG section 7).
+-- Speed in deciseconds; a spring ignores it (the value is its settle time).
+hl.curve("ease", { type = "bezier", points = { { 0.2, 0.8 }, { 0.2, 1 } } })
+hl.curve("in", { type = "bezier", points = { { 0.4, 0 }, { 1, 1 } } })
+hl.curve("out", { type = "bezier", points = { { 0, 0 }, { 0.2, 1 } } })
+hl.curve("in-out", { type = "bezier", points = { { 0.4, 0 }, { 0.2, 1 } } })
+hl.curve("glass", { type = "bezier", points = { { 0.34, 1.56 }, { 0.64, 1 } } })
+hl.curve("overshoot", { type = "bezier", points = { { 0.22, 1.2 }, { 0.36, 1 } } })
+hl.curve("soft", { type = "bezier", points = { { 0.25, 0.1 }, { 0.25, 1 } } })
+hl.curve("window-open", { type = "spring", stiffness = 385.5, damping = 31.4, mass = 1 })
+hl.curve("window-close", { type = "spring", stiffness = 322.3, damping = 30.5, mass = 1 })
+hl.animation({ leaf = "windowsIn", enabled = true, speed = 1.9, spring = "window-open", style = "popin 90%" })
+hl.animation({ leaf = "windowsOut", enabled = true, speed = 2.3, spring = "window-close", style = "popin 90%" })
+hl.animation({ leaf = "windowsMove", enabled = true, speed = 2.5, bezier = "overshoot" })
+hl.animation({ leaf = "fade", enabled = true, speed = 2.5, bezier = "soft" })
+hl.animation({ leaf = "fadeIn", enabled = true, speed = 2.5, bezier = "ease" })
+hl.animation({ leaf = "fadeOut", enabled = true, speed = 1.5, bezier = "in" })
+hl.animation({ leaf = "layers", enabled = true, speed = 2.5, bezier = "ease", style = "fade" })
+hl.animation({ leaf = "layersOut", enabled = true, speed = 1.5, bezier = "in", style = "fade" })
+hl.animation({ leaf = "fadeLayersIn", enabled = true, speed = 2.5, bezier = "ease" })
+hl.animation({ leaf = "fadeLayersOut", enabled = true, speed = 1.5, bezier = "in" })
+hl.animation({ leaf = "workspaces", enabled = true, speed = 4.0, bezier = "soft", style = "slide" })
+hl.animation({ leaf = "specialWorkspace", enabled = true, speed = 4.0, bezier = "soft", style = "slidevert" })
 
 hl.config({
     misc = {

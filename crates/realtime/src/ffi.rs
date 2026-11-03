@@ -57,6 +57,48 @@ pub extern "C" fn wol_anim_duration_ms(kind: u32) -> u64 {
     }
 }
 
+/// A named curve of the motion table (`anim::Curve`, the shell's names): 0 and its
+/// cubic-bezier control points x1, y1, x2, y2 in `out[0..4]` (`linear` is 0, 0, 1, 1), -1 for a
+/// null or unknown name (`out` untouched).
+///
+/// # Safety
+/// `name` must be null or a NUL-terminated string; `out` null or 4 writable floats.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_anim_curve(name: *const std::ffi::c_char, out: *mut f32) -> i32 {
+    if name.is_null() {
+        return -1;
+    }
+    // SAFETY: caller contract above.
+    let name = unsafe { std::ffi::CStr::from_ptr(name) };
+    let Some(c) = name.to_str().ok().and_then(crate::anim::Curve::from_name) else {
+        return -1;
+    };
+    if !out.is_null() {
+        let crate::anim::Bezier(a, b, x, y) = c.bezier();
+        // SAFETY: caller contract above.
+        unsafe { std::ptr::copy_nonoverlapping([a, b, x, y].as_ptr(), out, 4) };
+    }
+    0
+}
+
+/// Name of curve `index` in table order (static, NUL-terminated), null past the end.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_anim_curve_name(index: u32) -> *const std::ffi::c_char {
+    const NAMES: [&std::ffi::CStr; 8] = [
+        c"ease",
+        c"linear",
+        c"in",
+        c"out",
+        c"in-out",
+        c"glass",
+        c"overshoot",
+        c"soft",
+    ];
+    NAMES
+        .get(index as usize)
+        .map_or(std::ptr::null(), |n| n.as_ptr())
+}
+
 /// Title bar hit: -1 none, 0 close, 1 minimize, 2 zoom, 3 bar.
 #[unsafe(no_mangle)]
 pub extern "C" fn wol_titlebar_hit(width: i32, x: i32, y: i32) -> i32 {
@@ -553,6 +595,27 @@ mod tests {
         assert_eq!(
             wol_anim_duration_ms(WOL_ANIM_CLOSE),
             Animation::close(0).duration_ms
+        );
+        let mut p = [9.0f32; 4];
+        for (i, c) in crate::anim::Curve::ALL.into_iter().enumerate() {
+            let n = unsafe { std::ffi::CStr::from_ptr(wol_anim_curve_name(i as u32)) };
+            assert_eq!(n.to_str(), Ok(c.name()));
+            assert_eq!(unsafe { wol_anim_curve(n.as_ptr(), p.as_mut_ptr()) }, 0);
+            let crate::anim::Bezier(a, b, x, y) = c.bezier();
+            assert_eq!(p, [a, b, x, y]);
+        }
+        assert!(wol_anim_curve_name(8).is_null());
+        assert_eq!(
+            unsafe { wol_anim_curve(c"wolOut".as_ptr(), p.as_mut_ptr()) },
+            -1
+        );
+        assert_eq!(
+            unsafe { wol_anim_curve(std::ptr::null(), p.as_mut_ptr()) },
+            -1
+        );
+        assert_eq!(
+            unsafe { wol_anim_curve(c"soft".as_ptr(), std::ptr::null_mut()) },
+            0
         );
         let (ox, oy) = titlebar::button_origin(Button::Close);
         assert_eq!(wol_titlebar_hit(400, ox + 1, oy + 1), 0);

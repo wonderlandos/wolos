@@ -549,7 +549,7 @@ static IPC::Socket1::SResponse wolStats(const IPC::Socket1::SRequest&) {
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
-    // Close curve is sampled by the animation config generated from wol_anim_duration_ms.
+    // Animations are not set here: hyprland.lua carries the motion table (crates/realtime/src/anim.rs, anim::lua()); a curve is read by name with wol_anim_curve.
     static auto open = Event::bus()->m_events.window.open.listen([](PHLWINDOW w) { onOpen(w); });
     static auto openLate = Event::bus()->m_events.window.openLate.listen([](PHLWINDOW w) { onOpenLate(w); });
     static auto active = Event::bus()->m_events.window.active.listen([](PHLWINDOW w, Desktop::eFocusReason r) { onActive(w, r); });
