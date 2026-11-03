@@ -1,0 +1,5 @@
+{
+  "heap_mb": 4096,
+  "background_throttle": true,
+  "patches": []
+}

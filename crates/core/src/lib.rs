@@ -51,5 +51,7 @@ pub mod theme;
 pub mod toggles;
 pub mod update;
 pub mod webapps;
+pub mod webpolicy;
+pub mod webruntime;
 pub mod widgets;
 pub mod wifi;

@@ -1,0 +1,1 @@
+{"patches":[{"file":"/usr/lib/../etc/shadow","sha256":"00","op":"replace","offset":18446744073709551615,"find":"x","with":"y"}]}

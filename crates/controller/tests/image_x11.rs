@@ -239,24 +239,27 @@ fn xwayland_block_and_immediate_rules() {
     assert!(packages().iter().any(|p| p == "gamescope"));
 }
 
-/// X1-16: pacman Electron apps and VS Code get the ozone hint from a linked default.
+/// X1-16: pacman Electron apps and VS Code get the ozone hint from a linked default. Since ADR
+/// 0042 the link goes to the web-app runtime profile (tests/webruntime.rs runs the linker).
 #[test]
 fn electron_flags_defaults_are_linked() {
     let s = read(&format!("{BIN}/wol-session"));
-    let lp = s
+    assert!(
+        s.lines()
+            .any(|l| l.contains(r#"sh "$share/webruntime/link.sh" "$cfg" "$share""#)),
+        "wol-session links the Electron flag files through the runtime profile"
+    );
+    let link = read("desktop/overlay/usr/share/wolos/webruntime/link.sh");
+    let lp = link
         .lines()
         .find(|l| l.starts_with("for f in electron-flags.conf"))
-        .expect("wol-session links the Electron flag files");
-    assert!(
-        s.contains(r#"[ -e "$cfg/$f" ] || [ -L "$cfg/$f" ] || ln -s "$share/$f" "$cfg/$f""#),
-        "never over the user's own file"
-    );
+        .expect("the linker names the flag files");
     for f in ["electron-flags.conf", "code-flags.conf"] {
         let t = read(&format!("desktop/overlay/usr/share/wolos/{f}"));
         assert!(has_line(&t, "--ozone-platform-hint=auto"), "{f}");
         assert!(
             lp.split_whitespace().any(|w| w.trim_end_matches(';') == f),
-            "wol-session does not link {f}"
+            "the linker does not link {f}"
         );
     }
 }
