@@ -78,7 +78,7 @@ jobs:
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   iso:
     if: inputs.what == 'iso'
-    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@46c345e2f63e473c9c20d34aaf9990ae2768c3c3 # main 2026-11-03; bump after each wolos-iso push
+    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@ce6830beb981123e979194994e25dad6d3610568 # main 2026-11-03; bump after each wolos-iso push
     with:
       tag: ${{ inputs.run }}
     secrets:
