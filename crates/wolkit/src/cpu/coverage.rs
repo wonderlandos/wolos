@@ -7,6 +7,7 @@
 //! same way saturate at full coverage, which is what font outlines need.
 
 /// Flattening tolerance in pixels.
+use crate::num::{sat_u8, trunc_u32, trunc_usize};
 const TOLERANCE: f32 = 0.05;
 /// Upper bound on the pieces one curve is cut into.
 const MAX_SEGMENTS: u32 = 64;
@@ -102,8 +103,8 @@ impl Accumulator {
             x -= ystart * dxdy;
             ystart = 0.0;
         }
-        let row0 = ystart.floor() as usize;
-        let row_end = self.h.min(y1.ceil() as usize);
+        let row0 = trunc_usize(ystart.floor());
+        let row_end = self.h.min(trunc_usize(y1.ceil()));
         let wf = self.w as f32;
         for y in row0..row_end {
             let top = (y as f32).max(ystart);
@@ -117,9 +118,9 @@ impl Accumulator {
             let d = dy * dir;
             let (xa, xb) = if xc < xnext { (xc, xnext) } else { (xnext, xc) };
             let xaf = xa.floor();
-            let xai = xaf as usize;
+            let xai = trunc_usize(xaf);
             let xbc = xb.ceil();
-            let xbi = xbc as usize;
+            let xbi = trunc_usize(xbc);
             let base = y * self.stride;
             if xbi <= xai + 1 {
                 let xmf = 0.5 * (xc + xnext) - xaf;
@@ -159,7 +160,7 @@ impl Accumulator {
             for (o, a) in dst.iter_mut().zip(row) {
                 sum += *a;
                 let v = sum.abs().min(1.0);
-                *o = (v * 255.0 + 0.5) as u8;
+                *o = sat_u8(v * 255.0 + 0.5);
             }
         }
     }
@@ -271,7 +272,7 @@ fn segments(deviation: f32) -> u32 {
         return 1;
     }
     let n = (deviation / TOLERANCE).sqrt().ceil();
-    (n as u32).clamp(1, MAX_SEGMENTS)
+    trunc_u32(n).clamp(1, MAX_SEGMENTS)
 }
 
 #[cfg(test)]

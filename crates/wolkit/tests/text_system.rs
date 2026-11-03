@@ -2,6 +2,7 @@
 //! The engine-facing text system: the fallback chain built from installed families, measuring,
 //! and the installed-font path on whatever machine runs the test.
 
+#[path = "support/text.rs"]
 mod text_support;
 
 use text_support::font_dir;
@@ -75,8 +76,14 @@ fn measure_grows_with_text_and_shrinks_the_line_with_a_width_limit() {
 fn installed_fonts_work_whatever_this_machine_has() {
     // On a machine with no fonts this still must not panic; with fonts, Latin text measures.
     let tmp = temp("installed");
-    let mut sys = TextSystem::with_system_fonts(&default_font_roots(), &tmp.join("idx"));
-    let again = TextSystem::with_system_fonts(&default_font_roots(), &tmp.join("idx"));
+    let mut sys = TextSystem::with_system_fonts(
+        &default_font_roots(|k| std::env::var_os(k)),
+        &tmp.join("idx"),
+    );
+    let again = TextSystem::with_system_fonts(
+        &default_font_roots(|k| std::env::var_os(k)),
+        &tmp.join("idx"),
+    );
     assert_eq!(
         sys.db.len(),
         again.db.len(),

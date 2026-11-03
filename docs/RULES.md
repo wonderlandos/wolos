@@ -76,7 +76,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 
 | ID | Rule | Why | How checked |
 |---|---|---|---|
-| RR-019 | In api, realtime, xguard, xguard-clam and core no `Command::new(` outside `privileged_command`. | A root child must not inherit the caller's environment (ADR 0015). | rules_rust.rs RR-019 |
+| RR-019 | In api, realtime, xguard, xguard-clam and core no `Command::new(` outside `privileged_command`. | A root child must not inherit the caller's environment (ADR 0040). | rules_rust.rs RR-019 |
 | RR-020 | No `Command::new("sh")`, `"bash"` or `"/bin/sh"`. | A shell string is an injection point; pass typed argv. | rules_rust.rs RR-020 |
 | RR-021 | No `.read_line(`, `.read_to_end(` or `.read_to_string(` on a stream outside `shared::bounded`; a read on `.take(N)` is bounded and does not count. | An unbounded read lets one peer eat memory. | rules_rust.rs RR-021 |
 | RR-078 | A file that connects or accepts on a Unix socket sets a read timeout or uses `shared::bounded`. | A silent peer must not hold a thread. | rules_rust.rs RR-078 |

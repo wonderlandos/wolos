@@ -14,7 +14,7 @@ SET_PROP 2 background token0
 INSERT 1 2 append
 CREATE 3 button
 SET_PROP 3 flex-direction row
-SET_STYLE 3 1
+SET_STYLE 3 0
 SET_A11Y 3 button "New" ""
 SET_TEXT 3 "New"
 INSERT 2 3 append
@@ -48,8 +48,7 @@ SET_TEXT 9 "Folders"
 INSERT 8 9 append
 CREATE 10 box
 SET_PROP 10 flex-direction column
-SET_PROP 10 background token2
-SET_PROP 10 border-radius 10.0
+SET_STYLE 10 3
 INSERT 8 10 append
 CREATE 11 box
 SET_PROP 11 flex-direction row
@@ -109,7 +108,7 @@ INSERT 19 20 append
 CREATE 21 button
 SET_PROP 21 flex-direction row
 SET_STATE 21 32
-SET_STYLE 21 3
+SET_STYLE 21 2 6
 SET_A11Y 21 tab "All" ""
 BIND_EVENT 21 1
 SET_TEXT 21 "All"
@@ -117,7 +116,7 @@ INSERT 20 21 append
 CREATE 22 button
 SET_PROP 22 flex-direction row
 SET_STATE 22 0
-SET_STYLE 22 3
+SET_STYLE 22 2 6
 SET_A11Y 22 tab "Starred" ""
 BIND_EVENT 22 1
 SET_TEXT 22 "Starred"

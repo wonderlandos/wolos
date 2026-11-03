@@ -100,24 +100,9 @@ pub trait Measure {
     fn intrinsic(&mut self, n: u32) -> Size;
 }
 
-/// A stand-in measure: every character is `0.5 em` wide, a line is `1.3 em` high, words wrap.
-/// Headless runs and tests use it until a text-backed measure is plugged in.
-pub struct ApproxMeasure<'a> {
-    pub text: &'a dyn Fn(u32) -> (&'a str, f32),
-    pub control: Size,
-}
-
-impl Measure for ApproxMeasure<'_> {
-    fn text(&mut self, n: u32, max_w: Option<f32>) -> Size {
-        let (t, size) = (self.text)(n);
-        approx_text(t, size, max_w)
-    }
-    fn intrinsic(&mut self, _n: u32) -> Size {
-        self.control
-    }
-}
-
-/// Width and height of `t` at `size` px wrapped at `max_w`.
+/// Width and height of `t` at `size` px wrapped at `max_w`, with no font: every character is
+/// `0.5 em` wide, a line is `1.3 em` high, words wrap. The font-free measure of [`super::scene::run`]
+/// without a measure (layout tests, benches); windows measure with the shaper.
 pub fn approx_text(t: &str, size: f32, max_w: Option<f32>) -> Size {
     let cw = size * 0.5;
     let lh = (size * 1.3).ceil();

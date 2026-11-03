@@ -3,7 +3,7 @@
 //!   wol-xguard scan [--json] [--stream] [--rules DIR] PATH...   exit 0 clean, 1 found, 2 incomplete, 3 error
 //!   wol-xguard guard [--state D] [--rules D] [--scope M]... [--downloads D]...  the first-use guard
 //!   wol-xguard check|allow PATH   ask the guard about a file; Open Anyway
-//!   wol-xguard sweep              the background pass
+//!   wol-xguard sweep [--rules D] [STATE [ROOT...]]  the background pass (roots given: no idle gate)
 //!   wol-xguard rules build OUT VERSION SOURCE-DIR...  compile signature lists to a database
 //!   wol-xguard rules yara OUT SOURCE-DIR...           compile rule sources
 //!   wol-xguard rules bundle DIR VERSION               the manifest of a signature update
@@ -246,7 +246,12 @@ fn ask(verb: &str, args: &[String]) -> i32 {
 /// The background pass (a timer starts it).
 fn sweep(args: &[String]) -> i32 {
     use xguard::sweep::{gate, lowest_qos, pass, targets};
-    let dir = xguard::rules_dir();
+    let (dir, args) = match args {
+        [flag, rest @ ..] if flag == "--rules" => {
+            (rules_arg(rest.first()), rest.get(1..).unwrap_or(&[]))
+        }
+        _ => (xguard::rules_dir(), args),
+    };
     let state = args
         .first()
         .map_or(xguard::guard::STATE_DIR, String::as_str)
@@ -355,6 +360,7 @@ fn sweep(args: &[String]) -> i32 {
         let t = serde_json::to_string(&mine).unwrap_or_default();
         let p = Path::new(&state).join(wol_core::malware::sweep_file(uid));
         // S4-10: owner and 0600 before the list appears; atomic, so a reader never sees half.
+        // The owner change needs CAP_CHOWN in wolos-xguard-sweep.service (audit R7-1).
         if let Err(e) = shared::atomic::write_as(&p, 0o600, Some(uid), t.as_bytes()) {
             eprintln!("wol-xguard: could not write {}: {e}", p.display());
         }

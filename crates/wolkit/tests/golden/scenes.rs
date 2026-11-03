@@ -424,7 +424,11 @@ fn text_bidi(c: &mut Ctx, l: &mut DisplayList) {
         ..LayoutOptions::default()
     };
     let st = c.style(13.0);
-    c.text(l, "\u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD} and some English \u{645}\u{631}\u{62D}\u{628}\u{627} \u{628}\u{627}\u{644}\u{639}\u{627}\u{644}\u{645}", (10.0, y), &st, &narrow, INK);
+    let mixed = concat!(
+        "\u{5E9}\u{5DC}\u{5D5}\u{5DD} \u{5E2}\u{5D5}\u{5DC}\u{5DD} and some English ",
+        "\u{645}\u{631}\u{62D}\u{628}\u{627} \u{628}\u{627}\u{644}\u{639}\u{627}\u{644}\u{645}",
+    );
+    c.text(l, mixed, (10.0, y), &st, &narrow, INK);
     l.border(
         Rect::new(9.5, y - 0.5, 141.0, 56.0),
         Radii::uniform(2.0),

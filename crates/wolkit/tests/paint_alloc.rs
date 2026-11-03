@@ -3,6 +3,7 @@
 //! content did not change must not touch the heap in the instance builder, the damage tracker, the
 //! shaped-run cache or the atlas lookup.
 
+#[path = "support/text.rs"]
 mod text_support;
 
 use std::alloc::{GlobalAlloc, Layout, System};

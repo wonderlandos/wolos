@@ -2,7 +2,7 @@
 //! Shared by the layout tests: a hand-made tree, a deterministic random generator, and a reference
 //! oracle, a second and deliberately plain implementation of the layout semantics (no caches, no
 //! scratch stacks, `f64`, allocation everywhere) that the engine is held to.
-#![allow(dead_code)]
+#![allow(dead_code)] // each test file uses a part of these helpers
 use wolkit::layout::tree::*;
 use wolkit::layout::{LayoutCache, layout};
 use wolkit::style::value::*;

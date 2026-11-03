@@ -3,8 +3,11 @@
 //! rules of the element kind, then the classes in the order given (later wins), then state and
 //! media variants, then inline overrides. Results are interned (`StyleStore`) and memoised on
 //! (parent style, kind, classes, state, media), so flipping `:hover` re-resolves one node.
-use super::prop::*;
-use super::value::*;
+use super::prop::{
+    Decls, PropId, apply_mask, copy_prop, eq_prop, inherited_ids, layout_mask, put_prop,
+};
+use super::value::{Direction, Overflow, Props, Wr};
+use crate::scene::ids::{Ix, to_u8, to_u32};
 use std::collections::HashMap;
 
 /// Interaction states, one bit each (`StateMask`).
@@ -58,7 +61,7 @@ pub fn media_bit(name: &str) -> Option<u8> {
     MEDIA.iter().position(|s| *s == name).map(|i| 1u8 << i)
 }
 pub fn kind_id(name: &str) -> Option<u8> {
-    KINDS.iter().position(|s| *s == name).map(|i| i as u8)
+    KINDS.iter().position(|s| *s == name).map(to_u8)
 }
 
 /// Limits of a style table.
@@ -139,10 +142,7 @@ impl Default for StyleTable {
 
 impl StyleTable {
     pub fn class_id(&self, name: &str) -> Option<u32> {
-        self.classes
-            .iter()
-            .position(|c| c.name == name)
-            .map(|i| i as u32)
+        self.classes.iter().position(|c| c.name == name).map(to_u32)
     }
 }
 
@@ -186,7 +186,7 @@ impl StyleStore {
         self.styles.is_empty()
     }
     pub fn get(&self, id: StyleId) -> &Props {
-        &self.styles[id.0 as usize]
+        &self.styles[id.0.ix()]
     }
     pub fn intern(&mut self, p: &Props) -> StyleId {
         let mut key = std::mem::take(&mut self.scratch);
@@ -194,7 +194,7 @@ impl StyleStore {
         let id = match self.index.get(&key) {
             Some(i) => *i,
             None => {
-                let i = self.styles.len() as u32;
+                let i = to_u32(self.styles.len());
                 self.styles.push(p.clone());
                 self.index.insert(key.clone(), i);
                 i
@@ -270,7 +270,7 @@ impl Resolver {
         let parent_rules = inp.classes.iter().any(|c| {
             table
                 .classes
-                .get(*c as usize)
+                .get((*c).ix())
                 .is_some_and(|d| d.has_parent_rules())
         });
         if inp.inline.is_none() {
@@ -280,7 +280,7 @@ impl Resolver {
             self.key
                 .push(u32::from(inp.state) | (u32::from(inp.media) << 16));
             self.key.push(inp.text_scale.to_bits());
-            self.key.push(inp.classes.len() as u32);
+            self.key.push(to_u32(inp.classes.len()));
             self.key.extend_from_slice(inp.classes);
             if parent_rules {
                 self.key.push(u32::from(inp.parent_state));
@@ -329,7 +329,7 @@ pub fn builtin_kinds() -> &'static [ClassDef] {
                 d.mask |= id.bit();
             }
             if let Some(k) = kind_id(kind) {
-                v[k as usize].variants.push(Variant {
+                v[k.ix()].variants.push(Variant {
                     state: 0,
                     media: 0,
                     parent: None,
@@ -373,16 +373,16 @@ pub fn cascade(table: &StyleTable, store: &StyleStore, inp: &Input) -> Props {
     let empty = ClassDef::default();
     let mut layers: [&ClassDef; 2 + MAX_NODE_CLASSES] = [&empty; 2 + MAX_NODE_CLASSES];
     let mut n = 0;
-    if let Some(k) = builtin_kinds().get(inp.kind as usize) {
+    if let Some(k) = builtin_kinds().get(inp.kind.ix()) {
         layers[n] = k;
         n += 1;
     }
-    if let Some(k) = table.kinds.get(inp.kind as usize) {
+    if let Some(k) = table.kinds.get(inp.kind.ix()) {
         layers[n] = k;
         n += 1;
     }
     for c in inp.classes.iter().take(MAX_NODE_CLASSES) {
-        if let Some(d) = table.classes.get(*c as usize) {
+        if let Some(d) = table.classes.get((*c).ix()) {
             layers[n] = d;
             n += 1;
         }

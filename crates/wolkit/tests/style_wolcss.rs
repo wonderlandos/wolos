@@ -98,7 +98,7 @@ fn dump(t: &StyleTable) -> String {
     s
 }
 
-fn golden(name: &str) {
+fn check_golden(name: &str) {
     let src = std::fs::read_to_string(dir().join(format!("{name}.wolcss"))).unwrap();
     let c = compile(&src);
     // The table survives the binary format exactly, and resolves the same.
@@ -126,12 +126,12 @@ fn golden(name: &str) {
 
 #[test]
 fn basic_sheet_golden() {
-    golden("basic");
+    check_golden("basic");
 }
 
 #[test]
 fn layout_sheet_golden() {
-    golden("layout");
+    check_golden("layout");
 }
 
 #[test]

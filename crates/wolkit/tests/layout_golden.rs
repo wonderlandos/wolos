@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Hand-worked layouts (the numbers are what CSS flexbox gives for the same boxes, worked on
 //! paper), so the oracle and the engine are not only held to each other.
+#[path = "support/layout.rs"]
 mod layout_support;
 use layout_support::*;
 use wolkit::layout::tree::*;

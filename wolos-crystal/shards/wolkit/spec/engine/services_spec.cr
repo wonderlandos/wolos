@@ -24,4 +24,16 @@ describe Wolkit::Services do
     outcome.ok?.should be_false
     outcome.notice.to_s.should_not be_empty
   end
+
+  it "keeps a persisted signal in memory and shows the sentence when the preferences are refused" do
+    Wolkit::Store.current = Wolkit::PrefsStore.new
+    scope = Wolkit::Scope.new(nil)
+    name = scope.run { Wolkit::Persisted(String).new("name", "x") }
+    name.value = "y"
+    name.value.should eq "y"
+    name.notice.to_s.should_not be_empty
+    scope.dispose
+    Wolkit::Store.current = Wolkit::MemoryStore.new
+    Wolkit::Services.close
+  end
 end

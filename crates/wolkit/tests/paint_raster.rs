@@ -180,7 +180,7 @@ fn hostile_geometry_does_not_panic() {
 }
 
 #[test]
-fn compositing_laws() {
+fn compositing_obeys_the_laws() {
     let bg = Color::rgb(200, 100, 50);
     let draw = |l: &DisplayList| {
         render(

@@ -23,7 +23,7 @@ macro_rules! ix {
         }
     )*};
 }
-ix!(u8, u16, u32, u64);
+ix!(u8, u16, u32, u64, i32, i64, isize);
 
 pub fn to_u32(n: impl TryInto<u32>) -> u32 {
     n.try_into().unwrap_or(u32::MAX)

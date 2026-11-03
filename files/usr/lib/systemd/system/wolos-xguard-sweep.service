@@ -7,14 +7,23 @@ ConditionACPower=true
 Type=oneshot
 ExecStart=/usr/bin/wol-xguard sweep
 User=_xguard
-AmbientCapabilities=CAP_DAC_READ_SEARCH
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+# CAP_DAC_READ_SEARCH reads every home. CAP_CHOWN gives each account its findings list
+# (sweep-<uid>.json, 0600, owned by the account before it appears): the shell reads the list as
+# that account, and no other account may. Without it the write fails and nothing is shown
+# (audit R7-1). Its reach is the state directory only: everything else it could chown is mounted
+# read-only (homes, system, /sys, cgroups) or private to this run (/tmp, /dev).
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_CHOWN
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN
 PrivateNetwork=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
 # Reads every home, writes none (audit P6-2): only the state directory below is writable.
 ProtectHome=read-only
 ReadWritePaths=/var/lib/wolos/xguard
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
 Nice=19
 CPUSchedulingPolicy=idle
 IOSchedulingClass=idle

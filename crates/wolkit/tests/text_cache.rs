@@ -2,6 +2,7 @@
 //! Hit-rate tests: the shaped-run LRU and the glyph atlas must serve steady-state text entirely
 //! from cache (plan budget 8: atlas hit rate 100% in steady state).
 
+#[path = "support/text.rs"]
 mod text_support;
 
 use std::sync::Arc;

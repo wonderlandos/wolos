@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Virtual list geometry against a naive model, scrolling helpers, and a list laid out in a tree.
+#[path = "support/layout.rs"]
 mod layout_support;
 use layout_support::*;
 use wolkit::layout::tree::*;
@@ -111,7 +112,7 @@ fn reset_keeps_measurements_and_drops_the_tail() {
 }
 
 #[test]
-fn scroll_helpers() {
+fn scroll_clamp_and_fling_helpers() {
     assert_eq!(clamp_scroll(-5.0, 1000.0, 300.0), 0.0);
     assert_eq!(clamp_scroll(900.0, 1000.0, 300.0), 700.0);
     assert_eq!(clamp_scroll(10.0, 100.0, 300.0), 0.0);

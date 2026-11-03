@@ -13,25 +13,41 @@ require "./runtime"
 module Wolkit
   module Loop
     @@activity = Time.instant
+    # One pending wake-up is enough: the loop turns once and handles everything that is there.
+    SIGNAL = Channel(Nil).new(1)
+    # Posted in place of work to end the pump fiber (the posts channel itself outlives the loop).
+    STOP_PUMP = -> { nil }
+
+    # Make the loop take a turn (the engine's descriptor does it for engine events; `Runtime.quit` and
+    # the headless tests use this one).
+    def self.wake : Nil
+      select
+      when SIGNAL.send(nil)
+      else
+      end
+    end
 
     # Run until the last window closes or the engine says quit.
     def self.run(engine : FFI::Engine) : Nil
       UI.claim
       Frame.auto = true
-      wake = engine.wake_io
+      Runtime.on_quit = -> { wake }
+      wake_io = engine.wake_io
+      spawn(name: "wolkit-engine-fd") { watch(wake_io) }
       pump = spawn(name: "wolkit-posts") { pump_posts }
       GCPolicy.start
       begin
         until Runtime.quit?
           turn(engine)
           break if Runtime.quit?
-          wait_readable(wake)
+          SIGNAL.receive
         end
       ensure
         Frame.auto = false
+        Runtime.on_quit = nil
         GCPolicy.stop
-        wake.close
-        pump.dead? || Wolkit::UI::POSTS.close
+        wake_io.close
+        UI::POSTS.send(STOP_PUMP) unless pump.dead?
       end
     end
 
@@ -61,17 +77,37 @@ module Wolkit
       Time.instant - @@activity
     end
 
-    # Block this fiber until `io` is readable. Crystal has no public API for this on a descriptor
-    # that cannot be read (an epoll fd); the event loop's own method does it. Guarded by
-    # spec/engine/loop_spec.cr so a Crystal upgrade that moves it fails a test, not an app.
-    private def self.wait_readable(io : IO::FileDescriptor) : Nil
-      Crystal::EventLoop.current.wait_readable(io)
+    # Wait on the engine's descriptor (a duplicate Crystal owns) and wake the loop whenever it is
+    # readable. The engine's descriptor is a self-pipe: reading it only consumes the wake-up bytes, and
+    # `dispatch(0)` runs what is queued whether or not a byte was there, so no wake-up is lost. If it
+    # ever is a descriptor that cannot be read (an epoll descriptor), the event loop's own
+    # `wait_readable` does the waiting; that method is internal to the Crystal runtime and is used in
+    # this one place only.
+    private def self.watch(io : IO::FileDescriptor) : Nil
+      buffer = Bytes.new(64)
+      readable = true
+      until io.closed?
+        begin
+          if readable
+            break if io.read(buffer) == 0
+          else
+            Crystal::EventLoop.current.wait_readable(io)
+          end
+          wake
+        rescue ex : IO::Error
+          break if io.closed?
+          # EINVAL: not a readable descriptor. Wait for readiness instead.
+          raise ex unless readable
+          readable = false
+        end
+      end
     end
 
     # Work posted from other threads (`set_later`) runs on its own fiber in this context.
     private def self.pump_posts : Nil
       loop do
-        work = UI::POSTS.receive? || break
+        work = UI::POSTS.receive
+        break if work == STOP_PUMP
         Wolkit.batch { Wolkit.guard { work.call } }
         Frame.flush_all
       end

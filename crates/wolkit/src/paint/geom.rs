@@ -6,6 +6,8 @@
 
 /// An axis-aligned rectangle: origin and size. Width and height are never negative after
 /// [`Rect::new`].
+use crate::num::{ceil_i32, floor_i32};
+use crate::scene::ids::to_u8;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rect {
     pub x: f32,
@@ -128,10 +130,10 @@ impl Rect {
         if self.is_empty() {
             return PixelRect::default();
         }
-        let x0 = self.x.floor().clamp(-1.0e9, 1.0e9) as i32;
-        let y0 = self.y.floor().clamp(-1.0e9, 1.0e9) as i32;
-        let x1 = self.right().ceil().clamp(-1.0e9, 1.0e9) as i32;
-        let y1 = self.bottom().ceil().clamp(-1.0e9, 1.0e9) as i32;
+        let x0 = floor_i32(self.x.clamp(-1.0e9, 1.0e9));
+        let y0 = floor_i32(self.y.clamp(-1.0e9, 1.0e9));
+        let x1 = ceil_i32(self.right().clamp(-1.0e9, 1.0e9));
+        let y1 = ceil_i32(self.bottom().clamp(-1.0e9, 1.0e9));
         PixelRect { x0, y0, x1, y1 }
     }
 }
@@ -199,15 +201,16 @@ impl Color {
 
     /// Packs as `0xAABBGGRR` little-endian bytes `[r, g, b, a]` (the GPU instance layout).
     pub const fn pack(self) -> u32 {
-        (self.r as u32) | ((self.g as u32) << 8) | ((self.b as u32) << 16) | ((self.a as u32) << 24)
+        u32::from_le_bytes([self.r, self.g, self.b, self.a])
     }
 
     pub const fn unpack(v: u32) -> Color {
+        let b = v.to_le_bytes();
         Color {
-            r: v as u8,
-            g: (v >> 8) as u8,
-            b: (v >> 16) as u8,
-            a: (v >> 24) as u8,
+            r: b[0],
+            g: b[1],
+            b: b[2],
+            a: b[3],
         }
     }
 
@@ -215,9 +218,9 @@ impl Color {
     pub fn premul(self) -> [u8; 4] {
         let a = u32::from(self.a);
         [
-            div255(u32::from(self.r) * a) as u8,
-            div255(u32::from(self.g) * a) as u8,
-            div255(u32::from(self.b) * a) as u8,
+            to_u8(div255(u32::from(self.r) * a)),
+            to_u8(div255(u32::from(self.g) * a)),
+            to_u8(div255(u32::from(self.b) * a)),
             self.a,
         ]
     }
@@ -225,7 +228,7 @@ impl Color {
     /// This colour with its alpha scaled by `k / 255`.
     pub fn with_opacity(self, k: u8) -> Color {
         Color {
-            a: div255(u32::from(self.a) * u32::from(k)) as u8,
+            a: to_u8(div255(u32::from(self.a) * u32::from(k))),
             ..self
         }
     }
@@ -241,7 +244,7 @@ pub const fn div255(x: u32) -> u32 {
 /// Linear interpolation of two colours in straight space; `t` is `0..=255`.
 pub fn mix(a: Color, b: Color, t: u8) -> Color {
     let t = u32::from(t);
-    let lerp = |x: u8, y: u8| div255(u32::from(x) * (255 - t) + u32::from(y) * t) as u8;
+    let lerp = |x: u8, y: u8| to_u8(div255(u32::from(x) * (255 - t) + u32::from(y) * t));
     Color {
         r: lerp(a.r, b.r),
         g: lerp(a.g, b.g),

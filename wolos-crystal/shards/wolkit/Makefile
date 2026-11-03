@@ -39,16 +39,28 @@ spec: spec-core spec-engine
 spec-core:
 	crystal spec --error-on-warnings spec/*_spec.cr
 	crystal spec -Ddev --error-on-warnings spec/dev_context_spec.cr
+	sh spec/scripts/compile_errors.sh
+	sh spec/scripts/tutorial.sh
+	sh spec/scripts/template.sh
 
 # Specs against the headless engine, then the dev tools in a -Ddev build.
 spec-engine: all
 	WOLKIT_BUILD=$(BUILD) crystal spec --error-on-warnings $(LINK) spec/engine/
 	WOLKIT_BUILD=$(BUILD) crystal spec -Ddev --error-on-warnings $(LINK) spec/engine/dev_spec.cr
+	WOLKIT_BUILD=$(BUILD) sh spec/scripts/template.sh
+	sh spec/scripts/kit_styles.sh $(STYLEC)
 
 # Compile the example apps' specs (the headless engine again).
 examples: all
 	$(MAKE) -C ../../examples/counter spec
 	$(MAKE) -C ../../examples/todos spec
+
+# The default look: styles/kit.wolcss compiled by wolkit-stylec into src/wolkit/style/kit_classes.cr
+# and kit_table.cr (committed, checked by spec/scripts/kit_styles.sh).
+STYLEC := $(or $(WOLKIT_STYLEC),$(CARGO_TARGET)/release/wolkit-stylec)
+
+styles: all
+	sh bin/kit-styles.sh $(STYLEC)
 
 format:
 	crystal tool format --check src spec bin
@@ -60,10 +72,10 @@ fmt:
 # template goes to the templates directory `wol app new` reads.
 install:
 	install -d $(SHARD_DIR) $(TEMPLATE_DIR)
-	cp -r src bin shard.yml LICENSE README.md $(SHARD_DIR)/
+	cp -r src bin styles shard.yml LICENSE README.md $(SHARD_DIR)/
 	cp -r ../../templates/app $(TEMPLATE_DIR)/
 
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all spec spec-core spec-engine examples format fmt install clean
+.PHONY: all spec spec-core spec-engine examples styles format fmt install clean

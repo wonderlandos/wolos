@@ -26,7 +26,7 @@ require "../dsl_app_spec"
         Wolkit::Dev::Server.start(app)
         begin
           path = Wolkit::Dev::Server.socket_path
-          (File.info(path).permissions.value & 0o077).should eq 0
+          File.info(path).permissions.should eq File::Permissions.new(0o600)
           client = UNIXSocket.new(path)
           client.puts %({"cmd":"error","message":"src/views/todo.cr:12: text_field has no property `placehodler`."})
           client.gets.to_s.should eq %({"ok":true})

@@ -537,3 +537,21 @@ fn prop_table_and_style_table_agree_on_the_wire() {
 }
 
 use wolkit::scene::PropValue;
+
+#[test]
+fn an_inline_in_out_transition_passes_the_validator() {
+    let mut p = Pipe::new();
+    p.patch(|w| {
+        w.create(1, Kind::Box).insert(0, 1, APPEND);
+        // Easing 4 is `in-out`, the last of the style's curves.
+        w.set_prop(1, id::TRANSITION, &[u32::from(id::OPACITY), 0, 4]);
+    });
+    p.frame(200, 100);
+    let t = p.computed(1).motion.transition;
+    assert_eq!((t.ms, t.ease), (150, Ease::InOut));
+    // One past the last curve is refused whole.
+    let mut w = Writer::new();
+    w.set_prop(1, id::TRANSITION, &[u32::from(id::OPACITY), 0, 5]);
+    let bytes = w.finish(p.seq + 1).to_vec();
+    assert!(Patch::parse(&bytes, &mut Scratch::default()).is_err());
+}

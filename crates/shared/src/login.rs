@@ -45,7 +45,8 @@ pub fn command(data: &[u8]) -> Option<(&str, &[u8])> {
 }
 
 /// One boot timeline line (ADR 0012), from wol-login and the first surfaces alike: uptime in ms
-/// (CLOCK_MONOTONIC counts from boot on FreeBSD). `grep wolos-boot /var/log/messages`.
+/// (CLOCK_MONOTONIC counts from boot). Both send it to the journal via `logger`:
+/// `journalctl -b | grep wolos-boot`.
 pub fn boot_mark(uptime_ms: u64, stage: &str) -> String {
     format!("wolos-boot: {uptime_ms} ms {stage}")
 }

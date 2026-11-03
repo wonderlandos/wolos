@@ -2,6 +2,7 @@
 //! The instance builder on a realistic window: draw-call budget (plan budget 9), glyph instances,
 //! chunk reuse when only the scroll offset changes, and the 64-byte instance layout.
 
+#[path = "support/text.rs"]
 mod text_support;
 
 use text_support::{Fonts, fonts};

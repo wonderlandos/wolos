@@ -4,6 +4,8 @@
 //! Ids are `WK-nnn`, catalogued here and in `docs/modules/wolkit-style.md`, one test each in
 //! `tests/lints.rs`.
 
+use crate::scene::ids::{Ix, to_u32};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
     Error,
@@ -107,11 +109,11 @@ impl Diag {
         for ch in self
             .source_line
             .chars()
-            .take(self.col.saturating_sub(1) as usize)
+            .take(self.col.saturating_sub(1).ix())
         {
             s.push(if ch == '\t' { '\t' } else { ' ' });
         }
-        s.push_str(&"^".repeat(self.len.max(1) as usize));
+        s.push_str(&"^".repeat(self.len.max(1).ix()));
         s.push('\n');
         if let Some(h) = &self.help {
             s.push_str(&format!("{pad} = help: {h}\n"));
@@ -159,8 +161,8 @@ impl<'a> Lines<'a> {
             .find('\n')
             .map_or(self.src.len(), |n| start + n);
         let text = self.src[start..end].trim_end_matches('\r');
-        let col = self.src[start..off.max(start)].chars().count() as u32 + 1;
-        (li as u32 + 1, col, text)
+        let col = to_u32(self.src[start..off.max(start)].chars().count()) + 1;
+        (to_u32(li) + 1, col, text)
     }
     pub fn span_chars(&self, from: usize, to: usize) -> u32 {
         let from = boundary(self.src, from);
@@ -170,8 +172,8 @@ impl<'a> Lines<'a> {
         if l1 != l2 {
             // A caret under the first line only.
             let (_, c, t) = self.locate(from);
-            return (t.chars().count() as u32 + 1).saturating_sub(c).max(1);
+            return (to_u32(t.chars().count()) + 1).saturating_sub(c).max(1);
         }
-        self.src[from..to].chars().count().max(1) as u32
+        to_u32(self.src[from..to].chars().count().max(1))
     }
 }

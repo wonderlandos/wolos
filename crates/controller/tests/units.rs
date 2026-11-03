@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Root unit hardening (audit A7/B5, ADR 0015): every service under files/usr/lib/systemd/system
+//! Root unit hardening (audit A7/B5, ADR 0040): every service under files/usr/lib/systemd/system
 //! that runs as root (no `User=`) carries the sandbox keys its daemon allows, and the keys it must
 //! not have stay out (a mount namespace would make wolos-shm-limit remount a private /dev/shm;
 //! ProtectHome would hide the compositor sockets wolos-power talks to). This is the gate until the
@@ -537,4 +537,45 @@ fn wold_has_its_own_descriptor_limit() {
         .map(|(_, v)| v.as_str())
         .collect();
     assert_eq!(got, ["4096:524288"]);
+}
+
+/// ADR 0012: wol-login (a wold job, root) opens the console VT (`controller::login::CONSOLE`) and
+/// locks VT switching (`VT_LOCKSWITCH` needs `CAP_SYS_TTY_CONFIG`). A sandbox key added to
+/// wold.service later must not take the device or the capability away.
+#[test]
+fn wold_lets_the_login_job_reach_the_console_vt() {
+    assert_eq!(controller::login::CONSOLE, "/dev/tty1");
+    let have = service("wold.service");
+    let get = |key: &str| {
+        have.iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert!(get("User").is_empty(), "wold runs as root");
+    assert!(
+        get("PrivateDevices").iter().all(|v| *v == "no"),
+        "a private /dev has no /dev/tty1"
+    );
+    let allowed = get("DeviceAllow");
+    assert!(
+        get("DevicePolicy").iter().all(|v| *v == "auto")
+            || allowed
+                .iter()
+                .any(|a| a.starts_with("/dev/tty1") || a.starts_with("char-tty")),
+        "{allowed:?}"
+    );
+    for v in get("CapabilityBoundingSet") {
+        assert!(
+            v.split_whitespace().any(|c| c == "CAP_SYS_TTY_CONFIG"),
+            "CapabilityBoundingSet={v}"
+        );
+    }
+    let job = std::fs::read_to_string(
+        siblings::root().join("desktop/overlay/etc/wolos/jobs/org.wol.login.json"),
+    )
+    .unwrap();
+    let job = shared::jobs::JobSpec::parse(&job).unwrap();
+    assert_eq!(job.program, ["/usr/bin/wol-login"]);
+    assert_eq!(job.user, None, "the login job keeps wold's root identity");
 }

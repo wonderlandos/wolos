@@ -100,7 +100,8 @@ fn ids_are_append_only() {
     }
     assert!(
         broken.is_empty() || (broken[0].starts_with('#') && g.len() > w.len()),
-        "tests/style_props.snap does not match the property table: `{}` changed or moved. Ids and keyword order are part of WSB1; append, never edit (bless with WOLKIT_BLESS=1 only for an addition).",
+        "tests/style_props.snap does not match the property table: `{}` changed or moved. Ids and keyword order are part of \
+WSB1; append, never edit (bless with WOLKIT_BLESS=1 only for an addition).",
         broken.first().unwrap_or(&"")
     );
     panic!(

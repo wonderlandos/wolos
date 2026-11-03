@@ -4,7 +4,7 @@
 //! The fonts live in `tests/golden/fonts` (see the README there for sources and licences) so the
 //! goldens never depend on what a machine happens to have installed.
 
-#![allow(dead_code)]
+#![allow(dead_code)] // each test binary uses some of these helpers
 
 use std::path::PathBuf;
 

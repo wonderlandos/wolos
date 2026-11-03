@@ -30,7 +30,11 @@ button:active { transform: scale(0.98); }
 fn many_rules(n: usize) -> String {
     let mut s = String::new();
     for i in 0..n {
-        s.push_str(&format!(".c{} {{ padding: sm md; background: card; border-radius: m; opacity: 0.9; }}\n.c{}:hover {{ background: control; }}\n", name(i), name(i)));
+        let n = name(i);
+        s.push_str(&format!(
+            ".c{n} {{ padding: sm md; background: card; border-radius: m; opacity: 0.9; }}\n"
+        ));
+        s.push_str(&format!(".c{n}:hover {{ background: control; }}\n"));
     }
     s
 }

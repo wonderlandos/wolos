@@ -14,9 +14,13 @@
 //! ```
 //! The loader treats the bytes as untrusted: every count is bounded before it is used, every value
 //! is range checked, and nothing panics (`fuzz_targets/wolkit_wsb`).
-use super::prop::*;
-use super::select::*;
-use super::value::*;
+use super::prop::{Decls, PropId, get_prop, put_prop};
+use super::select::{
+    ClassDef, KINDS, MAX_CLASS_NAME, MAX_CLASSES, MAX_TABLE_BYTES, MAX_VARIANTS, MEDIA, ParentSel,
+    STATES, StyleTable, Variant,
+};
+use super::value::{Props, Rd, Wr};
+use crate::scene::ids::{Ix, to_u8, to_u32};
 
 pub const MAGIC: &[u8; 4] = b"WSB1";
 pub const VERSION: u16 = 1;
@@ -71,7 +75,7 @@ pub fn fnv1a(b: &[u8]) -> u32 {
 }
 
 fn put_variants(w: &mut Wr, defs: &[Variant]) {
-    w.u8(defs.len() as u8);
+    w.u8(to_u8(defs.len()));
     for v in defs {
         w.u16(v.state);
         w.u8(v.media);
@@ -86,7 +90,7 @@ fn put_variants(w: &mut Wr, defs: &[Variant]) {
         w.u128(v.decls.mask);
         let mut m = v.decls.mask;
         while m != 0 {
-            let b = m.trailing_zeros() as u8;
+            let b = to_u8(m.trailing_zeros());
             m &= m - 1;
             if let Some(id) = PropId::from_u8(b) {
                 put_prop(id, &v.decls.p, w);
@@ -104,13 +108,13 @@ pub fn write(t: &StyleTable) -> Result<Vec<u8>, WsbError> {
     w.0.extend_from_slice(MAGIC);
     w.u16(VERSION);
     w.u16(0);
-    w.u32(t.kinds.len() as u32);
-    w.u32(t.classes.len() as u32);
+    w.u32(to_u32(t.kinds.len()));
+    w.u32(to_u32(t.classes.len()));
     for k in &t.kinds {
         put_variants(&mut w, &k.variants);
     }
     for c in &t.classes {
-        w.u8(c.name.len() as u8);
+        w.u8(to_u8(c.name.len()));
         w.0.extend_from_slice(c.name.as_bytes());
         put_variants(&mut w, &c.variants);
     }
@@ -131,12 +135,12 @@ pub fn anim_mask() -> u128 {
 }
 
 fn get_variants(r: &mut Rd, n_classes: u32) -> Result<Vec<Variant>, WsbError> {
-    let count = r.u8().ok_or(WsbError::Truncated)? as usize;
+    let count = r.u8().ok_or(WsbError::Truncated)?.ix();
     if count > MAX_VARIANTS {
         return Err(WsbError::Limit("variants"));
     }
     let valid_states = (1u16 << STATES.len()) - 1;
-    let valid_media = (1u16 << MEDIA.len()) as u8 - 1;
+    let valid_media = to_u8((1u16 << MEDIA.len()) - 1);
     let mut out: Vec<Variant> = Vec::with_capacity(count);
     for _ in 0..count {
         let state = r.u16().ok_or(WsbError::Truncated)?;
@@ -172,7 +176,7 @@ fn get_variants(r: &mut Rd, n_classes: u32) -> Result<Vec<Variant>, WsbError> {
         };
         let mut m = mask;
         while m != 0 {
-            let b = m.trailing_zeros() as u8;
+            let b = to_u8(m.trailing_zeros());
             m &= m - 1;
             let id = PropId::from_u8(b).ok_or(WsbError::Value("property id"))?;
             get_prop(id, &mut decls.p, r).ok_or(WsbError::Value("property value"))?;
@@ -214,10 +218,10 @@ pub fn load(b: &[u8]) -> Result<StyleTable, WsbError> {
     r.u16().ok_or(WsbError::Truncated)?;
     let n_kinds = r.u32().ok_or(WsbError::Truncated)?;
     let n_classes = r.u32().ok_or(WsbError::Truncated)?;
-    if n_kinds as usize != KINDS.len() {
+    if n_kinds.ix() != KINDS.len() {
         return Err(WsbError::Limit("kinds"));
     }
-    if n_classes as usize > MAX_CLASSES {
+    if n_classes.ix() > MAX_CLASSES {
         return Err(WsbError::Limit("classes"));
     }
     if b.len() < 4 {
@@ -240,7 +244,7 @@ pub fn load(b: &[u8]) -> Result<StyleTable, WsbError> {
     }
     let mut seen = std::collections::HashSet::new();
     for _ in 0..n_classes {
-        let len = r.u8().ok_or(WsbError::Truncated)? as usize;
+        let len = r.u8().ok_or(WsbError::Truncated)?.ix();
         let name = r.take(len).ok_or(WsbError::Truncated)?;
         let name = std::str::from_utf8(name).map_err(|_| WsbError::Name)?;
         if len > MAX_CLASS_NAME

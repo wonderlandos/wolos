@@ -114,7 +114,9 @@ fn the_guard_fits_its_descriptor_limit() {
 }
 
 /// Audit P6-2: the sweep parses hostile files in every home. It reads them (CAP_DAC_READ_SEARCH)
-/// and never changes an owner, so it holds no CAP_CHOWN and sees homes read-only.
+/// and sees homes read-only. Audit R7-1: it also hands each account its findings list
+/// (`write_as` fchowns `sweep-<uid>.json` to the account), so it keeps CAP_CHOWN, and every other
+/// place that capability could reach is read-only or private to the run.
 #[test]
 fn the_sweep_reads_homes_and_cannot_change_them() {
     let path = concat!(
@@ -130,9 +132,29 @@ fn the_sweep_reads_homes_and_cannot_change_them() {
     };
     for key in ["AmbientCapabilities", "CapabilityBoundingSet"] {
         let caps = value(key);
-        let caps: Vec<&str> = caps.split_whitespace().collect();
-        assert_eq!(caps, ["CAP_DAC_READ_SEARCH"], "{key}: read, nothing else");
+        let mut caps: Vec<&str> = caps.split_whitespace().collect();
+        caps.sort_unstable();
+        assert_eq!(
+            caps,
+            ["CAP_CHOWN", "CAP_DAC_READ_SEARCH"],
+            "{key}: read, and give each account its list; nothing else"
+        );
     }
+    assert_eq!(value("User"), "_xguard");
+    assert_eq!(value("ProtectSystem"), "strict");
     assert_eq!(value("ProtectHome"), "read-only");
     assert_eq!(value("ReadWritePaths"), "/var/lib/wolos/xguard");
+    for key in [
+        "PrivateTmp",
+        "PrivateDevices",
+        "ProtectKernelTunables",
+        "ProtectControlGroups",
+        "NoNewPrivileges",
+    ] {
+        assert_eq!(
+            value(key),
+            "yes",
+            "{key}: CAP_CHOWN reaches the state directory only"
+        );
+    }
 }

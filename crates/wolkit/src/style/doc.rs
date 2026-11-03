@@ -3,87 +3,141 @@
 //! compares the file with `render()`; regenerate with `wolkit-stylec --doc > docs/modules/wolkit-style.md`
 //! (or `WOLKIT_BLESS=1 cargo test -p wolkit --test style_doc`).
 use super::lint::{LINTS, Severity};
-use super::prop::*;
-use super::select::*;
-use super::tokens::*;
+use super::prop::{Effect, Group, PROPS, SHORTHANDS};
+use super::select::{KINDS, MAX_CLASSES, MAX_TABLE_BYTES, MAX_VARIANTS, MEDIA, STATES};
+use super::tokens::{
+    CONTRAST, MIN_FONT_PX, MOTION, RADIUS, ROLES, SPACE, ShadowTok, Step, Token, spring_params,
+};
+use crate::scene::ids::to_u8;
 use std::fmt::Write;
 
 fn esc(s: &str) -> String {
     s.replace('|', "\\|")
 }
 
-pub fn render() -> String {
-    let mut o = String::new();
-    let w = &mut o;
+fn ticks<'a>(items: impl Iterator<Item = &'a str>, prefix: &str) -> String {
+    items
+        .map(|s| format!("`{prefix}{s}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+const INTRO: &str = "The style language of libWolkit: a small CSS-like subset whose values are theme tokens, not literals. \
+Two authoring tiers meet in one binary table (`WSB1`): inline arguments checked by the shard's macros, and \
+`src/styles/*.wolcss` sheets compiled by `wolkit-stylec` with the same parser the engine's dev loader uses.";
+
+const EXAMPLE: &str = "```css
+.card        { background: card; padding: md; border-radius: m; box-shadow: sm; }
+.card:hover  { background: control; }
+.row:hover > .actions { opacity: 1; }
+@dark        { .card { box-shadow: md; } }
+button       { cursor: pointer; transition: background fast ease; }
+```";
+
+const RESOLUTION: &str = "- There is no specificity and there is no `!important` (RU-056). Resolution order is fixed: the rules of the node kind, \
+then the classes in the order the node lists them (later wins), then state and media variants (a variant with more \
+conditions comes later; equals keep the order written), then inline properties.";
+
+const INHERITANCE: &str = "- Inherited properties (marked below) are copied from the parent when no rule sets them. Results are interned, \
+so two nodes with the same computed style share one entry.";
+
+const PRAGMA: &str = "- The pragma `/* wolkit: off-scale */` lifts the spacing and radius scale for a file (WK-005, WK-006). \
+It is counted by a ratchet and reported as WK-020.";
+
+const TOKENS_INTRO: &str = "Colours are the 13 theme tokens of `shared::theme::TOKENS`, in this order (ids are the position). \
+`alpha(token, 20%)` makes a see-through one and `transparent` is clear. A hex literal is WK-001, `rgb()` and the like WK-023 (RU-062).";
+
+const EASES: &str = "| Eases | `ease` (the theme's `--ease`, cubic-bezier(0.2, 0.8, 0.2, 1)), `linear`, `in`, `out`, `in-out` | `--ease` |";
+
+const SHADOWS_INTRO: &str = "Shadows are fixed material (black at an alpha), not themable. `box-shadow` holds two layers at most; `lg` is two.";
+
+const PROPS_INTRO: &str = "`Affects` is what a change dirties: `layout` or `paint` (a paint change never dirties layout). \
+`Anim` marks the properties a `transition` can run on. Ids are append-only (a property's id is part of `WSB1`).";
+
+const LAYOUT_INTRO: &str = "A flexbox-like subset. Every box is border-box; sizes are logical `f32` pixels. A node's size comes from its style, \
+the parent's `stretch` or flex result, or its content. Children are laid out by the flexbox algorithm: single and multi line, \
+grow and shrink with min and max freezing, `justify-content`, `align-items`, `align-self`, `align-content`, gaps, auto margins, \
+`row-reverse` and `column-reverse`, absolute children placed by insets in the parent's box, `aspect-ratio`, and overflow. \
+Where it differs from CSS:";
+
+const LAYOUT_NOTES: [&str; 8] = [
+    "`min-width` and `min-height` of `auto` are 0, not the content size. Use `shrink: 0` or a minimum where text must not be squeezed.",
+    "A container with `overflow: scroll` or `auto` never shrinks its children; it reports its content extent for scrolling \
+instead. `scroll` and `vlist` nodes start with `overflow: auto` and `flex-direction: column`; a `spacer` starts with `grow: 1`.",
+    "Percentages resolve against the parent's inner box when it is known and behave as `auto` otherwise; a percentage margin \
+is a share of the parent's inner width.",
+    "A content-sized width is the smaller of the content's natural width and the room offered; a content-sized height is never clamped.",
+    "`align-items: baseline` behaves as `start` in 1.0.",
+    "`display: none` removes the node from layout; its rectangle is empty.",
+    "An `overlay` leaves the flow. With an anchor it sits on the chosen side (flipped when it does not fit, shifted to stay \
+inside the window); without one it is centred.",
+    "A `vlist` positions its realised children by row index (the node key) from the list's estimated row height and the \
+measured heights of rows laid out so far.",
+];
+
+const INCREMENTAL: &str = "Incremental layout: a change marks the node and its ancestors up to the nearest *relayout boundary* \
+(a node whose width and height are both in pixels, or that is out of the flow). Measured sizes are cached per node.";
+
+const NOT_IN_1_0: &str = "Grid (planned for 1.1), floats, tables, pseudo-elements, `@import`, `@font-face`, `@keyframes`, `calc()`, \
+filters and blend modes, `position: fixed` and `sticky`, variable-font axes, descendant and sibling selectors. \
+Each is reported as WK-009 or WK-012, never ignored silently.";
+
+const LINTS_INTRO: &str = "Diagnostics are sentences with `file:line:col`, the source line, a caret and a suggestion; \
+the word \"failed\" never appears (RU-003). `tests/lints.rs` has one test per id.";
+
+const WSB: &str = "Little endian: `WSB1`, version, flags, the number of kinds and classes, one variant list per kind, then each class \
+(name and variant list), then a 32-bit FNV-1a checksum. A variant is a state (0 or one bit), a media mask, an optional parent \
+selector, a 128-bit mask of the properties it sets, and the value of each set property in id order. The loader treats the \
+bytes as untrusted: every count is bounded before use, every value is range checked, and it never panics. \
+`wolkit-stylec` also writes `src/gen/styles.cr`, one constant per class.";
+
+const COMPILER: &str = "```
+wolkit-stylec [--out build/styles.wsb] [--crystal src/gen/styles.cr] [--deny-warnings] SHEET.wolcss...
+wolkit-stylec --doc
+```";
+
+const COMPILER_NOTES: &str = "Sheets are read in sorted order, so the same files always give the same table. Class ids follow \
+first appearance. Errors print every diagnostic and write nothing (exit 1); warnings print and pass unless `--deny-warnings` is given. \
+The engine's dev loader (`style::compile`) and `style::load` run the same parser and the same checks.";
+
+const INLINE: &str = "Tier 1 arguments reach the engine as `SET_PROP` ops with the ids of `scene::prop` and are mapped by property onto \
+the same declarations (`style::inline`). A role in `font-size` sets the size only; `text_scale` of the environment scales every \
+declared size.";
+
+fn header(w: &mut String) {
     let _ = writeln!(w, "# Wolkit style (`.wolcss`)\n");
     let _ = writeln!(
         w,
         "<!-- Generated by `wolkit-stylec --doc` from crates/wolkit/src/style. Do not edit; `tests/style_doc.rs` fails when this file drifts. -->\n"
     );
-    let _ = writeln!(
-        w,
-        "The style language of libWolkit: a small CSS-like subset whose values are theme tokens, not literals. Two authoring tiers meet in one binary table (`WSB1`): inline arguments checked by the shard's macros, and `src/styles/*.wolcss` sheets compiled by `wolkit-stylec` with the same parser the engine's dev loader uses.\n"
-    );
-    let _ = writeln!(
-        w,
-        "```css\n.card        {{ background: card; padding: md; border-radius: m; box-shadow: sm; }}\n.card:hover  {{ background: control; }}\n.row:hover > .actions {{ opacity: 1; }}\n@dark        {{ .card {{ box-shadow: md; }} }}\nbutton       {{ cursor: pointer; transition: background fast ease; }}\n```\n"
-    );
+    let _ = writeln!(w, "{INTRO}\n\n{EXAMPLE}\n");
+}
 
+fn selectors(w: &mut String) {
     let _ = writeln!(w, "## Selectors and the order of resolution\n");
     let _ = writeln!(
         w,
-        "- `.class`, a node kind (`button`), at most one state (`.card:hover`), and the single form `.parent:state > .child` for hover-reveal actions. Selector lists with commas are fine."
+        "- `.class`, a node kind (`button`), at most one state (`.card:hover`), and the single form \
+`.parent:state > .child` for hover-reveal actions. Selector lists with commas are fine."
     );
-    let _ = writeln!(
-        w,
-        "- States: {}.",
-        STATES
-            .iter()
-            .map(|s| format!("`:{s}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
+    let _ = writeln!(w, "- States: {}.", ticks(STATES.iter().copied(), ":"));
     let _ = writeln!(
         w,
         "- Media wrap rules: `@dark {{ ... }}`; several conditions combine with a space (`@dark @contrast {{ ... }}`). Conditions: {}.",
-        MEDIA
-            .iter()
-            .map(|s| format!("`@{s}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
+        ticks(MEDIA.iter().copied(), "@")
     );
-    let _ = writeln!(
-        w,
-        "- Node kinds: {}.",
-        KINDS
-            .iter()
-            .map(|s| format!("`{s}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    let _ = writeln!(
-        w,
-        "- There is no specificity and there is no `!important` (RU-056). Resolution order is fixed: the rules of the node kind, then the classes in the order the node lists them (later wins), then state and media variants (a variant with more conditions comes later; equals keep the order written), then inline properties."
-    );
+    let _ = writeln!(w, "- Node kinds: {}.", ticks(KINDS.iter().copied(), ""));
+    let _ = writeln!(w, "{RESOLUTION}");
     let _ = writeln!(
         w,
         "- A class holds at most {MAX_VARIANTS} variants; a table holds at most {MAX_CLASSES} classes and {} MiB.",
         MAX_TABLE_BYTES >> 20
     );
-    let _ = writeln!(
-        w,
-        "- Inherited properties (marked below) are copied from the parent when no rule sets them. Results are interned, so two nodes with the same computed style share one entry."
-    );
-    let _ = writeln!(
-        w,
-        "- The pragma `/* wolkit: off-scale */` lifts the spacing and radius scale for a file (WK-005, WK-006). It is counted by a ratchet and reported as WK-020.\n"
-    );
+    let _ = writeln!(w, "{INHERITANCE}\n{PRAGMA}\n");
+}
 
-    let _ = writeln!(w, "## Tokens, not literals\n");
-    let _ = writeln!(
-        w,
-        "Colours are the 13 theme tokens of `shared::theme::TOKENS`, in this order (ids are the position). `alpha(token, 20%)` makes a see-through one and `transparent` is clear. A hex literal is WK-001, `rgb()` and the like WK-023 (RU-062).\n"
-    );
+fn colours(w: &mut String) {
+    let _ = writeln!(w, "## Tokens, not literals\n\n{TOKENS_INTRO}\n");
     let _ = writeln!(w, "| Id | Token | Under `@contrast` |\n|---|---|---|");
     for (i, t) in Token::ALL.iter().enumerate() {
         let c = CONTRAST
@@ -98,6 +152,28 @@ pub fn render() -> String {
             });
         let _ = writeln!(w, "| {i} | `{}` | {c} |", t.name());
     }
+}
+
+fn steps(s: &[Step], unit: &str) -> String {
+    let one = |x: &Step| {
+        if x.value >= 1000.0 {
+            format!("`{}` pill", x.name)
+        } else {
+            format!("`{}` {}{unit}", x.name, x.value)
+        }
+    };
+    s.iter().map(one).collect::<Vec<_>>().join(", ")
+}
+
+fn vars(s: &[Step]) -> String {
+    s.iter()
+        .filter_map(|x| x.var)
+        .map(|v| format!("`{v}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn scales(w: &mut String) {
     let _ = writeln!(
         w,
         "\nThe scales mirror `shared::theme::SCALE` (a test holds them to it):\n"
@@ -106,25 +182,6 @@ pub fn render() -> String {
         w,
         "| Scale | Names and values | Theme variable |\n|---|---|---|"
     );
-    let steps = |s: &[Step], unit: &str| -> String {
-        s.iter()
-            .map(|x| {
-                if x.value >= 1000.0 {
-                    format!("`{}` pill", x.name)
-                } else {
-                    format!("`{}` {}{unit}", x.name, x.value)
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let vars = |s: &[Step]| -> String {
-        s.iter()
-            .filter_map(|x| x.var)
-            .map(|v| format!("`{v}`"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
     let _ = writeln!(
         w,
         "| Spacing (padding, margin, gap) | {} | {} |",
@@ -143,13 +200,11 @@ pub fn render() -> String {
         steps(&MOTION, "ms"),
         vars(&MOTION)
     );
+    let _ = writeln!(w, "{EASES}");
     let _ = writeln!(
         w,
-        "| Eases | `ease` (the theme's `--ease`, cubic-bezier(0.2, 0.8, 0.2, 1)), `linear`, `in`, `out`, `in-out` | `--ease` |"
-    );
-    let _ = writeln!(
-        w,
-        "\nA pixel value off the spacing or radius scale is WK-005 or WK-006; a font below {MIN_FONT_PX}px is WK-003 (RU-059); a transition over 500 ms is WK-004 (RU-060).\n"
+        "\nA pixel value off the spacing or radius scale is WK-005 or WK-006; a font below {MIN_FONT_PX}px is WK-003 (RU-059); \
+a transition over 500 ms is WK-004 (RU-060).\n"
     );
     let _ = writeln!(
         w,
@@ -159,10 +214,10 @@ pub fn render() -> String {
     for r in &ROLES {
         let _ = writeln!(w, "| `{}` | {}px | {} |", r.name, r.size, r.weight);
     }
-    let _ = writeln!(
-        w,
-        "\nShadows are fixed material (black at an alpha), not themable. `box-shadow` holds two layers at most; `lg` is two.\n"
-    );
+}
+
+fn materials(w: &mut String) {
+    let _ = writeln!(w, "\n{SHADOWS_INTRO}\n");
     let _ = writeln!(w, "| Shadow | Layers (offset y, blur, alpha) |\n|---|---|");
     for s in ShadowTok::ALL {
         let l: Vec<String> = s
@@ -170,16 +225,12 @@ pub fn render() -> String {
             .iter()
             .map(|p| format!("{}px {}px {}%", p.dy, p.blur, p.alpha))
             .collect();
-        let _ = writeln!(
-            w,
-            "| `{}` | {} |",
-            s.name(),
-            if l.is_empty() {
-                "none".into()
-            } else {
-                l.join("; ")
-            }
-        );
+        let text = if l.is_empty() {
+            "none".to_string()
+        } else {
+            l.join("; ")
+        };
+        let _ = writeln!(w, "| `{}` | {text} |", s.name());
     }
     let _ = writeln!(
         w,
@@ -201,12 +252,10 @@ pub fn render() -> String {
             );
         }
     }
+}
 
-    let _ = writeln!(w, "\n## Properties\n");
-    let _ = writeln!(
-        w,
-        "`Affects` is what a change dirties: `layout` or `paint` (a paint change never dirties layout). `Anim` marks the properties a `transition` can run on. Ids are append-only (a property's id is part of `WSB1`).\n"
-    );
+fn properties(w: &mut String) {
+    let _ = writeln!(w, "\n## Properties\n\n{PROPS_INTRO}\n");
     for g in [Group::Layout, Group::Paint, Group::Text, Group::Motion] {
         let _ = writeln!(w, "### {}\n", g.name());
         let _ = writeln!(
@@ -214,18 +263,18 @@ pub fn render() -> String {
             "| Id | Property | Values | Inherited | Affects | Anim | Notes |\n|---|---|---|---|---|---|---|"
         );
         for p in PROPS.iter().filter(|p| p.group == g) {
+            let affects = if p.effect == Effect::Layout {
+                "layout"
+            } else {
+                "paint"
+            };
             let _ = writeln!(
                 w,
-                "| {} | `{}` | {} | {} | {} | {} | {} |",
-                p.id as u8,
+                "| {} | `{}` | {} | {} | {affects} | {} | {} |",
+                to_u8(p.id as u64),
                 p.name,
                 esc(p.grammar),
                 if p.inherited { "yes" } else { "no" },
-                if p.effect == Effect::Layout {
-                    "layout"
-                } else {
-                    "paint"
-                },
                 if p.anim { "yes" } else { "" },
                 esc(p.doc)
             );
@@ -248,40 +297,19 @@ pub fn render() -> String {
             esc(s.doc)
         );
     }
+}
 
-    let _ = writeln!(w, "\n## Layout\n");
-    let _ = writeln!(
-        w,
-        "A flexbox-like subset. Every box is border-box; sizes are logical `f32` pixels. A node's size comes from its style, the parent's `stretch` or flex result, or its content. Children are laid out by the flexbox algorithm: single and multi line, grow and shrink with min and max freezing, `justify-content`, `align-items`, `align-self`, `align-content`, gaps, auto margins, `row-reverse` and `column-reverse`, absolute children placed by insets in the parent's box, `aspect-ratio`, and overflow. Where it differs from CSS:\n"
-    );
-    for l in [
-        "`min-width` and `min-height` of `auto` are 0, not the content size. Use `shrink: 0` or a minimum where text must not be squeezed.",
-        "A container with `overflow: scroll` or `auto` never shrinks its children; it reports its content extent for scrolling instead. `scroll` and `vlist` nodes start with `overflow: auto` and `flex-direction: column`; a `spacer` starts with `grow: 1`.",
-        "Percentages resolve against the parent's inner box when it is known and behave as `auto` otherwise; a percentage margin is a share of the parent's inner width.",
-        "A content-sized width is the smaller of the content's natural width and the room offered; a content-sized height is never clamped.",
-        "`align-items: baseline` behaves as `start` in 1.0.",
-        "`display: none` removes the node from layout; its rectangle is empty.",
-        "An `overlay` leaves the flow. With an anchor it sits on the chosen side (flipped when it does not fit, shifted to stay inside the window); without one it is centred.",
-        "A `vlist` positions its realised children by row index (the node key) from the list's estimated row height and the measured heights of rows laid out so far.",
-    ] {
+fn layout(w: &mut String) {
+    let _ = writeln!(w, "\n## Layout\n\n{LAYOUT_INTRO}\n");
+    for l in LAYOUT_NOTES {
         let _ = writeln!(w, "- {l}");
     }
-    let _ = writeln!(
-        w,
-        "\nIncremental layout: a change marks the node and its ancestors up to the nearest *relayout boundary* (a node whose width and height are both in pixels, or that is out of the flow). Measured sizes are cached per node.\n"
-    );
+    let _ = writeln!(w, "\n{INCREMENTAL}\n");
+    let _ = writeln!(w, "## Not in 1.0\n\n{NOT_IN_1_0}\n");
+}
 
-    let _ = writeln!(w, "## Not in 1.0\n");
-    let _ = writeln!(
-        w,
-        "Grid (planned for 1.1), floats, tables, pseudo-elements, `@import`, `@font-face`, `@keyframes`, `calc()`, filters and blend modes, `position: fixed` and `sticky`, variable-font axes, descendant and sibling selectors. Each is reported as WK-009 or WK-012, never ignored silently.\n"
-    );
-
-    let _ = writeln!(w, "## Lints\n");
-    let _ = writeln!(
-        w,
-        "Diagnostics are sentences with `file:line:col`, the source line, a caret and a suggestion; the word \"failed\" never appears (RU-003). `tests/lints.rs` has one test per id.\n"
-    );
+fn lints(w: &mut String) {
+    let _ = writeln!(w, "## Lints\n\n{LINTS_INTRO}\n");
     let _ = writeln!(w, "| Id | Severity | Mirrors | Checks |\n|---|---|---|---|");
     for l in LINTS {
         let sev = if l.severity == Severity::Error {
@@ -291,32 +319,31 @@ pub fn render() -> String {
         };
         let _ = writeln!(
             w,
-            "| {} | {} | {} | {} |",
+            "| {} | {sev} | {} | {} |",
             l.id,
-            sev,
             l.rule.unwrap_or(""),
             esc(l.summary)
         );
     }
+}
 
-    let _ = writeln!(w, "\n## The `WSB1` table\n");
-    let _ = writeln!(
-        w,
-        "Little endian: `WSB1`, version, flags, the number of kinds and classes, one variant list per kind, then each class (name and variant list), then a 32-bit FNV-1a checksum. A variant is a state (0 or one bit), a media mask, an optional parent selector, a 128-bit mask of the properties it sets, and the value of each set property in id order. The loader treats the bytes as untrusted: every count is bounded before use, every value is range checked, and it never panics. `wolkit-stylec` also writes `src/gen/styles.cr`, one constant per class.\n"
-    );
-    let _ = writeln!(w, "## The compiler\n");
-    let _ = writeln!(
-        w,
-        "```\nwolkit-stylec [--out build/styles.wsb] [--crystal src/gen/styles.cr] [--deny-warnings] SHEET.wolcss...\nwolkit-stylec --doc\n```\n"
-    );
-    let _ = writeln!(
-        w,
-        "Sheets are read in sorted order, so the same files always give the same table. Class ids follow first appearance. Errors print every diagnostic and write nothing (exit 1); warnings print and pass unless `--deny-warnings` is given. The engine's dev loader (`style::compile`) and `style::load` run the same parser and the same checks.\n"
-    );
-    let _ = writeln!(w, "## Inline properties\n");
-    let _ = writeln!(
-        w,
-        "Tier 1 arguments reach the engine as `SET_PROP` ops with the ids of `scene::prop` and are mapped by property onto the same declarations (`style::inline`). A role in `font-size` sets the size only; `text_scale` of the environment scales every declared size."
-    );
+fn formats(w: &mut String) {
+    let _ = writeln!(w, "\n## The `WSB1` table\n\n{WSB}\n");
+    let _ = writeln!(w, "## The compiler\n\n{COMPILER}\n\n{COMPILER_NOTES}\n");
+    let _ = writeln!(w, "## Inline properties\n\n{INLINE}");
+}
+
+/// The whole page.
+pub fn render() -> String {
+    let mut o = String::new();
+    header(&mut o);
+    selectors(&mut o);
+    colours(&mut o);
+    scales(&mut o);
+    materials(&mut o);
+    properties(&mut o);
+    layout(&mut o);
+    lints(&mut o);
+    formats(&mut o);
     o
 }

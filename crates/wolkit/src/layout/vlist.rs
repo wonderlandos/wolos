@@ -2,6 +2,8 @@
 //! Virtual list geometry: where row `i` starts, which rows are visible, with a measured height for
 //! rows that have been laid out and an estimate for the rest. A Fenwick tree of the differences
 //! keeps `offset` and `row_at` at O(log n) for 100k rows, and fixed height lists stay O(1).
+use crate::scene::ids::{Ix, to_u32};
+use crate::style::num::f32_to_u32;
 use std::ops::Range;
 
 #[derive(Clone, Debug)]
@@ -44,14 +46,14 @@ impl VlistModel {
         }
         if count < self.count {
             // Drop measurements past the end: rebuild if any existed there.
-            if self.measured.iter().skip(count as usize).any(|m| *m != 0.0) {
+            if self.measured.iter().skip(count.ix()).any(|m| *m != 0.0) {
                 let keep: Vec<(u32, f32)> = self
                     .measured
                     .iter()
                     .enumerate()
-                    .take(count as usize)
+                    .take(count.ix())
                     .filter(|(_, m)| **m != 0.0)
-                    .map(|(i, m)| (i as u32, *m))
+                    .map(|(i, m)| (to_u32(i), *m))
                     .collect();
                 self.tree.clear();
                 self.measured.clear();
@@ -66,24 +68,24 @@ impl VlistModel {
 
     fn ensure(&mut self) {
         if self.tree.is_empty() && self.count > 0 {
-            self.tree = vec![0.0; self.count as usize + 1];
-            self.measured = vec![0.0; self.count as usize];
+            self.tree = vec![0.0; self.count.ix() + 1];
+            self.measured = vec![0.0; self.count.ix()];
         }
-        if self.tree.len() < self.count as usize + 1 {
+        if self.tree.len() < self.count.ix() + 1 {
             // The count grew: rebuild from the measurements.
             let old = std::mem::take(&mut self.measured);
-            self.tree = vec![0.0; self.count as usize + 1];
-            self.measured = vec![0.0; self.count as usize];
+            self.tree = vec![0.0; self.count.ix() + 1];
+            self.measured = vec![0.0; self.count.ix()];
             for (i, m) in old.into_iter().enumerate() {
                 if m != 0.0 {
-                    self.set_measured(i as u32, m);
+                    self.set_measured(to_u32(i), m);
                 }
             }
         }
     }
 
     fn add(&mut self, i: u32, d: f64) {
-        let mut k = i as usize + 1;
+        let mut k = i.ix() + 1;
         while k < self.tree.len() {
             self.tree[k] += d;
             k += k & (!k).wrapping_add(1);
@@ -92,7 +94,7 @@ impl VlistModel {
 
     /// Prefix sum of the differences for rows `[0, i)`.
     fn prefix(&self, i: u32) -> f64 {
-        let mut k = (i as usize).min(self.tree.len().saturating_sub(1));
+        let mut k = (i.ix()).min(self.tree.len().saturating_sub(1));
         let mut s = 0.0;
         while k > 0 {
             s += self.tree[k];
@@ -102,7 +104,7 @@ impl VlistModel {
     }
 
     pub fn height_of(&self, i: u32) -> f32 {
-        match self.measured.get(i as usize) {
+        match self.measured.get(i.ix()) {
             Some(m) if *m != 0.0 => *m,
             _ => self.estimate,
         }
@@ -115,11 +117,11 @@ impl VlistModel {
         }
         self.ensure();
         let old = self.height_of(i);
-        if old == h && self.measured[i as usize] != 0.0 {
+        if old == h && self.measured[i.ix()] != 0.0 {
             return;
         }
         self.add(i, f64::from(h) - f64::from(old));
-        self.measured[i as usize] = h;
+        self.measured[i.ix()] = h;
     }
 
     /// Top edge of row `i` (`i == count` gives the total height).
@@ -138,7 +140,7 @@ impl VlistModel {
             return 0;
         }
         if self.tree.is_empty() {
-            return ((y.max(0.0) / self.estimate) as u32).min(self.count - 1);
+            return f32_to_u32((y.max(0.0) / self.estimate).floor()).min(self.count - 1);
         }
         let (mut lo, mut hi) = (0u32, self.count - 1);
         while lo < hi {

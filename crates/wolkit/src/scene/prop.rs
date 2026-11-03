@@ -302,7 +302,8 @@ pub fn check_value(d: &PropDef, words: &[u32]) -> Result<(), &'static str> {
         Ty::Shadow => (f(words[0]) && f(words[1]) && f(words[2]) && words[3] < TOKENS)
             .then_some(())
             .ok_or("A shadow is an offset, a blur and a theme token."),
-        Ty::Transition => (words[1] <= 2 && words[2] <= 4)
+        // The easing is an index into the style's `Ease` (ease, linear, in, out, in-out).
+        Ty::Transition => (words[1] <= 2 && words[2].ix() < crate::style::value::Ease::ALL.len())
             .then_some(())
             .ok_or("A transition is a property, fast, normal or slow, and an easing."),
     }
@@ -375,5 +376,19 @@ mod tests {
         assert!(check_value(d, &[3]).is_ok());
         assert!(check_value(d, &[4]).is_err());
         assert!(def(0).is_none() && def(999).is_none());
+    }
+
+    #[test]
+    fn every_easing_of_the_style_is_accepted_inline() {
+        use crate::style::value::Ease;
+        let d = def(u32::from(id::TRANSITION)).unwrap();
+        for e in Ease::ALL {
+            let w = [u32::from(id::BACKGROUND), 1, u32::from(e.to_u8())];
+            assert!(check_value(d, &w).is_ok(), "{}", e.kw());
+        }
+        assert_eq!(Ease::from_u8(4), Some(Ease::InOut));
+        let past = u32::try_from(Ease::ALL.len()).unwrap();
+        assert!(check_value(d, &[0, 1, past]).is_err());
+        assert!(check_value(d, &[0, 3, 0]).is_err(), "durations are fast, normal or slow");
     }
 }

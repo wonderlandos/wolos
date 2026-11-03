@@ -22,8 +22,13 @@ check:
 run: bin/{{name}}
 	bin/{{name}}
 
+# The kit sheet goes first (build/00-kit.wolcss sorts before src/styles/), so the default look's class
+# ids stay where Wolkit expects them; load the result with Wolkit.use_styles("build/styles.wsb").
+KIT_SHEET ?= $(firstword $(wildcard $(addsuffix /wolkit/styles/kit.wolcss,$(subst :, ,$(shell crystal env CRYSTAL_PATH)))))
+
 styles:
 	mkdir -p build src/gen
-	wolkit-stylec --out build/styles.wsb --crystal src/gen/styles.cr src/styles/app.wolcss
+	cp $(KIT_SHEET) build/00-kit.wolcss
+	wolkit-stylec --out build/styles.wsb --crystal src/gen/styles.cr build/00-kit.wolcss src/styles/app.wolcss
 
 .PHONY: all spec format check run styles

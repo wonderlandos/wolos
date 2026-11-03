@@ -24,11 +24,13 @@ pub fn ensure_layout(w: &mut WindowCore) {
         &w.env,
         w.width,
     );
-    crate::layout::scene::run(
+    let text = w.text.clone();
+    let mut sys = crate::text::measure::lock(&text);
+    crate::layout::scene::run_text(
         &mut w.scene,
         &w.styles,
         &mut w.layout_cache,
-        None,
+        (&mut sys, &mut w.text_cache),
         w.width as f32,
         w.height as f32,
     );

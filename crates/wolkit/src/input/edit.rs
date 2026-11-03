@@ -88,7 +88,11 @@ pub fn focus_changed(w: &WindowCore, st: &mut InputState) -> Request {
     }
     if !is_field {
         st.field.node = NIL;
-        return if was { Request::Ime(false) } else { Request::None };
+        return if was {
+            Request::Ime(false)
+        } else {
+            Request::None
+        };
     }
     let mut e = Editor::new(true);
     e.set_text(w.scene.text(f));
@@ -269,7 +273,13 @@ pub fn key(
             write_back(w, s, st);
             return Some(Request::Copy(t));
         }
-        (sym::V, true) => return Some(if can_write { Request::Paste } else { Request::None }),
+        (sym::V, true) => {
+            return Some(if can_write {
+                Request::Paste
+            } else {
+                Request::None
+            });
+        }
         (sym::ESCAPE, _) if e.preedit().is_some() => {
             e.ime_cancel();
             w.scene.mark_dirty(node, dirty::PAINT);
@@ -343,7 +353,8 @@ pub fn ime_done(w: &mut WindowCore, s: &mut Sink, st: &mut InputState, serial: u
 
 /// The text, cursor and anchor to send to the input method, if a field has it.
 pub fn surrounding(st: &InputState) -> Option<(String, usize, usize)> {
-    (st.field.node != NIL && st.field.editor.ime_enabled()).then(|| st.field.editor.surrounding_text())
+    (st.field.node != NIL && st.field.editor.ime_enabled())
+        .then(|| st.field.editor.surrounding_text())
 }
 
 /// Where the input method should put its candidate window: the field, in window coordinates.

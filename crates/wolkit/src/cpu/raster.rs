@@ -13,6 +13,8 @@
 //! The rasteriser is the default on machines without 3D, the fallback after a device loss, and
 //! the oracle the GPU path is compared against with a tolerance.
 
+use crate::num::{ceil_i32, floor_i32, to_i32, trunc_usize};
+use crate::scene::ids::{Ix, to_u8, to_u32};
 use std::ops::Range;
 
 use crate::paint::geom::{Color, PixelRect, Rect, div255, mix};
@@ -37,8 +39,8 @@ pub struct Image {
 impl Image {
     pub fn new(width: u32, height: u32, fill: Color) -> Image {
         let px = fill.premul();
-        let mut data = Vec::with_capacity(width as usize * height as usize * 4);
-        for _ in 0..(width as usize * height as usize) {
+        let mut data = Vec::with_capacity(width.ix() * height.ix() * 4);
+        for _ in 0..(width.ix() * height.ix()) {
             data.extend_from_slice(&px);
         }
         Image {
@@ -57,7 +59,7 @@ impl Image {
                 p.fill(0);
             } else if a != 255 {
                 for c in &mut p[..3] {
-                    *c = ((u32::from(*c) * 255 + a / 2) / a).min(255) as u8;
+                    *c = to_u8(((u32::from(*c) * 255 + a / 2) / a).min(255));
                 }
             }
         }
@@ -231,7 +233,7 @@ fn prepare(
         clip_stack.push(root_clip);
         let cb = scale_rect(&chunk.bounds, scale, ox, oy).to_pixels();
         // Chunk bounds clip its content.
-        let mut chunk_clip = p.clips[root_clip as usize].clone();
+        let mut chunk_clip = p.clips[root_clip.ix()].clone();
         chunk_clip.bounds = chunk_clip.bounds.intersect(&cb);
         p.clips.push(chunk_clip);
         clip_stack.push((p.clips.len() - 1) as u32);
@@ -243,20 +245,20 @@ fn prepare(
 
         for item in list.chunk_items(chunk) {
             let clip_id = *clip_stack.last().unwrap_or(&root_clip);
-            let clip_bounds = p.clips[clip_id as usize].bounds;
+            let clip_bounds = p.clips[clip_id.ix()].bounds;
             match item {
                 Item::PushClip { rect, radius } => {
                     let r = scale_rect(rect, scale, ox, oy);
-                    let parent = p.clips[clip_id as usize].clone();
+                    let parent = p.clips[clip_id.ix()].clone();
                     let mut bounds = parent.bounds.intersect(&r.to_pixels());
-                    let start = p.soft.len() as u32;
+                    let start = to_u32(p.soft.len());
                     // Keep the innermost MAX_SOFT_CLIPS soft clips: deeper nesting is clipped by the
                     // integer bounds only, which bounds the memory a hostile list can use.
-                    let from = (parent.soft.end as usize)
+                    let from = (parent.soft.end.ix())
                         .saturating_sub(MAX_SOFT_CLIPS - 1)
-                        .max(parent.soft.start as usize);
+                        .max(parent.soft.start.ix());
                     let existing: Vec<(Rect, [f32; 4])> =
-                        p.soft[from..parent.soft.end as usize].to_vec();
+                        p.soft[from..parent.soft.end.ix()].to_vec();
                     p.soft.extend(existing);
                     let rad = (radius.max(0.0) * scale).min(r.w.min(r.h) * 0.5);
                     if rad > 0.0 || !is_aligned(&r) {
@@ -267,7 +269,7 @@ fn prepare(
                     }
                     p.clips.push(Clip {
                         bounds,
-                        soft: start..p.soft.len() as u32,
+                        soft: start..to_u32(p.soft.len()),
                     });
                     clip_stack.push((p.clips.len() - 1) as u32);
                 }
@@ -304,7 +306,7 @@ fn prepare(
                             for q in &p.prims[b + 1..end] {
                                 ub = union_px(ub, q.bounds);
                             }
-                            let cb = p.clips[p.prims[b].clip as usize].bounds;
+                            let cb = p.clips[p.prims[b].clip.ix()].bounds;
                             p.prims[b].bounds = ub.intersect(&cb);
                             if let Kind::LayerBegin { end: e, .. } = &mut p.prims[b].kind {
                                 *e = end;
@@ -328,15 +330,15 @@ fn prepare(
                         continue;
                     }
                     let fill = match *fill {
-                        Fill::Solid(c) => PFill::Solid(c.with_opacity(opacity as u8)),
+                        Fill::Solid(c) => PFill::Solid(c.with_opacity(to_u8(opacity))),
                         Fill::Linear { from, to, p0, p1 } => {
                             let a = (r.x + p0.0 * r.w, r.y + p0.1 * r.h);
                             let b = (r.x + p1.0 * r.w, r.y + p1.1 * r.h);
                             let d = (b.0 - a.0, b.1 - a.1);
                             let dd = d.0 * d.0 + d.1 * d.1;
                             PFill::Grad {
-                                c0: from.with_opacity(opacity as u8),
-                                c1: to.with_opacity(opacity as u8),
+                                c0: from.with_opacity(to_u8(opacity)),
+                                c1: to.with_opacity(to_u8(opacity)),
                                 p0: a,
                                 d,
                                 inv: if dd > 0.0 { 1.0 / dd } else { 0.0 },
@@ -377,7 +379,7 @@ fn prepare(
                             ro,
                             inner,
                             ri,
-                            color: color.with_opacity(opacity as u8),
+                            color: color.with_opacity(to_u8(opacity)),
                         },
                         bounds,
                         clip: clip_id,
@@ -405,7 +407,7 @@ fn prepare(
                         .fitted(cast.w, cast.h)
                         .0;
                     let blur_px = (blur.max(0.0) * s).min(256.0);
-                    let margin = (blur_px * 1.5).ceil() as i32 + 2;
+                    let margin = ceil_i32(blur_px * 1.5) + 2;
                     let area = cast.to_pixels();
                     let ext = PixelRect {
                         x0: area.x0 - margin,
@@ -421,7 +423,7 @@ fn prepare(
                     if i64::from(mw) * i64::from(mh) > 16_000_000 {
                         continue;
                     }
-                    let mut mask = vec![0u8; (mw * mh) as usize];
+                    let mut mask = vec![0u8; (mw * mh).ix()];
                     for y in 0..mh {
                         for x in 0..mw {
                             let c = rrect_cov(
@@ -430,10 +432,10 @@ fn prepare(
                                 &cast,
                                 &rad,
                             );
-                            mask[(y * mw + x) as usize] = cov_u8(c) as u8;
+                            mask[(y * mw + x).ix()] = to_u8(cov_u8(c));
                         }
                     }
-                    box_blur3(&mut mask, mw as usize, mh as usize, blur_px);
+                    box_blur3(&mut mask, mw.ix(), mh.ix(), blur_px);
                     let off = p.masks.len();
                     p.masks.extend_from_slice(&mask);
                     p.prims.push(Prim {
@@ -443,7 +445,7 @@ fn prepare(
                             w: mw,
                             h: mh,
                             off,
-                            color: color.with_opacity(opacity as u8),
+                            color: color.with_opacity(to_u8(opacity)),
                         },
                         bounds: vis,
                         clip: clip_id,
@@ -455,13 +457,13 @@ fn prepare(
                     color,
                     glyphs: range,
                 } => {
-                    let color = color.with_opacity(opacity as u8);
+                    let color = color.with_opacity(to_u8(opacity));
                     let dev_size = size * scale;
                     for g in list.glyph_slice(range) {
                         let x = (g.x + ox) * scale;
                         let y = (g.y + oy) * scale;
                         let (xi, sub) = split_subpixel(x);
-                        let yi = (y + 0.5).floor() as i32;
+                        let yi = floor_i32(y + 0.5);
                         let Some(gr) = glyphs.glyph(*font, g.id, dev_size, sub) else {
                             continue;
                         };
@@ -479,9 +481,9 @@ fn prepare(
                             continue;
                         }
                         let off = p.masks.len();
-                        for row in 0..gh as usize {
+                        for row in 0..gh.ix() {
                             p.masks.extend_from_slice(
-                                &gr.data[row * gr.stride..row * gr.stride + gw as usize],
+                                &gr.data[row * gr.stride..row * gr.stride + gw.ix()],
                             );
                         }
                         p.prims.push(Prim {
@@ -544,7 +546,7 @@ fn box_blur3(mask: &mut [u8], w: usize, h: usize, blur: f32) {
     }
     let sigma = blur * 0.5;
     // Ideal box width for n = 3 passes: sqrt(12 sigma^2 / 3 + 1).
-    let wi = (4.0 * sigma * sigma + 1.0).sqrt().floor() as usize;
+    let wi = trunc_usize((4.0 * sigma * sigma + 1.0).sqrt().floor());
     let size = if wi.is_multiple_of(2) { wi + 1 } else { wi }.max(1);
     let r = size / 2;
     let mut tmp = vec![0u8; mask.len()];
@@ -585,7 +587,7 @@ fn blur_line(src: &[u8], dst: &mut [u8], r: usize, _stride: usize, n: usize) {
         if i > r {
             sum -= u32::from(src[i - r - 1]);
         }
-        dst[i] = ((sum + (size as u32) / 2) / size as u32) as u8;
+        dst[i] = ((sum + (to_u32(size)) / 2) / to_u32(size)) as u8;
     }
 }
 
@@ -608,7 +610,7 @@ impl TileBuf {
             y0,
             w,
             h,
-            px: vec![0; (w * h * 4) as usize],
+            px: vec![0; (w * h * 4).ix()],
         }
     }
 }
@@ -636,14 +638,14 @@ fn over(dst: &mut [u8], src: [u8; 4], cov: u32) {
     };
     let inv = 255 - s[3];
     for i in 0..4 {
-        dst[i] = (s[i] + div255(u32::from(dst[i]) * inv)).min(255) as u8;
+        dst[i] = to_u8((s[i] + div255(u32::from(dst[i]) * inv)).min(255));
     }
 }
 
 fn clip_cov(p: &Prepared, clip: u32, px: f32, py: f32) -> u32 {
-    let c = &p.clips[clip as usize];
+    let c = &p.clips[clip.ix()];
     let mut cov = 255u32;
-    for (r, rad) in &p.soft[c.soft.start as usize..c.soft.end as usize] {
+    for (r, rad) in &p.soft[c.soft.start.ix()..c.soft.end.ix()] {
         let k = cov_u8(rrect_cov(px, py, r, rad));
         cov = div255(cov * k);
         if cov == 0 {
@@ -661,12 +663,12 @@ fn draw_prim(buf: &mut TileBuf, p: &Prepared, prim: &Prim) {
         y1: buf.y0 + buf.h,
     }
     .intersect(&prim.bounds)
-    .intersect(&p.clips[prim.clip as usize].bounds);
+    .intersect(&p.clips[prim.clip.ix()].bounds);
     if area.is_empty() {
         return;
     }
-    let soft = !p.clips[prim.clip as usize].soft.is_empty()
-        && p.clips[prim.clip as usize].soft.start != p.clips[prim.clip as usize].soft.end;
+    let soft = !p.clips[prim.clip.ix()].soft.is_empty()
+        && p.clips[prim.clip.ix()].soft.start != p.clips[prim.clip.ix()].soft.end;
     for y in area.y0..area.y1 {
         for x in area.x0..area.x1 {
             let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
@@ -677,7 +679,7 @@ fn draw_prim(buf: &mut TileBuf, p: &Prepared, prim: &Prim) {
                         PFill::Solid(c) => c,
                         PFill::Grad { c0, c1, p0, d, inv } => {
                             let t = (((fx - p0.0) * d.0 + (fy - p0.1) * d.1) * inv).clamp(0.0, 1.0);
-                            mix(c0, c1, cov_u8(t) as u8)
+                            mix(c0, c1, to_u8(cov_u8(t)))
                         }
                     };
                     (col.premul(), c)
@@ -709,10 +711,7 @@ fn draw_prim(buf: &mut TileBuf, p: &Prepared, prim: &Prim) {
                     if mx < 0 || my < 0 || mx >= *w || my >= *h {
                         continue;
                     }
-                    (
-                        color.premul(),
-                        u32::from(p.masks[off + (my * w + mx) as usize]),
-                    )
+                    (color.premul(), u32::from(p.masks[off + (my * w + mx).ix()]))
                 }
                 Kind::LayerBegin { .. } | Kind::LayerEnd { .. } => return,
             };
@@ -753,7 +752,7 @@ pub fn render(
     if width == 0 || height == 0 {
         return img;
     }
-    let (w, h) = (width as i32, height as i32);
+    let (w, h) = (to_i32(width), to_i32(height));
     let scale = if opts.scale.is_finite() && opts.scale > 0.0 {
         opts.scale
     } else {
@@ -764,7 +763,7 @@ pub fn render(
     let tiles_x = (w + tile - 1) / tile;
     let tiles_y = (h + tile - 1) / tile;
     // Bin primitives to tiles.
-    let mut bins: Vec<Vec<u32>> = vec![Vec::new(); (tiles_x * tiles_y) as usize];
+    let mut bins: Vec<Vec<u32>> = vec![Vec::new(); (tiles_x * tiles_y).ix()];
     for (i, prim) in prepared.prims.iter().enumerate() {
         let b = prim.bounds.intersect(&PixelRect {
             x0: 0,
@@ -777,13 +776,13 @@ pub fn render(
         }
         for ty in (b.y0 / tile)..=((b.y1 - 1) / tile) {
             for tx in (b.x0 / tile)..=((b.x1 - 1) / tile) {
-                bins[(ty * tiles_x + tx) as usize].push(i as u32);
+                bins[(ty * tiles_x + tx).ix()].push(to_u32(i));
             }
         }
     }
     for ty in 0..tiles_y {
         for tx in 0..tiles_x {
-            let list = &bins[(ty * tiles_x + tx) as usize];
+            let list = &bins[(ty * tiles_x + tx).ix()];
             if list.is_empty() {
                 continue;
             }
@@ -793,14 +792,13 @@ pub fn render(
             let mut base = TileBuf::blank(x0, y0, tw, th);
             for row in 0..th {
                 let s = (((y0 + row) * w + x0) * 4) as usize;
-                let d = (row * tw * 4) as usize;
-                base.px[d..d + (tw * 4) as usize]
-                    .copy_from_slice(&img.data[s..s + (tw * 4) as usize]);
+                let d = (row * tw * 4).ix();
+                base.px[d..d + (tw * 4).ix()].copy_from_slice(&img.data[s..s + (tw * 4).ix()]);
             }
             let mut stack: Vec<TileBuf> = vec![base];
             let mut k = 0;
             while k < list.len() {
-                let prim = &prepared.prims[list[k] as usize];
+                let prim = &prepared.prims[list[k].ix()];
                 match &prim.kind {
                     Kind::LayerBegin { .. } => stack.push(TileBuf::blank(x0, y0, tw, th)),
                     Kind::LayerEnd { alpha } => {
@@ -829,9 +827,8 @@ pub fn render(
             let base = &stack[0];
             for row in 0..th {
                 let d = (((y0 + row) * w + x0) * 4) as usize;
-                let s = (row * tw * 4) as usize;
-                img.data[d..d + (tw * 4) as usize]
-                    .copy_from_slice(&base.px[s..s + (tw * 4) as usize]);
+                let s = (row * tw * 4).ix();
+                img.data[d..d + (tw * 4).ix()].copy_from_slice(&base.px[s..s + (tw * 4).ix()]);
             }
         }
     }

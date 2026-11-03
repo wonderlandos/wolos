@@ -4,11 +4,13 @@
 //! mapping goes by property, never by position, and a value that the wire table accepted is
 //! always representable. Node-specific properties (slider, text input, image, anchor, list) are
 //! not style and are ignored here.
-use super::prop::*;
+use super::num::{f32_to_i16, f32_to_u16, i32_to_i16, i32_to_u16, wire_i32};
+use super::prop::{Decls, PropId, parse_prop};
 use super::tokens::{self as tk, Token};
-use super::value::*;
+use super::value::{ColorRef, Dim, Ease, Paint, Props, Shadow, Transform, Transition};
 use super::vparse::{Cur, tokenize};
 use crate::scene::PropValue;
+use crate::scene::ids::{Ix, to_u8, to_u16};
 use crate::scene::prop::{self as wire, id};
 
 fn f(v: &PropValue) -> f32 {
@@ -25,7 +27,7 @@ fn dim(v: &PropValue) -> Dim {
 }
 
 fn token(w: u32) -> ColorRef {
-    Token::from_u8(w as u8).map_or(ColorRef::Token(Token::Text), ColorRef::Token)
+    Token::from_u8(to_u8(w)).map_or(ColorRef::Token(Token::Text), ColorRef::Token)
 }
 
 fn set(out: &mut Decls, p: PropId, f: impl FnOnce(&mut Props)) {
@@ -35,7 +37,7 @@ fn set(out: &mut Decls, p: PropId, f: impl FnOnce(&mut Props)) {
 
 /// Parse a keyword of an enum property with the sheet parser, so inline and sheet agree.
 fn keyword(out: &mut Decls, def: &wire::PropDef, v: &PropValue) {
-    let Some(name) = def.enums.get(v.w[0] as usize) else {
+    let Some(name) = def.enums.get(v.w[0].ix()) else {
         return;
     };
     let Some(p) = PropId::parse_name(def.name) else {
@@ -53,7 +55,7 @@ fn keyword(out: &mut Decls, def: &wire::PropDef, v: &PropValue) {
 /// animatable one).
 fn transition_mask(wire_id: u32) -> u128 {
     use PropId as P;
-    let ids: &[PropId] = match wire_id as u16 {
+    let ids: &[PropId] = match to_u16(wire_id) {
         0 => {
             return PropId::ALL
                 .iter()
@@ -77,35 +79,27 @@ fn transition_mask(wire_id: u32) -> u128 {
 
 /// Add the declaration for wire property `prop` with `v` to `out`; later calls win.
 pub fn decl_from_wire(prop: u16, v: &PropValue, out: &mut Decls) {
-    use PropId as P;
     let Some(def) = wire::def(u32::from(prop)) else {
         return;
     };
+    if prop >= 150 || prop == id::TAB_INDEX {
+        // Node-specific properties and the tab order are not style.
+        return;
+    }
+    if def.ty == wire::Ty::Enum {
+        keyword(out, def, v);
+    } else if prop < 50 {
+        layout_wire(prop, v, out);
+    } else if prop < 100 {
+        paint_wire(prop, v, out);
+    } else {
+        text_wire(prop, v, out);
+    }
+}
+
+fn layout_wire(prop: u16, v: &PropValue, out: &mut Decls) {
+    use PropId as P;
     match prop {
-        id::DISPLAY
-        | id::FLEX_DIRECTION
-        | id::FLEX_WRAP
-        | id::ALIGN_ITEMS
-        | id::ALIGN_SELF
-        | id::ALIGN_CONTENT
-        | id::JUSTIFY_CONTENT
-        | id::POSITION
-        | id::OVERFLOW
-        | id::CURSOR
-        | id::POINTER_EVENTS
-        | id::VISIBILITY
-        | id::BACKDROP
-        | id::FONT_FAMILY
-        | id::FONT_STYLE
-        | id::TEXT_ALIGN
-        | id::TEXT_DECORATION
-        | id::TEXT_OVERFLOW
-        | id::WHITE_SPACE
-        | id::FONT_FEATURE
-        | id::USER_SELECT
-        | id::SPRING
-        | id::FONT_SIZE
-        | id::FONT_WEIGHT => keyword(out, def, v),
         id::GROW => set(out, P::Grow, |p| p.layout.grow = f(v).max(0.0)),
         id::SHRINK => set(out, P::Shrink, |p| p.layout.shrink = f(v).max(0.0)),
         id::BASIS => set(out, P::Basis, |p| p.layout.basis = dim(v)),
@@ -129,7 +123,7 @@ pub fn decl_from_wire(prop: u16, v: &PropValue, out: &mut Decls) {
             }
         }
         id::PADDING_TOP..=id::PADDING_LEFT => {
-            let i = (prop - id::PADDING_TOP) as usize;
+            let i = (prop - id::PADDING_TOP).ix();
             let pid = [
                 P::PaddingTop,
                 P::PaddingRight,
@@ -147,7 +141,7 @@ pub fn decl_from_wire(prop: u16, v: &PropValue, out: &mut Decls) {
             }
         }
         id::MARGIN_TOP..=id::MARGIN_LEFT => {
-            let i = (prop - id::MARGIN_TOP) as usize;
+            let i = (prop - id::MARGIN_TOP).ix();
             let pid = [P::MarginTop, P::MarginRight, P::MarginBottom, P::MarginLeft][i];
             set(out, pid, |p| p.layout.margin[i] = dim(v));
         }
@@ -159,24 +153,31 @@ pub fn decl_from_wire(prop: u16, v: &PropValue, out: &mut Decls) {
         id::MAX_HEIGHT => set(out, P::MaxHeight, |p| p.layout.max_height = dim(v)),
         id::ASPECT_RATIO => set(out, P::AspectRatio, |p| p.layout.aspect = f(v).max(0.0)),
         id::INSET_TOP..=id::INSET_LEFT => {
-            let i = (prop - id::INSET_TOP) as usize;
+            let i = (prop - id::INSET_TOP).ix();
             let pid = [P::InsetTop, P::InsetRight, P::InsetBottom, P::InsetLeft][i];
             set(out, pid, |p| p.layout.inset[i] = dim(v));
         }
         id::Z_INDEX => set(out, P::ZIndex, |p| {
-            p.layout.z_index = (v.w[0] as i32).clamp(-1000, 1000) as i16
+            p.layout.z_index = i32_to_i16(wire_i32(v.w[0]).clamp(-1000, 1000))
         }),
+        _ => {}
+    }
+}
+
+fn paint_wire(prop: u16, v: &PropValue, out: &mut Decls) {
+    use PropId as P;
+    match prop {
         id::BACKGROUND => set(out, P::Background, |p| {
             p.paint.background = Paint::Color(token(v.w[0]))
         }),
         id::BACKGROUND_GRADIENT => set(out, P::Background, |p| {
-            let n = (v.w[1] as u8).clamp(2, 3);
+            let n = to_u8(v.w[1]).clamp(2, 3);
             let mut stops = [ColorRef::Transparent; 3];
-            for (i, s) in stops.iter_mut().enumerate().take(n as usize) {
+            for (i, s) in stops.iter_mut().enumerate().take(n.ix()) {
                 *s = token(v.w[2 + i]);
             }
             p.paint.background = Paint::Linear {
-                angle: f(v).clamp(-360.0, 360.0) as i16,
+                angle: f32_to_i16(f(v).clamp(-360.0, 360.0)),
                 stops,
                 n,
             };
@@ -198,7 +199,7 @@ pub fn decl_from_wire(prop: u16, v: &PropValue, out: &mut Decls) {
             }
         }
         id::RADIUS_TL..=id::RADIUS_BL => {
-            let i = (prop - id::RADIUS_TL) as usize;
+            let i = (prop - id::RADIUS_TL).ix();
             let pid = [P::RadiusTl, P::RadiusTr, P::RadiusBr, P::RadiusBl][i];
             set(out, pid, |p| p.paint.radius[i] = f(v).max(0.0));
         }
@@ -238,19 +239,26 @@ pub fn decl_from_wire(prop: u16, v: &PropValue, out: &mut Decls) {
                 }
             });
         }
+        _ => {}
+    }
+}
+
+fn text_wire(prop: u16, v: &PropValue, out: &mut Decls) {
+    use PropId as P;
+    match prop {
         id::COLOR => set(out, P::Color, |p| p.text.color = token(v.w[0])),
         id::LINE_HEIGHT => set(out, P::LineHeight, |p| p.text.line_height = f(v).max(0.0)),
         id::LETTER_SPACING => set(out, P::LetterSpacing, |p| {
             p.text.letter_spacing = f(v).clamp(-2.0, 8.0)
         }),
         id::MAX_LINES => set(out, P::MaxLines, |p| {
-            p.text.max_lines = (v.w[0] as i32).clamp(0, 1000) as u16
+            p.text.max_lines = i32_to_u16(wire_i32(v.w[0]).clamp(0, 1000))
         }),
         id::TRANSITION => {
             let ms = tk::MOTION
-                .get(v.w[1] as usize)
-                .map_or(250, |m| m.value as u16);
-            let ease = Ease::from_u8(v.w[2] as u8).unwrap_or(Ease::Standard);
+                .get(v.w[1].ix())
+                .map_or(250, |m| f32_to_u16(m.value));
+            let ease = Ease::from_u8(to_u8(v.w[2])).unwrap_or(Ease::Standard);
             set(out, P::Transition, |p| {
                 p.motion.transition = Transition {
                     props: transition_mask(v.w[0]),

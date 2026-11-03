@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Shaping, itemisation, bidi, wrapping and caret behaviour on the bundled fonts.
 
+#[path = "support/text.rs"]
 mod text_support;
 
 use text_support::fonts;

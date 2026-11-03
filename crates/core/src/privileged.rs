@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Root-side process launch (docs/STANDARDS.md section 7, ADR 0015; audit A22/B12, R2C-16). Every
+//! Root-side process launch (docs/STANDARDS.md section 7, ADR 0040; audit A22/B12, R2C-16). Every
 //! program a root process of WolOS starts (wold, wol-admind, wol-login, the xguard daemon) is
 //! built by [`privileged_command`]: a cleared environment, a fixed `PATH`, `LC_ALL=C`, stdin from
 //! /dev/null, typed argv and never a shell. The invariant: nothing an app or a user put in the

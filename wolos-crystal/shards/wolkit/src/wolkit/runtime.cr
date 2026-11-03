@@ -19,6 +19,7 @@ module Wolkit
   def self.run(app_class : T.class, app_id : String = default_app_id, flags : UInt32 = 0_u32) : Nil forall T
     engine = FFI::Engine.create(app_id, flags)
     begin
+      Store.current = PrefsStore.new if Store.current.is_a?(MemoryStore)
       Runtime.backend = EngineBackend.new(engine)
       app = app_class.new
       app.start
@@ -33,6 +34,7 @@ module Wolkit
         Dev::Server.stop
       {% end %}
       Runtime.reset
+      Services.close
       Scope.reset_root
       Runtime.backend = nil
       engine.close

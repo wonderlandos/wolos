@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! The cascade: the memoised, interning resolver against the plain reference on random inputs,
 //! then the rules of resolution one by one.
+#[path = "support/layout.rs"]
 mod layout_support;
 use layout_support::Rng;
 use wolkit::style::prop::*;

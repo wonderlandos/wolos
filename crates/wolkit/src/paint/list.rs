@@ -10,6 +10,7 @@
 //! The list owns its storage and is meant to be cleared and re-filled each frame without
 //! reallocating (`clear` keeps capacity).
 
+use crate::scene::ids::{Ix, to_u32};
 use std::ops::Range;
 
 use crate::paint::geom::{Color, Rect};
@@ -208,7 +209,7 @@ impl DisplayList {
     /// Starts a chunk; items pushed until `end_chunk` belong to it.
     pub fn begin_chunk(&mut self, id: u32, version: u64, bounds: Rect, offset: (f32, f32), z: i32) {
         self.end_chunk();
-        let at = self.items.len() as u32;
+        let at = to_u32(self.items.len());
         // `u32::MAX` marks the open chunk: it extends to the end of the item vector.
         self.chunks.push(Chunk {
             id,
@@ -223,7 +224,7 @@ impl DisplayList {
 
     pub fn end_chunk(&mut self) {
         if let Some(i) = self.open.take() {
-            let end = self.items.len() as u32;
+            let end = to_u32(self.items.len());
             self.chunks[i].items.end = end;
         }
     }
@@ -277,9 +278,9 @@ impl DisplayList {
         glyphs: impl IntoIterator<Item = PosGlyph>,
     ) {
         self.ensure_chunk();
-        let a = self.glyphs.len() as u32;
+        let a = to_u32(self.glyphs.len());
         self.glyphs.extend(glyphs);
-        let b = self.glyphs.len() as u32;
+        let b = to_u32(self.glyphs.len());
         if b > a {
             self.items.push(Item::Glyphs {
                 font,
@@ -322,8 +323,8 @@ impl DisplayList {
 
     /// The items of a chunk. Call after `end_chunk`.
     pub fn chunk_items(&self, c: &Chunk) -> &[Item] {
-        let end = (c.items.end as usize).min(self.items.len());
-        &self.items[(c.items.start as usize).min(end)..end]
+        let end = (c.items.end.ix()).min(self.items.len());
+        &self.items[(c.items.start.ix()).min(end)..end]
     }
 
     /// Finalises an open chunk; call before reading chunk item ranges.
@@ -332,8 +333,8 @@ impl DisplayList {
     }
 
     pub fn glyph_slice(&self, r: &Range<u32>) -> &[PosGlyph] {
-        let end = (r.end as usize).min(self.glyphs.len());
-        &self.glyphs[(r.start as usize).min(end)..end]
+        let end = (r.end.ix()).min(self.glyphs.len());
+        &self.glyphs[(r.start.ix()).min(end)..end]
     }
 }
 

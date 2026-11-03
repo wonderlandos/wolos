@@ -41,7 +41,7 @@ module Wolkit
   end
 
   class List(T) < Source
-    include Indexable(T)
+    include Enumerable(T)
 
     @items = [] of T
     @cursors = [] of ListCursor(T)
@@ -56,9 +56,36 @@ module Wolkit
       @items.size
     end
 
-    def unsafe_fetch(index : Int) : T
+    # The item at `index` (negative counts from the end); raises IndexError. A tracked read.
+    def [](index : Int) : T
       track
-      @items.unsafe_fetch(index)
+      @items[index]
+    end
+
+    # The item at `index`, or nil.
+    def []?(index : Int) : T?
+      track
+      @items[index]?
+    end
+
+    def first? : T?
+      track
+      @items.first?
+    end
+
+    def last? : T?
+      track
+      @items.last?
+    end
+
+    def empty? : Bool
+      size == 0
+    end
+
+    # Each item, in order; a tracked read.
+    def each(& : T ->) : Nil
+      track
+      @items.each { |item| yield item }
     end
 
     # The items without recording a dependency (a snapshot copy).

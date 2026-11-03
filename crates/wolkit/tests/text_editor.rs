@@ -161,7 +161,7 @@ fn check(ed: &Editor, m: &Model, ctx: &str) {
     );
 }
 
-fn run(seed: u64, steps: usize, with_ime: bool) {
+fn check_sequence(seed: u64, steps: usize, with_ime: bool) {
     let mut rng = Rng(seed | 1);
     let mut ed = Editor::new(false);
     let mut m = Model::new();
@@ -275,14 +275,14 @@ fn run(seed: u64, steps: usize, with_ime: bool) {
 #[test]
 fn editor_matches_the_model_over_random_sequences() {
     for seed in 1..=40u64 {
-        run(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15), 400, false);
+        check_sequence(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15), 400, false);
     }
 }
 
 #[test]
 fn editor_with_ime_batches_keeps_the_text_and_history_exact() {
     for seed in 100..=130u64 {
-        run(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15), 400, true);
+        check_sequence(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15), 400, true);
     }
 }
 

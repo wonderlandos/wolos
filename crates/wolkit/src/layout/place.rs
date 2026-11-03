@@ -3,6 +3,7 @@
 //! anchor rectangle, aligned to it, flipped to the other side when it does not fit and shifted back
 //! inside the bounds. Pure arithmetic; `tests/layout_place.rs` holds it to its properties.
 use super::tree::{Rect, Size};
+use crate::scene::ids::Ix;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
@@ -34,7 +35,7 @@ impl Side {
     /// From the wire enum order of `anchor-side`: bottom, top, right, left.
     pub fn from_wire(v: u32) -> Side {
         [Side::Bottom, Side::Top, Side::Right, Side::Left]
-            .get(v as usize)
+            .get(v.ix())
             .copied()
             .unwrap_or(Side::Bottom)
     }
@@ -44,7 +45,7 @@ impl Align {
     /// From the wire enum order of `anchor-align`: start, center, end.
     pub fn from_wire(v: u32) -> Align {
         [Align::Start, Align::Center, Align::End]
-            .get(v as usize)
+            .get(v.ix())
             .copied()
             .unwrap_or(Align::Start)
     }

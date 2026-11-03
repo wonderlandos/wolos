@@ -91,7 +91,7 @@ pub fn decode(png: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
 }
 
 #[test]
-fn png_roundtrip() {
+fn png_encode_then_decode_roundtrips() {
     let px: Vec<u8> = (0..4 * 5 * 4).map(|i| (i * 7) as u8).collect();
     let (w, h, back) = decode(&encode(4, 5, &px)).unwrap();
     assert_eq!((w, h), (4, 5));

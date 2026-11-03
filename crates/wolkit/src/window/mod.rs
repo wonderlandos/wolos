@@ -51,6 +51,10 @@ pub struct WindowCore {
     pub styles: crate::style::Styles,
     /// Layout measure cache and relayout boundaries (WK-W2).
     pub layout_cache: crate::layout::LayoutCache,
+    /// The process's fonts and shaping caches (`text::measure::shared`).
+    pub text: crate::text::measure::SharedText,
+    /// This window's paragraphs by text, width and style: layout measures them, paint draws them.
+    pub text_cache: crate::text::measure::TextCache,
     /// Springs and tweens (`ANIM` ops) and the scratch they use.
     pub clock: crate::anim::Clock,
     pub anim_reqs: Vec<crate::scene::AnimReq>,
@@ -92,6 +96,8 @@ impl WindowCore {
             scratch: Scratch::default(),
             styles: crate::style::Styles::default(),
             layout_cache: crate::layout::LayoutCache::new(),
+            text: crate::text::measure::shared(),
+            text_cache: crate::text::measure::TextCache::new(),
             clock: crate::anim::Clock::new(),
             anim_reqs: Vec::new(),
             anim_done: Vec::new(),

@@ -29,198 +29,216 @@ fn find<'a>(ds: &'a [Diag], id: &str) -> &'a Diag {
     })
 }
 
-macro_rules! lint {
-    ($name:ident, $id:expr, $src:expr, $under:expr, $help:expr) => {
-        #[test]
-        fn $name() {
-            let src: String = $src.to_string();
-            let ds = run(&src);
-            let d = find(&ds, $id);
-            assert_eq!(
-                highlighted(d),
-                $under,
-                "the caret points at the offending text: {}",
-                d.render()
-            );
-            assert_eq!(d.file, "t.wolcss");
-            assert!(d.line >= 1 && d.col >= 1);
-            let help = d.help.clone().unwrap_or_default();
-            assert!(
-                help.contains($help),
-                "help `{help}` should mention `{}`",
-                $help
-            );
-            let r = d.render();
-            assert!(
-                r.starts_with(&format!("t.wolcss:{}:{}: ", d.line, d.col)),
-                "{r}"
-            );
-            assert!(r.contains(&format!("[{}]", $id)));
-            assert!(r.contains('^'));
-            // The severity matches the catalogue.
-            assert_eq!(d.severity, def($id).unwrap().severity);
-        }
-    };
+/// Run `src` and check lint `id` shows where it should: the caret sits under `under` and the suggestion mentions `help`.
+fn check_lint(id: &str, src: &str, under: &str, help: &str) {
+    let ds = run(src);
+    let d = find(&ds, id);
+    assert_eq!(
+        highlighted(d),
+        under,
+        "the caret points at the offending text: {}",
+        d.render()
+    );
+    assert_eq!(d.file, "t.wolcss");
+    assert!(d.line >= 1 && d.col >= 1);
+    let hint = d.help.clone().unwrap_or_default();
+    assert!(hint.contains(help), "help `{hint}` should mention `{help}`");
+    let r = d.render();
+    assert!(
+        r.starts_with(&format!("t.wolcss:{}:{}: ", d.line, d.col)),
+        "{r}"
+    );
+    assert!(r.contains(&format!("[{id}]")));
+    assert!(r.contains('^'));
+    // The severity matches the catalogue.
+    assert_eq!(d.severity, def(id).unwrap().severity);
 }
 
-lint!(
-    wk_001_hex_literal,
-    "WK-001",
-    ".a { background: #fff; }",
-    "#fff",
-    "token"
-);
-lint!(
-    wk_002_important,
-    "WK-002",
-    ".a { opacity: 1 !important; }",
-    "!important",
-    "order"
-);
-lint!(
-    wk_003_font_too_small,
-    "WK-003",
-    ".a { font-size: 10px; }",
-    "10px",
-    "11px"
-);
-lint!(
-    wk_004_duration_too_long,
-    "WK-004",
-    ".a { transition: opacity 600ms; }",
-    "600ms",
-    "slow"
-);
-lint!(
-    wk_005_off_scale_spacing,
-    "WK-005",
-    ".a { padding: 13px; }",
-    "13px",
-    "nearest is `md`"
-);
-lint!(
-    wk_006_off_scale_radius,
-    "WK-006",
-    ".a { border-radius: 7px; }",
-    "7px",
-    "nearest is `s`"
-);
-lint!(
-    wk_007_unknown_token,
-    "WK-007",
-    ".a { color: acent; }",
-    "acent",
-    "did you mean `accent`"
-);
-lint!(
-    wk_008_unknown_property,
-    "WK-008",
-    ".a { colour: text; }",
-    "colour",
-    "did you mean `color`"
-);
-lint!(
-    wk_009_unsupported_grid,
-    "WK-009",
-    ".a { display: grid; }",
-    "grid",
-    "flex"
-);
-lint!(wk_010_bad_value, "WK-010", ".a { opacity: 2; }", "2", "");
-lint!(
-    wk_011_unknown_state,
-    "WK-011",
-    ".a:hovr { opacity: 1; }",
-    "hovr",
-    "did you mean `:hover`"
-);
-lint!(
-    wk_012_selector_form,
-    "WK-012",
-    ".a .b { opacity: 1; }",
-    ".a .b",
-    ".parent:state > .child"
-);
-lint!(
-    wk_013_duplicate_property,
-    "WK-013",
-    ".a { opacity: 1; opacity: 0.5; }",
-    "opacity",
-    "later"
-);
-lint!(
-    wk_014_too_many_variants,
-    "WK-014",
-    ".a { opacity: 1; } .a:hover { opacity: 1; } .a:active { opacity: 1; } .a:focus { opacity: 1; } .a:disabled { opacity: 1; } .a:selected { opacity: 1; } .a:checked { opacity: 1; } .a:expanded { opacity: 1; } .a:empty { opacity: 1; }",
-    ".a:empty",
-    "two classes"
-);
-lint!(wk_015_empty_rule, "WK-015", ".a { }", ".a", "declaration");
-lint!(
-    wk_016_table_limit,
-    "WK-016",
-    (0..=4096)
-        .map(|i| format!(".c{} {{ opacity: 1; }}\n", name(i)))
-        .collect::<String>(),
-    ".c-names-4096",
-    "split"
-);
-lint!(
-    wk_017_bad_weight,
-    "WK-017",
-    ".a { font-weight: 300; }",
-    "300",
-    "400, 500, 600 and 700"
-);
-lint!(
-    wk_018_syntax,
-    "WK-018",
-    ".a { opacity 1; }",
-    "opacity 1",
-    "property: value"
-);
-lint!(
-    wk_019_unknown_name,
-    "WK-019",
-    ".a { padding: huge; }",
-    "huge",
-    "names are"
-);
-lint!(
-    wk_020_opt_out,
-    "WK-020",
-    "/* wolkit: off-scale */\n.a { padding: 13px; }",
-    "/*",
-    "counted"
-);
-lint!(
-    wk_021_merged_variant,
-    "WK-021",
-    ".a { opacity: 1; } .a { color: dim; }",
-    ".a",
-    "one block"
-);
-lint!(
-    wk_022_not_animatable,
-    "WK-022",
-    ".a { transition: width fast; }",
-    "width",
-    "colours"
-);
-lint!(
-    wk_023_color_function,
-    "WK-023",
-    ".a { color: rgb(1, 2, 3); }",
-    "rgb(",
-    "alpha(token"
-);
-lint!(
-    wk_024_conflicting_media,
-    "WK-024",
-    "@dark @light { .a { opacity: 1; } }",
-    "@dark @light",
-    "two blocks"
-);
+#[test]
+fn wk_001_hex_literal() {
+    check_lint("WK-001", ".a { background: #fff; }", "#fff", "token");
+}
+#[test]
+fn wk_002_important() {
+    check_lint(
+        "WK-002",
+        ".a { opacity: 1 !important; }",
+        "!important",
+        "order",
+    );
+}
+#[test]
+fn wk_003_font_too_small() {
+    check_lint("WK-003", ".a { font-size: 10px; }", "10px", "11px");
+}
+#[test]
+fn wk_004_duration_too_long() {
+    check_lint(
+        "WK-004",
+        ".a { transition: opacity 600ms; }",
+        "600ms",
+        "slow",
+    );
+}
+#[test]
+fn wk_005_off_scale_spacing() {
+    check_lint("WK-005", ".a { padding: 13px; }", "13px", "nearest is `md`");
+}
+#[test]
+fn wk_006_off_scale_radius() {
+    check_lint(
+        "WK-006",
+        ".a { border-radius: 7px; }",
+        "7px",
+        "nearest is `s`",
+    );
+}
+#[test]
+fn wk_007_unknown_token() {
+    check_lint(
+        "WK-007",
+        ".a { color: acent; }",
+        "acent",
+        "did you mean `accent`",
+    );
+}
+#[test]
+fn wk_008_unknown_property() {
+    check_lint(
+        "WK-008",
+        ".a { colour: text; }",
+        "colour",
+        "did you mean `color`",
+    );
+}
+#[test]
+fn wk_009_unsupported_grid() {
+    check_lint("WK-009", ".a { display: grid; }", "grid", "flex");
+}
+#[test]
+fn wk_010_bad_value() {
+    check_lint("WK-010", ".a { opacity: 2; }", "2", "");
+}
+#[test]
+fn wk_011_unknown_state() {
+    check_lint(
+        "WK-011",
+        ".a:hovr { opacity: 1; }",
+        "hovr",
+        "did you mean `:hover`",
+    );
+}
+#[test]
+fn wk_012_selector_form() {
+    check_lint(
+        "WK-012",
+        ".a .b { opacity: 1; }",
+        ".a .b",
+        ".parent:state > .child",
+    );
+}
+#[test]
+fn wk_013_duplicate_property() {
+    check_lint(
+        "WK-013",
+        ".a { opacity: 1; opacity: 0.5; }",
+        "opacity",
+        "later",
+    );
+}
+#[test]
+fn wk_014_too_many_variants() {
+    check_lint(
+        "WK-014",
+        ".a { opacity: 1; } .a:hover { opacity: 1; } .a:active { opacity: 1; } .a:focus { opacity: 1; } .a:disabled { opacity: 1; } \
+     .a:selected { opacity: 1; } .a:checked { opacity: 1; } .a:expanded { opacity: 1; } .a:empty { opacity: 1; }",
+        ".a:empty",
+        "two classes",
+    );
+}
+#[test]
+fn wk_015_empty_rule() {
+    check_lint("WK-015", ".a { }", ".a", "declaration");
+}
+#[test]
+fn wk_016_table_limit() {
+    check_lint(
+        "WK-016",
+        &(0..=4096)
+            .map(|i| format!(".c{} {{ opacity: 1; }}\n", name(i)))
+            .collect::<String>()
+            .to_string(),
+        ".c-names-4096",
+        "split",
+    );
+}
+#[test]
+fn wk_017_bad_weight() {
+    check_lint(
+        "WK-017",
+        ".a { font-weight: 300; }",
+        "300",
+        "400, 500, 600 and 700",
+    );
+}
+#[test]
+fn wk_018_syntax() {
+    check_lint(
+        "WK-018",
+        ".a { opacity 1; }",
+        "opacity 1",
+        "property: value",
+    );
+}
+#[test]
+fn wk_019_unknown_name() {
+    check_lint("WK-019", ".a { padding: huge; }", "huge", "names are");
+}
+#[test]
+fn wk_020_opt_out() {
+    check_lint(
+        "WK-020",
+        "/* wolkit: off-scale */\n.a { padding: 13px; }",
+        "/*",
+        "counted",
+    );
+}
+#[test]
+fn wk_021_merged_variant() {
+    check_lint(
+        "WK-021",
+        ".a { opacity: 1; } .a { color: dim; }",
+        ".a",
+        "one block",
+    );
+}
+#[test]
+fn wk_022_not_animatable() {
+    check_lint(
+        "WK-022",
+        ".a { transition: width fast; }",
+        "width",
+        "colours",
+    );
+}
+#[test]
+fn wk_023_color_function() {
+    check_lint(
+        "WK-023",
+        ".a { color: rgb(1, 2, 3); }",
+        "rgb(",
+        "alpha(token",
+    );
+}
+#[test]
+fn wk_024_conflicting_media() {
+    check_lint(
+        "WK-024",
+        "@dark @light { .a { opacity: 1; } }",
+        "@dark @light",
+        "two blocks",
+    );
+}
 
 /// Class names for the limit test: lower-case words only.
 fn name(i: usize) -> String {
@@ -354,10 +372,9 @@ fn off_scale_pragma_ratchet() {
         assert!(errs.is_empty(), "{}: {}", f.display(), errs[0].render());
         n += ds.iter().filter(|d| d.id == OPT_OUT).count();
     }
-    #[allow(clippy::absurd_extreme_comparisons)]
-    let over = n > BASELINE;
-    assert!(
-        !over,
+    let over = n.saturating_sub(BASELINE);
+    assert_eq!(
+        over, 0,
         "{n} sheets opt out of the scale; the ratchet is {BASELINE}. Lower it when you remove one, never raise it."
     );
 }

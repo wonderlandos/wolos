@@ -4,7 +4,7 @@
 //!
 //! `cargo bench -p wolkit --bench batch [-- --check]`
 
-#[path = "../tests/text_support/mod.rs"]
+#[path = "../tests/support/text.rs"]
 mod text_support;
 #[path = "w3_support/mod.rs"]
 mod w3_support;

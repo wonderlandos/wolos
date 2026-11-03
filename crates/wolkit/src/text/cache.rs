@@ -6,6 +6,8 @@
 //! an `Arc` clone; no allocation. Entries live in a slab threaded by a doubly linked recency list,
 //! so touching and evicting are O(1).
 
+use crate::num::round_u32;
+use crate::scene::ids::{Ix, to_u32};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -75,7 +77,7 @@ pub struct ShapeCache {
 }
 
 fn size_q(size: f32) -> u32 {
-    (size.max(0.0) * 64.0).round() as u32
+    round_u32(size.max(0.0) * 64.0)
 }
 
 fn features_hash(f: &[FontFeature]) -> u64 {
@@ -117,24 +119,24 @@ impl ShapeCache {
     }
 
     fn unlink(&mut self, i: u32) {
-        let (p, n) = (self.slab[i as usize].prev, self.slab[i as usize].next);
+        let (p, n) = (self.slab[i.ix()].prev, self.slab[i.ix()].next);
         if p != NIL {
-            self.slab[p as usize].next = n;
+            self.slab[p.ix()].next = n;
         } else {
             self.head = n;
         }
         if n != NIL {
-            self.slab[n as usize].prev = p;
+            self.slab[n.ix()].prev = p;
         } else {
             self.tail = p;
         }
     }
 
     fn push_front(&mut self, i: u32) {
-        self.slab[i as usize].prev = NIL;
-        self.slab[i as usize].next = self.head;
+        self.slab[i.ix()].prev = NIL;
+        self.slab[i.ix()].next = self.head;
         if self.head != NIL {
-            self.slab[self.head as usize].prev = i;
+            self.slab[self.head.ix()].prev = i;
         }
         self.head = i;
         if self.tail == NIL {
@@ -153,14 +155,14 @@ impl ShapeCache {
             script: script_id(p.script),
         };
         if let Some(&i) = self.map.get(&key)
-            && &*self.slab[i as usize].text == text
+            && &*self.slab[i.ix()].text == text
         {
             self.stats.hits += 1;
             if self.head != i {
                 self.unlink(i);
                 self.push_front(i);
             }
-            return Arc::clone(&self.slab[i as usize].run);
+            return Arc::clone(&self.slab[i.ix()].run);
         }
         self.stats.misses += 1;
         let run = Arc::new(shape_run(db, text, p));
@@ -172,8 +174,8 @@ impl ShapeCache {
         // A collision on the same key with different text replaces the old entry.
         if let Some(&old) = self.map.get(&key) {
             self.unlink(old);
-            self.slab[old as usize].text = text.into();
-            self.slab[old as usize].run = run;
+            self.slab[old.ix()].text = text.into();
+            self.slab[old.ix()].run = run;
             self.push_front(old);
             return;
         }
@@ -186,14 +188,14 @@ impl ShapeCache {
         };
         let i = if self.slab.len() < self.cap {
             self.slab.push(entry);
-            (self.slab.len() - 1) as u32
+            to_u32(self.slab.len() - 1)
         } else {
             let victim = self.tail;
             self.unlink(victim);
-            let old_key = self.slab[victim as usize].key;
+            let old_key = self.slab[victim.ix()].key;
             self.map.remove(&old_key);
             self.stats.evictions += 1;
-            self.slab[victim as usize] = entry;
+            self.slab[victim.ix()] = entry;
             victim
         };
         self.map.insert(key, i);

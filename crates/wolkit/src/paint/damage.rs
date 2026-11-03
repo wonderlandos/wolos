@@ -10,6 +10,7 @@
 //! presentation) can repaint only what changed since that buffer was last shown.
 
 use crate::paint::geom::Rect;
+use crate::scene::ids::Ix;
 
 /// Most rectangles a region keeps before merging.
 pub const MAX_RECTS: usize = 8;
@@ -144,7 +145,7 @@ impl DamageTracker {
     /// A node (by slot) is now painted at `new`. Damages the union of its old and new bounds, or
     /// nothing at all when it did not move or change size and `repaint` is false.
     pub fn update(&mut self, slot: u32, new: Rect, repaint: bool) {
-        let i = slot as usize;
+        let i = slot.ix();
         if i >= self.bounds.len() {
             self.bounds.resize(i + 1, Rect::ZERO);
         }
@@ -157,7 +158,7 @@ impl DamageTracker {
 
     /// A node left the tree; its old bounds are damaged.
     pub fn remove(&mut self, slot: u32) {
-        if let Some(b) = self.bounds.get_mut(slot as usize) {
+        if let Some(b) = self.bounds.get_mut(slot.ix()) {
             let old = std::mem::replace(b, Rect::ZERO);
             self.region.add(old);
         }
@@ -170,10 +171,7 @@ impl DamageTracker {
 
     /// The painted bounds recorded for a slot.
     pub fn bounds_of(&self, slot: u32) -> Rect {
-        self.bounds
-            .get(slot as usize)
-            .copied()
-            .unwrap_or(Rect::ZERO)
+        self.bounds.get(slot.ix()).copied().unwrap_or(Rect::ZERO)
     }
 
     pub fn pending(&self) -> &Damage {

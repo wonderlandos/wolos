@@ -3,6 +3,8 @@
 //! and motion scales, the shadow and spring materials. Values mirror `shared::theme` (colours in
 //! `TOKENS`, the scale in `SCALE`, the metrics in `scaffold`); `tests/style_tokens.rs` fails the
 //! build when either side drifts.
+use super::num::f32_to_u16;
+use crate::scene::ids::{Ix, to_u8};
 
 /// The 13 semantic colours of a theme, in `shared::theme::TOKENS` order (ids are append-only).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -55,7 +57,7 @@ impl Token {
         "danger",
     ];
     pub fn name(self) -> &'static str {
-        Self::NAMES[self as usize]
+        Self::NAMES[(self as u64).ix()]
     }
     pub fn parse(s: &str) -> Option<Token> {
         Self::NAMES
@@ -64,10 +66,10 @@ impl Token {
             .map(|i| Self::ALL[i])
     }
     pub fn to_u8(self) -> u8 {
-        self as u8
+        to_u8(self as u64)
     }
     pub fn from_u8(b: u8) -> Option<Token> {
-        Self::ALL.get(b as usize).copied()
+        Self::ALL.get(b.ix()).copied()
     }
 }
 
@@ -228,7 +230,7 @@ pub fn motion_ms(name: &str) -> Option<u16> {
     MOTION
         .iter()
         .find(|s| s.name == name)
-        .map(|s| s.value as u16)
+        .map(|s| f32_to_u16(s.value))
 }
 pub fn role(name: &str) -> Option<&'static RoleSpec> {
     ROLES.iter().find(|r| r.name == name)
@@ -262,16 +264,16 @@ pub struct ShadowParams {
 impl ShadowTok {
     pub const ALL: [ShadowTok; 4] = [ShadowTok::None, ShadowTok::Sm, ShadowTok::Md, ShadowTok::Lg];
     pub fn name(self) -> &'static str {
-        ["none", "sm", "md", "lg"][self as usize]
+        ["none", "sm", "md", "lg"][(self as u64).ix()]
     }
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|t| t.name() == s)
     }
     pub fn to_u8(self) -> u8 {
-        self as u8
+        to_u8(self as u64)
     }
     pub fn from_u8(b: u8) -> Option<Self> {
-        Self::ALL.get(b as usize).copied()
+        Self::ALL.get(b.ix()).copied()
     }
     /// Layers, mirroring `--glass-shadow` of the Kit for `lg`.
     pub fn layers(self) -> &'static [ShadowParams] {
@@ -368,12 +370,12 @@ pub fn contrast_remap(c: super::value::ColorRef) -> super::value::ColorRef {
     use super::value::ColorRef;
     let (t, a) = match c {
         ColorRef::Token(t) => (t, 100u32),
-        ColorRef::Alpha(t, a) => (t, a as u32),
+        ColorRef::Alpha(t, a) => (t, u32::from(a)),
         ColorRef::Transparent | ColorRef::Shade(_) => return c,
     };
     match CONTRAST.iter().find(|o| o.token == t) {
         Some(o) => {
-            let pct = (o.pct as u32 * a / 100) as u8;
+            let pct = to_u8(u32::from(o.pct) * a / 100);
             if pct == 100 {
                 ColorRef::Token(o.from)
             } else {

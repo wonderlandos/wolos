@@ -147,14 +147,23 @@ jobs:
   compositor-config:
     runs-on: ubuntu-latest
     container: archlinux:latest@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 # bump: docker buildx imagetools inspect archlinux:latest
+    # One snapshot install and four config checks (RC-005).
+    timeout-minutes: 30
     steps:
       - name: The compositor (snapshot-pinned)
+        # bash -eo pipefail, not the container's sh -e (RC-019).
+        shell: bash
         run: |
           echo 'Server = https://archive.archlinux.org/repos/2026/10/27/$repo/os/$arch' > /etc/pacman.d/mirrorlist
           pacman -Syu --noconfirm --needed hyprland git
-          pacman -Q hyprland | tee /dev/stderr | grep -q ' 0\.56\.2-'
+          v=$(pacman -Q hyprland)
+          echo "$v"
+          grep -q ' 0\.56\.2-' <<< "$v"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Hyprland --verify-config on the shipped confs
+        # bash -eo pipefail (RC-019); the checks read $out from a here-string, so an early grep -q
+        # exit cannot SIGPIPE a printf stage under pipefail.
+        shell: bash
         run: |
           mkdir -p /usr/share/wolos
           cp -r desktop/overlay/usr/share/wolos/. /usr/share/wolos/
@@ -167,9 +176,9 @@ jobs:
           bad=0
           for c in hyprland login installer setup; do
             out=$(runuser -u ci -- env HOME=/home/ci XDG_RUNTIME_DIR=/run/ci Hyprland --verify-config -c "/usr/share/wolos/hypr/$c.conf" 2>&1 || true)
-            errors=$(printf '%s\n' "$out" | grep -E 'Config error|unexpected symbol' | grep -vE "$fork_only" || true)
-            if [ -n "$errors" ] || ! printf '%s\n' "$out" | grep -q 'config ok\|Config error'; then
-              printf '%s\n' "$out" | tail -20
+            errors=$(grep -E 'Config error|unexpected symbol' <<< "$out" | grep -vE "$fork_only" || true)
+            if [ -n "$errors" ] || ! grep -q 'config ok\|Config error' <<< "$out"; then
+              tail -20 <<< "$out"
               echo "::error::$c.conf is not accepted"
               bad=1
             else

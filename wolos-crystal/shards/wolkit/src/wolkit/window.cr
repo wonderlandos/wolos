@@ -103,6 +103,7 @@ module Wolkit
     @@backend : Backend? = nil
     @@windows = {} of UInt32 => Window
     @@quit = false
+    @@on_quit : Proc(Nil)? = nil
 
     def self.backend : Backend
       @@backend || raise UsageError.new("Wolkit is not running. Start the app with `Wolkit.run MyApp`, or use `Wolkit::Test.run` in a spec.")
@@ -129,9 +130,15 @@ module Wolkit
       @@windows.values
     end
 
-    # Ask the loop to end.
+    # Ask the loop to end (and wake it, so it notices at once).
     def self.quit : Nil
       @@quit = true
+      @@on_quit.try &.call
+    end
+
+    # What `quit` calls to wake the loop (set by `Wolkit::Loop.run`).
+    def self.on_quit=(hook : Proc(Nil)?) : Proc(Nil)?
+      @@on_quit = hook
     end
 
     def self.quit? : Bool

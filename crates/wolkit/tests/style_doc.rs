@@ -21,7 +21,8 @@ fn the_style_doc_is_what_the_code_generates() {
             .position(|(a, b)| a != b)
             .unwrap_or(got.lines().count().min(want.lines().count()));
         panic!(
-            "docs/modules/wolkit-style.md is stale (first difference at line {}): regenerate with WOLKIT_BLESS=1 cargo test -p wolkit --test style_doc\n  file: {}\n  code: {}",
+            "docs/modules/wolkit-style.md is stale (first difference at line {}): regenerate with \
+WOLKIT_BLESS=1 cargo test -p wolkit --test style_doc\n  file: {}\n  code: {}",
             at + 1,
             got.lines().nth(at).unwrap_or("<end>"),
             want.lines().nth(at).unwrap_or("<end>")

@@ -35,7 +35,7 @@ pub enum WriteContent {
         password: Option<String>,
         hidden: bool,
     },
-    /// Merge `key=value` lines into the current sysctl.conf.local (allow-listed keys only).
+    /// Merge `key=value` lines into the current [`power::SYSCTL_LOCAL`] (allow-listed keys only).
     SysctlUpsert(Vec<(String, String)>),
     /// Drop one Wi-Fi network from the current wpa_supplicant.conf.
     WifiRemove {

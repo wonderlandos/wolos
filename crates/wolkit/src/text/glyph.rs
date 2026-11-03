@@ -5,6 +5,8 @@
 //! it on a worker thread and upload the result asynchronously; this module owns no threads.
 //! Rendering is unhinted grayscale: no LCD fringing, one coverage byte per pixel.
 
+use crate::num::{round_u32, to_i16, to_i32, trunc_i32};
+use crate::scene::ids::{Ix, to_u8, to_u16};
 use std::collections::HashMap;
 
 use skrifa::{DrawMemory, GlyphId, PathSink, ScalerFont};
@@ -45,7 +47,7 @@ impl GlyphKey {
         GlyphKey {
             font,
             glyph,
-            size_q: (size.max(0.0) * 64.0).round() as u32,
+            size_q: round_u32(size.max(0.0) * 64.0),
             sub: sub % SUBPIXEL_STEPS,
         }
     }
@@ -58,8 +60,8 @@ impl GlyphKey {
 /// Splits a pen x into whole pixels and a quarter-pixel phase, rounding down (`floor(4x)`).
 pub fn split_subpixel(x: f32) -> (i32, u8) {
     let q = (x * f32::from(SUBPIXEL_STEPS)).floor();
-    let q = q.clamp(-1.0e9, 1.0e9) as i64;
-    ((q >> 2) as i32, (q & 3) as u8)
+    let q = i64::from(trunc_i32(q.clamp(-1.0e9, 1.0e9)));
+    (to_i32(q >> 2), to_u8(q & 3))
 }
 
 #[derive(Default)]
@@ -158,12 +160,12 @@ impl GlyphRasterizer {
         let maxx = (self.rec.max.0 + shift).ceil();
         let miny = self.rec.min.1.floor();
         let maxy = self.rec.max.1.ceil();
-        let w = (maxx - minx) as i32;
-        let h = (maxy - miny) as i32;
+        let w = trunc_i32(maxx - minx);
+        let h = trunc_i32(maxy - miny);
         if w <= 0 || h <= 0 || w > MAX_GLYPH_SIDE || h > MAX_GLYPH_SIDE {
             return None;
         }
-        self.acc.reset(w as usize, h as usize);
+        self.acc.reset(w.ix(), h.ix());
         {
             let mut f = Flattener::new(&mut self.acc, 1.0, 1.0, shift - minx, maxy);
             for op in &self.rec.ops {
@@ -177,13 +179,13 @@ impl GlyphRasterizer {
             }
             f.close();
         }
-        let mut data = vec![0u8; (w * h) as usize];
+        let mut data = vec![0u8; (w * h).ix()];
         self.acc.finish(&mut data);
         Some(GlyphBitmap {
-            width: w as u16,
-            height: h as u16,
-            left: minx as i16,
-            top: maxy as i16,
+            width: to_u16(w),
+            height: to_u16(h),
+            left: to_i16(trunc_i32(minx)),
+            top: to_i16(trunc_i32(maxy)),
             data,
         })
     }

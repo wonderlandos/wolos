@@ -4,7 +4,7 @@
 //! arithmetic and the decision, both pure.
 use super::prop::PropId;
 use super::tokens::{SpringParams, spring_params};
-use super::value::*;
+use super::value::{Ease, Props, Shadow, Transform};
 
 /// Control points of the cubic Bezier behind an ease (CSS `cubic-bezier(x1, y1, x2, y2)`).
 pub fn bezier(e: Ease) -> Option<[f32; 4]> {

@@ -191,7 +191,7 @@ for the tools). The rules in one place:
 - ADR 0020: identity from the kernel, every call names one capability, fields bounded both sides,
   panics stop at the boundary, apps have no ambient authority. ADR 0027: an app lives in its own
   scope with task, memory and swap limits; a storm is killed, a well-behaved app is never touched.
-  ADR 0015 is the baseline (firewall, hardening, what runs as root).
+  ADR 0040 is the baseline (firewall, hardening, what runs as root).
 - CVE-class checklist for every change that reads input or touches the system:
   - **Path traversal**: a name from outside is joined to a root and the result is checked to stay
     under it (`Path::components`, no `..`, no absolute parts) before open or unlink.

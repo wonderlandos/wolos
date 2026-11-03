@@ -6,4 +6,4 @@ pub mod coverage;
 pub mod headless;
 pub mod raster;
 
-pub use headless::render;
+pub use headless::{Frame, render};

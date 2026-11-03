@@ -74,9 +74,9 @@ pub fn choose<'a>(
         return Some(d);
     }
     devices.iter().filter(usable).max_by_key(|d| {
-        let drives = pref.display_device.is_some_and(|dev| {
-            d.render_node == Some(dev) || d.primary_node == Some(dev)
-        });
+        let drives = pref
+            .display_device
+            .is_some_and(|dev| d.render_node == Some(dev) || d.primary_node == Some(dev));
         (
             drives,
             d.kind != DeviceKind::Software,
@@ -124,7 +124,9 @@ impl Blocklist {
     pub fn parse(text: &str) -> (Blocklist, Vec<usize>) {
         let mut out = Blocklist::default();
         let mut bad = Vec::new();
-        let text = text.get(..MAX_BLOCKLIST_BYTES.min(text.len())).unwrap_or("");
+        let text = text
+            .get(..MAX_BLOCKLIST_BYTES.min(text.len()))
+            .unwrap_or("");
         for (n, line) in text.lines().enumerate() {
             let (body, reason) = match line.split_once('#') {
                 Some((b, r)) => (b.trim(), r.trim()),
@@ -284,7 +286,8 @@ mod tests {
 
     #[test]
     fn blocklist_parses_wildcards_versions_and_reports_bad_lines() {
-        let text = "# comment\n0x1002:* below 0x5000 # old firmware\n10de:2204\nnonsense\n8086:zz\n";
+        let text =
+            "# comment\n0x1002:* below 0x5000 # old firmware\n10de:2204\nnonsense\n8086:zz\n";
         let (list, bad) = Blocklist::parse(text);
         assert_eq!(list.rules.len(), 2);
         assert_eq!(bad, vec![4, 5]);

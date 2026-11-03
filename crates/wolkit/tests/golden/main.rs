@@ -7,7 +7,7 @@
 
 mod png;
 mod scenes;
-#[path = "../text_support/mod.rs"]
+#[path = "../support/text.rs"]
 mod text_support;
 
 use std::path::PathBuf;

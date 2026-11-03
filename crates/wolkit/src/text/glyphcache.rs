@@ -2,6 +2,7 @@
 //! Rasteriser + atlas behind the [`GlyphSource`] trait.
 
 use crate::paint::glyphs::{GlyphRef, GlyphSource, Place};
+use crate::scene::ids::Ix;
 use crate::text::atlas::Atlas;
 use crate::text::fontdb::{FontDb, FontId};
 use crate::text::glyph::{GlyphBitmap, GlyphKey, GlyphRasterizer};
@@ -42,7 +43,7 @@ impl GlyphCache {
                 height: bm.height,
                 left: bm.left,
                 top: bm.top,
-                stride: bm.width as usize,
+                stride: bm.width.ix(),
                 data: &bm.data,
                 place: Place::Transient,
             });
@@ -67,7 +68,7 @@ impl GlyphCache {
                             height: bm.height,
                             left: bm.left,
                             top: bm.top,
-                            stride: bm.width as usize,
+                            stride: bm.width.ix(),
                             data: &bm.data,
                             place: Place::Transient,
                         });

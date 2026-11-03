@@ -2,8 +2,15 @@
 //! Value tokenizer and the per-kind value parsers of `.wolcss`. Each parser reads one value from a
 //! `Cur` and returns the typed value or one `PErr` (lint id, span, sentence, suggestion).
 use super::lint as L;
+use super::num::{f32_to_i16, f32_to_u8, f32_to_u16};
 use super::tokens::{self as tk, ShadowTok, Token};
-use super::value::*;
+use super::value::{
+    AlignContent, AlignItems, AlignSelf, Backdrop, ColorRef, Cursor, Dim, Direction, Display, Ease,
+    FEATURE_TNUM, FontFamily, FontStyle, Justify, MAX_TRANSITION_MS, Overflow, Paint,
+    PointerEvents, Position, Shadow, Spring, TextAlign, TextDecoration, TextOverflow, Transform,
+    Transition, UserSelect, Visibility, WhiteSpace, Wrap,
+};
+use crate::scene::ids::Ix;
 
 /// A parse error inside one value: byte span in the file.
 #[derive(Clone, Debug, PartialEq)]
@@ -547,9 +554,14 @@ pub fn parse_aspect(c: &mut Cur) -> PRes<f32> {
 pub fn parse_zindex(c: &mut Cur) -> PRes<i16> {
     let t = c.take()?;
     match &t.t {
-        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => {
-            Ok(num_in(c, &t, *v, -1000.0, 1000.0, "a whole number")? as i16)
-        }
+        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => Ok(f32_to_i16(num_in(
+            c,
+            &t,
+            *v,
+            -1000.0,
+            1000.0,
+            "a whole number",
+        )?)),
         _ => Err(c.bad(&t, "a whole number from -1000 to 1000")),
     }
 }
@@ -642,7 +654,7 @@ pub fn parse_color(c: &mut Cur) -> PRes<ColorRef> {
             if close.t != T::RParen {
                 return Err(c.bad(&close, "a closing parenthesis"));
             }
-            Ok(ColorRef::Alpha(tok, a.round() as u8))
+            Ok(ColorRef::Alpha(tok, f32_to_u8(a)))
         }
         T::Func(f)
             if matches!(
@@ -680,7 +692,9 @@ pub fn parse_paint(c: &mut Cur) -> PRes<Paint> {
             c.i += 1;
             let at = c.take()?;
             let angle = match &at.t {
-                T::Num(v, u) if u == "deg" => num_in(c, &at, *v, -360.0, 360.0, "degrees")? as i16,
+                T::Num(v, u) if u == "deg" => {
+                    f32_to_i16(num_in(c, &at, *v, -360.0, 360.0, "degrees")?)
+                }
                 T::Ident(s) if s == "to" => {
                     let d = c.take()?;
                     let name = match &d.t {
@@ -716,7 +730,7 @@ pub fn parse_paint(c: &mut Cur) -> PRes<Paint> {
                         None,
                     ));
                 }
-                stops[n as usize] = parse_color(c)?;
+                stops[n.ix()] = parse_color(c)?;
                 n += 1;
             }
             if n < 2 {
@@ -890,8 +904,9 @@ pub fn parse_weight(c: &mut Cur) -> PRes<u16> {
         T::Ident(s) if s == "normal" => Ok(400),
         T::Ident(s) if s == "bold" => Ok(700),
         T::Num(v, u) if u.is_empty() => {
-            if matches!(*v as i32, 400 | 500 | 600 | 700) && v.fract() == 0.0 {
-                Ok(*v as u16)
+            let w = f32_to_u16(*v);
+            if matches!(w, 400 | 500 | 600 | 700) && v.fract() == 0.0 {
+                Ok(w)
             } else {
                 Err(c.err(
                     &t,
@@ -918,9 +933,14 @@ pub fn parse_max_lines(c: &mut Cur) -> PRes<u16> {
     let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "none" => Ok(0),
-        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => {
-            Ok(num_in(c, &t, *v, 1.0, 1000.0, "a whole number")? as u16)
-        }
+        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => Ok(f32_to_u16(num_in(
+            c,
+            &t,
+            *v,
+            1.0,
+            1000.0,
+            "a whole number",
+        )?)),
         _ => Err(c.bad(&t, "none or a whole number")),
     }
 }
@@ -961,7 +981,14 @@ pub fn parse_duration(c: &mut Cur) -> PRes<u16> {
                     Some("use `slow` (400ms) or shorter".into()),
                 ));
             }
-            Ok(num_in(c, &t, ms, 0.0, MAX_TRANSITION_MS as f32, "milliseconds")?.round() as u16)
+            Ok(f32_to_u16(num_in(
+                c,
+                &t,
+                ms,
+                0.0,
+                MAX_TRANSITION_MS as f32,
+                "milliseconds",
+            )?))
         }
         _ => Err(c.bad(&t, "fast, normal, slow or a time such as 200ms")),
     }
@@ -990,7 +1017,7 @@ pub fn parse_transition(c: &mut Cur) -> PRes<Transition> {
         if name == "all" {
             for p in PropId::ALL {
                 if p.info().anim {
-                    tr.props |= 1u128 << (*p as u8);
+                    tr.props |= p.bit();
                 }
             }
         } else if let Some(p) = PropId::parse_name(&name) {
@@ -1004,10 +1031,10 @@ pub fn parse_transition(c: &mut Cur) -> PRes<Transition> {
                     ),
                 ));
             }
-            tr.props |= 1u128 << (p as u8);
+            tr.props |= p.bit();
         } else if let Some(group) = group_props(&name) {
             for p in group {
-                tr.props |= 1u128 << (*p as u8);
+                tr.props |= p.bit();
             }
         } else {
             let help = tk::suggest(&name, PropId::ALL.iter().map(|p| p.name()))

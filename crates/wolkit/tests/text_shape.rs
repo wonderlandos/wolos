@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Shaping, font selection and fallback, the font index, and glyph rasterisation.
 
+#[path = "support/text.rs"]
 mod text_support;
 
 use harfrust::Script;
@@ -329,12 +330,16 @@ fn the_font_index_is_read_from_its_cache_until_a_directory_changes() {
     );
 
     // Adding a file changes the directory's mtime: the cache is stale and the scan runs again.
-    std::thread::sleep(std::time::Duration::from_millis(20));
     std::fs::write(
         fonts_dir.join("WkHebrew-Regular.ttf"),
         load("WkHebrew-Regular.ttf"),
     )
     .unwrap();
+    // A sure change of the directory's mtime without waiting for the clock to tick.
+    std::fs::File::open(&fonts_dir)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+        .unwrap();
     let (third, from_cache) = FontIndex::load_or_scan(&roots, &cache);
     assert!(!from_cache);
     assert_eq!(third.entries.len(), 3);

@@ -79,6 +79,11 @@ pub fn scope(layers: &Layers) -> Idx {
     if m == NIL { 0 } else { m }
 }
 
+/// The nearest list container above `n`, or NIL.
+pub fn enclosing_list(scene: &dyn SceneRead, n: Idx) -> Idx {
+    list_of(scene, n).map_or(NIL, |(l, _)| l)
+}
+
 /// The nearest list container above `n` (a `vlist` or a node with a list, tab-list or menu role)
 /// and the direct child of it that holds `n`.
 fn list_of(scene: &dyn SceneRead, n: Idx) -> Option<(Idx, Idx)> {
@@ -127,18 +132,22 @@ pub fn in_list(scene: &dyn SceneRead, from: Idx, m: Move) -> Idx {
             first_in(scene, c)
         }
     };
-    let (mut c, step): (Idx, fn(&dyn SceneRead, Idx) -> Idx) = match m {
-        Move::Prev => (scene.prev_sibling(item), |s, i| s.prev_sibling(i)),
-        Move::Next => (scene.next_sibling(item), |s, i| s.next_sibling(i)),
-        Move::First => (scene.first_child(list), |s, i| s.next_sibling(i)),
-        Move::Last => (scene.last_child(list), |s, i| s.prev_sibling(i)),
+    let (mut c, forward) = match m {
+        Move::Prev => (scene.prev_sibling(item), false),
+        Move::Next => (scene.next_sibling(item), true),
+        Move::First => (scene.first_child(list), true),
+        Move::Last => (scene.last_child(list), false),
     };
     while c != NIL {
         let t = target(c);
         if t != NIL {
             return t;
         }
-        c = step(scene, c);
+        c = if forward {
+            scene.next_sibling(c)
+        } else {
+            scene.prev_sibling(c)
+        };
     }
     NIL
 }
@@ -202,7 +211,8 @@ pub fn sync(w: &mut WindowCore, s: &mut Sink, st: &mut InputState) -> bool {
     // 3. Modal layers.
     let modal = st.layers.top_modal();
     if modal != st.modal {
-        let opened = modal != NIL && (st.modal == NIL || scene_is_inside(&w.scene, st.modal, modal));
+        let opened =
+            modal != NIL && (st.modal == NIL || scene_is_inside(&w.scene, st.modal, modal));
         if opened {
             if st.focus_return.len() >= super::MAX_FOCUS_RETURN {
                 st.focus_return.remove(0);

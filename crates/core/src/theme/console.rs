@@ -213,8 +213,13 @@ fn sgr(c: Color) -> String {
     format!("38;2;{};{};{}", c.r, c.g, c.b)
 }
 
+const SHELLCHECK_BASH: &str = "# shellcheck shell=bash disable=SC2034\n";
+
 fn bash(t: &ResolvedTheme) -> String {
-    let mut s = note(t, "#") + &format!("WOLOS_THEME={}\n", t.id);
+    // Sourced (no shebang, not executable): the directive names the dialect for shellcheck (and
+    // that bashrc reads these names, SC2034), so the CI gate over every `*.sh` checks the shipped
+    // copy instead of failing on SC2148.
+    let mut s = note(t, "#") + SHELLCHECK_BASH + &format!("WOLOS_THEME={}\n", t.id);
     for (k, c) in roles(t) {
         let k = k.to_uppercase();
         // `#rrggbb`, and the SGR parameters a bash prompt puts between `\e[` and `m`.
@@ -632,7 +637,20 @@ pub(crate) mod tests {
                 assert!(file(&f, NU).contains(&format!("$env.{var} = \"{hx}\"\n")));
                 assert!(file(&f, PWSH).contains(&format!("$env:{var} = '{hx}'\n")));
             }
-            // bash/sh: NAME=value or NAME='value' lines only.
+            // bash/sh: the shellcheck dialect directive before the first assignment (the file
+            // has no shebang), then NAME=value or NAME='value' lines only.
+            let first = file(&f, BASH)
+                .lines()
+                .position(|l| !l.starts_with('#'))
+                .unwrap();
+            assert!(
+                file(&f, BASH)
+                    .lines()
+                    .take(first)
+                    .any(|l| l == SHELLCHECK_BASH.trim_end()),
+                "{}: bash/colors.sh needs `# shellcheck shell=bash` before its first command",
+                t.id
+            );
             for l in file(&f, BASH).lines().filter(|l| !l.starts_with('#')) {
                 let (k, v) = l.split_once('=').unwrap();
                 assert!(k.chars().all(|c| c.is_ascii_uppercase() || c == '_'), "{l}");

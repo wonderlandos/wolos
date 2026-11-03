@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Section, ListRow and EmptyState: grouped lists and the empty screen (HIG sections 3 and 5).
 require "../component"
+require "../style/kit_class"
 require "./scaffold"
 
 module Wolkit
@@ -12,7 +13,7 @@ module Wolkit
       def view
         column gap: :xs do
           text @title, role: :secondary, color: :dim
-          column bg: :card, radius: :m do
+          column class: KitClass::CARD do
             slot
           end
         end

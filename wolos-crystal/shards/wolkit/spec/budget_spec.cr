@@ -79,11 +79,9 @@ describe "the budgets" do
     scope = Wolkit::Scope.new(nil)
     error = nil
     scope.run do
-      begin
-        70_000.times { mount.create(Wolkit::Wire::Kind::BOX) }
-      rescue ex : Wolkit::LimitError
-        error = ex
-      end
+      70_000.times { mount.create(Wolkit::Wire::Kind::BOX) }
+    rescue ex : Wolkit::LimitError
+      error = ex
     end
     error.try(&.message).should eq "This window has 65,537 parts; the limit is 65,536. Use `list` for long lists."
     scope.dispose

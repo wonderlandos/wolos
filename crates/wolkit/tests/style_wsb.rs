@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! `WSB1`: exact round trips of random tables, deterministic output, and a loader that treats its
 //! input as hostile (truncation at every length, bit flips with the checksum repaired, limits).
+#[path = "support/layout.rs"]
 mod layout_support;
 use layout_support::Rng;
 use wolkit::style::prop::*;

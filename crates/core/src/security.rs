@@ -43,9 +43,10 @@ pub const HARDENING: &[(&str, &str, &str)] = &[
 ];
 
 /// Where [`HARDENING`] is set at boot (systemd-sysctl): the shipped default, owned by the
-/// package (`files/usr/lib/sysctl.d`, image-test-checked). A local change goes in a later-sorting
-/// drop-in such as [`crate::power::SYSCTL_LOCAL`]; a file of the same name in `/etc/sysctl.d`
-/// would replace this one whole, dropping every line of the hardening. Settings and
+/// package (`files/usr/lib/sysctl.d`, image-test-checked). A local change goes in a drop-in whose
+/// name sorts after `90-wolos.conf` (systemd-sysctl applies files by name, the last value wins);
+/// a file of the same name in `/etc/sysctl.d` ([`HARDENING_MASK`]) would replace this one whole,
+/// dropping every line of the hardening. Settings and
 /// `wol security` read the running values from `/proc/sys`, so either way they show what the
 /// kernel really has.
 pub const HARDENING_FILE: &str = "/usr/lib/sysctl.d/90-wolos.conf";

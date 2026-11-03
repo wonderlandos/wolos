@@ -803,7 +803,7 @@ mod tests {
                 let mut c = b.clone();
                 c[i] = v;
                 if let Ok(p) = Patch::parse(&c, &mut sc) {
-                    let _ = p.ops().count();
+                    assert!(p.ops().count() as u32 <= p.op_count);
                 }
             }
         }

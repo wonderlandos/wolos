@@ -13,8 +13,8 @@
 
 use std::collections::HashMap;
 
-use crate::paint::geom::{PixelRect, Rect};
 use super::{f2i, f2u};
+use crate::paint::geom::{PixelRect, Rect};
 use crate::scene::ids::{Ix, to_u16, to_u32};
 
 /// Largest mask the CPU rasteriser draws (`raster.rs` skips bigger ones too).
@@ -55,7 +55,12 @@ pub fn box_radius(blur: f32) -> usize {
     }
     let sigma = blur * 0.5;
     let size = f2u((4.0 * sigma * sigma + 1.0).sqrt().floor()).ix();
-    let size = if size.is_multiple_of(2) { size + 1 } else { size }.max(1);
+    let size = if size.is_multiple_of(2) {
+        size + 1
+    } else {
+        size
+    }
+    .max(1);
     size / 2
 }
 
@@ -168,8 +173,24 @@ pub fn prototype(cast: &Rect, radii: &[f32; 4], blur: f32) -> Option<(Rect, Slic
     let blur = blur.clamp(0.0, 256.0);
     let ext = extent(cast, blur)?;
     let r = box_radius(blur);
-    let (bx0, bx1) = band(cast.x, cast.w, radii[0].max(radii[3]), radii[1].max(radii[2]), ext.x0, ext.width(), r);
-    let (by0, by1) = band(cast.y, cast.h, radii[0].max(radii[1]), radii[3].max(radii[2]), ext.y0, ext.height(), r);
+    let (bx0, bx1) = band(
+        cast.x,
+        cast.w,
+        radii[0].max(radii[3]),
+        radii[1].max(radii[2]),
+        ext.x0,
+        ext.width(),
+        r,
+    );
+    let (by0, by1) = band(
+        cast.y,
+        cast.h,
+        radii[0].max(radii[1]),
+        radii[3].max(radii[2]),
+        ext.y0,
+        ext.height(),
+        r,
+    );
     let nx = (bx1 - bx0).max(0);
     let ny = (by1 - by0).max(0);
     let proto = Rect::new(cast.x, cast.y, cast.w - nx as f32, cast.h - ny as f32);
@@ -292,7 +313,10 @@ impl ShadowAtlas {
             return Some((p, ext));
         }
         let (pext, m) = mask(&proto, radii, blur)?;
-        let (w, h) = (u32::try_from(pext.width()).ok()?, u32::try_from(pext.height()).ok()?);
+        let (w, h) = (
+            u32::try_from(pext.width()).ok()?,
+            u32::try_from(pext.height()).ok()?,
+        );
         let at = match self.alloc(w, h) {
             Some(a) => a,
             None => {
@@ -371,8 +395,12 @@ mod tests {
 
     fn stretched_equals_full(cast: Rect, radii: [f32; 4], blur: f32) {
         let mut a = ShadowAtlas::new(1024);
-        let (p, ext) = a.get(&cast, &radii, blur).unwrap_or_else(|| unreachable_none());
-        let (fext, full) = mask(&cast, &radii, blur).unwrap_or_else(|| unreachable_none());
+        let Some((p, ext)) = a.get(&cast, &radii, blur) else {
+            panic!("{cast:?}: a shadow of this size has a prototype");
+        };
+        let Some((fext, full)) = mask(&cast, &radii, blur) else {
+            panic!("{cast:?}: a shadow of this size has a mask");
+        };
         assert_eq!(ext, fext);
         let w = u32::try_from(ext.width()).unwrap_or(0);
         let h = u32::try_from(ext.height()).unwrap_or(0);
@@ -387,14 +415,14 @@ mod tests {
         }
     }
 
-    fn unreachable_none<T>() -> T {
-        unreachable!("a shadow of this size always has a mask")
-    }
-
     #[test]
     fn stretched_prototype_equals_the_full_mask() {
         stretched_equals_full(Rect::new(20.0, 30.0, 300.0, 120.0), [8.0; 4], 12.0);
-        stretched_equals_full(Rect::new(20.5, 30.25, 211.3, 97.6), [4.0, 9.0, 2.0, 0.0], 7.0);
+        stretched_equals_full(
+            Rect::new(20.5, 30.25, 211.3, 97.6),
+            [4.0, 9.0, 2.0, 0.0],
+            7.0,
+        );
         stretched_equals_full(Rect::new(3.0, 4.0, 40.0, 30.0), [6.0; 4], 0.0);
         stretched_equals_full(Rect::new(10.0, 10.0, 18.0, 400.0), [9.0; 4], 24.0);
     }
@@ -405,7 +433,10 @@ mod tests {
         for i in 0..20u16 {
             let w = 200.0 + f32::from(i) * 13.0;
             let y = 10.0 + f32::from(i) * 90.0;
-            assert!(a.get(&Rect::new(16.0, y, w, 60.0), &[8.0; 4], 12.0).is_some());
+            assert!(
+                a.get(&Rect::new(16.0, y, w, 60.0), &[8.0; 4], 12.0)
+                    .is_some()
+            );
         }
         assert_eq!(a.stats.made, 1, "{:?}", a.stats);
         assert_eq!(a.stats.hits, 19);
@@ -419,13 +450,23 @@ mod tests {
             let _ = a.get(&Rect::new(0.0, 0.0, 60.0, 60.0), &[f32::from(i); 4], 4.0);
         }
         assert!(a.generation > g);
-        assert!(a.get(&Rect::new(0.0, 0.0, 600.0, 600.0), &[290.0; 4], 0.0).is_none());
+        assert!(
+            a.get(&Rect::new(0.0, 0.0, 600.0, 600.0), &[290.0; 4], 0.0)
+                .is_none()
+        );
         assert_eq!(a.stats.dropped, 1);
     }
 
     #[test]
     fn box_radius_matches_the_rasteriser_formula() {
-        for (blur, want) in [(0.0, 0), (1.0, 0), (2.0, 1), (12.0, 6), (24.0, 12), (7.0, 3)] {
+        for (blur, want) in [
+            (0.0, 0),
+            (1.0, 0),
+            (2.0, 1),
+            (12.0, 6),
+            (24.0, 12),
+            (7.0, 3),
+        ] {
             assert_eq!(box_radius(blur), want, "blur {blur}");
         }
     }

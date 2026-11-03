@@ -18,7 +18,7 @@ INSERT 2 3 append
 CREATE 4 button
 SET_PROP 4 flex-direction row
 SET_STATE 4 16
-SET_STYLE 4 1
+SET_STYLE 4 0
 SET_A11Y 4 button "Add" ""
 BIND_EVENT 4 1
 SET_TEXT 4 "Add"

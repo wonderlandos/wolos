@@ -3,6 +3,7 @@
 //! property groups (`LayoutStyle`, `PaintStyle`, `TextStyle`, `MotionStyle`) that make up a
 //! computed style. Plain data, no allocation, comparable, with a stable byte codec (`WSB1`).
 use super::tokens::Token;
+use crate::scene::ids::{Ix, to_u8};
 
 /// Declares a keyword enum: variants map to CSS keywords, to a stable `u8` (declaration order,
 /// append-only) and back. The first variant is the default.
@@ -18,8 +19,8 @@ macro_rules! kw_enum {
             pub const KEYWORDS: &'static [&'static str] = &[$($kw),+];
             pub fn kw(self) -> &'static str { match self { $($name::$var => $kw),+ } }
             pub fn parse(s: &str) -> Option<Self> { match s { $($kw => Some($name::$var),)+ _ => None } }
-            pub fn from_u8(b: u8) -> Option<Self> { Self::ALL.get(b as usize).copied() }
-            pub fn to_u8(self) -> u8 { self as u8 }
+            pub fn from_u8(b: u8) -> Option<Self> { Self::ALL.get(b.ix()).copied() }
+            pub fn to_u8(self) -> u8 { to_u8(self as u64) }
         }
     };
 }
@@ -554,7 +555,7 @@ impl Val for Paint {
                 w.u8(2);
                 w.i16(angle);
                 w.u8(n);
-                for s in stops.iter().take(n as usize) {
+                for s in stops.iter().take(n.ix()) {
                     s.put(w);
                 }
             }
@@ -571,7 +572,7 @@ impl Val for Paint {
                     return None;
                 }
                 let mut stops = [ColorRef::Transparent; 3];
-                for s in stops.iter_mut().take(n as usize) {
+                for s in stops.iter_mut().take(n.ix()) {
                     *s = ColorRef::get(r)?;
                 }
                 Paint::Linear { angle, stops, n }

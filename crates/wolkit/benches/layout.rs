@@ -3,7 +3,7 @@
 //! for a full relayout of 10k nodes. Relayout boundaries and the measure cache keep an edit local.
 //!
 //! `cargo bench -p wolkit --bench layout [-- --check]`
-#[path = "../tests/layout_support/mod.rs"]
+#[path = "../tests/support/layout.rs"]
 mod layout_support;
 #[path = "w3_support/mod.rs"]
 mod w3_support;

@@ -8,6 +8,8 @@
 //! * Each page tracks a dirty rectangle so the GPU path uploads only what changed.
 //! * Every lookup counts a hit or a miss; steady-state text must show a 100% hit rate.
 
+use crate::num::to_i32;
+use crate::scene::ids::{Ix, to_u16};
 use std::collections::HashMap;
 
 use crate::paint::geom::PixelRect;
@@ -85,7 +87,7 @@ impl Atlas {
     /// An atlas of `page_size`-square pages using at most `cap_bytes` (at least one page).
     pub fn new(page_size: u32, cap_bytes: usize) -> Atlas {
         let size = page_size.clamp(16, 8192);
-        let page_bytes = (size as usize) * (size as usize);
+        let page_bytes = (size.ix()) * (size.ix());
         Atlas {
             size,
             max_pages: (cap_bytes / page_bytes).max(1),
@@ -110,7 +112,7 @@ impl Atlas {
 
     /// Bytes currently allocated for page pixels.
     pub fn allocated_bytes(&self) -> usize {
-        self.pages.len() * (self.size as usize) * (self.size as usize)
+        self.pages.len() * (self.size.ix()) * (self.size.ix())
     }
 
     /// Marks the start of a frame; pages touched since are protected from eviction in favour of
@@ -122,7 +124,7 @@ impl Atlas {
     /// Looks a glyph up; a stale slot (its page was cleared) is a miss.
     pub fn get(&mut self, key: &GlyphKey) -> Option<Slot> {
         if let Some(s) = self.map.get(key).copied()
-            && let Some(p) = self.pages.get_mut(s.page as usize)
+            && let Some(p) = self.pages.get_mut(s.page.ix())
             && p.generation == s.generation
         {
             p.last_used = self.epoch;
@@ -141,18 +143,18 @@ impl Atlas {
             return None;
         }
         let (page, x, y) = self.allocate(w + 2 * PAD, h + 2 * PAD)?;
-        let size = self.size as usize;
+        let size = self.size.ix();
         let p = &mut self.pages[page];
-        for row in 0..h as usize {
-            let dst = (y as usize + PAD as usize + row) * size + x as usize + PAD as usize;
-            let src = row * w as usize;
-            p.pixels[dst..dst + w as usize].copy_from_slice(&bm.data[src..src + w as usize]);
+        for row in 0..h.ix() {
+            let dst = (y.ix() + PAD.ix() + row) * size + x.ix() + PAD.ix();
+            let src = row * w.ix();
+            p.pixels[dst..dst + w.ix()].copy_from_slice(&bm.data[src..src + w.ix()]);
         }
         let r = PixelRect {
-            x0: x as i32,
-            y0: y as i32,
-            x1: (x + w + 2 * PAD) as i32,
-            y1: (y + h + 2 * PAD) as i32,
+            x0: to_i32(x),
+            y0: to_i32(y),
+            x1: to_i32(x + w + 2 * PAD),
+            y1: to_i32(y + h + 2 * PAD),
         };
         p.dirty = Some(match p.dirty {
             None => r,
@@ -165,10 +167,10 @@ impl Atlas {
         });
         p.last_used = self.epoch;
         let slot = Slot {
-            page: page as u16,
+            page: to_u16(page),
             generation: p.generation,
-            x: (x + PAD) as u16,
-            y: (y + PAD) as u16,
+            x: to_u16(x + PAD),
+            y: to_u16(y + PAD),
             w: bm.width,
             h: bm.height,
             left: bm.left,
@@ -187,7 +189,7 @@ impl Atlas {
         }
         // 2. A fresh page.
         if self.pages.len() < self.max_pages {
-            let n = (self.size as usize) * (self.size as usize);
+            let n = (self.size.ix()) * (self.size.ix());
             self.pages.push(Page {
                 pixels: vec![0; n],
                 generation: 1,
@@ -217,10 +219,10 @@ impl Atlas {
         p.dirty = Some(PixelRect {
             x0: 0,
             y0: 0,
-            x1: self.size as i32,
-            y1: self.size as i32,
+            x1: to_i32(self.size),
+            y1: to_i32(self.size),
         });
-        self.map.retain(|_, s| s.page as usize != pi);
+        self.map.retain(|_, s| s.page.ix() != pi);
     }
 
     fn fit(p: &mut Page, size: u32, w: u32, h: u32) -> Option<(u32, u32)> {
@@ -262,12 +264,12 @@ impl Atlas {
 
     /// The coverage bytes of a slot as `(row stride, data starting at the slot's top-left)`.
     pub fn slot_pixels(&self, s: &Slot) -> Option<(usize, &[u8])> {
-        let p = self.pages.get(s.page as usize)?;
+        let p = self.pages.get(s.page.ix())?;
         if p.generation != s.generation {
             return None;
         }
-        let size = self.size as usize;
-        Some((size, &p.pixels[s.y as usize * size + s.x as usize..]))
+        let size = self.size.ix();
+        Some((size, &p.pixels[s.y.ix() * size + s.x.ix()..]))
     }
 }
 

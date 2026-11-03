@@ -9,4 +9,4 @@ pub mod tree;
 pub mod vlist;
 
 pub use engine::{LayoutCache, layout};
-pub use tree::{ApproxMeasure, LayoutTree, Leaf, Measure, Size};
+pub use tree::{LayoutTree, Leaf, Measure, Size};

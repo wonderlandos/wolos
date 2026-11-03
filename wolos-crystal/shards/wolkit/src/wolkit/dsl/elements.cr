@@ -71,9 +71,9 @@ module Wolkit
                 {% if val.is_a?(SymbolLiteral) || val.is_a?(NumberLiteral) %}
                   {% if conv == "space" %}
                     {% if val.is_a?(SymbolLiteral) && !::Wolkit::Scale::SPACING[val.id.stringify] %}
-                      {% val.raise "Spacing is one of :none, :xs, :sm, :md, :lg, :xl or :xxl (0, 4, 8, 12, 16, 24 or 32); this is #{val}." %}
-                    {% elsif val.is_a?(NumberLiteral) && !%w(0 4 8 12 16 24 32).includes?(val.stringify) %}
-                      {% val.raise "Spacing is one of 0, 4, 8, 12, 16, 24 or 32; this is #{val}." %}
+                      {% val.raise "Spacing is one of :none, :xs, :sm, :md, :lg or :xl (0, 4, 8, 12, 16 or 24); this is #{val}." %}
+                    {% elsif val.is_a?(NumberLiteral) && !%w(0 4 8 12 16 24).includes?(val.stringify) %}
+                      {% val.raise "Spacing is one of 0, 4, 8, 12, 16 or 24; this is #{val}." %}
                     {% end %}
                   {% elsif conv == "radius" %}
                     {% if val.is_a?(SymbolLiteral) && !::Wolkit::Scale::RADIUS[val.id.stringify] %}

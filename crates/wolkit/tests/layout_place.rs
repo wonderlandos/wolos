@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Anchored placement: worked examples and properties over random anchors.
+#[path = "support/layout.rs"]
 mod layout_support;
 use layout_support::Rng;
 use wolkit::layout::place::*;
@@ -23,7 +24,7 @@ fn opts(side: Side, align: Align) -> PlaceOpts {
 }
 
 #[test]
-fn worked_examples() {
+fn placement_worked_examples() {
     let a = Rect::new(100.0, 100.0, 50.0, 20.0);
     let s = Size::new(80.0, 40.0);
     let p = place(a, s, BOUNDS, opts(Side::Bottom, Align::Start));

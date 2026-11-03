@@ -11,6 +11,8 @@
 //! again so the visible `.notdef` ("tofu") glyph is drawn. Colour emoji slots into the chain in
 //! phase 3.
 
+use crate::num::trunc_u32;
+use crate::scene::ids::{Ix, to_u16, to_u32};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -89,7 +91,7 @@ impl FontDb {
     }
 
     pub fn face(&self, id: FontId) -> Option<&Face> {
-        self.faces.get(id.0 as usize)
+        self.faces.get(id.0.ix())
     }
 
     /// Adds a face from memory. The family name comes from the font's own `name` table.
@@ -114,7 +116,7 @@ impl FontDb {
             return None;
         }
         let id = self.add_data(std::fs::read(path).ok()?)?;
-        self.faces[id.0 as usize].path = Some(path.to_path_buf());
+        self.faces[id.0.ix()].path = Some(path.to_path_buf());
         Some(id)
     }
 
@@ -131,7 +133,7 @@ impl FontDb {
     }
 
     fn push(&mut self, mut face: Face) -> FontId {
-        let id = FontId(self.faces.len() as u32);
+        let id = FontId(to_u32(self.faces.len()));
         face.id = id;
         self.by_family
             .entry(face.family.to_lowercase())
@@ -145,7 +147,7 @@ impl FontDb {
     pub fn find(&self, family: &str, weight: Weight, italic: bool) -> Option<FontId> {
         let list = self.by_family.get(&family.to_lowercase())?;
         list.iter().copied().min_by_key(|id| {
-            let f = &self.faces[id.0 as usize];
+            let f = &self.faces[id.0.ix()];
             (
                 u32::from(f.italic != italic),
                 u32::from(f.weight.abs_diff(weight)),
@@ -219,7 +221,7 @@ fn family_of(font: &Font) -> Option<String> {
 
 fn attributes_of(font: &Font) -> (u16, bool) {
     let a = font.default_attributes();
-    let w = a.weight.value().round().clamp(1.0, 1000.0) as u16;
+    let w = to_u16(trunc_u32(a.weight.value().round().clamp(1.0, 1000.0)));
     let italic = !matches!(a.style, skrifa::font::attribute::Style::Normal);
     (w, italic)
 }

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Property tests: the engine against the reference oracle on random trees, and incremental layout
 //! against a fresh layout after random edits.
+#[path = "support/layout.rs"]
 mod layout_support;
 use layout_support::*;
 use wolkit::layout::tree::*;
 use wolkit::layout::{LayoutCache, layout};
 use wolkit::style::value::*;
 
-fn compare(t: &TTree, vw: f32, vh: f32, seed: u64) {
+fn check_oracle(t: &TTree, vw: f32, vh: f32, seed: u64) {
     let got = run_engine(t, vw, vh);
     let want = Oracle { t }.layout(f64::from(vw), f64::from(vh));
     let seen = reachable(t);
@@ -24,7 +25,7 @@ fn engine_matches_oracle_on_random_trees() {
         let t = random_tree(&mut r, 4, 4);
         let vw = r.pick(&[200.0, 320.0, 480.0, 640.0, 800.0]);
         let vh = r.pick(&[120.0, 240.0, 400.0, 600.0]);
-        let res = std::panic::catch_unwind(|| compare(&t, vw, vh, seed));
+        let res = std::panic::catch_unwind(|| check_oracle(&t, vw, vh, seed));
         if res.is_err() {
             fails += 1;
             if fails > 3 {
@@ -43,7 +44,7 @@ fn engine_matches_oracle_on_deeper_trees() {
     for seed in 1..=300u64 {
         let mut r = Rng(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) | 1);
         let t = random_tree(&mut r, 6, 3);
-        compare(&t, 480.0, 360.0, seed);
+        check_oracle(&t, 480.0, 360.0, seed);
     }
 }
 

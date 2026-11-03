@@ -54,7 +54,8 @@ fn counted<R>(f: impl FnOnce() -> R) -> (R, usize) {
 
 #[test]
 fn steady_state_frames_allocate_nothing() {
-    let sheet = ".row { padding: xs sm; gap: sm; } .row:hover { background: control; } .row:hover > .act { opacity: 1; } .act { opacity: 0; } .label { font-size: secondary; }";
+    let sheet = ".row { padding: xs sm; gap: sm; } .row:hover { background: control; } .row:hover > .act { opacity: 1; } \
+                 .act { opacity: 0; } .label { font-size: secondary; }";
     let c = compile_sources(&[("t.wolcss", sheet)]).unwrap();
     let table = Table::new(c.table);
     let (row, act, label) = (

@@ -4,6 +4,7 @@
 # costs nothing (plan-wolkit section 3.4 "Overlays"). Esc closes the topmost one (the engine delivers
 # it as a key event to the overlay's close handler).
 require "../component"
+require "../style/kit_class"
 
 module Wolkit
   module Kit
@@ -18,7 +19,7 @@ module Wolkit
       def view
         show(@open) do
           overlay modal: true, align: :center, justify: :center, bg: :glass do
-            column bg: :card, radius: :l, pad: :lg, gap: :md, width: 420, a11y_role: :dialog, label: @title do
+            column class: KitClass::SHEET, gap: :md, width: 420, a11y_role: :dialog, label: @title do
               text @title, role: :title
               slot
             end
@@ -36,9 +37,9 @@ module Wolkit
       def view
         show(@open) do
           overlay anchor: @anchor, side: :bottom, anchor_align: :start do
-            column bg: :card, radius: :m, pad: :xs, a11y_role: :menu, label: "Menu" do
+            column a11y_role: :menu, label: "Menu" do
               @items.each do |item|
-                button item.label, flat: true, disabled: item.disabled, a11y_role: :menuitem, on_click: -> do
+                button item.label, flat: true, class: KitClass::MENU_ITEM, disabled: item.disabled, a11y_role: :menuitem, on_click: -> do
                   @open.value = false
                   item.action.call
                 end
@@ -77,7 +78,7 @@ module Wolkit
       def view
         show(@open) do
           overlay modal: true, align: :center, justify: :center, bg: :glass do
-            column bg: :card, radius: :l, pad: :lg, gap: :md, width: 360, a11y_role: :alert, label: @title do
+            column class: KitClass::SHEET, gap: :md, width: 360, a11y_role: :alert, label: @title do
               text @title, role: :title
               text @message
               row gap: :sm, justify: :end do
@@ -103,7 +104,7 @@ module Wolkit
       def view
         row gap: :xs, a11y_role: :tablist, label: "Tabs" do
           @labels.each_with_index do |name, index|
-            button name, flat: true, selected: @selected.value == index, a11y_role: :tab, on_click: -> { @selected.value = index; nil }
+            button name, flat: true, class: KitClass::TAB, selected: @selected.value == index, a11y_role: :tab, on_click: -> { @selected.value = index; nil }
           end
         end
       end

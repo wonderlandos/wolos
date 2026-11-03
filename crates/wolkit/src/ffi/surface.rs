@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! `wolkit_surface_*`: an external GPU image placed by layout (a Wayland subsurface on the native
-//! backend). W1 made these stubs; WK-W5 fills them. Until then every creation says what is missing.
+//! backend, plan section 5.6). The instance-extension table is real (`gpu::surface`), and so is
+//! the Vulkan side of `create_vk` (`gpu::surface::AppSurface`, a `VkSurfaceKHR` on the app's own
+//! instance). Making the subsurface is the native backend's (WK-W4); until it does, creation says
+//! the window needs the native backend, so no handle exists to call `create_vk` on.
 
 use super::window::wolkit_window;
 use super::{borrow, guard, handle, need, release, retain, wolkit_error, wolkit_status};
@@ -74,17 +77,19 @@ pub unsafe extern "C" fn wolkit_surface_get_size(
     })
 }
 
-/// The Vulkan instance extensions a surface needs; none until the native backend exists.
+/// The Vulkan instance extensions an app enables to make a surface with
+/// `wolkit_surface_create_vk`: `VK_KHR_surface` and `VK_KHR_wayland_surface`, as a
+/// NULL-terminated table of static strings (`*count` gets 2).
 ///
 /// # Safety
-/// `count` is writable.
+/// `count` is writable or NULL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wolkit_surface_get_vk_instance_extensions(
     count: *mut u32,
 ) -> *const *const c_char {
-    static NONE: [usize; 1] = [0];
-    super::put(count, 0);
-    NONE.as_ptr().cast()
+    let table = &crate::gpu::surface::INSTANCE_EXTENSIONS.0;
+    super::put(count, 2);
+    table.as_ptr()
 }
 
 /// # Safety

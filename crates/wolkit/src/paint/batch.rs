@@ -8,11 +8,17 @@
 //!
 //! Chunks are cached by `(id, version, scale, atlas generation)`: a chunk whose content did not
 //! change keeps its instances, and scrolling (a changed chunk *offset*) rebuilds nothing, since the
-//! offset is the draw's push constant. The builder owns its buffers and reuses them, so a frame
+//! offset is the draw's push constant. Glyphs are the exception that keeps them exact: a glyph's
+//! pixel row and quarter-pixel phase are chosen after the offset (as the CPU rasteriser does), so
+//! the sub-pixel part of the device offset is folded into glyph positions and the shader moves
+//! glyph quads by the whole-pixel part only. Whole-pixel scrolling still rebuilds nothing; a new
+//! sub-pixel part rebuilds that chunk. The builder owns its buffers and reuses them, so a frame
 //! with unchanged content allocates nothing.
 //!
 //! Coordinates in instances are device pixels (the display list's logical pixels times scale).
 
+use crate::num::{floor_i32, round_u32, trunc_u32};
+use crate::scene::ids::{Ix, to_u8, to_u16, to_u32};
 use std::collections::HashMap;
 use std::mem::size_of;
 
@@ -154,6 +160,8 @@ enum Op {
 struct Cached {
     version: u64,
     scale_bits: u32,
+    /// The sub-pixel part of the chunk's device offset the glyphs were placed for.
+    frac_bits: (u32, u32),
     atlas_gen: u64,
     instances: Vec<Instance>,
     ops: Vec<Op>,
@@ -177,11 +185,11 @@ pub struct InstanceBuilder {
 }
 
 fn q16(v: f32) -> u16 {
-    (v * 16.0).round().clamp(0.0, 65535.0) as u16
+    to_u16(trunc_u32((v * 16.0).round().clamp(0.0, 65535.0)))
 }
 
 fn frac16(v: f32) -> u16 {
-    (v.clamp(0.0, 1.0) * 65535.0).round() as u16
+    to_u16(round_u32(v.clamp(0.0, 1.0) * 65535.0))
 }
 
 fn clip_key(c: &ClipEntry) -> [u32; 9] {
@@ -217,7 +225,7 @@ impl InstanceBuilder {
         if let Some(&id) = self.clip_ids.get(&clip_key(&c)) {
             return id;
         }
-        let id = self.clips.len() as u32;
+        let id = to_u32(self.clips.len());
         self.clips.push(c);
         self.clip_ids.insert(clip_key(&c), id);
         id
@@ -250,10 +258,12 @@ impl InstanceBuilder {
         list.draw_order_into(&mut order);
         for &ci in &order {
             let chunk = &list.chunks[ci];
+            let frac = offset_frac((chunk.offset.0 * scale, chunk.offset.1 * scale));
             let fresh = match self.cache.get_mut(&chunk.id) {
                 Some(c)
                     if c.version == chunk.version
                         && c.scale_bits == scale.to_bits()
+                        && c.frac_bits == (frac.0.to_bits(), frac.1.to_bits())
                         && c.atlas_gen == atlas_gen =>
                 {
                     c.touched = self.frame;
@@ -262,7 +272,7 @@ impl InstanceBuilder {
                 _ => true,
             };
             if fresh {
-                let built = self.build_chunk(list, ci, glyphs, scale, atlas_gen);
+                let built = self.build_chunk(list, ci, glyphs, (scale, frac), atlas_gen);
                 self.cache.insert(chunk.id, built);
                 self.stats.chunks_rebuilt += 1;
             } else {
@@ -274,9 +284,9 @@ impl InstanceBuilder {
             for op in &cached.ops {
                 match op {
                     Op::Instances(r) => {
-                        let first = self.instances.len() as u32;
+                        let first = to_u32(self.instances.len());
                         self.instances
-                            .extend_from_slice(&cached.instances[r.start as usize..r.end as usize]);
+                            .extend_from_slice(&cached.instances[r.start.ix()..r.end.ix()]);
                         let count = r.end - r.start;
                         // Merge with the previous draw when nothing forces a break.
                         match self.draws.last_mut() {
@@ -297,7 +307,7 @@ impl InstanceBuilder {
                         }
                     }
                     Op::LayerBegin => {
-                        let at = self.instances.len() as u32;
+                        let at = to_u32(self.instances.len());
                         self.draws.push(Draw {
                             first: at,
                             count: 0,
@@ -308,7 +318,7 @@ impl InstanceBuilder {
                         self.stats.layers += 1;
                     }
                     Op::LayerEnd(a) => {
-                        let at = self.instances.len() as u32;
+                        let at = to_u32(self.instances.len());
                         self.draws.push(Draw {
                             first: at,
                             count: 0,
@@ -321,8 +331,8 @@ impl InstanceBuilder {
             }
         }
         self.order = order;
-        self.stats.instances = self.instances.len() as u32;
-        self.stats.draws = self.draws.iter().filter(|d| d.pass == Pass::Draw).count() as u32;
+        self.stats.instances = to_u32(self.instances.len());
+        self.stats.draws = to_u32(self.draws.iter().filter(|d| d.pass == Pass::Draw).count());
         // Forget chunks that were not part of this frame.
         if self.cache.len() > list.chunks.len() {
             let f = self.frame;
@@ -335,25 +345,21 @@ impl InstanceBuilder {
         list: &DisplayList,
         ci: usize,
         glyphs: &mut dyn GlyphSource,
-        scale: f32,
+        (scale, frac): (f32, (f32, f32)),
         atlas_gen: u64,
     ) -> Cached {
         let chunk = &list.chunks[ci];
-        let mut out = Cached {
-            version: chunk.version,
-            scale_bits: scale.to_bits(),
-            atlas_gen,
-            instances: Vec::new(),
-            ops: Vec::new(),
-            path_glyphs: 0,
-            touched: self.frame,
+        // A chunk clips its content to the whole pixels its bounds touch on screen (the CPU
+        // rasteriser's `to_pixels`), so the base clip row is snapped to that grid: in chunk-local
+        // space the grid is shifted by the sub-pixel part of the offset.
+        let snap = |lo: f32, len: f32, f: f32| {
+            let a = (lo * scale + f).floor() - f;
+            let b = ((lo + len) * scale + f).ceil() - f;
+            (a, (b - a).max(0.0))
         };
-        let chunk_bounds = Rect::new(
-            chunk.bounds.x * scale,
-            chunk.bounds.y * scale,
-            chunk.bounds.w * scale,
-            chunk.bounds.h * scale,
-        );
+        let (bx, bw) = snap(chunk.bounds.x, chunk.bounds.w, frac.0);
+        let (by, bh) = snap(chunk.bounds.y, chunk.bounds.h, frac.1);
+        let chunk_bounds = Rect::new(bx, by, bw, bh);
         let base_clip = if chunk.bounds.w > 1.0e5 {
             0
         } else {
@@ -369,200 +375,259 @@ impl InstanceBuilder {
                 _pad: [0.0; 3],
             })
         };
-        let mut clip_stack: Vec<(u32, ClipEntry)> = Vec::new();
         let base_entry = if base_clip == 0 {
             NO_CLIP
         } else {
-            self.clips[base_clip as usize]
+            self.clips[base_clip.ix()]
         };
-        clip_stack.push((base_clip, base_entry));
-        let mut opacity: u32 = 255;
-        let mut opacity_stack: Vec<(u32, bool, u8)> = Vec::new();
-        let mut run_start: u32 = 0;
-        let flush = |out: &mut Cached, run_start: &mut u32| {
-            let n = out.instances.len() as u32;
-            if n > *run_start {
-                out.ops.push(Op::Instances(*run_start..n));
-            }
-            *run_start = n;
+        let mut b = ChunkBuild {
+            out: Cached {
+                version: chunk.version,
+                scale_bits: scale.to_bits(),
+                frac_bits: (frac.0.to_bits(), frac.1.to_bits()),
+                atlas_gen,
+                instances: Vec::new(),
+                ops: Vec::new(),
+                path_glyphs: 0,
+                touched: self.frame,
+            },
+            scale,
+            frac,
+            clip_stack: vec![(base_clip, base_entry)],
+            opacity: 255,
+            opacity_stack: Vec::new(),
+            run_start: 0,
         };
         for item in list.chunk_items(chunk) {
-            let (clip_id, clip_entry) = *clip_stack.last().unwrap_or(&(0, NO_CLIP));
             match item {
-                Item::PushClip { rect, radius } => {
-                    let r = Rect::new(
-                        rect.x * scale,
-                        rect.y * scale,
-                        rect.w * scale,
-                        rect.h * scale,
-                    );
-                    let mut e = clip_entry;
-                    let cur = PixelRectF::from(e.rect);
-                    let inter = cur.intersect(&r);
-                    e.rect = [inter.x, inter.y, inter.w, inter.h];
-                    if *radius > 0.0 {
-                        e.rounded = [r.x, r.y, r.w, r.h];
-                        e.radius = (radius * scale).min(r.w.min(r.h) * 0.5);
-                    }
-                    let id = self.intern(e);
-                    clip_stack.push((id, e));
-                }
-                Item::PopClip => {
-                    if clip_stack.len() > 1 {
-                        clip_stack.pop();
-                    }
-                }
-                Item::PushOpacity { alpha, overlap } => {
-                    if *overlap {
-                        flush(&mut out, &mut run_start);
-                        out.ops.push(Op::LayerBegin);
-                        opacity_stack.push((opacity, true, *alpha));
-                    } else {
-                        opacity_stack.push((opacity, false, *alpha));
-                        opacity = div255(opacity * u32::from(*alpha));
-                    }
-                }
-                Item::PopOpacity => {
-                    if let Some((prev, layer, alpha)) = opacity_stack.pop() {
-                        if layer {
-                            flush(&mut out, &mut run_start);
-                            out.ops.push(Op::LayerEnd(alpha));
-                        }
-                        opacity = prev;
-                    }
-                }
-                Item::Rect { rect, radii, fill } => {
-                    let r = Rect::new(
-                        rect.x * scale,
-                        rect.y * scale,
-                        rect.w * scale,
-                        rect.h * scale,
-                    );
-                    if r.is_empty() {
-                        continue;
-                    }
-                    let rad = radii_q(radii, scale, r.w, r.h);
-                    let mut inst = Instance {
-                        rect: [r.x, r.y, r.w, r.h],
-                        radii: rad,
-                        clip: clip_id,
-                        ..Instance::default()
-                    };
-                    match *fill {
-                        Fill::Solid(c) => {
-                            inst.color0 = c.with_opacity(opacity as u8).pack();
-                            inst.params = kind::RECT;
-                        }
-                        Fill::Linear { from, to, p0, p1 } => {
-                            inst.color0 = from.with_opacity(opacity as u8).pack();
-                            inst.color1 = to.with_opacity(opacity as u8).pack();
-                            inst.uv = [frac16(p0.0), frac16(p0.1), frac16(p1.0), frac16(p1.1)];
-                            inst.params = kind::GRADIENT;
-                        }
-                    }
-                    out.instances.push(inst);
-                }
-                Item::Border {
-                    rect,
-                    radii,
-                    width,
-                    color,
-                } => {
-                    let r = Rect::new(
-                        rect.x * scale,
-                        rect.y * scale,
-                        rect.w * scale,
-                        rect.h * scale,
-                    );
-                    if r.is_empty() || *width <= 0.0 {
-                        continue;
-                    }
-                    out.instances.push(Instance {
-                        rect: [r.x, r.y, r.w, r.h],
-                        extra: [width * scale, 0.0, 0.0, 0.0],
-                        color0: color.with_opacity(opacity as u8).pack(),
-                        radii: radii_q(radii, scale, r.w, r.h),
-                        clip: clip_id,
-                        params: kind::BORDER,
-                        ..Instance::default()
-                    });
-                }
-                Item::Shadow {
-                    rect,
-                    radii,
-                    blur,
-                    spread,
-                    dx,
-                    dy,
-                    color,
-                } => {
-                    let sp = spread * scale;
-                    let r = Rect::new(
-                        rect.x * scale + dx * scale - sp,
-                        rect.y * scale + dy * scale - sp,
-                        rect.w * scale + 2.0 * sp,
-                        rect.h * scale + 2.0 * sp,
-                    );
-                    if r.is_empty() {
-                        continue;
-                    }
-                    let rr = Radii(radii.0.map(|v| (v * scale + sp).max(0.0))).fitted(r.w, r.h);
-                    out.instances.push(Instance {
-                        rect: [r.x, r.y, r.w, r.h],
-                        extra: [blur.max(0.0) * scale, 0.0, 0.0, 0.0],
-                        color0: color.with_opacity(opacity as u8).pack(),
-                        radii: rr.0.map(q16),
-                        clip: clip_id,
-                        params: kind::SHADOW,
-                        ..Instance::default()
-                    });
-                }
-                Item::Glyphs {
-                    font,
-                    size,
-                    color,
-                    glyphs: range,
-                } => {
-                    let color: Color = color.with_opacity(opacity as u8);
-                    for g in list.glyph_slice(range) {
-                        let x = g.x * scale;
-                        let y = g.y * scale;
-                        let (xi, sub) = split_subpixel(x);
-                        let yi = (y + 0.5).floor() as i32;
-                        let Some(gr) = glyphs.glyph(*font, g.id, size * scale, sub) else {
-                            continue;
-                        };
-                        match gr.place {
-                            Place::Atlas { page, x: ux, y: uy } => {
-                                out.instances.push(Instance {
-                                    rect: [
-                                        (xi + i32::from(gr.left)) as f32,
-                                        (yi - i32::from(gr.top)) as f32,
-                                        f32::from(gr.width),
-                                        f32::from(gr.height),
-                                    ],
-                                    color0: color.pack(),
-                                    uv: [ux, uy, gr.width, gr.height],
-                                    clip: clip_id,
-                                    params: kind::GLYPH | (u32::from(page.min(63)) << 4),
-                                    ..Instance::default()
-                                });
-                            }
-                            Place::Transient => out.path_glyphs += 1,
-                        }
-                    }
-                }
+                Item::PushClip { .. } | Item::PopClip => b.clip(self, item),
+                Item::PushOpacity { .. } | Item::PopOpacity => b.layer(item),
+                Item::Rect { .. } | Item::Border { .. } | Item::Shadow { .. } => b.shape(item),
+                Item::Glyphs { .. } => b.glyphs(list, glyphs, item),
             }
         }
-        flush(&mut out, &mut run_start);
+        b.flush();
         // An unbalanced list must not leave a layer open on the GPU.
-        while let Some((_, layer, alpha)) = opacity_stack.pop() {
+        while let Some((_, layer, alpha)) = b.opacity_stack.pop() {
             if layer {
-                out.ops.push(Op::LayerEnd(alpha));
+                b.out.ops.push(Op::LayerEnd(alpha));
             }
         }
-        out
+        b.out
     }
+}
+
+/// The state of one chunk being turned into instances.
+struct ChunkBuild {
+    out: Cached,
+    scale: f32,
+    /// Sub-pixel part of the chunk's device offset, added to glyph positions before rounding.
+    frac: (f32, f32),
+    clip_stack: Vec<(u32, ClipEntry)>,
+    opacity: u32,
+    /// (opacity before, whether it opened a layer, alpha).
+    opacity_stack: Vec<(u32, bool, u8)>,
+    run_start: u32,
+}
+
+impl ChunkBuild {
+    /// End the current run of instances as one op.
+    fn flush(&mut self) {
+        let n = to_u32(self.out.instances.len());
+        if n > self.run_start {
+            self.out.ops.push(Op::Instances(self.run_start..n));
+        }
+        self.run_start = n;
+    }
+
+    fn clip_id(&self) -> u32 {
+        self.clip_stack.last().map_or(0, |c| c.0)
+    }
+
+    fn scaled(&self, r: &Rect) -> Rect {
+        let s = self.scale;
+        Rect::new(r.x * s, r.y * s, r.w * s, r.h * s)
+    }
+
+    fn clip(&mut self, b: &mut InstanceBuilder, item: &Item) {
+        match item {
+            Item::PushClip { rect, radius } => {
+                let clip_entry = self.clip_stack.last().map_or(NO_CLIP, |c| c.1);
+                let r = self.scaled(rect);
+                let mut e = clip_entry;
+                let cur = PixelRectF::from(e.rect);
+                let inter = cur.intersect(&r);
+                e.rect = [inter.x, inter.y, inter.w, inter.h];
+                if *radius > 0.0 {
+                    e.rounded = [r.x, r.y, r.w, r.h];
+                    e.radius = (radius * self.scale).min(r.w.min(r.h) * 0.5);
+                }
+                let id = b.intern(e);
+                self.clip_stack.push((id, e));
+            }
+            Item::PopClip if self.clip_stack.len() > 1 => {
+                self.clip_stack.pop();
+            }
+            _ => {}
+        }
+    }
+
+    fn layer(&mut self, item: &Item) {
+        match item {
+            Item::PushOpacity { alpha, overlap } => {
+                if *overlap {
+                    self.flush();
+                    self.out.ops.push(Op::LayerBegin);
+                    self.opacity_stack.push((self.opacity, true, *alpha));
+                } else {
+                    self.opacity_stack.push((self.opacity, false, *alpha));
+                    self.opacity = div255(self.opacity * u32::from(*alpha));
+                }
+            }
+            Item::PopOpacity => {
+                if let Some((prev, layer, alpha)) = self.opacity_stack.pop() {
+                    if layer {
+                        self.flush();
+                        self.out.ops.push(Op::LayerEnd(alpha));
+                    }
+                    self.opacity = prev;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Rectangles, borders and shadows: one instance each.
+    fn shape(&mut self, item: &Item) {
+        let (scale, clip_id) = (self.scale, self.clip_id());
+        let alpha = to_u8(self.opacity);
+        match item {
+            Item::Rect { rect, radii, fill } => {
+                let r = self.scaled(rect);
+                if r.is_empty() {
+                    return;
+                }
+                let mut inst = Instance {
+                    rect: [r.x, r.y, r.w, r.h],
+                    radii: radii_q(radii, scale, r.w, r.h),
+                    clip: clip_id,
+                    ..Instance::default()
+                };
+                match *fill {
+                    Fill::Solid(c) => {
+                        inst.color0 = c.with_opacity(alpha).pack();
+                        inst.params = kind::RECT;
+                    }
+                    Fill::Linear { from, to, p0, p1 } => {
+                        inst.color0 = from.with_opacity(alpha).pack();
+                        inst.color1 = to.with_opacity(alpha).pack();
+                        inst.uv = [frac16(p0.0), frac16(p0.1), frac16(p1.0), frac16(p1.1)];
+                        inst.params = kind::GRADIENT;
+                    }
+                }
+                self.out.instances.push(inst);
+            }
+            Item::Border {
+                rect,
+                radii,
+                width,
+                color,
+            } => {
+                let r = self.scaled(rect);
+                if r.is_empty() || *width <= 0.0 {
+                    return;
+                }
+                self.out.instances.push(Instance {
+                    rect: [r.x, r.y, r.w, r.h],
+                    extra: [width * scale, 0.0, 0.0, 0.0],
+                    color0: color.with_opacity(alpha).pack(),
+                    radii: radii_q(radii, scale, r.w, r.h),
+                    clip: clip_id,
+                    params: kind::BORDER,
+                    ..Instance::default()
+                });
+            }
+            Item::Shadow {
+                rect,
+                radii,
+                blur,
+                spread,
+                dx,
+                dy,
+                color,
+            } => {
+                let sp = spread * scale;
+                let r = Rect::new(
+                    rect.x * scale + dx * scale - sp,
+                    rect.y * scale + dy * scale - sp,
+                    rect.w * scale + 2.0 * sp,
+                    rect.h * scale + 2.0 * sp,
+                );
+                if r.is_empty() {
+                    return;
+                }
+                let rr = Radii(radii.0.map(|v| (v * scale + sp).max(0.0))).fitted(r.w, r.h);
+                self.out.instances.push(Instance {
+                    rect: [r.x, r.y, r.w, r.h],
+                    extra: [blur.max(0.0) * scale, 0.0, 0.0, 0.0],
+                    color0: color.with_opacity(alpha).pack(),
+                    radii: rr.0.map(q16),
+                    clip: clip_id,
+                    params: kind::SHADOW,
+                    ..Instance::default()
+                });
+            }
+            _ => {}
+        }
+    }
+
+    /// A run of glyphs: atlas glyphs become instances, the rest are counted for the path pass.
+    fn glyphs(&mut self, list: &DisplayList, glyphs: &mut dyn GlyphSource, item: &Item) {
+        let Item::Glyphs {
+            font,
+            size,
+            color,
+            glyphs: range,
+        } = item
+        else {
+            return;
+        };
+        let (scale, clip_id) = (self.scale, self.clip_id());
+        let color: Color = color.with_opacity(to_u8(self.opacity));
+        for g in list.glyph_slice(range) {
+            let x = g.x * scale + self.frac.0;
+            let y = g.y * scale + self.frac.1;
+            let (xi, sub) = split_subpixel(x);
+            let yi = floor_i32(y + 0.5);
+            let Some(gr) = glyphs.glyph(*font, g.id, size * scale, sub) else {
+                continue;
+            };
+            match gr.place {
+                Place::Atlas { page, x: ux, y: uy } => {
+                    self.out.instances.push(Instance {
+                        rect: [
+                            (xi + i32::from(gr.left)) as f32,
+                            (yi - i32::from(gr.top)) as f32,
+                            f32::from(gr.width),
+                            f32::from(gr.height),
+                        ],
+                        color0: color.pack(),
+                        uv: [ux, uy, gr.width, gr.height],
+                        clip: clip_id,
+                        params: kind::GLYPH | (u32::from(page.min(63)) << 4),
+                        ..Instance::default()
+                    });
+                }
+                Place::Transient => self.out.path_glyphs += 1,
+            }
+        }
+    }
+}
+
+/// The sub-pixel part (`0 <= f < 1`) of a device offset; the shader moves glyphs by the rest.
+pub fn offset_frac(o: (f32, f32)) -> (f32, f32) {
+    let f = |v: f32| if v.is_finite() { v - v.floor() } else { 0.0 };
+    (f(o.0), f(o.1))
 }
 
 fn radii_q(r: &Radii, scale: f32, w: f32, h: f32) -> [u16; 4] {
@@ -701,6 +766,70 @@ mod tests {
         assert_eq!(b.stats.chunks_reused, 2);
         assert_eq!(b.instances, first);
         assert_eq!(b.draws.last().unwrap().offset, (0.0, 37.0));
+    }
+
+    #[test]
+    fn glyphs_follow_the_sub_pixel_offset_and_whole_pixels_rebuild_nothing() {
+        use crate::paint::glyphs::{GlyphRef, Place};
+        use crate::paint::list::PosGlyph;
+        use crate::text::fontdb::FontId;
+        struct One([u8; 4], Vec<u8>);
+        impl GlyphSource for One {
+            fn glyph(&mut self, _: FontId, _: u32, _: f32, sub: u8) -> Option<GlyphRef<'_>> {
+                self.1.push(sub);
+                Some(GlyphRef {
+                    width: 2,
+                    height: 2,
+                    left: 0,
+                    top: 2,
+                    stride: 2,
+                    data: &self.0,
+                    place: Place::Atlas {
+                        page: 0,
+                        x: 0,
+                        y: 0,
+                    },
+                })
+            }
+        }
+        let mk = |oy: f32, ox: f32| {
+            let mut l = DisplayList::new();
+            l.begin_chunk(7, 1, Rect::new(0.0, 0.0, 100.0, 100.0), (ox, oy), 0);
+            l.glyph_run(
+                FontId(0),
+                12.0,
+                Color::rgb(0, 0, 0),
+                [PosGlyph {
+                    id: 5,
+                    x: 10.0,
+                    y: 20.2,
+                }],
+            );
+            l.finish();
+            l
+        };
+        let mut src = One([255; 4], Vec::new());
+        let mut b = InstanceBuilder::new();
+        b.build(&mk(2.5, 0.0), &mut src, 1.0, 0);
+        // CPU: baseline row floor(20.2 + 2.5 + 0.5) = 23; GPU: local row + floor(2.5).
+        let local = b.instances[0].rect[1] + 2.0 + 2.0;
+        assert_eq!(local, 23.0, "row chosen after the offset");
+        b.build(&mk(3.5, 0.0), &mut src, 1.0, 0);
+        assert_eq!(
+            b.stats.chunks_rebuilt, 0,
+            "same sub-pixel part: whole-pixel scroll is free"
+        );
+        b.build(&mk(3.75, 0.25), &mut src, 1.0, 0);
+        assert_eq!(
+            b.stats.chunks_rebuilt, 1,
+            "a new sub-pixel part places glyphs again"
+        );
+        assert_eq!(
+            src.1.last().copied(),
+            Some(1),
+            "quarter-pixel phase of x = 10.25"
+        );
+        assert_eq!(offset_frac((-0.25, 7.0)), (0.75, 0.0));
     }
 
     #[test]

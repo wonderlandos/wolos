@@ -46,9 +46,13 @@ pub unsafe extern "C" fn wolkit_engine_create(
         let id = unsafe { text_in(app_id, len, 128, "The app id") }?;
         let engine = Engine::new(id, flags)?;
         // The one place the library reads the process environment (RR-027 baseline row).
-        if let Some(path) = crate::window::kit::socket_path(|k| std::env::var_os(k)) {
+        let var = |k: &str| std::env::var_os(k);
+        if let Some(path) = crate::window::kit::socket_path(var) {
             engine.set_kit_socket(&path);
         }
+        // The person's fonts, indexed once per process (the first engine wins).
+        use crate::text::system::{default_font_roots, default_index_path};
+        crate::text::measure::install(&default_font_roots(var), &default_index_path(var));
         let h = Arc::new(wolkit_engine {
             tag: handle::Tag::new(),
             engine,

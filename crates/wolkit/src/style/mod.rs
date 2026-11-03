@@ -13,6 +13,7 @@
 pub mod doc;
 pub mod inline;
 pub mod lint;
+pub mod num;
 pub mod prop;
 pub mod select;
 pub mod tokens;
@@ -24,8 +25,12 @@ pub mod wsb;
 
 use crate::env::Environment;
 use crate::error::{Error, Result};
+use crate::scene::ids::{to_u8, to_u16};
 use crate::scene::{Idx, NIL, SceneWrite, dirty};
-use select::*;
+use select::{
+    Input, MAX_TABLE_BYTES, MEDIA_CONTRAST, MEDIA_DARK, MEDIA_LIGHT, Resolver, StyleTable, diff,
+    needs_layout,
+};
 use std::sync::atomic::{AtomicU64, Ordering};
 use value::Props;
 
@@ -252,13 +257,13 @@ fn visit(
     let cl = scene.classes(i);
     let n = cl.len().min(8);
     buf[..n].copy_from_slice(&cl[..n]);
-    let state = (scene.state(i) & 0x1ff) as u16;
+    let state = to_u16(scene.state(i) & 0x1ff);
     let mut changed = false;
     if need {
         let mut inline = prop::Decls::default();
         scene.each_prop(i, &mut |p, v| inline::decl_from_wire(p, v, &mut inline));
         let inp = Input {
-            kind: (scene.kind(i) as u8).saturating_sub(1),
+            kind: to_u8(scene.kind(i) as u64).saturating_sub(1),
             classes: &buf[..n],
             state,
             media: cx.media,

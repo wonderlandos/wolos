@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# The app template: a generated project must type-check, be formatted, and (against the engine, in
-# spec/engine/template_spec.cr) build and pass its own spec.
+# The app template: names are filled in, unsafe names are refused. That a generated project builds, is
+# formatted and passes its own spec is checked by spec/scripts/template.sh and template_engine.sh (the
+# compiler is started from a script, not from a spec: RCR-021).
 require "./spec_helper"
 require "../src/wolkit/template"
 
@@ -34,22 +35,5 @@ describe Wolkit::Template do
 
   it "refuses to write over a directory" do
     expect_raises(ArgumentError, /exists already/) { Wolkit::Template.render("todos", Dir.tempdir) }
-  end
-
-  it "type-checks and formats a generated project" do
-    target = File.join(Dir.tempdir, "wolkit-template-#{Process.pid}-b")
-    begin
-      Wolkit::Template.render("demo", target)
-      shards = File.expand_path("../..", __DIR__)
-      path = "#{shards}:#{`crystal env CRYSTAL_PATH`.strip}"
-      output = IO::Memory.new
-      status = Process.run("crystal", ["build", "--no-codegen", "--error-on-warnings", "src/main.cr"], chdir: target, env: {"CRYSTAL_PATH" => path}, output: output, error: output)
-      status.success?.should be_true, output.to_s
-      output = IO::Memory.new
-      status = Process.run("crystal", ["tool", "format", "--check", "src", "spec"], chdir: target, output: output, error: output)
-      status.success?.should be_true, output.to_s
-    ensure
-      FileUtils.rm_rf(target)
-    end
   end
 end

@@ -40,10 +40,10 @@
 
         # A one-line summary of the stats JSON: its numbers, at most 120 characters.
         def self.summary(json : String) : String
-          values = JSON.parse(json)
-          line = values.as_h.compact_map { |key, value| value.as_f?.try { |number| "#{key} #{number.round(2)}" } || value.as_i64?.try { |number| "#{key} #{number}" } }.join("  ")
+          values = Hash(String, JSON::Any).from_json(json)
+          line = values.compact_map { |key, value| value.as_f?.try { |number| "#{key} #{number.round(2)}" } || value.as_i64?.try { |number| "#{key} #{number}" } }.join("  ")
           line.empty? ? json[0, 120] : line[0, 120]
-        rescue JSON::ParseException
+        rescue JSON::Error
           json[0, 120]
         end
       end

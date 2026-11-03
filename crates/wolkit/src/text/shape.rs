@@ -5,6 +5,7 @@
 //! units and are scaled to pixels here. Cluster values are UTF-8 byte offsets *relative to the
 //! start of the run's text*, so a run can be cached by content and reused anywhere in a document.
 
+use crate::scene::ids::to_u32;
 use harfrust::{Buffer, Direction, Feature, Script, ShapeOptions, ShaperFont, Tag};
 
 use crate::text::fontdb::{FontDb, FontId};
@@ -95,7 +96,7 @@ pub fn shape_run(db: &FontDb, text: &str, p: &ShapeParams<'_>) -> ShapedRun {
         font: p.font,
         size: p.size,
         dir: p.dir,
-        text_len: text.len() as u32,
+        text_len: to_u32(text.len()),
         glyphs: Vec::with_capacity(text.chars().count()),
         advance: 0.0,
         ascent,
@@ -113,7 +114,7 @@ pub fn shape_run(db: &FontDb, text: &str, p: &ShapeParams<'_>) -> ShapedRun {
         for (i, _) in text.char_indices() {
             run.glyphs.push(Glyph {
                 id: 0,
-                cluster: i as u32,
+                cluster: to_u32(i),
                 x_advance: adv,
                 x_offset: 0.0,
                 y_offset: 0.0,

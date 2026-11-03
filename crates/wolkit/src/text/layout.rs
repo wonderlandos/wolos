@@ -10,6 +10,7 @@
 //! * Positions are logical `f32` pixels; the baseline of each line is rounded to a whole pixel so
 //!   text stays crisp.
 
+use crate::scene::ids::{Ix, to_u32};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -270,7 +271,7 @@ fn paragraphs(text: &str) -> Vec<(usize, usize)> {
 }
 
 fn script_of(c: char) -> Script {
-    harfrust::unicode::script(c as u32)
+    harfrust::unicode::script(to_u32(c))
 }
 
 fn layout_paragraph(
@@ -294,7 +295,21 @@ fn layout_paragraph(
     let bidi = ParagraphBidiInfo::new(body, level);
     let para_rtl = bidi.paragraph_level.is_rtl();
 
-    // --- itemise ---
+    let items = itemise(db, cache, body, base_off, style, &bidi);
+    let atoms = atoms_of(&items, body, base_off);
+    let ranges = break_lines(&atoms, body, base_off, opts);
+    build_lines(&bidi, &items, &atoms, &ranges, base_off, para_rtl)
+}
+
+/// Split the paragraph into runs of one font, one script and one bidi level, shaped.
+fn itemise(
+    db: &FontDb,
+    cache: &mut ShapeCache,
+    body: &str,
+    base_off: usize,
+    style: &TextStyle,
+    bidi: &ParagraphBidiInfo,
+) -> Vec<Item> {
     let mut items: Vec<Item> = Vec::new();
     let mut run_start = 0usize;
     let mut cur_font = style.font;
@@ -365,10 +380,13 @@ fn layout_paragraph(
         cur_script,
         cur_level,
     );
+    items
+}
 
-    // --- atoms (logical order) ---
+/// The unbreakable clusters of the runs, in logical order, with their widths.
+fn atoms_of(items: &[Item], body: &str, base_off: usize) -> Vec<Atom> {
     let mut atoms: Vec<Atom> = Vec::new();
-    for it in &items {
+    for it in items {
         let starts = it.run.cluster_starts();
         for (k, &s) in starts.iter().enumerate() {
             let e = starts.get(k + 1).copied().unwrap_or(it.run.text_len);
@@ -379,7 +397,7 @@ fn layout_paragraph(
                 .filter(|g| g.cluster == s)
                 .map(|g| g.x_advance)
                 .sum();
-            let (a, b) = (it.range.start + s as usize, it.range.start + e as usize);
+            let (a, b) = (it.range.start + s.ix(), it.range.start + e.ix());
             let space = body[a - base_off..b - base_off]
                 .chars()
                 .all(|c| c.is_whitespace());
@@ -392,8 +410,16 @@ fn layout_paragraph(
         }
     }
     atoms.sort_by_key(|a| a.start);
+    atoms
+}
 
-    // --- break into lines ---
+/// Line breaks: ranges of atoms, one per line, wrapping at `opts.max_width` when it is finite.
+fn break_lines(
+    atoms: &[Atom],
+    body: &str,
+    base_off: usize,
+    opts: &LayoutOptions,
+) -> Vec<Range<usize>> {
     let allowed: Vec<usize> = linebreaks(body).map(|(i, _)| base_off + i).collect();
     let mut ranges: Vec<Range<usize>> = Vec::new(); // atom index ranges
     let wrap = opts.max_width.is_finite();
@@ -431,10 +457,20 @@ fn layout_paragraph(
     if line_start < atoms.len() || ranges.is_empty() {
         ranges.push(line_start..atoms.len());
     }
+    ranges
+}
 
-    // --- build each line ---
+/// Turn atom ranges into lines of visually ordered fragments.
+fn build_lines(
+    bidi: &ParagraphBidiInfo,
+    items: &[Item],
+    atoms: &[Atom],
+    ranges: &[Range<usize>],
+    base_off: usize,
+    para_rtl: bool,
+) -> Vec<PendingLine> {
     let mut out = Vec::new();
-    for r in ranges {
+    for r in ranges.iter().cloned() {
         let (lo, hi) = if r.is_empty() {
             (base_off, base_off)
         } else {
@@ -463,8 +499,8 @@ fn layout_paragraph(
                     Arc::clone(&it.run)
                 } else {
                     Arc::new(it.run.slice(
-                        (rg.start - it.range.start) as u32,
-                        (rg.end - it.range.start) as u32,
+                        to_u32(rg.start - it.range.start),
+                        to_u32(rg.end - it.range.start),
                     ))
                 };
                 let adv = run.advance;
@@ -513,7 +549,7 @@ impl TextLayout {
                     let k = starts.binary_search(&c).unwrap_or(0);
                     let e = starts.get(k + 1).copied().unwrap_or(run.text_len);
                     v.push(ClusterBox {
-                        bytes: (f.range.start + c as usize, f.range.start + e as usize),
+                        bytes: (f.range.start + c.ix(), f.range.start + e.ix()),
                         x0: x,
                         x1: x + adv,
                         rtl: run.dir == Dir::Rtl,

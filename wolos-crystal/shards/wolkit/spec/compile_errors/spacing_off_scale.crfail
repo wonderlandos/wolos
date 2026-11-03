@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# expect: Spacing is one of 0, 4, 8, 12, 16, 24 or 32; this is 13.
+# expect: Spacing is one of 0, 4, 8, 12, 16 or 24; this is 13.
 require "../../src/wolkit/core"
 
 class Fixture < Wolkit::App

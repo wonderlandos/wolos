@@ -1,58 +1,53 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! The headless entry point: scene in, RGBA bytes out.
+//! The headless entry point: a laid-out scene in, RGBA bytes out. The scene is lowered to a
+//! display list with its resolved styles, real text and the token palette (`paint::scene`), and
+//! the reference rasteriser draws it onto the theme's surface colour.
 
 use super::raster;
 use crate::env::Environment;
-use crate::scene::{SceneRead, walk};
+use crate::paint::list::DisplayList;
+use crate::paint::palette::Palette;
+use crate::paint::scene::{Lower, build};
+use crate::scene::SceneRead;
+use crate::style::Styles;
+use crate::text::measure::TextCache;
+use crate::text::system::TextSystem;
 
-/// Render `scene` into `out` (RGBA8, `width * height * 4` bytes, straight alpha).
-///
-/// Interim lowering until the style stage publishes computed styles: the window background and a
-/// one pixel outline per node, as W1's placeholder drew. The display-list renderer in
-/// [`raster`] is the real engine; this function keeps its signature.
-pub fn render(
-    scene: &dyn SceneRead,
-    width: u32,
-    height: u32,
-    scale: f32,
-    env: &Environment,
-    out: &mut [u8],
-) {
-    use crate::paint::geom::{Color, Rect};
-    use crate::paint::glyphs::NoGlyphs;
-    use crate::paint::list::{DisplayList, Radii};
-    let bg = if env.dark {
-        Color::rgb(0x1c, 0x1c, 0x20)
-    } else {
-        Color::rgb(0xf3, 0xf1, 0xf8)
-    };
-    let line = if env.dark {
-        Color::rgb(0x3a, 0x3a, 0x3a)
-    } else {
-        Color::rgb(0xd8, 0xd8, 0xd8)
-    };
+/// One frame to draw: the scene after style and layout, and the device size.
+pub struct Frame<'a> {
+    pub scene: &'a dyn SceneRead,
+    pub styles: &'a Styles,
+    pub env: &'a Environment,
+    /// Device pixels.
+    pub width: u32,
+    pub height: u32,
+    /// Device pixels per logical pixel.
+    pub scale: f32,
+}
+
+/// Render `f` into `out` (RGBA8, `width * height * 4` bytes, straight alpha). Text is shaped with
+/// `text` through the window's paragraph cache, the same entries the layout measured.
+pub fn render(f: &Frame<'_>, text: &mut TextSystem, cache: &mut TextCache, out: &mut [u8]) {
+    let palette = Palette::for_env(f.env);
     let mut list = DisplayList::new();
-    walk(scene, 0, &mut |i, _| {
-        if i == 0 {
-            return;
-        }
-        let r = scene.rect(i);
-        list.border(
-            Rect::new(r.x, r.y, r.w, r.h),
-            Radii::ZERO,
-            1.0 / scale.max(0.01),
-            line,
-        );
-    });
-    list.finish();
+    build(
+        &mut Lower {
+            scene: f.scene,
+            styles: f.styles,
+            palette: &palette,
+            text,
+            cache,
+        },
+        &mut list,
+    );
     let img = raster::render(
         &list,
-        &mut NoGlyphs,
-        width,
-        height,
+        &mut text.glyph_source(),
+        f.width,
+        f.height,
         &raster::RasterOptions {
-            scale,
-            clear: bg,
+            scale: f.scale,
+            clear: palette.background(),
             tile: raster::TILE,
         },
     );

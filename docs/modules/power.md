@@ -18,6 +18,8 @@ Probes: `nproc`, `powerprofilesctl get`, `ls`/`cat` under `/sys/class/power_supp
 
 Not offered yet: a battery charge limit (`charge_control_end_threshold`).
 
+Kernel settings wol-admind may change go to `/etc/sysctl.d/99-wolos-local.conf` (`power::SYSCTL_LOCAL`; none are allowed yet). The name sorts after the shipped `90-wolos.conf`, so a local value wins; **CI** image_security `local_sysctl_sorts_after_the_shipped_defaults`.
+
 ## Sleep, alerts, session power
 - Every sleep path locks first. The systemd-sleep hook calls `wol power suspend`, which locks each session that asks for the password after sleep. It waits at most 3 s for each shell (`power::LOCK_WAIT_SECS`), so one hung session does not hold the sleep.
 - Battery notifications at 20, 10 and 5 %. At 3 % the computer sleeps (`shell::alerts`).

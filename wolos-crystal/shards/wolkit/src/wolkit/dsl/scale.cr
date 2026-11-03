@@ -8,8 +8,8 @@ require "../guard"
 
 module Wolkit
   module Scale
-    # Spacing in px (HIG section 2): 0, 4, 8, 12, 16, 24, 32.
-    SPACING = {"none" => 0, "xs" => 4, "sm" => 8, "md" => 12, "lg" => 16, "xl" => 24, "xxl" => 32}
+    # Spacing in px (HIG section 2, the scale of the style language): 0, 4, 8, 12, 16, 24.
+    SPACING = {"none" => 0, "xs" => 4, "sm" => 8, "md" => 12, "lg" => 16, "xl" => 24}
     # Corner radius in px (shared::theme::SCALE).
     RADIUS = {"none" => 0, "s" => 6, "m" => 10, "l" => 14, "xl" => 20}
     # The colour tokens, in the order of shared::theme::TOKENS (the wire id is the index).
@@ -21,7 +21,7 @@ module Wolkit
 
     def self.space(px : Int | Float) : Float32
       return px.to_f32 if SPACING.values.includes?(px)
-      raise UsageError.new("Spacing is one of 0, 4, 8, 12, 16, 24 or 32; this is #{px}.")
+      raise UsageError.new("Spacing is one of 0, 4, 8, 12, 16 or 24; this is #{px}.")
     end
 
     def self.radius(name : Symbol) : Float32

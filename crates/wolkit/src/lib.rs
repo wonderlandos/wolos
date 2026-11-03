@@ -31,6 +31,7 @@ pub mod gpu;
 pub mod input;
 pub mod layout;
 pub mod loop_;
+pub mod num;
 pub mod paint;
 pub mod scene;
 pub mod style;

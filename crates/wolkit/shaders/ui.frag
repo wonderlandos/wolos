@@ -166,14 +166,20 @@ void main() {
         vec4 cr = clips.rows[clip * 3u];
         vec4 rr = clips.rows[clip * 3u + 1u];
         float radius = clips.rows[clip * 3u + 2u].x;
-        cov = div255(cov * cov_u8(rrect_cov(p, cr, vec4(0.0))));
+        // The row's rectangle is the intersection of every clip and shares its edges with the
+        // rounded clip inside it, so the two coverages are combined with min (a product would
+        // count a shared fractional edge twice); one of them is 0 or 255 except on such edges.
+        uint c = cov_u8(rrect_cov(p, cr, vec4(0.0)));
         if (radius > 0.0) {
-            cov = div255(cov * cov_u8(rrect_cov(p, rr, vec4(radius))));
+            c = min(c, cov_u8(rrect_cov(p, rr, vec4(radius))));
         }
+        cov = div255(cov * c);
     }
     if (cov == 0u) {
         discard;
     }
     uvec4 o = uvec4(div255(src.r * cov), div255(src.g * cov), div255(src.b * cov), div255(src.a * cov));
-    o_color = vec4(o) / 255.0;
+    // A quarter step up: drivers that truncate instead of rounding on the float-to-unorm write
+    // still store exactly `o` (v + 0.25 truncates and rounds to v; 255.25 / 255 clamps to 1).
+    o_color = (vec4(o) + 0.25) / 255.0;
 }

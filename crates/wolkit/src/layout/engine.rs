@@ -22,9 +22,13 @@
 //! `arrange` is skipped for a node whose subtree is unchanged and whose size is unchanged. A change
 //! invalidates the node and its ancestors up to the nearest *relayout boundary*: a node whose size
 //! cannot depend on its content (both width and height in pixels) or that is out of the flow.
-use super::tree::*;
+use super::tree::{LayoutTree, Leaf, Measure, Rect, Size, VlistInfo};
 use crate::scene::NIL;
-use crate::style::value::*;
+use crate::scene::ids::{Ix, to_u8};
+use crate::style::value::{
+    AlignContent, AlignItems, AlignSelf, Dim, Direction, Display, Justify, LayoutStyle, Overflow,
+    Position, Wrap,
+};
 use std::collections::HashMap;
 
 type O = Option<f32>;
@@ -138,8 +142,8 @@ impl NodeCache {
         self.entries.iter().find(|e| e.key == *k).map(|e| e.size)
     }
     fn store(&mut self, key: Key, size: Size) {
-        self.entries[self.next as usize % WAYS] = Entry { key, size };
-        self.next = (self.next + 1) % WAYS as u8;
+        self.entries[self.next.ix() % WAYS] = Entry { key, size };
+        self.next = to_u8((self.next.ix() + 1) % WAYS);
     }
     fn clear(&mut self) {
         self.entries = [EMPTY_ENTRY; WAYS];
@@ -207,7 +211,7 @@ impl LayoutCache {
     }
 
     fn ensure(&mut self, n: u32) {
-        let need = n as usize + 1;
+        let need = n.ix() + 1;
         if self.nodes.len() < need {
             self.nodes.resize_with(need, NodeCache::default);
         }
@@ -223,19 +227,17 @@ impl LayoutCache {
 
     /// The scrollable extent of `n` after the last layout.
     pub fn content_size(&self, n: u32) -> Size {
-        self.nodes.get(n as usize).map_or(Size::ZERO, |c| c.content)
+        self.nodes.get(n.ix()).map_or(Size::ZERO, |c| c.content)
     }
 
     /// The window-space rectangle of `n` after the last layout.
     pub fn rect(&self, n: u32) -> Rect {
-        self.nodes
-            .get(n as usize)
-            .map_or(Rect::default(), |c| c.abs)
+        self.nodes.get(n.ix()).map_or(Rect::default(), |c| c.abs)
     }
 
     /// The cache entry of a node as text, for test failures.
     pub fn debug_node(&self, n: u32) -> String {
-        self.nodes.get(n as usize).map_or("none".into(), |c| {
+        self.nodes.get(n.ix()).map_or("none".into(), |c| {
             format!(
                 "arranged={} size={:?} rel={:?} abs={:?} abs_dirty={} sub_dirty={} inner_dirty={}",
                 c.arranged, c.size, c.rel, c.abs, c.abs_dirty, c.sub_dirty, c.inner_dirty
@@ -255,7 +257,7 @@ impl LayoutCache {
     /// up to a boundary must be laid out again.
     pub fn invalidate_own<T: LayoutTree>(&mut self, t: &T, n: u32) {
         self.ensure(n);
-        self.nodes[n as usize].clear();
+        self.nodes[n.ix()].clear();
         let p = t.parent(n);
         if p != NIL {
             self.invalidate_content(t, p);
@@ -267,16 +269,16 @@ impl LayoutCache {
         let mut guard = 0;
         while n != NIL && guard < 4096 {
             self.ensure(n);
-            self.nodes[n as usize].clear();
+            self.nodes[n.ix()].clear();
             if is_boundary(t.style(n)) {
                 // The ancestors keep their layout but must let the walk reach this node.
                 let mut p = t.parent(n);
                 while p != NIL && guard < 8192 {
                     self.ensure(p);
-                    if self.nodes[p as usize].inner_dirty {
+                    if self.nodes[p.ix()].inner_dirty {
                         break;
                     }
-                    self.nodes[p as usize].inner_dirty = true;
+                    self.nodes[p.ix()].inner_dirty = true;
                     p = t.parent(p);
                     guard += 1;
                 }
@@ -339,6 +341,27 @@ fn align_of(parent: &LayoutStyle, child: &LayoutStyle) -> AlignItems {
     }
 }
 
+/// What the steps of `flex_run` share about one run: the container, its axes and the room on them.
+#[derive(Clone, Copy)]
+struct Run {
+    n: u32,
+    row: bool,
+    rev: bool,
+    im: O,
+    ic: O,
+    am: O,
+    ac: O,
+    gap_m: f32,
+    gap_c: f32,
+    wbase: O,
+    ib: usize,
+    lb: usize,
+    /// Where the inner box starts in the node's border box.
+    org: (f32, f32),
+    /// Children are placed (not only measured).
+    arrange: bool,
+}
+
 pub struct Engine<'a, T: LayoutTree, M: Measure> {
     pub t: &'a T,
     pub m: &'a mut M,
@@ -369,13 +392,13 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             }
         }
         self.c.ensure(n);
-        if let Some(s) = self.c.nodes[n as usize].lookup(&key) {
+        if let Some(s) = self.c.nodes[n.ix()].lookup(&key) {
             self.c.stats.hits += 1;
             return s;
         }
         self.c.stats.measures += 1;
         let s = self.measure_uncached(n, st, leaf, key.known(), key.avail());
-        self.c.nodes[n as usize].store(key, s);
+        self.c.nodes[n.ix()].store(key, s);
         s
     }
 
@@ -494,21 +517,93 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
         let (ib, lb, ab) = (self.c.items.len(), self.c.lines.len(), self.c.abs.len());
         let (b_x, b_y) = (s.border_width + s.padding[3], s.border_width + s.padding[0]);
 
-        // ---- collect in-flow children and their flex base sizes
+        let r = Run {
+            n,
+            row,
+            rev,
+            im,
+            ic,
+            am,
+            ac,
+            gap_m,
+            gap_c,
+            wbase,
+            ib,
+            lb,
+            org: (b_x, b_y),
+            arrange: arrange.is_some(),
+        };
+        let ie = self.collect_items(&r);
+        let (nl, cont_m) = self.break_lines(&r, ie);
+        self.resolve_lines(&r, nl, cont_m);
+        let wrap = s.wrap == Wrap::Wrap;
+        let single = !wrap || nl <= 1;
+        if single
+            && nl >= 1
+            && let Some(c) = ic
+        {
+            self.c.lines[lb].cross = c;
+        }
+        let gaps_c = gap_c * nl.saturating_sub(1) as f32;
+        let sum_cross: f32 = self.c.lines[lb..].iter().map(|l| l.cross).sum::<f32>() + gaps_c;
+        let cont_c = ic.unwrap_or(sum_cross);
+        let content = {
+            let (w, h) = mc(row, cont_m, cont_c);
+            Size::new(w, h)
+        };
+        let Some(node_size) = arrange else {
+            self.c.items.truncate(ib);
+            self.c.lines.truncate(lb);
+            self.c.abs.truncate(ab);
+            return content;
+        };
+        let free_c = cont_c - sum_cross;
+        self.spread_lines(&r, nl, single, free_c);
+        let (ext_x, ext_y) = self.place_items(&r, nl, cont_m);
+
+        // ---- absolute children
+        // Entries above `ab` are ours; nested calls push above them and truncate back.
+        let end = self.c.abs.len();
+        for k in ab..end {
+            let a = self.c.abs[k];
+            self.place_absolute(n, node_size, a);
+        }
+        self.c.abs.truncate(ab);
+        let c = &mut self.c.nodes[n.ix()];
+        c.content = Size::new(
+            ext_x + s.padding[1] + s.border_width,
+            ext_y + s.padding[2] + s.border_width,
+        );
+        content
+    }
+
+    fn collect_items(&mut self, r: &Run) -> usize {
+        let t = self.t;
+        let s = t.style(r.n);
+        let Run {
+            n,
+            row,
+            im,
+            ic,
+            ac,
+            wbase,
+            arrange,
+            ..
+        } = *r;
         let mut ch = t.first_child(n);
         while ch != NIL {
             let ci = t.info(ch);
             let cs = ci.style;
             let next = t.next_sibling(ch);
             if cs.display == Display::None {
-                if arrange.is_some() {
+                if arrange {
                     self.zero(ch);
                 }
                 ch = next;
                 continue;
             }
             if cs.position == Position::Absolute || ci.overlay {
-                if arrange.is_some() {
+                if arrange {
                     if ci.overlay {
                         if !self.c.overlays.contains(&ch) {
                             self.c.overlays.push(ch);
@@ -584,9 +679,21 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             });
             ch = next;
         }
-        let ie = self.c.items.len();
+        self.c.items.len()
+    }
 
-        // ---- lines
+    fn break_lines(&mut self, r: &Run, ie: usize) -> (usize, f32) {
+        let t = self.t;
+        let s = t.style(r.n);
+        let Run {
+            row,
+            im,
+            am,
+            gap_m,
+            ib,
+            lb,
+            ..
+        } = *r;
         let wrap = s.wrap == Wrap::Wrap;
         let limit = im.or(am);
         let outer_m = |it: &Item| -> f32 {
@@ -630,9 +737,16 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             .map(|l| l.sum)
             .fold(0.0f32, f32::max);
         let cont_m = im.unwrap_or(max_sum);
-        let no_shrink = matches!(s.overflow, Overflow::Scroll | Overflow::Auto);
+        (nl, cont_m)
+    }
 
-        // ---- flexible lengths per line, then cross sizes
+    fn resolve_lines(&mut self, r: &Run, nl: usize, cont_m: f32) {
+        let t = self.t;
+        let s = t.style(r.n);
+        let Run {
+            row, ac, gap_m, lb, ..
+        } = *r;
+        let no_shrink = matches!(s.overflow, Overflow::Scroll | Overflow::Auto);
         for li in lb..lb + nl {
             let Line { start, end, .. } = self.c.lines[li];
             let marg: f32 = self.c.items[start..end]
@@ -654,7 +768,6 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             let mut line_cross = 0.0f32;
             for i in start..end {
                 let it = self.c.items[i];
-                let cs = t.style(it.node);
                 let marg_c = if row {
                     it.mm[0] + it.mm[2]
                 } else {
@@ -666,34 +779,17 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
                 let sz = self.measure(it.node, (kw, kh), (aw, ah));
                 let cross = if row { sz.h } else { sz.w };
                 self.c.items[i].cross = cross;
-                let _ = cs;
                 line_cross = line_cross.max(cross + marg_c);
             }
             self.c.lines[li].cross = line_cross;
         }
-        let single = !wrap || nl <= 1;
-        if single
-            && nl >= 1
-            && let Some(c) = ic
-        {
-            self.c.lines[lb].cross = c;
-        }
-        let gaps_c = gap_c * nl.saturating_sub(1) as f32;
-        let sum_cross: f32 = self.c.lines[lb..].iter().map(|l| l.cross).sum::<f32>() + gaps_c;
-        let cont_c = ic.unwrap_or(sum_cross);
-        let content = {
-            let (w, h) = mc(row, cont_m, cont_c);
-            Size::new(w, h)
-        };
-        let Some(node_size) = arrange else {
-            self.c.items.truncate(ib);
-            self.c.lines.truncate(lb);
-            self.c.abs.truncate(ab);
-            return content;
-        };
+    }
 
-        // ---- align-content: distribute spare cross space between lines
-        let free_c = cont_c - sum_cross;
+    fn spread_lines(&mut self, r: &Run, nl: usize, single: bool, free_c: f32) {
+        let t = self.t;
+        let s = t.style(r.n);
+        let Run { gap_c, lb, .. } = *r;
+        let wrap = s.wrap == Wrap::Wrap;
         let (mut lead_c, mut between_c) = (0.0f32, gap_c);
         if (!single || (wrap && nl > 1)) && free_c > 0.0 {
             match s.align_content {
@@ -722,8 +818,21 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             l.cpos = cp;
             cp += l.cross + between_c;
         }
+    }
 
-        // ---- place items
+    fn place_items(&mut self, r: &Run, nl: usize, cont_m: f32) -> (f32, f32) {
+        let t = self.t;
+        let s = t.style(r.n);
+        let Run {
+            org: (b_x, b_y),
+            row,
+            rev,
+            ic,
+            gap_m,
+            ib,
+            lb,
+            ..
+        } = *r;
         let mut ext_x = 0.0f32;
         let mut ext_y = 0.0f32;
         for li in lb..lb + nl {
@@ -852,32 +961,18 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
         }
         self.c.items.truncate(ib);
         self.c.lines.truncate(lb);
-
-        // ---- absolute children
-        // Entries above `ab` are ours; nested calls push above them and truncate back.
-        let end = self.c.abs.len();
-        for k in ab..end {
-            let a = self.c.abs[k];
-            self.place_absolute(n, node_size, a);
-        }
-        self.c.abs.truncate(ab);
-        let c = &mut self.c.nodes[n as usize];
-        c.content = Size::new(
-            ext_x + s.padding[1] + s.border_width,
-            ext_y + s.padding[2] + s.border_width,
-        );
-        content
+        (ext_x, ext_y)
     }
 
     fn set_rel(&mut self, n: u32, r: Rect) {
         self.c.ensure(n);
-        self.c.nodes[n as usize].rel = r;
+        self.c.nodes[n.ix()].rel = r;
     }
 
     /// A display:none node and everything below it has no rectangle.
     fn zero(&mut self, n: u32) {
         self.c.ensure(n);
-        let c = &mut self.c.nodes[n as usize];
+        let c = &mut self.c.nodes[n.ix()];
         c.rel = Rect::default();
         c.size = Size::ZERO;
         c.arranged = false;
@@ -943,18 +1038,18 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
     pub fn arrange(&mut self, n: u32, size: Size) {
         self.c.ensure(n);
         {
-            let c = &self.c.nodes[n as usize];
+            let c = &self.c.nodes[n.ix()];
             if c.arranged && c.size == size {
                 if !c.inner_dirty {
                     self.c.stats.skipped += 1;
                     return;
                 }
-                self.c.nodes[n as usize].inner_dirty = false;
+                self.c.nodes[n.ix()].inner_dirty = false;
                 let t = self.t;
                 let mut ch = t.first_child(n);
                 while ch != NIL {
                     self.c.ensure(ch);
-                    let cc = &self.c.nodes[ch as usize];
+                    let cc = &self.c.nodes[ch.ix()];
                     let ci = t.info(ch);
                     if (!cc.arranged || cc.inner_dirty)
                         && ci.style.display != Display::None
@@ -976,7 +1071,7 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
         }
         self.c.stats.arranges += 1;
         {
-            let c = &mut self.c.nodes[n as usize];
+            let c = &mut self.c.nodes[n.ix()];
             c.size = size;
             c.arranged = true;
             c.abs_dirty = true;
@@ -987,7 +1082,7 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
         let mut guard = 0;
         while p != NIL && guard < 4096 {
             self.c.ensure(p);
-            let pc = &mut self.c.nodes[p as usize];
+            let pc = &mut self.c.nodes[p.ix()];
             if pc.sub_dirty {
                 break;
             }
@@ -998,7 +1093,7 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
         let t = self.t;
         let info = t.info(n);
         if info.leaf != Leaf::None {
-            self.c.nodes[n as usize].content = size;
+            self.c.nodes[n.ix()].content = size;
             return;
         }
         let s = info.style;
@@ -1066,7 +1161,7 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             self.arrange(ch, sz);
         }
         self.c.rows.truncate(rb);
-        self.c.nodes[n as usize].content = Size::new(
+        self.c.nodes[n.ix()].content = Size::new(
             size.w,
             total + s.padding[0] + s.padding[2] + 2.0 * s.border_width,
         );
@@ -1076,14 +1171,14 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
     fn place_abs(&mut self, n: u32, origin: (f32, f32)) {
         let t = self.t;
         self.c.ensure(n);
-        let nc = &self.c.nodes[n as usize];
+        let nc = &self.c.nodes[n.ix()];
         let abs = Rect::new(origin.0 + nc.rel.x, origin.1 + nc.rel.y, nc.rel.w, nc.rel.h);
         let moved = abs != nc.abs || nc.abs_dirty;
         let descend = moved || nc.sub_dirty;
         if moved {
             self.c.changed.push((n, abs));
         }
-        let nc = &mut self.c.nodes[n as usize];
+        let nc = &mut self.c.nodes[n.ix()];
         nc.abs = abs;
         nc.abs_dirty = false;
         nc.sub_dirty = false;
@@ -1105,7 +1200,7 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
     fn place_zero(&mut self, n: u32) {
         self.c.ensure(n);
         let z = Rect::default();
-        let c = &mut self.c.nodes[n as usize];
+        let c = &mut self.c.nodes[n.ix()];
         if c.abs != z || c.abs_dirty {
             c.abs = z;
             c.abs_dirty = false;
@@ -1129,8 +1224,8 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             }
             let bounds = Rect::new(0.0, 0.0, viewport.w, viewport.h);
             let size = self.measure(n, (None, None), (Some(viewport.w), Some(viewport.h)));
-            let rect = if spec.anchor != NIL && (spec.anchor as usize) < self.c.nodes.len() {
-                let a = self.c.nodes[spec.anchor as usize].abs;
+            let rect = if spec.anchor != NIL && (spec.anchor.ix()) < self.c.nodes.len() {
+                let a = self.c.nodes[spec.anchor.ix()].abs;
                 let opts = super::place::PlaceOpts {
                     side: spec.side,
                     align: spec.align,
@@ -1142,7 +1237,7 @@ impl<T: LayoutTree, M: Measure> Engine<'_, T, M> {
             };
             let parent = t.parent(n);
             let pabs = if parent != NIL {
-                self.c.nodes[parent as usize].abs
+                self.c.nodes[parent.ix()].abs
             } else {
                 Rect::default()
             };

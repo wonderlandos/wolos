@@ -8,6 +8,7 @@
 use super::{BUTTON_RIGHT, InputState, Request, edit, focus, hit};
 use crate::error::{Error, Result};
 use crate::event::kind as ev;
+use crate::scene::ids::Ix;
 use crate::scene::prop::id;
 use crate::scene::{Idx, Kind, NIL, PropValue, SceneRead, SceneWrite, dirty, state};
 use crate::window::route::{disabled, receiver};
@@ -70,13 +71,18 @@ fn slider_at(w: &mut WindowCore, s: &mut Sink, node: Idx, x: f32) {
 
 fn toggle(w: &mut WindowCore, s: &mut Sink, node: Idx) {
     let on = w.scene.state(node) & state::CHECKED == 0;
-    if let Some(st) = w.scene.state.get_mut(usize::try_from(node).unwrap_or(usize::MAX)) {
+    if let Some(st) = w.scene.state.get_mut(node.ix()) {
         *st ^= state::CHECKED;
     }
     w.scene
         .mark_dirty(node, dirty::STYLE | dirty::PAINT | dirty::A11Y);
     if let Some(r) = receiver(&w.scene, node, ev::TOGGLE) {
-        s.emit(ev::TOGGLE, w.scene.id(r).0, &u32::from(on).to_le_bytes(), &[]);
+        s.emit(
+            ev::TOGGLE,
+            w.scene.id(r).0,
+            &u32::from(on).to_le_bytes(),
+            &[],
+        );
     }
 }
 
@@ -124,7 +130,10 @@ fn hover(w: &mut WindowCore, s: &mut Sink, st: &mut InputState, hit: Idx, x: f32
     if hit == w.hover {
         return;
     }
-    let (mut old, mut new) = (std::mem::take(&mut st.chain_a), std::mem::take(&mut st.chain_b));
+    let (mut old, mut new) = (
+        std::mem::take(&mut st.chain_a),
+        std::mem::take(&mut st.chain_b),
+    );
     chain(&w.scene, w.hover, &mut old);
     chain(&w.scene, hit, &mut new);
     for n in old.iter().filter(|n| !new.contains(n)) {
@@ -193,7 +202,10 @@ pub fn pointer(
         scroll(w, s, st, p.x, p.y);
         return Ok(Request::None);
     }
-    if !matches!(p.kind, POINTER_MOVE | POINTER_LEAVE | POINTER_DOWN | POINTER_UP) {
+    if !matches!(
+        p.kind,
+        POINTER_MOVE | POINTER_LEAVE | POINTER_DOWN | POINTER_UP
+    ) {
         return Err(Error::invalid("That is not a pointer event kind."));
     }
     w.pointer = (p.x, p.y);
@@ -223,7 +235,8 @@ pub fn pointer(
             st.chain_a = c;
             if !disabled(&w.scene, hit) {
                 let f = focus::nearest_focusable(&w.scene, hit);
-                if f != NIL || st.focused != NIL {
+                // A press where nothing takes focus leaves it where it is (as on the desktop).
+                if f != NIL {
                     focus::set_focus(w, s, st, f, false);
                     req = edit::focus_changed(w, st);
                 }

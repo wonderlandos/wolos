@@ -29,10 +29,13 @@ layout(location = 5) flat out vec2 v_lo;
 
 // Bit 10 of params: the rectangle is already in absolute window pixels (shadow masks).
 const uint ABSOLUTE = 1024u;
+const uint K_GLYPH = 4u;
 
 void main() {
     bool absolute = (i_params & ABSOLUTE) != 0u;
-    vec2 off = absolute ? vec2(0.0) : pc.offset;
+    // Glyphs carry the sub-pixel part of the offset in their position already (batch.rs), so
+    // they move by the whole-pixel part only and stay on the CPU rasteriser's pixel grid.
+    vec2 off = absolute ? vec2(0.0) : ((i_params & 15u) == K_GLYPH ? floor(pc.offset) : pc.offset);
     vec2 lo = floor(i_rect.xy + off);
     vec2 hi = ceil(i_rect.xy + i_rect.zw + off);
     vec2 corner = vec2(float(gl_VertexIndex & 1), float((gl_VertexIndex >> 1) & 1));

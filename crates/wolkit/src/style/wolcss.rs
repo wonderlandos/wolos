@@ -11,12 +11,21 @@
 //! button       { cursor: pointer; transition: background fast ease; }
 //! ```
 use super::lint::{self as L, Diag, Lines, Severity};
-use super::prop::*;
-use super::select::*;
+use super::prop::{Decls, PROPS, PropId, SHORTHANDS, Shorthand, get_prop, parse_prop, put_prop};
+use super::select::{
+    ClassDef, KINDS, MAX_CLASS_NAME, MAX_CLASSES, MAX_VARIANTS, MEDIA, MEDIA_DARK, MEDIA_LIGHT,
+    ParentSel, STATES, StyleTable, Variant, kind_id, media_bit, state_bit,
+};
 use super::tokens as tk;
-use super::value::*;
-use super::vparse::*;
+use super::value::{Props, Rd, Wr};
+use super::vparse::{Cur, PErr, PRes, T, Tok, tokenize};
+use crate::scene::ids::{Ix, to_u32};
 use std::collections::HashMap;
+
+const MEDIA_LIST: &str =
+    "@dark, @light, @contrast, @reduce-motion, @reduce-transparency and @compact";
+const STATE_LIST: &str =
+    "hover, active, focus, focus-visible, disabled, selected, checked, expanded and empty";
 
 /// The pragma that lifts the spacing and radius scale for a whole file (counted by a ratchet).
 pub const PRAGMA_OFF_SCALE: &str = "wolkit: off-scale";
@@ -304,11 +313,21 @@ impl Builder {
                                 | "charset"
                                 | "property"
                         ) {
-                            (L::UNSUPPORTED, format!("`@{name}` is not in version 1.0."), Some("styles are plain classes; conditions are @dark, @light, @contrast, @reduce-motion, @reduce-transparency and @compact".to_string()))
+                            (
+                                L::UNSUPPORTED,
+                                format!("`@{name}` is not in version 1.0."),
+                                Some(format!(
+                                    "styles are plain classes; conditions are {MEDIA_LIST}"
+                                )),
+                            )
                         } else {
                             let help = tk::suggest(name, MEDIA.iter().copied())
                                 .map(|n| format!("did you mean `@{n}`?"));
-                            (L::UNKNOWN_STATE, format!("`@{name}` is not a media condition."), help.or(Some("the conditions are dark, light, contrast, reduce-motion, reduce-transparency and compact".into())))
+                            (
+                                L::UNKNOWN_STATE,
+                                format!("`@{name}` is not a media condition."),
+                                help.or(Some(format!("the conditions are {MEDIA_LIST}"))),
+                            )
                         };
                         self.diag(cx, id, ns - 1, j, msg, help);
                     }
@@ -586,7 +605,14 @@ impl Builder {
                     let help = tk::suggest(s, STATES.iter().copied())
                         .map(|n| format!("did you mean `:{n}`?"));
                     let at_s = at + head.len() + 1;
-                    self.diag(cx, id, at_s, at_s + s.len(), format!("`:{s}` is not a state."), help.or(Some("the states are hover, active, focus, focus-visible, disabled, selected, checked, expanded and empty".into())));
+                    self.diag(
+                        cx,
+                        id,
+                        at_s,
+                        at_s + s.len(),
+                        format!("`:{s}` is not a state."),
+                        help.or(Some(format!("the states are {STATE_LIST}"))),
+                    );
                     return None;
                 }
             }
@@ -803,7 +829,7 @@ impl Builder {
             );
             return None;
         }
-        let i = self.table.classes.len() as u32;
+        let i = to_u32(self.table.classes.len());
         self.table.classes.push(ClassDef {
             name: name.to_string(),
             variants: vec![],
@@ -830,13 +856,13 @@ impl Builder {
             decls: decls.clone(),
         };
         let target: &mut ClassDef = if let Some(k) = s.kind {
-            &mut self.table.kinds[k as usize]
+            &mut self.table.kinds[k.ix()]
         } else {
             let name = s.class.clone().unwrap_or_default();
             let Some(ci) = self.class_index(cx, &name, s.s, s.e) else {
                 return;
             };
-            &mut self.table.classes[ci as usize]
+            &mut self.table.classes[ci.ix()]
         };
         if let Some(existing) = target.variants.iter_mut().find(|x| x.key() == v.key()) {
             existing.decls.merge(&v.decls);

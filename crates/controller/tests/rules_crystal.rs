@@ -63,7 +63,8 @@ const B_AMEBA_EXCLUDED: &[&str] = &[];
 /// needs an ADR. A directory entry ends in `/`, a prefix entry in `*`.
 /// Reasons: the generated bindings and `lib_*` files declare the C ABI; hue color/image and wopkg
 /// core call C libraries; the cryswol files `callbacks`, `context`, `error`, `handle`, `info`,
-/// `string` and `pkg/ffi` are the libwol handle/callback boundary.
+/// `string` and `pkg/ffi` are the libwol handle/callback boundary; the wolkit shard's `ffi/` files and
+/// generated `lib_wolkit.cr` are the libwolkit boundary (ADR 0039).
 const FFI_ALLOW: &[&str] = &[
     "crates/wol-abi/bindings/crystal/",
     "hue/src/hue/color.cr",
@@ -79,6 +80,8 @@ const FFI_ALLOW: &[&str] = &[
     "wolos-crystal/shards/cryswol/src/wol/pkg/lib_*",
     "wolos-crystal/shards/cryswol/src/wol/realtime/lib_*",
     "wolos-crystal/shards/cryswol/src/wol/string.cr",
+    "wolos-crystal/shards/wolkit/src/wolkit/ffi/",
+    "wolos-crystal/shards/wolkit/src/wolkit/lib_wolkit.cr",
     "wopkg/src/wopkg/core.cr",
     "wopkg/src/wopkg/lib_wopkg.cr",
 ];

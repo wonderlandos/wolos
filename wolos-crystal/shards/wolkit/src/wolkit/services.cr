@@ -119,6 +119,24 @@ module Wolkit
     end
   end
 
+  # The store behind `persisted`: the app's preferences (`wol_prefs`, grant `app-preferences`). A key
+  # is 1 to 64 letters, digits, '.', '_' or '-' and a value at most 4 KiB; libwol checks both and
+  # says so in a sentence, which `write` returns for the signal to show.
+  class PrefsStore < Store
+    def read(key : String) : String?
+      Wol::Prefs.new(Services.context)[key]?
+    rescue Wol::Error
+      nil
+    end
+
+    def write(key : String, value : String) : String?
+      Wol::Prefs.new(Services.context)[key] = value
+      nil
+    rescue ex : Wol::Error
+      ex.message
+    end
+  end
+
   # Show a notification; see `Services.notify`.
   def self.notify(title : String, body : String = "") : String?
     Services.notify(title, body)

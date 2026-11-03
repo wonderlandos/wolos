@@ -81,23 +81,24 @@ const SCRIPT_FALLBACKS: &[(&str, &[&str])] = &[
     ("Taml", &["Noto Sans Tamil"]),
 ];
 
-/// Where installed fonts live.
-pub fn default_font_roots() -> Vec<PathBuf> {
+/// Where installed fonts live. The environment comes in as a lookup (RR-027): the caller passes
+/// `|k| std::env::var_os(k)` or a fixed table in a test.
+pub fn default_font_roots(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Vec<PathBuf> {
     let mut v = vec![
         PathBuf::from("/usr/share/fonts"),
         PathBuf::from("/usr/local/share/fonts"),
     ];
-    if let Some(home) = std::env::var_os("HOME") {
+    if let Some(home) = var("HOME") {
         v.push(PathBuf::from(home).join(".local/share/fonts"));
     }
     v
 }
 
-/// Where the font index is cached.
-pub fn default_index_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CACHE_HOME")
+/// Where the font index is cached (the environment as a lookup, like [`default_font_roots`]).
+pub fn default_index_path(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    let base = var("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .or_else(|| var("HOME").map(|h| PathBuf::from(h).join(".cache")))
         .unwrap_or_else(std::env::temp_dir);
     base.join("wolkit/fonts.idx")
 }
