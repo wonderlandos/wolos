@@ -1,0 +1,29 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Doctor's own layout on top of wolkit.css: expandable check rows. */
+.dr-summary { color: var(--wol-text); font-weight: 600; }
+.dr-summary:empty { display: none; }
+#lists > wol-list + wol-list { margin-top: var(--wk-5); }
+.dr-check + .dr-check { border-top: 1px solid var(--wol-border); }
+.dr-head { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: var(--wk-3); width: 100%;
+  min-height: var(--wk-row); padding: var(--wk-2) var(--wk-4); cursor: pointer; }
+.dr-head:hover { background: var(--wk-hover); }
+.dr-head:focus-visible { outline: 2px solid var(--wol-accent); outline-offset: -2px; border-radius: var(--wol-radius-sm); }
+.dr-title { flex: 1; min-width: 0; }
+.dr-chev { flex: none; width: 8px; height: 8px; border-right: 2px solid var(--wol-text-2); border-bottom: 2px solid var(--wol-text-2);
+  transform: rotate(-45deg); transition: transform .15s; margin-inline: 4px; }
+.dr-head[aria-expanded="true"] .dr-chev { transform: rotate(45deg); }
+.dr-panel { padding: 0 var(--wk-4) var(--wk-4); }
+.dr-panel > * + * { margin-top: var(--wk-3); }
+.dr-detail { color: var(--wol-text); max-width: 60ch; }
+.dr-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--wk-3); }
+.dr-note { color: var(--wol-text-2); font-size: var(--wk-sm); }
+.dr-result { font-weight: 600; }
+.dr-result:empty { display: none; }
+.dr-result[data-ok="true"] { color: var(--wk-ok); }
+.dr-result[data-ok="false"] { color: var(--wk-fail); }
+.dr-cmd summary { cursor: pointer; color: var(--wol-accent); font-size: var(--wk-sm); width: max-content; border-radius: var(--wol-radius-sm); }
+.dr-cmd p { color: var(--wol-text-2); font-size: var(--wk-sm); margin-top: var(--wk-2); }
+.dr-cmd code { display: block; margin-top: var(--wk-1); padding: var(--wk-2) var(--wk-3); background: var(--wol-surface-2);
+  border-radius: var(--wol-radius-sm); overflow-wrap: anywhere; font-family: var(--wol-font-mono); font-size: var(--wk-sm); }
+wol-sidebar nav a wol-badge[hidden] { display: none; }
+#fine > p { color: var(--wol-text-2); }

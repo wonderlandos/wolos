@@ -652,6 +652,24 @@ pub const TREE: &[Cmd] = &[
         &[],
         "Reopen the saved windows in their workspaces",
     ),
+    // Doctor: every area in plain words, each with its fix (docs/modules/doctor.md).
+    cmd(
+        &["doctor"],
+        "doctor.check",
+        &[Arg {
+            name: "area",
+            choices: crate::doctor::AREAS,
+            optional: true,
+            rest: false,
+        }],
+        "Check sound, games, updates, security, storage, network, power and displays, with the fix",
+    ),
+    cmd(
+        &["doctor", "fix"],
+        "doctor.fix",
+        &[arg("id")],
+        "Run one check's fix (wol-admind when it needs the administrator), then check again",
+    ),
     // Games (wol_core::games, docs/modules/games.md).
     cmd(
         &["games"],

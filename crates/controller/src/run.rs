@@ -297,6 +297,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" | "hw.compute"
         | "hw.report" => crate::hw::execute(inv, env),
         "audio.doctor" | "audio.reset" | "audio.appmix" => crate::audio_doctor::execute(inv, env),
+        "doctor.check" | "doctor.fix" => crate::doctor::execute(inv, env),
         a if a.starts_with("games.") => crate::games::execute(inv, env),
         a if a.starts_with("modules.") => crate::modules::execute(inv, env),
         a if a.starts_with("sessions.") => crate::sessions::execute(inv, env),
@@ -884,7 +885,7 @@ fn update_check(env: &mut dyn Env, json: bool) -> i32 {
 }
 
 /// The daily check's findings (wol_core::update::check), without a release installed since.
-fn update_snapshot(env: &mut dyn Env) -> Option<wol_core::update::check::Updates> {
+pub(crate) fn update_snapshot(env: &mut dyn Env) -> Option<wol_core::update::check::Updates> {
     use wol_core::update::check::{DIR, USERLAND_ARGV, Updates};
     let keys = wol_core::package::read_keys(Path::new(
         &env.var("WOL_KEYS_DIR")

@@ -7,6 +7,7 @@ pub mod authcheck;
 pub mod boot;
 pub mod catalog;
 pub mod cli;
+pub mod doctor;
 pub mod games;
 pub mod hw;
 pub mod install;
