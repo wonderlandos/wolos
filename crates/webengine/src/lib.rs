@@ -20,6 +20,10 @@
 //! system browser ([`WebView::take_refused`]). The host process runs in its own systemd scope named
 //! like the Memory Saver's (`process::scope_unit`), so the saver and the frontmost QoS see the app
 //! and its content process as one.
+//!
+//! System web apps (ADR 0048) add [`bridge`]: the `app.toml` manifest, the permission catalog and the
+//! host's end of `window.wolos`, with recorded answers for development ([`bridge::mock`]).
+pub mod bridge;
 pub mod ffi;
 pub mod input;
 pub mod policy;

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The starter system web app (ADR 0048): copy this folder to start a new one.
+id = "org.wolos.webapp.hello"
+name = "Hello"
+version = "0.1.0"
+summary = "A first look at your computer"
+entry = "index.html"
+icon = "icon.svg"
+permissions = ["system.read", "audio.read"]

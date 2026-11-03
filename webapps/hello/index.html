@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-2-Clause -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hello</title>
+  <link rel="stylesheet" href="../kit/wolkit.css">
+  <link rel="stylesheet" href="app.css">
+  <script src="../kit/mock-bridge.js"></script>
+  <script src="../kit/fixtures.js"></script>
+  <script src="fixtures.js"></script>
+  <script src="../kit/bridge.js"></script>
+  <script src="strings.js"></script>
+  <script defer src="../kit/wolkit.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <wol-app>
+    <wol-sidebar data-t-label="nav.label">
+      <a href="#overview" data-t="nav.overview">This computer</a>
+      <a href="#storage" data-t="nav.storage">Storage</a>
+      <a href="#sound"><span data-t="nav.sound">Sound check</span><wol-badge id="sound-badge" state="info" compact hidden></wol-badge></a>
+    </wol-sidebar>
+    <main>
+      <section id="page-overview" data-page="overview">
+        <header class="wk-header"><div><h1 data-t="overview.title">This computer</h1><p data-t="overview.lead"></p></div></header>
+        <wol-list id="about" data-t-heading="overview.list"></wol-list>
+        <wol-list>
+          <wol-row data-t-label="overview.details"><wol-switch id="details"></wol-switch></wol-row>
+        </wol-list>
+      </section>
+      <section id="page-storage" data-page="storage" hidden>
+        <header class="wk-header"><div><h1 data-t="storage.title">Storage</h1><p data-t="storage.lead"></p></div></header>
+        <wol-list id="disks" data-t-heading="storage.list"></wol-list>
+      </section>
+      <section id="page-sound" data-page="sound" hidden>
+        <header class="wk-header">
+          <div><h1 data-t="sound.title">Sound check</h1><p id="sound-summary" data-t="sound.lead"></p></div>
+          <wol-button id="again" kind="primary"><span data-t="sound.again">Check again</span></wol-button>
+        </header>
+        <wol-search id="sound-search" data-t-label="sound.search"></wol-search>
+        <wol-list id="checks" data-t-heading="sound.list"></wol-list>
+        <wol-empty id="checks-empty" data-t-heading="sound.none" hidden><span data-t="sound.none.body"></span></wol-empty>
+      </section>
+    </main>
+  </wol-app>
+</body>
+</html>

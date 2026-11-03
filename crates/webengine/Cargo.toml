@@ -21,6 +21,8 @@ wolkit = { path = "../wolkit" }
 libloading = "0.8.9"
 serde.workspace = true
 serde_json.workspace = true
+# app.toml of system web apps (ADR 0048; already in the lock through wol_core).
+toml = "1"
 
 [dev-dependencies]
 # The goldens' PNG codec is wolkit's (tests/golden/png.rs), which needs it.

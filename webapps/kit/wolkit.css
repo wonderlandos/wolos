@@ -1,0 +1,179 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* WolOS system web apps: the visual system (ADR 0048). Colours are the golden tokens
+   (design/tokens/colors.json, checked by crates/webengine/tests/webapps.rs); the accent comes from
+   <html data-accent>, the scheme from <html data-theme>, both set by bridge.js from wolos.app. */
+:root {
+  --wol-bg: #F3F1F8; --wol-surface: #FFFFFF; --wol-surface-2: #E9E7F0; --wol-border: rgba(34,27,54,0.12);
+  --wol-text: #181521; --wol-text-2: #686575; --wol-shadow: rgba(24,21,33,0.18);
+  --wol-red: #CF3A68; --wol-orange: #D9541E; --wol-yellow: #E0A21F; --wol-green: #1C9A6E; --wol-blue: #1D64B0;
+  --wol-accent: #7C5CFF; --wol-accent-fg: #FFFFFF; --wol-selection: rgba(124,92,255,0.22);
+  --wol-radius-sm: 6px; --wol-radius-md: 10px; --wol-radius-lg: 14px; --wol-radius-window: 12px;
+  --wol-font-ui: Inter, Cantarell, "Noto Sans", "DejaVu Sans", sans-serif;
+  --wol-font-mono: "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace;
+  /* One type scale, 13 px UI base. */
+  --wk-xs: 11px; --wk-sm: 12px; --wk-base: 13px; --wk-lg: 15px; --wk-xl: 20px; --wk-2xl: 26px;
+  /* One spacing scale. */
+  --wk-1: 4px; --wk-2: 8px; --wk-3: 12px; --wk-4: 16px; --wk-5: 24px; --wk-6: 32px; --wk-7: 48px;
+  --wk-sidebar: 232px; --wk-row: 44px; --wk-content: 680px;
+  --wk-sidebar-bg: color-mix(in srgb, var(--wol-surface-2) 70%, var(--wol-bg));
+  --wk-hover: color-mix(in srgb, var(--wol-text) 6%, transparent);
+  --wk-press: color-mix(in srgb, var(--wol-text) 11%, transparent);
+  --wk-ok: var(--wol-green); --wk-warn: var(--wol-orange); --wk-fail: var(--wol-red); --wk-info: var(--wol-blue);
+  color-scheme: light;
+}
+:root[data-accent="blue"] { --wol-accent: #1d64b0; }
+:root[data-accent="pink"] { --wol-accent: #b64495; }
+:root[data-accent="red"] { --wol-accent: #cf3a68; }
+:root[data-accent="orange"] { --wol-accent: #d9541e; }
+:root[data-accent="yellow"] { --wol-accent: #e0a21f; --wol-accent-fg: #181521; }
+:root[data-accent="green"] { --wol-accent: #1c9a6e; }
+:root[data-accent="graphite"] { --wol-accent: #5b5873; }
+:root[data-theme="dark"] {
+  --wol-bg: #191720; --wol-surface: #2A2832; --wol-surface-2: #393643; --wol-border: rgba(237,232,255,0.12);
+  --wol-text: #F6F5FB; --wol-text-2: #AAA7B6; --wol-shadow: rgba(8,6,14,0.45);
+  --wol-red: #F2678F; --wol-orange: #FF8A55; --wol-yellow: #FFC94A; --wol-green: #5BE3B0; --wol-blue: #6AAEF2;
+  --wol-accent: #8B6CFF; --wol-accent-fg: #FFFFFF; --wol-selection: rgba(155,133,255,0.30);
+  --wk-sidebar-bg: color-mix(in srgb, var(--wol-surface) 55%, var(--wol-bg));
+  color-scheme: dark;
+}
+:root[data-theme="dark"][data-accent="blue"] { --wol-accent: #6aaef2; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="pink"] { --wol-accent: #d368b1; }
+:root[data-theme="dark"][data-accent="red"] { --wol-accent: #f2678f; }
+:root[data-theme="dark"][data-accent="orange"] { --wol-accent: #ff8a55; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="yellow"] { --wol-accent: #ffc94a; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="green"] { --wol-accent: #5be3b0; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="graphite"] { --wol-accent: #a9a6c4; --wol-accent-fg: #181521; }
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--wol-bg); color: var(--wol-text); font: 400 var(--wk-base)/1.45 var(--wol-font-ui);
+  -webkit-font-smoothing: antialiased; }
+::selection { background: var(--wol-selection); }
+:focus-visible { outline: 2px solid var(--wol-accent); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+h1 { font-size: var(--wk-2xl); line-height: 1.2; }
+h2 { font-size: var(--wk-lg); line-height: 1.3; }
+h3 { font-size: var(--wk-base); }
+p { margin: 0; }
+code, kbd { font-family: var(--wol-font-mono); font-size: var(--wk-sm); }
+a { color: var(--wol-accent); }
+.wk-dim { color: var(--wol-text-2); }
+.wk-mono { font-family: var(--wol-font-mono); font-size: var(--wk-sm); }
+.wk-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.wk-skip { position: absolute; left: var(--wk-2); top: -40px; z-index: 10; padding: var(--wk-2) var(--wk-3);
+  background: var(--wol-surface); border-radius: var(--wol-radius-sm); }
+.wk-skip:focus { top: var(--wk-2); }
+
+/* Layout: sidebar + content, like Settings. The window's own chrome is the host's. */
+wol-app { display: grid; grid-template-columns: var(--wk-sidebar) minmax(0, 1fr); height: 100vh; }
+wol-app > main { overflow: auto; padding: var(--wk-6) var(--wk-6) var(--wk-7); }
+wol-app > main > * { max-width: var(--wk-content); margin-inline: auto; }
+wol-app > main > * + *, wol-app > main > section > * + * { margin-top: var(--wk-5); }
+.wk-header { display: flex; align-items: center; gap: var(--wk-3); }
+.wk-header > :first-child { flex: 1; min-width: 0; }
+.wk-header p { color: var(--wol-text-2); margin-top: var(--wk-1); }
+wol-app.wk-solo { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 640px) {
+  wol-app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  wol-app > main { padding: var(--wk-4); }
+  wol-sidebar nav { flex-direction: row; overflow-x: auto; }
+}
+
+wol-sidebar { display: block; background: var(--wk-sidebar-bg); border-right: 1px solid var(--wol-border); overflow: auto;
+  padding: var(--wk-4) var(--wk-3); }
+wol-sidebar .wk-sidebar-title { font-size: var(--wk-xs); font-weight: 600; color: var(--wol-text-2); padding: 0 var(--wk-2) var(--wk-2); }
+wol-sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+wol-sidebar nav a { display: flex; align-items: center; gap: var(--wk-2); min-height: 32px; padding: 0 var(--wk-2);
+  border-radius: var(--wol-radius-sm); color: var(--wol-text); text-decoration: none; white-space: nowrap; }
+wol-sidebar nav a:hover { background: var(--wk-hover); }
+wol-sidebar nav a[aria-current="page"] { background: var(--wol-accent); color: var(--wol-accent-fg); }
+wol-sidebar nav a wol-badge { margin-left: auto; }
+wol-sidebar nav a[aria-current="page"] wol-badge { --wk-badge-ink: var(--wol-accent-fg); }
+
+/* Grouped list of rows on one card. */
+wol-list { display: block; }
+wol-list > .wk-list-head { display: flex; align-items: baseline; gap: var(--wk-2); margin: 0 var(--wk-1) var(--wk-2); }
+wol-list > .wk-list-head h2 { flex: 1; }
+wol-list > .wk-list-body { background: var(--wol-surface); border: 1px solid var(--wol-border); border-radius: var(--wol-radius-md); overflow: hidden; }
+wol-list > .wk-list-foot { color: var(--wol-text-2); font-size: var(--wk-sm); margin: var(--wk-2) var(--wk-1) 0; }
+wol-row { display: flex; align-items: center; gap: var(--wk-3); min-height: var(--wk-row); padding: var(--wk-2) var(--wk-4); }
+wol-row + wol-row { border-top: 1px solid var(--wol-border); }
+wol-row > .wk-row-text { flex: 1; min-width: 0; }
+wol-row .wk-row-label { display: block; }
+wol-row .wk-row-detail { display: block; color: var(--wol-text-2); font-size: var(--wk-sm); overflow-wrap: anywhere; }
+wol-row > .wk-row-end { display: flex; align-items: center; gap: var(--wk-2); flex: none; }
+wol-row[href] { cursor: pointer; }
+wol-row[href]:hover { background: var(--wk-hover); }
+
+/* Controls */
+wol-button { display: inline-flex; }
+wol-button > button { font: inherit; font-weight: 600; display: inline-flex; align-items: center; gap: var(--wk-2);
+  min-height: 28px; padding: 0 var(--wk-3); border-radius: var(--wol-radius-sm); cursor: pointer;
+  border: 1px solid var(--wol-border); background: var(--wol-surface); color: var(--wol-text); }
+wol-button > button:hover { background: color-mix(in srgb, var(--wol-surface) 88%, var(--wol-text)); }
+wol-button > button:active { background: var(--wk-press); }
+wol-button[kind="primary"] > button { background: var(--wol-accent); border-color: transparent; color: var(--wol-accent-fg); }
+wol-button[kind="primary"] > button:hover { background: color-mix(in srgb, var(--wol-accent) 88%, var(--wol-text)); }
+wol-button[kind="danger"] > button { color: var(--wol-red); }
+wol-button[kind="quiet"] > button { background: transparent; border-color: transparent; color: var(--wol-accent); }
+wol-button > button:disabled { opacity: .45; cursor: default; }
+wol-button[busy] > button::after { content: ""; width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor;
+  border-right-color: transparent; animation: wk-spin .8s linear infinite; }
+
+wol-switch { display: inline-flex; flex: none; width: 38px; height: 22px; border-radius: 11px; position: relative; cursor: pointer;
+  background: color-mix(in srgb, var(--wol-text) 22%, transparent); transition: background .15s; }
+wol-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+wol-switch[aria-checked="true"] { background: var(--wol-accent); }
+wol-switch[aria-checked="true"]::after { transform: translateX(16px); }
+wol-switch[aria-disabled="true"] { opacity: .45; cursor: default; }
+wol-switch:focus-visible { outline-offset: 2px; border-radius: 11px; }
+
+wol-badge { --wk-badge-ink: var(--wk-info); display: inline-flex; align-items: center; gap: 5px; flex: none;
+  font-size: var(--wk-sm); font-weight: 600; color: var(--wk-badge-ink); white-space: nowrap; }
+wol-badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+wol-badge[state="ok"] { --wk-badge-ink: var(--wk-ok); }
+wol-badge[state="warn"] { --wk-badge-ink: var(--wk-warn); }
+wol-badge[state="warn"]::before { border-radius: 1px; transform: rotate(45deg) scale(.85); }
+wol-badge[state="fail"] { --wk-badge-ink: var(--wk-fail); }
+wol-badge[state="fail"]::before { border-radius: 2px; }
+wol-badge[compact] .wk-badge-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+
+wol-progress { display: block; height: 6px; border-radius: 3px; overflow: hidden; background: var(--wol-surface-2); }
+wol-progress > span { display: block; height: 100%; width: 0; background: var(--wol-accent); border-radius: inherit; transition: width .2s; }
+wol-progress:not([value]) > span { width: 30%; animation: wk-slide 1.2s ease-in-out infinite; }
+
+wol-search { display: flex; align-items: center; position: relative; }
+wol-search input { font: inherit; width: 100%; height: 30px; padding: 0 var(--wk-3) 0 28px; border-radius: var(--wol-radius-sm);
+  border: 1px solid var(--wol-border); background: var(--wol-surface); color: var(--wol-text); }
+wol-search input:focus-visible { outline: 2px solid var(--wol-accent); outline-offset: 0; }
+wol-search::before { content: ""; position: absolute; left: 10px; width: 9px; height: 9px; border: 1.6px solid var(--wol-text-2);
+  border-radius: 50%; pointer-events: none; transform: translate(-1px, -1px); }
+wol-search::after { content: ""; position: absolute; left: 18px; top: 18px; width: 5px; height: 1.6px; background: var(--wol-text-2);
+  transform: rotate(45deg); pointer-events: none; }
+
+wol-empty { display: grid; justify-items: center; gap: var(--wk-2); text-align: center; padding: var(--wk-7) var(--wk-5); color: var(--wol-text-2); }
+wol-empty .wk-empty-heading { font-size: var(--wk-lg); font-weight: 600; color: var(--wol-text); }
+wol-empty > :last-child:not(.wk-empty-heading) { margin-top: var(--wk-2); }
+
+/* The confirm sheet: slides from the window's top edge, like the system's own sheets. */
+wol-sheet { display: contents; }
+wol-sheet dialog { width: min(420px, calc(100vw - 32px)); margin: 0 auto; top: 0; padding: var(--wk-5); border: 1px solid var(--wol-border);
+  border-top: 0; border-radius: 0 0 var(--wol-radius-lg) var(--wol-radius-lg); background: var(--wol-surface); color: var(--wol-text);
+  box-shadow: 0 24px 60px -18px var(--wol-shadow); }
+wol-sheet dialog::backdrop { background: color-mix(in srgb, var(--wol-bg) 55%, transparent); }
+wol-sheet dialog[open] { animation: wk-drop .18s ease-out both; }
+wol-sheet .wk-sheet-body { margin-top: var(--wk-2); color: var(--wol-text-2); }
+wol-sheet .wk-sheet-actions { display: flex; justify-content: flex-end; gap: var(--wk-2); margin-top: var(--wk-5); }
+
+@keyframes wk-spin { to { transform: rotate(360deg); } }
+@keyframes wk-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@keyframes wk-drop { from { transform: translateY(-12px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0s !important; animation-iteration-count: 1 !important; transition: none !important; }
+  wol-progress:not([value]) > span { width: 100%; opacity: .5; }
+}
+@media (forced-colors: active) {
+  wol-switch, wol-progress, wol-badge::before { forced-color-adjust: none; border: 1px solid CanvasText; }
+}

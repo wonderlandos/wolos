@@ -86,8 +86,36 @@ start. Full adds no caps and no throttling; Light never rasterises on the GPU.
 background content back, the saver goes to Saving without its own reclaim pass; App Nap and
 Restore are unchanged. wold passes `false` until a runtime reports its discards.
 
+## System web apps (ADR 0048)
+
+WolOS's own tool apps (Doctor first) are folders under `webapps/<slug>/`: `app.toml`, `index.html`,
+`app.js`, `strings.js`, an icon and, for development, `fixtures.js`. They share the kit in
+`webapps/kit/` (`wolkit.css`, `wolkit.js`, `bridge.js`, `mock-bridge.js`, `fixtures.js`) and reach
+the system only through `window.wolos`:
+
+```js
+const r = await wolos.call("audio.doctor");          // a wol verb's --json output
+const off = wolos.subscribe("permissions", redraw);  // app | permissions | progress
+wolos.app.theme;                                     // "light" | "dark"
+```
+
+Start a new app by copying `webapps/hello/`: change `app.toml` (id `org.wolos.webapp.<slug>`, the
+folder named after the slug), list the permissions it needs from
+`crates/webengine/src/bridge/catalog.rs`, put every word in `strings.js`. Open
+`webapps/<slug>/index.html?dev` in a desktop browser to run it against the recorded answers
+(`&theme=dark`, `&deny=audio.read`, `&fail=audio.doctor`, `&delay=0`). A method the catalog lacks
+is a `wol` verb first, then one catalog row in both `catalog.rs` and `mock-bridge.js`, then a kit
+fixture.
+
+Checks: `cargo test -p webengine --test webapps` validates every manifest and permission, the
+mock's catalog copy, the fixtures, the tokens and the strings tables; with
+`CHROME=<headless browser>` it also runs `webapps/hello` in development mode and saves light and
+dark screenshots to `WOLKIT_SHOTS`.
+
 ## Not verified
 
 - No row is measured yet; switch and policy names in the table are not yet checked against the
   shipped binaries.
 - The hook and the flags on an installed system (no VM run yet).
+- System web apps run in development mode only: the engine has no host channel yet
+  (`wwe_engine_set_host_channel`, ADR 0048), `wol-webhost` and wold's `webapp-call` are not built.
