@@ -51,7 +51,9 @@ module Hue
     PREVIEW_PIXELS = 24_000_000_i64
     PREVIEW_SIDE   =           1600
 
-    def self.load(path : String) : Picture
+    # `max_side` decodes a picture whose long side is longer at that size (a vector picture is then
+    # drawn at that size instead of its own, which is much quicker); wol-hue itself passes none.
+    def self.load(path : String, max_side : Int32? = nil) : Picture
       raise ImageError.new("#{path}: no such file") unless File.file?(path)
       w = 0
       h = 0
@@ -60,8 +62,12 @@ module Hue
       px = w.to_i64 * h
       raise ImageError.new("#{path}: #{w}x#{h} is too large") if px > MAX_PIXELS
       err = Pointer(LibPixbuf::GError).null
-      pb = if px > PREVIEW_PIXELS
-             sw, sh = w >= h ? {PREVIEW_SIDE, -1} : {-1, PREVIEW_SIDE}
+      side = px > PREVIEW_PIXELS ? PREVIEW_SIDE : nil
+      if max_side && Math.max(w, h) > max_side
+        side = side ? Math.min(side, max_side) : max_side
+      end
+      pb = if side
+             sw, sh = w >= h ? {side, -1} : {-1, side}
              LibPixbuf.new_from_file_at_scale(path, sw, sh, 1, pointerof(err))
            else
              LibPixbuf.new_from_file(path, pointerof(err))

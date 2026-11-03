@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wolos-app-looks: Looks (org.wolos.looks), the WolOS theme-from-a-picture app, a Crystal app on the
+# wolkit shard and libwolkit, built from wolos-crystal/apps/looks of github.com/wonderlandos/wolos
+# (wolos docs/modules/looks.md). It links the wol-hue palette engine (hue/ of the same tree, required
+# by path), so the build fetches nothing; libwolkit and libwol are linked from the system.
+pkgname=wolos-app-looks
+pkgver=0.12.0  # the newest CHANGELOG.md entry at _wolos_commit
+pkgrel=1
+pkgdesc='WolOS theme from a picture: eight modes light and dark, sliders, app previews, saved looks, schedule'
+arch=(x86_64)
+url='https://github.com/wonderlandos/wolos'
+# GPL-2.0-or-later for the app and the engine; four hue files are translated from MIT code and carry
+# their notice, installed as THIRD-PARTY.md.
+license=(GPL-2.0-or-later MIT)
+# libwolkit draws the window, libwol carries the file panels; libyaml reads Base16 files, gdk-pixbuf2
+# decodes pictures, openssl names the cached thumbnails; wolos-system has the `wol` command that
+# switches the desktop to the new theme.
+depends=(gc pcre2 libyaml openssl zlib gcc-libs glibc glib2 gdk-pixbuf2 libwolkit libwol wolos-system)
+optdepends=('webp-pixbuf-loader: WebP pictures' 'libavif: AVIF pictures')
+makedepends=(crystal git)
+options=(!debug !lto)
+# The WolOS source at one commit (bumped by bump-wolos.sh from wolos CI). No submodule is needed: the
+# app, the engine and both shards are plain Crystal source in the main tree.
+_wolos_commit=11cd053405c386404b3d811d842fb82b361209ab
+source=("wolos::git+https://github.com/wonderlandos/wolos.git#commit=$_wolos_commit")
+sha256sums=(SKIP)
+
+build() {
+  cd "$srcdir/wolos/wolos-crystal/apps/looks"
+  # The system's libwolkit.so and libwol.so (makechrootpkg installs the local [wolos] packages).
+  make bin/looks WOLKIT_BUILD=/usr/lib RELEASE='--release --no-debug'
+}
+
+check() {
+  cd "$srcdir/wolos/wolos-crystal/apps/looks"
+  # The pure specs (studio, previews by pixel, store, .wollook, schedule, applier with a stand-in
+  # `wol`), then the app in the headless engine against its golden screenshots with the pinned fonts
+  # of the source tree, and the look against its sheet (wolkit-stylec comes with libwolkit).
+  make spec WOLKIT_BUILD=/usr/lib WOLKIT_STYLEC=/usr/bin/wolkit-stylec
+}
+
+package() {
+  local _repo=$srcdir/wolos _app=$srcdir/wolos/wolos-crystal/apps/looks
+  install -Dm755 "$_app/bin/looks" "$pkgdir/usr/bin/wol-looks"
+  install -Dm644 "$_app/org.wolos.looks.desktop" "$pkgdir/usr/share/applications/org.wolos.looks.desktop"
+  # The quiet run of the schedule: a user timer the app turns on while a schedule is set.
+  install -Dm644 "$_app/packaging/wol-looks-schedule.service" "$pkgdir/usr/lib/systemd/user/wol-looks-schedule.service"
+  install -Dm644 "$_app/packaging/wol-looks-schedule.timer" "$pkgdir/usr/lib/systemd/user/wol-looks-schedule.timer"
+  install -Dm644 "$_repo/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$_repo/docs/THIRD-PARTY.md" "$pkgdir/usr/share/licenses/$pkgname/THIRD-PARTY.md"
+}

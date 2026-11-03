@@ -1,0 +1,10 @@
+[Unit]
+Description=Looks: check the schedule every five minutes
+
+[Timer]
+OnStartupSec=30s
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

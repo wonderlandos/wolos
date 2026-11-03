@@ -1,0 +1,89 @@
+/* Looks' own classes, after the kit look (compiled with build/00-kit.wolcss first, so the kit class
+   ids stay 0 to 7). Colours are theme tokens and motion uses the named durations, eases and springs
+   only; DESIGN.md lists which part moves on which curve. The previews of a candidate palette are
+   pictures (Wolkit colours are tokens, never literals), so these classes only frame them. */
+
+/* Symbolic icons are 16 px; pictures set their own size inline. */
+image { width: 16px; height: 16px; }
+
+/* A row of the sidebar: the page you are on is tinted in the accent. */
+.nav {
+  border-radius: s;
+  padding: xs sm;
+  cursor: pointer;
+  transition: background fast ease;
+}
+.nav:hover { background: alpha(accent, 12%); }
+.nav:selected { background: alpha(accent, 24%); }
+.nav:focus-visible { outline: 2px accent; }
+
+/* A picture to start from (the wallpaper strip): a framed thumbnail, ringed when it is the one. */
+.pic {
+  background: card;
+  border-radius: s;
+  cursor: pointer;
+  opacity: 80%;
+  transition: opacity, background fast ease;
+}
+.pic:hover { opacity: 100%; background: control; }
+.pic:selected { opacity: 100%; border: 2px accent; }
+.pic:focus-visible { outline: 2px accent; }
+
+/* A mode card: dark and light halves side by side, ringed when chosen. */
+.mode {
+  background: card;
+  border-radius: m;
+  padding: xs;
+  cursor: pointer;
+  transition: background, box-shadow fast ease;
+}
+.mode:hover { background: control; box-shadow: sm; }
+.mode:selected { border: 2px accent; box-shadow: md; }
+.mode:focus-visible { outline: 2px accent; }
+.mode-name { font-size: secondary; color: text; }
+.mode-hint { font-size: caption; color: dim; }
+
+/* A per-app preview and its caption. */
+.preview {
+  background: card;
+  border-radius: s;
+  transition: opacity normal ease;
+}
+.preview-caption { font-size: caption; color: dim; }
+
+/* Headings and quiet lines. */
+.group-title { font-size: title; font-weight: 600; color: text; }
+.quiet { font-size: secondary; color: dim; }
+.value { font-size: secondary; color: dim; }
+
+/* A saved look's row: selected when it is the current one. */
+.look-row {
+  background: card;
+  border-radius: m;
+  padding: sm md;
+  cursor: pointer;
+  transition: background fast ease;
+}
+.look-row:hover { background: control; }
+.look-row:selected { border: 2px accent; }
+.look-row:focus-visible { outline: 2px accent; }
+
+/* The name form: one inline row under the toolbar. */
+.form { background: card; border-radius: m; padding: sm md; box-shadow: sm; }
+
+/* The notice line (a result, or what Undo would bring back). */
+.notice { background: card; border-radius: m; padding: sm md; box-shadow: sm; }
+
+@reduce-motion {
+  .nav { transition: none; }
+  .pic { transition: none; }
+  .mode { transition: none; }
+  .preview { transition: none; }
+  .look-row { transition: none; }
+}
+
+@contrast {
+  .pic { border: 1px text; opacity: 100%; }
+  .mode { border: 1px text; }
+  .look-row { border: 1px text; }
+}

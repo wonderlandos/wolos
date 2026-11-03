@@ -1,0 +1,9 @@
+[Unit]
+Description=Looks: switch the desktop to the day or night look when the phase changes
+ConditionPathExists=%h/.local/share/org.wolos.looks/state.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/wol-looks --scheduled
+Nice=10
+NoNewPrivileges=yes

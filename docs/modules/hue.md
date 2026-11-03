@@ -47,6 +47,10 @@ Crystal, because the lead chose it for this tool; no shards, only the standard l
 6. **Cache** (`hue/src/hue/engine.cr`): `$XDG_CACHE_HOME/wolos/hue/<sha256>-<variant>-<mode>-v1.json`,
    keyed by the file's content.
 
+## The window
+
+[Looks](looks.md) (`wol-looks`) is this engine in a window: the same modules, required by path, with the eight modes drawn side by side in both variants, sliders with instant preview, a preview of a terminal, Settings, a document and a browser in the candidate's tokens, saved looks, a history and a day/night schedule. `Hue::Picture.load(path, max_side)` (an optional second argument, `wol-hue` passes none) decodes a long picture at a limited size for it.
+
 ## Commands
 
 ```sh

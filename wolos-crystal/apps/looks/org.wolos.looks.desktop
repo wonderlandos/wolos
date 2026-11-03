@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Looks
+GenericName=Theme from a picture
+Comment=Make a theme for the whole desktop from a picture
+Exec=wol-looks %f
+Icon=wolos-settings
+Terminal=false
+Categories=Settings;DesktopSettings;Graphics;
+MimeType=image/png;image/jpeg;image/webp;
+Keywords=theme;colors;colours;wallpaper;palette;appearance;look;dark;light;night;
+StartupWMClass=org.wolos.looks
+StartupNotify=true

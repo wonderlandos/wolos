@@ -93,6 +93,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/hardware.md](modules/hardware.md) | hardware catalogue, `wol hw`, `wolos-hw.service`, shipped firmware, gaps | [0016](adr/0016-arch-linux-base.md) |
 | [modules/hig.md](modules/hig.md) | WolOS Human Interface Guidelines (binding for every app and shell surface) | [0016](adr/0016-arch-linux-base.md) |
 | [modules/hue.md](modules/hue.md) | wol-hue: themes from a picture, 12 sliders, Base16 and colors.toml import, saved looks | [0031](adr/0031-shell-plugins-themes-layouts.md) |
+| [modules/looks.md](modules/looks.md) | Looks (`org.wolos.looks`, `wol-looks`): theme from a picture in a window, eight modes light and dark side by side, sliders, per-app previews, save, history, schedule, `.wollook` | [0031](adr/0031-shell-plugins-themes-layouts.md), [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/hyprland-fork.md](modules/hyprland-fork.md) | the compositor fork: base version, patches in `wolos-pkgbuilds/hyprland-wolos/`, config, QoS plugin | [0012](adr/0012-seamless-boot.md) |
 | [modules/intel-graphics.md](modules/intel-graphics.md) | i915 firmware, tunables, VA-API/Vulkan stack (historical: FreeBSD base) | [0008](adr/0008-i915-frame-deadline-boost.md) |
 | [modules/memory-bandwidth.md](modules/memory-bandwidth.md) | iGPU bandwidth paradigms, top 5, measurement | [0007](adr/0007-gpu-tuning-interface.md) |

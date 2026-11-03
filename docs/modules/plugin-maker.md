@@ -32,7 +32,7 @@ Rules it keeps: every read, check, save and pack runs off the GTK thread (`ui::m
 
 Not in v0.12: syntax colouring (the editor stays a plain text view; GtkSourceView would be a new C dependency with its own theme work), and refresh timers in the preview (an entry renders on load, on each click and on each save, not every `refresh` seconds).
 
-The Theme Studio and [hue.md](hue.md) overlap on purpose for now: `wol-hue` is the command-line palette engine and the Studio is the window; in a later release the Studio will call `wol-hue` for palette extraction instead of its own wallpaper sampling.
+The Theme Studio and [hue.md](hue.md) overlap on purpose for now: `wol-hue` is the command-line palette engine and the Studio is the window; in a later release the Studio will call `wol-hue` for palette extraction instead of its own wallpaper sampling. [Looks](looks.md) is the app for the picture-first case: eight modes side by side, sliders, per-app previews, saved looks and a day/night schedule on the same engine.
 
 ## Tests
 

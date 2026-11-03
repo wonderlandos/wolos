@@ -1,0 +1,9 @@
+name: looks
+version: 0.1.0
+description: |
+  Looks (org.wolos.looks), the WolOS theme-from-a-picture app, made with Wolkit on the wol-hue palette engine.
+license: GPL-2.0-or-later
+crystal: ">= 1.22.0"
+targets:
+  looks:
+    main: src/main.cr
