@@ -22,6 +22,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [RULES.md](RULES.md) | the rule catalogue: small concrete rules, each with an id, a reason and the check that enforces it |
 | [RULES-system.md](RULES-system.md) | system-file rules (RS-nnn) for scripts, units, sysctl, polkit, compositor config and pacman hooks; checked by `crates/controller/tests/rules_system.rs` |
 | [RULES-ui.md](RULES-ui.md) | UI consistency rules (RU-nnn) for copy, widgets, CSS, goldens and docs; checked by `crates/shell/tests/rules_ui.rs` |
+| [RULES-ruby.md](RULES-ruby.md) | Ruby rules (RB-nnn) for Ruby scripts: header, argv-only commands, no eval or object-building decoders, default gems only, `ruby -wc` and one explicit RuboCop list, no Ruby root helpers; checked by `crates/controller/tests/rules_ruby.rs` |
 | [RULES-crystal.md](RULES-crystal.md) | Crystal rules (RCR-nnn) for `.cr` code, the ameba and formatter setup, FFI limits, known-vulnerable patterns and the shard supply chain; checked by `crates/controller/tests/rules_crystal.rs` |
 | [THIRD-PARTY.md](THIRD-PARTY.md) | third-party notices: the only place where projects we translated code from, and their copyright holders, are named; shipped as `/usr/share/licenses/<package>/THIRD-PARTY.md` |
 | ADR process | a decision is a file `adr/NNNN-title.md` with Status, Context, Decision, Consequences (**CI** `tools/check-adrs.sh`). A decision changes only by a new ADR that names the old one; the old one's Status says `superseded by NNNN`. `mem adr` is the maintainers' tooling that drafts them; the files in `adr/` are the record. |
@@ -70,6 +71,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0038](adr/0038-sound-service.md) | One sound service, and 100% is 0 dB | accepted |
 | [0039](adr/0039-libwolkit-and-wolkit.md) | libWolkit (the engine) and wolkit (the shard) | accepted |
 | [0040](adr/0040-security-defaults-on-linux.md) | Security defaults on Linux | accepted |
+| [0041](adr/0041-ruby-scripts.md) | Ruby scripts run like shell scripts (`wol script`) | accepted |
 | [0042](adr/0042-wolos-web-runtime.md) | A WolOS web-app runtime on the Rust browser engine: two tracks, one engine library | accepted |
 
 ## Modules
@@ -105,6 +107,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/plugin-maker.md](modules/plugin-maker.md) | wol-plugin-maker: make a plugin or a theme and see it live (editor with the CLI check, sandboxed preview on four surfaces, Theme Studio, pack and share) | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/plugins.md](modules/plugins.md) | shell plugins: manifest, Lua runtime, sandbox, `wol plugin check|run` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/power.md](modules/power.md) | power policy per power source and mode, sleep and lock, battery alerts, `wol power` | [0014](adr/0014-power-policy.md) |
+| [modules/scripting.md](modules/scripting.md) | scripts in sh, bash and Ruby: `wol script check|run|on`, the clean environment, the helper gate, ssh | [0041](adr/0041-ruby-scripts.md) |
 | [modules/security.md](modules/security.md) | firewall, hardening, update check, malware check, encrypted homes, app permissions, what runs as root | [0040](adr/0040-security-defaults-on-linux.md), [0024](adr/0024-first-use-malware-check.md) |
 | [modules/system-api.md](modules/system-api.md) | System API topics (`wol_core::system`) and their invariants | [0016](adr/0016-arch-linux-base.md) |
 | [modules/userland.md](modules/userland.md) | Dock apps and app-ids, default apps, zsh, sudo, keyring, printing, USB sticks, size | [0016](adr/0016-arch-linux-base.md) |

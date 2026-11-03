@@ -169,6 +169,30 @@ pub const TREE: &[Cmd] = &[
         "Run a .wol bundle (wol-run)",
     ),
     cmd(
+        &["script"],
+        "script.kinds",
+        &[],
+        "Script kinds wol checks and runs: sh, bash, ruby (ADR 0041)",
+    ),
+    cmd(
+        &["script", "check"],
+        "script.check",
+        &[arg("file")],
+        "Check a script without running it: it parses, and its linter is clean when installed",
+    ),
+    cmd(
+        &["script", "run"],
+        "script.run",
+        &[arg("file"), rest("args")],
+        "Run a sh, bash or ruby script as you, clean environment, its wol changes through the helper gate",
+    ),
+    cmd(
+        &["script", "on"],
+        "script.on",
+        &[arg("host"), arg("file"), rest("args")],
+        "Run a local script on another computer over ssh, the same way (the file goes on stdin)",
+    ),
+    cmd(
         &["port"],
         "bundle.plan",
         &[arg("bundle")],

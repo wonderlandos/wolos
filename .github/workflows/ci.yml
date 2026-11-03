@@ -24,7 +24,7 @@ jobs:
       - name: Toolchain and the libraries the workspace links
         run: |
           pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell \
-            pam clamav nautilus crystal shellcheck python
+            pam clamav nautilus crystal shellcheck python ruby rubocop
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
@@ -39,8 +39,11 @@ jobs:
           path: wolos-iso
       - name: cargo test
         # The whole workspace, every target (includes crates/shared/tests/unsafe_ratchet.rs and the
-        # identity/exhaustion regression tests).
+        # identity/exhaustion regression tests). WOLOS_REQUIRE_RUBOCOP: the Ruby rules (RB-019,
+        # RB-020, RB-032) fail instead of skipping when ruby or rubocop is missing.
         working-directory: wolos
+        env:
+          WOLOS_REQUIRE_RUBOCOP: "1"
         run: cargo test --workspace --locked
       - name: Fuzz regressions (fuzz/regressions/<target>/ replayed on stable, no fuzzing)
         working-directory: wolos
@@ -50,6 +53,13 @@ jobs:
         # The aurlaws fixtures are frozen inputs of the analyser (some are deliberately not valid scripts,
         # e.g. no shebang); they are read as bytes, never run, and must not be edited to please shellcheck.
         run: git ls-files -z -- '*.sh' ':(exclude)crates/aurlaws/tests/fixtures/**' | xargs -0 shellcheck -S error
+      - name: "Ruby scripts: ruby -wc and RuboCop (docs/RULES-ruby.md, tools/ruby/lint.sh)"
+        working-directory: wolos
+        # The scanner fixtures in crates/controller/tests/fixtures/ruby are wrong on purpose; lint.sh
+        # leaves them out. A missing rubocop fails the step.
+        env:
+          WOLOS_REQUIRE_RUBOCOP: "1"
+        run: bash tools/ruby/lint.sh
 
   # docs/STANDARDS.md: the rules a machine can check. Separate from `test` so a style failure and a
   # test failure are told apart at a glance; same image so clippy links what the workspace links.
@@ -59,7 +69,7 @@ jobs:
     steps:
       - name: Toolchain, the libraries the workspace links, cargo-audit, shellcheck
         run: |
-          pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell             pam clamav nautilus crystal shellcheck luacheck python librsvg cargo-audit cargo-deny
+          pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell             pam clamav nautilus crystal shellcheck luacheck python ruby rubocop librsvg cargo-audit cargo-deny
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
@@ -92,10 +102,13 @@ jobs:
         run: cargo audit --deny warnings
       - name: cargo deny (advisories, licenses, bans, sources; deny.toml)
         run: cargo deny --locked check
-      - name: "Shipped scripts: sh -n, SPDX and purpose header, shellcheck"
+      - name: "Shipped scripts: sh -n / ruby -wc, SPDX and purpose header, shellcheck, RuboCop"
+        env:
+          WOLOS_REQUIRE_RUBOCOP: "1"
         run: |
           bash tools/check-headers.sh
           find files/usr/lib/wolos desktop/overlay/usr/bin -type f -exec grep -lZE '^#!/(usr/)?bin/(env )?(sh|bash)' {} + | xargs -0 -r shellcheck -S error
+          find files/usr/lib/wolos desktop/overlay/usr/bin -type f -exec grep -lZE '^#!/(usr/)?bin/(env )?ruby' {} + | xargs -0 -r bash tools/ruby/lint.sh
       - name: "Lua plugins and widgets: luacheck (.luacheckrc declares the wol global)"
         run: luacheck . --no-color
       - name: "Decision records: Status, Context, Decision, Consequences"

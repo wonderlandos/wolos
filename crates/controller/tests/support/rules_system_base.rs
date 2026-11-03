@@ -305,6 +305,7 @@ pub(crate) fn scripts() -> &'static Vec<String> {
                 && first.contains("sh")
                 && !first.contains("python")
                 && !first.contains("lua")
+                && !first.contains("ruby")
             {
                 v.push(f);
             }

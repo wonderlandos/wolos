@@ -4,6 +4,12 @@
 
 - libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
 
+Scripts
+- Ruby scripts run like shell scripts (ADR 0041). `wol script check <file>` parses a sh, bash or Ruby script without running it, then runs shellcheck or RuboCop when installed; `wol script run <file>` runs it as you, never as root, with a clean environment, and every change it asks of `wol` shows the approval sheet and lands in the activity log under the script's name; `wol script on <host> <file>` runs a local script on another computer over ssh the same way. `wol script` lists the kinds.
+- `ruby` is part of the system, so a `.rb` file runs on a fresh computer and over ssh; the Developer module adds `rubocop`.
+- The background malware pass also looks at `.rb` files, as it does at `.sh` files.
+- Ruby scripts in the tree have their own rules (docs/RULES-ruby.md, `RB-nnn`), checked in CI with `ruby -wc` and one explicit RuboCop list (`tools/ruby/lint.sh`).
+
 ## 0.12.0 (2026-11-03)
 The same desktop, made solid, and then grown: a redesigned Settings and Control Center, shell
 plugins and themes you can make yourself, optional modules, and a friendlier installer with Secure

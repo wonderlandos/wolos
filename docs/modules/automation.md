@@ -10,6 +10,7 @@ One door for people, scripts and AI helpers: the `wol` command tree. Helpers nev
 |---|---|---|
 | `wol mcp` client (MCP over stdio, JSON-RPC 2.0) | its `clientInfo.name` | yes |
 | script with `WOL_HELPER=<name>` | `script:<name>` | yes |
+| script started with `wol script run <file>` or `wol script on <host> <file>` (sh, bash or Ruby, docs/modules/scripting.md) | `script:<file name>` (set by the runner) | yes; plus one `script run` / `script on` record per run |
 | a person running `wol` | `cli` | no (admin verbs ask for the password on stdin) |
 
 Helper verbs: `catalog::HELPER_VERBS` (`wol api --json` lists access and capability). Anything else stays for people.
@@ -67,5 +68,6 @@ config home, which the notification code and `wol focus` read).
 
 - One audit record per helper call (`$XDG_STATE_HOME/wolos/actions.jsonl`), written by the requester; the shell writes one only for an admin change it ran after the requester left. Passwords are never logged.
 - Always Allow is per helper and capability. An MCP helper is its declared name plus the program that started `wol mcp`, read from the kernel through a pinned `/proc` directory (`Assistant (/usr/bin/assistant)`), so another program that copies the name is asked again (audit C10-6). Changes that leave something behind (`webapp add|remove`, `modules enable`, `sessions save|restore`) are asked every time and offer no Always Allow (C10-1); `wol helpers deny <cap>` and `wol helpers forget <helper>` take it back; it is a journaled `helpers` change a helper cannot undo.
+- The gate does not care what language a script is written in: it sees `WOL_HELPER`, so a Ruby script and a shell script meet the same policy, sheets and log (tests `crates/controller/tests/script.rs`). Over ssh (`wol script on`, or any ssh session) there is no desktop showing, so changes are refused with "No WolOS session is showing"; reads run.
 - Helper names are what the helper says it is and helpers run as the user: the gate keeps well-behaved helpers inside what the user approved; it is not a sandbox.
 - Tests: `crates/controller/tests/{mcp,helpers,approval_socket}.rs` (fake shell on a real socket), goldens `approval`, `approval-admin`.

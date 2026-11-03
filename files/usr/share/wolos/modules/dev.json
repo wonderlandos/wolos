@@ -1,7 +1,7 @@
 {
   "id": "dev",
   "name": "Developer",
-  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij, rootless podman and Crystal with Cryswol; ~/Work",
+  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij, rootless podman, RuboCop for Ruby scripts and Crystal with Cryswol; ~/Work",
   "icon": "applications-engineering-symbolic",
   "category": "developer",
   "size_mb": 350,
@@ -15,6 +15,7 @@
     "zellij",
     "podman",
     "jq",
+    "rubocop",
     "ttf-jetbrains-mono-nerd",
     "crystal",
     "pkgconf",

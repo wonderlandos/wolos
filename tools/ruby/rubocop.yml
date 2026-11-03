@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# RuboCop settings for the Ruby scripts in this tree (docs/RULES-ruby.md RB-020, RB-032; ADR 0041).
+# Why: a RuboCop update must never add failures by itself, so every cop is off unless listed here,
+# and new cops stay off. How: tools/ruby/lint.sh passes this file; `wol script check` runs the same
+# list with --only (controller::script::RUBOCOP_COPS; rules_ruby.rs keeps the two equal).
+AllCops:
+  DisabledByDefault: true
+  NewCops: disable
+  SuggestExtensions: false
+  Exclude:
+    - 'crates/controller/tests/fixtures/ruby/**/*'
+Lint/Debugger:
+  Enabled: true
+Lint/RescueException:
+  Enabled: true
+Lint/ShadowingOuterLocalVariable:
+  Enabled: true
+Lint/SuppressedException:
+  Enabled: true
+Lint/Syntax:
+  Enabled: true
+Lint/UnreachableCode:
+  Enabled: true
+Lint/UnusedMethodArgument:
+  Enabled: true
+Lint/UselessAssignment:
+  Enabled: true
+Lint/Void:
+  Enabled: true
+Security/Eval:
+  Enabled: true
+Security/JSONLoad:
+  Enabled: true
+Security/MarshalLoad:
+  Enabled: true
+Security/Open:
+  Enabled: true
+Security/YAMLLoad:
+  Enabled: true
+Style/FrozenStringLiteralComment:
+  Enabled: true

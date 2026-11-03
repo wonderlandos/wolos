@@ -61,6 +61,11 @@ pub trait Env {
         let _ = (argv, var, secret);
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
+    /// Like `exec`, with `input` on the child's stdin (`wol script on` sends the script to ssh).
+    fn exec_input(&mut self, argv: &[String], input: &str) -> io::Result<i32> {
+        let _ = (argv, input);
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
     /// Payload of the `user` key `desc` in root's user keyring (systemd's password cache).
     fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
         let _ = desc;
@@ -299,6 +304,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         a if a.starts_with("plugin.") => crate::plugin::execute(inv, env),
         a if a.starts_with("shard.") => crate::shard::execute(inv, env),
         a if a.starts_with("app.") => crate::app::execute(inv, env),
+        a if a.starts_with("script.") => crate::script::execute(inv, env),
         a if a.starts_with("power.") => crate::power::execute(inv, env),
         a if a.starts_with("firewall.") || a.starts_with("security.") => {
             crate::security::execute(inv, env)
@@ -1159,6 +1165,18 @@ impl Env for RealEnv {
             .status()?;
         Ok(st.code().unwrap_or(1))
     }
+    fn exec_input(&mut self, argv: &[String], input: &str) -> io::Result<i32> {
+        use io::Write;
+        let mut child = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(std::process::Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            // A child that exits early closes the pipe; its exit code says what happened.
+            let _ = stdin.write_all(input.as_bytes());
+        }
+        Ok(child.wait()?.code().unwrap_or(1))
+    }
     fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
         let id = keyring_search(desc)?;
         let mut buf = vec![0u8; 4096];
@@ -1265,6 +1283,8 @@ pub struct FakeEnv {
     pub dirs: Vec<PathBuf>,
     /// `secs` of every `request_wait`, in order.
     pub waits: Vec<u32>,
+    /// stdin given to `exec_input`, in order (the argv is in `execs`).
+    pub inputs: Vec<String>,
 }
 
 #[derive(Default)]
@@ -1320,6 +1340,10 @@ impl Env for FakeEnv {
     }
     fn exec_secret(&mut self, argv: &[String], var: &str, secret: &str) -> io::Result<i32> {
         self.secrets.push((var.into(), secret.into()));
+        self.exec(argv)
+    }
+    fn exec_input(&mut self, argv: &[String], input: &str) -> io::Result<i32> {
+        self.inputs.push(input.into());
         self.exec(argv)
     }
     fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {

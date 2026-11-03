@@ -76,7 +76,7 @@ class Policy:
             return self.d["code_names"][name]
         if "." in name:
             return self.d["code"].get(name.rsplit(".", 1)[1])
-        if head.startswith("#!") and re.match(r"#!.*\b(sh|bash|zsh|python3?|env)\b", head.split("\n", 1)[0]):
+        if head.startswith("#!") and re.match(r"#!.*\b(sh|bash|zsh|python3?|ruby|env)\b", head.split("\n", 1)[0]):
             return "#"
         return None
 
