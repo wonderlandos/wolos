@@ -104,6 +104,11 @@ jobs:
         run: python3 -I design/tools/icons/overlay.py --check
       - name: "Colour icons: the SVGs are what the vector generator draws now (build.py: checks, renders, no hand edits)"
         run: python3 -I design/tools/icons/build.py --check
+      - name: "Colour icons through Qt: QtSvg (the renderer Qt apps load the theme with) draws every full-colour icon within RMSE 0.03 of librsvg at 48 and 128 px (qtcheck)"
+        # A skip (exit 77: a tool missing) fails the step: here the tools are installed.
+        run: |
+          pacman -S --noconfirm --needed gcc qt6-svg
+          bash design/tools/icons/qtcheck/check.sh
       - name: "Design tokens: colors.{json,css,sh} match tokens.py, the WCAG floors hold, no borrowed stock grey anywhere in the tree"
         run: python3 -I design/tools/tokens.py --check
 

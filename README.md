@@ -11,6 +11,8 @@ WolOS is an open source desktop operating system for ordinary PCs. It is built o
 
 <p align="center"><img src="assets/setup.png" width="49%" alt="Setup Assistant"> <img src="assets/search.png" width="49%" alt="Search"></p>
 
+The screenshots are made from the shell's golden images: `tools/site-shots.sh assets` (the site's `public/img` takes the same files).
+
 ## What is in this repo
 
 | Path | What |
