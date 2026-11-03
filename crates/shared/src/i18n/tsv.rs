@@ -170,7 +170,8 @@ pub fn write_source(unit: &str, origin: &str, rows: &[SourceRow]) -> String {
 /// `<lang>.tsv` for `rows`.
 pub fn write_lang(unit: &str, lang: Lang, rows: &[LangRow]) -> String {
     let mut s = format!(
-        "# WolOS text: {unit}, {} ({}). Write the translation in the third column; leave the hash alone.\n# Translators: docs/l10n/README.md and docs/l10n/RULES-{}.md. Columns:\n{LANG_HEADER}\n",
+        "# WolOS text: {unit}, {} ({}). Write the translation in the third column; leave the hash alone.\n\
+         # Translators: docs/l10n/README.md and docs/l10n/RULES-{}.md. Columns:\n{LANG_HEADER}\n",
         lang.endonym(),
         lang.tag(),
         lang.tag()

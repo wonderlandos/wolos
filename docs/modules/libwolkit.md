@@ -116,6 +116,10 @@ Kit lowering, and what does not survive: `box` becomes a row or a stack (directi
 | Decoded image | 16,384 px a side, 256 megapixels; 512 MB of images |
 | Style table | 4 MiB |
 
+## Text catalogs and languages (WOLKIT_1.1, ADR 0045)
+
+`wolkit_catalog_*` and `wolkit_lang_*` give C and Crystal apps the compiled text tables of the locale system (`.wtx`, made by `wol-i18n compile` from `locale/<unit>/*.tsv`; the same code as the shell, `shared::i18n`). A catalog is built from the English table and any translations in memory (`wolkit_catalog_load`) or from `<dir>/<unit>.<lang>.wtx` files (`wolkit_catalog_load_dir`, so a language pack adds a language without a rebuild). `wolkit_catalog_find` turns a key name into a number once; `wolkit_catalog_text` and `wolkit_catalog_plural` then return a pointer and a length into the table in constant time, with no parsing and no allocation, valid until the catalog is released. The text is not NUL-terminated. A language that lacks a key falls back to English; an unknown key or language id writes `""` and returns `WOLKIT_ERR_INVALID_ARGUMENT`. Language ids are `WOLKIT_LANG_*` (ten languages and the pseudo-locale `xx`); `WOLKIT_LANG_CURRENT` reads the process language set with `wolkit_lang_set`; `wolkit_lang_parse` maps a tag (`pt-BR`) or a POSIX locale (`pt_BR.UTF-8`) to an id, -1 for a language without a translation. `src/ffi/catalog.rs`, `tests/catalog.rs`.
+
 ## Security and untrusted input
 
 The patch stream, style tables, style sheets, images and fonts are untrusted. Each is bounded, validated before use and fuzzed (`fuzz/fuzz_targets/wolkit_patch.rs`, `wolkit_wsb.rs`, `wolkit_wolcss.rs`; seeds in `fuzz/regressions/`; `crates/wolkit/tests/patch_fuzz.rs` replays them and a deterministic mutation on stable). A panic stops at the boundary as `WOLKIT_ERR_INTERNAL`. The engine opens only the Kit socket (kit backend) and, on the native backend, the Wayland socket; it has no privilege and sends no telemetry.

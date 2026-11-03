@@ -64,7 +64,7 @@ pub fn categories(l: Lang) -> &'static [Plural] {
 /// The category of the count `n` in `l`.
 pub fn category(l: Lang, n: u64) -> Plural {
     // es, fr, pt: many = e = 0 and i != 0 and i % 1000000 = 0 and v = 0.
-    let million = n != 0 && n % 1_000_000 == 0;
+    let million = n != 0 && n.is_multiple_of(1_000_000);
     match l {
         // one: i = 1 and v = 0.
         Lang::En | Lang::De | Lang::Xx => {

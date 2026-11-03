@@ -65,7 +65,7 @@ pub fn zone_label(zone: &str) -> String {
 }
 
 /// (locale, label) shipped choices, label in its own language.
-pub const LANGUAGES: [(&str, &str); 12] = [
+pub const LANGUAGES: [(&str, &str); 15] = [
     ("en_US.UTF-8", "English (US)"),
     ("en_GB.UTF-8", "English (UK)"),
     ("pt_BR.UTF-8", "Português (Brasil)"),
@@ -78,6 +78,11 @@ pub const LANGUAGES: [(&str, &str); 12] = [
     ("pl_PL.UTF-8", "Polski"),
     ("ja_JP.UTF-8", "日本語"),
     ("zh_CN.UTF-8", "中文 (简体)"),
+    // The rest of the ten languages WolOS is translated into (ADR 0045); the new ones go last, so
+    // a saved choice keeps its place.
+    ("ko_KR.UTF-8", "한국어"),
+    ("id_ID.UTF-8", "Bahasa Indonesia"),
+    ("tl_PH.UTF-8", "Tagalog"),
 ];
 
 /// `ll_CC.UTF-8` (2-3 lowercase letters, 2 uppercase).

@@ -229,6 +229,14 @@ impl Catalog {
         Ok(Catalog { tables })
     }
 
+    /// A catalog with no keys: what a program shows when its own tables are broken (every lookup
+    /// reads as the empty string, nothing panics).
+    pub fn empty() -> Catalog {
+        Catalog {
+            tables: [const { None }; 11],
+        }
+    }
+
     /// Adds (or replaces) the table of a translation. A table compiled against another list of
     /// keys is matched by key name once, here. Err: an English table (use [`Catalog::new`]).
     pub fn add(&mut self, t: Table) -> Result<(), WtxError> {

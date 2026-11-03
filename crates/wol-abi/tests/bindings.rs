@@ -256,6 +256,10 @@ const EXEMPT: &[(&str, &str)] = &[
     ),
     ("wolkit_image_retain", "owned once, released by the wrapper"),
     (
+        "wolkit_catalog_retain",
+        "owned once, released by the wrapper",
+    ),
+    (
         "wolkit_surface_retain",
         "owned once, released by the wrapper",
     ),

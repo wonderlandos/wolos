@@ -129,6 +129,10 @@ Every window starts with the kit look: `styles/kit.wolcss` in the shard, compile
 
 An app with its own sheets compiles the kit sheet **first**: `wolkit-stylec --out build/styles.wsb --crystal src/gen/styles.cr build/00-kit.wolcss src/styles/*.wolcss` (the template's `make styles` copies the kit sheet to `build/00-kit.wolcss`; sheets are read in sorted order), then calls `Wolkit.use_styles("build/styles.wsb")`. The kit ids stay 0 to 7 and the app's classes follow, as the generated `Wolkit::Styles` constants say. A table made without the kit sheet replaces the default look.
 
+## Text in the person's language
+
+`t("key")` returns the text of a key of the app's catalog in the language in use; `t("files.count", n: 3)` picks the plural form and fills `{n}`, and `t("join", name: "Rabbit Hole")` fills `{name}`. `t` reads the language signal, so `text t("sound.title")` is an effect and relabels itself when `Wolkit::I18n.language = "de"` runs. The catalog is loaded once, `Wolkit::I18n.load(dir, unit)` (tables made by `wol-i18n compile`, ADR 0045; `docs/l10n/README.md`); the String of a label is kept after its first use, so reading it again allocates nothing. A key the catalog lacks reads as its own name and `Wolkit::I18n.missing` counts it, so a missing word never stops an app. `Wolkit::I18n::Table` is a catalog held in memory for specs. `src/wolkit/i18n.cr`, `src/wolkit/ffi/catalog.cr`, `spec/i18n_spec.cr`.
+
 ## Navigator
 
 `Wolkit::Navigator(Route)` is a typed stack: `push`, `back`, `replace`, `reset`, `current` (a readable), `depth`. `navigator @nav do |route| ... end` shows the top route and rebuilds the screen when it changes; the routes are your own values (a `Symbol`, a record), so a screen's arguments are checked by the compiler.

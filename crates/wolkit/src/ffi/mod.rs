@@ -4,10 +4,11 @@
 //! panics (`WOLKIT_ERR_INTERNAL`) and writes out-pointers only on success. The engine behind it is
 //! plain Rust (`crate::engine`).
 //!
-//! Files: `error` (the error object), `engine`, `window`, `style`, `image`, `canvas` and `surface`
+//! Files: `error` (the error object), `engine`, `window`, `style`, `catalog` (text tables, ADR 0045), `image`, `canvas` and `surface`
 //! (stubs W5 fills), `diag`.
 
 pub mod canvas;
+pub mod catalog;
 pub mod diag;
 pub mod engine;
 pub mod error;

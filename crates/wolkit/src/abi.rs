@@ -33,6 +33,23 @@ pub const INFO_MAX_WINDOWS: u32 = 6;
 pub const INFO_MAX_EVENT_RECORD: u32 = 7;
 pub const INFO_GPU: u32 = 8;
 
+/// Language ids (`shared::i18n::Lang::index`), `WOLKIT_LANG_*`.
+pub const LANG_EN: i32 = 0;
+pub const LANG_PT_BR: i32 = 1;
+pub const LANG_ES: i32 = 2;
+pub const LANG_FR: i32 = 3;
+pub const LANG_DE: i32 = 4;
+pub const LANG_JA: i32 = 5;
+pub const LANG_KO: i32 = 6;
+pub const LANG_ZH_HANS: i32 = 7;
+pub const LANG_ID: i32 = 8;
+pub const LANG_TL: i32 = 9;
+pub const LANG_XX: i32 = 10;
+/// Look up in the language `wolkit_lang_set` chose.
+pub const LANG_CURRENT: i32 = -1;
+/// `wolkit_catalog_find` found no such key.
+pub const NO_KEY: u32 = u32::MAX;
+
 pub const TRIM_LIGHT: u32 = 0;
 pub const TRIM_HIDDEN: u32 = 1;
 pub const TRIM_CRITICAL: u32 = 2;
@@ -87,6 +104,19 @@ fn fixed() -> Vec<(&'static str, i64)> {
         ("WOLKIT_PATCH_MUST_UNDERSTAND", n(patch::MUST_UNDERSTAND)),
         ("WOLKIT_APPEND", n(patch::APPEND)),
         ("WOLKIT_NO_STR", n(crate::scene::strings::NO_STR)),
+        ("WOLKIT_LANG_EN", n(LANG_EN)),
+        ("WOLKIT_LANG_PT_BR", n(LANG_PT_BR)),
+        ("WOLKIT_LANG_ES", n(LANG_ES)),
+        ("WOLKIT_LANG_FR", n(LANG_FR)),
+        ("WOLKIT_LANG_DE", n(LANG_DE)),
+        ("WOLKIT_LANG_JA", n(LANG_JA)),
+        ("WOLKIT_LANG_KO", n(LANG_KO)),
+        ("WOLKIT_LANG_ZH_HANS", n(LANG_ZH_HANS)),
+        ("WOLKIT_LANG_ID", n(LANG_ID)),
+        ("WOLKIT_LANG_TL", n(LANG_TL)),
+        ("WOLKIT_LANG_XX", n(LANG_XX)),
+        ("WOLKIT_LANG_CURRENT", n(LANG_CURRENT)),
+        ("WOLKIT_NO_KEY", n(NO_KEY)),
         ("WOLKIT_ANIM_TWEEN", n(patch::ANIM_TWEEN)),
         ("WOLKIT_ANIM_SPRING", n(patch::ANIM_SPRING)),
         ("WOLKIT_DIM_AUTO", n(prop::DIM_AUTO)),

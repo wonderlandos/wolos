@@ -39,4 +39,4 @@ pub mod text;
 pub mod window;
 
 /// libWolkit's own version (not the WolOS version): major.minor.patch.
-pub const VERSION: (u32, u32, u32) = (1, 0, 0);
+pub const VERSION: (u32, u32, u32) = (1, 1, 0);

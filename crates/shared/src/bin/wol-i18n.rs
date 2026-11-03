@@ -5,6 +5,7 @@
 //! wol-i18n extract <unit-dir>...        en.tsv from the copy modules in sources.tsv
 //! wol-i18n check <unit-dir>...          en.tsv matches its sources and every language compiles
 //! wol-i18n status <unit-dir>...         coverage per language: translated, stale, errors
+//! wol-i18n budgets <unit-dir>...       per key: budget, English and pseudo columns, widest translation
 //! wol-i18n sync <unit-dir> <lang>|all   (re)write <lang>.tsv: every row, the current English
 //! wol-i18n compile <unit-dir> <out-dir> <out-dir>/<unit>.<lang>.wtx for a shipped app
 //! wol-i18n pseudo <text>                the text as the pseudo-locale xx shows it
@@ -14,7 +15,7 @@ use shared::i18n::{Lang, compile, files, status, tsv};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: wol-i18n extract|check|status <unit-dir>... | sync <unit-dir> <lang>|all | compile <unit-dir> <out-dir> | pseudo <text>";
+const USAGE: &str = "usage: wol-i18n extract|check|status|budgets <unit-dir>... | sync <unit-dir> <lang>|all | compile <unit-dir> <out-dir> | pseudo <text>";
 
 fn write(p: &Path, text: &str) -> Result<(), String> {
     std::fs::write(p, text).map_err(|e| format!("{}: {e}", p.display()))
@@ -67,6 +68,12 @@ fn status_of(dirs: &[PathBuf]) -> Result<bool, String> {
     let mut ok = true;
     for d in dirs {
         let unit = files::load_unit(d)?;
+        let open = unit.rows().iter().filter(|r| r.budget.is_none()).count();
+        eprintln!(
+            "{}: {open} of {} keys have no length budget yet (wol-i18n budgets)",
+            files::unit_name(d),
+            unit.rows().len()
+        );
         for l in Lang::SHIPPED {
             let rows = files::load_lang(d, l)?;
             let (c, _) = status::coverage(&unit, l, &rows).map_err(|e| e.to_string())?;
@@ -83,6 +90,43 @@ fn status_of(dirs: &[PathBuf]) -> Result<bool, String> {
                 c.warnings
             );
         }
+    }
+    Ok(ok)
+}
+
+/// Per key: how many columns it may take and how many the English, the pseudo-locale and the widest
+/// translation take. Exit 1 when a text is over its budget (the build refuses that anyway).
+fn budgets(dirs: &[PathBuf]) -> Result<bool, String> {
+    println!("unit\tkey\tbudget\tenglish\tpseudo\twidest\tlang\theadroom");
+    let mut ok = true;
+    for d in dirs {
+        let unit = files::load_unit(d)?;
+        let mut langs = Vec::new();
+        for l in Lang::SHIPPED.into_iter().skip(1) {
+            langs.push((l, files::load_lang(d, l)?));
+        }
+        let rooms = status::budgets(&unit, &langs);
+        let bounded = rooms.iter().filter(|r| r.budget.is_some()).count();
+        for r in &rooms {
+            let show = |v: Option<String>| v.unwrap_or_else(|| "-".into());
+            ok &= r.headroom().is_none_or(|h| h >= 0);
+            println!(
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                files::unit_name(d),
+                r.key,
+                show(r.budget.map(|b| b.to_string())),
+                r.english,
+                r.pseudo,
+                show(r.widest.map(|w| w.1.to_string())),
+                show(r.widest.map(|w| w.0.tag().to_string())),
+                show(r.headroom().map(|h| h.to_string())),
+            );
+        }
+        eprintln!(
+            "{}: {} keys, {bounded} with a length budget",
+            files::unit_name(d),
+            rooms.len()
+        );
     }
     Ok(ok)
 }
@@ -129,6 +173,7 @@ fn main() -> ExitCode {
         Some("extract") if args.len() > 1 => extract(&dirs()),
         Some("check") if args.len() > 1 => check(&dirs()),
         Some("status") if args.len() > 1 => status_of(&dirs()),
+        Some("budgets") if args.len() > 1 => budgets(&dirs()),
         Some("sync") if args.len() == 3 => sync(Path::new(&args[1]), &args[2]),
         Some("compile") if args.len() == 3 => compile_to(Path::new(&args[1]), Path::new(&args[2])),
         Some("pseudo") if args.len() == 2 => {

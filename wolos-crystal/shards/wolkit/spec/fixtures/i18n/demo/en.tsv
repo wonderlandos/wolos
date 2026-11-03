@@ -1,0 +1,7 @@
+# WolOS text: demo, English source.
+# key	source	comment	budget
+sound.title	Sound	Pane title.	
+sound.louder	Lets volume sliders pass 100%.	Subtitle of Allow louder.	
+files.count#one	{n} file	Count of files; {n} is the number.	
+files.count#other	{n} files	Count of files; {n} is the number.	
+net.join	Join “{name}”.	{name} is the network name.	

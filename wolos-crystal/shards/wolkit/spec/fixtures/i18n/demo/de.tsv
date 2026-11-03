@@ -1,0 +1,4 @@
+# key	source	text	hash
+sound.title	Sound	Ton	
+files.count#one	{n} file	{n} Datei	
+files.count#other	{n} files	{n} Dateien	

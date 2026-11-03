@@ -66,7 +66,7 @@ pub extern "C" fn wolkit_version() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wolkit_version_string() -> *const c_char {
-    c"1.0.0".as_ptr()
+    c"1.1.0".as_ptr()
 }
 
 /// # Safety

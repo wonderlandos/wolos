@@ -33,10 +33,14 @@ use std::path::{Path, PathBuf};
 /// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
 /// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// 294 -> 347 for the text catalogs (ADR 0045, I18N-os-2): `ffi/catalog.rs` is nine pointer-taking
+/// C exports (each `#[unsafe(no_mangle)]` and `unsafe extern`, plus the reads of the caller's
+/// table arrays and strings and the handle borrows, each with a SAFETY line) and three safe ones,
+/// and `tests/catalog.rs` calls the exports directly (16): the same shape as `ffi/style.rs`.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
-    ("wolkit", 294),
+    ("wolkit", 347),
     ("wopkg", 94),
     ("realtime", 69),
     ("xguard", 63),

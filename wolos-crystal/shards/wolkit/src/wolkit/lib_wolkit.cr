@@ -4,7 +4,7 @@
 @[Link("wolkit")]
 lib LibWolkit
   WOLKIT_VERSION_MAJOR            =              1
-  WOLKIT_VERSION_MINOR            =              0
+  WOLKIT_VERSION_MINOR            =              1
   WOLKIT_VERSION_PATCH            =              0
   WOLKIT_OK                       =              0
   WOLKIT_ERR_INVALID_ARGUMENT     =              1
@@ -48,6 +48,19 @@ lib LibWolkit
   WOLKIT_MOD_CTRL                 =          2_u32
   WOLKIT_MOD_ALT                  =          4_u32
   WOLKIT_MOD_SUPER                =          8_u32
+  WOLKIT_LANG_EN                  =              0
+  WOLKIT_LANG_PT_BR               =              1
+  WOLKIT_LANG_ES                  =              2
+  WOLKIT_LANG_FR                  =              3
+  WOLKIT_LANG_DE                  =              4
+  WOLKIT_LANG_JA                  =              5
+  WOLKIT_LANG_KO                  =              6
+  WOLKIT_LANG_ZH_HANS             =              7
+  WOLKIT_LANG_ID                  =              8
+  WOLKIT_LANG_TL                  =              9
+  WOLKIT_LANG_XX                  =             10
+  WOLKIT_LANG_CURRENT             =             -1
+  WOLKIT_NO_KEY                   = 4294967295_u32
   WOLKIT_PATCH_MAGIC              =  827345751_u32
   WOLKIT_PATCH_FORMAT             =              1
   WOLKIT_PATCH_HEADER             =             24
@@ -288,6 +301,10 @@ lib LibWolkit
     opaque : UInt8
   end
 
+  struct Catalog
+    opaque : UInt8
+  end
+
   struct Image
     opaque : UInt8
   end
@@ -337,6 +354,18 @@ lib LibWolkit
   fun wolkit_style_table_release(arg0 : StyleTable*)
   fun wolkit_window_set_style_table(arg0 : Window*, arg1 : StyleTable*, arg2 : Error**) : Status
   fun wolkit_style_compile(wolcss : UInt8*, len : LibC::SizeT, out_ : UInt8*, cap : LibC::SizeT, needed : LibC::SizeT*, error : Error**) : Status
+  fun wolkit_catalog_load(tables : UInt8**, lens : LibC::SizeT*, count : LibC::SizeT, out_ : Catalog**, arg4 : Error**) : Status
+  fun wolkit_catalog_load_dir(dir : UInt8*, dir_len : LibC::SizeT, unit : UInt8*, unit_len : LibC::SizeT, out_ : Catalog**, arg5 : Error**) : Status
+  fun wolkit_catalog_retain(arg0 : Catalog*) : Catalog*
+  fun wolkit_catalog_release(arg0 : Catalog*)
+  fun wolkit_catalog_count(arg0 : Catalog*) : UInt32
+  fun wolkit_catalog_find(arg0 : Catalog*, name : UInt8*, len : LibC::SizeT) : UInt32
+  fun wolkit_catalog_text(arg0 : Catalog*, key : UInt32, lang : Int32, text : UInt8**, len : LibC::SizeT*) : Status
+  fun wolkit_catalog_plural(arg0 : Catalog*, key : UInt32, count : UInt64, lang : Int32, text : UInt8**, len : LibC::SizeT*) : Status
+  fun wolkit_lang_parse(name : UInt8*, len : LibC::SizeT) : Int32
+  fun wolkit_lang_tag(lang : Int32) : UInt8*
+  fun wolkit_lang_get : Int32
+  fun wolkit_lang_set(lang : Int32) : Status
   fun wolkit_image_create(arg0 : Engine*, encoded : UInt8*, len : LibC::SizeT, out_ : Image**, arg4 : Error**) : Status
   fun wolkit_image_create_rgba(arg0 : Engine*, w : UInt32, h : UInt32, stride : UInt32, pixels : UInt8*, len : LibC::SizeT, out_ : Image**, arg7 : Error**) : Status
   fun wolkit_image_get_id(arg0 : Image*) : UInt32

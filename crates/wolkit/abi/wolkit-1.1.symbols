@@ -1,0 +1,12 @@
+wolkit_catalog_count@WOLKIT_1.1
+wolkit_catalog_find@WOLKIT_1.1
+wolkit_catalog_load@WOLKIT_1.1
+wolkit_catalog_load_dir@WOLKIT_1.1
+wolkit_catalog_plural@WOLKIT_1.1
+wolkit_catalog_release@WOLKIT_1.1
+wolkit_catalog_retain@WOLKIT_1.1
+wolkit_catalog_text@WOLKIT_1.1
+wolkit_lang_get@WOLKIT_1.1
+wolkit_lang_parse@WOLKIT_1.1
+wolkit_lang_set@WOLKIT_1.1
+wolkit_lang_tag@WOLKIT_1.1

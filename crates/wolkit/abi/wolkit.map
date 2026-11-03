@@ -54,6 +54,22 @@ WOLKIT_1.0 {
     wolkit_window_set_style_table;
     wolkit_window_set_title;
     wolkit_window_show;
+};
+
+WOLKIT_1.1 {
+  global:
+    wolkit_catalog_count;
+    wolkit_catalog_find;
+    wolkit_catalog_load;
+    wolkit_catalog_load_dir;
+    wolkit_catalog_plural;
+    wolkit_catalog_release;
+    wolkit_catalog_retain;
+    wolkit_catalog_text;
+    wolkit_lang_get;
+    wolkit_lang_parse;
+    wolkit_lang_set;
+    wolkit_lang_tag;
   local:
     *;
-};
+} WOLKIT_1.0;

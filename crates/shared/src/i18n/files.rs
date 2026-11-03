@@ -93,10 +93,12 @@ pub fn lang_file(dir: &Path, l: Lang) -> PathBuf {
     dir.join(format!("{}.tsv", l.tag()))
 }
 
-/// The rows of `<lang>.tsv`; Ok(empty) when there is no such file. Err: a line that is not a row.
+/// The rows of `<lang>.tsv`; Ok(empty) when there is no such file (and for English, whose file is
+/// the source). Err: a line that is not a row.
 pub fn load_lang(dir: &Path, l: Lang) -> Result<Vec<LangRow>, String> {
     let p = lang_file(dir, l);
-    if !p.exists() {
+    // en.tsv is the source (key, English, comment, budget), not a translation of itself.
+    if l == Lang::En || !p.exists() {
         return Ok(Vec::new());
     }
     tsv::parse_lang(&read(&p)?).map_err(|e| lines_err(&p, e))
@@ -150,7 +152,14 @@ mod tests {
             "# key\tsource\ttext\thash\ndemo.title\tHello\tHallo\t\n",
         )
         .expect("de.tsv");
+        // The fixture's budget sits in en.tsv's fourth column: English is never read as a translation.
+        assert!(load_lang(&unit, Lang::En).expect("en rows").is_empty());
         let tables = compile_dir(&unit).expect("compile");
+        assert!(
+            tables[0].2.is_empty(),
+            "English has no warnings: {}",
+            tables[0].2
+        );
         let langs: Vec<Lang> = tables.iter().map(|t| t.0).collect();
         assert_eq!(langs, [Lang::En, Lang::De, Lang::Xx]);
         std::fs::write(unit.join("fr.tsv"), "demo.title\tHello\tBonjour {x}\t\n").expect("fr.tsv");

@@ -33,7 +33,7 @@ extern "C" {
 /* ---- version, status, errors ---- */
 
 #define WOLKIT_VERSION_MAJOR  1
-#define WOLKIT_VERSION_MINOR  0
+#define WOLKIT_VERSION_MINOR  1
 #define WOLKIT_VERSION_PATCH  0
 
 uint32_t wolkit_version(void);
@@ -160,6 +160,55 @@ wolkit_status wolkit_window_set_style_table(wolkit_window *, wolkit_style_table 
 /* dev reload and the CLI */
 wolkit_status wolkit_style_compile(const char *wolcss, size_t len, uint8_t *out, size_t cap,
                                    size_t *needed, wolkit_error **error);
+
+/* ---- text catalogs (version 1.1, ADR 0045) ---- */
+
+/* One unit's compiled text tables (.wtx, made by `wol-i18n compile`): English, which defines the
+   keys, and any translations. A lookup reads a hash slot and returns a slice of the table: no
+   parsing, no allocation. The text is UTF-8, NOT NUL-terminated (use *len), and valid until the
+   catalog is released. A language without the key falls back to English. */
+typedef struct wolkit_catalog wolkit_catalog;
+/* Language ids (wolkit_lang_*): the ten shipped languages and the pseudo-locale xx, which shows
+   every string 40 percent longer and accented, to test layouts. */
+#define WOLKIT_LANG_EN       0
+#define WOLKIT_LANG_PT_BR    1
+#define WOLKIT_LANG_ES       2
+#define WOLKIT_LANG_FR       3
+#define WOLKIT_LANG_DE       4
+#define WOLKIT_LANG_JA       5
+#define WOLKIT_LANG_KO       6
+#define WOLKIT_LANG_ZH_HANS  7
+#define WOLKIT_LANG_ID       8
+#define WOLKIT_LANG_TL       9
+#define WOLKIT_LANG_XX       10
+/* in a lookup: the language wolkit_lang_set chose */
+#define WOLKIT_LANG_CURRENT  -1
+/* wolkit_catalog_find: no such key */
+#define WOLKIT_NO_KEY        4294967295u
+/* From `count` tables in memory (English among them) */
+wolkit_status wolkit_catalog_load(const uint8_t *const *tables, const size_t *lens, size_t count,
+                                  wolkit_catalog **out, wolkit_error **);
+/* From <dir>/<unit>.<lang>.wtx files; a language pack can add a file without a rebuild */
+wolkit_status wolkit_catalog_load_dir(const char *dir, size_t dir_len, const char *unit,
+                                      size_t unit_len, wolkit_catalog **out, wolkit_error **);
+wolkit_catalog *wolkit_catalog_retain(wolkit_catalog *);
+void wolkit_catalog_release(wolkit_catalog *);
+uint32_t wolkit_catalog_count(const wolkit_catalog *);
+/* the key named `name` ("settings.sound_louder"); do it once per string and keep the key */
+uint32_t wolkit_catalog_find(const wolkit_catalog *, const char *name, size_t len);
+/* text and len are always written: "" with an error status for an unknown key or language */
+wolkit_status wolkit_catalog_text(const wolkit_catalog *, uint32_t key, int32_t lang,
+                                  const char **text, size_t *len);
+/* the plural form of a key for `count` (CLDR rules of the language) */
+wolkit_status wolkit_catalog_plural(const wolkit_catalog *, uint32_t key, uint64_t count,
+                                    int32_t lang, const char **text, size_t *len);
+/* a tag ("pt-BR") or a POSIX locale ("pt_BR.UTF-8") as a language id; -1: no translation, show English */
+int32_t wolkit_lang_parse(const char *name, size_t len);
+/* the BCP 47 tag of a language id, static NUL-terminated text; NULL for an unknown id */
+const char *wolkit_lang_tag(int32_t lang);
+/* the language of this process (WOLKIT_LANG_EN until set), shared by every catalog lookup */
+int32_t wolkit_lang_get(void);
+wolkit_status wolkit_lang_set(int32_t lang);
 
 /* ---- images ---- */
 

@@ -85,6 +85,56 @@ pub fn sync(unit: &Unit, l: Lang, rows: &[LangRow]) -> (Vec<LangRow>, usize) {
     (out, dropped)
 }
 
+/// The room one key has: the English and pseudo-locale widths in columns against the budget, and
+/// the widest translation anyone wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Room {
+    /// The key (`name` or `name#form`).
+    pub key: String,
+    /// Most columns the text may take; None: nobody set one yet.
+    pub budget: Option<u32>,
+    /// Columns of the English.
+    pub english: usize,
+    /// Columns of the English in the pseudo-locale (what a language 40 % longer needs).
+    pub pseudo: usize,
+    /// The widest translation, with its language; None: no translation yet.
+    pub widest: Option<(Lang, usize)>,
+}
+
+impl Room {
+    /// Columns left in the budget for the widest text, English included; None: no budget.
+    pub fn headroom(&self) -> Option<i64> {
+        let used = self.widest.map_or(self.english, |w| w.1.max(self.english));
+        self.budget
+            .map(|b| i64::from(b) - i64::try_from(used).unwrap_or(i64::MAX))
+    }
+}
+
+/// [`Room`] for every row of the English, with `langs` the translations written so far.
+pub fn budgets(unit: &Unit, langs: &[(Lang, Vec<LangRow>)]) -> Vec<Room> {
+    unit.rows()
+        .iter()
+        .map(|r| {
+            let english = compile::width(&r.source);
+            let widest = langs
+                .iter()
+                .filter_map(|(l, rows)| {
+                    rows.iter()
+                        .find(|x| x.key == r.key && !x.text.is_empty())
+                        .map(|x| (*l, compile::width(&x.text)))
+                })
+                .max_by_key(|w| w.1);
+            Room {
+                key: r.key.clone(),
+                budget: r.budget,
+                english,
+                pseudo: compile::pseudo_width(english),
+                widest,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,5 +202,32 @@ mod tests {
         assert_eq!(problems.len(), 1);
         let (en, _) = coverage(&u, Lang::En, &[]).expect("en");
         assert_eq!(en.percent(), 100);
+    }
+
+    #[test]
+    fn budgets_report_the_room_each_key_has() {
+        let mut u_rows = vec![SourceRow {
+            key: "a.title".into(),
+            source: "Language & Region".into(),
+            budget: Some(30),
+            ..Default::default()
+        }];
+        u_rows.push(SourceRow {
+            key: "a.note".into(),
+            source: "Apps use the new language.".into(),
+            ..Default::default()
+        });
+        let u = Unit::new(u_rows).expect("unit");
+        let de = vec![LangRow {
+            key: "a.title".into(),
+            text: "Sprache und Region".into(),
+            ..Default::default()
+        }];
+        let r = budgets(&u, &[(Lang::De, de)]);
+        assert_eq!((r[0].english, r[0].pseudo), (17, 24));
+        assert_eq!(r[0].widest, Some((Lang::De, 18)));
+        assert_eq!(r[0].headroom(), Some(12));
+        assert_eq!(r[1].budget, None);
+        assert_eq!(r[1].headroom(), None);
     }
 }
