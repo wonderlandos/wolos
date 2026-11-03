@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # The full malware signatures (ADR 0028): runs only after the person turned them on in Settings.
-# The data comes straight from the ClamAV project to this computer, and is never in the image.
+# The data comes straight from its publisher to this computer, and is never in the image.
 # This runs as _xguard and only fetches: the lean signature file the guard loads is built by root
 # afterwards, from these files once their publisher's signature checks (`wol-xguard rules full`,
 # wolos-clam-update.service; audit F10). Whole signed files, no unsigned patches.

@@ -713,10 +713,12 @@ mod tests {
                 inside = (l == PRO_AUDIO_VM_RULES) == rules;
                 continue;
             }
-            if let Some((k, v)) = l.split_once(" = ") {
-                if inside && k.starts_with("default.clock.") && k.ends_with("quantum") {
-                    out.push((k.to_string(), v.parse().unwrap()));
-                }
+            if let Some((k, v)) = l.split_once(" = ")
+                && inside
+                && k.starts_with("default.clock.")
+                && k.ends_with("quantum")
+            {
+                out.push((k.to_string(), v.parse().unwrap()));
             }
         }
         out

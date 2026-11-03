@@ -77,6 +77,10 @@ impl Fix {
     fn built(&self) -> Option<Vec<u8>> {
         std::fs::read(self.p("local/full.xgdb")).ok()
     }
+    /// Root's record of the last attempt, next to DEST (Settings reads it).
+    fn status(&self) -> Option<wol_core::malware::RulesStatus> {
+        serde_json::from_slice(&std::fs::read(self.p(wol_core::malware::RULES_STATUS)).ok()?).ok()
+    }
 }
 
 impl Drop for Fix {
@@ -94,6 +98,8 @@ fn a_signed_download_is_built_into_the_guards_folder() {
     assert!(ok, "{err}");
     let db = xguard::db::Db::open(&f.p("local/full.xgdb")).expect("a database");
     assert_eq!(db.version(), 28173, "the daily file's version");
+    let s = f.status().expect("a status");
+    assert!(s.ok && (s.main, s.daily) == (63, 28173), "{s:?}");
     assert_eq!(
         std::fs::read_dir(f.p("tmp")).unwrap().count(),
         0,
@@ -123,7 +129,52 @@ fn a_download_whose_signature_does_not_verify_is_refused() {
             Some(&b"before"[..]),
             "the old build stays"
         );
+        let s = f.status().expect("the refusal is recorded");
+        assert!(
+            !s.ok && s.reason.contains("signature does not verify"),
+            "{s:?}"
+        );
+        let text = std::fs::read_to_string(f.p(wol_core::malware::RULES_STATUS)).ok();
+        assert_eq!(
+            wol_core::malware::refusal(text.as_deref()).as_deref(),
+            Some("the publisher's signature does not verify"),
+            "Settings reads it"
+        );
     }
+}
+
+/// A file still signed but older than the one in use (a replay) is refused; the same or newer
+/// goes in.
+#[test]
+fn an_older_signed_download_is_refused() {
+    let f = Fix::new("old");
+    let ok_tool = f.sigtool("Verification OK.", 0);
+    f.cvd("main", 63);
+    f.cvd("daily", 28173);
+    assert!(f.run(&ok_tool, &f.p("local")).0);
+    let built = f.built();
+    f.cvd("daily", 28100);
+    let (ok, err) = f.run(&ok_tool, &f.p("local"));
+    assert!(
+        !ok && err.contains("older than the signatures in use"),
+        "{err}"
+    );
+    assert_eq!(f.built(), built, "the newer build stays");
+    let s = f.status().unwrap();
+    assert!(
+        !s.ok && (s.main, s.daily) == (63, 28173),
+        "versions in use kept: {s:?}"
+    );
+    f.cvd("main", 62);
+    f.cvd("daily", 28174);
+    assert!(
+        !f.run(&ok_tool, &f.p("local")).0,
+        "an older main is refused too"
+    );
+    f.cvd("main", 63);
+    let (ok, err) = f.run(&ok_tool, &f.p("local"));
+    assert!(ok, "{err}");
+    assert!(f.status().unwrap().ok, "a good build clears the refusal");
 }
 
 #[test]

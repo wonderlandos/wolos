@@ -1,4 +1,4 @@
-# ClamAV starts when something asks (ADR 0028), and only once the person fetched the signatures.
+# The full signature engine starts when something asks (ADR 0028), and only once the person fetched the signatures.
 [Unit]
 Description=WolOS full malware check, on demand
 

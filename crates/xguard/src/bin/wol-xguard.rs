@@ -446,49 +446,85 @@ fn install(args: &[String]) -> i32 {
 /// database `clam-update` fetched as `_xguard` is only trusted once root has checked it (audit
 /// F10). Each of `main.cvd` and `daily.cvd` is read without following a link into a folder of
 /// this process's own, its publisher's signature checked there by `sigtool` ("Verification OK."),
-/// then unpacked and built into DEST/full.xgdb. Anything else, and DEST keeps what it had.
+/// refused when older than the one in use, then unpacked and built into DEST/full.xgdb. The
+/// outcome goes to [`wol_core::malware::RULES_STATUS`] next to DEST (root's; Settings reads it);
+/// a refusal keeps the previous build and versions.
 fn full(args: &[String]) -> i32 {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    use wol_core::malware::RulesStatus;
     let db = Path::new(
         args.first()
             .map_or("/var/lib/wolos/xguard/clamav", String::as_str),
     );
     let dest = PathBuf::from(args.get(1).map_or(xguard::LOCAL_DIR, String::as_str));
+    if let Err(e) = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(&dest)
+    {
+        die(&format!("{}: {e}", dest.display()));
+    }
+    // Nowhere to write a status either: someone else may write here.
+    if !xguard::trusted(&dest) {
+        die(&format!("{}: not root's alone", dest.display()));
+    }
+    let status_path = dest
+        .parent()
+        .unwrap_or(&dest)
+        .join(wol_core::malware::RULES_STATUS);
+    let read_own = |p: &Path, cap: u64| -> std::io::Result<Vec<u8>> {
+        use std::io::Read;
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(p)?;
+        if !f.metadata()?.is_file() {
+            return Err(std::io::Error::other("not a regular file"));
+        }
+        let mut b = Vec::new();
+        f.take(cap).read_to_end(&mut b)?;
+        Ok(b)
+    };
+    let prior: RulesStatus = read_own(&status_path, 1 << 16)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
     let work = std::env::temp_dir().join(format!("xguard-full-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&work)
         .unwrap_or_else(|m| die(&format!("{}: {m}", work.display())));
-    let done = |code: i32, m: &str| -> i32 {
+    let write_status = |s: &RulesStatus| {
+        let t = serde_json::to_vec(s).unwrap_or_default();
+        let _ = shared::atomic::atomic_write(&status_path, 0o644, &t);
+    };
+    let refuse = |why: &str, detail: &str| -> ! {
+        write_status(&RulesStatus {
+            ok: false,
+            reason: why.into(),
+            time: xguard::scan::now(),
+            ..prior.clone()
+        });
         let _ = std::fs::remove_dir_all(&work);
-        if code != 0 {
-            die(m)
-        }
-        code
+        die(&format!("{detail}: {why}"))
     };
     let sigtool = std::env::var("XGUARD_SIGTOOL").unwrap_or_else(|_| "sigtool".into());
-    let mut version = String::new();
-    for n in ["main", "daily"] {
+    let mut versions = [0u32; 2];
+    for (k, n) in ["main", "daily"].into_iter().enumerate() {
         let src = db.join(format!("{n}.cvd"));
-        let mut bytes = Vec::new();
-        let read = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&src)
-            .and_then(|f| {
-                if !f.metadata()?.is_file() {
-                    return Err(std::io::Error::other("not a regular file"));
-                }
-                use std::io::Read;
-                f.take(2 << 30).read_to_end(&mut bytes)
-            });
-        if let Err(e) = read {
-            return done(1, &format!("{}: {e}", src.display()));
-        }
+        let bytes = read_own(&src, 2 << 30).unwrap_or_else(|e| {
+            refuse(
+                "a downloaded file is missing or not a plain file",
+                &format!("{}: {e}", src.display()),
+            )
+        });
         let copy = work.join(format!("{n}.cvd"));
         if let Err(e) = std::fs::write(&copy, &bytes) {
-            return done(1, &format!("{}: {e}", copy.display()));
+            refuse(
+                "it could not be checked",
+                &format!("{}: {e}", copy.display()),
+            );
         }
         let ok = std::process::Command::new(&sigtool)
             .arg(format!("--info={}", copy.display()))
@@ -502,19 +538,25 @@ fn full(args: &[String]) -> i32 {
                         .any(|l| l.trim() == "Verification OK.")
             });
         if !ok || bytes.len() < 512 {
-            return done(
-                1,
-                &format!("{n}.cvd: the publisher's signature does not verify"),
+            refuse(
+                "the publisher's signature does not verify",
+                &format!("{n}.cvd"),
             );
         }
-        // `ClamAV-VDB:date:version:...`: the daily file's version names the build.
-        if n == "daily" {
-            version = String::from_utf8_lossy(&bytes[..512])
-                .split(':')
-                .nth(2)
-                .unwrap_or("0")
-                .to_owned();
+        // `ClamAV-VDB:date:version:...` (signed with the rest).
+        let v: u32 = String::from_utf8_lossy(&bytes[..512])
+            .split(':')
+            .nth(2)
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let before = if k == 0 { prior.main } else { prior.daily };
+        if v < before {
+            refuse(
+                "the download is older than the signatures in use",
+                &format!("{n}.cvd {v} < {before}"),
+            );
         }
+        versions[k] = v;
         let out = work.join(n);
         let _ = std::fs::create_dir(&out);
         let untar = |z: &str| {
@@ -530,28 +572,26 @@ fn full(args: &[String]) -> i32 {
             c.wait()
         };
         if !untar("-xzf").is_ok_and(|s| s.success()) && !untar("-xf").is_ok_and(|s| s.success()) {
-            return done(1, &format!("{n}.cvd: cannot unpack"));
+            refuse("the download could not be unpacked", &format!("{n}.cvd"));
         }
-    }
-    if let Err(e) = std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o755)
-        .create(&dest)
-    {
-        return done(1, &format!("{}: {e}", dest.display()));
-    }
-    if !xguard::trusted(&dest) {
-        return done(1, &format!("{}: not root's alone", dest.display()));
     }
     let out = dest.join("full.xgdb").to_string_lossy().into_owned();
     let srcs = [work.join("main"), work.join("daily")].map(|p| p.to_string_lossy().into_owned());
     build(&[
         out,
-        version.trim().to_owned(),
+        versions[1].to_string(),
         srcs[0].clone(),
         srcs[1].clone(),
     ]);
-    done(0, "")
+    write_status(&RulesStatus {
+        ok: true,
+        reason: String::new(),
+        time: xguard::scan::now(),
+        main: versions[0],
+        daily: versions[1],
+    });
+    let _ = std::fs::remove_dir_all(&work);
+    0
 }
 
 fn main() {
