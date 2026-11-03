@@ -16,8 +16,8 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   `kernel.unprivileged_bpf_disabled=1` (only administrators load BPF), `net.core.bpf_jit_harden=1`
   (constant blinding for ordinary accounts' BPF), `net.ipv4.tcp_syncookies=1` (half-open floods),
   `kernel.kexec_load_disabled=1` (no kernel swap without a firmware restart),
-  `kernel.io_uring_disabled=1` (only administrators create io_uring instances; interim until the
-  7.3.1 kernel, whose stable fixes close the 7.3.0 io_uring CVEs). The same file raises
+  `kernel.io_uring_disabled=1` (only administrators create io_uring instances; a hardening default,
+  revisit when a shipped app needs it). The same file raises
   `vm.max_map_count` for games. `wol security` reads them from /proc/sys; **CI** the controller test sysctl_docs
   fails when this line names a setting no file sets.
 

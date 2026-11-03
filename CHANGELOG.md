@@ -10,7 +10,7 @@ Security
 - Administrator approval cannot be held up by another account any more: a user who kept sending wrong requests used to stall every administrator sheet on the machine for two seconds at a time. A refusal, a password check or a long install no longer blocks other admin requests; a Wi-Fi join no longer waits for an install. Declining one request cancels only your own pending approval, and an approval you gave earlier is checked again if it ran out while your request waited.
 - Programs that were updated while running keep their identity for permission checks, and a program must now reach a file it hands to the installer through every folder above it.
 - The graphics environment script quotes values correctly, so a quote in a setting can no longer break out of it.
-- `io_uring` is limited to administrators (`kernel.io_uring_disabled = 1`) as a precaution; the setting is documented in the security module page.
+- `io_uring` is limited to administrators (`kernel.io_uring_disabled = 1`) as a hardening default, because it is a steady source of kernel CVEs; programs fall back to ordinary reads and writes, and the default is revisited when a shipped app needs it. The setting is documented in the security module page.
 - The dependency checks (`cargo deny` and `cargo audit`) now look at everything that ships and agree with each other; the two reviewed exceptions are written down. The Crystal shards (`hue`, `wopkg`) now require Crystal 1.22 or newer.
 
 Kernel
