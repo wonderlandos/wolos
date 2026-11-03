@@ -362,6 +362,18 @@ Inside the shell every part is fenced (`crates/shell/src/kit/fence.rs`): when a 
 
 To try both by hand (also what the VM journey runs): `pkill -ABRT -n -x wol-shell` crashes the shell itself (the newest `wol-shell` process; the oldest is the supervisor), the way a panic in a callback does. Use `-ABRT`, not `-SEGV`: a SIGSEGV sent with `kill` to a fresh shell is absorbed once by the runtime's stack-overflow handler. `WOL_SHELL_BREAK=<part>[,<part>...]` in the shell's environment (user level, a test switch) makes those parts panic as they are built, e.g. `WOL_SHELL_BREAK=clipboard`; `wol shell show clipboard` then shows the "This part stopped" card and everything else keeps working. The part names are the ones the journal line uses: `desktop widgets`, `wallpaper`, `clipboard`, `themes`, `session`, `notifications`, `overview`, `control-center`, `force-quit`, `shortcuts`, `shelf`, `screenshot`, `switcher`, `app host`, `app notices`, `sessions`, `file index`, `phones`, `setup`.
 
+### Live reload
+
+Saving a shell config file applies it on its own, no `wol shell reload` needed (`crates/shell/src/ui/ipc.rs`, `watch_prefs`): one watch on `$XDG_CONFIG_HOME/wolos/` (no polling) sees an editor's save, a rename over the file and a file created later, waits until the folder has been quiet for 100 ms (an editor writes in bursts), then applies the file. `wol shell reload` stays the explicit way and runs the same checks. The shell's own saves (it writes `widgets.json` when a widget moves) are not applied again.
+
+| File | What applies it | A save that does not load |
+|---|---|---|
+| `shell.json` | Every reload hook (`ipc::on_reload`): menu bar, Dock, Control Center, layout of the bar and the Dock, desktop widgets | Nothing changes; the notice names the first key in the file whose value does not fit (`dock_tile_size`, `control_center.record`, `layout`), or the line when the text is not JSON (`wol_core::prefs::ShellFile::try_parse`) |
+| `widgets.json` | The same hooks (the desktop widgets read it again) | Nothing changes when the file is not a JSON object, `widgets` is not a list or `grants` do not load (`wol_core::prefs::widgets_error`); a single widget entry that does not load is kept aside as before |
+| `kit.css` | The user style sheet, its own provider just above the kit and theme (`kit::style::user_css`, priority `STYLE_PROVIDER_PRIORITY_USER + 1`), so a rule as specific as the kit's wins; a missing file means no user rules | The last good rules stay; the notice names the first property the style parser refused and its line (deprecation warnings do not count) |
+
+A file that does not load shows one notification ("Changes Not Applied", from WolOS) and one journal line with the parser's words; the same mistake saved again does not notify again, and the next good save clears it. Until then the shell keeps the last prefs that loaded, also for parts that ask later. Other shell processes (Settings, Store) read `kit.css` when they start. The theme, Increase Contrast and the looks have their own watches (`kit/style.rs`).
+
 ## `wol plugin`
 
 | Command | Does |
