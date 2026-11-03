@@ -88,6 +88,10 @@ else
 fi
 mv -f "$vmlua.tmp" "$vmlua"
 rm -f "${vmlua%.lua}.conf"
+# Startup stage times of wol-shell ("wol-shell: first map 61ms at ..."), one line per stage, in
+# $XDG_RUNTIME_DIR/wol-shell.log (hyprland.lua starts the shell with its stderr there): a release run reads the
+# map time from it (tests/metrics.sh, shell_map_ms). A caller's own value wins ("exit": measure startup only).
+export WOL_SHELL_TIMING=${WOL_SHELL_TIMING:-1}
 # GTK 3: client-side title bars everywhere, so apps without a header bar still get the traffic lights.
 export GTK_CSD=${GTK_CSD:-1}
 # start-hyprland: the 0.56 watchdog launcher (restarts on crash; no "started without" banner).
