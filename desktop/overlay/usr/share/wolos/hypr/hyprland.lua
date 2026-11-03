@@ -42,7 +42,7 @@ once([[sh -c 'xhost +si:localuser:"$(id -un)" && xhost -local: && xhost -']])
 once("gnome-keyring-daemon --start --components=secrets") -- finishes the login keyring wol-login unlocked
 once("/usr/lib/xdg-desktop-portal-hyprland")
 once("lxqt-policykit-agent")
-once([[sh -c 'exec wol-shell 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
+once([[sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
 once([[sh -c 'wol theme set "$(wol theme)"']]) -- GTK/Qt/foot files + gsettings from the active theme
 -- User config (System Settings > Lock & Idle) wins over the system default.
 once([[sh -c '[ -e /etc/wolos-live ] && exit; c="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hypridle.conf"; [ -f "$c" ] || c=/usr/share/wolos/hypr/hypridle.conf; exec hypridle -c "$c"']])
