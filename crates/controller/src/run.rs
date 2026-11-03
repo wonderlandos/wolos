@@ -63,6 +63,11 @@ pub trait Env {
     fn keyring_forget(&mut self, desc: &str) {
         let _ = desc;
     }
+    /// The administrator password: on a terminal "Password: " and no echo (`secret`); otherwise
+    /// one line of stdin, as [`Env::stdin_line`].
+    fn read_password(&mut self) -> Option<String> {
+        self.stdin_line()
+    }
     /// One raw line from stdin; None at end of input (`wol mcp`).
     fn read_line(&mut self) -> Option<String> {
         let mut l = String::new();
@@ -475,7 +480,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 if attempt == PASSWORD_TRIES {
                     break;
                 }
-                match env.stdin_line() {
+                match env.read_password() {
                     Some(p) if !p.is_empty() => password = p.into_bytes(),
                     _ => return fail(env, ErrorCode::Denied, reply.message()),
                 }
@@ -1073,6 +1078,12 @@ impl Env for RealEnv {
         let mut l = String::new();
         io::stdin().read_line(&mut l).ok()?;
         Some(l.trim_end_matches(['\n', '\r']).to_owned())
+    }
+    fn read_password(&mut self) -> Option<String> {
+        use std::os::fd::AsRawFd;
+        let stdin = io::stdin();
+        let fd = stdin.as_raw_fd();
+        crate::secret::read_password(&mut stdin.lock(), &mut io::stderr(), fd)
     }
     fn read_file(&self, p: &Path) -> Option<String> {
         std::fs::read_to_string(p).ok()
