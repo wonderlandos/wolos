@@ -8,6 +8,9 @@
 //! `cargo test -p shared --test rules_rust -- --nocapture --test-threads=1 | grep BASELINE-ROW`
 //! to print the current table. The invariant: the debt only comes down, and a new crate, file or
 //! line starts clean. The doc and this file name the same ids (`the_doc_and_the_tests_agree`).
+#[path = "support/lexer.rs"]
+mod lexer;
+use lexer::{is_ident, lex};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -20,7 +23,6 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-004", "api", 22),
     ("RR-004", "audio", 4),
     ("RR-004", "controller", 3),
-    ("RR-004", "realtime", 1),
     ("RR-004", "shell", 69),
     // +1 (audit C7-2): guard.rs is the wol-xguard daemon body; it says on stderr (the journal)
     // when the download-folder thread cannot start, like its six other daemon diagnostics.
@@ -152,7 +154,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-047", "controller", 12),
     ("RR-047", "core", 53),
     ("RR-047", "proxy", 6),
-    ("RR-047", "realtime", 7),
+    ("RR-047", "realtime", 5),
     ("RR-047", "shared", 28),
     ("RR-047", "shell", 43),
     ("RR-047", "wol-abi", 18),
@@ -175,10 +177,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-049", "xguard", 12),
     ("RR-052", "core", 2),
     ("RR-052", "shell", 10),
-    ("RR-054", "core", 194),
+    ("RR-054", "core", 193),
     ("RR-054", "shared", 97),
     ("RR-055", "core", 209),
-    ("RR-055", "shared", 131),
+    ("RR-055", "shared", 130),
     ("RR-056", "aurlaws", 1),
     ("RR-057", "api", 1),
     ("RR-057", "audio", 1),
@@ -199,12 +201,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-058", "wol-lua", 15),
     ("RR-058", "wopkg", 8),
     ("RR-058", "xguard", 1),
-    ("RR-059", "shell", 6),
-    ("RR-059", "wol-abi", 18),
     ("RR-060", "core", 13),
     ("RR-064", "aurlaws", 11),
     ("RR-064", "core", 102),
-    ("RR-064", "realtime", 5),
+    ("RR-064", "realtime", 4),
     ("RR-064", "shared", 57),
     ("RR-064", "shell", 5),
     ("RR-064", "wopkg", 25),
@@ -248,95 +248,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
 ];
 
 // ---------------------------------------------------------------------------------------------
-// The lexer.
-
-fn is_ident(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_'
-}
-
-/// The code of `text` with comments, strings and char literals blanked (newlines kept, length
-/// kept), and the byte spans of the string literals (quotes and prefix included).
-fn lex(text: &str) -> (Vec<u8>, Vec<(usize, usize)>) {
-    let b = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(b.len());
-    let mut lits = Vec::new();
-    let blank = |out: &mut Vec<u8>, from: usize, to: usize| {
-        out.extend(
-            b[from..to.min(b.len())]
-                .iter()
-                .map(|c| if *c == b'\n' { b'\n' } else { b' ' }),
-        );
-    };
-    let mut i = 0;
-    while i < b.len() {
-        let c = b[i];
-        let prev_ident = i > 0 && is_ident(b[i - 1]);
-        if c == b'/' && b.get(i + 1) == Some(&b'/') {
-            let end = b[i..]
-                .iter()
-                .position(|c| *c == b'\n')
-                .map_or(b.len(), |n| i + n);
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'/' && b.get(i + 1) == Some(&b'*') {
-            let (mut j, mut depth) = (i + 2, 1usize);
-            while j < b.len() && depth > 0 {
-                if b[j] == b'/' && b.get(j + 1) == Some(&b'*') {
-                    depth += 1;
-                    j += 2;
-                } else if b[j] == b'*' && b.get(j + 1) == Some(&b'/') {
-                    depth -= 1;
-                    j += 2;
-                } else {
-                    j += 1;
-                }
-            }
-            blank(&mut out, i, j);
-            i = j;
-        } else if !prev_ident && (c == b'r' || (c == b'b' && b.get(i + 1) == Some(&b'r'))) && {
-            let k = i + 1 + usize::from(c == b'b');
-            let h = b[k.min(b.len())..]
-                .iter()
-                .take_while(|c| **c == b'#')
-                .count();
-            b.get(k + h) == Some(&b'"')
-        } {
-            let k = i + 1 + usize::from(c == b'b');
-            let h = b[k..].iter().take_while(|c| **c == b'#').count();
-            let mut j = k + h + 1;
-            while j < b.len()
-                && !(b[j] == b'"' && b[j + 1..].iter().take(h).filter(|c| **c == b'#').count() == h)
-            {
-                j += 1;
-            }
-            let end = (j + 1 + h).min(b.len());
-            lits.push((i, end));
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'"' {
-            let mut j = i + 1;
-            while j < b.len() && b[j] != b'"' {
-                j += if b[j] == b'\\' { 2 } else { 1 };
-            }
-            let end = (j + 1).min(b.len());
-            lits.push((i, end));
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'\'' && (b.get(i + 1) == Some(&b'\\') || b.get(i + 2) == Some(&b'\'')) {
-            let mut j = i + 1;
-            while j < b.len() && b[j] != b'\'' {
-                j += if b[j] == b'\\' { 2 } else { 1 };
-            }
-            let end = (j + 1).min(b.len());
-            blank(&mut out, i, end);
-            i = end;
-        } else {
-            out.push(c);
-            i += 1;
-        }
-    }
-    (out, lits)
-}
+// The lexer (`lex`, shared with unsafe_ratchet.rs in tests/support/lexer.rs) and item ranges.
 
 /// The index after the `}` that closes the `{` at `open` (or the end of `code`).
 fn match_brace(code: &[u8], open: usize) -> usize {

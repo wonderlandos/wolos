@@ -1,5 +1,5 @@
 # 0035 - Live layers on a slot switch: held, not merged, until the new slot is good
-Status: Proposed (SF3, 2026-11-02, after audit2 CORE-1/CORE-2). Builds on 0016 (A/B root slots).
+Status: proposed (SF3, 2026-11-02, after audit2 CORE-1/CORE-2). Builds on 0016 (A/B root slots).
 
 ## Context
 On a sealed slot `wol pkg` (the `pacman` wrapper) installs into a live layer: a systemd-sysext

@@ -144,8 +144,8 @@ for the tools). The rules in one place:
 - SPDX line first (`// SPDX-License-Identifier: GPL-2.0-or-later`; kernel: `GPL-2.0-only`;
   `wol.h`: `BSD-2-Clause`).
 - Built with `-Wall -Wextra -Werror`, and `-fstack-protector-strong -D_FORTIFY_SOURCE=3` from the
-  recipe's `CFLAGS`. (`plugins/wol-hypr/Makefile:5` does not pass the warning flags yet; adding
-  them is the first task of the next change in that directory.)
+  recipe's `CFLAGS` (`plugins/wol-hypr/Makefile:7` passes the warning flags; the compositor's
+  headers come in as `-isystem`, so the flags hold for the plugin's own code, `Makefile:5-6`).
 - Nothing from IPC, a file or another process is dereferenced before its length and type were
   checked. A pointer returned by the compositor or a library is checked for null before use.
 - No policy in C: the plugin forwards events to Rust (`crates/realtime`, `plugins/wol-hypr/main.cpp:2`); the kernel
@@ -170,9 +170,11 @@ for the tools). The rules in one place:
   that way, then the exact command or `file:line`.
 - An ADR (`docs/adr/NNNN-title.md`) has **CI** these four parts, as `Status:` lines or `##`
   headings: Status, Context, Decision, Consequences (`tools/check-adrs.sh`). A decision is changed
-  by a new ADR that names the old one, not by editing history.
-- A module document (`docs/modules/*.md`) names its ADR in the title and its code by crate and
-  path. `docs/README.md` lists every module document.
+  by a new ADR that names the old one, not by editing history. The `Status:` line starts with one
+  of `accepted`, `proposed`, `superseded`, in lowercase (**CI** `adr_index.rs`).
+- A module document (`docs/modules/*.md`) names its ADR in the title, as `(ADR NNNN)` (**CI**
+  `adr_index.rs`; `hig.md`, `performance.md` and `vm-graphics.md` have no record yet and are
+  listed there), and its code by crate and path. `docs/README.md` lists every module document.
 - Code comments say why, not what. A number has its unit and its origin (`// 8 ms: one frame at 120 Hz`).
 
 ## 6. Commits
@@ -278,9 +280,12 @@ brackets; `cargo test` runs in the `test` job).
 - **unsafe ratchet**: **CI** [test] `crates/shared/tests/unsafe_ratchet.rs` counts `unsafe` per
   crate (code only: comments, strings and char literals stripped by a lexer; `src/` with the
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
-  `BASELINE` row (that table is the record; at v0.12 after R2C-19: wol-abi 473, wopkg 94,
-  realtime 54, xguard 61, controller 52, api 32). Lowering a count lowers the baseline in the
-  same commit; the doc numbers change in the same commit as the table. (C, R2C-19)
+  `BASELINE` row (that table is the record and its comment gives the reason for every raise;
+  the rows: wol-abi 473, wolkit 294, wopkg 94, realtime 32, xguard 63, controller 52, api 33,
+  core 13, xguard-clam 13, shared 17, shell 8, proxy 3, wol-lua 3, audio 0, aurlaws 0). A raise
+  is justified there and each new block has its `// SAFETY:` line (RR-012); lowering a count
+  lowers the baseline in the same commit, and these numbers change in the same commit as the
+  table (**CI** [test] `standards_quotes_the_baseline`). (C, R2C-19, audit8)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
   `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`). **CI** [fuzz]

@@ -19,7 +19,7 @@ module Wolkit
         LibWolkit.wolkit_style_table_release(ptr)
       end
 
-      # Compile `.wolcss` source to table bytes (the dev loop and `wol app build`).
+      # Compile `.wolcss` source to table bytes (the dev loop and `make styles`).
       def self.compile(source : ::String) : Bytes
         needed = LibC::SizeT.new(0)
         buf = Bytes.new(64 * 1024)

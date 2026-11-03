@@ -49,7 +49,7 @@ The CPU reference rasteriser draws the typical window at 640 by 480 in 8.2 ms (C
 
 ## Developer loop
 
-Shard build times for a 3,081-line app of 70 screens on the forge: `crystal build --no-codegen` (the `wol app check` path) 1.8 s, a debug build 3.8 s, a rebuild after a one-line change 2.5 s, a release build 17.7 s. The hot-reload target is at most 5 s for a 2,000-line app.
+Shard build times for a 3,081-line app of 70 screens on the forge: `crystal build --no-codegen` (the template's `make check`) 1.8 s, a debug build 3.8 s, a rebuild after a one-line change 2.5 s, a release build 17.7 s. The hot-reload target is at most 5 s for a 2,000-line app.
 
 ## Not measured yet
 

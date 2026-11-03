@@ -6,6 +6,9 @@
 //! are stripped by a small lexer first, so an `unsafe` after a `"http://…"` on the same line is
 //! counted and one inside a string is not. Above the baseline fails; below it passes and prints
 //! the new number so the baseline here can be lowered.
+#[path = "support/lexer.rs"]
+mod lexer;
+use lexer::{is_ident, lex};
 use std::path::{Path, PathBuf};
 
 /// Baselines, counted on 2026-11-02 with this counter. History: the audit's (v0.12, `src/` only,
@@ -33,12 +36,19 @@ use std::path::{Path, PathBuf};
 /// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
 /// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// realtime 69 -> 32 (audit8 standards #2, 2026-11-03): the C exports' out-pointers are
+/// `Option<&mut T>` (same ABI as `T *`, null is `None`), so eight of them are safe `extern "C"`
+/// functions with no `unsafe` block and their unit tests call them without `unsafe`; what is left
+/// is the `#[unsafe(no_mangle)]` of each export, `wol_window_lights` (a C string) and
+/// `wol_frame_stats_json` (a caller buffer). xguard 63 and api 33 stay: `openat` and `statvfs`
+/// have no std wrapper and no new dependency is wanted for them (reasons above).
+/// docs/STANDARDS.md 7.1 repeats these rows ([`standards_quotes_the_baseline`] checks it).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
     ("wolkit", 294),
     ("wopkg", 94),
-    ("realtime", 69),
+    ("realtime", 32),
     ("xguard", 63),
     ("controller", 52),
     ("api", 33),
@@ -71,92 +81,13 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn is_word(b: &[u8], at: usize, len: usize) -> bool {
-    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    (at == 0 || !ident(b[at - 1])) && b.get(at + len).is_none_or(|&c| !ident(c))
+    (at == 0 || !is_ident(b[at - 1])) && b.get(at + len).is_none_or(|&c| !is_ident(c))
 }
 
-/// The code of a Rust source with comments, strings and char literals blanked (newlines kept).
+/// The code of a Rust source with comments, strings and char literals blanked (newlines kept):
+/// the lexer rules_rust.rs uses too (`tests/support/lexer.rs`).
 pub fn code_only(text: &str) -> Vec<u8> {
-    let b = text.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
-    let mut i = 0;
-    // Blank `b[from..to]` into `out`, keeping newlines.
-    let blank = |out: &mut Vec<u8>, from: usize, to: usize| {
-        out.extend(
-            b[from..to.min(b.len())]
-                .iter()
-                .map(|c| if *c == b'\n' { b'\n' } else { b' ' }),
-        );
-    };
-    while i < b.len() {
-        let c = b[i];
-        let prev_ident = i > 0 && ident(b[i - 1]);
-        if c == b'/' && b.get(i + 1) == Some(&b'/') {
-            let end = b[i..]
-                .iter()
-                .position(|c| *c == b'\n')
-                .map_or(b.len(), |n| i + n);
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'/' && b.get(i + 1) == Some(&b'*') {
-            let (mut j, mut depth) = (i + 2, 1usize);
-            while j < b.len() && depth > 0 {
-                if b[j] == b'/' && b.get(j + 1) == Some(&b'*') {
-                    depth += 1;
-                    j += 2;
-                } else if b[j] == b'*' && b.get(j + 1) == Some(&b'/') {
-                    depth -= 1;
-                    j += 2;
-                } else {
-                    j += 1;
-                }
-            }
-            blank(&mut out, i, j);
-            i = j;
-        } else if !prev_ident && (c == b'r' || (c == b'b' && b.get(i + 1) == Some(&b'r'))) && {
-            let k = i + 1 + usize::from(c == b'b');
-            let h = b[k.min(b.len())..]
-                .iter()
-                .take_while(|c| **c == b'#')
-                .count();
-            b.get(k + h) == Some(&b'"')
-        } {
-            // Raw string: ends at a quote followed by as many #.
-            let k = i + 1 + usize::from(c == b'b');
-            let h = b[k..].iter().take_while(|c| **c == b'#').count();
-            let mut j = k + h + 1;
-            while j < b.len()
-                && !(b[j] == b'"' && b[j + 1..].iter().take(h).filter(|c| **c == b'#').count() == h)
-            {
-                j += 1;
-            }
-            let end = (j + 1 + h).min(b.len());
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'"' {
-            let mut j = i + 1;
-            while j < b.len() && b[j] != b'"' {
-                j += if b[j] == b'\\' { 2 } else { 1 };
-            }
-            let end = (j + 1).min(b.len());
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'\'' && (b.get(i + 1) == Some(&b'\\') || b.get(i + 2) == Some(&b'\'')) {
-            // A char literal; a lifetime ('a) has no closing quote right after one character.
-            let mut j = i + 1;
-            while j < b.len() && b[j] != b'\'' {
-                j += if b[j] == b'\\' { 2 } else { 1 };
-            }
-            let end = (j + 1).min(b.len());
-            blank(&mut out, i, end);
-            i = end;
-        } else {
-            out.push(c);
-            i += 1;
-        }
-    }
-    out
+    lex(text).0
 }
 
 /// `unsafe` as a word in the code of `text` ([`code_only`]).
@@ -206,6 +137,41 @@ fn the_counter_counts_words_in_code_only() {
     );
     assert_eq!(count_unsafe("fn f<'a>(x: &'a u8) { unsafe {} }"), 1);
     assert_eq!(count_unsafe("let e = '\\''; unsafe {}"), 1);
+}
+
+/// audit8 standards #3: docs/STANDARDS.md 7.1 quoted rows the table had left behind. The
+/// "unsafe ratchet" rule lists every row after `the rows: ` and they must be this table.
+#[test]
+fn standards_quotes_the_baseline() {
+    let doc =
+        std::fs::read_to_string(crates_dir().join("../docs/STANDARDS.md")).expect("STANDARDS");
+    let rule = doc
+        .split("\n- ")
+        .find(|b| b.starts_with("**unsafe ratchet**"))
+        .expect("STANDARDS 7.1 has the unsafe ratchet rule")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let list = rule
+        .split_once("the rows: ")
+        .and_then(|(_, r)| r.split_once(')'))
+        .map(|(l, _)| l)
+        .expect("the rule lists `the rows: <crate> <n>, ...)`");
+    let mut quoted: Vec<(String, usize)> = list
+        .split(", ")
+        .map(|p| {
+            let (c, n) = p.rsplit_once(' ').expect("<crate> <n>");
+            (c.to_string(), n.parse().expect("a number"))
+        })
+        .collect();
+    let mut want: Vec<(String, usize)> =
+        BASELINE.iter().map(|(c, n)| (c.to_string(), *n)).collect();
+    quoted.sort();
+    want.sort();
+    assert_eq!(
+        quoted, want,
+        "docs/STANDARDS.md 7.1 must quote the BASELINE rows (change both in one commit)"
+    );
 }
 
 #[test]

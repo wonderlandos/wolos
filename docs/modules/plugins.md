@@ -1,4 +1,4 @@
-# Shell plugins
+# Shell plugins (ADR 0031)
 
 Decision: ADR 0031. Code: `crates/shared/src/plugins.rs` (manifest contract, `parse`, the schema), `crates/shared/src/layout.rs` (bar and Dock slots plugin items land in), `crates/wol-lua/src/plugin.rs` (Lua API v1 in the widget sandbox), `crates/core/src/plugins.rs` (folders, check, grants, state, toggles, failure counter, scaffold, pack), `crates/controller/src/plugin.rs` (`wol plugin`). Reference plugin: `plugins/shell/org.wolos.stats/`. Schema: `docs/plugins/plugin.schema.json`, installed at `/usr/share/wolos/plugins.schema.json`.
 
