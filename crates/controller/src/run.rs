@@ -619,7 +619,8 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
 }
 
 /// Third-party toolkits follow the theme: regenerate GTK/Qt/foot files, then gsettings so
-/// running GTK apps switch live (settings portal), then the `theme` event on wold for libwol apps
+/// running GTK apps switch live (settings portal), running foot terminals by signal
+/// (`apps::terminal_argv`), then the `theme` event on wold for libwol apps
 /// (`subscribe("theme")`). Best effort: a missing gsettings or wold is not an error.
 /// Every theme change goes through here: `wol theme set|light|dark|toggle`, appearance and accent
 /// (verbs.rs `set_theme`) and undo.
@@ -634,9 +635,13 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     {
         env.err(&format!("wol: app themes: {e}\n"));
     }
+    // foot rereads nothing while it runs: its two colour sections are switched by signal.
+    let foot = apps::foot_is_ours(&apps::user_dir(&home), &home)
+        .then(|| apps::terminal_argv(t, shared::sys::euid()));
     for argv in apps::gsettings_argv(t)
         .into_iter()
         .chain(apps::strip_argv(t))
+        .chain(foot)
     {
         let _ = env.exec(&argv);
     }

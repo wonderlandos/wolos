@@ -2,7 +2,7 @@
 
 Decision record: ADR 0031 (themes and layouts, themes v2), ADR 0032 (Console).
 
-Source: `crates/core/src/theme/{apps,generate,hypr,terminal,console,templates,packs,scaffold,firefox,sourceview,helium,kvantum}.rs`. One palette, every consumer: `generate::consumers` is the full list of files a switch writes. Files go to `$XDG_CONFIG_HOME/wolos/toolkits/` and are linked into `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` (a real user file is never replaced). The image ships the `wol-light` render under `/usr/share/wolos` (toolkit files) and `/usr/share/wolos/toolkits` (console files but starship, whose default is the shipped `starship.toml`); `WOL_REGEN=1 cargo test -p core` rewrites both.
+Source: `crates/core/src/theme/{apps,generate,hypr,terminal,console,templates,packs,scaffold,firefox,sourceview,helium,kvantum}.rs`. One palette, every consumer: `generate::consumers` is the full list of files a switch writes. Files go to `$XDG_CONFIG_HOME/wolos/toolkits/` and are linked into `$XDG_CONFIG_HOME` / `$XDG_DATA_HOME` (a real user file, or a link of the person's own, is never replaced; the links `wol-session` makes to the shipped defaults under `/usr/share/wolos` before the first theme are WolOS's and are replaced, `apps::made_by_wolos`). The image ships the `wol-light` render under `/usr/share/wolos` (toolkit files) and `/usr/share/wolos/toolkits` (console files but starship, whose default is the shipped `starship.toml`); `WOL_REGEN=1 cargo test -p core` rewrites both.
 
 | Toolkit | Output | Live switch |
 |---|---|---|
@@ -12,7 +12,7 @@ Source: `crates/core/src/theme/{apps,generate,hypr,terminal,console,templates,pa
 | Firefox | `firefox/wolos-chrome.css`, loaded by `wolos.cfg` from the optional `wolos-browser-config` package, which the image does not ship (AutoConfig, user sheet) | yes: polled, re-registered on change |
 | Qt | qt6ct palette + Kvantum `WolOS` | on app restart |
 | Compositor | `hypr/wolos/theme.conf` (`hypr::conf`: hyprbars bar, title, inactive look, shadows), linked as `$XDG_CONFIG_HOME/hypr/wolos/theme.conf` and read by the user conf's `hypr/wolos/*.conf` glob after the shipped default `/usr/share/wolos/hypr/wolos/theme.conf`; the window buttons are `/usr/share/wolos/hypr/wolos/lights.conf` | yes: `hyprctl keyword` per line |
-| foot | `foot/foot.ini` (terminal palette) | new windows |
+| foot | `foot/foot.ini`: `[colors-dark]` the dark variant, `[colors-light]` the light variant of the same accent (`apps::counterpart`; a theme without a pair is in both), `initial-color-theme` the one in use | yes: foot rereads nothing while it runs, so `wol theme`/appearance and Settings send SIGUSR1 (dark) or SIGUSR2 (light) to the account's `foot`/`footclient` (`apps::terminal_argv`), only while foot.ini is WolOS's link |
 | GtkSourceView 5 | `gtksourceview-5/styles/wolos-{light,dark}.xml` in `$XDG_DATA_HOME` | light/dark live; palette on restart |
 | zsh | `zsh/colors.zsh` (`WOLOS_PROMPT_*`, read by `/usr/share/wolos/zsh/zshrc`) | new shells |
 | starship | `starship/palette.toml`: the shipped starship.toml with `[palettes.wolos]` set (roles + text, surface, ANSI names) | new prompts |

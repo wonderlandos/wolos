@@ -126,6 +126,56 @@ fn theme_set_restyles_third_party_apps() {
     );
 }
 
+/// MANUAL 0.12.0: `wol appearance set dark` left the open terminal light. The session links foot.ini
+/// to the shipped (light) default before the first theme; the theme now takes that link over, and
+/// running foot terminals of this account switch sections by signal.
+#[test]
+fn appearance_reaches_the_open_terminal() {
+    let home = temp_home("foot");
+    std::fs::create_dir_all(home.join("foot")).unwrap();
+    std::os::unix::fs::symlink("/usr/share/wolos/foot/foot.ini", home.join("foot/foot.ini"))
+        .unwrap();
+    let mut env = FakeEnv {
+        home: home.clone(),
+        ..Default::default()
+    };
+    let uid = shared::sys::euid().to_string();
+    let signal = |env: &FakeEnv| {
+        env.execs
+            .iter()
+            .find(|a| a.first().is_some_and(|x| x == "pkill"))
+            .cloned()
+    };
+    assert_eq!(run("appearance set dark", &mut env), 0, "{}", env.err);
+    let foot = std::fs::read_to_string(home.join("foot/foot.ini")).unwrap();
+    assert!(foot.contains("initial-color-theme=dark\n"), "{foot}");
+    assert_eq!(
+        signal(&env).unwrap(),
+        [
+            "pkill",
+            "--signal",
+            "USR1",
+            "--uid",
+            &uid,
+            "--exact",
+            "foot|footclient"
+        ]
+    );
+    env.execs.clear();
+    assert_eq!(run("appearance set light", &mut env), 0, "{}", env.err);
+    assert_eq!(signal(&env).unwrap()[2], "USR2");
+    // A foot.ini of the person's own: kept, and their terminals are left alone.
+    std::fs::remove_file(home.join("foot/foot.ini")).unwrap();
+    std::fs::write(home.join("foot/foot.ini"), "mine").unwrap();
+    env.execs.clear();
+    assert_eq!(run("appearance set dark", &mut env), 0, "{}", env.err);
+    assert_eq!(signal(&env), None);
+    assert_eq!(
+        std::fs::read_to_string(home.join("foot/foot.ini")).unwrap(),
+        "mine"
+    );
+}
+
 /// The compositor's title strip follows the theme, so it is not dark on a light desktop.
 #[test]
 fn theme_set_colours_the_title_strip() {
