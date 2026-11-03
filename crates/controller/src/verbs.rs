@@ -1219,12 +1219,23 @@ fn toggle(env: &mut dyn Env, word: &str, wanted: Option<bool>, json: bool) -> i3
     }
     for argv in toggles::commands(t, on) {
         let code = env.exec_quiet(&argv).unwrap_or(-1);
-        if code != 0 && toggles::must_succeed(t) {
-            let msg = format!(
-                "{} is not available yet; log in to the desktop and try again.",
-                t.label()
-            );
-            return fail(env, ErrorCode::Unavailable, &msg);
+        if code != 0 && toggles::must_succeed(t, on) {
+            let program = Path::new("/usr/bin").join(toggles::NIGHT_LIGHT_PROGRAM);
+            let installed = env
+                .list_dir(Path::new("/usr/bin"))
+                .iter()
+                .any(|n| Path::new(n) == program);
+            // Installed but not running (it ended, or came after login): start it.
+            let started = installed
+                && toggles::start_command(t, on)
+                    .is_some_and(|a| env.exec_quiet(&a).unwrap_or(-1) == 0);
+            if !started {
+                return fail(
+                    env,
+                    ErrorCode::Unavailable,
+                    &toggles::unavailable(t, installed),
+                );
+            }
         }
     }
     let flag = toggles::state_file(t, &env.config_home(), &env.state_home());
@@ -1545,11 +1556,45 @@ mod port_tests {
             e.removed,
             vec![PathBuf::from("/h/state/wolos/toggles/org.wolos.stay-awake")]
         );
-        // no hyprsunset: Night Light stays as it was
+        // no hyprsunset: Night Light stays as it was, and says why (e2e D2)
         let mut e = fake();
         e.exec_codes = vec![1];
         assert_ne!(run(&mut e, "toggle nightlight on"), 0);
         assert!(e.written.is_empty());
+        assert!(e.err.contains("not installed"), "{}", e.err);
+        // installed but not running: the compositor starts it, the flag is kept
+        let mut e = fake();
+        e.exec_codes = vec![1, 0];
+        e.files
+            .push((PathBuf::from("/usr/bin/hyprsunset"), String::new()));
+        assert_eq!(run(&mut e, "toggle nightlight on"), 0, "{}", e.err);
+        assert_eq!(
+            e.execs[1],
+            ["hyprctl", "dispatch", "exec", "hyprsunset -t 4500"]
+        );
+        assert_eq!(
+            e.written[0].0,
+            PathBuf::from("/h/state/wolos/toggles/org.wolos.nightlight")
+        );
+        // and no compositor to ask: not a desktop session
+        let mut e = fake();
+        e.exec_codes = vec![1, 1];
+        e.files
+            .push((PathBuf::from("/usr/bin/hyprsunset"), String::new()));
+        assert_ne!(run(&mut e, "toggle nightlight on"), 0);
+        assert!(e.err.contains("desktop session"), "{}", e.err);
+        // off with hyprsunset not running: off, the flag goes
+        let mut e = fake();
+        e.exec_codes = vec![1];
+        e.files.push((
+            PathBuf::from("/h/state/wolos/toggles/org.wolos.nightlight"),
+            String::new(),
+        ));
+        assert_eq!(run(&mut e, "toggle nightlight off"), 0, "{}", e.err);
+        assert_eq!(
+            e.removed,
+            vec![PathBuf::from("/h/state/wolos/toggles/org.wolos.nightlight")]
+        );
         // list
         let mut e = fake();
         assert_eq!(run(&mut e, "toggle --json"), 0);

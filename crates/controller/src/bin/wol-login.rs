@@ -41,6 +41,8 @@ fn main() {
     let mut flow = LoginFlow::new(listed_on_system(), auto);
     let mut phase = flow.start();
     let mut respawn = GreeterRespawn::default();
+    // Sessions that die while starting wait longer each time (1 s .. 5 min), never spin.
+    let mut sessions = GreeterRespawn::default();
     loop {
         if phase == Phase::Session
             && let Some(user) = flow.user.clone()
@@ -52,13 +54,26 @@ fn main() {
             };
             console_ready();
             let started = Instant::now();
-            let ok = run_session(&user, flow.locked, || marks.spawned(what));
+            let ok =
+                display_allowed(&user) && run_session(&user, flow.locked, || marks.spawned(what));
             marks.exited(what);
-            if failed_early(started.elapsed(), ok) && flow.locked {
-                println!("wol-login: locked start failed; the login window takes over");
+            let ran = started.elapsed();
+            if failed_early(ran, ok) {
+                // The login window takes over (it says nothing more than the journal does yet);
+                // the next start, whoever asks for it, waits.
+                let next = sessions.exited(ran);
+                println!(
+                    "wol-login: {} session of {} ended after {} ms; the login window takes over in {} s",
+                    if flow.locked { "locked" } else { "the" },
+                    user.name,
+                    ran.as_millis(),
+                    next.delay.as_secs()
+                );
                 flow.locked_start_failed();
-            } else if started.elapsed() >= GreeterRespawn::HEALTHY {
+                std::thread::sleep(next.delay);
+            } else if ran >= GreeterRespawn::HEALTHY {
                 flow.session_ran_healthy();
+                sessions = GreeterRespawn::default();
             }
             flow.session_ended();
             flow.listed = listed_on_system();
@@ -253,6 +268,9 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
             if result == Auth::Ok && !unlock_home(&user, &buf[password.clone()]) {
                 result = Auth::Error; // no session without its files
             }
+            if result == Auth::Ok && !flow.user.as_ref().is_some_and(display_allowed) {
+                result = Auth::Error; // no session that cannot open the display
+            }
             println!("wol-login: {user}: {result:?}");
             let phase = flow.authenticated(result == Auth::Ok);
             let line = match result {
@@ -429,6 +447,18 @@ fn start_keyring(user: &LoginUser, password: &[u8]) {
     if capture_input(&argv, pw, Duration::from_secs(10)).is_none() {
         eprintln!("wol-login: {}: keyring daemon did not start", user.name);
     }
+}
+
+/// [`can_open_display`], said in the journal when not: the compositor would die while starting.
+fn display_allowed(user: &LoginUser) -> bool {
+    let ok = can_open_display(&read(GROUP_FILE), user);
+    if !ok {
+        println!(
+            "wol-login: {} is not in group {SEAT_GROUP}, so the display cannot open; an administrator adds it with: usermod -aG {SEAT_GROUP} {}",
+            user.name, user.name
+        );
+    }
+    ok
 }
 
 /// Runs the session to its end; true when it exited cleanly (logout).

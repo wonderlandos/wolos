@@ -29,7 +29,8 @@ pub const PACMAN_CONF: &str = crate::mirror::PACMAN_CONF;
 /// have their own mirrorlist (`/etc/pacman.d/wolos-cachy-mirrorlist`, ADR 0030) and are not dated.
 pub const MIRRORLIST: &str = crate::mirror::MIRRORLIST;
 
-/// Pending package names from `pacman -Qu` (`name old -> new`); None when output unknown.
+/// Pending package names from `pacman -Qu` output (`name old -> new`, the update check's `pkg`
+/// file); None when output unknown.
 /// Inside one release only `[wolos]` moves: everything else is pinned to the snapshot date.
 pub fn parse_pending(output: Option<&str>) -> Option<Vec<String>> {
     Some(
@@ -40,8 +41,6 @@ pub fn parse_pending(output: Option<&str>) -> Option<Vec<String>> {
             .collect(),
     )
 }
-
-pub const PENDING_ARGV: [&str; 2] = ["pacman", "-Qu"];
 
 /// "2 package updates: a, b" / "+N more".
 pub fn summary(names: &[String], max: usize) -> String {
@@ -445,7 +444,6 @@ mod tests {
         for (out, want) in cases {
             assert_eq!(parse_pending(out).map(|l| l.join(",")).as_deref(), want);
         }
-        assert_eq!(PENDING_ARGV, ["pacman", "-Qu"]);
     }
 
     #[test]

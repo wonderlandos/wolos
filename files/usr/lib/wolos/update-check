@@ -4,14 +4,18 @@
 # it checks at most once every 20 hours, so a computer asleep at night still checks once a day.
 # `update-check now` checks regardless. It only looks: installing is Software Update (wol update).
 # Findings in $D, readable by every account (the shell notifies from them):
-#   pkg      packages with a newer version at the pinned snapshot and in [wolos] (checkupdates)
+#   pkg      packages with a newer version at the pinned snapshot and in [wolos] (pacman -Qu)
 #   audit    installed packages with a known vulnerability (arch-audit -q)
 #   kernels  installed package names (pacman -Qq): kernels besides linux-wolos are reported
 #   base     the latest release manifest; base.sig its signature in hex (verified when read)
 #   checked  when the check finished (seconds since 1970)
 set -u
 D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
-URL=${WOLOS_RELEASE_URL:-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
+# The release manifest (and URL.sig) from the CDN's latest/ folder (the release tooling writes it);
+# GitHub's latest release carries the same two files and is read when the CDN answers 404 or an
+# error or cannot be reached. The signature is checked when the findings are read, whichever came.
+URL=${WOLOS_RELEASE_URL:-https://wolos.squareweb.app/latest/release.json}
+FALLBACK=${WOLOS_RELEASE_FALLBACK-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
 EVERY=72000
 now=$(date +%s)
 last=$(cat "$D/checked" 2>/dev/null)
@@ -21,12 +25,29 @@ case $last in '' | *[!0-9]*) last=0 ;; esac
 [ "${1:-}" = now ] || [ $((now - last)) -ge $EVERY ] || exit 0
 umask 022
 mkdir -p "$D" || exit 1
-# checkupdates: 0 updates listed, 2 none; anything else (offline) leaves no stamp: the next hour tries.
-checkupdates --nocolor >"$D/pkg.new" 2>/dev/null
-case $? in
-0 | 2) mv "$D/pkg.new" "$D/pkg" ;;
-*) rm -f "$D/pkg.new"; exit 0 ;;
-esac
+# Packages, against a temporary copy of pacman's database: an installed slot keeps it on the
+# read-only seal (DBPath /usr/lib/pacman, ADR 0016), where `pacman -Sy` cannot take its lock, and
+# checkupdates needs fakeroot, which the image does not ship (e2e D3: no check ever finished).
+# `local` is linked, `sync` copied and refreshed there, as modules-install and update-download do;
+# pacman's download user must be able to look in (a link and public package lists).
+db=${WOLOS_PACMAN_DB:-$(pacman-conf DBPath 2>/dev/null || :)}
+db=${db:-/var/lib/pacman}
+db=${db%/}
+tmp=$(mktemp -d "${TMPDIR:-/var/tmp}/wolos-check-db.XXXXXX") || exit 0
+trap 'rm -rf "${tmp:?}"' EXIT
+chmod 755 "$tmp" && ln -s "$db/local" "$tmp/local" || exit 0
+if [ -d "$db/sync" ]; then cp -a "$db/sync" "$tmp/" || exit 0; fi
+# Offline (the refresh fails) leaves no stamp: the next hour tries.
+pacman --dbpath "$tmp" -Sy --noprogressbar >/dev/null 2>&1 || exit 0
+# -Qu: 0 = updates listed, 1 = none (or an error, which says so on stderr).
+pacman --dbpath "$tmp" -Qu >"$D/pkg.new" 2>"$tmp/err"
+st=$?
+if [ "$st" -eq 0 ] || { [ "$st" -eq 1 ] && [ ! -s "$tmp/err" ]; }; then
+	mv "$D/pkg.new" "$D/pkg"
+else
+	rm -f "$D/pkg.new"
+	exit 0
+fi
 # Exit 1 also means "found some"; an empty list from a failed run keeps the last one. Without
 # arch-audit there is no list at all (not an empty one: that would read "no known vulnerabilities").
 if command -v arch-audit >/dev/null 2>&1; then
@@ -38,9 +59,14 @@ else
 	rm -f "$D/audit"
 fi
 pacman -Qq >"$D/kernels" 2>/dev/null
-if curl -fsSL -o "$D/base.new" "$URL" 2>/dev/null &&
-	curl -fsSL "$URL.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
-	[ -s "$D/base.sig.new" ]; then
+# release URL: the manifest and its signature (in hex) from one place; 0 when both came.
+release() {
+	[ -n "$1" ] &&
+		curl -fsSL -o "$D/base.new" "$1" 2>/dev/null &&
+		curl -fsSL "$1.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
+		[ -s "$D/base.sig.new" ]
+}
+if release "$URL" || release "$FALLBACK"; then
 	mv "$D/base.new" "$D/base"
 	mv "$D/base.sig.new" "$D/base.sig"
 else

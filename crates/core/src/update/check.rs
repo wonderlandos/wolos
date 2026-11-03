@@ -11,8 +11,11 @@ pub const DIR: &str = "/var/lib/wolos/updates";
 /// The script the timer runs (hourly; it checks at most once every [`EVERY_SECS`]).
 pub const SCRIPT: &str = "/usr/lib/wolos/update-check";
 pub const EVERY_SECS: u64 = 20 * 3600;
-/// The manifest of the release this slot runs.
+/// The manifest of the release this slot runs. An image without it (v0.12.0) is known by
+/// [`OS_RELEASE`]'s `VERSION_ID` instead ([`Updates::installed`] reads either).
 pub const RELEASE_FILE: &str = "/usr/lib/wolos-release.json";
+/// os-release of the running system: its `VERSION_ID` is the release version.
+pub const OS_RELEASE: &str = "/etc/os-release";
 /// The system kernel, only from `[wolos]`; the default boot entry always boots it.
 pub const SYSTEM_KERNEL: &str = "linux-wolos";
 
@@ -130,9 +133,15 @@ impl Updates {
         self.packages.len() + usize::from(self.base.is_some())
     }
 
-    /// Drop a release already installed since the check (the running [`RELEASE_FILE`]).
+    /// Drop a release already installed since the check: `running` is the text of the running
+    /// [`RELEASE_FILE`], or of [`OS_RELEASE`] where the image has no manifest (e2e D3: once the
+    /// check worked, every 0.12.0 system was offered "WolOS 0.12.0").
     pub fn installed(mut self, running: Option<&str>) -> Self {
-        let v = running.and_then(Manifest::parse).map(|m| m.version);
+        let v = running.and_then(|t| {
+            Manifest::parse(t)
+                .map(|m| m.version)
+                .or_else(|| crate::base::version(t))
+        });
         if v.is_some() && v == self.base {
             self.base = None;
             self.snapshot = None;
@@ -246,8 +255,16 @@ mod tests {
             u.clone().installed(Some(&older)).base.as_deref(),
             Some("2026.11")
         );
-        assert_eq!(u.installed(None).count(), 1, "unknown: keep");
+        assert_eq!(u.clone().installed(None).count(), 1, "unknown: keep");
         assert_eq!(USERLAND_ARGV, ["cat", "/usr/lib/wolos-release.json"]);
+        // No manifest in the image: os-release names the running version.
+        let os = "NAME=WolOS\nID=wolos\nVERSION_ID=2026.11\n";
+        assert_eq!(u.clone().installed(Some(os)).base, None);
+        let os_older = os.replace("2026.11", "2026.10");
+        assert_eq!(
+            u.installed(Some(&os_older)).base.as_deref(),
+            Some("2026.11")
+        );
     }
 
     #[test]

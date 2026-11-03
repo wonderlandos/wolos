@@ -382,7 +382,9 @@ pub fn plan_with(
             },
         ],
         AdminAction::TimeZone => vec![AdminStep::Run(timezones::set_argv(&a[0]))],
-        AdminAction::PkgRefresh => vec![argv(&["pacman", "-Sy"])],
+        // The update check now: catalogue refreshed in a temporary database (`pacman -Sy` cannot
+        // lock the sealed one, ADR 0016), findings in `update::check::DIR` for every account.
+        AdminAction::PkgRefresh => vec![argv(&[crate::update::check::SCRIPT, "now"])],
         // Inside the pinned release only `[wolos]` moves; a new release is a new root slot.
         // Holds (validated package names) stay at their version: `--ignore=a,b`.
         AdminAction::PkgUpgrade if a.is_empty() => vec![argv(&["pacman", "-Syu", "--noconfirm"])],
@@ -1049,7 +1051,7 @@ mod tests {
                 &["firefox", "gimp"],
                 "pacman -Syu --noconfirm --ignore=firefox,gimp",
             ),
-            (PkgRefresh, &[], "pacman -Sy"),
+            (PkgRefresh, &[], "/usr/lib/wolos/update-check now"),
             (
                 BootEnvironment,
                 &["wolos-b"],

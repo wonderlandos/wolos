@@ -325,10 +325,13 @@ impl SystemApi {
             }),
             updates: Cached::new(host.clone(), 3600.0, None, {
                 let h = h.clone();
+                // The update check's findings (`update::check::DIR`, readable by every
+                // account): `pacman -Qu` here would read the sealed, never refreshed database
+                // (ADR 0016) and exits 1 when nothing is pending. None: never checked.
                 move || {
-                    Some(crate::update::parse_pending(
-                        h.run_slow(&crate::update::PENDING_ARGV).as_deref(),
-                    ))
+                    use crate::update::check::{DIR, Updates};
+                    let f = |n: &str| h.read_text(&format!("{DIR}/{n}")).unwrap_or_default();
+                    Some(Updates::parse(&f("checked"), &f("pkg"), "", "").map(|u| u.packages))
                 }
             }),
             host,
@@ -358,7 +361,8 @@ impl SystemApi {
     pub fn hardware(&self) -> shared::hardware::HardwareSnapshot {
         self.hw.get()
     }
-    /// Pending pkg upgrades (None = unknown). Forks pkg at most once an hour.
+    /// Pending pkg upgrades from the update check (None = never checked). Read at most once an
+    /// hour.
     pub fn pending_updates(&self) -> Option<Vec<String>> {
         self.updates.get()
     }
@@ -421,10 +425,14 @@ mod tests {
     #[test]
     fn updates_are_cached_and_invalidated() {
         let h = Arc::new(FakeHost::new(true));
-        h.slow("pacman -Qu", "a 1-1 -> 2-1\n");
+        let dir = crate::update::check::DIR;
         let api = SystemApi::new(h.clone());
+        assert_eq!(api.pending_updates(), None, "never checked");
+        api.invalidate_updates();
+        h.file(&format!("{dir}/checked"), "5\n");
+        h.file(&format!("{dir}/pkg"), "a 1-1 -> 2-1\n");
         assert_eq!(api.pending_updates(), Some(vec!["a".into()]));
-        h.slow("pacman -Qu", "");
+        h.file(&format!("{dir}/pkg"), "");
         assert_eq!(api.pending_updates().map(|v| v.len()), Some(1));
         api.invalidate_updates();
         assert_eq!(api.pending_updates().map(|v| v.len()), Some(0));

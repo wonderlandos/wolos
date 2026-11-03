@@ -23,7 +23,8 @@ pub enum AdminAction {
     UserPassword,
     TimeZone,
     PkgUpgrade,
-    /// Refresh the package catalogue (`pkg update`) so an update check reads current data.
+    /// Run the update check now (`/usr/lib/wolos/update-check now`: the package catalogue
+    /// refreshed in a temporary database) so `wol update check` reads current findings.
     PkgRefresh,
     Revoke,
     /// App Store: one catalog id or pkg name (`wol_core::store`).

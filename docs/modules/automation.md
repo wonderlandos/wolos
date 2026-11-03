@@ -59,7 +59,7 @@ config home, which the notification code and `wol focus` read).
 
 | Word (aliases) | Toggle | What it flips |
 |---|---|---|
-| `nightlight` (`night-light`, `nightshift`, `night-shift`) | Night Light | warmer colours: `hyprctl hyprsunset temperature` at `NIGHT_LIGHT_KELVIN`, off = `identity`; without hyprsunset the change stops |
+| `nightlight` (`night-light`, `nightshift`, `night-shift`) | Night Light | warmer colours: `hyprctl hyprsunset temperature` at `NIGHT_LIGHT_KELVIN`, off = `identity`. hyprsunset starts at login (warm when Night Light was left on); not running, on starts it (`hyprctl dispatch exec hyprsunset -t 4500`); not installed, on stops with a sentence saying so; off always succeeds |
 | `stay-awake` (`idle`, `awake`, `caffeine`) | Stay Awake | the screen does not dim, lock or sleep by itself: a `systemd-inhibit --what=idle` held by the user unit `wol-stay-awake.service`, which off stops |
 | `silence` (`dnd`, `focus`) | Do Not Disturb | banners wait in the Notification Center: only the flag file changes |
 

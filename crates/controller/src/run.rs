@@ -684,8 +684,8 @@ fn shell(env: &mut dyn Env, inv: &Invocation) -> i32 {
     }
 }
 
-/// Refresh the package catalogue through wol-admind (no password: the person at the computer)
-/// so "up to date" is never read from a stale catalogue.
+/// Run the update check now through wol-admind (no password: the person at the computer) so
+/// "up to date" is never read from a stale catalogue.
 fn refresh_catalogue(env: &mut dyn Env) -> bool {
     let sock = env
         .var("WOL_ADMIN_SOCKET")
@@ -698,14 +698,22 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
         .is_ok_and(|r| AdminReply::parse(&r) == AdminReply::Ok)
 }
 
+/// Pending updates: the check's own findings, never `pacman -Qu` on the running system. Its
+/// database sits on the read-only seal (ADR 0016) and is never refreshed there, and `-Qu` exits 1
+/// when nothing is pending (e2e D3: "pacman -Qu failed" on every installed system). wol-admind
+/// runs the check now (`update-check now`, a temporary database); a stamp from before this request
+/// means it could not refresh (offline).
 fn update_check(env: &mut dyn Env, json: bool) -> i32 {
+    let asked = env.now_secs();
     let refreshed = refresh_catalogue(env);
-    let out = env.capture(&wol_core::update::PENDING_ARGV);
-    let Some(mut pending) = wol_core::update::parse_pending(out.as_deref()) else {
-        return fail(env, ErrorCode::Unavailable, "pacman -Qu failed");
-    };
-    // A newer release the daily check found, until installed (`wol update apply`).
-    if let Some(b) = update_snapshot(env).and_then(|u| u.base) {
+    let found = update_snapshot(env);
+    let refreshed = refreshed && found.as_ref().is_some_and(|u| u.checked >= asked);
+    let mut pending = found
+        .as_ref()
+        .map(|u| u.packages.clone())
+        .unwrap_or_default();
+    // A newer release the check found, until installed (`wol update apply`).
+    if let Some(b) = found.and_then(|u| u.base) {
         pending.push(format!("WolOS {b}"));
     }
     if pending.is_empty() && !refreshed {
@@ -735,7 +743,11 @@ fn update_snapshot(env: &mut dyn Env) -> Option<wol_core::update::check::Updates
     ));
     let f = |n: &str| env.read_file(&Path::new(DIR).join(n)).unwrap_or_default();
     let u = Updates::from_files(f, &keys)?;
-    let userland = u.base.as_ref().and_then(|_| env.capture(&USERLAND_ARGV));
+    // No manifest in the image (v0.12.0): os-release names the running release.
+    let userland = u.base.as_ref().and_then(|_| {
+        env.capture(&USERLAND_ARGV)
+            .or_else(|| env.read_file(Path::new(wol_core::update::check::OS_RELEASE)))
+    });
     Some(u.installed(userland.as_deref()))
 }
 

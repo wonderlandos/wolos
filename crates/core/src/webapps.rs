@@ -9,9 +9,14 @@
 //! [`MARK_KEY`] are listed or removed.
 use std::path::{Path, PathBuf};
 
-/// Browser that opens web apps (`--app=` window: no tabs, no address bar). Ships in
-/// wolos-iso/profile/packages.desktop.
-pub const BROWSER: &str = "helium-browser";
+/// Browser that opens web apps (`--app=` window: no tabs, no address bar): the launcher the
+/// `helium-browser` package installs (wolos-pkgbuilds helium-browser/PKGBUILD), the one path
+/// every browser caller shares ([`crate::theme::helium::HELIUM`]). The package is named
+/// `helium-browser`; its program is `/usr/bin/helium` (e2e D1: a launcher naming the package
+/// opened nothing).
+pub const BROWSER: &str = crate::theme::helium::HELIUM.bin;
+/// Profile directory Chromium opens inside a user data directory (ours or the shared one).
+const CHROMIUM_PROFILE: &str = "Default";
 /// File name prefix of our launchers under `<data home>/applications`.
 pub const PREFIX: &str = "wolos-webapp-";
 /// Key in `[Desktop Entry]` that marks a launcher as ours; its value is the address.
@@ -215,9 +220,29 @@ pub fn profile_dir(data_home: &Path, id: &str) -> PathBuf {
     data_home.join(DATA_DIR).join("profiles").join(id)
 }
 
-/// Window class the browser gives an `--app` window, so the Dock groups it under the launcher.
-pub fn wm_class(id: &str) -> String {
-    format!("{PREFIX}{id}")
+/// Window class (Wayland app-id) the browser gives an `--app` window, so the Dock and the menu
+/// bar find the launcher (`StartupWMClass`). Chromium ignores `--class` for app windows on
+/// Wayland and names them after the address: `chrome-<host>_<path, / as _>-<profile>`, without
+/// port, query or fragment (measured on Helium 0.20.2.1: `https://example.org/` gives
+/// `chrome-example.org__-Default`, `https://Mail.Example.org:8443/a/b.c?x=1#y` gives
+/// `chrome-mail.example.org__a_b.c-Default`).
+pub fn wm_class(app: &WebApp) -> String {
+    let Ok(u) = parse_url(&app.url) else {
+        return format!("{PREFIX}{}", app.id);
+    };
+    let rest = u.url.split_once("://").map_or("", |(_, r)| r);
+    let path = rest
+        .find(['/', '?', '#'])
+        .map_or("", |i| &rest[i..])
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("");
+    let path = if path.is_empty() { "/" } else { path };
+    format!(
+        "chrome-{}_{}-{CHROMIUM_PROFILE}",
+        u.host,
+        path.replace('/', "_")
+    )
 }
 
 /// Escapes one `Exec=` argument (freedesktop Desktop Entry spec, "The Exec key"): quoted, with
@@ -285,11 +310,7 @@ fn unvalue(v: &str) -> String {
 
 /// The browser argv that opens `app` (data home for an own profile).
 pub fn launch_argv(app: &WebApp, data_home: &Path) -> Vec<String> {
-    let mut v = vec![
-        BROWSER.to_string(),
-        format!("--app={}", app.url),
-        format!("--class={}", wm_class(&app.id)),
-    ];
+    let mut v = vec![BROWSER.to_string(), format!("--app={}", app.url)];
     if app.profile == Profile::Own {
         v.push(format!(
             "--user-data-dir={}",
@@ -315,7 +336,7 @@ pub fn desktop_entry(app: &WebApp, data_home: &Path) -> String {
         url = value(&app.url),
         exec = exec.join(" "),
         icon = value(&app.icon),
-        class = wm_class(&app.id),
+        class = value(&wm_class(app)),
         profile = match app.profile {
             Profile::Shared => "shared",
             Profile::Own => "own",
@@ -483,11 +504,10 @@ mod tests {
         let text = desktop_entry(&app, home);
         assert!(text.starts_with("[Desktop Entry]\nType=Application\n"));
         assert!(text.contains(
-            "\nExec=\"helium-browser\" \"--app=https://mail.example.com/?a=1%%20b\" \
-             \"--class=wolos-webapp-mail\" \
+            "\nExec=\"/usr/bin/helium\" \"--app=https://mail.example.com/?a=1%%20b\" \
              \"--user-data-dir=/home/a/.local/share/wolos/webapps/profiles/mail\"\n"
         ));
-        assert!(text.contains("\nStartupWMClass=wolos-webapp-mail\n"));
+        assert!(text.contains("\nStartupWMClass=chrome-mail.example.com__-Default\n"));
         assert!(text.contains("\nIcon=/home/a/.local/share/wolos/webapps/icons/mail.png\n"));
         assert_eq!(parse_entry("mail", &text), Some(app.clone()));
         let shared = WebApp {
@@ -502,6 +522,33 @@ mod tests {
         assert_eq!(
             parse_entry("x", "[Desktop Entry]\nName=X\nX-WolOS-WebApp=file:///etc\n"),
             None
+        );
+    }
+
+    /// e2e D1: the window class Helium really gives an `--app` window (measured in the VM), so
+    /// the Dock and the menu bar match the launcher instead of showing `chrome-...`.
+    #[test]
+    fn the_window_class_is_the_one_chromium_gives_app_windows() {
+        let class = |url: &str| wm_class(&WebApp::new("Mail", url, Profile::Own).unwrap());
+        assert_eq!(class("https://example.org"), "chrome-example.org__-Default");
+        assert_eq!(
+            class("https://example.org/"),
+            "chrome-example.org__-Default"
+        );
+        assert_eq!(
+            class("https://Mail.Example.org:8443/a/b.c?x=1#y"),
+            "chrome-mail.example.org__a_b.c-Default"
+        );
+        assert_eq!(class("example.org?q=1"), "chrome-example.org__-Default");
+        // The browser is the program the package installs, never the package name.
+        assert_eq!(BROWSER, "/usr/bin/helium");
+        assert!(
+            !launch_argv(
+                &WebApp::new("M", "example.org", Profile::Shared).unwrap(),
+                Path::new("/d")
+            )
+            .iter()
+            .any(|a| a.starts_with("--class"))
         );
     }
 
