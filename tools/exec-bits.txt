@@ -79,3 +79,4 @@ tools/hooks/guard-test.sh
 tools/hooks/install.sh
 tools/hooks/public-guard
 tools/license/relicense.py
+tools/ruby/lint.sh

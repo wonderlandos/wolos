@@ -19,6 +19,7 @@ pub mod pkg;
 pub mod plugin;
 pub mod power;
 pub mod run;
+pub mod script;
 pub mod seal;
 pub mod security;
 pub mod sessions;

@@ -968,18 +968,25 @@ rule!(
         && !s.rel.contains("core/src/system/"),
     |s| n_all(&s.code, &["Command::new("])
 );
-rule!(rr_020_no_shell_in_command, "RR-020", prod, |s| {
-    lit_has(
-        s,
-        &[
-            "\"sh\"",
-            "\"bash\"",
-            "\"/bin/sh\"",
-            "\"/bin/bash\"",
-            "\"/usr/bin/sh\"",
-        ],
-    )
-});
+// controller/src/script.rs is left out: `wol script`'s KINDS table names interpreters that run a
+// script file as an argv; no shell string is built there (ADR 0041).
+rule!(
+    rr_020_no_shell_in_command,
+    "RR-020",
+    |s| prod(s) && !s.rel.ends_with("controller/src/script.rs"),
+    |s| {
+        lit_has(
+            s,
+            &[
+                "\"sh\"",
+                "\"bash\"",
+                "\"/bin/sh\"",
+                "\"/bin/bash\"",
+                "\"/usr/bin/sh\"",
+            ],
+        )
+    }
+);
 rule!(
     rr_021_socket_reads_go_through_the_bounded_reader,
     "RR-021",

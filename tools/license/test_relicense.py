@@ -131,6 +131,12 @@ class Relicense(unittest.TestCase):
         self.assertEqual(self.read("image/old.sh"), f"#!/bin/sh\n# SPDX-License-Identifier: {G}\nset -e\n")
         self.assertEqual(self.read("crates/api/etc.conf"), f"# SPDX-License-Identifier: {G}\nkey=1\n")
 
+    def test_extensionless_ruby_scripts_get_a_hash_header(self):
+        pol = R.Policy(json.loads((Path(R.HERE) / "policy.json").read_text()))
+        self.assertEqual(pol.style("desktop/overlay/usr/bin/wol-x", "#!/usr/bin/ruby\nputs 1\n"), "#")
+        self.assertEqual(pol.style("tools/x", "#!/usr/bin/env ruby\nputs 1\n"), "#")
+        self.assertIsNone(pol.style("tools/x", "#!/usr/bin/node\n"))
+
     def test_crlf_is_kept(self):
         R.run(self.root, self.pol, apply=True)
         self.assertEqual(self.read("tools/win.py"), f"# SPDX-License-Identifier: {G}\r\nimport os\r\nprint(1)\r\n")

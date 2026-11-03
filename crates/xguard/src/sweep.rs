@@ -90,9 +90,17 @@ pub fn in_scope(name: &str, executable: bool, tagged: bool) -> bool {
     let n = name.to_ascii_lowercase();
     executable
         || tagged
-        || [".appimage", ".exe", ".msi", ".wol", ".sh", ".desktop"]
-            .iter()
-            .any(|e| n.ends_with(e))
+        || [
+            ".appimage",
+            ".exe",
+            ".msi",
+            ".wol",
+            ".sh",
+            ".rb",
+            ".desktop",
+        ]
+        .iter()
+        .any(|e| n.ends_with(e))
 }
 
 /// Files in scope under `dir`, not following links.
@@ -229,6 +237,7 @@ mod tests {
         for f in [
             "a/run.AppImage",
             "a/setup.exe",
+            "a/backup.rb",
             "a/notes.txt",
             "a/photo.jpg",
             "a/tagged.pdf",
@@ -247,7 +256,16 @@ mod tests {
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap())
             .collect();
-        assert_eq!(names, ["run.AppImage", "setup.exe", "tagged.pdf", "tool"]);
+        assert_eq!(
+            names,
+            [
+                "backup.rb",
+                "run.AppImage",
+                "setup.exe",
+                "tagged.pdf",
+                "tool"
+            ]
+        );
     }
 
     #[test]

@@ -108,6 +108,21 @@ the rest with the checklist in `docs/REVIEW.md`.
 - Quote every expansion. Paths that come from a user, a disk label or a package are checked
   against `..` and absolute roots before use. No `eval`, no `sh -c "$user_string"`.
 
+## 2.1 Ruby scripts (ADR 0041)
+
+- Ruby is the scripting language beside sh, for scripts that run as a person (tooling, widget
+  sources, bundle entries, helpers). Root helpers, units and hooks stay POSIX sh: no Ruby under
+  `files/usr/lib/wolos` (RB-030). Apps and tools are Crystal (§2a).
+- A shipped script starts `#!/usr/bin/ruby` (never `env`), the SPDX line on line 2, then the
+  header (what, why, how) and `# frozen_string_literal: true` before the first code line.
+- The interpreter's own library only (docs/RULES-ruby.md `STDLIB`); no gems, no Bundler.
+- Commands are a program plus its arguments (`system('tar', 'czf', out, dir)`); never backticks,
+  `%x()` or one command string. No `eval`, no `Marshal.load`/`YAML.load`; `JSON.parse`.
+- **CI** `ruby -wc` with no warning and RuboCop with `tools/ruby/rubocop.yml` (an explicit cop
+  list) clean: `tools/ruby/lint.sh`; the catalogue is docs/RULES-ruby.md (`RB-nnn`).
+- `rescue` names what it handles (never `Exception`, never `rescue nil`); `Dir.mktmpdir` with a
+  block; `Net::HTTP` with `open_timeout` and `read_timeout`.
+
 ## 2a. Crystal (wopkg, wol-hue, the libwol examples)
 
 Crystal is the userland language (ADR 0036); the numbered, test-enforced catalogue is

@@ -12,6 +12,7 @@
   "skip": [
     "third_party/**",
     "crates/aurlaws/tests/fixtures/**",
+    "crates/controller/tests/fixtures/ruby/bad-spdx.rb",
     "desktop/overlay/usr/share/wolos/gtk-*/*.css",
     "desktop/overlay/usr/share/wolos/gtk3-theme/**",
     "desktop/overlay/usr/share/wolos/firefox/wolos-chrome.css",
