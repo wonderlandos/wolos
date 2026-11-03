@@ -360,27 +360,34 @@ mod tests {
             .env("HOME", "/")
             .stderr(std::process::Stdio::null())
             .spawn();
-        if let Ok(mut c) = un {
-            // unshare execs sleep a moment after it started: wait for that exec, bounded.
-            for _ in 0..1_000_000 {
-                let exe = std::fs::read_link(format!("/proc/{}/exe", c.id()));
-                if exe.is_ok_and(|e| e.ends_with("sleep")) {
-                    break;
-                }
-                std::thread::yield_now();
+        let Ok(mut c) = un else {
+            eprintln!("skipped: unshare(1) cannot be run here");
+            return;
+        };
+        // unshare execs sleep a moment after it started: wait for that exec, bounded. Where it
+        // may not map the account (uid_map EPERM) it exits at once: nothing to judge.
+        let start = std::time::Instant::now();
+        loop {
+            if let Ok(Some(st)) = c.try_wait() {
+                eprintln!("skipped: unshare -m -r is not permitted here ({st})");
+                return;
             }
-            let id = PeerIdentity::of_process(i32::try_from(c.id()).unwrap(), &SHOWERS);
-            // Where unshare may not map the account (uid_map EPERM), it exits at once: the
-            // process is gone and there is nothing to judge.
-            if let Some(dir) = id.dir.as_ref()
-                && exe_of(dir).is_some_and(|e| e.ends_with("sleep"))
-            {
-                assert!(!same_mount_namespace(dir), "a mount namespace of its own");
-                assert!(id.injected());
+            let exe = std::fs::read_link(format!("/proc/{}/exe", c.id()));
+            if exe.is_ok_and(|e| e.ends_with("sleep")) {
+                break;
             }
-            let _ = c.kill();
-            let _ = c.wait();
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(5),
+                "unshare neither ran sleep nor exited"
+            );
+            std::thread::yield_now();
         }
+        let id = PeerIdentity::of_process(i32::try_from(c.id()).unwrap(), &SHOWERS);
+        let dir = id.dir.as_ref().expect("the running child's /proc entry");
+        assert!(!same_mount_namespace(dir), "a mount namespace of its own");
+        assert!(id.injected());
+        let _ = c.kill();
+        let _ = c.wait();
     }
 
     /// A child process, started with `env`, still running `sleep`.

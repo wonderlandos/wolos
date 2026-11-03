@@ -118,8 +118,58 @@ pub struct Shared {
 #[derive(Default)]
 struct Cached {
     cache: AuthCache,
-    /// Revokes so far: a password accepted while a revoke went by does not become a grant.
+    /// Sessions with a request under way ([`Watching`]): how many requests, and the revokes of
+    /// that session since the first began. Per (uid, session), so one account's revokes never
+    /// touch another's; an entry goes with its last request, so the table is never larger than
+    /// the connections.
+    watched: HashMap<(u32, i32), Watch>,
+}
+
+#[derive(Default)]
+struct Watch {
+    requests: u32,
     revokes: u64,
+}
+
+/// One request watching the revokes of its own session, from its decision to its end: a
+/// password accepted, or a command that waited for its lane on the cached authorization, while
+/// a revoke of that session went by does not count.
+struct Watching<'a> {
+    shared: &'a Shared,
+    key: (u32, i32),
+    seen: u64,
+}
+
+impl<'a> Watching<'a> {
+    /// Registered under the cache lock `c`, at the moment the cache is read.
+    fn new(shared: &'a Shared, c: &mut Cached, key: (u32, i32)) -> Self {
+        let w = c.watched.entry(key).or_default();
+        w.requests += 1;
+        Self {
+            shared,
+            key,
+            seen: w.revokes,
+        }
+    }
+    /// Whether the session was revoked since this request's decision.
+    fn revoked(&self, c: &Cached) -> bool {
+        c.watched
+            .get(&self.key)
+            .is_none_or(|w| w.revokes != self.seen)
+    }
+}
+
+// Unregisters the request: the session's entry goes with its last one.
+impl Drop for Watching<'_> {
+    fn drop(&mut self) {
+        let mut c = self.shared.cached();
+        if let Some(w) = c.watched.get_mut(&self.key) {
+            w.requests -= 1;
+            if w.requests == 0 {
+                c.watched.remove(&self.key);
+            }
+        }
+    }
 }
 
 /// Which commands may run side by side: the package manager, updates and boot entries are one
@@ -291,7 +341,9 @@ pub fn handle(
         if let Some(u) = uid {
             let mut c = shared.cached();
             c.cache.revoke(u, session);
-            c.revokes += 1;
+            if let Some(w) = c.watched.get_mut(&(u, session)) {
+                w.revokes += 1;
+            }
         }
         return AdminReply::Ok;
     }
@@ -303,23 +355,29 @@ pub fn handle(
     } else {
         user.as_ref().and(uid)
     };
-    let (cached, revokes) = {
-        let c = shared.cached();
+    let (cached, watch) = {
+        let mut c = shared.cached();
         let valid = !needs_fresh_password(&req)
             && session > 0
             && uid.is_some_and(|u| c.cache.valid(u, session, os.now()));
-        (valid, c.revokes)
+        let watch = uid
+            .filter(|_| session > 0)
+            .map(|u| Watching::new(shared, &mut c, (u, session)));
+        (valid, watch)
     };
     let user_level = known.is_some_and(|u| wol_core::admin::user_level_ok(&req, u, &os.sessions()));
     // Anyone may change their own password, with the current one (fresh: never the cache).
     let own_password = req.action == AdminAction::UserPassword
         && user.as_ref().is_some_and(|(n, _)| *n == req.args[0]);
-    match decide(
+    let decision = decide(
         known,
         admin || user_level || own_password,
         cached || user_level,
         !pw.is_empty(),
-    ) {
+    );
+    // Allowed on the session's cached authorization alone (not root, not a user-level action).
+    let on_cache = decision == AdminDecision::Allow && cached && !user_level && known != Some(0);
+    match decision {
         AdminDecision::NotAdmin => {
             os.log(&format!("{who}: {what}: not an administrator"));
             return refuse(AdminReply::NotAdmin);
@@ -337,7 +395,7 @@ pub fn handle(
                 && let Some(u) = uid
             {
                 let mut c = shared.cached();
-                if c.revokes == revokes {
+                if !watch.as_ref().is_some_and(|w| w.revoked(&c)) {
                     c.cache.grant(u, session, os.now());
                 }
             }
@@ -345,6 +403,18 @@ pub fn handle(
         AdminDecision::Allow => {}
     }
     let _lane = shared.lane(lane(req.action));
+    // A command may wait long for its lane (an install before it): on the cache, it runs only
+    // if the authorization still holds now and its session was not revoked meanwhile.
+    if on_cache {
+        let c = shared.cached();
+        let holds = uid.is_some_and(|u| c.cache.valid(u, session, os.now()))
+            && !watch.as_ref().is_some_and(|w| w.revoked(&c));
+        if !holds {
+            drop(c);
+            os.log(&format!("{who}: {what}: authorization ended while waiting"));
+            return AdminReply::NeedsAuth;
+        }
+    }
     let ok = match req.action {
         AdminAction::WolInstall => wol_install(os, &req.args[0], &req.args[1], uid),
         AdminAction::WolRemove => wol_remove(os, &req.args[0]),
@@ -1748,173 +1818,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A thread-safe fake (connections run on their own threads) whose refusal delay, password
-    /// check and pacman runs all wait at one gate until the test opens it: "slow" without any
-    /// sleeping, and a request that gets through while they wait was not held by them.
-    #[derive(Default)]
-    struct Slow {
-        delays: std::sync::atomic::AtomicU32,
-        /// (slow calls started, gate open).
-        gate: Mutex<(u32, bool)>,
-        moved: std::sync::Condvar,
-    }
-
-    /// How long a test waits for something that should happen at once.
-    const PROMPT: std::time::Duration = std::time::Duration::from_secs(5);
-
-    impl Slow {
-        fn wait(&self) {
-            let mut g = lock(&self.gate);
-            g.0 += 1;
-            self.moved.notify_all();
-            while !g.1 {
-                g = self.moved.wait(g).unwrap_or_else(|p| p.into_inner());
-            }
-        }
-        /// Until a slow call is waiting at the gate.
-        fn started(&self) {
-            let g = lock(&self.gate);
-            let (_g, t) = self
-                .moved
-                .wait_timeout_while(g, PROMPT, |g| g.0 == 0)
-                .unwrap_or_else(|p| p.into_inner());
-            assert!(!t.timed_out(), "nothing slow started");
-        }
-        fn open(&self) {
-            lock(&self.gate).1 = true;
-            self.moved.notify_all();
-        }
-    }
-
-    /// `handle` on a thread of its own, its reply awaited at most [`PROMPT`] (a request held by
-    /// another fails the test instead of hanging it).
-    fn promptly(
-        data: &[u8],
-        caller: Option<Caller>,
-        shared: &Arc<Shared>,
-        os: &'static Slow,
-    ) -> Option<AdminReply> {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let (data, shared) = (data.to_vec(), shared.clone());
-        std::thread::spawn(move || tx.send(handle(&data, caller, &shared, os)));
-        rx.recv_timeout(PROMPT).ok()
-    }
-
-    impl AdminOs for Slow {
-        fn passwd(&self) -> String {
-            Fake::default().passwd()
-        }
-        fn group(&self) -> String {
-            Fake::default().group()
-        }
-        fn authenticate(&self, user: &str, pw: &[u8]) -> bool {
-            self.wait();
-            user == "ann" && pw == b"good"
-        }
-        fn run(&self, argv: &[String], _: bool) -> bool {
-            if argv[0] == "pacman" {
-                self.wait();
-            }
-            true
-        }
-        fn run_input(&self, _: &[String], _: &str) -> bool {
-            true
-        }
-        fn run_progress(&self, argv: &[String], _: wol_core::progress::Kind, _: &str) -> bool {
-            self.run(argv, true)
-        }
-        fn write(&self, _: &str, _: u32, _: &str) -> bool {
-            true
-        }
-        fn read(&self, _: &str) -> Option<String> {
-            None
-        }
-        fn refuse_delay(&self) {
-            self.delays
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            self.wait();
-        }
-        fn now(&self) -> u64 {
-            100
-        }
-        fn log(&self, _: &str) {}
-        fn sessions(&self) -> Vec<u32> {
-            Vec::new()
-        }
-        fn capture(&self, _: &[String]) -> Option<String> {
-            None
-        }
-        fn wall_now(&self) -> u64 {
-            0
-        }
-        fn stage_dir(&self) -> Option<PathBuf> {
-            None
-        }
-        fn copy_in(&self, _: &str, _: &Path, _: Option<u32>) -> Result<(), String> {
-            Err("no".into())
-        }
-        fn trusted_keys(&self) -> Vec<[u8; 32]> {
-            Vec::new()
-        }
-        fn remove_dir(&self, _: &Path) {}
-        fn package_facts(&self, _: &str) -> Result<crate::packages::PkgFacts, String> {
-            Err("no".into())
-        }
-    }
-
-    /// api-security 1+2: while one account's refusal delay, wrong-password check or long install
-    /// is still under way, valid requests from other threads are answered; the refusal still
-    /// waited its delay (one per refusal).
-    #[test]
-    fn a_refusal_a_password_check_or_an_install_does_not_hold_other_requests() {
-        use std::sync::atomic::Ordering::SeqCst;
-        let upgrade = |pw: &[u8]| encode(&req(AdminAction::PkgUpgrade, &[]), pw);
-        let quick = encode(&req(AdminAction::Hostname, &["wolbox"]), b"");
-        for (case, slow_req, slow_caller, slow_reply, delays) in [
-            ("refusal", b"garbage".to_vec(), BOB, AdminReply::Invalid, 1),
-            ("password", upgrade(b"bad"), ANN, AdminReply::Denied, 1),
-            ("install", upgrade(b""), ROOT, AdminReply::Ok, 0),
-        ] {
-            let os: &'static Slow = Box::leak(Box::default());
-            let shared = Arc::new(Shared::default());
-            let slow = {
-                let shared = shared.clone();
-                std::thread::spawn(move || handle(&slow_req, slow_caller, &shared, os))
-            };
-            os.started();
-            for _ in 0..3 {
-                assert_eq!(
-                    promptly(&quick, ROOT, &shared, os),
-                    Some(AdminReply::Ok),
-                    "{case}: held by the slow request"
-                );
-            }
-            os.open();
-            assert_eq!(slow.join().unwrap(), slow_reply, "{case}");
-            assert_eq!(
-                os.delays.load(SeqCst),
-                delays,
-                "{case}: one delay per refusal"
-            );
-        }
-    }
-
-    /// A revoke that arrives while the password check is still running wins: the accepted
-    /// password runs its request but leaves no cached authorization behind.
-    #[test]
-    fn a_revoke_during_a_password_check_leaves_no_grant() {
-        let os: &'static Slow = Box::leak(Box::default());
-        let shared = Arc::new(Shared::default());
-        let up = |pw: &[u8]| encode(&req(AdminAction::PkgUpgrade, &[]), pw);
-        let checking = {
-            let shared = shared.clone();
-            std::thread::spawn(move || handle(&up(b"good"), ANN, &shared, os))
-        };
-        os.started();
-        let revoke = encode(&req(AdminAction::Revoke, &[]), b"");
-        assert_eq!(promptly(&revoke, ANN, &shared, os), Some(AdminReply::Ok));
-        os.open();
-        assert_eq!(checking.join().unwrap(), AdminReply::Ok);
-        assert_eq!(handle(&up(b""), ANN, &shared, os), AdminReply::NeedsAuth);
-    }
+    /// Requests from many threads at once (api-security 1+2 and its review).
+    mod concurrency;
 }
