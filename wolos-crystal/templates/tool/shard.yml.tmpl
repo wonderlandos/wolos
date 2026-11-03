@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+name: {{name}}
+version: 0.1.0
+description: |
+  {{module}}, a WolOS tool in Crystal that talks to the system through Cryswol (libwol).
+license: BSD-2-Clause
+crystal: ">= 1.22.0"
+libraries:
+  libwol: ">= 1.14"
+targets:
+  {{name}}:
+    main: src/main.cr

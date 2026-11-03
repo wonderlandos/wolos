@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The spec of {{module}}: it calls run with arguments and reads the two streams, no process started.
+require "spec"
+require "../src/{{name}}"
+
+describe {{module}} do
+  it "greets" do
+    {{module}}.greeting("you").should eq "Hello, you!"
+  end
+
+  it "takes a name" do
+    printed = IO::Memory.new
+    {{module}}.run(["--name", "Ada"], printed, IO::Memory.new).should eq 0
+    printed.to_s.should eq "Hello, Ada!\n"
+  end
+
+  it "refuses an unknown option" do
+    err = IO::Memory.new
+    {{module}}.run(["--colour"], IO::Memory.new, err).should eq 2
+    err.to_s.should contain "--colour is not an option"
+  end
+end

@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{module}}: the tool's commands. `Command.parse` turns the arguments into a value with no system
+# call (the spec reads it); `run` does the work through Cryswol in an open context, and every
+# permission is checked by WolOS, not here.
+require "cryswol"
+
+module {{module}}
+  VERSION = "0.1.0"
+  APP_ID  = "{{id}}"
+  USAGE   = "usage: {{name}} about | notify TITLE [BODY]"
+
+  # What the person asked for.
+  enum Verb
+    Usage
+    About
+    Notify
+  end
+
+  # One parsed command line: the verb, its words, and the line to show for a usage error.
+  record Command, verb : Verb, words : Array(String) = [] of String, message : String = "" do
+    # Read `args`. An unknown or incomplete command is `Verb::Usage` with the usage line; `--help`
+    # is `Verb::Usage` with no message.
+    def self.parse(args : Array(String)) : Command
+      case args.first?
+      when "about"
+        Command.new(Verb::About)
+      when "notify"
+        title = args[1]?
+        return Command.new(Verb::Usage, message: USAGE) unless title && !title.empty?
+        Command.new(Verb::Notify, args[1, 2])
+      when "-h", "--help"
+        Command.new(Verb::Usage)
+      else
+        Command.new(Verb::Usage, message: USAGE)
+      end
+    end
+  end
+
+  # Run `command` in `ctx`; the line to print.
+  def self.run(ctx : Wol::Context, command : Command) : String
+    case command.verb
+    when .about?
+      info = Wol::System.info(ctx)
+      "#{info.os_name} #{info.os_version}"
+    when .notify?
+      Wol::Notification.post(ctx, command.words[0], command.words[1]? || "")
+      "Posted."
+    else
+      USAGE
+    end
+  end
+end

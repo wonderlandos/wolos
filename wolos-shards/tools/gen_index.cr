@@ -13,7 +13,9 @@ require "file_utils"
 
 module ShardIndexGen
   # One reviewed shard: where it is published, the commit, the line the list shows. `fetch` is an
-  # optional other place to read the same commit from (a review mirror).
+  # optional other place to read the same commit from (a review mirror). `path` is the shard's
+  # folder inside the repository `fetch` names, for a shard that still lives in the WolOS source
+  # tree: `check` reads it there, `build` refuses it (README.md "Shards still in the WolOS tree").
   struct Curated
     include YAML::Serializable
 
@@ -22,6 +24,7 @@ module ShardIndexGen
     getter commit : String
     getter summary : String = ""
     getter fetch : String? = nil
+    getter path : String? = nil
   end
 
   # curated.yml.
@@ -84,6 +87,7 @@ module ShardIndexGen
   GIT     = /\Ahttps:\/\/[A-Za-z0-9.:-]+\/[A-Za-z0-9\/._~-]+\z/
   COMMIT  = /\A[0-9a-f]{40}\z/
   VERSION = /\A[0-9][A-Za-z0-9.-]{0,63}\z/
+  PATH    = /\A[A-Za-z0-9][A-Za-z0-9\/._-]{0,199}\z/
 
   # Runs git; its stdout, or nil when it fails.
   def self.git(args : Array(String)) : String?
@@ -108,6 +112,10 @@ module ShardIndexGen
       bad << "git is not an https:// URL without user, query or fragment" if dot_segment || !c.git.matches?(GIT)
       bad << "commit is not 40 lowercase hex digits" unless c.commit.matches?(COMMIT)
       bad << "summary is longer than 200 characters" if c.summary.size > 200
+      if folder = c.path
+        bad << "path is not a plain relative folder" unless folder.matches?(PATH) && folder.split('/').none? { |seg| seg == ".." || seg == "." }
+        bad << "path needs fetch: (the repository that holds the folder)" unless c.fetch
+      end
       unless bad.empty?
         bad.each { |b| problems << "#{c.name}: #{b}" }
         next
@@ -117,9 +125,10 @@ module ShardIndexGen
         problems << "#{c.name}: #{c.fetch || c.git} cannot be cloned"
         next
       end
-      text = git(["--git-dir", mirror, "show", "#{c.commit}:shard.yml"])
+      yml = c.path.try { |dir| "#{dir}/shard.yml" } || "shard.yml"
+      text = git(["--git-dir", mirror, "show", "#{c.commit}:#{yml}"])
       unless text
-        problems << "#{c.name}: commit #{c.commit} is not there or has no shard.yml at the top"
+        problems << "#{c.name}: commit #{c.commit} is not there or has no #{yml}"
         next
       end
       begin
@@ -171,6 +180,13 @@ module ShardIndexGen
     if cmd == "check"
       puts "#{entries.size} curated shards check."
       return 0
+    end
+    # A shard still in the WolOS tree is reviewed, but its `git` URL does not hold that commit yet:
+    # publishing it would pin people to a commit `shards install` cannot fetch.
+    in_tree = list.shards.select(&.path).map(&.name)
+    unless in_tree.empty?
+      STDERR.puts "Not published while they live in the WolOS tree (README.md): #{in_tree.join(", ")}"
+      return 1
     end
     days = (args[1]? || "30").to_i
     last = File.exists?(index_path) ? Index.from_json(File.read(index_path)).serial : 0_i64

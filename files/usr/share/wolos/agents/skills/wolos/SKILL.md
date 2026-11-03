@@ -74,3 +74,20 @@ login. Inside one boot, use zellij for long-running work.
 
 Say what you will change before you change it, in plain words. Prefer one `wol` verb over a script.
 Never write outside the project folder unless the person asked for that folder.
+
+## Apps in Crystal
+
+A WolOS app, tool or assistant tool server is written in Crystal, one way, with `wol app new`,
+`wol app run` and `wol app check`:
+
+1. `wol app new <name or app id> --template app|cli|tool|ai` (app: a window with Wolkit; cli: a short
+   command; tool: talks to WolOS through Cryswol; ai: a JSON-RPC tool server on stdin/stdout). The
+   project builds and passes its spec as written.
+2. Keep the layout: the work in methods under `src/`, `src/main.cr` only starts it, a spec for each
+   change. State in signals, colours and spacing from the theme, system calls through Cryswol,
+   processes as argv, typed JSON, named rescues, a doc comment on every public method.
+3. `wol app run` (`--watch` follows edits in the app template), `crystal spec`, then
+   `wol app check` until it prints no findings (`docs/RULES-crystal.md` RCR-nnn says the fix).
+
+The full guide, with the rules behind each step, is `/usr/share/wolos/crystal/skill/SKILL.md`
+(it comes with the Crystal tools, the `wolos-crystal` package).

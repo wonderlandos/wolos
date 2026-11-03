@@ -1,0 +1,17 @@
+# {{module}}
+
+A tool server for WolOS assistants, made with `wol app new {{name}} --template ai`. An assistant
+starts `bin/{{name}}` and sends JSON-RPC 2.0 messages on standard input, one per line: `initialize`,
+`tools/list` and `tools/call`. Answers come back on standard output; nothing else is ever written
+there (messages for a person go to standard error).
+
+- Add a tool in `src/tools.cr`: a name, one sentence that says what it does and when to use it, a
+  JSON schema for its arguments, and a method that returns text. The spec in `spec/` calls the
+  server with lines in memory, so every tool is tested without an assistant.
+- The server can only do what this program does. To change the system, an assistant uses the
+  `wolos` tools (`wol mcp`), which ask the person first; this server never runs `wol` itself.
+- Register it with your assistant as a stdio server whose command is the full path of
+  `bin/{{name}}`.
+- `make` builds, `make spec` runs the spec, `make check` only type-checks; `wol app check` runs the
+  WolOS Crystal rules over the project.
+- `AGENTS.md` tells an assistant working in this folder how the project is laid out.

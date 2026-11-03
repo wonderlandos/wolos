@@ -3,6 +3,7 @@
 class Greeting < Wolkit::Component
   prop name : String
 
+  # One title line with the name.
   def view
     text "Hello, #{@name}!", role: :title
   end

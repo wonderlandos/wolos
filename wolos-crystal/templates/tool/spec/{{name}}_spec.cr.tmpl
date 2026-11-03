@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The spec of {{module}}'s command line: it parses arguments only, so no desktop has to run.
+require "spec"
+require "../src/{{name}}"
+
+describe {{module}}::Command do
+  it "reads about" do
+    {{module}}::Command.parse(["about"]).verb.should eq {{module}}::Verb::About
+  end
+
+  it "reads notify with a title and a body" do
+    command = {{module}}::Command.parse(["notify", "Done", "The copy finished."])
+    command.verb.should eq {{module}}::Verb::Notify
+    command.words.should eq ["Done", "The copy finished."]
+  end
+
+  it "asks for a title" do
+    command = {{module}}::Command.parse(["notify"])
+    command.verb.should eq {{module}}::Verb::Usage
+    command.message.should eq {{module}}::USAGE
+  end
+
+  it "takes --help without a message" do
+    {{module}}::Command.parse(["--help"]).message.should be_empty
+  end
+end

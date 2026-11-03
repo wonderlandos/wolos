@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{module}}, a command line tool. `make` builds the release program, `make spec` runs the spec,
+# `make check` only type-checks, `make run ARGS="..."` builds and runs it. The release build has no
+# garbage collector (-Dgc_none): a short-lived command frees everything when it exits, and starts
+# faster without one. Only this template may do that (RCR-051): a long-running program needs the
+# collector.
+CRYSTAL ?= crystal
+
+all: bin/{{name}}
+
+bin/{{name}}: $(wildcard src/*.cr src/*/*.cr)
+	mkdir -p bin
+	$(CRYSTAL) build --release -Dgc_none --error-on-warnings src/main.cr -o bin/{{name}}
+
+spec:
+	$(CRYSTAL) spec --error-on-warnings
+
+format:
+	$(CRYSTAL) tool format src spec
+
+check:
+	$(CRYSTAL) build --no-codegen --error-on-warnings src/main.cr
+
+# `wol app run` comes here; watching (WOL_APP_WATCH=1) is for windowed apps, a command runs once.
+run: bin/{{name}}
+	bin/{{name}} $(ARGS)
+
+.PHONY: all spec format check run

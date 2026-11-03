@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{module}}: the command's work. `run` reads the arguments with OptionParser and writes to the
+# streams it is given, so the spec drives it without starting a process. Exit status 0 is success,
+# 1 a failure, 2 a usage error (the shell convention).
+require "option_parser"
+
+module {{module}}
+  VERSION = "0.1.0"
+
+  # The greeting for `name`.
+  def self.greeting(name : String) : String
+    "Hello, #{name}!"
+  end
+
+  # Run the command with `args`; output goes to `stdout`, messages to `stderr`. Returns the exit status.
+  def self.run(args : Array(String), stdout : IO, stderr : IO) : Int32
+    name = "WolOS"
+    status = nil
+    parser = OptionParser.new do |opts|
+      opts.banner = "usage: {{name}} [--name NAME]"
+      opts.on("-n NAME", "--name NAME", "Who to greet") { |value| name = value }
+      opts.on("--version", "Print the version") do
+        stdout.puts VERSION
+        status = 0
+      end
+      opts.on("-h", "--help", "Show this help") do
+        stdout.puts opts
+        status = 0
+      end
+      opts.invalid_option do |flag|
+        stderr.puts "{{name}}: #{flag} is not an option. Try --help."
+        status = 2
+      end
+    end
+    parser.parse(args)
+    # `status` is captured by the blocks above, so it is read through a local.
+    if done = status
+      return done
+    end
+    stdout.puts greeting(name)
+    0
+  end
+end

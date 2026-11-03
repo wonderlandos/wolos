@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{module}}, a tool over Cryswol. `make` builds, `make spec` runs the spec (it needs libwol, not a
+# running desktop), `make check` only type-checks, `make run ARGS="about"` builds and runs it.
+# Cryswol comes from CRYSTAL_PATH (the system shards directory, /usr/lib/wolos/crystal). The
+# collector stays on: libwol calls back into Crystal and the callbacks are held by the GC.
+CRYSTAL ?= crystal
+
+all: bin/{{name}}
+
+bin/{{name}}: $(wildcard src/*.cr src/*/*.cr)
+	mkdir -p bin
+	$(CRYSTAL) build --release --error-on-warnings src/main.cr -o bin/{{name}}
+
+spec:
+	$(CRYSTAL) spec --error-on-warnings
+
+format:
+	$(CRYSTAL) tool format src spec
+
+check:
+	$(CRYSTAL) build --no-codegen --error-on-warnings src/main.cr
+
+# `wol app run` comes here; watching (WOL_APP_WATCH=1) is for windowed apps, a tool runs once.
+run: bin/{{name}}
+	bin/{{name}} $(ARGS)
+
+.PHONY: all spec format check run

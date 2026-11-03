@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The program: serve {{module}}'s tools on standard input and output until the assistant closes
+# the input. Each line in is one JSON-RPC message, each line out one answer.
+require "./server"
+
+{{module}}::Server.new(STDIN, STDOUT).serve

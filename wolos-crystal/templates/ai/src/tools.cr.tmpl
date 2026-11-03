@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{module}}'s tools: each has a name, one sentence for the assistant (what it does and when to use
+# it), a JSON schema for its arguments and a block that returns text. A wrong argument raises
+# ArgumentError with a sentence the assistant can act on.
+require "json"
+
+module {{module}}
+  VERSION = "0.1.0"
+
+  # One tool the server offers.
+  record Tool, name : String, description : String, schema : String, action : Proc(Hash(String, JSON::Any), String) do
+    # The `tools/list` entry.
+    def describe
+      {name: name, description: description, inputSchema: JSON::Any.from_json(schema)}
+    end
+
+    # Run the tool with the assistant's arguments.
+    def run(arguments : Hash(String, JSON::Any)) : String
+      action.call(arguments)
+    end
+  end
+
+  # The text argument `key`, or ArgumentError.
+  def self.text_argument(arguments : Hash(String, JSON::Any), key : String) : String
+    arguments[key]?.try(&.as_s?) || raise ArgumentError.new("Give `#{key}` as a string.")
+  end
+
+  # The number of words in `text` (runs of letters, digits and apostrophes).
+  def self.word_count(text : String) : Int32
+    text.scan(/[\p{L}\p{N}']+/).size
+  end
+
+  TOOLS = [
+    Tool.new(
+      "word_count",
+      "Count the words in a text. Use it when the person asks how long a text is.",
+      %({"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}),
+      ->(arguments : Hash(String, JSON::Any)) { "#{word_count(text_argument(arguments, "text"))} words" },
+    ),
+  ]
+end

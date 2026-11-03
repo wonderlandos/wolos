@@ -123,6 +123,10 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["shard", "check"], Read, "read"),
     hv(&["shard", "add"], Change, "files"),
     hv(&["shard", "update"], Change, "files"),
+    // Crystal apps (wolos-crystal/skill/SKILL.md): `new` writes one new project folder; `check`
+    // reads the project and type-checks it. `run` opens the person's windows and stays for people.
+    hv(&["app", "new"], Change, "files"),
+    hv(&["app", "check"], Read, "read"),
 ];
 
 /// A visible command and, when helpers may call it, its rule.
@@ -433,6 +437,12 @@ pub fn describe(inv: &Invocation) -> String {
                 "move {what} to the commit the WolOS shard list vouches for and rewrite shard.lock"
             )
         }
+        // Crystal apps (wolos-crystal/skill/SKILL.md): a new project folder from a template.
+        "app.new" => format!(
+            "make the Crystal project “{}” from the {} template",
+            get("id"),
+            inv.get("template").unwrap_or("app")
+        ),
         _ => match approval(inv, None) {
             Ok(r) => r.describe(),
             Err(_) => format!("run `wol {}`", inv.path.join(" ")),

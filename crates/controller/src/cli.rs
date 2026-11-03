@@ -1156,6 +1156,31 @@ pub const TREE: &[Cmd] = &[
         help: "Check shard.yml and shard.lock: commit pins, the lock, the signed list (--local: files only)",
         hidden: false,
     },
+    // Crystal apps (wolos-crystal/skill/SKILL.md, RCR-050 to RCR-053): templates, run, check.
+    Cmd {
+        path: &["app", "new"],
+        action: "app.new",
+        args: &[arg("id"), opt("template")],
+        flags: &["template"],
+        help: "Make a Crystal project from a template: wol app new <name or app id> --template app|cli|tool|ai",
+        hidden: false,
+    },
+    Cmd {
+        path: &["app", "run"],
+        action: "app.run",
+        args: &[opt("dir")],
+        flags: &["watch"],
+        help: "Build and run the project (make run); --watch follows your edits",
+        hidden: false,
+    },
+    Cmd {
+        path: &["app", "check"],
+        action: "app.check",
+        args: &[opt("dir")],
+        flags: &["rules"],
+        help: "Check a Crystal project against the WolOS rules, then type-check it (--rules: the files only)",
+        hidden: false,
+    },
     cmd(&["help"], "help", &[rest("command")], "Show help"),
 ];
 

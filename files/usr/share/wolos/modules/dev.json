@@ -19,7 +19,8 @@
     "crystal",
     "pkgconf",
     "libwol",
-    "cryswol"
+    "cryswol",
+    "wolos-crystal"
   ],
   "flatpaks": [],
   "recipes": [],

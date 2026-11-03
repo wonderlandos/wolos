@@ -85,10 +85,11 @@ const FFI_ALLOW: &[&str] = &[
     "wopkg/src/wopkg/core.cr",
     "wopkg/src/wopkg/lib_wopkg.cr",
 ];
-/// RCR-042: the shards the repo may depend on (direct and transitive), by name. Empty today:
-/// the Crystal code uses the standard library only. A shard is added with an ADR, here, and in
-/// docs/THIRD-PARTY.md.
-const ALLOWED_SHARDS: &[&str] = &[];
+/// RCR-042: the shards the repo may depend on (direct and transitive), by name. A third-party
+/// shard is added with an ADR, here, and in docs/THIRD-PARTY.md. `cryswol` is WolOS's own shard
+/// (ADR 0036, wolos-crystal/shards/cryswol), pinned by the wolkit shard (ADR 0039), so it has no
+/// THIRD-PARTY row.
+const ALLOWED_SHARDS: &[&str] = &["cryswol"];
 /// RCR-042: ceiling of the number of shard.yml dependency entries plus vendored shards.
 const SHARD_CENSUS: usize = ALLOWED_SHARDS.len();
 /// Directories whose `.cr` files are scanner fixtures (wrong on purpose, never linted).
@@ -756,6 +757,235 @@ fn rcr_044_build_files_do_not_fetch_shards() {
     assert!(bad.is_empty(), "RCR-044:\n{}", bad.join("\n"));
 }
 
+// ---------------------------------------------------------------- templates and `wol app` (RCR-05x)
+
+/// The templates `wol app new` copies (wolos-crystal/templates/<name>/).
+fn template_dir() -> PathBuf {
+    repo_dir().join("wolos-crystal/templates")
+}
+
+/// Every file of one template: (path relative to the template, text).
+fn template_files(t: &str) -> Vec<(String, String)> {
+    let root = template_dir().join(t);
+    let mut paths = Vec::new();
+    walk(&root, &mut paths);
+    let mut out: Vec<(String, String)> = paths
+        .into_iter()
+        .map(|p| {
+            let rel = p
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            (rel, std::fs::read_to_string(&p).unwrap_or_default())
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The project `wol app new demo --template <t>` writes, rendered by the verb itself.
+fn rendered_template(t: &str) -> Vec<(String, String)> {
+    let mut env = controller::run::FakeEnv {
+        files: template_files(t)
+            .into_iter()
+            .map(|(r, x)| (Path::new("/t").join(t).join(r), x))
+            .collect(),
+        vars: vec![("WOLKIT_TEMPLATES".into(), "/t".into())],
+        ..Default::default()
+    };
+    let inv = controller::cli::parse(&["app", "new", "demo", "--template", t]).unwrap();
+    assert_eq!(
+        controller::run::execute(&inv, &mut env),
+        0,
+        "{t}: {}",
+        env.err
+    );
+    env.written
+        .iter()
+        .map(|(p, x)| {
+            let rel = p
+                .strip_prefix("demo")
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            (rel, x.clone())
+        })
+        .collect()
+}
+
+#[test]
+fn rcr_050_templates_use_only_the_i7_placeholders() {
+    let mut names: Vec<String> = std::fs::read_dir(template_dir())
+        .expect("wolos-crystal/templates")
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let mut want: Vec<String> = controller::app::TEMPLATES
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    want.sort();
+    assert_eq!(
+        names, want,
+        "RCR-050: the template folders and app::TEMPLATES differ"
+    );
+    let mut bad = Vec::new();
+    for t in controller::app::TEMPLATES {
+        // The app template is shared with the wolkit shard's own generator, which names two more.
+        let allowed: &[&str] = if *t == "app" {
+            &["id", "name", "module", "class_name", "app_id"]
+        } else {
+            &["id", "name", "module"]
+        };
+        let files = template_files(t);
+        for must in [
+            "shard.yml.tmpl",
+            "Makefile.tmpl",
+            "README.md.tmpl",
+            ".gitignore.tmpl",
+        ] {
+            if !files.iter().any(|f| f.0 == must) {
+                bad.push(format!("{t}: {must} is missing"));
+            }
+        }
+        let make = files
+            .iter()
+            .find(|f| f.0 == "Makefile.tmpl")
+            .map_or("", |f| f.1.as_str());
+        for target in ["all:", "spec:", "check:", "format:"] {
+            if !make.lines().any(|l| l.starts_with(target)) {
+                bad.push(format!("{t}: Makefile.tmpl has no {target} target"));
+            }
+        }
+        if !make
+            .lines()
+            .any(|l| l.starts_with("run:") || l.starts_with("run: "))
+        {
+            bad.push(format!(
+                "{t}: Makefile.tmpl has no run: target (wol app run)"
+            ));
+        }
+        for (rel, text) in &files {
+            if !rel.ends_with(".tmpl") && !rel.ends_with(".keep") {
+                bad.push(format!("{t}/{rel}: a template file ends in .tmpl (the repo's checks must not read it as code)"));
+            }
+            for hay in [rel.as_str(), text.as_str()] {
+                let mut rest = hay;
+                while let Some(i) = rest.find("{{") {
+                    let after = &rest[i + 2..];
+                    let word = after.split("}}").next().unwrap_or("");
+                    if !allowed.contains(&word) {
+                        bad.push(format!("{t}/{rel}: placeholder {{{{{word}}}}} is not I7"));
+                    }
+                    rest = after;
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "RCR-050:\n{}", bad.join("\n"));
+}
+
+#[test]
+fn rcr_051_gc_none_only_in_the_cli_template() {
+    let base = siblings::root();
+    let mut found = BTreeSet::new();
+    for f in all_files(&base) {
+        let name = f.rsplit('/').next().unwrap_or(&f);
+        let name = name.strip_suffix(".tmpl").unwrap_or(name);
+        let build = name == "PKGBUILD"
+            || name == "Makefile"
+            || name == "shard.yml"
+            || name.ends_with(".sh")
+            || name.ends_with(".mk");
+        if !build || is_fixture(&f) {
+            continue;
+        }
+        let Ok(t) = std::fs::read_to_string(base.join(&f)) else {
+            continue;
+        };
+        if !controller::app::scan_gc_none(&t).is_empty() {
+            found.insert(f);
+        }
+    }
+    let cli = "wolos-crystal/templates/cli/Makefile.tmpl";
+    assert!(
+        found.iter().any(|f| f.ends_with(cli)),
+        "RCR-051: the cli template no longer builds with -Dgc_none: {found:?}"
+    );
+    found.retain(|f| !f.ends_with(cli));
+    assert!(
+        found.is_empty(),
+        "RCR-051: -Dgc_none outside the cli template (the collector stays on): {found:?}"
+    );
+    // The fixtures: the flag in a build line trips, in a comment it does not.
+    let dir = fixture_dir().join("app");
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+    assert_eq!(
+        trips(&read("bad-gc-none.build")).as_deref(),
+        Some("RCR-051")
+    );
+    assert!(!controller::app::scan_gc_none(&read("bad-gc-none.build")).is_empty());
+    assert!(controller::app::scan_gc_none(&read("good.build")).is_empty());
+}
+
+#[test]
+fn rcr_052_template_public_methods_are_documented() {
+    let mut bad = Vec::new();
+    for t in controller::app::TEMPLATES {
+        for (rel, text) in rendered_template(t) {
+            if !rel.ends_with(".cr") || rel.starts_with("spec/") {
+                continue;
+            }
+            for (n, why) in controller::app::scan_public_docs(&text) {
+                bad.push(format!("{t}: {rel}:{n}: {why}"));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "RCR-052:\n{}", bad.join("\n"));
+    // The fixtures: good.cr trips nothing (no file rule either), bad-public-doc.cr only RCR-052.
+    let dir = fixture_dir().join("app");
+    let good = std::fs::read_to_string(dir.join("good.cr")).unwrap();
+    assert!(controller::app::scan_public_docs(&good).is_empty());
+    let s = Src::new("app/good.cr", &good);
+    for (id, f) in FILE_SCANNERS {
+        assert!(
+            f(&s).is_empty(),
+            "RCR-052: fixtures/crystal/app/good.cr trips {id}"
+        );
+    }
+    let bad_doc = std::fs::read_to_string(dir.join("bad-public-doc.cr")).unwrap();
+    assert_eq!(trips(&bad_doc).as_deref(), Some("RCR-052"));
+    assert_eq!(controller::app::scan_public_docs(&bad_doc).len(), 1);
+    let s = Src::new("app/bad-public-doc.cr", &bad_doc);
+    for (id, f) in FILE_SCANNERS {
+        assert!(
+            f(&s).is_empty(),
+            "RCR-052: bad-public-doc.cr also trips {id}"
+        );
+    }
+}
+
+#[test]
+fn rcr_053_wol_app_check_passes_every_template() {
+    let mut bad = Vec::new();
+    for t in controller::app::TEMPLATES {
+        let env = controller::run::FakeEnv {
+            files: rendered_template(t)
+                .into_iter()
+                .map(|(r, x)| (Path::new("demo").join(r), x))
+                .collect(),
+            ..Default::default()
+        };
+        for p in controller::app::check(&env, Path::new("demo")) {
+            bad.push(format!("{t}: {}:{}: {} {}", p.file, p.line, p.rule, p.why));
+        }
+    }
+    assert!(bad.is_empty(), "RCR-053:\n{}", bad.join("\n"));
+}
+
 // ---------------------------------------------------------------- meta
 
 fn fixture_dir() -> PathBuf {
@@ -789,8 +1019,8 @@ fn rcr_090_fixtures_trip_exactly_their_rule() {
     );
     for p in entries {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        if name.ends_with(".lock") {
-            continue; // read with its .yml
+        if name.ends_with(".lock") || p.is_dir() {
+            continue; // a .lock is read with its .yml; app/ belongs to the RCR-05x tests
         }
         let text = std::fs::read_to_string(&p).unwrap();
         let want: BTreeSet<String> = if name.starts_with("good") {
