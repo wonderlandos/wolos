@@ -1,0 +1,18 @@
+<a b; echo injected *>
+[one]
+[two words]
+[]
+pre-20-post
+child: x y
+from ruby
+quoted from ruby and 2 single $RSH_GOLDEN #{x}
+prefix: C
+lines: 3
+condition true
+unless works
+value: true 0
+or ran
+and ran
+x1y x2y
+[]
+status: 0
