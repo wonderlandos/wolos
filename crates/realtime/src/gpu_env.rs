@@ -119,10 +119,18 @@ pub fn offload_env(
     }
 }
 
-/// Shell `export` lines (stable order), for `wol-session` to source.
+/// Shell `export` lines (stable order), for `wol-session` to source. The value is single-quoted
+/// with every `'` closed, escaped and reopened (`'\''`), so a device path or driver name with a
+/// quote, a `$(...)` or a newline stays text (audit 8 #6); a name that is not a shell variable
+/// name is left out.
 pub fn exports(env: &[(String, String)]) -> String {
+    let name = |k: &str| {
+        k.bytes().next().is_some_and(|b| !b.is_ascii_digit())
+            && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    };
     env.iter()
-        .map(|(k, v)| format!("export {k}='{v}'\n"))
+        .filter(|(k, _)| name(k))
+        .map(|(k, v)| format!("export {k}='{}'\n", v.replace('\'', r"'\''")))
         .collect()
 }
 
@@ -338,6 +346,14 @@ mod tests {
     #[test]
     fn exports_quote() {
         assert_eq!(exports(&[("A".into(), "b:c".into())]), "export A='b:c'\n");
+        assert_eq!(
+            exports(&[("A".into(), "it's".into())]),
+            "export A='it'\\''s'\n"
+        );
+        assert_eq!(
+            exports(&[("A;id".into(), "x".into()), ("1A".into(), "x".into())]),
+            ""
+        );
     }
 
     #[test]
@@ -445,5 +461,26 @@ mod command_tests {
         ] {
             assert!(run(bad).is_none(), "{bad:?}");
         }
+    }
+
+    /// Audit 8 #6: what `wol-session` evals gives back exactly the values, whatever they hold.
+    #[test]
+    fn exports_survive_the_shell() {
+        let evil = "a'b\"c $(touch /nonexistent/x) `id` \\ ;x\ny'";
+        let env = vec![
+            ("EVIL".to_owned(), evil.to_owned()),
+            ("PLAIN".to_owned(), "p".to_owned()),
+        ];
+        let script = format!("{}printf '%s' \"$EVIL\"", exports(&env));
+        let o = std::process::Command::new("sh")
+            .args(["-c", &format!("eval '{}'", script.replace('\'', r"'\''"))])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&o.stdout), evil);
+        assert!(
+            o.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&o.stderr)
+        );
     }
 }

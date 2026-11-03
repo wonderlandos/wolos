@@ -158,15 +158,7 @@ pub fn unix_now() -> u64 {
 /// accepted (an old signed copy replayed) or when it carries an `expires` time already past.
 /// Equal serials pass (the same list downloaded again).
 pub fn check_fresh(what: &str, serial: u64, expires: u64, last: u64, now: u64) -> Result<()> {
-    if serial < last {
-        return Err(Error::untrusted(format!(
-            "The {what} is older than the one already seen."
-        )));
-    }
-    if expires != 0 && expires <= now {
-        return Err(Error::untrusted(format!("The {what} has expired.")));
-    }
-    Ok(())
+    wol_core::update::check::check_fresh(what, serial, expires, last, now).map_err(Error::untrusted)
 }
 
 /// Stable 0..100 bucket for staged rollout: the same machine gets the same answer per release.

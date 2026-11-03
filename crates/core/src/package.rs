@@ -747,11 +747,31 @@ pub fn verify_fetched_index(
     verify_index(text, sig, keys)
 }
 
-/// curl into `dest` (fails on HTTP errors).
+/// Most bytes the store index (or its signature) may be (audit 8 #5): curl stops a larger
+/// download, and the controller reads no more of what is on disk.
+pub const INDEX_MAX_BYTES: u64 = 32 << 20;
+
+/// curl into `dest` (fails on HTTP errors): https only, also after a redirect, nothing larger
+/// than [`INDEX_MAX_BYTES`], no `.curlrc`.
 pub fn fetch_argv(url: &str, dest: &str) -> Vec<String> {
-    ["curl", "-fsSL", "-o", dest, url]
-        .map(String::from)
-        .to_vec()
+    let max = INDEX_MAX_BYTES.to_string();
+    [
+        "curl",
+        "--disable",
+        "-fsSL",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--max-filesize",
+        &max,
+        "-o",
+        dest,
+        "--",
+        url,
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 #[cfg(test)]
@@ -1036,7 +1056,16 @@ not-a-key x
             .is_err()
         );
         assert!(remove_steps("org.wolos.Fixture", "{").is_err());
-        assert_eq!(fetch_argv("https://x/a.wol", "/t/a")[0], "curl");
+        let a = fetch_argv("https://x/a.wol", "/t/a");
+        assert_eq!(a[0], "curl");
+        let has = |w: &[&str]| a.windows(w.len()).any(|x| x == w);
+        assert!(has(&["--proto", "=https"]) && has(&["--proto-redir", "=https"]));
+        assert!(has(&["--max-filesize", "33554432"]));
+        assert_eq!(
+            a[a.len() - 2..],
+            ["--", "https://x/a.wol"],
+            "the url is never an option"
+        );
     }
 
     #[test]

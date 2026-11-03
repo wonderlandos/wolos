@@ -106,6 +106,45 @@ fn release_signature_verifies_with_the_package_keys() {
     );
 }
 
+/// Audit 8 #4/#5: the two scripts that download as root fetch over https only, every download
+/// capped; xguard-update judges the signed bundle.json before it fetches any data file.
+#[test]
+fn downloading_scripts_are_https_only_and_capped() {
+    for p in [
+        "files/usr/lib/wolos/update-check",
+        "files/usr/lib/wolos/xguard-update",
+    ] {
+        let t = read(p);
+        for want in ["--proto =https", "--proto-redir =https", "--max-filesize"] {
+            assert!(t.contains(want), "{p}: {want}");
+        }
+        // Every curl is called through get(): nothing is fetched without those options.
+        let curls = t
+            .lines()
+            .filter(|l| l.trim_start().starts_with("curl ") || l.contains("| curl"))
+            .count();
+        assert_eq!(curls, 1, "{p}: one curl call, in get()");
+    }
+    let x = read("files/usr/lib/wolos/xguard-update");
+    let at = |s: &str| x.find(s).unwrap_or_else(|| panic!("xguard-update: {s}"));
+    assert!(
+        at("wol-xguard rules check") < at(r#"get 536870912 "$T/$f""#),
+        "the signature is verified before data files are fetched"
+    );
+    assert!(
+        x.contains("while IFS= read -r f"),
+        "the names loop is quoted"
+    );
+    assert!(
+        !x.contains("for f in $("),
+        "no word splitting of downloaded names"
+    );
+    assert!(
+        x.contains("*.xgdb | *.yxc | NOTICES"),
+        "the same names as bundle::fits"
+    );
+}
+
 /// The check fetches from where the ISO workflow publishes.
 #[test]
 fn update_check_reads_the_published_release() {
