@@ -16,21 +16,7 @@ const REPOS: [&str; 3] = ["", "crates/shell", "design"];
 const NOT_RUN: [&str; 1] = ["crates/aurlaws/tests/fixtures/"];
 /// Tracked as 100644 before the list existed; the commit that adds this test sets their bit
 /// (`git update-index --chmod=+x`). Only shrinks: an entry that is 100755 is reported for removal.
-const PENDING_CHMOD: &[&str] = &[
-    "design/tools/apps/kvantum-vm.sh",
-    "design/tools/perf/idle.py",
-    "design/tools/perf/latency.py",
-    "design/tools/perf/leak.py",
-    "design/tools/perf/session_start.py",
-    "files/usr/lib/wolos/ai-local",
-    "files/usr/lib/wolos/modules-enable-ai-claude",
-    "files/usr/lib/wolos/modules-enable-dev",
-    "tools/check-adrs.sh",
-    "tools/check-headers.sh",
-    "tools/ci/fuzz-replay.sh",
-    "tools/ci/pin-lint.py",
-    "tools/license/relicense.py",
-];
+const PENDING_CHMOD: &[&str] = &[];
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
