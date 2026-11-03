@@ -2,7 +2,9 @@
 /* libwolwebengine.so.1: the C boundary over the pinned Rust browser engine (ADR 0042).
  * Built once per pin by the webengine-wolos package; crates/webengine (Rust) loads it with dlopen and
  * is the only supported caller. Every call is made on the thread that called wwe_engine_new, except
- * the waker, which the engine calls from any thread. One engine per process (one app per process).
+ * the waker, which the engine calls from any thread. One engine per process at a time (one app per
+ * process): wwe_engine_free gives the slot back. No call unwinds into the caller: an engine panic is
+ * an error return (NULL, -1) where the call has one, and a log line where it has none.
  * Strings are UTF-8 and NUL-terminated unless a length is given. Errors are written into err/errlen
  * (NUL-terminated, truncated). The source is crates/webengine/src/engine/lib.rs; the exports come
  * only from crates/webengine/engine/wolwebengine.map. */
@@ -107,6 +109,9 @@ uint32_t wwe_abi_version(void);
 /* The pinned engine's version string (static). */
 const char *wwe_engine_version(void);
 wwe_engine *wwe_engine_new(const wwe_config *config, char *err, size_t errlen);
+/* Shuts the engine down and frees it. A content process that does not answer the shutdown within
+ * 5 s is ended (SIGKILL), and that is logged. Once this returns no callback is called with ctx
+ * again (the waker included), so the host may free ctx. */
 void wwe_engine_free(wwe_engine *engine);
 /* Run what is pending (no blocking). */
 void wwe_engine_spin(wwe_engine *engine);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! [`WebView`]: one web app's page, made from its [`Policy`] and painted into a wolkit surface node
-//! or headless into memory. One per process: the engine allows one instance per process, which is
-//! the process model anyway (one app per host process, [`crate::process`]).
+//! or headless into memory. One per process at a time: the engine allows one instance per process
+//! at a time, which is the process model anyway (one app per host process, [`crate::process`]).
 use crate::ffi::{self, EngineH, Lib, ViewH};
 use crate::input::{Bridged, Input};
 use crate::policy::Policy;
@@ -270,7 +270,8 @@ impl WebView {
         // SAFETY: engine is live; t and curl are valid for the call.
         let view = unsafe { (lib.view_new)(engine, &t, curl.as_ptr(), err.as_mut_ptr(), ERR) };
         if view.is_null() {
-            // SAFETY: engine has no view.
+            // SAFETY: engine has no view. Freeing it gives the library's one-engine slot back,
+            // so a later WebView::new in this process can make one again.
             unsafe { (lib.engine_free)(engine) };
             return Err(Error::Engine(take_err(&err)));
         }
@@ -315,11 +316,15 @@ impl WebView {
         true
     }
 
-    /// Spins until the page and its subresources have loaded.
+    /// Spins until the page and its subresources have loaded, or its content crashed (an error at
+    /// once: the page will not load).
     pub fn wait_loaded(&self, timeout: Duration) -> Result<(), Error> {
-        self.spin_until(timeout, |v| v.state().load == ffi::LOAD_COMPLETE)
-            .then_some(())
-            .ok_or(Error::Timeout("page load"))
+        let mut outcome = None;
+        self.spin_until(timeout, |v| {
+            outcome = load_outcome(&v.state());
+            outcome.is_some()
+        });
+        outcome.unwrap_or(Err(Error::Timeout("page load")))
     }
 
     /// The page as painted, once rendering is up to date.
@@ -465,14 +470,55 @@ impl WebView {
     }
 }
 
-// Releases the engine's view, then the engine (which ends its content process); the callback
-// context `shared` is dropped after, so no callback outlives it.
+/// What [`WebView::wait_loaded`] waits for, from the view's state: a crash ends the wait as an
+/// error (no load follows one), a complete load as success, anything else goes on.
+fn load_outcome(s: &ffi::State) -> Option<Result<(), Error>> {
+    if s.crashed > 0 {
+        Some(Err(Error::Engine(
+            "the page's content process crashed".into(),
+        )))
+    } else if s.load == ffi::LOAD_COMPLETE {
+        Some(Ok(()))
+    } else {
+        None
+    }
+}
+
+// Releases the engine's view, then the engine (which ends its content process, at most a few
+// seconds late: the library ends one that does not answer, and gives the one-engine slot back);
+// the callback context `shared` is dropped after, and the library calls no callback, the waker
+// included, once engine_free has returned.
 impl Drop for WebView {
     fn drop(&mut self) {
         // SAFETY: both are live and freed once, the view first; `shared` is dropped after this.
         unsafe {
             (self.lib.view_free)(self.view);
             (self.lib.engine_free)(self.engine);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(load: u32, crashed: u32) -> ffi::State {
+        ffi::State {
+            load,
+            crashed,
+            frames: 0,
+        }
+    }
+
+    #[test]
+    fn a_crash_ends_the_wait_for_the_load_at_once() {
+        assert_eq!(load_outcome(&state(1, 0)), None, "still loading");
+        assert_eq!(load_outcome(&state(ffi::LOAD_COMPLETE, 0)), Some(Ok(())));
+        for load in [0, 1, 2, ffi::LOAD_COMPLETE] {
+            assert!(
+                matches!(load_outcome(&state(load, 1)), Some(Err(Error::Engine(_)))),
+                "load {load}"
+            );
         }
     }
 }

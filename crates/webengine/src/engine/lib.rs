@@ -9,11 +9,16 @@
 //! resource load asks the host's `allow`; a refusal is a network error, a refused navigation does
 //! not happen), the profile directory as the engine's only place for files, the page's features as
 //! preferences, the host's clipboard and waker, and a synchronous screenshot for the goldens.
+//!
+//! A fault in the engine stays on this side ([`boundary`]): no export unwinds (a panic is an error
+//! return, or a log line where the call returns nothing), the waker stops when the engine is
+//! freed, the engine's shutdown is watched, and the one-engine slot comes back with the engine.
+mod boundary;
+
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_char, c_void};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use dpi::PhysicalSize;
@@ -105,11 +110,11 @@ pub struct Image {
     rgba: *mut u8,
 }
 
-/// The host's callbacks and the context they get. Called on the engine thread only, except `wake`.
+/// The host's callbacks and the context they get, called on the engine thread only (the waker,
+/// which any thread calls, is [`Waker`]).
 #[derive(Clone, Copy)]
 struct Host {
     allow: AllowFn,
-    wake: Option<WakeFn>,
     clip_get: Option<ClipGetFn>,
     clip_set: Option<ClipSetFn>,
     ctx: *mut c_void,
@@ -123,22 +128,35 @@ impl Host {
     }
 }
 
-/// The waker crosses threads: the host promised `wake` may be called from any thread.
+/// The waker crosses threads: the host promised `wake` may be called from any thread. Every copy
+/// the engine's threads hold calls through one [`boundary::Revocable`], which `wwe_engine_free`
+/// revokes once the engine has shut down: a thread the engine leaves behind cannot wake the host's
+/// context after the host has freed it.
 #[derive(Clone)]
-struct Waker(WakeFn, usize);
+struct Waker(boundary::Revocable<(WakeFn, usize)>);
 impl EventLoopWaker for Waker {
     fn clone_box(&self) -> Box<dyn EventLoopWaker> {
         Box::new(self.clone())
     }
     fn wake(&self) {
-        // SAFETY: Config contract: `wake` is callable from any thread with `ctx`.
-        unsafe { (self.0)(std::ptr::with_exposed_provenance_mut(self.1)) }
+        self.0.call(|(wake, ctx)| {
+            // SAFETY: Config contract: `wake` is callable from any thread with `ctx` until
+            // wwe_engine_free returns, and the gate is revoked before it does.
+            unsafe { wake(std::ptr::with_exposed_provenance_mut(ctx)) }
+        });
     }
 }
+
+/// How long `wwe_engine_free` waits for the engine to shut down before it ends the content
+/// processes (a wedged one never answers the engine's exit).
+const SHUTDOWN: Duration = Duration::from_secs(5);
 
 pub struct Engine {
     servo: Servo,
     host: Host,
+    waker: Option<boundary::Revocable<(WakeFn, usize)>>,
+    /// Last: the slot comes back once the engine is gone.
+    _slot: boundary::Claim<'static>,
 }
 
 #[derive(Default)]
@@ -246,7 +264,34 @@ pub struct View {
     engine: *mut Engine,
 }
 
-static ENGINE_MADE: AtomicBool = AtomicBool::new(false);
+/// One engine per process at a time (the engine keeps process-wide state).
+static ENGINE_SLOT: boundary::Slot = boundary::Slot::new();
+
+/// Runs an export's body; a panic is logged instead of unwinding into the host.
+fn guarded(what: &str, f: impl FnOnce()) {
+    if let Err(m) = boundary::catch(f) {
+        log::error!("wolwebengine: {what}: {m}");
+    }
+}
+
+/// The engine's shutdown is late: its content processes (children of this process started with
+/// `--content-process`) are ended, so the engine sees them gone and finishes.
+fn end_content_processes() {
+    let kids = boundary::content_children(Path::new("/proc"), std::process::id());
+    log::error!(
+        "wolwebengine: the engine has not shut down in {} s; ending {} content process(es)",
+        SHUTDOWN.as_secs(),
+        kids.len()
+    );
+    for kid in kids
+        .into_iter()
+        .filter_map(|k| libc::pid_t::try_from(k).ok())
+    {
+        // SAFETY: kill takes a pid and a signal number and touches no memory of ours; the pid is
+        // an unreaped child of this process (listed in its children just above).
+        unsafe { libc::kill(kid, libc::SIGKILL) };
+    }
+}
 
 fn put_err(err: *mut c_char, len: usize, msg: &str) {
     if err.is_null() || len == 0 {
@@ -335,43 +380,89 @@ pub unsafe extern "C" fn wwe_engine_new(
         put_err(err, errlen, "profile_dir must be absolute");
         return std::ptr::null_mut();
     }
-    if ENGINE_MADE.swap(true, Ordering::SeqCst) {
-        put_err(err, errlen, "one engine per process");
-        return std::ptr::null_mut();
-    }
-    let mut prefs = prefs(config);
     // SAFETY: contract above.
-    if let Some(ua) = unsafe { opt_str(config.user_agent) } {
-        prefs.user_agent = ua;
-    }
-    prefs.network_http_disk_cache = profile.join("cache").to_string_lossy().into_owned();
-    let mut opts = Opts::default();
-    opts.config_dir = Some(profile);
-    opts.multiprocess = config.flags & WWE_MULTIPROCESS != 0;
-    opts.sandbox = opts.multiprocess && config.flags & WWE_SANDBOX != 0;
-    let host = Host {
-        allow,
-        wake: config.wake,
-        clip_get: config.clip_get,
-        clip_set: config.clip_set,
-        ctx: config.ctx,
+    let user_agent = unsafe { opt_str(config.user_agent) };
+    let waker = config
+        .wake
+        .map(|wake| boundary::Revocable::new((wake, config.ctx.expose_provenance())));
+    let made = boundary::catch(|| {
+        // Dropped on every way out but the engine's own, which keeps it until it is freed.
+        let slot = ENGINE_SLOT
+            .claim()
+            .ok_or("one engine per process at a time")?;
+        let mut prefs = prefs(config);
+        if let Some(ua) = user_agent {
+            prefs.user_agent = ua;
+        }
+        prefs.network_http_disk_cache = profile.join("cache").to_string_lossy().into_owned();
+        let mut opts = Opts::default();
+        opts.config_dir = Some(profile);
+        opts.multiprocess = config.flags & WWE_MULTIPROCESS != 0;
+        opts.sandbox = opts.multiprocess && config.flags & WWE_SANDBOX != 0;
+        let host = Host {
+            allow,
+            clip_get: config.clip_get,
+            clip_set: config.clip_set,
+            ctx: config.ctx,
+        };
+        let mut builder = ServoBuilder::default().opts(opts).preferences(prefs);
+        if let Some(w) = &waker {
+            builder = builder.event_loop_waker(Box::new(Waker(w.clone())));
+        }
+        let servo = builder.build();
+        Ok::<_, &str>(Box::into_raw(Box::new(Engine {
+            servo,
+            host,
+            waker: waker.clone(),
+            _slot: slot,
+        })))
+    });
+    let failed = match made {
+        Ok(Ok(engine)) => return engine,
+        Ok(Err(m)) => m.to_owned(),
+        Err(m) => m,
     };
-    let mut builder = ServoBuilder::default().opts(opts).preferences(prefs);
-    if let Some(wake) = host.wake {
-        builder = builder.event_loop_waker(Box::new(Waker(wake, host.ctx.expose_provenance())));
+    // A half-built engine may have handed the waker to threads: none of them wakes the host's
+    // context, which the host frees on this error.
+    if let Some(w) = &waker {
+        w.revoke();
     }
-    let servo = builder.build();
-    Box::into_raw(Box::new(Engine { servo, host }))
+    put_err(err, errlen, &failed);
+    std::ptr::null_mut()
 }
 
+/// Shuts the engine down (it ends its content processes) and frees it. The engine waits for its
+/// content processes to answer; one that does not is ended after [`SHUTDOWN`], logged. When this
+/// returns no callback is called again (the waker is revoked) and a new engine may be made.
+///
 /// # Safety
 /// `engine` is NULL or from `wwe_engine_new`, with every view of it freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wwe_engine_free(engine: *mut Engine) {
-    if !engine.is_null() {
-        // SAFETY: contract above.
-        drop(unsafe { Box::from_raw(engine) });
+    if engine.is_null() {
+        return;
     }
+    // SAFETY: contract above.
+    let engine = unsafe { Box::from_raw(engine) };
+    let Engine {
+        servo,
+        waker,
+        _slot: slot,
+        ..
+    } = *engine;
+    let shutdown =
+        boundary::catch(|| boundary::bounded(SHUTDOWN, move || drop(servo), end_content_processes));
+    match shutdown {
+        Ok(((), false)) => {}
+        Ok(((), true)) => log::error!(
+            "wolwebengine: the engine shut down late, after its content processes were ended"
+        ),
+        Err(m) => log::error!("wolwebengine: shutdown: {m}"),
+    }
+    if let Some(w) = waker {
+        w.revoke();
+    }
+    drop(slot);
 }
 
 /// # Safety
@@ -380,7 +471,7 @@ pub unsafe extern "C" fn wwe_engine_free(engine: *mut Engine) {
 pub unsafe extern "C" fn wwe_engine_spin(engine: *mut Engine) {
     // SAFETY: contract above.
     if let Some(e) = unsafe { engine.as_ref() } {
-        e.servo.spin_event_loop();
+        guarded("spin", || e.servo.spin_event_loop());
     }
 }
 
@@ -443,37 +534,39 @@ pub unsafe extern "C" fn wwe_view_new(
         put_err(err, errlen, "the start url is not an allowed origin");
         return std::ptr::null_mut();
     }
-    let context = match context(t) {
-        Ok(c) => c,
+    let made = boundary::catch(|| {
+        let context = context(t)?;
+        context
+            .make_current()
+            .map_err(|x| format!("make_current: {x:?}"))?;
+        let state = Rc::new(ViewState::default());
+        let delegate = Rc::new(Delegate {
+            host: e.host,
+            state: state.clone(),
+        });
+        let scale = if t.scale > 0.0 { t.scale } else { 1.0 };
+        let webview = WebViewBuilder::new(&e.servo, context.clone())
+            .delegate(delegate)
+            .clipboard_delegate(Rc::new(Clipboard(e.host)))
+            .hidpi_scale_factor(euclid::Scale::new(scale))
+            .url(url)
+            .build();
+        webview.show();
+        webview.set_focused(true);
+        Ok::<_, String>(Box::into_raw(Box::new(View {
+            webview,
+            context,
+            state,
+            engine,
+        })))
+    });
+    match made.and_then(|r| r) {
+        Ok(view) => view,
         Err(x) => {
             put_err(err, errlen, &x);
-            return std::ptr::null_mut();
+            std::ptr::null_mut()
         }
-    };
-    if let Err(x) = context.make_current() {
-        put_err(err, errlen, &format!("make_current: {x:?}"));
-        return std::ptr::null_mut();
     }
-    let state = Rc::new(ViewState::default());
-    let delegate = Rc::new(Delegate {
-        host: e.host,
-        state: state.clone(),
-    });
-    let scale = if t.scale > 0.0 { t.scale } else { 1.0 };
-    let webview = WebViewBuilder::new(&e.servo, context.clone())
-        .delegate(delegate)
-        .clipboard_delegate(Rc::new(Clipboard(e.host)))
-        .hidpi_scale_factor(euclid::Scale::new(scale))
-        .url(url)
-        .build();
-    webview.show();
-    webview.set_focused(true);
-    Box::into_raw(Box::new(View {
-        webview,
-        context,
-        state,
-        engine,
-    }))
 }
 
 /// # Safety
@@ -482,7 +575,8 @@ pub unsafe extern "C" fn wwe_view_new(
 pub unsafe extern "C" fn wwe_view_free(view: *mut View) {
     if !view.is_null() {
         // SAFETY: contract above.
-        drop(unsafe { Box::from_raw(view) });
+        let view = unsafe { Box::from_raw(view) };
+        guarded("view free", move || drop(view));
     }
 }
 
@@ -491,7 +585,7 @@ pub unsafe extern "C" fn wwe_view_free(view: *mut View) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wwe_view_state(view: *const View, out: *mut State) {
     // SAFETY: contract above.
-    if let (Some(v), Some(o)) = (unsafe { view.as_ref() }, unsafe { out.as_mut() }) {
+    if let (Some(v), Some(o)) = unsafe { (view.as_ref(), out.as_mut()) } {
         *o = State {
             load: v.state.load.get(),
             crashed: v.state.crashed.get(),
@@ -506,11 +600,13 @@ pub unsafe extern "C" fn wwe_view_state(view: *const View, out: *mut State) {
 pub unsafe extern "C" fn wwe_view_resize(view: *mut View, width: u32, height: u32, scale: f32) {
     // SAFETY: contract above.
     if let Some(v) = unsafe { view.as_ref() } {
-        v.webview
-            .resize(PhysicalSize::new(width.max(1), height.max(1)));
-        if scale > 0.0 {
-            v.webview.set_hidpi_scale_factor(euclid::Scale::new(scale));
-        }
+        guarded("resize", || {
+            v.webview
+                .resize(PhysicalSize::new(width.max(1), height.max(1)));
+            if scale > 0.0 {
+                v.webview.set_hidpi_scale_factor(euclid::Scale::new(scale));
+            }
+        });
     }
 }
 
@@ -598,10 +694,12 @@ fn input(ev: &Input) -> Option<InputEvent> {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wwe_view_input(view: *mut View, event: *const Input) {
     // SAFETY: contract above.
-    if let (Some(v), Some(ev)) = (unsafe { view.as_ref() }, unsafe { event.as_ref() })
-        && let Some(e) = input(ev)
-    {
-        v.webview.notify_input_event(e);
+    if let (Some(v), Some(ev)) = unsafe { (view.as_ref(), event.as_ref()) } {
+        guarded("input", || {
+            if let Some(e) = input(ev) {
+                v.webview.notify_input_event(e);
+            }
+        });
     }
 }
 
@@ -611,7 +709,7 @@ pub unsafe extern "C" fn wwe_view_input(view: *mut View, event: *const Input) {
 pub unsafe extern "C" fn wwe_view_focus(view: *mut View, focused: bool) {
     // SAFETY: contract above.
     if let Some(v) = unsafe { view.as_ref() } {
-        v.webview.set_focused(focused);
+        guarded("focus", || v.webview.set_focused(focused));
     }
 }
 
@@ -621,11 +719,13 @@ pub unsafe extern "C" fn wwe_view_focus(view: *mut View, focused: bool) {
 pub unsafe extern "C" fn wwe_view_visible(view: *mut View, visible: bool) {
     // SAFETY: contract above.
     if let Some(v) = unsafe { view.as_ref() } {
-        if visible {
-            v.webview.show();
-        } else {
-            v.webview.hide();
-        }
+        guarded("visible", || {
+            if visible {
+                v.webview.show();
+            } else {
+                v.webview.hide();
+            }
+        });
     }
 }
 
@@ -635,8 +735,10 @@ pub unsafe extern "C" fn wwe_view_visible(view: *mut View, visible: bool) {
 pub unsafe extern "C" fn wwe_view_theme(view: *mut View, dark: bool) {
     // SAFETY: contract above.
     if let Some(v) = unsafe { view.as_ref() } {
-        v.webview
-            .notify_theme_change(if dark { Theme::Dark } else { Theme::Light });
+        guarded("theme", || {
+            v.webview
+                .notify_theme_change(if dark { Theme::Dark } else { Theme::Light });
+        });
     }
 }
 
@@ -651,7 +753,7 @@ pub unsafe extern "C" fn wwe_view_screenshot(
     errlen: usize,
 ) -> i32 {
     // SAFETY: contract above.
-    let (Some(v), Some(out)) = (unsafe { view.as_ref() }, unsafe { out.as_mut() }) else {
+    let (Some(v), Some(out)) = (unsafe { (view.as_ref(), out.as_mut()) }) else {
         put_err(err, errlen, "view or out is NULL");
         return -1;
     };
@@ -660,6 +762,17 @@ pub unsafe extern "C" fn wwe_view_screenshot(
         put_err(err, errlen, "engine is gone");
         return -1;
     };
+    match boundary::catch(|| screenshot(v, engine, timeout_ms, out)) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) | Err(e) => {
+            put_err(err, errlen, &e);
+            -1
+        }
+    }
+}
+
+/// The view's next up-to-date rendering into `out` (`wwe_view_screenshot`).
+fn screenshot(v: &View, engine: &Engine, timeout_ms: u32, out: &mut Image) -> Result<(), String> {
     let got: Rc<RefCell<Option<Result<servo::RgbaImage, String>>>> = Rc::default();
     let slot = got.clone();
     v.webview.take_screenshot(None, move |r| {
@@ -668,8 +781,7 @@ pub unsafe extern "C" fn wwe_view_screenshot(
     let deadline = Instant::now() + Duration::from_millis(u64::from(timeout_ms));
     while got.borrow().is_none() {
         if Instant::now() > deadline {
-            put_err(err, errlen, "screenshot timed out");
-            return -1;
+            return Err("screenshot timed out".into());
         }
         engine.servo.spin_event_loop();
         std::thread::sleep(Duration::from_millis(1));
@@ -685,13 +797,10 @@ pub unsafe extern "C" fn wwe_view_screenshot(
                 height: h,
                 rgba: px.cast::<u8>(),
             };
-            0
+            Ok(())
         }
-        Some(Err(e)) => {
-            put_err(err, errlen, &e);
-            -1
-        }
-        None => -1,
+        Some(Err(e)) => Err(e),
+        None => Err("no screenshot".into()),
     }
 }
 
@@ -717,5 +826,5 @@ pub unsafe extern "C" fn wwe_image_free(image: *mut Image) {
 pub unsafe extern "C" fn wwe_run_content_process(token: *const c_char) {
     // SAFETY: contract above.
     let token = unsafe { opt_str(token) }.unwrap_or_default();
-    servo::run_content_process(token);
+    guarded("content process", move || servo::run_content_process(token));
 }

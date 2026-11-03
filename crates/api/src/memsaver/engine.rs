@@ -108,6 +108,8 @@ impl<S: Sys> Engine<S> {
         let keys: Vec<String> = self.apps.keys().cloned().collect();
         for scope in keys {
             if !self.sys.exists(&scope) {
+                // Gone (the app quit): a give-back still running for it stops and is forgotten.
+                self.sys.cancel(&scope);
                 self.apps.remove(&scope);
                 continue;
             }
@@ -134,17 +136,20 @@ impl<S: Sys> Engine<S> {
 
     /// Windows not in a scope of ours yet: their whole process tree goes into a new one. The
     /// tree, not the cgroup: Chromium and Electron move their browser process into a user manager
-    /// scope on their own and leave the zygote and renderers in the session.
+    /// scope on their own and leave the zygote and renderers in the session. Ours are the scopes
+    /// this adopt made, right under the user's slice; an `app-wol-` scope of the user's manager (a
+    /// web app's, `webengine::process`) is not one of them and is adopted like any other.
     fn adopt(&mut self, now: u64) {
         let Some(s) = &self.session else { return };
         let (uid, scope) = (s.uid, s.scope.clone());
         self.asked
             .retain(|_, (t, _, _)| now.saturating_sub(*t) < 6 * ADOPT_RETRY_MS);
         let home = format!("/user.slice/user-{uid}.slice/");
+        let ours = format!("{home}app-wol-");
         let sys = &self.sys;
         let movable = |pid: i32| {
             sys.cgroup(pid)
-                .is_some_and(|c| c.starts_with(&home) && !c.contains("/app-wol-"))
+                .is_some_and(|c| c.starts_with(&home) && !c.starts_with(&ours))
                 && sys.owner_and_parent(pid).map(|o| o.0) == Some(uid)
                 && !procs::NEVER.contains(&sys.comm(pid).as_str())
         };

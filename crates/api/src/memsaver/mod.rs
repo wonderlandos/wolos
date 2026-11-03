@@ -49,8 +49,45 @@ pub trait Sys {
 pub struct Real {
     pub proc: PathBuf,
     pub root: PathBuf,
-    /// Running page-outs by scope: their stop flags.
-    paging: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Running page-outs by scope: their stop flags. One per scope; a page-out takes its own out
+    /// when it ends.
+    paging: Arc<Paging>,
+}
+
+/// The page-outs running, by scope.
+#[derive(Default)]
+struct Paging(Mutex<HashMap<String, Arc<AtomicBool>>>);
+
+impl Paging {
+    fn map(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<AtomicBool>>> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// A new page-out of `scope`: the stop flag it runs under. One still running for the scope (a
+    /// Nap over a Save) is stopped: two would page out the same processes, and the first could no
+    /// longer be stopped.
+    fn start(&self, scope: &str) -> Arc<AtomicBool> {
+        let stop = Arc::new(AtomicBool::new(false));
+        if let Some(old) = self.map().insert(scope.to_owned(), stop.clone()) {
+            old.store(true, Ordering::Relaxed);
+        }
+        stop
+    }
+
+    /// The page-out under `stop` ended: its entry goes, unless a newer one took the scope.
+    fn end(&self, scope: &str, stop: &Arc<AtomicBool>) {
+        let mut m = self.map();
+        if m.get(scope).is_some_and(|s| Arc::ptr_eq(s, stop)) {
+            m.remove(scope);
+        }
+    }
+
+    /// Stop the page-out of `scope`, if one runs.
+    fn cancel(&self, scope: &str) {
+        if let Some(stop) = self.map().remove(scope) {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Default for Real {
@@ -58,7 +95,7 @@ impl Default for Real {
         Real {
             proc: "/proc".into(),
             root: cgroup::ROOT.into(),
-            paging: Mutex::default(),
+            paging: Arc::default(),
         }
     }
 }
@@ -120,12 +157,9 @@ impl Sys for Real {
             .is_ok_and(|s| s.success())
     }
     fn give_back(&self, scope: &str, bytes: u64, pids: Vec<i32>) {
-        let stop = Arc::new(AtomicBool::new(false));
-        self.paging
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(scope.to_owned(), stop.clone());
+        let stop = self.paging.start(scope);
         let (proc, dir) = (self.proc.clone(), self.dir(scope));
+        let (paging, scope) = (self.paging.clone(), scope.to_owned());
         std::thread::spawn(move || {
             // The compression runs on this thread: it must not compete with what is in use.
             // SAFETY: setpriority on the calling thread (who = 0) with plain integers.
@@ -146,17 +180,11 @@ impl Sys for Real {
                     ""
                 }
             );
+            paging.end(&scope, &stop);
         });
     }
     fn cancel(&self, scope: &str) {
-        if let Some(stop) = self
-            .paging
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .remove(scope)
-        {
-            stop.store(true, Ordering::Relaxed);
-        }
+        self.paging.cancel(scope);
     }
     fn swapped(&self, pids: &[i32]) -> u64 {
         pids.iter().map(|p| pageout::swapped(&self.proc, *p)).sum()
@@ -304,6 +332,59 @@ impl Service {
 mod tests {
     use super::*;
     use shared::memsaver::{AppState, AppStatus, Status};
+
+    fn paging_of(r: &Real) -> Vec<String> {
+        r.paging.map().keys().cloned().collect()
+    }
+
+    /// A Nap over a Save: the first page-out is stopped, not orphaned, and the entry left is the
+    /// second's; an ended page-out takes only its own entry out.
+    #[test]
+    fn a_second_give_back_stops_the_first_and_ended_ones_are_forgotten() {
+        let p = Paging::default();
+        let save = p.start("/a");
+        let nap = p.start("/a");
+        assert!(
+            save.load(Ordering::Relaxed),
+            "the Save's page-out was stopped"
+        );
+        assert!(!nap.load(Ordering::Relaxed));
+        p.end("/a", &save);
+        assert!(
+            p.map().contains_key("/a"),
+            "the Save ending leaves the Nap's entry"
+        );
+        p.end("/a", &nap);
+        assert!(p.map().is_empty());
+        let other = p.start("/b");
+        p.cancel("/b");
+        assert!(other.load(Ordering::Relaxed));
+        assert!(p.map().is_empty());
+    }
+
+    /// A saved scope that exits: its give-back ends and its entry goes, with no cancel.
+    #[test]
+    fn a_finished_give_back_leaves_no_entry() {
+        let d = std::env::temp_dir().join(format!("wol-msgive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("proc")).unwrap();
+        let r = Real {
+            proc: d.join("proc"),
+            root: d.join("cg"),
+            paging: Arc::default(),
+        };
+        r.give_back("/user.slice/gone.scope", 1 << 20, vec![i32::MAX]);
+        let t = std::time::Instant::now();
+        while !paging_of(&r).is_empty() {
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(10),
+                "{:?}",
+                paging_of(&r)
+            );
+            std::thread::yield_now();
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     /// S4-10: the ticker, `serve` and `shutdown` write at once; a reader always parses a whole
     /// [`Status`] and the file stays world readable.

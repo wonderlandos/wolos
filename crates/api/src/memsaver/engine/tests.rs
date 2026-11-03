@@ -464,3 +464,69 @@ fn one_app_at_its_own_limit_is_not_a_full_slice() {
     slice_storm(&mut e, procs::APP_TASKS as u64);
     assert!(!e.sys.cg(SCOPE).killed);
 }
+
+/// A web app starts in an `app-wol-` scope of the user's manager (`webengine::process`): not one
+/// of ours, so it is adopted (whole tree, the ADR 0027 limits, bound to the session) like any app
+/// in a user scope, and once in our scope it is not asked for again.
+#[test]
+fn a_web_apps_own_scope_is_adopted_under_the_app_limits() {
+    let mut e = session();
+    let own = "/user.slice/user-1000.slice/user@1000.service/app.slice/app-wol-org.wolos.webapp.notes-20-1f00.scope";
+    e.sys.set(own, |_| {});
+    for pid in 20..=24 {
+        e.sys.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = own.into();
+    }
+    let mut s = snap(20, false);
+    s.windows[0].app = "org.wolos.webapp.notes".into();
+    e.snapshot(s);
+    e.tick(0);
+    let ours = "/user.slice/user-1000.slice/app-wol-org.wolos.webapp.notes-20.scope";
+    for pid in 20..=24 {
+        assert_eq!(e.sys.where_is(pid), ours, "pid {pid}");
+    }
+    {
+        let m = e.sys.0.borrow();
+        assert_eq!(m.adopted.len(), 1);
+        let args = m.adopted[0].join(" ");
+        assert!(
+            args.contains(&format!("MemoryMaxScale u {}", procs::APP_MEMORY_SCALE)),
+            "{args}"
+        );
+        assert!(
+            args.contains(&format!("MemorySwapMaxScale u {}", procs::APP_SWAP_SCALE)),
+            "{args}"
+        );
+        assert!(args.contains("BindsTo as 1 session-2.scope"), "{args}");
+    }
+    for t in [1, 20_000, 70_000] {
+        e.tick(t);
+    }
+    assert_eq!(
+        e.sys.0.borrow().adopted.len(),
+        1,
+        "our own scope is never adopted again"
+    );
+}
+
+/// A saved app that quits: its give-back is stopped and forgotten with its scope.
+#[test]
+fn a_scope_that_is_gone_has_its_give_back_cancelled() {
+    let mut e = adopted();
+    e.snapshot(snap(99, false));
+    e.tick(1_000);
+    e.tick(31_000);
+    assert_eq!(e.sys.0.borrow().given.len(), 1);
+    {
+        let mut m = e.sys.0.borrow_mut();
+        m.cgs.remove(SCOPE);
+        m.procs.retain(|p, _| !(20..=24).contains(p));
+    }
+    e.snapshot(Snapshot {
+        enabled: true,
+        front: 99,
+        ..Snapshot::default()
+    });
+    let st = e.tick(33_000);
+    assert!(st.apps.is_empty());
+    assert_eq!(e.sys.0.borrow().cancelled, [SCOPE]);
+}

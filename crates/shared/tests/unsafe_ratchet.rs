@@ -57,7 +57,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 8),
     ("wol-lua", 3),
     ("xguard-clam", 13),
-    ("webengine", 119),
+    ("webengine", 117),
 ];
 
 fn crates_dir() -> PathBuf {
