@@ -79,6 +79,17 @@ pub fn to_clear(folded: &str, ls: &str) -> Vec<String> {
         .collect()
 }
 
+/// Layers in `ls` of [`DIR`] without their [`RECORD`] (`has_record` false): pacman never finished
+/// in them (killed, power lost; [`finish`] writes the record first), so they are removed, never
+/// merged (audit8 stability2 #3). Only while no change runs: the one being made has none yet.
+pub fn unfinished(ls: &str, has_record: impl Fn(&str) -> bool) -> Vec<String> {
+    ls.lines()
+        .map(str::trim)
+        .filter(|n| is_layer_name(n) && !has_record(n))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Steps that remove the layers [`to_clear`] found: unmerge first (an overlay lower directory
 /// must not change under a live mount), remove, then merge what is left. Empty when there is
 /// nothing to remove. The last step is always the merge, so a caller that stops on a failed
@@ -137,14 +148,12 @@ fn v(a: &[&str]) -> Step {
     Step::Run(a.iter().map(|s| (*s).to_owned()).collect())
 }
 
-/// Steps up to and including the real pacman in the layer's chroot.
+/// Steps up to and including the real pacman in the layer's chroot. The layer has no
+/// extension-release yet, so systemd-sysext skips it until [`finish`] (audit8 stability2 #3: a
+/// transaction killed half way never merges over `/usr` at the next boot).
 pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
     let l = format!("{DIR}/{}", name(n));
     let w = format!("{WORK_DIR}/{}", name(n));
-    let rel = format!(
-        "{l}/usr/lib/extension-release.d/extension-release.{}",
-        name(n)
-    );
     let opts = format!("lowerdir={CHROOT}/usr,upperdir={l}/usr,workdir={w}");
     let mut chroot = vec!["arch-chroot", CHROOT, PACMAN];
     chroot.extend(args.iter().map(String::as_str));
@@ -156,10 +165,6 @@ pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
             &w,
             CHROOT,
         ]),
-        Step::Write {
-            path: rel,
-            text: extension_release(),
-        },
         v(&["mount", "--rbind", "/", CHROOT]),
         v(&["mount", "--make-rprivate", CHROOT]),
         v(&[
@@ -175,9 +180,12 @@ pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
     ]
 }
 
-/// Steps after pacman succeeded: keep the record, unmount, merge the layer. pacman has committed
-/// by now, so a failure here never removes the layer (its files and database entries are the
-/// change): the caller stops and the layer merges at the next boot (systemd-sysext.service).
+/// Steps after pacman succeeded: keep the record, make the layer an extension, unmount, merge
+/// it. pacman has committed by now, so a failure here never removes the layer (its files and
+/// database entries are the change): the caller stops and the layer merges at the next boot
+/// (systemd-sysext.service). The record comes first: a layer without one is unfinished
+/// ([`unfinished`]). The extension-release is written through the chroot's overlay, still
+/// mounted, so its upper directory never changes under it.
 pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
     let l = format!("{DIR}/{}", name(n));
     vec![
@@ -185,10 +193,33 @@ pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
             path: format!("{l}/{RECORD}"),
             text: rec.to_json(),
         },
+        Step::Write {
+            path: format!(
+                "{CHROOT}/usr/lib/extension-release.d/extension-release.{}",
+                name(n)
+            ),
+            text: extension_release(),
+        },
         v(&["umount", "-R", CHROOT]),
         v(&["rm", "-rf", &format!("{WORK_DIR}/{}", name(n))]),
         v(&["systemd-sysext", "refresh"]),
     ]
+}
+
+/// Whether `/proc/self/mountinfo` text shows something mounted at or under [`CHROOT`]: a run
+/// that stopped at [`finish`]'s `umount -R` left its rbind and overlay there (audit8 stability2
+/// #8), and the next [`begin`] must not stack another rbind on them.
+pub fn chroot_mounted(mountinfo: &str) -> bool {
+    mountinfo.lines().any(|l| {
+        l.split_whitespace().nth(4).is_some_and(|m| {
+            m == CHROOT || m.strip_prefix(CHROOT).is_some_and(|r| r.starts_with('/'))
+        })
+    })
+}
+
+/// Unmounts what [`chroot_mounted`] found.
+pub fn unmount_chroot() -> Vec<String> {
+    ["umount", "-R", CHROOT].map(String::from).to_vec()
 }
 
 /// After a failed [`begin`] step (pacman did not commit): nothing of the layer is left, the
@@ -309,9 +340,13 @@ mod tests {
         let t: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
         let l = "/var/lib/extensions/wolos-layer-0003";
         assert!(t[0].starts_with(&format!("mkdir -p {l}/usr/lib/extension-release.d")));
-        assert!(t[1].contains("extension-release.wolos-layer-0003"));
-        assert_eq!(t[2], "mount --rbind / /run/wolos/layer-root");
-        assert!(t[4].contains(&format!(
+        // audit8 stability2 #3: nothing makes the layer an extension before pacman is done.
+        assert!(
+            !t.iter().any(|x| x.contains("extension-release.wolos")),
+            "{t:?}"
+        );
+        assert_eq!(t[1], "mount --rbind / /run/wolos/layer-root");
+        assert!(t[3].contains(&format!(
             "lowerdir=/run/wolos/layer-root/usr,upperdir={l}/usr,workdir=/var/lib/wolos/layers/wolos-layer-0003"
         )));
         assert_eq!(
@@ -324,12 +359,44 @@ mod tests {
         };
         let f: Vec<String> = finish(3, &rec).iter().map(|s| s.to_string()).collect();
         assert_eq!(f[0], format!("write {l}/wolos-layer.json"));
-        assert_eq!(f[1], "umount -R /run/wolos/layer-root");
+        assert_eq!(
+            f[1],
+            "write /run/wolos/layer-root/usr/lib/extension-release.d/extension-release.wolos-layer-0003"
+        );
+        assert_eq!(f[2], "umount -R /run/wolos/layer-root");
         assert_eq!(f.last().unwrap(), "systemd-sysext refresh");
         assert!(
             f.iter()
                 .any(|s| s == &format!("write {l}/wolos-layer.json"))
         );
+    }
+
+    #[test]
+    fn a_chroot_left_mounted_is_seen() {
+        let line =
+            |m: &str| format!("36 25 0:32 / {m} rw,relatime shared:1 - btrfs /dev/vda2 rw\n");
+        let left = line("/") + &line("/run/wolos/layer-root") + &line("/run/wolos/layer-root/usr");
+        assert!(chroot_mounted(&left));
+        assert!(chroot_mounted(&line("/run/wolos/layer-root/usr")));
+        assert!(!chroot_mounted(
+            &(line("/") + &line("/run/wolos/layer-rootx"))
+        ));
+        assert!(!chroot_mounted(""));
+        assert_eq!(
+            unmount_chroot().join(" "),
+            "umount -R /run/wolos/layer-root"
+        );
+    }
+
+    #[test]
+    fn a_layer_without_its_record_is_unfinished() {
+        let ls = "wolos-layer-0001\nwolos-layer-0002\nother\n";
+        assert_eq!(
+            unfinished(ls, |n| n == "wolos-layer-0001"),
+            ["wolos-layer-0002"]
+        );
+        assert!(unfinished(ls, |_| true).is_empty());
+        assert!(unfinished("", |_| false).is_empty());
     }
 
     #[test]

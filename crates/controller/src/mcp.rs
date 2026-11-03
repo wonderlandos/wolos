@@ -340,6 +340,9 @@ impl Env for ToolEnv<'_> {
     fn capture(&mut self, argv: &[&str]) -> Option<String> {
         self.inner.capture(argv)
     }
+    fn try_lock(&mut self, path: &Path) -> io::Result<Option<crate::run::Lock>> {
+        self.inner.try_lock(path)
+    }
     fn stdin_line(&mut self) -> Option<String> {
         None
     }

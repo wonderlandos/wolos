@@ -113,9 +113,15 @@ impl Supervisor {
         while self.wanted(generation, ctx) {
             let started = ctx.epoch.elapsed().as_secs_f64();
             eprintln!("wold: start {}", self.spec.label);
-            match ctx.runner.spawn(&self.spec) {
-                Ok(pid) => {
-                    let rx = ctx.reaper.register(pid);
+            // Registered before any waitpid may see it exit (audit8 stability2 #1).
+            let spawned = {
+                let _held = crate::reaper::hold_spawn();
+                ctx.runner
+                    .spawn(&self.spec)
+                    .map(|pid| (pid, ctx.reaper.register(pid)))
+            };
+            match spawned {
+                Ok((pid, rx)) => {
                     {
                         let mut s = self.lock();
                         s.pid = Some(pid);
@@ -290,6 +296,57 @@ mod tests {
         c.reaper.exited(1000, 0, true);
         until(|| s.status().state == "waiting");
         s.stop(&c); // wakes the wait
+        until(|| s.status().state == "stopped");
+    }
+
+    /// Plays a kernel that reaps a job the moment it starts, before the supervisor registered it,
+    /// the way `Reaper::reap_all` does (waitpid under [`crate::reaper::hold_spawn`]).
+    struct DiesAtOnce {
+        reaper: Arc<Reaper>,
+        next: AtomicI32,
+    }
+
+    impl Runner for DiesAtOnce {
+        fn spawn(&self, _: &JobSpec) -> std::io::Result<i32> {
+            let pid = 2000 + self.next.fetch_add(1, Ordering::SeqCst);
+            if pid == 2000 {
+                let (reaper, (tx, rx)) = (Arc::clone(&self.reaper), std::sync::mpsc::channel());
+                std::thread::spawn(move || {
+                    let _ = tx.send(());
+                    let _waitpid = crate::reaper::hold_spawn();
+                    reaper.exited(pid, 1, false); // nobody named it a job yet
+                });
+                // The kernel side is running: give it time to deliver before spawn returns.
+                let _ = rx.recv();
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(pid)
+        }
+        fn stop_tree(&self, _: i32) {}
+    }
+
+    #[test]
+    fn a_job_that_exits_before_it_is_registered_still_restarts() {
+        let reaper: Arc<Reaper> = Arc::default();
+        let c = Arc::new(Ctx {
+            runner: Arc::new(DiesAtOnce {
+                reaper: Arc::clone(&reaper),
+                next: AtomicI32::default(),
+            }),
+            reaper,
+            stopping: Arc::default(),
+            epoch: Instant::now(),
+        });
+        let s = Supervisor::new(spec(
+            r#"{"label":"e","program":["x"],"keepAlive":true,"throttleSeconds":0}"#,
+        ));
+        s.start(&c);
+        // The first run's exit is delivered, so the job starts again instead of hanging "running".
+        until(|| s.pid() == Some(2001));
+        let st = s.status();
+        assert_eq!((st.starts, st.last_exit), (2, Some(1)));
+        s.stop(&c);
+        c.reaper.exited(2001, 143, true);
         until(|| s.status().state == "stopped");
     }
 

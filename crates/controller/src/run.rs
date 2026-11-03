@@ -109,6 +109,12 @@ pub trait Env {
     fn write_private(&mut self, path: &Path, text: &str) -> io::Result<()> {
         shared::atomic::atomic_write(path, 0o600, text.as_bytes())
     }
+    /// Take the exclusive lock file `path` without waiting (`flock`, released when the [`Lock`]
+    /// drops or the process ends): `Ok(None)` while another run holds it (`wol update apply`, the
+    /// pacman wrapper; audit8 stability2 #2).
+    fn try_lock(&mut self, path: &Path) -> io::Result<Option<Lock>> {
+        flock_file(path)
+    }
     /// Delete one file; a file that is already gone is not an error (`wol webapp remove`).
     fn remove_file(&mut self, path: &Path) -> io::Result<()> {
         match std::fs::remove_file(path) {
@@ -140,6 +146,52 @@ pub trait Env {
     fn actor(&self) -> String {
         self.var("WOL_HELPER")
             .map_or_else(|| "cli".into(), |h| format!("script:{h}"))
+    }
+}
+
+/// An exclusive lock from [`Env::try_lock`]; dropping it releases the lock.
+pub struct Lock(#[allow(dead_code)] Box<dyn std::any::Any>);
+
+/// [`Env::try_lock`] on the real file system: `path` (and its directory) made if missing, mode
+/// 0600, `flock(LOCK_EX | LOCK_NB)` on it.
+fn flock_file(path: &Path) -> io::Result<Option<Lock>> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    // SAFETY: flock on a descriptor this function owns; the lock goes with `f`.
+    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(Some(Lock(Box::new(f))));
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::EWOULDBLOCK) {
+        Ok(None)
+    } else {
+        Err(e)
+    }
+}
+
+/// Take [`wol_core::update::LOCK`] for one change to a slot or a layer, or say why not: only one
+/// such change runs at a time (audit8 stability2 #2: a second `wol update apply` or pacman would
+/// delete or snapshot over the slot the first one is building). Err = the exit code to return.
+pub(crate) fn update_lock(env: &mut dyn Env) -> Result<Lock, i32> {
+    match env.try_lock(Path::new(wol_core::update::LOCK)) {
+        Ok(Some(l)) => Ok(l),
+        Ok(None) => Err(fail(env, ErrorCode::Unavailable, wol_core::update::BUSY)),
+        Err(e) => Err(fail(
+            env,
+            ErrorCode::Failed,
+            &format!("{}: {e}", wol_core::update::LOCK),
+        )),
     }
 }
 
@@ -904,23 +956,32 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     if !env.is_root() {
         return fail(env, ErrorCode::Denied, "update apply needs root");
     }
-    for s in &steps {
+    let _lock = match update_lock(env) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
+    for (i, s) in steps.iter().enumerate() {
         env.err(&format!("wol update: {s}\n"));
         let code = match s {
             Step::Run(argv) => env.exec(argv).unwrap_or(127),
             Step::Write { path, text } => i32::from(env.write_file(Path::new(path), text).is_err()),
         };
         if code != 0 {
-            for r in up::rollback_from(&slot, from) {
-                let _ = env.exec(&r);
+            // A stacked change past its swap no longer has the slot as it was (audit8 #4).
+            let undo = up::rollback_at(&slot, from, &steps, i);
+            for r in &undo.argv {
+                let _ = env.exec(r);
             }
             return fail(
                 env,
                 ErrorCode::Failed,
-                &if from == up::Base::Pending {
-                    format!("{s} failed ({code}); slot {slot} kept as it was")
-                } else {
-                    format!("{s} failed ({code}); slot {slot} removed")
+                &match (undo.kept, from) {
+                    (true, _) => format!("{s} failed ({code}); slot {slot} kept as it was"),
+                    (false, up::Base::Pending) => format!(
+                        "{s} failed ({code}); slot {slot} removed, with the change that waited \
+                         for a restart in it"
+                    ),
+                    (false, _) => format!("{s} failed ({code}); slot {slot} removed"),
                 },
             );
         }
@@ -1102,6 +1163,18 @@ pub struct FakeEnv {
     pub dirs: Vec<PathBuf>,
     /// `secs` of every `request_wait`, in order.
     pub waits: Vec<u32>,
+    /// Lock files held through `try_lock` (share one between two fakes to interleave runs).
+    pub locks: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
+}
+
+/// A [`FakeEnv`] lock: gone from the shared list when dropped.
+struct FakeLock(std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>, PathBuf);
+
+impl Drop for FakeLock {
+    fn drop(&mut self) {
+        let mut held = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        held.retain(|p| *p != self.1);
+    }
 }
 
 #[derive(Default)]
@@ -1152,6 +1225,17 @@ impl Env for FakeEnv {
     }
     fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
         self.keys.iter().find(|k| k.0 == desc).map(|k| k.1.clone())
+    }
+    fn try_lock(&mut self, path: &Path) -> io::Result<Option<Lock>> {
+        let mut held = self.locks.lock().unwrap_or_else(|p| p.into_inner());
+        if held.iter().any(|p| p == path) {
+            return Ok(None);
+        }
+        held.push(path.into());
+        Ok(Some(Lock(Box::new(FakeLock(
+            std::sync::Arc::clone(&self.locks),
+            path.into(),
+        )))))
     }
     fn keyring_forget(&mut self, desc: &str) {
         self.keys.retain(|k| k.0 != desc);

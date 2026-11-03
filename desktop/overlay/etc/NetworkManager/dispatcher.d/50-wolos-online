@@ -8,7 +8,9 @@
 # (wolos-modules-pending): while it runs, a second start is refused, so one drain at a time
 # (audit5 I6-5: Wi-Fi set up after the first login). --collect: the unit is gone when it ends, even
 # failed, or the name would stay taken and no later connection could drain; SuccessExitStatus=1:
-# "something stays queued" is the normal end of an offline try (audit6 ST6-2).
+# "something stays queued" is the normal end of an offline try (audit6 ST6-2). RuntimeMaxSec: a
+# drain that stalls past two hours ends (SIGINT first: pacman stops between packages), so it
+# never holds the name for good; what it did not install stays queued (audit8 stability2 #6).
 [ "${2:-}" = up ] || exit 0
 flock -n "${WOLOS_LOCK:-/run/wolos-hw-online.lock}" wol hw online >/dev/null 2>&1 &
 P=${WOL_MODULES_PENDING:-/var/lib/wolos/modules-pending}
@@ -20,6 +22,7 @@ Q=${WOL_PACKAGES_PENDING:-/var/lib/wolos/packages-pending}
 if [ "${1:-}" != lo ] && [ -n "$(ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null)" ] &&
   { [ -s "$P" ] || [ -s "$Q" ]; }; then
   systemd-run --no-block --unit=wolos-modules-pending --collect --property=SuccessExitStatus=1 --description="WolOS: install queued modules" \
+    --property=RuntimeMaxSec=2h --property=KillSignal=SIGINT \
     "${WOLOS_LIB:-/usr/lib/wolos}/modules-install" --drain >/dev/null 2>&1 || :
 fi
 exit 0

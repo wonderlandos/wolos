@@ -38,8 +38,10 @@ else
 	rm -f "$D/audit"
 fi
 pacman -Qq >"$D/kernels" 2>/dev/null
-if curl -fsSL -o "$D/base.new" "$URL" 2>/dev/null &&
-	curl -fsSL "$URL.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
+# Each fetch is bounded (audit8 stability2 #5): a stalled connection must not hold the unit, or the
+# hourly timer never starts it again until a restart (TimeoutStartSec bounds the whole run).
+if curl -fsSL --max-time 60 -o "$D/base.new" "$URL" 2>/dev/null &&
+	curl -fsSL --max-time 60 "$URL.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
 	[ -s "$D/base.sig.new" ]; then
 	mv "$D/base.new" "$D/base"
 	mv "$D/base.sig.new" "$D/base.sig"
