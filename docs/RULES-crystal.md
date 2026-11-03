@@ -20,7 +20,7 @@ Specs (`spec/` directories and `*_spec.cr`) are held to every rule except RCR-00
 | RCR-001 | file | Line 1 is `# SPDX-License-Identifier: <id>`. | `rcr_001_spdx_on_line_one` | enforced |
 | RCR-002 | file | Header: 40 or more characters of purpose comment (SPDX and notice lines left out) in the first 30 lines of every non-spec file. | `rcr_002_header_says_what_the_file_is_for` | enforced |
 | RCR-003 | file | No carriage returns, a final newline, no blank line at the end. | `rcr_003_text_hygiene` | enforced |
-| RCR-004 | tool | `crystal tool format --check` is clean over every `.cr` file (needs crystal 1.12 or newer: the formatter output differs between releases, CI's Arch toolchain is the reference). | `rcr_004_crystal_format_is_clean` | enforced |
+| RCR-004 | tool | `crystal tool format --check` is clean over every `.cr` file (needs crystal 1.22 or newer, the `shard.yml` floor: the formatter output differs between releases, CI's Arch toolchain is the reference). | `rcr_004_crystal_format_is_clean` | enforced |
 | RCR-005 | tool | `ameba --up-to-version 1.7.0` is clean with the committed `.ameba.yml`. | `rcr_005_ameba_is_clean` | enforced |
 | RCR-006 | tool | `.ameba.yml` decides every rule the installed ameba has (`Enabled: true` or `false`, no rule left to its default), keeps the scanner fixtures out of `Globs`, and keeps the lint rules that guard crashes and error handling on. A rule a newer ameba adds fails this test until it is decided. | `rcr_006_ameba_config_lists_every_rule_explicitly` | enforced |
 | RCR-007 | tool | The `Excluded:` lists in `.ameba.yml` (the legacy files that still break a rule) only shrink, and name existing files. | `rcr_007_ameba_exclusions_only_shrink` | baseline |
