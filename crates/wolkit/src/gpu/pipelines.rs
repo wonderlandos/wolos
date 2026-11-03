@@ -223,6 +223,7 @@ impl Pipelines {
             binding(1, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
             binding(2, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
             binding(3, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
+            binding(4, vk::DescriptorType::COMBINED_IMAGE_SAMPLER),
         ];
         let push = [vk::PushConstantRange {
             stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,

@@ -270,16 +270,12 @@ const RAW_ONLY: &[(&str, &str)] = &[(
 
 /// Functions the high layer does not wrap yet. CR1 is done, so libwol has none; a new header
 /// function is either wrapped in the same change or listed in EXEMPT with a reason. It may only
-/// shrink. The wolkit 1.0 calls below are the shard's next layer (version queries, images, canvas
-/// streams and GPU surfaces), not wrapped in its first release.
+/// shrink. The wolkit 1.0 calls below are the shard's next layer (version queries, canvas streams
+/// and GPU surfaces), not wrapped in its first release; images are wrapped (`FFI::Image`).
 const PENDING: &[&str] = &[
     "wolkit_version",
     "wolkit_version_string",
     "wolkit_engine_get_gpu_uuid",
-    "wolkit_image_create",
-    "wolkit_image_create_rgba",
-    "wolkit_image_get_id",
-    "wolkit_image_release",
     "wolkit_window_canvas_submit",
     "wolkit_surface_create",
     "wolkit_surface_release",

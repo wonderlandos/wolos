@@ -134,7 +134,7 @@ const WHITESPACE: &[&str] = &["normal", "nowrap", "pre-wrap"];
 const FEATURE: &[&str] = &["none", "tnum"];
 const SELECT: &[&str] = &["none", "text"];
 const SPRING: &[&str] = &["gentle", "snappy", "bouncy"];
-const FIT: &[&str] = &["contain", "cover", "fill"];
+const FIT: &[&str] = &["contain", "cover", "fill", "none"];
 const SIDE: &[&str] = &["bottom", "top", "right", "left"];
 const ANCHOR_ALIGN: &[&str] = &["start", "center", "end"];
 

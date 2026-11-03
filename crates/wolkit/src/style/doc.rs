@@ -299,12 +299,26 @@ fn properties(w: &mut String) {
     }
 }
 
+/// How an `image` node paints (WK-image; the engine side is `libwolkit.md`, Pictures).
+const PICTURES: &str = "An `image` node paints its picture (`libwolkit.md`, Pictures) between its background and \
+its border, placed by its `image-fit` (`contain`, `cover`, `fill`, `none`; set on the node, not in a sheet). Style it \
+like any box: `border-radius` rounds the picture as well as the box, `opacity` fades it (with no background, border, \
+shadow or focus ring the fade needs no offscreen layer), `background` fills what `contain` and `none` leave empty, and \
+`box-shadow` lifts it. A picture still decoding shows the `control` token in the node's shape.
+
+```css
+.tile { border-radius: m; box-shadow: sm; background: card; }
+.tile:hover { box-shadow: md; transition: box-shadow fast ease; }
+.faded { opacity: 0.6; }
+```";
+
 fn layout(w: &mut String) {
     let _ = writeln!(w, "\n## Layout\n\n{LAYOUT_INTRO}\n");
     for l in LAYOUT_NOTES {
         let _ = writeln!(w, "- {l}");
     }
     let _ = writeln!(w, "\n{INCREMENTAL}\n");
+    let _ = writeln!(w, "## Pictures\n\n{PICTURES}\n");
     let _ = writeln!(w, "## Not in 1.0\n\n{NOT_IN_1_0}\n");
 }
 

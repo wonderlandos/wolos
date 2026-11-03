@@ -202,6 +202,8 @@ pub struct LayoutCache {
     /// Scratch for the scene adapter, kept so a frame allocates nothing once warm.
     pub(crate) dirty_scratch: Vec<(u32, u8)>,
     pub(crate) changed_scratch: Vec<(u32, Rect)>,
+    /// The picture size generation (`image::size_generation`) the image nodes were measured at.
+    pub(crate) image_sizes: u64,
     pub stats: Stats,
 }
 

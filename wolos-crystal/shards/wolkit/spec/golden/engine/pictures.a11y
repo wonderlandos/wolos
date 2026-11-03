@@ -1,0 +1,7 @@
+a11y nodes=6
+0 box role=none name=""
+  1 box role=none name=""
+    2 image role=image name="Four colours, cut to fill"
+    3 image role=image name="Four colours, whole"
+    4 image role=image name="Four colours, actual size"
+    5 image role=none name=""

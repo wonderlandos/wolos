@@ -6,7 +6,8 @@
 // channel): signed-distance rounded rectangles with `0.5 - d` coverage quantised to 0..255,
 // integer premultiplication and `round(x / 255)`, gradient `t` quantised before the mix, glyph
 // and shadow coverage fetched from R8 atlases (shadow masks are the CPU's own three-box blur,
-// nine-sliced), and clip coverage multiplied in integers. `precise` keeps the compiler from
+// nine-sliced), pictures sampled bilinearly from premultiplied RGBA8 pages with weights
+// quantised to 0..255 (src/image/fit.rs), and clip coverage multiplied in integers. `precise` keeps the compiler from
 // fusing multiply-adds, which would move edge pixels.
 #version 450
 
@@ -14,6 +15,7 @@ layout(set = 0, binding = 0, std430) readonly buffer Clips { vec4 rows[]; } clip
 layout(set = 0, binding = 1) uniform sampler2DArray glyph_pages;
 layout(set = 0, binding = 2) uniform sampler2D shadow_atlas;
 layout(set = 0, binding = 3) uniform sampler2D layer_src;
+layout(set = 0, binding = 4) uniform sampler2DArray image_pages;
 
 layout(push_constant) uniform Push {
     vec2 offset;
@@ -35,6 +37,7 @@ const uint K_BORDER = 2u;
 const uint K_SHADOW = 3u;
 const uint K_GLYPH = 4u;
 const uint K_LAYER = 5u;
+const uint K_IMAGE = 6u;
 const uint ABSOLUTE = 1024u;
 
 uint div255(uint x) {
@@ -89,6 +92,16 @@ uvec4 mix_u8(uvec4 a, uvec4 b, uint t) {
 
 uint fetch_r8(float v) {
     return uint(v * 255.0 + 0.5);
+}
+
+uvec4 fetch_rgba(ivec3 at) {
+    vec4 t = texelFetch(image_pages, at, 0);
+    return uvec4(fetch_r8(t.r), fetch_r8(t.g), fetch_r8(t.b), fetch_r8(t.a));
+}
+
+// One texel of the level at `base` (size `lim + 1`) on `page`, clamped to its edges.
+uvec4 texel(ivec2 base, ivec2 lim, ivec2 q, int page) {
+    return fetch_rgba(ivec3(base + clamp(q, ivec2(0), lim), page));
 }
 
 int slice(int m, int split, int stretch) {
@@ -151,6 +164,24 @@ void main() {
         int page = int((params >> 4) & 63u);
         cov = fetch_r8(texelFetch(glyph_pages, ivec3(ivec2(v_uv.xy) + m, page), 0).r);
         src = premul(unpack(v_colors.x));
+    } else if (kind == K_IMAGE) {
+        // v_rect: the part drawn; v_extra: the picture's origin and texels per pixel.
+        cov = cov_u8(rrect_cov(p, v_rect, vec4(0.0)));
+        precise float u = (p.x - v_extra.x) * v_extra.z - 0.5;
+        precise float v = (p.y - v_extra.y) * v_extra.w - 0.5;
+        float fu = floor(u);
+        float fv = floor(v);
+        uint wx = cov_u8(u - fu);
+        uint wy = cov_u8(v - fv);
+        ivec2 q = ivec2(int(fu), int(fv));
+        ivec2 base = ivec2(v_uv.xy);
+        ivec2 lim = ivec2(v_uv.zw) - 1;
+        int page = int((params >> 4) & 63u);
+        uvec4 top = mix_u8(texel(base, lim, q, page), texel(base, lim, q + ivec2(1, 0), page), wx);
+        uvec4 bot = mix_u8(texel(base, lim, q + ivec2(0, 1), page), texel(base, lim, q + ivec2(1, 1), page), wx);
+        uvec4 t = mix_u8(top, bot, wy);
+        uint a = unpack(v_colors.x).a;
+        src = uvec4(div255(t.r * a), div255(t.g * a), div255(t.b * a), div255(t.a * a));
     } else {
         // K_LAYER: composite an offscreen layer (premultiplied) with alpha color0.a.
         vec4 t = texelFetch(layer_src, pix, 0);

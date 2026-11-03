@@ -31,6 +31,7 @@ module Wolkit
         file.to_slice
       end
 
+      # `Digest::CRC32.update` returns the finished CRC (already inverted), so it is written as is.
       private def self.chunk(file : IO, kind : String, data : Bytes) : Nil
         file.write_bytes(data.size.to_u32, IO::ByteFormat::BigEndian)
         file.write(kind.to_slice)

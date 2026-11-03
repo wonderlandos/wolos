@@ -86,7 +86,7 @@ An element macro takes at most one positional value, then named properties and a
 | `scroll` | none | a block | `on_scroll` |
 | `spacer`, `divider` | none | | |
 | `text` | the words (required) | `role` (type scale) | |
-| `image` | none | `source`, `fit`; needs `label:` or `decorative: true` | |
+| `image` | none | `src` (a file path; `source` is the same), `picture` (an `FFI::Image`), `fit` (`:contain`, `:cover`, `:fill`, `:none`); needs `alt:` or `decorative: true` | |
 | `button` | the label | `primary`, `danger`, `flat` | `on_click`, `on_hover` |
 | `icon_button` | an icon name (`:trash`) | `primary`, `danger`, `flat`; needs `label:` | `on_click`, `on_hover` |
 | `toggle` | a `Signal(Bool)` | needs `label:` | `on_toggle` |
@@ -96,11 +96,22 @@ An element macro takes at most one positional value, then named properties and a
 
 **Common events** (`COMMON_EVENTS`): every element takes `on_key: ->(key : Wolkit::KeyPress) { }` (the keys pressed while it or a part inside it has focus) and `on_focus: ->(focused : Bool) { }` (focus arrives in it or leaves it). See "Keys" below.
 
-**Common properties** (`COMMON` in the same file): `direction wrap grow shrink basis gap row_gap column_gap align align_self align_content justify pad pad_top pad_right pad_bottom pad_left margin margin_top margin_right margin_bottom margin_left width height min_width min_height max_width max_height aspect position top right bottom left overflow z tab_index bg border radius opacity outline translate scale rotate cursor pointer_events visibility backdrop color size weight line_height letter_spacing text_align decoration text_overflow white_space max_lines tnum italic selectable spring tooltip focusable`. Also `class:` (style class ids from `wolkit-stylec`), the state flags `disabled selected checked expanded busy` (one `SET_STATE` mask, not a restyle), and the accessibility arguments `label:`, `description:`, `a11y_role:`.
+**Common properties** (`COMMON` in the same file): `direction wrap grow shrink basis gap row_gap column_gap align align_self align_content justify pad pad_top pad_right pad_bottom pad_left margin margin_top margin_right margin_bottom margin_left width height min_width min_height max_width max_height aspect position top right bottom left overflow z tab_index bg border radius opacity outline translate scale rotate cursor pointer_events visibility backdrop color size weight line_height letter_spacing text_align decoration text_overflow white_space max_lines tnum italic selectable spring tooltip focusable`. Also `class:` (style class ids from `wolkit-stylec`), the state flags `disabled selected checked expanded busy` (one `SET_STATE` mask, not a restyle), and the accessibility arguments `label:`, `description:`, `a11y_role:` (`image` takes `alt:` for its name).
 
 **Values come from the design scale.** Spacing is `:none :xs :sm :md :lg :xl` (0, 4, 8, 12, 16, 24 px, the scale of the style language); radius `:none :s :m :l :xl`; colours are the 13 theme tokens (`:surface :sidebar :card :line :text :dim :accent :accentText :glass :control :success :warning :danger`); type roles `:display :large :title :body :secondary :caption`; enum properties take the engine's names with `_` for `-` (`align: :center`, `justify: :space_between`). A size is a number (px), `:auto` or `"50%"`. `translate:` and `scale:` take one number or `{x, y}`; `border:` and `outline:` take a width (in the `line` colour), `{width, :token}` or `:none`. A literal off the scale is a compile error, a computed one raises `Wolkit::UsageError` with the same sentence.
 
 **Events** are procs: `on_click: -> { add }`, or with the payload `on_change: ->(text : String) { }` (text fields), `Bool` (toggle), `Float64` (slider). A handler that raises goes to `Wolkit.on_error` (Cryswol's `Wol::Loop.on_error`, through `Wol::Callbacks.guard`, the one place that catches everything) and the UI goes on. Text fields are controlled: the app's signal and the engine's text follow each other, and an edit made before the app last wrote the text is ignored by its sequence number (`Mount#stale_text?`), so an IME composition is never overwritten.
+
+### Pictures
+
+```crystal
+image src: photo.thumbnail, fit: :cover, radius: :m, width: 160, height: 120, alt: "Harbour at dusk"
+image src: "/usr/share/backgrounds/wolos/dunes.jpg", fit: :contain, bg: :sidebar, alt: "Dunes"
+image picture: @scan, fit: :none, alt: "The scanned page"   # an FFI::Image the app holds
+image src: icon_path, decorative: true                       # no name for assistive technology
+```
+
+`src:` is an absolute path (or a signal of one): the engine reads and decodes the file on its own worker threads (PNG and JPEG, turned upright by the EXIF orientation), at a size that fits the part, and caches it per process, so a grid of thumbnails costs little. Until the picture is ready the part shows a placeholder in the `control` colour; the window draws again by itself when it is. `fit:` places it (`:contain` is the default), `radius:` rounds it, `opacity:` fades it (a bare picture needs no offscreen layer for that), `bg:` shows where `:contain` leaves room. `alt:` is required (what the picture shows, in a few words) unless `decorative: true`; the compile error says so. For pictures made in memory, `Wolkit.load_image(bytes, max_side: 512)` or `Wolkit.load_image(path, max_side:)` returns an `FFI::Image` (`size`, `state`, `id`; `from_rgba` for raw pixels): pass it as `picture:` and keep it while it is shown. An `image` with no `width:`/`height:` takes its picture's own size. The icon of an `icon_button :trash` is drawn from the icon theme (`trash` is mapped to `user-trash-symbolic`, and so on) in the button's text colour; a name the theme lacks draws nothing. The engine side is `docs/modules/libwolkit.md`, Pictures.
 
 ## Components
 
@@ -226,7 +237,7 @@ end
 
 The session starts the real engine headless: no fake wold, no Kit host. Parts are found by accessible name (or their text); `click` presses at the centre of the part's rectangle. Pure DSL specs use `Wolkit::Test.record(app)` instead: a recorder backend that keeps each patch, decoded to one line per op by `Wolkit::Patch.describe`.
 
-**Specs of the shard.** `spec/golden/*.ops` pin what the DSL sends; `spec/golden/engine/*.scene|a11y` pin what the engine makes of it (`wolkit_window_dump`); `spec/compile_errors/*.crfail` are programs that must not compile, each with the message and the line the compiler must print (`# expect:`, `# <= error`). `WOLKIT_BLESS=1 make spec` rewrites the goldens; review the diff.
+**Specs of the shard.** `spec/golden/*.ops` pin what the DSL sends; `spec/golden/engine/*.scene|a11y` pin what the engine makes of it (`wolkit_window_dump`), and `spec/golden/engine/pictures.png` the pixels of the `image` fits (`spec/engine/image_spec.cr`); `spec/compile_errors/*.crfail` are programs that must not compile, each with the message and the line the compiler must print (`# expect:`, `# <= error`). `WOLKIT_BLESS=1 make spec` rewrites the goldens; review the diff.
 
 ## Compile errors
 
@@ -239,7 +250,7 @@ In src/views/todo.cr:12:7
 Error: text_field has no property `placehodler`. Did you mean `placeholder`?
 ```
 
-Pinned by `spec/compile_errors_spec.cr`: unknown property with a suggestion (edit distance, computed in the macro), `icon_button needs `label:`. Screen readers and tooltips use it.`, `Spacing is one of 0, 4, 8, 12, 16 or 24; this is 13.`, `Colours are theme tokens: ...; this is :purple.`, an unknown enum value, a handler with the wrong arity, `text` without words, and a non-Bool `disabled:` (the compiler's own overload message, `expected argument #1 to 'Wolkit::Check.bool' to be Bool, not String`, with the caret under the argument). `.wolcss` errors are the engine's (`wolkit-style.md`). Runtime sentences: ``This window has 65,537 parts; the limit is 65,536. Use `list` for long lists.`` and the off-UI-context one above.
+Pinned by `spec/compile_errors_spec.cr`: unknown property with a suggestion (edit distance, computed in the macro), `icon_button needs `label:`. Screen readers and tooltips use it.`, `Spacing is one of 0, 4, 8, 12, 16 or 24; this is 13.`, `Colours are theme tokens: ...; this is :purple.`, an unknown enum value, a handler with the wrong arity, `text` without words, ``image needs `alt:` (what the picture shows), or `decorative: true`. Screen readers use it.``, and a non-Bool `disabled:` (the compiler's own overload message, `expected argument #1 to 'Wolkit::Check.bool' to be Bool, not String`, with the caret under the argument). `.wolcss` errors are the engine's (`wolkit-style.md`). Runtime sentences: ``This window has 65,537 parts; the limit is 65,536. Use `list` for long lists.`` and the off-UI-context one above.
 
 ## Developer tools (`-Ddev`)
 

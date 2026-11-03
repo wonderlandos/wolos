@@ -1,0 +1,4 @@
+wolkit_image_create_encoded@WOLKIT_1.1
+wolkit_image_create_file@WOLKIT_1.1
+wolkit_image_get_size@WOLKIT_1.1
+wolkit_image_get_state@WOLKIT_1.1

@@ -5,6 +5,7 @@
 //! their own chunks above the window. The CPU rasteriser draws the result for the headless
 //! backend; the native backend hands the same list to the GPU batcher.
 
+use crate::image::fit::Fit;
 use crate::num::sat_u8;
 use crate::paint::geom::Rect;
 use crate::paint::list::{DisplayList, Fill, Radii, Shadow};
@@ -50,7 +51,11 @@ pub fn build_with<S: SceneRead + ?Sized>(
         list.finish();
         return;
     }
-    let version = cx.scene.version();
+    // A picture that finished decoding changes what a chunk shows without a patch.
+    let version = cx
+        .scene
+        .version()
+        .wrapping_add(crate::image::generation() << 32);
     let mut overlays = Vec::new();
     list.begin_chunk(0, version, to_paint(cx.scene.rect(0)), (0.0, 0.0), 0);
     node(cx, canvases, list, 0, (0.0, 0.0), 0, &mut overlays);
@@ -122,7 +127,7 @@ fn paint_tree<S: SceneRead + ?Sized>(
     }
     let layer = alpha < 255;
     if layer {
-        list.push_opacity(alpha, true);
+        list.push_opacity(alpha, overlaps(cx, n, st));
     }
     let radii = Radii(st.paint.radius).fitted(r.w, r.h);
     if st.paint.visibility == Visibility::Visible {
@@ -194,6 +199,7 @@ fn decorate<S: SceneRead + ?Sized>(
         }
         Kind::Toggle => toggle(list, pal, cx.scene.state(n) & state::CHECKED != 0, r),
         Kind::Slider => slider(cx, list, n, r),
+        Kind::Image => image(cx, list, n, r, radii),
         _ => {}
     }
     let bw = st.layout.border_width;
@@ -201,6 +207,130 @@ fn decorate<S: SceneRead + ?Sized>(
         list.border(r, radii, bw, pal.resolve(st.paint.border_color));
     }
     text(cx, list, n, kind, st, r);
+}
+
+/// Whether a translucent node needs a layer: anything with children or more than one drawing.
+/// A bare picture (no background, border, shadow or focus ring) folds its opacity into the
+/// picture instead, which keeps a faded thumbnail grid free of offscreen passes.
+fn overlaps<S: SceneRead + ?Sized>(cx: &Lower<'_, S>, n: Idx, st: &Props) -> bool {
+    let bare = cx.scene.kind(n) == Kind::Image
+        && cx.scene.first_child(n) == NIL
+        && st.paint.background == Paint::None
+        && !st.paint.shadow.iter().any(|sh| {
+            sh.color != ColorRef::Transparent && (sh.blur > 0.0 || sh.dx != 0.0 || sh.dy != 0.0)
+        })
+        && st.layout.border_width <= 0.0
+        && (st.paint.outline_width <= 0.0 || cx.scene.state(n) & state::FOCUS_VISIBLE == 0);
+    !bare
+}
+
+/// The `icon:<name>` source of an `image` node without an `image-id`, if it has one.
+fn icon_source<S: SceneRead + ?Sized>(scene: &S, n: Idx) -> Option<&str> {
+    if scene.prop(n, id::IMAGE_ID).is_some_and(|v| v.w[0] != 0) {
+        return None;
+    }
+    let src = scene
+        .prop(n, id::IMAGE_SOURCE)
+        .map(|v| scene.string(v.w[0]))?;
+    crate::image::icon::is_icon(src).then_some(src)
+}
+
+/// The picture an `image` node shows: `image-id` (a registered picture) first, else an
+/// `image-source` path. `None` for a node with neither, or a source that is not a file.
+fn picture<S: SceneRead + ?Sized>(
+    scene: &S,
+    n: Idx,
+    r: Rect,
+) -> Option<std::sync::Arc<crate::image::Entry>> {
+    if let Some(v) = scene.prop(n, id::IMAGE_ID)
+        && v.w[0] != 0
+    {
+        return crate::image::lookup(v.w[0]);
+    }
+    let src = scene
+        .prop(n, id::IMAGE_SOURCE)
+        .map(|v| scene.string(v.w[0]))?;
+    crate::image::source::get(src, r.w, r.h)
+}
+
+/// Asks for the picture of every `image` node (paint does this lazily as it draws; the headless
+/// backend calls this, then waits, so its first frame already shows the pictures).
+pub fn request_images<S: SceneRead + ?Sized>(
+    scene: &S,
+    styles: &Styles,
+    palette: &Palette,
+) -> usize {
+    let mut n = 0;
+    if !scene.is_live(0) {
+        return 0;
+    }
+    let mut stack = vec![0];
+    while let Some(i) = stack.pop() {
+        let r = to_paint(scene.rect(i));
+        let asked = match (scene.kind(i), icon_source(scene, i)) {
+            (Kind::Image, Some(src)) => {
+                let color = palette.resolve(styles.get(scene.computed(i)).text.color);
+                crate::image::icon::get(src, r.w, r.h, color).is_some()
+            }
+            (Kind::Image, None) => picture(scene, i, r).is_some(),
+            _ => false,
+        };
+        if asked {
+            n += 1;
+        }
+        let mut c = scene.first_child(i);
+        while c != NIL && stack.len() < 1 << 16 {
+            stack.push(c);
+            c = scene.next_sibling(c);
+        }
+    }
+    n
+}
+
+/// An `image` node: the picture placed by `image-fit` and cut to the node's rounded box, or a
+/// placeholder fill while it is decoding (and when it could not be read).
+fn image<S: SceneRead + ?Sized>(
+    cx: &Lower<'_, S>,
+    list: &mut DisplayList,
+    n: Idx,
+    r: Rect,
+    radii: Radii,
+) {
+    let icon = icon_source(cx.scene, n);
+    let entry = match icon {
+        Some(src) => {
+            let color = cx
+                .palette
+                .resolve(cx.styles.get(cx.scene.computed(n)).text.color);
+            crate::image::icon::get(src, r.w, r.h, color)
+        }
+        None => picture(cx.scene, n, r),
+    };
+    let Some(entry) = entry else {
+        return;
+    };
+    let Some(px) = entry.pixels() else {
+        // An icon that is not drawn yet (or not found) shows nothing; a picture a placeholder.
+        if icon.is_none() {
+            list.rect(r, radii, Fill::Solid(cx.palette.token(Token::Control)));
+        }
+        return;
+    };
+    let fit = cx
+        .scene
+        .prop(n, id::IMAGE_FIT)
+        .map_or(Fit::Contain, |v| Fit::from_index(v.w[0]));
+    let dest = crate::image::fit::dest(fit, r, px.width, px.height);
+    let shown = dest.intersect(&r);
+    let round = !radii.is_zero();
+    if round {
+        list.push_clip(r, radii.max());
+    }
+    // The node's opacity is a layer, or folded in by the opacity stack (`overlaps`).
+    list.image(shown, dest, crate::image::ImageRef(px), 255);
+    if round {
+        list.pop_clip();
+    }
 }
 
 /// What `background` fills with. A three-stop gradient draws its first and last stops (the

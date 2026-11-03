@@ -20,7 +20,7 @@ fn hello_from_c() {
     );
     let (a, b, c) = wolkit::VERSION;
     let want = [
-        format!("version: {a}.{b}.{c} {} 1.0.0", (a << 16) | (b << 8) | c),
+        format!("version: {a}.{b}.{c} {} {a}.{b}.{c}", (a << 16) | (b << 8) | c),
         "backend: 1".to_owned(),
         "fd: yes".to_owned(),
         "bad id: 1 An app id is reverse-DNS, like org.example.hello (letters, digits, '.', '-', '_').".to_owned(),

@@ -47,15 +47,15 @@ fn render_fresh(s: &Scene) -> Image {
 }
 
 #[test]
-fn there_are_twelve_scenes_covering_bidi_and_cjk() {
+fn there_are_thirteen_scenes_covering_bidi_cjk_and_images() {
     let all = scenes::all();
-    assert_eq!(all.len(), 12);
+    assert_eq!(all.len(), 13);
     let names: Vec<_> = all.iter().map(|s| s.name).collect();
     assert!(names.iter().any(|n| n.contains("bidi")) && names.iter().any(|n| n.contains("cjk")));
     let mut sorted = names.clone();
     sorted.sort_unstable();
     sorted.dedup();
-    assert_eq!(sorted.len(), 12, "scene names are unique");
+    assert_eq!(sorted.len(), 13, "scene names are unique");
 }
 
 #[test]

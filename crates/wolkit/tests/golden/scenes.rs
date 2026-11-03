@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! The twelve golden scenes. Each builds a display list on the bundled fonts; the CPU rasteriser
+//! The thirteen golden scenes. Each builds a display list on the bundled fonts; the CPU rasteriser
 //! renders it and the bytes are compared with `scenes/<name>.png`.
 
 use wolkit::paint::geom::{Color, Rect};
@@ -166,7 +166,76 @@ pub fn all() -> Vec<Scene> {
             scale: 1.0,
             build: layers_overlap,
         },
+        Scene {
+            name: "13_images",
+            width: 256,
+            height: 160,
+            scale: 1.0,
+            build: images,
+        },
     ]
+}
+
+/// A 64 x 48 test picture: red rises left to right, green top to bottom, blue 8-pixel checks,
+/// and the right quarter half transparent.
+pub fn picture() -> std::sync::Arc<wolkit::image::Pixels> {
+    let (w, h) = (64u32, 48u32);
+    let mut px = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let check = ((x / 8) + (y / 8)) % 2 == 0;
+            let a = if x >= 48 { 128 } else { 255 };
+            px.extend_from_slice(&[
+                (x * 4) as u8,
+                (y * 5) as u8,
+                if check { 230 } else { 30 },
+                a,
+            ]);
+        }
+    }
+    wolkit::image::decode::premultiply(&mut px);
+    std::sync::Arc::new(wolkit::image::Pixels::from_level(
+        w,
+        h,
+        wolkit::image::Level { w, h, px },
+    ))
+}
+
+fn images(_: &mut Ctx, l: &mut DisplayList) {
+    use wolkit::image::ImageRef;
+    use wolkit::image::fit::{Fit, dest};
+    let p = picture();
+    let put = |l: &mut DisplayList, node: Rect, fit: Fit, alpha: u8| {
+        let d = dest(fit, node, p.width, p.height);
+        l.image(d.intersect(&node), d, ImageRef(p.clone()), alpha);
+    };
+    // Cover in a rounded box (the clip rounds the corners).
+    let a = Rect::new(8.0, 8.0, 72.0, 72.0);
+    l.push_clip(a, 12.0);
+    put(l, a, Fit::Cover, 255);
+    l.pop_clip();
+    // Contain on a background: letterboxed.
+    let b = Rect::new(88.0, 8.0, 72.0, 72.0);
+    l.rect(b, Radii::ZERO, Fill::Solid(LINE));
+    put(l, b, Fit::Contain, 255);
+    // Fill, stretched.
+    put(l, Rect::new(168.0, 8.0, 80.0, 40.0), Fit::Fill, 255);
+    // None: one picture pixel per pixel, centred and cut.
+    put(l, Rect::new(168.0, 56.0, 40.0, 24.0), Fit::None, 255);
+    // Downscaled (a smaller level), and upscaled at fractional positions.
+    put(l, Rect::new(8.0, 92.0, 24.0, 18.0), Fit::Fill, 255);
+    put(l, Rect::new(40.5, 88.25, 96.3, 64.1), Fit::Fill, 255);
+    // Faded: the group's opacity folded into the picture.
+    l.push_opacity(128, false);
+    put(l, Rect::new(146.0, 92.0, 48.0, 36.0), Fit::Fill, 255);
+    l.pop_opacity();
+    // The item's own alpha over a coloured card.
+    l.rect(
+        Rect::new(204.0, 92.0, 44.0, 44.0),
+        Radii::uniform(6.0),
+        Fill::Solid(ACCENT),
+    );
+    put(l, Rect::new(206.0, 94.0, 40.0, 40.0), Fit::Contain, 160);
 }
 
 fn boxes(_: &mut Ctx, l: &mut DisplayList) {

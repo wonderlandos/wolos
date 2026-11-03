@@ -30,6 +30,10 @@ xkbcommon = { version = "0.9", default-features = false, features = ["wayland"] 
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
 # Vulkan, loaded at run time (libvulkan.so.1 is dlopened, nothing links it): the GPU backend (WK-W5).
 ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+# Image decoding (WK-image): PNG and JPEG, decoded on the engine's worker threads (src/image/).
+png = "0.18"
+zune-jpeg = { version = "0.5", default-features = false, features = ["std", "x86", "neon"] }
+zune-core = { version = "0.5", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 miniz_oxide = "0.9.1"
@@ -43,6 +47,10 @@ harness = false
 
 [[bench]]
 name = "gpu"
+harness = false
+
+[[bench]]
+name = "image"
 harness = false
 
 [[bench]]

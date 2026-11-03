@@ -21,6 +21,8 @@ use crate::scene::ids::Ix;
 pub const SLOTS: usize = 3;
 /// Initial ring room per slot, in instances (grows by doubling).
 pub const RING_INSTANCES: u64 = 4096;
+/// The picture pages' format: the CPU rasteriser's premultiplied byte order.
+pub const IMAGE_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 /// Descriptor sets per slot (see [`Slot::sets`]).
 pub const SETS: usize = MAX_LAYERS + 1;
 
@@ -57,6 +59,8 @@ pub struct Live {
     pub slots: Vec<Slot>,
     /// The glyph pages (an R8 2D array; one 1x1 page until the first glyph).
     pub glyphs: Image,
+    /// The picture pages (an RGBA8 2D array, premultiplied; one 1x1 page until the first).
+    pub images: Image,
     pub shadows: Image,
     /// The shadow atlas generation the texture holds.
     pub shadow_gen: u64,
@@ -138,7 +142,7 @@ impl Live {
             },
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                descriptor_count: 3 * n,
+                descriptor_count: 4 * n,
             },
         ];
         // SAFETY: calls on a live device; the infos outlive them.
@@ -173,12 +177,14 @@ impl Live {
             usage | vk::ImageUsageFlags::COLOR_ATTACHMENT,
         );
         let glyphs = Image::new(&gpu, (1, 1, 1), true, vk::Format::R8_UNORM, usage);
+        let images = Image::new(&gpu, (1, 1, 1), true, IMAGE_FORMAT, usage);
         let mut live = Live {
             pipes,
             pool: pool.as_ref().copied().unwrap_or_default(),
             desc_pool: desc_pool.as_ref().copied().unwrap_or_default(),
             slots: Vec::new(),
             glyphs: Image::placeholder(),
+            images: Image::placeholder(),
             shadows: Image::placeholder(),
             shadow_gen: 0,
             dummy: Image::placeholder(),
@@ -193,6 +199,7 @@ impl Live {
         live.shadows = shadows?;
         live.dummy = dummy?;
         live.glyphs = glyphs?;
+        live.images = images?;
         for _ in 0..SLOTS {
             let s = slot(&live.gpu, live.pool, live.desc_pool, live.pipes.set_layout)?;
             live.slots.push(s);
@@ -221,6 +228,12 @@ impl Live {
             &self.gpu,
             cmd,
             &mut self.glyphs,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+        barrier(
+            &self.gpu,
+            cmd,
+            &mut self.images,
             vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
         self.submit_wait(0)
@@ -448,6 +461,96 @@ impl Live {
         Ok(true)
     }
 
+    /// Makes the picture texture array hold `pages` pages of `size` squared; true when it was
+    /// (re)made, so every placed level must be uploaded again.
+    pub fn ensure_images(&mut self, size: u32, pages: u32) -> Result<bool> {
+        if pages == 0 || (self.images.width == size && self.images.layers >= pages) {
+            return Ok(false);
+        }
+        self.gpu.idle()?;
+        let usage = vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST;
+        let img = Image::new(&self.gpu, (size, size, pages), true, IMAGE_FORMAT, usage)?;
+        self.images.destroy(&self.gpu);
+        self.images = img;
+        self.epoch += 1;
+        Ok(true)
+    }
+
+    /// Copies picture levels into the texture array through slot `i`'s staging buffer from
+    /// `at` (rounded up to 4); returns the bytes used. One barrier pair for the whole batch.
+    pub fn upload_images(
+        &mut self,
+        i: usize,
+        cmd: vk::CommandBuffer,
+        at: u64,
+        ups: &[super::images::Upload],
+    ) -> Result<u64> {
+        let Some(s) = self.slots.get_mut(i) else {
+            return Ok(0);
+        };
+        let mut off = at.next_multiple_of(4);
+        let mut regions = Vec::with_capacity(ups.len());
+        for u in ups {
+            let Some(l) = u.px.levels.get(u.level) else {
+                continue;
+            };
+            if u.page >= self.images.layers || !s.staging.write(off, &l.px) {
+                continue;
+            }
+            regions.push(vk::BufferImageCopy {
+                buffer_offset: off,
+                buffer_row_length: l.w,
+                buffer_image_height: l.h,
+                image_subresource: vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    base_array_layer: u.page,
+                    layer_count: 1,
+                },
+                image_offset: vk::Offset3D {
+                    x: i32::try_from(u.x).unwrap_or(0),
+                    y: i32::try_from(u.y).unwrap_or(0),
+                    z: 0,
+                },
+                image_extent: vk::Extent3D {
+                    width: l.w,
+                    height: l.h,
+                    depth: 1,
+                },
+            });
+            off += u64::try_from(l.px.len()).unwrap_or(0);
+        }
+        if regions.is_empty() {
+            return Ok(0);
+        }
+        let staging = s.staging.buffer;
+        let gpu = Arc::clone(&self.gpu);
+        barrier(
+            &gpu,
+            cmd,
+            &mut self.images,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+        );
+        // SAFETY: `cmd` is recording; the staging buffer holds every region (each write above
+        // succeeded) and every region lies inside one layer of the live texture array.
+        unsafe {
+            gpu.device.cmd_copy_buffer_to_image(
+                cmd,
+                staging,
+                self.images.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &regions,
+            );
+        }
+        barrier(
+            &gpu,
+            cmd,
+            &mut self.images,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+        Ok(off - at)
+    }
+
     /// Writes slot `i`'s descriptor sets if a resource changed since.
     pub fn update_sets(&mut self, i: usize) {
         let epoch = self.epoch;
@@ -471,6 +574,7 @@ impl Live {
         }];
         let gi = img(self.glyphs.view);
         let si = img(self.shadows.view);
+        let ii = img(self.images.view);
         for (k, set) in s.sets.iter().enumerate() {
             let layer_view = k
                 .checked_sub(1)
@@ -488,6 +592,7 @@ impl Live {
                 w(1, vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&gi),
                 w(2, vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&si),
                 w(3, vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&li),
+                w(4, vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&ii),
             ];
             // SAFETY: the slot is idle (its fence was waited), every handle is live.
             unsafe { self.gpu.device.update_descriptor_sets(&writes, &[]) };
@@ -595,6 +700,7 @@ impl Drop for Live {
             }
         }
         self.glyphs.destroy(&gpu);
+        self.images.destroy(&gpu);
         self.shadows.destroy(&gpu);
         self.dummy.destroy(&gpu);
         self.pipes.destroy(&gpu);

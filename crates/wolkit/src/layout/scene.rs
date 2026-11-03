@@ -116,9 +116,36 @@ fn intrinsic_size<S: SceneRead + ?Sized>(scene: &S, n: u32, line: f32) -> Size {
         Kind::Toggle => Size::new(40.0, h),
         Kind::Slider => Size::new(160.0, h),
         Kind::TextInput => Size::new(160.0, line.max(h)),
-        Kind::Image => Size::new(64.0, 64.0),
+        Kind::Image => image_size(scene, n),
         _ => Size::ZERO,
     }
+}
+
+/// An image part's natural size: its picture's (one picture pixel per logical pixel), an icon's
+/// nominal 16 px, or 64 px square while the size is not known yet (learning it lays the window
+/// out again, `image::size_generation`).
+fn image_size<S: SceneRead + ?Sized>(scene: &S, n: u32) -> Size {
+    const UNKNOWN: Size = Size::new(64.0, 64.0);
+    let id_size = scene
+        .prop(n, id::IMAGE_ID)
+        .filter(|v| v.w[0] != 0)
+        .map(|v| crate::image::lookup(v.w[0]).and_then(|e| e.natural_for_layout()));
+    let wh = match id_size {
+        Some(wh) => wh,
+        None => {
+            let Some(src) = scene
+                .prop(n, id::IMAGE_SOURCE)
+                .map(|v| scene.string(v.w[0]))
+            else {
+                return UNKNOWN;
+            };
+            if crate::image::icon::is_icon(src) {
+                return Size::new(crate::image::icon::NOMINAL, crate::image::icon::NOMINAL);
+            }
+            crate::image::source::natural(src)
+        }
+    };
+    wh.map_or(UNKNOWN, |(w, h)| Size::new(w as f32, h as f32))
 }
 
 /// A measure that needs no font: 0.5 em per character, 1.3 em per line. What [`run`] uses when
@@ -242,6 +269,16 @@ fn run_with<S: SceneWrite + ?Sized>(
     dirty_nodes.clear();
     changed.clear();
     collect(scene, 0, &mut dirty_nodes);
+    // A picture size learnt since the last pass: image parts measure again.
+    let sizes = crate::image::size_generation();
+    if cache.image_sizes != sizes {
+        cache.image_sizes = sizes;
+        for n in 0..scene.capacity() {
+            if scene.is_live(n) && scene.kind(n) == Kind::Image {
+                dirty_nodes.push((n, dirty::LAYOUT));
+            }
+        }
+    }
     {
         let rs: &S = &*scene;
         let tree = SceneTree { scene: rs, styles };

@@ -13,6 +13,7 @@
 use crate::scene::ids::{Ix, to_u32};
 use std::ops::Range;
 
+use crate::image::ImageRef;
 use crate::paint::geom::{Color, Rect};
 use crate::text::fontdb::FontId;
 
@@ -161,6 +162,15 @@ pub enum Item {
         overlap: bool,
     },
     PopOpacity,
+    /// A picture. `rect` is the part drawn (the node's box, or less), `dest` where the whole
+    /// picture maps (larger than `rect` for `cover`); `alpha` multiplies it. Both rasterisers
+    /// pick the level by the device size of `dest` and sample it bilinearly (`image::fit`).
+    Image {
+        rect: Rect,
+        dest: Rect,
+        image: ImageRef,
+        alpha: u8,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -287,6 +297,18 @@ impl DisplayList {
                 size,
                 color,
                 glyphs: a..b,
+            });
+        }
+    }
+
+    /// A picture drawn into `rect`, mapped onto `dest` (see [`Item::Image`]).
+    pub fn image(&mut self, rect: Rect, dest: Rect, image: ImageRef, alpha: u8) {
+        if !rect.is_empty() && alpha > 0 {
+            self.push(Item::Image {
+                rect,
+                dest,
+                image,
+                alpha,
             });
         }
     }

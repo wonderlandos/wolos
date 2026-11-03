@@ -57,3 +57,12 @@ WOLKIT_1.0 {
   local:
     *;
 };
+
+/* 1.1 (WK-image): pictures with a size cap, from a file, their size and decode state. */
+WOLKIT_1.1 {
+  global:
+    wolkit_image_create_encoded;
+    wolkit_image_create_file;
+    wolkit_image_get_size;
+    wolkit_image_get_state;
+} WOLKIT_1.0;

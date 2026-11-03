@@ -173,6 +173,23 @@ impl NativeWindow {
         }
     }
 
+    /// A picture finished decoding since the last frame: draw again (its node showed the
+    /// placeholder).
+    fn pictures_ready(&mut self, w: &mut WindowCore) {
+        if let Some(i) = &self.images {
+            i.drain();
+        }
+        let g = crate::image::generation();
+        if g == self.image_gen {
+            return;
+        }
+        self.image_gen = g;
+        w.scene.mark_dirty(0, crate::scene::dirty::PAINT);
+        if w.shown && self.pacer.request() {
+            self.draw(w);
+        }
+    }
+
     fn frame_done(&mut self, w: &mut WindowCore, s: &mut Sink) {
         let now = super::sys::monotonic_ns();
         let dt = if self.last_frame_ns == 0 {
@@ -903,6 +920,7 @@ impl Backend for NativeWindow {
         if self.menus_on && self.menus_front != (self.activated || self.keyboard_focus) {
             self.sync_menus(w);
         }
+        self.pictures_ready(w);
         self.pastes(w, s);
         self.a11y_actions(w, s);
         // Moves wait for the frame while one is outstanding; an idle window routes them now.
@@ -927,6 +945,9 @@ impl Backend for NativeWindow {
         self.clip.fds(&mut v);
         if let Some((h, _)) = &self.a11y {
             v.push(h.wake_fd());
+        }
+        if let Some(i) = &self.images {
+            v.push(i.fd());
         }
         v
     }

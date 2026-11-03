@@ -1,0 +1,20 @@
+CREATE 1 box
+SET_PROP 1 flex-direction row
+SET_PROP 1 gap 12.0
+INSERT 0 1 append
+CREATE 2 image
+SET_PROP 2 image-source "/pictures/a.jpg"
+SET_PROP 2 image-fit cover
+SET_PROP 2 border-radius 10.0
+SET_PROP 2 width px:160.0
+SET_PROP 2 height px:120.0
+SET_A11Y 2 image "A beach at dusk" ""
+INSERT 1 2 append
+CREATE 3 image
+SET_PROP 3 image-source "/pictures/b.jpg"
+SET_PROP 3 image-fit none
+SET_A11Y 3 image "The second picture" ""
+INSERT 1 3 append
+CREATE 4 image
+SET_PROP 4 image-source "/pictures/c.png"
+INSERT 1 4 append

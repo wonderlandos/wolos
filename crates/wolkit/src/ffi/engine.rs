@@ -66,7 +66,7 @@ pub extern "C" fn wolkit_version() -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wolkit_version_string() -> *const c_char {
-    c"1.0.0".as_ptr()
+    c"1.1.0".as_ptr()
 }
 
 /// # Safety
@@ -98,6 +98,9 @@ pub unsafe extern "C" fn wolkit_engine_create(
         // for a headless engine only the pinned folder, so its screenshots match on every machine.
         let (roots, index) = font_set(flags, var);
         crate::text::measure::install(&roots, &index);
+        // The icon folders, the same way (a headless engine reads only the pinned ones).
+        let headless = flags & crate::abi::ENGINE_HEADLESS != 0;
+        crate::image::icon::install(crate::image::icon::dirs_for(headless, var));
         let h = Arc::new(wolkit_engine {
             tag: handle::Tag::new(),
             engine,

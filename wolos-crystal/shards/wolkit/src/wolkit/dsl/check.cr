@@ -17,6 +17,15 @@ module Wolkit
       ""
     end
 
+    # `picture:`: the id of an `FFI::Image` (0, no picture, for nil).
+    def self.picture(value : ::Wolkit::FFI::Image) : UInt32
+      value.id
+    end
+
+    def self.picture(value : Nil) : UInt32
+      0_u32
+    end
+
     # A value shown as text: a string, a symbol or a number.
     def self.text(value : String | Symbol | Number?) : String
       value.to_s
