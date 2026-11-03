@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# wolkit-new: `wolkit-new NAME [DIR] [TEMPLATE]` writes a new Wolkit project (the work behind
-# `wol app new NAME --template app`). It prints the files it wrote, one per line.
+# wolkit-new: `wolkit-new NAME [DIR] [TEMPLATE]` writes a new Wolkit project (ADR 0036 plans a
+# `wol app new` over it; that command does not exist yet). It prints the files it wrote, one per line.
 require "../src/wolkit/template"
 
 name = ARGV[0]? || abort "usage: wolkit-new NAME [DIR] [TEMPLATE]"

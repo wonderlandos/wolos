@@ -1,5 +1,5 @@
 # 0034 - Locally built packages: who installs the staged copy
-Status: Accepted (SF1 proposal 2026-11-02; implemented in v0.12 after audit5 C7-1). Builds on 0021 (wopkg asks, wold decides) and 0033 (identity handshake).
+Status: accepted (SF1 proposal 2026-11-02; implemented in v0.12 after audit5 C7-1). Builds on 0021 (wopkg asks, wold decides) and 0033 (identity handshake).
 
 ## Context
 `package.install-file` installs a package built on this computer (the community package collection, a recipe): it is not from

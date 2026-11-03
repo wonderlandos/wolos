@@ -1,5 +1,5 @@
 # 0033 - wold greets first: identity handshake on the control socket
-Status: Accepted. Builds on 0020 (identity from the kernel). Closes audit-security A2 (identity after parse).
+Status: accepted. Builds on 0020 (identity from the kernel). Closes audit-security A2 (identity after parse).
 
 ## Context
 wold decides grants on who the kernel says is on the other end of the control socket

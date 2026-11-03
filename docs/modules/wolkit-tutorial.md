@@ -10,7 +10,7 @@ cd todos
 make run
 ```
 
-`wolkit-new` (the work behind `wol app new todos --template app`) writes `shard.yml`, `src/app.cr`, `src/views/main.cr`, `src/components/greeting.cr`, `src/styles/app.wolcss`, `spec/app_spec.cr`, a `Makefile` and a README, and the project builds and passes its own spec as it stands. `make run` opens a window with a greeting and a button that counts. Close the window and the program ends.
+`wolkit-new NAME [DIR] [TEMPLATE]` (`wolos-crystal/shards/wolkit/bin/wolkit-new.cr`; template `app` by default; there is no `wol` command for this yet) writes `shard.yml`, `src/app.cr`, `src/views/main.cr`, `src/components/greeting.cr`, `src/styles/app.wolcss`, `spec/app_spec.cr`, a `Makefile` and a README, and the project builds and passes its own spec as it stands. `make run` opens a window with a greeting and a button that counts. Close the window and the program ends.
 
 ## 2. Read the smallest app (1 minute)
 
@@ -39,7 +39,7 @@ Wolkit.run Todos
 
 ## 3. Watch it change while it runs (2 minutes)
 
-Build with `-Ddev` and the running app listens for changes: a saved `.wolcss` sheet restyles the window with no restart (under 100 ms), a saved `.cr` file rebuilds and the new process takes over with the old process's signals put back, and a compile error is shown as a banner in the window that is still running. `wol app run --watch` drives this (docs/modules/wolkit.md "Developer tools"). Try it now: change `"More"` to `"Add one"`, save, and the window follows.
+Build with `-Ddev` (`crystal build -Ddev src/main.cr -o bin/todos`) and the running app listens on its dev socket: a compiled `.wolcss` sheet sent there restyles the window with no restart (under 100 ms), a `snapshot` lets the next process take over with the old process's signals put back, and a compile error can be shown as a banner in the window that is still running (the commands are in docs/modules/wolkit.md "Developer tools"). No watcher that sends them on save ships yet (the planned `wol app run --watch` does not exist), so for now: change `"More"` to `"Add one"`, save, and `make run` again.
 
 ## 4. A text field and a button (2 minutes)
 

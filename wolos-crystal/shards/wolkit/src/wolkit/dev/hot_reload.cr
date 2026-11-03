@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # The dev server: a running app in a dev build (`-Ddev`) listens on a socket only its owner can
 # use (`$XDG_RUNTIME_DIR/wolkit-dev-<pid>.sock`, in the user's 0700 runtime directory) and takes
-# JSON lines from the CLI (`wol app run --watch`, `wol app inspect`), plan-wolkit D2 and D5:
+# JSON lines from a client (plan-wolkit D2 and D5 plan `wol app run --watch` and `wol app inspect`;
+# neither ships yet):
 #
 #   {"cmd":"style","data":"<base64 WSB1>"}   load a compiled style table into every window, no restart
 #   {"cmd":"error","message":"..."}         show the build error banner

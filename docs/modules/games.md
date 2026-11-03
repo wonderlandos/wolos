@@ -1,4 +1,4 @@
-# Games
+# Games (ADR 0016)
 
 Steam is the native Arch package from `[multilib]` (ADR 0016). Windows games run on Proton, which Steam installs and updates itself. There is no custom compatibility tool and no Linux ABI shim. For Windows programs outside Steam, `wol-run --exe` uses the native `wine` package (`/usr/bin/wine`, WoW64) and falls back to umu-launcher (`/usr/bin/umu-run`, multilib) when wine is not installed.
 

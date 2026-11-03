@@ -69,7 +69,7 @@ fmt:
 	crystal tool format src spec bin
 
 # The shard as a CRYSTAL_PATH entry: require "wolkit" finds <dir>/wolkit/src/wolkit.cr. The app
-# template goes to the templates directory `wol app new` reads.
+# template goes to the templates directory `wolkit-new` reads.
 install:
 	install -d $(SHARD_DIR) $(TEMPLATE_DIR)
 	cp -r src bin styles shard.yml LICENSE README.md $(SHARD_DIR)/

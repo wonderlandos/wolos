@@ -1,4 +1,4 @@
-# App theming (`wol theme set <id>`)
+# App theming (`wol theme set <id>`) (ADR 0031)
 
 Decision record: ADR 0031 (themes and layouts, themes v2), ADR 0032 (Console).
 

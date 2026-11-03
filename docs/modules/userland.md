@@ -1,4 +1,4 @@
-# Everyday userland
+# Everyday userland (ADR 0016)
 
 Decision record: ADR 0016 (Arch base; mature ports under WolOS names).
 

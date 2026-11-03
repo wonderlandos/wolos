@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! `wolkit-stylec`: compile `.wolcss` sheets into the `WSB1` style table and the Crystal constants
-//! of the shard. `wol app build` runs it. It uses the parser the engine's dev loader uses.
+//! of the shard. The shard's `make styles` runs it. It uses the parser the engine's dev loader uses.
 //!
 //! ```text
 //! wolkit-stylec [--out build/styles.wsb] [--crystal src/gen/styles.cr] [--spdx ID] [--deny-warnings] SHEET...
