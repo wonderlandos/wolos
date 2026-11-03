@@ -47,3 +47,18 @@ fn power_shutdown_help_prints_its_usage() {
     assert!(!env.out.contains("  theme"), "{}", env.out);
     assert!(env.requests.is_empty() && env.execs.is_empty());
 }
+
+/// Help names the system copy an update writes a slot (the manual's word), not the parameter key.
+#[test]
+fn update_help_says_slot() {
+    let h = controller::cli::help(&["update".into()]);
+    assert!(h.contains("update apply [slot] [release]"), "{h}");
+    assert!(h.contains("update rollback [slot]"), "{h}");
+    assert!(!h.contains("[be]") && !h.contains("<be>"), "{h}");
+    let h = controller::cli::help(&["restore".into()]);
+    assert!(h.contains("restore activate <point>"), "{h}");
+    assert!(!h.contains("<be>") && !h.contains("<slot>"), "{h}");
+    // The parameter key the verbs read stays `be`.
+    let inv = parse(&["update", "rollback", "wol-1"]).unwrap();
+    assert_eq!(inv.describe(), "update.rollback be=wol-1");
+}

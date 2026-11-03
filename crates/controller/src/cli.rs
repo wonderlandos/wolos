@@ -1330,6 +1330,16 @@ fn distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// The word help prints for an argument of `action`. `be` (the parameter key the verbs read) names
+/// a system copy: a slot for an update, a restore point for `restore activate` (site glossary).
+fn shown<'a>(action: &str, name: &'a str) -> &'a str {
+    match (action, name) {
+        ("restore.activate", "be") => "point",
+        (_, "be") => "slot",
+        (_, n) => n,
+    }
+}
+
 /// Help text for the whole tree or one command path.
 pub fn help(prefix: &[String]) -> String {
     let mut out = String::from("usage: wol <command> [args] [--json] [--yes]\n\n");
@@ -1340,7 +1350,7 @@ pub fn help(prefix: &[String]) -> String {
         let mut usage = c.path.join(" ");
         for a in c.args {
             let n = if a.choices.is_empty() {
-                a.name.to_string()
+                shown(c.action, a.name).to_string()
             } else {
                 a.choices.join("|")
             };
@@ -1521,7 +1531,10 @@ mod tests {
         assert!(h.contains("shell toggle <switcher|notifications"));
         assert!(!h.contains("jobs list"), "aliases are hidden");
         let h = help(&["update".into()]);
-        assert!(h.contains("update apply [be] [release]") && !h.contains("theme"));
+        assert!(h.contains("update apply [slot] [release]") && !h.contains("theme"));
+        assert!(!h.contains("[be]"), "help says slot, not the parameter key: {h}");
+        let h = help(&["restore".into()]);
+        assert!(h.contains("restore activate <point>") && !h.contains("<be>"), "{h}");
     }
 
     /// `.wol` and App Store verbs (ADR 0011).
