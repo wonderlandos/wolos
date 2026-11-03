@@ -114,9 +114,10 @@ fn the_guard_fits_its_descriptor_limit() {
 }
 
 /// Audit P6-2: the sweep parses hostile files in every home. It reads them (CAP_DAC_READ_SEARCH)
-/// and sees homes read-only. Audit R7-1: it also hands each account its findings list
-/// (`write_as` fchowns `sweep-<uid>.json` to the account), so it keeps CAP_CHOWN, and every other
-/// place that capability could reach is read-only or private to the run.
+/// and sees homes read-only. Audit R7-1 / DT-6: each account's findings list is handed to the
+/// guard over its socket (`findings <uid>`), which writes it as root, so the sweep holds no
+/// CAP_CHOWN, and its code changes no owner (lesson: a dropped capability means grepping the code
+/// for the calls it gated).
 #[test]
 fn the_sweep_reads_homes_and_cannot_change_them() {
     let path = concat!(
@@ -134,10 +135,34 @@ fn the_sweep_reads_homes_and_cannot_change_them() {
         let caps = value(key);
         let mut caps: Vec<&str> = caps.split_whitespace().collect();
         caps.sort_unstable();
-        assert_eq!(
-            caps,
-            ["CAP_CHOWN", "CAP_DAC_READ_SEARCH"],
-            "{key}: read, and give each account its list; nothing else"
+        assert_eq!(caps, ["CAP_DAC_READ_SEARCH"], "{key}: read; nothing else");
+    }
+    assert!(
+        !text.contains("CAP_CHOWN="),
+        "no capability line grants CAP_CHOWN"
+    );
+    // The findings arrive through the guard: the pass after it, handing lists over its socket,
+    // and never writing one for another account itself.
+    assert!(
+        text.lines()
+            .any(|l| l.trim() == format!("After={}", wol_core::malware::UNIT)),
+        "the sweep runs after the guard, whose socket takes its lists"
+    );
+    let bin = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/bin/wol-xguard.rs"
+    ))
+    .unwrap();
+    let body = &bin[bin.find("fn sweep(").expect("the sweep")..];
+    let body = &body[..body.find("\n}\n").expect("its end")];
+    assert!(
+        body.contains("xguard::ctl::hand_findings("),
+        "lists go to the guard"
+    );
+    for gated in ["write_as", "chown", "fchown"] {
+        assert!(
+            !body.contains(gated),
+            "the sweep calls {gated}: it needs CAP_CHOWN again"
         );
     }
     assert_eq!(value("User"), "_xguard");
@@ -154,7 +179,7 @@ fn the_sweep_reads_homes_and_cannot_change_them() {
         assert_eq!(
             value(key),
             "yes",
-            "{key}: CAP_CHOWN reaches the state directory only"
+            "{key}: the pass reaches its own folder only"
         );
     }
 }
@@ -198,6 +223,22 @@ fn the_guards_state_is_out_of_xguards_reach() {
             "tmpfiles removes the old {old}"
         );
     }
+    // DT-6: the pass's own lists are the guard's to write now; the old ones go, its memory stays.
+    assert!(
+        conf.lines()
+            .any(|l| l.trim() == format!("r {SWEEP_DIR}/sweep-*.json")),
+        "tmpfiles removes the pass's old lists"
+    );
+    assert!(
+        !conf.lines().any(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            matches!(w.first(), Some(&"r") | Some(&"R"))
+                && w.get(1).is_some_and(|p| {
+                    p.ends_with("sweep-verdicts") || *p == format!("{SWEEP_DIR}/*")
+                })
+        }),
+        "the pass keeps its memory"
+    );
     for old in ["rules", "local"] {
         assert!(
             conf.lines()

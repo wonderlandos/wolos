@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
-use wol_core::malware::{Blocked, findings_file};
+use wol_core::malware::{Blocked, findings_file, sweep_file};
 
 const FAN_OPEN_PERM: u64 = 0x0001_0000;
 const FAN_OPEN_EXEC_PERM: u64 = 0x0004_0000;
@@ -317,6 +317,8 @@ struct Shared {
     /// Write end of the event loop's wake-up pair: a socket request was queued, so the loop
     /// refreshes the status and lets the database go later (it no longer polls the socket).
     waker: Option<UnixStream>,
+    /// `_xguard`, the background pass: the one caller besides root whose `findings` it takes.
+    sweeper: Option<u32>,
 }
 
 fn mark(fan: RawFd, flags: u32, mask: u64, fd: RawFd, path: *const libc::c_char) -> bool {
@@ -971,6 +973,19 @@ impl Shared {
             return;
         };
         let file = std::fs::File::from(fd);
+        // The background pass's list for one account: written here, as root, so the pass needs
+        // no CAP_CHOWN. Nothing is scanned or queued; no other verb trusts `_xguard`.
+        if let Some(uid) = verb.strip_prefix(ctl::FINDINGS) {
+            let r = take_sweep(&self.o.state, self.sweeper, ctl::peer_uid(&s), uid, &file);
+            ctl::write_reply(
+                &s,
+                &Reply {
+                    state: if r.is_ok() { "taken" } else { "refused" }.into(),
+                    name: r.map_or_else(str::to_owned, |n| n.to_string()),
+                },
+            );
+            return;
+        }
         if checkable(&file).is_err() {
             return;
         }
@@ -1058,6 +1073,64 @@ fn save(state: &Path, all: &[Blocked], uid: u32) {
     let path = state.join(findings_file(uid));
     let mine: Vec<&Blocked> = all.iter().filter(|b| b.uid == uid).collect();
     write_json(&path, 0o600, Some(uid), &mine);
+}
+
+/// Largest list the background pass may hand over, and most entries kept of it.
+const SWEEP_BYTES: u64 = 1 << 20;
+const SWEEP_KEEP: usize = 1000;
+
+/// `findings <uid>` from the background pass: its list for account `uid`, read from `file` (a
+/// regular file, from its start) and written as `sweep-<uid>.json` in `state`, 0600 and owned by
+/// the account (S4-10, audit R7-1). Only `sweeper` (`_xguard`) or root may hand one in. An entry
+/// is kept only when it names that account and its path is still a file the account owns, so
+/// the pass cannot put words on someone's list about files that are not theirs. Returns how many
+/// were kept.
+pub fn take_sweep(
+    state: &Path,
+    sweeper: Option<u32>,
+    peer: Option<u32>,
+    uid: &str,
+    file: &std::fs::File,
+) -> Result<usize, &'static str> {
+    use std::io::{Seek, SeekFrom};
+    use std::os::unix::fs::MetadataExt;
+    if peer.is_none() || (peer != Some(0) && peer != sweeper) {
+        return Err("not the background pass");
+    }
+    let uid: u32 = uid
+        .strip_prefix(' ')
+        .filter(|u| !u.is_empty() && u.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|u| u.parse().ok())
+        .ok_or("no account")?;
+    checkable(file)?;
+    let mut f = file;
+    f.seek(SeekFrom::Start(0)).map_err(|_| "cannot read")?;
+    let mut t = Vec::new();
+    f.take(SWEEP_BYTES + 1)
+        .read_to_end(&mut t)
+        .map_err(|_| "cannot read")?;
+    if t.len() as u64 > SWEEP_BYTES {
+        return Err("too long");
+    }
+    let mut l: Vec<Blocked> = serde_json::from_slice(&t).map_err(|_| "not a list")?;
+    l.retain(|b| {
+        b.uid == uid
+            && b.path.starts_with('/')
+            && std::fs::symlink_metadata(&b.path).is_ok_and(|m| m.is_file() && m.uid() == uid)
+    });
+    l.truncate(SWEEP_KEEP);
+    let t = serde_json::to_vec(&l).map_err(|_| "not a list")?;
+    shared::atomic::write_as(&state.join(sweep_file(uid)), 0o600, Some(uid), &t)
+        .map_err(|_| "cannot write")?;
+    Ok(l.len())
+}
+
+/// The uid of account `name` in `passwd` text.
+fn account_uid(passwd: &str, name: &str) -> Option<u32> {
+    passwd.lines().find_map(|l| {
+        let mut f = l.split(':');
+        (f.next() == Some(name)).then(|| f.nth(1)?.parse().ok())?
+    })
 }
 
 /// The guard's folder is its own (audit F10): created 0755 when missing, refused when it is a
@@ -1189,6 +1262,10 @@ pub fn run(o: Options) -> Result<(), String> {
         rules_version: AtomicU64::new(0),
         stop: AtomicBool::new(false),
         waker: Some(wake_tx),
+        sweeper: account_uid(
+            &std::fs::read_to_string("/etc/passwd").unwrap_or_default(),
+            "_xguard",
+        ),
     });
     s.status();
     if let Some(d) = s.o.socket.parent() {
@@ -1658,6 +1735,7 @@ mod tests {
             rules_version: AtomicU64::new(0),
             stop: AtomicBool::new(false),
             waker: None,
+            sweeper: None,
         };
         (Arc::new(s), dir)
     }
@@ -1784,6 +1862,138 @@ mod tests {
         let mut j = Job::new(std::fs::File::open(&plain).unwrap(), None, false);
         assert_eq!(s.check(&mut j).0, Answer::Allow);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// DT-6: `findings <uid>` from the pass is written by the guard for that account alone:
+    /// only `_xguard` or root may hand one in, only that account's entries on files it owns are
+    /// kept, a pipe or an endless file is not read, and the list lands 0600, owned by it.
+    #[test]
+    fn the_pass_hands_its_list_and_the_guard_writes_it() {
+        use std::io::Write;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = std::env::temp_dir().join(format!("xguard-sweep-in-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let me = shared::sys::euid();
+        let bad = dir.join("bad.exe");
+        std::fs::write(&bad, b"x").unwrap();
+        let entry = |path: &str, uid| Blocked {
+            path: path.into(),
+            name: "T".into(),
+            sha256: String::new(),
+            when: 1,
+            uid,
+        };
+        let list = vec![
+            entry(&bad.display().to_string(), me),
+            entry("/nowhere/at/all", me),
+            entry("relative", me),
+            entry(&bad.display().to_string(), me.wrapping_add(1)),
+        ];
+        let mut f = tempfile_in(&dir);
+        f.write_all(&serde_json::to_vec(&list).unwrap()).unwrap();
+        let uid = format!(" {me}");
+        let take = |peer, uid: &str, f: &std::fs::File| take_sweep(&dir, Some(4242), peer, uid, f);
+        assert_eq!(
+            take(Some(me.wrapping_add(7)), &uid, &f),
+            Err("not the background pass")
+        );
+        assert_eq!(take(None, &uid, &f), Err("not the background pass"));
+        assert_eq!(take(Some(4242), " ", &f), Err("no account"));
+        assert_eq!(take(Some(4242), " -1", &f), Err("no account"));
+        assert_eq!(take(Some(4242), "x1", &f), Err("no account"));
+        let (r, _w) = std::os::unix::net::UnixStream::pair().unwrap();
+        let sock = std::fs::File::from(OwnedFd::from(r));
+        assert_eq!(take(Some(4242), &uid, &sock), Err("not a regular file"));
+        assert_eq!(
+            take(Some(4242), &uid, &f),
+            Ok(1),
+            "read from the start, filtered"
+        );
+        let p = dir.join(sweep_file(me));
+        let m = std::fs::metadata(&p).unwrap();
+        assert_eq!((m.uid(), m.permissions().mode() & 0o777), (me, 0o600));
+        let got: Vec<Blocked> =
+            serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(got, [list[0].clone()]);
+        let mut big = tempfile_in(&dir);
+        big.write_all(&vec![b' '; SWEEP_BYTES as usize + 1])
+            .unwrap();
+        assert_eq!(
+            take(Some(0), &uid, &big),
+            Err("too long"),
+            "root may, but not that much"
+        );
+        assert_eq!(take(Some(0), &uid, &tempfile_in(&dir)), Err("not a list"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn tempfile_in(dir: &Path) -> std::fs::File {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let p = dir.join(format!("t{}", N.fetch_add(1, Relaxed)));
+        let f = std::fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&p)
+            .unwrap();
+        std::fs::remove_file(&p).unwrap();
+        f
+    }
+
+    /// DT-6: the verb reaches [`take_sweep`] from the socket and the caller hears the answer;
+    /// nothing is queued for a scan, and the guard's own list is not touched.
+    #[test]
+    fn findings_over_the_socket_and_nothing_more() {
+        let (s, dir) = bare("findings-verb");
+        std::fs::create_dir_all(&s.o.state).unwrap();
+        let me = shared::sys::euid();
+        let s = Arc::new(Shared {
+            sweeper: Some(me),
+            ..Arc::into_inner(s).unwrap()
+        });
+        let hit = dir.join("hit");
+        std::fs::write(&hit, b"x").unwrap();
+        let list = [Blocked {
+            path: hit.display().to_string(),
+            name: "T".into(),
+            sha256: String::new(),
+            when: 1,
+            uid: me,
+        }];
+        let quota = shared::bounded::Quota::new(PER_UID, QUEUE_CAP);
+        let ask = |verb: &str, f: &std::fs::File| {
+            let (srv, cli) = UnixStream::pair().unwrap();
+            ctl::send_fd(&cli, verb, f.as_raw_fd()).unwrap();
+            s.client(srv, admit(&quota, &cli).unwrap());
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut std::io::BufReader::new(&cli), &mut line).unwrap();
+            line
+        };
+        let mut f = tempfile_in(&dir);
+        std::io::Write::write_all(&mut f, &serde_json::to_vec(&list).unwrap()).unwrap();
+        let r: Reply = serde_json::from_str(&ask(&format!("findings {me}"), &f)).unwrap();
+        assert_eq!((r.state.as_str(), r.name.as_str()), ("taken", "1"));
+        assert!(s.o.state.join(sweep_file(me)).exists());
+        assert!(
+            !s.o.state.join(findings_file(me)).exists(),
+            "the guard's own list untouched"
+        );
+        let r: Reply = serde_json::from_str(&ask("findings", &f)).unwrap();
+        assert_eq!(r.state, "refused");
+        assert!(
+            s.queue.lock().unwrap().is_empty(),
+            "nothing queued for a scan"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_pass_is_found_by_name() {
+        let p = "root:x:0:0::/root:/bin/sh\n_xguard:x:961:961:WolOS:/var/empty:/usr/bin/nologin\n";
+        assert_eq!(account_uid(p, "_xguard"), Some(961));
+        assert_eq!(account_uid(p, "_xg"), None);
+        assert_eq!(account_uid("_xguard:x:oops", "_xguard"), None);
     }
 
     /// S4-10: an account's findings are its own from the first moment: 0600 and owned by it.

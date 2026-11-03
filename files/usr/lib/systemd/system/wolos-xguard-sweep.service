@@ -2,23 +2,25 @@
 [Unit]
 Description=WolOS background malware check
 ConditionACPower=true
+# Its findings go to the guard over the guard's socket: running after it, the socket is there.
+After=wolos-xguard.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/wol-xguard sweep
 User=_xguard
-# CAP_DAC_READ_SEARCH reads every home. CAP_CHOWN gives each account its findings list
-# (sweep-<uid>.json, 0600, owned by the account before it appears): the shell reads the list as
-# that account, and no other account may. Without it the write fails and nothing is shown
-# (audit R7-1). Its reach is its own folder only: everything else it could chown is mounted
-# read-only (homes, system, /sys, cgroups) or private to this run (/tmp, /dev).
-AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_CHOWN
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN
+# CAP_DAC_READ_SEARCH reads every home; nothing else. Each account's findings list (sweep-<uid>.json,
+# 0600, owned by the account) is handed to the guard over its socket (verb `findings`), and the guard,
+# as root, writes it in its own folder: this pass gives no file to anyone, so no CAP_CHOWN (audit
+# R7-1, DT-6). The socket is reachable from here: a socket on a read-only mount still connects, and
+# a socket on a path is not bound to the network namespace.
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
 PrivateNetwork=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
-# Reads every home, writes none (audit P6-2): only its own folder below is writable, not the
-# guard's (audit F10).
+# Reads every home, writes none (audit P6-2): only its own folder below (its memory) is writable,
+# not the guard's (audit F10).
 ProtectHome=read-only
 ReadWritePaths=/var/lib/wolos/xguard/sweep
 PrivateTmp=yes

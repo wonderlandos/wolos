@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Audit R7-1: the background pass, run as an account that is not root, publishes what it found
-//! as `sweep-<uid>.json` in its state directory, owned by the file's account and 0600, where the
-//! shell's alerts read it (`wol_core::malware::sweep_file`).
+//! Audit R7-1 / DT-6: the background pass, run as an account that is not root, hands what it
+//! found to the guard over its socket; the guard writes `sweep-<uid>.json` in its own folder,
+//! owned by the file's account and 0600, where the shell's alerts read it
+//! (`wol_core::malware::sweep_path`).
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::process::Command;
 use xguard::automaton::{Pattern, Place, Tok};
@@ -25,6 +26,36 @@ fn rules(dir: &std::path::Path) {
     std::fs::write(dir.join("t.xgdb"), b.build(1, 1)).unwrap();
 }
 
+/// The guard's socket, as far as `findings` goes: each connection's list goes through
+/// [`xguard::guard::take_sweep`], trusting this test's account as the pass.
+fn guard_socket(sock: &std::path::Path, guard_dir: std::path::PathBuf) {
+    let l = std::os::unix::net::UnixListener::bind(sock).unwrap();
+    std::thread::spawn(move || {
+        for c in l.incoming().flatten() {
+            let Ok((verb, Some(fd))) = xguard::ctl::recv_fd(&c) else {
+                continue;
+            };
+            let uid = verb.strip_prefix(xguard::ctl::FINDINGS).unwrap_or("x");
+            let r = xguard::guard::take_sweep(
+                &guard_dir,
+                Some(shared::sys::euid()),
+                xguard::ctl::peer_uid(&c),
+                uid,
+                &std::fs::File::from(fd),
+            );
+            xguard::ctl::write_reply(
+                &c,
+                &xguard::ctl::Reply {
+                    state: if r.is_ok() { "taken" } else { "refused" }.into(),
+                    name: String::new(),
+                },
+            );
+        }
+    });
+}
+
+/// DT-6: the pass hands what it found to the guard over the socket, and the guard writes it in
+/// its own folder for the file's account (0600, owned by it). The pass's folder gets no list.
 #[test]
 fn a_sweep_hit_reaches_the_account_that_owns_the_file() {
     let d = std::env::temp_dir().join(format!("xg-sweep-{}", std::process::id()));
@@ -37,21 +68,27 @@ fn a_sweep_hit_reaches_the_account_that_owns_the_file() {
     let state = d.join("state");
     std::fs::create_dir_all(&state).unwrap();
     std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let guard = d.join("guard");
+    std::fs::create_dir_all(&guard).unwrap();
+    let sock = d.join("xguard.sock");
+    guard_socket(&sock, guard.clone());
 
     let o = Command::new(env!("CARGO_BIN_EXE_wol-xguard"))
         .arg("sweep")
         .arg("--rules")
         .arg(d.join("rules"))
+        .arg("--socket")
+        .arg(&sock)
         .arg(&state)
         .arg(d.join("home"))
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(o.status.success(), "sweep failed: {err}");
-    assert!(!err.contains("could not write"), "{err}");
+    assert!(!err.contains("could not hand"), "{err}");
 
     let owner = std::fs::metadata(home.join("evil.exe")).unwrap().uid();
-    let list = state.join(wol_core::malware::sweep_file(owner));
+    let list = guard.join(wol_core::malware::sweep_file(owner));
     let m = std::fs::metadata(&list).expect("the account's findings list exists");
     assert_eq!(m.uid(), owner, "owned by the account the file belongs to");
     assert_eq!(m.mode() & 0o777, 0o600, "nobody else reads it");
@@ -67,28 +104,43 @@ fn a_sweep_hit_reaches_the_account_that_owns_the_file() {
         wol_core::malware::merge(&[std::fs::read_to_string(&list).unwrap().as_str()]).len(),
         1
     );
+    let mine: Vec<String> = std::fs::read_dir(&state)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".json"))
+        .collect();
+    assert!(mine.is_empty(), "the pass wrote a list itself: {mine:?}");
     let _ = std::fs::remove_dir_all(&d);
 }
 
-/// Why the unit keeps CAP_CHOWN (audit R7-1): without it, handing a list to another account
-/// fails and nothing appears at the path, so the shell would show nothing.
+/// Without the guard to take a list, the pass says so and fails (the unit shows it), and writes
+/// no list itself: it has no right to give one to an account any more (DT-6).
 #[test]
-fn giving_a_list_to_another_account_needs_cap_chown() {
-    if shared::sys::euid() == 0 {
-        return; // root may chown: nothing to show here.
-    }
-    let d = std::env::temp_dir().join(format!("xg-chown-{}", std::process::id()));
+fn no_guard_no_list_and_the_pass_says_so() {
+    let d = std::env::temp_dir().join(format!("xg-noguard-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
-    std::fs::create_dir_all(&d).unwrap();
-    let p = d.join(wol_core::malware::sweep_file(0));
-    let e = shared::atomic::write_as(&p, 0o600, Some(0), b"[]").unwrap_err();
-    assert_eq!(e.raw_os_error(), Some(libc::EPERM), "{e}");
-    assert!(!p.exists(), "nothing half-written at the path");
-    assert_eq!(
-        std::fs::read_dir(&d).unwrap().count(),
-        0,
-        "no temporary left"
-    );
+    rules(&d.join("rules"));
+    let home = d.join("home/alice");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("evil.exe"), MARKER).unwrap();
+    let state = d.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_wol-xguard"))
+        .arg("sweep")
+        .arg("--rules")
+        .arg(d.join("rules"))
+        .arg("--socket")
+        .arg(d.join("nobody.sock"))
+        .arg(&state)
+        .arg(d.join("home"))
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "a list that went nowhere is a failure");
+    assert!(err.contains("could not hand the list"), "{err}");
+    let owner = std::fs::metadata(home.join("evil.exe")).unwrap().uid();
+    assert!(!state.join(wol_core::malware::sweep_file(owner)).exists());
     let _ = std::fs::remove_dir_all(&d);
 }
 

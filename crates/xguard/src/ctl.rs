@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The guard's local socket: `check` and `allow`, each with an open file passed alongside, so a
 //! caller can only ask about files it can really open, and the guard learns no path from it.
+//! `findings <uid>` is the background pass's: the file is its list for that account, which the
+//! guard (root) writes in its own folder, so the pass needs no right to hand files to accounts.
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 pub const SOCKET: &str = "/run/wolos/xguard.sock";
+/// The background pass's verb, followed by a space and the account's uid.
+pub const FINDINGS: &str = "findings";
 
 /// The guard's answer.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -111,6 +115,26 @@ pub fn ask(sock: &Path, verb: &str, f: &std::fs::File) -> std::io::Result<Reply>
     let mut line = String::new();
     BufReader::new(&s).read_line(&mut line)?;
     serde_json::from_str(&line).map_err(std::io::Error::other)
+}
+
+/// Hand the background pass's `list` for account `uid` to the guard: written into a memory file
+/// sent alongside `findings <uid>`. The guard answers `taken` (`name`: how many it kept) or
+/// `refused` (`name`: why).
+pub fn hand_findings(
+    sock: &Path,
+    uid: u32,
+    list: &impl serde::Serialize,
+) -> std::io::Result<Reply> {
+    let t = serde_json::to_vec(list).map_err(std::io::Error::other)?;
+    // SAFETY: plain syscall with a NUL-terminated name; the descriptor is ours on success.
+    let fd = unsafe { libc::memfd_create(c"xguard-findings".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: just created above, owned by nobody else.
+    let mut f = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
+    f.write_all(&t)?;
+    ask(sock, &format!("{FINDINGS} {uid}"), &f)
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //!   wol-xguard scan [--json] [--stream] [--rules DIR] PATH...   exit 0 clean, 1 found, 2 incomplete, 3 error
 //!   wol-xguard guard [--state D] [--rules D] [--scope M]... [--downloads D]...  the first-use guard
 //!   wol-xguard check|allow PATH   ask the guard about a file; Open Anyway
-//!   wol-xguard sweep [--rules D] [STATE [ROOT...]]  the background pass (roots given: no idle gate)
+//!   wol-xguard sweep [--rules D] [--socket S] [STATE [ROOT...]]  the background pass (roots given: no idle gate)
 //!   wol-xguard rules build OUT VERSION SOURCE-DIR...  compile signature lists to a database
 //!   wol-xguard rules yara OUT SOURCE-DIR...           compile rule sources
 //!   wol-xguard rules bundle DIR VERSION               the manifest of a signature update
@@ -246,12 +246,15 @@ fn ask(verb: &str, args: &[String]) -> i32 {
 /// The background pass (a timer starts it).
 fn sweep(args: &[String]) -> i32 {
     use xguard::sweep::{gate, lowest_qos, pass, targets};
-    let (dir, args) = match args {
-        [flag, rest @ ..] if flag == "--rules" => {
-            (rules_arg(rest.first()), rest.get(1..).unwrap_or(&[]))
+    let (mut dir, mut sock, mut args) = (xguard::rules_dir(), xguard::ctl::SOCKET.into(), args);
+    while let [flag, v, rest @ ..] = args {
+        match flag.as_str() {
+            "--rules" => dir = rules_arg(Some(v)),
+            "--socket" => sock = PathBuf::from(v),
+            _ => break,
         }
-        _ => (xguard::rules_dir(), args),
-    };
+        args = rest;
+    }
     let state = args
         .first()
         .map_or(wol_core::malware::SWEEP_DIR, String::as_str)
@@ -358,14 +361,24 @@ fn sweep(args: &[String]) -> i32 {
     let mut owners: Vec<u32> = l.iter().map(|b| b.uid).collect();
     owners.sort_unstable();
     owners.dedup();
+    // Each account's list goes to the guard, which writes it as root in its own folder, 0600 and
+    // owned by the account (S4-10): this pass holds no CAP_CHOWN (audit R7-1, DT-6).
+    let mut handed = true;
     for uid in owners {
         let mine: Vec<_> = l.iter().filter(|b| b.uid == uid).collect();
-        let t = serde_json::to_string(&mine).unwrap_or_default();
-        let p = Path::new(&state).join(wol_core::malware::sweep_file(uid));
-        // S4-10: owner and 0600 before the list appears; atomic, so a reader never sees half.
-        // The owner change needs CAP_CHOWN in wolos-xguard-sweep.service (audit R7-1).
-        if let Err(e) = shared::atomic::write_as(&p, 0o600, Some(uid), t.as_bytes()) {
-            eprintln!("wol-xguard: could not write {}: {e}", p.display());
+        match xguard::ctl::hand_findings(&sock, uid, &mine) {
+            Ok(r) if r.state == "taken" => {}
+            Ok(r) => {
+                handed = false;
+                eprintln!(
+                    "wol-xguard: the guard refused the list of {uid}: {}",
+                    r.name
+                );
+            }
+            Err(e) => {
+                handed = false;
+                eprintln!("wol-xguard: could not hand the list of {uid} to the guard: {e}");
+            }
         }
     }
     println!(
@@ -377,7 +390,7 @@ fn sweep(args: &[String]) -> i32 {
             "stopped"
         }
     );
-    0
+    if handed { 0 } else { 1 }
 }
 
 /// `rules yara OUT SOURCE-DIR...`: compile rule sources.
