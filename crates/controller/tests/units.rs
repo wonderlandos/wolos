@@ -589,3 +589,24 @@ fn wold_lets_the_login_job_reach_the_console_vt() {
     assert_eq!(job.program, ["/usr/bin/wol-login"]);
     assert_eq!(job.user, None, "the login job keeps wold's root identity");
 }
+
+/// F10 (prerelease B6): on a start the firmware did not measure (no event log, PCR 11 never
+/// extended), the first-boot bind and the reseal would seal the disk key to values no later start
+/// shows, and the next good start asks for the recovery key again. Both wait for a measured start.
+#[test]
+fn tpm_binding_waits_for_a_start_the_firmware_measured() {
+    for u in ["wolos-tpm-bind.service", "wolos-tpm-reseal.service"] {
+        let text = std::fs::read_to_string(path(u)).unwrap_or_else(|e| panic!("{u}: {e}"));
+        let unit: Vec<&str> = text
+            .split("[Service]")
+            .next()
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .collect();
+        assert!(
+            unit.contains(&"ConditionSecurity=measured-uki"),
+            "{u}: [Unit] lacks ConditionSecurity=measured-uki"
+        );
+    }
+}

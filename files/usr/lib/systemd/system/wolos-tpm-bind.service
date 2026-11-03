@@ -1,6 +1,10 @@
 [Unit]
 Description=Bind the disk key to this computer's firmware state (first boot)
 ConditionPathExists=/var/lib/wolos/secureboot/rebind.key
+# Only on a start the firmware measured (the boot image in PCR 11; systemd's own test). A start
+# where it did not (no event log, PCR 2-5 and 11 unextended: seen with a virtual TPM, prerelease
+# B6) would bind the key to values no later start shows; the install key then waits for the next.
+ConditionSecurity=measured-uki
 After=local-fs.target
 Before=wolos-boot-ok.service
 

@@ -4,7 +4,7 @@
   "summary": "starship prompt, fzf history, zoxide, eza, bat, fd and ripgrep for zsh; fish, nushell and PowerShell themed alike; ghostty and kitty",
   "icon": "utilities-terminal-symbolic",
   "category": "console",
-  "size_mb": 260,
+  "size_mb": 180,
   "packages": [
     "starship",
     "fzf",

@@ -20,6 +20,7 @@ design/icons/install.sh
 design/tools/apps/kvantum-vm.sh
 design/tools/apps/render.sh
 design/tools/apps/run.sh
+design/tools/icons/gtkcheck/check.sh
 design/tools/perf/build.sh
 design/tools/perf/idle.py
 design/tools/perf/latency.py

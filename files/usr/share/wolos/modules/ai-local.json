@@ -4,7 +4,7 @@
   "summary": "Run open models on this computer with Ollama; the GPU backend (CUDA, ROCm, Vulkan or CPU) follows wol hw compute",
   "icon": "wolos-chip-symbolic",
   "category": "ai",
-  "size_mb": 1200,
+  "size_mb": 3470,
   "packages": [
     "ollama"
   ],

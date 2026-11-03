@@ -89,6 +89,11 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
   systemd-cryptenroll as `$PASSWORD`, then the key is invalidated. Nothing typed (the chip opened the disk):
   nothing happens. A passphrase-only install (no `tpm2-device` in `rd.luks.options`) never asked for the chip:
   the service does nothing and exits 0, so there is no failed unit and no chip slot added behind the choice.
+- Neither the first-boot bind (`wolos-tpm-bind.service`) nor the reseal runs on a start the firmware
+  did not measure (`ConditionSecurity=measured-uki`: the boot image is not in PCR 11). Such a start
+  (seen with a virtual TPM: no event log, PCRs 2-5 and 11 never extended) asks for the password or
+  recovery key, since the chip cannot vouch for it; sealing to it would make the next good start ask
+  again. The install key stays until a measured start binds (test `tpm_binding_waits_for_a_start_the_firmware_measured`).
 - Changing the password in Settings (wol-admind `user-password`, the current password every time)
   also replaces the disk slot (`wol encrypt password USER`, unlocked by the chip). `passwd` in a
   terminal does not: the disk keeps the previous password (the chip and the recovery key still work).

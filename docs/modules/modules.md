@@ -8,7 +8,7 @@ ADR 0032. The base stays small; AI, developer, creative and console stacks are i
 |---|---|
 | `id` | `[a-z][a-z0-9-]{0,31}`, equals the file stem and the package suffix |
 | `name`, `summary`, `icon`, `category` | shown by the installer and Settings > Modules (the Store's Kits shelf lists only the Kits of `wol_core::store::KITS`, Media Codecs and Craft Suite, not modules); `icon` is a name the WolOS icon theme draws (`design/icons/symbolic`, an app icon or an alias; `crates/controller/tests/rules_system.rs` checks it); category `ai`, `developer`, `creative`, `gaming` or `console` |
-| `size_mb` | the installer's "Downloads N MB" badge |
+| `size_mb` | the download in MiB (as pacman's Total Download Size) rounded up to the next 10, shown as "N MB" by the installer, Settings > Modules and `wol modules status`: the meta package's dependencies a fresh slot lacks, plus its recipes, plus for a record with a `backend` the largest variant (ai-local: 20 for CPU, 30 for Vulkan, 3300 for CUDA, 3470 for ROCm, so 3470; per-backend sizes come after v0.12); measured, not guessed (`crates/controller/tests/module_sizes.rs` recomputes it with `WOLOS_REPO_DB`) |
 | `packages` | what the meta package depends on (documentation here; pacman decides) |
 | `recipes`, `mise`, `flatpaks` | user-side parts `enable` installs (`wopkg install`, `mise use -g`, `flatpak install --user`) |
 | `post` | argv run as the user by `enable`, idempotent; a script under `/usr/lib/wolos/` |

@@ -4,7 +4,7 @@
   "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij, rootless podman and Crystal with Cryswol; ~/Work",
   "icon": "applications-engineering-symbolic",
   "category": "developer",
-  "size_mb": 1300,
+  "size_mb": 350,
   "packages": [
     "git",
     "github-cli",
