@@ -88,15 +88,30 @@ pub struct Store {
 }
 
 impl Store {
+    /// The file is this process's own: opened without following a link, 0600 when created, and
+    /// refused when it is not a regular file owned by the caller (audit F10: another account must
+    /// not hand the guard a cache of its making).
     pub fn open(path: &Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let f = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(path)?;
+        let m = f.metadata()?;
+        if !m.is_file() || m.uid() != shared::sys::euid() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("{}: not this account's own file", path.display()),
+            ));
+        }
         f.set_len((SLOTS * SLOT) as u64)?;
-        // SAFETY: root-owned file in a root-only folder, written only through this mapping.
+        // SAFETY: the mapping is of a regular file this process owns (checked above); the guard's
+        // lives in a folder only root may write (`wol_core::malware::GUARD_DIR`), the background
+        // pass's in its own. Nothing else writes it while it is mapped.
         Ok(Self {
             map: unsafe { MmapMut::map_mut(&f)? },
         })
@@ -202,6 +217,33 @@ mod tests {
             rules: 9,
             deep: true,
             sha: [sha; 16],
+        }
+    }
+
+    /// Audit F10: a link put where the cache goes is not followed.
+    #[test]
+    fn a_link_in_place_of_the_cache_is_refused() {
+        let target = tmp("link-target");
+        let link = tmp("link");
+        let _ = std::fs::remove_file(&link);
+        std::fs::write(&target, b"").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(Store::open(&link).is_err(), "followed a link");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().len(),
+            0,
+            "the target is untouched"
+        );
+        let p = tmp("mode");
+        let _ = std::fs::remove_file(&p);
+        drop(Store::open(&p).unwrap());
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        for f in [target, link, p] {
+            let _ = std::fs::remove_file(f);
         }
     }
 

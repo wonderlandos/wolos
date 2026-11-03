@@ -103,6 +103,7 @@ Security
 - System services run in a sandbox by default and see only what they need.
 - Everything read from files, sockets and plugins has limits on size and depth, and the readers are fuzz-tested.
 - One account can no longer slow down another account's apps, use up the system's sockets for everyone, or stop the system service by naming a terminal.
+- The malware check keeps its memory, its lists and the signatures it loads in a folder only the system may write; the background check and the full-database download (run as their own unprivileged account) can no longer change them. The full database is built by the system only from downloads whose publisher's signature checks. After this update the check rebuilds its memory by looking at files again, and the list of files it stopped before the update is cleared once.
 - The malware check refuses a file it could not scan instead of letting it through. Large files are checked in pieces with a time limit, and files above 1 GiB are answered "not checked yet" until the background check is done. It reads each account's download folder safely and marks only folders inside that account's home.
 - The plugin index and the update feed are signed and carry a serial number, so an old copy cannot be replayed to hold back updates; downloads have size limits and replace the old copy only once verified.
 - A web app's icon is checked, so an approved web app cannot become another command.

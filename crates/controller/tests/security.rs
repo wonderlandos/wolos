@@ -87,7 +87,7 @@ fn status_names_the_malware_check_and_what_it_stopped() {
                 r#"{"version":3,"built":500,"files":[]}"#.into(),
             ),
             (
-                "/var/lib/wolos/xguard/findings-1000.json".into(),
+                "/var/lib/wolos/xguard/guard/findings-1000.json".into(),
                 r#"[{"path":"/home/a/bad","name":"Win.Test","sha256":"","when":9,"uid":1000}]"#
                     .into(),
             ),

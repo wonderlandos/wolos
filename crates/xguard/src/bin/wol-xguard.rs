@@ -198,7 +198,7 @@ fn build(args: &[String]) -> i32 {
 
 fn guard(args: &[String]) -> i32 {
     let mut o = xguard::guard::Options {
-        state: xguard::guard::STATE_DIR.into(),
+        state: wol_core::malware::GUARD_DIR.into(),
         rules: xguard::rules_dir(),
         scope: Vec::new(),
         downloads: Vec::new(),
@@ -254,7 +254,7 @@ fn sweep(args: &[String]) -> i32 {
     };
     let state = args
         .first()
-        .map_or(xguard::guard::STATE_DIR, String::as_str)
+        .map_or(wol_core::malware::SWEEP_DIR, String::as_str)
         .to_owned();
     let roots: Vec<PathBuf> = args.iter().skip(1).map(PathBuf::from).collect();
     let open = || {
@@ -271,9 +271,9 @@ fn sweep(args: &[String]) -> i32 {
     lowest_qos();
     let e = Engine::open(&dir).unwrap_or_else(|m| die(&m));
     let rules = e.versions().iter().copied().max().unwrap_or(0);
-    // The pass's own memory, not the guard's `verdicts`: that one is root's (0644) and the pass
-    // runs as _xguard, so opening it to write failed on every pass that got past the gate; and
-    // what the guard trusts is not for this account to write.
+    // The pass's own memory in its own folder, not the guard's `verdicts` (root's, in a folder only
+    // root may write): opening that to write failed on every pass that got past the gate, and
+    // what the guard trusts is not for this account to write (audit F10).
     let store = std::sync::Mutex::new(
         xguard::store::Store::open(&Path::new(&state).join("sweep-verdicts"))
             .unwrap_or_else(|m| die(&format!("sweep-verdicts: {m}"))),
@@ -442,6 +442,118 @@ fn install(args: &[String]) -> i32 {
     }
 }
 
+/// `rules full [DB [DEST]]` (root, wolos-clam-update.service's step after the download): the full
+/// database `clam-update` fetched as `_xguard` is only trusted once root has checked it (audit
+/// F10). Each of `main.cvd` and `daily.cvd` is read without following a link into a folder of
+/// this process's own, its publisher's signature checked there by `sigtool` ("Verification OK."),
+/// then unpacked and built into DEST/full.xgdb. Anything else, and DEST keeps what it had.
+fn full(args: &[String]) -> i32 {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let db = Path::new(
+        args.first()
+            .map_or("/var/lib/wolos/xguard/clamav", String::as_str),
+    );
+    let dest = PathBuf::from(args.get(1).map_or(xguard::LOCAL_DIR, String::as_str));
+    let work = std::env::temp_dir().join(format!("xguard-full-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&work);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&work)
+        .unwrap_or_else(|m| die(&format!("{}: {m}", work.display())));
+    let done = |code: i32, m: &str| -> i32 {
+        let _ = std::fs::remove_dir_all(&work);
+        if code != 0 {
+            die(m)
+        }
+        code
+    };
+    let sigtool = std::env::var("XGUARD_SIGTOOL").unwrap_or_else(|_| "sigtool".into());
+    let mut version = String::new();
+    for n in ["main", "daily"] {
+        let src = db.join(format!("{n}.cvd"));
+        let mut bytes = Vec::new();
+        let read = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&src)
+            .and_then(|f| {
+                if !f.metadata()?.is_file() {
+                    return Err(std::io::Error::other("not a regular file"));
+                }
+                use std::io::Read;
+                f.take(2 << 30).read_to_end(&mut bytes)
+            });
+        if let Err(e) = read {
+            return done(1, &format!("{}: {e}", src.display()));
+        }
+        let copy = work.join(format!("{n}.cvd"));
+        if let Err(e) = std::fs::write(&copy, &bytes) {
+            return done(1, &format!("{}: {e}", copy.display()));
+        }
+        let ok = std::process::Command::new(&sigtool)
+            .arg(format!("--info={}", copy.display()))
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .is_ok_and(|o| {
+                o.status.success()
+                    && String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .any(|l| l.trim() == "Verification OK.")
+            });
+        if !ok || bytes.len() < 512 {
+            return done(
+                1,
+                &format!("{n}.cvd: the publisher's signature does not verify"),
+            );
+        }
+        // `ClamAV-VDB:date:version:...`: the daily file's version names the build.
+        if n == "daily" {
+            version = String::from_utf8_lossy(&bytes[..512])
+                .split(':')
+                .nth(2)
+                .unwrap_or("0")
+                .to_owned();
+        }
+        let out = work.join(n);
+        let _ = std::fs::create_dir(&out);
+        let untar = |z: &str| {
+            let mut c = std::process::Command::new("tar")
+                .args([z, "-", "--no-same-owner", "--no-same-permissions", "-C"])
+                .arg(&out)
+                .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+            if let Some(mut i) = c.stdin.take() {
+                let _ = i.write_all(&bytes[512..]);
+            }
+            c.wait()
+        };
+        if !untar("-xzf").is_ok_and(|s| s.success()) && !untar("-xf").is_ok_and(|s| s.success()) {
+            return done(1, &format!("{n}.cvd: cannot unpack"));
+        }
+    }
+    if let Err(e) = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(&dest)
+    {
+        return done(1, &format!("{}: {e}", dest.display()));
+    }
+    if !xguard::trusted(&dest) {
+        return done(1, &format!("{}: not root's alone", dest.display()));
+    }
+    let out = dest.join("full.xgdb").to_string_lossy().into_owned();
+    let srcs = [work.join("main"), work.join("daily")].map(|p| p.to_string_lossy().into_owned());
+    build(&[
+        out,
+        version.trim().to_owned(),
+        srcs[0].clone(),
+        srcs[1].clone(),
+    ]);
+    done(0, "")
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let code = match a.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
@@ -455,7 +567,8 @@ fn main() {
         #[cfg(feature = "yara")]
         ["rules", "yara", ..] => yara_build(&a[2..]),
         ["rules", "build", ..] => build(&a[2..]),
-        _ => die("usage: wol-xguard scan|check|allow|guard|sweep|rules build|bundle|install"),
+        ["rules", "full", ..] => full(&a[2..]),
+        _ => die("usage: wol-xguard scan|check|allow|guard|sweep|rules build|bundle|install|full"),
     };
     std::process::exit(code)
 }

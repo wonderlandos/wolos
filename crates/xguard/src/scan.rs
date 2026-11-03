@@ -158,8 +158,9 @@ impl Engine {
         if dir == std::path::Path::new(crate::RULES_DIR)
             || dir == std::path::Path::new(crate::SHIPPED_DIR)
         {
+            // Only root's own build, never a file someone else left (audit F10).
             let local = std::path::Path::new(crate::LOCAL_DIR).join("full.xgdb");
-            files.extend(local.exists().then_some(local));
+            files.extend((local.is_file() && crate::trusted(&local)).then_some(local));
         }
         let dbs = files
             .iter()

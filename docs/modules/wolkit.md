@@ -114,7 +114,7 @@ class Counter < Wolkit::Component
     end
   end
 end
-# used as:  counter start: 5
+  # used as:  counter start: 5
 ```
 
 `prop` gives a typed argument (required without a default); a prop typed `Readable(T)` also accepts a plain `T`. The class `Counter` defines the element `counter`; a block given to it is rendered by `slot`. Lifecycle: `on_mount { }`, `on_unmount { }`, `on_cleanup { }`. Fragments are plain methods that call element macros while a view is mounting; there is no second concept.

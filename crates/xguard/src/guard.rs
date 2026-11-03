@@ -1060,14 +1060,55 @@ fn save(state: &Path, all: &[Blocked], uid: u32) {
     write_json(&path, 0o600, Some(uid), &mine);
 }
 
-/// Every account's list from a former run.
+/// The guard's folder is its own (audit F10): created 0755 when missing, refused when it is a
+/// link, someone else's, or writable by others, since what is in it decides what runs. A cache
+/// there that is not the guard's own (left before the folder was locked) is dropped, not read.
+pub fn own_state(state: &Path) -> Result<(), String> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt};
+    let err = |e: std::io::Error| format!("{}: {e}", state.display());
+    if std::fs::symlink_metadata(state).is_err() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o755)
+            .create(state)
+            .map_err(err)?;
+    }
+    let m = std::fs::symlink_metadata(state).map_err(err)?;
+    if !m.is_dir() || m.uid() != shared::sys::euid() || m.mode() & 0o022 != 0 {
+        return Err(format!(
+            "{}: not a folder this account alone may write",
+            state.display()
+        ));
+    }
+    let v = state.join("verdicts");
+    if let Ok(vm) = std::fs::symlink_metadata(&v)
+        && (!vm.is_file() || vm.uid() != shared::sys::euid())
+    {
+        std::fs::remove_file(&v).map_err(err)?;
+    }
+    Ok(())
+}
+
+/// Every account's list from a former run: only `findings-<uid>.json` owned by that account (or
+/// by the guard), as [`save`] leaves them.
 fn load_findings(state: &Path) -> Vec<Blocked> {
+    use std::os::unix::fs::MetadataExt;
     let Ok(rd) = std::fs::read_dir(state) else {
         return Vec::new();
     };
     let texts: Vec<String> = rd
         .flatten()
-        .filter(|e| e.file_name().to_string_lossy().starts_with("findings-"))
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            let uid = n
+                .strip_prefix("findings-")
+                .and_then(|r| r.strip_suffix(".json"))
+                .and_then(|u| u.parse::<u32>().ok());
+            uid.is_some_and(|u| {
+                e.metadata()
+                    .is_ok_and(|m| m.is_file() && (m.uid() == u || m.uid() == shared::sys::euid()))
+            })
+        })
         .filter_map(|e| std::fs::read_to_string(e.path()).ok())
         .collect();
     let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
@@ -1122,7 +1163,7 @@ fn mark_scope(fan: RawFd, o: &Options) {
 
 /// Runs until the process ends.
 pub fn run(o: Options) -> Result<(), String> {
-    std::fs::create_dir_all(&o.state).map_err(|e| e.to_string())?;
+    own_state(&o.state)?;
     let store = Store::open(&o.state.join("verdicts")).map_err(|e| e.to_string())?;
     let flags = FAN_CLASS_CONTENT | FAN_CLOEXEC | FAN_UNLIMITED_QUEUE | FAN_UNLIMITED_MARKS;
     let event_flags = (libc::O_RDONLY | libc::O_LARGEFILE | libc::O_CLOEXEC) as u32;
@@ -1242,6 +1283,37 @@ pub fn run(o: Options) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit F10: the guard's folder must be its own and closed to others; a link or a cache it did
+    /// not make is not used.
+    #[test]
+    fn the_guard_keeps_its_state_in_a_folder_only_it_may_write() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("xguard-own-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let s = d.join("guard");
+        own_state(&s).unwrap();
+        let m = std::fs::metadata(&s).unwrap();
+        assert!(m.is_dir() && m.permissions().mode() & 0o777 == 0o755);
+        // A cache that is a link (say, to a file another account fills) is dropped, not followed.
+        let theirs = d.join("theirs");
+        std::fs::write(&theirs, b"x").unwrap();
+        std::os::unix::fs::symlink(&theirs, s.join("verdicts")).unwrap();
+        own_state(&s).unwrap();
+        assert!(std::fs::symlink_metadata(s.join("verdicts")).is_err());
+        assert_eq!(std::fs::read(&theirs).unwrap(), b"x");
+        // A list that is a link is not read.
+        std::os::unix::fs::symlink(&theirs, s.join("findings-0.json")).unwrap();
+        assert!(load_findings(&s).is_empty());
+        // Writable by others, or a link in place of the folder: refused.
+        std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o775)).unwrap();
+        assert!(own_state(&s).is_err());
+        let l = d.join("linked");
+        std::os::unix::fs::symlink(&d, &l).unwrap();
+        assert!(own_state(&l).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn remembered_verdicts_answer_without_a_scan() {
