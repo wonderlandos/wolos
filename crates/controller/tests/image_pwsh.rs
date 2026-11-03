@@ -124,7 +124,7 @@ fn recipe_stages_launcher_profile_hook_and_entry() {
     let hook = fs::read_to_string(out.join("lib/powershell/profile.ps1")).unwrap();
     assert!(
         hook.contains(&format!(
-            "if (Test-Path -LiteralPath '{SETUP_ON_DISK}' -PathType Leaf) {{ . '{SETUP_ON_DISK}' }}"
+            "if ([IO.File]::Exists('{SETUP_ON_DISK}')) {{ . '{SETUP_ON_DISK}' }}"
         )),
         "{hook}"
     );

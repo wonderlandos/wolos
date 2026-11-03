@@ -9,10 +9,13 @@
 #
 # Scripts get a plain pwsh: nothing here runs for -File/-Command without -NoExit, -NonInteractive,
 # redirected input or output, or another host. $env:WOLOS_PWSH_FORCE = '1' loads it anyway (tests).
+# $env:WOLOS_PWSH_PIPE = '1' (zsh's `pw`, /usr/share/wolos/pwsh/pw.ps1) loads the part a one-line
+# command can use: the theme colours, ls/ll/la/grep and the bat settings; no keys, prompt or init.
 # Startup cost: language and .NET calls only until the prompt (each first use of a cmdlet module
 # costs tens of milliseconds), tools found by one PATH lookup, their init text cached.
 
-if ($env:WOLOS_PWSH_FORCE -ne '1' -and (& {
+$wolosPipe = $env:WOLOS_PWSH_PIPE -eq '1' -and $env:WOLOS_PWSH_FORCE -ne '1'
+if (-not $wolosPipe -and $env:WOLOS_PWSH_FORCE -ne '1' -and (& {
         $batch = $Host.Name -ne 'ConsoleHost' -or [Console]::IsInputRedirected -or [Console]::IsOutputRedirected
         $argv = [Environment]::GetCommandLineArgs()
         for ($i = 1; $i -lt $argv.Count -and -not $batch; $i++) {
@@ -24,6 +27,7 @@ if ($env:WOLOS_PWSH_FORCE -ne '1' -and (& {
         }
         $batch
     })) {
+    $ExecutionContext.SessionState.PSVariable.Remove('wolosPipe')
     return
 }
 
@@ -31,7 +35,7 @@ $wolosConfigHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { "$H
 $wolosCache = "$(if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { "$HOME/.cache" })/wolos/pwsh"
 # The programs this file wires, looked up once on PATH (Get-Command scans modules for a missing name).
 $wolosTools = @{}
-foreach ($t in 'starship', 'zoxide', 'wopkg', 'fzf', 'eza', 'ls', 'grep', 'bat') {
+foreach ($t in $(if ($wolosPipe) { 'eza', 'ls', 'grep', 'bat' } else { 'starship', 'zoxide', 'wopkg', 'fzf', 'eza', 'ls', 'grep', 'bat' })) {
     foreach ($d in "$env:PATH".Split(':')) {
         if ($d -and [IO.File]::Exists("$d/$t")) { $wolosTools[$t] = "$d/$t"; break }
     }
@@ -42,8 +46,8 @@ foreach ($t in 'starship', 'zoxide', 'wopkg', 'fzf', 'eza', 'ls', 'grep', 'bat')
 # Tab opens a menu you can arrow through, Shift+Tab walks it back; grey suggestions from history
 # (Right or End accepts), like zsh-autosuggestions. The console host loads PSReadLine before this
 # file runs; a forced run (tests) loads it here.
-$wolosReadLine = [bool](Get-Module -Name PSReadLine)
-if (-not $wolosReadLine -and $env:WOLOS_PWSH_FORCE -eq '1') {
+$wolosReadLine = -not $wolosPipe -and [bool](Get-Module -Name PSReadLine)
+if (-not $wolosReadLine -and -not $wolosPipe -and $env:WOLOS_PWSH_FORCE -eq '1') {
     $wolosReadLine = [bool](Import-Module PSReadLine -PassThru -ErrorAction Ignore)
 }
 if ($wolosReadLine) {
@@ -141,12 +145,12 @@ function global:Invoke-WolosPurePrompt {
     $color = if ($ok) { ConvertTo-WolosSgr $env:WOLOS_PROMPT_OK '39' } else { ConvertTo-WolosSgr $env:WOLOS_PROMPT_ERROR '31' }
     "$s $color$sym$reset "
 }
-function global:prompt { Invoke-WolosPurePrompt }
+if (-not $wolosPipe) { function global:prompt { Invoke-WolosPurePrompt } }
 
 # Console module (ADR 0032 "Console"): each tool is wired only when it is installed. starship
 # replaces the prompt above with the same shape (not on the Linux text console, TERM=linux: its
 # font has no prompt glyph); zoxide adds `z`; fzf adds Ctrl+R history; eza takes over ls.
-if ($env:WOLOS_PROMPT -ne 'pure' -and $env:TERM -ne 'linux' -and $wolosTools['starship']) {
+if (-not $wolosPipe -and $env:WOLOS_PROMPT -ne 'pure' -and $env:TERM -ne 'linux' -and $wolosTools['starship']) {
     $wolosStar = "$wolosConfigHome/wolos/toolkits/starship/palette.toml"
     if (-not [IO.File]::Exists($wolosStar)) { $wolosStar = '/usr/share/wolos/toolkits/starship/palette.toml' }
     if (-not [IO.File]::Exists($wolosStar)) { $wolosStar = '/usr/share/wolos/starship/starship.toml' }
@@ -204,7 +208,7 @@ if ($wolosTools['bat']) {
 }
 
 # Leave no variables behind (the session API: the Remove-Variable cmdlet would load a module).
-foreach ($n in 'wolosConfigHome', 'wolosCache', 'wolosTools', 'wolosReadLine', 'wolosColors', 'wolosInit',
+foreach ($n in 'wolosPipe', 'wolosConfigHome', 'wolosCache', 'wolosTools', 'wolosReadLine', 'wolosColors', 'wolosInit',
     'wolosStar', 'wolosFile', 'wolosDefs', 't', 'd', 'e', 'n') {
     $ExecutionContext.SessionState.PSVariable.Remove($n)
 }

@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! `wol script` (ADR 0041, docs/modules/scripting.md): a Ruby script is checked and run exactly
-//! like a shell script. Every parity test walks the same cases for `.sh` and `.rb`: the argv
+//! `wol script` (ADR 0041, docs/modules/scripting.md): a Ruby or pwsh script is checked and run
+//! exactly like a shell script. Every parity test walks the same cases for `.sh`, `.rb` and `.ps1`: the argv
 //! (interpreter + file, never a shell string), the clean environment, the helper name, the audit
 //! record, the ssh path (file on stdin) and the refusals. The last tests run the real `wol` binary
 //! on real scripts and skip with a message when the interpreter is missing.
 use controller::cli::parse;
 use controller::run::{FakeEnv, execute};
+use controller::script::{KINDS, Kind};
 use std::path::{Path, PathBuf};
 
 fn temp_home(tag: &str) -> PathBuf {
@@ -41,7 +42,27 @@ const SCRIPTS: &[(&str, &str, &str, &str)] = &[
         "#!/usr/bin/env ruby\nputs 'hi'\n",
         "/usr/bin/ruby",
     ),
+    (
+        "ps1",
+        "tidy.ps1",
+        "'hi'\n",
+        "/usr/lib/wolos/pwsh",
+    ),
+    (
+        "ps1",
+        "tidy",
+        "#!/usr/bin/env pwsh\n'hi'\n",
+        "/usr/lib/wolos/pwsh",
+    ),
 ];
+
+fn kind(id: &str) -> &'static Kind {
+    KINDS.iter().find(|k| k.id == id).unwrap()
+}
+
+fn strings(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
 
 fn env_with(tag: &str, file: &str, text: &str) -> (FakeEnv, String) {
     let home = temp_home(tag);
@@ -80,7 +101,9 @@ fn every_kind_runs_as_an_argv_with_a_clean_environment() {
         let argv = &e.execs[0];
         assert_eq!(&argv[..2], ["/usr/bin/env", "-i"], "{kind}: {argv:?}");
         let at = argv.iter().position(|a| a == prog).expect(prog);
-        assert_eq!(&argv[at + 1..], [path.as_str(), "a", "--b"], "{kind}");
+        let mut want = strings(self::kind(kind).run_args);
+        want.extend(strings(&[path.as_str(), "a", "--b"]));
+        assert_eq!(&argv[at + 1..], want, "{kind}");
         let vars = &argv[2..at];
         assert!(vars.contains(&"WOL_HELPER=tidy".to_string()), "{vars:?}");
         assert!(vars.contains(&"PATH=/usr/local/bin:/usr/bin".to_string()));
@@ -196,16 +219,23 @@ fn check_parses_without_running_then_lints_when_installed() {
         let (mut e, path) = env_with(&format!("chk{i}"), file, text);
         assert_eq!(run(&format!("script check {path}"), &mut e), 0, "{kind}");
         assert_eq!(e.execs.len(), 1, "{kind}: no linter installed, syntax only");
-        let syntax = if *prog == "/usr/bin/ruby" {
-            "-wc"
-        } else {
-            "-n"
-        };
-        assert_eq!(e.execs[0], [prog.to_string(), syntax.into(), path.clone()]);
+        let mut want = vec![prog.to_string()];
+        want.extend(strings(self::kind(kind).syntax));
+        want.push(path.clone());
+        assert_eq!(e.execs[0], want);
         assert!(e.out.contains("parses"), "{}", e.out);
         assert!(audit_log(&e).is_empty(), "a check is a read");
 
+        // pwsh's launcher says "not installed" with 127: a missing tool, not a parse error
+        let (mut e, path) = env_with(&format!("gone{i}"), file, text);
+        e.exec_codes = vec![127];
+        assert_eq!(run(&format!("script check {path}"), &mut e), 65);
+        assert!(e.out.contains("is not installed"), "{kind}: {}", e.out);
+
         // the linter is installed: it runs after a clean parse
+        if self::kind(kind).lint.is_none() {
+            continue;
+        }
         let (mut e, path) = env_with(&format!("lint{i}"), file, text);
         e.captured = Some("1.0\n".into());
         e.exec_codes = vec![0, 1];
@@ -226,7 +256,9 @@ fn check_parses_without_running_then_lints_when_installed() {
         assert_eq!(v["lint"], tool);
         assert!(v["problems"][0].as_str().unwrap().contains(tool));
 
-        // a parse error stops before the linter
+    }
+    // a parse error stops before the linter (every kind)
+    for (i, (kind, file, text, _)) in SCRIPTS.iter().enumerate() {
         let (mut e, path) = env_with(&format!("bad{i}"), file, text);
         e.captured = Some("1.0\n".into());
         e.exec_codes = vec![1];
@@ -241,7 +273,7 @@ fn check_parses_without_running_then_lints_when_installed() {
 }
 
 #[test]
-fn kinds_list_names_ruby_beside_sh() {
+fn kinds_list_names_ruby_and_ps1_beside_sh() {
     let mut e = FakeEnv::default();
     assert_eq!(run("script --json", &mut e), 0);
     let v: serde_json::Value = serde_json::from_str(&e.out).unwrap();
@@ -251,8 +283,11 @@ fn kinds_list_names_ruby_beside_sh() {
         .iter()
         .map(|k| k["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["sh", "bash", "ruby"]);
+    assert_eq!(ids, ["sh", "bash", "ruby", "ps1"]);
     assert_eq!(v[2]["extensions"], serde_json::json!([".rb"]));
+    assert_eq!(v[3]["extensions"], serde_json::json!([".ps1"]));
+    assert_eq!(v[3]["program"], "/usr/lib/wolos/pwsh");
+    assert_eq!(v[3]["lint"], serde_json::Value::Null);
 }
 
 #[test]
@@ -273,6 +308,32 @@ fn helpers_may_check_but_not_run() {
 
 fn have(prog: &str) -> bool {
     Path::new(prog).exists()
+}
+
+/// The real pwsh on PATH (the forge and VM runs put one there; CI hosts have none).
+fn pwsh_on_path() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|d| d.join("pwsh"))
+        .find(|p| p.is_file())
+}
+
+/// Whether `prog` can run a script with `home` as HOME. The pwsh shim starts the person's pwsh
+/// (~/.local/bin/pwsh): `home` gets a link to the real one, or the case is skipped.
+fn ready(prog: &str, home: &Path) -> bool {
+    if !have(prog) {
+        return false;
+    }
+    if prog != "/usr/lib/wolos/pwsh" {
+        return true;
+    }
+    let Some(real) = pwsh_on_path() else {
+        return false;
+    };
+    let bin = home.join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let _ = std::fs::remove_file(bin.join("pwsh"));
+    std::os::unix::fs::symlink(real, bin.join("pwsh")).is_ok()
 }
 
 /// Runs the built `wol` with only `vars` in its environment.
@@ -306,13 +367,21 @@ fn real_scripts_get_the_same_environment_and_the_same_gate() {
              system(ARGV[0], 'focus', 'on')\nputs \"code=#{$?.exitstatus}\"\n"
                 .to_string(),
         ),
+        (
+            "/usr/lib/wolos/pwsh",
+            "probe.ps1",
+            "#!/usr/bin/env pwsh\n\
+             \"helper=$env:WOL_HELPER token=$(if ($env:GITHUB_TOKEN) { 'set' } else { 'none' })\"\n\
+             & $args[0] focus on\n\"code=$LASTEXITCODE\"\n"
+                .to_string(),
+        ),
     ];
     for (prog, name, text) in cases {
-        if !have(prog) {
+        let home = temp_home(&format!("real-{name}"));
+        if !ready(prog, &home) {
             eprintln!("{prog} not installed; {name} skipped");
             continue;
         }
-        let home = temp_home(&format!("real-{name}"));
         let file = home.join(name);
         std::fs::write(&file, text).unwrap();
         let state = home.join("state");
@@ -351,16 +420,24 @@ fn real_check_tells_a_good_script_from_a_broken_one() {
             "#!/usr/bin/ruby\n# frozen_string_literal: true\nputs 'ok'\n",
             "#!/usr/bin/ruby\ndef x(\n",
         ),
+        (
+            "/usr/lib/wolos/pwsh",
+            "#!/usr/bin/env pwsh\nparam($Name)\n\"ok $Name\"\n",
+            "#!/usr/bin/env pwsh\nif ($x {\n",
+        ),
     ] {
-        if !have(prog) {
+        let home = temp_home(&format!("realchk-{}", prog.replace('/', "")));
+        if !ready(prog, &home) {
             eprintln!("{prog} not installed; check skipped");
             continue;
         }
-        let home = temp_home(&format!("realchk-{}", prog.replace('/', "")));
         for (n, t, ok) in [("good", good, true), ("bad", bad, false)] {
             let f = home.join(n);
             std::fs::write(&f, t).unwrap();
-            let o = wol(&["script", "check", f.to_str().unwrap(), "--json"], &[]);
+            let o = wol(
+                &["script", "check", f.to_str().unwrap(), "--json"],
+                &[("HOME", &home)],
+            );
             let v: serde_json::Value = serde_json::from_slice(&o.stdout)
                 .unwrap_or_else(|e| panic!("{prog} {n}: {e}: {:?}", o));
             assert_eq!(v["ok"], ok, "{prog} {n}: {v}");
@@ -386,13 +463,19 @@ fn real_scripts_run_on_another_computer_from_stdin() {
             "#!/usr/bin/ruby\n# frozen_string_literal: true\n\
              puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\n",
         ),
+        (
+            "/usr/lib/wolos/pwsh",
+            "far.ps1",
+            "param($Arg)\n\
+             \"helper=$env:WOL_HELPER token=$(if ($env:GITHUB_TOKEN) { 'set' } else { 'none' }) arg=$Arg\"\n",
+        ),
     ];
     for (prog, name, text) in cases {
-        if !have(prog) {
+        let home = temp_home(&format!("far-{name}"));
+        if !ready(prog, &home) {
             eprintln!("{prog} not installed; {name} skipped");
             continue;
         }
-        let home = temp_home(&format!("far-{name}"));
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let ssh = bin.join("ssh");

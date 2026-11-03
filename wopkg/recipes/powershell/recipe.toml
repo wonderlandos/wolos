@@ -4,7 +4,8 @@
 # - bin/pwsh, a launcher that knows its final home ($TARGET_PREFIX, ~/.local) and turns off the
 #   telemetry and the update check before pwsh starts;
 # - lib/powershell/profile.ps1 ($PSHOME's all-users profile), which loads the WolOS setup
-#   /usr/share/wolos/pwsh/profile.ps1 (interactive shells only; the setup checks that itself);
+#   /usr/share/wolos/pwsh/profile.ps1 (interactive shells only; the setup checks that itself),
+#   tested with a .NET call: Test-Path would load a cmdlet module, about 140 ms per pwsh start;
 # - share/applications/wolos-pwsh.desktop, the launcher entry (a foot window running pwsh).
 # The upstream release publishes the SHA-256 in its hashes.sha256. pwsh is never a login shell.
 name = "powershell"
@@ -26,7 +27,7 @@ run = [
   "chmod 755 \"$PREFIX/lib/powershell/pwsh\"",
   "printf '%s\\n' '#!/bin/sh' 'export POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off DOTNET_CLI_TELEMETRY_OPTOUT=1' \"exec '$TARGET_PREFIX/lib/powershell/pwsh' \\\"\\$@\\\"\" > \"$PREFIX/bin/pwsh\"",
   "chmod 755 \"$PREFIX/bin/pwsh\"",
-  "printf '%s\\n' '# WolOS: the system setup for interactive shells (wopkg recipe powershell).' \"if (Test-Path -LiteralPath '/usr/share/wolos/pwsh/profile.ps1' -PathType Leaf) { . '/usr/share/wolos/pwsh/profile.ps1' }\" > \"$PREFIX/lib/powershell/profile.ps1\"",
+  "printf '%s\\n' '# WolOS: the system setup for interactive shells (wopkg recipe powershell).' \"if ([IO.File]::Exists('/usr/share/wolos/pwsh/profile.ps1')) { . '/usr/share/wolos/pwsh/profile.ps1' }\" > \"$PREFIX/lib/powershell/profile.ps1\"",
   "printf '%s\\n' '[Desktop Entry]' 'Type=Application' 'Name=pwsh' 'Comment=Object shell in a terminal window' 'Icon=utilities-terminal' 'Categories=System;TerminalEmulator;' 'Keywords=shell;terminal;console;' \"Exec=foot -T pwsh $TARGET_PREFIX/bin/pwsh\" > \"$PREFIX/share/applications/wolos-pwsh.desktop\"",
 ]
 

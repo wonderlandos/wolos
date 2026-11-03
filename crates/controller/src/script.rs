@@ -6,7 +6,8 @@
 //! the calling shell) and `WOL_HELPER=<name>`, so every `wol` change it asks for goes through the
 //! helper gate (policy, approval sheet, audit log; docs/modules/automation.md). `wol script on
 //! <host>` sends the same file over ssh on stdin and runs it there the same way. Each run is one
-//! record in the helper audit log. One table, [`KINDS`], holds what differs between languages.
+//! record in the helper audit log. One table, [`KINDS`], holds what differs between languages:
+//! sh, bash, Ruby and pwsh (`.ps1`, the Console module's object shell).
 use crate::cli::Invocation;
 use crate::run::{Env, emit_json, fail};
 use serde_json::{Value, json};
@@ -17,7 +18,7 @@ use wol_core::automation::{Outcome, audit};
 /// One script language: how to recognise it, run it, read it from stdin and check it.
 #[derive(Clone, Copy, Debug)]
 pub struct Kind {
-    /// `sh`, `bash`, `ruby`.
+    /// `sh`, `bash`, `ruby`, `ps1`.
     pub id: &'static str,
     /// Interpreter names a shebang may give (`#!/usr/bin/ruby`, `#!/usr/bin/env ruby`).
     pub interpreters: &'static [&'static str],
@@ -25,11 +26,13 @@ pub struct Kind {
     pub extensions: &'static [&'static str],
     /// The interpreter on a WolOS system.
     pub program: &'static str,
-    /// Arguments before the script's file when it runs here (empty for sh, bash, ruby).
+    /// Arguments before the script's file when it runs here (empty for sh, bash, ruby; pwsh
+    /// takes `-File` and no profile, as a shebang start does not read one either).
     pub run_args: &'static [&'static str],
     /// Arguments before the script's own when the program reads the script from stdin.
     pub stdin_args: &'static [&'static str],
-    /// Syntax check without running anything (`sh -n`, `ruby -wc`).
+    /// Syntax check without running anything (`sh -n`, `ruby -wc`, pwsh's parser through
+    /// `/usr/share/wolos/pwsh/check.ps1`), given before the file.
     pub syntax: &'static [&'static str],
     /// Linter used when it is installed: program and arguments before the file.
     pub lint: Option<(&'static str, &'static [&'static str])>,
@@ -100,7 +103,41 @@ pub const KINDS: &[Kind] = &[
         )),
         lint_only: RUBOCOP_COPS,
     },
+    // pwsh is the person's own (Console module, wopkg recipe, ~/.local/bin); the shim at
+    // /usr/lib/wolos/pwsh starts it, or says where it comes from and exits 127. No linter: the
+    // analyzer is a pwsh module, not a program `--version` can find.
+    Kind {
+        id: "ps1",
+        interpreters: &["pwsh"],
+        extensions: &[".ps1"],
+        program: "/usr/lib/wolos/pwsh",
+        run_args: &[PWSH_BATCH[0], PWSH_BATCH[1], PWSH_BATCH[2], "-File"],
+        stdin_args: &[
+            PWSH_BATCH[0],
+            PWSH_BATCH[1],
+            PWSH_BATCH[2],
+            "-CommandWithArgs",
+            PWSH_FROM_STDIN,
+        ],
+        syntax: &[
+            PWSH_BATCH[0],
+            PWSH_BATCH[1],
+            PWSH_BATCH[2],
+            "-File",
+            "/usr/share/wolos/pwsh/check.ps1",
+        ],
+        lint: None,
+        lint_only: &[],
+    },
 ];
+
+/// pwsh options every `ps1` start uses: no banner, no profile, never a prompt.
+const PWSH_BATCH: [&str; 3] = ["-NoLogo", "-NoProfile", "-NonInteractive"];
+
+/// What `wol script on` runs on the other computer for a `.ps1` file: pwsh reads the script from
+/// stdin, makes it one script block and calls it with the script's arguments (`$args` and
+/// `param()` work as with `-File`; `$PSScriptRoot` is empty, there is no file).
+pub const PWSH_FROM_STDIN: &str = "& ([scriptblock]::Create([Console]::In.ReadToEnd())) @args";
 
 /// The fixed `PATH` a script gets.
 pub const PATH: &str = "/usr/local/bin:/usr/bin";
@@ -311,7 +348,7 @@ fn kinds(env: &mut dyn Env, json: bool) -> i32 {
     } else {
         for k in KINDS {
             env.out(&format!(
-                "{:<6} {:<8} {:<14} {}\n",
+                "{:<6} {:<8} {:<19} {}\n",
                 k.id,
                 k.extensions.join(" "),
                 k.program,
@@ -362,13 +399,14 @@ fn check(env: &mut dyn Env, file: &str, json: bool) -> i32 {
     };
     match run(env, &argv) {
         Ok(0) => {}
+        // 127: the program is a launcher whose interpreter is missing (the pwsh shim says so).
+        Ok(127) | Err(_) => problems.push(format!(
+            "{} is not installed, so {file} cannot be checked.",
+            kind.program
+        )),
         Ok(_) => problems.push(format!(
             "{file} does not parse as {}: the lines above say where.",
             kind.id
-        )),
-        Err(_) => problems.push(format!(
-            "{} is not installed, so {file} cannot be checked.",
-            kind.program
         )),
     }
     let mut linted = None;
@@ -492,6 +530,9 @@ mod tests {
             ("#!/usr/bin/env ruby", Some("ruby")),
             ("#!/usr/bin/env -S ruby -w", Some("ruby")),
             ("#!/usr/bin/ruby3.4", Some("ruby")),
+            ("#!/usr/bin/env pwsh", Some("pwsh")),
+            ("#!/usr/bin/env -S pwsh -NoProfile", Some("pwsh")),
+            ("#!/usr/lib/wolos/pwsh", Some("pwsh")),
             ("#! /usr/bin/python3", Some("python")),
             ("# a comment", None),
             ("#!", None),
@@ -506,9 +547,12 @@ mod tests {
         assert_eq!(kind_of("x.rb", "puts 1\n").unwrap().id, "ruby");
         assert_eq!(kind_of("x.SH", "echo\n").unwrap().id, "sh");
         assert_eq!(kind_of("x", "#!/bin/bash\n").unwrap().id, "bash");
+        assert_eq!(kind_of("x.PS1", "Get-Date\n").unwrap().id, "ps1");
+        assert_eq!(kind_of("tidy", "#!/usr/bin/env pwsh\n").unwrap().id, "ps1");
+        assert_eq!(kind_of("x.ps1", "#!/bin/sh\n").unwrap().id, "sh");
         let e = kind_of("x.py", "#!/usr/bin/python3\n").unwrap_err();
         assert!(
-            e.contains("python script") && e.contains("sh, bash and ruby"),
+            e.contains("python script") && e.contains("sh, bash, ruby and ps1"),
             "{e}"
         );
         let e = kind_of("notes.txt", "hello\n").unwrap_err();
@@ -546,6 +590,15 @@ mod tests {
         );
         let sh = &KINDS[0];
         assert!(remote_command(sh, "t.sh", &[]).ends_with("'/bin/sh' '-s' '--'"));
+        let ps1 = &KINDS[3];
+        let c = remote_command(ps1, "t.ps1", &["x".into()]);
+        assert!(
+            c.ends_with(
+                "'/usr/lib/wolos/pwsh' '-NoLogo' '-NoProfile' '-NonInteractive' \
+                 '-CommandWithArgs' '& ([scriptblock]::Create([Console]::In.ReadToEnd())) @args' 'x'"
+            ),
+            "{c}"
+        );
     }
 
     #[test]
