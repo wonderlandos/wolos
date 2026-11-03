@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Every state of the gallery through the headless engine, with golden screenshots and accessibility
 # trees, and the keyboard map driven with key events.
 require "./engine_helper_spec"

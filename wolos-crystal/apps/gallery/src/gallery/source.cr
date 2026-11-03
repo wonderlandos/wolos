@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Where the library comes from: the Pictures folder, scanned on the background pool. The app asks a
 # Source and gets one answer on the UI context; the specs give it a fixed one.
 module Gallery

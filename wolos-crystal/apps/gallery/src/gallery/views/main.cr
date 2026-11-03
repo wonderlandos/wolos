@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The window: the kit frame, the screen that is showing (library or viewer), the notice line, and the
 # keyboard bound once on the window's root so every key reaches `App#key` whatever has focus.
 module Gallery

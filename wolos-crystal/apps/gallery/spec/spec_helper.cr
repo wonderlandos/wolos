@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The pure specs: the gallery's core (no engine) and the picture fixtures.
 require "spec"
 require "../src/gallery/core"

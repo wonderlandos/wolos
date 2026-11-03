@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The gallery's door to the system: move to the Trash and back, share, open with another app. One
 # small interface, so the app never calls the system directly and the specs give it a fake.
 #

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The gallery in the real headless engine: a fixed library, a fake system, a fixed clock, and the
 # golden files (screenshots with the pinned fonts, accessibility trees). WOLKIT_BLESS=1 rewrites them.
 require "spec"

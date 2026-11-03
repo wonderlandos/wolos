@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # What kind of picture a file is and how big, from its first bytes. The engine shows PNG and JPEG
 # (libwolkit refuses other encoded formats), so those are the two the library lists.
 module Gallery

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # A small reader for the camera block of a picture: when it was taken, where, which way up, and the
 # small preview the camera stored next to it. Pure Crystal over a byte slice: no library, no pointer.
 #

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The gallery look compiled (WSB1), generated from the kit sheet and src/styles/*.wolcss by
 # wolkit-stylec (tools/styles.sh); do not edit. The app loads it with Wolkit.use_styles.
 module Gallery

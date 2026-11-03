@@ -1,5 +1,5 @@
 # shellcheck shell=sh
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Compile the gallery's look: the kit sheet first (so its class ids stay 0 to 7), then
 # src/styles/*.wolcss, with wolkit-stylec. Writes the class ids (src/gallery/style/classes.cr, module
 # Gallery::Styles) and the compiled table (src/gallery/style/table.cr, Gallery::STYLE_TABLE), both

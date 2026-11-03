@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Pictures written from code for the specs (no binary fixtures in git): JPEG and PNG files with a
 # camera block of chosen fields, in either byte order, with or without a stored preview.
 module Fixtures

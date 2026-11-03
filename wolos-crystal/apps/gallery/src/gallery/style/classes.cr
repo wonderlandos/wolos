@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The style class ids of the gallery, generated from the kit sheet and src/styles/*.wolcss by
 # wolkit-stylec (tools/styles.sh); do not edit. The kit ids come first, so they match Wolkit::KitClass.
 module Gallery::Styles

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The gallery (org.wolos.gallery). `make` builds bin/gallery; `make spec` runs the pure specs, the
 # look check and the headless engine specs with their golden screenshots (WOLKIT_BLESS=1 rewrites
 # the goldens: review the PNGs before committing); `make styles` compiles the look; `make check`

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The library screen: a toolbar (title, Date or Place, slideshow, reload), then the state that
 # applies: reading, the grid of sections, nothing yet, no folder, or what went wrong.
 module Gallery

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The viewer: a toolbar (back, name, zoom, slideshow, info, share, more), the stage with the picture
 # at its zoom, the filmstrip under it, and the info panel on the right when asked for.
 module Gallery

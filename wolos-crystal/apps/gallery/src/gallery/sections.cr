@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The smart sections of the library: pictures grouped by day (the last week) and month (before), or
 # by place. Pure functions of the photos and of "now", so the specs pin every heading.
 #

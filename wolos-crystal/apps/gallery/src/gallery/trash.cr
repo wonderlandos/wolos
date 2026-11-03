@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Moving a picture to the Trash, and back. The Trash is the shared folder of the session (a `files`
 # folder with the items and an `info` folder with one note per item saying where it came from and
 # when), so the file manager's Trash shows the picture and can put it back.

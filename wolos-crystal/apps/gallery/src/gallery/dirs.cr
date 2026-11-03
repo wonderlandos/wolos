@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Where the gallery reads and writes: the person's Pictures folder (as their folder settings name it),
 # the app's data folder (thumbnails live there) and the shared Trash folder. Pure lookups over an
 # environment, so specs pass their own.

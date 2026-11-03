@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The words and numbers the gallery shows about a picture: dates, sizes, the camera line. Pure, so the
 # info panel and the accessible names read the same in every test.
 module Gallery

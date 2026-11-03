@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The program: `wol-gallery` opens the library of the Pictures folder; `wol-gallery PICTURE` opens
 # that picture in the viewer, with the other pictures of its folder in the filmstrip. Runs until the
 # window is closed. The specs require src/gallery.cr instead, so they never start the real app.

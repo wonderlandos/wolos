@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The library scan: every PNG and JPEG under the Pictures folder, with its camera block and its
 # thumbnail. It runs on the background pool (never on the UI context) and returns one value.
 #

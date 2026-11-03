@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The thumbnail cache, under the app's data folder. A thumbnail is the preview the camera stored in
 # the picture (a small JPEG), copied out once so the grid never reads the full file again.
 #

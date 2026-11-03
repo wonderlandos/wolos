@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # One picture of the library: where the file is, what the camera block said, and the thumbnail the
 # grid shows. A plain value, so the library can be built off the UI context and handed over whole.
 module Gallery

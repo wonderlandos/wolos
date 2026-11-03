@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 # The gallery app: its state as signals and the verbs that change it. The screens are in views/,
 # which reopen this class; the keyboard map is `key` at the end.
 #

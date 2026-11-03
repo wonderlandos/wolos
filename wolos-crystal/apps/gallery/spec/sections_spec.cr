@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-2-Clause
+# SPDX-License-Identifier: GPL-2.0-or-later
 require "./spec_helper"
 
 private def photo(name : String, at : Time, place : Gallery::GeoPoint? = nil) : Gallery::Photo
