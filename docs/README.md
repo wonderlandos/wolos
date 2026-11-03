@@ -109,6 +109,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/power.md](modules/power.md) | power policy per power source and mode, sleep and lock, battery alerts, `wol power` | [0014](adr/0014-power-policy.md) |
 | [modules/scripting.md](modules/scripting.md) | scripts in sh, bash and Ruby: `wol script check|run|on`, the clean environment, the helper gate, ssh | [0041](adr/0041-ruby-scripts.md) |
 | [modules/security.md](modules/security.md) | firewall, hardening, update check, malware check, encrypted homes, app permissions, what runs as root | [0040](adr/0040-security-defaults-on-linux.md), [0024](adr/0024-first-use-malware-check.md) |
+| [modules/shards.md](modules/shards.md) | Crystal shards: the signed curated list, `wol shard list|add|update|check`, pins by commit and `shard.lock` (libwopkg 1.1) | [0036](adr/0036-crystal-userland.md) |
 | [modules/system-api.md](modules/system-api.md) | System API topics (`wol_core::system`) and their invariants | [0016](adr/0016-arch-linux-base.md) |
 | [modules/userland.md](modules/userland.md) | Dock apps and app-ids, default apps, zsh, sudo, keyring, printing, USB sticks, size | [0016](adr/0016-arch-linux-base.md) |
 | [modules/ux-journeys.md](modules/ux-journeys.md) | error copy rules (`shell::copy`, lint), where the journeys run now (`wolvm`), and the 2026-10-27 journey audit (historical) | [0013](adr/0013-first-run.md) |
