@@ -57,7 +57,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0025](adr/0025-signed-boot.md) | Signed boot with this computer's own keys | accepted |
 | [0026](adr/0026-memory-saver.md) | Memory Saver | accepted |
 | [0027](adr/0027-one-app-cannot-take-the-desktop.md) | One app cannot take the desktop with it | accepted |
-| [0028](adr/0028-clamav-in-its-own-process.md) | ClamAV in its own process, with data the person fetches | accepted |
+| [0028](adr/0028-clamav-in-its-own-process.md) | The full signature engine in its own process, with data the person fetches | accepted |
 | [0029](adr/0029-repository-split-and-single-build-path.md) | Repository split and a single build path | accepted |
 | [0030](adr/0030-repo-cdn-cachy-redirect.md) | The package repo on CloudFront; CachyOS repos through a redirect, not a copy | accepted |
 | [0031](adr/0031-shell-plugins-themes-layouts.md) | Shell plugins, themes and layouts | accepted |

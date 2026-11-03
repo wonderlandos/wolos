@@ -31,7 +31,7 @@ done
 eval cargo build --release -p xguard --features yara --bin wol-xguard --locked $F
 [ -x "$B/wol-xguard" ] || { echo "build-rust.sh: binary wol-xguard not produced" >&2; exit 1; }
 install -m 755 "$B/wol-xguard" "$DEST/usr/bin/wol-xguard"
-# ClamAV stays in its own program: the only one that links libclamav (ADR 0028).
+# The full signature engine stays in its own program: the only one that links libclamav (ADR 0028).
 eval cargo build --release -p xguard-clam --features libclamav --bin wol-xguard-clam --locked $F
 install -m 755 "$B/wol-xguard-clam" "$DEST/usr/bin/wol-xguard-clam"
 "$REPO/crates/xguard/rules/build.sh" "$B/wol-xguard" "$DEST/usr/share/wolos/xguard"
@@ -45,7 +45,7 @@ install -m 4755 "$B/wol-authcheck" "$DEST/usr/lib/wol-authcheck"
 [ -x "$B/wol-session-pam" ] || { echo "build-rust.sh: binary wol-session-pam not produced" >&2; exit 1; }
 install -m 755 "$B/wol-session-pam" "$DEST/usr/lib/wol-session-pam"
 
-# Files' right-click "Analyze with ClamAV": starts wol-analyze, links only Nautilus' library.
+# Files' right-click "Check for Malware": starts wol-analyze, links only Nautilus' library.
 EXT=$DEST$(pkg-config --variable=extensiondir libnautilus-extension-4)
 mkdir -p "$EXT"
 # shellcheck disable=SC2046

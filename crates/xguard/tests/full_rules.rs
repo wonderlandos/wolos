@@ -83,6 +83,7 @@ impl Fix {
     }
 }
 
+// Each test leaves no folder behind, pass or fail.
 impl Drop for Fix {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.base);

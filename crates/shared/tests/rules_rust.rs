@@ -1470,6 +1470,126 @@ fn has_key(t: &str, key: &str) -> bool {
     })
 }
 
+/// The upstream names RR-118 looks for, as written (identifiers such as `libclamav`, `--clamav`,
+/// `clamav/` and `wol-xguard-clam` are lower case and never match).
+const UPSTREAM_NAMES: &[&str] = &["ClamAV"];
+
+/// What RR-118 lets stand, and why. Exactly these, nothing by pattern:
+/// - the token `ClamAV-VDB`: the first bytes of the publisher's signed file, a data format;
+/// - `docs/adr/*.md` below the title line: ADRs are history (titles are not);
+/// - `CHANGELOG.md` and `NOTICE`: history, and the license attribution the licenses ask for
+///   (both outside the scanned set);
+/// - string literals in Rust (user-facing text there is copy_scan's); Crystal sources under
+///   `wopkg/` and `wolos-crystal/` are read whole, strings included.
+const UPSTREAM_ALLOW: &[&str] = &["ClamAV-VDB"];
+
+/// The lines of `text` RR-118 reads in a file at `rel`: comments of Rust sources (`//...`),
+/// `#` comments and `description` of manifests and scripts, and every docs line except an ADR's
+/// body.
+fn prose_lines(rel: &str, text: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    for (i, l) in text.lines().enumerate() {
+        let t = l.trim_start();
+        let keep = if rel.ends_with(".cr") {
+            // Crystal: comments and string literals alike (its messages are what people read).
+            Some(l.to_owned())
+        } else if rel.ends_with(".rs") {
+            l.find("//").map(|p| l[p..].to_owned())
+        } else if rel.ends_with(".md") {
+            (!(rel.starts_with("docs/adr/") && i > 0)).then(|| l.to_owned())
+        } else if t.starts_with('#') || t.starts_with("description") {
+            Some(l.to_owned())
+        } else {
+            None
+        };
+        if let Some(k) = keep {
+            out.push((i + 1, k));
+        }
+    }
+    out
+}
+
+#[test]
+fn rr_118_no_upstream_names_in_our_prose() {
+    let base = root();
+    let mut files = Vec::new();
+    for (dir, ext) in [
+        ("crates", "rs"),
+        ("crates", "toml"),
+        ("docs", "md"),
+        ("tools", "sh"),
+        ("wopkg", "cr"),
+        ("wolos-crystal", "cr"),
+    ] {
+        walk(&base.join(dir), &mut files, ext);
+    }
+    // Shipped scripts, units and configs: everything under files/ that is text.
+    fn every(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                every(&p, out);
+            } else {
+                out.push(p);
+            }
+        }
+    }
+    every(&base.join("files"), &mut files);
+    let mut hits = Vec::new();
+    for f in &files {
+        let Ok(text) = std::fs::read_to_string(f) else {
+            continue; // not text
+        };
+        let rel = f
+            .strip_prefix(&base)
+            .unwrap_or(f)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (n, line) in prose_lines(&rel, &text) {
+            let mut l = line.clone();
+            for a in UPSTREAM_ALLOW {
+                l = l.replace(a, "");
+            }
+            if UPSTREAM_NAMES.iter().any(|w| l.contains(w)) {
+                hits.push(format!("{rel}:{n}: {}", line.trim()));
+            }
+        }
+    }
+    let id = "RR-118";
+    assert!(
+        hits.is_empty(),
+        "{id}: an upstream name in our prose (UPSTREAM_ALLOW lists what may stand):\n{}",
+        hits.join("\n")
+    );
+}
+
+/// RR-118 reads what it should and leaves what it should.
+#[test]
+fn rr_118_reads_comments_and_docs_but_not_history() {
+    let w = UPSTREAM_NAMES[0];
+    let rs = format!("let x = \"{w} in a string\"; // {w} here\n");
+    assert_eq!(
+        prose_lines("crates/a/src/x.rs", &rs),
+        [(1, format!("// {w} here"))]
+    );
+    let adr = "# 0028 - Title\nBody that is history\n";
+    assert_eq!(
+        prose_lines("docs/adr/0028-x.md", adr),
+        [(1, "# 0028 - Title".to_owned())]
+    );
+    let sh = format!("#!/bin/sh\necho {w}\n# a comment\n");
+    assert_eq!(prose_lines("tools/x.sh", &sh).len(), 2, "comments only");
+    let cr = format!("puts \"{w} found it\"\n");
+    assert_eq!(
+        prose_lines("wopkg/src/x.cr", &cr).len(),
+        1,
+        "Crystal strings count"
+    );
+}
+
 #[test]
 fn rr_069_edition_is_2024() {
     ratchet(

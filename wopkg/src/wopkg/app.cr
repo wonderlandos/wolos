@@ -678,7 +678,7 @@ module Wopkg
     private def scan_gate(v : Scan::Verdict, what : String)
       if v.infected?
         STDERR.puts v.message
-        unless Scan.may_continue?(v, UI.confirm_strict("Install anyway, against ClamAV's warning?"))
+        unless Scan.may_continue?(v, UI.confirm_strict("Install anyway, against the malware check's warning?"))
           raise Failure.new(5, v.message)
         end
       elsif !v.clean?

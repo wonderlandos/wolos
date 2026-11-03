@@ -3,7 +3,7 @@ require "json"
 
 module Wopkg
   # The malware scan step (ADR 0021, 0026). `wol-xguard scan --json` reads archives in memory and asks
-  # ClamAV in its own process when the person turned the full signatures on; `clamscan` is the
+  # the full signature engine in its own process when the person turned the full signatures on; `clamscan` is the
   # fallback off WolOS. Neither is linked. Repository packages that pacman already verifies are not
   # scanned, so normal installs stay fast.
   module Scan
@@ -111,11 +111,11 @@ module Wopkg
         return run_xguard(paths, xguard, now)
       end
       unless clamscan
-        return Verdict.new(Kind::Unavailable, [] of String, "ClamAV is not installed, so this download was not checked for malware.")
+        return Verdict.new(Kind::Unavailable, [] of String, "The full signature engine is not installed, so this download was not checked for malware.")
       end
       age = db_age(db, now)
       unless age
-        return Verdict.new(Kind::Unavailable, [] of String, "ClamAV has no signature database yet (run freshclam), so this download was not checked for malware.")
+        return Verdict.new(Kind::Unavailable, [] of String, "The full signature engine has no signature database yet (run freshclam), so this download was not checked for malware.")
       end
       buf = IO::Memory.new
       a = argv(clamscan, paths, db)
@@ -124,14 +124,14 @@ module Wopkg
       when 0, 1
         hits = buf.to_s.lines.compact_map { |l| l[/: (\S+) FOUND\z/, 1]? }.uniq!
         if !hits.empty?
-          Verdict.new(Kind::Infected, hits, "ClamAV found #{hits.join(", ")} in the download, so nothing was installed.")
+          Verdict.new(Kind::Infected, hits, "The full signature engine found #{hits.join(", ")} in the download, so nothing was installed.")
         elsif age > STALE_DAYS
-          Verdict.new(Kind::Stale, [] of String, "ClamAV found nothing, but its signatures are #{age} days old, so this is not a clean result. Run freshclam.")
+          Verdict.new(Kind::Stale, [] of String, "The full signature engine found nothing, but its signatures are #{age} days old, so this is not a clean result. Run freshclam.")
         else
           Verdict.new(Kind::Clean, [] of String, "No known malware found.")
         end
       else
-        Verdict.new(Kind::Unavailable, [] of String, "ClamAV could not check this download, so it was not checked for malware.")
+        Verdict.new(Kind::Unavailable, [] of String, "The full signature engine could not check this download, so it was not checked for malware.")
       end
     end
 

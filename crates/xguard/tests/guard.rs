@@ -257,7 +257,7 @@ fn xattr(p: &Path, name: &str) -> bool {
     unsafe { libc::getxattr(c.as_ptr(), n.as_ptr(), std::ptr::null_mut(), 0) >= 0 }
 }
 
-/// The real ClamAV process behind the guard: `XGUARD_CLAM_BIN` is the binary built with libclamav.
+/// The real full-engine process behind the guard: `XGUARD_CLAM_BIN` is the binary built with libclamav.
 #[test]
 fn real_clamav_stops_what_only_it_knows_and_a_clean_file_is_asked_once() {
     let Some(base) = root() else { return };
@@ -294,7 +294,7 @@ fn real_clamav_stops_what_only_it_knows_and_a_clean_file_is_asked_once() {
     let clean = g.dir.join("dl/tool.exe");
     script(&clean, "harmless");
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(exec(&clean), Ok(7), "clean through ClamAV");
+    assert_eq!(exec(&clean), Ok(7), "clean through the full engine");
     let before = scanned(&g);
     for _ in 0..20 {
         assert_eq!(exec(&clean), Ok(7));

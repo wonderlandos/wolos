@@ -66,7 +66,7 @@ fn scan(args: &[String]) -> i32 {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
-            // ClamAV must answer: without it the result is Incomplete, not clean.
+            // The full engine must answer: without it the result is Incomplete, not clean.
             "--clamav" => need_clam = true,
             // The guard's deep check of a file above its memory cap: pieces, never whole (R2C-4).
             "--stream" => stream = true,
@@ -442,6 +442,25 @@ fn install(args: &[String]) -> i32 {
     }
 }
 
+/// The work folder of `rules full`, emptied by name (RR-041): its two copies, the two unpacked
+/// folders (a signed file unpacks flat) and their files, then the folders. Anything else stays.
+fn clear_work(work: &Path) -> std::io::Result<()> {
+    let flat = |d: &Path| {
+        if let Ok(rd) = std::fs::read_dir(d) {
+            for e in rd.flatten() {
+                if e.file_type().is_ok_and(|t| t.is_file() || t.is_symlink()) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+        std::fs::remove_dir(d)
+    };
+    for n in ["main", "daily"] {
+        let _ = flat(&work.join(n));
+    }
+    flat(work)
+}
+
 /// `rules full [DB [DEST]]` (root, wolos-clam-update.service's step after the download): the full
 /// database `clam-update` fetched as `_xguard` is only trusted once root has checked it (audit
 /// F10). Each of `main.cvd` and `daily.cvd` is read without following a link into a folder of
@@ -490,7 +509,7 @@ fn full(args: &[String]) -> i32 {
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default();
     let work = std::env::temp_dir().join(format!("xguard-full-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&work);
+    let _ = clear_work(&work);
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&work)
@@ -506,7 +525,7 @@ fn full(args: &[String]) -> i32 {
             time: xguard::scan::now(),
             ..prior.clone()
         });
-        let _ = std::fs::remove_dir_all(&work);
+        let _ = clear_work(&work);
         die(&format!("{detail}: {why}"))
     };
     let sigtool = std::env::var("XGUARD_SIGTOOL").unwrap_or_else(|_| "sigtool".into());
@@ -526,7 +545,7 @@ fn full(args: &[String]) -> i32 {
                 &format!("{}: {e}", copy.display()),
             );
         }
-        let ok = std::process::Command::new(&sigtool)
+        let ok = wol_core::privileged::privileged_command(&sigtool)
             .arg(format!("--info={}", copy.display()))
             .stdin(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -560,7 +579,7 @@ fn full(args: &[String]) -> i32 {
         let out = work.join(n);
         let _ = std::fs::create_dir(&out);
         let untar = |z: &str| {
-            let mut c = std::process::Command::new("tar")
+            let mut c = wol_core::privileged::privileged_command("tar")
                 .args([z, "-", "--no-same-owner", "--no-same-permissions", "-C"])
                 .arg(&out)
                 .stdin(std::process::Stdio::piped())
@@ -590,7 +609,7 @@ fn full(args: &[String]) -> i32 {
         main: versions[0],
         daily: versions[1],
     });
-    let _ = std::fs::remove_dir_all(&work);
+    let _ = clear_work(&work);
     0
 }
 

@@ -185,3 +185,4 @@ These cannot be decided by a text scan; the reviewer's checklist (`docs/REVIEW.m
 | RR-115 | A bug fix adds the test that would have caught it. | It cannot come back. | review |
 | RR-116 | Every file we ship has a contract test that reads the shipped file. | The file is the product. | review |
 | RR-117 | An error a person reads is one sentence they can act on. | RR-030 and copy_scan catch only the words. | review |
+| RR-118 | No upstream project name in our comments, manifests, scripts' comments, docs prose or Crystal sources (wopkg, wolos-crystal: comments and strings) (Wonderland Doctrine); the allowlist is written in the test. | Our words describe what WolOS does, not whose code it uses. | rules_rust.rs RR-118 |
