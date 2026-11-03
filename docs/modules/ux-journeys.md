@@ -15,6 +15,25 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 - In tests, with fakes: `crates/shell/tests/journeys.rs` drives J1, J2, J3, J4, J8 and J11 below through
   the real flows.
 
+## Manual pages and the journeys behind them
+
+Each hand-written manual page on the site (`site/src/content/manual/<slug>.md`) for a v0.12 feature names the
+journey that proves it and the tests that hold what the page says. The page's quoted on-screen strings
+are checked against `crates/shell/src` by the site's `scripts/check-copy.mjs`. "None yet": no journey
+drives it end to end; the tests named are the proof.
+
+| Page | Journey | Proof |
+|---|---|---|
+| `clipboard` (Clipboard history) | None yet (would be J13 Keyboard only: Shift+Super+V, type, Return) | `crates/shell/src/clipboard.rs` tests `history_rules`, `pins_survive_clear_and_new_copies`, `search_matches_every_word`, `one_time_codes_and_huge_copies_are_not_kept`; golden `clipboard` |
+| `screenshots` (Screenshots and markup) | J9 Screenshot | `crates/shell/src/capture.rs` tests (`argv_per_mode`, `clipboard_only_copies`, `markup_strokes_are_bounded_and_in_picture_pixels`); goldens `capture-bar`, `capture-thumb`, `capture-markup`, `banner-screenshot` |
+| `lock-screen` (Lock Screen and login window) | J12 Lock, sleep, log out, shut down | goldens `lock`, `lock-rejected`, `lock-checking`, `lock-caps-lock`, `login`, `login-password`, `login-hint`, `login-empty`, `settings-lockscreen-*`; `crates/shell/src/login.rs` tests `both_screens_show_the_hint_after_three_wrong_passwords`, `hint_after_three_failures` |
+| `sessions` (Sessions) | None yet (needs a VM journey: log out with terminals open, log in, Reopen) | `crates/shell/src/sessions.rs` tests `the_offer_comes_once_and_only_for_a_recent_set`, `the_marker_is_written_only_after_the_answer`, `the_offer_is_one_notification_with_a_reopen_button`; `crates/controller/src/sessions.rs` `restore_and_list_read_the_file_and_refuse_what_is_not_theirs` |
+| `webapps` (Web apps) | J3 Install an app (the terminal path; no Settings pane yet) | `crates/controller/src/verbs.rs` tests `webapp_add_writes_a_launcher_with_the_site_icon`, `webapp_add_refuses_bad_input_and_duplicates`, `webapp_icon_with_a_newline_is_refused`; `crates/controller/tests/plugin.rs` `add_installs_and_webapps_follow_enable` |
+| `startup-security` (Startup Security) | J1 First boot (the key screen after install); `mok-screen.yaml` in the VM | `crates/shell/src/ui/settings/startup_security.rs` test `finish_setup_shows_only_while_the_key_has_to_reach_the_firmware`; goldens `settings-startupsecurity-*` |
+| `themes` (Themes and the theme picker) | J4 Change look, undo | `crates/shell/tests/journeys.rs` `j4_theme_change_can_be_undone`; goldens `theme-picker` (`tests/golden_cases/theme_picker.rs`), `settings-appearance-*` |
+| `widgets-edit` (Arranging widgets) | None yet | goldens `widgets-edit`, `widgets-desktop` (`tests/golden_cases/widgets.rs`), `settings-widgets-*` |
+| `scripts-and-shells` (Scripts and shells) | J11 AI helper (the same gate: a script runs as helper `script:<file>`) | `crates/controller/tests/script.rs` (branch wave3/ruby); Settings > General "Shell in the terminal": golden `settings-general-shells-*` in `tests/golden_cases/settings.rs` and `crates/controller/tests/image_pwsh.rs` (branch wave3/pwsh) |
+
 ## Error copy: one place
 
 | Rule | Where |
