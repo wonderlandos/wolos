@@ -1058,9 +1058,9 @@ mod tests {
             (
                 PkgInstall,
                 &["steam"],
-                "pacman -S --needed --noprogressbar --noconfirm steam",
+                "wol pkg -- -S --needed --noprogressbar --noconfirm steam",
             ),
-            (PkgRemove, &["gimp"], "pacman -Rns --noconfirm gimp"),
+            (PkgRemove, &["gimp"], "wol pkg -- -Rns --noconfirm gimp"),
             (
                 FlatpakOverride,
                 &["org.gimp.GIMP", "shared=network", "deny"],

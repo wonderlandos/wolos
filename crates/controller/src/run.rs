@@ -63,6 +63,11 @@ pub trait Env {
     fn keyring_forget(&mut self, desc: &str) {
         let _ = desc;
     }
+    /// The administrator password: on a terminal "Password: " and no echo (`secret`); otherwise
+    /// one line of stdin, as [`Env::stdin_line`].
+    fn read_password(&mut self) -> Option<String> {
+        self.stdin_line()
+    }
     /// One raw line from stdin; None at end of input (`wol mcp`).
     fn read_line(&mut self) -> Option<String> {
         let mut l = String::new();
@@ -525,7 +530,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 if attempt == PASSWORD_TRIES {
                     break;
                 }
-                match env.stdin_line() {
+                match env.read_password() {
                     Some(p) if !p.is_empty() => password = p.into_bytes(),
                     _ => return fail(env, ErrorCode::Denied, reply.message()),
                 }
@@ -669,7 +674,8 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
 }
 
 /// Third-party toolkits follow the theme: regenerate GTK/Qt/foot files, then gsettings so
-/// running GTK apps switch live (settings portal), then the `theme` event on wold for libwol apps
+/// running GTK apps switch live (settings portal), running foot terminals by signal
+/// (`apps::terminal_argv`), then the `theme` event on wold for libwol apps
 /// (`subscribe("theme")`). Best effort: a missing gsettings or wold is not an error.
 /// Every theme change goes through here: `wol theme set|light|dark|toggle`, appearance and accent
 /// (verbs.rs `set_theme`) and undo.
@@ -684,13 +690,38 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     {
         env.err(&format!("wol: app themes: {e}\n"));
     }
-    for argv in apps::gsettings_argv(t)
-        .into_iter()
-        .chain(apps::strip_argv(t))
-    {
+    // foot rereads nothing while it runs: its two colour sections are switched by signal.
+    let foot = apps::foot_is_ours(&apps::user_dir(&home), &home)
+        .then(|| apps::terminal_argv(t, shared::sys::euid()));
+    for argv in apps::gsettings_argv(t) {
+        let _ = env.exec(&argv);
+    }
+    restyle_compositor(env, &apps::strip_argv(t));
+    if let Some(argv) = foot {
         let _ = env.exec(&argv);
     }
     announce_theme(env, &t.id);
+}
+
+/// The compositor's colours, live. hyprctl answers each keyword on stdout, "ok" when it took it
+/// and its error otherwise: the "ok" lines are dropped (`wol appearance set` printed ten of them),
+/// anything else goes to stderr. A hyprctl that fails to run (no compositor: a tty, ssh, a
+/// chroot) is said once and the other keywords are not tried.
+fn restyle_compositor(env: &mut dyn Env, argvs: &[Vec<String>]) {
+    for argv in argvs {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let Some(out) = env.capture(&a) else {
+            env.err("wol: the window title bars keep their colours until the desktop restarts (hyprctl did not answer)\n");
+            return;
+        };
+        for line in out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && *l != "ok")
+        {
+            env.err(&format!("wol: {}: {line}\n", argv[2..].join(" ")));
+        }
+    }
 }
 
 /// `publish {"event":"theme","id":ID}` on wold's socket: wold hands an Everyone event from a client
@@ -1108,6 +1139,12 @@ impl Env for RealEnv {
         io::stdin().read_line(&mut l).ok()?;
         Some(l.trim_end_matches(['\n', '\r']).to_owned())
     }
+    fn read_password(&mut self) -> Option<String> {
+        use std::os::fd::AsRawFd;
+        let stdin = io::stdin();
+        let fd = stdin.as_raw_fd();
+        crate::secret::read_password(&mut stdin.lock(), &mut io::stderr(), fd)
+    }
     fn read_file(&self, p: &Path) -> Option<String> {
         std::fs::read_to_string(p).ok()
     }
@@ -1144,6 +1181,8 @@ pub struct FakeEnv {
     pub home: PathBuf,
     /// Per-command captures (`argv joined by spaces`, stdout); else `captured`.
     pub captures: Vec<(String, String)>,
+    /// Every argv run through `capture`, in order.
+    pub captured_argvs: Vec<Vec<String>>,
     /// Host behind `controls()` (Linux fake when None).
     pub host: Option<std::sync::Arc<wol_core::system::fake::FakeHost>>,
     /// wol-admind as seen by `controls()`: replies in order (none left = not running), requests sent.
@@ -1248,6 +1287,8 @@ impl Env for FakeEnv {
         })
     }
     fn capture(&mut self, argv: &[&str]) -> Option<String> {
+        self.captured_argvs
+            .push(argv.iter().map(|a| (*a).to_owned()).collect());
         let line = argv.join(" ");
         match self.captures.iter().find(|c| c.0 == line) {
             Some(c) => Some(c.1.clone()),

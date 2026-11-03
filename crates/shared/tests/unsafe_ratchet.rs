@@ -47,6 +47,9 @@ use std::path::{Path, PathBuf};
 /// signals one pid, not the worker's process group, and `Child::try_wait` reaps), no new
 /// dependency was wanted for two calls.
 /// docs/STANDARDS.md 7.1 repeats these rows ([`standards_quotes_the_baseline`] checks it).
+/// controller +4 (MANUAL 0.12.0, `src/secret.rs`): the administrator password on a terminal was
+/// echoed; std has no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap (Ctrl-C restores
+/// the terminal) and `_exit` in that handler, each with a SAFETY line; no new dependency.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
@@ -54,7 +57,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("wopkg", 94),
     ("realtime", 32),
     ("xguard", 65),
-    ("controller", 52),
+    ("controller", 56),
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
