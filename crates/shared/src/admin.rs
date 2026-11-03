@@ -217,6 +217,33 @@ impl AdminReply {
     }
 }
 
+/// Longest sentence a failed reply carries (bytes; clients read at most 256 bytes of reply).
+pub const MAX_FAILURE_MESSAGE: usize = 200;
+
+/// A failed reply with wol-admind's own sentence: `failed <message>` on one line (append-only:
+/// a client that knows only `failed` reads any other line as [`AdminReply::Failed`] too). Control
+/// characters are dropped and the sentence is cut at [`MAX_FAILURE_MESSAGE`] bytes on a character
+/// boundary; an empty sentence is the plain `failed` line.
+pub fn failed_line(message: &str) -> String {
+    let mut m = String::new();
+    for c in message.chars().filter(|c| !c.is_control()) {
+        if m.len() + c.len_utf8() > MAX_FAILURE_MESSAGE {
+            break;
+        }
+        m.push(c);
+    }
+    match m.trim() {
+        "" => AdminReply::Failed.line().to_owned(),
+        t => format!("{} {t}", AdminReply::Failed.line()),
+    }
+}
+
+/// The sentence of a `failed <message>` reply line; None for every other reply.
+pub fn failure_message(line: &str) -> Option<String> {
+    let m = line.trim().strip_prefix("failed ")?.trim();
+    (!m.is_empty()).then(|| m.to_owned())
+}
+
 pub fn encode(req: &AdminRequest, password: &[u8]) -> Vec<u8> {
     let mut b = Vec::new();
     for f in [req.action.name(), &req.args.len().to_string()]
@@ -353,5 +380,27 @@ mod tests {
             assert_eq!(AdminReply::parse(&format!("{l}\n")), r);
         }
         assert_eq!(AdminReply::parse("garbage"), AdminReply::Failed);
+    }
+
+    /// A failed reply may carry wol-admind's sentence; a client that predates it still reads
+    /// Failed, and the sentence stays one bounded line.
+    #[test]
+    fn a_failed_reply_carries_an_optional_sentence() {
+        let l = failed_line("No restore point.\nNothing was changed.");
+        assert_eq!(l, "failed No restore point.Nothing was changed.");
+        assert_eq!(AdminReply::parse(&format!("{l}\n")), AdminReply::Failed);
+        assert_eq!(
+            failure_message(&format!("{l}\n")).as_deref(),
+            Some("No restore point.Nothing was changed.")
+        );
+        assert_eq!(failed_line(""), "failed");
+        assert_eq!(failed_line("\n\t"), "failed");
+        assert_eq!(failure_message("failed\n"), None);
+        assert_eq!(failure_message("ok\n"), None);
+        assert_eq!(failure_message("denied x"), None);
+        let long = failed_line(&"é".repeat(300));
+        let m = failure_message(&long).unwrap();
+        assert!(m.len() <= MAX_FAILURE_MESSAGE && m.chars().all(|c| c == 'é'));
+        assert!(long.len() < 256);
     }
 }

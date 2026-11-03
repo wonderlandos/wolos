@@ -60,3 +60,5 @@ History entry (`wopkg_history_record`, one JSON line each in `history.jsonl`): `
 ## Exit codes (CLI)
 
 0 done, 1 usage or bad input, 3 an installer failed, 5 refused for trust (unsigned remote), 6 not found or not available from that source.
+
+A failed system change prints what wold said as one stderr line, `wopkg: system: <sentence>` (control characters folded into spaces; the exit code is unchanged). For Update Now the sentence is wol-admind's own (the restore point it kept, or why none could be kept), and Settings > Software Update shows it. The prefix is stable: Settings reads it.

@@ -144,6 +144,88 @@ pub fn plan(
     })
 }
 
+/// A change made in the other root slot, with the restore point it leaves: the running slot,
+/// which no step touches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SlotChange {
+    /// The running slot: what the person goes back to (Settings > Restore, `wol restore`).
+    pub restore_point: &'static str,
+    /// Where the change is made and booted next.
+    pub slot: String,
+    pub from: Base,
+    pub steps: Vec<Step>,
+}
+
+/// The one way into the other slot, shared by the pacman wrapper and Update Now: `cmdline` is
+/// `/proc/cmdline`, `bootctl` the output of [`super::be::LIST_ARGV`]. None when this system does
+/// not boot a WolOS root slot (one copy, ADR 0023), so there is no restore point to keep.
+pub fn slot_change(
+    cmdline: Option<&str>,
+    bootctl: Option<&str>,
+    args: &[String],
+) -> Option<SlotChange> {
+    let restore_point = cmdline.and_then(running_slot)?;
+    let bes = super::be::parse(bootctl.unwrap_or_default());
+    let (slot, from) = base(&bes, restore_point)?;
+    let steps = plan(&slot, from, args, "current", cmdline)?;
+    Some(SlotChange {
+        restore_point,
+        slot,
+        from,
+        steps,
+    })
+}
+
+/// pacman's arguments for Update Now inside the pinned release (only `[wolos]` moves); `holds`
+/// (validated package names) stay at their version.
+pub fn update_now_args(holds: &[String]) -> Vec<String> {
+    let mut a = vec!["-Syu".to_owned(), "--noconfirm".to_owned()];
+    if !holds.is_empty() {
+        a.push(format!("--ignore={}", holds.join(",")));
+    }
+    a
+}
+
+/// Update Now on a computer with one copy of WolOS (ADR 0023, [`super::SINGLE_COPY`]): the
+/// running system is updated in place, with nothing to go back to (the page says so first).
+pub fn update_now_in_place(holds: &[String]) -> Vec<Step> {
+    let mut a = vec![super::PACMAN.to_owned()];
+    a.extend(update_now_args(holds));
+    vec![Step::Run(a)]
+}
+
+/// What wol-admind answers when Update Now could not be made, for the Software Update page
+/// (`shared::admin::failed_line`). The refusal: neither a root slot nor a one-copy install.
+pub const NO_RESTORE_POINT: &str = concat!(
+    "Update Now was not started: WolOS could not find a copy of the system to keep as a ",
+    "restore point. Nothing was changed."
+);
+
+/// A slot update that stopped: the half-made copy is gone, the running system is as it was.
+pub fn slot_failed(restore_point: &str) -> String {
+    format!(
+        "The update did not finish, so nothing was changed. The restore point {restore_point} is kept."
+    )
+}
+
+/// An in-place update (one copy) that stopped: part of it may be installed.
+pub const IN_PLACE_FAILED: &str = concat!(
+    "The update did not finish. This computer has one copy of WolOS, so some packages may ",
+    "already be updated. Check that you are online, then try again."
+);
+
+/// The most steps an Update Now may run (a change stacked onto a pending slot), so a client
+/// waits as long as wol-admind may take (S4-4).
+pub fn update_now_most_steps(holds: &[String]) -> usize {
+    let args = update_now_args(holds);
+    [Base::Pending, Base::Running { replace: true }]
+        .into_iter()
+        .filter_map(|from| plan(super::SLOTS[1], from, &args, "current", None))
+        .map(|s| s.len())
+        .max()
+        .unwrap_or(1)
+}
+
 /// The slot is read-only: `btrfs property get -ts / ro`.
 pub const RO_ARGV: [&str; 5] = ["btrfs", "property", "get", "-ts", "/"];
 
@@ -356,6 +438,53 @@ mod tests {
             super::super::rollback_from("wolos-b", Base::Running { replace: true }),
             super::super::rollback("wolos-b")
         );
+    }
+
+    /// Update Now and the pacman wrapper share one way into the other slot: the running slot is
+    /// the restore point and no step touches it; without a slot there is no restore point.
+    #[test]
+    fn a_slot_change_keeps_the_running_slot_as_the_restore_point() {
+        let cmd = "root=LABEL=wolos rootflags=subvol=@wolos-a rw";
+        let list = r#"[{"id":"wolos-a.conf","isSelected":true,"isDefault":true},{"id":"wolos-b.conf","isSelected":false,"isDefault":false}]"#;
+        let args = update_now_args(&[]);
+        assert_eq!(args, ["-Syu", "--noconfirm"]);
+        let c = slot_change(Some(cmd), Some(list), &args).unwrap();
+        assert_eq!(c.restore_point, "wolos-a");
+        assert_eq!(c.slot, "wolos-b");
+        assert_eq!(c.from, Base::Running { replace: true });
+        assert_eq!(
+            c.steps,
+            plan("wolos-b", c.from, &args, "current", Some(cmd)).unwrap()
+        );
+        let t: Vec<String> = c.steps.iter().map(ToString::to_string).collect();
+        assert_eq!(t[0], "btrfs subvolume delete /run/wolos/top/@wolos-b");
+        assert_eq!(t[1], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
+        assert!(t.contains(
+            &"arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm".into()
+        ));
+        assert!(
+            t.iter().all(|x| !x.contains("@wolos-a")),
+            "the restore point is never written: {t:?}"
+        );
+        // No WolOS slot on the command line (one copy, ADR 0023): no restore point, no plan.
+        assert_eq!(
+            slot_change(Some("root=/dev/sda2 rw"), Some(list), &args),
+            None
+        );
+        assert_eq!(slot_change(None, Some(list), &args), None);
+        // Holds stay at their version.
+        assert_eq!(
+            update_now_args(&["firefox".into(), "gimp".into()]),
+            ["-Syu", "--noconfirm", "--ignore=firefox,gimp"]
+        );
+        assert!(update_now_most_steps(&[]) >= c.steps.len());
+        // One copy: the running system, in place, holds kept.
+        let one: Vec<String> = update_now_in_place(&["gimp".into()])
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(one, ["/usr/bin/pacman -Syu --noconfirm --ignore=gimp"]);
+        assert!(slot_failed("wolos-a").contains("restore point wolos-a is kept"));
     }
 
     #[test]

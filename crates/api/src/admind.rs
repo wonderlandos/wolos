@@ -118,13 +118,22 @@ pub fn serve_one(
     }
     let mut buf = vec![0u8; shared::admin::MAX_REQUEST + 1];
     let n = read_request(&conn, &mut buf, REQUEST_DEADLINE);
+    let mut said = None;
     let reply = {
         let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
-        handle(&buf[..n], caller, &mut c, os)
+        handle_said(&buf[..n], caller, &mut c, os, &mut said)
     };
     buf.fill(0); // password never outlives the request
     let _ = conn.set_write_timeout(Some(REQUEST_DEADLINE));
-    let _ = writeln!(&conn, "{}", reply.line());
+    let _ = writeln!(&conn, "{}", reply_line(reply, said.as_deref()));
+}
+
+/// The reply line: a failure with a sentence for the person carries it (append-only wire).
+pub fn reply_line(reply: AdminReply, said: Option<&str>) -> String {
+    match (reply, said) {
+        (AdminReply::Failed, Some(m)) => shared::admin::failed_line(m),
+        _ => reply.line().to_owned(),
+    }
 }
 
 /// wol-admind's accept loop (audit S4-7): each connection on its own thread, at most
@@ -201,6 +210,18 @@ pub fn handle(
     caller: Option<Caller>,
     cache: &mut AuthCache,
     os: &dyn AdminOs,
+) -> AdminReply {
+    handle_said(data, caller, cache, os, &mut None)
+}
+
+/// [`handle`], and the sentence a failed request leaves for the person in `said` (the optional
+/// message of the failed reply, `shared::admin::failed_line`; today Update Now's).
+pub fn handle_said(
+    data: &[u8],
+    caller: Option<Caller>,
+    cache: &mut AuthCache,
+    os: &dyn AdminOs,
+    said: &mut Option<String>,
 ) -> AdminReply {
     let uid = caller.map(|c| c.uid);
     let session = caller.map_or(-1, |c| c.session);
@@ -290,6 +311,9 @@ pub fn handle(
         AdminAction::WolInstall => wol_install(os, &req.args[0], &req.args[1], uid),
         AdminAction::WolRemove => wol_remove(os, &req.args[0]),
         AdminAction::PkgInstallFile => pkg_install_file(os, &req, &who),
+        AdminAction::PkgUpgrade => update_now(os, &req.args, &who)
+            .map_err(|m| *said = Some(m))
+            .is_ok(),
         _ => execute(&req, os),
     };
     os.log(&format!(
@@ -345,6 +369,55 @@ fn pkg_install_file(os: &dyn AdminOs, req: &shared::admin::AdminRequest, who: &s
             false
         }
     }
+}
+
+/// Update Now (Settings > Software Update): the `[wolos]` fixes inside the pinned release, made in
+/// the other root slot by the one slot builder the pacman wrapper and `wol update` share. The
+/// running slot is the restore point and no step touches it; its name goes to the log before
+/// anything runs. A failed step deletes what it half made; the restore point stays as it was.
+/// One copy of WolOS (ADR 0023, `/etc/wolos/single-copy`): in place, nothing to go back to (the
+/// page says so). Neither: refused, nothing runs. Err: the sentence for the page.
+fn update_now(os: &dyn AdminOs, holds: &[String], who: &str) -> Result<(), String> {
+    use wol_core::update::{self as up, Step, pkg};
+    let run = |s: &Step| match s {
+        Step::Run(argv) => os.run(argv, true),
+        Step::Write { path, text } => os.write(path, 0o644, text),
+    };
+    if os.read(up::SINGLE_COPY).is_some() {
+        os.log(&format!(
+            "{who}: pkg-upgrade: one copy of WolOS, no restore point; updating the running system"
+        ));
+        if pkg::update_now_in_place(holds).iter().all(run) {
+            return Ok(());
+        }
+        return Err(pkg::IN_PLACE_FAILED.into());
+    }
+    let cmdline = os.read("/proc/cmdline");
+    let bootctl = os.capture(&up::be::LIST_ARGV.map(String::from));
+    let args = pkg::update_now_args(holds);
+    let Some(c) = pkg::slot_change(cmdline.as_deref(), bootctl.as_deref(), &args) else {
+        os.log(&format!("{who}: pkg-upgrade: {}", pkg::NO_RESTORE_POINT));
+        return Err(pkg::NO_RESTORE_POINT.into());
+    };
+    let (point, slot) = (c.restore_point, &c.slot);
+    os.log(&format!(
+        "{who}: pkg-upgrade: restore point {point} (the running system) is kept; updating into {slot}"
+    ));
+    for s in &c.steps {
+        if !run(s) {
+            for r in up::rollback_from(slot, c.from) {
+                let _ = os.run(&r, false);
+            }
+            os.log(&format!(
+                "{who}: pkg-upgrade: {s} failed; {slot} was cleaned up, restore point {point} is unchanged"
+            ));
+            return Err(pkg::slot_failed(point));
+        }
+    }
+    os.log(&format!(
+        "{who}: pkg-upgrade: updated into {slot}, it starts at the next restart; restore point {point}"
+    ));
+    Ok(())
 }
 
 fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
@@ -718,6 +791,8 @@ mod tests {
         delays: Cell<u32>,
         auths: Cell<u32>,
         fail_run: bool,
+        /// A run whose command line contains this fails (one step of a sequence).
+        fail_on: Option<&'static str>,
         captured: RefCell<Vec<Vec<String>>>,
         /// Probe answers by command line (`sysctl -n hw.ncpu` -> "4\n"); others fail.
         probes: Vec<(&'static str, &'static str)>,
@@ -753,7 +828,7 @@ mod tests {
         }
         fn run(&self, argv: &[String], _: bool) -> bool {
             self.ran.borrow_mut().push(argv.to_vec());
-            !self.fail_run
+            !self.fail_run && self.fail_on.is_none_or(|f| !argv.join(" ").contains(f))
         }
         fn run_progress(&self, argv: &[String], _: wol_core::progress::Kind, path: &str) -> bool {
             self.progress.borrow_mut().push(path.into());
@@ -834,6 +909,21 @@ mod tests {
         }
     }
 
+    /// A machine that boots root slot wolos-a; wolos-b holds the previous restore point.
+    const SLOT_CMDLINE: &str = "root=LABEL=wolos rootflags=subvol=@wolos-a rw quiet";
+    const SLOT_BOOTCTL: &str = concat!(
+        r#"[{"id":"wolos-a.conf","isSelected":true,"isDefault":true,"version":"0.12-2026/11/02"},"#,
+        r#"{"id":"wolos-b.conf","isSelected":false,"isDefault":false}]"#
+    );
+
+    fn slot_os() -> Fake {
+        Fake {
+            files: vec![("/proc/cmdline".into(), SLOT_CMDLINE.into())],
+            probes: vec![("bootctl list --json=short", SLOT_BOOTCTL)],
+            ..Fake::default()
+        }
+    }
+
     fn req(a: AdminAction, args: &[&str]) -> AdminRequest {
         AdminRequest {
             action: a,
@@ -868,7 +958,7 @@ mod tests {
             (b"garbage", ROOT, AdminReply::Invalid, 1),
         ];
         for (data, caller, want, delays) in cases {
-            let os = Fake::default();
+            let os = slot_os();
             let got = handle(data, caller, &mut AuthCache::default(), &os);
             assert_eq!(
                 (got, os.delays.get()),
@@ -995,7 +1085,7 @@ mod tests {
 
     #[test]
     fn authorization_is_cached_per_session_and_revocable() {
-        let os = Fake::default();
+        let os = slot_os();
         let mut cache = AuthCache::default();
         let good = encode(&req(AdminAction::PkgUpgrade, &[]), b"good");
         let none = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
@@ -1073,7 +1163,7 @@ mod tests {
         assert!(os.log.borrow().iter().all(|l| !l.contains("hunter22")));
         let failing = Fake {
             fail_run: true,
-            ..Fake::default()
+            ..slot_os()
         };
         let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
         assert_eq!(
@@ -1138,22 +1228,195 @@ mod tests {
         );
     }
 
-    /// Update Now stays inside the pinned release: pacman, no restore point of its own (the
-    /// previous root slot is the way back).
+    /// Update Now keeps a restore point first (the page says so): the running slot wolos-a is
+    /// named in the log before anything runs, and the `[wolos]` fixes go into wolos-b through the
+    /// shared slot builder (snapshot, pacman inside the release, initramfs, seal, boot entry).
+    /// No step writes the restore point.
     #[test]
-    fn package_upgrade_runs_pacman() {
-        let os = Fake::default();
+    fn update_now_keeps_a_restore_point_first() {
+        let os = slot_os();
         let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
         assert_eq!(
             handle(&up, ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
         let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-        assert_eq!(ran, ["pacman -Syu --noconfirm"]);
+        let b = "/run/wolos/top/@wolos-b";
+        assert_eq!(ran[0], format!("btrfs subvolume delete {b}"));
+        assert_eq!(ran[1], format!("btrfs subvolume snapshot / {b}"));
+        assert_eq!(ran[2], format!("wol layers fold {b}"));
+        assert_eq!(
+            ran[3],
+            format!("arch-chroot {b} /usr/bin/pacman -Syu --noconfirm")
+        );
+        assert!(ran.iter().any(|l| l.starts_with("wol seal apply")));
+        assert_eq!(ran.last().unwrap(), "bootctl set-default ");
+        assert!(ran.iter().all(|l| !l.contains("@wolos-a")), "{ran:?}");
+        assert!(
+            ran.iter().all(|l| l != "pacman -Syu --noconfirm"),
+            "never pacman on the live root"
+        );
+        let log = os.log.borrow();
+        assert_eq!(
+            log[0],
+            "root(0): pkg-upgrade: restore point wolos-a (the running system) is kept; updating into wolos-b"
+        );
+        assert!(
+            log.iter().any(|l| l.contains("updated into wolos-b")),
+            "{log:?}"
+        );
+        // Holds stay at their version, in the slot.
+        let held = slot_os();
+        let r = req(AdminAction::PkgUpgrade, &["firefox", "gimp"]);
+        handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &held);
+        assert!(held.ran.borrow().iter().any(|a| a.join(" ")
+            == format!("arch-chroot {b} /usr/bin/pacman -Syu --noconfirm --ignore=firefox,gimp")));
         let wifi = Fake::default();
         let r = req(AdminAction::WifiPower, &["wlan0", "off"]);
         handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &wifi);
         assert!(wifi.captured.borrow().is_empty());
+    }
+
+    /// A machine with one copy of WolOS (no root slot) cannot keep a restore point: Update Now
+    /// is refused with one sentence and nothing runs, not even pacman on the live root.
+    #[test]
+    fn update_now_without_a_restore_point_is_refused() {
+        for os in [
+            Fake::default(),
+            Fake {
+                files: vec![("/proc/cmdline".into(), "root=/dev/vda2 rw".into())],
+                ..Fake::default()
+            },
+        ] {
+            let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
+            assert_eq!(
+                handle(&up, ROOT, &mut AuthCache::default(), &os),
+                AdminReply::Failed
+            );
+            assert!(os.ran.borrow().is_empty(), "{:?}", os.ran.borrow());
+            let log = os.log.borrow();
+            assert_eq!(
+                log[0],
+                format!(
+                    "root(0): pkg-upgrade: {}",
+                    wol_core::update::pkg::NO_RESTORE_POINT
+                )
+            );
+            drop(log);
+            // The page gets the same sentence: the failed reply carries it.
+            let mut said = None;
+            let again = handle_said(&up, ROOT, &mut AuthCache::default(), &os, &mut said);
+            assert_eq!(again, AdminReply::Failed);
+            assert_eq!(
+                said.as_deref(),
+                Some(wol_core::update::pkg::NO_RESTORE_POINT)
+            );
+            let line = reply_line(again, said.as_deref());
+            assert_eq!(AdminReply::parse(&line), AdminReply::Failed, "old clients");
+            assert_eq!(
+                shared::admin::failure_message(&line).as_deref(),
+                Some(wol_core::update::pkg::NO_RESTORE_POINT)
+            );
+        }
+    }
+
+    /// One copy of WolOS (ADR 0023): Update Now updates the running system in place (the page
+    /// said there is no restore point); a failure says some packages may already be updated.
+    #[test]
+    fn update_now_on_one_copy_updates_in_place() {
+        let one = || Fake {
+            files: vec![
+                (wol_core::update::SINGLE_COPY.into(), String::new()),
+                ("/proc/cmdline".into(), "root=/dev/vda2 rw".into()),
+            ],
+            ..Fake::default()
+        };
+        let os = one();
+        let r = req(AdminAction::PkgUpgrade, &["gimp"]);
+        let mut said = None;
+        assert_eq!(
+            handle_said(
+                &encode(&r, b""),
+                ROOT,
+                &mut AuthCache::default(),
+                &os,
+                &mut said
+            ),
+            AdminReply::Ok
+        );
+        assert_eq!(said, None);
+        let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
+        assert_eq!(ran, ["/usr/bin/pacman -Syu --noconfirm --ignore=gimp"]);
+        assert!(os.log.borrow()[0].contains("one copy of WolOS, no restore point"));
+        assert!(os.captured.borrow().is_empty(), "no slot is looked for");
+        let failing = Fake {
+            fail_run: true,
+            ..one()
+        };
+        let mut said = None;
+        assert_eq!(
+            handle_said(
+                &encode(&r, b""),
+                ROOT,
+                &mut AuthCache::default(),
+                &failing,
+                &mut said
+            ),
+            AdminReply::Failed
+        );
+        assert_eq!(
+            said.as_deref(),
+            Some(wol_core::update::pkg::IN_PLACE_FAILED)
+        );
+    }
+
+    /// Only a failure carries a sentence; every other reply keeps its plain line.
+    #[test]
+    fn reply_lines_carry_a_sentence_only_on_failure() {
+        assert_eq!(reply_line(AdminReply::Ok, Some("x")), "ok");
+        assert_eq!(reply_line(AdminReply::Failed, None), "failed");
+        assert_eq!(
+            reply_line(AdminReply::Failed, Some("It broke.")),
+            "failed It broke."
+        );
+        assert_eq!(reply_line(AdminReply::Denied, Some("x")), "denied");
+    }
+
+    /// A step that fails deletes the half-made slot; the restore point is untouched and named.
+    #[test]
+    fn a_failed_update_now_cleans_up_and_keeps_the_restore_point() {
+        let os = Fake {
+            fail_on: Some("mkinitcpio"),
+            ..slot_os()
+        };
+        let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
+        assert_eq!(
+            handle(&up, ROOT, &mut AuthCache::default(), &os),
+            AdminReply::Failed
+        );
+        let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
+        let at = ran.iter().position(|l| l.contains("mkinitcpio")).unwrap();
+        let after: Vec<&str> = ran[at + 1..].iter().map(String::as_str).collect();
+        assert_eq!(
+            after,
+            [
+                "btrfs subvolume delete /run/wolos/top/@wolos-b",
+                "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
+            ]
+        );
+        assert!(
+            ran.iter()
+                .all(|l| !l.contains("@wolos-a") && !l.contains("set-default"))
+        );
+        assert!(
+            os.log.borrow().iter().any(|l| l
+                .contains("failed; wolos-b was cleaned up, restore point wolos-a is unchanged")),
+            "{:?}",
+            os.log.borrow()
+        );
+        let mut said = None;
+        handle_said(&up, ROOT, &mut AuthCache::default(), &os, &mut said);
+        assert_eq!(said, Some(wol_core::update::pkg::slot_failed("wolos-a")));
     }
 
     /// Low Power Mode probes the machine, saves the mode and switches power-profiles-daemon.

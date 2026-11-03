@@ -125,21 +125,15 @@ fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
     Outcome::Done
 }
 
+/// The same slot change Update Now makes (`pkg::slot_change`, wol-admind).
 fn in_slot(env: &mut dyn Env, args: &[String], cmdline: Option<&str>) -> bool {
-    let Some(running) = cmdline.and_then(up::running_slot) else {
+    let bootctl = capture(env, &up::be::LIST_ARGV.map(String::from));
+    let Some(c) = pkg::slot_change(cmdline, bootctl.as_deref(), args) else {
         return false;
     };
-    let bes =
-        up::be::parse(&capture(env, &up::be::LIST_ARGV.map(String::from)).unwrap_or_default());
-    let Some((slot, from)) = pkg::base(&bes, running) else {
-        return false;
-    };
-    let Some(steps) = pkg::plan(&slot, from, args, "current", cmdline) else {
-        return false;
-    };
-    for s in &steps {
+    for s in &c.steps {
         if !run_step(env, s) {
-            for r in up::rollback_from(&slot, from) {
+            for r in up::rollback_from(&c.slot, c.from) {
                 let _ = env.exec(&r);
             }
             return false;

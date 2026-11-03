@@ -15,7 +15,7 @@ module Wopkg
     if argv.includes?("--json")
       STDOUT.puts({"error" => e.kind, "message" => e.message}.to_json)
     else
-      STDERR.puts e.message
+      STDERR.puts e.line
     end
     e.code == 2 ? 77 : 1
   end

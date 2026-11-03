@@ -306,7 +306,11 @@ pub fn step_secs(a: AdminAction) -> u32 {
 /// [`step_secs`] plus [`REPLY_MARGIN_SECS`]. An action the daemon plans itself (`.wol` installs)
 /// or an invalid request counts as one step, so the wait is never shorter than the daemon's.
 pub fn reply_secs(r: &AdminRequest) -> u32 {
-    let steps = plan(r).map_or(1, |s| s.len().max(1));
+    let steps = match r.action {
+        // Update Now is a whole slot change (snapshot, pacman, initramfs, seal, boot entry).
+        AdminAction::PkgUpgrade => crate::update::pkg::update_now_most_steps(&r.args),
+        _ => plan(r).map_or(1, |s| s.len().max(1)),
+    };
     let steps = u32::try_from(steps).unwrap_or(u32::MAX);
     steps
         .saturating_mul(step_secs(r.action))
@@ -383,15 +387,11 @@ pub fn plan_with(
         ],
         AdminAction::TimeZone => vec![AdminStep::Run(timezones::set_argv(&a[0]))],
         AdminAction::PkgRefresh => vec![argv(&["pacman", "-Sy"])],
-        // Inside the pinned release only `[wolos]` moves; a new release is a new root slot.
-        // Holds (validated package names) stay at their version: `--ignore=a,b`.
-        AdminAction::PkgUpgrade if a.is_empty() => vec![argv(&["pacman", "-Syu", "--noconfirm"])],
-        AdminAction::PkgUpgrade => {
-            let hold = format!("--ignore={}", a.join(","));
-            vec![argv(&["pacman", "-Syu", "--noconfirm", &hold])]
-        }
         // Revoke: the daemon handles it. Packages: verified and planned by the daemon itself.
-        AdminAction::Revoke
+        // Update Now: planned by the daemon from the running slot, the restore point it keeps
+        // (`crate::update::pkg::slot_change`).
+        AdminAction::PkgUpgrade
+        | AdminAction::Revoke
         | AdminAction::AurOpen
         | AdminAction::WolInstall
         | AdminAction::WolRemove => vec![],
@@ -1059,12 +1059,6 @@ mod tests {
                 &["Europe/Lisbon"],
                 "timedatectl set-timezone Europe/Lisbon",
             ),
-            (PkgUpgrade, &[], "pacman -Syu --noconfirm"),
-            (
-                PkgUpgrade,
-                &["firefox", "gimp"],
-                "pacman -Syu --noconfirm --ignore=firefox,gimp",
-            ),
             (PkgRefresh, &[], "pacman -Sy"),
             (
                 BootEnvironment,
@@ -1142,12 +1136,18 @@ mod tests {
     const SPEED_SHIFT: &[(&str, &str)] =
         &[("nproc", "4\n"), ("powerprofilesctl get", "balanced\n")];
 
-    /// Update Now installs the `[wolos]` fixes inside the pinned release (a new release is a new
-    /// root slot: `wol update apply`).
+    /// Update Now installs the `[wolos]` fixes inside the pinned release in the other root slot;
+    /// wol-admind plans it itself from the running slot (the restore point), so the shared plan
+    /// has no steps and a client waits for the whole slot change.
     #[test]
-    fn package_upgrade_stays_inside_the_release() {
-        let p = plan_with(&r(PkgUpgrade, &[]), &probe(&[])).unwrap();
-        assert_eq!(shown(&p), "pacman -Syu --noconfirm");
+    fn package_upgrade_is_planned_by_the_daemon() {
+        assert_eq!(plan_with(&r(PkgUpgrade, &[]), &probe(&[])), Ok(vec![]));
+        let most = crate::update::pkg::update_now_most_steps(&[]);
+        assert!(most >= 9, "{most}");
+        assert_eq!(
+            reply_secs(&r(PkgUpgrade, &[])),
+            u32::try_from(most).unwrap() * LONG_STEP_SECS + REPLY_MARGIN_SECS
+        );
     }
 
     /// The mode is saved for `wol power apply` (AC changes, boot, resume); the plan switches the
