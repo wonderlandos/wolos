@@ -57,6 +57,40 @@ pub fn owner_and_parent(proc: &Path, pid: i32) -> Option<(u32, i32)> {
     Some((field("Uid:")?.parse().ok()?, field("PPid:")?.parse().ok()?))
 }
 
+/// Real uid of `pid` from `<proc>/<pid>/status`, without allocating: the path and the first KiB
+/// of the file (where `Uid:` is) live on the stack. wold's QoS hot path asks it on every focus
+/// change (audit S4-1); [`owner_and_parent`] is the allocating twin. None when unreadable.
+pub fn owner(proc: &Path, pid: i32) -> Option<u32> {
+    use std::io::{Read, Write};
+    use std::os::unix::ffi::OsStrExt;
+    if pid <= 0 {
+        return None;
+    }
+    let mut path = [0u8; 256];
+    let mut w = &mut path[..];
+    w.write_all(proc.as_os_str().as_bytes()).ok()?;
+    write!(w, "/{pid}/status").ok()?;
+    let n = 256 - w.len();
+    let at = Path::new(std::ffi::OsStr::from_bytes(path.get(..n)?));
+    let mut f = std::fs::File::open(at).ok()?;
+    let mut buf = [0u8; 1024];
+    let mut got = 0;
+    while got < buf.len() {
+        match f.read(&mut buf[got..]) {
+            Ok(0) => break,
+            Ok(k) => got += k,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return None,
+        }
+    }
+    let uid = buf[..got]
+        .split(|b| *b == b'\n')
+        .find_map(|l| l.strip_prefix(b"Uid:"))?
+        .split(u8::is_ascii_whitespace)
+        .find(|w| !w.is_empty())?;
+    std::str::from_utf8(uid).ok()?.parse().ok()
+}
+
 /// `/user.slice/user-<uid>.slice/session-<n>.scope` -> (uid, "session-<n>.scope").
 pub fn session_scope(cg: &str) -> Option<(u32, &str)> {
     let rest = cg.strip_prefix("/user.slice/user-")?;
@@ -275,6 +309,15 @@ pub mod tests {
             ],
         );
         assert_eq!(owner_and_parent(&d, 22), Some((1000, 21)));
+        assert_eq!(owner(&d, 22), Some(1000), "agrees with owner_and_parent");
+        assert_eq!(owner(&d, 99_999), None);
+        assert_eq!(owner(&d, 0), None);
+        assert_eq!(owner(&d, -1), None);
+        assert_eq!(
+            owner(Path::new("/proc"), std::process::id() as i32),
+            Some(shared::sys::euid()),
+            "the real /proc: this test process is ours"
+        );
         assert_eq!(comm(&d, 20), "code");
         assert_eq!(cgroup(&d, 20).as_deref(), Some("/s"));
         assert!(!is_game(&d, 20));

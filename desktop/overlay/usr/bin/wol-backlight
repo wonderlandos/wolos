@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wol-backlight up|down: the brightness keys (hyprland.conf binds XF86MonBrightnessUp/Down).
+# Why: the keys step the panel by 5 points through the same path as Control Center and
+# `wol display brightness` (logind SetBrightness, no root, the same backlight device), so no extra
+# package is needed. How: read the level from `wol display --json`, add or take 5, clamp to 1..100
+# and set it. No backlight (desktop monitor, VM): nothing to do, exit 0. Exit 64 on an unknown word.
+set -eu
+case ${1:-} in
+up) step=5 ;;
+down) step=-5 ;;
+*) echo "usage: wol-backlight up|down" >&2; exit 64 ;;
+esac
+cur=$(wol display --json 2>/dev/null | tr -d '\n' | grep -o '"brightness": *[0-9][0-9]*' | head -n 1 | grep -o '[0-9][0-9]*$' || true)
+[ -n "$cur" ] || exit 0
+new=$((cur + step))
+[ "$new" -ge 1 ] || new=1
+[ "$new" -le 100 ] || new=100
+exec wol display brightness "$new"

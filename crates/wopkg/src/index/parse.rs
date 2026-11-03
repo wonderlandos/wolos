@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Source inputs -> records: pacman sync databases (tar, gzip or zstd), Flathub AppStream XML
-//! (`.gz` or plain), the AUR metadata dump (`packages-meta-v1.json[.gz]`), the `.wol` index
+//! (`.gz` or plain), the community package metadata dump (`packages-meta-v1.json[.gz]`), the `.wol` index
 //! (`index.json`, ADR 0011), the recipe index and the AppImage feed.
 use super::{Kind, Record, app_key, package_key};
 use crate::ffi::{Error, Result};
@@ -339,11 +339,11 @@ struct Aur {
     votes: u32,
 }
 
-/// The AUR metadata dump: a JSON array of package objects.
+/// The community package metadata dump: a JSON array of package objects.
 pub fn aur(bytes: &[u8]) -> Result<Vec<Record>> {
     let json = decompress(bytes)?;
     let pkgs: Vec<Aur> = serde_json::from_slice(&json)
-        .map_err(|_| Error::untrusted("The AUR package list is damaged."))?;
+        .map_err(|_| Error::untrusted("The community package list is damaged."))?;
     Ok(pkgs
         .into_iter()
         .map(|p| Record {
@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn aur_dump_wol_recipes_feed() {
-        let a = aur(br#"[{"Name":"paru-bin","Version":"2.0-1","Description":"AUR helper","NumVotes":42},{"Name":"x","Version":"1","Description":null}]"#).unwrap();
+        let a = aur(br#"[{"Name":"paru-bin","Version":"2.0-1","Description":"A helper","NumVotes":42},{"Name":"x","Version":"1","Description":null}]"#).unwrap();
         assert_eq!((a[0].key.as_str(), a[0].votes), ("paru", 42));
         assert_eq!(a[1].summary, "");
         let wol = format!(

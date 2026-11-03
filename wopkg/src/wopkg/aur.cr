@@ -5,8 +5,8 @@ require "./sandbox"
 require "./aur_guard"
 
 module Wopkg
-  # AUR packages are hostile until read (ADR 0021, AurGuard). wopkg pins the exact commit you
-  # reviewed, takes package metadata from the AUR over TLS (not from the search dump), fetches
+  # Community packages are hostile until read (ADR 0021, AurGuard). wopkg pins the exact commit you
+  # reviewed, takes package metadata from the community package collection over TLS (not from the search dump), fetches
   # sources in a throwaway sandbox with network, builds in a second one without, and records
   # where every package came from.
   class Aur
@@ -45,7 +45,7 @@ module Wopkg
 
     # The full history is kept so an update can show the diff since the installed commit.
     def checkout(pkg : String) : Bool
-      raise ArgumentError.new("“#{pkg}” is not an AUR package name.") unless Aur.valid?(pkg)
+      raise ArgumentError.new("“#{pkg}” is not a community package name.") unless Aur.valid?(pkg)
       dir = repo(pkg)
       if Dir.exists?("#{dir}/.git")
         Process.run("git", ["-C", dir] + SAFE + ["fetch", "-q", "origin"], error: STDERR).success? &&
@@ -57,10 +57,10 @@ module Wopkg
       end
     end
 
-    # Metadata from the AUR itself over TLS; remembered so a later maintainer change shows.
+    # Metadata from the community package collection itself over TLS; remembered so a later maintainer change shows.
     def meta(pkg : String) : AurGuard::Meta
       r = HTTP::Client.get("#{BASE}/rpc/v5/info?arg[]=#{URI.encode_www_form(pkg)}")
-      raise ArgumentError.new("The AUR answered with an error (#{r.status_code}).") unless r.status_code == 200
+      raise ArgumentError.new("The community package collection answered with an error (#{r.status_code}).") unless r.status_code == 200
       AurGuard::Meta.parse(r.body)
     end
 
@@ -106,7 +106,7 @@ module Wopkg
 
     ENV_BUILD = {"PKGDEST" => "/work/.out", "SRCDEST" => "/work/.src", "BUILDDIR" => "/work/.build", "PKGEXT" => ".pkg.tar.zst"}
 
-    # .SRCINFO as makepkg reads it from the PKGBUILD, inside the sandbox. The one the AUR serves is not used.
+    # .SRCINFO as makepkg reads it from the PKGBUILD, inside the sandbox. The one the community package collection serves is not used.
     def srcinfo(pkg : String, log : String) : AurGuard::SrcInfo
       dir = repo(pkg)
       File.delete?("#{dir}/.SRCINFO.gen")
@@ -131,7 +131,7 @@ module Wopkg
       trace = Process.find_executable("strace") ? "/work/.trace" : nil
       File.delete?("#{dir}/.trace")
       Sandbox.run(dir, "makepkg --nodeps --noconfirm --force --holdver", false, log, "/work", ENV_BUILD, strict: true, trace: trace) ||
-        raise ArgumentError.new("#{pkg} did not build without network access. It may need to download while building, which wopkg does not allow for AUR packages. See #{log}.")
+        raise ArgumentError.new("#{pkg} did not build without network access. It may need to download while building, which wopkg does not allow for community packages. See #{log}.")
       {Dir.glob("#{dir}/.out/*.pkg.tar.zst").sort, trace ? "#{dir}/.trace" : nil}
     end
 

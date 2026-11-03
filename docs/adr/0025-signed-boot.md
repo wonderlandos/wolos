@@ -27,9 +27,9 @@ WolOS boots from A/B slots with systemd-boot (ADR 0016). Secure Boot had to be o
 - Updates sign on the computer, so its key is on it. That is the price of needing no vendor key; the TPM and the encrypted volume guard it.
 - Module signatures: `db` keys reach only the kernel's `.platform` keyring, MOK keys reach `.machine`. Out-of-tree modules (NVIDIA) on `own-keys` also need the key screen once.
 - `lockdown=integrity` blocks hibernation and raw MSR writes.
-- The live ISO is unsigned: install with Secure Boot off or in Setup Mode, until the live image key below exists.
+- The live ISO is signed with the WolOS live-image key (wolos-build docs/signing-kms.md "Secure Boot live key"): with Secure Boot on, one blue key screen once; off, nothing changes.
 
-## Live ISO with Secure Boot on (prepared, off until the key exists)
+## Live ISO with Secure Boot on
 The installed system needs no vendor key; a live ISO that boots with Secure Boot on does: one WolOS
 key that signs only the live image's second stage and UKI. Shim (unchanged, Microsoft-signed) is the
 first stage, so a PC with the usual keys starts it, and MokManager enrols the WolOS certificate once.
@@ -40,11 +40,11 @@ first stage, so a PC with the usual keys starts it, and MokManager enrols the Wo
   UKI with two profiles, Install WolOS and Try WolOS, `EFI/Linux/wolos.efi`. Unsigned it boots with
   Secure Boot off.
 - **Signing** (`wolos-iso/release/sb-layout.sh sign ISO KEY CERT`, wolos-iso `release.yml` when `WOLOS_SB_KEY` and `WOLOS_SB_CERT`
-  are set): systemd-boot and the UKI are signed, `/wolos-secureboot.cer` (DER) is on the EFI partition
+  are set): systemd-boot and the UKI are signed, `/ENROL_THIS_KEY_FOR_WOLOS.cer` (DER; also `EFI/wolos/wolos-live-2026.cer`, with `EFI/wolos/README.txt`) is on the EFI partition
   for MokManager's "Enroll key from disk". `release.yml` then runs `wolos-iso/tests/test-secureboot.sh`: OVMF in
   secure mode with the PC keys and the certificate in MokList must boot to the live system.
 - **First boot with Secure Boot on:** shim cannot verify systemd-boot yet and opens MokManager:
-  Enroll key from disk, `wolos-secureboot.cer`, confirm, reboot. Later boots go straight through.
+  Enroll key from disk, `/ENROL_THIS_KEY_FOR_WOLOS.cer` (DER; also `EFI/wolos/wolos-live-2026.cer`, with `EFI/wolos/README.txt`), confirm, reboot. Later boots go straight through.
 - **The key** is a trust root: only the owner makes it, offline, and it signs nothing but live images.
 
 Making the key (owner, once, on an offline machine with `openssl`):

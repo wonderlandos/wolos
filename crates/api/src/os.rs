@@ -14,7 +14,17 @@ pub struct OsRunner {
 }
 
 /// Signals wold handles synchronously (blocked in every thread, taken by `wait_signal`).
-pub const SIGNALS: [i32; 3] = [libc::SIGTERM, libc::SIGINT, libc::SIGCHLD];
+/// SIGHUP and SIGPIPE are here so neither can end wold (audit S4-2): wold has no terminal, but a
+/// terminal opened without O_NOCTTY would become its own and its hang-up would kill the
+/// supervisor and every session under it. Taken, they are ignored (`wold` main loop); a SIGPIPE
+/// raised by a write stays pending on the writing thread and the write returns EPIPE.
+pub const SIGNALS: [i32; 5] = [
+    libc::SIGTERM,
+    libc::SIGINT,
+    libc::SIGCHLD,
+    libc::SIGHUP,
+    libc::SIGPIPE,
+];
 
 fn sigset() -> libc::sigset_t {
     // SAFETY: sigset ops on a local, zero-initialised set.
@@ -75,6 +85,16 @@ fn as_account(cmd: &mut std::process::Command, uid: u32) -> std::io::Result<()> 
     Ok(())
 }
 
+/// Soft descriptor limit every job starts with: the usual default, so programs that use
+/// `select()` (FD_SETSIZE 1024) keep working. wold itself runs with more (wold.service).
+pub const CHILD_NOFILE_SOFT: u64 = 1024;
+
+/// A job's (soft, hard) descriptor limit from wold's: soft down to [`CHILD_NOFILE_SOFT`] when
+/// higher, hard unchanged (a job may still raise its soft limit up to it, as games do).
+pub fn child_nofile(cur: u64, max: u64) -> (u64, u64) {
+    (cur.min(CHILD_NOFILE_SOFT), max)
+}
+
 impl Runner for OsRunner {
     fn spawn(&self, spec: &JobSpec) -> std::io::Result<i32> {
         let mut cmd = std::process::Command::new(&spec.program[0]);
@@ -82,11 +102,23 @@ impl Runner for OsRunner {
         if let Some(uid) = spec.user {
             as_account(&mut cmd, uid)?;
         }
-        // SAFETY: only async-signal-safe calls between fork and exec.
+        // SAFETY: only async-signal-safe calls between fork and exec (sigprocmask, getrlimit,
+        // setrlimit on a local struct).
         unsafe {
             cmd.pre_exec(|| {
                 let set = sigset();
                 libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+                // S4-26: wold's own descriptor limit (wold.service LimitNOFILE) is not the
+                // session's: jobs start from the usual soft limit, the hard one unchanged.
+                let mut r: libc::rlimit = std::mem::zeroed();
+                if libc::getrlimit(libc::RLIMIT_NOFILE, &mut r) == 0 {
+                    let (cur, max) = child_nofile(r.rlim_cur, r.rlim_max);
+                    if cur != r.rlim_cur {
+                        r.rlim_cur = cur;
+                        r.rlim_max = max;
+                        libc::setrlimit(libc::RLIMIT_NOFILE, &r);
+                    }
+                }
                 Ok(())
             });
         }

@@ -4,7 +4,8 @@
 //! listener a cap on concurrent connections per uid and in total. A peer that exceeds any bound is
 //! dropped, never buffered. [`LineSplitter`] is the pure, push-style core (usable from async code
 //! such as GIO); [`BoundedLineReader`] is the pull-style wrapper for blocking `Read`ers; [`Quota`]
-//! counts connections with an RAII [`Slot`].
+//! counts connections with an RAII [`Slot`]. [`read_file`] / [`read_text`] read a whole small file
+//! under a byte cap (a longer file is refused, never cut).
 use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
@@ -156,6 +157,25 @@ pub fn limit_socket(s: &std::os::unix::net::UnixStream, timeout: Duration) -> st
     s.set_write_timeout(Some(timeout))
 }
 
+/// The whole of the file at `path` when it holds at most `max` bytes. None when it is missing or
+/// unreadable, or longer than `max` (never a truncated prefix: one byte past the cap is read to
+/// tell a file that fits from one that does not, so a file that grows while being read is
+/// refused too). Blocking.
+pub fn read_file(path: &std::path::Path, max: u64) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(max.saturating_add(1))
+        .read_to_end(&mut out)
+        .ok()?;
+    (u64::try_from(out.len()).ok()? <= max).then_some(out)
+}
+
+/// [`read_file`] as UTF-8 text; None also when the bytes are not text.
+pub fn read_text(path: &std::path::Path, max: u64) -> Option<String> {
+    String::from_utf8(read_file(path, max)?).ok()
+}
+
 #[derive(Debug, Default)]
 struct Counts {
     total: usize,
@@ -227,6 +247,26 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn read_file_returns_the_whole_file_or_nothing() {
+        let d = std::env::temp_dir().join(format!("wol-shared-bounded-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("f");
+        std::fs::write(&p, b"12345").unwrap();
+        assert_eq!(
+            read_file(&p, 5).as_deref(),
+            Some(&b"12345"[..]),
+            "exactly the cap"
+        );
+        assert_eq!(read_file(&p, 4), None, "one byte over: refused, not cut");
+        assert_eq!(read_text(&p, 64).as_deref(), Some("12345"));
+        std::fs::write(&p, [0xff, 0xfe]).unwrap();
+        assert_eq!(read_text(&p, 64), None, "not text");
+        assert_eq!(read_file(&d.join("missing"), 64), None);
+        assert_eq!(read_file(&p, u64::MAX).map(|b| b.len()), Some(2));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     fn lines(input: &[u8], max: usize, quota: u64) -> Vec<Result<Vec<u8>, String>> {
         let mut r = BoundedLineReader::new(input, max, quota);

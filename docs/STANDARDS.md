@@ -59,7 +59,7 @@ the rest with the checklist in `docs/REVIEW.md`.
   its row passes and prints the lowered table as a note. The closing worker of each wave pastes
   the lowered rows, so parallel changes do not collide on the table; the debt only comes down.
 - **CI** [test] `crates/shell/tests/hypr_ratchet.rs` (`hyprland_ipc_stays_in_the_hypr_module`):
-  Hyprland is spoken to through one module, `shell::hypr` (typed requests such as
+  The compositor is spoken to through one module, `shell::hypr` (typed requests such as
   `hypr::clients()`, one event stream). `hypr::request("j/…")`, `"dispatch …"` literals and
   `.socket2.sock` appear only in `src/hypr.rs` and the one event reader (`ui/ipc.rs`); every other
   file is frozen in the baseline and fails only on growth (audit3 R2A-17).
@@ -90,6 +90,8 @@ the rest with the checklist in `docs/REVIEW.md`.
 - Tests: prefer a type or a visibility that makes the wrong call impossible (a `pub(super)`
   function behind the one caller allowed to use it) over a test that greps for its absence. A
   grep test is allowed only as a ratchet with a baseline table, as above (audit3 R2A-24).
+- The numbered, test-enforced catalogue of these rules is `docs/RULES.md` (Rust: `RR-nnn`, checked by
+  `crates/shared/tests/rules_rust.rs`; it links the system, UI, packaging and CI catalogues).
 
 ## 2. Shell
 
@@ -120,7 +122,7 @@ the rest with the checklist in `docs/REVIEW.md`.
 - Kernel patches follow `Documentation/process/`: one change per patch, `checkpatch.pl` clean,
   `Signed-off-by` by a person, `Assisted-by` for a tool.
 
-## 4. Configuration files (units, pacman.conf, Hyprland, repart.d, PKGBUILDs)
+## 4. Configuration files (units, pacman.conf, compositor, repart.d, PKGBUILDs)
 
 - One concern per file: one unit, one drop-in, one repart definition, one recipe per package.
 - Every shipped config has a contract test that reads the file and asserts the property
@@ -250,8 +252,10 @@ brackets; `cargo test` runs in the `test` job).
   same commit; the doc numbers change in the same commit as the table. (C, R2C-19)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
-  `lua_loader`, `package_call`, `core_parsers`). **CI** [fuzz] runs each target 60 s on pinned nightly; [test]
-  `tools/ci/fuzz-replay.sh` replays `fuzz/regressions/<target>/` on stable. A new decoder without
+  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`). **CI** [fuzz]
+  runs each target 60 s on pinned nightly; [test] `tools/ci/fuzz-replay.sh` replays
+  `fuzz/regressions/<target>/` on stable, and `crates/shared/tests/fuzz_list.rs` fails when a
+  target has no `[[bin]]`, no seeds, no matrix row or no name in this list. A new decoder without
   a target is a review finding. (B10)
 - **Supply chain**: **CI** [lint] `cargo deny --locked check` (`deny.toml`) and `cargo audit`;
   [supply-chain] `tools/ci/pin-lint.py` checks that every GitHub Action `uses:` is pinned to a

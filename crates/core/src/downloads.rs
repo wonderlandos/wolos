@@ -11,7 +11,10 @@ pub struct Item {
     pub dir: bool,
 }
 
-/// `XDG_DOWNLOAD_DIR` from `~/.config/user-dirs.dirs`, else `~/Downloads`.
+/// `XDG_DOWNLOAD_DIR` from `~/.config/user-dirs.dirs`, else `~/Downloads`. Audit C7-3: only a
+/// folder inside `home` counts (no `.`/`..` steps, not `home` itself); a system path or another
+/// account's folder is the default. Who reads it as root also checks the real folder
+/// (canonical, owned by the account): this check is on the text only.
 pub fn dir(user_dirs: Option<&str>, home: &str) -> String {
     let fallback = format!("{home}/Downloads");
     let Some(text) = user_dirs else {
@@ -21,8 +24,19 @@ pub fn dir(user_dirs: Option<&str>, home: &str) -> String {
         .filter_map(|l| l.trim().strip_prefix("XDG_DOWNLOAD_DIR="))
         .next_back()
         .map(|v| v.trim().trim_matches('"').replace("$HOME", home))
-        .filter(|v| v.starts_with('/') && v.trim_end_matches('/') != home)
+        .filter(|v| inside(v, home))
         .unwrap_or(fallback)
+}
+
+/// `path` names a folder below `home`, without `.` or `..` steps.
+fn inside(path: &str, home: &str) -> bool {
+    let home = home.trim_end_matches('/');
+    path.strip_prefix(home)
+        .and_then(|r| r.strip_prefix('/'))
+        .map(|r| r.trim_end_matches('/'))
+        .is_some_and(|r| {
+            !r.is_empty() && r.split('/').all(|c| !c.is_empty() && c != "." && c != "..")
+        })
 }
 
 /// Unfinished downloads and hidden files stay out of the stack.
@@ -82,9 +96,20 @@ mod tests {
             "/home/ann/Downloads"
         );
         assert_eq!(dir(Some("XDG_DOWNLOAD_DIR=\"x\"\n"), "/h"), "/h/Downloads");
+        // Audit C7-3: outside the home, another account's or with `..`: the default.
+        for v in [
+            "/data/dl",
+            "/usr/bin",
+            "/home/bob/bin",
+            "$HOME/../bob",
+            "/home/annex",
+        ] {
+            let t = format!("XDG_DOWNLOAD_DIR=\"{v}\"\n");
+            assert_eq!(dir(Some(&t), "/home/ann"), "/home/ann/Downloads", "{v}");
+        }
         assert_eq!(
-            dir(Some("XDG_DOWNLOAD_DIR=\"/data/dl\"\n"), "/h"),
-            "/data/dl"
+            dir(Some("XDG_DOWNLOAD_DIR=\"/home/ann/a/b/\"\n"), "/home/ann"),
+            "/home/ann/a/b/"
         );
     }
 

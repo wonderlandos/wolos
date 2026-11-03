@@ -2,7 +2,7 @@
 //! Everyday userland from the real-GPU run: sudo for administrators, zsh for every account, user
 //! folders, unlocked keyring, printing, removable media and default apps (Helium the browser).
 //! Scripts run on the host with fakes.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 

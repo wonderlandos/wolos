@@ -31,9 +31,6 @@ pub struct BtState {
     pub devices: Vec<BtDevice>,
 }
 
-/// Transitional (ADR 0016): the FreeBSD pairing file wol-admind `bt-pair`/`bt-forget` still write.
-pub const HCSECD_CONF: &str = "/etc/bluetooth/hcsecd.conf";
-
 /// Six hex pairs separated by ':'.
 pub fn is_valid_addr(s: &str) -> bool {
     let parts: Vec<&str> = s.split(':').collect();

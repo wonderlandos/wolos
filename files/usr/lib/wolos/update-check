@@ -16,6 +16,8 @@ EVERY=72000
 now=$(date +%s)
 last=$(cat "$D/checked" 2>/dev/null)
 case $last in '' | *[!0-9]*) last=0 ;; esac
+# A stamp from the future (the clock was ahead when it was written) is stale, not fresh (C9-5).
+[ "$last" -le "$now" ] || last=0
 [ "${1:-}" = now ] || [ $((now - last)) -ge $EVERY ] || exit 0
 umask 022
 mkdir -p "$D" || exit 1

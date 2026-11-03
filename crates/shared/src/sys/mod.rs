@@ -35,6 +35,19 @@ pub fn peer(stream: &impl AsRawFd) -> Option<Peer> {
 /// Open flags for a file a person named: a pipe does not block the open, a terminal is not taken.
 pub const OPEN_QUIET: i32 = libc::O_NONBLOCK | libc::O_NOCTTY;
 
+/// Open, for reading, a file a caller named (a package to install, a file to check): with
+/// [`OPEN_QUIET`] and `O_NOFOLLOW`, so a FIFO does not block, a final symlink is refused, and a
+/// terminal never becomes the opener's controlling terminal. A root daemon without one (wold
+/// under systemd) would otherwise take a pty the caller named and die of its hang-up (audit
+/// S4-2). Check the opened file (`metadata().is_file()`), not the name. Err as `open(2)`.
+pub fn open_named(path: impl AsRef<std::path::Path>) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(OPEN_QUIET | libc::O_NOFOLLOW)
+        .open(path)
+}
+
 /// Write `bytes` with one file descriptor attached (SCM_RIGHTS).
 pub fn send_with_fd(
     sock: &impl AsRawFd,
@@ -293,12 +306,107 @@ pub fn canonical(path: &str) -> String {
         .map_or_else(|_| path.to_owned(), |p| p.to_string_lossy().into_owned())
 }
 
+/// `<runtime_dir>/hypr/<signature>/<name>`: where the compositor puts its IPC socket `name`
+/// (`.socket.sock` requests, `.socket2.sock` events). Pure, for tests.
+pub fn hypr_socket_in(runtime_dir: &str, signature: &str, name: &str) -> std::path::PathBuf {
+    std::path::PathBuf::from(runtime_dir)
+        .join("hypr")
+        .join(signature)
+        .join(name)
+}
+
+/// The running compositor's socket `name`: [`hypr_socket_in`] with `XDG_RUNTIME_DIR` and
+/// `HYPRLAND_INSTANCE_SIGNATURE` as `var` gives them (`|k| std::env::var(k).ok()` in the session);
+/// None when either is unset (outside the compositor).
+pub fn hypr_socket(var: impl Fn(&str) -> Option<String>, name: &str) -> Option<std::path::PathBuf> {
+    let rt = var("XDG_RUNTIME_DIR")?;
+    let sig = var("HYPRLAND_INSTANCE_SIGNATURE")?;
+    Some(hypr_socket_in(&rt, &sig, name))
+}
+
 #[cfg(test)]
 mod fd_tests {
     use super::*;
     use std::io::{Read, Seek, Write};
     use std::os::fd::AsFd;
     use std::os::unix::net::UnixStream;
+
+    /// tty_nr of this process (`/proc/self/stat` field 7): 0 = no controlling terminal.
+    fn ctty() -> i64 {
+        let st = std::fs::read_to_string("/proc/self/stat").unwrap();
+        let rest = &st[st.rfind(')').unwrap() + 1..];
+        rest.split_whitespace().nth(4).unwrap().parse().unwrap()
+    }
+
+    /// Audit S4-2: a session leader without a terminal (wold under systemd) that opens a pty by
+    /// name through [`open_named`] does not make it its controlling terminal; a plain open does
+    /// (the control). The probe runs as a child under setsid(1) on a pty from python3; skipped
+    /// when either is missing.
+    #[test]
+    fn opening_a_terminal_by_name_never_makes_it_ours() {
+        if let Some(tty) = std::env::var_os("WOL_CTTY_PROBE") {
+            assert_eq!(ctty(), 0, "setsid left a terminal");
+            let plain = std::env::var_os("WOL_CTTY_PLAIN").is_some();
+            let f = if plain {
+                std::fs::File::open(&tty).unwrap()
+            } else {
+                open_named(&tty).unwrap()
+            };
+            assert!(!f.metadata().unwrap().is_file());
+            assert_eq!(
+                ctty() != 0,
+                plain,
+                "plain open takes the terminal, open_named never"
+            );
+            return;
+        }
+        use std::process::{Command, Stdio};
+        let py = Command::new("python3")
+            .args([
+                "-c",
+                "import os,sys; m,s=os.openpty(); print(os.ttyname(s), flush=True); sys.stdin.read()",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn();
+        let Ok(mut py) = py else {
+            println!("skipped: no python3 to make a pty");
+            return;
+        };
+        let mut line = Vec::new();
+        let mut out = py.stdout.take().unwrap();
+        let mut b = [0u8; 1];
+        while out.read(&mut b).unwrap() == 1 && b[0] != b'\n' {
+            line.push(b[0]);
+        }
+        let tty = String::from_utf8(line).unwrap();
+        assert!(tty.starts_with("/dev/pts/"), "{tty}");
+        let exe = std::env::current_exe().unwrap();
+        let name = "sys::fd_tests::opening_a_terminal_by_name_never_makes_it_ours";
+        let probe = |plain: bool| {
+            let mut c = Command::new("setsid");
+            c.arg("--wait")
+                .arg(&exe)
+                .args(["--exact", name, "--test-threads=1"])
+                .env("WOL_CTTY_PROBE", &tty)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if plain {
+                c.env("WOL_CTTY_PLAIN", "1");
+            }
+            c.status()
+        };
+        match (probe(false), probe(true)) {
+            (Ok(quiet), Ok(plain)) => {
+                assert!(quiet.success(), "open_named took the terminal");
+                assert!(plain.success(), "the control: a plain open takes it");
+            }
+            _ => println!("skipped: no setsid"),
+        }
+        drop(py.stdin.take());
+        let _ = py.wait();
+    }
 
     #[test]
     fn a_descriptor_crosses_a_socket_with_its_line() {
@@ -334,6 +442,25 @@ mod fd_tests {
 mod tests {
     use super::*;
     use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn hypr_socket_layout() {
+        assert_eq!(
+            hypr_socket_in("/run/user/1000", "abc", ".socket2.sock"),
+            std::path::PathBuf::from("/run/user/1000/hypr/abc/.socket2.sock")
+        );
+        let env = |k: &str| (k == "XDG_RUNTIME_DIR").then(|| "/run/user/7".to_string());
+        assert_eq!(
+            hypr_socket(env, ".socket.sock"),
+            None,
+            "outside the compositor"
+        );
+        let env = |k: &str| Some(if k == "XDG_RUNTIME_DIR" { "/r" } else { "s" }.to_string());
+        assert_eq!(
+            hypr_socket(env, ".socket.sock"),
+            Some(std::path::PathBuf::from("/r/hypr/s/.socket.sock"))
+        );
+    }
 
     #[test]
     fn peer_of_socketpair_is_this_process() {

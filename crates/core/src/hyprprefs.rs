@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! WolOS-managed Hyprland include (`hypr/wolos/settings.conf`): typed desktop prefs from System Settings
+//! WolOS-managed compositor include (`hypr/wolos/settings.conf`): typed desktop prefs from System Settings
 //! rendered as `category:key = value` one-liners (the same names `hyprctl keyword` takes), plus the minimal
 //! command batch that applies a change live. Never touches the user's own hyprland.conf; never reloads.
 use crate::shortcuts::{self, Overrides, Shortcut};
@@ -233,7 +233,7 @@ impl DesktopPrefs {
             s.push_str(&format!("{k} = {v}\n"));
         }
         s.push_str(&format!("env = XCURSOR_SIZE,{}\n", self.cursor_size));
-        // Hyprland's own pointer (hyprcursor) and the apps' (Xcursor) agree on theme and size.
+        // The compositor's own pointer (hyprcursor) and the apps' (Xcursor) agree on theme and size.
         s.push_str(&format!(
             "env = HYPRCURSOR_THEME,{CURSOR_THEME}\nenv = HYPRCURSOR_SIZE,{}\n",
             self.cursor_size
@@ -267,13 +267,16 @@ impl DesktopPrefs {
     }
 }
 
+/// The session step that writes the X resource database (Xft.dpi, Xcursor.*) and the X11 scale
+/// variables from the monitor scale (`exec =` in hyprland.conf; desktop/overlay/usr/bin).
+pub const X11_ENV: &str = "wol-x11-env";
+
 /// Commands that move every toolkit's pointer to `size` at once; `setcursor` changes only the
-/// compositor's. GTK and libadwaita read gsettings, Xwayland apps the X resource database.
+/// compositor's. GTK and libadwaita read gsettings, Xwayland apps the X resource database
+/// ([`X11_ENV`] multiplies the size by the monitor scale: Xwayland renders 1:1).
 pub fn cursor_sync(size: u32) -> Vec<Vec<String>> {
     let argv = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<String>>();
     let px = size.to_string();
-    let xrdb =
-        format!("printf 'Xcursor.size: {size}\\nXcursor.theme: {CURSOR_THEME}\\n' | xrdb -merge -");
     vec![
         argv(&[
             "gsettings",
@@ -289,7 +292,7 @@ pub fn cursor_sync(size: u32) -> Vec<Vec<String>> {
             "cursor-theme",
             CURSOR_THEME,
         ]),
-        argv(&["sh", "-c", xrdb.as_str()]),
+        argv(&[X11_ENV, "--cursor-size", px.as_str()]),
     ]
 }
 
@@ -387,7 +390,7 @@ pub fn capture(host: &dyn Host, on: bool) -> bool {
 }
 
 /// One `hyprctl --batch` for the running session (none when nothing changed). Best effort: without a
-/// running Hyprland the files still apply at the next login.
+/// running compositor the files still apply at the next login.
 fn send(host: &dyn Host, cmds: &[String]) {
     if !cmds.is_empty() {
         let _ = host.run(&["hyprctl", "--batch", &cmds.join(" ; ")]);
@@ -760,7 +763,7 @@ mod tests {
             ]
         );
         assert_eq!(cmds[1][4], "Adwaita");
-        assert!(cmds[2][2].contains("Xcursor.size: 32") && cmds[2][2].contains("xrdb -merge"));
+        assert_eq!(cmds[2], ["wol-x11-env", "--cursor-size", "32"]);
         let h = home("cursor");
         let host = FakeHost::new(true);
         let old = load_desktop(&h);
@@ -779,7 +782,10 @@ mod tests {
                 .any(|l| l == "gsettings set org.gnome.desktop.interface cursor-size 32"),
             "{ran:?}"
         );
-        assert!(ran.iter().any(|l| l.contains("xrdb -merge")), "{ran:?}");
+        assert!(
+            ran.iter().any(|l| l == "wol-x11-env --cursor-size 32"),
+            "{ran:?}"
+        );
         assert!(batch(&host).contains(&"setcursor Adwaita 32".to_string()));
         apply_desktop(&host, &h, &old).unwrap(); // back to 24
         let host = FakeHost::new(true);
@@ -899,7 +905,7 @@ mod tests {
                 "hyprctl dispatch submap reset"
             ]
         );
-        assert!(!capture(&FakeHost::new(true), true), "no Hyprland");
+        assert!(!capture(&FakeHost::new(true), true), "no compositor");
         let shipped = shortcuts::SHIPPED;
         let block =
             format!("submap = {RECORD_SUBMAP}\nbindn = , escape, submap, reset\nsubmap = reset\n");

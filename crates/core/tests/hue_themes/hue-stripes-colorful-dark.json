@@ -1,0 +1,38 @@
+{
+  "id": "hue-stripes-colorful-dark",
+  "name": "stripes",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#030309",
+    "sidebar": "rgba(3,3,8,0.92)",
+    "card": "#131317",
+    "line": "rgba(232,230,207,0.1)",
+    "text": "#e8e6cf",
+    "dim": "#98978a",
+    "accent": "#4e7bfd",
+    "accentText": "#000000",
+    "glass": "rgba(3,3,9,0.84)",
+    "control": "#1e1e21",
+    "success": "#2cb243",
+    "warning": "#b7a400",
+    "danger": "#de3c38"
+  },
+  "terminal": [
+    "#030309",
+    "#de3c38",
+    "#2cb243",
+    "#b7a400",
+    "#4e7bfd",
+    "#b15ed8",
+    "#00b1cb",
+    "#e8e6cf",
+    "#63636a",
+    "#ff5c54",
+    "#4bdc5f",
+    "#e0ca2b",
+    "#6a9fff",
+    "#dc7eff",
+    "#31daf7",
+    "#f3eeb7"
+  ]
+}

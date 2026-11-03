@@ -1,0 +1,15 @@
+// WolOS zellij defaults (ADR 0032 "Console" and "Sessions"). zellij reads /etc/zellij/config.kdl when
+// you have no ~/.config/zellij/config.kdl; yours replaces this file entirely. Upgrades replace it.
+// Sessions are serialized so a named session comes back after a reboot (`wol sessions restore`
+// runs `zellij attach --create <name>`). The theme colours come from `wol theme`
+// (~/.config/wolos/toolkits/zellij/theme.kdl, theme "wolos"); WolOS passes them when it starts
+// zellij for you.
+session_serialization true
+serialize_pane_viewport true
+scroll_buffer_size 50000
+pane_frames false
+default_layout "compact"
+copy_on_select true
+mouse_mode true
+show_startup_tips false
+show_release_notes false

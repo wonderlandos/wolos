@@ -13,5 +13,25 @@ fi
 [ "$mode" = on ] || exit 0
 # `wol update check` refreshes the catalogue; offline leaves nothing to download.
 wol update check --json >/dev/null 2>&1 || exit 0
-pacman -Swu --noconfirm --noprogressbar >/dev/null 2>&1
+# pacman's database is on the sealed slot (DBPath /usr/lib/pacman, ADR 0016), where it cannot take
+# its lock: the download runs against a temporary copy (`local` linked, `sync` copied and refreshed
+# there), as checkupdates does (audit5 C9-1). --dbpath makes the /usr/local/bin wrapper pass it on.
+db=${WOLOS_PACMAN_DB:-$(pacman-conf DBPath 2>/dev/null || :)}
+db=${db:-/var/lib/pacman}
+db=${db%/}
+tmp=$(mktemp -d "${TMPDIR:-/var/tmp}/wolos-download-db.XXXXXX") || {
+	echo "update-download: no temporary database" >&2
+	exit 1
+}
+trap 'rm -rf "${tmp:?}"' EXIT
+# pacman's download user refreshes the sync copies in there: it must be able to look in (the folder
+# holds a link and public package lists, nothing secret).
+chmod 755 "$tmp" || exit 1
+ln -s "$db/local" "$tmp/local" || exit 1
+if [ -d "$db/sync" ]; then cp -a "$db/sync" "$tmp/" || exit 1; fi
+# A failure is the unit's: non-zero, the message in the journal (Settings and error reports see a failed unit).
+if ! pacman --dbpath "$tmp" -Sw --refresh --sysupgrade --noconfirm --noprogressbar >&2; then
+	echo "update-download: pacman could not download the pending updates" >&2
+	exit 1
+fi
 exit 0

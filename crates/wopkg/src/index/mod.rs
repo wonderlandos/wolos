@@ -3,6 +3,7 @@
 //! changed. A segment holds TSV records and a lowercase haystack; search scans the haystack with
 //! memchr's `memmem`, ranks hits and groups them into one result per app.
 pub mod parse;
+pub mod plugins;
 pub mod search;
 pub mod segment;
 
@@ -55,7 +56,7 @@ pub struct Record {
     pub kind: Kind,
     /// Repository or remote: `core`, `wolos`, `flathub`, `aur`, ...
     pub repo: String,
-    /// Display name (pacman/AUR: the package name; Flatpak: the app name).
+    /// Display name (pacman/community packages: the package name; Flatpak: the app name).
     pub name: String,
     /// What the installer takes: package name, Flatpak app id, `.wol` id, AppImage URL.
     pub id: String,
@@ -63,7 +64,7 @@ pub struct Record {
     pub summary: String,
     /// Grouping key: the same app from several sources shares it.
     pub key: String,
-    /// Popularity hint (AUR votes; 0 elsewhere).
+    /// Popularity hint (community package votes; 0 elsewhere).
     #[serde(default)]
     pub votes: u32,
 }
@@ -118,7 +119,7 @@ impl Record {
     }
 
     /// Source order (lower first): `[wolos]`, optimized builds, Arch, `.wol`, Flathub, AppImage,
-    /// recipes, AUR.
+    /// recipes, the community package collection.
     pub fn source_rank(&self) -> u8 {
         match self.kind {
             Kind::Pacman if self.repo == "wolos" => 0,
@@ -138,7 +139,7 @@ impl Record {
     }
 }
 
-/// Grouping key from a package name: lowercase, AUR packaging suffixes dropped.
+/// Grouping key from a package name: lowercase, community packaging suffixes dropped.
 pub fn package_key(name: &str) -> String {
     let n = name.to_lowercase();
     for suf in ["-bin", "-git", "-appimage", "-nightly", "-beta", "-stable"] {

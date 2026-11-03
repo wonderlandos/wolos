@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Hyprland IPC replies and event lines as the shell reads them (`shell::hypr`; audit B10):
+//! Compositor IPC replies and event lines as the shell reads them (`shell::hypr`; audit B10):
 //! hyprctl JSON and socket2 events are input from another process, so never panic.
 #![no_main]
 use libfuzzer_sys::fuzz_target;

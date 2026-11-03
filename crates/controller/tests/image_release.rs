@@ -141,18 +141,60 @@ fn update_check_reads_the_published_release() {
         publish.contains("--prerelease"),
         "iso-s3 is not a pre-release"
     );
+    // The ISO is built (build.sh: mkarchiso, then release/release-manifest.sh writes the manifest
+    // `wol update` parses next to it) and VM-tested on the forge; release.yml takes it with its
+    // checks.txt and hands it to `wolos-build release --do --iso` (wolos-build lib/publish.sh), the
+    // one writer: release.json = that manifest with image, sha256 and size of the published ISO,
+    // signed with release/sign-release.sh, then the latest release.
+    let build = read("build.sh");
+    for want in ["mkarchiso", "release/release-manifest.sh"] {
+        assert!(build.contains(want), "build.sh lacks {want}");
+    }
     for want in [
-        "archlinux",
-        "mkarchiso",
-        "release-manifest.sh",
+        "checks.txt",
+        "BOOT PASS",
+        "wolos-build release --do --iso",
         "sign-release.sh",
         "release.json",
         "release.json.sig",
         ".sha256",
-        "gh release create",
-        "--latest",
     ] {
         assert!(iso.contains(want), "release.yml lacks {want}");
+    }
+    assert!(
+        !iso.contains("gh release create") && !iso.contains("openssl pkeyutl"),
+        "release.yml writes the release itself instead of wolos-build release"
+    );
+    // The tool, when its private repo is checked out next to this one (the forge; not wolos CI).
+    let own = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .find(|d| d.join("LICENSE").is_file())
+        .map(|d| d.to_path_buf());
+    let tool = own.and_then(|d| d.parent().map(|p| p.join("wolos-build/lib/publish.sh")));
+    if let Some(text) = tool.and_then(|p| fs::read_to_string(p).ok()) {
+        for want in [
+            "release/sign-release.sh",
+            // the manifest's own fields stay; only these three follow the published ISO
+            "m[\"image\"], m[\"sha256\"], m[\"size\"] = url, sha, os.path.getsize(iso)",
+            // a stable release is a draft until every asset is on it (I7-6) ...
+            "gh_w release create \"$tag\" --draft --latest=false",
+            // ... and becomes the latest (what `wol update` reads) only then
+            "gh_w release edit \"$tag\" --draft=false --latest",
+            "gh_w release create \"$tag\" --prerelease",
+            // and the signed channel feed goes up with it
+            "release_feed stable",
+        ] {
+            assert!(
+                text.contains(want),
+                "wolos-build lib/publish.sh lacks {want}"
+            );
+        }
+        let upload = text.find("gh_w release upload \"$tag\"");
+        let latest = text.find("gh_w release edit \"$tag\" --draft=false --latest");
+        assert!(
+            matches!((upload, latest), (Some(u), Some(l)) if u < l),
+            "lib/publish.sh moves releases/latest before the assets are uploaded"
+        );
     }
     // Published in the releases repo the check reads (GH_REPO), not in this one.
     assert!(

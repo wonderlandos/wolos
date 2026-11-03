@@ -67,40 +67,67 @@ pub fn members(path: &Path) -> Result<Vec<Member>, String> {
         }
         f.seek(SeekFrom::Start(pos)).map_err(|e| e.to_string())?;
         f.read_exact(&mut h).map_err(|e| e.to_string())?;
-        if h.iter().all(|b| *b == 0) {
+        let Some(m) = header(&h, pos, len)? else {
             return Ok(out);
-        }
-        let sum: u64 = h
-            .iter()
-            .enumerate()
-            .map(|(i, b)| {
-                if (148..156).contains(&i) {
-                    32
-                } else {
-                    u64::from(*b)
-                }
-            })
-            .sum();
-        if octal(&h[148..156]) != Some(sum) {
-            return Err("bad header checksum".into());
-        }
-        if &h[257..262] != b"ustar" {
-            return Err("not a ustar archive".into());
-        }
-        if !matches!(h[156], b'0' | 0) || !field(&h[345..500]).is_empty() {
-            return Err("only plain files are allowed".into());
-        }
-        let name = std::str::from_utf8(field(&h[..100]))
-            .map_err(|_| "member name not UTF-8".to_string())?
-            .to_owned();
-        let size = octal(&h[124..136]).ok_or("bad member size")?;
-        let offset = pos + BLOCK;
-        let next = offset + size.div_ceil(BLOCK) * BLOCK;
-        if offset + size > len {
+        };
+        pos = m.offset + m.size.div_ceil(BLOCK) * BLOCK;
+        out.push(m);
+    }
+}
+
+/// One ustar header block at `pos` of an archive `len` bytes long: the member, or None for the
+/// end-of-archive block. Only plain files without a name prefix pass.
+fn header(h: &[u8; BLOCK as usize], pos: u64, len: u64) -> Result<Option<Member>, String> {
+    if h.iter().all(|b| *b == 0) {
+        return Ok(None);
+    }
+    let sum: u64 = h
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            if (148..156).contains(&i) {
+                32
+            } else {
+                u64::from(*b)
+            }
+        })
+        .sum();
+    if octal(&h[148..156]) != Some(sum) {
+        return Err("bad header checksum".into());
+    }
+    if &h[257..262] != b"ustar" {
+        return Err("not a ustar archive".into());
+    }
+    if !matches!(h[156], b'0' | 0) || !field(&h[345..500]).is_empty() {
+        return Err("only plain files are allowed".into());
+    }
+    let name = std::str::from_utf8(field(&h[..100]))
+        .map_err(|_| "member name not UTF-8".to_string())?
+        .to_owned();
+    let size = octal(&h[124..136]).ok_or("bad member size")?;
+    let offset = pos + BLOCK;
+    if offset.checked_add(size).is_none_or(|end| end > len) {
+        return Err("truncated archive".into());
+    }
+    Ok(Some(Member { name, offset, size }))
+}
+
+/// Regular-file members of a ustar archive held in memory (a decompressed `.wolplug`), with the
+/// same rules as [`members`].
+pub fn members_in(tar: &[u8]) -> Result<Vec<Member>, String> {
+    let len = tar.len() as u64;
+    let mut out = Vec::new();
+    let mut pos = 0u64;
+    loop {
+        let Some(block) = tar.get(pos as usize..(pos + BLOCK) as usize) else {
             return Err("truncated archive".into());
-        }
-        out.push(Member { name, offset, size });
-        pos = next;
+        };
+        let h: &[u8; BLOCK as usize] = block.try_into().map_err(|_| "truncated archive")?;
+        let Some(m) = header(h, pos, len)? else {
+            return Ok(out);
+        };
+        pos = m.offset + m.size.div_ceil(BLOCK) * BLOCK;
+        out.push(m);
     }
 }
 
@@ -252,6 +279,190 @@ pub fn public_of(seed: &[u8; 32]) -> [u8; 32] {
     ed25519_dalek::SigningKey::from_bytes(seed)
         .verifying_key()
         .to_bytes()
+}
+
+// ---- `.wolplug` (ADR 0031 W4, docs/modules/plugins.md "Distribution") ----
+
+/// Largest `.wolplug` file read (zstd-compressed): a full plugin folder compresses well below it.
+pub const WOLPLUG_MAX_FILE: u64 = 2 << 20;
+/// Largest decompressed `.wolplug` tar: the folder cap ([`shared::plugins::MAX_TOTAL_SIZE`]) plus
+/// a header block per file and the hash list. The decompressor stops at this many bytes.
+pub const WOLPLUG_MAX_TAR: u64 = 4 << 20;
+/// Signature member: the raw Ed25519 signature of the `SHA256` member, by the index key.
+pub const WOLPLUG_SIG: &str = "SHA256.sig";
+/// Files in one plugin.
+const WOLPLUG_MAX_FILES: usize = 256;
+
+/// A `.wolplug` that passed every check, ready to be written as `<plugins dir>/<id>/`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedPlugin {
+    pub manifest: shared::plugins::Manifest,
+    pub trust: Trust,
+    /// (path relative to the plugin folder, bytes), in archive order.
+    pub files: Vec<(String, Vec<u8>)>,
+}
+
+/// Checks a decompressed `.wolplug` in this order, stopping at the first failure: size, archive
+/// shape (plain files `<id>/<path>`, then `SHA256`, then optionally `SHA256.sig`), the signature
+/// over `SHA256` (before anything inside is read as text), every hash, then the folder rules and
+/// `plugin.toml` through [`shared::plugins::parse`]. A signature from an unknown key is refused;
+/// no signature gives [`Trust::Unsigned`] (the caller decides, see [`require_signed`]).
+pub fn verify_wolplug(tar: &[u8], keys: &[[u8; 32]]) -> Result<VerifiedPlugin, String> {
+    use crate::plugins::{MAX_FILE, PACK_MANIFEST};
+    use shared::plugins::{MANIFEST_FILE, MAX_TOTAL_SIZE, is_plugin_id, is_plugin_path};
+    if tar.len() as u64 > WOLPLUG_MAX_TAR {
+        return Err("The plugin file is too large.".into());
+    }
+    let ms = members_in(tar).map_err(|e| format!("The plugin file is damaged ({e})."))?;
+    let bytes = |m: &Member| &tar[m.offset as usize..(m.offset + m.size) as usize];
+    let names: Vec<&str> = ms.iter().map(|m| m.name.as_str()).collect();
+    let (man_at, sig) = match names[..] {
+        [.., PACK_MANIFEST, WOLPLUG_SIG] => (ms.len() - 2, Some(&ms[ms.len() - 1])),
+        [.., PACK_MANIFEST] => (ms.len() - 1, None),
+        _ => return Err("The plugin file has no SHA256 list at its end.".into()),
+    };
+    let files = &ms[..man_at];
+    let man = bytes(&ms[man_at]);
+    if man.len() as u64 > MAX_SMALL {
+        return Err("The plugin's SHA256 list is too large.".into());
+    }
+    // The signature first: nothing inside is trusted, or parsed, before it holds.
+    let trust = match sig {
+        None => Trust::Unsigned,
+        Some(s) => {
+            let sig: [u8; 64] = bytes(s)
+                .try_into()
+                .map_err(|_| "The plugin's signature is damaged.")?;
+            let i = keys
+                .iter()
+                .position(|k| verify_sig(k, man, &sig))
+                .ok_or("The plugin is not signed by a trusted key.")?;
+            Trust::Signed(i)
+        }
+    };
+    let text = std::str::from_utf8(man).map_err(|_| "The plugin's SHA256 list is damaged.")?;
+    let lines = parse_manifest(text).ok_or("The plugin's SHA256 list is damaged.")?;
+    if files.is_empty() || files.len() > WOLPLUG_MAX_FILES || lines.len() != files.len() {
+        return Err("The plugin's SHA256 list does not match its files.".into());
+    }
+    for m in files {
+        let mut found = lines.iter().filter(|(n, _)| *n == m.name);
+        let (Some((_, h)), None) = (found.next(), found.next()) else {
+            return Err(format!("{} does not match the SHA256 list.", m.name));
+        };
+        if *h != sha256_hex(bytes(m)) {
+            return Err(format!("{} does not match the SHA256 list.", m.name));
+        }
+    }
+    // Hashes hold: now the folder rules.
+    let id = files[0].name.split('/').next().unwrap_or_default();
+    if !is_plugin_id(id) {
+        return Err("The plugin file does not hold one plugin folder.".into());
+    }
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut total = 0u64;
+    for m in files {
+        let rel = m
+            .name
+            .strip_prefix(id)
+            .and_then(|r| r.strip_prefix('/'))
+            .filter(|r| is_plugin_path(r))
+            .ok_or_else(|| format!("{} is not a file inside the plugin folder.", m.name))?;
+        if out.iter().any(|(r, _)| r == rel) {
+            return Err(format!("{} is in the plugin file twice.", m.name));
+        }
+        if m.size > MAX_FILE {
+            return Err(format!("{rel} is larger than {} KB.", MAX_FILE / 1024));
+        }
+        total += m.size;
+        out.push((rel.to_owned(), bytes(m).to_vec()));
+    }
+    if total > MAX_TOTAL_SIZE {
+        return Err("The plugin is larger than 1 MB.".into());
+    }
+    let toml = out
+        .iter()
+        .find(|(r, _)| r == MANIFEST_FILE)
+        .ok_or_else(|| format!("The plugin has no {MANIFEST_FILE}."))?;
+    let toml = std::str::from_utf8(&toml.1).map_err(|_| format!("{MANIFEST_FILE} is not text."))?;
+    let manifest = shared::plugins::parse(toml)?;
+    if manifest.id != id {
+        return Err(format!(
+            "The folder is {id} but {MANIFEST_FILE} says {}.",
+            manifest.id
+        ));
+    }
+    if manifest.is_reserved() {
+        return Err("Plugin ids starting with org.wolos. are kept for WolOS.".into());
+    }
+    if let Some(f) = manifest
+        .files()
+        .into_iter()
+        .find(|f| !out.iter().any(|(r, _)| r == f))
+    {
+        return Err(format!(
+            "{MANIFEST_FILE} names {f}, which is not in the plugin."
+        ));
+    }
+    Ok(VerifiedPlugin {
+        manifest,
+        trust,
+        files: out,
+    })
+}
+
+/// Plugins from the index must carry the index key's signature (the index CI signs each one).
+pub fn require_signed(v: VerifiedPlugin) -> Result<VerifiedPlugin, String> {
+    match v.trust {
+        Trust::Signed(_) => Ok(v),
+        Trust::Unsigned => Err("The plugin is not signed by the WolOS plugin index.".into()),
+    }
+}
+
+/// Writes a verified plugin as `<plugins_dir>/<id>/` for this account: staged next to it, checked
+/// with [`crate::plugins::check`], then moved in place of any older version. Returns the folder.
+pub fn install_plugin(
+    v: &VerifiedPlugin,
+    plugins_dir: &Path,
+) -> Result<std::path::PathBuf, String> {
+    let id = &v.manifest.id;
+    let fail = |e: std::io::Error| format!("The plugin could not be written: {e}.");
+    std::fs::create_dir_all(plugins_dir).map_err(fail)?;
+    let stage = plugins_dir.join(format!(".stage-{id}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&stage);
+    let staged = stage.join(id);
+    let write = || -> std::io::Result<()> {
+        std::fs::create_dir_all(&staged)?;
+        for (rel, b) in &v.files {
+            let p = shared::safe_path::safe_join_str(&staged, rel)
+                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            if let Some(d) = p.parent() {
+                std::fs::create_dir_all(d)?;
+            }
+            std::fs::write(&p, b)?;
+        }
+        Ok(())
+    };
+    if let Err(e) = write() {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(fail(e));
+    }
+    if let Some(p) = crate::plugins::check(&staged, false).problems.first() {
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(p.clone());
+    }
+    let dest = plugins_dir.join(id);
+    let old = stage.join("old");
+    let moved_old = dest.exists() && std::fs::rename(&dest, &old).is_ok();
+    if let Err(e) = std::fs::rename(&staged, &dest) {
+        if moved_old {
+            let _ = std::fs::rename(&old, &dest);
+        }
+        let _ = std::fs::remove_dir_all(&stage);
+        return Err(fail(e));
+    }
+    let _ = std::fs::remove_dir_all(&stage);
+    Ok(dest)
 }
 
 fn base64(s: &str) -> Option<Vec<u8>> {
@@ -959,5 +1170,168 @@ not-a-key x
         assert!(index_sig_required(false, true, true));
         assert!(!index_sig_required(true, true, false));
         assert!(!index_sig_required(false, false, false));
+    }
+
+    // ---- `.wolplug` ----
+
+    /// Files of a plugin that passes `wol plugin check`, as `<id>/<rel>` members.
+    fn plugin_files(id: &str) -> Vec<(String, Vec<u8>)> {
+        crate::plugins::scaffold(id, "Demo", &[shared::plugins::Kind::Theme])
+            .unwrap()
+            .into_iter()
+            .map(|(rel, text)| (format!("{id}/{rel}"), text.into_bytes()))
+            .collect()
+    }
+
+    /// `.wolplug` tar of `files`: the hash list, then the signature by `seed` if any.
+    fn wolplug(files: &[(String, Vec<u8>)], seed: Option<&[u8; 32]>) -> Vec<u8> {
+        let refs: Vec<(&str, &[u8])> = files
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        let sha = manifest(&refs);
+        let sig = seed.map(|s| sign(s, sha.as_bytes()));
+        let mut all = refs;
+        all.push(("SHA256", sha.as_bytes()));
+        if let Some(s) = &sig {
+            all.push((WOLPLUG_SIG, s.as_slice()));
+        }
+        ustar(&all)
+    }
+
+    #[test]
+    fn a_signed_wolplug_verifies_and_installs_for_the_account() {
+        let keys = [public_of(&OTHER), public_of(&SEED)];
+        let tar = wolplug(&plugin_files("alice.demo"), Some(&SEED));
+        let v = verify_wolplug(&tar, &keys).unwrap();
+        assert_eq!(v.trust, Trust::Signed(1));
+        assert_eq!(v.manifest.id, "alice.demo");
+        assert!(v.files.iter().any(|(r, _)| r == "plugin.toml"));
+        let v = require_signed(v).unwrap();
+        let d = dir();
+        let at = install_plugin(&v, &d).unwrap();
+        assert_eq!(at.file_name().unwrap(), "alice.demo");
+        assert!(crate::plugins::check(&at, false).problems.is_empty());
+        // A second install replaces the folder and leaves no staging behind.
+        std::fs::write(at.join("stale.txt"), "old").unwrap();
+        install_plugin(&v, &d).unwrap();
+        assert!(!at.join("stale.txt").exists());
+        let left: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().collect();
+        assert_eq!(left.len(), 1, "only the plugin folder stays");
+    }
+
+    #[test]
+    fn unsigned_and_foreign_wolplugs_are_refused_for_the_index() {
+        let files = plugin_files("alice.demo");
+        let keys = [public_of(&SEED)];
+        let v = verify_wolplug(&wolplug(&files, None), &keys).unwrap();
+        assert_eq!(v.trust, Trust::Unsigned);
+        assert!(require_signed(v).unwrap_err().contains("not signed"));
+        let e = verify_wolplug(&wolplug(&files, Some(&OTHER)), &keys).unwrap_err();
+        assert!(e.contains("not signed by a trusted key"), "{e}");
+        assert!(verify_wolplug(&wolplug(&files, Some(&SEED)), &[]).is_err());
+    }
+
+    #[test]
+    fn the_signature_is_checked_before_anything_inside_is_parsed() {
+        let mut files = plugin_files("alice.demo");
+        let toml = files
+            .iter_mut()
+            .find(|f| f.0.ends_with("plugin.toml"))
+            .unwrap();
+        toml.1 = b"schema = \"not a number\"\n[[[ broken".to_vec();
+        // A broken manifest from an unknown key: the answer is about the key, not the TOML.
+        let e = verify_wolplug(&wolplug(&files, Some(&OTHER)), &[public_of(&SEED)]).unwrap_err();
+        assert!(e.contains("trusted key"), "{e}");
+        // Signed by the right key, the manifest is then read and refused.
+        assert!(verify_wolplug(&wolplug(&files, Some(&SEED)), &[public_of(&SEED)]).is_err());
+        // A file changed after signing fails its hash.
+        let mut tar = wolplug(&plugin_files("alice.demo"), Some(&SEED));
+        let at = tar.windows(9).position(|w| w == b"schema = ").unwrap();
+        tar[at + 9] ^= 1;
+        let e = verify_wolplug(&tar, &[public_of(&SEED)]).unwrap_err();
+        assert!(e.contains("does not match the SHA256 list"), "{e}");
+    }
+
+    #[test]
+    fn oversized_wolplugs_are_refused() {
+        let keys = [public_of(&SEED)];
+        let huge = vec![0u8; WOLPLUG_MAX_TAR as usize + 1];
+        assert!(
+            verify_wolplug(&huge, &keys)
+                .unwrap_err()
+                .contains("too large")
+        );
+        let mut one = plugin_files("alice.demo");
+        one.push((
+            "alice.demo/big.png".into(),
+            vec![1; crate::plugins::MAX_FILE as usize + 1],
+        ));
+        let e = verify_wolplug(&wolplug(&one, Some(&SEED)), &keys).unwrap_err();
+        assert!(e.contains("larger than"), "{e}");
+        let mut many = plugin_files("alice.demo");
+        for i in 0..5 {
+            many.push((
+                format!("alice.demo/part{i}.png"),
+                vec![1; crate::plugins::MAX_FILE as usize],
+            ));
+        }
+        let e = verify_wolplug(&wolplug(&many, Some(&SEED)), &keys).unwrap_err();
+        assert!(e.contains("larger than 1 MB"), "{e}");
+    }
+
+    #[test]
+    fn a_wolplug_holds_one_valid_plugin_folder() {
+        let keys = [public_of(&SEED)];
+        let bad = |files: Vec<(String, Vec<u8>)>| {
+            verify_wolplug(&wolplug(&files, Some(&SEED)), &keys).unwrap_err()
+        };
+        let mut up = plugin_files("alice.demo");
+        up.push(("alice.demo/../evil.sh".into(), b"x".to_vec()));
+        assert!(bad(up).contains("not a file inside"));
+        let mut two = plugin_files("alice.demo");
+        two.extend(plugin_files("bob.other"));
+        assert!(bad(two).contains("not a file inside"));
+        let renamed: Vec<_> = plugin_files("alice.demo")
+            .into_iter()
+            .map(|(n, b)| (n.replacen("alice.demo/", "alice.other/", 1), b))
+            .collect();
+        assert!(bad(renamed).contains("says alice.demo"));
+        assert!(bad(plugin_files("org.wolos.fake")).contains("kept for WolOS"));
+        let no_toml: Vec<_> = plugin_files("alice.demo")
+            .into_iter()
+            .filter(|(n, _)| !n.ends_with("plugin.toml"))
+            .collect();
+        assert!(bad(no_toml).contains("no plugin.toml"));
+        let no_theme: Vec<_> = plugin_files("alice.demo")
+            .into_iter()
+            .filter(|(n, _)| n.ends_with("plugin.toml"))
+            .collect();
+        assert!(bad(no_theme).contains("which is not in the plugin"));
+        // No hash list at the end.
+        let refs: Vec<(&str, &[u8])> = vec![("alice.demo/plugin.toml", b"x")];
+        let e = verify_wolplug(&ustar(&refs), &keys).unwrap_err();
+        assert!(e.contains("SHA256"), "{e}");
+    }
+
+    #[test]
+    fn damaged_archives_in_memory_are_errors_not_panics() {
+        let keys = [public_of(&SEED)];
+        let good = wolplug(&plugin_files("alice.demo"), Some(&SEED));
+        for cut in [0, 1, 511, 512, 513, good.len() / 2] {
+            let _ = members_in(&good[..cut]);
+            assert!(verify_wolplug(&good[..cut], &keys).is_err(), "{cut}");
+        }
+        let mut x: u32 = 1;
+        for _ in 0..64 {
+            let mut t = good.clone();
+            for _ in 0..8 {
+                x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                let i = (x as usize) % t.len();
+                t[i] = (x >> 16) as u8;
+            }
+            let _ = verify_wolplug(&t, &keys);
+        }
+        assert_eq!(members_in(&[0u8; 1024]).unwrap(), vec![]);
     }
 }

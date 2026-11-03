@@ -1,13 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! One app cannot take the desktop with it (ADR 0027): the defaults that keep the session alive
 //! under a fork bomb or a memory bomb. wolos-iso/tests/test/limits proves them in a guest.
-use std::path::PathBuf;
-fn read(p: &str) -> String {
-    let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p);
-    std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::read;
 
 fn has(file: &str, lines: &[&str]) {
     let s = read(file);

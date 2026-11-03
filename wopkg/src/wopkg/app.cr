@@ -97,7 +97,7 @@ module Wopkg
       say <<-H
         wopkg: apps and packages from every source, one command.
 
-          wopkg search <words>      (-Ss)  find apps in WolOS, Arch, Flathub, AppImage, recipes, AUR
+          wopkg search <words>      (-Ss)  find apps in WolOS, Arch, Flathub, AppImage, recipes, community packages
           wopkg info <name>         (-Si)  versions and sources of one app
           wopkg install <name>...   (-S)   install from the best source (--from flatpak|aur|appimage|recipe|<repo>)
           wopkg remove <name>...    (-R)   remove it
@@ -223,7 +223,7 @@ module Wopkg
       end
       note "#{UI.bold(hit["name"].as_s)} #{s["version"].as_s}: #{hit["summary"].as_s}"
       if kind == "aur"
-        note "The AUR is not reviewed by WolOS: anyone can publish there. Read what it does before you build it."
+        note "Community packages are not reviewed by WolOS: anyone can publish there. Read what it does before you build it."
       end
       return say "Not installed." unless UI.confirm("Install it from #{UI.source_label(s)}?", @a.yes && kind != "aur")
       case kind
@@ -411,7 +411,7 @@ module Wopkg
         end
       end
       if (n = aur.installed.size) > 0 && !@a.json && (@a.only.nil? || want?("aur"))
-        note "#{n} AUR package#{n == 1 ? "" : "s"} built here: AUR updates never run on their own. Read and update them with `wopkg aur update`."
+        note "#{n} community package#{n == 1 ? "" : "s"} built here: their updates never run on their own. Read and update them with `wopkg aur update`."
       end
       if @a.json
         emit({"changes" => summary, "checked_only" => @a.check})
@@ -491,22 +491,22 @@ module Wopkg
       case sub
       when "review"
         pkg || raise UsageError.new("wopkg aur review <package>")
-        aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+        aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the community package collection.")
         text = aur.review_text(pkg, AurGuard.head(aur.repo(pkg)))
         STDOUT.puts(text.empty? ? "Nothing changed since the version you installed." : text)
       when "update"
         (pkg ? [pkg] : aur.installed).each { |n| aur_install(n, true) }
-        say "No AUR packages built by wopkg yet." if pkg.nil? && aur.installed.empty?
+        say "No community packages built by wopkg yet." if pkg.nil? && aur.installed.empty?
       else
         raise UsageError.new("wopkg aur review <package> | wopkg aur update [package]")
       end
     end
 
-    # What an AUR package's files say, read and never run. Nothing here builds or installs.
+    # What a community package's files say, read and never run. Nothing here builds or installs.
     def audit
       pkg = @a.targets.first? || raise UsageError.new("wopkg audit <package>")
       raise UsageError.new("#{pkg} is not a package name.") unless Aur.valid?(pkg)
-      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the community package collection.")
       dir = aur.repo(pkg)
       graph = "#{cache}/aurlaws/#{pkg}.svg"
       Dir.mkdir_p(File.dirname(graph))
@@ -527,10 +527,10 @@ module Wopkg
       end
     end
 
-    # Every AUR build: pinned commit, TLS metadata, hostile-until-read checks, sandbox, inspection,
+    # Every community package build: pinned commit, TLS metadata, hostile-until-read checks, sandbox, inspection,
     # malware scan, then wold. Never unattended, and -y does not answer these questions.
     def aur_install(pkg : String, update : Bool = false)
-      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the community package collection.")
       dir = aur.repo(pkg)
       raise Failure.new(5, "#{pkg} contains symbolic links, so it was not built.") unless Aur.symlinks(dir).empty?
       commit = AurGuard.head(dir)
@@ -539,7 +539,7 @@ module Wopkg
       meta = begin
         aur.meta(pkg)
       rescue e
-        raise Failure.new(3, "The AUR did not answer over a secure connection (#{e.message}), so #{pkg} was not built.")
+        raise Failure.new(3, "The community package collection did not answer over a secure connection (#{e.message}), so #{pkg} was not built.")
       end
       log = "#{dir}/.build.log"
       File.delete?(log)
@@ -550,7 +550,7 @@ module Wopkg
       findings = AurGuard.scan(pkgbuild, inst, si) + AurGuard.meta_findings(meta, aur.stored_meta(pkg), Time.utc)
       findings += AurGuard.update_findings(AurGuard.files_at(dir, prev), AurGuard.files_at(dir, commit)) if prev && prev != commit
       STDOUT.puts aur.review_text(pkg, commit)
-      note "#{UI.bold(pkg)} from the AUR, commit #{commit[0, 12]}#{meta.maintainer ? ", maintained by #{meta.maintainer}" : ", with no maintainer"}. The AUR is not reviewed by WolOS: anyone can publish there."
+      note "#{UI.bold(pkg)} from the community package collection, commit #{commit[0, 12]}#{meta.maintainer ? ", maintained by #{meta.maintainer}" : ", with no maintainer"}. Community packages are not reviewed by WolOS: anyone can publish there."
       show_findings(findings)
       note UI.dim(AurGuard::DISCLAIMER)
       skips, hard = findings.select { |f| f.severity.refuse? }.partition { |f| f.kind == :skip }
@@ -596,7 +596,7 @@ module Wopkg
       files.each { |f| core.system_call({"call" => "package.install-file", "path" => f}.to_json) }
       aur.write_provenance(pkg, commit, si, meta, files)
       record("aur", update ? "update" : "install", pkg, prev.try(&.[0, 12]), commit[0, 12], {"type" => "run", "argv" => ["wopkg", "remove", pkg]})
-      say "Installed #{pkg} (AUR #{commit[0, 12]})."
+      say "Installed #{pkg} (community package, commit #{commit[0, 12]})."
     end
 
     # One plain sentence for a hit, which stops the install unless the person overrides on purpose;

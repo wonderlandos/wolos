@@ -122,10 +122,11 @@ pub fn read(path: &str) -> Option<u8> {
 }
 
 fn publish(path: &str, p: u8) {
-    let tmp = format!("{path}.tmp");
-    if std::fs::write(&tmp, format!("{p}\n")).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
-    }
+    let _ = shared::atomic::atomic_write(
+        std::path::Path::new(path),
+        0o644,
+        format!("{p}\n").as_bytes(),
+    );
 }
 
 /// Runs `argv` (stdout and stderr merged), publishing the percentage to `path` as it moves.
@@ -167,7 +168,9 @@ pub fn run_tracked_cmd(mut cmd: Command, kind: Kind, path: &str, timeout: Durati
     publish(path, 0);
     // The reader runs on its own thread and the Child stays here: the only process ever killed
     // is the one this function started, through its handle, never a pid by number (R2C-7).
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Audit S4-17: check-and-publish and stop-and-remove hold one lock, so a line a left-behind
+    // grandchild prints late never recreates the file after it was removed.
+    let stop = std::sync::Arc::new(std::sync::Mutex::new(false));
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
     let reader = {
         let (stop, path) = (stop.clone(), path.to_owned());
@@ -182,11 +185,11 @@ pub fn run_tracked_cmd(mut cmd: Command, kind: Kind, path: &str, timeout: Durati
                 };
                 for &b in &buf[..n] {
                     if b == b'\n' || b == b'\r' {
-                        let p = t.feed(&String::from_utf8_lossy(&line));
-                        if let Some(p) =
-                            p.filter(|_| !stop.load(std::sync::atomic::Ordering::Relaxed))
-                        {
-                            publish(&path, p);
+                        if let Some(p) = t.feed(&String::from_utf8_lossy(&line)) {
+                            let stopped = stop.lock().unwrap_or_else(|e| e.into_inner());
+                            if !*stopped {
+                                publish(&path, p);
+                            }
                         }
                         line.clear();
                     } else if line.len() < 4096 {
@@ -216,12 +219,16 @@ pub fn run_tracked_cmd(mut cmd: Command, kind: Kind, path: &str, timeout: Durati
     };
     // A grandchild may still hold the pipe: wait a moment for the last lines, never forever.
     let finished = done_rx.recv_timeout(READER_GRACE).is_ok();
-    // From here on a reader left behind publishes nothing (the file is removed below).
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    // From here on a reader left behind publishes nothing: the file goes under the same lock.
+    {
+        let mut stopped = stop.lock().unwrap_or_else(|e| e.into_inner());
+        *stopped = true;
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{path}.tmp"));
+    }
     if finished {
         let _ = reader.join();
     }
-    let _ = std::fs::remove_file(path);
     status.is_some_and(|s| s.success())
 }
 
@@ -247,6 +254,28 @@ mod tests {
             checking keyring...\n:: Processing package changes...\ninstalling babl...\n\
             installing gimp...\n:: Running post-transaction hooks...\n(1/3) Updating icon theme caches...\n";
         assert_eq!(feed(Kind::Pacman, out), [1, 25, 50, 72, 95]);
+    }
+
+    /// Audit S4-17: a grandchild that keeps the pipe and prints a tracked line after the command
+    /// ended (and after the reader grace) never leaves a progress file behind.
+    #[test]
+    fn a_late_line_from_a_grandchild_leaves_no_file() {
+        let dir = std::env::temp_dir().join(format!("wol-progress-late-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("gimp");
+        let p = path.to_string_lossy().into_owned();
+        let script = "( sleep 3; printf ':: Processing package changes...\\ninstalling babl...\\n\
+            installing gimp...\\n' ) & exit 0";
+        assert!(run_tracked(
+            &["sh", "-c", script],
+            Kind::Pacman,
+            &p,
+            Duration::from_secs(10)
+        ));
+        assert!(!path.exists(), "removed at the end");
+        std::thread::sleep(Duration::from_secs(3));
+        assert!(!path.exists(), "a late line recreated {p}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

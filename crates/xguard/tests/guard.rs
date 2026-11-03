@@ -309,3 +309,24 @@ fn real_clamav_stops_what_only_it_knows_and_a_clean_file_is_asked_once() {
     assert!(found.contains("Test.Only.Clam"), "{found}");
     assert_eq!(before, after, "the clean file is not read again");
 }
+
+/// Audit S4-3: callers that connect and send nothing never hold the kernel's questions: the
+/// socket has its own thread, so a fresh file still runs at once.
+#[test]
+fn idle_callers_on_the_socket_do_not_hold_up_execs() {
+    let Some(base) = root() else { return };
+    let g = start(&base, "idle");
+    let idle: Vec<_> = (0..5)
+        .map(|_| std::os::unix::net::UnixStream::connect(g.dir.join("sock")).unwrap())
+        .collect();
+    let f = g.dir.join("work/fresh");
+    script(&f, "harmless");
+    let t = Instant::now();
+    assert_eq!(exec(&f), Ok(7));
+    assert!(
+        t.elapsed() < Duration::from_millis(500),
+        "{:?} with idle callers",
+        t.elapsed()
+    );
+    drop(idle);
+}

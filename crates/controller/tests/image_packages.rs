@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `.wol` double-click wiring in the image (ADR 0011): MIME type, App Store handler, caches.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 
-use std::{fs, path::PathBuf};
+use std::fs;
 fn read(p: &str) -> String {
     let path = siblings::root().join(p);
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("{p}: {e}"))

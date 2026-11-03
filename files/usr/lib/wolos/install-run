@@ -65,6 +65,9 @@ here=$(cd "$(dirname "$0")" && pwd)
 wipe=1
 WOLOS_HOSTNAME=${WOLOS_HOSTNAME:-wolos}; WOLOS_AUTOLOGIN=${WOLOS_AUTOLOGIN:-no}; WOLOS_SWAP=${WOLOS_SWAP:-zram}
 account=${WOLOS_ACCOUNT:-}
+# Secure Boot wanted (the Install app's choice; boot-setup records it), the optional modules and the
+# media formats the person ticked (ADR 0032; `wol install info` checks every id and package name).
+WOLOS_SECURE=${WOLOS_SECURE:-yes}; modules=${WOLOS_MODULES:-}; extra_packages=
 # What `wol install layout` says beyond the devices; an erase keeps none of it.
 others=0 esp_reused=0 esp_wolos=0 windows=0 bitlocker=0
 slots=two home_dev='' var_dev='' extra_fstab='' extra_crypttab=''
@@ -82,6 +85,9 @@ take() { # info|layout: KEY=VALUE lines on stdin (controller install.rs info_tex
       info:WOLOS_HOSTNAME) WOLOS_HOSTNAME=$v ;;
       info:WOLOS_AUTOLOGIN) WOLOS_AUTOLOGIN=$v ;;
       info:WOLOS_SWAP) WOLOS_SWAP=$v ;;
+      info:WOLOS_SECURE) WOLOS_SECURE=$v ;;
+      info:modules) modules=$v ;;
+      info:extra_packages) extra_packages=$v ;;
       layout:esp) esp=$v ;;
       layout:root) root=$v ;;
       layout:fsdev) fsdev=$v ;;
@@ -102,6 +108,8 @@ take() { # info|layout: KEY=VALUE lines on stdin (controller install.rs info_tex
 if [ "$disk" = --plan ]; then
   plan=${2:-}
   plandir=$(dirname "$plan")
+  # The plan's passwords leave with the run, whatever its end: done, fail or refuse (audit5 C9-6).
+  trap 'rm -f "$plandir/account-password" "$plandir/disk-password"' EXIT
   info=$(wol install info "$plan") || refuse "the install plan can't be read"
   take info <<EOF
 $info
@@ -202,8 +210,18 @@ else
 fi
 [ "$elsewhere" = no ] || windows=1
 [ "$elsewhere_bitlocker" = no ] || bitlocker=1
-[ "$unlock" = off ] || luuid=$(blkid -s UUID -o value "$root")
-ruuid=$(blkid -s UUID -o value "$fsdev"); euuid=$(blkid -s UUID -o value "$esp")
+# A UUID or nothing: an empty or odd answer (blkid's cache, a slow rescan) is asked again with a
+# probe, then the install stops; `root=UUID=` with nothing after it would not start (audit5 C9-4).
+uuid() {
+  u=$(blkid -s UUID -o value "$1" 2>/dev/null)
+  case $u in '' | *[!0-9A-Fa-f-]*) udevadm settle; u=$(blkid -p -s UUID -o value "$1" 2>/dev/null) ;; esac
+  case $u in '' | *[!0-9A-Fa-f-]* | -* | *-) return 1 ;; esac
+  echo "$u"
+}
+luuid=
+if [ "$unlock" != off ]; then luuid=$(uuid "$root") || fail "could not read the new partitions ($root)"; fi
+ruuid=$(uuid "$fsdev") || fail "could not read the new partitions ($fsdev)"
+euuid=$(uuid "$esp") || fail "could not read the new partitions ($esp)"
 O=compress=zstd:1,noatime
 mkdir -p "$T"
 if [ "$slots" = two ]; then
@@ -237,8 +255,11 @@ rm -rf "$T/etc/sysusers.d/wolos-live.conf" "$T/etc/tmpfiles.d/wolos-live.conf" "
   "$T/etc/systemd/system/wolos-autoinstall.service" "$T/etc/systemd/system/multi-user.target.wants/wolos-autoinstall.service" \
   "$T/etc/systemd/journald.conf.d/volatile-storage.conf" "$T/home/live" \
   "$T/etc/systemd/system/wold.service.d" "$T/etc/systemd/system/wolos-installer.service" \
-  "$T/etc/systemd/system/multi-user.target.wants/wolos-installer.service"
+  "$T/etc/systemd/system/multi-user.target.wants/wolos-installer.service" \
+  "$T/etc/systemd/system/sshd.service.d/wolos-live.conf" "$T/etc/systemd/system/multi-user.target.d/wolos-live-ssh.conf"
 userdel -R "$T" live || :
+# The channel the image was built from (testing or stable): the installed system updates from it.
+sh "$here/install-channel" "$T" >&2 || fail "could not set where updates come from"
 # The live dock's copy of shell.json gives way to the package's.
 [ ! -f "$T/etc/wolos/shell.json.pacnew" ] || mv "$T/etc/wolos/shell.json.pacnew" "$T/etc/wolos/shell.json"
 # The package database belongs to the slot, not the shared @var (pacman.conf DBPath).
@@ -299,7 +320,7 @@ if [ "$unlock" != off ]; then
   # disk before the recovery key is needed; never a shared one. Kept in sync by `wol encrypt password`.
   # The files go to `wol encrypt enroll` as they are: it reads them as typed (one line end off,
   # encrypt::typed_secret), the same reading `wol encrypt decide` checked (audit2 B4, audit3 R2B-6).
-  fallback= pass=
+  fallback='' pass=''
   if [ "$unlock" = tpm2 ] && [ -n "${account:-}" ] && [ -s "${plandir:-/nonexistent}/account-password" ]; then
     fallback=1 pass=$plandir/account-password
   fi
@@ -363,6 +384,22 @@ done
 [ -f "$T/boot/vmlinuz-linux-wolos" ] || fail "no linux-wolos kernel in the image"
 arch-chroot "$T" mkinitcpio -P >&2 || fail "could not build the initramfs"
 mkdir -p "$T/efi/wolos-a"
+# The modules and media formats (Store kit, ADR 0032 B and C) the person ticked: online now, bounded;
+# offline (or cut short) they are queued (modules-pending, packages-pending) and the first start
+# installs them once it is online (firstboot drains them; the network-up hook 50-wolos-online too
+# when the connection comes later, e.g. Wi-Fi): "added at first start with a network".
+online=; [ -z "$(ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null)" ] || online=1
+if [ -n "$modules" ] || [ -n "$extra_packages" ]; then
+  if [ -n "$modules" ]; then say packages 80 "Installing the modules you chose"; else say packages 85 "Installing media formats"; fi
+  # Options first, then the ids; the disk and plan arguments were read above.
+  set --
+  [ -n "$online" ] || set -- --queue
+  for p in $extra_packages; do set -- "$@" --package "$p"; done
+  # shellcheck disable=SC2086 # ids: wol install info checks each (valid_id), modules-install checks again
+  WOLOS_MODULES_TIMEOUT=1800 sh "$here/modules-install" --root "$T" "$@" -- $modules >&2 ||
+    { stray; echo "install-run: some modules or media formats wait for the first start" >&2; }
+  [ ! -e "$T/usr/lib/pacman/db.lck" ] || fail "the package database was left locked"
+fi
 
 say settings 90 "Settings"
 echo "$WOLOS_HOSTNAME" > "$T/etc/hostname"
@@ -422,7 +459,7 @@ shared=no; [ "$esp_reused" != 1 ] || [ "$others" = 0 ] || shared=yes
 win=no; [ "$windows" != 1 ] || win=yes
 bl=no; [ "$bitlocker" != 1 ] || bl=yes
 WOLOS_ROOT=$T WOLOS_ESP=$T/efi WOLOS_ESP_DEV=$esp WOLOS_OTHER_SYSTEMS=${others#0} WOLOS_BOOT_DISK=$disk \
-  WOLOS_ESP_SHARED=$shared WOLOS_WINDOWS=$win WOLOS_BITLOCKER=$bl sh "$here/install-boot" >&2 ||
+  WOLOS_ESP_SHARED=$shared WOLOS_WINDOWS=$win WOLOS_BITLOCKER=$bl WOLOS_SECURE=$WOLOS_SECURE sh "$here/install-boot" >&2 ||
   fail "could not install the boot loader"
 for f in "efi/loader/entries/wolos-a+3.conf" "efi/EFI/wolos/wolos-a.efi" "etc/fstab" "etc/hostname"; do
   [ -s "$T/$f" ] || fail "the new system did not check out: $f missing"

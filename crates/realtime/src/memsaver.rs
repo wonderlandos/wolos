@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Memory Saver session side (ADR 0026): what Hyprland shows, what plays, and the user's choices,
+//! Memory Saver session side (ADR 0026): what the compositor shows, what plays, and the user's choices,
 //! sent to wold as one `shared::memsaver` snapshot line whenever it changes.
 use shared::memsaver::{Snapshot, Window};
 use std::io::Write;
@@ -142,7 +142,7 @@ impl Sender {
 /// Sound and players are looked at every this many rounds (a round is at most 2 s).
 const MEDIA_EVERY: u32 = 2;
 
-/// Session loop: a round on every Hyprland event (`kick`) and every 2 s. `hypr` answers IPC
+/// Session loop: a round on every compositor event (`kick`) and every 2 s. `hypr` answers IPC
 /// requests, `run` runs a command and returns its stdout; prefs are reread every round.
 pub fn run(
     kick: std::sync::mpsc::Receiver<()>,

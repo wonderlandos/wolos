@@ -43,6 +43,6 @@ Echo cancel with WebRTC gain control ("Automatic input level" → `WolOS Microph
 
 ## Reset and doctor
 
-`wol audio reset` prints what it would do (remove `~/.local/state/wireplumber`, the pro-audio file and the snap list; `wpctl clear-default`; clear the forces; restart pipewire, pipewire-pulse and wireplumber) and does it with `--yes` (`wol_core::audio::reset_plan`). `wol audio doctor` checks services, realtime, the four fragments, the input level, the clock, xruns, the RNNoise plugin, the OBS plugin and the Hyprland portal, each with its fix; exit 1 only on a FAIL.
+`wol audio reset` prints what it would do (remove `~/.local/state/wireplumber`, the pro-audio file and the snap list; `wpctl clear-default`; clear the forces; restart pipewire, pipewire-pulse and wireplumber) and does it with `--yes` (`wol_core::audio::reset_plan`). `wol audio doctor` checks services, realtime, the four fragments, the input level, the clock, xruns, the RNNoise plugin, the OBS plugin and the compositor's portal, each with its fix; exit 1 only on a FAIL.
 
 Tests: `crates/core/src/audio.rs`, `crates/audio/src/fake.rs`, `crates/controller/src/audio_doctor.rs`, `crates/controller/tests/image_gaming_audio.rs`, `wolos-iso/checks/tests/image_gaming_audio.rs`, `wolos-iso/tests/test-audio.sh` (in the guest).

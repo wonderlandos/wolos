@@ -50,23 +50,63 @@ unsafe fn engine<'a>(e: *const XguardEngine) -> Option<&'a Engine> {
     Some(unsafe { &(*e).engine })
 }
 
-/// A report from the worker: its JSON line. None when the worker is absent or failed.
-fn worker(exe: &str, path: &str, dir: Option<&str>) -> Option<Report> {
-    let mut c = std::process::Command::new(exe);
-    c.args(["scan", "--json"]);
-    if let Some(d) = dir {
-        c.args(["--rules", d]);
-    }
-    let out = c.arg(path).output().ok()?;
-    serde_json::from_slice(out.stdout.split(|b| *b == b'\n').next()?).ok()
+/// The deep worker on the already opened `f` (audit S4-16): the guard's command (the file on
+/// standard input, never a path the worker opens again or could read as a flag, no new
+/// privileges, nobody when we are root) and its deadline; only that child is ever killed.
+fn worker(
+    exe: &Path,
+    f: &std::fs::File,
+    deadline: std::time::Duration,
+) -> crate::guard::DeepOutcome {
+    let streamed = f.metadata().is_ok_and(|m| m.len() > crate::guard::WHOLE);
+    let root = shared::sys::euid() == 0;
+    let c = crate::guard::deep_command_as(exe, &crate::rules_dir(), streamed, root);
+    crate::guard::run_deep(c, f, deadline)
 }
 
 /// One file, with or without the signature rules. The Rust API of what the C calls do.
 pub fn scan_path(e: &Engine, path: &str, deep: bool) -> Result<Report, String> {
-    if deep && let Some(r) = worker(WORKER, path, None) {
-        return Ok(r);
+    scan_path_with(
+        e,
+        path,
+        deep,
+        Path::new(WORKER),
+        crate::guard::DEEP_DEADLINE,
+    )
+}
+
+/// [`scan_path`] with the worker and its deadline named. A deep check that ran past the deadline
+/// is Err (`XGUARD_UNAVAILABLE`): the caller must not take a hashes-only result for a deep one.
+/// A worker that is absent or failed falls back to hashes and patterns, as before.
+fn scan_path_with(
+    e: &Engine,
+    path: &str,
+    deep: bool,
+    exe: &Path,
+    deadline: std::time::Duration,
+) -> Result<Report, String> {
+    use std::io::{Seek, SeekFrom};
+    use std::os::unix::fs::OpenOptionsExt;
+    // A FIFO does not block the open and a terminal is never taken as ours (S4-2).
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(shared::sys::OPEN_QUIET)
+        .open(path)
+        .map_err(|m| m.to_string())?;
+    if deep {
+        match worker(exe, &f, deadline) {
+            crate::guard::DeepOutcome::Report(r) => return Ok(r),
+            crate::guard::DeepOutcome::TimedOut => {
+                return Err(format!(
+                    "the deep check took longer than {} s",
+                    deadline.as_secs()
+                ));
+            }
+            crate::guard::DeepOutcome::Failed => {
+                f.seek(SeekFrom::Start(0)).map_err(|m| m.to_string())?;
+            }
+        }
     }
-    let mut f = std::fs::File::open(path).map_err(|m| m.to_string())?;
     crate::scan_file(e, &mut f, path, None, Limits::default()).map_err(|m| m.to_string())
 }
 
@@ -348,7 +388,13 @@ mod tests {
 
     #[test]
     fn a_missing_worker_is_no_verdict() {
-        assert!(worker("/nonexistent/wol-xguard", "/etc/hostname", None).is_none());
+        let f = std::fs::File::open("/etc/passwd").unwrap();
+        let o = worker(
+            Path::new("/nonexistent/wol-xguard"),
+            &f,
+            std::time::Duration::from_secs(5),
+        );
+        assert!(matches!(o, crate::guard::DeepOutcome::Failed), "{o:?}");
     }
 
     /// Exports, header and linker map list the same calls.
@@ -373,5 +419,59 @@ mod tests {
         assert_eq!(exports.len(), 6);
         assert_eq!(exports, names(read("abi/xguard.map")));
         assert_eq!(exports, names(read("include/xguard.h")));
+    }
+
+    /// Audit S4-16: the deep worker of the library has the guard's deadline. One that hangs is
+    /// stopped and the call fails (XGUARD_UNAVAILABLE), never a hashes-only "clean"; one that
+    /// cannot start falls back to hashes and patterns.
+    #[test]
+    fn a_hung_deep_worker_is_stopped_and_the_call_fails() {
+        // Its own directory: rules() is shared with tests that rewrite and remove it.
+        let d = std::env::temp_dir().join(format!("xguard-ffi-deep-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let mut b = Builder::default();
+        b.hash(Table::Sha256, 68, &Sha256::digest(EICAR), "Test.File");
+        std::fs::write(d.join("a.xgdb"), b.build(3, 1)).unwrap();
+        let e = Engine::open(&d).unwrap();
+        let sample = d.join("deep-sample");
+        std::fs::write(&sample, b"plain text").unwrap();
+        // A worker that never finishes when asked to scan.
+        use std::os::unix::fs::PermissionsExt;
+        let hang = d.join("hang-worker");
+        std::fs::write(
+            &hang,
+            "#!/bin/sh\n[ \"$1\" = scan ] || exit 0\nexec sleep 30\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&hang, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // A file just written can refuse to start (ETXTBSY) while another test thread forks with
+        // its descriptor; that ends when the fork execs.
+        let runs = (0..200).any(|_| std::process::Command::new(&hang).status().is_ok());
+        assert!(runs, "the fake worker never started");
+        let p = sample.to_str().unwrap();
+        let t = std::time::Instant::now();
+        let r = scan_path_with(&e, p, true, &hang, std::time::Duration::from_millis(300));
+        assert!(r.is_err(), "{r:?}");
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            t.elapsed()
+        );
+        let gone = d.join("no-such-worker");
+        let r = scan_path_with(&e, p, true, &gone, std::time::Duration::from_secs(5)).unwrap();
+        assert!(r.findings.is_empty());
+        // A path that looks like a flag is a file name to us; the worker never sees it.
+        let flag = d.join("--rules");
+        std::fs::write(&flag, EICAR).unwrap();
+        let r = scan_path_with(
+            &e,
+            flag.to_str().unwrap(),
+            false,
+            &gone,
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(r.findings[0].name, "Test.File");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

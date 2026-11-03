@@ -3,8 +3,8 @@ require "json"
 require "uri"
 
 module Wopkg
-  # AUR packages are hostile until read (ADR 0021). Everything here is a static check on text the
-  # AUR serves: it raises flags in plain words and never says "safe".
+  # Community packages are hostile until read (ADR 0021). Everything here is a static check on text the
+  # community package collection serves: it raises flags in plain words and never says "safe".
   module AurGuard
     DISCLAIMER = "These checks look for known warning signs. They cannot prove a package is safe, and a quiet result is not a guarantee."
 
@@ -26,7 +26,7 @@ module Wopkg
     VCS        = %w(git+ svn+ hg+ bzr+ fossil+)
     SUM_ORDER  = %w(b2 sha512 sha384 sha256 sha224 sha1 md5 ck)
 
-    # What `makepkg --printsrcinfo` says (generated inside the sandbox, never taken from the AUR).
+    # What `makepkg --printsrcinfo` says (generated inside the sandbox, never taken from the community package collection).
     class SrcInfo
       getter url : String
       getter sources : Array({String, String})
@@ -160,22 +160,22 @@ module Wopkg
       acc
     end
 
-    # What the AUR RPC says about a package (fetched over TLS; the dump is not used for decisions).
+    # What the community package collection's RPC says about a package (fetched over TLS; the dump is not used for decisions).
     record Meta, maintainer : String?, first_submitted : Int64, last_modified : Int64, votes : Int32, popularity : Float64, out_of_date : Bool do
       def self.parse(json : String) : Meta
-        r = JSON.parse(json)["results"]?.try(&.as_a?).try(&.first?) || raise ArgumentError.new("The AUR did not describe that package.")
-        Meta.new(r["Maintainer"]?.try(&.as_s?), r["FirstSubmitted"]?.try(&.as_i64?) || raise(ArgumentError.new("The AUR answer is incomplete.")),
+        r = JSON.parse(json)["results"]?.try(&.as_a?).try(&.first?) || raise ArgumentError.new("The community package collection did not describe that package.")
+        Meta.new(r["Maintainer"]?.try(&.as_s?), r["FirstSubmitted"]?.try(&.as_i64?) || raise(ArgumentError.new("The community package collection answered incompletely.")),
           r["LastModified"]?.try(&.as_i64?) || 0_i64, r["NumVotes"]?.try(&.as_i?) || 0,
           r["Popularity"]?.try(&.as_f?) || 0.0, !r["OutOfDate"]?.try(&.raw).nil?)
       rescue JSON::ParseException
-        raise ArgumentError.new("The AUR answer could not be read.")
+        raise ArgumentError.new("The community package collection answer could not be read.")
       end
     end
 
     def self.meta_findings(m : Meta, prev : Meta?, now : Time) : Array(Finding)
       acc = [] of Finding
       days = ((now.to_unix - m.first_submitted) / 86_400).to_i
-      acc << f(Severity::Warn, :new_package, "First submitted to the AUR only #{days} day#{days == 1 ? "" : "s"} ago.") if days < 30
+      acc << f(Severity::Warn, :new_package, "First submitted to the community package collection only #{days} day#{days == 1 ? "" : "s"} ago.") if days < 30
       acc << f(Severity::Note, :few_votes, "Only #{m.votes} vote#{m.votes == 1 ? "" : "s"}, so few people have used it.") if m.votes < 5
       acc << f(Severity::Warn, :orphan, "Has no maintainer, so anyone can take it over.") if m.maintainer.nil?
       if prev && prev.maintainer != m.maintainer

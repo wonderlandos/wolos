@@ -488,10 +488,10 @@ fn run_crypt(c: &wol_core::home_crypt::Cmd) -> bool {
 
 /// Opens an encrypted home with the password just checked; true when it is ready (or plain).
 fn unlock_home(name: &str, password: &[u8]) -> bool {
-    let Ok(pw) = std::str::from_utf8(password) else {
-        return true;
+    let Some(steps) = home_unlock_steps(name, home_state(name), password) else {
+        eprintln!("wol-login: {name}: the encrypted home needs a password typed as text");
+        return false;
     };
-    let steps = wol_core::home_crypt::unlock(name, home_state(name), pw);
     let ok = steps.iter().all(run_crypt);
     if !ok {
         eprintln!("wol-login: {name}: the encrypted home did not open");

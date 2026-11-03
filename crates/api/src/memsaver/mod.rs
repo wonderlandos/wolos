@@ -178,13 +178,12 @@ fn reclaim(dir: &Path, bytes: u64, stop: &AtomicBool) {
     }
 }
 
-/// Write the status file atomically, world readable.
+/// Write the status file atomically, world readable. The ticker, a finishing `serve` and
+/// `shutdown` may write at once: each gets its own temporary (S4-10), so a reader never sees a
+/// truncated file and no writer renames another's half-written one.
 pub fn write_status(path: &Path, st: &shared::memsaver::Status) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec(st).map_err(std::io::Error::other)?)?;
-    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644))?;
-    std::fs::rename(tmp, path)
+    let body = serde_json::to_vec(st).map_err(std::io::Error::other)?;
+    shared::atomic::atomic_write(path, 0o644, &body)
 }
 
 /// The running service: the engine behind a lock, a ticker thread, and an allocation-free
@@ -298,5 +297,68 @@ impl Service {
     pub fn shutdown(&self) {
         let st = self.engine().disconnect(now_ms());
         let _ = write_status(&self.status, &st);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::memsaver::{AppState, AppStatus, Status};
+
+    /// S4-10: the ticker, `serve` and `shutdown` write at once; a reader always parses a whole
+    /// [`Status`] and the file stays world readable.
+    #[test]
+    fn concurrent_status_writes_never_tear() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let d = std::env::temp_dir().join(format!("wol-msstatus-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("wol-memsaver.json");
+        write_status(&p, &Status::default()).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let reader = {
+            let (p, stop) = (p.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut n = 0u32;
+                while !stop.load(Ordering::Relaxed) {
+                    let t = std::fs::read(&p).unwrap();
+                    serde_json::from_slice::<Status>(&t).unwrap();
+                    n += 1;
+                }
+                n
+            })
+        };
+        let writers: Vec<_> = (0..8u64)
+            .map(|w| {
+                let p = p.clone();
+                std::thread::spawn(move || {
+                    for i in 0..100u64 {
+                        let st = Status {
+                            enabled: true,
+                            saved: i,
+                            apps: (0..(i % 7))
+                                .map(|k| AppStatus {
+                                    app: format!("app-{w}-{k}"),
+                                    state: AppState::Saving,
+                                    saved: k,
+                                    memory: k << 20,
+                                    swap: 0,
+                                })
+                                .collect(),
+                        };
+                        write_status(&p, &st).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        stop.store(true, Ordering::Relaxed);
+        assert!(reader.join().unwrap() > 0);
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

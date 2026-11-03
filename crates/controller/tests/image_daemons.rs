@@ -2,17 +2,11 @@
 //! Every daemon the shell and `wol` talk to starts at boot on the image. wol-admind shipped as a binary
 //! only (no job, a launcher left off and pointing at the wrong path): every admin action failed.
 //! wold itself is a systemd unit enabled by the WolOS preset (ADR 0016).
+#[path = "support/repo.rs"]
+mod repo;
+use repo::{read, repo};
 use shared::jobs::JobSpec;
-use std::{fs, path::PathBuf};
-fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p)
-}
-
-fn read(p: &str) -> String {
-    fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+use std::fs;
 
 /// Binaries that bind a `shared::*::SOCKET` (crates/*/src/bin/<name>.rs).
 fn daemons() -> Vec<String> {

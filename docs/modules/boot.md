@@ -1,5 +1,8 @@
 # Boot chain and install safety (ADR 0016)
 
+How a WolOS computer is laid out on disk and starts, and what keeps an install or an update
+from leaving it unable to start.
+
 ## Disk layout
 GPT: partition 1 = ESP (1 GiB, FAT32, label `WOLOS`, mounted at `/efi`), partition 2 = btrfs (label `WolOS`).
 Subvolumes: `@wolos-a` (installed system), `@home`, `@var`; the first update creates `@wolos-b`.

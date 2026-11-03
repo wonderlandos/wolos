@@ -1,0 +1,38 @@
+{
+  "id": "hue-sunset-normal-dark",
+  "name": "sunset",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#130b18",
+    "sidebar": "rgba(17,10,21,0.92)",
+    "card": "#241a21",
+    "line": "rgba(255,231,151,0.1)",
+    "text": "#ffe797",
+    "dim": "#ac9a6b",
+    "accent": "#a06dc3",
+    "accentText": "#000000",
+    "glass": "rgba(19,11,24,0.84)",
+    "control": "#2f2527",
+    "success": "#faac47",
+    "warning": "#fdc86f",
+    "danger": "#c46157"
+  },
+  "terminal": [
+    "#130b18",
+    "#c46157",
+    "#faac47",
+    "#fdc86f",
+    "#a06dc3",
+    "#a865a7",
+    "#9b67bb",
+    "#ffe797",
+    "#6a676c",
+    "#f38175",
+    "#ffb100",
+    "#ffd04b",
+    "#c98ff1",
+    "#d386d1",
+    "#c388e8",
+    "#ffe972"
+  ]
+}

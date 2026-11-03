@@ -63,8 +63,6 @@ pub enum FutexWaitv {
 pub const ICD_DIR: &str = "/usr/share/vulkan/icd.d";
 pub const PACMAN_CONF: &str = "/etc/pacman.conf";
 pub const STEAM_BIN: &str = "/usr/bin/steam";
-/// Kernel settings games need; none on Linux (kept for callers that list them).
-pub const SYSCTLS: [(&str, &str, &str); 0] = [];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
@@ -100,6 +98,9 @@ pub struct Facts {
     pub kernel: String,
     /// WolOS base version (`/etc/os-release` VERSION_ID).
     pub base: Option<String>,
+    /// Largest monitor scale when not 1 (`"2"`, `"1.5"`): Steam's UI is X11 and Xwayland renders
+    /// 1:1 (`force_zero_scaling`), so Steam scales itself ([`super::steam::ui_scale`]).
+    pub ui_scale: Option<String>,
 }
 
 fn exists(h: &dyn Host, p: &Path) -> bool {
@@ -279,8 +280,8 @@ pub fn gather(
 ) -> Facts {
     let has = |p: &str| exists(h, Path::new(p));
     let wine = has("/usr/bin/wine").then(|| "/usr/bin/wine".to_string());
-    // The three commands are independent (vulkaninfo alone takes tens of ms): fork/join.
-    let ((wine_version, vulkan), groups) = shared::par::join(
+    // The four commands are independent (vulkaninfo alone takes tens of ms): fork/join.
+    let ((wine_version, vulkan), (groups, ui_scale)) = shared::par::join(
         || {
             shared::par::join(
                 || {
@@ -295,9 +296,17 @@ pub fn gather(
             )
         },
         || {
-            h.run(&["id", "-Gn"])
-                .map(|t| t.split_whitespace().map(String::from).collect())
-                .unwrap_or_default()
+            shared::par::join(
+                || {
+                    h.run(&["id", "-Gn"])
+                        .map(|t| t.split_whitespace().map(String::from).collect())
+                        .unwrap_or_default()
+                },
+                || {
+                    h.run(&["hyprctl", "-j", "monitors"])
+                        .and_then(|t| super::steam::ui_scale(&t))
+                },
+            )
         },
     );
     let mut gpu_vendors: Vec<&'static str> = h
@@ -359,6 +368,7 @@ pub fn gather(
             .and_then(|t| parse_os_release(&t))
             .map(|(_, v)| v)
             .filter(|v| !v.is_empty()),
+        ui_scale,
     }
 }
 

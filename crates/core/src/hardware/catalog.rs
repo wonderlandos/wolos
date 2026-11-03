@@ -69,7 +69,7 @@ const fn bt(name: &'static str, vendor: Option<u16>, fw: &'static [&'static str]
     }
 }
 
-/// Virtual GPU with an in-kernel DRM driver: Hyprland runs in the VM.
+/// Virtual GPU with an in-kernel DRM driver: the compositor runs in the VM.
 const fn virt(
     name: &'static str,
     vendor: u16,

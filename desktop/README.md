@@ -11,9 +11,9 @@ Overlay defaults for the WolOS session. Copy `overlay/` onto `/`; install `packa
 | `usr/bin/wol-screenshot`, `wol-volume` | grim/slurp and wpctl helpers |
 | `usr/etc/xdg/gtk-{3,4}.0`, `qt6ct`, `foot` | Theme adw-gtk3 + font Inter (image/fetch-theme.sh), icons WolOS |
 | `usr/etc/fonts/conf.d/60-wolos-inter.conf` | `Inter` -> Inter Variable; default sans |
-| `usr/etc/xdg/xdg-desktop-portal/hyprland-portals.conf` | Hyprland portal, GTK file chooser |
+| `usr/etc/xdg/xdg-desktop-portal/hyprland-portals.conf` | compositor portal, GTK file chooser |
 | `usr/etc/wolos/jobs/org.wol.login.json` | wold job: `wol-login` (root) -> `wol-greeter-session` -> `wol-session` |
-| `usr/bin/wol-greeter-session`, `share/wolos/hypr/login.conf` | Login window: Hyprland + wol-loginwindow as `_wollogin` (uid 911, firstboot) |
+| `usr/bin/wol-greeter-session`, `share/wolos/hypr/login.conf` | Login window: the compositor + wol-loginwindow as `_wollogin` (uid 911, firstboot) |
 | `usr/etc/pam.d/wol-login` | PAM service of wol-login |
 | `etc/NetworkManager/` | NetworkManager dispatcher (wold: `wold.service`, on by default) |
 

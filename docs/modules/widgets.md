@@ -82,7 +82,7 @@ Limits: depth 12, 200 nodes, output 256 KB. A package that does not validate sho
 
 - One timer for the whole desktop, armed for the earliest due widget. Deadlines sit on wall-clock multiples of each period, so a clock, a calendar and a 5-minute custom widget wake together.
 - Music and batteries listen to D-Bus signals; no polling.
-- Fullscreen window on the active workspace: the timer stops; the first wake after it ends catches up.
+- A maximized or fullscreen window on the workspace a display shows: that display's timer stops (each display follows its own output, not the focused one); the first wake after it ends catches up.
 - No animation unless the user acted (drag, gallery). Data changes swap content in place, and identical data changes nothing on screen.
 - `WOL_SHELL_TIMING=1` prints each widget wakeup: what ran, and how long it took.
 

@@ -193,7 +193,14 @@ fn new_check_run_enable_pack_remove_round_trip() {
     let file = PathBuf::from(r["file"].as_str().unwrap());
     assert_eq!(file, plugin_dir(&e, "alice.demo-0.1.wolplug"));
     assert_eq!(r["signed"], false);
-    let tar = file.with_extension("tar");
+    let zstd = e.execs.iter().find(|a| a[0] == "zstd").expect("zstd ran");
+    let tar = PathBuf::from(&zstd[7]);
+    // Audit S4-23: a unique name next to the target, never a neighbour's.
+    let tar_name = tar.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        tar_name.starts_with("alice.demo-0.1.wolplug.") && tar_name.ends_with(".tar"),
+        "{tar_name}"
+    );
     assert!(
         tar.is_file(),
         "the tar waits for zstd (the fake env runs nothing)"
@@ -204,7 +211,6 @@ fn new_check_run_enable_pack_remove_round_trip() {
         names.contains(&"alice.demo/plugin.toml") && names.last() == Some(&"SHA256"),
         "{names:?}"
     );
-    let zstd = e.execs.iter().find(|a| a[0] == "zstd").expect("zstd ran");
     assert_eq!(&zstd[1..6], ["-q", "-f", "-19", "--rm", "-o"]);
     assert_eq!(zstd[6], file.to_string_lossy());
     assert_eq!(zstd[7], tar.to_string_lossy());
@@ -212,6 +218,21 @@ fn new_check_run_enable_pack_remove_round_trip() {
         r["sha256"].as_str().unwrap().lines().count(),
         names.len() - 1
     );
+    // Audit S4-23: an existing target is replaced only with --yes; a neighbour that the old
+    // `with_extension("tar")` name hit is never touched.
+    let neighbour = file.with_extension("tar");
+    std::fs::write(&neighbour, "mine").unwrap();
+    std::fs::write(&file, "old pack").unwrap();
+    assert_eq!(
+        run("plugin pack alice.demo", &mut e),
+        ErrorCode::Usage.exit()
+    );
+    assert!(e.err.contains("--yes"), "{}", e.err);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "old pack");
+    assert_eq!(run("plugin pack alice.demo --yes", &mut e), 0, "{}", e.err);
+    assert_eq!(std::fs::read_to_string(&neighbour).unwrap(), "mine");
+    let _ = std::fs::remove_file(&neighbour);
+    let _ = std::fs::remove_file(&file);
 
     // A broken script: check says which file and what, run fails the same way, pack refuses.
     std::fs::write(
@@ -382,4 +403,166 @@ fn reference_stats_plugin_checks_clean_from_its_checkout() {
             .contains("reserved")
     );
     let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// Audit C8-2: `check` (and `new`, `pack`) run the plugin's Lua with inert services: a
+/// `wol.run` in render runs nothing, and no state or toggle flag is written, before any grant.
+#[test]
+fn check_runs_nothing_and_writes_nothing() {
+    let mut e = env("inert");
+    assert_eq!(
+        run("plugin new alice.inert menubar", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    let dir = plugin_dir(&e, "alice.inert");
+    let mark = e.home.join("ran");
+    let toml = std::fs::read_to_string(dir.join("plugin.toml")).unwrap();
+    std::fs::write(
+        dir.join("plugin.toml"),
+        toml.replace("min_wolos", "permissions = [\"run\"]\nmin_wolos"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("bar.lua"),
+        format!(
+            "return wol.menubar {{ render = function() wol.run {{ \"touch\", \"{}\" }}; wol.state.set(\"n\", 1); return wol.label {{ \"x\" }} end }}\n",
+            mark.display()
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        run("plugin check alice.inert --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    assert!(!mark.exists(), "check ran the plugin's command");
+    assert!(!e.home.join("state").exists(), "check wrote state");
+    assert_eq!(
+        run("plugin pack alice.inert --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    assert!(!mark.exists(), "pack ran the plugin's command");
+    // `run` is the explicit way to run it, as the person.
+    assert_eq!(
+        run("plugin run alice.inert menubar", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    assert!(
+        json(&e)["events"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("run: touch")
+    );
+    assert!(mark.exists());
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// Audit X6-1: planned kinds are refused by `new` with the sentence `check` gives.
+#[test]
+fn new_refuses_planned_kinds() {
+    let mut e = env("planned");
+    for k in ["look", "hypr"] {
+        assert_eq!(
+            run(&format!("plugin new alice.p {k}"), &mut e),
+            ErrorCode::Usage.exit()
+        );
+        assert!(e.err.contains("is planned"), "{}", e.err);
+    }
+    assert!(!plugin_dir(&e, "alice.p").exists());
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// Audit X6-2 and X6-1: `wol plugin add` installs a folder or a `.wolplug` into this account's
+/// plugin folder (unsigned only with --yes, never turned on); an enabled `[[webapp]]` is a
+/// launcher until the plugin is turned off or removed.
+#[test]
+fn add_installs_and_webapps_follow_enable() {
+    let mut e = env("add");
+    // The source folder lives outside the plugin folder (a checkout).
+    let src_root = e.home.join("src");
+    let src = src_root.join("alice.web");
+    std::fs::create_dir_all(&src_root).unwrap();
+    let mut maker = env("add-maker");
+    assert_eq!(
+        run("plugin new alice.web menubar,webapp", &mut maker),
+        0,
+        "{}",
+        maker.out
+    );
+    let made = plugin_dir(&maker, "alice.web");
+    std::fs::create_dir_all(&src).unwrap();
+    for f in ["plugin.toml", "bar.lua"] {
+        std::fs::copy(made.join(f), src.join(f)).unwrap();
+    }
+
+    let line = format!("plugin add {}", src.display());
+    assert_eq!(run(&line, &mut e), ErrorCode::Usage.exit());
+    assert!(
+        e.err.contains("not signed") && e.err.contains("--yes"),
+        "{}",
+        e.err
+    );
+    assert!(!plugin_dir(&e, "alice.web").exists());
+    assert_eq!(run(&format!("{line} --yes --json"), &mut e), 0, "{}", e.err);
+    let r = json(&e);
+    assert_eq!(
+        (r["id"].as_str(), r["enabled"].as_bool()),
+        (Some("alice.web"), Some(false))
+    );
+    assert!(plugin_dir(&e, "alice.web").join("bar.lua").is_file());
+    assert_eq!(
+        run("plugin add alice.nothing", &mut e),
+        ErrorCode::Unavailable.exit()
+    );
+    assert!(e.err.contains("App Store"), "{}", e.err);
+
+    let launcher = e
+        .home
+        .join("share/applications/wolos-webapp-plugin-alice-web-web.desktop");
+    assert!(!launcher.exists());
+    assert_eq!(run("plugin enable alice.web", &mut e), 0, "{}", e.err);
+    let text = std::fs::read_to_string(&launcher).unwrap();
+    assert!(text.contains("X-WolOS-Plugin=alice.web"), "{text}");
+    assert_eq!(run("plugin disable alice.web", &mut e), 0);
+    assert!(!launcher.exists());
+    assert_eq!(run("plugin enable alice.web", &mut e), 0);
+    assert_eq!(run("plugin remove alice.web", &mut e), 0, "{}", e.err);
+    assert!(!launcher.exists(), "remove takes its launchers too");
+
+    // A .wolplug made by `pack` (the fake env leaves the tar; real zstd compresses it).
+    assert_eq!(
+        run("plugin pack alice.web --json", &mut maker),
+        0,
+        "{}",
+        maker.err
+    );
+    let file = PathBuf::from(json(&maker)["file"].as_str().unwrap());
+    let zstd = maker.execs.iter().find(|a| a[0] == "zstd").unwrap().clone();
+    let real = std::process::Command::new("zstd")
+        .args(&zstd[1..])
+        .status()
+        .is_ok_and(|s| s.success());
+    if real {
+        let line = format!("plugin add {}", file.display());
+        assert_eq!(run(&line, &mut e), ErrorCode::Usage.exit(), "unsigned");
+        assert_eq!(run(&format!("{line} --yes"), &mut e), 0, "{}", e.err);
+        assert!(plugin_dir(&e, "alice.web").join("plugin.toml").is_file());
+        std::fs::write(&file, b"not zstd").unwrap();
+        assert_eq!(
+            run(&format!("{line} --yes"), &mut e),
+            ErrorCode::Invalid.exit()
+        );
+        assert!(e.err.contains("damaged"), "{}", e.err);
+    } else {
+        eprintln!("no zstd here: the .wolplug half is skipped");
+    }
+    let _ = std::fs::remove_dir_all(&e.home);
+    let _ = std::fs::remove_dir_all(&maker.home);
 }

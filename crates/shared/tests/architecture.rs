@@ -51,9 +51,11 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // wopkg checks what it is about to install (ADR 0024).
                 "wopkg" => ["shared", "core", "xguard"].contains(&dep.as_str()),
                 // The App Store links the package core directly (ADR 0021); the desktop runs Lua
-                // widgets (ADR 0020).
-                "shell" => ["shared", "core", "wopkg", "wol-lua"].contains(&dep.as_str()),
-                // other members (e.g. shell) may use core + shared only
+                // widgets (ADR 0020); the Sound pane and the Control Center drive PipeWire through
+                // the audio adaptor (wol_audio::pw::Handle).
+                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio"].contains(&dep.as_str()),
+                // other members (e.g. audio: shared::atomic for its config fragments) may use
+                // core + shared only
                 _ => dep == "shared" || dep == "core",
             };
             if !ok {
@@ -127,6 +129,9 @@ fn violations_table() {
         (&[("shell", &["wol-abi"])], &["shell -> wol-abi"]),
         (&[("shell", &["wopkg", "core"])], &[]),
         (&[("shell", &["wol-lua"])], &[]),
+        (&[("shell", &["audio"])], &[]),
+        (&[("audio", &["shared", "core"])], &[]),
+        (&[("audio", &["api"])], &["audio -> api"]),
         (&[("controller", &["wol-lua", "core", "shared"])], &[]),
         (&[("controller", &["wol-abi"])], &["controller -> wol-abi"]),
         (&[("controller", &["api"])], &["controller -> api"]),

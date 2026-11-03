@@ -4,7 +4,7 @@ require "json"
 module Wopkg
   # Human output: one line per thing, a progress bar on a terminal, one confirmation question.
   module UI
-    SOURCE_NAMES = {"pacman" => "WolOS", "flatpak" => "Flathub", "aur" => "AUR (unreviewed)",
+    SOURCE_NAMES = {"pacman" => "WolOS", "flatpak" => "Flathub", "aur" => "Community (unreviewed)",
                     "appimage" => "AppImage", "recipe" => "recipe", "wol" => "WolOS app"}
 
     def self.tty? : Bool
@@ -19,7 +19,7 @@ module Wopkg
       tty? && !ENV.has_key?("NO_COLOR") ? "\e[2m#{s}\e[0m" : s
     end
 
-    # "Arch (extra)", "WolOS", "Flathub", "AUR (unreviewed)".
+    # "Arch (extra)", "WolOS", "Flathub", "Community (unreviewed)".
     def self.source_label(s : JSON::Any) : String
       kind = s["kind"].as_s
       repo = s["repo"].as_s

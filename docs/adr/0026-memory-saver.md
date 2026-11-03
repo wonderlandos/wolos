@@ -35,6 +35,6 @@ Rejected, because they did not win beyond noise:
 - A kernel patch: stacks are under 1 MiB after saving and hot anonymous memory is what remains, so ordering V8 regions has nothing to act on, and one pass already works from userspace.
 
 Consequences:
-- A frozen app stops answering the compositor's ping, so Hyprland shows its not-responding dialog over it. App Nap stays off until that is solved. Chromium with busy tabs never counts as idle and does not nap at all.
+- A frozen app stops answering the compositor's ping, so the compositor shows its not-responding dialog over it. App Nap stays off until that is solved. Chromium with busy tabs never counts as idle and does not nap at all.
 - Memory stays compressed in zram, and the first focus after saving costs up to about 110 ms.
 - The numbers come from a VM with software rendering. Restore on real hardware has not been measured.

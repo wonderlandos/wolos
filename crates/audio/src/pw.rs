@@ -154,6 +154,15 @@ pub struct PwBackend {
     to_loop: pw::channel::Sender<LoopCmd>,
 }
 
+/// Mode of a PipeWire or WirePlumber fragment: the person's own config, readable by its daemons.
+const FRAGMENT_MODE: u32 = 0o644;
+
+/// Replace a config fragment atomically (audit S4-10): a PipeWire or WirePlumber restart at that
+/// moment reads the old file or the new one, never a truncated one (no sound).
+fn write_fragment(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    shared::atomic::atomic_write(path, FRAGMENT_MODE, data)
+}
+
 impl Backend for PwBackend {
     fn execute(&mut self, cmd: &Command) -> Result<String, String> {
         match cmd {
@@ -170,7 +179,7 @@ impl Backend for PwBackend {
                 if let Some(dir) = p.parent() {
                     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                 }
-                std::fs::write(p, text).map_err(|e| e.to_string())?;
+                write_fragment(p, text.as_bytes()).map_err(|e| e.to_string())?;
                 Ok(String::new())
             }
             Command::RemovePath(p) => {
@@ -824,4 +833,44 @@ fn pw_loop(rx: pw::channel::Receiver<LoopCmd>, tx: &Events) -> Result<(), pw::Er
     mainloop.run();
     conn.borrow_mut().take();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit S4-10: a fragment is replaced whole, keeps 0644 whatever the umask, and leaves no
+    /// temporary behind; many writers at once each leave one whole version.
+    #[test]
+    fn fragments_are_replaced_atomically() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("wol-audio-frag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("51-wolos.conf");
+        write_fragment(&p, b"a = 1").unwrap();
+        write_fragment(&p, b"a = 2").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"a = 2");
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, FRAGMENT_MODE);
+        let writers: Vec<_> = (0..8)
+            .map(|i| {
+                let p = p.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        write_fragment(&p, format!("writer = {i}").as_bytes()).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.join().unwrap();
+        }
+        let last = std::fs::read_to_string(&p).unwrap();
+        assert!(last.starts_with("writer = ") && last.len() == 10, "{last}");
+        let names: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().collect();
+        assert_eq!(names.len(), 1, "no temporary left");
+        assert!(write_fragment(&d.join("missing/x.conf"), b"x").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

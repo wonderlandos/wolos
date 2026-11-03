@@ -1,11 +1,20 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# wol-volume up|down|mute via PipeWire wpctl.
+# wol-volume up|down|mute|micmute: the volume and microphone keys (hyprland.conf binds).
+# Why: one small script per key so the OSD shows at once (CTO 2026-11-02: the keys stay here for
+# v0.12, not on `wol audio volume`). How: PipeWire's wpctl on the default output (up, down, mute)
+# or the default input (micmute), then `wol shell show osd` (`osd-mic` after micmute: the OSD
+# shows the microphone state, not the speaker). Exit 64 on an unknown word.
+set -eu
 case ${1:-} in
 up) wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ ;;
 down) wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
 mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
-*) echo "usage: wol-volume up|down|mute" >&2; exit 64 ;;
+micmute) wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle ;;
+*) echo "usage: wol-volume up|down|mute|micmute" >&2; exit 64 ;;
 esac
 # The shell reads the new level now and shows the OSD (no wait for its status poll).
+if [ "${1:-}" = micmute ]; then
+	exec wol shell show osd-mic
+fi
 exec wol shell show osd

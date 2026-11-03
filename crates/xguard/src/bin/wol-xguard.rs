@@ -71,6 +71,11 @@ fn scan(args: &[String]) -> i32 {
             // The guard's deep check of a file above its memory cap: pieces, never whole (R2C-4).
             "--stream" => stream = true,
             "--rules" => dir = Some(rules_arg(it.next())),
+            // Everything after `--` is a path, even one that starts with `-` (S4-16).
+            "--" => {
+                paths.extend(it.by_ref().cloned());
+                break;
+            }
             p => paths.push(p.to_owned()),
         }
     }
@@ -184,9 +189,7 @@ fn build(args: &[String]) -> i32 {
     let mut b = xguard::db::Builder::default();
     let st = xguard::sigs::import(&mut b, &refs);
     let bytes = b.build(version, xguard::scan::now());
-    let tmp = format!("{out}.tmp");
-    std::fs::write(&tmp, &bytes)
-        .and_then(|()| std::fs::rename(&tmp, out))
+    shared::atomic::atomic_write(std::path::Path::new(out), 0o644, &bytes)
         .unwrap_or_else(|m| die(&format!("{out}: {m}")));
     println!("{}", serde_json::to_string(&st).unwrap_or_default());
     println!("{out}: {} bytes", bytes.len());
@@ -348,13 +351,13 @@ fn sweep(args: &[String]) -> i32 {
     owners.sort_unstable();
     owners.dedup();
     for uid in owners {
-        use std::os::unix::fs::PermissionsExt;
         let mine: Vec<_> = l.iter().filter(|b| b.uid == uid).collect();
         let t = serde_json::to_string(&mine).unwrap_or_default();
         let p = Path::new(&state).join(wol_core::malware::sweep_file(uid));
-        let _ = std::fs::write(&p, t);
-        let _ = std::os::unix::fs::chown(&p, Some(uid), None);
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        // S4-10: owner and 0600 before the list appears; atomic, so a reader never sees half.
+        if let Err(e) = shared::atomic::write_as(&p, 0o600, Some(uid), t.as_bytes()) {
+            eprintln!("wol-xguard: could not write {}: {e}", p.display());
+        }
     }
     println!(
         "{} files, {}",

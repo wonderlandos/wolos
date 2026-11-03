@@ -193,7 +193,7 @@ fn adl_laptop_snapshot() {
 
 #[test]
 fn vm_snapshot_virtio_gpu_and_no_cpufreq() {
-    // QEMU with virtio-gpu (Hyprland runs) and a virtio NIC, no cpufreq driver.
+    // QEMU with virtio-gpu (the compositor runs) and a virtio NIC, no cpufreq driver.
     let h = FakeHost::linux();
     sysfs(
         &h,
@@ -393,4 +393,16 @@ fn real_host_lists_its_cpu() {
     let s = read(&crate::system::PosixHost);
     let cpu = s.devices.iter().find(|d| d.kind == Kind::Cpu);
     assert!(cpu.is_some_and(|c| !c.name.is_empty()), "{s:?}");
+}
+
+/// Audit S4-24: `pacman -Qq` slower than the quick probe is read with the slow runner, so a
+/// missing driver package is reported, not taken as installed.
+#[test]
+fn a_slow_package_list_is_still_read() {
+    let h = FakeHost::linux();
+    h.slow("pacman -Qq", "linux\nmesa\n");
+    let ctx = context(&h);
+    let installed = ctx.installed.expect("read through run_slow");
+    assert!(installed.contains("mesa") && !installed.contains("vulkan-intel"));
+    assert!(context(&FakeHost::linux()).installed.is_none());
 }

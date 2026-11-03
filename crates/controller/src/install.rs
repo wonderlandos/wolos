@@ -762,7 +762,9 @@ impl Extras {
     }
 }
 
-/// `KEY=VALUE` lines for install-run (read like [`Applied::env`], never run).
+/// `KEY=VALUE` lines for install-run (read like [`Applied::env`], never run). `WOLOS_SECURE`:
+/// the person's Secure Boot answer, yes for a plan that never asked. `modules`: checked module
+/// ids, `extra_packages`: the Store kits' checked package names, both space-separated (ADR 0032 B).
 pub fn info_text(p: &Plan, x: &Extras) -> String {
     [
         kv("disk", &p.disk),
@@ -775,6 +777,16 @@ pub fn info_text(p: &Plan, x: &Extras) -> String {
         kv("WOLOS_HOSTNAME", &x.hostname),
         kv("WOLOS_AUTOLOGIN", if x.autologin { "yes" } else { "no" }),
         kv("WOLOS_SWAP", &x.swap),
+        kv(
+            "WOLOS_SECURE",
+            if p.secure_boot.unwrap_or(true) {
+                "yes"
+            } else {
+                "no"
+            },
+        ),
+        kv("modules", &p.module_ids().join(" ")),
+        kv("extra_packages", &p.extra_packages().join(" ")),
     ]
     .concat()
 }
@@ -1763,8 +1775,43 @@ mod tests {
         };
         assert_eq!(
             info_text(&p, &x),
-            "disk=/dev/vda\nwipe=0\nWOLOS_ENCRYPT=no\naccount=alice\nWOLOS_HOSTNAME=alices-pc\nWOLOS_AUTOLOGIN=yes\nWOLOS_SWAP=swapfile:8\n"
+            "disk=/dev/vda\nwipe=0\nWOLOS_ENCRYPT=no\naccount=alice\nWOLOS_HOSTNAME=alices-pc\nWOLOS_AUTOLOGIN=yes\nWOLOS_SWAP=swapfile:8\nWOLOS_SECURE=yes\nmodules=\nextra_packages=\n"
         );
+    }
+
+    #[test]
+    fn the_installers_new_pages_reach_install_run_as_checked_lines() {
+        let p = Plan {
+            disk: "/dev/vda".into(),
+            secure_boot: Some(false),
+            modules: vec!["dev".into(), "x;reboot".into(), "creative".into()],
+            extras: vec!["codecs-kit".into()],
+            ..Plan::default()
+        };
+        let t = info_text(&p, &Extras::default());
+        let line = |k: &str| {
+            t.lines()
+                .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+                .unwrap_or_else(|| panic!("no {k} in {t}"))
+                .to_string()
+        };
+        assert_eq!(line("WOLOS_SECURE"), "no");
+        assert_eq!(
+            line("modules"),
+            "dev creative",
+            "a bad id never reaches the shell"
+        );
+        let pk = line("extra_packages");
+        assert!(pk.starts_with("gst-plugins-good lame "), "MP3 first: {pk}");
+        assert!(
+            pk.split(' ').all(wol_core::store::is_pkg_name),
+            "only package names: {pk}"
+        );
+        let asked = Plan {
+            secure_boot: Some(true),
+            ..Plan::default()
+        };
+        assert!(info_text(&asked, &Extras::default()).contains("WOLOS_SECURE=yes\n"));
     }
 
     #[test]

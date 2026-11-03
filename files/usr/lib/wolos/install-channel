@@ -1,0 +1,35 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# install-channel ROOT: the installed system follows the channel its image was built from (audit
+# CA-3), not always the stable tag the wolos-mirrorlist package names. The live medium's
+# /etc/pacman.conf says which (wolos-iso build.sh): its WolOS section is `[NAME]` + `Server = URL`
+# (wolos = stable, wolos-testing = testing; URL ends in the release tag). In ROOT (the copied live
+# root, install-run) that section reads the mirrorlist again (`Include =`), and the mirrorlist's
+# release tag becomes the channel's. A live medium without such a Server line changes nothing.
+set -eu
+root=${1:?usage: install-channel ROOT}
+conf=$root/etc/pacman.conf
+list=$root/etc/pacman.d/wolos-mirrorlist
+inc="Include = /etc/pacman.d/wolos-mirrorlist"
+die() { echo "install-channel: $*" >&2; exit 1; }
+[ -f "$conf" ] || die "no $conf"
+# The WolOS section ([wolos] or [wolos-<channel>]) and its first Server line.
+row=$(awk '/^\[/ { s = substr($0, 2, length($0) - 2); next }
+  s ~ /^wolos(-[a-z0-9]+)?$/ && /^Server[ \t]*=/ { sub(/^Server[ \t]*=[ \t]*/, ""); print s " " $0; exit }' "$conf")
+[ -n "$row" ] || exit 0
+name=${row%% *} url=${row#* }; url=${url%/}
+tag=${url##*/}
+case $url in *[!A-Za-z0-9._~:/@%+-]*) die "unexpected server: $url" ;; esac
+case $tag in '' | *[!A-Za-z0-9._-]*) die "no release tag in $url" ;; esac
+awk -v n="[$name]" -v inc="$inc" '
+  /^\[/ { s = $0; done = 0 }
+  s == n && /^Server[ \t]*=/ { if (!done) print inc; done = 1; next }
+  { print }' "$conf" > "$conf.new" && mv "$conf.new" "$conf"
+[ -f "$list" ] || die "no $list"
+# Stable from the release the package names: nothing to change.
+if sed "s/[$]repo/$name/g" "$list" | grep -qxF "Server = $url"; then exit 0; fi
+awk -v tag="$tag" -v url="$url" '
+  NR == 1 { print "# Channel " tag ": the image this system was installed from (install-channel)." }
+  /^#?Server[ \t]*=/ { gsub(/\$repo-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/, tag) }
+  { print; if ($0 == "Server = " url) have = 1 }
+  END { if (!have) print "Server = " url }' "$list" > "$list.new" && mv "$list.new" "$list"

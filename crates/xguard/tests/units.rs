@@ -83,3 +83,32 @@ fn the_guard_fits_its_memory_limit() {
         xguard::guard::RESERVE
     );
 }
+
+/// Audit S4-3: the socket queue and the workers fit the unit's descriptor limit with room for the
+/// kernel's questions (one descriptor each while queued). Out of descriptors, `fanotify_read`
+/// fails and the kernel refuses every pending exec.
+#[test]
+fn the_guard_fits_its_descriptor_limit() {
+    let unit = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../files/usr/lib/systemd/system/wolos-xguard.service"
+    );
+    let text = std::fs::read_to_string(unit).unwrap();
+    let limit: usize = text
+        .lines()
+        .find_map(|l| l.strip_prefix("LimitNOFILE="))
+        .expect("wolos-xguard.service sets LimitNOFILE")
+        .trim()
+        .parse()
+        .expect("one number (soft = hard)");
+    use xguard::guard::{FD_NEED, QUEUE_CAP, THREADS};
+    assert!(
+        QUEUE_CAP * 2 + THREADS * 4 < limit,
+        "QUEUE_CAP * 2 + THREADS * 4 >= LimitNOFILE={limit}"
+    );
+    // At least 4x headroom for kernel questions waiting on the three workers.
+    assert!(
+        FD_NEED * 4 <= limit,
+        "FD_NEED {FD_NEED} x 4 > LimitNOFILE={limit}"
+    );
+}

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! Root-side process launch (docs/STANDARDS.md section 7, ADR 0015; audit A22/B12, R2C-16). Every
 //! program a root process of WolOS starts (wold, wol-admind, wol-login, the xguard daemon) is
 //! built by [`privileged_command`]: a cleared environment, a fixed `PATH`, `LC_ALL=C`, stdin from
@@ -43,17 +43,8 @@ pub fn capture(argv: &[&str], timeout: Duration) -> Option<String> {
 
 /// `argv` with `input` on stdin (secrets never in argv); stdout as [`capture`].
 pub fn capture_input(argv: &[&str], input: &str, timeout: Duration) -> Option<String> {
-    use std::io::Write;
     let (file, args) = argv.split_first()?;
-    let mut child = privileged_command(file)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    if let Some(mut i) = child.stdin.take() {
-        let _ = i.write_all(input.as_bytes());
-    }
-    crate::system::wait_output(child, timeout)
+    let mut cmd = privileged_command(file);
+    cmd.args(args);
+    crate::system::run_input(cmd, input, timeout)
 }

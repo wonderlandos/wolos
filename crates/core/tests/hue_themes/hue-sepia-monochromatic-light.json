@@ -1,0 +1,38 @@
+{
+  "id": "hue-sepia-monochromatic-light",
+  "name": "sepia",
+  "variant": "light",
+  "tokens": {
+    "surface": "#ffebd1",
+    "sidebar": "rgba(249,229,204,0.92)",
+    "card": "#fff7ed",
+    "line": "rgba(61,51,37,0.1)",
+    "text": "#3d3325",
+    "dim": "#817361",
+    "accent": "#835c47",
+    "accentText": "#ffffff",
+    "glass": "rgba(255,235,209,0.84)",
+    "control": "#e8d5bc",
+    "success": "#3b2900",
+    "warning": "#1b0400",
+    "danger": "#664c30"
+  },
+  "terminal": [
+    "#ffebd1",
+    "#664c30",
+    "#3b2900",
+    "#1b0400",
+    "#835c47",
+    "#5b3411",
+    "#281800",
+    "#3d3325",
+    "#847f7a",
+    "#563812",
+    "#2d1500",
+    "#260700",
+    "#73462c",
+    "#4d1d00",
+    "#210c00",
+    "#050100"
+  ]
+}

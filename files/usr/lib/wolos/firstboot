@@ -1,19 +1,38 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # WolOS first boot (wolos-firstboot.service, once): driver packages not on the image (NVIDIA: the
-# hardware catalogue picks nvidia-open-dkms) are installed online and loaded before the login window.
+# hardware catalogue picks nvidia-open-dkms) are installed online and loaded before the login window;
+# optional modules and media formats the installer queued (/var/lib/wolos/modules-pending,
+# packages-pending) start installing in the background (modules-install --drain). firstboot-done
+# is written once the drivers are done: the queue is not firstboot's, it is drained again on every
+# connection that comes up (NetworkManager dispatcher 50-wolos-online), and modules-install gives
+# up on an id that keeps failing (audit C8-7), so a module that can never install never makes the
+# whole first boot (mirror gate, driver downloads) run again.
 # wolos-hw.service (`wol hw boot`) loads drivers on every later boot. The first user is created by
 # the setup assistant on the first login window (ADR 0004).
 set -u
 log() { echo "wolos-firstboot: $*"; logger -t wolos-firstboot "$*" 2>/dev/null || :; }
-D=${WOLOS_STATE:-/var/lib/wolos}
+D="${WOLOS_STATE:-/var/lib/wolos}"
 # The optimized x86-64-v3 repo sections match this processor (`wol mirror gate`, ADR 0030; a disk
 # moved to another machine is re-gated).
 wol mirror gate --yes >/dev/null || log "wol mirror gate failed"
-if wol hw boot --online; then
-  mkdir -p "$D" && touch "$D/firstboot-done"
-else
+ok=yes
+if ! wol hw boot --online; then
   # Offline or a failed download: the network-up hook retries (wol hw online); next boot tries again.
-  log "wol hw boot --online failed"
+  log "wol hw boot --online failed"; ok=no
+fi
+# Optional modules and media formats the installer queued (ticked, but not installable offline;
+# ADR 0032). A module can be gigabytes, so it never holds up the login window: its own transient
+# unit downloads and installs it after this one. What does not install stays queued for the
+# dispatcher's next run; it does not keep firstboot-done from being written.
+P="${WOL_MODULES_PENDING:-$D/modules-pending}"
+Q="${WOL_PACKAGES_PENDING:-$D/packages-pending}"
+if [ -s "$P" ] || [ -s "$Q" ]; then
+  systemd-run --no-block --unit=wolos-modules-pending --description="WolOS: install queued modules" \
+    --property=After=network-online.target "${WOLOS_LIB:-/usr/lib/wolos}/modules-install" --drain ||
+    log "could not start the queued modules"
+fi
+if [ "$ok" = yes ]; then
+  mkdir -p "$D" && touch "$D/firstboot-done"
 fi
 exit 0

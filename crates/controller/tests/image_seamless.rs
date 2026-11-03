@@ -1,17 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! One picture from power-on to the desktop (ADR 0012): loader splash, black console, locked start,
 //! compositor colours. Scripts run against fakes; configs are checked line by line.
+#[path = "support/repo.rs"]
+mod repo;
+use repo::{read, repo};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
-fn repo(p: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(p)
-}
-
-fn read(p: &str) -> String {
-    fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
 
 fn sandbox(tag: &str, fakes: &[(&str, &str)]) -> PathBuf {
     let d = std::env::temp_dir().join(format!("wol-seamless-{tag}-{}", std::process::id()));
@@ -30,7 +26,7 @@ fn sh_n(p: &str) {
     assert!(st.success(), "sh -n {p}");
 }
 
-/// `key = value` lines of one Hyprland section (`misc {` .. `}`), whitespace trimmed.
+/// `key = value` lines of one compositor section (`misc {` .. `}`), whitespace trimmed.
 fn section(conf: &str, name: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut inside = false;
@@ -111,6 +107,54 @@ fn every_compositor_draws_the_pointer_in_a_vm_with_a_shipped_theme() {
     }
 }
 
+/// Audit4 S5-20: in a VM the desktop draws the pointer as a setting too, so `hyprctl reload` (Settings
+/// does it) never brings the invisible cursor plane back. wol-session writes the fragment every
+/// start, the conf sources it after wolos-perf.conf (which sets the auto mode).
+#[test]
+fn the_desktop_keeps_the_vm_pointer_across_reloads() {
+    for (vm, want) in [(true, Some("1")), (false, None)] {
+        let d = sandbox(
+            if vm { "vm" } else { "metal" },
+            &[
+                ("dbus-run-session", "#!/bin/sh\nexit 0\n"),
+                (
+                    "systemd-detect-virt",
+                    if vm {
+                        "#!/bin/sh\nexit 0\n"
+                    } else {
+                        "#!/bin/sh\nexit 1\n"
+                    },
+                ),
+            ],
+        );
+        let home = d.join("home");
+        fs::create_dir_all(&home).unwrap();
+        let st = Command::new("sh")
+            .arg(repo("desktop/overlay/usr/bin/wol-session"))
+            .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+            .env("HOME", &home)
+            .env("XDG_RUNTIME_DIR", &d)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env_remove("WOL_SESSION_LOCKED")
+            .status()
+            .unwrap();
+        assert!(st.success());
+        let frag = fs::read_to_string(home.join(".cache/wolos/hypr-vm.conf")).unwrap();
+        assert_eq!(
+            value(&frag, "cursor", "no_hardware_cursors").as_deref(),
+            want,
+            "vm={vm}: {frag}"
+        );
+        assert!(!home.join(".cache/wolos/hypr-vm.conf.tmp").exists());
+    }
+    let desktop = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+    let at = |l: &str| desktop.find(l).unwrap_or_else(|| panic!("{l}"));
+    assert!(
+        at("\nsource = /usr/share/wolos/hypr/wolos-perf.conf\n")
+            < at("\nsource = ~/.cache/wolos/hypr-vm.conf\n")
+    );
+}
+
 #[test]
 fn every_compositor_starts_on_black_with_the_lock_kept_across_crashes() {
     let desktop = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
@@ -133,7 +177,7 @@ fn every_compositor_starts_on_black_with_the_lock_kept_across_crashes() {
     }
 }
 
-/// Hyprland draws no title bars: GTK 3 apps without a header bar (Shotwell) lost their traffic lights.
+/// The compositor draws no title bars: GTK 3 apps without a header bar (Shotwell) lost their traffic lights.
 #[test]
 fn every_gtk3_window_draws_the_kit_traffic_lights() {
     let s = read("desktop/overlay/usr/bin/wol-session");
@@ -186,7 +230,7 @@ fn the_installer_compositor_never_hides_the_pointer() {
     assert_eq!(value(&c, "cursor", "invisible"), None, "installer.conf");
 }
 
-/// vmwgfx (VirtualBox VMSVGA, VMware) has a render node, but Hyprland drops GTK's GL clients there
+/// vmwgfx (VirtualBox VMSVGA, VMware) has a render node, but the compositor drops GTK's GL clients there
 /// (wol-shell and every wol-lock died: black screen). Cairo wins over ngl on vmwgfx.
 #[test]
 fn vmwgfx_sessions_draw_gtk_with_cairo() {

@@ -1,19 +1,22 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Local AI module, user step (`post` of /usr/share/wolos/modules/ai-local.json, run as the person by
-# `wol modules enable ai-local`, ADR 0032, docs/modules/modules.md): the module depends on `ollama`
-# (CPU); this adds the GPU backend `wol hw compute --json` names (ollama-cuda, ollama-rocm or
-# ollama-vulkan) through `wol install`, which asks wol-admind and so the administrator password.
-# Idempotent: an installed backend, or `cpu`, needs nothing. Exit 0 when done, 1 when a step failed.
+# `wol modules enable ai-local`, ADR 0032, docs/modules/modules.md): checks that the GPU backend
+# `wol hw compute --json` names (ollama-cuda, ollama-rocm or ollama-vulkan) is there. The backend is
+# installed with the module, on the root side (modules-install, called by the installer, firstboot
+# and `wol modules install ai-local`), so this step never asks for the administrator password and
+# never installs anything. Without the backend Ollama runs on the CPU, so a missing one is a note.
+# Idempotent. Exit 0 when Ollama can run (CPU or GPU), 1 when `wol hw compute` gave no answer.
 set -eu
-json=$(wol hw compute --json)
+json=$(wol hw compute --json) || { echo "ai-local: wol hw compute did not answer" >&2; exit 1; }
 backend=$(printf '%s\n' "$json" | sed -n 's/.*"backend": *"\([a-z]*\)".*/\1/p')
 case "$backend" in
   cuda|rocm|vulkan) pkg="ollama-$backend" ;;
   cpu) exit 0 ;;
   *) echo "ai-local: unknown compute backend '$backend'" >&2; exit 1 ;;
 esac
-if pacman -Qq "$pkg" >/dev/null 2>&1; then
-  exit 0
+if ! pacman -Qq "$pkg" >/dev/null 2>&1; then
+  echo "ai-local: models run on the processor for now; the graphics part ($pkg) comes with" \
+    "the next 'wol modules install ai-local'" >&2
 fi
-wol install "$pkg"
+exit 0

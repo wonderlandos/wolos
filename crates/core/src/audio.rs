@@ -499,14 +499,22 @@ pub struct ResetPlan {
     pub commands: Vec<Vec<String>>,
 }
 
-pub fn reset_plan(home: &Path) -> ResetPlan {
+/// The reset for one account: WirePlumber's state under `state_home` (`$XDG_STATE_HOME`, and the
+/// default place under `home` when that differs), WolOS's own files under `home`. None when `home`
+/// or `state_home` is empty or relative (audit S4-22): nothing is ever removed relative to the
+/// working directory.
+pub fn reset_plan(home: &Path, state_home: &Path) -> Option<ResetPlan> {
+    if !home.is_absolute() || !state_home.is_absolute() {
+        return None;
+    }
     let sv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    ResetPlan {
-        remove: vec![
-            home.join(WIREPLUMBER_STATE),
-            home.join(PRO_AUDIO_CONF),
-            home.join(SNAPPED_FILE),
-        ],
+    let mut remove = vec![state_home.join("wireplumber")];
+    if home.join(WIREPLUMBER_STATE) != remove[0] {
+        remove.push(home.join(WIREPLUMBER_STATE));
+    }
+    remove.extend([home.join(PRO_AUDIO_CONF), home.join(SNAPPED_FILE)]);
+    Some(ResetPlan {
+        remove,
         commands: vec![
             sv(&["wpctl", "clear-default"]),
             sv(&[
@@ -534,7 +542,7 @@ pub fn reset_plan(home: &Path) -> ResetPlan {
                 "wireplumber.service",
             ]),
         ],
-    }
+    })
 }
 
 impl ResetPlan {
@@ -924,10 +932,26 @@ mod tests {
         }
     }
 
+    /// Audit S4-22: never a relative path; `$XDG_STATE_HOME` is where WirePlumber's state is.
+    #[test]
+    fn reset_is_absolute_and_follows_the_state_home() {
+        assert_eq!(reset_plan(Path::new(""), Path::new("/s")), None);
+        assert_eq!(reset_plan(Path::new("home"), Path::new("/s")), None);
+        assert_eq!(
+            reset_plan(Path::new("/home/x"), Path::new(".local/state")),
+            None
+        );
+        let p = reset_plan(Path::new("/home/x"), Path::new("/var/state/x")).unwrap();
+        assert_eq!(p.remove[0], Path::new("/var/state/x/wireplumber"));
+        assert_eq!(p.remove[1], Path::new("/home/x/.local/state/wireplumber"));
+        assert!(p.remove.iter().all(|r| r.is_absolute()));
+    }
+
     #[test]
     fn reset_forgets_state_and_restarts_the_three_services() {
-        let p = reset_plan(Path::new("/home/x"));
+        let p = reset_plan(Path::new("/home/x"), Path::new("/home/x/.local/state")).unwrap();
         assert_eq!(p.remove[0], Path::new("/home/x/.local/state/wireplumber"));
+        assert_eq!(p.remove.len(), 3);
         assert_eq!(
             p.remove[1],
             Path::new("/home/x/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf")

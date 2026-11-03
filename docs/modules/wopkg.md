@@ -11,13 +11,13 @@ One tool for every source. `wopkg` (Crystal CLI, `wopkg/`) drives `libwopkg` (`c
 | `flatpak` | Flathub and other signed remotes | app id | `flatpak --user` | `flatpak update` |
 | `appimage` | `gh:owner/repo` releases, files | URL | `~/Applications` | zsync delta, else full download; key pinned at first install |
 | `recipe` | `wopkg/recipes/*/recipe.toml` | recipe name | `~/.local` | rebuild when the version changes |
-| `aur` | AUR metadata dump | package name | sandboxed build, then `package.install-file` | rebuild; always `unreviewed` |
+| `aur` | community package collection metadata dump | package name | sandboxed build, then `package.install-file` | rebuild; always `unreviewed` |
 
 Flathub is added for the account the first time an app is installed from it. On an installed slot the package database is the one `/etc/pacman.conf` names (`/usr/lib/pacman`).
 
 `catalog` is Arch's AppStream (`archlinux-appstream-data`). It installs nothing: it ties a package name to an AppStream id, so search can find a package by its app's name and one app shows once. Sources join only when their ids agree. In the October 2026 data, 604 of Arch's 1401 apps share an id with Flathub; the rest stay separate entries, and a package without metadata never joins by name. `wopkg pin <name>` keeps a package out of `wopkg update` (`package.update-holding` passes `--ignore`); `wopkg update <name>` updates one app.
 
-`wopkg audit <pkg>` checks an AUR package out and reads it with `wopkg-aurlaws` without building it (see [aurlaws](aurlaws.md)). The same analyser runs after the sandboxed build, on the files, the built package and the trace.
+`wopkg audit <pkg>` checks a community-collection package out and reads it with `wopkg-aurlaws` without building it (see [aurlaws](aurlaws.md)). The same analyser runs after the sandboxed build, on the files, the built package and the trace.
 
 Search ranks exact name, prefix, word, summary; ties by the source order above. One result per app (`key`), each listing every source.
 
@@ -37,13 +37,19 @@ Search result (`wopkg_search`):
 
 Index update request: `{"sources":[{"name","kind","url"|"path","format"?}]}` (the CLI builds it from `/etc/pacman.conf`, Flatpak's appstream copy and the local feeds), result `{"sources":[{"name","records","rebuilt","error"?}]}`. A source is rebuilt only when its input's size, mtime or ETag changed.
 
+Downloads are bounded: an index input at most 512 MiB (`fetch::MAX_INPUT`), the release feed `<channel>.json` 4 MiB, the plugin index `index.json` 4 MiB, a `.sig` 64 bytes. A longer body is refused and its part file deleted, so the last good copy stays.
+
+The release feed lives at `wopkg::FEEDS`, the assets of the latest wolos-packages release: `https://github.com/wonderlandos/wolos-packages/releases/latest/download/<channel>.json` and `<channel>.json.sig` (GitHub redirects to the asset; the download follows it). Every publication uploads the feeds of all channels again, so `latest` always carries each one. In v0.12 the feeds are published with `expires` 0: the serial floor alone stops a replayed older feed.
+
+Signed lists (release feed and plugin index) carry `serial` (increasing with each publication) and `expires` (Unix seconds, 0 = none) next to `format`, both covered by the signature. A copy is checked (signature, format, channel, serial not below the highest seen, not expired) before it replaces the cached copy and its ETag; the highest feed serial per channel lives in the state dir. When a new copy fails, the cached copy is used while it still checks. The Store downloads the plugin index again once half of its remaining lifetime or a day has passed, and an expired cached list is not shown.
+
 Progress events (callback, valid during the call, JSON with an `event`): `bytes` (`url`, `done`, `total`), `done` (`url`, `outcome`), `source` (`report`, from an index update), `appimage` (`name`, `result`). New events and fields may appear; ignore what you do not know.
 
 History entry (`wopkg_history_record`, one JSON line each in `history.jsonl`): `{"source","action","name","from","to","undo"}`; `undo` is a document tagged by `type` (`restore` with `from`/`to`, `remove` with `path`, `run` with `argv`, `system` with `note`). `wopkg_rollback(id)` runs the undo.
 
 ## System changes (wold)
 
-`wopkg_system_call` sends one line `call <json>` to the wold socket and reads one answer line. Calls: `package.change` (`verb` install|remove|update, `names`), `package.install-file` (`path`), `system.update` (`manifest`, `signature` hex), `system.channel` (`channel`), `system.rollback`. wold takes the caller's executable from the kernel and checks the consent grant: `packages-install`, `packages-remove`, `packages-update`, and `packages-unreviewed` for files built locally. Denials say where to allow it (Settings > Privacy & Security > Software). Nothing else is trusted from the request.
+`wopkg_system_call` sends one line `call <json>` to the wold socket and reads one answer line. Calls: `package.change` (`verb` install|remove|update, `names`), `package.install-file` (`path`), `system.update` (`manifest`, `signature` hex), `system.channel` (`channel`), `system.rollback`. wold takes the caller's executable from the kernel and checks the consent grant: `packages-install`, `packages-remove`, `packages-update`, and `packages-unreviewed` for files built locally. Denials say where to allow it (Settings > Privacy & Security > Software). Nothing else is trusted from the request. Every call except `system.update` (a signed, newer release) is an administrator sheet the shell runs through wol-admind after the password; `install-file` installs wold's own staged copy (ADR 0034).
 
 ## Recipes
 

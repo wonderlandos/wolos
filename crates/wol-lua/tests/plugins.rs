@@ -844,3 +844,45 @@ fn every_entry_point_stops_at_its_deadline() {
         load(Kind::Widget, bomb, &[]).unwrap_err()
     });
 }
+
+/// Audit C8-4: a loop of `wol.notify` in one render reaches the host at most
+/// `NOTIFY_PER_WINDOW` times; the rest answer `false, "Too many ..."`, and long text is cut.
+#[test]
+fn notify_is_rate_limited_and_capped() {
+    let fake = Rc::new(Fake::default());
+    let src = r#"
+local refused, why = 0, ""
+return wol.widget { render = function()
+  local long = string.rep("x", 5000)
+  for i = 1, 10000 do
+    local t = i == 1 and long or "t"
+    local ok, m = wol.notify(t, t)
+    if not ok then refused = refused + 1; why = m end
+  end
+  return wol.label { refused .. "|" .. why }
+end }
+"#;
+    let mut w = load_with(
+        Kind::Widget,
+        src,
+        &[Permission::Notifications],
+        fake.clone(),
+    )
+    .unwrap();
+    let text = match w.render().unwrap() {
+        Node::Label { text, .. } => text,
+        other => panic!("{other:?}"),
+    };
+    let posted = fake.posted.borrow();
+    assert_eq!(posted.len(), wol_lua::NOTIFY_PER_WINDOW);
+    assert_eq!(
+        text,
+        format!(
+            "{}|{}",
+            10000 - wol_lua::NOTIFY_PER_WINDOW,
+            wol_lua::TOO_MANY_NOTIFICATIONS
+        )
+    );
+    assert_eq!(posted[0].0.chars().count(), wol_lua::NOTIFY_TITLE);
+    assert_eq!(posted[0].1.chars().count(), wol_lua::NOTIFY_BODY);
+}

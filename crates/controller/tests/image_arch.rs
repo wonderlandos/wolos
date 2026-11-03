@@ -2,16 +2,9 @@
 //! The Arch Linux image (ADR 0016): mkarchiso profile `wolos-iso/profile`, pinned to one Arch Linux Archive
 //! date, `[wolos]` before the Arch repos, linux-wolos only, the `[wolos]` repo build and the release
 //! manifest. Scripts run against fakes; nothing here needs root or the network.
-use std::{fs, path::PathBuf};
-fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p)
-}
-
-fn read(p: &str) -> String {
-    fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::read;
 
 #[test]
 fn every_hyprland_session_runs_at_scale_one() {

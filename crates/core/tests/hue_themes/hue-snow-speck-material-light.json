@@ -1,0 +1,38 @@
+{
+  "id": "hue-snow-speck-material-light",
+  "name": "snow speck",
+  "variant": "light",
+  "tokens": {
+    "surface": "#fafafa",
+    "sidebar": "rgba(243,243,243,0.92)",
+    "card": "#fdfdfd",
+    "line": "rgba(33,33,33,0.1)",
+    "text": "#212121",
+    "dim": "#6d6d6d",
+    "accent": "#5b72a0",
+    "accentText": "#ffffff",
+    "glass": "rgba(250,250,250,0.84)",
+    "control": "#e0e0e0",
+    "success": "#c91f29",
+    "warning": "#ca232d",
+    "danger": "#c71a24"
+  },
+  "terminal": [
+    "#fafafa",
+    "#c71a24",
+    "#c91f29",
+    "#ca232d",
+    "#5b72a0",
+    "#a8515e",
+    "#527597",
+    "#212121",
+    "#757575",
+    "#aa0e17",
+    "#ad121b",
+    "#af151e",
+    "#7b96cb",
+    "#d5717f",
+    "#7199c1",
+    "#000000"
+  ]
+}

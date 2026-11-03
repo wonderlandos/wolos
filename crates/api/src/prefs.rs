@@ -5,8 +5,7 @@
 use serde_json::{Value, json};
 use shared::portal::{Answer, Code, MAX_PREFS};
 use std::collections::BTreeMap;
-use std::io::Write;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -54,16 +53,7 @@ impl Prefs {
             .recursive(true)
             .mode(0o700)
             .create(dir)?;
-        let tmp = path.with_extension("tmp");
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&tmp)?;
-        f.write_all(json!(map).to_string().as_bytes())?;
-        f.sync_all()?;
-        std::fs::rename(tmp, path)
+        shared::atomic::atomic_write(path, 0o600, json!(map).to_string().as_bytes())
     }
 
     pub fn get(&self, uid: u32, app: &str, key: &str) -> Answer {

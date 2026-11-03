@@ -10,8 +10,6 @@ pub const PASSWD_FILE: &str = "/etc/passwd";
 pub const SHELLS_FILE: &str = "/etc/shells";
 pub const MAX_USER: usize = 32;
 pub const MAX_PASSWORD: usize = 512;
-const FIRST_HUMAN: u32 = 1000;
-const NOBODY: u32 = 65534;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoginUser {
@@ -66,18 +64,16 @@ pub fn all_users(passwd: &str) -> Vec<LoginUser> {
         .collect()
 }
 
-/// Shown on the login window: uid >= 1000 (not nobody) with a shell from /etc/shells, sorted by name.
+/// Shown on the login window and accepted by [`LoginFlow::submit`]: [`shared::login::login_names`]
+/// (one rule for both sides, audit5 S9-1), sorted by name.
 pub fn listed(passwd: &str, shells: &str) -> Vec<LoginUser> {
-    let valid: Vec<&str> = shells
-        .lines()
-        .map(str::trim)
-        .filter(|s| s.starts_with('/'))
-        .collect();
+    let names = shared::login::login_names(passwd, shells);
     let mut v: Vec<LoginUser> = all_users(passwd)
         .into_iter()
-        .filter(|u| u.uid >= FIRST_HUMAN && u.uid != NOBODY && valid.contains(&u.shell.as_str()))
+        .filter(|u| names.contains(&u.name))
         .collect();
     v.sort_by(|a, b| a.name.cmp(&b.name));
+    v.dedup_by(|a, b| a.name == b.name);
     v
 }
 
@@ -355,6 +351,23 @@ fn write_file(
     Ok(())
 }
 
+/// The steps that open `name`'s home with the password just checked (audit S4-20). None: the home
+/// is encrypted and closed but the password is not UTF-8 text, so homectl cannot be given it and
+/// the session must not start without its files. A plain or already open home needs no steps.
+pub fn home_unlock_steps(
+    name: &str,
+    state: Option<wol_core::home_crypt::State>,
+    password: &[u8],
+) -> Option<Vec<wol_core::home_crypt::Cmd>> {
+    match std::str::from_utf8(password) {
+        Ok(pw) => Some(wol_core::home_crypt::unlock(name, state, pw)),
+        Err(_) => {
+            let steps = wol_core::home_crypt::unlock(name, state, "");
+            steps.is_empty().then_some(steps)
+        }
+    }
+}
+
 pub fn encode_request(user: &str, password: &[u8]) -> Vec<u8> {
     let mut b = format!("{user}\n").into_bytes();
     b.extend_from_slice(password);
@@ -371,7 +384,7 @@ pub fn runtime_dir(u: &LoginUser) -> String {
 pub const SESSION_PAM: &str = "/usr/lib/wol-session-pam";
 pub const SESSION_PAM_SERVICE: &std::ffi::CStr = c"wol-login";
 
-/// `locked`: wol-session starts Hyprland locked behind wol-lock (ADR 0012).
+/// `locked`: wol-session starts the compositor locked behind wol-lock (ADR 0012).
 pub fn session_command(u: &LoginUser, locked: bool) -> Option<Vec<String>> {
     let lock = if locked { "WOL_SESSION_LOCKED=1 " } else { "" };
     valid_name(&u.name).then(|| {
@@ -646,7 +659,7 @@ pub fn console_notice(dri_present: bool, status: &str) -> String {
     )
 }
 
-/// Greeter respawn policy: a greeter that dies quickly (e.g. Hyprland without DRM) is retried with
+/// Greeter respawn policy: a greeter that dies quickly (e.g. the compositor without DRM) is retried with
 /// exponential backoff (1 s .. 5 min) and logged once per failure streak, never spun.
 #[derive(Debug, Default)]
 pub struct GreeterRespawn {
@@ -852,6 +865,30 @@ broken:line
             full_name: full.into(),
             home: home.into(),
             shell: shell.into(),
+        }
+    }
+
+    #[test]
+    fn the_listed_accounts_are_the_accepted_ones_without_etc_shells() {
+        // audit5 S9-1: the login window lists exactly what wol-login accepts.
+        let pw = "root:*:0:0::/root:/bin/sh\n\
+                  bo:*:1002:1002:Bo Peep:/home/bo:/usr/bin/fish\n\
+                  svc:*:1003:1003::/var/svc:/usr/sbin/nologin\n";
+        for shells in ["", "/bin/sh\n", "/usr/bin/fish\n"] {
+            let l = listed(pw, shells);
+            assert_eq!(
+                l.iter().map(|u| u.name.clone()).collect::<Vec<_>>(),
+                shared::login::login_names(pw, shells),
+                "{shells:?}"
+            );
+            assert_eq!(
+                l.iter().map(|u| u.name.as_str()).collect::<Vec<_>>(),
+                ["bo"]
+            );
+            assert!(!LoginFlow::new(l.clone(), None).submit("svc"));
+            let mut f = LoginFlow::new(l, None);
+            assert!(f.submit("bo"), "{shells:?}");
+            assert_eq!(f.user.as_ref().map(|u| u.name.as_str()), Some("bo"));
         }
     }
 
@@ -1292,7 +1329,7 @@ broken:line
         };
         assert_eq!(SESSION_PAM, "/usr/lib/wol-session-pam");
         assert_eq!(session_command(&zoe, false).unwrap(), argv(""));
-        // Locked start (ADR 0012): wol-session starts Hyprland locked with wol-lock.
+        // Locked start (ADR 0012): wol-session starts the compositor locked with wol-lock.
         assert_eq!(
             session_command(&zoe, true).unwrap(),
             argv("WOL_SESSION_LOCKED=1 ")
@@ -1356,5 +1393,28 @@ broken:line
         assert!(!g.submit("ana"));
         g.listed = vec![ana];
         assert!(g.submit("ana"));
+    }
+
+    /// Audit S4-20: a password that is not text never starts a session over a closed encrypted
+    /// home; a plain or open home needs nothing either way.
+    #[test]
+    fn a_non_text_password_does_not_skip_the_home_unlock() {
+        use wol_core::home_crypt::State;
+        let closed = Some(State {
+            encrypted: true,
+            key_loaded: false,
+            mounted: false,
+        });
+        let open = Some(State {
+            encrypted: true,
+            key_loaded: true,
+            mounted: true,
+        });
+        let bad = b"pass\xff\xfe";
+        assert_eq!(super::home_unlock_steps("ana", closed, bad), None);
+        assert_eq!(super::home_unlock_steps("ana", open, bad), Some(vec![]));
+        assert_eq!(super::home_unlock_steps("ana", None, bad), Some(vec![]));
+        let steps = super::home_unlock_steps("ana", closed, b"s3cret-pw").unwrap();
+        assert!(!steps.is_empty());
     }
 }

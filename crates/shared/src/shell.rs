@@ -6,6 +6,8 @@ pub const PANELS: &[&str] = &[
     "session",
     "clipboard",
     "osd",
+    // `show` after the mic-mute key: the OSD with the microphone state (wol-volume micmute).
+    "osd-mic",
     "control-center",
     "overview",
     "screenshot",
@@ -29,6 +31,8 @@ pub const PANELS: &[&str] = &[
     // `show` opens the session panel on its Log Out / Shut Down question (the WolOS menu).
     "session-logout",
     "session-shutdown",
+    // ⌃⌘T: every theme as a preview card (ADR 0031 themes v2).
+    "themes",
 ];
 
 /// `approve <json>` on wol-shell.sock: a helper (`wol mcp`, a `WOL_HELPER` script) asks before a
@@ -78,12 +82,41 @@ pub enum ApprovalRequest {
         #[serde(default)]
         names: Vec<String>,
     },
+    /// A package built on this computer (the community package collection, recipe; wold, ADR 0034): `staged` is wold's own
+    /// root-only copy. Unreviewed code whose install steps run as root, so the shell runs it
+    /// through wol-admind after the administrator password (audit C7-1). `name` and `version`
+    /// are what the copy's `.PKGINFO` says (`pkgname`, `pkgver`), `sha256` the copy's SHA-256
+    /// (64 lowercase hex), all read by wold from the staged copy itself. Every field is required:
+    /// a sheet without them does not parse, so nothing runs (fail closed).
+    PackageFile {
+        staged: String,
+        name: String,
+        version: String,
+        sha256: String,
+    },
+    /// Undo the last system update (wold): through wol-admind after the password.
+    SystemRollback,
+    /// Switch the system update channel (wold): through wol-admind after the password.
+    SystemChannel {
+        channel: String,
+    },
     /// A user-level change the helper runs itself once allowed. `what` is the sentence end
     /// ("switch to Dark appearance"); `capability` is what Always Allow grants.
     Change {
         capability: String,
         what: String,
     },
+}
+
+/// Hex digits of a SHA-256 shown in a sheet's title; the full digest is on the detail line.
+pub const SHA_PREFIX: usize = 12;
+
+/// The first [`SHA_PREFIX`] characters of `sha256` (all of it when shorter).
+pub fn sha_prefix(sha256: &str) -> &str {
+    sha256
+        .char_indices()
+        .nth(SHA_PREFIX)
+        .map_or(sha256, |(i, _)| &sha256[..i])
 }
 
 impl ApprovalRequest {
@@ -108,6 +141,22 @@ impl ApprovalRequest {
                     (_, true) => "update all system apps".into(),
                     _ => format!("update {list}"),
                 }
+            }
+            Self::PackageFile {
+                name,
+                version,
+                sha256,
+                ..
+            } => format!(
+                "install the package “{name}” {version} (SHA-256 {}…), which WolOS has not \
+                 reviewed; its install steps run as the administrator",
+                sha_prefix(sha256)
+            ),
+            Self::SystemRollback => {
+                "undo the last system update (the previous release starts next time)".into()
+            }
+            Self::SystemChannel { channel } => {
+                format!("switch system updates to the “{channel}” channel")
             }
             Self::Change { what, .. } => what.clone(),
         }
@@ -264,6 +313,63 @@ mod tests {
         assert_eq!(
             Approval::parse(a.line().strip_prefix("approve ").unwrap()),
             Some(a)
+        );
+    }
+
+    /// Audit C7-1: what wold used to run itself after a plain Allow is an administrator sheet,
+    /// and its wire form is stable.
+    #[test]
+    fn root_package_changes_need_the_password() {
+        let sha = "0123456789abcdef".repeat(4);
+        let file = ApprovalRequest::PackageFile {
+            staged:
+                "/var/cache/wolos/install/0123456789abcdef0123456789abcdef/x-1-1-any.pkg.tar.zst"
+                    .into(),
+            name: "x".into(),
+            version: "1:2.0-1".into(),
+            sha256: sha.clone(),
+        };
+        let back = ApprovalRequest::SystemRollback;
+        let chan = ApprovalRequest::SystemChannel {
+            channel: "beta".into(),
+        };
+        for r in [&file, &back, &chan] {
+            assert!(r.is_admin(), "{r:?}");
+            let a = Approval {
+                helper: "/usr/bin/wopkg".into(),
+                tool: "wopkg packages-update".into(),
+                request: r.clone(),
+            };
+            assert_eq!(
+                Approval::parse(a.line().strip_prefix("approve ").unwrap()),
+                Some(a)
+            );
+        }
+        // ADR 0034: the sheet names what the staged copy contains, not the file name.
+        assert!(
+            file.describe()
+                .starts_with("install the package “x” 1:2.0-1 (SHA-256 0123456789ab…)"),
+            "{}",
+            file.describe()
+        );
+        assert!(
+            !file.describe().contains(&sha),
+            "only a prefix in the title"
+        );
+        assert_eq!(sha_prefix("abc"), "abc");
+        // A sheet from a wold that does not send the facts does not parse (fail closed).
+        let old =
+            r#"{"action":"package-file","staged":"/var/cache/wolos/install/n/x.pkg.tar.zst"}"#;
+        assert!(serde_json::from_str::<ApprovalRequest>(old).is_err());
+        assert!(file.describe().contains("as the administrator"));
+        assert!(!file.describe().contains("/var/cache"));
+        assert_eq!(
+            serde_json::to_string(&back).unwrap(),
+            "{\"action\":\"system-rollback\"}"
+        );
+        assert_eq!(
+            chan.describe(),
+            "switch system updates to the “beta” channel"
         );
     }
 

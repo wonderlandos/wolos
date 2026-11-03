@@ -15,6 +15,7 @@
     "desktop/overlay/usr/share/wolos/gtk-*/*.css",
     "desktop/overlay/usr/share/wolos/gtk3-theme/**",
     "desktop/overlay/usr/share/wolos/firefox/wolos-chrome.css",
+    "desktop/overlay/usr/share/wolos/toolkits/**",
     "**/vendor/**",
     "**/target/**",
     "**/.git/**",
@@ -61,6 +62,30 @@
     {
       "glob": "kernel/freebsd/**",
       "spdx": "GPL-2.0-only"
+    },
+    {
+      "glob": "hue/src/hue/color.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "hue/src/hue/extract.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "hue/src/hue/palette.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "hue/src/hue/imports.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "crates/shell/src/offers.rs",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "crates/shell/tests/offers.rs",
+      "spdx": "MIT"
     }
   ],
   "code": {

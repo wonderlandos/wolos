@@ -674,3 +674,46 @@ fn to_json(v: &Value, depth: usize) -> Result<Json, String> {
         _ => return Err("State holds text, numbers, booleans and tables only.".into()),
     })
 }
+
+/// The Lua step of a plugin check (`wol plugin check`, Plugin Maker's problems list): every
+/// script of `m`, read from `dir`, loaded with `deadlines` and run once the way the desktop runs
+/// it (search: one query; the others: render, then popover). One sentence per script that does
+/// not, starting with its file name; empty = every script runs. `services` makes a fresh set of
+/// services for each script.
+pub fn lua_problems(
+    dir: &Path,
+    m: &shared::plugins::Manifest,
+    deadlines: Deadlines,
+    services: &dyn Fn() -> Rc<dyn Services>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for (kind, id, file) in m.scripts() {
+        let Ok(src) = std::fs::read_to_string(dir.join(file)) else {
+            out.push(format!("{file}: the file could not be read as text."));
+            continue;
+        };
+        let at = Entry {
+            kind,
+            plugin: &m.id,
+            id,
+            dir,
+        };
+        let mut script = match Script::load_within(at, &src, &m.permissions, services(), deadlines)
+        {
+            Ok(s) => s,
+            Err(e) => {
+                out.push(format!("{file}: {e}"));
+                continue;
+            }
+        };
+        let r = if kind == Kind::Search {
+            script.query("test").map(|_| ())
+        } else {
+            script.render().and_then(|_| script.popover().map(|_| ()))
+        };
+        if let Err(e) = r {
+            out.push(format!("{file}: {e}"));
+        }
+    }
+    out
+}

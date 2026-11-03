@@ -3,13 +3,9 @@
 //! Bazzite settings, then the audio audit of 2026-11): kernel limits, file-descriptor limits,
 //! realtime audio, the 0 dB input rule, pulse client floors, Bluetooth codecs. Every key a
 //! fragment sets has one `has()` line here (docs/modules/audio.md).
-use std::path::PathBuf;
-fn read(p: &str) -> String {
-    let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p);
-    std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::read;
 
 fn has(file: &str, lines: &[&str]) {
     let s = read(file);

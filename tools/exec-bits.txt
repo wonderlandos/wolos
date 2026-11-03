@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Every file in this tree (with the crates/shell and design submodules) whose first line is a `#!`
+# shebang, one repo-relative path per line: each is committed with mode 100755.
+# Why: the repos run with core.filemode=false (checked out on Windows), so a plain `git add` records
+# a new script as 100644 and a Linux checkout cannot run it (audit5 X6-3: a 0644 sb-key.sh turns the
+# Secure Boot layout off without a word). How: add a new script here and commit it with
+# `git add --chmod=+x <path>` (an existing one: `git update-index --chmod=+x <path>`);
+# crates/controller/tests/exec_bits.rs fails when a shebang file is missing here, a listed file is
+# gone or has no shebang, or the git index holds a listed file as 100644.
+# Not listed: crates/aurlaws/tests/fixtures/ (scanned as data, never run).
+crates/shell/tests/golden-env/run.sh
+crates/shell/tests/golden-env/starve.sh
+crates/wol-abi/link.sh
+crates/wopkg/link.sh
+crates/xguard/link.sh
+crates/xguard/rules/build.sh
+design/icons/install.sh
+design/tools/apps/kvantum-vm.sh
+design/tools/apps/render.sh
+design/tools/apps/run.sh
+design/tools/perf/build.sh
+design/tools/perf/idle.py
+design/tools/perf/latency.py
+design/tools/perf/leak.py
+design/tools/perf/session_start.py
+desktop/hyprland/build-plugins.sh
+desktop/overlay/etc/NetworkManager/dispatcher.d/50-wolos-online
+desktop/overlay/etc/wolos/nftables.conf
+desktop/overlay/usr/bin/wol-backlight
+desktop/overlay/usr/bin/wol-greeter-session
+desktop/overlay/usr/bin/wol-screenshot
+desktop/overlay/usr/bin/wol-session
+desktop/overlay/usr/bin/wol-vbox-guest
+desktop/overlay/usr/bin/wol-volume
+desktop/overlay/usr/bin/wol-x11-env
+desktop/overlay/usr/bin/wol-zoom
+desktop/overlay/usr/share/wolos/widgets/game-friends/friends.sh
+files/usr/bin/wolos-update-slot
+files/usr/lib/systemd/system-sleep/wolos-power
+files/usr/lib/wolos/ai-local
+files/usr/lib/wolos/autoinstall
+files/usr/lib/wolos/boot-enroll
+files/usr/lib/wolos/boot-keys
+files/usr/lib/wolos/boot-ok
+files/usr/lib/wolos/boot-setup
+files/usr/lib/wolos/clam-update
+files/usr/lib/wolos/dkms-sign
+files/usr/lib/wolos/esp-sync
+files/usr/lib/wolos/firstboot
+files/usr/lib/wolos/gpu
+files/usr/lib/wolos/install-boot
+files/usr/lib/wolos/install-channel
+files/usr/lib/wolos/install-check
+files/usr/lib/wolos/install-disks
+files/usr/lib/wolos/install-run
+files/usr/lib/wolos/installer-session
+files/usr/lib/wolos/modules-disable-ai-claude
+files/usr/lib/wolos/modules-disable-dev
+files/usr/lib/wolos/modules-enable-ai-claude
+files/usr/lib/wolos/modules-enable-dev
+files/usr/lib/wolos/modules-install
+files/usr/lib/wolos/report
+files/usr/lib/wolos/update-check
+files/usr/lib/wolos/update-download
+files/usr/lib/wolos/verify-gpu.sh
+files/usr/lib/wolos/wol-install
+files/usr/lib/wolos/xguard-update
+files/usr/share/wolos/boot/41_wolos
+tools/build-rust.sh
+tools/check-adrs.sh
+tools/check-headers.sh
+tools/ci/fuzz-replay.sh
+tools/ci/pin-lint.py
+tools/hooks/guard-test.sh
+tools/hooks/install.sh
+tools/hooks/public-guard
+tools/license/relicense.py

@@ -1,23 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Hyprland IPC: `.socket.sock` (requests, e.g. `j/activewindow`) and `.socket2.sock`
+//! Compositor IPC: `.socket.sock` (requests, e.g. `j/activewindow`) and `.socket2.sock`
 //! (events, one `name>>data` line each). Pure parsers + thin socket helpers.
 use shared::events::Event;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
-/// `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/<name>`.
-pub fn socket_path(runtime_dir: &str, signature: &str, name: &str) -> PathBuf {
-    PathBuf::from(runtime_dir)
-        .join("hypr")
-        .join(signature)
-        .join(name)
-}
-
+/// `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/<name>`; None outside the compositor.
 fn env_socket(name: &str) -> Option<PathBuf> {
-    let rt = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
-    Some(socket_path(&rt, &sig, name))
+    shared::sys::hypr_socket(|k| std::env::var(k).ok(), name)
 }
 
 /// One parsed `.socket2.sock` line. `ActiveAddress` comes from `activewindowv2` (pid looked up later).
@@ -92,14 +83,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn socket_path_layout() {
-        assert_eq!(
-            socket_path("/run/user/1000", "abc", ".socket2.sock"),
-            PathBuf::from("/run/user/1000/hypr/abc/.socket2.sock")
-        );
-    }
-
-    #[test]
     fn event_table() {
         let bus = |e| Some(HyprEvent::Bus(e));
         let cases = [
@@ -164,7 +147,7 @@ mod tests {
     }
 }
 
-/// Drive the session from Hyprland events: frontmost pid -> QoS boost, bus events -> `publish`.
+/// Drive the session from compositor events: frontmost pid -> QoS boost, bus events -> `publish`.
 /// `lookup_pid` resolves the active window (normally `request("j/activewindow")` + [`active_pid`]);
 /// its pid is filled into `Event::ActiveWindow`. `activewindowv2` repeats `activewindow` and is ignored.
 pub fn run(

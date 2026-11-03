@@ -2,7 +2,7 @@
 //! Root unit hardening (audit A7/B5, ADR 0015): every service under files/usr/lib/systemd/system
 //! that runs as root (no `User=`) carries the sandbox keys its daemon allows, and the keys it must
 //! not have stay out (a mount namespace would make wolos-shm-limit remount a private /dev/shm;
-//! ProtectHome would hide the Hyprland sockets wolos-power talks to). This is the gate until the
+//! ProtectHome would hide the compositor sockets wolos-power talks to). This is the gate until the
 //! CI step `systemd-analyze security` (threshold 50) exists. A new root unit fails
 //! `every_root_unit_is_hardened` until it has a row here or an EXEMPT reason.
 #[path = "support/siblings.rs"]
@@ -307,6 +307,8 @@ const HARDENED: &[(&str, &[&str])] = &[
             "RestrictSUIDSGID=yes",
             "RestrictNamespaces=yes",
             "ProtectHostname=yes",
+            // S4-3: queue cap vs descriptors, checked in crates/xguard/tests/units.rs.
+            "LimitNOFILE=8192",
         ],
     ),
 ];
@@ -521,4 +523,18 @@ fn units_that_download_with_pacman_may_switch_to_its_download_user() {
         }
     }
     assert!(seen >= 2, "update-check and update-download run pacman");
+}
+
+/// Audit S4-26: wold has room for its sockets (soft 4096, above the 1024 that ran out on EMFILE)
+/// and keeps the default hard limit; its jobs start again from soft 1024
+/// (`api::os::child_nofile`, crates/api/tests/os_procs.rs), so the session inherits nothing.
+#[test]
+fn wold_has_its_own_descriptor_limit() {
+    let have = service("wold.service");
+    let got: Vec<&str> = have
+        .iter()
+        .filter(|(k, _)| k == "LimitNOFILE")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(got, ["4096:524288"]);
 }

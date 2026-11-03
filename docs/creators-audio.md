@@ -10,7 +10,7 @@ What works out of the box on WolOS, what one command adds, and the three things 
 
 ## OBS Studio
 
-Install OBS (`pacman -S obs-studio`) and the PipeWire audio capture plugin (`pacman -S obs-pipewire-audio-capture`, from the [wolos] repo). The plugin adds three sources: **Application Audio Capture** (one app, picked by name), **Desktop Audio Capture** (what the speakers play) and **Audio Input Capture (PipeWire)**. Screen and window capture use the Hyprland portal (`xdg-desktop-portal-hyprland`): OBS asks, you pick.
+Install OBS (`pacman -S obs-studio`) and the PipeWire audio capture plugin (`pacman -S obs-pipewire-audio-capture`, from the [wolos] repo). The plugin adds three sources: **Application Audio Capture** (one app, picked by name), **Desktop Audio Capture** (what the speakers play) and **Audio Input Capture (PipeWire)**. Screen and window capture use the compositor's portal (`xdg-desktop-portal-hyprland`): OBS asks, you pick.
 
 **Game audio and voice on separate tracks.** `wol audio appmix on` creates an output called **WolOS App Mix** and a source called **Mic + App Mix**:
 

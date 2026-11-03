@@ -8,7 +8,7 @@ describe Wopkg::UI do
     Wopkg::UI.source_label(s.call("pacman", "wolos")).should eq("WolOS")
     Wopkg::UI.source_label(s.call("pacman", "extra")).should eq("Arch (extra)")
     Wopkg::UI.source_label(s.call("pacman", "wolos-cachy")).should eq("WolOS optimized (wolos-cachy)")
-    Wopkg::UI.source_label(s.call("aur", "aur")).should eq("AUR (unreviewed)")
+    Wopkg::UI.source_label(s.call("aur", "aur")).should eq("Community (unreviewed)")
   end
 
   it "draws a progress bar and sizes" do

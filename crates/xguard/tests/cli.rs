@@ -43,6 +43,34 @@ fn a_file_that_cannot_be_opened_does_not_lose_the_others() {
     assert_eq!(scan(&[&gone, &good]), (3, 1), "could not run, one report");
     assert_eq!(scan(&[&gone, &bad, &good]), (1, 2), "a finding outranks it");
     assert_eq!(scan(&[&good]), (0, 1));
+    // S4-16: after `--` a name that starts with `-` is a file, not a flag.
+    let o = Command::new(env!("CARGO_BIN_EXE_wol-xguard"))
+        .current_dir(&d)
+        .args(["scan", "--json", "--rules"])
+        .arg(d.join("rules"))
+        .args(["--", "--json"])
+        .env_remove(xguard::clam::SOCKET_ENV)
+        .output()
+        .unwrap();
+    assert_eq!(
+        o.status.code(),
+        Some(3),
+        "a file named --json that is not there"
+    );
+    std::fs::write(d.join("--json"), MARKER).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_wol-xguard"))
+        .current_dir(&d)
+        .args(["scan", "--json", "--rules"])
+        .arg(d.join("rules"))
+        .args(["--", "--json"])
+        .env_remove(xguard::clam::SOCKET_ENV)
+        .output()
+        .unwrap();
+    assert_eq!(
+        o.status.code(),
+        Some(1),
+        "the file named --json was scanned"
+    );
 }
 
 fn report(args: &[&std::ffi::OsStr], socket: Option<&std::path::Path>) -> (i32, String) {

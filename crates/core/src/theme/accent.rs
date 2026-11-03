@@ -47,16 +47,8 @@ pub fn auto_is_dark(hour: u8) -> bool {
 
 /// Seconds until the next light/dark switch.
 pub fn secs_to_next_switch(hour: u8, minute: u8, second: u8) -> u32 {
-    let now = hour as u32 * 3600 + minute as u32 * 60 + second as u32;
-    let next = [
-        DAY_STARTS as u32 * 3600,
-        NIGHT_STARTS as u32 * 3600,
-        (24 + DAY_STARTS as u32) * 3600,
-    ]
-    .into_iter()
-    .find(|t| *t > now)
-    .unwrap_or(0);
-    next - now
+    let at = |h: u8| u32::from(h) * 3600;
+    crate::clock::secs_until(hour, minute, second, &[at(DAY_STARTS), at(NIGHT_STARTS)])
 }
 
 /// No theme file or a `wol-auto-*` id: appearance follows the time of day.
@@ -138,6 +130,7 @@ pub fn variants() -> Vec<ThemeSpec> {
                 tokens,
                 wallpaper: None,
                 icon_theme: None,
+                terminal: None,
                 dir: Default::default(),
             });
         }

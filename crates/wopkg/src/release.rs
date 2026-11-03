@@ -120,6 +120,12 @@ fn full() -> u8 {
 pub struct Feed {
     pub format: u32,
     pub channel: String,
+    /// Signed, increasing publication number (audit C6-2); 0 in feeds made before it existed.
+    #[serde(default)]
+    pub serial: u64,
+    /// Signed end of validity, Unix seconds; 0 = none.
+    #[serde(default)]
+    pub expires: u64,
     pub releases: Vec<Release>,
 }
 
@@ -139,6 +145,28 @@ impl Feed {
         }
         Ok(f)
     }
+}
+
+/// Seconds since the Unix epoch (0 when the clock is before it).
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// Freshness of a signed list (audit C6-2): Err when its `serial` is lower than the `last` one
+/// accepted (an old signed copy replayed) or when it carries an `expires` time already past.
+/// Equal serials pass (the same list downloaded again).
+pub fn check_fresh(what: &str, serial: u64, expires: u64, last: u64, now: u64) -> Result<()> {
+    if serial < last {
+        return Err(Error::untrusted(format!(
+            "The {what} is older than the one already seen."
+        )));
+    }
+    if expires != 0 && expires <= now {
+        return Err(Error::untrusted(format!("The {what} has expired.")));
+    }
+    Ok(())
 }
 
 /// Stable 0..100 bucket for staged rollout: the same machine gets the same answer per release.
@@ -235,6 +263,54 @@ pub fn plan(i: &Inputs) -> Result<Plan> {
     Ok(mk(Reason::MajorNeedsChoice, None))
 }
 
+/// Why a plugin update is or is not offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PluginReason {
+    Available,
+    /// The new version needs a newer WolOS (`min_wolos`): shown, not installed.
+    NeedsNewerWolos,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PluginUpdate {
+    pub id: String,
+    pub from: String,
+    pub to: String,
+    pub reason: PluginReason,
+}
+
+/// Plugin updates follow the signed plugin index, not a channel feed (ADR 0031 W4): no rollout,
+/// pause or OS release holds them, and they never touch pacman. `installed` is (id, version) for
+/// this account's plugins, `os` the running WolOS version. Only a strictly newer version is
+/// offered; versions that are not numbers are left alone (no guessing at an order).
+pub fn plugin_updates(
+    os: &str,
+    installed: &[(String, String)],
+    index: &crate::index::plugins::PluginIndex,
+) -> Vec<PluginUpdate> {
+    let os = Version::parse(os);
+    installed
+        .iter()
+        .filter_map(|(id, have)| {
+            let e = index.get(id)?;
+            (Version::parse(&e.version)? > Version::parse(have)?).then_some(())?;
+            let fits = e.min_wolos.is_empty()
+                || matches!((&os, Version::parse(&e.min_wolos)), (Some(o), Some(m)) if *o >= m);
+            Some(PluginUpdate {
+                id: id.clone(),
+                from: have.clone(),
+                to: e.version.clone(),
+                reason: if fits {
+                    PluginReason::Available
+                } else {
+                    PluginReason::NeedsNewerWolos
+                },
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,8 +329,28 @@ mod tests {
         Feed {
             format: 1,
             channel: "stable".into(),
+            serial: 0,
+            expires: 0,
             releases: rs,
         }
+    }
+
+    /// C6-2: lower serial than seen, or expired, is refused; old feeds without the fields pass.
+    #[test]
+    fn stale_or_expired_lists_are_refused() {
+        assert!(check_fresh("release list", 4, 0, 5, 100).is_err());
+        assert!(check_fresh("release list", 5, 0, 5, 100).is_ok());
+        assert!(check_fresh("release list", 6, 101, 5, 100).is_ok());
+        assert!(check_fresh("release list", 6, 100, 5, 100).is_err());
+        assert!(check_fresh("release list", 0, 0, 0, 100).is_ok());
+        let seed = [4u8; 32];
+        let keys = [wol_core::package::public_of(&seed)];
+        let old = br#"{"format":1,"channel":"stable","releases":[]}"#;
+        let f = Feed::verify(old, &wol_core::package::sign(&seed, old), &keys).unwrap();
+        assert_eq!((f.serial, f.expires), (0, 0));
+        let new = br#"{"format":1,"channel":"stable","serial":7,"expires":9,"releases":[]}"#;
+        let f = Feed::verify(new, &wol_core::package::sign(&seed, new), &keys).unwrap();
+        assert_eq!((f.serial, f.expires), (7, 9));
     }
 
     #[test]
@@ -377,5 +473,60 @@ mod tests {
         assert!(Feed::verify(&text, &wol_core::package::sign(&seed, &text), &keys).is_ok());
         assert!(Feed::verify(&text, &wol_core::package::sign(&[4; 32], &text), &keys).is_err());
         assert!(Feed::verify(&text, b"", &keys).is_err());
+    }
+
+    #[test]
+    fn plugin_updates_follow_the_index_not_the_os_channel() {
+        use crate::index::plugins::{Entry, PluginIndex};
+        let e = |id: &str, v: &str, min: &str| Entry {
+            id: id.into(),
+            version: v.into(),
+            min_wolos: min.into(),
+            ..Default::default()
+        };
+        let index = PluginIndex {
+            plugins: vec![
+                e("alice.weather", "1.3", "0.12"),
+                e("bob.clock", "2.0", "0.13"),
+                e("carol.same", "1.0", ""),
+                e("dave.older", "0.9", ""),
+                e("erin.words", "beta", ""),
+            ],
+        };
+        let have = |v: &[(&str, &str)]| -> Vec<(String, String)> {
+            v.iter()
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .collect()
+        };
+        let installed = have(&[
+            ("alice.weather", "1.2"),
+            ("bob.clock", "1.0"),
+            ("carol.same", "1.0"),
+            ("dave.older", "1.0"),
+            ("erin.words", "alpha"),
+            ("frank.gone", "1.0"),
+        ]);
+        let u = plugin_updates("0.12.1", &installed, &index);
+        assert_eq!(
+            u,
+            [
+                PluginUpdate {
+                    id: "alice.weather".into(),
+                    from: "1.2".into(),
+                    to: "1.3".into(),
+                    reason: PluginReason::Available,
+                },
+                PluginUpdate {
+                    id: "bob.clock".into(),
+                    from: "1.0".into(),
+                    to: "2.0".into(),
+                    reason: PluginReason::NeedsNewerWolos,
+                },
+            ]
+        );
+        // The same index on a newer OS: the held update is offered, nothing else changes.
+        let u = plugin_updates("0.13", &installed, &index);
+        assert!(u.iter().all(|x| x.reason == PluginReason::Available));
+        assert_eq!(u.len(), 2);
     }
 }

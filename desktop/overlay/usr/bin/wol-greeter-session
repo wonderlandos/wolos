@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Login window display, started by wol-login (root). Hyprland refuses root, so the compositor and
+# Login window display, started by wol-login (root). The compositor refuses root, so the compositor and
 # wol-loginwindow both run as _wollogin (seat and video groups; DRM via seatd).
 # `setup` (first boot, no user yet): the setup assistant instead of the login window (ADR 0004).
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
@@ -9,7 +9,7 @@ export LIBSEAT_BACKEND=seatd   # the seat group's seat (no logind session for th
 # GTK cairo renderer: small static screens, no GPU renderer dependency before login (Setup never
 # mapped with the default renderer on a passthrough iGPU).
 export GSK_RENDERER=${GSK_RENDERER:-cairo}
-install -d -o _wollogin -g _wollogin -m 0700 "$XDG_RUNTIME_DIR" "$HOME/.cache"   # .cache: Hyprland crash reports
+install -d -o _wollogin -g _wollogin -m 0700 "$XDG_RUNTIME_DIR" "$HOME/.cache"   # .cache: compositor crash reports
 conf=login
 [ "${1:-}" = setup ] && conf=setup
 exec setpriv --reuid=_wollogin --regid=_wollogin --init-groups Hyprland -c /usr/share/wolos/hypr/$conf.conf

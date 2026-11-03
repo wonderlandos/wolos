@@ -49,6 +49,26 @@ fn setup_with(
     esp_files: &[(&str, &str)],
     env: &[(&str, &str)],
 ) -> (PathBuf, String) {
+    let (d, o) = setup_out(name, tier, screen, sbctl_fails, esp_files, env, &[]);
+    assert!(
+        o.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    (d, String::from_utf8_lossy(&o.stdout).trim().to_owned())
+}
+
+/// [`setup_with`] that hands back the run as it ended; `fakes` replace the default tools.
+fn setup_out(
+    name: &str,
+    tier: &str,
+    screen: &str,
+    sbctl_fails: bool,
+    esp_files: &[(&str, &str)],
+    env: &[(&str, &str)],
+    fakes: &[(&str, &str)],
+) -> (PathBuf, std::process::Output) {
     let d = std::env::temp_dir().join(format!("wol-bs-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&d);
     let (t, esp) = (d.join("t"), d.join("t/efi"));
@@ -143,6 +163,9 @@ fn setup_with(
             "case \"$*\" in \"boot detect\"*) echo {tier} ;; \"boot key-screen\"*) echo {screen} ;; \"boot words\"*) echo protected ;; \"boot password\"*) echo boot ;; \"boot note\"*) echo \"$3 $4\" ;; esac"
         ),
     );
+    for (n, body) in fakes {
+        fake(&d, n, body);
+    }
     let o = Command::new("sh")
         .arg(lib("boot-setup"))
         .arg(&t)
@@ -158,13 +181,7 @@ fn setup_with(
         .env("WOLOS_ESP_DEV", "/dev/x2")
         .output()
         .unwrap();
-    assert!(
-        o.status.success(),
-        "{}{}",
-        String::from_utf8_lossy(&o.stdout),
-        String::from_utf8_lossy(&o.stderr)
-    );
-    (d, String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    (d, o)
 }
 
 #[test]
@@ -599,7 +616,10 @@ fn a_module_built_here_is_signed_with_this_computers_key() {
     fs::create_dir_all(d.join("bin")).unwrap();
     fs::create_dir_all(d.join("sb")).unwrap();
     fs::write(d.join("sb/db.der"), "cert").unwrap();
-    fs::write(d.join("sb/db.key"), "key").unwrap();
+    // The whole set (without a TPM): `boot-keys open` refuses one with a key missing (C9-3).
+    for k in ["db.key", "PK.key", "KEK.key", "tpm2-pcr-private.pem"] {
+        fs::write(d.join("sb").join(k), "key").unwrap();
+    }
     fake(&d, "sign-file", "");
     let out = Command::new("sh")
         .arg(lib("dkms-sign"))
@@ -745,4 +765,143 @@ fn a_good_boot_blesses_only_after_the_key_screen_unit_is_done() {
     assert_eq!(asks, 3, "{l}");
     let last_ask = l.rfind("ActiveState").unwrap();
     assert!(l.find("wol boot bless").unwrap() > last_ask, "{l}");
+}
+
+/// audit5 C9-2: bootctl writes the fallback loader and then fails (a full partition). On a shared
+/// partition the other system's loader is put back all the same, and no copy is left behind.
+#[test]
+fn a_failed_boot_loader_install_puts_the_other_systems_fallback_back() {
+    let tmp = std::env::temp_dir().join(format!("wol-bs-fb-fail-tmp-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    let tmp_s = tmp.display().to_string();
+    let (d, o) = setup_out(
+        "fb-fail",
+        "own-keys",
+        "no",
+        false,
+        &[("EFI/BOOT/BOOTX64.EFI", "other system's shim")],
+        &[("WOLOS_ESP_SHARED", "yes"), ("TMPDIR", tmp_s.as_str())],
+        &[(
+            "bootctl",
+            "case \"$*\" in *install*) echo sd-boot > \"${1#--esp-path=}/EFI/BOOT/BOOTX64.EFI\"; exit 1 ;; esac",
+        )],
+    );
+    assert!(!o.status.success(), "bootctl failed: the run fails");
+    assert_eq!(
+        fs::read_to_string(d.join("t/efi/EFI/BOOT/BOOTX64.EFI")).unwrap(),
+        "other system's shim",
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(!d.join("run/db.key").exists(), "the keys left RAM too");
+    assert_eq!(
+        fs::read_dir(&tmp).unwrap().count(),
+        0,
+        "the kept copy went once it was back"
+    );
+}
+
+/// audit5 C9-3: boot-keys with a TPM whose encryption fails for one key. The run fails, keeps no
+/// half set that a later run would take as made, leaves no clear key in RAM, and `open` refuses
+/// a set with a key missing.
+#[test]
+fn a_half_made_key_set_is_never_taken_as_made() {
+    let d = std::env::temp_dir().join(format!("wol-bk-half-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&d);
+    fs::create_dir_all(d.join("bin")).unwrap();
+    fs::create_dir_all(d.join("tpm")).unwrap();
+    fs::write(d.join("tpm/tpm_version_major"), "2\n").unwrap();
+    fake(
+        &d,
+        "openssl",
+        "while [ $# -gt 0 ]; do case $1 in -keyout|-out) echo x > \"$2\"; shift ;; esac; shift; done",
+    );
+    fake(&d, "mount", "");
+    fake(&d, "mountpoint", "exit 1");
+    // encrypt FILE OUT / decrypt CRED OUT: the last two arguments; KEK.key fails while `fail` exists.
+    fake(
+        &d,
+        "systemd-creds",
+        &format!(
+            "for a; do src=$dst; dst=$a; done; case \"$*\" in *encrypt*--name=KEK.key*) [ ! -e {} ] || exit 1 ;; esac; cp \"$src\" \"$dst\"",
+            d.join("fail").display()
+        ),
+    );
+    let run = |verb: &str| {
+        Command::new("sh")
+            .arg(lib("boot-keys"))
+            .arg(verb)
+            .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+            .env("WOLOS_SB_DIR", d.join("sb"))
+            .env("WOLOS_SB_RUN", d.join("run"))
+            .env("WOLOS_TPM_DIR", d.join("tpm"))
+            .output()
+            .unwrap()
+    };
+    fs::write(d.join("fail"), "").unwrap();
+    assert!(!run("create").status.success(), "the TPM refused one key");
+    assert!(
+        !d.join("run/KEK.key").exists() && !d.join("run/db.key").exists(),
+        "no clear key left in RAM"
+    );
+    assert!(
+        !run("create").status.success(),
+        "a second run makes the whole set or fails"
+    );
+    // An older half set: db.crt there, a private key missing.
+    fs::create_dir_all(d.join("sb")).unwrap();
+    fs::write(d.join("sb/db.crt"), "x\n").unwrap();
+    fs::write(d.join("sb/db.key.cred"), "x\n").unwrap();
+    let o = run("open");
+    assert!(!o.status.success(), "open refuses a set with keys missing");
+    assert!(
+        !d.join("run/db.key").exists(),
+        "a refused open leaves nothing in RAM"
+    );
+    fs::remove_file(d.join("fail")).unwrap();
+    let o = run("create");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    for f in [
+        "PK.crt",
+        "KEK.crt",
+        "db.crt",
+        "db.der",
+        "tpm2-pcr-public.pem",
+        "db.key.cred",
+        "KEK.key.cred",
+        "PK.key.cred",
+        "tpm2-pcr-private.pem.cred",
+    ] {
+        assert!(d.join("sb").join(f).exists(), "{f}");
+    }
+    assert!(
+        !d.join("run/db.key").exists(),
+        "create leaves no clear key in RAM"
+    );
+    let o = run("open");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(d.join("run/KEK.key").exists());
+    assert!(run("close").status.success());
+    assert!(!d.join("run/KEK.key").exists());
+    // Done: nothing is made again. A new set would be new keys, so new certificate bytes; the
+    // file's identity and time say it was not even rewritten with the same bytes.
+    let stamp = || {
+        use std::os::unix::fs::MetadataExt;
+        let m = fs::metadata(d.join("sb/db.crt")).unwrap();
+        (
+            m.ino(),
+            m.modified().unwrap(),
+            fs::read(d.join("sb/db.crt")).unwrap(),
+        )
+    };
+    let before = stamp();
+    assert!(run("create").status.success());
+    assert!(stamp() == before, "create made the set again");
+    let left: Vec<_> = fs::read_dir(&d)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("sb.new."))
+        .collect();
+    assert!(left.is_empty(), "no temporary set left: {left:?}");
 }

@@ -14,15 +14,13 @@ pub mod gpu_probe;
 pub mod gpu_select;
 pub mod gpu_tune;
 pub mod hypr;
-pub mod identity;
-pub mod idle;
 pub mod memsaver;
 pub mod placement;
-pub mod policy;
 pub mod power;
 pub mod qos;
 pub mod session_lock;
 pub mod titlebar;
+pub mod wm_gates;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {

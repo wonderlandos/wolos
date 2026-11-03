@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wol-x11-env [--cursor-size N]: X11 apps follow the desktop scale (audit X1-2).
+# Why: Xwayland renders X11 clients 1:1 (wolos-perf.conf xwayland:force_zero_scaling), so on a
+# HiDPI screen Steam, Wine, Java and X11 Electron apps were half size with 24 px cursors.
+# How: s = the largest scale in `hyprctl -j monitors` (1 when unreadable). `xrdb -nocpp -merge`
+# Xft.dpi = 96*s, Xcursor.size = N*s (N: --cursor-size, else $XCURSOR_SIZE, else 24) and
+# Xcursor.theme; then GDK_SCALE = round(s) and STEAM_FORCE_DESKTOPUI_SCALING = s into the D-Bus
+# activation and systemd user environment. Run by hyprland.conf `exec =` (again on every
+# hyprctl reload), by Settings > Accessibility on a cursor size change
+# (wol_core::hyprprefs::cursor_sync) and after a display scale change.
+# Exit 0; 64 on a bad argument. A step without an X server or a user bus is skipped and said on
+# stderr (the next run catches up).
+set -eu
+size=${XCURSOR_SIZE:-24}
+case ${1:-} in
+'') ;;
+--cursor-size) size=${2:-} ;;
+*) echo "usage: wol-x11-env [--cursor-size N]" >&2; exit 64 ;;
+esac
+case $size in
+'' | *[!0-9]*) echo "wol-x11-env: cursor size must be a number of pixels" >&2; exit 64 ;;
+esac
+theme=${XCURSOR_THEME:-Adwaita}
+# No compositor to ask (a test, a TTY): scale 1. hyprctl's own error text is not useful here.
+scale=$(hyprctl -j monitors 2>/dev/null | sed -n 's/.*"scale": *\([0-9][0-9.]*\).*/\1/p' |
+	awk 'BEGIN { m = 0 } $1 + 0 > m { m = $1 + 0 } END { if (m <= 0) m = 1; print m }')
+read -r dpi cursor gdk steam <<VALUES
+$(awk -v s="$scale" -v c="$size" 'BEGIN {
+	g = int(s + 0.5); if (g < 1) g = 1
+	v = sprintf("%.2f", s); sub(/0+$/, "", v); sub(/\.$/, "", v)
+	printf "%d %d %d %s\n", int(96 * s + 0.5), int(c * s + 0.5), g, v
+}')
+VALUES
+if [ -n "${DISPLAY:-}" ] && command -v xrdb >/dev/null 2>&1; then
+	# -nocpp: xrdb would run the text through cpp, which the image does not ship.
+	printf 'Xft.dpi: %s\nXcursor.size: %s\nXcursor.theme: %s\n' "$dpi" "$cursor" "$theme" |
+		xrdb -nocpp -merge - || echo "wol-x11-env: xrdb failed, X resources unchanged" >&2
+else
+	echo "wol-x11-env: no X server (DISPLAY) or xrdb, X resources unchanged" >&2
+fi
+# --systemd: the systemd user manager too, whichever D-Bus daemon runs (audit X1-11).
+dbus-update-activation-environment --systemd "GDK_SCALE=$gdk" "STEAM_FORCE_DESKTOPUI_SCALING=$steam" ||
+	echo "wol-x11-env: no session bus, GDK_SCALE and Steam scaling not exported" >&2

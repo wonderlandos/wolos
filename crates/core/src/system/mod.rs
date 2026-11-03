@@ -48,13 +48,6 @@ pub trait Host: Send + Sync {
         None
     }
     /// Transitional, see [`Host::sysctl_i64`].
-    fn sysctl_into(&self, name: &str, buf: &mut [u8]) -> Option<usize> {
-        let b = self.sysctl_bytes(name)?;
-        let n = b.len().min(buf.len());
-        buf[..n].copy_from_slice(&b[..n]);
-        Some(n)
-    }
-    /// Transitional, see [`Host::sysctl_i64`].
     fn sysctl_string(&self, _name: &str) -> Option<String> {
         None
     }
@@ -120,6 +113,23 @@ pub fn run_with_timeout(argv: &[&str], timeout: Duration) -> Option<String> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
+    wait_output(child, timeout)
+}
+
+/// `cmd` with `input` on stdin (secrets never in argv) and stderr dropped; stdout as
+/// [`wait_output`]. The caller picks the program (`Command::new`, `privileged_command`).
+pub fn run_input(mut cmd: std::process::Command, input: &str, timeout: Duration) -> Option<String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    if let Some(mut i) = child.stdin.take() {
+        let _ = i.write_all(input.as_bytes());
+    }
     wait_output(child, timeout)
 }
 
@@ -458,12 +468,28 @@ mod tests {
 
     #[test]
     fn posix_run_returns_as_soon_as_the_child_exits() {
-        // A sleep-poll loop costs every short command its poll interval (was 5 ms each).
-        let t = std::time::Instant::now();
-        for _ in 0..20 {
-            assert!(run_with_timeout(&["true"], RUN_TIMEOUT).is_some());
-        }
-        assert!(t.elapsed() < Duration::from_millis(80), "{:?}", t.elapsed());
+        // A sleep-poll loop costs every short command its poll interval (was 5 ms each). Wall time
+        // on a loaded test host says little, so the fastest of 20 runs is compared with the fastest
+        // plain `Command::output()` of the same program: load slows both alike, a poll adds ~5 ms.
+        let best = |f: &dyn Fn()| {
+            (0..20)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    f();
+                    t.elapsed()
+                })
+                .min()
+                .unwrap()
+        };
+        let ours = best(&|| assert!(run_with_timeout(&["true"], RUN_TIMEOUT).is_some()));
+        let plain = best(&|| {
+            let o = std::process::Command::new("true").output().unwrap();
+            assert!(o.status.success());
+        });
+        assert!(
+            ours < plain + Duration::from_millis(3),
+            "fastest run {ours:?}, a plain spawn {plain:?}"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! No args: Hyprland events -> frontmost QoS boost + event bus (wold).
-//! `gpu env` / `gpu offload` / `gpu hyprconf [--vrr]`: session GPU env, one app's dGPU env, Hyprland fragment.
+//! No args: compositor events -> frontmost QoS boost + event bus (wold).
+//! `gpu env` / `gpu offload` / `gpu hyprconf [--vrr]`: session GPU env, one app's dGPU env, compositor fragment.
 //! `gpu caps` / `gpu sample`: ADR 0007 JSON (root: debugfs, cpuctl). `hypr stats`: frame ring of
 //! wol-hypr (hyprctl `wolstats`). `power show` / `power set [--pl1 W] [--pl2 W]`: Intel RAPL package
 //! limits (root, cpuctl). Thin composition root.

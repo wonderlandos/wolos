@@ -6,7 +6,7 @@ After=wolos-hw.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/wol power apply
-# Hardening (audit A7/B5, crates/controller/tests/units.rs): writes /sys and /etc/wolos/power.json and talks to each session's Hyprland socket in /run/user: no ProtectHome, no ProtectSystem; iw sets Wi-Fi power saving over nl80211 (netlink, the host network namespace): no PrivateNetwork.
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): writes /sys and /etc/wolos/power.json and talks to each session's compositor socket in /run/user: no ProtectHome, no ProtectSystem; iw sets Wi-Fi power saving over nl80211 (netlink, the host network namespace): no PrivateNetwork.
 NoNewPrivileges=yes
 LockPersonality=yes
 RestrictRealtime=yes

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Control Center extras: battery, Now Playing (MPRIS via playerctl), Bluetooth devices, keyboard
-//! backlight, Low Power Mode, accessibility (Hyprland options), Night Shift probe, default route.
+//! backlight, Low Power Mode, accessibility (compositor options), Night Shift probe, default route.
 //! Same shape as the parent module: pure parsers (fixture-tested) + sysfs reads and fixed argv.
 use super::{ControlError, Controls, backlight_percent};
 use crate::power::policy::Mode;
@@ -45,7 +45,7 @@ pub struct BtDevice {
     pub connected: bool,
 }
 
-/// Hyprland-backed accessibility shortcuts.
+/// Compositor-backed accessibility shortcuts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct A11y {
     pub reduce_motion: bool,
@@ -298,7 +298,7 @@ impl Controls {
         self.admin(AdminAction::PowerMode, &[m.name()], pw)
     }
 
-    // ---- Accessibility (Hyprland) ----
+    // ---- Accessibility (the compositor) ----
 
     pub fn accessibility(&self) -> Option<A11y> {
         let opt = |name: &str| {
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn accessibility_options() {
         let (h, c, _) = controls();
-        assert_eq!(c.accessibility(), None, "no Hyprland");
+        assert_eq!(c.accessibility(), None, "no compositor");
         h.command(
             "hyprctl -j getoption animations:enabled",
             r#"{"option":"animations:enabled","int":0,"set":true}"#,

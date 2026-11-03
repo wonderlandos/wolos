@@ -2,7 +2,7 @@
 //! WolOS on systemd (ADR 0016): the rc.d scripts became units in files/usr/lib/systemd, devd
 //! became udev, cron became a timer, dhclient hooks became a NetworkManager dispatcher script,
 //! sysctl.conf.local became sysctl.d. Scripts run against fakes; units are checked key by key.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 
@@ -324,7 +324,14 @@ fn power_follows_the_adapter_and_sleep() {
 fn network_up_retries_a_pending_driver() {
     let f = "desktop/overlay/etc/NetworkManager/dispatcher.d/50-wolos-online";
     let d = scratch("nm");
-    let path = fakes(&d, &[("flock", "shift 2; exec \"$@\""), ("wol", "")]);
+    let path = fakes(
+        &d,
+        &[
+            ("flock", "shift 2; exec \"$@\""),
+            ("wol", ""),
+            ("systemd-run", ""),
+        ],
+    );
     for (action, runs) in [
         ("up", true),
         ("down", false),
@@ -337,17 +344,77 @@ fn network_up_retries_a_pending_driver() {
             .arg(action)
             .env("PATH", &path)
             .env("WOLOS_LOCK", d.join("lock"))
+            .env("WOL_MODULES_PENDING", d.join("none"))
+            .env("WOL_PACKAGES_PENDING", d.join("none"))
             .status()
             .unwrap();
         assert!(st.success());
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        assert_eq!(
-            log(&d).contains("wol hw online"),
-            runs,
-            "{action}: {}",
+        // `wol hw online` runs in the background: wait (bounded) for it when it is due. Not due,
+        // the script has already exited before starting anything.
+        let due = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        // The `wol` line itself (the `flock` line before it names the same words).
+        let ran = || log(&d).lines().any(|l| l == "wol hw online");
+        while runs && !ran() && std::time::Instant::now() < due {
+            std::thread::yield_now();
+        }
+        assert_eq!(ran(), runs, "{action}: {}", log(&d));
+        assert!(
+            !log(&d).contains("systemd-run"),
+            "nothing queued: {}",
             log(&d)
         );
     }
+}
+
+/// audit5 I6-5: modules or media formats the installer queued offline start installing when a
+/// connection comes up (Wi-Fi set up after the first login), not only at the next start.
+#[test]
+fn network_up_drains_the_queued_modules() {
+    let f = "desktop/overlay/etc/NetworkManager/dispatcher.d/50-wolos-online";
+    let d = scratch("nm-modules");
+    let path = fakes(&d, &[("flock", "exit 0"), ("wol", ""), ("systemd-run", "")]);
+    let (mods, pkgs, none) = (
+        d.join("modules-pending"),
+        d.join("packages-pending"),
+        d.join("none"),
+    );
+    let run = |action: &str, m: &Path, p: &Path| {
+        let _ = fs::remove_file(d.join("log"));
+        let st = Command::new("sh")
+            .arg(repo(f))
+            .arg("wlan0")
+            .arg(action)
+            .env("PATH", &path)
+            .env("WOLOS_LOCK", d.join("lock"))
+            .env("WOL_MODULES_PENDING", m)
+            .env("WOL_PACKAGES_PENDING", p)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        // systemd-run is called before the script exits; only the flock job is in the background.
+        log(&d)
+    };
+    fs::write(&mods, "x\n").unwrap();
+    let l = run("up", &mods, &none);
+    assert!(
+        l.contains("systemd-run --no-block --unit=wolos-modules-pending"),
+        "{l}"
+    );
+    assert!(l.contains("modules-install --drain"), "{l}");
+    assert!(
+        !run("down", &mods, &none).contains("systemd-run"),
+        "only on up"
+    );
+    fs::write(&mods, "").unwrap();
+    assert!(
+        !run("up", &mods, &none).contains("systemd-run"),
+        "an empty queue: nothing"
+    );
+    fs::write(&pkgs, "gst-libav\n").unwrap();
+    assert!(
+        run("up", &mods, &pkgs).contains("modules-install --drain"),
+        "media formats alone are drained too"
+    );
 }
 
 /// Daily update check: a timer runs it hourly; the script checks at most once every 20 hours,
@@ -412,6 +479,24 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(out.join("pkg")).unwrap().permissions().mode();
     assert_eq!(mode & 0o044, 0o044, "every account reads the findings");
+    // audit5 C9-5: a stamp from the future (the clock was ahead) is stale, not fresh.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    fs::write(out.join("checked"), format!("{}\n", now + 1_000_000_000)).unwrap();
+    fs::remove_file(out.join("pkg")).unwrap();
+    run(true, None);
+    assert!(
+        out.join("pkg").exists(),
+        "a future stamp does not stop the check"
+    );
+    let stamp: u64 = fs::read_to_string(out.join("checked"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(stamp <= now + 60, "the new stamp is today's: {stamp}");
 }
 
 /// A panel handed over at brightness 0 (passthrough, some firmware) is raised; never lowered.
@@ -486,25 +571,76 @@ fn automatic_updates_download_daily_and_apps_update_per_account() {
     assert_eq!(values(&s, "Service", "Type"), ["oneshot"]);
     let d = scratch("autoupdate");
     let conf = d.join("auto-update");
-    let path = fakes(&d, &[("wol", ""), ("pacman", "")]);
+    // pacman's database as on a sealed slot: never written by the download (audit5 C9-1).
+    let db = d.join("db");
+    fs::create_dir_all(db.join("local")).unwrap();
+    fs::create_dir_all(db.join("sync")).unwrap();
+    fs::write(db.join("sync/core.db"), "old").unwrap();
+    let tmp = d.join("tmp");
+    fs::create_dir_all(&tmp).unwrap();
+    // A download-only pacman: takes its lock in the database it is given, refreshes sync there.
+    let pacman = "db=$2; [ \"$1\" = --dbpath ] || exit 9; : > \"$db/db.lck\" || exit 1
+[ -L \"$db/local\" ] || exit 8; echo new > \"$db/sync/core.db\"
+[ ! -e \"$(dirname \"$0\")/../pacman-fails\" ] || exit 1; rm -f \"$db/db.lck\"";
+    let path = fakes(&d, &[("wol", ""), ("pacman", pacman)]);
     let run = || {
-        let st = Command::new("sh")
+        Command::new("sh")
             .arg(repo("files/usr/lib/wolos/update-download"))
             .env("PATH", &path)
             .env("WOLOS_AUTO_UPDATE", &conf)
-            .status()
-            .unwrap();
-        assert!(st.success());
+            .env("WOLOS_PACMAN_DB", &db)
+            .env("TMPDIR", &tmp)
+            .output()
+            .unwrap()
     };
-    run();
+    let o = run();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let l = log(&d);
+    let mut lines = l.lines();
     assert_eq!(
-        log(&d),
-        "wol update check --json\npacman -Swu --noconfirm --noprogressbar\n",
-        "no file: on"
+        lines.next(),
+        Some("wol update check --json"),
+        "no file: on: {l}"
     );
+    let p = lines.next().unwrap_or_default();
+    let want = format!("pacman --dbpath {}/wolos-download-db.", tmp.display());
+    assert!(
+        p.starts_with(&want),
+        "a temporary database, not the slot's: {l}"
+    );
+    assert!(
+        p.ends_with(" -Sw --refresh --sysupgrade --noconfirm --noprogressbar"),
+        "download only: {l}"
+    );
+    assert_eq!(
+        fs::read_to_string(db.join("sync/core.db")).unwrap(),
+        "old",
+        "the slot's database is never written"
+    );
+    assert!(!db.join("db.lck").exists());
+    assert_eq!(
+        fs::read_dir(&tmp).unwrap().count(),
+        0,
+        "the temporary database goes"
+    );
+    // A failed download is the unit's failure, not a silent success.
+    fs::write(d.join("pacman-fails"), "").unwrap();
+    let o = run();
+    assert!(!o.status.success(), "pacman failed: the unit fails");
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("could not download"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert_eq!(
+        fs::read_dir(&tmp).unwrap().count(),
+        0,
+        "the temporary database goes"
+    );
+    fs::remove_file(d.join("pacman-fails")).unwrap();
     fs::write(&conf, wol_core::update::auto::conf(false)).unwrap();
     fs::remove_file(d.join("log")).unwrap();
-    run();
+    assert!(run().status.success());
     assert_eq!(log(&d), "", "download=off: nothing runs");
     assert!(!log(&d).contains("-Syu"), "never installs");
 
@@ -643,4 +779,244 @@ fn one_mdns_stack() {
         d.contains("[Resolve]\n") && d.contains("MulticastDNS=no"),
         "{d}"
     );
+}
+
+/// The live medium's mark (wolos-iso build.sh); install-run leaves it out of the installed system.
+const LIVE_MARK: &str = "ConditionPathExists=!/etc/wolos-live";
+
+/// Units 50-wolos.preset enables that may run on the live medium: (unit, the condition in the
+/// unit that keeps it off there, or "" when running there is right, reason).
+const LIVE_SAFE: [(&str, &str, &str); 21] = [
+    (
+        "wold.service",
+        "",
+        "the login window; airootfs's wold.service.d/wolos-live.conf starts it only for Try WolOS",
+    ),
+    (
+        "wolos-verity-check.service",
+        "ConditionPathExists=/usr/lib/wolos/verity.manifest",
+        "the manifest is written when a slot is sealed",
+    ),
+    (
+        "wolos-tpm-bind.service",
+        "ConditionPathExists=/var/lib/wolos/secureboot/rebind.key",
+        "install-run writes the key into the installed system",
+    ),
+    (
+        "wolos-tpm-reseal.service",
+        "ConditionKernelCommandLine=rd.luks.name",
+        "the live medium has no encrypted root",
+    ),
+    (
+        "wolos-mok-enroll.service",
+        "ConditionPathExists=/var/lib/wolos/secureboot/db.der",
+        "the computer's keys are made by install-run",
+    ),
+    (
+        "systemd-sysext.service",
+        "",
+        "no system extension exists on the live medium; nothing to merge",
+    ),
+    (
+        "wolos-hw.service",
+        "",
+        "drivers and settings for the devices present: the live session needs them",
+    ),
+    (
+        "wolos-shm-limit.service",
+        "",
+        "the same /dev/shm limit for the live session",
+    ),
+    (
+        "wolos-gpu.service",
+        "",
+        "panel brightness once the display driver is up, live too",
+    ),
+    (
+        "wolos-power.service",
+        "",
+        "power policy for the adapter and battery, live too",
+    ),
+    (
+        "NetworkManager.service",
+        "",
+        "the installer's online step and Try WolOS need the network",
+    ),
+    ("iwd.service", "", "Wi-Fi under NetworkManager"),
+    (
+        "bluetooth.service",
+        "",
+        "Bluetooth keyboards and mice in the live session",
+    ),
+    (
+        "nftables.service",
+        "",
+        "the firewall protects the live session as well",
+    ),
+    (
+        "cups.socket",
+        "",
+        "socket-activated: idle until Try WolOS prints",
+    ),
+    ("avahi-daemon.service", "", "finds printers for Try WolOS"),
+    (
+        "systemd-timesyncd.service",
+        "",
+        "a right clock for TLS downloads and the installed system's files",
+    ),
+    ("udisks2.service", "", "Files mounts disks in Try WolOS"),
+    ("seatd.service", "", "the live session's seat"),
+    (
+        "vboxservice.service",
+        "",
+        "Arch's unit: ConditionVirtualization=oracle; guest tools in a live VM too",
+    ),
+    (
+        "vmtoolsd.service",
+        "",
+        "Arch's unit: ConditionVirtualization=vmware; guest tools in a live VM too",
+    ),
+];
+
+/// A unit shipped in files/ plus its drop-ins there.
+fn unit_and_dropins(name: &str) -> String {
+    let mut s = fs::read_to_string(repo(&format!("{UNITS}/{name}"))).unwrap_or_default();
+    if let Ok(d) = fs::read_dir(repo(&format!("{UNITS}/{name}.d"))) {
+        let mut ds: Vec<_> = d.flatten().map(|e| e.path()).collect();
+        ds.sort();
+        for p in ds {
+            s.push('\n');
+            s.push_str(&fs::read_to_string(p).unwrap());
+        }
+    }
+    s
+}
+
+#[test]
+fn preset_units_stay_off_on_the_live_medium() {
+    // Audit CA-2: firstboot, updates, reports, xguard, clam and boot-ok must not run on the ISO.
+    let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
+    let enabled: Vec<&str> = preset
+        .lines()
+        .filter_map(|l| l.strip_prefix("enable "))
+        .collect();
+    assert!(enabled.len() >= 20, "{enabled:?}");
+    let mut guarded = 0;
+    for u in &enabled {
+        let text = unit_and_dropins(u);
+        let live_off = text.lines().any(|l| l.trim() == LIVE_MARK);
+        let safe = LIVE_SAFE.iter().find(|(n, _, _)| n == u);
+        match (live_off, safe) {
+            (true, None) => guarded += 1,
+            (true, Some(_)) => panic!("{u}: live-safe and guarded; drop one"),
+            (false, None) => panic!(
+                "{u}: enabled by the preset, runs on the live medium: add {UNITS}/{u}.d/no-live.conf \
+                 ({LIVE_MARK}) or list it in LIVE_SAFE with a reason"
+            ),
+            (false, Some((_, cond, why))) => {
+                assert!(!why.is_empty(), "{u}: a reason");
+                assert!(
+                    cond.is_empty() || text.lines().any(|l| l.trim() == *cond),
+                    "{u}: LIVE_SAFE says {cond} keeps it off the live medium; the unit lacks it"
+                );
+            }
+        }
+    }
+    for (n, _, _) in LIVE_SAFE {
+        assert!(
+            enabled.contains(&n),
+            "LIVE_SAFE names {n}, which the preset does not enable"
+        );
+    }
+    for must in [
+        "wolos-firstboot.service",
+        "wolos-update-check.timer",
+        "wolos-update-download.timer",
+        "wolos-report.timer",
+        "wolos-xguard.service",
+        "wolos-xguard-update.timer",
+        "wolos-xguard-sweep.timer",
+        "wolos-clam.socket",
+        "wolos-boot-ok.service",
+    ] {
+        assert!(
+            unit_and_dropins(must)
+                .lines()
+                .any(|l| l.trim() == LIVE_MARK),
+            "{must} runs on the live medium"
+        );
+    }
+    assert!(guarded >= 9, "{guarded} guarded");
+    // The mark exists only on the live medium: the image build makes it, install-run drops it.
+    let run = read("files/usr/lib/wolos/install-run");
+    assert!(
+        run.contains("\"$T/etc/wolos-live\""),
+        "install-run copies /etc/wolos-live into the installed system"
+    );
+    if let Ok(b) = fs::read_to_string(repo("build.sh")) {
+        assert!(
+            b.contains("touch \"$A/etc/wolos-live\""),
+            "build.sh no longer marks the live medium"
+        );
+    }
+}
+
+#[test]
+fn wifi_is_iwd_under_networkmanager() {
+    // Audit CA-11: one Wi-Fi stack. networkmanager depends on wpa_supplicant in Arch, so it is on
+    // the disk; NetworkManager never starts it with the iwd backend, and the preset keeps it off.
+    let conf = read("files/etc/NetworkManager/conf.d/wolos-iwd.conf");
+    assert!(conf.contains("[device]\nwifi.backend=iwd\n"), "{conf}");
+    let preset = read("files/usr/lib/systemd/system-preset/50-wolos.preset");
+    for l in [
+        "enable NetworkManager.service",
+        "enable iwd.service",
+        "disable wpa_supplicant.service",
+    ] {
+        assert!(preset.lines().any(|p| p == l), "preset lacks {l}");
+    }
+    // The live medium enables units from the package scriptlet, not this preset: NetworkManager
+    // pulls iwd in itself.
+    let nm = unit_and_dropins("NetworkManager.service");
+    assert!(
+        nm.contains("[Unit]\nWants=iwd.service\nAfter=iwd.service\n"),
+        "{nm}"
+    );
+    if let Ok(p) = fs::read_to_string(repo("profile/packages.x86_64")) {
+        let names: Vec<&str> = p
+            .lines()
+            .map(|l| l.split('#').next().unwrap().trim())
+            .collect();
+        assert!(
+            names.contains(&"networkmanager") && names.contains(&"iwd"),
+            "image lacks NetworkManager or iwd"
+        );
+        assert!(
+            !names.contains(&"wpa_supplicant"),
+            "wpa_supplicant listed: one Wi-Fi stack"
+        );
+    }
+}
+
+#[test]
+fn mok_enroll_is_skipped_without_secure_boot_firmware() {
+    // wolvm e2e (BW8): on firmware without Secure Boot (plain OVMF) mokutil fails; the unit must be
+    // skipped there, not failed. The SecureBoot variable exists whenever the firmware has Secure
+    // Boot, on or off (the person may turn it on later).
+    let u = unit("wolos-mok-enroll.service");
+    let conds = values(&u, "Unit", "ConditionPathExists");
+    assert!(
+        conds.contains(
+            &"/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c".to_owned()
+        ),
+        "{conds:?}"
+    );
+    // Still only where the key screen is the way in.
+    for c in [
+        "/var/lib/wolos/secureboot/db.der",
+        "/var/lib/wolos/secureboot/key-screen",
+        "!/var/lib/wolos/secureboot/enrolled",
+    ] {
+        assert!(conds.contains(&c.to_owned()), "{c}: {conds:?}");
+    }
 }

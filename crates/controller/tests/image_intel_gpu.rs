@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Intel iGPU stack on first boot: firmware + user-space packages offline, i915 tunables, session env,
 //! native-boot proof script. Evidence: docs/modules/intel-graphics.md.
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
-fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p)
-}
-
-fn read(p: &str) -> String {
-    fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::{read, repo};
+use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 
 #[test]
 fn session_sources_gpu_env() {

@@ -4,7 +4,7 @@ Ceiling on iGPUs: shared LPDDR, not FLOPS. Unit of cost: bytes moved per frame.
 Baseline (derived): 1920x1200 RGBA8 = 9.2 MB per full read or write; at 60 Hz = 553 MB/s per full-screen pass.
 Contract: ADR 0007. Hardware: `intel-graphics.md`. Current config: `hyprland-fork.md`.
 
-Legend: Layer = C compositor (wol-hypr/Hyprland), D kernel driver, M Mesa, A apps. Agnostic = same code on every vendor; Backend = per-vendor code or knob.
+Legend: Layer = C compositor (wol-hypr and the compositor fork), D kernel driver, M Mesa, A apps. Agnostic = same code on every vendor; Backend = per-vendor code or knob.
 
 | Paradigm | Mechanism | Saving (source) | Layer | Agnostic? | Measure |
 |---|---|---|---|---|---|

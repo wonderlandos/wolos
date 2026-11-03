@@ -2,7 +2,7 @@
 //! WolOS mirrors (ADR 0030): repo order in pacman.conf, the wolos-mirrorlist package (the `[wolos]`
 //! list and the CachyOS `/cachy/` redirect list), the CPU gate of the three CachyOS x86-64-v3
 //! sections (`wol mirror`), status and latency ranking of `[wolos]` only.
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 
@@ -84,35 +84,68 @@ fn repos_in_order_with_the_wolos_mirrorlists() {
         );
     }
     // [wolos]: the CDN first (<domain>/<repo>-<date>/<file>, the bucket layout), the release
-    // assets second; every line at the release date.
+    // assets second; every line at the release date. The CDN line stays commented out until its
+    // CloudFront domain exists (audit CA-8): a name that does not resolve costs every sync a DNS
+    // failure. Active or not, never the literal placeholder.
     let list = read("wolos-mirrorlist/wolos-mirrorlist");
-    let s = m::servers(&list);
-    assert_eq!(s.len(), 2, "{s:?}");
+    let uncomment = |l: &str| {
+        l.strip_prefix('#')
+            .filter(|r| r.starts_with("Server ="))
+            .map_or_else(|| l.to_owned(), str::to_owned)
+    };
+    let all: Vec<String> = m::servers(&list.lines().map(uncomment).collect::<Vec<_>>().join("\n"));
+    assert_eq!(all.len(), 2, "{all:?}");
     assert_eq!(
-        s[0],
-        format!("{}/$repo-{}", host(&s[0]), snapshot()),
+        all[0],
+        format!("{}/$repo-{}", host(&all[0]), snapshot()),
         "primary = the WolOS CDN"
     );
-    let cdn = host(&s[0]).to_owned();
+    let cdn = host(&all[0]).to_owned();
     assert!(
         cdn == "https://REPO_DOMAIN" || cdn.ends_with(".cloudfront.net"),
         "{cdn}: the CloudFront domain (placeholder until terraform apply)"
     );
+    let fallback = format!(
+        "https://github.com/wonderlandos/wolos-packages/releases/download/$repo-{}",
+        snapshot()
+    );
     assert_eq!(
-        s[1],
-        format!(
-            "https://github.com/wonderlandos/wolos-packages/releases/download/$repo-{}",
-            snapshot()
-        ),
+        all[1], fallback,
         "fallback = the release assets the CDN falls back to as well"
     );
+    let s = m::servers(&list);
+    if cdn.ends_with(".cloudfront.net") {
+        assert_eq!(s, all, "the CDN is set: both lines active");
+    } else {
+        assert_eq!(
+            s,
+            [fallback],
+            "placeholder: only the release assets are active"
+        );
+    }
     assert!(
         !list.contains("squareweb"),
         "the old CDN is gone (ADR 0030)"
     );
-    // The CachyOS list: one server, the same CDN's /cachy/ redirect; no date (the repos roll).
+    // The CachyOS list: one server, the same CDN's /cachy/ redirect, active only with the real
+    // domain; no date (the repos roll).
     let cachy = read("wolos-mirrorlist/wolos-cachy-mirrorlist");
-    assert_eq!(m::servers(&cachy), [format!("{cdn}/cachy/$repo")]);
+    let cachy_all = m::servers(&cachy.lines().map(uncomment).collect::<Vec<_>>().join("\n"));
+    assert_eq!(cachy_all, [format!("{cdn}/cachy/$repo")]);
+    if cdn.ends_with(".cloudfront.net") {
+        assert_eq!(m::servers(&cachy), cachy_all);
+    } else {
+        assert!(m::servers(&cachy).is_empty(), "placeholder: commented out");
+    }
+    for (f, t) in [
+        ("wolos-mirrorlist", &list),
+        ("wolos-cachy-mirrorlist", &cachy),
+    ] {
+        assert!(
+            !m::servers(t).iter().any(|s| s.contains("REPO_DOMAIN")),
+            "{f}: an active REPO_DOMAIN server (audit CA-8)"
+        );
+    }
     assert!(
         !cachy.contains(&snapshot()),
         "no release date in the CachyOS list"
@@ -134,11 +167,13 @@ fn repos_in_order_with_the_wolos_mirrorlists() {
 #[test]
 fn gate_turns_the_cachyos_sections_on_only_on_v3_cpus() {
     let conf = read("profile/pacman.conf");
+    let cachy = "# c\nServer = https://cdn.example/cachy/$repo\n";
     let mut e = FakeEnv {
         root: true,
         files: vec![
             ("/proc/cpuinfo".into(), V3.into()),
             ("/etc/pacman.conf".into(), conf.clone()),
+            ("/etc/pacman.d/wolos-cachy-mirrorlist".into(), cachy.into()),
         ],
         ..Default::default()
     };
@@ -154,12 +189,41 @@ fn gate_turns_the_cachyos_sections_on_only_on_v3_cpus() {
             "{r}"
         );
     }
+    // A v3 CPU but no CachyOS server (the shipped list until the CDN exists, or none): off, and
+    // sections already on go off again; a section without a server fails every pacman -Sy.
+    let shipped = read("wolos-mirrorlist/wolos-cachy-mirrorlist");
+    let none = if m::servers(&shipped).is_empty() {
+        shipped
+    } else {
+        String::new()
+    };
+    for (have, list) in [
+        (&conf, none.clone()),
+        (&m::gate(&conf, true), none.clone()),
+        (&conf, String::new()),
+    ] {
+        let mut n = FakeEnv {
+            root: true,
+            files: vec![
+                ("/proc/cpuinfo".into(), V3.into()),
+                ("/etc/pacman.conf".into(), have.clone()),
+                ("/etc/pacman.d/wolos-cachy-mirrorlist".into(), list),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(run("mirror gate --yes", &mut n), 0, "{}", n.err);
+        assert_eq!(n.out, "{\"cachyos\":\"off\"}\n");
+        let after = n.written.last().map_or(have.as_str(), |(_, t)| t.as_str());
+        assert!(!m::cachy_enabled(after), "sections on without a server");
+        assert_eq!(after, conf, "back to the shipped file");
+    }
     // Older CPU: the sections stay off, nothing written.
     let mut old = FakeEnv {
         root: true,
         files: vec![
             ("/proc/cpuinfo".into(), V2.into()),
             ("/etc/pacman.conf".into(), conf),
+            ("/etc/pacman.d/wolos-cachy-mirrorlist".into(), cachy.into()),
         ],
         ..Default::default()
     };
@@ -232,6 +296,26 @@ fn status_and_rank_by_latency_touch_only_the_wolos_list() {
     );
     e.root = false;
     assert_ne!(run("mirror rank --yes", &mut e), 0, "writing needs root");
+    // A testing install ([wolos-testing], install-channel): its servers answer wolos-testing.db.
+    let testing = read("profile/pacman.conf").replacen("\n[wolos]\n", "\n[wolos-testing]\n", 1);
+    let mut t = FakeEnv {
+        root: false,
+        files: vec![
+            ("/etc/pacman.conf".into(), testing),
+            (
+                "/etc/pacman.d/wolos-mirrorlist".into(),
+                "Server = https://gh.example/download/wolos-testing\n".into(),
+            ),
+        ],
+        captures: vec![(
+            "probe https://gh.example/download/wolos-testing/wolos-testing.db".into(),
+            "15".into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("mirror rank --json", &mut t), 0, "{}", t.err);
+    let r: serde_json::Value = serde_json::from_str(&t.out).unwrap();
+    assert_eq!(r[0]["ms"], 15, "probed the testing database: {}", t.out);
     // The real probe follows redirects: the CDN and the release assets answer with 302s.
     let src = read("crates/controller/src/mirror.rs");
     assert!(src.contains("\"-fsSL\""), "curl -L in curl_probe");

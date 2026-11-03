@@ -109,6 +109,32 @@ pub const CAPABILITIES: &[&str] = &[
     "modules",
 ];
 pub const GLOBAL_FLAGS: &[&str] = &["json", "yes", "help"];
+/// `wol toggle` words: `wol_core::toggles::words()` (test-checked).
+pub const TOGGLES: &[&str] = &[
+    "nightlight",
+    "night-light",
+    "nightshift",
+    "night-shift",
+    "stay-awake",
+    "idle",
+    "awake",
+    "caffeine",
+    "silence",
+    "dnd",
+    "focus",
+];
+const ONE_TOGGLE: Arg = Arg {
+    name: "toggle",
+    choices: TOGGLES,
+    optional: true,
+    rest: false,
+};
+const ON_OFF: Arg = Arg {
+    name: "state",
+    choices: &["on", "off"],
+    optional: true,
+    rest: false,
+};
 
 /// The tree. Longest matching path wins.
 pub const TREE: &[Cmd] = &[
@@ -470,7 +496,7 @@ pub const TREE: &[Cmd] = &[
         &["gpu", "hyprconf"],
         "gpu.hyprconf",
         &[],
-        "Hyprland render config fragment",
+        "compositor render config fragment",
     ),
     // Hardware: drivers, firmware, quirks (wol_core::hardware, docs/modules/hardware.md).
     cmd(
@@ -555,6 +581,31 @@ pub const TREE: &[Cmd] = &[
         "modules.enable",
         &[arg("id")],
         "Finish a module's setup for this user (recipes, mise tools, post step); repeatable",
+    ),
+    // Sessions (wol_core::sessions, ADR 0032): terminal and agent windows reopened at login.
+    cmd(
+        &["sessions"],
+        "sessions.list",
+        &[],
+        "Terminal and agent windows saved for the next login",
+    ),
+    cmd(
+        &["sessions", "list"],
+        "sessions.list",
+        &[],
+        "Terminal and agent windows saved for the next login",
+    ),
+    cmd(
+        &["sessions", "save"],
+        "sessions.save",
+        &[],
+        "Save this session's terminal and agent windows (workspace, folder, zellij, claude --continue)",
+    ),
+    cmd(
+        &["sessions", "restore"],
+        "sessions.restore",
+        &[],
+        "Reopen the saved windows in their workspaces",
     ),
     // Games (wol_core::games, docs/modules/games.md).
     cmd(
@@ -721,13 +772,13 @@ pub const TREE: &[Cmd] = &[
         &["plugin", "new"],
         "plugin.new",
         &[arg("id"), opt("kinds")],
-        "Scaffold a plugin that passes check (kinds: menubar,widget,panel,search,dock,tile,toggle,hotkey,webapp,theme,look,hypr)",
+        "Scaffold a plugin that passes check (kinds: menubar,widget,panel,search,dock,tile,toggle,hotkey,webapp,theme)",
     ),
     cmd(
         &["plugin", "check"],
         "plugin.check",
         &[arg("plugin")],
-        "Check a plugin (id or folder): manifest, files, Lua loads and renders, theme, Hyprland lines",
+        "Check a plugin (id or folder): manifest, files, Lua loads and renders, theme, compositor lines",
     ),
     cmd(
         &["plugin", "run"],
@@ -757,6 +808,12 @@ pub const TREE: &[Cmd] = &[
         "plugin.remove",
         &[arg("id")],
         "Delete a user plugin folder and its state",
+    ),
+    cmd(
+        &["plugin", "add"],
+        "plugin.add",
+        &[arg("plugin")],
+        "Install a .wolplug file or a plugin folder for this account (unsigned: --yes); turn it on with enable",
     ),
     cmd(
         &["plugin", "pack"],
@@ -899,6 +956,43 @@ pub const TREE: &[Cmd] = &[
         "focus.off",
         &[],
         "Turn Do Not Disturb off",
+    ),
+    // Web apps (ADR 0031 W5, wol_core::webapps): a web address as an app of its own.
+    cmd(&["webapp"], "webapp.list", &[], "Your web apps"),
+    cmd(&["webapp", "list"], "webapp.list", &[], "Your web apps"),
+    Cmd {
+        flags: &["own-profile"],
+        ..cmd(
+            &["webapp", "add"],
+            "webapp.add",
+            &[arg("name"), arg("url"), opt("icon")],
+            "Make a web address an app with its own window and icon",
+        )
+    },
+    cmd(
+        &["webapp", "remove"],
+        "webapp.remove",
+        &[arg("name")],
+        "Remove a web app (name or id)",
+    ),
+    // Desktop toggles (wol_core::toggles): Night Light, Stay Awake, Do Not Disturb.
+    cmd(
+        &["toggle"],
+        "toggle",
+        &[ONE_TOGGLE, ON_OFF],
+        "Turn a toggle on or off; without on|off it flips; alone it lists them",
+    ),
+    cmd(
+        &["toggle", "list"],
+        "toggle",
+        &[],
+        "Desktop toggles and their state",
+    ),
+    cmd(
+        &["remind"],
+        "remind",
+        &[arg("minutes"), rest("text")],
+        "Show a reminder in <minutes> (1..1440)",
     ),
     cmd(&["settings"], "settings", &[], "Your desktop settings"),
     cmd(
@@ -1356,6 +1450,22 @@ mod tests {
             ),
             ("games doctor --json", "games.doctor --json"),
             ("games", "games.doctor"),
+            // hyprland.conf toggles and web app launchers (ADR 0031 W5)
+            ("toggle", "toggle"),
+            ("toggle list --json", "toggle --json"),
+            ("toggle dnd", "toggle toggle=dnd"),
+            ("toggle nightlight on", "toggle toggle=nightlight state=on"),
+            ("toggle idle off", "toggle toggle=idle state=off"),
+            ("webapp", "webapp.list"),
+            (
+                "webapp add Mail https://mail.example.com --own-profile",
+                "webapp.add name=Mail url=https://mail.example.com --own-profile",
+            ),
+            ("webapp remove Mail", "webapp.remove name=Mail"),
+            (
+                "remind 10 tea is ready",
+                "remind minutes=10 text=tea text=is text=ready",
+            ),
             ("", "help"),
         ];
         for (line, want) in table {
@@ -1402,6 +1512,7 @@ mod tests {
             .map(|c| c.0)
             .collect();
         assert_eq!(CAPABILITIES, caps.as_slice());
+        assert_eq!(TOGGLES, wol_core::toggles::words().as_slice());
     }
 
     #[test]

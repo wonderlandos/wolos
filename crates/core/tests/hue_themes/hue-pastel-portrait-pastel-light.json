@@ -1,0 +1,38 @@
+{
+  "id": "hue-pastel-portrait-pastel-light",
+  "name": "pastel portrait",
+  "variant": "light",
+  "tokens": {
+    "surface": "#f5f1e9",
+    "sidebar": "rgba(240,235,227,0.92)",
+    "card": "#fbf9f6",
+    "line": "rgba(73,41,36,0.1)",
+    "text": "#492924",
+    "dim": "#856f69",
+    "accent": "#496d89",
+    "accentText": "#ffffff",
+    "glass": "rgba(245,241,233,0.84)",
+    "control": "#e0d9d1",
+    "success": "#516f4e",
+    "warning": "#4c704e",
+    "danger": "#88565d"
+  },
+  "terminal": [
+    "#f5f1e9",
+    "#88565d",
+    "#516f4e",
+    "#4c704e",
+    "#496d89",
+    "#925d67",
+    "#486d89",
+    "#492924",
+    "#86827c",
+    "#b1777f",
+    "#71946e",
+    "#6b956e",
+    "#6891b1",
+    "#bc7e89",
+    "#6791b1",
+    "#6e4741"
+  ]
+}

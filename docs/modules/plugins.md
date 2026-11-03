@@ -6,7 +6,7 @@ This is the one document for the whole plugin API. Every TOML and Lua block in i
 
 ## What a plugin is
 
-A plugin is a folder named after its id with a `plugin.toml` and the files it names. Nothing else: no install hooks, no binaries, no symlinks, at most 1 MiB. The shell looks in `~/.local/share/wolos/plugins/<id>/` (yours, reloaded when it changes) and `/usr/share/wolos/plugins/<id>/` (shipped or installed through wopkg). A plugin may contribute, through sections of its manifest: a menu bar item, a Dock entry, a desktop card, a panel, search results, a Control Center tile, a toggle, a hotkey, a web app, a theme, a Looks preset and Hyprland window rules. Code is Lua, run in the sandbox of ADR 0020 (`wol-lua`: 16 MiB, 5 million instructions per load, render or click, no `io`, `os`, `require`, `debug`, loaders or bytecode). A plugin cannot leave the HIG: it returns Kit view trees and the shell draws them. It reaches the system only through the calls below and, for anything that changes the system, through `wol` verbs, which pass the helper policy and the audit log under the plugin's id (Settings > Assistants & Automation).
+A plugin is a folder named after its id with a `plugin.toml` and the files it names. Nothing else: no install hooks, no binaries, no symlinks, at most 1 MiB. The shell looks in `~/.local/share/wolos/plugins/<id>/` (yours, reloaded when it changes) and `/usr/share/wolos/plugins/<id>/` (shipped or installed through wopkg). A plugin may contribute, through sections of its manifest: a menu bar item, a Dock entry, a desktop card, a panel, search results, a Control Center tile, a toggle, a hotkey, a web app, a theme, a Looks preset and compositor window rules. Code is Lua, run in the sandbox of ADR 0020 (`wol-lua`: 16 MiB, 5 million instructions per load, render or click, no `io`, `os`, `require`, `debug`, loaders or bytecode). A plugin cannot leave the HIG: it returns Kit view trees and the shell draws them. It reaches the system only through the calls below and, for anything that changes the system, through `wol` verbs, which pass the helper policy and the audit log under the plugin's id (Settings > Assistants & Automation).
 
 Ids are reverse-DNS (`org.example.stats`) or `<user>.<name>` (`alice.stats`): lowercase labels of letters, digits and `-`, joined by dots. `org.wolos.*` is reserved for plugins WolOS ships.
 
@@ -59,22 +59,22 @@ Then one `[[section]]` per contribution. Every entry has an `id` (1 to 32 lowerc
 | Section | Keys | Notes |
 |---|---|---|
 | `[[menubar]]` | `script`, `side` | A bar item. `side` is `left`, `centre` or `right` (default). The script returns `wol.menubar`. |
-| `[[dock]]` | `name`, `icon`, `exec` | A Dock tile that runs `exec` (argv, never a shell line). |
+| `[[dock]]` | `name`, `icon`, `exec` | A Dock tile that runs `exec` (argv, never a shell line). An `exec` that is not a `wol` verb needs the `run` permission. |
 | `[[widget]]` | `script`, `sizes` | A desktop card (today's `lua:<id>`). `sizes`: any of `small`, `medium`, `large` (default all). |
 | `[[panel]]` | `script`, `anchor` | A sheet the shell shows on `wol.show("<id>")` or a hotkey. `anchor`: `top` (default), `bottom`, `left`, `right`, `centre`. |
 | `[[search]]` | `script`, `kind`, `prefix` | Search rows. `kind = "results"` (default) sees every query; `kind = "command"` sees queries starting with `prefix` (1 to 8 characters, no spaces). |
 | `[[tile]]` | `icon`, `label`, `toggle` | A Control Center tile bound to a `[[toggle]]` of this plugin. |
-| `[[toggle]]` | `on`, `off` | Two argv commands; the state is a flag file in `$XDG_STATE_HOME/wolos/toggles/<plugin>.<id>`. |
-| `[[hotkey]]` | `default`, `exec`, `group` | A user-rebindable shortcut (`shortcuts::Custom`). `default`: modifiers from `super`, `ctrl`, `alt`, `shift`, then a key (`super+shift+t`, `super+f5`, `super+space`). `group` is the heading in Settings (default: the plugin name). |
-| `[[webapp]]` | `name`, `url`, `icon`, `profile` | A frameless browser window for an `https://` URL, in Search and the Dock. `profile`: `shared` (default) or `own` (isolated cookies). |
+| `[[toggle]]` | `on`, `off` | Two argv commands; the state is a flag file in `$XDG_STATE_HOME/wolos/toggles/<plugin>.<id>`. A command that is not a `wol` verb needs the `run` permission. |
+| `[[hotkey]]` | `default`, `exec`, `group` | A user-rebindable shortcut (`shortcuts::Custom`). `default`: modifiers from `super`, `ctrl`, `alt`, `shift`, then a key (`super+shift+t`, `super+f5`, `super+space`). `group` is the heading in Settings (default: the plugin name). An `exec` that is not a `wol` verb needs the `run` permission. |
+| `[[webapp]]` | `name`, `url`, `icon`, `profile` | A frameless browser window for an `https://` URL. While the plugin is on it is a launcher next to your own web apps (`wol webapp list`, Search, Launchpad; pin it to the Dock): `~/.local/share/applications/wolos-webapp-plugin-<plugin>-<id>.desktop`, marked `X-WolOS-Plugin=<plugin>`. Turning the plugin off or removing it removes the launcher; a web app of yours with the same file name is kept. `profile`: `shared` (default) or `own` (isolated cookies). |
 | `[[theme]]` | `file` | A `theme.json` (`shared::theme` tokens, optional `extends`); checked for contrast. |
-| `[[look]]` | `file` | A Looks preset JSON (`wol_core::looks`). |
-| `[[hypr]]` | `file` | `keyword = value` lines; only `windowrule`, `layerrule`, `bezier`, `animation`. Never `bind`, `exec`, `env`, `source`, `plugin`, `$variables` or `{ }` blocks. Parsed into `hyprprefs` keywords, never sourced raw. |
+| `[[look]]` | `file` | Planned: a Looks preset JSON (`wol_core::looks`). Nothing applies it yet, so `wol plugin check` refuses the section and `wol plugin new` does not offer it. |
+| `[[hypr]]` | `file` | `keyword = value` lines; only `windowrule`, `layerrule`, `bezier`, `animation`. Never `bind`, `exec`, `env`, `source`, `plugin`, `$variables` or `{ }` blocks. Planned: nothing applies these lines yet, so `wol plugin check` refuses the section and `wol plugin new` does not offer it. When it lands, the lines become `hyprprefs` keywords, never sourced raw. |
 
 `icon` is a symbolic icon name or a `.png`/`.svg` in the folder.
 
-A `[[hypr]]` rule (`windowrule` or `layerrule`, value `effect [args], match, ...`) is checked
-before it is used (`shared::plugins::check_hypr`):
+The rules a `[[hypr]]` section will be held to (`windowrule` or `layerrule`, value
+`effect [args], match, ...`; `shared::plugins::check_hypr`, already run by `check`):
 
 - `windowrule` effects allowed (placement and looks): `float`, `tile`, `pseudo`, `size`,
   `minsize`, `maxsize`, `move`, `center`, `workspace`, `rounding`, `bordersize`, `animation`,
@@ -148,14 +148,6 @@ profile = "own"
 [[theme]]
 id = "night"
 file = "night.json"
-
-[[look]]
-id = "glass"
-file = "glass.json"
-
-[[hypr]]
-id = "rules"
-file = "rules.conf"
 ```
 
 A plugin without code: a Control Center tile bound to a toggle, and a theme.
@@ -193,13 +185,13 @@ Declared in the header, shown before the plugin is turned on (`wol plugin enable
 | Permission | Call | Shown as |
 |---|---|---|
 | `notifications` | `wol.notify` | Show notifications |
-| `run` | `wol.run` | Run commands as you |
+| `run` | `wol.run`; `[[toggle]]`, `[[dock]]` and `[[hotkey]]` commands that are not `wol` verbs | Run commands as you |
 | `http` | `wol.http_get` | Read data from the web (each site asks once) |
 | `clipboard` | `wol.clipboard.text` | Read the clipboard |
 | `open` | `wol.open` | Open apps, files and links |
 | `toggles` | `wol.toggle_set` | Switch its own toggles |
 
-`wol.run { "wol", ... }` runs the `wol` verb as a helper named after the plugin: the helper policy, on-screen approval and the audit log apply exactly as for an AI assistant (docs/modules/automation.md). Other programs run as you, with the limits of widget sources (own process group, CPU limit, nice 10, output cap, never a shell). `wol.http_get` needs a grant for each host; the first use shows the consent sentence ("Allow this plugin to read data from api.example.com.") and the card asks. No new privilege path exists: a plugin that needs more is a libwol app (ADR 0020).
+`wol.run { "wol", ... }` runs the `wol` verb as a helper named after the plugin: the helper policy, on-screen approval and the audit log apply exactly as for an AI assistant (docs/modules/automation.md). Other programs run as you, with the limits of widget sources (own process group, CPU limit, nice 10, output cap, never a shell). The argv of `[[toggle]]`, `[[dock]]` and `[[hotkey]]` entries are commands too: one whose first word is not `wol` is refused by `check` unless the plugin declares `run`, and the shell runs, shows or binds it only while `run` is granted. `wol plugin check` and `wol plugin enable` list each such command. `wol.http_get` needs a grant for each host; the first use shows the consent sentence ("Allow this plugin to read data from api.example.com.") and the card asks. A read follows no redirect: a host that answers with one (to another site, the local network or this machine) gives an error, never the other body. `wol.notify` posts at most 10 notifications a minute per script (the rest answer `false, message`); titles are cut at 120 characters and bodies at 1000. No new privilege path exists: a plugin that needs more is a libwol app (ADR 0020).
 
 ## Lua API v1
 
@@ -305,9 +297,9 @@ With a permission:
 
 | Call | Permission | Returns |
 |---|---|---|
-| `wol.notify(title, body)` | `notifications` | `ok, message` |
+| `wol.notify(title, body)` | `notifications` | `ok, message`. At most 10 a minute per script. |
 | `wol.run { "prog", "arg", ..., timeout = 5 }` | `run` | `ok, output_or_message`. argv only; `timeout` 1 to 30 s (default 5); stdout up to 64 KB. |
-| `wol.http_get(url)` | `http` | `body, message`. `https://` or `http://`; the host needs a grant. |
+| `wol.http_get(url)` | `http` | `body, message`. `https://` or `http://`; the host needs a grant; redirects are refused. |
 | `wol.open(target)` | `open` | `ok, message`. A file, folder, link or app id, with the default handler. |
 | `wol.toggle_set(id, on)` | `toggles` | `ok, message`. Flips this plugin's toggle `id` and runs its `on`/`off` command. |
 | `wol.clipboard.text()` | `clipboard` | `text, message` |
@@ -366,12 +358,13 @@ A render or click that errors shows the sentence on the card or bar item, not a 
 
 | Command | Does |
 |---|---|
-| `wol plugin new <id> [kinds]` | Scaffolds `~/.local/share/wolos/plugins/<id>/` with one entry per kind (comma-separated: `menubar,widget,panel,search,dock,tile,toggle,hotkey,webapp,theme,look,hypr`; default `menubar,widget`). The result passes `check`. |
-| `wol plugin check <id or folder> [--json]` | Manifest, folder (files named exist, no symlinks, 1 MiB), every Lua script loaded and rendered once with real services (search: one query), Hyprland whitelist, theme contrast, Looks preset. Exit 0 only when clean. |
-| `wol plugin run <id or folder> <menubar\|widget\|panel\|search> [entry] [input]` | Loads one entry headless and prints JSON: `node` (and `popover`), `refresh`, `events` (notifications, `run`, `open`, `show` as lines). `input` is a part number to click before the final render, or the search text. `XDG_STATE_HOME=/tmp/x` gives a clean state; `WOL_PLUGIN_HOSTS=a.com,b.com` grants hosts for `http_get`. |
+| `wol plugin new <id> [kinds]` | Scaffolds `~/.local/share/wolos/plugins/<id>/` with one entry per kind (comma-separated: `menubar,widget,panel,search,dock,tile,toggle,hotkey,webapp,theme`; default `menubar,widget`; `look` and `hypr` are planned and refused). The result passes `check`. |
+| `wol plugin check <id or folder> [--json]` | Manifest, folder (files named exist, no symlinks, 1 MiB), every Lua script loaded and rendered once with inert services, the same as Plugin Maker's check (search: one query): `wol.run`, `wol.http_get`, state and toggles answer empty and nothing runs, is read from the web or is written, because the plugin was granted nothing. Theme contrast; planned sections (`[[look]]`, `[[hypr]]`) are refused. Exit 0 only when clean; the OK line lists the permissions and every command the plugin runs as you. `new` and `pack` run the same check. |
+| `wol plugin run <id or folder> <menubar\|widget\|panel\|search> [entry] [input]` | Runs one entry headless with real services, as you (its `wol.run` commands run and its state is written; this is the author's tool, so run only a plugin you trust) and prints JSON: `node` (and `popover`), `refresh`, `events` (notifications, `run`, `open`, `show` as lines). `input` is a part number to click before the final render, or the search text. `XDG_STATE_HOME=/tmp/x` gives a clean state; `WOL_PLUGIN_HOSTS=a.com,b.com` grants hosts for `http_get`. |
 | `wol plugin list [--json]` | Installed plugins: on/off, version, entries, problems. |
-| `wol plugin enable <id>` / `disable <id>` | Turns a plugin on (granting what it declares) or off; the running shell reloads. |
-| `wol plugin remove <id>` | Deletes a user plugin folder and its state. System plugins are only disabled. |
+| `wol plugin add <folder or file.wolplug> [--yes]` | Installs a plugin for this account the way the Store's Plugins page does: the `.wolplug` is unpacked (bounded) and checked like a Store download (signature, hashes, folder rules), then staged, checked and moved into `~/.local/share/wolos/plugins/<id>/`. Unsigned (every folder, a `.wolplug` the index did not sign) needs `--yes`. It does not turn the plugin on. Plugins by id come from App Store > Plugins. |
+| `wol plugin enable <id>` / `disable <id>` | Turns a plugin on (granting what it declares) or off, and adds or removes its `[[webapp]]` launchers; the running shell reloads. |
+| `wol plugin remove <id>` | Deletes a user plugin folder, its state and its web app launchers. System plugins are only disabled. |
 | `wol plugin pack <id or folder> [out]` | Writes `<id>-<version>.wolplug` after a clean check. |
 
 `--json` on any command gives machine-readable output; without a TTY it is the default.
@@ -386,7 +379,7 @@ A render or click that errors shows the sentence on the card or bar item, not a 
 
 ## Distribution
 
-Three ways in, all user level, none waiting for an OS release (ADR 0031): drop the folder in `~/.local/share/wolos/plugins/`; `wol plugin add <git-url|path|.wolplug>` (stage, check, move; hooks never run); or the signed plugin index through wopkg and the Store's Plugins page. Unsigned plugins are marked unreviewed, like AUR, and need the typed `yes`.
+Three ways in, all user level, none waiting for an OS release (ADR 0031): drop the folder in `~/.local/share/wolos/plugins/`; `wol plugin add <folder|.wolplug>` (stage, check, move; hooks never run); or the signed plugin index through the Store's Plugins page, which also offers updates. Unsigned plugins are marked unreviewed, like community-collection packages, and need `--yes` (the Store: its own confirmation). Planned, not in 0.12: `wol plugin add` by index id or git URL, and `wopkg update` updating plugins.
 
 `.wolplug` (frozen): a zstd-compressed ustar archive with the members `<id>/<file>` for every file of the folder, then `SHA256` (BSD `sha256` lines, one per file, sorted, ADR 0011 form), then optionally `SHA256.sig` (the raw 64-byte Ed25519 signature of the `SHA256` bytes, by the index key in `/usr/share/wolos/keys/`). `wol plugin pack` writes it unsigned; the index CI adds the signature. File paths inside are at most 99 characters.
 

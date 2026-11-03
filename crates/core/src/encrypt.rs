@@ -105,11 +105,6 @@ fn v(a: &[&str]) -> Vec<String> {
     a.iter().map(|s| (*s).to_owned()).collect()
 }
 
-/// systemd-repart flags for the encrypted root (`Encrypt=key-file` in the definition).
-pub fn repart_flags(keyfile: &str) -> Vec<String> {
-    vec![format!("--key-file={keyfile}")]
-}
-
 /// Commands after partitioning, each run in order; all must succeed. `part`: the LUKS partition,
 /// `key`: the throw-away key file, `pass`: the passphrase file (Unlock::Passphrase).
 /// The recovery key comes on stdout of the `--recovery-key` step (the caller keeps it once).

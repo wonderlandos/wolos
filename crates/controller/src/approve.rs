@@ -48,7 +48,9 @@ pub fn decide(
         };
     }
     let admin = rule.access == Access::Admin;
-    if !admin && pol.always_allows(helper, rule.capability) {
+    // C10-1: once-only changes ask every time, even with an `apps` grant from `open`.
+    let once_only = policy::once_only(tool);
+    if !admin && pol.always_allows_tool(helper, rule.capability, tool) {
         return Verdict::Run {
             approved: false,
             note: "always allowed",
@@ -88,6 +90,11 @@ pub fn decide(
     let nothing = "Nothing changed.";
     match (answer, admin) {
         (Some(Answer::AllowOnce), false) => Verdict::Run {
+            approved: true,
+            note: "allowed once",
+        },
+        // A shell that offered Always Allow anyway: it counts once (nothing honours the grant).
+        (Some(Answer::AllowAlways), false) if once_only => Verdict::Run {
             approved: true,
             note: "allowed once",
         },
@@ -170,16 +177,60 @@ fn via_wold(env: &mut dyn Env, a: Approval) -> Result<Option<Answer>, Verdict> {
         Err(e) if timed_out(&e) => return Ok(Some(Answer::TimedOut)),
         Err(_) => return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
     };
+    // Audit S4-12: wold's own reason (permission, validation, a newer wold) reaches the helper.
+    let cannot = |why: &str| {
+        Verdict::Stop(
+            Outcome::Refused,
+            format!("WolOS could not ask on screen ({why}). Nothing changed."),
+        )
+    };
     let Ok(r) = serde_json::from_str::<Reply>(reply.trim()) else {
-        return Ok(None);
+        return Err(cannot("wold's answer could not be read"));
     };
     if r.ok {
-        return Ok(r.data.and_then(|d| serde_json::from_value(d).ok()));
+        return match r.data.map(serde_json::from_value::<Answer>) {
+            Some(Ok(a)) => Ok(Some(a)),
+            _ => Err(cannot("wold's answer could not be read")),
+        };
     }
-    Ok(match r.message.as_deref() {
-        Some(BUSY) => Some(Answer::Busy),
-        Some(NO_ANSWER) => Some(Answer::TimedOut),
-        Some(NOT_RUNNING) => return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
-        _ => None,
-    })
+    match r.message.as_deref() {
+        Some(BUSY) => Ok(Some(Answer::Busy)),
+        Some(NO_ANSWER) => Ok(Some(Answer::TimedOut)),
+        Some(NOT_RUNNING) => Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
+        Some(m) if !m.trim().is_empty() => Err(cannot(&reason(m))),
+        _ => Err(cannot("wold gave no reason")),
+    }
+}
+
+/// wold's refusal text for the helper: one line, control characters dropped, at most 160 chars.
+fn reason(m: &str) -> String {
+    m.chars()
+        .filter(|c| !c.is_control())
+        .take(160)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// C10-1: every state-changing `apps` verb besides plain `open` is once-only, so an Always
+    /// Allow given on an `open` sheet never covers it.
+    #[test]
+    fn apps_changes_besides_open_are_once_only() {
+        for v in catalog::HELPER_VERBS {
+            let tool = v.path.join("_");
+            if v.capability == "apps" && v.access == Access::Change {
+                assert_eq!(policy::once_only(&tool), tool != "open", "{tool}");
+            }
+        }
+        for t in policy::ONCE_ONLY {
+            assert!(
+                catalog::HELPER_VERBS.iter().any(|v| v.path.join("_") == t),
+                "{t} is not a helper verb"
+            );
+        }
+    }
 }

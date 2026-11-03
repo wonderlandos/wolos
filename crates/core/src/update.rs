@@ -19,9 +19,8 @@ pub const SLOTS: [&str; 2] = ["wolos-a", "wolos-b"];
 pub const TOP: &str = "/run/wolos/top";
 /// The EFI system partition.
 pub const ESP: &str = "/efi";
-/// Kernel and initramfs every slot boots (`linux-wolos`).
+/// Kernel every slot boots (`linux-wolos`).
 pub const KERNEL: &str = "vmlinuz-linux-wolos";
-pub const INITRAMFS: &str = "initramfs-linux-wolos.img";
 /// Boot counting: tries before systemd-boot falls back to the other slot.
 pub const TRIES: u32 = 3;
 /// pacman.conf: the Arch repos at one Arch Linux Archive date (`/repos/YYYY/MM/DD/`).

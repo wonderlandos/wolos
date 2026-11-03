@@ -6,7 +6,7 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 
 ## Apps
 
-| Dock / role | Package | App-id (Hyprland class, `apps::PINS` id) |
+| Dock / role | Package | App-id (compositor window class, `apps::PINS` id) |
 |---|---|---|
 | Files, Trash (`nautilus trash:///`) | nautilus | `org.gnome.Nautilus` |
 | Browser | firefox | `firefox` |

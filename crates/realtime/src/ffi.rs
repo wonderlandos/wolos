@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! C ABI for the wol-hypr Hyprland plugin. Header: `include/wol_realtime.h` (kept in sync by test).
+//! C ABI for the wol-hypr compositor plugin. Header: `include/wol_realtime.h` (kept in sync by test).
 //! All functions are pure or best effort, never panic across the boundary, never allocate per call
 //! (except the first `wol_qos_foreground`, which creates the connection).
 use crate::anim::Animation;
@@ -321,6 +321,90 @@ pub unsafe extern "C" fn wol_refit(
     }
 }
 
+/// New floating window (`wm_gates::placement_for`): 0 skip (X11 override-redirect or borderless
+/// popup), 1 only clamp (an X11 window that asked for its position), 2 place.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_x11_placement(
+    x11: i32,
+    override_redirect: i32,
+    no_borders: i32,
+    size_hint_flags: u32,
+) -> i32 {
+    crate::wm_gates::placement_for(
+        x11 != 0,
+        override_redirect != 0,
+        no_borders != 0,
+        size_hint_flags,
+    ) as i32
+}
+
+/// 1 when the plugin may move the window later (cascade origin, refit): `wm_gates::managed`.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_x11_managed(x11: i32, override_redirect: i32, no_borders: i32) -> i32 {
+    i32::from(crate::wm_gates::managed(
+        x11 != 0,
+        override_redirect != 0,
+        no_borders != 0,
+    ))
+}
+
+/// Fixed axes from client limits (0 = unset): bit 1 width, bit 2 height.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_fixed_axes(min_w: i32, min_h: i32, max_w: i32, max_h: i32) -> u32 {
+    crate::wm_gates::FixedAxes::of((min_w, min_h), (max_w, max_h)).bits()
+}
+
+/// Limits for `wol_fit`/`wol_refit` in/out: a fixed axis is pinned to the current size
+/// (`cur_w`, `cur_h`), the other stays free. Returns the fixed-axes bits, -1 on a null pointer.
+///
+/// # Safety
+/// `min_w`, `min_h`, `max_w`, `max_h` must point to writable i32s.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_placement_limits(
+    cur_w: i32,
+    cur_h: i32,
+    min_w: *mut i32,
+    min_h: *mut i32,
+    max_w: *mut i32,
+    max_h: *mut i32,
+) -> i32 {
+    if min_w.is_null() || min_h.is_null() || max_w.is_null() || max_h.is_null() {
+        return -1;
+    }
+    // SAFETY: caller contract above.
+    unsafe {
+        let (mut min, mut max) = ((*min_w, *min_h), (*max_w, *max_h));
+        let f = crate::wm_gates::FixedAxes::of(min, max);
+        f.pin((cur_w, cur_h), &mut min, &mut max);
+        (*min_w, *min_h, *max_w, *max_h) = (min.0, min.1, max.0, max.1);
+        f.bits() as i32
+    }
+}
+
+/// One watched key (`wm_gates::SwitchKeys`): `state` from the previous call (start at 0), `key`
+/// WOL_KEY_*, `flags` WOL_KEYF_*. Returns the next state; `action` (may be null) gets the line
+/// code (WOL_LINE_*, text from `wol_keys_line`) in the low byte and WOL_ACTION_CONSUME.
+///
+/// # Safety
+/// `action` is null or points to a writable u32.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_keys_step(state: u32, key: i32, flags: u32, action: *mut u32) -> u32 {
+    use crate::wm_gates::{Key, KeyEvent, SwitchKeys};
+    let mut s = SwitchKeys::from_bits(state);
+    let a = s.on(Key::from_code(key), KeyEvent::from_flags(flags));
+    if !action.is_null() {
+        // SAFETY: caller contract above.
+        unsafe { *action = a.bits() };
+    }
+    s.bits()
+}
+
+/// Wire text of a WOL_LINE_* code for `wol-shell.sock`, NUL-terminated, static ("" for none).
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_keys_line(code: i32) -> *const std::ffi::c_char {
+    crate::wm_gates::Line::from_code(code).wire().as_ptr()
+}
+
 static QOS: Mutex<Option<Qos>> = Mutex::new(None);
 
 /// Report the frontmost pid to wold (QoS UserInteractive boost). 1 = sent, 0 = dropped/unavailable.
@@ -391,7 +475,7 @@ mod tests {
         assert!(names.len() >= 7, "{names:?}");
         for n in names {
             assert!(
-                header.contains(&format!(" {n}(")),
+                header.contains(&format!(" {n}(")) || header.contains(&format!("*{n}(")),
                 "{n} missing from wol_realtime.h"
             );
         }
@@ -519,6 +603,33 @@ mod tests {
         assert_eq!(wol_lights_glyphs(on), 1);
         assert_eq!(wol_lights_glyphs(wol_lights_hover(on, 0, 0)), 0);
         assert_eq!(wol_lights_glyphs(wol_lights_hover(on, 0, 1)), 1);
+        // wm_gates through the C ABI (audit4 S5-2, S5-3, S5-11)
+        assert_eq!(wol_x11_placement(1, 1, 0, 0), 0);
+        assert_eq!(wol_x11_placement(1, 0, 0, 1), 1);
+        assert_eq!(wol_x11_placement(0, 1, 1, 5), 2);
+        assert_eq!((wol_x11_managed(1, 0, 1), wol_x11_managed(1, 0, 0)), (0, 1));
+        assert_eq!(wol_fixed_axes(300, 200, 300, 0), 1);
+        let (mut a, mut b, mut c2, mut d) = (300, 200, 300, 0);
+        assert_eq!(
+            unsafe { wol_placement_limits(300, 900, &mut a, &mut b, &mut c2, &mut d) },
+            1
+        );
+        assert_eq!((a, b, c2, d), (300, 200, 300, 0));
+        let null = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { wol_placement_limits(1, 1, null, &mut b, &mut c2, &mut d) },
+            -1
+        );
+        let mut act = 0u32;
+        let st = unsafe { wol_keys_step(0, 0, 1, &mut act) }; // Super down
+        assert_eq!(act, 0);
+        let st = unsafe { wol_keys_step(st, 1, 1 | 2, &mut act) }; // Tab with Super
+        assert_eq!(act, 2 | 0x100, "show switcher, consumed");
+        let line = unsafe { std::ffi::CStr::from_ptr(wol_keys_line((act & 0xff) as i32)) };
+        assert_eq!(line.to_str().unwrap(), "show switcher\n");
+        let st = unsafe { wol_keys_step(st, 0, 0, std::ptr::null_mut()) }; // Super up
+        let _ = unsafe { wol_keys_step(st, 1, 0, &mut act) }; // Tab up: still ours
+        assert_eq!(act, 0x100);
         let class = c"org.gnome.Nautilus";
         assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 0, 0, 0) }, 0);
         assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 1, 1, 1) }, 1);

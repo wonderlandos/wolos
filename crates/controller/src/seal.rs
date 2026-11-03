@@ -263,13 +263,10 @@ pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
     {
         None => None,
         Some(Some(Ok(p))) => {
-            if env.write_file(&typed, &p).is_err() {
+            // Audit S4-10: 0600 from the first byte (never umask, then chmod).
+            if env.write_private(&typed, &p).is_err() {
                 return fail(env, ErrorCode::Failed, "could not read the password file");
             }
-            let _ = std::fs::set_permissions(
-                &typed,
-                std::os::unix::fs::PermissionsExt::from_mode(0o600),
-            );
             Some(typed.to_string_lossy().into_owned())
         }
         Some(Some(Err(e))) => {
@@ -312,11 +309,9 @@ fn enroll_steps(
             let Some(rk) = env.capture(&a) else {
                 return fail(env, ErrorCode::Failed, "could not create the recovery key");
             };
-            if env.write_file(Path::new(out), &rk).is_err() {
+            if env.write_private(Path::new(out), &rk).is_err() {
                 return fail(env, ErrorCode::Failed, "could not keep the recovery key");
             }
-            let _ =
-                std::fs::set_permissions(out, std::os::unix::fs::PermissionsExt::from_mode(0o600));
         } else if env.exec(argv).unwrap_or(1) != 0 {
             return fail(env, ErrorCode::Failed, &format!("{} failed", argv[0]));
         }

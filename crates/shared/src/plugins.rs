@@ -166,6 +166,23 @@ impl Kind {
         }
     }
 
+    /// Kinds the manifest format knows but no part of WolOS applies yet (audit X6-1): `check`
+    /// refuses them, `new` and Plugin Maker do not offer them.
+    pub const PLANNED: [Kind; 2] = [Kind::Look, Kind::Hypr];
+
+    /// See [`Kind::PLANNED`].
+    pub fn is_planned(self) -> bool {
+        Kind::PLANNED.contains(&self)
+    }
+
+    /// The sentence `check` and `new` give for a planned kind.
+    pub fn planned_sentence(self) -> String {
+        format!(
+            "[[{}]] is planned: WolOS does not apply it yet, so remove the section for now.",
+            self.id()
+        )
+    }
+
     /// Entries of this kind run Lua.
     pub fn has_script(self) -> bool {
         matches!(
@@ -533,9 +550,30 @@ impl Manifest {
         self.permissions.contains(&p)
     }
 
-    /// `org.wolos.*` is reserved for plugins shipped by WolOS.
+    /// `org.wolos` and `org.wolos.*` are reserved for WolOS. The bare id is reserved too: a
+    /// plugin `org.wolos` with `[[toggle]] id = "stay-awake"` would share the flag file
+    /// `org.wolos.stay-awake` of the built-in toggle.
     pub fn is_reserved(&self) -> bool {
-        self.id.starts_with(RESERVED_PREFIX)
+        is_reserved_id(&self.id)
+    }
+
+    /// Every `[[toggle]]`, `[[dock]]` and `[[hotkey]]` argv that is not a `wol` verb, as
+    /// (section, entry id, argv). These run as the user, so they need `run` (declared and
+    /// granted); `wol` verbs go through the helper policy.
+    pub fn commands(&self) -> Vec<(Kind, &str, &[String])> {
+        let mut v: Vec<(Kind, &str, &[String])> = Vec::new();
+        for t in &self.toggle {
+            v.push((Kind::Toggle, &t.id, &t.on));
+            v.push((Kind::Toggle, &t.id, &t.off));
+        }
+        for d in &self.dock {
+            v.push((Kind::Dock, &d.id, &d.exec));
+        }
+        for h in &self.hotkey {
+            v.push((Kind::Hotkey, &h.id, &h.exec));
+        }
+        v.retain(|(_, _, a)| !is_wol_argv(a));
+        v
     }
 
     /// `~/.local/share/wolos/plugins/<id>/plugin.toml` text with the same content.
@@ -798,24 +836,24 @@ pub fn check_hypr(text: &str) -> Result<Vec<(String, String)>, String> {
         let n = i + 1;
         let Some((k, v)) = line.split_once('=') else {
             return Err(format!(
-                "Line {n} of the Hyprland fragment is not a keyword = value line."
+                "Line {n} of the compositor fragment is not a keyword = value line."
             ));
         };
         let k = k.trim();
         let v = v.trim();
         if !HYPR_KEYWORDS.contains(&k) {
             return Err(format!(
-                "Hyprland fragments may only set {}; line {n} sets \"{k}\".",
+                "Compositor fragments may only set {}; line {n} sets \"{k}\".",
                 HYPR_KEYWORDS.join(", ")
             ));
         }
-        // `$name` is a Hyprland variable (never from a plugin); a regex `$` anchor is fine.
+        // `$name` is a compositor variable (never from a plugin); a regex `$` anchor is fine.
         let variable = v
             .match_indices('$')
             .any(|(i, _)| v[i + 1..].starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'));
         if v.is_empty() || v.contains(['{', '}']) || variable || v.chars().any(char::is_control) {
             return Err(format!(
-                "Line {n} of the Hyprland fragment needs a plain value without $variables or braces."
+                "Line {n} of the compositor fragment needs a plain value without $variables or braces."
             ));
         }
         if k == "windowrule" || k == "layerrule" {
@@ -840,7 +878,7 @@ fn check_rule(n: usize, k: &str, v: &str) -> Result<(), String> {
     };
     if !allowed.contains(&name.as_str()) {
         return Err(format!(
-            "Line {n} of the Hyprland fragment uses the {k} \"{name}\"; plugins may use {}.",
+            "Line {n} of the compositor fragment uses the {k} \"{name}\"; plugins may use {}.",
             allowed.join(", ")
         ));
     }
@@ -850,13 +888,13 @@ fn check_rule(n: usize, k: &str, v: &str) -> Result<(), String> {
             .any(|o| o.is_nan() || o < HYPR_MIN_OPACITY)
     {
         return Err(format!(
-            "Line {n} of the Hyprland fragment makes windows almost invisible; use an opacity from {HYPR_MIN_OPACITY} to 1."
+            "Line {n} of the compositor fragment makes windows almost invisible; use an opacity from {HYPR_MIN_OPACITY} to 1."
         ));
     }
     let matches: Vec<&str> = fields.filter(|f| !f.is_empty()).collect();
     if matches.is_empty() || matches.iter().any(|m| matches_everything(m)) {
         return Err(format!(
-            "Line {n} of the Hyprland fragment applies to every window; name the app, like class:^(org.example.App)$."
+            "Line {n} of the compositor fragment applies to every window; name the app, like class:^(org.example.App)$."
         ));
     }
     Ok(())
@@ -1669,6 +1707,15 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
             ));
         }
     }
+    if !m.has(Permission::Run)
+        && let Some((k, id, argv)) = m.commands().first()
+    {
+        return Err(format!(
+            "[[{}]] \"{id}\" runs \"{}\", which is not a wol command: add \"run\" to permissions so the person is asked first.",
+            k.id(),
+            argv.first().map(String::as_str).unwrap_or_default()
+        ));
+    }
     if m.entries().is_empty() {
         return Err(format!(
             "The plugin does nothing yet: add a section such as {}.",
@@ -1676,6 +1723,16 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
         ));
     }
     Ok(m)
+}
+
+/// `org.wolos` itself or `org.wolos.*`.
+pub fn is_reserved_id(id: &str) -> bool {
+    id == RESERVED_PREFIX.trim_end_matches('.') || id.starts_with(RESERVED_PREFIX)
+}
+
+/// argv that calls a `wol` verb (argv[0] is `wol`), so the helper policy applies.
+pub fn is_wol_argv(argv: &[String]) -> bool {
+    argv.first().is_some_and(|a| a == "wol")
 }
 
 #[cfg(test)]
@@ -1761,6 +1818,16 @@ file = "rules.conf"
         assert_eq!(m.files(), ["cpu.lua", "card.lua", "mail.png", "rules.conf"]);
         assert_eq!(m.scripts().len(), 2);
         assert!(m.is_reserved());
+        assert!(
+            is_reserved_id("org.wolos"),
+            "the bare id shares the built-in flag files"
+        );
+        assert!(!is_reserved_id("org.wolosx.a"));
+        assert_eq!(
+            m.commands().len(),
+            1,
+            "only the hotkey's foot; the toggle is a wol verb"
+        );
         assert_eq!(parse(&m.to_toml()).unwrap(), m, "{}", m.to_toml());
         let json = serde_json::to_string(&m).unwrap();
         assert_eq!(serde_json::from_str::<Manifest>(&json).unwrap(), m);
@@ -1795,6 +1862,9 @@ file = "rules.conf"
             (base("[[hypr]]\nid = \"h\"\nfile = \"h.lua\"\n"), ".conf file"),
             (base("permissions = [\"camera\"]\n[[dock]]\nid = \"d\"\nname = \"D\"\nicon = \"x\"\nexec = [\"x\"]\n"), "permission \"camera\""),
             (base("[[dock]]\nid = \"d\"\nname = \"D\"\nicon = \"x\"\nexec = \"x\"\n"), "is a list like"),
+            (base("[[toggle]]\nid = \"t\"\non = [\"sh\", \"-c\", \"x\"]\noff = [\"wol\", \"focus\", \"off\"]\n"), "add \"run\" to permissions"),
+            (base("[[dock]]\nid = \"d\"\nname = \"D\"\nicon = \"x\"\nexec = [\"foot\"]\n"), "runs \"foot\""),
+            (base("[[hotkey]]\nid = \"h\"\ndefault = \"super+t\"\nexec = [\"foot\"]\n"), "not a wol command"),
             (base("[[dock]]\nid = \"d\"\nname = { a = 1 }\n"), "Inline tables"),
             (base("[[dock]]\nid = \"d\"\nname = \"\"\"x\"\"\"\n"), "Multi-line"),
             (base("[[dock]]\nid = \"d\"\nname = \"x\n"), "closing quote"),
@@ -1834,7 +1904,7 @@ file = "rules.conf"
     #[test]
     fn toml_subset_reads_escapes_literals_and_comments() {
         let m = parse(
-            "schema = 1 # one\nid = 'alice.demo'\nname = \"Quote\\\" \\u00e9\"\nversion = \"1_0\"\nlicense = \"MIT\"\n\n# section\n[[ dock ]]\nid = \"d\"\nname = \"D\"\nicon = \"folder-symbolic\"\nexec = [\"sh\", \"-c\", 'echo \"hi\"']\n",
+            "schema = 1 # one\nid = 'alice.demo'\nname = \"Quote\\\" \\u00e9\"\nversion = \"1_0\"\nlicense = \"MIT\"\npermissions = [\"run\"]\n\n# section\n[[ dock ]]\nid = \"d\"\nname = \"D\"\nicon = \"folder-symbolic\"\nexec = [\"sh\", \"-c\", 'echo \"hi\"']\n",
         )
         .unwrap();
         assert_eq!(m.name, "Quote\" é");

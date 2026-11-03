@@ -4,7 +4,6 @@
 //! renamed, so a reader sees the old or the new segment, never half of one.
 use super::Record;
 use crate::ffi::{Error, Result};
-use std::io::Write;
 use std::path::Path;
 
 const MAGIC: &[u8; 8] = b"WOPKGSG1";
@@ -42,13 +41,8 @@ pub fn write(path: &Path, fingerprint: &str, records: &[Record]) -> Result<()> {
         std::fs::create_dir_all(d)
             .map_err(|_| Error::unavailable("The index folder cannot be created."))?;
     }
-    let tmp = path.with_extension("tmp");
-    let mut f = std::fs::File::create(&tmp)
-        .map_err(|_| Error::unavailable("The index cannot be written."))?;
-    f.write_all(&out)
-        .and_then(|_| f.sync_all())
-        .map_err(|_| Error::unavailable("The index cannot be written."))?;
-    std::fs::rename(&tmp, path).map_err(|_| Error::unavailable("The index cannot be written."))
+    shared::atomic::atomic_write(path, 0o644, &out)
+        .map_err(|_| Error::unavailable("The index cannot be written."))
 }
 
 /// A mapped segment.

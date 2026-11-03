@@ -17,12 +17,13 @@ pub const STATE_FILE: &str = "wolos/modules.json";
 /// Meta package name prefix.
 pub const PACKAGE_PREFIX: &str = "wolos-module-";
 /// The modules this release ships records for (contract tests).
-pub const IDS: [&str; 6] = [
+pub const IDS: [&str; 7] = [
     "ai-claude",
     "ai-local",
     "ai-sessions",
     "dev",
     "creative",
+    "gaming",
     "console",
 ];
 
@@ -35,7 +36,7 @@ pub struct Module {
     pub summary: String,
     /// Icon name (freedesktop theme name or a WolOS symbolic).
     pub icon: String,
-    /// `ai` | `developer` | `creative` | `console`.
+    /// `ai` | `developer` | `creative` | `gaming` | `console`.
     pub category: String,
     /// Download size the installer shows ("Downloads N MB").
     pub size_mb: u32,
@@ -49,10 +50,28 @@ pub struct Module {
     pub mise: Vec<String>,
     /// Enable step as argv, run as the user, idempotent; empty = nothing to run.
     pub post: Vec<String>,
+    /// Undo of `post` as argv, run as the user by `remove` before the recipes come off,
+    /// idempotent; empty = `post` leaves nothing to undo (audit C8-6).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unpost: Vec<String>,
     /// Installable from the ISO without network.
     pub offline: bool,
     /// Requirements in words: `network`, `gpu`, ...
     pub needs: Vec<String>,
+    /// Package stem with one variant per GPU backend, installed with the meta package on the root
+    /// side: `<backend>-cuda|rocm|vulkan` as `wol hw compute` picks (ai-local: `ollama`); none = no
+    /// per-machine part. Never a `depends=` of the meta package (it differs per machine).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+}
+
+/// A package stem WolOS accepts for [`Module::backend`]: `[a-z0-9][a-z0-9+_.-]*`, at most 64 bytes.
+/// False for anything else.
+pub fn valid_backend(b: &str) -> bool {
+    b.len() <= 64
+        && b.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && b.bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"+_.-".contains(&c))
 }
 
 /// `[a-z][a-z0-9-]{0,31}`: a safe file stem and package suffix.
@@ -76,12 +95,37 @@ impl Module {
         if m.post.iter().any(|a| a.is_empty()) {
             return Err(format!("module '{}': post has an empty word", m.id));
         }
+        if m.unpost.iter().any(|a| a.is_empty()) {
+            return Err(format!("module '{}': unpost has an empty word", m.id));
+        }
+        if let Some(b) = &m.backend
+            && !valid_backend(b)
+        {
+            return Err(format!("module '{}': bad backend '{b}'", m.id));
+        }
         Ok(m)
     }
 
     /// `wolos-module-<id>`.
     pub fn package(&self) -> String {
         format!("{PACKAGE_PREFIX}{}", self.id)
+    }
+
+    /// The backend package for `compute` (`wol hw compute`'s `backend`): `<backend>-<compute>` for
+    /// cuda, rocm or vulkan; None without a backend, for cpu or an unknown word.
+    pub fn backend_package(&self, compute: &str) -> Option<String> {
+        let b = self.backend.as_deref().filter(|b| valid_backend(b))?;
+        matches!(compute, "cuda" | "rocm" | "vulkan").then(|| format!("{b}-{compute}"))
+    }
+
+    /// Backend packages of this record that are installed (`installed`: pacman's names), whatever
+    /// GPU this machine has now: `remove` takes each of them off with the meta package.
+    pub fn installed_backends(&self, installed: &[String]) -> Vec<String> {
+        ["cuda", "rocm", "vulkan"]
+            .iter()
+            .filter_map(|c| self.backend_package(c))
+            .filter(|p| installed.contains(p))
+            .collect()
     }
 
     /// Whether `enable` has anything to do as the user.
@@ -153,6 +197,32 @@ pub fn state_file(state_home: &Path) -> PathBuf {
     state_home.join(STATE_FILE)
 }
 
+/// `/var/lib/wolos/modules-gave-up`: what modules-install gave up on, lines `m ID` / `p NAME`.
+pub const GAVE_UP_FILE: &str = "/var/lib/wolos/modules-gave-up";
+
+/// The gave-up line for a package installed by name: `m ID` for a module's meta package
+/// (`wolos-module-<id>`), else `p NAME`.
+pub fn gave_up_line(package: &str) -> String {
+    match package.strip_prefix(PACKAGE_PREFIX) {
+        Some(id) if valid_id(id) => format!("m {id}"),
+        _ => format!("p {package}"),
+    }
+}
+
+/// `text` of the gave-up file without the line for `package` installed since ([`gave_up_line`]);
+/// None when it had no such line (nothing to write). Other lines stay as they are.
+pub fn without_gave_up(text: &str, package: &str) -> Option<String> {
+    let gone = gave_up_line(package);
+    let keep: Vec<&str> = text
+        .lines()
+        .filter(|l| l.split_whitespace().collect::<Vec<_>>().join(" ") != gone)
+        .collect();
+    if keep.len() == text.lines().count() {
+        return None;
+    }
+    Some(keep.iter().map(|l| format!("{l}\n")).collect())
+}
+
 /// `/var/lib/wolos/modules-pending`.
 pub fn pending_file() -> PathBuf {
     PathBuf::from(PENDING_FILE)
@@ -212,6 +282,11 @@ pub struct Status {
     pub needs_enable: bool,
     pub offline: bool,
     pub needs: Vec<String>,
+    /// The record's per-machine package for this computer (`Module::backend_package`, ai-local:
+    /// `ollama-cuda`): `wol modules list` fills it from `wol hw compute`; Settings installs it with
+    /// the meta package. None: no such part, or this machine has none (cpu), or not asked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
 }
 
 impl Status {
@@ -241,6 +316,7 @@ pub fn status(m: &Module, f: &Facts) -> Status {
         offline: m.offline,
         needs: m.needs.clone(),
         package,
+        backend: None,
     }
 }
 
@@ -257,6 +333,29 @@ mod tests {
         "size_mb":900,"packages":["git","mise"],"recipes":[],"post":["/usr/lib/wolos/modules-enable-dev"]}"#;
     const CONSOLE: &str =
         r#"{"id":"console","name":"Console","category":"console","packages":["starship"]}"#;
+
+    #[test]
+    fn backend_package_follows_the_compute_backend() {
+        let m = Module::parse(r#"{"id":"ai-local","name":"Local AI","backend":"ollama"}"#).unwrap();
+        assert_eq!(m.backend_package("cuda").as_deref(), Some("ollama-cuda"));
+        assert_eq!(
+            m.backend_package("vulkan").as_deref(),
+            Some("ollama-vulkan")
+        );
+        assert_eq!(m.backend_package("cpu"), None);
+        assert_eq!(m.backend_package("x;rm"), None);
+        assert_eq!(Module::parse(DEV).unwrap().backend_package("cuda"), None);
+        for bad in ["Ollama", "-x", "a b", "../x", ""] {
+            let t = format!(r#"{{"id":"x","name":"x","backend":"{bad}"}}"#);
+            assert!(Module::parse(&t).is_err(), "{bad}");
+        }
+        // Omitted on output when unset, so records without it stay as they are.
+        assert!(
+            !serde_json::to_string(&Module::parse(DEV).unwrap())
+                .unwrap()
+                .contains("backend")
+        );
+    }
 
     #[test]
     fn parse_validates_id_and_name() {
@@ -359,5 +458,31 @@ mod tests {
         );
         assert_eq!(pending_file(), Path::new(PENDING_FILE));
         assert_eq!(parse_pending(None), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_package_installed_leaves_the_gave_up_list() {
+        assert_eq!(gave_up_line("wolos-module-dev"), "m dev");
+        assert_eq!(gave_up_line("gst-libav"), "p gst-libav");
+        assert_eq!(gave_up_line("wolos-module-Bad"), "p wolos-module-Bad");
+        let text = "m dev\np gst-libav\nm ai-local\n";
+        assert_eq!(
+            without_gave_up(text, "wolos-module-dev").as_deref(),
+            Some("p gst-libav\nm ai-local\n")
+        );
+        assert_eq!(
+            without_gave_up(text, "gst-libav").as_deref(),
+            Some("m dev\nm ai-local\n")
+        );
+        assert_eq!(
+            without_gave_up("m dev\n", "wolos-module-dev").as_deref(),
+            Some("")
+        );
+        assert_eq!(without_gave_up(text, "lame"), None);
+        assert_eq!(
+            without_gave_up(text, "dev"),
+            None,
+            "a module is not a package"
+        );
     }
 }

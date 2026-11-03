@@ -1,0 +1,20 @@
+# WolOS ghostty defaults (ADR 0032 "Console"). ghostty has no system-wide config, so WolOS starts it
+# with `--config-file=/usr/share/wolos/ghostty/config`, which ghostty reads after
+# ~/.config/ghostty/config (start plain `ghostty` to use only yours). Same font, padding and
+# opacity as foot (desktop/overlay/usr/share/wolos/foot/foot.ini). The colours are the theme's,
+# written by `wol theme` to ~/.config/wolos/toolkits/ghostty/theme (the leading ? makes a missing
+# file fine).
+font-family = JetBrains Mono
+font-size = 11
+window-padding-x = 12
+window-padding-y = 12
+background-opacity = 0.9
+window-decoration = none
+gtk-titlebar = false
+confirm-close-surface = false
+shell-integration = detect
+copy-on-select = clipboard
+scrollback-limit = 50000000
+# The default theme first, then yours (a later file wins).
+config-file = ?/usr/share/wolos/toolkits/ghostty/theme
+config-file = ?~/.config/wolos/toolkits/ghostty/theme

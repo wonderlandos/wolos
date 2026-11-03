@@ -2,7 +2,7 @@
 require "json"
 
 module Wopkg
-  # Where the index comes from: the repos in pacman.conf, Flatpak's own AppStream copy, the AUR
+  # Where the index comes from: the repos in pacman.conf, Flatpak's own AppStream copy, the community package collection
   # metadata dump, the AppImage catalogue, the `.wol` index and the recipe index.
   module Sources
     ARCH     = "x86_64"

@@ -13,6 +13,8 @@ WolOS. Copyright (c) 2026 Julia Klee.
 | other `*.patch` | the license of the files each patch changes (`wolos-pkgbuilds/hyprland-wolos/*.patch`: BSD-3-Clause) |
 | `crates/shell/protocols/` | BSD-3-Clause (notice kept in each file) |
 | `third_party/blocking/` | Apache-2.0 OR MIT |
+| `hue/src/hue/{color,extract,palette,imports}.cr` | MIT (`LICENSES/MIT.txt`; copyright holders in `docs/THIRD-PARTY.md`) |
+| `crates/shell/src/offers.rs`, `crates/shell/tests/offers.rs` | MIT (`LICENSES/MIT.txt`; copyright holders in `docs/THIRD-PARTY.md`) |
 
 Each source file names its license in an `SPDX-License-Identifier` line; the license texts are in `LICENSES/`.
 

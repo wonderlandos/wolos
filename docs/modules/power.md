@@ -19,7 +19,7 @@ Probes: `nproc`, `powerprofilesctl get`, `ls`/`cat` under `/sys/class/power_supp
 Not offered yet: a battery charge limit (`charge_control_end_threshold`).
 
 ## Sleep, alerts, session power
-- Every sleep path locks first. The systemd-sleep hook calls `wol power suspend`, which locks each session that asks for the password after sleep.
+- Every sleep path locks first. The systemd-sleep hook calls `wol power suspend`, which locks each session that asks for the password after sleep. It waits at most 3 s for each shell (`power::LOCK_WAIT_SECS`), so one hung session does not hold the sleep.
 - Battery notifications at 20, 10 and 5 %. At 3 % the computer sleeps (`shell::alerts`).
 - When the startup disk is under 5 % free, the shell shows one notification until space is back.
 - Sleep, Restart and Shut Down go through wol-admind `session-power` (`systemctl suspend|reboot|poweroff`).

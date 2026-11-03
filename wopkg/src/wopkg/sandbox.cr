@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 module Wopkg
-  # Builds (recipes, AUR) run inside bubblewrap: the system read-only, only the build folder
+  # Builds (recipes, community packages) run inside bubblewrap: the system read-only, only the build folder
   # writable, a fresh /tmp, no home, no session bus, and no network unless the step is the fetch
   # step. Memory is capped with a systemd user scope when one is available.
   #
-  # `strict` is the profile for code nobody reviewed (AUR): a throwaway user namespace where the
+  # `strict` is the profile for code nobody reviewed (community packages): a throwaway user namespace where the
   # build is uid 65534 (nobody), not you and not root, with no capabilities and only the few /etc
   # files a build needs. `trace` records the build's system calls for the package analyser.
   module Sandbox

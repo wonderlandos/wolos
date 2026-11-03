@@ -80,14 +80,8 @@ impl FakeHost {
     pub fn set_load(&self, l: Load) {
         self.st().load = Some(l);
     }
-    pub fn set_root(&self, r: bool) {
-        self.st().root = r;
-    }
     pub fn advance(&self, secs: f64) {
         self.st().now += secs;
-    }
-    pub fn set_now(&self, secs: f64) {
-        self.st().now = secs;
     }
     /// Command lines run so far.
     pub fn ran(&self) -> Vec<String> {

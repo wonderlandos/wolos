@@ -56,6 +56,19 @@ impl PeerIdentity {
         }
     }
 
+    /// The peer is no longer who it was at accept (audit S4-26): an executable was known then and
+    /// now differs or cannot be read (an exec, or the pinned process is gone). An executable that
+    /// was unknown on first sight is not a change: no identity, nothing to lose. For calls that
+    /// need no grant (`publish`, `subscribe`); grants use [`PeerIdentity::caller`], which also
+    /// refuses an unknown executable.
+    pub fn changed(&self) -> bool {
+        match (&self.exe, &self.dir) {
+            (None, _) => false,
+            (Some(was), Some(dir)) => exe_of(dir).as_ref() != Some(was),
+            (Some(_), None) => true,
+        }
+    }
+
     /// The calling app for a grant decision. None (refuse) if the executable is unknown, not an
     /// absolute path, or changed since accept.
     pub fn caller(&self) -> Option<Caller> {
@@ -65,6 +78,15 @@ impl PeerIdentity {
             pid: self.pid,
             app,
         })
+    }
+
+    /// [`PeerIdentity::capture`] of `stream`, with the executable seen at accept replaced by
+    /// `exe` (tests of what a changed or unknown identity may do).
+    #[cfg(test)]
+    pub(crate) fn captured_as(stream: &impl AsRawFd, exe: Option<&str>) -> Option<Self> {
+        let mut id = Self::capture(stream)?;
+        id.exe = exe.map(str::to_owned);
+        Some(id)
     }
 
     /// Executable bytes as captured at accept (for exact-path checks such as the realtime agent).
@@ -116,5 +138,30 @@ mod tests {
         child.wait().unwrap();
         assert!(!id.still_same(), "the pinned process is gone");
         assert!(id.caller().is_none());
+        assert!(id.changed(), "known at accept, gone now: a change");
+    }
+
+    /// Audit S4-26: only a change of a known identity counts; an executable unknown on first
+    /// sight is not refused for grant-free calls (it still gets no grant).
+    #[test]
+    fn only_a_known_identity_can_change() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let live = PeerIdentity::capture(&a).unwrap();
+        assert!(!live.changed(), "same executable as at accept");
+        let unknown = PeerIdentity {
+            uid: 1000,
+            pid: live.pid,
+            exe: None,
+            dir: None,
+        };
+        assert!(!unknown.changed(), "unknown on first sight is not a change");
+        assert!(unknown.caller().is_none(), "and still no grant");
+        let execd = PeerIdentity {
+            uid: 1000,
+            pid: live.pid,
+            exe: Some("/usr/bin/not-this-test".into()),
+            dir: std::fs::File::open(format!("/proc/{}", live.pid)).ok(),
+        };
+        assert!(execd.changed(), "another executable than at accept");
     }
 }

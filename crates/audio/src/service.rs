@@ -377,7 +377,14 @@ impl<B: Backend> Service<B> {
                 self.physical_mic = None;
                 self.pending_default = None;
                 self.unload(&VIRTUAL);
-                let plan = reset_plan(&self.home);
+                // Audit S4-22: WirePlumber's state is under $XDG_STATE_HOME; never a relative path.
+                let state = std::env::var_os("XDG_STATE_HOME")
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_absolute())
+                    .unwrap_or_else(|| self.home.join(".local/state"));
+                let Some(plan) = reset_plan(&self.home, &state) else {
+                    return Err("Sound could not be reset: the home folder is unknown.".into());
+                };
                 // Every step runs even when one did not work: half a reset helps nobody.
                 let mut first_err = None;
                 for p in &plan.remove {

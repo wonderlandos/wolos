@@ -256,7 +256,10 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
         }
     }
     let _ = std::fs::create_dir_all(folded_path.parent().unwrap_or(root));
-    if std::fs::write(&folded_path, folded.join("\n") + "\n").is_err() {
+    // Audit S4-10: a kill mid-write never leaves a truncated list (CORE-1, R2C-1 inputs).
+    let list = folded.join("\n") + "\n";
+    let mode = crate::run::kept_mode(&folded_path);
+    if shared::atomic::atomic_write(&folded_path, mode, list.as_bytes()).is_err() {
         return fail(env, ErrorCode::Failed, "could not record the folded layers");
     }
     0

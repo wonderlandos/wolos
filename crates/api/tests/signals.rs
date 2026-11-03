@@ -3,13 +3,27 @@
 //! and SIGCHLD's default action is ignore (kern.sig_discard_ign), so a blocked SIG_DFL SIGCHLD never
 //! became pending: exited jobs stayed zombies and were never restarted (installed disk: wol-login
 //! <defunct> under wold). `harness = false`: a single thread, as in wold before it spawns any.
-fn pending(sig: i32) -> bool {
-    // SAFETY: sigpending/sigismember on a local set.
+/// Is `sig` pending (`pending`), or blocked in this thread's mask?
+fn has(pending: bool, sig: i32) -> bool {
+    // SAFETY: sigpending, or pthread_sigmask as a pure readback (null new set), and sigismember,
+    // all on a local set.
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
-        libc::sigpending(&mut set);
+        if pending {
+            libc::sigpending(&mut set);
+        } else {
+            libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut set);
+        }
         libc::sigismember(&set, sig) == 1
     }
+}
+
+fn pending(sig: i32) -> bool {
+    has(true, sig)
+}
+
+fn blocked(sig: i32) -> bool {
+    has(false, sig)
 }
 
 fn main() {
@@ -18,6 +32,11 @@ fn main() {
         unsafe { libc::signal(s, libc::SIG_IGN) };
     }
     api::os::block_signals();
+    // S4-2: a hang-up or a broken pipe can never end wold: both are blocked in every thread
+    // (sigprocmask readback), so they wait for `wait_signal`, which ignores them.
+    for s in [libc::SIGHUP, libc::SIGPIPE, libc::SIGTERM] {
+        assert!(blocked(s), "signal {s} is not blocked");
+    }
     let mut child = std::process::Command::new("true").spawn().unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !pending(libc::SIGCHLD) {

@@ -1,0 +1,60 @@
+# WolOS prompt (starship; ADR 0032 "Console"): one prompt for zsh, fish, nushell, bash and
+# PowerShell. The shells point STARSHIP_CONFIG at the theme's copy,
+# ${XDG_CONFIG_HOME:-~/.config}/wolos/toolkits/starship/palette.toml, which `wol theme` writes as
+# this file with the [palettes.wolos] table set from the theme tokens (core theme/console.rs reads
+# this file: keep the table name); without it the default theme's copy under
+# /usr/share/wolos/toolkits, then this file (terminal palette colours). Same shape as the pure-zsh
+# prompt: directory, git branch, one symbol (accent after success, error colour after a failure),
+# user@host only over SSH.
+"$schema" = "https://starship.rs/config-schema.json"
+add_newline = false
+scan_timeout = 30
+command_timeout = 200
+palette = "wolos"
+format = "$username$hostname$directory$git_branch$git_state$cmd_duration$character"
+
+[palettes.wolos]
+accent = "purple"
+muted = "bright-black"
+ok = "white"
+error = "red"
+warn = "yellow"
+suggest = "bright-black"
+text = "white"
+surface = "black"
+
+[username]
+show_always = false
+format = "[$user]($style)@"
+style_user = "muted"
+style_root = "error"
+
+[hostname]
+ssh_only = true
+format = "[$hostname]($style) "
+style = "muted"
+
+[directory]
+truncation_length = 3
+truncation_symbol = ".../"
+truncate_to_repo = false
+style = "accent"
+format = "[$path]($style)[$read_only]($read_only_style)"
+
+[git_branch]
+format = " [$branch]($style)"
+style = "muted"
+
+[git_state]
+format = "[\\|$state]($style)"
+style = "muted"
+
+[cmd_duration]
+min_time = 5000
+format = " [$duration]($style)"
+style = "muted"
+
+[character]
+success_symbol = " [❯](ok)"
+error_symbol = " [❯](error)"
+vimcmd_symbol = " [❮](accent)"

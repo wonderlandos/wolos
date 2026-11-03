@@ -24,7 +24,7 @@ pub trait AdminOs {
     fn refuse_delay(&self);
     fn now(&self) -> u64;
     fn log(&self, text: &str);
-    /// Accounts with a desktop session on this machine (a Hyprland socket in their runtime dir).
+    /// Accounts with a desktop session on this machine (a compositor socket in their runtime dir).
     fn sessions(&self) -> Vec<u32>;
     /// Fixed argv, stdout; None if it failed.
     fn capture(&self, argv: &[String]) -> Option<String>;
@@ -38,6 +38,9 @@ pub trait AdminOs {
     /// Ed25519 keys in [`shared::package::KEYS_DIR`].
     fn trusted_keys(&self) -> Vec<[u8; 32]>;
     fn remove_dir(&self, dir: &Path);
+    /// Name, version and SHA-256 of wold's staged package copy (ADR 0034,
+    /// [`crate::packages::inspect_staged`]); Err: why it cannot be read.
+    fn package_facts(&self, staged: &str) -> Result<crate::packages::PkgFacts, String>;
 }
 
 /// (name, gid) of `uid` from passwd(5) text.
@@ -54,6 +57,142 @@ pub fn user_of(passwd: &str, uid: u32) -> Option<(String, u32)> {
 pub struct Caller {
     pub uid: u32,
     pub session: i32,
+}
+
+/// Longest a client may take to send its whole request (audit S4-7): one deadline for the
+/// connection, not per read, so a byte every few seconds cannot hold wol-admind. The hello
+/// before it has its own bound (`shared::jobs::HELLO_TIMEOUT`).
+pub const REQUEST_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Longest the password check may take (a stalled PAM stack, a faillock delay): past it the
+/// helper is killed and the password counts as not accepted.
+pub const AUTH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Connections served at once, per account and in total (each on its own thread).
+pub const CONN_PER_UID: usize = 4;
+pub const CONN_TOTAL: usize = 32;
+
+/// Read a request from `conn` until EOF, `buf` is full or `deadline` has passed since the call;
+/// the byte count. The read timeout is what is left of the deadline before every read.
+pub fn read_request(
+    conn: &std::os::unix::net::UnixStream,
+    buf: &mut [u8],
+    deadline: std::time::Duration,
+) -> usize {
+    use std::io::Read;
+    let start = std::time::Instant::now();
+    let mut n = 0;
+    while n < buf.len() {
+        let Some(left) = deadline
+            .checked_sub(start.elapsed())
+            .filter(|d| !d.is_zero())
+        else {
+            break;
+        };
+        if conn.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match (&*conn).read(&mut buf[n..]) {
+            Ok(0) | Err(_) => break,
+            Ok(r) => n += r,
+        }
+    }
+    n
+}
+
+/// One connection, on its own thread: identity from the kernel at accept, the ADR 0033 hello,
+/// the request within [`REQUEST_DEADLINE`], then [`handle`] under the one cache lock (requests
+/// still run one at a time, as before), the reply, and the buffer wiped.
+pub fn serve_one(
+    conn: std::os::unix::net::UnixStream,
+    cache: &std::sync::Mutex<AuthCache>,
+    os: &dyn AdminOs,
+) {
+    use std::io::Write;
+    let caller = shared::sys::peer(&conn).map(|p| Caller {
+        uid: p.uid,
+        session: session_of(p.pid),
+    });
+    // ADR 0033: greet first; a request written before accept, or an echo from another process
+    // than the one that connected, is dropped without an answer.
+    if shared::jobs::greet(&conn).is_err() {
+        return;
+    }
+    let mut buf = vec![0u8; shared::admin::MAX_REQUEST + 1];
+    let n = read_request(&conn, &mut buf, REQUEST_DEADLINE);
+    let reply = {
+        let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
+        handle(&buf[..n], caller, &mut c, os)
+    };
+    buf.fill(0); // password never outlives the request
+    let _ = conn.set_write_timeout(Some(REQUEST_DEADLINE));
+    let _ = writeln!(&conn, "{}", reply.line());
+}
+
+/// wol-admind's accept loop (audit S4-7): each connection on its own thread, at most
+/// [`CONN_PER_UID`] per account and [`CONN_TOTAL`] in all, so one idle or slow client never
+/// holds the others. Never returns.
+pub fn serve(listener: &std::os::unix::net::UnixListener, os: &'static (dyn AdminOs + Sync)) {
+    let cache = std::sync::Arc::new(std::sync::Mutex::new(AuthCache::default()));
+    let quota = shared::bounded::Quota::new(CONN_PER_UID, CONN_TOTAL);
+    loop {
+        let conn = match listener.accept() {
+            Ok((c, _)) => c,
+            // Out of descriptors: wait instead of spinning.
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+        };
+        let Some(slot) = shared::sys::peer(&conn).and_then(|p| quota.admit(p.uid)) else {
+            continue;
+        };
+        let cache = cache.clone();
+        let _ = std::thread::Builder::new()
+            .name("admind-conn".into())
+            .spawn(move || {
+                serve_one(conn, &cache, os);
+                drop(slot);
+            });
+    }
+}
+
+/// Run a password helper with `password` on its standard input; true only when it exits 0
+/// within `timeout`. Past it the helper is killed (audit S4-7: a stalled PAM stack used to
+/// freeze wol-admind for everyone).
+pub fn check_password(
+    mut cmd: std::process::Command,
+    password: &[u8],
+    timeout: std::time::Duration,
+) -> bool {
+    use std::io::Write;
+    use std::process::Stdio;
+    let Ok(mut child) = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    // Dropped at the end of the statement: the helper sees EOF after the password.
+    let wrote = child
+        .stdin
+        .take()
+        .is_some_and(|mut s| s.write_all(password).is_ok());
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return st.success() && wrote,
+            Ok(None) if start.elapsed() < timeout => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            // Past the timeout, or the child cannot be waited on: the password is not accepted.
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 /// Judge and run one request. Never logs the password or keybind JSON.
@@ -129,16 +268,61 @@ pub fn handle(
     let ok = match req.action {
         AdminAction::WolInstall => wol_install(os, &req.args[0], &req.args[1], uid),
         AdminAction::WolRemove => wol_remove(os, &req.args[0]),
+        AdminAction::PkgInstallFile => pkg_install_file(os, &req, &who),
         _ => execute(&req, os),
     };
     os.log(&format!(
         "{who}: {what}: {}",
         if ok { "ok" } else { "failed" }
     ));
+    if ok && req.action == AdminAction::PkgInstall {
+        drop_gave_up(os, &req.args[0]);
+    }
     if ok {
         AdminReply::Ok
     } else {
         AdminReply::Failed
+    }
+}
+
+/// `package` is installed: modules-install no longer has to be asked to offer it again, so its
+/// line goes from the gave-up list (ADR 0032, `wol_core::modules::GAVE_UP_FILE`). A missing or
+/// unchanged list is left alone; the lines of other names stay.
+fn drop_gave_up(os: &dyn AdminOs, package: &str) {
+    let file = wol_core::modules::GAVE_UP_FILE;
+    let Some(text) = os.read(file) else {
+        return;
+    };
+    if let Some(kept) = wol_core::modules::without_gave_up(&text, package)
+        && !os.write(file, 0o644, &kept)
+    {
+        os.log(&format!("{file}: could not drop {package}"));
+    }
+}
+
+/// A locally built package (ADR 0034): only a staged copy that still has the SHA-256 the sheet
+/// showed (`args[1]`) is installed; its name, version and digest go to the log first.
+fn pkg_install_file(os: &dyn AdminOs, req: &shared::admin::AdminRequest, who: &str) -> bool {
+    let (staged, shown) = (&req.args[0], &req.args[1]);
+    match os.package_facts(staged) {
+        Ok(f) if f.sha256 == *shown => {
+            os.log(&format!(
+                "{who}: pkg-install-file: {} {} sha256 {}",
+                f.name, f.version, f.sha256
+            ));
+            execute(req, os)
+        }
+        Ok(f) => {
+            os.log(&format!(
+                "{who}: pkg-install-file: {staged} has sha256 {}, the sheet showed {shown}; not installed",
+                f.sha256
+            ));
+            false
+        }
+        Err(e) => {
+            os.log(&format!("{who}: pkg-install-file: {staged}: {e}"));
+            false
+        }
     }
 }
 
@@ -152,14 +336,8 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
             return false;
         }
     };
-    let long = matches!(
-        req.action,
-        AdminAction::PkgUpgrade
-            | AdminAction::PkgInstall
-            | AdminAction::PkgRemove
-            | AdminAction::FlatpakInstall
-            | AdminAction::FlatpakRemove
-    );
+    // S4-4: one table for wol-admind and the `wol` client that waits for it.
+    let long = wol_core::admin::LONG_ACTIONS.contains(&req.action);
     // App Store installs publish their percentage for the tile ring.
     let progress = match req.action {
         AdminAction::PkgInstall => Some(wol_core::progress::Kind::Pacman),
@@ -327,26 +505,18 @@ impl AdminOs for RealOs {
         std::fs::read_to_string("/etc/group").unwrap_or_default()
     }
     fn authenticate(&self, user: &str, password: &[u8]) -> bool {
-        use std::io::Write;
-        use std::process::Stdio;
-        let Ok(mut child) = crate::privileged::privileged_command(AUTHCHECK)
-            .args(["--admin", user]) // user checked by valid_name in authcheck
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
-            return false;
-        };
-        let wrote = child
-            .stdin
-            .take()
-            .is_some_and(|mut s| s.write_all(password).is_ok());
-        child.wait().is_ok_and(|s| s.success()) && wrote
+        let mut cmd = crate::privileged::privileged_command(AUTHCHECK);
+        cmd.args(["--admin", user]); // user checked by valid_name in authcheck
+        check_password(cmd, password, AUTH_TIMEOUT)
     }
     fn run(&self, argv: &[String], long: bool) -> bool {
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let t = std::time::Duration::from_secs(if long { 1800 } else { 30 });
+        let secs = if long {
+            wol_core::admin::LONG_STEP_SECS
+        } else {
+            wol_core::admin::STEP_SECS
+        };
+        let t = std::time::Duration::from_secs(secs.into());
         crate::privileged::capture(&argv, t).is_some()
     }
     fn run_progress(&self, argv: &[String], kind: wol_core::progress::Kind, path: &str) -> bool {
@@ -411,11 +581,8 @@ impl AdminOs for RealOs {
         if !is_plain_absolute(src) {
             return Err("package path is not a plain absolute path".into());
         }
-        let mut f = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
-            .open(src)
-            .map_err(|e| e.to_string())?;
+        // O_NOCTTY too (S4-2): a terminal the caller names never becomes wol-admind's.
+        let mut f = shared::sys::open_named(src).map_err(|e| e.to_string())?;
         let m = f.metadata().map_err(|e| e.to_string())?;
         if !m.is_file() || m.len() > shared::package::MAX_SIZE {
             return Err("not a package file".into());
@@ -455,6 +622,9 @@ impl AdminOs for RealOs {
     }
     fn remove_dir(&self, dir: &Path) {
         let _ = std::fs::remove_dir_all(dir);
+    }
+    fn package_facts(&self, staged: &str) -> Result<crate::packages::PkgFacts, String> {
+        crate::packages::inspect_staged(staged)
     }
     fn log(&self, text: &str) {
         eprintln!("wol-admind: {text}");
@@ -498,33 +668,9 @@ impl AdminOs for RealOs {
     }
 }
 
-/// temp file + fsync + rename, then mode. Parent dir must exist. The temp name is unique per
-/// call (pid and a random nonce) and created with `O_EXCL | O_NOFOLLOW`, so two writers never
-/// share one temp file and a planted link is never followed (R2C-23). Removed on failure.
-pub fn atomic_write(path: &std::path::Path, mode: u32, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-    let nonce = shared::jobs::new_nonce()?;
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".wol-tmp-{}-{nonce}", std::process::id()));
-    let tmp = path.with_file_name(name);
-    let done = (|| {
-        let mut f = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(mode)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode))?;
-        std::fs::rename(&tmp, path)
-    })();
-    if done.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    done
-}
+/// temp file + fsync + rename, mode set at open (R2C-23, S4-10): one writer for every daemon,
+/// [`shared::atomic::atomic_write`].
+pub use shared::atomic::atomic_write;
 
 /// Session id of `pid`, -1 if unknown.
 pub fn session_of(pid: i32) -> i32 {
@@ -566,7 +712,12 @@ mod tests {
         stage: RefCell<Option<std::path::PathBuf>>,
         /// Progress files of tracked runs.
         progress: RefCell<Vec<String>>,
+        /// SHA-256 of every staged package copy (None: [`FAKE_SHA`]).
+        staged_sha: Option<String>,
     }
+
+    /// What the fake reads from a staged package copy unless `staged_sha` says otherwise.
+    const FAKE_SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     impl AdminOs for Fake {
         fn passwd(&self) -> String {
@@ -622,6 +773,16 @@ mod tests {
         }
         fn remove_dir(&self, d: &std::path::Path) {
             let _ = std::fs::remove_dir_all(d);
+        }
+        fn package_facts(&self, _: &str) -> Result<crate::packages::PkgFacts, String> {
+            match self.staged_sha.as_deref() {
+                Some("") => Err("it has no package information (.PKGINFO) at its start".into()),
+                sha => Ok(crate::packages::PkgFacts {
+                    name: "x".into(),
+                    version: "1-1".into(),
+                    sha256: sha.unwrap_or(FAKE_SHA).into(),
+                }),
+            }
         }
         fn wall_now(&self) -> u64 {
             1_761_600_000
@@ -717,6 +878,98 @@ mod tests {
             handle(&with_arg, ROOT, &mut cache, &Fake::default()),
             AdminReply::Invalid
         );
+    }
+
+    /// Audit C7-1 (ADR 0034): a locally built package, Undo Update and the update channel run as
+    /// root only for an administrator, with a password typed for each (never the session cache).
+    /// A standard account is refused whatever its own shell answered; a path outside wold's
+    /// staging layout is refused before anything runs.
+    #[test]
+    fn root_package_changes_need_an_administrator_and_a_fresh_password() {
+        let staged = format!(
+            "{}/0123456789abcdef0123456789abcdef/x-1-1-x86_64.pkg.tar.zst",
+            shared::package::STAGING_DIR
+        );
+        let os = Fake::default();
+        let mut cache = AuthCache::default();
+        for (action, args) in [
+            (AdminAction::PkgInstallFile, vec![staged.as_str(), FAKE_SHA]),
+            (AdminAction::SystemRollback, vec![]),
+            (AdminAction::SystemChannel, vec!["beta"]),
+        ] {
+            let good = encode(&req(action, &args), b"good");
+            let none = encode(&req(action, &args), b"");
+            assert_eq!(handle(&good, BOB, &mut cache, &os), AdminReply::NotAdmin);
+            assert_eq!(handle(&good, ANN, &mut cache, &os), AdminReply::Ok);
+            assert_eq!(
+                handle(&none, ANN, &mut cache, &os),
+                AdminReply::NeedsAuth,
+                "{action:?}: a warm cache is not enough"
+            );
+        }
+        let ran: Vec<String> = os.ran.borrow().iter().map(|v| v.join(" ")).collect();
+        assert_eq!(
+            ran,
+            [
+                format!("wol pkg -- -U --noconfirm -- {staged}"),
+                "wol update rollback".into()
+            ]
+        );
+        assert_eq!(
+            *os.wrote.borrow(),
+            [(
+                wol_core::admin::CHANNEL_FILE.to_owned(),
+                "beta\n".to_owned()
+            )]
+        );
+        for path in ["/home/bob/evil-1-1-any.pkg.tar.zst", "/tmp/x.pkg.tar.zst"] {
+            let r = encode(
+                &req(AdminAction::PkgInstallFile, &[path, FAKE_SHA]),
+                b"good",
+            );
+            assert_eq!(handle(&r, ANN, &mut cache, &os), AdminReply::Invalid);
+        }
+        assert_eq!(os.ran.borrow().len(), 2, "nothing else ran");
+        assert!(
+            os.log
+                .borrow()
+                .iter()
+                .any(|l| l == &format!("ann(1001): pkg-install-file: x 1-1 sha256 {FAKE_SHA}")),
+            "{:?}",
+            os.log.borrow()
+        );
+    }
+
+    /// ADR 0034: wol-admind installs only the copy the sheet described. A staged copy whose
+    /// SHA-256 is not the one shown, or that cannot be read, is not installed, and the log says
+    /// why.
+    #[test]
+    fn a_staged_package_that_is_not_what_the_sheet_showed_is_not_installed() {
+        let staged = format!(
+            "{}/0123456789abcdef0123456789abcdef/x-1-1-x86_64.pkg.tar.zst",
+            shared::package::STAGING_DIR
+        );
+        let mut cache = AuthCache::default();
+        for (sha, why) in [
+            ("f".repeat(64), "the sheet showed"),
+            (String::new(), ".PKGINFO"),
+        ] {
+            let os = Fake {
+                staged_sha: Some(sha),
+                ..Default::default()
+            };
+            let r = encode(
+                &req(AdminAction::PkgInstallFile, &[&staged, FAKE_SHA]),
+                b"good",
+            );
+            assert_eq!(handle(&r, ANN, &mut cache, &os), AdminReply::Failed);
+            assert!(os.ran.borrow().is_empty(), "nothing ran");
+            assert!(
+                os.log.borrow().iter().any(|l| l.contains(why)),
+                "{:?}",
+                os.log.borrow()
+            );
+        }
     }
 
     #[test]
@@ -1027,6 +1280,45 @@ mod tests {
         assert_eq!(os.ran.borrow().len(), 3);
     }
 
+    /// A package that installed leaves modules-install's gave-up list (Settings > Modules Retry);
+    /// a failed install, another name or no list leaves it alone.
+    #[test]
+    fn an_installed_package_leaves_the_gave_up_list() {
+        let file = wol_core::modules::GAVE_UP_FILE;
+        let list = "m dev\np gst-libav\nm ai-local\n";
+        let os = Fake {
+            files: vec![(file.into(), list.into())],
+            ..Fake::default()
+        };
+        let go = |os: &Fake, name: &str| {
+            let r = req(AdminAction::PkgInstall, &[name]);
+            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), os)
+        };
+        assert_eq!(go(&os, "wolos-module-dev"), AdminReply::Ok);
+        assert_eq!(go(&os, "gst-libav"), AdminReply::Ok);
+        assert_eq!(go(&os, "lame"), AdminReply::Ok);
+        let wrote = os.wrote.borrow().clone();
+        assert_eq!(
+            wrote,
+            [
+                (file.to_string(), "p gst-libav\nm ai-local\n".to_string()),
+                (file.to_string(), "m dev\nm ai-local\n".to_string()),
+            ],
+            "one write per name on the list; `lame` was not there"
+        );
+        let failing = Fake {
+            fail_run: true,
+            files: vec![(file.into(), list.into())],
+            ..Fake::default()
+        };
+        assert_eq!(go(&failing, "wolos-module-dev"), AdminReply::Failed);
+        assert!(
+            failing.wrote.borrow().is_empty(),
+            "a failed install keeps its line"
+        );
+        assert_eq!(go(&Fake::default(), "wolos-module-dev"), AdminReply::Ok);
+    }
+
     /// Signed `.wol`: verified on the daemon's own copy, then `pacman -U` (deps from the repos).
     #[test]
     fn wol_install_signed() {
@@ -1229,5 +1521,108 @@ mod tests {
         ] {
             assert_eq!(is_plain_absolute(p), ok, "{p}");
         }
+    }
+
+    /// Audit S4-7: the deadline is for the whole request, not per read: a client that trickles
+    /// a byte at a time is cut off at the deadline, an idle one too.
+    #[test]
+    fn a_trickling_client_is_cut_off_at_the_deadline() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        let (srv, cli) = UnixStream::pair().unwrap();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let trickle = std::thread::spawn(move || {
+            // One byte every 50 ms until told to stop (the channel's timeout is the pause).
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+                stop_rx.recv_timeout(std::time::Duration::from_millis(50))
+            {
+                if (&cli).write_all(b"x").is_err() {
+                    break;
+                }
+            }
+        });
+        let mut buf = vec![0u8; 1024];
+        let t = std::time::Instant::now();
+        let n = read_request(&srv, &mut buf, std::time::Duration::from_millis(300));
+        let took = t.elapsed();
+        assert!(took < std::time::Duration::from_millis(900), "{took:?}");
+        assert!(n < 20, "{n} bytes");
+        let _ = stop_tx.send(());
+        trickle.join().unwrap();
+        let (srv, _idle) = UnixStream::pair().unwrap();
+        let t = std::time::Instant::now();
+        assert_eq!(
+            read_request(&srv, &mut buf, std::time::Duration::from_millis(200)),
+            0
+        );
+        assert!(t.elapsed() < std::time::Duration::from_millis(800));
+    }
+
+    /// Audit S4-7: a password check that stalls (PAM) is killed at its timeout and counts as
+    /// not accepted; the daemon is not frozen.
+    #[test]
+    fn a_stalled_password_check_is_a_no_not_a_hang() {
+        let mut slow = std::process::Command::new("sleep");
+        slow.arg("10");
+        let t = std::time::Instant::now();
+        assert!(!check_password(
+            slow,
+            b"pw",
+            std::time::Duration::from_millis(300)
+        ));
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(3),
+            "{:?}",
+            t.elapsed()
+        );
+        let ok = std::process::Command::new("true");
+        assert!(check_password(ok, b"pw", AUTH_TIMEOUT));
+        let no = std::process::Command::new("false");
+        assert!(!check_password(no, b"pw", AUTH_TIMEOUT));
+    }
+
+    /// Audit S4-7 and ADR 0033 on wol-admind: an idle client does not hold the daemon (a second
+    /// client's `revoke` is answered within a second), and a request sent without answering the
+    /// hello gets no answer at all.
+    #[test]
+    fn an_idle_client_does_not_hold_wol_admind() {
+        use std::io::{Read, Write};
+        use std::os::unix::net::UnixStream;
+        static OS: RealOs = RealOs;
+        let dir = std::env::temp_dir().join(format!("wol-admind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("admin.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        std::thread::spawn(move || serve(&listener, &OS));
+        let _idle = UnixStream::connect(&path).unwrap();
+        let req = shared::admin::AdminRequest {
+            action: AdminAction::Revoke,
+            args: Vec::new(),
+        };
+        let t = std::time::Instant::now();
+        let mut s = shared::jobs::connect(&path).unwrap();
+        s.write_all(&shared::admin::encode(&req, b"")).unwrap();
+        s.shutdown(std::net::Shutdown::Write).unwrap();
+        s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut line = String::new();
+        s.read_to_string(&mut line).unwrap();
+        assert_eq!(AdminReply::parse(&line), AdminReply::Ok, "{line}");
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            t.elapsed()
+        );
+        // No hello answered: the request is never read and nothing comes back.
+        let mut raw = UnixStream::connect(&path).unwrap();
+        raw.write_all(&shared::admin::encode(&req, b"")).unwrap();
+        raw.shutdown(std::net::Shutdown::Write).unwrap();
+        raw.set_read_timeout(Some(std::time::Duration::from_secs(8)))
+            .unwrap();
+        let mut got = String::new();
+        let _ = raw.read_to_string(&mut got);
+        assert!(!got.contains("ok"), "{got}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -2,11 +2,17 @@
 //! Theme catalog and resolver (IaraOS ADR 0016). Contract data lives in `shared::theme`.
 pub mod accent;
 pub mod apps;
+pub mod console;
 pub mod firefox;
+pub mod generate;
 pub mod helium;
+pub mod hypr;
 pub mod kvantum;
+pub mod packs;
 pub mod scaffold;
 pub mod sourceview;
+pub mod templates;
+pub mod terminal;
 
 use shared::theme::{self as contract, Variant};
 use std::collections::BTreeMap;
@@ -49,6 +55,8 @@ pub struct ThemeSpec {
     pub tokens: BTreeMap<String, String>,
     pub wallpaper: Option<String>,
     pub icon_theme: Option<String>,
+    /// Themes v2: ANSI 0-15 for terminals (`terminal` in theme.json); None = derived.
+    pub terminal: Option<Vec<String>>,
     /// Theme folder; a relative wallpaper resolves against it.
     pub dir: PathBuf,
 }
@@ -76,7 +84,26 @@ impl ThemeSpec {
                 );
             }
         }
+        let terminal = match v.get("terminal") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(t) => {
+                let list = t
+                    .as_array()
+                    .filter(|a| a.len() == contract::TERMINAL_COLORS)
+                    .ok_or("terminal must list 16 colours")?;
+                let mut out = Vec::with_capacity(list.len());
+                for c in list {
+                    let c = c
+                        .as_str()
+                        .filter(|c| contract::Color::parse(c).is_some())
+                        .ok_or("terminal colours must be colours")?;
+                    out.push(c.to_owned());
+                }
+                Some(out)
+            }
+        };
         Ok(Self {
+            terminal,
             name: s("name").unwrap_or_else(|| id.clone()),
             id,
             variant,
@@ -98,6 +125,9 @@ pub struct ResolvedTheme {
     pub tokens: BTreeMap<String, String>,
     pub wallpaper: Option<PathBuf>,
     pub icon_theme: Option<String>,
+    /// ANSI 0-15 from the nearest theme in the chain that lists them; None = derived
+    /// (`terminal::palette`).
+    pub terminal: Option<Vec<String>>,
 }
 
 impl ResolvedTheme {
@@ -186,6 +216,22 @@ impl ThemeCatalog {
         cat
     }
 
+    /// Everything a person can pick: built-ins, `search_paths(config_home)` and the theme packs of
+    /// enabled plugins under `data_home` (`packs`; a pack never replaces an id already known).
+    pub fn installed(config_home: &Path, data_home: Option<&Path>) -> Self {
+        let cat = Self::load(&search_paths(config_home));
+        match data_home {
+            Some(d) => packs::add(cat, &packs::themes(config_home, d)),
+            None => cat,
+        }
+    }
+
+    /// Adds `spec` unless its id is taken.
+    pub fn with_new(mut self, spec: ThemeSpec) -> Self {
+        self.specs.entry(spec.id.clone()).or_insert(spec);
+        self
+    }
+
     pub fn with(mut self, spec: ThemeSpec) -> Self {
         self.specs.insert(spec.id.clone(), spec);
         self
@@ -217,8 +263,11 @@ impl ThemeCatalog {
             });
         }
         let mut tokens = BTreeMap::new();
-        let (mut wallpaper, mut icons) = (None, None);
+        let (mut wallpaper, mut icons, mut terminal) = (None, None, None);
         for s in chain.iter().rev() {
+            if s.terminal.is_some() {
+                terminal.clone_from(&s.terminal);
+            }
             tokens.extend(s.tokens.clone());
             if let Some(w) = &s.wallpaper {
                 wallpaper = Some(if Path::new(w).is_absolute() {
@@ -239,6 +288,7 @@ impl ThemeCatalog {
             tokens,
             wallpaper,
             icon_theme: icons,
+            terminal,
         })
     }
 }
@@ -262,9 +312,7 @@ pub mod active {
         if let Some(d) = file.parent() {
             std::fs::create_dir_all(d)?;
         }
-        let tmp = file.with_extension("tmp");
-        std::fs::write(&tmp, format!("{id}\n"))?;
-        std::fs::rename(tmp, file)
+        shared::atomic::atomic_write(file, super::kept_mode(file), format!("{id}\n").as_bytes())
     }
 
     pub fn effective(saved: Option<&str>, dark: bool) -> String {
@@ -290,6 +338,16 @@ pub mod active {
             _ => None,
         }
     }
+}
+
+/// The permission bits `path` has now (never set-id bits); 0644 when it does not exist or is
+/// not a regular file. Rewrites keep the mode the person gave the file (audit C6-3).
+pub(crate) fn kept_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map_or(0o644, |m| m.permissions().mode() & 0o777)
 }
 
 #[cfg(test)]
@@ -508,6 +566,25 @@ mod tests {
                 PathBuf::from("/home/u/.config/wolos/themes")
             ]
         );
+    }
+
+    /// C6-3: a link planted at the old fixed temporary name is not followed, and a rewrite keeps
+    /// the file's mode.
+    #[test]
+    fn active_set_ignores_a_planted_tmp_link_and_keeps_the_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = temp("active-link");
+        let (f, victim) = (d.join("theme"), d.join("victim"));
+        std::fs::write(&victim, "keep").unwrap();
+        std::os::unix::fs::symlink(&victim, f.with_extension("tmp")).unwrap();
+        active::set(&f, "nord").unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert_eq!(active::get(&f).as_deref(), Some("nord"));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        active::set(&f, "gruvbox").unwrap();
+        let m = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+        assert_eq!(m, 0o600);
+        let _ = std::fs::remove_dir_all(d);
     }
 
     #[test]

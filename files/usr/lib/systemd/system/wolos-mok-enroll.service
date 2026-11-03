@@ -6,6 +6,9 @@ ConditionPathExists=/usr/share/wolos/shim/shimx64.efi
 ConditionPathExists=/var/lib/wolos/secureboot/db.der
 ConditionPathExists=/var/lib/wolos/secureboot/key-screen
 ConditionPathExists=!/var/lib/wolos/secureboot/enrolled
+# Firmware with Secure Boot (on or off): without the SecureBoot variable mokutil has nothing to
+# queue for (VMs on plain OVMF, old firmware); skipped, not failed.
+ConditionPathExists=/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c
 After=local-fs.target
 
 [Service]

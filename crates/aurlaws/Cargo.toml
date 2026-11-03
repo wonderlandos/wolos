@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license = "GPL-2.0-or-later"
 authors.workspace = true
-description = "AUR package graphs and the laws over them (ADR 0022)"
+description = "Community package graphs and the laws over them (ADR 0022)"
 
 [dependencies]
 serde.workspace = true

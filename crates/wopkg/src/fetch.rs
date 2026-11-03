@@ -323,16 +323,33 @@ pub fn many(net: &Net, req: &Request, progress: &mut dyn FnMut(&serde_json::Valu
     out.into_iter().flatten().collect()
 }
 
-/// Conditional GET of an index input into `dest`: the validator (ETag or Last-Modified) is kept in
-/// `<dest>.etag`, so an unchanged input is not downloaded again.
-pub fn conditional(net: &Net, url: &str, dest: &Path) -> Result<Outcome> {
+/// Largest index input a source may serve (a pacman sync db, an appstream file, the community package dump).
+/// A longer body is refused and its part file deleted (audit C10-2: an endless body must not
+/// fill the cache partition).
+pub const MAX_INPUT: u64 = 512 << 20;
+
+/// What a bounded conditional GET brought back ([`get_conditional`]).
+#[derive(Debug, PartialEq, Eq)]
+pub enum Got {
+    /// Not changed since the validator sent.
+    NotModified,
+    /// The new body and its validator (`etag <v>` / `date <v>`) for the next request.
+    Body {
+        bytes: Vec<u8>,
+        validator: Option<String>,
+    },
+}
+
+/// The validator file kept next to `dest`.
+pub fn tag_path(dest: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.etag", dest.display()))
+}
+
+/// Sends the GET with `tag` (as stored by [`conditional`]) and checks the status. `None` is 304.
+fn start(net: &Net, url: &str, tag: Option<&str>) -> Result<Option<(ureq::Body, Option<String>)>> {
     net.check_url(url)?;
-    let tag_path = PathBuf::from(format!("{}.etag", dest.display()));
-    let tag = std::fs::read_to_string(&tag_path)
-        .ok()
-        .filter(|_| dest.exists());
     let mut req = net.agent.get(url);
-    if let Some(t) = &tag {
+    if let Some(t) = tag {
         req = match t.split_once(' ') {
             Some(("etag", v)) => req.header("If-None-Match", v),
             Some(("date", v)) => req.header("If-Modified-Since", v),
@@ -343,7 +360,7 @@ pub fn conditional(net: &Net, url: &str, dest: &Path) -> Result<Outcome> {
         .call()
         .map_err(|e| Error::unavailable(format!("{} could not be reached ({e}).", host(url))))?;
     match resp.status().as_u16() {
-        304 => return Ok(Outcome::NotModified),
+        304 => return Ok(None),
         200 => {}
         404 => {
             return Err(Error::new(
@@ -362,6 +379,45 @@ pub fn conditional(net: &Net, url: &str, dest: &Path) -> Result<Outcome> {
     let validator = h("etag")
         .map(|e| format!("etag {e}"))
         .or_else(|| h("last-modified").map(|d| format!("date {d}")));
+    Ok(Some((resp.into_body(), validator)))
+}
+
+/// Copies at most `max` bytes of `body` into `w`; one byte more is an error (never cut short).
+fn copy_bounded(body: ureq::Body, w: &mut dyn Write, max: u64, url: &str) -> Result<u64> {
+    let n = std::io::copy(&mut body.into_reader().take(max + 1), w)
+        .map_err(|_| Error::unavailable(format!("The download from {} stopped.", host(url))))?;
+    if n > max {
+        return Err(Error::untrusted(format!(
+            "The download from {} is larger than it should be.",
+            host(url)
+        )));
+    }
+    Ok(n)
+}
+
+/// Bounded conditional GET into memory: nothing is written, so the caller can verify the body
+/// before it replaces a cached copy (the release feed and its signature, audit C10-2).
+pub fn get_conditional(net: &Net, url: &str, tag: Option<&str>, max: u64) -> Result<Got> {
+    let Some((body, validator)) = start(net, url, tag)? else {
+        return Ok(Got::NotModified);
+    };
+    let mut bytes = Vec::new();
+    copy_bounded(body, &mut bytes, max, url)?;
+    Ok(Got::Body { bytes, validator })
+}
+
+/// Conditional GET of an index input into `dest`, at most `max` bytes: the validator (ETag or
+/// Last-Modified) is kept in `<dest>.etag`, so an unchanged input is not downloaded again. The
+/// body goes to `<dest>.part` first; a failed or oversized download deletes it and leaves `dest`
+/// and its validator as they were.
+pub fn conditional(net: &Net, url: &str, dest: &Path, max: u64) -> Result<Outcome> {
+    let tag_path = tag_path(dest);
+    let tag = std::fs::read_to_string(&tag_path)
+        .ok()
+        .filter(|_| dest.exists());
+    let Some((body, validator)) = start(net, url, tag.as_deref())? else {
+        return Ok(Outcome::NotModified);
+    };
     if let Some(d) = dest.parent() {
         std::fs::create_dir_all(d)
             .map_err(|_| Error::unavailable("The index folder cannot be created."))?;
@@ -369,14 +425,22 @@ pub fn conditional(net: &Net, url: &str, dest: &Path) -> Result<Outcome> {
     let part = part_of(dest);
     let mut f = std::fs::File::create(&part)
         .map_err(|_| Error::unavailable("The index cannot be written."))?;
-    let n = std::io::copy(&mut resp.into_body().into_reader(), &mut f)
-        .map_err(|_| Error::unavailable(format!("The download from {} stopped.", host(url))))?;
-    drop(f);
-    std::fs::rename(&part, dest).map_err(|_| Error::unavailable("The index cannot be written."))?;
-    match validator {
-        Some(v) => std::fs::write(&tag_path, v).ok(),
-        None => std::fs::remove_file(&tag_path).ok(),
+    let n = match copy_bounded(body, &mut f, max, url) {
+        Ok(n) => n,
+        Err(e) => {
+            drop(f);
+            let _ = std::fs::remove_file(&part);
+            return Err(e);
+        }
     };
+    drop(f);
+    // The old validator goes first: a crash between the steps never pairs a new tag with the
+    // old body (an old tag with the new body only costs one more download).
+    let _ = std::fs::remove_file(&tag_path);
+    std::fs::rename(&part, dest).map_err(|_| Error::unavailable("The index cannot be written."))?;
+    if let Some(v) = validator {
+        let _ = std::fs::write(&tag_path, v);
+    }
     Ok(Outcome::Fetched {
         bytes: n,
         resumed: false,
@@ -473,12 +537,51 @@ pub mod tests {
         let net = Net::new(true);
         let dest = d.join("core.db");
         assert!(matches!(
-            conditional(&net, &srv.url("/core.db"), &dest).unwrap(),
+            conditional(&net, &srv.url("/core.db"), &dest, MAX_INPUT).unwrap(),
             Outcome::Fetched { bytes: 2, .. }
         ));
         assert_eq!(
-            conditional(&net, &srv.url("/core.db"), &dest).unwrap(),
+            conditional(&net, &srv.url("/core.db"), &dest, MAX_INPUT).unwrap(),
             Outcome::NotModified
+        );
+    }
+
+    /// C10-2: a body one byte past `max` is an error, its part file is deleted, and an earlier
+    /// copy and its validator stay as they were.
+    #[test]
+    fn an_oversized_input_is_refused_and_the_last_copy_kept() {
+        let srv = serve(vec![
+            ("/ok", Served::bytes(b"good".to_vec()).etag("\"v1\"")),
+            ("/big", Served::bytes(vec![b'x'; 9]).etag("\"v2\"")),
+        ]);
+        let d = temp("cond-max");
+        let net = Net::new(true);
+        let dest = d.join("feed");
+        let err = conditional(&net, &srv.url("/big"), &dest, 8).unwrap_err();
+        assert!(err.message.contains("larger"), "{err}");
+        assert!(!dest.exists() && !part_of(&dest).exists());
+        assert!(!tag_path(&dest).exists());
+        // Exactly `max` is fine.
+        assert!(conditional(&net, &srv.url("/ok"), &dest, 4).is_ok());
+        assert!(conditional(&net, &srv.url("/big"), &dest, 8).is_err());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"good");
+        assert_eq!(
+            std::fs::read_to_string(tag_path(&dest)).unwrap(),
+            "etag \"v1\""
+        );
+        assert!(!part_of(&dest).exists());
+        // In memory: the same bound, and a 304 for the stored validator.
+        assert!(get_conditional(&net, &srv.url("/big"), None, 8).is_err());
+        assert_eq!(
+            get_conditional(&net, &srv.url("/ok"), Some("etag \"v1\""), 4).unwrap(),
+            Got::NotModified
+        );
+        assert_eq!(
+            get_conditional(&net, &srv.url("/ok"), None, 4).unwrap(),
+            Got::Body {
+                bytes: b"good".to_vec(),
+                validator: Some("etag \"v1\"".into())
+            }
         );
     }
 }

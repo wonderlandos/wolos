@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! flatpak-wolos: Flatpak from the WolOS fork's `wolos` branch at the commit in `ref`, built from a
 //! tarball like linux-wolos, replacing Arch's flatpak and listed in the [wolos] repo.
-use std::{fs, path::PathBuf};
-fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p)
-}
-
-fn read(p: &str) -> String {
-    fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::{read, repo};
+use std::fs;
 
 /// Every session finds the consent helper: systemd's environment.d, read for user sessions.
 #[test]
@@ -60,6 +54,8 @@ fn x11_compat_and_electron_wayland_hint() {
         env.lines()
             .any(|l| l == "ELECTRON_OZONE_PLATFORM_HINT=auto")
     );
+    // Java/AWT Flatpaks under Xwayland (the compositor does not reparent; image_x11.rs has the rest).
+    assert!(env.lines().any(|l| l == "_JAVA_AWT_WM_NONREPARENTING=1"));
 }
 
 /// Apps that offer Wayland and fallback X11 keep Flatpak's default (native Wayland): nothing in

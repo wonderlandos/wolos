@@ -71,7 +71,7 @@ pub fn gtk4_vars(t: &ResolvedTheme) -> String {
         .collect()
 }
 
-/// libadwaita's own knobs, set from the theme: window corners as Hyprland rounds them, hairlines
+/// libadwaita's own knobs, set from the theme: window corners as the compositor rounds them, hairlines
 /// at the line token's strength, dimmed text as dark as the `dim` token.
 pub fn adw_knobs(t: &ResolvedTheme) -> String {
     let line = Color::parse(&t.tokens["line"]).map_or(0.15, |c| if c.a < 1.0 { c.a } else { 0.15 });
@@ -165,7 +165,7 @@ mod tests {
             .collect()
     }
 
-    /// The Kit (kit.css, widgets.rs) and Hyprland draw the scaffold with the same numbers the
+    /// The Kit (kit.css, widgets.rs) and the compositor draw the scaffold with the same numbers the
     /// toolkit sheets get: one source, held both ways.
     #[test]
     fn metrics_are_the_kits() {

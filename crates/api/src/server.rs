@@ -66,6 +66,17 @@ pub fn serve(
     };
     let attached = reader.get_mut().fd.take();
     let req = JobRequest::parse(&line);
+    // S4-26: grant-free requests too are refused from a peer whose known executable changed
+    // since accept (exec after connect); an executable unknown on first sight is let through.
+    if matches!(req, Some(JobRequest::Subscribe | JobRequest::Publish(_)))
+        && peer.as_ref().is_some_and(PeerIdentity::changed)
+    {
+        // The refusal is the record: the caller hears why (no library logging, RR-004).
+        return refuse(
+            &stream,
+            "permission denied: the caller changed since it connected",
+        );
+    }
     match &req {
         Some(JobRequest::Subscribe) => {
             // Publish writes are non-blocking: a subscriber that stops reading is dropped (bus.rs).
@@ -310,6 +321,59 @@ mod tests {
         serve_me(srv, &Empty, bus, &AllowAll, &portal::State::default());
         h.join().unwrap();
         cli
+    }
+
+    /// Audit S4-26: a peer whose executable was known at accept and is another now (it
+    /// exec()ed) may neither publish nor subscribe; one whose executable was unknown on first
+    /// sight still may (no grant involved).
+    #[test]
+    fn publish_and_subscribe_refuse_a_changed_identity_only() {
+        let bus = Bus::default();
+        let sub = call("subscribe\n", &bus);
+        let e = Event::Theme {
+            id: "wol-dark".into(),
+        };
+        let publish = |exe: Option<&str>| {
+            let (srv, cli) = UnixStream::pair().unwrap();
+            let h = ask(&cli, format!("publish {}", e.to_line()).as_bytes());
+            let peer = PeerIdentity::captured_as(&srv, exe);
+            serve(
+                srv,
+                peer,
+                &Empty,
+                &bus,
+                &AllowAll,
+                &portal::State::default(),
+            );
+            h.join().unwrap();
+            cli
+        };
+        // Changed: refused with a reason, nothing reaches the subscriber.
+        let mut answer = String::new();
+        let mut cli = publish(Some("/usr/bin/not-what-runs"));
+        cli.shutdown(std::net::Shutdown::Write).unwrap();
+        cli.read_to_string(&mut answer).unwrap();
+        assert!(answer.contains("changed since it connected"), "{answer}");
+        // Unknown on first sight: published.
+        drop(publish(None));
+        let mut line = String::new();
+        BufReader::new(&sub).read_line(&mut line).unwrap();
+        assert_eq!(Event::parse(&line), Some(e.clone()));
+        // A changed subscriber is not added.
+        let before = bus.len();
+        let (srv, cli) = UnixStream::pair().unwrap();
+        let h = ask(&cli, b"subscribe\n");
+        let peer = PeerIdentity::captured_as(&srv, Some("/usr/bin/not-what-runs"));
+        serve(
+            srv,
+            peer,
+            &Empty,
+            &bus,
+            &AllowAll,
+            &portal::State::default(),
+        );
+        h.join().unwrap();
+        assert_eq!(bus.len(), before);
     }
 
     #[test]

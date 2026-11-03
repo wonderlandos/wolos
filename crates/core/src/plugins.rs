@@ -115,7 +115,7 @@ pub struct Report {
 }
 
 /// Reads and checks one folder without running Lua: manifest, id, reserved prefix, files named
-/// exist, no symlinks, size, Hyprland whitelist, theme tokens and contrast, Looks presets.
+/// exist, no symlinks, size, compositor whitelist, theme tokens and contrast, Looks presets.
 pub fn check(dir: &Path, system: bool) -> Report {
     let id = dir
         .file_name()
@@ -154,7 +154,8 @@ pub fn check(dir: &Path, system: bool) -> Report {
     }
     if m.is_reserved() && !system {
         r.problems.push(format!(
-            "Ids starting with {} are reserved for WolOS; use a reverse-DNS or user.name id.",
+            "The id {} and ids starting with {} are reserved for WolOS; use a reverse-DNS or user.name id.",
+            shared::plugins::RESERVED_PREFIX.trim_end_matches('.'),
             shared::plugins::RESERVED_PREFIX
         ));
     }
@@ -182,6 +183,11 @@ pub fn check(dir: &Path, system: bool) -> Report {
             ));
         }
     }
+    // Audit X6-1: these kinds parse, but nothing applies them yet; a check that passed them
+    // promised a plugin that does nothing.
+    for k in m.kinds().into_iter().filter(|k| k.is_planned()) {
+        r.problems.push(k.planned_sentence());
+    }
     let read = |rel: &str| std::fs::read_to_string(dir.join(rel)).ok();
     for e in &m.hypr {
         if let Some(t) = read(&e.file)
@@ -205,6 +211,24 @@ pub fn check(dir: &Path, system: bool) -> Report {
         }
     }
     r.manifest = Some(m);
+    r
+}
+
+/// The full check of `wol plugin check` and Plugin Maker: [`check`], then, when the folder is
+/// clean, the Lua step `lua` (given the folder and the manifest; `wol_lua::plugin::lua_problems`
+/// loads and runs every script once). Core runs no Lua itself, so the step is passed in. The bad
+/// path is the report's `problems`, folder problems first; Lua is not run on a folder with any.
+pub fn check_full(
+    dir: &Path,
+    system: bool,
+    lua: impl FnOnce(&Path, &shared::plugins::Manifest) -> Vec<String>,
+) -> Report {
+    let mut r = check(dir, system);
+    if let Some(m) = &r.manifest
+        && r.problems.is_empty()
+    {
+        r.problems = lua(dir, m);
+    }
     r
 }
 
@@ -236,7 +260,9 @@ pub fn load(dir: &Path, system: bool) -> Plugin {
     }
 }
 
-/// Every folder with a `plugin.toml` in `dirs`, sorted by name; first dir wins on equal ids.
+/// Every folder with a `plugin.toml` in `dirs`, sorted by name; first dir wins on equal ids,
+/// except that a broken entry never hides a later good one of the same id (audit S4-25: a user
+/// folder `org.wolos.stats` refused as reserved does not take the shipped plugin's place).
 pub fn load_all(dirs: &[(PathBuf, bool)]) -> Vec<Plugin> {
     let mut out: Vec<Plugin> = Vec::new();
     for (d, system) in dirs {
@@ -251,8 +277,10 @@ pub fn load_all(dirs: &[(PathBuf, bool)]) -> Vec<Plugin> {
         found.sort();
         for p in found {
             let pkg = load(&p, *system);
-            if !out.iter().any(|q| q.id == pkg.id) {
-                out.push(pkg);
+            match out.iter_mut().find(|q| q.id == pkg.id) {
+                None => out.push(pkg),
+                Some(q) if q.manifest.is_err() && pkg.manifest.is_ok() => *q = pkg,
+                Some(_) => {}
             }
         }
     }
@@ -360,13 +388,8 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
         .parent()
         .ok_or_else(|| "The file has no folder.".to_owned())?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let file = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let tmp = path.with_file_name(format!("{file}.tmp"));
-    std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+    shared::atomic::atomic_write(path, 0o644, text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 // ---- Per-plugin state (`wol.state`) ----
@@ -419,7 +442,7 @@ pub fn toggle_get(state_home: &Path, plugin: &str, toggle: &str) -> bool {
 }
 
 /// Sets the flag. Running the toggle's `on`/`off` command is the caller's (the host checks the
-/// grant, runs it limited, then calls this on success).
+/// grant, `run` for anything but a `wol` verb, runs it limited, then calls this on success).
 pub fn toggle_set(state_home: &Path, plugin: &str, toggle: &str, on: bool) -> Result<(), String> {
     if !is_plugin_id(plugin) || !shared::plugins::is_entry_id(toggle) {
         return Err("Not a toggle of a plugin.".into());
@@ -434,6 +457,95 @@ pub fn toggle_set(state_home: &Path, plugin: &str, toggle: &str, on: bool) -> Re
             Err(e) => Err(format!("{}: {e}", p.display())),
         }
     }
+}
+
+// ---- Web apps (`[[webapp]]`) ----
+
+/// Key in a plugin web app launcher: the plugin it came from (next to the web app mark of
+/// `crate::webapps`, so `wol webapp list` shows it and the plugin's turn-off removes it).
+pub const WEBAPP_PLUGIN_KEY: &str = "X-WolOS-Plugin";
+
+/// The launchers of `m`'s `[[webapp]]` entries (audit X6-1): the same `.desktop` files `wol webapp
+/// add` writes (`crate::webapps`), id `plugin-<plugin>-<entry>`, icon a file of the plugin
+/// folder `dir` or an icon name, each marked with [`WEBAPP_PLUGIN_KEY`]. (file, text); an entry
+/// whose name or address does not check is left out.
+pub fn webapp_launchers(m: &Manifest, dir: &Path, data_home: &Path) -> Vec<(PathBuf, String)> {
+    use crate::webapps as wa;
+    m.webapp
+        .iter()
+        .filter_map(|e| {
+            let profile = match e.profile {
+                shared::plugins::Profile::Shared => wa::Profile::Shared,
+                shared::plugins::Profile::Own => wa::Profile::Own,
+            };
+            let mut app = wa::WebApp::new(&e.name, &e.url, profile).ok()?;
+            app.id = wa::slug(&format!("plugin-{}-{}", m.id, e.id))?;
+            let icon = if shared::plugins::is_icon_file(&e.icon) {
+                dir.join(&e.icon).to_string_lossy().into_owned()
+            } else {
+                e.icon.clone()
+            };
+            if wa::check_icon(&icon) {
+                app.icon = icon;
+            }
+            let text = format!(
+                "{}{WEBAPP_PLUGIN_KEY}={}\n",
+                wa::desktop_entry(&app, data_home),
+                m.id
+            );
+            Some((wa::desktop_path(data_home, &app.id), text))
+        })
+        .collect()
+}
+
+/// Whether the launcher text came from plugin `id`.
+fn is_launcher_of(text: &str, id: &str) -> bool {
+    text.lines().any(|l| {
+        l.trim()
+            .strip_prefix(WEBAPP_PLUGIN_KEY)
+            .and_then(|r| r.strip_prefix('='))
+            == Some(id)
+    })
+}
+
+/// Puts plugin `id`'s web app launchers in `<data home>/applications`: removes every launcher
+/// of `id` there, then, when `m` is given (the plugin is on), writes [`webapp_launchers`]. A file
+/// of the same name that is not this plugin's (a web app of the person's own) is never
+/// replaced; the names of those skipped are returned.
+pub fn sync_webapps(
+    data_home: &Path,
+    id: &str,
+    m: Option<(&Manifest, &Path)>,
+) -> Result<Vec<String>, String> {
+    let apps = data_home.join("applications");
+    if let Ok(rd) = std::fs::read_dir(&apps) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if crate::webapps::id_of_file(&name).is_none() {
+                continue;
+            }
+            let p = e.path();
+            if std::fs::read_to_string(&p).is_ok_and(|t| is_launcher_of(&t, id)) {
+                std::fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+            }
+        }
+    }
+    let mut skipped = Vec::new();
+    let Some((m, dir)) = m else {
+        return Ok(skipped);
+    };
+    for (file, text) in webapp_launchers(m, dir, data_home) {
+        if file.symlink_metadata().is_ok() {
+            skipped.push(
+                file.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            );
+            continue;
+        }
+        write_atomic(&file, &text)?;
+    }
+    Ok(skipped)
 }
 
 // ---- Render failures ----
@@ -599,16 +711,6 @@ const THEME_JSON: &str = r##"{
 }
 "##;
 
-const LOOK_JSON: &str = r#"{
-  "name": "__NAME__",
-  "description": "Rounded, with a soft shadow.",
-  "rounding": 12,
-  "shadow": true
-}
-"#;
-
-const HYPR_CONF: &str = "# Only windowrule, layerrule, bezier and animation lines are accepted.\nwindowrule = float, class:^(__ID__)$\n";
-
 /// Files for a new plugin: `plugin.toml` with one entry per kind in `kinds`, and the scripts and
 /// files they name. The result passes `wol plugin check` as is.
 pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, String)>, String> {
@@ -617,6 +719,9 @@ pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, Str
             "A plugin id is a reverse-DNS or user.name id of lowercase labels, like \"alice.{}\".",
             id.rsplit('.').next().unwrap_or("demo").to_ascii_lowercase()
         ));
+    }
+    if let Some(k) = kinds.iter().find(|k| k.is_planned()) {
+        return Err(k.planned_sentence());
     }
     let mut kinds: Vec<Kind> = kinds.to_vec();
     kinds.dedup();
@@ -635,6 +740,10 @@ pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, Str
         "schema = 1\nid = \"{id}\"\nname = \"{name}\"\nversion = \"0.1\"\nauthor = \"\"\nlicense = \"MIT\"\ndescription = \"What it does, in one line.\"\nmin_wolos = \"0.12\"\n"
     );
     let mut perms: Vec<&str> = Vec::new();
+    if kinds.contains(&Kind::Dock) {
+        // The Dock entry runs `foot`, not a `wol` verb.
+        perms.push("run");
+    }
     if kinds.contains(&Kind::Toggle) {
         perms.push("toggles");
     }
@@ -689,14 +798,8 @@ pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, Str
                 files.push(("theme.json".into(), fill(THEME_JSON, "theme")));
                 "\n[[theme]]\nid = \"theme\"\nfile = \"theme.json\"\n".to_owned()
             }
-            Kind::Look => {
-                files.push(("look.json".into(), fill(LOOK_JSON, "look")));
-                "\n[[look]]\nid = \"look\"\nfile = \"look.json\"\n".to_owned()
-            }
-            Kind::Hypr => {
-                files.push(("rules.conf".into(), fill(HYPR_CONF, "rules")));
-                "\n[[hypr]]\nid = \"rules\"\nfile = \"rules.conf\"\n".to_owned()
-            }
+            // Refused above (audit X6-1).
+            Kind::Look | Kind::Hypr => continue,
         };
         toml.push_str(&section);
     }
@@ -707,6 +810,28 @@ pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_full_check_runs_the_lua_step_only_on_a_clean_folder() {
+        let d = tmp("full");
+        let dir = d.join("alice.full");
+        std::fs::create_dir_all(&dir).unwrap();
+        for (rel, text) in scaffold("alice.full", "Full", &[Kind::Menubar]).unwrap() {
+            std::fs::write(dir.join(rel), text).unwrap();
+        }
+        let r = check_full(&dir, false, |at, m| {
+            assert_eq!(at, dir.as_path());
+            vec![format!("{}: ran", m.id)]
+        });
+        assert_eq!(r.problems, ["alice.full: ran"]);
+        std::fs::remove_file(dir.join("bar.lua")).unwrap();
+        let r = check_full(&dir, false, |_, _| panic!("no Lua on a broken folder"));
+        assert_eq!(
+            r.problems,
+            ["plugin.toml names bar.lua, but the folder has no such file."]
+        );
+        let _ = std::fs::remove_dir_all(d);
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("wol-plugins-{name}-{}", std::process::id()));
@@ -727,9 +852,17 @@ mod tests {
     #[test]
     fn scaffolds_check_clean_and_name_their_files() {
         let root = tmp("scaffold");
-        let mut sets: Vec<Vec<Kind>> = Kind::ALL.iter().map(|k| vec![*k]).collect();
-        sets.push(Kind::ALL.to_vec());
+        let offered: Vec<Kind> = Kind::ALL.into_iter().filter(|k| !k.is_planned()).collect();
+        let mut sets: Vec<Vec<Kind>> = offered.iter().map(|k| vec![*k]).collect();
+        sets.push(offered.clone());
         sets.push(Vec::new());
+        // Audit X6-1: planned kinds are not scaffolded.
+        for k in Kind::PLANNED {
+            assert_eq!(
+                scaffold("alice.x", "X", &[k]).unwrap_err(),
+                k.planned_sentence()
+            );
+        }
         for (i, kinds) in sets.iter().enumerate() {
             let id = format!("alice.demo{i}");
             let files = scaffold(&id, "Demo", kinds).unwrap();
@@ -767,15 +900,66 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Audit X6-1: an enabled plugin's `[[webapp]]` is a launcher next to the person's own web
+    /// apps; turning it off removes it and never touches a web app of theirs.
+    #[test]
+    fn webapp_entries_become_launchers_and_go_away() {
+        let root = tmp("webapp");
+        let data = root.join("data");
+        let dir = root.join("alice.web");
+        write_all(
+            &dir,
+            &scaffold("alice.web", "Web", &[Kind::Webapp]).unwrap(),
+        );
+        let m = check(&dir, false).manifest.unwrap();
+        let l = webapp_launchers(&m, &dir, &data);
+        assert_eq!(l.len(), 1);
+        let (file, text) = &l[0];
+        assert_eq!(
+            file,
+            &data.join("applications/wolos-webapp-plugin-alice-web-web.desktop")
+        );
+        assert!(text.contains("--app=https://example.com/"), "{text}");
+        assert!(text.ends_with("X-WolOS-Plugin=alice.web\n"), "{text}");
+        let app = crate::webapps::parse_entry("plugin-alice-web-web", text).unwrap();
+        assert_eq!(
+            (app.name.as_str(), app.icon.as_str()),
+            ("Web", "web-browser-symbolic")
+        );
+
+        // The person's own web app, and one of another plugin.
+        let apps = data.join("applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        let mine = apps.join("wolos-webapp-mail.desktop");
+        std::fs::write(&mine, "[Desktop Entry]\nName=Mail\n").unwrap();
+        let other = apps.join("wolos-webapp-plugin-bob-x-web.desktop");
+        std::fs::write(&other, "[Desktop Entry]\nX-WolOS-Plugin=bob.x\n").unwrap();
+
+        assert!(
+            sync_webapps(&data, &m.id, Some((&m, &dir)))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(std::fs::read_to_string(file).unwrap(), *text);
+        // Off: only this plugin's launcher goes.
+        sync_webapps(&data, &m.id, None).unwrap();
+        assert!(!file.exists());
+        assert!(mine.is_file() && other.is_file());
+        // A file of the same name that is not ours is kept and reported.
+        std::fs::write(file, "[Desktop Entry]\nName=Mine\n").unwrap();
+        let skipped = sync_webapps(&data, &m.id, Some((&m, &dir))).unwrap();
+        assert_eq!(skipped, ["wolos-webapp-plugin-alice-web-web.desktop"]);
+        assert_eq!(
+            std::fs::read_to_string(file).unwrap(),
+            "[Desktop Entry]\nName=Mine\n"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn check_names_folder_problems() {
         let root = tmp("check");
-        let files = scaffold(
-            "alice.demo",
-            "Demo",
-            &[Kind::Menubar, Kind::Hypr, Kind::Theme],
-        )
-        .unwrap();
+        let files = scaffold("alice.demo", "Demo", &[Kind::Menubar, Kind::Theme]).unwrap();
         let dir = root.join("alice.demo");
         write_all(&dir, &files);
         assert!(check(&dir, false).problems.is_empty());
@@ -798,9 +982,21 @@ mod tests {
             r.problems
         );
         std::fs::write(dir.join("bar.lua"), "return 1").unwrap();
-        // Hypr whitelist and theme contrast.
+        // Audit X6-1: [[hypr]] and [[look]] parse but nothing applies them, so check refuses
+        // them (the compositor whitelist still runs: shared::plugins::check_hypr).
+        let toml = std::fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE),
+            format!("{toml}\n[[hypr]]\nid = \"rules\"\nfile = \"rules.conf\"\n"),
+        )
+        .unwrap();
         std::fs::write(dir.join("rules.conf"), "bind = SUPER, X, exec, rm\n").unwrap();
         let r = check(&dir, false);
+        assert!(
+            r.problems.contains(&Kind::Hypr.planned_sentence()),
+            "{:?}",
+            r.problems
+        );
         assert!(
             r.problems
                 .iter()
@@ -808,7 +1004,8 @@ mod tests {
             "{:?}",
             r.problems
         );
-        std::fs::write(dir.join("rules.conf"), "layerrule = blur, x\n").unwrap();
+        std::fs::write(dir.join(MANIFEST_FILE), toml).unwrap();
+        std::fs::remove_file(dir.join("rules.conf")).unwrap();
         let theme = std::fs::read_to_string(dir.join("theme.json")).unwrap();
         std::fs::write(dir.join("theme.json"), theme.replace("#f2f3f7", "#1b1d24")).unwrap();
         let r = check(&dir, false);
@@ -845,6 +1042,10 @@ mod tests {
             check(&reserved, true).problems.is_empty(),
             "system folders may ship org.wolos.*"
         );
+        let bare = root.join("org.wolos");
+        write_all(&bare, &scaffold("org.wolos", "X", &[Kind::Toggle]).unwrap());
+        assert!(check(&bare, false).problems[0].contains("reserved"));
+        std::fs::remove_dir_all(&bare).unwrap();
         assert!(check(&root.join("nope"), false).problems[0].contains("plugin.toml"));
         // load keeps the manifest only for a clean folder; load_all orders by name, user first.
         assert!(load(&dir, false).manifest.is_ok());
@@ -858,6 +1059,26 @@ mod tests {
             dirs(Path::new("/h/.local/share"))[0].0,
             Path::new("/h/.local/share/wolos/plugins")
         );
+        // Audit S4-25: the user's refused org.wolos.x does not shadow the shipped one.
+        let system = tmp("shipped");
+        write_all(
+            &system.join("org.wolos.x"),
+            &scaffold("org.wolos.x", "X", &[Kind::Dock]).unwrap(),
+        );
+        let all = load_all(&[(root.clone(), false), (system.clone(), true)]);
+        let x: Vec<&Plugin> = all.iter().filter(|p| p.id == "org.wolos.x").collect();
+        assert_eq!(x.len(), 1);
+        assert!(x[0].system && x[0].manifest.is_ok(), "{:?}", x[0].manifest);
+        // A good user plugin still wins over the same id shipped.
+        let all = load_all(&[
+            (root.clone(), false),
+            (system.clone(), true),
+            (root.clone(), true),
+        ]);
+        let demo: Vec<&Plugin> = all.iter().filter(|p| p.id == "alice.demo").collect();
+        assert_eq!(demo.len(), 1);
+        assert!(!demo[0].system);
+        std::fs::remove_dir_all(system).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 

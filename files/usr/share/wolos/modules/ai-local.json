@@ -2,7 +2,7 @@
   "id": "ai-local",
   "name": "Local AI",
   "summary": "Run open models on this computer with Ollama; the GPU backend (CUDA, ROCm, Vulkan or CPU) follows wol hw compute",
-  "icon": "wolos-module-ai-local-symbolic",
+  "icon": "wolos-chip-symbolic",
   "category": "ai",
   "size_mb": 1200,
   "packages": [
@@ -15,6 +15,7 @@
     "/usr/lib/wolos/ai-local"
   ],
   "offline": false,
+  "backend": "ollama",
   "needs": [
     "network"
   ]

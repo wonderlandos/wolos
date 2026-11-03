@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Graphs of what an AUR package says it does and what it did, and the laws over them (ADR 0022).
+//! Graphs of what a community package says it does and what it did, and the laws over them (ADR 0022).
 //! A broken law means "needs review". No broken law means only that: never "safe".
 pub mod facts;
 pub mod graph;

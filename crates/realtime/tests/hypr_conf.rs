@@ -6,6 +6,11 @@
 use realtime::anim::{Animation, Bezier};
 use realtime::titlebar::{self, Button};
 const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+/// The window buttons, sourced once by hyprland.conf (colours live outside it: themes v2).
+const LIGHTS: &str =
+    include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos/lights.conf");
+/// The default theme's compositor colours (`wol_core::theme::hypr`), sourced by hyprland.conf.
+const THEME: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos/theme.conf");
 
 fn value(key: &str) -> String {
     CONF.lines()
@@ -32,7 +37,8 @@ fn rgb(s: &str) -> (i32, i32, i32) {
 
 #[test]
 fn hyprbars_lights_match_kit_order_colour_and_spacing() {
-    let buttons: Vec<Vec<String>> = CONF
+    assert!(CONF.contains("\nsource = /usr/share/wolos/hypr/wolos/lights.conf\n"));
+    let buttons: Vec<Vec<String>> = LIGHTS
         .lines()
         .filter_map(|l| l.trim().strip_prefix("hyprbars-button"))
         .map(|l| {
@@ -181,8 +187,10 @@ fn inactive_windows_look_inactive() {
         "bar_color_inactive",
         "col.text_inactive",
     ] {
-        assert!(value(key).starts_with("rgba("), "{key}");
+        let line = format!("plugin:hyprbars:{key} = rgba(");
+        assert!(THEME.lines().any(|l| l.starts_with(&line)), "{key}");
     }
+    assert!(CONF.contains("\nsource = /usr/share/wolos/hypr/wolos/theme.conf\n"));
     let dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../desktop/hyprland/hyprbars"
@@ -251,7 +259,7 @@ fn window_animations_use_realtime_curves() {
     ] {
         let a = anim(name);
         assert_eq!(a[2], curve);
-        // Hyprland speed is in deciseconds.
+        // The compositor's speed is in deciseconds.
         let speed: f32 = a[1].parse().unwrap();
         assert!(
             (speed * 100.0 - ms as f32).abs() < 1.0,
@@ -294,7 +302,7 @@ fn every_wol_hypr_build_allows_private_access() {
     }
 }
 
-/// Live (iGPU passthrough): the setup and login screens run Hyprland directly (wol-login restarts
+/// Live (iGPU passthrough): the setup and login screens run the compositor directly (wol-login restarts
 /// them) and showed the guiutils and "launched without start-hyprland" banners over Setup.
 #[test]
 fn greeter_compositors_show_no_nag_banners() {
@@ -330,8 +338,16 @@ fn activation_raises_the_window() {
     let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
     let hook = &plugin[plugin.find("static void onActive").unwrap()..];
     let hook = &hook[..hook.find("\n}").unwrap()];
-    assert!(hook.contains("alterzorder top"), "{hook}");
+    assert!(hook.contains("raiseLater(w)"), "{hook}");
     assert!(hook.contains("raisesOnFocus(reason)"), "{hook}");
+    // Audit4 S5-6: raised in-process after the focus change, no hyprctl alterzorder (it simulated
+    // pointer motion that handed a tiled-mode focus back to the window under the pointer).
+    let raise = &plugin[plugin.find("static void raiseLater").unwrap()..];
+    let raise = &raise[..raise.find("\n}").unwrap()];
+    for call in ["doLater(", "windowState()->raise(w)", "bringTargetToTop("] {
+        assert!(raise.contains(call), "{call}: {raise}");
+    }
+    assert!(!plugin.contains("alterzorder"));
     let filter = &plugin[plugin.find("static bool raisesOnFocus").unwrap()..];
     let filter = &filter[..filter.find("\n}").unwrap()];
     for yes in [
@@ -412,7 +428,7 @@ fn shell_output_is_logged() {
     );
 }
 
-/// Window open, close and resize settle in about 0.2 s (2 in Hyprland's 100 ms units): longer
+/// Window open, close and resize settle in about 0.2 s (2 in the compositor's 100 ms units): longer
 /// reads as lag when dragging a window edge.
 #[test]
 fn window_animations_take_about_a_fifth_of_a_second() {
@@ -432,7 +448,7 @@ fn window_animations_take_about_a_fifth_of_a_second() {
     }
 }
 
-/// Live (VM, virtio-gpu): with damage tracking on, Hyprland never repainted the last frame of a
+/// Live (VM, virtio-gpu): with damage tracking on, the compositor never repainted the last frame of a
 /// Setup page fade, so the previous page stayed half-visible behind the next one until Setup
 /// closed. Setup and the login screen redraw whole frames; they are short-lived and mostly still.
 #[test]
@@ -479,4 +495,33 @@ fn compositor_frame_policy_is_configured() {
     assert_eq!(get("throttle_freeze_updates"), 2.0);
     assert_eq!(get("reconfigure_ack_timeout_ms"), 250.0);
     assert_eq!(get("frame_deadline"), 0.95);
+}
+
+/// Audit-x11 X1-1 / audit4 S5-2: X11 override-redirect and borderless popups are never placed,
+/// cascaded from, refitted or tagged; the rule is realtime's (wm_gates.rs via wol_realtime.h).
+#[test]
+fn x11_popups_are_left_where_they_open() {
+    let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
+    let body = |name: &str| {
+        let f = &plugin[plugin.find(name).unwrap_or_else(|| panic!("{name}"))..];
+        f[..f.find("\n}").unwrap()].to_owned()
+    };
+    assert!(body("static bool x11OverrideRedirect").contains("isX11OverrideRedirect()"));
+    assert!(body("static int32_t placementOf").contains("wol_x11_placement("));
+    assert!(body("static bool managedWindow").contains("wol_x11_managed("));
+    let late = body("static void onOpenLate");
+    assert!(late.contains("placementOf(w)") && late.contains("WOL_PLACE_SKIP"));
+    assert!(late.contains("WOL_PLACE_CLAMP_ONLY"));
+    assert!(body("static void onOpen(").contains("!managedWindow(w)"));
+    assert!(body("static PHLWINDOW previousOfClass").contains("!managedWindow(o)"));
+    assert!(body("static void refitMonitor").contains("!managedWindow(w)"));
+    let header = include_str!("../include/wol_realtime.h");
+    for f in [
+        "wol_x11_placement(",
+        "wol_x11_managed(",
+        "wol_keys_step(",
+        "wol_placement_limits(",
+    ] {
+        assert!(header.contains(f), "{f}");
+    }
 }

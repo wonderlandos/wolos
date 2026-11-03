@@ -56,6 +56,10 @@ pub const STATUS: &str = "status.json";
 
 /// Above this an untagged file runs at once and is checked in the background.
 const LARGE: u64 = 1 << 30;
+/// How much of a download or asked file above [`LARGE`] the guard reads before it answers
+/// (S4-5): [`LARGE`]. Unit tests read 128 MiB through the same code (a debug build matches at
+/// tens of MiB/s).
+const LARGE_READ: u64 = if cfg!(test) { 2 * WHOLE } else { LARGE };
 /// Largest file held in memory whole and handed to the deep worker whole; above it the lean pass
 /// streams in [`PIECE`]s, the worker runs the rule sets over pieces (`scan --stream`, R2C-4) and
 /// the sweep does the whole-file look later (audit S8). Each of the [`THREADS`]
@@ -149,19 +153,83 @@ pub fn is_removable(path: &str) -> bool {
     REMOVABLE.iter().any(|r| path.starts_with(&format!("{r}/")))
 }
 
-/// Downloads folder of every login account: (`/etc/passwd`, user-dirs reader).
-pub fn download_dirs(passwd: &str, user_dirs: &dyn Fn(&str) -> Option<String>) -> Vec<String> {
+/// Most of `~/.config/user-dirs.dirs` root reads (audit C7-2).
+pub const USER_DIRS_CAP: u64 = 64 * 1024;
+
+/// An account's `user-dirs.dirs`, read as root without trusting it (audit C7-2): no final
+/// symlink, a FIFO does not block the open, only a regular file owned by `uid`, at most
+/// [`USER_DIRS_CAP`] bytes. None otherwise.
+pub fn read_user_dirs(path: &str, uid: u32) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let f = shared::sys::open_named(path).ok()?;
+    let md = f.metadata().ok()?;
+    if !md.is_file() || md.uid() != uid {
+        return None;
+    }
+    let mut text = String::new();
+    f.take(USER_DIRS_CAP).read_to_string(&mut text).ok()?;
+    Some(text)
+}
+
+/// `dir` opened as a folder strictly inside `home` that `uid` owns (audit C7-3). Each step below
+/// `home` is opened from the one before with `O_NOFOLLOW | O_DIRECTORY`, so a symlink anywhere
+/// on the way is refused, and the descriptor is what gets marked: swapping a folder for a symlink
+/// after the check cannot move the mark to `/usr/bin` or another account's files. A directory
+/// open never blocks (no FIFO can be opened with `O_DIRECTORY`). None when any of that fails.
+pub fn open_owned_dir(dir: &str, home: &str, uid: u32) -> Option<OwnedFd> {
+    use std::os::unix::fs::MetadataExt;
+    let home = home.trim_end_matches('/');
+    let rest = dir
+        .strip_prefix(home)?
+        .strip_prefix('/')?
+        .trim_end_matches('/');
+    if home.is_empty() || rest.is_empty() {
+        return None;
+    }
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let open_at = |at: RawFd, name: &str| -> Option<OwnedFd> {
+        let c = std::ffi::CString::new(name).ok()?;
+        // SAFETY: plain syscall on a NUL-terminated name; a valid fd is owned from here on.
+        let fd = unsafe { libc::openat(at, c.as_ptr(), flags) };
+        // SAFETY: openat returned a new descriptor nobody else owns.
+        (fd >= 0).then(|| unsafe { OwnedFd::from_raw_fd(fd) })
+    };
+    let mut cur = open_at(libc::AT_FDCWD, home)?;
+    for part in rest.split('/') {
+        if part.is_empty() || part == "." || part == ".." {
+            return None;
+        }
+        cur = open_at(cur.as_raw_fd(), part)?;
+    }
+    let f = std::fs::File::from(cur);
+    let md = f.metadata().ok()?;
+    (md.is_dir() && md.uid() == uid).then(|| OwnedFd::from(f))
+}
+
+/// Downloads folder of every login account: (`/etc/passwd`, user-dirs reader (path, uid), folder
+/// check and open (dir, home, uid), e.g. [`open_owned_dir`]). A folder that fails the check falls
+/// back to `<home>/Downloads`, and that too must pass, else the account has none.
+pub fn download_dirs<T>(
+    passwd: &str,
+    user_dirs: &dyn Fn(&str, u32) -> Option<String>,
+    open: &dyn Fn(&str, &str, u32) -> Option<T>,
+) -> Vec<(String, T)> {
     passwd
         .lines()
         .filter_map(|l| {
             let f: Vec<&str> = l.split(':').collect();
             let uid: u32 = f.get(2)?.parse().ok()?;
             let home = *f.get(5)?;
-            ((1000..60000).contains(&uid) && home.starts_with("/home/")).then_some(home)
+            ((1000..60000).contains(&uid) && home.starts_with("/home/")).then_some((home, uid))
         })
-        .map(|home| {
-            let dirs = user_dirs(&format!("{home}/.config/user-dirs.dirs"));
-            wol_core::downloads::dir(dirs.as_deref(), home)
+        .filter_map(|(home, uid)| {
+            let dirs = user_dirs(&format!("{home}/.config/user-dirs.dirs"), uid);
+            let d = wol_core::downloads::dir(dirs.as_deref(), home);
+            if let Some(t) = open(&d, home, uid) {
+                return Some((d, t));
+            }
+            let fallback = wol_core::downloads::dir(None, home);
+            open(&fallback, home, uid).map(|t| (fallback, t))
         })
         .collect()
 }
@@ -203,6 +271,36 @@ struct Job {
     reply: Option<UnixStream>,
     /// Open Anyway: remember this content as the person's choice.
     allow: bool,
+    /// The file as the kernel sees it: questions about the same file share one scan (S4-3).
+    id: Option<FileId>,
+    /// A socket request's place in [`QUEUE_CAP`], given back when the job is dropped.
+    slot: Option<shared::bounded::Slot>,
+    /// Questions about the same file that arrived while this one waited: same answer.
+    followers: Vec<Job>,
+}
+
+impl Job {
+    fn new(file: std::fs::File, event: Option<RawFd>, open_mark: bool) -> Self {
+        Self {
+            id: FileId::of(&file).ok(),
+            file,
+            event,
+            open_mark,
+            reply: None,
+            allow: false,
+            slot: None,
+            followers: Vec::new(),
+        }
+    }
+
+    /// Two questions one scan can answer: the same file, the same verb, both from the kernel or
+    /// both from the socket (a caller always gets the deep check).
+    fn same(&self, o: &Job) -> bool {
+        self.id.is_some()
+            && self.id == o.id
+            && self.allow == o.allow
+            && self.reply.is_some() == o.reply.is_some()
+    }
 }
 
 struct Shared {
@@ -216,6 +314,9 @@ struct Shared {
     findings: Mutex<Vec<Blocked>>,
     rules_version: AtomicU64,
     stop: AtomicBool,
+    /// Write end of the event loop's wake-up pair: a socket request was queued, so the loop
+    /// refreshes the status and lets the database go later (it no longer polls the socket).
+    waker: Option<UnixStream>,
 }
 
 fn mark(fan: RawFd, flags: u32, mask: u64, fd: RawFd, path: *const libc::c_char) -> bool {
@@ -284,8 +385,10 @@ fn key16(sha: &[u8; 32]) -> [u8; 16] {
     k
 }
 
-/// What a `check`/`allow` caller may hand over: a regular file no larger than the cap. A FIFO,
-/// socket or device (`/dev/zero`) would block or never end, so it is refused before any read.
+/// What a `check`/`allow` caller may hand over: a regular file. A FIFO, socket or device
+/// (`/dev/zero`) would block or never end, so it is refused before any read. A file above
+/// [`LARGE`] is let in: the guard reads at most [`LARGE`] of it and answers `unchecked` unless a
+/// pattern is found there (S4-5).
 pub fn checkable(file: &std::fs::File) -> Result<u64, &'static str> {
     use std::os::unix::fs::FileTypeExt;
     let m = file.metadata().map_err(|_| "cannot stat")?;
@@ -293,10 +396,41 @@ pub fn checkable(file: &std::fs::File) -> Result<u64, &'static str> {
     if !t.is_file() || t.is_fifo() || t.is_char_device() || t.is_block_device() || t.is_socket() {
         return Err("not a regular file");
     }
-    if m.len() > LARGE {
-        return Err("too large");
-    }
     Ok(m.len())
+}
+
+/// Most socket requests (`check`/`allow`) being read, queued or scanned at once, over all callers
+/// (S4-3). Each holds two descriptors (the connection and the file).
+pub const QUEUE_CAP: usize = 64;
+/// Most socket requests of one account at once: one account cannot fill [`QUEUE_CAP`].
+pub const PER_UID: usize = 8;
+/// Longest a caller on the socket may take to send its verb and file.
+const CLIENT_READ: Duration = Duration::from_secs(2);
+/// Descriptors the guard holds besides the queue: fanotify, mountinfo, the listener, stdio, the
+/// mapped database and, per worker thread, the file, its clone for the deep worker and the
+/// worker's pipes.
+pub const FD_RESERVE: usize = 32 + THREADS * 4;
+/// The descriptors the socket queue and the workers may need at most; the unit's `LimitNOFILE`
+/// must leave room above it for the kernel's questions, which hold one each while queued
+/// (crates/xguard/tests/units.rs).
+pub const FD_NEED: usize = QUEUE_CAP * 2 + FD_RESERVE;
+
+/// A place for one socket request of the caller on `c`, or None after telling it `unchecked`:
+/// over [`PER_UID`] or [`QUEUE_CAP`], or the kernel did not say who it is.
+fn admit(quota: &shared::bounded::Quota, c: &UnixStream) -> Option<shared::bounded::Slot> {
+    let slot = ctl::peer_uid(c).and_then(|u| quota.admit(u));
+    if slot.is_none() {
+        let _ = c.set_write_timeout(Some(CLIENT_READ));
+        ctl::write_reply(c, &unchecked());
+    }
+    slot
+}
+
+fn unchecked() -> Reply {
+    Reply {
+        state: "unchecked".into(),
+        name: String::new(),
+    }
 }
 
 /// Longest one deep scan may take (R2C-5). The kernel holds the opener until the guard answers,
@@ -319,6 +453,17 @@ pub enum DeepOutcome {
 /// The worker's command: a fresh process with no privileges. `stream`: the file is above
 /// [`WHOLE`], the worker reads it in pieces (R2C-4).
 fn deep_command(worker: &Path, rules: &Path, stream: bool) -> std::process::Command {
+    deep_command_as(worker, rules, stream, true)
+}
+
+/// [`deep_command`]; `nobody`: run it as uid/gid 65534 (only root may switch, so a library
+/// caller that is not root keeps its own account, still without new privileges; S4-16).
+pub(crate) fn deep_command_as(
+    worker: &Path,
+    rules: &Path,
+    stream: bool,
+    nobody: bool,
+) -> std::process::Command {
     use std::os::unix::process::CommandExt;
     let mut c = std::process::Command::new(worker);
     c.args(["scan", "--json"]);
@@ -333,7 +478,9 @@ fn deep_command(worker: &Path, rules: &Path, stream: bool) -> std::process::Comm
             Ok(())
         });
     }
-    c.uid(65534).gid(65534);
+    if nobody {
+        c.uid(65534).gid(65534);
+    }
     c
 }
 
@@ -405,9 +552,14 @@ pub fn after_deep(
 }
 
 /// Patterns piece by piece with an overlap, and the whole-file hashes from streamed digests:
-/// memory stays at one [`PIECE`] whatever the size (audit S8). Reads at most [`LARGE`].
-fn stream(e: &Engine, f: &mut std::fs::File, path: &str) -> Option<(Vec<String>, [u8; 32])> {
-    let mut r = f.take(LARGE);
+/// memory stays at one [`PIECE`] whatever the size (audit S8). Reads at most `limit` bytes.
+fn stream(
+    e: &Engine,
+    f: &mut std::fs::File,
+    path: &str,
+    limit: u64,
+) -> Option<(Vec<String>, [u8; 32])> {
+    let mut r = f.take(limit);
     let (mut buf, mut keep) = (vec![0u8; PIECE + OVERLAP], 0usize);
     let (mut md5, mut sha, mut size) = (Md5::new(), Sha256::new(), 0u64);
     let mut names = Vec::new();
@@ -474,7 +626,7 @@ impl Shared {
         if d.len() as u64 > WHOLE {
             drop(d);
             f.seek(SeekFrom::Start(0)).ok()?;
-            let (names, sha) = stream(&e, f, path)?;
+            let (names, sha) = stream(&e, f, path, LARGE)?;
             return Some((names, sha, false));
         }
         let sha = <[u8; 32]>::from(Sha256::digest(&d));
@@ -529,9 +681,15 @@ impl Shared {
         let tagged = is_tagged(fd);
         let asked = j.reply.is_some();
         let deep = asked || needs_deep(tagged, is_removable(&path), &head, &path);
-        // Above the cap nothing is read in the guard, asked or not: the sweep looks later.
+        // S4-5: above the cap an ordinary file runs at once and the sweep looks later. A download
+        // or a file somebody asked about gets the streamed lean pass over its first LARGE bytes
+        // (hashes and patterns), never the deep check here: a pattern there refuses it, else it
+        // is unchecked for now, never allowed and never given the ignore mark.
         if id.size > LARGE {
-            return (Answer::Allow, String::new());
+            if !(tagged || asked) {
+                return (Answer::Allow, String::new());
+            }
+            return self.check_large(j, &path);
         }
         let Some((names, sha, whole)) = self.lean(&mut j.file, &path) else {
             return (Answer::Allow, String::new());
@@ -615,6 +773,32 @@ impl Shared {
         }
     }
 
+    /// A download or asked file above [`LARGE`]: patterns over what [`stream`] reads. Found:
+    /// refused and remembered like any finding. Otherwise [`Answer::Unchecked`] (the deep check
+    /// did not run: `on_deep_failure(true)`), nothing remembered, so the sweep's verdict or Open
+    /// Anyway decides.
+    fn check_large(&self, j: &mut Job, path: &str) -> (Answer, String) {
+        let found = self.engine().and_then(|e| {
+            self.counters.scanned.fetch_add(1, Relaxed);
+            let (names, sha) = stream(&e, &mut j.file, path, LARGE_READ)?;
+            Some((names.first()?.clone(), sha))
+        });
+        match found {
+            Some((n, sha)) => {
+                use std::os::unix::fs::MetadataExt;
+                if let Ok(id) = FileId::of(&j.file) {
+                    let rules = u32::try_from(self.rules_version.load(Relaxed)).unwrap_or(u32::MAX);
+                    self.put(&id, State::Found, rules, false, key16(&sha));
+                }
+                let uid = j.file.metadata().map_or(0, |m| m.uid());
+                self.block(path, &n, &sha, uid);
+                (Answer::Deny, n)
+            }
+            // Larger than LARGE: refused until the background check or Open Anyway.
+            None => (on_deep_failure(true), String::new()),
+        }
+    }
+
     fn put(&self, id: &FileId, state: State, rules: u32, deep: bool, sha: [u8; 16]) {
         self.store.lock().unwrap_or_else(|p| p.into_inner()).put(
             id,
@@ -658,6 +842,9 @@ impl Shared {
                     name: name.into(),
                 },
             );
+        }
+        for f in &j.followers {
+            self.finish(f, a, name);
         }
     }
 
@@ -703,7 +890,7 @@ impl Shared {
             "scanned": self.counters.scanned.load(Relaxed),
             "denied": self.counters.denied.load(Relaxed),
         });
-        write_json(&self.o.state.join(STATUS), &v);
+        write_json(&self.o.state.join(STATUS), 0o644, None, &v);
     }
 
     /// One kernel event. Remembered files are answered right here, on this thread.
@@ -719,13 +906,7 @@ impl Shared {
         self.counters.asked.fetch_add(1, Relaxed);
         let open_mark = mask & FAN_OPEN_PERM != 0;
         let remembered = self.remembered(&file);
-        let job = Job {
-            event: Some(fd),
-            open_mark,
-            reply: None,
-            allow: false,
-            file,
-        };
+        let job = Job::new(file, Some(fd), open_mark);
         match remembered {
             Some(a) => self.finish(&job, a, ""),
             None => self.enqueue(job),
@@ -744,15 +925,48 @@ impl Shared {
         from_store(Some(e))
     }
 
+    /// Queue a question; one about a file already waiting rides along with it (S4-3), so a
+    /// burst of execs of one new file is one scan.
     fn enqueue(&self, job: Job) {
         let mut q = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(lead) = q.iter_mut().find(|l| l.same(&job)) {
+            lead.followers.push(job);
+            return;
+        }
         q.push_back(job);
         self.ready.notify_one();
     }
 
-    /// One caller on the socket.
-    fn client(&self, s: UnixStream) {
-        let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+    /// The socket's own thread (S4-3): the event loop never waits on a caller. Each connection is
+    /// read on a thread of its own, at most [`QUEUE_CAP`] at once ([`PER_UID`] per account); a
+    /// caller over its place hears `unchecked` at once.
+    fn accept_loop(self: &Arc<Self>, listener: &UnixListener) {
+        let quota = shared::bounded::Quota::new(PER_UID, QUEUE_CAP);
+        loop {
+            let c = match listener.accept() {
+                Ok((c, _)) => c,
+                // EMFILE and friends: wait a little instead of spinning.
+                Err(_) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+            };
+            let Some(slot) = admit(&quota, &c) else {
+                continue;
+            };
+            let s = self.clone();
+            // No thread: the connection and its slot are dropped, the caller sees it close.
+            let _ = std::thread::Builder::new()
+                .name("xguard-client".into())
+                .spawn(move || s.client(c, slot));
+        }
+    }
+
+    /// One caller on the socket, on its own thread. Its slot travels with the job.
+    fn client(&self, s: UnixStream, slot: shared::bounded::Slot) {
+        let _ = s.set_nonblocking(false);
+        let _ = s.set_read_timeout(Some(CLIENT_READ));
+        let _ = s.set_write_timeout(Some(CLIENT_READ));
         let Ok((verb, Some(fd))) = ctl::recv_fd(&s) else {
             return;
         };
@@ -774,13 +988,15 @@ impl Shared {
             }
             _ => return,
         };
-        self.enqueue(Job {
-            event: None,
-            open_mark: false,
-            reply: Some(s),
-            allow,
-            file,
-        });
+        let mut job = Job::new(file, None, false);
+        job.reply = Some(s);
+        job.allow = allow;
+        job.slot = Some(slot);
+        self.enqueue(job);
+        if let Some(w) = &self.waker {
+            // Nonblocking: a full pair already means the loop will wake.
+            let _ = std::io::Write::write(&mut &*w, &[1]);
+        }
     }
 
     /// Lets the database go once nothing has been scanned for a while. True: come back later.
@@ -827,23 +1043,21 @@ fn verity_key(fd: RawFd) -> Option<[u8; 16]> {
     })
 }
 
-fn write_json(path: &Path, v: &impl serde::Serialize) {
-    let tmp = path.with_extension("tmp");
-    if let Ok(t) = serde_json::to_string(v)
-        && std::fs::write(&tmp, t).is_ok()
-    {
-        let _ = std::fs::rename(&tmp, path);
+/// `v` as JSON at `path`, atomically (S4-10: a unique temporary, never a shared `.tmp`), with
+/// `mode` and, when given, owner `uid` set before the file appears.
+/// Best effort, like every state write of the guard: the page shows the last good file.
+fn write_json(path: &Path, mode: u32, uid: Option<u32>, v: &impl serde::Serialize) {
+    if let Ok(t) = serde_json::to_vec(v) {
+        let _ = shared::atomic::write_as(path, mode, uid, &t);
     }
 }
 
-/// One account's list: only that account can read it, since the paths are its own.
+/// One account's list: only that account can read it, since the paths are its own. Owner and
+/// mode 0600 are set on the temporary, so the list is never readable by anyone else (S4-10).
 fn save(state: &Path, all: &[Blocked], uid: u32) {
-    use std::os::unix::fs::PermissionsExt;
     let path = state.join(findings_file(uid));
     let mine: Vec<&Blocked> = all.iter().filter(|b| b.uid == uid).collect();
-    write_json(&path, &mine);
-    let _ = std::os::unix::fs::chown(&path, Some(uid), None);
-    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    write_json(&path, 0o600, Some(uid), &mine);
 }
 
 /// Every account's list from a former run.
@@ -872,17 +1086,37 @@ fn mark_scope(fan: RawFd, o: &Options) {
             eprintln!("wol-xguard: cannot guard {m}");
         }
     }
-    let dirs: Vec<String> = if o.downloads.is_empty() {
-        let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
-        download_dirs(&passwd, &|p: &str| std::fs::read_to_string(p).ok())
-    } else {
-        o.downloads
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect()
-    };
-    for d in dirs {
-        mark_path(fan, FAN_MARK_ADD, FAN_CLOSE_WRITE | FAN_EVENT_ON_CHILD, &d);
+    // Audit C7-2: files the accounts own are read off this thread (it answers permission events),
+    // one pass at a time; a pass already running covers this change too.
+    static MARKING: AtomicBool = AtomicBool::new(false);
+    if MARKING.swap(true, Relaxed) {
+        return;
+    }
+    let explicit: Vec<String> = o
+        .downloads
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    let spawned = std::thread::Builder::new()
+        .name("xguard-downloads".into())
+        .spawn(move || {
+            let mask = FAN_CLOSE_WRITE | FAN_EVENT_ON_CHILD;
+            if explicit.is_empty() {
+                let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+                // C7-3: the folder that was checked, by descriptor, never its name again.
+                for (_, fd) in download_dirs(&passwd, &read_user_dirs, &open_owned_dir) {
+                    mark(fan, FAN_MARK_ADD, mask, fd.as_raw_fd(), std::ptr::null());
+                }
+            } else {
+                for d in explicit {
+                    mark_path(fan, FAN_MARK_ADD, mask, &d);
+                }
+            }
+            MARKING.store(false, Relaxed);
+        });
+    if spawned.is_err() {
+        MARKING.store(false, Relaxed);
+        eprintln!("wol-xguard: cannot watch download folders");
     }
 }
 
@@ -899,6 +1133,9 @@ pub fn run(o: Options) -> Result<(), String> {
     }
     mark_scope(fan, &o);
     let findings = load_findings(&o.state);
+    let (wake_tx, mut wake_rx) = UnixStream::pair().map_err(|e| e.to_string())?;
+    wake_tx.set_nonblocking(true).map_err(|e| e.to_string())?;
+    wake_rx.set_nonblocking(true).map_err(|e| e.to_string())?;
     let s = Arc::new(Shared {
         fan,
         o,
@@ -910,6 +1147,7 @@ pub fn run(o: Options) -> Result<(), String> {
         findings: Mutex::new(findings),
         rules_version: AtomicU64::new(0),
         stop: AtomicBool::new(false),
+        waker: Some(wake_tx),
     });
     s.status();
     if let Some(d) = s.o.socket.parent() {
@@ -921,10 +1159,16 @@ pub fn run(o: Options) -> Result<(), String> {
         &s.o.socket,
         std::os::unix::fs::PermissionsExt::from_mode(0o666),
     );
-    listener.set_nonblocking(true).map_err(|e| e.to_string())?;
     for _ in 0..THREADS {
         let s = s.clone();
         std::thread::spawn(move || s.worker());
+    }
+    {
+        let s = s.clone();
+        std::thread::Builder::new()
+            .name("xguard-socket".into())
+            .spawn(move || s.accept_loop(&listener))
+            .map_err(|e| e.to_string())?;
     }
     let mounts = std::fs::File::open("/proc/self/mountinfo").map_err(|e| e.to_string())?;
     let mut buf = vec![0u8; 16 << 10];
@@ -940,7 +1184,7 @@ pub fn run(o: Options) -> Result<(), String> {
             revents: 0,
         },
         libc::pollfd {
-            fd: listener.as_raw_fd(),
+            fd: wake_rx.as_raw_fd(),
             events: libc::POLLIN,
             revents: 0,
         },
@@ -949,13 +1193,13 @@ pub fn run(o: Options) -> Result<(), String> {
     loop {
         // No timer at rest: with nothing to tidy, this process sleeps until the kernel asks.
         let wake = if dirty { 5_000 } else { -1 };
+        // S4-3: never a caller's socket here (they have their own thread), only the kernel's
+        // descriptors and the wake-up pair, whose reads never block.
         // SAFETY: three valid pollfds.
         let n = unsafe { libc::poll(pfd.as_mut_ptr(), 3, wake) };
         if n > 0 && pfd[2].revents != 0 {
-            while let Ok((c, _)) = listener.accept() {
-                let _ = c.set_nonblocking(false);
-                s.client(c);
-            }
+            let mut drain = [0u8; 64];
+            while matches!(wake_rx.read(&mut drain), Ok(n) if n > 0) {}
             dirty = true;
         }
         if n > 0 && pfd[1].revents != 0 {
@@ -1176,11 +1420,101 @@ mod tests {
                       nobody:x:65534:65534::/:/bin/false\n\
                       ann:x:1000:1000::/home/ann:/bin/zsh\n\
                       bob:x:1001:1001::/home/bob:/bin/zsh\n";
-        let dirs = download_dirs(passwd, &|p: &str| {
-            p.contains("bob")
-                .then(|| "XDG_DOWNLOAD_DIR=\"$HOME/Baixados\"\n".to_string())
-        });
+        let dirs = download_dirs(
+            passwd,
+            &|p: &str, _| {
+                p.contains("bob")
+                    .then(|| "XDG_DOWNLOAD_DIR=\"$HOME/Baixados\"\n".to_string())
+            },
+            &|_, _, _| Some(()),
+        );
+        let dirs: Vec<String> = dirs.into_iter().map(|d| d.0).collect();
         assert_eq!(dirs, ["/home/ann/Downloads", "/home/bob/Baixados"]);
+    }
+
+    /// Audit C7-3: a folder outside the account's home (a system path, another account's home,
+    /// a symlink out) is never watched; the account's own Downloads is.
+    #[test]
+    fn download_folders_stay_inside_the_accounts_home() {
+        use std::os::unix::fs::MetadataExt;
+        let t = std::env::temp_dir().join(format!("wol-xg-c73-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let ann = t.join("ann");
+        let bob = t.join("bob");
+        std::fs::create_dir_all(ann.join("Downloads")).unwrap();
+        std::fs::create_dir_all(bob.join("bin")).unwrap();
+        // Our uid: the owner of what this test just made.
+        let uid = std::fs::metadata(&t).unwrap().uid();
+        std::os::unix::fs::symlink(&bob, ann.join("out")).unwrap();
+        std::os::unix::fs::symlink(ann.join("Downloads"), ann.join("dl-link")).unwrap();
+        let home = ann.to_str().unwrap();
+        let owned = |d: &str, h: &str, u| open_owned_dir(d, h, u).is_some();
+        for bad in ["/usr/bin".to_string(), format!("{}/bin", bob.display())] {
+            assert!(!owned(&bad, home, uid), "{bad}");
+        }
+        assert!(!owned(&format!("{home}/out/bin"), home, uid), "symlink out");
+        assert!(
+            !owned(&format!("{home}/dl-link"), home, uid),
+            "a symlink is refused even when it points inside"
+        );
+        assert!(!owned(&format!("{home}/../bob/bin"), home, uid), "..");
+        assert!(!owned(home, home, uid), "home itself");
+        assert!(owned(&format!("{home}/Downloads"), home, uid));
+        assert!(owned(&format!("{home}/Downloads/"), home, uid));
+        assert!(
+            !owned(&format!("{home}/Downloads"), home, uid + 1),
+            "another owner"
+        );
+        // The descriptor is the folder that was checked, whatever happens to its name later.
+        let fd = open_owned_dir(&format!("{home}/Downloads"), home, uid).unwrap();
+        std::fs::rename(ann.join("Downloads"), ann.join("moved")).unwrap();
+        std::os::unix::fs::symlink(&bob, ann.join("Downloads")).unwrap();
+        let real = std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).unwrap();
+        assert_eq!(real, ann.join("moved"));
+        let passwd = "ann:x:1000:1000::/home/ann:/bin/zsh\n";
+        let dirs = download_dirs(
+            passwd,
+            &|_, _| Some("XDG_DOWNLOAD_DIR=\"/usr/bin\"\n".into()),
+            &|d, _, _| d.starts_with("/home/ann/").then_some(()),
+        );
+        let dirs: Vec<String> = dirs.into_iter().map(|d| d.0).collect();
+        assert_eq!(dirs, ["/home/ann/Downloads"]);
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// Audit C7-2: a FIFO, a symlink to /dev/zero, another owner's file or a huge file never
+    /// block or flood the reader.
+    #[test]
+    fn user_dirs_are_read_without_trusting_the_file() {
+        use std::os::unix::fs::MetadataExt;
+        let t = std::env::temp_dir().join(format!("wol-xg-c72-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        std::fs::create_dir_all(&t).unwrap();
+        // Our uid: the owner of what this test just made.
+        let uid = std::fs::metadata(&t).unwrap().uid();
+        let fifo = t.join("fifo");
+        let made = std::process::Command::new("mkfifo")
+            .args(["-m", "600"])
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let zero = t.join("zero");
+        std::os::unix::fs::symlink("/dev/zero", &zero).unwrap();
+        let start = Instant::now();
+        assert_eq!(read_user_dirs(fifo.to_str().unwrap(), uid), None);
+        assert_eq!(read_user_dirs(zero.to_str().unwrap(), uid), None);
+        assert_eq!(read_user_dirs("/dev/zero", uid), None);
+        assert!(start.elapsed() < Duration::from_millis(500));
+        let ok = t.join("ok");
+        std::fs::write(&ok, "XDG_DOWNLOAD_DIR=\"$HOME/D\"\n").unwrap();
+        assert!(read_user_dirs(ok.to_str().unwrap(), uid).is_some());
+        assert_eq!(read_user_dirs(ok.to_str().unwrap(), uid + 1), None);
+        let big = t.join("big");
+        std::fs::write(&big, vec![b'#'; 1 << 20]).unwrap();
+        let got = read_user_dirs(big.to_str().unwrap(), uid).unwrap();
+        assert_eq!(got.len() as u64, USER_DIRS_CAP);
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]
@@ -1208,5 +1542,203 @@ mod tests {
         assert!(is_removable("/run/media/ann/Stick/x"));
         assert!(is_removable("/media/d/x"));
         assert!(!is_removable("/home/a/media/x"));
+    }
+
+    const MARKER: &str = "XGUARD-UNIT-MARKER-CAFEBABE-5678";
+
+    /// A guard without the kernel: no fanotify descriptor, no workers, rules with one marker.
+    fn bare(tag: &str) -> (Arc<Shared>, PathBuf) {
+        use crate::automaton::{Pattern, Place, Tok};
+        let dir = std::env::temp_dir().join(format!("xguard-unit-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for d in ["rules", "state", "work"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+        }
+        let mut b = crate::db::Builder::default();
+        assert!(b.rule(
+            "Test.Marker",
+            vec![Pattern {
+                toks: vec![Tok::Lit(MARKER.as_bytes().to_vec())],
+                place: Place::Anywhere,
+                kinds: 0,
+                id: 0,
+                part: 0,
+            }]
+        ));
+        std::fs::write(dir.join("rules/test.xgdb"), b.build(1, 1)).unwrap();
+        let o = Options {
+            state: dir.join("state"),
+            rules: dir.join("rules"),
+            scope: Vec::new(),
+            downloads: Vec::new(),
+            worker: None,
+            socket: dir.join("sock"),
+        };
+        let s = Shared {
+            fan: -1,
+            store: Mutex::new(Store::open(&dir.join("state/verdicts")).unwrap()),
+            o,
+            engine: Mutex::new((None, Instant::now())),
+            queue: Mutex::new(VecDeque::new()),
+            ready: Condvar::new(),
+            counters: Counters::default(),
+            findings: Mutex::new(Vec::new()),
+            rules_version: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+            waker: None,
+        };
+        (Arc::new(s), dir)
+    }
+
+    fn asked(file: std::fs::File) -> (Job, UnixStream) {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let mut j = Job::new(file, None, false);
+        j.reply = Some(ours);
+        (j, theirs)
+    }
+
+    /// S4-3: a caller over its account's share of the queue hears `unchecked` at once, without
+    /// anything being read from it; a freed place admits the next one.
+    #[test]
+    fn a_caller_over_the_cap_hears_unchecked_at_once() {
+        let quota = shared::bounded::Quota::new(PER_UID, QUEUE_CAP);
+        let mut held = Vec::new();
+        for _ in 0..PER_UID {
+            let (srv, cli) = UnixStream::pair().unwrap();
+            held.push((admit(&quota, &srv).expect("within the cap"), srv, cli));
+        }
+        let (srv, cli) = UnixStream::pair().unwrap();
+        let start = Instant::now();
+        assert!(admit(&quota, &srv).is_none());
+        drop(srv);
+        let mut line = String::new();
+        std::io::Read::read_to_string(&mut &cli, &mut line).unwrap();
+        let r: Reply = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(r.state, "unchecked");
+        assert!(start.elapsed() < Duration::from_millis(500));
+        held.pop();
+        let (srv, _cli) = UnixStream::pair().unwrap();
+        assert!(admit(&quota, &srv).is_some(), "a freed place admits again");
+        const { assert!(PER_UID < QUEUE_CAP) };
+    }
+
+    /// S4-3: questions about one file share one scan and one answer.
+    #[test]
+    fn questions_about_one_file_ride_along_and_share_the_answer() {
+        let (s, dir) = bare("dedup");
+        let p = dir.join("work/tool");
+        std::fs::write(&p, "#!/bin/sh\nexit 0\n").unwrap();
+        let other = dir.join("work/other");
+        std::fs::write(&other, "#!/bin/sh\nexit 1\n").unwrap();
+        let mut ends = Vec::new();
+        for _ in 0..5 {
+            let (j, end) = asked(std::fs::File::open(&p).unwrap());
+            s.enqueue(j);
+            ends.push(end);
+        }
+        let (j, _o) = asked(std::fs::File::open(&other).unwrap());
+        s.enqueue(j);
+        // An Open Anyway about the same file is its own question.
+        let (mut j, _a) = asked(std::fs::File::open(&p).unwrap());
+        j.allow = true;
+        s.enqueue(j);
+        {
+            let q = s.queue.lock().unwrap();
+            assert_eq!(q.len(), 3, "one lead per file and verb");
+            assert_eq!(q[0].followers.len(), 4);
+        }
+        let mut lead = s.queue.lock().unwrap().pop_front().unwrap();
+        let (a, name) = s.check(&mut lead);
+        assert_eq!((a, name.as_str()), (Answer::Allow, ""));
+        s.finish(&lead, a, &name);
+        for e in &ends {
+            let mut line = String::new();
+            std::io::BufRead::read_line(&mut std::io::BufReader::new(e), &mut line).unwrap();
+            assert!(line.contains("\"clean\""), "{line}");
+        }
+        assert_eq!(
+            s.counters.scanned.load(Relaxed),
+            1,
+            "five questions, one scan"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// S4-5: a file above LARGE that somebody asks about (or that was downloaded) is never
+    /// allowed unread: the streamed pass refuses a pattern in its first bytes, and without one
+    /// the answer is "unchecked", not remembered.
+    #[test]
+    fn a_large_asked_file_is_unchecked_or_refused_never_allowed() {
+        let (s, dir) = bare("large");
+        let clean = dir.join("work/big-clean.AppImage");
+        std::fs::File::create(&clean)
+            .unwrap()
+            .set_len(LARGE + 1)
+            .unwrap();
+        let (mut j, _e) = asked(std::fs::File::open(&clean).unwrap());
+        assert_eq!(s.check(&mut j).0, Answer::Unchecked);
+        let id = FileId::of(&j.file).unwrap();
+        assert!(
+            s.store.lock().unwrap().by_id(&id).is_none(),
+            "nothing remembered"
+        );
+
+        let bad = dir.join("work/big-bad.AppImage");
+        std::fs::write(&bad, format!("ELF {MARKER}")).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&bad)
+            .unwrap()
+            .set_len(LARGE + 1)
+            .unwrap();
+        let (mut j, _e) = asked(std::fs::File::open(&bad).unwrap());
+        let (a, name) = s.check(&mut j);
+        assert_eq!((a, name.as_str()), (Answer::Deny, "Test.Marker"));
+
+        // A tagged download from the kernel (no caller) gets the same rule, when the
+        // filesystem keeps user xattrs.
+        let f = std::fs::File::open(&clean).unwrap();
+        set_tag(f.as_raw_fd());
+        if is_tagged(f.as_raw_fd()) {
+            let mut j = Job::new(f, None, false);
+            assert_eq!(s.check(&mut j).0, Answer::Unchecked);
+        }
+        // An untagged file nobody asked about runs at once; the sweep looks later.
+        let plain = dir.join("work/big-plain");
+        std::fs::File::create(&plain)
+            .unwrap()
+            .set_len(LARGE + 1)
+            .unwrap();
+        let mut j = Job::new(std::fs::File::open(&plain).unwrap(), None, false);
+        assert_eq!(s.check(&mut j).0, Answer::Allow);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// S4-10: an account's findings are its own from the first moment: 0600 and owned by it.
+    #[test]
+    fn findings_are_written_for_their_account_only() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let dir = std::env::temp_dir().join(format!("xguard-findings-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let me = shared::sys::euid();
+        let b = Blocked {
+            path: "/home/a/x".into(),
+            name: "T".into(),
+            sha256: String::new(),
+            when: 1,
+            uid: me,
+        };
+        save(&dir, &[b], me);
+        let m = std::fs::metadata(dir.join(findings_file(me))).unwrap();
+        assert_eq!(m.permissions().mode() & 0o777, 0o600);
+        assert_eq!(m.uid(), me);
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, [findings_file(me)], "no temporary left");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

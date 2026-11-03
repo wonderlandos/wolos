@@ -1,8 +1,14 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Screen zoom around the pointer (Hyprland cursor:zoom_factor). Bound to ⌥⌘8 / ⌥⌘= / ⌥⌘- in the shipped
+# Screen zoom around the pointer (compositor cursor:zoom_factor). Bound to ⌥⌘8 / ⌥⌘= / ⌥⌘- in the shipped
 # hyprland.conf (System Settings > Keyboard > Shortcuts > Accessibility). Usage: wol-zoom in|out|toggle
-state="${XDG_RUNTIME_DIR:-/tmp}/wol-zoom"
+# The saved level lives in the per-user runtime dir only, never a fixed name in a shared /tmp
+# (audit C6-5). No runtime dir: toggle works without remembering the level.
+# owned PATH: PATH exists and belongs to us (POSIX find -user; `test -O` is not in POSIX sh).
+owned() { [ -n "$(find "$1" -prune -user "$(id -u)" 2>/dev/null)" ]; }
+run=${XDG_RUNTIME_DIR:-}
+state=
+[ -n "$run" ] && [ -d "$run" ] && owned "$run" && state="$run/wol-zoom"
 cur=$(hyprctl getoption cursor:zoom_factor 2>/dev/null | awk '/^float:/ { print $2; exit }')
 [ -n "$cur" ] || cur=1
 case "$1" in
@@ -10,10 +16,12 @@ in) new=$(awk -v c="$cur" 'BEGIN { v = c * 1.25; if (v > 10) v = 10; printf "%.2
 out) new=$(awk -v c="$cur" 'BEGIN { v = c / 1.25; if (v < 1.05) v = 1; printf "%.2f", v }') ;;
 toggle)
 	if awk -v c="$cur" 'BEGIN { exit !(c > 1.01) }'; then
-		echo "$cur" >"$state"
+		[ -n "$state" ] && echo "$cur" >"$state"
 		new=1
 	else
-		new=$(cat "$state" 2>/dev/null || echo 2)
+		new=2
+		[ -n "$state" ] && [ -f "$state" ] && owned "$state" && new=$(cat "$state" 2>/dev/null || echo 2)
+		case $new in "" | *[!0-9.]*) new=2 ;; esac
 	fi
 	;;
 *)

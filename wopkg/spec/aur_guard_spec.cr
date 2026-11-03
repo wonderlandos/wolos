@@ -151,7 +151,7 @@ describe AurGuard, "static checks" do
   end
 end
 
-describe AurGuard, "package metadata from the AUR (TLS)" do
+describe AurGuard, "package metadata from the community package collection (TLS)" do
   now = Time.utc(2026, 10, 31)
   meta = ->(h : String) { AurGuard::Meta.parse(%({"resultcount":1,"results":[#{h}]})) }
 
