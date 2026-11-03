@@ -422,11 +422,12 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
         assert_eq!(t[0], format!("btrfs subvolume snapshot / {r}"));
         assert_eq!(t[1], format!("wol layers fold {r}"));
         assert!(t[2].ends_with(&format!(" {r}/etc/fstab")), "{}", t[2]);
-        assert_eq!(t[3], super::super::ETC_SETTLE);
-        assert_eq!(t[4], format!("mount --bind {r} {r}"));
-        assert_eq!(t[5], format!("arch-chroot {r} /usr/bin/pacman -S vim"));
-        assert_eq!(t[6], format!("arch-chroot {r} mkinitcpio -P"));
-        assert_eq!(t[7], format!("umount {r}"));
+        assert_eq!(t[3], format!("write {r}/etc/wolos/slot"));
+        assert_eq!(t[4], super::super::ETC_SETTLE);
+        assert_eq!(t[5], format!("mount --bind {r} {r}"));
+        assert_eq!(t[6], format!("arch-chroot {r} /usr/bin/pacman -S vim"));
+        assert_eq!(t[7], format!("arch-chroot {r} mkinitcpio -P"));
+        assert_eq!(t[8], format!("umount {r}"));
         let seal = t
             .iter()
             .position(|x| x.starts_with("wol seal apply"))
@@ -447,7 +448,7 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
         let (r, w) = ("/run/wolos/top/@wolos-b", "/run/wolos/top/@wolos-tx");
         assert_eq!(t[0], format!("btrfs subvolume snapshot {r} {w}"));
         assert_eq!(t[1], format!("wol layers fold {w}"));
-        assert_eq!(t[5], format!("arch-chroot {w} /usr/bin/pacman -S git"));
+        assert_eq!(t[6], format!("arch-chroot {w} /usr/bin/pacman -S git"));
         let del = t
             .iter()
             .position(|x| x == &format!("btrfs subvolume delete {r}"))

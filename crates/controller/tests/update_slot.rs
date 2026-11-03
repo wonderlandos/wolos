@@ -32,10 +32,11 @@ UUID=2222 /efi vfat umask=0077,shortname=winnt 0 2
 overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,workdir=/var/lib/wolos/etc/work,x-systemd.requires-mounts-for=/var 0 0
 ";
 
+/// A step as argv; the one file write (the new slot's `/etc/wolos/slot`) as `write PATH`.
 fn argv(s: &Step) -> Vec<String> {
     match s {
         Step::Run(a) => a.clone(),
-        Step::Write { .. } => panic!("no file writes expected: {s}"),
+        Step::Write { path, .. } => vec!["write".into(), path.clone()],
     }
 }
 

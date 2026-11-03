@@ -227,6 +227,16 @@ x-systemd.requires-mounts-for=/var 0 0";
 /// Copies the data of metacopy-only copy-ups in the `/etc` upper up through the live overlay, so a
 /// mount with `metacopy=off` (the new slot's [`ETC_FSTAB`]) reads them.
 pub const ETC_SETTLE: &str = "/usr/lib/wolos/etc-settle";
+/// The slot's own letter (`a` or `b`), in its sealed `/etc`: written by install-run for the first
+/// slot and by every slot build for the new one (the copy still names the slot it came from).
+/// esp-sync reads it when it is given a root but no slot.
+pub const SLOT_FILE: &str = "/etc/wolos/slot";
+
+/// [`SLOT_FILE`]'s text for a slot of [`SLOTS`].
+pub fn slot_file_text(slot: &str) -> String {
+    format!("{}\n", slot.strip_prefix("wolos-").unwrap_or(slot))
+}
+
 /// Where [`Build::files`] are inside the copy, one folder per file (a signature next to it keeps
 /// its name).
 pub const STAGE: &str = "/var/tmp/wolos-pkg";
@@ -321,6 +331,11 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
         &format!("s#^overlay[[:space:]]+/etc[[:space:]]+overlay[[:space:]].*#{ETC_FSTAB}#"),
         &format!("{work}/etc/fstab"),
     ]));
+    // The copy is the running slot: it names itself until told otherwise (UPG-0121).
+    steps.push(Step::Write {
+        path: format!("{work}{SLOT_FILE}"),
+        text: slot_file_text(slot),
+    });
     steps.push(v(&[ETC_SETTLE]));
     steps.extend((b.prep)(&work));
     let stage = format!("{work}{STAGE}");
@@ -649,6 +664,7 @@ mod tests {
                     "sed -i -E s#^overlay[[:space:]]+/etc[[:space:]]+overlay[[:space:]].*#{ETC_FSTAB}# \
 /run/wolos/top/@wolos-b/etc/fstab"
                 ),
+                "write /run/wolos/top/@wolos-b/etc/wolos/slot",
                 "/usr/lib/wolos/etc-settle",
                 "sed -i -E s#/repos/[0-9]{4}/[0-9]{2}/[0-9]{2}/#/repos/2026/11/02/# \
 /run/wolos/top/@wolos-b/etc/pacman.conf",
@@ -765,6 +781,76 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
             );
             assert!(fstab < bind && at(ETC_SETTLE) < bind, "{s:?}");
         }
+    }
+
+    /// UPG-0121: the new slot's sealed /etc names that slot, not the one it was copied from (the
+    /// copy of slot a said `a` after booting b). Written before the seal, in the copy pacman runs in.
+    #[test]
+    fn the_new_slot_names_itself_before_the_seal() {
+        for (slot, from, work, letter) in [
+            (
+                "wolos-b",
+                Base::Running { replace: true },
+                "/run/wolos/top/@wolos-b",
+                "b\n",
+            ),
+            (
+                "wolos-a",
+                Base::Running { replace: false },
+                "/run/wolos/top/@wolos-a",
+                "a\n",
+            ),
+            ("wolos-b", Base::Pending, "/run/wolos/top/@wolos-tx", "b\n"),
+        ] {
+            let p = plan_from(slot, from, None, None).unwrap();
+            let at = |pre: &str| {
+                p.iter()
+                    .position(|s| s.to_string().starts_with(pre))
+                    .unwrap_or_else(|| panic!("{pre}: {p:?}"))
+            };
+            let writes: Vec<(usize, &Step)> = p
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| matches!(s, Step::Write { .. }))
+                .collect();
+            assert_eq!(writes.len(), 1, "{p:?}");
+            let (i, w) = writes[0];
+            assert_eq!(
+                *w,
+                Step::Write {
+                    path: format!("{work}/etc/wolos/slot"),
+                    text: letter.into()
+                }
+            );
+            assert!(
+                at("wol layers fold") < i && i < at("wol seal apply"),
+                "{p:?}"
+            );
+        }
+        // The pacman wrapper's slot changes share the step.
+        let args = ["-U".to_owned(), "/x.pkg.tar.zst".to_owned()];
+        let w = pkg::plan(
+            "wolos-a",
+            Base::Running { replace: true },
+            &args,
+            "current",
+            None,
+        )
+        .unwrap()
+        .into_iter()
+        .find(|s| matches!(s, Step::Write { .. }))
+        .unwrap();
+        assert_eq!(
+            w.to_string(),
+            "write /run/wolos/top/@wolos-a/etc/wolos/slot"
+        );
+        assert_eq!(slot_file_text("wolos-a"), "a\n");
+        // install-run names the first slot the same way.
+        let run = include_str!("../../../files/usr/lib/wolos/install-run");
+        assert!(
+            run.contains(&format!("echo a > \"$T{SLOT_FILE}\"")),
+            "install-run"
+        );
     }
 
     /// The /etc overlay never uses what overlayfs needs an unchanged lower for.
