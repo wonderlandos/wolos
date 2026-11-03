@@ -43,6 +43,16 @@ use std::path::{Path, PathBuf};
 /// wol-abi 473 -> 482 (libwol 1.15, CR-12): three C exports (`wol_file_trash`, `wol_share_file`,
 /// `wol_open_with`), each `#[unsafe(no_mangle)] pub unsafe extern` and one `unsafe` write of its
 /// checked out-pointer, with a SAFETY line; the context is taken without `unsafe` (`arc_of`).
+/// `webengine` (ADR 0042, WA-2, 2026-11-03): 124 when the crate was made, 119 once libloading
+/// replaced dlopen and transmute. The C boundary of the engine library in `src/engine/lib.rs`
+/// (built by webengine-wolos as libwolwebengine.so.1, counted here because it lives in this
+/// crate's `src/`: every `#[unsafe(no_mangle)] unsafe extern "C"` export and its pointer reads)
+/// and the loading side in `src/ffi.rs` and `src/view.rs` (libloading's open and get, the function
+/// pointer types, the callbacks the engine calls with the view's context); each with a SAFETY
+/// line. 117 -> 118 (FIX-websandbox, 2026-11-03): `src/engine/confine.rs` confines the content
+/// process with Landlock and seccomp, which std wraps none of: one private `sys` function holds
+/// the one `libc::syscall` call (a ruleset, a rule, `prctl`, the filter), every other step is safe
+/// Rust (`O_PATH` through `OpenOptionsExt`). Lowered when the engine's embedding API settles.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 482),
@@ -60,6 +70,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 8),
     ("wol-lua", 3),
     ("xguard-clam", 13),
+    ("webengine", 118),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -1218,7 +1218,15 @@ rule!(
         prod(s)
             && !matches!(
                 s.krate.as_str(),
-                "wol-abi" | "wolkit" | "wopkg" | "xguard" | "xguard-clam" | "realtime"
+                "wol-abi"
+                    | "wolkit"
+                    | "wopkg"
+                    | "xguard"
+                    | "xguard-clam"
+                    | "realtime"
+                    // The web-app runtime's engine boundary (ADR 0042): its C shim and the
+                    // run-time loaded side, counted by its unsafe_ratchet row.
+                    | "webengine"
             )
             && !s.rel.ends_with("api/src/os.rs")
     },

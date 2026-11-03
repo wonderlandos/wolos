@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: BSD-2-Clause -->
+<!-- The headless golden (tests/headless_golden.rs): layout, a rounded box, a gradient, text and a
+     script that paints the third box; the iframe and the image are outside the app's origins and
+     must be refused by the gate (no network is ever reached), and so must the link, which leaves
+     the page as it was. -->
+<html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:#f4f1ea;font:16px "DejaVu Sans",sans-serif}
+.card{position:absolute;left:24px;top:24px;width:200px;height:120px;border-radius:16px;background:#3b6df0;color:#fff;padding:12px;box-sizing:border-box}
+.bar{position:absolute;left:24px;top:168px;width:252px;height:24px;background:linear-gradient(90deg,#e33,#3c3)}
+#js{position:absolute;left:240px;top:24px;width:56px;height:56px;background:#888}
+#away{position:absolute;left:24px;top:204px;width:80px;height:24px;background:#222;display:block}
+iframe,img{position:absolute;left:240px;top:96px;width:56px;height:48px;border:0}
+</style></head><body>
+<div class="card">WolOS</div><div class="bar"></div><div id="js"></div>
+<iframe src="https://blocked.example/frame.html"></iframe>
+<img src="https://blocked.example/pixel.png" alt="">
+<a id="away" href="https://blocked.example/away"></a>
+<script>document.getElementById("js").style.background = "#f0a030";</script>
+</body></html>

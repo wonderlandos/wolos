@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# libwolwebengine (ADR 0042): the C shim over the pinned Rust browser engine. Not a member of the WolOS
+# workspace: webengine-wolos copies crates/webengine into the engine's own workspace at the pinned
+# commit (ports/wolwebengine) and builds it there, so the engine's Cargo.lock decides every version.
+# Every dependency below is a workspace dependency of the engine for that reason.
+[package]
+name = "wolwebengine"
+version = "1.0.0"
+edition = "2024"
+license = "BSD-2-Clause"
+publish = false
+
+[lib]
+name = "wolwebengine"
+path = "../src/engine/lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+dpi = { workspace = true }
+euclid = { workspace = true }
+http = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+raw-window-handle = { workspace = true }
+url = { workspace = true }
+# baked-in-resources: the engine's resource reader does not work from a cdylib otherwise (as the
+# engine's own C API). No clipboard feature: the host's clipboard comes in through wwe_config.
+servo = { workspace = true, features = [
+    "js_jit",
+    "baked-in-resources",
+    "bundled_freetype",
+    "multiprocess",
+    "webcrypto",
+    "webgl",
+    "webgpu",
+] }

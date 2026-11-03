@@ -133,3 +133,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## servo
+
+The Rust browser engine of the WolOS web-app runtime (ADR 0042). Not translated into our files:
+linked, unmodified, at one pinned commit (tag v0.7.0, `aac43a3f31a259f04a574f5ec4e959c943ad7cc7`),
+into `libwolwebengine.so.1` by the `webengine-wolos` package, together with the engine's own
+dependencies at the versions its `Cargo.lock` names. Licence: MPL-2.0 (file-level copyleft; the
+pin carries no "Incompatible With Secondary Licenses" notice, so MPL-2.0 section 3.3 lets the
+GPL-2.0-or-later combination stand). The source is the engine's repository at that commit; the
+package installs the engine's `LICENSE` (MPL-2.0, 374 lines, sha256
+`1af2d2b02d9c86030d29ed77117ca7a1b0e4b6ff35bcf8eeb124867d0f5cb59e`) as
+`/usr/share/licenses/webengine-wolos/LICENSE-engine` and our shim's BSD-2-Clause text next to it.

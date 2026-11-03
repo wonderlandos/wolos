@@ -58,6 +58,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // widgets (ADR 0020); the Sound pane and the Control Center drive PipeWire through
                 // the audio adaptor (wol_audio::pw::Handle).
                 "shell" => ["shared", "core", "wopkg", "wol-lua", "audio"].contains(&dep.as_str()),
+                // The web-app runtime (ADR 0042) paints into wolkit surface nodes and reads wolkit's
+                // event records; BSD-2-Clause like wolkit, so the licence rule holds.
+                "webengine" => ["shared", "core", "wolkit"].contains(&dep.as_str()),
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",
@@ -144,6 +147,8 @@ fn violations_table() {
         (&[("controller", &["wol-lua", "core", "shared"])], &[]),
         (&[("controller", &["wol-abi"])], &["controller -> wol-abi"]),
         (&[("controller", &["api"])], &["controller -> api"]),
+        (&[("webengine", &["wolkit", "core", "shared"])], &[]),
+        (&[("webengine", &["api"])], &["webengine -> api"]),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

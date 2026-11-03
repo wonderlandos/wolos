@@ -4521,6 +4521,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "webengine"
+version = "0.12.0"
+dependencies = [
+ "core",
+ "libc",
+ "libloading",
+ "miniz_oxide",
+ "serde",
+ "serde_json",
+ "shared",
+ "wolkit",
+]
+
+[[package]]
 name = "webpki-root-certs"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"

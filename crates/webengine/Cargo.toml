@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# webengine (ADR 0042): the WolOS web-app runtime's adaptor over the pinned Rust browser engine. The
+# engine itself is not a dependency: it is built once per pin into libwolwebengine.so.1 by the
+# webengine-wolos package (engine/ and src/engine/ here are that library's source) and loaded at run
+# time, so the workspace never compiles it and apps link one copy.
+[package]
+name = "webengine"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+
+[lib]
+name = "webengine"
+
+[dependencies]
+shared.workspace = true
+wol_core.workspace = true
+wolkit = { path = "../wolkit" }
+# Loads libwolwebengine.so.1 at run time (already in the lock through ash).
+libloading = "0.8.9"
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# The goldens' PNG codec is wolkit's (tests/golden/png.rs), which needs it.
+miniz_oxide = "0.9.1"
+# The content process confinement (src/engine/confine.rs, built into the engine library, where the
+# engine's workspace supplies libc) is compiled here too for tests/confinement.rs.
+libc.workspace = true
+
+[[test]]
+name = "content_process"
+harness = false
+
+# A child process confines itself and probes what it can still do, so this binary is its own child.
+[[test]]
+name = "confinement"
+harness = false
