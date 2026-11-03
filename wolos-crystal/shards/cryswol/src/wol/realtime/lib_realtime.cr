@@ -55,4 +55,6 @@ lib LibRealtime
   fun wol_qos_foreground(pid : Int32) : Int32
   fun wol_frame_record(begin_ns : UInt64, end_ns : UInt64, damage_px : UInt64, screen_px : UInt64, passes : UInt32)
   fun wol_frame_stats_json(buf : UInt8*, len : LibC::SizeT) : Int32
+  fun wol_anim_curve(name : UInt8*, out_ : Float32*) : Int32
+  fun wol_anim_curve_name(index : UInt32) : UInt8*
 end

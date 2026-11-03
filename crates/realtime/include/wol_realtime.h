@@ -108,6 +108,13 @@ void wol_frame_record(uint64_t begin_ns, uint64_t end_ns, uint64_t damage_px, ui
 /* Frame stats JSON into buf (NUL-terminated): length, or -1 if buf is null or too small. */
 int32_t wol_frame_stats_json(uint8_t *buf, size_t len);
 
+/* The motion table (anim.rs; the shell's curve names, docs/modules/hig.md section 7). Curve
+   `name`: 0 and the cubic-bezier x1, y1, x2, y2 in out[0..4] (out may be NULL; linear is
+   0, 0, 1, 1), -1 for a NULL or unknown name. curve_name: name `index` in table order (static,
+   NUL-terminated), NULL past the end. */
+int32_t wol_anim_curve(const char *name, float *out);
+const char *wol_anim_curve_name(uint32_t index);
+
 #ifdef __cplusplus
 }
 #endif

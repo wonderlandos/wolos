@@ -569,8 +569,9 @@ mod tests {
         let mut slow = old.clone();
         slow.looks.speed = 0.5;
         let cmds = slow.live(&old);
-        assert_eq!(cmds.len(), 7, "every animation line: {cmds:?}");
-        assert!(cmds[0].starts_with("keyword animation windowsIn,1,4.4,"));
+        // Speed 0.5: twelve animation lines; windows ride the springs' bezier stand-ins.
+        assert_eq!(cmds.len(), 12, "every animation line: {cmds:?}");
+        assert!(cmds[0].starts_with("keyword animation windowsIn,1,3.8,ease"));
         let calm = DesktopPrefs {
             reduce_transparency: true,
             ..old.clone()

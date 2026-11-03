@@ -4,7 +4,7 @@
 //! edge, 22 px apart).
 //! Live 0.56.2: buttons were 20 px apart, CSD apps got a second bar, and the
 //! open animation used a 400 ms overshooting spring instead of our ease-out.
-use realtime::anim::{Animation, Bezier};
+use realtime::anim::{self, Animation, Curve, Spring, Timing};
 use realtime::titlebar::{self, Align, Button};
 const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 /// The window buttons, sourced once by hyprland.conf (colours live outside it: themes v2).
@@ -300,71 +300,65 @@ fn display_or_dock_changes_refit_open_windows() {
     }
 }
 
+/// The compositor's animations are the motion table of `realtime::anim` (the shell's curves,
+/// durations and window springs), rendered by `anim::lua()` into hyprland.lua verbatim. The 0.56
+/// `.conf` keeps its old curves until it goes.
 #[test]
-fn window_animations_use_realtime_curves() {
-    let bez = |name: &str| -> Vec<f32> {
-        let l = CONF
-            .lines()
-            .map(str::trim)
-            .find(|l| l.starts_with("bezier") && l.contains(name))
-            .unwrap();
-        l.split(',')
-            .skip(1)
-            .map(|v| v.trim().parse().unwrap())
-            .collect()
-    };
-    let anim = |name: &str| -> Vec<String> {
-        let l = CONF
-            .lines()
-            .map(str::trim)
-            .find(|l| l.starts_with(&format!("animation = {name},")))
-            .unwrap();
-        l.split(',').skip(1).map(|v| v.trim().to_owned()).collect()
-    };
-    for (name, curve, want, ms) in [
-        (
-            "windowsIn",
-            "wolOut",
-            Bezier::EASE_OUT,
-            Animation::open(0).duration_ms,
-        ),
-        (
-            "windowsOut",
-            "wolIn",
-            Bezier::EASE_IN,
-            Animation::close(0).duration_ms,
-        ),
-    ] {
-        let a = anim(name);
-        assert_eq!(a[2], curve);
-        // The compositor's speed is in deciseconds.
-        let speed: f32 = a[1].parse().unwrap();
-        assert!(
-            (speed * 100.0 - ms as f32).abs() < 1.0,
-            "{name}: {speed}ds vs {ms}ms"
-        );
-        assert_eq!(bez(curve), vec![want.0, want.1, want.2, want.3]);
-    }
+fn window_animations_are_the_motion_table() {
+    let block = anim::lua();
+    assert!(
+        LUA.contains(&block),
+        "hyprland.lua's animations block is not anim::lua():\n{block}"
+    );
+    assert_eq!(
+        LUA.lines()
+            .filter(|l| l.starts_with("hl.animation("))
+            .count(),
+        anim::LEAVES.len(),
+        "an animation outside the motion table"
+    );
+    // The leaves the sampled window animations stand for.
+    let open = anim::leaf("windowsIn").unwrap();
+    assert_eq!(open.timing, Timing::Spring(Spring::WINDOW_OPEN));
+    assert_eq!(open.style, Some("popin 90%"));
+    assert_eq!(
+        anim::leaf("windowsOut").unwrap().timing,
+        Timing::Spring(Spring::WINDOW_CLOSE)
+    );
+    assert!(Animation::open(0).duration_ms >= Spring::WINDOW_OPEN.settle_ms());
+    assert!(Animation::close(0).duration_ms >= Spring::WINDOW_CLOSE.settle_ms());
 }
 
 #[test]
-fn every_animation_names_a_defined_bezier() {
-    // Live: dropping `spring`/`ease` left five animations with "no such bezier".
-    let defined: Vec<&str> = CONF
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("bezier = "))
-        .map(|l| l.split(',').next().unwrap().trim())
-        .collect();
-    for l in CONF
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("animation = "))
-    {
-        let f: Vec<&str> = l.split(',').map(str::trim).collect();
-        if f.len() > 3 && f[1] == "1" {
-            assert!(
-                f[3] == "default" || defined.contains(&f[3]),
-                "{l}: no such bezier"
-            );
+fn every_lua_animation_names_a_defined_curve() {
+    // Live (0.56): dropping `spring`/`ease` left five animations with "no such bezier".
+    let defined = |kind: &str| -> Vec<String> {
+        LUA.lines()
+            .filter_map(|l| l.trim().strip_prefix("hl.curve(\""))
+            .filter(|l| l.contains(&format!("type = \"{kind}\"")))
+            .map(|l| l.split('"').next().unwrap().to_string())
+            .collect()
+    };
+    let (beziers, springs) = (defined("bezier"), defined("spring"));
+    assert_eq!(beziers.len(), 7, "{beziers:?}");
+    assert_eq!(springs, ["window-open", "window-close"]);
+    for c in Curve::ALL {
+        assert!(
+            c == Curve::Linear || beziers.contains(&c.name().to_string()),
+            "{c:?}"
+        );
+    }
+    let field = |l: &str, k: &str| -> Option<String> {
+        let at = l.find(&format!(" {k} = \""))? + k.len() + 5;
+        Some(l[at..at + l[at..].find('"').unwrap()].to_string())
+    };
+    for l in LUA.lines().filter(|l| l.starts_with("hl.animation(")) {
+        match (field(l, "bezier"), field(l, "spring")) {
+            (Some(b), None) => {
+                assert!(b == "linear" || beziers.contains(&b), "{l}: no such bezier")
+            }
+            (None, Some(s)) => assert!(springs.contains(&s), "{l}: no such spring"),
+            _ => panic!("{l}: one bezier or one spring"),
         }
     }
 }
@@ -731,67 +725,6 @@ fn lua_strip_settings_are_the_conf_ones() {
 }
 
 #[test]
-fn lua_curves_and_animations_are_the_conf_ones() {
-    let conf_bez: Vec<(String, Vec<f32>)> = CONF
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("bezier = "))
-        .map(|l| {
-            let mut f = l.split(',').map(str::trim);
-            let n = f.next().unwrap().to_string();
-            (n, f.map(|v| v.parse().unwrap()).collect())
-        })
-        .collect();
-    let lua_bez: Vec<(String, Vec<f32>)> = LUA
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("hl.curve(\""))
-        .map(|l| {
-            let (n, rest) = l.split_once('"').unwrap();
-            let pts: Vec<f32> = rest
-                .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
-                .filter(|v| !v.is_empty())
-                .map(|v| v.parse().unwrap())
-                .collect();
-            (n.to_string(), pts)
-        })
-        .collect();
-    assert_eq!(lua_bez, conf_bez);
-    let conf_anim: Vec<Vec<String>> = CONF
-        .lines()
-        .filter_map(|l| l.trim().strip_prefix("animation = "))
-        .map(|l| l.split(',').map(|f| f.trim().to_string()).collect())
-        .collect();
-    let field = |l: &str, k: &str| -> Option<String> {
-        let at = l.find(&format!("{k} = "))? + k.len() + 3;
-        let rest = &l[at..];
-        Some(
-            rest[..rest.find([',', '}']).unwrap()]
-                .trim()
-                .trim_matches('"')
-                .to_string(),
-        )
-    };
-    let lua_anim: Vec<Vec<String>> = LUA
-        .lines()
-        .filter(|l| l.trim().starts_with("hl.animation("))
-        .map(|l| {
-            let mut v = vec![
-                field(l, "leaf").unwrap(),
-                if field(l, "enabled").as_deref() == Some("true") {
-                    "1".into()
-                } else {
-                    "0".into()
-                },
-                field(l, "speed").unwrap(),
-                field(l, "bezier").unwrap(),
-            ];
-            v.extend(field(l, "style"));
-            v
-        })
-        .collect();
-    assert_eq!(lua_anim, conf_anim);
-}
-
-#[test]
 fn lua_perf_defaults_and_greeters_are_the_conf_ones() {
     assert!(
         LUA.lines()
@@ -875,4 +808,36 @@ fn lua_session_starts_the_conf_programs() {
         n += 1;
     }
     assert_eq!(n, lua_cmds.len(), "{lua_cmds:#?}");
+}
+
+/// Effects & Looks writes the same animations (`wol_core::looks`, which cannot depend on realtime):
+/// at the shipped speed every line it applies is a line of the motion table, and each Motion is
+/// `anim::window_in`.
+#[test]
+fn looks_animations_are_the_motion_table() {
+    use wol_core::looks::{Looks, Motion};
+    let block = anim::lua();
+    let lines = |l: &Looks| -> Vec<String> {
+        l.keywords_lua(false, false)
+            .into_iter()
+            .filter(|l| l.starts_with("hl.animation("))
+            .collect()
+    };
+    let d = lines(&Looks::default());
+    assert_eq!(d.len(), anim::LEAVES.len(), "{d:?}");
+    for (got, leaf) in d.iter().zip(anim::LEAVES) {
+        assert_eq!(*got, leaf.lua(), "Looks and the motion table disagree");
+        assert!(block.contains(got.as_str()));
+    }
+    for (m, name) in [
+        (Motion::Zoom, "zoom"),
+        (Motion::Pop, "pop"),
+        (Motion::Slide, "slide"),
+    ] {
+        let l = Looks {
+            motion: m,
+            ..Default::default()
+        };
+        assert_eq!(lines(&l)[0], anim::window_in(name).unwrap().lua(), "{name}");
+    }
 }
