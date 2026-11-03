@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Web-platform feature probe (webapps.py): which features an engine exposes, posted back to the
+// runner as one JSON object. Feature detection only: a true means the API exists, not that it is
+// complete.
+(function () {
+  var r = {};
+  function t(name, f) { try { r[name] = !!f(); } catch (e) { r[name] = false; } }
+  function c(name, f) { try { r[name] = String(f() || ''); } catch (e) { r[name] = ''; } }
+  t('es_modules_dynamic_import', function () { return typeof Function('return import("data:text/javascript,")') === 'function'; });
+  t('webassembly', function () { return typeof WebAssembly === 'object' && WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0])); });
+  t('wasm_threads_sab', function () { return typeof SharedArrayBuffer === 'function'; });
+  t('workers', function () { return typeof Worker === 'function'; });
+  t('shared_workers', function () { return typeof SharedWorker === 'function'; });
+  t('service_workers', function () { return 'serviceWorker' in navigator; });
+  t('indexeddb', function () { return !!window.indexedDB; });
+  t('cache_storage', function () { return 'caches' in window; });
+  t('storage_manager', function () { return !!(navigator.storage && navigator.storage.estimate); });
+  t('broadcast_channel', function () { return typeof BroadcastChannel === 'function'; });
+  t('websocket', function () { return typeof WebSocket === 'function'; });
+  t('webtransport', function () { return typeof WebTransport === 'function'; });
+  t('fetch_streams', function () { return typeof ReadableStream === 'function' && 'body' in Response.prototype; });
+  t('compression_streams', function () { return typeof CompressionStream === 'function'; });
+  t('custom_elements', function () { return !!window.customElements; });
+  t('shadow_dom', function () { return !!Element.prototype.attachShadow; });
+  t('dialog_modal', function () { return typeof HTMLDialogElement === 'function' && 'showModal' in HTMLDialogElement.prototype; });
+  t('popover', function () { return 'popover' in HTMLElement.prototype; });
+  t('contenteditable', function () { return 'isContentEditable' in HTMLElement.prototype; });
+  t('exec_command', function () { return typeof document.execCommand === 'function'; });
+  t('selection_api', function () { return typeof window.getSelection === 'function'; });
+  t('intl_segmenter', function () { return typeof Intl.Segmenter === 'function'; });
+  t('resize_observer', function () { return typeof ResizeObserver === 'function'; });
+  t('intersection_observer', function () { return typeof IntersectionObserver === 'function'; });
+  t('mutation_observer', function () { return typeof MutationObserver === 'function'; });
+  t('request_idle_callback', function () { return typeof requestIdleCallback === 'function'; });
+  t('web_animations', function () { return typeof Element.prototype.animate === 'function'; });
+  t('css_grid', function () { return CSS.supports('display', 'grid'); });
+  t('css_subgrid', function () { return CSS.supports('grid-template-columns', 'subgrid'); });
+  t('css_container_queries', function () { return CSS.supports('container-type', 'inline-size'); });
+  t('css_has', function () { return CSS.supports('selector(:has(a))'); });
+  t('css_nesting', function () { return CSS.supports('selector(&)'); });
+  t('css_backdrop_filter', function () { return CSS.supports('backdrop-filter', 'blur(2px)'); });
+  t('css_houdini_paint', function () { return !!(CSS.paintWorklet); });
+  t('font_loading', function () { return !!document.fonts; });
+  t('canvas_2d', function () { return !!document.createElement('canvas').getContext('2d'); });
+  t('offscreen_canvas', function () { return typeof OffscreenCanvas === 'function'; });
+  t('webgl', function () { return !!document.createElement('canvas').getContext('webgl'); });
+  t('webgl2', function () { return !!document.createElement('canvas').getContext('webgl2'); });
+  t('webgpu', function () { return !!navigator.gpu; });
+  t('media_element', function () { return typeof HTMLVideoElement === 'function'; });
+  t('media_source', function () { return typeof MediaSource === 'function'; });
+  t('web_audio', function () { return typeof AudioContext === 'function'; });
+  t('webrtc_peer', function () { return typeof RTCPeerConnection === 'function'; });
+  t('get_user_media', function () { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); });
+  t('get_display_media', function () { return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia); });
+  t('notifications', function () { return typeof Notification === 'function'; });
+  t('clipboard_async', function () { return !!(navigator.clipboard && navigator.clipboard.writeText); });
+  t('webauthn', function () { return typeof PublicKeyCredential === 'function'; });
+  t('credential_mgmt', function () { return !!navigator.credentials; });
+  t('file_system_access', function () { return typeof showOpenFilePicker === 'function'; });
+  t('origin_private_fs', function () { return !!(navigator.storage && navigator.storage.getDirectory); });
+  t('web_share', function () { return typeof navigator.share === 'function'; });
+  t('gamepad', function () { return typeof navigator.getGamepads === 'function'; });
+  t('pointer_events', function () { return typeof PointerEvent === 'function'; });
+  t('fullscreen', function () { return typeof Element.prototype.requestFullscreen === 'function'; });
+  t('page_visibility', function () { return 'visibilityState' in document; });
+  t('web_locks', function () { return !!navigator.locks; });
+  t('wake_lock', function () { return !!navigator.wakeLock; });
+  t('trusted_types', function () { return !!window.trustedTypes; });
+  t('import_maps', function () { return HTMLScriptElement.supports && HTMLScriptElement.supports('importmap'); });
+  var v = document.createElement('video'), a = document.createElement('audio');
+  c('codec_h264', function () { return v.canPlayType('video/mp4; codecs="avc1.42E01E"'); });
+  c('codec_hevc', function () { return v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"'); });
+  c('codec_vp9', function () { return v.canPlayType('video/webm; codecs="vp9"'); });
+  c('codec_av1', function () { return v.canPlayType('video/mp4; codecs="av01.0.05M.08"'); });
+  c('codec_opus', function () { return a.canPlayType('audio/ogg; codecs="opus"'); });
+  c('codec_aac', function () { return a.canPlayType('audio/mp4; codecs="mp4a.40.2"'); });
+  c('codec_mp3', function () { return a.canPlayType('audio/mpeg'); });
+  t('mse_h264', function () { return typeof MediaSource === 'function' && MediaSource.isTypeSupported('video/mp4; codecs="avc1.42E01E"'); });
+  t('eme_drm', function () { return typeof navigator.requestMediaKeySystemAccess === 'function'; });
+  t('extensions_api', function () { return !!(window.chrome && window.chrome.runtime) || !!window.browser; });
+  r.user_agent = navigator.userAgent;
+  var x = new XMLHttpRequest();
+  x.open("POST", "/report" + location.search, true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.send(JSON.stringify(r));
+  document.title = 'features done';
+  document.body.textContent = JSON.stringify(r);
+})();

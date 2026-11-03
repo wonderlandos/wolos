@@ -1,0 +1,151 @@
+{
+ "schema": 1,
+ "about": "Supplementary run, Memory Saver off: PSS in MiB and process count per role after 30 s idle in front (runner roles(), added after the baseline). Same VM and image as webapps-baseline.json.",
+ "started": "2026-11-03T19:03:41Z",
+ "apps": {
+  "helium": {
+   "pss_mib": 405.5,
+   "procs": 10,
+   "roles": {
+    "gpu-process": {
+     "n": 1,
+     "pss": 50.4
+    },
+    "helium": {
+     "n": 1,
+     "pss": 136.9
+    },
+    "renderer": {
+     "n": 3,
+     "pss": 142.1
+    },
+    "utility": {
+     "n": 2,
+     "pss": 43.2
+    },
+    "zygote": {
+     "n": 3,
+     "pss": 32.8
+    }
+   }
+  },
+  "steam": {
+   "pss_mib": 957.3,
+   "procs": 15,
+   "roles": {
+    "bash": {
+     "n": 1,
+     "pss": 1.9
+    },
+    "pv-adverb": {
+     "n": 1,
+     "pss": 2.8
+    },
+    "srt-bwrap": {
+     "n": 1,
+     "pss": 0.2
+    },
+    "steam": {
+     "n": 1,
+     "pss": 215.4
+    },
+    "steamwebhelper": {
+     "n": 1,
+     "pss": 263.4
+    },
+    "utility": {
+     "n": 1,
+     "pss": 46.2
+    },
+    "wol": {
+     "n": 1,
+     "pss": 3.6
+    },
+    "x86_64-linux-gnu-srt-launcher-service": {
+     "n": 1,
+     "pss": 10.1
+    },
+    "zygote": {
+     "n": 7,
+     "pss": 413.5
+    }
+   }
+  },
+  "code": {
+   "pss_mib": 888.7,
+   "procs": 12,
+   "roles": {
+    "electron": {
+     "n": 2,
+     "pss": 268.9
+    },
+    "gpu-process": {
+     "n": 1,
+     "pss": 49.8
+    },
+    "renderer": {
+     "n": 1,
+     "pss": 237.5
+    },
+    "utility": {
+     "n": 5,
+     "pss": 312.2
+    },
+    "zygote": {
+     "n": 3,
+     "pss": 20.5
+    }
+   }
+  },
+  "signal": {
+   "pss_mib": 493.3,
+   "procs": 7,
+   "roles": {
+    "gpu-process": {
+     "n": 1,
+     "pss": 44.2
+    },
+    "renderer": {
+     "n": 1,
+     "pss": 179.0
+    },
+    "signal-desktop": {
+     "n": 1,
+     "pss": 213.2
+    },
+    "utility": {
+     "n": 1,
+     "pss": 24.6
+    },
+    "zygote": {
+     "n": 3,
+     "pss": 32.2
+    }
+   }
+  },
+  "firefox": {
+   "pss_mib": 530.9,
+   "procs": 11,
+   "roles": {
+    "firefox": {
+     "n": 11,
+     "pss": 530.9
+    }
+   }
+  },
+  "wolkit-todos": {
+   "pss_mib": 85.5,
+   "procs": 2,
+   "roles": {
+    "todos": {
+     "n": 1,
+     "pss": 7.9
+    },
+    "wol-kit-host": {
+     "n": 1,
+     "pss": 77.6
+    }
+   }
+  }
+ }
+}
