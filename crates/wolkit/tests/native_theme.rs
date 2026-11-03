@@ -81,3 +81,76 @@ fn file_names_match_the_shell() {
     assert_eq!(theme::THEME_FILE, "wolos/theme");
     assert_eq!(theme::PREFS_FILE, "wolos/desktop.json");
 }
+
+#[test]
+fn a_glass_window_carries_the_suffix_once() {
+    use wolkit::style::value::Backdrop;
+    assert_eq!(theme::GLASS_SUFFIX, ".glass");
+    let mut env = wolkit::env::Environment::default();
+    assert!(theme::wants_glass(Backdrop::Glass, &env));
+    assert!(!theme::wants_glass(Backdrop::None, &env));
+    env.reduce_transparency = true;
+    assert!(
+        !theme::wants_glass(Backdrop::Glass, &env),
+        "Reduce Transparency keeps the token colour"
+    );
+    assert_eq!(
+        theme::toplevel_app_id("org.wolos.todos", true),
+        "org.wolos.todos.glass"
+    );
+    assert_eq!(
+        theme::toplevel_app_id("org.wolos.todos.glass", true),
+        "org.wolos.todos.glass",
+        "not twice"
+    );
+    assert_eq!(
+        theme::toplevel_app_id("org.wolos.todos.glass", false),
+        "org.wolos.todos"
+    );
+    assert_eq!(
+        theme::toplevel_app_id("org.wolos.todos", false),
+        "org.wolos.todos"
+    );
+    assert_eq!(theme::toplevel_app_id("", true), "");
+    assert_eq!(theme::base_app_id(".glass"), ".glass");
+}
+
+#[test]
+fn the_glass_suffix_matches_the_compositor() {
+    let glass = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../realtime/src/glass.rs"
+    ))
+    .unwrap();
+    assert!(
+        glass.contains(&format!(
+            "pub const APP_SUFFIX: &str = \"{}\";",
+            theme::GLASS_SUFFIX
+        )),
+        "the compositor's glass suffix moved; it is frozen (realtime/src/glass.rs)"
+    );
+}
+
+#[test]
+fn menus_are_published_at_the_shell_s_object_path() {
+    assert_eq!(
+        theme::menu_object_path("org.wolos.todos"),
+        "/org/wolos/todos"
+    );
+    assert_eq!(
+        theme::menu_object_path("org.wolos.todos.glass"),
+        "/org/wolos/todos",
+        "the app's own id, not the glass one"
+    );
+    let transient = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../shell/src/ui/transient.rs"
+    ))
+    .unwrap();
+    assert!(
+        transient.contains(
+            "pub fn object_path(id: &str) -> String {\n    format!(\"/{}\", id.replace('.', \"/\"))\n}"
+        ),
+        "the shell's object path moved; it is frozen (ui/transient.rs object_path)"
+    );
+}

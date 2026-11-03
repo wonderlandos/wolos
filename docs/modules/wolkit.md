@@ -129,6 +129,13 @@ Every window starts with the kit look: `styles/kit.wolcss` in the shard, compile
 
 An app with its own sheets compiles the kit sheet **first**: `wolkit-stylec --out build/styles.wsb --crystal src/gen/styles.cr build/00-kit.wolcss src/styles/*.wolcss` (the template's `make styles` copies the kit sheet to `build/00-kit.wolcss`; sheets are read in sorted order), then calls `Wolkit.use_styles("build/styles.wsb")`. The kit ids stay 0 to 7 and the app's classes follow, as the generated `Wolkit::Styles` constants say. A table made without the kit sheet replaces the default look.
 
+## Window chrome: glass and menus
+
+A native window tells the compositor and the menu bar two things about itself, with no call of its own.
+
+- **Glass.** When the window's root computes `backdrop: glass` (and Reduce Transparency is off) the toplevel's app id gets the suffix `.glass` (`window::native::theme::toplevel_app_id`), before the first commit and again when it changes. The compositor's `wol-glass` rule keys on the suffix and blurs what is really behind the window; the Dock, menu bar and switcher read the app by the id without it.
+- **Menus.** The window's direct children with the role `MENU` (name = the title) and their `MENUITEM` children (name = the label; `SEPARATOR` for a rule; the state flags `disabled` and `checked` show) are the app's menus for the menu bar, up to the limits of a Kit window's menus (8 menus of 48 entries, labels of 64 bytes). The app may hide them in its own window. They are published on the session bus under the app's own id at its object path (`/org/example/App`) as `org.wolos.Menus`: `Get` returns them as JSON, `Activate(menu, key)` clicks the item, `Changed` says to read again (`window::native::menus`). Only an item of the published menus that is not disabled is accepted. An app with no such nodes publishes nothing and takes no bus name.
+
 ## Navigator
 
 `Wolkit::Navigator(Route)` is a typed stack: `push`, `back`, `replace`, `reset`, `current` (a readable), `depth`. `navigator @nav do |route| ... end` shows the top route and rebuilds the screen when it changes; the routes are your own values (a `Symbol`, a record), so a screen's arguments are checked by the compiler.

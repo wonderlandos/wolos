@@ -350,7 +350,9 @@ fn gtk4_css(t: &ResolvedTheme) -> String {
 /// WolOS window controls (`button.light` in kit.css): a quiet 12 px circle (the text colour at
 /// half way over the surface), 22 px centre to centre (measured on kit goldens). The glyph
 /// (close, minimise, zoom: the symbolic icons) shows while the pointer is over the group; only the
-/// control under the pointer takes the accent, a shade deeper while pressed.
+/// control under the pointer takes the accent, a shade deeper while pressed. They sit on the right,
+/// close at the edge ([`BUTTON_LAYOUT`] puts every button in `windowcontrols.end`, inset by
+/// `adwaita.css`), like the compositor's strip (`realtime::chrome::STRIP_ALIGN`).
 fn window_controls(t: &ResolvedTheme, button: &str) -> String {
     let (idle, hover, pressed) = controls_colors(t);
     let text = token(t, "text");
@@ -403,7 +405,8 @@ fn titlebutton(suffix: &str) -> String {
 /// GTK mode renders only the button background under GTK 3, so the glyph is a hover background:
 /// that way GTK 3 apps and Helium (default browser) show the same one. Chromium styles each button
 /// on its own, so unlike GTK 4 only the hovered control shows its glyph (on the accent). The real
-/// icon stays hidden. GTK 3 and Chromium place buttons at header padding + margins, 6 px apart.
+/// icon stays hidden. GTK 3 and Chromium place buttons at header padding + margins, 6 px apart;
+/// close is the last of [`BUTTON_LAYOUT`], so its extra right margin is the right-edge inset.
 fn gtk3_window_controls(t: &ResolvedTheme) -> String {
     let side = (LIGHT_PITCH - LIGHT_SIZE - GTK3_BUTTON_SPACING) / 2;
     let first = LIGHT_FIRST_CENTRE - LIGHT_SIZE / 2 - GTK3_HEADER_PADDING;
@@ -935,10 +938,34 @@ mod tests {
             LIGHT_FIRST_CENTRE
         );
         assert!(!g3.contains("margin: 0 5px"), "the old 28 px pitch");
-        // GTK 4 windowcontrols: border-spacing between 12 px images; start inset.
+        // GTK 4 windowcontrols: border-spacing between 12 px images; the end box (the layout puts
+        // every button there) holds close at the right: the header box's padding, less the 1 px
+        // libadwaita lays the bar past the window edge, plus the end inset.
         let g4 = file(&f, "gtk-4.0/gtk.css");
         assert!(g4.contains("windowcontrols { border-spacing: 10px; }"));
         assert_eq!(LIGHT_SIZE + 10, LIGHT_PITCH);
+        // The first number after `key: ` in the rule starting with `rule` (px), or its `nth` one.
+        let px = |rule: &str, key: &str, nth: usize| -> i32 {
+            let body = g4
+                .lines()
+                .find(|l| l.starts_with(rule))
+                .unwrap_or_else(|| panic!("{rule} missing"));
+            let v = body.split(&format!("{key}: ")).nth(1).unwrap();
+            let v = v.split(';').next().unwrap().split(' ').nth(nth).unwrap();
+            v.trim_end_matches("px").parse().unwrap()
+        };
+        // `padding: <vertical>px <horizontal>px`.
+        let pad = px("headerbar > windowhandle > box {", "padding", 1);
+        let end = px("windowcontrols.end {", "margin-right", 0);
+        assert_eq!(
+            pad - crate::theme::scaffold::ADW_BAR_BLEED + end + LIGHT_SIZE / 2,
+            LIGHT_FIRST_CENTRE,
+            "GTK 4 close centre from the right edge"
+        );
+        assert!(
+            BUTTON_LAYOUT.starts_with(':') && BUTTON_LAYOUT.ends_with(",close"),
+            "every button in the end box, close last"
+        );
         // Firefox: container inset + 5 px button padding + radius.
         let ff = crate::theme::firefox::chrome_css(&theme("wol-light"));
         assert!(ff.contains("margin-inline-end: 12px !important;"));

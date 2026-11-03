@@ -238,6 +238,32 @@ impl Glass {
     }
 }
 
+/// The app-id suffix a toplevel ends with to ask for glass behind it (frozen; ADR 0039 open item).
+/// Wolkit's native backend appends it when the window's root computes `backdrop: glass` and the
+/// person has not turned on Reduce Transparency; the compositor rule below keys on it.
+pub const APP_SUFFIX: &str = ".glass";
+
+/// The compositor's window rule for glass toplevels (`hyprland.lua`, beside the layer rule for the
+/// shell's glass). The session's blur is `xray` (floating glass blurs the cached wallpaper only,
+/// `wolos-perf.lua`); a glass window blurs what is really behind it, like the menu bar and panels.
+pub const WINDOW_RULE: &str = r#"hl.window_rule({ name = "wol-glass", match = { class = "^.+\\.glass$" }, no_blur = false, xray = false })"#;
+
+/// Whether a toplevel's class (Wayland app id, X11 class) asks for glass: it ends in
+/// [`APP_SUFFIX`] after a non-empty app id.
+pub fn wants_glass(class: &str) -> bool {
+    class.len() > APP_SUFFIX.len() && class.ends_with(APP_SUFFIX)
+}
+
+/// The app's own id: the class without the glass suffix. The Dock, the menu bar and the window
+/// buttons know an app by this one.
+pub fn base_class(class: &str) -> &str {
+    if wants_glass(class) {
+        &class[..class.len() - APP_SUFFIX.len()]
+    } else {
+        class
+    }
+}
+
 /// Signed distance to a rounded rect centred at the origin (same formula as the shader).
 pub fn sdf_rounded_rect(p: (f32, f32), half: (f32, f32), r: f32) -> f32 {
     let qx = p.0.abs() - half.0 + r;
@@ -417,5 +443,42 @@ mod tests {
         assert!(nx > 0.99 && ny.abs() < 1e-3);
         let (nx, ny) = sdf_normal((0.0, -19.0), half, 8.0);
         assert!(ny < -0.99 && nx.abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_glass_app_id_ends_in_the_suffix() {
+        assert_eq!(APP_SUFFIX, ".glass");
+        assert!(wants_glass("org.wolos.todos.glass"));
+        for not in [
+            "org.wolos.todos",
+            ".glass",
+            "",
+            "glass",
+            "org.wolos.glassy",
+            "a.Glass",
+        ] {
+            assert!(!wants_glass(not), "{not:?}");
+        }
+        assert_eq!(base_class("org.wolos.todos.glass"), "org.wolos.todos");
+        assert_eq!(base_class("org.wolos.todos"), "org.wolos.todos");
+        assert_eq!(base_class(".glass"), ".glass");
+    }
+
+    /// The rule's pattern is the same test as [`wants_glass`]: anchored, a non-empty id, a literal dot.
+    #[test]
+    fn the_window_rule_keys_on_the_suffix() {
+        let pattern = WINDOW_RULE
+            .split("class = \"")
+            .nth(1)
+            .and_then(|r| r.split('"').next())
+            .unwrap();
+        assert_eq!(
+            pattern, r"^.+\\.glass$",
+            "Lua string: one escaped backslash"
+        );
+        let unescaped = pattern.replace(r"\\", r"\");
+        assert_eq!(unescaped, format!("^.+{}$", APP_SUFFIX.replace('.', r"\.")));
+        assert!(WINDOW_RULE.starts_with("hl.window_rule({ name = \"wol-glass\""));
+        assert!(WINDOW_RULE.contains("xray = false") && WINDOW_RULE.contains("no_blur = false"));
     }
 }

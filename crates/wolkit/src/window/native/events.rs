@@ -2,7 +2,7 @@
 //! What a native window does with each protocol event, and the [`Backend`] it is to the engine.
 
 use super::client::Proto;
-use super::{NativeWindow, copy, data, ime, mime, sizing};
+use super::{NativeWindow, copy, data, ime, menus, mime, sizing, theme};
 use crate::event::kind as ev;
 use crate::input::keys::KeyPress;
 use crate::input::{BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT, Request, edit, focus, keys, pointer};
@@ -641,6 +641,7 @@ impl NativeWindow {
         w.env = a.env;
         w.env.text_scale = text_scale;
         w.style_version += 1;
+        self.sync_glass(w);
         let mut head = [0u8; 12];
         head[0..4].copy_from_slice(&u32::from(w.env.dark).to_le_bytes());
         head[4..8].copy_from_slice(&w.env.accent_rgb.to_le_bytes());
@@ -649,6 +650,57 @@ impl NativeWindow {
         if self.pacer.request() {
             self.draw(w);
         }
+    }
+
+    /// The toplevel's app id carries the glass suffix while the root computes `backdrop: glass`
+    /// and Reduce Transparency is off, so the compositor's `wol-glass` rule blurs what is behind
+    /// the window. Sent before the first commit when the scene already says so, and again when
+    /// it changes.
+    pub(super) fn sync_glass(&mut self, w: &mut WindowCore) {
+        pipeline::ensure_layout(w);
+        let root = if w.scene.is_live(0) {
+            w.styles.get(w.scene.computed(0)).paint.backdrop
+        } else {
+            crate::style::value::Backdrop::None
+        };
+        let glass = theme::wants_glass(root, &w.env);
+        if glass == self.glass {
+            return;
+        }
+        self.glass = glass;
+        if let Some(surf) = &self.surf {
+            surf.toplevel
+                .set_app_id(theme::toplevel_app_id(&self.app_id, glass));
+            self.flush();
+        }
+    }
+
+    /// Publish the window's menus for the menu bar (see [`super::menus`]) when it has any, or
+    /// withdraw them when it had and no longer does.
+    pub(super) fn sync_menus(&mut self, w: &WindowCore) {
+        let Some((hub, slot)) = self.a11y.clone() else {
+            return;
+        };
+        let has = menus::has_menus(&w.scene);
+        if !has && !self.menus_on {
+            return;
+        }
+        let svc = if has {
+            menus::shared(&self.app_id, hub)
+        } else {
+            menus::current()
+        };
+        let Some(svc) = svc else {
+            return;
+        };
+        let m = if has {
+            menus::collect(&w.scene)
+        } else {
+            Vec::new()
+        };
+        self.menus_on = !m.is_empty();
+        self.menus_front = self.activated || self.keyboard_focus;
+        svc.publish(slot, self.menus_front, m);
     }
 
     /// Build the accessibility tree and hand it to the hub (with change signals) while an
@@ -776,6 +828,8 @@ impl Backend for NativeWindow {
             return Err(crate::error::Error::unavailable(copy::LOST));
         }
         if self.surf.is_none() {
+            // The app id the first commit carries already says whether the window wants glass.
+            self.sync_glass(w);
             self.open_surface(w);
         }
         w.shown = true;
@@ -825,6 +879,8 @@ impl Backend for NativeWindow {
             self.request(w, s, r);
         }
         self.sync_ime(w);
+        self.sync_glass(w);
+        self.sync_menus(w);
         if w.shown && self.pacer.request() {
             self.draw(w);
         }
@@ -844,6 +900,9 @@ impl Backend for NativeWindow {
             self.repeat_fired(w, s);
         }
         self.theme_changed(w, s);
+        if self.menus_on && self.menus_front != (self.activated || self.keyboard_focus) {
+            self.sync_menus(w);
+        }
         self.pastes(w, s);
         self.a11y_actions(w, s);
         // Moves wait for the frame while one is outstanding; an idle window routes them now.

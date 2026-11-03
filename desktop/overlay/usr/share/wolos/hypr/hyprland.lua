@@ -170,6 +170,9 @@ hl.window_rule({ name = "wol-float-apps", enabled = false, match = { class = "^$
 hl.layer_rule({ match = { namespace = "^(wol-menubar|wol-dock|wol-panel-.*)$" }, blur = true, ignore_alpha = 0.3 })
 -- The screenshot bar and thumbnail vanish at once: a fade-out would land in the capture.
 hl.layer_rule({ match = { namespace = "^(wol-panel-capture|wol-panel-capture-thumb)$" }, no_anim = true })
+-- A toplevel whose app id ends in .glass (a Wolkit window whose root computes backdrop: glass) blurs
+-- what is really behind it; the session blur is xray, the wallpaper only. realtime glass.rs.
+hl.window_rule({ name = "wol-glass", match = { class = "^.+\\.glass$" }, no_blur = false, xray = false })
 
 -- Title bars: window buttons right (close at the edge, then zoom, minimise), title centered.
 -- The strip's keys and rule effects exist once its plugin is loaded: the compositor loads the

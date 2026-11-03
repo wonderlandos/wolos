@@ -20,7 +20,7 @@ Specs (`spec/` directories and `*_spec.cr`) are held to every rule except RCR-00
 | RCR-001 | file | Line 1 is `# SPDX-License-Identifier: <id>`. | `rcr_001_spdx_on_line_one` | enforced |
 | RCR-002 | file | Header: 40 or more characters of purpose comment (SPDX and notice lines left out) in the first 30 lines of every non-spec file. | `rcr_002_header_says_what_the_file_is_for` | enforced |
 | RCR-003 | file | No carriage returns, a final newline, no blank line at the end. | `rcr_003_text_hygiene` | enforced |
-| RCR-004 | tool | `crystal tool format --check` is clean over every `.cr` file (needs crystal 1.12 or newer: the formatter output differs between releases, CI's Arch toolchain is the reference). | `rcr_004_crystal_format_is_clean` | enforced |
+| RCR-004 | tool | `crystal tool format --check` is clean over every `.cr` file (needs the pinned crystal, RCR-046: the formatter output differs between releases; an older compiler counts as missing). | `rcr_004_crystal_format_is_clean` | enforced |
 | RCR-005 | tool | `ameba --up-to-version 1.7.0` is clean with the committed `.ameba.yml`. | `rcr_005_ameba_is_clean` | enforced |
 | RCR-006 | tool | `.ameba.yml` decides every rule the installed ameba has (`Enabled: true` or `false`, no rule left to its default), keeps the scanner fixtures out of `Globs`, and keeps the lint rules that guard crashes and error handling on. A rule a newer ameba adds fails this test until it is decided. | `rcr_006_ameba_config_lists_every_rule_explicitly` | enforced |
 | RCR-007 | tool | The `Excluded:` lists in `.ameba.yml` (the legacy files that still break a rule) only shrink, and name existing files. | `rcr_007_ameba_exclusions_only_shrink` | baseline |
@@ -44,10 +44,34 @@ Specs (`spec/` directories and `*_spec.cr`) are held to every rule except RCR-00
 | RCR-042 | supply | Dependency census: the shards the checkout uses (shard.yml entries, shard.lock entries, vendored shards under a `lib/` directory) are in `ALLOWED_SHARDS` and not more than `SHARD_CENSUS`. Both are empty today; a shard is added with an ADR, in `ALLOWED_SHARDS` and in THIRD-PARTY.md. | `rcr_042_shard_census_only_falls` | enforced |
 | RCR-043 | supply | A `require` names the standard library (`STDLIB`) or a relative file of this repo; anything else is a shard nobody counted. | `rcr_043_requires_are_stdlib_or_in_repo` | enforced |
 | RCR-044 | supply | No build file (PKGBUILD, Makefile, `.sh`, workflow, `.install`) runs `shards install/update/build/check/run/prune` without `--frozen --local`: the build never fetches shards from the network. A shard that is ever needed arrives as a vendored source in `source=(...)` with a real checksum (not `SKIP`) and is built with `shards install --frozen --local`. | `rcr_044_build_files_do_not_fetch_shards` | enforced |
+| RCR-045 | supply | No entry of a `shard.lock` in the checkout and no toolchain package recorded in `tools/crystal/toolchain.json` (`crystal`, `gc`, `llvm-libs`) is older than the `fixed_in` of an advisory for it in `tools/crystal/advisories.json` (an array of `{"package", "fixed_in", "note"}`, exactly those keys, sorted). See "Toolchain and advisories". | `rcr_045_no_locked_shard_or_toolchain_package_is_below_an_advisory` | enforced |
+| RCR-046 | supply | One Crystal version is pinned, in `tools/crystal/toolchain.json` (`crystal >= 1.22.0`): every `shard.yml` asks for `crystal: ">= <pin>"`, every recipe that depends on crystal says `crystal>=<pin>`, the snapshot's compiler is on the pinned line, the snapshot date matches the recipes', `tools/crystal/lint.sh` reads the pin, and no document or workflow names another Crystal floor. | `rcr_046_one_crystal_version_is_pinned_and_read_everywhere` | baseline |
 | RCR-090 | meta | Every scanner has a bad fixture under `crates/controller/tests/fixtures/crystal/` that trips exactly the rule on its `# trips:` line; the good fixtures trip nothing; with crystal and ameba installed `good.cr` is clean and `bad-format.cr`/`bad-ameba.cr` are not. | `rcr_090_fixtures_trip_exactly_their_rule` | enforced |
 | RCR-091 | meta | This document and the `rcr_nnn_*` tests list the same rules, each documented test exists, and every baseline constant is named here. | `rcr_091_doc_and_tests_agree` | enforced |
 | RCR-092 | meta | Baselines, allowlists and the stdlib list are sorted and free of duplicates. | `rcr_092_baselines_are_sorted_and_unique` | enforced |
 | RCR-093 | meta | The walk finds the Crystal trees (at least 39 files; wopkg, hue and crates). | `rcr_093_every_crystal_file_is_found` | enforced |
+
+## Standard library and security policy
+
+Crystal programs in WolOS use the standard library of the pinned toolchain and nothing else unless a shard is counted (RCR-042, `ALLOWED_SHARDS`). A `require` of a name outside `STDLIB` (in `crates/controller/tests/support/crystal_scan.rs`) is a shard (RCR-043). The table below is that list with the rule each part carries; `rcr_091_doc_and_tests_agree` fails when the table and `STDLIB` differ.
+
+| Kind | Modules | Policy |
+|---|---|---|
+| stdlib | `annotations`, `array`, `big`, `bit_array`, `bool`, `box`, `char`, `class`, `comparable`, `complex`, `deque`, `enum`, `enumerable`, `float`, `hash`, `indexable`, `int`, `iterable`, `iterator`, `levenshtein`, `math`, `named_tuple`, `nil`, `number`, `object`, `proc`, `range`, `reference`, `semantic_version`, `set`, `slice`, `static_array`, `string`, `string_pool`, `string_scanner`, `struct`, `symbol`, `tuple`, `unicode`, `union`, `value`, `weak_ref` | Values and collections. No rule beyond the general ones. `Box(T).box/unbox` only in the FFI allowlist (RCR-010). |
+| stdlib | `pointer` | Raw memory: only in the `FFI_ALLOW` files (RCR-010, RCR-011). |
+| stdlib | `atomic`, `channel`, `concurrent`, `fiber`, `mutex` | Concurrency through execution contexts (ADR 0036): view state on the UI context only, blocking work in `Wol.background`. |
+| stdlib | `base64`, `compress`, `csv`, `ecr`, `html`, `ini`, `json`, `mime`, `uri`, `uuid`, `xml`, `yaml` | Data from outside decodes into types (`Type.from_json`, `from_yaml`, `JSON::Serializable`), never `JSON.parse`/`YAML.parse` (RCR-024); input and archives are read with a size limit, `Compress` readers with a byte budget (RCR-191); `ecr` templates are compiled in, never loaded at run time (RCR-021). |
+| stdlib | `http`, `oauth`, `oauth2`, `openssl`, `socket` | No `HTTP::Client.get/post/...` class methods; a client sets `connect_timeout` and `read_timeout`, a `TCPSocket` its `connect_timeout` (RCR-022); TLS verification stays on (RCR-023). |
+| stdlib | `crypto`, `digest`, `random` | SHA-256 or better, no MD5 or SHA-1 (RCR-032); tokens, nonces and keys from `Random::Secure` (RCR-033); no literal secrets (RCR-034). |
+| stdlib | `dir`, `env`, `errno`, `file`, `file_utils`, `io`, `path`, `process`, `signal`, `system`, `termios` | A command is a program and an argument array (RCR-020) with a timeout (RCR-192); `File.tempfile`, no fixed `/tmp` names (RCR-030); nothing world-writable (RCR-031); paths from outside are checked (RCR-190). |
+| stdlib | `benchmark`, `colorize`, `crystal`, `exception`, `gc`, `humanize`, `kernel`, `log`, `option_parser`, `prelude`, `pretty_print`, `regex`, `time` | Runtime and tools. Errors are rescued by type (RCR-025, RCR-026). A `regex` built from outside input is checked first (RCR-190). |
+| stdlib | `compiler`, `spec` | `spec` only in specs. `compiler` is named so RCR-043 recognises it; requiring it in a program is refused by RCR-021 (no code built at run time). |
+
+## Toolchain and advisories
+
+**One pin.** `tools/crystal/toolchain.json` holds the one Crystal version WolOS builds and tests with: `crystal >= 1.22.0` (`"crystal": "1.22.0"`, the only release tested; the snapshot ships 1.22.2). Everything else reads it or is checked against it by RCR-046: every `shard.yml` asks for `crystal: ">= 1.22.0"` (baseline `B_CRYSTAL_FLOOR`, empty), the recipes depend on `crystal>=1.22.0` (baseline `B_RECIPE_PIN`, empty; checked when the sibling `wolos-pkgbuilds` checkout is there), `crates/wol-abi/tests/bindings.rs` reads the pin for the shard specs, `tools/crystal/lint.sh` (and so CI) treats an older compiler as missing, RCR-004 takes the pin as its formatter floor, and no document or workflow names another floor. The file also records the distribution snapshot the recipes build on (`"snapshot"`, the same date as `wolos-pkgbuilds/snapshot`) and the versions of `crystal`, `gc` and `llvm-libs` it ships (`"packages"`).
+
+**Advisories.** `tools/crystal/advisories.json` is an array of `{"package", "fixed_in", "note"}` (schema frozen; sorted by package, then version). RCR-045 compares every entry of every `shard.lock` in the checkout and every `packages` version of the toolchain file with it: a version below `fixed_in` (package-manager order, `[epoch:]pkgver[-pkgrel]`; a shard.lock `+git.commit.<sha>` suffix is not part of the version) fails. The fix for a toolchain package is a newer snapshot plus a `pkgrel` bump of every recipe that compiles Crystal (`wopkg`, `wolos-hue`, the apps), because the standard library and the collector are compiled into each program; for a shard it is a new pin and lock. The procedure is in `tools/crystal/README.md`. This replaces the manual rule RCR-193.
 
 ## Not automated
 
@@ -56,7 +80,6 @@ Specs (`spec/` directories and `*_spec.cr`) are held to every rule except RCR-00
 | RCR-190 | input | A value that reaches a path, an argument or a regex from outside (a package name, a repo name, a file from a download) is validated against `..`, absolute roots and a character set before use. The scanner cannot see data flow. | none | manual |
 | RCR-191 | input | Bodies and archives from the network are read with a size limit (`IO::Sized`, `Compress` readers with a byte budget); a read timeout does not bound size. | none | manual |
 | RCR-192 | process | A child process gets a timeout or is killed on cancel; its environment is cleared or built (`clear_env: true`) where it runs foreign code. | none | manual |
-| RCR-193 | supply | The Crystal compiler and its standard library are the Arch package; a security advisory for either is a reason to rebuild `wopkg` and `wol-hue` (their PKGBUILDs bump `pkgrel`). | none | manual |
 | RCR-194 | tool | Whether a flagged pattern is really unsafe (the scanners are heuristics, not a parser). | none | manual |
 | RCR-195 | tool | Specs are run in the package `check()` (`crystal spec`) and on the build farm; this catalogue reads the code, it does not run it. | none | manual |
 
@@ -97,9 +120,12 @@ Counts found when the catalogue was written (61 `.cr` files: wopkg 35, hue 22, b
 - RCR-030: `B_TMP`, 1 file (wopkg/src/wopkg/sandbox.cr, 3 strings: the `/tmp` mount point and `TMPDIR` inside the sandbox, which is a fresh tmpfs); 8 more in specs, not asked.
 - RCR-032: `B_WEAK_HASH`, 0. RCR-033: `B_RANDOM`, 0. RCR-035: `B_HOME`, 0.
 - RCR-040 to RCR-042: 2 `shard.yml` files (wopkg, hue), 0 dependencies, 0 lock files needed. `ALLOWED_SHARDS` is empty and `SHARD_CENSUS` is 0: the Crystal code uses the standard library and libwopkg only.
+- RCR-045: `advisories.json` is empty, 0 `shard.lock` files in the checkout; the toolchain record is crystal 1.22.2-1, gc 8.2.12-1, llvm-libs 23.1.4-1 (snapshot 2026-10-31).
+- RCR-046: `B_CRYSTAL_FLOOR`, 0 (all 6 `shard.yml` files ask for the pin); `B_RECIPE_PIN`, 0 (the 5 recipes that depend on crystal say `crystal>=1.22.0`).
 
 ## Tools
 
+- `tools/crystal/toolchain.json` is the Crystal pin and the snapshot's toolchain record (RCR-046); `tools/crystal/advisories.json` the advisory list (RCR-045); `tools/crystal/README.md` says what to do when an advisory comes out or the pin moves.
 - `tools/crystal/lint.sh` runs `crystal tool format --check` and `ameba` (pinned with `--up-to-version`) over the tracked and new `.cr` files, fixtures left out. The same files are checked by RCR-004 and RCR-005 in `cargo test`.
 - `.ameba.yml` is the rule set. Edit it with the rule list in front of you (`ameba --rules`); never rely on a default.
 - Installing ameba: CI builds it from a pinned commit of its source (`crystal build --no-debug -o ameba src/cli.cr`, about 15 seconds, no shards; the step is in `.github/workflows/ci.yml`). Arch's ameba 1.7.0 package crashed at start with Crystal 1.22 on the build box ("Arithmetic overflow"), so RCR-005 and RCR-006 treat a binary that will not print `--version` as missing. Moving to a newer ameba: build it, run `ameba --rules`, decide each new rule in `.ameba.yml`, then change `AMEBA_VERSION` in `rules_crystal.rs` and `tools/crystal/lint.sh` and the commit in ci.yml together.

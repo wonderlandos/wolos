@@ -7,6 +7,11 @@
 //! all come before the first commit; that a configure maps the window with a buffer of the right
 //! size (scale 1 and 1.5 through the viewport); that close reaches the app; that frames are paced
 //! by callbacks; and the text-input-v3, keyboard, clipboard and drop flows.
+//!
+//! One test is opt-in and talks to a real compositor instead (`WOLKIT_REAL_COMPOSITOR=1` with
+//! `WAYLAND_DISPLAY` set, e.g. a headless nested compositor on the build forge): an engine with
+//! the native backend opens a window there and waits only on the engine descriptor, as an app
+//! does, until a frame is drawn. `WOLKIT_REAL_COMPOSITOR=gpu` also requires the GPU present path.
 
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
@@ -821,6 +826,15 @@ fn serve(
 
 impl Rig {
     fn new(tag: &str, min: (u32, u32), max: (u32, u32)) -> Rig {
+        Rig::with_hub(tag, min, max, None)
+    }
+
+    fn with_hub(
+        tag: &str,
+        min: (u32, u32),
+        max: (u32, u32),
+        hub: Option<Arc<wolkit::a11y::hub::Hub>>,
+    ) -> Rig {
         let (client, server) = UnixStream::pair().unwrap();
         let (tx, rx) = channel();
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -833,7 +847,7 @@ impl Rig {
         let home = std::env::temp_dir().join(format!("wolkit-native-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
         let shared = Shared::from_socket(client).unwrap();
-        let win = NativeWindow::with_hub(shared, "org.example.native", &home, None).unwrap();
+        let win = NativeWindow::with_hub(shared, "org.example.native", &home, hub).unwrap();
         let mut core = WindowCore::new(1, "Native test", 320, 200, 0, Environment::default());
         core.min = min;
         core.max = max;
@@ -970,6 +984,156 @@ fn limits_title_and_decoration_come_before_the_first_commit() {
             .any(|l| l.starts_with("surface.attach")),
         "no buffer before the first configure"
     );
+}
+
+/// `backdrop: glass` on the root (inline, as the engine's style table would resolve it).
+fn glass_root(p: &mut Writer) {
+    p.set_prop(0, wolkit::scene::prop::id::BACKDROP, &[1]);
+}
+
+#[test]
+fn a_glass_root_puts_the_suffix_on_the_first_app_id() {
+    let mut r = Rig::new("glass-first", (0, 0), (0, 0));
+    r.apply(glass_root);
+    r.show();
+    r.logged("the first commit", "surface.commit");
+    let log = r.log();
+    let ids: Vec<_> = log
+        .iter()
+        .filter(|l| l.starts_with("toplevel.app_id"))
+        .collect();
+    assert_eq!(
+        ids,
+        ["toplevel.app_id org.example.native.glass"],
+        "one app id, with the suffix, before the first commit: {log:#?}"
+    );
+    assert!(index(&log, "toplevel.app_id") < index(&log, "surface.commit"));
+}
+
+#[test]
+fn reduce_transparency_keeps_the_plain_app_id() {
+    let mut r = Rig::new("glass-reduced", (0, 0), (0, 0));
+    r.core.env.reduce_transparency = true;
+    r.apply(glass_root);
+    r.show();
+    r.logged("the first commit", "surface.commit");
+    let log = r.log();
+    assert_eq!(
+        log.iter()
+            .filter(|l| l.starts_with("toplevel.app_id"))
+            .collect::<Vec<_>>(),
+        ["toplevel.app_id org.example.native"],
+        "{log:#?}"
+    );
+}
+
+#[test]
+fn glass_added_and_removed_later_changes_the_app_id() {
+    let mut r = Rig::new("glass-later", (0, 0), (0, 0));
+    r.mapped(300, 200);
+    r.apply(glass_root);
+    r.logged("the glass id", "toplevel.app_id org.example.native.glass");
+    r.apply(|p| {
+        p.set_prop(0, wolkit::scene::prop::id::BACKDROP, &[0]);
+    });
+    let last_id = |r: &Rig| {
+        r.log()
+            .iter()
+            .rfind(|l| l.starts_with("toplevel.app_id"))
+            .cloned()
+    };
+    r.until("the plain id again", |r| {
+        last_id(r).as_deref() == Some("toplevel.app_id org.example.native")
+    });
+    assert_eq!(
+        last_id(&r).as_deref(),
+        Some("toplevel.app_id org.example.native")
+    );
+}
+
+#[test]
+fn a_window_with_menus_publishes_them_and_a_choice_clicks_the_item() {
+    use std::io::{BufRead, BufReader, Read};
+    use std::process::{Command, Stdio};
+    let dir = std::env::temp_dir().join(format!("wolkit-native-bus-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sock = dir.join("bus");
+    let _ = std::fs::remove_file(&sock);
+    let Ok(mut child) = Command::new("dbus-daemon")
+        .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+        .arg(format!("--address=unix:path={}", sock.display()))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        println!("no message bus daemon here: the menus-on-the-bus test is skipped");
+        return;
+    };
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap().take(4096))
+        .read_line(&mut line)
+        .unwrap();
+    let address = line.trim().to_owned();
+    let hub = Arc::new(wolkit::a11y::hub::Hub::new("org.example.native").unwrap());
+    let svc = wolkit::window::native::menus::shared_on(
+        "org.example.native",
+        hub.clone(),
+        wolkit::window::native::menus::Bus::Address(&address),
+    )
+    .unwrap();
+    let mut r = Rig::with_hub("menus", (0, 0), (0, 0), Some(hub));
+    r.mapped(300, 200);
+    r.apply(|p| {
+        use wolkit::a11y::roles::wk;
+        p.create(1, Kind::Box).insert(0, 1, APPEND);
+        p.set_a11y(1, wk::MENU, "File", "");
+        p.create(2, Kind::Button).insert(1, 2, APPEND);
+        p.set_a11y(2, wk::MENUITEM, "New", "");
+        p.bind_event(2, event::bit(ev::CLICK));
+    });
+    let item = r.core.scene.id(2).0;
+    let want = format!(
+        r#"[{{"id":1,"title":"File","entries":[{{"type":"item","key":"{item}","label":"New"}}]}}]"#
+    );
+    assert_eq!(svc.json(), want, "published when the scene changed");
+    let client = zbus::blocking::connection::Builder::address(address.as_str())
+        .unwrap()
+        .method_timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let call = |key: &str| {
+        client.call_method(
+            Some("org.example.native"),
+            "/org/example/native",
+            Some("org.wolos.Menus"),
+            "Activate",
+            &(1u32, key),
+        )
+    };
+    // The service connects on its own thread: wait until it answers (an unlisted key is refused).
+    let end = Instant::now() + Duration::from_secs(5);
+    while !matches!(call("0"), Err(zbus::Error::MethodError(..))) {
+        assert!(Instant::now() < end, "the service never answered");
+        wolkit::loop_::wait(&[], 20, &mut Vec::new());
+    }
+    call(&item.to_string()).unwrap();
+    let end = Instant::now() + Duration::from_secs(5);
+    let mut clicked = false;
+    while !clicked {
+        assert!(
+            Instant::now() < end,
+            "no CLICK on the item; log: {:#?}",
+            r.log()
+        );
+        r.pump();
+        clicked = r.events().iter().any(|e| e.0 == ev::CLICK && e.1 == item);
+        if !clicked {
+            let mut ready = Vec::new();
+            wolkit::loop_::wait(&r.win.fds(), 50, &mut ready);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[test]
@@ -1380,4 +1544,131 @@ fn focus_the_app_asks_for_is_reported_once() {
         .collect();
     assert_eq!(focus.len(), 1, "{focus:?}");
     assert_eq!((focus[0].1, u32_at(&focus[0].2, 0)), (1, 1));
+}
+
+#[test]
+fn a_real_compositor_shows_a_frame_while_the_app_waits_on_the_engine_fd() {
+    let mode = std::env::var("WOLKIT_REAL_COMPOSITOR").unwrap_or_default();
+    if mode != "1" && mode != "gpu" {
+        eprintln!("skipped: set WOLKIT_REAL_COMPOSITOR=1 (or gpu) and WAYLAND_DISPLAY");
+        return;
+    }
+    assert!(
+        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        "WOLKIT_REAL_COMPOSITOR is set but WAYLAND_DISPLAY is not"
+    );
+    wolkit::window::native::set_opt_in(true);
+    let engine = wolkit::engine::Engine::new("org.wolos.realcompositor", 0).unwrap();
+    assert_eq!(
+        engine.backend(),
+        wolkit::window::BACKEND_NATIVE,
+        "the native backend is chosen (a display answers)"
+    );
+    let id = engine
+        .create_window("Real compositor", 320, 200, 0)
+        .unwrap();
+    engine.show(id).unwrap();
+    let mut p = Writer::new();
+    p.create(1, Kind::Button).insert(0, 1, APPEND);
+    p.set_text(1, "Add");
+    engine.apply(id, p.finish(1)).unwrap();
+    let mut diagnostics = Vec::new();
+    let frames = |e: &wolkit::engine::Engine| {
+        let v: serde_json::Value = serde_json::from_str(&e.stats_json()).unwrap();
+        v["frames"].as_u64().unwrap_or(0)
+    };
+    // Dispatch only when the engine descriptor is readable (as Wolkit::Loop does) until `want`
+    // frames are drawn or 10 s pass.
+    // The display socket itself, only to check the promise: whenever it is readable, so is the
+    // engine descriptor (the app never sees the socket).
+    let shared = wolkit::window::native::shared().unwrap();
+    let sock = {
+        use std::os::fd::AsRawFd;
+        shared.conn.backend().poll_fd().as_raw_fd()
+    };
+    let mut socket_wakes = 0;
+    let mut run_until = |want: u64, at_least: Duration, diagnostics: &mut Vec<String>| {
+        let begin = Instant::now();
+        let until = begin + Duration::from_secs(10);
+        let mut ready = Vec::new();
+        while (frames(&engine) < want || begin.elapsed() < at_least) && Instant::now() < until {
+            wolkit::loop_::wait(&[engine.fd(), sock], 200, &mut ready);
+            if ready.contains(&1) {
+                socket_wakes += 1;
+                // The graphics driver may read the same socket from its own thread, so the
+                // socket is sampled between two looks at the engine fd: a failure is "the engine
+                // fd was not readable before and after a moment the socket was".
+                let look = |fd: i32| {
+                    let mut r = Vec::new();
+                    wolkit::loop_::wait(&[fd], 0, &mut r);
+                    !r.is_empty()
+                };
+                let before = look(engine.fd());
+                let socket = look(sock);
+                let after = look(engine.fd());
+                assert!(
+                    before || after || !socket,
+                    "the display socket is readable but the engine fd is not: an app waiting on \
+                     wolkit_engine_get_fd would sleep through the compositor's events"
+                );
+            }
+            if !ready.contains(&0) {
+                continue;
+            }
+            engine.dispatch(0).unwrap();
+            let mut buf = vec![0u8; 1 << 16];
+            let n = engine.read_events(&mut buf);
+            let mut at = 0;
+            while at + event::HEADER <= n {
+                let len = u32_at(&buf, at) as usize;
+                let kind = u16::from_le_bytes([buf[at + 4], buf[at + 5]]);
+                if kind == ev::DIAGNOSTIC {
+                    diagnostics.push(
+                        buf[at + event::HEADER..at + len]
+                            .iter()
+                            .filter(|b| b.is_ascii_graphic() || **b == b' ')
+                            .map(|b| char::from(*b))
+                            .collect::<String>(),
+                    );
+                }
+                if len == 0 {
+                    break;
+                }
+                at += len;
+            }
+        }
+        frames(&engine)
+    };
+    assert!(
+        run_until(1, Duration::ZERO, &mut diagnostics) >= 1,
+        "no first frame within 10 s while waiting on the engine fd; diagnostics: {diagnostics:?}"
+    );
+    // More frames, each answered by the compositor on the display socket only.
+    for (seq, label) in [(2, "Added"), (3, "Again")] {
+        let mut p = Writer::new();
+        p.set_text(1, label);
+        engine.apply(id, p.finish(seq)).unwrap();
+        run_until(u64::from(seq), Duration::ZERO, &mut diagnostics);
+    }
+    // and keep serving the compositor for a while: its frame callbacks come on the socket
+    run_until(0, Duration::from_millis(1500), &mut diagnostics);
+    assert!(
+        socket_wakes > 0,
+        "the display socket never became readable during the run; nothing was checked"
+    );
+    let gpu_off = diagnostics
+        .iter()
+        .any(|d| d.contains("GPU path could not start"));
+    eprintln!(
+        "real compositor: {} frame(s), {} path, diagnostics {diagnostics:?}",
+        frames(&engine),
+        if gpu_off { "CPU" } else { "GPU" }
+    );
+    if mode == "gpu" {
+        assert!(
+            !gpu_off,
+            "the GPU present path did not start: {diagnostics:?}"
+        );
+    }
+    engine.close_window(id);
 }
