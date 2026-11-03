@@ -24,7 +24,7 @@ class Sandbox
   def run(*args : String) : {Int32, String, String}
     o = IO::Memory.new
     e = IO::Memory.new
-    st = Process.run(BIN.not_nil!, args.to_a, env: @env, output: o, error: e)
+    st = Process.run(BIN || raise("WOL_HUE_BIN is not set"), args.to_a, env: @env, output: o, error: e)
     {st.exit_code, o.to_s, e.to_s}
   end
 
@@ -34,7 +34,7 @@ class Sandbox
   end
 
   def files(under : String) : Array(String)
-    Dir.glob(File.join(@root, under, "**", "*")).select { |f| File.file?(f) }.map(&.sub(File.join(@root, under) + "/", "")).sort
+    Dir.glob(File.join(@root, under, "**", "*")).select { |f| File.file?(f) }.map(&.sub(File.join(@root, under) + "/", "")).sort!
   end
 end
 

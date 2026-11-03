@@ -55,7 +55,7 @@ module Hue
 
     def final_accent : String?
       a = @accent
-      return nil unless a
+      return unless a
       @adjustments.empty? ? a : Color.adjust(a, @adjustments)
     end
 
@@ -85,7 +85,7 @@ module Hue
 
     def self.list : Array(Look)
       return [] of Look unless Dir.exists?(dir)
-      Dir.children(dir).select(&.ends_with?(".json")).sort.compact_map do |f|
+      Dir.children(dir).select(&.ends_with?(".json")).sort!.compact_map do |f|
         read(File.join(dir, f))
       rescue Invalid
         nil

@@ -71,6 +71,7 @@ tools/check-adrs.sh
 tools/check-headers.sh
 tools/ci/fuzz-replay.sh
 tools/ci/pin-lint.py
+tools/crystal/lint.sh
 tools/hooks/guard-test.sh
 tools/hooks/install.sh
 tools/hooks/public-guard

@@ -14,6 +14,14 @@ module Hue
 
     record Result, palette : Array(String), cached : Bool
 
+    # What a cache file holds; anything else in it is ignored, anything missing makes it a miss.
+    struct CacheFile
+      include JSON::Serializable
+
+      getter version : Int32
+      getter palette : Array(String)
+    end
+
     def self.cache_dir : String
       x = ENV["XDG_CACHE_HOME"]?
       File.join(x && !x.empty? ? x : File.join(ENV["HOME"]? || "/", ".cache"), "wolos", "hue")
@@ -41,7 +49,7 @@ module Hue
       file = nil
       if cache
         file = File.join(cache_dir, cache_key(path, light, mode) + ".json")
-        if (hit = read_cache(file))
+        if hit = read_cache(file)
           return Result.new(hit, true)
         end
       end
@@ -58,12 +66,11 @@ module Hue
     end
 
     private def self.read_cache(file : String) : Array(String)?
-      return nil unless File.file?(file)
-      j = JSON.parse(File.read(file))
-      return nil unless j["version"]?.try(&.as_i?) == CACHE_VERSION
-      p = j["palette"].as_a.map(&.as_s)
-      p.size == 16 && p.all? { |c| Color.valid_hex?(c) } ? p : nil
-    rescue JSON::ParseException | TypeCastError | KeyError | File::Error
+      return unless File.file?(file)
+      c = CacheFile.from_json(File.read(file))
+      return unless c.version == CACHE_VERSION
+      c.palette.size == 16 && c.palette.all? { |h| Color.valid_hex?(h) } ? c.palette : nil
+    rescue JSON::Error | File::Error
       nil
     end
   end

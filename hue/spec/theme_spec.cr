@@ -9,7 +9,7 @@ describe Hue::Theme do
       Palette::MODES.each do |mode|
         [false, true].each do |light|
           t = Theme.tokens(SpecHelp.palette(name, light, mode), !light)
-          t.keys.sort.should eq(Theme::TOKENS.sort)
+          t.keys.sort!.should eq(Theme::TOKENS.sort)
           Theme.check(t).should eq([] of String)
         end
       end
@@ -28,7 +28,7 @@ describe Hue::Theme do
     j["id"].should eq("picture-ocean")
     j["variant"].should eq("dark")
     j["terminal"].as_a.size.should eq(16)
-    j["terminal"].as_a.all? { |c| c.as_s.matches?(/\A#[0-9a-f]{6}\z/) }.should be_true
+    j["terminal"].as_a.all?(&.as_s.matches?(/\A#[0-9a-f]{6}\z/)).should be_true
     j["tokens"].as_h.size.should eq(13)
     j["wallpaper"].should eq("/tmp/ocean.png")
   end

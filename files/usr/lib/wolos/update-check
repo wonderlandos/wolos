@@ -27,10 +27,16 @@ case $? in
 0 | 2) mv "$D/pkg.new" "$D/pkg" ;;
 *) rm -f "$D/pkg.new"; exit 0 ;;
 esac
-# Exit 1 also means "found some"; an empty list from a failed run keeps the last one.
-arch-audit -q >"$D/audit.new" 2>/dev/null
-st=$?
-if [ $st -eq 0 ] || [ -s "$D/audit.new" ]; then mv "$D/audit.new" "$D/audit"; else rm -f "$D/audit.new"; fi
+# Exit 1 also means "found some"; an empty list from a failed run keeps the last one. Without
+# arch-audit there is no list at all (not an empty one: that would read "no known vulnerabilities").
+if command -v arch-audit >/dev/null 2>&1; then
+	arch-audit -q >"$D/audit.new" 2>/dev/null
+	st=$?
+	if [ $st -eq 0 ] || [ -s "$D/audit.new" ]; then mv "$D/audit.new" "$D/audit"; else rm -f "$D/audit.new"; fi
+else
+	echo "update-check: arch-audit is not installed: no vulnerability list" >&2
+	rm -f "$D/audit"
+fi
 pacman -Qq >"$D/kernels" 2>/dev/null
 if curl -fsSL -o "$D/base.new" "$URL" 2>/dev/null &&
 	curl -fsSL "$URL.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&

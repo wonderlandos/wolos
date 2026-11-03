@@ -2,23 +2,23 @@
 $env:WOLOS_THEME = 'wol-light'
 $env:WOLOS_PROMPT_ACCENT = '#7053e6'
 $env:WOLOS_PROMPT_MUTED = '#6e6e73'
-$env:WOLOS_PROMPT_OK = '#22813a'
-$env:WOLOS_PROMPT_ERROR = '#cc2f26'
+$env:WOLOS_PROMPT_OK = '#167b58'
+$env:WOLOS_PROMPT_ERROR = '#c53763'
 $env:WOLOS_PROMPT_SUGGEST = '#8d8d91'
-$env:WOLOS_PROMPT_WARN = '#995900'
+$env:WOLOS_PROMPT_WARN = '#b8471a'
 if (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue) {
     Set-PSReadLineOption -Colors @{
         Default = "`e[38;2;29;29;31m"
         Command = "`e[38;2;112;83;230m"
         Keyword = "`e[38;2;112;83;230m"
         Parameter = "`e[38;2;110;110;115m"
-        String = "`e[38;2;34;129;58m"
+        String = "`e[38;2;22;123;88m"
         Comment = "`e[38;2;110;110;115m"
-        Operator = "`e[38;2;153;89;0m"
-        Number = "`e[38;2;153;89;0m"
+        Operator = "`e[38;2;184;71;26m"
+        Number = "`e[38;2;184;71;26m"
         Variable = "`e[38;2;29;29;31m"
         Type = "`e[38;2;112;83;230m"
-        Error = "`e[38;2;204;47;38m"
+        Error = "`e[38;2;197;55;99m"
         InlinePrediction = "`e[38;2;141;141;145m"
     }
 }

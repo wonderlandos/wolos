@@ -27,4 +27,10 @@ describe Wopkg::Core do
     expect_raises(Wopkg::Failure, /not a package name/) { core.system_call(%({"call":"package.change","verb":"install","names":["-Syu"]})) }
     FileUtils.rm_rf(d)
   end
+
+  it "is the libwopkg its generated header bindings describe" do
+    want = (LibWopkg::WOPKG_VERSION_MAJOR << 16) | (LibWopkg::WOPKG_VERSION_MINOR << 8) | LibWopkg::WOPKG_VERSION_PATCH
+    Wopkg::Core.abi_version.should eq(want)
+    Wopkg::Core.version.should eq("#{LibWopkg::WOPKG_VERSION_MAJOR}.#{LibWopkg::WOPKG_VERSION_MINOR}.#{LibWopkg::WOPKG_VERSION_PATCH}")
+  end
 end

@@ -130,6 +130,7 @@ Developer
 - `wolvm` drives the whole system in a VM step by step: boot the ISO, go through the installer, start the installed disk, open apps, take snapshots and collect the journal (docs/modules/vm-e2e.md).
 - The install tests fail when their checks fail, and they check Secure Boot, the first boot and dual boot for real.
 - Scripts that are run directly are checked to keep their executable bit.
+- Crystal code (the package tool, `wol-hue`, the libwol examples) has its own rule catalogue (docs/RULES-crystal.md): formatter and linter clean, raw memory and C bindings only in listed files, programs run without a shell, network clients with timeouts, input decoded into types, dependencies pinned by commit and counted (none today), and no shard fetched while a package builds. `tools/crystal/lint.sh` runs the tools.
 
 Known limitations
 - The CDN is not switched on yet: its mirror lines stay commented out until it exists, so packages come from the release host.

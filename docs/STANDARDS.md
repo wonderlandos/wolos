@@ -108,6 +108,37 @@ the rest with the checklist in `docs/REVIEW.md`.
 - Quote every expansion. Paths that come from a user, a disk label or a package are checked
   against `..` and absolute roots before use. No `eval`, no `sh -c "$user_string"`.
 
+## 2a. Crystal (wopkg, wol-hue, the libwol examples)
+
+Crystal is the userland language (ADR 0036); the numbered, test-enforced catalogue is
+`docs/RULES-crystal.md` (`RCR-nnn`, `crates/controller/tests/rules_crystal.rs`, run `tools/crystal/lint.sh`
+for the tools). The rules in one place:
+
+- Every `.cr` file starts with the SPDX line and a comment that says what it is for.
+- **CI** `crystal tool format --check` clean (the formatter output differs between releases; CI's
+  Arch toolchain is the reference) and `ameba` clean with the committed `.ameba.yml`, which decides
+  every rule explicitly. A rule a newer ameba adds is decided there before it is on; lint runs
+  `--up-to-version`. A file the linter cannot be made to like goes in that file's `Excluded:` list,
+  which only shrinks.
+- No raw pointers, `unsafe_*`, `LibC` or C bindings outside the files listed in `FFI_ALLOW`; the
+  allowlist grows only with an ADR.
+- Run programs as program + argument array (`Process.run("git", ["-C", dir])`), never through a
+  shell string, `shell: true`, `sh -c` or backticks. No code built or loaded at run time (no macro
+  `run`, no `dlopen`, no `crystal eval`).
+- Network: build an `HTTP::Client` and set `connect_timeout` and `read_timeout` (the `HTTP::Client.get`
+  class methods cannot); never switch TLS verification off.
+- Input from outside (JSON, YAML, files, downloads) decodes into typed structs with `from_json` /
+  `from_yaml`; `JSON.parse` / `YAML.parse` are counted and may only fall. Validate a name before it
+  becomes a path or an argument.
+- `rescue` names its exception types; never `rescue Exception`; a catch-all is counted and may only
+  fall. A failed check fails closed or tells the user.
+- No fixed `/tmp` names (use `File.tempfile`), nothing world-writable, no MD5 or SHA-1, tokens from
+  `Random::Secure`, no literal credentials, no `/home/` literals.
+- Dependencies: the standard library only today. A shard needs an ADR, an entry in
+  `ALLOWED_SHARDS`, a `commit:` pin in `shard.yml`, a committed `shard.lock` and a THIRD-PARTY.md
+  entry; the number of shards may only fall. PKGBUILDs and scripts never run `shards install`
+  against the network (vendored source with a checksum, `--frozen --local`).
+
 ## 3. C and C++ (plugins, libwol headers, kernel work)
 
 - SPDX line first (`// SPDX-License-Identifier: GPL-2.0-or-later`; kernel: `GPL-2.0-only`;

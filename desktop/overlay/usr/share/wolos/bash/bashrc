@@ -4,8 +4,9 @@
 #   [ -r /usr/share/wolos/bash/bashrc ] && . /usr/share/wolos/bash/bashrc
 # Upgrades replace this file; your settings stay in ~/.bashrc. Theme colours come from
 # ${XDG_CONFIG_HOME:-~/.config}/wolos/toolkits/bash/colors.sh (`wol theme`), else the default
-# theme's /usr/share/wolos/toolkits/bash/colors.sh: WOLOS_PROMPT_<ROLE>_SGR for ACCENT, MUTED, OK,
-# ERROR as SGR parameters such as 38;2;124;92;255 (and WOLOS_PROMPT_<ROLE> as #rrggbb).
+# theme's /usr/share/wolos/toolkits/bash/colors.sh (core theme/console.rs `bash`): WOLOS_ANSI_<ROLE>
+# for ACCENT, MUTED, OK, ERROR as SGR parameters such as 38;2;124;92;255 (and WOLOS_PROMPT_<ROLE>
+# as #rrggbb, for other programs). Unset = terminal palette.
 # shellcheck shell=bash
 case $- in *i*) ;; *) return 0 2>/dev/null || exit 0 ;; esac
 [ -z "${WOLOS_BASHRC_READ:-}" ] || return 0
@@ -26,19 +27,26 @@ _wolos_colors=${XDG_CONFIG_HOME:-$HOME/.config}/wolos/toolkits/bash/colors.sh
 [ -r "$_wolos_colors" ] || _wolos_colors=/usr/share/wolos/toolkits/bash/colors.sh
 # shellcheck source=/dev/null
 [ -r "$_wolos_colors" ] && . "$_wolos_colors"
-: "${WOLOS_PROMPT_ACCENT_SGR:=35}" "${WOLOS_PROMPT_MUTED_SGR:=90}" "${WOLOS_PROMPT_OK_SGR:=39}"
-: "${WOLOS_PROMPT_ERROR_SGR:=31}"
+: "${WOLOS_ANSI_ACCENT:=35}" "${WOLOS_ANSI_MUTED:=90}" "${WOLOS_ANSI_OK:=39}"
+: "${WOLOS_ANSI_ERROR:=31}"
 alias ls='ls --color=auto' ll='ls -lh' la='ls -lAh' grep='grep --color=auto'
 
 # Prompt: the pure-bash fallback (directory, one symbol coloured by the last status), replaced by
-# starship when it is installed (WOLOS_PROMPT=pure keeps this one).
+# starship when it is installed (WOLOS_PROMPT=pure keeps this one). The symbol is \$ (# for root)
+# where the font may lack it, like the zsh prompt; starship is not used on the Linux text console.
+case ${TERM:-} in
+  foot* | *256color* | *-direct) _wolos_sym='❯' ;;
+  *) _wolos_sym='\$' ;;
+esac
+[ "${EUID:-1}" != 0 ] || _wolos_sym='#'
 _wolos_ps1() {
-  local s=$? c=$WOLOS_PROMPT_OK_SGR
-  [ "$s" = 0 ] || c=$WOLOS_PROMPT_ERROR_SGR
-  PS1="\[\e[${WOLOS_PROMPT_ACCENT_SGR}m\]\w\[\e[0m\] \[\e[${c}m\]❯\[\e[0m\] "
+  local s=$? c=$WOLOS_ANSI_OK
+  [ "$s" = 0 ] || c=$WOLOS_ANSI_ERROR
+  PS1="\[\e[${WOLOS_ANSI_ACCENT}m\]\w\[\e[0m\] \[\e[${c}m\]${_wolos_sym}\[\e[0m\] "
 }
 PROMPT_COMMAND="_wolos_ps1; $PROMPT_COMMAND"
-if [ "${WOLOS_PROMPT:-starship}" != pure ] && command -v starship >/dev/null 2>&1; then
+if [ "${WOLOS_PROMPT:-starship}" != pure ] && [ "${TERM:-}" != linux ] &&
+  command -v starship >/dev/null 2>&1; then
   _wolos_star=${XDG_CONFIG_HOME:-$HOME/.config}/wolos/toolkits/starship/palette.toml
   [ -r "$_wolos_star" ] || _wolos_star=/usr/share/wolos/toolkits/starship/palette.toml
   [ -r "$_wolos_star" ] || _wolos_star=/usr/share/wolos/starship/starship.toml

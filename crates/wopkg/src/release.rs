@@ -542,6 +542,9 @@ mod tests {
         assert!(plugin_fits("0.12.0", "0.12.0"));
         assert!(!plugin_fits("0.12.1", "0.13"));
         assert!(!plugin_fits("0.12.1", "soon"), "not a version: not offered");
-        assert!(!plugin_fits("dev", "0.12"), "an OS that is no version: no guess");
+        assert!(
+            !plugin_fits("dev", "0.12"),
+            "an OS that is no version: no guess"
+        );
     }
 }

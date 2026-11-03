@@ -72,7 +72,7 @@ module Wopkg
         raise Invalid.new("sha256 of #{url} is 64 hex digits") unless sum.matches?(/\A[0-9a-f]{64}\z/)
         file = Recipe.str(h, "file", false)
         file = url.split('/').last.split('?').first if file.empty?
-        raise Invalid.new("bad source file name #{file}") unless file.matches?(/\A[A-Za-z0-9._+-]+\z/) && !file.starts_with?('.')
+        raise Invalid.new("bad source file name #{file}") if !file.matches?(/\A[A-Za-z0-9._+-]+\z/) || file.starts_with?('.')
         Source.new(url, sum, file)
       end
       sec = ->(k : String) { t[k]?.try(&.as?(Hash)) || ({} of String => Toml::Value) }

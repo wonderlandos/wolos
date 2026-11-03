@@ -21,7 +21,7 @@ describe Wopkg::Toml do
     t["name"].should eq("hvm")
     t["version"].should eq("2.0.22")
     t["jobs"].should eq(4)
-    t["cached"].should eq(true)
+    t["cached"].should be_true
     t["needs"].should eq(["cargo", "cc"])
     t["source"].as(Array)[0].as(Hash)["url"].should eq("https://x/a#b")
     t["source"].as(Array).size.should eq(2)

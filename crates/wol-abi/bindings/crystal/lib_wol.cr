@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Generated from include/wol.h by crates/wol-abi/tests/bindings.rs; do not edit.
+# Generated from crates/wol-abi/include/wol.h by crates/wol-abi/tests/bindings.rs; do not edit.
 # Regenerate: WOL_BLESS=1 cargo test -p wol-abi --test bindings
 @[Link("wol")]
 lib LibWol

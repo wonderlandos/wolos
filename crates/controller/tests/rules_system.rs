@@ -6,10 +6,10 @@
 //! (`support/rules_system_base.rs`): the list only shrinks, a new violation fails the test, a fixed
 //! one is reported on stderr so the entry is removed. Every `rs_nnn_*` test is one rule;
 //! `doc_and_tests_agree` ties them to the document.
-#[path = "support/siblings.rs"]
-mod siblings;
 #[path = "support/rules_system_base.rs"]
 mod base;
+#[path = "support/siblings.rs"]
+mod siblings;
 use base::*;
 
 use std::collections::{BTreeMap, BTreeSet};

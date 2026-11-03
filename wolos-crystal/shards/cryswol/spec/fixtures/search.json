@@ -1,0 +1,11 @@
+{
+  "app": "org.example.search",
+  "answers": {
+    "search.provide": [{"ok": true}],
+    "search.reply": [{"ok": true}]
+  },
+  "events": [
+    {"after": "search.provide", "emit": [{"event": "search-query", "uid": 1000, "pid": 1, "id": 5, "text": "term"}]},
+    {"after": "search.reply", "emit": [{"event": "search-open", "uid": 1000, "pid": 1, "key": "note-1"}]}
+  ]
+}

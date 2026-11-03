@@ -44,6 +44,7 @@ module Wopkg
       a.concat(%w(--ro-bind-try /run/systemd/resolve /run/systemd/resolve)) if net
       a.concat(["--bind", work, "/work", "--chdir", chdir])
       a.concat(%w(--cap-drop ALL)) if strict
+      # This /tmp is the mount point of the sandbox's own fresh tmpfs, not a path on your disk.
       base = {"PATH" => "/usr/bin", "HOME" => "/work/home", "LANG" => "C.UTF-8", "TMPDIR" => "/tmp",
               "MAKEFLAGS" => "-j4", "CARGO_BUILD_JOBS" => "4", "CARGO_HOME" => "/work/cargo"}
       base.merge(env).each { |k, v| a.concat(["--setenv", k, v]) }
@@ -56,8 +57,20 @@ module Wopkg
       a
     end
 
+    # The real user id of this process: the first number of the "Uid:" line of /proc/self/status.
+    # nil when that cannot be read.
+    def self.user_id : Int64?
+      File.each_line("/proc/self/status") do |line|
+        return line.split[1]?.try(&.to_i64?) if line.starts_with?("Uid:")
+      end
+      nil
+    rescue File::Error
+      nil
+    end
+
     def self.check_user! : Nil
-      raise Refused.new("wopkg builds as you, never as the administrator. Run it without sudo.") if LibC.getuid == 0
+      id = user_id || raise Refused.new("wopkg could not tell which user it runs as, so it will not build.")
+      raise Refused.new("wopkg builds as you, never as the administrator. Run it without sudo.") if id == 0
       raise Refused.new("Building needs bubblewrap (bwrap), which is not installed.") unless Process.find_executable("bwrap")
     end
 

@@ -1,0 +1,9 @@
+{
+  "app": "org.example.files",
+  "answers": {
+    "panel.open": [{"ok": true, "data": {"name": "a.txt"}, "fd": "from the panel"}, {"ok": true, "data": {"cancelled": true}}],
+    "panel.save": [{"ok": true, "data": {"name": "out.txt"}, "fd": ""}],
+    "device.open": [{"ok": true, "data": {"name": "Scanner"}, "fd": "usb"}, {"ok": false, "code": "permission-denied", "message": "This app may not open that device."}]
+  },
+  "events": []
+}

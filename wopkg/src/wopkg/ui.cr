@@ -65,7 +65,7 @@ module Wopkg
       ver = top["version"].as_s
       inst = srcs.any?(&.["installed"].as_bool) ? " #{bold("[installed]")}" : ""
       head = "#{bold(h["name"].as_s)} #{ver}#{inst}"
-      where = srcs.map { |s| label = source_label(s); s["kind"].as_s == "flatpak" ? "#{label} #{s["id"].as_s}" : label }.uniq.join(" · ")
+      where = srcs.map { |s| label = source_label(s); s["kind"].as_s == "flatpak" ? "#{label} #{s["id"].as_s}" : label }.uniq!.join(" · ")
       "#{head}\n    #{h["summary"].as_s}\n    #{dim(where)}"
     end
 

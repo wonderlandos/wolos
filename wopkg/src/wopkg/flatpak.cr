@@ -47,7 +47,7 @@ module Wopkg
     end
 
     def self.capture(argv : Array(String)) : String?
-      return nil unless Process.find_executable(argv[0])
+      return unless Process.find_executable(argv[0])
       buf = IO::Memory.new
       st = Process.run(argv[0], argv[1..], output: buf, error: Process::Redirect::Close)
       st.success? ? buf.to_s : nil

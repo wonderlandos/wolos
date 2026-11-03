@@ -13,6 +13,23 @@ module Wopkg
     BASE = "https://aur.archlinux.org"
     SAFE = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "core.hooksPath=/dev/null"]
 
+    # What `write_provenance` records; only the commit is read back.
+    struct Provenance
+      include JSON::Serializable
+
+      getter commit : String?
+    end
+
+    # The community package metadata remembered from the last build (`store_meta`).
+    struct StoredMeta
+      include JSON::Serializable
+
+      getter maintainer : String?
+      getter first : Int64
+      getter modified : Int64
+      getter votes : Int32
+    end
+
     def initialize(@cache : String, @state : String)
     end
 
@@ -34,12 +51,12 @@ module Wopkg
 
     # Packages built through wopkg, with their pinned commit.
     def installed : Array(String)
-      Dir.glob("#{@state}/aur-provenance/*.json").map { |f| File.basename(f, ".json") }.sort
+      Dir.glob("#{@state}/aur-provenance/*.json").map { |f| File.basename(f, ".json") }.sort!
     end
 
     def installed_commit(pkg : String) : String?
-      JSON.parse(File.read(provenance_path(pkg)))["commit"]?.try(&.as_s?).try { |c| AurGuard.commit?(c) ? c : nil }
-    rescue
+      Provenance.from_json(File.read(provenance_path(pkg))).commit.try { |c| AurGuard.commit?(c) ? c : nil }
+    rescue JSON::Error | File::Error
       nil
     end
 
@@ -59,15 +76,18 @@ module Wopkg
 
     # Metadata from the community package collection itself over TLS; remembered so a later maintainer change shows.
     def meta(pkg : String) : AurGuard::Meta
-      r = HTTP::Client.get("#{BASE}/rpc/v5/info?arg[]=#{URI.encode_www_form(pkg)}")
+      client = HTTP::Client.new(URI.parse(BASE))
+      client.connect_timeout = 10.seconds
+      client.read_timeout = 30.seconds
+      r = client.get("/rpc/v5/info?arg[]=#{URI.encode_www_form(pkg)}")
       raise ArgumentError.new("The community package collection answered with an error (#{r.status_code}).") unless r.status_code == 200
       AurGuard::Meta.parse(r.body)
     end
 
     def stored_meta(pkg : String) : AurGuard::Meta?
-      j = JSON.parse(File.read(meta_path(pkg)))
-      AurGuard::Meta.new(j["maintainer"]?.try(&.as_s?), j["first"].as_i64, j["modified"].as_i64, j["votes"].as_i, 0.0, false)
-    rescue
+      j = StoredMeta.from_json(File.read(meta_path(pkg)))
+      AurGuard::Meta.new(j.maintainer, j.first, j.modified, j.votes, 0.0, false)
+    rescue JSON::Error | File::Error
       nil
     end
 
@@ -78,11 +98,11 @@ module Wopkg
 
     # Symbolic links in a checkout can point a "PKGBUILD" at a file of yours.
     def self.symlinks(dir : String) : Array(String)
-      Dir.glob("#{dir}/**/*", match: File::MatchOptions::DotFiles).select { |f| !f.includes?("/.git/") && File.symlink?(f) }.map { |f| f.lchop(dir + "/") }
+      Dir.glob("#{dir}/**/*", match: File::MatchOptions::DotFiles).select { |f| !f.includes?("/.git/") && File.symlink?(f) }.map(&.lchop(dir + "/"))
     end
 
     def self.review_files(dir : String) : Array(String)
-      Dir.children(dir).reject { |f| f.starts_with?('.') }.select { |f| File.file?("#{dir}/#{f}") && !File.symlink?("#{dir}/#{f}") && File.size("#{dir}/#{f}") < 1_000_000 }.sort
+      Dir.children(dir).reject(&.starts_with?('.')).select { |f| File.file?("#{dir}/#{f}") && !File.symlink?("#{dir}/#{f}") && File.size("#{dir}/#{f}") < 1_000_000 }.sort!
     end
 
     # Text to read before building: the whole files the first time, the diff since the installed commit later.
@@ -101,7 +121,7 @@ module Wopkg
       srcinfo.lines.compact_map do |l|
         k, _, v = l.strip.partition(" = ")
         v.split(/[<>=]/).first if %w(depends makedepends checkdepends).includes?(k)
-      end.uniq
+      end.uniq!
     end
 
     ENV_BUILD = {"PKGDEST" => "/work/.out", "SRCDEST" => "/work/.src", "BUILDDIR" => "/work/.build", "PKGEXT" => ".pkg.tar.zst"}

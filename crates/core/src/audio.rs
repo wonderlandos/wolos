@@ -152,7 +152,7 @@ pub fn linear_for(percent: u16, volume_base: f32) -> f32 {
 /// (100 = 0 dB) on a device whose 0 dB sits at `volume_base`: both count from the hardware
 /// maximum, cubic like the slider, so a base below 1.0 makes the numbers differ.
 pub fn hardware_percent(percent: u16, volume_base: f32) -> u16 {
-    (linear_for(percent, volume_base).cbrt() * 100.0).round() as u16
+    percent_of(linear_for(percent, volume_base), 1.0, false)
 }
 
 /// The slider's end when boost is allowed: the hardware maximum in percent of 0 dB.

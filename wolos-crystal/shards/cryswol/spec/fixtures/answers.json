@@ -1,0 +1,15 @@
+{
+  "app": "org.example.answers",
+  "answers": {
+    "power.info": [{"ok": true, "data": {"on_battery": true, "low_power": false, "battery": {"percent": 71, "charging": false, "full": false}}}],
+    "power.keep-awake": [{"ok": true}, {"ok": false, "code": "permission-denied", "message": "Keeping the computer awake is turned off for this app."}],
+    "network.info": [{"ok": true, "data": {"online": true, "interfaces": [{"name": "eth0", "kind": "ethernet", "up": true}, {"name": "wlan0", "kind": "wifi", "up": false}]}}],
+    "audio.info": [{"ok": true, "data": {"volume": 40, "muted": false, "now_playing": {"title": "Song", "artist": "Band", "player": "Music", "playing": true}}}],
+    "audio.set-volume": [{"ok": true}],
+    "audio.set-muted": [{"ok": true}],
+    "account.info": [{"ok": true, "data": {"name": "alice", "full_name": "Alice"}}],
+    "device.list": [{"ok": true, "data": {"devices": [{"kind": "usb", "name": "Scanner", "can_open": true, "vendor": 1234, "product": 22136}, {"kind": "bluetooth", "name": "Headphones", "can_open": false, "connected": true}]}}],
+    "search.query": [{"ok": true, "data": {"results": [{"title": "Notes", "kind": "App"}, {"title": "Wi-Fi", "kind": "Settings"}]}}]
+  },
+  "events": []
+}

@@ -1,6 +1,6 @@
 # Sound
 
-Decision record: [0037](../adr/0037-sound-service.md) (the design for creators is [creators-audio.md](../creators-audio.md)).
+Decision record: [0038](../adr/0038-sound-service.md) (the design for creators is [creators-audio.md](../creators-audio.md)).
 
 One sound server, PipeWire, with WirePlumber as its session manager (`wolos-iso/profile/packages.desktop`, "Audio" block). This module is about the rules WolOS adds on top and where each one lives.
 

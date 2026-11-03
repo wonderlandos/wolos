@@ -1,4 +1,4 @@
-# 0037 - One sound service, and 100% is 0 dB
+# 0038 - One sound service, and 100% is 0 dB
 Status: accepted (recorded in v0.12 for what the sound service already does; written from the round-6 audio audit). Builds on 0016 (Arch base: PipeWire and WirePlumber come from the distribution).
 
 Context: PipeWire reports where a device's 0 dB sits (`volumeBase`) and WirePlumber starts a new source at the hardware maximum, which on most codecs is +20 to +30 dB of microphone boost, so every new microphone clipped, and a slider labelled 100% meant "as loud as the hardware can go". Three tools also moved volumes by their own scale: `wpctl set-volume N%` and `pactl N%` count from the hardware maximum, the Settings and Control Center sliders drew percent of 0 dB. Filters (echo cancel with automatic gain, RNNoise) and the App Mix for OBS are PipeWire-pulse modules that must exist only while someone asks. The sound pages in Settings and the Control Center each need the same devices, levels and rules.

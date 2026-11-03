@@ -210,7 +210,8 @@ fn enroll_keeps_the_recovery_key_in_a_file_and_never_in_arguments() {
 const CMDLINE: &str = "root=/dev/mapper/wolosroot rd.luks.name=U-1=wolosroot quiet\n";
 /// A TPM install (`encrypt::cmdline_words`, Unlock::Tpm2) and a passphrase-only one.
 const TPM_CMDLINE: &str = "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=tpm2-device=auto,discard root=/dev/mapper/wolosroot quiet\n";
-const PASS_CMDLINE: &str = "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=discard root=/dev/mapper/wolosroot quiet\n";
+const PASS_CMDLINE: &str =
+    "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=discard root=/dev/mapper/wolosroot quiet\n";
 
 /// The chip refused (Secure Boot turned off: PCR 7 changed), the person typed their password:
 /// systemd-cryptsetup's cached copy unlocks the volume once more and the TPM slot is sealed to the

@@ -343,7 +343,7 @@ module Hue
 
     # Chroma-weighted mean hue of a mostly grey picture; nil below the JPEG-noise floor.
     def tint(colors : P) : Float64?
-      return nil if colors.empty?
+      return if colors.empty?
       sn = cs = sum = 0.0
       colors.each do |c|
         lch = Color.hex_to_lch(c)
@@ -353,7 +353,7 @@ module Hue
         cs += Math.cos(rad) * lch.c
         sum += lch.c
       end
-      return nil if sum / colors.size < MIN_TINT_CHROMA
+      return if sum / colors.size < MIN_TINT_CHROMA
       fmod(Math.atan2(sn / sum, cs / sum) * 180 / Math::PI + 360, 360)
     end
 

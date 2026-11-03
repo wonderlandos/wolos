@@ -13,9 +13,9 @@
     "accentText": "#ffffff",
     "glass": "rgba(246,246,250,0.84)",
     "control": "#eceef2",
-    "success": "#34c759",
-    "warning": "#ff9500",
-    "danger": "#ff3b30"
+    "success": "#1c9a6e",
+    "warning": "#d9541e",
+    "danger": "#cf3a68"
   },
   "iconTheme": "WhiteSur"
 }

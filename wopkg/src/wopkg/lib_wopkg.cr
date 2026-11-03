@@ -1,36 +1,59 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# libwopkg C ABI (crates/wopkg/include/wopkg.h, ADR 0021).
+# Generated from crates/wopkg/include/wopkg.h by crates/wol-abi/tests/bindings.rs; do not edit.
+# Regenerate: WOL_BLESS=1 cargo test -p wol-abi --test bindings
 @[Link("wopkg")]
 lib LibWopkg
-  alias Status = Int32
-  alias Context = Void*
-  alias Error = Void*
-  alias WString = Void*
-  alias ProgressFn = (UInt8*, LibC::SizeT, Void*) -> Void
+  WOPKG_VERSION_MAJOR         = 1
+  WOPKG_VERSION_MINOR         = 0
+  WOPKG_VERSION_PATCH         = 0
+  WOPKG_OK                    = 0
+  WOPKG_ERR_INVALID_ARGUMENT  = 1
+  WOPKG_ERR_PERMISSION_DENIED = 2
+  WOPKG_ERR_UNAVAILABLE       = 3
+  WOPKG_ERR_INTERNAL          = 4
+  WOPKG_ERR_UNTRUSTED         = 5
+  WOPKG_ERR_NOT_FOUND         = 6
 
-  fun version = wopkg_version : UInt32
-  fun version_string = wopkg_version_string : UInt8*
-  fun string_get_bytes = wopkg_string_get_bytes(s : WString, len : LibC::SizeT*) : UInt8*
-  fun string_release = wopkg_string_release(s : WString)
-  fun error_get_code = wopkg_error_get_code(e : Error) : Status
-  fun error_get_message = wopkg_error_get_message(e : Error, len : LibC::SizeT*) : UInt8*
-  fun error_release = wopkg_error_release(e : Error)
-  fun context_create = wopkg_context_create(config : UInt8*, len : LibC::SizeT, out : Context*, error : Error*) : Status
-  fun context_release = wopkg_context_release(c : Context)
-  fun index_update = wopkg_index_update(c : Context, req : UInt8*, len : LibC::SizeT, progress : ProgressFn, ud : Void*, out : WString*, error : Error*) : Status
-  fun search = wopkg_search(c : Context, q : UInt8*, len : LibC::SizeT, limit : UInt32, out : WString*, error : Error*) : Status
-  fun info = wopkg_info(c : Context, n : UInt8*, len : LibC::SizeT, out : WString*, error : Error*) : Status
-  fun complete = wopkg_complete(c : Context, p : UInt8*, len : LibC::SizeT, limit : UInt32, out : WString*, error : Error*) : Status
-  fun installed = wopkg_installed(c : Context, out : WString*, error : Error*) : Status
-  fun fetch = wopkg_fetch(c : Context, req : UInt8*, len : LibC::SizeT, progress : ProgressFn, ud : Void*, out : WString*, error : Error*) : Status
-  fun verify = wopkg_verify(c : Context, req : UInt8*, len : LibC::SizeT, out : WString*, error : Error*) : Status
-  fun appimage_inspect = wopkg_appimage_inspect(c : Context, p : UInt8*, len : LibC::SizeT, out : WString*, error : Error*) : Status
-  fun appimage_install = wopkg_appimage_install(c : Context, req : UInt8*, len : LibC::SizeT, progress : ProgressFn, ud : Void*, out : WString*, error : Error*) : Status
-  fun appimage_remove = wopkg_appimage_remove(c : Context, n : UInt8*, len : LibC::SizeT, out : WString*, error : Error*) : Status
-  fun appimage_update = wopkg_appimage_update(c : Context, req : UInt8*, len : LibC::SizeT, progress : ProgressFn, ud : Void*, out : WString*, error : Error*) : Status
-  fun history = wopkg_history(c : Context, out : WString*, error : Error*) : Status
-  fun history_record = wopkg_history_record(c : Context, e : UInt8*, len : LibC::SizeT, out : WString*, error : Error*) : Status
-  fun rollback = wopkg_rollback(c : Context, id : UInt8*, len : LibC::SizeT, out : WString*, error : Error*) : Status
-  fun system_call = wopkg_system_call(c : Context, req : UInt8*, len : LibC::SizeT, error : Error*) : Status
-  fun release_plan = wopkg_release_plan(c : Context, req : UInt8*, len : LibC::SizeT, out : WString*, error : Error*) : Status
+  alias Status = Int32
+
+  # Handles are opaque: the field exists only because a Crystal struct cannot be empty.
+  struct Context
+    opaque : UInt8
+  end
+
+  struct Error
+    opaque : UInt8
+  end
+
+  struct String
+    opaque : UInt8
+  end
+
+  alias ProgressFn = UInt8*, LibC::SizeT, Void* -> Void
+
+  fun wopkg_version : UInt32
+  fun wopkg_version_string : UInt8*
+  fun wopkg_string_get_bytes(string : String*, len : LibC::SizeT*) : UInt8*
+  fun wopkg_string_release(string : String*)
+  fun wopkg_error_get_code(error : Error*) : Status
+  fun wopkg_error_get_message(error : Error*, len : LibC::SizeT*) : UInt8*
+  fun wopkg_error_release(error : Error*)
+  fun wopkg_context_create(config : UInt8*, len : LibC::SizeT, out_ : Context**, error : Error**) : Status
+  fun wopkg_context_release(context : Context*)
+  fun wopkg_index_update(context : Context*, request : UInt8*, len : LibC::SizeT, progress : ProgressFn, user_data : Void*, out_ : String**, error : Error**) : Status
+  fun wopkg_search(context : Context*, query : UInt8*, len : LibC::SizeT, limit : UInt32, out_ : String**, error : Error**) : Status
+  fun wopkg_info(context : Context*, name : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_complete(context : Context*, prefix : UInt8*, len : LibC::SizeT, limit : UInt32, out_ : String**, error : Error**) : Status
+  fun wopkg_installed(context : Context*, out_ : String**, error : Error**) : Status
+  fun wopkg_fetch(context : Context*, request : UInt8*, len : LibC::SizeT, progress : ProgressFn, user_data : Void*, out_ : String**, error : Error**) : Status
+  fun wopkg_verify(context : Context*, request : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_appimage_inspect(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_appimage_install(context : Context*, request : UInt8*, len : LibC::SizeT, progress : ProgressFn, user_data : Void*, out_ : String**, error : Error**) : Status
+  fun wopkg_appimage_remove(context : Context*, name : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_appimage_update(context : Context*, request : UInt8*, len : LibC::SizeT, progress : ProgressFn, user_data : Void*, out_ : String**, error : Error**) : Status
+  fun wopkg_history(context : Context*, out_ : String**, error : Error**) : Status
+  fun wopkg_history_record(context : Context*, entry : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_rollback(context : Context*, id : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_system_call(context : Context*, request : UInt8*, len : LibC::SizeT, error : Error**) : Status
+  fun wopkg_release_plan(context : Context*, request : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
 end

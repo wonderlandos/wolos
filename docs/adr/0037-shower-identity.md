@@ -22,14 +22,14 @@ started, and it holds something only that process holds.
 - has a tracer (`TracerPid`), which survives an exec;
 - lives in another mount namespace than wold (a private `/usr` overlay);
 - or cannot be read at all (unknown is refused).
-Not done: a parent check. Hyprland starts `exec-once` programs by a double fork, so the legitimate shell
+Not done: a parent check. The compositor starts `exec-once` programs by a double fork, so the legitimate shell
 is an orphan whose parent is init, exactly like one an attacker double-forks.
 This raises the price; it is not the identity. It does not stop a process that gets code into the
 real shell after it started (ptrace needs the shell to be a descendant under `ptrace_scope=1`; making
 the shell non-dumpable closes that and is a one-line change in the shell, see Consequences). A user
 whose profile exports `LD_LIBRARY_PATH` gets no notifications until the shell is started clean.
 
-## Proposed decision (the token)
+## Decision (proposed: the token)
 1. `wol-login` (root; it starts the session) draws 256 random bits per session, sends them to wold
    (`session.token {uid, token}`, accepted from root only) and keeps the descriptor of a memfd that
    holds them, sealed.
@@ -52,7 +52,7 @@ whose profile exports `LD_LIBRARY_PATH` gets no notifications until the shell is
 
 ## Consequences if accepted
 - The compositor `exec-once` line for `wol-shell` goes; `wol-session` owns the shell's lifetime
-  (restart, crash log). Tests (`desktop/overlay`, golden journeys) that start the shell by Hyprland change.
+  (restart, crash log). Tests (`desktop/overlay`, golden journeys) that start the shell from the compositor change.
 - A second login of the same account (fast user switching) has its own token per session.
 - Residual, accepted: code the real shell loads by its own plug-in path (themes, plugins) runs with
   its token. Plugins are `[[hypr]]`/Lua with allow-lists (`plugins.md`), not libraries.

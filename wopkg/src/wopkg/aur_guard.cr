@@ -65,9 +65,9 @@ module Wopkg
     def self.host_of(url : String) : String?
       u = url.sub(/\A[\w.-]+::/, "")
       VCS.each { |v| u = u.lchop(v) }
-      return nil unless u.includes?("://")
+      return unless u.includes?("://")
       URI.parse(u.sub(/#.*\z/, "")).host.try(&.downcase)
-    rescue
+    rescue URI::Error
       nil
     end
 
@@ -141,7 +141,7 @@ module Wopkg
           toks = line.split(/\s+/).reject { |t| t.includes?("pkgdir") || t.includes?("srcdir") || t.includes?("DESTDIR") || t.includes?("$_") }
           abs = toks.any? { |t| t.gsub(/\A["'>]+|["']+\z/, "").matches?(%r{\A/(usr|etc|opt|bin|sbin|lib|lib64|var|root|boot|srv)(/|\z)}) && !t.starts_with?("--") }
           redirect = line.gsub(/\S*(pkgdir|srcdir|DESTDIR)\S*/, "").matches?(%r{>>?\s*"?/(usr|etc|opt|bin|sbin|lib|var|root|boot)/})
-          if (abs && toks.any? { |t| t.matches?(WRITE_VERBS) }) || redirect
+          if (abs && toks.any?(&.matches?(WRITE_VERBS))) || redirect
             acc << f(Severity::Warn, :outside_pkgdir, "Writes outside the package folder (#{line.size > 60 ? line[0, 60] + "..." : line}), so it would change the build computer itself.")
           end
         end
@@ -153,7 +153,7 @@ module Wopkg
       acc = scan_sources(si, allow_skip)
       acc.concat(scan_script(pkgbuild, false))
       if inst = install
-        names = inst.scan(/^\s*((?:pre|post)_(?:install|upgrade|remove))\s*\(\)/m).map(&.[1]).uniq
+        names = inst.scan(/^\s*((?:pre|post)_(?:install|upgrade|remove))\s*\(\)/m).map(&.[1]).uniq!
         acc << f(Severity::Warn, :scriptlet, "Has an install script#{names.empty? ? "" : " (#{names.join(", ")})"} that runs as the administrator when the package is installed. Read it first.")
         acc.concat(scan_script(inst, true))
       end
@@ -162,13 +162,39 @@ module Wopkg
 
     # What the community package collection's RPC says about a package (fetched over TLS; the dump is not used for decisions).
     record Meta, maintainer : String?, first_submitted : Int64, last_modified : Int64, votes : Int32, popularity : Float64, out_of_date : Bool do
+      # The RPC answer (`/rpc/v5/info`); the fields wopkg does not read are ignored.
+      struct Answer
+        include JSON::Serializable
+
+        struct Package
+          include JSON::Serializable
+
+          @[JSON::Field(key: "Maintainer")]
+          getter maintainer : String?
+          @[JSON::Field(key: "FirstSubmitted")]
+          getter first_submitted : Int64?
+          @[JSON::Field(key: "LastModified")]
+          getter last_modified : Int64?
+          @[JSON::Field(key: "NumVotes")]
+          getter votes : Int32?
+          @[JSON::Field(key: "Popularity")]
+          getter popularity : Float64?
+          @[JSON::Field(key: "OutOfDate")]
+          getter out_of_date : Int64?
+        end
+
+        getter results : Array(Package) = [] of Package
+      end
+
       def self.parse(json : String) : Meta
-        r = JSON.parse(json)["results"]?.try(&.as_a?).try(&.first?) || raise ArgumentError.new("The community package collection did not describe that package.")
-        Meta.new(r["Maintainer"]?.try(&.as_s?), r["FirstSubmitted"]?.try(&.as_i64?) || raise(ArgumentError.new("The community package collection answered incompletely.")),
-          r["LastModified"]?.try(&.as_i64?) || 0_i64, r["NumVotes"]?.try(&.as_i?) || 0,
-          r["Popularity"]?.try(&.as_f?) || 0.0, !r["OutOfDate"]?.try(&.raw).nil?)
-      rescue JSON::ParseException
-        raise ArgumentError.new("The community package collection answer could not be read.")
+        r = begin
+          Answer.from_json(json).results.first?
+        rescue JSON::Error
+          raise ArgumentError.new("The community package collection answer could not be read.")
+        end
+        raise ArgumentError.new("The community package collection did not describe that package.") unless r
+        Meta.new(r.maintainer, r.first_submitted || raise(ArgumentError.new("The community package collection answered incompletely.")),
+          r.last_modified || 0_i64, r.votes || 0, r.popularity || 0.0, !r.out_of_date.nil?)
       end
     end
 
@@ -195,7 +221,7 @@ module Wopkg
     end
 
     def self.blocked?(fs : Array(Finding)) : Bool
-      fs.any? { |x| x.severity.refuse? }
+      fs.any?(&.severity.refuse?)
     end
 
     # ---- git pins -------------------------------------------------------------------------------
@@ -223,7 +249,7 @@ module Wopkg
 
     def self.files_at(dir : String, commit : String) : Array(String)
       raise ArgumentError.new("Not a commit id.") unless commit?(commit)
-      git(dir, ["ls-tree", "--name-only", commit])[1].lines.map(&.strip).reject(&.empty?).sort
+      git(dir, ["ls-tree", "--name-only", commit])[1].lines.map(&.strip).reject(&.empty?).sort!
     end
 
     # Is the checkout exactly the reviewed commit, with no edits since?

@@ -13,14 +13,16 @@ command_timeout = 200
 palette = "wolos"
 format = "$username$hostname$directory$git_branch$git_state$cmd_duration$character"
 
+# This table (no theme yet; `wol theme` writes the theme's colours instead): terminal palette slots,
+# "none" = the terminal's own foreground, readable on light and dark (ANSI white vanished on light).
 [palettes.wolos]
 accent = "purple"
 muted = "bright-black"
-ok = "white"
+ok = "none"
 error = "red"
 warn = "yellow"
 suggest = "bright-black"
-text = "white"
+text = "none"
 surface = "black"
 
 [username]

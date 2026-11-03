@@ -13,8 +13,36 @@ module Wopkg
 
     record Repo, name : String, servers : Array(String)
 
+    # One source of an index update request, as `request` writes it (read back by `wopkg sources`).
+    struct Source
+      include JSON::Serializable
+
+      getter name : String
+      getter kind : String
+      getter url : String?
+      getter path : String?
+
+      # Where it is read from: a URL or a file.
+      def location : String
+        url || path || ""
+      end
+    end
+
+    struct IndexRequest
+      include JSON::Serializable
+
+      getter sources : Array(Source)
+    end
+
+    # A file's text, or nil when it cannot be read (an `Include` that is not there is skipped).
+    def self.read_text(path : String) : String?
+      File.read(path)
+    rescue File::Error
+      nil
+    end
+
     # `[repo]` sections (not `[options]`) with their servers, `Include` files read, comments skipped.
-    def self.pacman_repos(conf : String, read : Proc(String, String?) = ->(p : String) { File.read(p) rescue nil }) : Array(Repo)
+    def self.pacman_repos(conf : String, read : Proc(String, String?) = ->read_text(String)) : Array(Repo)
       repos = [] of Repo
       cur : Repo? = nil
       conf.each_line do |raw|
@@ -23,7 +51,7 @@ module Wopkg
         if line.starts_with?('[') && line.ends_with?(']')
           name = line[1..-2]
           cur = name == "options" ? nil : Repo.new(name, [] of String)
-          repos << cur.not_nil! if cur
+          repos << cur if cur
           next
         end
         next unless c = cur
@@ -58,7 +86,7 @@ module Wopkg
     FLATHUB  = "https://dl.flathub.org/repo/appstream/#{ARCH}/appstream.xml.gz"
 
     def self.request(repos : Array(Repo), appstream : String?, local : Bool, only : Array(String)? = nil) : String
-      want = ->(k : String) { only.nil? || only.not_nil!.includes?(k) }
+      want = ->(k : String) { (o = only).nil? || o.includes?(k) }
       JSON.build do |j|
         j.object do
           j.field "prune", only.nil?

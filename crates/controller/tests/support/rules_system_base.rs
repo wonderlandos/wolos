@@ -235,7 +235,11 @@ pub(crate) fn ratchet(rule: &str, found: BTreeSet<String>, baseline: &[&str]) {
     }
 }
 
-pub(crate) fn ratchet_count(rule: &str, found: BTreeMap<String, usize>, baseline: &[(&str, usize)]) {
+pub(crate) fn ratchet_count(
+    rule: &str,
+    found: BTreeMap<String, usize>,
+    baseline: &[(&str, usize)],
+) {
     let mut bad = Vec::new();
     for (f, n) in &found {
         let allowed = baseline.iter().find(|(b, _)| b == f).map_or(0, |(_, n)| *n);

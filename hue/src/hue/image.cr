@@ -103,14 +103,37 @@ module Hue
       Picture.new(w, h, res)
     end
 
-    # Writes the picture as PNG or JPEG (test fixtures and the benchmark picture).
-    def save(path : String, type : String = "png") : Nil
+    # A copy scaled to `w` x `h` with gdk-pixbuf's bilinear scaler (the benchmark picture is a
+    # test scene blown up to 50 MP).
+    def scaled(w : Int32, h : Int32) : Picture
+      pb = to_pixbuf
+      begin
+        big = LibPixbuf.scale_simple(pb, w, h, 2) # GDK_INTERP_BILINEAR
+        raise ImageError.new("out of memory") if big.null?
+        begin
+          Picture.from_pixbuf(big)
+        ensure
+          LibPixbuf.unref(big.as(Void*))
+        end
+      ensure
+        LibPixbuf.unref(pb.as(Void*))
+      end
+    end
+
+    # The picture as a gdk-pixbuf the caller owns (RGBA, 8 bits).
+    private def to_pixbuf : LibPixbuf::Pixbuf
       pb = LibPixbuf.new(0, 1, 8, @width, @height)
       raise ImageError.new("out of memory") if pb.null?
+      dst = LibPixbuf.pixels(pb)
+      stride = LibPixbuf.rowstride(pb)
+      @height.times { |y| (dst + y.to_i64 * stride).copy_from(@rgba.to_unsafe + y.to_i64 * @width * 4, @width * 4) }
+      pb
+    end
+
+    # Writes the picture as PNG or JPEG (test fixtures and the benchmark picture).
+    def save(path : String, type : String = "png") : Nil
+      pb = to_pixbuf
       begin
-        dst = LibPixbuf.pixels(pb)
-        stride = LibPixbuf.rowstride(pb)
-        @height.times { |y| (dst + y.to_i64 * stride).copy_from(@rgba.to_unsafe + y.to_i64 * @width * 4, @width * 4) }
         target = pb
         if type == "jpeg"
           # JPEG has no alpha: drop it by an identity scale into an RGB copy.

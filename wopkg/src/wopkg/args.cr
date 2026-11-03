@@ -8,10 +8,10 @@ module Wopkg
   class Args
     property verb : String = "help"
     property targets = [] of String
-    property json = false
-    property yes = false
-    property check = false
-    property local = false
+    property? json = false
+    property? yes = false
+    property? check = false
+    property? local = false
     property from : String? = nil
     property to : String? = nil
     property only : Array(String)? = nil

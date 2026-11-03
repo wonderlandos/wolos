@@ -174,16 +174,16 @@ module Hue
         mid = b.size // 2
         boxes[best, 1] = [Box.new(pool, b.from, mid), Box.new(pool, b.from + mid, b.size - mid)]
       end
-      boxes.compact_map do |b|
-        next if b.size == 0
+      boxes.compact_map do |bx|
+        next if bx.size == 0
         l = a = bb = 0.0
-        (b.from...(b.from + b.size)).each do |k|
+        (bx.from...(bx.from + bx.size)).each do |k|
           c = pool[k]
           l += c.l
           a += c.a
           bb += c.b
         end
-        {Color.lab_to_hex(Color::Lab.new(l / b.size, a / b.size, bb / b.size)), b.size}
+        {Color.lab_to_hex(Color::Lab.new(l / bx.size, a / bx.size, bb / bx.size)), bx.size}
       end
     end
 
@@ -208,7 +208,7 @@ module Hue
 
     def self.weights(counts : Array(Int32)) : Array(Float64)?
       total = counts.sum
-      return nil if total == 0
+      return if total == 0
       counts.map { |c| c.to_f / total }
     end
 

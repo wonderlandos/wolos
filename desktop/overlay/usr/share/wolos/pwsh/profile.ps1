@@ -20,7 +20,8 @@ $wolosColors = Join-Path $wolosConfigHome 'wolos/toolkits/pwsh/colors.ps1'
 if (-not (Test-Path -LiteralPath $wolosColors -PathType Leaf)) { $wolosColors = '/usr/share/wolos/toolkits/pwsh/colors.ps1' }
 if (Test-Path -LiteralPath $wolosColors -PathType Leaf) { . $wolosColors }
 
-if ($env:WOLOS_PROMPT -ne 'pure' -and (Get-Command starship -ErrorAction Ignore)) {
+# Not on the Linux text console (TERM=linux): its font has no prompt glyph.
+if ($env:WOLOS_PROMPT -ne 'pure' -and $env:TERM -ne 'linux' -and (Get-Command starship -ErrorAction Ignore)) {
     $wolosStar = Join-Path $wolosConfigHome 'wolos/toolkits/starship/palette.toml'
     if (-not (Test-Path -LiteralPath $wolosStar -PathType Leaf)) { $wolosStar = '/usr/share/wolos/toolkits/starship/palette.toml' }
     if (-not (Test-Path -LiteralPath $wolosStar -PathType Leaf)) { $wolosStar = '/usr/share/wolos/starship/starship.toml' }

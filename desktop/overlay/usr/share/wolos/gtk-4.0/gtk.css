@@ -3,14 +3,14 @@
   --accent-bg-color: #7c5cff;
   --accent-fg-color: #ffffff;
   --accent-color: #7657f2;
-  --destructive-bg-color: #ff3b30;
-  --destructive-color: #d93229;
-  --success-bg-color: #34c759;
-  --success-color: #22813a;
-  --warning-bg-color: #ff9500;
-  --warning-color: #a66100;
-  --error-bg-color: #ff3b30;
-  --error-color: #d93229;
+  --destructive-bg-color: #cf3a68;
+  --destructive-color: #cf3a68;
+  --success-bg-color: #1c9a6e;
+  --success-color: #18835e;
+  --warning-bg-color: #d9541e;
+  --warning-color: #c34c1b;
+  --error-bg-color: #cf3a68;
+  --error-color: #cf3a68;
   --window-bg-color: #f5f5f7;
   --window-fg-color: #1d1d1f;
   --view-bg-color: #ffffff;
@@ -53,9 +53,9 @@
   --wol-accent-text: #ffffff;
   --wol-glass: #f6f6fa;
   --wol-control: #eceef2;
-  --wol-success: #34c759;
-  --wol-warning: #ff9500;
-  --wol-danger: #ff3b30;
+  --wol-success: #1c9a6e;
+  --wol-warning: #d9541e;
+  --wol-danger: #cf3a68;
 }
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* WolOS scaffold for libadwaita / GTK 4 apps: the Kit AppWindow (crates/shell/src/kit/kit.css) drawn on
@@ -216,6 +216,6 @@ windowcontrols { border-spacing: 10px; }
 windowcontrols > button { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border: none; background: none; box-shadow: none; }
 windowcontrols > button image { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
 windowcontrols:hover > button image { color: rgba(0,0,0,0.55); }
-windowcontrols > button.close image { background: #ff3b30; }
-windowcontrols > button.minimize image { background: #ff9500; }
-windowcontrols > button.maximize image { background: #34c759; }
+windowcontrols > button.close image { background: #cf3a68; }
+windowcontrols > button.minimize image { background: #d9541e; }
+windowcontrols > button.maximize image { background: #1c9a6e; }

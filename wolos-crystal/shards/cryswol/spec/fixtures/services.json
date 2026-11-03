@@ -1,0 +1,9 @@
+{
+  "app": "org.example.services",
+  "answers": {
+    "service.start": [{"ok": true}, {"ok": false, "code": "permission-denied", "message": "Running in the background is turned off for this app."}],
+    "service.status": [{"ok": true, "data": {"state": "running", "starts": 1, "last_exit": 0}}],
+    "service.stop": [{"ok": true}]
+  },
+  "events": []
+}

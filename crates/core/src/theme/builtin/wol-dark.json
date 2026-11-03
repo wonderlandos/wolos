@@ -13,9 +13,9 @@
     "accentText": "#ffffff",
     "glass": "rgba(36,36,42,0.84)",
     "control": "#3a3a40",
-    "success": "#30d158",
-    "warning": "#ff9f0a",
-    "danger": "#ff453a"
+    "success": "#5be3b0",
+    "warning": "#ff8a55",
+    "danger": "#f2678f"
   },
   "iconTheme": "WhiteSur-dark"
 }

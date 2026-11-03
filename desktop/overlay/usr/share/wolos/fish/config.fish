@@ -18,7 +18,8 @@ test -r $colors; and source $colors
 # Keys: fish 4's defaults already match the WolOS zsh (emacs bindings, Ctrl/Alt-arrows by word,
 # Up/Down search history by the typed prefix); fzf adds Ctrl+R and Ctrl+T when installed.
 
-if test "$WOLOS_PROMPT" != pure; and command -q starship
+# Not on the Linux text console (TERM=linux): its font has no prompt glyph.
+if test "$WOLOS_PROMPT" != pure; and test "$TERM" != linux; and command -q starship
     set -l star $config_home/wolos/toolkits/starship/palette.toml
     test -r $star; or set star /usr/share/wolos/toolkits/starship/palette.toml
     test -r $star; or set star /usr/share/wolos/starship/starship.toml

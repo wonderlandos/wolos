@@ -56,8 +56,8 @@ describe Hue::Extract do
   it "finds 48 dominant colours by coverage" do
     dom, counts = Extract.dominant(Extract.sample(Picture.load(SpecHelp.scene_files["stripes"])))
     dom.size.should eq(48)
-    counts.should eq(counts.sort.reverse)
-    dom.all? { |c| c.matches?(/\A#[0-9A-F]{6}\z/) }.should be_true
+    counts.should eq(counts.sort.reverse!)
+    dom.all?(&.matches?(/\A#[0-9A-F]{6}\z/)).should be_true
   end
 
   it "tells monochrome pictures from colourful ones" do

@@ -16,12 +16,13 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 
 | Document | What it is |
 |---|---|
-| [STANDARDS.md](STANDARDS.md) | coding standards for Rust, shell, C/C++, configs, docs, commits and security (§7.1: the v0.12 hardening rules, one helper per rule); lines marked **CI** are checked |
+| [STANDARDS.md](STANDARDS.md) | coding standards for Rust, shell, Crystal, C/C++, configs, docs, commits and security (§7.1: the v0.12 hardening rules, one helper per rule); lines marked **CI** are checked |
 | [REVIEW.md](REVIEW.md) | the post-change audit (second pass): how to get a box, the general list, per-component briefs, the report format |
 | [DOCTRINE.md](DOCTRINE.md) | the code of conduct ("The Wonderland Doctrine"): who you are here, what is and is not welcome in project spaces, upstreams, and how reports are handled (conduct@wolos.org); `CODE_OF_CONDUCT.md` at the repository root points to it |
 | [RULES.md](RULES.md) | the rule catalogue: small concrete rules, each with an id, a reason and the check that enforces it |
 | [RULES-system.md](RULES-system.md) | system-file rules (RS-nnn) for scripts, units, sysctl, polkit, compositor config and pacman hooks; checked by `crates/controller/tests/rules_system.rs` |
 | [RULES-ui.md](RULES-ui.md) | UI consistency rules (RU-nnn) for copy, widgets, CSS, goldens and docs; checked by `crates/shell/tests/rules_ui.rs` |
+| [RULES-crystal.md](RULES-crystal.md) | Crystal rules (RCR-nnn) for `.cr` code, the ameba and formatter setup, FFI limits, known-vulnerable patterns and the shard supply chain; checked by `crates/controller/tests/rules_crystal.rs` |
 | [THIRD-PARTY.md](THIRD-PARTY.md) | third-party notices: the only place where projects we translated code from, and their copyright holders, are named; shipped as `/usr/share/licenses/<package>/THIRD-PARTY.md` |
 | ADR process | a decision is a file `adr/NNNN-title.md` with Status, Context, Decision, Consequences (**CI** `tools/check-adrs.sh`). A decision changes only by a new ADR that names the old one; the old one's Status says `superseded by NNNN`. `mem adr` is the maintainers' tooling that drafts them; the files in `adr/` are the record. |
 
@@ -65,6 +66,8 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0034](adr/0034-root-staged-installs.md) | Locally built packages: who installs the staged copy | accepted |
 | [0035](adr/0035-layer-hold-on-slot-switch.md) | Live layers on a slot switch: held, not merged, until the new slot is good | proposed |
 | [0036](adr/0036-crystal-userland.md) | Crystal is the userland language: bindings, wolkit, GPU surface, shard index | accepted |
+| [0037](adr/0037-shower-identity.md) | The shower is the shell wold's session started, not any process running its file | proposed |
+| [0038](adr/0038-sound-service.md) | One sound service, and 100% is 0 dB | accepted |
 
 ## Modules
 
@@ -74,7 +77,7 @@ Each module document names its ADR and its code by crate and path.
 |---|---|---|
 | [modules/abi.md](modules/abi.md) | libwol: the app API (`wol.h`, `libwol.so.1`), ABI rules, planned families, Lua widgets | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Helium, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
-| [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | none yet |
+| [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | [0038](adr/0038-sound-service.md) |
 | [modules/aurlaws.md](modules/aurlaws.md) | aurlaws: community-collection packages judged by laws over dependency graphs | [0022](adr/0022-aur-laws.md) |
 | [modules/automation.md](modules/automation.md) | helpers (`wol mcp`, scripts): policy, approval sheet wire, audit log | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/boot.md](modules/boot.md) | quiet boot, ESP layout, systemd-boot A/B slots, Secure Boot, install safety checks | [0016](adr/0016-arch-linux-base.md), [0023](adr/0023-installer-plans.md), [0025](adr/0025-signed-boot.md) |

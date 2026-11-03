@@ -16,7 +16,8 @@ const wolos_colors_system = "/usr/share/wolos/toolkits/nu/colors.nu"
 const wolos_colors_file = if ($wolos_colors | path exists) { $wolos_colors } else if ($wolos_colors_system | path exists) { $wolos_colors_system } else { null }
 source $wolos_colors_file
 
-if ($env.WOLOS_PROMPT? | default "starship") != "pure" and (which starship | is-not-empty) {
+# Not on the Linux text console (TERM=linux): its font has no prompt glyph.
+if ($env.WOLOS_PROMPT? | default "starship") != "pure" and ($env.TERM? | default "") != "linux" and (which starship | is-not-empty) {
     let star = ($nu.default-config-dir | path dirname | path join "wolos/toolkits/starship/palette.toml")
     if "STARSHIP_CONFIG" not-in $env {
         let system = "/usr/share/wolos/toolkits/starship/palette.toml"

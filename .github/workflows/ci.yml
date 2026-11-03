@@ -73,6 +73,18 @@ jobs:
           -A clippy::type_complexity
       - name: Crystal format (wopkg, hue, the wol-abi bindings; the lint image's crystal is the reference)
         run: make -C wopkg fmt-check
+      - name: Crystal lint (ameba with .ameba.yml; docs/RULES-crystal.md, tools/crystal/lint.sh)
+        # ameba is built from a pinned commit of its source (v1.7.0, no dependencies, no shards): the
+        # distribution package crashed at start against the current crystal. The script also repeats the
+        # format check; a missing tool fails the step here instead of being skipped.
+        env:
+          WOLOS_REQUIRE_CRYSTAL_LINT: "1"
+        run: |
+          git init -q "$RUNNER_TEMP/ameba"
+          git -C "$RUNNER_TEMP/ameba" fetch -q --depth 1 https://github.com/crystal-ameba/ameba 9a19f5f98abdf792a5a0ef6ca5c5d89459740e2f
+          git -C "$RUNNER_TEMP/ameba" checkout -q FETCH_HEAD
+          crystal build --no-debug -o /usr/local/bin/ameba "$RUNNER_TEMP/ameba/src/cli.cr"
+          sh tools/crystal/lint.sh
       - name: cargo audit (RustSec advisories against Cargo.lock)
         # Ignored advisories go in .cargo/audit.toml (read by cargo-audit; deny.toml is cargo-deny's), each with a reason and a review date.
         run: cargo audit --deny warnings

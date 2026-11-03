@@ -499,6 +499,83 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
     assert!(stamp <= now + 60, "the new stamp is today's: {stamp}");
 }
 
+/// SHELLS-check F2: the vulnerability list comes from arch-audit. Absent, the check says so in the
+/// journal and leaves no list (an empty one would read "no known vulnerabilities"); present, a
+/// finding is listed.
+#[test]
+fn update_check_without_arch_audit_says_so_and_lists_nothing() {
+    let d = scratch("audit");
+    let out = d.join("out");
+    fs::create_dir_all(&out).unwrap();
+    // PATH of exactly the tools the script uses, so a host arch-audit cannot leak in.
+    let fake = fakes(
+        &d,
+        &[
+            ("checkupdates", "exit 2"),
+            ("pacman", "echo linux-wolos"),
+            ("curl", "exit 22"),
+        ],
+    );
+    let bin = d.join("only");
+    fs::create_dir_all(&bin).unwrap();
+    for t in ["date", "cat", "mkdir", "mv", "rm", "chmod", "od", "tr"] {
+        let o = Command::new("sh")
+            .args(["-c", &format!("command -v {t}")])
+            .output()
+            .unwrap();
+        let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        std::os::unix::fs::symlink(&p, bin.join(t)).unwrap();
+    }
+    for t in ["checkupdates", "pacman", "curl"] {
+        std::os::unix::fs::symlink(
+            Path::new(fake.split(':').next().unwrap()).join(t),
+            bin.join(t),
+        )
+        .unwrap();
+    }
+    let sh = Command::new("sh")
+        .args(["-c", "command -v sh"])
+        .output()
+        .unwrap();
+    let sh = String::from_utf8_lossy(&sh.stdout).trim().to_string();
+    let run = |path: &Path| {
+        fs::remove_file(out.join("checked")).ok();
+        Command::new(&sh)
+            .arg(repo("files/usr/lib/wolos/update-check"))
+            .env("PATH", path)
+            .env("WOLOS_UPDATES", &out)
+            .output()
+            .unwrap()
+    };
+    fs::write(out.join("audit"), "stale\n").unwrap();
+    let o = run(&bin);
+    assert!(o.status.success());
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("arch-audit is not installed"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(!out.join("audit").exists(), "no list without arch-audit");
+    assert!(
+        out.join("checked").exists(),
+        "the rest of the check still ran"
+    );
+    // With it: exit 1 + names = vulnerable packages.
+    fs::write(bin.join("arch-audit"), "#!/bin/sh\necho openssl\nexit 1\n").unwrap();
+    Command::new("chmod")
+        .arg("+x")
+        .arg(bin.join("arch-audit"))
+        .status()
+        .unwrap();
+    let o = run(&bin);
+    assert!(
+        o.status.success() && o.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert_eq!(fs::read_to_string(out.join("audit")).unwrap(), "openssl\n");
+}
+
 /// A panel handed over at brightness 0 (passthrough, some firmware) is raised; never lowered.
 #[test]
 fn dark_panel_backlight_is_raised() {

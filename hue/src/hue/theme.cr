@@ -40,20 +40,25 @@ module Hue
       s = css.strip
       if s.starts_with?('#')
         h = s[1..]
-        return nil unless h.each_char.all?(&.hex?)
+        return unless h.each_char.all?(&.hex?)
         h = h.each_char.map { |c| "#{c}#{c}" }.join if h.size == 3
-        return nil unless h.size == 6 || h.size == 8
+        return unless h.size == 6 || h.size == 8
         a = h.size == 8 ? h[6, 2].to_i(16) / 255.0 : 1.0
         return Rgba.new(h[0, 2].to_i(16), h[2, 2].to_i(16), h[4, 2].to_i(16), a)
       end
-      return nil unless s.starts_with?("rgb") && s.ends_with?(')') && (o = s.index('('))
+      return unless s.starts_with?("rgb") && s.ends_with?(')') && (o = s.index('('))
       p = s[(o + 1)...-1].split(',').map(&.strip)
-      return nil unless p.size == 3 || p.size == 4
-      ch = p[0, 3].map { |x| x.to_i? }
-      return nil if ch.any? { |x| x.nil? || x < 0 || x > 255 }
-      a = p.size == 4 ? (p[3].to_f? || return nil) : 1.0
-      return nil unless 0.0 <= a <= 1.0
-      Rgba.new(ch[0].not_nil!, ch[1].not_nil!, ch[2].not_nil!, a)
+      return unless p.size == 3 || p.size == 4
+      r, g, b = p[0].to_i?, p[1].to_i?, p[2].to_i?
+      return unless r && g && b && {r, g, b}.all? { |x| 0 <= x <= 255 }
+      a = p.size == 4 ? (p[3].to_f? || return) : 1.0
+      return unless 0.0 <= a <= 1.0
+      Rgba.new(r, g, b, a)
+    end
+
+    # `parse` for colours this file builds itself: one that does not read is a bug, said plainly.
+    def self.parse!(css : String) : Rgba
+      parse(css) || raise Invalid.new("not a colour: #{css}")
     end
 
     # The desktop's WCAG luminance (its threshold is 0.03928, the WCAG 2.0 text).
@@ -107,7 +112,7 @@ module Hue
     end
 
     private def self.con(a : String, b : String) : Float64
-      ratio(parse(a).not_nil!, parse(b).not_nil!)
+      ratio(parse!(a), parse!(b))
     end
 
     # `c` moved toward black or white (whichever reads better on `bgs`) until it reaches `min`
@@ -143,7 +148,7 @@ module Hue
       fg = p[7].downcase
       card = dark ? mix(bg, fg, 0.07) : mix(bg, "#ffffff", 0.6)
       side = dark ? mix(bg, "#000000", 0.12) : mix(bg, fg, 0.03)
-      sbar = parse(rgba(side, 0.92)).not_nil!.over(parse(bg).not_nil!).hex
+      sbar = parse!(rgba(side, 0.92)).over(parse!(bg)).hex
       text = readable(fg, [bg, card, side, sbar], 4.6, ink)
       dim = readable(mix(text, bg, 0.35), [bg, card], 3.2, ink)
       acc = (accent || p[4]).downcase
@@ -200,9 +205,9 @@ module Hue
       tmp = "#{path}.tmp.#{Process.pid}"
       File.write(tmp, text)
       File.rename(tmp, path)
-    rescue e
+    ensure
+      # After the rename there is nothing left to delete; after a failed write or rename the partial file goes.
       File.delete?(tmp) if tmp
-      raise e
     end
 
     # A theme id from a name: lower case, runs of other characters become one "-".

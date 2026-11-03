@@ -23,6 +23,7 @@ id, or the other way round. A rule is changed or dropped in the same commit as i
 | RR- | this file, section "Rust" | Rust sources and Cargo.toml (`crates/shared/tests/rules_rust.rs`) |
 | RS- | [RULES-system.md](RULES-system.md) | system: units, services, files, daemons |
 | RU- | [RULES-ui.md](RULES-ui.md) | UI: shell, widgets, copy, themes |
+| RCR- | [RULES-crystal.md](RULES-crystal.md) | Crystal: `wopkg/`, `hue/`, the libwol bindings, shards and their build files (`crates/controller/tests/rules_crystal.rs`) |
 | RP- | [../../wolos-pkgbuilds/docs/RULES-packaging.md](../../wolos-pkgbuilds/docs/RULES-packaging.md) | package recipes |
 | RC- | [../../wolos-build/docs/RULES-ci.md](../../wolos-build/docs/RULES-ci.md) | build and CI |
 

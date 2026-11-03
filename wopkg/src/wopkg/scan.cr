@@ -62,6 +62,20 @@ module Wopkg
       Process.find_executable("wol-xguard")
     end
 
+    # One line of `wol-xguard scan --json`; what it adds beyond these fields is ignored.
+    struct XguardReport
+      include JSON::Serializable
+
+      struct Hit
+        include JSON::Serializable
+
+        getter name : String
+      end
+
+      getter findings : Array(Hit) = [] of Hit
+      getter signatures_age_days : Int64? = nil
+    end
+
     # One report per line, exit 0 clean, 1 found, 2 incomplete, 3 could not run.
     def self.run_xguard(paths : Array(String), xguard : String, now : Time = Time.utc) : Verdict
       hits = [] of String
@@ -71,9 +85,13 @@ module Wopkg
         buf = IO::Memory.new
         status = Process.run(xguard, ["scan", "--json", p], output: buf, error: Process::Redirect::Close)
         return Verdict.new(Kind::Unavailable, [] of String, "The malware check could not run, so this download was not checked.") if status.exit_code == 3
-        r = JSON.parse(buf.to_s.lines.first? || "{}")
-        r["findings"]?.try(&.as_a.each { |f| hits << f["name"].as_s })
-        age = r["signatures_age_days"]?.try(&.as_i64?) || age
+        r = begin
+          XguardReport.from_json(buf.to_s.lines.first? || "{}")
+        rescue JSON::Error
+          return Verdict.new(Kind::Unavailable, [] of String, "The malware check gave an answer that could not be read, so this download was not checked.")
+        end
+        r.findings.each { |f| hits << f.name }
+        age = r.signatures_age_days || age
         incomplete ||= status.exit_code == 2
       end
       hits = hits.uniq
@@ -104,7 +122,7 @@ module Wopkg
       status = Process.run(a.first, a[1..], output: buf, error: Process::Redirect::Close)
       case status.exit_code
       when 0, 1
-        hits = buf.to_s.lines.compact_map { |l| l[/: (\S+) FOUND\z/, 1]? }.uniq
+        hits = buf.to_s.lines.compact_map { |l| l[/: (\S+) FOUND\z/, 1]? }.uniq!
         if !hits.empty?
           Verdict.new(Kind::Infected, hits, "ClamAV found #{hits.join(", ")} in the download, so nothing was installed.")
         elsif age > STALE_DAYS

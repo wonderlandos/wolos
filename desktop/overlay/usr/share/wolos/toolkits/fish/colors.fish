@@ -4,15 +4,15 @@ set -g fish_color_normal 1d1d1f
 set -g fish_color_command 7053e6
 set -g fish_color_keyword 7053e6
 set -g fish_color_param 1d1d1f
-set -g fish_color_quote 22813a
+set -g fish_color_quote 167b58
 set -g fish_color_redirection 6e6e73
 set -g fish_color_end 6e6e73
 set -g fish_color_comment 6e6e73
-set -g fish_color_error cc2f26
-set -g fish_color_operator 995900
-set -g fish_color_escape 995900
+set -g fish_color_error c53763
+set -g fish_color_operator b8471a
+set -g fish_color_escape b8471a
 set -g fish_color_autosuggestion 8d8d91
-set -g fish_color_cancel cc2f26
+set -g fish_color_cancel c53763
 set -g fish_color_selection ffffff --background=7c5cff
 set -g fish_color_search_match --background=7c5cff
 set -g fish_pager_color_prefix 7053e6
@@ -21,7 +21,7 @@ set -g fish_pager_color_description 6e6e73
 set -g fish_pager_color_progress 6e6e73
 set -gx WOLOS_PROMPT_ACCENT '#7053e6'
 set -gx WOLOS_PROMPT_MUTED '#6e6e73'
-set -gx WOLOS_PROMPT_OK '#22813a'
-set -gx WOLOS_PROMPT_ERROR '#cc2f26'
+set -gx WOLOS_PROMPT_OK '#167b58'
+set -gx WOLOS_PROMPT_ERROR '#c53763'
 set -gx WOLOS_PROMPT_SUGGEST '#8d8d91'
-set -gx WOLOS_PROMPT_WARN '#995900'
+set -gx WOLOS_PROMPT_WARN '#b8471a'

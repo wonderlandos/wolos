@@ -1,0 +1,12 @@
+{
+  "app": "org.example.messages",
+  "answers": {
+    "ipc.listen": [{"ok": true}],
+    "ipc.send": [{"ok": true, "data": {"body": "pong"}}],
+    "ipc.reply": [{"ok": true}],
+    "ipc.publish": [{"ok": true}]
+  },
+  "events": [
+    {"after": "ipc.listen", "emit": [{"event": "message", "uid": 1000, "pid": 1, "id": 9, "from": "/usr/bin/sender", "name": "ping", "body": "hello"}]}
+  ]
+}

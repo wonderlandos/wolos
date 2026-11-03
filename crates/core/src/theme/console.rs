@@ -498,6 +498,13 @@ pub(crate) mod tests {
             for name in ["accent", "muted", "ok", "error", "warn"] {
                 assert!(pal.iter().any(|x| x.1 == name), "{name}");
             }
+            // The unthemed fallback: text roles in the terminal's own foreground, never ANSI
+            // white or black, one of which is invisible on any background.
+            for (_, k, v) in base.iter().filter(|x| x.0 == "palettes.wolos") {
+                if k == "ok" || k == "text" {
+                    assert_eq!(v, "none", "starship.toml fallback {k}");
+                }
+            }
             let z = kdl(file(&f, ZELLIJ)).unwrap_or_else(|e| panic!("{}: {e}", t.id));
             assert_eq!(z.len(), 11);
             assert!(
@@ -578,6 +585,96 @@ pub(crate) mod tests {
             let ps = file(&f, PWSH);
             assert_eq!(ps.matches('{').count(), ps.matches('}').count());
             assert!(ps.contains("Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue"));
+        }
+    }
+
+    /// Every `WOLOS_PROMPT_*` / `WOLOS_ANSI_*` name a shipped shell config reads is one the
+    /// generator writes into the toolkit file that config sources (bash read `*_SGR` names nobody
+    /// wrote, so its prompt never took the theme), and the prompt roles each config colours with
+    /// are among them. `<ROLE>` placeholders in comments are skipped.
+    #[test]
+    fn shell_configs_read_only_the_names_the_generator_writes() {
+        use crate::theme::apps::SHELL_COLORS;
+        fn names(text: &str) -> Vec<String> {
+            let mut out = Vec::new();
+            for (i, _) in text.match_indices("WOLOS_") {
+                let rest = &text[i..];
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_uppercase() || c == '_'))
+                    .unwrap_or(rest.len());
+                let n = &rest[..end];
+                let starts = n.starts_with("WOLOS_PROMPT_") || n.starts_with("WOLOS_ANSI_");
+                if starts && !n.ends_with('_') && !out.iter().any(|o| o == n) {
+                    out.push(n.to_string());
+                }
+            }
+            out
+        }
+        let share =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../desktop/overlay/usr/share/wolos");
+        let t = ThemeCatalog::builtin().resolve("wol-light").unwrap();
+        let console = render(&t);
+        let apps = crate::theme::apps::render(&t, Path::new("/x"));
+        let zsh = &apps.iter().find(|f| f.rel == SHELL_COLORS).unwrap().text;
+        let role = |p: &str| -> Vec<String> {
+            ["ACCENT", "OK", "ERROR"]
+                .iter()
+                .map(|r| format!("{p}{r}"))
+                .collect()
+        };
+        for (config, toolkit, written, must_read) in [
+            (
+                "bash/bashrc",
+                BASH,
+                file(&console, BASH),
+                role("WOLOS_ANSI_"),
+            ),
+            (
+                "zsh/zshrc",
+                SHELL_COLORS,
+                zsh.as_str(),
+                role("WOLOS_PROMPT_"),
+            ),
+            ("fish/config.fish", FISH, file(&console, FISH), vec![]),
+            ("nu/autoload/wolos.nu", NU, file(&console, NU), vec![]),
+            ("pwsh/profile.ps1", PWSH, file(&console, PWSH), vec![]),
+        ] {
+            let text = std::fs::read_to_string(share.join(config)).unwrap();
+            assert!(
+                text.contains(&format!("wolos/toolkits/{toolkit}")),
+                "{config} sources {toolkit}"
+            );
+            // Before the first `wol theme set`: the default theme's shipped copy.
+            let system = if toolkit == SHELL_COLORS {
+                format!("{}/{toolkit}", crate::theme::apps::SYSTEM_DIR)
+            } else {
+                format!("{SYSTEM_DIR}/{toolkit}")
+            };
+            assert!(text.contains(&system), "{config} falls back to {system}");
+            // starship's prompt glyph is not in the Linux text console's font.
+            let vt = [
+                "$TERM != linux",
+                "\"${TERM:-}\" != linux",
+                "\"$TERM\" != linux",
+            ]
+            .iter()
+            .chain(&[
+                "($env.TERM? | default \"\") != \"linux\"",
+                "$env:TERM -ne 'linux'",
+            ])
+            .any(|g| text.contains(g));
+            assert!(vt, "{config} starts starship on TERM=linux");
+            let read = names(&text);
+            let wrote = names(written);
+            for n in &read {
+                assert!(
+                    wrote.contains(n),
+                    "{config} reads {n}; {toolkit} writes {wrote:?}"
+                );
+            }
+            for n in &must_read {
+                assert!(read.contains(n), "{config} never reads {n}");
+            }
         }
     }
 

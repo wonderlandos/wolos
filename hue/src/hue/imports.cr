@@ -22,11 +22,14 @@ module Hue
     # base00 -> 0, base08 red -> 1/9, base0B green -> 2/10, base0A yellow -> 3/11, base0D blue ->
     # 4/12, base0E magenta -> 5/13, base0C cyan -> 6/14, base05 -> 7, base03 -> 8, base07 -> 15.
     def self.base16(path : String) : Imported
-      doc = YAML::Nodes.parse(File.read(path)).nodes.first?
-      raise Invalid.new("#{path}: not a Base16 scheme (no mapping)") unless doc.is_a?(YAML::Nodes::Mapping)
+      doc = begin
+        Hash(String, Entry).from_yaml(File.read(path))
+      rescue e : YAML::ParseException
+        raise Invalid.new("#{path}: not a Base16 scheme (#{e.message})")
+      end
       top = scalars(doc)
-      pal = doc.nodes.each_slice(2).find { |kv| kv[0].as?(YAML::Nodes::Scalar).try(&.value) == "palette" }
-      vals = pal && pal[1].is_a?(YAML::Nodes::Mapping) ? scalars(pal[1].as(YAML::Nodes::Mapping)) : top
+      pal = doc["palette"]?.try(&.fields)
+      vals = pal ? scalars(pal) : top
       base = {} of Int32 => String
       16.times do |i|
         k = "base%02X" % i
@@ -44,13 +47,27 @@ module Hue
       Imported.new(name, order.map { |i| base[i] }, light, nil)
     end
 
-    private def self.scalars(m : YAML::Nodes::Mapping) : Hash(String, String)
-      h = {} of String => String
-      m.nodes.each_slice(2) do |kv|
-        k = kv[0].as?(YAML::Nodes::Scalar)
-        v = kv[1]?.try(&.as?(YAML::Nodes::Scalar))
-        h[k.value] = v.value if k && v
+    # One value in a scheme file: a scalar's text (kept as written, `000000` stays `000000`), or a
+    # mapping of such values. A list or an alias is neither.
+    class Entry
+      getter text : String?
+      getter fields : Hash(String, Entry)?
+
+      def initialize(@text : String? = nil, @fields : Hash(String, Entry)? = nil)
       end
+
+      def self.new(ctx : YAML::ParseContext, node : YAML::Nodes::Node) : Entry
+        case node
+        when YAML::Nodes::Scalar  then new(node.value)
+        when YAML::Nodes::Mapping then new(nil, Hash(String, Entry).new(ctx, node))
+        else                           new
+        end
+      end
+    end
+
+    private def self.scalars(m : Hash(String, Entry)) : Hash(String, String)
+      h = {} of String => String
+      m.each { |k, e| e.text.try { |t| h[k] = t } }
       h
     end
 
@@ -101,7 +118,7 @@ module Hue
                 when "false", "0", "no" then false
                 end
               end
-      Imported.new(File.basename(path, File.extname(path)), colors.map(&.not_nil!), light, kv["accent"]?.try { |v| hex(v) })
+      Imported.new(File.basename(path, File.extname(path)), colors.compact, light, kv["accent"]?.try { |v| hex(v) })
     end
   end
 end

@@ -141,7 +141,7 @@ module Hue
       light = if a.flags.includes?("--light") || a.flags.includes?("--dark")
                 light?(a)
               else
-                imp.light.nil? ? Color.hex_to_lab(imp.colors[0]).l >= 0.5 : imp.light.not_nil!
+                (l = imp.light).nil? ? Color.hex_to_lab(imp.colors[0]).l >= 0.5 : l
               end
       wp = a.opts["--wallpaper"]?.try { |w| File.expand_path(w, home: true) }
       id = a.opts["--id"]? || Theme.slug(imp.name)
@@ -207,7 +207,7 @@ module Hue
         applied = true
       end
       if a.flags.includes?("--json")
-        j = JSON.parse(text).as_h
+        j = Hash(String, JSON::Any).from_json(text)
         j["dir"] = JSON::Any.new(dir)
         j["mode"] = JSON::Any.new(look.mode)
         j["applied"] = JSON::Any.new(applied)

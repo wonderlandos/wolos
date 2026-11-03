@@ -3,14 +3,14 @@
 @define-color accent_bg_color #7c5cff;
 @define-color accent_fg_color #ffffff;
 @define-color accent_color #7657f2;
-@define-color destructive_bg_color #ff3b30;
-@define-color destructive_color #d93229;
-@define-color success_bg_color #34c759;
-@define-color success_color #22813a;
-@define-color warning_bg_color #ff9500;
-@define-color warning_color #a66100;
-@define-color error_bg_color #ff3b30;
-@define-color error_color #d93229;
+@define-color destructive_bg_color #cf3a68;
+@define-color destructive_color #cf3a68;
+@define-color success_bg_color #1c9a6e;
+@define-color success_color #18835e;
+@define-color warning_bg_color #d9541e;
+@define-color warning_color #c34c1b;
+@define-color error_bg_color #cf3a68;
+@define-color error_color #cf3a68;
 @define-color window_bg_color #f5f5f7;
 @define-color window_fg_color #1d1d1f;
 @define-color view_bg_color #ffffff;
@@ -48,9 +48,9 @@ window, .background { font-family: "Inter", sans-serif; }
 @define-color wol_accent_text #ffffff;
 @define-color wol_glass #f6f6fa;
 @define-color wol_control #eceef2;
-@define-color wol_success #34c759;
-@define-color wol_warning #ff9500;
-@define-color wol_danger #ff3b30;
+@define-color wol_success #1c9a6e;
+@define-color wol_warning #d9541e;
+@define-color wol_danger #cf3a68;
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* WolOS Kit scaffold for GTK 3 apps (adw-gtk3 underneath). Colours are theme tokens (wol_ + token), metrics
    wrap a shared::theme::scaffold name in at-signs. GTK 3 CSS only: no custom properties, no color-mix. */
@@ -90,9 +90,9 @@ tooltip.background { border-radius: 6px; }
 button.titlebutton:not(.appmenu), headerbar.default-decoration button.titlebutton, .default-decoration.titlebar:not(headerbar) button.titlebutton { min-width: 12px; min-height: 12px; margin: 0 2px; padding: 0; border: none; border-radius: 999px; background-image: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
 button.titlebutton:not(.appmenu).close, headerbar.default-decoration button.titlebutton.close, .default-decoration.titlebar:not(headerbar) button.titlebutton.close { margin-left: 11px; }
 button.titlebutton:not(.appmenu) image, headerbar.default-decoration button.titlebutton image, .default-decoration.titlebar:not(headerbar) button.titlebutton image { margin: -2px; padding: 0; color: transparent; background: none; box-shadow: none; -gtk-icon-transform: scale(0.6); }
-button.titlebutton:not(.appmenu).close, headerbar.default-decoration button.titlebutton.close, .default-decoration.titlebar:not(headerbar) button.titlebutton.close { background-color: #ff3b30; }
+button.titlebutton:not(.appmenu).close, headerbar.default-decoration button.titlebutton.close, .default-decoration.titlebar:not(headerbar) button.titlebutton.close { background-color: #cf3a68; }
 button.titlebutton:not(.appmenu).close:hover, headerbar.default-decoration button.titlebutton.close:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.close:hover { color: rgba(0,0,0,0.55); background-image: -gtk-icontheme("window-close-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }
-button.titlebutton:not(.appmenu).minimize, headerbar.default-decoration button.titlebutton.minimize, .default-decoration.titlebar:not(headerbar) button.titlebutton.minimize { background-color: #ff9500; }
+button.titlebutton:not(.appmenu).minimize, headerbar.default-decoration button.titlebutton.minimize, .default-decoration.titlebar:not(headerbar) button.titlebutton.minimize { background-color: #d9541e; }
 button.titlebutton:not(.appmenu).minimize:hover, headerbar.default-decoration button.titlebutton.minimize:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.minimize:hover { color: rgba(0,0,0,0.55); background-image: -gtk-icontheme("list-remove-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }
-button.titlebutton:not(.appmenu).maximize, headerbar.default-decoration button.titlebutton.maximize, .default-decoration.titlebar:not(headerbar) button.titlebutton.maximize { background-color: #34c759; }
+button.titlebutton:not(.appmenu).maximize, headerbar.default-decoration button.titlebutton.maximize, .default-decoration.titlebar:not(headerbar) button.titlebutton.maximize { background-color: #1c9a6e; }
 button.titlebutton:not(.appmenu).maximize:hover, headerbar.default-decoration button.titlebutton.maximize:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.maximize:hover { color: rgba(0,0,0,0.55); background-image: -gtk-icontheme("list-add-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }

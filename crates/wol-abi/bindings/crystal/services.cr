@@ -3,7 +3,7 @@
 require "./lib_wol"
 
 macro ok(call)
-  abort "failed: " + {{call.stringify}} unless {{call}} == LibWol::WOL_OK
+  abort "failed: " + {{ call.stringify }} unless {{ call }} == LibWol::WOL_OK
 end
 
 def str(s : LibWol::String*) : String
@@ -22,8 +22,8 @@ ok LibWol.wol_context_create(app, app.bytesize, pointerof(ctx), pointerof(err))
 file, open, save, key, value, title, body = "File", "open", "Open", "width", "640", "Copying", "1 of 5"
 shortcut, icon, reason = "cmd+o", "document-open-symbolic", "Exporting"
 
-on_menu = ->(m : LibWol::Menu*, k : LibWol::String*, d : Void*) { nil }
-on_tool = ->(t : LibWol::Toolbar*, k : LibWol::String*, d : Void*) { nil }
+on_menu = ->(_m : LibWol::Menu*, _k : LibWol::String*, d : Void*) { nil }
+on_tool = ->(t : LibWol::Toolbar*, _k : LibWol::String*, d : Void*) { nil }
 menu = Pointer(LibWol::Menu).null
 ok LibWol.wol_menu_create(ctx, file, file.bytesize, on_menu, nil, pointerof(menu), pointerof(err))
 ok LibWol.wol_menu_add_item(menu, open, open.bytesize, save, save.bytesize, shortcut, shortcut.bytesize, pointerof(err))
@@ -92,31 +92,31 @@ ok LibWol.wol_audio_set_volume(ctx, 30, pointerof(err))
 ok LibWol.wol_audio_set_muted(ctx, 1, pointerof(err))
 
 class Found
-  class_property opened = false
+  class_property? opened = false
 end
 
 term = "term"
 ok LibWol.wol_search_query(ctx, term, term.bytesize, pointerof(info), pointerof(err))
 puts "found: #{LibWol.wol_info_get_count(field(info, "results"))}"
 LibWol.wol_info_release(info)
-on_query = ->(p : LibWol::SearchProvider*, r : LibWol::SearchReply*, t : LibWol::String*, d : Void*) {
+on_query = ->(_p : LibWol::SearchProvider*, r : LibWol::SearchReply*, t : LibWol::String*, d : Void*) {
   e = Pointer(LibWol::Error).null
   row_key, row_title = "note-1", "A note"
   LibWol.wol_search_reply_add(r, row_key, row_key.bytesize, row_title, row_title.bytesize, nil, 0, pointerof(e))
   puts "asked: #{str(t)}"
   nil
 }
-on_open = ->(p : LibWol::SearchProvider*, k : LibWol::String*, d : Void*) { puts "open: #{str(k)}"; Found.opened = true; nil }
+on_open = ->(_p : LibWol::SearchProvider*, k : LibWol::String*, d : Void*) { puts "open: #{str(k)}"; Found.opened = true; nil }
 provider = Pointer(LibWol::SearchProvider).null
 ok LibWol.wol_search_provide(ctx, on_query, on_open, nil, pointerof(provider), pointerof(err))
-100.times { break if Found.opened; ok LibWol.wol_context_dispatch(ctx, 100, pointerof(err)) }
+100.times { break if Found.opened?; ok LibWol.wol_context_dispatch(ctx, 100, pointerof(err)) }
 LibWol.wol_search_provider_release(provider)
 ok LibWol.wol_account_copy_info(ctx, pointerof(info), pointerof(err))
 puts "account: #{str(LibWol.wol_info_get_text(field(info, "name")))}"
 LibWol.wol_info_release(info)
 
 class Inbox
-  class_property seen = false
+  class_property? seen = false
 end
 
 peer, hello = "/usr/bin/peer", "hello"
@@ -133,7 +133,7 @@ ok LibWol.wol_endpoint_create(ctx, key, key.bytesize, on_message, nil, pointerof
 ok LibWol.wol_message_send(ctx, peer, peer.bytesize, key, key.bytesize, hello, hello.bytesize, pointerof(text), pointerof(err))
 puts "reply: #{str(text)}"
 LibWol.wol_string_release(text)
-100.times { break if Inbox.seen; ok LibWol.wol_context_dispatch(ctx, 100, pointerof(err)) }
+100.times { break if Inbox.seen?; ok LibWol.wol_context_dispatch(ctx, 100, pointerof(err)) }
 ok LibWol.wol_publish(ctx, key, key.bytesize, hello, hello.bytesize, pointerof(err))
 LibWol.wol_endpoint_release(door)
 ok LibWol.wol_device_copy_list(ctx, pointerof(info), pointerof(err))
