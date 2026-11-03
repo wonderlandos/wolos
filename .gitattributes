@@ -1,0 +1,10 @@
+# Text files are stored and checked out with LF, whatever the platform, so a diff shows only real
+# changes (a CRLF checkout on Windows used to make whole files look rewritten).
+* text=auto eol=lf
+# Bytes that must never be converted: images, signed .wol fixtures, fuzz seeds, patches applied to
+# other trees, and vendored crates (their checksums cover the exact bytes).
+*.png binary
+*.wol binary
+*.patch -text
+fuzz/regressions/** -text
+third_party/** -text
