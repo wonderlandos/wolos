@@ -116,6 +116,10 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["plugin"], Read, "read"),
     hv(&["plugin", "list"], Read, "read"),
     hv(&["plugin", "check"], Read, "read"),
+    // Scripts (ADR 0041): helpers may list the kinds and check a file (parsing runs nothing);
+    // `script run|on` executes code, so it stays for people.
+    hv(&["script"], Read, "read"),
+    hv(&["script", "check"], Read, "read"),
 ];
 
 /// A visible command and, when helpers may call it, its rule.

@@ -23,6 +23,7 @@ id, or the other way round. A rule is changed or dropped in the same commit as i
 | RR- | this file, section "Rust" | Rust sources and Cargo.toml (`crates/shared/tests/rules_rust.rs`) |
 | RS- | [RULES-system.md](RULES-system.md) | system: units, services, files, daemons |
 | RU- | [RULES-ui.md](RULES-ui.md) | UI: shell, widgets, copy, themes |
+| RB- | [RULES-ruby.md](RULES-ruby.md) | Ruby scripts under `files/`, `desktop/`, `tools/` (`crates/controller/tests/rules_ruby.rs`) |
 | RCR- | [RULES-crystal.md](RULES-crystal.md) | Crystal: `wopkg/`, `hue/`, the libwol bindings, shards and their build files (`crates/controller/tests/rules_crystal.rs`) |
 | RP- | [../../wolos-pkgbuilds/docs/RULES-packaging.md](../../wolos-pkgbuilds/docs/RULES-packaging.md) | package recipes |
 | RC- | [../../wolos-build/docs/RULES-ci.md](../../wolos-build/docs/RULES-ci.md) | build and CI |
@@ -77,7 +78,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 | ID | Rule | Why | How checked |
 |---|---|---|---|
 | RR-019 | In api, realtime, xguard, xguard-clam and core no `Command::new(` outside `privileged_command`. | A root child must not inherit the caller's environment (ADR 0040). | rules_rust.rs RR-019 |
-| RR-020 | No `Command::new("sh")`, `"bash"` or `"/bin/sh"`. | A shell string is an injection point; pass typed argv. | rules_rust.rs RR-020 |
+| RR-020 | No `Command::new("sh")`, `"bash"` or `"/bin/sh"` (not checked in `crates/controller/src/script.rs`: `wol script`'s interpreter table runs a file as an argv, ADR 0041). | A shell string is an injection point; pass typed argv. | rules_rust.rs RR-020 |
 | RR-021 | No `.read_line(`, `.read_to_end(` or `.read_to_string(` on a stream outside `shared::bounded`; a read on `.take(N)` is bounded and does not count. | An unbounded read lets one peer eat memory. | rules_rust.rs RR-021 |
 | RR-078 | A file that connects or accepts on a Unix socket sets a read timeout or uses `shared::bounded`. | A silent peer must not hold a thread. | rules_rust.rs RR-078 |
 | RR-022 | No `thread::sleep(` in the shell crate. | A frame is 8 ms; the GTK main thread never blocks. | rules_rust.rs RR-022 |

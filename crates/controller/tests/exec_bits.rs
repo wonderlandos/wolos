@@ -13,7 +13,10 @@ use std::process::Command;
 /// The git repositories of this tree: the root, then the submodules (path prefix).
 const REPOS: [&str; 3] = ["", "crates/shell", "design"];
 /// Directories whose shebang files are data, never run (scanner fixtures).
-const NOT_RUN: [&str; 1] = ["crates/aurlaws/tests/fixtures/"];
+const NOT_RUN: [&str; 2] = [
+    "crates/aurlaws/tests/fixtures/",
+    "crates/controller/tests/fixtures/ruby/",
+];
 /// Tracked as 100644 before the list existed; the commit that adds this test sets their bit
 /// (`git update-index --chmod=+x`). Only shrinks: an entry that is 100755 is reported for removal.
 const PENDING_CHMOD: &[&str] = &[];

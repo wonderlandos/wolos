@@ -35,6 +35,7 @@ helper verbs; the tool name is the verb path joined with `_` (`theme_set`, `audi
 | Files and undo | `history`, `restore list` | `files tidy` (dry run first, then with the plan id), `undo` |
 | Modules | `modules list`, `modules status <id>` | `modules enable <id>` |
 | Plugins | `plugin list`, `plugin check <plugin>` | |
+| Scripts | `script`, `script check <file>` | |
 
 People install and remove modules themselves (`wol modules install|remove <id>`, administrator);
 you may suggest the command, you cannot run it.
@@ -63,6 +64,22 @@ https://github.com/wonderlandos/wolos/blob/main/docs/modules/plugins.md; the man
 Permissions a plugin may declare: `notifications`, `run`, `http`, `clipboard`, `open`, `toggles`.
 Declare only what it uses. A plugin that changes the system calls `wol` verbs, which go through the
 same gate as you, under the plugin's id.
+
+## Scripts
+
+A script is a file in sh, bash or Ruby (`#!/bin/sh`, `#!/usr/bin/env ruby`, or a `.sh`/`.rb`
+name); WolOS treats a Ruby script exactly like a shell script
+(https://github.com/wonderlandos/wolos/blob/main/docs/modules/scripting.md).
+
+- Check one without running it: `wol script check <file> --json` (parses with `sh -n` or
+  `ruby -wc`, then shellcheck or RuboCop when installed). Fix every problem it lists.
+- The person runs it with `wol script run <file> [args]`, or on another computer with
+  `wol script on <host> <file> [args]` (over ssh, file on stdin). It runs as them, with a clean
+  environment, and every `wol` change it makes asks on screen under `script:<file name>`. You
+  cannot start `script run` or `script on` through MCP; suggest the command instead.
+- Write commands as separate arguments (`system('wol', 'focus', 'on')`, never one string or
+  backticks), read `wol ... --json` with `JSON.parse`, and use only the interpreter's own
+  libraries (no gems). Scripts that WolOS ships start `#!/usr/bin/ruby`.
 
 ## Sessions
 

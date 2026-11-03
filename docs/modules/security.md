@@ -51,7 +51,7 @@ A layer of protection against known malware. Code: `crates/xguard`, `wol_core::m
 Threat model:
 - Covers: a known bad file arriving as a download, on a removable disk, as an AppImage, `.wol`, Windows program, or a program marked executable under `/home`, `/tmp` and removable disks, and whatever wopkg is about to install.
 - Does not cover: new or altered malware with no signature, and an attacker already running on the computer, who can stop nothing here without root but can also do harm without ever opening a new file.
-- Ways past the first-use check, known and accepted: code run by an interpreter (`python x.py`, `wine x.exe` from a terminal; double-click goes through the check), `dlopen` and `mmap` of a file that was never executed, code in `memfd`, and packed Windows programs (no unpacker runs).
+- Ways past the first-use check, known and accepted: code run by an interpreter (`python x.py`, `ruby x.rb`, `sh x.sh`, `wol script run x.rb`, `wine x.exe` from a terminal; double-click goes through the check; the interpreter is checked once, not each script it reads; ADR 0041 adds `ruby` to the system and widens this gap by one interpreter), `dlopen` and `mmap` of a file that was never executed, code in `memfd`, and packed Windows programs (no unpacker runs).
 - The signature database is data from public lists. Formats read in part: hashes, section hashes and plain patterns are read; bytecode, targets that need normalised text, HTML or mail, alternatives, negations and regular expressions are left out and counted at build time. See the ADR for the numbers.
 
 How it works:
@@ -65,7 +65,7 @@ How it works:
 - Full signatures, off by default: a switch in Privacy & Security enables `wolos-clam-update.timer`. freshclam fetches the data to this computer; it is never in the image. `wol-xguard-clam` is the only program that links libclamav; it starts on demand from `wolos-clam.socket`, takes 1 GB while loaded, and exits after 120 idle seconds. Off deletes the data.
 - `wol-analyze`, from Files' right-click "Check for Malware" (`desktop/nautilus/wolos-analyze.c`), runs `wol-xguard scan --clamav`: without an answer from the full engine the result is Incomplete, never clean. With the signatures off it checks nothing and offers Settings; only the switch there turns them on.
 - The guard's unit must keep the host's mount namespace: no `ProtectSystem`, `PrivateTmp`, `PrivateNetwork` or the like, or its kernel marks land on copies and it stops nothing.
-- Background pass: `wolos-xguard-sweep.timer`, on mains power and while everyone is away and no game runs, at idle priority. It stops at the first sign of activity.
+- Background pass: `wolos-xguard-sweep.timer` (it looks at executables, tagged downloads and `.AppImage`, `.exe`, `.msi`, `.wol`, `.sh`, `.rb` and `.desktop` files: `xguard::sweep::in_scope`), on mains power and while everyone is away and no game runs, at idle priority. It stops at the first sign of activity.
 - Updates: `wolos-xguard-update.timer` downloads a signed bundle; `wol-xguard rules install` refuses anything unsigned, older or altered, then the guard restarts so files are looked at again.
 - People see nothing unless a file is stopped: then one notification, and a row in Settings > Privacy & Security with Move to Trash and a deliberate Open Anyway. Each account's list is readable by that account only. `wol security`, `wol security scan <path>`, `wol security allow <path>`.
 
