@@ -35,10 +35,14 @@ module Wolkit
         file.write_bytes(data.size.to_u32, IO::ByteFormat::BigEndian)
         file.write(kind.to_slice)
         file.write(data)
+        # Digest::CRC32.update takes and returns the finished CRC (the zlib convention), so the
+        # chunk's value is written as it comes back, without a final inversion.
         crc = Digest::CRC32.initial
         crc = Digest::CRC32.update(kind.to_slice, crc)
-        crc = Digest::CRC32.update(data, crc)
-        file.write_bytes(crc ^ 0xffff_ffff_u32, IO::ByteFormat::BigEndian)
+        # An empty slice has a null pointer, and the zlib CRC of a null buffer is "the initial
+        # value", not the CRC of nothing: IEND would get 0.
+        crc = Digest::CRC32.update(data, crc) unless data.empty?
+        file.write_bytes(crc, IO::ByteFormat::BigEndian)
       end
     end
   end

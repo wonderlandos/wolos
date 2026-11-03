@@ -104,6 +104,11 @@ module Wolkit
       backdrop color size weight line_height letter_spacing text_align decoration text_overflow white_space
       max_lines tnum italic selectable spring tooltip focusable)
 
+    # Events every element takes: `on_key: ->(key : Wolkit::KeyPress) { }` hears the keys pressed
+    # while it or a part inside it has focus (dsl/keys.cr); `on_focus: ->(focused : Bool) { }` hears
+    # focus arrive in it or leave it.
+    COMMON_EVENTS = {"on_key" => {ev: "KEY", arg: "key"}, "on_focus" => {ev: "FOCUS", arg: "flag"}}
+
     # The state flags: one SET_STATE mask (the app-owned bits of the engine's state).
     STATES = {"disabled" => 16, "selected" => 32, "checked" => 64, "expanded" => 128, "busy" => 512}
 

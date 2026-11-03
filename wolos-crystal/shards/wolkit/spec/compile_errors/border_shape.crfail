@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: A border is a width, `{width, :token}` or :none; this is :thick.
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Todos" do
+      column outline: :thick do # <= error
+        text "Hello"
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

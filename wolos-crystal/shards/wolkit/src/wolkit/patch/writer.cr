@@ -124,9 +124,10 @@ module Wolkit
       float(value)
     end
 
+    # An i32 travels as its two's-complement word (the engine reads it back with `as i32`).
     def set_i32(node : UInt32, prop : UInt16, value : Int32) : Nil
       prop_head(node, prop, 1)
-      float(value)
+      word(value.to_u32!)
     end
 
     def set_u32(node : UInt32, prop : UInt16, value : UInt32) : Nil

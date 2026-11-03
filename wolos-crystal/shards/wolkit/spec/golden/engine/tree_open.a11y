@@ -1,0 +1,24 @@
+a11y nodes=23
+0 box role=none name=""
+  1 box role=none name=""
+    2 vlist role=list name="Files" focused
+      16777223 box role=listitem name="Documents" state=expanded
+        16777222 button role=button name="Close Documents"
+        16777221 text role=none name=""
+      16777226 box role=listitem name="Letters" state=selected|expanded
+        16777225 spacer role=none name=""
+        16777224 button role=button name="Close Letters"
+        26 text role=none name=""
+      27 box role=listitem name="bank.txt"
+        28 spacer role=none name=""
+        29 spacer role=none name=""
+        30 text role=none name=""
+      31 box role=listitem name="notes.txt"
+        32 spacer role=none name=""
+        33 spacer role=none name=""
+        34 text role=none name=""
+      35 box role=listitem name="Music"
+        36 spacer role=none name=""
+        37 text role=none name=""
+      16777220 spacer role=none name=""
+      3 spacer role=none name=""

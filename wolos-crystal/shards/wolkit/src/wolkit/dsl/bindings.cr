@@ -6,7 +6,9 @@
 # Concept: the engine owns the live text (caret, selection, IME composition), the app owns the
 # value. How: an effect writes the signal's value to the part only when it differs from what the
 # part is known to hold (`last`), and the edit handler records what the person typed in `last`
-# before it writes the signal, so the effect does not send the person's own text back.
+# before it writes the signal, so the effect does not send the person's own text back. The binding's
+# handler runs first and the element's own `on_change:` (or `on_toggle:`) after it, with the signal
+# already holding the new value.
 require "../mount"
 require "../reactive/signal"
 
@@ -24,7 +26,7 @@ module Wolkit
           mount.set_text(id, value)
         end
       end
-      mount.on(id, Wire::Event::TEXT_CHANGED) do |event|
+      mount.on_first(id, Wire::Event::TEXT_CHANGED) do |event|
         unless mount.stale_text?(event)
           text = event.text
           last = text
@@ -44,7 +46,7 @@ module Wolkit
       Wolkit.effect do
         mount.set_state(id, source.value ? Wire::State::CHECKED : 0_u32)
       end
-      mount.on(id, Wire::Event::TOGGLE) do |event|
+      mount.on_first(id, Wire::Event::TOGGLE) do |event|
         source.value = event.flag
         nil
       end
@@ -60,7 +62,7 @@ module Wolkit
       Wolkit.effect do
         mount.set_f32(id, Wire::Prop::SLIDER_VALUE, source.value.to_f32)
       end
-      mount.on(id, Wire::Event::SLIDER) do |event|
+      mount.on_first(id, Wire::Event::SLIDER) do |event|
         source.value = event.number
         nil
       end

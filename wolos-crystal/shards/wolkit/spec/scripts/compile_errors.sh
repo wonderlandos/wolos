@@ -41,4 +41,15 @@ for file in spec/compile_errors/*.crfail; do
   echo "ok   $file"
 done
 echo "$count compile-fail specs"
+# And the shard's own programs must compile with no engine library (bin/wolkit-doctor.cr runs where
+# the app cannot start).
+for file in bin/*.cr; do
+  if crystal build --no-codegen --error-on-warnings --no-color "$file" >/dev/null 2>&1; then
+    echo "ok   $file builds"
+  else
+    echo "FAIL $file does not build"
+    crystal build --no-codegen --error-on-warnings --no-color "$file" || true
+    failed=1
+  fi
+done
 exit "$failed"

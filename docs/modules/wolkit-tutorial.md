@@ -39,7 +39,7 @@ Wolkit.run Todos
 
 ## 3. Watch it change while it runs (2 minutes)
 
-Build with `-Ddev` and the running app listens for changes: a saved `.wolcss` sheet restyles the window with no restart (under 100 ms), a saved `.cr` file rebuilds and the new process takes over with the old process's signals put back, and a compile error is shown as a banner in the window that is still running. `wol app run --watch` drives this (docs/modules/wolkit.md "Developer tools"). Try it now: change `"More"` to `"Add one"`, save, and the window follows.
+Build with `-Ddev` and the running app listens for changes: a saved `.wolcss` sheet restyles the window with no restart (the app watches the sheets named by `$WOLKIT_DEV_STYLES`, for example `build/00-kit.wolcss:src/styles`, and a sheet with an error keeps the last good look and shows `file:line` in a banner), a saved `.cr` file rebuilds and the new process takes over with the old process's signals put back, and a compile error is shown as a banner in the window that is still running. `wol app run --watch` drives this (docs/modules/wolkit.md "Developer tools"). Try it now: change `"More"` to `"Add one"`, save, and the window follows.
 
 ## 4. A text field and a button (2 minutes)
 
@@ -118,7 +118,44 @@ Inline arguments are checked at compile time: `pad: :lg`, `bg: :card`, `radius: 
 
 `make styles` compiles it, after the kit look (`build/00-kit.wolcss`, so the default look keeps its class ids), with `wolkit-stylec` into `build/styles.wsb` and `src/gen/styles.cr` (one constant per class); load the sheet with `Wolkit.use_styles("build/styles.wsb")` and name a class with `class: Wolkit::Styles::DONE`. The language, its properties and its errors are in `docs/modules/wolkit-style.md`.
 
-## 7. Test it without a display (2 minutes)
+## 7. Check what people type, and a shortcut (1 minute)
+
+```crystal
+require "wolkit"
+
+class Todos < Wolkit::App
+  @items = list(String)
+  @draft = field("", "New todo", Wolkit::Validate.length(2, 80))
+  @form = Wolkit::Form.new
+
+  def view
+    window "Todos", width: 420, height: 560 do
+      shortcut("cmd+n") { @draft.value.value = "" }
+      column gap: :md, pad: :lg do
+        form_field field: @draft, form: @form do
+          text_field @draft.value, label: "New todo", on_submit: -> { add }
+        end
+        each @items, key: ->(t : String) { t } do |todo|
+          text todo
+        end
+      end
+    end
+  end
+
+  def add
+    @form.submit do
+      @items << @draft.value.value.strip
+      @form.reset
+    end
+  end
+end
+
+Wolkit.run Todos
+```
+
+`field` is a signal with rules. Its error shows under the field only once you leave the field or press Enter, never while you start typing; `@form.submit` shows every error and runs the block only when they are all gone. `shortcut("cmd+n")` works wherever the focus is in the window (Command arrives as Control). For long lists, `table` and `tree` build only the rows on screen; `segmented`, `combo`, `date_field` and `text_area` are the other controls (docs/modules/wolkit.md "Forms").
+
+## 8. Test it without a display (2 minutes)
 
 ```crystal
 require "spec"
@@ -138,9 +175,9 @@ describe Todos do
 end
 ```
 
-`Wolkit::Test.run` starts the real engine with no display and drives it with pointer and key events; `t.a11y_snapshot` prints the accessibility tree and `t.screenshot` returns a PNG that is identical on every machine. `make spec` runs it; `make check` only type-checks.
+`Wolkit::Test.run` starts the real engine with no display and drives it with pointer and key events; `t.a11y_snapshot` prints the accessibility tree and `t.screenshot` returns a PNG that is identical on every machine. `make spec` runs it; `make check` only type-checks. A window that does not show on the desktop: run `wolkit-doctor` (`crystal run` the shard's `bin/wolkit-doctor.cr`), which checks the session, the display and the libraries and says what to do.
 
-## 8. Package it (1 minute)
+## 9. Package it (1 minute)
 
 `make` builds a release binary (`crystal build --release`); a package recipe for a Crystal app is the same as for any program in `docs/modules/wopkg.md`: build in the chroot, install the binary and a `.desktop` file, depend on `libwolkit` and `libwol`. Give the app a reverse-DNS id (`$WOLKIT_APP_ID` or `org.wolos.<name>`) so the system can show its permissions.
 

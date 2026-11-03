@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: `translate:` takes one number or `{x, y}`; this has 3 values.
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Todos" do
+      column translate: {1, 2, 3} do # <= error
+        text "Hello"
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)
