@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Gallery
+GenericName=Picture library
+Comment=Look through your pictures by date and place
+Exec=wol-gallery %F
+Icon=wolos-photos
+Terminal=false
+Categories=Graphics;Viewer;Photography;
+MimeType=image/jpeg;image/png;
+Keywords=photos;pictures;images;viewer;slideshow;
+StartupWMClass=org.wolos.gallery
