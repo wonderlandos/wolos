@@ -7,7 +7,7 @@ D=/run/wolos-installer
 export XDG_RUNTIME_DIR=$D HOME=$D XDG_SESSION_TYPE=wayland LIBSEAT_BACKEND=seatd
 export GSK_RENDERER=${GSK_RENDERER:-cairo}
 install -d -o live -g live -m 0700 "$D" "$D/.cache"
-setpriv --reuid=live --regid=live --init-groups Hyprland -c /usr/share/wolos/hypr/installer.conf
+setpriv --reuid=live --regid=live --init-groups Hyprland -c /usr/share/wolos/hypr/installer.lua
 if [ -e "$D/try" ]; then
   mkdir -p /run/wolos && : > /run/wolos/try
   systemctl start --no-block wold.service

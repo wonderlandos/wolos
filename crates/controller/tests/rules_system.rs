@@ -1123,7 +1123,7 @@ fn rs_075_polkit_rules_carry_spdx_and_a_header() {
 fn rs_080_every_bind_has_a_shortcut_sheet_row() {
     let mut bad = BTreeSet::new();
     for conf in [wol_core::shortcuts::SHIPPED, wol_core::shortcuts::TILING] {
-        for b in wol_core::shortcuts::parse(conf) {
+        for b in wol_core::shortcuts::parse_lua(conf) {
             if wol_core::shortcuts::name_of(&b.dispatcher, &b.args).is_none() {
                 bad.insert(format!("{} {}", b.dispatcher, b.args));
             }
@@ -1344,7 +1344,7 @@ fn rs_090_no_windowrulev2_or_legacy_layerrule_syntax() {
 fn rs_091_no_two_binds_share_a_key_combination() {
     let mut seen = BTreeSet::new();
     let mut bad = BTreeSet::new();
-    for b in wol_core::shortcuts::parse(wol_core::shortcuts::SHIPPED) {
+    for b in wol_core::shortcuts::parse_lua(wol_core::shortcuts::SHIPPED) {
         let k = b.combo.label();
         if !seen.insert(k.clone()) && !b.flags.contains('r') {
             bad.insert(k);

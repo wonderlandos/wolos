@@ -109,10 +109,16 @@ fn every_compositor_draws_the_pointer_in_a_vm_with_a_shipped_theme() {
 
 /// Audit4 S5-20: in a VM the desktop draws the pointer as a setting too, so `hyprctl reload` (Settings
 /// does it) never brings the invisible cursor plane back. wol-session writes the fragment every
-/// start, the conf sources it after wolos-perf.conf (which sets the auto mode).
+/// start, hyprland.lua loads it after wolos-perf.lua (which sets the auto mode).
 #[test]
 fn the_desktop_keeps_the_vm_pointer_across_reloads() {
-    for (vm, want) in [(true, Some("1")), (false, None)] {
+    for (vm, want) in [
+        (
+            true,
+            "-- wol-session: this is a VM\nhl.config({ cursor = { no_hardware_cursors = 1 } })\n",
+        ),
+        (false, "-- wol-session: not a VM\n"),
+    ] {
         let d = sandbox(
             if vm { "vm" } else { "metal" },
             &[
@@ -139,19 +145,24 @@ fn the_desktop_keeps_the_vm_pointer_across_reloads() {
             .status()
             .unwrap();
         assert!(st.success());
-        let frag = fs::read_to_string(home.join(".cache/wolos/hypr-vm.conf")).unwrap();
-        assert_eq!(
-            value(&frag, "cursor", "no_hardware_cursors").as_deref(),
-            want,
-            "vm={vm}: {frag}"
+        let cache = home.join(".cache/wolos");
+        let frag = fs::read_to_string(cache.join("hypr-vm.lua")).unwrap();
+        assert_eq!(frag, want, "vm={vm}");
+        assert!(!cache.join("hypr-vm.lua.tmp").exists());
+        // Lua only: no .conf of the compositor's in the cache or the config.
+        assert!(!cache.join("hypr-vm.conf").exists());
+        assert!(!home.join(".config/hypr/hyprland.conf").exists());
+        let user = fs::read_to_string(home.join(".config/hypr/hyprland.lua")).unwrap();
+        assert!(
+            user.starts_with("-- WolOS defaults. Add your overrides below.\nrequire(\"/usr/share/wolos/hypr/hyprland.lua\")\n"),
+            "{user}"
         );
-        assert!(!home.join(".cache/wolos/hypr-vm.conf.tmp").exists());
     }
-    let desktop = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+    let desktop = read("desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
     let at = |l: &str| desktop.find(l).unwrap_or_else(|| panic!("{l}"));
     assert!(
-        at("\nsource = /usr/share/wolos/hypr/wolos-perf.conf\n")
-            < at("\nsource = ~/.cache/wolos/hypr-vm.conf\n")
+        at("\nrequire(\"/usr/share/wolos/hypr/wolos-perf.lua\")\n")
+            < at("\nrequire(\"~/.cache/wolos/hypr-vm.lua\")\n")
     );
 }
 

@@ -126,7 +126,8 @@ fn theme_set_restyles_third_party_apps() {
     );
 }
 
-/// The compositor's title strip follows the theme, so it is not dark on a light desktop.
+/// The compositor's title strip follows the theme, so it is not dark on a light desktop (live:
+/// `hyprctl eval` of the theme file's `hl.config` calls).
 #[test]
 fn theme_set_colours_the_title_strip() {
     let home = temp_home("strip");
@@ -134,11 +135,16 @@ fn theme_set_colours_the_title_strip() {
         home: home.clone(),
         ..Default::default()
     };
+    let set = |key: &str, colour: &str| {
+        format!("hl.config({{ [\"plugin.hyprbars.{key}\"] = \"{colour}\" }})")
+    };
     let bar = |env: &FakeEnv| {
         env.execs
             .iter()
-            .find(|a| a[..2] == ["hyprctl", "keyword"] && a[2] == "plugin:hyprbars:bar_color")
-            .map(|a| a[3].clone())
+            .find(|a| {
+                a[..2] == ["hyprctl", "eval"] && a[2].contains("\"plugin.hyprbars.bar_color\"")
+            })
+            .map(|a| a[2].clone())
     };
     assert_eq!(
         run("theme set catppuccin-latte", &mut env),
@@ -146,21 +152,84 @@ fn theme_set_colours_the_title_strip() {
         "{}",
         env.err
     );
-    assert_eq!(bar(&env).as_deref(), Some("rgba(eff1f5e6)"));
+    assert_eq!(bar(&env), Some(set("bar_color", "rgba(eff1f5e6)")));
     assert!(
         env.execs.iter().any(|a| a[..]
             == [
-                "hyprctl",
-                "keyword",
-                "plugin:hyprbars:col.text",
-                "rgba(4c4f69ff)"
+                "hyprctl".to_string(),
+                "eval".into(),
+                set("col.text", "rgba(4c4f69ff)")
             ]),
         "{:?}",
         env.execs
     );
     env.execs.clear();
     assert_eq!(run("theme set lumon", &mut env), 0, "{}", env.err);
-    assert_eq!(bar(&env).as_deref(), Some("rgba(16242de6)"));
+    assert_eq!(bar(&env), Some(set("bar_color", "rgba(16242de6)")));
+}
+
+/// Upgrade to the Lua configuration: the first `wol theme set` (session start) carries the 0.56
+/// `.conf` files over, removes them (a dangling link too) and reloads the compositor once; once
+/// they are gone it does nothing.
+#[test]
+fn theme_set_carries_the_old_compositor_files_over_once() {
+    let home = temp_home("retire");
+    let wolos = home.join("hypr/wolos");
+    std::fs::create_dir_all(&wolos).unwrap();
+    std::fs::write(
+        wolos.join("keyboard.conf"),
+        "input {\n    kb_layout = br\n    repeat_rate = 40\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        wolos.join("displays.conf"),
+        "monitor = eDP-1,1920x1080@60.00,auto,1.5\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(home.join("gone/theme.conf"), wolos.join("theme.conf")).unwrap();
+    let mut env = FakeEnv {
+        home: home.clone(),
+        ..Default::default()
+    };
+    let reloads = |env: &FakeEnv| {
+        env.execs
+            .iter()
+            .filter(|a| a[..] == ["hyprctl", "reload"])
+            .count()
+    };
+    assert_eq!(run("theme set wol-dark", &mut env), 0, "{}", env.err);
+    let mut removed = env.removed.clone();
+    removed.sort();
+    assert_eq!(
+        removed,
+        ["displays.conf", "keyboard.conf", "theme.conf"].map(|f| wolos.join(f))
+    );
+    let wrote = |f: &str| {
+        env.written
+            .iter()
+            .find(|w| w.0 == wolos.join(f))
+            .map(|w| w.1.clone())
+            .unwrap_or_else(|| panic!("{f} written"))
+    };
+    let kb = wrote("keyboard.lua");
+    assert!(
+        kb.contains("kb_layout = \"br\",") && kb.contains("repeat_rate = 40,"),
+        "{kb}"
+    );
+    assert_eq!(
+        wrote("displays.lua"),
+        "-- Written by WolOS Settings.\nhl.monitor({ output = \"eDP-1\", mode = \"1920x1080@60.00\", position = \"auto\", scale = \"1.5\" })\n"
+    );
+    assert_eq!(reloads(&env), 1);
+    for f in &removed {
+        std::fs::remove_file(f).unwrap();
+    }
+    let mut env = FakeEnv {
+        home: home.clone(),
+        ..Default::default()
+    };
+    assert_eq!(run("theme set wol-dark", &mut env), 0, "{}", env.err);
+    assert_eq!((reloads(&env), env.removed.len()), (0, 0), "once");
 }
 
 /// `wol theme set <id>` in a fresh HOME writes every toolkit's files from that theme.

@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! WolOS-managed compositor include (`hypr/wolos/settings.conf`): typed desktop prefs from System Settings
-//! rendered as `category:key = value` one-liners (the same names `hyprctl keyword` takes), plus the minimal
-//! command batch that applies a change live. Never touches the user's own hyprland.conf; never reloads.
+//! WolOS-managed compositor file (`hypr/wolos/settings.lua`): typed desktop prefs from System Settings
+//! rendered as one Lua call per keyword (`hl.config`, `hl.window_rule`, `hl.env`; the keyword names
+//! `hyprctl keyword` takes), plus the minimal command batch that applies a change live. Never touches the
+//! user's own lines in hyprland.lua; never reloads.
+use crate::prefs::{
+    DISPLAYS_FILE, HYPR_USER, KEYBOARD_FILE, LAYOUTS, REPEATS, ensure_require, keyboard_lua,
+    monitor_lua, monitor_rules, parse_keyboard,
+};
 use crate::shortcuts::{self, Overrides, Shortcut};
 use crate::system::Host;
 use serde::{Deserialize, Serialize};
@@ -9,9 +14,9 @@ use std::path::Path;
 
 /// Settings' source of truth, relative to `$XDG_CONFIG_HOME`.
 pub const PREFS_FILE: &str = "wolos/desktop.json";
-/// Rendered include, sourced by the user conf through the `hypr/wolos/*.conf` glob (`prefs::ensure_source`).
-pub const INCLUDE: &str = "hypr/wolos/settings.conf";
-/// Named rules in the shipped hyprland.conf: everything floats; listed apps keep floating while tiling.
+/// Rendered file, loaded by the user hyprland.lua through `hypr/wolos/*.lua` (`prefs::ensure_require`).
+pub const INCLUDE: &str = "hypr/wolos/settings.lua";
+/// Named rules in the shipped hyprland.lua: everything floats; listed apps keep floating while tiling.
 pub const FLOAT_RULE: &str = "wol-float";
 pub const FLOAT_APPS_RULE: &str = "wol-float-apps";
 /// Cursor theme the shipped session exports (`env = XCURSOR_THEME`).
@@ -70,7 +75,7 @@ pub struct DesktopPrefs {
 }
 
 impl Default for DesktopPrefs {
-    /// Same values as the shipped hyprland.conf: writing defaults changes nothing.
+    /// Same values as the shipped hyprland.lua: writing defaults changes nothing.
     fn default() -> Self {
         Self {
             tiling: false,
@@ -154,13 +159,21 @@ impl DesktopPrefs {
         serde_json::to_string_pretty(self).unwrap_or_default() + "\n"
     }
 
-    /// First run: carry over the older `hypr/wolos/keyboard.conf` (layout, repeat).
+    /// `desktop.json`, else (first run) the setup assistant's `hypr/wolos/keyboard.lua` carried over.
+    pub fn from_files(desktop_json: Option<&str>, keyboard: Option<&str>) -> Self {
+        match desktop_json {
+            Some(t) => Self::parse(Some(t)),
+            None => Self::from_legacy_keyboard(keyboard),
+        }
+    }
+
+    /// First run: carry over the setup assistant's `hypr/wolos/keyboard.lua` (layout, repeat).
     pub fn from_legacy_keyboard(keyboard_conf: Option<&str>) -> Self {
         let mut p = Self::default();
         if let Some(t) = keyboard_conf {
-            let (l, r) = crate::prefs::parse_keyboard(Some(t));
-            p.layouts = vec![crate::prefs::LAYOUTS[l].0.to_string()];
-            let (_, rate, delay) = crate::prefs::REPEATS[r];
+            let (l, r) = parse_keyboard(Some(t));
+            p.layouts = vec![LAYOUTS[l].0.to_string()];
+            let (_, rate, delay) = REPEATS[r];
             (p.repeat_rate, p.repeat_delay) = (rate, delay);
         }
         p
@@ -224,29 +237,71 @@ impl DesktopPrefs {
         .collect()
     }
 
-    /// The include file: keywords, then session env and login items.
+    /// The Lua file: keywords, then session env and login items. A named rule's keywords
+    /// (`windowrule[NAME]:enable`, `:match:class`) become one `hl.window_rule` call that updates the
+    /// shipped rule of that name; every other keyword is `looks::keyword_lua`.
     pub fn include(&self) -> String {
+        use crate::theme::hypr::lua_str;
         let mut s = String::from(
-            "# Written by WolOS System Settings. Change these there; your own lines belong in hyprland.conf.\n",
+            "-- Written by WolOS System Settings. Change these there; your own lines belong in hyprland.lua.\n",
         );
+        let mut rules: Vec<(String, Option<String>, Option<String>)> = Vec::new();
+        let mut rest = Vec::new();
         for (k, v) in self.keywords() {
-            s.push_str(&format!("{k} = {v}\n"));
+            let Some((name, field)) = k
+                .strip_prefix("windowrule[")
+                .and_then(|r| r.split_once("]:"))
+            else {
+                rest.push((k, v));
+                continue;
+            };
+            let at = match rules.iter().position(|r| r.0 == name) {
+                Some(at) => at,
+                None => {
+                    rules.push((name.to_string(), None, None));
+                    rules.len() - 1
+                }
+            };
+            match field {
+                "enable" => rules[at].1 = Some(v),
+                "match:class" => rules[at].2 = Some(v),
+                _ => rest.push((k, v)),
+            }
         }
-        s.push_str(&format!("env = XCURSOR_SIZE,{}\n", self.cursor_size));
+        for (name, enabled, class) in rules {
+            let mut call = format!("hl.window_rule({{ name = {}", lua_str(&name));
+            if let Some(e) = enabled {
+                call += &format!(", enabled = {e}");
+            }
+            if let Some(c) = class {
+                call += &format!(", match = {{ class = {} }}", lua_str(&c));
+            }
+            s += &call;
+            s += " })\n";
+        }
+        for (k, v) in rest {
+            s += &crate::looks::keyword_lua(&k, &v);
+            s.push('\n');
+        }
+        let env = |k: &str, v: &str| format!("hl.env({}, {})\n", lua_str(k), lua_str(v));
+        let size = self.cursor_size.to_string();
+        s += &env("XCURSOR_SIZE", &size);
         // The compositor's own pointer (hyprcursor) and the apps' (Xcursor) agree on theme and size.
-        s.push_str(&format!(
-            "env = HYPRCURSOR_THEME,{CURSOR_THEME}\nenv = HYPRCURSOR_SIZE,{}\n",
-            self.cursor_size
-        ));
+        s += &env("HYPRCURSOR_THEME", CURSOR_THEME);
+        s += &env("HYPRCURSOR_SIZE", &size);
         if let Some(l) = self
             .language
             .as_deref()
             .filter(|l| crate::region::is_valid_locale(l))
         {
-            s.push_str(&format!("env = LANG,{l}\nenv = LC_ALL,{l}\n"));
+            s += &env("LANG", l);
+            s += &env("LC_ALL", l);
         }
         for c in self.login_items.iter().filter(|c| is_valid_command(c)) {
-            s.push_str(&format!("exec-once = {}\n", c.trim()));
+            s += &format!(
+                "hl.on(\"hyprland.start\", function() hl.exec_cmd({}) end)\n",
+                lua_str(c.trim())
+            );
         }
         s
     }
@@ -268,7 +323,7 @@ impl DesktopPrefs {
 }
 
 /// The session step that writes the X resource database (Xft.dpi, Xcursor.*) and the X11 scale
-/// variables from the monitor scale (`exec =` in hyprland.conf; desktop/overlay/usr/bin).
+/// variables from the monitor scale (`hl.exec_cmd` in hyprland.lua; desktop/overlay/usr/bin).
 pub const X11_ENV: &str = "wol-x11-env";
 
 /// Commands that move every toolkit's pointer to `size` at once; `setcursor` changes only the
@@ -323,8 +378,8 @@ pub fn retile(clients_json: &str, tile: bool, float_apps: &[String]) -> Vec<Stri
 
 // ---- Applying (System Settings) ----
 
-/// The older Keyboard fragment, folded into the include on the first save.
-const LEGACY_KEYBOARD: &str = "hypr/wolos/keyboard.conf";
+/// The setup assistant's keyboard file, folded into the include on the first save.
+const LEGACY_KEYBOARD: &str = KEYBOARD_FILE;
 
 fn read_in(home: &Path, rel: &str) -> Option<String> {
     std::fs::read_to_string(home.join(rel)).ok()
@@ -332,28 +387,26 @@ fn read_in(home: &Path, rel: &str) -> Option<String> {
 
 /// Saved desktop prefs under `home` (`$XDG_CONFIG_HOME`); first run carries over the older keyboard fragment.
 pub fn load_desktop(home: &Path) -> DesktopPrefs {
-    match read_in(home, PREFS_FILE) {
-        Some(t) => DesktopPrefs::parse(Some(&t)),
-        None => DesktopPrefs::from_legacy_keyboard(read_in(home, LEGACY_KEYBOARD).as_deref()),
-    }
+    DesktopPrefs::from_files(
+        read_in(home, PREFS_FILE).as_deref(),
+        read_in(home, LEGACY_KEYBOARD).as_deref(),
+    )
 }
 
 pub fn load_overrides(home: &Path) -> Overrides {
     Overrides::parse(read_in(home, shortcuts::PREFS_FILE).as_deref())
 }
 
-/// Shipped shortcuts: the installed confs, else the copies built in.
+/// Shipped shortcuts: the installed Lua files, else the copies built in.
 pub fn shortcut_defaults(host: &dyn Host) -> Vec<Shortcut> {
     shortcuts::load_defaults(|p| host.read_text(p))
 }
 
-/// Writes prefs, both includes and the user conf's `source` line: one journal entry (`wol undo`,
-/// Settings > Restore).
+/// Writes prefs, both Lua files and the user hyprland.lua's `require` of them: one journal entry
+/// (`wol undo`, Settings > Restore).
 fn persist(home: &Path, d: &DesktopPrefs, o: &Overrides, list: &[Shortcut]) -> std::io::Result<()> {
-    let glob = home.join(crate::prefs::HYPR_DIR).join("*.conf");
-    let user = crate::prefs::HYPR_USER;
-    let source =
-        crate::prefs::ensure_source(read_in(home, user).as_deref(), &glob.to_string_lossy());
+    let user = HYPR_USER;
+    let source = ensure_require(read_in(home, user).as_deref());
     let texts = [
         (PREFS_FILE, Some(d.to_json())),
         (INCLUDE, Some(d.include())),
@@ -375,10 +428,80 @@ fn persist(home: &Path, d: &DesktopPrefs, o: &Overrides, list: &[Shortcut]) -> s
     Ok(())
 }
 
+/// The WolOS files of the compositor 0.56 series (WolOS 0.12 and before) under `$XDG_CONFIG_HOME`,
+/// the last one the theme render in the toolkit dir (`theme::apps::user_dir`). The 0.57 series reads
+/// only Lua and never these; [`retire_plan`] carries them over once.
+pub const STALE_CONF: [&str; 6] = [
+    "hypr/wolos/settings.conf",
+    "hypr/wolos/shortcuts.conf",
+    "hypr/wolos/theme.conf",
+    "hypr/wolos/keyboard.conf",
+    "hypr/wolos/displays.conf",
+    "wolos/toolkits/hypr/wolos/theme.conf",
+];
+
+/// What [`retire_plan`] found, relative to `$XDG_CONFIG_HOME`: Lua files to write, then stale
+/// files to remove. Empty when nothing is stale.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Retire {
+    pub write: Vec<(&'static str, String)>,
+    pub remove: Vec<&'static str>,
+}
+
+/// First run after the upgrade to the Lua configuration: the person's keyboard and display choices
+/// in [`STALE_CONF`] move to their Lua files, the Settings and shortcut files are rendered again
+/// from `desktop.json` and `shortcuts.json` (the source of truth), and the stale files go. A Lua
+/// file that already exists wins. `read` and `present` look under `$XDG_CONFIG_HOME` (`present`
+/// counts a dangling link), `shipped` reads the installed defaults ([`shortcut_defaults`]). Pure:
+/// the caller writes, removes and reloads the compositor (`wol theme set`, at every session start).
+pub fn retire_plan(
+    read: &dyn Fn(&str) -> Option<String>,
+    present: &dyn Fn(&str) -> bool,
+    shipped: &dyn Fn(&str) -> Option<String>,
+) -> Retire {
+    let remove: Vec<&'static str> = STALE_CONF.into_iter().filter(|r| present(r)).collect();
+    let mut write: Vec<(&'static str, String)> = Vec::new();
+    if remove.is_empty() {
+        return Retire::default();
+    }
+    if let Some(t) = read(STALE_CONF[3]).filter(|_| !present(KEYBOARD_FILE)) {
+        let (l, r) = parse_keyboard(Some(&t));
+        write.extend(keyboard_lua(LAYOUTS[l].0, r).map(|lua| (KEYBOARD_FILE, lua)));
+    }
+    if let Some(t) = read(STALE_CONF[4]).filter(|_| !present(DISPLAYS_FILE)) {
+        let rules = monitor_rules(&t);
+        if !rules.is_empty() {
+            let mut lua = String::from("-- Written by WolOS Settings.\n");
+            for r in rules {
+                lua += &monitor_lua(&r);
+                lua.push('\n');
+            }
+            write.push((DISPLAYS_FILE, lua));
+        }
+    }
+    let keyboard = write
+        .iter()
+        .find(|w| w.0 == KEYBOARD_FILE)
+        .map(|w| w.1.clone())
+        .or_else(|| read(LEGACY_KEYBOARD));
+    let d = DesktopPrefs::from_files(read(PREFS_FILE).as_deref(), keyboard.as_deref());
+    if read(PREFS_FILE).is_some() && !present(INCLUDE) {
+        write.push((INCLUDE, d.include()));
+    }
+    if let Some(o) = read(shortcuts::PREFS_FILE).filter(|_| !present(shortcuts::INCLUDE)) {
+        let list = shortcuts::effective(
+            &shortcuts::load_defaults(shipped),
+            &Overrides::parse(Some(&o)),
+        );
+        write.push((shortcuts::INCLUDE, shortcuts::include(&list, d.tiling)));
+    }
+    Retire { write, remove }
+}
+
 /// One apply at a time: each reads the saved state, diffs and writes it back.
 static APPLYING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Submap with no binds of its own (shipped hyprland.conf): while Settings records a shortcut, WolOS
+/// Submap with no binds of its own (shipped hyprland.lua): while Settings records a shortcut, WolOS
 /// shortcuts pause so the keys reach it. Esc (non-consuming bind) always leaves it.
 pub const RECORD_SUBMAP: &str = "wol-record";
 
@@ -513,7 +636,17 @@ mod tests {
             ];
             assert_eq!(got, want.map(String::from), "{p:?}");
             let inc = p.include();
-            assert!(inc.contains(&format!("windowrule[wol-float]:enable = {}\n", want[0])));
+            let rule = format!(
+                "hl.window_rule({{ name = \"wol-float\", enabled = {} }})\n",
+                want[0]
+            );
+            assert!(inc.contains(&rule), "{inc}");
+            let apps = format!(
+                "hl.window_rule({{ name = \"wol-float-apps\", enabled = {}, match = {{ class = {} }} }})\n",
+                want[2],
+                crate::theme::hypr::lua_str(want[1])
+            );
+            assert!(inc.contains(&apps), "{inc}");
         }
     }
 
@@ -592,7 +725,7 @@ mod tests {
         assert_eq!(kw(&p, "input:kb_variant"), ",intl,");
         assert_eq!(kw(&p, "input:kb_options"), "grp:ctrl_space_toggle");
         assert_eq!(kw(&DesktopPrefs::default(), "input:kb_options"), "");
-        let legacy = crate::prefs::keyboard_conf("br", 2).unwrap();
+        let legacy = crate::prefs::keyboard_lua("br", 2).unwrap();
         let m = DesktopPrefs::from_legacy_keyboard(Some(&legacy));
         assert_eq!(
             (m.layouts, m.repeat_rate, m.repeat_delay),
@@ -614,12 +747,14 @@ mod tests {
         };
         let inc = p.include();
         for line in [
-            "animations:enabled = false\n",
-            "env = XCURSOR_SIZE,24\n",
-            "env = HYPRCURSOR_THEME,Adwaita\n",
-            "env = HYPRCURSOR_SIZE,24\n",
-            "env = LANG,pt_BR.UTF-8\n",
-            "exec-once = foot\n",
+            "hl.config({ [\"animations.enabled\"] = false })\n",
+            "hl.config({ [\"input.touchpad.tap_to_click\"] = true })\n",
+            "hl.config({ [\"input.kb_variant\"] = \"\" })\n",
+            "hl.env(\"XCURSOR_SIZE\", \"24\")\n",
+            "hl.env(\"HYPRCURSOR_THEME\", \"Adwaita\")\n",
+            "hl.env(\"HYPRCURSOR_SIZE\", \"24\")\n",
+            "hl.env(\"LANG\", \"pt_BR.UTF-8\")\n",
+            "hl.on(\"hyprland.start\", function() hl.exec_cmd(\"foot\") end)\n",
         ] {
             assert!(inc.contains(line), "{line}");
         }
@@ -653,27 +788,16 @@ mod tests {
         assert!(!is_valid_command("a ; b"));
     }
 
-    /// `WOL_HYPRLAND=<path to Hyprland> cargo test -p core hyprland_accepts -- --ignored`: the real parser
-    /// (0.56) accepts the shipped conf plus both generated includes (plugins stripped: not loadable here).
+    /// `WOL_HYPR_GEN=<dir> cargo test -p core write_generated_lua -- --ignored`: every Lua file WolOS
+    /// writes under `$XDG_CONFIG_HOME/hypr` (the user hyprland.lua, Settings, shortcuts with the
+    /// tiling set and custom keys, the setup keyboard, displays, each theme) into `<dir>/hypr`, for
+    /// `Hyprland --verify-config -c <dir>/hypr/hyprland.lua` with the shipped files installed (the
+    /// compositor-config CI job's setup). `<dir>/hypr/themes/` holds one file per theme.
     #[test]
     #[ignore]
-    fn hyprland_accepts_generated_includes() {
+    fn write_generated_lua() {
         use crate::shortcuts as sc;
-        let bin = std::env::var("WOL_HYPRLAND").expect("WOL_HYPRLAND");
-        let mut conf = String::new();
-        let mut depth = 0;
-        for l in sc::SHIPPED.lines() {
-            let t = l.trim_start();
-            if t.starts_with("plugin {") || depth > 0 {
-                depth += t.matches('{').count();
-                depth -= t.matches('}').count();
-                continue;
-            }
-            if !t.starts_with("plugin =") && !t.starts_with("source =") && !t.contains("hyprbars") {
-                conf.push_str(l);
-                conf.push('\n');
-            }
-        }
+        let dir = std::path::PathBuf::from(std::env::var("WOL_HYPR_GEN").expect("WOL_HYPR_GEN"));
         let p = DesktopPrefs {
             tiling: true,
             layout: Layout::Master,
@@ -682,6 +806,11 @@ mod tests {
             reduce_motion: true,
             language: Some("pt_BR.UTF-8".into()),
             login_items: vec!["foot --server".into()],
+            looks: crate::looks::Looks {
+                gaps: 4,
+                rounding: 6,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let d = sc::defaults(sc::SHIPPED, sc::TILING);
@@ -693,27 +822,52 @@ mod tests {
             false,
         )
         .unwrap();
+        o.assign(&d, "exec wol-settings", None, false).unwrap();
         o.add_custom(
             &d,
             sc::Custom {
                 name: "Top".into(),
-                combo: sc::Combo::parse("SUPER CTRL", "T").unwrap(),
+                combo: sc::Combo::parse("SUPER CTRL", "Y").unwrap(),
                 command: "foot -e top".into(),
             },
         )
         .unwrap();
-        conf.push_str(&p.include());
-        conf.push_str(&sc::include(&sc::effective(&d, &o), true));
-        let f = std::env::temp_dir().join(format!("wol-hypr-verify-{}.conf", std::process::id()));
-        std::fs::write(&f, &conf).unwrap();
-        let out = std::process::Command::new(bin)
-            .args(["--verify-config", "-c"])
-            .arg(&f)
-            .output()
-            .unwrap();
-        let text = String::from_utf8_lossy(&out.stdout);
-        let _ = std::fs::remove_file(&f);
-        assert!(text.contains("config ok"), "{text}\n{conf}");
+        let write = |rel: &str, text: &str| {
+            let f = dir.join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, text).unwrap();
+        };
+        write(
+            crate::prefs::HYPR_USER,
+            &crate::prefs::ensure_require(None).unwrap(),
+        );
+        write(INCLUDE, &p.include());
+        write(sc::INCLUDE, &sc::include(&sc::effective(&d, &o), true));
+        write(
+            crate::prefs::KEYBOARD_FILE,
+            &crate::prefs::keyboard_lua("us(intl)", 2).unwrap(),
+        );
+        let two = crate::prefs::displays_lua(None, "Virtual-1,1920x1080@60.00,auto,1");
+        write(
+            crate::prefs::DISPLAYS_FILE,
+            &crate::prefs::displays_lua(
+                Some(&two),
+                "HDMI-A-1,1920x1080@60.00,auto,1,mirror,Virtual-1",
+            ),
+        );
+        let cat = crate::theme::ThemeCatalog::builtin();
+        let t = cat.resolve("wol-dark").unwrap();
+        write(
+            crate::theme::hypr::HYPR_THEME_FILE,
+            &crate::theme::hypr::lua(&t),
+        );
+        for s in cat.list() {
+            let t = cat.resolve(&s.id).unwrap();
+            write(
+                &format!("hypr/themes/{}.lua", s.id),
+                &crate::theme::hypr::lua(&t),
+            );
+        }
     }
 
     #[test]
@@ -823,8 +977,8 @@ mod tests {
         let h = home("desktop");
         std::fs::create_dir_all(h.join("hypr/wolos")).unwrap();
         std::fs::write(
-            h.join("hypr/wolos/keyboard.conf"),
-            "input {\n    kb_layout = br\n    repeat_rate = 40\n    repeat_delay = 250\n}\n",
+            h.join(crate::prefs::KEYBOARD_FILE),
+            crate::prefs::keyboard_lua("br", 2).unwrap(),
         )
         .unwrap();
         let host = FakeHost::new(true);
@@ -832,7 +986,7 @@ mod tests {
             "hyprctl -j clients",
             r#"[{"address":"0x1","class":"foot","floating":true,"workspace":{"id":1}}]"#,
         );
-        // First load migrates the older keyboard fragment.
+        // First load carries over the setup assistant's keyboard file.
         let old = load_desktop(&h);
         assert_eq!(old.layouts, ["br"]);
         let new = DesktopPrefs {
@@ -842,11 +996,11 @@ mod tests {
         apply_desktop(&host, &h, &new).unwrap();
         assert_eq!(load_desktop(&h), new);
         let inc = std::fs::read_to_string(h.join(INCLUDE)).unwrap();
-        assert!(inc.contains("windowrule[wol-float]:enable = false\n"));
-        assert!(inc.contains("input:kb_layout = br\n"));
-        assert!(!h.join("hypr/wolos/keyboard.conf").exists(), "migrated");
-        let user = std::fs::read_to_string(h.join("hypr/hyprland.conf")).unwrap();
-        assert!(user.contains(&format!("source = {}/hypr/wolos/*.conf", h.display())));
+        assert!(inc.contains("hl.window_rule({ name = \"wol-float\", enabled = false })\n"));
+        assert!(inc.contains("hl.config({ [\"input.kb_layout\"] = \"br\" })\n"));
+        assert!(!h.join(crate::prefs::KEYBOARD_FILE).exists(), "migrated");
+        let user = std::fs::read_to_string(h.join("hypr/hyprland.lua")).unwrap();
+        assert_eq!(user, crate::prefs::user_lua("/usr/share/wolos"));
         let sent = batch(&host);
         assert!(sent.contains(&"keyword windowrule[wol-float]:enable false".to_string()));
         assert!(sent.contains(&"dispatch settiled address:0x1".to_string()));
@@ -858,7 +1012,9 @@ mod tests {
         );
         let sc = std::fs::read_to_string(h.join(shortcuts::INCLUDE)).unwrap();
         assert!(
-            sc.contains("bind = SUPER ALT, left, movefocus, l\n"),
+            sc.contains(
+                "hl.bind(\"SUPER + ALT + left\", hl.dsp.focus({ direction = \"left\" }))\n"
+            ),
             "{sc}"
         );
         assert!(
@@ -906,12 +1062,12 @@ mod tests {
             ]
         );
         assert!(!capture(&FakeHost::new(true), true), "no compositor");
-        let shipped = shortcuts::SHIPPED;
+        let shipped = crate::theme::hypr::conf_binds(shortcuts::SHIPPED);
         let block =
             format!("submap = {RECORD_SUBMAP}\nbindn = , escape, submap, reset\nsubmap = reset\n");
         assert!(
             shipped.contains(&block),
-            "shipped conf defines the record submap"
+            "shipped hyprland.lua defines the record submap"
         );
     }
 
@@ -942,7 +1098,138 @@ mod tests {
             "{sent:?}"
         );
         let sc = std::fs::read_to_string(h.join(shortcuts::INCLUDE)).unwrap();
-        assert!(sc.contains("bind = SUPER SHIFT, K, "), "{sc}");
+        assert!(sc.contains("hl.bind(\"SUPER + SHIFT + K\", "), "{sc}");
         let _ = std::fs::remove_dir_all(h);
+    }
+
+    /// An upgrade from the 0.56 configuration: the person's keyboard and displays move to Lua, the
+    /// Settings and shortcut files are rendered again from the JSON, every stale .conf file is
+    /// listed for removal (a dangling link too), and a Lua file that already exists wins.
+    #[test]
+    fn stale_conf_files_are_carried_over_once() {
+        use crate::prefs;
+        let mut files: std::collections::BTreeMap<&str, String> = Default::default();
+        let none = |_: &str| None;
+        let plan = |f: &std::collections::BTreeMap<&str, String>| {
+            retire_plan(
+                &|r| f.get(r).filter(|t| *t != "->").cloned(),
+                &|r| f.contains_key(r),
+                &none,
+            )
+        };
+        assert_eq!(
+            plan(&files),
+            Retire::default(),
+            "nothing stale, nothing done"
+        );
+        files.insert(
+            "hypr/wolos/keyboard.conf",
+            "# Written by WolOS Settings.\ninput {\n    kb_layout = br\n    kb_variant = \n    repeat_rate = 40\n    repeat_delay = 250\n}\n".into(),
+        );
+        files.insert(
+            "hypr/wolos/displays.conf",
+            "# Written by WolOS Settings.\nmonitor = eDP-1,1920x1080@60.00,auto,1.5\nmonitor = HDMI-A-1,1920x1080@60.00,auto,1,mirror,eDP-1\n".into(),
+        );
+        files.insert(
+            "hypr/wolos/settings.conf",
+            "general:layout = master\n".into(),
+        );
+        files.insert(
+            "hypr/wolos/shortcuts.conf",
+            "bind = SUPER, K, exec, foot\n".into(),
+        );
+        // A dangling link (the toolkit render gone): present, unreadable.
+        files.insert("hypr/wolos/theme.conf", "->".into());
+        files.insert(STALE_CONF[5], "plugin:hyprbars:bar_color = x\n".into());
+        let tiled = DesktopPrefs {
+            tiling: true,
+            ..Default::default()
+        };
+        files.insert(PREFS_FILE, tiled.to_json());
+        let mut o = Overrides::default();
+        let defaults = shortcuts::defaults(shortcuts::SHIPPED, shortcuts::TILING);
+        o.add_custom(
+            &defaults,
+            shortcuts::Custom {
+                name: "Top".into(),
+                combo: shortcuts::Combo::parse("SUPER CTRL", "U").unwrap(),
+                command: "foot -e top".into(),
+            },
+        )
+        .unwrap();
+        files.insert(shortcuts::PREFS_FILE, o.to_json());
+        // The person already has a displays.lua: it wins over the stale displays.conf.
+        files.insert(
+            prefs::DISPLAYS_FILE,
+            prefs::displays_lua(None, "eDP-1,2560x1600@60.00,auto,2"),
+        );
+
+        let p = plan(&files);
+        assert_eq!(p.remove, STALE_CONF);
+        let wrote = |rel: &str| p.write.iter().find(|w| w.0 == rel).map(|w| w.1.clone());
+        let kb = wrote(prefs::KEYBOARD_FILE).unwrap();
+        assert_eq!(prefs::parse_keyboard(Some(&kb)), (2, 2), "{kb}");
+        assert_eq!(
+            wrote(prefs::DISPLAYS_FILE),
+            None,
+            "the person's displays.lua stays"
+        );
+        assert_eq!(wrote(INCLUDE), Some(tiled.include()));
+        let sc = wrote(shortcuts::INCLUDE).unwrap();
+        assert!(sc.contains("hl.dsp.exec_cmd(\"foot -e top\")"), "{sc}");
+        assert!(
+            sc.contains("hl.bind(\"SUPER + ALT + left\""),
+            "tiling set: {sc}"
+        );
+        assert_eq!(
+            crate::theme::apps::user_dir(Path::new("/h")).join("hypr/wolos/theme.conf"),
+            Path::new("/h").join(STALE_CONF[5]),
+            "the toolkit render"
+        );
+
+        // Applied: the stale files are gone, so the next run does nothing.
+        for (rel, text) in p.write {
+            files.insert(rel, text);
+        }
+        for rel in p.remove {
+            files.remove(rel);
+        }
+        assert_eq!(plan(&files), Retire::default(), "once");
+
+        // Without a displays.lua of its own the rules move over, mirror included; without
+        // desktop.json the keyboard file carried over is the layout Settings starts from.
+        files.remove(prefs::DISPLAYS_FILE);
+        files.remove(PREFS_FILE);
+        files.remove(INCLUDE);
+        files.remove(prefs::KEYBOARD_FILE);
+        files.insert(
+            "hypr/wolos/displays.conf",
+            "monitor = HDMI-A-1,1920x1080@60.00,auto,1,mirror,eDP-1\n".into(),
+        );
+        files.insert(
+            "hypr/wolos/keyboard.conf",
+            "input {\n    kb_layout = de\n    repeat_rate = 15\n}\n".into(),
+        );
+        let p = plan(&files);
+        let d = p
+            .write
+            .iter()
+            .find(|w| w.0 == prefs::DISPLAYS_FILE)
+            .unwrap();
+        assert_eq!(
+            prefs::monitor_rules(&d.1),
+            ["HDMI-A-1,1920x1080@60.00,auto,1,mirror,eDP-1"]
+        );
+        assert!(
+            p.write.iter().all(|w| w.0 != INCLUDE),
+            "no desktop.json, no settings.lua"
+        );
+        let kb = &p
+            .write
+            .iter()
+            .find(|w| w.0 == prefs::KEYBOARD_FILE)
+            .unwrap()
+            .1;
+        assert_eq!(prefs::parse_keyboard(Some(kb)), (5, 0));
     }
 }

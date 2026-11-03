@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-2.0-or-later
 -- First screen of the live image (installer-session, ADR 0023): Install WolOS alone, no shell.
 -- Scale 1 like the desktop session (hyprland.lua): without a rule the compositor picks a scale from
 -- the display's size, and a VM display at 1.5 left the welcome card taller than the screen.

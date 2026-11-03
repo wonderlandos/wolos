@@ -399,7 +399,7 @@ pub fn session_command(u: &LoginUser, locked: bool) -> Option<Vec<String>> {
 pub const KEYRING_DAEMON: &str = "/usr/bin/gnome-keyring-daemon";
 
 /// gnome-keyring at login: reads the password on stdin, unlocks (or creates) the login keyring once
-/// the session runs `gnome-keyring-daemon --start` (hyprland.conf) within 120 s. Not the PAM keyring
+/// the session runs `gnome-keyring-daemon --start` (hyprland.lua) within 120 s. Not the PAM keyring
 /// module: wol-login hands the password over only after it accepted it (a typo never creates or
 /// unlocks a keyring), and the login PAM stack does not depend on the keyring package (without the
 /// daemon this is a no-op).
@@ -1681,5 +1681,41 @@ broken:line
         assert_eq!(super::home_unlock_steps("ana", None, bad), Some(vec![]));
         let steps = super::home_unlock_steps("ana", closed, b"s3cret-pw").unwrap();
         assert!(!steps.is_empty());
+    }
+
+    /// The greeter (login window, setup assistant) and the live image's installer start the
+    /// compositor on its Lua configuration (the 0.57 series reads no other), a file that ships.
+    #[test]
+    fn greeter_and_installer_start_on_the_lua_configuration() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let read = |rel: &str| std::fs::read_to_string(repo.join(rel)).unwrap();
+        let ships = |name: &str| {
+            let f = format!("desktop/overlay/usr/share/wolos/hypr/{name}.lua");
+            assert!(repo.join(&f).is_file(), "{f} ships");
+        };
+        let g = read(&format!("desktop/overlay{GREETER}"));
+        let start = g
+            .lines()
+            .find(|l| l.contains("Hyprland -c "))
+            .expect("the greeter starts the compositor");
+        assert!(
+            start.ends_with(" Hyprland -c /usr/share/wolos/hypr/$conf.lua"),
+            "{start}"
+        );
+        for conf in ["login", "setup"] {
+            assert!(g.contains(&format!("conf={conf}")), "{conf}");
+            ships(conf);
+        }
+        let i = read("files/usr/lib/wolos/installer-session");
+        let start = i.lines().find(|l| l.contains("Hyprland -c ")).unwrap();
+        assert!(
+            start.ends_with(" Hyprland -c /usr/share/wolos/hypr/installer.lua"),
+            "{start}"
+        );
+        ships("installer");
+        assert!(
+            !g.contains(".conf") && !i.contains(".conf"),
+            "no .conf left"
+        );
     }
 }

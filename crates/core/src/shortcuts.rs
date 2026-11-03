@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Keyboard shortcuts for System Settings > Keyboard > Shortcuts. The shipped compositor conf is the single
-//! source of truth for defaults; every bind gets a human name and group here. User changes and custom
-//! shortcuts live in `wolos/shortcuts.json`, render to the managed include `hypr/wolos/shortcuts.conf`
-//! (`unbind` + `bind`) and apply live with `hyprctl keyword unbind/bind` (no reload).
+//! Keyboard shortcuts for System Settings > Keyboard > Shortcuts. The shipped compositor configuration
+//! (`hyprland.lua`, `tiling.lua`, read as bind lines by `theme::hypr::conf_binds`) is the single source of
+//! truth for defaults; every bind gets a human name and group here. User changes and custom shortcuts
+//! live in `wolos/shortcuts.json`, render to the managed Lua file `hypr/wolos/shortcuts.lua`
+//! (`hl.unbind` + `hl.bind`) and apply live with `hyprctl keyword unbind/bind` (no reload).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 pub const PREFS_FILE: &str = "wolos/shortcuts.json";
-pub const INCLUDE: &str = "hypr/wolos/shortcuts.conf";
-/// Installed defaults; the repo copies below are the fallback (dev, tests).
-pub const SHIPPED_PATH: &str = "/usr/share/wolos/hypr/hyprland.conf";
-pub const TILING_PATH: &str = "/usr/share/wolos/hypr/tiling.conf";
+pub const INCLUDE: &str = "hypr/wolos/shortcuts.lua";
+/// Installed defaults (Lua); the repo copies below are the fallback (dev, tests).
+pub const SHIPPED_PATH: &str = "/usr/share/wolos/hypr/hyprland.lua";
+pub const TILING_PATH: &str = "/usr/share/wolos/hypr/tiling.lua";
 pub const SHIPPED: &str =
-    include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
-pub const TILING: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/tiling.conf");
+    include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+pub const TILING: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/tiling.lua");
 
 pub const CTRL: u8 = 1;
 pub const ALT: u8 = 2;
@@ -60,6 +61,16 @@ impl Combo {
     /// Same keys, ignoring letter case of the key name.
     pub fn same(&self, o: &Combo) -> bool {
         self.mods == o.mods && self.key.eq_ignore_ascii_case(&o.key)
+    }
+
+    /// The key string of `hl.bind` and `hl.unbind`: "SUPER + SHIFT + 4", "Print".
+    pub fn lua_keys(&self) -> String {
+        let mods = self.hypr_mods();
+        if mods.is_empty() {
+            self.key.clone()
+        } else {
+            format!("{} + {}", mods.replace(' ', " + "), self.key)
+        }
     }
 
     /// "SUPER SHIFT" (compositor order), "" for none.
@@ -147,6 +158,7 @@ fn key_label(k: &str) -> String {
         "xf86audioraisevolume" => "Volume Up",
         "xf86audiolowervolume" => "Volume Down",
         "xf86audiomute" => "Mute",
+        "xf86audiomicmute" => "Mic Mute",
         "xf86monbrightnessup" => "Brightness Up",
         "xf86monbrightnessdown" => "Brightness Down",
         "xf86audioplay" => "Play",
@@ -184,6 +196,82 @@ impl Bind {
         s
     }
 
+    /// The `hl.bind` call: the dispatcher as its `hl.dsp` function (the inverse of
+    /// `theme::hypr::conf_binds`), the flag letters as the options table. A dispatcher without a
+    /// Lua form runs through `hyprctl dispatch`.
+    pub fn lua(&self, combo: &Combo) -> String {
+        use crate::theme::hypr::lua_str;
+        fn dir(a: &str) -> &str {
+            match a {
+                "l" => "left",
+                "r" => "right",
+                "u" => "up",
+                "d" => "down",
+                other => other,
+            }
+        }
+        let num = |v: &str| {
+            if v.parse::<i64>().is_ok() {
+                v.to_string()
+            } else {
+                lua_str(v)
+            }
+        };
+        let a = self.args.trim();
+        let dsp = match (self.dispatcher.as_str(), a) {
+            ("exec", cmd) => format!("hl.dsp.exec_cmd({})", lua_str(cmd)),
+            ("?lua", call) => call.to_string(),
+            ("submap", name) => format!("hl.dsp.submap({})", lua_str(name)),
+            ("movefocus", d) => format!("hl.dsp.focus({{ direction = {} }})", lua_str(dir(d))),
+            ("workspace", w) => format!("hl.dsp.focus({{ workspace = {} }})", num(w)),
+            ("movewindow", "") => "hl.dsp.window.drag()".into(),
+            ("movewindow", d) => {
+                format!("hl.dsp.window.move({{ direction = {} }})", lua_str(dir(d)))
+            }
+            ("resizewindow", "") => "hl.dsp.window.resize()".into(),
+            ("resizeactive", xy) => match xy.split_once(' ') {
+                Some((x, y)) => format!(
+                    "hl.dsp.window.resize({{ x = {}, y = {}, relative = true }})",
+                    num(x.trim()),
+                    num(y.trim())
+                ),
+                None => self.dispatch_lua(),
+            },
+            ("togglefloating", "") => "hl.dsp.window.float({ action = \"toggle\" })".into(),
+            ("fullscreen", m) => format!(
+                "hl.dsp.window.fullscreen({{ mode = {} }})",
+                lua_str(if m == "1" { "maximized" } else { "fullscreen" })
+            ),
+            _ => self.dispatch_lua(),
+        };
+        let opts: Vec<String> = [
+            ('e', "repeating"),
+            ('l', "locked"),
+            ('m', "mouse"),
+            ('n', "non_consuming"),
+            ('r', "release"),
+            ('t', "transparent"),
+        ]
+        .iter()
+        .filter(|(c, _)| self.flags.contains(*c))
+        .map(|(_, o)| format!("{o} = true"))
+        .collect();
+        let mut s = format!("hl.bind({}, {dsp}", lua_str(&combo.lua_keys()));
+        if !opts.is_empty() {
+            s += &format!(", {{ {} }}", opts.join(", "));
+        }
+        s + ")"
+    }
+
+    /// `hyprctl dispatch <dispatcher> <args>` as an `hl.dsp.exec_cmd` (a dispatcher with no Lua form).
+    fn dispatch_lua(&self) -> String {
+        let cmd = format!("hyprctl dispatch {} {}", self.dispatcher, self.args);
+        format!(
+            "hl.dsp.exec_cmd({})",
+            crate::theme::hypr::lua_str(cmd.trim())
+        )
+    }
+
     /// `hyprctl keyword` form: "bindel SUPER,Return,exec,foot".
     fn keyword(&self, combo: &Combo) -> String {
         let mut s = format!(
@@ -201,7 +289,8 @@ impl Bind {
     }
 }
 
-/// Global binds of a compositor conf (none from inside a `submap`), `$variables` substituted.
+/// Global binds of bind lines (`bind = MODS, key, dispatcher, args`; none from inside a `submap`),
+/// `$variables` substituted: the form `theme::hypr::conf_binds` lowers the Lua configuration to.
 pub fn parse(conf: &str) -> Vec<Bind> {
     let mut vars: Vec<(String, String)> = Vec::new();
     let mut out = Vec::new();
@@ -482,7 +571,7 @@ const NAMES: [(&str, &str, &str, Group); 92] = [
     (
         "exec",
         "wol toggle nightlight",
-        "Turn Night Light on or off",
+        "Turn Night Shift on or off",
         G::System,
     ),
     (
@@ -542,13 +631,18 @@ const NAMES: [(&str, &str, &str, Group); 92] = [
     ("exec", "wol-app emoji", "Emoji & Symbols", G::Commands),
 ];
 
-/// Shipped defaults (desktop conf, then the tiling set), named and grouped, ids unique.
+/// Global binds of a Lua configuration (`hyprland.lua`, `tiling.lua`).
+pub fn parse_lua(lua: &str) -> Vec<Bind> {
+    parse(&crate::theme::hypr::conf_binds(lua))
+}
+
+/// Shipped defaults (the desktop's hyprland.lua, then the tiling set), named and grouped, ids unique.
 pub fn defaults(shipped: &str, tiling: &str) -> Vec<Shortcut> {
     let mut out: Vec<Shortcut> = Vec::new();
-    let all = parse(shipped)
+    let all = parse_lua(shipped)
         .into_iter()
         .map(|b| (b, false))
-        .chain(parse(tiling).into_iter().map(|b| (b, true)));
+        .chain(parse_lua(tiling).into_iter().map(|b| (b, true)));
     for (b, tiles) in all {
         let base = format!("{} {}", b.dispatcher, b.args).trim().to_string();
         let n = out
@@ -583,7 +677,7 @@ pub fn defaults(shipped: &str, tiling: &str) -> Vec<Shortcut> {
     out
 }
 
-/// Installed confs, else the repo copies.
+/// Installed Lua files, else the repo copies.
 pub fn load_defaults(read: impl Fn(&str) -> Option<String>) -> Vec<Shortcut> {
     defaults(
         &read(SHIPPED_PATH).unwrap_or_else(|| SHIPPED.into()),
@@ -768,10 +862,11 @@ pub fn active(list: &[Shortcut], tiling: bool) -> Vec<(Combo, Bind)> {
         .collect()
 }
 
-/// The include: unbind changed shipped defaults, bind their new combos, tiling set while on, custom ones.
+/// The Lua file: unbind changed shipped defaults, bind their new combos, tiling set while on, custom ones.
 pub fn include(list: &[Shortcut], tiling: bool) -> String {
+    use crate::theme::hypr::lua_str;
     let mut s = String::from(
-        "# Written by WolOS System Settings (Keyboard > Shortcuts). Change shortcuts there.\n",
+        "-- Written by WolOS System Settings (Keyboard > Shortcuts). Change shortcuts there.\n",
     );
     let shipped = |x: &&Shortcut| x.group != G::Tiling && x.group != G::Custom;
     let moved: Vec<&Shortcut> = list
@@ -785,7 +880,7 @@ pub fn include(list: &[Shortcut], tiling: bool) -> String {
         .collect();
     for x in &moved {
         if let Some(d) = &x.default {
-            s.push_str(&format!("unbind = {}, {}\n", d.hypr_mods(), d.key));
+            s.push_str(&format!("hl.unbind({})\n", lua_str(&d.lua_keys())));
         }
     }
     let bound = moved.iter().copied().chain(
@@ -794,7 +889,8 @@ pub fn include(list: &[Shortcut], tiling: bool) -> String {
     );
     for x in bound {
         if let Some(k) = &x.combo {
-            s.push_str(&format!("bind{} = {}\n", x.bind.flags, x.bind.value(k)));
+            s.push_str(&x.bind.lua(k));
+            s.push('\n');
         }
     }
     s
@@ -839,6 +935,7 @@ mod tests {
             ("SUPER", "Escape", "⌘⎋", "SUPER"),
             ("SUPER SHIFT", "Tab", "⇧⌘⇥", "SUPER SHIFT"),
             ("", "XF86AudioRaiseVolume", "Volume Up", ""),
+            ("", "XF86AudioMicMute", "Mic Mute", ""),
             ("SUPER ALT", "equal", "⌥⌘=", "SUPER ALT"),
         ] {
             let x = c(mods, key);
@@ -870,12 +967,18 @@ mod tests {
         assert_eq!(Combo::recorded(CTRL, "space"), Some(c("CTRL", "space")));
     }
 
-    /// Every bind line in the shipped conf is listed, named by the curated table (no fallback names).
+    /// Every bind in the shipped Lua configuration is listed, named by the curated table (no
+    /// fallback names).
     #[test]
-    fn shipped_conf_lists_every_bind() {
+    fn shipped_lua_lists_every_bind() {
         // Global bind lines (a submap's own binds are not shortcuts).
+        let lowered = crate::theme::hypr::conf_binds(SHIPPED);
+        assert!(
+            !lowered.contains('?'),
+            "a bind form conf_binds does not read"
+        );
         let mut global = true;
-        let lines = SHIPPED
+        let lines = lowered
             .lines()
             .map(str::trim)
             .filter(|l| {
@@ -886,15 +989,24 @@ mod tests {
                 global && l.starts_with("bind")
             })
             .count();
-        let binds = parse(SHIPPED);
+        let binds = parse_lua(SHIPPED);
         assert_eq!(binds.len(), lines, "a bind line failed to parse");
+        let calls = SHIPPED
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("bind(") || l.starts_with("hl.bind("))
+            .filter(|l| !l.starts_with("hl.bind(keys,"))
+            .count();
+        // The submap's own Esc bind is the one call that is not a shortcut (and the `bind` helper's
+        // own body binds nothing).
+        assert_eq!(calls, lines + 1, "every bind call is read");
         let d = defaults(SHIPPED, TILING);
         let tiling = TILING
             .lines()
-            .filter(|l| l.trim_start().starts_with("bind"))
+            .filter(|l| l.trim_start().starts_with("hl.bind("))
             .count();
         assert_eq!(d.len(), lines + tiling);
-        for b in binds.iter().chain(parse(TILING).iter()) {
+        for b in binds.iter().chain(parse_lua(TILING).iter()) {
             assert!(
                 name_of(&b.dispatcher, &b.args).is_some(),
                 "unnamed shipped bind: {} {}",
@@ -916,6 +1028,23 @@ mod tests {
             ("Show Search", Group::Search, "⌘Space".to_string())
         );
         assert!(d.iter().filter(|s| s.group == Group::Tiling).count() >= 8);
+        // The shell's word for the warm display is Night Shift; the mic key has a name, not a keysym.
+        let night = d
+            .iter()
+            .find(|s| s.id == "exec wol toggle nightlight")
+            .unwrap();
+        assert_eq!(night.name, "Turn Night Shift on or off");
+        let mic = d
+            .iter()
+            .find(|s| s.id == "exec wol-volume micmute")
+            .unwrap();
+        assert_eq!(mic.combo.as_ref().unwrap().label(), "Mic Mute");
+        assert!(
+            d.iter()
+                .filter_map(|s| s.combo.as_ref())
+                .all(|k| !k.label().starts_with("XF86")),
+            "every media key has a label"
+        );
         let drag = d.iter().find(|s| s.bind.flags == "m").unwrap();
         assert!(!drag.editable);
         let vol = d
@@ -933,6 +1062,66 @@ mod tests {
         ] {
             assert!(d.iter().any(|s| s.group == g), "{g:?} empty");
         }
+    }
+
+    /// `Bind::lua` is the inverse of `conf_binds`: every shipped bind written back as Lua reads as
+    /// the same bind, on its own key or another.
+    #[test]
+    fn every_shipped_bind_renders_as_lua() {
+        let d = defaults(SHIPPED, TILING);
+        let other = c("SUPER CTRL ALT", "K");
+        for s in &d {
+            let k = s.default.clone().unwrap();
+            for combo in [&k, &other] {
+                let lua = s.bind.lua(combo);
+                let back = parse_lua(&lua);
+                let want = Bind {
+                    combo: combo.clone(),
+                    ..s.bind.clone()
+                };
+                let sorted = |f: &str| {
+                    let mut v: Vec<char> = f.chars().collect();
+                    v.sort_unstable();
+                    v
+                };
+                assert_eq!(back.len(), 1, "{lua}");
+                assert_eq!(
+                    (
+                        sorted(&back[0].flags),
+                        &back[0].combo,
+                        &back[0].dispatcher,
+                        &back[0].args
+                    ),
+                    (
+                        sorted(&want.flags),
+                        &want.combo,
+                        &want.dispatcher,
+                        &want.args
+                    ),
+                    "{lua}"
+                );
+            }
+        }
+        let b = Bind {
+            flags: "el".into(),
+            combo: c("", "XF86AudioRaiseVolume"),
+            dispatcher: "exec".into(),
+            args: "wol-volume \"up\"".into(),
+        };
+        assert_eq!(
+            b.lua(&b.combo),
+            "hl.bind(\"XF86AudioRaiseVolume\", hl.dsp.exec_cmd(\"wol-volume \\\"up\\\"\"), { repeating = true, locked = true })"
+        );
+        let odd = Bind {
+            flags: String::new(),
+            combo: c("SUPER", "P"),
+            dispatcher: "pin".into(),
+            args: String::new(),
+        };
+        assert_eq!(
+            odd.lua(&odd.combo),
+            "hl.bind(\"SUPER + P\", hl.dsp.exec_cmd(\"hyprctl dispatch pin\"))"
+        );
     }
 
     #[test]
@@ -1047,7 +1236,8 @@ mod tests {
         assert_eq!(Overrides::parse(Some(&o.to_json())), o);
     }
 
-    /// Simulates the compositor: shipped binds, then the include's unbind/bind lines in order, equals `active`.
+    /// Simulates the compositor: shipped binds, then the Lua file's `hl.unbind`/`hl.bind` calls in
+    /// order, equals `active`.
     #[test]
     fn include_round_trip() {
         let d = defaults(SHIPPED, TILING);
@@ -1067,18 +1257,23 @@ mod tests {
         for tiling in [false, true] {
             let e = effective(&d, &o);
             let inc = include(&e, tiling);
-            let mut session: Vec<(Combo, String, String)> = parse(SHIPPED)
+            let mut session: Vec<(Combo, String, String)> = parse_lua(SHIPPED)
                 .into_iter()
                 .map(|b| (b.combo.clone(), b.dispatcher, b.args))
                 .collect();
             for l in inc.lines() {
-                if let Some(v) = l.strip_prefix("unbind = ") {
-                    let (m, k) = v.split_once(", ").unwrap();
+                if let Some(v) = l
+                    .strip_prefix("hl.unbind(\"")
+                    .and_then(|v| v.strip_suffix("\")"))
+                {
+                    let (m, k) = v.rsplit_once(" + ").unwrap_or(("", v));
                     let u = c(m, k);
                     session.retain(|s| !s.0.same(&u));
-                } else if l.starts_with("bind") {
-                    let b = &parse(l)[0];
+                } else if l.starts_with("hl.bind(") {
+                    let b = &parse_lua(l)[0];
                     session.push((b.combo.clone(), b.dispatcher.clone(), b.args.clone()));
+                } else {
+                    assert!(l.starts_with("-- "), "{l}");
                 }
             }
             let mut got: Vec<String> = session
@@ -1096,7 +1291,7 @@ mod tests {
         assert!(
             include(&effective(&d, &Overrides::default()), false)
                 .lines()
-                .all(|l| l.starts_with('#')),
+                .all(|l| l.starts_with("--")),
             "defaults write nothing"
         );
     }

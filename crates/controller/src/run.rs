@@ -634,6 +634,7 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     {
         env.err(&format!("wol: app themes: {e}\n"));
     }
+    retire_hypr_conf(env, &home);
     for argv in apps::gsettings_argv(t)
         .into_iter()
         .chain(apps::strip_argv(t))
@@ -641,6 +642,34 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
         let _ = env.exec(&argv);
     }
     announce_theme(env, &t.id);
+}
+
+/// The upgrade to the compositor's Lua configuration (WolOS 0.13): the first theme switch (`wol theme
+/// set`, at every session start) carries the 0.56 `.conf` files over (`hyprprefs::retire_plan`) and
+/// reloads the compositor once, so the person's keyboard, displays, Settings and shortcuts hold.
+/// A stale file stays until its Lua file is written.
+fn retire_hypr_conf(env: &mut dyn Env, home: &Path) {
+    let plan = {
+        let read = |r: &str| env.read_file(&home.join(r));
+        let present = |r: &str| std::fs::symlink_metadata(home.join(r)).is_ok();
+        let shipped = |p: &str| env.read_file(Path::new(p));
+        wol_core::hyprprefs::retire_plan(&read, &present, &shipped)
+    };
+    if plan.remove.is_empty() {
+        return;
+    }
+    for (rel, text) in &plan.write {
+        let p = home.join(rel);
+        let made = p.parent().map_or(Ok(()), |d| env.make_dir(d));
+        if let Err(e) = made.and_then(|()| env.write_file(&p, text)) {
+            env.err(&format!("wol: {rel}: {e}\n"));
+            return;
+        }
+    }
+    for rel in &plan.remove {
+        let _ = env.remove_file(&home.join(rel));
+    }
+    let _ = env.exec_quiet(&["hyprctl".into(), "reload".into()]);
 }
 
 /// `publish {"event":"theme","id":ID}` on wold's socket: wold hands an Everyone event from a client
