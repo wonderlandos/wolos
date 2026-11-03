@@ -49,6 +49,7 @@ files/usr/lib/wolos/boot-setup
 files/usr/lib/wolos/clam-update
 files/usr/lib/wolos/dkms-sign
 files/usr/lib/wolos/esp-sync
+files/usr/lib/wolos/etc-settle
 files/usr/lib/wolos/firstboot
 files/usr/lib/wolos/gpu
 files/usr/lib/wolos/install-boot

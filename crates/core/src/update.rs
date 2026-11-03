@@ -13,6 +13,8 @@ pub mod check;
 pub mod layers;
 pub mod pkg;
 
+use std::path::Path;
+
 /// The two root slots (btrfs subvolumes `@wolos-a`, `@wolos-b`).
 pub const SLOTS: [&str; 2] = ["wolos-a", "wolos-b"];
 /// The btrfs top level (subvolid=5), mounted by the image.
@@ -146,6 +148,7 @@ pub fn plan_from(
         from,
         prep: &prep,
         pacman: &["-Syu", "--noconfirm"],
+        files: &[],
         release: &release,
         cmdline,
     })
@@ -209,6 +212,54 @@ pub enum Base {
     Pending,
 }
 
+/// The `/etc` overlay of a two-slot system (fstab line). The lower is the slot's own `/etc`, a
+/// different directory after every slot switch, while the upper in the shared `@var` stays.
+/// overlayfs defines changes to a lower layer made while it is not mounted only when the index,
+/// metacopy, xino and redirect features were not used (Documentation/filesystems/overlayfs.rst,
+/// "Changes to underlying filesystems"). With the kernel default `index=on` the mount refused the
+/// upper after a switch: its root origin named the other slot's `/etc` (ESTALE, emergency mode).
+/// `redirect_dir=follow` makes no redirects and still reads those an older upper has;
+/// [`ETC_SETTLE`] turns metacopy-only copy-ups into full ones first. Nothing is stripped from the
+/// upper: a slot from before this line (`index=on`) still finds its own origin there.
+pub const ETC_FSTAB: &str = "overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,\
+workdir=/var/lib/wolos/etc/work,index=off,metacopy=off,redirect_dir=follow,xino=off,nfs_export=off,\
+x-systemd.requires-mounts-for=/var 0 0";
+/// Copies the data of metacopy-only copy-ups in the `/etc` upper up through the live overlay, so a
+/// mount with `metacopy=off` (the new slot's [`ETC_FSTAB`]) reads them.
+pub const ETC_SETTLE: &str = "/usr/lib/wolos/etc-settle";
+/// Where [`Build::files`] are inside the copy, one folder per file (a signature next to it keeps
+/// its name).
+pub const STAGE: &str = "/var/tmp/wolos-pkg";
+
+/// The path pacman sees for file `i` of [`Build::files`], `src` on the running system.
+pub fn staged(i: usize, src: &str) -> String {
+    let name = Path::new(src)
+        .file_name()
+        .map_or_else(|| src.to_owned(), |n| n.to_string_lossy().into_owned());
+    format!("{STAGE}/{i}/{name}")
+}
+
+/// `src`'s folder and a `find -name` pattern for its detached signature (`NAME.sig`).
+fn sig_pattern(src: &str) -> (String, String) {
+    let p = Path::new(src);
+    let dir = match p.parent().map(|d| d.to_string_lossy().into_owned()) {
+        Some(d) if d.starts_with(['/', '.']) => d,
+        Some(d) if !d.is_empty() => format!("./{d}"),
+        _ => ".".to_owned(),
+    };
+    let name = p
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let mut pat = String::new();
+    for c in name.chars() {
+        if matches!(c, '*' | '?' | '[' | ']' | '\\') {
+            pat.push('\\');
+        }
+        pat.push(c);
+    }
+    (dir, pat + ".sig")
+}
+
 /// One change to a slot: the one implementation `wol update` and the pacman wrapper share.
 pub struct Build<'a> {
     pub slot: &'a str,
@@ -217,6 +268,10 @@ pub struct Build<'a> {
     pub prep: &'a dyn Fn(&str) -> Vec<Step>,
     /// Arguments of the real pacman, run in the slot.
     pub pacman: &'a [&'a str],
+    /// Package files on the running system that `pacman` names by [`staged`] path: copied into
+    /// the copy first (the chroot has no `/var`, `/home` or `/tmp` of the running system, and
+    /// starts in `/`), removed again before the seal.
+    pub files: &'a [String],
     pub release: &'a str,
     pub cmdline: Option<&'a str>,
 }
@@ -249,11 +304,59 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     // Packages installed live since: their files and database entries come along, then the
     // layers are cleared from the copy.
     steps.push(v(&["wol", "layers", "fold", &work]));
+    // The new slot mounts /etc so that its own, different lower is never refused (ETC_FSTAB), and
+    // the upper holds nothing that mount would refuse.
+    steps.push(v(&[
+        "sed",
+        "-i",
+        "-E",
+        &format!("s#^overlay[[:space:]]+/etc[[:space:]]+overlay[[:space:]].*#{ETC_FSTAB}#"),
+        &format!("{work}/etc/fstab"),
+    ]));
+    steps.push(v(&[ETC_SETTLE]));
     steps.extend((b.prep)(&work));
+    let stage = format!("{work}{STAGE}");
+    if !b.files.is_empty() {
+        let dirs: Vec<String> = (0..b.files.len()).map(|i| format!("{stage}/{i}")).collect();
+        let mut mkdir = vec!["mkdir", "-p"];
+        mkdir.extend(dirs.iter().map(String::as_str));
+        steps.push(v(&mkdir));
+        for (src, dir) in b.files.iter().zip(&dirs) {
+            steps.push(v(&["cp", "--reflink=auto", "-t", dir, "--", src]));
+            // LocalFileSigLevel: a signature next to the file is checked, so it comes along.
+            let (from, pat) = sig_pattern(src);
+            steps.push(v(&[
+                "find",
+                "-L",
+                &from,
+                "-maxdepth",
+                "1",
+                "-type",
+                "f",
+                "-name",
+                &pat,
+                "-exec",
+                "cp",
+                "--reflink=auto",
+                "-t",
+                dir,
+                "--",
+                "{}",
+                "+",
+            ]));
+        }
+    }
+    // pacman finds the root's file system in the mount table (CheckSpace); a subvolume folder is
+    // not a mount, so the copy is bound onto itself (arch-chroot(8)) and let go before the seal.
+    steps.push(v(&["mount", "--bind", &work, &work]));
     let mut chroot = vec!["arch-chroot", &work, PACMAN];
     chroot.extend(b.pacman);
     steps.push(v(&chroot));
     steps.push(v(&["arch-chroot", &work, "mkinitcpio", "-P"]));
+    steps.push(v(&["umount", &work]));
+    if !b.files.is_empty() {
+        steps.push(v(&["rm", "-rf", "--", &stage]));
+    }
     let esp = format!("{ESP}/{slot}");
     steps.push(v(&["mkdir", "-p", &esp]));
     steps.push(v(&[
@@ -286,22 +389,30 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     Some(steps)
 }
 
+/// Unbinds a copy a failed step left mounted (the bind for pacman, a chroot's mounts): a mounted
+/// subvolume cannot be deleted. Fails harmlessly when nothing is mounted there.
+fn unmount(root: &str) -> Vec<String> {
+    vec!["umount".into(), "-R".into(), root.into()]
+}
+
 /// After a failed step: a stacked change only loses its scratch copy.
 pub fn rollback_from(slot: &str, from: Base) -> Vec<Vec<String>> {
     match from {
         Base::Running { .. } => rollback(slot),
-        Base::Pending => vec![vec![
-            "btrfs".into(),
-            "subvolume".into(),
-            "delete".into(),
-            format!("{TOP}/@{SCRATCH}"),
-        ]],
+        Base::Pending => {
+            let scratch = format!("{TOP}/@{SCRATCH}");
+            vec![
+                unmount(&scratch),
+                vec!["btrfs".into(), "subvolume".into(), "delete".into(), scratch],
+            ]
+        }
     }
 }
 
 /// After a failed step: delete the half-made slot and its entry.
 pub fn rollback(slot: &str) -> Vec<Vec<String>> {
     vec![
+        unmount(&format!("{TOP}/@{slot}")),
         vec![
             "btrfs".into(),
             "subvolume".into(),
@@ -489,12 +600,19 @@ mod tests {
                 "btrfs subvolume delete /run/wolos/top/@wolos-b",
                 "btrfs subvolume snapshot / /run/wolos/top/@wolos-b",
                 "wol layers fold /run/wolos/top/@wolos-b",
+                &format!(
+                    "sed -i -E s#^overlay[[:space:]]+/etc[[:space:]]+overlay[[:space:]].*#{ETC_FSTAB}# \
+/run/wolos/top/@wolos-b/etc/fstab"
+                ),
+                "/usr/lib/wolos/etc-settle",
                 "sed -i -E s#/repos/[0-9]{4}/[0-9]{2}/[0-9]{2}/#/repos/2026/11/02/# \
 /run/wolos/top/@wolos-b/etc/pacman.conf",
                 "sed -i -E s#[0-9]{4}-[0-9]{2}-[0-9]{2}#2026-11-02#g \
 /run/wolos/top/@wolos-b/etc/pacman.d/wolos-mirrorlist",
+                "mount --bind /run/wolos/top/@wolos-b /run/wolos/top/@wolos-b",
                 "arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm",
                 "arch-chroot /run/wolos/top/@wolos-b mkinitcpio -P",
+                "umount /run/wolos/top/@wolos-b",
                 "mkdir -p /efi/wolos-b",
                 "wol seal apply /run/wolos/top/@wolos-b /efi/wolos-b/verity",
                 "env WOLOS_ROOT=/run/wolos/top/@wolos-b WOLOS_SLOT=wolos-b WOLOS_RELEASE=2026/11/02 \
@@ -510,7 +628,12 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
             first[0].to_string(),
             "btrfs subvolume snapshot / /run/wolos/top/@wolos-a"
         );
-        assert!(!first.iter().any(|s| s.to_string().starts_with("sed ")));
+        // Only the fstab line is rewritten: no repo date moves.
+        assert!(
+            !first.iter().any(
+                |s| s.to_string().starts_with("sed ") && !s.to_string().ends_with("/etc/fstab")
+            )
+        );
         for (slot, date) in [("x", None), ("wolos-a", Some("2026-11-02")), ("", None)] {
             assert!(plan(slot, false, date).is_none(), "{slot} {date:?}");
         }
@@ -541,10 +664,104 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
         assert_eq!(
             r,
             [
+                "umount -R /run/wolos/top/@wolos-b",
                 "btrfs subvolume delete /run/wolos/top/@wolos-b",
                 "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
             ]
         );
+        let r: Vec<String> = rollback_from("wolos-b", Base::Pending)
+            .iter()
+            .map(|a| a.join(" "))
+            .collect();
+        assert_eq!(
+            r,
+            [
+                "umount -R /run/wolos/top/@wolos-tx",
+                "btrfs subvolume delete /run/wolos/top/@wolos-tx"
+            ]
+        );
+    }
+
+    /// FIX-slot 0.12.1: the copy pacman runs in is a mount for exactly the chroot steps (pacman's
+    /// CheckSpace looks the root up in the mount table), and is let go before the seal, the swap of
+    /// a stacked change and the boot image; the new slot's /etc overlay line is rewritten first.
+    #[test]
+    fn the_copy_is_a_mount_only_while_pacman_and_mkinitcpio_run_in_it() {
+        for (from, work) in [
+            (Base::Running { replace: true }, "/run/wolos/top/@wolos-b"),
+            (Base::Pending, "/run/wolos/top/@wolos-tx"),
+        ] {
+            let s: Vec<String> = plan_from("wolos-b", from, None, None)
+                .unwrap()
+                .iter()
+                .map(Step::to_string)
+                .collect();
+            let at = |p: &str| {
+                s.iter()
+                    .position(|x| x.starts_with(p))
+                    .unwrap_or_else(|| panic!("{p}: {s:?}"))
+            };
+            let bind = at(&format!("mount --bind {work} {work}"));
+            let unbind = at(&format!("umount {work}"));
+            let chroots: Vec<usize> = (0..s.len())
+                .filter(|&i| s[i].starts_with("arch-chroot "))
+                .collect();
+            assert_eq!(chroots, [bind + 1, bind + 2], "{s:?}");
+            assert_eq!(unbind, bind + 3, "{s:?}");
+            assert!(unbind < at("wol seal apply") && unbind < at("env WOLOS_ROOT="));
+            if from == Base::Pending {
+                assert!(unbind < at("mv "), "{s:?}");
+            }
+            let fstab = at("sed -i -E s#^overlay");
+            assert!(
+                s[fstab].ends_with(&format!(" {work}/etc/fstab")),
+                "{}",
+                s[fstab]
+            );
+            assert!(fstab < bind && at(ETC_SETTLE) < bind, "{s:?}");
+        }
+    }
+
+    /// The /etc overlay never uses what overlayfs needs an unchanged lower for.
+    #[test]
+    fn the_etc_overlay_takes_a_changed_lower() {
+        let opts = ETC_FSTAB.split_whitespace().nth(3).unwrap();
+        for o in [
+            "lowerdir=/etc",
+            "upperdir=/var/lib/wolos/etc/upper",
+            "workdir=/var/lib/wolos/etc/work",
+            "index=off",
+            "metacopy=off",
+            "redirect_dir=follow",
+            "xino=off",
+            "nfs_export=off",
+            "x-systemd.requires-mounts-for=/var",
+        ] {
+            assert!(opts.split(',').any(|x| x == o), "{o}: {opts}");
+        }
+        assert!(ETC_FSTAB.starts_with("overlay /etc overlay ") && ETC_FSTAB.ends_with(" 0 0"));
+        // One line, nothing sed would read as its own syntax in the replacement.
+        assert!(!ETC_FSTAB.contains(['#', '&', '\\', '\n']), "{ETC_FSTAB}");
+    }
+
+    #[test]
+    fn staged_files_keep_their_name_in_a_folder_of_their_own() {
+        assert_eq!(
+            staged(0, "/home/a/x.pkg.tar.zst"),
+            "/var/tmp/wolos-pkg/0/x.pkg.tar.zst"
+        );
+        assert_eq!(
+            staged(3, "x.pkg.tar.zst"),
+            "/var/tmp/wolos-pkg/3/x.pkg.tar.zst"
+        );
+        for (src, dir, pat) in [
+            ("/home/a/x.pkg.tar.zst", "/home/a", "x.pkg.tar.zst.sig"),
+            ("x.pkg.tar.zst", ".", "x.pkg.tar.zst.sig"),
+            ("sub/x", "./sub", "x.sig"),
+            ("/x[1]*.zst", "/", "x\\[1\\]\\*.zst.sig"),
+        ] {
+            assert_eq!(sig_pattern(src), (dir.into(), pat.into()), "{src}");
+        }
     }
 
     pub(crate) const BOOTCTL: &str = r#"[
