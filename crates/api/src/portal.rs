@@ -331,7 +331,8 @@ fn doing(capability: &str) -> Option<&'static str> {
         "account-info" => "read your account name",
         "ipc" => "send or receive messages from other apps",
         "devices" => "use connected devices",
-        "share" => "share text",
+        "share" => "share text and files",
+        "trash" => "move files to the Trash",
         "background" => "run in the background",
         _ => return None,
     })
@@ -649,6 +650,18 @@ fn decide<W: Write + Send>(
         Call::ShareText { title, text } => {
             let ask = Ask::Share { title, text };
             st.asks.ask(bus, caller.uid, ask, PANEL_TIMEOUT)
+        }
+        // The desktop acts as the person: wold never opens or moves a path for an app.
+        Call::FileTrash { path } => st
+            .asks
+            .ask(bus, caller.uid, Ask::Trash { path }, ASK_TIMEOUT),
+        Call::ShareFile { path } => {
+            st.asks
+                .ask(bus, caller.uid, Ask::ShareFile { path }, PANEL_TIMEOUT)
+        }
+        Call::OpenWith { path } => {
+            st.asks
+                .ask(bus, caller.uid, Ask::OpenWith { path }, PANEL_TIMEOUT)
         }
         Call::ServiceStart { name } => match st.background.start(caller, &name) {
             Ok(()) => Answer::ok(),
@@ -1012,6 +1025,76 @@ mod tests {
         let a = handle(read, Some(&reader), &grants, &s.0, &s.1);
         assert_eq!(a.data, Some(serde_json::json!({"text": "copied"})));
         t.join().unwrap();
+        assert_eq!(next(&seen), None, "another account's desktop saw nothing");
+    }
+
+    #[test]
+    fn file_calls_reach_only_the_desktop_of_the_callers_account() {
+        let s = Arc::new((Bus::<UnixStream>::default(), State::default()));
+        let grants = Fixed(&[("/usr/bin/sharer", "share"), ("/usr/bin/tidy", "trash")]);
+        let (sharer, tidy) = (caller("/usr/bin/sharer"), caller("/usr/bin/tidy"));
+        let trash = r#"{"call":"file.trash","path":"/home/a/b.jpg"}"#;
+        let share = r#"{"call":"share.file","path":"/home/a/b.jpg"}"#;
+        let open = r#"{"call":"open.with","path":"/home/a/b.jpg"}"#;
+        let a = handle(trash, Some(&sharer), &grants, &s.0, &s.1);
+        assert_eq!(a.code, Some(Code::PermissionDenied));
+        assert_eq!(
+            a.message.as_deref(),
+            Some(
+                "sharer is not allowed to move files to the Trash. Allow it in System Settings > \
+                 Privacy & Security."
+            )
+        );
+        for c in [share, open] {
+            let a = handle(c, Some(&tidy), &grants, &s.0, &s.1);
+            assert_eq!(a.code, Some(Code::PermissionDenied), "{c}");
+        }
+        let a = handle(
+            r#"{"call":"file.trash","path":"/home/a/../b"}"#,
+            Some(&tidy),
+            &grants,
+            &s.0,
+            &s.1,
+        );
+        assert_eq!(a.code, Some(Code::InvalidArgument), "not a normal path");
+        let (other, seen) = UnixStream::pair().unwrap();
+        s.0.subscribe(Some(1001), None, other);
+        let cases = [
+            (
+                trash,
+                &tidy,
+                Ask::Trash {
+                    path: "/home/a/b.jpg".into(),
+                },
+                r#"{"name":"b.jpg"}"#,
+            ),
+            (
+                share,
+                &sharer,
+                Ask::ShareFile {
+                    path: "/home/a/b.jpg".into(),
+                },
+                r#"{"done":"copied"}"#,
+            ),
+            (
+                open,
+                &sharer,
+                Ask::OpenWith {
+                    path: "/home/a/b.jpg".into(),
+                },
+                r#"{"done":"opened"}"#,
+            ),
+        ];
+        for (call, who, want, data) in cases {
+            let reply = format!(r#"{{"call":"session.answer","id":ID,"data":{data}}}"#);
+            let t = shell(s.clone(), 1000, move |ask| {
+                assert_eq!(ask, want);
+                reply.clone()
+            });
+            let a = handle(call, Some(who), &grants, &s.0, &s.1);
+            assert_eq!(a.data, serde_json::from_str(data).ok(), "{call}");
+            t.join().unwrap();
+        }
         assert_eq!(next(&seen), None, "another account's desktop saw nothing");
     }
 

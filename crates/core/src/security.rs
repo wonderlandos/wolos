@@ -294,12 +294,17 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
     (
         "share",
         Enforcement::System,
-        "WolOS shows the person what would be shared, and nothing leaves until they pick where it goes",
+        "WolOS shows the person what would be shared, and nothing leaves until they pick where it goes or which app opens it",
     ),
     (
         "background",
         Enforcement::System,
         "WolOS runs only the app's own program, as your account, until the app or the computer stops it",
+    ),
+    (
+        "trash",
+        Enforcement::System,
+        "WolOS moves the file the app names to your Trash, as you, where you can put it back",
     ),
 ];
 

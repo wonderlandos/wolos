@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Sharing (ADR 0020, 1.13): the person sees what an app wants to share and picks where it goes.
-//! The app learns only what was done.
+//! Sharing (ADR 0020, 1.13, 1.15): the person sees what an app wants to share and picks where it
+//! goes, or which app opens a file. The app learns only what was done.
 use crate::client;
 use crate::context::wol_context;
 use crate::error::{Error, Status, guard, input, need, wol_error, wol_status};
 use crate::file::PANEL_WAIT;
 use crate::kit::arc_of;
 use crate::string::{into_raw, wol_string};
-use shared::portal::{Call, MAX_MESSAGE, MAX_TITLE};
+use shared::portal::{Call, MAX_MESSAGE, MAX_PATH, MAX_TITLE};
 use std::ffi::c_char;
 
 /// # Safety
@@ -39,6 +39,62 @@ pub unsafe extern "C" fn wol_share_text(
         let data = a.data.unwrap_or_default();
         let done = data.get("done").and_then(|d| d.as_str());
         unsafe { *out = into_raw(wol_string::new(done.unwrap_or("cancelled"))) };
+        Ok(())
+    })
+}
+
+/// A call that waits for the person: what `done` the desktop answered ("cancelled" if none).
+fn done_of(context: &wol_context, c: &Call) -> crate::error::Result<*mut wol_string> {
+    let (a, _) = client::call_for(context.wold(), c, PANEL_WAIT);
+    if !a.ok {
+        return Err(Error::new(
+            a.code.map_or(Status::Internal, Into::into),
+            a.message.unwrap_or_default(),
+        ));
+    }
+    let data = a.data.unwrap_or_default();
+    let done = data.get("done").and_then(|d| d.as_str());
+    Ok(into_raw(wol_string::new(done.unwrap_or("cancelled"))))
+}
+
+/// # Safety
+/// `context` is live; `path` points at `len` bytes; `out`, `error` writable or NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_share_file(
+    context: *mut wol_context,
+    path: *const c_char,
+    len: usize,
+    out: *mut *mut wol_string,
+    error: *mut *mut wol_error,
+) -> wol_status {
+    guard(error, || {
+        need(out, "out")?;
+        let context = arc_of(context)?;
+        let path = input(path, len, MAX_PATH, "The path")?.to_owned();
+        let s = done_of(&context, &Call::ShareFile { path })?;
+        // SAFETY: `out` was checked non-NULL above and is writable (header contract).
+        unsafe { *out = s };
+        Ok(())
+    })
+}
+
+/// # Safety
+/// `context` is live; `path` points at `len` bytes; `out`, `error` writable or NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_open_with(
+    context: *mut wol_context,
+    path: *const c_char,
+    len: usize,
+    out: *mut *mut wol_string,
+    error: *mut *mut wol_error,
+) -> wol_status {
+    guard(error, || {
+        need(out, "out")?;
+        let context = arc_of(context)?;
+        let path = input(path, len, MAX_PATH, "The path")?.to_owned();
+        let s = done_of(&context, &Call::OpenWith { path })?;
+        // SAFETY: `out` was checked non-NULL above and is writable (header contract).
+        unsafe { *out = s };
         Ok(())
     })
 }

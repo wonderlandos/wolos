@@ -19,7 +19,10 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 40] = [
+const SEEDS: [&str; 43] = [
+    r#"{"call":"file.trash","path":"/home/a/Pictures/a.jpg"}"#,
+    r#"{"call":"share.file","path":"/home/a/Pictures/a.jpg"}"#,
+    r#"{"call":"open.with","path":"/home/a/Pictures/a.jpg"}"#,
     r#"{"call":"service.start","name":"sync"}"#,
     r#"{"call":"service.stop","name":"sync"}"#,
     r#"{"call":"service.status","name":"sync"}"#,

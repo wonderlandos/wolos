@@ -19,7 +19,8 @@ unsafe class Services
         IntPtr ctx = 0, err = 0;
         using Utf8 app = new("org.example.services"), file = new("File"), open = new("open"), save = new("Open"),
             key = new("width"), value = new("640"), title = new("Copying"), body = new("1 of 5"),
-            shortcut = new("cmd+o"), icon = new("document-open-symbolic"), reason = new("Exporting");
+            shortcut = new("cmd+o"), icon = new("document-open-symbolic"), reason = new("Exporting"),
+            pic = new("/srv/photos/a.jpg");
         Ok(wol_context_create(app.Ptr, app.Len, &ctx, &err));
 
         wol_menu_fn onMenu = (_, _, _) => { };
@@ -142,6 +143,15 @@ unsafe class Services
         Console.WriteLine($"service: {Text(wol_info_get_text(Field(info, "state")))}");
         wol_info_release(info);
         Ok(wol_service_stop(ctx, key.Ptr, key.Len, &err));
+        Ok(wol_file_trash(ctx, pic.Ptr, pic.Len, &str, &err));
+        Console.WriteLine($"trashed: {Text(str)}");
+        wol_string_release(str);
+        Ok(wol_share_file(ctx, pic.Ptr, pic.Len, &str, &err));
+        Console.WriteLine($"shared file: {Text(str)}");
+        wol_string_release(str);
+        Ok(wol_open_with(ctx, pic.Ptr, pic.Len, &str, &err));
+        Console.WriteLine($"open with: {Text(str)}");
+        wol_string_release(str);
         wol_context_release(ctx);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);

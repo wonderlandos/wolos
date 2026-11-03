@@ -4,7 +4,7 @@
 @[Link("wol")]
 lib LibWol
   WOL_VERSION_MAJOR         =  1
-  WOL_VERSION_MINOR         = 14
+  WOL_VERSION_MINOR         = 15
   WOL_VERSION_PATCH         =  0
   WOL_OK                    =  0
   WOL_ERR_INVALID_ARGUMENT  =  1
@@ -232,4 +232,7 @@ lib LibWol
   fun wol_service_start(context : Context*, name : UInt8*, len : LibC::SizeT, error : Error**) : Status
   fun wol_service_stop(context : Context*, name : UInt8*, len : LibC::SizeT, error : Error**) : Status
   fun wol_service_copy_status(context : Context*, name : UInt8*, len : LibC::SizeT, out_ : Info**, error : Error**) : Status
+  fun wol_file_trash(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wol_share_file(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wol_open_with(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
 end

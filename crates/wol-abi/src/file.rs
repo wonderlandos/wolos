@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! File panels (ADR 0020, 1.5): the person picks, the desktop opens the file as them, and the
-//! descriptor comes back through wold. The app never gets a path.
+//! descriptor comes back through wold. The app never gets a path. And the Trash (1.15): the
+//! desktop moves a file the app names, as the person, into the Trash the Files app shows.
 use crate::client;
 use crate::context::wol_context;
 use crate::error::{Error, Result, Status, guard, input, need, wol_error, wol_status};
 use crate::string::{borrow, into_raw, release, retain, wol_string};
-use shared::portal::{Call, MAX_NAME, MAX_TITLE};
+use shared::portal::{Call, MAX_NAME, MAX_PATH, MAX_TITLE};
 use std::ffi::{c_char, c_int};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::ptr::null_mut;
@@ -86,6 +87,28 @@ pub unsafe extern "C" fn wol_panel_save(
         let name = input(name, name_len, MAX_NAME, "The name")?.to_owned();
         let f = panel(ctx, &Call::PanelSave { title, name })?;
         unsafe { *out = f };
+        Ok(())
+    })
+}
+
+/// # Safety
+/// `context` is live; `path` points at `len` bytes; `out`, `error` writable or NULL.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wol_file_trash(
+    context: *mut wol_context,
+    path: *const c_char,
+    len: usize,
+    out: *mut *mut wol_string,
+    error: *mut *mut wol_error,
+) -> wol_status {
+    guard(error, || {
+        need(out, "out")?;
+        let ctx = crate::kit::arc_of(context)?;
+        let path = input(path, len, MAX_PATH, "The path")?.to_owned();
+        let data = client::data(ctx.wold(), &Call::FileTrash { path })?;
+        let name = data.get("name").and_then(|n| n.as_str());
+        // SAFETY: `out` was checked non-NULL above and is writable (header contract).
+        unsafe { *out = name.map_or(null_mut(), |n| into_raw(wol_string::new(n))) };
         Ok(())
     })
 }

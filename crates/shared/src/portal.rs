@@ -45,6 +45,9 @@ pub const MAX_ENDPOINT: usize = 64;
 pub const MAX_PEER: usize = 1024;
 pub const MAX_MESSAGE: usize = 24 * 1024;
 
+/// A file's full path in [`Call::FileTrash`], [`Call::ShareFile`] and [`Call::OpenWith`].
+pub const MAX_PATH: usize = 4096;
+
 /// Services one account can run.
 pub const MAX_SERVICES: usize = 8;
 /// The argument a service's program gets: this and its name.
@@ -69,6 +72,7 @@ pub const CAPABILITIES: &[&str] = &[
     "devices",
     "share",
     "background",
+    "trash",
 ];
 
 /// A row a search provider offers: `key` comes back to the app when the person opens it.
@@ -226,6 +230,17 @@ pub enum Call {
     /// Offer text for the person to send somewhere.
     #[serde(rename = "share.text")]
     ShareText { title: String, text: String },
+    /// Move a file or folder of the person to the shared Trash (with its information file, so
+    /// the Files Trash lists it and can put it back). Answer: `{"name": ...}`, its name in the
+    /// Trash, or `{}` when the Trash of another drive took it.
+    #[serde(rename = "file.trash")]
+    FileTrash { path: String },
+    /// Offer a file for the person to send somewhere (the share sheet).
+    #[serde(rename = "share.file")]
+    ShareFile { path: String },
+    /// Let the person pick the app that opens a file.
+    #[serde(rename = "open.with")]
+    OpenWith { path: String },
     /// Run the caller's own executable as a service called `name`.
     #[serde(rename = "service.start")]
     ServiceStart { name: String },
@@ -323,6 +338,18 @@ pub enum Ask {
     Share {
         title: String,
         text: String,
+    },
+    /// Move `path` to the person's Trash, as `{"name": ...}` (its name there) or `{}`.
+    Trash {
+        path: String,
+    },
+    /// The share sheet for a file, as `{"done": "copied", "saved", "opened" or "cancelled"}`.
+    ShareFile {
+        path: String,
+    },
+    /// The chooser of apps that open a file, as `{"done": "opened" or "cancelled"}`.
+    OpenWith {
+        path: String,
     },
     ClipboardRead,
     ClipboardWrite {
@@ -451,6 +478,23 @@ fn panel_title(t: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// A full path in normal form: absolute, no `.` or `..` part, no empty part, no trailing `/`, no
+/// control character, at most [`MAX_PATH`] bytes. Never `/` itself.
+pub fn file_path(p: &str) -> Result<(), String> {
+    let normal = p.len() > 1
+        && p.starts_with('/')
+        && !p.ends_with('/')
+        && p[1..]
+            .split('/')
+            .all(|c| !c.is_empty() && c != "." && c != "..");
+    if !normal || !clean(p, MAX_PATH, false) {
+        return Err(format!(
+            "A file is named by its full path (from '/', with no '.' or '..' part), at most {MAX_PATH} bytes."
+        ));
+    }
+    Ok(())
+}
+
 /// `[A-Za-z0-9._-]{1,64}`.
 fn pref_key(k: &str) -> Result<(), String> {
     let ok = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-');
@@ -506,7 +550,10 @@ impl Call {
             Self::IpcSend { .. } => Need::Peer,
             Self::DeviceList {} => Need::Grant("devices"),
             Self::DeviceOpen { .. } => Need::Device,
-            Self::ShareText { .. } => Need::Grant("share"),
+            Self::ShareText { .. } | Self::ShareFile { .. } | Self::OpenWith { .. } => {
+                Need::Grant("share")
+            }
+            Self::FileTrash { .. } => Need::Grant("trash"),
             Self::ServiceStart { .. } | Self::ServiceStop { .. } | Self::ServiceStatus { .. } => {
                 Need::Grant("background")
             }
@@ -622,6 +669,9 @@ impl Call {
                     return Err("There is nothing to share.".into());
                 }
                 message_body(text)
+            }
+            Self::FileTrash { path } | Self::ShareFile { path } | Self::OpenWith { path } => {
+                file_path(path)
             }
             Self::ServiceStart { name }
             | Self::ServiceStop { name }
@@ -1039,6 +1089,48 @@ mod tests {
         }
         let extra = r#"{"call":"service.start","name":"s","program":"/bin/sh"}"#;
         assert!(Call::decode(extra.as_bytes()).is_err(), "only a name");
+    }
+
+    #[test]
+    fn file_calls_take_a_full_path_and_need_their_grant() {
+        let calls = |p: &str| {
+            [
+                Call::FileTrash { path: p.into() },
+                Call::ShareFile { path: p.into() },
+                Call::OpenWith { path: p.into() },
+            ]
+        };
+        for c in calls("/home/a/Pictures/IMG 1.jpg") {
+            assert_eq!(c.validate(), Ok(()), "{c:?}");
+        }
+        let [t, s, o] = calls("/x");
+        assert_eq!(t.need(), Need::Grant("trash"));
+        assert_eq!(s.need(), Need::Grant("share"));
+        assert_eq!(o.need(), Need::Grant("share"));
+        let long = format!("/{}", "x".repeat(MAX_PATH));
+        for bad in [
+            "", "/", "a/b", "/a/", "/a//b", "/a/./b", "/a/../b", "/..", "/a\nb", "/a\0b", &long,
+        ] {
+            for c in calls(bad) {
+                assert!(c.validate().is_err(), "{c:?}");
+            }
+        }
+        let wire = Call::FileTrash {
+            path: "/h/a".into(),
+        }
+        .encode();
+        assert_eq!(wire, r#"{"call":"file.trash","path":"/h/a"}"#);
+        assert_eq!(
+            Call::decode(wire.as_bytes()),
+            Ok(Call::FileTrash {
+                path: "/h/a".into()
+            })
+        );
+        let ask = serde_json::to_string(&Ask::OpenWith {
+            path: "/h/a".into(),
+        })
+        .unwrap();
+        assert_eq!(ask, r#"{"ask":"open-with","path":"/h/a"}"#);
     }
 
     #[test]

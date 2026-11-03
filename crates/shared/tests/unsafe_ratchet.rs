@@ -35,9 +35,12 @@ use std::path::{Path, PathBuf};
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
 /// 294 -> 296 (CR-8, 2026-11-03): `loop_/mod.rs` `Ready`, the epoll set behind
 /// `wolkit_engine_get_fd` (epoll_create1 with OwnedFd taking it, epoll_ctl; std wraps neither).
+/// wol-abi 473 -> 482 (libwol 1.15, CR-12): three C exports (`wol_file_trash`, `wol_share_file`,
+/// `wol_open_with`), each `#[unsafe(no_mangle)] pub unsafe extern` and one `unsafe` write of its
+/// checked out-pointer, with a SAFETY line; the context is taken without `unsafe` (`arc_of`).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
-    ("wol-abi", 473),
+    ("wol-abi", 482),
     ("wolkit", 296),
     ("wopkg", 94),
     ("realtime", 69),

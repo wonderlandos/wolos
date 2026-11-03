@@ -191,3 +191,10 @@ WOL_1.14 {
     wol_service_start;
     wol_service_stop;
 } WOL_1.13;
+
+WOL_1.15 {
+  global:
+    wol_file_trash;
+    wol_open_with;
+    wol_share_file;
+} WOL_1.14;

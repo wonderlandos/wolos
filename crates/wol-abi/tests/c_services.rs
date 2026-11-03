@@ -326,6 +326,48 @@ fn share() {
 }
 
 #[test]
+fn file_verbs_reach_wold_and_answer_from_c() {
+    let (out, calls) = run("file_verbs", |c, _| match c {
+        Call::FileTrash { path } if path.ends_with("away.jpg") => Answer::with(json!({})),
+        Call::FileTrash { .. } => Answer::with(json!({"name": "a.jpg"})),
+        Call::ShareFile { .. } => Answer::with(json!({"done": "copied"})),
+        Call::OpenWith { .. } => Answer::err(
+            shared::portal::Code::Unavailable,
+            "No app on this computer opens this kind of file.",
+        ),
+        _ => Answer::ok(),
+    });
+    assert_eq!(
+        out,
+        [
+            "trashed: a.jpg",
+            "other drive: null",
+            "shared: copied",
+            "open with: 3 No app on this computer opens this kind of file.",
+            "relative: 1",
+        ]
+    );
+    let p = |s: &str| s.to_owned();
+    assert_eq!(
+        calls,
+        [
+            Call::FileTrash {
+                path: p("/home/a/a.jpg")
+            },
+            Call::FileTrash {
+                path: p("/media/x/away.jpg")
+            },
+            Call::ShareFile {
+                path: p("/home/a/a.jpg")
+            },
+            Call::OpenWith {
+                path: p("/home/a/a.jpg")
+            },
+        ]
+    );
+}
+
+#[test]
 fn service() {
     let (out, calls) = run("service", |c, _| match c {
         Call::ServiceStatus { .. } => Answer::with(json!({"state": "running"})),
