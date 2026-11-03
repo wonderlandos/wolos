@@ -7,7 +7,9 @@
     "prefs.set": [{"ok": true}],
     "prefs.remove": [{"ok": true}],
     "prefs.keys": [{"ok": true, "data": ["height", "width"]}],
-    "share.text": [{"ok": true, "data": {"done": "copied"}}, {"ok": false, "code": "permission-denied", "message": "Sharing is turned off for this app."}]
+    "share.text": [{"ok": true, "data": {"done": "copied"}}, {"ok": false, "code": "permission-denied", "message": "Sharing is turned off for this app."}],
+    "share.file": [{"ok": true, "data": {"done": "saved"}}, {"ok": true, "data": {"done": "opened"}}],
+    "open.with": [{"ok": true, "data": {"done": "cancelled"}}, {"ok": false, "code": "unavailable", "message": "No app on this computer opens this kind of file."}]
   },
   "events": []
 }

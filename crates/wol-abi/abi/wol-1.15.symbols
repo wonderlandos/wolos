@@ -1,0 +1,4 @@
+# libwol 1.15 exports (WOL_1.15). Never edit a shipped line.
+wol_file_trash@WOL_1.15
+wol_open_with@WOL_1.15
+wol_share_file@WOL_1.15

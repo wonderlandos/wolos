@@ -1,6 +1,6 @@
 # Cryswol: the Crystal framework over libwol (ADR 0036)
 
-Cryswol is the Crystal shard that gives an app every WolOS verb: windows and Kit parts, notifications, menus, the clipboard, preferences, file panels, power, network, audio, Search, accounts, messages between apps, devices, sharing and background services. It lives in `wolos-crystal/shards/cryswol/` (BSD-2-Clause), its namespace is `Wol`, and it is a thin, typed layer over `libwol.so.1` and `crates/wol-abi/include/wol.h` (ADR 0020). An app writes `require "cryswol"` and gets Crystal objects, exceptions and blocks, never pointers.
+Cryswol is the Crystal shard that gives an app every WolOS verb: windows and Kit parts, notifications, menus, the clipboard, preferences, file panels, power, network, audio, Search, accounts, messages between apps, devices, the Trash, sharing, opening a file with another app and background services. It lives in `wolos-crystal/shards/cryswol/` (BSD-2-Clause), its namespace is `Wol`, and it is a thin, typed layer over `libwol.so.1` and `crates/wol-abi/include/wol.h` (ADR 0020). An app writes `require "cryswol"` and gets Crystal objects, exceptions and blocks, never pointers.
 
 ## Why
 
@@ -41,6 +41,7 @@ Each group is one module or class in its own file under `src/wol/`. The context 
 | Clipboard | `Wol::Clipboard.text(ctx)`, `.set_text(ctx, text)` | clipboard-read, clipboard-write | `prefs_clipboard_spec.cr` |
 | Preferences | `prefs = Wol::Prefs.new(ctx)`, then `prefs["k"]?`, `prefs["k"] = v`, `prefs.delete("k")`, `prefs.keys` | app-preferences | `prefs_clipboard_spec.cr` |
 | Files | `Wol::Panel.open(ctx, title) : OpenFile?`, `.save(ctx, name, title)`; `OpenFile#name`, `#to_io`, `#read` | file-panels | `files_spec.cr` |
+| Trash | `Wol::Trash.move(ctx, path) : String?`: the item's name in the shared Trash (the one the Files app shows, with the standard information file), or `nil` when another drive's Trash took it | trash | `files_spec.cr` |
 | Power | `Wol::Power.info(ctx)`, `.keep_awake(ctx, reason) { ... }` | power-info, keep-awake | `answers_spec.cr` |
 | Network | `Wol::Network.info(ctx)`, `.online?(ctx)` | network-info | `answers_spec.cr` |
 | Audio | `Wol::Audio.info(ctx)`, `.set_volume(ctx, 0..100)`, `.set_muted(ctx, bool)` | audio-info, audio-control | `answers_spec.cr` |
@@ -48,7 +49,8 @@ Each group is one module or class in its own file under `src/wol/`. The context 
 | Account | `Wol::Account.info(ctx)` | account-info | `answers_spec.cr` |
 | Messages | `Wol::Endpoint.new(ctx, name) { \|m\| m.reply(text) }`, `Message#keep`, `Wol::Message.send(ctx, peer, name, body)`, `.publish(ctx, topic, body)` | ipc, ipc:&lt;peer&gt; | `messages_spec.cr` |
 | Devices | `Wol::Device.list(ctx)`, `.open(ctx, vendor, product) : OpenFile` | devices, device:&lt;vendor&gt;:&lt;product&gt; | `answers_spec.cr`, `files_spec.cr` |
-| Sharing | `Wol::Share.text(ctx, title, text)`: "copied", "saved" or "cancelled" | share | `prefs_clipboard_spec.cr` |
+| Sharing | `Wol::Share.text(ctx, title, text)`: "copied", "saved" or "cancelled"; `Wol::Share.file(ctx, path)`, the share sheet for a file: "copied", "saved", "opened" or "cancelled" | share | `prefs_clipboard_spec.cr` |
+| Open with | `Wol::Share.open_with(ctx, path)`: the chooser of apps for the file's kind; "opened" or "cancelled", `Wol::Unavailable` when no app opens it | share | `prefs_clipboard_spec.cr` |
 | Services | `Wol::Service.start(ctx, name)`, `.stop`, `.status`; `Wol::Service.current` (the name this process runs as, or `nil`) | background | `services_spec.cr` |
 | Packages (opt-in, GPL) | `Wol::Pkg::Context.new(config)`, then `#search`, `#info`, `#index_update(req) { \|event\| }`, `#verify`, `#history_record`, `#rollback`, ...; results are JSON text | wold's consent, for system changes | `pkg_spec.cr` |
 
@@ -71,7 +73,7 @@ All of them are `Wol::Error`, which carries `code : Int32`. `Wol::UsageError` is
 
 `wol.h` asks for one thread at a time per context. The default Crystal execution context is single-threaded, so an app that stays on it meets the rule without effort. Only the `Wol::Loop` fiber calls `wol_context_dispatch`, and callbacks run inside it, so a callback should be short and `spawn` its work.
 
-Some verbs wait for the person or a peer: `Wol::Panel.open` and `.save` (up to ten minutes), `Wol::Share.text` (until the person chooses) and `Wol::Message.send` (up to 3 seconds). On the loop's fiber they freeze the window. Run them through `Wol.background(ctx.app_id) { |bg| Wol::Panel.open(bg) }` (`src/wol/background.cr`). It runs the block on its own thread with a separate context for the same app (`wol.h` allows one context per driving thread), and the calling fiber waits for the result without blocking the other fibers. An exception in the block is raised in the caller. Crystal 1.22 has execution contexts with no flag; never build with `-Dpreview_mt` alone. Every such method says `Blocks:` in its doc comment.
+Some verbs wait for the person or a peer: `Wol::Panel.open` and `.save` (up to ten minutes), `Wol::Share.text`, `.file` and `.open_with` (until the person chooses) and `Wol::Message.send` (up to 3 seconds). On the loop's fiber they freeze the window. Run them through `Wol.background(ctx.app_id) { |bg| Wol::Panel.open(bg) }` (`src/wol/background.cr`). It runs the block on its own thread with a separate context for the same app (`wol.h` allows one context per driving thread), and the calling fiber waits for the result without blocking the other fibers. An exception in the block is raised in the caller. Crystal 1.22 has execution contexts with no flag; never build with `-Dpreview_mt` alone. Every such method says `Blocks:` in its doc comment.
 
 ## Build
 

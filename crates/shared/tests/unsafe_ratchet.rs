@@ -33,9 +33,12 @@ use std::path::{Path, PathBuf};
 /// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
 /// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// wol-abi 473 -> 482 (libwol 1.15, CR-12): three C exports (`wol_file_trash`, `wol_share_file`,
+/// `wol_open_with`), each `#[unsafe(no_mangle)] pub unsafe extern` and one `unsafe` write of its
+/// checked out-pointer, with a SAFETY line; the context is taken without `unsafe` (`arc_of`).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
-    ("wol-abi", 473),
+    ("wol-abi", 482),
     ("wolkit", 294),
     ("wopkg", 94),
     ("realtime", 69),

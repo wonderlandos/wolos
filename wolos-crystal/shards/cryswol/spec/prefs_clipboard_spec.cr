@@ -4,6 +4,20 @@
 require "./spec_helper"
 
 describe "Wol::Prefs, Wol::Clipboard and Wol::Share" do
+  it "shares a file and asks which app opens one" do
+    Wol::Spec.with_fake("prefs_clipboard") do |ctx, fake|
+      Wol::Share.file(ctx, "/home/a/Pictures/a.jpg").should eq "saved"
+      Wol::Share.file(ctx, "/home/a/Pictures/a.jpg").should eq "opened"
+      Wol::Share.open_with(ctx, "/home/a/Pictures/a.jpg").should eq "cancelled"
+      expect_raises(Wol::Unavailable, "No app on this computer opens this kind of file.") do
+        Wol::Share.open_with(ctx, "/home/a/Pictures/a.jpg")
+      end
+      expect_raises(Wol::InvalidArgument) { Wol::Share.file(ctx, "Pictures/a.jpg") }
+      fake.call_tags.should eq ["share.file", "share.file", "open.with", "open.with"]
+      fake.calls.each(&.["path"].as_s.should(eq "/home/a/Pictures/a.jpg"))
+    end
+  end
+
   it "sets, reads, lists and removes preferences; an unset key is nil" do
     Wol::Spec.with_fake("prefs_clipboard") do |ctx, fake|
       prefs = Wol::Prefs.new(ctx)

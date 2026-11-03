@@ -41,6 +41,9 @@ fn answer(c: &Call) -> Answer {
         Call::DeviceOpen { .. } => Answer::with(json!({"name": "Scanner"})),
         Call::ShareText { .. } => Answer::with(json!({"done": "copied"})),
         Call::ServiceStatus { .. } => Answer::with(json!({"state": "running"})),
+        Call::FileTrash { .. } => Answer::with(json!({"name": "a.jpg"})),
+        Call::ShareFile { .. } => Answer::with(json!({"done": "saved"})),
+        Call::OpenWith { .. } => Answer::with(json!({"done": "opened"})),
         _ => Answer::ok(),
     }
 }
@@ -146,6 +149,9 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "opened: Scanner",
             "shared: copied",
             "service: running",
+            "trashed: a.jpg",
+            "shared file: saved",
+            "open with: opened",
         ]
     );
     let names: Vec<String> = calls
@@ -191,6 +197,9 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "service.start",
             "service.status",
             "service.stop",
+            "file.trash",
+            "share.file",
+            "open.with",
         ]
     );
 }

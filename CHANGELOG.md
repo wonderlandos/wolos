@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
+
 ## 0.12.0 (2026-11-03)
 The same desktop, made solid, and then grown: a redesigned Settings and Control Center, shell
 plugins and themes you can make yourself, optional modules, and a friendlier installer with Secure

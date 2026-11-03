@@ -138,8 +138,11 @@ describe "LibWol" do
       (->LibWol.wol_service_start(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::Error**)).pointer,
       (->LibWol.wol_service_stop(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::Error**)).pointer,
       (->LibWol.wol_service_copy_status(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::Info**, LibWol::Error**)).pointer,
+      (->LibWol.wol_file_trash(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::String**, LibWol::Error**)).pointer,
+      (->LibWol.wol_share_file(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::String**, LibWol::Error**)).pointer,
+      (->LibWol.wol_open_with(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::String**, LibWol::Error**)).pointer,
     ]
-    pointers.size.should eq 131
+    pointers.size.should eq 134
     pointers.each(&.null?.should(be_false))
   end
 end

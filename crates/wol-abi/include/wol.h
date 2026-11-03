@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 14
+#define WOL_VERSION_MINOR 15
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -504,6 +504,39 @@ wol_status wol_service_stop(wol_context *context, const char *name, size_t len, 
 /* Keys: state ("running", "waiting" or "stopped"), starts, last_exit. */
 wol_status wol_service_copy_status(wol_context *context, const char *name, size_t len,
                                    wol_info **out, wol_error **error);
+
+/* ---- 1.15: a file to the Trash, to share, to open with another app (WOL_1.15) ---- */
+
+/*
+ * Each takes a file's full path: from '/', with no '.' or '..' part and no trailing '/', at most
+ * 4096 bytes. The desktop acts as the person: wold never opens or moves a path for an app.
+ */
+
+/*
+ * Move a file or folder to the person's Trash, with the information file every Trash keeps, so the
+ * Files Trash lists it and can put it back. Permission: trash. Never the home folder, a folder that
+ * holds it, or something already in the Trash. `out` is the item's name in the Trash (what the
+ * Files Trash shows), or NULL when the Trash of another drive took it.
+ */
+wol_status wol_file_trash(wol_context *context, const char *path, size_t len, wol_string **out,
+                          wol_error **error);
+
+/*
+ * Offer a file (not a folder). Permission: share. The share sheet shows the person its name, and
+ * they choose to copy it (a link to the file on the clipboard), save a copy, open it with another
+ * app or cancel: blocks until they do. `out` says which: "copied", "saved", "opened" or
+ * "cancelled". The app never learns where a copy went or which app opened it.
+ */
+wol_status wol_share_file(wol_context *context, const char *path, size_t len, wol_string **out,
+                          wol_error **error);
+
+/*
+ * Let the person choose which app opens a file. Permission: share. The chooser lists the apps of
+ * this computer for the file's kind; blocks until the person picks one or cancels. `out` is
+ * "opened" or "cancelled". Fails when no app opens that kind of file.
+ */
+wol_status wol_open_with(wol_context *context, const char *path, size_t len, wol_string **out,
+                         wol_error **error);
 
 #ifdef __cplusplus
 }

@@ -3,6 +3,7 @@
   "answers": {
     "panel.open": [{"ok": true, "data": {"name": "a.txt"}, "fd": "from the panel"}, {"ok": true, "data": {"cancelled": true}}],
     "panel.save": [{"ok": true, "data": {"name": "out.txt"}, "fd": ""}],
+    "file.trash": [{"ok": true, "data": {"name": "a.2.jpg"}}, {"ok": true, "data": {}}, {"ok": false, "code": "permission-denied", "message": "Gallery is not allowed to move files to the Trash."}],
     "device.open": [{"ok": true, "data": {"name": "Scanner"}, "fd": "usb"}, {"ok": false, "code": "permission-denied", "message": "This app may not open that device."}]
   },
   "events": []

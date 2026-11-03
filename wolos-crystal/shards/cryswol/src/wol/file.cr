@@ -2,7 +2,8 @@
 # Files the person picks (wol.h "1.5: files and panels", WOL_1.5). The app gets the one file
 # chosen, already open, and never a path. The descriptor belongs to libwol's `wol_file`, so
 # `OpenFile#to_io` hands out a close-on-exec duplicate that outlives `close` (plan-cr1 §3 rule 8).
-# Named `OpenFile`, not `File`, so it never shadows `::File` inside `module Wol`.
+# Named `OpenFile`, not `File`, so it never shadows `::File` inside `module Wol`. And the Trash
+# (wol.h "1.15", WOL_1.15): the desktop moves a file the app names, as the person.
 require "./lib_wol"
 require "./error"
 require "./handle"
@@ -70,6 +71,20 @@ module Wol
           Strings.ptr(name), Strings.size(name), slot, err)
       end
       OpenFile.take(ptr)
+    end
+  end
+
+  # The person's shared Trash: the same one the Files app shows, with the information file every
+  # Trash keeps, so Files can put an item back. Permission: trash.
+  module Trash
+    # Move the file or folder at `path` (full path, no '.' or '..' part) to the Trash. Returns
+    # its name in the Trash, or nil when the Trash of another drive took it. Never the home
+    # folder, a folder holding it, or something already in the Trash.
+    def self.move(context : Context, path : ::String) : ::String?
+      str = Wol.out(LibWol::String) do |o, err|
+        LibWol.wol_file_trash(context, Strings.ptr(path), Strings.size(path), o, err)
+      end
+      Strings.take(str)
     end
   end
 end

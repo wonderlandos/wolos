@@ -150,4 +150,14 @@ ok LibWol.wol_service_copy_status(ctx, key, key.bytesize, pointerof(info), point
 puts "service: #{str(LibWol.wol_info_get_text(field(info, "state")))}"
 LibWol.wol_info_release(info)
 ok LibWol.wol_service_stop(ctx, key, key.bytesize, pointerof(err))
+pic = "/srv/photos/a.jpg"
+ok LibWol.wol_file_trash(ctx, pic, pic.bytesize, pointerof(text), pointerof(err))
+puts "trashed: #{str(text)}"
+LibWol.wol_string_release(text)
+ok LibWol.wol_share_file(ctx, pic, pic.bytesize, pointerof(text), pointerof(err))
+puts "shared file: #{str(text)}"
+LibWol.wol_string_release(text)
+ok LibWol.wol_open_with(ctx, pic, pic.bytesize, pointerof(text), pointerof(err))
+puts "open with: #{str(text)}"
+LibWol.wol_string_release(text)
 LibWol.wol_context_release(ctx)

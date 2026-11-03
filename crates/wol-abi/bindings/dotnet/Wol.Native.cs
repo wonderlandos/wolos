@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 14;
+    public const int WOL_VERSION_MINOR = 15;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -173,4 +173,7 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern int wol_service_start(IntPtr context, byte* name, nuint len, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_service_stop(IntPtr context, byte* name, nuint len, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_service_copy_status(IntPtr context, byte* name, nuint len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_file_trash(IntPtr context, byte* path, nuint len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_share_file(IntPtr context, byte* path, nuint len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_open_with(IntPtr context, byte* path, nuint len, IntPtr* @out, IntPtr* error);
 }

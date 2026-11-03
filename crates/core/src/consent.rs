@@ -22,7 +22,7 @@ pub fn refusal(capability: &str) -> Option<&'static str> {
 }
 
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
-pub const CAPABILITIES: [&str; 24] = [
+pub const CAPABILITIES: [&str; 25] = [
     "notifications",
     "input-injection",
     "clipboard-history",
@@ -48,6 +48,7 @@ pub const CAPABILITIES: [&str; 24] = [
     "devices",
     "share",
     "background",
+    "trash",
 ];
 
 const MAX_APP: usize = 1024;

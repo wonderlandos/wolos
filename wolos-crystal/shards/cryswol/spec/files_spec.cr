@@ -3,7 +3,29 @@
 # spec/fixtures/files.json (it hands a real file over with each answer that has "fd").
 require "./spec_helper"
 
-describe "Wol::Panel and Wol::Device.open" do
+describe "Wol::Panel, Wol::Trash and Wol::Device.open" do
+  it "moves a file to the Trash: its name there, nil from another drive, a refusal" do
+    Wol::Spec.with_fake("files") do |ctx, fake|
+      Wol::Trash.move(ctx, "/home/a/Pictures/a.jpg").should eq "a.2.jpg"
+      Wol::Trash.move(ctx, "/media/b/a.jpg").should be_nil
+      expect_raises(Wol::PermissionDenied, "Gallery is not allowed to move files to the Trash.") do
+        Wol::Trash.move(ctx, "/home/a/Pictures/a.jpg")
+      end
+      fake.call_tags.should eq ["file.trash", "file.trash", "file.trash"]
+      fake.calls[0]["path"].as_s.should eq "/home/a/Pictures/a.jpg"
+      fake.calls[1]["path"].as_s.should eq "/media/b/a.jpg"
+    end
+  end
+
+  it "refuses a path that is not full before asking wold" do
+    Wol::Spec.with_fake("files") do |ctx, fake|
+      ["a.jpg", "/home/a/../b.jpg", "/home/a/", "/"].each do |bad|
+        expect_raises(Wol::InvalidArgument) { Wol::Trash.move(ctx, bad) }
+      end
+      fake.call_tags.should be_empty
+    end
+  end
+
   it "opens the picked file; to_io is a duplicate that survives close" do
     Wol::Spec.with_fake("files") do |ctx, fake|
       file = Wol::Panel.open(ctx, "Pick a note").should_not be_nil
