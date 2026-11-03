@@ -13,7 +13,12 @@
 flock -n "${WOLOS_LOCK:-/run/wolos-hw-online.lock}" wol hw online >/dev/null 2>&1 &
 P=${WOL_MODULES_PENDING:-/var/lib/wolos/modules-pending}
 Q=${WOL_PACKAGES_PENDING:-/var/lib/wolos/packages-pending}
-if [ -s "$P" ] || [ -s "$Q" ]; then
+# Only a connection that leads somewhere drains: the loopback device (NetworkManager manages it
+# and calls this for it first on every boot) or a link without a default route cannot download, and
+# its drain would hold the unit's name while the real connection comes up a moment later, whose own
+# start is then refused: an Ethernet machine installed offline never drained (pre-release run).
+if [ "${1:-}" != lo ] && [ -n "$(ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null)" ] &&
+  { [ -s "$P" ] || [ -s "$Q" ]; }; then
   systemd-run --no-block --unit=wolos-modules-pending --collect --property=SuccessExitStatus=1 --description="WolOS: install queued modules" \
     "${WOLOS_LIB:-/usr/lib/wolos}/modules-install" --drain >/dev/null 2>&1 || :
 fi

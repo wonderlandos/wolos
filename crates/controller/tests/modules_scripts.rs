@@ -125,6 +125,7 @@ fn the_network_up_hook_starts_a_collected_drain() {
     for c in ["systemd-run", "flock", "wol"] {
         stub(&d, c, 0);
     }
+    ip(&d, true);
     let path = format!(
         "{}:{}",
         d.join("bin").display(),
@@ -132,21 +133,7 @@ fn the_network_up_hook_starts_a_collected_drain() {
     );
     let pending = d.join("modules-pending");
     std::fs::write(&pending, "ai-local\n").unwrap();
-    let hook = |action: &str| {
-        let _ = std::fs::remove_file(d.join("calls"));
-        let out = std::process::Command::new("sh")
-            .arg(root().join("desktop/overlay/etc/NetworkManager/dispatcher.d/50-wolos-online"))
-            .args(["eth0", action])
-            .env("PATH", &path)
-            .env("WOL_MODULES_PENDING", &pending)
-            .env("WOL_PACKAGES_PENDING", d.join("none"))
-            .env("WOLOS_LOCK", d.join("lock"))
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "{out:?}");
-        // The hook's own `flock ... &` is in the background: give it nothing to wait for.
-        std::fs::read_to_string(d.join("calls")).unwrap_or_default()
-    };
+    let hook = |action: &str| hook_on(&d, &path, &pending, "eth0", action);
     let calls = hook("up");
     assert_collected(&calls);
     assert!(calls.contains("modules-install --drain"), "{calls}");
@@ -154,7 +141,35 @@ fn the_network_up_hook_starts_a_collected_drain() {
         !hook("down").contains("systemd-run"),
         "only a connection coming up drains"
     );
+    // The loopback device comes up first on every boot, and a link without a default route
+    // cannot download: neither takes the unit's name from the real connection a moment later.
+    assert!(
+        !hook_on(&d, &path, &pending, "lo", "up").contains("systemd-run"),
+        "loopback does not drain"
+    );
+    ip(&d, false);
+    assert!(
+        !hook("up").contains("systemd-run"),
+        "no default route: no drain"
+    );
     let _ = std::fs::remove_dir_all(&d);
+}
+
+/// The hook as NetworkManager runs it: IFACE ACTION, the stubs in `path`; the calls it made.
+fn hook_on(d: &Path, path: &str, pending: &Path, iface: &str, action: &str) -> String {
+    let _ = std::fs::remove_file(d.join("calls"));
+    let out = std::process::Command::new("sh")
+        .arg(root().join("desktop/overlay/etc/NetworkManager/dispatcher.d/50-wolos-online"))
+        .args([iface, action])
+        .env("PATH", path)
+        .env("WOL_MODULES_PENDING", pending)
+        .env("WOL_PACKAGES_PENDING", d.join("none"))
+        .env("WOLOS_LOCK", d.join("lock"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    // The hook's own `flock ... &` is in the background: give it nothing to wait for.
+    std::fs::read_to_string(d.join("calls")).unwrap_or_default()
 }
 
 /// `modules-install --drain` on `/` with stub pacman/wol/logger and every state file in `d`.

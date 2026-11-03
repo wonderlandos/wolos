@@ -372,7 +372,18 @@ fn network_up_retries_a_pending_driver() {
 fn network_up_drains_the_queued_modules() {
     let f = "desktop/overlay/etc/NetworkManager/dispatcher.d/50-wolos-online";
     let d = scratch("nm-modules");
-    let path = fakes(&d, &[("flock", "exit 0"), ("wol", ""), ("systemd-run", "")]);
+    // A default route (the hook drains only on a connection that has one): this host's must not
+    // decide the test.
+    let route = "case \"$*\" in *-4*) echo 'default via 10.0.2.2 dev wlan0' ;; esac";
+    let path = fakes(
+        &d,
+        &[
+            ("flock", "exit 0"),
+            ("wol", ""),
+            ("systemd-run", ""),
+            ("ip", route),
+        ],
+    );
     let (mods, pkgs, none) = (
         d.join("modules-pending"),
         d.join("packages-pending"),
