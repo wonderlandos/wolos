@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Doctor (ADR 0048): the checks of `wol doctor --json` by area, each row opens to its plain
 // detail and a Fix button (`doctor.fix`), with "Check again" and an empty state when all is fine.
-import { t, localize, explain } from "../kit/wolkit.js";
+"use strict";
+{
+const { t, localize, explain } = window.wolkit;
 
 const AREAS = ["sound", "games", "updates", "security", "storage", "network", "power", "display"];
 const RANK = { fail: 0, warn: 1, ok: 2, skipped: 3 };
@@ -275,3 +277,4 @@ wolos.subscribe("progress", (p) => {
   }
 });
 wolos.ready.then(() => load(false));
+}

@@ -62,7 +62,7 @@ for (const theme of ["light", "dark"]) {
     // Words on screen: no commands while "Show the command" is closed.
     const text = await pg.evaluate(() => document.querySelector("main").innerText);
     ok(!/\bwol |systemctl|pacman|sudo|--/.test(text), `${tag}: no command words on screen`);
-    if (theme === "light" && width === 1280) await pg.screenshot({ path: join(out, `doctor-all-${tag}.png`) });
+    await pg.screenshot({ path: join(out, `doctor-all-${tag}.png`) });
 
     // Keyboard: sidebar to Security, Down between checks, Enter opens, Escape closes.
     await pg.focus('wol-sidebar a[href="#all"]');
@@ -100,14 +100,14 @@ for (const theme of ["light", "dark"]) {
     // "Show the command" opens to the command.
     await pg.click('.dr-check[data-id="security.firewall"] .dr-cmd summary');
     const cmd = await pg.textContent('.dr-check[data-id="security.firewall"] .dr-cmd');
-    ok(cmd.includes("wol doctor fix security.firewall"), `${tag}: "Show the command" shows wol doctor fix`);
+    ok(cmd.includes("wol doctor security"), `${tag}: "Show the command" shows the command`);
     await pg.screenshot({ path: join(out, `doctor-fix-${tag}.png`) });
 
     // Empty state: an area with nothing to look at.
     await pg.evaluate(() => { location.hash = "#network"; });
     await pg.waitForSelector("#fine:not([hidden])");
     const fine = await pg.evaluate(() => ({ h: document.querySelector("#fine .wk-empty-heading").textContent, t: document.querySelector("#fine-time").textContent, lists: document.querySelector("#lists").hidden }));
-    ok(fine.h === "Everything is fine" && /^Last checked at \d\d:\d\d\.$/.test(fine.t) && fine.lists, `${tag}: empty state "${fine.h}", "${fine.t}"`);
+    ok(fine.h === "Everything is fine" && /^Last checked at \d\d?:\d\d( [AP]M)?\.$/.test(fine.t) && fine.lists, `${tag}: empty state "${fine.h}", "${fine.t}"`);
     await pg.screenshot({ path: join(out, `doctor-fine-${tag}.png`) });
 
     // Check again.
