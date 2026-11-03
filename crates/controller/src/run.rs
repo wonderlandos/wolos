@@ -48,6 +48,13 @@ pub trait Env {
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
         self.exec(argv)
     }
+    /// Run argv with no stdin and stdout captured; (exit status, stdout). Unlike `capture`, a
+    /// non-zero exit keeps its output (`wol shard check --json` reports findings and exits 1).
+    /// Refused where there is no child to run.
+    fn exec_output(&mut self, argv: &[String]) -> io::Result<(i32, String)> {
+        let _ = argv;
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
     /// Like `exec`, with one secret in the child's environment (`$PASSWORD`, `$NEWPASSWORD` for
     /// systemd-cryptenroll), never in its arguments. Refused where there is no child to give it to.
     fn exec_secret(&mut self, argv: &[String], var: &str, secret: &str) -> io::Result<i32> {
@@ -289,6 +296,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         a if a.starts_with("modules.") => crate::modules::execute(inv, env),
         a if a.starts_with("sessions.") => crate::sessions::execute(inv, env),
         a if a.starts_with("plugin.") => crate::plugin::execute(inv, env),
+        a if a.starts_with("shard.") => crate::shard::execute(inv, env),
         a if a.starts_with("power.") => crate::power::execute(inv, env),
         a if a.starts_with("firewall.") || a.starts_with("security.") => {
             crate::security::execute(inv, env)
@@ -1040,6 +1048,17 @@ impl Env for RealEnv {
             .status()?;
         Ok(st.code().unwrap_or(1))
     }
+    fn exec_output(&mut self, argv: &[String]) -> io::Result<(i32, String)> {
+        let out = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .output()?;
+        Ok((
+            out.status.code().unwrap_or(1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        ))
+    }
     fn capture(&mut self, argv: &[&str]) -> Option<String> {
         wol_core::system::run_with_timeout(argv, std::time::Duration::from_secs(60))
     }
@@ -1145,6 +1164,15 @@ impl Env for FakeEnv {
         } else {
             self.exec_codes.remove(0)
         })
+    }
+    /// Recorded like `exec`; stdout is the `captures` entry for the argv, else `captured`.
+    fn exec_output(&mut self, argv: &[String]) -> io::Result<(i32, String)> {
+        let line = argv.join(" ");
+        let text = match self.captures.iter().find(|c| c.0 == line) {
+            Some(c) => c.1.clone(),
+            None => self.captured.clone().unwrap_or_default(),
+        };
+        Ok((self.exec(argv)?, text))
     }
     fn exec_secret(&mut self, argv: &[String], var: &str, secret: &str) -> io::Result<i32> {
         self.secrets.push((var.into(), secret.into()));

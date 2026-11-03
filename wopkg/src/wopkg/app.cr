@@ -13,6 +13,7 @@ require "./aur_hook"
 require "./scan"
 require "./recipe"
 require "./completions"
+require "./shard"
 
 module Wopkg
   # The commands. Every system change is one wold call through libwopkg; everything else runs as
@@ -111,6 +112,7 @@ module Wopkg
       when "aur"         then aur_cmd
       when "audit"       then audit
       when "recipe"      then recipe_cmd
+      when "shard"       then return Shard.new(core, @a).run
       end
       0
     end
@@ -143,6 +145,7 @@ module Wopkg
           wopkg channel [stable|beta|nightly] | pause [days] | resume
           wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg audit <pkg> | wopkg recipe build|install|remove <name>
           wopkg completions zsh|bash|fish
+          wopkg shard list [words] | add <name>... | update [name]... | check   [folder] (default: here)
 
         Options: -y (do not ask), --json (for tools).
         H

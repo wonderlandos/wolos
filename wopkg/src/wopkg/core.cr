@@ -81,6 +81,14 @@ module Wopkg
       JSON.parse(take(res))
     end
 
+    # The call's result as libwopkg's JSON text, for callers that decode it into their own types.
+    private def text(&) : String
+      res = Pointer(LibWopkg::String).null
+      err = Pointer(LibWopkg::Error).null
+      check yield(pointerof(res), pointerof(err)), err
+      take(res)
+    end
+
     # Runs a progress-reporting call; `progress` gets each JSON event on this thread.
     private def with_progress(progress : Progress?, &)
       box = Box.box(progress || Progress.new { |_| nil })
@@ -171,6 +179,21 @@ module Wopkg
 
     def release_plan(req : String) : JSON::Any
       json { |o, e| LibWopkg.wopkg_release_plan(@ctx, req, req.bytesize, o, e) }
+    end
+
+    # The signed curated shard list (libwopkg 1.1), as JSON text.
+    def shard_index(req : String) : String
+      text { |o, e| LibWopkg.wopkg_shard_index(@ctx, req, req.bytesize, o, e) }
+    end
+
+    # Pins shards by commit in a project's shard.yml and writes its shard.lock, as JSON text.
+    def shard_pin(req : String) : String
+      text { |o, e| LibWopkg.wopkg_shard_pin(@ctx, req, req.bytesize, o, e) }
+    end
+
+    # Checks a project's shard.yml and shard.lock (RCR-040, RCR-041, the list), as JSON text.
+    def shard_check(req : String) : String
+      text { |o, e| LibWopkg.wopkg_shard_check(@ctx, req, req.bytesize, o, e) }
     end
   end
 end

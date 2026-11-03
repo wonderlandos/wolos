@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 #define WOPKG_VERSION_MAJOR 1
-#define WOPKG_VERSION_MINOR 0
+#define WOPKG_VERSION_MINOR 1
 #define WOPKG_VERSION_PATCH 0
 
 typedef int32_t wopkg_status;
@@ -73,6 +73,12 @@ wopkg_status wopkg_rollback(const wopkg_context *context, const char *id, size_t
 /* System (through wold) and releases */
 wopkg_status wopkg_system_call(const wopkg_context *context, const char *request, size_t len, wopkg_error **error);
 wopkg_status wopkg_release_plan(const wopkg_context *context, const char *request, size_t len, wopkg_string **out, wopkg_error **error);
+
+/* Curated shards (1.1, docs/modules/shards.md): the signed shard list, commit pins in a project's
+ * shard.yml with its shard.lock, and the check of both. Requests are JSON objects. */
+wopkg_status wopkg_shard_index(const wopkg_context *context, const char *request, size_t len, wopkg_string **out, wopkg_error **error);
+wopkg_status wopkg_shard_pin(const wopkg_context *context, const char *request, size_t len, wopkg_string **out, wopkg_error **error);
+wopkg_status wopkg_shard_check(const wopkg_context *context, const char *request, size_t len, wopkg_string **out, wopkg_error **error);
 
 #ifdef __cplusplus
 }

@@ -75,7 +75,7 @@ fn c_program_searches_two_sources() {
             .unwrap_or_else(|| panic!("{p} in {text}"))
             .to_owned()
     };
-    assert_eq!(line("version:"), "version: 1.0.0 65536");
+    assert_eq!(line("version:"), "version: 1.1.0 65792");
     let search: serde_json::Value =
         serde_json::from_str(line("search:").trim_start_matches("search: ")).unwrap();
     let r = &search["results"][0];

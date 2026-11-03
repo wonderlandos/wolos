@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wolos-shards CI: every pull request rebuilds the list from curated.yml without writing or signing
+# (tools/gen_index.cr check). Publishing (build, sign with the offline key, upload public/) is a
+# release-owner step, never CI: the signing key does not live on a runner.
+name: check
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm crystal git
+      - name: Checkout
+        run: git clone --depth 1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" . && git fetch --depth 1 origin "$GITHUB_SHA" && git checkout "$GITHUB_SHA"
+      - name: Format
+        run: crystal tool format --check tools
+      - name: Curated list
+        run: crystal run tools/gen_index.cr -- check

@@ -116,6 +116,13 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["plugin"], Read, "read"),
     hv(&["plugin", "list"], Read, "read"),
     hv(&["plugin", "check"], Read, "read"),
+    // Crystal shards (docs/modules/shards.md): looking and checking read; add and update change
+    // the project's shard.yml and shard.lock and the person's shards cache, never the system.
+    hv(&["shard"], Read, "read"),
+    hv(&["shard", "list"], Read, "read"),
+    hv(&["shard", "check"], Read, "read"),
+    hv(&["shard", "add"], Change, "files"),
+    hv(&["shard", "update"], Change, "files"),
 ];
 
 /// A visible command and, when helpers may call it, its rule.
@@ -408,6 +415,24 @@ pub fn describe(inv: &Invocation) -> String {
             Some(id) => format!("undo settings change #{id}"),
             None => "undo the last settings change".into(),
         },
+        // Crystal shards (docs/modules/shards.md): the project's shard.yml and shard.lock.
+        "shard.add" => format!(
+            "pin the Crystal shard “{}” by commit in {} and write its shard.lock",
+            get("shard"),
+            inv.get("dir")
+                .map_or("this project".into(), |d| format!("“{d}”"))
+        ),
+        "shard.update" => {
+            let what = inv
+                .get("shard")
+                .filter(|s| !s.contains('/'))
+                .map_or("every Crystal shard".into(), |s| {
+                    format!("the Crystal shard “{s}”")
+                });
+            format!(
+                "move {what} to the commit the WolOS shard list vouches for and rewrite shard.lock"
+            )
+        }
         _ => match approval(inv, None) {
             Ok(r) => r.describe(),
             Err(_) => format!("run `wol {}`", inv.path.join(" ")),
