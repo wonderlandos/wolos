@@ -12,7 +12,10 @@ use crate::event::{self, EventQueue, kind as ev};
 use crate::loop_::{self, Waker};
 use crate::scene::patch::Patch;
 use crate::scene::{Idx, NIL, NodeId, SceneRead};
-use crate::window::{self, Backend, KeyInput, MAX_WINDOWS, PointerInput, Sink, WindowCore, dump, headless::Headless, kit, pipeline};
+use crate::window::{
+    self, Backend, KeyInput, MAX_WINDOWS, PointerInput, Sink, WindowCore, dump, headless::Headless,
+    kit, pipeline,
+};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 pub struct Window {
@@ -54,7 +57,12 @@ impl Engine {
                 "An app id is reverse-DNS, like org.example.hello (letters, digits, '.', '-', '_').",
             ));
         }
-        let waker = Waker::new().map_err(|_| Error::new(crate::error::Status::Internal, "The engine could not make its wake-up pipe."))?;
+        let waker = Waker::new().map_err(|_| {
+            Error::new(
+                crate::error::Status::Internal,
+                "The engine could not make its wake-up pipe.",
+            )
+        })?;
         Ok(Arc::new(Engine {
             inner: Mutex::new(Inner {
                 app_id: app_id.to_owned(),
@@ -65,7 +73,7 @@ impl Engine {
                 ever_had_window: false,
                 env: Environment::default(),
                 kit: None,
-                kit_path: kit::socket_path(),
+                kit_path: None,
                 counters: Counters::default(),
                 frames: FrameRing::new(),
             }),
@@ -119,12 +127,17 @@ impl Engine {
         fds.clear();
         self.waker.drain();
         let mut g = self.lock();
-        let Inner { windows, events, counters, .. } = &mut *g;
+        let Inner {
+            windows, events, ..
+        } = &mut *g;
         for w in windows.iter_mut() {
-            let mut sink = Sink { events, window: w.core.id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: w.core.id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.pump(&mut w.core, &mut sink);
         }
-        counters.events = counters.events.max(0);
         let mut flags = 0;
         if !g.events.is_empty() {
             flags |= abi::DISPATCH_EVENTS;
@@ -205,7 +218,9 @@ impl Engine {
         }
         g.env.set(dark, accent_rgb, flags);
         let env = g.env;
-        let Inner { windows, events, .. } = &mut *g;
+        let Inner {
+            windows, events, ..
+        } = &mut *g;
         for w in windows.iter_mut() {
             w.core.env = env;
             w.core.style_version += 1;
@@ -213,7 +228,14 @@ impl Engine {
             head[0..4].copy_from_slice(&u32::from(dark).to_le_bytes());
             head[4..8].copy_from_slice(&(accent_rgb & 0x00ff_ffff).to_le_bytes());
             head[8..12].copy_from_slice(&flags.to_le_bytes());
-            events.push(ev::THEME_CHANGED, w.core.id, 0, w.core.scene.last_seq(), &head, &[]);
+            events.push(
+                ev::THEME_CHANGED,
+                w.core.id,
+                0,
+                w.core.scene.last_seq(),
+                &head,
+                &[],
+            );
         }
         self.arm(&g);
         Ok(())
@@ -221,12 +243,22 @@ impl Engine {
 
     // ---- windows ----
 
-    pub fn create_window(&self, title: &str, width: u32, height: u32, flags: u32) -> Result<WindowId> {
+    pub fn create_window(
+        &self,
+        title: &str,
+        width: u32,
+        height: u32,
+        flags: u32,
+    ) -> Result<WindowId> {
         if title.len() > shared::view::MAX_TITLE || title.chars().any(char::is_control) {
-            return Err(Error::invalid("A window title is one line of at most 256 bytes."));
+            return Err(Error::invalid(
+                "A window title is one line of at most 256 bytes.",
+            ));
         }
         if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
-            return Err(Error::invalid("A window is between 1 and 16384 pixels each way."));
+            return Err(Error::invalid(
+                "A window is between 1 and 16384 pixels each way.",
+            ));
         }
         let mut g = self.lock();
         if g.windows.len() >= MAX_WINDOWS {
@@ -250,13 +282,26 @@ impl Engine {
         g.next_id += 1;
         g.ever_had_window = true;
         let env = g.env;
-        g.windows.push(Window { core: WindowCore::new(id, title, width, height, flags, env), backend });
+        g.windows.push(Window {
+            core: WindowCore::new(id, title, width, height, flags, env),
+            backend,
+        });
         Ok(id)
     }
 
-    fn with<R>(&self, id: WindowId, f: impl FnOnce(&mut Window, &mut EventQueue, &mut Counters, &mut FrameRing) -> Result<R>) -> Result<R> {
+    fn with<R>(
+        &self,
+        id: WindowId,
+        f: impl FnOnce(&mut Window, &mut EventQueue, &mut Counters, &mut FrameRing) -> Result<R>,
+    ) -> Result<R> {
         let mut g = self.lock();
-        let Inner { windows, events, counters, frames, .. } = &mut *g;
+        let Inner {
+            windows,
+            events,
+            counters,
+            frames,
+            ..
+        } = &mut *g;
         let w = windows
             .iter_mut()
             .find(|w| w.core.id == id)
@@ -268,10 +313,16 @@ impl Engine {
 
     pub fn close_window(&self, id: WindowId) {
         let mut g = self.lock();
-        let Inner { windows, events, .. } = &mut *g;
+        let Inner {
+            windows, events, ..
+        } = &mut *g;
         if let Some(at) = windows.iter().position(|w| w.core.id == id) {
             let mut w = windows.remove(at);
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.close(&mut w.core, &mut sink);
         }
         self.arm(&g);
@@ -283,30 +334,46 @@ impl Engine {
 
     pub fn set_title(&self, id: WindowId, title: &str) -> Result<()> {
         if title.len() > shared::view::MAX_TITLE || title.chars().any(char::is_control) {
-            return Err(Error::invalid("A window title is one line of at most 256 bytes."));
+            return Err(Error::invalid(
+                "A window title is one line of at most 256 bytes.",
+            ));
         }
         self.with(id, |w, events, _, _| {
             w.core.title = title.to_owned();
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.title_changed(&mut w.core, &mut sink)
         })
     }
 
     pub fn set_size_limits(&self, id: WindowId, min: (u32, u32), max: (u32, u32)) -> Result<()> {
         if (max.0 != 0 && max.0 < min.0) || (max.1 != 0 && max.1 < min.1) {
-            return Err(Error::invalid("A window's largest size cannot be below its smallest."));
+            return Err(Error::invalid(
+                "A window's largest size cannot be below its smallest.",
+            ));
         }
         self.with(id, |w, events, _, _| {
             w.core.min = min;
             w.core.max = max;
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.limits_changed(&mut w.core, &mut sink)
         })
     }
 
     pub fn show(&self, id: WindowId) -> Result<()> {
         self.with(id, |w, events, _, _| {
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.show(&mut w.core, &mut sink)
         })
     }
@@ -314,7 +381,11 @@ impl Engine {
     /// Hide the window (it stays open and keeps its scene).
     pub fn hide(&self, id: WindowId) -> Result<()> {
         self.with(id, |w, events, _, _| {
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.close(&mut w.core, &mut sink);
             Ok(())
         })
@@ -339,16 +410,27 @@ impl Engine {
                     return Err(e);
                 }
             };
-            let mut sink = Sink { events, window: id, seq: patch.seq };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: patch.seq,
+            };
             if let Err(e) = w.backend.committed(core, &mut sink) {
                 core.scene.rollback(&mut core.journal);
                 counters.patch_errors += 1;
                 return Err(e);
             }
             core.scene.commit(&mut core.journal);
+            // Only a backend with a frame clock animates; the Kit host gets the final values.
+            let animate = w.backend.kind() != window::BACKEND_KIT;
+            core.start_anims(&mut sink, animate);
             counters.patches += 1;
             counters.ops += u64::from(applied.ops);
-            frames.record(crate::diag::Frame { begin_ns: t0, end_ns: frames.now_ns(), ..Default::default() });
+            frames.record(crate::diag::Frame {
+                begin_ns: t0,
+                end_ns: frames.now_ns(),
+                ..Default::default()
+            });
             Ok(())
         })
     }
@@ -367,15 +449,25 @@ impl Engine {
 
     pub fn set_focus(&self, id: WindowId, node: u32) -> Result<()> {
         self.with(id, |w, events, _, _| {
-            let i = if node == 0 { NIL } else { live_node(&w.core, node)? };
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let i = if node == 0 {
+                NIL
+            } else {
+                live_node(&w.core, node)?
+            };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             crate::window::headless::set_focus(&mut w.core, &mut sink, i, true);
             Ok(())
         })
     }
 
     pub fn size(&self, id: WindowId) -> Result<(u32, u32, f32)> {
-        self.with(id, |w, _, _, _| Ok((w.core.width, w.core.height, w.core.scale)))
+        self.with(id, |w, _, _, _| {
+            Ok((w.core.width, w.core.height, w.core.scale))
+        })
     }
 
     pub fn node_rect(&self, id: WindowId, node: u32) -> Result<[f32; 4]> {
@@ -398,7 +490,9 @@ impl Engine {
 
     pub fn dump(&self, id: WindowId, what: u32) -> Result<String> {
         if !(dump::SCENE..=dump::A11Y).contains(&what) {
-            return Err(Error::invalid("A dump is the scene, the layout or the accessibility tree."));
+            return Err(Error::invalid(
+                "A dump is the scene, the layout or the accessibility tree.",
+            ));
         }
         self.with(id, |w, _, _, _| {
             if what == dump::LAYOUT {
@@ -414,37 +508,61 @@ impl Engine {
 
     pub fn inject_pointer(&self, id: WindowId, p: PointerInput) -> Result<()> {
         self.with(id, |w, events, _, _| {
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.inject_pointer(&mut w.core, &mut sink, p)
         })
     }
 
     pub fn inject_key(&self, id: WindowId, k: KeyInput) -> Result<()> {
         self.with(id, |w, events, _, _| {
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.inject_key(&mut w.core, &mut sink, k)
         })
     }
 
     pub fn inject_text(&self, id: WindowId, t: &str) -> Result<()> {
         self.with(id, |w, events, _, _| {
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.inject_text(&mut w.core, &mut sink, t)
         })
     }
 
     pub fn advance_time(&self, id: WindowId, ns: u64) -> Result<()> {
         self.with(id, |w, events, _, _| {
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.advance_time(&mut w.core, &mut sink, ns)
         })
     }
 
-    pub fn set_style_table(&self, id: WindowId, table: Option<Arc<crate::style::Table>>) -> Result<()> {
+    pub fn set_style_table(
+        &self,
+        id: WindowId,
+        table: Option<Arc<crate::style::Table>>,
+    ) -> Result<()> {
         self.with(id, |w, events, _, _| {
             w.core.style = table;
             w.core.style_version += 1;
-            let mut sink = Sink { events, window: id, seq: w.core.scene.last_seq() };
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
             w.backend.committed(&mut w.core, &mut sink)
         })
     }
@@ -456,6 +574,8 @@ fn live_node(core: &WindowCore, raw: u32) -> Result<Idx> {
     if core.scene.is_live(i) && core.scene.id(i) == id {
         Ok(i)
     } else {
-        Err(Error::invalid(format!("Part {raw} is not a part of this window.")))
+        Err(Error::invalid(format!(
+            "Part {raw} is not a part of this window."
+        )))
     }
 }

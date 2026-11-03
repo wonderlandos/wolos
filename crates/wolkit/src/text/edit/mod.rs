@@ -19,7 +19,7 @@ use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::text::edit::ime::{surrounding_window, Ime, Pending, Preedit};
+use crate::text::edit::ime::{Ime, Pending, Preedit, surrounding_window};
 use crate::text::edit::rope::Rope;
 
 /// Largest surrounding text sent to an input method (the protocol's limit).
@@ -39,7 +39,10 @@ pub struct Selection {
 
 impl Selection {
     pub fn caret(at: usize) -> Selection {
-        Selection { anchor: at, head: at }
+        Selection {
+            anchor: at,
+            head: at,
+        }
     }
 
     pub fn start(&self) -> usize {
@@ -69,7 +72,11 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { max_bytes: 64 * 1024, max_undo: 1000, max_history_bytes: 1 << 20 }
+        Limits {
+            max_bytes: 64 * 1024,
+            max_undo: 1000,
+            max_history_bytes: 1 << 20,
+        }
     }
 }
 
@@ -208,7 +215,11 @@ impl Editor {
         }
         let (base, w) = self.window(at, GRAPHEME_WINDOW);
         let rel = at - base;
-        w.grapheme_indices(true).map(|(i, _)| i).take_while(|&i| i < rel).last().map_or(base, |i| base + i)
+        w.grapheme_indices(true)
+            .map(|(i, _)| i)
+            .take_while(|&i| i < rel)
+            .last()
+            .map_or(base, |i| base + i)
     }
 
     /// The grapheme boundary after `at` (or the end).
@@ -271,7 +282,11 @@ impl Editor {
             a -= 1;
         }
         let (base, w) = self.window(a, GRAPHEME_WINDOW);
-        w.grapheme_indices(true).map(|(i, _)| base + i).take_while(|&i| i <= a).last().unwrap_or(base)
+        w.grapheme_indices(true)
+            .map(|(i, _)| base + i)
+            .take_while(|&i| i <= a)
+            .last()
+            .unwrap_or(base)
     }
 
     fn set_head(&mut self, head: usize, extend: bool) {
@@ -282,7 +297,10 @@ impl Editor {
     }
 
     pub fn select_all(&mut self) {
-        self.sel = Selection { anchor: 0, head: self.rope.len() };
+        self.sel = Selection {
+            anchor: 0,
+            head: self.rope.len(),
+        };
     }
 
     pub fn move_left(&mut self, extend: bool) {
@@ -327,13 +345,22 @@ impl Editor {
     // ---- editing --------------------------------------------------------------------------
 
     /// Replaces `range` with `with` and records the step. Returns false when nothing changed.
-    fn replace(&mut self, range: Range<usize>, with: &str, after_head: Option<usize>, group: Group) -> bool {
+    fn replace(
+        &mut self,
+        range: Range<usize>,
+        with: &str,
+        after_head: Option<usize>,
+        group: Group,
+    ) -> bool {
         if range.start == range.end && with.is_empty() {
             return false;
         }
         let removed = self.rope.slice(range.clone());
         // Respect the size limit: shorten the insertion, never refuse a pure deletion.
-        let room = self.limits.max_bytes.saturating_sub(self.rope.len() - removed.len());
+        let room = self
+            .limits
+            .max_bytes
+            .saturating_sub(self.rope.len() - removed.len());
         let with = truncate_bytes(with, room);
         if removed.is_empty() && with.is_empty() {
             return false;
@@ -365,8 +392,18 @@ impl Editor {
                 && last.group == e.group
                 && e.group != Group::Other
                 && match e.group {
-                    Group::Typing => e.removed.is_empty() && last.removed.is_empty() && last.pos + last.inserted.len() == e.pos && last.after.head == e.before.head && e.before.is_empty(),
-                    Group::Delete => e.inserted.is_empty() && last.inserted.is_empty() && (e.pos + e.removed.len() == last.pos || e.pos == last.pos),
+                    Group::Typing => {
+                        e.removed.is_empty()
+                            && last.removed.is_empty()
+                            && last.pos + last.inserted.len() == e.pos
+                            && last.after.head == e.before.head
+                            && e.before.is_empty()
+                    }
+                    Group::Delete => {
+                        e.inserted.is_empty()
+                            && last.inserted.is_empty()
+                            && (e.pos + e.removed.len() == last.pos || e.pos == last.pos)
+                    }
                     Group::Other => false,
                 };
             if mergeable {
@@ -387,7 +424,9 @@ impl Editor {
                     Group::Other => {}
                 }
                 last.after = e.after;
-                if e.group == Group::Typing && e.inserted.chars().last().is_some_and(char::is_whitespace) {
+                if e.group == Group::Typing
+                    && e.inserted.chars().last().is_some_and(char::is_whitespace)
+                {
                     last.closed = true;
                 }
                 let new = last.bytes();
@@ -410,7 +449,9 @@ impl Editor {
     }
 
     fn trim_history(&mut self) {
-        while self.undo.len() > self.limits.max_undo || self.history_bytes > self.limits.max_history_bytes {
+        while self.undo.len() > self.limits.max_undo
+            || self.history_bytes > self.limits.max_history_bytes
+        {
             if self.undo.is_empty() {
                 break;
             }
@@ -427,7 +468,11 @@ impl Editor {
             return false;
         }
         let r = self.sel.range();
-        let group = if r.is_empty() { Group::Typing } else { Group::Other };
+        let group = if r.is_empty() {
+            Group::Typing
+        } else {
+            Group::Other
+        };
         self.replace(r, &s, None, group)
     }
 
@@ -501,7 +546,9 @@ impl Editor {
     }
 
     pub fn undo(&mut self) -> bool {
-        let Some(e) = self.undo.pop() else { return false };
+        let Some(e) = self.undo.pop() else {
+            return false;
+        };
         let end = e.pos + e.inserted.len();
         self.rope.remove(e.pos..end);
         self.rope.insert(e.pos, &e.removed);
@@ -512,7 +559,9 @@ impl Editor {
     }
 
     pub fn redo(&mut self) -> bool {
-        let Some(e) = self.redo.pop() else { return false };
+        let Some(e) = self.redo.pop() else {
+            return false;
+        };
         let end = e.pos + e.removed.len();
         self.rope.remove(e.pos..end);
         self.rope.insert(e.pos, &e.inserted);
@@ -546,7 +595,12 @@ impl Editor {
     /// Queues `preedit_string`.
     pub fn ime_preedit_string(&mut self, text: &str, cursor: Option<(usize, usize)>) {
         let text = self.sanitize(text);
-        let cursor = cursor.filter(|(a, b)| *a <= text.len() && *b <= text.len() && text.is_char_boundary(*a) && text.is_char_boundary(*b));
+        let cursor = cursor.filter(|(a, b)| {
+            *a <= text.len()
+                && *b <= text.len()
+                && text.is_char_boundary(*a)
+                && text.is_char_boundary(*b)
+        });
         self.ime.pending_mut().preedit = Some(Preedit { text, cursor });
     }
 
@@ -564,7 +618,11 @@ impl Editor {
     /// Applies everything queued since the last `done`, in the protocol's order. Deleting the
     /// surrounding text and committing happen as one undo step.
     pub fn ime_done(&mut self, serial: u32) {
-        let Pending { preedit, commit, delete } = self.ime.take_pending(serial);
+        let Pending {
+            preedit,
+            commit,
+            delete,
+        } = self.ime.take_pending(serial);
         if !self.ime.enabled() {
             return;
         }
@@ -594,11 +652,18 @@ impl Editor {
             None if delete.is_some() && (lo, hi) != (sel.start, sel.end) => {
                 let mid = self.rope.slice(sel.clone());
                 let anchor = self.sel.anchor <= self.sel.head;
-                if self.replace(lo..hi, &mid, Some(lo + mid.len()), Group::Other) && !mid.is_empty() {
+                if self.replace(lo..hi, &mid, Some(lo + mid.len()), Group::Other) && !mid.is_empty()
+                {
                     self.sel = if anchor {
-                        Selection { anchor: lo, head: lo + mid.len() }
+                        Selection {
+                            anchor: lo,
+                            head: lo + mid.len(),
+                        }
                     } else {
-                        Selection { anchor: lo + mid.len(), head: lo }
+                        Selection {
+                            anchor: lo + mid.len(),
+                            head: lo,
+                        }
                     };
                 }
                 self.break_undo_group();
@@ -665,7 +730,12 @@ impl Editor {
     /// The text, cursor and anchor to send to the input method (preedit excluded, at most 4000
     /// bytes around the cursor).
     pub fn surrounding_text(&self) -> (String, usize, usize) {
-        surrounding_window(&self.text(), self.sel.head, self.sel.anchor, SURROUNDING_LIMIT)
+        surrounding_window(
+            &self.text(),
+            self.sel.head,
+            self.sel.anchor,
+            SURROUNDING_LIMIT,
+        )
     }
 
     pub fn ime_serial(&self) -> u32 {
@@ -674,7 +744,14 @@ impl Editor {
 }
 
 fn is_wordish(seg: &str) -> bool {
-    seg.chars().any(|c| c.is_alphanumeric() || c == '_' || (!c.is_whitespace() && !c.is_ascii_punctuation() && !c.is_control() && !is_general_punct(c)))
+    seg.chars().any(|c| {
+        c.is_alphanumeric()
+            || c == '_'
+            || (!c.is_whitespace()
+                && !c.is_ascii_punctuation()
+                && !c.is_control()
+                && !is_general_punct(c))
+    })
 }
 
 fn is_general_punct(c: char) -> bool {

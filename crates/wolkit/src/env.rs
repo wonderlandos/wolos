@@ -34,9 +34,9 @@ impl Default for Environment {
 
 impl Environment {
     pub fn flags(&self) -> u32 {
-        u32::from(self.reduce_motion) * FLAG_REDUCE_MOTION
-            | u32::from(self.reduce_transparency) * FLAG_REDUCE_TRANSPARENCY
-            | u32::from(self.contrast) * FLAG_CONTRAST
+        (u32::from(self.reduce_motion) * FLAG_REDUCE_MOTION)
+            | (u32::from(self.reduce_transparency) * FLAG_REDUCE_TRANSPARENCY)
+            | (u32::from(self.contrast) * FLAG_CONTRAST)
     }
 
     pub fn set(&mut self, dark: bool, accent_rgb: u32, flags: u32) {

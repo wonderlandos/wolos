@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: on_click: takes a proc with no arguments
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Todos" do
+      column do
+        button "Go", on_click: ->(x : String) { x } # <= error
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

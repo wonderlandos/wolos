@@ -148,7 +148,10 @@ impl Rope {
         if self.chunks.is_empty() {
             self.chunks.push(String::new());
         }
-        let (i, start) = self.locate(at).unwrap_or((self.chunks.len() - 1, self.len - self.chunks[self.chunks.len() - 1].len()));
+        let (i, start) = self.locate(at).unwrap_or((
+            self.chunks.len() - 1,
+            self.len - self.chunks[self.chunks.len() - 1].len(),
+        ));
         self.chunks[i].insert_str(at - start, s);
         self.len += s.len();
         self.split_if_big(i);
@@ -234,7 +237,8 @@ mod tests {
         let alphabet = ["a", "bc", "é", "日本", "🧑‍🚀", " ", "xyz123"];
         for step in 0..4000 {
             if s.is_empty() || next() % 3 != 0 {
-                let piece = alphabet[(next() % alphabet.len() as u64) as usize].repeat(1 + (next() % 40) as usize);
+                let piece = alphabet[(next() % alphabet.len() as u64) as usize]
+                    .repeat(1 + (next() % 40) as usize);
                 let mut at = (next() % (s.len() as u64 + 1)) as usize;
                 while !s.is_char_boundary(at) {
                     at -= 1;

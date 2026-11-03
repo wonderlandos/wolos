@@ -1,5 +1,5 @@
 # 0012 - one picture from power-on to the desktop
-Status: accepted (amends ADR 0003 and ADR 0004)
+Status: accepted (amends ADR 0003 and ADR 0004). The screen sequence and the lock rules stand; the old-base mechanics below (an rc script, `ttyv0`, `VT_LOCKSWITCH`, `/var/log/messages`, `kern.console`) are superseded by 0016: on Linux the kernel command line and the boot splash in a systemd initramfs keep the screen quiet (docs/modules/boot.md, Quiet boot) and the boot timeline lines reach the journal through `logger` (`journalctl -b | grep wolos-boot`).
 Context: the first real-GPU boot showed rc text, a greeter hop and black gaps between compositors. A finished product shows its logo, then the login window or the desktop, and nothing else.
 Decision:
 - Screen sequence: loader menu -> WolOS kernel splash (`/boot/images/wolos.png`, `boot_mute`) -> black -> first WolOS surface fades in. `rc.d/wolos_quiet` (before `dumpon`) turns a video console black on black; serial consoles stay readable. Every compositor starts black (`misc:background_color`, `cursor:invisible` until the first window), and every first surface fades in from black and out to black (`kit::reveal`).

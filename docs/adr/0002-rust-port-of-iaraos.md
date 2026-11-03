@@ -1,5 +1,5 @@
 # 0002 - Rust port of IaraOS userland on the forked compositor
-Status: accepted (amends 0001: the compositor stays the fork chosen there)
+Status: accepted (amends 0001: the compositor stays the fork chosen there). The syscall line is superseded by 0016: the system is Linux, and the last `Host::is_freebsd` paths go as their slices are removed.
 Context: IaraOS (C#/.NET + Rust) solved jobs, QoS, admin auth, login, theme contract, bundles, System API, fork/join. It failed by rebuilding everything, incl. its own compositor.
 Decision:
 - One Cargo workspace. `shared` (contracts: QoS ABI, jobs, admin wire, theme tokens, bundle Info.json, events, error codes, `sys`, `par`) <- `core` (pure logic) <- `api` (`wold`, `wol-admind`), `controller` (`wol`, `wol-login`, `wol-authcheck`), `proxy` (`wol-run`), `realtime` (compositor IPC, event bus, QoS boost, GPU env, pure compositor policies + C ABI for `plugins/wol-hypr`).

@@ -39,7 +39,8 @@ fn spacing(s: &dyn SceneRead, i: Idx, row: bool) -> u8 {
 }
 
 fn hidden(s: &dyn SceneRead, i: Idx) -> bool {
-    s.prop(i, id::DISPLAY).is_some_and(|v| v.w[0] == 1) || s.prop(i, id::VISIBILITY).is_some_and(|v| v.w[0] == 1)
+    s.prop(i, id::DISPLAY).is_some_and(|v| v.w[0] == 1)
+        || s.prop(i, id::VISIBILITY).is_some_and(|v| v.w[0] == 1)
 }
 
 /// The text a part shows: its own, else its first descendant text.
@@ -71,7 +72,9 @@ fn role(s: &dyn SceneRead, i: Idx) -> Role {
 }
 
 fn one_line(t: &str) -> String {
-    t.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+    t.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 fn check_text(t: &str) -> Result<()> {
@@ -118,15 +121,24 @@ impl Ctx<'_> {
                 if s.kind(i) == Kind::Vlist {
                     Node::List { children }
                 } else if row {
-                    Node::Row { spacing: spacing(s, i, true), children }
+                    Node::Row {
+                        spacing: spacing(s, i, true),
+                        children,
+                    }
                 } else {
-                    Node::Stack { spacing: spacing(s, i, false), children }
+                    Node::Stack {
+                        spacing: spacing(s, i, false),
+                        children,
+                    }
                 }
             }
             Kind::Text => {
                 let text = one_line_keep_newlines(s.text(i));
                 check_text(&text)?;
-                Node::Label { text, role: role(s, i) }
+                Node::Label {
+                    text,
+                    role: role(s, i),
+                }
             }
             Kind::Button => {
                 let l = one_line(&label(s, i));
@@ -139,24 +151,46 @@ impl Ctx<'_> {
             Kind::Toggle => {
                 let l = one_line(&label(s, i));
                 check_text(&l)?;
-                Node::Toggle { id: wire, on: s.state(i) & state::CHECKED != 0, label: l }
+                Node::Toggle {
+                    id: wire,
+                    on: s.state(i) & state::CHECKED != 0,
+                    label: l,
+                }
             }
             Kind::Slider => {
                 let min = prop_f32(s, i, id::SLIDER_MIN).unwrap_or(0.0);
                 let max = prop_f32(s, i, id::SLIDER_MAX).unwrap_or(1.0);
-                let (min, max) = if max > min { (f64::from(min), f64::from(max)) } else { (0.0, 1.0) };
-                let value = f64::from(prop_f32(s, i, id::SLIDER_VALUE).unwrap_or(0.0)).clamp(min, max);
-                Node::Slider { id: wire, value, min, max }
+                let (min, max) = if max > min {
+                    (f64::from(min), f64::from(max))
+                } else {
+                    (0.0, 1.0)
+                };
+                let value =
+                    f64::from(prop_f32(s, i, id::SLIDER_VALUE).unwrap_or(0.0)).clamp(min, max);
+                Node::Slider {
+                    id: wire,
+                    value,
+                    min,
+                    max,
+                }
             }
             Kind::TextInput => {
                 let text = one_line(s.text(i));
-                let placeholder = s.prop(i, id::PLACEHOLDER).map_or(String::new(), |v| one_line(s.string(v.w[0])));
+                let placeholder = s
+                    .prop(i, id::PLACEHOLDER)
+                    .map_or(String::new(), |v| one_line(s.string(v.w[0])));
                 check_text(&text)?;
                 check_text(&placeholder)?;
-                Node::TextField { id: wire, text, placeholder }
+                Node::TextField {
+                    id: wire,
+                    text,
+                    placeholder,
+                }
             }
             Kind::Image => {
-                let source = s.prop(i, id::IMAGE_SOURCE).map_or(String::new(), |v| s.string(v.w[0]).to_owned());
+                let source = s
+                    .prop(i, id::IMAGE_SOURCE)
+                    .map_or(String::new(), |v| s.string(v.w[0]).to_owned());
                 if source.is_empty() {
                     self.count -= 1;
                     return Ok(None);
@@ -165,14 +199,20 @@ impl Ctx<'_> {
                     Some(v) if v.w[0] == crate::scene::prop::DIM_PX => f32::from_bits(v.w[1]),
                     _ => 24.0,
                 };
-                Node::Image { source, size: nearest(&IMAGE_SIZES, want, f32::from) }
+                Node::Image {
+                    source,
+                    size: nearest(&IMAGE_SIZES, want, f32::from),
+                }
             }
             Kind::Spacer => Node::Spacer,
             Kind::Divider => {
                 self.count -= 1;
                 return Ok(None);
             }
-            Kind::Canvas | Kind::Surface => Node::Label { text: copy::KIT_NO_CANVAS.to_owned(), role: Role::Secondary },
+            Kind::Canvas | Kind::Surface => Node::Label {
+                text: copy::KIT_NO_CANVAS.to_owned(),
+                role: Role::Secondary,
+            },
             Kind::Overlay => {
                 self.count -= 1;
                 return Ok(None);
@@ -182,7 +222,9 @@ impl Ctx<'_> {
 }
 
 fn one_line_keep_newlines(t: &str) -> String {
-    t.chars().map(|c| if c.is_control() && c != '\n' { ' ' } else { c }).collect()
+    t.chars()
+        .map(|c| if c.is_control() && c != '\n' { ' ' } else { c })
+        .collect()
 }
 
 /// The Kit tree for a window's scene: the root's children in a stack.
@@ -196,7 +238,10 @@ pub fn lower(scene: &dyn SceneRead) -> Result<Node> {
         }
         c = scene.next_sibling(c);
     }
-    let root = Node::Stack { spacing: spacing(scene, 0, false), children };
+    let root = Node::Stack {
+        spacing: spacing(scene, 0, false),
+        children,
+    };
     root.validate().map_err(Error::invalid)?;
     Ok(root)
 }

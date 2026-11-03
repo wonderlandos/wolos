@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: icon_button needs `label:`. Screen readers and tooltips use it.
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Todos" do
+      column do
+        icon_button :trash, on_click: -> { } # <= error
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

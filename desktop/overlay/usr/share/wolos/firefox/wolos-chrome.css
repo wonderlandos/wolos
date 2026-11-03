@@ -2,68 +2,68 @@
 @-moz-document url("chrome://browser/content/browser.xhtml"), url-prefix("chrome://browser/content/places/") {
 :root {
   color-scheme: light !important;
-  --toolbox-bgcolor: #f5f5f7 !important;
-  --toolbox-bgcolor-inactive: #f5f5f7 !important;
-  --toolbox-textcolor: #1d1d1f !important;
-  --toolbox-textcolor-inactive: #6e6e73 !important;
-  --toolbar-bgcolor: #f5f5f7 !important;
-  --toolbar-color: #1d1d1f !important;
-  --toolbar-field-background-color: #eceef2 !important;
-  --toolbar-field-color: #1d1d1f !important;
+  --toolbox-bgcolor: #f3f1f8 !important;
+  --toolbox-bgcolor-inactive: #f3f1f8 !important;
+  --toolbox-textcolor: #181521 !important;
+  --toolbox-textcolor-inactive: #686575 !important;
+  --toolbar-bgcolor: #f3f1f8 !important;
+  --toolbar-color: #181521 !important;
+  --toolbar-field-background-color: #e9e9f3 !important;
+  --toolbar-field-color: #181521 !important;
   --toolbar-field-border-color: transparent !important;
   --toolbar-field-focus-background-color: #ffffff !important;
-  --toolbar-field-focus-color: #1d1d1f !important;
+  --toolbar-field-focus-color: #181521 !important;
   --toolbar-field-focus-border-color: #7c5cff !important;
-  --toolbarseparator-color: #e1e1e3 !important;
-  --toolbarbutton-icon-fill: #1d1d1f !important;
+  --toolbarseparator-color: #dedce5 !important;
+  --toolbarbutton-icon-fill: #181521 !important;
   --toolbarbutton-icon-fill-attention: #7053e6 !important;
-  --toolbarbutton-hover-background: #dfdfe1 !important;
-  --toolbarbutton-active-background: #ceced0 !important;
+  --toolbarbutton-hover-background: #dddbe3 !important;
+  --toolbarbutton-active-background: #ccc9d1 !important;
   --toolbarbutton-border-radius: 6px !important;
   --tab-selected-bgcolor: #ffffff !important;
-  --tab-selected-textcolor: #1d1d1f !important;
-  --tab-hover-background-color: #e6e6e8 !important;
+  --tab-selected-textcolor: #181521 !important;
+  --tab-hover-background-color: #e4e2e9 !important;
   --tab-border-radius: 6px !important;
-  --tab-selected-shadow: 0 0 0 1px #e1e1e3 !important;
+  --tab-selected-shadow: 0 0 0 1px #dedce5 !important;
   --tabs-navbar-separator-style: none !important;
-  --chrome-content-separator-color: #e1e1e3 !important;
-  --urlbar-box-background-color: #eceef2 !important;
+  --chrome-content-separator-color: #dedce5 !important;
+  --urlbar-box-background-color: #e9e9f3 !important;
   --urlbar-box-background-color-focus: #ffffff !important;
-  --urlbarview-background-color-hover: #e6e6e8 !important;
+  --urlbarview-background-color-hover: #e4e2e9 !important;
   --urlbarview-background-color-selected: #7c5cff !important;
   --urlbarview-text-color-selected: #ffffff !important;
-  --sidebar-background-color: #ededf1 !important;
-  --sidebar-text-color: #1d1d1f !important;
-  --sidebar-border-color: #e1e1e3 !important;
+  --sidebar-background-color: #eae8f2 !important;
+  --sidebar-text-color: #181521 !important;
+  --sidebar-border-color: #dedce5 !important;
   --arrowpanel-background: #ffffff !important;
-  --arrowpanel-color: #1d1d1f !important;
-  --arrowpanel-border-color: #e1e1e3 !important;
+  --arrowpanel-color: #181521 !important;
+  --arrowpanel-border-color: #dedce5 !important;
   --panel-background: #ffffff !important;
-  --panel-color: #1d1d1f !important;
-  --panel-border-color: #e1e1e3 !important;
-  --panel-separator-color: #e1e1e3 !important;
+  --panel-color: #181521 !important;
+  --panel-border-color: #dedce5 !important;
+  --panel-separator-color: #dedce5 !important;
   --menu-background-color: #ffffff !important;
-  --menu-color: #1d1d1f !important;
-  --menu-border-color: #e1e1e3 !important;
-  --menuitem-hover-background-color: #e4e4e6 !important;
-  --background-color-canvas: #f5f5f7 !important;
+  --menu-color: #181521 !important;
+  --menu-border-color: #dedce5 !important;
+  --menuitem-hover-background-color: #e1dfe7 !important;
+  --background-color-canvas: #f3f1f8 !important;
   --background-color-box: #ffffff !important;
-  --text-color: #1d1d1f !important;
-  --text-color-deemphasized: #6e6e73 !important;
-  --border-color: #e1e1e3 !important;
-  --border-color-card: #e1e1e3 !important;
+  --text-color: #181521 !important;
+  --text-color-deemphasized: #686575 !important;
+  --border-color: #dedce5 !important;
+  --border-color-card: #dedce5 !important;
   --focus-outline-color: #7c5cff !important;
   --color-accent-primary: #7c5cff !important;
-  --color-accent-primary-hover: #7154e4 !important;
-  --color-accent-primary-active: #654dc9 !important;
-  --button-background-color: #eceef2 !important;
-  --button-background-color-hover: #dbdde1 !important;
-  --button-background-color-active: #cbcdd0 !important;
-  --button-text-color: #1d1d1f !important;
+  --color-accent-primary-hover: #7053e4 !important;
+  --color-accent-primary-active: #644bca !important;
+  --button-background-color: #e9e9f3 !important;
+  --button-background-color-hover: #d8d8e2 !important;
+  --button-background-color-active: #c8c7d1 !important;
+  --button-text-color: #181521 !important;
   --button-background-color-primary: #7c5cff !important;
   --button-text-color-primary: #ffffff !important;
   --input-bgcolor: #ffffff !important;
-  --input-color: #1d1d1f !important;
+  --input-color: #181521 !important;
   --link-color: #7053e6 !important;
 }
 :root, menupopup, panel, tooltip { font-family: "Inter", sans-serif !important; }
@@ -72,44 +72,44 @@
 .tab-background { border-radius: 6px !important; box-shadow: none !important; }
 .tabbrowser-tab[selected] .tab-background { background-color: var(--tab-selected-bgcolor) !important; box-shadow: var(--tab-selected-shadow) !important; }
 #urlbar-background { border-radius: 6px !important; }
-.titlebar-buttonbox-container { order: -1 !important; margin-inline-start: 12px !important; }
+.titlebar-buttonbox-container { order: 1 !important; margin-inline-end: 12px !important; }
 .titlebar-buttonbox { --titlebar-button-size: 12px !important; --titlebar-button-spacing: 5px !important; --titlebar-button-end-spacing: 5px !important; }
 .titlebar-spacer[type="pre-tabs"] { width: 8px !important; }
 .titlebar-button { padding-inline: 5px !important; }
-.titlebar-close { order: 0 !important; }
-.titlebar-min { order: 1 !important; }
-.titlebar-max, .titlebar-restore { order: 2 !important; }
+.titlebar-min { order: 0 !important; }
+.titlebar-max, .titlebar-restore { order: 1 !important; }
+.titlebar-close { order: 2 !important; }
 .titlebar-min, :root:not([sizemode="maximized"]) .titlebar-max, :root[sizemode="maximized"] .titlebar-restore { display: flex !important; }
-.titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; background-color: #89898b !important; box-shadow: none !important; transition: none !important; }
+.titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; background-color: #86838d !important; box-shadow: none !important; transition: none !important; }
 .titlebar-button:hover > .toolbarbutton-icon { background-color: #7c5cff !important; }
-.titlebar-button:hover:active > .toolbarbutton-icon { background-color: #674ece !important; }
-.titlebar-buttonbox:hover .titlebar-close > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-close-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-button:hover:active > .toolbarbutton-icon { background-color: #664cce !important; }
+.titlebar-buttonbox:hover .titlebar-close > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-close-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
 .titlebar-buttonbox:hover .titlebar-close:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
-.titlebar-buttonbox:hover .titlebar-min > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-minimize-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-buttonbox:hover .titlebar-min > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-minimize-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
 .titlebar-buttonbox:hover .titlebar-min:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
-.titlebar-buttonbox:hover .titlebar-max > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-maximize-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-buttonbox:hover .titlebar-max > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-maximize-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
 .titlebar-buttonbox:hover .titlebar-max:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
-.titlebar-buttonbox:hover .titlebar-restore > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-restore-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-buttonbox:hover .titlebar-restore > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-restore-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
 .titlebar-buttonbox:hover .titlebar-restore:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
 }
 @-moz-document url("about:newtab"), url("about:home"), url("about:privatebrowsing") {
 :root {
   color-scheme: light !important;
-  --newtab-background-color: #f5f5f7 !important;
+  --newtab-background-color: #f3f1f8 !important;
   --newtab-background-color-secondary: #ffffff !important;
   --newtab-background-card: #ffffff !important;
-  --newtab-text-primary-color: #1d1d1f !important;
-  --newtab-text-secondary-color: #6e6e73 !important;
-  --newtab-text-secondary-text: #6e6e73 !important;
-  --newtab-wordmark-color: #1d1d1f !important;
-  --newtab-element-hover-color: #e6e6e8 !important;
-  --newtab-element-active-color: #d7d7d9 !important;
+  --newtab-text-primary-color: #181521 !important;
+  --newtab-text-secondary-color: #686575 !important;
+  --newtab-text-secondary-text: #686575 !important;
+  --newtab-wordmark-color: #181521 !important;
+  --newtab-element-hover-color: #e4e2e9 !important;
+  --newtab-element-active-color: #d4d2da !important;
   --newtab-primary-action-background: #7c5cff !important;
   --newtab-primary-element-text-color: #ffffff !important;
   --newtab-weather-background-color: #ffffff !important;
-  --in-content-page-background: #f5f5f7 !important;
-  --in-content-page-color: #1d1d1f !important;
+  --in-content-page-background: #f3f1f8 !important;
+  --in-content-page-color: #181521 !important;
   --link-color: #7053e6 !important;
 }
-body { background-color: #f5f5f7 !important; color: #1d1d1f !important; font-family: "Inter", sans-serif !important; }
+body { background-color: #f3f1f8 !important; color: #181521 !important; font-family: "Inter", sans-serif !important; }
 }

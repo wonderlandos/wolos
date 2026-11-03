@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+#[path = "support/mod.rs"]
 mod common;
 
 fn root() -> &'static Path {
@@ -24,7 +25,12 @@ fn lib() -> PathBuf {
 }
 
 fn readelf(args: &[&str]) -> String {
-    let out = std::process::Command::new("readelf").args(args).arg(lib()).env("LC_ALL", "C").output().expect("readelf");
+    let out = std::process::Command::new("readelf")
+        .args(args)
+        .arg(lib())
+        .env("LC_ALL", "C")
+        .output()
+        .expect("readelf");
     assert!(out.status.success());
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
@@ -68,7 +74,9 @@ fn baselines() -> BTreeSet<String> {
 }
 
 fn names(syms: &BTreeSet<String>) -> BTreeSet<String> {
-    syms.iter().map(|s| s.split('@').next().unwrap().to_owned()).collect()
+    syms.iter()
+        .map(|s| s.split('@').next().unwrap().to_owned())
+        .collect()
 }
 
 #[test]
@@ -83,7 +91,10 @@ fn shipped_symbols_never_go_away() {
         unrecorded.is_empty(),
         "new symbols need a line in abi/wolkit-<next>.symbols and a WOLKIT_<next> node: {unrecorded:?}"
     );
-    assert!(stray.is_empty(), "only wolkit_ symbols are exported: {stray:?}");
+    assert!(
+        stray.is_empty(),
+        "only wolkit_ symbols are exported: {stray:?}"
+    );
 }
 
 #[test]
@@ -142,7 +153,19 @@ fn c_param(p: &str) -> String {
         // `unsigned x` style types do not occur; a final identifier after a type is a name unless
         // the whole parameter is a bare typedef name like `wolkit_error*`.
         let before = words[..words.len() - 1].join(" ");
-        before.ends_with('*') || matches!(before.as_str(), "uint8_t" | "uint32_t" | "uint64_t" | "int32_t" | "size_t" | "float" | "int" | "const char" | "void")
+        before.ends_with('*')
+            || matches!(
+                before.as_str(),
+                "uint8_t"
+                    | "uint32_t"
+                    | "uint64_t"
+                    | "int32_t"
+                    | "size_t"
+                    | "float"
+                    | "int"
+                    | "const char"
+                    | "void"
+            )
             || before.starts_with("const ")
     };
     if is_name {
@@ -169,12 +192,18 @@ fn header_prototypes(h: &str) -> BTreeMap<String, String> {
         }
         let Some(open) = s.find('(') else { continue };
         let head = &s[..open];
-        let name_at = head.rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).map_or(0, |i| i + 1);
+        let name_at = head
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map_or(0, |i| i + 1);
         let (ret, name) = (squash(&head[..name_at]), head[name_at..].to_owned());
         if !name.starts_with("wolkit_") {
             continue;
         }
-        let params: Vec<String> = s[open + 1..s.len() - 1].split(',').map(c_param).filter(|p| !p.is_empty()).collect();
+        let params: Vec<String> = s[open + 1..s.len() - 1]
+            .split(',')
+            .map(c_param)
+            .filter(|p| !p.is_empty())
+            .collect();
         m.insert(name, format!("{ret}({})", params.join(",")));
     }
     m
@@ -184,7 +213,11 @@ fn c_type(rust: &str) -> String {
     let t = rust.trim().trim_start_matches("std::ffi::");
     if let Some(inner) = t.strip_prefix("*const ") {
         let i = c_type(inner);
-        return if i.ends_with('*') { format!("{i}const*") } else { format!("const {i}*") };
+        return if i.ends_with('*') {
+            format!("{i}const*")
+        } else {
+            format!("const {i}*")
+        };
     }
     if let Some(inner) = t.strip_prefix("*mut ") {
         return format!("{}*", c_type(inner));
@@ -235,10 +268,21 @@ fn rust_exports() -> BTreeMap<String, String> {
                 .filter(|p| !p.trim().is_empty())
                 .map(|p| c_type(p.split_once(':').unwrap().1))
                 .collect();
-            let ret = sig[close + 1..].trim().strip_prefix("->").map_or_else(|| "void".to_owned(), c_type);
+            let ret = sig[close + 1..]
+                .trim()
+                .strip_prefix("->")
+                .map_or_else(|| "void".to_owned(), c_type);
             m.insert(
                 name,
-                format!("{}({})", squash(&ret), params.iter().map(|p| squash(p)).collect::<Vec<_>>().join(",")),
+                format!(
+                    "{}({})",
+                    squash(&ret),
+                    params
+                        .iter()
+                        .map(|p| squash(p))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
             );
         }
     }
@@ -269,7 +313,10 @@ fn header_declares_exactly_the_rust_exports() {
     let r = rust_exports();
     assert!(r.len() > 40, "parser found {} exports", r.len());
     assert_eq!(h, r);
-    assert_eq!(h.keys().cloned().collect::<BTreeSet<_>>(), names(&baselines()));
+    assert_eq!(
+        h.keys().cloned().collect::<BTreeSet<_>>(),
+        names(&baselines())
+    );
 }
 
 fn header_defines(h: &str) -> BTreeMap<String, i64> {
@@ -290,10 +337,18 @@ fn header_constants_match_the_library() {
     for (name, value) in &consts {
         assert_eq!(defines.get(name), Some(value), "{name}");
     }
-    assert_eq!(defines.len(), consts.len(), "a define without a constant: {:?}", {
-        let known: BTreeSet<_> = consts.iter().map(|c| &c.0).collect();
-        defines.keys().filter(|k| !known.contains(k)).collect::<Vec<_>>()
-    });
+    assert_eq!(
+        defines.len(),
+        consts.len(),
+        "a define without a constant: {:?}",
+        {
+            let known: BTreeSet<_> = consts.iter().map(|c| &c.0).collect();
+            defines
+                .keys()
+                .filter(|k| !known.contains(k))
+                .collect::<Vec<_>>()
+        }
+    );
 }
 
 #[test]
@@ -301,24 +356,39 @@ fn property_ids_never_change() {
     let want = read("abi/wolkit-1.0.props");
     let now = wolkit::scene::prop::snapshot_lines();
     let now: BTreeSet<&str> = now.iter().map(String::as_str).collect();
-    for line in want.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
-        assert!(now.contains(line), "a shipped property changed or went away: {line}");
+    for line in want
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    {
+        assert!(
+            now.contains(line),
+            "a shipped property changed or went away: {line}"
+        );
     }
 }
 
 #[test]
 fn shipped_declarations_never_change() {
-    let now: BTreeSet<String> = strip_comments(&read("include/wolkit.h")).split(';').map(squash).collect();
+    let now: BTreeSet<String> = strip_comments(&read("include/wolkit.h"))
+        .split(';')
+        .map(squash)
+        .collect();
     let current = read("include/wolkit.h");
     for e in std::fs::read_dir(root().join("abi")).unwrap() {
         let p = e.unwrap().path();
         if p.extension().is_some_and(|x| x == "h") {
             let snap = std::fs::read_to_string(&p).unwrap();
             for decl in strip_comments(&snap).split(';').map(squash) {
-                assert!(now.contains(&decl), "{}: changed or removed: {decl}", p.display());
+                assert!(
+                    now.contains(&decl),
+                    "{}: changed or removed: {decl}",
+                    p.display()
+                );
             }
             // Every value but the version (which says which header this is) is forever.
-            for def in snap.lines().filter(|l| l.starts_with("#define WOLKIT_") && !l.starts_with("#define WOLKIT_VERSION_")) {
+            for def in snap.lines().filter(|l| {
+                l.starts_with("#define WOLKIT_") && !l.starts_with("#define WOLKIT_VERSION_")
+            }) {
                 assert!(current.lines().any(|l| l == def), "{def}");
             }
         }
@@ -327,9 +397,18 @@ fn shipped_declarations_never_change() {
 
 #[test]
 fn detectors_catch_changes() {
-    let h = "wolkit_status wolkit_x(const char *s, size_t n, wolkit_error **error);\nvoid wolkit_y(void);\nconst char *const *wolkit_z(uint32_t *count);\nuint64_t wolkit_w(const wolkit_engine *, uint32_t key);";
-    let p = header_prototypes(h);
-    assert_eq!(p["wolkit_x"], "wolkit_status(const char*,size_t,wolkit_error**)");
+    let h = [
+        "wolkit_status wolkit_x(const char *s, size_t n, wolkit_error **error);",
+        "void wolkit_y(void);",
+        "const char *const *wolkit_z(uint32_t *count);",
+        "uint64_t wolkit_w(const wolkit_engine *, uint32_t key);",
+    ]
+    .join("\n");
+    let p = header_prototypes(&h);
+    assert_eq!(
+        p["wolkit_x"],
+        "wolkit_status(const char*,size_t,wolkit_error**)"
+    );
     assert_eq!(p["wolkit_y"], "void()");
     assert_eq!(p["wolkit_z"], "const char*const*(uint32_t*)");
     assert_eq!(p["wolkit_w"], "uint64_t(const wolkit_engine*,uint32_t)");

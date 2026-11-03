@@ -19,7 +19,7 @@ pub const CTRL: u8 = 1;
 pub const ALT: u8 = 2;
 pub const SHIFT: u8 = 4;
 pub const SUPER: u8 = 8;
-/// (bit, compositor name, symbol) in macOS display order ⌃⌥⇧⌘.
+/// (bit, compositor name, symbol) in display order ⌃⌥⇧⌘.
 const MODS: [(u8, &str, &str); 4] = [
     (CTRL, "CTRL", "⌃"),
     (ALT, "ALT", "⌥"),
@@ -72,7 +72,7 @@ impl Combo {
             .join(" ")
     }
 
-    /// macOS-style label: "⌃⌥⇧⌘Space", "⇧⌘4", "←".
+    /// Symbol label: "⌃⌥⇧⌘Space", "⇧⌘4", "←".
     pub fn label(&self) -> String {
         let mut s: String = MODS
             .iter()

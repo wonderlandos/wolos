@@ -21,7 +21,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::paint::geom::Rect;
 use crate::text::cache::ShapeCache;
 use crate::text::fontdb::{FontDb, FontId};
-use crate::text::shape::{line_metrics, Dir, FontFeature, ShapeParams, ShapedRun};
+use crate::text::shape::{Dir, FontFeature, ShapeParams, ShapedRun, line_metrics};
 
 /// Base direction of a paragraph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -56,7 +56,12 @@ pub struct TextStyle {
 
 impl TextStyle {
     pub fn new(font: FontId, size: f32) -> TextStyle {
-        TextStyle { font, size, line_height: 0.0, features: Vec::new() }
+        TextStyle {
+            font,
+            size,
+            line_height: 0.0,
+            features: Vec::new(),
+        }
     }
 }
 
@@ -73,7 +78,12 @@ pub struct LayoutOptions {
 
 impl Default for LayoutOptions {
     fn default() -> Self {
-        LayoutOptions { max_width: f32::INFINITY, align: Align::Start, base: BaseDir::Auto, max_lines: 0 }
+        LayoutOptions {
+            max_width: f32::INFINITY,
+            align: Align::Start,
+            base: BaseDir::Auto,
+            max_lines: 0,
+        }
     }
 }
 
@@ -139,9 +149,16 @@ pub fn layout_text(
     style: &TextStyle,
     opts: &LayoutOptions,
 ) -> TextLayout {
-    let mut out = TextLayout { text_len: text.len(), ..TextLayout::default() };
+    let mut out = TextLayout {
+        text_len: text.len(),
+        ..TextLayout::default()
+    };
     let (asc, desc, gap) = line_metrics(db, style.font, style.size);
-    let pitch = if style.line_height > 0.0 { style.line_height } else { asc + desc + gap };
+    let pitch = if style.line_height > 0.0 {
+        style.line_height
+    } else {
+        asc + desc + gap
+    };
     let mut y = 0.0f32;
     let mut start = 0usize;
     let mut lines_done = 0usize;
@@ -163,12 +180,20 @@ pub fn layout_text(
         start = next;
     }
     if out.lines.is_empty() {
-        out.lines.push(PendingLine::empty(0).finish(0.0, pitch, (((pitch - (asc + desc)) * 0.5) + asc).round()));
+        out.lines.push(PendingLine::empty(0).finish(
+            0.0,
+            pitch,
+            (((pitch - (asc + desc)) * 0.5) + asc).round(),
+        ));
         y = pitch;
     }
     // Width and alignment.
     out.width = out.lines.iter().map(|l| l.width).fold(0.0, f32::max);
-    let avail = if opts.max_width.is_finite() { opts.max_width.max(out.width) } else { out.width };
+    let avail = if opts.max_width.is_finite() {
+        opts.max_width.max(out.width)
+    } else {
+        out.width
+    };
     for l in &mut out.lines {
         let slack = (avail - l.width).max(0.0);
         let off = match (opts.align, l.rtl) {
@@ -194,11 +219,25 @@ struct PendingLine {
 
 impl PendingLine {
     fn empty(at: usize) -> PendingLine {
-        PendingLine { range: at..at, frags: Vec::new(), width: 0.0, rtl: false }
+        PendingLine {
+            range: at..at,
+            frags: Vec::new(),
+            width: 0.0,
+            rtl: false,
+        }
     }
 
     fn finish(self, top: f32, height: f32, baseline: f32) -> Line {
-        Line { range: self.range, top, height, baseline, x: 0.0, width: self.width, rtl: self.rtl, frags: self.frags }
+        Line {
+            range: self.range,
+            top,
+            height,
+            baseline,
+            x: 0.0,
+            width: self.width,
+            rtl: self.rtl,
+            frags: self.frags,
+        }
     }
 }
 
@@ -268,29 +307,48 @@ fn layout_paragraph(
         .unwrap_or(Script::LATIN);
     let mut cur_script = first_real;
     let mut first = true;
-    let flush = |items: &mut Vec<Item>, cache: &mut ShapeCache, from: usize, to: usize, font: FontId, script: Script, lvl: Level| {
+    let flush = |items: &mut Vec<Item>,
+                 cache: &mut ShapeCache,
+                 from: usize,
+                 to: usize,
+                 font: FontId,
+                 script: Script,
+                 lvl: Level| {
         if to <= from {
             return;
         }
         let dir = if lvl.is_rtl() { Dir::Rtl } else { Dir::Ltr };
-        let p = ShapeParams { font, size: style.size, dir, script, features: &style.features };
+        let p = ShapeParams {
+            font,
+            size: style.size,
+            dir,
+            script,
+            features: &style.features,
+        };
         let run = cache.get(db, &body[from..to], &p);
-        items.push(Item { range: base_off + from..base_off + to, run });
+        items.push(Item {
+            range: base_off + from..base_off + to,
+            run,
+        });
     };
     for (i, c) in body.char_indices() {
         let lvl = bidi.levels[i];
         let s = script_of(c);
         let real = s != Script::COMMON && s != Script::INHERITED;
         let new_script = if real { s } else { cur_script };
-        let new_font = if !real && db.face(cur_font).is_some_and(|f| f.has_char(c)) {
-            cur_font
-        } else if c.is_control() || c.is_whitespace() || s == Script::INHERITED {
+        let stays = (!real && db.face(cur_font).is_some_and(|f| f.has_char(c)))
+            || c.is_control()
+            || c.is_whitespace()
+            || s == Script::INHERITED;
+        let new_font = if stays {
             cur_font
         } else {
             db.resolve(c, new_script, style.font)
         };
         if !first && (lvl != cur_level || new_script != cur_script || new_font != cur_font) {
-            flush(&mut items, cache, run_start, i, cur_font, cur_script, cur_level);
+            flush(
+                &mut items, cache, run_start, i, cur_font, cur_script, cur_level,
+            );
             run_start = i;
         }
         first = false;
@@ -298,7 +356,15 @@ fn layout_paragraph(
         cur_script = new_script;
         cur_font = new_font;
     }
-    flush(&mut items, cache, run_start, body.len(), cur_font, cur_script, cur_level);
+    flush(
+        &mut items,
+        cache,
+        run_start,
+        body.len(),
+        cur_font,
+        cur_script,
+        cur_level,
+    );
 
     // --- atoms (logical order) ---
     let mut atoms: Vec<Atom> = Vec::new();
@@ -306,10 +372,23 @@ fn layout_paragraph(
         let starts = it.run.cluster_starts();
         for (k, &s) in starts.iter().enumerate() {
             let e = starts.get(k + 1).copied().unwrap_or(it.run.text_len);
-            let width: f32 = it.run.glyphs.iter().filter(|g| g.cluster == s).map(|g| g.x_advance).sum();
+            let width: f32 = it
+                .run
+                .glyphs
+                .iter()
+                .filter(|g| g.cluster == s)
+                .map(|g| g.x_advance)
+                .sum();
             let (a, b) = (it.range.start + s as usize, it.range.start + e as usize);
-            let space = body[a - base_off..b - base_off].chars().all(|c| c.is_whitespace());
-            atoms.push(Atom { start: a, end: b, width, space });
+            let space = body[a - base_off..b - base_off]
+                .chars()
+                .all(|c| c.is_whitespace());
+            atoms.push(Atom {
+                start: a,
+                end: b,
+                width,
+                space,
+            });
         }
     }
     atoms.sort_by_key(|a| a.start);
@@ -383,7 +462,10 @@ fn layout_paragraph(
                 let run = if rg == it.range {
                     Arc::clone(&it.run)
                 } else {
-                    Arc::new(it.run.slice((rg.start - it.range.start) as u32, (rg.end - it.range.start) as u32))
+                    Arc::new(it.run.slice(
+                        (rg.start - it.range.start) as u32,
+                        (rg.end - it.range.start) as u32,
+                    ))
                 };
                 let adv = run.advance;
                 frags.push(Frag { run, range: rg, x });
@@ -400,7 +482,12 @@ fn layout_paragraph(
             }
         }
         content_end += x - trail;
-        out.push(PendingLine { range: lo..hi, frags, width: content_end.max(0.0), rtl: para_rtl });
+        out.push(PendingLine {
+            range: lo..hi,
+            frags,
+            width: content_end.max(0.0),
+            rtl: para_rtl,
+        });
     }
     out
 }
@@ -465,11 +552,20 @@ impl TextLayout {
             return (li, line.x);
         }
         let l = self.lines.first();
-        (0, if l.is_some_and(|l| l.rtl) { l.map_or(0.0, |l| l.x + l.width) } else { l.map_or(0.0, |l| l.x) })
+        (
+            0,
+            if l.is_some_and(|l| l.rtl) {
+                l.map_or(0.0, |l| l.x + l.width)
+            } else {
+                l.map_or(0.0, |l| l.x)
+            },
+        )
     }
 
     fn line_of(&self, idx: usize) -> Option<usize> {
-        self.lines.iter().position(|l| idx >= l.range.start && idx <= l.range.end)
+        self.lines
+            .iter()
+            .position(|l| idx >= l.range.start && idx <= l.range.end)
     }
 
     /// The byte offset nearest to a point (the grapheme boundary closest to `x` on the line at `y`).
@@ -479,11 +575,20 @@ impl TextLayout {
             .iter()
             .position(|l| y < l.top + l.height)
             .unwrap_or(self.lines.len().saturating_sub(1));
-        let Some(line) = self.lines.get(li) else { return 0 };
-        let boxes: Vec<ClusterBox> = self.cluster_boxes().into_iter().filter(|b| b.line == li).collect();
+        let Some(line) = self.lines.get(li) else {
+            return 0;
+        };
+        let boxes: Vec<ClusterBox> = self
+            .cluster_boxes()
+            .into_iter()
+            .filter(|b| b.line == li)
+            .collect();
         let mut best = (line.range.start, f32::INFINITY);
         for b in &boxes {
-            let g: Vec<usize> = text[b.bytes.0..b.bytes.1].grapheme_indices(true).map(|(i, _)| b.bytes.0 + i).collect();
+            let g: Vec<usize> = text[b.bytes.0..b.bytes.1]
+                .grapheme_indices(true)
+                .map(|(i, _)| b.bytes.0 + i)
+                .collect();
             let total = g.len().max(1);
             let w = b.x1 - b.x0;
             for (k, &bi) in g.iter().enumerate() {
@@ -520,11 +625,12 @@ impl TextLayout {
             }
             let line = &self.lines[b.line];
             let r = Rect::new(b.x0, line.top, b.x1 - b.x0, line.height);
-            if let Some(last) = out.last_mut() {
-                if (last.y - r.y).abs() < 0.01 && (last.right() - r.x).abs() < 0.01 {
-                    *last = last.union(&r);
-                    continue;
-                }
+            if let Some(last) = out.last_mut()
+                && (last.y - r.y).abs() < 0.01
+                && (last.right() - r.x).abs() < 0.01
+            {
+                *last = last.union(&r);
+                continue;
             }
             out.push(r);
         }

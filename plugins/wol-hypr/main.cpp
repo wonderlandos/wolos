@@ -193,7 +193,7 @@ static PHLWINDOW previousOfClass(PHLWINDOW w) {
 }
 
 // After mapWindow's layout recalc (window.open is too early: the layout re-centres the window).
-// macOS rules (realtime placement.rs): a new window keeps the size it asked for, cut to the usable
+// WolOS placement rules (realtime placement.rs): a new window keeps the size it asked for, cut to the usable
 // area; a dialog opens centred on its parent; the next window of an app cascades from the previous
 // one; a fixed-size window is never resized. The conf no longer forces a size (the rule hit
 // dialogs and fixed-size windows, which then flashed at the wrong size).
@@ -245,7 +245,7 @@ static void onOpenLate(PHLWINDOW w) {
 
 // Raise on a focus the user asked for. Not on focus that merely follows the desktop: the pointer
 // (FFM), a desktop or special-workspace switch, the fallback after a window closed (the next window
-// is wherever it was, macOS leaves the order alone), activation (CWindow::activate raises a floating
+// is wherever it was, WolOS leaves the order alone), activation (CWindow::activate raises a floating
 // window itself) and other state changes.
 static bool raisesOnFocus(Desktop::eFocusReason reason) {
     using namespace Desktop;
@@ -324,7 +324,7 @@ static void qosStop() {
     g_qos = nullptr;
 }
 
-// macOS: the active window is frontmost. focuswindow alone leaves floating windows behind. Raised
+// WolOS: the active window is frontmost. focuswindow alone leaves floating windows behind. Raised
 // directly once the focus change is done (audit4 S5-6): no hyprctl round trip, no simulated pointer
 // motion handing the focus back to a tiled window under the pointer, no reordering inside
 // rawWindowFocus.

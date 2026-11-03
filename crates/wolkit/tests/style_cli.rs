@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//! `wolkit-stylec` end to end: files in, `WSB1` and Crystal constants out, diagnostics on stderr.
+use std::process::Command;
+
+fn bin() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_wolkit-stylec"))
+}
+
+fn tmp(name: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("wolkit-stylec-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn compiles_sheets_and_writes_both_outputs() {
+    let d = tmp("ok");
+    std::fs::write(d.join("b.wolcss"), ".nav-item { padding: sm; }\n").unwrap();
+    std::fs::write(
+        d.join("a.wolcss"),
+        ".card { background: card; }\n.card:hover { background: control; }\n",
+    )
+    .unwrap();
+    let out = d.join("styles.wsb");
+    let cr = d.join("styles.cr");
+    // Given in the "wrong" order: the output must not depend on it.
+    let run = |order: [&str; 2]| {
+        let o = bin()
+            .args([
+                "--out",
+                out.to_str().unwrap(),
+                "--crystal",
+                cr.to_str().unwrap(),
+            ])
+            .args(order.map(|f| d.join(f)))
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        std::fs::read(&out).unwrap()
+    };
+    let one = run(["a.wolcss", "b.wolcss"]);
+    let two = run(["b.wolcss", "a.wolcss"]);
+    assert_eq!(one, two, "file order does not change the table");
+    let t = wolkit::style::wsb::load(&one).unwrap();
+    assert_eq!(
+        t.classes
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        ["card", "nav-item"]
+    );
+    let cr_text = std::fs::read_to_string(&cr).unwrap();
+    assert!(
+        cr_text.contains("CARD = 0_u32") && cr_text.contains("NAV_ITEM = 1_u32"),
+        "{cr_text}"
+    );
+    std::fs::remove_dir_all(&d).ok();
+}
+
+#[test]
+fn errors_print_diagnostics_and_write_nothing() {
+    let d = tmp("bad");
+    let f = d.join("bad.wolcss");
+    std::fs::write(&f, ".a {\n  background: #fff;\n}\n").unwrap();
+    let out = d.join("styles.wsb");
+    let o = bin()
+        .args(["--out", out.to_str().unwrap()])
+        .arg(&f)
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("bad.wolcss:2:15: error[WK-001]"), "{err}");
+    assert!(err.contains("^^^^"), "{err}");
+    assert!(!err.to_lowercase().contains("failed"), "{err}");
+    assert!(!out.exists(), "no table on errors");
+    std::fs::remove_dir_all(&d).ok();
+}
+
+#[test]
+fn warnings_pass_unless_denied() {
+    let d = tmp("warn");
+    let f = d.join("w.wolcss");
+    std::fs::write(&f, ".a { opacity: 1; opacity: 0.5; }\n").unwrap();
+    assert!(bin().arg(&f).output().unwrap().status.success());
+    let o = bin().arg("--deny-warnings").arg(&f).output().unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("WK-013"));
+    std::fs::remove_dir_all(&d).ok();
+}
+
+#[test]
+fn usage_and_missing_files() {
+    assert_eq!(bin().output().unwrap().status.code(), Some(2));
+    assert_eq!(bin().arg("--nope").output().unwrap().status.code(), Some(2));
+    let o = bin().arg("/nonexistent/x.wolcss").output().unwrap();
+    assert_eq!(o.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("cannot be read"));
+}
+
+#[test]
+fn doc_flag_prints_the_generated_page() {
+    let o = bin().arg("--doc").output().unwrap();
+    assert!(o.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&o.stdout),
+        wolkit::style::doc::render()
+    );
+}

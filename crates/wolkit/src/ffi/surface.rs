@@ -3,11 +3,12 @@
 //! backend). W1 made these stubs; WK-W5 fills them. Until then every creation says what is missing.
 
 use super::window::wolkit_window;
-use super::{borrow, guard, handle, release, retain, wolkit_error, wolkit_status, need};
+use super::{borrow, guard, handle, need, release, retain, wolkit_error, wolkit_status};
 use crate::error::Error;
 use std::ffi::{c_char, c_void};
 
 #[repr(C)]
+#[allow(non_camel_case_types)] // the C name
 pub struct wolkit_surface {
     tag: handle::Tag<wolkit_surface>,
 }
@@ -30,14 +31,18 @@ pub unsafe extern "C" fn wolkit_surface_create(
         // SAFETY: live (contract).
         let _ = unsafe { borrow(window) }?;
         let _ = (node, width, height);
-        Err(Error::unavailable("This window needs the native backend to show a GPU surface."))
+        Err(Error::unavailable(
+            "This window needs the native backend to show a GPU surface.",
+        ))
     })
 }
 
 /// # Safety
 /// `surface` is NULL or live.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_surface_retain(surface: *mut wolkit_surface) -> *mut wolkit_surface {
+pub unsafe extern "C" fn wolkit_surface_retain(
+    surface: *mut wolkit_surface,
+) -> *mut wolkit_surface {
     // SAFETY: NULL or live (contract).
     unsafe { retain(surface) }
 }
@@ -63,7 +68,9 @@ pub unsafe extern "C" fn wolkit_surface_get_size(
         // SAFETY: live (contract).
         let _ = unsafe { borrow(surface) }?;
         let _ = (w, h, scale);
-        Err(Error::unavailable("This window needs the native backend to show a GPU surface."))
+        Err(Error::unavailable(
+            "This window needs the native backend to show a GPU surface.",
+        ))
     })
 }
 
@@ -72,7 +79,9 @@ pub unsafe extern "C" fn wolkit_surface_get_size(
 /// # Safety
 /// `count` is writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_surface_get_vk_instance_extensions(count: *mut u32) -> *const *const c_char {
+pub unsafe extern "C" fn wolkit_surface_get_vk_instance_extensions(
+    count: *mut u32,
+) -> *const *const c_char {
     static NONE: [usize; 1] = [0];
     super::put(count, 0);
     NONE.as_ptr().cast()
@@ -91,6 +100,8 @@ pub unsafe extern "C" fn wolkit_surface_create_vk(
         // SAFETY: live (contract).
         let _ = unsafe { borrow(surface) }?;
         let _ = (vk_instance, vk_surface);
-        Err(Error::unavailable("This window needs the native backend to show a GPU surface."))
+        Err(Error::unavailable(
+            "This window needs the native backend to show a GPU surface.",
+        ))
     })
 }

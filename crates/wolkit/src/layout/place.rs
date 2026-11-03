@@ -33,14 +33,20 @@ impl Side {
     }
     /// From the wire enum order of `anchor-side`: bottom, top, right, left.
     pub fn from_wire(v: u32) -> Side {
-        [Side::Bottom, Side::Top, Side::Right, Side::Left].get(v as usize).copied().unwrap_or(Side::Bottom)
+        [Side::Bottom, Side::Top, Side::Right, Side::Left]
+            .get(v as usize)
+            .copied()
+            .unwrap_or(Side::Bottom)
     }
 }
 
 impl Align {
     /// From the wire enum order of `anchor-align`: start, center, end.
     pub fn from_wire(v: u32) -> Align {
-        [Align::Start, Align::Center, Align::End].get(v as usize).copied().unwrap_or(Align::Start)
+        [Align::Start, Align::Center, Align::End]
+            .get(v as usize)
+            .copied()
+            .unwrap_or(Align::Start)
     }
 }
 
@@ -65,7 +71,13 @@ pub struct PlaceOpts {
 
 impl Default for PlaceOpts {
     fn default() -> Self {
-        PlaceOpts { side: Side::Bottom, align: Align::Start, gap: 4.0, flip: true, shift: true }
+        PlaceOpts {
+            side: Side::Bottom,
+            align: Align::Start,
+            gap: 4.0,
+            flip: true,
+            shift: true,
+        }
     }
 }
 
@@ -79,10 +91,22 @@ fn along(anchor_lo: f32, anchor_len: f32, len: f32, a: Align) -> f32 {
 
 fn at(anchor: &Rect, size: Size, side: Side, align: Align, gap: f32) -> Rect {
     let (x, y) = match side {
-        Side::Bottom => (along(anchor.x, anchor.w, size.w, align), anchor.y + anchor.h + gap),
-        Side::Top => (along(anchor.x, anchor.w, size.w, align), anchor.y - gap - size.h),
-        Side::Right => (anchor.x + anchor.w + gap, along(anchor.y, anchor.h, size.h, align)),
-        Side::Left => (anchor.x - gap - size.w, along(anchor.y, anchor.h, size.h, align)),
+        Side::Bottom => (
+            along(anchor.x, anchor.w, size.w, align),
+            anchor.y + anchor.h + gap,
+        ),
+        Side::Top => (
+            along(anchor.x, anchor.w, size.w, align),
+            anchor.y - gap - size.h,
+        ),
+        Side::Right => (
+            anchor.x + anchor.w + gap,
+            along(anchor.y, anchor.h, size.h, align),
+        ),
+        Side::Left => (
+            anchor.x - gap - size.w,
+            along(anchor.y, anchor.h, size.h, align),
+        ),
     };
     Rect::new(x, y, size.w, size.h)
 }
@@ -105,7 +129,11 @@ fn room(anchor: &Rect, bounds: &Rect, side: Side, gap: f32) -> f32 {
 /// 3. With `shift` on, slide the box along the anchor's edge so it lies inside the bounds (the
 ///    start edge wins when the box is larger than the bounds).
 pub fn place(anchor: Rect, size: Size, bounds: Rect, opts: PlaceOpts) -> Placement {
-    let need = if opts.side.horizontal() { size.w } else { size.h };
+    let need = if opts.side.horizontal() {
+        size.w
+    } else {
+        size.h
+    };
     let mut side = opts.side;
     if opts.flip {
         let here = room(&anchor, &bounds, side, opts.gap);
@@ -127,7 +155,11 @@ pub fn place(anchor: Rect, size: Size, bounds: Rect, opts: PlaceOpts) -> Placeme
             r.x = x;
         }
     }
-    Placement { rect: r, side, shifted }
+    Placement {
+        rect: r,
+        side,
+        shifted,
+    }
 }
 
 /// A box with no anchor (a dialog): centred in the bounds, kept inside.

@@ -42,12 +42,34 @@ pub struct OverlaySpec {
     pub align: super::place::Align,
 }
 
+/// What the engine asks of a node on its hot paths, in one call: a tree whose lookups are not free
+/// answers them together.
+#[derive(Clone, Copy)]
+pub struct NodeInfo<'a> {
+    pub style: &'a LayoutStyle,
+    pub leaf: Leaf,
+    /// The node is an overlay (placed after everything else).
+    pub overlay: bool,
+    /// The node is a virtual list.
+    pub vlist: bool,
+}
+
 pub trait LayoutTree {
     fn first_child(&self, n: u32) -> u32;
     fn next_sibling(&self, n: u32) -> u32;
     fn parent(&self, n: u32) -> u32;
     fn style(&self, n: u32) -> &LayoutStyle;
     fn leaf(&self, n: u32) -> Leaf;
+    /// Style, leaf kind and the overlay and list flags together. Override it when one lookup can
+    /// answer all of them.
+    fn info(&self, n: u32) -> NodeInfo<'_> {
+        NodeInfo {
+            style: self.style(n),
+            leaf: self.leaf(n),
+            overlay: self.overlay(n).is_some(),
+            vlist: self.vlist(n).is_some(),
+        }
+    }
     /// Overlays leave the flow; the engine places them after everything else.
     fn overlay(&self, _n: u32) -> Option<OverlaySpec> {
         None
@@ -78,7 +100,7 @@ pub trait Measure {
     fn intrinsic(&mut self, n: u32) -> Size;
 }
 
-/// A stand-in measure: every character is `0.55 em` wide, a line is `1.3 em` high, words wrap.
+/// A stand-in measure: every character is `0.5 em` wide, a line is `1.3 em` high, words wrap.
 /// Headless runs and tests use it until a text-backed measure is plugged in.
 pub struct ApproxMeasure<'a> {
     pub text: &'a dyn Fn(u32) -> (&'a str, f32),
@@ -97,7 +119,7 @@ impl Measure for ApproxMeasure<'_> {
 
 /// Width and height of `t` at `size` px wrapped at `max_w`.
 pub fn approx_text(t: &str, size: f32, max_w: Option<f32>) -> Size {
-    let cw = size * 0.55;
+    let cw = size * 0.5;
     let lh = (size * 1.3).ceil();
     if t.is_empty() {
         return Size::new(0.0, lh);

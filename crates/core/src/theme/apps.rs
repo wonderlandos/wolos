@@ -56,8 +56,8 @@ pub const SYSTEM_DIR: &str = "/usr/share/wolos";
 pub const ICON_THEME: &str = "WolOS";
 pub const FONT: &str = "Inter 10";
 pub const MONO_FONT: &str = "JetBrains Mono:size=11";
-/// Window controls on the left, where the compositor draws its own.
-pub const BUTTON_LAYOUT: &str = "close,minimize,maximize:";
+/// Window controls on the right, close rightmost, the order the compositor draws its own in.
+pub const BUTTON_LAYOUT: &str = ":minimize,maximize,close";
 /// libadwaita accent presets (`org.gnome.desktop.interface accent-color`) and their colours.
 pub const ADW_ACCENTS: [(&str, &str); 9] = [
     ("blue", "#3584e4"),
@@ -114,7 +114,7 @@ pub(crate) fn hue_sat(c: Color) -> (f64, f64) {
 }
 pub const FOOT_ALPHA: &str = "0.9";
 /// Window buttons as Kit AppWindow / hyprbars draw them (kit goldens, pixel edges): 12 px
-/// circles, 22 px apart, first centre 23 px from the window's left edge. Every toolkit matches.
+/// circles, 22 px apart, close centred 23 px in from the window's right edge. Every toolkit matches.
 pub use shared::theme::scaffold::{LIGHT_FIRST_CENTRE, LIGHT_PITCH, LIGHT_SIZE};
 /// adw-gtk3 6.5 `headerbar { padding: 0 6px }`; Chromium's GTK frame reads the same padding.
 const GTK3_HEADER_PADDING: i32 = 6;
@@ -411,7 +411,7 @@ fn gtk3_window_controls(t: &ResolvedTheme) -> String {
     let on_accent = token(t, "accentText");
     let mut s = format!(
         "{} {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; margin: 0 {side}px; padding: 0; border: none; border-radius: 999px; background-image: none; background-color: {idle}; box-shadow: none; }}\n\
-         {} {{ margin-left: {first}px; }}\n\
+         {} {{ margin-right: {first}px; }}\n\
          {} {{ margin: -2px; padding: 0; color: transparent; background: none; box-shadow: none; -gtk-icon-transform: scale(0.6); }}\n\
          {} {{ background-color: {hover}; color: {on_accent}; }}\n\
          {} {{ background-color: {pressed}; color: {on_accent}; }}\n",
@@ -856,11 +856,11 @@ mod tests {
         }
         assert!(!gtk3.contains(":hover image"), "one glyph, not two");
         assert!(file(&f, "gtk-4.0/gtk.css").contains("windowcontrols { border-spacing: 10px; }"));
-        // Header bar (bleeds 1 px past the window) pads 17, controls inset 1: close covers x 17..28,
-        // y 20..31 of the window, the Kit golden's pixels (measured on nautilus and calculator).
+        // Header bar (bleeds 1 px past the window) pads 17, controls inset 1: close covers the
+        // window's x 17..28 counted from the right edge, y 20..31 (the compositor row, mirrored).
         let g4 = file(&f, "gtk-4.0/gtk.css");
         assert!(g4.contains("headerbar > windowhandle > box { padding: 10px 17px; }"));
-        assert!(g4.contains("windowcontrols.start { margin-left: 1px;"));
+        assert!(g4.contains("windowcontrols.end { margin-left: 8px; margin-right: 1px; }"));
     }
 
     /// GTK 3 rejects GTK 4-only CSS (Firefox logged `'-gtk-icon-size' is not a valid property name`).
@@ -894,7 +894,8 @@ mod tests {
     }
 
     /// Same window-button geometry in every toolkit as Kit AppWindow / hyprbars (kit goldens,
-    /// pixel edges): 12 px circles, centres 23/45/67 px from the window's left edge.
+    /// pixel edges): 12 px circles, centres 23/45/67 px in from the window's right edge (close,
+    /// zoom, minimise).
     #[test]
     fn window_buttons_match_the_kit_geometry() {
         assert_eq!((LIGHT_SIZE, LIGHT_PITCH, LIGHT_FIRST_CENTRE), (12, 22, 23));
@@ -922,7 +923,7 @@ mod tests {
             assert!(g3.contains(&format!("{adw}.close")), "{adw}.close");
         }
         assert!(g3.contains(&format!(
-            "{} {{ margin-left: {first}px; }}",
+            "{} {{ margin-right: {first}px; }}",
             titlebutton(".close")
         )));
         assert!(
@@ -941,7 +942,7 @@ mod tests {
         assert_eq!(LIGHT_SIZE + 10, LIGHT_PITCH);
         // Firefox: container inset + 5 px button padding + radius.
         let ff = crate::theme::firefox::chrome_css(&theme("wol-light"));
-        assert!(ff.contains("margin-inline-start: 12px !important;"));
+        assert!(ff.contains("margin-inline-end: 12px !important;"));
         assert!(ff.contains(".titlebar-button { padding-inline: 5px !important; }"));
         assert_eq!(12 + 5 + LIGHT_SIZE / 2, LIGHT_FIRST_CENTRE);
         assert_eq!(5 + LIGHT_SIZE + 5, LIGHT_PITCH);
@@ -975,7 +976,7 @@ mod tests {
                 "{id}"
             );
             for ini in [ini3, file(&f, "gtk-4.0/settings.ini")] {
-                assert!(ini.contains("gtk-decoration-layout=close,minimize,maximize:"));
+                assert!(ini.contains("gtk-decoration-layout=:minimize,maximize,close\n"));
                 assert!(ini.contains("gtk-font-name=Inter 10"));
                 assert!(ini.contains("gtk-icon-theme-name=WolOS\n"));
                 assert!(ini.contains(&format!("gtk-application-prefer-dark-theme={}", dark as u8)));
@@ -1200,6 +1201,26 @@ mod tests {
         }
     }
 
+    /// Client-side controls sit where the compositor draws its own: on the right, close rightmost,
+    /// then zoom and minimise leftward (realtime `titlebar::Align::Right`).
+    #[test]
+    fn client_controls_follow_the_compositor_row() {
+        assert_eq!(BUTTON_LAYOUT, ":minimize,maximize,close");
+        let (start, end) = BUTTON_LAYOUT.split_once(':').unwrap();
+        assert!(start.is_empty(), "nothing on the left");
+        assert_eq!(end.rsplit(',').next(), Some("close"), "close rightmost");
+        let hypr = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf"),
+        )
+        .unwrap();
+        assert!(
+            hypr.lines()
+                .any(|l| l.trim().replace(' ', "") == "bar_buttons_alignment=right"),
+            "the compositor row is right-aligned too"
+        );
+    }
+
     #[test]
     fn gsettings_follow_the_variant() {
         let l = gsettings(&theme("wol-light"));
@@ -1210,7 +1231,7 @@ mod tests {
         assert_eq!(get(&d, "color-scheme"), "prefer-dark");
         assert_eq!(get(&d, "gtk-theme"), "WolOS-wol-dark-gtk3");
         assert_eq!(get(&l, "accent-color"), "purple");
-        assert_eq!(get(&l, "button-layout"), "close,minimize,maximize:");
+        assert_eq!(get(&l, "button-layout"), ":minimize,maximize,close");
         assert_eq!(get(&l, "font-name"), "Inter 10");
         assert_eq!(
             get(&d, "icon-theme"),

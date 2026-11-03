@@ -6,7 +6,6 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use wolkit::abi::ENGINE_HEADLESS;
 use wolkit::engine::Engine;
 use wolkit::scene::patch::{APPEND, Writer};
@@ -14,18 +13,22 @@ use wolkit::scene::prop::id;
 use wolkit::scene::{Kind, state};
 
 struct Counting;
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
     static ON: Cell<bool> = const { Cell::new(false) };
+    static COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+fn count() {
+    if ON.with(Cell::get) {
+        COUNT.with(|c| c.set(c.get() + 1));
+    }
 }
 
 // SAFETY: forwards every call to the system allocator; the counter is an atomic.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        if ON.with(Cell::get) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
+        count();
         // SAFETY: same contract as ours.
         unsafe { System.alloc(l) }
     }
@@ -34,9 +37,7 @@ unsafe impl GlobalAlloc for Counting {
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
-        if ON.with(Cell::get) {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
-        }
+        count();
         // SAFETY: same contract as ours.
         unsafe { System.realloc(p, l, n) }
     }
@@ -46,11 +47,11 @@ unsafe impl GlobalAlloc for Counting {
 static A: Counting = Counting;
 
 fn counted<R>(f: impl FnOnce() -> R) -> (R, usize) {
-    let before = ALLOCS.load(Ordering::Relaxed);
+    COUNT.with(|c| c.set(0));
     ON.with(|o| o.set(true));
     let r = f();
     ON.with(|o| o.set(false));
-    (r, ALLOCS.load(Ordering::Relaxed) - before)
+    (r, COUNT.with(Cell::get))
 }
 
 /// 200 rows of (box > text + button + toggle) under one list box.
@@ -60,8 +61,14 @@ fn build(w: &mut Writer) {
     for _ in 0..50 {
         let (row, t, b, s) = (n, n + 1, n + 2, n + 3);
         n += 4;
-        w.create(row, Kind::Box).create(t, Kind::Text).create(b, Kind::Button).create(s, Kind::Toggle);
-        w.insert(1, row, APPEND).insert(row, t, APPEND).insert(row, b, APPEND).insert(row, s, APPEND);
+        w.create(row, Kind::Box)
+            .create(t, Kind::Text)
+            .create(b, Kind::Button)
+            .create(s, Kind::Toggle);
+        w.insert(1, row, APPEND)
+            .insert(row, t, APPEND)
+            .insert(row, b, APPEND)
+            .insert(row, s, APPEND);
         w.set_text(t, "Row").set_text(b, "Delete");
         w.bind_event(b, 1);
     }
@@ -81,6 +88,45 @@ fn update(w: &mut Writer, flip: bool) {
     }
 }
 
+/// The scene, the validator and the journal on their own: no style, no layout, no backend.
+#[test]
+fn steady_state_scene_apply_allocates_nothing() {
+    use wolkit::scene::patch::{Patch, Scratch};
+    use wolkit::scene::{Journal, Scene};
+    let mut scene = Scene::new();
+    let (mut scratch, mut journal) = (Scratch::default(), Journal::default());
+    let mut w = Writer::new();
+    build(&mut w);
+    scene
+        .apply(
+            &Patch::parse(w.finish(1), &mut scratch).unwrap(),
+            &mut journal,
+        )
+        .unwrap();
+    let (mut a, mut b) = (Writer::new(), Writer::new());
+    update(&mut a, true);
+    update(&mut b, false);
+    let (pa, pb) = (a.finish(2).to_vec(), b.finish(3).to_vec());
+    for _ in 0..8 {
+        for p in [&pa, &pb] {
+            scene
+                .apply(&Patch::parse(p, &mut scratch).unwrap(), &mut journal)
+                .unwrap();
+        }
+    }
+    let (_, n) = counted(|| {
+        for _ in 0..200 {
+            for p in [&pa, &pb] {
+                scene
+                    .apply(&Patch::parse(p, &mut scratch).unwrap(), &mut journal)
+                    .unwrap();
+            }
+        }
+    });
+    assert_eq!(n, 0, "the scene allocated in steady state");
+}
+
+/// The whole path a window takes: validate, apply, style, layout, frame.
 #[test]
 fn steady_state_apply_and_frame_allocate_nothing() {
     let engine = Engine::new("org.example.alloc", ENGINE_HEADLESS).unwrap();
@@ -107,13 +153,11 @@ fn steady_state_apply_and_frame_allocate_nothing() {
             engine.apply(win, &pb).unwrap();
         }
     });
-    assert_eq!(apply_allocs, 0, "apply allocated in steady state");
     let (_, frame_allocs) = counted(|| {
         for _ in 0..100 {
             engine.advance_time(win, 16_000_000).unwrap();
         }
     });
-    assert_eq!(frame_allocs, 0, "a frame allocated in steady state");
     let (_, both) = counted(|| {
         for _ in 0..100 {
             engine.apply(win, &pa).unwrap();
@@ -122,5 +166,8 @@ fn steady_state_apply_and_frame_allocate_nothing() {
             engine.advance_time(win, 16_000_000).unwrap();
         }
     });
+    eprintln!("allocations: apply {apply_allocs}, frame {frame_allocs}, both {both}");
+    assert_eq!(apply_allocs, 0, "apply allocated in steady state");
+    assert_eq!(frame_allocs, 0, "a frame allocated in steady state");
     assert_eq!(both, 0, "apply plus frame allocated in steady state");
 }

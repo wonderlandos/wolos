@@ -30,16 +30,44 @@ fn is_unsupported_property(n: &str) -> bool {
         || n.starts_with("border-image")
         || n.starts_with("mask")
         || n.starts_with("scroll-")
-        || n.starts_with("flex-")
-            && !matches!(n, "flex-direction" | "flex-wrap")
+        || n.starts_with("flex-") && !matches!(n, "flex-direction" | "flex-wrap")
         || matches!(
             n,
-            "float" | "clear" | "filter" | "backdrop-filter" | "mix-blend-mode" | "text-shadow" | "flex" | "flex-flow"
-                | "place-items" | "place-content" | "place-self" | "order" | "content" | "clip-path" | "will-change"
-                | "contain" | "writing-mode" | "direction" | "font" | "background-image" | "background-color"
-                | "background-size" | "background-position" | "background-repeat" | "list-style" | "table-layout"
-                | "vertical-align" | "word-break" | "overflow-wrap" | "text-transform" | "text-indent"
-                | "border-style" | "box-sizing" | "all" | "src"
+            "float"
+                | "clear"
+                | "filter"
+                | "backdrop-filter"
+                | "mix-blend-mode"
+                | "text-shadow"
+                | "flex"
+                | "flex-flow"
+                | "place-items"
+                | "place-content"
+                | "place-self"
+                | "order"
+                | "content"
+                | "clip-path"
+                | "will-change"
+                | "contain"
+                | "writing-mode"
+                | "direction"
+                | "font"
+                | "background-image"
+                | "background-color"
+                | "background-size"
+                | "background-position"
+                | "background-repeat"
+                | "list-style"
+                | "table-layout"
+                | "vertical-align"
+                | "word-break"
+                | "overflow-wrap"
+                | "text-transform"
+                | "text-indent"
+                | "border-style"
+                | "box-sizing"
+                | "all"
+                | "src"
         )
 }
 
@@ -79,7 +107,12 @@ struct FileCx<'a> {
 
 impl Builder {
     pub fn new() -> Self {
-        Builder { table: StyleTable::default(), index: HashMap::new(), diags: vec![], optouts: 0 }
+        Builder {
+            table: StyleTable::default(),
+            index: HashMap::new(),
+            diags: vec![],
+            optouts: 0,
+        }
     }
 
     pub fn has_errors(&self) -> bool {
@@ -88,13 +121,26 @@ impl Builder {
 
     /// Finish: variants in resolution order.
     pub fn finish(mut self) -> (StyleTable, Vec<Diag>) {
-        for c in self.table.classes.iter_mut().chain(self.table.kinds.iter_mut()) {
+        for c in self
+            .table
+            .classes
+            .iter_mut()
+            .chain(self.table.kinds.iter_mut())
+        {
             c.sort();
         }
         (self.table, self.diags)
     }
 
-    fn diag(&mut self, cx: &FileCx, id: &'static str, s: usize, e: usize, msg: String, help: Option<String>) {
+    fn diag(
+        &mut self,
+        cx: &FileCx,
+        id: &'static str,
+        s: usize,
+        e: usize,
+        msg: String,
+        help: Option<String>,
+    ) {
         let (line, col, text) = cx.lines.locate(s);
         let sev = L::def(id).map_or(Severity::Error, |d| d.severity);
         self.diags.push(Diag {
@@ -119,9 +165,21 @@ impl Builder {
         let (clean, pragma, unterminated) = blank_comments(original);
         let lines = Lines::new(original);
         let off_scale = pragma.is_some();
-        let cx = FileCx { file, src: &clean, lines, off_scale };
+        let cx = FileCx {
+            file,
+            src: &clean,
+            lines,
+            off_scale,
+        };
         if let Some(at) = unterminated {
-            self.diag(&cx, L::SYNTAX, at, at + 2, "This comment is never closed.".into(), Some("end it with */".into()));
+            self.diag(
+                &cx,
+                L::SYNTAX,
+                at,
+                at + 2,
+                "This comment is never closed.".into(),
+                Some("end it with */".into()),
+            );
         }
         if let Some(at) = pragma {
             self.optouts += 1;
@@ -157,12 +215,26 @@ impl Builder {
             let start = *i;
             match b[*i] {
                 b'}' => {
-                    self.diag(cx, L::SYNTAX, start, start + 1, "This `}` closes nothing.".into(), Some("remove it".into()));
+                    self.diag(
+                        cx,
+                        L::SYNTAX,
+                        start,
+                        start + 1,
+                        "This `}` closes nothing.".into(),
+                        Some("remove it".into()),
+                    );
                     *i += 1;
                 }
                 b'@' => {
                     if !top {
-                        self.diag(cx, L::SELECTOR_FORM, start, start + 1, "Media blocks do not nest.".into(), Some("put the condition outside, as @dark @contrast { ... }".into()));
+                        self.diag(
+                            cx,
+                            L::SELECTOR_FORM,
+                            start,
+                            start + 1,
+                            "Media blocks do not nest.".into(),
+                            Some("put the condition outside, as @dark @contrast { ... }".into()),
+                        );
                     }
                     self.at_rule(cx, i, end, top);
                 }
@@ -188,7 +260,14 @@ impl Builder {
             }
             j += 1;
         }
-        self.diag(cx, L::SYNTAX, open, open + 1, "This block is never closed.".into(), Some("add a closing }".into()));
+        self.diag(
+            cx,
+            L::SYNTAX,
+            open,
+            open + 1,
+            "This block is never closed.".into(),
+            Some("add a closing }".into()),
+        );
         None
     }
 
@@ -197,6 +276,7 @@ impl Builder {
         let start = *i;
         let mut media = 0u8;
         let mut ok = true;
+        let mut names_end = start;
         // One or more `@name` words, then `{`.
         loop {
             Self::skip_ws(cx.src, i, end);
@@ -213,17 +293,28 @@ impl Builder {
                         ok = false;
                         let (id, msg, help) = if matches!(
                             name,
-                            "import" | "font-face" | "keyframes" | "media" | "supports" | "layer" | "container" | "namespace" | "charset" | "property"
+                            "import"
+                                | "font-face"
+                                | "keyframes"
+                                | "media"
+                                | "supports"
+                                | "layer"
+                                | "container"
+                                | "namespace"
+                                | "charset"
+                                | "property"
                         ) {
                             (L::UNSUPPORTED, format!("`@{name}` is not in version 1.0."), Some("styles are plain classes; conditions are @dark, @light, @contrast, @reduce-motion, @reduce-transparency and @compact".to_string()))
                         } else {
-                            let help = tk::suggest(name, MEDIA.iter().copied()).map(|n| format!("did you mean `@{n}`?"));
+                            let help = tk::suggest(name, MEDIA.iter().copied())
+                                .map(|n| format!("did you mean `@{n}`?"));
                             (L::UNKNOWN_STATE, format!("`@{name}` is not a media condition."), help.or(Some("the conditions are dark, light, contrast, reduce-motion, reduce-transparency and compact".into())))
                         };
                         self.diag(cx, id, ns - 1, j, msg, help);
                     }
                 }
                 *i = j.max(ns);
+                names_end = j.max(ns);
                 if j == ns {
                     *i = ns;
                 }
@@ -233,7 +324,14 @@ impl Builder {
         }
         if media & MEDIA_DARK != 0 && media & MEDIA_LIGHT != 0 {
             ok = false;
-            self.diag(cx, L::CONFLICTING_MEDIA, start, *i, "@dark and @light never hold together.".into(), Some("write two blocks, one for each".into()));
+            self.diag(
+                cx,
+                L::CONFLICTING_MEDIA,
+                start,
+                names_end,
+                "@dark and @light never hold together.".into(),
+                Some("write two blocks, one for each".into()),
+            );
         }
         Self::skip_ws(cx.src, i, end);
         if *i < end && b[*i] == b'{' {
@@ -272,7 +370,14 @@ impl Builder {
             j += 1;
         }
         if j >= end || b[j] != b'{' {
-            self.diag(cx, L::SYNTAX, sel_start, (sel_start + 1).min(end), "A selector is followed by a block in braces.".into(), Some("write .name { property: value; }".into()));
+            self.diag(
+                cx,
+                L::SYNTAX,
+                sel_start,
+                (sel_start + 1).min(end),
+                "A selector is followed by a block in braces.".into(),
+                Some("write .name { property: value; }".into()),
+            );
             *i = (j + 1).min(end);
             return;
         }
@@ -287,7 +392,11 @@ impl Builder {
         let mut part_start = sel_start;
         let mut depth = 0i32;
         for k in sel_start..=open {
-            let ch = if k < open { b[k] } else { b',' };
+            let ch = if k < open {
+                b.get(k).copied().unwrap_or(b',')
+            } else {
+                b','
+            };
             match ch {
                 b'(' => depth += 1,
                 b')' => depth -= 1,
@@ -303,7 +412,15 @@ impl Builder {
         // Declarations.
         let (decls, any) = self.declarations(cx, open + 1, close);
         if !any {
-            self.diag(cx, L::EMPTY_RULE, sel_start, open, "This rule sets nothing.".into(), Some("add a declaration or remove the rule".into()));
+            let sel_end = sel_start + cx.src[sel_start..open].trim_end().len();
+            self.diag(
+                cx,
+                L::EMPTY_RULE,
+                sel_start,
+                sel_end,
+                "This rule sets nothing.".into(),
+                Some("add a declaration or remove the rule".into()),
+            );
             return;
         }
         if decls.is_empty() {
@@ -321,12 +438,26 @@ impl Builder {
         let text = raw.trim();
         let e0 = s0 + text.len();
         if text.is_empty() {
-            self.diag(cx, L::SYNTAX, from, from + 1, "A selector is missing before the comma or brace.".into(), None);
+            self.diag(
+                cx,
+                L::SYNTAX,
+                from,
+                from + 1,
+                "A selector is missing before the comma or brace.".into(),
+                None,
+            );
             return None;
         }
         if text.contains("::") {
             let at = s0 + text.find("::").unwrap_or(0);
-            self.diag(cx, L::UNSUPPORTED, at, e0, "Pseudo-elements are not in version 1.0.".into(), Some("add a child node instead".into()));
+            self.diag(
+                cx,
+                L::UNSUPPORTED,
+                at,
+                e0,
+                "Pseudo-elements are not in version 1.0.".into(),
+                Some("add a child node instead".into()),
+            );
             return None;
         }
         let form_err = |me: &mut Self, at: usize, what: &str| {
@@ -350,10 +481,23 @@ impl Builder {
             (text, None)
         };
         let l_off = s0;
-        let mut sel = Sel { class: None, kind: None, state: 0, parent: None, s: s0, e: e0 };
+        let mut sel = Sel {
+            class: None,
+            kind: None,
+            state: 0,
+            parent: None,
+            s: s0,
+            e: e0,
+        };
         match right {
             None => {
-                let (name_is_class, name, state) = self.simple(cx, left.trim(), l_off + (left.len() - left.trim_start().len()), e0, true)?;
+                let (name_is_class, name, state) = self.simple(
+                    cx,
+                    left.trim(),
+                    l_off + (left.len() - left.trim_start().len()),
+                    e0,
+                    true,
+                )?;
                 if name_is_class {
                     sel.class = Some(name);
                 } else {
@@ -362,13 +506,25 @@ impl Builder {
                 sel.state = state;
             }
             Some(r) => {
-                let (pc, pname, pstate) = self.simple(cx, left.trim(), l_off + (left.len() - left.trim_start().len()), e0, true)?;
+                let (pc, pname, pstate) = self.simple(
+                    cx,
+                    left.trim(),
+                    l_off + (left.len() - left.trim_start().len()),
+                    e0,
+                    true,
+                )?;
                 if !pc {
                     form_err(self, s0, "A kind as the parent");
                     return None;
                 }
                 let r_off = s0 + left.len() + 1;
-                let (cc, cname, cstate) = self.simple(cx, r.trim(), r_off + (r.len() - r.trim_start().len()), e0, true)?;
+                let (cc, cname, cstate) = self.simple(
+                    cx,
+                    r.trim(),
+                    r_off + (r.len() - r.trim_start().len()),
+                    e0,
+                    true,
+                )?;
                 if !cc || cstate != 0 {
                     form_err(self, r_off, "A kind or a state on the child");
                     return None;
@@ -381,7 +537,14 @@ impl Builder {
     }
 
     /// `.name[:state]` or `kind[:state]`: (is_class, name, state).
-    fn simple(&mut self, cx: &FileCx, t: &str, at: usize, e0: usize, _allow_state: bool) -> Option<(bool, String, u16)> {
+    fn simple(
+        &mut self,
+        cx: &FileCx,
+        t: &str,
+        at: usize,
+        e0: usize,
+        _allow_state: bool,
+    ) -> Option<(bool, String, u16)> {
         let bad = |me: &mut Self, what: &str| {
             me.diag(
                 cx,
@@ -408,11 +571,11 @@ impl Builder {
             Some((h, s)) => (h, Some(s)),
             None => (t, None),
         };
-        if let Some(s) = state {
-            if s.contains(':') {
-                bad(self, "More than one state");
-                return None;
-            }
+        if let Some(s) = state
+            && s.contains(':')
+        {
+            bad(self, "More than one state");
+            return None;
         }
         let mut st = 0u16;
         if let Some(s) = state {
@@ -420,7 +583,8 @@ impl Builder {
                 Some(b) => st = b,
                 None => {
                     let id = L::UNKNOWN_STATE;
-                    let help = tk::suggest(s, STATES.iter().copied()).map(|n| format!("did you mean `:{n}`?"));
+                    let help = tk::suggest(s, STATES.iter().copied())
+                        .map(|n| format!("did you mean `:{n}`?"));
                     let at_s = at + head.len() + 1;
                     self.diag(cx, id, at_s, at_s + s.len(), format!("`:{s}` is not a state."), help.or(Some("the states are hover, active, focus, focus-visible, disabled, selected, checked, expanded and empty".into())));
                     return None;
@@ -429,14 +593,32 @@ impl Builder {
         }
         if let Some(cls) = head.strip_prefix('.') {
             if cls.len() > MAX_CLASS_NAME || !valid_class(cls) {
-                self.diag(cx, L::SYNTAX, at, at + head.len(), format!("`.{cls}` is not a class name."), Some("class names are lower-case words joined by hyphens, such as .nav-item".into()));
+                self.diag(
+                    cx,
+                    L::SYNTAX,
+                    at,
+                    at + head.len(),
+                    format!("`.{cls}` is not a class name."),
+                    Some(
+                        "class names are lower-case words joined by hyphens, such as .nav-item"
+                            .into(),
+                    ),
+                );
                 return None;
             }
             Some((true, cls.to_string(), st))
         } else {
             if kind_id(head).is_none() {
-                let help = tk::suggest(head, KINDS.iter().copied()).map(|n| format!("did you mean `{n}`?"));
-                self.diag(cx, L::UNKNOWN_NAME, at, at + head.len(), format!("`{head}` is not a node kind."), help.or(Some(format!("the kinds are {}", KINDS.join(", ")))));
+                let help = tk::suggest(head, KINDS.iter().copied())
+                    .map(|n| format!("did you mean `{n}`?"));
+                self.diag(
+                    cx,
+                    L::UNKNOWN_NAME,
+                    at,
+                    at + head.len(),
+                    format!("`{head}` is not a node kind."),
+                    help.or(Some(format!("the kinds are {}", KINDS.join(", ")))),
+                );
                 return None;
             }
             Some((false, head.to_string(), st))
@@ -478,7 +660,14 @@ impl Builder {
         }
         let ns = from + (raw.len() - raw.trim_start().len());
         let Some(colon) = text.find(':') else {
-            self.diag(cx, L::SYNTAX, ns, ns + text.len(), format!("`{text}` needs a colon and a value."), Some("write property: value;".into()));
+            self.diag(
+                cx,
+                L::SYNTAX,
+                ns,
+                ns + text.len(),
+                format!("`{text}` needs a colon and a value."),
+                Some("write property: value;".into()),
+            );
             return true;
         };
         let name = text[..colon].trim_end();
@@ -486,7 +675,17 @@ impl Builder {
         let toks = tokenize(cx.src, vs, to);
         // `!important`.
         if let Some(p) = toks.iter().position(|t| t.t == T::Bang) {
-            self.diag(cx, L::IMPORTANT, toks[p].s, toks.get(p + 1).map_or(toks[p].e, |t| t.e), "`!important` is not available; the order of resolution is fixed.".into(), Some("class order, then state variants, then inline overrides decide; remove it".into()));
+            self.diag(
+                cx,
+                L::IMPORTANT,
+                toks[p].s,
+                toks.get(p + 1).map_or(toks[p].e, |t| t.e),
+                "`!important` is not available; the order of resolution is fixed.".into(),
+                Some(
+                    "class order, then state variants, then inline overrides decide; remove it"
+                        .into(),
+                ),
+            );
             return true;
         }
         let name_end = ns + name.len();
@@ -496,7 +695,14 @@ impl Builder {
                 Ok(tmp) => {
                     for (id, src) in tmp {
                         if out.mask & id.bit() != 0 {
-                            self.diag(cx, L::DUPLICATE_PROPERTY, ns, name_end, format!("`{}` is set twice in this rule.", id.name()), Some("the later one wins; remove the other".into()));
+                            self.diag(
+                                cx,
+                                L::DUPLICATE_PROPERTY,
+                                ns,
+                                name_end,
+                                format!("`{}` is set twice in this rule.", id.name()),
+                                Some("the later one wins; remove the other".into()),
+                            );
                         }
                         out.set_from(id, &src);
                     }
@@ -507,23 +713,56 @@ impl Builder {
         }
         let Some(id) = PropId::parse_name(name) else {
             if is_unsupported_property(name) {
-                self.diag(cx, L::UNSUPPORTED, ns, name_end, format!("`{name}` is not in version 1.0."), Some(unsupported_hint(name)));
+                self.diag(
+                    cx,
+                    L::UNSUPPORTED,
+                    ns,
+                    name_end,
+                    format!("`{name}` is not in version 1.0."),
+                    Some(unsupported_hint(name)),
+                );
             } else {
-                let all = PROPS.iter().map(|p| p.name).chain(SHORTHANDS.iter().map(|s| s.name));
+                let all = PROPS
+                    .iter()
+                    .map(|p| p.name)
+                    .chain(SHORTHANDS.iter().map(|s| s.name));
                 let help = tk::suggest(name, all).map(|n| format!("did you mean `{n}`?"));
-                self.diag(cx, L::UNKNOWN_PROPERTY, ns, name_end, format!("`{name}` is not a property."), help.or(Some("docs/modules/wolkit-style.md lists them".into())));
+                self.diag(
+                    cx,
+                    L::UNKNOWN_PROPERTY,
+                    ns,
+                    name_end,
+                    format!("`{name}` is not a property."),
+                    help.or(Some("docs/modules/wolkit-style.md lists them".into())),
+                );
             }
             return true;
         };
         // Values that exist in CSS but not here.
-        if let Some(Tok { t: T::Ident(v), s, e }) = toks.first() {
+        if let Some(Tok {
+            t: T::Ident(v),
+            s,
+            e,
+        }) = toks.first()
+        {
             let uns = match (id, v.as_str()) {
-                (PropId::Position, "fixed" | "sticky") => Some("`position: fixed` and `sticky` are not in version 1.0.".to_string()),
-                (PropId::Display, "grid" | "inline-grid") => Some("`display: grid` is planned for 1.1.".to_string()),
+                (PropId::Position, "fixed" | "sticky") => {
+                    Some("`position: fixed` and `sticky` are not in version 1.0.".to_string())
+                }
+                (PropId::Display, "grid" | "inline-grid") => {
+                    Some("`display: grid` is planned for 1.1.".to_string())
+                }
                 _ => None,
             };
             if let Some(m) = uns {
-                self.diag(cx, L::UNSUPPORTED, *s, *e, m, Some("use flex, and `position: absolute` with insets".into()));
+                self.diag(
+                    cx,
+                    L::UNSUPPORTED,
+                    *s,
+                    *e,
+                    m,
+                    Some("use flex, and `position: absolute` with insets".into()),
+                );
                 return true;
             }
         }
@@ -533,7 +772,14 @@ impl Builder {
         match r {
             Ok(()) => {
                 if out.mask & id.bit() != 0 {
-                    self.diag(cx, L::DUPLICATE_PROPERTY, ns, name_end, format!("`{name}` is set twice in this rule."), Some("the later one wins; remove the other".into()));
+                    self.diag(
+                        cx,
+                        L::DUPLICATE_PROPERTY,
+                        ns,
+                        name_end,
+                        format!("`{name}` is set twice in this rule."),
+                        Some("the later one wins; remove the other".into()),
+                    );
                 }
                 out.set_from(id, &tmp);
             }
@@ -547,11 +793,21 @@ impl Builder {
             return Some(*i);
         }
         if self.table.classes.len() >= MAX_CLASSES {
-            self.diag(cx, L::TABLE_LIMIT, at, end, format!("A style table holds at most {MAX_CLASSES} classes."), Some("split the app or drop unused classes".into()));
+            self.diag(
+                cx,
+                L::TABLE_LIMIT,
+                at,
+                end,
+                format!("A style table holds at most {MAX_CLASSES} classes."),
+                Some("split the app or drop unused classes".into()),
+            );
             return None;
         }
         let i = self.table.classes.len() as u32;
-        self.table.classes.push(ClassDef { name: name.to_string(), variants: vec![] });
+        self.table.classes.push(ClassDef {
+            name: name.to_string(),
+            variants: vec![],
+        });
         self.index.insert(name.to_string(), i);
         Some(i)
     }
@@ -559,28 +815,52 @@ impl Builder {
     fn register(&mut self, cx: &FileCx, s: &Sel, media: u8, decls: &Decls) {
         let parent = match &s.parent {
             Some((pn, ps)) => match self.class_index(cx, pn, s.s, s.e) {
-                Some(c) => Some(ParentSel { class: c, state: *ps }),
+                Some(c) => Some(ParentSel {
+                    class: c,
+                    state: *ps,
+                }),
                 None => return,
             },
             None => None,
         };
-        let v = Variant { state: s.state, media, parent, decls: decls.clone() };
+        let v = Variant {
+            state: s.state,
+            media,
+            parent,
+            decls: decls.clone(),
+        };
         let target: &mut ClassDef = if let Some(k) = s.kind {
             &mut self.table.kinds[k as usize]
         } else {
             let name = s.class.clone().unwrap_or_default();
-            let Some(ci) = self.class_index(cx, &name, s.s, s.e) else { return };
+            let Some(ci) = self.class_index(cx, &name, s.s, s.e) else {
+                return;
+            };
             &mut self.table.classes[ci as usize]
         };
         if let Some(existing) = target.variants.iter_mut().find(|x| x.key() == v.key()) {
             existing.decls.merge(&v.decls);
             let name = target.name.clone();
-            self.diag(cx, L::MERGED_VARIANT, s.s, s.e, format!("`{name}` already has a block for this selector; the two are merged."), Some("keep one block per selector".into()));
+            self.diag(
+                cx,
+                L::MERGED_VARIANT,
+                s.s,
+                s.e,
+                format!("`{name}` already has a block for this selector; the two are merged."),
+                Some("keep one block per selector".into()),
+            );
             return;
         }
         if target.variants.len() >= MAX_VARIANTS {
             let name = target.name.clone();
-            self.diag(cx, L::TOO_MANY_VARIANTS, s.s, s.e, format!("`{name}` would have more than {MAX_VARIANTS} variants."), Some("split it into two classes".into()));
+            self.diag(
+                cx,
+                L::TOO_MANY_VARIANTS,
+                s.s,
+                s.e,
+                format!("`{name}` would have more than {MAX_VARIANTS} variants."),
+                Some("split it into two classes".into()),
+            );
             return;
         }
         target.variants.push(v);
@@ -604,7 +884,8 @@ fn unsupported_hint(n: &str) -> String {
 pub fn valid_class(s: &str) -> bool {
     let mut ch = s.chars();
     matches!(ch.next(), Some('a'..='z'))
-        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
         && !s.ends_with('-')
         && !s.contains("--")
 }
@@ -621,7 +902,7 @@ fn move_value(from: PropId, to: PropId, src: &Props, dst: &mut Props) {
 fn parse_shorthand(sh: &Shorthand, c: &mut Cur) -> PRes<Vec<(PropId, Props)>> {
     let mut out: Vec<(PropId, Props)> = Vec::new();
     if sh.name == "border" || sh.name == "outline" {
-        let t = c.next()?;
+        let t = c.take()?;
         c.i -= 1;
         if matches!(&t.t, T::Ident(s) if s == "none") {
             c.i += 1;
@@ -656,7 +937,7 @@ fn parse_shorthand(sh: &Shorthand, c: &mut Cur) -> PRes<Vec<(PropId, Props)>> {
         vals.push(p);
     }
     if vals.is_empty() {
-        let _ = c.next()?;
+        let _ = c.take()?;
     }
     let n = vals.len();
     let pick: Vec<usize> = if n_t == 2 {
@@ -714,5 +995,9 @@ pub fn blank_comments(src: &str) -> (String, Option<usize>, Option<usize>) {
         }
     }
     // Only ASCII bytes were replaced, so the text stays valid UTF-8.
-    (String::from_utf8(out).unwrap_or_else(|_| src.to_string()), pragma, unterminated)
+    (
+        String::from_utf8(out).unwrap_or_else(|_| src.to_string()),
+        pragma,
+        unterminated,
+    )
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! libwolkit.so.1 for the tests, linked once per test binary by `link.sh` from the staticlib this
 //! `cargo test` just built, and a helper that compiles `tests/c/<name>.c` against `wolkit.h`.
-#![allow(dead_code)]
+#![allow(dead_code)] // each test binary uses some of these helpers
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -62,9 +62,21 @@ pub fn build(name: &str, dir: &Path) -> PathBuf {
         .arg(&exe)
         .output()
         .expect("cc");
-    assert!(cc.status.success(), "cc: {}", String::from_utf8_lossy(&cc.stderr));
-    let needed = std::process::Command::new("readelf").env("LC_ALL", "C").args(["-d"]).arg(&exe).output().unwrap();
-    assert!(String::from_utf8_lossy(&needed.stdout).contains("[libwolkit.so.1]"), "apps record the soname");
+    assert!(
+        cc.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&cc.stderr)
+    );
+    let needed = std::process::Command::new("readelf")
+        .env("LC_ALL", "C")
+        .args(["-d"])
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&needed.stdout).contains("[libwolkit.so.1]"),
+        "apps record the soname"
+    );
     exe
 }
 pub mod fakes;

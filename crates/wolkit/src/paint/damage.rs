@@ -21,7 +21,9 @@ pub struct Damage {
 
 impl Damage {
     pub fn new() -> Damage {
-        Damage { rects: Vec::with_capacity(MAX_RECTS + 1) }
+        Damage {
+            rects: Vec::with_capacity(MAX_RECTS + 1),
+        }
     }
 
     pub fn full(window: Rect) -> Damage {
@@ -60,7 +62,10 @@ impl Damage {
         }
         let mut r = r;
         loop {
-            let hit = self.rects.iter().position(|o| o.contains(&r) || touches(o, &r));
+            let hit = self
+                .rects
+                .iter()
+                .position(|o| o.contains(&r) || touches(o, &r));
             match hit {
                 Some(i) => {
                     let o = self.rects.swap_remove(i);
@@ -109,10 +114,11 @@ impl Damage {
 
     /// Restricts the region to `window`.
     pub fn clip(&mut self, window: Rect) {
-        let old = std::mem::take(&mut self.rects);
-        for r in old {
-            self.add(r.intersect(&window));
-        }
+        // Intersecting disjoint rectangles keeps them disjoint, so no re-merge is needed.
+        self.rects.retain_mut(|r| {
+            *r = r.intersect(&window);
+            !r.is_empty()
+        });
     }
 }
 
@@ -129,7 +135,10 @@ pub struct DamageTracker {
 
 impl DamageTracker {
     pub fn new() -> DamageTracker {
-        DamageTracker { bounds: Vec::new(), region: Damage::new() }
+        DamageTracker {
+            bounds: Vec::new(),
+            region: Damage::new(),
+        }
     }
 
     /// A node (by slot) is now painted at `new`. Damages the union of its old and new bounds, or
@@ -161,7 +170,10 @@ impl DamageTracker {
 
     /// The painted bounds recorded for a slot.
     pub fn bounds_of(&self, slot: u32) -> Rect {
-        self.bounds.get(slot as usize).copied().unwrap_or(Rect::ZERO)
+        self.bounds
+            .get(slot as usize)
+            .copied()
+            .unwrap_or(Rect::ZERO)
     }
 
     pub fn pending(&self) -> &Damage {
@@ -187,7 +199,11 @@ pub struct DamageRing {
 
 impl DamageRing {
     pub fn new(depth: usize) -> DamageRing {
-        DamageRing { frames: (0..depth.max(1)).map(|_| Damage::new()).collect(), next: 0, filled: 0 }
+        DamageRing {
+            frames: (0..depth.max(1)).map(|_| Damage::new()).collect(),
+            next: 0,
+            filled: 0,
+        }
     }
 
     /// Records the damage of the frame just drawn.
@@ -221,7 +237,12 @@ impl DamageRing {
 mod tests {
     use super::*;
 
-    const WIN: Rect = Rect { x: 0.0, y: 0.0, w: 800.0, h: 600.0 };
+    const WIN: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 800.0,
+        h: 600.0,
+    };
 
     #[test]
     fn idle_frame_has_no_damage() {
@@ -278,7 +299,12 @@ mod tests {
     fn region_stays_disjoint_and_bounded() {
         let mut d = Damage::new();
         for i in 0..40 {
-            d.add(Rect::new(i as f32 * 30.0, (i % 5) as f32 * 100.0, 20.0, 20.0));
+            d.add(Rect::new(
+                i as f32 * 30.0,
+                (i % 5) as f32 * 100.0,
+                20.0,
+                20.0,
+            ));
         }
         assert!(d.rects().len() <= MAX_RECTS);
         for (i, a) in d.rects().iter().enumerate() {

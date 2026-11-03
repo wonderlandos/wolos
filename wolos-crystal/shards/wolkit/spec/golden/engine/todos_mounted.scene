@@ -1,0 +1,8 @@
+scene nodes=7
+0 box
+  1 box flex-direction=column gap=12 padding=16
+    2 box flex-direction=row gap=8
+      3 text_input on=0x30 placeholder="What needs doing?" grow=1
+      4 button classes=1 state=disabled on=0x1 flex-direction=row "Add"
+    5 spacer display=none
+    6 text font-size=caption "0 left"

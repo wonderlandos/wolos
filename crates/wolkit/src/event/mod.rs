@@ -11,6 +11,8 @@
 //! it has since sent (controlled inputs). Little-endian. The payload starts at byte 20: read its
 //! fields unaligned.
 
+use crate::scene::ids::{Ix, to_u32};
+
 /// Bytes of the fixed part of a record.
 pub const HEADER: usize = 20;
 /// Pending records (plan section 2.8).
@@ -90,8 +92,15 @@ pub const fn bit(kind: u16) -> u32 {
 pub const fn coalescable(kind: u16) -> bool {
     matches!(
         kind,
-        kind::SCROLL | kind::SLIDER | kind::RESIZE | kind::FRAME_TICK | kind::SURFACE_RESIZED
-            | kind::LIST_RANGE | kind::THEME_CHANGED | kind::POINTER_ENTER | kind::POINTER_LEAVE
+        kind::SCROLL
+            | kind::SLIDER
+            | kind::RESIZE
+            | kind::FRAME_TICK
+            | kind::SURFACE_RESIZED
+            | kind::LIST_RANGE
+            | kind::THEME_CHANGED
+            | kind::POINTER_ENTER
+            | kind::POINTER_LEAVE
     )
 }
 
@@ -117,11 +126,15 @@ impl Default for EventQueue {
 }
 
 fn rd32(b: &[u8], at: usize) -> u32 {
-    b.get(at..at + 4).and_then(|s| s.try_into().ok()).map_or(0, u32::from_le_bytes)
+    b.get(at..at + 4)
+        .and_then(|s| s.try_into().ok())
+        .map_or(0, u32::from_le_bytes)
 }
 
 fn rd16(b: &[u8], at: usize) -> u16 {
-    b.get(at..at + 2).and_then(|s| s.try_into().ok()).map_or(0, u16::from_le_bytes)
+    b.get(at..at + 2)
+        .and_then(|s| s.try_into().ok())
+        .map_or(0, u16::from_le_bytes)
 }
 
 impl EventQueue {
@@ -157,14 +170,14 @@ impl EventQueue {
         if total > MAX_RECORD + 8 {
             return;
         }
-        if coalescable(kind) && (kind as usize) <= 32 {
-            let at = self.newest[kind as usize - 1];
+        if coalescable(kind) && (kind.ix()) <= 32 {
+            let at = self.newest[kind.ix() - 1];
             if at != NONE
                 && at >= self.start
                 && rd16(&self.buf, at + 4) == kind
                 && rd32(&self.buf, at + 8) == window
                 && rd32(&self.buf, at + 12) == node
-                && rd32(&self.buf, at) as usize == total
+                && rd32(&self.buf, at).ix() == total
             {
                 self.write_record(at, total, kind, 0, window, node, seq, head, tail);
                 return;
@@ -184,20 +197,35 @@ impl EventQueue {
         self.compact_if_needed();
         let at = self.buf.len();
         self.buf.resize(at + total, 0);
-        let flags = if std::mem::take(&mut self.dropped) { FLAG_OVERFLOW } else { 0 };
+        let flags = if std::mem::take(&mut self.dropped) {
+            FLAG_OVERFLOW
+        } else {
+            0
+        };
         self.write_record(at, total, kind, flags, window, node, seq, head, tail);
         self.count += 1;
-        if coalescable(kind) && (kind as usize) <= 32 {
-            self.newest[kind as usize - 1] = at;
+        if coalescable(kind) && (kind.ix()) <= 32 {
+            self.newest[kind.ix() - 1] = at;
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn write_record(&mut self, at: usize, total: usize, kind: u16, flags: u16, window: u32, node: u32, seq: u32, head: &[u8], tail: &[u8]) {
+    #[allow(clippy::too_many_arguments)] // one record is these eight fields
+    fn write_record(
+        &mut self,
+        at: usize,
+        total: usize,
+        kind: u16,
+        flags: u16,
+        window: u32,
+        node: u32,
+        seq: u32,
+        head: &[u8],
+        tail: &[u8],
+    ) {
         let Some(r) = self.buf.get_mut(at..at + total) else {
             return;
         };
-        r[0..4].copy_from_slice(&(total as u32).to_le_bytes());
+        r[0..4].copy_from_slice(&(to_u32(total)).to_le_bytes());
         r[4..6].copy_from_slice(&kind.to_le_bytes());
         if flags != 0 || r[6..8] == [0, 0] {
             r[6..8].copy_from_slice(&flags.to_le_bytes());
@@ -216,7 +244,7 @@ impl EventQueue {
             if at >= self.buf.len() {
                 return None;
             }
-            let len = rd32(&self.buf, at) as usize;
+            let len = rd32(&self.buf, at).ix();
             if len < HEADER || at + len > self.buf.len() {
                 return None;
             }
@@ -227,7 +255,9 @@ impl EventQueue {
     }
 
     fn drop_oldest_coalescable(&mut self) -> bool {
-        let found = self.records().find(|(_, _, k)| *k != DEAD && coalescable(*k));
+        let found = self
+            .records()
+            .find(|(_, _, k)| *k != DEAD && coalescable(*k));
         if let Some((at, _, _)) = found {
             self.buf[at + 4..at + 6].copy_from_slice(&DEAD.to_le_bytes());
             self.count -= 1;
@@ -247,7 +277,10 @@ impl EventQueue {
     }
 
     fn compact_if_needed(&mut self) {
-        if self.start > 0 && (self.start >= self.buf.len() || self.start > 64 * 1024 && self.start * 2 > self.buf.len()) {
+        if self.start > 0
+            && (self.start >= self.buf.len()
+                || self.start > 64 * 1024 && self.start * 2 > self.buf.len())
+        {
             self.buf.drain(..self.start);
             self.start = 0;
             self.newest = [NONE; 32];
@@ -263,7 +296,7 @@ impl EventQueue {
                 break;
             }
             let at = self.start;
-            let len = rd32(&self.buf, at) as usize;
+            let len = rd32(&self.buf, at).ix();
             if len < HEADER || at + len > self.buf.len() {
                 self.buf.clear();
                 self.start = 0;
@@ -306,13 +339,13 @@ pub struct Header {
 pub fn parse(buf: &[u8]) -> Vec<(Header, &[u8])> {
     let (mut at, mut out) = (0, Vec::new());
     while at + HEADER <= buf.len() {
-        let len = rd32(buf, at) as usize;
-        if len < HEADER || len % 8 != 0 || at + len > buf.len() {
+        let len = rd32(buf, at).ix();
+        if len < HEADER || !len.is_multiple_of(8) || at + len > buf.len() {
             break;
         }
         out.push((
             Header {
-                len: len as u32,
+                len: to_u32(len),
                 kind: rd16(buf, at + 4),
                 flags: rd16(buf, at + 6),
                 window: rd32(buf, at + 8),
@@ -329,11 +362,15 @@ pub fn parse(buf: &[u8]) -> Vec<(Header, &[u8])> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scene::ids::to_u8;
 
     fn drain(q: &mut EventQueue) -> Vec<(Header, Vec<u8>)> {
         let mut buf = vec![0u8; MAX_BYTES];
         let n = q.read(&mut buf);
-        parse(&buf[..n]).into_iter().map(|(h, p)| (h, p.to_vec())).collect()
+        parse(&buf[..n])
+            .into_iter()
+            .map(|(h, p)| (h, p.to_vec()))
+            .collect()
     }
 
     #[test]
@@ -353,7 +390,7 @@ mod tests {
     fn newest_scroll_replaces_the_pending_one() {
         let mut q = EventQueue::new();
         for i in 0..100u32 {
-            q.push(kind::SCROLL, 1, 2, i, &[i as u8, 0, 0, 0, 0, 0, 0, 0], &[]);
+            q.push(kind::SCROLL, 1, 2, i, &[to_u8(i), 0, 0, 0, 0, 0, 0, 0], &[]);
         }
         assert_eq!(q.len(), 1);
         let r = drain(&mut q);
@@ -363,7 +400,7 @@ mod tests {
     #[test]
     fn overflow_drops_coalescable_first_and_flags_the_next_record() {
         let mut q = EventQueue::new();
-        for i in 0..MAX_PENDING as u32 {
+        for i in 0..to_u32(MAX_PENDING) {
             // Distinct nodes defeat replacement, so the queue really fills.
             q.push(kind::SCROLL, 1, i, 0, &[0; 8], &[]);
         }
@@ -379,7 +416,7 @@ mod tests {
     #[test]
     fn queue_of_clicks_stays_bounded() {
         let mut q = EventQueue::new();
-        for i in 0..(MAX_PENDING * 2) as u32 {
+        for i in 0..to_u32(MAX_PENDING * 2) {
             q.push(kind::CLICK, 1, i, 0, &[0; 16], &[]);
         }
         assert!(q.len() <= MAX_PENDING);

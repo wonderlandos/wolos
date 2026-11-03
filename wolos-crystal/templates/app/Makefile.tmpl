@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{class_name}}. `make` builds, `make spec` runs the headless spec, `make run` starts the app,
+# `make styles` compiles the .wolcss sheets. Wolkit comes from CRYSTAL_PATH (the system shards
+# directory, /usr/lib/wolos/crystal).
+CRYSTAL ?= crystal
+
+all: bin/{{name}}
+
+bin/{{name}}: $(wildcard src/*.cr src/*/*.cr)
+	mkdir -p bin
+	$(CRYSTAL) build --error-on-warnings src/main.cr -o bin/{{name}}
+
+spec:
+	$(CRYSTAL) spec --error-on-warnings
+
+format:
+	$(CRYSTAL) tool format src spec
+
+check:
+	$(CRYSTAL) build --no-codegen src/main.cr
+
+run: bin/{{name}}
+	bin/{{name}}
+
+styles:
+	mkdir -p build src/gen
+	wolkit-stylec --out build/styles.wsb --crystal src/gen/styles.cr src/styles/app.wolcss
+
+.PHONY: all spec format check run styles

@@ -1611,7 +1611,7 @@ mod tests {
     }
 
     /// The person at the computer joins Wi-Fi, pairs a keyboard, sleeps or shuts down without a
-    /// password (macOS). Everything system-wide still needs an administrator; restart and shut
+    /// password. Everything system-wide still needs an administrator; restart and shut
     /// down too while another account has a desktop session (it would lose its work).
     #[test]
     fn console_user_needs_no_password_for_everyday_changes() {

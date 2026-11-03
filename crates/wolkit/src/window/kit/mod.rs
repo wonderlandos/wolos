@@ -9,12 +9,13 @@
 pub mod lower;
 
 use super::route::receiver;
-use crate::scene::SceneRead;
 use super::{BACKEND_KIT, Backend, Sink, WindowCore, pipeline};
 use crate::copy;
 use crate::error::{Error, Result};
 use crate::event::kind as ev;
 use crate::loop_::Waker;
+use crate::scene::SceneRead;
+use crate::scene::ids::{Ix, to_u32};
 use shared::bounded::BoundedLineReader;
 use shared::view::{FromHost, MAX_TITLE, ToHost};
 use std::collections::VecDeque;
@@ -32,11 +33,12 @@ const INBOX_MAX: usize = 1024;
 pub const KIT_ENV: &str = "WOL_KIT_SOCKET";
 pub const KIT_SOCKET: &str = "wol-kit.sock";
 
-/// The Kit socket path: `$WOL_KIT_SOCKET`, else `$XDG_RUNTIME_DIR/wol-kit.sock`.
-pub fn socket_path() -> Option<PathBuf> {
-    std::env::var_os(KIT_ENV)
+/// The Kit socket path: `$WOL_KIT_SOCKET`, else `$XDG_RUNTIME_DIR/wol-kit.sock`. The environment
+/// comes in as a lookup (RR-027); the C boundary passes the process's.
+pub fn socket_path(var: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    var(KIT_ENV)
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("XDG_RUNTIME_DIR").map(|d| PathBuf::from(d).join(KIT_SOCKET)))
+        .or_else(|| var("XDG_RUNTIME_DIR").map(|d| PathBuf::from(d).join(KIT_SOCKET)))
 }
 
 struct Inbox {
@@ -62,9 +64,16 @@ impl Conn {
         shared::bounded::limit_socket(&stream, Duration::from_secs(10)).map_err(|_| gone())?;
         // The reader waits for the host as long as it takes; only writes have a deadline.
         stream.set_read_timeout(None).map_err(|_| gone())?;
-        let hello = ToHost::Hello { app: app_id.to_owned() };
-        (&stream).write_all(hello.to_line().as_bytes()).map_err(|_| gone())?;
-        let inbox = Arc::new(Inbox { q: Mutex::default(), lost: AtomicBool::new(false) });
+        let hello = ToHost::Hello {
+            app: app_id.to_owned(),
+        };
+        (&stream)
+            .write_all(hello.to_line().as_bytes())
+            .map_err(|_| gone())?;
+        let inbox = Arc::new(Inbox {
+            q: Mutex::default(),
+            lost: AtomicBool::new(false),
+        });
         let rx = stream.try_clone().map_err(|_| gone())?;
         let ib = inbox.clone();
         std::thread::Builder::new()
@@ -85,7 +94,10 @@ impl Conn {
                 let _ = (&wake).write(&[1]);
             })
             .map_err(|_| gone())?;
-        Ok(Conn { stream: Mutex::new(stream), inbox })
+        Ok(Conn {
+            stream: Mutex::new(stream),
+            inbox,
+        })
     }
 
     fn send(&self, line: &str) -> Result<()> {
@@ -98,6 +110,7 @@ impl Conn {
     }
 }
 
+// Shuts the socket down so the reader thread's read returns and the thread ends.
 impl Drop for Conn {
     fn drop(&mut self) {
         let _ = lock(&self.stream).shutdown(std::net::Shutdown::Both);
@@ -107,7 +120,9 @@ impl Drop for Conn {
 /// Make the engine's connection when the first kit window needs it.
 pub fn connect_for(path: Option<&Path>, app_id: &str, waker: &Waker) -> Result<Arc<Conn>> {
     let path = path.ok_or_else(|| Error::unavailable(copy::KIT_GONE))?;
-    let wake = waker.sender().map_err(|_| Error::unavailable(copy::KIT_GONE))?;
+    let wake = waker
+        .sender()
+        .map_err(|_| Error::unavailable(copy::KIT_GONE))?;
     Ok(Arc::new(Conn::connect(path, app_id, wake)?))
 }
 
@@ -119,16 +134,25 @@ pub struct KitWindow {
 
 impl KitWindow {
     pub fn new(conn: Arc<Conn>) -> Self {
-        KitWindow { conn, last: String::new() }
+        KitWindow {
+            conn,
+            last: String::new(),
+        }
     }
 
-    fn present(&mut self, w: &mut WindowCore) -> Result<()> {
-        let content = lower::lower(&w.scene)?;
+    /// Send the window's content (lowered by the caller) unless it is what the host has.
+    fn present(&mut self, w: &mut WindowCore, content: shared::view::Node) -> Result<()> {
         let title: String = w.title.chars().filter(|c| !c.is_control()).collect();
         if title.len() > MAX_TITLE {
             return Err(Error::invalid("A window title is at most 256 bytes."));
         }
-        let msg = ToHost::Show { window: w.id, title, content, menus: Vec::new(), toolbar: None };
+        let msg = ToHost::Show {
+            window: w.id,
+            title,
+            content,
+            menus: Vec::new(),
+            toolbar: None,
+        };
         let line = msg.to_line();
         if line == self.last {
             return Ok(());
@@ -146,7 +170,8 @@ impl Backend for KitWindow {
 
     fn show(&mut self, w: &mut WindowCore, _s: &mut Sink) -> Result<()> {
         self.last.clear();
-        self.present(w)?;
+        let content = lower::lower(&w.scene)?;
+        self.present(w, content)?;
         w.shown = true;
         Ok(())
     }
@@ -159,14 +184,23 @@ impl Backend for KitWindow {
     }
 
     fn title_changed(&mut self, w: &mut WindowCore, _s: &mut Sink) -> Result<()> {
-        if w.shown { self.present(w) } else { Ok(()) }
+        if w.shown {
+            let content = lower::lower(&w.scene)?;
+            self.present(w, content)
+        } else {
+            Ok(())
+        }
     }
 
     fn committed(&mut self, w: &mut WindowCore, _s: &mut Sink) -> Result<()> {
         // Even a hidden window must fit the Kit's limits: the error belongs to the patch that
         // broke them, not to a later `show`.
-        lower::lower(&w.scene)?;
-        if w.shown { self.present(w) } else { Ok(()) }
+        let content = lower::lower(&w.scene)?;
+        if w.shown {
+            self.present(w, content)
+        } else {
+            Ok(())
+        }
     }
 
     fn pump(&mut self, w: &mut WindowCore, s: &mut Sink) {
@@ -219,17 +253,17 @@ impl KitWindow {
             }
             FromHost::Edited { widget, text, .. } => {
                 let Some(n) = kit(widget) else { return };
-                let mut cur = w.scene.text[n as usize];
+                let mut cur = w.scene.text[n.ix()];
                 if let Some(true) = w.scene.set_str(&mut cur, &text) {
-                    let old = w.scene.text[n as usize];
-                    w.scene.text[n as usize] = cur;
+                    let old = w.scene.text[n.ix()];
+                    w.scene.text[n.ix()] = cur;
                     w.scene.strings.release(old);
                     w.scene.version += 1;
                 }
                 // The host drew the edit already: remember it so an unchanged tree stays quiet.
                 self.last.clear();
                 if let Some(r) = receiver(&w.scene, n, ev::TEXT_CHANGED) {
-                    let len = text.len() as u32;
+                    let len = to_u32(text.len());
                     let mut head = Vec::with_capacity(12);
                     for v in [len, len, len] {
                         head.extend_from_slice(&v.to_le_bytes());
@@ -239,17 +273,30 @@ impl KitWindow {
             }
             FromHost::Toggled { widget, on, .. } => {
                 let Some(n) = kit(widget) else { return };
-                let cur = w.scene.state[n as usize];
-                w.scene.state[n as usize] = if on { cur | crate::scene::state::CHECKED } else { cur & !crate::scene::state::CHECKED };
+                let cur = w.scene.state[n.ix()];
+                w.scene.state[n.ix()] = if on {
+                    cur | crate::scene::state::CHECKED
+                } else {
+                    cur & !crate::scene::state::CHECKED
+                };
                 self.last.clear();
                 if let Some(r) = receiver(&w.scene, n, ev::TOGGLE) {
-                    s.emit(ev::TOGGLE, w.scene.id(r).0, &u32::from(on).to_le_bytes(), &[]);
+                    s.emit(
+                        ev::TOGGLE,
+                        w.scene.id(r).0,
+                        &u32::from(on).to_le_bytes(),
+                        &[],
+                    );
                 }
             }
             FromHost::Slid { widget, value, .. } => {
                 let Some(n) = kit(widget) else { return };
                 let v = value as f32;
-                w.scene.put_prop(n, crate::scene::prop::id::SLIDER_VALUE, &crate::scene::PropValue::new(&[v.to_bits()]));
+                w.scene.put_prop(
+                    n,
+                    crate::scene::prop::id::SLIDER_VALUE,
+                    &crate::scene::PropValue::new(&[v.to_bits()]),
+                );
                 self.last.clear();
                 if let Some(r) = receiver(&w.scene, n, ev::SLIDER) {
                     s.emit(ev::SLIDER, w.scene.id(r).0, &v.to_le_bytes(), &[]);

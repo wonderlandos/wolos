@@ -103,7 +103,12 @@ impl Ime {
 
 /// Trims `text` to at most `limit` bytes around byte `cursor`, on character boundaries.
 /// Returns the window and the cursor / anchor offsets inside it.
-pub fn surrounding_window(text: &str, cursor: usize, anchor: usize, limit: usize) -> (String, usize, usize) {
+pub fn surrounding_window(
+    text: &str,
+    cursor: usize,
+    anchor: usize,
+    limit: usize,
+) -> (String, usize, usize) {
     if text.len() <= limit {
         return (text.to_string(), cursor, anchor);
     }
@@ -149,14 +154,20 @@ mod tests {
 
     #[test]
     fn short_text_is_untouched() {
-        assert_eq!(surrounding_window("abc", 1, 2, 4000), ("abc".to_string(), 1, 2));
+        assert_eq!(
+            surrounding_window("abc", 1, 2, 4000),
+            ("abc".to_string(), 1, 2)
+        );
     }
 
     #[test]
     fn disable_drops_preedit_and_pending() {
         let mut i = Ime::new();
         i.set_enabled(true);
-        i.set_preedit(Some(Preedit { text: "にほ".into(), cursor: Some((0, 0)) }));
+        i.set_preedit(Some(Preedit {
+            text: "にほ".into(),
+            cursor: Some((0, 0)),
+        }));
         i.pending_mut().commit = Some("x".into());
         i.set_enabled(false);
         assert!(i.preedit().is_none() && i.pending_mut().is_empty());
@@ -165,7 +176,10 @@ mod tests {
     #[test]
     fn empty_preedit_clears() {
         let mut i = Ime::new();
-        i.set_preedit(Some(Preedit { text: String::new(), cursor: None }));
+        i.set_preedit(Some(Preedit {
+            text: String::new(),
+            cursor: None,
+        }));
         assert!(i.preedit().is_none());
     }
 }

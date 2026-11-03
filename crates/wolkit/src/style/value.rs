@@ -30,17 +30,17 @@ kw_enum! { pub enum Wrap { NoWrap = "nowrap", Wrap = "wrap" } }
 kw_enum! { pub enum AlignItems { Stretch = "stretch", Start = "start", Center = "center", End = "end", Baseline = "baseline" } }
 kw_enum! { pub enum AlignSelf { Auto = "auto", Stretch = "stretch", Start = "start", Center = "center", End = "end", Baseline = "baseline" } }
 kw_enum! { pub enum AlignContent {
-    Stretch = "stretch", Start = "start", Center = "center", End = "end",
-    SpaceBetween = "space-between", SpaceAround = "space-around" } }
+Stretch = "stretch", Start = "start", Center = "center", End = "end",
+SpaceBetween = "space-between", SpaceAround = "space-around" } }
 kw_enum! { pub enum Justify {
-    Start = "start", Center = "center", End = "end",
-    SpaceBetween = "space-between", SpaceAround = "space-around", SpaceEvenly = "space-evenly" } }
+Start = "start", Center = "center", End = "end",
+SpaceBetween = "space-between", SpaceAround = "space-around", SpaceEvenly = "space-evenly" } }
 kw_enum! { pub enum Position { Relative = "relative", Absolute = "absolute" } }
 kw_enum! { pub enum Overflow { Visible = "visible", Hidden = "hidden", Scroll = "scroll", Auto = "auto" } }
 
 kw_enum! { pub enum Cursor {
-    Default = "default", Pointer = "pointer", Text = "text", Grab = "grab", Grabbing = "grabbing",
-    NotAllowed = "not-allowed", Progress = "progress" } }
+Default = "default", Pointer = "pointer", Text = "text", Grab = "grab", Grabbing = "grabbing",
+NotAllowed = "not-allowed", Progress = "progress" } }
 kw_enum! { pub enum PointerEvents { Auto = "auto", None = "none" } }
 kw_enum! { pub enum Visibility { Visible = "visible", Hidden = "hidden" } }
 kw_enum! { pub enum Backdrop { None = "none", Glass = "glass" } }
@@ -115,7 +115,12 @@ pub struct Shadow {
 }
 
 impl Shadow {
-    pub const NONE: Shadow = Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: ColorRef::Transparent };
+    pub const NONE: Shadow = Shadow {
+        dx: 0.0,
+        dy: 0.0,
+        blur: 0.0,
+        color: ColorRef::Transparent,
+    };
 }
 
 /// `background`: nothing, a colour, or an evenly spaced 2 or 3 stop linear gradient.
@@ -124,7 +129,11 @@ pub enum Paint {
     #[default]
     None,
     Color(ColorRef),
-    Linear { angle: i16, stops: [ColorRef; 3], n: u8 },
+    Linear {
+        angle: i16,
+        stops: [ColorRef; 3],
+        n: u8,
+    },
 }
 
 /// Paint-only transform. Identity is `{0, 0, 1, 1, 0}`.
@@ -140,7 +149,13 @@ pub struct Transform {
 
 impl Default for Transform {
     fn default() -> Self {
-        Transform { tx: 0.0, ty: 0.0, sx: 1.0, sy: 1.0, rotate: 0.0 }
+        Transform {
+            tx: 0.0,
+            ty: 0.0,
+            sx: 1.0,
+            sy: 1.0,
+            rotate: 0.0,
+        }
     }
 }
 
@@ -366,7 +381,8 @@ impl<'a> Rd<'a> {
         self.take(2).map(|s| i16::from_le_bytes([s[0], s[1]]))
     }
     pub fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+        self.take(4)
+            .map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
     }
     pub fn u128(&mut self) -> Option<u128> {
         self.take(16).map(|s| {
@@ -377,7 +393,9 @@ impl<'a> Rd<'a> {
     }
     /// A finite float only: NaN and infinities are rejected so equal tables compare equal.
     pub fn f32(&mut self) -> Option<f32> {
-        let v = self.take(4).map(|s| f32::from_le_bytes([s[0], s[1], s[2], s[3]]))?;
+        let v = self
+            .take(4)
+            .map(|s| f32::from_le_bytes([s[0], s[1], s[2], s[3]]))?;
         v.is_finite().then_some(v)
     }
     pub fn left(&self) -> usize {
@@ -433,9 +451,28 @@ macro_rules! val_enum {
     )+};
 }
 val_enum!(
-    Display, Direction, Wrap, AlignItems, AlignSelf, AlignContent, Justify, Position, Overflow,
-    Cursor, PointerEvents, Visibility, Backdrop, FontFamily, FontStyle, TextAlign, TextDecoration,
-    TextOverflow, WhiteSpace, UserSelect, Ease, Spring
+    Display,
+    Direction,
+    Wrap,
+    AlignItems,
+    AlignSelf,
+    AlignContent,
+    Justify,
+    Position,
+    Overflow,
+    Cursor,
+    PointerEvents,
+    Visibility,
+    Backdrop,
+    FontFamily,
+    FontStyle,
+    TextAlign,
+    TextDecoration,
+    TextOverflow,
+    WhiteSpace,
+    UserSelect,
+    Ease,
+    Spring
 );
 
 impl Val for Dim {
@@ -553,7 +590,13 @@ impl Val for Transform {
         w.f32(self.rotate);
     }
     fn get(r: &mut Rd) -> Option<Self> {
-        Some(Transform { tx: r.f32()?, ty: r.f32()?, sx: r.f32()?, sy: r.f32()?, rotate: r.f32()? })
+        Some(Transform {
+            tx: r.f32()?,
+            ty: r.f32()?,
+            sx: r.f32()?,
+            sy: r.f32()?,
+            rotate: r.f32()?,
+        })
     }
 }
 
@@ -565,7 +608,12 @@ impl Val for Shadow {
         self.color.put(w);
     }
     fn get(r: &mut Rd) -> Option<Self> {
-        Some(Shadow { dx: r.f32()?, dy: r.f32()?, blur: r.f32()?, color: ColorRef::get(r)? })
+        Some(Shadow {
+            dx: r.f32()?,
+            dy: r.f32()?,
+            blur: r.f32()?,
+            color: ColorRef::get(r)?,
+        })
     }
 }
 
@@ -591,6 +639,10 @@ impl Val for Transition {
         if ms > MAX_TRANSITION_MS {
             return None;
         }
-        Some(Transition { props, ms, ease: Ease::from_u8(r.u8()?)? })
+        Some(Transition {
+            props,
+            ms,
+            ease: Ease::from_u8(r.u8()?)?,
+        })
     }
 }

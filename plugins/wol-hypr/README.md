@@ -1,5 +1,5 @@
 # wol-hypr
-Thin compositor plugin: `window.openLate` (macOS placement: own size cut to the usable area, dialogs centred
+Thin compositor plugin: `window.openLate` (WolOS placement: own size cut to the usable area, dialogs centred
 on their parent, cascade per app), `window.active` (QoS boost via wold, raise on user-driven focus only),
 `render.pre` (usable-area change: display resize, Dock shown/hidden -> refit open windows), `render.stage`
 (frame stats), `hyprctl wolstats`.

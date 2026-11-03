@@ -9,12 +9,14 @@ use crate::scene::{Idx, Kind, NIL, NodeId, SceneRead, SceneWrite, dirty};
 use crate::style::Styles;
 use crate::style::value::LayoutStyle;
 
-pub struct SceneTree<'a> {
-    pub scene: &'a dyn SceneRead,
+/// The scene as a layout tree. Generic over the scene type so a concrete `Scene` is inlined; a
+/// `&dyn SceneRead` works too.
+pub struct SceneTree<'a, S: SceneRead + ?Sized = dyn SceneRead + 'a> {
+    pub scene: &'a S,
     pub styles: &'a Styles,
 }
 
-impl LayoutTree for SceneTree<'_> {
+impl<S: SceneRead + ?Sized> LayoutTree for SceneTree<'_, S> {
     fn first_child(&self, n: u32) -> u32 {
         self.scene.first_child(n)
     }
@@ -34,8 +36,29 @@ impl LayoutTree for SceneTree<'_> {
             Kind::Image => Leaf::Image,
             Kind::Slider | Kind::Toggle | Kind::TextInput => Leaf::Control,
             // A button or any box that carries its own label and has no children is a text leaf.
-            Kind::Button | Kind::Box if s.first_child(n) == NIL && !s.text(n).is_empty() => Leaf::Text,
+            Kind::Button | Kind::Box if s.first_child(n) == NIL && !s.text(n).is_empty() => {
+                Leaf::Text
+            }
             _ => Leaf::None,
+        }
+    }
+    fn info(&self, n: u32) -> NodeInfo<'_> {
+        let s = self.scene;
+        let kind = s.kind(n);
+        let leaf = match kind {
+            Kind::Text => Leaf::Text,
+            Kind::Image => Leaf::Image,
+            Kind::Slider | Kind::Toggle | Kind::TextInput => Leaf::Control,
+            Kind::Button | Kind::Box if s.first_child(n) == NIL && !s.text(n).is_empty() => {
+                Leaf::Text
+            }
+            _ => Leaf::None,
+        };
+        NodeInfo {
+            style: &self.styles.get(s.computed(n)).layout,
+            leaf,
+            overlay: kind == Kind::Overlay,
+            vlist: kind == Kind::Vlist,
         }
     }
     fn overlay(&self, n: u32) -> Option<OverlaySpec> {
@@ -46,11 +69,25 @@ impl LayoutTree for SceneTree<'_> {
             .scene
             .prop(n, id::ANCHOR)
             .map(|v| NodeId(v.w[0]))
-            .filter(|a| a.slot() < self.scene.capacity() && self.scene.is_live(a.slot()) && self.scene.id(a.slot()) == *a)
+            .filter(|a| {
+                a.slot() < self.scene.capacity()
+                    && self.scene.is_live(a.slot())
+                    && self.scene.id(a.slot()) == *a
+            })
             .map_or(NIL, |a| a.slot());
-        let side = self.scene.prop(n, id::ANCHOR_SIDE).map_or(Side::Bottom, |v| Side::from_wire(v.w[0]));
-        let align = self.scene.prop(n, id::ANCHOR_ALIGN).map_or(Align::Start, |v| Align::from_wire(v.w[0]));
-        Some(OverlaySpec { anchor, side, align })
+        let side = self
+            .scene
+            .prop(n, id::ANCHOR_SIDE)
+            .map_or(Side::Bottom, |v| Side::from_wire(v.w[0]));
+        let align = self
+            .scene
+            .prop(n, id::ANCHOR_ALIGN)
+            .map_or(Align::Start, |v| Align::from_wire(v.w[0]));
+        Some(OverlaySpec {
+            anchor,
+            side,
+            align,
+        })
     }
     fn vlist(&self, n: u32) -> Option<VlistInfo> {
         if self.scene.kind(n) != Kind::Vlist {
@@ -58,21 +95,24 @@ impl LayoutTree for SceneTree<'_> {
         }
         let count = self.scene.prop(n, id::LIST_COUNT).map_or(0, |v| v.w[0]);
         let est = self.scene.prop(n, id::LIST_HEIGHT).map_or(0.0, |v| v.f32());
-        Some(VlistInfo { count, estimate: if est > 0.0 { est } else { 32.0 } })
+        Some(VlistInfo {
+            count,
+            estimate: if est > 0.0 { est } else { 32.0 },
+        })
     }
     fn row_index(&self, n: u32) -> u32 {
         self.scene.key(n) as u32
     }
 }
 
-/// A measure that needs no font: 0.55 em per character, 1.3 em per line. The native backend plugs
+/// A measure that needs no font: 0.5 em per character, 1.3 em per line. The native backend plugs
 /// in the shaper's measure instead.
-pub struct SceneMeasure<'a> {
-    pub scene: &'a dyn SceneRead,
+pub struct SceneMeasure<'a, S: SceneRead + ?Sized = dyn SceneRead + 'a> {
+    pub scene: &'a S,
     pub styles: &'a Styles,
 }
 
-impl Measure for SceneMeasure<'_> {
+impl<S: SceneRead + ?Sized> Measure for SceneMeasure<'_, S> {
     fn text(&mut self, n: u32, max_w: Option<f32>) -> Size {
         let t = &self.styles.get(self.scene.computed(n)).text;
         let mut s = approx_text(self.scene.text(n), t.size, max_w);
@@ -97,7 +137,7 @@ impl Measure for SceneMeasure<'_> {
     }
 }
 
-fn collect(scene: &dyn SceneRead, n: Idx, out: &mut Vec<(Idx, u8)>) {
+fn collect<S: SceneRead + ?Sized>(scene: &S, n: Idx, out: &mut Vec<(Idx, u8)>) {
     let d = scene.dirty(n);
     if d & (dirty::LAYOUT | dirty::CHILDREN) != 0 {
         out.push((n, d & (dirty::LAYOUT | dirty::CHILDREN)));
@@ -114,8 +154,8 @@ fn collect(scene: &dyn SceneRead, n: Idx, out: &mut Vec<(Idx, u8)>) {
 /// Lay out `scene` for a viewport of `width` x `height` logical pixels and store each node's
 /// rectangle in window space (before scroll offsets) with `set_rect`. Only what is dirty, and what
 /// depends on it, is laid out again.
-pub fn run(
-    scene: &mut dyn SceneWrite,
+pub fn run<S: SceneWrite + ?Sized>(
+    scene: &mut S,
     styles: &Styles,
     cache: &mut LayoutCache,
     measure: Option<&mut dyn Measure>,
@@ -125,11 +165,13 @@ pub fn run(
     if !scene.is_live(0) {
         return;
     }
-    let mut dirty_nodes = Vec::new();
+    let mut dirty_nodes = std::mem::take(&mut cache.dirty_scratch);
+    let mut changed = std::mem::take(&mut cache.changed_scratch);
+    dirty_nodes.clear();
+    changed.clear();
     collect(scene, 0, &mut dirty_nodes);
-    let mut changed: Vec<(Idx, Rect)> = Vec::new();
     {
-        let rs: &dyn SceneRead = &*scene;
+        let rs: &S = &*scene;
         let tree = SceneTree { scene: rs, styles };
         for (n, bits) in &dirty_nodes {
             if bits & dirty::LAYOUT != 0 {
@@ -145,17 +187,26 @@ pub fn run(
             None => &mut default,
         };
         let mut rep = |n: u32, r: Rect| changed.push((n, r));
-        layout(&tree, &mut DynMeasure(m), cache, 0, Size::new(width, height), &mut rep);
+        layout(
+            &tree,
+            &mut DynMeasure(m),
+            cache,
+            0,
+            Size::new(width, height),
+            &mut rep,
+        );
     }
-    for (n, r) in changed {
+    for (n, r) in changed.drain(..) {
         if scene.is_live(n) && scene.rect(n) != r {
             scene.set_rect(n, r);
             scene.mark_dirty(n, dirty::PAINT);
         }
     }
-    for (n, _) in dirty_nodes {
+    for (n, _) in dirty_nodes.drain(..) {
         scene.clear_dirty(n, dirty::LAYOUT | dirty::CHILDREN);
     }
+    cache.dirty_scratch = dirty_nodes;
+    cache.changed_scratch = changed;
 }
 
 struct DynMeasure<'a>(&'a mut dyn Measure);

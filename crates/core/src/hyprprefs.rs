@@ -37,7 +37,7 @@ impl Layout {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DesktopPrefs {
-    /// Windows tile instead of floating (macOS-like floating is the default).
+    /// Windows tile instead of floating (floating is the default).
     pub tiling: bool,
     pub layout: Layout,
     /// Effects & Looks (gaps, corners, blur, borders, shadows, motion). Flattened: its keys sit at the

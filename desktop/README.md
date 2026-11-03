@@ -5,7 +5,7 @@ Overlay defaults for the WolOS session. Copy `overlay/` onto `/`; install `packa
 | Path | Purpose |
 |---|---|
 | `usr/bin/wol-session` | Creates `~/.config/hypr/hyprland.conf` (sources system file) once; links toolkit defaults; runs `dbus-run-session start-hyprland` |
-| `usr/share/wolos/hypr/hyprland.conf` | floating windows, hyprbars window buttons (quiet circles, accent on hover on the client side), spring animations, blur, keybinds, autostart |
+| `usr/share/wolos/hypr/hyprland.conf` | floating windows, title-bar window buttons on the right, close rightmost (quiet circles, accent on hover and press, as the client-side themes draw them), spring animations, blur, keybinds, autostart |
 | `usr/share/wolos/hypr/hypridle.conf` | Lock (wol-lock) at 300 s, DPMS off at 360 s |
 | `usr/etc/wolos/shell.json` | wol-shell menu bar, status icons, dock, wallpapers |
 | `usr/bin/wol-screenshot`, `wol-volume` | grim/slurp and wpctl helpers |

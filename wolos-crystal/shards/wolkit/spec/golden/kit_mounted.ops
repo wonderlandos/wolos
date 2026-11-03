@@ -1,0 +1,159 @@
+CREATE 1 box
+SET_PROP 1 flex-direction column
+SET_PROP 1 grow 1.0
+SET_PROP 1 background token0
+INSERT 0 1 append
+CREATE 2 box
+SET_PROP 2 flex-direction row
+SET_PROP 2 height px:52.0
+SET_PROP 2 padding-left 16.0
+SET_PROP 2 padding-right 16.0
+SET_PROP 2 align-items center
+SET_PROP 2 gap 8.0
+SET_PROP 2 background token0
+INSERT 1 2 append
+CREATE 3 button
+SET_PROP 3 flex-direction row
+SET_STYLE 3 1
+SET_A11Y 3 button "New" ""
+SET_TEXT 3 "New"
+INSERT 2 3 append
+CREATE 4 button
+SET_PROP 4 flex-direction row
+SET_A11Y 4 button "More actions" ""
+SET_TEXT 4 "More"
+INSERT 2 4 append
+CREATE 5 spacer
+SET_PROP 5 display none
+INSERT 2 5 append
+CREATE 6 box
+SET_PROP 6 flex-direction row
+SET_PROP 6 grow 1.0
+INSERT 1 6 append
+CREATE 7 box
+SET_PROP 7 flex-direction column
+SET_PROP 7 width px:220.0
+SET_PROP 7 background token1
+SET_PROP 7 padding 8.0
+SET_PROP 7 gap 4.0
+INSERT 6 7 append
+CREATE 8 box
+SET_PROP 8 flex-direction column
+SET_PROP 8 gap 4.0
+INSERT 7 8 append
+CREATE 9 text
+SET_PROP 9 font-size secondary
+SET_PROP 9 color token5
+SET_TEXT 9 "Folders"
+INSERT 8 9 append
+CREATE 10 box
+SET_PROP 10 flex-direction column
+SET_PROP 10 background token2
+SET_PROP 10 border-radius 10.0
+INSERT 8 10 append
+CREATE 11 box
+SET_PROP 11 flex-direction row
+SET_PROP 11 height px:40.0
+SET_PROP 11 padding-left 12.0
+SET_PROP 11 padding-right 12.0
+SET_PROP 11 align-items center
+SET_PROP 11 gap 8.0
+SET_A11Y 11 listitem "Inbox" ""
+BIND_EVENT 11 1
+INSERT 10 11 append
+CREATE 12 box
+SET_PROP 12 flex-direction column
+SET_PROP 12 grow 1.0
+INSERT 11 12 append
+CREATE 13 text
+SET_TEXT 13 "Inbox"
+INSERT 12 13 append
+CREATE 14 text
+SET_PROP 14 font-size secondary
+SET_PROP 14 color token5
+SET_PROP 14 visibility visible
+SET_TEXT 14 "3 new"
+INSERT 12 14 append
+CREATE 15 box
+SET_PROP 15 flex-direction row
+SET_PROP 15 height px:40.0
+SET_PROP 15 padding-left 12.0
+SET_PROP 15 padding-right 12.0
+SET_PROP 15 align-items center
+SET_PROP 15 gap 8.0
+SET_A11Y 15 listitem "Archive" ""
+BIND_EVENT 15 1
+INSERT 10 15 append
+CREATE 16 box
+SET_PROP 16 flex-direction column
+SET_PROP 16 grow 1.0
+INSERT 15 16 append
+CREATE 17 text
+SET_TEXT 17 "Archive"
+INSERT 16 17 append
+CREATE 18 text
+SET_PROP 18 font-size secondary
+SET_PROP 18 color token5
+SET_PROP 18 visibility hidden
+SET_TEXT 18 ""
+INSERT 16 18 append
+CREATE 19 box
+SET_PROP 19 flex-direction column
+SET_PROP 19 grow 1.0
+INSERT 6 19 append
+CREATE 20 box
+SET_PROP 20 flex-direction row
+SET_PROP 20 gap 4.0
+SET_A11Y 20 tablist "Tabs" ""
+INSERT 19 20 append
+CREATE 21 button
+SET_PROP 21 flex-direction row
+SET_STATE 21 32
+SET_STYLE 21 3
+SET_A11Y 21 tab "All" ""
+BIND_EVENT 21 1
+SET_TEXT 21 "All"
+INSERT 20 21 append
+CREATE 22 button
+SET_PROP 22 flex-direction row
+SET_STATE 22 0
+SET_STYLE 22 3
+SET_A11Y 22 tab "Starred" ""
+BIND_EVENT 22 1
+SET_TEXT 22 "Starred"
+INSERT 20 22 append
+CREATE 23 button
+SET_PROP 23 flex-direction row
+SET_A11Y 23 button "Flavour" ""
+BIND_EVENT 23 1
+SET_TEXT 23 "Mint"
+INSERT 19 23 append
+CREATE 24 spacer
+SET_PROP 24 display none
+INSERT 19 24 append
+CREATE 25 box
+SET_PROP 25 flex-direction column
+SET_PROP 25 grow 1.0
+SET_PROP 25 align-items center
+SET_PROP 25 justify-content center
+SET_PROP 25 gap 8.0
+SET_PROP 25 padding 24.0
+INSERT 19 25 append
+CREATE 26 text
+SET_PROP 26 font-size title
+SET_TEXT 26 "Nothing here"
+INSERT 25 26 append
+CREATE 27 text
+SET_PROP 27 font-size secondary
+SET_PROP 27 color token5
+SET_PROP 27 text-align center
+SET_TEXT 27 "Add a note to get started."
+INSERT 25 27 append
+CREATE 28 button
+SET_PROP 28 flex-direction row
+SET_A11Y 28 button "Add note" ""
+SET_TEXT 28 "Add note"
+INSERT 25 28 append
+CREATE 29 spacer
+SET_PROP 29 display none
+INSERT 1 29 append

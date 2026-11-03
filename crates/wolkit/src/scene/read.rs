@@ -36,8 +36,16 @@ impl Rect {
             return *self;
         }
         let (x0, y0) = (self.x.min(o.x), self.y.min(o.y));
-        let (x1, y1) = ((self.x + self.w).max(o.x + o.w), (self.y + self.h).max(o.y + o.h));
-        Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+        let (x1, y1) = (
+            (self.x + self.w).max(o.x + o.w),
+            (self.y + self.h).max(o.y + o.h),
+        );
+        Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        }
     }
 }
 

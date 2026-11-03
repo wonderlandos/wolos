@@ -1,6 +1,7 @@
 # Performance
 
 Measured live, release build, Linux host, nested compositor fork, 0.56.2 (patches + plugins) on a 1280x720 headless output, started the product way: `wol-session` -> `start-hyprland` -> exec-once `wol-shell`.
+When and where: October 2026, recorded with release 0.11.2 (CHANGELOG), on a CachyOS development host, not on the installed WolOS image; the compositor ran nested, so no number below comes from a real DRM output. Re-measure on the image before quoting one as a WolOS figure; the table keeps these until then.
 Probes: `design/tools/perf/build.sh` builds `dmg` (screencopy region hash per frame), `vk`/`vp` (virtual keyboard/pointer, `STAMP=1` prints send time). Run the scripts inside the session (`WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE` set, probes on PATH).
 
 | Metric | Target | Measured | Reproduce |

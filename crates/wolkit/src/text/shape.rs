@@ -77,7 +77,11 @@ pub fn line_metrics(db: &FontDb, font: FontId, size: f32) -> (f32, f32, f32) {
     match m.h_line() {
         Some(l) => {
             let k = size / upem;
-            (l.ascender.to_f32() * k, -l.descender.to_f32() * k, l.line_gap.to_f32().max(0.0) * k)
+            (
+                l.ascender.to_f32() * k,
+                -l.descender.to_f32() * k,
+                l.line_gap.to_f32().max(0.0) * k,
+            )
         }
         None => (size * 0.8, size * 0.2, 0.0),
     }
@@ -98,13 +102,22 @@ pub fn shape_run(db: &FontDb, text: &str, p: &ShapeParams<'_>) -> ShapedRun {
         descent,
         line_gap,
     };
-    let shaped = db.face(p.font).and_then(|f| f.font()).and_then(|font| shape_with(font, text, p, &mut run));
+    let shaped = db
+        .face(p.font)
+        .and_then(|f| f.font())
+        .and_then(|font| shape_with(font, text, p, &mut run));
     if shaped.is_none() {
         run.glyphs.clear();
         run.advance = 0.0;
         let adv = p.size * 0.6;
         for (i, _) in text.char_indices() {
-            run.glyphs.push(Glyph { id: 0, cluster: i as u32, x_advance: adv, x_offset: 0.0, y_offset: 0.0 });
+            run.glyphs.push(Glyph {
+                id: 0,
+                cluster: i as u32,
+                x_advance: adv,
+                x_offset: 0.0,
+                y_offset: 0.0,
+            });
             run.advance += adv;
         }
         if p.dir == Dir::Rtl {
@@ -114,7 +127,12 @@ pub fn shape_run(db: &FontDb, text: &str, p: &ShapeParams<'_>) -> ShapedRun {
     run
 }
 
-fn shape_with(font: &skrifa::Font, text: &str, p: &ShapeParams<'_>, run: &mut ShapedRun) -> Option<()> {
+fn shape_with(
+    font: &skrifa::Font,
+    text: &str,
+    p: &ShapeParams<'_>,
+    run: &mut ShapedRun,
+) -> Option<()> {
     let upem = f32::from(font.units_per_em()).max(1.0);
     let k = p.size / upem;
     let sf = ShaperFont::new(font);
@@ -177,9 +195,20 @@ impl ShapedRun {
     /// `a`.
     pub fn slice(&self, a: u32, b: u32) -> ShapedRun {
         let r = self.glyph_range(a, b);
-        let glyphs: Vec<Glyph> = self.glyphs[r].iter().map(|g| Glyph { cluster: g.cluster - a, ..*g }).collect();
+        let glyphs: Vec<Glyph> = self.glyphs[r]
+            .iter()
+            .map(|g| Glyph {
+                cluster: g.cluster - a,
+                ..*g
+            })
+            .collect();
         let advance = glyphs.iter().map(|g| g.x_advance).sum();
-        ShapedRun { glyphs, advance, text_len: b.min(self.text_len).saturating_sub(a), ..self.clone() }
+        ShapedRun {
+            glyphs,
+            advance,
+            text_len: b.min(self.text_len).saturating_sub(a),
+            ..self.clone()
+        }
     }
 }
 
@@ -189,7 +218,13 @@ mod tests {
 
     #[test]
     fn slice_rebases_clusters() {
-        let g = |c| Glyph { id: 1, cluster: c, x_advance: 2.0, x_offset: 0.0, y_offset: 0.0 };
+        let g = |c| Glyph {
+            id: 1,
+            cluster: c,
+            x_advance: 2.0,
+            x_offset: 0.0,
+            y_offset: 0.0,
+        };
         let r = ShapedRun {
             font: FontId(0),
             size: 10.0,

@@ -39,7 +39,7 @@ toolbarview > .top-bar headerbar, toolbarview > .bottom-bar headerbar { backgrou
 headerbar .title, windowtitle > .title { font-size: @BODY@px; font-weight: 600; }
 headerbar .subtitle, windowtitle > .subtitle { font-size: @SECONDARY@px; color: var(--wol-dim); opacity: 1; }
 /* Kit icon-button: 16 px glyph, 4 px padding, radius 6, control on hover. */
-/* Window buttons carry .close/.minimize/.maximize and keep the traffic-light geometry. */
+/* Window buttons carry .close/.minimize/.maximize and keep the window-control geometry. */
 headerbar button.image-button:not(.close):not(.minimize):not(.maximize), headerbar menubutton.image-button > button, headerbar splitbutton > button,
 headerbar splitbutton > menubutton > button, headerbar button.text-button, headerbar menubutton > button {
   min-height: @CONTROL_HEIGHT@px; padding-top: 0; padding-bottom: 0; border-radius: @RADIUS_CONTROL@px; }
@@ -50,9 +50,10 @@ headerbar button:hover:not(.suggested-action):not(.destructive-action):not(.clos
 headerbar splitbutton:hover { background-color: var(--wol-control); box-shadow: none; }
 headerbar button:checked:not(.suggested-action), headerbar menubutton > button:checked { background-color: var(--wol-control); box-shadow: none; }
 
-/* ---- Window buttons (Kit button.light): see traffic lights below ---- */
-windowcontrols.start { margin-left: @LIGHTS_INSET@px; margin-right: 8px; }
-windowcontrols.end { margin-right: @BAR_PADDING@px; }
+/* ---- Window buttons (Kit button.light) ---- */
+/* Right-aligned like the compositor's row: close rightmost, its centre 23 px in from the edge. */
+windowcontrols.start { margin-left: @BAR_PADDING@px; }
+windowcontrols.end { margin-left: 8px; margin-right: @LIGHTS_INSET@px; }
 
 /* ---- Sidebar (Kit list.sidebar): sidebar token, 28 px source rows, accent pill selection ---- */
 .sidebar-pane, navigation-split-view > .sidebar-pane, overlay-split-view > .sidebar-pane { background-color: var(--wol-sidebar); color: var(--wol-text); }

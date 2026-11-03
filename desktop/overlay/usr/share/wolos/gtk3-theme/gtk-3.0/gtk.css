@@ -11,43 +11,43 @@
 @define-color warning_color #c34c1b;
 @define-color error_bg_color #cf3a68;
 @define-color error_color #cf3a68;
-@define-color window_bg_color #f5f5f7;
-@define-color window_fg_color #1d1d1f;
+@define-color window_bg_color #f3f1f8;
+@define-color window_fg_color #181521;
 @define-color view_bg_color #ffffff;
-@define-color view_fg_color #1d1d1f;
-@define-color headerbar_bg_color #f5f5f7;
-@define-color headerbar_fg_color #1d1d1f;
-@define-color headerbar_backdrop_color #f5f5f7;
-@define-color sidebar_bg_color #ededf1;
-@define-color sidebar_fg_color #1d1d1f;
-@define-color sidebar_backdrop_color #ededf1;
-@define-color secondary_sidebar_bg_color #ededf1;
+@define-color view_fg_color #181521;
+@define-color headerbar_bg_color #f3f1f8;
+@define-color headerbar_fg_color #181521;
+@define-color headerbar_backdrop_color #f3f1f8;
+@define-color sidebar_bg_color #eae8f2;
+@define-color sidebar_fg_color #181521;
+@define-color sidebar_backdrop_color #eae8f2;
+@define-color secondary_sidebar_bg_color #eae8f2;
 @define-color card_bg_color #ffffff;
-@define-color card_fg_color #1d1d1f;
+@define-color card_fg_color #181521;
 @define-color dialog_bg_color #ffffff;
-@define-color dialog_fg_color #1d1d1f;
+@define-color dialog_fg_color #181521;
 @define-color popover_bg_color #ffffff;
-@define-color popover_fg_color #1d1d1f;
-@define-color borders rgba(0,0,0,0.08);
+@define-color popover_fg_color #181521;
+@define-color borders rgba(34,27,54,0.10);
 window, .background { font-family: "Inter", sans-serif; }
 @define-color theme_selected_bg_color #7c5cff;
 @define-color theme_selected_fg_color #ffffff;
-@define-color theme_bg_color #f5f5f7;
-@define-color theme_fg_color #1d1d1f;
+@define-color theme_bg_color #f3f1f8;
+@define-color theme_fg_color #181521;
 @define-color theme_base_color #ffffff;
-@define-color theme_text_color #1d1d1f;
-@define-color insensitive_fg_color #6e6e73;
-@define-color borders #e1e1e3;
-@define-color wol_surface #f5f5f7;
-@define-color wol_sidebar #ededf1;
+@define-color theme_text_color #181521;
+@define-color insensitive_fg_color #686575;
+@define-color borders #dedce5;
+@define-color wol_surface #f3f1f8;
+@define-color wol_sidebar #eae8f2;
 @define-color wol_card #ffffff;
-@define-color wol_line rgba(0,0,0,0.08);
-@define-color wol_text #1d1d1f;
-@define-color wol_dim #6e6e73;
+@define-color wol_line rgba(34,27,54,0.10);
+@define-color wol_text #181521;
+@define-color wol_dim #686575;
 @define-color wol_accent #7c5cff;
 @define-color wol_accent_text #ffffff;
-@define-color wol_glass #f6f6fa;
-@define-color wol_control #eceef2;
+@define-color wol_glass #f5f4fb;
+@define-color wol_control #e9e9f3;
 @define-color wol_success #1c9a6e;
 @define-color wol_warning #d9541e;
 @define-color wol_danger #cf3a68;
@@ -87,11 +87,11 @@ popover, popover.background, menu, .menu, .context-menu { border-radius: 10px; }
 popover modelbutton { min-height: 24px; border-radius: 6px; }
 popover modelbutton:hover, menu menuitem:hover, .menu menuitem:hover { background-color: @wol_accent; color: @wol_accent_text; }
 tooltip.background { border-radius: 6px; }
-button.titlebutton:not(.appmenu), headerbar.default-decoration button.titlebutton, .default-decoration.titlebar:not(headerbar) button.titlebutton { min-width: 12px; min-height: 12px; margin: 0 2px; padding: 0; border: none; border-radius: 999px; background-image: none; background-color: #89898b; box-shadow: none; }
-button.titlebutton:not(.appmenu).close, headerbar.default-decoration button.titlebutton.close, .default-decoration.titlebar:not(headerbar) button.titlebutton.close { margin-left: 11px; }
+button.titlebutton:not(.appmenu), headerbar.default-decoration button.titlebutton, .default-decoration.titlebar:not(headerbar) button.titlebutton { min-width: 12px; min-height: 12px; margin: 0 2px; padding: 0; border: none; border-radius: 999px; background-image: none; background-color: #86838d; box-shadow: none; }
+button.titlebutton:not(.appmenu).close, headerbar.default-decoration button.titlebutton.close, .default-decoration.titlebar:not(headerbar) button.titlebutton.close { margin-right: 11px; }
 button.titlebutton:not(.appmenu) image, headerbar.default-decoration button.titlebutton image, .default-decoration.titlebar:not(headerbar) button.titlebutton image { margin: -2px; padding: 0; color: transparent; background: none; box-shadow: none; -gtk-icon-transform: scale(0.6); }
 button.titlebutton:not(.appmenu):hover, headerbar.default-decoration button.titlebutton:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton:hover { background-color: #7c5cff; color: #ffffff; }
-button.titlebutton:not(.appmenu):active, headerbar.default-decoration button.titlebutton:active, .default-decoration.titlebar:not(headerbar) button.titlebutton:active { background-color: #674ece; color: #ffffff; }
+button.titlebutton:not(.appmenu):active, headerbar.default-decoration button.titlebutton:active, .default-decoration.titlebar:not(headerbar) button.titlebutton:active { background-color: #664cce; color: #ffffff; }
 button.titlebutton:not(.appmenu).close:hover, headerbar.default-decoration button.titlebutton.close:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.close:hover { background-image: -gtk-icontheme("window-close-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }
 button.titlebutton:not(.appmenu).minimize:hover, headerbar.default-decoration button.titlebutton.minimize:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.minimize:hover { background-image: -gtk-icontheme("window-minimize-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }
 button.titlebutton:not(.appmenu).maximize:hover, headerbar.default-decoration button.titlebutton.maximize:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.maximize:hover { background-image: -gtk-icontheme("window-maximize-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }

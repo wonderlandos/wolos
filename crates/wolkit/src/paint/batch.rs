@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::mem::size_of;
 
-use crate::paint::geom::{div255, Color, Rect};
+use crate::paint::geom::{Color, Rect, div255};
 use crate::paint::glyphs::{GlyphSource, Place};
 use crate::paint::list::{DisplayList, Fill, Item, Radii};
 use crate::text::glyph::split_subpixel;
@@ -97,7 +97,12 @@ pub struct ClipEntry {
     pub _pad: [f32; 3],
 }
 
-const NO_CLIP: ClipEntry = ClipEntry { rect: [-1.0e9, -1.0e9, 2.0e9, 2.0e9], rounded: [0.0; 4], radius: 0.0, _pad: [0.0; 3] };
+const NO_CLIP: ClipEntry = ClipEntry {
+    rect: [-1.0e9, -1.0e9, 2.0e9, 2.0e9],
+    rounded: [0.0; 4],
+    radius: 0.0,
+    _pad: [0.0; 3],
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blend {
@@ -112,7 +117,9 @@ pub enum Pass {
     /// Start rendering into an offscreen layer.
     LayerBegin,
     /// Composite the layer back with this alpha.
-    LayerEnd { alpha: u8 },
+    LayerEnd {
+        alpha: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -166,6 +173,7 @@ pub struct InstanceBuilder {
     pub draws: Vec<Draw>,
     pub stats: BatchStats,
     frame: u64,
+    order: Vec<usize>,
 }
 
 fn q16(v: f32) -> u16 {
@@ -219,7 +227,13 @@ impl InstanceBuilder {
     ///
     /// `atlas_gen` is any counter that changes whenever glyph images may have moved (the atlas
     /// eviction count); a change rebuilds the chunks that hold glyphs.
-    pub fn build(&mut self, list: &DisplayList, glyphs: &mut dyn GlyphSource, scale: f32, atlas_gen: u64) {
+    pub fn build(
+        &mut self,
+        list: &DisplayList,
+        glyphs: &mut dyn GlyphSource,
+        scale: f32,
+        atlas_gen: u64,
+    ) {
         if self.clips.is_empty() || self.clips.len() > MAX_CLIPS {
             self.reset_clips();
         }
@@ -227,11 +241,21 @@ impl InstanceBuilder {
         self.instances.clear();
         self.draws.clear();
         self.stats = BatchStats::default();
-        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
-        for ci in list.draw_order() {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        let mut order = std::mem::take(&mut self.order);
+        list.draw_order_into(&mut order);
+        for &ci in &order {
             let chunk = &list.chunks[ci];
             let fresh = match self.cache.get_mut(&chunk.id) {
-                Some(c) if c.version == chunk.version && c.scale_bits == scale.to_bits() && c.atlas_gen == atlas_gen => {
+                Some(c)
+                    if c.version == chunk.version
+                        && c.scale_bits == scale.to_bits()
+                        && c.atlas_gen == atlas_gen =>
+                {
                     c.touched = self.frame;
                     false
                 }
@@ -251,28 +275,52 @@ impl InstanceBuilder {
                 match op {
                     Op::Instances(r) => {
                         let first = self.instances.len() as u32;
-                        self.instances.extend_from_slice(&cached.instances[r.start as usize..r.end as usize]);
+                        self.instances
+                            .extend_from_slice(&cached.instances[r.start as usize..r.end as usize]);
                         let count = r.end - r.start;
                         // Merge with the previous draw when nothing forces a break.
                         match self.draws.last_mut() {
-                            Some(d) if d.pass == Pass::Draw && d.offset == offset && d.first + d.count == first => {
+                            Some(d)
+                                if d.pass == Pass::Draw
+                                    && d.offset == offset
+                                    && d.first + d.count == first =>
+                            {
                                 d.count += count;
                             }
-                            _ => self.draws.push(Draw { first, count, offset, blend: Blend::Normal, pass: Pass::Draw }),
+                            _ => self.draws.push(Draw {
+                                first,
+                                count,
+                                offset,
+                                blend: Blend::Normal,
+                                pass: Pass::Draw,
+                            }),
                         }
                     }
                     Op::LayerBegin => {
                         let at = self.instances.len() as u32;
-                        self.draws.push(Draw { first: at, count: 0, offset, blend: Blend::Normal, pass: Pass::LayerBegin });
+                        self.draws.push(Draw {
+                            first: at,
+                            count: 0,
+                            offset,
+                            blend: Blend::Normal,
+                            pass: Pass::LayerBegin,
+                        });
                         self.stats.layers += 1;
                     }
                     Op::LayerEnd(a) => {
                         let at = self.instances.len() as u32;
-                        self.draws.push(Draw { first: at, count: 0, offset, blend: Blend::Normal, pass: Pass::LayerEnd { alpha: *a } });
+                        self.draws.push(Draw {
+                            first: at,
+                            count: 0,
+                            offset,
+                            blend: Blend::Normal,
+                            pass: Pass::LayerEnd { alpha: *a },
+                        });
                     }
                 }
             }
         }
+        self.order = order;
         self.stats.instances = self.instances.len() as u32;
         self.stats.draws = self.draws.iter().filter(|d| d.pass == Pass::Draw).count() as u32;
         // Forget chunks that were not part of this frame.
@@ -282,7 +330,14 @@ impl InstanceBuilder {
         }
     }
 
-    fn build_chunk(&mut self, list: &DisplayList, ci: usize, glyphs: &mut dyn GlyphSource, scale: f32, atlas_gen: u64) -> Cached {
+    fn build_chunk(
+        &mut self,
+        list: &DisplayList,
+        ci: usize,
+        glyphs: &mut dyn GlyphSource,
+        scale: f32,
+        atlas_gen: u64,
+    ) -> Cached {
         let chunk = &list.chunks[ci];
         let mut out = Cached {
             version: chunk.version,
@@ -293,14 +348,33 @@ impl InstanceBuilder {
             path_glyphs: 0,
             touched: self.frame,
         };
-        let chunk_bounds = Rect::new(chunk.bounds.x * scale, chunk.bounds.y * scale, chunk.bounds.w * scale, chunk.bounds.h * scale);
+        let chunk_bounds = Rect::new(
+            chunk.bounds.x * scale,
+            chunk.bounds.y * scale,
+            chunk.bounds.w * scale,
+            chunk.bounds.h * scale,
+        );
         let base_clip = if chunk.bounds.w > 1.0e5 {
             0
         } else {
-            self.intern(ClipEntry { rect: [chunk_bounds.x, chunk_bounds.y, chunk_bounds.w, chunk_bounds.h], rounded: [0.0; 4], radius: 0.0, _pad: [0.0; 3] })
+            self.intern(ClipEntry {
+                rect: [
+                    chunk_bounds.x,
+                    chunk_bounds.y,
+                    chunk_bounds.w,
+                    chunk_bounds.h,
+                ],
+                rounded: [0.0; 4],
+                radius: 0.0,
+                _pad: [0.0; 3],
+            })
         };
         let mut clip_stack: Vec<(u32, ClipEntry)> = Vec::new();
-        let base_entry = if base_clip == 0 { NO_CLIP } else { self.clips[base_clip as usize] };
+        let base_entry = if base_clip == 0 {
+            NO_CLIP
+        } else {
+            self.clips[base_clip as usize]
+        };
         clip_stack.push((base_clip, base_entry));
         let mut opacity: u32 = 255;
         let mut opacity_stack: Vec<(u32, bool, u8)> = Vec::new();
@@ -316,7 +390,12 @@ impl InstanceBuilder {
             let (clip_id, clip_entry) = *clip_stack.last().unwrap_or(&(0, NO_CLIP));
             match item {
                 Item::PushClip { rect, radius } => {
-                    let r = Rect::new(rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale);
+                    let r = Rect::new(
+                        rect.x * scale,
+                        rect.y * scale,
+                        rect.w * scale,
+                        rect.h * scale,
+                    );
                     let mut e = clip_entry;
                     let cur = PixelRectF::from(e.rect);
                     let inter = cur.intersect(&r);
@@ -353,7 +432,12 @@ impl InstanceBuilder {
                     }
                 }
                 Item::Rect { rect, radii, fill } => {
-                    let r = Rect::new(rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale);
+                    let r = Rect::new(
+                        rect.x * scale,
+                        rect.y * scale,
+                        rect.w * scale,
+                        rect.h * scale,
+                    );
                     if r.is_empty() {
                         continue;
                     }
@@ -378,8 +462,18 @@ impl InstanceBuilder {
                     }
                     out.instances.push(inst);
                 }
-                Item::Border { rect, radii, width, color } => {
-                    let r = Rect::new(rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale);
+                Item::Border {
+                    rect,
+                    radii,
+                    width,
+                    color,
+                } => {
+                    let r = Rect::new(
+                        rect.x * scale,
+                        rect.y * scale,
+                        rect.w * scale,
+                        rect.h * scale,
+                    );
                     if r.is_empty() || *width <= 0.0 {
                         continue;
                     }
@@ -393,7 +487,15 @@ impl InstanceBuilder {
                         ..Instance::default()
                     });
                 }
-                Item::Shadow { rect, radii, blur, spread, dx, dy, color } => {
+                Item::Shadow {
+                    rect,
+                    radii,
+                    blur,
+                    spread,
+                    dx,
+                    dy,
+                    color,
+                } => {
                     let sp = spread * scale;
                     let r = Rect::new(
                         rect.x * scale + dx * scale - sp,
@@ -415,14 +517,21 @@ impl InstanceBuilder {
                         ..Instance::default()
                     });
                 }
-                Item::Glyphs { font, size, color, glyphs: range } => {
+                Item::Glyphs {
+                    font,
+                    size,
+                    color,
+                    glyphs: range,
+                } => {
                     let color: Color = color.with_opacity(opacity as u8);
                     for g in list.glyph_slice(range) {
                         let x = g.x * scale;
                         let y = g.y * scale;
                         let (xi, sub) = split_subpixel(x);
                         let yi = (y + 0.5).floor() as i32;
-                        let Some(gr) = glyphs.glyph(*font, g.id, size * scale, sub) else { continue };
+                        let Some(gr) = glyphs.glyph(*font, g.id, size * scale, sub) else {
+                            continue;
+                        };
                         match gr.place {
                             Place::Atlas { page, x: ux, y: uy } => {
                                 out.instances.push(Instance {
@@ -471,7 +580,12 @@ struct PixelRectF {
 
 impl From<[f32; 4]> for PixelRectF {
     fn from(a: [f32; 4]) -> Self {
-        PixelRectF { x: a[0], y: a[1], w: a[2], h: a[3] }
+        PixelRectF {
+            x: a[0],
+            y: a[1],
+            w: a[2],
+            h: a[3],
+        }
     }
 }
 
@@ -481,7 +595,12 @@ impl PixelRectF {
         let y0 = self.y.max(o.y);
         let x1 = (self.x + self.w).min(o.x + o.w);
         let y1 = (self.y + self.h).min(o.y + o.h);
-        PixelRectF { x: x0, y: y0, w: (x1 - x0).max(0.0), h: (y1 - y0).max(0.0) }
+        PixelRectF {
+            x: x0,
+            y: y0,
+            w: (x1 - x0).max(0.0),
+            h: (y1 - y0).max(0.0),
+        }
     }
 }
 
@@ -489,30 +608,66 @@ impl PixelRectF {
 mod tests {
     use super::*;
     use crate::paint::glyphs::NoGlyphs;
+    use crate::paint::list::Shadow;
 
     #[test]
     fn instance_is_64_bytes_and_serialises() {
         assert_eq!(size_of::<Instance>(), 64);
-        let i = Instance { rect: [1.0, 2.0, 3.0, 4.0], clip: 9, params: kind::BORDER, ..Instance::default() };
+        let i = Instance {
+            rect: [1.0, 2.0, 3.0, 4.0],
+            clip: 9,
+            params: kind::BORDER,
+            ..Instance::default()
+        };
         let b = i.to_bytes();
         assert_eq!(f32::from_le_bytes(b[0..4].try_into().unwrap()), 1.0);
         assert_eq!(u32::from_le_bytes(b[56..60].try_into().unwrap()), 9);
-        assert_eq!(u32::from_le_bytes(b[60..64].try_into().unwrap()), kind::BORDER);
+        assert_eq!(
+            u32::from_le_bytes(b[60..64].try_into().unwrap()),
+            kind::BORDER
+        );
     }
 
     fn sample(offset_y: f32, version: u64) -> DisplayList {
         let mut l = DisplayList::new();
         l.begin_chunk(1, 1, Rect::new(0.0, 0.0, 400.0, 300.0), (0.0, 0.0), 0);
-        l.rect(Rect::new(0.0, 0.0, 400.0, 300.0), Radii::ZERO, Fill::Solid(Color::rgb(250, 250, 252)));
+        l.rect(
+            Rect::new(0.0, 0.0, 400.0, 300.0),
+            Radii::ZERO,
+            Fill::Solid(Color::rgb(250, 250, 252)),
+        );
         l.push_clip(Rect::new(10.0, 10.0, 200.0, 200.0), 8.0);
         for i in 0..20 {
-            l.rect(Rect::new(10.0, 10.0 + i as f32 * 10.0, 200.0, 8.0), Radii::uniform(2.0), Fill::vertical(Color::rgb(200, 210, 255), Color::rgb(180, 190, 240)));
+            l.rect(
+                Rect::new(10.0, 10.0 + i as f32 * 10.0, 200.0, 8.0),
+                Radii::uniform(2.0),
+                Fill::vertical(Color::rgb(200, 210, 255), Color::rgb(180, 190, 240)),
+            );
         }
         l.pop_clip();
-        l.shadow(Rect::new(220.0, 20.0, 100.0, 60.0), Radii::uniform(8.0), 12.0, 0.0, 0.0, 4.0, Color::rgba(0, 0, 0, 90));
-        l.border(Rect::new(220.0, 20.0, 100.0, 60.0), Radii::uniform(8.0), 1.0, Color::rgb(120, 120, 140));
-        l.begin_chunk(2, version, Rect::new(0.0, 0.0, 400.0, 600.0), (0.0, offset_y), 1);
-        l.rect(Rect::new(0.0, 0.0, 100.0, 40.0), Radii::uniform(4.0), Fill::Solid(Color::rgb(90, 120, 255)));
+        l.shadow(
+            Rect::new(220.0, 20.0, 100.0, 60.0),
+            Radii::uniform(8.0),
+            Shadow::new(12.0, 0.0, 0.0, 4.0, Color::rgba(0, 0, 0, 90)),
+        );
+        l.border(
+            Rect::new(220.0, 20.0, 100.0, 60.0),
+            Radii::uniform(8.0),
+            1.0,
+            Color::rgb(120, 120, 140),
+        );
+        l.begin_chunk(
+            2,
+            version,
+            Rect::new(0.0, 0.0, 400.0, 600.0),
+            (0.0, offset_y),
+            1,
+        );
+        l.rect(
+            Rect::new(0.0, 0.0, 100.0, 40.0),
+            Radii::uniform(4.0),
+            Fill::Solid(Color::rgb(90, 120, 255)),
+        );
         l.finish();
         l
     }
@@ -522,10 +677,18 @@ mod tests {
         let mut b = InstanceBuilder::new();
         b.build(&sample(0.0, 1), &mut NoGlyphs, 1.0, 0);
         assert!(b.stats.draws <= 10, "{:?}", b.stats);
-        assert_eq!(b.stats.draws, 1, "chunks with the same transform share a draw: {:?}", b.stats);
+        assert_eq!(
+            b.stats.draws, 1,
+            "chunks with the same transform share a draw: {:?}",
+            b.stats
+        );
         assert_eq!(b.stats.instances, 1 + 20 + 1 + 1 + 1);
         b.build(&sample(30.0, 1), &mut NoGlyphs, 1.0, 0);
-        assert_eq!(b.stats.draws, 2, "a scrolled chunk draws with its own transform: {:?}", b.stats);
+        assert_eq!(
+            b.stats.draws, 2,
+            "a scrolled chunk draws with its own transform: {:?}",
+            b.stats
+        );
     }
 
     #[test]

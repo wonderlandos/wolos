@@ -56,10 +56,12 @@ pub fn palette(t: &ResolvedTheme) -> Palette {
 /// of the way to white (dark) or black (light).
 fn derived(t: &ResolvedTheme, dark: bool) -> [Color; TERMINAL_COLORS] {
     let c = |k| token_color(t, k);
+    // The WolOS neutral ramp (design/tools/tokens.py, ink hue 295): dark black is the control
+    // tone, light black the light text; the whites are the same ramp near the top.
     let (black, white) = if dark {
-        (Color::rgb(58, 58, 64), Color::rgb(229, 229, 234))
+        (Color::rgb(0x39, 0x36, 0x47), Color::rgb(0xe6, 0xe5, 0xee))
     } else {
-        (Color::rgb(29, 29, 31), Color::rgb(199, 199, 204))
+        (Color::rgb(0x18, 0x15, 0x21), Color::rgb(0xc4, 0xc2, 0xcd))
     };
     // The lake blue of the design tokens (`blue`, light and dark).
     let blue = if dark {
@@ -67,10 +69,12 @@ fn derived(t: &ResolvedTheme, dark: bool) -> [Color; TERMINAL_COLORS] {
     } else {
         Color::rgb(0x1d, 0x64, 0xb0)
     };
+    // The icon art's glass cyan (design/tools/icons): sky on dark, deep lagoon on light; each
+    // holds more contrast on the theme's surface than the stock pair it replaced (12.1 / 5.3:1).
     let cyan = if dark {
-        Color::rgb(100, 210, 255)
+        Color::rgb(0x8c, 0xe4, 0xff)
     } else {
-        Color::rgb(0, 122, 168)
+        Color::rgb(0x0f, 0x6e, 0x79)
     };
     let regular = [
         black,
@@ -149,6 +153,23 @@ mod tests {
             assert_eq!(p.ansi[1], token_color(&t, "danger"), "{}", s.id);
             assert_eq!(p.ansi[5], token_color(&t, "accent"), "{}", s.id);
             assert_eq!(p.background, token_color(&t, "surface"), "{}", s.id);
+        }
+    }
+
+    /// The derived cyan is the WolOS icon cyan, not a stock value, and reads on the WolOS
+    /// surfaces at least as well as the stock pair did (10.08:1 dark, 4.31:1 light).
+    #[test]
+    fn the_derived_cyan_is_ours_and_holds_contrast() {
+        for (id, floor) in [("wol-dark", 10.08), ("wol-light", 4.31)] {
+            let t = ThemeCatalog::builtin().resolve(id).unwrap();
+            let p = palette(&t);
+            let cyan = p.ansi[6];
+            assert_ne!(cyan, Color::rgb(100, 210, 255), "{id}: stock cyan");
+            let r = Color::contrast(cyan, p.background);
+            assert!(
+                r >= floor,
+                "{id}: cyan {r:.2}:1 on the surface, floor {floor}"
+            );
         }
     }
 }

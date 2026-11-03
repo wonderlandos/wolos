@@ -1,10 +1,19 @@
-# UX journeys (audit 2026-10-27)
+# UX journeys
 
 Decision records: ADR 0013 (first run), ADR 0004 (setup assistant).
 
 Acceptance: `site/src/pages/Thesis.jsx` (Calm, Instant, Obvious, One look, No homework, Yours, Safe to tinker, AI-friendly not forced).
 Verdicts: OK, STUCK (no way forward without help), JARGON, TERMINAL, SLOW (> 1 s, no progress/cancel), NO-FEEDBACK (> 150 ms silent, or no confirmation).
 Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/tests/copy_lint.rs`.
+
+## Where the journeys run now
+
+- In a VM, on the real image: `wolvm` journey files in the wolos-iso repository, `tests/wolvm/journeys/`:
+  `live-boot.yaml`, `live-secureboot.yaml`, `mok-screen.yaml`, `install-auto.yaml`, `install-gui.yaml`,
+  `cryswol-hello.yaml`. `wolvm journey w FILE` runs one and writes a screenshot per step, `journey.jsonl`
+  and a report ([vm-e2e.md](vm-e2e.md), The journey, boot to apps).
+- In tests, with fakes: `crates/shell/tests/journeys.rs` drives J1, J2, J3, J4, J8 and J11 below through
+  the real flows.
 
 ## Error copy: one place
 
@@ -14,7 +23,14 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | `copy::lint`: no `BANNED` fragment (failed, error, errno, os error, exit code, program names, pkg, wlan, root…), no paths/flags/backticks, capital start, full stop, no `!`, <= 140 chars, <= 2 sentences | `copy_lint.rs` |
 | No `{e}` / `e.to_string()` outside `eprintln!` in `crates/shell/src` | `copy_lint.rs::no_raw_error_text_on_screen` |
 
-## J1 First boot (USB -> desktop)
+## Journey audit 2026-10-27 (historical)
+
+> Historical. Audited on 2026-10-27, on the base ADR 0016 replaced. Mechanisms named in these
+> tables (package queries, Wi-Fi tools, the image layout) are those of that base, and the verdicts
+> are not re-checked; rows a later fix closed say "now". The current state is what the journeys
+> above report.
+
+### J1 First boot (USB -> desktop)
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -29,7 +45,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Create account fails | "Go back and check it" on a card without Back; "Setup is unavailable. Restart…" with no Restart | - | STUCK | First-run |
 | Desktop | no Mail in the Dock | - | OK (gap) | Base apps |
 
-## J2 Join Wi-Fi
+### J2 Join Wi-Fi
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -43,7 +59,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Hidden network, captive portal | not built | - | STUCK | Settings |
 | No Wi-Fi card | "Not Connected", tile still clickable; hardware state only in `wol hw` | - | TERMINAL | Kernel/hardware |
 
-## J3 Install an app
+### J3 Install an app
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -55,7 +71,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Remove app | no Remove anywhere | - | STUCK | Packages |
 | Double-click `.wol` | no MIME type, no handler, Files opens the folder | - | STUCK | Packages |
 
-## J4 Change look, undo
+### J4 Change look, undo
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -67,7 +83,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Undo | journal + `System::undo` exist, no Undo button/toast/Restore page; `wol undo` only | - | TERMINAL | Settings |
 | Undo errors | were raw (`wolos/theme changed since…`); now `copy::undo` | sentence | OK (fixed, tested) | UX |
 
-## J5 Windows game via Steam
+### J5 Windows game via Steam
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -76,7 +92,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Windows .exe | double-click runs it on wine (or umu-launcher) in its own prefix (`wol-run --exe`) | none while a new prefix is made | NO-FEEDBACK | Games |
 | NVIDIA | `linux-nvidia-libs` not installed by `wol hw`; the notification points to `wol games doctor` | notification | TERMINAL | Kernel/hardware |
 
-## J6 Plug in
+### J6 Plug in
 
 | Device | What happens | Verdict | Owner |
 |---|---|---|---|
@@ -86,7 +102,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Second monitor | auto-extends; no arrange/mirror/keep-or-revert | OK / STUCK | Settings |
 | Webcam | webcamd on plug-in | OK | - |
 
-## J7 Update, roll back
+### J7 Update, roll back
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -97,7 +113,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Roll back | no Restore page; CLI with password on stdin; boot menu 2 s | - | TERMINAL | Settings |
 | Restore points | 5 kept, shared with app installs: 5 installs delete the pre-update point | - | STUCK | Packages |
 
-## J8 Things go wrong
+### J8 Things go wrong
 
 | Case | What happens | Verdict | Owner |
 |---|---|---|---|
@@ -107,7 +123,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Low battery | icon only; no 10 %/5 % banner, no auto-sleep, lid does nothing | STUCK | Power/Security |
 | Unsupported Wi-Fi card | `/var/run/wolos-hw.json` written, read by no surface | TERMINAL | Kernel/hardware |
 
-## J9 Screenshot
+### J9 Screenshot
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -117,7 +133,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Recording | no indicator; stop = reopen toolbar | - | STUCK | Shell |
 | Non-English account | saves to new English folders | - | STUCK | Shell |
 
-## J10 Search
+### J10 Search
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -128,7 +144,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | No result | "No results for “…”" + "Search the web for “…”" (Return opens the browser) | sentence | OK | Shell |
 | Click away | stays open with the keyboard | none | NO-FEEDBACK | Shell |
 
-## J11 AI helper: Dark Mode, then revoke
+### J11 AI helper: Dark Mode, then revoke
 
 | Step | User sees / does | Feedback | Verdict | Owner |
 |---|---|---|---|---|
@@ -137,7 +153,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Answer | shell replies nothing; helper told "could not ask on screen" while the sheet is up | - | STUCK | Automation |
 | Revoke | no Assistants pane; `wol helpers deny` only; revocation journaled, helper cannot undo it (tested) | - | TERMINAL | Automation / Settings |
 
-## J12 Lock, sleep, log out, shut down
+### J12 Lock, sleep, log out, shut down
 
 | Step | What happens | Verdict | Owner |
 |---|---|---|---|
@@ -147,7 +163,7 @@ Tests: `crates/shell/tests/journeys.rs` (J1 J2 J3 J4 J8 J11), `crates/shell/test
 | Lock screen error | "Authentication unavailable" with no way out | STUCK | Power/Security |
 | Lock crash | no respawn | STUCK | Power/Security |
 
-## J13 Keyboard only
+### J13 Keyboard only
 
 | Surface | Verdict | Owner |
 |---|---|---|

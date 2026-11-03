@@ -97,7 +97,14 @@ impl FontDb {
         let font = Font::new(data, 0)?;
         let family = family_of(&font)?;
         let (weight, italic) = attributes_of(&font);
-        Some(self.push(Face { id: FontId(0), family, weight, italic, path: None, font: OnceLock::from(Some(font)) }))
+        Some(self.push(Face {
+            id: FontId(0),
+            family,
+            weight,
+            italic,
+            path: None,
+            font: OnceLock::from(Some(font)),
+        }))
     }
 
     /// Adds a face from a file, read now.
@@ -126,7 +133,10 @@ impl FontDb {
     fn push(&mut self, mut face: Face) -> FontId {
         let id = FontId(self.faces.len() as u32);
         face.id = id;
-        self.by_family.entry(face.family.to_lowercase()).or_default().push(id);
+        self.by_family
+            .entry(face.family.to_lowercase())
+            .or_default()
+            .push(id);
         self.faces.push(face);
         id
     }
@@ -136,7 +146,11 @@ impl FontDb {
         let list = self.by_family.get(&family.to_lowercase())?;
         list.iter().copied().min_by_key(|id| {
             let f = &self.faces[id.0 as usize];
-            (u32::from(f.italic != italic), u32::from(f.weight.abs_diff(weight)), id.0)
+            (
+                u32::from(f.italic != italic),
+                u32::from(f.weight.abs_diff(weight)),
+                id.0,
+            )
         })
     }
 
@@ -164,10 +178,13 @@ impl FontDb {
         if self.face(preferred).is_some_and(|f| f.has_char(c)) {
             return preferred;
         }
-        if let Some((_, list)) = self.script_fonts.iter().find(|(s, _)| *s == script) {
-            if let Some(id) = list.iter().copied().find(|id| self.face(*id).is_some_and(|f| f.has_char(c))) {
-                return id;
-            }
+        if let Some((_, list)) = self.script_fonts.iter().find(|(s, _)| *s == script)
+            && let Some(id) = list
+                .iter()
+                .copied()
+                .find(|id| self.face(*id).is_some_and(|f| f.has_char(c)))
+        {
+            return id;
         }
         for id in &self.chain {
             if self.face(*id).is_some_and(|f| f.has_char(c)) {
@@ -261,19 +278,25 @@ impl FontIndex {
         let mut idx = FontIndex::default();
         let mut stack: Vec<PathBuf> = roots.iter().rev().cloned().collect();
         while let Some(dir) = stack.pop() {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             if let Some(m) = mtime_ns(&dir) {
-                idx.dirs.push(DirStamp { path: dir.clone(), mtime_ns: m });
+                idx.dirs.push(DirStamp {
+                    path: dir.clone(),
+                    mtime_ns: m,
+                });
             }
             let mut children: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
             children.sort();
             for p in children.into_iter().rev() {
                 if p.is_dir() {
                     stack.push(p);
-                } else if is_font_file(&p) && idx.entries.len() < MAX_SCAN_FILES {
-                    if let Some(e) = entry_of(&p) {
-                        idx.entries.push(e);
-                    }
+                } else if is_font_file(&p)
+                    && idx.entries.len() < MAX_SCAN_FILES
+                    && let Some(e) = entry_of(&p)
+                {
+                    idx.entries.push(e);
                 }
             }
         }
@@ -293,7 +316,10 @@ impl FontIndex {
             let mut f = line.split('\t');
             match f.next()? {
                 "R" => root_list.push(PathBuf::from(f.next()?)),
-                "D" => idx.dirs.push(DirStamp { path: PathBuf::from(f.next()?), mtime_ns: f.next()?.parse().ok()? }),
+                "D" => idx.dirs.push(DirStamp {
+                    path: PathBuf::from(f.next()?),
+                    mtime_ns: f.next()?.parse().ok()?,
+                }),
                 "F" => idx.entries.push(IndexEntry {
                     path: PathBuf::from(f.next()?),
                     size: f.next()?.parse().ok()?,
@@ -327,7 +353,15 @@ impl FontIndex {
             let _ = writeln!(s, "D\t{}\t{}", d.path.display(), d.mtime_ns);
         }
         for e in &self.entries {
-            let _ = writeln!(s, "F\t{}\t{}\t{}\t{}\t{}", e.path.display(), e.size, e.weight, u8::from(e.italic), e.family);
+            let _ = writeln!(
+                s,
+                "F\t{}\t{}\t{}\t{}\t{}",
+                e.path.display(),
+                e.size,
+                e.weight,
+                u8::from(e.italic),
+                e.family
+            );
         }
         s
     }
@@ -335,7 +369,12 @@ impl FontIndex {
     fn roots(&self) -> Vec<&Path> {
         self.dirs
             .iter()
-            .filter(|d| !self.dirs.iter().any(|o| o.path != d.path && d.path.starts_with(&o.path)))
+            .filter(|d| {
+                !self
+                    .dirs
+                    .iter()
+                    .any(|o| o.path != d.path && d.path.starts_with(&o.path))
+            })
             .map(|d| d.path.as_path())
             .collect()
     }
@@ -352,7 +391,13 @@ fn mtime_ns(p: &Path) -> Option<u128> {
 }
 
 fn is_font_file(p: &Path) -> bool {
-    matches!(p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(), Some("ttf" | "otf"))
+    matches!(
+        p.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("ttf" | "otf")
+    )
 }
 
 fn entry_of(p: &Path) -> Option<IndexEntry> {
@@ -366,5 +411,11 @@ fn entry_of(p: &Path) -> Option<IndexEntry> {
         return None;
     }
     let (weight, italic) = attributes_of(&font);
-    Some(IndexEntry { path: p.to_path_buf(), size: md.len(), family, weight, italic })
+    Some(IndexEntry {
+        path: p.to_path_buf(),
+        size: md.len(),
+        family,
+        weight,
+        italic,
+    })
 }

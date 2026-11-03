@@ -38,12 +38,21 @@ impl std::fmt::Display for WsbError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WsbError::TooBig => write!(f, "The style table is over {MAX_TABLE_BYTES} bytes."),
-            WsbError::Magic => write!(f, "This is not a style table (it does not start with WSB1)."),
-            WsbError::Version(v) => write!(f, "This style table is version {v}; this engine reads version {VERSION}."),
+            WsbError::Magic => write!(
+                f,
+                "This is not a style table (it does not start with WSB1)."
+            ),
+            WsbError::Version(v) => write!(
+                f,
+                "This style table is version {v}; this engine reads version {VERSION}."
+            ),
             WsbError::Truncated => write!(f, "The style table ends too early."),
             WsbError::Checksum => write!(f, "The style table does not match its checksum."),
             WsbError::Limit(w) => write!(f, "The style table has too many {w}."),
-            WsbError::Name => write!(f, "The style table has a class name that is not valid or not unique."),
+            WsbError::Name => write!(
+                f,
+                "The style table has a class name that is not valid or not unique."
+            ),
             WsbError::Value(w) => write!(f, "The style table has a {w} that is out of range."),
             WsbError::Trailing => write!(f, "The style table has bytes after its checksum."),
         }
@@ -115,7 +124,10 @@ pub fn write(t: &StyleTable) -> Result<Vec<u8>, WsbError> {
 
 /// Mask of the properties a transition may name.
 pub fn anim_mask() -> u128 {
-    PropId::ALL.iter().filter(|p| p.info().anim).fold(0, |m, p| m | p.bit())
+    PropId::ALL
+        .iter()
+        .filter(|p| p.info().anim)
+        .fold(0, |m, p| m | p.bit())
 }
 
 fn get_variants(r: &mut Rd, n_classes: u32) -> Result<Vec<Variant>, WsbError> {
@@ -143,7 +155,10 @@ fn get_variants(r: &mut Rd, n_classes: u32) -> Result<Vec<Variant>, WsbError> {
                 if class >= n_classes || pstate & !valid_states != 0 || pstate.count_ones() > 1 {
                     return Err(WsbError::Value("parent selector"));
                 }
-                Some(ParentSel { class, state: pstate })
+                Some(ParentSel {
+                    class,
+                    state: pstate,
+                })
             }
             _ => return Err(WsbError::Value("parent flag")),
         };
@@ -151,7 +166,10 @@ fn get_variants(r: &mut Rd, n_classes: u32) -> Result<Vec<Variant>, WsbError> {
         if mask >> PropId::COUNT != 0 {
             return Err(WsbError::Value("property mask"));
         }
-        let mut decls = Decls { mask, p: Props::default() };
+        let mut decls = Decls {
+            mask,
+            p: Props::default(),
+        };
         let mut m = mask;
         while m != 0 {
             let b = m.trailing_zeros() as u8;
@@ -162,7 +180,12 @@ fn get_variants(r: &mut Rd, n_classes: u32) -> Result<Vec<Variant>, WsbError> {
         if decls.p.motion.transition.props & !anim_mask() != 0 {
             return Err(WsbError::Value("transition"));
         }
-        let v = Variant { state, media, parent, decls };
+        let v = Variant {
+            state,
+            media,
+            parent,
+            decls,
+        };
         if out.iter().any(|x| x.key() == v.key()) {
             return Err(WsbError::Value("duplicate variant"));
         }
@@ -201,7 +224,12 @@ pub fn load(b: &[u8]) -> Result<StyleTable, WsbError> {
         return Err(WsbError::Truncated);
     }
     let body = &b[..b.len() - 4];
-    let want = u32::from_le_bytes([b[b.len() - 4], b[b.len() - 3], b[b.len() - 2], b[b.len() - 1]]);
+    let want = u32::from_le_bytes([
+        b[b.len() - 4],
+        b[b.len() - 3],
+        b[b.len() - 2],
+        b[b.len() - 1],
+    ]);
     if fnv1a(body) != want {
         return Err(WsbError::Checksum);
     }
@@ -215,11 +243,17 @@ pub fn load(b: &[u8]) -> Result<StyleTable, WsbError> {
         let len = r.u8().ok_or(WsbError::Truncated)? as usize;
         let name = r.take(len).ok_or(WsbError::Truncated)?;
         let name = std::str::from_utf8(name).map_err(|_| WsbError::Name)?;
-        if len > MAX_CLASS_NAME || !super::wolcss::valid_class(name) || !seen.insert(name.to_string()) {
+        if len > MAX_CLASS_NAME
+            || !super::wolcss::valid_class(name)
+            || !seen.insert(name.to_string())
+        {
             return Err(WsbError::Name);
         }
         let variants = get_variants(&mut r, n_classes)?;
-        t.classes.push(ClassDef { name: name.to_string(), variants });
+        t.classes.push(ClassDef {
+            name: name.to_string(),
+            variants,
+        });
     }
     if r.left() != 0 {
         return Err(WsbError::Trailing);
@@ -229,9 +263,16 @@ pub fn load(b: &[u8]) -> Result<StyleTable, WsbError> {
 
 /// `src/gen/styles.cr`: one typed id per class, for the shard (`Wolkit::Styles::CARD`).
 pub fn crystal_constants(t: &StyleTable) -> String {
-    let mut s = String::from("# Generated by wolkit-stylec from the .wolcss sheets. Do not edit.\nmodule Wolkit::Styles\n");
+    let mut s = String::from(
+        "# Generated by wolkit-stylec from the .wolcss sheets. Do not edit.\nmodule Wolkit::Styles\n",
+    );
     for (i, c) in t.classes.iter().enumerate() {
-        s.push_str(&format!("  {} = {}_u32 # .{}\n", c.name.to_ascii_uppercase().replace('-', "_"), i, c.name));
+        s.push_str(&format!(
+            "  {} = {}_u32 # .{}\n",
+            c.name.to_ascii_uppercase().replace('-', "_"),
+            i,
+            c.name
+        ));
     }
     s.push_str("  NAMES = {\n");
     for (i, c) in t.classes.iter().enumerate() {

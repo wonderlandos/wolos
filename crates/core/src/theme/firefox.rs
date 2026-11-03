@@ -153,18 +153,19 @@ pub fn chrome_css(t: &ResolvedTheme) -> String {
     s
 }
 
-/// WolOS window controls (`button.light`): quiet 12 px circles 22 px apart, left, close first; the
+/// WolOS window controls (`button.light`): quiet 12 px circles 22 px apart on the right, close
+/// rightmost after minimise and zoom, as the compositor draws them; the
 /// glyph shows while the pointer is over the group, the control under it takes the accent. Order is
 /// forced so it does not depend on GTK's reported decoration layout.
 fn window_controls(t: &ResolvedTheme) -> String {
     let h = |k: &str| token_color(t, k).to_hex();
     let (idle, hover, pressed) = super::apps::controls_colors(t);
     let mut s = String::new();
-    s += ".titlebar-buttonbox-container { order: -1 !important; margin-inline-start: 12px !important; }\n";
+    s += ".titlebar-buttonbox-container { order: 1 !important; margin-inline-end: 12px !important; }\n";
     s += ".titlebar-buttonbox { --titlebar-button-size: 12px !important; --titlebar-button-spacing: 5px !important; --titlebar-button-end-spacing: 5px !important; }\n";
     s += ".titlebar-spacer[type=\"pre-tabs\"] { width: 8px !important; }\n";
     s += ".titlebar-button { padding-inline: 5px !important; }\n";
-    s += ".titlebar-close { order: 0 !important; }\n.titlebar-min { order: 1 !important; }\n.titlebar-max, .titlebar-restore { order: 2 !important; }\n";
+    s += ".titlebar-min { order: 0 !important; }\n.titlebar-max, .titlebar-restore { order: 1 !important; }\n.titlebar-close { order: 2 !important; }\n";
     // Firefox hides buttons missing from GTK's layout (e.g. a host default of "close" only).
     s += ".titlebar-min, :root:not([sizemode=\"maximized\"]) .titlebar-max, :root[sizemode=\"maximized\"] .titlebar-restore { display: flex !important; }\n";
     s += &format!(
@@ -238,18 +239,20 @@ mod tests {
     }
 
     #[test]
-    fn window_controls_left_close_first_and_accent_on_hover() {
+    fn window_controls_right_close_last_and_accent_on_hover() {
         let (t, s) = css("wol-light");
         for want in [
-            ".titlebar-buttonbox-container { order: -1 !important;",
-            ".titlebar-close { order: 0 !important; }",
-            ".titlebar-min { order: 1 !important; }",
-            ".titlebar-max, .titlebar-restore { order: 2 !important; }",
+            ".titlebar-buttonbox-container { order: 1 !important; margin-inline-end: 12px !important; }",
+            ".titlebar-min { order: 0 !important; }",
+            ".titlebar-max, .titlebar-restore { order: 1 !important; }",
+            ".titlebar-close { order: 2 !important; }",
             ".titlebar-min, :root:not([sizemode=\"maximized\"]) .titlebar-max, :root[sizemode=\"maximized\"] .titlebar-restore { display: flex !important; }",
             "width: 12px !important; height: 12px !important; border-radius: 50% !important;",
         ] {
             assert!(s.contains(want), "{want}");
         }
+        assert!(!s.contains("order: -1"), "never moved to the left");
+        assert!(!s.contains("margin-inline-start: 12px"), "no left inset");
         // One quiet colour for the three, never the status colours.
         for tok in ["danger", "warning", "success"] {
             let hex = token_color(&t, tok).to_hex();

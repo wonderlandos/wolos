@@ -11,7 +11,7 @@ OpenType layout tables so shaping (ligatures, Arabic joining, Hebrew marks) is r
 | `WkLatin-Bold.ttf` | `noto-fonts`, `NotoSans-Bold.ttf` | SIL OFL 1.1 | Basic Latin, Latin-1, general punctuation |
 | `WkArabic-Regular.ttf` | `noto-fonts`, `NotoSansArabic-Regular.ttf` | SIL OFL 1.1 | U+0621..064A, marks, Arabic-Indic digits, joiners |
 | `WkHebrew-Regular.ttf` | `noto-fonts`, `NotoSansHebrew-Regular.ttf` | SIL OFL 1.1 | U+05B0..05C7, U+05D0..05EA, punctuation |
-| `WkCJK-Regular.ttf` | `DroidSansFallbackFull.ttf` (Android Open Source Project) | Apache-2.0 | about 110 ideographs and kana used by the scenes |
+| `WkCJK-Regular.ttf` | `DroidSansFallbackFull.ttf` (Android Open Source Project) | Apache-2.0 | about 105 ideographs and kana used by the scenes |
 
 Why CJK is not from the forge image: the forge (Arch, `noto-fonts` 2026.11.01, `ttf-dejavu`,
 `adwaita-fonts`) ships no font with CJK coverage (`fc-list :charset=4e2d` is empty there). The CJK

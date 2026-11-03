@@ -12,7 +12,7 @@ pointer motion, presses, window updates and draw() sample one state (realtime ti
 geometry from titlebar too, so press and hover agree) and redraw from the event loop. All glyphs
 follow that one state. Glyph textures are kept per monitor scale.
 
-Inactive windows look inactive (macOS): bar_color_inactive and col.text_inactive colour the bar
+Inactive windows look inactive: bar_color_inactive and col.text_inactive colour the bar
 and the title of a window without focus (0 = unset, same as inactive_button_color); focus is
 tracked whatever the colours say, so a change redraws the lights and the title.
 
@@ -113,7 +113,7 @@ index c27653d..b8dd6ea 100644
          return;
  
 +    if (m_pressedButton >= 0) {
-+        // macOS: a button acts on release over the same button; sliding off cancels.
++        // A button acts on release over the same button; sliding off cancels.
 +        const int PRESSED = m_pressedButton;
 +        m_pressedButton   = -1;
 +        if (!m_bTouchEv && buttonAt(cursorRelativeToBar()) == PRESSED && (size_t)PRESSED < g_pGlobalState->buttons.size())

@@ -122,7 +122,54 @@ pub extern "C" fn wol_lights_at(count: i32, x: i32, y: i32) -> i32 {
 /// `titlebar::over_lights`.
 #[unsafe(no_mangle)]
 pub extern "C" fn wol_lights_over(count: i32, x: i32, y: i32) -> i32 {
-    crate::titlebar::over_lights(count, x, y) as i32
+    i32::from(crate::titlebar::over_lights(count, x, y))
+}
+
+/// Button code of the C ABI: 0 close, 1 minimise, 2 zoom, -1 none.
+fn button_code(b: Option<Button>) -> i32 {
+    match b {
+        Some(Button::Close) => 0,
+        Some(Button::Minimize) => 1,
+        Some(Button::Zoom) => 2,
+        None => -1,
+    }
+}
+
+/// `titlebar::button_at` on a right-aligned row in a bar `width` px wide (close at the right
+/// edge, then zoom, minimise): 0 close, 1 minimise, 2 zoom, -1 none.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_lights_at_w(width: i32, count: i32, x: i32, y: i32) -> i32 {
+    button_code(titlebar::button_at(
+        titlebar::Align::Right,
+        width,
+        count,
+        x,
+        y,
+    ))
+}
+
+/// `titlebar::over_group` on a right-aligned row in a bar `width` px wide.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_lights_over_w(width: i32, count: i32, x: i32, y: i32) -> i32 {
+    i32::from(titlebar::over_group(
+        titlebar::Align::Right,
+        width,
+        count,
+        x,
+        y,
+    ))
+}
+
+/// The button in `slot` of a right-aligned row (slot 0 at the right edge; a window showing `n`
+/// buttons shows slots 0..n): 0 close, 1 minimise, 2 zoom, -1 bad slot.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_lights_slot_w(slot: i32) -> i32 {
+    let order = titlebar::Align::Right.order();
+    button_code(
+        usize::try_from(slot)
+            .ok()
+            .and_then(|i| order.get(i).copied()),
+    )
 }
 
 /// `titlebar::Hover::next` on the bits the bar keeps (start at 0).
@@ -136,7 +183,7 @@ pub extern "C" fn wol_lights_hover(state: u32, over: i32, held: i32) -> u32 {
 /// `titlebar::Hover::glyphs` of those bits: 1 shows the glyphs on every light.
 #[unsafe(no_mangle)]
 pub extern "C" fn wol_lights_glyphs(state: u32) -> i32 {
-    crate::titlebar::Hover::from_bits(state).glyphs() as i32
+    i32::from(crate::titlebar::Hover::from_bits(state).glyphs())
 }
 
 /// Title bar height in logical px.
@@ -603,6 +650,21 @@ mod tests {
         assert_eq!(wol_lights_glyphs(on), 1);
         assert_eq!(wol_lights_glyphs(wol_lights_hover(on, 0, 0)), 0);
         assert_eq!(wol_lights_glyphs(wol_lights_hover(on, 0, 1)), 1);
+        // Right-aligned row: placement and hit follow the bar width; the old calls are unchanged.
+        assert_eq!(wol_lights_at_w(600, 3, 577, 14), 0);
+        assert_eq!(wol_lights_at_w(600, 3, 555, 14), 2);
+        assert_eq!(wol_lights_at_w(600, 3, 533, 14), 1);
+        assert_eq!(wol_lights_at_w(600, 1, 555, 14), -1);
+        assert_eq!(wol_lights_at_w(600, 3, 23, 14), -1);
+        assert_eq!(wol_lights_at_w(800, 3, 777, 14), 0);
+        assert_eq!(wol_lights_over_w(600, 3, 566, 14), 1);
+        assert_eq!(wol_lights_over_w(600, 3, 300, 14), 0);
+        assert_eq!(wol_lights_over_w(600, 0, 577, 14), 0);
+        assert_eq!(
+            [0, 1, 2, 3, -1].map(|s| wol_lights_slot_w(s)),
+            [0, 2, 1, -1, -1],
+            "close, zoom, minimise from the right edge"
+        );
         // wm_gates through the C ABI (audit4 S5-2, S5-3, S5-11)
         assert_eq!(wol_x11_placement(1, 1, 0, 0), 0);
         assert_eq!(wol_x11_placement(1, 0, 0, 1), 1);
@@ -630,18 +692,24 @@ mod tests {
         let st = unsafe { wol_keys_step(st, 0, 0, std::ptr::null_mut()) }; // Super up
         let _ = unsafe { wol_keys_step(st, 1, 0, &mut act) }; // Tab up: still ours
         assert_eq!(act, 0x100);
-        let class = c"org.gnome.Nautilus";
-        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 0, 0, 0) }, 0);
-        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 1, 1, 1) }, 1);
-        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 1, 0, 0) }, 3);
-        assert_eq!(unsafe { wol_window_lights(class.as_ptr(), 2, 0, 0) }, 0);
-        assert_eq!(unsafe { wol_window_lights(c"steam".as_ptr(), 3, 0, 0) }, 0);
-        assert_eq!(unsafe { wol_window_lights(std::ptr::null(), 1, 0, 0) }, 3);
+        // One unsafe call site for the whole table: `class` is a C string or null, as asked.
+        let lights = |class: Option<&std::ffi::CStr>, decoration| {
+            let p = class.map_or(std::ptr::null(), std::ffi::CStr::as_ptr);
+            // SAFETY: `p` is null or a NUL-terminated string that outlives the call.
+            unsafe { wol_window_lights(p, decoration, 0, 0) }
+        };
+        let class = Some(c"org.gnome.Nautilus");
+        assert_eq!(lights(class, 0), 0);
+        // SAFETY: a NUL-terminated string literal.
         assert_eq!(
-            unsafe { wol_window_lights(class.as_ptr(), 9, 0, 0) },
-            3,
-            "unknown: ours"
+            unsafe { wol_window_lights(c"org.gnome.Nautilus".as_ptr(), 1, 1, 1) },
+            1
         );
+        assert_eq!(lights(class, 1), 3);
+        assert_eq!(lights(class, 2), 0);
+        assert_eq!(lights(Some(c"steam"), 3), 0);
+        assert_eq!(lights(None, 1), 3);
+        assert_eq!(lights(class, 9), 3, "unknown: ours");
     }
 
     #[test]

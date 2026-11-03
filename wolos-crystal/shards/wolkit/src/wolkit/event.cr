@@ -48,6 +48,56 @@ module Wolkit
       IO::ByteFormat::LittleEndian.decode(Float32, @payload[at, 4])
     end
 
+    # The text of a text-changed or text-submit event (payload: caret, anchor, length, bytes).
+    def text : String
+      str(8)
+    end
+
+    # The caret of a text event, as a byte offset into the text.
+    def caret : Int32
+      i32(0)
+    end
+
+    # The other end of the selection of a text event (equal to the caret when nothing is selected).
+    def anchor : Int32
+      i32(4)
+    end
+
+    # The state of a toggle event.
+    def flag : Bool
+      u32(0) != 0
+    end
+
+    # The value of a slider event.
+    def number : Float64
+      f32(0).to_f64
+    end
+
+    # The offset of a scroll event.
+    def scroll : {Float32, Float32}
+      {f32(0), f32(4)}
+    end
+
+    # The first and last row a virtual list wants (list-range event).
+    def range : {Int32, Int32}
+      {i32(0), i32(4)}
+    end
+
+    # The position of a click or a hover.
+    def point : {Float32, Float32}
+      kind == Wire::Event::CLICK ? {f32(8), f32(12)} : {f32(0), f32(4)}
+    end
+
+    # The size and scale of a resize event.
+    def size : {UInt32, UInt32, Float32}
+      {u32(0), u32(4), f32(8)}
+    end
+
+    # The text of a diagnostic event (payload: level, length, bytes).
+    def message : String
+      str(4)
+    end
+
     # A string stored as `u32 length` then the bytes, at byte `at` of the payload.
     def str(at : Int32) : String
       len = u32(at).to_i

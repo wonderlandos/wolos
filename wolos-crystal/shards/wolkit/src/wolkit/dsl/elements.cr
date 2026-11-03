@@ -72,13 +72,13 @@ module Wolkit
                   {% if conv == "space" %}
                     {% if val.is_a?(SymbolLiteral) && !::Wolkit::Scale::SPACING[val.id.stringify] %}
                       {% val.raise "Spacing is one of :none, :xs, :sm, :md, :lg, :xl or :xxl (0, 4, 8, 12, 16, 24 or 32); this is #{val}." %}
-                    {% elsif val.is_a?(NumberLiteral) && ![0, 4, 8, 12, 16, 24, 32].includes?(val.id.to_i) %}
+                    {% elsif val.is_a?(NumberLiteral) && !%w(0 4 8 12 16 24 32).includes?(val.stringify) %}
                       {% val.raise "Spacing is one of 0, 4, 8, 12, 16, 24 or 32; this is #{val}." %}
                     {% end %}
                   {% elsif conv == "radius" %}
                     {% if val.is_a?(SymbolLiteral) && !::Wolkit::Scale::RADIUS[val.id.stringify] %}
                       {% val.raise "A radius is one of :none, :s, :m, :l or :xl (0, 6, 10, 14 or 20); this is #{val}." %}
-                    {% elsif val.is_a?(NumberLiteral) && ![0, 6, 10, 14, 20].includes?(val.id.to_i) %}
+                    {% elsif val.is_a?(NumberLiteral) && !%w(0 6 10 14 20).includes?(val.stringify) %}
                       {% val.raise "A radius is one of 0, 6, 10, 14 or 20; this is #{val}." %}
                     {% end %}
                   {% elsif conv == "token" && val.is_a?(SymbolLiteral) %}
@@ -215,7 +215,7 @@ module Wolkit
 
             # --- accessibility: role, name, description
             {% name_node = props[:label] %}
-            {% if !name_node && spec[:pos] == "text" && pos %}{% name_node = pos %}{% end %}
+            {% if !name_node && spec[:pos] == "text" && pos && spec[:a11y] != "NONE" %}{% name_node = pos %}{% end %}
             {% if !name_node && props[:placeholder] %}{% name_node = props[:placeholder] %}{% end %}
             {% role_name = spec[:a11y] %}
             {% if props[:a11y_role] %}{% role_name = props[:a11y_role].id.stringify.upcase %}{% end %}

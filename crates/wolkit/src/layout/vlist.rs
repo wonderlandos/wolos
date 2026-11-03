@@ -18,7 +18,12 @@ pub const MAX_ROWS: u32 = 4_000_000;
 
 impl VlistModel {
     pub fn new(count: u32, estimate: f32) -> Self {
-        VlistModel { count: count.min(MAX_ROWS), estimate: estimate.max(1.0), tree: Vec::new(), measured: Vec::new() }
+        VlistModel {
+            count: count.min(MAX_ROWS),
+            estimate: estimate.max(1.0),
+            tree: Vec::new(),
+            measured: Vec::new(),
+        }
     }
 
     pub fn count(&self) -> u32 {
@@ -40,8 +45,14 @@ impl VlistModel {
         if count < self.count {
             // Drop measurements past the end: rebuild if any existed there.
             if self.measured.iter().skip(count as usize).any(|m| *m != 0.0) {
-                let keep: Vec<(u32, f32)> =
-                    self.measured.iter().enumerate().take(count as usize).filter(|(_, m)| **m != 0.0).map(|(i, m)| (i as u32, *m)).collect();
+                let keep: Vec<(u32, f32)> = self
+                    .measured
+                    .iter()
+                    .enumerate()
+                    .take(count as usize)
+                    .filter(|(_, m)| **m != 0.0)
+                    .map(|(i, m)| (i as u32, *m))
+                    .collect();
                 self.tree.clear();
                 self.measured.clear();
                 self.count = count;
@@ -75,7 +86,7 @@ impl VlistModel {
         let mut k = i as usize + 1;
         while k < self.tree.len() {
             self.tree[k] += d;
-            k += k & k.wrapping_neg();
+            k += k & (!k).wrapping_add(1);
         }
     }
 
@@ -85,7 +96,7 @@ impl VlistModel {
         let mut s = 0.0;
         while k > 0 {
             s += self.tree[k];
-            k -= k & k.wrapping_neg();
+            k -= k & (!k).wrapping_add(1);
         }
         s
     }
@@ -171,7 +182,11 @@ pub fn fling(velocity: f32, dt: f32, friction: f32) -> (f32, f32) {
     }
     let k = (-friction).exp();
     let decay = k.powf(dt);
-    let dist = if friction > 0.0 { velocity * (1.0 - decay) / friction } else { velocity * dt };
+    let dist = if friction > 0.0 {
+        velocity * (1.0 - decay) / friction
+    } else {
+        velocity * dt
+    };
     let v = velocity * decay;
     (dist, if v.abs() < 1.0 { 0.0 } else { v })
 }

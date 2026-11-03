@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! `wolkit_engine_*`: the engine handle, dispatch and the event stream.
 
-use super::{borrow, bytes_out, give, guard, guard_status, handle, into_raw, need, put, quiet, release, retain, text_in, wolkit_error, wolkit_status};
+use super::{
+    borrow, bytes_out, give, guard, guard_status, handle, into_raw, need, put, quiet, release,
+    retain, text_in, wolkit_error, wolkit_status,
+};
 use crate::engine::Engine;
 use crate::error::{Error, Status};
 use std::ffi::{c_char, c_int};
 use std::sync::Arc;
 
 #[repr(C)]
+#[allow(non_camel_case_types)] // the C name
 pub struct wolkit_engine {
     tag: handle::Tag<wolkit_engine>,
     pub(crate) engine: Arc<Engine>,
@@ -41,7 +45,14 @@ pub unsafe extern "C" fn wolkit_engine_create(
         // SAFETY: the pointer and length are the caller's (contract).
         let id = unsafe { text_in(app_id, len, 128, "The app id") }?;
         let engine = Engine::new(id, flags)?;
-        let h = Arc::new(wolkit_engine { tag: handle::Tag::new(), engine });
+        // The one place the library reads the process environment (RR-027 baseline row).
+        if let Some(path) = crate::window::kit::socket_path(|k| std::env::var_os(k)) {
+            engine.set_kit_socket(&path);
+        }
+        let h = Arc::new(wolkit_engine {
+            tag: handle::Tag::new(),
+            engine,
+        });
         // SAFETY: checked non-NULL above.
         unsafe { *out = into_raw(h) };
         Ok(())
@@ -69,7 +80,9 @@ pub unsafe extern "C" fn wolkit_engine_release(engine: *mut wolkit_engine) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wolkit_engine_get_fd(engine: *const wolkit_engine) -> c_int {
     // SAFETY: NULL or live (contract).
-    quiet(-1, || unsafe { borrow(engine) }.map_or(-1, |e| e.engine.fd()))
+    quiet(-1, || {
+        unsafe { borrow(engine) }.map_or(-1, |e| e.engine.fd())
+    })
 }
 
 /// # Safety
@@ -93,12 +106,20 @@ pub unsafe extern "C" fn wolkit_engine_dispatch(
 /// # Safety
 /// `engine` is live; `buf` has `cap` writable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_engine_read_events(engine: *mut wolkit_engine, buf: *mut u8, cap: usize) -> usize {
+pub unsafe extern "C" fn wolkit_engine_read_events(
+    engine: *mut wolkit_engine,
+    buf: *mut u8,
+    cap: usize,
+) -> usize {
     quiet(0, || {
         // SAFETY: live (contract).
-        let Ok(e) = (unsafe { borrow(engine) }) else { return 0 };
+        let Ok(e) = (unsafe { borrow(engine) }) else {
+            return 0;
+        };
         // SAFETY: `cap` writable bytes (contract).
-        let Ok(out) = (unsafe { bytes_out(buf, cap, "The event buffer") }) else { return 0 };
+        let Ok(out) = (unsafe { bytes_out(buf, cap, "The event buffer") }) else {
+            return 0;
+        };
         e.engine.read_events(out)
     })
 }
@@ -108,7 +129,9 @@ pub unsafe extern "C" fn wolkit_engine_read_events(engine: *mut wolkit_engine, b
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wolkit_engine_get_info(engine: *const wolkit_engine, key: u32) -> u64 {
     // SAFETY: NULL or live (contract).
-    quiet(0, || unsafe { borrow(engine) }.map_or(0, |e| e.engine.info(key)))
+    quiet(0, || {
+        unsafe { borrow(engine) }.map_or(0, |e| e.engine.info(key))
+    })
 }
 
 /// # Safety
@@ -145,12 +168,18 @@ pub unsafe extern "C" fn wolkit_engine_stats_json(
 /// # Safety
 /// `engine` is live; `out16` has 16 writable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_engine_get_gpu_uuid(engine: *const wolkit_engine, out16: *mut u8) -> wolkit_status {
+pub unsafe extern "C" fn wolkit_engine_get_gpu_uuid(
+    engine: *const wolkit_engine,
+    out16: *mut u8,
+) -> wolkit_status {
     guard_status(|| {
         // SAFETY: live (contract).
         let _ = unsafe { borrow(engine) }?;
         let _ = out16;
-        Err(Error::new(Status::Unavailable, "This engine has no GPU; it draws on the CPU."))
+        Err(Error::new(
+            Status::Unavailable,
+            "This engine has no GPU; it draws on the CPU.",
+        ))
     })
 }
 

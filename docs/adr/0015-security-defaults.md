@@ -1,5 +1,5 @@
 # 0015 - secure by default, honest about the rest
-Status: accepted
+Status: superseded by 0040 (Security defaults on Linux): the promise stands, the mechanisms below belonged to the base ADR 0016 replaced. Kept as the record of its time.
 Context: a desktop is safe only if it is safe without settings: nothing listening, updates found without asking, and privacy switches that do what they say.
 Decision:
 - On from the first boot: pf (inbound blocked except replies and local discovery), no remote login, system log off the network, kernel hardening with one reason per line (`wol_core::security::HARDENING`). `wol security` reports each item from the running system.

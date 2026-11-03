@@ -6,6 +6,8 @@
 //!
 //! A value on the wire is `Ty::arity()` little-endian 32-bit words after `(node, prop)`.
 
+use crate::scene::ids::Ix;
+
 /// Wire type of a property value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ty {
@@ -92,11 +94,32 @@ const DIRECTION: &[&str] = &["row", "column", "row-reverse", "column-reverse"];
 const WRAP: &[&str] = &["nowrap", "wrap"];
 const ALIGN: &[&str] = &["start", "center", "end", "stretch", "baseline"];
 const SELF_ALIGN: &[&str] = &["auto", "start", "center", "end", "stretch", "baseline"];
-const CONTENT: &[&str] = &["start", "center", "end", "stretch", "space-between", "space-around"];
-const JUSTIFY: &[&str] = &["start", "center", "end", "space-between", "space-around", "space-evenly"];
+const CONTENT: &[&str] = &[
+    "start",
+    "center",
+    "end",
+    "stretch",
+    "space-between",
+    "space-around",
+];
+const JUSTIFY: &[&str] = &[
+    "start",
+    "center",
+    "end",
+    "space-between",
+    "space-around",
+    "space-evenly",
+];
 const POSITION: &[&str] = &["relative", "absolute"];
 const OVERFLOW: &[&str] = &["visible", "hidden", "scroll", "auto"];
-const CURSOR: &[&str] = &["default", "pointer", "text", "grab", "grabbing", "not-allowed"];
+const CURSOR: &[&str] = &[
+    "default",
+    "pointer",
+    "text",
+    "grab",
+    "grabbing",
+    "not-allowed",
+];
 const POINTER: &[&str] = &["auto", "none"];
 const VISIBILITY: &[&str] = &["visible", "hidden"];
 const BACKDROP: &[&str] = &["none", "glass"];
@@ -239,13 +262,19 @@ pub fn def(id: u32) -> Option<&'static PropDef> {
 pub fn check_value(d: &PropDef, words: &[u32]) -> Result<(), &'static str> {
     let f = |w: u32| f32::from_bits(w).is_finite();
     match d.ty {
-        Ty::F32 => f(words[0]).then_some(()).ok_or("A number property needs a finite number."),
+        Ty::F32 => f(words[0])
+            .then_some(())
+            .ok_or("A number property needs a finite number."),
         Ty::I32 | Ty::U32 | Ty::Str => Ok(()),
-        Ty::Bool => (words[0] <= 1).then_some(()).ok_or("A flag property is 0 or 1."),
-        Ty::Enum => ((words[0] as usize) < d.enums.len())
+        Ty::Bool => (words[0] <= 1)
+            .then_some(())
+            .ok_or("A flag property is 0 or 1."),
+        Ty::Enum => ((words[0].ix()) < d.enums.len())
             .then_some(())
             .ok_or("That is not one of the values of this property."),
-        Ty::Token => (words[0] < TOKENS).then_some(()).ok_or("A colour is one of the 13 theme tokens."),
+        Ty::Token => (words[0] < TOKENS)
+            .then_some(())
+            .ok_or("A colour is one of the 13 theme tokens."),
         Ty::Dim => {
             if words[0] > DIM_PERCENT || !f(words[1]) {
                 Err("A size is auto, pixels or a percentage.")
@@ -253,24 +282,27 @@ pub fn check_value(d: &PropDef, words: &[u32]) -> Result<(), &'static str> {
                 Ok(())
             }
         }
-        Ty::Pair => (f(words[0]) && f(words[1])).then_some(()).ok_or("A pair needs finite numbers."),
-        Ty::Border => (f(words[0]) && words[0] as i32 >= 0 && words[1] < TOKENS)
+        Ty::Pair => (f(words[0]) && f(words[1]))
+            .then_some(())
+            .ok_or("A pair needs finite numbers."),
+        Ty::Border => (f(words[0]) && words[0].cast_signed() >= 0 && words[1] < TOKENS)
             .then_some(())
             .ok_or("A border is a width and a theme token."),
         Ty::Gradient => {
             let n = words[1];
-            if !f(words[0]) || !(2..=3).contains(&n) || words[2..2 + n as usize].iter().any(|t| *t >= TOKENS) {
+            if !f(words[0])
+                || !(2..=3).contains(&n)
+                || words[2..2 + n.ix()].iter().any(|t| *t >= TOKENS)
+            {
                 Err("A gradient is an angle and two or three theme tokens.")
             } else {
                 Ok(())
             }
         }
-        Ty::Shadow => {
-            (f(words[0]) && f(words[1]) && f(words[2]) && words[3] < TOKENS)
-                .then_some(())
-                .ok_or("A shadow is an offset, a blur and a theme token.")
-        }
-        Ty::Transition => (words[1] <= 2 && words[2] <= 3)
+        Ty::Shadow => (f(words[0]) && f(words[1]) && f(words[2]) && words[3] < TOKENS)
+            .then_some(())
+            .ok_or("A shadow is an offset, a blur and a theme token."),
+        Ty::Transition => (words[1] <= 2 && words[2] <= 4)
             .then_some(())
             .ok_or("A transition is a property, fast, normal or slow, and an easing."),
     }
@@ -282,6 +314,34 @@ pub fn snapshot_lines() -> Vec<String> {
         .iter()
         .map(|d| format!("{} {} {} {}", d.id, d.ident, d.name, d.ty.name()))
         .collect()
+}
+
+/// Whether property `id` makes sense on a node of `kind`. Node-specific properties (150 and up)
+/// belong to one kind; the style properties apply to every kind.
+pub fn applies(id: u16, kind: super::kind::Kind) -> bool {
+    use super::kind::Kind;
+    match id {
+        id::SLIDER_MIN..=id::SLIDER_STEP => kind == Kind::Slider,
+        id::PLACEHOLDER..=id::READONLY => kind == Kind::TextInput,
+        id::IMAGE_SOURCE..=id::IMAGE_FIT => kind == Kind::Image,
+        id::SCROLL_OFFSET => matches!(kind, Kind::Scroll | Kind::Vlist),
+        id::ANCHOR..=id::MODAL => kind == Kind::Overlay,
+        id::LIST_COUNT..=id::LIST_OVERSCAN => false, // only LIST_RANGE sets these
+        _ => true,
+    }
+}
+
+/// Extra dirty bits a property sets beyond `STYLE` (the style stage derives the rest by
+/// comparing computed styles; these are the properties that bypass it).
+pub fn dirty_extra(id: u16) -> u8 {
+    use super::kind::dirty;
+    match id {
+        id::SLIDER_MIN..=id::SLIDER_STEP | id::IMAGE_SOURCE..=id::IMAGE_FIT | id::SCROLL_OFFSET => {
+            dirty::LAYOUT | dirty::PAINT
+        }
+        id::PLACEHOLDER..=id::READONLY => dirty::LAYOUT | dirty::PAINT | dirty::A11Y,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
@@ -315,33 +375,5 @@ mod tests {
         assert!(check_value(d, &[3]).is_ok());
         assert!(check_value(d, &[4]).is_err());
         assert!(def(0).is_none() && def(999).is_none());
-    }
-}
-
-/// Whether property `id` makes sense on a node of `kind`. Node-specific properties (150 and up)
-/// belong to one kind; the style properties apply to every kind.
-pub fn applies(id: u16, kind: super::kind::Kind) -> bool {
-    use super::kind::Kind;
-    match id {
-        id::SLIDER_MIN..=id::SLIDER_STEP => kind == Kind::Slider,
-        id::PLACEHOLDER..=id::READONLY => kind == Kind::TextInput,
-        id::IMAGE_SOURCE..=id::IMAGE_FIT => kind == Kind::Image,
-        id::SCROLL_OFFSET => matches!(kind, Kind::Scroll | Kind::Vlist),
-        id::ANCHOR..=id::MODAL => kind == Kind::Overlay,
-        id::LIST_COUNT..=id::LIST_OVERSCAN => false, // only LIST_RANGE sets these
-        _ => true,
-    }
-}
-
-/// Extra dirty bits a property sets beyond `STYLE` (the style stage derives the rest by
-/// comparing computed styles; these are the properties that bypass it).
-pub fn dirty_extra(id: u16) -> u8 {
-    use super::kind::dirty;
-    match id {
-        id::SLIDER_MIN..=id::SLIDER_STEP | id::IMAGE_SOURCE..=id::IMAGE_FIT | id::SCROLL_OFFSET => {
-            dirty::LAYOUT | dirty::PAINT
-        }
-        id::PLACEHOLDER..=id::READONLY => dirty::LAYOUT | dirty::PAINT | dirty::A11Y,
-        _ => 0,
     }
 }

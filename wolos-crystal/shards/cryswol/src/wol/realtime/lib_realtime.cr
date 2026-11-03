@@ -35,6 +35,9 @@ lib LibRealtime
   fun wol_titlebar_height : Int32
   fun wol_lights_at(count : Int32, x : Int32, y : Int32) : Int32
   fun wol_lights_over(count : Int32, x : Int32, y : Int32) : Int32
+  fun wol_lights_at_w(width : Int32, count : Int32, x : Int32, y : Int32) : Int32
+  fun wol_lights_over_w(width : Int32, count : Int32, x : Int32, y : Int32) : Int32
+  fun wol_lights_slot_w(slot : Int32) : Int32
   fun wol_lights_hover(state : UInt32, over : Int32, held : Int32) : UInt32
   fun wol_lights_glyphs(state : UInt32) : Int32
   fun wol_window_lights(class_ : UInt8*, decoration : Int32, transient : Int32, fixed_size : Int32) : Int32

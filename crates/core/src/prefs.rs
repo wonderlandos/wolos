@@ -378,10 +378,7 @@ mod tests {
         assert_eq!(old.control_center, ControlCenterPrefs::default());
         let d = ControlCenterPrefs::default();
         assert!(d.now_playing && d.battery && d.screenshot && d.record && d.night_shift);
-        assert!(
-            !d.keyboard_brightness && !d.accessibility,
-            "opt-in like macOS"
-        );
+        assert!(!d.keyboard_brightness && !d.accessibility, "opt-in");
         let mut p = ShellPrefs::default();
         for (key, label) in ControlCenterPrefs::MODULES {
             assert!(!label.is_empty());

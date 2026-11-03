@@ -39,7 +39,12 @@ impl Radii {
     pub fn fitted(&self, w: f32, h: f32) -> Radii {
         let r = self.0.map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
         let mut k = 1.0f32;
-        for (a, b, len) in [(r[0], r[1], w), (r[3], r[2], w), (r[0], r[3], h), (r[1], r[2], h)] {
+        for (a, b, len) in [
+            (r[0], r[1], w),
+            (r[3], r[2], w),
+            (r[0], r[3], h),
+            (r[1], r[2], h),
+        ] {
             let s = a + b;
             if s > len && s > 0.0 {
                 k = k.min(len / s);
@@ -54,16 +59,53 @@ impl Radii {
 pub enum Fill {
     Solid(Color),
     /// Two-stop linear gradient from point `p0` to `p1`, given as fractions of the rectangle.
-    Linear { from: Color, to: Color, p0: (f32, f32), p1: (f32, f32) },
+    Linear {
+        from: Color,
+        to: Color,
+        p0: (f32, f32),
+        p1: (f32, f32),
+    },
 }
 
 impl Fill {
     pub fn vertical(top: Color, bottom: Color) -> Fill {
-        Fill::Linear { from: top, to: bottom, p0: (0.0, 0.0), p1: (0.0, 1.0) }
+        Fill::Linear {
+            from: top,
+            to: bottom,
+            p0: (0.0, 0.0),
+            p1: (0.0, 1.0),
+        }
     }
 
     pub fn horizontal(left: Color, right: Color) -> Fill {
-        Fill::Linear { from: left, to: right, p0: (0.0, 0.0), p1: (1.0, 0.0) }
+        Fill::Linear {
+            from: left,
+            to: right,
+            p0: (0.0, 0.0),
+            p1: (1.0, 0.0),
+        }
+    }
+}
+
+/// The look of a drop shadow: blur radius, spread, offset and colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    pub blur: f32,
+    pub spread: f32,
+    pub dx: f32,
+    pub dy: f32,
+    pub color: Color,
+}
+
+impl Shadow {
+    pub fn new(blur: f32, spread: f32, dx: f32, dy: f32, color: Color) -> Shadow {
+        Shadow {
+            blur,
+            spread,
+            dx,
+            dy,
+            color,
+        }
     }
 }
 
@@ -77,18 +119,46 @@ pub struct PosGlyph {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
-    Rect { rect: Rect, radii: Radii, fill: Fill },
-    Border { rect: Rect, radii: Radii, width: f32, color: Color },
+    Rect {
+        rect: Rect,
+        radii: Radii,
+        fill: Fill,
+    },
+    Border {
+        rect: Rect,
+        radii: Radii,
+        width: f32,
+        color: Color,
+    },
     /// A blurred rounded rectangle (`rect` is the casting box; the offset and spread are applied
     /// here). Drawn from a nine-slice texture on the GPU and as a blurred mask on the CPU.
-    Shadow { rect: Rect, radii: Radii, blur: f32, spread: f32, dx: f32, dy: f32, color: Color },
-    Glyphs { font: FontId, size: f32, color: Color, glyphs: Range<u32> },
+    Shadow {
+        rect: Rect,
+        radii: Radii,
+        blur: f32,
+        spread: f32,
+        dx: f32,
+        dy: f32,
+        color: Color,
+    },
+    Glyphs {
+        font: FontId,
+        size: f32,
+        color: Color,
+        glyphs: Range<u32>,
+    },
     /// Intersects the clip with a (rounded) rectangle until the matching `PopClip`.
-    PushClip { rect: Rect, radius: f32 },
+    PushClip {
+        rect: Rect,
+        radius: f32,
+    },
     PopClip,
     /// Multiplies the alpha of everything until `PopOpacity`. With `overlap` false the factor is
     /// pushed down to the leaves; with `overlap` true (children overlap) a layer is composed.
-    PushOpacity { alpha: u8, overlap: bool },
+    PushOpacity {
+        alpha: u8,
+        overlap: bool,
+    },
     PopOpacity,
 }
 
@@ -140,7 +210,14 @@ impl DisplayList {
         self.end_chunk();
         let at = self.items.len() as u32;
         // `u32::MAX` marks the open chunk: it extends to the end of the item vector.
-        self.chunks.push(Chunk { id, version, bounds, offset, z, items: at..u32::MAX });
+        self.chunks.push(Chunk {
+            id,
+            version,
+            bounds,
+            offset,
+            z,
+            items: at..u32::MAX,
+        });
         self.open = Some(self.chunks.len() - 1);
     }
 
@@ -171,21 +248,45 @@ impl DisplayList {
     }
 
     pub fn border(&mut self, rect: Rect, radii: Radii, width: f32, color: Color) {
-        self.push(Item::Border { rect, radii, width, color });
+        self.push(Item::Border {
+            rect,
+            radii,
+            width,
+            color,
+        });
     }
 
-    pub fn shadow(&mut self, rect: Rect, radii: Radii, blur: f32, spread: f32, dx: f32, dy: f32, color: Color) {
-        self.push(Item::Shadow { rect, radii, blur, spread, dx, dy, color });
+    pub fn shadow(&mut self, rect: Rect, radii: Radii, shadow: Shadow) {
+        self.push(Item::Shadow {
+            rect,
+            radii,
+            blur: shadow.blur,
+            spread: shadow.spread,
+            dx: shadow.dx,
+            dy: shadow.dy,
+            color: shadow.color,
+        });
     }
 
     /// Adds a run of glyphs sharing a font, size and colour.
-    pub fn glyph_run(&mut self, font: FontId, size: f32, color: Color, glyphs: impl IntoIterator<Item = PosGlyph>) {
+    pub fn glyph_run(
+        &mut self,
+        font: FontId,
+        size: f32,
+        color: Color,
+        glyphs: impl IntoIterator<Item = PosGlyph>,
+    ) {
         self.ensure_chunk();
         let a = self.glyphs.len() as u32;
         self.glyphs.extend(glyphs);
         let b = self.glyphs.len() as u32;
         if b > a {
-            self.items.push(Item::Glyphs { font, size, color, glyphs: a..b });
+            self.items.push(Item::Glyphs {
+                font,
+                size,
+                color,
+                glyphs: a..b,
+            });
         }
     }
 
@@ -205,11 +306,18 @@ impl DisplayList {
         self.push(Item::PopOpacity);
     }
 
-    /// Chunk indices in draw order (stable sort by `z`).
+    /// Chunk indices in draw order: by `z`, then by recording order.
     pub fn draw_order(&self) -> Vec<usize> {
-        let mut v: Vec<usize> = (0..self.chunks.len()).collect();
-        v.sort_by_key(|&i| self.chunks[i].z);
+        let mut v = Vec::new();
+        self.draw_order_into(&mut v);
         v
+    }
+
+    /// Like [`DisplayList::draw_order`] into a reusable vector (no allocation once it has grown).
+    pub fn draw_order_into(&self, out: &mut Vec<usize>) {
+        out.clear();
+        out.extend(0..self.chunks.len());
+        out.sort_unstable_by_key(|&i| (self.chunks[i].z, i));
     }
 
     /// The items of a chunk. Call after `end_chunk`.
@@ -238,7 +346,13 @@ mod tests {
         let r = Radii::uniform(30.0).fitted(40.0, 100.0);
         assert!(r.0.iter().all(|v| (*v - 20.0).abs() < 1e-4), "{r:?}");
         assert_eq!(Radii::uniform(4.0).fitted(40.0, 40.0), Radii::uniform(4.0));
-        assert!(Radii([f32::NAN, -1.0, 2.0, 3.0]).fitted(10.0, 10.0).0.iter().all(|v| *v >= 0.0));
+        assert!(
+            Radii([f32::NAN, -1.0, 2.0, 3.0])
+                .fitted(10.0, 10.0)
+                .0
+                .iter()
+                .all(|v| *v >= 0.0)
+        );
     }
 
     #[test]

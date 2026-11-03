@@ -53,22 +53,42 @@ pub fn tokenize(src: &str, from: usize, to: usize) -> Vec<Tok> {
             i += 1;
         } else if c == b',' {
             i += 1;
-            out.push(Tok { t: T::Comma, s, e: i });
+            out.push(Tok {
+                t: T::Comma,
+                s,
+                e: i,
+            });
         } else if c == b'/' {
             i += 1;
-            out.push(Tok { t: T::Slash, s, e: i });
+            out.push(Tok {
+                t: T::Slash,
+                s,
+                e: i,
+            });
         } else if c == b')' {
             i += 1;
-            out.push(Tok { t: T::RParen, s, e: i });
+            out.push(Tok {
+                t: T::RParen,
+                s,
+                e: i,
+            });
         } else if c == b'!' {
             i += 1;
-            out.push(Tok { t: T::Bang, s, e: i });
+            out.push(Tok {
+                t: T::Bang,
+                s,
+                e: i,
+            });
         } else if c == b'#' {
             i += 1;
             while i < to && is_id(b[i]) {
                 i += 1;
             }
-            out.push(Tok { t: T::Hash(src[s..i].to_string()), s, e: i });
+            out.push(Tok {
+                t: T::Hash(src[s..i].to_string()),
+                s,
+                e: i,
+            });
         } else if c == b'"' || c == b'\'' {
             i += 1;
             while i < to && b[i] != c {
@@ -78,7 +98,9 @@ pub fn tokenize(src: &str, from: usize, to: usize) -> Vec<Tok> {
             out.push(Tok { t: T::Str, s, e: i });
         } else if c.is_ascii_digit()
             || c == b'.'
-            || ((c == b'-' || c == b'+') && i + 1 < to && (b[i + 1].is_ascii_digit() || b[i + 1] == b'.'))
+            || ((c == b'-' || c == b'+')
+                && i + 1 < to
+                && (b[i + 1].is_ascii_digit() || b[i + 1] == b'.'))
         {
             i += 1;
             while i < to && (b[i].is_ascii_digit() || b[i] == b'.') {
@@ -89,7 +111,11 @@ pub fn tokenize(src: &str, from: usize, to: usize) -> Vec<Tok> {
             while i < to && (b[i].is_ascii_alphabetic() || b[i] == b'%') {
                 i += 1;
             }
-            out.push(Tok { t: T::Num(num, src[us..i].to_ascii_lowercase()), s, e: i });
+            out.push(Tok {
+                t: T::Num(num, src[us..i].to_ascii_lowercase()),
+                s,
+                e: i,
+            });
         } else if is_id0(c) {
             i += 1;
             while i < to && is_id(b[i]) {
@@ -98,14 +124,26 @@ pub fn tokenize(src: &str, from: usize, to: usize) -> Vec<Tok> {
             if i < to && b[i] == b'(' {
                 let name = src[s..i].to_ascii_lowercase();
                 i += 1;
-                out.push(Tok { t: T::Func(name), s, e: i });
+                out.push(Tok {
+                    t: T::Func(name),
+                    s,
+                    e: i,
+                });
             } else {
-                out.push(Tok { t: T::Ident(src[s..i].to_string()), s, e: i });
+                out.push(Tok {
+                    t: T::Ident(src[s..i].to_string()),
+                    s,
+                    e: i,
+                });
             }
         } else {
             let ch = src[i..].chars().next().unwrap_or('?');
             i += ch.len_utf8();
-            out.push(Tok { t: T::Other(ch), s, e: i });
+            out.push(Tok {
+                t: T::Other(ch),
+                s,
+                e: i,
+            });
         }
     }
     out
@@ -125,7 +163,13 @@ pub struct Cur {
 
 impl Cur {
     pub fn new(toks: Vec<Tok>, prop: &'static str, end: usize, off_scale: bool) -> Self {
-        Cur { toks, i: 0, prop, end, off_scale }
+        Cur {
+            toks,
+            i: 0,
+            prop,
+            end,
+            off_scale,
+        }
     }
     pub fn peek(&self) -> Option<&Tok> {
         self.toks.get(self.i)
@@ -133,7 +177,7 @@ impl Cur {
     pub fn at_end(&self) -> bool {
         self.i >= self.toks.len()
     }
-    pub fn next(&mut self) -> PRes<Tok> {
+    pub fn take(&mut self) -> PRes<Tok> {
         match self.toks.get(self.i) {
             Some(t) => {
                 self.i += 1;
@@ -143,10 +187,22 @@ impl Cur {
         }
     }
     pub fn err_end(&self, msg: String) -> PErr {
-        PErr { id: L::BAD_VALUE, s: self.end, e: self.end, msg, help: None }
+        PErr {
+            id: L::BAD_VALUE,
+            s: self.end,
+            e: self.end,
+            msg,
+            help: None,
+        }
     }
     pub fn err(&self, t: &Tok, id: &'static str, msg: String, help: Option<String>) -> PErr {
-        PErr { id, s: t.s, e: t.e, msg, help }
+        PErr {
+            id,
+            s: t.s,
+            e: t.e,
+            msg,
+            help,
+        }
     }
     pub fn bad(&self, t: &Tok, grammar: &str) -> PErr {
         let found = describe(&t.t);
@@ -156,6 +212,15 @@ impl Cur {
             format!("`{}` does not take {}.", self.prop, found),
             Some(format!("write {grammar}")),
         )
+    }
+    /// Consume the next token if it is the identifier `word`.
+    pub fn eat_word(&mut self, word: &str) -> bool {
+        if matches!(self.peek().map(|t| &t.t), Some(T::Ident(s)) if s == word) {
+            self.i += 1;
+            true
+        } else {
+            false
+        }
     }
     pub fn eat_comma(&mut self) -> bool {
         if matches!(self.peek().map(|t| &t.t), Some(T::Comma)) {
@@ -193,7 +258,20 @@ fn describe(t: &T) -> String {
 /// Features that exist in CSS but not in 1.0 get their own lint.
 fn unsupported_id(t: &T) -> Option<&'static str> {
     match t {
-        T::Func(f) if matches!(f.as_str(), "calc" | "min" | "max" | "clamp" | "var" | "env" | "blur" | "drop-shadow" | "brightness") => {
+        T::Func(f)
+            if matches!(
+                f.as_str(),
+                "calc"
+                    | "min"
+                    | "max"
+                    | "clamp"
+                    | "var"
+                    | "env"
+                    | "blur"
+                    | "drop-shadow"
+                    | "brightness"
+            ) =>
+        {
             Some(L::UNSUPPORTED)
         }
         _ => None,
@@ -214,17 +292,40 @@ macro_rules! impl_kw {
     )+};
 }
 impl_kw!(
-    Display, Direction, Wrap, AlignItems, AlignSelf, AlignContent, Justify, Position, Overflow,
-    Cursor, PointerEvents, Visibility, Backdrop, FontFamily, FontStyle, TextAlign, TextDecoration,
-    TextOverflow, WhiteSpace, UserSelect, Ease, Spring
+    Display,
+    Direction,
+    Wrap,
+    AlignItems,
+    AlignSelf,
+    AlignContent,
+    Justify,
+    Position,
+    Overflow,
+    Cursor,
+    PointerEvents,
+    Visibility,
+    Backdrop,
+    FontFamily,
+    FontStyle,
+    TextAlign,
+    TextDecoration,
+    TextOverflow,
+    WhiteSpace,
+    UserSelect,
+    Ease,
+    Spring
 );
 
 fn list(words: &[&str]) -> String {
-    words.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(", ")
+    words
+        .iter()
+        .map(|w| format!("`{w}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn parse_kw<E: Kw>(c: &mut Cur) -> PRes<E> {
-    let t = c.next()?;
+    let t = c.take()?;
     if let T::Ident(s) = &t.t {
         if let Some(v) = E::from_kw(s) {
             return Ok(v);
@@ -233,7 +334,12 @@ pub fn parse_kw<E: Kw>(c: &mut Cur) -> PRes<E> {
             Some(n) => format!("did you mean `{n}`? The values are {}.", list(E::KEYWORDS)),
             None => format!("the values are {}.", list(E::KEYWORDS)),
         };
-        return Err(c.err(&t, L::BAD_VALUE, format!("`{s}` is not a value of `{}`.", c.prop), Some(help)));
+        return Err(c.err(
+            &t,
+            L::BAD_VALUE,
+            format!("`{s}` is not a value of `{}`.", c.prop),
+            Some(help),
+        ));
     }
     Err(c.bad(&t, &format!("one of {}", list(E::KEYWORDS))))
 }
@@ -251,7 +357,11 @@ fn num_in(c: &Cur, t: &Tok, v: f32, lo: f32, hi: f32, what: &str) -> PRes<f32> {
 }
 
 fn scale_names(steps: &[tk::Step]) -> String {
-    steps.iter().map(|s| format!("`{}`", s.name)).collect::<Vec<_>>().join(", ")
+    steps
+        .iter()
+        .map(|s| format!("`{}`", s.name))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn off_scale_err(c: &Cur, t: &Tok, px: f32, spacing: bool) -> PErr {
@@ -260,7 +370,11 @@ fn off_scale_err(c: &Cur, t: &Tok, px: f32, spacing: bool) -> PErr {
     } else {
         (L::OFF_SCALE_RADIUS, &tk::RADIUS[..], "radius")
     };
-    let values: Vec<String> = steps.iter().filter(|s| s.value < 1000.0).map(|s| format!("{}px", s.value)).collect();
+    let values: Vec<String> = steps
+        .iter()
+        .filter(|s| s.value < 1000.0)
+        .map(|s| format!("{}px", s.value))
+        .collect();
     let near = steps
         .iter()
         .filter(|s| s.value < 1000.0)
@@ -280,7 +394,7 @@ fn off_scale_err(c: &Cur, t: &Tok, px: f32, spacing: bool) -> PErr {
 
 /// A scale value: a name, or a pixel value that is on the scale (or anything, after the pragma).
 fn scale_value(c: &mut Cur, spacing: bool, allow_neg: bool) -> PRes<f32> {
-    let t = c.next()?;
+    let t = c.take()?;
     let steps: &[tk::Step] = if spacing { &tk::SPACE } else { &tk::RADIUS };
     match &t.t {
         T::Ident(s) => match steps.iter().find(|x| x.name == s.as_str()) {
@@ -290,7 +404,15 @@ fn scale_value(c: &mut Cur, spacing: bool, allow_neg: bool) -> PRes<f32> {
                     Some(n) => format!("did you mean `{n}`? The names are {}.", scale_names(steps)),
                     None => format!("the names are {}.", scale_names(steps)),
                 };
-                Err(c.err(&t, L::UNKNOWN_NAME, format!("`{s}` is not a {} name.", if spacing { "spacing" } else { "radius" }), Some(help)))
+                Err(c.err(
+                    &t,
+                    L::UNKNOWN_NAME,
+                    format!(
+                        "`{s}` is not a {} name.",
+                        if spacing { "spacing" } else { "radius" }
+                    ),
+                    Some(help),
+                ))
             }
         },
         T::Num(v, u) if u.is_empty() || u == "px" => {
@@ -304,7 +426,12 @@ fn scale_value(c: &mut Cur, spacing: bool, allow_neg: bool) -> PRes<f32> {
                 let mag = v.abs();
                 let neg = *v < 0.0;
                 if neg && !allow_neg {
-                    return Err(c.err(&t, L::BAD_VALUE, format!("`{}` cannot be negative.", c.prop), None));
+                    return Err(c.err(
+                        &t,
+                        L::BAD_VALUE,
+                        format!("`{}` cannot be negative.", c.prop),
+                        None,
+                    ));
                 }
                 if u.is_empty() {
                     return Err(c.err(
@@ -314,7 +441,11 @@ fn scale_value(c: &mut Cur, spacing: bool, allow_neg: bool) -> PRes<f32> {
                         Some(format!("write `{v}px` or a name ({})", scale_names(steps))),
                     ));
                 }
-                let on = if spacing { tk::on_space_scale(mag) } else { tk::on_radius_scale(mag) };
+                let on = if spacing {
+                    tk::on_space_scale(mag)
+                } else {
+                    tk::on_radius_scale(mag)
+                };
                 if !on && !c.off_scale {
                     return Err(off_scale_err(c, &t, *v, spacing));
                 }
@@ -322,7 +453,13 @@ fn scale_value(c: &mut Cur, spacing: bool, allow_neg: bool) -> PRes<f32> {
             }
             Ok(0.0)
         }
-        _ => Err(c.bad(&t, &format!("a name ({}) or a pixel value on the scale", scale_names(steps)))),
+        _ => Err(c.bad(
+            &t,
+            &format!(
+                "a name ({}) or a pixel value on the scale",
+                scale_names(steps)
+            ),
+        )),
     }
 }
 
@@ -334,18 +471,15 @@ pub fn parse_radius(c: &mut Cur) -> PRes<f32> {
 }
 
 pub fn parse_margin(c: &mut Cur) -> PRes<Dim> {
-    if let Some(Tok { t: T::Ident(s), .. }) = c.peek() {
-        if s == "auto" {
-            c.i += 1;
-            return Ok(Dim::Auto);
-        }
+    if c.eat_word("auto") {
+        return Ok(Dim::Auto);
     }
     Ok(Dim::Px(scale_value(c, true, true)?))
 }
 
 /// Lengths for sizes and insets: `auto`/`none`, pixels, or a percentage; spacing names also work.
 fn parse_length(c: &mut Cur, allow_neg: bool, none_word: &'static str) -> PRes<Dim> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "auto" || s == none_word => Ok(Dim::Auto),
         T::Ident(s) => match tk::space_value(s) {
@@ -359,7 +493,12 @@ fn parse_length(c: &mut Cur, allow_neg: bool, none_word: &'static str) -> PRes<D
         },
         T::Num(v, u) if u == "px" || u == "%" || (u.is_empty() && *v == 0.0) => {
             if v.is_nan() || (!allow_neg && *v < 0.0) || v.abs() > 100_000.0 {
-                return Err(c.err(&t, L::BAD_VALUE, format!("`{}` takes a length from 0 to 100000.", c.prop), None));
+                return Err(c.err(
+                    &t,
+                    L::BAD_VALUE,
+                    format!("`{}` takes a length from 0 to 100000.", c.prop),
+                    None,
+                ));
             }
             Ok(if u == "%" { Dim::Pct(*v) } else { Dim::Px(*v) })
         }
@@ -375,7 +514,7 @@ pub fn parse_inset(c: &mut Cur) -> PRes<Dim> {
 }
 
 pub fn parse_nonneg(c: &mut Cur) -> PRes<f32> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Num(v, u) if u.is_empty() => num_in(c, &t, *v, 0.0, 1000.0, "a number"),
         _ => Err(c.bad(&t, "a number such as 1")),
@@ -383,19 +522,19 @@ pub fn parse_nonneg(c: &mut Cur) -> PRes<f32> {
 }
 
 pub fn parse_aspect(c: &mut Cur) -> PRes<f32> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "auto" => Ok(0.0),
         T::Num(v, u) if u.is_empty() => {
             let a = num_in(c, &t, *v, 0.05, 20.0, "a ratio")?;
             if matches!(c.peek().map(|x| &x.t), Some(T::Slash)) {
                 c.i += 1;
-                let d = c.next()?;
-                if let T::Num(w, u2) = &d.t {
-                    if u2.is_empty() {
-                        let w = num_in(c, &d, *w, 0.05, 20.0, "a ratio")?;
-                        return Ok(a / w);
-                    }
+                let d = c.take()?;
+                if let T::Num(w, u2) = &d.t
+                    && u2.is_empty()
+                {
+                    let w = num_in(c, &d, *w, 0.05, 20.0, "a ratio")?;
+                    return Ok(a / w);
                 }
                 return Err(c.bad(&d, "a ratio such as 16 / 9"));
             }
@@ -406,17 +545,21 @@ pub fn parse_aspect(c: &mut Cur) -> PRes<f32> {
 }
 
 pub fn parse_zindex(c: &mut Cur) -> PRes<i16> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
-        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => Ok(num_in(c, &t, *v, -1000.0, 1000.0, "a whole number")? as i16),
+        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => {
+            Ok(num_in(c, &t, *v, -1000.0, 1000.0, "a whole number")? as i16)
+        }
         _ => Err(c.bad(&t, "a whole number from -1000 to 1000")),
     }
 }
 
 fn px_in(c: &mut Cur, lo: f32, hi: f32) -> PRes<f32> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
-        T::Num(v, u) if u == "px" || (u.is_empty() && *v == 0.0) => num_in(c, &t, *v, lo, hi, "pixels"),
+        T::Num(v, u) if u == "px" || (u.is_empty() && *v == 0.0) => {
+            num_in(c, &t, *v, lo, hi, "pixels")
+        }
         _ => Err(c.bad(&t, "a pixel value such as 1px")),
     }
 }
@@ -428,17 +571,14 @@ pub fn parse_outline_width(c: &mut Cur) -> PRes<f32> {
     px_in(c, 0.0, 8.0)
 }
 pub fn parse_letter_spacing(c: &mut Cur) -> PRes<f32> {
-    if let Some(Tok { t: T::Ident(s), .. }) = c.peek() {
-        if s == "normal" {
-            c.i += 1;
-            return Ok(0.0);
-        }
+    if c.eat_word("normal") {
+        return Ok(0.0);
     }
     px_in(c, -2.0, 8.0)
 }
 
 pub fn parse_opacity(c: &mut Cur) -> PRes<f32> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Num(v, u) if u.is_empty() => num_in(c, &t, *v, 0.0, 1.0, "a number"),
         T::Num(v, u) if u == "%" => Ok(num_in(c, &t, *v, 0.0, 100.0, "a percentage")? / 100.0),
@@ -447,48 +587,79 @@ pub fn parse_opacity(c: &mut Cur) -> PRes<f32> {
 }
 
 pub fn parse_color(c: &mut Cur) -> PRes<ColorRef> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "transparent" => Ok(ColorRef::Transparent),
         T::Ident(s) => match Token::parse(s) {
             Some(tok) => Ok(ColorRef::Token(tok)),
             None => {
                 let help = match tk::suggest(s, Token::NAMES.iter().copied()) {
-                    Some(n) => format!("did you mean `{n}`? The tokens are {}.", list(&Token::NAMES)),
+                    Some(n) => format!(
+                        "did you mean `{n}`? The tokens are {}.",
+                        list(&Token::NAMES)
+                    ),
                     None => format!("the tokens are {}.", list(&Token::NAMES)),
                 };
-                Err(c.err(&t, L::UNKNOWN_TOKEN, format!("`{s}` is not a colour token."), Some(help)))
+                Err(c.err(
+                    &t,
+                    L::UNKNOWN_TOKEN,
+                    format!("`{s}` is not a colour token."),
+                    Some(help),
+                ))
             }
         },
         T::Hash(h) => Err(c.err(
             &t,
             L::HEX_LITERAL,
             format!("`{h}` is a hex colour; colours here are theme tokens."),
-            Some(format!("use a token such as `card` or `accent`; the tokens are {}", list(&Token::NAMES))),
+            Some(format!(
+                "use a token such as `card` or `accent`; the tokens are {}",
+                list(&Token::NAMES)
+            )),
         )),
         T::Func(f) if f == "alpha" => {
-            let tt = c.next()?;
+            let tt = c.take()?;
             let tok = match &tt.t {
                 T::Ident(s) => Token::parse(s).ok_or_else(|| {
-                    c.err(&tt, L::UNKNOWN_TOKEN, format!("`{s}` is not a colour token."), Some(format!("the tokens are {}.", list(&Token::NAMES))))
+                    c.err(
+                        &tt,
+                        L::UNKNOWN_TOKEN,
+                        format!("`{s}` is not a colour token."),
+                        Some(format!("the tokens are {}.", list(&Token::NAMES))),
+                    )
                 })?,
                 _ => return Err(c.bad(&tt, "a token name first, as in alpha(accent, 20%)")),
             };
             if !c.eat_comma() {
                 return Err(c.bad(&tt, "alpha(token, 20%)"));
             }
-            let at = c.next()?;
+            let at = c.take()?;
             let a = match &at.t {
                 T::Num(v, u) if u == "%" => num_in(c, &at, *v, 0.0, 100.0, "a percentage")?,
                 _ => return Err(c.bad(&at, "a percentage such as 20%")),
             };
-            let close = c.next()?;
+            let close = c.take()?;
             if close.t != T::RParen {
                 return Err(c.bad(&close, "a closing parenthesis"));
             }
             Ok(ColorRef::Alpha(tok, a.round() as u8))
         }
-        T::Func(f) if matches!(f.as_str(), "rgb" | "rgba" | "hsl" | "hsla" | "hwb" | "lab" | "lch" | "oklab" | "oklch" | "color" | "color-mix") => {
+        T::Func(f)
+            if matches!(
+                f.as_str(),
+                "rgb"
+                    | "rgba"
+                    | "hsl"
+                    | "hsla"
+                    | "hwb"
+                    | "lab"
+                    | "lch"
+                    | "oklab"
+                    | "oklch"
+                    | "color"
+                    | "color-mix"
+            ) =>
+        {
             Err(c.err(
                 &t,
                 L::COLOR_FUNCTION,
@@ -501,20 +672,17 @@ pub fn parse_color(c: &mut Cur) -> PRes<ColorRef> {
 }
 
 pub fn parse_paint(c: &mut Cur) -> PRes<Paint> {
-    if let Some(Tok { t: T::Ident(s), .. }) = c.peek() {
-        if s == "none" {
-            c.i += 1;
-            return Ok(Paint::None);
-        }
+    if c.eat_word("none") {
+        return Ok(Paint::None);
     }
-    if let Some(Tok { t: T::Func(f), .. }) = c.peek() {
-        if f == "linear-gradient" {
+    if matches!(c.peek().map(|t| &t.t), Some(T::Func(f)) if f == "linear-gradient") {
+        {
             c.i += 1;
-            let at = c.next()?;
+            let at = c.take()?;
             let angle = match &at.t {
                 T::Num(v, u) if u == "deg" => num_in(c, &at, *v, -360.0, 360.0, "degrees")? as i16,
                 T::Ident(s) if s == "to" => {
-                    let d = c.next()?;
+                    let d = c.take()?;
                     let name = match &d.t {
                         T::Ident(n) => n.clone(),
                         _ => return Err(c.bad(&d, "to top, to bottom, to left or to right")),
@@ -524,7 +692,14 @@ pub fn parse_paint(c: &mut Cur) -> PRes<Paint> {
                         "right" => 90,
                         "bottom" => 180,
                         "left" => 270,
-                        _ => return Err(c.err(&d, L::BAD_VALUE, format!("`to {name}` is not a direction."), Some("use top, bottom, left or right".into()))),
+                        _ => {
+                            return Err(c.err(
+                                &d,
+                                L::BAD_VALUE,
+                                format!("`to {name}` is not a direction."),
+                                Some("use top, bottom, left or right".into()),
+                            ));
+                        }
                     }
                 }
                 _ => return Err(c.bad(&at, "an angle such as 180deg or `to bottom` first")),
@@ -534,15 +709,25 @@ pub fn parse_paint(c: &mut Cur) -> PRes<Paint> {
             while c.eat_comma() {
                 if n == 3 {
                     let t = c.peek().cloned().unwrap_or(at.clone());
-                    return Err(c.err(&t, L::BAD_VALUE, "A gradient has two or three stops.".into(), None));
+                    return Err(c.err(
+                        &t,
+                        L::BAD_VALUE,
+                        "A gradient has two or three stops.".into(),
+                        None,
+                    ));
                 }
                 stops[n as usize] = parse_color(c)?;
                 n += 1;
             }
             if n < 2 {
-                return Err(c.err(&at, L::BAD_VALUE, "A gradient has two or three stops.".into(), Some("add a colour after the angle".into())));
+                return Err(c.err(
+                    &at,
+                    L::BAD_VALUE,
+                    "A gradient has two or three stops.".into(),
+                    Some("add a colour after the angle".into()),
+                ));
             }
-            let close = c.next()?;
+            let close = c.take()?;
             if close.t != T::RParen {
                 return Err(c.bad(&close, "a closing parenthesis"));
             }
@@ -557,18 +742,33 @@ pub fn parse_shadow(c: &mut Cur) -> PRes<[Shadow; 2]> {
     let mut n = 0;
     let first = c.peek().cloned();
     loop {
-        let t = c.next()?;
+        let t = c.take()?;
         let tok = match &t.t {
             T::Ident(s) => ShadowTok::parse(s).ok_or_else(|| {
-                c.err(&t, L::UNKNOWN_NAME, format!("`{s}` is not a shadow."), Some("the shadows are `none`, `sm`, `md` and `lg`.".into()))
+                c.err(
+                    &t,
+                    L::UNKNOWN_NAME,
+                    format!("`{s}` is not a shadow."),
+                    Some("the shadows are `none`, `sm`, `md` and `lg`.".into()),
+                )
             })?,
             _ => return Err(c.bad(&t, "none, sm, md or lg")),
         };
         for l in tok.layers() {
             if n == 2 {
-                return Err(c.err(&t, L::BAD_VALUE, "`box-shadow` holds two layers at most (`lg` is two).".into(), Some("use fewer or smaller shadows".into())));
+                return Err(c.err(
+                    &t,
+                    L::BAD_VALUE,
+                    "`box-shadow` holds two layers at most (`lg` is two).".into(),
+                    Some("use fewer or smaller shadows".into()),
+                ));
             }
-            out[n] = Shadow { dx: 0.0, dy: l.dy, blur: l.blur, color: ColorRef::Shade(l.alpha) };
+            out[n] = Shadow {
+                dx: 0.0,
+                dy: l.dy,
+                blur: l.blur,
+                color: ColorRef::Shade(l.alpha),
+            };
             n += 1;
         }
         if !c.eat_comma() {
@@ -581,11 +781,8 @@ pub fn parse_shadow(c: &mut Cur) -> PRes<[Shadow; 2]> {
 
 pub fn parse_transform(c: &mut Cur) -> PRes<Transform> {
     let mut tr = Transform::default();
-    if let Some(Tok { t: T::Ident(s), .. }) = c.peek() {
-        if s == "none" {
-            c.i += 1;
-            return Ok(tr);
-        }
+    if c.eat_word("none") {
+        return Ok(tr);
     }
     let mut any = false;
     while let Some(Tok { t: T::Func(f), .. }) = c.peek().cloned() {
@@ -594,10 +791,14 @@ pub fn parse_transform(c: &mut Cur) -> PRes<Transform> {
         match f.as_str() {
             "translate" => {
                 tr.tx = px_in(c, -10000.0, 10000.0)?;
-                tr.ty = if c.eat_comma() { px_in(c, -10000.0, 10000.0)? } else { 0.0 };
+                tr.ty = if c.eat_comma() {
+                    px_in(c, -10000.0, 10000.0)?
+                } else {
+                    0.0
+                };
             }
             "scale" => {
-                let t = c.next()?;
+                let t = c.take()?;
                 match &t.t {
                     T::Num(v, u) if u.is_empty() => {
                         tr.sx = num_in(c, &t, *v, 0.0, 10.0, "a number")?;
@@ -606,39 +807,48 @@ pub fn parse_transform(c: &mut Cur) -> PRes<Transform> {
                     _ => return Err(c.bad(&t, "scale(1.05)")),
                 }
                 if c.eat_comma() {
-                    let t2 = c.next()?;
+                    let t2 = c.take()?;
                     match &t2.t {
-                        T::Num(v, u) if u.is_empty() => tr.sy = num_in(c, &t2, *v, 0.0, 10.0, "a number")?,
+                        T::Num(v, u) if u.is_empty() => {
+                            tr.sy = num_in(c, &t2, *v, 0.0, 10.0, "a number")?
+                        }
                         _ => return Err(c.bad(&t2, "scale(1.05, 1)")),
                     }
                 }
             }
             "rotate" => {
-                let t = c.next()?;
+                let t = c.take()?;
                 match &t.t {
-                    T::Num(v, u) if u == "deg" => tr.rotate = num_in(c, &t, *v, -3600.0, 3600.0, "degrees")?,
+                    T::Num(v, u) if u == "deg" => {
+                        tr.rotate = num_in(c, &t, *v, -3600.0, 3600.0, "degrees")?
+                    }
                     _ => return Err(c.bad(&t, "rotate(10deg)")),
                 }
             }
             other => {
                 let t = c.toks[c.i - 1].clone();
-                return Err(c.err(&t, L::UNSUPPORTED, format!("`{other}()` is not a transform in 1.0."), Some("use translate, scale or rotate".into())));
+                return Err(c.err(
+                    &t,
+                    L::UNSUPPORTED,
+                    format!("`{other}()` is not a transform in 1.0."),
+                    Some("use translate, scale or rotate".into()),
+                ));
             }
         }
-        let close = c.next()?;
+        let close = c.take()?;
         if close.t != T::RParen {
             return Err(c.bad(&close, "a closing parenthesis"));
         }
     }
     if !any {
-        let t = c.next()?;
+        let t = c.take()?;
         return Err(c.bad(&t, "none or translate(0px, 4px) scale(1.05) rotate(10deg)"));
     }
     Ok(tr)
 }
 
 pub fn parse_font_size(c: &mut Cur) -> PRes<f32> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) => match tk::role(s) {
             Some(r) => Ok(r.size),
@@ -648,7 +858,12 @@ pub fn parse_font_size(c: &mut Cur) -> PRes<f32> {
                     Some(n) => format!("did you mean `{n}`? The roles are {}.", list(&names)),
                     None => format!("the roles are {}.", list(&names)),
                 };
-                Err(c.err(&t, L::UNKNOWN_NAME, format!("`{s}` is not a type role."), Some(help)))
+                Err(c.err(
+                    &t,
+                    L::UNKNOWN_NAME,
+                    format!("`{s}` is not a type role."),
+                    Some(help),
+                ))
             }
         },
         T::Num(v, u) if u == "px" => {
@@ -656,7 +871,10 @@ pub fn parse_font_size(c: &mut Cur) -> PRes<f32> {
                 return Err(c.err(
                     &t,
                     L::FONT_TOO_SMALL,
-                    format!("{v}px is below the smallest font size, {}px.", tk::MIN_FONT_PX),
+                    format!(
+                        "{v}px is below the smallest font size, {}px.",
+                        tk::MIN_FONT_PX
+                    ),
                     Some("use `secondary` or `caption` (11px) or larger".into()),
                 ));
             }
@@ -667,7 +885,7 @@ pub fn parse_font_size(c: &mut Cur) -> PRes<f32> {
 }
 
 pub fn parse_weight(c: &mut Cur) -> PRes<u16> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "normal" => Ok(400),
         T::Ident(s) if s == "bold" => Ok(700),
@@ -675,7 +893,12 @@ pub fn parse_weight(c: &mut Cur) -> PRes<u16> {
             if matches!(*v as i32, 400 | 500 | 600 | 700) && v.fract() == 0.0 {
                 Ok(*v as u16)
             } else {
-                Err(c.err(&t, L::BAD_WEIGHT, format!("{v} is not a font weight here."), Some("the weights are 400, 500, 600 and 700".into())))
+                Err(c.err(
+                    &t,
+                    L::BAD_WEIGHT,
+                    format!("{v} is not a font weight here."),
+                    Some("the weights are 400, 500, 600 and 700".into()),
+                ))
             }
         }
         _ => Err(c.bad(&t, "400, 500, 600 or 700")),
@@ -683,7 +906,7 @@ pub fn parse_weight(c: &mut Cur) -> PRes<u16> {
 }
 
 pub fn parse_line_height(c: &mut Cur) -> PRes<f32> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "normal" => Ok(0.0),
         T::Num(v, u) if u.is_empty() => num_in(c, &t, *v, 0.8, 3.0, "a multiple"),
@@ -692,16 +915,18 @@ pub fn parse_line_height(c: &mut Cur) -> PRes<f32> {
 }
 
 pub fn parse_max_lines(c: &mut Cur) -> PRes<u16> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "none" => Ok(0),
-        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => Ok(num_in(c, &t, *v, 1.0, 1000.0, "a whole number")? as u16),
+        T::Num(v, u) if u.is_empty() && v.fract() == 0.0 => {
+            Ok(num_in(c, &t, *v, 1.0, 1000.0, "a whole number")? as u16)
+        }
         _ => Err(c.bad(&t, "none or a whole number")),
     }
 }
 
 pub fn parse_feature(c: &mut Cur) -> PRes<u8> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) if s == "none" => Ok(0),
         T::Ident(s) if s == "tnum" => Ok(FEATURE_TNUM),
@@ -711,7 +936,7 @@ pub fn parse_feature(c: &mut Cur) -> PRes<u8> {
 
 /// Duration: `fast`, `normal`, `slow` or `N ms`; over 500 ms is WK-004.
 pub fn parse_duration(c: &mut Cur) -> PRes<u16> {
-    let t = c.next()?;
+    let t = c.take()?;
     match &t.t {
         T::Ident(s) => tk::motion_ms(s).ok_or_else(|| {
             let names: Vec<&str> = tk::MOTION.iter().map(|m| m.name).collect();
@@ -719,7 +944,12 @@ pub fn parse_duration(c: &mut Cur) -> PRes<u16> {
                 Some(n) => format!("did you mean `{n}`?"),
                 None => format!("the durations are {}.", list(&names)),
             };
-            c.err(&t, L::UNKNOWN_NAME, format!("`{s}` is not a duration."), Some(help))
+            c.err(
+                &t,
+                L::UNKNOWN_NAME,
+                format!("`{s}` is not a duration."),
+                Some(help),
+            )
         }),
         T::Num(v, u) if u == "ms" || u == "s" => {
             let ms = if u == "s" { *v * 1000.0 } else { *v };
@@ -741,16 +971,18 @@ pub fn parse_duration(c: &mut Cur) -> PRes<u16> {
 /// optional duration, then an optional ease.
 pub fn parse_transition(c: &mut Cur) -> PRes<Transition> {
     use super::prop::PropId;
-    let mut tr = Transition { props: 0, ms: 250, ease: Ease::Standard };
-    let first = c.next()?;
-    if let T::Ident(s) = &first.t {
-        if s == "none" {
-            return Ok(Transition::default());
-        }
+    let mut tr = Transition {
+        props: 0,
+        ms: 250,
+        ease: Ease::Standard,
+    };
+    let first = c.take()?;
+    if matches!(&first.t, T::Ident(s) if s == "none") {
+        return Ok(Transition::default());
     }
     c.i -= 1;
     loop {
-        let t = c.next()?;
+        let t = c.take()?;
         let name = match &t.t {
             T::Ident(s) => s.clone(),
             _ => return Err(c.bad(&t, "property names, then a duration and an ease")),
@@ -763,7 +995,14 @@ pub fn parse_transition(c: &mut Cur) -> PRes<Transition> {
             }
         } else if let Some(p) = PropId::parse_name(&name) {
             if !p.info().anim {
-                return Err(c.err(&t, L::NOT_ANIMATABLE, format!("`{name}` does not animate."), Some("transitions run on colours, opacity, transform, radius and shadows".into())));
+                return Err(c.err(
+                    &t,
+                    L::NOT_ANIMATABLE,
+                    format!("`{name}` does not animate."),
+                    Some(
+                        "transitions run on colours, opacity, transform, radius and shadows".into(),
+                    ),
+                ));
             }
             tr.props |= 1u128 << (p as u8);
         } else if let Some(group) = group_props(&name) {
@@ -773,14 +1012,24 @@ pub fn parse_transition(c: &mut Cur) -> PRes<Transition> {
         } else {
             let help = tk::suggest(&name, PropId::ALL.iter().map(|p| p.name()))
                 .map(|n| format!("did you mean `{n}`?"));
-            return Err(c.err(&t, L::UNKNOWN_PROPERTY, format!("`{name}` is not a property."), help));
+            return Err(c.err(
+                &t,
+                L::UNKNOWN_PROPERTY,
+                format!("`{name}` is not a property."),
+                help,
+            ));
         }
         if !c.eat_comma() {
             break;
         }
     }
     if tr.props == 0 {
-        return Err(c.err(&first, L::BAD_VALUE, "A transition names at least one property.".into(), None));
+        return Err(c.err(
+            &first,
+            L::BAD_VALUE,
+            "A transition names at least one property.".into(),
+            None,
+        ));
     }
     if let Some(t) = c.peek().cloned() {
         if let T::Ident(s) = &t.t {
@@ -791,11 +1040,19 @@ pub fn parse_transition(c: &mut Cur) -> PRes<Transition> {
             tr.ms = parse_duration(c)?;
         }
     }
-    if let Some(t) = c.peek().cloned() {
-        if let T::Ident(s) = &t.t {
+    if let Some(t) = c.peek().cloned()
+        && let T::Ident(s) = &t.t
+    {
+        {
             tr.ease = Ease::parse(s).ok_or_else(|| {
-                let help = tk::suggest(s, Ease::KEYWORDS.iter().copied()).map(|n| format!("did you mean `{n}`?"));
-                c.err(&t, L::UNKNOWN_NAME, format!("`{s}` is not an ease."), help.or(Some(format!("the eases are {}.", list(Ease::KEYWORDS)))))
+                let help = tk::suggest(s, Ease::KEYWORDS.iter().copied())
+                    .map(|n| format!("did you mean `{n}`?"));
+                c.err(
+                    &t,
+                    L::UNKNOWN_NAME,
+                    format!("`{s}` is not an ease."),
+                    help.or(Some(format!("the eases are {}.", list(Ease::KEYWORDS)))),
+                )
             })?;
             c.i += 1;
         }

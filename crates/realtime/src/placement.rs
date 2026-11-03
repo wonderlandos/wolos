@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! New-window placement (macOS rule): a fresh toplevel fits the usable area (below the menu bar,
+//! New-window placement (the WolOS rule): a fresh toplevel fits the usable area (below the menu bar,
 //! above the dock, inside a margin), is centred, or cascaded from the previous window of the same
 //! app, and is never placed off screen. Positions are the client area; the title bar sits above it.
 
@@ -78,7 +78,7 @@ pub fn clamp(size: (i32, i32), area: Rect, bar: i32, at: (i32, i32)) -> (i32, i3
 }
 
 /// Client-area position for a new window of `size`. `prev`: client position of the previous
-/// window of the same app (cascade); otherwise centred, a little high like macOS.
+/// window of the same app (cascade); otherwise centred, a little above centre.
 pub fn place(size: (i32, i32), area: Rect, bar: i32, prev: Option<(i32, i32)>) -> (i32, i32) {
     let area = rect(area);
     let (ax, ay, aw, ah) = area;
@@ -100,7 +100,7 @@ pub fn place(size: (i32, i32), area: Rect, bar: i32, prev: Option<(i32, i32)>) -
     clamp(size, area, bar, (x, y + bar))
 }
 
-/// Client-area position of a dialog of `size` over its parent's client rect `parent` (macOS: a
+/// Client-area position of a dialog of `size` over its parent's client rect `parent` (a
 /// transient window opens centred on the window it belongs to), kept inside `area`.
 pub fn centre_on(size: (i32, i32), parent: Rect, area: Rect, bar: i32) -> (i32, i32) {
     let (px, py, pw, ph) = rect(parent);

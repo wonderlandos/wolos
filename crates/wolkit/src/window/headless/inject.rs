@@ -6,9 +6,13 @@
 //! so an app's controlled value can tell an echo from news.
 
 use super::super::route::{disabled, receiver};
-use super::super::{KeyInput, MOD_SHIFT, POINTER_DOWN, POINTER_LEAVE, POINTER_MOVE, POINTER_SCROLL, POINTER_UP, PointerInput, Sink, WindowCore, pipeline};
+use super::super::{
+    KeyInput, MOD_SHIFT, POINTER_DOWN, POINTER_LEAVE, POINTER_MOVE, POINTER_SCROLL, POINTER_UP,
+    PointerInput, Sink, WindowCore, pipeline,
+};
 use crate::error::{Error, Result};
 use crate::event::kind as ev;
+use crate::scene::ids::{Ix, to_u32};
 use crate::scene::prop::id;
 use crate::scene::{Idx, Kind, NIL, PropValue, SceneRead, SceneWrite, state};
 
@@ -35,7 +39,9 @@ pub fn hit_test(scene: &dyn SceneRead, x: f32, y: f32) -> Idx {
     fn skip(scene: &dyn SceneRead, c: Idx) -> bool {
         scene.prop(c, id::VISIBILITY).is_some_and(|v| v.w[0] == 1)
             || scene.prop(c, id::DISPLAY).is_some_and(|v| v.w[0] == 1)
-            || scene.prop(c, id::POINTER_EVENTS).is_some_and(|v| v.w[0] == 1)
+            || scene
+                .prop(c, id::POINTER_EVENTS)
+                .is_some_and(|v| v.w[0] == 1)
     }
     fn at(scene: &dyn SceneRead, n: Idx, x: f32, y: f32, depth: usize) -> Option<Idx> {
         if depth > crate::scene::MAX_DEPTH + 1 {
@@ -46,10 +52,10 @@ pub fn hit_test(scene: &dyn SceneRead, x: f32, y: f32) -> Idx {
         if !(clips && !inside) {
             let mut c = scene.last_child(n);
             while c != NIL {
-                if !skip(scene, c) {
-                    if let Some(h) = at(scene, c, x, y, depth + 1) {
-                        return Some(h);
-                    }
+                if !skip(scene, c)
+                    && let Some(h) = at(scene, c, x, y, depth + 1)
+                {
+                    return Some(h);
                 }
                 c = scene.prev_sibling(c);
             }
@@ -92,7 +98,8 @@ pub fn set_focus(w: &mut WindowCore, s: &mut Sink, to: Idx, visible: bool) {
     }
     w.scene.focus = to;
     if old != NIL {
-        w.scene.set_engine_state(old, state::FOCUS | state::FOCUS_VISIBLE, false);
+        w.scene
+            .set_engine_state(old, state::FOCUS | state::FOCUS_VISIBLE, false);
         if let Some(r) = receiver(&w.scene, old, ev::FOCUS) {
             s.emit(ev::FOCUS, w.scene.id(r).0, &0u32.to_le_bytes(), &[]);
         }
@@ -127,7 +134,8 @@ fn slider_value(w: &mut WindowCore, s: &mut Sink, node: Idx, x: f32) {
     if w.scene.prop(node, id::SLIDER_VALUE).map(|p| p.f32()) == Some(v) {
         return;
     }
-    w.scene.set_prop(node, id::SLIDER_VALUE, &PropValue::new(&[v.to_bits()]));
+    w.scene
+        .set_prop(node, id::SLIDER_VALUE, &PropValue::new(&[v.to_bits()]));
     if let Some(r) = receiver(&w.scene, node, ev::SLIDER) {
         s.emit(ev::SLIDER, w.scene.id(r).0, &v.to_le_bytes(), &[]);
     }
@@ -135,10 +143,18 @@ fn slider_value(w: &mut WindowCore, s: &mut Sink, node: Idx, x: f32) {
 
 fn toggle(w: &mut WindowCore, s: &mut Sink, node: Idx) {
     let on = w.scene.state(node) & state::CHECKED == 0;
-    w.scene.state[node as usize] ^= state::CHECKED;
-    w.scene.mark_dirty(node, crate::scene::dirty::STYLE | crate::scene::dirty::PAINT | crate::scene::dirty::A11Y);
+    w.scene.state[node.ix()] ^= state::CHECKED;
+    w.scene.mark_dirty(
+        node,
+        crate::scene::dirty::STYLE | crate::scene::dirty::PAINT | crate::scene::dirty::A11Y,
+    );
     if let Some(r) = receiver(&w.scene, node, ev::TOGGLE) {
-        s.emit(ev::TOGGLE, w.scene.id(r).0, &u32::from(on).to_le_bytes(), &[]);
+        s.emit(
+            ev::TOGGLE,
+            w.scene.id(r).0,
+            &u32::from(on).to_le_bytes(),
+            &[],
+        );
     }
 }
 
@@ -146,9 +162,8 @@ fn click(w: &mut WindowCore, s: &mut Sink, node: Idx, x: f32, y: f32, button: u3
     if disabled(&w.scene, node) {
         return;
     }
-    match w.scene.kind(node) {
-        Kind::Toggle => return toggle(w, s, node),
-        _ => {}
+    if w.scene.kind(node) == Kind::Toggle {
+        return toggle(w, s, node);
     }
     if let Some(r) = receiver(&w.scene, node, ev::CLICK) {
         let mut head = u32s([button, mods]);
@@ -166,7 +181,11 @@ pub fn pointer(w: &mut WindowCore, s: &mut Sink, p: PointerInput) -> Result<()> 
     if p.kind != POINTER_SCROLL {
         w.pointer = (p.x, p.y);
     }
-    let hit = if p.kind == POINTER_LEAVE { NIL } else { hit_test(&w.scene, p.x, p.y) };
+    let hit = if p.kind == POINTER_LEAVE {
+        NIL
+    } else {
+        hit_test(&w.scene, p.x, p.y)
+    };
     let (mut old, mut new) = (Vec::new(), Vec::new());
     match p.kind {
         POINTER_MOVE | POINTER_LEAVE | POINTER_DOWN | POINTER_UP => {
@@ -209,7 +228,10 @@ pub fn pointer(w: &mut WindowCore, s: &mut Sink, p: PointerInput) -> Result<()> 
             }
         }
         POINTER_MOVE => {
-            if w.pressed != NIL && w.scene.kind(w.pressed) == Kind::Slider && !disabled(&w.scene, w.pressed) {
+            if w.pressed != NIL
+                && w.scene.kind(w.pressed) == Kind::Slider
+                && !disabled(&w.scene, w.pressed)
+            {
                 let n = w.pressed;
                 slider_value(w, s, n, p.x);
             }
@@ -222,7 +244,9 @@ pub fn pointer(w: &mut WindowCore, s: &mut Sink, p: PointerInput) -> Result<()> 
             chain(&w.scene, pressed, &mut old);
             set_chain_state(&mut w.scene, &old, state::ACTIVE, false);
             // A click is press and release on the same part (or one inside the other).
-            let same = hit == pressed || w.scene.is_ancestor(pressed, hit) || w.scene.is_ancestor(hit, pressed);
+            let same = hit == pressed
+                || w.scene.is_ancestor(pressed, hit)
+                || w.scene.is_ancestor(hit, pressed);
             if same && hit != NIL && w.scene.kind(pressed) != Kind::Slider {
                 click(w, s, pressed, p.x, p.y, p.button, p.mods);
             }
@@ -234,9 +258,15 @@ pub fn pointer(w: &mut WindowCore, s: &mut Sink, p: PointerInput) -> Result<()> 
                 n = w.scene.parent(n);
             }
             if n != NIL {
-                let cur = w.scene.prop(n, id::SCROLL_OFFSET).map_or((0.0, 0.0), |v| (f32::from_bits(v.w[0]), f32::from_bits(v.w[1])));
+                let cur = w.scene.prop(n, id::SCROLL_OFFSET).map_or((0.0, 0.0), |v| {
+                    (f32::from_bits(v.w[0]), f32::from_bits(v.w[1]))
+                });
                 let next = ((cur.0 + p.x).max(0.0), (cur.1 + p.y).max(0.0));
-                w.scene.set_prop(n, id::SCROLL_OFFSET, &PropValue::new(&[next.0.to_bits(), next.1.to_bits()]));
+                w.scene.set_prop(
+                    n,
+                    id::SCROLL_OFFSET,
+                    &PropValue::new(&[next.0.to_bits(), next.1.to_bits()]),
+                );
                 if let Some(r) = receiver(&w.scene, n, ev::SCROLL) {
                     s.emit(ev::SCROLL, w.scene.id(r).0, &f32s(next.0, next.1), &[]);
                 }
@@ -252,7 +282,9 @@ fn next_focus(scene: &dyn SceneRead, from: Idx, backwards: bool) -> Idx {
     let mut order: Vec<(i32, Idx)> = Vec::new();
     crate::scene::walk(scene, 0, &mut |i, _| {
         if i != 0 && focusable(scene, i) {
-            let t = scene.prop(i, id::TAB_INDEX).map_or(0, |v| v.w[0] as i32);
+            let t = scene
+                .prop(i, id::TAB_INDEX)
+                .map_or(0, |v| v.w[0].cast_signed());
             if t >= 0 {
                 order.push((if t > 0 { t } else { i32::MAX }, i));
             }
@@ -276,9 +308,18 @@ fn next_focus(scene: &dyn SceneRead, from: Idx, backwards: bool) -> Idx {
 pub fn key(w: &mut WindowCore, s: &mut Sink, k: KeyInput) -> Result<()> {
     s.seq = w.scene.last_seq();
     pipeline::ensure_layout(w);
-    let target = if w.scene.focus() == NIL { 0 } else { w.scene.focus() };
+    let target = if w.scene.focus() == NIL {
+        0
+    } else {
+        w.scene.focus()
+    };
     if let Some(r) = receiver(&w.scene, target, ev::KEY) {
-        s.emit(ev::KEY, w.scene.id(r).0, &u32s([k.keysym, u32::from(k.pressed), k.mods, 0]), &[]);
+        s.emit(
+            ev::KEY,
+            w.scene.id(r).0,
+            &u32s([k.keysym, u32::from(k.pressed), k.mods, 0]),
+            &[],
+        );
     }
     if !k.pressed {
         return Ok(());
@@ -300,8 +341,13 @@ pub fn key(w: &mut WindowCore, s: &mut Sink, k: KeyInput) -> Result<()> {
         (Kind::TextInput, KEY_RETURN) => {
             if let Some(r) = receiver(&w.scene, f, ev::TEXT_SUBMIT) {
                 let text = w.scene.text(f).to_owned();
-                let n = text.len() as u32;
-                s.emit(ev::TEXT_SUBMIT, w.scene.id(r).0, &u32s([n, n, n]), text.as_bytes());
+                let n = to_u32(text.len());
+                s.emit(
+                    ev::TEXT_SUBMIT,
+                    w.scene.id(r).0,
+                    &u32s([n, n, n]),
+                    text.as_bytes(),
+                );
             }
         }
         (Kind::TextInput, KEY_BACKSPACE) => {
@@ -316,21 +362,31 @@ pub fn key(w: &mut WindowCore, s: &mut Sink, k: KeyInput) -> Result<()> {
 }
 
 fn edit(w: &mut WindowCore, s: &mut Sink, node: Idx, text: String) {
-    let mut cur = w.scene.text[node as usize];
+    let mut cur = w.scene.text[node.ix()];
     match w.scene.set_str(&mut cur, &text) {
         Some(true) => {
-            let old = w.scene.text[node as usize];
-            w.scene.text[node as usize] = cur;
+            let old = w.scene.text[node.ix()];
+            w.scene.text[node.ix()] = cur;
             w.scene.strings.release(old);
-            w.scene.mark_dirty(node, crate::scene::dirty::LAYOUT | crate::scene::dirty::PAINT | crate::scene::dirty::A11Y);
+            w.scene.mark_dirty(
+                node,
+                crate::scene::dirty::LAYOUT
+                    | crate::scene::dirty::PAINT
+                    | crate::scene::dirty::A11Y,
+            );
             w.scene.version += 1;
         }
         Some(false) => {}
         None => return,
     }
     if let Some(r) = receiver(&w.scene, node, ev::TEXT_CHANGED) {
-        let n = text.len() as u32;
-        s.emit(ev::TEXT_CHANGED, w.scene.id(r).0, &u32s([n, n, n]), text.as_bytes());
+        let n = to_u32(text.len());
+        s.emit(
+            ev::TEXT_CHANGED,
+            w.scene.id(r).0,
+            &u32s([n, n, n]),
+            text.as_bytes(),
+        );
     }
 }
 
@@ -346,9 +402,15 @@ pub fn text(w: &mut WindowCore, s: &mut Sink, t: &str) -> Result<()> {
     let t: String = t.chars().filter(|c| !c.is_control()).collect();
     let mut next = w.scene.text(f).to_owned();
     next.push_str(&t);
-    let max = w.scene.prop(f, id::MAX_LENGTH).map_or(0, |v| v.w[0] as i32);
+    let max = w
+        .scene
+        .prop(f, id::MAX_LENGTH)
+        .map_or(0, |v| v.w[0].cast_signed());
     if max > 0 {
-        next = next.chars().take(max as usize).collect();
+        next = next
+            .chars()
+            .take(usize::try_from(max).unwrap_or(0))
+            .collect();
     }
     if next.len() > crate::scene::patch::MAX_STRING {
         return Err(Error::limit("A text field holds at most 64 KiB."));
@@ -356,5 +418,3 @@ pub fn text(w: &mut WindowCore, s: &mut Sink, t: &str) -> Result<()> {
     edit(w, s, f, next);
     Ok(())
 }
-
-

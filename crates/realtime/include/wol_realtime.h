@@ -23,12 +23,20 @@ uint64_t wol_anim_duration_ms(uint32_t kind);
 /* -1 none, 0 close, 1 minimize, 2 zoom, 3 bar. */
 int32_t wol_titlebar_hit(int32_t width, int32_t x, int32_t y);
 int32_t wol_titlebar_height(void);
-/* Window buttons for a new window: 0 none, 1 close only, 3 all. decoration: 0 no xdg-decoration,
-   1 server side, 2 client side, 3 X11, 4 bare X11 (menu, tooltip). class may be NULL. */
+/* Left-aligned row (close leftmost): 0 close, 1 minimize, 2 zoom, -1 none; over: 1 over the group. */
 int32_t wol_lights_at(int32_t count, int32_t x, int32_t y);
 int32_t wol_lights_over(int32_t count, int32_t x, int32_t y);
+/* Right-aligned row in a bar `width` px wide (the WolOS default): slot 0 at the right edge holds
+   close, then zoom, minimise leftward; a window showing `count` buttons shows slots 0..count.
+   at_w: 0 close, 1 minimize, 2 zoom, -1 none. over_w: 1 over the group, gaps included.
+   slot_w: the button in a slot (same codes), -1 bad slot. wol_lights_at/over stay left-aligned. */
+int32_t wol_lights_at_w(int32_t width, int32_t count, int32_t x, int32_t y);
+int32_t wol_lights_over_w(int32_t width, int32_t count, int32_t x, int32_t y);
+int32_t wol_lights_slot_w(int32_t slot);
 uint32_t wol_lights_hover(uint32_t state, int32_t over, int32_t held);
 int32_t wol_lights_glyphs(uint32_t state);
+/* Window buttons for a new window: 0 none, 1 close only, 3 all. decoration: 0 no xdg-decoration,
+   1 server side, 2 client side, 3 X11, 4 bare X11 (menu, tooltip). class may be NULL. */
 int32_t wol_window_lights(const char *class_, int32_t decoration, int32_t transient, int32_t fixed_size);
 /* 0 ok, -1 bad button. */
 int32_t wol_titlebar_button_origin(int32_t button, int32_t *x, int32_t *y);

@@ -1,0 +1,31 @@
+/* The look of a plain app: cards, rows, a button, text roles. */
+.card {
+  background: card;
+  padding: md lg;
+  border-radius: m;
+  box-shadow: sm;
+  border: 1px line;
+}
+.card:hover { background: control; box-shadow: md; }
+.card:disabled { opacity: 50%; cursor: not-allowed; }
+@dark { .card { box-shadow: lg; } }
+@contrast { .card { border: 2px text; } }
+
+.row { gap: sm; align-items: center; padding: xs sm; }
+.row:hover > .actions { opacity: 1; }
+.actions { opacity: 0; transition: opacity fast ease; }
+
+.title { font-size: title; font-weight: 600; color: text; }
+.hint, .caption { font-size: caption; color: dim; }
+.pill { border-radius: full; padding: xs md; background: accent; color: accentText; }
+
+button {
+  cursor: pointer;
+  padding: sm md;
+  border-radius: s;
+  background: control;
+  transition: background, border-color normal ease;
+}
+button:hover { background: alpha(accent, 20%); }
+button:active { background: alpha(accent, 35%); transform: scale(0.98); }
+button:focus-visible { outline: 2px accent; }

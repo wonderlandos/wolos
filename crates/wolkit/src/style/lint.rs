@@ -100,8 +100,15 @@ impl Diag {
         );
         let gutter = self.line.to_string();
         let pad = " ".repeat(gutter.len());
-        s.push_str(&format!("{pad} |\n{gutter} | {}\n{pad} | ", self.source_line));
-        for ch in self.source_line.chars().take(self.col.saturating_sub(1) as usize) {
+        s.push_str(&format!(
+            "{pad} |\n{gutter} | {}\n{pad} | ",
+            self.source_line
+        ));
+        for ch in self
+            .source_line
+            .chars()
+            .take(self.col.saturating_sub(1) as usize)
+        {
             s.push(if ch == '\t' { '\t' } else { ' ' });
         }
         s.push_str(&"^".repeat(self.len.max(1) as usize));
@@ -122,6 +129,15 @@ pub struct Lines<'a> {
     starts: Vec<usize>,
 }
 
+/// The largest char boundary at or below `i` (a span end can fall inside a multi-byte character).
+fn boundary(s: &str, i: usize) -> usize {
+    let mut i = i.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 impl<'a> Lines<'a> {
     pub fn new(src: &'a str) -> Self {
         let mut starts = vec![0];
@@ -133,19 +149,22 @@ impl<'a> Lines<'a> {
         Lines { src, starts }
     }
     pub fn locate(&self, off: usize) -> (u32, u32, &'a str) {
-        let off = off.min(self.src.len());
+        let off = boundary(self.src, off);
         let li = match self.starts.binary_search(&off) {
             Ok(i) => i,
             Err(i) => i - 1,
         };
         let start = self.starts[li];
-        let end = self.src[start..].find('\n').map_or(self.src.len(), |n| start + n);
+        let end = self.src[start..]
+            .find('\n')
+            .map_or(self.src.len(), |n| start + n);
         let text = self.src[start..end].trim_end_matches('\r');
         let col = self.src[start..off.max(start)].chars().count() as u32 + 1;
         (li as u32 + 1, col, text)
     }
     pub fn span_chars(&self, from: usize, to: usize) -> u32 {
-        let to = to.min(self.src.len()).max(from);
+        let from = boundary(self.src, from);
+        let to = boundary(self.src, to).max(from);
         let (l1, _, _) = self.locate(from);
         let (l2, _, _) = self.locate(to);
         if l1 != l2 {

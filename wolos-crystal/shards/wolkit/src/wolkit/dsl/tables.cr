@@ -116,9 +116,9 @@ module Wolkit
     # properties; `events` the events it takes (DSL name => engine event and the payload accessor a one-argument proc gets);
     # `label` says a name for assistive technology is required.
     ELEMENTS = {
-      "box"         => {kind: "BOX", a11y: "NONE", dir: -1, pos: "none", props: %w(), events: {"on_hover" => {ev: "POINTER_ENTER", arg: nil}}, label: false},
-      "column"      => {kind: "BOX", a11y: "NONE", dir: 1, pos: "none", props: %w(), events: {"on_hover" => {ev: "POINTER_ENTER", arg: nil}}, label: false},
-      "row"         => {kind: "BOX", a11y: "NONE", dir: 0, pos: "none", props: %w(), events: {"on_hover" => {ev: "POINTER_ENTER", arg: nil}}, label: false},
+      "box"         => {kind: "BOX", a11y: "NONE", dir: -1, pos: "none", props: %w(), events: {"on_click" => {ev: "CLICK", arg: nil}, "on_hover" => {ev: "POINTER_ENTER", arg: nil}}, label: false},
+      "column"      => {kind: "BOX", a11y: "NONE", dir: 1, pos: "none", props: %w(), events: {"on_click" => {ev: "CLICK", arg: nil}, "on_hover" => {ev: "POINTER_ENTER", arg: nil}}, label: false},
+      "row"         => {kind: "BOX", a11y: "NONE", dir: 0, pos: "none", props: %w(), events: {"on_click" => {ev: "CLICK", arg: nil}, "on_hover" => {ev: "POINTER_ENTER", arg: nil}}, label: false},
       "scroll"      => {kind: "SCROLL", a11y: "SCROLLVIEW", dir: 1, pos: "none", props: %w(), events: {"on_scroll" => {ev: "SCROLL", arg: "scroll"}}, label: false},
       "spacer"      => {kind: "SPACER", a11y: "NONE", dir: -1, pos: "none", props: %w(), events: {"" => nil}, label: false},
       "divider"     => {kind: "DIVIDER", a11y: "SEPARATOR", dir: -1, pos: "none", props: %w(), events: {"" => nil}, label: false},

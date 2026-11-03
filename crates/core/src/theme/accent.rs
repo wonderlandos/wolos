@@ -99,13 +99,13 @@ pub fn color(variant: Variant, accent: &str) -> Option<&'static str> {
         .map(|a| if variant == Variant::Light { a.2 } else { a.3 })
 }
 
-/// White when it passes the accent contrast rule, else near-black.
+/// White when it passes the accent contrast rule, else the light theme's ink (tokens light.text).
 pub fn text_on(accent_hex: &str) -> &'static str {
     let a = Color::parse(accent_hex).unwrap_or(Color::WHITE);
     if Color::contrast(Color::WHITE, a) >= ACCENT_CONTRAST {
         "#ffffff"
     } else {
-        "#1d1d1f"
+        "#181521"
     }
 }
 
@@ -187,7 +187,7 @@ mod tests {
                 assert_eq!(t.tokens["accent"], color(v, a).unwrap(), "{id}");
             }
         }
-        assert_eq!(text_on("#ffc94a"), "#1d1d1f");
+        assert_eq!(text_on("#ffc94a"), "#181521");
         assert_eq!(text_on("#1d64b0"), "#ffffff");
     }
 

@@ -17,6 +17,19 @@ pub enum Status {
 }
 
 impl Status {
+    /// The `wolkit_status` value.
+    pub const fn code(self) -> i32 {
+        match self {
+            Status::Ok => 0,
+            Status::InvalidArgument => 1,
+            Status::PermissionDenied => 2,
+            Status::Unavailable => 3,
+            Status::Internal => 4,
+            Status::Limit => 5,
+            Status::DeviceLost => 6,
+        }
+    }
+
     pub const ALL: &'static [(&'static str, Status)] = &[
         ("OK", Status::Ok),
         ("ERR_INVALID_ARGUMENT", Status::InvalidArgument),

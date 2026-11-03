@@ -6,9 +6,6 @@
 //!
 //! Files: `error` (the error object), `engine`, `window`, `style`, `image`, `canvas` and `surface`
 //! (stubs W5 fills), `diag`.
-#![allow(non_camel_case_types)]
-// The C boundary takes a pointer and a length per buffer.
-#![allow(clippy::too_many_arguments)]
 
 pub mod canvas;
 pub mod diag;
@@ -25,18 +22,26 @@ use std::ffi::c_char;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
+#[allow(non_camel_case_types)] // the C name
 pub type wolkit_status = i32;
 pub use error::wolkit_error;
 
 /// Run an export body: panics become `Internal`, errors fill `*error` when it is given.
-pub(crate) fn guard(error: *mut *mut wolkit_error, f: impl FnOnce() -> Result<()>) -> wolkit_status {
-    let r = catch_unwind(AssertUnwindSafe(f))
-        .unwrap_or_else(|_| Err(Error::new(Status::Internal, "libwolkit hit an internal error.")));
+pub(crate) fn guard(
+    error: *mut *mut wolkit_error,
+    f: impl FnOnce() -> Result<()>,
+) -> wolkit_status {
+    let r = catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        Err(Error::new(
+            Status::Internal,
+            "libwolkit hit an internal error.",
+        ))
+    });
     match r {
-        Ok(()) => Status::Ok as wolkit_status,
+        Ok(()) => Status::Ok.code(),
         Err(e) => {
             error::fill(error, &e);
-            e.status as wolkit_status
+            e.status.code()
         }
     }
 }
@@ -56,7 +61,12 @@ pub(crate) fn quiet<T>(fallback: T, f: impl FnOnce() -> T) -> T {
 ///
 /// # Safety
 /// `ptr` has `len` readable bytes (header contract).
-pub(crate) unsafe fn bytes_in<'a>(ptr: *const u8, len: usize, max: usize, what: &str) -> Result<&'a [u8]> {
+pub(crate) unsafe fn bytes_in<'a>(
+    ptr: *const u8,
+    len: usize,
+    max: usize,
+    what: &str,
+) -> Result<&'a [u8]> {
     if len > max {
         return Err(Error::limit(format!("{what} is longer than {max} bytes.")));
     }
@@ -75,7 +85,12 @@ pub(crate) unsafe fn bytes_in<'a>(ptr: *const u8, len: usize, max: usize, what: 
 ///
 /// # Safety
 /// As [`bytes_in`].
-pub(crate) unsafe fn text_in<'a>(ptr: *const c_char, len: usize, max: usize, what: &str) -> Result<&'a str> {
+pub(crate) unsafe fn text_in<'a>(
+    ptr: *const c_char,
+    len: usize,
+    max: usize,
+    what: &str,
+) -> Result<&'a str> {
     // SAFETY: forwarded contract.
     let b = unsafe { bytes_in(ptr.cast(), len, max, what) }?;
     std::str::from_utf8(b).map_err(|_| Error::invalid(format!("{what} is not UTF-8.")))
@@ -91,7 +106,9 @@ pub(crate) unsafe fn bytes_out<'a>(ptr: *mut u8, cap: usize, what: &str) -> Resu
         return if cap == 0 {
             Ok(&mut [])
         } else {
-            Err(Error::invalid(format!("{what} is NULL but has a capacity.")))
+            Err(Error::invalid(format!(
+                "{what} is NULL but has a capacity."
+            )))
         };
     }
     // SAFETY: the caller guarantees `cap` writable bytes at `ptr` (header contract).
@@ -119,12 +136,22 @@ pub(crate) fn need<T>(out: *mut T, what: &str) -> Result<()> {
 ///
 /// # Safety
 /// As [`bytes_out`]; `needed` is NULL or writable.
-pub(crate) unsafe fn give(buf: *mut u8, cap: usize, needed: *mut usize, data: &[u8], what: &str) -> Result<()> {
+pub(crate) unsafe fn give(
+    buf: *mut u8,
+    cap: usize,
+    needed: *mut usize,
+    data: &[u8],
+    what: &str,
+) -> Result<()> {
     put(needed, data.len());
     // SAFETY: forwarded contract.
     let out = unsafe { bytes_out(buf, cap, what) }?;
     if data.len() > out.len() {
-        return Err(Error::limit(format!("{what} needs {} bytes; the buffer has {}.", data.len(), out.len())));
+        return Err(Error::limit(format!(
+            "{what} needs {} bytes; the buffer has {}.",
+            data.len(),
+            out.len()
+        )));
     }
     out[..data.len()].copy_from_slice(data);
     Ok(())
@@ -163,5 +190,6 @@ pub(crate) unsafe fn borrow<'a, T: handle::Tagged>(p: *const T) -> Result<&'a T>
         return Err(Error::invalid("A handle is NULL."));
     }
     // SAFETY: a libwolkit handle per the contract; its tag is checked before use.
-    unsafe { handle::live(p) }.ok_or_else(|| Error::invalid("A handle is not a live object of the expected type."))
+    unsafe { handle::live(p) }
+        .ok_or_else(|| Error::invalid("A handle is not a live object of the expected type."))
 }

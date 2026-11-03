@@ -8,14 +8,42 @@ use super::value::*;
 use std::collections::HashMap;
 
 /// Interaction states, one bit each (`StateMask`).
-pub const STATES: [&str; 9] =
-    ["hover", "active", "focus", "focus-visible", "disabled", "selected", "checked", "expanded", "empty"];
+pub const STATES: [&str; 9] = [
+    "hover",
+    "active",
+    "focus",
+    "focus-visible",
+    "disabled",
+    "selected",
+    "checked",
+    "expanded",
+    "empty",
+];
 /// Media conditions, one bit each (`MediaMask`).
-pub const MEDIA: [&str; 6] = ["dark", "light", "contrast", "reduce-motion", "reduce-transparency", "compact"];
+pub const MEDIA: [&str; 6] = [
+    "dark",
+    "light",
+    "contrast",
+    "reduce-motion",
+    "reduce-transparency",
+    "compact",
+];
 /// Node kinds a rule can name (`button { ... }`), in id order.
 pub const KINDS: [&str; 14] = [
-    "box", "text", "image", "spacer", "divider", "button", "toggle", "slider", "text-input", "scroll", "vlist",
-    "canvas", "surface", "overlay",
+    "box",
+    "text",
+    "image",
+    "spacer",
+    "divider",
+    "button",
+    "toggle",
+    "slider",
+    "text-input",
+    "scroll",
+    "vlist",
+    "canvas",
+    "surface",
+    "overlay",
 ];
 
 pub const MEDIA_DARK: u8 = 1;
@@ -38,6 +66,8 @@ pub const MAX_CLASSES: usize = 4096;
 pub const MAX_VARIANTS: usize = 8;
 pub const MAX_TABLE_BYTES: usize = 4 << 20;
 pub const MAX_CLASS_NAME: usize = 64;
+/// Classes a node can carry (`SET_STYLE`).
+pub const MAX_NODE_CLASSES: usize = 8;
 
 /// `.parent:state > .child`: the variant applies when the parent has the class and the state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -95,7 +125,13 @@ pub struct StyleTable {
 impl Default for StyleTable {
     fn default() -> Self {
         StyleTable {
-            kinds: KINDS.iter().map(|k| ClassDef { name: k.to_string(), variants: vec![] }).collect(),
+            kinds: KINDS
+                .iter()
+                .map(|k| ClassDef {
+                    name: k.to_string(),
+                    variants: vec![],
+                })
+                .collect(),
             classes: vec![],
         }
     }
@@ -103,7 +139,10 @@ impl Default for StyleTable {
 
 impl StyleTable {
     pub fn class_id(&self, name: &str) -> Option<u32> {
-        self.classes.iter().position(|c| c.name == name).map(|i| i as u32)
+        self.classes
+            .iter()
+            .position(|c| c.name == name)
+            .map(|i| i as u32)
     }
 }
 
@@ -120,7 +159,11 @@ pub struct StyleStore {
 
 impl Default for StyleStore {
     fn default() -> Self {
-        let mut s = StyleStore { styles: vec![], index: HashMap::new(), scratch: vec![] };
+        let mut s = StyleStore {
+            styles: vec![],
+            index: HashMap::new(),
+            scratch: vec![],
+        };
         s.intern(&Props::default());
         s
     }
@@ -179,20 +222,25 @@ pub struct Input<'a> {
 
 impl Default for Input<'_> {
     fn default() -> Self {
-        Input { kind: 0, classes: &[], state: 0, media: 0, parent: None, parent_classes: &[], parent_state: 0, inline: None, text_scale: 1.0 }
+        Input {
+            kind: 0,
+            classes: &[],
+            state: 0,
+            media: 0,
+            parent: None,
+            parent_classes: &[],
+            parent_state: 0,
+            inline: None,
+            text_scale: 1.0,
+        }
     }
 }
 
 /// The set of properties that differ between two styles.
 pub fn diff(a: &Props, b: &Props) -> u128 {
-    let (mut wa, mut wb) = (Wr::default(), Wr::default());
     let mut m = 0u128;
     for id in PropId::ALL {
-        wa.0.clear();
-        wb.0.clear();
-        put_prop(*id, a, &mut wa);
-        put_prop(*id, b, &mut wb);
-        if wa.0 != wb.0 {
+        if !eq_prop(*id, a, b) {
             m |= id.bit();
         }
     }
@@ -204,17 +252,12 @@ pub fn needs_layout(changed: u128) -> bool {
     changed & layout_mask() != 0
 }
 
+#[derive(Default)]
 pub struct Resolver {
     memo: HashMap<Box<[u32]>, StyleId>,
     key: Vec<u32>,
     pub hits: u64,
     pub misses: u64,
-}
-
-impl Default for Resolver {
-    fn default() -> Self {
-        Resolver { memo: HashMap::new(), key: Vec::new(), hits: 0, misses: 0 }
-    }
 }
 
 impl Resolver {
@@ -224,12 +267,19 @@ impl Resolver {
     }
 
     pub fn resolve(&mut self, table: &StyleTable, store: &mut StyleStore, inp: &Input) -> StyleId {
-        let parent_rules = inp.classes.iter().any(|c| table.classes.get(*c as usize).is_some_and(|d| d.has_parent_rules()));
+        let parent_rules = inp.classes.iter().any(|c| {
+            table
+                .classes
+                .get(*c as usize)
+                .is_some_and(|d| d.has_parent_rules())
+        });
         if inp.inline.is_none() {
             self.key.clear();
             self.key.push(u32::from(inp.kind));
             self.key.push(inp.parent.map_or(0, |p| p.0 + 1));
-            self.key.push(u32::from(inp.state) | (u32::from(inp.media) << 16));
+            self.key
+                .push(u32::from(inp.state) | (u32::from(inp.media) << 16));
+            self.key.push(inp.text_scale.to_bits());
             self.key.push(inp.classes.len() as u32);
             self.key.extend_from_slice(inp.classes);
             if parent_rules {
@@ -265,7 +315,13 @@ fn matches(v: &Variant, inp: &Input) -> bool {
 pub fn builtin_kinds() -> &'static [ClassDef] {
     static B: std::sync::OnceLock<Vec<ClassDef>> = std::sync::OnceLock::new();
     B.get_or_init(|| {
-        let mut v: Vec<ClassDef> = KINDS.iter().map(|k| ClassDef { name: (*k).to_string(), variants: vec![] }).collect();
+        let mut v: Vec<ClassDef> = KINDS
+            .iter()
+            .map(|k| ClassDef {
+                name: (*k).to_string(),
+                variants: vec![],
+            })
+            .collect();
         let mut set = |kind: &str, f: &dyn Fn(&mut Props), ids: &[PropId]| {
             let mut d = Decls::default();
             f(&mut d.p);
@@ -273,15 +329,24 @@ pub fn builtin_kinds() -> &'static [ClassDef] {
                 d.mask |= id.bit();
             }
             if let Some(k) = kind_id(kind) {
-                v[k as usize].variants.push(Variant { state: 0, media: 0, parent: None, decls: d });
+                v[k as usize].variants.push(Variant {
+                    state: 0,
+                    media: 0,
+                    parent: None,
+                    decls: d,
+                });
             }
         };
         set("spacer", &|p| p.layout.grow = 1.0, &[PropId::Grow]);
         for k in ["scroll", "vlist"] {
-            set(k, &|p| {
-                p.layout.overflow = Overflow::Auto;
-                p.layout.direction = Direction::Column;
-            }, &[PropId::Overflow, PropId::Direction]);
+            set(
+                k,
+                &|p| {
+                    p.layout.overflow = Overflow::Auto;
+                    p.layout.direction = Direction::Column;
+                },
+                &[PropId::Overflow, PropId::Direction],
+            );
         }
         v
     })
@@ -304,26 +369,37 @@ pub fn cascade(table: &StyleTable, store: &StyleStore, inp: &Input) -> Props {
             copy_prop(id, &mut p, pp);
         }
     }
-    let mut layers: Vec<&ClassDef> = Vec::with_capacity(inp.classes.len() + 2);
+    // Kind rules, then up to eight classes: a fixed array, so a restyle allocates nothing.
+    let empty = ClassDef::default();
+    let mut layers: [&ClassDef; 2 + MAX_NODE_CLASSES] = [&empty; 2 + MAX_NODE_CLASSES];
+    let mut n = 0;
     if let Some(k) = builtin_kinds().get(inp.kind as usize) {
-        layers.push(k);
+        layers[n] = k;
+        n += 1;
     }
     if let Some(k) = table.kinds.get(inp.kind as usize) {
-        layers.push(k);
+        layers[n] = k;
+        n += 1;
     }
-    for c in inp.classes {
+    for c in inp.classes.iter().take(MAX_NODE_CLASSES) {
         if let Some(d) = table.classes.get(*c as usize) {
-            layers.push(d);
+            layers[n] = d;
+            n += 1;
         }
     }
+    let layers = &layers[..n];
     // Base blocks of the kind and every class first, then the conditional variants.
-    for l in &layers {
+    for l in layers {
         for v in l.variants.iter().filter(|v| v.is_base()) {
             apply(&mut p, &v.decls, inp.text_scale);
         }
     }
-    for l in &layers {
-        for v in l.variants.iter().filter(|v| !v.is_base() && matches(v, inp)) {
+    for l in layers {
+        for v in l
+            .variants
+            .iter()
+            .filter(|v| !v.is_base() && matches(v, inp))
+        {
             apply(&mut p, &v.decls, inp.text_scale);
         }
     }

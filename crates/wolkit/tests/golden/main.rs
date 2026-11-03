@@ -12,8 +12,8 @@ mod text_support;
 
 use std::path::PathBuf;
 
-use scenes::{Ctx, Scene, BG};
-use wolkit::cpu::raster::{render, Image, RasterOptions};
+use scenes::{BG, Ctx, Scene};
+use wolkit::cpu::raster::{Image, RasterOptions, render};
 use wolkit::paint::list::DisplayList;
 use wolkit::text::glyphcache::Glyphs;
 
@@ -25,8 +25,21 @@ fn render_scene(s: &Scene, ctx: &mut Ctx, tile: i32) -> Image {
     let mut list = DisplayList::new();
     (s.build)(ctx, &mut list);
     list.finish();
-    let mut src = Glyphs { db: &ctx.f.db, cache: &mut ctx.glyphs };
-    render(&list, &mut src, s.width, s.height, &RasterOptions { scale: s.scale, clear: BG, tile })
+    let mut src = Glyphs {
+        db: &ctx.f.db,
+        cache: &mut ctx.glyphs,
+    };
+    render(
+        &list,
+        &mut src,
+        s.width,
+        s.height,
+        &RasterOptions {
+            scale: s.scale,
+            clear: BG,
+            tile,
+        },
+    )
 }
 
 fn render_fresh(s: &Scene) -> Image {
@@ -61,17 +74,37 @@ fn scenes_match_their_goldens_bit_for_bit() {
             continue;
         }
         let Ok(bytes) = std::fs::read(&path) else {
-            failures.push(format!("{}: no golden at {} (run with WOLKIT_BLESS=1)", s.name, path.display()));
+            failures.push(format!(
+                "{}: no golden at {} (run with WOLKIT_BLESS=1)",
+                s.name,
+                path.display()
+            ));
             continue;
         };
-        let (w, h, want) = png::decode(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let (w, h, want) =
+            png::decode(&bytes).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         if (w, h) != (img.width, img.height) {
-            failures.push(format!("{}: size {}x{} but the golden is {w}x{h}", s.name, img.width, img.height));
+            failures.push(format!(
+                "{}: size {}x{} but the golden is {w}x{h}",
+                s.name, img.width, img.height
+            ));
             continue;
         }
         if rgba != want {
-            let diff = rgba.chunks_exact(4).zip(want.chunks_exact(4)).filter(|(a, b)| a != b).count();
-            let first = rgba.chunks_exact(4).zip(want.chunks_exact(4)).position(|(a, b)| a != b).unwrap_or(0);
+            let diff = rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(want.as_chunks::<4>().0)
+                .filter(|(a, b)| a != b)
+                .count();
+            let first = rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(want.as_chunks::<4>().0)
+                .position(|(a, b)| a != b)
+                .unwrap_or(0);
             std::fs::create_dir_all(&actual_dir).unwrap();
             let out = actual_dir.join(format!("{}.png", s.name));
             std::fs::write(&out, png::encode(img.width, img.height, &rgba)).unwrap();
@@ -84,7 +117,11 @@ fn scenes_match_their_goldens_bit_for_bit() {
             ));
         }
     }
-    assert!(failures.is_empty(), "golden mismatches:\n{}", failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "golden mismatches:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -97,7 +134,11 @@ fn rendering_does_not_depend_on_cache_state_or_tile_size() {
         let hot = render_scene(&s, &mut warm, 64);
         assert_eq!(cold, hot, "{}: warm caches changed the output", s.name);
         let small_tiles = render_scene(&s, &mut warm, 24);
-        assert_eq!(cold, small_tiles, "{}: tile size changed the output", s.name);
+        assert_eq!(
+            cold, small_tiles,
+            "{}: tile size changed the output",
+            s.name
+        );
     }
 }
 
@@ -105,18 +146,32 @@ fn rendering_does_not_depend_on_cache_state_or_tile_size() {
 fn every_scene_draws_something_and_text_scenes_draw_text() {
     for s in scenes::all() {
         let img = render_fresh(&s);
-        let bg = wolkit::paint::geom::Color::rgb(246, 246, 248).premul();
-        let painted = img.data.chunks_exact(4).filter(|p| p[..] != bg[..]).count();
-        assert!(painted > 400, "{}: only {painted} pixels differ from the background", s.name);
+        let bg = wolkit::paint::geom::Color::rgb(243, 241, 248).premul();
+        let painted = img
+            .data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[..] != bg[..])
+            .count();
+        assert!(
+            painted > 400,
+            "{}: only {painted} pixels differ from the background",
+            s.name
+        );
     }
 }
 
 #[test]
 fn the_bundled_fonts_are_the_pinned_ones() {
     // FNV-1a 64 of each file; the sources and licences are in fonts/README.md.
-    let manifest = std::fs::read_to_string(text_support::font_dir().join("MANIFEST")).expect("MANIFEST");
+    let manifest =
+        std::fs::read_to_string(text_support::font_dir().join("MANIFEST")).expect("MANIFEST");
     let mut n = 0;
-    for line in manifest.lines().filter(|l| !l.starts_with('#') && !l.trim().is_empty()) {
+    for line in manifest
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+    {
         let mut f = line.split_whitespace();
         let (name, len, hash) = (f.next().unwrap(), f.next().unwrap(), f.next().unwrap());
         let data = text_support::load(name);

@@ -18,7 +18,8 @@ pub mod route;
 use crate::env::Environment;
 use crate::error::{Error, Result};
 use crate::event::EventQueue;
-use crate::scene::{Idx, Journal, NIL, Scene, patch::Scratch};
+use crate::scene::ids::to_u32;
+use crate::scene::{Idx, Journal, NIL, Scene, SceneRead, patch::Scratch};
 use std::os::fd::RawFd;
 use std::sync::Arc;
 
@@ -46,6 +47,14 @@ pub struct WindowCore {
     pub scene: Scene,
     pub journal: Journal,
     pub scratch: Scratch,
+    /// Computed styles and the cascade memo (WK-W2).
+    pub styles: crate::style::Styles,
+    /// Layout measure cache and relayout boundaries (WK-W2).
+    pub layout_cache: crate::layout::LayoutCache,
+    /// Springs and tweens (`ANIM` ops) and the scratch they use.
+    pub clock: crate::anim::Clock,
+    pub anim_reqs: Vec<crate::scene::AnimReq>,
+    pub anim_done: Vec<crate::anim::Done>,
     pub style: Option<Arc<crate::style::Table>>,
     /// Bumped when the style table or the environment changes, so the pipeline restyles.
     pub style_version: u64,
@@ -61,7 +70,14 @@ pub struct WindowCore {
 }
 
 impl WindowCore {
-    pub fn new(id: u32, title: &str, width: u32, height: u32, flags: u32, env: Environment) -> Self {
+    pub fn new(
+        id: u32,
+        title: &str,
+        width: u32,
+        height: u32,
+        flags: u32,
+        env: Environment,
+    ) -> Self {
         WindowCore {
             id,
             title: title.to_owned(),
@@ -74,6 +90,11 @@ impl WindowCore {
             scene: Scene::new(),
             journal: Journal::default(),
             scratch: Scratch::default(),
+            styles: crate::style::Styles::default(),
+            layout_cache: crate::layout::LayoutCache::new(),
+            clock: crate::anim::Clock::new(),
+            anim_reqs: Vec::new(),
+            anim_done: Vec::new(),
             style: None,
             style_version: 0,
             shown: false,
@@ -83,6 +104,56 @@ impl WindowCore {
             pressed: NIL,
             pointer: (0.0, 0.0),
             time_ns: 0,
+        }
+    }
+}
+
+impl WindowCore {
+    /// Start the animations the last patch queued (they snap when `animate` is false or the
+    /// person asked for reduced motion), and tell the app about the ones that finished at once.
+    pub fn start_anims(&mut self, s: &mut Sink, animate: bool) {
+        self.scene.take_anims(&mut self.anim_reqs);
+        if self.anim_reqs.is_empty() {
+            return;
+        }
+        let animate = animate && !self.env.reduce_motion;
+        self.clock.start(
+            &mut self.scene,
+            &mut self.anim_reqs,
+            self.time_ns,
+            animate,
+            &mut self.anim_done,
+        );
+        self.report_anims(s);
+    }
+
+    /// Move the clock to `ns` later in steps of at most one frame (a spring needs small steps).
+    pub fn step_anims(&mut self, s: &mut Sink, ns: u64) {
+        const FRAME_NS: u64 = 16_000_000;
+        let target = self.time_ns.saturating_add(ns.min(3_600_000_000_000));
+        while self.time_ns < target {
+            self.time_ns = target.min(self.time_ns + FRAME_NS);
+            if self.clock.is_empty() {
+                self.time_ns = target;
+                break;
+            }
+            self.clock
+                .step(&mut self.scene, self.time_ns, &mut self.anim_done);
+        }
+        self.report_anims(s);
+    }
+
+    fn report_anims(&mut self, s: &mut Sink) {
+        for d in std::mem::take(&mut self.anim_done) {
+            let i = d.node.slot();
+            if let Some(r) = route::receiver(&self.scene, i, crate::event::kind::ANIMATION_DONE) {
+                s.emit(
+                    crate::event::kind::ANIMATION_DONE,
+                    self.scene.id(r).0,
+                    &u32::from(d.prop).to_le_bytes(),
+                    &[],
+                );
+            }
         }
     }
 }
@@ -97,7 +168,8 @@ pub struct Sink<'a> {
 
 impl Sink<'_> {
     pub fn emit(&mut self, kind: u16, node: u32, head: &[u8], tail: &[u8]) {
-        self.events.push(kind, self.window, node, self.seq, head, tail);
+        self.events
+            .push(kind, self.window, node, self.seq, head, tail);
     }
 
     /// A message for the developer: `level` 0 note, 1 warning, 2 error.
@@ -108,8 +180,13 @@ impl Sink<'_> {
         }
         let mut head = [0u8; 8];
         head[..4].copy_from_slice(&level.to_le_bytes());
-        head[4..].copy_from_slice(&(end as u32).to_le_bytes());
-        self.emit(crate::event::kind::DIAGNOSTIC, 0, &head, &text.as_bytes()[..end]);
+        head[4..].copy_from_slice(&(to_u32(end)).to_le_bytes());
+        self.emit(
+            crate::event::kind::DIAGNOSTIC,
+            0,
+            &head,
+            &text.as_bytes()[..end],
+        );
     }
 }
 
@@ -137,7 +214,12 @@ pub trait Backend: Send {
     fn render_rgba(&mut self, _w: &mut WindowCore, _out: &mut [u8]) -> Result<(u32, u32)> {
         Err(Error::unavailable(crate::copy::HEADLESS_ONLY))
     }
-    fn inject_pointer(&mut self, _w: &mut WindowCore, _s: &mut Sink, _p: PointerInput) -> Result<()> {
+    fn inject_pointer(
+        &mut self,
+        _w: &mut WindowCore,
+        _s: &mut Sink,
+        _p: PointerInput,
+    ) -> Result<()> {
         Err(Error::unavailable(crate::copy::HEADLESS_ONLY))
     }
     fn inject_key(&mut self, _w: &mut WindowCore, _s: &mut Sink, _k: KeyInput) -> Result<()> {

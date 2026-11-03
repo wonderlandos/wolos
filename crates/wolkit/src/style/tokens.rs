@@ -58,7 +58,10 @@ impl Token {
         Self::NAMES[self as usize]
     }
     pub fn parse(s: &str) -> Option<Token> {
-        Self::NAMES.iter().position(|n| *n == s).map(|i| Self::ALL[i])
+        Self::NAMES
+            .iter()
+            .position(|n| *n == s)
+            .map(|i| Self::ALL[i])
     }
     pub fn to_u8(self) -> u8 {
         self as u8
@@ -78,31 +81,91 @@ pub struct Step {
 
 /// Spacing: padding, margin, gap, inset. `--space-1` to `--space-6` (there is no `--space-5`).
 pub const SPACE: [Step; 6] = [
-    Step { name: "none", value: 0.0, var: None },
-    Step { name: "xs", value: 4.0, var: Some("--space-1") },
-    Step { name: "sm", value: 8.0, var: Some("--space-2") },
-    Step { name: "md", value: 12.0, var: Some("--space-3") },
-    Step { name: "lg", value: 16.0, var: Some("--space-4") },
-    Step { name: "xl", value: 24.0, var: Some("--space-6") },
+    Step {
+        name: "none",
+        value: 0.0,
+        var: None,
+    },
+    Step {
+        name: "xs",
+        value: 4.0,
+        var: Some("--space-1"),
+    },
+    Step {
+        name: "sm",
+        value: 8.0,
+        var: Some("--space-2"),
+    },
+    Step {
+        name: "md",
+        value: 12.0,
+        var: Some("--space-3"),
+    },
+    Step {
+        name: "lg",
+        value: 16.0,
+        var: Some("--space-4"),
+    },
+    Step {
+        name: "xl",
+        value: 24.0,
+        var: Some("--space-6"),
+    },
 ];
 
 /// Corner radius. `full` is a pill: the shorter side halved.
 pub const RADIUS: [Step; 6] = [
-    Step { name: "none", value: 0.0, var: None },
-    Step { name: "s", value: 6.0, var: Some("--radius-s") },
-    Step { name: "m", value: 10.0, var: Some("--radius-m") },
-    Step { name: "l", value: 14.0, var: Some("--radius-l") },
-    Step { name: "xl", value: 20.0, var: Some("--radius-xl") },
-    Step { name: "full", value: RADIUS_FULL, var: None },
+    Step {
+        name: "none",
+        value: 0.0,
+        var: None,
+    },
+    Step {
+        name: "s",
+        value: 6.0,
+        var: Some("--radius-s"),
+    },
+    Step {
+        name: "m",
+        value: 10.0,
+        var: Some("--radius-m"),
+    },
+    Step {
+        name: "l",
+        value: 14.0,
+        var: Some("--radius-l"),
+    },
+    Step {
+        name: "xl",
+        value: 20.0,
+        var: Some("--radius-xl"),
+    },
+    Step {
+        name: "full",
+        value: RADIUS_FULL,
+        var: None,
+    },
 ];
 /// Stored radius meaning "pill" (clamped to half the box at paint).
 pub const RADIUS_FULL: f32 = 9999.0;
 
 /// Motion durations in milliseconds (`--motion-*`).
 pub const MOTION: [Step; 3] = [
-    Step { name: "fast", value: 150.0, var: Some("--motion-fast") },
-    Step { name: "normal", value: 250.0, var: Some("--motion-normal") },
-    Step { name: "slow", value: 400.0, var: Some("--motion-slow") },
+    Step {
+        name: "fast",
+        value: 150.0,
+        var: Some("--motion-fast"),
+    },
+    Step {
+        name: "normal",
+        value: 250.0,
+        var: Some("--motion-normal"),
+    },
+    Step {
+        name: "slow",
+        value: 400.0,
+        var: Some("--motion-slow"),
+    },
 ];
 
 /// Type scale roles (`shared::view::Role`): name, size px, weight.
@@ -114,12 +177,42 @@ pub struct RoleSpec {
 }
 
 pub const ROLES: [RoleSpec; 6] = [
-    RoleSpec { name: "display", size: 28.0, weight: 700, line_height: 1.2 },
-    RoleSpec { name: "large", size: 22.0, weight: 600, line_height: 1.25 },
-    RoleSpec { name: "title", size: 17.0, weight: 600, line_height: 1.3 },
-    RoleSpec { name: "body", size: 13.0, weight: 400, line_height: 1.4 },
-    RoleSpec { name: "secondary", size: 11.0, weight: 400, line_height: 1.4 },
-    RoleSpec { name: "caption", size: 11.0, weight: 400, line_height: 1.3 },
+    RoleSpec {
+        name: "display",
+        size: 34.0,
+        weight: 700,
+        line_height: 1.15,
+    },
+    RoleSpec {
+        name: "large",
+        size: 26.0,
+        weight: 600,
+        line_height: 1.2,
+    },
+    RoleSpec {
+        name: "title",
+        size: 17.0,
+        weight: 600,
+        line_height: 1.3,
+    },
+    RoleSpec {
+        name: "body",
+        size: 13.0,
+        weight: 400,
+        line_height: 1.4,
+    },
+    RoleSpec {
+        name: "secondary",
+        size: 11.0,
+        weight: 400,
+        line_height: 1.4,
+    },
+    RoleSpec {
+        name: "caption",
+        size: 11.0,
+        weight: 400,
+        line_height: 1.3,
+    },
 ];
 
 /// Smallest font size the compiler accepts (RU-059).
@@ -132,7 +225,10 @@ pub fn radius_value(name: &str) -> Option<f32> {
     RADIUS.iter().find(|s| s.name == name).map(|s| s.value)
 }
 pub fn motion_ms(name: &str) -> Option<u16> {
-    MOTION.iter().find(|s| s.name == name).map(|s| s.value as u16)
+    MOTION
+        .iter()
+        .find(|s| s.name == name)
+        .map(|s| s.value as u16)
 }
 pub fn role(name: &str) -> Option<&'static RoleSpec> {
     ROLES.iter().find(|r| r.name == name)
@@ -179,10 +275,28 @@ impl ShadowTok {
     }
     /// Layers, mirroring `--glass-shadow` of the Kit for `lg`.
     pub fn layers(self) -> &'static [ShadowParams] {
-        const SM: [ShadowParams; 1] = [ShadowParams { dy: 1.0, blur: 3.0, alpha: 16 }];
-        const MD: [ShadowParams; 1] = [ShadowParams { dy: 3.0, blur: 10.0, alpha: 20 }];
-        const LG: [ShadowParams; 2] =
-            [ShadowParams { dy: 6.0, blur: 18.0, alpha: 24 }, ShadowParams { dy: 1.0, blur: 4.0, alpha: 16 }];
+        const SM: [ShadowParams; 1] = [ShadowParams {
+            dy: 1.0,
+            blur: 3.0,
+            alpha: 16,
+        }];
+        const MD: [ShadowParams; 1] = [ShadowParams {
+            dy: 3.0,
+            blur: 10.0,
+            alpha: 20,
+        }];
+        const LG: [ShadowParams; 2] = [
+            ShadowParams {
+                dy: 6.0,
+                blur: 18.0,
+                alpha: 24,
+            },
+            ShadowParams {
+                dy: 1.0,
+                blur: 4.0,
+                alpha: 16,
+            },
+        ];
         match self {
             ShadowTok::None => &[],
             ShadowTok::Sm => &SM,
@@ -204,9 +318,21 @@ pub fn spring_params(s: super::value::Spring) -> Option<SpringParams> {
     use super::value::Spring;
     match s {
         Spring::None => None,
-        Spring::Gentle => Some(SpringParams { stiffness: 170.0, damping: 26.0, mass: 1.0 }),
-        Spring::Snappy => Some(SpringParams { stiffness: 320.0, damping: 30.0, mass: 1.0 }),
-        Spring::Bouncy => Some(SpringParams { stiffness: 260.0, damping: 14.0, mass: 1.0 }),
+        Spring::Gentle => Some(SpringParams {
+            stiffness: 170.0,
+            damping: 26.0,
+            mass: 1.0,
+        }),
+        Spring::Snappy => Some(SpringParams {
+            stiffness: 320.0,
+            damping: 30.0,
+            mass: 1.0,
+        }),
+        Spring::Bouncy => Some(SpringParams {
+            stiffness: 260.0,
+            damping: 14.0,
+            mass: 1.0,
+        }),
     }
 }
 
@@ -220,9 +346,21 @@ pub struct ContrastOverride {
 }
 
 pub const CONTRAST: [ContrastOverride; 3] = [
-    ContrastOverride { token: Token::Dim, from: Token::Text, pct: 100 },
-    ContrastOverride { token: Token::Line, from: Token::Text, pct: 55 },
-    ContrastOverride { token: Token::Glass, from: Token::Surface, pct: 100 },
+    ContrastOverride {
+        token: Token::Dim,
+        from: Token::Text,
+        pct: 100,
+    },
+    ContrastOverride {
+        token: Token::Line,
+        from: Token::Text,
+        pct: 55,
+    },
+    ContrastOverride {
+        token: Token::Glass,
+        from: Token::Surface,
+        pct: 100,
+    },
 ];
 
 /// Resolve a colour reference under the increase-contrast preference.

@@ -13,7 +13,11 @@ pub fn push_layout(list: &mut DisplayList, layout: &TextLayout, ox: f32, oy: f32
             let mut pen = ox + frag.x;
             let base = oy + line.baseline;
             let glyphs = run.glyphs.iter().map(|g| {
-                let p = PosGlyph { id: g.id, x: pen + g.x_offset, y: base - g.y_offset };
+                let p = PosGlyph {
+                    id: g.id,
+                    x: pen + g.x_offset,
+                    y: base - g.y_offset,
+                };
                 pen += g.x_advance;
                 p
             });

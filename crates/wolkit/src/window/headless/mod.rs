@@ -7,8 +7,9 @@ mod inject;
 
 pub use inject::{hit_test, set_focus};
 
-use super::{Backend, BACKEND_HEADLESS, KeyInput, PointerInput, Sink, WindowCore, pipeline};
+use super::{BACKEND_HEADLESS, Backend, KeyInput, PointerInput, Sink, WindowCore, pipeline};
 use crate::error::{Error, Result};
+use crate::scene::ids::Ix;
 
 #[derive(Default)]
 pub struct Headless;
@@ -43,11 +44,8 @@ impl Backend for Headless {
 
     fn render_rgba(&mut self, w: &mut WindowCore, out: &mut [u8]) -> Result<(u32, u32)> {
         pipeline::ensure_layout(w);
-        let (pw, ph) = (
-            (w.width as f32 * w.scale).round() as u32,
-            (w.height as f32 * w.scale).round() as u32,
-        );
-        let need = pw as usize * ph as usize * 4;
+        let (pw, ph) = (scaled(w.width, w.scale), scaled(w.height, w.scale));
+        let need = pw.ix() * ph.ix() * 4;
         if out.len() < need {
             return Err(Error::invalid(format!(
                 "The pixel buffer needs {need} bytes for a {pw} by {ph} window."
@@ -70,9 +68,15 @@ impl Backend for Headless {
     }
 
     fn advance_time(&mut self, w: &mut WindowCore, s: &mut Sink, ns: u64) -> Result<()> {
-        w.time_ns = w.time_ns.saturating_add(ns);
-        let _ = s;
+        w.step_anims(s, ns);
         pipeline::frame(w);
         Ok(())
     }
+}
+
+/// A size in logical pixels at `scale`, in device pixels (rounded, at most the largest window).
+fn scaled(px: u32, scale: f32) -> u32 {
+    let f = (px as f32 * scale).round().clamp(0.0, 65_536.0);
+    // The clamp makes the conversion exact; `u64` is the one cast the rules allow here.
+    u32::try_from(f as u64).unwrap_or(u32::MAX)
 }

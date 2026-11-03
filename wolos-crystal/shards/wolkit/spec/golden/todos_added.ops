@@ -1,0 +1,19 @@
+SET_TEXT 3 ""
+SET_STATE 4 16
+CREATE 7 box
+SET_PROP 7 flex-direction row
+INSERT 1 7 1
+CREATE 8 text
+SET_PROP 8 grow 1.0
+SET_TEXT 8 "milk"
+INSERT 7 8 append
+CREATE 9 button
+SET_PROP 9 flex-direction row
+SET_A11Y 9 button "Delete milk" ""
+BIND_EVENT 9 1
+CREATE 10 image
+SET_PROP 10 image-source "icon:trash"
+INSERT 9 10 append
+INSERT 7 9 append
+SET_KEY 7 15732515656745422402
+SET_TEXT 6 "1 left"

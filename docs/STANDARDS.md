@@ -52,7 +52,7 @@ the rest with the checklist in `docs/REVIEW.md`.
   (ADR 0020).
 - `unsafe` only for a C boundary or a libc call with no safe wrapper, each block with a
   `// SAFETY:` comment that states the invariant (`crates/api/src/os.rs`). New `unsafe` outside
-  `crates/wol-abi`, `crates/wopkg`, `crates/xguard*`, `crates/realtime` and `crates/api/src/os.rs`
+  `crates/wol-abi`, `crates/wolkit`, `crates/wopkg`, `crates/xguard*`, `crates/realtime` and `crates/api/src/os.rs`
   is a review question.
 - Source ratchets (`crates/shell/tests/*`, reader in `tests/support/scan.rs`) freeze a count per
   file in a `BASELINE` table. They fail only on growth (a new file or a count above its row); a count below
@@ -270,7 +270,7 @@ brackets; `cargo test` runs in the `test` job).
 - **Bus**: no I/O while a lock is held; a slow subscriber is dropped, not waited for
   (`crates/api/src/bus.rs`). **CI** [test] `a_slow_subscriber_is_dropped_and_does_not_block_others`.
   (B4)
-- **FFI**: handles crossing the C boundary are tagged with `wol_abi::handle::Tag` (type and
+- **FFI**: `crates/wolkit` follows the same rules (`wolkit::ffi::handle::Tag`, checked input helpers in `crates/wolkit/src/ffi/mod.rs`, ADR 0039). Handles crossing the C boundary are tagged with `wol_abi::handle::Tag` (type and
   generation, `crates/wol-abi/src/handle.rs`); strings from C go through the checked wrappers
   (`error::input`, `kit::text` in `crates/wol-abi/src`); `unsafe_op_in_unsafe_fn` is denied in
   `wol-abi`, and `slice::from_raw_parts` is a disallowed method outside those wrappers
@@ -283,7 +283,7 @@ brackets; `cargo test` runs in the `test` job).
   same commit; the doc numbers change in the same commit as the table. (C, R2C-19)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
-  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`). **CI** [fuzz]
+  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`). **CI** [fuzz]
   runs each target 60 s on pinned nightly; [test] `tools/ci/fuzz-replay.sh` replays
   `fuzz/regressions/<target>/` on stable, and `crates/shared/tests/fuzz_list.rs` fails when a
   target has no `[[bin]]`, no seeds, no matrix row or no name in this list. A new decoder without

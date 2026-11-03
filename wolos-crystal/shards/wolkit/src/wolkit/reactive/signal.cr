@@ -70,21 +70,23 @@ module Wolkit
     end
   end
 
-  # Make a signal. Written at class level (`@draft = signal("")`) the type argument is worked out
-  # from the literal; for anything else give it: `signal(nil, of: String?)`.
-  macro signal(value, of type = nil)
-    {% if type %}
-      ::Wolkit::Signal({{ type }}).new({{ value }})
-    {% elsif value.is_a?(StringLiteral) %}
-      ::Wolkit::Signal(::String).new({{ value }})
-    {% elsif value.is_a?(BoolLiteral) %}
-      ::Wolkit::Signal(::Bool).new({{ value }})
-    {% elsif value.is_a?(NumberLiteral) %}
-      ::Wolkit::Signal({{ {i8: "Int8", i16: "Int16", i32: "Int32", i64: "Int64", u8: "UInt8", u16: "UInt16", u32: "UInt32", u64: "UInt64", f32: "Float32", f64: "Float64"}[value.kind].id }}).new({{ value }})
-    {% elsif value.is_a?(SymbolLiteral) %}
-      ::Wolkit::Signal(::Symbol).new({{ value }})
-    {% else %}
-      ::Wolkit::Signal(typeof({{ value }})).new({{ value }})
-    {% end %}
+  module DSL
+    # Make a signal. Written at class level (`@draft = signal("")`) the type argument is worked out
+    # from the literal; for anything else give it: `signal(nil, of: String?)`.
+    macro signal(value, of type = nil)
+      {% if type %}
+        ::Wolkit::Signal({{ type }}).new({{ value }})
+      {% elsif value.is_a?(StringLiteral) %}
+        ::Wolkit::Signal(::String).new({{ value }})
+      {% elsif value.is_a?(BoolLiteral) %}
+        ::Wolkit::Signal(::Bool).new({{ value }})
+      {% elsif value.is_a?(NumberLiteral) %}
+        ::Wolkit::Signal({{ {i8: "Int8", i16: "Int16", i32: "Int32", i64: "Int64", u8: "UInt8", u16: "UInt16", u32: "UInt32", u64: "UInt64", f32: "Float32", f64: "Float64"}[value.kind].id }}).new({{ value }})
+      {% elsif value.is_a?(SymbolLiteral) %}
+        ::Wolkit::Signal(::Symbol).new({{ value }})
+      {% else %}
+        ::Wolkit::Signal(typeof({{ value }})).new({{ value }})
+      {% end %}
+    end
   end
 end

@@ -102,6 +102,10 @@ jobs:
         run: bash tools/check-adrs.sh
       - name: "App icons: one source (design/icons/apps); the overlay PNGs are its renders, on one grid"
         run: python3 -I design/tools/icons/overlay.py --check
+      - name: "Colour icons: the SVGs are what the vector generator draws now (build.py: checks, renders, no hand edits)"
+        run: python3 -I design/tools/icons/build.py --check
+      - name: "Design tokens: colors.{json,css,sh} match tokens.py, the WCAG floors hold, no borrowed stock grey anywhere in the tree"
+        run: python3 -I design/tools/tokens.py --check
 
   # Supply chain (audit A3/A4/B11): every `uses:` pinned to a commit SHA, every image to a digest,
   # in this repo and the two it checks out; actionlint on all their workflows.
@@ -182,7 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader, package_call, core_parsers, wolplug_verify, plugin_index]
+        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader, package_call, core_parsers, wolplug_verify, plugin_index, wolkit_patch, wolkit_wsb, wolkit_wolcss]
     steps:
       - name: Toolchain (nightly pinned), cargo-fuzz, the libraries the shell links
         run: |

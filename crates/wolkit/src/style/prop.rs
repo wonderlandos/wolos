@@ -90,6 +90,16 @@ macro_rules! props {
             })+ }
         }
 
+        /// Whether one property has the same value in two styles.
+        pub fn eq_prop(id: PropId, a: &Props, b: &Props) -> bool {
+            match id { $(PropId::$id => { let $p = a; let va = &$place; let $p = b; va == &$place })+ }
+        }
+
+        /// A value as text, for goldens and diagnostics.
+        pub fn fmt_prop(id: PropId, src: &Props) -> String {
+            match id { $(PropId::$id => { let $p = src; format!("{:?}", $place) })+ }
+        }
+
         /// Parse one value from the cursor into `dst`.
         pub fn parse_prop(id: PropId, c: &mut Cur, dst: &mut Props) -> PRes<()> {
             match id { $(PropId::$id => {
@@ -184,13 +194,68 @@ pub struct Shorthand {
 }
 
 pub static SHORTHANDS: &[Shorthand] = &[
-    Shorthand { name: "padding", sets: &[PropId::PaddingTop, PropId::PaddingRight, PropId::PaddingBottom, PropId::PaddingLeft], grammar: "<space>{1,4}", doc: "One value for all sides, two for vertical and horizontal, four for top, right, bottom, left." },
-    Shorthand { name: "margin", sets: &[PropId::MarginTop, PropId::MarginRight, PropId::MarginBottom, PropId::MarginLeft], grammar: "(auto | <space>){1,4}", doc: "Same forms as `padding`." },
-    Shorthand { name: "gap", sets: &[PropId::RowGap, PropId::ColumnGap], grammar: "<space>{1,2}", doc: "One value for both, or row then column." },
-    Shorthand { name: "inset", sets: &[PropId::InsetTop, PropId::InsetRight, PropId::InsetBottom, PropId::InsetLeft], grammar: "(auto | <length>){1,4}", doc: "Same forms as `padding`." },
-    Shorthand { name: "border-radius", sets: &[PropId::RadiusTl, PropId::RadiusTr, PropId::RadiusBr, PropId::RadiusBl], grammar: "<radius>{1,4}", doc: "Corners in the order top left, top right, bottom right, bottom left; fewer values repeat as in CSS." },
-    Shorthand { name: "border", sets: &[PropId::BorderWidth, PropId::BorderColor], grammar: "<pixels> [<color>]", doc: "Width and colour of a solid border." },
-    Shorthand { name: "outline", sets: &[PropId::OutlineWidth, PropId::OutlineColor], grammar: "<pixels> [<color>]", doc: "Width and colour of the focus ring." },
+    Shorthand {
+        name: "padding",
+        sets: &[
+            PropId::PaddingTop,
+            PropId::PaddingRight,
+            PropId::PaddingBottom,
+            PropId::PaddingLeft,
+        ],
+        grammar: "<space>{1,4}",
+        doc: "One value for all sides, two for vertical and horizontal, four for top, right, bottom, left.",
+    },
+    Shorthand {
+        name: "margin",
+        sets: &[
+            PropId::MarginTop,
+            PropId::MarginRight,
+            PropId::MarginBottom,
+            PropId::MarginLeft,
+        ],
+        grammar: "(auto | <space>){1,4}",
+        doc: "Same forms as `padding`.",
+    },
+    Shorthand {
+        name: "gap",
+        sets: &[PropId::RowGap, PropId::ColumnGap],
+        grammar: "<space>{1,2}",
+        doc: "One value for both, or row then column.",
+    },
+    Shorthand {
+        name: "inset",
+        sets: &[
+            PropId::InsetTop,
+            PropId::InsetRight,
+            PropId::InsetBottom,
+            PropId::InsetLeft,
+        ],
+        grammar: "(auto | <length>){1,4}",
+        doc: "Same forms as `padding`.",
+    },
+    Shorthand {
+        name: "border-radius",
+        sets: &[
+            PropId::RadiusTl,
+            PropId::RadiusTr,
+            PropId::RadiusBr,
+            PropId::RadiusBl,
+        ],
+        grammar: "<radius>{1,4}",
+        doc: "Corners in the order top left, top right, bottom right, bottom left; fewer values repeat as in CSS.",
+    },
+    Shorthand {
+        name: "border",
+        sets: &[PropId::BorderWidth, PropId::BorderColor],
+        grammar: "<pixels> [<color>]",
+        doc: "Width and colour of a solid border.",
+    },
+    Shorthand {
+        name: "outline",
+        sets: &[PropId::OutlineWidth, PropId::OutlineColor],
+        grammar: "<pixels> [<color>]",
+        doc: "Width and colour of the focus ring.",
+    },
 ];
 
 /// Properties copied from the parent when a rule does not set them.
@@ -233,5 +298,8 @@ pub fn apply_mask(dst: &mut Props, src: &Props, mut mask: u128) {
 
 /// Mask of the properties whose change needs a new layout.
 pub fn layout_mask() -> u128 {
-    PropId::ALL.iter().filter(|p| p.info().effect == Effect::Layout).fold(0, |m, p| m | p.bit())
+    PropId::ALL
+        .iter()
+        .filter(|p| p.info().effect == Effect::Layout)
+        .fold(0, |m, p| m | p.bit())
 }

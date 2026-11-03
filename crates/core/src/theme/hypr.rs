@@ -5,7 +5,7 @@
 //! [`LIGHTS`]; `wol theme set` writes the user copy at [`HYPR_THEME_FILE`] (picked up by the user
 //! conf's `hypr/wolos/*.conf` glob, after the system one) and sets the same keys live.
 use super::ResolvedTheme;
-use super::apps::{mix, token_color};
+use super::apps::{controls_colors, mix, token_color};
 use shared::theme::Color;
 pub use shared::theme::{HYPR_THEME_FILE, SYSTEM_HYPR_THEME};
 
@@ -22,6 +22,11 @@ pub fn rgba(c: Color, alpha: u8) -> String {
 pub fn keywords(t: &ResolvedTheme) -> Vec<(&'static str, String)> {
     let (bar, text) = (token_color(t, "surface"), token_color(t, "text"));
     let black = Color::rgb(0, 0, 0);
+    let (_, accent, pressed) = controls_colors(t);
+    // controls_colors renders `#rrggbb`, which always parses back.
+    let parse = |hex: &str| Color::parse(hex).unwrap_or(black);
+    let (accent, pressed) = (parse(&accent), parse(&pressed));
+    let on_accent = token_color(t, "accentText");
     vec![
         ("plugin:hyprbars:bar_color", rgba(bar, 0xe6)),
         ("plugin:hyprbars:col.text", rgba(text, 0xff)),
@@ -33,6 +38,14 @@ pub fn keywords(t: &ResolvedTheme) -> Vec<(&'static str, String)> {
         ),
         ("plugin:hyprbars:bar_color_inactive", rgba(bar, 0xcc)),
         ("plugin:hyprbars:col.text_inactive", rgba(text, 0x8c)),
+        // The button under the pointer: the accent, deeper while pressed, its glyph in the text on
+        // the accent, the client-side controls' colours (apps::controls_colors; hyprbars patch 0002).
+        ("plugin:hyprbars:button_hover_color", rgba(accent, 0xff)),
+        ("plugin:hyprbars:button_pressed_color", rgba(pressed, 0xff)),
+        (
+            "plugin:hyprbars:col.button_hover_text",
+            rgba(on_accent, 0xff),
+        ),
         ("decoration:shadow:color", rgba(black, 0x59)),
         ("decoration:shadow:color_inactive", rgba(black, 0x33)),
     ]

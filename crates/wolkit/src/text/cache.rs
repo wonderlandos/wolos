@@ -12,7 +12,7 @@ use std::sync::Arc;
 use harfrust::Script;
 
 use crate::text::fontdb::{FontDb, FontId};
-use crate::text::shape::{shape_run, Dir, FontFeature, ShapeParams, ShapedRun};
+use crate::text::shape::{Dir, FontFeature, ShapeParams, ShapedRun, shape_run};
 
 /// FNV-1a, 64 bit. Not DoS-resistant, which is fine: the cache verifies the text on a hit and an
 /// attacker who controls text can only slow their own window.
@@ -152,15 +152,15 @@ impl ShapeCache {
             dir: p.dir,
             script: script_id(p.script),
         };
-        if let Some(&i) = self.map.get(&key) {
-            if &*self.slab[i as usize].text == text {
-                self.stats.hits += 1;
-                if self.head != i {
-                    self.unlink(i);
-                    self.push_front(i);
-                }
-                return Arc::clone(&self.slab[i as usize].run);
+        if let Some(&i) = self.map.get(&key)
+            && &*self.slab[i as usize].text == text
+        {
+            self.stats.hits += 1;
+            if self.head != i {
+                self.unlink(i);
+                self.push_front(i);
             }
+            return Arc::clone(&self.slab[i as usize].run);
         }
         self.stats.misses += 1;
         let run = Arc::new(shape_run(db, text, p));
@@ -177,7 +177,13 @@ impl ShapeCache {
             self.push_front(old);
             return;
         }
-        let entry = Entry { key, text: text.into(), run, prev: NIL, next: NIL };
+        let entry = Entry {
+            key,
+            text: text.into(),
+            run,
+            prev: NIL,
+            next: NIL,
+        };
         let i = if self.slab.len() < self.cap {
             self.slab.push(entry);
             (self.slab.len() - 1) as u32

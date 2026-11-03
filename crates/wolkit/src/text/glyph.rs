@@ -42,7 +42,12 @@ pub struct GlyphKey {
 
 impl GlyphKey {
     pub fn new(font: FontId, glyph: u32, size: f32, sub: u8) -> GlyphKey {
-        GlyphKey { font, glyph, size_q: (size.max(0.0) * 64.0).round() as u32, sub: sub % SUBPIXEL_STEPS }
+        GlyphKey {
+            font,
+            glyph,
+            size_q: (size.max(0.0) * 64.0).round() as u32,
+            sub: sub % SUBPIXEL_STEPS,
+        }
     }
 
     pub fn size(&self) -> f32 {
@@ -174,7 +179,13 @@ impl GlyphRasterizer {
         }
         let mut data = vec![0u8; (w * h) as usize];
         self.acc.finish(&mut data);
-        Some(GlyphBitmap { width: w as u16, height: h as u16, left: minx as i16, top: maxy as i16, data })
+        Some(GlyphBitmap {
+            width: w as u16,
+            height: h as u16,
+            left: minx as i16,
+            top: maxy as i16,
+            data,
+        })
     }
 }
 

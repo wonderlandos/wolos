@@ -13,6 +13,10 @@ macro_rules! kinds {
             pub fn from_u32(v: u32) -> Option<Kind> {
                 match v { $($id => Some(Kind::$Var),)* _ => None }
             }
+            /// The wire id (`WOLKIT_KIND_*`).
+            pub fn id(self) -> u32 { match self { $(Kind::$Var => $id,)* } }
+            /// The wire id as a byte (the scene stores kinds in a `u8` column).
+            pub fn id_u8(self) -> u8 { match self { $(Kind::$Var => $id,)* } }
             pub fn name(self) -> &'static str { match self { $(Kind::$Var => $name,)* } }
             /// The C name: `WOLKIT_KIND_BOX`.
             pub fn define(self) -> String { format!("WOLKIT_KIND_{}", self.name().to_ascii_uppercase()) }
@@ -40,15 +44,24 @@ kinds! {
 impl Kind {
     /// Kinds that take pointer and key focus by themselves.
     pub fn focusable(self) -> bool {
-        matches!(self, Kind::Button | Kind::Toggle | Kind::Slider | Kind::TextInput)
+        matches!(
+            self,
+            Kind::Button | Kind::Toggle | Kind::Slider | Kind::TextInput
+        )
     }
 
     /// Kinds with no children (the validator refuses an INSERT below them).
     pub fn leaf(self) -> bool {
         matches!(
             self,
-            Kind::Text | Kind::Image | Kind::Spacer | Kind::Divider | Kind::Slider | Kind::Canvas
-                | Kind::Surface | Kind::TextInput
+            Kind::Text
+                | Kind::Image
+                | Kind::Spacer
+                | Kind::Divider
+                | Kind::Slider
+                | Kind::Canvas
+                | Kind::Surface
+                | Kind::TextInput
         )
     }
 }

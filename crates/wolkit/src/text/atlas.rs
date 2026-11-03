@@ -121,21 +121,19 @@ impl Atlas {
 
     /// Looks a glyph up; a stale slot (its page was cleared) is a miss.
     pub fn get(&mut self, key: &GlyphKey) -> Option<Slot> {
-        if let Some(s) = self.map.get(key).copied() {
-            if let Some(p) = self.pages.get_mut(s.page as usize) {
-                if p.generation == s.generation {
-                    p.last_used = self.epoch;
-                    self.stats.hits += 1;
-                    return Some(s);
-                }
-            }
+        if let Some(s) = self.map.get(key).copied()
+            && let Some(p) = self.pages.get_mut(s.page as usize)
+            && p.generation == s.generation
+        {
+            p.last_used = self.epoch;
+            self.stats.hits += 1;
+            return Some(s);
         }
         self.stats.misses += 1;
         None
     }
 
-    /// Records that `key` has no image (an empty glyph) is the caller's concern; this stores a
-    /// rendered bitmap and returns its slot, or `None` when it cannot fit at all.
+    /// Stores a rendered bitmap and returns its slot, or `None` when it cannot fit at all.
     pub fn insert(&mut self, key: GlyphKey, bm: &GlyphBitmap) -> Option<Slot> {
         let (w, h) = (u32::from(bm.width), u32::from(bm.height));
         if w + 2 * PAD > self.size || h + 2 * PAD > self.size {
@@ -150,10 +148,20 @@ impl Atlas {
             let src = row * w as usize;
             p.pixels[dst..dst + w as usize].copy_from_slice(&bm.data[src..src + w as usize]);
         }
-        let r = PixelRect { x0: x as i32, y0: y as i32, x1: (x + w + 2 * PAD) as i32, y1: (y + h + 2 * PAD) as i32 };
+        let r = PixelRect {
+            x0: x as i32,
+            y0: y as i32,
+            x1: (x + w + 2 * PAD) as i32,
+            y1: (y + h + 2 * PAD) as i32,
+        };
         p.dirty = Some(match p.dirty {
             None => r,
-            Some(d) => PixelRect { x0: d.x0.min(r.x0), y0: d.y0.min(r.y0), x1: d.x1.max(r.x1), y1: d.y1.max(r.y1) },
+            Some(d) => PixelRect {
+                x0: d.x0.min(r.x0),
+                y0: d.y0.min(r.y0),
+                x1: d.x1.max(r.x1),
+                y1: d.y1.max(r.y1),
+            },
         });
         p.last_used = self.epoch;
         let slot = Slot {
@@ -206,7 +214,12 @@ impl Atlas {
         p.shelves.clear();
         p.next_y = 0;
         p.pixels.iter_mut().for_each(|b| *b = 0);
-        p.dirty = Some(PixelRect { x0: 0, y0: 0, x1: self.size as i32, y1: self.size as i32 });
+        p.dirty = Some(PixelRect {
+            x0: 0,
+            y0: 0,
+            x1: self.size as i32,
+            y1: self.size as i32,
+        });
         self.map.retain(|_, s| s.page as usize != pi);
     }
 
@@ -264,7 +277,13 @@ mod tests {
     use crate::text::fontdb::FontId;
 
     fn bm(w: u16, h: u16, v: u8) -> GlyphBitmap {
-        GlyphBitmap { width: w, height: h, left: 0, top: h as i16, data: vec![v; w as usize * h as usize] }
+        GlyphBitmap {
+            width: w,
+            height: h,
+            left: 0,
+            top: h as i16,
+            data: vec![v; w as usize * h as usize],
+        }
     }
 
     fn key(g: u32) -> GlyphKey {

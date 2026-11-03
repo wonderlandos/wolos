@@ -48,7 +48,11 @@ pub fn wait(fds: &[RawFd], timeout_ms: i32, ready: &mut Vec<usize>) {
     ready.clear();
     let mut set: Vec<libc::pollfd> = fds
         .iter()
-        .map(|fd| libc::pollfd { fd: *fd, events: libc::POLLIN, revents: 0 })
+        .map(|fd| libc::pollfd {
+            fd: *fd,
+            events: libc::POLLIN,
+            revents: 0,
+        })
         .collect();
     // SAFETY: `set` is a live array of `set.len()` pollfd structs for the duration of the call.
     let n = unsafe { libc::poll(set.as_mut_ptr(), set.len() as libc::nfds_t, timeout_ms) };

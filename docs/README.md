@@ -31,20 +31,20 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | ADR | Decision | Status |
 |---|---|---|
 | [0001](adr/0001-freebsd-ports-not-from-scratch.md) | Fork and tune mature software, not a new stack | accepted; its base is superseded by 0016, the fork-and-tune decision stands |
-| [0002](adr/0002-rust-port-of-iaraos.md) | Rust port of IaraOS userland on the forked compositor | accepted |
+| [0002](adr/0002-rust-port-of-iaraos.md) | Rust port of IaraOS userland on the forked compositor | accepted; its syscall line is superseded by 0016 |
 | [0003](adr/0003-login-socket-power.md) | login socket: power requests | accepted |
 | [0004](adr/0004-setup-assistant.md) | first-boot setup assistant (wol-setup) | accepted |
 | [0005](adr/0005-overview-surface.md) | Overview is a wol-shell layer surface | accepted |
 | [0006](adr/0006-vendored-blocking-idle-exit.md) | vendored `blocking` with idle thread exit | accepted |
-| [0007](adr/0007-gpu-tuning-interface.md) | GPU tuning interface | accepted |
+| [0007](adr/0007-gpu-tuning-interface.md) | GPU tuning interface | accepted; its counter sources follow 0016 |
 | [0008](adr/0008-i915-frame-deadline-boost.md) | i915kms: pinned drm-kmod build | superseded by 0016 |
 | [0009](adr/0009-live-iso.md) | live ISO boots the desktop | superseded by 0016 |
 | [0010](adr/0010-desktop-widgets.md) | desktop widgets: one layer surface, data packages, no web view | accepted |
 | [0011](adr/0011-wol-packages.md) | .wol packages: one signed file around a pkg(8) package | superseded by 0021 |
-| [0012](adr/0012-seamless-boot.md) | one picture from power-on to the desktop | accepted |
-| [0013](adr/0013-first-run.md) | first run: Install WolOS app and Setup Assistant v2 | accepted |
-| [0014](adr/0014-power-policy.md) | the power source picks the profile | accepted |
-| [0015](adr/0015-security-defaults.md) | secure by default, honest about the rest | accepted |
+| [0012](adr/0012-seamless-boot.md) | one picture from power-on to the desktop | accepted; its console mechanics follow 0016 |
+| [0013](adr/0013-first-run.md) | first run: Install WolOS app and Setup Assistant v2 | accepted; its install backend is replaced by 0018 and 0023 |
+| [0014](adr/0014-power-policy.md) | the power source picks the profile | accepted; its triggers follow 0016 |
+| [0015](adr/0015-security-defaults.md) | secure by default, honest about the rest | superseded by 0040 |
 | [0016](adr/0016-arch-linux-base.md) | Arch Linux base, released in snapshots | accepted; its build parts are replaced by 0029 |
 | [0017](adr/0017-wolos-base.md) | One base system: WolKernel and userland released together | accepted; its build parts are replaced by 0029 |
 | [0018](adr/0018-installer-systemd-repart.md) | Installer disk layout from systemd-repart | accepted |
@@ -68,6 +68,8 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0036](adr/0036-crystal-userland.md) | Crystal is the userland language: bindings, wolkit, GPU surface, shard index | accepted |
 | [0037](adr/0037-shower-identity.md) | The shower is the shell wold's session started, not any process running its file | proposed |
 | [0038](adr/0038-sound-service.md) | One sound service, and 100% is 0 dB | accepted |
+| [0039](adr/0039-libwolkit-and-wolkit.md) | libWolkit (the engine) and wolkit (the shard) | accepted |
+| [0040](adr/0040-security-defaults-on-linux.md) | Security defaults on Linux | accepted |
 
 ## Modules
 
@@ -95,10 +97,10 @@ Each module document names its ADR and its code by crate and path.
 | [modules/plugin-maker.md](modules/plugin-maker.md) | wol-plugin-maker: make a plugin or a theme and see it live (editor with the CLI check, sandboxed preview on four surfaces, Theme Studio, pack and share) | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/plugins.md](modules/plugins.md) | shell plugins: manifest, Lua runtime, sandbox, `wol plugin check|run` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/power.md](modules/power.md) | power policy per power source and mode, sleep and lock, battery alerts, `wol power` | [0014](adr/0014-power-policy.md) |
-| [modules/security.md](modules/security.md) | firewall, hardening, update check, malware check, encrypted homes, app permissions, what runs as root | [0015](adr/0015-security-defaults.md), [0024](adr/0024-first-use-malware-check.md) |
+| [modules/security.md](modules/security.md) | firewall, hardening, update check, malware check, encrypted homes, app permissions, what runs as root | [0040](adr/0040-security-defaults-on-linux.md), [0024](adr/0024-first-use-malware-check.md) |
 | [modules/system-api.md](modules/system-api.md) | System API topics (`wol_core::system`) and their invariants | [0016](adr/0016-arch-linux-base.md) |
 | [modules/userland.md](modules/userland.md) | Dock apps and app-ids, default apps, zsh, sudo, keyring, printing, USB sticks, size | [0016](adr/0016-arch-linux-base.md) |
-| [modules/ux-journeys.md](modules/ux-journeys.md) | user journeys with verdicts and owners; error copy rules (`shell::copy`, lint) | [0013](adr/0013-first-run.md) |
+| [modules/ux-journeys.md](modules/ux-journeys.md) | error copy rules (`shell::copy`, lint), where the journeys run now (`wolvm`), and the 2026-10-27 journey audit (historical) | [0013](adr/0013-first-run.md) |
 | [modules/vm-e2e.md](modules/vm-e2e.md) | VM end to end: `wolvm` boots the ISO, drives the installer and the installed desktop step by step, snapshots and collects the journal | [0029](adr/0029-repository-split-and-single-build-path.md) |
 | [modules/vm-graphics.md](modules/vm-graphics.md) | the desktop in a VM: what runs and why (historical record from the FreeBSD base) | none yet |
 | [modules/widgets.md](modules/widgets.md) | desktop widgets, Edit Widgets, building a widget package, `wol widgets` | [0010](adr/0010-desktop-widgets.md) |

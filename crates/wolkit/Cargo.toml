@@ -22,5 +22,32 @@ skrifa = "0.49.0"
 unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
+# The native window backend (WK-W4): the Wayland client, keymaps and compose, and the accessibility bus.
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+xkbcommon = { version = "0.9", default-features = false, features = ["wayland"] }
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+# Vulkan, loaded at run time (libvulkan.so.1 is dlopened, nothing links it): the GPU backend (WK-W5).
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
 
 [dev-dependencies]
+miniz_oxide = "0.9.1"
+# An in-process mock compositor for the native backend tests (the forge has no headless compositor).
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["server", "client", "staging", "unstable"] }
+
+[[bench]]
+name = "batch"
+harness = false
+
+[[bench]]
+name = "layout"
+harness = false
+
+[[bench]]
+name = "style"
+harness = false
+
+[[bench]]
+name = "text"
+harness = false

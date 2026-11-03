@@ -119,10 +119,12 @@ pub fn from_samples(
     } else {
         mix(surface, white, 0.6)
     };
+    // The WolOS ramp's text (design/tools/tokens.py dark.text / light.text), then nudged to the
+    // wallpaper and held at 7:1 below.
     let ink = if dark {
-        Color::rgb(245, 245, 247)
+        Color::rgb(0xf6, 0xf5, 0xfb)
     } else {
-        Color::rgb(29, 29, 31)
+        Color::rgb(0x18, 0x15, 0x21)
     };
     let worst = |c: Color| {
         [surface, card]

@@ -42,5 +42,12 @@ pub fn fonts() -> Fonts {
     db.set_script_fallback(Script::HIRAGANA, &[cjk]);
     db.set_script_fallback(Script::KATAKANA, &[cjk]);
     db.set_chain(&[latin, arabic, hebrew, cjk]);
-    Fonts { db, latin, latin_bold, arabic, hebrew, cjk }
+    Fonts {
+        db,
+        latin,
+        latin_bold,
+        arabic,
+        hebrew,
+        cjk,
+    }
 }

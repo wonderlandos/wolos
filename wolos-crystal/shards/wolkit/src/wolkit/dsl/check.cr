@@ -18,7 +18,7 @@ module Wolkit
     end
 
     # A value shown as text: a string, a symbol or a number.
-    def self.text(value : String | Symbol | Number | Nil) : String
+    def self.text(value : String | Symbol | Number?) : String
       value.to_s
     end
   end

@@ -15,12 +15,22 @@ pub struct Rect {
 }
 
 impl Rect {
-    pub const ZERO: Rect = Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
+    pub const ZERO: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+    };
 
     /// A rectangle; a negative size is clamped to zero and a NaN becomes zero.
     pub fn new(x: f32, y: f32, w: f32, h: f32) -> Rect {
         let f = |v: f32| if v.is_finite() { v } else { 0.0 };
-        Rect { x: f(x), y: f(y), w: f(w).max(0.0), h: f(h).max(0.0) }
+        Rect {
+            x: f(x),
+            y: f(y),
+            w: f(w).max(0.0),
+            h: f(h).max(0.0),
+        }
     }
 
     pub fn right(&self) -> f32 {
@@ -47,7 +57,12 @@ impl Rect {
         let y0 = self.y.min(o.y);
         let x1 = self.right().max(o.right());
         let y1 = self.bottom().max(o.bottom());
-        Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+        Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        }
     }
 
     /// The overlap, or an empty rectangle at the origin of the clip when they do not touch.
@@ -57,9 +72,19 @@ impl Rect {
         let x1 = self.right().min(o.right());
         let y1 = self.bottom().min(o.bottom());
         if x1 <= x0 || y1 <= y0 {
-            Rect { x: x0, y: y0, w: 0.0, h: 0.0 }
+            Rect {
+                x: x0,
+                y: y0,
+                w: 0.0,
+                h: 0.0,
+            }
         } else {
-            Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+            Rect {
+                x: x0,
+                y: y0,
+                w: x1 - x0,
+                h: y1 - y0,
+            }
         }
     }
 
@@ -74,11 +99,20 @@ impl Rect {
     }
 
     pub fn contains(&self, o: &Rect) -> bool {
-        o.is_empty() || (o.x >= self.x && o.y >= self.y && o.right() <= self.right() && o.bottom() <= self.bottom())
+        o.is_empty()
+            || (o.x >= self.x
+                && o.y >= self.y
+                && o.right() <= self.right()
+                && o.bottom() <= self.bottom())
     }
 
     pub fn translate(&self, dx: f32, dy: f32) -> Rect {
-        Rect { x: self.x + dx, y: self.y + dy, w: self.w, h: self.h }
+        Rect {
+            x: self.x + dx,
+            y: self.y + dy,
+            w: self.w,
+            h: self.h,
+        }
     }
 
     pub fn inflate(&self, d: f32) -> Rect {
@@ -148,7 +182,12 @@ pub struct Color {
 }
 
 impl Color {
-    pub const TRANSPARENT: Color = Color { r: 0, g: 0, b: 0, a: 0 };
+    pub const TRANSPARENT: Color = Color {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    };
 
     pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Color {
         Color { r, g, b, a }
@@ -164,7 +203,12 @@ impl Color {
     }
 
     pub const fn unpack(v: u32) -> Color {
-        Color { r: v as u8, g: (v >> 8) as u8, b: (v >> 16) as u8, a: (v >> 24) as u8 }
+        Color {
+            r: v as u8,
+            g: (v >> 8) as u8,
+            b: (v >> 16) as u8,
+            a: (v >> 24) as u8,
+        }
     }
 
     /// Premultiplied components, rounded exactly with [`div255`].
@@ -180,7 +224,10 @@ impl Color {
 
     /// This colour with its alpha scaled by `k / 255`.
     pub fn with_opacity(self, k: u8) -> Color {
-        Color { a: div255(u32::from(self.a) * u32::from(k)) as u8, ..self }
+        Color {
+            a: div255(u32::from(self.a) * u32::from(k)) as u8,
+            ..self
+        }
     }
 }
 
@@ -195,7 +242,12 @@ pub const fn div255(x: u32) -> u32 {
 pub fn mix(a: Color, b: Color, t: u8) -> Color {
     let t = u32::from(t);
     let lerp = |x: u8, y: u8| div255(u32::from(x) * (255 - t) + u32::from(y) * t) as u8;
-    Color { r: lerp(a.r, b.r), g: lerp(a.g, b.g), b: lerp(a.b, b.b), a: lerp(a.a, b.a) }
+    Color {
+        r: lerp(a.r, b.r),
+        g: lerp(a.g, b.g),
+        b: lerp(a.b, b.b),
+        a: lerp(a.a, b.a),
+    }
 }
 
 #[cfg(test)]

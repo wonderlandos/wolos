@@ -22,6 +22,7 @@ use super::kind::Kind;
 use super::prop::{self, MAX_WORDS, PropDef};
 use super::strings::NO_STR;
 use crate::error::{Error, Result};
+use crate::scene::ids::{Ix, to_u8, to_u16, to_u32};
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"WKP1");
 pub const FORMAT: u16 = 1;
@@ -88,12 +89,12 @@ impl PropValue {
         let mut v = PropValue::default();
         let n = words.len().min(MAX_WORDS);
         v.w[..n].copy_from_slice(&words[..n]);
-        v.n = n as u8;
+        v.n = to_u8(n);
         v
     }
 
     pub fn words(&self) -> &[u32] {
-        &self.w[..self.n as usize]
+        &self.w[..self.n.ix()]
     }
 
     pub fn f32(&self) -> f32 {
@@ -104,22 +105,76 @@ impl PropValue {
 /// One decoded op. Strings borrow from the patch.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Op<'a> {
-    Create { node: u32, kind: Kind },
-    Insert { parent: u32, child: u32, index: u32 },
-    Remove { node: u32 },
-    Move { node: u32, parent: u32, index: u32 },
+    Create {
+        node: u32,
+        kind: Kind,
+    },
+    Insert {
+        parent: u32,
+        child: u32,
+        index: u32,
+    },
+    Remove {
+        node: u32,
+    },
+    Move {
+        node: u32,
+        parent: u32,
+        index: u32,
+    },
     /// `text` is the string of a `Str` property (the value word is its pool reference); else "".
-    SetProp { node: u32, def: &'static PropDef, value: PropValue, text: &'a str },
-    SetText { node: u32, text: &'a str },
-    SetStyle { node: u32, n: u8, classes: [u32; MAX_CLASSES] },
-    SetState { node: u32, state: u32 },
-    SetKey { node: u32, key: u64 },
-    BindEvent { node: u32, mask: u32 },
-    SetA11y { node: u32, role: u32, name: &'a str, description: &'a str },
-    Anim { node: u32, prop: u32, target: u32, mode: u32, param: u32 },
-    ListRange { node: u32, count: u32, height: f32, overscan: u32 },
-    Focus { node: u32 },
-    Free { node: u32 },
+    SetProp {
+        node: u32,
+        def: &'static PropDef,
+        value: PropValue,
+        text: &'a str,
+    },
+    SetText {
+        node: u32,
+        text: &'a str,
+    },
+    SetStyle {
+        node: u32,
+        n: u8,
+        classes: [u32; MAX_CLASSES],
+    },
+    SetState {
+        node: u32,
+        state: u32,
+    },
+    SetKey {
+        node: u32,
+        key: u64,
+    },
+    BindEvent {
+        node: u32,
+        mask: u32,
+    },
+    SetA11y {
+        node: u32,
+        role: u32,
+        name: &'a str,
+        description: &'a str,
+    },
+    Anim {
+        node: u32,
+        prop: u32,
+        target: u32,
+        mode: u32,
+        param: u32,
+    },
+    ListRange {
+        node: u32,
+        count: u32,
+        height: f32,
+        overscan: u32,
+    },
+    Focus {
+        node: u32,
+    },
+    Free {
+        node: u32,
+    },
 }
 
 /// Reusable buffers of the validator, so a steady-state apply allocates nothing.
@@ -159,8 +214,11 @@ impl<'a> Patch<'a> {
                 "A patch is at most {MAX_PATCH} bytes; send the changes in several."
             )));
         }
-        if buf.len() < HEADER || buf.len() % 4 != 0 {
-            return Err(bad(0, "a patch is a 24-byte header and a whole number of 4-byte words."));
+        if buf.len() < HEADER || !buf.len().is_multiple_of(4) {
+            return Err(bad(
+                0,
+                "a patch is a 24-byte header and a whole number of 4-byte words.",
+            ));
         }
         let (magic, format) = (rd32(buf, 0).unwrap_or(0), rd16(buf, 4).unwrap_or(0));
         if magic != MAGIC {
@@ -176,8 +234,8 @@ impl<'a> Patch<'a> {
         }
         let seq = rd32(buf, 8).unwrap_or(0);
         let op_count = rd32(buf, 12).unwrap_or(0);
-        let pool_len = rd32(buf, 16).unwrap_or(0) as usize;
-        if pool_len % 4 != 0 || pool_len > buf.len() - HEADER {
+        let pool_len = rd32(buf, 16).unwrap_or(0).ix();
+        if !pool_len.is_multiple_of(4) || pool_len > buf.len() - HEADER {
             return Err(bad(16, "the string pool does not fit in the patch."));
         }
         let pool_start = buf.len() - pool_len;
@@ -186,9 +244,13 @@ impl<'a> Patch<'a> {
         scratch.entries.clear();
         let mut off = 0usize;
         while off < pool.len() {
-            let len = rd32(pool, off).ok_or_else(|| bad(pool_start + off, "a string entry is cut short."))? as usize;
+            let len = rd32(pool, off)
+                .ok_or_else(|| bad(pool_start + off, "a string entry is cut short."))?
+                .ix();
             if len > MAX_STRING {
-                return Err(Error::limit(format!("A string is at most {MAX_STRING} bytes.")));
+                return Err(Error::limit(format!(
+                    "A string is at most {MAX_STRING} bytes."
+                )));
             }
             let end = off + 4 + len;
             let text = pool
@@ -197,7 +259,7 @@ impl<'a> Patch<'a> {
             if std::str::from_utf8(text).is_err() {
                 return Err(bad(pool_start + off, "a string is not valid UTF-8."));
             }
-            scratch.entries.push(off as u32);
+            scratch.entries.push(to_u32(off));
             off = (end + 3) & !3;
         }
         if off != pool.len() {
@@ -221,7 +283,10 @@ impl<'a> Patch<'a> {
             }
         }
         if seen != op_count || at != pool_start {
-            return Err(bad(12, "the operation count in the header does not match the stream."));
+            return Err(bad(
+                12,
+                "the operation count in the header does not match the stream.",
+            ));
         }
         Ok(patch)
     }
@@ -242,8 +307,8 @@ impl<'a> Patch<'a> {
         if let Some(e) = entries {
             e.binary_search(&offset).ok()?;
         }
-        let off = offset as usize;
-        let len = rd32(self.pool, off)? as usize;
+        let off = offset.ix();
+        let len = rd32(self.pool, off)?.ix();
         std::str::from_utf8(self.pool.get(off + 4..off + 4 + len)?).ok()
     }
 
@@ -255,7 +320,7 @@ impl<'a> Patch<'a> {
             (Some(c), Some(l)) => (c, l),
             _ => return Err(bad(at, "an operation is cut short.")),
         };
-        let words = (lw & !MUST_UNDERSTAND) as usize;
+        let words = (lw & !MUST_UNDERSTAND).ix();
         let must = lw & MUST_UNDERSTAND != 0;
         if words == 0 {
             return Err(bad(at, "an operation has no length."));
@@ -264,28 +329,44 @@ impl<'a> Patch<'a> {
         if end > buf.len() {
             return Err(bad(at, "an operation runs past the end of the patch."));
         }
-        let w = |i: usize| rd32(buf, at + 4 + i * 4).unwrap_or(0);
-        let n = words - 1;
-        let want = |k: usize| -> Result<()> {
-            if n == k {
-                Ok(())
-            } else {
-                Err(bad(at, &format!("this operation takes {k} words, not {n}.")))
-            }
+        let f = Frame {
+            patch: self,
+            at,
+            n: words - 1,
+            entries,
         };
-        let s = |off: u32| {
-            self.string(off, entries)
-                .ok_or_else(|| bad(at, "a string reference does not point at a string."))
+        let op = match self.decode_tree(code, &f)? {
+            Some(op) => op,
+            None => match self.decode_content(code, &f)? {
+                Some(op) => op,
+                None if must => {
+                    return Err(Error::unavailable(format!(
+                        "This patch uses operation {code}, which this engine does not know; update libwolkit."
+                    )));
+                }
+                None => return Ok((None, end)),
+            },
         };
+        Ok((Some(op), end))
+    }
+
+    /// The ops that change the tree; None for any other opcode.
+    fn decode_tree(&self, code: u16, f: &Frame<'_, 'a>) -> Result<Option<Op<'a>>> {
+        let (at, w, want) = (f.at, |i| f.w(i), |k| f.want(k));
         let op = match code {
             op::CREATE => {
                 want(2)?;
-                let kind = Kind::from_u32(w(1)).ok_or_else(|| bad(at, "that is not a node kind."))?;
+                let kind =
+                    Kind::from_u32(w(1)).ok_or_else(|| bad(at, "that is not a node kind."))?;
                 Op::Create { node: w(0), kind }
             }
             op::INSERT => {
                 want(3)?;
-                Op::Insert { parent: w(0), child: w(1), index: w(2) }
+                Op::Insert {
+                    parent: w(0),
+                    child: w(1),
+                    index: w(2),
+                }
             }
             op::REMOVE => {
                 want(1)?;
@@ -293,8 +374,30 @@ impl<'a> Patch<'a> {
             }
             op::MOVE => {
                 want(3)?;
-                Op::Move { node: w(0), parent: w(1), index: w(2) }
+                Op::Move {
+                    node: w(0),
+                    parent: w(1),
+                    index: w(2),
+                }
             }
+            op::FOCUS => {
+                want(1)?;
+                Op::Focus { node: w(0) }
+            }
+            op::FREE => {
+                want(1)?;
+                Op::Free { node: w(0) }
+            }
+            _ => return Ok(None),
+        };
+        let _ = at;
+        Ok(Some(op))
+    }
+
+    /// The ops that set content and behaviour; None for any other opcode.
+    fn decode_content(&self, code: u16, f: &Frame<'_, 'a>) -> Result<Option<Op<'a>>> {
+        let (at, n, w, want, s) = (f.at, f.n, |i| f.w(i), |k| f.want(k), |o| f.s(o));
+        let op = match code {
             op::SET_PROP => {
                 if n < 3 {
                     return Err(bad(at, "SET_PROP needs a node, a property and a value."));
@@ -307,18 +410,30 @@ impl<'a> Patch<'a> {
                 }
                 let value = PropValue::new(&value[..def.ty.arity()]);
                 prop::check_value(def, value.words()).map_err(|m| bad(at, m))?;
-                let text = if def.ty == prop::Ty::Str { s(value.w[0])? } else { "" };
-                Op::SetProp { node: w(0), def, value, text }
+                let text = if def.ty == prop::Ty::Str {
+                    s(value.w[0])?
+                } else {
+                    ""
+                };
+                Op::SetProp {
+                    node: w(0),
+                    def,
+                    value,
+                    text,
+                }
             }
             op::SET_TEXT => {
                 want(2)?;
-                Op::SetText { node: w(0), text: s(w(1))? }
+                Op::SetText {
+                    node: w(0),
+                    text: s(w(1))?,
+                }
             }
             op::SET_STYLE => {
                 if n < 2 {
                     return Err(bad(at, "SET_STYLE names a node and up to 8 classes."));
                 }
-                let count = w(1) as usize;
+                let count = w(1).ix();
                 if count != n - 2 || count > MAX_CLASSES {
                     return Err(bad(at, "SET_STYLE names a node and up to 8 classes."));
                 }
@@ -326,19 +441,32 @@ impl<'a> Patch<'a> {
                 for (i, c) in classes.iter_mut().enumerate().take(count) {
                     *c = w(2 + i);
                 }
-                Op::SetStyle { node: w(0), n: count as u8, classes }
+                Op::SetStyle {
+                    node: w(0),
+                    n: to_u8(count),
+                    classes,
+                }
             }
             op::SET_STATE => {
                 want(2)?;
-                Op::SetState { node: w(0), state: w(1) }
+                Op::SetState {
+                    node: w(0),
+                    state: w(1),
+                }
             }
             op::SET_KEY => {
                 want(3)?;
-                Op::SetKey { node: w(0), key: u64::from(w(1)) | (u64::from(w(2)) << 32) }
+                Op::SetKey {
+                    node: w(0),
+                    key: u64::from(w(1)) | (u64::from(w(2)) << 32),
+                }
             }
             op::BIND_EVENT => {
                 want(2)?;
-                Op::BindEvent { node: w(0), mask: w(1) }
+                Op::BindEvent {
+                    node: w(0),
+                    mask: w(1),
+                }
             }
             op::SET_A11Y => {
                 want(4)?;
@@ -346,43 +474,85 @@ impl<'a> Patch<'a> {
                 if !super::kind::ROLES.iter().any(|r| r.0 == role) {
                     return Err(bad(at, "that is not an accessibility role."));
                 }
-                Op::SetA11y { node: w(0), role, name: s(w(2))?, description: s(w(3))? }
+                Op::SetA11y {
+                    node: w(0),
+                    role,
+                    name: s(w(2))?,
+                    description: s(w(3))?,
+                }
             }
             op::ANIM => {
                 want(5)?;
                 let d = prop::def(w(1)).ok_or_else(|| bad(at, "that is not a property id."))?;
                 if d.ty != prop::Ty::F32 || w(3) > ANIM_SPRING || w(4) > 3 {
-                    return Err(bad(at, "only number properties animate, as a tween or a spring."));
+                    return Err(bad(
+                        at,
+                        "only number properties animate, as a tween or a spring.",
+                    ));
                 }
                 if !f32::from_bits(w(2)).is_finite() {
                     return Err(bad(at, "an animation target is a finite number."));
                 }
-                Op::Anim { node: w(0), prop: w(1), target: w(2), mode: w(3), param: w(4) }
+                Op::Anim {
+                    node: w(0),
+                    prop: w(1),
+                    target: w(2),
+                    mode: w(3),
+                    param: w(4),
+                }
             }
             op::LIST_RANGE => {
                 want(4)?;
                 let h = f32::from_bits(w(2));
-                if !h.is_finite() || h <= 0.0 || w(1) as usize > super::ids::MAX_NODES * 64 {
-                    return Err(bad(at, "a list needs a row height above zero and a sane count."));
+                if !h.is_finite() || h <= 0.0 || w(1).ix() > super::ids::MAX_NODES * 64 {
+                    return Err(bad(
+                        at,
+                        "a list needs a row height above zero and a sane count.",
+                    ));
                 }
-                Op::ListRange { node: w(0), count: w(1), height: h, overscan: w(3).min(64) }
+                Op::ListRange {
+                    node: w(0),
+                    count: w(1),
+                    height: h,
+                    overscan: w(3).min(64),
+                }
             }
-            op::FOCUS => {
-                want(1)?;
-                Op::Focus { node: w(0) }
-            }
-            op::FREE => {
-                want(1)?;
-                Op::Free { node: w(0) }
-            }
-            other if must => {
-                return Err(Error::unavailable(format!(
-                    "This patch uses operation {other}, which this engine does not know; update libwolkit."
-                )));
-            }
-            _ => return Ok((None, end)),
+            _ => return Ok(None),
         };
-        Ok((Some(op), end))
+        let _ = (at, n);
+        Ok(Some(op))
+    }
+}
+
+/// One op being decoded: where it is and how many payload words it has.
+struct Frame<'p, 'a> {
+    patch: &'p Patch<'a>,
+    at: usize,
+    n: usize,
+    entries: Option<&'p [u32]>,
+}
+
+impl<'a> Frame<'_, 'a> {
+    /// Payload word `i` (0 when there is none; `want` has checked the count by then).
+    fn w(&self, i: usize) -> u32 {
+        rd32(self.patch.buf, self.at + 4 + i * 4).unwrap_or(0)
+    }
+
+    fn want(&self, k: usize) -> Result<()> {
+        if self.n == k {
+            Ok(())
+        } else {
+            Err(bad(
+                self.at,
+                &format!("this operation takes {k} words, not {}.", self.n),
+            ))
+        }
+    }
+
+    fn s(&self, off: u32) -> Result<&'a str> {
+        self.patch
+            .string(off, self.entries)
+            .ok_or_else(|| bad(self.at, "a string reference does not point at a string."))
     }
 }
 
@@ -443,7 +613,7 @@ impl Writer {
 
     /// Append an op with raw payload words (the typed helpers below call this).
     pub fn raw(&mut self, code: u16, words: &[u32]) -> &mut Self {
-        let lw = (words.len() as u16 + 1) | MUST_UNDERSTAND;
+        let lw = (to_u16(words.len()) + 1) | MUST_UNDERSTAND;
         self.ops.extend_from_slice(&code.to_le_bytes());
         self.ops.extend_from_slice(&lw.to_le_bytes());
         for w in words {
@@ -458,17 +628,18 @@ impl Writer {
         if s.is_empty() {
             return NO_STR;
         }
-        let off = self.pool.len() as u32;
-        self.pool.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        let off = to_u32(self.pool.len());
+        self.pool
+            .extend_from_slice(&(to_u32(s.len())).to_le_bytes());
         self.pool.extend_from_slice(s.as_bytes());
-        while self.pool.len() % 4 != 0 {
+        while !self.pool.len().is_multiple_of(4) {
             self.pool.push(0);
         }
         off
     }
 
     pub fn create(&mut self, node: u32, kind: Kind) -> &mut Self {
-        self.raw(op::CREATE, &[node, kind as u32])
+        self.raw(op::CREATE, &[node, kind.id()])
     }
 
     pub fn insert(&mut self, parent: u32, child: u32, index: u32) -> &mut Self {
@@ -505,7 +676,7 @@ impl Writer {
         let mut words = [0u32; 2 + MAX_CLASSES];
         let n = classes.len().min(MAX_CLASSES);
         words[0] = node;
-        words[1] = n as u32;
+        words[1] = to_u32(n);
         words[2..2 + n].copy_from_slice(&classes[..n]);
         self.raw(op::SET_STYLE, &words[..2 + n])
     }
@@ -515,7 +686,7 @@ impl Writer {
     }
 
     pub fn set_key(&mut self, node: u32, key: u64) -> &mut Self {
-        self.raw(op::SET_KEY, &[node, key as u32, (key >> 32) as u32])
+        self.raw(op::SET_KEY, &[node, to_u32(key), to_u32(key >> 32)])
     }
 
     pub fn bind_event(&mut self, node: u32, mask: u32) -> &mut Self {
@@ -528,7 +699,10 @@ impl Writer {
     }
 
     pub fn anim(&mut self, node: u32, prop: u16, target: f32, mode: u32, param: u32) -> &mut Self {
-        self.raw(op::ANIM, &[node, u32::from(prop), target.to_bits(), mode, param])
+        self.raw(
+            op::ANIM,
+            &[node, u32::from(prop), target.to_bits(), mode, param],
+        )
     }
 
     pub fn list_range(&mut self, node: u32, count: u32, height: f32, overscan: u32) -> &mut Self {
@@ -551,7 +725,8 @@ impl Writer {
         self.out.extend_from_slice(&0u16.to_le_bytes());
         self.out.extend_from_slice(&seq.to_le_bytes());
         self.out.extend_from_slice(&self.count.to_le_bytes());
-        self.out.extend_from_slice(&(self.pool.len() as u32).to_le_bytes());
+        self.out
+            .extend_from_slice(&(to_u32(self.pool.len())).to_le_bytes());
         self.out.extend_from_slice(&0u32.to_le_bytes());
         self.out.extend_from_slice(&self.ops);
         self.out.extend_from_slice(&self.pool);
@@ -566,24 +741,48 @@ mod tests {
 
     fn sample() -> Vec<u8> {
         let mut w = Writer::new();
-        w.create(1, Kind::Box).create(2, Kind::Text).insert(0, 1, APPEND).insert(1, 2, 0);
-        w.set_text(2, "Hello").set_f32(1, id::GROW, 1.0).set_style(1, &[3, 4]);
+        w.create(1, Kind::Box)
+            .create(2, Kind::Text)
+            .insert(0, 1, APPEND)
+            .insert(1, 2, 0);
+        w.set_text(2, "Hello")
+            .set_f32(1, id::GROW, 1.0)
+            .set_style(1, &[3, 4]);
         w.set_a11y(2, 2, "Greeting", "").set_state(1, 16).focus(1);
         w.finish(7).to_vec()
     }
 
     #[test]
-    fn round_trips() {
+    fn a_patch_round_trips_through_the_decoder() {
         let b = sample();
         let mut sc = Scratch::default();
         let p = Patch::parse(&b, &mut sc).unwrap();
         assert_eq!((p.seq, p.op_count), (7, 10));
         let ops: Vec<_> = p.ops().collect();
         assert_eq!(ops.len(), 10);
-        assert_eq!(ops[0], Op::Create { node: 1, kind: Kind::Box });
-        assert_eq!(ops[4], Op::SetText { node: 2, text: "Hello" });
+        assert_eq!(
+            ops[0],
+            Op::Create {
+                node: 1,
+                kind: Kind::Box
+            }
+        );
+        assert_eq!(
+            ops[4],
+            Op::SetText {
+                node: 2,
+                text: "Hello"
+            }
+        );
         assert!(matches!(ops[6], Op::SetStyle { n: 2, .. }));
-        assert!(matches!(ops[7], Op::SetA11y { name: "Greeting", description: "", .. }));
+        assert!(matches!(
+            ops[7],
+            Op::SetA11y {
+                name: "Greeting",
+                description: "",
+                ..
+            }
+        ));
     }
 
     #[test]

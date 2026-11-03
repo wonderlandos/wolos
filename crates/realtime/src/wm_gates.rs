@@ -13,7 +13,7 @@ pub enum Placement {
     /// An X11 window that asked for its own position (WM_NORMAL_HINTS USPosition/PPosition):
     /// kept there, only pulled back into the zone.
     ClampOnly = 1,
-    /// macOS placement: own size cut to the zone, centred on the parent or cascaded.
+    /// WolOS placement: own size cut to the zone, centred on the parent or cascaded.
     Place = 2,
 }
 

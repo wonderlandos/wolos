@@ -23,7 +23,22 @@ impl Rng {
 }
 
 const PIECES: &[&str] = &[
-    "a", "b", "hello", " ", "é", "e\u{301}", "日本", "語", "🧑‍🚀", "🇯🇵", "שלום", "مرحبا", "x y", "\u{301}", "\t", "ok.",
+    "a",
+    "b",
+    "hello",
+    " ",
+    "é",
+    "e\u{301}",
+    "日本",
+    "語",
+    "🧑‍🚀",
+    "🇯🇵",
+    "שלום",
+    "مرحبا",
+    "x y",
+    "\u{301}",
+    "\t",
+    "ok.",
 ];
 
 /// The reference: plain string, byte offsets, graphemes recomputed from scratch.
@@ -36,11 +51,18 @@ struct Model {
 
 impl Model {
     fn new() -> Model {
-        Model { text: String::new(), anchor: 0, head: 0 }
+        Model {
+            text: String::new(),
+            anchor: 0,
+            head: 0,
+        }
     }
 
     fn sel(&self) -> Selection {
-        Selection { anchor: self.anchor, head: self.head }
+        Selection {
+            anchor: self.anchor,
+            head: self.head,
+        }
     }
 
     fn bounds(&self) -> Vec<usize> {
@@ -50,11 +72,18 @@ impl Model {
     }
 
     fn prev(&self, at: usize) -> usize {
-        self.bounds().into_iter().filter(|&b| b < at).last().unwrap_or(0)
+        self.bounds()
+            .into_iter()
+            .rev()
+            .find(|&b| b < at)
+            .unwrap_or(0)
     }
 
     fn next(&self, at: usize) -> usize {
-        self.bounds().into_iter().find(|&b| b > at).unwrap_or(self.text.len())
+        self.bounds()
+            .into_iter()
+            .find(|&b| b > at)
+            .unwrap_or(self.text.len())
     }
 
     fn replace(&mut self, lo: usize, hi: usize, with: &str) {
@@ -126,7 +155,10 @@ impl Model {
 fn check(ed: &Editor, m: &Model, ctx: &str) {
     assert_eq!(ed.text(), m.text, "{ctx}: text");
     assert_eq!(ed.selection(), m.sel(), "{ctx}: selection in {:?}", m.text);
-    assert!(ed.text().is_char_boundary(ed.selection().anchor) && ed.text().is_char_boundary(ed.selection().head));
+    assert!(
+        ed.text().is_char_boundary(ed.selection().anchor)
+            && ed.text().is_char_boundary(ed.selection().head)
+    );
 }
 
 fn run(seed: u64, steps: usize, with_ime: bool) {
@@ -222,11 +254,18 @@ fn run(seed: u64, steps: usize, with_ime: bool) {
     while ed.undo() {
         let t = ed.text();
         let found = states[..=idx].iter().rposition(|(s, _)| *s == t);
-        assert!(found.is_some(), "seed {seed}: undo produced a text that never existed: {t:?}", );
+        assert!(
+            found.is_some(),
+            "seed {seed}: undo produced a text that never existed: {t:?}",
+        );
         idx = found.unwrap();
     }
     assert_eq!(ed.text(), "", "seed {seed}: undo all");
-    assert_eq!(ed.selection(), Selection::default(), "seed {seed}: undo all restores the selection");
+    assert_eq!(
+        ed.selection(),
+        Selection::default(),
+        "seed {seed}: undo all restores the selection"
+    );
     // Redo returns to the end state exactly.
     while ed.redo() {}
     assert_eq!(ed.text(), final_text, "seed {seed}: redo all");
@@ -340,7 +379,13 @@ fn selection_snaps_to_grapheme_boundaries() {
     ed.set_selection(3, 3);
     assert_eq!(ed.caret(), 1);
     ed.set_selection(0, 999);
-    assert_eq!(ed.selection(), Selection { anchor: 0, head: ed.len() });
+    assert_eq!(
+        ed.selection(),
+        Selection {
+            anchor: 0,
+            head: ed.len()
+        }
+    );
 }
 
 // ---- input method ---------------------------------------------------------------------------
@@ -379,7 +424,11 @@ fn cancelling_a_composition_leaves_text_and_selection_alone() {
     ed.ime_enable();
     ed.ime_preedit_string("x", None);
     ed.ime_done(1);
-    assert_eq!(ed.display_text(), "hxo", "the preedit shows where the selection starts");
+    assert_eq!(
+        ed.display_text(),
+        "hxo",
+        "the preedit shows where the selection starts"
+    );
     ed.ime_cancel();
     assert_eq!(ed.text(), "hello");
     assert_eq!(ed.selection(), Selection { anchor: 1, head: 4 });

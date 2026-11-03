@@ -1,5 +1,5 @@
 # 0007 - GPU tuning interface
-Status: accepted (v1 implemented: `gpu_tune.rs`, `frame_stats.rs`, `wol-realtime gpu caps|sample`, `hypr stats`)
+Status: accepted (v1 implemented: `gpu_tune.rs`, `frame_stats.rs`, `wol-realtime gpu caps|sample`, `hypr stats`). The counter sources named below (sysctl, `cpuctl`) are superseded by 0016: on Linux the i915 backend reads `/sys/kernel/debug/dri/<n>` and RAPL MSRs (`crates/realtime/src/gpu_tune.rs`).
 Context: iGPU throughput is bound by shared memory bandwidth (`modules/memory-bandwidth.md`). Tuning must apply to i915/xe now and amdgpu/nvidia later without forking compositor logic. `crates/realtime` already probes GPUs (`gpu_probe.rs`, `gpu_select.rs`) and exposes a C ABI to wol-hypr (`wol_realtime.h`).
 Decision:
 - Contract lives in `crates/realtime/src/gpu_tune.rs` (domain-local; promote to `crates/shared` only when a second domain reads it). Plain data, no I/O in the types:

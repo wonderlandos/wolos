@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! The error object (`wolkit_error`): a status and a sentence, owned by the caller after a failed call.
 
-use super::{wolkit_status, handle};
+use super::{handle, wolkit_status};
 use crate::error::{Error, Status};
 use std::ffi::c_char;
 
 #[repr(C)]
+#[allow(non_camel_case_types)] // the C name
 pub struct wolkit_error {
     tag: handle::Tag<wolkit_error>,
     status: Status,
@@ -22,7 +23,11 @@ pub(crate) fn fill(error: *mut *mut wolkit_error, e: &Error) {
     }
     let mut message = e.message.replace('\0', " ").into_bytes();
     message.push(0);
-    let obj = Box::new(wolkit_error { tag: handle::Tag::new(), status: e.status, message });
+    let obj = Box::new(wolkit_error {
+        tag: handle::Tag::new(),
+        status: e.status,
+        message,
+    });
     // SAFETY: the caller passed a writable `wolkit_error **` (header contract).
     unsafe { *error = Box::into_raw(obj) };
 }
@@ -32,13 +37,16 @@ pub(crate) fn fill(error: *mut *mut wolkit_error, e: &Error) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wolkit_error_get_code(error: *const wolkit_error) -> wolkit_status {
     // SAFETY: NULL or a live error object (contract).
-    unsafe { handle::live(error) }.map_or(Status::InvalidArgument as wolkit_status, |e| e.status as i32)
+    unsafe { handle::live(error) }.map_or(Status::InvalidArgument.code(), |e| e.status.code())
 }
 
 /// # Safety
 /// `error` is NULL or came from libwolkit; `len` is NULL or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_error_get_message(error: *const wolkit_error, len: *mut usize) -> *const c_char {
+pub unsafe extern "C" fn wolkit_error_get_message(
+    error: *const wolkit_error,
+    len: *mut usize,
+) -> *const c_char {
     // SAFETY: NULL or a live error object (contract).
     match unsafe { handle::live(error) } {
         Some(e) => {
@@ -73,7 +81,10 @@ mod tests {
         let mut e: *mut wolkit_error = std::ptr::null_mut();
         assert_eq!(super::super::guard(&mut e, || Ok(())), 0);
         assert!(e.is_null());
-        assert_eq!(super::super::guard(&mut e, || Err(Error::invalid("bad\0x"))), 1);
+        assert_eq!(
+            super::super::guard(&mut e, || Err(Error::invalid("bad\0x"))),
+            1
+        );
         let mut n = 0;
         // SAFETY: `e` is the live error just made.
         let m = unsafe { wolkit_error_get_message(e, &mut n) };
@@ -85,6 +96,6 @@ mod tests {
         // SAFETY: released once.
         unsafe { wolkit_error_release(e) };
         let code = super::super::guard(std::ptr::null_mut(), || panic!("boom"));
-        assert_eq!(code, Status::Internal as i32);
+        assert_eq!(code, Status::Internal.code());
     }
 }

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+name: counter
+version: 0.1.0
+description: |
+  The smallest Wolkit app: a number and two buttons.
+license: BSD-2-Clause
+crystal: ">= 1.22.0"
+targets:
+  counter:
+    main: src/main.cr

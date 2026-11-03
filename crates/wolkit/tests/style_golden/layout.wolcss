@@ -1,0 +1,12 @@
+.page    { flex-direction: column; gap: lg; padding: lg; overflow: auto; }
+.toolbar { height: 52px; padding: 0 lg; justify-content: space-between; align-items: center; }
+.side    { width: 220px; shrink: 0; background: sidebar; }
+.grow    { grow: 1; basis: 0px; min-width: 0px; }
+.center  { margin: auto; max-width: 600px; width: 100%; }
+.badge   { position: absolute; top: -4px; right: -4px; z-index: 2; }
+.fill    { aspect-ratio: 16 / 9; width: 50%; }
+.wrap    { flex-wrap: wrap; row-gap: sm; column-gap: xs; align-content: start; }
+.mono    { font-family: mono; font-feature: tnum; letter-spacing: 1px; line-height: 1.5; }
+@compact { .side { display: none; } .page { padding: md; } }
+@dark @reduce-motion { .badge { spring: snappy; } }
+.glass   { backdrop: glass; background: linear-gradient(to bottom, glass, alpha(glass, 60%)); }

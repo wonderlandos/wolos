@@ -3,7 +3,10 @@
 
 use super::engine::wolkit_engine;
 use super::style::wolkit_style_table;
-use super::{borrow, bytes_in, bytes_out, give, guard, guard_status, handle, into_raw, need, put, quiet, release, retain, text_in, wolkit_error, wolkit_status};
+use super::{
+    borrow, bytes_in, bytes_out, give, guard, guard_status, handle, into_raw, need, put, quiet,
+    release, retain, text_in, wolkit_error, wolkit_status,
+};
 use crate::engine::Engine;
 use crate::error::Error;
 use crate::scene::patch::MAX_PATCH;
@@ -12,6 +15,7 @@ use std::ffi::c_char;
 use std::sync::Arc;
 
 #[repr(C)]
+#[allow(non_camel_case_types)] // the C name
 pub struct wolkit_window {
     tag: handle::Tag<wolkit_window>,
     engine: Arc<Engine>,
@@ -20,6 +24,7 @@ pub struct wolkit_window {
 
 handle::tagged!(wolkit_window, 0x57_4f_4c_4b_49_54_57_01);
 
+// Closes the window in its engine when the last reference goes.
 impl Drop for wolkit_window {
     fn drop(&mut self) {
         // The last reference to a window closes it.
@@ -56,7 +61,11 @@ pub unsafe extern "C" fn wolkit_window_create(
         // SAFETY: pointer and length are the caller's (contract).
         let t = unsafe { text_in(title, title_len, 256, "The title") }?;
         let id = e.engine.create_window(t, width, height, flags)?;
-        let w = Arc::new(wolkit_window { tag: handle::Tag::new(), engine: e.engine.clone(), id });
+        let w = Arc::new(wolkit_window {
+            tag: handle::Tag::new(),
+            engine: e.engine.clone(),
+            id,
+        });
         // SAFETY: checked non-NULL above.
         unsafe { *out = into_raw(w) };
         Ok(())
@@ -124,20 +133,30 @@ pub unsafe extern "C" fn wolkit_window_set_size_limits(
     max_h: u32,
     error: *mut *mut wolkit_error,
 ) -> wolkit_status {
-    window_call!(window, error, |w| w.engine.set_size_limits(w.id, (min_w, min_h), (max_w, max_h)))
+    window_call!(window, error, |w| w.engine.set_size_limits(
+        w.id,
+        (min_w, min_h),
+        (max_w, max_h)
+    ))
 }
 
 /// # Safety
 /// `window` is live.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_window_show(window: *mut wolkit_window, error: *mut *mut wolkit_error) -> wolkit_status {
+pub unsafe extern "C" fn wolkit_window_show(
+    window: *mut wolkit_window,
+    error: *mut *mut wolkit_error,
+) -> wolkit_status {
     window_call!(window, error, |w| w.engine.show(w.id))
 }
 
 /// # Safety
 /// `window` is live.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_window_close(window: *mut wolkit_window, error: *mut *mut wolkit_error) -> wolkit_status {
+pub unsafe extern "C" fn wolkit_window_close(
+    window: *mut wolkit_window,
+    error: *mut *mut wolkit_error,
+) -> wolkit_status {
     window_call!(window, error, |w| {
         w.engine.close_window(w.id);
         Ok(())
@@ -177,7 +196,9 @@ pub unsafe extern "C" fn wolkit_window_read_text(
         let n = w.engine.read_text(w.id, node, out)?;
         put(needed, n);
         if n > cap {
-            return Err(Error::limit(format!("The text needs {n} bytes; the buffer has {cap}.")));
+            return Err(Error::limit(format!(
+                "The text needs {n} bytes; the buffer has {cap}."
+            )));
         }
         Ok(())
     })
@@ -186,14 +207,23 @@ pub unsafe extern "C" fn wolkit_window_read_text(
 /// # Safety
 /// `window` is live.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_window_set_focus(window: *mut wolkit_window, node: u32, error: *mut *mut wolkit_error) -> wolkit_status {
+pub unsafe extern "C" fn wolkit_window_set_focus(
+    window: *mut wolkit_window,
+    node: u32,
+    error: *mut *mut wolkit_error,
+) -> wolkit_status {
     window_call!(window, error, |w| w.engine.set_focus(w.id, node))
 }
 
 /// # Safety
 /// `window` is live; the out-pointers are writable or NULL.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_window_get_size(window: *const wolkit_window, w: *mut u32, h: *mut u32, scale: *mut f32) -> wolkit_status {
+pub unsafe extern "C" fn wolkit_window_get_size(
+    window: *const wolkit_window,
+    w: *mut u32,
+    h: *mut u32,
+    scale: *mut f32,
+) -> wolkit_status {
     guard_status(|| {
         // SAFETY: live (contract).
         let win = unsafe { borrow(window) }?;
@@ -228,7 +258,12 @@ pub unsafe extern "C" fn wolkit_window_node_rect(
 /// # Safety
 /// `window` is live; `node` is writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_window_hit_test(window: *const wolkit_window, x: f32, y: f32, node: *mut u32) -> wolkit_status {
+pub unsafe extern "C" fn wolkit_window_hit_test(
+    window: *const wolkit_window,
+    x: f32,
+    y: f32,
+    node: *mut u32,
+) -> wolkit_status {
     guard_status(|| {
         need(node, "node")?;
         // SAFETY: live (contract).
@@ -292,7 +327,16 @@ pub unsafe extern "C" fn wolkit_window_inject_pointer(
     mods: u32,
     error: *mut *mut wolkit_error,
 ) -> wolkit_status {
-    window_call!(window, error, |w| w.engine.inject_pointer(w.id, PointerInput { kind, x, y, button, mods }))
+    window_call!(window, error, |w| w.engine.inject_pointer(
+        w.id,
+        PointerInput {
+            kind,
+            x,
+            y,
+            button,
+            mods
+        }
+    ))
 }
 
 /// # Safety
@@ -305,7 +349,14 @@ pub unsafe extern "C" fn wolkit_window_inject_key(
     mods: u32,
     error: *mut *mut wolkit_error,
 ) -> wolkit_status {
-    window_call!(window, error, |w| w.engine.inject_key(w.id, KeyInput { keysym, pressed: pressed != 0, mods }))
+    window_call!(window, error, |w| w.engine.inject_key(
+        w.id,
+        KeyInput {
+            keysym,
+            pressed: pressed != 0,
+            mods
+        }
+    ))
 }
 
 /// # Safety
@@ -327,7 +378,11 @@ pub unsafe extern "C" fn wolkit_window_inject_text(
 /// # Safety
 /// `window` is live.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_window_advance_time(window: *mut wolkit_window, ns: u64, error: *mut *mut wolkit_error) -> wolkit_status {
+pub unsafe extern "C" fn wolkit_window_advance_time(
+    window: *mut wolkit_window,
+    ns: u64,
+    error: *mut *mut wolkit_error,
+) -> wolkit_status {
     window_call!(window, error, |w| w.engine.advance_time(w.id, ns))
 }
 

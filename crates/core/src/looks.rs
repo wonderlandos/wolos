@@ -19,7 +19,7 @@ pub const MAX_FILE: u64 = 64 * 1024;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Motion {
-    /// Grow from the centre (macOS-like, the default).
+    /// Grow from the centre (the default).
     #[default]
     Zoom,
     /// Spring past full size and settle.

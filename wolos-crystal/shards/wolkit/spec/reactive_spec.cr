@@ -2,6 +2,18 @@
 # Specs for the reactive core: signals, effects, computeds, batches, scopes and lists.
 require "./spec_helper"
 
+# The macros live in Wolkit::DSL, which every view includes.
+class SignalMacros
+  include Wolkit::DSL
+
+  getter string = signal("")
+  getter int = signal(1)
+  getter float = signal(1.5)
+  getter flag = signal(false)
+  getter maybe = signal(nil, of: String?)
+  getter items = list(String)
+end
+
 describe Wolkit::Signal do
   it "runs an effect once at creation and again when the value changes" do
     scope = Wolkit::Scope.new(nil)
@@ -32,11 +44,13 @@ describe Wolkit::Signal do
   end
 
   it "infers the type of a literal signal at class level" do
-    Wolkit.signal("").should be_a(Wolkit::Signal(String))
-    Wolkit.signal(1).should be_a(Wolkit::Signal(Int32))
-    Wolkit.signal(1.5).should be_a(Wolkit::Signal(Float64))
-    Wolkit.signal(false).should be_a(Wolkit::Signal(Bool))
-    Wolkit.signal(nil, of: String?).should be_a(Wolkit::Signal(String?))
+    made = SignalMacros.new
+    made.string.should be_a(Wolkit::Signal(String))
+    made.int.should be_a(Wolkit::Signal(Int32))
+    made.float.should be_a(Wolkit::Signal(Float64))
+    made.flag.should be_a(Wolkit::Signal(Bool))
+    made.maybe.should be_a(Wolkit::Signal(String?))
+    made.items.should be_a(Wolkit::List(String))
   end
 
   it "does not record a dependency for peek and untracked" do
@@ -228,7 +242,7 @@ describe Wolkit::List do
     items.delete("a")
     items.move(0, 0)
     sizes.should eq [0, 1, 2, 1]
-    cursor.changes.map { |c| {c.kind, c.index} }.should eq [{Wolkit::ListChange::Kind::Insert, 0}, {Wolkit::ListChange::Kind::Insert, 1}, {Wolkit::ListChange::Kind::Remove, 0}]
+    cursor.changes.map { |c| {c.kind, c.index} }.should eq [{Wolkit::ListChangeKind::Insert, 0}, {Wolkit::ListChangeKind::Insert, 1}, {Wolkit::ListChangeKind::Remove, 0}]
     scope.dispose
   end
 
@@ -237,7 +251,7 @@ describe Wolkit::List do
     cursor = items.open_cursor
     items << 4
     items.replace([9])
-    cursor.changes.map(&.kind).should eq [Wolkit::ListChange::Kind::Reset]
+    cursor.changes.map(&.kind).should eq [Wolkit::ListChangeKind::Reset]
     items.to_a.should eq [9]
   end
 end

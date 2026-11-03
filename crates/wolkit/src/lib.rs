@@ -18,6 +18,7 @@
 
 pub mod a11y;
 pub mod abi;
+pub mod anim;
 pub mod copy;
 pub mod cpu;
 pub mod diag;

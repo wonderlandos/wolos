@@ -3,6 +3,7 @@
 //! the compositor's (`crates/realtime/src/frame_stats.rs`): one entry per frame with begin and end
 //! times, damage and pass count, so the bench harness reads both the same way.
 
+use crate::scene::ids::Ix;
 use std::time::Instant;
 
 /// Frames kept.
@@ -32,7 +33,12 @@ impl Default for FrameRing {
 
 impl FrameRing {
     pub fn new() -> Self {
-        Self { frames: Box::new([Frame::default(); RING]), next: 0, total: 0, epoch: Instant::now() }
+        Self {
+            frames: Box::new([Frame::default(); RING]),
+            next: 0,
+            total: 0,
+            epoch: Instant::now(),
+        }
     }
 
     pub fn now_ns(&self) -> u64 {
@@ -51,11 +57,14 @@ impl FrameRing {
 
     /// (p50, p95, max) of frame durations in microseconds over the ring.
     pub fn percentiles(&self) -> (u64, u64, u64) {
-        let n = (self.total as usize).min(RING);
+        let n = (self.total.ix()).min(RING);
         if n == 0 {
             return (0, 0, 0);
         }
-        let mut d: Vec<u64> = self.frames[..n].iter().map(|f| f.end_ns.saturating_sub(f.begin_ns) / 1000).collect();
+        let mut d: Vec<u64> = self.frames[..n]
+            .iter()
+            .map(|f| f.end_ns.saturating_sub(f.begin_ns) / 1000)
+            .collect();
         d.sort_unstable();
         (d[n / 2], d[(n * 95 / 100).min(n - 1)], d[n - 1])
     }

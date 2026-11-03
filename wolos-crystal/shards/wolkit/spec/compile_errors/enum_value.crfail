@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: `align:` takes :start, :center, :end, :stretch, :baseline; this is :midle.
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Todos" do
+      column align: :midle do # <= error
+        text "Hello"
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

@@ -4,6 +4,7 @@
 //! ABI end to end on the headless backend: a window, a patch built by hand, a broken patch that
 //! changes nothing, a click injected at a node's rectangle, and the event it makes.
 
+#[path = "support/mod.rs"]
 mod common;
 
 #[test]
@@ -12,7 +13,11 @@ fn hello_from_c() {
     let exe = common::build("hello", &dir);
     let out = std::process::Command::new(&exe).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "{stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let (a, b, c) = wolkit::VERSION;
     let want = [
         format!("version: {a}.{b}.{c} {} 1.0.0", (a << 16) | (b << 8) | c),
@@ -34,7 +39,10 @@ fn hello_from_c() {
     for w in &want {
         assert!(lines.contains(&w.as_str()), "missing {w:?} in\n{stdout}");
     }
-    assert!(stdout.contains("    2 button role=button name=\"Add\" focused"), "{stdout}");
+    assert!(
+        stdout.contains("    2 button role=button name=\"Add\" focused"),
+        "{stdout}"
+    );
     // The scene survives a broken patch: the button text is still there, the sequence unchanged.
     assert_eq!(lines.last(), Some(&"done"));
 }

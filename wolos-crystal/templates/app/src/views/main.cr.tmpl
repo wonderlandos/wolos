@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The main window of {{class_name}}. A view runs once, at mount; state lives in signals, and only the
+# parts that read a signal change when it does. Edit the text below while `wol app run --watch` is
+# running and watch the window follow.
+class {{class_name}}
+  def view
+    window "{{class_name}}", width: 360, height: 240 do
+      column grow: 1, gap: :md, pad: :lg, align: :center, justify: :center do
+        greeting name: "WolOS"
+        text "You pressed the button #{@presses} times.", role: :secondary, color: :dim
+        button "Press me", primary: true, on_click: -> { @presses.value += 1 }
+      end
+    end
+  end
+end

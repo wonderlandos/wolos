@@ -41,13 +41,20 @@ pub struct Table {
     pub table: StyleTable,
     /// Distinct for every table ever loaded, so a window can tell the table changed.
     pub generation: u64,
+    /// Some class has a `.parent:state > .child` rule: a parent's state can restyle its children.
+    pub parent_rules: bool,
 }
 
 static GENERATION: AtomicU64 = AtomicU64::new(1);
 
 impl Table {
     pub fn new(table: StyleTable) -> Table {
-        Table { table, generation: GENERATION.fetch_add(1, Ordering::Relaxed) }
+        let parent_rules = table.classes.iter().any(|c| c.has_parent_rules());
+        Table {
+            table,
+            generation: GENERATION.fetch_add(1, Ordering::Relaxed),
+            parent_rules,
+        }
     }
 }
 
@@ -64,7 +71,9 @@ pub fn load(bytes: &[u8]) -> Result<Table> {
 /// Compile `.wolcss` source to a `WSB1` table (dev reload and the CLI). The error carries every
 /// diagnostic, rendered.
 pub fn compile(src: &str) -> Result<Vec<u8>> {
-    compile_sources(&[("style.wolcss", src)]).map(|c| c.bytes).map_err(|d| Error::invalid(render_all(&d)))
+    compile_sources(&[("style.wolcss", src)])
+        .map(|c| c.bytes)
+        .map_err(|d| Error::invalid(render_all(&d)))
 }
 
 pub fn render_all(d: &[lint::Diag]) -> String {
@@ -92,7 +101,12 @@ pub fn compile_sources(files: &[(&str, &str)]) -> std::result::Result<Compiled, 
         return Err(diags);
     }
     match wsb::write(&table) {
-        Ok(bytes) => Ok(Compiled { bytes, table, warnings: diags, optouts }),
+        Ok(bytes) => Ok(Compiled {
+            bytes,
+            table,
+            warnings: diags,
+            optouts,
+        }),
         Err(e) => {
             let id = lint::TABLE_LIMIT;
             let mut v = diags;
@@ -172,9 +186,19 @@ fn empty_table() -> &'static StyleTable {
 /// Resolve computed styles for the dirty nodes of `scene` and set the layout and paint bits that
 /// follow from what changed: a changed table, environment or window class restyles everything;
 /// otherwise only nodes with the style bit (and what inherits from them).
-pub fn resolve(scene: &mut dyn SceneWrite, table: Option<&Table>, styles: &mut Styles, env: &Environment, width: u32) {
+pub fn resolve(
+    scene: &mut dyn SceneWrite,
+    table: Option<&Table>,
+    styles: &mut Styles,
+    env: &Environment,
+    width: u32,
+) {
     let media = media_mask(env, width);
-    let key = (table.map_or(0, |t| t.generation), media, env.text_scale.to_bits());
+    let key = (
+        table.map_or(0, |t| t.generation),
+        media,
+        env.text_scale.to_bits(),
+    );
     let full = styles.last != Some(key);
     if full {
         styles.resolver.clear();
@@ -184,9 +208,18 @@ pub fn resolve(scene: &mut dyn SceneWrite, table: Option<&Table>, styles: &mut S
         Some(t) => &t.table,
         None => empty_table(),
     };
-    let parent_rules = tbl.classes.iter().any(|c| c.has_parent_rules());
-    let scale = if env.text_scale.is_finite() { env.text_scale.clamp(0.5, 3.0) } else { 1.0 };
-    let cx = Cx { table: tbl, media, scale, parent_rules };
+    let parent_rules = table.is_some_and(|t| t.parent_rules);
+    let scale = if env.text_scale.is_finite() {
+        env.text_scale.clamp(0.5, 3.0)
+    } else {
+        1.0
+    };
+    let cx = Cx {
+        table: tbl,
+        media,
+        scale,
+        parent_rules,
+    };
     if !scene.is_live(0) {
         return;
     }
@@ -201,7 +234,14 @@ struct ParentInfo {
     state: u16,
 }
 
-fn visit(scene: &mut dyn SceneWrite, styles: &mut Styles, cx: &Cx, i: Idx, parent: Option<ParentInfo>, forced: bool) {
+fn visit(
+    scene: &mut dyn SceneWrite,
+    styles: &mut Styles,
+    cx: &Cx,
+    i: Idx,
+    parent: Option<ParentInfo>,
+    forced: bool,
+) {
     let d = scene.dirty(i);
     let need = forced || d & dirty::STYLE != 0;
     if !need && d & dirty::SUBTREE == 0 {
@@ -225,7 +265,11 @@ fn visit(scene: &mut dyn SceneWrite, styles: &mut Styles, cx: &Cx, i: Idx, paren
             parent: parent.map(|p| p.style),
             parent_classes: parent.as_ref().map_or(&[], |p| &p.classes[..p.n]),
             parent_state: parent.map_or(0, |p| p.state),
-            inline: if inline.is_empty() { None } else { Some(&inline) },
+            inline: if inline.is_empty() {
+                None
+            } else {
+                Some(&inline)
+            },
             text_scale: cx.scale,
         };
         let new = styles.resolver.resolve(cx.table, &mut styles.store, &inp);
@@ -240,7 +284,12 @@ fn visit(scene: &mut dyn SceneWrite, styles: &mut Styles, cx: &Cx, i: Idx, paren
         scene.clear_dirty(i, dirty::STYLE);
     }
     let force_kids = forced || changed || (need && cx.parent_rules);
-    let me = ParentInfo { style: cur, classes: buf, n, state };
+    let me = ParentInfo {
+        style: cur,
+        classes: buf,
+        n,
+        state,
+    };
     let mut c = scene.first_child(i);
     while c != NIL {
         let next = scene.next_sibling(c);

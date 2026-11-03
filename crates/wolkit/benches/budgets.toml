@@ -1,0 +1,44 @@
+# Ratchet for the wolkit microbenchmarks (plan section 4.6). A bench exits non-zero under
+# `--check` when a median exceeds its limit here. Limits are ceilings with CI noise in mind;
+# lower them by hand after a forge run, never raise one without a recorded reason.
+# Each owner appends its own group: [text] and [batch] are WK-W3's; [style], [layout], [patch]
+# belong to their benches.
+
+[text]
+# Budget 8. Targets from the plan: hit <= 2 us, cold 40-char Latin line <= 50 us.
+shape_hit_ns = 2_000
+shape_cold_40_ns = 50_000
+atlas_hit_ns = 500
+layout_warm_para_ns = 100_000
+glyph_raster_cold_ns = 100_000
+
+[batch]
+# Budget 9. A typical window is at most 10 draw calls.
+draws = 10
+# Scroll with unchanged content only re-emits the cached instances.
+build_scroll_ns = 400_000
+damage_blink_ns = 2_000
+
+[style]
+# Budget 5: style resolve <= 0.2 ms per 100 dirty nodes (memoised; inline properties skip the memo).
+# Forge (Xeon 8375C, release): state flips 72 us, inline 119 us, restyle of 1000 nodes 113 us.
+resolve_100_state_ns = 200_000
+resolve_100_inline_ns = 200_000
+resolve_clean_ns = 1_000
+restyle_all_1000_ns = 400_000
+compile_1000_rules_ns = 4_000_000
+load_1000_rules_ns = 600_000
+
+[layout]
+# Budget 6: <= 0.5 ms for a 1k-node relayout boundary, <= 4 ms for a full relayout of 10k nodes.
+# The stand-in text is not in these (the text budget is [text]); every text node is a fixed size.
+# Release, engine only. CTO box: boundary 280 us, edit inside it 10 us, full 10k 2.9 ms, resize 0.6 ms.
+# Forge (shared, so it moves with load): boundary 320-390 us, full 10k 3.3 ms quiet and 4.3-4.6 ms
+# loaded. The ceilings below carry that noise; the plan target for full 10k is 4 ms.
+boundary_1k_full_ns = 500_000
+boundary_1k_edit_ns = 100_000
+clean_ns = 1_000
+full_10k_ns = 5_000_000
+first_10k_ns = 5_000_000
+resize_10k_ns = 2_000_000
+scene_full_ns = 5_000_000

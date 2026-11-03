@@ -37,15 +37,23 @@ module Wolkit
       @@current || @@root
     end
 
-    # The scope of the whole app; disposing it ends everything.
+    # The scope of the whole app.
     def self.root : Scope
       @@root
+    end
+
+    # Dispose everything in the root scope and start a new one (the end of a run, specs).
+    def self.reset_root : Nil
+      @@root.dispose
+      @@root = Scope.new(nil)
     end
 
     getter parent : Scope?
     getter? disposed : Bool = false
     # Node ids created while this scope was current (for the mount to free).
     getter nodes = [] of UInt32
+    # True once a mount has registered the cleanup that gives `nodes` back.
+    property? tracks_nodes : Bool = false
     @children = [] of Scope
     @disposables = [] of Disposable
 

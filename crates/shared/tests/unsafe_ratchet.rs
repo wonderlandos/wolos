@@ -23,11 +23,15 @@ use std::path::{Path, PathBuf};
 /// `O_NOFOLLOW` per path step and taking the descriptor it returns (`open_owned_dir`; std has no
 /// `openat`). api +1 (F7-security P6-5, `os::space_at` in the listed `os.rs`): one `statvfs(3)`
 /// call so a staged package copy cannot fill the disk; std has no free-space query and no new
-/// dependency was wanted for one call. A new crate needs a line here.
+/// dependency was wanted for one call. `wolkit` (ADR 0039, 2026-11-03): provisional 400, set when the crate was made (the C boundary in
+/// `src/ffi/`, a `poll` call in `src/loop_/`, the counting allocator in `tests/alloc_free.rs`, and
+/// the room the native window and GPU backends need); the closer lowers it to the final count.
+/// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
+    ("wolkit", 400),
     ("wopkg", 94),
-    ("realtime", 71),
+    ("realtime", 69),
     ("xguard", 63),
     ("controller", 52),
     ("api", 33),

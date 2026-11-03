@@ -32,7 +32,9 @@ fn bez_d(a: f32, b: f32, t: f32) -> f32 {
 /// Progress (0 to 1) of an ease at time fraction `t` (clamped to 0..1).
 pub fn ease(e: Ease, t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
-    let Some([x1, y1, x2, y2]) = bezier(e) else { return t };
+    let Some([x1, y1, x2, y2]) = bezier(e) else {
+        return t;
+    };
     // Solve x(s) = t for s: Newton steps, then bisection when the slope is flat.
     let mut s = t;
     for _ in 0..8 {
@@ -90,7 +92,10 @@ pub fn spring_step(s: SpringState, target: f32, p: SpringParams, dt: f32) -> Spr
         left -= h;
     }
     if s.at_rest(target) {
-        SpringState { pos: target, vel: 0.0 }
+        SpringState {
+            pos: target,
+            vel: 0.0,
+        }
     } else {
         s
     }
@@ -110,7 +115,10 @@ pub fn plan(old: &Props, new: &Props, reduce_motion: bool) -> (u128, Motion) {
     let tr = new.motion.transition;
     let motion = match spring_params(new.motion.spring) {
         Some(p) => Motion::Spring(p),
-        None => Motion::Curve { ms: tr.ms, ease: tr.ease },
+        None => Motion::Curve {
+            ms: tr.ms,
+            ease: tr.ease,
+        },
     };
     if reduce_motion || tr.props == 0 {
         return (0, motion);
@@ -137,7 +145,10 @@ pub fn blend(from: &Props, to: &Props, t: f32, mask: u128) -> Props {
     if on(P::OutlineWidth) {
         p.paint.outline_width = lerp(from.paint.outline_width, to.paint.outline_width, t);
     }
-    for (i, id) in [P::RadiusTl, P::RadiusTr, P::RadiusBr, P::RadiusBl].into_iter().enumerate() {
+    for (i, id) in [P::RadiusTl, P::RadiusTr, P::RadiusBr, P::RadiusBl]
+        .into_iter()
+        .enumerate()
+    {
         if on(id) {
             p.paint.radius[i] = lerp(from.paint.radius[i], to.paint.radius[i], t);
         }
@@ -155,7 +166,12 @@ pub fn blend(from: &Props, to: &Props, t: f32, mask: u128) -> Props {
     if on(P::BoxShadow) {
         for i in 0..2 {
             let (a, b) = (from.paint.shadow[i], to.paint.shadow[i]);
-            p.paint.shadow[i] = Shadow { dx: lerp(a.dx, b.dx, t), dy: lerp(a.dy, b.dy, t), blur: lerp(a.blur, b.blur, t), color: if pick { b.color } else { a.color } };
+            p.paint.shadow[i] = Shadow {
+                dx: lerp(a.dx, b.dx, t),
+                dy: lerp(a.dy, b.dy, t),
+                blur: lerp(a.blur, b.blur, t),
+                color: if pick { b.color } else { a.color },
+            };
         }
     }
     if on(P::Background) && !pick {

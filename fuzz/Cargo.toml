@@ -19,6 +19,7 @@ wopkg = { path = "../crates/wopkg" }
 wol-lua = { path = "../crates/wol-lua" }
 wol = { path = "../crates/wol-abi", package = "wol-abi" }
 wol_core = { path = "../crates/core", package = "core" }
+wolkit = { path = "../crates/wolkit" }
 
 [[bin]]
 name = "ipc_decode"
@@ -100,6 +101,27 @@ bench = false
 [[bin]]
 name = "plugin_index"
 path = "fuzz_targets/plugin_index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wolkit_patch"
+path = "fuzz_targets/wolkit_patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wolkit_wsb"
+path = "fuzz_targets/wolkit_wsb.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wolkit_wolcss"
+path = "fuzz_targets/wolkit_wolcss.rs"
 test = false
 doc = false
 bench = false

@@ -2,17 +2,17 @@
 # Computed(T): a lazy derived value. It recomputes on the first read after a source changed and
 # caches the result; it is both a Source (effects read it) and an Observer (it reads signals).
 module Wolkit
-  # What a computed's link tells when a source changed.
-  module Invalidatable
-    abstract def invalidate : Nil
-  end
-
-  # The observer half of a computed (a class cannot inherit both Source and Observer).
+  # The observer half of a computed (a class cannot inherit both Source and Observer): it forwards
+  # the mark to the computed that owns it.
   class ComputedLink < Observer
-    property owner : Invalidatable? = nil
+    @on_mark : Proc(Nil) = -> { nil }
+
+    def on_mark(&block : ->) : Nil
+      @on_mark = block
+    end
 
     def mark : Nil
-      @owner.try &.invalidate
+      @on_mark.call
     end
 
     def relink : Nil
@@ -21,7 +21,6 @@ module Wolkit
   end
 
   class Computed(T) < Source
-    include Invalidatable
     include Readable(T)
 
     @cache : T? = nil
@@ -29,7 +28,7 @@ module Wolkit
     @link = ComputedLink.new
 
     def initialize(&@compute : -> T)
-      @link.owner = self
+      @link.on_mark { invalidate }
     end
 
     # The value, recomputed when a source changed since the last read. Records a dependency.

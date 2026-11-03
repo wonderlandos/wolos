@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Greeting: a small component with one typed prop. `greeting name: "WolOS"` in a view mounts it.
+class Greeting < Wolkit::Component
+  prop name : String
+
+  def view
+    text "Hello, #{@name}!", role: :title
+  end
+end

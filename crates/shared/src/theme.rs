@@ -64,8 +64,8 @@ pub mod scaffold {
     pub const HEADING: i32 = 15;
     /// Page titles (`label.large-title`), bold, tracking -0.5 px.
     pub const LARGE_TITLE: i32 = 26;
-    /// Window buttons: 12 px circles, 22 px centre to centre, the first centred 23 px from the
-    /// window's left edge (pixel edges), all on the toolbar's vertical centre.
+    /// Window buttons: 12 px circles, 22 px centre to centre, close (the edge one) centred 23 px
+    /// in from the window's right edge (pixel edges), all on the toolbar's vertical centre.
     pub const LIGHT_SIZE: i32 = 12;
     pub const LIGHT_PITCH: i32 = 22;
     pub const LIGHT_FIRST_CENTRE: i32 = 23;

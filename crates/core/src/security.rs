@@ -2,7 +2,7 @@
 //! Settings > Privacy & Security backend: the firewall, the kernel hardening WolOS ships and what
 //! each app permission really enforces (docs/modules/security.md).
 
-/// Kernel hardening shipped in [`HARDENING_FILE`] (desktop/overlay, test-checked):
+/// Kernel hardening shipped in [`HARDENING_FILE`] (`files/usr/lib/sysctl.d`, test-checked):
 /// (sysctl, value, why). ASLR is already the Linux default (`kernel.randomize_va_space=2`).
 pub const HARDENING: &[(&str, &str, &str)] = &[
     (
@@ -42,8 +42,16 @@ pub const HARDENING: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Where [`HARDENING`] is set at boot (systemd-sysctl).
-pub const HARDENING_FILE: &str = "/etc/sysctl.d/90-wolos.conf";
+/// Where [`HARDENING`] is set at boot (systemd-sysctl): the shipped default, owned by the
+/// package (`files/usr/lib/sysctl.d`, image-test-checked). A local change goes in a later-sorting
+/// drop-in such as [`crate::power::SYSCTL_LOCAL`]; a file of the same name in `/etc/sysctl.d`
+/// would replace this one whole, dropping every line of the hardening. Settings and
+/// `wol security` read the running values from `/proc/sys`, so either way they show what the
+/// kernel really has.
+pub const HARDENING_FILE: &str = "/usr/lib/sysctl.d/90-wolos.conf";
+
+/// Same-name file in `/etc/sysctl.d` that would mask [`HARDENING_FILE`] (sysctl.d precedence).
+pub const HARDENING_MASK: &str = "/etc/sysctl.d/90-wolos.conf";
 
 /// Syslog daemons that could send the log over the network (WolOS ships journald only).
 pub const NETWORK_LOGGERS: &[&str] = &["rsyslog.service", "syslog-ng@default.service"];

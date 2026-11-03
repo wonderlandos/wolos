@@ -8,6 +8,8 @@ use crate::text::glyph::{GlyphBitmap, GlyphKey, GlyphRasterizer};
 
 /// Glyphs larger than this many pixels per em are drawn as one-off path fills, not cached.
 pub const LARGE_GLYPH_PX: f32 = 160.0;
+/// Most remembered "this glyph has no image" keys (spaces and the like) before the set resets.
+const MAX_EMPTY_KEYS: usize = 65_536;
 
 /// Owns the atlas and the rasteriser state; borrow it with a [`FontDb`] through [`Glyphs`].
 #[derive(Default)]
@@ -21,7 +23,10 @@ pub struct GlyphCache {
 
 impl GlyphCache {
     pub fn new(atlas: Atlas) -> GlyphCache {
-        GlyphCache { atlas, ..GlyphCache::default() }
+        GlyphCache {
+            atlas,
+            ..GlyphCache::default()
+        }
     }
 
     /// Looks a glyph up, rendering and storing it on a miss.
@@ -46,6 +51,9 @@ impl GlyphCache {
             Some(s) => s,
             None => match self.rast.rasterize(db, key) {
                 None => {
+                    if self.empty.len() >= MAX_EMPTY_KEYS {
+                        self.empty.clear();
+                    }
                     self.empty.insert(key);
                     return None;
                 }
@@ -75,7 +83,11 @@ impl GlyphCache {
             top: slot.top,
             stride,
             data,
-            place: Place::Atlas { page: slot.page, x: slot.x, y: slot.y },
+            place: Place::Atlas {
+                page: slot.page,
+                x: slot.x,
+                y: slot.y,
+            },
         })
     }
 
@@ -95,6 +107,7 @@ pub struct Glyphs<'a> {
 
 impl GlyphSource for Glyphs<'_> {
     fn glyph(&mut self, font: FontId, glyph: u32, size: f32, sub: u8) -> Option<GlyphRef<'_>> {
-        self.cache.get(self.db, GlyphKey::new(font, glyph, size, sub))
+        self.cache
+            .get(self.db, GlyphKey::new(font, glyph, size, sub))
     }
 }

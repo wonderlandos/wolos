@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: Colours are theme tokens: surface, sidebar, card, line, text, dim, accent, accentText, glass, control, success, warning or danger; this is :purple.
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Todos" do
+      column bg: :purple do # <= error
+        text "Hello"
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

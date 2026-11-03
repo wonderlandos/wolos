@@ -3,11 +3,15 @@
 //! compiler (parsing is `crate::style`, owned by WK-W2).
 
 use super::engine::wolkit_engine;
-use super::{borrow, bytes_in, give, guard, handle, into_raw, need, release, retain, text_in, wolkit_error, wolkit_status};
+use super::{
+    borrow, bytes_in, give, guard, handle, into_raw, need, release, retain, text_in, wolkit_error,
+    wolkit_status,
+};
 use std::ffi::c_char;
 use std::sync::Arc;
 
 #[repr(C)]
+#[allow(non_camel_case_types)] // the C name
 pub struct wolkit_style_table {
     tag: handle::Tag<wolkit_style_table>,
     table: Arc<crate::style::Table>,
@@ -38,7 +42,10 @@ pub unsafe extern "C" fn wolkit_style_table_load(
         // SAFETY: pointer and length are the caller's (contract).
         let b = unsafe { bytes_in(bytes, len, crate::style::MAX_TABLE, "A style table") }?;
         let table = crate::style::load(b)?;
-        let h = Arc::new(wolkit_style_table { tag: handle::Tag::new(), table: Arc::new(table) });
+        let h = Arc::new(wolkit_style_table {
+            tag: handle::Tag::new(),
+            table: Arc::new(table),
+        });
         // SAFETY: checked non-NULL above.
         unsafe { *out = into_raw(h) };
         Ok(())
@@ -48,7 +55,9 @@ pub unsafe extern "C" fn wolkit_style_table_load(
 /// # Safety
 /// `table` is NULL or live.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wolkit_style_table_retain(table: *mut wolkit_style_table) -> *mut wolkit_style_table {
+pub unsafe extern "C" fn wolkit_style_table_retain(
+    table: *mut wolkit_style_table,
+) -> *mut wolkit_style_table {
     // SAFETY: NULL or live (contract).
     unsafe { retain(table) }
 }

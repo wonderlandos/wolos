@@ -36,6 +36,22 @@ module Wolkit
     STDERR.puts "wolkit: the error handler raised #{error.class} while handling #{ex.class}"
   end
 
+  @@on_diagnostic : Proc(UInt32, String, Nil) = ->(level : UInt32, message : String) do
+    STDERR.puts "wolkit: #{%w(note warning error)[level]? || "note"}: #{message}"
+    nil
+  end
+
+  # Replace the handler for the engine's diagnostic events (level 0 note, 1 warning, 2 error). The
+  # dev overlay shows them in a banner.
+  def self.on_diagnostic(&handler : UInt32, String ->) : Nil
+    @@on_diagnostic = handler
+  end
+
+  # An engine diagnostic arrived.
+  def self.diagnostic(level : UInt32, message : String) : Nil
+    @@on_diagnostic.call(level, message)
+  end
+
   # Run app code. An exception goes to `report` and the caller carries on.
   def self.guard(& : ->) : Nil
     yield

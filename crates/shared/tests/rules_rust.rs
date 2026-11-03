@@ -68,9 +68,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-017", "controller", 3),
     ("RR-017", "core", 67),
     ("RR-017", "proxy", 1),
-    ("RR-017", "realtime", 14),
+    ("RR-017", "realtime", 10),
     ("RR-017", "shared", 39),
-    ("RR-017", "shell", 159),
+    ("RR-017", "shell", 156),
     ("RR-017", "wol-abi", 21),
     ("RR-017", "wol-lua", 12),
     ("RR-017", "wopkg", 39),
@@ -102,6 +102,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-027", "realtime", 1),
     ("RR-027", "shell", 60),
     ("RR-027", "wol-abi", 5),
+    // wolkit 1 (ADR 0039): `ffi/engine.rs` reads $WOL_KIT_SOCKET and $XDG_RUNTIME_DIR once, at
+    // `wolkit_engine_create`, and hands the engine the path; the library proper takes it as a value.
+    ("RR-027", "wolkit", 1),
     ("RR-027", "wol-lua", 1),
     ("RR-027", "wopkg", 1),
     ("RR-027", "xguard-clam", 2),
@@ -164,7 +167,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-048", "shared", 6),
     ("RR-048", "shell", 5),
     ("RR-048", "wol-abi", 10),
-    ("RR-049", "api", 8),
+    ("RR-049", "api", 7),
     ("RR-049", "controller", 1),
     ("RR-049", "core", 1),
     ("RR-049", "shell", 11),
@@ -190,7 +193,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-058", "controller", 14),
     ("RR-058", "core", 48),
     ("RR-058", "realtime", 1),
-    ("RR-058", "shared", 7),
+    ("RR-058", "shared", 6),
     ("RR-058", "shell", 13),
     ("RR-058", "wol-abi", 1),
     ("RR-058", "wol-lua", 15),
@@ -1215,7 +1218,7 @@ rule!(
         prod(s)
             && !matches!(
                 s.krate.as_str(),
-                "wol-abi" | "wopkg" | "xguard" | "xguard-clam" | "realtime"
+                "wol-abi" | "wolkit" | "wopkg" | "xguard" | "xguard-clam" | "realtime"
             )
             && !s.rel.ends_with("api/src/os.rs")
     },

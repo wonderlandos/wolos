@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! A fake Kit host: speaks the real `shared::view` wires on a socket, records every message from
 //! the engine and sends the events a test asks for.
-#![allow(dead_code)]
+#![allow(dead_code)] // each test binary uses some of these helpers
 use shared::view::{FromHost, ToHost};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
@@ -14,6 +14,7 @@ pub struct FakeKit {
     pub path: PathBuf,
     pub seen: Arc<Mutex<Vec<ToHost>>>,
     tx: Sender<FromHost>,
+    raw: Sender<String>,
 }
 
 impl FakeKit {
@@ -23,14 +24,24 @@ impl FakeKit {
         let l = UnixListener::bind(&path).unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = channel::<FromHost>();
+        let (raw, raw_rx) = channel::<String>();
         let s2 = seen.clone();
         std::thread::spawn(move || {
             let Ok((conn, _)) = l.accept() else { return };
             let rd = conn.try_clone().unwrap();
             std::thread::spawn(move || {
                 for line in BufReader::new(rd).lines().map_while(Result::ok) {
-                    let m = ToHost::parse(&line).unwrap_or_else(|| panic!("the host dropped an invalid line: {line}"));
+                    let m = ToHost::parse(&line)
+                        .unwrap_or_else(|| panic!("the host dropped an invalid line: {line}"));
                     s2.lock().unwrap().push(m);
+                }
+            });
+            let c2 = conn.try_clone().unwrap();
+            std::thread::spawn(move || {
+                while let Ok(t) = raw_rx.recv() {
+                    if (&c2).write_all(t.as_bytes()).is_err() {
+                        break;
+                    }
                 }
             });
             let mut w = &conn;
@@ -40,7 +51,17 @@ impl FakeKit {
                 }
             }
         });
-        FakeKit { path, seen, tx }
+        FakeKit {
+            path,
+            seen,
+            tx,
+            raw,
+        }
+    }
+
+    /// Bytes as they are, with a newline: for the lines a real host would never send.
+    pub fn send_raw(&self, text: &str) {
+        self.raw.send(format!("{text}\n")).unwrap();
     }
 
     pub fn send(&self, e: FromHost) {

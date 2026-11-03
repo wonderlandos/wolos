@@ -53,7 +53,11 @@ impl Accumulator {
         }
         let wf = self.w as f32;
         // Orient top to bottom; the sign carries the original direction.
-        let (sign, tx, ty, bx, by) = if y0 < y1 { (1.0f32, x0, y0, x1, y1) } else { (-1.0, x1, y1, x0, y0) };
+        let (sign, tx, ty, bx, by) = if y0 < y1 {
+            (1.0f32, x0, y0, x1, y1)
+        } else {
+            (-1.0, x1, y1, x0, y0)
+        };
         let dxdy = (bx - tx) / (by - ty);
         // Break the line where it crosses x = 0 and x = w; every piece then lies wholly on one
         // side, so clamping its end points to [0, w] is exact (outside pieces become vertical
@@ -176,7 +180,16 @@ pub struct Flattener<'a> {
 
 impl<'a> Flattener<'a> {
     pub fn new(acc: &'a mut Accumulator, sx: f32, sy: f32, ox: f32, oy: f32) -> Flattener<'a> {
-        Flattener { acc, sx, sy, ox, oy, start: (0.0, 0.0), cur: (0.0, 0.0), open: false }
+        Flattener {
+            acc,
+            sx,
+            sy,
+            ox,
+            oy,
+            start: (0.0, 0.0),
+            cur: (0.0, 0.0),
+            open: false,
+        }
     }
 
     fn map(&self, x: f32, y: f32) -> (f32, f32) {
@@ -337,13 +350,33 @@ mod tests {
             let (cx, cy, r) = (16.0f32, 16.0f32, 10.0f32);
             let k = r * 0.414_213_57;
             f.move_to(cx + r, cy);
-            f.quad_to(cx + r, cy + k, cx + r * 0.707_106_8, cy + r * 0.707_106_8);
+            f.quad_to(
+                cx + r,
+                cy + k,
+                cx + r * std::f32::consts::FRAC_1_SQRT_2,
+                cy + r * std::f32::consts::FRAC_1_SQRT_2,
+            );
             f.quad_to(cx + k, cy + r, cx, cy + r);
-            f.quad_to(cx - k, cy + r, cx - r * 0.707_106_8, cy + r * 0.707_106_8);
+            f.quad_to(
+                cx - k,
+                cy + r,
+                cx - r * std::f32::consts::FRAC_1_SQRT_2,
+                cy + r * std::f32::consts::FRAC_1_SQRT_2,
+            );
             f.quad_to(cx - r, cy + k, cx - r, cy);
-            f.quad_to(cx - r, cy - k, cx - r * 0.707_106_8, cy - r * 0.707_106_8);
+            f.quad_to(
+                cx - r,
+                cy - k,
+                cx - r * std::f32::consts::FRAC_1_SQRT_2,
+                cy - r * std::f32::consts::FRAC_1_SQRT_2,
+            );
             f.quad_to(cx - k, cy - r, cx, cy - r);
-            f.quad_to(cx + k, cy - r, cx + r * 0.707_106_8, cy - r * 0.707_106_8);
+            f.quad_to(
+                cx + k,
+                cy - r,
+                cx + r * std::f32::consts::FRAC_1_SQRT_2,
+                cy - r * std::f32::consts::FRAC_1_SQRT_2,
+            );
             f.quad_to(cx + r, cy - k, cx + r, cy);
             f.close();
         }

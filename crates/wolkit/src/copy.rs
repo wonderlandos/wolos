@@ -6,7 +6,8 @@ pub const KIT_NO_CANVAS: &str = "This window needs the native backend to show a 
 pub const KIT_NO_OVERLAY: &str = "The Kit host cannot show popovers; use the native backend.";
 pub const KIT_TOO_MANY_PARTS: &str =
     "The Kit host shows at most 200 parts per window; use a list or the native backend.";
-pub const KIT_TOO_DEEP: &str = "The Kit host shows at most 12 levels; flatten the window or use the native backend.";
+pub const KIT_TOO_DEEP: &str =
+    "The Kit host shows at most 12 levels; flatten the window or use the native backend.";
 pub const KIT_LABEL_NEEDED: &str = "A button, switch or field needs a label for the Kit host.";
 pub const KIT_TEXT_LONG: &str = "The Kit host shows at most 1024 bytes of text per part.";
 pub const KIT_GONE: &str = "The WolOS desktop is not running, so the window cannot open.";

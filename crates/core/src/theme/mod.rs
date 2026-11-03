@@ -504,10 +504,10 @@ mod tests {
     #[test]
     fn builtins_match_palette() {
         let cat = ThemeCatalog::builtin();
-        assert_eq!(cat.resolve("wol-dark").unwrap().tokens["card"], "#2c2c30");
+        assert_eq!(cat.resolve("wol-dark").unwrap().tokens["card"], "#2a2834");
         assert_eq!(
             cat.resolve("wol-light").unwrap().tokens["sidebar"],
-            "rgba(236,236,240,0.92)"
+            "rgba(233,231,241,0.92)"
         );
         assert_eq!(cat.resolve("wol-dark").unwrap().variant, Variant::Dark);
     }
@@ -532,7 +532,7 @@ mod tests {
         let t = ThemeCatalog::load(&[d]).resolve("mine").unwrap();
         assert_eq!(
             (t.tokens["accent"].as_str(), t.tokens["card"].as_str()),
-            ("#ff00ff", "#2c2c30")
+            ("#ff00ff", "#2a2834")
         );
     }
 
@@ -686,7 +686,7 @@ mod tests {
     fn css_has_tokens_and_scale() {
         let css = ThemeCatalog::builtin().resolve("wol-dark").unwrap().css();
         for want in [
-            "--card: #2c2c30;",
+            "--card: #2a2834;",
             "--accent-text: #ffffff;",
             "--radius-m: 10px;",
             "--motion-fast: 150ms;",

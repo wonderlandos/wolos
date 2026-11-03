@@ -23,7 +23,7 @@ impl Visual {
 pub struct Bezier(pub f32, pub f32, pub f32, pub f32);
 
 impl Bezier {
-    /// macOS-like: fast start, soft landing.
+    /// Fast start, soft landing (the WolOS default).
     pub const EASE_OUT: Bezier = Bezier(0.2, 0.8, 0.2, 1.0);
     pub const EASE_IN: Bezier = Bezier(0.4, 0.0, 1.0, 1.0);
 

@@ -3,29 +3,33 @@
 # (Insert, Remove, Move, Reset) instead of diffing, so adding a todo creates one row and removing
 # one frees one row (plan-wolkit section 3.2 "Structure"). Reads (`size`, `[]`, `each`) are tracked.
 module Wolkit
-  # What happened to a list. `index` is where, `to` is the destination of a move.
-  struct ListChange
-    enum Kind
-      Insert
-      Remove
-      Move
-      Reset
-    end
+  # The kinds of change a list records.
+  enum ListChangeKind
+    Insert
+    Remove
+    Move
+    Reset
+  end
 
-    getter kind : Kind
+  # What happened to a list. `index` is where, `to` the destination of a move; an insert carries the
+  # item, a reset carries the whole new content (so a later change applies on top of it).
+  struct ListChange(T)
+    getter kind : ListChangeKind
     getter index : Int32
     getter to : Int32
+    getter item : T?
+    getter items : Array(T)?
 
-    def initialize(@kind : Kind, @index : Int32 = 0, @to : Int32 = 0)
+    def initialize(@kind : ListChangeKind, @index : Int32 = 0, @to : Int32 = 0, @item : T? = nil, @items : Array(T)? = nil)
     end
   end
 
   # One reader of the change records (an `each` region): it gets its own queue, so regions on the
   # same list do not share a cursor.
-  class ListCursor
-    getter changes = [] of ListChange
+  class ListCursor(T)
+    getter changes = [] of ListChange(T)
 
-    def push(change : ListChange) : Nil
+    def push(change : ListChange(T)) : Nil
       # A reset makes every earlier record moot.
       @changes.clear if change.kind.reset?
       @changes << change
@@ -40,7 +44,7 @@ module Wolkit
     include Indexable(T)
 
     @items = [] of T
-    @cursors = [] of ListCursor
+    @cursors = [] of ListCursor(T)
 
     def initialize(items : Enumerable(T)? = nil)
       items.try { |source| source.each { |item| @items << item } }
@@ -63,13 +67,13 @@ module Wolkit
     end
 
     # Open a reader of the change records. The region disposes it with its scope.
-    def open_cursor : ListCursor
-      cursor = ListCursor.new
+    def open_cursor : ListCursor(T)
+      cursor = ListCursor(T).new
       @cursors << cursor
       cursor
     end
 
-    def close_cursor(cursor : ListCursor) : Nil
+    def close_cursor(cursor : ListCursor(T)) : Nil
       @cursors.delete(cursor)
     end
 
@@ -85,7 +89,7 @@ module Wolkit
     def push(item : T) : self
       UI.check_context("`List#push`")
       @items << item
-      changed(ListChange.new(:insert, @items.size - 1))
+      changed(ListChange(T).new(:insert, @items.size - 1, item: item))
       self
     end
 
@@ -94,7 +98,7 @@ module Wolkit
       index += @items.size + 1 if index < 0
       raise IndexError.new("List#insert: index #{index} is outside 0..#{@items.size}") unless 0 <= index <= @items.size
       @items.insert(index, item)
-      changed(ListChange.new(:insert, index))
+      changed(ListChange(T).new(:insert, index, item: item))
       self
     end
 
@@ -102,7 +106,7 @@ module Wolkit
       UI.check_context("`List#delete_at`")
       index += @items.size if index < 0
       item = @items.delete_at(index)
-      changed(ListChange.new(:remove, index))
+      changed(ListChange(T).new(:remove, index))
       item
     end
 
@@ -122,8 +126,8 @@ module Wolkit
       @items[index] = item
       # A row shows its item: replace it (remove then insert), the region keeps the order.
       @cursors.each do |cursor|
-        cursor.push(ListChange.new(:remove, index))
-        cursor.push(ListChange.new(:insert, index))
+        cursor.push(ListChange(T).new(:remove, index))
+        cursor.push(ListChange(T).new(:insert, index, item: item))
       end
       notify
       item
@@ -134,7 +138,7 @@ module Wolkit
       UI.check_context("`List#move`")
       return self if from == to
       @items.insert(to, @items.delete_at(from))
-      changed(ListChange.new(:move, from, to))
+      changed(ListChange(T).new(:move, from, to))
       self
     end
 
@@ -142,7 +146,7 @@ module Wolkit
       UI.check_context("`List#clear`")
       return self if @items.empty?
       @items.clear
-      changed(ListChange.new(:reset))
+      changed(ListChange(T).new(:reset, items: [] of T))
       self
     end
 
@@ -151,7 +155,7 @@ module Wolkit
       UI.check_context("`List#replace`")
       @items.clear
       items.each { |item| @items << item }
-      changed(ListChange.new(:reset))
+      changed(ListChange(T).new(:reset, items: @items.dup))
       self
     end
 
@@ -159,18 +163,20 @@ module Wolkit
     def sort_by!(&block : T -> U) : self forall U
       UI.check_context("`List#sort_by!`")
       @items.sort_by!(&block)
-      changed(ListChange.new(:reset))
+      changed(ListChange(T).new(:reset, items: @items.dup))
       self
     end
 
-    private def changed(change : ListChange) : Nil
+    private def changed(change : ListChange(T)) : Nil
       @cursors.each &.push(change)
       notify
     end
   end
 
-  # A list: `@items = list(String)`.
-  macro list(type)
-    ::Wolkit::List({{ type }}).new
+  module DSL
+    # A list: `@items = list(String)`.
+    macro list(type)
+      ::Wolkit::List({{ type }}).new
+    end
   end
 end

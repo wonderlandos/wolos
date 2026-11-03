@@ -3,6 +3,8 @@
 //! so the scene keeps one copy; a node holds a [`StrId`]. Setting a text that is already interned
 //! allocates nothing, which is what keeps the steady-state apply allocation-free.
 
+use crate::scene::ids::{Ix, to_u32};
+
 /// Index of an interned string; [`NO_STR`] is the empty string and is never stored.
 pub type StrId = u32;
 pub const NO_STR: StrId = u32::MAX;
@@ -56,9 +58,9 @@ impl Strings {
     /// The text of `id`; "" for [`NO_STR`] or an id that nothing refers to.
     pub fn get(&self, id: StrId) -> &str {
         self.entries
-            .get(id as usize)
+            .get(id.ix())
             .filter(|e| e.refs > 0)
-            .and_then(|e| self.heap.get(e.off as usize..(e.off + e.len) as usize))
+            .and_then(|e| self.heap.get(e.off.ix()..(e.off + e.len).ix()))
             .unwrap_or("")
     }
 
@@ -84,13 +86,13 @@ impl Strings {
         if self.buckets.is_empty() {
             return None;
         }
-        let mut i = h as usize & self.mask();
+        let mut i = h.ix() & self.mask();
         loop {
             match self.buckets[i] {
                 EMPTY => return None,
                 idx => {
-                    let e = self.entries[idx as usize];
-                    if e.hash == h && self.heap.get(e.off as usize..(e.off + e.len) as usize) == Some(s) {
+                    let e = self.entries[idx.ix()];
+                    if e.hash == h && self.heap.get(e.off.ix()..(e.off + e.len).ix()) == Some(s) {
                         return Some(idx);
                     }
                 }
@@ -106,11 +108,11 @@ impl Strings {
         let mask = want - 1;
         for (idx, e) in self.entries.iter().enumerate() {
             if e.refs > 0 {
-                let mut i = e.hash as usize & mask;
+                let mut i = e.hash.ix() & mask;
                 while buckets[i] != EMPTY {
                     i = (i + 1) & mask;
                 }
-                buckets[i] = idx as u32;
+                buckets[i] = to_u32(idx);
             }
         }
         self.buckets = buckets;
@@ -128,15 +130,17 @@ impl Strings {
         }
         let h = hash(s);
         if let Some(idx) = self.find(s, h) {
-            let e = &mut self.entries[idx as usize];
+            let e = &mut self.entries[idx.ix()];
             if e.refs == 0 {
                 self.used += 1;
-                self.dead_bytes -= e.len as usize;
+                self.dead_bytes -= e.len.ix();
             }
             e.refs += 1;
             return Some(idx);
         }
-        if self.heap.len() - self.dead_bytes + s.len() > MAX_BYTES || self.heap.len() + s.len() >= u32::MAX as usize / 2 {
+        if self.heap.len() - self.dead_bytes + s.len() > MAX_BYTES
+            || self.heap.len() + s.len() >= u32::MAX.ix() / 2
+        {
             self.compact();
             if self.heap.len() + s.len() > MAX_BYTES {
                 return None;
@@ -149,19 +153,24 @@ impl Strings {
                 self.rebuild(1);
             }
         }
-        let entry = Entry { off: self.heap.len() as u32, len: s.len() as u32, refs: 1, hash: h };
+        let entry = Entry {
+            off: to_u32(self.heap.len()),
+            len: to_u32(s.len()),
+            refs: 1,
+            hash: h,
+        };
         self.heap.push_str(s);
         let idx = match self.free.pop() {
             Some(i) => {
-                self.entries[i as usize] = entry;
+                self.entries[i.ix()] = entry;
                 i
             }
             None => {
                 self.entries.push(entry);
-                (self.entries.len() - 1) as u32
+                to_u32(self.entries.len() - 1)
             }
         };
-        let mut i = h as usize & self.mask();
+        let mut i = h.ix() & self.mask();
         while self.buckets[i] != EMPTY {
             i = (i + 1) & self.mask();
         }
@@ -172,20 +181,20 @@ impl Strings {
 
     /// One more reference to a string already held.
     pub fn retain(&mut self, id: StrId) {
-        if let Some(e) = self.entries.get_mut(id as usize).filter(|e| e.refs > 0) {
+        if let Some(e) = self.entries.get_mut(id.ix()).filter(|e| e.refs > 0) {
             e.refs += 1;
         }
     }
 
     /// Drop one reference. The text stays cached until `compact`.
     pub fn release(&mut self, id: StrId) {
-        let Some(e) = self.entries.get_mut(id as usize).filter(|e| e.refs > 0) else {
+        let Some(e) = self.entries.get_mut(id.ix()).filter(|e| e.refs > 0) else {
             return;
         };
         e.refs -= 1;
         if e.refs == 0 {
             self.used -= 1;
-            self.dead_bytes += e.len as usize;
+            self.dead_bytes += e.len.ix();
             // Churn must not grow the heap without bound: drop the cache once it is most of it.
             if self.dead_bytes > 64 * 1024 && self.dead_bytes * 2 > self.heap.len() {
                 self.compact();
@@ -201,15 +210,15 @@ impl Strings {
         let mut heap = String::with_capacity(self.heap.len() - self.dead_bytes);
         for (idx, e) in self.entries.iter_mut().enumerate() {
             if e.refs > 0 {
-                let at = heap.len() as u32;
-                if let Some(s) = self.heap.get(e.off as usize..(e.off + e.len) as usize) {
+                let at = to_u32(heap.len());
+                if let Some(s) = self.heap.get(e.off.ix()..(e.off + e.len).ix()) {
                     heap.push_str(s);
                 }
                 e.off = at;
             } else if e.off != FREED {
                 e.off = FREED;
                 e.len = 0;
-                self.free.push(idx as u32);
+                self.free.push(to_u32(idx));
             }
         }
         self.heap = heap;
@@ -255,7 +264,9 @@ mod tests {
     #[test]
     fn many_strings_survive_growth_and_compaction() {
         let mut s = Strings::new();
-        let ids: Vec<_> = (0..500).map(|i| s.intern(&format!("row {i}")).unwrap()).collect();
+        let ids: Vec<_> = (0..500)
+            .map(|i| s.intern(&format!("row {i}")).unwrap())
+            .collect();
         for (i, id) in ids.iter().enumerate().filter(|(i, _)| i % 2 == 0) {
             let _ = i;
             s.release(*id);

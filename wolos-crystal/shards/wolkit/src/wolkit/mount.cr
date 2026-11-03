@@ -85,6 +85,7 @@ module Wolkit
     MAX_NODES = 65_536
 
     @gens = Array(UInt8).new(64, 0_u8)
+    @alive = Array(Bool).new(64, false)
     @free = [] of UInt32
     @pending_free = [] of UInt32
     @next_slot = 1_u32
@@ -113,15 +114,21 @@ module Wolkit
     # its id comes back when the scope is disposed.
     def create(kind : UInt32) : UInt32
       if @live + 1 >= MAX_NODES
-        raise LimitError.new("This window has #{MAX_NODES + 1} parts; the limit is #{MAX_NODES}. Use `list` for long lists.")
+        raise LimitError.new("This window has #{delimit(MAX_NODES + 1)} parts; the limit is #{delimit(MAX_NODES)}. Use `list` for long lists.")
       end
       slot = take_slot
       id = slot | (@gens[slot.to_i].to_u32 << 24)
       @live += 1
+      @alive[slot.to_i] = true
       @writer.create(id, kind)
-      Scope.current.nodes << id
+      track(Scope.current, id)
       touch
       id
+    end
+
+    # 65536 -> "65,536" (the sentences the plan promises, section 3.7).
+    private def delimit(number : Int) : String
+      number.to_s.reverse.scan(/\d{1,3}/).map(&.[0]).join(',').reverse
     end
 
     private def take_slot : UInt32
@@ -137,6 +144,7 @@ module Wolkit
     private def grow(slot : Int) : Nil
       while @gens.size <= slot
         @gens << 0_u8
+        @alive << false
         @kids << nil
         @parent_of << NONE
         @handlers << nil
@@ -146,6 +154,11 @@ module Wolkit
     end
 
     # --- structure
+
+    # The part new children are being inserted into.
+    def current_parent : UInt32
+      @points.last.parent
+    end
 
     # Put `child` at the insertion point: appended to the current parent, or before the marker a
     # region is inserting in front of.
@@ -226,30 +239,65 @@ module Wolkit
       touch
     end
 
-    # Take `roots` out of the window: FREE each root (the engine frees its subtree) when `send` is
-    # true, and give every id of `nodes` back. `send` is false when a parent is being freed too.
-    def release(roots : Array(UInt32), nodes : Array(UInt32), send : Bool) : Nil
-      if send
-        roots.each do |root|
-          parent = @parent_of[Mount.slot(root)]
-          @kids[Mount.slot(parent)].try &.delete(root)
-          @writer.free(root)
+    # Build the content of `scope` (it becomes the current scope) at `parent`, before `before` (or at
+    # the end), and own what it makes: when the scope is disposed the roots are freed (unless the scope's
+    # parent is being disposed too, which frees them as part of a bigger subtree) and every id goes back.
+    # Returns the roots.
+    def build(scope : Scope, parent : UInt32 = current_parent, before : UInt32 = NONE, & : ->) : Array(UInt32)
+      roots = [] of UInt32
+      scope.run do
+        Mount.with(self) do
+          at(parent, before) do
+            roots = collect { Wolkit.untracked { yield } }
+          end
         end
-        touch
       end
-      nodes.each { |id| forget(id) }
+      owner = scope.parent
+      scope.on_cleanup do
+        release(roots, !(owner.try(&.disposed?) || false))
+        nil
+      end
+      roots
     end
 
-    private def forget(id : UInt32) : Nil
-      slot = Mount.slot(id)
-      @kids[slot] = nil
-      @handlers[slot] = nil
-      @masks[slot] = 0_u32
-      @text_seq[slot] = 0_u32
-      @parent_of[slot] = NONE
-      @gens[slot] = @gens[slot] &+ 1
-      @pending_free << slot.to_u32
-      @live -= 1
+    # Take `roots` out of the window: FREE each root (the engine frees its subtree) when `send` is true.
+    def release(roots : Array(UInt32), send : Bool) : Nil
+      return unless send
+      roots.each do |root|
+        parent = @parent_of[Mount.slot(root)]
+        @kids[Mount.slot(parent)].try &.delete(root)
+        @writer.free(root)
+      end
+      touch
+    end
+
+    # Remember that `scope` made `id`, and give its ids back when the scope is disposed.
+    private def track(scope : Scope, id : UInt32) : Nil
+      unless scope.tracks_nodes?
+        scope.tracks_nodes = true
+        scope.on_cleanup do
+          recycle(scope.nodes)
+          nil
+        end
+      end
+      scope.nodes << id
+    end
+
+    # Give ids back: the slot is reusable (with a new generation) after the patch that frees it.
+    private def recycle(ids : Array(UInt32)) : Nil
+      ids.each do |id|
+        slot = Mount.slot(id)
+        next unless @alive[slot] && @gens[slot].to_u32 == id >> 24
+        @alive[slot] = false
+        @kids[slot] = nil
+        @handlers[slot] = nil
+        @masks[slot] = 0_u32
+        @text_seq[slot] = 0_u32
+        @parent_of[slot] = NONE
+        @gens[slot] = @gens[slot] &+ 1
+        @pending_free << slot.to_u32
+        @live -= 1
+      end
     end
 
     # --- properties (the element macros call these)

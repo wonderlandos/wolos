@@ -25,6 +25,8 @@ pub unsafe extern "C" fn wolkit_window_canvas_submit(
         // SAFETY: pointer and length are the caller's (contract).
         let _ = unsafe { bytes_in(ops, len, MAX_OPS, "The canvas ops") }?;
         let _ = (w.engine(), w.id(), node);
-        Err(Error::unavailable("This window needs the native backend to draw on a canvas."))
+        Err(Error::unavailable(
+            "This window needs the native backend to draw on a canvas.",
+        ))
     })
 }
