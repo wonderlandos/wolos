@@ -23,7 +23,7 @@ check:
 # build (-Ddev) and follows your edits; without it the program runs once.
 ifeq ($(WOL_APP_WATCH),1)
 run:
-	sh dev/watch.sh
+	WOLKIT_DEV_STYLES=build/00-kit.wolcss:src/styles sh dev/watch.sh
 else
 run: bin/{{name}}
 	bin/{{name}}

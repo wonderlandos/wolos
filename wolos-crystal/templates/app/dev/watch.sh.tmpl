@@ -14,6 +14,9 @@ mkdir -p bin build
 "$crystal" build --error-on-warnings dev/send.cr -o bin/dev-send
 "$crystal" build -Ddev --error-on-warnings src/main.cr -o "$app"
 snapshot="$PWD/build/snapshot.json"
+# The sheets the dev build reloads on its own when they change (the kit look first, then the app's).
+WOLKIT_DEV_STYLES=${WOLKIT_DEV_STYLES:-build/00-kit.wolcss:src/styles}
+export WOLKIT_DEV_STYLES
 rm -f "$snapshot"
 WOLKIT_DEV_SNAPSHOT=$snapshot "$app" &
 pid=$!
