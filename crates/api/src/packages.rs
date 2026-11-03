@@ -967,9 +967,10 @@ pub fn handle(
                     );
                 }
             };
+            // The running slot's release file has no image hash (wolos-base writes it): Running.
             let running = sys
                 .running_release()
-                .and_then(|t| wol_core::update::check::Manifest::parse(&t));
+                .and_then(|t| wol_core::update::check::Running::parse(&t));
             if running.is_some_and(|r| r.snapshot >= m.snapshot) {
                 return Answer::err(
                     Code::InvalidArgument,
@@ -1709,6 +1710,16 @@ mod tests {
             "no downgrades"
         );
         assert_eq!(f.ran.borrow().len(), 1);
+        // The running slot's own release file (wolos-base writes it, no image hash) counts too.
+        let g = Fake {
+            running: Some(r#"{"version":"2027.01","snapshot":"2027/01/10"}"#.into()),
+            ..yes(seed)
+        };
+        assert_eq!(
+            handle(&down, Some((1000, APP)), &all, &g).code,
+            Some(Code::InvalidArgument),
+            "no downgrades from a hash-less release file"
+        );
     }
 
     /// One tar header of `kind` for `name`, then the data, padded to whole blocks.

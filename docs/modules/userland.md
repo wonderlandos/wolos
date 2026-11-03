@@ -26,7 +26,7 @@ Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list`
 |---|---|
 | zsh for accounts WolOS creates (`users::LOGIN_SHELL`); root keeps `/bin/sh` | `/etc/zsh/zshenv` (no wizard; loads `/usr/share/wolos/zsh/zshrc` in interactive shells), skel `.zshrc` (comments only) |
 | sudo for `%wheel` | `/etc/sudoers.d/wolos` (0440) |
-| Groups | admins `wheel,video,operator`, standard accounts `video` (operator can read raw disks) |
+| Groups | admins `wheel,seat,video,input,audio`, standard accounts `seat,video,input,audio` (`users::ACCOUNT_GROUPS*`). `seat` opens the display: wol-login starts no session for an account outside it, answers the login window `no-display` (`shared::login::REPLY_NO_DISPLAY`, the window says to ask an administrator), and a session that ends within 2 s counts as failed and waits 1 s .. 5 min before the next try |
 | User folders | `xdg-user-dirs-update` in `wol-session` |
 | Login keyring | wol-login: `gnome-keyring-daemon --daemonize --login` (password on stdin) after PAM succeeds; the session's `--start --components=secrets` finishes it; stopped at logout |
 | Printing | `cupsd_enable`, `avahi_daemon_enable` (driverless IPP) |

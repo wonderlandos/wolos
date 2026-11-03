@@ -42,6 +42,39 @@ pub struct Manifest {
     pub sha256: String,
 }
 
+/// The running slot's [`RELEASE_FILE`]: the release it runs, written by the `wolos-base` package of
+/// that release (so a system update replaces it). No image URL or hash: an image cannot carry its
+/// own. A published [`Manifest`] reads as one too (its other fields are ignored).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Running {
+    /// `0.12.1` (`VERSION_ID` of os-release).
+    pub version: String,
+    /// Arch Linux Archive date the release is pinned to (`2026/11/02`).
+    pub snapshot: String,
+    /// The rest of a published [`Manifest`] (and `size`, which release-manifest.sh adds): read,
+    /// not used. Any other key is a mistake and the file does not count.
+    #[serde(default)]
+    pub wolos_repo: String,
+    #[serde(default)]
+    pub cachy: String,
+    #[serde(default)]
+    pub kernel: String,
+    #[serde(default)]
+    pub image: String,
+    #[serde(default)]
+    pub sha256: String,
+    #[serde(default)]
+    pub size: u64,
+}
+
+impl Running {
+    pub fn parse(text: &str) -> Option<Self> {
+        let r: Self = serde_json::from_str(text).ok()?;
+        (!r.version.is_empty() && super::is_snapshot_date(&r.snapshot)).then_some(r)
+    }
+}
+
 impl Manifest {
     pub fn parse(text: &str) -> Option<Self> {
         let m: Self = serde_json::from_str(text).ok()?;
@@ -138,8 +171,8 @@ impl Updates {
     /// check worked, every 0.12.0 system was offered "WolOS 0.12.0").
     pub fn installed(mut self, running: Option<&str>) -> Self {
         let v = running.and_then(|t| {
-            Manifest::parse(t)
-                .map(|m| m.version)
+            Running::parse(t)
+                .map(|r| r.version)
                 .or_else(|| crate::base::version(t))
         });
         if v.is_some() && v == self.base {
@@ -257,6 +290,31 @@ mod tests {
         );
         assert_eq!(u.clone().installed(None).count(), 1, "unknown: keep");
         assert_eq!(USERLAND_ARGV, ["cat", "/usr/lib/wolos-release.json"]);
+        // The release file wolos-base writes (no image hash), and the published manifest, both read.
+        let file = r#"{"version":"2026.11","snapshot":"2026/11/02"}"#;
+        assert_eq!(u.clone().installed(Some(file)).base, None);
+        assert_eq!(
+            Running::parse(RELEASE).map(|r| r.version).as_deref(),
+            Some("2026.11")
+        );
+        assert_eq!(
+            Running::parse(r#"{"version":"2026.11","snapshot":"x"}"#),
+            None
+        );
+        assert_eq!(
+            Running::parse(r#"{"version":"","snapshot":"2026/11/02"}"#),
+            None
+        );
+        let published = r#"{"version":"0.12.0","snapshot":"2026/10/31","wolos_repo":"r","kernel":"k","image":"https://x/i.iso","sha256":"00","size":5}"#;
+        assert_eq!(
+            Running::parse(published).map(|r| r.version).as_deref(),
+            Some("0.12.0")
+        );
+        assert_eq!(
+            Running::parse(r#"{"version":"1","snapshot":"2026/10/31","verison":"2"}"#),
+            None,
+            "a typo is not read"
+        );
         // No manifest in the image: os-release names the running version.
         let os = "NAME=WolOS\nID=wolos\nVERSION_ID=2026.11\n";
         assert_eq!(u.clone().installed(Some(os)).base, None);

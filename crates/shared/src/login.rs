@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Login window <-> wol-login socket wire (IaraOS ADR 0024, WolOS ADR 0003).
 //! Auth: `user\n` + password. Commands: `!verb\n` (+ body); `!` never starts an account name.
-//! Reply: one line `ok|denied|error`.
+//! Reply: one line `ok|denied|error|no-display`.
 
 pub const SOCKET: &str = "/var/run/wol-login.sock";
+/// Auth reply when the password is right but the account may not open the display (not in group
+/// `seat`, controller::login::can_open_display): no session starts, the login window says why.
+pub const REPLY_NO_DISPLAY: &str = "no-display";
 /// Password hints by account name (world-readable; the login window shows one after 3 failures).
 pub const HINTS_DIR: &str = "/var/db/wolos/hints";
 

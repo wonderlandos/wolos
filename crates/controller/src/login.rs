@@ -569,6 +569,18 @@ pub fn can_open_display(group_text: &str, user: &LoginUser) -> bool {
     })
 }
 
+/// The login window's one-line answer to a password (shared::login): `no_display` = the password
+/// was right but [`can_open_display`] said no, so the window names the real reason.
+pub fn auth_reply(result: &crate::authcheck::Auth, no_display: bool) -> &'static str {
+    use crate::authcheck::Auth;
+    match result {
+        Auth::Ok => "ok",
+        Auth::Denied => "denied",
+        Auth::Error if no_display => shared::login::REPLY_NO_DISPLAY,
+        Auth::Error => "error",
+    }
+}
+
 /// A session that ended sooner than this never started: nobody logs out within two seconds of
 /// the compositor's first frame. The compositor's launcher (start-hyprland) reports a compositor
 /// that died while starting as a clean exit (e2e D6: an account outside group `seat` restarted
@@ -1569,6 +1581,16 @@ broken:line
         g.submit("ana");
         assert_eq!(g.authenticated(true), Phase::Session);
         assert!(!g.locked);
+    }
+
+    #[test]
+    fn a_right_password_without_the_seat_group_gets_its_own_answer() {
+        use crate::authcheck::Auth;
+        assert_eq!(auth_reply(&Auth::Ok, false), "ok");
+        assert_eq!(auth_reply(&Auth::Denied, false), "denied");
+        assert_eq!(auth_reply(&Auth::Error, false), "error");
+        assert_eq!(auth_reply(&Auth::Error, true), "no-display");
+        assert_eq!(shared::login::REPLY_NO_DISPLAY, "no-display");
     }
 
     #[test]

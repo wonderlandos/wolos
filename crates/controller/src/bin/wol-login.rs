@@ -268,16 +268,14 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
             if result == Auth::Ok && !unlock_home(&user, &buf[password.clone()]) {
                 result = Auth::Error; // no session without its files
             }
-            if result == Auth::Ok && !flow.user.as_ref().is_some_and(display_allowed) {
-                result = Auth::Error; // no session that cannot open the display
+            // No session that cannot open the display; the login window says why.
+            let no_display = result == Auth::Ok && !flow.user.as_ref().is_some_and(display_allowed);
+            if no_display {
+                result = Auth::Error;
             }
             println!("wol-login: {user}: {result:?}");
             let phase = flow.authenticated(result == Auth::Ok);
-            let line = match result {
-                Auth::Ok => "ok",
-                Auth::Denied => "denied",
-                Auth::Error => "error",
-            };
+            let line = auth_reply(&result, no_display);
             reply(client, line, result != Auth::Ok);
             if let (Phase::Session, Some(u)) = (phase, flow.user.as_ref()) {
                 start_keyring(u, &buf[password]);
