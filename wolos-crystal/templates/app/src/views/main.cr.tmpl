@@ -3,6 +3,7 @@
 # parts that read a signal change when it does. Edit the text below while `wol app run --watch` is
 # running and watch the window follow.
 class {{class_name}}
+  # The window: a greeting, a line that follows the count and the button that raises it.
   def view
     window "{{class_name}}", width: 360, height: 240 do
       column grow: 1, gap: :md, pad: :lg, align: :center, justify: :center do

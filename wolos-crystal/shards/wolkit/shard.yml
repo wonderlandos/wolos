@@ -9,5 +9,12 @@ authors:
 license: BSD-2-Clause
 # Built on Cryswol (Wol::Handle, Wol.background) and checked on 1.22.2 only.
 crystal: ">= 1.22.0"
+# Cryswol from the curated WolOS shard list (wolos-shards/curated.yml), at the commit the list has;
+# tools/crystal/pin-shards.sh moves this pin, shard.lock and the list together. In the tree the shard is found on
+# CRYSTAL_PATH (/usr/lib/wolos/crystal), so the pin matters to projects that use `shards install`.
+dependencies:
+  cryswol:
+    git: https://git.wolos.org/shards/cryswol.git
+    commit: 11cd053405c386404b3d811d842fb82b361209ab
 libraries:
   libwolkit: ">= 1.0"

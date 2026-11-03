@@ -1,0 +1,48 @@
+# shellcheck shell=sh
+# SPDX-License-Identifier: BSD-2-Clause
+# The watch loop behind `wol app run --watch` (which only sets WOL_APP_WATCH=1 and runs `make run`).
+# It starts a dev build (-Ddev) of {{class_name}} and follows your edits, checking twice a second:
+#   a .wolcss sheet changed  -> `make styles`, then the new table goes to the running window (no restart);
+#   a .cr file changed       -> rebuild; on success the old process saves its signals and the new one
+#                               takes over with them; on a compile error the old window shows a banner.
+# It ends when you close the app. A shell script on purpose: Crystal code never starts the compiler
+# (RCR-021).
+set -eu
+crystal=${CRYSTAL:-crystal}
+app=bin/{{name}}-dev
+mkdir -p bin build
+"$crystal" build --error-on-warnings dev/send.cr -o bin/dev-send
+"$crystal" build -Ddev --error-on-warnings src/main.cr -o "$app"
+snapshot="$PWD/build/snapshot.json"
+# The sheets the dev build reloads on its own when they change (the kit look first, then the app's).
+WOLKIT_DEV_STYLES=${WOLKIT_DEV_STYLES:-build/00-kit.wolcss:src/styles}
+export WOLKIT_DEV_STYLES
+rm -f "$snapshot"
+WOLKIT_DEV_SNAPSHOT=$snapshot "$app" &
+pid=$!
+trap 'kill "$pid" 2>/dev/null || true' INT TERM
+touch build/.watched
+while kill -0 "$pid" 2>/dev/null; do
+  sleep 0.5
+  changed=$(find src assets -type f -newer build/.watched 2>/dev/null | grep -v '^src/gen/' || true)
+  [ -n "$changed" ] || continue
+  touch build/.watched
+  if ! printf '%s\n' "$changed" | grep -qv '\.wolcss$'; then
+    if make -s styles > build/error.txt 2>&1; then
+      bin/dev-send "$pid" style build/styles.wsb || true
+    else
+      bin/dev-send "$pid" error "$(grep -m1 . build/error.txt)" || true
+    fi
+    continue
+  fi
+  if "$crystal" build -Ddev --error-on-warnings src/main.cr -o "$app.next" > build/error.txt 2>&1; then
+    bin/dev-send "$pid" snapshot "$snapshot" || true
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    mv "$app.next" "$app"
+    WOLKIT_DEV_SNAPSHOT=$snapshot "$app" &
+    pid=$!
+  else
+    bin/dev-send "$pid" error "$(grep -m1 . build/error.txt)" || true
+  fi
+done

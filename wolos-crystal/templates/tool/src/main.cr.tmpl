@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The program: read the command line, open one libwol context as {{id}} and run the command in it.
+# A usage error never opens a context, so `--help` works with no desktop running.
+require "cryswol"
+require "./{{name}}"
+
+command = {{module}}::Command.parse(ARGV)
+if command.verb.usage?
+  # `--help` asked for the usage line; anything else got it as an error.
+  if command.message.empty?
+    puts {{module}}::USAGE
+    exit 0
+  end
+  STDERR.puts command.message
+  exit 2
+end
+begin
+  Wol::Context.open({{module}}::APP_ID) { |ctx| puts {{module}}.run(ctx, command) }
+rescue ex : Wol::Error
+  # libwol's sentence is written for a person: show it as it is.
+  STDERR.puts ex.message
+  exit 1
+end

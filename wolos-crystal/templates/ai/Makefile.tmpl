@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{module}}, a tool server an assistant starts and talks to over standard input and output, one
+# JSON-RPC message per line (the protocol `wol mcp` speaks). `make` builds, `make spec` runs the
+# spec, `make check` only type-checks, `make run` starts the server on this terminal (type a line of
+# JSON, read the answer). Standard library only; the collector stays on, a server runs for hours.
+CRYSTAL ?= crystal
+
+all: bin/{{name}}
+
+bin/{{name}}: $(wildcard src/*.cr src/*/*.cr)
+	mkdir -p bin
+	$(CRYSTAL) build --release --error-on-warnings src/main.cr -o bin/{{name}}
+
+spec:
+	$(CRYSTAL) spec --error-on-warnings
+
+format:
+	$(CRYSTAL) tool format src spec
+
+check:
+	$(CRYSTAL) build --no-codegen --error-on-warnings src/main.cr
+
+# `wol app run` comes here; watching (WOL_APP_WATCH=1) is for windowed apps, a server runs once.
+run: bin/{{name}}
+	bin/{{name}}
+
+.PHONY: all spec format check run

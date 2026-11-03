@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The spec of {{module}}'s server: it sends JSON-RPC lines through memory and reads the answers, the
+# way an assistant would, with no process started.
+require "spec"
+require "../src/server"
+
+private def answer(line : String) : JSON::Any
+  JSON.parse({{module}}::Server.new(IO::Memory.new, IO::Memory.new).handle(line) || "null")
+end
+
+describe {{module}}::Server do
+  it "introduces itself" do
+    reply = answer(%({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}))
+    reply["result"]["protocolVersion"].should eq "2025-06-18"
+    reply["result"]["serverInfo"]["name"].should eq "{{name}}"
+  end
+
+  it "lists its tools" do
+    reply = answer(%({"jsonrpc":"2.0","id":2,"method":"tools/list"}))
+    reply["result"]["tools"][0]["name"].should eq "word_count"
+  end
+
+  it "runs a tool" do
+    reply = answer(%({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"word_count","arguments":{"text":"one two three"}}}))
+    reply["result"]["content"][0]["text"].should eq "3 words"
+    reply["result"]["isError"].should be_false
+  end
+
+  it "says what is wrong with the arguments" do
+    reply = answer(%({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"word_count","arguments":{}}}))
+    reply["result"]["isError"].should be_true
+  end
+
+  it "stays quiet on a notification" do
+    {{module}}::Server.new(IO::Memory.new, IO::Memory.new).handle(%({"jsonrpc":"2.0","method":"notifications/initialized"})).should be_nil
+  end
+
+  it "serves lines until the input ends" do
+    output = IO::Memory.new
+    {{module}}::Server.new(IO::Memory.new(%({"jsonrpc":"2.0","id":5,"method":"tools/list"}\n)), output).serve
+    output.to_s.lines.size.should eq 1
+  end
+end

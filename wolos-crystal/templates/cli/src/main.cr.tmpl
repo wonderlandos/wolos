@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The program: hand the command line to {{module}}.run and exit with its status. Nothing else lives
+# here, so the spec can call {{module}}.run with its own arguments and read what it wrote.
+require "./{{name}}"
+
+exit {{module}}.run(ARGV, STDOUT, STDERR)

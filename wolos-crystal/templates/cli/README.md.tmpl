@@ -1,0 +1,9 @@
+# {{module}}
+
+A WolOS command line tool in Crystal, made with `wol app new {{name}} --template cli`.
+
+- `make` builds `bin/{{name}}` (release, no garbage collector); `make spec` runs the spec;
+  `make check` only type-checks; `wol app check` runs the WolOS Crystal rules over the project.
+- `src/{{name}}.cr` holds the work in plain methods (easy to test), `src/main.cr` only turns the
+  command line into a call and an exit status.
+- `shards build --frozen --local` builds the same target without the Makefile.

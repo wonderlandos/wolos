@@ -14,13 +14,20 @@ spec:
 	$(CRYSTAL) spec --error-on-warnings
 
 format:
-	$(CRYSTAL) tool format src spec
+	$(CRYSTAL) tool format src spec dev
 
 check:
 	$(CRYSTAL) build --no-codegen src/main.cr
 
+# `wol app run` comes here. With WOL_APP_WATCH=1 (`wol app run --watch`) dev/watch.sh runs a dev
+# build (-Ddev) and follows your edits; without it the program runs once.
+ifeq ($(WOL_APP_WATCH),1)
+run:
+	WOLKIT_DEV_STYLES=build/00-kit.wolcss:src/styles sh dev/watch.sh
+else
 run: bin/{{name}}
 	bin/{{name}}
+endif
 
 # The kit sheet goes first (build/00-kit.wolcss sorts before src/styles/), so the default look's class
 # ids stay where Wolkit expects them; load the result with Wolkit.use_styles("build/styles.wsb").

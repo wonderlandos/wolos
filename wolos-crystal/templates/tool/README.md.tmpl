@@ -1,0 +1,12 @@
+# {{module}}
+
+A WolOS tool in Crystal over Cryswol (`docs/modules/cryswol.md`), made with
+`wol app new {{name}} --template tool`.
+
+- `bin/{{name}} about` prints the system's name and version; `bin/{{name}} notify TITLE [BODY]`
+  posts a notification. Both go through libwol, so WolOS checks the permission
+  (Settings > Privacy & Security).
+- `make` builds, `make spec` runs the spec, `make check` only type-checks; `wol app check` runs the
+  WolOS Crystal rules over the project.
+- `src/{{name}}.cr` reads the command line into a `{{module}}::Command` (no system call, so the spec
+  tests it alone); `src/main.cr` opens the libwol context as `{{id}}` and runs the command.

@@ -1,9 +1,21 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # The shards WolOS vouches for, each at one full commit (README.md "Adding a shard"). The generator
 # (tools/gen_index.cr) reads everything else from the shard's own shard.yml at that commit.
-# Example entry:
-#   - name: wolkit
-#     git: https://git.wolos.org/shards/wolkit.git
-#     commit: 0123456789abcdef0123456789abcdef01234567
-#     summary: Reactive UI on libWolkit
-shards: []
+#
+# The first two still live in the WolOS source tree (README.md "Shards still in the WolOS tree"):
+# `git` is the standalone repository each will move to, `fetch` and `path` say where the reviewed
+# commit is today. When the standalone mirror exists, its commit replaces `commit`, and `fetch` and
+# `path` go; until then `check` reads them from the tree and `build` does not publish them.
+shards:
+  - name: cryswol
+    git: https://git.wolos.org/shards/cryswol.git
+    commit: 11cd053405c386404b3d811d842fb82b361209ab
+    summary: The WolOS app framework for Crystal over libwol (windows, notifications, services)
+    fetch: https://github.com/wonderlandos/wolos.git
+    path: wolos-crystal/shards/cryswol
+  - name: wolkit
+    git: https://git.wolos.org/shards/wolkit.git
+    commit: 11cd053405c386404b3d811d842fb82b361209ab
+    summary: Reactive UI on libWolkit (a declarative DSL, signals, a headless test harness)
+    fetch: https://github.com/wonderlandos/wolos.git
+    path: wolos-crystal/shards/wolkit

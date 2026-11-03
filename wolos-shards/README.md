@@ -9,7 +9,7 @@ has read it at one commit, and the list carries that commit and nothing newer.
 
 | Path | What |
 |---|---|
-| `curated.yml` | The reviewed shards: `name`, `git` (the published `https://` URL), `commit` (40 hex), `summary`, optional `fetch` (another place to read the same commit). |
+| `curated.yml` | The reviewed shards: `name`, `git` (the published `https://` URL), `commit` (40 hex), `summary`, optional `fetch` (another place to read the same commit) and `path` (the shard's folder inside `fetch`, for a shard still in the WolOS tree). |
 | `tools/gen_index.cr` | The generator: `check`, `build [days]`, `sign <key.pem>` (standard library only). |
 | `.github/workflows/check.yml` | CI: format check and `gen_index.cr check` on every pull request. |
 | `public/` | What gets published, never committed: `index.json` and `index.json.sig`. |
@@ -29,6 +29,19 @@ has read it at one commit, and the list carries that commit and nothing newer.
 
 `version`, `license`, `crystal` and `dependencies` are never typed by hand: the generator copies
 them from the shard's own `shard.yml` at the commit.
+
+## Shards still in the WolOS tree
+
+The first curated shards, `cryswol` and `wolkit`, are developed inside the WolOS source tree
+(`wolos-crystal/shards/`), so their rows carry two more keys: `fetch:` (the WolOS repository) and
+`path:` (the shard's folder in it). `check` reads `<path>/shard.yml` at the commit from there, with
+every other rule unchanged. `build` refuses to publish while any row has `path:`: the list promises
+that `git` holds `commit`, and the standalone repository does not exist yet.
+
+The move, once per shard: split the folder's history into its own repository at the `git` URL
+(the commit hashes change), review the difference to the tree at the old commit (none is expected),
+put the new commit in `commit`, and delete `fetch` and `path`. Until then the `commit` of both rows here and the `cryswol` pin in `wolos-crystal/shards/wolkit/shard.yml` (with its `shard.lock`) move together, because `check` refuses the list if they differ: `tools/crystal/pin-shards.sh <commit>` moves them; the release runbook runs it before the wolos content commit, so the pin names the previous release commit. Shards that depend on it move their
+`commit:` pins in the same pull request (`check` refuses a pin that differs from the list).
 
 ## Publishing (release owner, offline key)
 

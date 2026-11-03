@@ -1,0 +1,5 @@
+version: 2.0
+shards:
+  cryswol:
+    git: https://git.wolos.org/shards/cryswol.git
+    version: 0.1.0+git.commit.11cd053405c386404b3d811d842fb82b361209ab

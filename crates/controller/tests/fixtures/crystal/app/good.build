@@ -1,0 +1,3 @@
+# trips nothing: the flag in a comment is not a build flag (-Dgc_none)
+all:
+	crystal build --release src/main.cr -o bin/app

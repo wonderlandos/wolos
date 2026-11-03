@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{module}}::Server: JSON-RPC 2.0, one message per line, on the two streams it is given. It
+# answers `initialize`, `tools/list` and `tools/call`, ignores notifications (no `id`), and gives a
+# JSON-RPC error for anything else. Input is untrusted: a line is at most 1 MiB and is decoded into
+# a type, never walked as a free tree.
+require "json"
+require "./tools"
+
+module {{module}}
+  # The protocol versions this server speaks, newest first.
+  PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
+  # The longest line read, in bytes.
+  MAX_LINE = 1024 * 1024
+
+  # One request or notification.
+  struct Request
+    include JSON::Serializable
+
+    getter jsonrpc : String = "2.0"
+    getter id : JSON::Any? = nil
+    getter method : String
+    getter params : Hash(String, JSON::Any) = {} of String => JSON::Any
+  end
+
+  # Reads messages from `input` and writes the answers to `output`.
+  class Server
+    # A server over the two streams.
+    def initialize(@input : IO, @output : IO)
+    end
+
+    # Answer every line until the input ends.
+    def serve : Nil
+      while line = @input.gets(MAX_LINE)
+        answer = handle(line)
+        next unless answer
+        @output.puts answer
+        @output.flush
+      end
+    end
+
+    # The answer to one line, or nil for a notification.
+    def handle(line : String) : String?
+      request = Request.from_json(line)
+      id = request.id
+      return nil if id.nil?
+      result = case request.method
+               when "initialize" then initialize_result(request.params)
+               when "tools/list" then {tools: TOOLS.map(&.describe)}
+               when "tools/call" then call(request.params)
+               else
+                 return error(id, -32601, "There is no method #{request.method}.")
+               end
+      {jsonrpc: "2.0", id: id, result: result}.to_json
+    rescue ex : JSON::Error
+      error(nil, -32700, "This line is not a JSON-RPC message: #{ex.message}")
+    end
+
+    private def initialize_result(params : Hash(String, JSON::Any))
+      asked = params["protocolVersion"]?.try(&.as_s?)
+      version = asked && PROTOCOL_VERSIONS.includes?(asked) ? asked : PROTOCOL_VERSIONS.first
+      {
+        protocolVersion: version,
+        capabilities:    {tools: {} of String => String},
+        serverInfo:      {name: "{{name}}", version: VERSION},
+      }
+    end
+
+    private def call(params : Hash(String, JSON::Any))
+      name = params["name"]?.try(&.as_s?) || ""
+      arguments = params["arguments"]?.try(&.as_h?) || {} of String => JSON::Any
+      tool = TOOLS.find { |candidate| candidate.name == name }
+      return text_result("There is no tool #{name}.", true) unless tool
+      text_result(tool.run(arguments), false)
+    rescue ex : ArgumentError
+      text_result(ex.message || "The arguments do not fit this tool.", true)
+    end
+
+    private def text_result(text : String, failed : Bool)
+      {content: [{type: "text", text: text}], isError: failed}
+    end
+
+    private def error(id : JSON::Any?, code : Int32, message : String) : String
+      {jsonrpc: "2.0", id: id, error: {code: code, message: message}}.to_json
+    end
+  end
+end

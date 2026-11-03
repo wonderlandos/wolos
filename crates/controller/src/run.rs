@@ -298,6 +298,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         a if a.starts_with("sessions.") => crate::sessions::execute(inv, env),
         a if a.starts_with("plugin.") => crate::plugin::execute(inv, env),
         a if a.starts_with("shard.") => crate::shard::execute(inv, env),
+        a if a.starts_with("app.") => crate::app::execute(inv, env),
         a if a.starts_with("power.") => crate::power::execute(inv, env),
         a if a.starts_with("firewall.") || a.starts_with("security.") => {
             crate::security::execute(inv, env)

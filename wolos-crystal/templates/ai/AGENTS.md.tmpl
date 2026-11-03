@@ -1,0 +1,9 @@
+# Working on {{module}}
+
+This is a WolOS Crystal project made from the `ai` template. Read the WolOS skill for Crystal apps
+(`/usr/share/wolos/crystal/skill/SKILL.md`) before changing it.
+
+- One way to add a tool: a `Tool` entry in `src/tools.cr` and an example in `spec/server_spec.cr`.
+- Check before you finish: `make spec`, `make format`, `wol app check`.
+- Standard library only. No `system`, no backticks, no shell: a program and its arguments, if ever.
+- Standard output carries the protocol. Never `puts` from a tool; return the text.

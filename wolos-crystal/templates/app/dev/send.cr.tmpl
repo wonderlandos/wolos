@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# dev-send: one command to a running dev build of {{class_name}} over its dev socket
+# ($XDG_RUNTIME_DIR/wolkit-dev-<pid>.sock, docs/modules/wolkit.md "Developer tools"). dev/watch.sh
+# uses it: `dev-send PID style FILE.wsb`, `dev-send PID error TEXT`, `dev-send PID clear`,
+# `dev-send PID snapshot FILE`. Exit status 0 when the app answered ok, 1 otherwise.
+require "base64"
+require "json"
+require "socket"
+
+pid = ARGV[0]?.try(&.to_i?) || abort "usage: dev-send PID style|error|clear|snapshot [ARG]"
+command = ARGV[1]? || abort "usage: dev-send PID style|error|clear|snapshot [ARG]"
+argument = ARGV[2]? || ""
+runtime = ENV["XDG_RUNTIME_DIR"]? || abort "dev-send needs XDG_RUNTIME_DIR, the user's runtime directory."
+path = File.join(runtime, "wolkit-dev-#{pid}.sock")
+
+line = JSON.build do |json|
+  json.object do
+    json.field "cmd", command
+    case command
+    when "style"    then json.field "data", Base64.strict_encode(File.read(argument))
+    when "error"    then json.field "message", argument
+    when "snapshot" then json.field "path", argument
+    end
+  end
+end
+
+# A process that has just started may not listen yet: wait up to 5 s (50 tries, 100 ms apart).
+50.times do
+  break if File.exists?(path)
+  sleep 100.milliseconds
+end
+begin
+  UNIXSocket.open(path) do |socket|
+    socket.read_timeout = 30.seconds
+    socket.puts line
+    reply = socket.gets || ""
+    exit 0 if reply.includes?(%("ok":true))
+    STDERR.puts reply
+    exit 1
+  end
+rescue ex : IO::Error | Socket::Error
+  STDERR.puts "The app is not listening on #{path}: #{ex.message}"
+  exit 1
+end
