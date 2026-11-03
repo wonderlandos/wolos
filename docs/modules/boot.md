@@ -25,6 +25,11 @@ Three failed boots: the entry sorts last and the other slot boots.
 ## Quiet boot
 Kernel `quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0`; plymouth theme `wolos` (the mark on black) in a systemd initramfs.
 
+## Console and VT
+ADR 0012. tty1 is the only console: no getty on any VT (`NAutoVTs=0`, `ReserveVT=0`), and wol-login (a wold job, root, `CAP_SYS_TTY_CONFIG`) blanks tty1 and sets the Linux `VT_LOCKSWITCH` (`0x560B`) before every compositor, so Ctrl+Alt+Fn and `chvt` do nothing at the login window, in a session, on the lock screen and after it is unlocked.
+When the login window cannot start, wol-login sets `VT_UNLOCKSWITCH` (`0x560C`) and draws a notice on tty1 after every exit: what is wrong, the exit status, when it tries again (backoff 1 s to 5 min), `journalctl -b -u wold`, and Ctrl+Alt+Delete to restart.
+The journey `tests/wolvm/journeys/vt-lock.yaml` in wolos-iso proves each of these on an installed disk.
+
 ## Secure Boot
 ADR 0025. `install-boot` runs `boot-setup ROOT ESP` after the seal; it prints the tier and writes plain words to `/run/wolos/boot-note` (the Install app shows that file).
 

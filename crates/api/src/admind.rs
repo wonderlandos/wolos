@@ -247,7 +247,28 @@ pub fn handle(
         !pw.is_empty(),
     ) {
         AdminDecision::NotAdmin => {
-            os.log(&format!("{who}: {what}: not an administrator"));
+            // A restart or shut down from the session refused because another account would lose
+            // its session (the lock screen's Restart, audit6 S6-5): the log names who is signed in.
+            let others = known
+                .filter(|_| wol_core::admin::is_user_level(req.action))
+                .map(|u| wol_core::admin::signed_in_others(&req, u, &os.sessions()))
+                .unwrap_or_default();
+            if others.is_empty() {
+                os.log(&format!("{who}: {what}: not an administrator"));
+            } else {
+                let passwd = os.passwd();
+                let names: Vec<String> = others
+                    .iter()
+                    .map(|u| match user_of(&passwd, *u) {
+                        Some((n, _)) => format!("{n}({u})"),
+                        None => format!("uid {u}"),
+                    })
+                    .collect();
+                os.log(&format!(
+                    "{who}: {what}: refused, signed in: {}",
+                    names.join(", ")
+                ));
+            }
             return refuse(AdminReply::NotAdmin);
         }
         AdminDecision::NeedPassword => return AdminReply::NeedsAuth,
@@ -1218,6 +1239,15 @@ mod tests {
             handle(&off, ANN, &mut AuthCache::default(), &os),
             AdminReply::NeedsAuth
         );
+        // Bob restarting would end Ann's session: refused, and the log says who is signed in
+        // (the lock screen's Restart, audit6 S6-5), not "not an administrator".
+        let restart = encode(&req(AdminAction::SessionPower, &["restart"]), b"");
+        assert_eq!(
+            handle(&restart, BOB, &mut AuthCache::default(), &os),
+            AdminReply::NotAdmin
+        );
+        let last = os.log.borrow().last().cloned().unwrap_or_default();
+        assert!(last.ends_with("refused, signed in: ann(1001)"), "{last}");
         // No desktop session (a remote shell): no everyday shortcut.
         let away = Fake::default();
         let join = encode(&req(AdminAction::WifiPower, &["wlan0", "on"]), b"");

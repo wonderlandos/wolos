@@ -747,21 +747,36 @@ impl Timeline {
 }
 
 /// Full-screen text for the console when the greeter keeps failing: what is wrong, the raw reason
-/// from the greeter exit, where the details are, and how to restart (no VT has a getty, so there
-/// is no console login to point to).
-pub fn console_notice(dri_present: bool, status: &str) -> String {
+/// from the greeter exit, when the next try is, where the details are, and how to restart (no VT
+/// has a getty, so there is no console login to point to). wol-login draws it after every exit:
+/// the next try blanks the VT (ADR 0012), so a notice drawn once was gone after one second.
+pub fn console_notice(dri_present: bool, status: &str, retry_in: std::time::Duration) -> String {
     let headline = if dri_present {
         "The WolOS login window could not start."
     } else {
         "WolOS needs a supported graphics card (no /dev/dri: no GPU driver loaded)."
     };
+    let retry = retry_words(retry_in);
     format!(
-        "{TEXT_VISIBLE}{SHOW_CURSOR}\x1b[2J\x1b[H\r\n  WolOS\r\n\r\n  {headline}\r\n\r\n  Reason: login window exited, {status}.\r\n  Details: journalctl -b -u wold\r\n\r\n  Restart: press Ctrl+Alt+Delete, or hold the power button.\r\n"
+        "{TEXT_VISIBLE}{SHOW_CURSOR}\x1b[2J\x1b[H\r\n  WolOS\r\n\r\n  {headline}\r\n\r\n  Reason: login window exited, {status}.\r\n  Trying again in {retry}.\r\n  Details: journalctl -b -u wold\r\n\r\n  Restart: press Ctrl+Alt+Delete, or hold the power button.\r\n"
     )
 }
 
+/// A wait in the words of the console notice: whole seconds under a minute, else whole minutes
+/// (the backoff waits are 1 s .. 5 min).
+pub fn retry_words(d: std::time::Duration) -> String {
+    let s = d.as_secs().max(1);
+    let (n, unit) = if s < 60 {
+        (s, "second")
+    } else {
+        ((s + 30) / 60, "minute")
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
 /// Greeter respawn policy: a greeter that dies quickly (e.g. the compositor without DRM) is retried with
-/// exponential backoff (1 s .. 5 min) and logged once per failure streak, never spun.
+/// exponential backoff (1 s .. 5 min) and logged once per failure streak, never spun; the console
+/// notice is drawn after each exit ([`console_notice`]).
 #[derive(Debug, Default)]
 pub struct GreeterRespawn {
     quick_exits: u32,
@@ -807,7 +822,8 @@ mod tests {
             ),
         ];
         for (dri, status, headline) in cases {
-            let m = console_notice(dri, status);
+            let m = console_notice(dri, status, std::time::Duration::from_secs(4));
+            assert!(m.contains("Trying again in 4 seconds."), "{m}");
             assert!(m.contains(headline), "{m}");
             assert!(m.contains(status), "{m}");
             // No VT has a getty (logind.conf.d/wolos.conf): no console login to point to, and
@@ -822,6 +838,30 @@ mod tests {
                 "notice is readable over black-on-black boot text, with a cursor: {m:?}"
             );
         }
+    }
+
+    /// The notice says when the next try is, for every wait of the backoff.
+    #[test]
+    fn console_notice_says_when_it_tries_again() {
+        let mut r = GreeterRespawn::default();
+        let waits: Vec<String> = (0..10)
+            .map(|_| retry_words(r.exited(std::time::Duration::ZERO).delay))
+            .collect();
+        assert_eq!(
+            waits,
+            [
+                "1 second",
+                "2 seconds",
+                "4 seconds",
+                "8 seconds",
+                "16 seconds",
+                "32 seconds",
+                "1 minute",
+                "2 minutes",
+                "4 minutes",
+                "5 minutes"
+            ]
+        );
     }
 
     /// ADR 0012: between two compositors the kernel redraws the console VT's text; it must be black
@@ -944,7 +984,7 @@ mod tests {
                 format!("write {BLANK_CONSOLE:?}")
             ]
         );
-        let notice = console_notice(true, "exit status: 1");
+        let notice = console_notice(true, "exit status: 1", std::time::Duration::from_secs(1));
         let (got, log) = step_on_fake(None, None, None, false, &notice);
         assert_eq!(got, VtStep::Done);
         assert_eq!(
