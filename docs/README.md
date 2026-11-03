@@ -111,6 +111,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/ux-journeys.md](modules/ux-journeys.md) | error copy rules (`shell::copy`, lint), where the journeys run now (`wolvm`), and the 2026-10-27 journey audit (historical) | [0013](adr/0013-first-run.md) |
 | [modules/vm-e2e.md](modules/vm-e2e.md) | VM end to end: `wolvm` boots the ISO, drives the installer and the installed desktop step by step, snapshots and collects the journal | [0029](adr/0029-repository-split-and-single-build-path.md) |
 | [modules/vm-graphics.md](modules/vm-graphics.md) | the desktop in a VM: what runs and why (historical record from the FreeBSD base) | none yet |
+| [modules/webapps.md](modules/webapps.md) | web apps, both tracks: per-app policies (`webpolicy/<app>.json`, the patch hook), runtime profiles and flag rows | [0026](adr/0026-memory-saver.md) |
 | [modules/webengine.md](modules/webengine.md) | the web-app runtime's engine: `crates/webengine`, `libwolwebengine.so.1`, the origin gate, process model, input bridge, gaps | [0042](adr/0042-wolos-web-runtime.md) |
 | [modules/widgets.md](modules/widgets.md) | desktop widgets, Edit Widgets, building a widget package, `wol widgets` | [0010](adr/0010-desktop-widgets.md) |
 | [modules/wifi.md](modules/wifi.md) | Wi-Fi: one interface, NetworkManager and iwd, join and its errors | [0016](adr/0016-arch-linux-base.md) |

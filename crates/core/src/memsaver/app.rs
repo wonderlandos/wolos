@@ -34,6 +34,10 @@ pub struct Facts {
     pub hidden: bool,
     /// No CPU or I/O worth mentioning over the last minute.
     pub idle: bool,
+    /// The app's own runtime already gave its background content back (the browser discarded its
+    /// tabs, ADR 0042): the saver moves on to Saving without a reclaim pass of its own, which
+    /// would only scan pages the app has freed. App Nap and Restore are unchanged.
+    pub runtime_discarded: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +105,9 @@ impl Phase {
         let away = now.saturating_sub(since);
         match self {
             Phase::Active => (Phase::Waiting { since: now }, Action::None),
+            Phase::Waiting { .. } if away >= c.delay_ms && f.runtime_discarded => {
+                (Phase::Saving { since }, Action::None)
+            }
             Phase::Waiting { .. } if away >= c.delay_ms => (Phase::Saving { since }, Action::Save),
             Phase::Saving { .. } if f.nap && f.hidden && f.idle && away >= c.nap_after_ms => {
                 (Phase::Napping { since }, Action::Nap)
@@ -295,5 +302,39 @@ mod tests {
             (10 * min + 1 + 30_000, off),
         ]);
         assert_eq!(acts.last(), Some(&(10 * min + 1 + 30_000, Action::Save)));
+    }
+    #[test]
+    fn runtime_discarded_skips_the_reclaim_but_not_nap_or_restore() {
+        let gone = Facts {
+            runtime_discarded: true,
+            nap: true,
+            idle: true,
+            ..bg()
+        };
+        let used = Facts {
+            in_use: true,
+            ..gone
+        };
+        let min = 60_000;
+        let (acts, end) = replay(&[(0, gone), (30_000, gone)]);
+        assert!(acts.is_empty(), "no reclaim pass: {acts:?}");
+        assert_eq!(end, Phase::Saving { since: 0 });
+        assert_eq!(
+            end.state(),
+            AppState::Saving,
+            "Settings still shows it saving"
+        );
+        let (acts, _) = replay(&[
+            (0, gone),
+            (30_000, gone),
+            (10 * min, gone),
+            (10 * min + 1, used),
+        ]);
+        assert_eq!(
+            acts,
+            vec![(10 * min, Action::Nap), (10 * min + 1, Action::Restore)]
+        );
+        // Default (no signal from the runtime): unchanged.
+        assert!(!Facts::default().runtime_discarded);
     }
 }

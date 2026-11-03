@@ -43,7 +43,8 @@ pub fn initial_preferences() -> String {
     serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"
 }
 
-/// Privacy defaults: no usage reports, no sign-in or sync, no promotional tabs.
+/// Privacy defaults: no usage reports, no sign-in or sync, no promotional tabs; then the browser
+/// rows its web policy (`webpolicy/helium.json`) allows, and only those.
 pub fn policies() -> String {
     let v = json!({
         "MetricsReportingEnabled": false,
@@ -55,6 +56,15 @@ pub fn policies() -> String {
         "BackgroundModeEnabled": false,
         "DefaultBrowserSettingEnabled": false
     });
+    // The browser's web policy decides its runtime rows (tab discard, throttling; ADR 0042). A
+    // refused policy adds none.
+    let mut v = v;
+    if let (Some(m), Ok(p)) = (
+        v.as_object_mut(),
+        crate::webpolicy::parse(crate::webpolicy::HELIUM_JSON.as_bytes()),
+    ) {
+        m.extend(crate::webpolicy::browser_policies(&p));
+    }
     serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"
 }
 

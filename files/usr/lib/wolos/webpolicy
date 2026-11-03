@@ -1,0 +1,102 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Web policy, track 1 (docs/modules/webapps.md): apply the byte patches of every shipped policy
+# plan (/usr/share/wolos/webpolicy/<app>.plan, compiled from <app>.json by wol_core::webpolicy)
+# whenever pacman installs or upgrades a patched file (wolos-webpolicy.hook). A file is edited
+# only when its whole content still has the sha256 the patches were written for and the bytes at
+# each offset are the ones to edit; a file whose hash is recorded as already patched is left
+# alone; anything else is refused, never forced, reported on stderr and recorded in the state
+# file, so Settings can say the policy is not applied. The hook never fails a transaction. Nothing is executed: the edits
+# are head, tail and printf on bytes into a sibling file, then a rename. Plan lines come grouped
+# by file with offsets descending, so each edit leaves the earlier offsets valid.
+# State, <state>/<app>.state, one line per file: `patched <file> <sha256>` or
+# `refused <file> <unix time> <expected sha256> <found sha256 or -> <reason>`.
+# Environment (tests): WEBPOLICY_ROOT (prefix), WEBPOLICY_PLANS, WEBPOLICY_STATE.
+set -eu
+root=${WEBPOLICY_ROOT:-}
+plans=${WEBPOLICY_PLANS:-/usr/share/wolos/webpolicy}
+state=${WEBPOLICY_STATE:-/var/lib/wolos/webpolicy}
+mkdir -p "$state"
+
+say() {
+	printf 'webpolicy: %s\n' "$*" >&2
+}
+
+# Replace the state line of $cur_file with "$1".
+record() {
+	awk -v f="$cur_file" '$2 != f' "$rec" >"$rec.new"
+	printf '%s\n' "$1" >>"$rec.new"
+	mv -f "$rec.new" "$rec"
+}
+
+# Refuse the current file: $1 reason, $2 the hash found (or -). Nothing of it is applied.
+refuse() {
+	say "$app: $cur_file: $1, refused"
+	[ -z "$work" ] || rm -f "$work"
+	work=''
+	skip=1
+	record "refused $cur_file $(date +%s) $sum $2 $1"
+}
+
+# Put the edited copy of the current file in place and record its hash.
+finish() {
+	[ -n "$work" ] || return 0
+	chmod "$(stat -c %a "$target")" "$work"
+	new=$(sha256sum <"$work" | cut -d' ' -f1)
+	mv -f "$work" "$target"
+	record "patched $cur_file $new"
+	say "$app: $cur_file patched"
+	work=
+}
+
+for plan in "$plans"/*.plan; do
+	[ -f "$plan" ] || continue
+	app=$(basename "$plan" .plan)
+	rec="$state/$app.state"
+	[ -f "$rec" ] || : >"$rec"
+	cur_file='' work='' skip=0 target=''
+	while read -r file sum off find with; do
+		case $file in '' | '#'*) continue ;; esac
+		if [ "$file" != "$cur_file" ]; then
+			finish
+			cur_file=$file skip=0 target="$root$file"
+			case $file in
+			*/../* | */./* | *//*) refuse "not a plain path" - ;;
+			/usr/lib/* | /opt/*) ;;
+			*) refuse "not under /usr/lib or /opt" - ;;
+			esac
+			[ "$skip" = 1 ] && continue
+			if [ -L "$target" ] || [ ! -f "$target" ]; then
+				skip=1
+				continue # the app is not installed (or the path is a link): nothing to do
+			fi
+			have=$(sha256sum <"$target" | cut -d' ' -f1)
+			if grep -qxF "patched $file $have" "$rec"; then
+				skip=1
+				continue # already patched
+			fi
+			if [ "$have" != "$sum" ]; then
+				refuse "not the version the patch was written for" "$have"
+				continue
+			fi
+			work="$target.webpolicy.$$"
+			cp "$target" "$work"
+		fi
+		[ "$skip" = 0 ] || continue
+		case $off in '' | *[!0-9]*) refuse "bad offset" "$have"; continue ;; esac
+		len=$((${#find} / 2))
+		got=$(tail -c "+$((off + 1))" "$work" | head -c "$len" | od -An -v -tx1 | tr -d ' \n')
+		if [ "$got" != "$find" ]; then
+			refuse "the bytes at $off are not the ones to edit" "$have"
+			continue
+		fi
+		{
+			head -c "$off" "$work"
+			[ "$with" = - ] || printf '%b' "$with"
+			tail -c "+$((off + len + 1))" "$work"
+		} >"$work.next"
+		mv -f "$work.next" "$work"
+	done <"$plan"
+	finish
+done
+exit 0

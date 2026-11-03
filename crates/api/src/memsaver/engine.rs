@@ -271,6 +271,8 @@ impl<S: Sys> Engine<S> {
             game: app.games.values().any(|g| *g),
             hidden: !visible,
             idle: now.saturating_sub(app.last_busy) >= IDLE_MS,
+            // No signal from the runtime yet (ADR 0042): the saver reclaims as before.
+            runtime_discarded: false,
         }
     }
 

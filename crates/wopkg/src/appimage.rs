@@ -354,14 +354,50 @@ pub fn valid_name(n: &str) -> bool {
             .all(|c| c.is_alphanumeric() || "._- +".contains(c))
 }
 
+/// The app's web-policy id: the launcher's slug.
+fn policy_id(name: &str) -> String {
+    name.to_lowercase().replace(' ', "-")
+}
+
+/// Web-policy apply step for AppImages: the flag rows the app's policy allows (the account's
+/// runtime profile, no GPU tier: the launcher cannot know the session's). The image itself is
+/// never edited, so a policy's `patches` are not applied here; a refused or missing policy adds
+/// nothing. Every line is one `--` word (`webruntime` tests), safe on an `Exec=` line.
+pub fn policy_args(policy_dir: &Path, config_home: &Path, name: &str) -> Vec<String> {
+    use wol_core::{webpolicy, webruntime};
+    let Some(Ok(p)) = webpolicy::load(policy_dir, &policy_id(name)) else {
+        return Vec::new();
+    };
+    let profile = webruntime::load_profile(config_home);
+    webruntime::flags_with(
+        profile,
+        webruntime::Role::App,
+        webruntime::Gpu::Soft,
+        &|row| webpolicy::allows(&p, row),
+    )
+}
+
+fn config_home(ctx: &Context) -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| ctx.home.join(".config"))
+}
+
+/// Written at install and again after every update, so the policy is re-applied each time.
 fn desktop_entry(ctx: &Context, a: &App) -> Result<()> {
     let dir = ctx.home.join(".local/share/applications");
-    let file = dir.join(format!(
-        "wopkg-appimage-{}.desktop",
-        a.name.to_lowercase().replace(' ', "-")
-    ));
+    let file = dir.join(format!("wopkg-appimage-{}.desktop", policy_id(&a.name)));
+    let args: String = policy_args(
+        Path::new(wol_core::webpolicy::DIR),
+        &config_home(ctx),
+        &a.name,
+    )
+    .iter()
+    .map(|f| format!(" {f}"))
+    .collect();
     let text = format!(
-        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\" %U\nIcon=application-x-executable\nCategories=Utility;\nX-WolOS-Source=appimage\n",
+        "[Desktop Entry]\nType=Application\nName={}\nExec=\"{}\"{args} %U\nIcon=application-x-executable\nCategories=Utility;\nX-WolOS-Source=appimage\n",
         a.name,
         a.path.display()
     );
@@ -837,8 +873,9 @@ fn update_one(
         na.key_pin = info.key_pin.clone();
         na.signed = info.signed;
     }
-    reg.upsert(na);
+    reg.upsert(na.clone());
     reg.save(ctx)?;
+    desktop_entry(ctx, &na)?;
     let id = crate::journal::record(
         ctx,
         crate::journal::Entry::new(
@@ -864,6 +901,40 @@ fn update_one(
 pub mod tests {
     use super::*;
     use crate::testutil::{Served, temp};
+
+    /// Web policy: the allowed flag rows reach the launcher; no policy, a refused one, or a
+    /// patch list changes nothing (the image is never edited).
+    #[test]
+    fn policy_args_follow_the_apps_policy() {
+        let d = temp("webpolicy");
+        let (pol, cfg) = (d.join("webpolicy"), d.join("config"));
+        std::fs::create_dir_all(&pol).unwrap();
+        assert!(policy_args(&pol, &cfg, "Chat App").is_empty(), "no policy");
+        std::fs::write(
+            pol.join("chat-app.json"),
+            r#"{"heap_mb": 1024, "patches": []}"#,
+        )
+        .unwrap();
+        let args = policy_args(&pol, &cfg, "Chat App");
+        let all = wol_core::webruntime::flags(
+            wol_core::webruntime::Profile::Balanced,
+            wol_core::webruntime::Role::App,
+            wol_core::webruntime::Gpu::Soft,
+        );
+        assert!(args.iter().all(|a| all.contains(a)), "{args:?}");
+        assert!(
+            args.contains(&"--ozone-platform-hint=auto".to_owned()),
+            "{args:?}"
+        );
+        for a in &args {
+            assert!(a.starts_with("--") && !a.contains([' ', '"', '%']), "{a}");
+        }
+        std::fs::write(pol.join("chat-app.json"), r#"{"heap_mb": 1}"#).unwrap();
+        assert!(
+            policy_args(&pol, &cfg, "Chat App").is_empty(),
+            "refused policy"
+        );
+    }
 
     /// Audit S4-15: the gpg scratch directory is new, 0700, never a directory someone made first,
     /// its files are created new, and it is gone after use.
