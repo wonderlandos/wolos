@@ -33,6 +33,7 @@ desktop/overlay/usr/bin/wol-backlight
 desktop/overlay/usr/bin/wol-greeter-session
 desktop/overlay/usr/bin/wol-screenshot
 desktop/overlay/usr/bin/wol-session
+desktop/overlay/usr/bin/wol-term-shell
 desktop/overlay/usr/bin/wol-vbox-guest
 desktop/overlay/usr/bin/wol-volume
 desktop/overlay/usr/bin/wol-x11-env
@@ -62,6 +63,7 @@ files/usr/lib/wolos/modules-disable-dev
 files/usr/lib/wolos/modules-enable-ai-claude
 files/usr/lib/wolos/modules-enable-dev
 files/usr/lib/wolos/modules-install
+files/usr/lib/wolos/pwsh
 files/usr/lib/wolos/report
 files/usr/lib/wolos/update-check
 files/usr/lib/wolos/update-download

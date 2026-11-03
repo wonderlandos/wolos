@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- PowerShell is a terminal shell beside zsh: the Developer module ships pwsh with the WolOS profile and completions, `wol-term-shell` starts it from foot, ghostty and kitty, and Settings > General has a Shells row.
+
 ## 0.12.0 (2026-11-03)
 The same desktop, made solid, and then grown: a redesigned Settings and Control Center, shell
 plugins and themes you can make yourself, optional modules, and a friendlier installer with Secure

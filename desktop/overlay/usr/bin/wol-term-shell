@@ -1,0 +1,29 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The shell of a new terminal window (foot, ghostty and kitty start this; ADR 0032 "Console").
+# Settings > General, "Shell in the terminal", writes one word to
+# ${XDG_CONFIG_HOME:-~/.config}/wolos/terminal-shell; this starts that shell, with SHELL set to it
+# so programs that open one (zellij, editors) open the same. An unknown word or a shell that is not
+# installed gives zsh and one sentence. The account's login shell stays zsh: the session and ssh
+# hand it POSIX text. Same table as wol_core::terminal_shell::SHELLS (a test keeps them equal).
+# WOLOS_TERM_SHELL_ROOT: prefix of the system paths (tests run this with fakes).
+set -eu
+root=${WOLOS_TERM_SHELL_ROOT:-}
+id=
+read -r id 2>/dev/null < "${XDG_CONFIG_HOME:-$HOME/.config}/wolos/terminal-shell" || :
+[ -n "$id" ] || id=zsh
+case $id in
+	zsh) p=$root/usr/bin/zsh ;;
+	bash) p=$root/usr/bin/bash ;;
+	fish) p=$root/usr/bin/fish ;;
+	nu) p=$root/usr/bin/nu ;;
+	pwsh) p=$HOME/.local/bin/pwsh ;;
+	*) p= ;;
+esac
+if [ -z "$p" ] || [ ! -x "$p" ]; then
+	[ "$id" = zsh ] || echo "The shell chosen in Settings ($id) is not installed, so this window uses zsh." >&2
+	p=$root/usr/bin/zsh
+fi
+SHELL=$p
+export SHELL
+exec "$p" "$@"

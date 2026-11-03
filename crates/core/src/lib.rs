@@ -47,6 +47,7 @@ pub mod shortcuts;
 pub mod storage;
 pub mod store;
 pub mod system;
+pub mod terminal_shell;
 pub mod theme;
 pub mod toggles;
 pub mod update;

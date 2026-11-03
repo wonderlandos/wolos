@@ -55,7 +55,7 @@ History entry (`wopkg_history_record`, one JSON line each in `history.jsonl`): `
 
 ## Recipes
 
-`recipe.toml`: `name`, `version`, `summary`, `license`, `homepage`, `needs` (tools the sandbox must have), `[[source]]` (`url`, `sha256`, `file`), optional `[fetch]` (lockfile step, with network), `[build]` and `[install]` (`run` = shell lines, offline sandbox; `$TARGET_PREFIX` is the final prefix, `/work/out` the staging one). Built output is cached by the recipe's hash.
+`recipe.toml`: `name`, `version`, `summary`, `license`, `homepage`, `needs` (tools the sandbox must have), `[[source]]` (`url`, `sha256`, `file`), optional `[fetch]` (lockfile step, with network), `[build]` and `[install]` (`run` = shell lines, offline sandbox; `$TARGET_PREFIX` is the final prefix, `/work/out` the staging one). Built output is cached by the recipe's hash. Everything under the staging prefix is copied into `~/.local` as it is, so a recipe may also write `share/applications/*.desktop` (a launcher entry that exists only while the recipe is installed) or files its program reads, such as `lib/<name>/profile.ps1`.
 
 ## Exit codes (CLI)
 

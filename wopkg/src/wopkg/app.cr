@@ -142,7 +142,7 @@ module Wopkg
           wopkg pin|unpin <name>           keep a package at its version through updates
           wopkg channel [stable|beta|nightly] | pause [days] | resume
           wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg audit <pkg> | wopkg recipe build|install|remove <name>
-          wopkg completions zsh|bash|fish
+          wopkg completions zsh|bash|fish|pwsh
 
         Options: -y (do not ask), --json (for tools).
         H
@@ -157,7 +157,7 @@ module Wopkg
 
     def completions
       shell = @a.targets.first? || "zsh"
-      s = Completions.for(shell) || raise UsageError.new("Completions exist for zsh, bash and fish.")
+      s = Completions.for(shell) || raise UsageError.new("Completions exist for zsh, bash, fish and pwsh.")
       STDOUT.print s
     end
 
