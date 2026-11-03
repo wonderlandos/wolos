@@ -29,6 +29,9 @@ pub struct ShellPrefs {
     pub searchbar_slow_timeout_ms: u32,
     /// Settings > Control Center: which optional modules show.
     pub control_center: ControlCenterPrefs,
+    /// Status items of apps in the bar (the shell runs the session's tray watcher). Off: no
+    /// watcher, so an app that would hide in the tray keeps its window.
+    pub tray: bool,
 }
 
 impl Default for ShellPrefs {
@@ -43,6 +46,7 @@ impl Default for ShellPrefs {
             priority_index_delay_ms: 0,
             searchbar_slow_timeout_ms: 400,
             control_center: ControlCenterPrefs::default(),
+            tray: true,
         }
     }
 }
