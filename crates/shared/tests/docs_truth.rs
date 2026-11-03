@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! Current docs describe the Linux system WolOS is (ADR 0016), not the base it left. Why: a
 //! reader who finds ZFS boot environments in the README or a packet filter in the security record
 //! acts on a system that does not exist any more (audit5, plan NS1).

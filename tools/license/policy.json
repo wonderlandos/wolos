@@ -80,6 +80,18 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "wolos-crystal/examples/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "wolos-crystal/templates/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "tools/bench/wolkit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "kernel/scx_wolos/**",
       "spdx": "GPL-2.0-only"
     },
