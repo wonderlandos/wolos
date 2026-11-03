@@ -623,14 +623,16 @@ pub fn install_steps(
 }
 
 /// Remove an installed app from its install record text: the package and the dependencies
-/// nothing else needs (`pacman -Rns`).
+/// nothing else needs (`-Rns`), through the sealed-system pacman (`wol pkg --`, as the install
+/// plans in `store` run it). The bare `pacman` wol-admind finds on its `PATH` keeps its database
+/// on the read-only /usr and cannot remove anything.
 pub fn remove_steps(id: &str, record: &str) -> Result<Vec<Vec<String>>, String> {
     let i = Info::parse(record)?;
     if i.id != id || i.package.is_empty() {
         return Err(format!("{id}: install record does not match"));
     }
     Ok(vec![
-        ["pacman", "-Rns", "--noconfirm", &i.package]
+        ["wol", "pkg", "--", "-Rns", "--noconfirm", &i.package]
             .map(String::from)
             .to_vec(),
     ])
@@ -1024,7 +1026,14 @@ not-a-key x
         let rec = |pkg: &str| INFO.replace("wol-fixture", pkg);
         assert_eq!(
             remove_steps("org.wolos.Fixture", &rec("wol-fixture")).unwrap(),
-            [vec!["pacman", "-Rns", "--noconfirm", "wol-fixture"]]
+            [vec![
+                "wol",
+                "pkg",
+                "--",
+                "-Rns",
+                "--noconfirm",
+                "wol-fixture"
+            ]]
         );
         // The record must be the app asked for and name a package.
         assert!(remove_steps("org.wolos.Other", &rec("wol-fixture")).is_err());

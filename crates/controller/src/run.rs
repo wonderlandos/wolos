@@ -638,14 +638,35 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     // foot rereads nothing while it runs: its two colour sections are switched by signal.
     let foot = apps::foot_is_ours(&apps::user_dir(&home), &home)
         .then(|| apps::terminal_argv(t, shared::sys::euid()));
-    for argv in apps::gsettings_argv(t)
-        .into_iter()
-        .chain(apps::strip_argv(t))
-        .chain(foot)
-    {
+    for argv in apps::gsettings_argv(t) {
+        let _ = env.exec(&argv);
+    }
+    restyle_compositor(env, &apps::strip_argv(t));
+    if let Some(argv) = foot {
         let _ = env.exec(&argv);
     }
     announce_theme(env, &t.id);
+}
+
+/// The compositor's colours, live. hyprctl answers each keyword on stdout, "ok" when it took it
+/// and its error otherwise: the "ok" lines are dropped (`wol appearance set` printed ten of them),
+/// anything else goes to stderr. A hyprctl that fails to run (no compositor: a tty, ssh, a
+/// chroot) is said once and the other keywords are not tried.
+fn restyle_compositor(env: &mut dyn Env, argvs: &[Vec<String>]) {
+    for argv in argvs {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let Some(out) = env.capture(&a) else {
+            env.err("wol: the window title bars keep their colours until the desktop restarts (hyprctl did not answer)\n");
+            return;
+        };
+        for line in out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && *l != "ok")
+        {
+            env.err(&format!("wol: {}: {line}\n", argv[2..].join(" ")));
+        }
+    }
 }
 
 /// `publish {"event":"theme","id":ID}` on wold's socket: wold hands an Everyone event from a client
@@ -1089,6 +1110,8 @@ pub struct FakeEnv {
     pub home: PathBuf,
     /// Per-command captures (`argv joined by spaces`, stdout); else `captured`.
     pub captures: Vec<(String, String)>,
+    /// Every argv run through `capture`, in order.
+    pub captured_argvs: Vec<Vec<String>>,
     /// Host behind `controls()` (Linux fake when None).
     pub host: Option<std::sync::Arc<wol_core::system::fake::FakeHost>>,
     /// wol-admind as seen by `controls()`: replies in order (none left = not running), requests sent.
@@ -1170,6 +1193,8 @@ impl Env for FakeEnv {
         })
     }
     fn capture(&mut self, argv: &[&str]) -> Option<String> {
+        self.captured_argvs
+            .push(argv.iter().map(|a| (*a).to_owned()).collect());
         let line = argv.join(" ");
         match self.captures.iter().find(|c| c.0 == line) {
             Some(c) => Some(c.1.clone()),

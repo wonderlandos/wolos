@@ -829,18 +829,21 @@ pub fn is_package_call(json: &str) -> bool {
         .is_some_and(|c| c.starts_with("package.") || c.starts_with("system."))
 }
 
+/// The refusal names the pane and the row the person turns on: Privacy & Security lists the app
+/// under the section of its permission (the shell's `privacy::KINDS` titles), with its switch
+/// (wold noted the refusal, `portal::Remembering`). There is no "Software" section.
 fn denied(grant: &str, app: &str) -> Answer {
-    let what = match grant {
-        "packages-install" => "install system apps",
-        "packages-remove" => "remove system apps",
-        "packages-update" => "update the system",
-        _ => "install apps built on this computer",
+    let (what, section) = match grant {
+        "packages-install" => ("install system apps", "Install Apps"),
+        "packages-remove" => ("remove system apps", "Remove Apps"),
+        "packages-update" => ("update the system", "System Updates"),
+        _ => ("install apps built on this computer", "Unreviewed Apps"),
     };
     let name = app.rsplit('/').next().unwrap_or(app);
     Answer::err(
         Code::PermissionDenied,
         format!(
-            "{name} is not allowed to {what}. Allow it in System Settings > Privacy & Security > Software."
+            "{name} is not allowed to {what}. Turn on {name} under {section} in System Settings > Privacy & Security."
         ),
     )
 }
@@ -987,6 +990,29 @@ pub fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The refusal leads to a real row: the section title Privacy & Security shows for the
+    /// grant, and the app's name (MANUAL 0.12.0: it named a "Software" section that is not there).
+    #[test]
+    fn a_refusal_names_the_privacy_row() {
+        for (grant, section) in [
+            ("packages-install", "Install Apps"),
+            ("packages-remove", "Remove Apps"),
+            ("packages-update", "System Updates"),
+            ("packages-unreviewed", "Unreviewed Apps"),
+        ] {
+            let a = denied(grant, "/usr/bin/wopkg");
+            assert_eq!(a.code, Some(Code::PermissionDenied));
+            let m = a.message.unwrap_or_default();
+            assert!(
+                m.ends_with(&format!(
+                    "Turn on wopkg under {section} in System Settings > Privacy & Security."
+                )),
+                "{m}"
+            );
+            assert!(!m.contains("Software"), "{m}");
+        }
+    }
 
     #[test]
     fn a_pinned_package_is_held_through_a_full_update() {

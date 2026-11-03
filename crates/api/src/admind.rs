@@ -1506,7 +1506,7 @@ mod tests {
             handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(ran(&os), ["pacman -Rns --noconfirm wol-fixture"]);
+        assert_eq!(ran(&os), ["wol pkg -- -Rns --noconfirm wol-fixture"]);
         let r = req(AdminAction::WolRemove, &["org.wolos.Missing"]);
         let os = Fake::default();
         assert_eq!(
