@@ -33,10 +33,12 @@ use std::path::{Path, PathBuf};
 /// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
 /// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// 294 -> 296 (CR-8, 2026-11-03): `loop_/mod.rs` `Ready`, the epoll set behind
+/// `wolkit_engine_get_fd` (epoll_create1 with OwnedFd taking it, epoll_ctl; std wraps neither).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
-    ("wolkit", 294),
+    ("wolkit", 296),
     ("wopkg", 94),
     ("realtime", 69),
     ("xguard", 63),
