@@ -678,32 +678,11 @@ pub fn install(t: &ResolvedTheme, dir: &Path, config_home: &Path) -> std::io::Re
     Ok(())
 }
 
-/// The user hyprland.lua loads the WolOS files (`prefs::ensure_require`), so the theme file
-/// is read after the system default on the next start or reload. A hyprland.lua that is a link
-/// (a dotfiles manager) stays a link: the line is written to the file it points at, and when that
-/// file cannot be written (a read-only store, a dangling link) it is left alone (audit C8-5).
+/// The user hyprland.lua loads the WolOS files (`prefs::ensure_require`), so the theme file is read
+/// after the system default on the next start or reload. Under the journal lock and atomic, like
+/// every writer of that file (`hyprprefs::edit_user_lua`, which also keeps a linked file a link).
 fn hypr_source(config_home: &Path) -> std::io::Result<()> {
-    let user = config_home.join(crate::prefs::HYPR_USER);
-    let linked = user.symlink_metadata().is_ok_and(|m| m.is_symlink());
-    let target = if linked {
-        match std::fs::canonicalize(&user) {
-            Ok(t) if t.is_file() => t,
-            _ => return Ok(()),
-        }
-    } else {
-        user
-    };
-    let cur = std::fs::read_to_string(&target).ok();
-    if let Some(text) = crate::prefs::ensure_require(cur.as_deref()) {
-        if let Some(d) = target.parent() {
-            std::fs::create_dir_all(d)?;
-        }
-        let r = shared::atomic::atomic_write(&target, super::kept_mode(&target), text.as_bytes());
-        if !linked {
-            r?;
-        }
-    }
-    Ok(())
+    crate::hyprprefs::edit_user_lua(config_home, crate::prefs::ensure_require).map(|_| ())
 }
 
 /// True when the link at `link` points into the toolkit dir `dir`, so WolOS made it and may

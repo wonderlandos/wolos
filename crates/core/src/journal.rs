@@ -209,6 +209,20 @@ impl Journal {
         open_locked(&self.file).map(Locked)
     }
 
+    /// Runs `f` holding the journal lock: a read-modify-write of a settings file that several
+    /// writers edit and that is not journaled (the user hyprland.lua, `hyprprefs::edit_user_lua`).
+    /// The lock is not re-entrant: `f` must not call [`Journal::save`] or another locking method.
+    pub fn with_lock<R>(&self, f: impl FnOnce() -> R) -> io::Result<R> {
+        let _held = self.lock()?;
+        Ok(f())
+    }
+
+    /// A file of WolOS's own beside the journal (`<state>/wolos/<name>`): state that belongs to
+    /// the same account and config home.
+    pub fn beside(&self, name: &str) -> PathBuf {
+        self.file.with_file_name(name)
+    }
+
     /// Every entry, oldest first; malformed lines skipped.
     pub fn entries(&self) -> Vec<Entry> {
         parse(&std::fs::read_to_string(&self.file).unwrap_or_default())

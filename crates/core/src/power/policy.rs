@@ -390,8 +390,12 @@ pub fn hypridle_listeners() -> String {
 pub const FIRST_USER_UID: u32 = 1000;
 /// Session runtime dirs (`/run/user/<uid>`, made by systemd-logind).
 pub const RUNTIME_ROOT: &str = "/run/user";
+/// Starts the lock screen unless this account's own already runs: `-u` so another account's live
+/// lock (fast user switching, the login window's) never stands in for it. A shell command line
+/// (hypridle runs its commands through `sh -c`, so does the compositor's `exec`).
+pub const LOCK_CMD: &str = "pgrep -u \"$(id -u)\" -x wol-lock || wol-lock";
 /// Compositor IPC request: start the user's lock unless it already runs (as the user, in the session).
-pub const LOCK_REQUEST: &[u8] = b"dispatch exec pgrep -x wol-lock || wol-lock";
+pub const LOCK_REQUEST: &[u8] = b"dispatch exec pgrep -u \"$(id -u)\" -x wol-lock || wol-lock";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Session {
@@ -725,7 +729,8 @@ mod tests {
         let pw = "root:*:0:0::/root:/bin/sh\nann:*:1001:1001:Ann:/home/ann:/usr/bin/zsh\n";
         assert_eq!(home_of(pw, 1001).as_deref(), Some("/home/ann"));
         assert_eq!(home_of(pw, 1002), None);
-        assert_eq!(LOCK_REQUEST, b"dispatch exec pgrep -x wol-lock || wol-lock");
+        assert_eq!(LOCK_REQUEST, format!("dispatch exec {LOCK_CMD}").as_bytes());
+        assert!(LOCK_CMD.starts_with("pgrep -u \"$(id -u)\" -x wol-lock "));
     }
 
     #[test]

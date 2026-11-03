@@ -25,7 +25,13 @@ end
 -- VM GPUs (vmwgfx): no pointer on the cursor plane, draw it (again after a reload).
 hl.exec_cmd([[sh -c 'systemd-detect-virt -q --vm && hyprctl eval "hl.config({cursor = {no_hardware_cursors = 1}})"']])
 -- The same as a setting (wol-session writes it each start; reload keeps it, no frame with the plane).
-require("~/.cache/wolos/hypr-vm.lua")
+-- A start without wol-session (a TTY, another launcher) has no such file: nothing to load then.
+local vm_lua = (os.getenv("HOME") or "") .. "/.cache/wolos/hypr-vm.lua"
+local vm_file = io.open(vm_lua, "r")
+if vm_file then
+    vm_file:close()
+    require(vm_lua)
+end
 once("wol-vbox-guest") -- VirtualBox: resize with the VM window, clipboard, drag and drop (only under VirtualBox)
 -- --systemd: the systemd user manager gets DISPLAY/WAYLAND_DISPLAY too, whichever D-Bus daemon runs.
 once("dbus-update-activation-environment --systemd --all")

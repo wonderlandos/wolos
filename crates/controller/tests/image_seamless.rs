@@ -162,8 +162,12 @@ fn the_desktop_keeps_the_vm_pointer_across_reloads() {
     let at = |l: &str| desktop.find(l).unwrap_or_else(|| panic!("{l}"));
     assert!(
         at("\nrequire(\"/usr/share/wolos/hypr/wolos-perf.lua\")\n")
-            < at("\nrequire(\"~/.cache/wolos/hypr-vm.lua\")\n")
+            < at(
+                "\nlocal vm_lua = (os.getenv(\"HOME\") or \"\") .. \"/.cache/wolos/hypr-vm.lua\"\n"
+            )
     );
+    // Loaded only when wol-session wrote it: a start without wol-session shows no error banner.
+    assert!(desktop.contains("\nif vm_file then\n    vm_file:close()\n    require(vm_lua)\nend\n"));
 }
 
 #[test]
@@ -256,4 +260,52 @@ fn vmwgfx_sessions_draw_gtk_with_cairo() {
         + vmw;
     let ngl = s.find("GSK_RENDERER=${GSK_RENDERER:-ngl}").expect("no ngl");
     assert!(cairo < ngl, "the vmwgfx cairo branch must come before ngl");
+}
+
+/// A start without logind (no `XDG_RUNTIME_DIR`): when `/run/user/<uid>` cannot be made (a plain
+/// user under root's /run/user, here a parent that does not exist) wol-session uses a private
+/// folder of its own, 0700, instead of exporting a path that is not there (finding 10).
+#[test]
+fn wol_session_makes_a_runtime_folder_without_logind() {
+    let s = read("desktop/overlay/usr/bin/wol-session");
+    let start = s
+        .find("if [ -z \"${XDG_RUNTIME_DIR:-}\" ]; then\n")
+        .expect("wol-session sets XDG_RUNTIME_DIR");
+    let end = start + s[start..].find("\nfi\n").unwrap() + 4;
+    let d = sandbox("runtime", &[]);
+    let block = s[start..end].replace("/run/user/", &format!("{}/missing/", d.display()));
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{block}printf '%s' \"$XDG_RUNTIME_DIR\""))
+        .env_remove("XDG_RUNTIME_DIR")
+        .env("TMPDIR", &d)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let rt = PathBuf::from(String::from_utf8(out.stdout).unwrap());
+    let uid = String::from_utf8(Command::new("id").arg("-u").output().unwrap().stdout).unwrap();
+    assert_eq!(rt, d.join(format!("wol-runtime-{}", uid.trim())));
+    let m = fs::metadata(&rt).unwrap();
+    assert!(m.is_dir());
+    assert_eq!(m.permissions().mode() & 0o777, 0o700);
+    // The next start reuses it; a link planted at that name is refused.
+    let again = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{block}printf '%s' \"$XDG_RUNTIME_DIR\""))
+        .env_remove("XDG_RUNTIME_DIR")
+        .env("TMPDIR", &d)
+        .output()
+        .unwrap();
+    assert_eq!(PathBuf::from(String::from_utf8(again.stdout).unwrap()), rt);
+    fs::remove_dir(&rt).unwrap();
+    std::os::unix::fs::symlink(&d, &rt).unwrap();
+    let planted = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{block}printf '%s' \"$XDG_RUNTIME_DIR\""))
+        .env_remove("XDG_RUNTIME_DIR")
+        .env("TMPDIR", &d)
+        .output()
+        .unwrap();
+    assert!(!planted.status.success(), "{planted:?}");
+    let _ = fs::remove_dir_all(&d);
 }

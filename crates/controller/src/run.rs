@@ -649,6 +649,7 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
 /// reloads the compositor once, so the person's keyboard, displays, Settings and shortcuts hold.
 /// A stale file stays until its Lua file is written.
 fn retire_hypr_conf(env: &mut dyn Env, home: &Path) {
+    carry_user_conf(env, home);
     let plan = {
         let read = |r: &str| env.read_file(&home.join(r));
         let present = |r: &str| std::fs::symlink_metadata(home.join(r)).is_ok();
@@ -670,6 +671,27 @@ fn retire_hypr_conf(env: &mut dyn Env, home: &Path) {
         let _ = env.remove_file(&home.join(rel));
     }
     let _ = env.exec_quiet(&["hyprctl".into(), "reload".into()]);
+}
+
+/// Title and body of the notice [`carry_user_conf`] shows.
+pub const CARRIED_NOTICE: (&str, &str) = (
+    "Your compositor settings moved",
+    "Your own lines from hyprland.conf are now comments at the end of hyprland.lua (in ~/.config/hypr). Write each again in Lua to use it.",
+);
+
+/// The person's own lines of the 0.12 user hyprland.conf go into hyprland.lua as comments
+/// (`hyprprefs::carry_user_conf`), and the person is told once, as a notification.
+fn carry_user_conf(env: &mut dyn Env, home: &Path) {
+    match wol_core::hyprprefs::carry_user_conf(home) {
+        Ok(true) => {
+            let (title, body) = CARRIED_NOTICE;
+            env.err(&format!("wol: {title}. {body}\n"));
+            let argv = ["notify-send", "--app-name=WolOS", "--", title, body];
+            let _ = env.exec_quiet(&argv.map(String::from));
+        }
+        Ok(false) => {}
+        Err(e) => env.err(&format!("wol: {}: {e}\n", wol_core::prefs::USER_CONF)),
+    }
 }
 
 /// `publish {"event":"theme","id":ID}` on wold's socket: wold hands an Everyone event from a client

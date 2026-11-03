@@ -376,6 +376,63 @@ pub fn ensure_require(user_lua_text: Option<&str>) -> Option<String> {
     Some(s)
 }
 
+/// The user compositor file of WolOS 0.12 and before (`source = ` lines). The compositor reads only
+/// [`HYPR_USER`] now; the person's own lines in it are carried over by [`carry_conf`].
+pub const USER_CONF: &str = "hypr/hyprland.conf";
+
+/// First line of the block [`carry_conf`] adds to the user hyprland.lua.
+pub const CARRIED: &str =
+    "-- WolOS 0.13: your own lines from hyprland.conf, kept here as comments.";
+
+/// The person's own lines of an older user hyprland.conf ([`USER_CONF`]), in file order: every
+/// line but blank ones and the ones WolOS wrote there (its `# WolOS` comments, the `source =` of
+/// the system defaults and of `hypr/wolos/*.conf`).
+pub fn own_conf_lines(conf: &str) -> Vec<&str> {
+    conf.lines()
+        .map(str::trim_end)
+        .filter(|l| {
+            let t = l.trim();
+            let wolos_source = t
+                .strip_prefix("source")
+                .map(|r| r.trim_start())
+                .and_then(|r| r.strip_prefix('='))
+                .map(str::trim)
+                .is_some_and(|p| {
+                    p.ends_with("/wolos/hypr/hyprland.conf") || p.ends_with("/hypr/wolos/*.conf")
+                });
+            !t.is_empty() && !t.starts_with("# WolOS") && !wolos_source
+        })
+        .collect()
+}
+
+/// The user hyprland.lua with the person's own hyprland.conf lines ([`own_conf_lines`]) added at
+/// the end as one commented block under a notice ([`CARRIED`]): the compositor reads only Lua
+/// now, so each line has to be written again in Lua, and none is dropped on the way. Lines the
+/// file already holds as such a comment, and lines in `carried` (an earlier carry), are not added
+/// again; None when nothing is left to add. A missing hyprland.lua starts from [`user_lua`].
+pub fn carry_conf(conf: &str, user_lua_text: Option<&str>, carried: &[&str]) -> Option<String> {
+    let cur = user_lua_text.map_or_else(|| user_lua("/usr/share/wolos"), str::to_owned);
+    let have: std::collections::HashSet<&str> = cur.lines().map(str::trim_end).collect();
+    let own: Vec<&str> = own_conf_lines(conf)
+        .into_iter()
+        .filter(|l| !carried.contains(l) && !have.contains(format!("-- {l}").as_str()))
+        .collect();
+    if own.is_empty() {
+        return None;
+    }
+    let mut s = cur.trim_end_matches('\n').to_string();
+    s.push_str(&format!(
+        "\n\n{CARRIED}\n-- The compositor now reads only this file: write each line again in Lua (hl.bind,\n\
+         -- hl.config, hl.window_rule, hl.exec_cmd), then delete its comment. hyprland.conf is unchanged.\n"
+    ));
+    for l in own {
+        s.push_str("-- ");
+        s.push_str(l);
+        s.push('\n');
+    }
+    Some(s)
+}
+
 /// Lock-after choices in seconds (0 = never).
 pub const IDLE_CHOICES: [(&str, u32); 5] = [
     ("1 minute", 60),
@@ -389,17 +446,22 @@ pub const DISPLAY_OFF_AFTER_LOCK: u32 = 60;
 
 /// hypridle config: lock after `lock_secs`, display off a minute later; `require_password` = lock on sleep.
 /// Then the battery-only steps (display off, sleep: `power::policy::hypridle_listeners`).
+///
+/// Lock on sleep holds the system's sleep (a logind delay inhibitor, `inhibit_sleep = 3`) until
+/// the session is locked, that is until wol-lock has shown its first frame on every display, so
+/// waking up never shows the desktop before the lock screen.
 pub fn hypridle_conf(lock_secs: u32, lock_on_sleep: bool) -> String {
-    let mut s = String::from(
-        "# Written by WolOS Settings.\ngeneral {\n    lock_cmd = pgrep -x wol-lock || wol-lock\n",
-    );
+    use crate::power::policy::LOCK_CMD;
+    let mut s = format!("# Written by WolOS Settings.\ngeneral {{\n    lock_cmd = {LOCK_CMD}\n");
     if lock_on_sleep {
-        s.push_str("    before_sleep_cmd = pgrep -x wol-lock || wol-lock\n");
+        s.push_str(&format!(
+            "    before_sleep_cmd = {LOCK_CMD}\n    inhibit_sleep = 3\n"
+        ));
     }
     s.push_str("    after_sleep_cmd = hyprctl dispatch dpms on\n}\n");
     if lock_secs > 0 {
         s.push_str(&format!(
-            "listener {{\n    timeout = {lock_secs}\n    on-timeout = pgrep -x wol-lock || wol-lock\n}}\nlistener {{\n    timeout = {}\n    on-timeout = hyprctl dispatch dpms off\n    on-resume = hyprctl dispatch dpms on\n}}\n",
+            "listener {{\n    timeout = {lock_secs}\n    on-timeout = {LOCK_CMD}\n}}\nlistener {{\n    timeout = {}\n    on-timeout = hyprctl dispatch dpms off\n    on-resume = hyprctl dispatch dpms on\n}}\n",
             lock_secs + DISPLAY_OFF_AFTER_LOCK
         ));
     }
@@ -589,6 +651,16 @@ mod tests {
         let c = hypridle_conf(300, true);
         assert!(c.contains("timeout = 360\n    on-timeout = hyprctl dispatch dpms off"));
         assert_eq!(parse_hypridle(None), (300, true));
+        // Only this account's lock counts, and lock on sleep holds the sleep until it shows.
+        assert!(c.contains("    before_sleep_cmd = pgrep -u \"$(id -u)\" -x wol-lock || wol-lock\n    inhibit_sleep = 3\n"), "{c}");
+        assert!(!c.contains("pgrep -x"), "{c}");
+        assert!(!hypridle_conf(300, false).contains("inhibit_sleep"));
+        // The shipped default is Settings' 5 minutes with lock on sleep.
+        let shipped = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hypridle.conf");
+        assert_eq!(
+            format!("# Written by WolOS Settings.\n{shipped}"),
+            hypridle_conf(300, true)
+        );
         // Battery display off and sleep (power::policy) whatever the lock setting, Never too.
         for secs in [0, 300] {
             let c = hypridle_conf(secs, false);

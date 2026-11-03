@@ -178,7 +178,7 @@ fn suspend_locks_sessions_that_ask_for_the_password_after_sleep() {
         env.requests[0],
         (
             PathBuf::from("/run/user/1001/hypr/a/.socket.sock"),
-            b"dispatch exec pgrep -x wol-lock || wol-lock".to_vec()
+            b"dispatch exec pgrep -u \"$(id -u)\" -x wol-lock || wol-lock".to_vec()
         )
     );
     assert!(env.out.contains("lock uid 1001: ok"), "{}", env.out);

@@ -498,6 +498,79 @@ pub fn retire_plan(
     Retire { write, remove }
 }
 
+/// Read-modify-write of the user hyprland.lua ([`crate::prefs::HYPR_USER`]) under the journal lock,
+/// written atomically: the theme switch, the first-session setup step and the upgrade carry
+/// ([`carry_user_conf`]) all run at the start of the same session, and none may lose another's
+/// line (the system `require` lost means no desktop at the next login). `edit` gets the text now
+/// (None: no file yet) and returns the new text (None: leave it). A hyprland.lua that is a link (a
+/// dotfiles manager) stays a link: the text goes to the file it points at, and when that cannot
+/// be written (a read-only store, a dangling link) it is left alone (audit C8-5). True when written.
+pub fn edit_user_lua(
+    config_home: &Path,
+    edit: impl FnOnce(Option<&str>) -> Option<String>,
+) -> std::io::Result<bool> {
+    let user = config_home.join(crate::prefs::HYPR_USER);
+    crate::journal::Journal::for_config(config_home).with_lock(|| {
+        let linked = user.symlink_metadata().is_ok_and(|m| m.is_symlink());
+        let target = if linked {
+            match std::fs::canonicalize(&user) {
+                Ok(t) if t.is_file() => t,
+                _ => return Ok(false),
+            }
+        } else {
+            user.clone()
+        };
+        let cur = std::fs::read_to_string(&target).ok();
+        let Some(text) = edit(cur.as_deref()) else {
+            return Ok(false);
+        };
+        if let Some(d) = target.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        let mode = crate::theme::kept_mode(&target);
+        match shared::atomic::atomic_write(&target, mode, text.as_bytes()) {
+            Ok(()) => Ok(true),
+            Err(_) if linked => Ok(false),
+            Err(e) => Err(e),
+        }
+    })?
+}
+
+/// What [`carry_user_conf`] has carried, beside the journal: the own lines, so a block the person
+/// deleted after rewriting it in Lua is not carried again (a line they add to hyprland.conf later is).
+const CARRIED_STATE: &str = "hyprland-conf.carried";
+
+/// The upgrade from WolOS 0.12 (`wol theme set`, at every session start): the person's own lines in
+/// the old user hyprland.conf ([`crate::prefs::own_conf_lines`]) go into hyprland.lua as a
+/// commented block with a notice ([`crate::prefs::carry_conf`]), never dropped silently; the old
+/// file stays as it is. True when a block was added now (the caller tells the person).
+pub fn carry_user_conf(config_home: &Path) -> std::io::Result<bool> {
+    use crate::prefs::{carry_conf, own_conf_lines};
+    let Ok(conf) = std::fs::read_to_string(config_home.join(crate::prefs::USER_CONF)) else {
+        return Ok(false);
+    };
+    let state = crate::journal::Journal::for_config(config_home).beside(CARRIED_STATE);
+    let before = std::fs::read_to_string(&state).unwrap_or_default();
+    let carried: Vec<&str> = before.lines().collect();
+    if own_conf_lines(&conf).iter().all(|l| carried.contains(l)) {
+        return Ok(false);
+    }
+    let added = edit_user_lua(config_home, |cur| carry_conf(&conf, cur, &carried))?;
+    // Recorded once hyprland.lua holds them (a linked file that cannot be written: tried again).
+    let lua = std::fs::read_to_string(config_home.join(crate::prefs::HYPR_USER)).ok();
+    if lua.is_some() && carry_conf(&conf, lua.as_deref(), &carried).is_none() {
+        let mut all = carried.clone();
+        all.extend(
+            own_conf_lines(&conf)
+                .into_iter()
+                .filter(|l| !carried.contains(l)),
+        );
+        let text: String = all.iter().map(|l| format!("{l}\n")).collect();
+        shared::atomic::atomic_write(&state, 0o600, text.as_bytes())?;
+    }
+    Ok(added)
+}
+
 /// One apply at a time: each reads the saved state, diffs and writes it back.
 static APPLYING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -743,7 +816,12 @@ mod tests {
         let p = DesktopPrefs {
             reduce_motion: true,
             language: Some("pt_BR.UTF-8".into()),
-            login_items: vec!["foot".into(), "evil; rm -rf ~".into(), "  ".into()],
+            login_items: vec![
+                "foot".into(),
+                "evil; rm -rf ~".into(),
+                "  ".into(),
+                "foot --title '#1 \"main\"'".into(),
+            ],
             ..Default::default()
         };
         let inc = p.include();
@@ -756,6 +834,9 @@ mod tests {
             "hl.env(\"HYPRCURSOR_SIZE\", \"24\")\n",
             "hl.env(\"LANG\", \"pt_BR.UTF-8\")\n",
             "hl.on(\"hyprland.start\", function() hl.exec_cmd(\"foot\") end)\n",
+            // `#` is no comment inside a Lua string: the whole command runs (the 0.56 `.conf`
+            // parser cut it there).
+            "hl.on(\"hyprland.start\", function() hl.exec_cmd(\"foot --title '#1 \\\"main\\\"'\") end)\n",
         ] {
             assert!(inc.contains(line), "{line}");
         }
@@ -806,7 +887,7 @@ mod tests {
             layouts: vec!["us".into(), "br".into()],
             reduce_motion: true,
             language: Some("pt_BR.UTF-8".into()),
-            login_items: vec!["foot --server".into()],
+            login_items: vec!["foot --server".into(), "foot --title '#1'".into()],
             looks: crate::looks::Looks {
                 gaps: 4,
                 rounding: 6,
@@ -838,9 +919,12 @@ mod tests {
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             std::fs::write(f, text).unwrap();
         };
+        // The user hyprland.lua after the upgrade from 0.12 carried the person's own lines.
+        let old = "source = /usr/share/wolos/hypr/hyprland.conf\nbind = $mod, B, exec, firefox\n";
+        let user = crate::prefs::ensure_require(None).unwrap();
         write(
             crate::prefs::HYPR_USER,
-            &crate::prefs::ensure_require(None).unwrap(),
+            &crate::prefs::carry_conf(old, Some(&user), &[]).unwrap(),
         );
         write(INCLUDE, &p.include());
         write(sc::INCLUDE, &sc::include(&sc::effective(&d, &o), true));
@@ -892,6 +976,119 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    /// Finding 2 of the compositor-session hunt: the upgrade from 0.12 keeps the person's own
+    /// hyprland.conf lines (commented, under a notice) and drops only the ones WolOS wrote; once.
+    #[test]
+    fn the_old_user_conf_is_carried_into_hyprland_lua_once() {
+        use crate::prefs::{CARRIED, HYPR_USER, USER_CONF, ensure_require};
+        let h = home("carry");
+        let old = "# WolOS defaults. Add your overrides below.\nsource = /usr/share/wolos/hypr/hyprland.conf\n\n\
+                   bind = $mod, B, exec, firefox\n# my own comment\nmonitor = DP-1, 2560x1440@144, 0x0, 1\n\
+                   # WolOS Settings (keyboard, displays).\nsource = /home/me/.config/hypr/wolos/*.conf\n";
+        std::fs::create_dir_all(h.join("hypr")).unwrap();
+        std::fs::write(h.join(USER_CONF), old).unwrap();
+        // Nothing yet in hyprland.lua (a TTY start): it starts from the WolOS default.
+        assert!(carry_user_conf(&h).unwrap());
+        let lua = std::fs::read_to_string(h.join(HYPR_USER)).unwrap();
+        assert!(
+            lua.starts_with(&crate::prefs::user_lua("/usr/share/wolos")),
+            "{lua}"
+        );
+        let block = &lua[lua.find(CARRIED).expect("notice")..];
+        assert!(block.ends_with(
+            "-- bind = $mod, B, exec, firefox\n-- # my own comment\n-- monitor = DP-1, 2560x1440@144, 0x0, 1\n"
+        ), "{block}");
+        assert!(
+            !block.contains("source ="),
+            "WolOS's own lines are not carried: {block}"
+        );
+        assert_eq!(
+            ensure_require(Some(&lua)),
+            None,
+            "the WolOS require is kept"
+        );
+        // Every later start: nothing again, also after the person rewrote and deleted the block.
+        assert!(!carry_user_conf(&h).unwrap());
+        std::fs::write(h.join(HYPR_USER), ensure_require(None).unwrap()).unwrap();
+        assert!(!carry_user_conf(&h).unwrap());
+        // A line they add to the old file later is carried, alone.
+        std::fs::write(h.join(USER_CONF), format!("{old}env = FOO,1\n")).unwrap();
+        assert!(carry_user_conf(&h).unwrap());
+        let lua = std::fs::read_to_string(h.join(HYPR_USER)).unwrap();
+        assert!(lua.ends_with("-- env = FOO,1\n"), "{lua}");
+        assert_eq!(lua.matches("-- bind = $mod").count(), 0, "{lua}");
+        // The old file is never changed; a conf with only WolOS lines carries nothing.
+        assert!(
+            std::fs::read_to_string(h.join(USER_CONF))
+                .unwrap()
+                .starts_with(old)
+        );
+        let h2 = home("carry-none");
+        std::fs::create_dir_all(h2.join("hypr")).unwrap();
+        std::fs::write(h2.join(USER_CONF), "# WolOS defaults. Add your overrides below.\nsource = /usr/share/wolos/hypr/hyprland.conf\n").unwrap();
+        assert!(!carry_user_conf(&h2).unwrap());
+        assert!(!h2.join(HYPR_USER).exists());
+        assert!(!carry_user_conf(&home("carry-fresh")).unwrap());
+    }
+
+    /// Finding 4: the theme switch and the first-session setup step edit the user hyprland.lua at
+    /// the same login; through [`edit_user_lua`] (journal lock, atomic write) no edit is lost.
+    #[test]
+    fn user_lua_edits_never_lose_each_other() {
+        use crate::prefs::{HYPR_USER, USER_REQUIRE};
+        let h = home("race");
+        std::fs::create_dir_all(h.join("hypr")).unwrap();
+        std::fs::write(
+            h.join(HYPR_USER),
+            "require(\"/usr/share/wolos/hypr/hyprland.lua\")\n",
+        )
+        .unwrap();
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let h = h.clone();
+                std::thread::spawn(move || {
+                    if i == 0 {
+                        edit_user_lua(&h, crate::prefs::ensure_require).unwrap();
+                    }
+                    edit_user_lua(&h, |cur| {
+                        let cur = cur.unwrap_or_default();
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        Some(format!("{cur}-- line {i}\n"))
+                    })
+                    .unwrap();
+                })
+            })
+            .collect();
+        threads.into_iter().for_each(|t| t.join().unwrap());
+        let lua = std::fs::read_to_string(h.join(HYPR_USER)).unwrap();
+        for i in 0..8 {
+            assert!(lua.contains(&format!("-- line {i}\n")), "{lua}");
+        }
+        assert_eq!(lua.matches(USER_REQUIRE).count(), 1, "{lua}");
+        assert!(lua.starts_with("require(\"/usr/share/wolos/hypr/hyprland.lua\")\n"));
+        // No edit: no write.
+        assert!(!edit_user_lua(&h, |_| None).unwrap());
+        // A link into a read-only place (a dotfiles store) stays as it is.
+        let store = h.join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::write(store.join("hyprland.lua"), "-- mine\n").unwrap();
+        let link = h.join("linked");
+        std::fs::create_dir_all(link.join("hypr")).unwrap();
+        std::os::unix::fs::symlink(store.join("hyprland.lua"), link.join(HYPR_USER)).unwrap();
+        assert!(edit_user_lua(&link, crate::prefs::ensure_require).unwrap());
+        assert!(
+            link.join(HYPR_USER)
+                .symlink_metadata()
+                .unwrap()
+                .is_symlink()
+        );
+        assert!(
+            std::fs::read_to_string(store.join("hyprland.lua"))
+                .unwrap()
+                .contains(USER_REQUIRE)
+        );
     }
 
     fn batch(host: &FakeHost) -> Vec<String> {

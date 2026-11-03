@@ -3,9 +3,21 @@
 # Start a WolOS session: the compositor with WolOS defaults (user file sources the system file).
 export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=Hyprland XDG_CURRENT_DESKTOP=Hyprland
 export LIBSEAT_BACKEND=seatd   # seatd (seat group), as the login window
+# No logind session (a TTY start, another launcher): /run/user/<uid> is logind's to make and root's
+# folder, so a plain user cannot create it. Use it when it is this account's, else a private folder
+# of its own (0700, owned by it), never one that is not.
 if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
-	XDG_RUNTIME_DIR=/var/run/user/$(id -u)
-	mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+	XDG_RUNTIME_DIR=/run/user/$(id -u)
+	mkdir -m 700 "$XDG_RUNTIME_DIR" 2>/dev/null
+	if [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -O "$XDG_RUNTIME_DIR" ]; then
+		XDG_RUNTIME_DIR=${TMPDIR:-/tmp}/wol-runtime-$(id -u)
+		mkdir -m 700 "$XDG_RUNTIME_DIR" 2>/dev/null
+		if [ -L "$XDG_RUNTIME_DIR" ] || [ ! -d "$XDG_RUNTIME_DIR" ] || [ ! -O "$XDG_RUNTIME_DIR" ]; then
+			echo "wol-session: no runtime folder of this account's own ($XDG_RUNTIME_DIR)" >&2
+			exit 1
+		fi
+	fi
+	chmod 700 "$XDG_RUNTIME_DIR"
 	export XDG_RUNTIME_DIR
 fi
 # WOLOS_SHARE: shipped defaults (overridable so a live test runs this script from the repo).
