@@ -33,6 +33,12 @@ allow = [
     "BSL-1.0",
     "Unicode-3.0",
     "CDLA-Permissive-2.0",
+    # The Rust browser engine (`servo`, ADR 0042) and its crates: file-level copyleft, compatible with
+    # a GPL-2.0-or-later combination through MPL-2.0 section 3.3 (no "Incompatible With Secondary
+    # Licenses" notice at the pin). CTO decision 2026-11-03; listed in docs/THIRD-PARTY.md. The
+    # engine is built by webengine-wolos in its own workspace, so this row covers that graph and
+    # any engine crate the workspace ever links directly.
+    "MPL-2.0",
 ]
 
 [licenses.private]

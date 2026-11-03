@@ -1,0 +1,23 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* The only exports of libwolwebengine.so.1 (ABI 1). Append-only within a major. */
+WOLWEBENGINE_1 {
+  global:
+    wwe_abi_version;
+    wwe_engine_version;
+    wwe_engine_new;
+    wwe_engine_free;
+    wwe_engine_spin;
+    wwe_view_new;
+    wwe_view_free;
+    wwe_view_state;
+    wwe_view_resize;
+    wwe_view_input;
+    wwe_view_focus;
+    wwe_view_visible;
+    wwe_view_theme;
+    wwe_view_screenshot;
+    wwe_image_free;
+    wwe_run_content_process;
+  local:
+    *;
+};

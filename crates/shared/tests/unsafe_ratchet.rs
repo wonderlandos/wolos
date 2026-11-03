@@ -33,6 +33,13 @@ use std::path::{Path, PathBuf};
 /// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
 /// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// `webengine` (ADR 0042, WA-2, 2026-11-03): 124 when the crate was made, 119 once libloading
+/// replaced dlopen and transmute. The C boundary of the engine library in `src/engine/lib.rs`
+/// (built by webengine-wolos as libwolwebengine.so.1, counted here because it lives in this
+/// crate's `src/`: every `#[unsafe(no_mangle)] unsafe extern "C"` export and its pointer reads)
+/// and the loading side in `src/ffi.rs` and `src/view.rs` (libloading's open and get, the function
+/// pointer types, the callbacks the engine calls with the view's context); each with a SAFETY
+/// line. Lowered when the engine's embedding API settles.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
@@ -50,6 +57,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 8),
     ("wol-lua", 3),
     ("xguard-clam", 13),
+    ("webengine", 119),
 ];
 
 fn crates_dir() -> PathBuf {

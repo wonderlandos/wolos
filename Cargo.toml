@@ -16,7 +16,10 @@ members = [
     "crates/xguard",
     "crates/xguard-clam",
     "crates/aurlaws",
+    "crates/webengine",
 ]
+# The engine library's source (ADR 0042): built in the engine's own workspace by webengine-wolos.
+exclude = ["crates/webengine/engine"]
 
 [workspace.package]
 version = "0.12.0"
