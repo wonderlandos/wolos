@@ -200,6 +200,13 @@ pub fn snap_to_base(dev: &Device, snapped: &[String]) -> Option<f32> {
 // ---- Pro Audio file ----
 
 /// The user fragment Pro Audio writes; empty when nothing is forced (the caller removes the file).
+///
+/// A quantum pins the graph: quantum = min-quantum = max-quantum = N. In a VM PipeWire's own
+/// `context.properties.rules` (pipewire.conf) raise default.clock.min-quantum to
+/// [`VM_MIN_QUANTUM`], and whether that rule lands before or after this file is PipeWire's load
+/// order; a pinned N below 1024 would then leave min (1024) above max (N). So for N < 1024 the
+/// file carries the same `cpu.vm.name` match and pins 1024 there: N on hardware, 1024 in a VM,
+/// min never above max in either order. The live `clock.force-quantum` still gives N in a VM.
 pub fn pro_audio_conf(rate: u32, quantum: u32) -> String {
     let mut s = String::from(
         "# Written by Settings > Sound > Pro Audio (WolOS). `wol audio reset` removes it.\n",
@@ -218,14 +225,33 @@ pub fn pro_audio_conf(rate: u32, quantum: u32) -> String {
         s.push_str(&format!("    default.clock.max-quantum = {quantum}\n"));
     }
     s.push_str("}\n");
+    if quantum != 0 && quantum < VM_MIN_QUANTUM {
+        let quantum = VM_MIN_QUANTUM;
+        s.push_str(&format!(
+            "{PRO_AUDIO_VM_RULES}\n    {{\n        matches = [ {{ cpu.vm.name = !null }} ]\n        \
+             actions = {{\n            update-props = {{\n                \
+             default.clock.quantum = {quantum}\n                \
+             default.clock.min-quantum = {quantum}\n                \
+             default.clock.max-quantum = {quantum}\n            }}\n        }}\n    }}\n]\n"
+        ));
+    }
     s
 }
+
+/// The floor PipeWire's own rule sets when `cpu.vm.name` is present (pipewire.conf).
+pub const VM_MIN_QUANTUM: u32 = 1024;
+
+/// Opens the VM block of [`pro_audio_conf`]; [`parse_pro_audio_conf`] stops reading there.
+const PRO_AUDIO_VM_RULES: &str = "context.properties.rules = [";
 
 /// Read back what [`pro_audio_conf`] wrote.
 pub fn parse_pro_audio_conf(text: &str) -> ProAudio {
     let mut p = ProAudio::default();
     for l in text.lines() {
         let l = l.trim();
+        if l == PRO_AUDIO_VM_RULES {
+            break;
+        }
         if let Some(v) = l.strip_prefix("default.clock.rate =") {
             p.rate = v.trim().parse().unwrap_or(0);
         } else if let Some(v) = l.strip_prefix("default.clock.quantum =") {
@@ -675,6 +701,94 @@ mod tests {
         assert_eq!(decay(0.8, -1.0), 0.8);
         m.feed(2.0, 0.0);
         assert_eq!(m.peak, 1.0, "clamped");
+    }
+
+    /// The clock keys of one block of a fragment: `context.properties = {..}` (props) or the
+    /// update-props of `context.properties.rules` (VM-only), as PipeWire would read them.
+    fn clock_keys(text: &str, rules: bool) -> Vec<(String, u32)> {
+        let mut inside = false;
+        let mut out = vec![];
+        for l in text.lines().map(str::trim) {
+            if l.starts_with("context.properties") {
+                inside = (l == PRO_AUDIO_VM_RULES) == rules;
+                continue;
+            }
+            if let Some((k, v)) = l.split_once(" = ") {
+                if inside && k.starts_with("default.clock.") && k.ends_with("quantum") {
+                    out.push((k.to_string(), v.parse().unwrap()));
+                }
+            }
+        }
+        out
+    }
+
+    /// (quantum, min, max) after a reboot: the shipped fragment (1024 / 64 / 2048), PipeWire's
+    /// VM rule (min 1024) when `vm`, and the Pro Audio file, with the VM rules in either order.
+    fn boot_clock(user: &str, vm: bool, upstream_rule_last: bool) -> (u32, u32, u32) {
+        let mut m: std::collections::HashMap<String, u32> = [
+            ("default.clock.quantum", 1024),
+            ("default.clock.min-quantum", 64),
+            ("default.clock.max-quantum", 2048),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        m.extend(clock_keys(user, false));
+        if vm {
+            let upstream = vec![("default.clock.min-quantum".to_string(), 1024)];
+            let ours = clock_keys(user, true);
+            let order = if upstream_rule_last {
+                [ours, upstream]
+            } else {
+                [upstream, ours]
+            };
+            for rule in order {
+                m.extend(rule);
+            }
+        }
+        let g = |k: &str| m[&format!("default.clock.{k}")];
+        (g("quantum"), g("min-quantum"), g("max-quantum"))
+    }
+
+    #[test]
+    fn a_saved_quantum_never_leaves_min_above_max_on_hardware_or_in_a_vm() {
+        for n in QUANTA.iter().copied().chain([2048]) {
+            let t = pro_audio_conf(0, n);
+            assert_eq!(
+                boot_clock(&t, false, false),
+                (n, n, n),
+                "hardware, quantum {n}\n{t}"
+            );
+            let vm = n.max(VM_MIN_QUANTUM);
+            for last in [false, true] {
+                let (q, min, max) = boot_clock(&t, true, last);
+                assert!(
+                    min <= q && q <= max,
+                    "VM, quantum {n}: {min}/{q}/{max}\n{t}"
+                );
+                let want = if n < VM_MIN_QUANTUM {
+                    (vm, vm, vm)
+                } else {
+                    (n, VM_MIN_QUANTUM.min(n), n)
+                };
+                assert_eq!(
+                    (q, min, max),
+                    want,
+                    "VM, quantum {n}, upstream rule last {last}\n{t}"
+                );
+            }
+            assert_eq!(
+                t.contains("matches = [ { cpu.vm.name = !null } ]"),
+                n < VM_MIN_QUANTUM,
+                "{t}"
+            );
+            assert_eq!(parse_pro_audio_conf(&t).quantum, n);
+        }
+        // Rate only: no rule, the shipped floor (and the VM's 1024) stay in charge.
+        let r = pro_audio_conf(96000, 0);
+        assert!(!r.contains("context.properties.rules"), "{r}");
+        assert_eq!(boot_clock(&r, true, true), (1024, 1024, 2048));
+        assert_eq!(boot_clock(&r, false, true), (1024, 64, 2048));
     }
 
     #[test]

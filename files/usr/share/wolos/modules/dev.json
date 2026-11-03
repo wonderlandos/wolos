@@ -1,10 +1,10 @@
 {
   "id": "dev",
   "name": "Developer",
-  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij and rootless podman; ~/Work",
+  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij, rootless podman and Crystal with Cryswol; ~/Work",
   "icon": "applications-engineering-symbolic",
   "category": "developer",
-  "size_mb": 900,
+  "size_mb": 1000,
   "packages": [
     "git",
     "github-cli",
@@ -15,7 +15,10 @@
     "zellij",
     "podman",
     "jq",
-    "ttf-jetbrains-mono-nerd"
+    "ttf-jetbrains-mono-nerd",
+    "crystal",
+    "libwol",
+    "cryswol"
   ],
   "flatpaks": [],
   "recipes": [],

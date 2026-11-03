@@ -22,7 +22,11 @@ ProtectKernelLogs=yes
 ProtectHostname=yes
 ProtectHome=yes
 PrivateNetwork=yes
-ProtectKernelModules=yes
+# No ProtectKernelModules: it hides /usr/lib/modules, whose sealed files (the kernel's build
+# scripts) then fail to measure and every boot reports a broken seal. Loading modules stays
+# out of reach without hiding the directory.
+CapabilityBoundingSet=~CAP_SYS_MODULE
+SystemCallFilter=~@module
 RestrictAddressFamilies=AF_UNIX
 
 [Install]

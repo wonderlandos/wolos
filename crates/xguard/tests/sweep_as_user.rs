@@ -91,3 +91,43 @@ fn giving_a_list_to_another_account_needs_cap_chown() {
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// F10: the guard's `verdicts` is root's (0644) and the pass runs as _xguard: the pass keeps its
+/// own memory (`sweep-verdicts`) and never opens the guard's to write. Before, every pass that got
+/// past the gate died on "Permission denied" (exit 3) and the unit failed.
+#[test]
+fn the_pass_leaves_the_guards_verdicts_alone() {
+    let d = std::env::temp_dir().join(format!("xg-own-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    rules(&d.join("rules"));
+    let home = d.join("home/alice");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("fine.sh"), "echo hi\n").unwrap();
+    let state = d.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o775)).unwrap();
+    let guards = state.join("verdicts");
+    std::fs::write(&guards, b"").unwrap();
+    std::fs::set_permissions(&guards, std::fs::Permissions::from_mode(0o444)).unwrap();
+
+    for _ in 0..2 {
+        let o = Command::new(env!("CARGO_BIN_EXE_wol-xguard"))
+            .arg("sweep")
+            .arg("--rules")
+            .arg(d.join("rules"))
+            .arg(&state)
+            .arg(d.join("home"))
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "sweep failed: {err}");
+    }
+    let g = std::fs::metadata(&guards).unwrap();
+    assert_eq!(g.len(), 0, "the guard's file was not opened to write");
+    assert_eq!(g.mode() & 0o777, 0o444);
+    assert!(
+        std::fs::metadata(state.join("sweep-verdicts")).is_ok_and(|m| m.len() > 0),
+        "the pass remembers in its own file"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

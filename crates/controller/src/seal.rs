@@ -149,11 +149,14 @@ pub fn check(env: &mut dyn Env) -> i32 {
         }
     }
     let v = seal::verify(&man, &expected, &|p| cache.get(p).cloned().flatten());
+    let failed_mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/verity-failed-{s}"));
     if v == seal::Verdict::Ok {
+        // A slot that passes has not failed: an old mark (a check that could not see every file)
+        // would keep the other slot from ever falling back to this one.
+        let _ = env.remove_file(&failed_mark(slot));
         return 0;
     }
     let other = update::other_slot(slot).unwrap_or("");
-    let failed_mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/verity-failed-{s}"));
     let entry = |suffix: &str| {
         Path::new(&format!(
             "{}/loader/entries/{other}{suffix}.conf",

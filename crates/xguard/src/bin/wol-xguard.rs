@@ -271,9 +271,12 @@ fn sweep(args: &[String]) -> i32 {
     lowest_qos();
     let e = Engine::open(&dir).unwrap_or_else(|m| die(&m));
     let rules = e.versions().iter().copied().max().unwrap_or(0);
+    // The pass's own memory, not the guard's `verdicts`: that one is root's (0644) and the pass
+    // runs as _xguard, so opening it to write failed on every pass that got past the gate; and
+    // what the guard trusts is not for this account to write.
     let store = std::sync::Mutex::new(
-        xguard::store::Store::open(&Path::new(&state).join("verdicts"))
-            .unwrap_or_else(|m| die(&m.to_string())),
+        xguard::store::Store::open(&Path::new(&state).join("sweep-verdicts"))
+            .unwrap_or_else(|m| die(&format!("sweep-verdicts: {m}"))),
     );
     let mut files = Vec::new();
     let tagged = |p: &Path| {

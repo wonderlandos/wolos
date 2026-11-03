@@ -42,13 +42,21 @@ and the desktop as shipped.
 ## The journey, boot to apps
 
 1. **Boot the ISO.** `wolvm new w --iso wolos.iso --tpm && wolvm start w`.
-   `wolvm wait-text w "Welcome to"` (systemd on the serial console), `wolvm wait-agent w`,
+   `wolvm wait-text w "Install WolOS: the first screen of the live image"` (the live system on
+   the serial console; it prints no "Welcome to" greeting), `wolvm wait-agent w`,
    `wolvm wait-stable w`, `wolvm screenshot w now.png`.
 2. **Drive the installer.** Read the screenshot, act (`key tab`, `key ret`, `click X Y`,
    `type "name"`), `wait-stable`, screenshot again. `snapshot save` before the disk page.
    Ask the installer what it did: `wolvm ssh w 'journalctl -b -t wol-installer -n 50'`.
-   Or unattended: `--direct --append "wolos.autoinstall=/dev/vda wolos.autologin=yes"` and
+   Or unattended: `--direct --append "wolos.autoinstall=/dev/vda"` and
    `wait-text "wolos-install: done"`.
+   **Tester note (unattended installs):** an autoinstall without `wolos.plan=` creates no user
+   account, so the installed disk boots to the login window with nobody to log in as.
+   `wolos.autologin=yes` is a word for the live session only; the installed system ignores it.
+   For a ready account, pass a plan the app wrote (`wolos.plan=WOLOSKEY:plan`, as
+   `WOLOS_PLAN=auto tests/test-install.sh` does). A user made by hand in the installed system
+   (`useradd`) must be in the group `seat`, or the desktop cannot open the seat and the session
+   restarts in a loop.
 3. **Reboot into the installed disk.** After the power-off: `wolvm set w --boot disk`
    (or `eject` + reboot from the guest), `wolvm start w`. The installed system boots from its own
    ESP; the SMBIOS console words still apply, so serial and agent work there too.

@@ -123,6 +123,50 @@ fn boot_check_with_a_tampered_manifest_tells_the_person() {
     );
 }
 
+/// A slot that passes loses any old mark of its own (F10: a check that could not see
+/// /usr/lib/modules marked every fresh slot failed, and the mark then barred the fallback to it).
+#[test]
+fn boot_check_that_passes_clears_the_slots_old_mark() {
+    let m = Manifest::parse(&format!(
+        "{} usr/bin/a\n{} usr/lib/modules/7.3.0-5-wolos/build/scripts/x\n",
+        d('a'),
+        d('b')
+    ));
+    let mut env = FakeEnv {
+        files: vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                format!("rootflags=subvol=@wolos-a wolos.seal={}", m.root_digest()),
+            ),
+            (PathBuf::from("/usr/lib/wolos/verity.manifest"), m.to_text()),
+        ],
+        captures: vec![(
+            "fsverity measure /usr/bin/a /usr/lib/modules/7.3.0-5-wolos/build/scripts/x".into(),
+            format!(
+                "sha256:{} /usr/bin/a\nsha256:{} /usr/lib/modules/7.3.0-5-wolos/build/scripts/x\n",
+                d('a'),
+                d('b')
+            ),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("seal check", &mut env), 0, "{}", env.err);
+    assert!(env.err.is_empty(), "{}", env.err);
+    assert!(
+        env.removed
+            .iter()
+            .any(|p| p == std::path::Path::new("/var/lib/wolos/verity-failed-wolos-a")),
+        "{:?}",
+        env.removed
+    );
+    assert!(
+        !env.written
+            .iter()
+            .any(|w| w.0.to_string_lossy().contains("verity-failed")),
+        "a pass writes no mark"
+    );
+}
+
 #[test]
 fn boot_check_passes_a_slot_that_was_never_sealed() {
     let mut env = FakeEnv {

@@ -24,7 +24,7 @@ One sound server, PipeWire, with WirePlumber as its session manager (`wolos-iso/
 
 | Piece | Where | Does |
 |---|---|---|
-| Graph | `files/usr/share/pipewire/pipewire.conf.d/70-wolos-latency.conf` | 48 kHz default; `allowed-rates [44100 48000 88200 96000]` so a 44.1 or 96 kHz stream is followed, not resampled; quantum 1024, floor 64 (1.3 ms, games), ceiling 2048 |
+| Graph | `files/usr/share/pipewire/pipewire.conf.d/70-wolos-latency.conf` | 48 kHz default; `allowed-rates [44100 48000 88200 96000]` so a 44.1 or 96 kHz stream is followed, not resampled; quantum 1024, floor 64 (1.3 ms, games), ceiling 2048; in a VM (`cpu.vm.name` set) PipeWire's own rule in `pipewire.conf` raises the floor to 1024, which WolOS keeps; the floor in effect is `clock.min-quantum` in `pw-metadata -n settings 0` |
 | Pulse clients | `files/usr/share/pipewire/pipewire-pulse.conf.d/70-wolos-latency.conf` | floor 256 frames for every client (a browser cannot drag the graph to 64 and crackle); `pulse.rules` give 64 only to `wine*`, `steam*`, `gamescope*`; `cpu.vm.name` gets 1024 |
 | Pro Audio | Settings > Sound > Pro Audio, `Action::ProAudio { rate, quantum }` | writes `~/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf` (`wol_core::audio::pro_audio_conf`) and applies live with `pw-metadata -n settings 0 clock.force-rate|quantum`; 0 means automatic; xruns from `pw-top -b -n 1` (`parse_pw_top_xruns`) |
 | Realtime | `files/etc/security/limits.d/70-wolos-audio.conf`, rtkit | `@audio rtprio 95`, `memlock unlimited`; rtkit for everyone else |

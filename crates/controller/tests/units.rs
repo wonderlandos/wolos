@@ -282,7 +282,8 @@ const HARDENED: &[(&str, &[&str])] = &[
             "ProtectHostname=yes",
             "ProtectHome=yes",
             "PrivateNetwork=yes",
-            "ProtectKernelModules=yes",
+            "CapabilityBoundingSet=~CAP_SYS_MODULE",
+            "SystemCallFilter=~@module",
             "RestrictAddressFamilies=AF_UNIX",
         ],
     ),
@@ -335,6 +336,15 @@ const FORBIDDEN: &[(&str, &[&str], &str)] = &[
         "wolos-power.service",
         &["PrivateNetwork"],
         "iw sets Wi-Fi power saving over nl80211 in the host network namespace (audit CORE2-3)",
+    ),
+    (
+        "wolos-verity-check.service",
+        &[
+            "ProtectKernelModules",
+            "InaccessiblePaths",
+            "TemporaryFileSystem",
+        ],
+        "measures every sealed file, /usr/lib/modules included: a hidden path fails the seal",
     ),
     (
         "wolos-hw.service",
