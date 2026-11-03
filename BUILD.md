@@ -72,6 +72,14 @@ gh workflow run publish.yml -R wonderlandos/wolos -f what=promote               
   `FAIL`: no release), Secure-Boot-signs and boots it when the keys are set, then
   `wolos-build release --do --iso` writes and signs `release.json` and publishes the latest
   release. `what=iso-s3` publishes any tested ISO of a run the same way, as a pre-release.
+- What a forge release run leaves in its directory (`/scratch/rel012` for v0.12.0), and what reads it:
+
+  | Forge step | Writes | Read by |
+  |---|---|---|
+  | `wolos-build pkg` | `pkg/*.pkg.tar.zst`, `*.inputs.json`, `logs/pkg.log` | uploaded to `s3://$BUCKET/runs/<run>/out/`, then `what=packages` |
+  | `wolos-build iso` | `iso/<name>.iso`, `.sha256`, `.json` (size, sha256, kernel), `logs/iso.log` | `what=iso` |
+  | wolvm journeys (`tests/wolvm/wolvm journey`) | `vm/<journey>/journey.jsonl` (steps, seconds), `serial.log`, screenshots, `vm/wolvm/vms/<vm>/vm.json` | `metrics.sh` |
+  | `sh ../wolos-iso/tests/metrics.sh RUN RUN/metrics.json` | `metrics.json` (`wolos-iso/release/metrics.schema.json`): boot, install, pages, idle CPU, shell map, ISO size, journey passes; null where the run did not measure | copied to the site as `data/metrics.json` (Proof, Compare, Hardware pages) |
 - `wolos-build release vX.Y.Z` puts the same `vX.Y.Z` tag on `wolos`, `wolos-pkgbuilds`,
   `wolos-iso` and `wolos-build` (signed tags, clean work trees; a tag already at HEAD is kept) and
   writes the release manifest (each repo's commit, the snapshot). Without `--do` it only prints the

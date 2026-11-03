@@ -61,4 +61,27 @@ Written files start with a WolOS header. Unchanged files are not rewritten. Alwa
 
 Session environment (GBM, GLX vendor, VA-API, PRIME offload): `crates/realtime/src/gpu_env.rs`.
 
+## Hardware reports (`catalog::report`)
+
+A report is what a public hardware matrix needs from one computer: which models it has and how WolOS drives them. `wol_core::hardware::catalog::report(&snapshot, os)` turns a snapshot into JSON (`format: 1`): per device the kind, bus, `vvvv:dddd` id (or ACPI id, CPU vendor), the catalogue's row name, the bound driver, the state and the missing catalogue packages.
+
+| Kept | Left out (why) |
+|---|---|
+| kind, bus, id, catalogue name, driver, state, missing catalogue packages | `location` (bus paths tell machines apart), the bus's own description (USB strings can carry an owner's name or a serial), hints, notes, any package the catalogue does not name, any id or driver that is not a plain token |
+
+The `wol hw report` verb that writes it to a file is not wired yet (planned with the controller's `hw` rows). Test: `crates/core/src/hardware/catalog.rs` (`report_names_models_and_carries_no_personal_data`).
+
+## Tested configurations
+
+No real machine has a published result yet. Each release run boots the image in QEMU/KVM VMs on the forge (`wolos-iso/tests/wolvm/wolvm`); `wolos-iso/tests/metrics.sh` records them in `metrics.json` (`vms`). v0.12.0 (run `rel012`, 2026-11-03): four VMs, all 4 vCPUs, 6 GB, virtio GPU at 1280x800, OVMF, KVM:
+
+| VM | Disk | TPM | Secure Boot | Journey | Result |
+|---|---|---|---|---|---|
+| live | 40G, boots the ISO | no | off | live-boot | 13/13 |
+| sb | 40G, boots the ISO | no | on | live-secureboot | 36/36 |
+| mok | 1G, shim test ESP | yes | on | mok-screen | 16/16 |
+| inst | 40G, autoinstall | yes | off | install-auto | 3/4: installed, the harness lost the VM at `stop`; the installed disk's first start was not reached |
+
+The site's Hardware page lists the catalogue (from `catalog.rs`) and these VMs.
+
 Tests: `crates/core/src/hardware/tests.rs`, `crates/controller/tests/hw.rs`.

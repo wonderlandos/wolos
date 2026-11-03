@@ -4,6 +4,7 @@
 //! iwlwifi, rtw88/rtw89, ath1xk, mt76), Arch linux-firmware split packages, NVIDIA open-module support
 //! list (Turing and newer). docs/modules/hardware.md.
 use super::{BASE, Bus, Entry};
+use shared::hardware::HardwareSnapshot;
 use shared::hardware::Kind::*;
 
 const FW_INTEL: &[&str] = &["linux-firmware-intel"];
@@ -687,3 +688,126 @@ pub const CATALOG: &[Entry] = &[
         ..BASE
     },
 ];
+
+/// `wol hw report`: one computer's devices as the public hardware matrix wants them (site page
+/// /hardware, docs/modules/hardware.md "Hardware reports"). Only what identifies a MODEL, never a
+/// machine or a person: kind, bus, the `vvvv:dddd` id (or ACPI id / CPU vendor), the catalogue's
+/// name for the row, the bound driver, the state and the missing catalogue packages. Left out on
+/// purpose: `location` (bus paths), the bus's own description (USB strings can carry an owner's
+/// name or a serial), hints and notes; an id or driver that is not a plain token is dropped too.
+pub fn report(snap: &HardwareSnapshot, os: &str) -> serde_json::Value {
+    let token = |s: &str, max: usize| {
+        (!s.is_empty()
+            && s.len() <= max
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_:-.".contains(&b)))
+        .then(|| s.to_owned())
+    };
+    let devices: Vec<serde_json::Value> = snap
+        .devices
+        .iter()
+        .map(|d| {
+            let name = CATALOG.iter().find(|e| e.name == d.name).map(|e| e.name);
+            serde_json::json!({
+                "kind": d.kind.name(),
+                "bus": token(&d.bus, 12),
+                "id": token(&d.id, 16),
+                "name": name,
+                "driver": d.driver.as_deref().and_then(|v| token(v, 32)),
+                "state": d.state.name(),
+                "missing": d.missing_packages.iter().filter(|p| is_catalogue_package(p)).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    serde_json::json!({ "format": 1, "os": token(os, 32), "devices": devices })
+}
+
+/// A package name the catalogue itself names (firmware or driver): the only package names a
+/// report may carry.
+fn is_catalogue_package(p: &str) -> bool {
+    CATALOG
+        .iter()
+        .any(|e| e.firmware.contains(&p) || e.packages.contains(&p))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::hardware::{Device, Kind, State};
+
+    fn dev(kind: Kind, name: &str, bus: &str, id: &str, location: &str) -> Device {
+        Device {
+            kind,
+            name: name.into(),
+            bus: bus.into(),
+            id: id.into(),
+            location: location.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn report_names_models_and_carries_no_personal_data() {
+        let mut wifi = dev(
+            Kind::Wifi,
+            "Intel Wi-Fi 6E AX210/AX211",
+            "pci",
+            "8086:2725",
+            "0000:02:00.0",
+        );
+        wifi.driver = Some("iwlwifi".into());
+        wifi.missing_packages = vec!["linux-firmware-intel".into(), "alice-private-pkg".into()];
+        wifi.state = State::NeedsFirmware;
+        wifi.hint = "install linux-firmware-intel for alice".into();
+        wifi.notes = vec!["seen on alice-laptop".into()];
+        // A USB device whose own description is the owner's naming, with a serial in the id slot.
+        let cam = dev(
+            Kind::Webcam,
+            "Alice's Camera SN 0042-77",
+            "usb",
+            "046d:085e serial=ABC 123",
+            "usb-3-2",
+        );
+        let snap = HardwareSnapshot {
+            devices: vec![wifi, cam],
+        };
+        let r = report(&snap, "0.12.0");
+        let text = r.to_string();
+        for secret in [
+            "alice",
+            "Alice",
+            "0000:02:00.0",
+            "usb-3-2",
+            "serial",
+            "ABC",
+            "0042",
+        ] {
+            assert!(!text.contains(secret), "{secret} leaked: {text}");
+        }
+        assert_eq!(r["format"], 1);
+        assert_eq!(r["os"], "0.12.0");
+        let d = &r["devices"][0];
+        assert_eq!(d["kind"], "wifi");
+        assert_eq!(d["id"], "8086:2725");
+        assert_eq!(d["name"], "Intel Wi-Fi 6E AX210/AX211");
+        assert_eq!(d["driver"], "iwlwifi");
+        assert_eq!(d["state"], "needs-firmware");
+        assert_eq!(d["missing"], serde_json::json!(["linux-firmware-intel"]));
+        let c = &r["devices"][1];
+        assert_eq!(c["kind"], "webcam");
+        assert!(c["name"].is_null() && c["id"].is_null() && c["driver"].is_null());
+        // Exactly these keys per device: a new Device field does not reach the report unseen.
+        let keys: Vec<&str> = d.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(
+            keys,
+            ["bus", "driver", "id", "kind", "missing", "name", "state"]
+        );
+    }
+
+    #[test]
+    fn an_empty_computer_is_an_empty_report() {
+        let r = report(&HardwareSnapshot::default(), "");
+        assert_eq!(r["devices"], serde_json::json!([]));
+        assert!(r["os"].is_null());
+    }
+}
