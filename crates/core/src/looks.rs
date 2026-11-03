@@ -157,6 +157,44 @@ fn clamp_f(v: f32, (lo, hi): (f32, f32)) -> f32 {
     }
 }
 
+/// One keyword as a Lua call. `animation = name,on,speed,curve[,style]` becomes `hl.animation`; a
+/// gradient (`col 1 col 2 [angle]deg`) becomes `{ colors = {...}, angle = N }`.
+pub fn keyword_lua(k: &str, v: &str) -> String {
+    use crate::theme::hypr::{lua_key, lua_set, lua_str, lua_value};
+    if k == "animation" {
+        let f: Vec<&str> = v.split(',').map(str::trim).collect();
+        let mut s = format!(
+            "hl.animation({{ leaf = {}, enabled = {}",
+            lua_str(f.first().copied().unwrap_or_default()),
+            f.get(1).is_some_and(|e| *e == "1")
+        );
+        if let Some(speed) = f.get(2) {
+            s += &format!(", speed = {}", lua_value(speed));
+        }
+        if let Some(curve) = f.get(3) {
+            s += &format!(", bezier = {}", lua_str(curve));
+        }
+        if let Some(style) = f.get(4) {
+            s += &format!(", style = {}", lua_str(style));
+        }
+        return s + " })";
+    }
+    let parts: Vec<&str> = v.split_whitespace().collect();
+    if k.contains("col.") && parts.len() > 1 && parts.iter().all(|p| p.starts_with("rgb") || p.ends_with("deg")) {
+        let colors: Vec<String> = parts.iter().filter(|p| p.starts_with("rgb")).map(|c| lua_str(c)).collect();
+        let angle = parts
+            .iter()
+            .find_map(|p| p.strip_suffix("deg"))
+            .map_or(String::new(), |a| format!(", angle = {}", lua_value(a)));
+        return format!(
+            "hl.config({{ [{}] = {{ colors = {{ {} }}{angle} }} }})",
+            lua_str(&lua_key(k)),
+            colors.join(", ")
+        );
+    }
+    lua_set(k, v)
+}
+
 /// Seconds formatted the way the compositor reads animation speed (deciseconds, one decimal).
 fn ds(base: f32, speed: f32) -> String {
     format!("{:.1}", (base / speed).max(0.1))
@@ -293,6 +331,15 @@ impl Looks {
             anim("workspaces", 5.0, "ease", ws),
             anim("specialWorkspace", 4.0, "ease", "slidevert"),
         ]
+    }
+
+    /// [`Looks::keywords`] as Lua for the compositor 0.57 series (one call per keyword, same order):
+    /// `hl.config` for options, `hl.animation` for `animation` entries.
+    pub fn keywords_lua(&self, reduce_motion: bool, reduce_transparency: bool) -> Vec<String> {
+        self.keywords(reduce_motion, reduce_transparency)
+            .iter()
+            .map(|(k, v)| keyword_lua(k, v))
+            .collect()
     }
 
     /// Rough GPU cost: blur work, see-through windows (blur behind every window) and shadow size.
@@ -644,6 +691,85 @@ mod tests {
         let d = Looks::default();
         assert_eq!(kw(&d, "decoration:active_opacity"), "1.00");
         assert_eq!(kw(&d, "decoration:dim_inactive"), "false");
+    }
+
+    const SHIPPED_LUA: &str =
+        include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+
+    /// The Lua configuration (compositor 0.57) has the same defaults: every option the Looks set
+    /// is in the shipped hyprland.lua with the same value, every animation with the same fields.
+    #[test]
+    fn defaults_equal_the_shipped_lua() {
+        let unset = [
+            "dim_inactive",
+            "dim_strength",
+            "col.active_border",
+            "col.inactive_border",
+            "active_opacity",
+            "inactive_opacity",
+        ];
+        let num = |v: &str| v.parse::<f64>().map_or(v.to_string(), |n| format!("{n}"));
+        let shipped: Vec<(String, String)> = SHIPPED_LUA
+            .lines()
+            .filter_map(|l| l.split("--").next()?.split_once(" = "))
+            .map(|(k, v)| (k.trim().to_string(), num(v.trim().trim_end_matches(','))))
+            .collect();
+        let anims: Vec<String> = SHIPPED_LUA
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with("hl.animation("))
+            .map(|l| l.replace("  ", " "))
+            .collect();
+        let d = Looks::default();
+        for ((k, v), lua) in d.keywords(false, false).iter().zip(d.keywords_lua(false, false)) {
+            if k == "animation" {
+                let norm = |l: &str| l.replace(".0,", ",").replace(".0 ", " ");
+                assert!(
+                    anims.iter().any(|a| norm(a) == norm(&lua)),
+                    "{lua} is not in the shipped hyprland.lua"
+                );
+                continue;
+            }
+            let leaf = k.rsplit(':').next().unwrap();
+            if unset.contains(&leaf) {
+                continue;
+            }
+            let want = num(&crate::theme::hypr::lua_value(v));
+            assert!(
+                shipped.iter().any(|(sk, sv)| sk == leaf && *sv == want),
+                "{k} = {v} ({lua}) differs from the shipped hyprland.lua"
+            );
+        }
+    }
+
+    #[test]
+    fn keywords_render_as_lua() {
+        assert_eq!(
+            keyword_lua("decoration:blur:enabled", "true"),
+            "hl.config({ [\"decoration.blur.enabled\"] = true })"
+        );
+        assert_eq!(
+            keyword_lua("general:gaps_out", "12"),
+            "hl.config({ [\"general.gaps_out\"] = 12 })"
+        );
+        assert_eq!(
+            keyword_lua("animation", "windowsIn,1,1.1,wolOut,popin 90%"),
+            "hl.animation({ leaf = \"windowsIn\", enabled = true, speed = 1.1, bezier = \"wolOut\", style = \"popin 90%\" })"
+        );
+        assert_eq!(
+            keyword_lua("animation", "fade,0,3.0,ease"),
+            "hl.animation({ leaf = \"fade\", enabled = false, speed = 3.0, bezier = \"ease\" })"
+        );
+        assert_eq!(
+            keyword_lua("general:col.active_border", "rgba(33ccffff) rgba(00ff99ee) 45deg"),
+            "hl.config({ [\"general.col.active_border\"] = { colors = { \"rgba(33ccffff)\", \"rgba(00ff99ee)\" }, angle = 45 } })"
+        );
+        assert_eq!(
+            keyword_lua("general:col.inactive_border", "rgba(595959aa)"),
+            "hl.config({ [\"general.col.inactive_border\"] = \"rgba(595959aa)\" })"
+        );
+        let l = Looks::default();
+        assert_eq!(l.keywords_lua(true, true).len(), l.keywords(true, true).len());
     }
 
     #[test]

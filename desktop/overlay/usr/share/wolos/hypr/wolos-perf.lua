@@ -1,0 +1,75 @@
+-- WolOS compositor performance defaults (compositor 0.57 series, Lua configuration).
+-- Ships in the desktop overlay; desktop hyprland.lua loads it:
+--   require("/usr/share/wolos/hypr/wolos-perf.lua")
+-- Map to IaraOS optimizations: docs/modules/hyprland-fork.md
+
+hl.config({
+    debug = {
+        vfr = true, -- event-driven frames: render only on damage/commit/input (IaraOS frame clock)
+        damage_tracking = 2, -- full damage tracking with buffer age (IaraOS damage + buffer age)
+    },
+
+    render = {
+        direct_scanout = 2, -- auto: fullscreen client buffer goes straight to KMS, no composite pass
+        new_render_scheduling = false, -- triple-buffer scheduling only helps underpowered GPUs; costs latency
+    },
+
+    decoration = {
+        blur = {
+            enabled = true,
+            new_optimizations = true, -- cache blur of static layers; redo only when backdrop damages (IaraOS cached Kawase)
+            xray = true, -- floating glass blurs the cached wallpaper, not live windows below
+            passes = 2, -- IaraOS dual Kawase: 2 down + 2 up
+            size = 6,
+            popups = false, -- menus are not blurred per frame
+            special = false, -- no blur behind the special workspace (expensive)
+        },
+        shadow = {
+            render_power = 2,
+        },
+    },
+
+    misc = {
+        vrr = 2, -- VRR only for fullscreen apps: no desktop cursor wakes, tear-free games
+        disable_hyprland_logo = true,
+        disable_splash_rendering = true,
+        disable_autoreload = true, -- no config file watcher in the shipped image
+        render_unfocused_fps = 15,
+        throttle_occluded = true, -- covered windows: frame callbacks every 33.3 ms or 2 updates, once > 10 windows are open
+        throttle_window_count = 10,
+        throttle_occlusion_cutoff = 0.2, -- under 20 % visible counts as covered
+        throttle_freeze_ms = 33.3,
+        throttle_freeze_updates = 2,
+        reconfigure_ack_timeout_ms = 250, -- after a mode change, wait at most this long for clients to ack their new size
+        frame_deadline = 0.95, -- a render past 95 % of the frame interval counts as late
+    },
+
+    general = {
+        allow_tearing = true, -- lets fullscreen games opt into immediate presents (lowest input latency)
+    },
+
+    -- Xwayland starts lazily on the first X11 client; the session's xhost and wol-x11-env steps
+    -- (hyprland.lua) are such clients, so it is up from login. Upstream does not respawn a crashed
+    -- Xwayland: X11 apps open again after the next login (audit X1-12, no fork patch yet).
+    xwayland = {
+        enabled = true, -- X11 apps (Steam, Wine, Java, some Flatpaks) run through XWayland
+        -- X11 clients render 1:1, not bilinear-upscaled (sharper, cheaper). They do not know the
+        -- monitor scale, so wol-x11-env tells them (Xft.dpi, Xcursor.size, GDK_SCALE, Steam's UI
+        -- scale). The trade-off: an X11 app that ignores all of these stays small on HiDPI; false
+        -- would make every X11 app full size but blurry.
+        force_zero_scaling = true,
+        use_nearest_neighbor = true, -- a game's lower fullscreen mode is scaled sharp, not blurred (default, stated)
+        create_abstract_socket = false, -- default; true only if a Steam runtime or umu title cannot find :0
+    },
+
+    cursor = {
+        no_hardware_cursors = 2, -- auto: HW cursor plane, cursor motion does not recomposite
+    },
+})
+
+-- Steam/Proton games present immediately (tearing) instead of waiting for vblank.
+hl.window_rule({ name = "wol-game-immediate", match = { class = [[^steam_app_\d+$]] }, immediate = true })
+-- Windows programs run with wine outside Steam: class is the .exe name.
+hl.window_rule({ name = "wol-wine-immediate", match = { class = [[(?i)\.exe$]] }, immediate = true })
+-- Any other fullscreen X11 game (native Linux, itch, GOG, gamescope-less launchers).
+hl.window_rule({ name = "wol-xwayland-fullscreen-immediate", match = { xwayland = true, fullscreen = true }, immediate = true })

@@ -4,13 +4,14 @@
 # + plugins/wol-hypr
 # against the installed hyprland-wolos headers; install into STAGE/usr/lib/hyprland/plugins/.
 # Usage: build-plugins.sh STAGE   (run by the wolos-system PKGBUILD; needs hyprland-wolos, git, c++)
-# Env: WOLOS_HP_REV (hyprland-plugins commit; default = hyprpm.toml pin for 0.56.0-0.56.2),
+# Env: WOLOS_HP_REV (hyprland-plugins commit; default: main of 2026-10-20, which has the 0.57 Lua
+#      API; hyprpm.toml has no 0.57 pin yet, so the pin is ours: built against 0.57.1 on the forge),
 #      WOLOS_RT_LIB (librealtime.a), WOLOS_WORK (clone cache).
 set -eu
 STAGE=$1
 HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/../.." && pwd)
 WORK=${WOLOS_WORK:-${TMPDIR:-/tmp}}
-REV=${WOLOS_HP_REV:-7644cecdb947060682891a0db2a0cdc5c0b9e704}
+REV=${WOLOS_HP_REV:-d2427d4d15b36df40468f5a58bbd67cdba19835d}
 RT=${WOLOS_RT_LIB:-${CARGO_TARGET_DIR:-$REPO/target}/release/librealtime.a}
 DST=$STAGE/usr/lib/hyprland/plugins
 CF=$(pkg-config --cflags pixman-1 libdrm hyprland libinput libudev wayland-server xkbcommon lua)

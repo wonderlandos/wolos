@@ -203,7 +203,8 @@ fn hyprbars_is_patched_and_the_patch_ends_drags_anywhere() {
         "m_bDragPending || m_bDraggingThis || m_bCancelledDown || m_pressedButton >= 0"
     ));
     assert!(added("\"hyprbars:buttons\""));
-    assert!(added("d[\"closewindow\"](ADDR)"));
+    // The buttons act on the bar's own window in-process (0.57: Config::Actions, no dispatcher table).
+    assert!(added("Config::Actions::closeWindow(PWINDOW)"));
     // Live: hover changed only while rendering, so a pointer that stopped after one motion over a
     // light got no glyphs (a hardware cursor makes no frame). Input decides, rendering reads.
     assert!(added("void CHyprBar::sampleHover()") && added("wol_lights_hover(m_hover"));
@@ -583,7 +584,8 @@ fn x11_popups_are_left_where_they_open() {
         let f = &plugin[plugin.find(name).unwrap_or_else(|| panic!("{name}"))..];
         f[..f.find("\n}").unwrap()].to_owned()
     };
-    assert!(body("static bool x11OverrideRedirect").contains("isX11OverrideRedirect()"));
+    // 0.57: the X11 backend's traits carry override-redirect.
+    assert!(body("static bool x11OverrideRedirect").contains("traits().overrideRedirect"));
     assert!(body("static int32_t placementOf").contains("wol_x11_placement("));
     assert!(body("static bool managedWindow").contains("wol_x11_managed("));
     let late = body("static void onOpenLate");
@@ -601,4 +603,276 @@ fn x11_popups_are_left_where_they_open() {
     ] {
         assert!(header.contains(f), "{f}");
     }
+}
+
+// ---- The Lua configuration of the compositor 0.57 series (WolOS 0.13). While both forms ship, the
+// Lua files carry the same settings as the `.conf` files the tests above check, so those checks hold
+// for both.
+
+const SHARE: &str = "../../../desktop/overlay/usr/share/wolos/hypr";
+const LUA: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+const LIGHTS_LUA: &str =
+    include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos/lights.lua");
+
+/// `key = value` leaves of a `.conf` (block or `category:key` lines) or of a Lua table, values
+/// unquoted and numbers normalised, comments dropped; top-level calls and keywords skipped.
+fn leaves(text: &str, lua: bool) -> Vec<(String, String)> {
+    let comment = if lua { "--" } else { "#" };
+    let num = |v: &str| v.parse::<f64>().map_or(v.to_string(), |n| format!("{n}"));
+    text.lines()
+        .filter_map(|l| l.split(comment).next())
+        .map(str::trim)
+        .flat_map(|l| {
+            // A one-line `hl.window_rule({ name = …, match = { k = v }, effect = v })`, a one-line
+            // `hl.config({ a = { b = v } })` or an inline `a = { b = v },`: their fields.
+            let inline = l.split_once(" = {").is_some_and(|(_, r)| r.contains(" = "));
+            if let Some(r) = l
+                .strip_prefix("hl.window_rule(")
+                .or_else(|| l.strip_prefix("hl.config("))
+                .or(inline.then_some(l))
+            {
+                return r
+                    .split([',', '{', '}'])
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+            }
+            if l.starts_with("hl.") || l.starts_with("local ") || l.starts_with("if ") {
+                return Vec::new();
+            }
+            vec![l.to_string()]
+        })
+        .filter_map(|l| {
+            l.split_once(" = ")
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
+        .map(|(k, v)| {
+            let v = v.trim().trim_end_matches(',').trim();
+            let v = v
+                .trim_matches('"')
+                .trim_start_matches("[[")
+                .trim_end_matches("]]");
+            let v = match v {
+                "on" => "true",
+                "off" => "false",
+                v => v,
+            };
+            (k.trim().rsplit(':').next().unwrap().to_string(), num(v))
+        })
+        .filter(|(k, v)| {
+            !v.is_empty()
+                && v != "{"
+                && !k.is_empty()
+                && k.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+                && !matches!(
+                    k.as_str(),
+                    "name"
+                        | "enabled"
+                        | "source"
+                        | "plugin"
+                        | "monitor"
+                        | "env"
+                        | "exec"
+                        | "exec-once"
+                )
+        })
+        .map(|(k, v)| (k.replace('-', "_"), v))
+        .collect()
+}
+
+#[test]
+fn lua_buttons_are_the_conf_buttons() {
+    let conf: Vec<Vec<String>> = LIGHTS
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("hyprbars-button = "))
+        .map(|l| l.split(',').map(|f| f.trim().to_string()).collect())
+        .collect();
+    let field = |l: &str, k: &str| -> String {
+        let at = l.find(&format!("{k} = ")).unwrap() + k.len() + 3;
+        let rest = &l[at..];
+        rest[..rest.find([',', '}']).unwrap()]
+            .trim()
+            .trim_matches('"')
+            .to_string()
+    };
+    let lua: Vec<Vec<String>> = LIGHTS_LUA
+        .lines()
+        .filter(|l| l.contains(".add_button("))
+        .map(|l| {
+            ["bg_color", "size", "icon", "action", "fg_color"]
+                .map(|k| field(l, k))
+                .to_vec()
+        })
+        .collect();
+    assert_eq!(conf.len(), 3);
+    assert_eq!(
+        lua, conf,
+        "lights.lua adds the buttons of lights.conf, in order"
+    );
+}
+
+#[test]
+fn lua_strip_settings_are_the_conf_ones() {
+    let block = |t: &str, open: &str, close: &str| -> String {
+        let a = t.find(open).unwrap_or_else(|| panic!("{open}"));
+        t[a..a + t[a..].find(close).unwrap()].to_string()
+    };
+    let conf = leaves(&block(CONF, "hyprbars {", "}"), false);
+    let lua = leaves(&block(LUA, "hyprbars = {", "}"), true);
+    assert!(conf.len() >= 10, "{conf:?}");
+    assert_eq!(lua, conf);
+    // The theme keys are the same keywords (wol_core::theme::hypr), for both files.
+    let theme_lua = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos/theme.lua");
+    for l in THEME.lines().filter(|l| !l.starts_with('#')) {
+        let (k, v) = l.split_once(" = ").unwrap();
+        let want = format!("[\"{}\"] = \"{v}\"", k.replace(':', "."));
+        assert!(theme_lua.contains(&want), "theme.lua lacks {want}");
+    }
+}
+
+#[test]
+fn lua_curves_and_animations_are_the_conf_ones() {
+    let conf_bez: Vec<(String, Vec<f32>)> = CONF
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("bezier = "))
+        .map(|l| {
+            let mut f = l.split(',').map(str::trim);
+            let n = f.next().unwrap().to_string();
+            (n, f.map(|v| v.parse().unwrap()).collect())
+        })
+        .collect();
+    let lua_bez: Vec<(String, Vec<f32>)> = LUA
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("hl.curve(\""))
+        .map(|l| {
+            let (n, rest) = l.split_once('"').unwrap();
+            let pts: Vec<f32> = rest
+                .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                .filter(|v| !v.is_empty())
+                .map(|v| v.parse().unwrap())
+                .collect();
+            (n.to_string(), pts)
+        })
+        .collect();
+    assert_eq!(lua_bez, conf_bez);
+    let conf_anim: Vec<Vec<String>> = CONF
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("animation = "))
+        .map(|l| l.split(',').map(|f| f.trim().to_string()).collect())
+        .collect();
+    let field = |l: &str, k: &str| -> Option<String> {
+        let at = l.find(&format!("{k} = "))? + k.len() + 3;
+        let rest = &l[at..];
+        Some(
+            rest[..rest.find([',', '}']).unwrap()]
+                .trim()
+                .trim_matches('"')
+                .to_string(),
+        )
+    };
+    let lua_anim: Vec<Vec<String>> = LUA
+        .lines()
+        .filter(|l| l.trim().starts_with("hl.animation("))
+        .map(|l| {
+            let mut v = vec![
+                field(l, "leaf").unwrap(),
+                if field(l, "enabled").as_deref() == Some("true") {
+                    "1".into()
+                } else {
+                    "0".into()
+                },
+                field(l, "speed").unwrap(),
+                field(l, "bezier").unwrap(),
+            ];
+            v.extend(field(l, "style"));
+            v
+        })
+        .collect();
+    assert_eq!(lua_anim, conf_anim);
+}
+
+#[test]
+fn lua_perf_defaults_and_greeters_are_the_conf_ones() {
+    assert!(
+        LUA.lines()
+            .any(|l| l.trim() == "require(\"/usr/share/wolos/hypr/wolos-perf.lua\")")
+    );
+    assert!(
+        LUA.lines()
+            .any(|l| l.trim() == "require(\"/usr/share/wolos/hypr/permissions.lua\")")
+    );
+    for (conf, lua) in [
+        (
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos-perf.conf"),
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos-perf.lua"),
+        ),
+        (
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/login.conf"),
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/login.lua"),
+        ),
+        (
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/setup.conf"),
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/setup.lua"),
+        ),
+        (
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/installer.conf"),
+            include_str!("../../../desktop/overlay/usr/share/wolos/hypr/installer.lua"),
+        ),
+    ] {
+        let mut c = leaves(conf, false);
+        let mut l = leaves(lua, true);
+        c.sort();
+        l.sort();
+        assert_eq!(l, c, "Lua settings differ from the conf ({SHARE})");
+    }
+}
+
+/// The session starts the same programs: every `exec-once` of hyprland.conf is a `once(…)` of
+/// hyprland.lua and every `exec` an `hl.exec_cmd(…)`, but for the VM pointer line, which sets the
+/// option through `hyprctl eval` (0.57 has no `keyword` command).
+#[test]
+fn lua_session_starts_the_conf_programs() {
+    let cmd = |l: &str| l.split("  #").next().unwrap().trim().to_string();
+    let lua_cmds: Vec<String> = LUA
+        .lines()
+        .map(|l| l.split(" -- ").next().unwrap().trim())
+        .filter_map(|l| {
+            let inner = l
+                .strip_prefix("once(")
+                .or_else(|| l.strip_prefix("hl.exec_cmd("))?
+                .strip_suffix(')')?;
+            let inner = inner
+                .strip_prefix("[[")
+                .and_then(|i| i.strip_suffix("]]"))
+                .or_else(|| inner.strip_prefix('"').and_then(|i| i.strip_suffix('"')))?;
+            Some(format!(
+                "{}{inner}",
+                if l.starts_with("once(") {
+                    "once "
+                } else {
+                    "exec "
+                }
+            ))
+        })
+        .collect();
+    let mut n = 0;
+    for l in CONF.lines().map(str::trim) {
+        let (kind, c) = if let Some(c) = l.strip_prefix("exec-once = ") {
+            ("once ", cmd(c))
+        } else if let Some(c) = l.strip_prefix("exec = ") {
+            ("exec ", cmd(c))
+        } else {
+            continue;
+        };
+        let want = format!("{kind}{c}").replace(
+            "hyprctl keyword cursor:no_hardware_cursors 1",
+            "hyprctl eval \"hl.config({cursor = {no_hardware_cursors = 1}})\"",
+        );
+        assert!(
+            lua_cmds.contains(&want),
+            "hyprland.lua lacks `{want}`: {lua_cmds:#?}"
+        );
+        n += 1;
+    }
+    assert_eq!(n, lua_cmds.len(), "{lua_cmds:#?}");
 }
