@@ -39,10 +39,12 @@ else
 fi
 pacman -Qq >"$D/kernels" 2>/dev/null
 # Audit 8 #5: https only (also after a redirect), the manifest and its signature capped, no .curlrc.
-get() { # MAX URL [curl options]
+# Each fetch is bounded (audit8 stability2 #5): a stalled connection must not hold the unit, or the
+# hourly timer never starts it again until a restart (TimeoutStartSec bounds the whole run).
+get() { # MAX URL [extra options]
 	max=$1 url=$2
 	shift 2
-	curl --disable -fsSL --proto =https --proto-redir =https --max-filesize "$max" "$@" -- "$url" 2>/dev/null
+	curl --disable -fsSL --max-time 60 --proto =https --proto-redir =https --max-filesize "$max" "$@" -- "$url" 2>/dev/null
 }
 if get 1048576 "$URL" -o "$D/base.new" &&
 	[ "$(wc -c <"$D/base.new")" -le 1048576 ] &&

@@ -358,6 +358,66 @@ mod tests {
         );
     }
 
+    /// audit8 stability2 #4: a stacked change that fails before its first change is deleted keeps
+    /// the slot; one that fails at the `mv` or later (boot image, entry) removes it, scratch too.
+    #[test]
+    fn a_stacked_change_failing_after_the_swap_removes_the_slot() {
+        use super::super::{Undo, rollback, rollback_at};
+        let s = plan("wolos-b", Base::Pending, &a("-S git"), "current", None).unwrap();
+        let t: Vec<String> = s.iter().map(|x| x.to_string()).collect();
+        let (r, w) = ("/run/wolos/top/@wolos-b", "/run/wolos/top/@wolos-tx");
+        let del = t
+            .iter()
+            .position(|x| x == &format!("btrfs subvolume delete {r}"))
+            .unwrap();
+        let mv = t.iter().position(|x| x == &format!("mv {w} {r}")).unwrap();
+        let esp = t
+            .iter()
+            .position(|x| x.ends_with("esp-sync --new"))
+            .unwrap();
+        assert!(del < mv && mv < esp, "{t:?}");
+        let scratch = vec![a(&format!("btrfs subvolume delete {w}"))];
+        for kept in [0, del - 1, del] {
+            assert_eq!(
+                rollback_at("wolos-b", Base::Pending, &s, kept),
+                Undo {
+                    argv: scratch.clone(),
+                    kept: true
+                },
+                "step {kept}: {}",
+                t[kept]
+            );
+        }
+        let mut gone = rollback("wolos-b");
+        gone.extend(scratch);
+        for lost in [mv, esp, t.len() - 1] {
+            assert_eq!(
+                rollback_at("wolos-b", Base::Pending, &s, lost),
+                Undo {
+                    argv: gone.clone(),
+                    kept: false
+                },
+                "step {lost}: {}",
+                t[lost]
+            );
+        }
+        let s = plan(
+            "wolos-b",
+            Base::Running { replace: true },
+            &a("-S git"),
+            "current",
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            rollback_at("wolos-b", Base::Running { replace: true }, &s, 1),
+            Undo {
+                argv: rollback("wolos-b"),
+                kept: false
+            }
+        );
+    }
+
     #[test]
     fn sealed_means_a_wolos_slot_with_a_read_only_root() {
         let c = "root=LABEL=wolos rootflags=subvol=@wolos-a rw";

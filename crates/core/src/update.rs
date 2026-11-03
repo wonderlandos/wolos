@@ -221,6 +221,14 @@ pub struct Build<'a> {
     pub cmdline: Option<&'a str>,
 }
 
+/// Held (`flock`) for the whole of one change to a slot or a layer (`wol update apply`, the pacman
+/// wrapper): two at once would delete or snapshot over what the other is building (audit8
+/// stability2 #2). Under `/run`: a crash or restart never leaves it held.
+pub const LOCK: &str = "/run/wolos/update.lock";
+/// Said when [`LOCK`] is taken.
+pub const BUSY: &str =
+    "Another system update or package change is running. Try again when it has finished.";
+
 /// Builds the slot's signed kernel image and its counted boot entry.
 pub const ESP_SYNC: &str = "/usr/lib/wolos/esp-sync";
 
@@ -296,6 +304,43 @@ pub fn rollback_from(slot: &str, from: Base) -> Vec<Vec<String>> {
             "delete".into(),
             format!("{TOP}/@{SCRATCH}"),
         ]],
+    }
+}
+
+/// How to undo a build whose step `failed` (an index into its `steps`) did not succeed.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Undo {
+    /// Run in order, each whatever the one before gave.
+    pub argv: Vec<Vec<String>>,
+    /// The slot still holds what it held before (else it is removed with its boot entry).
+    pub kept: bool,
+}
+
+/// [`rollback_from`], knowing which step failed. A stacked change ([`Base::Pending`]) keeps the
+/// slot only until its first change is deleted (audit8 stability2 #4): past that the slot is gone
+/// (a failed `mv`) or holds the new change under the old signed image (a failed boot image or
+/// entry), which cannot boot as it is, so it goes like any half-made slot, scratch copy too.
+pub fn rollback_at(slot: &str, from: Base, steps: &[Step], failed: usize) -> Undo {
+    let first_gone = || {
+        let delete = ["btrfs", "subvolume", "delete", &format!("{TOP}/@{slot}")];
+        steps.iter().take(failed).any(|s| {
+            matches!(s, Step::Run(a) if a.iter().map(String::as_str).eq(delete.iter().copied()))
+        })
+    };
+    match from {
+        Base::Pending if !first_gone() => Undo {
+            argv: rollback_from(slot, from),
+            kept: true,
+        },
+        Base::Pending => {
+            let mut argv = rollback(slot);
+            argv.extend(rollback_from(slot, from));
+            Undo { argv, kept: false }
+        }
+        Base::Running { .. } => Undo {
+            argv: rollback(slot),
+            kept: false,
+        },
     }
 }
 

@@ -5,6 +5,9 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/wolos/update-check
+# A oneshot has no start timeout of its own: a hung check would hold the unit, and the hourly
+# timer would never start it again until a restart (audit8 stability2 #5).
+TimeoutStartSec=30min
 Nice=10
 IOSchedulingClass=idle
 # Hardening (audit A7/B5, crates/controller/tests/units.rs): network fetcher: writes only its state directory; checkupdates and pacman -Qq read the package database; pacman -Sy on the copy drops to its download user (setuid/setgid, chown of the download folder), so the same capabilities as wolos-update-download (audit S10).

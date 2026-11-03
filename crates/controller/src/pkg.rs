@@ -29,6 +29,10 @@ fn real(env: &mut dyn Env, args: &[String]) -> i32 {
 }
 
 const UNCHANGED: &str = "Nothing was changed. Try again, or run `wol update` first.";
+/// A stacked change that failed past its swap (audit8 stability2 #4): the restart-pending slot
+/// went with it.
+const PENDING_LOST: &str = "Nothing was changed, and the change that waited for a restart was \
+                            removed with it. Run it again, or run `wol update` first.";
 
 pub fn run(env: &mut dyn Env, args: &[String]) -> i32 {
     let pkg::Kind::Change(c) = pkg::classify(args) else {
@@ -39,6 +43,10 @@ pub fn run(env: &mut dyn Env, args: &[String]) -> i32 {
     if !env.is_root() || !pkg::is_sealed(cmdline.as_deref(), ro.as_deref()) {
         return real(env, args);
     }
+    let _lock = match crate::run::update_lock(env) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
     let names = if c.verb == pkg::Verb::Upgrade {
         Vec::new()
     } else {
@@ -49,11 +57,11 @@ pub fn run(env: &mut dyn Env, args: &[String]) -> i32 {
     let route = pkg::route(&c, &names);
     let outcome = match route {
         pkg::Route::Layer => in_layer(env, args),
-        pkg::Route::Slot if in_slot(env, args, cmdline.as_deref()) => Outcome::Done,
-        pkg::Route::Slot => Outcome::Unchanged,
+        pkg::Route::Slot => in_slot(env, args, cmdline.as_deref()),
     };
     let shown = match outcome {
         Outcome::Unchanged => return fail(env, ErrorCode::Failed, UNCHANGED),
+        Outcome::PendingLost => return fail(env, ErrorCode::Failed, PENDING_LOST),
         Outcome::Done => route,
         // pacman committed into the layer; it merges at the next boot (CORE-5).
         Outcome::AtRestart => pkg::Route::Slot,
@@ -69,6 +77,8 @@ enum Outcome {
     Done,
     /// pacman committed, the layer could not be merged now: it is kept and merges at boot.
     AtRestart,
+    /// Nothing was changed, and the restart-pending slot the change stacked onto is gone.
+    PendingLost,
 }
 
 /// The live system's package database directory (`DBPath` of `/etc/pacman.conf`).
@@ -80,6 +90,19 @@ fn live_db(env: &dyn Env) -> String {
 }
 
 fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
+    // audit8 stability2 #8: a run that stopped at `umount -R` left the chroot mounted (the lock
+    // says no other run uses it); never stack another rbind on it.
+    let mounted = |env: &dyn Env| {
+        env.read_file(Path::new("/proc/self/mountinfo"))
+            .is_some_and(|m| layers::chroot_mounted(&m))
+    };
+    if mounted(env) && (env.exec(&layers::unmount_chroot()).unwrap_or(127) != 0 || mounted(env)) {
+        env.err(&format!(
+            "wol pkg: {} is still mounted from an earlier change\n",
+            layers::CHROOT
+        ));
+        return Outcome::Unchanged;
+    }
     let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
     let counter = env
         .read_file(Path::new(layers::COUNTER))
@@ -125,27 +148,32 @@ fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
     Outcome::Done
 }
 
-fn in_slot(env: &mut dyn Env, args: &[String], cmdline: Option<&str>) -> bool {
+fn in_slot(env: &mut dyn Env, args: &[String], cmdline: Option<&str>) -> Outcome {
     let Some(running) = cmdline.and_then(up::running_slot) else {
-        return false;
+        return Outcome::Unchanged;
     };
     let bes =
         up::be::parse(&capture(env, &up::be::LIST_ARGV.map(String::from)).unwrap_or_default());
     let Some((slot, from)) = pkg::base(&bes, running) else {
-        return false;
+        return Outcome::Unchanged;
     };
     let Some(steps) = pkg::plan(&slot, from, args, "current", cmdline) else {
-        return false;
+        return Outcome::Unchanged;
     };
-    for s in &steps {
+    for (i, s) in steps.iter().enumerate() {
         if !run_step(env, s) {
-            for r in up::rollback_from(&slot, from) {
-                let _ = env.exec(&r);
+            let undo = up::rollback_at(&slot, from, &steps, i);
+            for r in &undo.argv {
+                let _ = env.exec(r);
             }
-            return false;
+            return if undo.kept || from != up::Base::Pending {
+                Outcome::Unchanged
+            } else {
+                Outcome::PendingLost
+            };
         }
     }
-    true
+    Outcome::Done
 }
 
 /// `wol seal off`: developer mode.
@@ -275,7 +303,22 @@ pub fn clear(env: &mut dyn Env) -> i32 {
         .read_file(&Path::new("/").join(layers::FOLDED))
         .unwrap_or_default();
     let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
-    let steps = layers::clear_steps(&layers::to_clear(&folded, &ls));
+    let mut names = layers::to_clear(&folded, &ls);
+    // audit8 stability2 #3: layers pacman never finished in go too, only while no change runs
+    // (the one being made has no record yet); held to the end so none starts meanwhile.
+    let lock = env.try_lock(Path::new(up::LOCK)).ok().flatten();
+    if lock.is_some() {
+        let has = |n: &str| {
+            env.read_file(&Path::new(layers::DIR).join(n).join(layers::RECORD))
+                .is_some()
+        };
+        for n in layers::unfinished(&ls, has) {
+            if !names.contains(&n) {
+                names.push(n);
+            }
+        }
+    }
+    let steps = layers::clear_steps(&names);
     let refresh = steps.iter().position(|s| *s == layers::refresh_step());
     for (i, a) in steps.iter().enumerate() {
         if env.exec(a).unwrap_or(127) != 0 {

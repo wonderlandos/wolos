@@ -518,10 +518,33 @@ fn move_file(from: &Path, to: &Path) -> Result<()> {
     if std::fs::rename(from, to).is_ok() {
         return Ok(());
     }
-    std::fs::copy(from, to)
-        .map(|_| ())
-        .and_then(|_| std::fs::remove_file(from))
+    copy_then_rename(from, to)
+        .and_then(|()| std::fs::remove_file(from))
         .map_err(|_| Error::unavailable("The app cannot be moved into ~/Applications."))
+}
+
+/// The cross-device fallback of [`move_file`]: the copy goes to `<to>.tmp`, is fsynced, then renamed
+/// over `to`, so a crash or full disk never leaves a truncated file at the final path (audit8
+/// stability2 #9: the next install would have renamed it over the `.prev` backup).
+fn copy_then_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    let tmp = PathBuf::from(format!("{}.tmp", to.display()));
+    let copied = (|| {
+        let mut src = std::fs::File::open(from)?;
+        let mut out = std::fs::File::create(&tmp)?;
+        std::io::copy(&mut src, &mut out)?;
+        out.set_permissions(src.metadata()?.permissions())?;
+        out.sync_all()
+    })();
+    if let Err(e) = copied.and_then(|()| std::fs::rename(&tmp, to)) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Some(dir) = to.parent()
+        && let Ok(d) = std::fs::File::open(dir)
+    {
+        let _ = d.sync_all();
+    }
+    Ok(())
 }
 
 /// Find the `.zsync` URL for an app's update information.
@@ -1205,5 +1228,32 @@ SHA-1:",
             zsync_url(&c, &u, &srv.url("")).unwrap(),
             "https://e/App-2.8-x86_64.AppImage.zsync"
         );
+    }
+
+    /// Audit8 stability2 #9: the copy fallback of `move_file` lands under a temporary name and is
+    /// renamed in; nothing is left half way, and a failed copy leaves the target as it was.
+    #[test]
+    fn the_copy_fallback_renames_a_whole_file_into_place() {
+        let d = temp("ai-copy");
+        let (from, to) = (d.join("a.AppImage"), d.join("b.AppImage"));
+        std::fs::write(&from, vec![7u8; 300_000]).unwrap();
+        std::fs::write(&to, b"old").unwrap();
+        // A leftover from a crash is replaced, not appended to.
+        std::fs::write(d.join("b.AppImage.tmp"), b"half").unwrap();
+        copy_then_rename(&from, &to).unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), vec![7u8; 300_000]);
+        assert!(!d.join("b.AppImage.tmp").exists());
+        assert!(
+            from.exists(),
+            "the caller removes the source after the rename"
+        );
+        let gone = d.join("missing");
+        assert!(copy_then_rename(&gone, &to).is_err());
+        assert_eq!(
+            std::fs::read(&to).unwrap().len(),
+            300_000,
+            "target untouched"
+        );
+        assert!(!d.join("b.AppImage.tmp").exists());
     }
 }
