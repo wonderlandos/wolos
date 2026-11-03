@@ -364,7 +364,7 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
 }
 
 /// `.wol` install (ADR 0011): verify the daemon's own copy, check the payload is the package
-/// Info.json names, then `pacman -U` (dependencies from the pinned repos). `trust` is what the caller
+/// Info.json names, then `wol pkg -- -U` (dependencies from the pinned repos). `trust` is what the caller
 /// approved: an unsigned file needs `unsigned` (and so a fresh password).
 fn wol_install(os: &dyn AdminOs, src: &str, trust: &str, caller: Option<u32>) -> bool {
     let Some(dir) = os.stage_dir() else {
@@ -1354,7 +1354,7 @@ mod tests {
         assert_eq!(go(&Fake::default(), "wolos-module-dev"), AdminReply::Ok);
     }
 
-    /// Signed `.wol`: verified on the daemon's own copy, then `pacman -U` (deps from the repos).
+    /// Signed `.wol`: verified on the daemon's own copy, then `wol pkg -- -U` (deps from the repos).
     #[test]
     fn wol_install_signed() {
         let os = pkg_os();
@@ -1364,7 +1364,7 @@ mod tests {
             handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(ran(&os), ["pacman -U --noconfirm <stage>/payload.pkg"]);
+        assert_eq!(ran(&os), ["wol pkg -- -U --noconfirm <stage>/payload.pkg"]);
         let stage = os.stage.borrow().clone().unwrap();
         assert!(!stage.exists(), "staging removed");
         // Same version installed: nothing runs.
@@ -1481,7 +1481,7 @@ mod tests {
         );
         assert_eq!(
             ran(&os).last().unwrap(),
-            "pacman -U --noconfirm <stage>/payload.pkg"
+            "wol pkg -- -U --noconfirm <stage>/payload.pkg"
         );
         // Signed installs use the cache as before.
         let s = wol_file("fresh-signed", Some(&SEED), b"payload");

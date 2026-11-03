@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! `.wol` package files (ADR 0011, docs/modules/packages.md): read and verify the ustar
-//! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `pacman -U` install.
+//! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `wol pkg -- -U` install (the sealed-system pacman).
 use shared::bundle::{INFO_FILE, Info};
 use shared::package::{
     Entry, Index, MANIFEST, MAX_SIZE, MEMBERS, PAYLOAD, SIGNATURE, is_app_id, is_version,
@@ -601,9 +601,10 @@ pub fn ustar(members: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
-/// Steps after verification: `pacman -U` of the payload (a pacman package). pacman resolves its
-/// dependencies from the pinned repos and replaces another installed version itself; the same
-/// version installed: nothing to do.
+/// Steps after verification: `-U` of the payload (a pacman package) through the sealed-system
+/// pacman (`wol pkg --`, like [`remove_steps`]; the bare `pacman` on wol-admind's `PATH` keeps its
+/// database on the read-only /usr). pacman resolves its dependencies from the pinned repos and
+/// replaces another installed version itself; the same version installed: nothing to do.
 pub fn install_steps(
     payload: &str,
     version: &str,
@@ -616,7 +617,7 @@ pub fn install_steps(
         return Ok(vec![]);
     }
     Ok(vec![
-        ["pacman", "-U", "--noconfirm", payload]
+        ["wol", "pkg", "--", "-U", "--noconfirm", payload]
             .map(String::from)
             .to_vec(),
     ])
@@ -1000,7 +1001,7 @@ not-a-key x
             (
                 p,
                 None,
-                "pacman -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
+                "wol pkg -- -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
             ),
             // Same version installed: nothing to do.
             (p, Some("3.1.0-1"), ""),
@@ -1008,7 +1009,7 @@ not-a-key x
             (
                 p,
                 Some("3.0.0-1"),
-                "pacman -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
+                "wol pkg -- -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
             ),
             ("-x", None, "error: payload -x is not an absolute path"),
         ];
