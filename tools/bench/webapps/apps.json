@@ -1,0 +1,271 @@
+{
+  "schema": 1,
+  "about": "Apps the web-app benchmark measures (tools/bench/webapps/README.md). kind web: the window is drawn by a browser engine; kind native: a comparison app measured the same way; kind candidate: a runtime under evaluation, not shipped. origin: base (in the image), store:<catalog id> (wol_core::store::CATALOG), module:<id> (files/usr/share/wolos/modules/<id>.json), webapp (wol_core::webapps launcher). crates/controller/tests/bench_webapps.rs keeps this list in step with the Store, the modules and the web-app launcher.",
+  "apps": [
+    {
+      "id": "helium",
+      "kind": "web",
+      "runtime": "browser",
+      "engine": "chromium",
+      "packages": [
+        "helium-browser"
+      ],
+      "origin": [
+        "base"
+      ],
+      "argv": [
+        "helium",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--new-window",
+        "{url}/page.html"
+      ],
+      "class": "^helium$",
+      "interact": "scroll+type",
+      "features": true
+    },
+    {
+      "id": "webapp",
+      "kind": "web",
+      "runtime": "web app window (--app)",
+      "engine": "chromium",
+      "packages": [
+        "helium-browser"
+      ],
+      "origin": [
+        "base",
+        "webapp"
+      ],
+      "argv": [
+        "helium",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--app={url}/page.html",
+        "--class=wolos-webapp-bench"
+      ],
+      "class": "^wolos-webapp-bench$|^chrome-127\\.0\\.0\\.1__page\\.html-Default$",
+      "interact": "scroll+type",
+      "note": "On Wayland the engine ignores --class and names the window chrome-<host>__<path>-<profile>; both are accepted so the row measures the window either way."
+    },
+    {
+      "id": "steam",
+      "kind": "web",
+      "runtime": "client UI in an embedded browser engine",
+      "engine": "cef",
+      "packages": [
+        "steam"
+      ],
+      "origin": [
+        "base",
+        "store:steam"
+      ],
+      "argv": [
+        "wol",
+        "games",
+        "steam"
+      ],
+      "class": "^steam$|^steamwebhelper$",
+      "interact": "none",
+      "start_timeout_s": 600
+    },
+    {
+      "id": "code",
+      "kind": "web",
+      "runtime": "desktop app on a shared embedded engine",
+      "engine": "electron",
+      "packages": [
+        "code",
+        "electron42"
+      ],
+      "origin": [
+        "module:dev",
+        "store:vscode"
+      ],
+      "argv": [
+        "code",
+        "--new-window",
+        "--disable-workspace-trust",
+        "{fixtures}/long.rs"
+      ],
+      "class": "^code-oss$|^code$|^Code$",
+      "interact": "scroll+type",
+      "wl_argv": [
+        "/usr/lib/electron42/electron",
+        "/usr/lib/code/code.mjs",
+        "--ozone-platform-hint=auto",
+        "--new-window",
+        "--disable-workspace-trust",
+        "{fixtures}/long.rs"
+      ]
+    },
+    {
+      "id": "signal",
+      "kind": "web",
+      "runtime": "desktop app with its own bundled engine",
+      "engine": "electron",
+      "packages": [
+        "signal-desktop"
+      ],
+      "origin": [
+        "store:signal"
+      ],
+      "argv": [
+        "signal-desktop"
+      ],
+      "class": "^signal$|^Signal$|^signal-desktop$",
+      "interact": "none"
+    },
+    {
+      "id": "chromium",
+      "kind": "web",
+      "runtime": "browser",
+      "engine": "chromium",
+      "packages": [
+        "chromium"
+      ],
+      "origin": [
+        "store:chromium"
+      ],
+      "argv": [
+        "chromium",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--ozone-platform-hint=auto",
+        "--new-window",
+        "{url}/page.html"
+      ],
+      "class": "^chromium$|^Chromium$|^chromium-browser$",
+      "interact": "scroll+type",
+      "features": true
+    },
+    {
+      "id": "firefox",
+      "kind": "web",
+      "runtime": "browser (interface drawn by its own engine)",
+      "engine": "gecko",
+      "packages": [
+        "firefox"
+      ],
+      "origin": [
+        "store:firefox"
+      ],
+      "argv": [
+        "firefox",
+        "--new-window",
+        "{url}/page.html"
+      ],
+      "class": "^firefox$|^org\\.mozilla\\.firefox$",
+      "interact": "scroll+type",
+      "features": true
+    },
+    {
+      "id": "thunderbird",
+      "kind": "web",
+      "runtime": "mail app (interface drawn by a browser engine)",
+      "engine": "gecko",
+      "packages": [
+        "thunderbird"
+      ],
+      "origin": [
+        "store:thunderbird"
+      ],
+      "argv": [
+        "thunderbird"
+      ],
+      "class": "^thunderbird$|^org\\.mozilla\\.thunderbird$|^org\\.mozilla\\.Thunderbird$",
+      "interact": "type"
+    },
+    {
+      "id": "text-editor",
+      "kind": "native",
+      "runtime": "GTK 4 app",
+      "engine": "none",
+      "packages": [
+        "gnome-text-editor"
+      ],
+      "origin": [
+        "base"
+      ],
+      "argv": [
+        "gnome-text-editor",
+        "--standalone",
+        "{fixtures}/long.rs"
+      ],
+      "class": "^org\\.gnome\\.TextEditor$",
+      "interact": "scroll+type"
+    },
+    {
+      "id": "wolkit-todos",
+      "kind": "native",
+      "runtime": "Wolkit app (wolos-crystal/examples/todos, release build)",
+      "engine": "none",
+      "packages": [],
+      "origin": [
+        "example"
+      ],
+      "argv": [
+        "{payload}/bin/todos"
+      ],
+      "env": {
+        "LD_LIBRARY_PATH": "{payload}/lib"
+      },
+      "class": ".",
+      "interact": "type",
+      "optional": true
+    },
+    {
+      "id": "servo",
+      "kind": "candidate",
+      "runtime": "the Rust browser engine's own shell (servoshell 0.7.0, official build)",
+      "engine": "servo",
+      "packages": [],
+      "origin": [
+        "example"
+      ],
+      "argv": [
+        "{payload}/servo/servoshell",
+        "{url}/page.html"
+      ],
+      "class": "servo",
+      "interact": "scroll+type",
+      "features": true,
+      "optional": true
+    }
+  ],
+  "not_web": {
+    "libreoffice": "native toolkit",
+    "okular": "native toolkit",
+    "keepassxc": "native toolkit",
+    "telegram": "native toolkit",
+    "nextcloud": "native toolkit; an embedded web view only for the sign-in page",
+    "evolution": "native toolkit; an embedded web view only draws message bodies",
+    "gimp": "native toolkit",
+    "inkscape": "native toolkit",
+    "krita": "native toolkit",
+    "blender": "own toolkit",
+    "darktable": "native toolkit",
+    "kdenlive": "native toolkit",
+    "shotcut": "native toolkit",
+    "audacity": "native toolkit",
+    "obs": "native toolkit; browser sources run an embedded engine only when added",
+    "ardour": "own toolkit",
+    "scribus": "native toolkit",
+    "vlc": "native toolkit",
+    "mpv": "no toolkit",
+    "strawberry": "native toolkit",
+    "supertuxkart": "game",
+    "0ad": "game",
+    "wesnoth": "game",
+    "openttd": "game",
+    "luanti": "game",
+    "retroarch": "own toolkit",
+    "godot": "own toolkit",
+    "qtcreator": "native toolkit",
+    "kate": "native toolkit",
+    "geany": "native toolkit",
+    "meld": "native toolkit",
+    "dbeaver": "native toolkit (Java)",
+    "emacs": "own toolkit",
+    "gitg": "native toolkit"
+  }
+}

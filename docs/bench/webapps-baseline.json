@@ -1,0 +1,3379 @@
+{
+ "schema": 1,
+ "started": "2026-11-03T16:10:37Z",
+ "identity": {
+  "os": "WolOS 0.12.0 0.12.0",
+  "kernel": "7.3.0-5-wolos",
+  "base_version": "0.12.0",
+  "cpu": "Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz",
+  "cpus": 4,
+  "mem_mib": 7927,
+  "gpu_driver": "virtio-pci",
+  "swap": "/dev/zram0 3963.5 MiB",
+  "zram_algo": "lzo-rle lzo lz4 lz4hc [zstd] deflate 842",
+  "thp": "always [madvise] never",
+  "packages": [
+   "chromium 156.0.8078.79-1",
+   "code 1.138.0-1",
+   "electron42 42.11.18-1",
+   "firefox 159.0-1",
+   "gnome-text-editor 51.0-1",
+   "helium-browser 0.20.2.1-2",
+   "hyprland-wolos 0.56.2-5",
+   "linux-wolos 1:1.0+7.3-5",
+   "mesa 1:26.2.6-1",
+   "signal-desktop 8.33.0-1",
+   "steam 1.0.0.87-3",
+   "thunderbird 158.0.1-1",
+   "wolos-system 0.12.0-1"
+  ],
+  "monitor": "1280x800@74.99400 at 0x0"
+ },
+ "refresh_hz": 74.994,
+ "settings": {
+  "warm_runs": 3,
+  "idle_s": 120.0,
+  "prime_s": 20.0,
+  "back_s": 60.0
+ },
+ "saver_session": "running",
+ "apps": [
+  {
+   "id": "helium",
+   "mode": "on",
+   "cold": {
+    "window_ms": 2476,
+    "settled_ms": 5112,
+    "class": "helium"
+   },
+   "warm": [
+    {
+     "window_ms": 1115,
+     "settled_ms": 2731,
+     "class": "helium"
+    },
+    {
+     "window_ms": 1250,
+     "settled_ms": 2892,
+     "class": "helium"
+    },
+    {
+     "window_ms": 1117,
+     "settled_ms": 3819,
+     "class": "helium"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1117,
+    "settled_ms": 2892
+   },
+   "mem_launch": {
+    "rss": 1115.0,
+    "pss": 438.2,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "procs": 10,
+   "fg_idle": {
+    "cpu_ms_s": 2.62,
+    "wakeups_s": 38.83,
+    "mem": {
+     "rss": 1078.1,
+     "pss": 404.0,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 3.28,
+    "wakeups_s": 37.17,
+    "mem": {
+     "rss": 972.1,
+     "pss": 300.7,
+     "swap": 114.5,
+     "swap_pss": 94.9,
+     "procs": 10
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 94.9,
+     "apps": [
+      {
+       "app": "helium",
+       "state": "saving",
+       "saved_mib": 94.9
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6775,
+     "swap_used_mib": 107
+    }
+   },
+   "return": {
+    "settled_ms": 1024,
+    "faults": {
+     "minor": 1809,
+     "major": 888
+    }
+   },
+   "mem_return": {
+    "rss": 1001.9,
+    "pss": 323.9,
+    "swap": 93.8,
+    "swap_pss": 87.0,
+    "procs": 10
+   },
+   "interact": {
+    "cpu_ms_s": 73.9,
+    "commits": 312,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 23.5,
+     "latency_p95_ms": 61.3,
+     "frames": 312,
+     "interval_p50_ms": 26.6,
+     "interval_p95_ms": 37.2,
+     "interval_p99_ms": 63.8,
+     "long_frames_pct": 49.1
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 18.4,
+     "latency_p95_ms": 23.0,
+     "frames": 312,
+     "interval_p50_ms": 26.6,
+     "interval_p95_ms": 37.2,
+     "interval_p99_ms": 63.8,
+     "long_frames_pct": 49.1
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 15454,
+     "p95_us": 18272,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 1161,
+    "faults": {
+     "minor": 254,
+     "major": 1047
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 43.4,
+    "latency_p95_ms": 43.4,
+    "frames": 14,
+    "interval_p50_ms": 27.4,
+    "interval_p95_ms": 28.3,
+    "interval_p99_ms": 28.3,
+    "long_frames_pct": 55.6,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 95.4,
+     "apps": [
+      {
+       "app": "helium",
+       "state": "saving",
+       "saved_mib": 95.4
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "webapp",
+   "mode": "on",
+   "cold": {
+    "window_ms": 3731,
+    "settled_ms": 6349,
+    "class": "chrome-127.0.0.1__page.html-Default"
+   },
+   "warm": [
+    {
+     "window_ms": 1410,
+     "settled_ms": 2904,
+     "class": "chrome-127.0.0.1__page.html-Default"
+    },
+    {
+     "window_ms": 1591,
+     "settled_ms": 3071,
+     "class": "chrome-127.0.0.1__page.html-Default"
+    },
+    {
+     "window_ms": 1545,
+     "settled_ms": 3023,
+     "class": "chrome-127.0.0.1__page.html-Default"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1545,
+    "settled_ms": 3023
+   },
+   "mem_launch": {
+    "rss": 1082.8,
+    "pss": 419.5,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "procs": 10,
+   "fg_idle": {
+    "cpu_ms_s": 2.91,
+    "wakeups_s": 42.45,
+    "mem": {
+     "rss": 1066.3,
+     "pss": 397.0,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 4.41,
+    "wakeups_s": 38.78,
+    "mem": {
+     "rss": 958.5,
+     "pss": 293.3,
+     "swap": 111.1,
+     "swap_pss": 96.9,
+     "procs": 10
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 97.0,
+     "apps": [
+      {
+       "app": "chrome-127.0.0.1__page.html-default",
+       "state": "saving",
+       "saved_mib": 97.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6778,
+     "swap_used_mib": 105
+    }
+   },
+   "return": {
+    "settled_ms": 838,
+    "faults": {
+     "minor": 1457,
+     "major": 1641
+    }
+   },
+   "mem_return": {
+    "rss": 981.2,
+    "pss": 312.7,
+    "swap": 92.5,
+    "swap_pss": 89.2,
+    "procs": 10
+   },
+   "interact": {
+    "cpu_ms_s": 74.5,
+    "commits": 303,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 46.7,
+     "latency_p95_ms": 57.0,
+     "frames": 303,
+     "interval_p50_ms": 26.6,
+     "interval_p95_ms": 28.2,
+     "interval_p99_ms": 31.9,
+     "long_frames_pct": 41.9
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 22.9,
+     "latency_p95_ms": 43.6,
+     "frames": 303,
+     "interval_p50_ms": 26.6,
+     "interval_p95_ms": 28.2,
+     "interval_p99_ms": 31.9,
+     "long_frames_pct": 41.9
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 18161,
+     "p95_us": 20823,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 575,
+    "faults": {
+     "minor": 112,
+     "major": 979
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 43.8,
+    "latency_p95_ms": 43.8,
+    "frames": 12,
+    "interval_p50_ms": 26.3,
+    "interval_p95_ms": 28.0,
+    "interval_p99_ms": 28.0,
+    "long_frames_pct": 33.3,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 99.4,
+     "apps": [
+      {
+       "app": "chrome-127.0.0.1__page.html-default",
+       "state": "saving",
+       "saved_mib": 99.4
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "steam",
+   "mode": "on",
+   "cold": {
+    "window_ms": 43738,
+    "settled_ms": 49446,
+    "class": "steam"
+   },
+   "warm": [
+    {
+     "window_ms": 29893,
+     "settled_ms": 34492,
+     "class": "steam"
+    },
+    {
+     "window_ms": 26264,
+     "settled_ms": 31456,
+     "class": "steam"
+    },
+    {
+     "window_ms": 29947,
+     "settled_ms": 30332,
+     "class": "steam"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 29893,
+    "settled_ms": 31456
+   },
+   "mem_launch": {
+    "rss": 1397.7,
+    "pss": 944.4,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 15
+   },
+   "procs": 15,
+   "fg_idle": {
+    "cpu_ms_s": 65.56,
+    "wakeups_s": 495.28,
+    "mem": {
+     "rss": 1365.4,
+     "pss": 904.7,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 15
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 65.57,
+    "wakeups_s": 465.0,
+    "mem": {
+     "rss": 1019.4,
+     "pss": 562.0,
+     "swap": 409.3,
+     "swap_pss": 281.3,
+     "procs": 15
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 281.3,
+     "apps": [
+      {
+       "app": "steam",
+       "state": "saving",
+       "saved_mib": 281.3
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6592,
+     "swap_used_mib": 348
+    }
+   },
+   "return": {
+    "settled_ms": 690,
+    "faults": {
+     "minor": 2503,
+     "major": 374
+    }
+   },
+   "mem_return": {
+    "rss": 1027.6,
+    "pss": 569.6,
+    "swap": 407.8,
+    "swap_pss": 279.8,
+    "procs": 15
+   },
+   "ok": true
+  },
+  {
+   "id": "code",
+   "mode": "on",
+   "cold": {
+    "window_ms": 4846,
+    "settled_ms": 26696,
+    "class": "code-oss"
+   },
+   "warm": [
+    {
+     "window_ms": 2653,
+     "settled_ms": 22200,
+     "class": "code-oss"
+    },
+    {
+     "window_ms": 1868,
+     "settled_ms": 13077,
+     "class": "code-oss"
+    },
+    {
+     "window_ms": 2333,
+     "settled_ms": 18404,
+     "class": "code-oss"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 2333,
+    "settled_ms": 18404
+   },
+   "mem_launch": {
+    "rss": 1829.6,
+    "pss": 1124.2,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 12
+   },
+   "procs": 12,
+   "fg_idle": {
+    "cpu_ms_s": 23.68,
+    "wakeups_s": 196.48,
+    "mem": {
+     "rss": 1544.5,
+     "pss": 839.0,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 12
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 10.82,
+    "wakeups_s": 55.57,
+    "mem": {
+     "rss": 1047.4,
+     "pss": 354.1,
+     "swap": 509.6,
+     "swap_pss": 468.0,
+     "procs": 12
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 468.0,
+     "apps": [
+      {
+       "app": "code-oss",
+       "state": "saving",
+       "saved_mib": 468.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6605,
+     "swap_used_mib": 491
+    }
+   },
+   "return": {
+    "settled_ms": 1830,
+    "faults": {
+     "minor": 1817,
+     "major": 3203
+    }
+   },
+   "mem_return": {
+    "rss": 1135.1,
+    "pss": 433.2,
+    "swap": 427.5,
+    "swap_pss": 402.5,
+    "procs": 12
+   },
+   "interact": {
+    "cpu_ms_s": 189.1,
+    "commits": 253,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 76.4,
+     "latency_p95_ms": 156.6,
+     "frames": 253,
+     "interval_p50_ms": 26.4,
+     "interval_p95_ms": 44.8,
+     "interval_p99_ms": 70.8,
+     "long_frames_pct": 39.1
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 75.2,
+     "latency_p95_ms": 99.7,
+     "frames": 253,
+     "interval_p50_ms": 26.4,
+     "interval_p95_ms": 44.8,
+     "interval_p99_ms": 70.8,
+     "long_frames_pct": 39.1
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 18232,
+     "p95_us": 22248,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 1833,
+    "faults": {
+     "minor": 1561,
+     "major": 2117
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 156.9,
+    "latency_p95_ms": 156.9,
+    "frames": 43,
+    "interval_p50_ms": 26.9,
+    "interval_p95_ms": 31.0,
+    "interval_p99_ms": 75.6,
+    "long_frames_pct": 55.3,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 620.4,
+     "apps": [
+      {
+       "app": "code-oss",
+       "state": "saving",
+       "saved_mib": 620.4
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "signal",
+   "mode": "on",
+   "cold": {
+    "window_ms": 6580,
+    "settled_ms": 12362,
+    "class": "signal"
+   },
+   "warm": [
+    {
+     "window_ms": 3961,
+     "settled_ms": 9375,
+     "class": "signal"
+    },
+    {
+     "window_ms": 4062,
+     "settled_ms": 9099,
+     "class": "signal"
+    },
+    {
+     "window_ms": 2648,
+     "settled_ms": 6863,
+     "class": "signal"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 3961,
+    "settled_ms": 9099
+   },
+   "mem_launch": {
+    "rss": 990.0,
+    "pss": 590.2,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 7
+   },
+   "procs": 7,
+   "fg_idle": {
+    "cpu_ms_s": 2.07,
+    "wakeups_s": 19.28,
+    "mem": {
+     "rss": 881.3,
+     "pss": 484.3,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 7
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 4.01,
+    "wakeups_s": 46.0,
+    "mem": {
+     "rss": 704.7,
+     "pss": 309.0,
+     "swap": 192.2,
+     "swap_pss": 178.7,
+     "procs": 7
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 178.7,
+     "apps": [
+      {
+       "app": "signal",
+       "state": "saving",
+       "saved_mib": 178.7
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6715,
+     "swap_used_mib": 186
+    }
+   },
+   "return": {
+    "settled_ms": 901,
+    "faults": {
+     "minor": 534,
+     "major": 1699
+    }
+   },
+   "mem_return": {
+    "rss": 717.1,
+    "pss": 319.7,
+    "swap": 183.7,
+    "swap_pss": 171.1,
+    "procs": 7
+   },
+   "ok": true
+  },
+  {
+   "id": "chromium",
+   "mode": "on",
+   "cold": {
+    "window_ms": 3651,
+    "settled_ms": 5448,
+    "class": "chromium"
+   },
+   "warm": [
+    {
+     "window_ms": 1736,
+     "settled_ms": 3933,
+     "class": "chromium"
+    },
+    {
+     "window_ms": 2012,
+     "settled_ms": 4265,
+     "class": "chromium"
+    },
+    {
+     "window_ms": 1782,
+     "settled_ms": 3688,
+     "class": "chromium"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1782,
+    "settled_ms": 3933
+   },
+   "mem_launch": {
+    "rss": 977.6,
+    "pss": 428.2,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "procs": 10,
+   "fg_idle": {
+    "cpu_ms_s": 21.39,
+    "wakeups_s": 219.6,
+    "mem": {
+     "rss": 977.9,
+     "pss": 429.6,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 27.01,
+    "wakeups_s": 165.22,
+    "mem": {
+     "rss": 975.1,
+     "pss": 350.4,
+     "swap": 95.9,
+     "swap_pss": 80.8,
+     "procs": 12
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 80.9,
+     "apps": [
+      {
+       "app": "chromium",
+       "state": "saving",
+       "saved_mib": 80.9
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6767,
+     "swap_used_mib": 90
+    }
+   },
+   "return": {
+    "settled_ms": 1235,
+    "faults": {
+     "minor": 1895,
+     "major": 1236
+    }
+   },
+   "mem_return": {
+    "rss": 1002.0,
+    "pss": 372.6,
+    "swap": 77.2,
+    "swap_pss": 72.2,
+    "procs": 12
+   },
+   "interact": {
+    "cpu_ms_s": 79.9,
+    "commits": 303,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 43.3,
+     "latency_p95_ms": 46.4,
+     "frames": 303,
+     "interval_p50_ms": 26.4,
+     "interval_p95_ms": 28.1,
+     "interval_p99_ms": 33.1,
+     "long_frames_pct": 40.4
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 21.2,
+     "latency_p95_ms": 40.4,
+     "frames": 303,
+     "interval_p50_ms": 26.4,
+     "interval_p95_ms": 28.1,
+     "interval_p99_ms": 33.1,
+     "long_frames_pct": 40.4
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 17016,
+     "p95_us": 22924,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 553,
+    "faults": {
+     "minor": 196,
+     "major": 1817
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 43.5,
+    "latency_p95_ms": 43.5,
+    "frames": 13,
+    "interval_p50_ms": 26.2,
+    "interval_p95_ms": 27.7,
+    "interval_p99_ms": 27.7,
+    "long_frames_pct": 30.0,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 99.5,
+     "apps": [
+      {
+       "app": "chromium",
+       "state": "saving",
+       "saved_mib": 99.5
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "firefox",
+   "mode": "on",
+   "cold": {
+    "window_ms": 4801,
+    "settled_ms": 9085,
+    "class": "firefox"
+   },
+   "warm": [
+    {
+     "window_ms": 1716,
+     "settled_ms": 9203,
+     "class": "firefox"
+    },
+    {
+     "window_ms": 2366,
+     "settled_ms": 6979,
+     "class": "firefox"
+    },
+    {
+     "window_ms": 1825,
+     "settled_ms": 6657,
+     "class": "firefox"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1825,
+    "settled_ms": 6979
+   },
+   "mem_launch": {
+    "rss": 1155.6,
+    "pss": 535.6,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 14
+   },
+   "procs": 14,
+   "fg_idle": {
+    "cpu_ms_s": 4.0,
+    "wakeups_s": 41.77,
+    "mem": {
+     "rss": 1115.9,
+     "pss": 504.3,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 11
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 2.36,
+    "wakeups_s": 29.72,
+    "mem": {
+     "rss": 843.6,
+     "pss": 234.0,
+     "swap": 231.1,
+     "swap_pss": 222.0,
+     "procs": 11
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 222.0,
+     "apps": [
+      {
+       "app": "firefox",
+       "state": "saving",
+       "saved_mib": 222.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6737,
+     "swap_used_mib": 226
+    }
+   },
+   "return": {
+    "settled_ms": 2153,
+    "faults": {
+     "minor": 967,
+     "major": 1796
+    }
+   },
+   "mem_return": {
+    "rss": 866.9,
+    "pss": 255.7,
+    "swap": 211.4,
+    "swap_pss": 202.9,
+    "procs": 11
+   },
+   "interact": {
+    "cpu_ms_s": 53.3,
+    "commits": 1999,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 12.4,
+     "latency_p95_ms": 22.4,
+     "frames": 1999,
+     "interval_p50_ms": 13.0,
+     "interval_p95_ms": 26.8,
+     "interval_p99_ms": 29.6,
+     "long_frames_pct": 5.2
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 13.9,
+     "latency_p95_ms": 24.0,
+     "frames": 1999,
+     "interval_p50_ms": 13.0,
+     "interval_p95_ms": 26.8,
+     "interval_p99_ms": 29.6,
+     "long_frames_pct": 5.2
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 12252,
+     "p95_us": 16588,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 255,
+    "faults": {
+     "minor": 319,
+     "major": 1003
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 27.7,
+    "latency_p95_ms": 27.7,
+    "frames": 30,
+    "interval_p50_ms": 13.2,
+    "interval_p95_ms": 13.9,
+    "interval_p99_ms": 15.4,
+    "long_frames_pct": 0.0,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 309.5,
+     "apps": [
+      {
+       "app": "firefox",
+       "state": "saving",
+       "saved_mib": 309.5
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "thunderbird",
+   "mode": "on",
+   "cold": {
+    "window_ms": 4134,
+    "settled_ms": 7021,
+    "class": "org.mozilla.Thunderbird"
+   },
+   "warm": [
+    {
+     "window_ms": 2752,
+     "settled_ms": 7373,
+     "class": "org.mozilla.Thunderbird"
+    },
+    {
+     "window_ms": 3445,
+     "settled_ms": 9551,
+     "class": "org.mozilla.Thunderbird"
+    },
+    {
+     "window_ms": 3422,
+     "settled_ms": 8813,
+     "class": "org.mozilla.Thunderbird"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 3422,
+    "settled_ms": 8813
+   },
+   "mem_launch": {
+    "rss": 719.5,
+    "pss": 459.6,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 7
+   },
+   "procs": 7,
+   "fg_idle": {
+    "cpu_ms_s": 1.98,
+    "wakeups_s": 12.2,
+    "mem": {
+     "rss": 671.4,
+     "pss": 423.6,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 4
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 1.53,
+    "wakeups_s": 6.02,
+    "mem": {
+     "rss": 509.7,
+     "pss": 263.1,
+     "swap": 157.1,
+     "swap_pss": 115.7,
+     "procs": 4
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 128.2,
+     "apps": [
+      {
+       "app": "org.mozilla.thunderbird",
+       "state": "saving",
+       "saved_mib": 128.2
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6765,
+     "swap_used_mib": 137
+    }
+   },
+   "return": {
+    "settled_ms": 554,
+    "faults": {
+     "minor": 166,
+     "major": 139
+    }
+   },
+   "mem_return": {
+    "rss": 541.2,
+    "pss": 294.5,
+    "swap": 143.2,
+    "swap_pss": 102.4,
+    "procs": 4
+   },
+   "interact": {
+    "cpu_ms_s": 67.2,
+    "commits": 610,
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 15.0,
+     "latency_p95_ms": 19.9,
+     "frames": 610,
+     "interval_p50_ms": 25.7,
+     "interval_p95_ms": 29.3,
+     "interval_p99_ms": 34.0,
+     "long_frames_pct": 30.5
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 14294,
+     "p95_us": 16545,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 398,
+    "faults": {
+     "minor": 9,
+     "major": 82
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 15.1,
+    "latency_p95_ms": 15.1,
+    "frames": 18,
+    "interval_p50_ms": 13.6,
+    "interval_p95_ms": 24.9,
+    "interval_p99_ms": 37.6,
+    "long_frames_pct": 6.2,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 129.9,
+     "apps": [
+      {
+       "app": "org.mozilla.thunderbird",
+       "state": "saving",
+       "saved_mib": 129.9
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "text-editor",
+   "mode": "on",
+   "cold": {
+    "window_ms": 2237,
+    "settled_ms": 6024,
+    "class": "org.gnome.TextEditor"
+   },
+   "warm": [
+    {
+     "window_ms": 1189,
+     "settled_ms": 4965,
+     "class": "org.gnome.TextEditor"
+    },
+    {
+     "window_ms": 1206,
+     "settled_ms": 5003,
+     "class": "org.gnome.TextEditor"
+    },
+    {
+     "window_ms": 1106,
+     "settled_ms": 4924,
+     "class": "org.gnome.TextEditor"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1189,
+    "settled_ms": 4965
+   },
+   "mem_launch": {
+    "rss": 170.7,
+    "pss": 102.7,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 1
+   },
+   "procs": 1,
+   "fg_idle": {
+    "cpu_ms_s": 0.11,
+    "wakeups_s": 0.78,
+    "mem": {
+     "rss": 170.6,
+     "pss": 102.6,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 1
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 0.14,
+    "wakeups_s": 0.7,
+    "mem": {
+     "rss": 107.0,
+     "pss": 39.6,
+     "swap": 65.6,
+     "swap_pss": 64.2,
+     "procs": 1
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 64.2,
+     "apps": [
+      {
+       "app": "org.gnome.texteditor",
+       "state": "saving",
+       "saved_mib": 64.2
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6873,
+     "swap_used_mib": 66
+    }
+   },
+   "return": {
+    "settled_ms": 1830,
+    "faults": {
+     "minor": 31,
+     "major": 250
+    }
+   },
+   "mem_return": {
+    "rss": 132.0,
+    "pss": 63.9,
+    "swap": 45.8,
+    "swap_pss": 45.8,
+    "procs": 1
+   },
+   "interact": {
+    "cpu_ms_s": 300.7,
+    "commits": 367,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 34.8,
+     "latency_p95_ms": 49.7,
+     "frames": 367,
+     "interval_p50_ms": 26.2,
+     "interval_p95_ms": 52.8,
+     "interval_p99_ms": 69.2,
+     "long_frames_pct": 40.4
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 26.0,
+     "latency_p95_ms": 72.6,
+     "frames": 367,
+     "interval_p50_ms": 26.2,
+     "interval_p95_ms": 52.8,
+     "interval_p99_ms": 69.2,
+     "long_frames_pct": 40.4
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 14033,
+     "p95_us": 15329,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 1478,
+    "faults": {
+     "minor": 247,
+     "major": 316
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 12.8,
+    "latency_p95_ms": 12.8,
+    "frames": 100,
+    "interval_p50_ms": 13.5,
+    "interval_p95_ms": 37.0,
+    "interval_p99_ms": 63.4,
+    "long_frames_pct": 17.5,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 70.4,
+     "apps": [
+      {
+       "app": "org.gnome.texteditor",
+       "state": "saving",
+       "saved_mib": 70.4
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "wolkit-todos",
+   "mode": "on",
+   "cold": {
+    "window_ms": 4047,
+    "settled_ms": 4171,
+    "class": "org.wolos.todos"
+   },
+   "warm": [
+    {
+     "window_ms": 826,
+     "settled_ms": 872,
+     "class": "org.wolos.todos"
+    },
+    {
+     "window_ms": 863,
+     "settled_ms": 984,
+     "class": "org.wolos.todos"
+    },
+    {
+     "window_ms": 824,
+     "settled_ms": 864,
+     "class": "org.wolos.todos"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 826,
+    "settled_ms": 872
+   },
+   "mem_launch": {
+    "rss": 154.7,
+    "pss": 85.0,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 2
+   },
+   "procs": 2,
+   "fg_idle": {
+    "cpu_ms_s": 2.41,
+    "wakeups_s": 116.35,
+    "mem": {
+     "rss": 155.0,
+     "pss": 85.3,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 2
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 2.3,
+    "wakeups_s": 123.42,
+    "mem": {
+     "rss": 110.9,
+     "pss": 41.1,
+     "swap": 45.1,
+     "swap_pss": 45.1,
+     "procs": 2
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 45.1,
+     "apps": [
+      {
+       "app": "org.wolos.todos",
+       "state": "saving",
+       "saved_mib": 45.1
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6872,
+     "swap_used_mib": 45
+    }
+   },
+   "return": {
+    "settled_ms": 430,
+    "faults": {
+     "minor": 0,
+     "major": 44
+    }
+   },
+   "mem_return": {
+    "rss": 122.2,
+    "pss": 52.5,
+    "swap": 33.8,
+    "swap_pss": 33.8,
+    "procs": 2
+   },
+   "interact": {
+    "cpu_ms_s": 29.2,
+    "commits": 0,
+    "type": {
+     "inputs": 43,
+     "no_change": 43,
+     "latency_p50_ms": null,
+     "latency_p95_ms": null,
+     "frames": 0,
+     "interval_p50_ms": null,
+     "interval_p95_ms": null,
+     "interval_p99_ms": null,
+     "long_frames_pct": null
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 13692,
+     "p95_us": 16591,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 549,
+    "faults": {
+     "minor": 0,
+     "major": 41
+    },
+    "inputs": 1,
+    "no_change": 1,
+    "latency_p50_ms": null,
+    "latency_p95_ms": null,
+    "frames": 0,
+    "interval_p50_ms": null,
+    "interval_p95_ms": null,
+    "interval_p99_ms": null,
+    "long_frames_pct": null,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 43.3,
+     "apps": [
+      {
+       "app": "org.wolos.todos",
+       "state": "saving",
+       "saved_mib": 43.3
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "servo",
+   "mode": "on",
+   "cold": {
+    "window_ms": 1474,
+    "settled_ms": 3208,
+    "class": "org.servo.Servo"
+   },
+   "warm": [
+    {
+     "window_ms": 482,
+     "settled_ms": 1946,
+     "class": "org.servo.Servo"
+    },
+    {
+     "window_ms": 490,
+     "settled_ms": 1990,
+     "class": "org.servo.Servo"
+    },
+    {
+     "window_ms": 492,
+     "settled_ms": 1965,
+     "class": "org.servo.Servo"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 490,
+    "settled_ms": 1965
+   },
+   "mem_launch": {
+    "rss": 328.7,
+    "pss": 273.9,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 1
+   },
+   "procs": 1,
+   "fg_idle": {
+    "cpu_ms_s": 1.18,
+    "wakeups_s": 56.72,
+    "mem": {
+     "rss": 329.3,
+     "pss": 274.5,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 1
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 2.34,
+    "wakeups_s": 53.1,
+    "mem": {
+     "rss": 137.6,
+     "pss": 85.2,
+     "swap": 189.0,
+     "swap_pss": 184.0,
+     "procs": 1
+    },
+    "saver": {
+     "enabled": true,
+     "saved_mib": 184.0,
+     "apps": [
+      {
+       "app": "org.servo.servo",
+       "state": "saving",
+       "saved_mib": 184.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6855,
+     "swap_used_mib": 189
+    }
+   },
+   "return": {
+    "settled_ms": 1272,
+    "faults": {
+     "minor": 857,
+     "major": 2264
+    }
+   },
+   "mem_return": {
+    "rss": 201.3,
+    "pss": 146.4,
+    "swap": 126.2,
+    "swap_pss": 126.2,
+    "procs": 1
+   },
+   "interact": {
+    "cpu_ms_s": 189.9,
+    "commits": 105,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 101.8,
+     "latency_p95_ms": 159.0,
+     "frames": 105,
+     "interval_p50_ms": 47.8,
+     "interval_p95_ms": 73.7,
+     "interval_p99_ms": 79.1,
+     "long_frames_pct": 93.8
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 202.4,
+     "latency_p95_ms": 279.7,
+     "frames": 105,
+     "interval_p50_ms": 47.8,
+     "interval_p95_ms": 73.7,
+     "interval_p99_ms": 79.1,
+     "long_frames_pct": 93.8
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 18549,
+     "p95_us": 21934,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": null,
+    "faults": {
+     "minor": 67,
+     "major": 303
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 361.8,
+    "latency_p95_ms": 361.8,
+    "frames": 49,
+    "interval_p50_ms": null,
+    "interval_p95_ms": null,
+    "interval_p99_ms": null,
+    "long_frames_pct": null,
+    "saver": {
+     "enabled": true,
+     "saved_mib": 189.1,
+     "apps": [
+      {
+       "app": "org.servo.servo",
+       "state": "saving",
+       "saved_mib": 189.1
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "helium",
+   "mode": "off",
+   "cold": {
+    "window_ms": 3236,
+    "settled_ms": 5353,
+    "class": "helium"
+   },
+   "warm": [
+    {
+     "window_ms": 1800,
+     "settled_ms": 3653,
+     "class": "helium"
+    },
+    {
+     "window_ms": 1707,
+     "settled_ms": 4171,
+     "class": "helium"
+    },
+    {
+     "window_ms": 1909,
+     "settled_ms": 3690,
+     "class": "helium"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1800,
+    "settled_ms": 3690
+   },
+   "mem_launch": {
+    "rss": 1119.7,
+    "pss": 437.6,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "procs": 10,
+   "fg_idle": {
+    "cpu_ms_s": 4.16,
+    "wakeups_s": 43.82,
+    "mem": {
+     "rss": 1083.2,
+     "pss": 404.2,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 2.79,
+    "wakeups_s": 36.95,
+    "mem": {
+     "rss": 1083.4,
+     "pss": 404.5,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "helium",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6693,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 579,
+    "faults": {
+     "minor": 1286,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 1093.9,
+    "pss": 411.6,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "interact": {
+    "cpu_ms_s": 84.9,
+    "commits": 322,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 37.2,
+     "latency_p95_ms": 51.1,
+     "frames": 322,
+     "interval_p50_ms": 26.6,
+     "interval_p95_ms": 29.3,
+     "interval_p99_ms": 60.5,
+     "long_frames_pct": 43.2
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 21.6,
+     "latency_p95_ms": 38.3,
+     "frames": 322,
+     "interval_p50_ms": 26.6,
+     "interval_p95_ms": 29.3,
+     "interval_p99_ms": 60.5,
+     "long_frames_pct": 43.2
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 16826,
+     "p95_us": 18766,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 694,
+    "faults": {
+     "minor": 231,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 52.2,
+    "latency_p95_ms": 52.2,
+    "frames": 12,
+    "interval_p50_ms": 26.0,
+    "interval_p95_ms": 27.1,
+    "interval_p99_ms": 27.1,
+    "long_frames_pct": 14.3,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "helium",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "webapp",
+   "mode": "off",
+   "cold": {
+    "window_ms": 4316,
+    "settled_ms": 6357,
+    "class": "chrome-127.0.0.1__page.html-Default"
+   },
+   "warm": [
+    {
+     "window_ms": 1865,
+     "settled_ms": 4595,
+     "class": "chrome-127.0.0.1__page.html-Default"
+    },
+    {
+     "window_ms": 1857,
+     "settled_ms": 4704,
+     "class": "chrome-127.0.0.1__page.html-Default"
+    },
+    {
+     "window_ms": 1748,
+     "settled_ms": 4518,
+     "class": "chrome-127.0.0.1__page.html-Default"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1857,
+    "settled_ms": 4595
+   },
+   "mem_launch": {
+    "rss": 1082.7,
+    "pss": 420.1,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "procs": 10,
+   "fg_idle": {
+    "cpu_ms_s": 3.41,
+    "wakeups_s": 41.3,
+    "mem": {
+     "rss": 1065.7,
+     "pss": 397.1,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 3.82,
+    "wakeups_s": 38.7,
+    "mem": {
+     "rss": 1066.0,
+     "pss": 397.3,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "chrome-127.0.0.1__page.html-default",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6702,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 742,
+    "faults": {
+     "minor": 1477,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 1075.1,
+    "pss": 403.3,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "interact": {
+    "cpu_ms_s": 72.3,
+    "commits": 299,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 42.7,
+     "latency_p95_ms": 46.8,
+     "frames": 299,
+     "interval_p50_ms": 26.5,
+     "interval_p95_ms": 27.4,
+     "interval_p99_ms": 27.7,
+     "long_frames_pct": 41.7
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 21.1,
+     "latency_p95_ms": 39.3,
+     "frames": 299,
+     "interval_p50_ms": 26.5,
+     "interval_p95_ms": 27.4,
+     "interval_p99_ms": 27.7,
+     "long_frames_pct": 41.7
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 17033,
+     "p95_us": 18077,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 676,
+    "faults": {
+     "minor": 130,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 41.9,
+    "latency_p95_ms": 41.9,
+    "frames": 11,
+    "interval_p50_ms": 26.1,
+    "interval_p95_ms": 30.4,
+    "interval_p99_ms": 30.4,
+    "long_frames_pct": 25.0,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "chrome-127.0.0.1__page.html-default",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "steam",
+   "mode": "off",
+   "cold": {
+    "window_ms": 47318,
+    "settled_ms": 53612,
+    "class": "steam"
+   },
+   "warm": [
+    {
+     "window_ms": 30538,
+     "settled_ms": 36006,
+     "class": "steam"
+    },
+    {
+     "window_ms": 30149,
+     "settled_ms": 36354,
+     "class": "steam"
+    },
+    {
+     "window_ms": 28940,
+     "settled_ms": 33579,
+     "class": "steam"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 30149,
+    "settled_ms": 36006
+   },
+   "mem_launch": {
+    "rss": 1428.1,
+    "pss": 963.6,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 15
+   },
+   "procs": 15,
+   "fg_idle": {
+    "cpu_ms_s": 56.85,
+    "wakeups_s": 496.22,
+    "mem": {
+     "rss": 1363.7,
+     "pss": 903.8,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 15
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 48.75,
+    "wakeups_s": 462.6,
+    "mem": {
+     "rss": 1365.8,
+     "pss": 905.9,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 15
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    },
+    "system": {
+     "available_mib": 6295,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 769,
+    "faults": {
+     "minor": 2503,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 1372.5,
+    "pss": 912.0,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 15
+   },
+   "ok": true
+  },
+  {
+   "id": "code",
+   "mode": "off",
+   "cold": {
+    "window_ms": 3939,
+    "settled_ms": 17141,
+    "class": "code-oss"
+   },
+   "warm": [
+    {
+     "window_ms": 2268,
+     "settled_ms": 14968,
+     "class": "code-oss"
+    },
+    {
+     "window_ms": 1800,
+     "settled_ms": 12860,
+     "class": "code-oss"
+    },
+    {
+     "window_ms": 2235,
+     "settled_ms": 14809,
+     "class": "code-oss"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 2235,
+    "settled_ms": 14809
+   },
+   "mem_launch": {
+    "rss": 1820.9,
+    "pss": 1118.4,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 12
+   },
+   "procs": 12,
+   "fg_idle": {
+    "cpu_ms_s": 23.96,
+    "wakeups_s": 214.82,
+    "mem": {
+     "rss": 1509.0,
+     "pss": 806.1,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 12
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 6.25,
+    "wakeups_s": 58.38,
+    "mem": {
+     "rss": 1503.5,
+     "pss": 801.7,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 12
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "code-oss",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6289,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 1853,
+    "faults": {
+     "minor": 1408,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 1515.6,
+    "pss": 810.5,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 12
+   },
+   "interact": {
+    "cpu_ms_s": 173.5,
+    "commits": 254,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 72.6,
+     "latency_p95_ms": 103.4,
+     "frames": 254,
+     "interval_p50_ms": 26.2,
+     "interval_p95_ms": 28.8,
+     "interval_p99_ms": 45.8,
+     "long_frames_pct": 33.7
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 30.0,
+     "latency_p95_ms": 48.6,
+     "frames": 254,
+     "interval_p50_ms": 26.2,
+     "interval_p95_ms": 28.8,
+     "interval_p99_ms": 45.8,
+     "long_frames_pct": 33.7
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 15204,
+     "p95_us": 19179,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 1749,
+    "faults": {
+     "minor": 1354,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 75.3,
+    "latency_p95_ms": 75.3,
+    "frames": 44,
+    "interval_p50_ms": 26.5,
+    "interval_p95_ms": 28.2,
+    "interval_p99_ms": 29.4,
+    "long_frames_pct": 41.0,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "code-oss",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "signal",
+   "mode": "off",
+   "cold": {
+    "window_ms": 5013,
+    "settled_ms": 9378,
+    "class": "signal"
+   },
+   "warm": [
+    {
+     "window_ms": 2679,
+     "settled_ms": 6832,
+     "class": "signal"
+    },
+    {
+     "window_ms": 2674,
+     "settled_ms": 6806,
+     "class": "signal"
+    },
+    {
+     "window_ms": 2693,
+     "settled_ms": 6808,
+     "class": "signal"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 2679,
+    "settled_ms": 6808
+   },
+   "mem_launch": {
+    "rss": 989.1,
+    "pss": 590.3,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 7
+   },
+   "procs": 7,
+   "fg_idle": {
+    "cpu_ms_s": 2.29,
+    "wakeups_s": 18.05,
+    "mem": {
+     "rss": 881.7,
+     "pss": 485.9,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 7
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 2.36,
+    "wakeups_s": 41.32,
+    "mem": {
+     "rss": 885.2,
+     "pss": 489.2,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 7
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "signal",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6567,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 902,
+    "faults": {
+     "minor": 595,
+     "major": 1
+    }
+   },
+   "mem_return": {
+    "rss": 889.8,
+    "pss": 492.3,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 7
+   },
+   "ok": true
+  },
+  {
+   "id": "chromium",
+   "mode": "off",
+   "cold": {
+    "window_ms": 3460,
+    "settled_ms": 6753,
+    "class": "chromium"
+   },
+   "warm": [
+    {
+     "window_ms": 1335,
+     "settled_ms": 4548,
+     "class": "chromium"
+    },
+    {
+     "window_ms": 1368,
+     "settled_ms": 4610,
+     "class": "chromium"
+    },
+    {
+     "window_ms": 1504,
+     "settled_ms": 4449,
+     "class": "chromium"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 1368,
+    "settled_ms": 4548
+   },
+   "mem_launch": {
+    "rss": 1022.8,
+    "pss": 470.6,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "procs": 10,
+   "fg_idle": {
+    "cpu_ms_s": 5.66,
+    "wakeups_s": 133.1,
+    "mem": {
+     "rss": 983.1,
+     "pss": 432.9,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 4.36,
+    "wakeups_s": 120.23,
+    "mem": {
+     "rss": 982.3,
+     "pss": 432.1,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 10
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "chromium",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    },
+    "system": {
+     "available_mib": 6686,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 955,
+    "faults": {
+     "minor": 1891,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 994.2,
+    "pss": 440.6,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 10
+   },
+   "interact": {
+    "cpu_ms_s": 74.6,
+    "commits": 334,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 29.7,
+     "latency_p95_ms": 45.0,
+     "frames": 334,
+     "interval_p50_ms": 25.7,
+     "interval_p95_ms": 30.1,
+     "interval_p99_ms": 49.8,
+     "long_frames_pct": 33.2
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 3.7,
+     "latency_p95_ms": 19.8,
+     "frames": 334,
+     "interval_p50_ms": 25.7,
+     "interval_p95_ms": 30.1,
+     "interval_p99_ms": 49.8,
+     "long_frames_pct": 33.2
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 14226,
+     "p95_us": 17250,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 587,
+    "faults": {
+     "minor": 182,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 40.1,
+    "latency_p95_ms": 40.1,
+    "frames": 12,
+    "interval_p50_ms": 26.5,
+    "interval_p95_ms": 43.3,
+    "interval_p99_ms": 43.3,
+    "long_frames_pct": 37.5,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": [
+      {
+       "app": "chromium",
+       "state": "active",
+       "saved_mib": 0.0
+      }
+     ]
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "firefox",
+   "mode": "off",
+   "cold": {
+    "window_ms": 3904,
+    "settled_ms": 11925,
+    "class": "firefox"
+   },
+   "warm": [
+    {
+     "window_ms": 2081,
+     "settled_ms": 7697,
+     "class": "firefox"
+    },
+    {
+     "window_ms": 2076,
+     "settled_ms": 6604,
+     "class": "firefox"
+    },
+    {
+     "window_ms": 2293,
+     "settled_ms": 7922,
+     "class": "firefox"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 2081,
+    "settled_ms": 7697
+   },
+   "mem_launch": {
+    "rss": 1153.2,
+    "pss": 537.7,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 14
+   },
+   "procs": 14,
+   "fg_idle": {
+    "cpu_ms_s": 3.48,
+    "wakeups_s": 41.0,
+    "mem": {
+     "rss": 1112.3,
+     "pss": 504.8,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 11
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 1.49,
+    "wakeups_s": 27.78,
+    "mem": {
+     "rss": 1112.3,
+     "pss": 504.7,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 11
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    },
+    "system": {
+     "available_mib": 6567,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 1952,
+    "faults": {
+     "minor": 1756,
+     "major": 1
+    }
+   },
+   "mem_return": {
+    "rss": 1114.2,
+    "pss": 505.4,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 11
+   },
+   "interact": {
+    "cpu_ms_s": 57.1,
+    "commits": 1719,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 13.8,
+     "latency_p95_ms": 24.5,
+     "frames": 1719,
+     "interval_p50_ms": 13.2,
+     "interval_p95_ms": 27.5,
+     "interval_p99_ms": 30.2,
+     "long_frames_pct": 11.6
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 14.8,
+     "latency_p95_ms": 19.1,
+     "frames": 1719,
+     "interval_p50_ms": 13.2,
+     "interval_p95_ms": 27.5,
+     "interval_p99_ms": 30.2,
+     "long_frames_pct": 11.6
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 12583,
+     "p95_us": 16655,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 372,
+    "faults": {
+     "minor": 449,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 1.8,
+    "latency_p95_ms": 1.8,
+    "frames": 31,
+    "interval_p50_ms": 13.2,
+    "interval_p95_ms": 13.7,
+    "interval_p99_ms": 14.4,
+    "long_frames_pct": 0.0,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "thunderbird",
+   "mode": "off",
+   "cold": {
+    "window_ms": 5144,
+    "settled_ms": 10801,
+    "class": "org.mozilla.Thunderbird"
+   },
+   "warm": [
+    {
+     "window_ms": 2694,
+     "settled_ms": 7338,
+     "class": "org.mozilla.Thunderbird"
+    },
+    {
+     "window_ms": 2892,
+     "settled_ms": 7682,
+     "class": "org.mozilla.Thunderbird"
+    },
+    {
+     "window_ms": 2676,
+     "settled_ms": 7034,
+     "class": "org.mozilla.Thunderbird"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 2694,
+    "settled_ms": 7338
+   },
+   "mem_launch": {
+    "rss": 719.1,
+    "pss": 459.7,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 7
+   },
+   "procs": 7,
+   "fg_idle": {
+    "cpu_ms_s": 1.47,
+    "wakeups_s": 12.7,
+    "mem": {
+     "rss": 671.6,
+     "pss": 424.2,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 4
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 0.57,
+    "wakeups_s": 3.98,
+    "mem": {
+     "rss": 672.0,
+     "pss": 424.7,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 4
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    },
+    "system": {
+     "available_mib": 6635,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 324,
+    "faults": {
+     "minor": 544,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 672.1,
+    "pss": 424.8,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 4
+   },
+   "interact": {
+    "cpu_ms_s": 43.5,
+    "commits": 736,
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 9.9,
+     "latency_p95_ms": 12.0,
+     "frames": 736,
+     "interval_p50_ms": 13.2,
+     "interval_p95_ms": 57.4,
+     "interval_p99_ms": 89.2,
+     "long_frames_pct": 5.7
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 9319,
+     "p95_us": 15866,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 187,
+    "faults": {
+     "minor": 0,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 0.9,
+    "latency_p95_ms": 0.9,
+    "frames": 18,
+    "interval_p50_ms": 13.1,
+    "interval_p95_ms": 13.5,
+    "interval_p99_ms": 15.7,
+    "long_frames_pct": 0.0,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "text-editor",
+   "mode": "off",
+   "cold": {
+    "window_ms": 1293,
+    "settled_ms": 5621,
+    "class": "org.gnome.TextEditor"
+   },
+   "warm": [
+    {
+     "window_ms": 956,
+     "settled_ms": 5631,
+     "class": "org.gnome.TextEditor"
+    },
+    {
+     "window_ms": 993,
+     "settled_ms": 5329,
+     "class": "org.gnome.TextEditor"
+    },
+    {
+     "window_ms": 928,
+     "settled_ms": 5551,
+     "class": "org.gnome.TextEditor"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 956,
+    "settled_ms": 5551
+   },
+   "mem_launch": {
+    "rss": 171.8,
+    "pss": 103.1,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 1
+   },
+   "procs": 1,
+   "fg_idle": {
+    "cpu_ms_s": 0.06,
+    "wakeups_s": 0.72,
+    "mem": {
+     "rss": 171.7,
+     "pss": 103.0,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 1
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 0.07,
+    "wakeups_s": 0.78,
+    "mem": {
+     "rss": 173.5,
+     "pss": 104.7,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 1
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    },
+    "system": {
+     "available_mib": 6819,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 743,
+    "faults": {
+     "minor": 140,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 179.1,
+    "pss": 110.3,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 1
+   },
+   "interact": {
+    "cpu_ms_s": 267.0,
+    "commits": 301,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 41.8,
+     "latency_p95_ms": 60.7,
+     "frames": 301,
+     "interval_p50_ms": 27.9,
+     "interval_p95_ms": 68.0,
+     "interval_p99_ms": 82.2,
+     "long_frames_pct": 61.4
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 32.5,
+     "latency_p95_ms": 71.4,
+     "frames": 301,
+     "interval_p50_ms": 27.9,
+     "interval_p95_ms": 68.0,
+     "interval_p99_ms": 82.2,
+     "long_frames_pct": 61.4
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 12870,
+     "p95_us": 15478,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 1326,
+    "faults": {
+     "minor": 33,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 21.3,
+    "latency_p95_ms": 21.3,
+    "frames": 112,
+    "interval_p50_ms": 13.4,
+    "interval_p95_ms": 27.4,
+    "interval_p99_ms": 39.5,
+    "long_frames_pct": 9.2,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "wolkit-todos",
+   "mode": "off",
+   "cold": {
+    "window_ms": 3721,
+    "settled_ms": 3770,
+    "class": "org.wolos.todos"
+   },
+   "warm": [
+    {
+     "window_ms": 651,
+     "settled_ms": 707,
+     "class": "org.wolos.todos"
+    },
+    {
+     "window_ms": 731,
+     "settled_ms": 778,
+     "class": "org.wolos.todos"
+    },
+    {
+     "window_ms": 685,
+     "settled_ms": 748,
+     "class": "org.wolos.todos"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 685,
+    "settled_ms": 748
+   },
+   "mem_launch": {
+    "rss": 153.0,
+    "pss": 85.7,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 2
+   },
+   "procs": 2,
+   "fg_idle": {
+    "cpu_ms_s": 2.37,
+    "wakeups_s": 114.38,
+    "mem": {
+     "rss": 153.4,
+     "pss": 85.9,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 2
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 2.54,
+    "wakeups_s": 117.22,
+    "mem": {
+     "rss": 154.4,
+     "pss": 86.9,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 2
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    },
+    "system": {
+     "available_mib": 6838,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 471,
+    "faults": {
+     "minor": 0,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 154.8,
+    "pss": 87.3,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 2
+   },
+   "interact": {
+    "cpu_ms_s": 31.1,
+    "commits": 0,
+    "type": {
+     "inputs": 43,
+     "no_change": 43,
+     "latency_p50_ms": null,
+     "latency_p95_ms": null,
+     "frames": 0,
+     "interval_p50_ms": null,
+     "interval_p95_ms": null,
+     "interval_p99_ms": null,
+     "long_frames_pct": null
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 10098,
+     "p95_us": 11464,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": 296,
+    "faults": {
+     "minor": 0,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 1,
+    "latency_p50_ms": null,
+    "latency_p95_ms": null,
+    "frames": 0,
+    "interval_p50_ms": null,
+    "interval_p95_ms": null,
+    "interval_p99_ms": null,
+    "long_frames_pct": null,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    }
+   },
+   "ok": true
+  },
+  {
+   "id": "servo",
+   "mode": "off",
+   "cold": {
+    "window_ms": 1157,
+    "settled_ms": 2292,
+    "class": "org.servo.Servo"
+   },
+   "warm": [
+    {
+     "window_ms": 388,
+     "settled_ms": 1287,
+     "class": "org.servo.Servo"
+    },
+    {
+     "window_ms": 397,
+     "settled_ms": 1533,
+     "class": "org.servo.Servo"
+    },
+    {
+     "window_ms": 363,
+     "settled_ms": 1268,
+     "class": "org.servo.Servo"
+    }
+   ],
+   "warm_median": {
+    "window_ms": 388,
+    "settled_ms": 1287
+   },
+   "mem_launch": {
+    "rss": 327.2,
+    "pss": 270.1,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 1
+   },
+   "procs": 1,
+   "fg_idle": {
+    "cpu_ms_s": 0.98,
+    "wakeups_s": 51.2,
+    "mem": {
+     "rss": 327.8,
+     "pss": 270.7,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 1
+    }
+   },
+   "bg_idle": {
+    "cpu_ms_s": 1.04,
+    "wakeups_s": 54.03,
+    "mem": {
+     "rss": 327.9,
+     "pss": 270.8,
+     "swap": 0.0,
+     "swap_pss": 0.0,
+     "procs": 1
+    },
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    },
+    "system": {
+     "available_mib": 6682,
+     "swap_used_mib": 0
+    }
+   },
+   "return": {
+    "settled_ms": 338,
+    "faults": {
+     "minor": 161,
+     "major": 0
+    }
+   },
+   "mem_return": {
+    "rss": 328.5,
+    "pss": 271.4,
+    "swap": 0.0,
+    "swap_pss": 0.0,
+    "procs": 1
+   },
+   "interact": {
+    "cpu_ms_s": 229.4,
+    "commits": 95,
+    "scroll": {
+     "inputs": 30,
+     "no_change": 0,
+     "latency_p50_ms": 53.1,
+     "latency_p95_ms": 70.9,
+     "frames": 95,
+     "interval_p50_ms": 54.1,
+     "interval_p95_ms": 85.0,
+     "interval_p99_ms": 87.1,
+     "long_frames_pct": 92.9
+    },
+    "type": {
+     "inputs": 43,
+     "no_change": 0,
+     "latency_p50_ms": 127.8,
+     "latency_p95_ms": 153.9,
+     "frames": 95,
+     "interval_p50_ms": 54.1,
+     "interval_p95_ms": 85.0,
+     "interval_p99_ms": 87.1,
+     "long_frames_pct": 92.9
+    },
+    "compositor": {
+     "frames": 512,
+     "p50_us": 14858,
+     "p95_us": 17032,
+     "damage_pct": 100.0,
+     "full_frames": 512,
+     "bytes_per_frame": 8192000
+    }
+   },
+   "return_frame": {
+    "settled_ms": null,
+    "faults": {
+     "minor": 56,
+     "major": 0
+    },
+    "inputs": 1,
+    "no_change": 0,
+    "latency_p50_ms": 392.7,
+    "latency_p95_ms": 392.7,
+    "frames": 48,
+    "interval_p50_ms": null,
+    "interval_p95_ms": null,
+    "interval_p99_ms": null,
+    "long_frames_pct": null,
+    "saver": {
+     "enabled": false,
+     "saved_mib": 0.0,
+     "apps": []
+    }
+   },
+   "ok": true
+  }
+ ],
+ "prime": {
+  "helium": {
+   "window_ms": 1212,
+   "settled_ms": 3545,
+   "class": "helium"
+  },
+  "webapp": {
+   "window_ms": 2055,
+   "settled_ms": 4699,
+   "class": "chrome-127.0.0.1__page.html-Default"
+  },
+  "steam": {
+   "window_ms": 35919,
+   "settled_ms": 36352,
+   "class": "steam"
+  },
+  "code": {
+   "window_ms": 3009,
+   "settled_ms": 24702,
+   "class": "code-oss"
+  },
+  "signal": {
+   "window_ms": 9695,
+   "settled_ms": 12143,
+   "class": "signal"
+  },
+  "chromium": {
+   "window_ms": 2688,
+   "settled_ms": 5598,
+   "class": "chromium"
+  },
+  "firefox": {
+   "window_ms": 2775,
+   "settled_ms": 7519,
+   "class": "firefox"
+  },
+  "thunderbird": {
+   "window_ms": 5480,
+   "settled_ms": 11757,
+   "class": "org.mozilla.Thunderbird"
+  },
+  "text-editor": {
+   "window_ms": 1096,
+   "settled_ms": 6776,
+   "class": "org.gnome.TextEditor"
+  },
+  "wolkit-todos": {
+   "window_ms": 967,
+   "settled_ms": 1026,
+   "class": "org.wolos.todos"
+  },
+  "servo": {
+   "window_ms": 552,
+   "settled_ms": 2435,
+   "class": "org.servo.Servo"
+  }
+ },
+ "features": {
+  "helium": {
+   "es_modules_dynamic_import": true,
+   "webassembly": true,
+   "wasm_threads_sab": false,
+   "workers": true,
+   "shared_workers": true,
+   "service_workers": true,
+   "indexeddb": true,
+   "cache_storage": true,
+   "storage_manager": true,
+   "broadcast_channel": true,
+   "websocket": true,
+   "webtransport": true,
+   "fetch_streams": true,
+   "compression_streams": true,
+   "custom_elements": true,
+   "shadow_dom": true,
+   "dialog_modal": true,
+   "popover": true,
+   "contenteditable": true,
+   "exec_command": true,
+   "selection_api": true,
+   "intl_segmenter": true,
+   "resize_observer": true,
+   "intersection_observer": true,
+   "mutation_observer": true,
+   "request_idle_callback": true,
+   "web_animations": true,
+   "css_grid": true,
+   "css_subgrid": true,
+   "css_container_queries": true,
+   "css_has": true,
+   "css_nesting": true,
+   "css_backdrop_filter": true,
+   "css_houdini_paint": true,
+   "font_loading": true,
+   "canvas_2d": true,
+   "offscreen_canvas": true,
+   "webgl": false,
+   "webgl2": false,
+   "webgpu": true,
+   "media_element": true,
+   "media_source": true,
+   "web_audio": true,
+   "webrtc_peer": true,
+   "get_user_media": true,
+   "get_display_media": true,
+   "notifications": true,
+   "clipboard_async": true,
+   "webauthn": true,
+   "credential_mgmt": true,
+   "file_system_access": true,
+   "origin_private_fs": true,
+   "web_share": false,
+   "gamepad": true,
+   "pointer_events": true,
+   "fullscreen": true,
+   "page_visibility": true,
+   "web_locks": true,
+   "wake_lock": true,
+   "trusted_types": true,
+   "import_maps": true,
+   "codec_h264": "probably",
+   "codec_hevc": "",
+   "codec_vp9": "probably",
+   "codec_av1": "probably",
+   "codec_opus": "probably",
+   "codec_aac": "probably",
+   "codec_mp3": "probably",
+   "mse_h264": true,
+   "eme_drm": true,
+   "extensions_api": false,
+   "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+  },
+  "chromium": {
+   "es_modules_dynamic_import": true,
+   "webassembly": true,
+   "wasm_threads_sab": false,
+   "workers": true,
+   "shared_workers": true,
+   "service_workers": true,
+   "indexeddb": true,
+   "cache_storage": true,
+   "storage_manager": true,
+   "broadcast_channel": true,
+   "websocket": true,
+   "webtransport": true,
+   "fetch_streams": true,
+   "compression_streams": true,
+   "custom_elements": true,
+   "shadow_dom": true,
+   "dialog_modal": true,
+   "popover": true,
+   "contenteditable": true,
+   "exec_command": true,
+   "selection_api": true,
+   "intl_segmenter": true,
+   "resize_observer": true,
+   "intersection_observer": true,
+   "mutation_observer": true,
+   "request_idle_callback": true,
+   "web_animations": true,
+   "css_grid": true,
+   "css_subgrid": true,
+   "css_container_queries": true,
+   "css_has": true,
+   "css_nesting": true,
+   "css_backdrop_filter": true,
+   "css_houdini_paint": true,
+   "font_loading": true,
+   "canvas_2d": true,
+   "offscreen_canvas": true,
+   "webgl": false,
+   "webgl2": false,
+   "webgpu": true,
+   "media_element": true,
+   "media_source": true,
+   "web_audio": true,
+   "webrtc_peer": true,
+   "get_user_media": true,
+   "get_display_media": true,
+   "notifications": true,
+   "clipboard_async": true,
+   "webauthn": true,
+   "credential_mgmt": true,
+   "file_system_access": true,
+   "origin_private_fs": true,
+   "web_share": false,
+   "gamepad": true,
+   "pointer_events": true,
+   "fullscreen": true,
+   "page_visibility": true,
+   "web_locks": true,
+   "wake_lock": true,
+   "trusted_types": true,
+   "import_maps": true,
+   "codec_h264": "probably",
+   "codec_hevc": "",
+   "codec_vp9": "probably",
+   "codec_av1": "probably",
+   "codec_opus": "probably",
+   "codec_aac": "probably",
+   "codec_mp3": "probably",
+   "mse_h264": true,
+   "eme_drm": true,
+   "extensions_api": false,
+   "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+  },
+  "firefox": {
+   "es_modules_dynamic_import": true,
+   "webassembly": true,
+   "wasm_threads_sab": false,
+   "workers": true,
+   "shared_workers": true,
+   "service_workers": true,
+   "indexeddb": true,
+   "cache_storage": true,
+   "storage_manager": true,
+   "broadcast_channel": true,
+   "websocket": true,
+   "webtransport": true,
+   "fetch_streams": true,
+   "compression_streams": true,
+   "custom_elements": true,
+   "shadow_dom": true,
+   "dialog_modal": true,
+   "popover": true,
+   "contenteditable": true,
+   "exec_command": true,
+   "selection_api": true,
+   "intl_segmenter": true,
+   "resize_observer": true,
+   "intersection_observer": true,
+   "mutation_observer": true,
+   "request_idle_callback": true,
+   "web_animations": true,
+   "css_grid": true,
+   "css_subgrid": true,
+   "css_container_queries": true,
+   "css_has": true,
+   "css_nesting": true,
+   "css_backdrop_filter": true,
+   "css_houdini_paint": false,
+   "font_loading": true,
+   "canvas_2d": true,
+   "offscreen_canvas": true,
+   "webgl": true,
+   "webgl2": true,
+   "webgpu": false,
+   "media_element": true,
+   "media_source": true,
+   "web_audio": true,
+   "webrtc_peer": true,
+   "get_user_media": true,
+   "get_display_media": true,
+   "notifications": true,
+   "clipboard_async": true,
+   "webauthn": true,
+   "credential_mgmt": true,
+   "file_system_access": false,
+   "origin_private_fs": true,
+   "web_share": false,
+   "gamepad": true,
+   "pointer_events": true,
+   "fullscreen": true,
+   "page_visibility": true,
+   "web_locks": true,
+   "wake_lock": true,
+   "trusted_types": true,
+   "import_maps": true,
+   "codec_h264": "probably",
+   "codec_hevc": "probably",
+   "codec_vp9": "probably",
+   "codec_av1": "probably",
+   "codec_opus": "probably",
+   "codec_aac": "probably",
+   "codec_mp3": "maybe",
+   "mse_h264": true,
+   "eme_drm": true,
+   "extensions_api": false,
+   "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:159.0) Gecko/20100101 Firefox/159.0"
+  },
+  "servo": {
+   "es_modules_dynamic_import": true,
+   "webassembly": true,
+   "wasm_threads_sab": false,
+   "workers": true,
+   "shared_workers": true,
+   "service_workers": false,
+   "indexeddb": false,
+   "cache_storage": false,
+   "storage_manager": false,
+   "broadcast_channel": true,
+   "websocket": true,
+   "webtransport": false,
+   "fetch_streams": true,
+   "compression_streams": true,
+   "custom_elements": true,
+   "shadow_dom": true,
+   "dialog_modal": true,
+   "popover": false,
+   "contenteditable": true,
+   "exec_command": false,
+   "selection_api": true,
+   "intl_segmenter": true,
+   "resize_observer": true,
+   "intersection_observer": false,
+   "mutation_observer": true,
+   "request_idle_callback": false,
+   "web_animations": false,
+   "css_grid": true,
+   "css_subgrid": false,
+   "css_container_queries": false,
+   "css_has": false,
+   "css_nesting": true,
+   "css_backdrop_filter": false,
+   "css_houdini_paint": false,
+   "font_loading": true,
+   "canvas_2d": true,
+   "offscreen_canvas": false,
+   "webgl": true,
+   "webgl2": false,
+   "webgpu": false,
+   "media_element": true,
+   "media_source": false,
+   "web_audio": true,
+   "webrtc_peer": false,
+   "get_user_media": false,
+   "get_display_media": false,
+   "notifications": false,
+   "clipboard_async": false,
+   "webauthn": false,
+   "credential_mgmt": false,
+   "file_system_access": false,
+   "origin_private_fs": false,
+   "web_share": false,
+   "gamepad": true,
+   "pointer_events": true,
+   "fullscreen": true,
+   "page_visibility": true,
+   "web_locks": false,
+   "wake_lock": false,
+   "trusted_types": true,
+   "import_maps": true,
+   "codec_h264": "",
+   "codec_hevc": "",
+   "codec_vp9": "probably",
+   "codec_av1": "",
+   "codec_opus": "",
+   "codec_aac": "",
+   "codec_mp3": "maybe",
+   "mse_h264": false,
+   "eme_drm": false,
+   "extensions_api": false,
+   "user_agent": "Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Servo/0.7.0 Firefox/153.0"
+  }
+ },
+ "finished": "2026-11-03T18:40:28Z",
+ "idle_daemon": "stopped for the run",
+ "vm": {
+  "name": "ms",
+  "mem": "8G",
+  "smp": 4,
+  "gpu": "virtio",
+  "res": "1280x800",
+  "kvm": true,
+  "tpm": true,
+  "iso": "wolos-2026.11.03-x86_64.iso",
+  "iso_sha256": "fcd5a474d8344d8c4c9c46567f4a2427b05554edd3c57d1bbb939b05b6a42bba",
+  "host_cpu": "Intel(R) Xeon(R) Platinum 8375C CPU @ 2.90GHz"
+ }
+}

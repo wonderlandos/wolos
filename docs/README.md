@@ -126,4 +126,5 @@ Each module document names its ADR and its code by crate and path.
 |---|---|
 | [creators-audio.md](creators-audio.md) | sound for creators: recording, streaming, producing |
 | [plugins/plugin.schema.json](plugins/plugin.schema.json) | JSON schema of a shell plugin manifest (ADR 0031, [modules/plugins.md](modules/plugins.md)) |
+| [bench/webapps-baseline.md](bench/webapps-baseline.md) | web-app baseline: what each web-based app costs in memory, start-up, idle and frames, Memory Saver on and off, the gap against native apps and the ranked wins; raw data in `bench/webapps-baseline.json` and `bench/webapps-roles.json`, harness in `tools/bench/webapps/` |
 | [research/attested-gaming-mode.md](research/attested-gaming-mode.md) | research: attested gaming mode and kernel anti-cheat on WolOS (builds on ADR 0025; not a decision) |
