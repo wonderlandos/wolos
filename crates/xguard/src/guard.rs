@@ -560,13 +560,15 @@ pub fn run_deep(
 /// and so its process group's number, stays taken until [`std::process::Child::wait`]. An error
 /// (no such child) counts as ended.
 fn exited_unreaped(pid: libc::pid_t) -> bool {
-    // SAFETY: siginfo_t is plain data; waitid only writes into it.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
     let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-    // SAFETY: valid pointer to a local; `pid` is our own unreaped child.
-    let r = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) };
-    // SAFETY: waitid filled `info` (si_pid 0: the child is still running).
-    r != 0 || unsafe { info.si_pid() } != 0
+    // SAFETY: siginfo_t is plain data, so all-zero is a valid value, and waitid only writes into
+    // the valid local it is given; `pid` is our own unreaped child. After a successful call
+    // waitid has filled `info` (si_pid 0: the child is still running).
+    unsafe {
+        let mut info: libc::siginfo_t = std::mem::zeroed();
+        let r = libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags);
+        r != 0 || info.si_pid() != 0
+    }
 }
 
 /// SIGKILL to the worker's process group (its pgid is its own pid, `process_group(0)`). Only

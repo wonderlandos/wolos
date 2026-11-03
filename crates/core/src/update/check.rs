@@ -66,13 +66,6 @@ pub fn check_fresh(
     Ok(())
 }
 
-/// Seconds since 1970 now (0 when the clock is before it).
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
-}
-
 /// `2026.11` / `2026.11.2` / `2026.11-rc1` as numbers and a pre-release tag (a tag sorts below
 /// the release); None when it is anything else.
 fn release_number(v: &str) -> Option<(Vec<u64>, Option<&str>)> {
@@ -171,26 +164,24 @@ impl Updates {
         })
     }
 
-    /// [`Self::read_with`] the trusted package keys.
-    pub fn read(dir: &Path) -> Option<Self> {
+    /// [`Self::read_with`] the trusted package keys, at the time `now` (seconds since 1970; core
+    /// takes the clock from its caller, RR-067).
+    pub fn read(dir: &Path, now: u64) -> Option<Self> {
         let keys = crate::package::read_keys(Path::new(shared::package::KEYS_DIR));
-        Self::read_with(dir, &keys)
+        Self::read_with(dir, &keys, now)
     }
 
     /// The check's files; the release manifest counts only with a trusted `base.sig`.
-    pub fn read_with(dir: &Path, keys: &[[u8; 32]]) -> Option<Self> {
-        Self::from_files(
+    pub fn read_with(dir: &Path, keys: &[[u8; 32]], now: u64) -> Option<Self> {
+        Self::from_files_at(
             |n| std::fs::read_to_string(dir.join(n)).unwrap_or_default(),
             keys,
+            now,
         )
     }
 
-    /// From the check's files by name (`base.sig` = the signature in lowercase hex).
-    pub fn from_files(f: impl Fn(&str) -> String, keys: &[[u8; 32]]) -> Option<Self> {
-        Self::from_files_at(f, keys, unix_now())
-    }
-
-    /// [`Self::from_files`] at the time `now`: a signed manifest past its `expires` is dropped.
+    /// From the check's files by name (`base.sig` = the signature in lowercase hex) at the time
+    /// `now`: a signed manifest past its `expires` is dropped.
     pub fn from_files_at(f: impl Fn(&str) -> String, keys: &[[u8; 32]], now: u64) -> Option<Self> {
         let base = f("base");
         let sig = unhex(f("base.sig").trim()).unwrap_or_default();
@@ -469,25 +460,29 @@ mod tests {
     fn reads_the_folder() {
         let d = std::env::temp_dir().join(format!("wol-updates-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        assert_eq!(Updates::read(&d), None);
+        assert_eq!(Updates::read(&d, 1), None);
         std::fs::write(d.join("checked"), "42\n").unwrap();
         std::fs::write(d.join("pkg"), PKG).unwrap();
         std::fs::write(d.join("kernels"), "linux-wolos\nlinux-lts\n").unwrap();
-        let u = Updates::read(&d).unwrap();
+        let u = Updates::read(&d, 1).unwrap();
         assert_eq!(u.count(), 2);
         assert_eq!(u.kernels, ["linux-lts"]);
         // The manifest counts only with a trusted signature.
         let seed = [7u8; 32];
         let key = crate::package::public_of(&seed);
         std::fs::write(d.join("base"), RELEASE).unwrap();
-        assert_eq!(Updates::read_with(&d, &[key]).unwrap().base, None, "no sig");
+        assert_eq!(
+            Updates::read_with(&d, &[key], 1).unwrap().base,
+            None,
+            "no sig"
+        );
         let sig = crate::package::hex(crate::package::sign(&seed, RELEASE.as_bytes()));
         std::fs::write(d.join("base.sig"), format!("{sig}\n")).unwrap();
         assert_eq!(
-            Updates::read_with(&d, &[key]).unwrap().base.as_deref(),
+            Updates::read_with(&d, &[key], 1).unwrap().base.as_deref(),
             Some("2026.11")
         );
-        assert_eq!(Updates::read_with(&d, &[[9; 32]]).unwrap().base, None);
+        assert_eq!(Updates::read_with(&d, &[[9; 32]], 1).unwrap().base, None);
         std::fs::remove_dir_all(&d).unwrap();
     }
 

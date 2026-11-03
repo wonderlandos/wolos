@@ -785,8 +785,9 @@ fn update_snapshot(env: &mut dyn Env) -> Option<wol_core::update::check::Updates
         &env.var("WOL_KEYS_DIR")
             .unwrap_or_else(|| shared::package::KEYS_DIR.into()),
     ));
+    let now = env.now_secs();
     let f = |n: &str| env.read_file(&Path::new(DIR).join(n)).unwrap_or_default();
-    let u = Updates::from_files(f, &keys)?;
+    let u = Updates::from_files_at(f, &keys, now)?;
     let userland = u.base.as_ref().and_then(|_| env.capture(&USERLAND_ARGV));
     Some(u.installed(userland.as_deref()))
 }

@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.12.1 (unreleased)
+A fixes-only release after a hunt for stalls, races and weak spots in 0.12.0. Nothing new to learn.
+
+Security
+- An older or expired release announcement is never offered as an update any more: the signed release manifest carries a serial number and an expiry date, and the updater and the plugin store feed refuse a manifest that is not newer than what you run. Before, a stale copy of an older release could be offered and installed over a newer one.
+- The malware scanner's deep scan stops at its time limit even when the scanning helper started helpers of its own; the limit used to be ignored in that case and the scan could hang.
+- The malware rule updater now checks the signed bundle (key, version, size and file names) before it downloads any rule file, and downloads only over HTTPS with a size limit per file. The store index and the daily update check use the same limits.
+- Administrator approval cannot be held up by another account any more: a user who kept sending wrong requests used to stall every administrator sheet on the machine for two seconds at a time. A refusal, a password check or a long install no longer blocks other admin requests; a Wi-Fi join no longer waits for an install. Declining one request cancels only your own pending approval, and an approval you gave earlier is checked again if it ran out while your request waited.
+- Programs that were updated while running keep their identity for permission checks, and a program must now reach a file it hands to the installer through every folder above it.
+- The graphics environment script quotes values correctly, so a quote in a setting can no longer break out of it.
+- Until the 7.3.1 kernel arrives, `io_uring` is limited to administrators (`kernel.io_uring_disabled = 1`), as a precaution; the setting is documented in the security module page.
+- The dependency checks (`cargo deny` and `cargo audit`) now look at everything that ships and agree with each other; the two reviewed exceptions are written down. The Crystal shards (`hue`, `wopkg`) now require Crystal 1.22 or newer.
+
+Install and update
+- A disk with Windows on BitLocker (or a Windows volume that cannot be read) is refused for Alongside, Replace and Manual, because WolOS cannot tell whether Windows shut down fully; Erase Disk still works. The installer says so in a sentence and what to do about it.
+- A failed install step closes the encrypted disks it had opened, and trying again closes any left over. Blank 4K-sector disks get the right startup partition size (they used to get 8 GiB).
+- The boot check marks a slot that is under the rollback floor and never falls back to a marked slot.
+- Programs added in layers are removed after an update with a much shorter moment without them: the old layers are moved aside, the new set is merged, and only then are they deleted.
+- A program installation that is killed halfway (power cut, timeout) no longer leaves a half-installed layer that merges into the system on the next start; such a layer is removed at start. Two builds of the next version can no longer run at the same time.
+- A failed build of a stacked layer reports the right error and rolls back cleanly, and an interrupted one no longer leaves its mounts behind.
+- The daily update check can no longer hang for good on a stalled connection: each download has a time limit, and the check as a whole is limited to 30 minutes, so the hourly timer keeps running.
+
+Stability
+- A background job that ended before the supervisor noticed it is no longer restarted as if it had crashed.
+- Installing optional modules has a time limit, and so has the temporary job it runs in, so one stuck download cannot block all later installs.
+- The Setup Assistant gives up waiting for the login helper after a time limit with a clear message instead of freezing.
+- Plugin packages are moved into place safely (copy, flush to disk, rename), so a power cut cannot leave a half file.
+- `wol hw boot --online` exits with an error when the online install failed.
+
+Standards and documents
+- The unsafe-code list in the standards document matches the code (the real-time helper went from 69 to 32 `unsafe` uses), rules and baselines were refreshed, and the documents for plugins, the command line and the module pages match what the commands do today.
+
 ## 0.12.0 (2026-11-03)
 The same desktop, made solid, and then grown: a redesigned Settings and Control Center, shell
 plugins and themes you can make yourself, optional modules, and a friendlier installer with Secure

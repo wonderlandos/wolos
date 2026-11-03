@@ -40,8 +40,12 @@ use std::path::{Path, PathBuf};
 /// `Option<&mut T>` (same ABI as `T *`, null is `None`), so eight of them are safe `extern "C"`
 /// functions with no `unsafe` block and their unit tests call them without `unsafe`; what is left
 /// is the `#[unsafe(no_mangle)]` of each export, `wol_window_lights` (a C string) and
-/// `wol_frame_stats_json` (a caller buffer). xguard 63 and api 33 stay: `openat` and `statvfs`
-/// have no std wrapper and no new dependency is wanted for them (reasons above).
+/// `wol_frame_stats_json` (a caller buffer). api 33 stays: `statvfs` has no std wrapper and no new
+/// dependency is wanted for it (reasons above); xguard keeps `openat` likewise.
+/// xguard 63 -> 65 (audit8 security, deep-scan deadline): `exited_unreaped` (`waitid` with
+/// `WNOWAIT`, one block) and `kill_group` (`killpg`, one block); std has neither (`Child::kill`
+/// signals one pid, not the worker's process group, and `Child::try_wait` reaps), no new
+/// dependency was wanted for two calls.
 /// docs/STANDARDS.md 7.1 repeats these rows ([`standards_quotes_the_baseline`] checks it).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
@@ -49,7 +53,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("wolkit", 294),
     ("wopkg", 94),
     ("realtime", 32),
-    ("xguard", 63),
+    ("xguard", 65),
     ("controller", 52),
     ("api", 33),
     ("audio", 0),
