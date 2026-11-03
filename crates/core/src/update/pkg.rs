@@ -492,7 +492,7 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
             .position(|x| x.ends_with("esp-sync --new"))
             .unwrap();
         assert!(del < mv && mv < esp, "{t:?}");
-        let scratch = vec![a(&format!("btrfs subvolume delete {w}"))];
+        let scratch = super::super::rollback_from("wolos-b", Base::Pending);
         for kept in [0, del - 1, del] {
             assert_eq!(
                 rollback_at("wolos-b", Base::Pending, &s, kept),

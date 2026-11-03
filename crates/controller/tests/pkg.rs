@@ -367,16 +367,19 @@ fn a_chroot_left_mounted_is_unmounted_first() {
 #[test]
 fn a_stacked_change_failing_after_the_swap_says_the_pending_change_is_gone() {
     let mut env = sealed("nvidia\nlinux-wolos\n", PENDING);
-    // snapshot, fold, pacman, mkinitcpio, mkdir, seal, delete, mv ok; esp-sync fails.
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 1];
+    // snapshot, fold, fstab, etc-settle, bind, pacman, mkinitcpio, unbind, mkdir, seal, delete,
+    // mv ok; esp-sync fails.
+    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     assert_ne!(run("pkg -- -S nvidia", &mut env), 0);
     let l = lines(&env);
-    assert!(l[8].ends_with("esp-sync --new"), "{l:?}");
+    assert!(l[12].ends_with("esp-sync --new"), "{l:?}");
     assert_eq!(
-        l[9..],
+        l[13..],
         [
+            "umount -R /run/wolos/top/@wolos-b",
             "btrfs subvolume delete /run/wolos/top/@wolos-b",
             "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi",
+            "umount -R /run/wolos/top/@wolos-tx",
             "btrfs subvolume delete /run/wolos/top/@wolos-tx"
         ]
     );

@@ -22,6 +22,9 @@ Words come from `/etc/kernel/cmdline`, the slot from `/etc/wolos/slot`; `wolos.e
 A boot is good when `wolos-boot-ok.service` sees wold (login window) up, before `boot-complete.target`; `systemd-bless-boot` then drops the counter and `wol boot bless` moves the epoch floor.
 Three failed boots: the entry sorts last and the other slot boots.
 
+## /etc across slots (ADR 0044)
+`/etc` is an overlay over the running slot's own `/etc`, with one upper in `/var/lib/wolos/etc/upper` shared by both slots. Its fstab line is `wol_core::update::ETC_FSTAB` (`index=off,metacopy=off,...`): the installer writes it and every slot build rewrites it, after `files/usr/lib/wolos/etc-settle` has copied the data of metacopy-only files up, so a switch to the other slot (or the fall-back after failed boots) mounts `/etc` instead of stopping in emergency mode.
+
 ## Quiet boot
 Kernel `quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.show_status=auto vt.global_cursor_default=0`; plymouth theme `wolos` (the mark on black) in a systemd initramfs.
 

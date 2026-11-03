@@ -17,6 +17,8 @@ Kernel
 - WolKernel 1:1.0+7.3.1-1: the kernel moves to the stable Linux 7.3.1 line (tag `wolkernel-1.0-7.3.1`, branch `wolos-7.3.1`), which carries 24 CVE fixes the 0.12.0 kernel lacked. The 0.12.0 kernel was built on a mainline merge-window snapshot labelled 7.3.0, not on a stable release; the WolOS patches are rebased onto the stable line (four were re-fitted), and options that only the snapshot had, such as the steal governor, are gone.
 
 Install and update
+- Switching between the two system copies no longer stops in emergency mode: the settings in `/etc` survive an update, a switch back and a fall-back after failed starts. The cause was the kernel's check that the `/etc` overlay still sits on the copy it was made over, which fails once the update has made another copy; the new copy now mounts `/etc` with options that do not need that check, and files whose data was not yet copied are copied first. A copy built by an older updater still starts after a switch back.
+- Programs you installed from a local package file (`pacman -U`) now install into the new system copy and are in it after the switch; building a new copy no longer stops with "could not determine root mount point".
 - A disk with Windows on BitLocker (or a Windows volume that cannot be read) is refused for Alongside, Replace and Manual, because WolOS cannot tell whether Windows shut down fully; Erase Disk still works. The installer says so in a sentence and what to do about it.
 - A failed install step closes the encrypted disks it had opened, and trying again closes any left over. Blank 4K-sector disks get the right startup partition size (they used to get 8 GiB).
 - The boot check marks a slot that is under the rollback floor and never falls back to a marked slot.
