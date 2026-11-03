@@ -7,12 +7,13 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 pub struct FakeKit {
     pub path: PathBuf,
-    pub seen: Arc<Mutex<Vec<ToHost>>>,
+    /// Every message from the engine, and a signal for each one that arrives.
+    pub seen: Arc<(Mutex<Vec<ToHost>>, Condvar)>,
     tx: Sender<FromHost>,
     raw: Sender<String>,
 }
@@ -22,7 +23,7 @@ impl FakeKit {
         let path = dir.join("kit.sock");
         let _ = std::fs::remove_file(&path);
         let l = UnixListener::bind(&path).unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
         let (tx, rx) = channel::<FromHost>();
         let (raw, raw_rx) = channel::<String>();
         let s2 = seen.clone();
@@ -33,7 +34,8 @@ impl FakeKit {
                 for line in BufReader::new(rd).lines().map_while(Result::ok) {
                     let m = ToHost::parse(&line)
                         .unwrap_or_else(|| panic!("the host dropped an invalid line: {line}"));
-                    s2.lock().unwrap().push(m);
+                    s2.0.lock().unwrap().push(m);
+                    s2.1.notify_all();
                 }
             });
             let c2 = conn.try_clone().unwrap();
@@ -70,13 +72,12 @@ impl FakeKit {
 
     /// The messages seen so far, once at least `n` have arrived.
     pub fn wait(&self, n: usize) -> Vec<ToHost> {
-        let end = Instant::now() + Duration::from_secs(5);
-        loop {
-            let v = self.seen.lock().unwrap().clone();
-            if v.len() >= n || Instant::now() > end {
-                return v;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        let (lock, arrived) = &*self.seen;
+        let (v, _) = arrived
+            .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(5), |v| {
+                v.len() < n
+            })
+            .unwrap();
+        v.clone()
     }
 }

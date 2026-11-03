@@ -13,7 +13,7 @@
 //! The rasteriser is the default on machines without 3D, the fallback after a device loss, and
 //! the oracle the GPU path is compared against with a tolerance.
 
-use crate::num::{ceil_i32, floor_i32, to_i32, trunc_usize};
+use crate::num::{ceil_i32, floor_i32, to_i32, trunc_u32, trunc_usize};
 use crate::scene::ids::{Ix, to_u8, to_u32};
 use std::ops::Range;
 
@@ -67,7 +67,7 @@ impl Image {
     }
 
     pub fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
-        let i = ((y * self.width + x) * 4) as usize;
+        let i = ((y * self.width + x) * 4).ix();
         [
             self.data[i],
             self.data[i + 1],
@@ -104,7 +104,7 @@ impl Default for RasterOptions {
 
 #[inline]
 fn cov_u8(c: f32) -> u32 {
-    (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u32
+    trunc_u32(c.clamp(0.0, 1.0) * 255.0 + 0.5)
 }
 
 /// Coverage (0..=1) of the pixel centred at `(px, py)` by a rounded rectangle.
@@ -206,6 +206,38 @@ fn scale_radii(r: &Radii, s: f32, w: f32, h: f32) -> [f32; 4] {
     Radii(r.0.map(|v| v * s)).fitted(w, h).0
 }
 
+/// Where items of the chunk being prepared land: its scale and offset, the folded opacity of
+/// non-overlapping groups and the current clip.
+#[derive(Clone, Copy)]
+struct Cur {
+    scale: f32,
+    ox: f32,
+    oy: f32,
+    opacity: u32,
+    clip: u32,
+    clip_bounds: PixelRect,
+}
+
+impl Cur {
+    fn rect(&self, r: &Rect) -> Rect {
+        scale_rect(r, self.scale, self.ox, self.oy)
+    }
+
+    fn color(&self, c: Color) -> Color {
+        c.with_opacity(to_u8(self.opacity))
+    }
+}
+
+/// Per-chunk stacks: clips, group opacities and open layers.
+struct Stacks {
+    clip: Vec<u32>,
+    /// (alpha, is a layer)
+    alpha: Vec<(u8, bool)>,
+    /// Prim index of each open `LayerBegin`.
+    layer: Vec<usize>,
+    opacity: Vec<u32>,
+}
+
 fn prepare(
     list: &DisplayList,
     glyphs: &mut dyn GlyphSource,
@@ -223,168 +255,70 @@ fn prepare(
     for ci in list.draw_order() {
         let chunk = &list.chunks[ci];
         let (ox, oy) = chunk.offset;
-        // Per-chunk state.
-        let mut clip_stack: Vec<u32> = Vec::new();
         p.clips.push(Clip {
             bounds: full,
             soft: 0..0,
         });
-        let root_clip = (p.clips.len() - 1) as u32;
-        clip_stack.push(root_clip);
+        let root_clip = to_u32(p.clips.len() - 1);
         let cb = scale_rect(&chunk.bounds, scale, ox, oy).to_pixels();
         // Chunk bounds clip its content.
         let mut chunk_clip = p.clips[root_clip.ix()].clone();
         chunk_clip.bounds = chunk_clip.bounds.intersect(&cb);
         p.clips.push(chunk_clip);
-        clip_stack.push((p.clips.len() - 1) as u32);
-
-        let mut alpha_stack: Vec<(u8, bool)> = Vec::new(); // (alpha, is_layer)
-        let mut layer_stack: Vec<usize> = Vec::new(); // prim index of LayerBegin
-        let mut opacity: u32 = 255; // folded product for non-overlap groups
-        let mut opacity_stack: Vec<u32> = Vec::new();
-
+        let mut st = Stacks {
+            clip: vec![root_clip, to_u32(p.clips.len() - 1)],
+            alpha: Vec::new(),
+            layer: Vec::new(),
+            opacity: Vec::new(),
+        };
+        // Folded product for non-overlap groups.
+        let mut opacity: u32 = 255;
         for item in list.chunk_items(chunk) {
-            let clip_id = *clip_stack.last().unwrap_or(&root_clip);
-            let clip_bounds = p.clips[clip_id.ix()].bounds;
+            let clip = *st.clip.last().unwrap_or(&root_clip);
+            let cur = Cur {
+                scale,
+                ox,
+                oy,
+                opacity,
+                clip,
+                clip_bounds: p.clips[clip.ix()].bounds,
+            };
             match item {
                 Item::PushClip { rect, radius } => {
-                    let r = scale_rect(rect, scale, ox, oy);
-                    let parent = p.clips[clip_id.ix()].clone();
-                    let mut bounds = parent.bounds.intersect(&r.to_pixels());
-                    let start = to_u32(p.soft.len());
-                    // Keep the innermost MAX_SOFT_CLIPS soft clips: deeper nesting is clipped by the
-                    // integer bounds only, which bounds the memory a hostile list can use.
-                    let from = (parent.soft.end.ix())
-                        .saturating_sub(MAX_SOFT_CLIPS - 1)
-                        .max(parent.soft.start.ix());
-                    let existing: Vec<(Rect, [f32; 4])> =
-                        p.soft[from..parent.soft.end.ix()].to_vec();
-                    p.soft.extend(existing);
-                    let rad = (radius.max(0.0) * scale).min(r.w.min(r.h) * 0.5);
-                    if rad > 0.0 || !is_aligned(&r) {
-                        p.soft.push((r, [rad; 4]));
-                    }
-                    if r.is_empty() {
-                        bounds = PixelRect::default();
-                    }
-                    p.clips.push(Clip {
-                        bounds,
-                        soft: start..to_u32(p.soft.len()),
-                    });
-                    clip_stack.push((p.clips.len() - 1) as u32);
+                    let id = p.push_clip(&cur, rect, *radius);
+                    st.clip.push(id);
                 }
                 Item::PopClip => {
-                    if clip_stack.len() > 2 {
-                        clip_stack.pop();
+                    if st.clip.len() > 2 {
+                        st.clip.pop();
                     }
                 }
                 Item::PushOpacity { alpha, overlap } => {
                     if *overlap {
-                        let idx = p.prims.len();
-                        p.prims.push(Prim {
-                            kind: Kind::LayerBegin {
-                                alpha: *alpha,
-                                end: usize::MAX,
-                            },
-                            bounds: PixelRect::default(),
-                            clip: clip_id,
-                        });
-                        layer_stack.push(idx);
-                        alpha_stack.push((*alpha, true));
+                        st.layer.push(p.begin_layer(*alpha, clip));
+                        st.alpha.push((*alpha, true));
                     } else {
-                        opacity_stack.push(opacity);
+                        st.opacity.push(opacity);
                         opacity = div255(opacity * u32::from(*alpha));
-                        alpha_stack.push((*alpha, false));
+                        st.alpha.push((*alpha, false));
                     }
                 }
-                Item::PopOpacity => match alpha_stack.pop() {
+                Item::PopOpacity => match st.alpha.pop() {
                     Some((alpha, true)) => {
-                        if let Some(b) = layer_stack.pop() {
-                            let end = p.prims.len();
-                            // Layer bounds: union of what the children touched, clipped.
-                            let mut ub = PixelRect::default();
-                            for q in &p.prims[b + 1..end] {
-                                ub = union_px(ub, q.bounds);
-                            }
-                            let cb = p.clips[p.prims[b].clip.ix()].bounds;
-                            p.prims[b].bounds = ub.intersect(&cb);
-                            if let Kind::LayerBegin { end: e, .. } = &mut p.prims[b].kind {
-                                *e = end;
-                            }
-                            let bounds = p.prims[b].bounds;
-                            p.prims.push(Prim {
-                                kind: Kind::LayerEnd { alpha },
-                                bounds,
-                                clip: p.prims[b].clip,
-                            });
+                        if let Some(b) = st.layer.pop() {
+                            p.end_layer(b, alpha);
                         }
                     }
-                    Some((_, false)) => opacity = opacity_stack.pop().unwrap_or(255),
+                    Some((_, false)) => opacity = st.opacity.pop().unwrap_or(255),
                     None => {}
                 },
-                Item::Rect { rect, radii, fill } => {
-                    let r = scale_rect(rect, scale, ox, oy);
-                    let rad = scale_radii(radii, scale, r.w, r.h);
-                    let bounds = r.to_pixels().intersect(&clip_bounds);
-                    if bounds.is_empty() {
-                        continue;
-                    }
-                    let fill = match *fill {
-                        Fill::Solid(c) => PFill::Solid(c.with_opacity(to_u8(opacity))),
-                        Fill::Linear { from, to, p0, p1 } => {
-                            let a = (r.x + p0.0 * r.w, r.y + p0.1 * r.h);
-                            let b = (r.x + p1.0 * r.w, r.y + p1.1 * r.h);
-                            let d = (b.0 - a.0, b.1 - a.1);
-                            let dd = d.0 * d.0 + d.1 * d.1;
-                            PFill::Grad {
-                                c0: from.with_opacity(to_u8(opacity)),
-                                c1: to.with_opacity(to_u8(opacity)),
-                                p0: a,
-                                d,
-                                inv: if dd > 0.0 { 1.0 / dd } else { 0.0 },
-                            }
-                        }
-                    };
-                    p.prims.push(Prim {
-                        kind: Kind::Rrect {
-                            rect: r,
-                            radii: rad,
-                            fill,
-                        },
-                        bounds,
-                        clip: clip_id,
-                    });
-                }
+                Item::Rect { rect, radii, fill } => p.rrect(&cur, rect, radii, fill),
                 Item::Border {
                     rect,
                     radii,
                     width,
                     color,
-                } => {
-                    let r = scale_rect(rect, scale, ox, oy);
-                    let bw = (width.max(0.0) * scale).min(r.w.min(r.h) * 0.5);
-                    if bw <= 0.0 {
-                        continue;
-                    }
-                    let bounds = r.to_pixels().intersect(&clip_bounds);
-                    if bounds.is_empty() {
-                        continue;
-                    }
-                    let ro = scale_radii(radii, scale, r.w, r.h);
-                    let inner = Rect::new(r.x + bw, r.y + bw, r.w - 2.0 * bw, r.h - 2.0 * bw);
-                    let ri = ro.map(|v| (v - bw).max(0.0));
-                    p.prims.push(Prim {
-                        kind: Kind::Border {
-                            outer: r,
-                            ro,
-                            inner,
-                            ri,
-                            color: color.with_opacity(to_u8(opacity)),
-                        },
-                        bounds,
-                        clip: clip_id,
-                    });
-                }
+                } => p.border(&cur, rect, radii, *width, *color),
                 Item::Shadow {
                     rect,
                     radii,
@@ -394,134 +328,276 @@ fn prepare(
                     dy,
                     color,
                 } => {
-                    let s = scale;
-                    let base = scale_rect(rect, s, ox, oy);
-                    let sp = spread * s;
-                    let cast = Rect::new(
-                        base.x + dx * s - sp,
-                        base.y + dy * s - sp,
-                        base.w + 2.0 * sp,
-                        base.h + 2.0 * sp,
-                    );
-                    let rad = Radii(radii.0.map(|v| (v * s + sp).max(0.0)))
-                        .fitted(cast.w, cast.h)
-                        .0;
-                    let blur_px = (blur.max(0.0) * s).min(256.0);
-                    let margin = ceil_i32(blur_px * 1.5) + 2;
-                    let area = cast.to_pixels();
-                    let ext = PixelRect {
-                        x0: area.x0 - margin,
-                        y0: area.y0 - margin,
-                        x1: area.x1 + margin,
-                        y1: area.y1 + margin,
-                    };
-                    let vis = ext.intersect(&clip_bounds);
-                    if vis.is_empty() || cast.is_empty() {
-                        continue;
-                    }
-                    let (mw, mh) = (ext.width(), ext.height());
-                    if i64::from(mw) * i64::from(mh) > 16_000_000 {
-                        continue;
-                    }
-                    let mut mask = vec![0u8; (mw * mh).ix()];
-                    for y in 0..mh {
-                        for x in 0..mw {
-                            let c = rrect_cov(
-                                (ext.x0 + x) as f32 + 0.5,
-                                (ext.y0 + y) as f32 + 0.5,
-                                &cast,
-                                &rad,
-                            );
-                            mask[(y * mw + x).ix()] = to_u8(cov_u8(c));
-                        }
-                    }
-                    box_blur3(&mut mask, mw.ix(), mh.ix(), blur_px);
-                    let off = p.masks.len();
-                    p.masks.extend_from_slice(&mask);
-                    p.prims.push(Prim {
-                        kind: Kind::Mask {
-                            ox: ext.x0,
-                            oy: ext.y0,
-                            w: mw,
-                            h: mh,
-                            off,
-                            color: color.with_opacity(to_u8(opacity)),
-                        },
-                        bounds: vis,
-                        clip: clip_id,
-                    });
+                    let sh = crate::paint::list::Shadow::new(*blur, *spread, *dx, *dy, *color);
+                    p.shadow(&cur, rect, radii, &sh);
                 }
                 Item::Glyphs {
                     font,
                     size,
                     color,
                     glyphs: range,
-                } => {
-                    let color = color.with_opacity(to_u8(opacity));
-                    let dev_size = size * scale;
-                    for g in list.glyph_slice(range) {
-                        let x = (g.x + ox) * scale;
-                        let y = (g.y + oy) * scale;
-                        let (xi, sub) = split_subpixel(x);
-                        let yi = floor_i32(y + 0.5);
-                        let Some(gr) = glyphs.glyph(*font, g.id, dev_size, sub) else {
-                            continue;
-                        };
-                        let (gw, gh) = (i32::from(gr.width), i32::from(gr.height));
-                        let gx = xi + i32::from(gr.left);
-                        let gy = yi - i32::from(gr.top);
-                        let bounds = PixelRect {
-                            x0: gx,
-                            y0: gy,
-                            x1: gx + gw,
-                            y1: gy + gh,
-                        }
-                        .intersect(&clip_bounds);
-                        if bounds.is_empty() {
-                            continue;
-                        }
-                        let off = p.masks.len();
-                        for row in 0..gh.ix() {
-                            p.masks.extend_from_slice(
-                                &gr.data[row * gr.stride..row * gr.stride + gw.ix()],
-                            );
-                        }
-                        p.prims.push(Prim {
-                            kind: Kind::Mask {
-                                ox: gx,
-                                oy: gy,
-                                w: gw,
-                                h: gh,
-                                off,
-                                color,
-                            },
-                            bounds,
-                            clip: clip_id,
-                        });
-                    }
-                }
+                } => p.glyphs(&cur, glyphs, *font, *size, *color, list.glyph_slice(range)),
             }
         }
         // Close any layer left open by an unbalanced list.
-        while let Some(b) = layer_stack.pop() {
-            let end = p.prims.len();
-            let mut ub = PixelRect::default();
-            for q in &p.prims[b + 1..end] {
-                ub = union_px(ub, q.bounds);
-            }
-            p.prims[b].bounds = ub;
-            if let Kind::LayerBegin { end: e, alpha } = &mut p.prims[b].kind {
-                *e = end;
-                let a = *alpha;
-                p.prims.push(Prim {
-                    kind: Kind::LayerEnd { alpha: a },
-                    bounds: ub,
-                    clip: root_clip,
-                });
-            }
+        while let Some(b) = st.layer.pop() {
+            p.close_open_layer(b, root_clip);
         }
     }
     p
+}
+
+impl Prepared {
+    /// A clip inside the current one; returns its id.
+    fn push_clip(&mut self, cur: &Cur, rect: &Rect, radius: f32) -> u32 {
+        let r = cur.rect(rect);
+        let parent = self.clips[cur.clip.ix()].clone();
+        let mut bounds = parent.bounds.intersect(&r.to_pixels());
+        let start = to_u32(self.soft.len());
+        // Keep the innermost MAX_SOFT_CLIPS soft clips: deeper nesting is clipped by the
+        // integer bounds only, which bounds the memory a hostile list can use.
+        let from = (parent.soft.end.ix())
+            .saturating_sub(MAX_SOFT_CLIPS - 1)
+            .max(parent.soft.start.ix());
+        let existing: Vec<(Rect, [f32; 4])> = self.soft[from..parent.soft.end.ix()].to_vec();
+        self.soft.extend(existing);
+        let rad = (radius.max(0.0) * cur.scale).min(r.w.min(r.h) * 0.5);
+        if rad > 0.0 || !is_aligned(&r) {
+            self.soft.push((r, [rad; 4]));
+        }
+        if r.is_empty() {
+            bounds = PixelRect::default();
+        }
+        self.clips.push(Clip {
+            bounds,
+            soft: start..to_u32(self.soft.len()),
+        });
+        to_u32(self.clips.len() - 1)
+    }
+
+    fn begin_layer(&mut self, alpha: u8, clip: u32) -> usize {
+        let idx = self.prims.len();
+        self.prims.push(Prim {
+            kind: Kind::LayerBegin {
+                alpha,
+                end: usize::MAX,
+            },
+            bounds: PixelRect::default(),
+            clip,
+        });
+        idx
+    }
+
+    /// Union of what the prims after `b` touched.
+    fn touched_since(&self, b: usize) -> PixelRect {
+        let mut ub = PixelRect::default();
+        for q in &self.prims[b + 1..] {
+            ub = union_px(ub, q.bounds);
+        }
+        ub
+    }
+
+    fn end_layer(&mut self, b: usize, alpha: u8) {
+        let end = self.prims.len();
+        // Layer bounds: union of what the children touched, clipped.
+        let cb = self.clips[self.prims[b].clip.ix()].bounds;
+        self.prims[b].bounds = self.touched_since(b).intersect(&cb);
+        if let Kind::LayerBegin { end: e, .. } = &mut self.prims[b].kind {
+            *e = end;
+        }
+        let bounds = self.prims[b].bounds;
+        self.prims.push(Prim {
+            kind: Kind::LayerEnd { alpha },
+            bounds,
+            clip: self.prims[b].clip,
+        });
+    }
+
+    fn close_open_layer(&mut self, b: usize, root_clip: u32) {
+        let end = self.prims.len();
+        let ub = self.touched_since(b);
+        self.prims[b].bounds = ub;
+        if let Kind::LayerBegin { end: e, alpha } = &mut self.prims[b].kind {
+            *e = end;
+            let a = *alpha;
+            self.prims.push(Prim {
+                kind: Kind::LayerEnd { alpha: a },
+                bounds: ub,
+                clip: root_clip,
+            });
+        }
+    }
+
+    fn rrect(&mut self, cur: &Cur, rect: &Rect, radii: &Radii, fill: &Fill) {
+        let r = cur.rect(rect);
+        let rad = scale_radii(radii, cur.scale, r.w, r.h);
+        let bounds = r.to_pixels().intersect(&cur.clip_bounds);
+        if bounds.is_empty() {
+            return;
+        }
+        let fill = match *fill {
+            Fill::Solid(c) => PFill::Solid(cur.color(c)),
+            Fill::Linear { from, to, p0, p1 } => {
+                let a = (r.x + p0.0 * r.w, r.y + p0.1 * r.h);
+                let b = (r.x + p1.0 * r.w, r.y + p1.1 * r.h);
+                let d = (b.0 - a.0, b.1 - a.1);
+                let dd = d.0 * d.0 + d.1 * d.1;
+                PFill::Grad {
+                    c0: cur.color(from),
+                    c1: cur.color(to),
+                    p0: a,
+                    d,
+                    inv: if dd > 0.0 { 1.0 / dd } else { 0.0 },
+                }
+            }
+        };
+        self.prims.push(Prim {
+            kind: Kind::Rrect {
+                rect: r,
+                radii: rad,
+                fill,
+            },
+            bounds,
+            clip: cur.clip,
+        });
+    }
+
+    fn border(&mut self, cur: &Cur, rect: &Rect, radii: &Radii, width: f32, color: Color) {
+        let r = cur.rect(rect);
+        let bw = (width.max(0.0) * cur.scale).min(r.w.min(r.h) * 0.5);
+        if bw <= 0.0 {
+            return;
+        }
+        let bounds = r.to_pixels().intersect(&cur.clip_bounds);
+        if bounds.is_empty() {
+            return;
+        }
+        let ro = scale_radii(radii, cur.scale, r.w, r.h);
+        let inner = Rect::new(r.x + bw, r.y + bw, r.w - 2.0 * bw, r.h - 2.0 * bw);
+        let ri = ro.map(|v| (v - bw).max(0.0));
+        self.prims.push(Prim {
+            kind: Kind::Border {
+                outer: r,
+                ro,
+                inner,
+                ri,
+                color: cur.color(color),
+            },
+            bounds,
+            clip: cur.clip,
+        });
+    }
+
+    fn shadow(&mut self, cur: &Cur, rect: &Rect, radii: &Radii, sh: &crate::paint::list::Shadow) {
+        let s = cur.scale;
+        let base = cur.rect(rect);
+        let sp = sh.spread * s;
+        let cast = Rect::new(
+            base.x + sh.dx * s - sp,
+            base.y + sh.dy * s - sp,
+            base.w + 2.0 * sp,
+            base.h + 2.0 * sp,
+        );
+        let rad = Radii(radii.0.map(|v| (v * s + sp).max(0.0)))
+            .fitted(cast.w, cast.h)
+            .0;
+        let blur_px = (sh.blur.max(0.0) * s).min(256.0);
+        let margin = ceil_i32(blur_px * 1.5) + 2;
+        let area = cast.to_pixels();
+        let ext = PixelRect {
+            x0: area.x0 - margin,
+            y0: area.y0 - margin,
+            x1: area.x1 + margin,
+            y1: area.y1 + margin,
+        };
+        let vis = ext.intersect(&cur.clip_bounds);
+        if vis.is_empty() || cast.is_empty() {
+            return;
+        }
+        let (mw, mh) = (ext.width(), ext.height());
+        if i64::from(mw) * i64::from(mh) > 16_000_000 {
+            return;
+        }
+        let mut mask = vec![0u8; (mw * mh).ix()];
+        for y in 0..mh {
+            for x in 0..mw {
+                let c = rrect_cov(
+                    (ext.x0 + x) as f32 + 0.5,
+                    (ext.y0 + y) as f32 + 0.5,
+                    &cast,
+                    &rad,
+                );
+                mask[(y * mw + x).ix()] = to_u8(cov_u8(c));
+            }
+        }
+        box_blur3(&mut mask, mw.ix(), mh.ix(), blur_px);
+        let off = self.masks.len();
+        self.masks.extend_from_slice(&mask);
+        self.prims.push(Prim {
+            kind: Kind::Mask {
+                ox: ext.x0,
+                oy: ext.y0,
+                w: mw,
+                h: mh,
+                off,
+                color: cur.color(sh.color),
+            },
+            bounds: vis,
+            clip: cur.clip,
+        });
+    }
+
+    fn glyphs(
+        &mut self,
+        cur: &Cur,
+        src: &mut dyn GlyphSource,
+        font: crate::text::fontdb::FontId,
+        size: f32,
+        color: Color,
+        run: &[crate::paint::list::PosGlyph],
+    ) {
+        let color = cur.color(color);
+        let dev_size = size * cur.scale;
+        for g in run {
+            let x = (g.x + cur.ox) * cur.scale;
+            let y = (g.y + cur.oy) * cur.scale;
+            let (xi, sub) = split_subpixel(x);
+            let yi = floor_i32(y + 0.5);
+            let Some(gr) = src.glyph(font, g.id, dev_size, sub) else {
+                continue;
+            };
+            let (gw, gh) = (i32::from(gr.width), i32::from(gr.height));
+            let gx = xi + i32::from(gr.left);
+            let gy = yi - i32::from(gr.top);
+            let bounds = PixelRect {
+                x0: gx,
+                y0: gy,
+                x1: gx + gw,
+                y1: gy + gh,
+            }
+            .intersect(&cur.clip_bounds);
+            if bounds.is_empty() {
+                continue;
+            }
+            let off = self.masks.len();
+            for row in 0..gh.ix() {
+                self.masks
+                    .extend_from_slice(&gr.data[row * gr.stride..row * gr.stride + gw.ix()]);
+            }
+            self.prims.push(Prim {
+                kind: Kind::Mask {
+                    ox: gx,
+                    oy: gy,
+                    w: gw,
+                    h: gh,
+                    off,
+                    color,
+                },
+                bounds,
+                clip: cur.clip,
+            });
+        }
+    }
 }
 
 fn union_px(a: PixelRect, b: PixelRect) -> PixelRect {
@@ -587,7 +663,7 @@ fn blur_line(src: &[u8], dst: &mut [u8], r: usize, _stride: usize, n: usize) {
         if i > r {
             sum -= u32::from(src[i - r - 1]);
         }
-        dst[i] = ((sum + (to_u32(size)) / 2) / to_u32(size)) as u8;
+        dst[i] = to_u8((sum + (to_u32(size)) / 2) / to_u32(size));
     }
 }
 
@@ -718,7 +794,7 @@ fn draw_prim(buf: &mut TileBuf, p: &Prepared, prim: &Prim) {
             if soft {
                 cov = div255(cov * clip_cov(p, prim.clip, fx, fy));
             }
-            let i = (((y - buf.y0) * buf.w + (x - buf.x0)) * 4) as usize;
+            let i = (((y - buf.y0) * buf.w + (x - buf.x0)) * 4).ix();
             over(&mut buf.px[i..i + 4], src, cov);
         }
     }
@@ -791,7 +867,7 @@ pub fn render(
             // Load the current pixels.
             let mut base = TileBuf::blank(x0, y0, tw, th);
             for row in 0..th {
-                let s = (((y0 + row) * w + x0) * 4) as usize;
+                let s = (((y0 + row) * w + x0) * 4).ix();
                 let d = (row * tw * 4).ix();
                 base.px[d..d + (tw * 4).ix()].copy_from_slice(&img.data[s..s + (tw * 4).ix()]);
             }
@@ -826,7 +902,7 @@ pub fn render(
             }
             let base = &stack[0];
             for row in 0..th {
-                let d = (((y0 + row) * w + x0) * 4) as usize;
+                let d = (((y0 + row) * w + x0) * 4).ix();
                 let s = (row * tw * 4).ix();
                 img.data[d..d + (tw * 4).ix()].copy_from_slice(&base.px[s..s + (tw * 4).ix()]);
             }

@@ -3,25 +3,35 @@
 //! of the shard. `wol app build` runs it. It uses the parser the engine's dev loader uses.
 //!
 //! ```text
-//! wolkit-stylec [--out build/styles.wsb] [--crystal src/gen/styles.cr] [--deny-warnings] SHEET...
+//! wolkit-stylec [--out build/styles.wsb] [--crystal src/gen/styles.cr] [--spdx ID] [--deny-warnings] SHEET...
 //! wolkit-stylec --doc          print docs/modules/wolkit-style.md
 //! ```
 //! Exit status: 0 compiled, 1 the sheets have errors (or warnings with `--deny-warnings`), 2 the
-//! command line is wrong or a file cannot be read or written.
+//! command line is wrong or a file cannot be read or written. `--spdx` is the licence of the app the
+//! Crystal file belongs to (default `BSD-2-Clause`, the app template's).
 use std::process::ExitCode;
 use wolkit::style::{compile_sources, doc, wsb};
 
 fn usage() -> ExitCode {
     eprintln!(
-        "usage: wolkit-stylec [--out FILE.wsb] [--crystal FILE.cr] [--deny-warnings] SHEET.wolcss..."
+        "usage: wolkit-stylec [--out FILE.wsb] [--crystal FILE.cr] [--spdx ID] [--deny-warnings] SHEET.wolcss..."
     );
     eprintln!("       wolkit-stylec --doc");
     ExitCode::from(2)
 }
 
+/// An SPDX expression as a line can hold it: ids, `AND`, `OR`, `WITH`, parentheses.
+fn spdx_ok(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 120
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b".-+() ".contains(&b))
+}
+
 fn main() -> ExitCode {
     let mut out = None;
     let mut crystal = None;
+    let mut spdx = String::from("BSD-2-Clause");
     let mut deny = false;
     let mut files: Vec<String> = Vec::new();
     let mut args = std::env::args().skip(1);
@@ -38,6 +48,10 @@ fn main() -> ExitCode {
             "--crystal" => match args.next() {
                 Some(v) => crystal = Some(v),
                 None => return usage(),
+            },
+            "--spdx" => match args.next() {
+                Some(v) if spdx_ok(&v) => spdx = v,
+                _ => return usage(),
             },
             "--deny-warnings" => deny = true,
             "-h" | "--help" => return usage(),
@@ -86,7 +100,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
             if let Some(path) = crystal
-                && let Err(e) = std::fs::write(&path, wsb::crystal_constants(&c.table))
+                && let Err(e) = std::fs::write(&path, wsb::crystal_constants(&c.table, &spdx))
             {
                 eprintln!("wolkit-stylec: {path} cannot be written: {e}.");
                 return ExitCode::from(2);

@@ -19,6 +19,28 @@ pub struct wolkit_engine {
 
 handle::tagged!(wolkit_engine, 0x57_4f_4c_4b_49_54_45_01);
 
+/// From the environment: whether `WOLKIT_BACKEND=native` opts in to the native backend, and the
+/// session it runs in (`LC_ALL`, `LC_CTYPE` or `LANG`, the first set; `XDG_ACTIVATION_TOKEN`).
+fn native_settings(
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> (bool, crate::window::native::Session) {
+    let text = |k: &str| {
+        var(k)
+            .and_then(|v| v.into_string().ok())
+            .filter(|v| !v.is_empty())
+    };
+    let native = text("WOLKIT_BACKEND").is_some_and(|v| v == "native");
+    let locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+        .iter()
+        .find_map(|k| text(k))
+        .unwrap_or_default();
+    let session = crate::window::native::Session {
+        locale,
+        activation_token: text("XDG_ACTIVATION_TOKEN"),
+    };
+    (native, session)
+}
+
 /// `WOLKIT_VERSION_MAJOR << 16 | MINOR << 8 | PATCH`.
 #[unsafe(no_mangle)]
 pub extern "C" fn wolkit_version() -> u32 {
@@ -50,6 +72,11 @@ pub unsafe extern "C" fn wolkit_engine_create(
         if let Some(path) = crate::window::kit::socket_path(var) {
             engine.set_kit_socket(&path);
         }
+        // The native backend, only when asked for (it is not the default in this release), and
+        // what it needs from the session: the locale for compose and the launcher's token.
+        let (native, session) = native_settings(var);
+        crate::window::native::set_opt_in(native);
+        crate::window::native::set_session(session);
         // The person's fonts, indexed once per process (the first engine wins).
         use crate::text::system::{default_font_roots, default_index_path};
         crate::text::measure::install(&default_font_roots(var), &default_index_path(var));
@@ -202,4 +229,40 @@ pub unsafe extern "C" fn wolkit_engine_set_environment(
         let e = unsafe { borrow(engine) }?;
         e.engine.set_environment(dark != 0, accent_rgb, flags)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::native_settings;
+    use std::ffi::OsString;
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<OsString> + 'a {
+        move |k| {
+            pairs
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| OsString::from(v))
+        }
+    }
+
+    #[test]
+    fn native_is_off_unless_the_environment_asks_for_it() {
+        assert!(!native_settings(env(&[])).0);
+        assert!(!native_settings(env(&[("WOLKIT_BACKEND", "kit")])).0);
+        assert!(native_settings(env(&[("WOLKIT_BACKEND", "native")])).0);
+    }
+
+    #[test]
+    fn the_session_takes_the_first_locale_set_and_the_launch_token() {
+        let (_, s) = native_settings(env(&[
+            ("LANG", "de_DE.UTF-8"),
+            ("LC_CTYPE", "fr_FR.UTF-8"),
+            ("LC_ALL", ""),
+            ("XDG_ACTIVATION_TOKEN", "tok"),
+        ]));
+        assert_eq!(s.locale, "fr_FR.UTF-8");
+        assert_eq!(s.activation_token.as_deref(), Some("tok"));
+        let (_, none) = native_settings(env(&[]));
+        assert!(none.locale.is_empty() && none.activation_token.is_none());
+    }
 }

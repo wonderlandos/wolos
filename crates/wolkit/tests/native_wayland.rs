@@ -27,7 +27,8 @@ use wayland_protocols::xdg::decoration::zv1::server::{
 use wayland_protocols::xdg::shell::server::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_server::protocol::{
     wl_buffer, wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
-    wl_data_source, wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_data_source, wl_keyboard, wl_output, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
+    wl_subcompositor, wl_subsurface, wl_surface,
 };
 use wayland_server::{
     Client, DataInit, Dispatch, Display, DisplayHandle, GlobalDispatch, New, Resource,
@@ -95,6 +96,7 @@ macro_rules! global {
 
 global!(
     wl_compositor::WlCompositor,
+    wl_subcompositor::WlSubcompositor,
     wl_shm::WlShm,
     xdg_wm_base::XdgWmBase,
     zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
@@ -133,6 +135,7 @@ macro_rules! logged {
 
 logged!(
     wl_callback::WlCallback => "callback",
+    wl_region::WlRegion => "region",
     wl_output::WlOutput => "output",
     wl_pointer::WlPointer => "pointer",
     wl_keyboard::WlKeyboard => "keyboard",
@@ -165,8 +168,17 @@ impl Dispatch<wl_compositor::WlCompositor, ()> for Comp {
         d: &mut DataInit<'_, Self>,
     ) {
         match r {
-            wl_compositor::Request::CreateSurface { id } => s.o.surface = Some(d.init(id, ())),
-            wl_compositor::Request::CreateRegion { .. } => s.log("compositor.create_region"),
+            wl_compositor::Request::CreateSurface { id } => {
+                // The first surface is the window; later ones are subsurfaces.
+                let surface = d.init(id, ());
+                if s.o.surface.is_none() {
+                    s.o.surface = Some(surface);
+                }
+            }
+            wl_compositor::Request::CreateRegion { id } => {
+                d.init(id, ());
+                s.log("compositor.create_region");
+            }
             _ => {}
         }
     }
@@ -210,6 +222,43 @@ impl Dispatch<wl_surface::WlSurface, ()> for Comp {
                 s.log(format!("surface.damage_buffer {width}x{height}"))
             }
             other => s.log(format!("surface.{other:?}")),
+        }
+    }
+}
+
+impl Dispatch<wl_subcompositor::WlSubcompositor, ()> for Comp {
+    fn request(
+        s: &mut Self,
+        _: &Client,
+        _: &wl_subcompositor::WlSubcompositor,
+        r: wl_subcompositor::Request,
+        _: &(),
+        _: &DisplayHandle,
+        d: &mut DataInit<'_, Self>,
+    ) {
+        if let wl_subcompositor::Request::GetSubsurface { id, .. } = r {
+            d.init(id, ());
+            s.log("subcompositor.get_subsurface");
+        }
+    }
+}
+
+impl Dispatch<wl_subsurface::WlSubsurface, ()> for Comp {
+    fn request(
+        s: &mut Self,
+        _: &Client,
+        _: &wl_subsurface::WlSubsurface,
+        r: wl_subsurface::Request,
+        _: &(),
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
+        use wl_subsurface::Request as R;
+        match r {
+            R::SetPosition { x, y } => s.log(format!("subsurface.position {x},{y}")),
+            R::SetDesync => s.log("subsurface.desync"),
+            R::Destroy => s.log("subsurface.destroy"),
+            other => s.log(format!("subsurface.{other:?}")),
         }
     }
 }
@@ -735,6 +784,7 @@ fn serve(
     let mut display: Display<Comp> = Display::new().unwrap();
     let dh = display.handle();
     dh.create_global::<Comp, wl_compositor::WlCompositor, ()>(6, ());
+    dh.create_global::<Comp, wl_subcompositor::WlSubcompositor, ()>(1, ());
     dh.create_global::<Comp, wl_shm::WlShm, ()>(1, ());
     dh.create_global::<Comp, xdg_wm_base::XdgWmBase, ()>(6, ());
     dh.create_global::<Comp, zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, ()>(1, ());
@@ -783,7 +833,7 @@ impl Rig {
         let home = std::env::temp_dir().join(format!("wolkit-native-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
         let shared = Shared::from_socket(client).unwrap();
-        let win = NativeWindow::new(shared, "org.example.native", &home).unwrap();
+        let win = NativeWindow::with_hub(shared, "org.example.native", &home, None).unwrap();
         let mut core = WindowCore::new(1, "Native test", 320, 200, 0, Environment::default());
         core.min = min;
         core.max = max;
@@ -1103,6 +1153,11 @@ fn keys_through_the_keymap_type_into_the_focused_field() {
     r.send(Cmd::Key(14, true));
     r.send(Cmd::Key(14, false));
     r.until("backspace", |r| r.core.scene.text(1) == "hell");
+    assert_eq!(r.core.scene.text(1), "hell");
+    assert!(
+        r.win.input.field.editor.can_undo(),
+        "typing went through the editor"
+    );
 }
 
 #[test]
@@ -1224,4 +1279,105 @@ fn dead_keys_compose_through_the_locale_table() {
     assert_eq!(e.keysym, 0xe9);
     let plain = k.key(30, true).expect("a plain key");
     assert_eq!(plain.text, "a");
+}
+
+#[test]
+fn wsi_handles_exist_while_shown_and_the_cpu_path_draws() {
+    let mut r = Rig::new("wsi", (0, 0), (0, 0));
+    assert!(r.win.wsi_handles().is_none(), "no surface before show");
+    r.mapped(200, 100);
+    let (d, s) = r
+        .win
+        .wsi_handles()
+        .expect("display and surface pointers while shown");
+    assert!(!d.is_null() && !s.is_null() && d != s);
+    assert!(
+        !r.win.on_gpu(),
+        "a window made with a given hub draws on the CPU"
+    );
+    let mut sink = Sink {
+        events: &mut r.events,
+        window: 1,
+        seq: 0,
+    };
+    r.win.close(&mut r.core, &mut sink);
+    assert!(r.win.wsi_handles().is_none(), "hidden: the surface is gone");
+}
+
+#[test]
+fn gpu_surfaces_are_desync_subsurfaces_placed_by_layout() {
+    use wolkit::scene::prop::{DIM_PX, id};
+    let px = |v: f32| [DIM_PX, v.to_bits()];
+    let mut r = Rig::new("subsurface", (0, 0), (0, 0));
+    r.mapped(300, 200);
+    r.apply(|p| {
+        p.create(5, Kind::Surface).insert(0, 5, APPEND);
+        p.set_prop(5, id::POSITION, &[1]);
+        p.set_prop(5, id::INSET_LEFT, &px(20.0));
+        p.set_prop(5, id::INSET_TOP, &px(30.0));
+        p.set_prop(5, id::WIDTH, &px(100.0));
+        p.set_prop(5, id::HEIGHT, &px(50.0));
+    });
+    let g = r
+        .win
+        .create_gpu_surface(&mut r.core, 5)
+        .expect("a GPU surface");
+    assert!(!g.display.is_null() && !g.surface.is_null());
+    assert_eq!((g.width, g.height, g.scale), (100, 50, 1.0));
+    r.logged("the subsurface", "subsurface.position 20,30");
+    let log = r.log();
+    assert!(log.iter().any(|l| l == "subcompositor.get_subsurface"));
+    assert!(log.iter().any(|l| l == "subsurface.desync"), "{log:#?}");
+    assert!(
+        log.iter().any(|l| l.starts_with("surface.SetInputRegion")),
+        "an empty input region"
+    );
+    assert!(
+        r.win.create_gpu_surface(&mut r.core, 0).is_err(),
+        "only a surface part takes one"
+    );
+    r.events();
+    r.apply(|p| {
+        p.set_prop(5, id::WIDTH, &px(120.0));
+        p.set_prop(5, id::INSET_LEFT, &px(10.0));
+    });
+    let resized = r
+        .events()
+        .into_iter()
+        .find(|e| e.0 == ev::SURFACE_RESIZED)
+        .expect("a size change is reported");
+    assert_eq!(resized.1, 5);
+    assert_eq!((u32_at(&resized.2, 0), u32_at(&resized.2, 4)), (120, 50));
+    r.logged("the move", "subsurface.position 10,30");
+    r.win.destroy_gpu_surface(g.id);
+    r.logged("the destroy", "subsurface.destroy");
+}
+
+#[test]
+fn focus_the_app_asks_for_is_reported_once() {
+    let mut r = Rig::new("focus", (0, 0), (0, 0));
+    r.mapped(300, 200);
+    r.apply(|p| {
+        p.create(1, Kind::Button).insert(0, 1, APPEND);
+        p.set_text(1, "Go");
+        p.bind_event(1, event::bit(ev::FOCUS));
+    });
+    let _ = r.events();
+    // What `wolkit_window_set_focus` does, then a patch that changes nothing about focus.
+    let mut s = Sink {
+        events: &mut r.events,
+        window: 1,
+        seq: r.seq,
+    };
+    r.win.set_focus(&mut r.core, &mut s, 1, true);
+    r.apply(|p| {
+        p.set_text(1, "Go on");
+    });
+    let focus: Vec<_> = r
+        .events()
+        .into_iter()
+        .filter(|e| e.0 == ev::FOCUS)
+        .collect();
+    assert_eq!(focus.len(), 1, "{focus:?}");
+    assert_eq!((focus[0].1, u32_at(&focus[0].2, 0)), (1, 1));
 }

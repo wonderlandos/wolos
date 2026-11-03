@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! The shaped-run LRU.
+//! The shaped-run LRU: shaped text by run, reused across frames.
 //!
 //! Keyed by (text hash, font, size, features, direction, script). A hit is one hash of the text,
 //! one map probe, a text compare (so a 64-bit hash collision can never return wrong glyphs) and

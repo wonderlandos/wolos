@@ -351,18 +351,21 @@ fn add(scene: &dyn SceneRead, cx: &Context, t: &mut Tree, n: Idx, parent: usize,
     }
 }
 
-/// Interactive parts with no name: one sentence each. The native backend reports them as
-/// warnings; a headless test run treats them as errors (plan section 2.7).
-pub fn lint(t: &Tree) -> Vec<String> {
+/// Interactive parts with no name: the node id and one sentence each. The native backend reports
+/// them as warnings; a headless test run treats them as errors (plan section 2.7).
+pub fn lint(t: &Tree) -> Vec<(u32, String)> {
     t.nodes
         .iter()
         .skip(1)
         .filter(|n| (n.has(st::FOCUSABLE) || n.action.is_some()) && n.name.trim().is_empty())
         .map(|n| {
-            format!(
-                "Part {} ({}) has no accessible name: give it text, a text child or a name with SET_A11Y.",
+            let role = roles::role_name(n.wire_role);
+            (
                 n.id,
-                roles::role_name(n.wire_role)
+                format!(
+                    "Part {} ({role}) has no accessible name: give it text, a text child or a name with SET_A11Y.",
+                    n.id
+                ),
             )
         })
         .collect()

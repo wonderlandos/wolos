@@ -134,8 +134,19 @@ pub fn local_time() -> (u8, u8, u8) {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
     let t: libc::time_t = libc::time_t::try_from(now).unwrap_or(0);
-    // SAFETY: an all-zero `tm` is a valid value of the plain C struct (the call overwrites it).
-    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let mut tm = libc::tm {
+        tm_sec: 0,
+        tm_min: 0,
+        tm_hour: 0,
+        tm_mday: 0,
+        tm_mon: 0,
+        tm_year: 0,
+        tm_wday: 0,
+        tm_yday: 0,
+        tm_isdst: 0,
+        tm_gmtoff: 0,
+        tm_zone: std::ptr::null(),
+    };
     // SAFETY: both pointers are to live locals for the duration of the call.
     let ok = !unsafe { libc::localtime_r(&t, &mut tm) }.is_null();
     let b = |v: libc::c_int| u8::try_from(v).unwrap_or(0);

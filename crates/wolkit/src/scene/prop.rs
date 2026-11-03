@@ -389,6 +389,9 @@ mod tests {
         assert_eq!(Ease::from_u8(4), Some(Ease::InOut));
         let past = u32::try_from(Ease::ALL.len()).unwrap();
         assert!(check_value(d, &[0, 1, past]).is_err());
-        assert!(check_value(d, &[0, 3, 0]).is_err(), "durations are fast, normal or slow");
+        assert!(
+            check_value(d, &[0, 3, 0]).is_err(),
+            "durations are fast, normal or slow"
+        );
     }
 }

@@ -7,7 +7,7 @@ use crate::event::kind as ev;
 use crate::input::keys::KeyPress;
 use crate::input::{BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT, Request, edit, focus, keys, pointer};
 use crate::scene::prop::id;
-use crate::scene::{Idx, Kind, NIL, SceneRead};
+use crate::scene::{Idx, Kind, NIL, SceneRead, SceneWrite};
 use crate::window::route::receiver;
 use crate::window::{
     BACKEND_NATIVE, Backend, POINTER_DOWN, POINTER_LEAVE, POINTER_MOVE, POINTER_SCROLL, POINTER_UP,
@@ -651,6 +651,105 @@ impl NativeWindow {
         }
     }
 
+    /// Build the accessibility tree and hand it to the hub (with change signals) while an
+    /// assistive technology listens; in debug builds also report nameless controls once each.
+    pub(super) fn publish_a11y(&mut self, w: &WindowCore, s: Option<&mut Sink>) {
+        let Some((hub, slot)) = self.a11y.clone() else {
+            return;
+        };
+        let active = hub.active();
+        if !active && !(cfg!(debug_assertions) && s.is_some()) {
+            return;
+        }
+        let tree = crate::a11y::build(
+            &w.scene,
+            &crate::a11y::Context {
+                window: w.id,
+                title: &w.title,
+                active: self.activated || self.keyboard_focus,
+                resizable: w.flags & WINDOW_FIXED_SIZE == 0,
+                field: Some(&self.input.field),
+            },
+        );
+        if let Some(s) = s {
+            if self.linted.len() > 4096 {
+                self.linted.clear();
+            }
+            for (id, msg) in crate::a11y::lint(&tree) {
+                if self.linted.insert(id) {
+                    s.diagnostic(1, &msg);
+                }
+            }
+        }
+        if !active {
+            return;
+        }
+        let generation = hub.generation();
+        let old = hub.publish(slot, tree.clone());
+        if generation == self.a11y_gen
+            && let Some(old) = old
+        {
+            crate::a11y::bridge::changes(&hub, slot, &old, &tree);
+        }
+        self.a11y_gen = generation;
+    }
+
+    /// Do what an assistive technology asked.
+    fn a11y_actions(&mut self, w: &mut WindowCore, s: &mut Sink) {
+        use crate::a11y::hub::Action;
+        let Some((hub, slot)) = self.a11y.clone() else {
+            return;
+        };
+        hub.drain_wake();
+        let actions = hub.take_actions(slot);
+        let republish = self.a11y_gen != hub.generation() && hub.active();
+        if actions.is_empty() && !republish {
+            return;
+        }
+        for (id, a) in actions {
+            let i = crate::scene::NodeId(id).slot();
+            if !w.scene.is_live(i) || w.scene.id(i).0 != id {
+                continue;
+            }
+            match a {
+                Action::Default => {
+                    if !pointer::activate(w, s, i, 0)
+                        && let Some(r) = receiver(&w.scene, i, ev::A11Y_ACTION)
+                    {
+                        s.emit(ev::A11Y_ACTION, w.scene.id(r).0, &0u32.to_le_bytes(), &[]);
+                    }
+                }
+                Action::Focus => {
+                    focus::set_focus(w, s, &mut self.input, i, true);
+                    let r = edit::focus_changed(w, &mut self.input);
+                    self.request(w, s, r);
+                }
+                Action::Caret(c) => self.a11y_select(w, i, c, c),
+                Action::Select(a, b) => self.a11y_select(w, i, a, b),
+                Action::Value(v) => pointer::set_slider(w, s, i, v as f32),
+                Action::ScrollTo => keys::scroll_into_view(w, s, i),
+            }
+        }
+        self.after_input(w);
+        // A fresh export (an assistive technology just attached) gets the current tree now.
+        self.publish_a11y(w, Some(s));
+    }
+
+    /// Caret or selection (character offsets) in the focused field.
+    fn a11y_select(&mut self, w: &mut WindowCore, node: Idx, anchor: usize, head: usize) {
+        if self.input.field.node() != node {
+            return;
+        }
+        let text = self.input.field.editor.text();
+        let byte = |c: usize| text.char_indices().nth(c).map_or(text.len(), |(b, _)| b);
+        self.input
+            .field
+            .editor
+            .set_selection(byte(anchor), byte(head));
+        w.scene
+            .mark_dirty(node, crate::scene::dirty::PAINT | crate::scene::dirty::A11Y);
+    }
+
     fn pastes(&mut self, w: &mut WindowCore, s: &mut Sink) {
         let done = self.clip.poll();
         for t in done {
@@ -708,7 +807,19 @@ impl Backend for NativeWindow {
         Ok(())
     }
 
+    fn set_focus(&mut self, w: &mut WindowCore, s: &mut Sink, to: Idx, visible: bool) {
+        // Through the input state, so the next `focus::sync` sees no change to report again.
+        focus::set_focus(w, s, &mut self.input, to, visible);
+        let r = edit::focus_changed(w, &mut self.input);
+        self.request(w, s, r);
+    }
+
     fn committed(&mut self, w: &mut WindowCore, s: &mut Sink) -> crate::error::Result<()> {
+        if !self.subs.list.is_empty() {
+            pipeline::ensure_layout(w);
+            let scale = self.scale();
+            self.subs.follow(w, s, scale);
+        }
         if focus::sync(w, s, &mut self.input) {
             let r = edit::focus_changed(w, &mut self.input);
             self.request(w, s, r);
@@ -717,20 +828,30 @@ impl Backend for NativeWindow {
         if w.shown && self.pacer.request() {
             self.draw(w);
         }
+        self.publish_a11y(w, Some(s));
         Ok(())
     }
 
     fn pump(&mut self, w: &mut WindowCore, s: &mut Sink) {
         self.read();
         self.handle_all(w, s);
+        if !self.subs.list.is_empty() {
+            pipeline::ensure_layout(w);
+            let scale = self.scale();
+            self.subs.follow(w, s, scale);
+        }
         if self.repeat_timer.is_some() {
             self.repeat_fired(w, s);
         }
         self.theme_changed(w, s);
         self.pastes(w, s);
+        self.a11y_actions(w, s);
         // Moves wait for the frame while one is outstanding; an idle window routes them now.
         if !self.pacer.is_waiting() {
             self.flush_pointer(w, s);
+        }
+        for n in std::mem::take(&mut self.notes) {
+            s.diagnostic(1, &n);
         }
         self.report_lost(s);
         self.flush();
@@ -745,6 +866,9 @@ impl Backend for NativeWindow {
             v.push(t.fd());
         }
         self.clip.fds(&mut v);
+        if let Some((h, _)) = &self.a11y {
+            v.push(h.wake_fd());
+        }
         v
     }
 
@@ -765,11 +889,37 @@ impl Backend for NativeWindow {
                 "The pixel buffer needs {n} bytes for a {bw} by {bh} window."
             )));
         }
-        crate::cpu::render(&w.scene, bw, bh, scale, &w.env, &mut out[..n]);
+        pipeline::render_rgba(w, bw, bh, scale, &mut out[..n]);
         Ok((bw, bh))
     }
 
+    fn create_subsurface(
+        &mut self,
+        w: &mut WindowCore,
+        node: Idx,
+        _width: u32,
+        _height: u32,
+    ) -> crate::error::Result<crate::window::Subsurface> {
+        // The size follows the node's layout (`SURFACE_RESIZED` reports changes).
+        let g = self.create_gpu_surface(w, node)?;
+        Ok(crate::window::Subsurface {
+            id: g.id,
+            display: g.display,
+            surface: g.surface,
+            width: g.width,
+            height: g.height,
+            scale: g.scale,
+        })
+    }
+
+    fn destroy_subsurface(&mut self, id: u32) {
+        self.destroy_gpu_surface(id);
+    }
+
     fn trim(&mut self, level: u32) {
+        if let Some(g) = &mut self.gpu {
+            g.trim();
+        }
         if level >= 1 && self.surf.is_none() {
             self.buffers.clear();
             self.rgba = Vec::new();

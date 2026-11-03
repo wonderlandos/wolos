@@ -26,11 +26,17 @@ use std::path::{Path, PathBuf};
 /// dependency was wanted for one call. `wolkit` (ADR 0039, 2026-11-03): provisional 400 when the
 /// crate was made, lowered to the count of its finished wave (the C boundary in `src/ffi/`, a
 /// `poll` call in `src/loop_/`, the counting allocator in `tests/alloc_free.rs`, the native window
-/// and GPU backends).
+/// and GPU backends). 279 -> 294 when the native backend landed (WK-W4): `window/native/sys.rs`
+/// (memfd_create, timerfd_create/settime, inotify_init1/add_watch, localtime_r, clock_gettime:
+/// std wraps none; fd ownership after each), `window/native/seat.rs` (keymap from the compositor's
+/// fd; Send for the keyboard used under the engine lock), `tests/native_wayland.rs` (the DROP
+/// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
+/// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
+/// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
-    ("wolkit", 279),
+    ("wolkit", 294),
     ("wopkg", 94),
     ("realtime", 69),
     ("xguard", 63),

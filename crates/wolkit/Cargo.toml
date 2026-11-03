@@ -23,7 +23,8 @@ unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
 # The native window backend (WK-W4): the Wayland client, keymaps and compose, and the accessibility bus.
-wayland-client = "0.31"
+# `system`: libwayland-client itself, so the GPU backend can hand its display and surface to Vulkan WSI.
+wayland-client = { version = "0.31", features = ["system"] }
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 xkbcommon = { version = "0.9", default-features = false, features = ["wayland"] }
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
@@ -38,6 +39,10 @@ wayland-protocols = { version = "0.32", features = ["server", "client", "staging
 
 [[bench]]
 name = "batch"
+harness = false
+
+[[bench]]
+name = "gpu"
 harness = false
 
 [[bench]]

@@ -209,6 +209,7 @@ fn main() {
         cpu.push(r.stats.record_ns.saturating_sub(r.stats.wait_ns) as f64);
     }
     let _ = r.wait_idle();
+    b.value("hover_damage_px", r.stats.damage_px as f64);
     let (l50, l95) = (pct(&mut latency, 50), pct(&mut latency, 95));
     println!(
         "bench gpu.input_to_submit p50={l50:.0} p95={l95:.0} n={}",
@@ -258,5 +259,15 @@ fn main() {
     let _ = r.render_image(frame(&mut c, &l, Some(&Damage::new())));
     b.value("idle_damage_px", r.stats.damage_px as f64);
     b.value("idle_draws", f64::from(r.stats.draws));
+    // Present spike (v1 vs v2): bytes written per frame for the measured damage. v1 renders the
+    // damage into the persistent target and copies damage (union buffer age, the same rectangle
+    // for a repeated update) into the swapchain image; v2 would render straight into a dmabuf.
+    for (name, px) in [("caret", 16.0f64), ("full", f64::from(W * H))] {
+        println!(
+            "bench gpu.present_{name} v1_bytes={} v2_bytes={}",
+            px * 8.0,
+            px * 4.0
+        );
+    }
     b.finish();
 }

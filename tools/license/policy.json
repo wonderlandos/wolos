@@ -72,6 +72,14 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "crates/wolkit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "wolos-crystal/shards/wolkit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "kernel/scx_wolos/**",
       "spdx": "GPL-2.0-only"
     },

@@ -204,7 +204,10 @@ pub fn run_text<S: SceneWrite + ?Sized>(
     scene: &mut S,
     styles: &Styles,
     cache: &mut LayoutCache,
-    text: (&mut crate::text::system::TextSystem, &mut crate::text::measure::TextCache),
+    text: (
+        &mut crate::text::system::TextSystem,
+        &mut crate::text::measure::TextCache,
+    ),
     width: f32,
     height: f32,
 ) {

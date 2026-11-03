@@ -3,12 +3,11 @@
 //! stream (format and limits in `gpu::canvas`). The stream is decoded and validated here, whole;
 //! a bad stream is refused with one sentence and changes nothing. The decoded items are drawn by
 //! the CPU rasteriser and the GPU renderer alike (one decoder, `gpu::canvas::Canvas::emit`).
-//! Storing the canvas on its node is the window's job: until the native backend (WK-W4) takes
-//! it, every backend answers that the window needs the native backend, after validating.
+//! The window keeps the canvas on its node (`WindowCore.canvases`) and redraws; the Kit backend
+//! refuses, because the Kit host cannot show drawings.
 
 use super::window::wolkit_window;
 use super::{borrow, bytes_in, guard, wolkit_error, wolkit_status};
-use crate::error::Error;
 use crate::gpu::canvas::Canvas;
 
 /// Longest canvas op stream per call.
@@ -30,7 +29,6 @@ pub unsafe extern "C" fn wolkit_window_canvas_submit(
         // SAFETY: pointer and length are the caller's (contract).
         let bytes = unsafe { bytes_in(ops, len, MAX_OPS, "The canvas ops") }?;
         let canvas = Canvas::decode(bytes)?;
-        let _ = (w.engine(), w.id(), node, canvas);
-        Err(Error::unavailable(crate::copy::KIT_NO_CANVAS))
+        w.engine().set_canvas(w.id(), node, canvas)
     })
 }

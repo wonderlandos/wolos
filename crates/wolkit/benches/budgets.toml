@@ -43,3 +43,20 @@ full_10k_ns = 4_000_000
 first_10k_ns = 4_500_000
 resize_10k_ns = 2_000_000
 scene_full_ns = 4_500_000
+
+[gpu]
+# WK-W5, budgets 1 2 7 9 10; *_cpu_* is main-thread time minus the slot fence wait (on lavapipe the
+# GPU is the CPU). CTO box lavapipe, 640x480 typical window, 609 instances: draws 1, input to submit
+# p50 0.80 ms / p95 1.08 ms, interaction 0.12 ms, scroll 0.045 ms, fling 0.049 ms (3000 frames
+# across all 100,000 rows), caret damage 16 px, idle 0 px and 0 draws.
+draws = 10
+input_to_submit_p50_ns = 3_000_000
+input_to_submit_p95_ns = 5_000_000
+interaction_cpu_p95_ns = 2_500_000
+scroll_cpu_p95_ns = 1_000_000
+fling_cpu_p95_ns = 1_000_000
+scroll_frames_over_budget = 0
+fling_frames_over_budget = 0
+caret_damage_px = 16
+idle_damage_px = 0
+idle_draws = 0

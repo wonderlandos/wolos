@@ -232,7 +232,11 @@ fn slider_drag_is_captured_outside_its_rectangle() {
     w.ptr(POINTER_DOWN, 150.0, 110.0, BUTTON_LEFT);
     assert_eq!(value(&mut w), vec![5.0]);
     w.ptr(POINTER_MOVE, 380.0, 250.0, 0);
-    assert_eq!(value(&mut w), vec![10.0], "past the end: clamped at the maximum");
+    assert_eq!(
+        value(&mut w),
+        vec![10.0],
+        "past the end: clamped at the maximum"
+    );
     w.ptr(POINTER_MOVE, 0.0, 250.0, 0);
     w.ptr(POINTER_UP, 0.0, 250.0, BUTTON_LEFT);
     assert_eq!(value(&mut w), vec![0.0]);

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Language bindings for the C ABIs (ADR 0020, ADR 0036, docs/modules/abi.md "Other languages"): Swift,
 //! Crystal and .NET. Guards against drift:
-//! - The Crystal `lib`s for `wol.h`, `wopkg.h` and `wol_realtime.h` and the .NET P/Invoke class are
-//!   generated from the headers (`common/bindgen.rs`) and must equal the checked-in files, in every
-//!   place they are kept (the conformance programs, the wopkg CLI, the cryswol shard). Swift imports
+//! - The Crystal `lib`s for `wol.h`, `wopkg.h`, `wol_realtime.h` and `wolkit.h` and the .NET P/Invoke
+//!   class are generated from the headers (`common/bindgen.rs`) and must equal the checked-in files,
+//!   in every place they are kept (the conformance programs, the wopkg CLI, the cryswol and wolkit
+//!   shards). Swift imports
 //!   the header itself through its module map. A header change not carried into the bindings fails here.
 //! - Every header function has a wrapper in a high layer (the shard, the wopkg CLI) or is listed in
 //!   `EXEMPT` with a reason: a new libwol call costs a wrapper in the same change (ADR 0036).
@@ -49,6 +50,16 @@ const WOPKG: Target = Target {
     link: Some("wopkg"),
     license: "GPL-2.0-or-later",
 };
+/// The UI engine (ADR 0039, plan-wolkit 5.5): its high layer is the wolkit shard.
+const WOLKIT: Target = Target {
+    header: "crates/wolkit/include/wolkit.h",
+    prefix: "wolkit_",
+    lib: "LibWolkit",
+    link: Some("wolkit"),
+    license: "BSD-2-Clause",
+};
+/// The wolkit shard, which wraps `LibWolkit`.
+const WOLKIT_SHARD: &str = "wolos-crystal/shards/wolkit";
 /// Compositor-internal and only a static archive, so no `@[Link]`; opt-in (`require "cryswol/realtime"`).
 const REALTIME: Target = Target {
     header: "crates/realtime/include/wol_realtime.h",
@@ -78,6 +89,10 @@ const CRYSTAL_LIBS: &[(Target, &[&str])] = &[
     (
         REALTIME,
         &["wolos-crystal/shards/cryswol/src/wol/realtime/lib_realtime.cr"],
+    ),
+    (
+        WOLKIT,
+        &["wolos-crystal/shards/wolkit/src/wolkit/lib_wolkit.cr"],
     ),
 ];
 
@@ -131,6 +146,17 @@ fn the_wopkg_header_model_has_every_exported_function() {
         names(&header_of(&WOPKG)),
         want,
         "wopkg.h and crates/wopkg/abi/wopkg.map disagree (or the header reader missed one)"
+    );
+}
+
+#[test]
+fn the_wolkit_header_model_has_every_exported_function() {
+    let mut want = map_symbols("crates/wolkit/abi/wolkit.map", "wolkit_");
+    want.sort();
+    assert_eq!(
+        names(&header_of(&WOLKIT)),
+        want,
+        "wolkit.h and crates/wolkit/abi/wolkit.map disagree (or the header reader missed one)"
     );
 }
 
@@ -216,6 +242,23 @@ const EXEMPT: &[(&str, &str)] = &[
         "owned once, released by the wrapper",
     ),
     ("wol_endpoint_retain", "owned once, released by the wrapper"),
+    (
+        "wolkit_engine_retain",
+        "owned once, released by the wrapper",
+    ),
+    (
+        "wolkit_window_retain",
+        "owned once, released by the wrapper",
+    ),
+    (
+        "wolkit_style_table_retain",
+        "owned once, released by the wrapper",
+    ),
+    ("wolkit_image_retain", "owned once, released by the wrapper"),
+    (
+        "wolkit_surface_retain",
+        "owned once, released by the wrapper",
+    ),
 ];
 
 /// Whole headers with no high layer of their own: the raw `lib` is the API. Drift and parser tests
@@ -225,15 +268,34 @@ const RAW_ONLY: &[(&str, &str)] = &[(
     "compositor-internal, opt-in raw layer; its consumer is the compositor plugin",
 )];
 
-/// Functions the high layer does not wrap yet. CR1 is done, so it is empty; a new header function
-/// is either wrapped in the same change or listed in EXEMPT with a reason. It may only shrink.
-const PENDING: &[&str] = &[];
+/// Functions the high layer does not wrap yet. CR1 is done, so libwol has none; a new header
+/// function is either wrapped in the same change or listed in EXEMPT with a reason. It may only
+/// shrink. The wolkit 1.0 calls below are the shard's next layer (version queries, images, canvas
+/// streams and GPU surfaces), not wrapped in its first release.
+const PENDING: &[&str] = &[
+    "wolkit_version",
+    "wolkit_version_string",
+    "wolkit_engine_get_gpu_uuid",
+    "wolkit_image_create",
+    "wolkit_image_create_rgba",
+    "wolkit_image_get_id",
+    "wolkit_image_release",
+    "wolkit_window_canvas_submit",
+    "wolkit_surface_create",
+    "wolkit_surface_release",
+    "wolkit_surface_get_size",
+    "wolkit_surface_get_vk_instance_extensions",
+    "wolkit_surface_create_vk",
+];
 
 /// The high-layer Crystal sources that call `lib` (generated `lib_*.cr` files are not wrappers).
 fn high_layer(lib: &str) -> Vec<(PathBuf, String)> {
     let mut dirs = vec![root().join(SHARD).join("src")];
     if lib == "LibWopkg" {
         dirs.push(root().join("wopkg/src"));
+    }
+    if lib == "LibWolkit" {
+        dirs = vec![root().join(WOLKIT_SHARD).join("src")];
     }
     let mut out = Vec::new();
     while let Some(d) = dirs.pop() {

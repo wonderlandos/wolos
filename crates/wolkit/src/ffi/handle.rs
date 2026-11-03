@@ -52,6 +52,7 @@ impl<T: Tagged> Default for Tag<T> {
     }
 }
 
+// A freed handle keeps a dead tag, so a later call through a stale pointer is refused, not trusted.
 impl<T> Drop for Tag<T> {
     fn drop(&mut self) {
         self.magic.store(DEAD, Ordering::Release);

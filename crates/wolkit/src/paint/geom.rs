@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn union_intersect() {
+    fn union_and_intersect_cover_both_and_the_overlap() {
         let a = Rect::new(0.0, 0.0, 10.0, 10.0);
         let b = Rect::new(5.0, 5.0, 10.0, 10.0);
         assert_eq!(a.union(&b), Rect::new(0.0, 0.0, 15.0, 15.0));
@@ -276,7 +276,7 @@ mod tests {
     }
 
     #[test]
-    fn pack_roundtrip() {
+    fn a_packed_colour_unpacks_to_itself() {
         let c = Color::rgba(1, 2, 3, 4);
         assert_eq!(Color::unpack(c.pack()), c);
     }

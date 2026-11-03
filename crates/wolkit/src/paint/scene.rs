@@ -27,9 +27,24 @@ pub struct Lower<'a, S: SceneRead + ?Sized = dyn SceneRead + 'a> {
     pub cache: &'a mut TextCache,
 }
 
+/// The drawings of canvas nodes (`wolkit_window_canvas_submit`), by slot, each with the full id
+/// it was submitted for (a reused slot does not draw a stale canvas).
+pub type Canvases =
+    std::collections::HashMap<Idx, (crate::scene::NodeId, crate::gpu::canvas::Canvas)>;
+
 /// Fill `list` (cleared first) with the scene: the window as chunk 0, then one chunk per overlay
 /// in tree order above it.
 pub fn build<S: SceneRead + ?Sized>(cx: &mut Lower<'_, S>, list: &mut DisplayList) {
+    build_with(cx, None, list);
+}
+
+/// [`build`], drawing each canvas node's submitted drawing inside its rectangle (in tree order,
+/// so later siblings and overlays stay on top).
+pub fn build_with<S: SceneRead + ?Sized>(
+    cx: &mut Lower<'_, S>,
+    canvases: Option<&Canvases>,
+    list: &mut DisplayList,
+) {
     list.clear();
     if !cx.scene.is_live(0) {
         list.finish();
@@ -38,15 +53,21 @@ pub fn build<S: SceneRead + ?Sized>(cx: &mut Lower<'_, S>, list: &mut DisplayLis
     let version = cx.scene.version();
     let mut overlays = Vec::new();
     list.begin_chunk(0, version, to_paint(cx.scene.rect(0)), (0.0, 0.0), 0);
-    node(cx, list, 0, (0.0, 0.0), 0, &mut overlays);
+    node(cx, canvases, list, 0, (0.0, 0.0), 0, &mut overlays);
     let mut z = 1;
     let mut i = 0;
     // Overlays found inside overlays are appended while this runs, and drawn above their parent.
     while i < overlays.len() {
         let (n, off) = overlays[i];
-        list.begin_chunk(cx.scene.id(n).0, version, to_paint(cx.scene.rect(n)), (0.0, 0.0), z);
+        list.begin_chunk(
+            cx.scene.id(n).0,
+            version,
+            to_paint(cx.scene.rect(n)),
+            (0.0, 0.0),
+            z,
+        );
         let mut nested = Vec::new();
-        paint_tree(cx, list, n, off, 0, &mut nested);
+        paint_tree(cx, canvases, list, n, off, 0, &mut nested);
         overlays.extend(nested);
         z += 1;
         i += 1;
@@ -61,6 +82,7 @@ fn to_paint(r: crate::scene::Rect) -> Rect {
 /// A node met while walking a chunk: an overlay is deferred to its own chunk.
 fn node<S: SceneRead + ?Sized>(
     cx: &mut Lower<'_, S>,
+    canvases: Option<&Canvases>,
     list: &mut DisplayList,
     n: Idx,
     off: (f32, f32),
@@ -71,12 +93,13 @@ fn node<S: SceneRead + ?Sized>(
         overlays.push((n, off));
         return;
     }
-    paint_tree(cx, list, n, off, depth, overlays);
+    paint_tree(cx, canvases, list, n, off, depth, overlays);
 }
 
 /// Node `n` and its subtree, translated by `off` (scroll offsets and transforms above it).
 fn paint_tree<S: SceneRead + ?Sized>(
     cx: &mut Lower<'_, S>,
+    canvases: Option<&Canvases>,
     list: &mut DisplayList,
     n: Idx,
     off: (f32, f32),
@@ -106,6 +129,13 @@ fn paint_tree<S: SceneRead + ?Sized>(
         decorate(cx, list, n, st, r, radii);
     }
     let kind = cx.scene.kind(n);
+    if kind == Kind::Canvas
+        && st.paint.visibility == Visibility::Visible
+        && let Some((id, c)) = canvases.and_then(|m| m.get(&n))
+        && *id == cx.scene.id(n)
+    {
+        c.emit(r, list);
+    }
     let scrolls = matches!(kind, Kind::Scroll | Kind::Vlist);
     let clips = scrolls || st.layout.overflow != Overflow::Visible;
     if cx.scene.first_child(n) != NIL {
@@ -113,16 +143,16 @@ fn paint_tree<S: SceneRead + ?Sized>(
             list.push_clip(r, radii.max());
         }
         let scroll = if scrolls {
-            cx.scene
-                .prop(n, id::SCROLL_OFFSET)
-                .map_or((0.0, 0.0), |v| (f32::from_bits(v.w[0]), f32::from_bits(v.w[1])))
+            cx.scene.prop(n, id::SCROLL_OFFSET).map_or((0.0, 0.0), |v| {
+                (f32::from_bits(v.w[0]), f32::from_bits(v.w[1]))
+            })
         } else {
             (0.0, 0.0)
         };
         let inner = (off.0 - scroll.0, off.1 - scroll.1);
         let mut c = cx.scene.first_child(n);
         while c != NIL {
-            node(cx, list, c, inner, depth + 1, overlays);
+            node(cx, canvases, list, c, inner, depth + 1, overlays);
             c = cx.scene.next_sibling(c);
         }
         if clips {
@@ -213,13 +243,30 @@ fn slider<S: SceneRead + ?Sized>(cx: &Lower<'_, S>, list: &mut DisplayList, n: I
     let k = ((f(id::SLIDER_VALUE, min) - min) / (max - min)).clamp(0.0, 1.0);
     let pal = cx.palette;
     let knob = r.h.min(16.0);
-    let track = Rect::new(r.x + knob / 2.0, r.y + (r.h - 4.0) / 2.0, (r.w - knob).max(0.0), 4.0);
-    list.rect(track, Radii::uniform(2.0), Fill::Solid(pal.token(Token::Control)));
+    let track = Rect::new(
+        r.x + knob / 2.0,
+        r.y + (r.h - 4.0) / 2.0,
+        (r.w - knob).max(0.0),
+        4.0,
+    );
+    list.rect(
+        track,
+        Radii::uniform(2.0),
+        Fill::Solid(pal.token(Token::Control)),
+    );
     let done = Rect::new(track.x, track.y, track.w * k, track.h);
-    list.rect(done, Radii::uniform(2.0), Fill::Solid(pal.token(Token::Accent)));
+    list.rect(
+        done,
+        Radii::uniform(2.0),
+        Fill::Solid(pal.token(Token::Accent)),
+    );
     let kx = track.x + track.w * k - knob / 2.0;
     let kr = Rect::new(kx, r.y + (r.h - knob) / 2.0, knob, knob);
-    list.rect(kr, Radii::uniform(knob / 2.0), Fill::Solid(pal.token(Token::Card)));
+    list.rect(
+        kr,
+        Radii::uniform(knob / 2.0),
+        Fill::Solid(pal.token(Token::Card)),
+    );
     list.border(kr, Radii::uniform(knob / 2.0), 1.0, pal.token(Token::Line));
 }
 
@@ -233,7 +280,9 @@ fn label<'s, S: SceneRead + ?Sized>(
     let t = scene.text(n);
     match kind {
         Kind::TextInput if t.is_empty() => {
-            let p = scene.prop(n, id::PLACEHOLDER).map(|v| scene.string(v.w[0]))?;
+            let p = scene
+                .prop(n, id::PLACEHOLDER)
+                .map(|v| scene.string(v.w[0]))?;
             (!p.is_empty()).then(|| (p.into(), ColorRef::Token(Token::Dim)))
         }
         Kind::TextInput if scene.prop(n, id::SECURE).is_some_and(|v| v.w[0] == 1) => {
@@ -284,7 +333,13 @@ fn text<S: SceneRead + ?Sized>(
     if overflows || one_line {
         list.push_clip(content, 0.0);
     }
-    push_layout(list, &layout, content.x, content.y + dy, cx.palette.resolve(color));
+    push_layout(
+        list,
+        &layout,
+        content.x,
+        content.y + dy,
+        cx.palette.resolve(color),
+    );
     if overflows || one_line {
         list.pop_clip();
     }
@@ -304,5 +359,10 @@ fn focus_ring<S: SceneRead + ?Sized>(
         return;
     }
     let ring = Radii(radii.0.map(|v| v + w));
-    list.border(r.inflate(w), ring, w, cx.palette.resolve(st.paint.outline_color));
+    list.border(
+        r.inflate(w),
+        ring,
+        w,
+        cx.palette.resolve(st.paint.outline_color),
+    );
 }

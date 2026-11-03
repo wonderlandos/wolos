@@ -55,6 +55,8 @@ pub struct WindowCore {
     pub text: crate::text::measure::SharedText,
     /// This window's paragraphs by text, width and style: layout measures them, paint draws them.
     pub text_cache: crate::text::measure::TextCache,
+    /// The submitted drawing of each canvas node (`wolkit_window_canvas_submit`).
+    pub canvases: crate::paint::scene::Canvases,
     /// Springs and tweens (`ANIM` ops) and the scratch they use.
     pub clock: crate::anim::Clock,
     pub anim_reqs: Vec<crate::scene::AnimReq>,
@@ -98,6 +100,7 @@ impl WindowCore {
             layout_cache: crate::layout::LayoutCache::new(),
             text: crate::text::measure::shared(),
             text_cache: crate::text::measure::TextCache::new(),
+            canvases: crate::paint::scene::Canvases::default(),
             clock: crate::anim::Clock::new(),
             anim_reqs: Vec::new(),
             anim_done: Vec::new(),
@@ -239,6 +242,35 @@ pub trait Backend: Send {
     }
     /// Memory Saver: drop caches. 0 light, 1 hidden window, 2 critical.
     fn trim(&mut self, _level: u32) {}
+    /// A child surface for a `surface` node, `width` by `height` logical pixels. Only a backend
+    /// with its own display has one.
+    fn create_subsurface(
+        &mut self,
+        _w: &mut WindowCore,
+        _node: crate::scene::Idx,
+        _width: u32,
+        _height: u32,
+    ) -> Result<Subsurface> {
+        Err(Error::unavailable(crate::copy::NO_GPU_SURFACE))
+    }
+    fn destroy_subsurface(&mut self, _id: u32) {}
+    /// Move keyboard focus to `to` (NIL clears it) for the app (`wolkit_window_set_focus`) and
+    /// report it once. A backend with its own input state keeps that state in step here.
+    fn set_focus(&mut self, w: &mut WindowCore, s: &mut Sink, to: Idx, visible: bool) {
+        headless::set_focus(w, s, to, visible);
+    }
+}
+
+/// A child surface the backend made for a `surface` node. The pointers are only carried to
+/// `gpu::surface::AppSurface::create`; the backend owns the objects behind them.
+#[derive(Debug)]
+pub struct Subsurface {
+    pub id: u32,
+    pub display: *mut std::ffi::c_void,
+    pub surface: *mut std::ffi::c_void,
+    pub width: u32,
+    pub height: u32,
+    pub scale: f32,
 }
 
 /// `WOLKIT_POINTER_*` kinds.

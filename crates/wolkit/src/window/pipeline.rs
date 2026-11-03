@@ -37,6 +37,25 @@ pub fn ensure_layout(w: &mut WindowCore) {
     w.laid_out = Some(key);
 }
 
+/// Draw the window on the CPU into `out` (RGBA8 straight alpha, `width * height * 4` bytes of
+/// device pixels at `scale`): style and layout first, then the scene lowered with its styles, real
+/// text and the token palette. The headless backend's `render_rgba` and a backend's `wl_shm` path.
+pub fn render_rgba(w: &mut WindowCore, width: u32, height: u32, scale: f32, out: &mut [u8]) {
+    ensure_layout(w);
+    let text = w.text.clone();
+    let mut sys = crate::text::measure::lock(&text);
+    let frame = crate::cpu::Frame {
+        scene: &w.scene,
+        styles: &w.styles,
+        env: &w.env,
+        width,
+        height,
+        scale,
+        canvases: Some(&w.canvases),
+    };
+    crate::cpu::render_frame(&frame, &mut sys, &mut w.text_cache, out);
+}
+
 /// A frame as the engine sees it: bring layout up to date, "paint", and clear the paint and
 /// accessibility bits. The headless backend has no screen to draw to, so this is also what a
 /// test's `advance_time` runs. Allocates nothing.

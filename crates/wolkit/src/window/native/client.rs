@@ -233,6 +233,9 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for Client {
 }
 
 delegate_noop!(Client: ignore wl_compositor::WlCompositor);
+delegate_noop!(Client: ignore wayland_client::protocol::wl_subcompositor::WlSubcompositor);
+delegate_noop!(Client: ignore wayland_client::protocol::wl_subsurface::WlSubsurface);
+delegate_noop!(Client: ignore wayland_client::protocol::wl_region::WlRegion);
 delegate_noop!(Client: ignore wl_shm_pool::WlShmPool);
 delegate_noop!(Client: ignore wl_data_device_manager::WlDataDeviceManager);
 delegate_noop!(Client: ignore zxdg_decoration_manager_v1::ZxdgDecorationManagerV1);

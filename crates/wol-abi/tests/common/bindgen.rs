@@ -92,7 +92,10 @@ fn param(s: &str) -> (String, Ty) {
         .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
         .map_or(0, |i| i + 1);
     let (t, name) = s.split_at(split);
-    assert!(!t.trim().is_empty(), "parameter without a type: {s}");
+    // A lone word is a type with no name (`size_t` in `f(size_t)`).
+    if t.trim().is_empty() || t.trim() == "const" {
+        return (String::new(), ty(s));
+    }
     (name.to_string(), ty(t))
 }
 
@@ -101,7 +104,13 @@ fn params(args: &str) -> Vec<(String, Ty)> {
     if args.is_empty() || args == "void" {
         return Vec::new();
     }
-    args.split(',').map(param).collect()
+    args.split(',')
+        .enumerate()
+        .map(|(i, a)| {
+            let (n, t) = param(a);
+            (if n.is_empty() { format!("arg{i}") } else { n }, t)
+        })
+        .collect()
 }
 
 /// `RET name(ARGS)` with RET possibly ending in `*`.

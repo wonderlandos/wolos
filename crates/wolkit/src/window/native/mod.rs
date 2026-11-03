@@ -20,12 +20,14 @@ mod conn;
 pub mod data;
 pub mod dmabuf;
 mod events;
+pub mod gpu;
 pub mod ime;
 pub mod mime;
 pub mod pacing;
 pub mod seat;
 pub mod shm;
 pub mod sizing;
+pub mod subsurface;
 pub mod sys;
 pub mod theme;
 
@@ -67,6 +69,8 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 pub mod copy {
     pub const NO_SHELL: &str = "The compositor does not offer the window protocols this app needs.";
     pub const LOST: &str = "The compositor closed the connection, so the window is gone.";
+    pub const NOT_SHOWN: &str = "Show the window before you put a GPU surface in it.";
+    pub const GPU_OFF: &str = "This window draws on the CPU because the GPU path could not start:";
     pub const CLIENT_SIDE: &str =
         "The compositor asked this window to draw its own title bar, which the engine does not do.";
 }
@@ -77,6 +81,7 @@ pub const BUILT: bool = true;
 /// Globals the window binds.
 struct Globals {
     compositor: wl_compositor::WlCompositor,
+    subcompositor: Option<wayland_client::protocol::wl_subcompositor::WlSubcompositor>,
     shm: wl_shm::WlShm,
     wm_base: xdg_wm_base::XdgWmBase,
     decoration: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
@@ -158,6 +163,43 @@ pub struct NativeWindow {
     lost_reported: bool,
     last_frame_ns: u64,
     outs: Vec<ime::Out>,
+    /// The accessibility hub and this window's slot in it.
+    a11y: Option<(Arc<crate::a11y::hub::Hub>, u32)>,
+    /// The hub generation the last published tree belongs to.
+    a11y_gen: u64,
+    /// Nameless controls already reported.
+    linted: std::collections::HashSet<u32>,
+    /// The GPU present path, once opened; `None` draws on the CPU into `wl_shm`.
+    gpu: Option<gpu::GpuPath>,
+    /// Draw on the CPU only (`WOLKIT_ENGINE_FORCE_CPU`, or the GPU path failed once).
+    cpu_only: bool,
+    /// Sentences for the app, reported as warnings on the next pump.
+    notes: Vec<String>,
+    /// GPU surfaces of `surface` nodes (`wolkit_surface_*`).
+    subs: subsurface::Subs,
+}
+
+/// A GPU surface made for a `surface` node: its id, the pointers Vulkan WSI takes, and its size
+/// in device pixels at `scale`.
+#[derive(Clone, Copy, Debug)]
+pub struct GpuSurface {
+    pub id: u32,
+    pub display: *mut std::ffi::c_void,
+    pub surface: *mut std::ffi::c_void,
+    pub width: u32,
+    pub height: u32,
+    pub scale: f32,
+}
+
+// Releases the window's slot in the accessibility hub (its tree stops being exported).
+impl Drop for NativeWindow {
+    fn drop(&mut self) {
+        // The presenter goes first: it refers to the surface by pointer.
+        self.gpu = None;
+        if let Some((h, slot)) = &self.a11y {
+            h.unregister(*slot);
+        }
+    }
 }
 
 fn bind_opt<I, U>(
@@ -175,20 +217,31 @@ where
 }
 
 /// Open a native window's connection side (globals, seat, theme watch) on the shared display.
-pub fn create(app_id: &str) -> Result<Box<dyn Backend>> {
+/// `gpu`: try the GPU present path (false for `WOLKIT_ENGINE_FORCE_CPU`).
+pub fn create(app_id: &str, gpu: bool) -> Result<Box<dyn Backend>> {
     let shared = conn::shared()?;
-    Ok(Box::new(NativeWindow::new(
-        shared,
-        app_id,
-        &wol_core::theme::config_home(),
-    )?))
+    let mut w = NativeWindow::new(shared, app_id, &wol_core::theme::config_home())?;
+    w.cpu_only = !gpu;
+    Ok(Box::new(w))
 }
 
 impl NativeWindow {
+    /// A window on `shared` that exports its accessibility tree through the process's hub.
     pub fn new(
         shared: Arc<Shared>,
         app_id: &str,
         config_home: &std::path::Path,
+    ) -> Result<NativeWindow> {
+        let hub = crate::a11y::hub::hub(app_id, crate::a11y::bridge::start);
+        Self::with_hub(shared, app_id, config_home, hub)
+    }
+
+    /// The same with a given hub (tests: a private one, or none).
+    pub fn with_hub(
+        shared: Arc<Shared>,
+        app_id: &str,
+        config_home: &std::path::Path,
+        hub: Option<Arc<crate::a11y::hub::Hub>>,
     ) -> Result<NativeWindow> {
         let lost = |_| Error::unavailable(copy::LOST);
         let (globals, mut queue) = registry_queue_init::<Client>(&shared.conn)
@@ -198,6 +251,7 @@ impl NativeWindow {
         let caps = Arc::new(SeatCaps::default());
         let g = Globals {
             compositor: globals.bind(&qh, 4..=6, ()).map_err(need)?,
+            subcompositor: bind_opt(&globals, &qh, 1..=1, ()),
             shm: globals.bind(&qh, 1..=1, ()).map_err(need)?,
             wm_base: globals.bind(&qh, 1..=6, ()).map_err(need)?,
             decoration: bind_opt(&globals, &qh, 1..=1, ()),
@@ -260,6 +314,16 @@ impl NativeWindow {
             lost_reported: false,
             last_frame_ns: 0,
             outs: Vec::new(),
+            a11y: hub.map(|h| {
+                let slot = h.register();
+                (h, slot)
+            }),
+            a11y_gen: u64::MAX,
+            linted: std::collections::HashSet::new(),
+            gpu: None,
+            cpu_only: true,
+            notes: Vec::new(),
+            subs: subsurface::Subs::default(),
         };
         w.buffers.choose_format(&w.client.shm_formats);
         w.devices();
@@ -375,6 +439,10 @@ impl NativeWindow {
     }
 
     fn close_surface(&mut self) {
+        // The presenter refers to the surface: it goes before the surface is destroyed, and so
+        // do the subsurfaces, whose parent it is.
+        self.gpu = None;
+        self.subs.clear();
         if let Some(s) = self.surf.take() {
             if let Some(d) = s.decoration {
                 d.destroy();
@@ -395,40 +463,88 @@ impl NativeWindow {
         self.flush();
     }
 
-    /// Draw the window into a buffer and commit it with a frame callback.
-    fn draw(&mut self, w: &mut WindowCore) {
+    /// The `wl_display *` and this window's `wl_surface *`, for Vulkan WSI (the GPU present path
+    /// and `wolkit_surface_*`), while the window is shown.
+    pub fn wsi_handles(&self) -> Option<(*mut std::ffi::c_void, *mut std::ffi::c_void)> {
+        let surf = self.surf.as_ref()?;
+        let d = self
+            .shared
+            .conn
+            .backend()
+            .display_ptr()
+            .cast::<std::ffi::c_void>();
+        let p = surf.surface.id().as_ptr().cast::<std::ffi::c_void>();
+        (!d.is_null() && !p.is_null()).then_some((d, p))
+    }
+
+    /// A GPU surface for `node` (a `surface` node) while the window is shown.
+    pub fn create_gpu_surface(
+        &mut self,
+        w: &mut WindowCore,
+        node: crate::scene::Idx,
+    ) -> Result<GpuSurface> {
+        pipeline::ensure_layout(w);
+        let scale = self.scale();
+        let Some(surf) = &self.surf else {
+            return Err(Error::unavailable(copy::NOT_SHOWN));
+        };
+        let made = self
+            .subs
+            .create(&self.g, &surf.surface, &self.qh, w, node, scale)
+            .map_err(Error::invalid)?;
+        let display = self
+            .shared
+            .conn
+            .backend()
+            .display_ptr()
+            .cast::<std::ffi::c_void>();
+        let surface = made.surface.id().as_ptr().cast::<std::ffi::c_void>();
+        self.flush();
+        Ok(GpuSurface {
+            id: made.id,
+            display,
+            surface,
+            width: made.size.0,
+            height: made.size.1,
+            scale,
+        })
+    }
+
+    pub fn destroy_gpu_surface(&mut self, id: u32) {
+        self.subs.destroy(id);
+        self.flush();
+    }
+
+    /// Whether frames go through the GPU present path now.
+    pub fn on_gpu(&self) -> bool {
+        self.gpu.is_some()
+    }
+
+    fn open_gpu(&mut self, bw: u32, bh: u32) {
+        if self.cpu_only || self.gpu.is_some() {
+            return;
+        }
+        let Some((d, p)) = self.wsi_handles() else {
+            return;
+        };
+        // SAFETY: `d` is the display of `self.shared`, which this window holds for its whole life;
+        // `p` is `self.surf`'s surface. The path is dropped before the surface is destroyed
+        // (`close_surface`) and before the connection (`Drop`), as `GpuPath::new` requires.
+        match unsafe { gpu::GpuPath::new(d, p, bw, bh) } {
+            Ok(g) => self.gpu = Some(g),
+            Err(e) => {
+                self.cpu_only = true;
+                self.notes.push(format!("{} {}", copy::GPU_OFF, e.message));
+            }
+        }
+    }
+
+    /// The state a commit carries besides the buffer: the scale, the frame callback, feedback.
+    fn surface_state(&self, w: &WindowCore, scale: f32) {
         let Some(surf) = &self.surf else {
             return;
         };
-        if !self.configured || self.lost {
-            return;
-        }
-        let begin = sys::monotonic_ns();
-        let scale = self.scale();
-        if (w.scale - scale).abs() > f32::EPSILON {
-            w.scale = scale;
-        }
-        pipeline::ensure_layout(w);
-        let (bw, bh) = (
-            sizing::device(w.width, scale),
-            sizing::device(w.height, scale),
-        );
-        let n = usize::try_from(bw).unwrap_or(0) * usize::try_from(bh).unwrap_or(0) * 4;
-        self.rgba.resize(n, 0);
-        crate::cpu::render(&w.scene, bw, bh, scale, &w.env, &mut self.rgba);
-        pipeline::frame(w);
-        let Some(buf) = self.buffers.put(&self.g.shm, &self.qh, bw, bh, &self.rgba) else {
-            // Every buffer is with the compositor: draw again when one comes back.
-            self.pacer.request();
-            return;
-        };
         let surface = &surf.surface;
-        surface.attach(Some(&buf), 0, 0);
-        let (iw, ih) = (
-            i32::try_from(bw).unwrap_or(i32::MAX),
-            i32::try_from(bh).unwrap_or(i32::MAX),
-        );
-        surface.damage_buffer(0, 0, iw, ih);
         match &surf.viewport {
             Some(v) => {
                 surface.set_buffer_scale(1);
@@ -443,8 +559,76 @@ impl NativeWindow {
         if let Some(p) = &self.g.presentation {
             p.feedback(surface, &self.qh, ());
         }
-        surface.commit();
+    }
+
+    /// Draw the window and commit it with a frame callback: through the GPU when that path is
+    /// open, else on the CPU into a `wl_shm` buffer.
+    fn draw(&mut self, w: &mut WindowCore) {
+        if self.surf.is_none() || !self.configured || self.lost {
+            return;
+        }
+        let begin = sys::monotonic_ns();
+        let scale = self.scale();
+        if (w.scale - scale).abs() > f32::EPSILON {
+            w.scale = scale;
+        }
+        pipeline::ensure_layout(w);
+        let (bw, bh) = (
+            sizing::device(w.width, scale),
+            sizing::device(w.height, scale),
+        );
+        self.open_gpu(bw, bh);
+        if let Some(mut g) = self.gpu.take() {
+            self.surface_state(w, scale);
+            match g.draw(w, bw, bh, scale) {
+                Ok(p) => {
+                    if p == crate::gpu::present::Presented::Skipped
+                        && let Some(surf) = &self.surf
+                    {
+                        // Nothing to show: the commit still carries the frame callback.
+                        surf.surface.commit();
+                    }
+                    self.gpu = Some(g);
+                    pipeline::frame(w);
+                    self.finish_frame(w, begin, bw, bh);
+                    return;
+                }
+                Err(e) => {
+                    // The presenter is dropped here, which frees the surface for `wl_shm`.
+                    drop(g);
+                    self.cpu_only = true;
+                    self.notes.push(format!("{} {}", copy::GPU_OFF, e.message));
+                }
+            }
+        }
+        let n = usize::try_from(bw).unwrap_or(0) * usize::try_from(bh).unwrap_or(0) * 4;
+        self.rgba.resize(n, 0);
+        pipeline::render_rgba(w, bw, bh, scale, &mut self.rgba);
+        pipeline::frame(w);
+        let Some(buf) = self.buffers.put(&self.g.shm, &self.qh, bw, bh, &self.rgba) else {
+            // Every buffer is with the compositor: draw again when one comes back.
+            self.pacer.request();
+            return;
+        };
+        let Some(surf) = &self.surf else {
+            return;
+        };
+        surf.surface.attach(Some(&buf), 0, 0);
+        let (iw, ih) = (
+            i32::try_from(bw).unwrap_or(i32::MAX),
+            i32::try_from(bh).unwrap_or(i32::MAX),
+        );
+        surf.surface.damage_buffer(0, 0, iw, ih);
+        self.surface_state(w, scale);
+        if let Some(surf) = &self.surf {
+            surf.surface.commit();
+        }
+        self.finish_frame(w, begin, bw, bh);
+    }
+
+    fn finish_frame(&mut self, w: &WindowCore, begin: u64, bw: u32, bh: u32) {
         self.flush();
+        self.publish_a11y(w, None);
         self.pacer.drew(pacing::FrameRecord {
             begin_ns: begin,
             end_ns: sys::monotonic_ns(),

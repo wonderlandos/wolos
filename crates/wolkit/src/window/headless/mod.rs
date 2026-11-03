@@ -51,17 +51,7 @@ impl Backend for Headless {
                 "The pixel buffer needs {need} bytes for a {pw} by {ph} window."
             )));
         }
-        let text = w.text.clone();
-        let mut sys = crate::text::measure::lock(&text);
-        let frame = crate::cpu::Frame {
-            scene: &w.scene,
-            styles: &w.styles,
-            env: &w.env,
-            width: pw,
-            height: ph,
-            scale: w.scale,
-        };
-        crate::cpu::render(&frame, &mut sys, &mut w.text_cache, &mut out[..need]);
+        pipeline::render_rgba(w, pw, ph, w.scale, &mut out[..need]);
         Ok((pw, ph))
     }
 

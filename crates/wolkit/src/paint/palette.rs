@@ -120,7 +120,10 @@ mod tests {
             for t in Token::ALL {
                 assert_ne!(p.token(t).a, 0, "{} dark={dark}", t.name());
             }
-            assert_ne!(p.background(), Palette::for_env(&Environment { dark: !dark, ..env }).background());
+            assert_ne!(
+                p.background(),
+                Palette::for_env(&Environment { dark: !dark, ..env }).background()
+            );
         }
     }
 
@@ -149,6 +152,9 @@ mod tests {
             contrast: true,
             ..env
         });
-        assert_eq!(hc.resolve(ColorRef::Token(Token::Dim)), hc.token(Token::Text));
+        assert_eq!(
+            hc.resolve(ColorRef::Token(Token::Dim)),
+            hc.token(Token::Text)
+        );
     }
 }

@@ -96,7 +96,7 @@ backend() {
 # Download-only steps on the running system (root /) go through a temporary copy of pacman's
 # database: an installed slot keeps DBPath (/usr/lib/pacman, ADR 0016) on the read-only seal, where
 # pacman cannot take its lock (audit5 C9-1). `local` is linked, `sync` copied; --dbpath makes the
-# /usr/local/bin wrapper pass it to the real pacman. The install itself is the plain `pacman -S`,
+# /usr/local/bin wrapper pass it to the real pacman. The install itself is the plain `pacman -Sy`,
 # which the wrapper makes in a layer like every `wol pkg` change.
 tmpdb='' tmp=''
 cleanup() {
@@ -114,14 +114,20 @@ download_db() {
 }
 
 # PACKAGE...: downloaded (bounded), then installed from the cache to the end.
+# On the running system the repo lists are refreshed first (-y), in the download copy and again
+# in the install's layer: a system installed offline has none at all (install-run refreshes only
+# online), and an older list names files the mirror no longer has, so a plain -S could never find
+# the module ("target not found", every connection until it is given up). The installer's target
+# (--root) was refreshed by install-run itself when it was online.
 get() {
-  st=0
+  st=0 y=
   if [ -z "$r" ]; then
-    download_db && timeout -k 10 "$secs" pacman --dbpath "$tmpdb" -Sw --noconfirm --needed "$@" >&2 || st=$?
+    y=y
+    download_db && timeout -k 10 "$secs" pacman --dbpath "$tmpdb" -Syw --noconfirm --needed "$@" >&2 || st=$?
   else
     timeout -k 10 "$secs" arch-chroot "$r" pacman -Sw --noconfirm --needed "$@" >&2 || st=$?
   fi
-  [ "$st" -eq 0 ] && in_root pacman -S --noconfirm --needed "$@" >&2
+  [ "$st" -eq 0 ] && in_root pacman "-S$y" --noconfirm --needed "$@" >&2
 }
 
 done_ids='' queued='' done_pkgs='' queued_pkgs='' failed='' failed_pkgs=''

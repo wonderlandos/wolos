@@ -7,7 +7,7 @@ use super::raster;
 use crate::env::Environment;
 use crate::paint::list::DisplayList;
 use crate::paint::palette::Palette;
-use crate::paint::scene::{Lower, build};
+use crate::paint::scene::{Lower, build_with};
 use crate::scene::SceneRead;
 use crate::style::Styles;
 use crate::text::measure::TextCache;
@@ -23,14 +23,16 @@ pub struct Frame<'a> {
     pub height: u32,
     /// Device pixels per logical pixel.
     pub scale: f32,
+    /// The submitted drawings of canvas nodes, drawn inside their rectangles.
+    pub canvases: Option<&'a crate::paint::scene::Canvases>,
 }
 
 /// Render `f` into `out` (RGBA8, `width * height * 4` bytes, straight alpha). Text is shaped with
 /// `text` through the window's paragraph cache, the same entries the layout measured.
-pub fn render(f: &Frame<'_>, text: &mut TextSystem, cache: &mut TextCache, out: &mut [u8]) {
+pub fn render_frame(f: &Frame<'_>, text: &mut TextSystem, cache: &mut TextCache, out: &mut [u8]) {
     let palette = Palette::for_env(f.env);
     let mut list = DisplayList::new();
-    build(
+    build_with(
         &mut Lower {
             scene: f.scene,
             styles: f.styles,
@@ -38,6 +40,7 @@ pub fn render(f: &Frame<'_>, text: &mut TextSystem, cache: &mut TextCache, out: 
             text,
             cache,
         },
+        f.canvases,
         &mut list,
     );
     let img = raster::render(

@@ -167,8 +167,9 @@ fn scrolling_reuses_every_chunk() {
         b.build(&l0, &mut src, 1.0, glyphs_gen());
     }
     let first = b.instances.clone();
+    // Whole-pixel steps: the sub-pixel part of the offset stays 0, so nothing is rebuilt.
     for step in 1..20 {
-        let l = window(&f, &mut shapes, step as f32 * 13.5, 1);
+        let l = window(&f, &mut shapes, step as f32 * 14.0, 1);
         let mut src = Glyphs {
             db: &f.db,
             cache: &mut glyphs,
@@ -181,8 +182,23 @@ fn scrolling_reuses_every_chunk() {
             .iter()
             .find(|d| d.offset.1 < 0.0)
             .expect("scrolled chunk has its own transform");
-        assert_eq!(scrolled.offset, (0.0, -(step as f32) * 13.5));
+        assert_eq!(scrolled.offset, (0.0, -(step as f32) * 14.0));
     }
+    // A half-pixel step changes the sub-pixel part: the scrolled chunk is rebuilt once (its
+    // glyphs move to the CPU rasteriser's pixel grid), then whole-pixel steps reuse it again.
+    let half =
+        |y: f32, b: &mut InstanceBuilder, glyphs: &mut GlyphCache, shapes: &mut ShapeCache| {
+            let l = window(&f, shapes, y, 1);
+            let mut src = Glyphs {
+                db: &f.db,
+                cache: glyphs,
+            };
+            b.build(&l, &mut src, 1.0, glyphs_gen());
+            b.stats.chunks_rebuilt
+        };
+    assert_eq!(half(300.5, &mut b, &mut glyphs, &mut shapes), 1);
+    assert_eq!(half(314.5, &mut b, &mut glyphs, &mut shapes), 0);
+    assert_eq!(half(328.0, &mut b, &mut glyphs, &mut shapes), 1);
 }
 
 fn glyphs_gen() -> u64 {

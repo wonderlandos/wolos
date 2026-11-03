@@ -2,18 +2,40 @@
 //! `wolkit_surface_*`: an external GPU image placed by layout (a Wayland subsurface on the native
 //! backend, plan section 5.6). The instance-extension table is real (`gpu::surface`), and so is
 //! the Vulkan side of `create_vk` (`gpu::surface::AppSurface`, a `VkSurfaceKHR` on the app's own
-//! instance). Making the subsurface is the native backend's (WK-W4); until it does, creation says
-//! the window needs the native backend, so no handle exists to call `create_vk` on.
+//! instance). The native backend makes the subsurface (`Backend::create_subsurface`); the other
+//! backends say the window needs the native backend. Releasing the last reference destroys the
+//! Vulkan surface first, then the subsurface.
 
 use super::window::wolkit_window;
-use super::{borrow, guard, handle, need, release, retain, wolkit_error, wolkit_status};
-use crate::error::Error;
+use super::{
+    borrow, guard, handle, into_raw, need, put, release, retain, wolkit_error, wolkit_status,
+};
+use crate::engine::Engine;
+use crate::gpu::surface::AppSurface;
 use std::ffi::{c_char, c_void};
+use std::sync::{Arc, Mutex};
 
 #[repr(C)]
 #[allow(non_camel_case_types)] // the C name
 pub struct wolkit_surface {
     tag: handle::Tag<wolkit_surface>,
+    engine: Arc<Engine>,
+    window: u32,
+    sub: u32,
+    /// The `wl_display *` and `wl_surface *`, kept as exposed addresses (the backend owns them).
+    display: usize,
+    surface: usize,
+    size: (u32, u32, f32),
+    vk: Mutex<Option<AppSurface>>,
+}
+
+// Destroys the app's VkSurfaceKHR, then the subsurface it was made on.
+impl Drop for wolkit_surface {
+    fn drop(&mut self) {
+        let vk = self.vk.get_mut().map_or(None, Option::take);
+        drop(vk);
+        self.engine.destroy_subsurface(self.window, self.sub);
+    }
 }
 
 handle::tagged!(wolkit_surface, 0x57_4f_4c_4b_49_54_55_01);
@@ -32,11 +54,21 @@ pub unsafe extern "C" fn wolkit_surface_create(
     guard(error, || {
         need(out, "out")?;
         // SAFETY: live (contract).
-        let _ = unsafe { borrow(window) }?;
-        let _ = (node, width, height);
-        Err(Error::unavailable(
-            "This window needs the native backend to show a GPU surface.",
-        ))
+        let w = unsafe { borrow(window) }?;
+        let sub = w.engine().create_subsurface(w.id(), node, width, height)?;
+        let h = Arc::new(wolkit_surface {
+            tag: handle::Tag::new(),
+            engine: w.engine().clone(),
+            window: w.id(),
+            sub: sub.id,
+            display: sub.display.expose_provenance(),
+            surface: sub.surface.expose_provenance(),
+            size: (sub.width, sub.height, sub.scale),
+            vk: Mutex::new(None),
+        });
+        // SAFETY: checked non-NULL above.
+        unsafe { *out = into_raw(h) };
+        Ok(())
     })
 }
 
@@ -69,11 +101,11 @@ pub unsafe extern "C" fn wolkit_surface_get_size(
 ) -> wolkit_status {
     super::guard_status(|| {
         // SAFETY: live (contract).
-        let _ = unsafe { borrow(surface) }?;
-        let _ = (w, h, scale);
-        Err(Error::unavailable(
-            "This window needs the native backend to show a GPU surface.",
-        ))
+        let s = unsafe { borrow(surface) }?;
+        put(w, s.size.0);
+        put(h, s.size.1);
+        put(scale, s.size.2);
+        Ok(())
     })
 }
 
@@ -102,11 +134,21 @@ pub unsafe extern "C" fn wolkit_surface_create_vk(
     error: *mut *mut wolkit_error,
 ) -> wolkit_status {
     guard(error, || {
+        need(vk_surface, "vk_surface")?;
         // SAFETY: live (contract).
-        let _ = unsafe { borrow(surface) }?;
-        let _ = (vk_instance, vk_surface);
-        Err(Error::unavailable(
-            "This window needs the native backend to show a GPU surface.",
-        ))
+        let s = unsafe { borrow(surface) }?;
+        let mut slot = s.vk.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_none() {
+            let display = std::ptr::with_exposed_provenance_mut::<c_void>(s.display);
+            let wl = std::ptr::with_exposed_provenance_mut::<c_void>(s.surface);
+            // SAFETY: the instance is the caller's (contract); the display and the subsurface
+            // stay alive while this handle does (the backend destroys the subsurface only when
+            // the handle's last reference goes, after this Vulkan surface).
+            *slot = Some(unsafe { AppSurface::create(vk_instance, display, wl) }?);
+        }
+        let raw = slot.as_ref().map_or(0, AppSurface::raw);
+        // SAFETY: checked non-NULL above.
+        unsafe { *vk_surface = raw };
+        Ok(())
     })
 }

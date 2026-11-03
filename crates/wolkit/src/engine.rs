@@ -165,7 +165,7 @@ impl Engine {
             abi::INFO_BACKEND => u64::from(window::choose(g.flags)),
             abi::INFO_PATCH_FORMAT => u64::from(crate::scene::patch::FORMAT),
             abi::INFO_MAX_NODES => crate::scene::MAX_NODES as u64,
-            abi::INFO_A11Y_ACTIVE => 0,
+            abi::INFO_A11Y_ACTIVE => u64::from(crate::a11y::active()),
             abi::INFO_MAX_PATCH => crate::scene::patch::MAX_PATCH as u64,
             abi::INFO_MAX_WINDOWS => MAX_WINDOWS as u64,
             abi::INFO_MAX_EVENT_RECORD => event::MAX_RECORD as u64,
@@ -275,6 +275,9 @@ impl Engine {
                     Some(c) => Box::new(kit::KitWindow::new(c)),
                     None => return Err(Error::unavailable(copy::KIT_GONE)),
                 }
+            }
+            window::BACKEND_NATIVE => {
+                crate::window::native::create(&g.app_id, g.flags & abi::ENGINE_FORCE_CPU == 0)?
             }
             _ => return Err(Error::unavailable(copy::NO_DISPLAY)),
         };
@@ -459,7 +462,7 @@ impl Engine {
                 window: id,
                 seq: w.core.scene.last_seq(),
             };
-            crate::window::headless::set_focus(&mut w.core, &mut sink, i, true);
+            w.backend.set_focus(&mut w.core, &mut sink, i, true);
             Ok(())
         })
     }
@@ -565,6 +568,61 @@ impl Engine {
             };
             w.backend.committed(&mut w.core, &mut sink)
         })
+    }
+}
+
+impl Engine {
+    /// Store a canvas node's drawing (`wolkit_window_canvas_submit`) and redraw. The Kit host
+    /// cannot show drawings, so the kit backend refuses; headless and native draw it.
+    pub fn set_canvas(
+        &self,
+        id: WindowId,
+        node: u32,
+        canvas: crate::gpu::canvas::Canvas,
+    ) -> Result<()> {
+        self.with(id, |w, events, _, _| {
+            if w.backend.kind() == window::BACKEND_KIT {
+                return Err(Error::unavailable(copy::KIT_NO_CANVAS));
+            }
+            let i = live_node(&w.core, node)?;
+            if w.core.scene.kind(i) != crate::scene::Kind::Canvas {
+                return Err(Error::invalid(format!("Part {node} is not a canvas.")));
+            }
+            let nid = w.core.scene.id(i);
+            w.core
+                .canvases
+                .retain(|slot, (n, _)| *slot != i && w.core.scene.is_live(n.slot()));
+            w.core.canvases.insert(i, (nid, canvas));
+            crate::scene::SceneWrite::mark_dirty(&mut w.core.scene, i, crate::scene::dirty::PAINT);
+            let mut sink = Sink {
+                events,
+                window: id,
+                seq: w.core.scene.last_seq(),
+            };
+            w.backend.committed(&mut w.core, &mut sink)
+        })
+    }
+
+    /// A child surface for a `surface` node (`wolkit_surface_create`); native windows only.
+    pub fn create_subsurface(
+        &self,
+        id: WindowId,
+        node: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<window::Subsurface> {
+        self.with(id, |w, _, _, _| {
+            let i = live_node(&w.core, node)?;
+            w.backend.create_subsurface(&mut w.core, i, width, height)
+        })
+    }
+
+    /// Release a child surface (the window may already be closed).
+    pub fn destroy_subsurface(&self, id: WindowId, sub: u32) {
+        let _ = self.with(id, |w, _, _, _| {
+            w.backend.destroy_subsurface(sub);
+            Ok(())
+        });
     }
 }
 
