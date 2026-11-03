@@ -22,6 +22,7 @@ pub mod dmabuf;
 mod events;
 pub mod gpu;
 pub mod ime;
+pub mod menus;
 pub mod mime;
 pub mod pacing;
 pub mod seat;
@@ -134,7 +135,14 @@ pub struct NativeWindow {
     g: Globals,
     dev: Devices,
     surf: Option<Surf>,
+    /// The app's own id (without the glass suffix).
     app_id: String,
+    /// Whether the toplevel's app id carries the glass suffix now (the root computes
+    /// `backdrop: glass` and Reduce Transparency is off).
+    glass: bool,
+    /// This window published menus last time, and whether it was in front.
+    menus_on: bool,
+    menus_front: bool,
     pub input: InputState,
     pub pacer: pacing::FramePacer,
     buffers: shm::Buffers,
@@ -197,6 +205,11 @@ impl Drop for NativeWindow {
         // The presenter goes first: it refers to the surface by pointer.
         self.gpu = None;
         if let Some((h, slot)) = &self.a11y {
+            if self.menus_on
+                && let Some(svc) = menus::current()
+            {
+                svc.remove(*slot);
+            }
             h.unregister(*slot);
         }
     }
@@ -288,7 +301,10 @@ impl NativeWindow {
             g,
             dev: Devices::default(),
             surf: None,
-            app_id: app_id.to_owned(),
+            app_id: theme::base_app_id(app_id).to_owned(),
+            glass: false,
+            menus_on: false,
+            menus_front: false,
             input: InputState::new(),
             pacer: pacing::FramePacer::default(),
             buffers: shm::Buffers::default(),
@@ -398,7 +414,7 @@ impl NativeWindow {
         let xdg = self.g.wm_base.get_xdg_surface(&surface, qh, data.clone());
         let toplevel = xdg.get_toplevel(qh, data);
         toplevel.set_title(w.title.clone());
-        toplevel.set_app_id(self.app_id.clone());
+        toplevel.set_app_id(theme::toplevel_app_id(&self.app_id, self.glass));
         let fixed = (w.flags & WINDOW_FIXED_SIZE != 0).then_some((w.width, w.height));
         let (min, max) = sizing::limits(w.min, w.max, fixed);
         toplevel.set_min_size(min.0, min.1);

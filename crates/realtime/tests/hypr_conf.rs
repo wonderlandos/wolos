@@ -875,3 +875,12 @@ fn lua_session_starts_the_conf_programs() {
     }
     assert_eq!(n, lua_cmds.len(), "{lua_cmds:#?}");
 }
+
+/// A toplevel whose app id ends in `.glass` blurs what is behind it: the rule text is the one the
+/// engine's helper carries (`realtime::glass::WINDOW_RULE`, DT-3), once, and the title-bar tags
+/// of `lights.lua` do not depend on it.
+#[test]
+fn lua_has_the_glass_window_rule_once() {
+    assert_eq!(LUA.matches(realtime::glass::WINDOW_RULE).count(), 1);
+    assert_eq!(LUA.matches("name = \"wol-glass\"").count(), 1);
+}

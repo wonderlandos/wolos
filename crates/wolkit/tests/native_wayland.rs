@@ -826,6 +826,15 @@ fn serve(
 
 impl Rig {
     fn new(tag: &str, min: (u32, u32), max: (u32, u32)) -> Rig {
+        Rig::with_hub(tag, min, max, None)
+    }
+
+    fn with_hub(
+        tag: &str,
+        min: (u32, u32),
+        max: (u32, u32),
+        hub: Option<Arc<wolkit::a11y::hub::Hub>>,
+    ) -> Rig {
         let (client, server) = UnixStream::pair().unwrap();
         let (tx, rx) = channel();
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -838,7 +847,7 @@ impl Rig {
         let home = std::env::temp_dir().join(format!("wolkit-native-{tag}-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
         let shared = Shared::from_socket(client).unwrap();
-        let win = NativeWindow::with_hub(shared, "org.example.native", &home, None).unwrap();
+        let win = NativeWindow::with_hub(shared, "org.example.native", &home, hub).unwrap();
         let mut core = WindowCore::new(1, "Native test", 320, 200, 0, Environment::default());
         core.min = min;
         core.max = max;
@@ -975,6 +984,156 @@ fn limits_title_and_decoration_come_before_the_first_commit() {
             .any(|l| l.starts_with("surface.attach")),
         "no buffer before the first configure"
     );
+}
+
+/// `backdrop: glass` on the root (inline, as the engine's style table would resolve it).
+fn glass_root(p: &mut Writer) {
+    p.set_prop(0, wolkit::scene::prop::id::BACKDROP, &[1]);
+}
+
+#[test]
+fn a_glass_root_puts_the_suffix_on_the_first_app_id() {
+    let mut r = Rig::new("glass-first", (0, 0), (0, 0));
+    r.apply(glass_root);
+    r.show();
+    r.logged("the first commit", "surface.commit");
+    let log = r.log();
+    let ids: Vec<_> = log
+        .iter()
+        .filter(|l| l.starts_with("toplevel.app_id"))
+        .collect();
+    assert_eq!(
+        ids,
+        ["toplevel.app_id org.example.native.glass"],
+        "one app id, with the suffix, before the first commit: {log:#?}"
+    );
+    assert!(index(&log, "toplevel.app_id") < index(&log, "surface.commit"));
+}
+
+#[test]
+fn reduce_transparency_keeps_the_plain_app_id() {
+    let mut r = Rig::new("glass-reduced", (0, 0), (0, 0));
+    r.core.env.reduce_transparency = true;
+    r.apply(glass_root);
+    r.show();
+    r.logged("the first commit", "surface.commit");
+    let log = r.log();
+    assert_eq!(
+        log.iter()
+            .filter(|l| l.starts_with("toplevel.app_id"))
+            .collect::<Vec<_>>(),
+        ["toplevel.app_id org.example.native"],
+        "{log:#?}"
+    );
+}
+
+#[test]
+fn glass_added_and_removed_later_changes_the_app_id() {
+    let mut r = Rig::new("glass-later", (0, 0), (0, 0));
+    r.mapped(300, 200);
+    r.apply(glass_root);
+    r.logged("the glass id", "toplevel.app_id org.example.native.glass");
+    r.apply(|p| {
+        p.set_prop(0, wolkit::scene::prop::id::BACKDROP, &[0]);
+    });
+    let last_id = |r: &Rig| {
+        r.log()
+            .iter()
+            .rfind(|l| l.starts_with("toplevel.app_id"))
+            .cloned()
+    };
+    r.until("the plain id again", |r| {
+        last_id(r).as_deref() == Some("toplevel.app_id org.example.native")
+    });
+    assert_eq!(
+        last_id(&r).as_deref(),
+        Some("toplevel.app_id org.example.native")
+    );
+}
+
+#[test]
+fn a_window_with_menus_publishes_them_and_a_choice_clicks_the_item() {
+    use std::io::{BufRead, BufReader, Read};
+    use std::process::{Command, Stdio};
+    let dir = std::env::temp_dir().join(format!("wolkit-native-bus-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sock = dir.join("bus");
+    let _ = std::fs::remove_file(&sock);
+    let Ok(mut child) = Command::new("dbus-daemon")
+        .args(["--session", "--nofork", "--nopidfile", "--print-address=1"])
+        .arg(format!("--address=unix:path={}", sock.display()))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        println!("no message bus daemon here: the menus-on-the-bus test is skipped");
+        return;
+    };
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap().take(4096))
+        .read_line(&mut line)
+        .unwrap();
+    let address = line.trim().to_owned();
+    let hub = Arc::new(wolkit::a11y::hub::Hub::new("org.example.native").unwrap());
+    let svc = wolkit::window::native::menus::shared_on(
+        "org.example.native",
+        hub.clone(),
+        wolkit::window::native::menus::Bus::Address(&address),
+    )
+    .unwrap();
+    let mut r = Rig::with_hub("menus", (0, 0), (0, 0), Some(hub));
+    r.mapped(300, 200);
+    r.apply(|p| {
+        use wolkit::a11y::roles::wk;
+        p.create(1, Kind::Box).insert(0, 1, APPEND);
+        p.set_a11y(1, wk::MENU, "File", "");
+        p.create(2, Kind::Button).insert(1, 2, APPEND);
+        p.set_a11y(2, wk::MENUITEM, "New", "");
+        p.bind_event(2, event::bit(ev::CLICK));
+    });
+    let item = r.core.scene.id(2).0;
+    let want = format!(
+        r#"[{{"id":1,"title":"File","entries":[{{"type":"item","key":"{item}","label":"New"}}]}}]"#
+    );
+    assert_eq!(svc.json(), want, "published when the scene changed");
+    let client = zbus::blocking::connection::Builder::address(address.as_str())
+        .unwrap()
+        .method_timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let call = |key: &str| {
+        client.call_method(
+            Some("org.example.native"),
+            "/org/example/native",
+            Some("org.wolos.Menus"),
+            "Activate",
+            &(1u32, key),
+        )
+    };
+    // The service connects on its own thread: wait until it answers (an unlisted key is refused).
+    let end = Instant::now() + Duration::from_secs(5);
+    while !matches!(call("0"), Err(zbus::Error::MethodError(..))) {
+        assert!(Instant::now() < end, "the service never answered");
+        wolkit::loop_::wait(&[], 20, &mut Vec::new());
+    }
+    call(&item.to_string()).unwrap();
+    let end = Instant::now() + Duration::from_secs(5);
+    let mut clicked = false;
+    while !clicked {
+        assert!(
+            Instant::now() < end,
+            "no CLICK on the item; log: {:#?}",
+            r.log()
+        );
+        r.pump();
+        clicked = r.events().iter().any(|e| e.0 == ev::CLICK && e.1 == item);
+        if !clicked {
+            let mut ready = Vec::new();
+            wolkit::loop_::wait(&r.win.fds(), 50, &mut ready);
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[test]

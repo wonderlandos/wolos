@@ -1,12 +1,12 @@
 -- WolOS compositor performance defaults (compositor 0.57 series, Lua configuration).
 -- Ships in the desktop overlay; desktop hyprland.lua loads it:
 --   require("/usr/share/wolos/hypr/wolos-perf.lua")
--- Map to IaraOS optimizations: docs/modules/hyprland-fork.md
+-- Map to the earlier system's optimizations: docs/modules/hyprland-fork.md
 
 hl.config({
     debug = {
-        vfr = true, -- event-driven frames: render only on damage/commit/input (IaraOS frame clock)
-        damage_tracking = 2, -- full damage tracking with buffer age (IaraOS damage + buffer age)
+        vfr = true, -- event-driven frames: render only on damage/commit/input (the earlier system's frame clock)
+        damage_tracking = 2, -- full damage tracking with buffer age (the earlier system's damage + buffer age)
     },
 
     render = {
@@ -17,9 +17,9 @@ hl.config({
     decoration = {
         blur = {
             enabled = true,
-            new_optimizations = true, -- cache blur of static layers; redo only when backdrop damages (IaraOS cached Kawase)
+            new_optimizations = true, -- cache blur of static layers; redo only when backdrop damages (the earlier system's cached Kawase)
             xray = true, -- floating glass blurs the cached wallpaper, not live windows below
-            passes = 2, -- IaraOS dual Kawase: 2 down + 2 up
+            passes = 2, -- the earlier system's dual Kawase: 2 down + 2 up
             size = 6,
             popups = false, -- menus are not blurred per frame
             special = false, -- no blur behind the special workspace (expensive)

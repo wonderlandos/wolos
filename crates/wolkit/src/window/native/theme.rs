@@ -9,6 +9,9 @@
 //!
 //! Only built-in themes and their accent variants are resolved here (no directory walk on the
 //! app's thread); an id the catalog does not know draws the default of its appearance.
+//!
+//! The window chrome's hooks live here too: the glass app-id suffix the compositor keys on, and
+//! the object path the window's menus are published at for the menu bar.
 
 use super::sys;
 use crate::env::Environment;
@@ -23,6 +26,41 @@ pub const THEME_FILE: &str = shared::theme::ACTIVE_FILE;
 pub const PREFS_FILE: &str = wol_core::hyprprefs::PREFS_FILE;
 /// Largest theme id file read.
 const MAX_ID: u64 = 4096;
+
+/// The app-id suffix of a toplevel that asks the compositor for glass behind it (frozen; the
+/// compositor's own copy is `realtime::glass::APP_SUFFIX`, its window rule keys on it).
+pub const GLASS_SUFFIX: &str = ".glass";
+
+/// Whether a window gets glass behind it: its root computes `backdrop: glass` and the person has
+/// not turned on Reduce Transparency (then the token colour stays, as the Kit does).
+pub fn wants_glass(root: crate::style::value::Backdrop, env: &Environment) -> bool {
+    root == crate::style::value::Backdrop::Glass && !env.reduce_transparency
+}
+
+/// The app id the toplevel carries: the app's own, with [`GLASS_SUFFIX`] when it wants glass.
+/// An id that already ends in it is not suffixed twice; an empty id stays empty (no rule matches).
+pub fn toplevel_app_id(app_id: &str, glass: bool) -> String {
+    let base = base_app_id(app_id);
+    if glass && !base.is_empty() {
+        format!("{base}{GLASS_SUFFIX}")
+    } else {
+        base.to_owned()
+    }
+}
+
+/// The app's own id from a toplevel's app id (the glass suffix dropped).
+pub fn base_app_id(app_id: &str) -> &str {
+    match app_id.strip_suffix(GLASS_SUFFIX) {
+        Some(base) if !base.is_empty() => base,
+        _ => app_id,
+    }
+}
+
+/// The D-Bus object path the app's menus are published at, the GApplication form of its own id
+/// (`/org/example/App`): the shell's `ui::transient::object_path`, frozen.
+pub fn menu_object_path(app_id: &str) -> String {
+    format!("/{}", base_app_id(app_id).replace('.', "/"))
+}
 
 /// The appearance inputs and what they resolve to.
 #[derive(Clone, Debug, PartialEq)]
