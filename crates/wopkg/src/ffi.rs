@@ -4,6 +4,8 @@
 use std::ffi::{c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use crate::wopkg_context;
+
 #[allow(non_camel_case_types)]
 pub type wopkg_status = i32;
 
@@ -298,6 +300,67 @@ pub unsafe extern "C" fn wopkg_error_release(error: *mut wopkg_error) {
         // SAFETY: from Box::into_raw in `guard` (contract).
         drop(unsafe { Box::from_raw(error) });
     }
+}
+
+// ---- libwopkg 1.1: the curated shard index (index/shards.rs, docs/modules/shards.md) ----
+
+/// The signed shard list (`index::shards::IndexRequest` -> `{"shards":[..],"serial","expires"}`).
+/// # Safety
+/// Pointers as documented in `wopkg.h`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wopkg_shard_index(
+    context: *const wopkg_context,
+    req: *const c_char,
+    len: usize,
+    out: *mut *mut wopkg_string,
+    error: *mut *mut wopkg_error,
+) -> wopkg_status {
+    guard(error, || {
+        need(out, "out")?;
+        let c = unsafe { crate::ctx(context) }?;
+        let r: crate::index::shards::IndexRequest = request(req, len)?;
+        give_json(out, &crate::index::shards::index_json(c, &r)?)
+    })
+}
+
+/// Pin shards by commit in a project's `shard.yml` and write its `shard.lock`
+/// (`index::shards::PinRequest` -> `{"changed":[..],"locked":[..],..}`).
+/// # Safety
+/// Pointers as documented in `wopkg.h`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wopkg_shard_pin(
+    context: *const wopkg_context,
+    req: *const c_char,
+    len: usize,
+    out: *mut *mut wopkg_string,
+    error: *mut *mut wopkg_error,
+) -> wopkg_status {
+    guard(error, || {
+        need(out, "out")?;
+        let c = unsafe { crate::ctx(context) }?;
+        let r: crate::index::shards::PinRequest = request(req, len)?;
+        give_json(out, &crate::index::shards::pin_json(c, &r)?)
+    })
+}
+
+/// Check a project's `shard.yml` and `shard.lock` (RCR-040, RCR-041, the signed list)
+/// (`index::shards::CheckRequest` -> `{"ok","index","findings":[..]}`).
+/// # Safety
+/// Pointers as documented in `wopkg.h`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wopkg_shard_check(
+    context: *const wopkg_context,
+    req: *const c_char,
+    len: usize,
+    out: *mut *mut wopkg_string,
+    error: *mut *mut wopkg_error,
+) -> wopkg_status {
+    guard(error, || {
+        need(out, "out")?;
+        let c = unsafe { crate::ctx(context) }?;
+        let r: crate::index::shards::CheckRequest = request(req, len)?;
+        give_json(out, &crate::index::shards::check_json(c, &r)?)
+    })
 }
 
 #[cfg(test)]

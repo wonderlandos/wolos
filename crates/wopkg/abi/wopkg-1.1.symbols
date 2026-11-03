@@ -1,0 +1,4 @@
+# libwopkg 1.1 exports: the curated shard index (wave 3 CR-4). Never edit a shipped line: add abi/wopkg-1.2.symbols for new ones.
+wopkg_shard_check@WOPKG_1.1
+wopkg_shard_index@WOPKG_1.1
+wopkg_shard_pin@WOPKG_1.1

@@ -337,6 +337,9 @@ impl Env for ToolEnv<'_> {
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
         self.inner.exec_quiet(argv)
     }
+    fn exec_output(&mut self, argv: &[String]) -> io::Result<(i32, String)> {
+        self.inner.exec_output(argv)
+    }
     fn capture(&mut self, argv: &[&str]) -> Option<String> {
         self.inner.capture(argv)
     }

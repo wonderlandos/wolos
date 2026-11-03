@@ -29,3 +29,10 @@ WOPKG_1.0 {
   local:
     *;
 };
+
+WOPKG_1.1 {
+  global:
+    wopkg_shard_check;
+    wopkg_shard_index;
+    wopkg_shard_pin;
+} WOPKG_1.0;

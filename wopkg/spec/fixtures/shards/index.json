@@ -1,0 +1,29 @@
+{
+  "expires": 0,
+  "format": 1,
+  "serial": 1,
+  "shards": [
+    {
+      "commit": "1111111111111111111111111111111111111111",
+      "crystal": ">= 1.22.0",
+      "dependencies": [
+        "cryswol"
+      ],
+      "git": "https://git.wolos.org/shards/wolkit.git",
+      "license": "BSD-2-Clause",
+      "name": "wolkit",
+      "summary": "The wolkit shard",
+      "version": "0.3.0"
+    },
+    {
+      "commit": "2222222222222222222222222222222222222222",
+      "crystal": ">= 1.22.0",
+      "dependencies": [],
+      "git": "https://git.wolos.org/shards/cryswol.git",
+      "license": "BSD-2-Clause",
+      "name": "cryswol",
+      "summary": "The cryswol shard",
+      "version": "0.3.0"
+    }
+  ]
+}

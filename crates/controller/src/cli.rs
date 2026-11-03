@@ -1134,6 +1134,43 @@ pub const TREE: &[Cmd] = &[
         &[],
         "Newer versions of .wol apps; --yes installs them (administrator)",
     ),
+    // Crystal shards from the signed WolOS shard list (docs/modules/shards.md, RCR-040 to RCR-044).
+    cmd(
+        &["shard"],
+        "shard.list",
+        &[rest("term")],
+        "Crystal shards the WolOS shard list vouches for",
+    ),
+    cmd(
+        &["shard", "list"],
+        "shard.list",
+        &[rest("term")],
+        "Crystal shards the WolOS shard list vouches for (filter by words)",
+    ),
+    Cmd {
+        path: &["shard", "add"],
+        action: "shard.add",
+        args: &[arg("shard"), opt("dir")],
+        flags: &["local"],
+        help: "Add a curated shard to shard.yml pinned by commit, write shard.lock, fill the shards cache (--local: no fetch)",
+        hidden: false,
+    },
+    Cmd {
+        path: &["shard", "update"],
+        action: "shard.update",
+        args: &[opt("shard"), opt("dir")],
+        flags: &["local"],
+        help: "Move shard pins to the commits the list vouches for now and rewrite shard.lock",
+        hidden: false,
+    },
+    Cmd {
+        path: &["shard", "check"],
+        action: "shard.check",
+        args: &[opt("dir")],
+        flags: &["local"],
+        help: "Check shard.yml and shard.lock: commit pins, the lock, the signed list (--local: files only)",
+        hidden: false,
+    },
     cmd(&["help"], "help", &[rest("command")], "Show help"),
 ];
 

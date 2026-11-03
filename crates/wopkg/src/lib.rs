@@ -26,7 +26,7 @@ use ffi::{
 };
 use std::ffi::{c_char, c_void};
 
-pub const VERSION: (u32, u32, u32) = (1, 0, 0);
+pub const VERSION: (u32, u32, u32) = (1, 1, 0);
 
 /// Every `#define` in `wopkg.h` (test-checked against the header).
 pub mod abi {
@@ -59,10 +59,10 @@ pub extern "C" fn wopkg_version() -> u32 {
     (VERSION.0 << 16) | (VERSION.1 << 8) | VERSION.2
 }
 
-/// "1.0.0", static.
+/// "1.1.0", static.
 #[unsafe(no_mangle)]
 pub extern "C" fn wopkg_version_string() -> *const c_char {
-    c"1.0.0".as_ptr()
+    c"1.1.0".as_ptr()
 }
 
 unsafe fn ctx<'a>(c: *const wopkg_context) -> Result<&'a context::Context> {
@@ -718,7 +718,7 @@ mod tests {
             s.to_str().unwrap(),
             format!("{}.{}.{}", VERSION.0, VERSION.1, VERSION.2)
         );
-        assert_eq!(wopkg_version(), 0x01_00_00);
+        assert_eq!(wopkg_version(), 0x01_01_00);
     }
 
     /// The default feed is the latest wolos-packages release's assets (`<channel>.json` and

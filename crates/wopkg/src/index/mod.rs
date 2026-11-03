@@ -6,6 +6,7 @@ pub mod parse;
 pub mod plugins;
 pub mod search;
 pub mod segment;
+pub mod shards;
 
 use serde::{Deserialize, Serialize};
 

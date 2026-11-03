@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The shards WolOS vouches for, each at one full commit (README.md "Adding a shard"). The generator
+# (tools/gen_index.cr) reads everything else from the shard's own shard.yml at that commit.
+# Example entry:
+#   - name: wolkit
+#     git: https://git.wolos.org/shards/wolkit.git
+#     commit: 0123456789abcdef0123456789abcdef01234567
+#     summary: Reactive UI on libWolkit
+shards: []

@@ -4,7 +4,7 @@
 @[Link("wopkg")]
 lib LibWopkg
   WOPKG_VERSION_MAJOR         = 1
-  WOPKG_VERSION_MINOR         = 0
+  WOPKG_VERSION_MINOR         = 1
   WOPKG_VERSION_PATCH         = 0
   WOPKG_OK                    = 0
   WOPKG_ERR_INVALID_ARGUMENT  = 1
@@ -56,4 +56,7 @@ lib LibWopkg
   fun wopkg_rollback(context : Context*, id : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
   fun wopkg_system_call(context : Context*, request : UInt8*, len : LibC::SizeT, error : Error**) : Status
   fun wopkg_release_plan(context : Context*, request : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_shard_index(context : Context*, request : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_shard_pin(context : Context*, request : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wopkg_shard_check(context : Context*, request : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
 end

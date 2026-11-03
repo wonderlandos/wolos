@@ -22,5 +22,6 @@ pub mod run;
 pub mod seal;
 pub mod security;
 pub mod sessions;
+pub mod shard;
 pub mod verbs;
 pub mod widgets;
