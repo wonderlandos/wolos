@@ -619,7 +619,10 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
 }
 
 /// Third-party toolkits follow the theme: regenerate GTK/Qt/foot files, then gsettings so
-/// running GTK apps switch live (settings portal). Best effort: a missing gsettings is not an error.
+/// running GTK apps switch live (settings portal), then the `theme` event on wold for libwol apps
+/// (`subscribe("theme")`). Best effort: a missing gsettings or wold is not an error.
+/// Every theme change goes through here: `wol theme set|light|dark|toggle`, appearance and accent
+/// (verbs.rs `set_theme`) and undo.
 pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme) {
     use wol_core::theme::apps;
     let home = env.config_home();
@@ -637,6 +640,17 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     {
         let _ = env.exec(&argv);
     }
+    announce_theme(env, &t.id);
+}
+
+/// `publish {"event":"theme","id":ID}` on wold's socket: wold hands an Everyone event from a client
+/// to that client's own uid (and root), so the person's apps hear their own theme change. wold
+/// answers nothing; no wold (a chroot, early boot) is fine.
+fn announce_theme(env: &mut dyn Env, id: &str) {
+    let e = shared::events::Event::Theme { id: id.to_owned() };
+    let line = JobRequest::Publish(e.to_line().trim_end().to_owned()).line() + "\n";
+    let sock = jobs_socket(env);
+    let _ = env.request(&sock, line.as_bytes());
 }
 
 /// Shell wire line for a shell.* invocation.
@@ -1318,6 +1332,59 @@ mod tests {
             action,
             args: args.iter().map(|s| (*s).to_string()).collect(),
         }
+    }
+
+    /// A theme change tells libwol apps: one `publish` of the `theme` event with the new theme's id
+    /// on wold's socket, for `wol theme light|dark|set` and for appearance (verbs.rs `set_theme`).
+    /// No wold is not an error: the theme is still written.
+    #[test]
+    fn theme_changes_publish_the_theme_event_on_wold() {
+        let run = |line: &str, e: &mut FakeEnv| {
+            let argv: Vec<&str> = line.split_whitespace().collect();
+            execute(&crate::cli::parse(&argv).unwrap(), e)
+        };
+        let published = |e: &FakeEnv| -> Vec<String> {
+            e.requests
+                .iter()
+                .filter(|(p, _)| p == Path::new("/w/wold.sock"))
+                .map(|(_, r)| String::from_utf8_lossy(r).into_owned())
+                .collect()
+        };
+        let mut e = FakeEnv {
+            home: tmp("theme-event"),
+            vars: vec![("WOL_JOBS_SOCKET".into(), "/w/wold.sock".into())],
+            replies: vec![String::new(), String::new()],
+            ..Default::default()
+        };
+        assert_eq!(run("theme dark", &mut e), 0, "{}", e.err);
+        assert_eq!(run("theme light", &mut e), 0, "{}", e.err);
+        assert_eq!(
+            published(&e),
+            [
+                "publish {\"event\":\"theme\",\"id\":\"wol-dark\"}\n",
+                "publish {\"event\":\"theme\",\"id\":\"wol-light\"}\n"
+            ]
+        );
+        // What wold reads back is the event a subscriber gets (shared::jobs / shared::events).
+        let line = published(&e)[0].clone();
+        match JobRequest::parse(line.trim_end()) {
+            Some(JobRequest::Publish(j)) => assert_eq!(
+                shared::events::Event::parse(&j),
+                Some(shared::events::Event::Theme {
+                    id: "wol-dark".into()
+                })
+            ),
+            other => panic!("{other:?}"),
+        }
+        // wold not running (no reply): still written, still 0.
+        e.requests.clear();
+        assert_eq!(run("theme dark", &mut e), 0, "{}", e.err);
+        assert_eq!(published(&e).len(), 1);
+        // Appearance goes through the same announcement.
+        e.requests.clear();
+        assert_eq!(run("appearance set light", &mut e), 0, "{}", e.err);
+        assert_eq!(published(&e).len(), 1, "{:?}", e.requests);
+        assert!(published(&e)[0].starts_with("publish {\"event\":\"theme\""));
     }
 
     /// Audit S4-4: a package request waits as long as wol-admind may run pacman; a quick one

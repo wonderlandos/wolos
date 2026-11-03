@@ -16,7 +16,7 @@ ADR 0032. The base stays small; AI, developer, creative and console stacks are i
 | `needs` | words for the UI: `network`, `anthropic-account`, ... |
 | `backend` | optional package stem with one variant per GPU backend (`ollama` for ai-local): `<backend>-cuda\|rocm\|vulkan`, installed with the meta package on the root side (`Module::backend_package`), never a `depends=`; none for `cpu` |
 
-Records this release ships: `ai-claude`, `ai-local`, `ai-sessions`, `dev`, `creative`, `gaming`, `console` (`files/usr/share/wolos/modules/`, `wol_core::modules::IDS`; `crates/controller/tests/modules.rs` checks them). `dev` also carries the WolOS userland language: `crystal` (Arch) and the `[wolos]` packages `libwol` and `cryswol`, the only `[wolos]` dependencies of any module (`wolos-pkgbuilds/checks/tests/modules.rs`); Cryswol programs need it on an installed system (docs/modules/cryswol.md). Not in v0.12 (ADR 0032, planned for 0.13): the `codecs` record and `wol jail run`, the agent workspace jail.
+Records this release ships: `ai-claude`, `ai-local`, `ai-sessions`, `dev`, `creative`, `gaming`, `console` (`files/usr/share/wolos/modules/`, `wol_core::modules::IDS`; `crates/controller/tests/modules.rs` checks them). `dev` also carries the WolOS userland language: `crystal` and `pkgconf` (Arch) and the `[wolos]` packages `libwol` and `cryswol`, the only `[wolos]` dependencies of any module (`wolos-pkgbuilds/checks/tests/modules.rs`); Cryswol programs need it on an installed system (docs/modules/cryswol.md). Not in v0.12 (ADR 0032, planned for 0.13): the `codecs` record and `wol jail run`, the agent workspace jail.
 
 ## State
 
