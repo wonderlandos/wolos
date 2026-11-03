@@ -485,50 +485,95 @@ pub(crate) fn deep_command_as(
 }
 
 /// Run a deep-scan command with the file on its standard input and wait at most `deadline`
-/// (R2C-5). The guard keeps the `Child`: only it is ever killed, never a pid by number.
+/// (R2C-5). The worker runs in a process group of its own: at the end the whole group is killed
+/// (anything it started that still holds its output dies with it), while the worker is not yet
+/// reaped, so the group's number is still its own and never an unrelated pid. After a timeout
+/// the report reader is never waited for.
 pub fn run_deep(
     mut c: std::process::Command,
     file: &std::fs::File,
     deadline: Duration,
 ) -> DeepOutcome {
+    use std::os::unix::process::CommandExt;
     use std::process::Stdio;
     let Ok(clone) = file.try_clone() else {
         return DeepOutcome::Failed;
     };
     c.stdin(clone).stdout(Stdio::piped()).stderr(Stdio::null());
+    c.process_group(0);
     let Ok(mut child) = c.spawn() else {
         return DeepOutcome::Failed;
     };
+    let Ok(pid) = libc::pid_t::try_from(child.id()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return DeepOutcome::Failed;
+    };
     // The report is read on its own thread so a full pipe never stalls the wait below.
-    let reader = child.stdout.take().map(|out| {
+    let (tx, rx) = std::sync::mpsc::channel();
+    if let Some(out) = child.stdout.take() {
         std::thread::spawn(move || {
             let mut v = Vec::new();
             let _ = out.take(DEEP_OUT).read_to_end(&mut v);
-            v
-        })
-    });
-    let start = Instant::now();
-    let timed_out = loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break false,
-            Ok(None) if start.elapsed() >= deadline => break true,
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(_) => break true,
-        }
-    };
-    if timed_out {
-        let _ = child.kill();
-        let _ = child.wait();
+            let _ = tx.send(v);
+        });
+    } else {
+        let _ = tx.send(Vec::new());
     }
-    let out = reader.and_then(|r| r.join().ok()).unwrap_or_default();
+    let start = Instant::now();
+    let (mut ended, mut out) = (false, None);
+    let timed_out = loop {
+        if out.is_none() {
+            match rx.try_recv() {
+                Ok(v) => out = Some(v),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => out = Some(Vec::new()),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if !ended && exited_unreaped(pid) {
+            ended = true;
+            // What the worker left behind may hold its output open: stop it so the reader ends.
+            kill_group(pid);
+        }
+        if ended && out.is_some() {
+            break false;
+        }
+        if start.elapsed() >= deadline {
+            break true;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    kill_group(pid);
+    let _ = child.wait();
     if timed_out {
         return DeepOutcome::TimedOut;
     }
+    let out = out.unwrap_or_default();
     out.split(|b| *b == b'\n')
         .next()
         .and_then(|l| serde_json::from_slice(l).ok())
         .and_then(usable)
         .map_or(DeepOutcome::Failed, DeepOutcome::Report)
+}
+
+/// The worker `pid` (a child of this process) has ended, left as a zombie (`WNOWAIT`): its pid,
+/// and so its process group's number, stays taken until [`std::process::Child::wait`]. An error
+/// (no such child) counts as ended.
+fn exited_unreaped(pid: libc::pid_t) -> bool {
+    // SAFETY: siginfo_t is plain data; waitid only writes into it.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
+    // SAFETY: valid pointer to a local; `pid` is our own unreaped child.
+    let r = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) };
+    // SAFETY: waitid filled `info` (si_pid 0: the child is still running).
+    r != 0 || unsafe { info.si_pid() } != 0
+}
+
+/// SIGKILL to the worker's process group (its pgid is its own pid, `process_group(0)`). Only
+/// called while the worker is unreaped, so the number cannot belong to anyone else.
+fn kill_group(pid: libc::pid_t) {
+    // SAFETY: plain integer arguments.
+    unsafe { libc::killpg(pid, libc::SIGKILL) };
 }
 
 /// What a deep check means for the answer: `Ok((finding, ran_deep))` to go on, or `Err(answer)`
@@ -1387,6 +1432,34 @@ mod tests {
             after_deep(DeepOutcome::Failed, true, true),
             Err(Answer::Unchecked)
         );
+    }
+
+    /// Audit 8 #3: what a worker leaves behind holding its output never holds the guard: on
+    /// the deadline the whole process group is killed, and a worker that ended takes its
+    /// leftovers with it at once.
+    #[test]
+    fn a_deep_scan_worker_leaves_nothing_behind() {
+        let f = std::fs::File::open("/etc/passwd").unwrap();
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", "sleep 30 & sleep 30; :"]);
+        let start = Instant::now();
+        let o = run_deep(c, &f, Duration::from_millis(500));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
+        assert!(matches!(o, DeepOutcome::TimedOut), "{o:?}");
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", "sleep 30 & exit 0"]);
+        let start = Instant::now();
+        let o = run_deep(c, &f, Duration::from_secs(20));
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
+        assert!(matches!(o, DeepOutcome::Failed), "no report: {o:?}");
     }
 
     /// R2C-4: a download above WHOLE goes to the worker in stream mode; what its rules find is
