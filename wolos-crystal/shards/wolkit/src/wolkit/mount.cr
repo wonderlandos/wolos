@@ -94,6 +94,7 @@ module Wolkit
     @handlers = Array(NodeHandlers?).new(64, nil)
     @masks = Array(UInt32).new(64, 0_u32)
     @text_seq = Array(UInt32).new(64, 0_u32)
+    @owner_of = Array(Scope?).new(64, nil)
     @points = [Point.new(ROOT, NONE)]
     @collect : Array(UInt32)? = nil
     @collect_depth = 0
@@ -150,6 +151,7 @@ module Wolkit
         @handlers << nil
         @masks << 0_u32
         @text_seq << 0_u32
+        @owner_of << nil
       end
     end
 
@@ -211,6 +213,9 @@ module Wolkit
       ensure
         @collect = previous
         @collect_depth = previous_depth
+        # A collect at the level of the enclosing one (a component that is the only element of a
+        # row) made roots of that row too.
+        previous.concat(roots) if previous && previous_depth == @points.size
       end
       roots
     end
@@ -253,19 +258,32 @@ module Wolkit
         end
       end
       owner = scope.parent
+      holder = @owner_of[Mount.slot(parent)]?
       scope.on_cleanup do
-        release(roots, !(owner.try(&.disposed?) || false))
+        release(roots, !(owner.try(&.disposed?) || false) || survives?(parent, holder), parent)
         nil
       end
       roots
     end
 
+    # True when `parent` stays in the window while a scope is disposed: the scope that made it is
+    # alive. Then the rows built into it must be freed one by one, because no FREE of a bigger
+    # subtree takes them (a region placed directly in a `switch` row puts its rows beside the row's
+    # own parts, in a parent the switch does not own).
+    private def survives?(parent : UInt32, holder : Scope?) : Bool
+      return false unless holder
+      slot = Mount.slot(parent)
+      !holder.disposed? && @alive[slot] && @gens[slot].to_u32 == parent >> 24
+    end
+
     # Take `roots` out of the window: FREE each root (the engine frees its subtree) when `send` is true.
-    def release(roots : Array(UInt32), send : Bool) : Nil
+    # `parent` is where the roots were built: a root a child scope made (a component that is the
+    # whole row) has already given its id back, and its own parent link with it.
+    def release(roots : Array(UInt32), send : Bool, parent : UInt32? = nil) : Nil
       return unless send
       roots.each do |root|
-        parent = @parent_of[Mount.slot(root)]
-        @kids[Mount.slot(parent)].try &.delete(root)
+        at = parent || @parent_of[Mount.slot(root)]
+        @kids[Mount.slot(at)]?.try &.delete(root) unless at == NONE
         @writer.free(root)
       end
       touch
@@ -281,6 +299,7 @@ module Wolkit
         end
       end
       scope.nodes << id
+      @owner_of[Mount.slot(id)] = scope
     end
 
     # Give ids back: the slot is reusable (with a new generation) after the patch that frees it.
@@ -294,6 +313,7 @@ module Wolkit
         @masks[slot] = 0_u32
         @text_seq[slot] = 0_u32
         @parent_of[slot] = NONE
+        @owner_of[slot] = nil
         @gens[slot] = @gens[slot] &+ 1
         @pending_free << slot.to_u32
         @live -= 1
@@ -398,6 +418,27 @@ module Wolkit
       @masks[slot] |= Event.bit(kind)
       @writer.bind_event(id, @masks[slot])
       touch
+    end
+
+    # Like `on`, but a handler already bound for `kind` keeps running, after this one: a two-way
+    # binding (`text_field @draft`) and the app's own `on_change:` both hear the edit.
+    def on_first(id : UInt32, kind : UInt16, &handler : Event ->) : Nil
+      slot = Mount.slot(id)
+      previous = @handlers[slot]?.try &.find(kind)
+      if previous
+        on(id, kind) do |event|
+          handler.call(event)
+          previous.call(event)
+        end
+      else
+        on(id, kind, &handler)
+      end
+    end
+
+    # The part `id` is inside (NONE for the root or a part not inserted).
+    def parent(id : UInt32) : UInt32
+      slot = Mount.slot(id)
+      slot < @parent_of.size ? @parent_of[slot] : NONE
     end
 
     # Run the handler of the event, in a batch. An event for a part this mount no longer has is

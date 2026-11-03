@@ -1,0 +1,31 @@
+scene nodes=30
+0 box
+  1 box on=0x8 flex-direction=column gap=12 padding=16
+    2 box on=0x400 flex-direction=column gap=4 align-self=stretch
+      3 text font-size=secondary font-weight=600 "Name"
+      4 text_input on=0x10 placeholder="Ada Lovelace"
+      5 text font-size=caption color=dim visibility=hidden
+    6 box on=0x400 flex-direction=column gap=4 align-self=stretch
+      7 text font-size=secondary font-weight=600 "City"
+      8 box flex-direction=column gap=0 align-self=stretch
+        9 text_input on=0x18 placeholder="" align-self=stretch
+        10 spacer display=none
+      11 text font-size=caption color=dim visibility=visible "Where you live."
+    12 text_input on=0x30 placeholder="" white-space=pre-wrap min-height=72px align-self=stretch max-length=65536
+    13 box on=0x8 flex-direction=row gap=0 padding=4 background=control border-radius=6 align-self=start
+      14 button classes=2,6 state=selected|checked on=0x1 flex-direction=row "Day"
+      15 button classes=2,6 on=0x1 flex-direction=row "Week"
+      16 button classes=2,6 on=0x1 flex-direction=row "Month"
+    17 box on=0x8 flex-direction=row gap=4 align-items=center
+      18 text_input on=0x10 placeholder="YYYY-MM-DD" width=120px max-length=10 "1990-05-17"
+      19 button classes=2 on=0x1 flex-direction=row
+        20 image image-source="icon:go_previous"
+      21 button classes=2 on=0x1 flex-direction=row
+        22 image image-source="icon:go_next"
+      23 button classes=2 on=0x1 flex-direction=row "Today"
+    24 box flex-direction=row gap=8 align-items=center align-self=stretch
+      25 text width=120px "Volume"
+      26 slider on=0x80 slider-min=0 slider-max=1 slider-step=0 grow=1 slider-value=0.5
+      27 text font-feature=tnum width=56px text-align=end "50%"
+    28 button classes=0 on=0x1 flex-direction=row "Save"
+    29 text font-size=secondary color=dim visibility=hidden

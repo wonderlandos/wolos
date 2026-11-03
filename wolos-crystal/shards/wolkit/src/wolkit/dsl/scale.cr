@@ -64,6 +64,49 @@ module Wolkit
       {2_u32, percent}
     end
 
+    # A pair of numbers (`translate:`, `scale:`): one number is both, `{x, y}` is each.
+    def self.pair(value : Int | Float) : {Float32, Float32}
+      {value.to_f32, value.to_f32}
+    end
+
+    def self.pair(value : Tuple(A, B)) : {Float32, Float32} forall A, B
+      x, y = value
+      raise UsageError.new("A pair is one number or `{x, y}`; this is #{value.inspect}.") unless x.is_a?(Number) && y.is_a?(Number)
+      {x.to_f32, y.to_f32}
+    end
+
+    def self.pair(value) : {Float32, Float32}
+      raise UsageError.new("A pair is one number or `{x, y}`; this is #{value.inspect}.")
+    end
+
+    # A border or outline: `{width, :token}`, a width alone (in the `line` colour), or `:none`.
+    def self.border(value : Int | Float) : {Float32, UInt32}
+      border_width(value, value)
+      {value.to_f32, token(:line)}
+    end
+
+    def self.border(value : Symbol) : {Float32, UInt32}
+      raise UsageError.new("A border is a width, `{width, :token}` or :none; this is :#{value}.") unless value == :none
+      {0.0_f32, token(:line)}
+    end
+
+    def self.border(value : Tuple(A, B)) : {Float32, UInt32} forall A, B
+      width, colour = value
+      unless width.is_a?(Number) && colour.is_a?(Symbol)
+        raise UsageError.new("A border is `{width, :token}`, for example `{1, :line}`; this is #{value.inspect}.")
+      end
+      border_width(width, value)
+      {width.to_f32, token(colour)}
+    end
+
+    def self.border(value) : {Float32, UInt32}
+      raise UsageError.new("A border is a width, `{width, :token}` or :none; this is #{value.inspect}.")
+    end
+
+    private def self.border_width(width : Number, whole) : Nil
+      raise UsageError.new("A border width is 0 or more; this is #{whole.inspect}.") if width < 0
+    end
+
     # font-weight: 400, 500, 600 or 700.
     def self.weight(value : Int) : UInt32
       case value

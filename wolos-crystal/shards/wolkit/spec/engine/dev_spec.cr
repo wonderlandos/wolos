@@ -49,5 +49,39 @@ require "../dsl_app_spec"
         end
       end
     end
+
+    it "restyles when a watched sheet is saved and points at the line of a broken one" do
+      dir = File.join(Dir.tempdir, "wolkit-style-watch-#{Process.pid}")
+      Dir.mkdir_p(dir)
+      kit = File.join(dir, "00-kit.wolcss")
+      app_sheet = File.join(dir, "app.wolcss")
+      File.write(kit, File.read(File.join(__DIR__, "../../styles/kit.wolcss")))
+      File.write(app_sheet, ".greeting { font-size: title; }\n")
+      Wolkit::Test.run(SpecTodos) do |t|
+        Wolkit::Dev::StyleWatch.start([dir], every: 1.hour).should be_true
+        Wolkit::Dev::StyleWatch.paths.should eq [kit, app_sheet]
+        Wolkit::Dev::StyleWatch.check.should be_false
+        File.write(app_sheet, ".greeting {\n  font-size: title;\n  colour: accent;\n}\n")
+        File.touch(app_sheet, Time.utc + 1.second)
+        Wolkit::Dev::StyleWatch.check.should be_true
+        Wolkit::Dev::StyleWatch.last_error.to_s.should start_with("#{app_sheet}:3:")
+        t.scene.should contain("overlay")
+        File.write(app_sheet, ".greeting { font-size: title; color: accent; }\n")
+        File.touch(app_sheet, Time.utc + 2.seconds)
+        Wolkit::Dev::StyleWatch.check.should be_true
+        Wolkit::Dev::StyleWatch.last_error.should be_nil
+        t.scene.should_not contain("overlay")
+      ensure
+        Wolkit::Dev::StyleWatch.stop
+      end
+    ensure
+      FileUtils.rm_rf(dir) if dir
+    end
+
+    it "maps a line of the joined sheets back to its file" do
+      parts = [Wolkit::Dev::StyleWatch::Part.new("a.wolcss", 1, 10), Wolkit::Dev::StyleWatch::Part.new("b.wolcss", 11, 5)]
+      Wolkit::Dev::StyleWatch.locate("style.wolcss:13:4: error[WS-001]: unknown", parts).should eq "b.wolcss:3:4: error[WS-001]: unknown"
+      Wolkit::Dev::StyleWatch.locate("something else", parts).should eq "something else"
+    end
   end
 {% end %}

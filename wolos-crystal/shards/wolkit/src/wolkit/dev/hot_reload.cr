@@ -9,6 +9,9 @@
 #   {"cmd":"snapshot","path":"..."}         write the app's state to a file for the next process
 #   {"cmd":"inspect","what":"scene|layout|a11y"}   reply with the dump of the first window
 #
+# The server also watches the app's `.wolcss` sheets (`$WOLKIT_DEV_STYLES`, dev/style_watch.cr) and
+# restyles on save, so a style change needs no CLI at all.
+#
 # Release builds contain none of this code. A line is at most 8 MiB (a style table is at most 4 MiB
 # before base64) and a connection that stops talking is dropped after 30 s (RCR-191, RCR-192).
 {% if flag?(:dev) %}
@@ -19,6 +22,7 @@
   require "../runtime"
   require "./errors"
   require "./snapshot"
+  require "./style_watch"
 
   module Wolkit
     module Dev
@@ -54,6 +58,7 @@
           @@server = server
           @@path = path
           Snapshot.restore_from_env(app)
+          StyleWatch.start
           spawn(name: "wolkit-dev") do
             while client = server.accept?
               spawn(name: "wolkit-dev-client") { serve(client, app) }
@@ -62,6 +67,7 @@
         end
 
         def self.stop : Nil
+          StyleWatch.stop
           @@server.try &.close
           @@path.try { |path| File.delete(path) if File.exists?(path) }
           @@server = nil

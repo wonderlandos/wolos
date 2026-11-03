@@ -16,6 +16,7 @@
 require "./tables"
 require "./scale"
 require "./check"
+require "./keys"
 require "../mount"
 
 module Wolkit
@@ -56,9 +57,9 @@ module Wolkit
               {% known = true %}
             {% elsif ::Wolkit::DSL::STATES[k] %}
               {% known = true %}
-            {% elsif spec[:events][k] %}
+            {% elsif spec[:events][k] || ::Wolkit::DSL::COMMON_EVENTS[k] %}
               {% known = true %}
-              {% ev = spec[:events][k] %}
+              {% ev = spec[:events][k] || ::Wolkit::DSL::COMMON_EVENTS[k] %}
               {% if val.is_a?(ProcLiteral) && val.args.size == 1 && !ev[:arg] %}
                 {% val.raise "#{k.id}: takes a proc with no arguments; this one takes #{val.args.size}." %}
               {% end %}
@@ -81,6 +82,10 @@ module Wolkit
                     {% elsif val.is_a?(NumberLiteral) && !%w(0 6 10 14 20).includes?(val.stringify) %}
                       {% val.raise "A radius is one of 0, 6, 10, 14 or 20; this is #{val}." %}
                     {% end %}
+                  {% elsif conv == "border" && val.is_a?(SymbolLiteral) && val.id.stringify != "none" %}
+                    {% val.raise "A border is a width, `{width, :token}` or :none; this is #{val}." %}
+                  {% elsif conv == "pair" && val.is_a?(SymbolLiteral) %}
+                    {% val.raise "`#{k.id}:` takes one number or `{x, y}`; this is #{val}." %}
                   {% elsif conv == "token" && val.is_a?(SymbolLiteral) %}
                     {% if !::Wolkit::Scale::TOKENS.includes?(val.id.stringify) %}
                       {% val.raise "Colours are theme tokens: surface, sidebar, card, line, text, dim, accent, accentText, glass, control, success, warning or danger; this is #{val}." %}
@@ -94,11 +99,20 @@ module Wolkit
                     {% end %}
                   {% end %}
                 {% end %}
+                {% if conv == "border" && val.is_a?(TupleLiteral) %}
+                  {% if val.size != 2 || val[0].is_a?(StringLiteral) || val[0].is_a?(SymbolLiteral) || val[1].is_a?(NumberLiteral) || val[1].is_a?(StringLiteral) %}
+                    {% val.raise "A border is `{width, :token}`, for example `{1, :line}`; this is #{val}." %}
+                  {% elsif val[1].is_a?(SymbolLiteral) && !::Wolkit::Scale::TOKENS.includes?(val[1].id.stringify) %}
+                    {% val[1].raise "Colours are theme tokens: surface, sidebar, card, line, text, dim, accent, accentText, glass, control, success, warning or danger; this is #{val[1]}." %}
+                  {% end %}
+                {% elsif conv == "pair" && val.is_a?(TupleLiteral) && val.size != 2 %}
+                  {% val.raise "`#{k.id}:` takes one number or `{x, y}`; this has #{val.size} values." %}
+                {% end %}
               {% end %}
             {% end %}
             {% unless known %}
               {% best = nil %}{% bestd = 3 %}
-              {% for cand in allowed + spec[:events].keys + %w(label description a11y_role class decorative disabled selected checked expanded busy) %}
+              {% for cand in allowed + spec[:events].keys + ::Wolkit::DSL::COMMON_EVENTS.keys + %w(label description a11y_role class decorative disabled selected checked expanded busy) %}
                 {% a = k.chars %}{% b = cand.chars %}
                 {% prev = [] of NumberLiteral %}{% for j in (0..b.size) %}{% prev << j %}{% end %}
                 {% for i in (1..a.size) %}
@@ -138,6 +152,10 @@ module Wolkit
                 {% info = ::Wolkit::Wire::PROPS[p[:wire]] %}
                 {% conv = p[:conv] %}
                 {% lit = val.is_a?(NumberLiteral) || val.is_a?(StringLiteral) || val.is_a?(SymbolLiteral) || val.is_a?(BoolLiteral) || val.is_a?(NilLiteral) %}
+                {% if val.is_a?(TupleLiteral) %}
+                  {% lit = true %}
+                  {% for part in val %}{% lit = false unless part.is_a?(NumberLiteral) || part.is_a?(SymbolLiteral) %}{% end %}
+                {% end %}
                 {% eff_open = lit ? "" : "::Wolkit.effect do" %}
                 {% eff_close = lit ? "" : "end" %}
                 {% rd_open = lit ? "(" : "::Wolkit.read(" %}
@@ -231,16 +249,27 @@ module Wolkit
             # --- events
             {% for key, val in props %}
               {% k = key.stringify %}
-              {% if spec[:events][k] %}
-                {% ev = spec[:events][k] %}
-                %m.on(%id, ::Wolkit::Wire::Event::{{ ev[:ev].id }}) do |%e|
-                  {% if val.is_a?(ProcLiteral) && val.args.size == 1 %}
-                    ({{ val }}).call(%e.{{ ev[:arg].id }})
-                  {% else %}
-                    ({{ val }}).call
-                  {% end %}
-                  nil
-                end
+              {% if spec[:events][k] || ::Wolkit::DSL::COMMON_EVENTS[k] %}
+                {% ev = spec[:events][k] || ::Wolkit::DSL::COMMON_EVENTS[k] %}
+                {% if ev[:ev] == "KEY" %}
+                  ::Wolkit::Keys.listen(%m, %id, ->(%key : ::Wolkit::KeyPress) do
+                    {% if val.is_a?(ProcLiteral) && val.args.size == 1 %}
+                      ({{ val }}).call(%key)
+                    {% else %}
+                      ({{ val }}).call
+                    {% end %}
+                    nil
+                  end)
+                {% else %}
+                  %m.on(%id, ::Wolkit::Wire::Event::{{ ev[:ev].id }}) do |%e|
+                    {% if val.is_a?(ProcLiteral) && val.args.size == 1 %}
+                      ({{ val }}).call(%e.{{ ev[:arg].id }})
+                    {% else %}
+                      ({{ val }}).call
+                    {% end %}
+                    nil
+                  end
+                {% end %}
               {% end %}
             {% end %}
 
