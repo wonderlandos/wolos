@@ -28,6 +28,8 @@ struct Cached {
 #[derive(Default)]
 struct Cache {
     map: HashMap<(String, u32), Cached>,
+    /// Size-only entries for parts laid out before any picture of their file was asked for.
+    headers: HashMap<String, Arc<Entry>>,
     tick: u64,
 }
 
@@ -94,6 +96,31 @@ pub fn get(src: &str, w: f32, h: f32) -> Option<Arc<Entry>> {
     Some(stand_in(path, cap).unwrap_or(e))
 }
 
+/// The natural size of the file `src` names, for layout; `None` until a header has been read
+/// (the first call starts a size-only read, and learning it moves `image::size_generation`).
+pub fn natural(src: &str) -> Option<(u32, u32)> {
+    let path = path_of(src)?;
+    let mut c = lock(&CACHE);
+    let known = c
+        .map
+        .iter()
+        .filter(|((p, _), _)| p == path)
+        .find_map(|(_, x)| x.entry.natural());
+    if known.is_some() {
+        return known;
+    }
+    if let Some(e) = c.headers.get(path) {
+        return e.natural_for_layout();
+    }
+    if c.headers.len() >= MAX_ENTRIES {
+        c.headers.clear();
+    }
+    let e = Entry::header_of_file(path.into());
+    let wh = e.natural_for_layout();
+    c.headers.insert(path.to_owned(), e);
+    wh
+}
+
 /// The largest ready picture of `path` below `cap`.
 fn stand_in(path: &str, cap: u32) -> Option<Arc<Entry>> {
     let c = lock(&CACHE);
@@ -130,7 +157,11 @@ fn evict(c: &mut Cache, keep: u64) {
 
 /// Memory Saver: forget every cached picture (the next frame asks again).
 pub fn trim() {
-    lock(&CACHE).map.clear();
+    let mut c = lock(&CACHE);
+    c.map.clear();
+    c.headers.clear();
+    drop(c);
+    super::icon::trim();
 }
 
 /// Entries in the cache (tests and stats).

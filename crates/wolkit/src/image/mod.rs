@@ -14,6 +14,7 @@
 pub mod decode;
 pub mod exif;
 pub mod fit;
+pub mod icon;
 pub mod source;
 mod worker;
 
@@ -153,6 +154,17 @@ struct Inner {
     /// Oriented natural size, once the header was read.
     natural: Option<(u32, u32)>,
     state: State,
+    /// Layout asked for the size before it was known: learning it moves [`size_generation`].
+    size_wanted: bool,
+}
+
+impl Inner {
+    fn learn(&mut self, wh: (u32, u32)) {
+        self.natural = Some(wh);
+        if std::mem::take(&mut self.size_wanted) {
+            SIZE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        }
+    }
 }
 
 /// One picture.
@@ -174,6 +186,7 @@ impl Drop for Entry {
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
 static HELD: AtomicU64 = AtomicU64::new(0);
 static GENERATION: AtomicU64 = AtomicU64::new(1);
+static SIZE_GENERATION: AtomicU64 = AtomicU64::new(1);
 static REGISTRY: LazyLock<Mutex<HashMap<u32, Weak<Entry>>>> = LazyLock::new(Default::default);
 static PENDING: LazyLock<(Mutex<usize>, Condvar)> = LazyLock::new(Default::default);
 static SUBSCRIBERS: LazyLock<Mutex<Vec<Weak<Waker>>>> = LazyLock::new(Default::default);
@@ -207,6 +220,12 @@ pub fn held_bytes() -> u64 {
 /// may show a placeholder that can now be a picture.
 pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
+}
+
+/// Changes whenever a natural size layout asked for became known (`Entry::natural_for_layout`);
+/// part of the layout key (`window::pipeline::ensure_layout`).
+pub fn size_generation() -> u64 {
+    SIZE_GENERATION.load(Ordering::Acquire)
 }
 
 /// A wake-up the native backend polls: woken whenever [`generation`] moves.
@@ -256,7 +275,11 @@ impl Entry {
     fn new(natural: Option<(u32, u32)>, state: State, held: u64) -> Arc<Entry> {
         let e = Arc::new(Entry {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            inner: Mutex::new(Inner { natural, state }),
+            inner: Mutex::new(Inner {
+                natural,
+                state,
+                size_wanted: false,
+            }),
             held: AtomicU64::new(held),
         });
         lock(&REGISTRY).insert(e.id, Arc::downgrade(&e));
@@ -299,6 +322,20 @@ impl Entry {
         }
     }
 
+    /// An icon of the theme (`icon:<name>`), drawn `px` pixels square in `color` on a worker.
+    pub fn icon(name: String, px: u32, color: crate::paint::geom::Color) -> Arc<Entry> {
+        let e = Entry::new(Some((px, px)), State::Pending, 0);
+        worker::submit(&e, worker::Input::Icon { name, px, color }, 0);
+        e
+    }
+
+    /// The size of a file only: its header is read on a worker (layout of a part with no size).
+    pub fn header_of_file(path: std::path::PathBuf) -> Arc<Entry> {
+        let e = Entry::new(None, State::Pending, 0);
+        worker::submit(&e, worker::Input::Header(path), 0);
+        e
+    }
+
     /// A file, read and decoded on a worker.
     pub fn from_file(path: std::path::PathBuf, max_side: u32) -> Arc<Entry> {
         let e = Entry::new(None, State::Pending, 0);
@@ -332,7 +369,29 @@ impl Entry {
     }
 
     fn set_natural(&self, wh: (u32, u32)) {
-        lock(&self.inner).natural = Some(wh);
+        lock(&self.inner).learn(wh);
+    }
+
+    /// The natural size for layout. When it is not known yet the entry remembers that layout
+    /// asked, and learning it moves [`size_generation`] (so the window lays out again).
+    pub fn natural_for_layout(&self) -> Option<(u32, u32)> {
+        let mut g = lock(&self.inner);
+        if g.natural.is_none() && matches!(g.state, State::Pending) {
+            g.size_wanted = true;
+        }
+        g.natural
+    }
+
+    /// A size-only entry is done: its header was read (or could not be).
+    fn finish_header(&self, wh: Option<(u32, u32)>) {
+        let mut g = lock(&self.inner);
+        match wh {
+            Some(wh) => g.learn(wh),
+            None => g.size_wanted = false,
+        }
+        g.state = State::Failed(String::new());
+        drop(g);
+        changed();
     }
 
     /// Worker side: the decode finished. The budget moves from the encoded bytes to the levels.
@@ -346,7 +405,7 @@ impl Entry {
                     Ok(()) => {
                         self.held.store(n, Ordering::Release);
                         let mut g = lock(&self.inner);
-                        g.natural = Some((p.width, p.height));
+                        g.learn((p.width, p.height));
                         g.state = State::Ready(Arc::new(p));
                         drop(g);
                         changed();

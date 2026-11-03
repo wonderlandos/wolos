@@ -7,8 +7,11 @@ use crate::scene::{SceneRead, SceneWrite, dirty};
 
 /// Bring styles and layout up to date for the window's size. Cheap when nothing changed.
 pub fn ensure_layout(w: &mut WindowCore) {
+    // A picture's size that layout waited for counts as a change of the scene.
     let key = (
-        w.scene.version(),
+        w.scene
+            .version()
+            .wrapping_add(crate::image::size_generation() << 40),
         w.width,
         w.height,
         w.scale.to_bits(),
@@ -60,10 +63,20 @@ pub fn render_rgba(w: &mut WindowCore, width: u32, height: u32, scale: f32, out:
 /// decoding, so a frame drawn next does not depend on timing. The headless backend's
 /// `render_rgba`; never on a display backend's frame path.
 pub fn settle_images(w: &mut WindowCore) {
-    ensure_layout(w);
-    if crate::paint::scene::request_images(&w.scene) > 0 {
-        crate::image::settle(std::time::Duration::from_secs(5));
+    // A size learnt while settling lays the window out again, which can ask for other sizes of
+    // the same pictures: a few rounds until the layout stands still.
+    for _ in 0..3 {
+        ensure_layout(w);
+        let sizes = crate::image::size_generation();
+        let palette = crate::paint::palette::Palette::for_env(&w.env);
+        if crate::paint::scene::request_images(&w.scene, &w.styles, &palette) > 0 {
+            crate::image::settle(std::time::Duration::from_secs(5));
+        }
+        if crate::image::size_generation() == sizes {
+            break;
+        }
     }
+    ensure_layout(w);
 }
 
 /// A frame as the engine sees it: bring layout up to date, "paint", and clear the paint and

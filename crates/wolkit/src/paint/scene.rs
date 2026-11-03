@@ -224,6 +224,17 @@ fn overlaps<S: SceneRead + ?Sized>(cx: &Lower<'_, S>, n: Idx, st: &Props) -> boo
     !bare
 }
 
+/// The `icon:<name>` source of an `image` node without an `image-id`, if it has one.
+fn icon_source<S: SceneRead + ?Sized>(scene: &S, n: Idx) -> Option<&str> {
+    if scene.prop(n, id::IMAGE_ID).is_some_and(|v| v.w[0] != 0) {
+        return None;
+    }
+    let src = scene
+        .prop(n, id::IMAGE_SOURCE)
+        .map(|v| scene.string(v.w[0]))?;
+    crate::image::icon::is_icon(src).then_some(src)
+}
+
 /// The picture an `image` node shows: `image-id` (a registered picture) first, else an
 /// `image-source` path. `None` for a node with neither, or a source that is not a file.
 fn picture<S: SceneRead + ?Sized>(
@@ -244,14 +255,27 @@ fn picture<S: SceneRead + ?Sized>(
 
 /// Asks for the picture of every `image` node (paint does this lazily as it draws; the headless
 /// backend calls this, then waits, so its first frame already shows the pictures).
-pub fn request_images<S: SceneRead + ?Sized>(scene: &S) -> usize {
+pub fn request_images<S: SceneRead + ?Sized>(
+    scene: &S,
+    styles: &Styles,
+    palette: &Palette,
+) -> usize {
     let mut n = 0;
     if !scene.is_live(0) {
         return 0;
     }
     let mut stack = vec![0];
     while let Some(i) = stack.pop() {
-        if scene.kind(i) == Kind::Image && picture(scene, i, to_paint(scene.rect(i))).is_some() {
+        let r = to_paint(scene.rect(i));
+        let asked = match (scene.kind(i), icon_source(scene, i)) {
+            (Kind::Image, Some(src)) => {
+                let color = palette.resolve(styles.get(scene.computed(i)).text.color);
+                crate::image::icon::get(src, r.w, r.h, color).is_some()
+            }
+            (Kind::Image, None) => picture(scene, i, r).is_some(),
+            _ => false,
+        };
+        if asked {
             n += 1;
         }
         let mut c = scene.first_child(i);
@@ -272,11 +296,24 @@ fn image<S: SceneRead + ?Sized>(
     r: Rect,
     radii: Radii,
 ) {
-    let Some(entry) = picture(cx.scene, n, r) else {
+    let icon = icon_source(cx.scene, n);
+    let entry = match icon {
+        Some(src) => {
+            let color = cx
+                .palette
+                .resolve(cx.styles.get(cx.scene.computed(n)).text.color);
+            crate::image::icon::get(src, r.w, r.h, color)
+        }
+        None => picture(cx.scene, n, r),
+    };
+    let Some(entry) = entry else {
         return;
     };
     let Some(px) = entry.pixels() else {
-        list.rect(r, radii, Fill::Solid(cx.palette.token(Token::Control)));
+        // An icon that is not drawn yet (or not found) shows nothing; a picture a placeholder.
+        if icon.is_none() {
+            list.rect(r, radii, Fill::Solid(cx.palette.token(Token::Control)));
+        }
         return;
     };
     let fit = cx

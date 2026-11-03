@@ -212,6 +212,11 @@ impl Engine {
             w.core.scene.trim();
             w.backend.trim(level);
         }
+        // Hidden or critical: forget the pictures named by path (the next frame asks again; a
+        // picture a part still shows stays alive in that frame's display list until then).
+        if level >= abi::TRIM_HIDDEN {
+            crate::image::source::trim();
+        }
     }
 
     pub fn stats_json(&self) -> String {

@@ -15,7 +15,18 @@ use crate::error::{Error, Result};
 pub enum Input {
     Bytes(Vec<u8>),
     File(PathBuf),
+    /// The size only: the first [`HEADER_BYTES`] of the file.
+    Header(PathBuf),
+    /// An icon of the theme, `px` square, symbolic ones in `color`.
+    Icon {
+        name: String,
+        px: u32,
+        color: crate::paint::geom::Color,
+    },
 }
+
+/// Enough of a file for its header and camera block (APP segments are at most 64 KiB each).
+const HEADER_BYTES: u64 = 1 << 20;
 
 struct Job {
     entry: Weak<Entry>,
@@ -91,9 +102,12 @@ fn run_one() {
 }
 
 fn read_file(p: &std::path::Path) -> Result<Vec<u8>> {
+    read_head(p, u64::try_from(MAX_ENCODED).unwrap_or(u64::MAX) + 1)
+}
+
+fn read_head(p: &std::path::Path, cap: u64) -> Result<Vec<u8>> {
     let f = std::fs::File::open(p).map_err(|_| Error::invalid(super::source::UNREADABLE))?;
     let mut b = Vec::new();
-    let cap = u64::try_from(MAX_ENCODED).unwrap_or(u64::MAX) + 1;
     f.take(cap)
         .read_to_end(&mut b)
         .map_err(|_| Error::invalid(super::source::UNREADABLE))?;
@@ -104,10 +118,19 @@ fn read_file(p: &std::path::Path) -> Result<Vec<u8>> {
 }
 
 fn work(j: Job) {
-    if let Some(e) = j.entry.upgrade() {
+    if let (Some(e), Input::Header(p)) = (j.entry.upgrade(), &j.input) {
+        let wh = std::panic::catch_unwind(|| {
+            let b = read_head(p, HEADER_BYTES).ok()?;
+            decode::probe(&b).ok().map(|h| (h.width, h.height))
+        });
+        e.finish_header(wh.ok().flatten());
+    } else if let Some(e) = j.entry.upgrade() {
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let bytes = match j.input {
                 Input::Bytes(b) => b,
+                // Handled above; a size-only job never decodes.
+                Input::Header(_) => return Err(Error::invalid(decode::DAMAGED)),
+                Input::Icon { name, px, color } => return super::icon::load(&name, px, color),
                 Input::File(p) => {
                     let b = read_file(&p)?;
                     e.set_natural({
