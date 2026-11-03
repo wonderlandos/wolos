@@ -584,7 +584,8 @@ fn x11_popups_are_left_where_they_open() {
         let f = &plugin[plugin.find(name).unwrap_or_else(|| panic!("{name}"))..];
         f[..f.find("\n}").unwrap()].to_owned()
     };
-    assert!(body("static bool x11OverrideRedirect").contains("isX11OverrideRedirect()"));
+    // 0.57: the X11 backend's traits carry override-redirect.
+    assert!(body("static bool x11OverrideRedirect").contains("traits().overrideRedirect"));
     assert!(body("static int32_t placementOf").contains("wol_x11_placement("));
     assert!(body("static bool managedWindow").contains("wol_x11_managed("));
     let late = body("static void onOpenLate");

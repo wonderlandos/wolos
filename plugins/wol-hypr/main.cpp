@@ -2,8 +2,13 @@
 // wol-hypr: thin compositor plugin. All policy lives in Rust (crates/realtime, C ABI wol_realtime.h).
 #include <filesystem>
 #include <hyprland/src/plugins/PluginAPI.hpp>
-// Targets the compositor 0.56 (Event::bus(), desktop/view/Window.hpp, positionAnimation()).
-#include <hyprland/src/desktop/view/Window.hpp>
+// Targets the compositor 0.57 (window facts behind backend(), metadata() and presentation()).
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WaylandBackend.hpp>
+#include <hyprland/src/desktop/view/window/X11Backend.hpp>
+#include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+#include <hyprland/src/ipc/s1/S1.hpp>
+#include <hyprland/src/render/Context.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/Compositor.hpp>
@@ -46,23 +51,41 @@
 inline HANDLE PHANDLE = nullptr;
 // Set by PLUGIN_INIT, run by PLUGIN_EXIT: releases the event listeners.
 static std::function<void()> g_unhook;
-static SP<SHyprCtlCommand>   g_wolstats;
+static SP<IPC::Socket1::SCommand> g_wolstats;
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
+
+// The window's xdg toplevel (Wayland) or Xwayland surface (X11); the backends keep them private
+// (built with -fno-access-control).
+static SP<CXDGToplevelResource> toplevelOf(PHLWINDOW w) {
+    if (w->backend().isX11())
+        return nullptr;
+    const auto xdg = static_cast<const Desktop::View::CWaylandBackend&>(w->backend()).m_resource.lock();
+    return xdg ? xdg->m_toplevel.lock() : nullptr;
+}
+
+static SP<CXWaylandSurface> xsurfaceOf(PHLWINDOW w) {
+    if (!w->backend().isX11())
+        return nullptr;
+    return static_cast<const Desktop::View::CX11Backend&>(w->backend()).m_xwaylandSurface.lock();
+}
+
+static bool noBorders(PHLWINDOW w) {
+    return w->backend().traits().suggestsNoBorder;
+}
 
 // What the window told us about its frame, as wol_window_lights reads it (crates/realtime chrome.rs).
 // Kit windows are GTK with no decorations and may carry any app id (hosted apps): the program tells.
 static bool isWolProgram(PHLWINDOW w) {
     std::error_code ec;
-    const auto      exe = std::filesystem::read_symlink(std::format("/proc/{}/exe", w->getPID()), ec);
+    const auto      exe = std::filesystem::read_symlink(std::format("/proc/{}/exe", w->backend().pid()), ec);
     return !ec && exe.filename().string().starts_with("wol-");
 }
 
 static int32_t decorationOf(PHLWINDOW w) {
-    if (w->m_isX11)
-        return w->m_X11DoesntWantBorders ? 4 : 3;
-    const auto xdg = w->m_xdgSurface.lock();
-    const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
+    if (w->backend().isX11())
+        return noBorders(w) ? 4 : 3;
+    const auto top = toplevelOf(w);
     if (!top)
         return 1;
     // GTK 3/4 and libadwaita never create an xdg-decoration object.
@@ -73,10 +96,11 @@ static int32_t decorationOf(PHLWINDOW w) {
 }
 
 static bool isTransient(PHLWINDOW w) {
-    if (w->m_isX11)
-        return w->m_xwaylandSurface && (w->m_xwaylandSurface->m_parent || w->m_xwaylandSurface->m_transient || w->isModal());
-    const auto xdg = w->m_xdgSurface.lock();
-    const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
+    if (w->backend().isX11()) {
+        const auto xs = xsurfaceOf(w);
+        return xs && (xs->m_parent || xs->m_transient || w->backend().traits().modal);
+    }
+    const auto top = toplevelOf(w);
     return top && top->m_parent;
 }
 
@@ -84,23 +108,24 @@ static uint32_t fixedAxesOf(PHLWINDOW w);
 
 // Close-only lights when either axis is fixed (palettes, fixed-size dialogs).
 static int32_t lightsOf(PHLWINDOW w) {
-    return wol_window_lights(w->m_class.c_str(), decorationOf(w), isTransient(w), fixedAxesOf(w) != 0);
+    return wol_window_lights(w->metadata().appID().c_str(), decorationOf(w), isTransient(w), fixedAxesOf(w) != 0);
 }
 
 // X11 override-redirect menus, tooltips and combo lists, and borderless X11 popups, are not windows
 // to place, cascade from, refit or tag (audit4 S5-2, audit-x11 X1-1): they position themselves at
 // the pointer. The rule is realtime's (wm_gates.rs).
 static bool x11OverrideRedirect(PHLWINDOW w) {
-    return w->m_isX11 && w->isX11OverrideRedirect();
+    return w->backend().isX11() && w->backend().traits().overrideRedirect;
 }
 
 static bool managedWindow(PHLWINDOW w) {
-    return wol_x11_managed(w->m_isX11, x11OverrideRedirect(w), w->m_X11DoesntWantBorders) != 0;
+    return wol_x11_managed(w->backend().isX11(), x11OverrideRedirect(w), noBorders(w)) != 0;
 }
 
 static int32_t placementOf(PHLWINDOW w) {
-    const auto* h = w->m_isX11 && w->m_xwaylandSurface ? w->m_xwaylandSurface->m_sizeHints.get() : nullptr;
-    return wol_x11_placement(w->m_isX11, x11OverrideRedirect(w), w->m_X11DoesntWantBorders, h ? h->flags : 0);
+    const auto  xs = xsurfaceOf(w);
+    const auto* h  = xs ? xs->m_sizeHints.get() : nullptr;
+    return wol_x11_placement(w->backend().isX11(), x11OverrideRedirect(w), noBorders(w), h ? h->flags : 0);
 }
 
 // `wol-lights-*` tags (hyprland.conf windowrules): no strip on windows that draw their own buttons,
@@ -110,7 +135,7 @@ static void onOpen(PHLWINDOW w) {
     const auto lights = lightsOf(w);
     const char* tag   = lights == 0 ? "wol-lights-none" : lights == 1 ? "wol-lights-close" : nullptr;
     if (tag)
-        HyprlandAPI::invokeHyprctlCommand("dispatch", std::format("tagwindow +{} address:0x{:x}", tag, (uintptr_t)w.get()));
+        (void)Config::Actions::tag(std::format("+{}", tag), w);
 }
 
 // A client-supplied size as int32: NaN, negative and huge values (a double past INT32_MAX is UB
@@ -129,16 +154,16 @@ static int32_t clientDim(int v) {
 // xdg min/max size of the toplevel (X11: WM_NORMAL_HINTS); 0 = unset, as wol_fit reads it.
 static void sizeLimits(PHLWINDOW w, int32_t& minW, int32_t& minH, int32_t& maxW, int32_t& maxH) {
     minW = minH = maxW = maxH = 0;
-    if (w->m_isX11) {
-        const auto h = w->m_xwaylandSurface ? w->m_xwaylandSurface->m_sizeHints.get() : nullptr;
+    if (w->backend().isX11()) {
+        const auto xs = xsurfaceOf(w);
+        const auto h  = xs ? xs->m_sizeHints.get() : nullptr;
         if (!h)
             return;
         minW = clientDim(h->min_width), minH = clientDim(h->min_height);
         maxW = clientDim(h->max_width), maxH = clientDim(h->max_height);
         return;
     }
-    const auto xdg = w->m_xdgSurface.lock();
-    const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
+    const auto top = toplevelOf(w);
     if (!top)
         return;
     const auto& s = top->m_current;
@@ -161,21 +186,7 @@ static void placementLimits(PHLWINDOW w, int32_t curW, int32_t curH, int32_t& mi
 
 // The window a transient belongs to (xdg parent toplevel, X11 WM_TRANSIENT_FOR), if it is open.
 static PHLWINDOW parentOf(PHLWINDOW w) {
-    if (w->m_isX11) {
-        const auto xs     = w->m_xwaylandSurface.lock();
-        const auto parent = xs ? xs->m_parent.lock() : nullptr;
-        if (!parent)
-            return nullptr;
-        for (const auto& o : Desktop::windowState()->windows())
-            if (o->m_isMapped && o->m_xwaylandSurface.lock() == parent)
-                return o;
-        return nullptr;
-    }
-    const auto xdg    = w->m_xdgSurface.lock();
-    const auto top    = xdg ? xdg->m_toplevel.lock() : nullptr;
-    const auto parent = top ? top->m_parent.lock() : nullptr;
-    const auto pw     = parent ? parent->m_window.lock() : nullptr;
-    return pw && pw->m_isMapped ? pw : nullptr;
+    return w->backend().parent(); // mapped or null, both backends
 }
 
 // Topmost other floating window of the same app on the same desktop: the cascade origin.
@@ -183,7 +194,7 @@ static PHLWINDOW parentOf(PHLWINDOW w) {
 static PHLWINDOW previousOfClass(PHLWINDOW w) {
     PHLWINDOW best;
     for (const auto& o : Desktop::windowState()->windows()) {
-        if (o == w || !o->m_isMapped || !o->m_isFloating || o->m_class != w->m_class || o->m_workspace != w->m_workspace || !managedWindow(o))
+        if (o == w || !o->mapped() || !o->isFloating() || o->metadata().appID() != w->metadata().appID() || o->m_workspace != w->m_workspace || !managedWindow(o))
             continue;
         if (Fullscreen::controller()->isFullscreen(o))
             continue;
@@ -210,7 +221,7 @@ static void setGeomNow(PHLWINDOW w, const CBox& box) {
 }
 
 static void onOpenLate(PHLWINDOW w) {
-    if (!w || !w->m_isFloating || !w->layoutTarget()) return;
+    if (!w || !w->isFloating() || !w->layoutTarget()) return;
     if (Fullscreen::controller()->isFullscreen(w)) return;
     auto mon = w->m_monitor.lock();
     if (!mon) return;
@@ -331,7 +342,7 @@ static void qosStop() {
 static void raiseLater(PHLWINDOW w) {
     g_pEventLoopManager->doLater([ref = PHLWINDOWREF{w}] {
         const auto w = ref.lock();
-        if (!w || !w->m_isMapped || !w->m_isFloating)
+        if (!w || !w->mapped() || !w->isFloating())
             return;
         Desktop::windowState()->raise(w);
         if (const auto target = w->layoutTarget())
@@ -341,8 +352,8 @@ static void raiseLater(PHLWINDOW w) {
 
 static void onActive(PHLWINDOW w, Desktop::eFocusReason reason) {
     if (!w) return;
-    qosForeground((int32_t)w->getPID());
-    if (w->m_isFloating && raisesOnFocus(reason))
+    qosForeground((int32_t)w->backend().pid());
+    if (w->isFloating() && raisesOnFocus(reason))
         raiseLater(w);
 }
 
@@ -366,7 +377,7 @@ static bool refitWindow(PHLWINDOW w, const CBox& zone) {
 static void refitMonitor(PHLMONITOR mon) {
     const auto zone = mon->logicalBoxMinusReserved();
     for (const auto& w : Desktop::windowState()->windows()) {
-        if (!w->m_isMapped || !w->m_isFloating || w->m_monitor.lock() != mon || !w->layoutTarget() || !managedWindow(w))
+        if (!w->mapped() || !w->isFloating() || w->m_monitor.lock() != mon || !w->layoutTarget() || !managedWindow(w))
             continue;
         if (Fullscreen::controller()->isFullscreen(w))
             continue;
@@ -384,7 +395,7 @@ static void onFullscreen(PHLWINDOW w) {
     g_pEventLoopManager->doLater([ref = PHLWINDOWREF{w}] {
         const auto w   = ref.lock();
         const auto mon = w ? w->m_monitor.lock() : nullptr;
-        if (!w || !mon || !w->m_isMapped || !w->m_isFloating || !w->layoutTarget() || !managedWindow(w) || Fullscreen::controller()->isFullscreen(w))
+        if (!w || !mon || !w->mapped() || !w->isFloating() || !w->layoutTarget() || !managedWindow(w) || Fullscreen::controller()->isFullscreen(w))
             return;
         refitWindow(w, mon->logicalBoxMinusReserved());
     });
@@ -462,15 +473,15 @@ static void onKey(const IKeyboard::SKeyEvent& e, Event::SCallbackInfo& info) {
         case KEY_ESC: key = WOL_KEY_ESC; break;
         default: return;
     }
-    const uint32_t mods  = g_pInputManager ? g_pInputManager->getModsFromAllKBs() : 0;
+    const uint32_t mods  = g_pInputManager ? (uint32_t)g_pInputManager->getModsFromAllKBs() : 0;
     uint32_t       flags = 0;
     if (e.state == WL_KEYBOARD_KEY_STATE_PRESSED)
         flags |= WOL_KEYF_PRESSED;
-    if (mods & HL_MODIFIER_META)
+    if (mods & (uint32_t)Input::HL_MODIFIER_META)
         flags |= WOL_KEYF_SUPER_HELD;
-    if (mods & HL_MODIFIER_SHIFT)
+    if (mods & (uint32_t)Input::HL_MODIFIER_SHIFT)
         flags |= WOL_KEYF_SHIFT;
-    if (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT))
+    if (mods & ((uint32_t)Input::HL_MODIFIER_CTRL | (uint32_t)Input::HL_MODIFIER_ALT))
         flags |= WOL_KEYF_OTHER_MODS;
     if (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked())
         flags |= WOL_KEYF_LOCKED;
@@ -515,9 +526,9 @@ static uint64_t monoNs() {
     return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
 }
 static uint64_t g_frameBegin = 0, g_frameDamage = 0, g_frameScreen = 0;
-static void onRenderStage(eRenderStage stage) {
-    if (stage == RENDER_BEGIN) {
-        const auto& rd = g_pHyprRenderer->m_renderData;
+static void onRenderStage(const Event::SRenderStageEvent& e) {
+    if (e.stage == RENDER_BEGIN && e.context) {
+        const auto& rd = e.context->get().m_data;
         uint64_t     px = 0;
         for (const auto& r : rd.damage.getRects())
             px += (uint64_t)(r.x2 - r.x1) * (uint64_t)(r.y2 - r.y1);
@@ -525,13 +536,13 @@ static void onRenderStage(eRenderStage stage) {
         g_frameDamage  = px;
         g_frameScreen  = mon ? (uint64_t)mon->m_pixelSize.x * (uint64_t)mon->m_pixelSize.y : 0;
         g_frameBegin   = monoNs();
-    } else if (stage == RENDER_POST && g_frameBegin) {
+    } else if (e.stage == RENDER_POST && g_frameBegin) {
         wol_frame_record(g_frameBegin, monoNs(), g_frameDamage, g_frameScreen, 1);
         g_frameBegin = 0;
     }
 }
 
-static std::string wolStats(eHyprCtlOutputFormat, std::string) {
+static IPC::Socket1::SResponse wolStats(const IPC::Socket1::SRequest&) {
     char buf[1024]; // audit4 S5-17: a JSON past 256 bytes came back as `{}`
     return wol_frame_stats_json((uint8_t*)buf, sizeof(buf)) < 0 ? std::string("{}") : std::string(buf);
 }
@@ -542,7 +553,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto open = Event::bus()->m_events.window.open.listen([](PHLWINDOW w) { onOpen(w); });
     static auto openLate = Event::bus()->m_events.window.openLate.listen([](PHLWINDOW w) { onOpenLate(w); });
     static auto active = Event::bus()->m_events.window.active.listen([](PHLWINDOW w, Desktop::eFocusReason r) { onActive(w, r); });
-    static auto render = Event::bus()->m_events.render.stage.listen([](eRenderStage s) { onRenderStage(s); });
+    static auto render = Event::bus()->m_events.render.stage.listen([](const Event::SRenderStageEvent& s) { onRenderStage(s); });
     static auto pre    = Event::bus()->m_events.render.pre.listen([](PHLMONITOR m) { onRenderPre(m); });
     static auto fs     = Event::bus()->m_events.window.fullscreen.listen([](PHLWINDOW w) { onFullscreen(w); });
     static auto lsOpen = Event::bus()->m_events.layer.opened.listen([](PHLLS l) { onLayerOpened(l); });
@@ -550,7 +561,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto key    = Event::bus()->m_events.input.keyboard.key.listen([](IKeyboard::SKeyEvent e, Event::SCallbackInfo& info) { onKey(e, info); });
     seedShellLayers();
     qosStart();
-    g_wolstats = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "wolstats", .exact = true, .fn = wolStats});
+    g_wolstats = HyprlandAPI::registerHyprCtlCommand(PHANDLE, IPC::Socket1::SCommand{.name = "wolstats", .match = IPC::Socket1::COMMAND_MATCH_EXACT, .handler = wolStats});
     // Unloading must drop every listener: a callback left on the bus would jump into the
     // unmapped .so on the next window event.
     g_unhook = [] {
