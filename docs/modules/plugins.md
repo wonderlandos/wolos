@@ -70,6 +70,7 @@ Then one `[[section]]` per contribution. Every entry has an `id` (1 to 32 lowerc
 | `[[theme]]` | `file` | A `theme.json` (`shared::theme` tokens, optional `extends`); checked for contrast. |
 | `[[look]]` | `file` | Planned: a Looks preset JSON (`wol_core::looks`). Nothing applies it yet, so `wol plugin check` refuses the section and `wol plugin new` does not offer it. |
 | `[[hypr]]` | `file` | `keyword = value` lines; only `windowrule`, `layerrule`, `bezier`, `animation`. Never `bind`, `exec`, `env`, `source`, `plugin`, `$variables` or `{ }` blocks. Planned: nothing applies these lines yet, so `wol plugin check` refuses the section and `wol plugin new` does not offer it. When it lands, the lines become `hyprprefs` keywords, never sourced raw. |
+| `[[ipc]]` | `script`, `args` | A function other programs call with `wol shell call <plugin> <id> [json]` (below, "IPC handlers"). `args`: `any` (default), `none`, `text`, `number`, `bool`, `list` or `object`. The script returns `wol.ipc`. |
 
 `icon` is a symbolic icon name or a `.png`/`.svg` in the folder.
 
@@ -205,6 +206,7 @@ A script is one file that ends with `return wol.<kind> { ... }` matching its sec
 | `wol.widget { refresh, render }` | A desktop card; `render()` returns the card body. |
 | `wol.panel { title, render }` | A sheet; `render()` returns its body. |
 | `wol.search { query }` | `query(text)` returns up to 20 rows `{ title, subtitle, icon, on_activate }`; a `command` entry gets the text after its prefix. |
+| `wol.ipc { <id> = function(args) ... end }` | One function per `[[ipc]]` entry, named like the entry; what it returns is the JSON answer. |
 
 `refresh`: seconds between renders, 0 to 86400 (default 60; 0 = only after input). After a handler runs, the shell renders again.
 
@@ -373,6 +375,63 @@ Saving a shell config file applies it on its own, no `wol shell reload` needed (
 | `kit.css` | The user style sheet, its own provider just above the kit and theme (`kit::style::user_css`, priority `STYLE_PROVIDER_PRIORITY_USER + 1`), so a rule as specific as the kit's wins; a missing file means no user rules | The last good rules stay; the notice names the first property the style parser refused and its line (deprecation warnings do not count) |
 
 A file that does not load shows one notification ("Changes Not Applied", from WolOS) and one journal line with the parser's words; the same mistake saved again does not notify again, and the next good save clears it. Until then the shell keeps the last prefs that loaded, also for parts that ask later. Other shell processes (Settings, Store) read `kit.css` when they start. The theme, Increase Contrast and the looks have their own watches (`kit/style.rs`).
+
+## IPC handlers, `[[ipc]]`
+
+A plugin can offer functions to scripts, keybinds and other programs: each `[[ipc]]` entry names one Lua function, and `wol shell call <plugin> <id> [json]` runs it in the shell and prints what it returned as one JSON line. Several entries may share a file.
+
+```toml
+schema = 1
+id = "alice.sound"
+name = "Sound"
+version = "1.0"
+license = "MIT"
+description = "Mute and volume for keybinds and scripts."
+permissions = ["run"]
+
+[[ipc]]
+id = "mute"
+script = "ipc.lua"
+args = "none"
+
+[[ipc]]
+id = "volume"
+script = "ipc.lua"
+args = "number"
+```
+
+```lua
+-- ipc.lua: one function per [[ipc]] entry, named like the entry.
+local muted = 0
+return wol.ipc {
+  mute = function()
+    muted = muted + 1
+    wol.run { "wol", "audio", "mute" }
+    return { muted = muted }
+  end,
+  volume = function(level)
+    if level < 0 or level > 100 then return nil, "Volume is 0 to 100." end
+    wol.run { "wol", "audio", "volume", tostring(math.floor(level)) }
+    return { volume = level }
+  end,
+}
+```
+
+```
+$ wol shell call alice.sound volume 40
+{"ok":true,"value":{"volume":40}}
+$ wol shell call alice.sound volume '"loud"'
+{"ok":false,"error":"alice.sound volume takes one JSON number."}
+```
+
+- The wire line on the shell socket (`$XDG_RUNTIME_DIR/wol-shell.sock`) is `call <plugin> <id> <json>`; the shell answers one line, `{"ok":true,"value":...}` or `{"ok":false,"error":"<sentence>"}`, and closes. `wol shell call` sends `null` when no JSON is given, joins the remaining words into one JSON value, prints the line and exits 1 when `ok` is false.
+- The function gets the JSON value as Lua (`null` is `nil`, objects are tables, lists are sequences) and returns a value that is JSON: text, numbers, booleans, lists, text-keyed tables, `nil` (`null`); at most 256 KB. `return nil, "sentence"` refuses the call: the sentence is the error and the plugin has not failed.
+- `args` is checked before the Lua runs; a value of another type is refused with a sentence and never reaches the function.
+- Only plugins that are on answer. The shell reads the plugins again before each call, so one turned on or edited a moment ago answers; while nothing changed, the script keeps its Lua state between calls (`muted` above counts up). `wol.state` keeps values across restarts.
+- A call runs under the same limits as a click (200 ms, 5 million instructions; "Failure and limits" above) with the plugin's granted permissions. An error or a stop counts toward the three failures in a row that turn the plugin off; a refusal does not. `wol.run` starts the command and answers what the same command answered last time (the first call reads `false, "Running…"`): the shell never waits on a command.
+- `wol shell call` is for people, keybinds and scripts; AI helpers cannot call it (`wol mcp` does not offer it), since it runs a plugin's commands as you.
+
+`wol shell status [--json]` answers what the shell shows: every panel by name with `open`, every surface by layer namespace (`wol-menubar`, `wol-dock`, `wol-panel-...`) with `visible`, and `stopped`, the parts that stopped ("What happens when the shell crashes" above). Wire line `status`, one JSON line back: `{"ok":true,"panels":[{"name":"control-center","open":false},...],"surfaces":[{"namespace":"wol-menubar","visible":true},...],"stopped":[]}`.
 
 ## `wol plugin`
 

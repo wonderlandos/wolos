@@ -246,6 +246,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
             theme(env, inv, json)
         }
         "shell.toggle" | "shell.show" | "shell.hide" | "shell.reload" => shell(env, inv),
+        "shell.call" | "shell.status" => shell_ask(env, inv, json),
         "update.check" => update_check(env, json),
         "update.status" => update_status(env, json),
         "base.verify" => base_verify(env, json),
@@ -733,6 +734,97 @@ fn shell(env: &mut dyn Env, inv: &Invocation) -> i32 {
             &format!("shell not running ({e})"),
         ),
     }
+}
+
+/// `wol shell call <plugin> <fn> [json...]` and `wol shell status`: one line to the shell, one
+/// JSON line back (docs/modules/plugins.md "IPC handlers"). `call` prints the reply line as is
+/// and exits 1 when it says `"ok":false`; `status` prints JSON (`--json` or no TTY) or one line
+/// per panel and surface.
+fn shell_ask(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
+    let line = if inv.action == "shell.call" {
+        let raw = inv.all("json").join(" ");
+        let args = if raw.trim().is_empty() {
+            serde_json::Value::Null
+        } else {
+            match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(v) => v,
+                Err(_) => {
+                    return fail(
+                        env,
+                        ErrorCode::Usage,
+                        "the argument is one JSON value, like 40, '\"text\"' or '{\"level\": 40}'",
+                    );
+                }
+            }
+        };
+        format!(
+            "call {} {} {args}\n",
+            inv.get("plugin").unwrap_or_default(),
+            inv.get("function").unwrap_or_default()
+        )
+    } else {
+        "status\n".to_owned()
+    };
+    let Some(rt) = env.var("XDG_RUNTIME_DIR") else {
+        return fail(
+            env,
+            ErrorCode::Unavailable,
+            "XDG_RUNTIME_DIR unset (no session)",
+        );
+    };
+    let sock = Path::new(&rt).join(SHELL_SOCKET);
+    let reply = match env.request(&sock, line.as_bytes()) {
+        Ok(r) => r,
+        Err(e) => {
+            return fail(
+                env,
+                ErrorCode::Unavailable,
+                &format!("shell not running ({e})"),
+            );
+        }
+    };
+    let reply = reply.lines().next().unwrap_or_default().trim().to_owned();
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&reply) else {
+        // An older shell answers nothing to lines it does not know.
+        return fail(
+            env,
+            ErrorCode::Unavailable,
+            "the shell did not answer (is it older than this wol?)",
+        );
+    };
+    let ok = v["ok"].as_bool() == Some(true);
+    if inv.action == "shell.status" && ok && !json && env.stdout_tty() {
+        let mut out = String::new();
+        for p in v["panels"].as_array().into_iter().flatten() {
+            let open = if p["open"].as_bool() == Some(true) {
+                "open"
+            } else {
+                "closed"
+            };
+            out.push_str(&format!(
+                "panel    {:<24} {open}\n",
+                p["name"].as_str().unwrap_or_default()
+            ));
+        }
+        for s in v["surfaces"].as_array().into_iter().flatten() {
+            let shown = if s["visible"].as_bool() == Some(true) {
+                "visible"
+            } else {
+                "hidden"
+            };
+            out.push_str(&format!(
+                "surface  {:<24} {shown}\n",
+                s["namespace"].as_str().unwrap_or_default()
+            ));
+        }
+        for p in v["stopped"].as_array().into_iter().flatten() {
+            out.push_str(&format!("stopped  {}\n", p.as_str().unwrap_or_default()));
+        }
+        env.out(&out);
+        return 0;
+    }
+    env.out(&format!("{reply}\n"));
+    if ok { 0 } else { ErrorCode::Failed.exit() }
 }
 
 /// Refresh the package catalogue through wol-admind (no password: the person at the computer)
@@ -1532,5 +1624,75 @@ mod tests {
             "the first asks, three carry a password"
         );
         assert_eq!(e.stdin, ["d4"], "the fourth line stays unread");
+    }
+
+    /// `wol shell call|status` (SP-6): one line out, the reply line printed, ok=false exits 1.
+    #[test]
+    fn shell_call_and_status_print_the_reply_line() {
+        let ask = |argv: &[&str], reply: &str, tty: bool| {
+            let mut env = FakeEnv {
+                vars: vec![("XDG_RUNTIME_DIR".into(), "/run/u".into())],
+                replies: vec![reply.into()],
+                tty,
+                ..Default::default()
+            };
+            let code = execute(&crate::cli::parse(argv).unwrap(), &mut env);
+            let sent = env
+                .requests
+                .first()
+                .map(|r| String::from_utf8(r.1.clone()).unwrap())
+                .unwrap_or_default();
+            (code, sent, env.out, env.err)
+        };
+        let ok = "{\"ok\":true,\"value\":{\"volume\":40}}\n";
+        let (code, sent, out, _) = ask(&["shell", "call", "alice.sound", "volume", "40"], ok, true);
+        assert_eq!((code, sent.as_str()), (0, "call alice.sound volume 40\n"));
+        assert_eq!(out, ok);
+        // Words after the function are one JSON value, sent on one line.
+        let (_, sent, _, _) = ask(
+            &["shell", "call", "alice.sound", "set", "{\"level\":", "40}"],
+            ok,
+            false,
+        );
+        assert_eq!(sent, "call alice.sound set {\"level\":40}\n");
+        let (_, sent, _, _) = ask(&["shell", "call", "alice.sound", "mute"], ok, false);
+        assert_eq!(sent, "call alice.sound mute null\n");
+        let no = "{\"ok\":false,\"error\":\"Volume is 0 to 100.\"}\n";
+        let (code, _, out, _) = ask(
+            &["shell", "call", "alice.sound", "volume", "300"],
+            no,
+            false,
+        );
+        assert_eq!((code, out.as_str()), (ErrorCode::Failed.exit(), no));
+        let (code, sent, _, err) = ask(
+            &["shell", "call", "alice.sound", "volume", "{nope"],
+            ok,
+            false,
+        );
+        assert_eq!((code, sent.as_str()), (ErrorCode::Usage.exit(), ""));
+        assert!(err.contains("one JSON value"), "{err}");
+        let (code, _, _, err) = ask(&["shell", "call", "alice.sound", "mute"], "", false);
+        assert_eq!(
+            code,
+            ErrorCode::Unavailable.exit(),
+            "an old shell answers nothing"
+        );
+        assert!(err.contains("did not answer"), "{err}");
+        let st = concat!(
+            "{\"ok\":true,\"panels\":[{\"name\":\"session\",\"open\":true}],",
+            "\"surfaces\":[{\"namespace\":\"wol-dock\",\"visible\":false}],\"stopped\":[\"clipboard\"]}\n"
+        );
+        let (code, sent, out, _) = ask(&["shell", "status"], st, false);
+        assert_eq!((code, sent.as_str(), out.as_str()), (0, "status\n", st));
+        let (_, _, out, _) = ask(&["shell", "status"], st, true);
+        assert_eq!(
+            out,
+            format!(
+                "panel    {:<24} open\nsurface  {:<24} hidden\nstopped  clipboard\n",
+                "session", "wol-dock"
+            )
+        );
+        let (_, _, out, _) = ask(&["shell", "status", "--json"], st, true);
+        assert_eq!(out, st);
     }
 }

@@ -689,6 +689,15 @@ return wol.search {
 }
 "#;
 
+const LUA_IPC: &str = r#"-- IPC: `wol shell call __ID__ ping '{"hello": 1}'` runs `ping` and prints what it returns.
+-- One function per [[ipc]] entry, named like the entry; `return nil, "sentence"` refuses.
+return wol.ipc {
+  ping = function(args)
+    return { pong = args }
+  end,
+}
+"#;
+
 const THEME_JSON: &str = r##"{
   "id": "__ENTRY__",
   "name": "__NAME__",
@@ -797,6 +806,10 @@ pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, Str
             Kind::Theme => {
                 files.push(("theme.json".into(), fill(THEME_JSON, "theme")));
                 "\n[[theme]]\nid = \"theme\"\nfile = \"theme.json\"\n".to_owned()
+            }
+            Kind::Ipc => {
+                files.push(("ipc.lua".into(), fill(LUA_IPC, "ping")));
+                "\n[[ipc]]\nid = \"ping\"\nscript = \"ipc.lua\"\nargs = \"any\"\n".to_owned()
             }
             // Refused above (audit X6-1).
             Kind::Look | Kind::Hypr => continue,

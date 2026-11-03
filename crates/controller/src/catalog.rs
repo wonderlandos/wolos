@@ -116,6 +116,9 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["plugin"], Read, "read"),
     hv(&["plugin", "list"], Read, "read"),
     hv(&["plugin", "check"], Read, "read"),
+    // The shell's own state (SP-6). `shell call` runs a plugin's Lua with the person's commands,
+    // so like `plugin run` it stays for people, hotkeys and scripts.
+    hv(&["shell", "status"], Read, "read"),
 ];
 
 /// A visible command and, when helpers may call it, its rule.

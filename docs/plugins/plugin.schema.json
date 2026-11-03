@@ -197,6 +197,20 @@
           }
         }
       }
+    },
+    "ipc": {
+      "type": "array",
+      "description": "Functions other programs call: wol shell call <plugin> <id> <json>.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "script"],
+        "properties": {
+          "id": { "$ref": "#/$defs/entryId", "description": "The function's name in the table the script returns (wol.ipc { <id> = function(args) ... end })." },
+          "script": { "$ref": "#/$defs/luaFile" },
+          "args": { "enum": ["any", "none", "text", "number", "bool", "list", "object"], "default": "any", "description": "The JSON value the function takes; anything else is refused before the Lua runs." }
+        }
+      }
     }
   },
   "$defs": {

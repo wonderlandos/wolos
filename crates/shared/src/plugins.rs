@@ -111,10 +111,12 @@ pub enum Kind {
     Theme,
     Look,
     Hypr,
+    /// `[[ipc]]`: a Lua function `wol shell call <plugin> <id> <json>` runs.
+    Ipc,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 12] = [
+    pub const ALL: [Kind; 13] = [
         Kind::Menubar,
         Kind::Dock,
         Kind::Widget,
@@ -127,6 +129,7 @@ impl Kind {
         Kind::Theme,
         Kind::Look,
         Kind::Hypr,
+        Kind::Ipc,
     ];
 
     pub fn id(self) -> &'static str {
@@ -143,6 +146,7 @@ impl Kind {
             Kind::Theme => "theme",
             Kind::Look => "look",
             Kind::Hypr => "hypr",
+            Kind::Ipc => "ipc",
         }
     }
 
@@ -163,6 +167,7 @@ impl Kind {
             Kind::Hotkey => &["id", "default", "exec", "group"],
             Kind::Webapp => &["id", "name", "url", "icon", "profile"],
             Kind::Theme | Kind::Look | Kind::Hypr => &["id", "file"],
+            Kind::Ipc => &["id", "script", "args"],
         }
     }
 
@@ -187,7 +192,7 @@ impl Kind {
     pub fn has_script(self) -> bool {
         matches!(
             self,
-            Kind::Menubar | Kind::Widget | Kind::Panel | Kind::Search
+            Kind::Menubar | Kind::Widget | Kind::Panel | Kind::Search | Kind::Ipc
         )
     }
 }
@@ -419,6 +424,81 @@ pub struct WebappEntry {
     pub profile: Profile,
 }
 
+/// What a `[[ipc]]` function takes: the JSON value after `call <plugin> <id>`, checked before
+/// the Lua runs (`any`: whatever was sent; `none`: nothing, `null` on the wire).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum ArgType {
+    #[default]
+    Any,
+    None,
+    Text,
+    Number,
+    Bool,
+    List,
+    Object,
+}
+
+impl ArgType {
+    pub const ALL: [ArgType; 7] = [
+        ArgType::Any,
+        ArgType::None,
+        ArgType::Text,
+        ArgType::Number,
+        ArgType::Bool,
+        ArgType::List,
+        ArgType::Object,
+    ];
+    /// The `args` value in `plugin.toml`.
+    pub fn id(self) -> &'static str {
+        match self {
+            ArgType::Any => "any",
+            ArgType::None => "none",
+            ArgType::Text => "text",
+            ArgType::Number => "number",
+            ArgType::Bool => "bool",
+            ArgType::List => "list",
+            ArgType::Object => "object",
+        }
+    }
+    /// See [`ArgType::id`].
+    pub fn parse(s: &str) -> Option<ArgType> {
+        ArgType::ALL.into_iter().find(|x| x.id() == s)
+    }
+
+    /// The value sent fits.
+    pub fn accepts(self, v: &serde_json::Value) -> bool {
+        use serde_json::Value as J;
+        match self {
+            ArgType::Any => true,
+            ArgType::None => v.is_null(),
+            ArgType::Text => matches!(v, J::String(_)),
+            ArgType::Number => matches!(v, J::Number(_)),
+            ArgType::Bool => matches!(v, J::Bool(_)),
+            ArgType::List => matches!(v, J::Array(_)),
+            ArgType::Object => matches!(v, J::Object(_)),
+        }
+    }
+
+    /// What `call` answers when the value does not fit.
+    pub fn sentence(self, plugin: &str, id: &str) -> String {
+        match self {
+            ArgType::None => format!("{plugin} {id} takes no arguments."),
+            t => format!("{plugin} {id} takes one JSON {}.", t.id()),
+        }
+    }
+}
+
+/// `[[ipc]]`: one Lua function other programs call through `wol shell call <plugin> <id> <json>`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IpcEntry {
+    /// Also the name of the function in the table the script returns (`wol.ipc { <id> = ... }`).
+    pub id: String,
+    pub script: String,
+    pub args: ArgType,
+}
+
 /// `[[theme]]`, `[[look]]`, `[[hypr]]`: a file in the plugin folder.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -450,6 +530,8 @@ pub struct Manifest {
     pub theme: Vec<FileEntry>,
     pub look: Vec<FileEntry>,
     pub hypr: Vec<FileEntry>,
+    #[serde(default)]
+    pub ipc: Vec<IpcEntry>,
 }
 
 impl Manifest {
@@ -475,6 +557,7 @@ impl Manifest {
             Kind::Theme => self.theme.len(),
             Kind::Look => self.look.len(),
             Kind::Hypr => self.hypr.len(),
+            Kind::Ipc => self.ipc.len(),
         }
     }
 
@@ -493,6 +576,7 @@ impl Manifest {
         v.extend(self.theme.iter().map(|e| (Kind::Theme, e.id.as_str())));
         v.extend(self.look.iter().map(|e| (Kind::Look, e.id.as_str())));
         v.extend(self.hypr.iter().map(|e| (Kind::Hypr, e.id.as_str())));
+        v.extend(self.ipc.iter().map(|e| (Kind::Ipc, e.id.as_str())));
         v
     }
 
@@ -518,6 +602,11 @@ impl Manifest {
             self.search
                 .iter()
                 .map(|e| (Kind::Search, e.id.as_str(), e.script.as_str())),
+        );
+        v.extend(
+            self.ipc
+                .iter()
+                .map(|e| (Kind::Ipc, e.id.as_str(), e.script.as_str())),
         );
         v
     }
@@ -700,6 +789,14 @@ impl Manifest {
                     s(&e.file)
                 ));
             }
+        }
+        for e in &self.ipc {
+            out.push_str(&format!(
+                "\n[[ipc]]\nid = {}\nscript = {}\nargs = {}\n",
+                s(&e.id),
+                s(&e.script),
+                s(e.args.id())
+            ));
         }
         out
     }
@@ -1695,6 +1792,16 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
                 Kind::Hypr => m.hypr.push(FileEntry {
                     id,
                     file: f.path("file", ".conf")?,
+                }),
+                Kind::Ipc => m.ipc.push(IpcEntry {
+                    id,
+                    script: f.path("script", ".lua")?,
+                    args: f.choice(
+                        "args",
+                        ArgType::parse,
+                        &ArgType::ALL.map(ArgType::id),
+                        ArgType::default(),
+                    )?,
                 }),
             }
         }

@@ -339,3 +339,114 @@ fn schema_json_matches_the_parser() {
         .collect();
     assert_eq!(sizes, Size::ALL.map(Size::id));
 }
+
+// ---- `[[ipc]]` (SP-6): parse, round trip, argument types and the schema's choices. ----
+
+const HEAD: &str =
+    "schema = 1\nid = \"alice.music\"\nname = \"Music\"\nversion = \"1.0\"\nlicense = \"MIT\"\n";
+
+#[test]
+fn an_ipc_entry_names_a_lua_function_and_its_argument() {
+    let m = parse(&format!(
+        "{HEAD}\n[[ipc]]\nid = \"next\"\nscript = \"ipc.lua\"\n\n[[ipc]]\nid = \"volume\"\nscript = \"ipc.lua\"\nargs = \"number\"\n"
+    ))
+    .unwrap();
+    assert_eq!(m.kinds(), [Kind::Ipc]);
+    assert_eq!(
+        m.ipc,
+        [
+            IpcEntry {
+                id: "next".into(),
+                script: "ipc.lua".into(),
+                args: ArgType::Any
+            },
+            IpcEntry {
+                id: "volume".into(),
+                script: "ipc.lua".into(),
+                args: ArgType::Number
+            }
+        ]
+    );
+    assert_eq!(m.scripts().len(), 2);
+    assert_eq!(m.files(), ["ipc.lua"], "one file, named once");
+    assert_eq!(parse(&m.to_toml()).unwrap(), m, "{}", m.to_toml());
+    let json = serde_json::to_string(&m).unwrap();
+    assert_eq!(serde_json::from_str::<Manifest>(&json).unwrap(), m);
+}
+
+#[test]
+fn a_bad_ipc_entry_is_one_sentence() {
+    let bad = |body: &str| parse(&format!("{HEAD}\n[[ipc]]\n{body}")).unwrap_err();
+    assert_eq!(bad("id = \"next\"\n"), "[[ipc]] 1 needs script.");
+    assert_eq!(
+        bad("id = \"next\"\nscript = \"ipc.txt\"\n"),
+        "[[ipc]] 1: script is a .lua file inside the plugin folder, like \"item.lua\"."
+    );
+    assert_eq!(
+        bad("id = \"next\"\nscript = \"ipc.lua\"\nargs = \"date\"\n"),
+        "[[ipc]] 1: args is one of any, none, text, number, bool, list, object."
+    );
+    assert_eq!(
+        bad("id = \"Next\"\nscript = \"ipc.lua\"\n"),
+        "[[ipc]] 1: id is 1 to 32 lowercase letters, digits, - or _."
+    );
+}
+
+#[test]
+fn argument_types_check_the_json_sent() {
+    use serde_json::json;
+    let all = [
+        json!(null),
+        json!("a"),
+        json!(1.5),
+        json!(true),
+        json!([1]),
+        json!({"a": 1}),
+    ];
+    let fits = |t: ArgType| -> Vec<bool> { all.iter().map(|v| t.accepts(v)).collect() };
+    assert_eq!(fits(ArgType::Any), [true; 6]);
+    assert_eq!(
+        fits(ArgType::None),
+        [true, false, false, false, false, false]
+    );
+    assert_eq!(
+        fits(ArgType::Text),
+        [false, true, false, false, false, false]
+    );
+    assert_eq!(
+        fits(ArgType::Number),
+        [false, false, true, false, false, false]
+    );
+    assert_eq!(
+        fits(ArgType::Bool),
+        [false, false, false, true, false, false]
+    );
+    assert_eq!(
+        fits(ArgType::List),
+        [false, false, false, false, true, false]
+    );
+    assert_eq!(
+        fits(ArgType::Object),
+        [false, false, false, false, false, true]
+    );
+    assert_eq!(
+        ArgType::None.sentence("alice.music", "next"),
+        "alice.music next takes no arguments."
+    );
+    assert_eq!(
+        ArgType::Number.sentence("alice.music", "volume"),
+        "alice.music volume takes one JSON number."
+    );
+}
+
+#[test]
+fn the_schema_lists_the_argument_types() {
+    let s: serde_json::Value = serde_json::from_str(SCHEMA_JSON).unwrap();
+    let got: Vec<&str> = s["properties"]["ipc"]["items"]["properties"]["args"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert_eq!(got, ArgType::ALL.map(ArgType::id));
+}
