@@ -2,7 +2,6 @@
 //! Tests of [`super`] (the package install and refusal paths).
 use super::*;
 
-
 /// The refusal leads to a real row: the section title Privacy & Security shows for the
 /// grant, and the app's name (MANUAL 0.12.0: it named a "Software" section that is not there).
 #[test]
