@@ -131,6 +131,33 @@ impl ShellPrefs {
         text.and_then(|t| serde_json::from_str(t).ok())
             .unwrap_or_default()
     }
+
+    /// [`ShellPrefs::parse`] for the live reload: a file that does not load is an error naming
+    /// the first key (in file order) whose value does not fit, `control_center.<module>` inside
+    /// that object; text that is not a JSON object names its line. Unknown keys still load.
+    pub fn try_parse(text: &str) -> Result<Self, ConfigError> {
+        let pairs: Ordered =
+            serde_json::from_str(text).map_err(|e| ConfigError::syntax(SHELL_NAME, &e))?;
+        for (k, v) in &pairs.0 {
+            let Err(e) = serde_json::from_value::<ShellPrefs>(one(k, v)) else {
+                continue;
+            };
+            let inner = match v {
+                serde_json::Value::Object(m) if k == "control_center" => {
+                    m.iter().find_map(|(ik, iv)| {
+                        serde_json::from_value::<ControlCenterPrefs>(one(ik, iv))
+                            .err()
+                            .map(|e| (format!("{k}.{ik}"), e))
+                    })
+                }
+                _ => None,
+            };
+            let (key, e) = inner.unwrap_or((k.clone(), e));
+            return Err(ConfigError::key(SHELL_NAME, key, &e));
+        }
+        // Each key fits on its own; what is left is the object as a whole (a key twice).
+        serde_json::from_str(text).map_err(|e| ConfigError::syntax(SHELL_NAME, &e))
+    }
     pub fn to_json(self) -> String {
         serde_json::to_string_pretty(&self).unwrap_or_default() + "\n"
     }
@@ -157,6 +184,24 @@ impl ShellFile {
         }
     }
 
+    /// [`ShellFile::parse`] for the live reload: the prefs as [`ShellPrefs::try_parse`], and a
+    /// `layout` that does not validate is an error naming `layout` (never today's desktop).
+    pub fn try_parse(text: &str) -> Result<Self, ConfigError> {
+        let prefs = ShellPrefs::try_parse(text)?;
+        let v: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| ConfigError::syntax(SHELL_NAME, &e))?;
+        let layout = match v.get(LAYOUT_KEY) {
+            None => shared::layout::Layout::default(),
+            Some(l) => shared::layout::Layout::parse(&l.to_string()).map_err(|e| ConfigError {
+                file: SHELL_NAME,
+                key: Some(LAYOUT_KEY.into()),
+                line: None,
+                detail: e,
+            })?,
+        };
+        Ok(Self { prefs, layout })
+    }
+
     pub fn to_json(&self) -> String {
         let mut v = serde_json::to_value(self.prefs).unwrap_or_default();
         if let (Some(o), Ok(l)) = (v.as_object_mut(), serde_json::to_value(&self.layout)) {
@@ -164,6 +209,103 @@ impl ShellFile {
         }
         serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"
     }
+}
+
+/// File names in notices and logs (the files live under `$XDG_CONFIG_HOME/wolos/`).
+pub const SHELL_NAME: &str = "shell.json";
+pub const WIDGETS_NAME: &str = "widgets.json";
+
+/// Why a config file did not load (live reload): the file, the first key whose value does not fit
+/// (None when the text is not JSON, or not an object), its line when known, and the reader's own
+/// words (logs only, never on screen).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConfigError {
+    pub file: &'static str,
+    pub key: Option<String>,
+    pub line: Option<usize>,
+    pub detail: String,
+}
+
+impl ConfigError {
+    pub fn syntax(file: &'static str, e: &serde_json::Error) -> Self {
+        Self {
+            file,
+            key: None,
+            line: Some(e.line()),
+            detail: e.to_string(),
+        }
+    }
+
+    fn key(file: &'static str, key: String, e: &serde_json::Error) -> Self {
+        Self {
+            file,
+            key: Some(key),
+            line: None,
+            detail: e.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.file)?;
+        if let Some(l) = self.line {
+            write!(f, " line {l}")?;
+        }
+        if let Some(k) = &self.key {
+            write!(f, " key {k}")?;
+        }
+        write!(f, ": {}", self.detail)
+    }
+}
+
+/// A JSON object's entries in file order (so "the first bad key" is the first one in the file).
+struct Ordered(Vec<(String, serde_json::Value)>);
+
+impl<'de> serde::Deserialize<'de> for Ordered {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Ordered;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut m: A,
+            ) -> Result<Ordered, A::Error> {
+                let mut v = Vec::new();
+                while let Some(kv) = m.next_entry()? {
+                    v.push(kv);
+                }
+                Ok(Ordered(v))
+            }
+        }
+        d.deserialize_map(V)
+    }
+}
+
+/// `{key: value}`.
+fn one(k: &str, v: &serde_json::Value) -> serde_json::Value {
+    serde_json::Value::Object([(k.to_string(), v.clone())].into_iter().collect())
+}
+
+/// `widgets.json` text that the live reload must not apply (the board keeps what it shows): not
+/// a JSON object (its line), a `widgets` key that is not a list, or `grants` that do not load.
+/// Single widget entries that do not load are no error: the board keeps them aside as before.
+pub fn widgets_error(text: &str) -> Option<ConfigError> {
+    let pairs: Ordered = match serde_json::from_str(text) {
+        Ok(p) => p,
+        Err(e) => return Some(ConfigError::syntax(WIDGETS_NAME, &e)),
+    };
+    pairs.0.iter().find_map(|(k, v)| {
+        let e = match k.as_str() {
+            "widgets" => serde_json::from_value::<Vec<serde_json::Value>>(v.clone()).err(),
+            "grants" => serde_json::from_value::<Vec<shared::widgets::Grant>>(v.clone()).err(),
+            _ => None,
+        }?;
+        Some(ConfigError::key(WIDGETS_NAME, k.clone(), &e))
+    })
 }
 
 /// The layout saved in `shell.json` text; today's desktop when there is none or it does not
@@ -493,6 +635,67 @@ mod tests {
         assert!(f.prefs.battery_percent);
         assert_eq!(f.layout, Layout::default());
         assert_eq!(layout(Some(r#"{"layout": 3}"#)), Layout::default());
+    }
+
+    /// SP-2: the live reload names the first key that does not fit and loads what Settings writes.
+    #[test]
+    fn try_parse_names_the_first_bad_key() {
+        let p = ShellPrefs {
+            dock_magnify: false,
+            ..Default::default()
+        };
+        assert_eq!(ShellPrefs::try_parse(&p.to_json()), Ok(p));
+        assert_eq!(ShellPrefs::try_parse("{}"), Ok(ShellPrefs::default()));
+        assert!(ShellPrefs::try_parse(r#"{"gone_key":[1],"show_date":false}"#).is_ok());
+        let key = |t: &str| ShellPrefs::try_parse(t).unwrap_err().key;
+        assert_eq!(
+            key(r#"{"show_date":false,"dock_tile_size":"big","battery_percent":3}"#).as_deref(),
+            Some("dock_tile_size"),
+            "file order, not name order"
+        );
+        assert_eq!(
+            key(r#"{"control_center":{"battery":true,"record":"yes"}}"#).as_deref(),
+            Some("control_center.record")
+        );
+        assert_eq!(
+            key(r#"{"control_center":4}"#).as_deref(),
+            Some("control_center")
+        );
+        let e = ShellPrefs::try_parse("{\n  \"show_date\": nope\n}").unwrap_err();
+        assert_eq!((e.key, e.line, e.file), (None, Some(2), SHELL_NAME));
+        assert_eq!(ShellPrefs::try_parse("[]").unwrap_err().key, None);
+        assert!(ShellPrefs::try_parse(r#"{"show_date":true,"show_date":false}"#).is_err());
+        let bad_layout = r#"{"battery_percent":true,"layout":{"bar":"top","dock":"top"}}"#;
+        assert_eq!(
+            ShellFile::try_parse(bad_layout).unwrap_err().key.as_deref(),
+            Some(LAYOUT_KEY)
+        );
+        let good = keep_layout(None, p);
+        assert_eq!(
+            ShellFile::try_parse(&good),
+            Ok(ShellFile::parse(Some(&good)))
+        );
+    }
+
+    #[test]
+    fn widgets_error_names_the_key() {
+        assert_eq!(widgets_error(r#"{"version":1,"widgets":[]}"#), None);
+        assert_eq!(
+            widgets_error(r#"{"widgets":[{"not":"a widget"}]}"#),
+            None,
+            "kept aside"
+        );
+        let e = widgets_error(r#"{"widgets":{}}"#).unwrap();
+        assert_eq!((e.file, e.key.as_deref()), (WIDGETS_NAME, Some("widgets")));
+        assert_eq!(
+            widgets_error(r#"{"widgets":[],"grants":7}"#)
+                .unwrap()
+                .key
+                .as_deref(),
+            Some("grants")
+        );
+        let e = widgets_error("{\n\"widgets\": [,]}").unwrap();
+        assert_eq!((e.key, e.line), (None, Some(2)));
     }
 
     #[test]
