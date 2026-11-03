@@ -27,7 +27,7 @@ Merging that pull request builds the changed packages on ECS (unsigned, into S3)
 |---|---|---|
 | [wolos](https://github.com/wonderlandos/wolos) | the OS code (Rust crates, desktop, files), the signing keys, the publish button | GitHub runner: tests only |
 | [wolos-shell](https://github.com/wonderlandos/wolos-shell), [wolos-brand](https://github.com/wonderlandos/wolos-brand) | the shell (GPL-3.0) and the brand art, submodules of wolos | - |
-| [linux](https://github.com/wonderlandos/linux) | WolKernel: branch `wolos-7.3` = Linux 7.3 + one commit per WolOS patch; releases are tags `wolkernel-<v>-7.3`; old topic work as `archive/*` tags | - |
+| [linux](https://github.com/wonderlandos/linux) | WolKernel: branch `wolos-7.3.1` = Linux 7.3.1 + one commit per WolOS patch; releases are tags `wolkernel-<v>-7.3.1`; old topic work as `archive/*` tags | - |
 | [wolos-pkgbuilds](https://github.com/wonderlandos/wolos-pkgbuilds) | one PKGBUILD per package, the kernel included | AWS ECS (clean chroot, Spot hosts, ccache in S3) |
 | [wolos-iso](https://github.com/wonderlandos/wolos-iso) | the archiso profile, VM install tests, release scripts | AWS ECS (from the published repo only) |
 | wolos-build (private) | the one build tool `wolos-build` + the ECS farm (terraform) + the builder image | - |

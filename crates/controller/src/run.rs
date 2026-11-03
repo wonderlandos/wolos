@@ -150,12 +150,14 @@ pub trait Env {
 }
 
 /// An exclusive lock from [`Env::try_lock`]; dropping it releases the lock.
-pub struct Lock(#[allow(dead_code)] Box<dyn std::any::Any>);
+pub struct Lock {
+    /// Holds the locked file (or a fake): only its drop matters.
+    _held: Box<dyn std::any::Any>,
+}
 
 /// [`Env::try_lock`] on the real file system: `path` (and its directory) made if missing, mode
-/// 0600, `flock(LOCK_EX | LOCK_NB)` on it.
+/// 0600, `flock(LOCK_EX | LOCK_NB)` on it (`File::try_lock`: std has the call, no `unsafe`).
 fn flock_file(path: &Path) -> io::Result<Option<Lock>> {
-    use std::os::fd::AsRawFd;
     use std::os::unix::fs::OpenOptionsExt;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -168,15 +170,11 @@ fn flock_file(path: &Path) -> io::Result<Option<Lock>> {
         .mode(0o600)
         .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
         .open(path)?;
-    // SAFETY: flock on a descriptor this function owns; the lock goes with `f`.
-    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        return Ok(Some(Lock(Box::new(f))));
-    }
-    let e = io::Error::last_os_error();
-    if e.raw_os_error() == Some(libc::EWOULDBLOCK) {
-        Ok(None)
-    } else {
-        Err(e)
+    match f.try_lock() {
+        // The lock goes with `f`: it is released when the `Lock` drops.
+        Ok(()) => Ok(Some(Lock { _held: Box::new(f) })),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
     }
 }
 
@@ -1171,6 +1169,7 @@ pub struct FakeEnv {
 /// A [`FakeEnv`] lock: gone from the shared list when dropped.
 struct FakeLock(std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>, PathBuf);
 
+// Gives the path back to the shared list, so a second fake can take the lock again.
 impl Drop for FakeLock {
     fn drop(&mut self) {
         let mut held = self.0.lock().unwrap_or_else(|p| p.into_inner());
@@ -1233,10 +1232,9 @@ impl Env for FakeEnv {
             return Ok(None);
         }
         held.push(path.into());
-        Ok(Some(Lock(Box::new(FakeLock(
-            std::sync::Arc::clone(&self.locks),
-            path.into(),
-        )))))
+        Ok(Some(Lock {
+            _held: Box::new(FakeLock(std::sync::Arc::clone(&self.locks), path.into())),
+        }))
     }
     fn keyring_forget(&mut self, desc: &str) {
         self.keys.retain(|k| k.0 != desc);

@@ -312,13 +312,14 @@ mod tests {
             if pid == 2000 {
                 let (reaper, (tx, rx)) = (Arc::clone(&self.reaper), std::sync::mpsc::channel());
                 std::thread::spawn(move || {
-                    let _ = tx.send(());
                     let _waitpid = crate::reaper::hold_spawn();
                     reaper.exited(pid, 1, false); // nobody named it a job yet
+                    let _ = tx.send(());
                 });
-                // The kernel side is running: give it time to deliver before spawn returns.
-                let _ = rx.recv();
-                std::thread::sleep(Duration::from_millis(50));
+                // The kernel side delivers while spawn is still running. With the spawn lock
+                // held by the caller it cannot get in until the job is registered, so this ends
+                // by its limit; without the lock it is told as soon as the exit is delivered.
+                let _ = rx.recv_timeout(Duration::from_millis(50));
             }
             Ok(pid)
         }

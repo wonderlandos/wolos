@@ -10,8 +10,11 @@ Security
 - Administrator approval cannot be held up by another account any more: a user who kept sending wrong requests used to stall every administrator sheet on the machine for two seconds at a time. A refusal, a password check or a long install no longer blocks other admin requests; a Wi-Fi join no longer waits for an install. Declining one request cancels only your own pending approval, and an approval you gave earlier is checked again if it ran out while your request waited.
 - Programs that were updated while running keep their identity for permission checks, and a program must now reach a file it hands to the installer through every folder above it.
 - The graphics environment script quotes values correctly, so a quote in a setting can no longer break out of it.
-- Until the 7.3.1 kernel arrives, `io_uring` is limited to administrators (`kernel.io_uring_disabled = 1`), as a precaution; the setting is documented in the security module page.
+- `io_uring` is limited to administrators (`kernel.io_uring_disabled = 1`) as a precaution; the setting is documented in the security module page.
 - The dependency checks (`cargo deny` and `cargo audit`) now look at everything that ships and agree with each other; the two reviewed exceptions are written down. The Crystal shards (`hue`, `wopkg`) now require Crystal 1.22 or newer.
+
+Kernel
+- WolKernel 1:1.0+7.3.1-1: the kernel moves to the stable Linux 7.3.1 line (tag `wolkernel-1.0-7.3.1`, branch `wolos-7.3.1`), which carries 24 CVE fixes the 0.12.0 kernel lacked. The 0.12.0 kernel was built on a mainline merge-window snapshot labelled 7.3.0, not on a stable release; the WolOS patches are rebased onto the stable line (four were re-fitted), and options that only the snapshot had, such as the steal governor, are gone.
 
 Install and update
 - A disk with Windows on BitLocker (or a Windows volume that cannot be read) is refused for Alongside, Replace and Manual, because WolOS cannot tell whether Windows shut down fully; Erase Disk still works. The installer says so in a sentence and what to do about it.
