@@ -665,6 +665,27 @@ pub fn run_with_input(argv: &[&str], input: &str, timeout: std::time::Duration) 
     crate::system::run_input(cmd, input, timeout)
 }
 
+/// wol-admind's sentence from the last failed reply of each action in this process (the
+/// optional message of `failed <message>`, `shared::admin::failed_line`), taken once by the
+/// surface that shows it ([`take_failure`]). Set and cleared by [`admin_request`].
+static FAILURES: std::sync::Mutex<Vec<(AdminAction, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Records (or, with None, clears) the sentence for `action`: [`admin_request`] after every reply,
+/// and the shell after a wopkg run that reported wol-admind's words.
+pub fn note_failure(action: AdminAction, message: Option<String>) {
+    let mut f = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+    f.retain(|(a, _)| *a != action);
+    f.extend(message.map(|m| (action, m)));
+}
+
+/// The sentence wol-admind gave with the last failed `action` request (Update Now's restore
+/// point refusal, say); None when it gave none or it was taken already.
+pub fn take_failure(action: AdminAction) -> Option<String> {
+    let mut f = FAILURES.lock().unwrap_or_else(|p| p.into_inner());
+    let i = f.iter().position(|(a, _)| *a == action)?;
+    Some(f.remove(i).1)
+}
+
 /// One wol-admind round trip. None when the daemon is not running. Long actions (pkg) may take minutes.
 pub fn admin_request(
     sock: &std::path::Path,
@@ -682,6 +703,7 @@ pub fn admin_request(
     let _ = s.shutdown(std::net::Shutdown::Write);
     let mut line = String::new();
     s.take(256).read_to_string(&mut line).ok()?;
+    note_failure(req.action, shared::admin::failure_message(&line));
     Some(AdminReply::parse(&line))
 }
 
@@ -1029,6 +1051,55 @@ mod tests {
         });
         assert_eq!(admin_request(&path, &req, ""), Some(AdminReply::Ok));
         assert_eq!(daemon.join().unwrap(), want);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A failed reply's sentence (Update Now's refusal) is kept for the page that asked, once;
+    /// a plain `failed` or the next request of the same action clears it.
+    #[test]
+    fn a_failed_reply_leaves_its_sentence_for_the_page() {
+        use std::io::{Read, Write};
+        let dir = std::env::temp_dir().join(format!("wol-ctl-failed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("admin.sock");
+        let l = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let replies = [
+            shared::admin::failed_line("No restore point could be kept."),
+            "failed".to_string(),
+        ];
+        let daemon = std::thread::spawn(move || {
+            for r in replies {
+                let (mut c, _) = l.accept().unwrap();
+                shared::jobs::greet(&c).unwrap();
+                let mut got = Vec::new();
+                c.read_to_end(&mut got).unwrap();
+                c.write_all(format!("{r}\n").as_bytes()).unwrap();
+            }
+        });
+        let up = AdminRequest {
+            action: AdminAction::PkgUpgrade,
+            args: vec![],
+        };
+        assert_eq!(admin_request(&path, &up, ""), Some(AdminReply::Failed));
+        assert_eq!(
+            take_failure(AdminAction::Ntp),
+            None,
+            "only the action that failed"
+        );
+        assert_eq!(
+            take_failure(AdminAction::PkgUpgrade).as_deref(),
+            Some("No restore point could be kept.")
+        );
+        assert_eq!(take_failure(AdminAction::PkgUpgrade), None, "taken once");
+        note_failure(AdminAction::PkgUpgrade, Some("stale".into()));
+        assert_eq!(admin_request(&path, &up, ""), Some(AdminReply::Failed));
+        assert_eq!(
+            take_failure(AdminAction::PkgUpgrade),
+            None,
+            "a plain failure clears it"
+        );
+        daemon.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

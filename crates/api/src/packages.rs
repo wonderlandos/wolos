@@ -440,6 +440,13 @@ fn failed_message(call: &PackageCall, shell: &str) -> String {
         .take(MAX_SHELL_MESSAGE)
         .collect();
     let said = said.trim();
+    // Update Now (everything, holds or not): wol-admind's own sentence, passed on by the shell,
+    // is truer than any promise made here (the restore point it kept, or why none could be).
+    let update_now = matches!(call, PackageCall::Change { verb: Verb::Update, names } if names.is_empty())
+        || matches!(call, PackageCall::UpdateHolding { .. });
+    if update_now && !said.is_empty() {
+        return said.to_owned();
+    }
     match (names > 1, said.is_empty()) {
         (false, _) => "The change did not finish. Nothing was changed; try again.".into(),
         (true, true) => {
@@ -1180,6 +1187,23 @@ mod tests {
         let one = r#"{"call":"package.change","verb":"install","names":["firefox"]}"#;
         let a = handle(one, Some((1000, APP)), &all, &failed("x"));
         assert!(a.message.unwrap().contains("Nothing was changed"));
+        // Update Now: what wol-admind said (through the sheet) is what wopkg hears, word for word.
+        let said = "The update did not finish. The restore point wolos-a is kept.";
+        for call in [
+            r#"{"call":"package.change","verb":"update","names":[]}"#,
+            r#"{"call":"package.update-holding","hold":["gimp"]}"#,
+        ] {
+            let a = handle(call, Some((1000, APP)), &all, &failed(said));
+            assert_eq!(
+                (a.code, a.message.as_deref()),
+                (Some(Code::Internal), Some(said))
+            );
+            let a = handle(call, Some((1000, APP)), &all, &failed(""));
+            assert!(a.message.unwrap().contains("Nothing was changed"), "{call}");
+        }
+        let named = r#"{"call":"package.change","verb":"update","names":["firefox"]}"#;
+        let a = handle(named, Some((1000, APP)), &all, &failed(said));
+        assert!(a.message.unwrap().starts_with("The change did not finish"));
     }
 
     /// Audit S4-2: what an app names for install-file is opened without becoming wold's

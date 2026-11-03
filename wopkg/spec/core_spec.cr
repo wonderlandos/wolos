@@ -24,8 +24,20 @@ describe Wopkg::Core do
     core.rollback(id)["undo"]["type"].should eq("run")
     err = expect_raises(Wopkg::Failure) { core.info("nothing-like-this") }
     err.kind.should eq("not-found")
-    expect_raises(Wopkg::Failure, /not a package name/) { core.system_call(%({"call":"package.change","verb":"install","names":["-Syu"]})) }
+    sys = expect_raises(Wopkg::Failure, /not a package name/) { core.system_call(%({"call":"package.change","verb":"install","names":["-Syu"]})) }
+    sys.system?.should be_true
+    sys.line.should start_with(Wopkg::Failure::SYSTEM_PREFIX)
+    err.system?.should be_false
     FileUtils.rm_rf(d)
+  end
+
+  it "puts what the system service said on one stderr line under a stable prefix" do
+    Wopkg::Failure::SYSTEM_PREFIX.should eq("wopkg: system: ")
+    f = Wopkg::Failure.new(LibWopkg::WOPKG_ERR_INTERNAL, "The update did not finish.\nThe restore point wolos-a is kept.")
+    f.line.should eq("The update did not finish.\nThe restore point wolos-a is kept.")
+    f.system = true
+    f.line.should eq("wopkg: system: The update did not finish. The restore point wolos-a is kept.")
+    f.line.lines.size.should eq(1)
   end
 
   it "is the libwopkg its generated header bindings describe" do

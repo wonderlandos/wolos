@@ -511,3 +511,36 @@ wolos-layer-0003
         );
     }
 }
+
+/// Update Now (wol-admind `pkg-upgrade`) and `pacman -Syu` on a sealed system make the same slot
+/// change: both keep the running slot as the restore point, and both stack onto a pending slot.
+#[test]
+fn update_now_and_the_pacman_wrapper_build_the_same_slot() {
+    use wol_core::update::pkg;
+    for (bootctl, from) in [
+        (IDLE, wol_core::update::Base::Running { replace: false }),
+        (PENDING, wol_core::update::Base::Pending),
+    ] {
+        let mut env = sealed("", bootctl);
+        assert_eq!(run("pkg -- -Syu --noconfirm", &mut env), 0, "{}", env.err);
+        let want = pkg::slot_change(Some(CMDLINE), Some(bootctl), &pkg::update_now_args(&[]))
+            .expect("a slot system keeps a restore point");
+        assert_eq!(want.restore_point, "wolos-a");
+        assert_eq!(want.from, from);
+        let planned: Vec<String> = want.steps.iter().map(ToString::to_string).collect();
+        assert_eq!(lines(&env), planned);
+        assert!(
+            planned.iter().all(|l| !l.contains("@wolos-a")),
+            "{planned:?}"
+        );
+    }
+    // One copy (no root slot on the command line): no restore point, so no Update Now plan.
+    assert_eq!(
+        pkg::slot_change(
+            Some("root=/dev/vda2 rw"),
+            Some(IDLE),
+            &pkg::update_now_args(&[])
+        ),
+        None
+    );
+}

@@ -20,12 +20,26 @@ module Wopkg
       LibWopkg::WOPKG_ERR_NOT_FOUND         => "not-found",
     }
 
+    # The prefix of the one stderr line that carries what the system service said about a change
+    # (wold, and through it wol-admind: Update Now's restore point, or why none could be kept).
+    # Settings reads the sentence after it, so it is stable: never reworded.
+    SYSTEM_PREFIX = "wopkg: system: "
+
+    # The failure came from the system service (a `system_call`), not from wopkg itself.
+    property? system = false
+
     def initialize(@code : Int32, message : String)
       super(message)
     end
 
     def kind : String
       STATUS[@code]? || "internal"
+    end
+
+    # The stderr line: a system failure on one line under SYSTEM_PREFIX, others as they are.
+    def line : String
+      m = message || ""
+      system? ? "#{SYSTEM_PREFIX}#{m.gsub(/[[:cntrl:]]+/, " ").strip}" : m
     end
   end
 
@@ -167,6 +181,9 @@ module Wopkg
     def system_call(req : String) : Nil
       err = Pointer(LibWopkg::Error).null
       check LibWopkg.wopkg_system_call(@ctx, req, req.bytesize, pointerof(err)), err
+    rescue e : Failure
+      e.system = true
+      raise e
     end
 
     def release_plan(req : String) : JSON::Any

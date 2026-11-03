@@ -25,7 +25,16 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   signed release manifest (`release.json` + `.sig`, verified with the package keys when read).
 - Findings go to `/var/lib/wolos/updates`, readable by every account. Never installs.
 - Release manifest: version, Arch snapshot date, `[wolos]` revision, linux-wolos version, image URL and sha256.
-- Update Now (wol-admind `pkg-upgrade`) = `pacman -Syu` inside the release: only `[wolos]` moves.
+- Update Now (wol-admind `pkg-upgrade`) = `pacman -Syu` inside the release (only `[wolos]` moves), made in the
+  other root slot by the same builder as the pacman wrapper below (`wol_core::update::pkg::slot_change`). The running
+  slot is the restore point Software Update promises: wol-admind logs its name before the first step, and no step
+  touches it. The update takes effect at the next restart; a failed step deletes the half-made slot. A one-copy install
+  (ADR 0023, `/etc/wolos/single-copy`) has no restore point: Update Now updates the running system in place, and
+  Software Update says so before the button is used. A system with neither is refused and nothing runs. A failed
+  Update Now answers `failed <sentence>` (one line, at most 200 bytes; older clients read it as `failed`) and Software
+  Update shows that sentence. Through wopkg it travels the whole way: the shell's administrator sheet hands it to wold,
+  wold answers wopkg with it word for word, wopkg prints it as one stderr line `wopkg: system: <sentence>` (exit code
+  unchanged), and Settings reads that line.
 - A new release = `wol update apply` (root): btrfs snapshot of the running root into the other slot
   (`@wolos-a`/`@wolos-b`, previous restore point deleted first), mirrorlist moved to the new date,
   `arch-chroot ... pacman -Syu` (wolos-base moves as one unit), `mkinitcpio -P`, kernel to the ESP,
