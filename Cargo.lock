@@ -4493,6 +4493,7 @@ name = "webengine"
 version = "0.12.0"
 dependencies = [
  "core",
+ "libc",
  "libloading",
  "miniz_oxide",
  "serde",

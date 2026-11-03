@@ -39,7 +39,10 @@ use std::path::{Path, PathBuf};
 /// crate's `src/`: every `#[unsafe(no_mangle)] unsafe extern "C"` export and its pointer reads)
 /// and the loading side in `src/ffi.rs` and `src/view.rs` (libloading's open and get, the function
 /// pointer types, the callbacks the engine calls with the view's context); each with a SAFETY
-/// line. Lowered when the engine's embedding API settles.
+/// line. 117 -> 118 (FIX-websandbox, 2026-11-03): `src/engine/confine.rs` confines the content
+/// process with Landlock and seccomp, which std wraps none of: one private `sys` function holds
+/// the one `libc::syscall` call (a ruleset, a rule, `prctl`, the filter), every other step is safe
+/// Rust (`O_PATH` through `OpenOptionsExt`). Lowered when the engine's embedding API settles.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
@@ -57,7 +60,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 8),
     ("wol-lua", 3),
     ("xguard-clam", 13),
-    ("webengine", 117),
+    ("webengine", 118),
 ];
 
 fn crates_dir() -> PathBuf {

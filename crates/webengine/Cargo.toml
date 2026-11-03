@@ -25,7 +25,15 @@ serde_json.workspace = true
 [dev-dependencies]
 # The goldens' PNG codec is wolkit's (tests/golden/png.rs), which needs it.
 miniz_oxide = "0.9.1"
+# The content process confinement (src/engine/confine.rs, built into the engine library, where the
+# engine's workspace supplies libc) is compiled here too for tests/confinement.rs.
+libc.workspace = true
 
 [[test]]
 name = "content_process"
+harness = false
+
+# A child process confines itself and probes what it can still do, so this binary is its own child.
+[[test]]
+name = "confinement"
 harness = false

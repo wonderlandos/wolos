@@ -9,10 +9,10 @@ use std::path::Path;
 use std::time::Duration;
 use webengine::{App, Policy, Target, WebView};
 
-fn children_with_token() -> usize {
+fn children_with_token() -> Vec<std::path::PathBuf> {
     let me = std::process::id().to_string();
     let Ok(rd) = std::fs::read_dir("/proc") else {
-        return 0;
+        return Vec::new();
     };
     rd.flatten()
         .filter(|e| {
@@ -28,12 +28,23 @@ fn children_with_token() -> usize {
                     .split(|&b| b == 0)
                     .any(|a| a == webengine::process::CONTENT_FLAG.as_bytes())
         })
-        .count()
+        .map(|e| e.path())
+        .collect()
+}
+
+/// A field of `/proc/<pid>/status`.
+fn status_field(proc_dir: &Path, field: &str) -> String {
+    std::fs::read_to_string(proc_dir.join("status"))
+        .unwrap_or_default()
+        .lines()
+        .find_map(|l| l.strip_prefix(field))
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default()
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    // The child inherits the environment (the engine's own sandbox is off, src/view.rs).
+    // The child inherits the environment; it confines itself before it runs (src/engine/confine.rs).
     let path = std::env::var_os(webengine::ffi::LIB_ENV).map(std::path::PathBuf::from);
     let loaded = webengine::ffi::load(path.as_deref());
     if let Some(token) = webengine::process::content_token(&args) {
@@ -68,7 +79,11 @@ fn main() {
     .unwrap_or_else(|e| panic!("{e}"));
     view.wait_loaded(Duration::from_secs(60)).unwrap();
     let kids = children_with_token();
-    assert_eq!(kids, 1, "one content process per app");
+    assert_eq!(kids.len(), 1, "one content process per app");
+    // And it is the confined one (src/engine/confine.rs): the page loaded and painted under
+    // no_new_privs and the seccomp filter, with the files and sockets of Landlock's ruleset.
+    assert_eq!(status_field(&kids[0], "NoNewPrivs:"), "1", "no_new_privs");
+    assert_eq!(status_field(&kids[0], "Seccomp:"), "2", "seccomp filter");
     let img = view.screenshot(Duration::from_secs(60)).unwrap();
     assert_eq!((img.width, img.height), (320, 240));
     // The script ran in the content process: orange, not the stylesheet's blue.
@@ -76,5 +91,5 @@ fn main() {
     assert!(c[0] > 0xe0 && c[2] < 0x50, "page colour {c:?}");
     drop(view);
     let _ = std::fs::remove_dir_all(&profile);
-    println!("content_process: ok (1 content process, page loaded and painted)");
+    println!("content_process: ok (1 confined content process, page loaded and painted)");
 }

@@ -15,6 +15,7 @@ pub const SONAME: &str = "libwolwebengine.so.1";
 pub const LIB_ENV: &str = "WOL_WEBENGINE_LIB";
 
 pub const MULTIPROCESS: u32 = 1;
+/// The content process confines itself (the library refuses [`MULTIPROCESS`] without it).
 pub const SANDBOX: u32 = 2;
 pub const FEATURE_WEBGL2: u32 = 1;
 pub const FEATURE_WEBGPU: u32 = 2;
@@ -223,8 +224,10 @@ pub fn engine_version() -> Result<String, String> {
         .into_owned())
 }
 
-/// In the engine's content process (see [`crate::process::content_token`]): runs the page until
-/// the engine ends it; the host's `main` then returns.
+/// In the engine's content process (see [`crate::process::content_token`]): confines the process
+/// (`src/engine/confine.rs`; it returns without running the page if it cannot), then runs the page until the engine ends it;
+/// the host's `main` then returns. Call it first in `main`: the confinement needs the process to
+/// have one thread.
 pub fn run_content_process(token: &str) -> Result<(), String> {
     let l = lib()?;
     let t = CString::new(token).map_err(|_| "token has a NUL".to_string())?;

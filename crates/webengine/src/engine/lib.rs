@@ -14,6 +14,7 @@
 //! return, or a log line where the call returns nothing), the waker stops when the engine is
 //! freed, the engine's shutdown is watched, and the one-engine slot comes back with the engine.
 mod boundary;
+mod confine;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_char, c_void};
@@ -274,6 +275,13 @@ fn guarded(what: &str, f: impl FnOnce()) {
     }
 }
 
+/// A line on stderr for the moments before the engine has a logger.
+fn stderr_line(msg: &str) {
+    use std::io::Write;
+    // Nothing to do when stderr itself is gone.
+    let _ = writeln!(std::io::stderr(), "{msg}");
+}
+
 /// The engine's shutdown is late: its content processes (children of this process started with
 /// `--content-process`) are ended, so the engine sees them gone and finishes.
 fn end_content_processes() {
@@ -380,6 +388,23 @@ pub unsafe extern "C" fn wwe_engine_new(
         put_err(err, errlen, "profile_dir must be absolute");
         return std::ptr::null_mut();
     }
+    // Content processes run confined or not at all (confine.rs): the host says it knows
+    // (WWE_SANDBOX), and this machine must be able to do it, so the failure is an error here and
+    // not a content process that dies while the engine waits for it.
+    if config.flags & WWE_MULTIPROCESS != 0 {
+        if config.flags & WWE_SANDBOX == 0 {
+            put_err(
+                err,
+                errlen,
+                "a content process runs confined only: WWE_MULTIPROCESS needs WWE_SANDBOX",
+            );
+            return std::ptr::null_mut();
+        }
+        if let Err(e) = confine::preflight() {
+            put_err(err, errlen, &e);
+            return std::ptr::null_mut();
+        }
+    }
     // SAFETY: contract above.
     let user_agent = unsafe { opt_str(config.user_agent) };
     let waker = config
@@ -398,7 +423,11 @@ pub unsafe extern "C" fn wwe_engine_new(
         let mut opts = Opts::default();
         opts.config_dir = Some(profile);
         opts.multiprocess = config.flags & WWE_MULTIPROCESS != 0;
-        opts.sandbox = opts.multiprocess && config.flags & WWE_SANDBOX != 0;
+        // Not the engine's own sandbox: at the pin it forks its jail from a multi-threaded host,
+        // needs an unprivileged user namespace and a chroot, kills the child on a 2015 allowlist of
+        // 21 system calls, never reaps it, and no page loads. WWE_SANDBOX is ours: the content
+        // process confines itself in `wwe_run_content_process` (confine.rs), checked above.
+        opts.sandbox = false;
         let host = Host {
             allow,
             clip_get: config.clip_get,
@@ -826,5 +855,25 @@ pub unsafe extern "C" fn wwe_image_free(image: *mut Image) {
 pub unsafe extern "C" fn wwe_run_content_process(token: *const c_char) {
     // SAFETY: contract above.
     let token = unsafe { opt_str(token) }.unwrap_or_default();
+    // Before the engine reads anything or starts a thread. A process that cannot be confined does
+    // not run the page: this returns, the host's `main` returns and the process ends.
+    match confine::enter(&token) {
+        Ok(done) => {
+            log::debug!("wolwebengine: content process confined: {done:?}");
+            if !done.unix_resolve {
+                // No logger yet (the engine installs it after the handshake).
+                stderr_line(
+                    "wolwebengine: this kernel cannot tell pathname unix sockets apart (Landlock \
+                     RESOLVE_UNIX): the content process can reach the user's sockets",
+                );
+            }
+        }
+        Err(e) => {
+            stderr_line(&format!(
+                "wolwebengine: the content process cannot be confined: {e}"
+            ));
+            return;
+        }
+    }
     guarded("content process", move || servo::run_content_process(token));
 }

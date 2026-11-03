@@ -18,7 +18,10 @@
 
 /* wwe_config.flags */
 #define WWE_MULTIPROCESS 1u   /* content in a child process (re-executes the host with --content-process) */
-#define WWE_SANDBOX 2u        /* the engine's own content sandbox (multiprocess only) */
+#define WWE_SANDBOX 2u        /* the content process confines itself before it runs anything (no_new_privs, a
+                                 Landlock ruleset, a seccomp filter; confine.rs). Required with WWE_MULTIPROCESS:
+                                 wwe_engine_new fails without it, and when the kernel cannot confine
+                                 (Landlock ABI 6, Linux 6.12). Not the engine's own sandbox, which stays off. */
 
 /* wwe_config.features: what the page may use (the policy's features) */
 #define WWE_FEATURE_WEBGL2 1u
@@ -127,7 +130,8 @@ void wwe_view_theme(wwe_view *view, bool dark);
 /* Spins until the rendering is up to date and captured, at most timeout_ms. 0 ok, -1 error. */
 int wwe_view_screenshot(wwe_view *view, uint32_t timeout_ms, wwe_image *out, char *err, size_t errlen);
 void wwe_image_free(wwe_image *image);
-/* In a content process (argv: --content-process TOKEN): runs the content until the engine ends it;
- * the host then exits. */
+/* In a content process (argv: --content-process TOKEN): confines the process (it must still have a
+ * single thread: call this first in main), then runs the content until the engine ends it; the host
+ * then exits. A process that cannot be confined prints why on stderr and returns without running the content. */
 void wwe_run_content_process(const char *token);
 #endif

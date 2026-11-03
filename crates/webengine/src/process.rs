@@ -12,6 +12,14 @@
 //! The launcher picks the unit with [`pick_unit`] from its own pid, calls [`scope_argv`] and then
 //! `exec`s the result, so the pid in the name is the scope's main process; `<n>` keeps a reused pid
 //! off a scope an earlier app left behind.
+//!
+//! The scope limits resources, not what a process may do: `systemd-run --scope` accepts the
+//! cgroup properties (memory, tasks) and refuses the execution ones (`ProtectHome`,
+//! `SystemCallFilter`, `NoNewPrivileges`: "Unknown assignment", they belong to services). What a
+//! content process may do is decided by the process itself: the engine library confines it before
+//! it runs anything (`src/engine/confine.rs`: `no_new_privs`, a Landlock ruleset, a seccomp filter),
+//! so a host's `main` must call [`content_token`] and [`crate::ffi::run_content_process`] first,
+//! while it has one thread.
 
 /// Prefix of a web app's id (plan-wave3 WA-3: `org.wolos.webapp.<slug>`).
 pub const APP_ID_PREFIX: &str = "org.wolos.webapp.";

@@ -189,6 +189,17 @@ fn take_err(buf: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// The engine flags of an app: a content process is always a confined one ([`ffi::SANDBOX`]; the
+/// library refuses the one without the other, and confines the process itself before the engine
+/// runs it, `src/engine/confine.rs`), and an app without a content process has nothing to confine.
+pub(crate) fn engine_flags(content_process: bool) -> u32 {
+    if content_process {
+        ffi::MULTIPROCESS | ffi::SANDBOX
+    } else {
+        0
+    }
+}
+
 impl WebView {
     /// The app's page at `url`, under `policy`. The start URL must pass the policy's gate.
     pub fn new(policy: &Policy, app: App, target: Target, url: &str) -> Result<WebView, Error> {
@@ -215,14 +226,7 @@ impl WebView {
         let profile = CString::new(app.profile_dir.to_string_lossy().into_owned())
             .map_err(|_| Error::Policy("the profile directory has a NUL".into()))?;
         let curl = CString::new(url).map_err(|_| Error::Policy("the URL has a NUL".into()))?;
-        // Not `ffi::SANDBOX`: the engine's own content sandbox does not load a page at the pin
-        // (the forge, 2026-11-03: no load in 60 s). The content process is confined by the jail
-        // helper instead once it lands (plan-wave3 WA-2: NS10), and meanwhile by the app's scope,
-        // the origin gate and the profile directory.
-        let mut flags = 0;
-        if app.content_process {
-            flags |= ffi::MULTIPROCESS;
-        }
+        let flags = engine_flags(app.content_process);
         let ctx = (&raw const *shared).cast_mut().cast::<c_void>();
         let config = ffi::Config {
             abi: ffi::ABI,
@@ -520,5 +524,22 @@ mod tests {
                 "load {load}"
             );
         }
+    }
+
+    /// A content process is a confined one: the flag that makes the library confine it is on
+    /// whenever the flag that starts it is, and never without it.
+    #[test]
+    fn a_content_process_is_always_a_confined_one() {
+        let flags = engine_flags(true);
+        assert_ne!(flags & ffi::MULTIPROCESS, 0);
+        assert_ne!(flags & ffi::SANDBOX, 0, "the content process is confined");
+        assert_eq!(
+            engine_flags(false),
+            0,
+            "no content process, nothing to confine"
+        );
+        // The default app has a content process (process.rs, plan-wave3 WA-3).
+        let app = App::new("org.wolos.webapp.t", std::path::PathBuf::from("/tmp/x"));
+        assert_ne!(engine_flags(app.content_process) & ffi::SANDBOX, 0);
     }
 }
