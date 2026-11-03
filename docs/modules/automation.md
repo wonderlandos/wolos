@@ -47,9 +47,25 @@ Shell -> one line `{"answer": ...}`, then close:
 - Admin: password field, Deny, Allow; a wrong password asks again.
 - Esc or closing = Deny. Queue: one on screen, 4 waiting, more get `busy`.
 
+## Desktop toggles (`wol toggle <word> [on|off]`, `wol_core::toggles`)
+
+What a toggle is: one switch the menu bar, Control Center tiles, hotkeys and helpers share. Why one
+verb: a toggle can touch the display, idle and notifications at once, which no single capability
+covers. How: `wol toggle <word>` flips it, `wol toggle <word> on|off` sets it, `wol toggle` (or
+`wol toggle list [--json]`) lists every toggle with its state. Helpers may only list them
+(`toggle list`, Read); flipping stays for people, hotkeys and tiles. State is one flag file per toggle
+under `$XDG_STATE_HOME/wolos/toggles/org.wolos.<id>` (Do Not Disturb: the `wol/dnd` file in the
+config home, which the notification code and `wol focus` read).
+
+| Word (aliases) | Toggle | What it flips |
+|---|---|---|
+| `nightlight` (`night-light`, `nightshift`, `night-shift`) | Night Light | warmer colours: `hyprctl hyprsunset temperature` at `NIGHT_LIGHT_KELVIN`, off = `identity`; without hyprsunset the change stops |
+| `stay-awake` (`idle`, `awake`, `caffeine`) | Stay Awake | the screen does not dim, lock or sleep by itself: a `systemd-inhibit --what=idle` held by the user unit `wol-stay-awake.service`, which off stops |
+| `silence` (`dnd`, `focus`) | Do Not Disturb | banners wait in the Notification Center: only the flag file changes |
+
 ## Invariants
 
 - One audit record per helper call (`$XDG_STATE_HOME/wolos/actions.jsonl`), written by the requester; the shell writes one only for an admin change it ran after the requester left. Passwords are never logged.
-- Always Allow is per helper name and capability; `wol helpers deny <cap>` and `wol helpers forget <helper>` take it back; it is a journaled `helpers` change a helper cannot undo.
+- Always Allow is per helper and capability. An MCP helper is its declared name plus the program that started `wol mcp`, read from the kernel through a pinned `/proc` directory (`Assistant (/usr/bin/assistant)`), so another program that copies the name is asked again (audit C10-6). Changes that leave something behind (`webapp add|remove`, `modules enable`, `sessions save|restore`) are asked every time and offer no Always Allow (C10-1); `wol helpers deny <cap>` and `wol helpers forget <helper>` take it back; it is a journaled `helpers` change a helper cannot undo.
 - Helper names are what the helper says it is and helpers run as the user: the gate keeps well-behaved helpers inside what the user approved; it is not a sandbox.
 - Tests: `crates/controller/tests/{mcp,helpers,approval_socket}.rs` (fake shell on a real socket), goldens `approval`, `approval-admin`.

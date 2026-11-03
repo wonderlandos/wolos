@@ -40,7 +40,7 @@ pub const SCALE: [(&str, &str); 16] = [
 
 /// AppWindow scaffold metrics in px (HIG §1/§2, Kit `AppWindow` in the shell's kit.css): third-party
 /// app themes (`wol_core::theme::apps`, GTK 3/4, Firefox) draw the same geometry. Tests hold the Kit
-/// stylesheet and the Hyprland config to these values.
+/// stylesheet and the compositor config to these values.
 pub mod scaffold {
     pub const TOOLBAR_HEIGHT: i32 = 52;
     /// Kit's own toolbar, under the 28 px compositor strip.
@@ -56,13 +56,16 @@ pub mod scaffold {
     pub const CONTROL_HEIGHT: i32 = 24;
     pub const RADIUS_CONTROL: i32 = 6;
     pub const RADIUS_CARD: i32 = 10;
-    /// Window corners (Hyprland `decoration:rounding`).
+    /// Window corners (compositor `decoration:rounding`).
     pub const WINDOW_RADIUS: i32 = 12;
     pub const BODY: i32 = 13;
     pub const SECONDARY: i32 = 11;
-    pub const LARGE_TITLE: i32 = 22;
-    /// Window buttons: 12 px circles, 22 px centre to centre, the first centred 23 px from the
-    /// window's left edge (pixel edges), all on the toolbar's vertical centre.
+    /// Section headings (`label.heading`).
+    pub const HEADING: i32 = 15;
+    /// Page titles (`label.large-title`), bold, tracking -0.5 px.
+    pub const LARGE_TITLE: i32 = 26;
+    /// Window buttons: 12 px circles, 22 px centre to centre, close (the edge one) centred 23 px
+    /// in from the window's right edge (pixel edges), all on the toolbar's vertical centre.
     pub const LIGHT_SIZE: i32 = 12;
     pub const LIGHT_PITCH: i32 = 22;
     pub const LIGHT_FIRST_CENTRE: i32 = 23;
@@ -91,6 +94,36 @@ pub const USER_THEMES_DIR: &str = "wolos/themes";
 pub const ACTIVE_FILE: &str = "wolos/theme";
 /// Under `$XDG_CONFIG_HOME`: the desktop picture (one line: an image path, or `dynamic`).
 pub const WALLPAPER_FILE: &str = "wolos/wallpaper";
+
+/// Themes v2 (ADR 0031): an optional `terminal` list in `theme.json` holds exactly this many
+/// colours (ANSI 0-15); without it the renderers derive them from the tokens.
+pub const TERMINAL_COLORS: usize = 16;
+/// ANSI names of the 16 terminal colours, in order (`{{color3}}` = `yellow`).
+pub const ANSI_NAMES: [&str; TERMINAL_COLORS] = [
+    "black",
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+    "brightBlack",
+    "brightRed",
+    "brightGreen",
+    "brightYellow",
+    "brightBlue",
+    "brightMagenta",
+    "brightCyan",
+    "brightWhite",
+];
+/// Under `$XDG_CONFIG_HOME`: compositor colours of the active theme, picked up by the user
+/// hyprland.conf's `hypr/wolos/*.conf` glob after the system default.
+pub const HYPR_THEME_FILE: &str = "hypr/wolos/theme.conf";
+/// The default theme's compositor colours, sourced by the shipped hyprland.conf.
+pub const SYSTEM_HYPR_THEME: &str = "/usr/share/wolos/hypr/wolos/theme.conf";
+/// Under `$XDG_CONFIG_HOME`: user templates `<name>.tpl`, rendered on every theme switch.
+pub const TEMPLATES_DIR: &str = "wolos/themed";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Variant {

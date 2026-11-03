@@ -1,21 +1,24 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Workspace dependency rules (AGENTS.md): shared <- core <- {api, realtime, proxy, controller, wol-abi, wopkg, xguard, xguard-clam}.
 //! libwopkg (ADR 0021): `wopkg` is the package core's stable C ABI, an adaptor like `wol-abi`.
+//! libWolkit (ADR 0039): `wolkit` is the UI engine's stable C ABI, an adaptor like `wol-abi` that
+//! depends on `shared` and `core` only (BSD-2-Clause), and no GPL crate may depend on it back.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
 //! Plugins (ADR 0031): `controller` may use `wol-lua` too, so `wol plugin check|run` runs plugin Lua headless.
 use std::collections::BTreeMap;
 use std::process::Command;
 
-const ADAPTORS: [&str; 7] = [
+const ADAPTORS: [&str; 8] = [
     "api",
     "realtime",
     "proxy",
     "controller",
     "wol-abi",
+    "wolkit",
     "wopkg",
     "xguard",
 ];
-const REQUIRED: [&str; 11] = [
+const REQUIRED: [&str; 12] = [
     "shared",
     "core",
     "api",
@@ -23,6 +26,7 @@ const REQUIRED: [&str; 11] = [
     "proxy",
     "controller",
     "wol-abi",
+    "wolkit",
     "wol-lua",
     "wopkg",
     "xguard",
@@ -51,9 +55,11 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // wopkg checks what it is about to install (ADR 0024).
                 "wopkg" => ["shared", "core", "xguard"].contains(&dep.as_str()),
                 // The App Store links the package core directly (ADR 0021); the desktop runs Lua
-                // widgets (ADR 0020).
-                "shell" => ["shared", "core", "wopkg", "wol-lua"].contains(&dep.as_str()),
-                // other members (e.g. shell) may use core + shared only
+                // widgets (ADR 0020); the Sound pane and the Control Center drive PipeWire through
+                // the audio adaptor (wol_audio::pw::Handle).
+                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio"].contains(&dep.as_str()),
+                // other members (e.g. audio: shared::atomic for its config fragments) may use
+                // core + shared only
                 _ => dep == "shared" || dep == "core",
             };
             if !ok {
@@ -120,6 +126,11 @@ fn violations_table() {
         (&[("shell", &["api"])], &["shell -> api"]),
         (&[("wol-abi", &["core", "shared"])], &[]),
         (&[("wol-abi", &["api"])], &["wol-abi -> api"]),
+        (&[("wolkit", &["core", "shared"])], &[]),
+        (&[("wolkit", &["wol-abi"])], &["wolkit -> wol-abi"]),
+        (&[("wolkit", &["api"])], &["wolkit -> api"]),
+        (&[("shell", &["wolkit"])], &["shell -> wolkit"]),
+        (&[("wol-abi", &["wolkit"])], &["wol-abi -> wolkit"]),
         (&[("wopkg", &["core", "shared"])], &[]),
         (&[("wopkg", &["api"])], &["wopkg -> api"]),
         (&[("wol-lua", &["wol-abi", "core", "shared"])], &[]),
@@ -127,6 +138,9 @@ fn violations_table() {
         (&[("shell", &["wol-abi"])], &["shell -> wol-abi"]),
         (&[("shell", &["wopkg", "core"])], &[]),
         (&[("shell", &["wol-lua"])], &[]),
+        (&[("shell", &["audio"])], &[]),
+        (&[("audio", &["shared", "core"])], &[]),
+        (&[("audio", &["api"])], &["audio -> api"]),
         (&[("controller", &["wol-lua", "core", "shared"])], &[]),
         (&[("controller", &["wol-abi"])], &["controller -> wol-abi"]),
         (&[("controller", &["api"])], &["controller -> api"]),

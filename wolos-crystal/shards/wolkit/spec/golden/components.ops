@@ -1,0 +1,33 @@
+CREATE 1 box
+SET_PROP 1 flex-direction column
+INSERT 0 1 append
+CREATE 2 box
+SET_PROP 2 flex-direction row
+SET_PROP 2 gap 8.0
+INSERT 1 2 append
+CREATE 3 button
+SET_PROP 3 flex-direction row
+SET_A11Y 3 button "Decrease" ""
+BIND_EVENT 3 1
+SET_TEXT 3 "-"
+INSERT 2 3 append
+CREATE 4 text
+SET_TEXT 4 "5"
+INSERT 2 4 append
+CREATE 5 button
+SET_PROP 5 flex-direction row
+SET_A11Y 5 button "Increase" ""
+BIND_EVENT 5 1
+SET_TEXT 5 "+"
+INSERT 2 5 append
+CREATE 6 box
+SET_PROP 6 flex-direction column
+SET_PROP 6 gap 8.0
+INSERT 1 6 append
+CREATE 7 text
+SET_PROP 7 font-size title
+SET_TEXT 7 "Notes"
+INSERT 6 7 append
+CREATE 8 text
+SET_TEXT 8 "inside the slot"
+INSERT 6 8 append

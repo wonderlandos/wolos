@@ -1,7 +1,7 @@
-# 0022 - AUR packages judged by laws over graphs
+# 0022 - Community-collection packages judged by laws over graphs
 Status: accepted
 
-Context: an AUR package is unreviewed code. wopkg already builds it in a sandbox and runs text checks. Text checks do not follow data: a download saved to a variable and run three lines later looks like nothing.
+Context: a package from the community package collection is unreviewed code. wopkg already builds it in a sandbox and runs text checks. Text checks do not follow data: a download saved to a variable and run three lines later looks like nothing.
 
 Decision:
 - `crates/aurlaws` turns a package into a graph with tree-sitter and never runs it. Nodes: sources, URLs, files, env vars, commands, functions, processes, sockets. Edges follow data: fetches, writes, reads, executes, decodes, sends, plus verifies and calls.

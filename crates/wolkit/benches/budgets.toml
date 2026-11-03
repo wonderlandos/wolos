@@ -1,0 +1,62 @@
+# Ratchet for the wolkit microbenchmarks (plan section 4.6). A bench exits non-zero under
+# `--check` when a median exceeds its limit here. Limits are ceilings with CI noise in mind;
+# lower them by hand after a forge run, never raise one without a recorded reason.
+# Each owner appends its own group: [text] and [batch] are WK-W3's; [style], [layout], [patch]
+# belong to their benches.
+
+[text]
+# Budget 8. Targets from the plan: hit <= 2 us, cold 40-char Latin line <= 50 us.
+shape_hit_ns = 2_000
+shape_cold_40_ns = 50_000
+atlas_hit_ns = 500
+layout_warm_para_ns = 100_000
+glyph_raster_cold_ns = 100_000
+
+[batch]
+# Budget 9. A typical window is at most 10 draw calls.
+draws = 10
+# Scroll with unchanged content only re-emits the cached instances.
+build_scroll_ns = 400_000
+damage_blink_ns = 2_000
+
+[style]
+# Budget 5: style resolve <= 0.2 ms per 100 dirty nodes (memoised; inline properties skip the memo).
+# Forge (Xeon 8375C, release): state flips 72-74 us, inline 113 us, restyle of 1000 nodes 130 us,
+# a clean frame 7 ns.
+resolve_100_state_ns = 200_000
+resolve_100_inline_ns = 200_000
+resolve_clean_ns = 1_000
+restyle_all_1000_ns = 400_000
+compile_1000_rules_ns = 4_000_000
+load_1000_rules_ns = 600_000
+
+[layout]
+# Budget 6: <= 0.5 ms for a 1k-node relayout boundary, <= 4 ms for a full relayout of 10k nodes.
+# The stand-in text is not in these (the text budget is [text]); every text node is a fixed size.
+# Release, engine only. CTO box: boundary 225 us, edit inside it 10 us, full 10k 2.4 ms (3.0 ms with the
+# stand-in text), resize 0.6 ms. Forge (shared, so it moves with load, two runs): boundary 277-334 us,
+# edit 11-13 us, full 10k 2.9-3.5 ms, through the scene 3.4-4.0 ms, resize 0.7-0.8 ms.
+boundary_1k_full_ns = 500_000
+boundary_1k_edit_ns = 100_000
+clean_ns = 1_000
+full_10k_ns = 4_000_000
+first_10k_ns = 4_500_000
+resize_10k_ns = 2_000_000
+scene_full_ns = 4_500_000
+
+[gpu]
+# WK-W5, budgets 1 2 7 9 10; *_cpu_* is main-thread time minus the slot fence wait (on lavapipe the
+# GPU is the CPU). CTO box lavapipe, 640x480 typical window, 609 instances: draws 1, input to submit
+# p50 0.80 ms / p95 1.08 ms, interaction 0.12 ms, scroll 0.045 ms, fling 0.049 ms (3000 frames
+# across all 100,000 rows), caret damage 16 px, idle 0 px and 0 draws.
+draws = 10
+input_to_submit_p50_ns = 3_000_000
+input_to_submit_p95_ns = 5_000_000
+interaction_cpu_p95_ns = 2_500_000
+scroll_cpu_p95_ns = 1_000_000
+fling_cpu_p95_ns = 1_000_000
+scroll_frames_over_budget = 0
+fling_frames_over_budget = 0
+caret_damage_px = 16
+idle_damage_px = 0
+idle_draws = 0

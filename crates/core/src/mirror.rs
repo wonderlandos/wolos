@@ -87,6 +87,28 @@ pub fn gate(conf: &str, on: bool) -> String {
     out
 }
 
+/// Whether the CachyOS sections may be on: the CPU runs their builds and their mirrorlist has an
+/// active server. A section without one fails every `pacman -Sy` (until the WolOS CDN exists,
+/// wolos-cachy-mirrorlist has none), so `gate` keeps them off then.
+pub fn gate_on(cpuinfo: &str, cachy_mirrorlist: &str) -> bool {
+    cachy_supported(cpuinfo) && !servers(cachy_mirrorlist).is_empty()
+}
+
+/// The repo section that reads [`MIRRORLIST`] (`[wolos]`, or `[wolos-testing]` on a system
+/// installed from a testing image): its name is the database's (`<name>.db`). `wolos` when none.
+pub fn wolos_repo(conf: &str) -> String {
+    let include = format!("Include = {MIRRORLIST}");
+    let mut sect = "";
+    for l in conf.lines().map(str::trim) {
+        if let Some(h) = l.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
+            sect = h;
+        } else if l == include && !sect.is_empty() && sect != "options" {
+            return sect.to_owned();
+        }
+    }
+    "wolos".to_owned()
+}
+
 /// The system kernel package for this CPU: `linux-wolos-v3` where the CPU runs it and a repo
 /// offers it, else `linux-wolos`.
 pub fn kernel_package(cpuinfo: &str, available: bool) -> &'static str {
@@ -107,12 +129,12 @@ pub fn servers(mirrorlist: &str) -> Vec<String> {
         .collect()
 }
 
-/// URL that answers for a server: its `[wolos]` database.
-pub fn probe_url(server: &str) -> String {
+/// URL that answers for a server of section `repo` ([`wolos_repo`]): that repo's database.
+pub fn probe_url(server: &str, repo: &str) -> String {
     format!(
-        "{}/wolos.db",
+        "{}/{repo}.db",
         server
-            .replace("$repo", "wolos")
+            .replace("$repo", repo)
             .replace("$arch", "x86_64")
             .trim_end_matches('/')
     )
@@ -230,6 +252,33 @@ ssse3 avx avx2 bmi1 bmi2 f16c fma abm movbe xsave\nprocessor\t: 1\nflags\t\t: fp
         assert_eq!(gate(&partial, false), CONF);
     }
 
+    #[test]
+    fn the_mirrorlist_section_names_the_database() {
+        assert_eq!(wolos_repo(CONF), "wolos");
+        let testing = CONF.replacen("[wolos]\n", "[wolos-testing]\n", 1);
+        assert_eq!(wolos_repo(&testing), "wolos-testing");
+        // A commented include does not count; no section at all: the stable name.
+        let off = CONF.replacen(
+            "Include = /etc/pacman.d/wolos-mirrorlist",
+            "#Include = /etc/pacman.d/wolos-mirrorlist",
+            1,
+        );
+        assert_eq!(wolos_repo(&off), "wolos");
+        assert_eq!(wolos_repo(""), "wolos");
+    }
+
+    #[test]
+    fn gate_needs_a_v3_cpu_and_a_cachyos_server() {
+        let list = "# c\nServer = https://cdn.example/cachy/$repo\n";
+        assert!(gate_on(V3_CPU, list));
+        assert!(
+            !gate_on(V3_CPU, "# c\n#Server = https://REPO_DOMAIN/cachy/$repo\n"),
+            "no active server"
+        );
+        assert!(!gate_on(V3_CPU, ""), "no list");
+        assert!(!gate_on("flags\t: fpu sse2\n", list), "older CPU");
+    }
+
     const LIST: &str = "# WolOS mirrors\nServer = https://a.example/$repo-2026-10-20\n\
 #Server = https://off.example/x\nServer = https://b.example/2026-10-20/$repo/$arch\n\
 Server=https://c.example/$repo\n";
@@ -239,12 +288,17 @@ Server=https://c.example/$repo\n";
         let s = servers(LIST);
         assert_eq!(s.len(), 3);
         assert_eq!(
-            probe_url(&s[1]),
+            probe_url(&s[1], "wolos"),
             "https://b.example/2026-10-20/wolos/x86_64/wolos.db"
         );
         assert_eq!(
-            probe_url(&s[0]),
+            probe_url(&s[0], "wolos"),
             "https://a.example/wolos-2026-10-20/wolos.db"
+        );
+        // A testing install: the section is [wolos-testing], so is its database.
+        assert_eq!(
+            probe_url("https://gh.example/download/wolos-testing", "wolos-testing"),
+            "https://gh.example/download/wolos-testing/wolos-testing.db"
         );
         let urls: Vec<String> = (0..7).map(|i| format!("u{i}")).collect();
         let got = probe_all(&urls, &|u: &str| {

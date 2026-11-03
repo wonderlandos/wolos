@@ -107,6 +107,8 @@ pub enum SourceError {
     /// The user has not allowed this host for this widget.
     NeedsConsent(String),
     Offline(String),
+    /// The host answered with a redirect (to this URL's host, or another one).
+    Moved(String),
 }
 
 impl SourceError {
@@ -134,6 +136,9 @@ impl SourceError {
             SourceError::NeedsConsent(h) => format!("Allow this widget to read data from {h}."),
             SourceError::Offline(h) => {
                 format!("Could not reach {h}. It will try again later.")
+            }
+            SourceError::Moved(h) => {
+                format!("{h} sent the request somewhere else; only {h} itself is read.")
             }
         }
     }
@@ -200,21 +205,50 @@ fn read_capped(p: &Path) -> Result<Vec<u8>, SourceError> {
 }
 
 /// GET with the system's own client (FreeBSD `fetch(1)`, else `curl`): no TLS stack in WolOS, no
-/// cookies, no API keys. Fails on HTTP errors.
+/// cookies, no API keys. Fails on HTTP errors, and on any redirect (audit C8-3): the grant is for
+/// the host asked, so a 3xx to another host (localhost, the LAN, another site) is
+/// [`SourceError::Moved`], never the other body.
 pub fn http_get(url: &str, timeout: Duration, max: usize) -> Result<Vec<u8>, SourceError> {
     let host = shared::widgets::manifest::url_host(url).unwrap_or_default();
+    match run_limited(
+        &http_argv(url, timeout, max),
+        Path::new("/"),
+        timeout + Duration::from_secs(2),
+        max,
+    ) {
+        Ok(b) => Ok(b),
+        Err(SourceError::TooLarge) => Err(SourceError::TooLarge),
+        Err(SourceError::Failed {
+            code: Some(CURL_TOO_MANY_REDIRECTS),
+            ..
+        }) if !cfg!(target_os = "freebsd") => Err(SourceError::Moved(host)),
+        Err(_) => Err(SourceError::Offline(host)),
+    }
+}
+
+/// curl's exit code when a redirect is past `--max-redirs`.
+const CURL_TOO_MANY_REDIRECTS: i32 = 47;
+
+/// The argv of [`http_get`]: no config file, no redirects (`--max-redirs 0`: curl fails on a 3xx
+/// instead of returning the redirect page; `fetch -A` does not follow it either), http(s) only.
+pub fn http_argv(url: &str, timeout: Duration, max: usize) -> Vec<String> {
     let secs = timeout.as_secs().max(1).to_string();
-    let argv: Vec<String> = if cfg!(target_os = "freebsd") {
-        ["fetch", "-q", "-T", &secs, "-o", "-", url]
+    if cfg!(target_os = "freebsd") {
+        ["fetch", "-q", "-A", "-T", &secs, "-o", "-", url]
             .map(String::from)
             .to_vec()
     } else {
         let max = max.to_string();
         [
             "curl",
+            "--disable",
             "-fsSL",
+            "--max-redirs",
+            "0",
             "--proto",
             "=https,http",
+            "--proto-redir",
+            "=https",
             "--max-time",
             &secs,
             "--max-filesize",
@@ -223,11 +257,6 @@ pub fn http_get(url: &str, timeout: Duration, max: usize) -> Result<Vec<u8>, Sou
         ]
         .map(String::from)
         .to_vec()
-    };
-    match run_limited(&argv, Path::new("/"), timeout + Duration::from_secs(2), max) {
-        Ok(b) => Ok(b),
-        Err(SourceError::TooLarge) => Err(SourceError::TooLarge),
-        Err(_) => Err(SourceError::Offline(host)),
     }
 }
 
@@ -344,9 +373,7 @@ pub fn save_desktop(path: &Path, d: &Desktop) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, d.to_json())?;
-    std::fs::rename(tmp, path)
+    shared::atomic::atomic_write(path, 0o644, d.to_json().as_bytes())
 }
 
 #[cfg(test)]
@@ -462,6 +489,66 @@ mod tests {
             r.unwrap_err().message(),
             "Allow this widget to read data from api.example.com."
         );
+    }
+
+    /// A one-shot HTTP server on 127.0.0.1 that answers every connection with `reply`; the
+    /// count of connections it took.
+    fn serve(reply: String) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{BufRead, BufReader, Write};
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let h = hits.clone();
+        std::thread::spawn(move || {
+            for c in l.incoming().flatten() {
+                h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut r = BufReader::new(c);
+                let mut line = String::new();
+                while r.read_line(&mut line).is_ok_and(|n| n > 2) {
+                    line.clear();
+                }
+                let _ = r.get_mut().write_all(reply.as_bytes());
+            }
+        });
+        (port, hits)
+    }
+
+    /// Audit C8-3: a granted host that redirects (to the LAN, localhost or another site) gives
+    /// an error, never the other body; the argv follows no redirect.
+    #[test]
+    fn http_reads_follow_no_redirect() {
+        let a = http_argv("https://example.org/x", Duration::from_secs(5), 1024);
+        if a[0] == "curl" {
+            assert_eq!(a[1], "--disable", "no ~/.curlrc");
+            let at = a.iter().position(|x| x == "--max-redirs").unwrap();
+            assert_eq!(a[at + 1], "0");
+        }
+        let (secret, secret_hits) =
+            serve("HTTP/1.0 200 OK\r\nContent-Length: 6\r\n\r\nsecret".into());
+        let (front, _) = serve(format!(
+            "HTTP/1.0 302 Found\r\nLocation: http://127.0.0.1:{secret}/\r\nContent-Length: 0\r\n\r\n"
+        ));
+        let ok = http_get(
+            &format!("http://127.0.0.1:{secret}/"),
+            Duration::from_secs(5),
+            1024,
+        );
+        if ok.as_deref() != Ok(b"secret".as_slice()) {
+            eprintln!("no curl here ({ok:?}); the redirect half is skipped");
+            return;
+        }
+        let r = http_get(
+            &format!("http://127.0.0.1:{front}/"),
+            Duration::from_secs(5),
+            1024,
+        );
+        assert_eq!(r, Err(SourceError::Moved("127.0.0.1".into())));
+        assert_eq!(
+            secret_hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the redirect target was never asked"
+        );
+        assert!(r.unwrap_err().message().contains("somewhere else"));
     }
 
     #[test]

@@ -64,7 +64,12 @@ fn main() {
             // Concurrent connections (each a thread; holds last as long as the app): 64 per uid,
             // 512 in total, so one account cannot exhaust wold's threads (audit A9/A10).
             let quota = shared::bounded::Quota::new(64, 512);
-            for conn in listener.incoming().flatten() {
+            for conn in listener.incoming() {
+                let Ok(conn) = conn else {
+                    // EMFILE and friends: wait instead of spinning at 100 % CPU (audit S4-26).
+                    std::thread::sleep(ACCEPT_BACKOFF);
+                    continue;
+                };
                 // Identity now, at accept, not after the request was read (audit A2).
                 let peer = api::peer::PeerIdentity::capture(&conn);
                 let Some(slot) = peer.as_ref().and_then(|p| quota.admit(p.uid)) else {
@@ -86,6 +91,9 @@ fn main() {
             libc::SIGCHLD => {
                 ctx.reaper.reap_all(|p| jobs.is_job(p));
             }
+            // S4-2: a hang-up (a terminal that became ours and closed) or a broken pipe is never
+            // a reason to take the whole session down.
+            libc::SIGHUP | libc::SIGPIPE => {}
             _ => {
                 ctx.stopping
                     .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -96,6 +104,14 @@ fn main() {
         }
     }
 }
+
+/// Pause after a failed accept (out of descriptors): the error repeats until a connection ends.
+const ACCEPT_BACKOFF: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The realtime sockets (QoS, Memory Saver): one wol-realtime per account, so one connection per
+/// uid, and room for every seat (audit S4-1: four in total let one account starve the others).
+const REALTIME_PER_UID: usize = 1;
+const REALTIME_TOTAL: usize = 64;
 
 /// Frontmost boost plus Memory Saver: the app coming to the front stops giving memory back.
 struct Boost(Arc<memsaver::Service>);
@@ -124,9 +140,12 @@ fn spawn_memsaver(saver: Arc<memsaver::Service>) {
         std::thread::spawn(move || saver.run_ticker());
     }
     std::thread::spawn(move || {
-        // Only the realtime agent connects; a handful of connections at most.
-        let quota = shared::bounded::Quota::new(4, 4);
-        for conn in listener.incoming().flatten() {
+        let quota = shared::bounded::Quota::new(REALTIME_PER_UID, REALTIME_TOTAL);
+        for conn in listener.incoming() {
+            let Ok(conn) = conn else {
+                std::thread::sleep(ACCEPT_BACKOFF);
+                continue;
+            };
             let id = api::peer::PeerIdentity::capture(&conn);
             let ok = id.as_ref().is_some_and(|p| {
                 p.still_same()
@@ -159,34 +178,40 @@ fn spawn_qos(saver: Arc<memsaver::Service>) {
         Err(e) => return eprintln!("wold: qos disabled: {e}"),
     };
     let allowed = shared::sys::canonical(qos::REALTIME_EXE);
-    let tracker = Arc::new(Mutex::new(shared::qos::ForegroundTracker::default()));
+    // S4-1: one frontmost app per account, not one for everybody.
+    let foregrounds = Arc::new(Mutex::new(qos::Foregrounds::default()));
     let n = qos::hint_defaults(Path::new(qos::HINTS));
     eprintln!(
         "wold: qos listening on {} ({n} kernel hints)",
         shared::qos::SOCKET
     );
     std::thread::spawn(move || {
-        // Only the realtime agent connects; a handful of connections at most.
-        let quota = shared::bounded::Quota::new(4, 4);
-        for conn in listener.incoming().flatten() {
+        let quota = shared::bounded::Quota::new(REALTIME_PER_UID, REALTIME_TOTAL);
+        for conn in listener.incoming() {
+            let Ok(conn) = conn else {
+                std::thread::sleep(ACCEPT_BACKOFF);
+                continue;
+            };
             let id = api::peer::PeerIdentity::capture(&conn);
-            let slot = id
+            let admitted = id
                 .as_ref()
                 .filter(|p| {
                     p.still_same()
                         && p.exe()
                             .is_some_and(|e| qos::peer_allowed(e.as_bytes(), &allowed))
                 })
-                .and_then(|p| quota.admit(p.uid));
-            let Some(slot) = slot else {
+                .and_then(|p| Some((p.uid, quota.admit(p.uid)?)));
+            let Some((uid, slot)) = admitted else {
                 eprintln!("wold: qos refused peer");
                 continue;
             };
-            let tracker = tracker.clone();
+            let foregrounds = foregrounds.clone();
             let boost = Boost(saver.clone());
             std::thread::spawn(move || {
                 if shared::jobs::greet(&conn).is_ok() {
-                    qos::serve(conn, &tracker, &boost);
+                    // S4-1: only pids of the peer's own account (real uid in /proc/<pid>/status).
+                    let owner = |pid: i32| memsaver::procs::owner(Path::new("/proc"), pid);
+                    qos::serve(conn, uid, &owner, &foregrounds, &boost);
                 }
                 drop(slot);
             });

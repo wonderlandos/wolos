@@ -81,6 +81,20 @@ impl Default for NodeInfo {
     }
 }
 
+/// The properties of the input-level stream. `node.link-group` is the one that matters: the
+/// Bluetooth autoswitch (WirePlumber `autoswitch-bluetooth-profile.lua`) moves a headset to its
+/// call profile (HFP) when a capture stream without a link group is linked to the headset's
+/// source, and opening Sound must not do that to someone listening to music. Streams of a filter
+/// carry a link group, which that script skips; the meter says the same about itself (A6-5).
+pub const METER_PROPS: [(&str, &str); 6] = [
+    ("media.type", "Audio"),
+    ("media.category", "Capture"),
+    ("media.role", "Production"),
+    ("node.name", "wolos-meter"),
+    ("node.description", "WolOS input level"),
+    ("node.link-group", "wolos-meter"),
+];
+
 /// What the service asks the backend to do.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {

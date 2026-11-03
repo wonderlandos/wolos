@@ -2,13 +2,9 @@
 //! glibc malloc keeps 64 chunks per thread-cache bin (glibc default: 7) for every service and
 //! user session: +26% on a 16-thread request/JSON workload at the same RSS. hugetlb stays off
 //! (it raised RSS 4-12x for no gain).
-use std::path::PathBuf;
-fn read(p: &str) -> String {
-    let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p);
-    std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::read;
 
 const TUNABLE: &str = "DefaultEnvironment=GLIBC_TUNABLES=glibc.malloc.tcache_count=64";
 

@@ -24,6 +24,9 @@ it without a plan first (dry run), show the moves to the user, then call it with
 
 pub struct Server {
     client: String,
+    /// The executable that started `wol mcp`, as the kernel reports it (audit C10-6); None only
+    /// for a server built without one ([`Server::default`], tests of the protocol itself).
+    program: Option<String>,
     pub version: &'static str,
     pub initialized: bool,
 }
@@ -32,10 +35,41 @@ impl Default for Server {
     fn default() -> Self {
         Self {
             client: "MCP client".into(),
+            program: None,
             version: VERSIONS[0],
             initialized: false,
         }
     }
+}
+
+/// Shown for a client whose starter could not be read (it exited, or is not this account's):
+/// no grant made for a known program ever matches it.
+pub const UNKNOWN_PROGRAM: &str = "unknown program";
+
+/// The executable of the process that started `wol mcp` (the MCP client), as the kernel reports
+/// it; None when it cannot be told. STANDARDS 7.1 "Identity": the parent's `/proc/<ppid>` is
+/// pinned as a directory first and the executable read through that descriptor. The pid is
+/// checked to still be this process's parent after the open: while it is, the parent is alive,
+/// so the pid cannot have been reused and the directory is the client, not a newcomer. A parent
+/// that already exited (`wol mcp` handed to init or a subreaper) is unknown, never the reaper.
+pub fn parent_program() -> Option<String> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let ppid = std::os::unix::process::parent_id();
+    if ppid <= 1 {
+        return None;
+    }
+    let dir = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .open(format!("/proc/{ppid}"))
+        .ok()?;
+    if std::os::unix::process::parent_id() != ppid {
+        return None;
+    }
+    std::fs::read_link(format!("/proc/self/fd/{}/exe", dir.as_raw_fd()))
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 fn ok(id: Value, result: Value) -> Value {
@@ -68,8 +102,44 @@ fn client_name(v: &Value) -> String {
 }
 
 impl Server {
+    /// A server for a client started by `program` (its executable path, or None when it could
+    /// not be read, which is [`UNKNOWN_PROGRAM`]).
+    pub fn started_by(program: Option<String>) -> Self {
+        Self {
+            program: Some(program.unwrap_or_else(|| UNKNOWN_PROGRAM.into())),
+            ..Self::default()
+        }
+    }
+
     pub fn client(&self) -> &str {
         &self.client
+    }
+
+    /// Who the policy and the approval sheet name (audit C10-6): the name the client declares
+    /// for itself, bound to the program that started it, `Assistant (/usr/bin/assistant)`. An
+    /// Always Allow given to one program is not inherited by another that copies its name. At
+    /// most [`shared::portal::MAX_HELPER_TEXT`] bytes (wold relays it): a long path keeps its end.
+    pub fn helper(&self) -> String {
+        let Some(program) = &self.program else {
+            return self.client.clone();
+        };
+        let program: String = program.chars().filter(|c| !c.is_control()).collect();
+        let room = shared::portal::MAX_HELPER_TEXT.saturating_sub(self.client.len() + 3);
+        let shown = if program.len() <= room {
+            program
+        } else {
+            let mut tail: Vec<char> = Vec::new();
+            let mut used = '…'.len_utf8();
+            for c in program.chars().rev() {
+                if used + c.len_utf8() > room {
+                    break;
+                }
+                used += c.len_utf8();
+                tail.push(c);
+            }
+            std::iter::once('…').chain(tail.into_iter().rev()).collect()
+        };
+        format!("{} ({shown})", self.client)
     }
 
     /// One JSON-RPC message in; a response for requests, None for notifications and responses.
@@ -148,7 +218,8 @@ impl Server {
             Err(e) => return Ok(tool_error(&e.to_string())),
         };
         let shown: Vec<&str> = inv.args.iter().map(|a| a.1.as_str()).collect();
-        let (approved, note) = match approve::decide(env, &self.client, &tool, rule, &inv, secret) {
+        let helper = self.helper();
+        let (approved, note) = match approve::decide(env, &helper, &tool, rule, &inv, secret) {
             Verdict::Stop(o, msg) => {
                 log(env, &shown, o, &msg);
                 return Ok(tool_error(&msg));
@@ -202,7 +273,7 @@ impl Server {
 
 /// Serves until stdin closes.
 pub fn serve(env: &mut dyn Env) -> i32 {
-    let mut s = Server::default();
+    let mut s = Server::started_by(parent_program());
     while let Some(line) = env.read_line() {
         let l = line.trim();
         if l.is_empty() {

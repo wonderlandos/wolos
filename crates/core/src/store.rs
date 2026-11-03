@@ -541,6 +541,169 @@ pub const TOOLCHAINS: &[(&str, &str)] = &[
     ("bend", "Massively parallel programming language"),
 ];
 
+/// Where a kit's parts come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KitSource {
+    /// System packages: one wol-admind `pkg-install` (one approval) for every part.
+    Packages,
+    /// A wopkg recipe installed for this account only (no approval, no system change).
+    Wopkg(&'static str),
+}
+
+/// One thing a kit brings, in the order the kit page lists it (most wanted first).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KitPart {
+    pub name: &'static str,
+    /// What it lets people do, one line, sentence case, no full stop.
+    pub why: &'static str,
+    /// Packages for this part (empty for a wopkg kit).
+    pub packages: &'static [&'static str],
+}
+
+/// A Store kit (ADR 0032 B, the "Adobe kit" pattern): one tile, one click, one approval for a
+/// set of parts. Kits are never installed by default; the person asks for each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Kit {
+    /// Store target: wol-admind `pkg-install <id>` resolves it (never a pacman name).
+    pub id: &'static str,
+    pub name: &'static str,
+    pub summary: &'static str,
+    /// Full-colour tile icon (`design/icons/apps/<icon>.svg`, a `wolos-kit-*` pixel tile).
+    pub icon: &'static str,
+    pub source: KitSource,
+    pub parts: &'static [KitPart],
+    /// One sentence under the parts (licences, what stays separate).
+    pub note: &'static str,
+}
+
+const fn part(name: &'static str, why: &'static str, packages: &'static [&'static str]) -> KitPart {
+    KitPart {
+        name,
+        why,
+        packages,
+    }
+}
+
+/// The Kits shelf, in order. The codecs kit lists its parts by how often people need them.
+pub const KITS: [Kit; 2] = [
+    Kit {
+        id: "codecs-kit",
+        name: "Media Codecs",
+        summary: "Play and make MP3, AAC, H.264, HEVC and more",
+        icon: "wolos-kit-codecs",
+        source: KitSource::Packages,
+        parts: &[
+            part(
+                "MP3",
+                "Music files and podcasts",
+                &["gst-plugins-good", "lame"],
+            ),
+            part(
+                "AAC",
+                "Music from stores, phone videos and streams",
+                &["gst-libav", "faad2"],
+            ),
+            part(
+                "H.264",
+                "Most videos on the web and from cameras",
+                &["gst-libav", "gst-plugins-ugly", "x264"],
+            ),
+            part(
+                "HEVC (H.265)",
+                "Videos from newer phones and 4K files",
+                &["gst-libav", "x265", "libde265"],
+            ),
+            part(
+                "AC3 (Dolby Digital)",
+                "Sound on DVDs and many films",
+                &["gst-libav", "a52dec"],
+            ),
+            part(
+                "Fonts",
+                "Documents and web pages look as their authors meant",
+                &[
+                    "ttf-liberation",
+                    "ttf-dejavu",
+                    "noto-fonts",
+                    "noto-fonts-cjk",
+                    "noto-fonts-emoji",
+                ],
+            ),
+        ],
+        note: "Some of these formats are patented in some countries. You choose whether to add them.",
+    },
+    Kit {
+        id: "craft-suite",
+        name: "Craft Suite",
+        summary: "Creative apps from one self-updating launcher",
+        icon: "wolos-kit-craft-suite",
+        source: KitSource::Wopkg("craft-launcher"),
+        parts: &[part(
+            "Craft Launcher",
+            "Installs and updates the Craft apps for you",
+            &[],
+        )],
+        note: "Installed for your account only and checked before it runs. It updates itself.",
+    },
+];
+
+pub fn kit(id: &str) -> Option<&'static Kit> {
+    KITS.iter().find(|k| k.id == id)
+}
+
+impl Kit {
+    /// Every package of every part, first mention first, without duplicates.
+    pub fn packages(&self) -> Vec<&'static str> {
+        let mut v: Vec<&'static str> = Vec::new();
+        for p in self.parts {
+            for n in p.packages {
+                if !v.contains(n) {
+                    v.push(n);
+                }
+            }
+        }
+        v
+    }
+
+    /// `wopkg` arguments for a wopkg kit (`install <recipe>`), None for a packages kit.
+    pub fn wopkg_args(&self) -> Option<Vec<String>> {
+        match self.source {
+            KitSource::Wopkg(r) => Some(vec!["install".into(), r.into()]),
+            KitSource::Packages => None,
+        }
+    }
+
+    /// Whether the kit can be installed here: a packages kit always (pacman resolves it); a
+    /// wopkg kit only when its recipe is in one of `recipe_dirs` (`<dir>/<recipe>/recipe.toml`).
+    /// A kit that cannot apply is not shown (STANDARDS: applies or not shown).
+    pub fn available(&self, recipe_dirs: &[std::path::PathBuf]) -> bool {
+        match self.source {
+            KitSource::Packages => true,
+            KitSource::Wopkg(r) => recipe_dirs
+                .iter()
+                .any(|d| d.join(r).join("recipe.toml").is_file()),
+        }
+    }
+}
+
+/// Where wopkg finds official recipes (as `wopkg/src/wopkg/recipe.cr`).
+pub const RECIPES_DIR: &str = "/usr/share/wopkg/recipes";
+
+/// Recipe dirs: `$WOPKG_RECIPES` (colon-separated) first, then [`RECIPES_DIR`].
+pub fn recipe_dirs(env: Option<&str>) -> Vec<std::path::PathBuf> {
+    env.unwrap_or("")
+        .split(':')
+        .filter(|d| !d.is_empty())
+        .chain([RECIPES_DIR])
+        .map(std::path::PathBuf::from)
+        .collect()
+}
+
+/// The Kits shelf for this system, in [`KITS`] order.
+pub fn shown_kits(recipe_dirs: &[std::path::PathBuf]) -> Vec<&'static Kit> {
+    KITS.iter().filter(|k| k.available(recipe_dirs)).collect()
+}
+
 pub fn get(id: &str) -> Option<&'static App> {
     CATALOG.iter().find(|a| a.id == id)
 }
@@ -577,10 +740,13 @@ pub fn is_pkg_name(s: &str) -> bool {
 
 /// Fixed argv steps that install a catalog id or plain package name. None if neither.
 pub fn install_plan(target: &str) -> Option<Vec<Vec<String>>> {
-    let pkgs: Vec<&str> = match get(target) {
-        Some(a) => a.packages.to_vec(),
-        None if is_pkg_name(target) => vec![target],
-        None => return None,
+    let pkgs: Vec<&str> = match (get(target), kit(target)) {
+        (Some(a), _) => a.packages.to_vec(),
+        // A wopkg kit is a user install, never a wol-admind step.
+        (_, Some(k)) if k.source == KitSource::Packages => k.packages(),
+        (_, Some(_)) => return None,
+        (None, None) if is_pkg_name(target) => vec![target],
+        (None, None) => return None,
     };
     let mut step = pacman("-S", "--needed", &pkgs);
     // Plain per-package lines the App Store turns into a percentage (`crate::progress`).
@@ -607,6 +773,10 @@ pub fn parse_installed_size(text: &str) -> Option<String> {
 
 /// Fixed argv step that removes a catalog id or plain package name, with its unused dependencies.
 pub fn remove_plan(target: &str) -> Option<Vec<Vec<String>>> {
+    // A kit's packages are shared with other apps (gst-libav, fonts): it has no one-click remove.
+    if kit(target).is_some() {
+        return None;
+    }
     let pkgs: Vec<&str> = match get(target) {
         Some(a) => a.packages.to_vec(),
         None if is_pkg_name(target) => vec![target],
@@ -737,6 +907,106 @@ mod tests {
         for (_, row) in ROWS {
             assert!(row.iter().all(|id| get(id).is_some()));
         }
+    }
+
+    #[test]
+    fn kits_are_one_click_and_never_default() {
+        let ids: Vec<&str> = KITS.iter().map(|k| k.id).collect();
+        assert_eq!(ids, ["codecs-kit", "craft-suite"]);
+        for k in KITS {
+            assert!(get(k.id).is_none(), "{} is not a catalog id", k.id);
+            assert!(!k.parts.is_empty() && k.summary.len() <= 50, "{}", k.id);
+            assert!(
+                !k.summary.ends_with('.') && k.note.ends_with('.'),
+                "{}",
+                k.id
+            );
+            assert!(k.packages().iter().all(|p| is_pkg_name(p)), "{}", k.id);
+            assert_eq!(remove_plan(k.id), None, "{} has no one-click remove", k.id);
+            // Kits are not apps: no Discover row and no category lists them.
+            assert!(ROWS.iter().all(|(_, r)| !r.contains(&k.id)));
+        }
+        assert_eq!(kit("nope"), None);
+    }
+
+    #[test]
+    fn the_codecs_kit_lists_what_people_need_most_first() {
+        let k = kit("codecs-kit").unwrap();
+        let names: Vec<&str> = k.parts.iter().map(|p| p.name).collect();
+        assert_eq!(
+            names,
+            [
+                "MP3",
+                "AAC",
+                "H.264",
+                "HEVC (H.265)",
+                "AC3 (Dolby Digital)",
+                "Fonts"
+            ]
+        );
+        assert!(k.parts.iter().all(|p| !p.packages.is_empty()));
+        let pkgs = k.packages();
+        let mut d = pkgs.clone();
+        d.sort();
+        d.dedup();
+        assert_eq!(d.len(), pkgs.len(), "each package once");
+        assert_eq!(pkgs[..2], ["gst-plugins-good", "lame"]);
+        // One wol-admind step, one approval, every package.
+        let plan = install_plan("codecs-kit").unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(
+            plan[0][..5],
+            ["pacman", "-S", "--needed", "--noprogressbar", "--noconfirm"]
+        );
+        assert_eq!(
+            plan[0][5..],
+            pkgs.iter().map(|p| p.to_string()).collect::<Vec<_>>()[..]
+        );
+        assert_eq!(k.wopkg_args(), None);
+    }
+
+    #[test]
+    fn craft_suite_is_a_user_install_through_wopkg() {
+        let k = kit("craft-suite").unwrap();
+        assert_eq!(k.source, KitSource::Wopkg("craft-launcher"));
+        assert_eq!(
+            k.wopkg_args().unwrap(),
+            ["install".to_string(), "craft-launcher".into()]
+        );
+        assert!(k.packages().is_empty());
+        // wol-admind never installs it: no system step for a user kit.
+        assert_eq!(install_plan("craft-suite"), None);
+    }
+
+    #[test]
+    fn craft_suite_shows_only_when_its_recipe_exists() {
+        let d = std::env::temp_dir().join(format!("wol-recipes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let ids = |dirs: &[std::path::PathBuf]| -> Vec<&str> {
+            shown_kits(dirs).iter().map(|k| k.id).collect()
+        };
+        let dirs = vec![d.clone()];
+        assert_eq!(ids(&dirs), ["codecs-kit"], "no recipe, no tile");
+        std::fs::create_dir_all(d.join("craft-launcher")).unwrap();
+        assert_eq!(
+            ids(&dirs),
+            ["codecs-kit"],
+            "a folder without recipe.toml is not a recipe"
+        );
+        std::fs::write(
+            d.join("craft-launcher/recipe.toml"),
+            "name = \"craft-launcher\"\n",
+        )
+        .unwrap();
+        assert_eq!(ids(&dirs), ["codecs-kit", "craft-suite"]);
+        assert!(kit("codecs-kit").unwrap().available(&[]));
+        std::fs::remove_dir_all(d).unwrap();
+        assert_eq!(
+            recipe_dirs(Some("/a::/b")),
+            ["/a", "/b", RECIPES_DIR].map(std::path::PathBuf::from)
+        );
+        assert_eq!(recipe_dirs(None), [std::path::PathBuf::from(RECIPES_DIR)]);
     }
 
     #[test]

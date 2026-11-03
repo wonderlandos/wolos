@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! User desktop preferences written by Settings: shell prefs (menu bar, Dock), Hyprland keyboard/display
+//! User desktop preferences written by Settings: shell prefs (menu bar, Dock), compositor keyboard/display
 //! fragments, hypridle config. Pure render/parse; callers write files and reload.
 use std::collections::HashMap;
 
@@ -134,6 +134,65 @@ impl ShellPrefs {
     pub fn to_json(self) -> String {
         serde_json::to_string_pretty(&self).unwrap_or_default() + "\n"
     }
+}
+
+/// `shell.json` as a whole (ADR 0031): Settings' [`ShellPrefs`] plus the `layout` key (where the
+/// bar and the Dock sit and what their slots hold). [`ShellPrefs`] stays `Copy` for Settings, so
+/// the layout is a field of the file, next to it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShellFile {
+    pub prefs: ShellPrefs,
+    /// Missing, broken or not valid (`Layout::validate`) = today's desktop.
+    pub layout: shared::layout::Layout,
+}
+
+/// The `layout` key of `shell.json`.
+pub const LAYOUT_KEY: &str = "layout";
+
+impl ShellFile {
+    pub fn parse(text: Option<&str>) -> Self {
+        Self {
+            prefs: ShellPrefs::parse(text),
+            layout: layout(text),
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        let mut v = serde_json::to_value(self.prefs).unwrap_or_default();
+        if let (Some(o), Ok(l)) = (v.as_object_mut(), serde_json::to_value(&self.layout)) {
+            o.insert(LAYOUT_KEY.into(), l);
+        }
+        serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"
+    }
+}
+
+/// The layout saved in `shell.json` text; today's desktop when there is none or it does not
+/// validate (the bar and the Dock on one edge, an item listed twice).
+pub fn layout(text: Option<&str>) -> shared::layout::Layout {
+    text.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok())
+        .and_then(|v| v.get(LAYOUT_KEY).map(ToString::to_string))
+        .and_then(|l| shared::layout::Layout::parse(&l).ok())
+        .unwrap_or_default()
+}
+
+/// What Settings writes after changing `p`: the new prefs with the layout `old` already had, so
+/// saving a Menu Bar or Dock setting never moves the bar or the Dock.
+pub fn keep_layout(old: Option<&str>, p: ShellPrefs) -> String {
+    ShellFile {
+        prefs: p,
+        layout: layout(old),
+    }
+    .to_json()
+}
+
+/// `old` with a new layout, the prefs kept. A layout that does not validate is refused.
+pub fn with_layout(old: Option<&str>, l: &shared::layout::Layout) -> Result<String, String> {
+    l.validate()?;
+    Ok(ShellFile {
+        prefs: ShellPrefs::parse(old),
+        layout: l.clone(),
+    }
+    .to_json())
 }
 
 /// (xkb layout, label).
@@ -319,10 +378,7 @@ mod tests {
         assert_eq!(old.control_center, ControlCenterPrefs::default());
         let d = ControlCenterPrefs::default();
         assert!(d.now_playing && d.battery && d.screenshot && d.record && d.night_shift);
-        assert!(
-            !d.keyboard_brightness && !d.accessibility,
-            "opt-in like macOS"
-        );
+        assert!(!d.keyboard_brightness && !d.accessibility, "opt-in");
         let mut p = ShellPrefs::default();
         for (key, label) in ControlCenterPrefs::MODULES {
             assert!(!label.is_empty());
@@ -387,6 +443,56 @@ mod tests {
                 "{c}"
             );
         }
+    }
+
+    /// ADR 0031: the layout lives in shell.json next to Settings' prefs; saving prefs keeps it,
+    /// and a broken or invalid layout falls back to today's desktop without losing the prefs.
+    #[test]
+    fn the_layout_is_kept_when_settings_saves_prefs() {
+        use shared::layout::{BarItem, Edge, Layout};
+        assert_eq!(layout(None), Layout::default());
+        let mut l = Layout::default();
+        l.right.insert(
+            0,
+            BarItem::Plugin {
+                plugin: "org.wolos.stats".into(),
+                id: "bar".into(),
+            },
+        );
+        let p = ShellPrefs {
+            battery_percent: true,
+            ..ShellPrefs::default()
+        };
+        let text = with_layout(Some(&p.to_json()), &l).unwrap();
+        let f = ShellFile::parse(Some(&text));
+        assert_eq!((f.prefs, &f.layout), (p, &l));
+        assert_eq!(
+            ShellPrefs::parse(Some(&text)),
+            p,
+            "old readers ignore the key"
+        );
+        let q = ShellPrefs {
+            show_date: false,
+            ..p
+        };
+        let saved = keep_layout(Some(&text), q);
+        assert_eq!(
+            ShellFile::parse(Some(&saved)),
+            ShellFile {
+                prefs: q,
+                layout: l
+            }
+        );
+        let bad = Layout {
+            dock: Some(Edge::Top),
+            ..Layout::default()
+        };
+        assert!(with_layout(None, &bad).is_err());
+        let broken = r#"{"battery_percent": true, "layout": {"bar": "top", "dock": "top"}}"#;
+        let f = ShellFile::parse(Some(broken));
+        assert!(f.prefs.battery_percent);
+        assert_eq!(f.layout, Layout::default());
+        assert_eq!(layout(Some(r#"{"layout": 3}"#)), Layout::default());
     }
 
     #[test]

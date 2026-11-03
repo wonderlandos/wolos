@@ -3,7 +3,7 @@ module Wopkg
   # Packages the person keeps at their version: one name per line, in wopkg's state folder.
   module Pins
     def self.read(path : String) : Array(String)
-      File.exists?(path) ? File.read_lines(path).map(&.strip).reject(&.empty?).uniq : [] of String
+      File.exists?(path) ? File.read_lines(path).map(&.strip).reject(&.empty?).uniq! : [] of String
     end
 
     def self.set(path : String, name : String, on : Bool) : Nil

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# {{class_name}}: the app class. It holds the state as signals; the window is described in
+# src/views/main.cr, which reopens this class, and the parts it uses are in src/components/.
+require "wolkit"
+require "./components/*"
+
+class {{class_name}} < Wolkit::App
+  @presses = signal(0)
+end
+
+require "./views/*"

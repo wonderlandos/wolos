@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// wol-hypr: thin Hyprland plugin. All policy lives in Rust (crates/realtime, C ABI wol_realtime.h).
+// wol-hypr: thin compositor plugin. All policy lives in Rust (crates/realtime, C ABI wol_realtime.h).
 #include <filesystem>
 #include <hyprland/src/plugins/PluginAPI.hpp>
-// Targets Hyprland 0.56 (Event::bus(), desktop/view/Window.hpp, positionAnimation()).
+// Targets the compositor 0.56 (Event::bus(), desktop/view/Window.hpp, positionAnimation()).
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/event/EventBus.hpp>
@@ -19,19 +19,28 @@
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
+#include <hyprland/src/managers/SessionLockManager.hpp>
+#include <hyprland/src/managers/input/InputManager.hpp>
+#include <hyprland/src/state/MonitorState.hpp>
 #include <algorithm>
 #include <array>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <format>
 #include <functional>
 #include <linux/input-event-codes.h>
+#include <mutex>
+#include <pthread.h>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <system_error>
+#include <thread>
 #include <time.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <utility>
 #include "../../crates/realtime/include/wol_realtime.h"
 
 inline HANDLE PHANDLE = nullptr;
@@ -71,27 +80,33 @@ static bool isTransient(PHLWINDOW w) {
     return top && top->m_parent;
 }
 
-static bool isFixedSize(PHLWINDOW w) {
-    if (w->m_isX11) {
-        const auto h = w->m_xwaylandSurface ? w->m_xwaylandSurface->m_sizeHints.get() : nullptr;
-        return h && h->min_width > 0 && h->min_height > 0 && (h->min_width == h->max_width || h->min_height == h->max_height);
-    }
-    const auto xdg = w->m_xdgSurface.lock();
-    const auto top = xdg ? xdg->m_toplevel.lock() : nullptr;
-    if (!top)
-        return false;
-    const auto& s = top->m_current;
-    return s.minSize.x > 1 && s.minSize.y > 1 && (s.minSize.x == s.maxSize.x || s.minSize.y == s.maxSize.y);
+static uint32_t fixedAxesOf(PHLWINDOW w);
+
+// Close-only lights when either axis is fixed (palettes, fixed-size dialogs).
+static int32_t lightsOf(PHLWINDOW w) {
+    return wol_window_lights(w->m_class.c_str(), decorationOf(w), isTransient(w), fixedAxesOf(w) != 0);
 }
 
-static int32_t lightsOf(PHLWINDOW w) {
-    return wol_window_lights(w->m_class.c_str(), decorationOf(w), isTransient(w), isFixedSize(w));
+// X11 override-redirect menus, tooltips and combo lists, and borderless X11 popups, are not windows
+// to place, cascade from, refit or tag (audit4 S5-2, audit-x11 X1-1): they position themselves at
+// the pointer. The rule is realtime's (wm_gates.rs).
+static bool x11OverrideRedirect(PHLWINDOW w) {
+    return w->m_isX11 && w->isX11OverrideRedirect();
+}
+
+static bool managedWindow(PHLWINDOW w) {
+    return wol_x11_managed(w->m_isX11, x11OverrideRedirect(w), w->m_X11DoesntWantBorders) != 0;
+}
+
+static int32_t placementOf(PHLWINDOW w) {
+    const auto* h = w->m_isX11 && w->m_xwaylandSurface ? w->m_xwaylandSurface->m_sizeHints.get() : nullptr;
+    return wol_x11_placement(w->m_isX11, x11OverrideRedirect(w), w->m_X11DoesntWantBorders, h ? h->flags : 0);
 }
 
 // `wol-lights-*` tags (hyprland.conf windowrules): no strip on windows that draw their own buttons,
-// close only on fixed-size dialogs.
+// close only on fixed-size dialogs. Popups get no tag (one hyprctl call per tooltip was waste).
 static void onOpen(PHLWINDOW w) {
-    if (!w) return;
+    if (!w || !managedWindow(w)) return;
     const auto lights = lightsOf(w);
     const char* tag   = lights == 0 ? "wol-lights-none" : lights == 1 ? "wol-lights-close" : nullptr;
     if (tag)
@@ -131,6 +146,19 @@ static void sizeLimits(PHLWINDOW w, int32_t& minW, int32_t& minH, int32_t& maxW,
     maxW = clientDim(s.maxSize.x), maxH = clientDim(s.maxSize.y);
 }
 
+static uint32_t fixedAxesOf(PHLWINDOW w) {
+    int32_t minW, minH, maxW, maxH;
+    sizeLimits(w, minW, minH, maxW, maxH);
+    return wol_fixed_axes(minW, minH, maxW, maxH);
+}
+
+// Limits for wol_fit/wol_refit: the client's, with a fixed axis pinned to the current size (audit4
+// S5-11: a fixed-width tall window may still be cut to the band vertically).
+static void placementLimits(PHLWINDOW w, int32_t curW, int32_t curH, int32_t& minW, int32_t& minH, int32_t& maxW, int32_t& maxH) {
+    sizeLimits(w, minW, minH, maxW, maxH);
+    (void)wol_placement_limits(curW, curH, &minW, &minH, &maxW, &maxH); // non-null: never -1
+}
+
 // The window a transient belongs to (xdg parent toplevel, X11 WM_TRANSIENT_FOR), if it is open.
 static PHLWINDOW parentOf(PHLWINDOW w) {
     if (w->m_isX11) {
@@ -155,7 +183,7 @@ static PHLWINDOW parentOf(PHLWINDOW w) {
 static PHLWINDOW previousOfClass(PHLWINDOW w) {
     PHLWINDOW best;
     for (const auto& o : Desktop::windowState()->windows()) {
-        if (o == w || !o->m_isMapped || !o->m_isFloating || o->m_class != w->m_class || o->m_workspace != w->m_workspace)
+        if (o == w || !o->m_isMapped || !o->m_isFloating || o->m_class != w->m_class || o->m_workspace != w->m_workspace || !managedWindow(o))
             continue;
         if (Fullscreen::controller()->isFullscreen(o))
             continue;
@@ -165,24 +193,43 @@ static PHLWINDOW previousOfClass(PHLWINDOW w) {
 }
 
 // After mapWindow's layout recalc (window.open is too early: the layout re-centres the window).
-// macOS rules (realtime placement.rs): a new window keeps the size it asked for, cut to the usable
+// WolOS placement rules (realtime placement.rs): a new window keeps the size it asked for, cut to the usable
 // area; a dialog opens centred on its parent; the next window of an app cascades from the previous
 // one; a fixed-size window is never resized. The conf no longer forces a size (the rule hit
 // dialogs and fixed-size windows, which then flashed at the wrong size).
+static bool refitWindow(PHLWINDOW w, const CBox& zone);
+
+// The box is final: no `windowsMove` glide from the layout's centred spot while the popin runs
+// (audit4 S5-4; the compositor's X11 configure path warps the same way).
+static void setGeomNow(PHLWINDOW w, const CBox& box) {
+    const auto target = w->layoutTarget();
+    if (!target)
+        return;
+    g_layoutManager->setTargetGeom(box, target);
+    target->warpPositionSize();
+}
+
 static void onOpenLate(PHLWINDOW w) {
     if (!w || !w->m_isFloating || !w->layoutTarget()) return;
     if (Fullscreen::controller()->isFullscreen(w)) return;
     auto mon = w->m_monitor.lock();
     if (!mon) return;
-    const auto    zone = mon->logicalBoxMinusReserved(); // below the menu bar, above the dock
-    const int32_t bar  = lightsOf(w) != 0 ? wol_titlebar_height() : 0;
-    const auto    sz   = w->m_realSize->goal();
-    int32_t       fw = (int32_t)sz.x, fh = (int32_t)sz.y;
-    if (!isFixedSize(w)) {
-        int32_t minW, minH, maxW, maxH;
-        sizeLimits(w, minW, minH, maxW, maxH);
-        wol_fit((int32_t)sz.x, (int32_t)sz.y, minW, minH, maxW, maxH, (int32_t)zone.x, (int32_t)zone.y, (int32_t)zone.w, (int32_t)zone.h, bar, &fw, &fh);
+    const auto placement = placementOf(w);
+    if (placement == WOL_PLACE_SKIP)
+        return;
+    const auto zone = mon->logicalBoxMinusReserved(); // below the menu bar, above the dock
+    if (placement == WOL_PLACE_CLAMP_ONLY) {
+        // An X11 window that asked for its position keeps it, only pulled back into the zone.
+        if (refitWindow(w, zone))
+            w->layoutTarget()->warpPositionSize();
+        return;
     }
+    const int32_t bar = lightsOf(w) != 0 ? wol_titlebar_height() : 0;
+    const auto    sz  = w->m_realSize->goal();
+    int32_t       fw = (int32_t)sz.x, fh = (int32_t)sz.y;
+    int32_t       minW, minH, maxW, maxH;
+    placementLimits(w, fw, fh, minW, minH, maxW, maxH);
+    wol_fit((int32_t)sz.x, (int32_t)sz.y, minW, minH, maxW, maxH, (int32_t)zone.x, (int32_t)zone.y, (int32_t)zone.w, (int32_t)zone.h, bar, &fw, &fh);
     int32_t x = 0, y = 0;
     if (const auto parent = isTransient(w) ? parentOf(w) : nullptr) {
         const auto pp = parent->m_realPosition->goal(), ps = parent->m_realSize->goal();
@@ -193,12 +240,12 @@ static void onOpenLate(PHLWINDOW w) {
         wol_place(fw, fh, (int32_t)zone.x, (int32_t)zone.y, (int32_t)zone.w, (int32_t)zone.h, bar, prev ? 1 : 0, (int32_t)pp.x, (int32_t)pp.y, &x, &y);
     }
     // Through the layout, which restores this box after zoom; moving the target directly is forgotten.
-    g_layoutManager->setTargetGeom(CBox{Vector2D(x, y), Vector2D(fw, fh)}, w->layoutTarget());
+    setGeomNow(w, CBox{Vector2D(x, y), Vector2D(fw, fh)});
 }
 
 // Raise on a focus the user asked for. Not on focus that merely follows the desktop: the pointer
 // (FFM), a desktop or special-workspace switch, the fallback after a window closed (the next window
-// is wherever it was, macOS leaves the order alone), activation (CWindow::activate raises a floating
+// is wherever it was, WolOS leaves the order alone), activation (CWindow::activate raises a floating
 // window itself) and other state changes.
 static bool raisesOnFocus(Desktop::eFocusReason reason) {
     using namespace Desktop;
@@ -214,25 +261,103 @@ static bool raisesOnFocus(Desktop::eFocusReason reason) {
     }
 }
 
-static void onActive(PHLWINDOW w, Desktop::eFocusReason reason) {
-    if (!w) return;
-    wol_qos_foreground((int32_t)w->getPID());
-    // macOS: the active window is frontmost. focuswindow alone leaves floating windows behind.
-    if (w->m_isFloating && raisesOnFocus(reason))
-        HyprlandAPI::invokeHyprctlCommand("dispatch", std::format("alterzorder top,address:0x{:x}", (uintptr_t)w.get()));
+// Frontmost QoS hand-off on a helper thread (audit4 S5-1): wol_qos_foreground connects to wold and
+// waits for its hello, which a stopped or wedged wold can stretch to seconds. The compositor thread
+// only stores the pid and wakes the helper; a burst of focus changes coalesces to the last pid.
+namespace {
+    struct SQosWorker {
+        std::mutex              m;
+        std::condition_variable cv;
+        int32_t                 pid  = 0;
+        bool                    stop = false;
+        std::thread             thread;
+    };
+}
+static SQosWorker* g_qos = nullptr;
+
+static void qosStart() {
+    auto* q = new SQosWorker;
+    try {
+        q->thread = std::thread([q] {
+            pthread_setname_np(pthread_self(), "wol-hypr-qos");
+            std::unique_lock lk(q->m);
+            for (;;) {
+                q->cv.wait(lk, [q] { return q->stop || q->pid > 0; });
+                if (q->stop)
+                    return;
+                const int32_t pid = std::exchange(q->pid, 0);
+                lk.unlock();
+                wol_qos_foreground(pid);
+                lk.lock();
+            }
+        });
+    } catch (const std::system_error&) {
+        delete q; // no thread: no QoS boost, never a blocking call on the compositor thread
+        return;
+    }
+    g_qos = q;
 }
 
-// One floating window pulled back into `zone` and cut to fit (realtime placement::refit).
-static void refitWindow(PHLWINDOW w, const CBox& zone) {
+static void qosForeground(int32_t pid) {
+    if (!g_qos || pid <= 0)
+        return;
+    {
+        std::lock_guard lk(g_qos->m);
+        g_qos->pid = pid;
+    }
+    g_qos->cv.notify_one();
+}
+
+// Unload: the helper must be gone before dlclose (its code lives in this .so). Waits for a hand-off
+// in flight (bounded by realtime's own timeouts).
+static void qosStop() {
+    if (!g_qos)
+        return;
+    {
+        std::lock_guard lk(g_qos->m);
+        g_qos->stop = true;
+    }
+    g_qos->cv.notify_one();
+    if (g_qos->thread.joinable())
+        g_qos->thread.join();
+    delete g_qos;
+    g_qos = nullptr;
+}
+
+// WolOS: the active window is frontmost. focuswindow alone leaves floating windows behind. Raised
+// directly once the focus change is done (audit4 S5-6): no hyprctl round trip, no simulated pointer
+// motion handing the focus back to a tiled window under the pointer, no reordering inside
+// rawWindowFocus.
+static void raiseLater(PHLWINDOW w) {
+    g_pEventLoopManager->doLater([ref = PHLWINDOWREF{w}] {
+        const auto w = ref.lock();
+        if (!w || !w->m_isMapped || !w->m_isFloating)
+            return;
+        Desktop::windowState()->raise(w);
+        if (const auto target = w->layoutTarget())
+            g_layoutManager->bringTargetToTop(target);
+    });
+}
+
+static void onActive(PHLWINDOW w, Desktop::eFocusReason reason) {
+    if (!w) return;
+    qosForeground((int32_t)w->getPID());
+    if (w->m_isFloating && raisesOnFocus(reason))
+        raiseLater(w);
+}
+
+// One floating window pulled back into `zone` and cut to fit (realtime placement::refit). True
+// when it moved.
+static bool refitWindow(PHLWINDOW w, const CBox& zone) {
     const auto    pos = w->m_realPosition->goal(), sz = w->m_realSize->goal();
     const int32_t bar = lightsOf(w) != 0 ? wol_titlebar_height() : 0;
     int32_t       minW, minH, maxW, maxH;
-    sizeLimits(w, minW, minH, maxW, maxH);
-    if (isFixedSize(w))
-        minW = maxW = clientDim(sz.x), minH = maxH = clientDim(sz.y);
+    placementLimits(w, clientDim(sz.x), clientDim(sz.y), minW, minH, maxW, maxH);
     int32_t x = (int32_t)pos.x, y = (int32_t)pos.y, fw = (int32_t)sz.x, fh = (int32_t)sz.y;
-    if (wol_refit(minW, minH, maxW, maxH, (int32_t)zone.x, (int32_t)zone.y, (int32_t)zone.w, (int32_t)zone.h, bar, &x, &y, &fw, &fh))
-        g_layoutManager->setTargetGeom(CBox{Vector2D(x, y), Vector2D(fw, fh)}, w->layoutTarget());
+    if (!wol_refit(minW, minH, maxW, maxH, (int32_t)zone.x, (int32_t)zone.y, (int32_t)zone.w, (int32_t)zone.h, bar, &x, &y, &fw, &fh))
+        return false;
+    g_layoutManager->setTargetGeom(CBox{Vector2D(x, y), Vector2D(fw, fh)}, w->layoutTarget());
+    return true;
 }
 
 // The usable area of an output changed (VBoxClient resized the guest display, the Dock hid or
@@ -241,7 +366,7 @@ static void refitWindow(PHLWINDOW w, const CBox& zone) {
 static void refitMonitor(PHLMONITOR mon) {
     const auto zone = mon->logicalBoxMinusReserved();
     for (const auto& w : Desktop::windowState()->windows()) {
-        if (!w->m_isMapped || !w->m_isFloating || w->m_monitor.lock() != mon || !w->layoutTarget())
+        if (!w->m_isMapped || !w->m_isFloating || w->m_monitor.lock() != mon || !w->layoutTarget() || !managedWindow(w))
             continue;
         if (Fullscreen::controller()->isFullscreen(w))
             continue;
@@ -259,7 +384,7 @@ static void onFullscreen(PHLWINDOW w) {
     g_pEventLoopManager->doLater([ref = PHLWINDOWREF{w}] {
         const auto w   = ref.lock();
         const auto mon = w ? w->m_monitor.lock() : nullptr;
-        if (!w || !mon || !w->m_isMapped || !w->m_isFloating || !w->layoutTarget() || Fullscreen::controller()->isFullscreen(w))
+        if (!w || !mon || !w->m_isMapped || !w->m_isFloating || !w->layoutTarget() || !managedWindow(w) || Fullscreen::controller()->isFullscreen(w))
             return;
         refitWindow(w, mon->logicalBoxMinusReserved());
     });
@@ -269,7 +394,7 @@ static void onFullscreen(PHLWINDOW w) {
 // are forwarded to the shell only while one is mapped (audit3 R2A-10). A `wol` process per Esc
 // in every app, games included, was a fork+exec per key press.
 static std::unordered_map<uintptr_t, std::string> g_shellLayers;
-static bool                                       g_superDown = false, g_switching = false;
+static uint32_t                                   g_keys = 0; // wol_keys_step state
 
 static bool isShellLayer(const std::string& ns) {
     return ns.starts_with("wol-panel-") || ns == "wol-catcher";
@@ -289,8 +414,24 @@ static bool shellLayerMapped(const char* only) {
     return std::ranges::any_of(g_shellLayers, [only](const auto& e) { return !only || e.second == only; });
 }
 
+// A plugin (re)load while the shell is up (hyprctl plugin load, hyprpm) saw no layer.opened for
+// the panels already on screen (audit4 S5-14).
+static void seedShellLayers() {
+    for (const auto& mon : State::monitorState()->monitors()) {
+        for (const auto& level : mon->m_layerSurfaceLayers) {
+            for (const auto& ref : level) {
+                const auto l = ref.lock();
+                if (l && l->m_mapped && isShellLayer(l->m_namespace))
+                    g_shellLayers[(uintptr_t)l.get()] = l->m_namespace;
+            }
+        }
+    }
+}
+
 // One line to `$XDG_RUNTIME_DIR/wol-shell.sock` (shell::protocol), from the compositor: no fork,
-// never blocks (a busy or absent shell loses the line, as a lost key press would).
+// never blocks (a busy or absent shell loses the line, as a lost key press would). send() with
+// MSG_NOSIGNAL: a shell that closed the connection first must not raise SIGPIPE in the compositor
+// (audit4 S5-5); MSG_DONTWAIT: a full socket buffer drops the line instead of waiting.
 static void tellShell(const char* line) {
     const char* rt = std::getenv("XDG_RUNTIME_DIR");
     if (!rt)
@@ -303,36 +444,47 @@ static void tellShell(const char* line) {
     const int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (fd < 0)
         return;
-    if (connect(fd, (const sockaddr*)&addr, sizeof(addr)) == 0 && write(fd, line, std::strlen(line)) < 0) {
+    if (connect(fd, (const sockaddr*)&addr, sizeof(addr)) == 0 && send(fd, line, std::strlen(line), MSG_NOSIGNAL | MSG_DONTWAIT) < 0) {
         // Lost: nothing to do.
     }
     close(fd);
 }
 
-// Keys are never consumed: the app still gets its Esc, the binds still run.
-static void onKey(const IKeyboard::SKeyEvent& e) {
-    const bool pressed = e.state == WL_KEYBOARD_KEY_STATE_PRESSED;
+// Keys are not consumed (the app still gets its Esc, the binds still run), except the Tab of ⌘Tab:
+// the plugin sends `show switcher` itself so the show and the Super release travel in order over one
+// socket (audit4 S5-3), and the conf's exec bind (the fallback without the plugin) does not run too.
+static void onKey(const IKeyboard::SKeyEvent& e, Event::SCallbackInfo& info) {
+    int32_t key = WOL_KEY_OTHER;
     switch (e.keycode) {
         case KEY_LEFTMETA:
-        case KEY_RIGHTMETA:
-            g_superDown = pressed;
-            // Releasing Super finishes ⌘Tab: also while the strip still waits for its client list
-            // (not mapped yet), hence the Tab seen since Super went down.
-            if (!pressed && (g_switching || shellLayerMapped("wol-panel-switcher")))
-                tellShell("hide switcher\n");
-            if (!pressed)
-                g_switching = false;
-            break;
-        case KEY_TAB:
-            if (pressed && g_superDown)
-                g_switching = true;
-            break;
-        case KEY_ESC:
-            if (pressed && shellLayerMapped(nullptr))
-                tellShell("hide transient\n");
-            break;
-        default: break;
+        case KEY_RIGHTMETA: key = WOL_KEY_SUPER; break;
+        case KEY_TAB: key = WOL_KEY_TAB; break;
+        case KEY_ESC: key = WOL_KEY_ESC; break;
+        default: return;
     }
+    const uint32_t mods  = g_pInputManager ? g_pInputManager->getModsFromAllKBs() : 0;
+    uint32_t       flags = 0;
+    if (e.state == WL_KEYBOARD_KEY_STATE_PRESSED)
+        flags |= WOL_KEYF_PRESSED;
+    if (mods & HL_MODIFIER_META)
+        flags |= WOL_KEYF_SUPER_HELD;
+    if (mods & HL_MODIFIER_SHIFT)
+        flags |= WOL_KEYF_SHIFT;
+    if (mods & (HL_MODIFIER_CTRL | HL_MODIFIER_ALT))
+        flags |= WOL_KEYF_OTHER_MODS;
+    if (g_pSessionLockManager && g_pSessionLockManager->isSessionLocked())
+        flags |= WOL_KEYF_LOCKED;
+    if (shellLayerMapped("wol-panel-switcher"))
+        flags |= WOL_KEYF_SWITCHER_MAPPED;
+    if (shellLayerMapped(nullptr))
+        flags |= WOL_KEYF_SHELL_LAYER_MAPPED;
+    uint32_t action = 0;
+    g_keys          = wol_keys_step(g_keys, key, flags, &action);
+    const int32_t line = (int32_t)(action & 0xffu);
+    if (line != WOL_LINE_NONE)
+        tellShell(wol_keys_line(line)); // static NUL-terminated text, never null
+    if (action & WOL_ACTION_CONSUME)
+        info.cancelled = true;
 }
 
 // Zone per output as last seen; a change (mode, scale, position or reserved area) refits once the
@@ -380,7 +532,7 @@ static void onRenderStage(eRenderStage stage) {
 }
 
 static std::string wolStats(eHyprCtlOutputFormat, std::string) {
-    char buf[256];
+    char buf[1024]; // audit4 S5-17: a JSON past 256 bytes came back as `{}`
     return wol_frame_stats_json((uint8_t*)buf, sizeof(buf)) < 0 ? std::string("{}") : std::string(buf);
 }
 
@@ -395,7 +547,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto fs     = Event::bus()->m_events.window.fullscreen.listen([](PHLWINDOW w) { onFullscreen(w); });
     static auto lsOpen = Event::bus()->m_events.layer.opened.listen([](PHLLS l) { onLayerOpened(l); });
     static auto lsShut = Event::bus()->m_events.layer.closed.listen([](PHLLS l) { onLayerClosed(l); });
-    static auto key    = Event::bus()->m_events.input.keyboard.key.listen([](IKeyboard::SKeyEvent e, Event::SCallbackInfo&) { onKey(e); });
+    static auto key    = Event::bus()->m_events.input.keyboard.key.listen([](IKeyboard::SKeyEvent e, Event::SCallbackInfo& info) { onKey(e, info); });
+    seedShellLayers();
+    qosStart();
     g_wolstats = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "wolstats", .exact = true, .fn = wolStats});
     // Unloading must drop every listener: a callback left on the bus would jump into the
     // unmapped .so on the next window event.
@@ -410,6 +564,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         lsShut   = {};
         key      = {};
         g_shellLayers.clear();
+        g_keys = 0;
+        qosStop();
     };
     return {"wol-hypr", "WolOS window policy (placement, refit, QoS, frame stats, shell keys)", "WolOS", "0.12.0"};
 }

@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Memory-bandwidth #2: fullscreen buffers go straight to a KMS plane and browser video is decoded
 //! by VA-API into dmabufs (NV12 1.5 B/px, no CPU copy) instead of software RGBA.
-use std::path::PathBuf;
-fn read(p: &str) -> String {
-    std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(p),
-    )
-    .unwrap()
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::read;
 
 #[test]
 fn wayland_latency_defaults_are_tuned() {

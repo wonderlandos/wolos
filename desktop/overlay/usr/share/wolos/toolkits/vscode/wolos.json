@@ -1,0 +1,95 @@
+{
+  "$schema": "vscode://schemas/color-theme",
+  "colors": {
+    "activityBar.background": "#eae8f2",
+    "activityBar.foreground": "#181521",
+    "activityBarBadge.background": "#7c5cff",
+    "activityBarBadge.foreground": "#ffffff",
+    "button.background": "#7c5cff",
+    "button.foreground": "#ffffff",
+    "descriptionForeground": "#686575",
+    "dropdown.background": "#ffffff",
+    "editor.background": "#f3f1f8",
+    "editor.foreground": "#181521",
+    "editor.selectionBackground": "#7c5cff55",
+    "editorCursor.foreground": "#7c5cff",
+    "editorGroupHeader.tabsBackground": "#f3f1f8",
+    "editorLineNumber.foreground": "#686575",
+    "errorForeground": "#c53763",
+    "focusBorder": "#7c5cff",
+    "foreground": "#181521",
+    "input.background": "#ffffff",
+    "input.foreground": "#181521",
+    "list.activeSelectionBackground": "#7c5cff",
+    "list.activeSelectionForeground": "#ffffff",
+    "panel.background": "#f3f1f8",
+    "panel.border": "#dedce5",
+    "sideBar.background": "#eae8f2",
+    "sideBar.border": "#dedce5",
+    "sideBar.foreground": "#181521",
+    "statusBar.background": "#eae8f2",
+    "statusBar.foreground": "#181521",
+    "tab.activeBackground": "#ffffff",
+    "tab.inactiveBackground": "#f3f1f8",
+    "terminal.ansiBlack": "#181521",
+    "terminal.ansiBlue": "#1d64b0",
+    "terminal.ansiBrightBlack": "#121019",
+    "terminal.ansiBrightBlue": "#164b84",
+    "terminal.ansiBrightCyan": "#0b535b",
+    "terminal.ansiBrightGreen": "#157453",
+    "terminal.ansiBrightMagenta": "#5d45bf",
+    "terminal.ansiBrightRed": "#9b2c4e",
+    "terminal.ansiBrightWhite": "#93929a",
+    "terminal.ansiBrightYellow": "#a33f17",
+    "terminal.ansiCyan": "#0f6e79",
+    "terminal.ansiGreen": "#1c9a6e",
+    "terminal.ansiMagenta": "#7c5cff",
+    "terminal.ansiRed": "#cf3a68",
+    "terminal.ansiWhite": "#c4c2cd",
+    "terminal.ansiYellow": "#d9541e",
+    "terminal.background": "#f3f1f8",
+    "terminal.foreground": "#181521",
+    "titleBar.activeBackground": "#f3f1f8",
+    "titleBar.activeForeground": "#181521"
+  },
+  "name": "WolOS WolOS Light",
+  "tokenColors": [
+    {
+      "scope": "comment",
+      "settings": {
+        "foreground": "#686575"
+      }
+    },
+    {
+      "scope": "keyword, storage",
+      "settings": {
+        "foreground": "#7053e6"
+      }
+    },
+    {
+      "scope": "string",
+      "settings": {
+        "foreground": "#167b58"
+      }
+    },
+    {
+      "scope": "constant.numeric, constant.language",
+      "settings": {
+        "foreground": "#b8471a"
+      }
+    },
+    {
+      "scope": "entity.name.function",
+      "settings": {
+        "foreground": "#7053e6"
+      }
+    },
+    {
+      "scope": "invalid",
+      "settings": {
+        "foreground": "#c53763"
+      }
+    }
+  ],
+  "type": "light"
+}

@@ -3,7 +3,7 @@
 //!   wol-xguard scan [--json] [--stream] [--rules DIR] PATH...   exit 0 clean, 1 found, 2 incomplete, 3 error
 //!   wol-xguard guard [--state D] [--rules D] [--scope M]... [--downloads D]...  the first-use guard
 //!   wol-xguard check|allow PATH   ask the guard about a file; Open Anyway
-//!   wol-xguard sweep              the background pass
+//!   wol-xguard sweep [--rules D] [STATE [ROOT...]]  the background pass (roots given: no idle gate)
 //!   wol-xguard rules build OUT VERSION SOURCE-DIR...  compile signature lists to a database
 //!   wol-xguard rules yara OUT SOURCE-DIR...           compile rule sources
 //!   wol-xguard rules bundle DIR VERSION               the manifest of a signature update
@@ -66,11 +66,16 @@ fn scan(args: &[String]) -> i32 {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--json" => json = true,
-            // ClamAV must answer: without it the result is Incomplete, not clean.
+            // The full engine must answer: without it the result is Incomplete, not clean.
             "--clamav" => need_clam = true,
             // The guard's deep check of a file above its memory cap: pieces, never whole (R2C-4).
             "--stream" => stream = true,
             "--rules" => dir = Some(rules_arg(it.next())),
+            // Everything after `--` is a path, even one that starts with `-` (S4-16).
+            "--" => {
+                paths.extend(it.by_ref().cloned());
+                break;
+            }
             p => paths.push(p.to_owned()),
         }
     }
@@ -184,9 +189,7 @@ fn build(args: &[String]) -> i32 {
     let mut b = xguard::db::Builder::default();
     let st = xguard::sigs::import(&mut b, &refs);
     let bytes = b.build(version, xguard::scan::now());
-    let tmp = format!("{out}.tmp");
-    std::fs::write(&tmp, &bytes)
-        .and_then(|()| std::fs::rename(&tmp, out))
+    shared::atomic::atomic_write(std::path::Path::new(out), 0o644, &bytes)
         .unwrap_or_else(|m| die(&format!("{out}: {m}")));
     println!("{}", serde_json::to_string(&st).unwrap_or_default());
     println!("{out}: {} bytes", bytes.len());
@@ -195,7 +198,7 @@ fn build(args: &[String]) -> i32 {
 
 fn guard(args: &[String]) -> i32 {
     let mut o = xguard::guard::Options {
-        state: xguard::guard::STATE_DIR.into(),
+        state: wol_core::malware::GUARD_DIR.into(),
         rules: xguard::rules_dir(),
         scope: Vec::new(),
         downloads: Vec::new(),
@@ -243,10 +246,15 @@ fn ask(verb: &str, args: &[String]) -> i32 {
 /// The background pass (a timer starts it).
 fn sweep(args: &[String]) -> i32 {
     use xguard::sweep::{gate, lowest_qos, pass, targets};
-    let dir = xguard::rules_dir();
+    let (dir, args) = match args {
+        [flag, rest @ ..] if flag == "--rules" => {
+            (rules_arg(rest.first()), rest.get(1..).unwrap_or(&[]))
+        }
+        _ => (xguard::rules_dir(), args),
+    };
     let state = args
         .first()
-        .map_or(xguard::guard::STATE_DIR, String::as_str)
+        .map_or(wol_core::malware::SWEEP_DIR, String::as_str)
         .to_owned();
     let roots: Vec<PathBuf> = args.iter().skip(1).map(PathBuf::from).collect();
     let open = || {
@@ -263,9 +271,12 @@ fn sweep(args: &[String]) -> i32 {
     lowest_qos();
     let e = Engine::open(&dir).unwrap_or_else(|m| die(&m));
     let rules = e.versions().iter().copied().max().unwrap_or(0);
+    // The pass's own memory in its own folder, not the guard's `verdicts` (root's, in a folder only
+    // root may write): opening that to write failed on every pass that got past the gate, and
+    // what the guard trusts is not for this account to write (audit F10).
     let store = std::sync::Mutex::new(
-        xguard::store::Store::open(&Path::new(&state).join("verdicts"))
-            .unwrap_or_else(|m| die(&m.to_string())),
+        xguard::store::Store::open(&Path::new(&state).join("sweep-verdicts"))
+            .unwrap_or_else(|m| die(&format!("sweep-verdicts: {m}"))),
     );
     let mut files = Vec::new();
     let tagged = |p: &Path| {
@@ -348,13 +359,14 @@ fn sweep(args: &[String]) -> i32 {
     owners.sort_unstable();
     owners.dedup();
     for uid in owners {
-        use std::os::unix::fs::PermissionsExt;
         let mine: Vec<_> = l.iter().filter(|b| b.uid == uid).collect();
         let t = serde_json::to_string(&mine).unwrap_or_default();
         let p = Path::new(&state).join(wol_core::malware::sweep_file(uid));
-        let _ = std::fs::write(&p, t);
-        let _ = std::os::unix::fs::chown(&p, Some(uid), None);
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        // S4-10: owner and 0600 before the list appears; atomic, so a reader never sees half.
+        // The owner change needs CAP_CHOWN in wolos-xguard-sweep.service (audit R7-1).
+        if let Err(e) = shared::atomic::write_as(&p, 0o600, Some(uid), t.as_bytes()) {
+            eprintln!("wol-xguard: could not write {}: {e}", p.display());
+        }
     }
     println!(
         "{} files, {}",
@@ -430,6 +442,177 @@ fn install(args: &[String]) -> i32 {
     }
 }
 
+/// The work folder of `rules full`, emptied by name (RR-041): its two copies, the two unpacked
+/// folders (a signed file unpacks flat) and their files, then the folders. Anything else stays.
+fn clear_work(work: &Path) -> std::io::Result<()> {
+    let flat = |d: &Path| {
+        if let Ok(rd) = std::fs::read_dir(d) {
+            for e in rd.flatten() {
+                if e.file_type().is_ok_and(|t| t.is_file() || t.is_symlink()) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+        std::fs::remove_dir(d)
+    };
+    for n in ["main", "daily"] {
+        let _ = flat(&work.join(n));
+    }
+    flat(work)
+}
+
+/// `rules full [DB [DEST]]` (root, wolos-clam-update.service's step after the download): the full
+/// database `clam-update` fetched as `_xguard` is only trusted once root has checked it (audit
+/// F10). Each of `main.cvd` and `daily.cvd` is read without following a link into a folder of
+/// this process's own, its publisher's signature checked there by `sigtool` ("Verification OK."),
+/// refused when older than the one in use, then unpacked and built into DEST/full.xgdb. The
+/// outcome goes to [`wol_core::malware::RULES_STATUS`] next to DEST (root's; Settings reads it);
+/// a refusal keeps the previous build and versions.
+fn full(args: &[String]) -> i32 {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    use wol_core::malware::RulesStatus;
+    let db = Path::new(
+        args.first()
+            .map_or("/var/lib/wolos/xguard/clamav", String::as_str),
+    );
+    let dest = PathBuf::from(args.get(1).map_or(xguard::LOCAL_DIR, String::as_str));
+    if let Err(e) = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(&dest)
+    {
+        die(&format!("{}: {e}", dest.display()));
+    }
+    // Nowhere to write a status either: someone else may write here.
+    if !xguard::trusted(&dest) {
+        die(&format!("{}: not root's alone", dest.display()));
+    }
+    let status_path = dest
+        .parent()
+        .unwrap_or(&dest)
+        .join(wol_core::malware::RULES_STATUS);
+    let read_own = |p: &Path, cap: u64| -> std::io::Result<Vec<u8>> {
+        use std::io::Read;
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(p)?;
+        if !f.metadata()?.is_file() {
+            return Err(std::io::Error::other("not a regular file"));
+        }
+        let mut b = Vec::new();
+        f.take(cap).read_to_end(&mut b)?;
+        Ok(b)
+    };
+    let prior: RulesStatus = read_own(&status_path, 1 << 16)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    let work = std::env::temp_dir().join(format!("xguard-full-{}", std::process::id()));
+    let _ = clear_work(&work);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&work)
+        .unwrap_or_else(|m| die(&format!("{}: {m}", work.display())));
+    let write_status = |s: &RulesStatus| {
+        let t = serde_json::to_vec(s).unwrap_or_default();
+        let _ = shared::atomic::atomic_write(&status_path, 0o644, &t);
+    };
+    let refuse = |why: &str, detail: &str| -> ! {
+        write_status(&RulesStatus {
+            ok: false,
+            reason: why.into(),
+            time: xguard::scan::now(),
+            ..prior.clone()
+        });
+        let _ = clear_work(&work);
+        die(&format!("{detail}: {why}"))
+    };
+    let sigtool = std::env::var("XGUARD_SIGTOOL").unwrap_or_else(|_| "sigtool".into());
+    let mut versions = [0u32; 2];
+    for (k, n) in ["main", "daily"].into_iter().enumerate() {
+        let src = db.join(format!("{n}.cvd"));
+        let bytes = read_own(&src, 2 << 30).unwrap_or_else(|e| {
+            refuse(
+                "a downloaded file is missing or not a plain file",
+                &format!("{}: {e}", src.display()),
+            )
+        });
+        let copy = work.join(format!("{n}.cvd"));
+        if let Err(e) = std::fs::write(&copy, &bytes) {
+            refuse(
+                "it could not be checked",
+                &format!("{}: {e}", copy.display()),
+            );
+        }
+        let ok = wol_core::privileged::privileged_command(&sigtool)
+            .arg(format!("--info={}", copy.display()))
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .is_ok_and(|o| {
+                o.status.success()
+                    && String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .any(|l| l.trim() == "Verification OK.")
+            });
+        if !ok || bytes.len() < 512 {
+            refuse(
+                "the publisher's signature does not verify",
+                &format!("{n}.cvd"),
+            );
+        }
+        // `ClamAV-VDB:date:version:...` (signed with the rest).
+        let v: u32 = String::from_utf8_lossy(&bytes[..512])
+            .split(':')
+            .nth(2)
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0);
+        let before = if k == 0 { prior.main } else { prior.daily };
+        if v < before {
+            refuse(
+                "the download is older than the signatures in use",
+                &format!("{n}.cvd {v} < {before}"),
+            );
+        }
+        versions[k] = v;
+        let out = work.join(n);
+        let _ = std::fs::create_dir(&out);
+        let untar = |z: &str| {
+            let mut c = wol_core::privileged::privileged_command("tar")
+                .args([z, "-", "--no-same-owner", "--no-same-permissions", "-C"])
+                .arg(&out)
+                .stdin(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()?;
+            if let Some(mut i) = c.stdin.take() {
+                let _ = i.write_all(&bytes[512..]);
+            }
+            c.wait()
+        };
+        if !untar("-xzf").is_ok_and(|s| s.success()) && !untar("-xf").is_ok_and(|s| s.success()) {
+            refuse("the download could not be unpacked", &format!("{n}.cvd"));
+        }
+    }
+    let out = dest.join("full.xgdb").to_string_lossy().into_owned();
+    let srcs = [work.join("main"), work.join("daily")].map(|p| p.to_string_lossy().into_owned());
+    build(&[
+        out,
+        versions[1].to_string(),
+        srcs[0].clone(),
+        srcs[1].clone(),
+    ]);
+    write_status(&RulesStatus {
+        ok: true,
+        reason: String::new(),
+        time: xguard::scan::now(),
+        main: versions[0],
+        daily: versions[1],
+    });
+    let _ = clear_work(&work);
+    0
+}
+
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let code = match a.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
@@ -443,7 +626,8 @@ fn main() {
         #[cfg(feature = "yara")]
         ["rules", "yara", ..] => yara_build(&a[2..]),
         ["rules", "build", ..] => build(&a[2..]),
-        _ => die("usage: wol-xguard scan|check|allow|guard|sweep|rules build|bundle|install"),
+        ["rules", "full", ..] => full(&a[2..]),
+        _ => die("usage: wol-xguard scan|check|allow|guard|sweep|rules build|bundle|install|full"),
     };
     std::process::exit(code)
 }

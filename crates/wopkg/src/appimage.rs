@@ -158,6 +158,43 @@ pub fn inspect(path: &Path) -> Result<Inspect> {
     })
 }
 
+/// A private scratch directory (GNUPGHOME and the files gpg reads): `<base>/wopkg-gpg-<nonce>`,
+/// created with mode 0700 and never reused; removed with everything in it when dropped.
+struct Scratch(PathBuf);
+
+impl Scratch {
+    /// A new directory under `base`; Err when it cannot be made or a name already exists there.
+    fn new(base: &Path) -> std::io::Result<Self> {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let nonce = shared::jobs::new_nonce()?;
+        let dir = base.join(format!("wopkg-gpg-{nonce}"));
+        std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+        let s = Scratch(dir);
+        // The umask may have taken bits off; never more than 0700 either way.
+        std::fs::set_permissions(&s.0, std::fs::Permissions::from_mode(0o700))?;
+        Ok(s)
+    }
+
+    /// Write `name` in the directory as a new file (never through something already there).
+    fn write(&self, name: &str, data: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(self.0.join(name))?
+            .write_all(data)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Check the embedded signature with gpgv against the embedded key (only after the key matched the
 /// pin). The key goes into a throwaway keyring; nothing touches the person's GnuPG home.
 pub fn verify_signature(path: &Path, info: &Inspect, pin: Option<&str>) -> Result<bool> {
@@ -181,11 +218,12 @@ pub fn verify_signature(path: &Path, info: &Inspect, pin: Option<&str>) -> Resul
         section_text(&b, &s, ".sha256_sig").unwrap_or_default(),
         section_text(&b, &s, ".sig_key").unwrap_or_default(),
     );
-    let dir = std::env::temp_dir().join(format!("wopkg-gpg-{}-{}", std::process::id(), info.sha1));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir)
+    // Audit S4-15: a fresh directory only this process made (unpredictable name, create_dir
+    // fails on an existing one, 0700), files created new, removed on every path by the guard.
+    let scratch = Scratch::new(&std::env::temp_dir())
         .map_err(|_| Error::unavailable("The signature cannot be checked."))?;
-    let w = |n: &str, t: &[u8]| std::fs::write(dir.join(n), t);
+    let dir = scratch.0.clone();
+    let w = |n: &str, t: &[u8]| scratch.write(n, t);
     w("key.asc", key.as_bytes())
         .and_then(|_| w("sig.asc", sig.as_bytes()))
         .and_then(|_| w("digest", info.signed_digest.as_bytes()))
@@ -217,7 +255,7 @@ pub fn verify_signature(path: &Path, info: &Inspect, pin: Option<&str>) -> Resul
         &d("sig.asc"),
         &d("digest"),
     ]);
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(scratch);
     if ok {
         Ok(true)
     } else {
@@ -826,6 +864,36 @@ fn update_one(
 pub mod tests {
     use super::*;
     use crate::testutil::{Served, temp};
+
+    /// Audit S4-15: the gpg scratch directory is new, 0700, never a directory someone made first,
+    /// its files are created new, and it is gone after use.
+    #[test]
+    fn gpg_scratch_is_private_fresh_and_removed() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("wopkg-scratch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let a = Scratch::new(&base).unwrap();
+        let b = Scratch::new(&base).unwrap();
+        assert_ne!(a.0, b.0, "never the same name twice");
+        let mode = std::fs::metadata(&a.0).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        a.write("key.asc", b"k").unwrap();
+        assert!(
+            a.write("key.asc", b"again").is_err(),
+            "files are created new"
+        );
+        std::os::unix::fs::symlink("/etc/passwd", a.0.join("sig.asc")).unwrap();
+        assert!(
+            a.write("sig.asc", b"x").is_err(),
+            "a planted link is not followed"
+        );
+        let (pa, pb) = (a.0.clone(), b.0.clone());
+        drop(a);
+        drop(b);
+        assert!(!pa.exists() && !pb.exists());
+        std::fs::remove_dir_all(&base).unwrap();
+    }
 
     /// A minimal 64-bit ELF AppImage with the given sections (name, contents).
     pub fn fake_appimage(payload: &[u8], secs: &[(&str, &[u8])]) -> Vec<u8> {

@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wol-vbox-guest: VirtualBox guest services for a compositor session (audit X1-5), from the
+# exec-once of hyprland.conf, login.conf, setup.conf and installer.conf.
+# Why: `VBoxClient --vmsvga` alone is an X11 RandR client: under Xwayland it cannot follow the VM
+# window, and host <-> guest clipboard and drag-and-drop were never started.
+# How: outside VirtualBox exit at once. Else VBoxClient --vmsvga-session (the Wayland/DRM resize
+# path through VBoxDRMClient, which vboxservice.service starts; --vmsvga on a VBoxClient without
+# it), then --clipboard and --draganddrop (through Xwayland's selection bridge). Each VBoxClient
+# forks into the background itself. Exit 0; a service that does not start is said on stderr and
+# does not stop the others.
+set -eu
+# systemd-detect-virt prints "none" and fails outside a VM: that is the answer, not an error.
+[ "$(systemd-detect-virt 2>/dev/null || :)" = oracle ] || exit 0
+if ! command -v VBoxClient >/dev/null 2>&1; then
+	echo "wol-vbox-guest: VBoxClient is not installed (virtualbox-guest-utils)" >&2
+	exit 0
+fi
+resize=--vmsvga
+# --help exits non-zero on some versions; only its text matters.
+if VBoxClient --help 2>&1 | grep -q -- --vmsvga-session; then
+	resize=--vmsvga-session
+fi
+for mode in "$resize" --clipboard --draganddrop; do
+	VBoxClient "$mode" || echo "wol-vbox-guest: VBoxClient $mode did not start" >&2
+done

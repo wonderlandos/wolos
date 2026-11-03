@@ -3,13 +3,9 @@
 //! Bazzite settings, then the audio audit of 2026-11): kernel limits, file-descriptor limits,
 //! realtime audio, the 0 dB input rule, pulse client floors, Bluetooth codecs. Every key a
 //! fragment sets has one `has()` line here (docs/modules/audio.md).
-use std::path::PathBuf;
-fn read(p: &str) -> String {
-    let f = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p);
-    std::fs::read_to_string(&f).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::read;
 
 fn has(file: &str, lines: &[&str]) {
     let s = read(file);
@@ -193,4 +189,57 @@ fn fragments_are_numbered_and_explained() {
             "{f}: first line explains the fragment"
         );
     }
+}
+
+/// The sound service has no background instance: only the Sound pages start one, so the snap-once
+/// rule runs from the first time Sound opens (A6-6). The module doc says so, in one place.
+#[test]
+fn the_sound_service_starts_only_with_a_sound_page_and_the_doc_says_so() {
+    fn walk(dir: &std::path::Path, out: &mut Vec<String>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "rs")
+                && std::fs::read_to_string(&p).is_ok_and(|s| s.contains("pw::Handle::spawn("))
+            {
+                out.push(p.file_name().unwrap().to_string_lossy().into_owned());
+            }
+        }
+    }
+    let mut spawners = Vec::new();
+    for root in [
+        "crates/shell/src",
+        "crates/controller/src",
+        "crates/core/src",
+    ] {
+        walk(&repo::repo(root), &mut spawners);
+    }
+    assert_eq!(
+        spawners,
+        ["sound.rs"],
+        "a new place that starts the sound service changes what the module doc says"
+    );
+    let doc = read("docs/modules/audio.md");
+    assert!(
+        doc.contains("**When it runs.**") && doc.contains("first Sound page that opens"),
+        "docs/modules/audio.md must say when the service runs"
+    );
+}
+
+/// The level meter's stream must stay out of the Bluetooth autoswitch (A6-5): its properties carry
+/// a `node.link-group`, and the input fragment that turns the autoswitch on says so.
+#[test]
+fn the_meter_stream_is_skipped_by_the_bluetooth_autoswitch() {
+    let model = read("crates/audio/src/model.rs");
+    assert!(
+        model.contains("(\"node.link-group\", \"wolos-meter\")"),
+        "METER_PROPS lost its link group"
+    );
+    let input = read(INPUT);
+    assert!(input.contains("bluetooth.autoswitch-to-headset-profile = true"));
+    assert!(
+        input.contains("node.link-group"),
+        "{INPUT} no longer explains the meter"
+    );
 }

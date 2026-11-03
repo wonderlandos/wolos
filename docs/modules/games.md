@@ -19,7 +19,7 @@ Steam is the native Arch package from `[multilib]` (ADR 0016). Windows games run
 | `base` (info) | never: names the WolOS base (os-release) and whether the kernel is linux-wolos | another kernel is reported and kept |
 | `multilib` | `[multilib]` off in `/etc/pacman.conf` | enable it, `pacman -Sy` |
 | `steam` | no `/usr/bin/steam` | `pacman -S steam` |
-| `drm` | no `/dev/dri` | `wol hw doctor` |
+| `drm` | no `/dev/dri` | `wol hw status` |
 | `lib32-gl` | no 32-bit Vulkan loader or OpenGL (the client is 32-bit) | `lib32-vulkan-icd-loader`, `lib32-mesa`, vendor lib32 driver |
 | `vulkan-icd`, `vulkan` | no ICD in `/usr/share/vulkan/icd.d`, or only llvmpipe | vendor Vulkan packages |
 | `nvidia` | `lib32-nvidia-utils` missing or not the running driver's version | `pacman -S lib32-nvidia-utils` |
@@ -27,3 +27,19 @@ Steam is the native Arch package from `[multilib]` (ADR 0016). Windows games run
 | `wine` (info) | not installed | only for programs outside Steam |
 
 The client starts only when `multilib`, `steam`, `drm`, `lib32-gl` and `nvidia` pass (`doctor::STEAM_CLIENT`).
+
+## Display and presentation (audit X1)
+
+Steam, Wine and most native games are X11 clients and run through Xwayland. Xwayland renders them 1:1 (`xwayland:force_zero_scaling` in `hypr/wolos-perf.conf`). On a HiDPI screen they would be half size, so they are told the scale instead. `wol games steam` adds `STEAM_FORCE_DESKTOPUI_SCALING=<largest monitor scale>` when it is not 1 (`wol_core::games::steam::ui_scale`). `wol-x11-env` also exports it, with `GDK_SCALE`, to the systemd user environment, and Dock and Apps launches pass both on (`shell::kit::scale_env`).
+
+Fullscreen games present immediately (tearing allowed: `general:allow_tearing`), not at the next vblank. Three window rules in `wolos-perf.conf` do this:
+
+| Rule | Matches |
+|---|---|
+| `wol-game-immediate` | Steam and Proton games (`steam_app_<id>`) |
+| `wol-wine-immediate` | Windows programs started with wine outside Steam (class ends in `.exe`) |
+| `wol-xwayland-fullscreen-immediate` | any other fullscreen X11 window (native, GOG, itch). A fullscreen X11 video player tears too. |
+
+`misc:vrr = 2` turns VRR on for fullscreen windows only. `xwayland:use_nearest_neighbor` scales a game's lower fullscreen mode sharp, not blurred.
+
+The image ships `gamescope` for Steam's `gamescope %command%` launch option and for games that need a fixed resolution. Memory Saver treats it as a game process.

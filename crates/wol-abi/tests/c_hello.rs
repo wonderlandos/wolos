@@ -43,7 +43,7 @@ fn hello_from_c() {
         version.as_str(),
         "appearance: dark",
         "accent: blue",
-        "accent-rgb: 0a84ff",
+        "accent-rgb: 6aaef2",
         "posted",
         "denied: Notifications are off for hello.",
         "invalid argument",

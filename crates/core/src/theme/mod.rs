@@ -2,11 +2,17 @@
 //! Theme catalog and resolver (IaraOS ADR 0016). Contract data lives in `shared::theme`.
 pub mod accent;
 pub mod apps;
+pub mod console;
 pub mod firefox;
+pub mod generate;
 pub mod helium;
+pub mod hypr;
 pub mod kvantum;
+pub mod packs;
 pub mod scaffold;
 pub mod sourceview;
+pub mod templates;
+pub mod terminal;
 
 use shared::theme::{self as contract, Variant};
 use std::collections::BTreeMap;
@@ -49,6 +55,8 @@ pub struct ThemeSpec {
     pub tokens: BTreeMap<String, String>,
     pub wallpaper: Option<String>,
     pub icon_theme: Option<String>,
+    /// Themes v2: ANSI 0-15 for terminals (`terminal` in theme.json); None = derived.
+    pub terminal: Option<Vec<String>>,
     /// Theme folder; a relative wallpaper resolves against it.
     pub dir: PathBuf,
 }
@@ -76,7 +84,26 @@ impl ThemeSpec {
                 );
             }
         }
+        let terminal = match v.get("terminal") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(t) => {
+                let list = t
+                    .as_array()
+                    .filter(|a| a.len() == contract::TERMINAL_COLORS)
+                    .ok_or("terminal must list 16 colours")?;
+                let mut out = Vec::with_capacity(list.len());
+                for c in list {
+                    let c = c
+                        .as_str()
+                        .filter(|c| contract::Color::parse(c).is_some())
+                        .ok_or("terminal colours must be colours")?;
+                    out.push(c.to_owned());
+                }
+                Some(out)
+            }
+        };
         Ok(Self {
+            terminal,
             name: s("name").unwrap_or_else(|| id.clone()),
             id,
             variant,
@@ -98,6 +125,9 @@ pub struct ResolvedTheme {
     pub tokens: BTreeMap<String, String>,
     pub wallpaper: Option<PathBuf>,
     pub icon_theme: Option<String>,
+    /// ANSI 0-15 from the nearest theme in the chain that lists them; None = derived
+    /// (`terminal::palette`).
+    pub terminal: Option<Vec<String>>,
 }
 
 impl ResolvedTheme {
@@ -186,6 +216,22 @@ impl ThemeCatalog {
         cat
     }
 
+    /// Everything a person can pick: built-ins, `search_paths(config_home)` and the theme packs of
+    /// enabled plugins under `data_home` (`packs`; a pack never replaces an id already known).
+    pub fn installed(config_home: &Path, data_home: Option<&Path>) -> Self {
+        let cat = Self::load(&search_paths(config_home));
+        match data_home {
+            Some(d) => packs::add(cat, &packs::themes(config_home, d)),
+            None => cat,
+        }
+    }
+
+    /// Adds `spec` unless its id is taken.
+    pub fn with_new(mut self, spec: ThemeSpec) -> Self {
+        self.specs.entry(spec.id.clone()).or_insert(spec);
+        self
+    }
+
     pub fn with(mut self, spec: ThemeSpec) -> Self {
         self.specs.insert(spec.id.clone(), spec);
         self
@@ -217,8 +263,11 @@ impl ThemeCatalog {
             });
         }
         let mut tokens = BTreeMap::new();
-        let (mut wallpaper, mut icons) = (None, None);
+        let (mut wallpaper, mut icons, mut terminal) = (None, None, None);
         for s in chain.iter().rev() {
+            if s.terminal.is_some() {
+                terminal.clone_from(&s.terminal);
+            }
             tokens.extend(s.tokens.clone());
             if let Some(w) = &s.wallpaper {
                 wallpaper = Some(if Path::new(w).is_absolute() {
@@ -239,6 +288,7 @@ impl ThemeCatalog {
             tokens,
             wallpaper,
             icon_theme: icons,
+            terminal,
         })
     }
 }
@@ -262,9 +312,7 @@ pub mod active {
         if let Some(d) = file.parent() {
             std::fs::create_dir_all(d)?;
         }
-        let tmp = file.with_extension("tmp");
-        std::fs::write(&tmp, format!("{id}\n"))?;
-        std::fs::rename(tmp, file)
+        shared::atomic::atomic_write(file, super::kept_mode(file), format!("{id}\n").as_bytes())
     }
 
     pub fn effective(saved: Option<&str>, dark: bool) -> String {
@@ -292,9 +340,89 @@ pub mod active {
     }
 }
 
+/// The permission bits `path` has now (never set-id bits); 0644 when it does not exist or is
+/// not a regular file. Rewrites keep the mode the person gave the file (audit C6-3).
+pub(crate) fn kept_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map_or(0o644, |m| m.permissions().mode() & 0o777)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The default themes are made of the design tokens (`design/tokens/colors.json`), so the
+    /// desktop, the icons and the brand cannot drift apart. Rule: the hue-carrying tokens (accent,
+    /// accent text, dim, success, warning, danger) are the token values exactly; the neutrals
+    /// (surface, card, text, sidebar, control, glass, line) keep the token's hue, within 4 levels
+    /// per channel of one neutral token of the same mode (they were tuned by eye), alpha free.
+    /// The third-party palettes (nord, catppuccin, ...) bring their own colours and are not held
+    /// to it; what they may not name is an icon theme the image does not ship.
+    #[test]
+    fn default_themes_are_made_of_the_design_tokens() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../design/tokens/colors.json");
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let rgb = |s: &str| {
+            let c = shared::theme::Color::parse(s).unwrap_or_else(|| panic!("colour {s}"));
+            [c.r, c.g, c.b]
+        };
+        for (id, mode) in [("wol-light", "light"), ("wol-dark", "dark")] {
+            let t = ThemeCatalog::builtin().resolve(id).unwrap();
+            let tok = |k: &str| {
+                rgb(json[mode][k]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{mode}.{k}")))
+            };
+            for (ours, theirs) in [
+                ("accent", "accent"),
+                ("accentText", "accent-fg"),
+                ("dim", "text-2"),
+                ("success", "green"),
+                ("warning", "orange"),
+                ("danger", "red"),
+            ] {
+                assert_eq!(
+                    rgb(&t.tokens[ours]),
+                    tok(theirs),
+                    "{id}: {ours} is token {theirs}"
+                );
+            }
+            let neutrals: Vec<[u8; 3]> = [
+                "bg",
+                "surface",
+                "surface-2",
+                "menubar",
+                "dock",
+                "text",
+                "border",
+                "shadow",
+            ]
+            .map(tok)
+            .to_vec();
+            for ours in [
+                "surface", "card", "text", "sidebar", "control", "glass", "line",
+            ] {
+                let c = rgb(&t.tokens[ours]);
+                let near = neutrals
+                    .iter()
+                    .any(|n| n.iter().zip(c).all(|(a, b)| a.abs_diff(b) <= 4));
+                assert!(near, "{id}: {ours} {c:?} is no design token colour");
+            }
+        }
+        // The accent presets and the icon theme every builtin names are the product's.
+        for spec in ThemeCatalog::builtin().list() {
+            assert!(
+                spec.icon_theme.as_deref().is_none_or(|n| n == "WolOS"),
+                "{}: {:?}",
+                spec.id,
+                spec.icon_theme
+            );
+        }
+    }
 
     fn temp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("wol-theme-{tag}-{}", std::process::id()));
@@ -376,10 +504,10 @@ mod tests {
     #[test]
     fn builtins_match_palette() {
         let cat = ThemeCatalog::builtin();
-        assert_eq!(cat.resolve("wol-dark").unwrap().tokens["card"], "#2c2c30");
+        assert_eq!(cat.resolve("wol-dark").unwrap().tokens["card"], "#2a2834");
         assert_eq!(
             cat.resolve("wol-light").unwrap().tokens["sidebar"],
-            "rgba(236,236,240,0.92)"
+            "rgba(233,231,241,0.92)"
         );
         assert_eq!(cat.resolve("wol-dark").unwrap().variant, Variant::Dark);
     }
@@ -404,7 +532,7 @@ mod tests {
         let t = ThemeCatalog::load(&[d]).resolve("mine").unwrap();
         assert_eq!(
             (t.tokens["accent"].as_str(), t.tokens["card"].as_str()),
-            ("#ff00ff", "#2c2c30")
+            ("#ff00ff", "#2a2834")
         );
     }
 
@@ -438,13 +566,13 @@ mod tests {
         put(
             &d,
             "w",
-            r#"{"id":"w","name":"W","variant":"light","tokens":{},"wallpaper":"bg.png","iconTheme":"WhiteSur"}"#,
+            r#"{"id":"w","name":"W","variant":"light","tokens":{},"wallpaper":"bg.png","iconTheme":"WolOS"}"#,
         );
         let t = ThemeCatalog::load(std::slice::from_ref(&d))
             .resolve("w")
             .unwrap();
         assert_eq!(t.wallpaper, Some(d.join("w").join("bg.png")));
-        assert_eq!(t.icon_theme.as_deref(), Some("WhiteSur"));
+        assert_eq!(t.icon_theme.as_deref(), Some("WolOS"));
     }
 
     #[test]
@@ -510,6 +638,25 @@ mod tests {
         );
     }
 
+    /// C6-3: a link planted at the old fixed temporary name is not followed, and a rewrite keeps
+    /// the file's mode.
+    #[test]
+    fn active_set_ignores_a_planted_tmp_link_and_keeps_the_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = temp("active-link");
+        let (f, victim) = (d.join("theme"), d.join("victim"));
+        std::fs::write(&victim, "keep").unwrap();
+        std::os::unix::fs::symlink(&victim, f.with_extension("tmp")).unwrap();
+        active::set(&f, "nord").unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert_eq!(active::get(&f).as_deref(), Some("nord"));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o600)).unwrap();
+        active::set(&f, "gruvbox").unwrap();
+        let m = std::fs::metadata(&f).unwrap().permissions().mode() & 0o777;
+        assert_eq!(m, 0o600);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
     #[test]
     fn active_set_get_effective_switch() {
         let f = temp("active").join("wolos").join("theme");
@@ -539,7 +686,7 @@ mod tests {
     fn css_has_tokens_and_scale() {
         let css = ThemeCatalog::builtin().resolve("wol-dark").unwrap().css();
         for want in [
-            "--card: #2c2c30;",
+            "--card: #2a2834;",
             "--accent-text: #ffffff;",
             "--radius-m: 10px;",
             "--motion-fast: 150ms;",

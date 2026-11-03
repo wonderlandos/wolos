@@ -28,6 +28,28 @@ pub const CAPABILITIES: [(&str, &str); 13] = [
     ("modules", "Install or remove optional modules"),
 ];
 
+/// Audit C10-1: changes that leave something behind (a launcher, an enabled module, a saved or
+/// reopened session) are asked every time, even though their capability (`apps`) also covers
+/// `open`, which may be Always Allowed. MCP tool names (`webapp_add`); `wol webapp add` paths
+/// (space-joined, as scripts send them) match too.
+pub const ONCE_ONLY: [&str; 5] = [
+    "webapp_add",
+    "webapp_remove",
+    "modules_enable",
+    "sessions_save",
+    "sessions_restore",
+];
+
+/// The approval sheet's line for a [`ONCE_ONLY`] change: there is no Always Allow.
+pub const ONCE_ONLY_DETAIL: &str =
+    "Allow Once lets it do this one time. This kind of change asks every time.";
+
+/// `tool` (`webapp_add` or `webapp add`) is asked every time; Always Allow never covers it.
+pub fn once_only(tool: &str) -> bool {
+    let t = tool.trim().replace(' ', "_");
+    ONCE_ONLY.contains(&t.as_str())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Policy {
     pub enabled: bool,
@@ -53,6 +75,8 @@ pub enum Refusal {
     Off,
     Denied(&'static str),
     Unknown(String),
+    /// Always Allow asked for a [`ONCE_ONLY`] change.
+    OnceOnly,
 }
 
 impl std::fmt::Display for Refusal {
@@ -67,6 +91,7 @@ impl std::fmt::Display for Refusal {
                 "Helpers are not allowed to: {label}. You can change this in Settings › Assistants & Automation."
             ),
             Self::Unknown(c) => write!(f, "unknown capability '{c}'"),
+            Self::OnceOnly => write!(f, "{ONCE_ONLY_DETAIL}"),
         }
     }
 }
@@ -126,6 +151,25 @@ impl Policy {
                 .always
                 .get(helper)
                 .is_some_and(|c| c.iter().any(|x| x == cap))
+    }
+
+    /// [`Policy::always_allows`] for one tool: never for a [`ONCE_ONLY`] tool, whatever the file
+    /// says.
+    pub fn always_allows_tool(&self, helper: &str, cap: &str, tool: &str) -> bool {
+        !once_only(tool) && self.always_allows(helper, cap)
+    }
+
+    /// [`Policy::allow_always`] from the sheet of `tool`: refused for a [`ONCE_ONLY`] tool.
+    pub fn allow_always_tool(
+        &mut self,
+        helper: &str,
+        cap: &str,
+        tool: &str,
+    ) -> Result<(), Refusal> {
+        if once_only(tool) {
+            return Err(Refusal::OnceOnly);
+        }
+        self.allow_always(helper, cap)
     }
 
     /// Always Allow on the approval sheet.
@@ -213,5 +257,30 @@ mod tests {
             !Policy::default().to_json().contains("always"),
             "no grants, same file as before"
         );
+    }
+
+    /// C10-1: a grant on `apps` (from `open`) never covers the once-only changes, even when the
+    /// file holds it; the sheet of one cannot store a grant.
+    #[test]
+    fn once_only_tools_ignore_and_refuse_always() {
+        let mut p = Policy::parse(Some(r#"{"enabled":true,"always":{"Claude":["apps"]}}"#));
+        assert!(p.always_allows_tool("Claude", "apps", "open"));
+        for t in ONCE_ONLY {
+            assert!(!p.always_allows_tool("Claude", "apps", t), "{t}");
+            assert!(
+                !p.always_allows_tool("Claude", "apps", &t.replace('_', " ")),
+                "{t}"
+            );
+        }
+        let mut q = Policy::default();
+        assert_eq!(
+            q.allow_always_tool("Claude", "apps", "webapp add"),
+            Err(Refusal::OnceOnly)
+        );
+        assert!(q.always.is_empty());
+        q.allow_always_tool("Claude", "apps", "open").unwrap();
+        assert_eq!(q.always["Claude"], ["apps"]);
+        p.forget("Claude");
+        assert!(!once_only("open") && !once_only("webapp_list"));
     }
 }

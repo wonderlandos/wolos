@@ -150,6 +150,30 @@ fn steam_first_start_downloads_the_client_then_starts_it() {
 }
 
 #[test]
+fn steam_ui_follows_a_hidpi_display() {
+    // Xwayland renders Steam 1:1 (force_zero_scaling): on a 2x screen Steam scales its own UI.
+    let home = temp_home("hidpi");
+    let h = ready_host(
+        "ana wheel video
+",
+    );
+    h.command("hyprctl -j monitors", r#"[{"name":"eDP-1","scale":2.00}]"#);
+    bootstrapped(&h, &home);
+    let mut e = env(&home, h, true);
+    assert_eq!(run("games steam", &mut e), 0, "{}", e.err);
+    assert_eq!(
+        e.execs,
+        [vec![
+            "/usr/bin/env".to_string(),
+            "GLIBC_TUNABLES=glibc.malloc.hugetlb=1".into(),
+            "STEAM_FORCE_DESKTOPUI_SCALING=2".into(),
+            STEAM.into(),
+        ]]
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
 fn steam_stops_on_what_the_client_needs() {
     let home = temp_home("blocked");
     let h = ready_host("ana wheel video\n");

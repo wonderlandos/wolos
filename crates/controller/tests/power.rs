@@ -182,6 +182,9 @@ fn suspend_locks_sessions_that_ask_for_the_password_after_sleep() {
         )
     );
     assert!(env.out.contains("lock uid 1001: ok"), "{}", env.out);
+    // Audit S4-21: a hung shell holds the sleep a few seconds, not the generic 30.
+    assert_eq!(env.waits, [controller::power::LOCK_WAIT_SECS]);
+    const { assert!(controller::power::LOCK_WAIT_SECS <= 5) };
     let mut user = FakeEnv::default();
     assert_ne!(run("power suspend", &mut user), 0);
 }

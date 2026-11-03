@@ -47,7 +47,9 @@ jobs:
         run: bash tools/ci/fuzz-replay.sh
       - name: shellcheck
         working-directory: wolos
-        run: git ls-files -z '*.sh' | xargs -0 shellcheck -S error
+        # The aurlaws fixtures are frozen inputs of the analyser (some are deliberately not valid scripts,
+        # e.g. no shebang); they are read as bytes, never run, and must not be edited to please shellcheck.
+        run: git ls-files -z -- '*.sh' ':(exclude)crates/aurlaws/tests/fixtures/**' | xargs -0 shellcheck -S error
 
   # docs/STANDARDS.md: the rules a machine can check. Separate from `test` so a style failure and a
   # test failure are told apart at a glance; same image so clippy links what the workspace links.
@@ -57,7 +59,7 @@ jobs:
     steps:
       - name: Toolchain, the libraries the workspace links, cargo-audit, shellcheck
         run: |
-          pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell             pam clamav nautilus crystal shellcheck cargo-audit cargo-deny
+          pacman -Syu --noconfirm --needed git rust clang mold pkgconf gtk4 libadwaita gtk4-layer-shell             pam clamav nautilus crystal shellcheck luacheck python librsvg cargo-audit cargo-deny
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
@@ -69,17 +71,41 @@ jobs:
           -D warnings
           -A clippy::too_many_arguments
           -A clippy::type_complexity
+      - name: "cargo check, shell with the real layer-shell surfaces (the image builds with this feature)"
+        run: cargo check -p shell --features layer-shell --all-targets --locked
+      - name: Crystal format (wopkg, hue, the wol-abi bindings; the lint image's crystal is the reference)
+        run: make -C wopkg fmt-check
+      - name: Crystal lint (ameba with .ameba.yml; docs/RULES-crystal.md, tools/crystal/lint.sh)
+        # ameba is built from a pinned commit of its source (v1.7.0, no dependencies, no shards): the
+        # distribution package crashed at start against the current crystal. The script also repeats the
+        # format check; a missing tool fails the step here instead of being skipped.
+        env:
+          WOLOS_REQUIRE_CRYSTAL_LINT: "1"
+        run: |
+          git init -q "$RUNNER_TEMP/ameba"
+          git -C "$RUNNER_TEMP/ameba" fetch -q --depth 1 https://github.com/crystal-ameba/ameba 9a19f5f98abdf792a5a0ef6ca5c5d89459740e2f
+          git -C "$RUNNER_TEMP/ameba" checkout -q FETCH_HEAD
+          crystal build --no-debug -o /usr/local/bin/ameba "$RUNNER_TEMP/ameba/src/cli.cr"
+          sh tools/crystal/lint.sh
       - name: cargo audit (RustSec advisories against Cargo.lock)
-        # Ignored advisories go here as `--ignore RUSTSEC-YYYY-NNNN` with a comment: issue and the date to look again.
+        # Ignored advisories go in .cargo/audit.toml (read by cargo-audit; deny.toml is cargo-deny's), each with a reason and a review date.
         run: cargo audit --deny warnings
       - name: cargo deny (advisories, licenses, bans, sources; deny.toml)
         run: cargo deny --locked check
       - name: "Shipped scripts: sh -n, SPDX and purpose header, shellcheck"
         run: |
           bash tools/check-headers.sh
-          find files/usr/lib/wolos desktop/overlay/usr/bin -type f -exec grep -lE '^#!/(usr/)?bin/(env )?(sh|bash)' {} +             | xargs -r shellcheck -S error
+          find files/usr/lib/wolos desktop/overlay/usr/bin -type f -exec grep -lZE '^#!/(usr/)?bin/(env )?(sh|bash)' {} + | xargs -0 -r shellcheck -S error
+      - name: "Lua plugins and widgets: luacheck (.luacheckrc declares the wol global)"
+        run: luacheck . --no-color
       - name: "Decision records: Status, Context, Decision, Consequences"
         run: bash tools/check-adrs.sh
+      - name: "App icons: one source (design/icons/apps); the overlay PNGs are its renders, on one grid"
+        run: python3 -I design/tools/icons/overlay.py --check
+      - name: "Colour icons: the SVGs are what the vector generator draws now (build.py: checks, renders, no hand edits)"
+        run: python3 -I design/tools/icons/build.py --check
+      - name: "Design tokens: colors.{json,css,sh} match tokens.py, the WCAG floors hold, no borrowed stock grey anywhere in the tree"
+        run: python3 -I design/tools/tokens.py --check
 
   # Supply chain (audit A3/A4/B11): every `uses:` pinned to a commit SHA, every image to a digest,
   # in this repo and the two it checks out; actionlint on all their workflows.
@@ -111,6 +137,56 @@ jobs:
           tar -xzf "$RUNNER_TEMP/al.tgz" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -shellcheck= wolos/.github/workflows/*.yml wolos-pkgbuilds/.github/workflows/*.yml             wolos-iso/.github/workflows/*.yml
 
+  # docs/RULES-system.md RS-192: `Hyprland --verify-config` accepts the shipped compositor confs. The
+  # compositor is Arch's hyprland 0.56.2-4 from the archive snapshot of 2026/10/27 (the last day it was
+  # current; the fork in wolos-pkgbuilds is that version plus patches), so the job reads the same
+  # syntax the image does. Hyprland refuses root, so it runs as a plain user; the confs `source` /usr/share/wolos
+  # and ~/.cache/wolos/hypr-vm.conf, so the overlay is copied there and an empty vm file is made.
+  # The seven `misc:` options below exist only in the fork's patches and `hyprbars:` fields belong to a
+  # plugin that is not loaded here: those are the only errors let through; any other error fails.
+  compositor-config:
+    runs-on: ubuntu-latest
+    container: archlinux:latest@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 # bump: docker buildx imagetools inspect archlinux:latest
+    # One snapshot install and four config checks (RC-005).
+    timeout-minutes: 30
+    steps:
+      - name: The compositor (snapshot-pinned)
+        # bash -eo pipefail, not the container's sh -e (RC-019).
+        shell: bash
+        run: |
+          echo 'Server = https://archive.archlinux.org/repos/2026/10/27/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+          pacman -Syu --noconfirm --needed hyprland git
+          v=$(pacman -Q hyprland)
+          echo "$v"
+          grep -q ' 0\.56\.2-' <<< "$v"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Hyprland --verify-config on the shipped confs
+        # bash -eo pipefail (RC-019); the checks read $out from a here-string, so an early grep -q
+        # exit cannot SIGPIPE a printf stage under pipefail.
+        shell: bash
+        run: |
+          mkdir -p /usr/share/wolos
+          cp -r desktop/overlay/usr/share/wolos/. /usr/share/wolos/
+          useradd -m ci
+          mkdir -p /home/ci/.cache/wolos /run/ci
+          : > /home/ci/.cache/wolos/hypr-vm.conf
+          chown -R ci /home/ci /run/ci
+          chmod 700 /run/ci
+          fork_only='misc:(throttle_occluded|throttle_window_count|throttle_occlusion_cutoff|throttle_freeze_ms|throttle_freeze_updates|reconfigure_ack_timeout_ms|frame_deadline)>|hyprbars:'
+          bad=0
+          for c in hyprland login installer setup; do
+            out=$(runuser -u ci -- env HOME=/home/ci XDG_RUNTIME_DIR=/run/ci Hyprland --verify-config -c "/usr/share/wolos/hypr/$c.conf" 2>&1 || true)
+            errors=$(grep -E 'Config error|unexpected symbol' <<< "$out" | grep -vE "$fork_only" || true)
+            if [ -n "$errors" ] || ! grep -q 'config ok\|Config error' <<< "$out"; then
+              tail -20 <<< "$out"
+              echo "::error::$c.conf is not accepted"
+              bad=1
+            else
+              echo "$c.conf: ok"
+            fi
+          done
+          exit "$bad"
+
   # libFuzzer smoke run (audit B10): 60 s per target on a pinned nightly. A crash fails the job;
   # its input goes into fuzz/regressions/<target>/ so the test job replays it from then on.
   fuzz:
@@ -119,7 +195,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader]
+        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader, package_call, core_parsers, wolplug_verify, plugin_index, wolkit_patch, wolkit_wsb, wolkit_wolcss]
     steps:
       - name: Toolchain (nightly pinned), cargo-fuzz, the libraries the shell links
         run: |

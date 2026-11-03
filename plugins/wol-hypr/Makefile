@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Needs hyprland headers (pkg-config hyprland). Builds against librealtime.a.
 CXX ?= c++
-# -fno-access-control: reads Hyprland privates (xdg-decoration map) to spot client-drawn title bars.
-CXXFLAGS += -std=c++2b -fPIC -O2 -Wall -Wextra -Werror -fno-access-control $(shell pkg-config --cflags hyprland pixman-1 libdrm libinput wayland-server xkbcommon lua-5.5)
+# -fno-access-control: reads compositor privates (xdg-decoration map) to spot client-drawn title bars.
+# The compositor's own headers are -isystem: -Wall -Wextra -Werror hold for this plugin's code, not theirs.
+DEPS = $(shell pkg-config --cflags hyprland pixman-1 libdrm libinput wayland-server xkbcommon lua-5.5 | sed 's/-I/-isystem /g')
+CXXFLAGS += -std=c++2b -fPIC -O2 -Wall -Wextra -Werror -fno-access-control $(DEPS)
 RT = ../../target/release/librealtime.a
 
 all: wol-hypr.so

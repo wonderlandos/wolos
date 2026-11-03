@@ -22,7 +22,7 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
     match inv.action {
         "modules.list" => list(env, json),
         "modules.status" => status(env, inv.get("id"), json),
-        "modules.install" => install(env, &id),
+        "modules.install" => install(env, &id, json),
         "modules.remove" => remove(env, &id, json),
         "modules.enable" => enable(env, &id, json),
         other => fail(env, ErrorCode::Failed, &format!("no handler for {other}")),
@@ -107,8 +107,11 @@ fn table(rows: &[Status]) -> String {
 fn list(env: &mut dyn Env, json: bool) -> i32 {
     let reg = registry(env);
     let f = facts(env);
-    let rows = modules::list(&reg, &f);
+    let mut rows = modules::list(&reg, &f);
     if json {
+        for (s, m) in rows.iter_mut().zip(&reg) {
+            s.backend = backend_for(env, m);
+        }
         emit_json(env, &serde_json::to_value(&rows).unwrap_or_default());
     } else if rows.is_empty() {
         env.out("no optional modules on this computer\n");
@@ -127,8 +130,9 @@ fn status(env: &mut dyn Env, id: Option<&str>, json: bool) -> i32 {
         Err(code) => return code,
     };
     let f = facts(env);
-    let s = modules::status(&m, &f);
+    let mut s = modules::status(&m, &f);
     if json {
+        s.backend = backend_for(env, &m);
         emit_json(env, &serde_json::to_value(&s).unwrap_or_default());
     } else {
         let mut t = format!("{} ({}): {}\n{}\n", s.name, s.id, s.state(), s.summary);
@@ -147,6 +151,15 @@ fn status(env: &mut dyn Env, id: Option<&str>, json: bool) -> i32 {
     0
 }
 
+/// The record's backend package for this machine (`wol hw compute`); the hardware is only read
+/// for a record that has a `backend`.
+fn backend_for(env: &mut dyn Env, m: &Module) -> Option<String> {
+    m.backend.as_ref()?;
+    let snap = env.hardware();
+    let c = crate::hw::compute(env, &snap);
+    m.backend_package(c.backend)
+}
+
 fn pkg_request(action: AdminAction, m: &Module) -> AdminRequest {
     AdminRequest {
         action,
@@ -155,31 +168,94 @@ fn pkg_request(action: AdminAction, m: &Module) -> AdminRequest {
 }
 
 /// Administrator: `pacman -S` the meta package through wol-admind. The user-side step is separate
-/// (`enable`) so the same two steps serve the CLI, Settings and, later, helpers.
-fn install(env: &mut dyn Env, id: &str) -> i32 {
+/// (`enable`) so the same two steps serve the CLI, Settings and, later, helpers. `json`: one object
+/// `{id, installed, was_installed, needs_enable}` instead of text (audit S4-9).
+fn install(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let m = match find(env, id) {
         Ok(m) => m,
         Err(code) => return code,
     };
     let f = facts(env);
     let before = modules::status(&m, &f);
-    if before.installed {
-        env.out(&format!("{} is already installed\n", m.name));
-    } else {
+    // The record's per-machine package (`backend`, ADR 0032): `<stem>-<cuda|rocm|vulkan>` from
+    // `wol hw compute`, none on a CPU-only machine. Installed with the meta package, or alone
+    // when the meta package is there and the backend is not. The backend goes first, as in
+    // Settings (`install_packages` in the shell): a failed backend leaves the module not
+    // installed, where the other order would leave one that looks ready without it.
+    let backend = backend_for(env, &m);
+    let backend_missing = backend.clone().filter(|p| !f.installed.contains(p));
+    if let Some(p) = &backend_missing {
+        let req = AdminRequest {
+            action: AdminAction::PkgInstall,
+            args: vec![p.clone()],
+        };
+        let code = admin_send(env, &req);
+        if code != 0 {
+            return code;
+        }
+    }
+    if !before.installed {
         let code = admin_send(env, &pkg_request(AdminAction::PkgInstall, &m));
         if code != 0 {
             return code;
         }
+    }
+    let needs_enable = m.has_user_step() && !before.enabled;
+    if json {
+        emit_json(
+            env,
+            &json!({"id": m.id, "installed": true, "was_installed": before.installed,
+                    "backend": backend, "needs_enable": needs_enable}),
+        );
+        return 0;
+    }
+    if before.installed && backend_missing.is_none() {
+        env.out(&format!("{} is already installed\n", m.name));
+    } else if before.installed {
+        env.out(&format!(
+            "installed {} for {}\n",
+            backend_missing.as_deref().unwrap_or_default(),
+            m.name
+        ));
+    } else {
         env.out(&format!("installed {} ({})\n", m.name, m.package()));
     }
-    if m.has_user_step() && !before.enabled {
+    if needs_enable {
         env.out(&format!("finish setup: wol modules enable {}\n", m.id));
     }
     0
 }
 
-/// Administrator: `pacman -Rs` the meta package through wol-admind, then the user-side parts
-/// (`wopkg remove` each recipe) and the enablement record.
+/// The user-side undo of `enable`, in reverse order: the record's `unpost`, Flatpaks, mise tools,
+/// then the wopkg recipes. Each idempotent (audit C8-6).
+fn undo_steps(m: &Module) -> Vec<Vec<String>> {
+    let mut steps: Vec<Vec<String>> = Vec::new();
+    if !m.unpost.is_empty() {
+        steps.push(m.unpost.clone());
+    }
+    for a in m.flatpaks.iter().rev() {
+        steps.push(vec![
+            "flatpak".into(),
+            "uninstall".into(),
+            "--user".into(),
+            "-y".into(),
+            "--noninteractive".into(),
+            a.clone(),
+        ]);
+    }
+    for t in m.mise.iter().rev() {
+        steps.push(vec!["mise".into(), "unuse".into(), "-g".into(), t.clone()]);
+    }
+    for r in m.recipes.iter().rev() {
+        steps.push(vec!["wopkg".into(), "remove".into(), r.clone()]);
+    }
+    steps
+}
+
+/// Undo `enable` and `install` in reverse: the user-side steps ([`undo_steps`], each reported),
+/// then, through wol-admind, `pacman -Rs` of the record's installed backend packages (ai-local:
+/// `ollama-<gpu>`, installed explicitly) and of the meta package. A step that does not finish
+/// keeps the enablement record and fails the verb (audit S4-9), so `remove` can be run again.
 fn remove(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let m = match find(env, id) {
         Ok(m) => m,
@@ -187,39 +263,74 @@ fn remove(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     };
     let f = facts(env);
     let before = modules::status(&m, &f);
+    let mut failed: Vec<String> = Vec::new();
+    let mut undone: Vec<String> = Vec::new();
+    if before.enabled {
+        for argv in undo_steps(&m) {
+            let line = argv.join(" ");
+            if matches!(env.exec(&argv), Ok(0)) {
+                if !json {
+                    env.out(&format!("undone: {line}\n"));
+                }
+                undone.push(line);
+            } else {
+                // A recipe is named by itself (the S4-9 contract), any other step by its argv.
+                let what = match argv.as_slice() {
+                    [w, r, name] if w == "wopkg" && r == "remove" => name.clone(),
+                    _ => line,
+                };
+                env.err(&format!("wol: {what}: did not finish\n"));
+                failed.push(what);
+            }
+        }
+    }
+    let backends = m.installed_backends(&f.installed);
+    for p in &backends {
+        let req = AdminRequest {
+            action: AdminAction::PkgRemove,
+            args: vec![p.clone()],
+        };
+        let code = admin_send(env, &req);
+        if code != 0 {
+            return code;
+        }
+        if !json {
+            env.out(&format!("removed {p}\n"));
+        }
+    }
     if before.installed {
         let code = admin_send(env, &pkg_request(AdminAction::PkgRemove, &m));
         if code != 0 {
             return code;
         }
     }
-    let mut failed: Vec<String> = Vec::new();
-    if before.enabled {
-        for r in &m.recipes {
-            let argv = vec!["wopkg".to_string(), "remove".into(), r.clone()];
-            if !matches!(env.exec(&argv), Ok(0)) {
-                failed.push(r.clone());
-            }
-        }
+    if before.enabled && failed.is_empty() {
         let mut e = f.enabled.clone();
         if e.set(&m.id, false) {
             write_state(env, &e);
         }
     }
-    for r in &failed {
-        env.err(&format!("wol: {r}: wopkg remove did not finish\n"));
-    }
     if json {
         emit_json(
             env,
-            &json!({"id": m.id, "removed": true, "was_installed": before.installed, "failed": failed}),
+            &json!({"id": m.id, "removed": failed.is_empty(), "was_installed": before.installed,
+                    "backends": backends, "undone": undone, "failed": failed}),
         );
+    } else if !failed.is_empty() {
+        env.out(&format!(
+            "{} is only partly removed: run wol modules remove {} again\n",
+            m.name, m.id
+        ));
     } else if before.installed {
         env.out(&format!("removed {} ({})\n", m.name, m.package()));
-    } else {
+    } else if backends.is_empty() {
         env.out(&format!("{} was not installed\n", m.name));
     }
-    0
+    if failed.is_empty() {
+        0
+    } else {
+        ErrorCode::Failed.exit()
+    }
 }
 
 /// As the user: wopkg recipes, mise tools, Flatpaks, then the record's `post` argv; all idempotent

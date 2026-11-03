@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Wi-Fi: wpa_supplicant.conf editing and input validation (to be replaced by NetworkManager, see docs/modules/wifi.md).
-pub const CONF_PATH: &str = "/etc/wpa_supplicant.conf";
 
 /// dBm to 0..100 (-100 dBm = 0, -50 dBm and above = 100).
 pub fn signal_percent(dbm: i32) -> i32 {

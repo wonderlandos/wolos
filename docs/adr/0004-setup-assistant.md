@@ -1,8 +1,8 @@
 # 0004 - first-boot setup assistant (wol-setup)
 Status: accepted (amends IaraOS ADR 0024; replaces the bsddialog user prompt in firstboot)
-Context: first boot asked for the first account in bsddialog on the console. WolOS wants a macOS-style setup assistant in the same visual language as the login window, without giving its UI root.
+Context: first boot asked for the first account in bsddialog on the console. WolOS wants a setup assistant in the same visual language as the login window, without giving its UI root.
 Decision:
-- wol-login: when no login user exists (uid >= 1000, shell in /etc/shells), the greeter runs `wol-greeter-session setup` -> Hyprland `setup.conf` -> `wol-setup` (as `_wollogin`).
+- wol-login: when no login user exists (uid >= 1000, shell in /etc/shells), the greeter runs `wol-greeter-session setup` -> the compositor with `setup.conf` -> `wol-setup` (as `_wollogin`).
 - Steps: Welcome, Language & Region, Keyboard, Wi-Fi (skippable), Create Your Account, Appearance, Done.
 - Socket requests (ADR 0003 framing), only from `_wollogin`, only while no login user exists and the greeter shows:
   - `!setup-create-user\n` name, full name, hint, locale, keymap, appearance (`light|dark|auto`), one per line, then the password (rest). Rules: `wol_core::settings::users::validate_account`.

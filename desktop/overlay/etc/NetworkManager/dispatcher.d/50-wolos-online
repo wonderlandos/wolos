@@ -3,6 +3,23 @@
 # NetworkManager dispatcher (IFACE ACTION). A connection came up: a driver only the internet has
 # (NVIDIA) that first boot could not install is installed now (`wol hw online`), one run at a time,
 # in the background, so the connection is never delayed. The session says restart, or where to fix it.
+# Optional modules and media formats the installer queued offline (/var/lib/wolos/modules-pending,
+# packages-pending) start installing too, in the same transient unit firstboot uses
+# (wolos-modules-pending): while it runs, a second start is refused, so one drain at a time
+# (audit5 I6-5: Wi-Fi set up after the first login). --collect: the unit is gone when it ends, even
+# failed, or the name would stay taken and no later connection could drain; SuccessExitStatus=1:
+# "something stays queued" is the normal end of an offline try (audit6 ST6-2).
 [ "${2:-}" = up ] || exit 0
 flock -n "${WOLOS_LOCK:-/run/wolos-hw-online.lock}" wol hw online >/dev/null 2>&1 &
+P=${WOL_MODULES_PENDING:-/var/lib/wolos/modules-pending}
+Q=${WOL_PACKAGES_PENDING:-/var/lib/wolos/packages-pending}
+# Only a connection that leads somewhere drains: the loopback device (NetworkManager manages it
+# and calls this for it first on every boot) or a link without a default route cannot download, and
+# its drain would hold the unit's name while the real connection comes up a moment later, whose own
+# start is then refused: an Ethernet machine installed offline never drained (pre-release run).
+if [ "${1:-}" != lo ] && [ -n "$(ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null)" ] &&
+  { [ -s "$P" ] || [ -s "$Q" ]; }; then
+  systemd-run --no-block --unit=wolos-modules-pending --collect --property=SuccessExitStatus=1 --description="WolOS: install queued modules" \
+    "${WOLOS_LIB:-/usr/lib/wolos}/modules-install" --drain >/dev/null 2>&1 || :
+fi
 exit 0

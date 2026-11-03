@@ -1,0 +1,13 @@
+{
+  "app": "org.example.prefs",
+  "answers": {
+    "clipboard.read": [{"ok": true, "data": {"text": "copied"}}],
+    "clipboard.write": [{"ok": true}],
+    "prefs.get": [{"ok": true, "data": {"value": "640"}}, {"ok": true, "data": {}}],
+    "prefs.set": [{"ok": true}],
+    "prefs.remove": [{"ok": true}],
+    "prefs.keys": [{"ok": true, "data": ["height", "width"]}],
+    "share.text": [{"ok": true, "data": {"done": "copied"}}, {"ok": false, "code": "permission-denied", "message": "Sharing is turned off for this app."}]
+  },
+  "events": []
+}

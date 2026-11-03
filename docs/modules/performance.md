@@ -1,13 +1,14 @@
 # Performance
 
-Measured live, release build, Linux host, nested Hyprland 0.56.2 fork (patches + plugins) on a 1280x720 headless output, started the product way: `wol-session` -> `start-hyprland` -> exec-once `wol-shell`.
+Measured live, release build, Linux host, nested compositor fork, 0.56.2 (patches + plugins) on a 1280x720 headless output, started the product way: `wol-session` -> `start-hyprland` -> exec-once `wol-shell`.
+When and where: October 2026, recorded with release 0.11.2 (CHANGELOG), on a CachyOS development host, not on the installed WolOS image; the compositor ran nested, so no number below comes from a real DRM output. Re-measure on the image before quoting one as a WolOS figure; the table keeps these until then.
 Probes: `design/tools/perf/build.sh` builds `dmg` (screencopy region hash per frame), `vk`/`vp` (virtual keyboard/pointer, `STAMP=1` prints send time). Run the scripts inside the session (`WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE` set, probes on PATH).
 
 | Metric | Target | Measured | Reproduce |
 |---|---|---|---|
-| Hyprland idle CPU | <= 2 ms/s | 0.06 ms/s | `idle.py 60 Hyprland wol-shell` |
-| Hyprland idle wakeups | <= 2/s | 1.14/s | same |
-| Hyprland RSS | - | 73 MB | same |
+| Compositor idle CPU | <= 2 ms/s | 0.06 ms/s | `idle.py 60 Hyprland wol-shell` |
+| Compositor idle wakeups | <= 2/s | 1.14/s | same |
+| Compositor RSS | - | 73 MB | same |
 | wol-shell idle CPU (own) | <= 1 ms/s | 0.25-0.28 ms/s | same |
 | wol-shell helpers (children) | - | ~1.0 ms/s (Linux nmcli/wpctl, 1/min) | same, `kids` column |
 | wol-shell idle wakeups | <= 2/s | 1.72-1.78/s | same |
@@ -34,6 +35,6 @@ Fixes behind these numbers (before -> after):
 
 Notes:
 - Latency = first frame whose region hash differs after the input stamp; includes compositor frame pacing (60 Hz headless).
-- Session start: the nested Hyprland socket is up at ~0.1 s, but exec-once fires on `Event start`, emitted on the first rendered monitor frame (`Renderer.cpp`). The harness creates its headless output from exec-once, so ~2 s goes to Hyprland's fallback output. On hardware a DRM monitor renders at once; real-boot number still to measure on FreeBSD.
+- Session start: the nested compositor socket is up at ~0.1 s, but exec-once fires on `Event start`, emitted on the first rendered monitor frame (`Renderer.cpp`). The harness creates its headless output from exec-once, so ~2 s goes to the compositor's fallback output. On hardware a DRM monitor renders at once; real-boot number still to measure on the installed image.
 - N/A on this host: hypridle (not installed), wold (needs root paths under /var/run). perf/ptrace unavailable; profiling used LD_PRELOAD timer shims and per-thread context switches.
-- Linux helper cost (nmcli, wpctl) differs from FreeBSD (ifconfig, mixer); re-measure on FreeBSD.
+- Helper cost (nmcli, wpctl) was measured on a CachyOS host, not on the installed image; re-measure on the image.

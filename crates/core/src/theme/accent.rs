@@ -6,16 +6,20 @@ use super::ThemeSpec;
 use shared::theme::{ACCENT_CONTRAST, Color, Variant};
 use std::collections::BTreeMap;
 
-/// (id, name, light hex, dark hex). First = brand default (the plain base themes).
+/// (id, name, light hex, dark hex). First = brand default (the plain base themes). The ids are
+/// saved in preferences and theme files, so they stay; the colours are WolOS's own: violet is the
+/// brand accent and blue, red, orange, yellow, green are the status colours of
+/// `design/tokens/colors.json` (test `accents_come_from_the_tokens`), pink is violet most of the way to
+/// rose, slate is the ink of the icon set lifted to a neutral.
 pub const ACCENTS: [(&str, &str, &str, &str); 8] = [
     ("violet", "Violet", "#7c5cff", "#8b6cff"),
-    ("blue", "Blue", "#007aff", "#0a84ff"),
-    ("pink", "Pink", "#e3307a", "#ff4f8b"),
-    ("red", "Red", "#e0352b", "#ff453a"),
-    ("orange", "Orange", "#f57c00", "#ff9f0a"),
-    ("yellow", "Yellow", "#f2b705", "#ffd60a"),
-    ("green", "Green", "#28a745", "#30d158"),
-    ("graphite", "Graphite", "#6e6e73", "#98989d"),
+    ("blue", "Lake", "#1d64b0", "#6aaef2"),
+    ("pink", "Orchid", "#b64495", "#d368b1"),
+    ("red", "Rose", "#cf3a68", "#f2678f"),
+    ("orange", "Tangerine", "#d9541e", "#ff8a55"),
+    ("yellow", "Marigold", "#e0a21f", "#ffc94a"),
+    ("green", "Jade", "#1c9a6e", "#5be3b0"),
+    ("graphite", "Slate", "#5b5873", "#a9a6c4"),
 ];
 
 pub const DEFAULT: &str = "violet";
@@ -47,16 +51,8 @@ pub fn auto_is_dark(hour: u8) -> bool {
 
 /// Seconds until the next light/dark switch.
 pub fn secs_to_next_switch(hour: u8, minute: u8, second: u8) -> u32 {
-    let now = hour as u32 * 3600 + minute as u32 * 60 + second as u32;
-    let next = [
-        DAY_STARTS as u32 * 3600,
-        NIGHT_STARTS as u32 * 3600,
-        (24 + DAY_STARTS as u32) * 3600,
-    ]
-    .into_iter()
-    .find(|t| *t > now)
-    .unwrap_or(0);
-    next - now
+    let at = |h: u8| u32::from(h) * 3600;
+    crate::clock::secs_until(hour, minute, second, &[at(DAY_STARTS), at(NIGHT_STARTS)])
 }
 
 /// No theme file or a `wol-auto-*` id: appearance follows the time of day.
@@ -103,13 +99,13 @@ pub fn color(variant: Variant, accent: &str) -> Option<&'static str> {
         .map(|a| if variant == Variant::Light { a.2 } else { a.3 })
 }
 
-/// White when it passes the accent contrast rule, else near-black.
+/// White when it passes the accent contrast rule, else the light theme's ink (tokens light.text).
 pub fn text_on(accent_hex: &str) -> &'static str {
     let a = Color::parse(accent_hex).unwrap_or(Color::WHITE);
     if Color::contrast(Color::WHITE, a) >= ACCENT_CONTRAST {
         "#ffffff"
     } else {
-        "#1d1d1f"
+        "#181521"
     }
 }
 
@@ -138,6 +134,7 @@ pub fn variants() -> Vec<ThemeSpec> {
                 tokens,
                 wallpaper: None,
                 icon_theme: None,
+                terminal: None,
                 dir: Default::default(),
             });
         }
@@ -190,8 +187,42 @@ mod tests {
                 assert_eq!(t.tokens["accent"], color(v, a).unwrap(), "{id}");
             }
         }
-        assert_eq!(text_on("#ffd60a"), "#1d1d1f");
-        assert_eq!(text_on("#007aff"), "#ffffff");
+        assert_eq!(text_on("#ffc94a"), "#181521");
+        assert_eq!(text_on("#1d64b0"), "#ffffff");
+    }
+
+    /// The accents are WolOS's own: the status colours are the design tokens, nothing else.
+    #[test]
+    fn accents_come_from_the_tokens() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../design/tokens/colors.json");
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let tok = |mode: &str, k: &str| json[mode][k].as_str().unwrap().to_ascii_lowercase();
+        for (id, token) in [
+            ("violet", "accent"),
+            ("blue", "blue"),
+            ("red", "red"),
+            ("orange", "orange"),
+            ("yellow", "yellow"),
+            ("green", "green"),
+        ] {
+            assert_eq!(
+                color(Variant::Light, id).unwrap(),
+                tok("light", token),
+                "{id} light"
+            );
+            assert_eq!(
+                color(Variant::Dark, id).unwrap(),
+                tok("dark", token),
+                "{id} dark"
+            );
+        }
+        // No two accents share a colour, so a choice is always visible.
+        let mut seen = std::collections::BTreeSet::new();
+        for (_, _, l, d) in ACCENTS {
+            assert!(seen.insert(l) && seen.insert(d), "{l} {d}");
+        }
     }
 
     #[test]

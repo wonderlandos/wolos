@@ -41,7 +41,7 @@ pub struct Monitor {
     pub height: u32,
     pub refresh: f64,
     pub scale: f64,
-    /// "WxH@R" strings as Hyprland lists them.
+    /// "WxH@R" strings as the compositor lists them.
     pub modes: Vec<String>,
 }
 
@@ -198,7 +198,7 @@ pub fn parse_wpa_status(text: &str) -> Option<String> {
         .flatten()
 }
 
-// ---- Hyprland ----
+// ---- The compositor ----
 
 /// `hyprctl -j monitors all`.
 pub fn parse_hypr_monitors(json: &str) -> Vec<Monitor> {
@@ -238,7 +238,7 @@ pub fn parse_mode(mode: &str) -> Option<(u32, u32, f64)> {
     Some((w.parse().ok()?, h.parse().ok()?, r.parse().ok()?))
 }
 
-/// Hyprland `monitor=` value: "eDP-1,1920x1080@60.00,auto,1.25".
+/// Compositor `monitor=` value: "eDP-1,1920x1080@60.00,auto,1.25".
 pub fn monitor_rule(name: &str, w: u32, h: u32, refresh: f64, scale: f64) -> Option<String> {
     let ok = !name.is_empty()
         && name
@@ -424,6 +424,10 @@ impl Controls {
             .and_then(|s| parse_wpctl_volume(&s))
     }
 
+    /// `wpctl set-volume N%`: N counts from the hardware maximum, capped at 100 (no boost here).
+    /// This is the path of the volume keys, `wol volume` and a machine with no sound service. The
+    /// sliders (Settings, Control Center) go through `wol_audio` instead, which knows each
+    /// device's 0 dB (`wol_core::audio::Action::OutputVolume`), so they never use this.
     pub fn set_volume(&self, percent: u8) -> Result<(), ControlError> {
         let p = percent.min(100);
         self.ok(self.run(&[
@@ -513,7 +517,7 @@ impl Controls {
         self.ok(self.run(&["bluetoothctl", "power", v]))
     }
 
-    // ---- Displays (Hyprland) ----
+    // ---- Displays (the compositor) ----
 
     pub fn monitors(&self) -> Vec<Monitor> {
         self.run(&["hyprctl", "-j", "monitors", "all"])
@@ -521,8 +525,16 @@ impl Controls {
             .unwrap_or_default()
     }
 
+    /// One `monitor =` rule, live. Then X11 apps follow a new scale: `wol-x11-env` re-merges
+    /// Xft.dpi and Xcursor.size and re-exports GDK_SCALE and Steam's UI scale (audit X1-2). Its
+    /// result is ignored: without an X server or a user bus it skips, and the next `exec` on
+    /// hyprctl reload catches up.
     pub fn set_monitor(&self, rule: &str) -> Result<(), ControlError> {
-        self.ok(self.run(&["hyprctl", "keyword", "monitor", rule]))
+        let r = self.ok(self.run(&["hyprctl", "keyword", "monitor", rule]));
+        if r.is_ok() {
+            let _ = self.run(&[crate::hyprprefs::X11_ENV]);
+        }
+        r
     }
 
     /// hyprsunset IPC (`exec-once = hyprsunset`).
@@ -552,12 +564,6 @@ impl Controls {
     ) -> Result<(), ControlError> {
         let a = if admin { "yes" } else { "no" };
         self.admin(AdminAction::UserAdd, &[name, full_name, a, password], pw)
-    }
-
-    /// New account password (`pw`: the caller's current one, asked every time). The disk's
-    /// password slot follows when this account opens the disk (`wol encrypt password`).
-    pub fn change_password(&self, name: &str, new: &str, pw: &str) -> Result<(), ControlError> {
-        self.admin(AdminAction::UserPassword, &[name, new], pw)
     }
 
     /// App Store: catalog id or package name (slow; worker thread).
@@ -653,20 +659,10 @@ impl Controls {
 
 /// Run argv with `input` on stdin; stdout when it exits 0 within `timeout`.
 pub fn run_with_input(argv: &[&str], input: &str, timeout: std::time::Duration) -> Option<String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
     let (file, args) = argv.split_first()?;
-    let mut child = Command::new(file)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    if let Some(mut i) = child.stdin.take() {
-        let _ = i.write_all(input.as_bytes());
-    }
-    crate::system::wait_output(child, timeout)
+    let mut cmd = std::process::Command::new(file);
+    cmd.args(args);
+    crate::system::run_input(cmd, input, timeout)
 }
 
 /// One wol-admind round trip. None when the daemon is not running. Long actions (pkg) may take minutes.
@@ -676,8 +672,11 @@ pub fn admin_request(
     password: &str,
 ) -> Option<AdminReply> {
     use std::io::{Read, Write};
-    let mut s = std::os::unix::net::UnixStream::connect(sock).ok()?;
-    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(1800)));
+    // wol-admind greets first (ADR 0033, audit S4-7): answer its hello before the request.
+    let mut s = shared::jobs::connect(sock).ok()?;
+    // As long as wol-admind may take (S4-4: every planned step at its own bound, plus margin).
+    let wait = std::time::Duration::from_secs(crate::admin::reply_secs(req).into());
+    let _ = s.set_read_timeout(Some(wait));
     s.write_all(&shared::admin::encode(req, password.as_bytes()))
         .ok()?;
     let _ = s.shutdown(std::net::Shutdown::Write);
@@ -1003,5 +1002,50 @@ mod tests {
             admin_request(std::path::Path::new("/nonexistent/sock"), &req, ""),
             None
         );
+    }
+
+    /// Audit S4-7 / ADR 0033: wol-admind greets first; the client answers the hello and only
+    /// then sends the request, which reaches the daemon whole.
+    #[test]
+    fn admin_request_answers_wol_admind_s_hello() {
+        use std::io::{Read, Write};
+        let dir = std::env::temp_dir().join(format!("wol-ctl-admin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("admin.sock");
+        let l = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let req = AdminRequest {
+            action: AdminAction::Revoke,
+            args: vec![],
+        };
+        let want = shared::admin::encode(&req, b"");
+        let daemon = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            shared::jobs::greet(&c).unwrap();
+            let mut got = Vec::new();
+            c.read_to_end(&mut got).unwrap();
+            c.write_all(b"ok\n").unwrap();
+            got
+        });
+        assert_eq!(admin_request(&path, &req, ""), Some(AdminReply::Ok));
+        assert_eq!(daemon.join().unwrap(), want);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A display change reaches X11 apps too (Settings > Displays, Control Center).
+    #[test]
+    fn a_monitor_change_refreshes_the_x11_scale() {
+        let (h, c, _) = controls();
+        let rule = "DP-1,2560x1440@60,0x0,2";
+        h.command(&format!("hyprctl keyword monitor {rule}"), "ok");
+        c.set_monitor(rule).unwrap();
+        let ran = h.ran();
+        let at = |l: &str| ran.iter().position(|r| r == l);
+        let kw = at(&format!("hyprctl keyword monitor {rule}")).expect("keyword sent");
+        assert!(at("wol-x11-env").is_some_and(|x| x > kw), "{ran:?}");
+        // A refused rule changes nothing, so the X11 step does not run.
+        let (h, c, _) = controls();
+        assert!(c.set_monitor("bad").is_err());
+        assert!(!h.ran().iter().any(|r| r == "wol-x11-env"), "{:?}", h.ran());
     }
 }

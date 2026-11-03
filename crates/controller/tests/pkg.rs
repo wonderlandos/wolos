@@ -202,6 +202,13 @@ fn fold_copies_layers_and_package_records_and_keeps_the_live_layers() {
         std::fs::read_to_string(root.join("etc/wolos/folded-layers")).unwrap(),
         "wolos-layer-0001\n"
     );
+    // Audit S4-10: written through a unique temporary that is gone afterwards.
+    let tmps: Vec<_> = std::fs::read_dir(root.join("etc/wolos"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".wol-tmp"))
+        .collect();
+    assert!(tmps.is_empty(), "{tmps:?}");
     // Folded once: a second fold does not copy the layer again.
     std::fs::write(root.join("usr/bin/vim"), "upgraded in the slot").unwrap();
     fold(&root, &layers, &db);

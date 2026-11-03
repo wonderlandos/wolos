@@ -595,13 +595,44 @@ fn grant(lua: &Lua, services: &Rc<dyn Services>, permissions: &[String]) -> mlua
     Ok(())
 }
 
+/// `wol.notify` calls one script may make per [`NOTIFY_WINDOW`] (audit C8-4: a loop in `render`
+/// otherwise posted thousands of notifications, and the shell spawned a thread for each).
+pub const NOTIFY_PER_WINDOW: usize = 10;
+pub const NOTIFY_WINDOW: Duration = Duration::from_secs(60);
+/// Longest notification title and body, in characters; longer text is cut.
+pub const NOTIFY_TITLE: usize = 120;
+pub const NOTIFY_BODY: usize = 1000;
+/// What `wol.notify` answers past [`NOTIFY_PER_WINDOW`].
+pub const TOO_MANY_NOTIFICATIONS: &str = "Too many notifications: a script may post 10 a minute.";
+
+fn cut(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
+}
+
 pub(crate) fn grant_notify(lua: &Lua, services: &Rc<dyn Services>) -> mlua::Result<()> {
     let wol = api(lua)?;
     let s = services.clone();
+    let sent: std::cell::RefCell<std::collections::VecDeque<Instant>> = Default::default();
     wol.raw_set(
         "notify",
         lua.create_function(move |_, (title, body): (String, Option<String>)| {
-            Ok(match s.notify(&title, body.as_deref().unwrap_or("")) {
+            let now = Instant::now();
+            let mut sent = sent.borrow_mut();
+            while sent
+                .front()
+                .is_some_and(|t| now.duration_since(*t) >= NOTIFY_WINDOW)
+            {
+                sent.pop_front();
+            }
+            if sent.len() >= NOTIFY_PER_WINDOW {
+                return Ok((false, Some(TOO_MANY_NOTIFICATIONS.to_owned())));
+            }
+            sent.push_back(now);
+            let (title, body) = (
+                cut(&title, NOTIFY_TITLE),
+                cut(body.as_deref().unwrap_or(""), NOTIFY_BODY),
+            );
+            Ok(match s.notify(&title, &body) {
                 Ok(()) => (true, None),
                 Err(m) => (false, Some(m)),
             })

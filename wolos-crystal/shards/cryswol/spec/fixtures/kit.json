@@ -1,0 +1,19 @@
+{
+  "app": "org.example.kit",
+  "answers": {},
+  "events": [],
+  "kit": [
+    {
+      "after_show": 2,
+      "send": [
+        {"event": "clicked", "window": "$window", "widget": {"type": "button", "label": "OK"}},
+        {"event": "edited", "window": "$window", "widget": {"type": "text-field", "placeholder": "Name"}, "text": "Ada"},
+        {"event": "toggled", "window": "$window", "widget": {"type": "toggle", "label": "Wi-Fi"}, "on": false},
+        {"event": "slid", "window": "$window", "widget": {"type": "slider"}, "value": 75.0},
+        {"event": "clicked", "window": "$window", "widget": {"type": "button", "label": "Raise"}},
+        {"event": "clicked", "window": "$window", "widget": {"type": "button", "label": "OK"}},
+        {"event": "closed", "window": "$window"}
+      ]
+    }
+  ]
+}

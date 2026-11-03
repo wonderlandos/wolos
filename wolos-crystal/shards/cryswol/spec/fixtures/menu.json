@@ -1,0 +1,19 @@
+{
+  "app": "org.example.menu",
+  "answers": {},
+  "events": [],
+  "kit": [
+    {
+      "after_show": 2,
+      "send": [
+        {"event": "chose", "window": "$window", "source": {"menu": "File"}, "key": "open"},
+        {"event": "chose", "window": "$window", "source": {"menu": "File"}, "key": "save"},
+        {"event": "chose", "window": "$window", "source": {"menu": "File"}, "key": "nope"},
+        {"event": "chose", "window": "$window", "source": {"menu": "View"}, "key": "grid"},
+        {"event": "chose", "window": "$window", "source": "toolbar", "key": "back"},
+        {"event": "chose", "window": "$window", "source": "toolbar", "key": "share"},
+        {"event": "closed", "window": "$window"}
+      ]
+    }
+  ]
+}

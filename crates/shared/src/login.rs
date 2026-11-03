@@ -45,7 +45,8 @@ pub fn command(data: &[u8]) -> Option<(&str, &[u8])> {
 }
 
 /// One boot timeline line (ADR 0012), from wol-login and the first surfaces alike: uptime in ms
-/// (CLOCK_MONOTONIC counts from boot on FreeBSD). `grep wolos-boot /var/log/messages`.
+/// (CLOCK_MONOTONIC counts from boot). Both send it to the journal via `logger`:
+/// `journalctl -b | grep wolos-boot`.
 pub fn boot_mark(uptime_ms: u64, stage: &str) -> String {
     format!("wolos-boot: {uptime_ms} ms {stage}")
 }
@@ -202,9 +203,77 @@ pub fn decode_networks(reply: &str) -> Option<Vec<SeenNetwork>> {
     })
 }
 
+/// The one rule for who can sign in, used by the login window (what it lists) and wol-login (what
+/// it accepts): uid >= 1000 and not nobody, with a shell listed in `/etc/shells`. When no account
+/// passes that (`/etc/shells` missing, or a shell not listed in it after a restore), every such
+/// uid whose shell is an absolute path other than `nologin`/`false`. Sorted by name.
+pub fn login_names(passwd: &str, shells: &str) -> Vec<String> {
+    const FIRST_HUMAN: u32 = 1000;
+    const NOBODY: u32 = 65534;
+    let valid: Vec<&str> = shells
+        .lines()
+        .map(str::trim)
+        .filter(|s| s.starts_with('/'))
+        .collect();
+    let humans: Vec<(&str, &str)> = passwd
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split(':').collect();
+            if f.len() < 7 || f[0].is_empty() {
+                return None;
+            }
+            let uid: u32 = f[2].parse().ok()?;
+            // The shell is the last field (7 in passwd, 10 in master.passwd).
+            let shell = f.last().copied().unwrap_or_default();
+            (uid >= FIRST_HUMAN && uid != NOBODY).then_some((f[0], shell))
+        })
+        .collect();
+    let mut v: Vec<String> = humans
+        .iter()
+        .filter(|(_, sh)| valid.contains(sh))
+        .map(|(n, _)| n.to_string())
+        .collect();
+    if v.is_empty() {
+        v = humans
+            .iter()
+            .filter(|(_, sh)| {
+                let base = sh.rsplit('/').next().unwrap_or_default();
+                sh.starts_with('/') && base != "nologin" && base != "false"
+            })
+            .map(|(n, _)| n.to_string())
+            .collect();
+    }
+    v.sort();
+    v.dedup();
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit5 S9-1: one rule for the login window and wol-login, with the no-`/etc/shells`
+    /// fallback that still keeps nologin/false and system accounts out.
+    #[test]
+    fn login_names_fall_back_without_etc_shells() {
+        let pw = "root:*:0:0::/root:/bin/sh\n\
+                  bo:*:1002:1002:Bo:/home/bo:/usr/bin/fish\n\
+                  ana:*:1001:1001::/home/ana:/bin/sh\n\
+                  svc:*:1003:1003::/var/svc:/usr/sbin/nologin\n\
+                  off:*:1004:1004::/home/off:/bin/false\n\
+                  nobody:*:65534:65534::/:/bin/sh\n";
+        assert_eq!(login_names(pw, ""), ["ana", "bo"]);
+        assert_eq!(login_names(pw, "/bin/sh\n"), ["ana"], "listed shells win");
+        assert_eq!(login_names(pw, "/usr/bin/fish\n/bin/sh\n"), ["ana", "bo"]);
+        assert!(login_names("root:*:0:0::/root:/bin/sh\n", "").is_empty());
+        // master.passwd lines (class, change, expire before the name): the shell is the last field.
+        let master = "klee:*:1001:1001::0:0:K:/home/klee:/bin/sh\n\
+                      svc:*:1002:1:::::/usr/sbin/nologin\n";
+        assert_eq!(login_names(master, "/bin/sh\n"), ["klee"]);
+        assert_eq!(login_names(master, ""), ["klee"]);
+    }
 
     #[test]
     fn boot_marks_share_one_format() {

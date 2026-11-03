@@ -1,0 +1,38 @@
+{
+  "id": "hue-night-city-muted-dark",
+  "name": "night city",
+  "variant": "dark",
+  "tokens": {
+    "surface": "#0b0d15",
+    "sidebar": "rgba(10,11,18,0.92)",
+    "card": "#171b22",
+    "line": "rgba(177,210,211,0.1)",
+    "text": "#b1d2d3",
+    "dim": "#778d91",
+    "accent": "#97a5c2",
+    "accentText": "#000000",
+    "glass": "rgba(11,13,21,0.84)",
+    "control": "#1f252c",
+    "success": "#4a858c",
+    "warning": "#699ca6",
+    "danger": "#a27388"
+  },
+  "terminal": [
+    "#0b0d15",
+    "#a27388",
+    "#4a858c",
+    "#699ca6",
+    "#97a5c2",
+    "#967699",
+    "#69a8ad",
+    "#b1d2d3",
+    "#64666c",
+    "#cb95ad",
+    "#68abb3",
+    "#89c3ce",
+    "#bbcbec",
+    "#be99c1",
+    "#88cfd5",
+    "#9be7ea"
+  ]
+}

@@ -4,22 +4,15 @@
 //! GPT with an ESP and one btrfs partition, subvolumes `@wolos-a` `@home` `@var` (the first update
 //! makes `@wolos-b`), copies the live root into slot a, and boots it with systemd-boot and boot
 //! counting. Every tool is a fake that logs its arguments: none may ever name another disk.
+#[path = "support/repo.rs"]
+mod repo;
+use repo::{read, repo};
 use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::{Command, Output},
 };
-fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p)
-}
-
-fn read(p: &str) -> String {
-    fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
-
 fn lib(name: &str) -> PathBuf {
     repo(&format!("files/usr/lib/wolos/{name}"))
 }
@@ -188,7 +181,7 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
     assert_eq!(code, Some(0), "{out}");
     assert_eq!(
         out,
-        "size 1000204886016\nos Windows\nos Linux\nbitlocker no\nboot firmware\n"
+        "size 1000204886016\nos Windows\nos Linux\nbitlocker no\nboot firmware\nboot-off firmware\n"
     );
     // BitLocker named (audit3 R2B-9): its recovery key is asked for after a key change.
     fs::write(
@@ -198,7 +191,7 @@ fn check_names_other_systems_and_refuses_unsafe_disks() {
     .unwrap();
     assert_eq!(
         check(&d, "/dev/sda").1,
-        "size 1000204886016\nos Windows\nbitlocker yes\nboot firmware\n"
+        "size 1000204886016\nos Windows\nbitlocker yes\nboot firmware\nboot-off firmware\n"
     );
     fs::write(
         d.join("parts"),
@@ -528,29 +521,7 @@ fn a_stop_names_the_stage_and_the_real_error() {
         "unsquashfs",
         "echo 'FATAL ERROR: write failed: No space left on device' >&2; exit 1",
     );
-    let t = d.join("target");
-    let _ = fs::remove_dir_all(&t);
-    fs::create_dir_all(&t).unwrap();
-    let _ = fs::remove_file(d.join("log"));
-    let o = Command::new("sh")
-        .arg(lib("install-run"))
-        .arg("/dev/nvme0n1")
-        .env("WOLOS_INSTALL_PATH", path(&d))
-        .env("WOLOS_INSTALL_ROOT", &t)
-        .env("WOLOS_SOURCE_SFS", d.join("airootfs.sfs"))
-        .env("WOLOS_TEST_PARTS", d.join("parts"))
-        .env("WOLOS_TEST_MOUNTS", d.join("mounts"))
-        .env("WOLOS_EFIVARS", d.join("efivars"))
-        .env("WOLOS_NO_INHIBIT", "1")
-        .env("WOLOS_KEYDIR", d.join("keys"))
-        .env("WOLOS_SB_RUN", d.join("sbrun"))
-        .env("WOLOS_TPM_DIR", d.join("no-tpm"))
-        .env("WOLOS_BOOT_NOTE", d.join("note"))
-        .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
-        .env("WOLOS_INSTALL_LOG", d.join("install.log"))
-        .env("WOLOS_RESULT_DIR", d.join("results"))
-        .output()
-        .unwrap();
+    let o = rerun(&d, "/dev/nvme0n1");
     assert_eq!(o.status.code(), Some(1));
     let out = String::from_utf8_lossy(&o.stdout).into_owned();
     let last = out.lines().last().unwrap();
@@ -569,6 +540,73 @@ fn a_stop_names_the_stage_and_the_real_error() {
         !log(&d).contains("mkinitcpio"),
         "nothing runs after the stop"
     );
+}
+
+/// install-run again on the fakes [`install_with`] left (some replaced since), on an empty target.
+fn rerun(d: &Path, disk: &str) -> Output {
+    let t = d.join("target");
+    let _ = fs::remove_dir_all(&t);
+    fs::create_dir_all(&t).unwrap();
+    let _ = fs::remove_file(d.join("log"));
+    Command::new("sh")
+        .arg(lib("install-run"))
+        .arg(disk)
+        .env("WOLOS_INSTALL_PATH", path(d))
+        .env("WOLOS_INSTALL_ROOT", &t)
+        .env("WOLOS_SOURCE_SFS", d.join("airootfs.sfs"))
+        .env("WOLOS_TEST_PARTS", d.join("parts"))
+        .env("WOLOS_TEST_MOUNTS", d.join("mounts"))
+        .env("WOLOS_EFIVARS", d.join("efivars"))
+        .env("WOLOS_NO_INHIBIT", "1")
+        .env("WOLOS_KEYDIR", d.join("keys"))
+        .env("WOLOS_SB_RUN", d.join("sbrun"))
+        .env("WOLOS_TPM_DIR", d.join("no-tpm"))
+        .env("WOLOS_BOOT_NOTE", d.join("note"))
+        .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
+        .env("WOLOS_INSTALL_LOG", d.join("install.log"))
+        .env("WOLOS_RESULT_DIR", d.join("results"))
+        .output()
+        .unwrap()
+}
+
+/// audit5 C9-4: a partition blkid has no UUID for yet (even when probed) stops the install; it
+/// never writes `root=UUID=` with nothing after it into the boot words and fstab.
+#[test]
+fn a_partition_without_a_uuid_stops_the_install() {
+    let d = scratch("no-uuid");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    fake(
+        &d,
+        "blkid",
+        "case \"$*\" in *nvme0n1p1*) echo AAAA-BBBB ;; *nvme0n1p2*) ;; *) echo 1111-2222 ;; esac",
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.lines().last().unwrap().starts_with(
+            "wolos-install: fail disk could not read the new partitions (/dev/nvme0n1p2)"
+        ),
+        "{out}"
+    );
+    let l = log(&d);
+    assert!(
+        l.contains("blkid -p -s UUID -o value /dev/nvme0n1p2"),
+        "asked again with a probe: {l}"
+    );
+    assert!(!l.contains("unsquashfs"), "nothing copied: {l}");
+    assert!(!d.join("target/etc/kernel/cmdline").exists());
+    // The probe answers: the install goes on with that UUID.
+    fake(
+        &d,
+        "blkid",
+        "case \"$*\" in *nvme0n1p1*) echo AAAA-BBBB ;; *-p*nvme0n1p2*) echo 3333-4444 ;; *nvme0n1p2*) ;; *) echo 1111-2222 ;; esac",
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    let cmdline = fs::read_to_string(d.join("target/etc/kernel/cmdline")).unwrap();
+    assert!(cmdline.starts_with("root=UUID=3333-4444 "), "{cmdline}");
 }
 
 /// A plan with the fake `wol` answering as the real one does.
@@ -714,12 +752,22 @@ fn a_plan_the_check_refuses_writes_nothing() {
         "esac",
         "\"install check\"*) echo refuse ReservedName; exit 2 ;;\nesac",
     );
-    let (o, _) = install_plan(&d, &wol);
+    let (o, _) = install_plan_on(&d, &wol, |d| {
+        fs::write(d.join("plan/disk-password"), "disk pw\n").unwrap();
+    });
     assert_eq!(o.status.code(), Some(2));
     let out = String::from_utf8_lossy(&o.stdout).into_owned();
     assert!(
         out.contains("wolos-install: fail prepare the disk is not what the plan was made for (refuse ReservedName)"),
         "{out}"
+    );
+    // audit5 C9-6: the plan's passwords go with the run, however it ends.
+    for f in ["account-password", "disk-password"] {
+        assert!(!d.join("plan").join(f).exists(), "{f} left after a refusal");
+    }
+    assert!(
+        d.join("plan/plan.json").exists(),
+        "the plan itself stays the caller's"
     );
     let l = log(&d);
     assert!(
@@ -736,6 +784,25 @@ fn a_plan_the_check_refuses_writes_nothing() {
             .contains("refuse ReservedName"),
         "the log is in the results folder"
     );
+}
+
+/// audit5 C9-6, S8-8: an install that stops after the erase leaves no password next to the plan.
+#[test]
+fn a_plan_that_stops_halfway_leaves_no_password_behind() {
+    let d = scratch("plan-stops");
+    let (o, _) = install_plan_on(&d, WOL_ALONGSIDE, |d| {
+        fs::write(d.join("plan/disk-password"), "disk pw\n").unwrap();
+        fake(d, "unsquashfs", "echo 'write failed' >&2; exit 1");
+    });
+    assert_eq!(o.status.code(), Some(1));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        out.contains("wolos-install: fail files could not copy the system"),
+        "{out}"
+    );
+    for f in ["account-password", "disk-password"] {
+        assert!(!d.join("plan").join(f).exists(), "{f} left after a stop");
+    }
 }
 
 #[test]
@@ -906,6 +973,114 @@ fn a_kernel_download_cut_short_leaves_no_lock_in_the_slot() {
             .any(|x| x.starts_with("timeout ") && x.contains("pacman -S --noconfirm")),
         "the transaction is never killed: {l}"
     );
+}
+
+/// W2-J (msgs 1094/1216): the plan's Secure Boot choice reaches boot-setup, the ticked modules and
+/// the media formats go to modules-install: installed online, queued for the first start offline
+/// (the installer's "added at first start with a network").
+#[test]
+fn a_plan_carries_secure_boot_modules_and_media_formats() {
+    let wol = WOL_ALONGSIDE.replace(
+        "WOLOS_ENCRYPT=no\\n",
+        "WOLOS_ENCRYPT=no\\nWOLOS_SECURE=no\\nmodules=dev\\nextra_packages=gst-libav lame\\n",
+    );
+    let registry = |d: &Path| {
+        let r = d.join("target/usr/share/wolos/modules");
+        fs::create_dir_all(&r).unwrap();
+        fs::write(r.join("dev.json"), "{}").unwrap();
+    };
+    // Offline: the module and the media formats are queued for the first start, no pacman at all.
+    let d = scratch("plan-modules-off");
+    let (o, t) = install_plan_on(&d, &wol, registry);
+    let l = log(&d);
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        o.status.success(),
+        "{out}{}{l}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(
+        l.contains("wol boot detect no"),
+        "WOLOS_SECURE=no reaches boot-setup: {l}"
+    );
+    assert_eq!(
+        fs::read_to_string(t.join("var/lib/wolos/modules-pending")).unwrap(),
+        "dev\n"
+    );
+    assert_eq!(
+        fs::read_to_string(t.join("var/lib/wolos/packages-pending")).unwrap(),
+        "gst-libav\nlame\n"
+    );
+    assert!(out.contains("wolos-install: packages 80"), "{out}");
+    assert!(!l.contains("pacman -S"), "offline: nothing downloaded: {l}");
+    // Online: the module and the media formats are installed into the target.
+    let d = scratch("plan-modules-on");
+    let (o, t) = install_plan_on(&d, &wol, |d| {
+        registry(d);
+        fs::write(d.join("route"), "default via 10.0.2.2 dev eth0\n").unwrap();
+    });
+    let l = log(&d);
+    assert!(
+        o.status.success(),
+        "{}{l}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let tt = t.display().to_string();
+    assert!(
+        l.contains(&format!(
+            "arch-chroot {tt} pacman -S --noconfirm --needed wolos-module-dev"
+        )),
+        "{l}"
+    );
+    assert!(
+        l.contains(&format!(
+            "arch-chroot {tt} pacman -Sw --noconfirm --needed gst-libav lame"
+        )) && l.contains(&format!(
+            "arch-chroot {tt} pacman -S --noconfirm --needed gst-libav lame"
+        )),
+        "{l}"
+    );
+    for q in ["modules-pending", "packages-pending"] {
+        assert!(
+            !t.join("var/lib/wolos").join(q).exists(),
+            "nothing left queued: {q}"
+        );
+    }
+    // Media formats alone, offline: queued too, at their own step.
+    let d = scratch("plan-formats-off");
+    let (o, t) = install_plan_on(
+        &d,
+        &WOL_ALONGSIDE.replace(
+            "WOLOS_ENCRYPT=no\\n",
+            "WOLOS_ENCRYPT=no\\nextra_packages=gst-libav\\n",
+        ),
+        |_| {},
+    );
+    assert!(o.status.success(), "{}", log(&d));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(out.contains("wolos-install: packages 85"), "{out}");
+    assert_eq!(
+        fs::read_to_string(t.join("var/lib/wolos/packages-pending")).unwrap(),
+        "gst-libav\n"
+    );
+    assert!(!t.join("var/lib/wolos/modules-pending").exists());
+    // Without the plan's keys: Secure Boot wanted, no modules, no media formats (today's install).
+    let d = scratch("plan-modules-none");
+    let (o, _) = install_plan(&d, WOL_ALONGSIDE);
+    let l = log(&d);
+    assert!(o.status.success(), "{l}");
+    assert!(l.contains("wol boot detect yes"), "{l}");
+    assert!(!String::from_utf8_lossy(&o.stdout).contains("wolos-install: packages"));
+    let run = read("files/usr/lib/wolos/install-run");
+    assert!(run.contains("WOLOS_SECURE=$WOLOS_SECURE sh \"$here/install-boot\""));
+    let check = read("files/usr/lib/wolos/install-check");
+    let (b, off) = (
+        check.find("echo \"boot $(wol boot detect)\"").unwrap(),
+        check
+            .find("echo \"boot-off $(wol boot detect no)\"")
+            .expect("install-check boot-off"),
+    );
+    assert!(b < off);
 }
 
 #[test]
@@ -1479,4 +1654,88 @@ fn the_autoinstall_name_follows_the_settings_rule() {
         read("files/usr/lib/wolos/install-run")
             .contains("wol install hostname \"$WOLOS_HOSTNAME\"")
     );
+}
+
+/// The first start (or the network-up hook) drains both queues: a module id and the media formats.
+/// A download that fails keeps them queued; one that works empties the queues. A queued line that
+/// is not a package name (an option, a path) is dropped, never handed to pacman.
+#[test]
+fn the_first_start_installs_the_queued_media_formats() {
+    let d = scratch("drain-formats");
+    let r = d.join("root");
+    let w = r.join("var/lib/wolos");
+    fs::create_dir_all(r.join("usr/share/wolos/modules")).unwrap();
+    fs::write(r.join("usr/share/wolos/modules/dev.json"), "{}").unwrap();
+    fs::create_dir_all(&w).unwrap();
+    fs::write(w.join("modules-pending"), "dev\n").unwrap();
+    fs::write(w.join("packages-pending"), "gst-libav\n--root=/x\nlame\n").unwrap();
+    // pacman inside the root: the download fails while `offline` exists.
+    fake(
+        &d,
+        "arch-chroot",
+        &format!(
+            "case \"$*\" in *-Sw*) [ ! -e {} ] || exit 1 ;; esac",
+            d.join("offline").display()
+        ),
+    );
+    fake(&d, "logger", "");
+    let run = || {
+        Command::new("sh")
+            .arg(lib("modules-install"))
+            .arg("--root")
+            .arg(&r)
+            .arg("--drain")
+            .env("PATH", path(&d))
+            .output()
+            .unwrap()
+    };
+    fs::write(d.join("offline"), "").unwrap();
+    let o = run();
+    assert_eq!(o.status.code(), Some(1), "something stays queued");
+    assert_eq!(
+        fs::read_to_string(w.join("modules-pending")).unwrap(),
+        "dev\n"
+    );
+    assert_eq!(
+        fs::read_to_string(w.join("packages-pending")).unwrap(),
+        "gst-libav\nlame\n",
+        "kept, the bad line dropped"
+    );
+    assert!(
+        !log(&d)
+            .lines()
+            .any(|x| x.starts_with("arch-chroot") && x.contains("--root=/x")),
+        "{}",
+        log(&d)
+    );
+    fs::remove_file(d.join("offline")).unwrap();
+    let _ = fs::remove_file(d.join("log"));
+    let o = run();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let l = log(&d);
+    let rr = r.display().to_string();
+    assert!(
+        l.contains(&format!(
+            "arch-chroot {rr} pacman -S --noconfirm --needed wolos-module-dev"
+        )),
+        "{l}"
+    );
+    assert!(
+        l.contains(&format!(
+            "arch-chroot {rr} pacman -S --noconfirm --needed gst-libav lame"
+        )),
+        "{l}"
+    );
+    assert!(!w.join("modules-pending").exists() && !w.join("packages-pending").exists());
+    // A name that is not a package is refused before anything runs.
+    let o = Command::new("sh")
+        .arg(lib("modules-install"))
+        .arg("--root")
+        .arg(&r)
+        .arg("--package")
+        .arg("-Syu")
+        .env("PATH", path(&d))
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(2));
 }

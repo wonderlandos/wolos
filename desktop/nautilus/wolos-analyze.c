@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Files' right-click action: "Analyze with ClamAV" on files on this computer. All it does is
+// Files' right-click action: "Check for Malware" on files on this computer. All it does is
 // start wol-analyze with their paths, which asks first if the signatures are off.
 #include <nautilus-extension.h>
 
 #define MENU_ID "WolosAnalyze::analyze"
-#define MENU_LABEL "Analyze with ClamAV"
-#define MENU_TIP "Check the selected files with ClamAV"
+#define MENU_LABEL "Check for Malware"
+#define MENU_TIP "Check the selected files with the full signature set"
 #define PATHS_KEY "wolos-analyze-paths"
 
 typedef struct {

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! Guard for STANDARDS 7.1 "Identity" (R2C-22): nothing reads who a process is through
 //! `/proc/<pid>` by number. A peer's `/proc/<pid>` is opened as a directory once, at accept, and its
 //! executable is read through that descriptor (`/proc/self/fd/<n>/exe`: `api::peer::PeerIdentity`,

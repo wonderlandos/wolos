@@ -1,6 +1,6 @@
 # aurlaws (ADR 0022)
 
-`crates/aurlaws` reads an AUR package and answers one question: does it break a law? It never says a package is good. The sandbox stays the main defence.
+The law checker for community packages: `crates/aurlaws` reads a package from the community package collection and answers one question: does it break a law? It never says a package is good. The sandbox stays the main defence.
 
 ## What runs
 
@@ -12,7 +12,7 @@
 
 ## Laws and states
 
-Each law has a name people can read and a severity. `wopkg audit <pkg>` and the App Store's AUR tab show the same names.
+Each law has a name people can read and a severity. `wopkg audit <pkg>` and the App Store's community-collection tab show the same names.
 
 | State | Meaning |
 |---|---|
@@ -57,5 +57,5 @@ Missed by the frozen rules: `ftp` and `scp` as the download, a tar source under 
 - `systemctl enable` of a unit the package installs under its own name is not a finding, and neither is Python running a version file named in `open()`. That file's contents are not read.
 - Upstream code is read leniently: only what runs in the build counts. Idle directories are not read.
 - Reaching the network is not a mismatch when the package's own files name a URL that a process fetches, so a helper with its address in plain sight passes the trace check.
-- AUR `-bin` packages have upstream sums compared only when `.src` or `--published` gives them.
+- Community-collection `-bin` packages have upstream sums compared only when `.src` or `--published` gives them.
 - Scriptlets are read, not traced.

@@ -30,7 +30,7 @@ pub enum AdminAction {
     PkgInstall,
     /// App Store: remove one catalog id or package name with its unused dependencies.
     PkgRemove,
-    /// App Store: open the AUR tab. Changes nothing; the answer is the password check itself.
+    /// App Store: open the Community tab. Changes nothing; the answer is the password check itself.
     AurOpen,
     /// Low Power Mode: `low` or `auto` (powerd flags).
     PowerMode,
@@ -83,6 +83,15 @@ pub enum AdminAction {
     /// Finish Secure Boot setup: queue this computer's key for the firmware's key screen
     /// (`wol boot enroll`, ADR 0025). No arguments; idempotent (an enrolled key is left alone).
     BootEnroll,
+    /// `<staged path> <sha256>`: install a package built on this computer (community package, recipe) from
+    /// wold's own root-only copy, `/var/cache/wolos/install/<32 hex>/<file>.pkg.tar.zst` (ADR
+    /// 0034, audit C7-1). `sha256` is the digest the sheet showed (64 lowercase hex); wol-admind
+    /// installs only a copy that still has it. Unreviewed code as root: always a fresh password.
+    PkgInstallFile,
+    /// Undo the last system update: boot the restore slot next (`wol update rollback`).
+    SystemRollback,
+    /// System update channel: `stable`, `beta` or `nightly` (`/etc/wolos/channel`).
+    SystemChannel,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -129,6 +138,9 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::FlatpakRemove, "flatpak-remove"),
     (AdminAction::AutoUpdate, "auto-update"),
     (AdminAction::BootEnroll, "boot-enroll"),
+    (AdminAction::PkgInstallFile, "pkg-install-file"),
+    (AdminAction::SystemRollback, "system-rollback"),
+    (AdminAction::SystemChannel, "system-channel"),
 ];
 
 impl AdminAction {
@@ -283,6 +295,9 @@ mod tests {
             "session-power",
             "auto-update",
             "boot-enroll",
+            "pkg-install-file",
+            "system-rollback",
+            "system-channel",
         ] {
             assert_eq!(AdminAction::parse(n).map(AdminAction::name), Some(n));
         }

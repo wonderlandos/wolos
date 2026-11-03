@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# The app's spec, in a headless engine: no display, no desktop. It clicks the button and reads the text.
+require "spec"
+require "wolkit/test"
+require "../src/app"
+
+describe {{class_name}} do
+  it "counts presses" do
+    Wolkit::Test.run({{class_name}}) do |t|
+      t.text("You pressed the button 0 times.").should eq "You pressed the button 0 times."
+      t.click "Press me"
+      t.click "Press me"
+      t.text("You pressed the button 2 times.").should eq "You pressed the button 2 times."
+    end
+  end
+end

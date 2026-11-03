@@ -33,9 +33,9 @@ Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`
 ## 2. Tokens, never literals
 
 - Colours: `--surface --card --text --dim --line --accent --accent-text --control --glass*`. No hex/rgb in app code or app CSS.
-- Spacing scale: 4, 8, 12, 16, 24, 32. Nothing else.
+- Spacing scale: 4, 8, 12, 16, 24 (`shared::theme::SCALE`, `--space-1` to `--space-6`). Nothing else.
 - Radius: controls 6, cards 10 (`--glass-radius-s`), windows/panels `--glass-radius`.
-- Type: Inter. Title 13 semibold (toolbar), body 13, secondary 11 dim, large title 22 semibold (empty states, About). No other sizes.
+- Type: Inter. Title 13 semibold (toolbar), body 13, secondary 11 dim, heading 15, large title 26 bold (page titles; `shared::theme::scaffold`), 22 semibold inside an empty state. No other sizes.
 - Icons: symbolic, 16 in rows/toolbar, 32/48/64 only for files and app tiles.
 
 ## 3. Behaviour

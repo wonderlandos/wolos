@@ -1,0 +1,25 @@
+{
+  "id": "gaming",
+  "name": "Gaming",
+  "summary": "Wine with Mono and Gecko, winetricks, Lutris for games outside Steam, and the MangoHud overlay (Steam and GameMode are already part of WolOS)",
+  "icon": "applications-games-symbolic",
+  "category": "gaming",
+  "size_mb": 260,
+  "packages": [
+    "wine",
+    "wine-mono",
+    "wine-gecko",
+    "winetricks",
+    "lutris",
+    "mangohud",
+    "lib32-mangohud"
+  ],
+  "flatpaks": [],
+  "recipes": [],
+  "mise": [],
+  "post": [],
+  "offline": false,
+  "needs": [
+    "network"
+  ]
+}

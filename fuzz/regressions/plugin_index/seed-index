@@ -1,0 +1,1 @@
+{"format":1,"plugins":[{"author":"Alice","id":"alice.demo","kinds":["theme"],"license":"MIT","min_wolos":"0.12","name":"Demo","permissions":["http"],"sha256":"e4a377d4bd53e48ebf669091dc8f1e68e452e5820e463d3948a4223f81d66533","size":1013,"summary":"A theme","url":"https://plugins.wolos.org/alice.demo-0.1.wolplug","version":"0.1"},{"id":"org.wolos.bad","name":"x"}]}

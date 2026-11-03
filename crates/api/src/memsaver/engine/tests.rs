@@ -162,7 +162,7 @@ impl Sys for Model {
 
 const SCOPE: &str = "/user.slice/user-1000.slice/app-wol-code-20.scope";
 
-/// Hyprland (10) runs wol-realtime (11) and Code: browser 20, zygote 21, renderers 22 23, gpu 24.
+/// The compositor (10) runs wol-realtime (11) and Code: browser 20, zygote 21, renderers 22 23, gpu 24.
 fn session() -> Engine<Model> {
     let m = Model::default();
     m.add(10, 1, "Hyprland");

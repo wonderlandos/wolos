@@ -2,8 +2,6 @@
 //! Nearby sharing discovery records: the mDNS instance name and the `n` TXT value a phone reads
 //! to show this computer in its share sheet. Pure encode/decode; wold advertises them.
 
-/// DNS-SD service type the share sheet browses for.
-pub const SERVICE_TYPE: &str = "_FC9F5ED42C8A._tcp";
 const PCP: u8 = 0x23;
 const SERVICE_HASH: [u8; 3] = [0xFC, 0x9F, 0x5E];
 

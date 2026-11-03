@@ -175,15 +175,42 @@ pub fn authenticate(service: &CStr, user: &CStr, password: &[u8]) -> Auth {
     if unsafe { pam_start(service.as_ptr(), user.as_ptr(), &conv, &mut h) } != PAM_SUCCESS {
         return Auth::Error;
     }
-    let mut rc = unsafe { pam_authenticate(h, PAM_SILENT) };
-    if rc == PAM_SUCCESS {
-        rc = unsafe { pam_acct_mgmt(h, PAM_SILENT) };
+    let auth_rc = unsafe { pam_authenticate(h, PAM_SILENT) };
+    let acct_rc = (auth_rc == PAM_SUCCESS).then(|| unsafe { pam_acct_mgmt(h, PAM_SILENT) });
+    unsafe { pam_end(h, acct_rc.unwrap_or(auth_rc)) };
+    let a = classify(auth_rc, acct_rc);
+    if a == Auth::Error {
+        eprintln!("pam: authenticate returned {auth_rc}, account check {acct_rc:?}");
     }
-    unsafe { pam_end(h, rc) };
-    if rc == PAM_SUCCESS {
-        Auth::Ok
-    } else {
-        Auth::Denied
+    a
+}
+
+// Linux-PAM return codes (security/_pam_types.h) that mean "this password is not accepted".
+const PAM_PERM_DENIED: c_int = 6;
+const PAM_AUTH_ERR: c_int = 7;
+const PAM_CRED_INSUFFICIENT: c_int = 8;
+const PAM_USER_UNKNOWN: c_int = 10;
+const PAM_MAXTRIES: c_int = 11;
+
+/// What one authentication means (audit S4-19). A wrong password, an unknown user (never told
+/// apart, so names are not probed) or too many tries is `Denied`. Anything else is `Error`: a
+/// module that could not run (`PAM_AUTHINFO_UNAVAIL`, `PAM_SYSTEM_ERR`, a conversation error) and
+/// an account the right password cannot open (expired, a new password required, refused by
+/// `pam_acct_mgmt`), so it is not reported as a wrong password. `acct_rc` is None when
+/// `pam_authenticate` did not pass.
+pub fn classify(auth_rc: c_int, acct_rc: Option<c_int>) -> Auth {
+    match (auth_rc, acct_rc) {
+        (PAM_SUCCESS, Some(PAM_SUCCESS)) => Auth::Ok,
+        (PAM_SUCCESS, _) => Auth::Error,
+        (
+            PAM_AUTH_ERR
+            | PAM_USER_UNKNOWN
+            | PAM_MAXTRIES
+            | PAM_CRED_INSUFFICIENT
+            | PAM_PERM_DENIED,
+            _,
+        ) => Auth::Denied,
+        _ => Auth::Error,
     }
 }
 
@@ -264,6 +291,35 @@ impl Drop for Session {
             let rc = pam_close_session(self.h, PAM_SILENT);
             pam_setcred(self.h, PAM_DELETE_CRED | PAM_SILENT);
             pam_end(self.h, rc);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit S4-19: only a refused password is "wrong password"; an account or system problem is
+    /// an error the person is told about differently (wol-authcheck exit 2, no fail delay).
+    #[test]
+    fn classify_tells_a_wrong_password_from_an_account_or_system_error() {
+        const PAM_SYSTEM_ERR: c_int = 4;
+        const PAM_AUTHINFO_UNAVAIL: c_int = 9;
+        const PAM_NEW_AUTHTOK_REQD: c_int = 12;
+        const PAM_ACCT_EXPIRED: c_int = 13;
+        for (auth, acct, want) in [
+            (PAM_SUCCESS, Some(PAM_SUCCESS), Auth::Ok),
+            (PAM_AUTH_ERR, None, Auth::Denied),
+            (PAM_USER_UNKNOWN, None, Auth::Denied),
+            (PAM_MAXTRIES, None, Auth::Denied),
+            (PAM_AUTHINFO_UNAVAIL, None, Auth::Error),
+            (PAM_SYSTEM_ERR, None, Auth::Error),
+            (PAM_CONV_ERR, None, Auth::Error),
+            (PAM_SUCCESS, Some(PAM_ACCT_EXPIRED), Auth::Error),
+            (PAM_SUCCESS, Some(PAM_NEW_AUTHTOK_REQD), Auth::Error),
+            (PAM_SUCCESS, Some(PAM_PERM_DENIED), Auth::Error),
+        ] {
+            assert_eq!(classify(auth, acct), want, "{auth} {acct:?}");
         }
     }
 }

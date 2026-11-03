@@ -1,0 +1,236 @@
+.card (5 variants)
+  [plain]
+    padding-top: 12.0
+    padding-right: 16.0
+    padding-bottom: 12.0
+    padding-left: 16.0
+    border-width: 1.0
+    background: Color(Token(Card))
+    border-top-left-radius: 10.0
+    border-top-right-radius: 10.0
+    border-bottom-right-radius: 10.0
+    border-bottom-left-radius: 10.0
+    box-shadow: [Shadow { dx: 0.0, dy: 1.0, blur: 3.0, color: Shade(16) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
+  [hover]
+    padding-top: 12.0
+    padding-right: 16.0
+    padding-bottom: 12.0
+    padding-left: 16.0
+    border-width: 1.0
+    background: Color(Token(Control))
+    border-top-left-radius: 10.0
+    border-top-right-radius: 10.0
+    border-bottom-right-radius: 10.0
+    border-bottom-left-radius: 10.0
+    box-shadow: [Shadow { dx: 0.0, dy: 3.0, blur: 10.0, color: Shade(20) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
+  [dark]
+    padding-top: 12.0
+    padding-right: 16.0
+    padding-bottom: 12.0
+    padding-left: 16.0
+    border-width: 1.0
+    background: Color(Token(Card))
+    border-top-left-radius: 10.0
+    border-top-right-radius: 10.0
+    border-bottom-right-radius: 10.0
+    border-bottom-left-radius: 10.0
+    box-shadow: [Shadow { dx: 0.0, dy: 6.0, blur: 18.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 1.0, blur: 4.0, color: Shade(16) }]
+  [focus-visible dark contrast]
+    padding-top: 12.0
+    padding-right: 16.0
+    padding-bottom: 12.0
+    padding-left: 16.0
+    border-width: 2.0
+    background: Color(Token(Card))
+    border-color: Token(Text)
+    border-top-left-radius: 10.0
+    border-top-right-radius: 10.0
+    border-bottom-right-radius: 10.0
+    border-bottom-left-radius: 10.0
+    box-shadow: [Shadow { dx: 0.0, dy: 6.0, blur: 18.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 1.0, blur: 4.0, color: Shade(16) }]
+  [compact reduce-motion dark]
+    padding-top: 12.0
+    padding-right: 16.0
+    padding-bottom: 12.0
+    padding-left: 16.0
+    border-width: 1.0
+    background: Color(Token(Card))
+    border-top-left-radius: 10.0
+    border-top-right-radius: 10.0
+    border-bottom-right-radius: 10.0
+    border-bottom-left-radius: 10.0
+    box-shadow: [Shadow { dx: 0.0, dy: 6.0, blur: 18.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 1.0, blur: 4.0, color: Shade(16) }]
+.row (1 variants)
+  [plain]
+    row-gap: 8.0
+    column-gap: 8.0
+    align-items: Center
+    padding-top: 4.0
+    padding-right: 8.0
+    padding-bottom: 4.0
+    padding-left: 8.0
+  [hover]
+    row-gap: 8.0
+    column-gap: 8.0
+    align-items: Center
+    padding-top: 4.0
+    padding-right: 8.0
+    padding-bottom: 4.0
+    padding-left: 8.0
+  [dark]
+    row-gap: 8.0
+    column-gap: 8.0
+    align-items: Center
+    padding-top: 4.0
+    padding-right: 8.0
+    padding-bottom: 4.0
+    padding-left: 8.0
+  [focus-visible dark contrast]
+    row-gap: 8.0
+    column-gap: 8.0
+    align-items: Center
+    padding-top: 4.0
+    padding-right: 8.0
+    padding-bottom: 4.0
+    padding-left: 8.0
+  [compact reduce-motion dark]
+    row-gap: 8.0
+    column-gap: 8.0
+    align-items: Center
+    padding-top: 4.0
+    padding-right: 8.0
+    padding-bottom: 4.0
+    padding-left: 8.0
+.actions (2 variants)
+  [plain]
+    opacity: 0.0
+    transition: Transition { props: 4398046511104, ms: 150, ease: Standard }
+  [hover]
+    opacity: 0.0
+    transition: Transition { props: 4398046511104, ms: 150, ease: Standard }
+  [dark]
+    opacity: 0.0
+    transition: Transition { props: 4398046511104, ms: 150, ease: Standard }
+  [focus-visible dark contrast]
+    opacity: 0.0
+    transition: Transition { props: 4398046511104, ms: 150, ease: Standard }
+  [compact reduce-motion dark]
+    opacity: 0.0
+    transition: Transition { props: 4398046511104, ms: 150, ease: Standard }
+.title (1 variants)
+  [plain]
+    font-size: 17.0
+    font-weight: 600
+  [hover]
+    font-size: 17.0
+    font-weight: 600
+  [dark]
+    font-size: 17.0
+    font-weight: 600
+  [focus-visible dark contrast]
+    font-size: 17.0
+    font-weight: 600
+  [compact reduce-motion dark]
+    font-size: 17.0
+    font-weight: 600
+.hint (1 variants)
+  [plain]
+    color: Token(Dim)
+    font-size: 11.0
+  [hover]
+    color: Token(Dim)
+    font-size: 11.0
+  [dark]
+    color: Token(Dim)
+    font-size: 11.0
+  [focus-visible dark contrast]
+    color: Token(Dim)
+    font-size: 11.0
+  [compact reduce-motion dark]
+    color: Token(Dim)
+    font-size: 11.0
+.caption (1 variants)
+  [plain]
+    color: Token(Dim)
+    font-size: 11.0
+  [hover]
+    color: Token(Dim)
+    font-size: 11.0
+  [dark]
+    color: Token(Dim)
+    font-size: 11.0
+  [focus-visible dark contrast]
+    color: Token(Dim)
+    font-size: 11.0
+  [compact reduce-motion dark]
+    color: Token(Dim)
+    font-size: 11.0
+.pill (1 variants)
+  [plain]
+    padding-top: 4.0
+    padding-right: 12.0
+    padding-bottom: 4.0
+    padding-left: 12.0
+    background: Color(Token(Accent))
+    border-top-left-radius: 9999.0
+    border-top-right-radius: 9999.0
+    border-bottom-right-radius: 9999.0
+    border-bottom-left-radius: 9999.0
+    color: Token(AccentText)
+  [hover]
+    padding-top: 4.0
+    padding-right: 12.0
+    padding-bottom: 4.0
+    padding-left: 12.0
+    background: Color(Token(Accent))
+    border-top-left-radius: 9999.0
+    border-top-right-radius: 9999.0
+    border-bottom-right-radius: 9999.0
+    border-bottom-left-radius: 9999.0
+    color: Token(AccentText)
+  [dark]
+    padding-top: 4.0
+    padding-right: 12.0
+    padding-bottom: 4.0
+    padding-left: 12.0
+    background: Color(Token(Accent))
+    border-top-left-radius: 9999.0
+    border-top-right-radius: 9999.0
+    border-bottom-right-radius: 9999.0
+    border-bottom-left-radius: 9999.0
+    color: Token(AccentText)
+  [focus-visible dark contrast]
+    padding-top: 4.0
+    padding-right: 12.0
+    padding-bottom: 4.0
+    padding-left: 12.0
+    background: Color(Token(Accent))
+    border-top-left-radius: 9999.0
+    border-top-right-radius: 9999.0
+    border-bottom-right-radius: 9999.0
+    border-bottom-left-radius: 9999.0
+    color: Token(AccentText)
+  [compact reduce-motion dark]
+    padding-top: 4.0
+    padding-right: 12.0
+    padding-bottom: 4.0
+    padding-left: 12.0
+    background: Color(Token(Accent))
+    border-top-left-radius: 9999.0
+    border-top-right-radius: 9999.0
+    border-bottom-right-radius: 9999.0
+    border-bottom-left-radius: 9999.0
+    color: Token(AccentText)
+kinds
+  button (4 variants)
+    padding-top: 8.0
+    padding-right: 12.0
+    padding-bottom: 8.0
+    padding-left: 12.0
+    background: Color(Token(Control))
+    border-top-left-radius: 6.0
+    border-top-right-radius: 6.0
+    border-bottom-right-radius: 6.0
+    border-bottom-left-radius: 6.0
+    cursor: Pointer
+    transition: Transition { props: 103079215104, ms: 250, ease: Standard }

@@ -1,0 +1,4 @@
+# Written by shaders/build.sh; checked by tests/gpu_shaders.rs. source fnv1a64, spirv fnv1a64.
+glslang 11:16.6.0
+ui.vert bb4c45be92f58311 ui.vert.spv 6fc7f88563602361
+ui.frag 0710e9cb460c5e20 ui.frag.spv 16d9aeec7d9cadf0

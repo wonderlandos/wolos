@@ -386,6 +386,85 @@ fn always_allow_skips_the_sheet() {
     assert_eq!(approvals(&e).len(), 1);
 }
 
+/// Audit C10-1: an `apps` grant from an `open` sheet never covers a change that leaves something
+/// behind (here removing a web app): it still gets a sheet, without Always Allow being stored.
+#[test]
+fn an_open_grant_does_not_cover_web_apps() {
+    let mut e = env("onceonly");
+    std::fs::create_dir_all(e.home.join("wolos")).unwrap();
+    std::fs::write(
+        e.home.join("wolos/helpers.json"),
+        r#"{"enabled":true,"deny":[],"always":{"Claude Desktop":["apps"]}}"#,
+    )
+    .unwrap();
+    let mut s = init(&mut e);
+    let r = call(&mut s, &mut e, "webapp_remove", json!({"name": "Mail"}));
+    assert_eq!(r["isError"], true, "no answer here: {r}");
+    let asked = approvals(&e);
+    assert_eq!(asked.len(), 1, "asked on screen");
+    assert!(matches!(
+        &asked[0].request,
+        ApprovalRequest::Change { capability, .. } if capability == "apps"
+    ));
+}
+
+/// Audit C10-6: Always Allow belongs to the name and the program that started `wol mcp`. Another
+/// program that copies the name gets the sheet, which names its own program.
+#[test]
+fn always_allow_is_bound_to_the_starting_program() {
+    let start = |e: &mut FakeEnv, program: Option<&str>| {
+        let mut s = Server::started_by(program.map(str::to_owned));
+        rpc(
+            &mut s,
+            e,
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"Claude Desktop","version":"1"}}}),
+        )
+        .unwrap();
+        s
+    };
+    let mut e = env("bound");
+    std::fs::create_dir_all(e.home.join("wolos")).unwrap();
+    std::fs::write(
+        e.home.join("wolos/helpers.json"),
+        r#"{"enabled":true,"deny":[],"always":{"Claude Desktop (/usr/bin/a)":["appearance"],"Claude Desktop":["appearance"]}}"#,
+    )
+    .unwrap();
+    let mut s = start(&mut e, Some("/usr/bin/a"));
+    assert_eq!(s.helper(), "Claude Desktop (/usr/bin/a)");
+    let r = call(&mut s, &mut e, "appearance_set", json!({"mode": "dark"}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert!(approvals(&e).is_empty(), "program A was granted");
+    // Same name, another program; and a program that could not be read: both are asked.
+    for (program, shown) in [
+        (Some("/usr/bin/b"), "Claude Desktop (/usr/bin/b)"),
+        (None, "Claude Desktop (unknown program)"),
+    ] {
+        let mut e2 = env("bound2");
+        std::fs::create_dir_all(e2.home.join("wolos")).unwrap();
+        std::fs::copy(
+            e.home.join("wolos/helpers.json"),
+            e2.home.join("wolos/helpers.json"),
+        )
+        .unwrap();
+        let mut s = start(&mut e2, program);
+        let r = call(&mut s, &mut e2, "appearance_set", json!({"mode": "light"}));
+        assert_eq!(r["isError"], true, "no answer here: {r}");
+        let asked = approvals(&e2);
+        assert_eq!(asked.len(), 1, "{program:?} gets the sheet");
+        assert_eq!(asked[0].helper, shown);
+    }
+    // A long path keeps its end and the whole name fits what wold relays.
+    let long = format!("/{}/claude", "d".repeat(300));
+    let mut e3 = env("bound3");
+    let s = start(&mut e3, Some(&long));
+    let h = s.helper();
+    assert!(h.len() <= shared::portal::MAX_HELPER_TEXT, "{h}");
+    assert!(
+        h.starts_with("Claude Desktop (…") && h.ends_with("/claude)"),
+        "{h}"
+    );
+}
+
 /// AllowAlways from the shell runs it now (the shell saved the grant).
 #[test]
 fn allow_always_runs_now() {
@@ -496,7 +575,22 @@ fn admin_failures_and_wrong_answers() {
 ",
                 json!({"ok": false, "code": "permission-denied", "message": "no"})
             ),
-            "could not ask",
+            "could not ask on screen (no)",
+            "refused",
+        ),
+        // Audit S4-12: wold's reason is kept, not replaced by a generic line.
+        (
+            format!(
+                "{}
+",
+                json!({"ok": false, "code": "invalid-argument", "message": "approval too long"})
+            ),
+            "could not ask on screen (approval too long)",
+            "refused",
+        ),
+        (
+            "{\"ok\": true, \"data\": 7}\n".to_string(),
+            "could not ask on screen (wold's answer could not be read)",
             "refused",
         ),
     ] {

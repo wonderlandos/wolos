@@ -39,7 +39,7 @@ pub struct Facts<'a> {
 pub enum Lights {
     /// No strip: the window draws its own controls or is not a normal window.
     None = 0,
-    /// Close only: a fixed-size dialog (macOS sheets and panels cannot be minimised or zoomed).
+    /// Close only: a fixed-size dialog (sheets and panels cannot be minimised or zoomed).
     Close = 1,
     /// Close, minimise, zoom.
     All = 3,

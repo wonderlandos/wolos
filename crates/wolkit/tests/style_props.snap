@@ -1,0 +1,198 @@
+0 display layout layout -
+1 flex-direction layout layout -
+2 flex-wrap layout layout -
+3 grow layout layout -
+4 shrink layout layout -
+5 basis layout layout -
+6 row-gap layout layout -
+7 column-gap layout layout -
+8 align-items layout layout -
+9 align-self layout layout -
+10 align-content layout layout -
+11 justify-content layout layout -
+12 padding-top layout layout -
+13 padding-right layout layout -
+14 padding-bottom layout layout -
+15 padding-left layout layout -
+16 margin-top layout layout -
+17 margin-right layout layout -
+18 margin-bottom layout layout -
+19 margin-left layout layout -
+20 width layout layout -
+21 height layout layout -
+22 min-width layout layout -
+23 min-height layout layout -
+24 max-width layout layout -
+25 max-height layout layout -
+26 aspect-ratio layout layout -
+27 position layout layout -
+28 top layout layout -
+29 right layout layout -
+30 bottom layout layout -
+31 left layout layout -
+32 overflow layout layout -
+33 z-index layout paint -
+34 border-width paint layout -
+35 background paint paint anim
+36 border-color paint paint anim
+37 border-top-left-radius paint paint anim
+38 border-top-right-radius paint paint anim
+39 border-bottom-right-radius paint paint anim
+40 border-bottom-left-radius paint paint anim
+41 box-shadow paint paint anim
+42 opacity paint paint anim
+43 outline-width paint paint anim
+44 outline-color paint paint anim
+45 transform paint paint anim
+46 cursor paint paint - inherited
+47 pointer-events paint paint -
+48 visibility paint paint - inherited
+49 backdrop paint paint -
+50 color text paint anim inherited
+51 font-family text layout - inherited
+52 font-size text layout - inherited
+53 font-weight text layout - inherited
+54 font-style text layout - inherited
+55 line-height text layout - inherited
+56 letter-spacing text layout - inherited
+57 text-align text layout - inherited
+58 text-decoration text paint -
+59 text-overflow text layout -
+60 white-space text layout - inherited
+61 max-lines text layout -
+62 font-feature text layout - inherited
+63 user-select text paint - inherited
+64 transition motion paint -
+65 spring motion paint -
+# kinds
+0 box
+1 text
+2 image
+3 spacer
+4 divider
+5 button
+6 toggle
+7 slider
+8 text-input
+9 scroll
+10 vlist
+11 canvas
+12 surface
+13 overlay
+# states
+1 hover
+2 active
+4 focus
+8 focus-visible
+16 disabled
+32 selected
+64 checked
+128 expanded
+256 empty
+# media
+1 dark
+2 light
+4 contrast
+8 reduce-motion
+16 reduce-transparency
+32 compact
+# Display
+0 flex
+1 none
+# Direction
+0 row
+1 column
+2 row-reverse
+3 column-reverse
+# Wrap
+0 nowrap
+1 wrap
+# AlignItems
+0 stretch
+1 start
+2 center
+3 end
+4 baseline
+# AlignSelf
+0 auto
+1 stretch
+2 start
+3 center
+4 end
+5 baseline
+# AlignContent
+0 stretch
+1 start
+2 center
+3 end
+4 space-between
+5 space-around
+# Justify
+0 start
+1 center
+2 end
+3 space-between
+4 space-around
+5 space-evenly
+# Position
+0 relative
+1 absolute
+# Overflow
+0 visible
+1 hidden
+2 scroll
+3 auto
+# Cursor
+0 default
+1 pointer
+2 text
+3 grab
+4 grabbing
+5 not-allowed
+6 progress
+# PointerEvents
+0 auto
+1 none
+# Visibility
+0 visible
+1 hidden
+# Backdrop
+0 none
+1 glass
+# FontFamily
+0 ui
+1 mono
+# FontStyle
+0 normal
+1 italic
+# TextAlign
+0 start
+1 center
+2 end
+3 justify
+# TextDecoration
+0 none
+1 underline
+2 strikethrough
+# TextOverflow
+0 clip
+1 ellipsis
+# WhiteSpace
+0 normal
+1 nowrap
+2 pre-wrap
+# UserSelect
+0 auto
+1 none
+2 text
+# Ease
+0 ease
+1 linear
+2 in
+3 out
+4 in-out
+# Spring
+0 none
+1 gentle
+2 snappy
+3 bouncy

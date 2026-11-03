@@ -64,7 +64,7 @@ pub fn linux(class: QosClass) -> Linux {
 }
 
 /// WolKernel hint interface (README.wolos.md in the kernel tree); absent on a stock kernel: no-op.
-/// `foreground_pid` feeds the frontmost-app CPU floor, timer slack and the i915 waitboost.
+/// `foreground_pid` feeds the i915 waitboost (only the frontmost app raises GPU clocks) and the OOM victim bias.
 pub const HINTS: &str = "/sys/kernel/wolos";
 
 /// Session policy wold sets at start: the frontmost app runs at least at half capacity with exact
@@ -219,10 +219,17 @@ fn for_each_thread(pid: i32, mut f: impl FnMut(i32) -> bool) -> bool {
     }
 }
 
-/// Apply one foreground switch: previous app -> Default, new one -> UserInteractive.
-pub fn foreground(tracker: &mut ForegroundTracker, pid: i32, applier: &dyn Applier) {
+/// Apply one foreground switch: previous app -> Default, new one -> UserInteractive. `mine` says
+/// whether a pid still belongs to the account that reported it (S4-1): a previous app whose pid
+/// now names another account's process is left alone.
+pub fn foreground(
+    tracker: &mut ForegroundTracker,
+    pid: i32,
+    mine: &dyn Fn(i32) -> bool,
+    applier: &dyn Applier,
+) {
     let (demoted, promoted) = tracker.switch(pid);
-    if demoted > 0 && !applier.apply(demoted, QosClass::Default) {
+    if demoted > 0 && mine(demoted) && !applier.apply(demoted, QosClass::Default) {
         eprintln!("wold: qos pid {demoted} -> default failed");
     }
     if promoted > 0 {
@@ -233,12 +240,54 @@ pub fn foreground(tracker: &mut ForegroundTracker, pid: i32, applier: &dyn Appli
     }
 }
 
-/// Serve one connection: `foreground <pid>` lines until EOF. One fixed buffer; no allocation.
+/// Accounts whose frontmost app is tracked at once (one per seat, with room to spare). One more
+/// takes the place of the account seen longest ago.
+pub const SEATS: usize = 64;
+
+/// The frontmost app of each account (audit S4-1): one account's focus change demotes only its
+/// own previous app, never another seat's. Room for [`SEATS`] is made once, up front, so the hot
+/// path never allocates.
+pub struct Foregrounds {
+    seats: Vec<(u32, ForegroundTracker)>,
+}
+
+impl Default for Foregrounds {
+    fn default() -> Self {
+        Self {
+            seats: Vec::with_capacity(SEATS),
+        }
+    }
+}
+
+impl Foregrounds {
+    /// The tracker of account `uid`, made on first use.
+    pub fn of(&mut self, uid: u32) -> &mut ForegroundTracker {
+        let at = match self.seats.iter().position(|(u, _)| *u == uid) {
+            Some(i) => i,
+            None => {
+                if self.seats.len() >= SEATS {
+                    self.seats.remove(0); // shifts in place: no allocation
+                }
+                self.seats.push((uid, ForegroundTracker::default()));
+                self.seats.len() - 1
+            }
+        };
+        &mut self.seats[at].1
+    }
+}
+
+/// Serve one connection of account `uid` (from the kernel): `foreground <pid>` lines until EOF.
+/// A pid is acted on only when `owner` says it belongs to `uid` (audit S4-1: the peer check is
+/// the executable, and any account may run it against an IPC of its own that names any pid).
+/// One fixed buffer; no allocation.
 pub fn serve(
     mut conn: impl Read,
-    tracker: &std::sync::Mutex<ForegroundTracker>,
+    uid: u32,
+    owner: &dyn Fn(i32) -> Option<u32>,
+    foregrounds: &std::sync::Mutex<Foregrounds>,
     applier: &dyn Applier,
 ) {
+    let mine = |pid: i32| owner(pid) == Some(uid);
     let mut buf = [0u8; 256];
     let mut filled = 0;
     loop {
@@ -248,9 +297,11 @@ pub fn serve(
         };
         filled += n;
         while let Some(nl) = buf[..filled].iter().position(|b| *b == b'\n') {
-            if let Some(pid) = parse_foreground(&buf[..nl]) {
-                let mut t = tracker.lock().unwrap_or_else(|p| p.into_inner());
-                foreground(&mut t, pid, applier);
+            if let Some(pid) = parse_foreground(&buf[..nl])
+                && mine(pid)
+            {
+                let mut f = foregrounds.lock().unwrap_or_else(|p| p.into_inner());
+                foreground(f.of(uid), pid, &mine, applier);
             }
             buf.copy_within(nl + 1..filled, 0);
             filled -= nl + 1;
@@ -611,12 +662,17 @@ pub mod tests {
         }
     }
 
+    /// Every pid is this account's (uid 1000).
+    pub fn ours(_: i32) -> Option<u32> {
+        Some(1000)
+    }
+
     #[test]
     fn serve_applies_switches_in_order() {
         let r = Recorder(Mutex::new(Vec::with_capacity(16)));
-        let t = Mutex::new(ForegroundTracker::default());
+        let t = Mutex::new(Foregrounds::default());
         let input: &[u8] = b"foreground 10\nforeground 10\ngarbage\nforeground 20\nforeground 3";
-        serve(input, &t, &r);
+        serve(input, 1000, &ours, &t, &r);
         use QosClass::*;
         assert_eq!(
             *r.0.lock().unwrap(),
@@ -638,8 +694,14 @@ pub mod tests {
     #[test]
     fn every_switch_tells_the_gpu_driver_the_frontmost_pid() {
         let r = GpuRecorder::default();
-        let t = Mutex::new(ForegroundTracker::default());
-        serve(&b"foreground 10\nforeground 20\nforeground 0\n"[..], &t, &r);
+        let t = Mutex::new(Foregrounds::default());
+        serve(
+            &b"foreground 10\nforeground 20\nforeground 0\n"[..],
+            1000,
+            &ours,
+            &t,
+            &r,
+        );
         assert_eq!(*r.0.lock().unwrap(), vec![10, 20]);
     }
 
@@ -680,10 +742,10 @@ pub mod tests {
     #[test]
     fn overlong_lines_are_dropped() {
         let r = Recorder(Mutex::new(Vec::with_capacity(4)));
-        let t = Mutex::new(ForegroundTracker::default());
+        let t = Mutex::new(Foregrounds::default());
         let mut input = vec![b'x'; 300];
         input.extend_from_slice(b"\nforeground 7\n");
-        serve(&input[..], &t, &r);
+        serve(&input[..], 1000, &ours, &t, &r);
         assert_eq!(*r.0.lock().unwrap(), vec![(7, QosClass::UserInteractive)]);
     }
 
@@ -974,6 +1036,99 @@ pub mod tests {
         std::fs::remove_dir_all(&d).ok();
     }
 
+    /// Audit S4-1: a peer may only steer its own account's processes. A pid of another account
+    /// is never promoted, and a previous app whose pid now names another account is not demoted.
+    #[test]
+    fn a_peer_steers_only_its_own_accounts_processes() {
+        let r = Recorder(Mutex::new(Vec::with_capacity(16)));
+        let t = Mutex::new(Foregrounds::default());
+        // pid 20 is uid 1001's; the peer is uid 1000.
+        let owner = |pid: i32| Some(if pid == 20 { 1001 } else { 1000 });
+        serve(&b"foreground 10\nforeground 20\n"[..], 1000, &owner, &t, &r);
+        assert_eq!(*r.0.lock().unwrap(), vec![(10, QosClass::UserInteractive)]);
+        // The same through a fake /proc and the real owner lookup.
+        let d = crate::memsaver::procs::tests::fake(
+            "qos-owner",
+            &[
+                (10, 1, 1000, "app", "/s", "app", ""),
+                (20, 1, 1001, "other", "/s", "other", ""),
+            ],
+        );
+        let r = Recorder(Mutex::new(Vec::with_capacity(16)));
+        let t = Mutex::new(Foregrounds::default());
+        let owner = |pid: i32| crate::memsaver::procs::owner(&d, pid);
+        serve(
+            &b"foreground 20\nforeground 10\nforeground 30\n"[..],
+            1000,
+            &owner,
+            &t,
+            &r,
+        );
+        assert_eq!(*r.0.lock().unwrap(), vec![(10, QosClass::UserInteractive)]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Audit S4-1: two seats, two trackers: the second account's switch never demotes the first
+    /// account's frontmost app.
+    #[test]
+    fn one_accounts_switch_never_demotes_another_seat() {
+        let r = Recorder(Mutex::new(Vec::with_capacity(16)));
+        let t = Mutex::new(Foregrounds::default());
+        let owner = |pid: i32| Some(if pid < 100 { 1000 } else { 1001 });
+        serve(&b"foreground 10\n"[..], 1000, &owner, &t, &r);
+        serve(
+            &b"foreground 110\nforeground 120\n"[..],
+            1001,
+            &owner,
+            &t,
+            &r,
+        );
+        use QosClass::*;
+        assert_eq!(
+            *r.0.lock().unwrap(),
+            vec![
+                (10, UserInteractive),
+                (110, UserInteractive),
+                (110, Default),
+                (120, UserInteractive)
+            ],
+            "pid 10 stays in front for uid 1000"
+        );
+        // A previous app whose pid was reused by another account is left alone.
+        let r = Recorder(Mutex::new(Vec::with_capacity(16)));
+        let t = Mutex::new(Foregrounds::default());
+        let reused = std::sync::atomic::AtomicBool::new(false);
+        let owner = |pid: i32| {
+            Some(
+                if pid == 10 && reused.load(std::sync::atomic::Ordering::Relaxed) {
+                    1001
+                } else {
+                    1000
+                },
+            )
+        };
+        serve(&b"foreground 10\n"[..], 1000, &owner, &t, &r);
+        reused.store(true, std::sync::atomic::Ordering::Relaxed);
+        serve(&b"foreground 11\n"[..], 1000, &owner, &t, &r);
+        assert_eq!(
+            *r.0.lock().unwrap(),
+            vec![(10, UserInteractive), (11, UserInteractive)]
+        );
+    }
+
+    #[test]
+    fn seats_are_bounded_and_kept_per_account() {
+        let mut f = Foregrounds::default();
+        let n = u32::try_from(SEATS).unwrap();
+        for uid in 0..n + 10 {
+            assert_eq!(f.of(uid).switch(7), (0, 7));
+        }
+        assert_eq!(f.seats.len(), SEATS);
+        assert!(f.seats.capacity() <= SEATS, "never grew");
+        // The newest seats kept their state.
+        assert_eq!(f.of(n + 9).switch(7), (0, 0));
+    }
+
     #[test]
     fn peer_check() {
         assert!(peer_allowed(b"/usr/bin/wol-realtime", REALTIME_EXE));
@@ -983,13 +1138,13 @@ pub mod tests {
     #[test]
     fn hot_path_is_fast() {
         let r = Recorder(Mutex::new(Vec::new())); // capacity 0: records nothing, never allocates
-        let t = Mutex::new(ForegroundTracker::default());
+        let t = Mutex::new(Foregrounds::default());
         let mut input = Vec::new();
         for i in 0..10_000 {
             input.extend_from_slice(format!("foreground {}\n", 100 + i % 2).as_bytes());
         }
         let start = std::time::Instant::now();
-        serve(&input[..], &t, &r);
+        serve(&input[..], 1000, &ours, &t, &r);
         assert!(
             start.elapsed() < std::time::Duration::from_millis(50),
             "{:?}",

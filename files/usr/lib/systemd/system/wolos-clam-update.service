@@ -5,6 +5,9 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/wolos/clam-update
+# As root ("+"), not _xguard: the guard loads only what root built from files whose publisher's
+# signature checks, into its own folder (audit F10; refused: the unit fails, the old build stays).
+ExecStartPost=+/usr/bin/wol-xguard rules full
 # Files trusted under the old signatures are looked at again.
 ExecStartPost=+/usr/bin/systemctl try-restart wolos-clam.service wolos-xguard.service
 User=_xguard

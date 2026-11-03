@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Root-side process launch (docs/STANDARDS.md section 7, ADR 0015; audit A22/B12). Every program
+//! Root-side process launch (docs/STANDARDS.md section 7, ADR 0040; audit A22/B12). Every program
 //! wold or wol-admind starts as root is built by [`privileged_command`]: a cleared environment, a
 //! fixed `PATH`, stdin from /dev/null, typed argv and never a shell. The invariant: nothing an
 //! app or a user put in the daemon's environment (`LD_PRELOAD`, `PATH`, `PACMAN_*`) reaches a

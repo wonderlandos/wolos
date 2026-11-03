@@ -390,7 +390,7 @@ pub fn hypridle_listeners() -> String {
 pub const FIRST_USER_UID: u32 = 1000;
 /// Session runtime dirs (`/run/user/<uid>`, made by systemd-logind).
 pub const RUNTIME_ROOT: &str = "/run/user";
-/// Hyprland IPC request: start the user's lock unless it already runs (as the user, in the session).
+/// Compositor IPC request: start the user's lock unless it already runs (as the user, in the session).
 pub const LOCK_REQUEST: &[u8] = b"dispatch exec pgrep -x wol-lock || wol-lock";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -400,7 +400,7 @@ pub struct Session {
     pub socket: String,
 }
 
-/// Desktop sessions of login accounts: every Hyprland instance under each runtime dir.
+/// Desktop sessions of login accounts: every compositor instance under each runtime dir.
 /// `list`: full paths of a directory's entries.
 pub fn sessions(list: &dyn Fn(&str) -> Vec<String>) -> Vec<Session> {
     let mut out = Vec::new();

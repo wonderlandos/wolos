@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Plugin Maker
+Comment=Make shell plugins and themes and see them live
+Icon=wolos-plugin-maker
+Exec=wol-plugin-maker %f
+Categories=Development;
+Keywords=plugin;theme;menu bar;widget;
+StartupNotify=true

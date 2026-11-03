@@ -39,7 +39,14 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "plugin.enable" => set_enabled(env, &get("id"), true, as_json),
         "plugin.disable" => set_enabled(env, &get("id"), false, as_json),
         "plugin.remove" => remove(env, &get("id")),
-        "plugin.pack" => pack(env, &get("plugin"), inv.get("out"), as_json),
+        "plugin.add" => add(env, &get("plugin"), inv.flag("yes"), as_json),
+        "plugin.pack" => pack(
+            env,
+            &get("plugin"),
+            inv.get("out"),
+            inv.flag("yes"),
+            as_json,
+        ),
         other => fail(env, ErrorCode::Failed, &format!("no handler for {other}")),
     }
 }
@@ -87,6 +94,9 @@ fn reload(env: &mut dyn Env) -> bool {
         .is_ok()
 }
 
+/// The permissions as sentences. `[[toggle]]`, `[[dock]]` and `[[hotkey]]` commands that are not
+/// `wol` verbs need `run` (audit C8-1), so "nothing beyond drawing" is true for `[]`; the
+/// commands themselves are listed by [`commands_lines`].
 fn perm_labels(perms: &[Permission]) -> String {
     if perms.is_empty() {
         return "nothing beyond drawing".into();
@@ -98,11 +108,24 @@ fn perm_labels(perms: &[Permission]) -> String {
         .join("; ")
 }
 
+/// Each command a `[[toggle]]`, `[[dock]]` or `[[hotkey]]` runs as the person (not a `wol`
+/// verb), one line each, so `check` shows what "Run commands as you" means here.
+fn commands_lines(m: &Manifest) -> String {
+    m.commands()
+        .iter()
+        .map(|(k, id, argv)| format!("Runs ({} {id}): {}\n", k.id(), argv.join(" ")))
+        .collect()
+}
+
 // ---- Headless services for `check` and `run` ----
 
-/// Side effects become lines in `events` (printed after the run); commands run limited as the
-/// user; state and toggles use the real stores under `$XDG_STATE_HOME`.
+/// Side effects become lines in `events` (printed after the run). For `wol plugin run`
+/// commands run limited as the user and state and toggles use the real stores under
+/// `$XDG_STATE_HOME`. With `inert` (`check`, `new`, `pack`, the same as Plugin Maker's check)
+/// nothing runs, nothing is read from the web and nothing is written: each call is only an event
+/// with an empty answer, because the plugin was never granted anything.
 pub struct CliServices {
+    pub inert: bool,
     pub state_home: PathBuf,
     pub manifest: Manifest,
     pub dir: PathBuf,
@@ -135,6 +158,9 @@ impl Services for CliServices {
         }
         cmd.extend(argv.iter().cloned());
         self.event(format!("run: {}", argv.join(" ")));
+        if self.inert {
+            return Ok(String::new());
+        }
         wol_core::widgets::run_limited(
             &cmd,
             &self.dir,
@@ -146,6 +172,10 @@ impl Services for CliServices {
     }
     fn http_get(&self, _plugin: &str, url: &str) -> Result<String, String> {
         let host = shared::widgets::manifest::url_host(url).unwrap_or_default();
+        if self.inert {
+            self.event(format!("http_get: {url}"));
+            return Ok(String::new());
+        }
         if !self.hosts.contains(&host) {
             return Err(format!(
                 "Allow this plugin to read data from {host} ({HOSTS_VAR}={host} on the command line)."
@@ -173,6 +203,9 @@ impl Services for CliServices {
             if on { "on" } else { "off" },
             argv.join(" ")
         ));
+        if self.inert {
+            return Ok(());
+        }
         cp::toggle_set(&self.state_home, plugin, toggle, on)
     }
     fn show(&self, _plugin: &str, panel: &str) -> Result<(), String> {
@@ -184,14 +217,21 @@ impl Services for CliServices {
         Ok(())
     }
     fn state_load(&self, plugin: &str) -> Option<String> {
+        if self.inert {
+            return None;
+        }
         cp::load_state(&self.state_home, plugin)
     }
     fn state_save(&self, plugin: &str, json: &str) -> Result<(), String> {
+        if self.inert {
+            self.event("state saved".to_owned());
+            return Ok(());
+        }
         cp::save_state(&self.state_home, plugin, json)
     }
 }
 
-fn services(env: &dyn Env, dir: &Path, m: &Manifest) -> Rc<CliServices> {
+fn services(env: &dyn Env, dir: &Path, m: &Manifest, inert: bool) -> Rc<CliServices> {
     let hosts = env
         .var(HOSTS_VAR)
         .unwrap_or_default()
@@ -200,6 +240,7 @@ fn services(env: &dyn Env, dir: &Path, m: &Manifest) -> Rc<CliServices> {
         .filter(|h| !h.is_empty())
         .collect();
     Rc::new(CliServices {
+        inert,
         state_home: env.state_home(),
         manifest: m.clone(),
         dir: dir.to_path_buf(),
@@ -232,39 +273,18 @@ fn load_script(
     .map_err(|e| format!("{file}: {e}"))
 }
 
-/// Loads every script and renders each once (search: one query), the way the desktop will.
-fn lua_problems(env: &dyn Env, dir: &Path, m: &Manifest) -> Vec<String> {
-    let mut out = Vec::new();
-    for (kind, id, file) in m.scripts() {
-        let s = services(env, dir, m);
-        let mut script = match load_script(dir, m, kind, id, file, s) {
-            Ok(s) => s,
-            Err(e) => {
-                out.push(e);
-                continue;
-            }
-        };
-        let r = if kind == Kind::Search {
-            script.query("test").map(|_| ())
-        } else {
-            script.render().and_then(|_| script.popover().map(|_| ()))
-        };
-        if let Err(e) = r {
-            out.push(format!("{file}: {e}"));
-        }
-    }
-    out
-}
-
-/// The full check: folder (`wol_core::plugins::check`) plus Lua loads and renders.
+/// The full check: folder (`wol_core::plugins::check`) plus every script loaded and run once
+/// (`wol_lua::plugin::lua_problems`), with inert services (nothing runs or is written); the same
+/// function as Plugin Maker's problems list.
 pub fn full_check(env: &dyn Env, dir: &Path, system: bool) -> cp::Report {
-    let mut r = cp::check(dir, system);
-    if let Some(m) = r.manifest.clone()
-        && r.problems.is_empty()
-    {
-        r.problems.extend(lua_problems(env, dir, &m));
-    }
-    r
+    cp::check_full(dir, system, |d, m| {
+        wol_lua::plugin::lua_problems(
+            d,
+            m,
+            wol_lua::Deadlines::DEFAULT,
+            &|| -> Rc<dyn Services> { services(env, d, m, true) },
+        )
+    })
 }
 
 fn report_json(r: &cp::Report, dir: &Path) -> Value {
@@ -299,12 +319,13 @@ fn print_report(env: &mut dyn Env, r: &cp::Report, dir: &Path, as_json: bool) ->
     match (&r.manifest, r.problems.is_empty()) {
         (Some(m), true) => {
             env.out(&format!(
-                "OK {} {} ({} KB): {}\nPermissions: {}\n",
+                "OK {} {} ({} KB): {}\nPermissions: {}\n{}",
                 m.id,
                 m.version,
                 r.size.div_ceil(1024),
                 kinds_line(m),
-                perm_labels(&m.permissions)
+                perm_labels(&m.permissions),
+                commands_lines(m)
             ));
             0
         }
@@ -398,7 +419,12 @@ fn new(env: &mut dyn Env, id: &str, kinds: Option<&str>, as_json: bool) -> i32 {
                     ErrorCode::Usage,
                     &format!(
                         "unknown kind '{k}'; kinds are {}",
-                        Kind::ALL.map(Kind::id).join(", ")
+                        Kind::ALL
+                            .into_iter()
+                            .filter(|k| !k.is_planned())
+                            .map(Kind::id)
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     ),
                 );
             }
@@ -516,7 +542,7 @@ fn run(env: &mut dyn Env, what: &str, kind: &str, entry: Option<&str>, input: Op
             ),
         );
     };
-    let s = services(env, &dir, &m);
+    let s = services(env, &dir, &m, false);
     let mut script = match load_script(&dir, &m, kind, id, file, s.clone()) {
         Ok(x) => x,
         Err(e) => return fail(env, ErrorCode::Invalid, &e),
@@ -572,30 +598,39 @@ fn set_enabled(env: &mut dyn Env, id: &str, on: bool, as_json: bool) -> i32 {
     };
     let config = env.config_home();
     let mut enabled = cp::load_enabled(&config);
-    let granted = if on {
+    let manifest = if on {
         let m = match &p.manifest {
             Ok(m) => m,
             Err(e) => return fail(env, ErrorCode::Invalid, &format!("{id} does not load: {e}")),
         };
         enabled.enable(m);
-        m.permissions.clone()
+        Some(m)
     } else {
         enabled.disable(id);
-        Vec::new()
+        None
     };
+    let granted = manifest.map(|m| m.permissions.clone()).unwrap_or_default();
     if let Err(e) = cp::save_enabled(&config, &enabled) {
         return fail(env, ErrorCode::Failed, &e);
     }
+    // Audit X6-1: `[[webapp]]` entries are launchers while the plugin is on.
+    let kept = match cp::sync_webapps(&env.data_home(), id, manifest.map(|m| (m, p.dir.as_path())))
+    {
+        Ok(k) => k,
+        Err(e) => return fail(env, ErrorCode::Failed, &e),
+    };
     let reloaded = reload(env);
     if as_json {
         emit_json(
             env,
-            &json!({"id": id, "enabled": on, "granted": granted.iter().map(|p| p.id()).collect::<Vec<_>>(), "reloaded": reloaded}),
+            &json!({"id": id, "enabled": on, "granted": granted.iter().map(|p| p.id()).collect::<Vec<_>>(), "reloaded": reloaded, "kept": kept}),
         );
-    } else if on {
+    } else if let Some(m) = manifest {
         env.out(&format!(
-            "{id} is on. Granted: {}.\n",
-            perm_labels(&granted)
+            "{id} is on. Granted: {}.\n{}{}",
+            perm_labels(&granted),
+            commands_lines(m),
+            kept_lines(&kept)
         ));
     } else {
         env.out(&format!("{id} is off.\n"));
@@ -627,6 +662,9 @@ fn remove(env: &mut dyn Env, id: &str) -> i32 {
         return fail(env, ErrorCode::Failed, &e);
     }
     cp::clear_state(&env.state_home(), id);
+    if let Err(e) = cp::sync_webapps(&env.data_home(), id, None) {
+        return fail(env, ErrorCode::Failed, &e);
+    }
     if let Err(e) = std::fs::remove_dir_all(&dir) {
         return fail(env, ErrorCode::Failed, &format!("{}: {e}", dir.display()));
     }
@@ -635,7 +673,153 @@ fn remove(env: &mut dyn Env, id: &str) -> i32 {
     0
 }
 
-fn pack(env: &mut dyn Env, what: &str, out: Option<&str>, as_json: bool) -> i32 {
+/// Web app launchers left alone because a file of that name is the person's own.
+fn kept_lines(kept: &[String]) -> String {
+    kept.iter()
+        .map(|f| format!("Kept your own {f}; that web app of the plugin is not added.\n"))
+        .collect()
+}
+
+/// `wol plugin add <folder|file.wolplug> [--yes]` (audit X6-2): the Store's install step
+/// (`wol_core::package::verify_wolplug`, then `install_plugin` into this account's plugin folder)
+/// for a file or folder on this machine. Unsigned (every folder, a `.wolplug` without the index
+/// signature) needs `--yes`. Installing never turns the plugin on.
+fn add(env: &mut dyn Env, what: &str, yes: bool, as_json: bool) -> i32 {
+    let p = Path::new(what);
+    let v = if p.join(MANIFEST_FILE).is_file() {
+        verified_folder(p)
+    } else if p.is_file() {
+        verified_wolplug(p)
+    } else if shared::plugins::is_plugin_id(what) {
+        return fail(
+            env,
+            ErrorCode::Unavailable,
+            &format!(
+                "Plugins by id come from App Store > Plugins for now; wol plugin add takes a .{} file or a plugin folder.",
+                cp::PACK_EXT
+            ),
+        );
+    } else {
+        return fail(
+            env,
+            ErrorCode::NotFound,
+            &format!(
+                "{what} is neither a .{} file nor a folder with a {MANIFEST_FILE}.",
+                cp::PACK_EXT
+            ),
+        );
+    };
+    let v = match v {
+        Ok(v) => v,
+        Err(e) => return fail(env, ErrorCode::Invalid, &e),
+    };
+    let signed = matches!(v.trust, wol_core::package::Trust::Signed(_));
+    if !signed && !yes {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            &format!(
+                "{} is not signed by the WolOS plugin index: read it (wol plugin check {what}), then pass --yes to install it anyway",
+                v.manifest.id
+            ),
+        );
+    }
+    let m = v.manifest.clone();
+    let dir = match wol_core::package::install_plugin(&v, &user_dir(env)) {
+        Ok(d) => d,
+        Err(e) => return fail(env, ErrorCode::Invalid, &e),
+    };
+    let enabled = cp::load_enabled(&env.config_home());
+    let on = enabled.is_enabled(&m.id);
+    // An update of a plugin that is on: its web app launchers follow the new manifest.
+    let kept = if on {
+        cp::sync_webapps(&env.data_home(), &m.id, Some((&m, &dir))).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let needs_grant = on && !enabled.missing(&m).is_empty();
+    let reloaded = on && reload(env);
+    if as_json {
+        emit_json(
+            env,
+            &json!({"id": m.id, "version": m.version, "dir": dir, "signed": signed, "enabled": on, "needs_grant": needs_grant, "reloaded": reloaded, "kept": kept}),
+        );
+    } else {
+        let next = if !on {
+            format!("Turn it on: wol plugin enable {}\n", m.id)
+        } else if needs_grant {
+            format!("It asks for more now: wol plugin enable {}\n", m.id)
+        } else {
+            String::new()
+        };
+        env.out(&format!(
+            "Installed {} {} in {}.\nAsks to: {}\n{}{}{next}",
+            m.id,
+            m.version,
+            dir.display(),
+            perm_labels(&m.permissions),
+            commands_lines(&m),
+            kept_lines(&kept)
+        ));
+    }
+    0
+}
+
+/// A plugin folder as the Store's verified form: checked as a user plugin, unsigned.
+fn verified_folder(dir: &Path) -> Result<wol_core::package::VerifiedPlugin, String> {
+    let r = cp::check(dir, false);
+    let m = match (r.manifest, r.problems.first()) {
+        (Some(m), None) => m,
+        (_, Some(p)) => return Err(p.clone()),
+        (None, None) => return Err("The plugin does not load.".into()),
+    };
+    let mut files = Vec::new();
+    for (rel, path) in cp::walk(dir)? {
+        let b = std::fs::read(&path).map_err(|e| format!("{rel}: {e}"))?;
+        files.push((rel, b));
+    }
+    Ok(wol_core::package::VerifiedPlugin {
+        manifest: m,
+        trust: wol_core::package::Trust::Unsigned,
+        files,
+    })
+}
+
+/// A `.wolplug` file: unpacked by the system's zstd (as `pack` makes it) to a bounded pipe, so
+/// a bomb stops one byte past `WOLPLUG_MAX_TAR` and nothing is written; then the same checks as
+/// a Store download (`verify_wolplug`: size, shape, signature, hashes, manifest).
+fn verified_wolplug(file: &Path) -> Result<wol_core::package::VerifiedPlugin, String> {
+    use wol_core::package::WOLPLUG_MAX_TAR;
+    let size = std::fs::metadata(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    if size.len() > WOLPLUG_MAX_TAR {
+        return Err("The plugin file is too large.".into());
+    }
+    let argv = [
+        "zstd".to_owned(),
+        "-q".to_owned(),
+        "-d".to_owned(),
+        "-c".to_owned(),
+        "--".to_owned(),
+        file.to_string_lossy().into_owned(),
+    ];
+    let tar = wol_core::widgets::run_limited(
+        &argv,
+        Path::new("/"),
+        Duration::from_secs(30),
+        usize::try_from(WOLPLUG_MAX_TAR).unwrap_or(usize::MAX),
+    )
+    .map_err(|e| match e {
+        wol_core::widgets::SourceError::TooLarge => "The plugin file is too large.".to_owned(),
+        wol_core::widgets::SourceError::NotFound(_) => {
+            "zstd is missing, so the plugin file cannot be read.".to_owned()
+        }
+        _ => "The plugin file is damaged (zstd could not read it).".to_owned(),
+    })?;
+    let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+    wol_core::package::verify_wolplug(&tar, &keys)
+}
+
+fn pack(env: &mut dyn Env, what: &str, out: Option<&str>, yes: bool, as_json: bool) -> i32 {
     let (dir, system) = match resolve(env, what) {
         Ok(x) => x,
         Err(e) => return fail(env, ErrorCode::NotFound, &e),
@@ -662,8 +846,30 @@ fn pack(env: &mut dyn Env, what: &str, out: Option<&str>, as_json: bool) -> i32 
             .parent()
             .map_or_else(|| PathBuf::from(&p.name), |d| d.join(&p.name)),
     };
-    let tar = target.with_extension("tar");
-    if let Err(e) = std::fs::write(&tar, &p.tar) {
+    // Audit S4-23: only the target is ever replaced, and only when asked; the tar is a fresh,
+    // unique name next to it (never `with_extension`, which named a neighbour).
+    if target.symlink_metadata().is_ok() && !yes {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            &format!(
+                "{} already exists: pass --yes to replace it",
+                target.display()
+            ),
+        );
+    }
+    let nonce = shared::jobs::new_nonce()
+        .unwrap_or_else(|_| format!("{}-{}", std::process::id(), shared::sys::monotonic_ns()));
+    let mut tar_name = target.file_name().unwrap_or_default().to_os_string();
+    tar_name.push(format!(".{nonce}.tar"));
+    let tar = target.with_file_name(tar_name);
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tar)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, &p.tar));
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tar);
         return fail(env, ErrorCode::Failed, &format!("{}: {e}", tar.display()));
     }
     // zstd (the system's own, as every image has it): level 19, removes the tar.
@@ -677,8 +883,14 @@ fn pack(env: &mut dyn Env, what: &str, out: Option<&str>, as_json: bool) -> i32 
         .collect();
     match env.exec(&argv) {
         Ok(0) => {}
-        Ok(c) => return fail(env, ErrorCode::Failed, &format!("zstd exited with {c}")),
-        Err(e) => return fail(env, ErrorCode::Unavailable, &format!("zstd: {e}")),
+        Ok(c) => {
+            let _ = std::fs::remove_file(&tar);
+            return fail(env, ErrorCode::Failed, &format!("zstd exited with {c}"));
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tar);
+            return fail(env, ErrorCode::Unavailable, &format!("zstd: {e}"));
+        }
     }
     if as_json {
         emit_json(

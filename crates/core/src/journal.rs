@@ -92,7 +92,7 @@ pub struct Reload {
     pub theme: Option<Option<String>>,
     /// wol-shell rereads shell.json / wallpaper (`reload` on wol-shell.sock).
     pub shell: bool,
-    /// Hyprland fragments changed (`hyprctl reload`).
+    /// Compositor fragments changed (`hyprctl reload`).
     pub hyprland: bool,
 }
 
@@ -125,9 +125,7 @@ fn write_atomic(path: &Path, text: &str) -> io::Result<()> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d)?;
     }
-    let tmp = path.with_extension(format!("wol-tmp-{}", std::process::id()));
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(tmp, path)
+    shared::atomic::atomic_write(path, 0o644, text.as_bytes())
 }
 
 fn put(path: &Path, text: Option<&str>) -> io::Result<()> {

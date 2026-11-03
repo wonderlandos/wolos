@@ -281,7 +281,12 @@ fn helper_approval(a: &crate::shell::Approval) -> Result<(), String> {
             !ssid.is_empty() && line(ssid, 32) && password.as_ref().is_none_or(|p| line(p, 64))
         }
         R::BootEnvironment { name } => !name.is_empty() && line(name, MAX_HELPER_TEXT),
-        R::Packages { .. } | R::Change { .. } => false,
+        // wold's own package sheets (ADR 0021, 0034), never a helper's to relay.
+        R::Packages { .. }
+        | R::PackageFile { .. }
+        | R::SystemRollback
+        | R::SystemChannel { .. }
+        | R::Change { .. } => false,
     };
     if !ok {
         return Err("Only a helper's administrator change is asked this way.".into());
@@ -704,6 +709,22 @@ mod tests {
             title: t.into(),
             body: b.into(),
             actions: Vec::new(),
+        }
+    }
+
+    /// Audit C7-1: wold's package sheets (a staged local file, Undo Update, the channel) are never
+    /// a helper's to relay through `session.approve`.
+    #[test]
+    fn helpers_cannot_relay_package_sheets() {
+        for request in [
+            r#"{"action":"package-file","staged":"/var/cache/wolos/install/0123456789abcdef0123456789abcdef/x.pkg.tar.zst"}"#,
+            r#"{"action":"system-rollback"}"#,
+            r#"{"action":"system-channel","channel":"beta"}"#,
+        ] {
+            let line = format!(
+                r#"{{"call":"session.approve","approval":{{"helper":"h","tool":"t","request":{request}}}}}"#
+            );
+            assert!(Call::decode(line.as_bytes()).is_err(), "{line}");
         }
     }
 

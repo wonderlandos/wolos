@@ -15,14 +15,6 @@ pub mod appearance {
             LIGHT
         }
     }
-
-    pub fn gtk_theme(mode: &str) -> &'static str {
-        if mode == DARK {
-            "WhiteSur-Dark"
-        } else {
-            "WhiteSur-Light"
-        }
-    }
 }
 
 pub mod keybinds {
@@ -210,9 +202,9 @@ pub mod users {
         }
     }
 
-    /// `useradd -m -c NAME -s zsh -G groups LOGIN`.
+    /// `useradd -m -c NAME -s zsh -G groups LOGIN`; None for an invalid or reserved name.
     pub fn add_argv(name: &str, full_name: &str, admin: bool) -> Option<Vec<String>> {
-        if !is_valid_name(name) {
+        if !is_valid_name(name) || is_reserved(name) {
             return None;
         }
         // Admins get the Setup Assistant account's groups (controller::login::setup_plan).
@@ -346,6 +338,10 @@ mod tests {
             "useradd -m -c Ann -s /usr/bin/zsh -G seat,video,input,audio ann"
         );
         assert!(users::remove_argv("x y").is_none());
+        // Audit S4-6: reserved names never reach useradd.
+        for n in ["git", "live", "wolos", "systemd-x", "root"] {
+            assert!(users::add_argv(n, "X", false).is_none(), "{n}");
+        }
     }
 
     /// The system's own users can never be chosen as an account (the live session's `live`, the

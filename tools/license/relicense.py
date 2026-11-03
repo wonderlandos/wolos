@@ -6,9 +6,11 @@
   relicense.py [--root DIR] [--policy FILE] apply [--dry-run] fix them, print what changed
 
 Files come from `git ls-files --recurse-submodules`, so submodules are covered and untracked
-files are not. Rules live in policy.json: skip globs, per-path expected license expressions,
-which old identifiers may be rewritten, license fields (Cargo.toml, PKGBUILD, shard.yml),
-exact-text doc edits and files copied from tools/license/staged/.
+files are not. A copy without .git (a synced build box) is walked instead, skipping build output
+(WALK_SKIP: .git, target, node_modules, __pycache__). Rules live in policy.json: skip globs,
+per-path expected license expressions, which old identifiers may be rewritten, license fields
+(Cargo.toml, PKGBUILD, shard.yml), exact-text doc edits and files copied from
+tools/license/staged/.
 A foreign identifier (not in `rewrite_from`, not expected) is reported and never rewritten.
 """
 import argparse
@@ -83,7 +85,20 @@ def norm(s):
     return " ".join(s.split())
 
 
+WALK_SKIP = {".git", "target", "node_modules", "__pycache__"}
+
+
 def files(root):
+    root = Path(root)
+    if not (root / ".git").exists():
+        # A copy without .git (e.g. a synced build box): walk the tree, skipping build output.
+        out = []
+        for p in root.rglob("*"):
+            rel = p.relative_to(root)
+            if any(part in WALK_SKIP for part in rel.parts) or not p.is_file():
+                continue
+            out.append(rel.as_posix())
+        return sorted(out)
     out = subprocess.run(["git", "-C", str(root), "ls-files", "--recurse-submodules", "-z"],
                          check=True, capture_output=True).stdout
     return sorted(p for p in out.decode().split("\0") if p)

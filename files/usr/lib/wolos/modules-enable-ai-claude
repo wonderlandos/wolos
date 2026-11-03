@@ -3,12 +3,23 @@
 # Claude Code module, user step (`post` of /usr/share/wolos/modules/ai-claude.json, run as the person
 # by `wol modules enable ai-claude`, ADR 0032): registers the `wol mcp` server with Claude Code for
 # this user (`claude mcp add --scope user wolos -- wol mcp`), so the agent acts on WolOS only through
-# the helper gate and its on-screen approval. Needs the `claude` the claude-code recipe installed.
-# Idempotent: an existing `wolos` server is left as it is. Exit 0 when done, 1 when a step failed.
+# the helper gate and its on-screen approval, and links the WolOS skill
+# (/usr/share/wolos/agents/skills/wolos: the wol verb tree, plugins, `wol plugin check`) into
+# ~/.claude/skills and ~/.agents/skills. Needs the `claude` the claude-code recipe installed.
+# Idempotent: an existing `wolos` server or skill folder is left as it is (the person's own wins).
+# Exit 0 when done, 1 when a step failed.
 set -eu
 : "${HOME:?}"
 PATH="$HOME/.local/bin:$PATH"
+SKILL=${WOLOS_AGENT_SKILL:-/usr/share/wolos/agents/skills/wolos}
 command -v claude >/dev/null 2>&1 || { echo "modules-enable-ai-claude: claude is not installed" >&2; exit 1; }
 if ! claude mcp get wolos >/dev/null 2>&1; then
   claude mcp add --scope user wolos -- wol mcp
 fi
+for d in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
+  mkdir -p "$d"
+  # -e follows the link, -L sees a dangling one: either way the name is taken, keep it.
+  if [ ! -e "$d/wolos" ] && [ ! -L "$d/wolos" ]; then
+    ln -s "$SKILL" "$d/wolos"
+  fi
+done

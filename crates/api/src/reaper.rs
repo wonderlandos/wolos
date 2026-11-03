@@ -15,16 +15,33 @@ pub fn global() -> &'static Arc<Reaper> {
     R.get_or_init(Arc::default)
 }
 
+/// Exit code of a command [`run`] stopped at its deadline (as timeout(1)).
+pub const TIMED_OUT: i32 = 124;
+
+/// Between SIGTERM and SIGKILL for a command past its deadline: pacman removes its lock and
+/// rolls back on SIGTERM.
+const GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Run a command to its end and give its exit code, whichever of `wait` and the reaper gets to
 /// it first. `Command::status` alone loses that race and reports a failed child that succeeded.
-pub fn run(cmd: &mut std::process::Command) -> i32 {
+/// Past `deadline` (audit S4-11) the command and everything it started (its own process group:
+/// `wol pkg` runs pacman as a child) get SIGTERM, then SIGKILL after [`GRACE`], and the answer
+/// is [`TIMED_OUT`].
+pub fn run(cmd: &mut std::process::Command, deadline: std::time::Duration) -> i32 {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
     let held = SPAWNING.lock().unwrap_or_else(|p| p.into_inner());
     let Ok(mut child) = cmd.spawn() else {
         return 127;
     };
-    let pid = child.id() as i32;
+    let Ok(pid) = i32::try_from(child.id()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return 127;
+    };
     let rx = global().register(pid);
     drop(held);
+    let start = std::time::Instant::now();
     loop {
         if let Ok(code) = rx.try_recv() {
             return code;
@@ -33,6 +50,11 @@ pub fn run(cmd: &mut std::process::Command) -> i32 {
             Ok(Some(s)) => {
                 global().forget(pid);
                 return s.code().unwrap_or(127);
+            }
+            Ok(None) if start.elapsed() >= deadline => {
+                stop(&mut child, pid);
+                global().forget(pid);
+                return TIMED_OUT;
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
             // The reaper has it, so its answer is on the way.
@@ -119,6 +141,26 @@ pub fn exit_code(status: i32) -> i32 {
     } else {
         -1
     }
+}
+
+/// SIGTERM to the group of `child` (its pid: it leads its own group), SIGKILL after [`GRACE`]
+/// if it still runs. The group is signalled only while `child` is unreaped, so its number cannot
+/// name anything else yet.
+fn stop(child: &mut std::process::Child, pid: i32) {
+    let group = |sig| {
+        // SAFETY: kill with a negative pid signals that process group; integer arguments only.
+        unsafe { libc::kill(-pid, sig) };
+    };
+    group(libc::SIGTERM);
+    let t = std::time::Instant::now();
+    while t.elapsed() < GRACE && matches!(child.try_wait(), Ok(None)) {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if matches!(child.try_wait(), Ok(None)) {
+        group(libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// Become the reaper of every descendant (Linux child subreaper). Best effort.
@@ -217,10 +259,15 @@ mod tests {
         let pid = child.id() as i32;
         let rx = r.register(pid);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while rx.try_recv().map(|c| assert_eq!(c, 7)).is_err() {
+        // Waits on the channel, not in a hot loop: reap_all is waitpid(-1), and hammering it would
+        // take the children other tests of this binary are waiting for.
+        let code = loop {
             r.reap_all(|p| p == pid);
+            if let Ok(code) = rx.recv_timeout(std::time::Duration::from_millis(5)) {
+                break code;
+            }
             assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        };
+        assert_eq!(code, 7);
     }
 }

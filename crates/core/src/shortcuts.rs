@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Keyboard shortcuts for System Settings > Keyboard > Shortcuts. The shipped Hyprland conf is the single
+//! Keyboard shortcuts for System Settings > Keyboard > Shortcuts. The shipped compositor conf is the single
 //! source of truth for defaults; every bind gets a human name and group here. User changes and custom
 //! shortcuts live in `wolos/shortcuts.json`, render to the managed include `hypr/wolos/shortcuts.conf`
 //! (`unbind` + `bind`) and apply live with `hyprctl keyword unbind/bind` (no reload).
@@ -19,7 +19,7 @@ pub const CTRL: u8 = 1;
 pub const ALT: u8 = 2;
 pub const SHIFT: u8 = 4;
 pub const SUPER: u8 = 8;
-/// (bit, Hyprland name, symbol) in macOS display order ⌃⌥⇧⌘.
+/// (bit, compositor name, symbol) in display order ⌃⌥⇧⌘.
 const MODS: [(u8, &str, &str); 4] = [
     (CTRL, "CTRL", "⌃"),
     (ALT, "ALT", "⌥"),
@@ -27,7 +27,7 @@ const MODS: [(u8, &str, &str); 4] = [
     (SUPER, "SUPER", "⌘"),
 ];
 
-/// Modifiers + one key (xkb keysym name as Hyprland and GDK spell it).
+/// Modifiers + one key (xkb keysym name as the compositor and GDK spell it).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Combo {
     pub mods: u8,
@@ -35,7 +35,7 @@ pub struct Combo {
 }
 
 impl Combo {
-    /// Hyprland's MODS field ("SUPER SHIFT", "CTRL $mod" after substitution, "SUPER_SHIFT") + key.
+    /// The compositor's MODS field ("SUPER SHIFT", "CTRL $mod" after substitution, "SUPER_SHIFT") + key.
     pub fn parse(mods: &str, key: &str) -> Option<Self> {
         let key = key.trim();
         if key.is_empty() || key.contains([',', ' ']) {
@@ -62,7 +62,7 @@ impl Combo {
         self.mods == o.mods && self.key.eq_ignore_ascii_case(&o.key)
     }
 
-    /// "SUPER SHIFT" (Hyprland order), "" for none.
+    /// "SUPER SHIFT" (compositor order), "" for none.
     pub fn hypr_mods(&self) -> String {
         [SUPER, SHIFT, CTRL, ALT]
             .iter()
@@ -72,7 +72,7 @@ impl Combo {
             .join(" ")
     }
 
-    /// macOS-style label: "⌃⌥⇧⌘Space", "⇧⌘4", "←".
+    /// Symbol label: "⌃⌥⇧⌘Space", "⇧⌘4", "←".
     pub fn label(&self) -> String {
         let mut s: String = MODS
             .iter()
@@ -201,7 +201,7 @@ impl Bind {
     }
 }
 
-/// Global binds of a Hyprland conf (none from inside a `submap`), `$variables` substituted.
+/// Global binds of a compositor conf (none from inside a `submap`), `$variables` substituted.
 pub fn parse(conf: &str) -> Vec<Bind> {
     let mut vars: Vec<(String, String)> = Vec::new();
     let mut out = Vec::new();
@@ -322,7 +322,7 @@ pub fn name_of(dispatcher: &str, args: &str) -> Option<(&'static str, Group)> {
 
 use Group as G;
 /// (dispatcher, args, name, group) for every shipped bind (desktop conf + tiling set).
-const NAMES: [(&str, &str, &str, Group); 85] = [
+const NAMES: [(&str, &str, &str, Group); 92] = [
     ("exec", "wol-search", "Show Search", G::Search),
     ("exec", "foot", "Open Terminal", G::Apps),
     ("exec", "nautilus", "Open Files", G::Apps),
@@ -395,6 +395,18 @@ const NAMES: [(&str, &str, &str, Group); 85] = [
     ),
     (
         "exec",
+        "wol-screenshot full --copy",
+        "Copy picture of screen",
+        G::Screenshots,
+    ),
+    (
+        "exec",
+        "wol-screenshot clip",
+        "Copy picture of selected area",
+        G::Screenshots,
+    ),
+    (
+        "exec",
         "wol shell show screenshot",
         "Screenshot and recording options",
         G::Screenshots,
@@ -410,8 +422,9 @@ const NAMES: [(&str, &str, &str, Group); 85] = [
     ("exec", "wol-volume up", "Volume up", G::Media),
     ("exec", "wol-volume down", "Volume down", G::Media),
     ("exec", "wol-volume mute", "Mute", G::Media),
-    ("exec", "backlight incr 5", "Brightness up", G::Media),
-    ("exec", "backlight decr 5", "Brightness down", G::Media),
+    ("exec", "wol-volume micmute", "Mute microphone", G::Media),
+    ("exec", "wol-backlight up", "Brightness up", G::Media),
+    ("exec", "wol-backlight down", "Brightness down", G::Media),
     ("exec", "playerctl play-pause", "Play or pause", G::Media),
     ("exec", "playerctl next", "Next track", G::Media),
     ("exec", "playerctl previous", "Previous track", G::Media),
@@ -458,6 +471,30 @@ const NAMES: [(&str, &str, &str, Group); 85] = [
         "exec",
         "wol shell toggle clipboard",
         "Show clipboard history",
+        G::System,
+    ),
+    (
+        "exec",
+        "wol shell toggle themes",
+        "Choose a theme",
+        G::System,
+    ),
+    (
+        "exec",
+        "wol toggle nightlight",
+        "Turn Night Light on or off",
+        G::System,
+    ),
+    (
+        "exec",
+        "wol toggle dnd",
+        "Turn Do Not Disturb on or off",
+        G::System,
+    ),
+    (
+        "exec",
+        "wol toggle stay-awake",
+        "Turn Stay Awake on or off",
         G::System,
     ),
     (
@@ -974,7 +1011,7 @@ mod tests {
         let mut o = Overrides::default();
         let htop = Custom {
             name: "Activity".into(),
-            combo: c("SUPER CTRL", "T"),
+            combo: c("SUPER CTRL", "U"),
             command: "foot -e htop".into(),
         };
         o.add_custom(&d, htop.clone()).unwrap();
@@ -1010,7 +1047,7 @@ mod tests {
         assert_eq!(Overrides::parse(Some(&o.to_json())), o);
     }
 
-    /// Simulates Hyprland: shipped binds, then the include's unbind/bind lines in order, equals `active`.
+    /// Simulates the compositor: shipped binds, then the include's unbind/bind lines in order, equals `active`.
     #[test]
     fn include_round_trip() {
         let d = defaults(SHIPPED, TILING);
@@ -1022,7 +1059,7 @@ mod tests {
             &d,
             Custom {
                 name: "Top".into(),
-                combo: c("SUPER CTRL", "T"),
+                combo: c("SUPER CTRL", "U"),
                 command: "foot -e top".into(),
             },
         )

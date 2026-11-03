@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# rustfmt settings for the whole workspace, so a bare `cargo fmt --all -- --check` parses
+# edition 2024 syntax (let chains) like the crates themselves (Cargo.toml edition = "2024").
+edition = "2024"
+style_edition = "2024"

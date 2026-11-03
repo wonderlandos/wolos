@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+name: todos
+version: 0.1.0
+description: |
+  The Wolkit tutorial app: a text field, a button and a keyed list.
+license: BSD-2-Clause
+crystal: ">= 1.22.0"
+targets:
+  todos:
+    main: src/main.cr

@@ -111,6 +111,10 @@ pub enum Action {
     /// Default input slider, 0..100 (100 = 0 dB; above 100 only with boost).
     MicVolume(u16),
     MicMuted(bool),
+    /// Default output slider, same scale as [`Action::MicVolume`] (100 = 0 dB; above 100 only
+    /// with boost). The service converts with [`linear_for`], so the slider and the hardware
+    /// agree on where 0 dB is (`wpctl set-volume N%` counts from the hardware maximum instead).
+    OutputVolume(u16),
     /// "Automatic input level": module-echo-cancel with WebRTC gain control -> `WolOS Microphone`.
     AutoInputLevel(bool),
     /// "Reduce background noise": RNNoise LADSPA source on the default input.
@@ -142,6 +146,13 @@ pub fn linear_for(percent: u16, volume_base: f32) -> f32 {
     let base = if volume_base > 0.0 { volume_base } else { 1.0 };
     let f = f32::from(percent) / 100.0;
     (base * f * f * f).clamp(0.0, 1.0)
+}
+
+/// What `pactl set-sink-volume N%` and `wpctl set-volume N%` call the slider position `percent`
+/// (100 = 0 dB) on a device whose 0 dB sits at `volume_base`: both count from the hardware
+/// maximum, cubic like the slider, so a base below 1.0 makes the numbers differ.
+pub fn hardware_percent(percent: u16, volume_base: f32) -> u16 {
+    percent_of(linear_for(percent, volume_base), 1.0, false)
 }
 
 /// The slider's end when boost is allowed: the hardware maximum in percent of 0 dB.
@@ -189,6 +200,13 @@ pub fn snap_to_base(dev: &Device, snapped: &[String]) -> Option<f32> {
 // ---- Pro Audio file ----
 
 /// The user fragment Pro Audio writes; empty when nothing is forced (the caller removes the file).
+///
+/// A quantum pins the graph: quantum = min-quantum = max-quantum = N. In a VM PipeWire's own
+/// `context.properties.rules` (pipewire.conf) raise default.clock.min-quantum to
+/// [`VM_MIN_QUANTUM`], and whether that rule lands before or after this file is PipeWire's load
+/// order; a pinned N below 1024 would then leave min (1024) above max (N). So for N < 1024 the
+/// file carries the same `cpu.vm.name` match and pins 1024 there: N on hardware, 1024 in a VM,
+/// min never above max in either order. The live `clock.force-quantum` still gives N in a VM.
 pub fn pro_audio_conf(rate: u32, quantum: u32) -> String {
     let mut s = String::from(
         "# Written by Settings > Sound > Pro Audio (WolOS). `wol audio reset` removes it.\n",
@@ -207,14 +225,33 @@ pub fn pro_audio_conf(rate: u32, quantum: u32) -> String {
         s.push_str(&format!("    default.clock.max-quantum = {quantum}\n"));
     }
     s.push_str("}\n");
+    if quantum != 0 && quantum < VM_MIN_QUANTUM {
+        let quantum = VM_MIN_QUANTUM;
+        s.push_str(&format!(
+            "{PRO_AUDIO_VM_RULES}\n    {{\n        matches = [ {{ cpu.vm.name = !null }} ]\n        \
+             actions = {{\n            update-props = {{\n                \
+             default.clock.quantum = {quantum}\n                \
+             default.clock.min-quantum = {quantum}\n                \
+             default.clock.max-quantum = {quantum}\n            }}\n        }}\n    }}\n]\n"
+        ));
+    }
     s
 }
+
+/// The floor PipeWire's own rule sets when `cpu.vm.name` is present (pipewire.conf).
+pub const VM_MIN_QUANTUM: u32 = 1024;
+
+/// Opens the VM block of [`pro_audio_conf`]; [`parse_pro_audio_conf`] stops reading there.
+const PRO_AUDIO_VM_RULES: &str = "context.properties.rules = [";
 
 /// Read back what [`pro_audio_conf`] wrote.
 pub fn parse_pro_audio_conf(text: &str) -> ProAudio {
     let mut p = ProAudio::default();
     for l in text.lines() {
         let l = l.trim();
+        if l == PRO_AUDIO_VM_RULES {
+            break;
+        }
         if let Some(v) = l.strip_prefix("default.clock.rate =") {
             p.rate = v.trim().parse().unwrap_or(0);
         } else if let Some(v) = l.strip_prefix("default.clock.quantum =") {
@@ -499,14 +536,22 @@ pub struct ResetPlan {
     pub commands: Vec<Vec<String>>,
 }
 
-pub fn reset_plan(home: &Path) -> ResetPlan {
+/// The reset for one account: WirePlumber's state under `state_home` (`$XDG_STATE_HOME`, and the
+/// default place under `home` when that differs), WolOS's own files under `home`. None when `home`
+/// or `state_home` is empty or relative (audit S4-22): nothing is ever removed relative to the
+/// working directory.
+pub fn reset_plan(home: &Path, state_home: &Path) -> Option<ResetPlan> {
+    if !home.is_absolute() || !state_home.is_absolute() {
+        return None;
+    }
     let sv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    ResetPlan {
-        remove: vec![
-            home.join(WIREPLUMBER_STATE),
-            home.join(PRO_AUDIO_CONF),
-            home.join(SNAPPED_FILE),
-        ],
+    let mut remove = vec![state_home.join("wireplumber")];
+    if home.join(WIREPLUMBER_STATE) != remove[0] {
+        remove.push(home.join(WIREPLUMBER_STATE));
+    }
+    remove.extend([home.join(PRO_AUDIO_CONF), home.join(SNAPPED_FILE)]);
+    Some(ResetPlan {
+        remove,
         commands: vec![
             sv(&["wpctl", "clear-default"]),
             sv(&[
@@ -534,7 +579,7 @@ pub fn reset_plan(home: &Path) -> ResetPlan {
                 "wireplumber.service",
             ]),
         ],
-    }
+    })
 }
 
 impl ResetPlan {
@@ -581,6 +626,22 @@ mod tests {
         assert!((db_of(base, base)).abs() < 1e-4);
         assert!((db_of(1.0, base) - 30.0).abs() < 1e-3);
         assert_eq!(db_of(0.0, base), f32::NEG_INFINITY);
+    }
+
+    /// A6-2: the same position means the same sound on both scales; only a base below 1.0 makes
+    /// the numbers differ, and 100 stays 0 dB, never the hardware maximum.
+    #[test]
+    fn hardware_percent_counts_from_the_hardware_maximum() {
+        assert_eq!(hardware_percent(100, 1.0), 100);
+        assert_eq!(hardware_percent(40, 1.0), 40);
+        let base = 0.125; // 0 dB is half of the maximum on the cubic scale
+        assert_eq!(hardware_percent(100, base), 50, "0 dB is not the maximum");
+        assert_eq!(hardware_percent(0, base), 0);
+        assert_eq!(
+            hardware_percent(max_percent(base), base),
+            100,
+            "louder tops out"
+        );
     }
 
     #[test]
@@ -640,6 +701,96 @@ mod tests {
         assert_eq!(decay(0.8, -1.0), 0.8);
         m.feed(2.0, 0.0);
         assert_eq!(m.peak, 1.0, "clamped");
+    }
+
+    /// The clock keys of one block of a fragment: `context.properties = {..}` (props) or the
+    /// update-props of `context.properties.rules` (VM-only), as PipeWire would read them.
+    fn clock_keys(text: &str, rules: bool) -> Vec<(String, u32)> {
+        let mut inside = false;
+        let mut out = vec![];
+        for l in text.lines().map(str::trim) {
+            if l.starts_with("context.properties") {
+                inside = (l == PRO_AUDIO_VM_RULES) == rules;
+                continue;
+            }
+            if let Some((k, v)) = l.split_once(" = ")
+                && inside
+                && k.starts_with("default.clock.")
+                && k.ends_with("quantum")
+            {
+                out.push((k.to_string(), v.parse().unwrap()));
+            }
+        }
+        out
+    }
+
+    /// (quantum, min, max) after a reboot: the shipped fragment (1024 / 64 / 2048), PipeWire's
+    /// VM rule (min 1024) when `vm`, and the Pro Audio file, with the VM rules in either order.
+    fn boot_clock(user: &str, vm: bool, upstream_rule_last: bool) -> (u32, u32, u32) {
+        let mut m: std::collections::HashMap<String, u32> = [
+            ("default.clock.quantum", 1024),
+            ("default.clock.min-quantum", 64),
+            ("default.clock.max-quantum", 2048),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        m.extend(clock_keys(user, false));
+        if vm {
+            let upstream = vec![("default.clock.min-quantum".to_string(), 1024)];
+            let ours = clock_keys(user, true);
+            let order = if upstream_rule_last {
+                [ours, upstream]
+            } else {
+                [upstream, ours]
+            };
+            for rule in order {
+                m.extend(rule);
+            }
+        }
+        let g = |k: &str| m[&format!("default.clock.{k}")];
+        (g("quantum"), g("min-quantum"), g("max-quantum"))
+    }
+
+    #[test]
+    fn a_saved_quantum_never_leaves_min_above_max_on_hardware_or_in_a_vm() {
+        for n in QUANTA.iter().copied().chain([2048]) {
+            let t = pro_audio_conf(0, n);
+            assert_eq!(
+                boot_clock(&t, false, false),
+                (n, n, n),
+                "hardware, quantum {n}\n{t}"
+            );
+            let vm = n.max(VM_MIN_QUANTUM);
+            for last in [false, true] {
+                let (q, min, max) = boot_clock(&t, true, last);
+                assert!(
+                    min <= q && q <= max,
+                    "VM, quantum {n}: {min}/{q}/{max}\n{t}"
+                );
+                let want = if n < VM_MIN_QUANTUM {
+                    (vm, vm, vm)
+                } else {
+                    (n, VM_MIN_QUANTUM.min(n), n)
+                };
+                assert_eq!(
+                    (q, min, max),
+                    want,
+                    "VM, quantum {n}, upstream rule last {last}\n{t}"
+                );
+            }
+            assert_eq!(
+                t.contains("matches = [ { cpu.vm.name = !null } ]"),
+                n < VM_MIN_QUANTUM,
+                "{t}"
+            );
+            assert_eq!(parse_pro_audio_conf(&t).quantum, n);
+        }
+        // Rate only: no rule, the shipped floor (and the VM's 1024) stay in charge.
+        let r = pro_audio_conf(96000, 0);
+        assert!(!r.contains("context.properties.rules"), "{r}");
+        assert_eq!(boot_clock(&r, true, true), (1024, 1024, 2048));
+        assert_eq!(boot_clock(&r, false, true), (1024, 64, 2048));
     }
 
     #[test]
@@ -924,10 +1075,26 @@ mod tests {
         }
     }
 
+    /// Audit S4-22: never a relative path; `$XDG_STATE_HOME` is where WirePlumber's state is.
+    #[test]
+    fn reset_is_absolute_and_follows_the_state_home() {
+        assert_eq!(reset_plan(Path::new(""), Path::new("/s")), None);
+        assert_eq!(reset_plan(Path::new("home"), Path::new("/s")), None);
+        assert_eq!(
+            reset_plan(Path::new("/home/x"), Path::new(".local/state")),
+            None
+        );
+        let p = reset_plan(Path::new("/home/x"), Path::new("/var/state/x")).unwrap();
+        assert_eq!(p.remove[0], Path::new("/var/state/x/wireplumber"));
+        assert_eq!(p.remove[1], Path::new("/home/x/.local/state/wireplumber"));
+        assert!(p.remove.iter().all(|r| r.is_absolute()));
+    }
+
     #[test]
     fn reset_forgets_state_and_restarts_the_three_services() {
-        let p = reset_plan(Path::new("/home/x"));
+        let p = reset_plan(Path::new("/home/x"), Path::new("/home/x/.local/state")).unwrap();
         assert_eq!(p.remove[0], Path::new("/home/x/.local/state/wireplumber"));
+        assert_eq!(p.remove.len(), 3);
         assert_eq!(
             p.remove[1],
             Path::new("/home/x/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf")
@@ -960,6 +1127,8 @@ mod tests {
         assert_eq!(serde_json::from_str::<Action>(&j).unwrap(), a);
         let j = serde_json::to_string(&Action::MicVolume(80)).unwrap();
         assert_eq!(j, r#"{"action":"mic-volume","value":80}"#);
+        let j = serde_json::to_string(&Action::OutputVolume(80)).unwrap();
+        assert_eq!(j, r#"{"action":"output-volume","value":80}"#);
         let j = serde_json::to_string(&Action::BtCodec("AA:BB".into(), "aac".into())).unwrap();
         assert_eq!(j, r#"{"action":"bt-codec","value":["AA:BB","aac"]}"#);
         assert_eq!(

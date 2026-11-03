@@ -19,7 +19,7 @@ Decision: ADR 0010. Code: `crates/shared/src/widgets/` (layout file, package sch
 
 ## Build a widget in 5 minutes
 
-1. Copy the example: `cp -r /usr/local/share/wolos/widgets/game-friends ~/.local/share/wolos/widgets/my-widget`. The folder name is the widget's id (lowercase letters, digits, `-`).
+1. Copy the example: `cp -r /usr/share/wolos/widgets/game-friends ~/.local/share/wolos/widgets/my-widget`. The folder name is the widget's id (lowercase letters, digits, `-`).
 2. Make the data source print JSON. `friends.sh` is a plain script; replace its body with your query and keep the shape.
 3. Edit `widget.json`: name, sizes, and one layout per size.
 4. Check it: `wol widgets validate my-widget`. It names every problem with its JSON path, runs the source once, and lists every `{{binding}}` the output does not fill.
@@ -82,7 +82,7 @@ Limits: depth 12, 200 nodes, output 256 KB. A package that does not validate sho
 
 - One timer for the whole desktop, armed for the earliest due widget. Deadlines sit on wall-clock multiples of each period, so a clock, a calendar and a 5-minute custom widget wake together.
 - Music and batteries listen to D-Bus signals; no polling.
-- Fullscreen window on the active workspace: the timer stops; the first wake after it ends catches up.
+- A maximized or fullscreen window on the workspace a display shows: that display's timer stops (each display follows its own output, not the focused one); the first wake after it ends catches up.
 - No animation unless the user acted (drag, gallery). Data changes swap content in place, and identical data changes nothing on screen.
 - `WOL_SHELL_TIMING=1` prints each widget wakeup: what ran, and how long it took.
 

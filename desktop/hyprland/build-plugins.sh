@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Build hyprbars (hyprland-plugins, commit pinned for the installed Hyprland, + desktop/hyprland/hyprbars patches)
+# Build hyprbars (hyprland-plugins, commit pinned for the installed compositor, + desktop/hyprland/hyprbars patches)
 # + plugins/wol-hypr
 # against the installed hyprland-wolos headers; install into STAGE/usr/lib/hyprland/plugins/.
 # Usage: build-plugins.sh STAGE   (run by the wolos-system PKGBUILD; needs hyprland-wolos, git, c++)
@@ -22,7 +22,11 @@ for p in "$HERE"/hyprbars/*.patch; do patch -d "$HP" -Np1 -s < "$p"; done
 [ -f "$RT" ] || cargo build --release -p realtime --manifest-path "$REPO/Cargo.toml"
 # Patched hyprbars takes its button geometry and hover state from realtime.
 make -C "$HP/hyprbars" INCLUDES="$CF -I$REPO/crates/realtime/include" LIBS="$RT -Wl,--gc-sections"
-c++ -std=c++2b -fPIC -O2 -fno-access-control $CF -shared "$REPO/plugins/wol-hypr/main.cpp" "$RT" -o "$WORK/libwol-hypr.so"
+# wol-hypr: STANDARDS 3 warnings as errors for our code; the compositor's headers are -isystem (they warn).
+# shellcheck disable=SC2086 # CF: one word per flag
+CFS=$(printf ' %s' $CF | sed 's/ -I/ -isystem /g')
+# shellcheck disable=SC2086 # CFS: one word per flag
+c++ -std=c++2b -fPIC -O2 -Wall -Wextra -Werror -fno-access-control $CFS -shared "$REPO/plugins/wol-hypr/main.cpp" "$RT" -o "$WORK/libwol-hypr.so"
 mkdir -p "$DST"
 install -m 755 "$HP/hyprbars/hyprbars.so" "$DST/libhyprbars.so"
 install -m 755 "$WORK/libwol-hypr.so" "$DST/libwol-hypr.so"

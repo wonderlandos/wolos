@@ -52,14 +52,14 @@ the rest with the checklist in `docs/REVIEW.md`.
   (ADR 0020).
 - `unsafe` only for a C boundary or a libc call with no safe wrapper, each block with a
   `// SAFETY:` comment that states the invariant (`crates/api/src/os.rs`). New `unsafe` outside
-  `crates/wol-abi`, `crates/wopkg`, `crates/xguard*`, `crates/realtime` and `crates/api/src/os.rs`
+  `crates/wol-abi`, `crates/wolkit`, `crates/wopkg`, `crates/xguard*`, `crates/realtime` and `crates/api/src/os.rs`
   is a review question.
 - Source ratchets (`crates/shell/tests/*`, reader in `tests/support/scan.rs`) freeze a count per
   file in a `BASELINE` table. They fail only on growth (a new file or a count above its row); a count below
   its row passes and prints the lowered table as a note. The closing worker of each wave pastes
   the lowered rows, so parallel changes do not collide on the table; the debt only comes down.
 - **CI** [test] `crates/shell/tests/hypr_ratchet.rs` (`hyprland_ipc_stays_in_the_hypr_module`):
-  Hyprland is spoken to through one module, `shell::hypr` (typed requests such as
+  The compositor is spoken to through one module, `shell::hypr` (typed requests such as
   `hypr::clients()`, one event stream). `hypr::request("j/…")`, `"dispatch …"` literals and
   `.socket2.sock` appear only in `src/hypr.rs` and the one event reader (`ui/ipc.rs`); every other
   file is frozen in the baseline and fails only on growth (audit3 R2A-17).
@@ -90,6 +90,8 @@ the rest with the checklist in `docs/REVIEW.md`.
 - Tests: prefer a type or a visibility that makes the wrong call impossible (a `pub(super)`
   function behind the one caller allowed to use it) over a test that greps for its absence. A
   grep test is allowed only as a ratchet with a baseline table, as above (audit3 R2A-24).
+- The numbered, test-enforced catalogue of these rules is `docs/RULES.md` (Rust: `RR-nnn`, checked by
+  `crates/shared/tests/rules_rust.rs`; it links the system, UI, packaging and CI catalogues).
 
 ## 2. Shell
 
@@ -106,6 +108,37 @@ the rest with the checklist in `docs/REVIEW.md`.
 - Quote every expansion. Paths that come from a user, a disk label or a package are checked
   against `..` and absolute roots before use. No `eval`, no `sh -c "$user_string"`.
 
+## 2a. Crystal (wopkg, wol-hue, the libwol examples)
+
+Crystal is the userland language (ADR 0036); the numbered, test-enforced catalogue is
+`docs/RULES-crystal.md` (`RCR-nnn`, `crates/controller/tests/rules_crystal.rs`, run `tools/crystal/lint.sh`
+for the tools). The rules in one place:
+
+- Every `.cr` file starts with the SPDX line and a comment that says what it is for.
+- **CI** `crystal tool format --check` clean (the formatter output differs between releases; CI's
+  Arch toolchain is the reference) and `ameba` clean with the committed `.ameba.yml`, which decides
+  every rule explicitly. A rule a newer ameba adds is decided there before it is on; lint runs
+  `--up-to-version`. A file the linter cannot be made to like goes in that file's `Excluded:` list,
+  which only shrinks.
+- No raw pointers, `unsafe_*`, `LibC` or C bindings outside the files listed in `FFI_ALLOW`; the
+  allowlist grows only with an ADR.
+- Run programs as program + argument array (`Process.run("git", ["-C", dir])`), never through a
+  shell string, `shell: true`, `sh -c` or backticks. No code built or loaded at run time (no macro
+  `run`, no `dlopen`, no `crystal eval`).
+- Network: build an `HTTP::Client` and set `connect_timeout` and `read_timeout` (the `HTTP::Client.get`
+  class methods cannot); never switch TLS verification off.
+- Input from outside (JSON, YAML, files, downloads) decodes into typed structs with `from_json` /
+  `from_yaml`; `JSON.parse` / `YAML.parse` are counted and may only fall. Validate a name before it
+  becomes a path or an argument.
+- `rescue` names its exception types; never `rescue Exception`; a catch-all is counted and may only
+  fall. A failed check fails closed or tells the user.
+- No fixed `/tmp` names (use `File.tempfile`), nothing world-writable, no MD5 or SHA-1, tokens from
+  `Random::Secure`, no literal credentials, no `/home/` literals.
+- Dependencies: the standard library only today. A shard needs an ADR, an entry in
+  `ALLOWED_SHARDS`, a `commit:` pin in `shard.yml`, a committed `shard.lock` and a THIRD-PARTY.md
+  entry; the number of shards may only fall. PKGBUILDs and scripts never run `shards install`
+  against the network (vendored source with a checksum, `--frozen --local`).
+
 ## 3. C and C++ (plugins, libwol headers, kernel work)
 
 - SPDX line first (`// SPDX-License-Identifier: GPL-2.0-or-later`; kernel: `GPL-2.0-only`;
@@ -120,7 +153,7 @@ the rest with the checklist in `docs/REVIEW.md`.
 - Kernel patches follow `Documentation/process/`: one change per patch, `checkpatch.pl` clean,
   `Signed-off-by` by a person, `Assisted-by` for a tool.
 
-## 4. Configuration files (units, pacman.conf, Hyprland, repart.d, PKGBUILDs)
+## 4. Configuration files (units, pacman.conf, compositor, repart.d, PKGBUILDs)
 
 - One concern per file: one unit, one drop-in, one repart definition, one recipe per package.
 - Every shipped config has a contract test that reads the file and asserts the property
@@ -158,7 +191,7 @@ the rest with the checklist in `docs/REVIEW.md`.
 - ADR 0020: identity from the kernel, every call names one capability, fields bounded both sides,
   panics stop at the boundary, apps have no ambient authority. ADR 0027: an app lives in its own
   scope with task, memory and swap limits; a storm is killed, a well-behaved app is never touched.
-  ADR 0015 is the baseline (firewall, hardening, what runs as root).
+  ADR 0040 is the baseline (firewall, hardening, what runs as root).
 - CVE-class checklist for every change that reads input or touches the system:
   - **Path traversal**: a name from outside is joined to a root and the result is checked to stay
     under it (`Path::components`, no `..`, no absolute parts) before open or unlink.
@@ -237,7 +270,7 @@ brackets; `cargo test` runs in the `test` job).
 - **Bus**: no I/O while a lock is held; a slow subscriber is dropped, not waited for
   (`crates/api/src/bus.rs`). **CI** [test] `a_slow_subscriber_is_dropped_and_does_not_block_others`.
   (B4)
-- **FFI**: handles crossing the C boundary are tagged with `wol_abi::handle::Tag` (type and
+- **FFI**: `crates/wolkit` follows the same rules (`wolkit::ffi::handle::Tag`, checked input helpers in `crates/wolkit/src/ffi/mod.rs`, ADR 0039). Handles crossing the C boundary are tagged with `wol_abi::handle::Tag` (type and
   generation, `crates/wol-abi/src/handle.rs`); strings from C go through the checked wrappers
   (`error::input`, `kit::text` in `crates/wol-abi/src`); `unsafe_op_in_unsafe_fn` is denied in
   `wol-abi`, and `slice::from_raw_parts` is a disallowed method outside those wrappers
@@ -250,8 +283,10 @@ brackets; `cargo test` runs in the `test` job).
   same commit; the doc numbers change in the same commit as the table. (C, R2C-19)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
-  `lua_loader`, `package_call`, `core_parsers`). **CI** [fuzz] runs each target 60 s on pinned nightly; [test]
-  `tools/ci/fuzz-replay.sh` replays `fuzz/regressions/<target>/` on stable. A new decoder without
+  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`). **CI** [fuzz]
+  runs each target 60 s on pinned nightly; [test] `tools/ci/fuzz-replay.sh` replays
+  `fuzz/regressions/<target>/` on stable, and `crates/shared/tests/fuzz_list.rs` fails when a
+  target has no `[[bin]]`, no seeds, no matrix row or no name in this list. A new decoder without
   a target is a review finding. (B10)
 - **Supply chain**: **CI** [lint] `cargo deny --locked check` (`deny.toml`) and `cargo audit`;
   [supply-chain] `tools/ci/pin-lint.py` checks that every GitHub Action `uses:` is pinned to a

@@ -66,6 +66,17 @@ pub fn serve(
     };
     let attached = reader.get_mut().fd.take();
     let req = JobRequest::parse(&line);
+    // S4-26: grant-free requests too are refused from a peer whose known executable changed
+    // since accept (exec after connect); an executable unknown on first sight is let through.
+    if matches!(req, Some(JobRequest::Subscribe | JobRequest::Publish(_)))
+        && peer.as_ref().is_some_and(PeerIdentity::changed)
+    {
+        // The refusal is the record: the caller hears why (no library logging, RR-004).
+        return refuse(
+            &stream,
+            "permission denied: the caller changed since it connected",
+        );
+    }
     match &req {
         Some(JobRequest::Subscribe) => {
             // Publish writes are non-blocking: a subscriber that stops reading is dropped (bus.rs).
@@ -312,6 +323,59 @@ mod tests {
         cli
     }
 
+    /// Audit S4-26: a peer whose executable was known at accept and is another now (it
+    /// exec()ed) may neither publish nor subscribe; one whose executable was unknown on first
+    /// sight still may (no grant involved).
+    #[test]
+    fn publish_and_subscribe_refuse_a_changed_identity_only() {
+        let bus = Bus::default();
+        let sub = call("subscribe\n", &bus);
+        let e = Event::Theme {
+            id: "wol-dark".into(),
+        };
+        let publish = |exe: Option<&str>| {
+            let (srv, cli) = UnixStream::pair().unwrap();
+            let h = ask(&cli, format!("publish {}", e.to_line()).as_bytes());
+            let peer = PeerIdentity::captured_as(&srv, exe);
+            serve(
+                srv,
+                peer,
+                &Empty,
+                &bus,
+                &AllowAll,
+                &portal::State::default(),
+            );
+            h.join().unwrap();
+            cli
+        };
+        // Changed: refused with a reason, nothing reaches the subscriber.
+        let mut answer = String::new();
+        let mut cli = publish(Some("/usr/bin/not-what-runs"));
+        cli.shutdown(std::net::Shutdown::Write).unwrap();
+        cli.read_to_string(&mut answer).unwrap();
+        assert!(answer.contains("changed since it connected"), "{answer}");
+        // Unknown on first sight: published.
+        drop(publish(None));
+        let mut line = String::new();
+        BufReader::new(&sub).read_line(&mut line).unwrap();
+        assert_eq!(Event::parse(&line), Some(e.clone()));
+        // A changed subscriber is not added.
+        let before = bus.len();
+        let (srv, cli) = UnixStream::pair().unwrap();
+        let h = ask(&cli, b"subscribe\n");
+        let peer = PeerIdentity::captured_as(&srv, Some("/usr/bin/not-what-runs"));
+        serve(
+            srv,
+            peer,
+            &Empty,
+            &bus,
+            &AllowAll,
+            &portal::State::default(),
+        );
+        h.join().unwrap();
+        assert_eq!(bus.len(), before);
+    }
+
     #[test]
     fn list_subscribe_publish() {
         let bus = Bus::default();
@@ -468,6 +532,58 @@ mod tests {
         cli.read_to_string(&mut out).unwrap();
         assert!(out.contains("permission denied"), "{out}");
         assert_eq!(bus.len(), 0);
+    }
+
+    /// Audit P6-1: a program that is a shower by its path alone is not one when it runs under
+    /// `LD_PRELOAD` (exec()ed by a same-account process to load its own code); the same path
+    /// without it subscribes.
+    #[test]
+    fn a_shower_binary_under_ld_preload_cannot_subscribe_to_the_account() {
+        for (env, subscribes) in [(None, true), (Some("LD_PRELOAD"), false)] {
+            let mut cmd = std::process::Command::new("/bin/sleep");
+            // Not the test runner's environment: cargo sets LD_LIBRARY_PATH for tests.
+            cmd.arg("10")
+                .env_clear()
+                .env("HOME", "/")
+                .stderr(std::process::Stdio::null());
+            if let Some(var) = env {
+                cmd.env(var, "/nonexistent/evil.so");
+            }
+            let mut child = cmd.spawn().unwrap();
+            let pid = i32::try_from(child.id()).unwrap();
+            let me = std::env::current_exe().unwrap();
+            while std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|e| e == me)
+                || std::fs::read(format!("/proc/{pid}/environ")).is_ok_and(|e| e.is_empty())
+            {
+                std::thread::yield_now(); // `spawn` returns after the exec; this is a safety net
+            }
+            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap();
+            let exe: &'static str = Box::leak(exe.to_string_lossy().into_owned().into_boxed_str());
+            let showers: &'static [&'static str] = Box::leak(vec![exe].into_boxed_slice());
+            let peer = PeerIdentity::of_process(pid, showers);
+            let bus = Bus::default();
+            let (srv, mut cli) = UnixStream::pair().unwrap();
+            let h = ask(&cli, b"subscribe account\n");
+            serve(
+                srv,
+                Some(peer),
+                &Empty,
+                &bus,
+                &AllowAll,
+                &portal::State::default(),
+            );
+            h.join().unwrap();
+            if subscribes {
+                assert_eq!(bus.len(), 1, "the real shower subscribes");
+            } else {
+                let mut out = String::new();
+                cli.read_to_string(&mut out).unwrap();
+                assert!(out.contains("permission denied"), "{out}");
+                assert_eq!(bus.len(), 0, "a preloaded shower is refused");
+            }
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
     }
 
     /// Child half of `a_peer_that_execs_after_sending_is_refused`: runs only when the parent test

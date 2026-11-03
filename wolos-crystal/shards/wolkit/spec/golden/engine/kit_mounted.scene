@@ -1,0 +1,31 @@
+scene nodes=30
+0 box
+  1 box flex-direction=column grow=1 background=surface
+    2 box flex-direction=row height=52px padding-left=16 padding-right=16 align-items=center gap=8 background=surface
+      3 button classes=0 flex-direction=row "New"
+      4 button flex-direction=row "More"
+      5 spacer display=none
+    6 box flex-direction=row grow=1
+      7 box flex-direction=column width=220px background=sidebar padding=8 gap=4
+        8 box flex-direction=column gap=4
+          9 text font-size=secondary color=dim "Folders"
+          10 box classes=3 flex-direction=column
+            11 box on=0x1 flex-direction=row height=40px padding-left=12 padding-right=12 align-items=center gap=8
+              12 box flex-direction=column grow=1
+                13 text "Inbox"
+                14 text font-size=secondary color=dim visibility=visible "3 new"
+            15 box on=0x1 flex-direction=row height=40px padding-left=12 padding-right=12 align-items=center gap=8
+              16 box flex-direction=column grow=1
+                17 text "Archive"
+                18 text font-size=secondary color=dim visibility=hidden
+      19 box flex-direction=column grow=1
+        20 box flex-direction=row gap=4
+          21 button classes=2,6 state=selected on=0x1 flex-direction=row "All"
+          22 button classes=2,6 on=0x1 flex-direction=row "Starred"
+        23 button on=0x1 flex-direction=row "Mint"
+        24 spacer display=none
+        25 box flex-direction=column grow=1 align-items=center justify-content=center gap=8 padding=24
+          26 text font-size=title "Nothing here"
+          27 text font-size=secondary color=dim text-align=center "Add a note to get started."
+          28 button flex-direction=row "Add note"
+    29 spacer display=none

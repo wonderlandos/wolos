@@ -21,21 +21,52 @@ module Wopkg
     getter core : Core
     @a : Args
 
+    # The part of the library's JSON configuration (WOPKG_CONFIG) the tool itself reads.
+    struct Config
+      include JSON::Serializable
+
+      getter home : String? = nil
+      getter cache_dir : String? = nil
+      getter state_dir : String? = nil
+    end
+
+    # A recipe's install manifest (`recipe_install` writes it).
+    struct Manifest
+      include JSON::Serializable
+
+      getter version : String
+      getter files : Array(String)
+    end
+
+    # The assets of a GitHub release.
+    struct Release
+      include JSON::Serializable
+
+      struct Asset
+        include JSON::Serializable
+
+        getter name : String
+        getter browser_download_url : String
+      end
+
+      getter assets : Array(Asset) = [] of Asset
+    end
+
     def initialize(@a : Args, config = ENV["WOPKG_CONFIG"]? || "{}")
-      @config = JSON.parse(config).as_h? || {} of String => JSON::Any
+      @config = Config.from_json(config)
       @core = Core.new(config)
     end
 
     def home : String
-      @config["home"]?.try(&.as_s) || ENV["HOME"]
+      @config.home || ENV["HOME"]
     end
 
     def cache : String
-      @config["cache_dir"]?.try(&.as_s) || "#{ENV["XDG_CACHE_HOME"]? || "#{home}/.cache"}/wopkg"
+      @config.cache_dir || "#{ENV["XDG_CACHE_HOME"]? || "#{home}/.cache"}/wopkg"
     end
 
     def state : String
-      @config["state_dir"]?.try(&.as_s) || "#{ENV["XDG_STATE_HOME"]? || "#{home}/.local/state"}/wopkg"
+      @config.state_dir || "#{ENV["XDG_STATE_HOME"]? || "#{home}/.local/state"}/wopkg"
     end
 
     def prefix : String
@@ -43,7 +74,7 @@ module Wopkg
     end
 
     def say(s : String)
-      STDOUT.puts s unless @a.json
+      STDOUT.puts s unless @a.json?
     end
 
     def note(s : String)
@@ -51,7 +82,7 @@ module Wopkg
     end
 
     def emit(j)
-      STDOUT.puts j.to_json if @a.json
+      STDOUT.puts j.to_json if @a.json?
     end
 
     def run : Int32
@@ -59,7 +90,7 @@ module Wopkg
       when "help"        then help
       when "version"     then say "wopkg #{VERSION} (libwopkg #{Core.version})"
       when "__fetch"     then bench_fetch
-      when "__complete"  then STDOUT.puts core.complete(@a.targets.first? || "") rescue nil
+      when "__complete"  then complete_names
       when "completions" then completions
       when "sync"        then sync
       when "search"      then search
@@ -97,7 +128,7 @@ module Wopkg
       say <<-H
         wopkg: apps and packages from every source, one command.
 
-          wopkg search <words>      (-Ss)  find apps in WolOS, Arch, Flathub, AppImage, recipes, AUR
+          wopkg search <words>      (-Ss)  find apps in WolOS, Arch, Flathub, AppImage, recipes, community packages
           wopkg info <name>         (-Si)  versions and sources of one app
           wopkg install <name>...   (-S)   install from the best source (--from flatpak|aur|appimage|recipe|<repo>)
           wopkg remove <name>...    (-R)   remove it
@@ -117,6 +148,13 @@ module Wopkg
         H
     end
 
+    # What a shell asks while the person types; it never prints an error into the prompt.
+    def complete_names
+      STDOUT.puts core.complete(@a.targets.first? || "")
+    rescue Failure | IO::Error
+      nil
+    end
+
     def completions
       shell = @a.targets.first? || "zsh"
       s = Completions.for(shell) || raise UsageError.new("Completions exist for zsh, bash and fish.")
@@ -129,13 +167,13 @@ module Wopkg
     end
 
     def index_request : String
-      Sources.request(repos, Sources.flatpak_appstream(home), @a.local, @a.only)
+      Sources.request(repos, Sources.flatpak_appstream(home), @a.local?, @a.only)
     end
 
     def sync
       t = Time.instant
       res = core.index_update(index_request, UI.progress("index"))
-      return emit(res) if @a.json
+      return emit(res) if @a.json?
       total = 0
       res["sources"].as_a.each do |s|
         total += s["records"].as_i
@@ -147,7 +185,7 @@ module Wopkg
     end
 
     def ensure_index
-      dir = @config["cache_dir"]?.try(&.as_s) || cache
+      dir = cache
       return if Dir.exists?("#{dir}/index") && !Dir.children("#{dir}/index").empty?
       note "Building the search index for the first time..."
       core.index_update(index_request, UI.progress("index"))
@@ -156,7 +194,7 @@ module Wopkg
     def search
       ensure_index
       res = core.search(@a.targets.join(" "), 30)
-      return emit(res) if @a.json
+      return emit(res) if @a.json?
       hits = res["results"].as_a
       if hits.empty?
         say "Nothing found for “#{@a.targets.join(" ")}”."
@@ -168,7 +206,7 @@ module Wopkg
     def info
       ensure_index
       res = core.info(@a.targets.first)
-      return emit(res) if @a.json
+      return emit(res) if @a.json?
       say UI.bold(res["name"].as_s)
       say "  #{res["summary"].as_s}"
       res["sources"].as_a.each do |s|
@@ -178,7 +216,7 @@ module Wopkg
 
     def list
       res = core.installed
-      return emit(res) if @a.json
+      return emit(res) if @a.json?
       {"pacman" => "System packages", "flatpak" => "Flatpak", "wol" => "WolOS apps", "recipe" => "Recipes"}.each do |k, title|
         v = res[k].as_a
         say "#{title} (#{v.size}): #{v.first(12).map(&.as_s).join(", ")}#{v.size > 12 ? ", ..." : ""}" unless v.empty?
@@ -188,8 +226,8 @@ module Wopkg
     end
 
     def sources
-      JSON.parse(index_request)["sources"].as_a.each do |s|
-        say "#{s["name"].as_s.ljust(16)} #{s["kind"].as_s.ljust(9)} #{(s["url"]? || s["path"]).not_nil!.as_s}"
+      Sources::IndexRequest.from_json(index_request).sources.each do |s|
+        say "#{s.name.ljust(16)} #{s.kind.ljust(9)} #{s.location}"
       end
     end
 
@@ -207,7 +245,7 @@ module Wopkg
     def record(source, action, name, from = nil, to = nil, undo = nil)
       e = {"source" => source, "action" => action, "name" => name, "from" => from, "to" => to, "undo" => undo}
       core.record(e.to_json)
-    rescue
+    rescue Failure
       nil
     end
 
@@ -223,9 +261,9 @@ module Wopkg
       end
       note "#{UI.bold(hit["name"].as_s)} #{s["version"].as_s}: #{hit["summary"].as_s}"
       if kind == "aur"
-        note "The AUR is not reviewed by WolOS: anyone can publish there. Read what it does before you build it."
+        note "Community packages are not reviewed by WolOS: anyone can publish there. Read what it does before you build it."
       end
-      return say "Not installed." unless UI.confirm("Install it from #{UI.source_label(s)}?", @a.yes && kind != "aur")
+      return say "Not installed." unless UI.confirm("Install it from #{UI.source_label(s)}?", @a.yes? && kind != "aur")
       case kind
       when "pacman"
         core.system_call({"call" => "package.change", "verb" => "install", "names" => [id]}.to_json)
@@ -270,25 +308,38 @@ module Wopkg
     # Newest `*.AppImage` asset of a GitHub repo (x86_64 when there are several).
     def appimage_release_url(repo : String) : String
       raise Failure.new(1, "“#{repo}” is not a GitHub repository.") unless repo.matches?(/\A[\w.-]+\/[\w.-]+\z/)
-      r = HTTP::Client.get("https://api.github.com/repos/#{repo}/releases/latest", headers: HTTP::Headers{"Accept" => "application/vnd.github+json", "User-Agent" => "wopkg"})
+      client = HTTP::Client.new(URI.parse("https://api.github.com"))
+      client.connect_timeout = 10.seconds
+      client.read_timeout = 30.seconds
+      r = client.get("/repos/#{repo}/releases/latest", headers: HTTP::Headers{"Accept" => "application/vnd.github+json", "User-Agent" => "wopkg"})
       raise Failure.new(3, "GitHub has no release for #{repo}.") unless r.status_code == 200
-      assets = JSON.parse(r.body)["assets"].as_a.select { |x| x["name"].as_s.downcase.ends_with?(".appimage") }
-      a = assets.find { |x| x["name"].as_s.includes?("x86_64") || x["name"].as_s.includes?("amd64") } || assets.first? ||
+      release = begin
+        Release.from_json(r.body)
+      rescue JSON::Error
+        raise Failure.new(3, "GitHub's answer about #{repo} could not be read.")
+      end
+      assets = release.assets.select(&.name.downcase.ends_with?(".appimage"))
+      a = assets.find { |x| x.name.includes?("x86_64") || x.name.includes?("amd64") } || assets.first? ||
           raise Failure.new(6, "The latest #{repo} release has no AppImage.")
-      a["browser_download_url"].as_s
+      a.browser_download_url
     end
 
     def remove(name : String)
       inst = core.installed
       if inst["appimage"].as_a.any? { |x| x["name"].as_s == name }
-        return say "Not removed." unless UI.confirm("Remove #{name} (AppImage)?", @a.yes)
+        return say "Not removed." unless UI.confirm("Remove #{name} (AppImage)?", @a.yes?)
         id = core.appimage_remove(name)
         return say "Removed #{name}. Undo: wopkg rollback #{id}"
       end
-      hit = (core.info(name) rescue nil)
+      hit = begin
+        core.info(name)
+      rescue Failure
+        nil
+      end
       srcs = hit ? hit["sources"].as_a.select(&.["installed"].as_bool) : [] of JSON::Any
       s = srcs.find { |x| @a.from.nil? || x["kind"].as_s == @a.from } || raise Failure.new(6, "#{name} is not installed.")
-      return say "Not removed." unless UI.confirm("Remove #{hit.not_nil!["name"].as_s} (#{UI.source_label(s)})?", @a.yes)
+      shown = hit ? hit["name"].as_s : name
+      return say "Not removed." unless UI.confirm("Remove #{shown} (#{UI.source_label(s)})?", @a.yes?)
       id = s["id"].as_s
       case s["kind"].as_s
       when "flatpak"
@@ -301,11 +352,11 @@ module Wopkg
       else
         core.system_call({"call" => "package.change", "verb" => "remove", "names" => [id]}.to_json)
       end
-      say "Removed #{hit.not_nil!["name"].as_s}."
+      say "Removed #{shown}."
     end
 
     def want?(kind : String) : Bool
-      @a.only.nil? || @a.only.not_nil!.includes?(kind)
+      (o = @a.only).nil? || o.includes?(kind)
     end
 
     # One command for everything: WolOS release, system packages, Flatpaks, AppImages, .wol, recipes.
@@ -336,6 +387,20 @@ module Wopkg
       say "Updated #{name}."
     end
 
+    # A refresh that fails leaves the old index; the update goes on with it.
+    private def refresh_index : Nil
+      core.index_update(index_request)
+    rescue Failure
+      nil
+    end
+
+    # The WolOS release plan, or nil when the system service cannot say.
+    private def release_plan : JSON::Any?
+      core.release_plan({"to" => @a.to}.compact.to_json)
+    rescue Failure
+      nil
+    end
+
     def update
       if (one = @a.targets.first?) && @a.to.nil?
         return update_one(one)
@@ -343,15 +408,15 @@ module Wopkg
       summary = [] of String
       failed = nil.as(Failure?)
       pins = Pins.read("#{state}/pins")
-      (core.index_update(index_request) rescue nil) if @a.only.nil? || want?("pacman")
+      refresh_index if @a.only.nil? || want?("pacman")
       if want?("system")
-        plan = core.release_plan(({"to" => @a.to}.compact).to_json) rescue nil
+        plan = release_plan
         if plan
           case plan["reason"].as_s
           when "available"
             t = plan["target"]
             summary << "WolOS #{t["version"].as_s} (from #{plan["current"].as_s})"
-            if !@a.check && UI.confirm("Update WolOS to #{t["version"].as_s}? It installs next to the running system and starts on restart.", @a.yes)
+            if !@a.check? && UI.confirm("Update WolOS to #{t["version"].as_s}? It installs next to the running system and starts on restart.", @a.yes?)
               core.system_call({"call" => "system.update", "manifest" => t["manifest"].as_s, "signature" => t["signature"].as_s}.to_json)
               record("system", "update", "wolos", plan["current"].as_s, t["version"].as_s, {"type" => "system", "note" => "boot the previous system"})
             end
@@ -363,9 +428,13 @@ module Wopkg
         end
       end
       if want?("pacman") && @a.to.nil?
-        if @a.check
+        if @a.check?
           buf = IO::Memory.new
-          Process.run("pacman", ["-Qu"], output: buf) rescue nil
+          begin
+            Process.run("pacman", ["-Qu"], output: buf)
+          rescue IO::Error
+            # No pacman here: nothing to count.
+          end
           n = buf.to_s.lines.size
           summary << "#{n} system package#{n == 1 ? "" : "s"}" if n > 0
         else
@@ -384,7 +453,7 @@ module Wopkg
       if want?("flatpak") && @a.to.nil? && (ids = Flatpak.capture(Flatpak::UPDATES_ARGV).try { |o| Flatpak.ids(o) }) && !ids.empty?
         ids -= pins
         summary << "#{ids.size} Flatpak app#{ids.size == 1 ? "" : "s"}"
-        unless @a.check
+        unless @a.check?
           commits = ids.to_h { |i| {i, Flatpak.capture(Flatpak.commit_argv(i)).try(&.strip)} }
           if !ids.empty? && Flatpak.run(pins.empty? ? Flatpak.update_argv : Flatpak.update_argv(ids))
             commits.each { |i, c| record("flatpak", "update", i, c, nil, c ? {"type" => "run", "argv" => Flatpak.rollback_argv(i, c)} : nil) }
@@ -392,7 +461,7 @@ module Wopkg
         end
       end
       if want?("appimage") && @a.to.nil?
-        r = core.appimage_update({"check_only" => @a.check, "adopt" => true}.to_json, UI.progress("AppImage"))
+        r = core.appimage_update({"check_only" => @a.check?, "adopt" => true}.to_json, UI.progress("AppImage"))
         r["apps"].as_a.each do |x|
           case x["state"].as_s
           when "updated"   then summary << "#{x["name"].as_s} (AppImage, #{UI.bytes(x["fetched_bytes"].as_i64)} downloaded)"
@@ -402,21 +471,21 @@ module Wopkg
         end
       end
       if want?("wol") && @a.to.nil? && Process.find_executable("wol")
-        Process.run("wol", ["update", "apps"] + (@a.check ? [] of String : ["--yes"]), output: STDERR, error: STDERR)
+        Process.run("wol", ["update", "apps"] + (@a.check? ? [] of String : ["--yes"]), output: STDERR, error: STDERR)
       end
       if want?("recipe") && @a.to.nil?
-        recipe_updates.each do |n|
-          summary << "#{n} (recipe)"
-          recipe_install(n) unless @a.check
+        recipe_updates.each do |rname|
+          summary << "#{rname} (recipe)"
+          recipe_install(rname) unless @a.check?
         end
       end
-      if (n = aur.installed.size) > 0 && !@a.json && (@a.only.nil? || want?("aur"))
-        note "#{n} AUR package#{n == 1 ? "" : "s"} built here: AUR updates never run on their own. Read and update them with `wopkg aur update`."
+      if (n = aur.installed.size) > 0 && !@a.json? && (@a.only.nil? || want?("aur"))
+        note "#{n} community package#{n == 1 ? "" : "s"} built here: their updates never run on their own. Read and update them with `wopkg aur update`."
       end
-      if @a.json
-        emit({"changes" => summary, "checked_only" => @a.check})
+      if @a.json?
+        emit({"changes" => summary, "checked_only" => @a.check?})
       elsif !summary.empty?
-        say "#{@a.check ? "Updates available" : "Updated"}: #{summary.join(", ")}."
+        say "#{@a.check? ? "Updates available" : "Updated"}: #{summary.join(", ")}."
       elsif failed.nil?
         say "Everything is up to date."
       end
@@ -425,7 +494,7 @@ module Wopkg
 
     def history
       h = core.history
-      return emit(h) if @a.json
+      return emit(h) if @a.json?
       h["entries"].as_a.last(30).each do |e|
         t = Time.unix(e["time"].as_i64).to_local.to_s("%Y-%m-%d %H:%M")
         undone = e["undone"].as_bool ? "  (undone)" : ""
@@ -436,7 +505,7 @@ module Wopkg
 
     def rollback(id : String)
       if id == "system"
-        return say "Nothing changed." unless UI.confirm("Start the previous WolOS on the next restart?", @a.yes)
+        return say "Nothing changed." unless UI.confirm("Start the previous WolOS on the next restart?", @a.yes?)
         core.system_call({"call" => "system.rollback"}.to_json)
         return say "The previous WolOS starts on the next restart."
       end
@@ -455,7 +524,12 @@ module Wopkg
         core.system_call({"call" => "system.channel", "channel" => c}.to_json)
         say "This computer now follows the #{c} channel."
       else
-        say (File.read("/etc/wolos/channel").strip rescue "stable")
+        current = begin
+          File.read("/etc/wolos/channel").strip
+        rescue File::Error
+          "stable"
+        end
+        say current
       end
     end
 
@@ -491,27 +565,27 @@ module Wopkg
       case sub
       when "review"
         pkg || raise UsageError.new("wopkg aur review <package>")
-        aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+        aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the community package collection.")
         text = aur.review_text(pkg, AurGuard.head(aur.repo(pkg)))
         STDOUT.puts(text.empty? ? "Nothing changed since the version you installed." : text)
       when "update"
         (pkg ? [pkg] : aur.installed).each { |n| aur_install(n, true) }
-        say "No AUR packages built by wopkg yet." if pkg.nil? && aur.installed.empty?
+        say "No community packages built by wopkg yet." if pkg.nil? && aur.installed.empty?
       else
         raise UsageError.new("wopkg aur review <package> | wopkg aur update [package]")
       end
     end
 
-    # What an AUR package's files say, read and never run. Nothing here builds or installs.
+    # What a community package's files say, read and never run. Nothing here builds or installs.
     def audit
       pkg = @a.targets.first? || raise UsageError.new("wopkg audit <package>")
       raise UsageError.new("#{pkg} is not a package name.") unless Aur.valid?(pkg)
-      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the community package collection.")
       dir = aur.repo(pkg)
       graph = "#{cache}/aurlaws/#{pkg}.svg"
       Dir.mkdir_p(File.dirname(graph))
       a = AurHook.audit(dir, graph)
-      return STDOUT.puts(a.raw) if @a.json && !a.raw.empty?
+      return STDOUT.puts(a.raw) if @a.json? && !a.raw.empty?
       say AurHook.summary(a.verdict)
       a.verdict.flags.each do |f|
         say "  #{f.severity.ljust(7)} #{f.title}#{f.count > 1 ? " (#{f.count})" : ""}"
@@ -527,10 +601,10 @@ module Wopkg
       end
     end
 
-    # Every AUR build: pinned commit, TLS metadata, hostile-until-read checks, sandbox, inspection,
+    # Every community package build: pinned commit, TLS metadata, hostile-until-read checks, sandbox, inspection,
     # malware scan, then wold. Never unattended, and -y does not answer these questions.
     def aur_install(pkg : String, update : Bool = false)
-      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the AUR.")
+      aur.checkout(pkg) || raise Failure.new(6, "#{pkg} is not in the community package collection.")
       dir = aur.repo(pkg)
       raise Failure.new(5, "#{pkg} contains symbolic links, so it was not built.") unless Aur.symlinks(dir).empty?
       commit = AurGuard.head(dir)
@@ -538,22 +612,22 @@ module Wopkg
       return say("#{pkg} is up to date (#{commit[0, 12]}).") if update && prev == commit
       meta = begin
         aur.meta(pkg)
-      rescue e
-        raise Failure.new(3, "The AUR did not answer over a secure connection (#{e.message}), so #{pkg} was not built.")
+      rescue e : ArgumentError | IO::Error | OpenSSL::SSL::Error
+        raise Failure.new(3, "The community package collection did not answer over a secure connection (#{e.message}), so #{pkg} was not built.")
       end
       log = "#{dir}/.build.log"
       File.delete?(log)
       si = aur.srcinfo(pkg, log)
       pkgbuild = File.read("#{dir}/PKGBUILD")
-      inst = Dir.children(dir).select(&.ends_with?(".install")).sort.map { |f| File.read("#{dir}/#{f}") }.join("\n")
+      inst = Dir.children(dir).select(&.ends_with?(".install")).sort!.map { |f| File.read("#{dir}/#{f}") }.join("\n")
       inst = nil if inst.empty?
       findings = AurGuard.scan(pkgbuild, inst, si) + AurGuard.meta_findings(meta, aur.stored_meta(pkg), Time.utc)
       findings += AurGuard.update_findings(AurGuard.files_at(dir, prev), AurGuard.files_at(dir, commit)) if prev && prev != commit
       STDOUT.puts aur.review_text(pkg, commit)
-      note "#{UI.bold(pkg)} from the AUR, commit #{commit[0, 12]}#{meta.maintainer ? ", maintained by #{meta.maintainer}" : ", with no maintainer"}. The AUR is not reviewed by WolOS: anyone can publish there."
+      note "#{UI.bold(pkg)} from the community package collection, commit #{commit[0, 12]}#{meta.maintainer ? ", maintained by #{meta.maintainer}" : ", with no maintainer"}. Community packages are not reviewed by WolOS: anyone can publish there."
       show_findings(findings)
       note UI.dim(AurGuard::DISCLAIMER)
-      skips, hard = findings.select { |f| f.severity.refuse? }.partition { |f| f.kind == :skip }
+      skips, hard = findings.select(&.severity.refuse?).partition { |f| f.kind == :skip }
       raise Failure.new(5, "#{pkg} was not built: #{hard.first.text}") unless hard.empty?
       unless skips.empty?
         raise Failure.new(1, "Not built.") unless UI.confirm_strict("A source has no checksum. Build #{pkg} anyway?")
@@ -575,7 +649,7 @@ module Wopkg
       files.each do |f|
         fs = AurGuard.inspect_file(f)
         show_findings(fs)
-        raise Failure.new(5, "#{File.basename(f)} was not installed: #{fs.find(&.severity.refuse?).not_nil!.text}") if AurGuard.blocked?(fs)
+        raise Failure.new(5, "#{File.basename(f)} was not installed: #{fs.find!(&.severity.refuse?).text}") if AurGuard.blocked?(fs)
         if sc = AurGuard.scriptlet_of(f)
           STDOUT.puts "==> install script, runs as the administrator\n#{sc}"
           raise Failure.new(1, "Not installed.") unless UI.confirm_strict("Run this install script as the administrator?")
@@ -596,7 +670,7 @@ module Wopkg
       files.each { |f| core.system_call({"call" => "package.install-file", "path" => f}.to_json) }
       aur.write_provenance(pkg, commit, si, meta, files)
       record("aur", update ? "update" : "install", pkg, prev.try(&.[0, 12]), commit[0, 12], {"type" => "run", "argv" => ["wopkg", "remove", pkg]})
-      say "Installed #{pkg} (AUR #{commit[0, 12]})."
+      say "Installed #{pkg} (community package, commit #{commit[0, 12]})."
     end
 
     # One plain sentence for a hit, which stops the install unless the person overrides on purpose;
@@ -604,7 +678,7 @@ module Wopkg
     private def scan_gate(v : Scan::Verdict, what : String)
       if v.infected?
         STDERR.puts v.message
-        unless Scan.may_continue?(v, UI.confirm_strict("Install anyway, against ClamAV's warning?"))
+        unless Scan.may_continue?(v, UI.confirm_strict("Install anyway, against the malware check's warning?"))
           raise Failure.new(5, v.message)
         end
       elsif !v.clean?
@@ -620,8 +694,9 @@ module Wopkg
         Recipe.dirs.each do |d|
           next unless Dir.exists?(d)
           Dir.children(d).sort.each do |n|
-            r = Recipe.find(n) rescue nil
-            say "#{n.ljust(12)} #{r.version.ljust(10)} #{r.summary}" if r = r.try(&.[0])
+            next unless found = find_recipe(n)
+            r = found[0]
+            say "#{n.ljust(12)} #{r.version.ljust(10)} #{r.summary}"
           end
         end
       when "build"   then recipe_build(name || raise UsageError.new("wopkg recipe build <name>"))
@@ -630,6 +705,13 @@ module Wopkg
       when "index"   then STDOUT.print Recipe.index(name || "recipes")
       else                raise UsageError.new("wopkg recipe list|build|install|remove|index")
       end
+    end
+
+    # A recipe by name; one that does not read counts as not there (the list skips it).
+    private def find_recipe(name : String) : {Recipe, String}?
+      Recipe.find(name)
+    rescue Recipe::Invalid | File::Error
+      nil
     end
 
     def recipe_build(name : String) : {Recipe, String}
@@ -654,10 +736,10 @@ module Wopkg
     def recipe_remove(name : String)
       m = "#{home}/.local/share/wopkg/recipes/#{name}/manifest.json"
       raise Failure.new(6, "The #{name} recipe is not installed.") unless File.exists?(m)
-      j = JSON.parse(File.read(m))
-      j["files"].as_a.each { |f| File.delete?(f.as_s) if f.as_s.starts_with?(prefix + "/") }
+      j = Manifest.from_json(File.read(m))
+      j.files.each { |f| File.delete?(f) if f.starts_with?(prefix + "/") }
       FileUtils.rm_rf(File.dirname(m))
-      record("recipe", "remove", name, j["version"].as_s, nil, {"type" => "run", "argv" => ["wopkg", "recipe", "install", name]})
+      record("recipe", "remove", name, j.version, nil, {"type" => "run", "argv" => ["wopkg", "recipe", "install", name]})
       say "Removed #{name}."
     end
 
@@ -665,8 +747,12 @@ module Wopkg
       base = "#{home}/.local/share/wopkg/recipes"
       return [] of String unless Dir.exists?(base)
       Dir.children(base).select do |n|
-        m = JSON.parse(File.read("#{base}/#{n}/manifest.json")) rescue next false
-        (r = Recipe.find(n)) && r[0].version != m["version"].as_s
+        m = begin
+          Manifest.from_json(File.read("#{base}/#{n}/manifest.json"))
+        rescue JSON::Error | File::Error
+          next false
+        end
+        (r = Recipe.find(n)) && r[0].version != m.version
       end
     end
   end

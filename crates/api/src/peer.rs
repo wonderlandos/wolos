@@ -5,12 +5,35 @@
 //! describing the newcomer. The executable is read at accept through that descriptor and read again
 //! before anything is granted: a peer that sent its request and then exec()ed into another binary
 //! is refused, never identified as the binary it became.
-use crate::portal::Caller;
+use crate::portal::{Caller, SHOWERS};
+use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 
 /// Longest executable path we accept (bytes): PATH_MAX.
 const MAX_EXE: usize = 4096;
+
+/// Most bytes of a peer's `environ` or `maps` we read; a process past it is not trusted as a shower.
+const MAX_PROC_FILE: u64 = 4 << 20;
+
+/// Environment variables that put foreign code into a program before its `main` (the dynamic
+/// loader, GTK, GIO, GStreamer, Qt and pixbuf plug-in paths). Every `LD_*` counts as well.
+const INJECTING_ENV: [&str; 9] = [
+    "GTK_MODULES",
+    "GTK3_MODULES",
+    "GTK_PATH",
+    "GIO_EXTRA_MODULES",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GST_PLUGIN_PATH",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "QT_PLUGIN_PATH",
+    "GSETTINGS_SCHEMA_DIR",
+];
+
+/// Where code the shell runs may be mapped from: the sealed system. A library from a home, a
+/// temporary directory or a memfd is code a same-account process put there. (A `/usr` file
+/// replaced since the shell started shows as deleted but is still the system's, so it passes.)
+const CODE_ROOTS: [&str; 3] = ["/usr/", "/lib/", "/lib64/"];
 
 /// The kernel's account of a connected peer.
 #[derive(Debug)]
@@ -21,6 +44,8 @@ pub struct PeerIdentity {
     exe: Option<String>,
     /// `/proc/<pid>` opened at accept.
     dir: Option<std::fs::File>,
+    /// Executables identified by path alone ([`SHOWERS`]); a seam for tests.
+    showers: &'static [&'static str],
 }
 
 impl PeerIdentity {
@@ -37,6 +62,7 @@ impl PeerIdentity {
             pid: p.pid,
             exe,
             dir,
+            showers: &SHOWERS,
         })
     }
 
@@ -56,21 +82,144 @@ impl PeerIdentity {
         }
     }
 
+    /// The peer is no longer who it was at accept (audit S4-26): an executable was known then and
+    /// now differs or cannot be read (an exec, or the pinned process is gone). An executable that
+    /// was unknown on first sight is not a change: no identity, nothing to lose. For calls that
+    /// need no grant (`publish`, `subscribe`); grants use [`PeerIdentity::caller`], which also
+    /// refuses an unknown executable.
+    pub fn changed(&self) -> bool {
+        match (&self.exe, &self.dir) {
+            (None, _) => false,
+            (Some(was), Some(dir)) => exe_of(dir).as_ref() != Some(was),
+            (Some(_), None) => true,
+        }
+    }
+
     /// The calling app for a grant decision. None (refuse) if the executable is unknown, not an
-    /// absolute path, or changed since accept.
+    /// absolute path, or changed since accept; and, for a program trusted by its path alone (the
+    /// shower, audit P6-1), if the process shows signs of carrying foreign code ([`Self::injected`]).
     pub fn caller(&self) -> Option<Caller> {
         let app = self.exe.clone()?;
-        (app.starts_with('/') && self.still_same()).then_some(Caller {
+        if !(app.starts_with('/') && self.still_same()) {
+            return None;
+        }
+        if self.showers.contains(&app.as_str()) && self.injected() {
+            return None;
+        }
+        Some(Caller {
             uid: self.uid,
             pid: self.pid,
             app,
         })
     }
 
+    /// The pinned process carries, or may carry, code its executable did not ship with (audit
+    /// P6-1, defence in depth: the path alone is not an identity, ADR 0037). True when its initial
+    /// environment names `LD_*`, `GTK_MODULES` and kin, when it has executable code mapped from
+    /// outside the sealed system, and whenever either cannot be read: unknown is refused.
+    pub fn injected(&self) -> bool {
+        let Some(dir) = &self.dir else {
+            return true;
+        };
+        let (Some(env), Some(maps), Some(status)) = (
+            proc_file(dir, "environ"),
+            proc_file(dir, "maps"),
+            proc_file(dir, "status"),
+        ) else {
+            return true;
+        };
+        // A tracer already attached (PTRACE_TRACEME before exec, which survives it) can rewrite
+        // the process at will; a mount namespace of its own can lay another /usr over the system's.
+        if traced(&String::from_utf8_lossy(&status)) || !same_mount_namespace(dir) {
+            return true;
+        }
+        // An empty environment is a process in the middle of an exec (or one that wiped it): no
+        // account's shell starts with none.
+        env.is_empty() || env_injects(&env) || maps_inject(&String::from_utf8_lossy(&maps))
+    }
+
+    /// [`PeerIdentity::capture`] of `stream`, with the executable seen at accept replaced by
+    /// `exe` (tests of what a changed or unknown identity may do).
+    #[cfg(test)]
+    pub(crate) fn captured_as(stream: &impl AsRawFd, exe: Option<&str>) -> Option<Self> {
+        let mut id = Self::capture(stream)?;
+        id.exe = exe.map(str::to_owned);
+        Some(id)
+    }
+
+    /// The identity of process `pid` as if it had connected, trusted by path as a shower when its
+    /// own executable is in `showers` (tests of a real child exec()ed under a hostile environment).
+    #[cfg(test)]
+    pub(crate) fn of_process(pid: i32, showers: &'static [&'static str]) -> Self {
+        let dir = std::fs::File::open(format!("/proc/{pid}")).ok();
+        let exe = dir.as_ref().and_then(exe_of);
+        Self {
+            uid: 0,
+            pid,
+            exe,
+            dir,
+            showers,
+        }
+    }
+
     /// Executable bytes as captured at accept (for exact-path checks such as the realtime agent).
     pub fn exe(&self) -> Option<&str> {
         self.exe.as_deref()
     }
+}
+
+/// A file of the process a `/proc/<pid>` descriptor pins, read through `/proc/self/fd` (bounded).
+fn proc_file(dir: &std::fs::File, name: &str) -> Option<Vec<u8>> {
+    let f = std::fs::File::open(format!("/proc/self/fd/{}/{name}", dir.as_raw_fd())).ok()?;
+    let mut buf = Vec::new();
+    f.take(MAX_PROC_FILE + 1).read_to_end(&mut buf).ok()?;
+    (buf.len() as u64 <= MAX_PROC_FILE).then_some(buf)
+}
+
+/// Whether a `status` file names a tracer (`TracerPid:` not 0). No such line counts as traced.
+fn traced(status: &str) -> bool {
+    status
+        .lines()
+        .find_map(|l| l.strip_prefix("TracerPid:"))
+        .is_none_or(|v| v.trim() != "0")
+}
+
+/// Whether the pinned process is in the mount namespace wold is in.
+fn same_mount_namespace(dir: &std::fs::File) -> bool {
+    let theirs = std::fs::read_link(format!("/proc/self/fd/{}/ns/mnt", dir.as_raw_fd()));
+    let ours = std::fs::read_link("/proc/self/ns/mnt");
+    matches!((theirs, ours), (Ok(t), Ok(o)) if t == o)
+}
+
+/// Whether a NUL-separated environment names a variable that loads foreign code.
+fn env_injects(environ: &[u8]) -> bool {
+    environ.split(|b| *b == 0).any(|entry| {
+        let name = entry.split(|b| *b == b'=').next().unwrap_or_default();
+        name.starts_with(b"LD_") || INJECTING_ENV.iter().any(|n| n.as_bytes() == name)
+    })
+}
+
+/// Whether a `maps` listing has executable code that is not from the sealed system: a path
+/// elsewhere or a memfd. Anonymous executable memory is not looked at (JIT).
+fn maps_inject(maps: &str) -> bool {
+    maps.lines().any(|line| {
+        // address perms offset dev inode [path]; the path may hold spaces.
+        let mut rest = line;
+        let mut perms = "";
+        for i in 0..5 {
+            rest = rest.trim_start();
+            let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+            if i == 1 {
+                perms = &rest[..end];
+            }
+            rest = &rest[end..];
+        }
+        let path = rest.trim();
+        perms.contains('x')
+            && !path.is_empty()
+            && !path.starts_with('[')
+            && !CODE_ROOTS.iter().any(|r| path.starts_with(r))
+    })
 }
 
 /// `exe` of the process a `/proc/<pid>` descriptor pins, read through `/proc/self/fd` so the pid is
@@ -110,11 +259,188 @@ mod tests {
             pid,
             exe: exe_of(&dir),
             dir: Some(dir),
+            showers: &SHOWERS,
         };
         assert!(id.still_same());
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(!id.still_same(), "the pinned process is gone");
         assert!(id.caller().is_none());
+        assert!(id.changed(), "known at accept, gone now: a change");
+    }
+
+    /// Audit S4-26: only a change of a known identity counts; an executable unknown on first
+    /// sight is not refused for grant-free calls (it still gets no grant).
+    #[test]
+    fn only_a_known_identity_can_change() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let live = PeerIdentity::capture(&a).unwrap();
+        assert!(!live.changed(), "same executable as at accept");
+        let unknown = PeerIdentity {
+            uid: 1000,
+            pid: live.pid,
+            exe: None,
+            dir: None,
+            showers: &SHOWERS,
+        };
+        assert!(!unknown.changed(), "unknown on first sight is not a change");
+        assert!(unknown.caller().is_none(), "and still no grant");
+        let execd = PeerIdentity {
+            uid: 1000,
+            pid: live.pid,
+            exe: Some("/usr/bin/not-this-test".into()),
+            dir: std::fs::File::open(format!("/proc/{}", live.pid)).ok(),
+            showers: &SHOWERS,
+        };
+        assert!(execd.changed(), "another executable than at accept");
+    }
+
+    /// Audit P6-1: names that load foreign code before `main` are refused; others are not.
+    #[test]
+    fn environment_that_injects_code_is_told_apart() {
+        assert!(env_injects(b"HOME=/h\0LD_PRELOAD=/tmp/x.so\0"));
+        assert!(env_injects(b"LD_LIBRARY_PATH=/tmp\0"));
+        assert!(env_injects(b"LD_AUDIT=/tmp/a.so"));
+        assert!(env_injects(b"A=b\0GTK_MODULES=evil\0"));
+        assert!(!env_injects(b"HOME=/h\0WAYLAND_DISPLAY=wayland-1\0"));
+        assert!(
+            !env_injects(b"X=LD_PRELOAD\0"),
+            "a value that mentions a name is not the name"
+        );
+        assert!(!env_injects(b""), "emptiness is `injected`'s to refuse");
+    }
+
+    #[test]
+    fn code_from_outside_the_sealed_system_is_told_apart() {
+        let sys = "7f00-7f10 r-xp 00000000 08:01 12   /usr/lib/libgtk-4.so.1\n\
+                   7f20-7f30 r-xp 00000000 08:01 13   /usr/bin/wol-shell\n\
+                   7f40-7f50 rw-p 00000000 00:00 0    [heap]\n\
+                   7f60-7f70 rwxp 00000000 00:00 0\n\
+                   7f80-7f90 r-xp 00000000 08:01 14   /usr/lib/old.so (deleted)\n\
+                   7fa0-7fb0 r--p 00000000 08:01 15   /home/ann/data.bin\n";
+        assert!(!maps_inject(sys));
+        for evil in [
+            "7f00-7f10 r-xp 00000000 08:01 12   /home/ann/.cache/evil.so",
+            "7f00-7f10 r-xp 00000000 08:01 12   /tmp/e v il.so",
+            "7f00-7f10 r-xp 00000000 00:01 12   /memfd:x (deleted)",
+            "7f00-7f10 r-xp 00000000 08:01 12   /usrx/lib/e.so",
+        ] {
+            assert!(maps_inject(&format!("{sys}{evil}\n")), "{evil}");
+        }
+    }
+
+    #[test]
+    fn a_traced_process_is_told_apart() {
+        assert!(!traced("Name:\tx\nTracerPid:\t0\nUid:\t1000\n"));
+        assert!(traced("Name:\tx\nTracerPid:\t4242\n"));
+        assert!(traced("Name:\tx\n"), "no line: unknown is refused");
+    }
+
+    /// A child of this test shares its mount namespace; one that unshared its own does not.
+    #[test]
+    fn a_process_in_another_mount_namespace_is_injected() {
+        let me = std::fs::File::open("/proc/self").unwrap();
+        assert!(same_mount_namespace(&me));
+        // unshare(1) -m needs privilege we may not have; if it works the child must be refused.
+        let un = std::process::Command::new("unshare")
+            .args(["-m", "-r", "/bin/sleep", "10"])
+            .env_clear()
+            .env("HOME", "/")
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut c) = un {
+            // unshare execs sleep a moment after it started: wait for that exec, bounded.
+            for _ in 0..1_000_000 {
+                let exe = std::fs::read_link(format!("/proc/{}/exe", c.id()));
+                if exe.is_ok_and(|e| e.ends_with("sleep")) {
+                    break;
+                }
+                std::thread::yield_now();
+            }
+            let id = PeerIdentity::of_process(i32::try_from(c.id()).unwrap(), &SHOWERS);
+            let dir = id.dir.as_ref().unwrap();
+            if exe_of(dir).is_some_and(|e| e.ends_with("sleep")) {
+                assert!(!same_mount_namespace(dir), "a mount namespace of its own");
+                assert!(id.injected());
+            }
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
+    /// A child process, started with `env`, still running `sleep`.
+    fn child(env: &[(&str, &str)]) -> std::process::Child {
+        let mut c = std::process::Command::new("/bin/sleep");
+        // Nothing of the test runner's own environment (cargo sets LD_LIBRARY_PATH for tests).
+        c.arg("10")
+            .env_clear()
+            .env("HOME", "/")
+            .stderr(std::process::Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        let child = c.spawn().unwrap();
+        // The exec of sleep is complete once the executable is no longer this test's and it has an
+        // environment to read.
+        let me = std::env::current_exe().unwrap();
+        for _ in 0..200 {
+            let exe = std::fs::read_link(format!("/proc/{}/exe", child.id())).unwrap();
+            let env = std::fs::read(format!("/proc/{}/environ", child.id())).unwrap_or_default();
+            if exe != me && !env.is_empty() {
+                break;
+            }
+            std::thread::yield_now(); // `spawn` returns after the exec; this is a safety net
+        }
+        child
+    }
+
+    /// The path of a child's executable as a one-entry shower list.
+    fn showers_of(pid: u32) -> &'static [&'static str] {
+        let exe = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap();
+        let s: &'static str = Box::leak(exe.to_string_lossy().into_owned().into_boxed_str());
+        Box::leak(vec![s].into_boxed_slice())
+    }
+
+    /// Audit P6-1: the real path is accepted; the same executable under `LD_PRELOAD` (or any of
+    /// the other loaders) is not a shower, and neither is one whose environment cannot be read.
+    #[test]
+    fn a_shower_binary_under_ld_preload_is_not_a_shower() {
+        let mut clean = child(&[]);
+        let pid = i32::try_from(clean.id()).unwrap();
+        let ok = PeerIdentity::of_process(pid, showers_of(clean.id()));
+        assert!(!ok.injected(), "a plain child carries no foreign code");
+        assert!(ok.caller().is_some(), "the real path is accepted");
+        clean.kill().unwrap();
+        clean.wait().unwrap();
+
+        for var in ["LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "GTK_MODULES"] {
+            let mut bad = child(&[(var, "/nonexistent/evil.so")]);
+            let id =
+                PeerIdentity::of_process(i32::try_from(bad.id()).unwrap(), showers_of(bad.id()));
+            assert!(id.injected(), "{var}");
+            assert!(id.caller().is_none(), "{var}: no caller, no shower");
+            bad.kill().unwrap();
+            bad.wait().unwrap();
+        }
+    }
+
+    /// Only the path-trusted programs are held to it: another app with `LD_LIBRARY_PATH` (a game
+    /// launcher) is still identified and still needs its grant.
+    #[test]
+    fn other_apps_keep_their_identity_under_ld_library_path() {
+        let mut other = child(&[("LD_LIBRARY_PATH", "/opt/lib")]);
+        let id = PeerIdentity::of_process(i32::try_from(other.id()).unwrap(), &SHOWERS);
+        assert!(id.injected());
+        assert!(id.caller().is_some());
+        other.kill().unwrap();
+        other.wait().unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_process_is_injected() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let mut id = PeerIdentity::capture(&a).unwrap();
+        id.dir = None;
+        assert!(id.injected(), "unknown is refused");
     }
 }

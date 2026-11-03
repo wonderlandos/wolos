@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# AUR laws: contracts over the graph of a package. Each law says which shape is a finding.
+# Community package laws: contracts over the graph of a package. Each law says which shape is a finding.
 # These establish how the checker behaves on these graphs and, where a law says `for`, on every
 # graph. They do not establish that a graph captured what a program does: a broken law means
 # "needs review", a clean graph means "no law broken", and neither means anything about safety.

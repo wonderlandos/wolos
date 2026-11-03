@@ -1,0 +1,15 @@
+{
+  "app": "org.example.core",
+  "answers": {
+    "notification.post": [{"ok": true, "id": 1}],
+    "power.info": [{"ok": true, "data": {"on_battery": true, "low_power": false, "battery": {"percent": 71, "charging": false}, "cells": [1, 2.5, "x"], "name": "Main"}}]
+  },
+  "events": [
+    {"after": "subscribe", "emit": [
+      {"event": "theme", "id": "wol-dark-blue"},
+      {"event": "theme", "id": "wol-light-blue"},
+      {"event": "theme", "id": "wol-dark-green"}
+    ]},
+    {"after": "notification.post", "emit": [{"event": "theme", "id": "wol-after-post"}]}
+  ]
+}

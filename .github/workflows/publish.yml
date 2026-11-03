@@ -7,11 +7,15 @@
 #   what=packages run=<ECS run id>: sign the unsigned packages of a wolos-pkgbuilds build.yml run
 #       (its log: "== wolos-pkgbuilds -> s3://.../runs/<run>") into [wolos-testing].
 #   what=promote: [wolos-testing] -> [wolos] (after the release passed its VM test).
-#   what=iso run=<vX.Y.Z>: the release of that wolos-iso tag: [wolos-cachy], ISO, release.json.
+#   what=iso run=<vX.Y.Z>: the release of that tag (put on all four repos by `wolos-build release`):
+#       ISO from [wolos-testing], VM test, release.json signed, the latest release.
 #   what=cdn run=<run>: copy a signed repo to the CDN's bucket after main uploaded it by hand.
 #   what=iso-s3 run=<S3 run id> tag=<vX.Y.Z>: publish an ISO already built and VM-tested on the build
-#       box (s3://$BUCKET/runs/<run>/: the .iso and its manifest .json) as a pre-release of this repo:
-#       the manifest's image URL points at that release, release.json is signed (WOLOS_RELEASE_KEY).
+#       box (s3://$BUCKET/runs/<run>/: the .iso, its manifest .json and the VM test's checks.txt,
+#       which must say BOOT PASS and no FAIL) as a pre-release of this repo:
+#       `wolos-build release --do --iso --prerelease` (the same signer and writes as what=iso).
+# Every write is `wolos-build publish|release` (lib/publish.sh in wolos-build, from the builder
+# image); the jobs here and the reusable workflows only check out, assume the role and pass keys.
 # Without WOLOS_RELEASES_TOKEN nothing is written to the releases repo: the run ends with a
 # ::notice:: holding the exact upload command for main's gh login (and the what=cdn step after it).
 # Variables (this repo): AWS_ROLE_ARN, AWS_REGION, BUCKET, CLUSTER, TASK_DEF_ISO, CAPACITY,
@@ -41,6 +45,11 @@ concurrency:
 permissions:
   contents: read
   id-token: write   # AWS (S3, ECR, the cluster) over OIDC
+
+# Every run: script is bash -eo pipefail (a failing stage of a pipeline fails the step).
+defaults:
+  run:
+    shell: bash
 
 jobs:
   packages:
@@ -84,44 +93,37 @@ jobs:
     environment: release
     permissions:
       contents: write   # the release of this repo
-      id-token: write   # S3 over OIDC
+      id-token: write   # S3 and ECR (the builder image) over OIDC
     env:
       RUN: ${{ inputs.run }}
       TAG: ${{ inputs.tag }}
       BUCKET: ${{ vars.BUCKET }}
+      GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Inputs
         run: |
           case $RUN in ''|*/*|*' '*) echo "::error::run '$RUN' is not an S3 run id"; exit 1 ;; esac
           case $TAG in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "::error::tag '$TAG' is not vX.Y.Z"; exit 1 ;; esac
+      # The signer (release/sign-release.sh, sb-layout.sh) and the builder image pin, at the same
+      # reviewed commit as the iso job's reusable workflow (I7-4: never a moving branch next to the key).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: wonderlandos/wolos-iso
+          ref: f2b094f47021fd054ff53e228616527bfcd1820d # main 2026-11-02; bump with the iso job's pin
+          path: wolos-iso
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
-      - name: ISO, manifest, signature
+      - name: Builder registry
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+      - name: ISO, release.json, signature, pre-release
         env:
-          RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+          WOLOS_RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
         run: |
-          [ -n "$RELEASE_KEY" ] || { echo "::error::WOLOS_RELEASE_KEY is not set: release.json would be unsigned"; exit 1; }
-          mkdir -p out && aws s3 sync --quiet "s3://$BUCKET/runs/$RUN/" out/
-          iso=$(ls out/*.iso); [ "$(ls out/*.iso | wc -l)" = 1 ] || { echo "::error::need exactly one .iso in runs/$RUN"; exit 1; }
-          name=${iso##*/}; man=${iso%.iso}.json
-          [ "$(sha256sum "$iso" | cut -d' ' -f1)" = "$(jq -r .sha256 "$man")" ] || { echo "::error::$name does not match its manifest"; exit 1; }
-          [ "$(stat -c %s "$iso")" -lt 2147483648 ] || { echo "::error::$name is over 2 GiB (GitHub asset limit)"; exit 1; }
-          jq --arg u "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name" '.image = $u' "$man" > out/release.json
-          ( umask 077; echo "$RELEASE_KEY" > "$RUNNER_TEMP/release.pem" )
-          openssl pkeyutl -sign -rawin -inkey "$RUNNER_TEMP/release.pem" -in out/release.json -out out/release.json.sig
-          rm -f "$RUNNER_TEMP/release.pem"
-          [ "$(stat -c %s out/release.json.sig)" = 64 ] || { echo "::error::WOLOS_RELEASE_KEY is not an Ed25519 key"; exit 1; }
-          (cd out && sha256sum "$name" > "$name.sha256")
-          echo "iso=$iso" >> "$GITHUB_ENV"; echo "name=$name" >> "$GITHUB_ENV"
-          cat out/release.json >> "$GITHUB_STEP_SUMMARY"
-      - name: Release
-        run: |
-          ver=$(jq -r .version out/release.json)
-          notes="Test build of WolOS $ver: built from [wolos-testing] and VM-tested (unattended install + boot) on the build box. Kernel $(jq -r .kernel out/release.json). sha256 in $name.sha256; release.json is signed."
-          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --prerelease --target main \
-            --title "WolOS $ver (test build)" --notes "$notes" \
-            "$iso" "out/$name.sha256" out/release.json out/release.json.sig
-          echo "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name" | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -p out/iso && aws s3 sync --quiet --exclude '*' --include '*.iso' --include '*.json' --include checks.txt "s3://$BUCKET/runs/$RUN/" out/iso/
+          export WOLOS_ISO=$PWD/wolos-iso WOLOS_SUMMARY=$PWD/out/summary.md WOLOS_WORK=$PWD/out/work
+          # --checks: the box's VM test (checks.txt: BOOT PASS, no FAIL) gates the signing (I7-5).
+          wolos-iso/.github/builder wolos-build release --do --iso out/iso --prerelease --checks out/iso/checks.txt "$TAG"
+          [ ! -f out/summary.md ] || cat out/summary.md >> "$GITHUB_STEP_SUMMARY"

@@ -3,59 +3,59 @@
   --accent-bg-color: #7c5cff;
   --accent-fg-color: #ffffff;
   --accent-color: #7657f2;
-  --destructive-bg-color: #ff3b30;
-  --destructive-color: #d93229;
-  --success-bg-color: #34c759;
-  --success-color: #22813a;
-  --warning-bg-color: #ff9500;
-  --warning-color: #a66100;
-  --error-bg-color: #ff3b30;
-  --error-color: #d93229;
-  --window-bg-color: #f5f5f7;
-  --window-fg-color: #1d1d1f;
+  --destructive-bg-color: #cf3a68;
+  --destructive-color: #cf3a68;
+  --success-bg-color: #1c9a6e;
+  --success-color: #18835e;
+  --warning-bg-color: #d9541e;
+  --warning-color: #c34c1b;
+  --error-bg-color: #cf3a68;
+  --error-color: #cf3a68;
+  --window-bg-color: #f3f1f8;
+  --window-fg-color: #181521;
   --view-bg-color: #ffffff;
-  --view-fg-color: #1d1d1f;
-  --headerbar-bg-color: #f5f5f7;
-  --headerbar-fg-color: #1d1d1f;
-  --headerbar-backdrop-color: #f5f5f7;
-  --sidebar-bg-color: #ededf1;
-  --sidebar-fg-color: #1d1d1f;
-  --sidebar-backdrop-color: #ededf1;
-  --secondary-sidebar-bg-color: #ededf1;
+  --view-fg-color: #181521;
+  --headerbar-bg-color: #f3f1f8;
+  --headerbar-fg-color: #181521;
+  --headerbar-backdrop-color: #f3f1f8;
+  --sidebar-bg-color: #eae8f2;
+  --sidebar-fg-color: #181521;
+  --sidebar-backdrop-color: #eae8f2;
+  --secondary-sidebar-bg-color: #eae8f2;
   --card-bg-color: #ffffff;
-  --card-fg-color: #1d1d1f;
+  --card-fg-color: #181521;
   --dialog-bg-color: #ffffff;
-  --dialog-fg-color: #1d1d1f;
+  --dialog-fg-color: #181521;
   --popover-bg-color: #ffffff;
-  --popover-fg-color: #1d1d1f;
-  --borders: rgba(0,0,0,0.08);
+  --popover-fg-color: #181521;
+  --borders: rgba(34,27,54,0.10);
   --window-radius: 12px;
-  --border-opacity: 8%;
-  --dim-opacity: 62%;
-  --headerbar-shade-color: rgba(0,0,0,0.08);
-  --headerbar-border-color: rgba(0,0,0,0.08);
-  --sidebar-border-color: rgba(0,0,0,0.08);
-  --sidebar-shade-color: rgba(0,0,0,0.08);
-  --card-shade-color: rgba(0,0,0,0.08);
+  --border-opacity: 10%;
+  --dim-opacity: 63%;
+  --headerbar-shade-color: rgba(34,27,54,0.10);
+  --headerbar-border-color: rgba(34,27,54,0.10);
+  --sidebar-border-color: rgba(34,27,54,0.10);
+  --sidebar-shade-color: rgba(34,27,54,0.10);
+  --card-shade-color: rgba(34,27,54,0.10);
   --accent-blue: #7c5cff;
   --blue-1: #b7a5ff;
   --blue-2: #967dff;
   --blue-3: #7c5cff;
   --blue-4: #6d51e0;
   --blue-5: #5d45bf;
-  --wol-surface: #f5f5f7;
-  --wol-sidebar: #ededf1;
+  --wol-surface: #f3f1f8;
+  --wol-sidebar: #eae8f2;
   --wol-card: #ffffff;
-  --wol-line: rgba(0,0,0,0.08);
-  --wol-text: #1d1d1f;
-  --wol-dim: #6e6e73;
+  --wol-line: rgba(34,27,54,0.10);
+  --wol-text: #181521;
+  --wol-dim: #686575;
   --wol-accent: #7c5cff;
   --wol-accent-text: #ffffff;
-  --wol-glass: #f6f6fa;
-  --wol-control: #eceef2;
-  --wol-success: #34c759;
-  --wol-warning: #ff9500;
-  --wol-danger: #ff3b30;
+  --wol-glass: #f5f4fb;
+  --wol-control: #e9e9f3;
+  --wol-success: #1c9a6e;
+  --wol-warning: #d9541e;
+  --wol-danger: #cf3a68;
 }
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* WolOS scaffold for libadwaita / GTK 4 apps: the Kit AppWindow (crates/shell/src/kit/kit.css) drawn on
@@ -65,7 +65,7 @@
 
 /* ---- Type (HIG §2): Inter; 13 body and titles, 11 secondary, 22 large titles; weights 400/600 ---- */
 window, popover, tooltip, dialog, sheet { font-family: "Inter", sans-serif; font-size: 13px; }
-.title-1, .title-2, statuspage > scrolledwindow > viewport > box > clamp > box > .title { font-size: 22px; font-weight: 600; }
+.title-1, .title-2, statuspage > scrolledwindow > viewport > box > clamp > box > .title { font-size: 26px; font-weight: 600; }
 .title-3, .title-4, .heading { font-weight: 600; }
 .title-3, .title-4 { font-size: 13px; }
 .caption, .caption-heading, .subtitle { font-size: 11px; }
@@ -98,7 +98,7 @@ toolbarview > .top-bar headerbar, toolbarview > .bottom-bar headerbar { backgrou
 headerbar .title, windowtitle > .title { font-size: 13px; font-weight: 600; }
 headerbar .subtitle, windowtitle > .subtitle { font-size: 11px; color: var(--wol-dim); opacity: 1; }
 /* Kit icon-button: 16 px glyph, 4 px padding, radius 6, control on hover. */
-/* Window buttons carry .close/.minimize/.maximize and keep the traffic-light geometry. */
+/* Window buttons carry .close/.minimize/.maximize and keep the window-control geometry. */
 headerbar button.image-button:not(.close):not(.minimize):not(.maximize), headerbar menubutton.image-button > button, headerbar splitbutton > button,
 headerbar splitbutton > menubutton > button, headerbar button.text-button, headerbar menubutton > button {
   min-height: 24px; padding-top: 0; padding-bottom: 0; border-radius: 6px; }
@@ -109,9 +109,10 @@ headerbar button:hover:not(.suggested-action):not(.destructive-action):not(.clos
 headerbar splitbutton:hover { background-color: var(--wol-control); box-shadow: none; }
 headerbar button:checked:not(.suggested-action), headerbar menubutton > button:checked { background-color: var(--wol-control); box-shadow: none; }
 
-/* ---- Window buttons (Kit button.light): see traffic lights below ---- */
-windowcontrols.start { margin-left: 1px; margin-right: 8px; }
-windowcontrols.end { margin-right: 17px; }
+/* ---- Window buttons (Kit button.light) ---- */
+/* Right-aligned like the compositor's row: close rightmost, its centre 23 px in from the edge. */
+windowcontrols.start { margin-left: 17px; }
+windowcontrols.end { margin-left: 8px; margin-right: 1px; }
 
 /* ---- Sidebar (Kit list.sidebar): sidebar token, 28 px source rows, accent pill selection ---- */
 .sidebar-pane, navigation-split-view > .sidebar-pane, overlay-split-view > .sidebar-pane { background-color: var(--wol-sidebar); color: var(--wol-text); }
@@ -214,8 +215,7 @@ tabbar tab:selected, tabbox > tab:selected { background-color: var(--wol-card); 
 monthcell label.first-day { background: none; color: var(--wol-dim); font-weight: 600; font-size: 11px; }
 windowcontrols { border-spacing: 10px; }
 windowcontrols > button { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border: none; background: none; box-shadow: none; }
-windowcontrols > button image { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
-windowcontrols:hover > button image { color: rgba(0,0,0,0.55); }
-windowcontrols > button.close image { background: #ff3b30; }
-windowcontrols > button.minimize image { background: #ff9500; }
-windowcontrols > button.maximize image { background: #34c759; }
+windowcontrols > button image { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; background: #86838d; box-shadow: none; }
+windowcontrols:hover > button image { color: #181521; }
+windowcontrols > button:hover image { background: #7c5cff; color: #ffffff; }
+windowcontrols > button:active image { background: #664cce; color: #ffffff; }

@@ -51,9 +51,49 @@ pub struct Plan {
     /// tz database name.
     pub zone: String,
     pub account: Option<Account>,
+    /// Secure Boot protection wanted (`WOLOS_SECURE`). None: a plan written before the installer
+    /// asked, which keeps the old answer, yes. The installer asks with the default off (lead,
+    /// 2026-11-02: the one-time key screen is opt-in).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secure_boot: Option<bool>,
+    /// Optional modules ticked on the Modules page (ADR 0032 B), registry ids
+    /// ([`crate::modules::valid_id`]); none by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<String>,
+    /// Store kits added on the Extras page (`codecs-kit`, [`crate::store::KITS`]); none by default.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extras: Vec<String>,
 }
 
 impl Plan {
+    /// The modules to install: valid ids, first mention first. A bad id is dropped, never run.
+    pub fn module_ids(&self) -> Vec<&str> {
+        let mut v: Vec<&str> = Vec::new();
+        for m in &self.modules {
+            if crate::modules::valid_id(m) && !v.contains(&m.as_str()) {
+                v.push(m);
+            }
+        }
+        v
+    }
+
+    /// The packages of the Store kits on the plan (known kits that install packages only), first
+    /// mention first, each a checked package name. An unknown kit adds nothing.
+    pub fn extra_packages(&self) -> Vec<&'static str> {
+        let mut v: Vec<&'static str> = Vec::new();
+        for k in self.extras.iter().filter_map(|id| crate::store::kit(id)) {
+            if k.source != crate::store::KitSource::Packages {
+                continue;
+            }
+            for p in k.packages() {
+                if crate::store::is_pkg_name(p) && !v.contains(&p) {
+                    v.push(p);
+                }
+            }
+        }
+        v
+    }
+
     /// Re-checked against the disk as it is now, just before anything is written.
     pub fn check(&self, now: &Disk) -> Result<Compiled, Refusal> {
         if now.path != self.disk || now.fingerprint() != self.fingerprint {
@@ -687,11 +727,49 @@ mod tests {
                 full_name: "Alice".into(),
                 tone: "violet".into(),
             }),
+            secure_boot: Some(false),
+            modules: vec!["dev".into(), "creative".into()],
+            extras: vec!["codecs-kit".into()],
         };
         let text = serde_json::to_string(&p).unwrap();
         assert!(!text.to_lowercase().contains("password\":\""));
         assert_eq!(serde_json::from_str::<Plan>(&text).unwrap(), p);
         assert_eq!(Protect::Password.word(), "passphrase");
+    }
+
+    #[test]
+    fn a_plan_from_before_the_new_pages_keeps_its_old_answers() {
+        let old = Plan::default();
+        let text = serde_json::to_string(&old).unwrap();
+        assert!(
+            !text.contains("secure_boot") && !text.contains("modules") && !text.contains("extras"),
+            "{text}"
+        );
+        let back: Plan = serde_json::from_str(&text).unwrap();
+        assert_eq!((back.secure_boot, back.modules.len()), (None, 0));
+    }
+
+    #[test]
+    fn only_checked_modules_and_known_kits_reach_the_run() {
+        let p = Plan {
+            modules: vec![
+                "dev".into(),
+                "dev".into(),
+                "Bad;rm".into(),
+                "../x".into(),
+                "creative".into(),
+            ],
+            extras: vec!["codecs-kit".into(), "nonsense".into(), "craft-suite".into()],
+            ..Plan::default()
+        };
+        assert_eq!(p.module_ids(), ["dev", "creative"]);
+        let pk = p.extra_packages();
+        // The codecs kit's packages, MP3 first (its priority order); the wopkg kit adds none.
+        assert_eq!(pk.first(), Some(&"gst-plugins-good"));
+        assert!(pk.contains(&"x265") && pk.iter().all(|n| crate::store::is_pkg_name(n)));
+        let mut seen = pk.clone();
+        seen.dedup();
+        assert_eq!(seen.len(), pk.len());
     }
 
     #[test]

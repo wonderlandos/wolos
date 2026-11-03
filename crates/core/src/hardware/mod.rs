@@ -329,9 +329,17 @@ pub fn context(host: &dyn Host) -> Ctx {
     Ctx {
         loaded,
         available,
-        installed: host.run(&["pacman", "-Qq"]).map(|t| parse::lines(&t)),
+        // Audit S4-24: a cold package database can miss the 2 s probe; an unknown list counts
+        // every package as installed, so ask once more with the slow runner before giving up.
+        installed: host
+            .run(&PACKAGES_ARGV)
+            .or_else(|| host.run_slow(&PACKAGES_ARGV))
+            .map(|t| parse::lines(&t)),
     }
 }
+
+/// The installed package list (`pacman -Qq`).
+const PACKAGES_ARGV: [&str; 2] = ["pacman", "-Qq"];
 
 fn pci_names(host: &dyn Host) -> Vec<(String, String)> {
     host.run(&["lspci", "-mm"])

@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Developer module, user undo step (`unpost` of /usr/share/wolos/modules/dev.json, run as the person
+# by `wol modules remove dev` before the packages come off, ADR 0032, audit C8-6): turns the rootless
+# podman socket that modules-enable-dev enabled back off. ~/Work stays: it holds the person's files.
+# Idempotent: a socket that is already off, or no user manager, changes nothing. Exit 0 when done,
+# 1 when a step failed (the module then stays recorded as enabled and remove can run again).
+set -eu
+: "${HOME:?}"
+if systemctl --user show-environment >/dev/null 2>&1; then
+  if systemctl --user is-enabled --quiet podman.socket 2>/dev/null \
+    || systemctl --user is-active --quiet podman.socket 2>/dev/null; then
+    systemctl --user disable --now podman.socket
+  fi
+fi
+exit 0

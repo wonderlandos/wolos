@@ -3,7 +3,7 @@
 # Runs public-guard against a throwaway repo. Fake credentials are built here so no blob holds one.
 G=$(cd "$(dirname "$0")" && pwd)/public-guard
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-cd "$T"; git init -q .; git config user.email t@t; git config user.name t
+cd "$T" || exit 1; git init -q .; git config user.email t@t; git config user.name t
 cp "$G" .git/hooks/pre-commit; chmod +x .git/hooks/pre-commit
 fails=0
 try() { # want path content

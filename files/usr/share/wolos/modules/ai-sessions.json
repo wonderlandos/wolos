@@ -2,9 +2,9 @@
   "id": "ai-sessions",
   "name": "Sessions",
   "summary": "Reopen last time's terminals and agents where they were: zellij inside a boot, wol sessions across boots",
-  "icon": "wolos-module-sessions-symbolic",
+  "icon": "wolos-restore-symbolic",
   "category": "ai",
-  "size_mb": 15,
+  "size_mb": 20,
   "packages": [
     "zellij",
     "foot"

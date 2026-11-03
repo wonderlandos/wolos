@@ -149,11 +149,14 @@ pub fn check(env: &mut dyn Env) -> i32 {
         }
     }
     let v = seal::verify(&man, &expected, &|p| cache.get(p).cloned().flatten());
+    let failed_mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/verity-failed-{s}"));
     if v == seal::Verdict::Ok {
+        // A slot that passes has not failed: an old mark (a check that could not see every file)
+        // would keep the other slot from ever falling back to this one.
+        let _ = env.remove_file(&failed_mark(slot));
         return 0;
     }
     let other = update::other_slot(slot).unwrap_or("");
-    let failed_mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/verity-failed-{s}"));
     let entry = |suffix: &str| {
         Path::new(&format!(
             "{}/loader/entries/{other}{suffix}.conf",
@@ -263,13 +266,10 @@ pub fn enroll(env: &mut dyn Env, inv: &Invocation) -> i32 {
     {
         None => None,
         Some(Some(Ok(p))) => {
-            if env.write_file(&typed, &p).is_err() {
+            // Audit S4-10: 0600 from the first byte (never umask, then chmod).
+            if env.write_private(&typed, &p).is_err() {
                 return fail(env, ErrorCode::Failed, "could not read the password file");
             }
-            let _ = std::fs::set_permissions(
-                &typed,
-                std::os::unix::fs::PermissionsExt::from_mode(0o600),
-            );
             Some(typed.to_string_lossy().into_owned())
         }
         Some(Some(Err(e))) => {
@@ -312,11 +312,9 @@ fn enroll_steps(
             let Some(rk) = env.capture(&a) else {
                 return fail(env, ErrorCode::Failed, "could not create the recovery key");
             };
-            if env.write_file(Path::new(out), &rk).is_err() {
+            if env.write_private(Path::new(out), &rk).is_err() {
                 return fail(env, ErrorCode::Failed, "could not keep the recovery key");
             }
-            let _ =
-                std::fs::set_permissions(out, std::os::unix::fs::PermissionsExt::from_mode(0o600));
         } else if env.exec(argv).unwrap_or(1) != 0 {
             return fail(env, ErrorCode::Failed, &format!("{} failed", argv[0]));
         }
@@ -331,6 +329,20 @@ fn luks_uuid(env: &dyn Env) -> Option<String> {
         .and_then(|w| w.split_once('=').map(|(u, _)| u.to_owned()))
 }
 
+/// Does this start's `rd.luks.options=<uuid>=...` ask the initramfs for the security chip
+/// (`tpm2-device`, [`encrypt::cmdline_words`])? A passphrase-only install does not: the chip
+/// must never be bound (or its absence reported as a failure) behind the person's choice.
+fn unlocks_with_chip(env: &dyn Env, uuid: &str) -> bool {
+    let Some(cmdline) = env.read_file(Path::new("/proc/cmdline")) else {
+        return false;
+    };
+    let prefix = format!("rd.luks.options={uuid}=");
+    cmdline
+        .split_whitespace()
+        .filter_map(|w| w.strip_prefix(prefix.as_str()))
+        .any(|opts| opts.split(',').any(|o| o.starts_with("tpm2-device")))
+}
+
 /// The PCRs this machine's chain measures: shim adds PCR 14.
 fn pcrs(env: &mut dyn Env) -> &'static str {
     let shim = env
@@ -343,11 +355,16 @@ fn pcrs(env: &mut dyn Env) -> &'static str {
 /// (Secure Boot turned off, new firmware: PCR 7 changed), the person typed their password or the
 /// recovery key, and systemd-cryptsetup left it in root's keyring ([`encrypt::PASSWORD_CACHE_KEY`]).
 /// That secret unlocks the volume once more to seal the key to the state measured now: the next
-/// start is automatic again. Nothing typed (the chip opened it): nothing to do.
+/// start is automatic again. Nothing typed (the chip opened it) or an install that never used the
+/// chip (no `tpm2-device` in `rd.luks.options`): nothing to do, exit 0.
 pub fn reseal(env: &mut dyn Env) -> i32 {
     let Some(uuid) = luks_uuid(env) else {
         return 0;
     };
+    // Passphrase-only install (audit I6-1): nothing to seal; the typed secret stays untouched.
+    if !unlocks_with_chip(env, &uuid) {
+        return 0;
+    }
     let Some(raw) = env.keyring_read(encrypt::PASSWORD_CACHE_KEY) else {
         return 0;
     };

@@ -176,7 +176,7 @@ impl Services for Yes {
             kernel: "WolKernel".into(),
             appearance: wol_lua::Appearance::Dark,
             accent_name: "blue".into(),
-            accent_rgb: 0x0a84ff,
+            accent_rgb: 0x6aaef2,
         }
     }
     fn notify(&self, _: &str, _: &str) -> Result<(), String> {

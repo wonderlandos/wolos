@@ -1,0 +1,10 @@
+name: wol-hue
+version: 0.1.0
+description: WolOS theme from a picture or a palette (ADR 0031, docs/modules/hue.md)
+authors:
+  - Julia Klee
+license: GPL-2.0-or-later AND MIT
+crystal: ">= 1.12.0"
+targets:
+  wol-hue:
+    main: src/hue.cr

@@ -1,16 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Intel iGPU stack on first boot: firmware + user-space packages offline, i915 tunables, session env,
 //! native-boot proof script. Evidence: docs/modules/intel-graphics.md.
-use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
-fn repo(p: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join(p)
-}
-
-fn read(p: &str) -> String {
-    fs::read_to_string(repo(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
-}
+#[path = "support/repo.rs"]
+mod repo;
+use repo::{read, repo};
+use std::{fs, os::unix::fs::PermissionsExt, process::Command};
 
 #[test]
 fn session_sources_gpu_env() {
@@ -60,8 +54,11 @@ fn verify_gpu_script_records_the_proof() {
     );
     for want in [
         "/var/log/wolos-gpu-report.txt",
-        "kldstat",
-        "sysctl hw.dri",
+        "lspci -nnk",
+        "/sys/module/i915/parameters",
+        "/sys/kernel/wolos",
+        "/sys/class/powercap/intel-rapl:0",
+        "modprobe -q intel_rapl_msr",
         "dmesg",
         "guc",
         "huc",
@@ -73,9 +70,67 @@ fn verify_gpu_script_records_the_proof() {
         "glmark2",
         "vkpeak",
         "wol-realtime power show",
-        "i915_wol_waitboost",
+        "*boost*",
         "noccs",
     ] {
         assert!(s.contains(want), "{p} lacks {want}");
     }
+    // The script came from the FreeBSD base (ADR 0016 moved to Linux): none of its tools remain.
+    for code in s.lines().filter(|l| !l.trim_start().starts_with('#')) {
+        for gone in [
+            "kldload",
+            "kldstat",
+            "pciconf",
+            "cpucontrol",
+            "cpuctl",
+            "sysctl ",
+            "compat.linuxkpi",
+            "/boot/modules",
+            "/var/log/messages",
+            "/usr/local/libexec",
+            "wolos-release",
+        ] {
+            assert!(!code.contains(gone), "{p}: FreeBSD `{gone}` in: {code}");
+        }
+    }
+}
+
+/// The proof script runs to its report on any Linux box: every section, no FreeBSD tool missing.
+/// Not as root (it would mount debugfs and sample RAPL for 10 s).
+#[test]
+fn verify_gpu_script_runs_on_linux() {
+    let uid = Command::new("id").arg("-u").output().unwrap();
+    if String::from_utf8_lossy(&uid.stdout).trim() == "0" {
+        eprintln!("root: verify-gpu.sh run skipped (it writes debugfs and samples RAPL)");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("wol-verify-gpu-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let report = dir.join("report.txt");
+    let o = Command::new("sh")
+        .arg(repo("files/usr/lib/wolos/verify-gpu.sh"))
+        .env("WOL_REPORT", &report)
+        .env("WOL_BENCH", "0")
+        .env("WOL_AB", "1")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("verify-gpu: wrote"));
+    let r = fs::read_to_string(&report).unwrap();
+    for sec in [
+        "system",
+        "driver + firmware",
+        "WolKernel hints",
+        "idle power",
+        "A/B (WOL_AB=1)",
+    ] {
+        assert!(r.contains(&format!("===== {sec}")), "section {sec}: {r}");
+    }
+    for gone in ["kldload", "kldstat", "pciconf", "cpucontrol", "sysctl"] {
+        assert!(
+            !r.contains(&format!("{gone}: not found")),
+            "{gone} called: {r}"
+        );
+    }
+    fs::remove_dir_all(&dir).ok();
 }

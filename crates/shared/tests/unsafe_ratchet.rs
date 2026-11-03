@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! The unsafe ratchet (audit section C): the number of `unsafe` keywords in each crate may go
 //! down, never up. Counted as the word `unsafe` in code of every `.rs` file under the crate's
 //! `src/` (binaries included), `tests/`, `benches/`, `examples/` and its `build.rs` (R2C-19).
@@ -16,14 +16,32 @@ use std::path::{Path, PathBuf};
 /// (2026-11-02) recounted every crate with the lexer and the wider file set (tests, benches,
 /// examples, build.rs); the numbers below are that count. In the same change api +1 (R2C-11: the
 /// grants map's shape is read with BPF_OBJ_GET_INFO_BY_FD before any write) and core -2 (R2C-7:
-/// the progress watchdog no longer signals a pid by number). A new crate needs a line here.
+/// the progress watchdog no longer signals a pid by number). realtime +17 (audit4 S5-2/3/11,
+/// wm_gates.rs): six C exports for the wol-hypr plugin, each `#[unsafe(no_mangle)]` as edition
+/// 2024 requires, two of them `unsafe extern` because they write through the plugin's pointers
+/// (two `unsafe` blocks), and seven unit-test calls of those. xguard +2 (audit C7-3): `openat` with
+/// `O_NOFOLLOW` per path step and taking the descriptor it returns (`open_owned_dir`; std has no
+/// `openat`). api +1 (F7-security P6-5, `os::space_at` in the listed `os.rs`): one `statvfs(3)`
+/// call so a staged package copy cannot fill the disk; std has no free-space query and no new
+/// dependency was wanted for one call. `wolkit` (ADR 0039, 2026-11-03): provisional 400 when the
+/// crate was made, lowered to the count of its finished wave (the C boundary in `src/ffi/`, a
+/// `poll` call in `src/loop_/`, the counting allocator in `tests/alloc_free.rs`, the native window
+/// and GPU backends). 279 -> 294 when the native backend landed (WK-W4): `window/native/sys.rs`
+/// (memfd_create, timerfd_create/settime, inotify_init1/add_watch, localtime_r, clock_gettime:
+/// std wraps none; fd ownership after each), `window/native/seat.rs` (keymap from the compositor's
+/// fd; Send for the keyboard used under the engine lock), `tests/native_wayland.rs` (the DROP
+/// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
+/// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
+/// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
+    ("wolkit", 294),
     ("wopkg", 94),
-    ("realtime", 54),
-    ("xguard", 61),
+    ("realtime", 69),
+    ("xguard", 63),
     ("controller", 52),
-    ("api", 32),
+    ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
     ("core", 13),

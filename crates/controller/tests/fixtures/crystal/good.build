@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Scanner fixture: a build step that uses only vendored, pinned shards.
+build() {
+  cd "$srcdir/wolos/hue"
+  shards install --frozen --local
+  crystal build --release src/hue.cr
+}

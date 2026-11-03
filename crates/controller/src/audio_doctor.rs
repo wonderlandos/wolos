@@ -305,7 +305,7 @@ pub fn checks(env: &mut dyn Env) -> Vec<Check> {
             check(
                 "portal",
                 Status::Warn,
-                "no Hyprland portal: OBS screen capture has nothing to ask",
+                "no compositor portal: OBS screen capture has nothing to ask",
                 "pacman -S xdg-desktop-portal-hyprland",
             )
         },
@@ -371,7 +371,17 @@ fn unload(env: &mut dyn Env, markers: &[&str]) -> Vec<u32> {
 }
 
 fn reset(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
-    let plan = a::reset_plan(&env.home());
+    let home = env.home();
+    let state = Some(env.state_home())
+        .filter(|s| s.is_absolute())
+        .unwrap_or_else(|| home.join(".local/state"));
+    let Some(plan) = a::reset_plan(&home, &state) else {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            "HOME is not set to an absolute path, so there is nothing safe to reset",
+        );
+    };
     if !yes {
         if json {
             emit_json(env, &serde_json::json!({ "dry_run": true, "plan": plan }));
@@ -393,7 +403,12 @@ fn reset(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
         ],
     );
     for p in &plan.remove {
-        let _ = env.exec(&["rm".into(), "-rf".into(), p.to_string_lossy().into_owned()]);
+        let _ = env.exec(&[
+            "rm".into(),
+            "-rf".into(),
+            "--".into(),
+            p.to_string_lossy().into_owned(),
+        ]);
     }
     let mut failed = 0;
     for c in &plan.commands {
@@ -663,7 +678,15 @@ mod tests {
         assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
         let lines: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
         assert_eq!(lines[0], "pactl unload-module 7");
-        assert_eq!(lines[1], "rm -rf /home/t/.local/state/wireplumber");
+        assert!(
+            lines.contains(&"rm -rf -- /home/t/.local/state/wireplumber".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|l| !l.starts_with("rm") || l.contains(" -- /"))
+        );
         assert!(lines.contains(&"wpctl clear-default".to_string()));
         assert!(
             lines
@@ -673,6 +696,19 @@ mod tests {
             "{lines:?}"
         );
         assert!(e.out.contains("PipeWire restarted"));
+    }
+
+    /// Audit S4-22: without an absolute HOME nothing is removed.
+    #[test]
+    fn reset_refuses_a_relative_home() {
+        let mut e = env(false);
+        e.home = PathBuf::new();
+        let argv = ["audio", "reset", "--yes"];
+        assert_eq!(
+            execute(&crate::cli::parse(&argv).unwrap(), &mut e),
+            ErrorCode::Usage.exit()
+        );
+        assert!(e.execs.is_empty(), "{:?}", e.execs);
     }
 
     #[test]

@@ -1,0 +1,268 @@
+.page (2 variants)
+  [plain]
+    flex-direction: Column
+    row-gap: 16.0
+    column-gap: 16.0
+    padding-top: 16.0
+    padding-right: 16.0
+    padding-bottom: 16.0
+    padding-left: 16.0
+    overflow: Auto
+  [hover]
+    flex-direction: Column
+    row-gap: 16.0
+    column-gap: 16.0
+    padding-top: 16.0
+    padding-right: 16.0
+    padding-bottom: 16.0
+    padding-left: 16.0
+    overflow: Auto
+  [dark]
+    flex-direction: Column
+    row-gap: 16.0
+    column-gap: 16.0
+    padding-top: 16.0
+    padding-right: 16.0
+    padding-bottom: 16.0
+    padding-left: 16.0
+    overflow: Auto
+  [focus-visible dark contrast]
+    flex-direction: Column
+    row-gap: 16.0
+    column-gap: 16.0
+    padding-top: 16.0
+    padding-right: 16.0
+    padding-bottom: 16.0
+    padding-left: 16.0
+    overflow: Auto
+  [compact reduce-motion dark]
+    flex-direction: Column
+    row-gap: 16.0
+    column-gap: 16.0
+    padding-top: 12.0
+    padding-right: 12.0
+    padding-bottom: 12.0
+    padding-left: 12.0
+    overflow: Auto
+.toolbar (1 variants)
+  [plain]
+    align-items: Center
+    justify-content: SpaceBetween
+    padding-right: 16.0
+    padding-left: 16.0
+    height: Px(52.0)
+  [hover]
+    align-items: Center
+    justify-content: SpaceBetween
+    padding-right: 16.0
+    padding-left: 16.0
+    height: Px(52.0)
+  [dark]
+    align-items: Center
+    justify-content: SpaceBetween
+    padding-right: 16.0
+    padding-left: 16.0
+    height: Px(52.0)
+  [focus-visible dark contrast]
+    align-items: Center
+    justify-content: SpaceBetween
+    padding-right: 16.0
+    padding-left: 16.0
+    height: Px(52.0)
+  [compact reduce-motion dark]
+    align-items: Center
+    justify-content: SpaceBetween
+    padding-right: 16.0
+    padding-left: 16.0
+    height: Px(52.0)
+.side (2 variants)
+  [plain]
+    shrink: 0.0
+    width: Px(220.0)
+    background: Color(Token(Sidebar))
+  [hover]
+    shrink: 0.0
+    width: Px(220.0)
+    background: Color(Token(Sidebar))
+  [dark]
+    shrink: 0.0
+    width: Px(220.0)
+    background: Color(Token(Sidebar))
+  [focus-visible dark contrast]
+    shrink: 0.0
+    width: Px(220.0)
+    background: Color(Token(Sidebar))
+  [compact reduce-motion dark]
+    display: None
+    shrink: 0.0
+    width: Px(220.0)
+    background: Color(Token(Sidebar))
+.grow (1 variants)
+  [plain]
+    grow: 1.0
+    basis: Px(0.0)
+    min-width: Px(0.0)
+  [hover]
+    grow: 1.0
+    basis: Px(0.0)
+    min-width: Px(0.0)
+  [dark]
+    grow: 1.0
+    basis: Px(0.0)
+    min-width: Px(0.0)
+  [focus-visible dark contrast]
+    grow: 1.0
+    basis: Px(0.0)
+    min-width: Px(0.0)
+  [compact reduce-motion dark]
+    grow: 1.0
+    basis: Px(0.0)
+    min-width: Px(0.0)
+.center (1 variants)
+  [plain]
+    margin-top: Auto
+    margin-right: Auto
+    margin-bottom: Auto
+    margin-left: Auto
+    width: Pct(100.0)
+    max-width: Px(600.0)
+  [hover]
+    margin-top: Auto
+    margin-right: Auto
+    margin-bottom: Auto
+    margin-left: Auto
+    width: Pct(100.0)
+    max-width: Px(600.0)
+  [dark]
+    margin-top: Auto
+    margin-right: Auto
+    margin-bottom: Auto
+    margin-left: Auto
+    width: Pct(100.0)
+    max-width: Px(600.0)
+  [focus-visible dark contrast]
+    margin-top: Auto
+    margin-right: Auto
+    margin-bottom: Auto
+    margin-left: Auto
+    width: Pct(100.0)
+    max-width: Px(600.0)
+  [compact reduce-motion dark]
+    margin-top: Auto
+    margin-right: Auto
+    margin-bottom: Auto
+    margin-left: Auto
+    width: Pct(100.0)
+    max-width: Px(600.0)
+.badge (2 variants)
+  [plain]
+    position: Absolute
+    top: Px(-4.0)
+    right: Px(-4.0)
+    z-index: 2
+  [hover]
+    position: Absolute
+    top: Px(-4.0)
+    right: Px(-4.0)
+    z-index: 2
+  [dark]
+    position: Absolute
+    top: Px(-4.0)
+    right: Px(-4.0)
+    z-index: 2
+  [focus-visible dark contrast]
+    position: Absolute
+    top: Px(-4.0)
+    right: Px(-4.0)
+    z-index: 2
+  [compact reduce-motion dark]
+    position: Absolute
+    top: Px(-4.0)
+    right: Px(-4.0)
+    z-index: 2
+    spring: Snappy
+.fill (1 variants)
+  [plain]
+    width: Pct(50.0)
+    aspect-ratio: 1.7777778
+  [hover]
+    width: Pct(50.0)
+    aspect-ratio: 1.7777778
+  [dark]
+    width: Pct(50.0)
+    aspect-ratio: 1.7777778
+  [focus-visible dark contrast]
+    width: Pct(50.0)
+    aspect-ratio: 1.7777778
+  [compact reduce-motion dark]
+    width: Pct(50.0)
+    aspect-ratio: 1.7777778
+.wrap (1 variants)
+  [plain]
+    flex-wrap: Wrap
+    row-gap: 8.0
+    column-gap: 4.0
+    align-content: Start
+  [hover]
+    flex-wrap: Wrap
+    row-gap: 8.0
+    column-gap: 4.0
+    align-content: Start
+  [dark]
+    flex-wrap: Wrap
+    row-gap: 8.0
+    column-gap: 4.0
+    align-content: Start
+  [focus-visible dark contrast]
+    flex-wrap: Wrap
+    row-gap: 8.0
+    column-gap: 4.0
+    align-content: Start
+  [compact reduce-motion dark]
+    flex-wrap: Wrap
+    row-gap: 8.0
+    column-gap: 4.0
+    align-content: Start
+.mono (1 variants)
+  [plain]
+    font-family: Mono
+    line-height: 1.5
+    letter-spacing: 1.0
+    font-feature: 1
+  [hover]
+    font-family: Mono
+    line-height: 1.5
+    letter-spacing: 1.0
+    font-feature: 1
+  [dark]
+    font-family: Mono
+    line-height: 1.5
+    letter-spacing: 1.0
+    font-feature: 1
+  [focus-visible dark contrast]
+    font-family: Mono
+    line-height: 1.5
+    letter-spacing: 1.0
+    font-feature: 1
+  [compact reduce-motion dark]
+    font-family: Mono
+    line-height: 1.5
+    letter-spacing: 1.0
+    font-feature: 1
+.glass (1 variants)
+  [plain]
+    background: Linear { angle: 180, stops: [Token(Glass), Alpha(Glass, 60), Transparent], n: 2 }
+    backdrop: Glass
+  [hover]
+    background: Linear { angle: 180, stops: [Token(Glass), Alpha(Glass, 60), Transparent], n: 2 }
+    backdrop: Glass
+  [dark]
+    background: Linear { angle: 180, stops: [Token(Glass), Alpha(Glass, 60), Transparent], n: 2 }
+    backdrop: Glass
+  [focus-visible dark contrast]
+    background: Linear { angle: 180, stops: [Token(Glass), Alpha(Glass, 60), Transparent], n: 2 }
+    backdrop: Glass
+  [compact reduce-motion dark]
+    background: Linear { angle: 180, stops: [Token(Glass), Alpha(Glass, 60), Transparent], n: 2 }
+    backdrop: Glass
+kinds

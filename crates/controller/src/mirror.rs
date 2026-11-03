@@ -72,7 +72,9 @@ fn rank(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
             &format!("no servers in {}", m::MIRRORLIST),
         );
     }
-    let urls: Vec<String> = servers.iter().map(|s| m::probe_url(s)).collect();
+    // The section that reads the list names the database: [wolos-testing] on a testing install.
+    let repo = m::wolos_repo(&read(env, m::PACMAN_CONF));
+    let urls: Vec<String> = servers.iter().map(|s| m::probe_url(s, &repo)).collect();
     let probe = env.prober();
     let ms = m::probe_all(&urls, &*probe);
     let ranked = m::rank(&list, &ms);
@@ -103,9 +105,10 @@ fn rank(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     }
 }
 
-/// The CachyOS v3 sections on exactly when the CPU runs x86-64-v3 builds (installer, first boot).
+/// The CachyOS v3 sections on exactly when the CPU runs x86-64-v3 builds and their mirrorlist has
+/// a server (installer, first boot); otherwise off, so `pacman -Sy` never fails on them.
 fn gate(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
-    let on = m::cachy_supported(&cpuinfo(env));
+    let on = m::gate_on(&cpuinfo(env), &read(env, m::CACHY_MIRRORLIST));
     let conf = read(env, m::PACMAN_CONF);
     if conf.is_empty() {
         return fail(env, ErrorCode::NotFound, &format!("no {}", m::PACMAN_CONF));

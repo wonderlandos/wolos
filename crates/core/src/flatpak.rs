@@ -350,15 +350,7 @@ pub fn parse_grants(json: &str, scope: Scope) -> Vec<Grant> {
 
 /// `Name=` of the `[Desktop Entry]` group (the app's exported desktop file).
 pub fn desktop_name(text: &str) -> Option<String> {
-    let mut inside = false;
-    for line in text.lines().map(str::trim) {
-        if line.starts_with('[') {
-            inside = line == "[Desktop Entry]";
-        } else if inside && let Some(n) = line.strip_prefix("Name=") {
-            return Some(n.trim().to_owned()).filter(|n| !n.is_empty());
-        }
-    }
-    None
+    crate::desktop::Entry::parse(text).name().map(str::to_owned)
 }
 
 /// Where an installed app's exported desktop file and icon live, below the install dir.
@@ -1010,6 +1002,10 @@ mod tests {
             Some("GNU Image Manipulation Program")
         );
         assert_eq!(desktop_name("[Other]\nName=x\n"), None);
+        assert_eq!(
+            desktop_name("[Desktop Entry]\nName = GIMP \n").as_deref(),
+            Some("GIMP")
+        );
         assert_eq!(
             export_paths("/var/lib/flatpak", "org.gimp.GIMP").0,
             "/var/lib/flatpak/app/org.gimp.GIMP/current/active/export/share/applications/org.gimp.GIMP.desktop"

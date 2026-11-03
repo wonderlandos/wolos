@@ -9,6 +9,11 @@ Restart=always
 RestartSec=1
 # SIGTERM to wold first: it stops every job tree (children first), then exits.
 KillMode=mixed
+# Descriptors (audit S4-26): wold holds up to 512 control connections, the bus's subscribers and
+# the realtime sockets; the default soft limit (1024) runs out first. Soft 4096 for wold, hard as
+# systemd's default; every job starts again from soft 1024 (api::os::child_nofile), so nothing in
+# the session inherits it. Checked in crates/controller/tests/units.rs.
+LimitNOFILE=4096:524288
 ExecStopPost=/usr/bin/rm -f /run/wold.sock /run/wol-qos.sock /run/wol-memsaver.sock /run/wol-memsaver.json
 
 [Install]

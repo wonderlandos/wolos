@@ -35,7 +35,7 @@ pub enum WriteContent {
         password: Option<String>,
         hidden: bool,
     },
-    /// Merge `key=value` lines into the current sysctl.conf.local (allow-listed keys only).
+    /// Merge `key=value` lines into the current [`power::SYSCTL_LOCAL`] (allow-listed keys only).
     SysctlUpsert(Vec<(String, String)>),
     /// Drop one Wi-Fi network from the current wpa_supplicant.conf.
     WifiRemove {
@@ -154,8 +154,10 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
             && (1..7).contains(&a[0].len())
             && a[0].bytes().all(|b| b.is_ascii_digit())
             && a[0].parse::<u32>().is_ok_and(|v| v <= MAX_IDLE_SECS)),
+        // Audit S4-6: a service or WolOS name (`live`, `git`, `systemd-*`) is never a login account.
         AdminAction::UserAdd => ok(n == 4
             && users::is_valid_name(a[0])
+            && !users::is_reserved(a[0])
             && a[1].chars().count() <= MAX_FULL_NAME
             && (a[2] == "yes" || a[2] == "no")
             && users::is_valid_password(a[3])),
@@ -196,6 +198,10 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::PrinterRemove | AdminAction::PrinterDefault => {
             ok(n == 1 && printers::is_valid_name(a[0]))
         }
+        // Not a grant (the compositor's rules are static, the portal asks): say so, not "invalid".
+        AdminAction::Consent if n == 3 && crate::consent::refusal(a[1]).is_some() => {
+            crate::consent::refusal(a[1]).map(String::from)
+        }
         AdminAction::Consent => ok(n == 3
             && crate::consent::is_valid_grant(a[0], a[1])
             && (a[2] == "allow" || a[2] == "deny")),
@@ -216,6 +222,9 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::FlatpakInstall | AdminAction::FlatpakRemove => {
             ok(n == 1 && flatpak::is_app_id(a[0]))
         }
+        AdminAction::PkgInstallFile => ok(n == 2 && is_staged_package(a[0]) && is_sha256_hex(a[1])),
+        AdminAction::SystemRollback => ok(n == 0),
+        AdminAction::SystemChannel => ok(n == 1 && shared::packages::CHANNELS.contains(&a[0])),
         _ => invalid(),
     }
 }
@@ -262,6 +271,46 @@ pub fn power_steps(
             .map(AdminStep::Run),
     );
     Ok(steps)
+}
+
+/// The actions whose steps run for minutes (pacman, Flatpak, `.wol` installs, Undo Update): one
+/// table that wol-admind's runner and every client's reply wait read, so both sides agree (S4-4).
+pub const LONG_ACTIONS: [AdminAction; 9] = [
+    AdminAction::PkgUpgrade,
+    AdminAction::PkgInstallFile,
+    AdminAction::SystemRollback,
+    AdminAction::PkgInstall,
+    AdminAction::PkgRemove,
+    AdminAction::FlatpakInstall,
+    AdminAction::FlatpakRemove,
+    AdminAction::WolInstall,
+    AdminAction::WolRemove,
+];
+/// How long wol-admind lets one step of a [`LONG_ACTIONS`] action run, in seconds.
+pub const LONG_STEP_SECS: u32 = 1800;
+/// How long wol-admind lets one step of any other action run, in seconds.
+pub const STEP_SECS: u32 = 30;
+/// What a client adds to the steps' time for the password check, copies and the reply itself.
+pub const REPLY_MARGIN_SECS: u32 = 60;
+
+/// The longest one wol-admind step of `a` may run (seconds): [`LONG_STEP_SECS`] or [`STEP_SECS`].
+pub fn step_secs(a: AdminAction) -> u32 {
+    if LONG_ACTIONS.contains(&a) {
+        LONG_STEP_SECS
+    } else {
+        STEP_SECS
+    }
+}
+
+/// How long a client waits for wol-admind's reply to `r` (seconds): every planned step at its
+/// [`step_secs`] plus [`REPLY_MARGIN_SECS`]. An action the daemon plans itself (`.wol` installs)
+/// or an invalid request counts as one step, so the wait is never shorter than the daemon's.
+pub fn reply_secs(r: &AdminRequest) -> u32 {
+    let steps = plan(r).map_or(1, |s| s.len().max(1));
+    let steps = u32::try_from(steps).unwrap_or(u32::MAX);
+    steps
+        .saturating_mul(step_secs(r.action))
+        .saturating_add(REPLY_MARGIN_SECS)
 }
 
 /// [`plan_with`] without facts (actions that need none).
@@ -449,6 +498,20 @@ pub fn plan_with(
             "-y",
             &a[0],
         ])],
+        // ADR 0034: the sealed-system pacman on wold's root-only copy, never the caller's file.
+        AdminAction::PkgInstallFile => vec![argv(&[
+            "wol",
+            "pkg",
+            "--",
+            "-U",
+            "--noconfirm",
+            "--",
+            &a[0],
+        ])],
+        AdminAction::SystemRollback => vec![argv(&["wol", "update", "rollback"])],
+        AdminAction::SystemChannel => {
+            vec![write(CHANNEL_FILE, 0o644, format!("{}\n", a[0]))]
+        }
     })
 }
 
@@ -581,6 +644,10 @@ pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
         (A::FlatpakRemove, Cached),
         (A::AutoUpdate, Cached),
         (A::BootEnroll, Always),
+        // Audit C7-1: unreviewed code as root, an older release, another update stream.
+        (A::PkgInstallFile, Always),
+        (A::SystemRollback, Always),
+        (A::SystemChannel, Always),
     ]
 };
 
@@ -600,6 +667,37 @@ pub fn needs_fresh_password(r: &AdminRequest) -> bool {
         Fresh::Always => true,
         Fresh::WhenUnsigned => r.args.get(1).is_some_and(|t| t == "unsigned"),
     }
+}
+
+/// The system update channel wopkg and `wol update` read (`stable`, `beta` or `nightly`).
+pub const CHANNEL_FILE: &str = "/etc/wolos/channel";
+
+/// wold's staged copy of a locally built package (ADR 0034):
+/// `<STAGING_DIR>/<32 hex digits>/<file>.pkg.tar.zst`, one fresh `0700` root directory per call,
+/// so nothing but root can have put a file there. wol-admind's own `.wol` staging directories under
+/// the same root carry dashes and never match.
+pub fn is_staged_package(p: &str) -> bool {
+    let Some(rest) = p
+        .strip_prefix(shared::package::STAGING_DIR)
+        .and_then(|r| r.strip_prefix('/'))
+    else {
+        return false;
+    };
+    let Some((dir, file)) = rest.split_once('/') else {
+        return false;
+    };
+    dir.len() == 32
+        && dir.bytes().all(|b| b.is_ascii_hexdigit())
+        && !file.contains('/')
+        && !file.starts_with(['-', '.'])
+        && shared::packages::file_ok(p)
+}
+
+/// A SHA-256 as the sheet showed it (ADR 0034): 64 lowercase hex digits.
+pub fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Absolute `.wol` path without `..` or control characters.
@@ -646,13 +744,6 @@ pub mod requests {
             Some(p) => req(AdminAction::WifiJoin, &[iface, ssid, p]),
             None => req(AdminAction::WifiJoin, &[iface, ssid]),
         }
-    }
-    /// A network that does not announce its name ("Other Network…").
-    pub fn wifi_join_hidden(iface: &str, ssid: &str, password: Option<&str>) -> AdminRequest {
-        req(
-            AdminAction::WifiJoin,
-            &[iface, ssid, password.unwrap_or(""), "hidden"],
-        )
     }
     pub fn appearance(dark: bool) -> AdminRequest {
         req(
@@ -727,6 +818,26 @@ impl AuthCache {
 
 #[cfg(test)]
 mod tests {
+
+    /// Audit S4-4: a pacman request is waited for as long as wol-admind may run it; quick
+    /// actions keep a short wait.
+    #[test]
+    fn reply_waits_cover_the_daemon_steps() {
+        let r = |action, args: &[&str]| AdminRequest {
+            action,
+            args: args.iter().map(|s| (*s).to_string()).collect(),
+        };
+        assert!(reply_secs(&r(AdminAction::PkgInstall, &["gimp"])) >= 1800);
+        assert!(reply_secs(&r(AdminAction::PkgUpgrade, &[])) >= 1800);
+        assert!(reply_secs(&r(AdminAction::WolInstall, &["/home/a/x.wol", "signed"])) >= 1800);
+        assert!(reply_secs(&r(AdminAction::FlatpakInstall, &["org.gimp.GIMP"])) >= 1800);
+        assert_eq!(step_secs(AdminAction::WifiJoin), 30);
+        assert!(reply_secs(&r(AdminAction::Revoke, &[])) <= 120);
+        for a in AdminAction::ALL {
+            let want = if LONG_ACTIONS.contains(&a) { 1800 } else { 30 };
+            assert_eq!(step_secs(a), want, "{}", a.name());
+        }
+    }
     use super::*;
     use AdminAction::*;
 
@@ -809,6 +920,9 @@ mod tests {
             (UserAdd, &["-G", "x", "no", "s3cret-pw"], false),
             (UserAdd, &["bob", "Bob", "maybe", "s3cret-pw"], false),
             (UserAdd, &["bob", &long, "no", "s3cret-pw"], false),
+            (UserAdd, &["live", "Live", "no", "password1"], false),
+            (UserAdd, &["systemd-x", "X", "no", "password1"], false),
+            (UserAdd, &["git", "Git", "yes", "password1"], false),
             (UserRemove, &["bob"], true),
             (UserRemove, &["root"], false),
             (UserRemove, &["bob;id"], false),
@@ -1103,17 +1217,15 @@ mod tests {
             (PrinterRemove, &["-x"], false),
             (PrinterDefault, &["HP_LaserJet"], true),
             (PrinterDefault, &["a/b"], false),
-            (Consent, &[app, "screen-capture", "allow"], true),
+            (Consent, &[app, "window-list", "allow"], true),
             (Consent, &[app, "input-injection", "deny"], true),
             (Consent, &[app, "shell-layer", "allow"], false),
-            (Consent, &[app, "screen-capture", "maybe"], false),
-            (Consent, &["wayvnc", "screen-capture", "allow"], false),
-            (
-                Consent,
-                &["/usr/../etc/x", "screen-capture", "allow"],
-                false,
-            ),
-            (Consent, &[app, "screen-capture"], false),
+            (Consent, &[app, "screen-capture", "allow"], false),
+            (Consent, &[app, "screen-capture", "deny"], false),
+            (Consent, &[app, "window-list", "maybe"], false),
+            (Consent, &["wayvnc", "window-list", "allow"], false),
+            (Consent, &["/usr/../etc/x", "window-list", "allow"], false),
+            (Consent, &[app, "window-list"], false),
             (BtPair, &["00:11:22:aa:bb:cc", "AirPods Pro"], true),
             (BtPair, &["00:11:22:AA:BB:CC", "MX Keys"], true),
             (BtPair, &["00:11:22:aa:bb", "x"], false),
@@ -1132,6 +1244,30 @@ mod tests {
         for (a, args, ok) in cases {
             assert_eq!(validate(&r(*a, args)).is_none(), *ok, "{a:?} {args:?}");
         }
+    }
+
+    /// Screen recording is no consent grant: refused with why, not as a malformed request.
+    #[test]
+    fn consent_refuses_screen_capture_with_why() {
+        for verdict in ["allow", "deny"] {
+            let why = validate(&r(
+                AdminAction::Consent,
+                &["/usr/bin/obs", "screen-capture", verdict],
+            ))
+            .unwrap();
+            assert!(
+                why.contains("not a grant") && why.contains("ask each time"),
+                "{why}"
+            );
+        }
+        assert_eq!(
+            validate(&r(
+                AdminAction::Consent,
+                &["/usr/bin/obs", "teleport", "allow"]
+            ))
+            .as_deref(),
+            Some("invalid consent request")
+        );
     }
 
     #[test]
@@ -1199,7 +1335,7 @@ mod tests {
             (PrinterDefault, &["HP"], &[], "lpadmin -d HP"),
             (
                 Consent,
-                &[app, "screen-capture", "allow"],
+                &[app, "window-list", "allow"],
                 &[],
                 "write /etc/wolos/consent.json",
             ),
@@ -1251,12 +1387,15 @@ mod tests {
             (c.render(Some("[Login]\nHandleLidSwitch=ignore\n")), mode),
             (power::lid_conf(power::Lid::Sleep), 0o644)
         );
-        let (c, mode) = content(Consent, &["/usr/bin/wayvnc", "screen-capture", "allow"]);
-        let cur = r#"{"grants":[{"app":"/usr/bin/grim","capability":"screen-capture"}]}"#;
+        let (c, mode) = content(Consent, &["/usr/bin/wayvnc", "window-list", "allow"]);
+        let cur = r#"{"grants":[{"app":"/usr/bin/wlrctl","capability":"window-list"}]}"#;
         assert_eq!(crate::consent::parse(&c.render(Some(cur))).len(), 2);
         assert_eq!(mode, 0o644);
-        let (c, _) = content(Consent, &["/usr/bin/grim", "screen-capture", "deny"]);
+        let (c, _) = content(Consent, &["/usr/bin/wlrctl", "window-list", "deny"]);
         assert!(crate::consent::parse(&c.render(Some(cur))).is_empty());
+        // An old screen-capture entry is dropped by the next write.
+        let old = r#"{"grants":[{"app":"/usr/bin/grim","capability":"screen-capture"}]}"#;
+        assert!(!c.render(Some(old)).contains("screen-capture"));
     }
 
     /// A printer URI may carry credentials (`ipp://user:pass@host`): never logged.
@@ -1356,6 +1495,9 @@ mod tests {
             BootEnvironment,
             AurOpen,
             BootEnroll,
+            PkgInstallFile,
+            SystemRollback,
+            SystemChannel,
         ] {
             assert_eq!(fresh_rule(a), Fresh::Always, "{a:?}");
         }
@@ -1365,6 +1507,77 @@ mod tests {
             &["/a.wol", "unsigned"]
         )));
         assert!(!needs_fresh_password(&r(PkgUpgrade, &[])));
+    }
+
+    /// Audit C7-1 (ADR 0034): what wold used to run as root after a plain Allow is an
+    /// administrator action. A local package installs only wold's own staged copy, through the
+    /// sealed-system pacman with `--` before the path; never a path the caller names.
+    #[test]
+    fn root_package_changes_are_admin_actions_on_the_staged_copy() {
+        let staged = format!(
+            "{}/0123456789abcdef0123456789ABCDEF/x-1-1-x86_64.pkg.tar.zst",
+            shared::package::STAGING_DIR
+        );
+        let sha = "0123456789abcdef".repeat(4);
+        let steps = plan(&r(PkgInstallFile, &[&staged, &sha])).unwrap();
+        assert_eq!(
+            shown(&steps),
+            format!("wol pkg -- -U --noconfirm -- {staged}")
+        );
+        let s = shared::package::STAGING_DIR;
+        for bad in [
+            "/home/ann/x-1-1-x86_64.pkg.tar.zst".to_owned(),
+            format!("{s}/x-1-1-x86_64.pkg.tar.zst"),
+            format!("{s}/1234-5678-abc/x-1-1-x86_64.pkg.tar.zst"),
+            format!("{s}/0123456789abcdef0123456789abcdef/../x.pkg.tar.zst"),
+            format!("{s}/0123456789abcdef0123456789abcdef/a/x.pkg.tar.zst"),
+            format!("{s}/0123456789abcdef0123456789abcdef/-x.pkg.tar.zst"),
+            format!("{s}/0123456789abcdef0123456789abcdef/x.tar"),
+            format!("{s}/0123456789abcdef0123456789abcdeg/x.pkg.tar.zst"),
+            format!("{s}/0123456789abcdef0123456789abcdef/x\n.pkg.tar.zst"),
+        ] {
+            assert!(
+                validate(&r(PkgInstallFile, &[&bad, &sha])).is_some(),
+                "{bad}"
+            );
+        }
+        assert!(validate(&r(PkgInstallFile, &[])).is_some());
+        // ADR 0034: the SHA-256 the sheet showed comes along (wol-admind checks it) and is logged.
+        assert!(
+            validate(&r(PkgInstallFile, &[&staged])).is_some(),
+            "no digest"
+        );
+        let upper = sha.to_uppercase();
+        let short = &sha[..63];
+        for bad in [upper.as_str(), short, "", &format!("{sha}0")] {
+            assert!(
+                validate(&r(PkgInstallFile, &[&staged, bad])).is_some(),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            describe(&r(PkgInstallFile, &[&staged, &sha])),
+            format!("pkg-install-file {staged} {sha}")
+        );
+        assert_eq!(
+            shown(&plan(&r(SystemRollback, &[])).unwrap()),
+            "wol update rollback"
+        );
+        assert!(validate(&r(SystemRollback, &["x"])).is_some());
+        let ch = plan(&r(SystemChannel, &["beta"])).unwrap();
+        assert!(matches!(
+            &ch[..],
+            [AdminStep::Write { path, mode: 0o644, content: WriteContent::Fixed(t) }]
+                if path == CHANNEL_FILE && t == "beta\n"
+        ));
+        for bad in ["alpha", "", "--x", "beta\nnightly"] {
+            assert!(validate(&r(SystemChannel, &[bad])).is_some(), "{bad:?}");
+        }
+        for a in [PkgInstallFile, SystemRollback, SystemChannel] {
+            assert!(!is_user_level(a), "{a:?} is an administrator's change");
+            assert!(needs_fresh_password(&r(a, &[])), "{a:?}");
+        }
+        assert!(LONG_ACTIONS.contains(&PkgInstallFile));
     }
 
     #[test]
@@ -1398,7 +1611,7 @@ mod tests {
     }
 
     /// The person at the computer joins Wi-Fi, pairs a keyboard, sleeps or shuts down without a
-    /// password (macOS). Everything system-wide still needs an administrator; restart and shut
+    /// password. Everything system-wide still needs an administrator; restart and shut
     /// down too while another account has a desktop session (it would lose its work).
     #[test]
     fn console_user_needs_no_password_for_everyday_changes() {
@@ -1426,6 +1639,9 @@ mod tests {
         let join = r(WifiJoin, &["wlan0", "Home", "psk"]);
         let off = r(SessionPower, &["shutdown"]);
         let sleep = r(SessionPower, &["sleep"]);
+        // The lock screen's Restart (audit6 S6-5): refused while another account is signed in,
+        // taken when the session is the only one; its caption says so.
+        let restart = r(SessionPower, &["restart"]);
         for (req, uid, sessions, want) in [
             (&join, 1002, &[1002][..], true),
             (&join, 1002, &[1001, 1002][..], true),
@@ -1433,6 +1649,8 @@ mod tests {
             (&join, 1002, &[1001][..], false),
             (&off, 1002, &[1002][..], true),
             (&off, 1002, &[1001, 1002][..], false),
+            (&restart, 1002, &[1002][..], true),
+            (&restart, 1002, &[1001, 1002][..], false),
             (&sleep, 1002, &[1001, 1002][..], true),
             (&r(PkgUpgrade, &[]), 1002, &[1002][..], false),
         ] {

@@ -1,6 +1,6 @@
 # Security
 
-On from the first boot (ADR 0015). Code: `wol_core::security` (defaults, status), `wol_core::update::check`, `wol_core::home_crypt`.
+On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status), `wol_core::update::check`, `wol_core::home_crypt`.
 `wol security [--json]` shows the state; `wol firewall on|off|status` changes the firewall through wol-admind.
 
 ## Defaults
@@ -57,12 +57,13 @@ Threat model:
 How it works:
 - `wolos-xguard.service`: holds `FAN_OPEN_EXEC_PERM` on the mounts in scope and `FAN_OPEN_PERM` on tagged files. Files outside scope, and the sealed root, cost nothing.
 - Tag: `user.wolos.quarantine`, set when a file lands in a Downloads folder, or `user.xdg.origin.url`, set by browsers, and by curl and wget through the shipped `.curlrc` and `.wgetrc`.
-- Verdict: a clean file gets an evictable kernel ignore mark, removed by the kernel when the file changes. The verdict store (`/var/lib/wolos/xguard/verdicts`) keeps file identity and sha256, or the fs-verity digest when there is one, so a restart reads nothing again.
+- Verdict: a clean file gets an evictable kernel ignore mark, removed by the kernel when the file changes. The verdict store (`/var/lib/wolos/xguard/guard/verdicts`, 0600) keeps file identity and sha256, or the fs-verity digest when there is one, so a restart reads nothing again.
 - Fails open, except for downloads: the guard dying, or a check it cannot finish, lets the file run. A stopped file needs a signature match. The one exception (audit S4): when the deep check cannot run at all on a tagged download (its worker ended or the rule sets did not load), the file is refused for now with the answer `unchecked`; that is not remembered, so the next open asks again.
-- Size: a file up to 64 MiB is read whole and may get the deep check; a larger one is scanned in pieces (hashes and patterns, streamed with an overlap so a pattern across two pieces is still seen), and its deep check is left to the background pass.
-- Engines: the mapped database in the guard; rule sets (YARA-X) only in a short-lived worker with no privileges, for tagged files, removable disks, Windows programs, AppImages and `.wol`; and, after the person opts in, ClamAV for the same files.
+- Size: a file up to 64 MiB is read whole and may get the deep check; a larger one, up to 1 GiB, is scanned in pieces (hashes and patterns, streamed with an overlap so a pattern across two pieces is still seen), and the deep worker reads it in pieces too, with its whole-file look left to the background pass. Above 1 GiB (audit S4-5): a file that is neither a tagged download nor asked about with `wol xguard check` runs at once and the background pass looks later; a tagged download or an asked file gets the streamed pass over its first 1 GiB, is refused if a pattern is found there, and otherwise is refused for now with `unchecked` (not remembered, no ignore mark) until the background pass clears it or the person chooses Open Anyway (`crates/xguard/src/guard.rs`, `check_large`).
+- The guard's socket (`/run/wolos/xguard.sock`, 0666) is served on its own thread, never on the thread that answers the kernel (audit S4-3): at most 64 requests at once, 8 per account, each with 2 s to send its file; a caller over its share hears `unchecked` at once. Questions about the same file share one scan. `LimitNOFILE` in the unit covers the queue (`crates/xguard/tests/units.rs`).
+- Engines: the mapped database in the guard; rule sets (YARA-X) only in a short-lived worker with no privileges, for tagged files, removable disks, Windows programs, AppImages and `.wol`; and, after the person opts in, the full signature engine (`wol-xguard-clam`) for the same files.
 - Full signatures, off by default: a switch in Privacy & Security enables `wolos-clam-update.timer`. freshclam fetches the data to this computer; it is never in the image. `wol-xguard-clam` is the only program that links libclamav; it starts on demand from `wolos-clam.socket`, takes 1 GB while loaded, and exits after 120 idle seconds. Off deletes the data.
-- `wol-analyze`, from Files' right-click (`desktop/nautilus/wolos-analyze.c`), runs `wol-xguard scan --clamav`: without an answer from ClamAV the result is Incomplete, never clean. With the signatures off it checks nothing and offers Settings; only the switch there turns them on.
+- `wol-analyze`, from Files' right-click "Check for Malware" (`desktop/nautilus/wolos-analyze.c`), runs `wol-xguard scan --clamav`: without an answer from the full engine the result is Incomplete, never clean. With the signatures off it checks nothing and offers Settings; only the switch there turns them on.
 - The guard's unit must keep the host's mount namespace: no `ProtectSystem`, `PrivateTmp`, `PrivateNetwork` or the like, or its kernel marks land on copies and it stops nothing.
 - Background pass: `wolos-xguard-sweep.timer`, on mains power and while everyone is away and no game runs, at idle priority. It stops at the first sign of activity.
 - Updates: `wolos-xguard-update.timer` downloads a signed bundle; `wol-xguard rules install` refuses anything unsigned, older or altered, then the guard restarts so files are looked at again.
@@ -85,7 +86,14 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
   `wolos-tpm-reseal.service` (`wol encrypt reseal`) binds the chip again to the PCRs measured now. The
   secret comes from systemd-cryptsetup's password cache: what was typed stays ~150 s in root's
   user keyring as the `user` key `cryptsetup` (`password-cache=yes`, the default). It goes to
-  systemd-cryptenroll as `$PASSWORD`, then the key is invalidated. Nothing typed: nothing happens.
+  systemd-cryptenroll as `$PASSWORD`, then the key is invalidated. Nothing typed (the chip opened the disk):
+  nothing happens. A passphrase-only install (no `tpm2-device` in `rd.luks.options`) never asked for the chip:
+  the service does nothing and exits 0, so there is no failed unit and no chip slot added behind the choice.
+- Neither the first-boot bind (`wolos-tpm-bind.service`) nor the reseal runs on a start the firmware
+  did not measure (`ConditionSecurity=measured-uki`: the boot image is not in PCR 11). Such a start
+  (seen with a virtual TPM: no event log, PCRs 2-5 and 11 never extended) asks for the password or
+  recovery key, since the chip cannot vouch for it; sealing to it would make the next good start ask
+  again. The install key stays until a measured start binds (test `tpm_binding_waits_for_a_start_the_firmware_measured`).
 - Changing the password in Settings (wol-admind `user-password`, the current password every time)
   also replaces the disk slot (`wol encrypt password USER`, unlocked by the chip). `passwd` in a
   terminal does not: the disk keeps the previous password (the chip and the recovery key still work).
@@ -100,8 +108,9 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 
 | Permission | Enforced by | Why |
 |---|---|---|
-| Screen capture, cursor position, input capture | Hyprland (`hypr/permissions.conf`, first match wins) | Only the portal and WolOS's own tools copy the screen directly. Apps ask through the portal. |
-| Compositor plugins | Hyprland | Loaded only from `/usr/local/lib/hyprland/plugins`. |
+| Screen capture, cursor position, input capture | The compositor (`hypr/permissions.conf`, first match wins) | Only the portal and WolOS's own tools (`security::SCREENCOPY_SYSTEM`) copy the screen directly. Apps ask through the portal, which asks which screen to share. The rules are static (`security::hypr_permissions`): no grant adds a program to them. |
+| X11 apps (Xwayland) | Xwayland's access list (`hyprland.conf`: `xhost +si:localuser`, `-local:`, `-`) | Xwayland starts without an auth cookie. Only the signed-in account may connect to its X server; other accounts, system users and root may not. Within one account, every X11 app can read the keys and the screen of every other X11 window: X11 apps share one trust domain per account. Wayland apps are not affected. |
+| Compositor plugins | The compositor | Loaded only from `/usr/lib/hyprland/plugins` (`security::PLUGIN_DIR`). |
 | Camera | advisory | Every account needs group video for the GPU, and `/dev/video*` belongs to it. |
 | Microphone | advisory | PipeWire gives the microphone to every app of the account. |
 | Location | advisory | WolOS ships no location service. |
@@ -109,20 +118,27 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 
 Advisory means a grant is recorded and shown to helpers that ask. An app that ignores it is not stopped. Settings says which kind each permission is (`security::enforcement`).
 
+Screen recording is not a grant in the consent database (`/etc/wolos/consent.json`, `consent::SCREEN_CAPTURE`): nothing would read it, since the compositor rules are static and every app asks through the portal each time. The administrator `consent` action refuses it (`consent::refusal`), an old `screen-capture` entry is ignored when the file is read and dropped the next time it is written, and Settings > Privacy & Security shows one row saying apps ask each time, not a switch per app.
+
+## Who may answer an ask (the shower)
+Asks that need a person (`SessionAsk`) go to the account's shell over `subscribe account` and come back as `session.answer`. wold knows the shell by its executable, `/usr/bin/wol-shell` (`portal::SHOWERS`), and any process of the account can run that file (audit P6-1). So a peer that is a shower by path is also refused when its pinned `/proc/<pid>` shows foreign code (`PeerIdentity::injected`, `crates/api/src/peer.rs`): `LD_*`, `GTK_MODULES` and the other plug-in variables in its environment (or no environment), executable code mapped from outside `/usr` and `/lib`, a tracer attached, a mount namespace other than wold's, or anything unreadable. Other apps keep their identity for grants: a game launcher with `LD_LIBRARY_PATH` is still an app. Known and accepted: the check is defence in depth; a process that puts code into the real shell after it started is not caught (the shell should be non-dumpable), and a parent check is not possible because the compositor double-forks its `exec-once` programs. The real fix, a token only the session's shell holds, is ADR 0037 (proposed). Tests: `peer::tests::a_shower_binary_under_ld_preload_is_not_a_shower`, `server::tests::a_shower_binary_under_ld_preload_cannot_subscribe_to_the_account`.
+
+Also: the sweep (`wolos-xguard-sweep.service`, user `_xguard`) reads every home and writes none: `CAP_DAC_READ_SEARCH` to read, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/wolos/xguard/sweep`, its own folder (audit P6-2). It keeps `CAP_CHOWN` for one job: each account's findings list, `sweep-<uid>.json`, is owned by that account and 0600 before it appears, so the shell reads it as that account and no other account can (audit R7-1; without it the write fails and a finding is never shown). The capability reaches that folder only: homes, the system, `/sys` and cgroups are read-only to the sweep, `/tmp` and `/dev` are private to the run (tests `the_sweep_reads_homes_and_cannot_change_them`, `a_sweep_hit_reaches_the_account_that_owns_the_file`). It remembers finished files in its own `sweep-verdicts`, never in the guard's `verdicts` (test `the_pass_leaves_the_guards_verdicts_alone`). Folders (audit F10, `files/usr/lib/tmpfiles.d/wolos.conf`): `/var/lib/wolos/xguard` is root:_xguard 1775, so the full database's updater can write there but nothing `_xguard` runs can move or replace root's entries; `guard/` (root:root 0755) holds the guard's verdicts (0600), status and each account's `findings-<uid>.json`; `sweep/` (_xguard) holds the pass's memory and `sweep-<uid>.json`. The guard refuses a state folder that is a link, not its own or writable by others, opens its cache without following links and only when it owns it, and reads a findings list only when the account it names owns it (tests `the_guards_state_is_out_of_xguards_reach`, `the_guard_keeps_its_state_in_a_folder_only_it_may_write`, `a_link_in_place_of_the_cache_is_refused`). Files from before the split are removed at boot, not adopted. The signatures the guard loads live there too: `guard/rules` (signed bundles, `wol-xguard rules install` as root) and `guard/local` (the full database's lean build). The full-database download (`clam-update`, as `_xguard`) only fetches whole signed files into `clamav/`; root then builds `guard/local/full.xgdb` (`ExecStartPost=+/usr/bin/wol-xguard rules full`): each file is read without following a link into a folder of root's own, its publisher's signature checked there, and a file older than the one in use (a replay of a once-signed file) is refused, as is anything else, with the previous build kept. Each outcome goes to root's `guard/rules-status.json` (`ok`, `reason`, `time`, the versions in use); Settings reads it and says "Signature update refused: <reason>" (`malware::refusal`, `copy::malware_full`). The guard loads `rules/` and `local/full.xgdb` only when they and their folder are no link, root's, and writable by nobody else (`xguard::trusted`; tests in `crates/xguard/tests/full_rules.rs`). A program that runs `wol` can raise an install sheet; the sheet says "A program using wol wants to install “name”", never "wol" as the requester (P6-4). A package file copy (`wol` install of a local file) is refused when it would leave the staging disk under a reserve of 10 % (at least 1 GiB) free (P6-5; `packages::staging_reserve`). `wolos-build` drops a `.sig` that arrives with a package and signs it with the release key; a signature already beside a package is kept only if `gpg --verify` accepts it (P6-3).
+
 ## What runs as root
 | Program | Does | Takes input from |
 |---|---|---|
-| wold | starts and restarts system jobs | its job files |
-| wol-admind | runs a fixed allow-list of actions (`AdminAction`), each validated, audited, with a password unless it is an everyday change by the account at the computer | a Unix socket, peer uid from the kernel |
+| wold | starts and restarts system jobs; serves the control/portal socket, the QoS socket and the Memory Saver socket (all 0666, identity from the kernel, ADR 0033 hello first); runs Allow-sheet package changes (`wol pkg`, system update, Undo Update) after the person said yes on screen, each stopped after 30 minutes. Runs with 4096 descriptors (`LimitNOFILE=4096:524288`); every job it starts goes back to soft 1024, so the session inherits nothing. A peer whose executable changed since it connected may not publish or subscribe either (audit S4-26) | its job files; the three sockets: peer uid, pid and executable from the kernel; QoS acts only on processes of the peer's own account (audit S4-1) |
+| wol-admind | runs a fixed allow-list of actions (`AdminAction`), each validated, audited, with a password unless it is an everyday change by the account at the computer | a Unix socket (ADR 0033 hello first, each connection on its own thread with a 2 s request deadline, a password check bounded to 10 s; audit S4-7), peer uid from the kernel |
 | wol-login | checks passwords (PAM), starts sessions, opens encrypted homes | the login window's socket |
-| wol-xguard-clam (runs as `_xguard`, not root) | ClamAV, on demand, no network | open files over a Unix socket |
+| wol-xguard-clam (runs as `_xguard`, not root) | the full signature engine, on demand, no network | open files over a Unix socket |
 | wol-xguard guard | answers first-use checks, reads the files it is asked about | kernel events, file content, a Unix socket with file descriptors, peer uid from the kernel |
 | systemd units and timers | `wol power apply`, `update-check` | none |
 
-No Capsicum or jails yet. Each daemon runs argv lists it builds itself (never a shell with user text). Each parses only its own small wire format.
+No namespace sandbox around the daemons yet beyond their systemd hardening. Each daemon runs argv lists it builds itself (never a shell with user text). Each parses only its own small wire format.
 
 ## Needs hardware
-- pf at boot (pf.ko is in the image).
-- Hyprland permission prompts on a real GPU (only `--verify-config` checked).
-- freebsd-update against update.FreeBSD.org.
+- nftables firewall at boot on a real install (`nftables.service`).
+- Compositor permission prompts on a real GPU (only `--verify-config` checked).
+- `wol update apply` against the real mirror on a real install (the slot switch is tested in a VM).
 - Encrypted homes on a real install.

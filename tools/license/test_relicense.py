@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """python3 -m unittest discover -s tools/license   (needs git)"""
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -161,6 +162,48 @@ class Relicense(unittest.TestCase):
         self.assertIn("`crates/core/`", text)
         self.assertIn("`kernel/scx_wolos/`", text)
         self.assertIn("GPL-2.0-only", text)
+
+    def test_mit_portions_are_expected_and_named(self):
+        # docs/THIRD-PARTY.md lists the files that carry MIT portions; the policy expects MIT
+        # there (and nowhere else), and COPYRIGHT names each of them.
+        repo = Path(R.HERE).parent.parent
+        listed = set()
+        for line in (repo / "docs" / "THIRD-PARTY.md").read_text(encoding="utf-8").splitlines():
+            if line.startswith("Our files with portions:"):
+                listed.update(re.findall(r"`([^`]+)`", line))
+        mit = {e["glob"] for e in POLICY["expected"] if e["spdx"] == "MIT"}
+        self.assertEqual(listed, mit)
+        pol = R.Policy(POLICY)
+        for f in listed:
+            self.assertEqual(pol.expected(f), "MIT", f)
+        named = set()
+        for item in re.findall(r"`([^`]+)`", (Path(R.HERE) / "staged" / "COPYRIGHT").read_text()):
+            m = re.fullmatch(r"(.*)\{([^}]*)\}(.*)", item)
+            named.update(m.group(1) + x + m.group(3) for x in m.group(2).split(",")) if m else named.add(item)
+        self.assertEqual(listed - named, set())
+
+    def test_a_copy_without_git_is_walked_like_the_index(self):
+        # The build box gets the tree without .git: the walk finds the same files as
+        # `git ls-files`, minus build output.
+        tracked = R.files(self.root)
+        with tempfile.TemporaryDirectory() as t:
+            copy = Path(t)
+            for rel in tracked:
+                (copy / rel).parent.mkdir(parents=True, exist_ok=True)
+                (copy / rel).write_bytes((self.root / rel).read_bytes())
+            for junk in ["target/debug/x.rs", "crates/api/target/y.rs", "node_modules/m/i.js",
+                         "tools/__pycache__/r.pyc"]:
+                (copy / junk).parent.mkdir(parents=True, exist_ok=True)
+                (copy / junk).write_text("fn x() {}\n")
+            self.assertEqual(R.files(copy), tracked)
+            self.assertEqual(R.run(copy, self.pol, apply=False)[0],
+                             R.run(self.root, self.pol, apply=False)[0])
+
+    def test_generated_theme_files_are_skipped(self):
+        # `wol theme` writes these (crates/core/src/theme); a header would be overwritten.
+        pol = R.Policy(POLICY)
+        self.assertTrue(pol.skipped("desktop/overlay/usr/share/wolos/toolkits/bash/colors.sh"))
+        self.assertFalse(pol.skipped("desktop/overlay/etc/profile.d/wolos-console.sh"))
 
     def test_third_party_patches_art_and_data_are_untouched(self):
         before = snapshot(self.root)

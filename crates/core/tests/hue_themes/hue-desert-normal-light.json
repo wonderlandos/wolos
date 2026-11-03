@@ -1,0 +1,38 @@
+{
+  "id": "hue-desert-normal-light",
+  "name": "desert",
+  "variant": "light",
+  "tokens": {
+    "surface": "#d6efff",
+    "sidebar": "rgba(208,232,247,0.92)",
+    "card": "#eff9ff",
+    "line": "rgba(7,0,0,0.1)",
+    "text": "#070000",
+    "dim": "#4f5459",
+    "accent": "#346c9e",
+    "accentText": "#ffffff",
+    "glass": "rgba(214,239,255,0.84)",
+    "control": "#bdd2e0",
+    "success": "#795e29",
+    "warning": "#816731",
+    "danger": "#8f6028"
+  },
+  "terminal": [
+    "#d6efff",
+    "#8f6028",
+    "#795e29",
+    "#816731",
+    "#346c9e",
+    "#346b9c",
+    "#3e6d92",
+    "#070000",
+    "#777e82",
+    "#b88244",
+    "#a08045",
+    "#a88a4d",
+    "#5190ca",
+    "#518fc8",
+    "#5c91bc",
+    "#240f0c"
+  ]
+}

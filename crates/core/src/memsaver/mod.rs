@@ -45,12 +45,8 @@ pub fn save(config_home: &Path, p: &Prefs) -> std::io::Result<()> {
     if let Some(d) = f.parent() {
         std::fs::create_dir_all(d)?;
     }
-    let tmp = f.with_extension("json.tmp");
-    std::fs::write(
-        &tmp,
-        serde_json::to_vec_pretty(p).map_err(std::io::Error::other)?,
-    )?;
-    std::fs::rename(tmp, f)
+    let json = serde_json::to_vec_pretty(p).map_err(std::io::Error::other)?;
+    shared::atomic::atomic_write(&f, 0o644, &json)
 }
 
 impl Prefs {

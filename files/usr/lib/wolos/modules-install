@@ -1,0 +1,267 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Optional modules, root side (ADR 0032, docs/modules/modules.md "State"): installs the meta package
+# wolos-module-<id> of each id, with the GPU backend package its record names (ai-local:
+# ollama-cuda, ollama-rocm or ollama-vulkan from `wol hw compute`; none for cpu), so the user step never needs the
+# administrator password. Called by install-run (ticked in the installer, into the new system) and
+# by firstboot and the network-up hook (draining what the installer queued).
+# Usage: modules-install [--root DIR] [--drain] [--queue] [--package NAME]... [ID...]
+#   --root DIR      the system to install into (arch-chroot DIR; default /, no chroot)
+#   --drain         also every id and package listed in the pending files
+#   --queue         install nothing, only queue the ids and packages (the installer is offline)
+#   --package NAME  a plain package too (the installer's media formats, ADR 0032 B), one transaction
+#                   for all of them after the modules; queued like an id when it does not install
+# Pending file: DIR/var/lib/wolos/modules-pending (WOL_MODULES_PENDING), one id per line. An id
+# that installed leaves it, one that did not (offline, mirror down, --queue) is added, so the next
+# drain tries again, at most WOLOS_MODULES_TRIES times (default 5; modules-attempts, then
+# modules-gave-up, below). Packages: DIR/var/lib/wolos/packages-pending (WOL_PACKAGES_PENDING), one name per
+# line, the same way (a name is store::is_pkg_name: never an option). Registry: DIR/usr/share/wolos/modules (WOL_MODULES_DIR); an id without a record is
+# refused. Downloads are bounded (WOLOS_MODULES_TIMEOUT seconds per module, default 900); the
+# install itself runs from the cache to the end (a transaction killed halfway leaves half a package).
+# Exit 0 everything installed (or nothing asked), 1 something queued or given up, 2 usage error (bad
+# or unknown id).
+set -eu
+root=/ drain=no queue=no
+
+# The same rule as wol_core::modules::valid_id: [a-z][a-z0-9-]{0,31}.
+valid() {
+  case $1 in [a-z]*) ;; *) return 1 ;; esac
+  case $1 in *[!a-z0-9-]*) return 1 ;; esac
+  [ "${#1}" -le 32 ]
+}
+# The same rule as wol_core::store::is_pkg_name: [A-Za-z0-9][A-Za-z0-9._+-]{0,63}.
+pkg_ok() {
+  case $1 in [A-Za-z0-9]*) ;; *) return 1 ;; esac
+  case $1 in *[!A-Za-z0-9._+-]*) return 1 ;; esac
+  [ "${#1}" -le 64 ]
+}
+ids='' extra=''
+add() { case " $ids " in *" $1 "*) ;; *) ids="${ids:+$ids }$1" ;; esac; }
+padd() { case " $extra " in *" $1 "*) ;; *) extra="${extra:+$extra }$1" ;; esac; }
+while [ $# -gt 0 ]; do
+  case $1 in
+    --root) [ $# -ge 2 ] || { echo "modules-install: --root needs a directory" >&2; exit 2; }; root=$2; shift 2 ;;
+    --drain) drain=yes; shift ;;
+    --queue) queue=yes; shift ;;
+    --package)
+      [ $# -ge 2 ] || { echo "modules-install: --package needs a name" >&2; exit 2; }
+      pkg_ok "$2" || { echo "modules-install: '$2' is not a package name" >&2; exit 2; }
+      padd "$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) echo "modules-install: unknown option $1" >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+case $root in /*) ;; *) echo "modules-install: --root must be absolute" >&2; exit 2 ;; esac
+r=${root%/}
+pending=${WOL_MODULES_PENDING:-$r/var/lib/wolos/modules-pending}
+pkg_pending=${WOL_PACKAGES_PENDING:-$r/var/lib/wolos/packages-pending}
+registry=${WOL_MODULES_DIR:-$r/usr/share/wolos/modules}
+secs=${WOLOS_MODULES_TIMEOUT:-900}
+log() { echo "modules-install: $*" >&2; logger -t wolos-modules "$*" 2>/dev/null || :; } # logger: journal copy only
+
+for id in "$@"; do
+  valid "$id" || { echo "modules-install: '$id' is not a module id" >&2; exit 2; }
+  [ -f "$registry/$id.json" ] || { echo "modules-install: no module '$id'" >&2; exit 2; }
+  add "$id"
+done
+# Asked for by name (not only drained): their tries start again from none, below.
+asked=$ids asked_pkgs=$extra
+if [ "$drain" = yes ] && [ -f "$pending" ]; then
+  while IFS= read -r id || [ -n "$id" ]; do
+    # A line the installer did not write (hand-edited, truncated) is dropped, not run.
+    if valid "$id" && [ -f "$registry/$id.json" ]; then add "$id"; else log "dropping pending line '$id'"; fi
+  done < "$pending"
+fi
+if [ "$drain" = yes ] && [ -f "$pkg_pending" ]; then
+  while IFS= read -r p || [ -n "$p" ]; do
+    if pkg_ok "$p"; then padd "$p"; else log "dropping pending package line '$p'"; fi
+  done < "$pkg_pending"
+fi
+[ -n "$ids" ] || [ -n "$extra" ] || exit 0
+
+in_root() { if [ "$r" = "" ]; then "$@"; else arch-chroot "$r" "$@"; fi; }
+
+# The record's per-machine part ("backend": "<stem>", as wol_core::modules::Module::backend_package):
+# <stem>-cuda|rocm|vulkan as `wol hw compute` picks for this machine (the live system and the
+# installed one see the same hardware); nothing for cpu or a record without a backend.
+backend() {
+  stem=$(sed -n 's/.*"backend": *"\([a-z0-9][a-z0-9+_.-]*\)".*/\1/p' "$registry/$1.json" | head -n 1)
+  [ -n "$stem" ] || return 0
+  json=$(wol hw compute --json 2>/dev/null) || return 0
+  b=$(printf '%s\n' "$json" | sed -n 's/.*"backend": *"\([a-z]*\)".*/\1/p')
+  case $b in cuda|rocm|vulkan) echo "$stem-$b" ;; esac
+}
+
+# Download-only steps on the running system (root /) go through a temporary copy of pacman's
+# database: an installed slot keeps DBPath (/usr/lib/pacman, ADR 0016) on the read-only seal, where
+# pacman cannot take its lock (audit5 C9-1). `local` is linked, `sync` copied; --dbpath makes the
+# /usr/local/bin wrapper pass it to the real pacman. The install itself is the plain `pacman -Sy`,
+# which the wrapper makes in a layer like every `wol pkg` change.
+tmpdb='' tmp=''
+cleanup() {
+  [ -z "$tmpdb" ] || rm -rf "${tmpdb:?}"
+  [ -z "$tmp" ] || rm -f "$tmp"
+}
+trap cleanup EXIT
+download_db() {
+  [ -z "$tmpdb" ] || return 0
+  db=${WOLOS_PACMAN_DB:-$(pacman-conf DBPath 2>/dev/null || :)}
+  db=${db:-/var/lib/pacman}; db=${db%/}
+  tmpdb=$(mktemp -d "${TMPDIR:-/var/tmp}/wolos-modules-db.XXXXXX") || return 1
+  chmod 755 "$tmpdb" || return 1   # pacman's download user looks in; nothing secret there
+  ln -s "$db/local" "$tmpdb/local" && { [ ! -d "$db/sync" ] || cp -a "$db/sync" "$tmpdb/"; }
+}
+
+# PACKAGE...: downloaded (bounded), then installed from the cache to the end.
+# On the running system the repo lists are refreshed first (-y), in the download copy and again
+# in the install's layer: a system installed offline has none at all (install-run refreshes only
+# online), and an older list names files the mirror no longer has, so a plain -S could never find
+# the module ("target not found", every connection until it is given up). The installer's target
+# (--root) was refreshed by install-run itself when it was online.
+get() {
+  st=0 y=
+  if [ -z "$r" ]; then
+    y=y
+    download_db && timeout -k 10 "$secs" pacman --dbpath "$tmpdb" -Syw --noconfirm --needed "$@" >&2 || st=$?
+  else
+    timeout -k 10 "$secs" arch-chroot "$r" pacman -Sw --noconfirm --needed "$@" >&2 || st=$?
+  fi
+  [ "$st" -eq 0 ] && in_root pacman "-S$y" --noconfirm --needed "$@" >&2
+}
+
+done_ids='' queued='' done_pkgs='' queued_pkgs='' failed='' failed_pkgs=''
+for id in $ids; do
+  if [ "$queue" = yes ]; then queued="$queued $id"; continue; fi
+  pkgs="wolos-module-$id"
+  pkgs="$pkgs $(backend "$id")"
+  # shellcheck disable=SC2086 # pkgs: package names built above, one word each
+  if get $pkgs; then
+    done_ids="$done_ids $id"; log "installed $pkgs"
+  else
+    queued="$queued $id"; failed="$failed $id"
+    log "could not install $pkgs now; queued for the next start"
+  fi
+done
+if [ -n "$extra" ]; then
+  # shellcheck disable=SC2086 # extra: names pkg_ok checked, one word each
+  if [ "$queue" = yes ]; then
+    queued_pkgs=$extra
+  elif get $extra; then
+    done_pkgs=$extra; log "installed $extra"
+  else
+    queued_pkgs=$extra; failed_pkgs=$extra
+    log "could not install $extra now; queued for the next start"
+  fi
+fi
+
+# Tries per queued name (audit C8-7): a module or package that can never install (gone from the
+# mirror, no backend for this GPU) would otherwise be downloaded again on every start, forever.
+# DIR/var/lib/wolos/modules-attempts (WOL_MODULES_ATTEMPTS) holds "KIND NAME TRIES" lines (KIND m
+# for a module id, p for a package); a name that installs is forgotten, one that failed
+# WOLOS_MODULES_TRIES times (default 5) leaves the queue and is listed in
+# DIR/var/lib/wolos/modules-gave-up (WOL_MODULES_GAVE_UP, "KIND NAME" lines; Settings > Modules
+# offers it again, through wol-admind). A later success here takes it off that list; so does
+# asking for it by name again (an ID or --package, not only --drain): its tries start from none and
+# it is queued again, listed again only once it fails WOLOS_MODULES_TRIES more times.
+attempts="${WOL_MODULES_ATTEMPTS:-$r/var/lib/wolos/modules-attempts}"
+gave_up_file="${WOL_MODULES_GAVE_UP:-$r/var/lib/wolos/modules-gave-up}"
+tries="${WOLOS_MODULES_TRIES:-5}"
+case $tries in '' | *[!0-9]*) tries=5 ;; esac
+# Replace FILE with what awk PROGRAM (-v vars after it) writes to the temp file "out"; the names awk
+# prints on stdout are returned. An empty result removes FILE. FILE PROGRAM [-v k=v]...
+keep_lines() {
+  f=$1 prog=$2; shift 2
+  dir=$(dirname "$f")
+  mkdir -p "$dir"
+  tmp=$(mktemp "$dir/.${f##*/}.XXXXXX")
+  { [ ! -f "$f" ] || cat "$f"; } | awk -v out="$tmp" "$@" "$prog"
+  if [ -s "$tmp" ]; then
+    chmod 644 "$tmp" && mv -f "$tmp" "$f"
+  else
+    rm -f "$tmp" "$f"
+  fi
+  tmp=''
+}
+# One more try for each FAILED name of KIND, none for DONE; the count of an ASKED name starts from
+# none. Prints the names that reached the limit. KIND FAILED DONE ASKED
+count_tries() {
+  [ -f "$attempts" ] || [ -n "$2" ] || return 0
+  # shellcheck disable=SC2016 # an awk program: its $ fields are awk's
+  keep_lines "$attempts" '
+    BEGIN { n = split(failed, a, " "); for (i = 1; i <= n; i++) bad[a[i]] = 1
+            n = split(ok, a, " "); for (i = 1; i <= n; i++) good[a[i]] = 1
+            n = split(asked, a, " "); for (i = 1; i <= n; i++) fresh[a[i]] = 1 }
+    NF != 3 || $3 !~ /^[0-9]+$/ { next }
+    $1 == kind && ($2 in good) { next }
+    $1 == kind && ($2 in fresh) { next }
+    $1 == kind && ($2 in bad) {
+      c = $3 + 1; delete bad[$2]
+      if (c >= max) print $2; else print $1, $2, c > out
+      next }
+    { print > out }
+    END { for (k in bad) { if (max <= 1) print k; else print kind, k, 1 > out } }' \
+    -v kind="$1" -v failed="$2" -v ok="$3" -v asked="$4" -v max="$tries"
+}
+# Add GAVE names of KIND to the gave-up list and take DONE ones off it. KIND GAVE DONE
+gave_up() {
+  [ -f "$gave_up_file" ] || [ -n "$2" ] || return 0
+  # shellcheck disable=SC2016 # an awk program: its $ fields are awk's
+  keep_lines "$gave_up_file" '
+    BEGIN { n = split(gave, a, " "); for (i = 1; i <= n; i++) add[a[i]] = 1
+            n = split(ok, a, " "); for (i = 1; i <= n; i++) good[a[i]] = 1 }
+    NF != 2 { next }
+    $1 == kind && ($2 in good) { next }
+    $1 == kind && ($2 in add) { next }
+    !seen[$0]++ { print > out }
+    END { for (k in add) print kind, k > out }' \
+    -v kind="$1" -v gave="$2" -v ok="$3"
+}
+# Offline (no default route) a failure says nothing about the module (audit I6-3): the laptop
+# installed offline would use up the tries in five boots before its first connection. The names stay
+# queued, no try is counted. Without `ip` there is no way to tell: count, as before.
+if command -v ip >/dev/null 2>&1 &&
+  [ -z "$(ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null)" ]; then
+  if [ -n "$failed$failed_pkgs" ]; then log "no network: nothing counted as a try"; fi
+  failed='' failed_pkgs=''
+fi
+dropped=$(count_tries m "$failed" "$done_ids" "$asked" | tr '\n' ' ')
+dropped_pkgs=$(count_tries p "$failed_pkgs" "$done_pkgs" "$asked_pkgs" | tr '\n' ' ')
+gave_up m "$dropped" "$done_ids $asked"
+gave_up p "$dropped_pkgs" "$done_pkgs $asked_pkgs"
+printf '%s\n' "$dropped" | tr ' ' '\n' | while IFS= read -r id; do
+  if [ -n "$id" ]; then
+    log "gave up on module $id after $tries tries; to try again: wol modules install $id"
+  fi
+done
+printf '%s\n' "$dropped_pkgs" | tr ' ' '\n' | while IFS= read -r p; do
+  if [ -n "$p" ]; then
+    log "gave up on package $p after $tries tries; to try again: wol pkg -- -S $p"
+  fi
+done
+
+# Rewrite a pending file: (old lines + queued) - installed, one per line, temp + rename.
+# FILE CHECK QUEUED DONE
+rewrite() {
+  [ -f "$1" ] || [ -n "$3" ] || return 0
+  dir=$(dirname "$1")
+  mkdir -p "$dir"
+  tmp=$(mktemp "$dir/.${1##*/}.XXXXXX")
+  {
+    if [ -f "$1" ]; then cat "$1"; fi
+    printf '%s\n' "$3" | tr ' ' '\n'
+  } | while IFS= read -r id || [ -n "$id" ]; do
+    "$2" "$id" || continue
+    case " $4 " in *" $id "*) continue ;; esac
+    echo "$id"
+  done | awk '!seen[$0]++' > "$tmp"
+  if [ -s "$tmp" ]; then
+    chmod 644 "$tmp" && mv -f "$tmp" "$1"
+  else
+    rm -f "$tmp" "$1"
+  fi
+  tmp=''
+}
+rewrite "$pending" valid "$queued" "$done_ids $dropped"
+rewrite "$pkg_pending" pkg_ok "$queued_pkgs" "$done_pkgs $dropped_pkgs"
+[ -z "$queued" ] && [ -z "$queued_pkgs" ]

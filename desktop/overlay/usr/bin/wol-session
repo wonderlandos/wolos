@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Start a WolOS session: Hyprland with WolOS defaults (user file sources the system file).
+# Start a WolOS session: the compositor with WolOS defaults (user file sources the system file).
 export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=Hyprland XDG_CURRENT_DESKTOP=Hyprland
 export LIBSEAT_BACKEND=seatd   # seatd (seat group), as the login window
 if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
@@ -19,13 +19,19 @@ source = $share/hypr/hyprland.conf
 CONF
 fi
 # Third-party apps look like WolOS before the first `wol theme set`: link the shipped defaults
-# (never over the user's own files). Hyprland exec-once regenerates them from the active theme.
+# (never over the user's own files). ghostty and kitty read no system-wide config, so their WolOS defaults are
+# linked as the user's own (replace the link to make it yours). Compositor exec-once regenerates them
+# from the active theme.
 cfg=${XDG_CONFIG_HOME:-$HOME/.config}
 for f in gtk-4.0/gtk.css gtk-4.0/settings.ini gtk-3.0/gtk.css gtk-3.0/settings.ini qt6ct/qt6ct.conf foot/foot.ini \
-	Kvantum/kvantum.kvconfig Kvantum/WolOS/WolOS.kvconfig Kvantum/WolOS/WolOS.svg; do
+	ghostty/config kitty/kitty.conf Kvantum/kvantum.kvconfig Kvantum/WolOS/WolOS.kvconfig Kvantum/WolOS/WolOS.svg; do
 	if [ ! -e "$cfg/$f" ] && [ ! -L "$cfg/$f" ]; then
 		mkdir -p "$cfg/${f%/*}" && ln -s "$share/$f" "$cfg/$f"
 	fi
+done
+# Electron apps from pacman and VS Code: the ozone hint, Wayland when the session has it (audit X1-16).
+for f in electron-flags.conf code-flags.conf; do
+	[ -e "$cfg/$f" ] || [ -L "$cfg/$f" ] || ln -s "$share/$f" "$cfg/$f"
 done
 # Desktop, Documents, Downloads, Music, Pictures, Videos (names follow the account language).
 command -v xdg-user-dirs-update >/dev/null 2>&1 && xdg-user-dirs-update
@@ -35,7 +41,7 @@ if command -v wol-realtime >/dev/null 2>&1; then
 fi
 # GTK 4 renderer: ngl (GPU, Mesa) wherever a DRM render node exists, the big win on Linux; cairo only
 # without one (software GL, VMs). Cairo was a FreeBSD passthrough workaround. A user override wins.
-# vmwgfx (VirtualBox VMSVGA, VMware) has a render node, but Hyprland refuses GTK's GL buffers
+# vmwgfx (VirtualBox VMSVGA, VMware) has a render node, but the compositor refuses GTK's GL buffers
 # ("invalid arguments for wl_surface.attach"): wol-shell and every wol-lock die at once, black screen.
 vmwgfx=
 for d in /sys/class/drm/renderD*/device/driver; do
@@ -48,10 +54,21 @@ elif ls /dev/dri/renderD* >/dev/null 2>&1; then
 else
 	export GSK_RENDERER=${GSK_RENDERER:-cairo}
 fi
+# VM GPUs (vmwgfx, virtio): no pointer on the cursor plane, the compositor draws it. A fragment the conf
+# sources, not only a `hyprctl keyword`: it holds through `hyprctl reload` (audit4 S5-20). Written
+# every start (the conf sources it either way), empty off a VM.
+vmconf=$HOME/.cache/wolos/hypr-vm.conf
+mkdir -p "${vmconf%/*}"
+if command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt -q --vm; then
+	printf '%s\n' '# wol-session: this is a VM' 'cursor {' '    no_hardware_cursors = 1' '}' > "$vmconf.tmp"
+else
+	printf '%s\n' '# wol-session: not a VM' > "$vmconf.tmp"
+fi
+mv -f "$vmconf.tmp" "$vmconf"
 # GTK 3: client-side title bars everywhere, so apps without a header bar still get the traffic lights.
 export GTK_CSD=${GTK_CSD:-1}
 # start-hyprland: the 0.56 watchdog launcher (restarts on crash; no "started without" banner).
-# After a crash it restarts Hyprland locked behind this lock screen (WolOS fork, ADR 0012).
+# After a crash it restarts the compositor locked behind this lock screen (WolOS fork, ADR 0012).
 export WOLOS_CRASH_LOCK_CMD="wol-lock --startup"
 # logind session (wol-session-pam): user@.service's bus carries PipeWire, the portals and the polkit
 # agent. Without one (a test, another launcher) a private bus.
@@ -60,7 +77,7 @@ if [ -S "$XDG_RUNTIME_DIR/bus" ]; then
 	export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 	bus=
 fi
-# Single-account boot (wol-login): Hyprland starts locked, nothing of the session shows before the
+# Single-account boot (wol-login): the compositor starts locked, nothing of the session shows before the
 # password. The variable stops here; apps never see it.
 if [ "${WOL_SESSION_LOCKED:-}" = 1 ]; then
 	unset WOL_SESSION_LOCKED

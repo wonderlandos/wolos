@@ -4,7 +4,7 @@ Ceiling on iGPUs: shared LPDDR, not FLOPS. Unit of cost: bytes moved per frame.
 Baseline (derived): 1920x1200 RGBA8 = 9.2 MB per full read or write; at 60 Hz = 553 MB/s per full-screen pass.
 Contract: ADR 0007. Hardware: `intel-graphics.md`. Current config: `hyprland-fork.md`.
 
-Legend: Layer = C compositor (wol-hypr/Hyprland), D kernel driver, M Mesa, A apps. Agnostic = same code on every vendor; Backend = per-vendor code or knob.
+Legend: Layer = C compositor (wol-hypr and the compositor fork), D kernel driver, M Mesa, A apps. Agnostic = same code on every vendor; Backend = per-vendor code or knob.
 
 | Paradigm | Mechanism | Saving (source) | Layer | Agnostic? | Measure |
 |---|---|---|---|---|---|
@@ -40,6 +40,8 @@ Interaction nets, honest verdict: compositor work is regular, data-parallel and 
 | 5 | Telemetry + freq policy (ADR 0007): bytes/frame and energy/frame, race-to-idle when idle | makes 1-4 measurable; avoids high GT freq on BW-bound frames | M | telemetry done (`gpu caps|sample`: freq, FBC, RAPL PP1 µJ); freq policy: ADR 0008 boost gate + power limits |
 
 ## Measurement (ADL-P 8086:46a8, FreeBSD 15.1, native)
+
+> Historical: the tool column is the FreeBSD one. On Linux, `perf_event_open` exists, so the limits below that name FreeBSD do not apply. Re-measure on the Linux image before relying on a number.
 
 | Need | Tool on FreeBSD | Status | Fallback |
 |---|---|---|---|

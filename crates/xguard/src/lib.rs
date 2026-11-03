@@ -20,20 +20,36 @@ pub mod yara;
 pub use scan::{Deep, Engine, Finding, Kind, Report, Skipped, Verdict, hexs};
 pub use walk::{Limits, scan_bytes, scan_file};
 
-/// Signatures delivered by updates.
-pub const RULES_DIR: &str = "/var/lib/wolos/xguard/rules";
+/// Signatures delivered by updates: in the guard's own folder, root's alone (audit F10).
+pub const RULES_DIR: &str = "/var/lib/wolos/xguard/guard/rules";
 /// Signatures the system shipped with.
 pub const SHIPPED_DIR: &str = "/usr/share/wolos/xguard";
 
-/// Lean signatures built on this computer from the data the person opted into (ADR 0028).
-pub const LOCAL_DIR: &str = "/var/lib/wolos/xguard/local";
+/// Lean signatures built on this computer from the data the person opted into (ADR 0028), by
+/// root from the publisher-signed files only (`wol-xguard rules full`, audit F10).
+pub const LOCAL_DIR: &str = "/var/lib/wolos/xguard/guard/local";
+
+/// Signatures may be loaded from `p`: it and its folder are no link, root's (or this
+/// process's), and writable by nobody else (audit F10). Anything `_xguard` could have made fails.
+pub fn trusted(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let ok = |p: &std::path::Path| {
+        std::fs::symlink_metadata(p).is_ok_and(|m| {
+            !m.file_type().is_symlink()
+                && (m.uid() == 0 || m.uid() == shared::sys::euid())
+                && m.mode() & 0o022 == 0
+        })
+    };
+    ok(p) && p.parent().is_none_or(ok)
+}
 
 /// The newest signatures on this machine: delivered ones, else the shipped ones.
 pub fn rules_dir() -> std::path::PathBuf {
     let d = std::path::Path::new(RULES_DIR);
-    let usable = std::fs::read_dir(d).is_ok_and(|mut e| {
-        e.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "xgdb")))
-    });
+    let usable = trusted(d)
+        && std::fs::read_dir(d).is_ok_and(|mut e| {
+            e.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "xgdb")))
+        });
     if usable {
         d
     } else {

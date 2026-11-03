@@ -120,7 +120,7 @@ impl Grid {
     }
 
     /// Free cell nearest to `prefer` (top-left first on ties, column by column like the Dock side
-    /// of macOS). None when the desktop is full.
+    /// of the WolOS desktop). None when the desktop is full.
     pub fn free_spot(
         &self,
         widgets: &[Placed],

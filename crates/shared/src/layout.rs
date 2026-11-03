@@ -60,7 +60,7 @@ impl Edge {
     }
 }
 
-/// Menubar: logo, app menus, status, clock (macOS order). Taskbar: start item, tasks, tray, clock.
+/// Menubar: logo, app menus, status, clock (WolOS order). Taskbar: start item, tasks, tray, clock.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BarStyle {
@@ -143,7 +143,7 @@ pub struct Layout {
 }
 
 impl Default for Layout {
-    /// Today's desktop: bar on top, Dock at the bottom, macOS menu bar order.
+    /// Today's desktop: bar on top, Dock at the bottom, the WolOS menu bar order.
     fn default() -> Self {
         use BarItem as B;
         Self {

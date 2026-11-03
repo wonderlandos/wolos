@@ -10,8 +10,6 @@ pub const PASSWD_FILE: &str = "/etc/passwd";
 pub const SHELLS_FILE: &str = "/etc/shells";
 pub const MAX_USER: usize = 32;
 pub const MAX_PASSWORD: usize = 512;
-const FIRST_HUMAN: u32 = 1000;
-const NOBODY: u32 = 65534;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoginUser {
@@ -66,18 +64,16 @@ pub fn all_users(passwd: &str) -> Vec<LoginUser> {
         .collect()
 }
 
-/// Shown on the login window: uid >= 1000 (not nobody) with a shell from /etc/shells, sorted by name.
+/// Shown on the login window and accepted by [`LoginFlow::submit`]: [`shared::login::login_names`]
+/// (one rule for both sides, audit5 S9-1), sorted by name.
 pub fn listed(passwd: &str, shells: &str) -> Vec<LoginUser> {
-    let valid: Vec<&str> = shells
-        .lines()
-        .map(str::trim)
-        .filter(|s| s.starts_with('/'))
-        .collect();
+    let names = shared::login::login_names(passwd, shells);
     let mut v: Vec<LoginUser> = all_users(passwd)
         .into_iter()
-        .filter(|u| u.uid >= FIRST_HUMAN && u.uid != NOBODY && valid.contains(&u.shell.as_str()))
+        .filter(|u| names.contains(&u.name))
         .collect();
     v.sort_by(|a, b| a.name.cmp(&b.name));
+    v.dedup_by(|a, b| a.name == b.name);
     v
 }
 
@@ -355,6 +351,23 @@ fn write_file(
     Ok(())
 }
 
+/// The steps that open `name`'s home with the password just checked (audit S4-20). None: the home
+/// is encrypted and closed but the password is not UTF-8 text, so homectl cannot be given it and
+/// the session must not start without its files. A plain or already open home needs no steps.
+pub fn home_unlock_steps(
+    name: &str,
+    state: Option<wol_core::home_crypt::State>,
+    password: &[u8],
+) -> Option<Vec<wol_core::home_crypt::Cmd>> {
+    match std::str::from_utf8(password) {
+        Ok(pw) => Some(wol_core::home_crypt::unlock(name, state, pw)),
+        Err(_) => {
+            let steps = wol_core::home_crypt::unlock(name, state, "");
+            steps.is_empty().then_some(steps)
+        }
+    }
+}
+
 pub fn encode_request(user: &str, password: &[u8]) -> Vec<u8> {
     let mut b = format!("{user}\n").into_bytes();
     b.extend_from_slice(password);
@@ -371,7 +384,7 @@ pub fn runtime_dir(u: &LoginUser) -> String {
 pub const SESSION_PAM: &str = "/usr/lib/wol-session-pam";
 pub const SESSION_PAM_SERVICE: &std::ffi::CStr = c"wol-login";
 
-/// `locked`: wol-session starts Hyprland locked behind wol-lock (ADR 0012).
+/// `locked`: wol-session starts the compositor locked behind wol-lock (ADR 0012).
 pub fn session_command(u: &LoginUser, locked: bool) -> Option<Vec<String>> {
     let lock = if locked { "WOL_SESSION_LOCKED=1 " } else { "" };
     valid_name(&u.name).then(|| {
@@ -386,9 +399,10 @@ pub fn session_command(u: &LoginUser, locked: bool) -> Option<Vec<String>> {
 pub const KEYRING_DAEMON: &str = "/usr/bin/gnome-keyring-daemon";
 
 /// gnome-keyring at login: reads the password on stdin, unlocks (or creates) the login keyring once
-/// the session runs `gnome-keyring-daemon --start` (hyprland.conf) within 120 s. Not pam_gnome_keyring:
-/// OpenPAM fails pam_start when a listed module is missing (no login at all) and runs auth modules
-/// after a wrong password (a keyring created with a typo).
+/// the session runs `gnome-keyring-daemon --start` (hyprland.conf) within 120 s. Not the PAM keyring
+/// module: wol-login hands the password over only after it accepted it (a typo never creates or
+/// unlocks a keyring), and the login PAM stack does not depend on the keyring package (without the
+/// daemon this is a no-op).
 pub fn keyring_login_command(u: &LoginUser) -> Option<Vec<String>> {
     valid_name(&u.name).then(|| {
         vec![
@@ -580,38 +594,137 @@ pub fn handoff_wait(from_setup: bool) -> std::time::Duration {
     std::time::Duration::from_secs(if from_setup { 600 } else { 2 })
 }
 
-/// Console (tty1) the notice is drawn on when the login window cannot start.
+/// The console VT. The login window and every session run on it: the seat daemon takes the VT
+/// that is active at boot (tty1; no getty there or on any other VT, logind.conf.d/wolos.conf), and
+/// the notice is drawn on it when the login window cannot start.
 pub const CONSOLE: &str = "/dev/tty1";
 
-/// Written to ttyv0 before each compositor starts (ADR 0012): vt(4) redraws it whenever no
-/// compositor holds the screen, so it must be plain black, with no text and no cursor.
-/// Black on black too: later console text (syslog errors) stays invisible. rc.d/wolos_quiet writes
-/// the same at the start of boot.
+/// Written to [`CONSOLE`] before each compositor starts (ADR 0012): when a compositor exits, the
+/// seat daemon puts the VT back in text mode and the kernel redraws its text, so it must be plain
+/// black, with no text and no cursor. Black on black too: later kernel console text stays
+/// invisible. The kernel command line (`quiet`, `vt.global_cursor_default=0`) keeps the VT so from
+/// the start of boot.
 pub const BLANK_CONSOLE: &str = "\x1b[30;40m\x1b[?25l\x1b[H\x1b[2J";
 pub const SHOW_CURSOR: &str = "\x1b[?25h";
 /// Default colours again (the console notice must be readable).
 pub const TEXT_VISIBLE: &str = "\x1b[0m";
 
-/// FreeBSD `VT_LOCKSWITCH` (`_IOW('v', 9, int)`): while set on the active vt, Alt+Fn and
-/// Ctrl+Alt+Fn (seatd VT_ACTIVATE) cannot leave the WolOS screen.
-pub const VT_LOCKSWITCH: libc::c_ulong = 0x8004_7609;
+/// Linux `VT_LOCKSWITCH` (`linux/vt.h`, `0x560B`): no argument, needs `CAP_SYS_TTY_CONFIG`, works
+/// on any VT descriptor. The lock is global: while it is set the kernel ignores every VT switch,
+/// Alt+Fn on a text VT and the seat daemon's `VT_ACTIVATE` for a compositor's Ctrl+Alt+Fn alike,
+/// so nothing but WolOS is ever on screen (ADR 0012). Graphics mode (`KDSETMODE`), keyboard mode
+/// and `VT_SETMODE` are the seat daemon's job when a compositor opens the seat; wol-login draws
+/// nothing on the VT but escape sequences, so it never sets them.
+pub const VT_LOCKSWITCH: libc::c_ulong = 0x560B;
+/// Linux `VT_UNLOCKSWITCH` (`linux/vt.h`, `0x560C`): VT switching works again.
+pub const VT_UNLOCKSWITCH: libc::c_ulong = 0x560C;
 
-pub fn vt_lock_arg(lock: bool) -> i32 {
-    if lock { 1 } else { 2 }
+/// The ioctl that locks (true) or unlocks (false) VT switching.
+pub fn vt_switch_request(lock: bool) -> libc::c_ulong {
+    if lock { VT_LOCKSWITCH } else { VT_UNLOCKSWITCH }
 }
 
-/// `kern.console` lists the active consoles first, `/dev/console` first of all: true when that
-/// is a serial port (VM, headless), so boot marks may go to the console without touching the screen.
-pub fn serial_primary(kern_console: &str) -> bool {
-    kern_console
-        .split([',', '/'])
-        .next()
-        .is_some_and(|c| c.starts_with("ttyu"))
+/// Errors that mean there is no VT to manage: no such device (kernel without VTs, a container) or
+/// a descriptor that is no VT (`ENOTTY`: a pty or a file, e.g. under a nested compositor).
+pub fn no_vt(e: &std::io::Error) -> bool {
+    matches!(
+        e.raw_os_error(),
+        Some(libc::ENOENT | libc::ENXIO | libc::ENODEV | libc::ENOTTY)
+    )
+}
+
+/// What [`console_step`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum VtStep {
+    /// Switching set and the text written.
+    Done,
+    /// No VT here: nothing to do, not an error.
+    NoVt,
+    /// Something to log (the reasons, `; ` between them).
+    Failed(String),
+}
+
+/// One console step (ADR 0012): open the console VT, lock (before a compositor) or unlock (for the
+/// notice) VT switching, then write `text`. `open` and `ioctl` are the device layer, so tests run
+/// it on fakes. No VT at all is [`VtStep::NoVt`] and nothing is written; a failed ioctl (e.g.
+/// `EPERM` without `CAP_SYS_TTY_CONFIG`) still writes the text, the screen matters more.
+pub fn console_step<D: std::io::Write>(
+    open: impl FnOnce() -> std::io::Result<D>,
+    ioctl: impl FnOnce(&D, libc::c_ulong) -> std::io::Result<()>,
+    lock: bool,
+    text: &str,
+) -> VtStep {
+    let mut tty = match open() {
+        Ok(t) => t,
+        Err(e) if no_vt(&e) => return VtStep::NoVt,
+        Err(e) => return VtStep::Failed(format!("open: {e}")),
+    };
+    let mut failed = Vec::new();
+    let name = if lock {
+        "VT_LOCKSWITCH"
+    } else {
+        "VT_UNLOCKSWITCH"
+    };
+    match ioctl(&tty, vt_switch_request(lock)) {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(libc::ENOTTY) => return VtStep::NoVt,
+        Err(e) => failed.push(format!("{name}: {e}")),
+    }
+    if let Err(e) = tty.write_all(text.as_bytes()).and_then(|()| tty.flush()) {
+        failed.push(format!("write: {e}"));
+    }
+    if failed.is_empty() {
+        VtStep::Done
+    } else {
+        VtStep::Failed(failed.join("; "))
+    }
+}
+
+/// The kernel's enabled consoles, `/dev/console` last (the service manager reads it the same way).
+pub const CONSOLE_ACTIVE: &str = "/sys/class/tty/console/active";
+/// Kernel command line: its last `console=` entry is `/dev/console` when [`CONSOLE_ACTIVE`] is
+/// unreadable.
+pub const KERNEL_CMDLINE: &str = "/proc/cmdline";
+
+/// The device behind `/dev/console` (`ttyS0`, `tty0`, ...): the last name in
+/// [`CONSOLE_ACTIVE`], else the last `console=` on the kernel command line (options after `,`
+/// dropped). None when neither names one.
+pub fn primary_console(active: Option<&str>, cmdline: Option<&str>) -> Option<String> {
+    let last = |it: &mut dyn Iterator<Item = String>| it.last().filter(|c| !c.is_empty());
+    active
+        .and_then(|a| last(&mut a.split_whitespace().map(str::to_owned)))
+        .or_else(|| {
+            cmdline.and_then(|c| {
+                last(&mut c.split_whitespace().filter_map(|w| {
+                    w.strip_prefix("console=")
+                        .map(|v| v.split(',').next().unwrap_or("").to_owned())
+                }))
+            })
+        })
+}
+
+/// True when `/dev/console` is a serial port (VM, headless: `ttyS0`, `ttyAMA0`, `hvc0`, ...),
+/// so boot marks may go to the console without touching the screen. A virtual terminal
+/// (`tty` + digits; bare `tty` is no console) is the screen.
+pub fn serial_primary(console: Option<&str>) -> bool {
+    console.is_some_and(|c| {
+        let vt = c
+            .strip_prefix("tty")
+            .is_some_and(|n| n.bytes().all(|b| b.is_ascii_digit()));
+        !c.is_empty() && !vt
+    })
+}
+
+/// [`serial_primary`] for the consoles read from `active` and `cmdline` (paths, so tests can
+/// point them at fixtures).
+pub fn serial_console_at(active: &std::path::Path, cmdline: &std::path::Path) -> bool {
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).ok();
+    serial_primary(primary_console(read(active).as_deref(), read(cmdline).as_deref()).as_deref())
 }
 
 pub use shared::login::boot_mark;
 
-/// Compositor hand-offs: a spawn after an exit reports the gap in which vt(4) owned the screen.
+/// Compositor hand-offs: a spawn after an exit reports the gap in which the text VT showed.
 #[derive(Debug, Default)]
 pub struct Timeline {
     exited_at: Option<u64>,
@@ -634,7 +747,8 @@ impl Timeline {
 }
 
 /// Full-screen text for the console when the greeter keeps failing: what is wrong, the raw reason
-/// from the greeter exit, and where the recovery login is (getty stays on ttyv1).
+/// from the greeter exit, where the details are, and how to restart (no VT has a getty, so there
+/// is no console login to point to).
 pub fn console_notice(dri_present: bool, status: &str) -> String {
     let headline = if dri_present {
         "The WolOS login window could not start."
@@ -642,11 +756,11 @@ pub fn console_notice(dri_present: bool, status: &str) -> String {
         "WolOS needs a supported graphics card (no /dev/dri: no GPU driver loaded)."
     };
     format!(
-        "{TEXT_VISIBLE}{SHOW_CURSOR}\x1b[2J\x1b[H\r\n  WolOS\r\n\r\n  {headline}\r\n\r\n  Reason: login window exited, {status}.\r\n  Details: /var/log/wold.log\r\n\r\n  Recovery console: press Alt+F2.\r\n"
+        "{TEXT_VISIBLE}{SHOW_CURSOR}\x1b[2J\x1b[H\r\n  WolOS\r\n\r\n  {headline}\r\n\r\n  Reason: login window exited, {status}.\r\n  Details: journalctl -b -u wold\r\n\r\n  Restart: press Ctrl+Alt+Delete, or hold the power button.\r\n"
     )
 }
 
-/// Greeter respawn policy: a greeter that dies quickly (e.g. Hyprland without DRM) is retried with
+/// Greeter respawn policy: a greeter that dies quickly (e.g. the compositor without DRM) is retried with
 /// exponential backoff (1 s .. 5 min) and logged once per failure streak, never spun.
 #[derive(Debug, Default)]
 pub struct GreeterRespawn {
@@ -696,7 +810,12 @@ mod tests {
             let m = console_notice(dri, status);
             assert!(m.contains(headline), "{m}");
             assert!(m.contains(status), "{m}");
-            assert!(m.contains("Alt+F2"), "recovery console named: {m}");
+            // No VT has a getty (logind.conf.d/wolos.conf): no console login to point to, and
+            // wold logs to the journal, not to a file.
+            assert!(!m.contains("Alt+F"), "no console login exists: {m}");
+            assert!(!m.contains("/var/log/"), "{m}");
+            assert!(m.contains("journalctl -b -u wold"), "{m}");
+            assert!(m.contains("Ctrl+Alt+Delete"), "how to restart: {m}");
             assert!(!m.contains("FreeBSD"), "{m}");
             assert!(
                 m.starts_with(&format!("{TEXT_VISIBLE}{SHOW_CURSOR}")),
@@ -705,8 +824,8 @@ mod tests {
         }
     }
 
-    /// ADR 0012: between two compositors vt(4) redraws ttyv0; it must be black with no cursor, and
-    /// any later console text (syslog errors) black on black.
+    /// ADR 0012: between two compositors the kernel redraws the console VT's text; it must be black
+    /// with no cursor, and any later kernel console text black on black.
     #[test]
     fn console_blank_clears_and_hides_the_cursor() {
         assert_eq!(BLANK_CONSOLE, "\x1b[30;40m\x1b[?25l\x1b[H\x1b[2J");
@@ -753,27 +872,186 @@ mod tests {
         assert!(!f.from_setup());
     }
 
-    /// FreeBSD sys/consio.h: `#define VT_LOCKSWITCH _IOW('v', 9, int)`; 1 locks, 2 unlocks.
+    /// linux/vt.h: `#define VT_LOCKSWITCH 0x560B`, `#define VT_UNLOCKSWITCH 0x560C` ('V' << 8 | n).
+    /// The old base's `_IOW('v', 9, int)` (0x80047609) is no VT ioctl on Linux.
     #[test]
-    fn vt_lockswitch_matches_consio() {
-        let iow = |g: u8, n: libc::c_ulong, len: libc::c_ulong| {
-            0x8000_0000 | (len & 0x1fff) << 16 | libc::c_ulong::from(g) << 8 | n
+    fn vt_lock_requests_match_linux_vt_h() {
+        let v = |n: libc::c_ulong| libc::c_ulong::from(b'V') << 8 | n;
+        assert_eq!((VT_LOCKSWITCH, VT_UNLOCKSWITCH), (v(0x0B), v(0x0C)));
+        assert_eq!(vt_switch_request(true), 0x560B);
+        assert_eq!(vt_switch_request(false), 0x560C);
+        assert_ne!(VT_LOCKSWITCH, 0x8004_7609);
+    }
+
+    /// Fake console VT: every ioctl and write lands in one ordered log; `write_err` makes writes
+    /// fail with that errno ([`step_on_fake`] fakes open and ioctl errors).
+    #[derive(Default)]
+    struct FakeVt {
+        log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+        write_err: Option<i32>,
+    }
+
+    impl std::io::Write for FakeVt {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            if let Some(e) = self.write_err {
+                return Err(std::io::Error::from_raw_os_error(e));
+            }
+            let t = String::from_utf8_lossy(b).into_owned();
+            self.log.borrow_mut().push(format!("write {t:?}"));
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Runs [`console_step`] on a [`FakeVt`]: (result, log).
+    fn step_on_fake(
+        open_err: Option<i32>,
+        ioctl_err: Option<i32>,
+        write_err: Option<i32>,
+        lock: bool,
+        text: &str,
+    ) -> (VtStep, Vec<String>) {
+        let log = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let vt = FakeVt {
+            log: log.clone(),
+            write_err,
         };
-        assert_eq!(VT_LOCKSWITCH, iow(b'v', 9, 4));
-        assert_eq!(VT_LOCKSWITCH, 0x8004_7609);
-        assert_eq!((vt_lock_arg(true), vt_lock_arg(false)), (1, 2));
+        let open = || match open_err {
+            Some(e) => Err(std::io::Error::from_raw_os_error(e)),
+            None => Ok(vt),
+        };
+        let ioctl = |d: &FakeVt, req: libc::c_ulong| {
+            d.log.borrow_mut().push(format!("ioctl {req:#x}"));
+            ioctl_err.map_or(Ok(()), |e| Err(std::io::Error::from_raw_os_error(e)))
+        };
+        let got = console_step(open, ioctl, lock, text);
+        let log = log.borrow().clone();
+        (got, log)
+    }
+
+    /// ADR 0012: before a compositor, switching is locked and the VT blanked; for the notice it is
+    /// unlocked first, then the notice drawn.
+    #[test]
+    fn console_step_locks_before_a_compositor_and_unlocks_for_the_notice() {
+        let (got, log) = step_on_fake(None, None, None, true, BLANK_CONSOLE);
+        assert_eq!(got, VtStep::Done);
+        assert_eq!(
+            log,
+            [
+                "ioctl 0x560b".to_owned(),
+                format!("write {BLANK_CONSOLE:?}")
+            ]
+        );
+        let notice = console_notice(true, "exit status: 1");
+        let (got, log) = step_on_fake(None, None, None, false, &notice);
+        assert_eq!(got, VtStep::Done);
+        assert_eq!(
+            log,
+            ["ioctl 0x560c".to_owned(), format!("write {notice:?}")]
+        );
+    }
+
+    /// No VT at all (kernel without VTs, a container, a nested compositor's pty): a quiet no-op.
+    #[test]
+    fn console_step_without_a_vt_is_a_no_op() {
+        for e in [libc::ENOENT, libc::ENXIO, libc::ENODEV, libc::ENOTTY] {
+            for lock in [true, false] {
+                let (got, log) = step_on_fake(Some(e), None, None, lock, BLANK_CONSOLE);
+                assert_eq!(got, VtStep::NoVt, "open errno {e}");
+                assert!(log.is_empty(), "nothing touched: {log:?}");
+            }
+        }
+        // The device opens but is no VT: nothing written to it either.
+        let (got, log) = step_on_fake(None, Some(libc::ENOTTY), None, true, BLANK_CONSOLE);
+        assert_eq!(got, VtStep::NoVt);
+        assert_eq!(log, ["ioctl 0x560b"]);
+    }
+
+    /// Real failures are reported; the text still reaches the screen when only the ioctl failed.
+    #[test]
+    fn console_step_reports_real_failures() {
+        let (got, log) = step_on_fake(None, Some(libc::EPERM), None, true, BLANK_CONSOLE);
+        let VtStep::Failed(why) = got else {
+            panic!("EPERM is a failure: {got:?}")
+        };
+        assert!(why.starts_with("VT_LOCKSWITCH: "), "{why}");
+        assert_eq!(log.len(), 2, "blank written anyway: {log:?}");
+        let (got, _) = step_on_fake(None, Some(libc::EPERM), None, false, "x");
+        assert!(
+            matches!(&got, VtStep::Failed(w) if w.starts_with("VT_UNLOCKSWITCH: ")),
+            "{got:?}"
+        );
+        let (got, log) = step_on_fake(Some(libc::EACCES), None, None, true, BLANK_CONSOLE);
+        assert!(
+            matches!(&got, VtStep::Failed(w) if w.starts_with("open: ")),
+            "{got:?}"
+        );
+        assert!(log.is_empty());
+        let (got, log) = step_on_fake(None, None, Some(libc::EIO), true, BLANK_CONSOLE);
+        assert!(
+            matches!(&got, VtStep::Failed(w) if w.starts_with("write: ")),
+            "{got:?}"
+        );
+        assert_eq!(log, ["ioctl 0x560b"], "locked even when the write fails");
     }
 
     #[test]
-    fn serial_primary_follows_kern_console_order() {
-        for (s, want) in [
-            ("ttyu0,ttyv0,/ttyv0,ttyu0,", true),
-            ("ttyv0,ttyu0,/ttyv0,ttyu0,", false),
-            ("ttyv0,/ttyv0,", false),
-            ("", false),
+    fn primary_console_is_the_last_active_one() {
+        for (active, cmdline, want) in [
+            (Some("tty0 ttyS0\n"), None, Some("ttyS0")),
+            (Some("ttyS0 tty0\n"), None, Some("tty0")),
+            (Some("tty1\n"), Some("console=ttyS0"), Some("tty1")),
+            (
+                None,
+                Some("quiet console=tty0 console=ttyS0,115200n8 splash"),
+                Some("ttyS0"),
+            ),
+            (Some("\n"), Some("console=hvc0"), Some("hvc0")),
+            (None, Some("quiet splash"), None),
+            (None, None, None),
         ] {
-            assert_eq!(serial_primary(s), want, "{s}");
+            assert_eq!(
+                primary_console(active, cmdline).as_deref(),
+                want,
+                "{active:?} {cmdline:?}"
+            );
         }
+    }
+
+    #[test]
+    fn serial_primary_tells_serial_from_the_screen() {
+        for (c, want) in [
+            (Some("ttyS0"), true),
+            (Some("ttyAMA0"), true),
+            (Some("hvc0"), true),
+            (Some("ttyUSB0"), true),
+            (Some("tty0"), false),
+            (Some("tty12"), false),
+            (Some("tty"), false),
+            (Some(""), false),
+            (None, false),
+        ] {
+            assert_eq!(serial_primary(c), want, "{c:?}");
+        }
+    }
+
+    /// Reads the real files' format from fixture paths; a missing active list falls back to
+    /// the command line.
+    #[test]
+    fn serial_console_at_reads_fake_paths() {
+        let dir = std::env::temp_dir().join(format!("wol-login-console-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (active, cmdline) = (dir.join("active"), dir.join("cmdline"));
+        std::fs::write(&cmdline, "root=UUID=x console=ttyS0,115200\n").unwrap();
+        assert!(serial_console_at(&active, &cmdline), "cmdline fallback");
+        std::fs::write(&active, "ttyS0 tty0\n").unwrap();
+        assert!(!serial_console_at(&active, &cmdline), "active wins");
+        std::fs::write(&active, "tty0 ttyS0\n").unwrap();
+        assert!(serial_console_at(&active, &cmdline));
+        assert!(!serial_console_at(&dir.join("none"), &dir.join("none")));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Boot timeline (ADR 0012): one grep-able line per stage, uptime in ms; hops carry the gap
@@ -852,6 +1130,30 @@ broken:line
             full_name: full.into(),
             home: home.into(),
             shell: shell.into(),
+        }
+    }
+
+    #[test]
+    fn the_listed_accounts_are_the_accepted_ones_without_etc_shells() {
+        // audit5 S9-1: the login window lists exactly what wol-login accepts.
+        let pw = "root:*:0:0::/root:/bin/sh\n\
+                  bo:*:1002:1002:Bo Peep:/home/bo:/usr/bin/fish\n\
+                  svc:*:1003:1003::/var/svc:/usr/sbin/nologin\n";
+        for shells in ["", "/bin/sh\n", "/usr/bin/fish\n"] {
+            let l = listed(pw, shells);
+            assert_eq!(
+                l.iter().map(|u| u.name.clone()).collect::<Vec<_>>(),
+                shared::login::login_names(pw, shells),
+                "{shells:?}"
+            );
+            assert_eq!(
+                l.iter().map(|u| u.name.as_str()).collect::<Vec<_>>(),
+                ["bo"]
+            );
+            assert!(!LoginFlow::new(l.clone(), None).submit("svc"));
+            let mut f = LoginFlow::new(l, None);
+            assert!(f.submit("bo"), "{shells:?}");
+            assert_eq!(f.user.as_ref().map(|u| u.name.as_str()), Some("bo"));
         }
     }
 
@@ -1292,7 +1594,7 @@ broken:line
         };
         assert_eq!(SESSION_PAM, "/usr/lib/wol-session-pam");
         assert_eq!(session_command(&zoe, false).unwrap(), argv(""));
-        // Locked start (ADR 0012): wol-session starts Hyprland locked with wol-lock.
+        // Locked start (ADR 0012): wol-session starts the compositor locked with wol-lock.
         assert_eq!(
             session_command(&zoe, true).unwrap(),
             argv("WOL_SESSION_LOCKED=1 ")
@@ -1356,5 +1658,28 @@ broken:line
         assert!(!g.submit("ana"));
         g.listed = vec![ana];
         assert!(g.submit("ana"));
+    }
+
+    /// Audit S4-20: a password that is not text never starts a session over a closed encrypted
+    /// home; a plain or open home needs nothing either way.
+    #[test]
+    fn a_non_text_password_does_not_skip_the_home_unlock() {
+        use wol_core::home_crypt::State;
+        let closed = Some(State {
+            encrypted: true,
+            key_loaded: false,
+            mounted: false,
+        });
+        let open = Some(State {
+            encrypted: true,
+            key_loaded: true,
+            mounted: true,
+        });
+        let bad = b"pass\xff\xfe";
+        assert_eq!(super::home_unlock_steps("ana", closed, bad), None);
+        assert_eq!(super::home_unlock_steps("ana", open, bad), Some(vec![]));
+        assert_eq!(super::home_unlock_steps("ana", None, bad), Some(vec![]));
+        let steps = super::home_unlock_steps("ana", closed, b"s3cret-pw").unwrap();
+        assert!(!steps.is_empty());
     }
 }

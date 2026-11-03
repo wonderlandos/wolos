@@ -1,0 +1,11 @@
+a11y window=1 nodes=10
+0 frame "Todos" [active,enabled,resizable,sensitive,showing,visible] 0,0 320x240
+  1 panel "" [enabled,sensitive,showing,visible] 0,0 320x240
+    2 heading "Todos" [enabled,sensitive,showing,visible] 16,8 200x24
+    3 entry "New todo" [editable,enabled,focusable,focused,sensitive,showing,single-line,visible,selectable-text] 16,40 200x28 text="milk" caret=4 selection=4..4
+    4 button "Add" [enabled,focusable,sensitive,showing,visible] 224,40 80x28 action=click
+    6 list "Todo list" [enabled,sensitive,showing,visible] 16,80 288x120
+      7 toggle-button "Buy bread" [checked,enabled,focusable,pressed,sensitive,showing,visible,checkable] 32,160 288x30 action=toggle
+      8 toggle-button "Call Ana" [enabled,focusable,sensitive,showing,visible,checkable] 32,190 288x30 description="Due today" action=toggle
+    9 slider "Priority" [enabled,focusable,horizontal,sensitive,showing,visible] 16,204 200x20 description="How urgent the new todo is" value=2 min=0 max=3 step=1
+    11 button "Clear done" [showing,visible] 224,204 80x20

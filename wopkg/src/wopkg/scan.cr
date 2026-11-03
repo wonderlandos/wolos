@@ -3,7 +3,7 @@ require "json"
 
 module Wopkg
   # The malware scan step (ADR 0021, 0026). `wol-xguard scan --json` reads archives in memory and asks
-  # ClamAV in its own process when the person turned the full signatures on; `clamscan` is the
+  # the full signature engine in its own process when the person turned the full signatures on; `clamscan` is the
   # fallback off WolOS. Neither is linked. Repository packages that pacman already verifies are not
   # scanned, so normal installs stay fast.
   module Scan
@@ -62,6 +62,20 @@ module Wopkg
       Process.find_executable("wol-xguard")
     end
 
+    # One line of `wol-xguard scan --json`; what it adds beyond these fields is ignored.
+    struct XguardReport
+      include JSON::Serializable
+
+      struct Hit
+        include JSON::Serializable
+
+        getter name : String
+      end
+
+      getter findings : Array(Hit) = [] of Hit
+      getter signatures_age_days : Int64? = nil
+    end
+
     # One report per line, exit 0 clean, 1 found, 2 incomplete, 3 could not run.
     def self.run_xguard(paths : Array(String), xguard : String, now : Time = Time.utc) : Verdict
       hits = [] of String
@@ -71,9 +85,13 @@ module Wopkg
         buf = IO::Memory.new
         status = Process.run(xguard, ["scan", "--json", p], output: buf, error: Process::Redirect::Close)
         return Verdict.new(Kind::Unavailable, [] of String, "The malware check could not run, so this download was not checked.") if status.exit_code == 3
-        r = JSON.parse(buf.to_s.lines.first? || "{}")
-        r["findings"]?.try(&.as_a.each { |f| hits << f["name"].as_s })
-        age = r["signatures_age_days"]?.try(&.as_i64?) || age
+        r = begin
+          XguardReport.from_json(buf.to_s.lines.first? || "{}")
+        rescue JSON::Error
+          return Verdict.new(Kind::Unavailable, [] of String, "The malware check gave an answer that could not be read, so this download was not checked.")
+        end
+        r.findings.each { |f| hits << f.name }
+        age = r.signatures_age_days || age
         incomplete ||= status.exit_code == 2
       end
       hits = hits.uniq
@@ -93,27 +111,27 @@ module Wopkg
         return run_xguard(paths, xguard, now)
       end
       unless clamscan
-        return Verdict.new(Kind::Unavailable, [] of String, "ClamAV is not installed, so this download was not checked for malware.")
+        return Verdict.new(Kind::Unavailable, [] of String, "The full signature engine is not installed, so this download was not checked for malware.")
       end
       age = db_age(db, now)
       unless age
-        return Verdict.new(Kind::Unavailable, [] of String, "ClamAV has no signature database yet (run freshclam), so this download was not checked for malware.")
+        return Verdict.new(Kind::Unavailable, [] of String, "The full signature engine has no signature database yet (run freshclam), so this download was not checked for malware.")
       end
       buf = IO::Memory.new
       a = argv(clamscan, paths, db)
       status = Process.run(a.first, a[1..], output: buf, error: Process::Redirect::Close)
       case status.exit_code
       when 0, 1
-        hits = buf.to_s.lines.compact_map { |l| l[/: (\S+) FOUND\z/, 1]? }.uniq
+        hits = buf.to_s.lines.compact_map { |l| l[/: (\S+) FOUND\z/, 1]? }.uniq!
         if !hits.empty?
-          Verdict.new(Kind::Infected, hits, "ClamAV found #{hits.join(", ")} in the download, so nothing was installed.")
+          Verdict.new(Kind::Infected, hits, "The full signature engine found #{hits.join(", ")} in the download, so nothing was installed.")
         elsif age > STALE_DAYS
-          Verdict.new(Kind::Stale, [] of String, "ClamAV found nothing, but its signatures are #{age} days old, so this is not a clean result. Run freshclam.")
+          Verdict.new(Kind::Stale, [] of String, "The full signature engine found nothing, but its signatures are #{age} days old, so this is not a clean result. Run freshclam.")
         else
           Verdict.new(Kind::Clean, [] of String, "No known malware found.")
         end
       else
-        Verdict.new(Kind::Unavailable, [] of String, "ClamAV could not check this download, so it was not checked for malware.")
+        Verdict.new(Kind::Unavailable, [] of String, "The full signature engine could not check this download, so it was not checked for malware.")
       end
     end
 

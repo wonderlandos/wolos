@@ -1,4 +1,4 @@
-# 0028 - ClamAV in its own process, with data the person fetches
+# 0028 - The full signature engine in its own process, with data the person fetches
 Status: accepted. Changes the libclamav and signature-data points of ADR 0024.
 
 Context: the first-use check should reach the full ClamAV signature set, and the parsers and unpackers only libclamav has. libclamav is GPL-2.0-only. libwol stays BSD-2-Clause, and the rule engine's tree holds Apache-2.0-only code, which cannot share a program with GPL-2.0-only code. Redistribution of the signature data has no sign-off, so it cannot be in the image. The library costs 1 GB of memory and 6.5 s to load.

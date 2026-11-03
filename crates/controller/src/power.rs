@@ -142,6 +142,9 @@ fn idle(env: &mut dyn Env, i: Idle) -> i32 {
     }
 }
 
+/// How long the sleep hook waits for one session shell to take its lock (docs/modules/power.md).
+pub const LOCK_WAIT_SECS: u32 = 3;
+
 /// Root, from the systemd-sleep hook (`pre`) before the kernel sleeps: every desktop session that
 /// asks for the password after sleep (Settings > Lock Screen) gets its lock now. The hook then
 /// waits before it lets the kernel continue, so the lock is drawn first.
@@ -163,7 +166,8 @@ fn suspend(env: &mut dyn Env) -> i32 {
         if !wol_core::prefs::parse_hypridle(conf.as_deref()).1 {
             continue;
         }
-        let r = env.request(Path::new(&s.socket), policy::LOCK_REQUEST);
+        // Audit S4-21: a hung shell costs the sleep LOCK_WAIT_SECS, not the generic 30 s.
+        let r = env.request_wait(Path::new(&s.socket), policy::LOCK_REQUEST, LOCK_WAIT_SECS);
         env.out(&format!(
             "wolos_power: lock uid {}: {}\n",
             s.uid,

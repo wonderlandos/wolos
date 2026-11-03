@@ -77,12 +77,12 @@ describe Wopkg::Scan do
     v = Scan.run(["#{d}/f"], clamscan: bin, db: d, now: Time.utc, xguard: nil)
     v.infected?.should be_true
     v.hits.should eq(["Unix.Trojan.Chaos-1"])
-    v.message.should eq("ClamAV found Unix.Trojan.Chaos-1 in the download, so nothing was installed.")
+    v.message.should eq("The full signature engine found Unix.Trojan.Chaos-1 in the download, so nothing was installed.")
     v.message.should_not contain("\n")
     FileUtils.rm_rf(d)
   end
 
-  it "says so when ClamAV is not installed, instead of implying a clean result" do
+  it "says so when the full signature engine is not installed, instead of implying a clean result" do
     v = Scan.run(["/nonexistent"], clamscan: nil, db: "/nonexistent", now: Time.utc, xguard: nil)
     v.unavailable?.should be_true
     v.clean?.should be_false

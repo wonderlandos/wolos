@@ -1,0 +1,2 @@
+.card { background: card; border-radius: 12; padding: 16 }
+.card:hover { background: control }

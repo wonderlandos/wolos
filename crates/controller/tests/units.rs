@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Root unit hardening (audit A7/B5, ADR 0015): every service under files/usr/lib/systemd/system
+//! Root unit hardening (audit A7/B5, ADR 0040): every service under files/usr/lib/systemd/system
 //! that runs as root (no `User=`) carries the sandbox keys its daemon allows, and the keys it must
 //! not have stay out (a mount namespace would make wolos-shm-limit remount a private /dev/shm;
-//! ProtectHome would hide the Hyprland sockets wolos-power talks to). This is the gate until the
+//! ProtectHome would hide the compositor sockets wolos-power talks to). This is the gate until the
 //! CI step `systemd-analyze security` (threshold 50) exists. A new root unit fails
 //! `every_root_unit_is_hardened` until it has a row here or an EXEMPT reason.
 #[path = "support/siblings.rs"]
@@ -282,7 +282,8 @@ const HARDENED: &[(&str, &[&str])] = &[
             "ProtectHostname=yes",
             "ProtectHome=yes",
             "PrivateNetwork=yes",
-            "ProtectKernelModules=yes",
+            "CapabilityBoundingSet=~CAP_SYS_MODULE",
+            "SystemCallFilter=~@module",
             "RestrictAddressFamilies=AF_UNIX",
         ],
     ),
@@ -307,6 +308,8 @@ const HARDENED: &[(&str, &[&str])] = &[
             "RestrictSUIDSGID=yes",
             "RestrictNamespaces=yes",
             "ProtectHostname=yes",
+            // S4-3: queue cap vs descriptors, checked in crates/xguard/tests/units.rs.
+            "LimitNOFILE=8192",
         ],
     ),
 ];
@@ -333,6 +336,15 @@ const FORBIDDEN: &[(&str, &[&str], &str)] = &[
         "wolos-power.service",
         &["PrivateNetwork"],
         "iw sets Wi-Fi power saving over nl80211 in the host network namespace (audit CORE2-3)",
+    ),
+    (
+        "wolos-verity-check.service",
+        &[
+            "ProtectKernelModules",
+            "InaccessiblePaths",
+            "TemporaryFileSystem",
+        ],
+        "measures every sealed file, /usr/lib/modules included: a hidden path fails the seal",
     ),
     (
         "wolos-hw.service",
@@ -521,4 +533,80 @@ fn units_that_download_with_pacman_may_switch_to_its_download_user() {
         }
     }
     assert!(seen >= 2, "update-check and update-download run pacman");
+}
+
+/// Audit S4-26: wold has room for its sockets (soft 4096, above the 1024 that ran out on EMFILE)
+/// and keeps the default hard limit; its jobs start again from soft 1024
+/// (`api::os::child_nofile`, crates/api/tests/os_procs.rs), so the session inherits nothing.
+#[test]
+fn wold_has_its_own_descriptor_limit() {
+    let have = service("wold.service");
+    let got: Vec<&str> = have
+        .iter()
+        .filter(|(k, _)| k == "LimitNOFILE")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(got, ["4096:524288"]);
+}
+
+/// ADR 0012: wol-login (a wold job, root) opens the console VT (`controller::login::CONSOLE`) and
+/// locks VT switching (`VT_LOCKSWITCH` needs `CAP_SYS_TTY_CONFIG`). A sandbox key added to
+/// wold.service later must not take the device or the capability away.
+#[test]
+fn wold_lets_the_login_job_reach_the_console_vt() {
+    assert_eq!(controller::login::CONSOLE, "/dev/tty1");
+    let have = service("wold.service");
+    let get = |key: &str| {
+        have.iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert!(get("User").is_empty(), "wold runs as root");
+    assert!(
+        get("PrivateDevices").iter().all(|v| *v == "no"),
+        "a private /dev has no /dev/tty1"
+    );
+    let allowed = get("DeviceAllow");
+    assert!(
+        get("DevicePolicy").iter().all(|v| *v == "auto")
+            || allowed
+                .iter()
+                .any(|a| a.starts_with("/dev/tty1") || a.starts_with("char-tty")),
+        "{allowed:?}"
+    );
+    for v in get("CapabilityBoundingSet") {
+        assert!(
+            v.split_whitespace().any(|c| c == "CAP_SYS_TTY_CONFIG"),
+            "CapabilityBoundingSet={v}"
+        );
+    }
+    let job = std::fs::read_to_string(
+        siblings::root().join("desktop/overlay/etc/wolos/jobs/org.wol.login.json"),
+    )
+    .unwrap();
+    let job = shared::jobs::JobSpec::parse(&job).unwrap();
+    assert_eq!(job.program, ["/usr/bin/wol-login"]);
+    assert_eq!(job.user, None, "the login job keeps wold's root identity");
+}
+
+/// F10 (prerelease B6): on a start the firmware did not measure (no event log, PCR 11 never
+/// extended), the first-boot bind and the reseal would seal the disk key to values no later start
+/// shows, and the next good start asks for the recovery key again. Both wait for a measured start.
+#[test]
+fn tpm_binding_waits_for_a_start_the_firmware_measured() {
+    for u in ["wolos-tpm-bind.service", "wolos-tpm-reseal.service"] {
+        let text = std::fs::read_to_string(path(u)).unwrap_or_else(|e| panic!("{u}: {e}"));
+        let unit: Vec<&str> = text
+            .split("[Service]")
+            .next()
+            .unwrap_or_default()
+            .lines()
+            .map(str::trim)
+            .collect();
+        assert!(
+            unit.contains(&"ConditionSecurity=measured-uki"),
+            "{u}: [Unit] lacks ConditionSecurity=measured-uki"
+        );
+    }
 }

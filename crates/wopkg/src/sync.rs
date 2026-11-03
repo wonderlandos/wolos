@@ -128,7 +128,7 @@ pub fn run(
                     let input = match (&s.url, &s.path) {
                         (Some(u), _) => {
                             let dest = inputs.join(&s.name);
-                            match fetch::conditional(&ctx.net, u, &dest) {
+                            match fetch::conditional(&ctx.net, u, &dest, fetch::MAX_INPUT) {
                                 Ok(o) => r.fetched = Some(o),
                                 Err(e) if dest.exists() => {
                                     r.error = Some(format!("{e} Using the last copy."))

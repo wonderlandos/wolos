@@ -261,14 +261,14 @@ mod tests {
                 12,
                 Appearance::Dark,
                 "blue",
-                0x0a84ff,
+                0x6aaef2,
             ),
             (
                 Some("wol-light-blue"),
                 23,
                 Appearance::Light,
                 "blue",
-                0x007aff,
+                0x1d64b0,
             ),
             (Some("wol-light"), 12, Appearance::Light, "violet", 0x7c5cff),
             (None, 12, Appearance::Light, "violet", 0x7c5cff),
@@ -278,7 +278,7 @@ mod tests {
                 3,
                 Appearance::Dark,
                 "green",
-                0x30d158,
+                0x5be3b0,
             ),
         ];
         for (saved, hour, a, name, rgb) in cases {

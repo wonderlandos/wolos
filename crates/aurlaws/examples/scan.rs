@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Static scan of AUR checkouts, one JSON line per package. Reads files; runs nothing from them.
+//! Static scan of community package checkouts, one JSON line per package. Reads files; runs nothing from them.
 //! Usage: scan <dir-holding-PKGBUILD>...
 use std::collections::HashMap;
 use std::path::Path;

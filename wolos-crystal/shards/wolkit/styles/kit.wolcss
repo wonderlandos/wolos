@@ -1,0 +1,130 @@
+/* The default look of Wolkit apps: what a plain button, field, toggle, slider, divider and overlay
+   look like, and the classes the DSL names (`primary: true` sets .primary). Colours are theme tokens,
+   spacing and radius the design scale, so the look follows dark mode, high contrast and the accent
+   colour with no code. The HIG components (src/wolkit/kit/) add layout, not colour.
+
+   The ids of the classes below are the order they first appear in this file (primary, danger, flat,
+   card, heading, menu-item, tab, sheet); `make styles` writes them to src/wolkit/style/kit_classes.cr
+   and the compiled table to src/wolkit/style/kit_table.cr. An app that has its own sheets compiles
+   this file FIRST (build/00-kit.wolcss) so these ids stay where the DSL expects them. */
+
+text {
+  color: text;
+  font-size: body;
+}
+
+button {
+  min-height: 24px;
+  padding: xs md;
+  border-radius: s;
+  background: control;
+  color: text;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  transition: background, opacity fast ease;
+}
+button:hover { background: alpha(accent, 20%); }
+button:active { background: alpha(accent, 35%); transform: scale(0.98); }
+button:focus-visible { outline: 2px accent; }
+button:selected { background: accent; color: accentText; }
+button:disabled { opacity: 45%; cursor: not-allowed; }
+
+.primary { background: accent; color: accentText; }
+.primary:hover { background: accent; opacity: 90%; }
+.primary:active { background: accent; opacity: 80%; }
+
+.danger { background: danger; color: accentText; }
+.danger:hover { background: danger; opacity: 90%; }
+.danger:active { background: danger; opacity: 80%; }
+
+.flat { background: transparent; }
+.flat:hover { background: control; }
+.flat:active { background: alpha(accent, 20%); }
+
+.card {
+  background: card;
+  border-radius: m;
+  padding: md;
+}
+
+.heading {
+  font-size: title;
+  font-weight: 600;
+}
+
+.menu-item {
+  border-radius: s;
+  padding: xs md;
+  justify-content: start;
+}
+
+.tab { border-radius: s; padding: xs md; }
+.tab:selected { background: accent; color: accentText; }
+
+.sheet {
+  background: card;
+  border-radius: l;
+  padding: lg;
+  box-shadow: lg;
+}
+
+text-input {
+  min-height: 24px;
+  padding: xs sm;
+  border-radius: s;
+  background: control;
+  border: 1px line;
+  color: text;
+  cursor: text;
+  align-items: center;
+}
+text-input:focus { border: 2px accent; }
+text-input:focus-visible { outline: 2px accent; }
+text-input:disabled { opacity: 45%; cursor: not-allowed; }
+
+toggle {
+  width: 36px;
+  height: 20px;
+  border-radius: full;
+  background: control;
+  cursor: pointer;
+  transition: background fast ease;
+}
+toggle:checked { background: accent; }
+toggle:focus-visible { outline: 2px accent; }
+toggle:disabled { opacity: 45%; cursor: not-allowed; }
+
+slider {
+  min-height: 24px;
+  border-radius: full;
+  background: control;
+  color: accent;
+  cursor: pointer;
+}
+slider:focus-visible { outline: 2px accent; }
+slider:disabled { opacity: 45%; cursor: not-allowed; }
+
+divider {
+  background: line;
+  min-width: 1px;
+  min-height: 1px;
+  align-self: stretch;
+}
+
+overlay {
+  background: glass;
+  backdrop: glass;
+  border-radius: m;
+  box-shadow: lg;
+  padding: xs;
+}
+
+@contrast {
+  button { border: 2px text; }
+  text-input { border: 2px text; }
+}
+
+@reduce-transparency {
+  overlay { background: card; backdrop: none; }
+}

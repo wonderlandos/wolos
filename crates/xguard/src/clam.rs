@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Asking the ClamAV process (ADR 0028). Nothing here links it: this side passes an open file over
+//! Asking the full signature engine's process (ADR 0028). Nothing here links it: this side passes an open file over
 //! a socket and reads one line, so the libraries built from this crate stay free of libclamav.
 use crate::scan::{Finding, Report, Skipped, Verdict};
 use std::io::{BufRead, BufReader};

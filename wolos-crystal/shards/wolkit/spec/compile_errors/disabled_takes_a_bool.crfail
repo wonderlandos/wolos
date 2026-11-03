@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: expected argument #1 to 'Wolkit::Check.bool' to be Bool, not String
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  @name = signal("")
+
+  def view
+    window "Todos" do
+      column do
+        button "Save", disabled: @name # <= error
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

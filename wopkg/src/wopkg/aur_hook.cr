@@ -61,7 +61,7 @@ module Wopkg
       buf = IO::Memory.new
       ok = Process.run(analyser, args, output: buf, error: Process::Redirect::Close).success?
       Audit.new(ok ? parse(buf.to_s) : Verdict.new(Kind::Unavailable, [NOT_CHECKED]), buf.to_s)
-    rescue
+    rescue IO::Error
       Audit.new(Verdict.new(Kind::Unavailable, [NOT_CHECKED]), "")
     end
 
@@ -74,23 +74,38 @@ module Wopkg
       ok = Process.run(analyser, args, output: buf, error: Process::Redirect::Close).success?
       return Verdict.new(Kind::Unavailable, [NOT_CHECKED]) unless ok
       parse(buf.to_s)
-    rescue
+    rescue IO::Error
       Verdict.new(Kind::Unavailable, [NOT_CHECKED])
     end
 
+    # The analyser's JSON answer; what it adds beyond these fields is ignored.
+    struct Report
+      include JSON::Serializable
+
+      struct RawFlag
+        include JSON::Serializable
+
+        getter title : String
+        getter severity : String
+        getter count : Int64
+      end
+
+      getter verdict : String? = nil
+      getter flags : Array(RawFlag) = [] of RawFlag
+      getter evidence : Array(String) = [] of String
+    end
+
     private def self.parse(text : String) : Verdict
-      j = JSON.parse(text)
-      kind = case j["verdict"]?.try(&.as_s?)
+      j = Report.from_json(text)
+      kind = case j.verdict
              when "pass"  then Kind::Pass
              when "flag"  then Kind::Flag
              when "block" then Kind::Block
              else              return Verdict.new(Kind::Unavailable, [NOT_CHECKED])
              end
-      flags = (j["flags"]?.try(&.as_a?) || [] of JSON::Any).map do |f|
-        Flag.new(f["title"].as_s, f["severity"].as_s.capitalize, f["count"].as_i64)
-      end
-      Verdict.new(kind, (j["evidence"]?.try(&.as_a?) || [] of JSON::Any).compact_map(&.as_s?), flags)
-    rescue
+      flags = j.flags.map { |f| Flag.new(f.title, f.severity.capitalize, f.count) }
+      Verdict.new(kind, j.evidence, flags)
+    rescue JSON::Error
       Verdict.new(Kind::Unavailable, [NOT_CHECKED])
     end
   end

@@ -1,0 +1,12 @@
+scene nodes=11
+0 box
+  1 box flex-direction=column gap=12 padding=16
+    2 box flex-direction=row gap=8
+      3 text_input on=0x30 placeholder="What needs doing?" grow=1
+      4 button classes=0 state=disabled on=0x1 flex-direction=row "Add"
+    7 box key=15732515656745422402 flex-direction=row
+      8 text grow=1 "milk"
+      9 button on=0x1 flex-direction=row
+        10 image image-source="icon:trash"
+    5 spacer display=none
+    6 text font-size=caption "1 left"

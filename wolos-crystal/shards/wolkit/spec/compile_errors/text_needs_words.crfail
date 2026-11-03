@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: text needs the words to show: `text "Hello"`.
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Todos" do
+      column do
+        text # <= error
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

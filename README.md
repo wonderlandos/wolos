@@ -5,7 +5,7 @@
 
 <p align="center"><img src="assets/desktop.png" alt="The WolOS desktop"></p>
 
-WolOS is an open source desktop operating system for ordinary PCs. It is built on Arch Linux packages, with a Rust system API, a GTK 4 shell (menu bar, Dock, Search, Control Center, Settings, Store, Setup Assistant), a Hyprland-based window server, and WolKernel, a Linux kernel tuned for foreground responsiveness and Steam/Proton games. Updates land in a new ZFS boot environment, so the old system is one reboot away.
+WolOS is an open source desktop operating system for ordinary PCs. It is built on Arch Linux packages, with a Rust system API, a GTK 4 shell (menu bar, Dock, Search, Control Center, Settings, Store, Setup Assistant), a window server built on a tuned fork of an open source Wayland compositor, and WolKernel, a Linux kernel tuned for foreground responsiveness and Steam/Proton games. Updates land in the other of two btrfs root slots (A/B, ADR 0016), so the old system is one reboot away.
 
 > Active development. The image installs offline and boots; the full desktop is still being proven on real hardware. Expect rough edges.
 

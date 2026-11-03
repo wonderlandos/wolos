@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+name: wolkit
+version: 0.1.0
+description: |
+  Wolkit, the WolOS UI kit for Crystal: a declarative DSL, a signal-based reactive runtime and the
+  developer tools over libwolkit (ADR 0039).
+authors:
+  - Julia Klee
+license: BSD-2-Clause
+# Built on Cryswol (Wol::Handle, Wol.background) and checked on 1.22.2 only.
+crystal: ">= 1.22.0"
+libraries:
+  libwolkit: ">= 1.0"

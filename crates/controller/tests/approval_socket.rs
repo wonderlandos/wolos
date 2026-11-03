@@ -119,7 +119,11 @@ fn allowed_once_runs_and_is_logged() {
     assert_eq!(
         seen,
         [Approval {
-            helper: "Claude Code".into(),
+            // C10-6: the declared name, bound to the program that started `wol mcp` (this test).
+            helper: format!(
+                "Claude Code ({})",
+                std::env::current_exe().unwrap().display()
+            ),
             tool: "appearance set".into(),
             request: ApprovalRequest::Change {
                 capability: "appearance".into(),

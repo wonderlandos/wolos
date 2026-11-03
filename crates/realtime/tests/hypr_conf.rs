@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The desktop hyprland.conf drives hyprbars and window animations; it must agree with the
-//! realtime geometry/curves and the kit (12 px lights, close centre 22.5 px in, 22 px apart).
-//! Live 0.56.2: lights were green-yellow-red, 20 px apart, CSD apps got a second bar, and the
+//! realtime geometry/curves and the kit (12 px buttons, close centre 22.5 px in from the right
+//! edge, 22 px apart).
+//! Live 0.56.2: buttons were 20 px apart, CSD apps got a second bar, and the
 //! open animation used a 400 ms overshooting spring instead of our ease-out.
 use realtime::anim::{Animation, Bezier};
-use realtime::titlebar::{self, Button};
+use realtime::titlebar::{self, Align, Button};
 const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+/// The window buttons, sourced once by hyprland.conf (colours live outside it: themes v2).
+const LIGHTS: &str =
+    include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos/lights.conf");
+/// The default theme's compositor colours (`wol_core::theme::hypr`), sourced by hyprland.conf.
+const THEME: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos/theme.conf");
 
 fn value(key: &str) -> String {
     CONF.lines()
@@ -31,8 +37,9 @@ fn rgb(s: &str) -> (i32, i32, i32) {
 }
 
 #[test]
-fn hyprbars_lights_match_kit_order_colour_and_spacing() {
-    let buttons: Vec<Vec<String>> = CONF
+fn hyprbars_buttons_match_kit_order_colour_and_spacing() {
+    assert!(CONF.contains("\nsource = /usr/share/wolos/hypr/wolos/lights.conf\n"));
+    let buttons: Vec<Vec<String>> = LIGHTS
         .lines()
         .filter_map(|l| l.trim().strip_prefix("hyprbars-button"))
         .map(|l| {
@@ -42,41 +49,117 @@ fn hyprbars_lights_match_kit_order_colour_and_spacing() {
                 .collect()
         })
         .collect();
-    // Kit light/dark colours; ±12 per channel (measure.py) must hold for both themes.
-    let kit = [
-        ("close", [(255, 59, 48), (255, 69, 58)]),
-        ("minimize", [(255, 149, 0), (255, 159, 10)]),
-        ("zoom", [(52, 199, 89), (48, 209, 88)]),
-    ];
+    // WolOS window buttons: one quiet neutral for all three (no red, amber and green), the ink
+    // glyph on it readable (>= 3:1), and the circle visible on both bars (the default light and
+    // dark surfaces, >= 3:1).
     assert_eq!(buttons.len(), 3);
-    for (b, (action, themes)) in buttons.iter().zip(kit) {
+    let lum = |c: (i32, i32, i32)| {
+        let f = |v: i32| {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * f(c.0) + 0.7152 * f(c.1) + 0.0722 * f(c.2)
+    };
+    let contrast = |a: (i32, i32, i32), b: (i32, i32, i32)| {
+        let (hi, lo) = (lum(a).max(lum(b)), lum(a).min(lum(b)));
+        (hi + 0.05) / (lo + 0.05)
+    };
+    let circle = rgb(&buttons[0][0]);
+    // Right-aligned: hyprbars puts the first button at the right edge, so the file lists
+    // realtime's right row (close, zoom, minimise); the patch maps slot i to the i-th button.
+    let action = |b| match b {
+        Button::Close => "close",
+        Button::Minimize => "minimize",
+        Button::Zoom => "zoom",
+    };
+    let order = Align::Right.order().map(action);
+    assert_eq!(order, ["close", "zoom", "minimize"]);
+    for (b, action) in buttons.iter().zip(order) {
         // The patched hyprbars runs these on the bar's own window (desktop/hyprland/hyprbars).
         assert_eq!(b[3], action, "order: {b:?} should be {action}");
         assert_eq!(b[1], titlebar::BUTTON.to_string());
-        let c = rgb(&b[0]);
-        for t in themes {
-            assert!(
-                (c.0 - t.0).abs() <= 12 && (c.1 - t.1).abs() <= 12 && (c.2 - t.2).abs() <= 12,
-                "{c:?} vs {t:?}"
-            );
-        }
+        assert_eq!(rgb(&b[0]), circle, "one colour for all three: {b:?}");
+        let ink = (0x22, 0x1b, 0x36);
+        assert!(contrast(ink, circle) >= 3.0, "glyph on the circle: {b:?}");
     }
-    assert_eq!(value("bar_buttons_alignment"), "left");
+    for (name, bar) in [("light", (255, 255, 255)), ("dark", (0x2c, 0x2c, 0x2e))] {
+        assert!(contrast(circle, bar) >= 3.0, "circle on the {name} bar");
+    }
+    assert_eq!(value("bar_buttons_alignment"), "right");
     assert_eq!(value("bar_padding"), titlebar::INSET.to_string());
     assert_eq!(value("bar_button_padding"), titlebar::GAP.to_string());
     assert_eq!(value("bar_height"), titlebar::HEIGHT.to_string());
-    let centre = |b| titlebar::button_origin(b).0 as f32 + titlebar::BUTTON as f32 / 2.0;
-    assert!((centre(Button::Close) - 22.5).abs() <= 1.0);
-    assert!((centre(Button::Minimize) - centre(Button::Close) - 22.0).abs() <= 1.0);
+    // Close centre 22.5 px in from the right edge, the next ones 22 px apart leftward, at any width.
+    for w in [300, 641, 1280] {
+        let centre =
+            |b| titlebar::origin(Align::Right, w, b).0 as f32 + titlebar::BUTTON as f32 / 2.0;
+        assert!(
+            (w as f32 - centre(Button::Close) - 22.5).abs() <= 1.0,
+            "{w}"
+        );
+        assert!((centre(Button::Close) - centre(Button::Zoom) - 22.0).abs() <= 1.0);
+        assert!((centre(Button::Zoom) - centre(Button::Minimize) - 22.0).abs() <= 1.0);
+    }
     assert_eq!(value("on_double_click"), "zoom");
-    // macOS: hovering any light shows the glyphs on all three (titlebar::Hover).
+    // Hovering any button shows the glyphs on all three (titlebar::Hover).
     assert_eq!(value("icon_on_hover"), "true");
-    for (b, glyph) in buttons.iter().zip(["×", "−", "+"]) {
+    for (b, glyph) in buttons.iter().zip(["×", "□", "−"]) {
         assert_eq!(b[2], glyph, "{b:?}");
         assert!(
             b.len() == 5 && b[4].starts_with("rgba("),
             "glyph colour: {b:?}"
         );
+    }
+}
+
+/// The server-side buttons look like the client-side ones (`wol_core::theme::apps` window
+/// controls): the button under the pointer takes the theme's accent, deeper while pressed, its glyph
+/// in the text on the accent. The patched hyprbars places and hits them with realtime's
+/// right-aligned row, against the bar's own width.
+#[test]
+fn hyprbars_buttons_are_right_aligned_and_take_the_accent_on_hover() {
+    for key in [
+        "button_hover_color",
+        "button_pressed_color",
+        "col.button_hover_text",
+    ] {
+        let line = format!("plugin:hyprbars:{key} = rgba(");
+        assert!(THEME.lines().any(|l| l.starts_with(&line)), "{key}");
+    }
+    let dir = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../desktop/hyprland/hyprbars"
+    );
+    let patches: String = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    let added = |s: &str| patches.lines().any(|l| l.starts_with('+') && l.contains(s));
+    for s in [
+        "wol_lights_at_w((int)assignedBoxGlobal().w",
+        "wol_lights_over_w((int)assignedBoxGlobal().w",
+        "wol_lights_slot_w(slot)",
+        "\"plugin:hyprbars:button_hover_color\"",
+        "\"plugin:hyprbars:button_pressed_color\"",
+        "\"plugin:hyprbars:col.button_hover_text\"",
+        "addConfigValueV2(PHANDLE, g_pGlobalState->config.buttonHoverColor)",
+    ] {
+        assert!(added(s), "{s}");
+    }
+    // The header carries the additive calls next to the left-aligned ones.
+    let header = include_str!("../include/wol_realtime.h");
+    for f in [
+        "int32_t wol_lights_at(int32_t count",
+        "int32_t wol_lights_over(int32_t count",
+        "int32_t wol_lights_at_w(int32_t width, int32_t count",
+        "int32_t wol_lights_over_w(int32_t width, int32_t count",
+        "int32_t wol_lights_slot_w(int32_t slot)",
+    ] {
+        assert!(header.contains(f), "{f}");
     }
 }
 
@@ -181,8 +264,10 @@ fn inactive_windows_look_inactive() {
         "bar_color_inactive",
         "col.text_inactive",
     ] {
-        assert!(value(key).starts_with("rgba("), "{key}");
+        let line = format!("plugin:hyprbars:{key} = rgba(");
+        assert!(THEME.lines().any(|l| l.starts_with(&line)), "{key}");
     }
+    assert!(CONF.contains("\nsource = /usr/share/wolos/hypr/wolos/theme.conf\n"));
     let dir = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../desktop/hyprland/hyprbars"
@@ -251,7 +336,7 @@ fn window_animations_use_realtime_curves() {
     ] {
         let a = anim(name);
         assert_eq!(a[2], curve);
-        // Hyprland speed is in deciseconds.
+        // The compositor's speed is in deciseconds.
         let speed: f32 = a[1].parse().unwrap();
         assert!(
             (speed * 100.0 - ms as f32).abs() < 1.0,
@@ -294,7 +379,7 @@ fn every_wol_hypr_build_allows_private_access() {
     }
 }
 
-/// Live (iGPU passthrough): the setup and login screens run Hyprland directly (wol-login restarts
+/// Live (iGPU passthrough): the setup and login screens run the compositor directly (wol-login restarts
 /// them) and showed the guiutils and "launched without start-hyprland" banners over Setup.
 #[test]
 fn greeter_compositors_show_no_nag_banners() {
@@ -324,14 +409,22 @@ fn greeter_compositors_show_no_nag_banners() {
 
 /// A focus the user asked for (click, keybind, focuswindow, switcher) raises the floating window;
 /// focus that merely follows the desktop (pointer, workspace switch, the fallback after a close)
-/// leaves the order alone, as macOS does.
+/// leaves the order alone.
 #[test]
 fn activation_raises_the_window() {
     let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
     let hook = &plugin[plugin.find("static void onActive").unwrap()..];
     let hook = &hook[..hook.find("\n}").unwrap()];
-    assert!(hook.contains("alterzorder top"), "{hook}");
+    assert!(hook.contains("raiseLater(w)"), "{hook}");
     assert!(hook.contains("raisesOnFocus(reason)"), "{hook}");
+    // Audit4 S5-6: raised in-process after the focus change, no hyprctl alterzorder (it simulated
+    // pointer motion that handed a tiled-mode focus back to the window under the pointer).
+    let raise = &plugin[plugin.find("static void raiseLater").unwrap()..];
+    let raise = &raise[..raise.find("\n}").unwrap()];
+    for call in ["doLater(", "windowState()->raise(w)", "bringTargetToTop("] {
+        assert!(raise.contains(call), "{call}: {raise}");
+    }
+    assert!(!plugin.contains("alterzorder"));
     let filter = &plugin[plugin.find("static bool raisesOnFocus").unwrap()..];
     let filter = &filter[..filter.find("\n}").unwrap()];
     for yes in [
@@ -412,7 +505,7 @@ fn shell_output_is_logged() {
     );
 }
 
-/// Window open, close and resize settle in about 0.2 s (2 in Hyprland's 100 ms units): longer
+/// Window open, close and resize settle in about 0.2 s (2 in the compositor's 100 ms units): longer
 /// reads as lag when dragging a window edge.
 #[test]
 fn window_animations_take_about_a_fifth_of_a_second() {
@@ -432,7 +525,7 @@ fn window_animations_take_about_a_fifth_of_a_second() {
     }
 }
 
-/// Live (VM, virtio-gpu): with damage tracking on, Hyprland never repainted the last frame of a
+/// Live (VM, virtio-gpu): with damage tracking on, the compositor never repainted the last frame of a
 /// Setup page fade, so the previous page stayed half-visible behind the next one until Setup
 /// closed. Setup and the login screen redraw whole frames; they are short-lived and mostly still.
 #[test]
@@ -479,4 +572,33 @@ fn compositor_frame_policy_is_configured() {
     assert_eq!(get("throttle_freeze_updates"), 2.0);
     assert_eq!(get("reconfigure_ack_timeout_ms"), 250.0);
     assert_eq!(get("frame_deadline"), 0.95);
+}
+
+/// Audit-x11 X1-1 / audit4 S5-2: X11 override-redirect and borderless popups are never placed,
+/// cascaded from, refitted or tagged; the rule is realtime's (wm_gates.rs via wol_realtime.h).
+#[test]
+fn x11_popups_are_left_where_they_open() {
+    let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
+    let body = |name: &str| {
+        let f = &plugin[plugin.find(name).unwrap_or_else(|| panic!("{name}"))..];
+        f[..f.find("\n}").unwrap()].to_owned()
+    };
+    assert!(body("static bool x11OverrideRedirect").contains("isX11OverrideRedirect()"));
+    assert!(body("static int32_t placementOf").contains("wol_x11_placement("));
+    assert!(body("static bool managedWindow").contains("wol_x11_managed("));
+    let late = body("static void onOpenLate");
+    assert!(late.contains("placementOf(w)") && late.contains("WOL_PLACE_SKIP"));
+    assert!(late.contains("WOL_PLACE_CLAMP_ONLY"));
+    assert!(body("static void onOpen(").contains("!managedWindow(w)"));
+    assert!(body("static PHLWINDOW previousOfClass").contains("!managedWindow(o)"));
+    assert!(body("static void refitMonitor").contains("!managedWindow(w)"));
+    let header = include_str!("../include/wol_realtime.h");
+    for f in [
+        "wol_x11_placement(",
+        "wol_x11_managed(",
+        "wol_keys_step(",
+        "wol_placement_limits(",
+    ] {
+        assert!(header.contains(f), "{f}");
+    }
 }

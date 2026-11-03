@@ -3,7 +3,7 @@
 require "./lib_wol"
 
 macro ok(call)
-  abort "failed: " + {{call.stringify}} unless {{call}} == LibWol::WOL_OK
+  abort "failed: " + {{ call.stringify }} unless {{ call }} == LibWol::WOL_OK
 end
 
 class State
@@ -17,7 +17,7 @@ def str(s : LibWol::String*) : String
   String.new(LibWol.wol_string_get_bytes(s, nil))
 end
 
-on_click = ->(w : LibWol::Widget*, d : Void*) { puts "clicked"; State.clicks += 1; nil }
+on_click = ->(_w : LibWol::Widget*, d : Void*) { puts "clicked"; State.clicks += 1; nil }
 on_name = ->(field : LibWol::Widget*, d : Void*) do
   text = Pointer(LibWol::String).null
   if LibWol.wol_widget_copy_text(field, pointerof(text), nil) == LibWol::WOL_OK
@@ -29,7 +29,7 @@ on_name = ->(field : LibWol::Widget*, d : Void*) do
 end
 on_wifi = ->(w : LibWol::Widget*, d : Void*) { puts "wifi: #{LibWol.wol_toggle_get_on(w)}"; State.changes += 1; nil }
 on_volume = ->(w : LibWol::Widget*, d : Void*) { puts "volume: #{LibWol.wol_slider_get_value(w)}"; State.changes += 1; nil }
-on_close = ->(w : LibWol::Window*, d : Void*) { puts "closed"; State.closed += 1; nil }
+on_close = ->(_w : LibWol::Window*, d : Void*) { puts "closed"; State.closed += 1; nil }
 on_action = ->(n : LibWol::Notification*, key : LibWol::String*, d : Void*) { puts "action: #{str(key)}"; State.pressed += 1; nil }
 
 ctx = Pointer(LibWol::Context).null

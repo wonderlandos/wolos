@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Apply gpu_select + glass parameters to a Hyprland session. Pure: facts in, env/config text out.
+//! Apply gpu_select + glass parameters to a compositor session. Pure: facts in, env/config text out.
 //! `wol-realtime gpu env` prints [`session_env`], `gpu offload` [`offload_env`] (one app on the
 //! discrete GPU: `eval "$(wol-realtime gpu offload)"; exec app`), `gpu hyprconf` [`hyprland_fragment`].
 use crate::glass::{Budget, GlassConfig};
@@ -126,14 +126,14 @@ pub fn exports(env: &[(String, String)]) -> String {
         .collect()
 }
 
-/// Hyprland config fragment: blur from glass params (degraded by budget), event-driven frames.
+/// Compositor config fragment: blur from glass params (degraded by budget), event-driven frames.
 pub fn hyprland_fragment(glass: &GlassConfig, budget: Budget, vrr: bool) -> String {
     let blur = if glass.degrade {
         glass.blur.degrade(budget)
     } else {
         glass.blur
     };
-    // Hyprland blur size ~ kawase spread at full resolution.
+    // Compositor blur size ~ kawase spread at full resolution.
     let size = (blur.offset * blur.downscale.max(1) as f32)
         .round()
         .max(1.0) as u32;
@@ -266,7 +266,7 @@ mod tests {
 
     /// NVIDIA (nvidia-open + nvidia-utils): every variable points at a file that exists.
     /// GBM_BACKEND or a GLX vendor without the library stops GBM/GLX; libva-nvidia-driver's name is
-    /// nvidia. Vulkan finds share/vulkan/icd.d/nvidia_icd.json itself; Hyprland handles the
+    /// nvidia. Vulkan finds share/vulkan/icd.d/nvidia_icd.json itself; the compositor handles the
     /// NVIDIA cursor (cursor:no_hardware_cursors = 2): nothing forced for either.
     #[test]
     fn nvidia_env_names_only_installed_userland() {

@@ -53,9 +53,28 @@ pub fn proton_order(names: &[String]) -> Vec<String> {
     found.into_iter().map(|f| f.2.clone()).collect()
 }
 
+/// `STEAM_FORCE_DESKTOPUI_SCALING` for `hyprctl -j monitors`: the largest monitor scale to two
+/// places (`"2"`, `"1.5"`), None at 1x or when unreadable. Steam's UI is an X11 client and
+/// Xwayland renders it 1:1 (`xwayland:force_zero_scaling`), so on HiDPI it scales itself.
+pub fn ui_scale(monitors_json: &str) -> Option<String> {
+    let s = (crate::flatpak::max_monitor_scale(monitors_json) * 100.0).round() / 100.0;
+    (s > 0.0 && s != 1.0).then(|| format!("{s}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn steam_ui_scale_follows_the_largest_monitor() {
+        let m = |a: &str, b: &str| format!(r#"[{{"scale": {a}}}, {{"scale": {b}}}]"#);
+        assert_eq!(ui_scale(&m("1.00", "2.00")).as_deref(), Some("2"));
+        assert_eq!(ui_scale(&m("1.50", "1.00")).as_deref(), Some("1.5"));
+        assert_eq!(ui_scale(&m("1.333333", "1.0")).as_deref(), Some("1.33"));
+        assert_eq!(ui_scale(&m("1.00", "1.00")), None);
+        assert_eq!(ui_scale("not json"), None);
+        assert_eq!(ui_scale("[]"), None);
+    }
 
     #[test]
     fn steam_root_preference() {

@@ -47,6 +47,9 @@ pub struct Service<B: Backend> {
     /// The user's real microphone (node name) while filters stand in front of it.
     physical_mic: Option<String>,
     pending_default: Option<PendingDefault>,
+    /// PipeWire went away while a filter was on: the pipewire-pulse modules died with it, so the
+    /// filters are loaded again when the microphone is back in the registry (A6-4).
+    refilter: bool,
     connected: bool,
     /// The last action's problem, shown by the page until the next action.
     error: Option<String>,
@@ -81,6 +84,7 @@ impl<B: Backend> Service<B> {
             noise_suppression: false,
             physical_mic: None,
             pending_default: None,
+            refilter: false,
             connected: true,
             error: None,
         }
@@ -109,6 +113,10 @@ impl<B: Backend> Service<B> {
                 ..Model::default()
             };
             self.pending_default = None;
+            // The filters are pipewire-pulse modules: they are gone with the sound server, while
+            // the switches (and the saved default naming the filter) still say "on". The
+            // registry has to send the microphone again before they can be loaded (`handle`).
+            self.refilter = self.auto_input_level || self.noise_suppression;
         }
     }
 
@@ -124,6 +132,27 @@ impl<B: Backend> Service<B> {
         let mut changed = self.model.apply(&ev);
         match &ev {
             Event::Props { id, .. } => self.snap_once(*id),
+            Event::Route {
+                device,
+                route_device,
+                ..
+            } => {
+                // A microphone whose `Props` came before its card's `Route` waited for it.
+                let waiting: Vec<u32> = self
+                    .model
+                    .nodes
+                    .values()
+                    .filter(|n| {
+                        n.seen_props
+                            && n.info.device_id == Some(*device)
+                            && n.info.route_device == Some(*route_device)
+                    })
+                    .map(|n| n.info.id)
+                    .collect();
+                for id in waiting {
+                    self.snap_once(id);
+                }
+            }
             Event::Node(info) => {
                 let arrived = self
                     .pending_default
@@ -139,6 +168,11 @@ impl<B: Backend> Service<B> {
                             Some(format!("Could not switch to the filtered microphone: {e}"));
                         changed = true;
                     }
+                }
+                if self.refilter && self.physical_mic.as_deref() == Some(info.node_name.as_str()) {
+                    self.refilter = false;
+                    self.error = self.rebuild_filters().err();
+                    changed = true;
                 }
             }
             _ => {}
@@ -171,6 +205,7 @@ impl<B: Backend> Service<B> {
                 self.error = self.rebuild_filters().err();
             }
             None => {
+                self.refilter = false;
                 self.auto_input_level = false;
                 self.noise_suppression = false;
                 self.pending_default = None;
@@ -222,6 +257,15 @@ impl<B: Backend> Service<B> {
             return;
         };
         if VIRTUAL.contains(&n.info.node_name.as_str()) {
+            return;
+        }
+        // The card has not said which route carries this node yet (`Props` can come before
+        // `Route`): setting the node's own volume now would skip the hardware mixer and mark the
+        // microphone done. The `Route` event calls this again.
+        if n.info.device_id.is_some()
+            && n.info.route_device.is_some()
+            && self.model.route_of(id).is_none()
+        {
             return;
         }
         let dev = self.model.device(n);
@@ -312,6 +356,19 @@ impl<B: Backend> Service<B> {
                     .map_err(|e| format!("Could not set the input volume: {e}"))?;
                 Ok(())
             }
+            Action::OutputVolume(p) => {
+                let n = self
+                    .model
+                    .default_node(DeviceKind::Output)
+                    .cloned()
+                    .ok_or("no output device")?;
+                let p = if self.boost { *p } else { (*p).min(100) };
+                let cmd = self.volume_command(n.info.id, linear_for(p, n.volume_base));
+                self.backend
+                    .execute(&cmd)
+                    .map_err(|e| format!("Could not set the volume: {e}"))?;
+                Ok(())
+            }
             Action::MicMuted(m) => {
                 let n = self.default_input()?;
                 let cmd = self.mute_command(n.info.id, *m);
@@ -372,12 +429,20 @@ impl<B: Backend> Service<B> {
                 Ok(())
             }
             Action::ResetAudio => {
+                self.refilter = false;
                 self.auto_input_level = false;
                 self.noise_suppression = false;
                 self.physical_mic = None;
                 self.pending_default = None;
                 self.unload(&VIRTUAL);
-                let plan = reset_plan(&self.home);
+                // Audit S4-22: WirePlumber's state is under $XDG_STATE_HOME; never a relative path.
+                let state = std::env::var_os("XDG_STATE_HOME")
+                    .map(PathBuf::from)
+                    .filter(|p| p.is_absolute())
+                    .unwrap_or_else(|| self.home.join(".local/state"));
+                let Some(plan) = reset_plan(&self.home, &state) else {
+                    return Err("Sound could not be reset: the home folder is unknown.".into());
+                };
                 // Every step runs even when one did not work: half a reset helps nobody.
                 let mut first_err = None;
                 for p in &plan.remove {

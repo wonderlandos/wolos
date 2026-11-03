@@ -1,10 +1,10 @@
 {
   "id": "dev",
   "name": "Developer",
-  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij and rootless podman; ~/Work",
-  "icon": "wolos-module-dev-symbolic",
+  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij, rootless podman and Crystal with Cryswol; ~/Work",
+  "icon": "applications-engineering-symbolic",
   "category": "developer",
-  "size_mb": 900,
+  "size_mb": 350,
   "packages": [
     "git",
     "github-cli",
@@ -15,13 +15,20 @@
     "zellij",
     "podman",
     "jq",
-    "ttf-jetbrains-mono-nerd"
+    "ttf-jetbrains-mono-nerd",
+    "crystal",
+    "pkgconf",
+    "libwol",
+    "cryswol"
   ],
   "flatpaks": [],
   "recipes": [],
   "mise": [],
   "post": [
     "/usr/lib/wolos/modules-enable-dev"
+  ],
+  "unpost": [
+    "/usr/lib/wolos/modules-disable-dev"
   ],
   "offline": false,
   "needs": [

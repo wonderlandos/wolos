@@ -29,7 +29,18 @@ echo "$tier" > "$S/tier"
 case ${WOLOS_SECURE:-yes} in no) echo no ;; *) echo yes ;; esac > "$S/want"
 wol boot words "$tier" > "$S/cmdline"
 K=$(sh "$here/boot-keys" open)
-trap 'sh "$here/boot-keys" close' EXIT
+# One exit path for everything: the keys leave RAM, and on a shared partition the other system's
+# fallback loader comes back even when bootctl or a later step fails (audit5 C9-2).
+kept='' FB=''
+finish() {
+  if [ -n "$kept" ]; then
+    cp "$kept" "$FB" || echo "boot-setup: could not put back $FB (copy kept at $kept)" >&2
+    [ ! -f "$FB" ] || ! cmp -s "$kept" "$FB" || rm -f "$kept"
+  fi
+  sh "$here/boot-keys" close
+}
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
 
 # The ESP as the firmware names it: disk and partition number, never assumed to be partition 1
 # (alongside another system it is the fourth or fifth).
@@ -58,9 +69,11 @@ if [ "$mode" != --enroll ]; then
   esac
 fi
 shared=no; [ ! -e "$S/esp-shared" ] || shared=yes
-kept=
 if [ "$shared" = yes ] && [ -f "$FB" ]; then
-  kept=$(mktemp) && cp "$FB" "$kept"
+  # Named in $kept only once the copy is whole: a half copy must never be put back over the original.
+  k=$(mktemp)
+  cp "$FB" "$k" || { rm -f "$k"; echo "boot-setup: could not keep a copy of $FB" >&2; exit 1; }
+  kept=$k
 fi
 if [ "$mode" != --enroll ]; then
   if [ "$screen" = yes ]; then
@@ -74,7 +87,8 @@ if [ "$mode" != --enroll ]; then
 fi
 # bootctl install always writes the fallback: on a shared partition the other system's comes back.
 if [ -n "$kept" ]; then
-  cp "$kept" "$FB" && rm -f "$kept"
+  cp "$kept" "$FB" || { echo "boot-setup: could not put back $FB" >&2; exit 1; }   # finish tries again
+  rm -f "$kept"; kept=
 fi
 signed "$L" "$ESP/EFI/systemd/systemd-bootx64.efi"
 if [ "$screen" = yes ]; then

@@ -268,6 +268,51 @@ fn remove_sends_pkg_remove_and_forgets_the_user_side() {
     assert!(e.out.contains("was not installed"), "{}", e.out);
 }
 
+/// Audit S4-9: a recipe that `wopkg remove` cannot take off fails the verb, says so in JSON and
+/// keeps the enablement record so the removal can be run again.
+#[test]
+fn a_failed_recipe_removal_fails_and_keeps_the_record() {
+    let mut e = env("removefails", "wolos-module-console\n");
+    let state = e.home.join("state/wolos/modules.json");
+    e.files
+        .push((state, r#"{"enabled":["console","dev"]}"#.into()));
+    e.replies = vec!["ok\n".into()];
+    e.exec_codes = vec![1];
+    assert_eq!(run("modules remove console --json", &mut e), 1, "{}", e.err);
+    let v = json_out(&e);
+    assert_eq!(v["removed"], false);
+    assert_eq!(v["failed"], serde_json::json!(["powershell"]));
+    assert!(e.written.is_empty(), "the record stays: {:?}", e.written);
+
+    // wopkg missing (exec error) is the same failure, in text too.
+    let mut e = env("removenowopkg", "");
+    let state = e.home.join("state/wolos/modules.json");
+    e.files.push((state, r#"{"enabled":["console"]}"#.into()));
+    e.exec_codes = vec![127];
+    assert_eq!(run("modules remove console", &mut e), 1);
+    assert!(e.out.contains("only partly removed"), "{}", e.out);
+}
+
+/// Audit S4-9: `modules install --json`, and any run whose stdout is not a terminal, prints JSON.
+#[test]
+fn install_honours_json_and_non_tty() {
+    let mut e = env("installjson", "git\n");
+    e.replies = vec!["ok\n".into()];
+    assert_eq!(run("modules install dev --json", &mut e), 0, "{}", e.err);
+    let v = json_out(&e);
+    assert_eq!(v["id"], "dev");
+    assert_eq!(v["installed"], true);
+    assert_eq!(v["was_installed"], false);
+    assert_eq!(v["needs_enable"], true);
+
+    let mut e = env("installpipe", "wolos-module-dev\n");
+    e.tty = false;
+    assert_eq!(run("modules install dev", &mut e), 0, "{}", e.err);
+    let v = json_out(&e);
+    assert_eq!(v["was_installed"], true);
+    assert!(e.requests.is_empty());
+}
+
 fn gpu(name: &str, id: &str, klds: &[&str], location: &str) -> Device {
     Device {
         kind: Kind::Gpu,
@@ -398,7 +443,7 @@ fn hw_compute_json_reads_vram_from_nvidia_smi_or_sysfs() {
     assert_eq!(e.out, "backend: cpu\nvram_mb: 0\ngpu: \n");
 }
 
-/// The six shipped records parse, carry the ADR's fields and match their file names.
+/// The shipped records (wol_core::modules::IDS) parse, carry the ADR's fields and match their file names.
 #[test]
 fn shipped_module_records_are_valid() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../files/usr/share/wolos/modules");
@@ -452,7 +497,7 @@ fn shipped_module_records_are_valid() {
             );
         }
         assert!(
-            ["ai", "developer", "creative", "console"].contains(&m.category.as_str()),
+            ["ai", "developer", "creative", "gaming", "console"].contains(&m.category.as_str()),
             "{id}"
         );
         seen.push(id);
@@ -482,6 +527,253 @@ fn shipped_module_records_are_valid() {
     assert!(local.packages.contains(&"ollama".to_string()));
     assert!(
         local.packages.iter().all(|p| !p.starts_with("ollama-")),
-        "backend chosen at enable from wol hw compute"
+        "backend chosen per machine from wol hw compute, never a depends="
     );
+    assert_eq!(local.backend.as_deref(), Some("ollama"));
+    assert_eq!(
+        local.backend_package("rocm").as_deref(),
+        Some("ollama-rocm")
+    );
+    // Gaming adds what the base lacks; Steam and GameMode are already in the image.
+    let gaming = Module::parse(&std::fs::read_to_string(dir.join("gaming.json")).unwrap()).unwrap();
+    assert_eq!(gaming.category, "gaming");
+    assert!(gaming.packages.iter().any(|p| p == "wine"));
+    assert!(
+        !gaming
+            .packages
+            .iter()
+            .any(|p| p == "steam" || p == "gamemode"),
+        "base packages are not module dependencies"
+    );
+}
+
+/// A record with a `backend` (ai-local): the per-machine package goes with the meta package, or
+/// alone when only it is missing; a CPU-only machine adds nothing.
+#[test]
+fn install_adds_the_records_backend_package_for_this_machine() {
+    let local = |e: &mut FakeEnv| {
+        let text = serde_json::json!({
+            "id": "ai-local", "name": "Local AI", "summary": "Ollama", "category": "ai",
+            "size_mb": 1, "packages": ["ollama"], "backend": "ollama", "needs": ["network"],
+        })
+        .to_string();
+        e.files
+            .push((PathBuf::from(format!("{DIR}/ai-local.json")), text));
+        e.hw = vec![snap(vec![gpu(
+            "AMD Radeon",
+            "1002:687f",
+            &["amdgpu"],
+            "0000:03:00.0",
+        )])];
+    };
+    let sent = |e: &FakeEnv| -> Vec<String> {
+        e.requests
+            .iter()
+            .map(|r| String::from_utf8_lossy(&r.1).into_owned())
+            .collect()
+    };
+    let mut e = env("backendboth", "git\n");
+    local(&mut e);
+    e.replies = vec!["ok\n".into(), "ok\n".into()];
+    assert_eq!(
+        run("modules install ai-local --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    let r = sent(&e);
+    assert!(
+        r[0].starts_with("pkg-install\u{0}1\u{0}ollama-rocm\u{0}"),
+        "the backend first, as Settings does: {r:?}"
+    );
+    assert!(
+        r[1].starts_with("pkg-install\u{0}1\u{0}wolos-module-ai-local\u{0}"),
+        "{r:?}"
+    );
+    assert_eq!(json_out(&e)["backend"], "ollama-rocm");
+
+    let mut e = env("backendonly", "wolos-module-ai-local\n");
+    local(&mut e);
+    e.replies = vec!["ok\n".into()];
+    assert_eq!(run("modules install ai-local", &mut e), 0, "{}", e.err);
+    let r = sent(&e);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(
+        r[0].starts_with("pkg-install\u{0}1\u{0}ollama-rocm\u{0}"),
+        "{r:?}"
+    );
+    assert!(
+        e.out.contains("installed ollama-rocm for Local AI"),
+        "{}",
+        e.out
+    );
+
+    let mut e = env("backendhave", "wolos-module-ai-local\nollama-rocm\n");
+    local(&mut e);
+    assert_eq!(run("modules install ai-local", &mut e), 0, "{}", e.err);
+    assert!(
+        e.requests.is_empty() && e.out.contains("already installed"),
+        "{}",
+        e.out
+    );
+
+    let mut e = env("backendcpu", "git\n");
+    local(&mut e);
+    e.hw = vec![snap(vec![])];
+    e.replies = vec!["ok\n".into()];
+    assert_eq!(run("modules install ai-local", &mut e), 0, "{}", e.err);
+    assert_eq!(sent(&e).len(), 1, "CPU only: the meta package alone");
+
+    // A backend that fails stops there: the meta package is never installed without it.
+    let mut e = env("backendfails", "git\n");
+    local(&mut e);
+    e.replies = vec!["failed\n".into()];
+    assert_ne!(run("modules install ai-local", &mut e), 0);
+    let r = sent(&e);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].contains("ollama-rocm"), "{r:?}");
+}
+
+/// Settings installs the record's backend package with the meta package, so `list --json` and
+/// `status --json` name it for this machine; a CPU-only machine and a record without one say
+/// nothing (the key is absent).
+#[test]
+fn list_and_status_json_name_the_backend_package_for_this_machine() {
+    let text = serde_json::json!({
+        "id": "ai-local", "name": "Local AI", "summary": "Ollama", "category": "ai",
+        "size_mb": 1, "packages": ["ollama"], "backend": "ollama", "needs": ["network"],
+    })
+    .to_string();
+    let setup = |tag: &str, devices: Vec<Device>| {
+        let mut e = env(tag, "git\n");
+        e.files
+            .push((PathBuf::from(format!("{DIR}/ai-local.json")), text.clone()));
+        e.hw = vec![snap(devices)];
+        e
+    };
+    let amd = || vec![gpu("AMD Radeon", "1002:687f", &["amdgpu"], "0000:03:00.0")];
+    let mut e = setup("listbackend", amd());
+    assert_eq!(run("modules list --json", &mut e), 0, "{}", e.err);
+    let rows = json_out(&e);
+    let local = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "ai-local")
+        .unwrap();
+    assert_eq!(local["backend"], "ollama-rocm");
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["id"] != "ai-local")
+            .all(|r| r.get("backend").is_none()),
+        "{rows}"
+    );
+
+    let mut e = setup("statusbackend", amd());
+    assert_eq!(
+        run("modules status ai-local --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    assert_eq!(json_out(&e)["backend"], "ollama-rocm");
+
+    let mut e = setup("cpubackend", vec![]);
+    assert_eq!(
+        run("modules status ai-local --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    assert!(json_out(&e).get("backend").is_none());
+}
+
+/// Audit C8-6: `remove` undoes all of `enable` and `install`. The user side runs in reverse
+/// (`unpost`, Flatpaks, mise tools, recipes), then the installed backend package (installed
+/// explicitly next to the meta package) and the meta package come off: two PkgRemove requests.
+#[test]
+fn remove_takes_off_the_backend_and_undoes_every_enable_step() {
+    let mut e = env("removeall", "wolos-module-ai-local\nollama-cuda\ngit\n");
+    let text = serde_json::json!({
+        "id": "ai-local", "name": "Local AI", "summary": "Ollama", "category": "ai",
+        "size_mb": 1, "packages": ["ollama"], "backend": "ollama", "needs": ["network"],
+        "recipes": ["r1"], "mise": ["node@22"], "flatpaks": ["org.example.App"],
+        "post": ["/usr/lib/wolos/ai-local"], "unpost": ["/usr/lib/wolos/ai-local-off"],
+    })
+    .to_string();
+    e.files
+        .push((PathBuf::from(format!("{DIR}/ai-local.json")), text));
+    let state = e.home.join("state/wolos/modules.json");
+    e.files.push((state, r#"{"enabled":["ai-local"]}"#.into()));
+    e.replies = vec!["ok\n".into(), "ok\n".into()];
+    assert_eq!(
+        run("modules remove ai-local --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    let sent: Vec<String> = e
+        .requests
+        .iter()
+        .map(|r| String::from_utf8_lossy(&r.1).into_owned())
+        .collect();
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert!(
+        sent[0].starts_with("pkg-remove\u{0}1\u{0}ollama-cuda\u{0}"),
+        "{sent:?}"
+    );
+    assert!(
+        sent[1].starts_with("pkg-remove\u{0}1\u{0}wolos-module-ai-local\u{0}"),
+        "{sent:?}"
+    );
+    let want: Vec<Vec<&str>> = vec![
+        vec!["/usr/lib/wolos/ai-local-off"],
+        vec![
+            "flatpak",
+            "uninstall",
+            "--user",
+            "-y",
+            "--noninteractive",
+            "org.example.App",
+        ],
+        vec!["mise", "unuse", "-g", "node@22"],
+        vec!["wopkg", "remove", "r1"],
+    ];
+    assert_eq!(e.execs, want);
+    let v = json_out(&e);
+    assert_eq!(v["removed"], true);
+    assert_eq!(v["backends"], serde_json::json!(["ollama-cuda"]));
+    let saved: Value = serde_json::from_str(&e.written[0].1).unwrap();
+    assert_eq!(saved["enabled"], serde_json::json!([]));
+
+    // The meta package already gone, the backend still there: remove still takes it off.
+    let mut e = env("removebackend", "ollama-vulkan\n");
+    let text = serde_json::json!({
+        "id": "ai-local", "name": "Local AI", "summary": "Ollama", "category": "ai",
+        "size_mb": 1, "packages": ["ollama"], "backend": "ollama", "needs": ["network"],
+    })
+    .to_string();
+    e.files
+        .push((PathBuf::from(format!("{DIR}/ai-local.json")), text));
+    e.replies = vec!["ok\n".into()];
+    assert_eq!(run("modules remove ai-local", &mut e), 0, "{}", e.err);
+    assert_eq!(e.requests.len(), 1);
+    assert!(e.out.contains("removed ollama-vulkan"), "{}", e.out);
+}
+
+/// The shipped records that `post` something also undo it (`unpost`), and the undo script exists.
+#[test]
+fn shipped_records_with_side_effects_have_an_unpost() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for (id, script) in [
+        ("ai-claude", "modules-disable-ai-claude"),
+        ("dev", "modules-disable-dev"),
+    ] {
+        let p = root.join(format!("files/usr/share/wolos/modules/{id}.json"));
+        let m = Module::parse(&std::fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(m.unpost, [format!("/usr/lib/wolos/{script}")], "{id}");
+        assert!(root.join("files/usr/lib/wolos").join(script).is_file());
+    }
 }

@@ -1,10 +1,10 @@
 {
   "id": "ai-claude",
-  "name": "Claude Code",
+  "name": "AI Assistants",
   "summary": "Anthropic's coding agent in the terminal, acting on WolOS through wol mcp with on-screen approval and a WolOS skill",
-  "icon": "wolos-module-ai-symbolic",
+  "icon": "wolos-assistant-symbolic",
   "category": "ai",
-  "size_mb": 320,
+  "size_mb": 300,
   "packages": [
     "git",
     "ripgrep",
@@ -17,6 +17,9 @@
   "mise": [],
   "post": [
     "/usr/lib/wolos/modules-enable-ai-claude"
+  ],
+  "unpost": [
+    "/usr/lib/wolos/modules-disable-ai-claude"
   ],
   "offline": false,
   "needs": [

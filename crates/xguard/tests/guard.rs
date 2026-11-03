@@ -257,7 +257,7 @@ fn xattr(p: &Path, name: &str) -> bool {
     unsafe { libc::getxattr(c.as_ptr(), n.as_ptr(), std::ptr::null_mut(), 0) >= 0 }
 }
 
-/// The real ClamAV process behind the guard: `XGUARD_CLAM_BIN` is the binary built with libclamav.
+/// The real full-engine process behind the guard: `XGUARD_CLAM_BIN` is the binary built with libclamav.
 #[test]
 fn real_clamav_stops_what_only_it_knows_and_a_clean_file_is_asked_once() {
     let Some(base) = root() else { return };
@@ -294,7 +294,7 @@ fn real_clamav_stops_what_only_it_knows_and_a_clean_file_is_asked_once() {
     let clean = g.dir.join("dl/tool.exe");
     script(&clean, "harmless");
     std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(exec(&clean), Ok(7), "clean through ClamAV");
+    assert_eq!(exec(&clean), Ok(7), "clean through the full engine");
     let before = scanned(&g);
     for _ in 0..20 {
         assert_eq!(exec(&clean), Ok(7));
@@ -308,4 +308,25 @@ fn real_clamav_stops_what_only_it_knows_and_a_clean_file_is_asked_once() {
     assert_eq!(denied, Err(libc::EPERM), "{found}");
     assert!(found.contains("Test.Only.Clam"), "{found}");
     assert_eq!(before, after, "the clean file is not read again");
+}
+
+/// Audit S4-3: callers that connect and send nothing never hold the kernel's questions: the
+/// socket has its own thread, so a fresh file still runs at once.
+#[test]
+fn idle_callers_on_the_socket_do_not_hold_up_execs() {
+    let Some(base) = root() else { return };
+    let g = start(&base, "idle");
+    let idle: Vec<_> = (0..5)
+        .map(|_| std::os::unix::net::UnixStream::connect(g.dir.join("sock")).unwrap())
+        .collect();
+    let f = g.dir.join("work/fresh");
+    script(&f, "harmless");
+    let t = Instant::now();
+    assert_eq!(exec(&f), Ok(7));
+    assert!(
+        t.elapsed() < Duration::from_millis(500),
+        "{:?} with idle callers",
+        t.elapsed()
+    );
+    drop(idle);
 }

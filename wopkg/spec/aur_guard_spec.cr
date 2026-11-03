@@ -72,8 +72,8 @@ describe AurGuard, "static checks" do
   it "refuses SKIP on a downloaded file unless the person accepts it" do
     si = info("pkgbase = x\n\turl = https://e.org\n\tsource = https://e.org/x.tar.gz\n\tsha256sums = SKIP\n")
     fs = AurGuard.scan("pkgname=x", nil, si)
-    fs.find { |f| f.kind == :skip }.not_nil!.severity.refuse?.should be_true
-    AurGuard.scan("pkgname=x", nil, si, allow_skip: true).find { |f| f.kind == :skip }.not_nil!.severity.refuse?.should be_false
+    fs.find! { |f| f.kind == :skip }.severity.refuse?.should be_true
+    AurGuard.scan("pkgname=x", nil, si, allow_skip: true).find! { |f| f.kind == :skip }.severity.refuse?.should be_false
   end
 
   it "flags weak or plain-http sources" do
@@ -151,7 +151,7 @@ describe AurGuard, "static checks" do
   end
 end
 
-describe AurGuard, "package metadata from the AUR (TLS)" do
+describe AurGuard, "package metadata from the community package collection (TLS)" do
   now = Time.utc(2026, 10, 31)
   meta = ->(h : String) { AurGuard::Meta.parse(%({"resultcount":1,"results":[#{h}]})) }
 
@@ -175,7 +175,7 @@ describe AurGuard, "package metadata from the AUR (TLS)" do
     old = meta.call(%({"Name":"x","Maintainer":"alice","FirstSubmitted":1500000000,"LastModified":1700000000,"NumVotes":300,"Popularity":3.0,"OutOfDate":null}))
     cur = meta.call(%({"Name":"x","Maintainer":"mallory","FirstSubmitted":1500000000,"LastModified":1760000000,"NumVotes":300,"Popularity":3.0,"OutOfDate":null}))
     fs = AurGuard.meta_findings(cur, old, now)
-    fs.find { |f| f.kind == :maintainer_changed }.not_nil!.explicit?.should be_true
+    fs.find! { |f| f.kind == :maintainer_changed }.explicit?.should be_true
     texts(fs).should contain("alice")
     kinds(AurGuard.meta_findings(old, old, now)).should_not contain(:maintainer_changed)
   end
@@ -189,7 +189,7 @@ end
 describe AurGuard, "updates" do
   it "needs an explicit yes for a scriptlet that was not there before" do
     fs = AurGuard.update_findings(old_files: ["PKGBUILD"], new_files: ["PKGBUILD", "foo.install"])
-    fs.find { |f| f.kind == :new_scriptlet }.not_nil!.explicit?.should be_true
+    fs.find! { |f| f.kind == :new_scriptlet }.explicit?.should be_true
     AurGuard.update_findings(old_files: ["PKGBUILD", "foo.install"], new_files: ["PKGBUILD", "foo.install"]).should be_empty
   end
 

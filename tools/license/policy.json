@@ -15,6 +15,7 @@
     "desktop/overlay/usr/share/wolos/gtk-*/*.css",
     "desktop/overlay/usr/share/wolos/gtk3-theme/**",
     "desktop/overlay/usr/share/wolos/firefox/wolos-chrome.css",
+    "desktop/overlay/usr/share/wolos/toolkits/**",
     "**/vendor/**",
     "**/target/**",
     "**/.git/**",
@@ -55,12 +56,60 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "wolos-crystal/shards/cryswol/src/wol/pkg/**",
+      "spdx": "GPL-2.0-or-later"
+    },
+    {
+      "glob": "wolos-crystal/shards/cryswol/src/wol/realtime/**",
+      "spdx": "GPL-2.0-or-later"
+    },
+    {
+      "glob": "wolos-crystal/shards/cryswol/spec/pkg_spec.cr",
+      "spdx": "GPL-2.0-or-later"
+    },
+    {
+      "glob": "wolos-crystal/shards/cryswol/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/wolkit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "wolos-crystal/shards/wolkit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "kernel/scx_wolos/**",
       "spdx": "GPL-2.0-only"
     },
     {
       "glob": "kernel/freebsd/**",
       "spdx": "GPL-2.0-only"
+    },
+    {
+      "glob": "hue/src/hue/color.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "hue/src/hue/extract.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "hue/src/hue/palette.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "hue/src/hue/imports.cr",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "crates/shell/src/offers.rs",
+      "spdx": "MIT"
+    },
+    {
+      "glob": "crates/shell/tests/offers.rs",
+      "spdx": "MIT"
     }
   ],
   "code": {

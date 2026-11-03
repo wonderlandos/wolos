@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+name: cryswol
+version: 0.1.0
+description: |
+  Cryswol, the WolOS app framework for Crystal: windows, notifications, menus, answers and
+  services through libwol (wol.h, ADR 0036).
+authors:
+  - Julia Klee
+license: BSD-2-Clause
+# Execution contexts without flags are used by Wol.background; checked on 1.22.2 only.
+crystal: ">= 1.22.0"
+libraries:
+  libwol: ">= 1.14"

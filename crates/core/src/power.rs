@@ -181,8 +181,12 @@ pub fn lid(h: &dyn Host) -> Option<Lid> {
     )
 }
 
-/// sysctl.d drop-in for settings wol-admind may change.
-pub const SYSCTL_LOCAL: &str = "/etc/sysctl.d/90-wolos-local.conf";
+/// sysctl.d drop-in for settings wol-admind may change. Its name sorts after the shipped
+/// `security::HARDENING_FILE` (`90-wolos.conf`): systemd-sysctl applies all files in name order
+/// and the last value wins, so a local value overrides the default (`90-wolos-local.conf`
+/// would sort first, `-` < `.`). Nothing has written the old name (the allow-list was always
+/// empty), so there is no file to move.
+pub const SYSCTL_LOCAL: &str = "/etc/sysctl.d/99-wolos-local.conf";
 
 /// `key=value` replaces the first line setting `key` (later duplicates dropped) or is appended;
 /// every other line is kept as is.

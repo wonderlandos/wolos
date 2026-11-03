@@ -1,0 +1,55 @@
+{
+  "app": "org.example.notify",
+  "answers": {
+    "notification.post": [
+      {
+        "ok": true,
+        "id": 7
+      },
+      {
+        "ok": false,
+        "code": "permission-denied",
+        "message": "Notifications are off for this app."
+      }
+    ],
+    "notification.replace": [
+      {
+        "ok": true
+      }
+    ],
+    "notification.withdraw": [
+      {
+        "ok": true
+      }
+    ]
+  },
+  "events": [
+    {
+      "after": "notification.post",
+      "emit": [
+        {
+          "event": "notification-action",
+          "uid": 1000,
+          "pid": 1,
+          "id": 6,
+          "key": "open"
+        },
+        {
+          "event": "notification-action",
+          "uid": 1000,
+          "pid": 1,
+          "id": 7,
+          "key": "later"
+        },
+        {
+          "event": "notification-action",
+          "uid": 1000,
+          "pid": 1,
+          "id": 7,
+          "key": "open"
+        }
+      ]
+    }
+  ],
+  "kit": []
+}

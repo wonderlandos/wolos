@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! New-window placement (macOS rule): a fresh toplevel fits the usable area (below the menu bar,
+//! New-window placement (the WolOS rule): a fresh toplevel fits the usable area (below the menu bar,
 //! above the dock, inside a margin), is centred, or cascaded from the previous window of the same
 //! app, and is never placed off screen. Positions are the client area; the title bar sits above it.
 
@@ -78,7 +78,7 @@ pub fn clamp(size: (i32, i32), area: Rect, bar: i32, at: (i32, i32)) -> (i32, i3
 }
 
 /// Client-area position for a new window of `size`. `prev`: client position of the previous
-/// window of the same app (cascade); otherwise centred, a little high like macOS.
+/// window of the same app (cascade); otherwise centred, a little above centre.
 pub fn place(size: (i32, i32), area: Rect, bar: i32, prev: Option<(i32, i32)>) -> (i32, i32) {
     let area = rect(area);
     let (ax, ay, aw, ah) = area;
@@ -100,7 +100,7 @@ pub fn place(size: (i32, i32), area: Rect, bar: i32, prev: Option<(i32, i32)>) -
     clamp(size, area, bar, (x, y + bar))
 }
 
-/// Client-area position of a dialog of `size` over its parent's client rect `parent` (macOS: a
+/// Client-area position of a dialog of `size` over its parent's client rect `parent` (a
 /// transient window opens centred on the window it belongs to), kept inside `area`.
 pub fn centre_on(size: (i32, i32), parent: Rect, area: Rect, bar: i32) -> (i32, i32) {
     let (px, py, pw, ph) = rect(parent);
@@ -113,7 +113,10 @@ pub fn centre_on(size: (i32, i32), parent: Rect, area: Rect, bar: i32) -> (i32, 
 
 /// A window that is already open after the usable area changed (display resize, Dock shown or
 /// hidden): its size fits the new area ([`fit`]) and its frame is pulled back inside; a window
-/// that still fits where it is does not move. Returns the client (x, y, w, h).
+/// that still fits where it is does not move. `area` is a [`usable`] area: a frame inside the
+/// zone it came from (the `MARGIN` around it included) counts as fitting, so a window the compositor
+/// put at the zone edge (zoom restored, a drag) is not nudged inward (audit4 S5-19). Returns the
+/// client (x, y, w, h).
 pub fn refit(
     at: (i32, i32),
     size: (i32, i32),
@@ -122,6 +125,14 @@ pub fn refit(
     area: Rect,
     bar: i32,
 ) -> (i32, i32, i32, i32) {
+    let (ax, ay, aw, ah) = rect(area);
+    let zone = (ax - MARGIN, ay - MARGIN, aw + 2 * MARGIN, ah + 2 * MARGIN);
+    let (sw, sh) = (d(size.0), d(size.1));
+    if fit((sw, sh), min, max, zone, bar) == (sw, sh)
+        && clamp((sw, sh), zone, bar, at) == (c(at.0), c(at.1))
+    {
+        return (c(at.0), c(at.1), sw, sh);
+    }
     let (w, h) = fit(size, min, max, area, bar);
     let (x, y) = clamp((w, h), area, bar, at);
     (x, y, w, h)
@@ -276,6 +287,41 @@ mod tests {
         assert_eq!(
             refit((100, 100), (1600, 1000), (1300, 600), none, area, BAR),
             (8, 36 + BAR, 1300, 600)
+        );
+    }
+
+    /// Audit4 S5-19: the margin is for new windows. A window flush with the zone edge (zoom
+    /// restored by the compositor, dragged there) stays where it is; one that sticks out of the zone is
+    /// still pulled back inside the margin.
+    #[test]
+    fn refit_does_not_nudge_a_window_inside_the_zone() {
+        let area = usable(ZONE, None); // (8, 36, 1264, 676)
+        let none = (0, 0);
+        let flush = ((0, 28 + BAR), (1280, 692 - BAR));
+        assert_eq!(
+            refit(flush.0, flush.1, none, none, area, BAR),
+            (0, 28 + BAR, 1280, 692 - BAR),
+            "the whole zone: untouched"
+        );
+        assert_eq!(
+            refit((1280 - 400, 28 + BAR), (400, 300), none, none, area, BAR),
+            (880, 58, 400, 300),
+            "top-right corner of the zone: untouched"
+        );
+        // one pixel out of the zone: back inside the margin, as before
+        assert_eq!(
+            refit((1280 - 399, 28 + BAR), (400, 300), none, none, area, BAR),
+            (8 + 1264 - 400, 28 + BAR + 8, 400, 300)
+        );
+        // taller than the zone: cut to the inset area
+        assert_eq!(
+            refit((0, 28 + BAR), (1280, 800), none, none, area, BAR),
+            (8, 36 + BAR, 1264, 676 - BAR)
+        );
+        // max size still applies to a window in the zone
+        assert_eq!(
+            refit((100, 100), (600, 400), none, (500, 0), area, BAR),
+            (100, 100, 500, 400)
         );
     }
 }

@@ -19,6 +19,8 @@ pw = ["dep:pipewire"]
 
 [dependencies]
 wol_core.workspace = true
+# shared::atomic: config fragments are replaced atomically (audit S4-10).
+shared.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # Rust bindings for libpipewire (MIT). 0.10.1 = libspa 0.10; MSRV 1.80; needs libpipewire >= 0.3.

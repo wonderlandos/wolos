@@ -114,7 +114,7 @@ fn theme_set_restyles_third_party_apps() {
             .any(|a| a.len() == 5 && a[0] == "gsettings" && a[3] == k && a[4] == v)
     };
     assert!(set("color-scheme", "prefer-dark"), "{:?}", env.execs);
-    assert!(set("button-layout", "close,minimize,maximize:"));
+    assert!(set("button-layout", ":minimize,maximize,close"));
     env.execs.clear();
     assert_eq!(run("theme light", &mut env), 0);
     let css = std::fs::read_to_string(home.join("gtk-4.0/gtk.css")).unwrap();
@@ -215,7 +215,7 @@ fn theme_set_writes_every_toolkit() {
     for (k, v) in [
         ("accent-color", "orange"),
         ("color-scheme", "prefer-dark"),
-        ("button-layout", "close,minimize,maximize:"),
+        ("button-layout", ":minimize,maximize,close"),
     ] {
         assert!(
             env.execs

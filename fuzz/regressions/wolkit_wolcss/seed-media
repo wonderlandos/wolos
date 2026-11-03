@@ -1,0 +1,2 @@
+@dark { .title { color: text } }
+.title { font-size: title; font-weight: 600 }

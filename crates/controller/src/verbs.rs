@@ -13,13 +13,14 @@ use std::path::{Path, PathBuf};
 use wol_core::automation::{self, Outcome, Policy, Record, audit, policy, tidy};
 use wol_core::controls::{ControlError, Controls};
 use wol_core::journal::{self, Journal};
-use wol_core::theme::{ThemeCatalog, accent, active, search_paths};
+use wol_core::theme::{ThemeCatalog, accent, active};
 use wol_core::update::be;
+use wol_core::{toggles, webapps};
 
 /// Wallpaper image path, one line, relative to the config home (read by wol-shell).
 pub const WALLPAPER_FILE: &str = "wolos/wallpaper";
 /// Do Not Disturb flag file (present = on), relative to the config home.
-pub const DND_FILE: &str = "wol/dnd";
+pub const DND_FILE: &str = wol_core::toggles::DND_FILE;
 const IMAGE_EXT: [&str; 6] = ["png", "jpg", "jpeg", "webp", "svg", "avif"];
 const URL_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
 const PASSWORD_TRIES: usize = 3;
@@ -71,6 +72,21 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
             let text = (inv.action == "focus.on").then_some("");
             save(env, "focus", DND_FILE, text, json, focus_state)
         }
+        "webapp.list" => webapp_list(env, json),
+        "webapp.add" => webapp_add(
+            env,
+            &a("name"),
+            &a("url"),
+            inv.get("icon"),
+            inv.flag("own-profile"),
+            json,
+        ),
+        "webapp.remove" => webapp_remove(env, &a("name"), json),
+        "toggle" => match inv.get("toggle") {
+            None => get(env, toggles_state, json),
+            Some(w) => toggle(env, w, inv.get("state").map(|s| s == "on"), json),
+        },
+        "remind" => remind(env, &a("minutes"), &inv.all("text").join(" "), json),
         "settings" => get(env, settings_state, json),
         "open" => open(env, &a("target")),
         "notify" => notify(env, &a("title"), &inv.all("body").join(" ")),
@@ -239,7 +255,10 @@ fn shell_reload(env: &mut dyn Env) {
 
 fn catalog(env: &dyn Env) -> ThemeCatalog {
     accent::variants().into_iter().fold(
-        ThemeCatalog::load(&search_paths(&env.config_home())),
+        ThemeCatalog::installed(
+            &env.config_home(),
+            wol_core::theme::apps::data_home(|k| env.var(k)).as_deref(),
+        ),
         ThemeCatalog::with,
     )
 }
@@ -475,22 +494,11 @@ fn settings_state(env: &mut dyn Env) -> Value {
 
 // ---- apps, notifications, screen, windows ----
 
-/// `Name=` of a desktop entry and whether it is hidden from menus.
+/// `Name=` of a desktop entry and whether it is hidden from menus (`wol_core::desktop` rules:
+/// trimmed, first wins, an empty name is none).
 pub fn desktop_name(text: &str) -> Option<(String, bool)> {
-    let mut in_entry = false;
-    let (mut name, mut hidden) = (None, false);
-    for l in text.lines().map(str::trim) {
-        if l.starts_with('[') {
-            in_entry = l == "[Desktop Entry]";
-        } else if in_entry {
-            if let Some(n) = l.strip_prefix("Name=") {
-                name.get_or_insert_with(|| n.to_string());
-            } else if l == "NoDisplay=true" || l == "Hidden=true" {
-                hidden = true;
-            }
-        }
-    }
-    name.map(|n| (n, hidden))
+    let e = wol_core::desktop::Entry::parse(text);
+    e.name().map(|n| (n.to_owned(), e.hidden()))
 }
 
 /// Desktop file for an app id (`org.gnome.TextEditor`) or its visible name (`Text Editor`).
@@ -624,11 +632,7 @@ pub fn parse_clients(json: &str, focused: Option<&str>) -> Vec<Value> {
 
 fn windows(env: &mut dyn Env, json: bool) -> i32 {
     let Some(list) = env.capture(&["hyprctl", "-j", "clients"]) else {
-        return fail(
-            env,
-            ErrorCode::Unavailable,
-            "no compositor (Hyprland) answered",
-        );
+        return fail(env, ErrorCode::Unavailable, "no compositor answered");
     };
     let focused = env
         .capture(&["hyprctl", "-j", "activewindow"])
@@ -651,7 +655,7 @@ fn windows(env: &mut dyn Env, json: bool) -> i32 {
     0
 }
 
-/// Hyprland window selector for an address (`0x55d1…`) or an app id.
+/// Compositor window selector for an address (`0x55d1…`) or an app id.
 pub fn window_selector(w: &str) -> Option<String> {
     let hex = |s: &str| !s.is_empty() && s.len() <= 16 && s.bytes().all(|b| b.is_ascii_hexdigit());
     if let Some(h) = w.strip_prefix("0x") {
@@ -671,11 +675,7 @@ fn windows_focus(env: &mut dyn Env, w: &str) -> i32 {
     match env.capture(&["hyprctl", "dispatch", "focuswindow", &sel]) {
         Some(o) if o.trim() == "ok" => 0,
         Some(o) => fail(env, ErrorCode::NotFound, o.trim()),
-        None => fail(
-            env,
-            ErrorCode::Unavailable,
-            "no compositor (Hyprland) answered",
-        ),
+        None => fail(env, ErrorCode::Unavailable, "no compositor answered"),
     }
 }
 
@@ -1041,6 +1041,268 @@ pub fn as_script(inv: &Invocation, env: &mut dyn Env, name: &str, rule: &HelperV
     code
 }
 
+// ---- web apps (ADR 0031 W5, wol_core::webapps) ----
+
+fn webapps_of(env: &dyn Env) -> Vec<webapps::WebApp> {
+    let dir = env.data_home().join("applications");
+    env.list_dir(&dir)
+        .iter()
+        .filter_map(|f| {
+            let p = Path::new(f);
+            let id = webapps::id_of_file(p.file_name()?.to_str()?)?;
+            webapps::parse_entry(id, &env.read_file(p)?)
+        })
+        .collect()
+}
+
+fn webapp_json(a: &webapps::WebApp) -> Value {
+    json!({
+        "id": a.id,
+        "name": a.name,
+        "url": a.url,
+        "icon": a.icon,
+        "own_profile": a.profile == webapps::Profile::Own,
+    })
+}
+
+fn webapp_list(env: &mut dyn Env, json: bool) -> i32 {
+    let apps: Vec<Value> = webapps_of(env).iter().map(webapp_json).collect();
+    show(env, json!({ "webapps": apps }), json)
+}
+
+/// Downloads the first icon that answers into the web app's icon file; None when none does.
+fn fetch_icon(env: &mut dyn Env, id: &str, list: Vec<(String, &str)>) -> Option<String> {
+    let data = env.data_home();
+    env.make_dir(&data.join(webapps::DATA_DIR).join("icons"))
+        .ok()?;
+    for (url, ext) in list {
+        let out = webapps::icon_path(&data, id, ext);
+        if env.exec_quiet(&webapps::icon_fetch_argv(&url, &out)).ok() == Some(0) {
+            return Some(out.display().to_string());
+        }
+        // A partial download is not an icon: try the next one, or use the fallback.
+        let _ = env.remove_file(&out);
+    }
+    None
+}
+
+/// The icon: a file the person named, an icon theme name, an https address, or (none given)
+/// the site's own icon over https; [`webapps::FALLBACK_ICON`] when there is none. A value with a
+/// control character or backslash is never used (audit C6-1: a newline would add launcher keys).
+fn webapp_icon(env: &mut dyn Env, app: &webapps::WebApp, given: Option<&str>) -> String {
+    match given.map(str::trim).filter(|g| !g.is_empty()) {
+        Some(g) if !webapps::check_icon(g) => None,
+        Some(g) if g.starts_with("https://") && webapps::parse_url(g).is_ok() => {
+            let ext = if g.ends_with(".svg") {
+                "svg"
+            } else if g.ends_with(".ico") {
+                "ico"
+            } else {
+                "png"
+            };
+            fetch_icon(env, &app.id, vec![(g.to_string(), ext)])
+        }
+        Some(g) if g.starts_with('/') || g.starts_with("~/") => {
+            let p = expand(env, g);
+            let s = p.display().to_string();
+            (p.is_file() && webapps::check_icon(&s)).then_some(s)
+        }
+        Some(g) if shared::plugins::is_entry_id(&g.to_ascii_lowercase().replace('.', "_")) => {
+            Some(g.to_string())
+        }
+        Some(_) => None,
+        None => {
+            let u = webapps::parse_url(&app.url).ok();
+            u.and_then(|u| fetch_icon(env, &app.id, webapps::icon_candidates(&u)))
+        }
+    }
+    .unwrap_or_else(|| webapps::FALLBACK_ICON.into())
+}
+
+fn webapp_add(
+    env: &mut dyn Env,
+    name: &str,
+    url: &str,
+    icon: Option<&str>,
+    own: bool,
+    json: bool,
+) -> i32 {
+    let profile = if own {
+        webapps::Profile::Own
+    } else {
+        webapps::Profile::Shared
+    };
+    let mut app = match webapps::WebApp::new(name, url, profile) {
+        Ok(a) => a,
+        Err(e) => return fail(env, ErrorCode::Invalid, &e.to_string()),
+    };
+    let data = env.data_home();
+    let file = webapps::desktop_path(&data, &app.id);
+    // Same id, ours or a file of that name that is not ours: never overwrite it.
+    if webapps_of(env).iter().any(|a| a.id == app.id) || env.read_file(&file).is_some() {
+        let e = webapps::Error::Exists(app.name);
+        return fail(env, ErrorCode::Invalid, &e.to_string());
+    }
+    app.icon = webapp_icon(env, &app, icon);
+    if own && let Err(e) = env.make_dir(&webapps::profile_dir(&data, &app.id)) {
+        return fail(
+            env,
+            ErrorCode::Failed,
+            &format!("web app profile folder: {e}"),
+        );
+    }
+    let text = webapps::desktop_entry(&app, &data);
+    let wrote = env
+        .make_dir(&data.join("applications"))
+        .and_then(|()| env.write_file(&file, &text));
+    match wrote {
+        Ok(()) => {
+            let mut v = webapp_json(&app);
+            v["file"] = file.display().to_string().into();
+            show(env, v, json)
+        }
+        Err(e) => fail(env, ErrorCode::Failed, &format!("{}: {e}", file.display())),
+    }
+}
+
+fn webapp_remove(env: &mut dyn Env, what: &str, json: bool) -> i32 {
+    let apps = webapps_of(env);
+    let Some(app) = webapps::find(&apps, what) else {
+        let e = webapps::Error::NotFound(what.trim().into());
+        return fail(env, ErrorCode::NotFound, &e.to_string());
+    };
+    let data = env.data_home();
+    let file = webapps::desktop_path(&data, &app.id);
+    if let Err(e) = env.remove_file(&file) {
+        return fail(env, ErrorCode::Failed, &format!("{}: {e}", file.display()));
+    }
+    // Only an icon we downloaded is ours to delete; a named file or a theme icon stays.
+    let icons = data.join(webapps::DATA_DIR).join("icons");
+    if Path::new(&app.icon).parent() == Some(icons.as_path()) {
+        let _ = env.remove_file(Path::new(&app.icon));
+    }
+    let mut v = webapp_json(app);
+    v["removed"] = true.into();
+    if app.profile == webapps::Profile::Own {
+        // Cookies and sign-ins stay until the person deletes the folder.
+        let dir = webapps::profile_dir(&data, &app.id);
+        v["profile_kept"] = dir.display().to_string().into();
+    }
+    show(env, v, json)
+}
+
+// ---- toggles (wol_core::toggles) ----
+
+fn toggle_on(env: &dyn Env, t: toggles::Toggle) -> bool {
+    toggles::is_on(t, &env.config_home(), &env.state_home(), |p| {
+        env.read_file(p).is_some()
+    })
+}
+
+fn toggles_state(env: &mut dyn Env) -> Value {
+    let list: Vec<Value> = toggles::Toggle::ALL
+        .iter()
+        .map(|t| json!({"id": t.id(), "label": t.label(), "on": toggle_on(env, *t)}))
+        .collect();
+    json!({ "toggles": list })
+}
+
+fn toggle(env: &mut dyn Env, word: &str, wanted: Option<bool>, json: bool) -> i32 {
+    let Some(t) = toggles::Toggle::from_word(word) else {
+        let msg = format!("<toggle> must be one of {}", crate::cli::TOGGLES.join(", "));
+        return fail(env, ErrorCode::Usage, &msg);
+    };
+    let on = toggles::target(toggle_on(env, t), wanted);
+    if t == toggles::Toggle::Silence {
+        // Do Not Disturb keeps its journaled file, as `wol focus on|off` writes it.
+        return save(env, "focus", DND_FILE, on.then_some(""), json, focus_state);
+    }
+    for argv in toggles::commands(t, on) {
+        let code = env.exec_quiet(&argv).unwrap_or(-1);
+        if code != 0 && toggles::must_succeed(t) {
+            let msg = format!(
+                "{} is not available yet; log in to the desktop and try again.",
+                t.label()
+            );
+            return fail(env, ErrorCode::Unavailable, &msg);
+        }
+    }
+    let flag = toggles::state_file(t, &env.config_home(), &env.state_home());
+    let r = match (on, flag.parent()) {
+        (true, Some(d)) => env.make_dir(d).and_then(|()| env.write_file(&flag, "")),
+        (true, None) => Ok(()),
+        (false, _) => env.remove_file(&flag),
+    };
+    if let Err(e) = r {
+        return fail(env, ErrorCode::Failed, &format!("{}: {e}", flag.display()));
+    }
+    show(
+        env,
+        json!({"id": t.id(), "label": t.label(), "on": on}),
+        json,
+    )
+}
+
+// ---- reminders ----
+
+/// Longest reminder text, in characters (one notification line).
+const MAX_REMINDER: usize = 200;
+/// Longest wait: one day, in minutes.
+const MAX_REMIND_MINUTES: u32 = 1440;
+
+/// `systemd-run` argv of a reminder: a transient user timer that survives `wol` exiting and is
+/// gone after it fired (`--collect`). The text is one argument, never a shell string. Audit
+/// C10-4: the notification carries `app`, the name of whoever asked for it (a helper's name, as
+/// a direct `wol notify` from it would), never a plain WolOS one.
+pub fn remind_argv(minutes: u32, text: &str, app: &str) -> Vec<String> {
+    [
+        "systemd-run",
+        "--user",
+        "--collect",
+        "--quiet",
+        &format!("--on-active={minutes}min"),
+        "--timer-property=AccuracySec=1s",
+        "--",
+        "notify-send",
+        &format!("--app-name={app}"),
+        "--",
+        "Reminder",
+        text,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+fn remind(env: &mut dyn Env, minutes: &str, text: &str, json: bool) -> i32 {
+    let Some(m) = minutes
+        .parse::<u32>()
+        .ok()
+        .filter(|m| (1..=MAX_REMIND_MINUTES).contains(m))
+    else {
+        return fail(env, ErrorCode::Usage, "<minutes> must be 1..1440");
+    };
+    let text = text.trim();
+    let ok = !text.is_empty()
+        && text.chars().count() <= MAX_REMINDER
+        && !text.chars().any(char::is_control);
+    if !ok {
+        let msg = "Say what to remind you of, in one short line.";
+        return fail(env, ErrorCode::Usage, msg);
+    }
+    let app = actor_name(&env.actor());
+    match env.exec_quiet(&remind_argv(m, text, &app)) {
+        Ok(0) => {
+            let at = env.now_secs().saturating_add(u64::from(m) * 60);
+            show(env, json!({"minutes": m, "text": text, "at": at}), json)
+        }
+        _ => {
+            let msg = "Reminders need the desktop session; log in and try again.";
+            fail(env, ErrorCode::Unavailable, msg)
+        }
+    }
+}
+
 // ---- api ----
 
 fn api(env: &mut dyn Env, json: bool) -> i32 {
@@ -1084,6 +1346,12 @@ mod tests {
             Some(("Hidden".into(), true))
         );
         assert_eq!(desktop_name("[Other]\nName=x\n"), None);
+        // One reader (dedup A7): trimmed, an empty name is none, `NoDisplay = true` hides.
+        assert_eq!(
+            desktop_name("[Desktop Entry]\nName= Mail \nNoDisplay = true\n"),
+            Some(("Mail".into(), true))
+        );
+        assert_eq!(desktop_name("[Desktop Entry]\nName=\nExec=x\n"), None);
     }
 
     #[test]
@@ -1120,5 +1388,196 @@ mod tests {
             (Some("firefox"), Some(true))
         );
         assert!(parse_clients("nope", None).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod port_tests {
+    use super::*;
+    use crate::run::FakeEnv;
+
+    fn run(env: &mut FakeEnv, line: &str) -> i32 {
+        let argv: Vec<&str> = line.split_whitespace().collect();
+        let inv = crate::cli::parse(&argv).expect("parses");
+        execute(&inv, env).expect("one of these verbs")
+    }
+
+    fn fake() -> FakeEnv {
+        FakeEnv {
+            home: PathBuf::from("/h"),
+            vars: vec![("XDG_DATA_HOME".into(), "/h/.local/share".into())],
+            ..FakeEnv::default()
+        }
+    }
+
+    #[test]
+    fn webapp_add_writes_a_launcher_with_the_site_icon() {
+        let mut e = fake();
+        // touch icon refused, favicon answers
+        e.exec_codes = vec![22, 0];
+        assert_eq!(
+            run(&mut e, "webapp add Mail https://mail.example.com --json"),
+            0,
+            "{}",
+            e.err
+        );
+        let (file, text) = e.written.last().cloned().unwrap();
+        assert_eq!(
+            file,
+            PathBuf::from("/h/.local/share/applications/wolos-webapp-mail.desktop")
+        );
+        assert!(
+            text.contains("\nIcon=/h/.local/share/wolos/webapps/icons/mail.ico\n"),
+            "{text}"
+        );
+        assert!(text.contains("--app=https://mail.example.com"));
+        assert_eq!(e.execs[0][0], "curl");
+        assert!(e.execs[0].contains(&"https://mail.example.com/apple-touch-icon.png".into()));
+        assert_eq!(
+            e.removed,
+            vec![PathBuf::from(
+                "/h/.local/share/wolos/webapps/icons/mail.png"
+            )],
+            "the refused download is dropped"
+        );
+        let v: Value = serde_json::from_str(&e.out).unwrap();
+        assert_eq!(v["id"], "mail");
+    }
+
+    #[test]
+    fn webapp_add_refuses_bad_input_and_duplicates() {
+        let mut e = fake();
+        assert_ne!(run(&mut e, "webapp add Mail file:///etc/passwd"), 0);
+        assert!(e.written.is_empty() && e.execs.is_empty());
+        let mut e = fake();
+        let app = webapps::WebApp::new("Mail", "https://m.example.com", webapps::Profile::Shared)
+            .unwrap();
+        let data = PathBuf::from("/h/.local/share");
+        e.files.push((
+            webapps::desktop_path(&data, "mail"),
+            webapps::desktop_entry(&app, &data),
+        ));
+        assert_ne!(run(&mut e, "webapp add mail https://other.example.com"), 0);
+        assert!(e.written.is_empty());
+        // listed, then removed by name
+        assert_eq!(run(&mut e, "webapp list --json"), 0);
+        let v: Value = serde_json::from_str(&e.out).unwrap();
+        assert_eq!(v["webapps"][0]["url"], "https://m.example.com");
+        e.out.clear();
+        assert_eq!(run(&mut e, "webapp remove MAIL --json"), 0);
+        assert_eq!(e.removed, vec![webapps::desktop_path(&data, "mail")]);
+        assert_ne!(run(&mut e, "webapp remove Maps"), 0);
+    }
+
+    /// C6-1: an icon file whose name carries a newline and launcher keys is not used, and the
+    /// launcher keeps exactly one `Exec=` line.
+    #[test]
+    fn webapp_icon_with_a_newline_is_refused() {
+        let d = std::env::temp_dir().join(format!("wol-icon-nl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let evil = d.join("x.png\nExec=sh -c evil");
+        std::fs::write(&evil, b"png").unwrap();
+        let ok = d.join("ok.png");
+        std::fs::write(&ok, b"png").unwrap();
+        let mut e = fake();
+        let mut app =
+            webapps::WebApp::new("Chat", "https://chat.example.com", webapps::Profile::Shared)
+                .unwrap();
+        let okp = ok.display().to_string();
+        assert_eq!(webapp_icon(&mut e, &app, Some(&okp)), okp);
+        let got = webapp_icon(&mut e, &app, Some(&evil.display().to_string()));
+        assert_eq!(got, webapps::FALLBACK_ICON);
+        assert_eq!(
+            webapp_icon(&mut e, &app, Some("a\\b")),
+            webapps::FALLBACK_ICON
+        );
+        app.icon = got;
+        let text = webapps::desktop_entry(&app, std::path::Path::new("/data"));
+        assert_eq!(text.lines().filter(|l| l.starts_with("Exec=")).count(), 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn webapp_icon_named_or_theme() {
+        let mut e = fake();
+        assert_eq!(
+            run(
+                &mut e,
+                "webapp add Chat https://chat.example.com mail-send --json"
+            ),
+            0
+        );
+        assert!(e.execs.is_empty(), "a theme icon downloads nothing");
+        assert!(e.written[0].1.contains("\nIcon=mail-send\n"));
+        let mut e = fake();
+        assert_eq!(
+            run(
+                &mut e,
+                "webapp add Chat https://chat.example.com ../../x --json"
+            ),
+            0
+        );
+        assert!(e.written[0].1.contains("\nIcon=web-browser\n"));
+    }
+
+    #[test]
+    fn toggles_run_their_command_then_keep_the_flag() {
+        let mut e = fake();
+        assert_eq!(run(&mut e, "toggle nightlight on --json"), 0, "{}", e.err);
+        assert_eq!(
+            e.execs[0],
+            vec!["hyprctl", "hyprsunset", "temperature", "4500"]
+        );
+        assert_eq!(
+            e.written[0].0,
+            PathBuf::from("/h/state/wolos/toggles/org.wolos.nightlight")
+        );
+        // flips off when the flag is there
+        let mut e = fake();
+        e.files.push((
+            PathBuf::from("/h/state/wolos/toggles/org.wolos.stay-awake"),
+            String::new(),
+        ));
+        assert_eq!(run(&mut e, "toggle idle --json"), 0);
+        assert_eq!(e.execs[0][0], "systemctl");
+        assert_eq!(
+            e.removed,
+            vec![PathBuf::from("/h/state/wolos/toggles/org.wolos.stay-awake")]
+        );
+        // no hyprsunset: Night Light stays as it was
+        let mut e = fake();
+        e.exec_codes = vec![1];
+        assert_ne!(run(&mut e, "toggle nightlight on"), 0);
+        assert!(e.written.is_empty());
+        // list
+        let mut e = fake();
+        assert_eq!(run(&mut e, "toggle --json"), 0);
+        let v: Value = serde_json::from_str(&e.out).unwrap();
+        assert_eq!(v["toggles"].as_array().map(Vec::len), Some(3));
+    }
+
+    #[test]
+    fn reminders_are_a_user_timer_with_the_text_as_one_argument() {
+        let mut e = fake();
+        assert_eq!(run(&mut e, "remind 10 tea is; ready --json"), 0);
+        let a = &e.execs[0];
+        assert_eq!(a[0], "systemd-run");
+        assert!(a.contains(&"--on-active=10min".to_string()));
+        assert_eq!(a.last().map(String::as_str), Some("tea is; ready"));
+        assert!(a.contains(&"--app-name=wol".to_string()), "{a:?}");
+        // C10-4: a helper's reminder carries the helper's name, like its direct `notify`.
+        let a = remind_argv(5, "tea", &actor_name("mcp:Claude Desktop"));
+        assert!(
+            a.contains(&"--app-name=Claude Desktop".to_string()),
+            "{a:?}"
+        );
+        let at = a.iter().position(|x| x == "notify-send").unwrap();
+        assert_eq!(a[at + 2..], ["--", "Reminder", "tea"]);
+        let mut e = fake();
+        assert_ne!(run(&mut e, "remind 0 x"), 0);
+        assert_ne!(run(&mut e, "remind 99999 x"), 0);
+        assert_ne!(run(&mut e, "remind 5"), 0);
+        assert!(e.execs.is_empty());
     }
 }

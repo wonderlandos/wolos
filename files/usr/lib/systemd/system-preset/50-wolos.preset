@@ -21,6 +21,9 @@ enable wolos-clam.socket
 # Only the person turns this on, in Settings: it downloads third-party data.
 disable wolos-clam-update.timer
 enable NetworkManager.service
+# Wi-Fi: iwd under NetworkManager (/etc/NetworkManager/conf.d/wolos-iwd.conf), never wpa_supplicant.
+enable iwd.service
+disable wpa_supplicant.service
 enable bluetooth.service
 enable nftables.service
 enable cups.socket

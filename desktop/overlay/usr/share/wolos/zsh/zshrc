@@ -3,8 +3,9 @@
 #
 # Prompt colours follow the WolOS theme: `wol theme` may write
 #   ${XDG_CONFIG_HOME:-~/.config}/wolos/toolkits/zsh/colors.zsh
-# setting any of WOLOS_PROMPT_ACCENT WOLOS_PROMPT_MUTED WOLOS_PROMPT_OK WOLOS_PROMPT_ERROR
-# WOLOS_PROMPT_SUGGEST to a zsh colour (%F{...}: name, 0-255 or #rrggbb). Unset = terminal palette.
+# (else the default theme's /usr/share/wolos/zsh/colors.zsh, like the other shells) setting any of
+# WOLOS_PROMPT_ACCENT WOLOS_PROMPT_MUTED WOLOS_PROMPT_OK WOLOS_PROMPT_ERROR WOLOS_PROMPT_SUGGEST
+# to a zsh colour (%F{...}: name, 0-255 or #rrggbb). Unset = terminal palette.
 
 # Plugins: Arch package paths (WOLOS_ZSH_PLUGINS: tests point it at a fixture).
 _wolos_share=${WOLOS_ZSH_PLUGINS:-/usr/share/zsh/plugins}
@@ -16,7 +17,10 @@ SAVEHIST=50000
 setopt EXTENDED_HISTORY SHARE_HISTORY HIST_IGNORE_DUPS HIST_EXPIRE_DUPS_FIRST
 setopt HIST_IGNORE_SPACE HIST_REDUCE_BLANKS HIST_VERIFY
 
-setopt AUTO_CD INTERACTIVE_COMMENTS NO_BEEP COMPLETE_IN_WORD ALWAYS_TO_END PROMPT_SUBST
+setopt AUTO_CD INTERACTIVE_COMMENTS NO_BEEP COMPLETE_IN_WORD ALWAYS_TO_END PROMPT_SUBST CHASE_LINKS
+# Tab: the first press lists the matches, the second walks the menu.
+setopt AUTO_LIST LIST_AMBIGUOUS AUTO_MENU
+unsetopt MENU_COMPLETE
 
 # Colours: ls --color with LS_COLORS; the same scheme for completion lists.
 export CLICOLOR=1
@@ -25,6 +29,7 @@ export LS_COLORS
 alias ls='ls --color=auto' ll='ls -lh' la='ls -lAh' grep='grep --color=auto'
 
 _wolos_colors=${XDG_CONFIG_HOME:-$HOME/.config}/wolos/toolkits/zsh/colors.zsh
+[[ -r $_wolos_colors ]] || _wolos_colors=/usr/share/wolos/zsh/colors.zsh
 [[ -r $_wolos_colors ]] && source "$_wolos_colors"
 : ${WOLOS_PROMPT_ACCENT:=magenta} ${WOLOS_PROMPT_MUTED:=8} ${WOLOS_PROMPT_OK:=default}
 : ${WOLOS_PROMPT_ERROR:=red} ${WOLOS_PROMPT_SUGGEST:=8}
@@ -78,6 +83,9 @@ _wolos_cache=${XDG_CACHE_HOME:-$HOME/.cache}/zsh
   fi
 }
 zstyle ':completion:*' menu select
+zstyle ':completion:*' list-prompt ''
+# No shell variables among the command-position Tab matches; `$HO<Tab>` still completes $HOME.
+zstyle ':completion:*:-command-:*' tag-order '!parameters'
 zstyle ':completion:*' matcher-list 'm:{a-zA-Z}={A-Za-z}' 'r:|[._-]=* r:|=*' 'l:|=* r:|=*'
 zstyle ':completion:*' list-colors ${(s.:.)LS_COLORS}
 zstyle ':completion:*' group-name ''
@@ -102,6 +110,35 @@ PROMPT+="%F{$WOLOS_PROMPT_ACCENT}%(4~|.../%3~|%~)%f"
 PROMPT+="%F{$WOLOS_PROMPT_MUTED}"'${vcs_info_msg_0_}'"%f "
 PROMPT+="%(?.%F{$WOLOS_PROMPT_OK}.%F{$WOLOS_PROMPT_ERROR})$_wolos_sym%f "
 unset _wolos_sym
+
+# Console module (ADR 0032 "Console"): each tool is wired only when it is installed, so the base
+# stays as above. starship replaces the prompt with the same shape, coloured by the theme's
+# palette (WOLOS_PROMPT=pure keeps the prompt above); fzf adds Ctrl+R history and Ctrl+T files;
+# zoxide adds `z`; eza takes over ls. The `eval`s run the installed program's own init output.
+# Not on the Linux text console (TERM=linux): its font has no prompt glyph; the prompt above has `%`.
+if [[ ${WOLOS_PROMPT:-starship} != pure && $TERM != linux ]] && (( $+commands[starship] )); then
+  _wolos_star=${XDG_CONFIG_HOME:-$HOME/.config}/wolos/toolkits/starship/palette.toml
+  [[ -r $_wolos_star ]] || _wolos_star=/usr/share/wolos/toolkits/starship/palette.toml
+  [[ -r $_wolos_star ]] || _wolos_star=/usr/share/wolos/starship/starship.toml
+  export STARSHIP_CONFIG=${STARSHIP_CONFIG:-$_wolos_star}
+  eval "$(starship init zsh)"
+  unset _wolos_star
+fi
+if (( $+commands[fzf] )); then
+  [[ -r /usr/share/fzf/key-bindings.zsh ]] && source /usr/share/fzf/key-bindings.zsh
+  [[ -r /usr/share/fzf/completion.zsh ]] && source /usr/share/fzf/completion.zsh
+  # Ctrl+Alt+F files, Ctrl+Alt+L git commits, Ctrl+Alt+V variables (next to this file).
+  [[ -r ${${(%):-%x}:h}/fzf.zsh ]] && source "${${(%):-%x}:h}/fzf.zsh"
+fi
+(( $+commands[zoxide] )) && eval "$(zoxide init zsh)"
+if (( $+commands[eza] )); then
+  alias ls='eza --group-directories-first' ll='eza -lh --git' la='eza -lah --git'
+fi
+# bat follows the terminal palette, which the theme sets; man pages go through bat.
+if (( $+commands[bat] )); then
+  export BAT_THEME=${BAT_THEME:-ansi}
+  export MANPAGER=${MANPAGER:-"sh -c 'col -bx | bat -l man -p'"} MANROFFOPT=${MANROFFOPT:--c}
+fi
 
 # Autosuggestions (grey, from history; Right/End accepts), then syntax highlighting last.
 if [[ -r $_wolos_share/zsh-autosuggestions/zsh-autosuggestions.zsh ]]; then

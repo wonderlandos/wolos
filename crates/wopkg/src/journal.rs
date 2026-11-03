@@ -71,10 +71,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d).map_err(bad)?;
     }
-    let tmp = PathBuf::from(format!("{}.tmp-{}", path.display(), std::process::id()));
-    let mut f = std::fs::File::create(&tmp).map_err(bad)?;
-    f.write_all(bytes).and_then(|_| f.sync_all()).map_err(bad)?;
-    std::fs::rename(&tmp, path).map_err(bad)
+    shared::atomic::atomic_write(path, 0o644, bytes).map_err(bad)
 }
 
 fn path(ctx: &Context) -> PathBuf {

@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: text_field has no property `placehodler`. Did you mean `placeholder`?
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  @draft = signal("")
+
+  def view
+    window "Todos" do
+      column do
+        text_field @draft, placehodler: "What needs doing?" # <= error
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

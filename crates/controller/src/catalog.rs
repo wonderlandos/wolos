@@ -79,6 +79,15 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["focus", "on"], Change, "focus"),
     hv(&["focus", "off"], Change, "focus"),
     hv(&["open"], Change, "apps"),
+    // Web apps (ADR 0031 W5): a launcher in the person's own applications folder.
+    hv(&["webapp"], Read, "read"),
+    hv(&["webapp", "list"], Read, "read"),
+    hv(&["webapp", "add"], Change, "apps"),
+    hv(&["webapp", "remove"], Change, "apps"),
+    // Toggles: helpers may read them; `wol toggle <id>` touches display, idle and focus at once,
+    // which no single capability covers, so flipping stays for people, hotkeys and tiles.
+    hv(&["toggle", "list"], Read, "read"),
+    hv(&["remind"], Change, "notify"),
     hv(&["notify"], Change, "notify"),
     hv(&["screenshot"], Change, "screen-capture"),
     hv(&["windows"], Read, "window-list"),
@@ -96,6 +105,12 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["modules", "list"], Read, "read"),
     hv(&["modules", "status"], Read, "read"),
     hv(&["modules", "enable"], Change, "apps"),
+    // Sessions (ADR 0032): the person's own windows; listing reads the window set, saving and
+    // reopening act on the person's own state and apps, like `modules enable`.
+    hv(&["sessions"], Read, "window-list"),
+    hv(&["sessions", "list"], Read, "window-list"),
+    hv(&["sessions", "save"], Change, "apps"),
+    hv(&["sessions", "restore"], Change, "apps"),
     // Shell plugins (ADR 0031): helpers may look and check; `run` executes a plugin's Lua with
     // the user's commands, so it stays for people and the Plugin Maker.
     hv(&["plugin"], Read, "read"),
@@ -361,11 +376,34 @@ pub fn describe(inv: &Invocation) -> String {
         "focus.on" => "turn Do Not Disturb on".into(),
         "focus.off" => "turn Do Not Disturb off".into(),
         "open" => format!("open “{}”", get("target")),
-        "notify" => format!("show the notification “{}”", get("title")),
+        // C10-5: the body is on the sheet too, as the notification will show it (shortened).
+        "notify" => match short(&inv.all("body").join(" "), QUOTED) {
+            b if b.is_empty() => format!("show the notification “{}”", get("title")),
+            b => format!("show the notification “{}”: “{b}”", get("title")),
+        },
         "screenshot" => "take a screenshot of the whole screen".into(),
         "windows.focus" => format!("bring the window “{}” forward", get("window")),
         "files.tidy" => "sort the files in Downloads into folders".into(),
         "modules.enable" => format!("finish setting up the “{}” module", get("id")),
+        "sessions.save" => "save the open terminal and agent windows for the next login".into(),
+        "sessions.restore" => "reopen the terminal and agent windows saved last time".into(),
+        "webapp.add" => match inv.get("icon").filter(|i| !i.trim().is_empty()) {
+            Some(i) => format!(
+                "add “{}” as a web app ({}) with the icon “{}”",
+                get("name"),
+                get("url"),
+                i.escape_debug()
+            ),
+            None => format!("add “{}” as a web app ({})", get("name"), get("url")),
+        },
+        "webapp.remove" => format!("remove the web app “{}”", get("name")),
+        // C10-4: the text the reminder will show, not just when.
+        "remind" => format!(
+            "remind you in {} minutes: “{}”",
+            get("minutes"),
+            // Whole: a reminder is one line of at most 200 characters (`wol remind`).
+            short(&inv.all("text").join(" "), 200)
+        ),
         "undo" => match inv.get("id") {
             Some(id) => format!("undo settings change #{id}"),
             None => "undo the last settings change".into(),
@@ -375,6 +413,20 @@ pub fn describe(inv: &Invocation) -> String {
             Err(_) => format!("run `wol {}`", inv.path.join(" ")),
         },
     }
+}
+
+/// Longest helper text quoted in an approval sentence, in characters.
+const QUOTED: usize = 80;
+
+/// `t` trimmed and cut to `max` characters, with `…` when it was longer.
+fn short(t: &str, max: usize) -> String {
+    let t = t.trim();
+    if t.chars().count() <= max {
+        return t.to_string();
+    }
+    let mut s: String = t.chars().take(max.saturating_sub(1)).collect();
+    s.push('…');
+    s
 }
 
 /// The on-screen approval for an admin verb (helpers never run these themselves).
@@ -488,6 +540,21 @@ mod tests {
     }
 
     /// The approval sheet says exactly what will change, in plain words, for every change verb.
+    /// C10-4/C10-5: what a notification or reminder will show is on the sheet, shortened.
+    #[test]
+    fn long_texts_are_quoted_shortened() {
+        let long = "x".repeat(300);
+        let inv = crate::cli::parse(&["notify", "Hi", &long]).unwrap();
+        let d = describe(&inv);
+        assert!(d.ends_with("…”"), "{d}");
+        assert_eq!(d.chars().filter(|c| *c == 'x').count(), QUOTED - 1);
+        let inv = crate::cli::parse(&["remind", "5", &"y".repeat(200)]).unwrap();
+        assert!(
+            describe(&inv).contains(&"y".repeat(200)),
+            "a reminder is shown whole"
+        );
+    }
+
     #[test]
     fn every_change_is_described_in_plain_words() {
         let p = |w: &[&str]| crate::cli::parse(w).unwrap();
@@ -519,7 +586,10 @@ mod tests {
             (&["focus", "on"], "turn Do Not Disturb on"),
             (&["focus", "off"], "turn Do Not Disturb off"),
             (&["open", "https://wolos.org"], "open “https://wolos.org”"),
-            (&["notify", "Hi", "there"], "show the notification “Hi”"),
+            (
+                &["notify", "Hi", "there"],
+                "show the notification “Hi”: “there”",
+            ),
             (&["screenshot"], "take a screenshot of the whole screen"),
             (
                 &["windows", "focus", "foot"],
@@ -535,6 +605,35 @@ mod tests {
                 &["modules", "enable", "dev"],
                 "finish setting up the “dev” module",
             ),
+            (
+                &["sessions", "save"],
+                "save the open terminal and agent windows for the next login",
+            ),
+            (
+                &["sessions", "restore"],
+                "reopen the terminal and agent windows saved last time",
+            ),
+            (
+                &["webapp", "add", "Mail", "https://m.example.com"],
+                "add “Mail” as a web app (https://m.example.com)",
+            ),
+            (
+                &[
+                    "webapp",
+                    "add",
+                    "Mail",
+                    "https://m.example.com",
+                    "mail-send",
+                ],
+                "add “Mail” as a web app (https://m.example.com) with the icon “mail-send”",
+            ),
+            (&["webapp", "remove", "Mail"], "remove the web app “Mail”"),
+            (&["remind", "5", "tea"], "remind you in 5 minutes: “tea”"),
+            (
+                &["remind", "5", "tea", "is", "ready"],
+                "remind you in 5 minutes: “tea is ready”",
+            ),
+            (&["notify", "Hi"], "show the notification “Hi”"),
         ] {
             assert_eq!(describe(&p(words)), want, "{words:?}");
         }

@@ -9,6 +9,7 @@
 #                                      recovery key is asked for after a Secure Boot key change)
 #   boot <tier>                        the protection this computer gets (`wol boot detect`);
 #                                      `firmware`: a firmware setting must change first
+#   boot-off <tier>                    the tier when Secure Boot is left off (`wol boot detect no`)
 #   refuse <not-listed|too-small|in-use|bios>
 # Exit 0: may erase. 2: refused (the boot medium, a missing disk, too small, a mounted partition,
 # a computer started without UEFI: the installed system boots through its EFI partition only).
@@ -43,6 +44,7 @@ printf '%s\n' "$facts" | grep -E '^(size|os|bitlocker) ' || :
 bytes=$(printf '%s\n' "$facts" | sed -n 's/^size \([0-9][0-9]*\)$/\1/p')
 [ -n "$bytes" ] || { bytes=0; echo "size 0"; }
 echo "boot $(wol boot detect)"
+echo "boot-off $(wol boot detect no)"
 [ "$bytes" -ge "$MIN_BYTES" ] || { echo "refuse too-small"; rc=2; }
 # Started without UEFI (BIOS, CSM): the installed system has no way to boot on this computer.
 [ -d "${WOLOS_EFIVARS:-/sys/firmware/efi/efivars}" ] || { echo "refuse bios"; rc=2; }

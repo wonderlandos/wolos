@@ -1,0 +1,6 @@
+# name  size  fnv1a64 (checked by tests/golden `the_bundled_fonts_are_the_pinned_ones`)
+WkArabic-Regular.ttf 33500 97db457973d86bfc
+WkCJK-Regular.ttf 15872 fc116f20acfc6fda
+WkHebrew-Regular.ttf 16376 4821c90d818f077d
+WkLatin-Bold.ttf 55968 902657a0004429da
+WkLatin-Regular.ttf 55804 11d20fdc480ff325

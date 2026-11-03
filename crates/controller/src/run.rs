@@ -6,7 +6,7 @@ use shared::errors::ErrorCode;
 use shared::jobs::{JobRequest, JobStatus, Reply};
 use std::io;
 use std::path::{Path, PathBuf};
-use wol_core::theme::{ThemeCatalog, active, config_home, search_paths};
+use wol_core::theme::{ThemeCatalog, active, config_home};
 
 /// Shell control socket under `$XDG_RUNTIME_DIR`. Wire: one line per connection,
 /// `toggle <panel>` | `show <panel>` | `hide <panel>` | `reload`, no reply.
@@ -98,11 +98,27 @@ pub trait Env {
         v.sort();
         v
     }
-    /// Replace a whole file: temp file + rename (`wol hw boot`).
+    /// Replace a whole file: `shared::atomic` temp file + rename (`wol hw boot`; S4-10). A file
+    /// that exists keeps its mode (a 0600 `wol encrypt hooks` or `folded-layers` stays 0600); a
+    /// new one is readable by all (0644).
     fn write_file(&mut self, path: &Path, text: &str) -> io::Result<()> {
-        let tmp = path.with_extension("wol-tmp");
-        std::fs::write(&tmp, text)?;
-        std::fs::rename(&tmp, path)
+        shared::atomic::atomic_write(path, kept_mode(path), text.as_bytes())
+    }
+    /// [`Env::write_file`] for a secret (a typed passphrase, a recovery key): mode 0600 from the
+    /// first byte, never readable by anyone else (S4-10).
+    fn write_private(&mut self, path: &Path, text: &str) -> io::Result<()> {
+        shared::atomic::atomic_write(path, 0o600, text.as_bytes())
+    }
+    /// Delete one file; a file that is already gone is not an error (`wol webapp remove`).
+    fn remove_file(&mut self, path: &Path) -> io::Result<()> {
+        match std::fs::remove_file(path) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    }
+    /// Create a directory and its parents (`wol webapp add`, `wol toggle`).
+    fn make_dir(&mut self, path: &Path) -> io::Result<()> {
+        std::fs::create_dir_all(path)
     }
     /// Desktop controls (Wi-Fi, audio, brightness, Bluetooth, displays) for this host.
     fn controls(&self) -> wol_core::controls::Controls {
@@ -125,6 +141,16 @@ pub trait Env {
         self.var("WOL_HELPER")
             .map_or_else(|| "cli".into(), |h| format!("script:{h}"))
     }
+}
+
+/// The permission bits `path` has now (never set-id bits), 0644 when it does not exist or is not
+/// a regular file.
+pub(crate) fn kept_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::symlink_metadata(path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map_or(0o644, |m| m.permissions().mode() & 0o777)
 }
 
 pub(crate) fn fail(env: &mut dyn Env, code: ErrorCode, msg: &str) -> i32 {
@@ -261,6 +287,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "audio.doctor" | "audio.reset" | "audio.appmix" => crate::audio_doctor::execute(inv, env),
         a if a.starts_with("games.") => crate::games::execute(inv, env),
         a if a.starts_with("modules.") => crate::modules::execute(inv, env),
+        a if a.starts_with("sessions.") => crate::sessions::execute(inv, env),
         a if a.starts_with("plugin.") => crate::plugin::execute(inv, env),
         a if a.starts_with("power.") => crate::power::execute(inv, env),
         a if a.starts_with("firewall.") || a.starts_with("security.") => {
@@ -301,6 +328,12 @@ fn topic(env: &mut dyn Env, t: &str, json: bool) -> i32 {
 fn jobs_socket(env: &dyn Env) -> PathBuf {
     env.var("WOL_JOBS_SOCKET")
         .map_or_else(|| shared::jobs::SOCKET.into(), PathBuf::from)
+}
+
+/// wol-admind's socket (`WOL_ADMIN_SOCKET` in tests).
+fn admin_socket(env: &dyn Env) -> PathBuf {
+    env.var("WOL_ADMIN_SOCKET")
+        .map_or_else(|| wire::SOCKET.into(), PathBuf::from)
 }
 
 fn jobs_list(env: &mut dyn Env, json: bool) -> i32 {
@@ -403,13 +436,28 @@ fn admin(env: &mut dyn Env, inv: &Invocation) -> i32 {
 
 /// One wol-admind request; asks for the password on stdin while it answers `auth`/`denied`.
 pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
-    let sock = env
-        .var("WOL_ADMIN_SOCKET")
-        .map_or_else(|| wire::SOCKET.into(), PathBuf::from);
+    let sock = admin_socket(env);
     let mut password: Vec<u8> = Vec::new(); // empty = use cached authorization
-    for _ in 0..=PASSWORD_TRIES {
-        let reply = match env.request(&sock, &wire::encode(req, &password)) {
+    for attempt in 0..=PASSWORD_TRIES {
+        // As long as wol-admind may take for this request, every planned step (S4-4/S4-18).
+        let secs = wol_core::admin::reply_secs(req);
+        let sent = env.request_wait(&sock, &wire::encode(req, &password), secs);
+        crate::authcheck::wipe(&mut password);
+        let reply = match sent {
             Ok(r) => AdminReply::parse(&r),
+            // A slow action (a package, a boot entry) is still running in wol-admind (S4-18).
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                return fail(
+                    env,
+                    ErrorCode::Failed,
+                    "wol-admind is still working on it; check again later",
+                );
+            }
             Err(_) => {
                 return fail(
                     env,
@@ -418,11 +466,14 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 );
             }
         };
-        crate::authcheck::wipe(&mut password);
         match reply {
             AdminReply::NeedsAuth | AdminReply::Denied => {
                 if reply == AdminReply::Denied {
                     env.err("wol admin: incorrect password\n");
+                }
+                // The last try does not ask for a password nobody will check (S4-18).
+                if attempt == PASSWORD_TRIES {
+                    break;
                 }
                 match env.stdin_line() {
                     Some(p) if !p.is_empty() => password = p.into_bytes(),
@@ -486,7 +537,9 @@ fn bundle_plan(env: &mut dyn Env, bundle: &str, json: bool) -> i32 {
 
 fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
     let home = env.config_home();
-    let catalog = ThemeCatalog::load(&search_paths(&home));
+    // Built-ins, theme folders and enabled plugins' theme packs (ADR 0031 themes v2).
+    let data = wol_core::theme::apps::data_home(|k| env.var(k));
+    let catalog = ThemeCatalog::installed(&home, data.as_deref());
     let file = active::default_file(&home);
     let dark = env
         .read_file(Path::new(wol_core::settings::appearance::FILE))
@@ -566,7 +619,10 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
 }
 
 /// Third-party toolkits follow the theme: regenerate GTK/Qt/foot files, then gsettings so
-/// running GTK apps switch live (settings portal). Best effort: a missing gsettings is not an error.
+/// running GTK apps switch live (settings portal), then the `theme` event on wold for libwol apps
+/// (`subscribe("theme")`). Best effort: a missing gsettings or wold is not an error.
+/// Every theme change goes through here: `wol theme set|light|dark|toggle`, appearance and accent
+/// (verbs.rs `set_theme`) and undo.
 pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme) {
     use wol_core::theme::apps;
     let home = env.config_home();
@@ -584,6 +640,17 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     {
         let _ = env.exec(&argv);
     }
+    announce_theme(env, &t.id);
+}
+
+/// `publish {"event":"theme","id":ID}` on wold's socket: wold hands an Everyone event from a client
+/// to that client's own uid (and root), so the person's apps hear their own theme change. wold
+/// answers nothing; no wold (a chroot, early boot) is fine.
+fn announce_theme(env: &mut dyn Env, id: &str) {
+    let e = shared::events::Event::Theme { id: id.to_owned() };
+    let line = JobRequest::Publish(e.to_line().trim_end().to_owned()).line() + "\n";
+    let sock = jobs_socket(env);
+    let _ = env.request(&sock, line.as_bytes());
 }
 
 /// Shell wire line for a shell.* invocation.
@@ -913,8 +980,9 @@ impl Env for RealEnv {
     }
     fn request_wait(&mut self, socket: &Path, req: &[u8], secs: u32) -> io::Result<String> {
         use io::{Read, Write};
-        // wold's control socket greets first (ADR 0033); other sockets do not.
-        let mut s = if socket == jobs_socket(self) {
+        // wold control socket and wol-admind greet first (ADR 0033); other sockets do not.
+        let greets = socket == jobs_socket(self) || socket == admin_socket(self);
+        let mut s = if greets {
             shared::jobs::connect(socket)?
         } else {
             std::os::unix::net::UnixStream::connect(socket)?
@@ -1028,6 +1096,12 @@ pub struct FakeEnv {
     pub secrets: Vec<(String, String)>,
     /// Root's user keyring: (description, payload).
     pub keys: Vec<(String, Vec<u8>)>,
+    /// Files deleted through `remove_file`.
+    pub removed: Vec<PathBuf>,
+    /// Directories made through `make_dir`.
+    pub dirs: Vec<PathBuf>,
+    /// `secs` of every `request_wait`, in order.
+    pub waits: Vec<u32>,
 }
 
 #[derive(Default)]
@@ -1059,6 +1133,10 @@ impl Env for FakeEnv {
             return Err(io::Error::from(io::ErrorKind::ConnectionRefused));
         }
         Ok(self.replies.remove(0))
+    }
+    fn request_wait(&mut self, socket: &Path, req: &[u8], secs: u32) -> io::Result<String> {
+        self.waits.push(secs);
+        self.request(socket, req)
     }
     fn exec(&mut self, argv: &[String]) -> io::Result<i32> {
         self.execs.push(argv.into());
@@ -1184,5 +1262,224 @@ impl Env for FakeEnv {
     fn write_file(&mut self, path: &Path, text: &str) -> io::Result<()> {
         self.written.push((path.into(), text.into()));
         Ok(())
+    }
+    fn write_private(&mut self, path: &Path, text: &str) -> io::Result<()> {
+        self.written.push((path.into(), text.into()));
+        Ok(())
+    }
+    fn remove_file(&mut self, path: &Path) -> io::Result<()> {
+        self.removed.push(path.into());
+        Ok(())
+    }
+    fn make_dir(&mut self, path: &Path) -> io::Result<()> {
+        self.dirs.push(path.into());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("wol-run-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// Audit S4-10: `foo.conf` and `foo.key` written at once each end with their own text (no
+    /// shared `foo.wol-tmp`), a 0600 file stays 0600, a new file is 0644, no temporary is left.
+    #[test]
+    fn write_file_is_atomic_per_file_and_keeps_the_mode() {
+        let d = tmp("write");
+        let (conf, key) = (d.join("foo.conf"), d.join("foo.key"));
+        std::fs::write(&key, "old").unwrap();
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let threads: Vec<_> = [(conf.clone(), "conf"), (key.clone(), "key")]
+            .into_iter()
+            .map(|(p, text)| {
+                std::thread::spawn(move || {
+                    for i in 0..100 {
+                        RealEnv.write_file(&p, &format!("{text} {i}\n")).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(std::fs::read_to_string(&conf).unwrap(), "conf 99\n");
+        assert_eq!(std::fs::read_to_string(&key).unwrap(), "key 99\n");
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&key), 0o600);
+        assert_eq!(mode(&conf), 0o644);
+        RealEnv.write_private(&d.join("secret"), "s").unwrap();
+        assert_eq!(mode(&d.join("secret")), 0o600);
+        let left: Vec<_> = std::fs::read_dir(&d)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(shared::atomic::TMP_SUFFIX))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    fn admin_req(action: AdminAction, args: &[&str]) -> AdminRequest {
+        AdminRequest {
+            action,
+            args: args.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    /// A theme change tells libwol apps: one `publish` of the `theme` event with the new theme's id
+    /// on wold's socket, for `wol theme light|dark|set` and for appearance (verbs.rs `set_theme`).
+    /// No wold is not an error: the theme is still written.
+    #[test]
+    fn theme_changes_publish_the_theme_event_on_wold() {
+        let run = |line: &str, e: &mut FakeEnv| {
+            let argv: Vec<&str> = line.split_whitespace().collect();
+            execute(&crate::cli::parse(&argv).unwrap(), e)
+        };
+        let published = |e: &FakeEnv| -> Vec<String> {
+            e.requests
+                .iter()
+                .filter(|(p, _)| p == Path::new("/w/wold.sock"))
+                .map(|(_, r)| String::from_utf8_lossy(r).into_owned())
+                .collect()
+        };
+        let mut e = FakeEnv {
+            home: tmp("theme-event"),
+            vars: vec![("WOL_JOBS_SOCKET".into(), "/w/wold.sock".into())],
+            replies: vec![String::new(), String::new()],
+            ..Default::default()
+        };
+        assert_eq!(run("theme dark", &mut e), 0, "{}", e.err);
+        assert_eq!(run("theme light", &mut e), 0, "{}", e.err);
+        assert_eq!(
+            published(&e),
+            [
+                "publish {\"event\":\"theme\",\"id\":\"wol-dark\"}\n",
+                "publish {\"event\":\"theme\",\"id\":\"wol-light\"}\n"
+            ]
+        );
+        // What wold reads back is the event a subscriber gets (shared::jobs / shared::events).
+        let line = published(&e)[0].clone();
+        match JobRequest::parse(line.trim_end()) {
+            Some(JobRequest::Publish(j)) => assert_eq!(
+                shared::events::Event::parse(&j),
+                Some(shared::events::Event::Theme {
+                    id: "wol-dark".into()
+                })
+            ),
+            other => panic!("{other:?}"),
+        }
+        // wold not running (no reply): still written, still 0.
+        e.requests.clear();
+        assert_eq!(run("theme dark", &mut e), 0, "{}", e.err);
+        assert_eq!(published(&e).len(), 1);
+        // Appearance goes through the same announcement.
+        e.requests.clear();
+        assert_eq!(run("appearance set light", &mut e), 0, "{}", e.err);
+        assert_eq!(published(&e).len(), 1, "{:?}", e.requests);
+        assert!(published(&e)[0].starts_with("publish {\"event\":\"theme\""));
+    }
+
+    /// Audit S4-4: a package request waits as long as wol-admind may run pacman; a quick one
+    /// keeps a short wait; a reply that does not come in time is not "service unavailable".
+    #[test]
+    fn admin_requests_wait_per_action() {
+        let mut e = FakeEnv {
+            replies: vec!["ok\n".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            admin_send(&mut e, &admin_req(AdminAction::PkgInstall, &["gimp"])),
+            0
+        );
+        assert!(e.waits[0] >= 1800, "{:?}", e.waits);
+        let mut e = FakeEnv {
+            replies: vec!["ok\n".into()],
+            ..Default::default()
+        };
+        assert_eq!(admin_send(&mut e, &admin_req(AdminAction::Revoke, &[])), 0);
+        assert!(e.waits[0] < 1800, "{:?}", e.waits);
+    }
+
+    /// A request wol-admind is still running: one request, "still working", never unavailable.
+    #[test]
+    fn a_slow_reply_is_not_service_unavailable() {
+        struct Slow(FakeEnv);
+        impl Env for Slow {
+            fn out(&mut self, s: &str) {
+                self.0.out(s)
+            }
+            fn err(&mut self, s: &str) {
+                self.0.err(s)
+            }
+            fn stdout_tty(&self) -> bool {
+                false
+            }
+            fn var(&self, n: &str) -> Option<String> {
+                self.0.var(n)
+            }
+            fn is_root(&self) -> bool {
+                false
+            }
+            fn request(&mut self, s: &Path, r: &[u8]) -> io::Result<String> {
+                self.0.requests.push((s.into(), r.into()));
+                Err(io::Error::from(io::ErrorKind::WouldBlock))
+            }
+            fn exec(&mut self, a: &[String]) -> io::Result<i32> {
+                self.0.exec(a)
+            }
+            fn capture(&mut self, a: &[&str]) -> Option<String> {
+                self.0.capture(a)
+            }
+            fn stdin_line(&mut self) -> Option<String> {
+                self.0.stdin_line()
+            }
+            fn read_file(&self, p: &Path) -> Option<String> {
+                self.0.read_file(p)
+            }
+            fn sys_topic(&mut self, t: &str) -> Option<serde_json::Value> {
+                self.0.sys_topic(t)
+            }
+            fn now_secs(&self) -> u64 {
+                0
+            }
+            fn config_home(&self) -> PathBuf {
+                PathBuf::new()
+            }
+        }
+        let mut e = Slow(FakeEnv::default());
+        let code = admin_send(&mut e, &admin_req(AdminAction::PkgInstall, &["gimp"]));
+        assert_eq!(code, ErrorCode::Failed.exit());
+        assert!(e.0.err.contains("still working"), "{}", e.0.err);
+        assert!(!e.0.err.contains("unavailable"), "{}", e.0.err);
+        assert_eq!(e.0.requests.len(), 1, "never sent twice");
+    }
+
+    /// Audit S4-18: three wrong passwords are three requests with a password; a fourth line on
+    /// stdin is never read.
+    #[test]
+    fn admin_reads_no_fourth_password() {
+        let mut e = FakeEnv {
+            replies: ["auth", "denied", "denied", "denied"]
+                .map(|r| format!("{r}\n"))
+                .to_vec(),
+            stdin: ["a1", "b2", "c3", "d4"].map(String::from).to_vec(),
+            ..Default::default()
+        };
+        let code = admin_send(&mut e, &admin_req(AdminAction::PkgInstall, &["gimp"]));
+        assert_eq!(code, ErrorCode::Denied.exit());
+        assert_eq!(
+            e.requests.len(),
+            4,
+            "the first asks, three carry a password"
+        );
+        assert_eq!(e.stdin, ["d4"], "the fourth line stays unread");
     }
 }

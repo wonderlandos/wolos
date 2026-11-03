@@ -4,6 +4,10 @@ WolOS. Copyright (c) 2026 Julia Klee.
 |---|---|
 | everything not listed below | GPL-2.0-or-later (`LICENSE`) |
 | `crates/wol-abi/`, `crates/shared/`, `crates/core/` | BSD-2-Clause (`LICENSES/BSD-2-Clause.txt`) |
+| `wolos-crystal/shards/cryswol/` (the Cryswol shard), except `src/wol/pkg/`, `src/wol/realtime/` and `spec/pkg_spec.cr` (GPL-2.0-or-later: they bind libwopkg and the realtime library) | BSD-2-Clause (`wolos-crystal/shards/cryswol/LICENSE`) |
+| `crates/wolkit/` (libWolkit, the UI engine), except `tests/golden/fonts/` | BSD-2-Clause (`LICENSES/BSD-2-Clause.txt`) |
+| `crates/wolkit/tests/golden/fonts/` (subsetted test fonts) | SIL OFL 1.1 or Apache-2.0, per font (`crates/wolkit/tests/golden/fonts/README.md`) |
+| `wolos-crystal/shards/wolkit/` (the Wolkit shard), `wolos-crystal/templates/app/`, `wolos-crystal/examples/` | BSD-2-Clause (`wolos-crystal/shards/wolkit/LICENSE`) |
 | `crates/shell/` | GPL-2.0-or-later (`crates/shell/LICENSE`) |
 | `kernel/scx_wolos/` | GPL-2.0-only (`LICENSES/GPL-2.0-only.txt`) |
 | `design/` (except `design/tools/`, `design/icons/store/`) | CC BY-NC-ND 4.0 (`design/LICENSE`) |
@@ -13,6 +17,8 @@ WolOS. Copyright (c) 2026 Julia Klee.
 | other `*.patch` | the license of the files each patch changes (`wolos-pkgbuilds/hyprland-wolos/*.patch`: BSD-3-Clause) |
 | `crates/shell/protocols/` | BSD-3-Clause (notice kept in each file) |
 | `third_party/blocking/` | Apache-2.0 OR MIT |
+| `hue/src/hue/{color,extract,palette,imports}.cr` | MIT (`LICENSES/MIT.txt`; copyright holders in `docs/THIRD-PARTY.md`) |
+| `crates/shell/src/offers.rs`, `crates/shell/tests/offers.rs` | MIT (`LICENSES/MIT.txt`; copyright holders in `docs/THIRD-PARTY.md`) |
 
 Each source file names its license in an `SPDX-License-Identifier` line; the license texts are in `LICENSES/`.
 

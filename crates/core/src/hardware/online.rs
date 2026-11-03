@@ -17,14 +17,10 @@ pub const DRIVER_READY: Notice = (
     "Driver installed",
     "Restart to finish setting up your hardware.",
 );
-pub const GRAPHICS_LATER: Notice = (
-    "Graphics driver not installed yet",
-    "WolOS tries again the next time you're online. To install it now, open System Settings › Hardware.",
-);
-pub const DRIVER_LATER: Notice = (
-    "Driver not installed yet",
-    "WolOS tries again the next time you're online. To install it now, open System Settings › Hardware.",
-);
+/// Both "not installed yet" notices end the same way.
+const LATER_BODY: &str = "WolOS tries again the next time you're online. To install it now, open System Settings › Hardware.";
+pub const GRAPHICS_LATER: Notice = ("Graphics driver not installed yet", LATER_BODY);
+pub const DRIVER_LATER: Notice = ("Driver not installed yet", LATER_BODY);
 /// The action a ready notice offers.
 pub const RESTART: &str = "Restart";
 

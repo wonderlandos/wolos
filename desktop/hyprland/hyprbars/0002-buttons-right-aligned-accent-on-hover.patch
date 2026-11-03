@@ -1,0 +1,204 @@
+hyprbars: right-aligned buttons from realtime geometry; the button under the pointer takes the accent
+
+bar_buttons_alignment other than "left" uses realtime's right-aligned row (wol_lights_at_w,
+wol_lights_over_w, wol_lights_slot_w in wol_realtime.h): close at the right edge, then zoom,
+minimise, placed against the bar's own width, so presses and hover agree with what is drawn
+(the button in slot i is the i-th hyprbars-button). "left" keeps wol_lights_at/wol_lights_over.
+
+The button under the pointer is sampled with the glyph state (never while rendering) and drawn
+in button_hover_color, in button_pressed_color while a press on it is held; its glyph takes
+col.button_hover_text (kept per monitor scale like the other glyphs, redrawn when that colour
+changes). 0 means unset for all three; the theme writes them (hypr/wolos/theme.conf).
+
+diff --git a/hyprbars/barDeco.cpp b/hyprbars/barDeco.cpp
+index b8dd6ea..c7b4941 100644
+--- a/hyprbars/barDeco.cpp
++++ b/hyprbars/barDeco.cpp
+@@ -320,8 +320,29 @@ size_t CHyprBar::shownButtons() {
+     return std::min(buttonCount(), getVisibleButtonCount(GAP, PADDING, assignedBoxGlobal().size(), 1.F));
+ }
+ 
++bool CHyprBar::buttonsRight() {
++    return g_pGlobalState->config.barButtonsAlignment->value() != "left";
++}
++
++// Geometry and order are realtime's (titlebar.rs): a right row holds close at the edge, then zoom,
++// minimise; the button in slot i is the i-th hyprbars-button, so what is drawn is what is pressed.
+ int CHyprBar::buttonAt(Vector2D COORDS) {
+-    return wol_lights_at((int)shownButtons(), (int)std::floor(COORDS.x), (int)std::floor(COORDS.y));
++    const int N = (int)shownButtons();
++    const int X = (int)std::floor(COORDS.x), Y = (int)std::floor(COORDS.y);
++    if (!buttonsRight())
++        return wol_lights_at(N, X, Y);
++    const int B = wol_lights_at_w((int)assignedBoxGlobal().w, N, X, Y);
++    for (int slot = 0; B >= 0 && slot < N; ++slot) {
++        if (wol_lights_slot_w(slot) == B)
++            return slot;
++    }
++    return -1;
++}
++
++bool CHyprBar::overButtons(Vector2D COORDS) {
++    const int N = (int)shownButtons();
++    const int X = (int)std::floor(COORDS.x), Y = (int)std::floor(COORDS.y);
++    return buttonsRight() ? wol_lights_over_w((int)assignedBoxGlobal().w, N, X, Y) : wol_lights_over(N, X, Y);
+ }
+ 
+ bool CHyprBar::pointerReachesBar() {
+@@ -352,15 +373,22 @@ bool CHyprBar::pointerReachesBar() {
+ 
+ // All three glyphs follow one state, decided here and never while rendering. The redraw waits for
+ // the event loop: damage added mid-frame (draw() runs inside the render) can be lost with the frame.
++// The button under the pointer (accent while hovered, deeper while pressed) is sampled the same way.
+ void CHyprBar::sampleHover() {
+-    if (!g_pGlobalState->config.iconOnHover->value() || !validMapped(m_pWindow))
++    if (!validMapped(m_pWindow))
+         return;
+ 
+-    const auto COORDS = cursorRelativeToBar();
+-    const bool OVER   = wol_lights_over((int)shownButtons(), (int)std::floor(COORDS.x), (int)std::floor(COORDS.y)) && pointerReachesBar();
+-    const auto NEXT   = wol_lights_hover(m_hover, OVER, m_pressedButton >= 0);
+-    const bool REDRAW = wol_lights_glyphs(NEXT) != wol_lights_glyphs(m_hover);
+-    m_hover           = NEXT;
++    const auto COORDS  = cursorRelativeToBar();
++    const bool REACHES = pointerReachesBar();
++    const bool OVER    = REACHES && overButtons(COORDS);
++    const int  UNDER   = OVER ? buttonAt(COORDS) : -1;
++    const auto NEXT    = wol_lights_hover(m_hover, OVER, m_pressedButton >= 0);
++    const bool GLYPHS  = g_pGlobalState->config.iconOnHover->value() && wol_lights_glyphs(NEXT) != wol_lights_glyphs(m_hover);
++    const bool PRESSED = m_pressedButton >= 0 && m_pressedButton == UNDER;
++    const bool REDRAW  = GLYPHS || UNDER != m_hoverButton || PRESSED != m_hoverPressed;
++    m_hover            = NEXT;
++    m_hoverButton      = UNDER;
++    m_hoverPressed     = PRESSED;
+ 
+     if (REDRAW)
+         g_pEventLoopManager->doLater([self = m_self] {
+@@ -441,6 +469,8 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a)
+     const auto BARPADDING       = g_pGlobalState->config.barPadding->value();
+     const auto ALIGNBUTTONS     = g_pGlobalState->config.barButtonsAlignment->value();
+     const auto INACTIVECOLOR    = g_pGlobalState->config.inactiveButtonColor->value();
++    const auto HOVERCOLOR       = g_pGlobalState->config.buttonHoverColor->value();
++    const auto PRESSEDCOLOR     = g_pGlobalState->config.buttonPressedColor->value();
+ 
+     const bool BUTTONSRIGHT    = ALIGNBUTTONS != "left";
+     const auto visibleCount    = std::min(buttonCount(), getVisibleButtonCount(BARBUTTONPADDING, BARPADDING, Vector2D{barBox->w, barBox->h}, scale));
+@@ -460,6 +490,10 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a)
+                 button.iconTex.clear();
+         }
+ 
++        // The button under the pointer takes the accent (0 = unset), a shade deeper while pressed on it.
++        if ((int)i == m_hoverButton && HOVERCOLOR > 0)
++            color = configColor(m_pressedButton == (int)i && PRESSEDCOLOR > 0 ? PRESSEDCOLOR : HOVERCOLOR);
++
+         color.a *= a;
+ 
+         CBox buttonBox = {barBox->x + (BUTTONSRIGHT ? barBox->w - offset - scaledButtonSize : offset), barBox->y + (barBox->h - scaledButtonSize) / 2.0, scaledButtonSize,
+@@ -477,6 +511,8 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
+     const auto BARPADDING       = g_pGlobalState->config.barPadding->value();
+     const auto ALIGNBUTTONS     = g_pGlobalState->config.barButtonsAlignment->value();
+     const auto ICONONHOVER      = g_pGlobalState->config.iconOnHover->value();
++    const auto HOVERCOLOR       = g_pGlobalState->config.buttonHoverColor->value();
++    const auto HOVERTEXT        = g_pGlobalState->config.buttonHoverText->value();
+ 
+     if (ICONONHOVER && !wol_lights_glyphs(m_hover))
+         return;
+@@ -491,11 +527,20 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
+         auto&      button           = g_pGlobalState->buttons[i];
+         const auto scaledButtonSize = button.size * scale;
+         const auto scaledButtonsPad = BARBUTTONPADDING * scale;
+-        auto&      tex              = button.iconTex[SCALEKEY];
++        // On the accent circle the glyph takes col.button_hover_text (0 = unset: the button's own).
++        const bool ONACCENT         = (int)i == m_hoverButton && HOVERCOLOR > 0 && HOVERTEXT > 0;
++        if (ONACCENT && button.iconTexHoverCol != configColor(HOVERTEXT)) {
++            button.iconTexHover.clear();
++            button.iconTexHoverCol = configColor(HOVERTEXT);
++        }
++        auto& tex = ONACCENT ? button.iconTexHover[SCALEKEY] : button.iconTex[SCALEKEY];
+ 
+         if ((!tex || tex->m_texID == 0) && !button.icon.empty()) {
+             // render icon
+-            auto fgcol = button.userfg ? button.fgcol : (button.bgcol.r + button.bgcol.g + button.bgcol.b < 1) ? CHyprColor(0xFFFFFFFF) : CHyprColor(0xFF000000);
++            auto fgcol = ONACCENT ? configColor(HOVERTEXT) :
++                button.userfg     ? button.fgcol :
++                                    (button.bgcol.r + button.bgcol.g + button.bgcol.b < 1) ? CHyprColor(0xFFFFFFFF) :
++                                                                                            CHyprColor(0xFF000000);
+ 
+             tex = g_pHyprRenderer->renderText(button.icon, fgcol, std::round(button.size * 0.62 * scale), false, "sans", scaledButtonSize);
+         }
+diff --git a/hyprbars/barDeco.hpp b/hyprbars/barDeco.hpp
+index 946ff9c..d37f79b 100644
+--- a/hyprbars/barDeco.hpp
++++ b/hyprbars/barDeco.hpp
+@@ -93,6 +93,10 @@ class CHyprBar : public IHyprWindowDecoration {
+     void handleMovement();
+     // Index of the button under COORDS (bar-relative), or -1.
+     int  buttonAt(Vector2D COORDS);
++    // COORDS is over the row of buttons, the gaps between them included.
++    bool overButtons(Vector2D COORDS);
++    // bar_buttons_alignment is not "left": realtime's right-aligned row (wol_lights_*_w).
++    bool buttonsRight();
+     void runAction(const std::string& cmd);
+     // Buttons this window shows (hyprbars:buttons rule); the rest of the row is bar.
+     size_t buttonCount();
+@@ -124,6 +128,9 @@ class CHyprBar : public IHyprWindowDecoration {
+ 
+     // Lights hover (realtime titlebar::Hover). Sampled from input and from draw(); rendering only reads it.
+     uint32_t            m_hover = 0;
++    // Button under the pointer (accent), or -1. Sampled with m_hover.
++    int                 m_hoverButton  = -1;
++    bool                m_hoverPressed = false;
+ 
+     // for dynamic updates
+     int    m_iLastHeight = 0;
+diff --git a/hyprbars/globals.hpp b/hyprbars/globals.hpp
+index f858339..72a37a5 100644
+--- a/hyprbars/globals.hpp
++++ b/hyprbars/globals.hpp
+@@ -20,6 +20,9 @@ struct SHyprButton {
+     std::string          icon    = "";
+     // Glyph texture by monitor scale (percent): windows on a 1x and a 2x screen share a button.
+     std::map<int, SP<Render::ITexture>> iconTex;
++    // The same glyph on the accent (col.button_hover_text), redrawn when that colour changes.
++    std::map<int, SP<Render::ITexture>> iconTexHover;
++    CHyprColor                          iconTexHoverCol = CHyprColor(0, 0, 0, 0);
+ };
+ 
+ class CHyprBar;
+@@ -33,7 +36,8 @@ struct SGlobalState {
+     uint32_t                  buttonsRuleIdx    = 0;
+ 
+     struct {
+-        SP<Config::Values::CColorValue>      barColor, textColor, inactiveButtonColor, barColorInactive, textColorInactive;
++        SP<Config::Values::CColorValue>      barColor, textColor, inactiveButtonColor, barColorInactive, textColorInactive, buttonHoverColor, buttonPressedColor,
++            buttonHoverText;
+         SP<Config::Values::CIntValue>        barHeight;
+         SP<Config::Values::CIntValue>        barTextSize;
+         SP<Config::Values::CFontWeightValue> barTextWeight;
+diff --git a/hyprbars/main.cpp b/hyprbars/main.cpp
+index 50d2030..096ecd8 100644
+--- a/hyprbars/main.cpp
++++ b/hyprbars/main.cpp
+@@ -220,6 +220,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+         makeShared<Config::Values::CColorValue>("plugin:hyprbars:bar_color_inactive", "Bar color of a window without focus. 0x00000000 means unset (bar_color)", 0x00000000);
+     g_pGlobalState->config.textColorInactive =
+         makeShared<Config::Values::CColorValue>("plugin:hyprbars:col.text_inactive", "Title color of a window without focus. 0x00000000 means unset (col.text)", 0x00000000);
++    g_pGlobalState->config.buttonHoverColor =
++        makeShared<Config::Values::CColorValue>("plugin:hyprbars:button_hover_color", "Color of the button under the pointer. 0x00000000 means unset", 0x00000000);
++    g_pGlobalState->config.buttonPressedColor = makeShared<Config::Values::CColorValue>(
++        "plugin:hyprbars:button_pressed_color", "Color of the button pressed under the pointer. 0x00000000 means unset (button_hover_color)", 0x00000000);
++    g_pGlobalState->config.buttonHoverText = makeShared<Config::Values::CColorValue>(
++        "plugin:hyprbars:col.button_hover_text", "Glyph color on the hovered button. 0x00000000 means unset (the button's own)", 0x00000000);
+     g_pGlobalState->config.barHeight       = makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_height", "Change the bar's height", 15);
+     g_pGlobalState->config.barTextSize     = makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_text_size", "Change the bar's text size", 10);
+     g_pGlobalState->config.barTextWeight   = makeShared<Config::Values::CFontWeightValue>("plugin:hyprbars:bar_text_weight", "Bar's title text weight (e.g. \"bold\" or an integer 100-1000)", 400);
+@@ -243,6 +249,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.inactiveButtonColor);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barColorInactive);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.textColorInactive);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.buttonHoverColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.buttonPressedColor);
++    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.buttonHoverText);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barHeight);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTextSize);
+     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barTextWeight);

@@ -36,6 +36,7 @@ Verify (`wol_core::package::verify`): order and names exact, no duplicates, ever
  "targets":[{"abi":"freebsd-native","arch":"amd64","entry":"bin/raider"}]}
 ```
 
+- `targets[].abi` is `freebsd-native` for a program built for WolOS itself: the name is a historic wire value of the schema (`shared::bundle::Abi`), kept so older `.wol` files stay valid; the resolver treats it as the native target. `arch` is the machine name (`amd64`).
 - `version` = the pacman version of `payload.pkg` (`pkgver-pkgrel`); `package` = its pkgname; `icon` = icon theme name.
 - `categories`: `Create` `Work` `Play` `Develop`. `capabilities`: `shared::package::CAPABILITIES` (declared, shown, not enforced).
 - Entries are relative to `/usr`. The payload installs the same bytes at `share/wolos/packages/<id>/Info.json`.
@@ -45,7 +46,7 @@ Verify (`wol_core::package::verify`): order and names exact, no duplicates, ever
 | Key | Form |
 |---|---|
 | private (CI secret `WOL_SIGNING_KEY`) | PEM PKCS#8 Ed25519: `openssl genpkey -algorithm ed25519 -out wol-packages.key` |
-| public (`/usr/local/share/wolos/keys/<name>.pub`) | PEM SPKI: `openssl pkey -in wol-packages.key -pubout -out wol-packages.pub` |
+| public (`/usr/share/wolos/keys/<name>.pub`) | PEM SPKI: `openssl pkey -in wol-packages.key -pubout -out wol-packages.pub` |
 
 ## Index
 
@@ -58,6 +59,8 @@ Files: Release `<package>-<version>`, asset `<package>-<version>.wol`.
  "url":"https://github.com/wonderlandos/wol-packages/releases/download/raider-3.1.0/raider-3.1.0.wol",
  "sha256":"…","size":123456,"signed":true}]}
 ```
+
+`abi` is a label kept from the first index format (`FreeBSD:15:amd64` in published files); the client reads it and does not check it. The checks that count are the sha256, the size and the signature.
 
 ## Commands
 

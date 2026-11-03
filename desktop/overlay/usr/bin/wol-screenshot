@@ -1,25 +1,52 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# wol-screenshot full|region|clip|window X,Y WxH|record|record-region|stop [--dir D] [--delay N]
-# Prints the saved file's path. Default dir the Desktop (recordings ~/Movies). The banner names
-# the folder and shows the picture as its thumbnail.
-# Recording uses wf-recorder (multimedia/wf-recorder); stop with `stop` or by recording again.
+# wol-screenshot full|screen|region|clip|window X,Y WxH|record|record-region|stop
+#                [--dir D] [--delay N] [--copy]
+# What: screenshots and screen recordings for the hotkeys (hyprland.conf ⇧⌘3/4, Print) and the
+# shell's capture toolbar (crates/shell/src/capture.rs builds this argv; ADR 0031 W5).
+# How: grim (picture), slurp (pick a region), wf-recorder (video), wl-copy (clipboard). A
+# picture is saved to the Desktop (or --dir), copied to the clipboard, and its path printed on
+# stdout; with --copy it only goes to the clipboard and nothing is printed. `clip` is region
+# with --copy. Recordings go to ~/Movies; `stop` (or recording again) ends one and prints it.
+# The banner names the folder and shows the picture as its thumbnail (WOL_SCREENSHOT_QUIET=1:
+# no banner, the shell shows its own thumbnail). Exit 0 also when the person cancels a region;
+# 64 on a usage error.
+# `test -O` (owned by us, for the recorder's pid file) is in FreeBSD sh and dash, not in POSIX.
+# shellcheck disable=SC3067
 set -eu
+usage() {
+	echo "usage: wol-screenshot full|screen|region|clip|window X,Y WxH|record|record-region|stop [--dir D] [--delay N] [--copy]" >&2
+	exit 64
+}
 mode=${1:-full}; [ $# -gt 0 ] && shift
 geom=
-if [ "$mode" = window ]; then geom="$1 $2"; shift 2; fi
-dir= delay=0
+if [ "$mode" = window ]; then
+	[ $# -ge 2 ] || usage
+	# grim -g "X,Y WxH": digits only (a window can sit at a negative offset on a second display).
+	case "$1" in *[!0-9,-]* | *,*,* | ,* | *,) usage ;; *,*) ;; *) usage ;; esac
+	case "$2" in *[!0-9x]* | *x*x* | x* | *x) usage ;; *x*) ;; *) usage ;; esac
+	geom="$1 $2"; shift 2
+fi
+dir='' delay=0 copy=''
 while [ $# -gt 0 ]; do
 	case $1 in
-	--dir) dir=$2; shift 2 ;;
-	--delay) delay=$2; shift 2 ;;
+	--dir) [ $# -ge 2 ] || usage; dir=$2; shift 2 ;;
+	--delay) [ $# -ge 2 ] || usage; delay=$2; shift 2 ;;
+	--copy) copy=1; shift ;;
 	*) echo "wol-screenshot: unknown option $1" >&2; exit 64 ;;
 	esac
 done
-pidf=${XDG_RUNTIME_DIR:-/tmp}/wol-record.pid
+case $delay in *[!0-9]* | '') usage ;; esac
+[ "$mode" = clip ] && { mode=region; copy=1; }
+[ "$mode" = screen ] && mode=full
+# The recorder pid lives in the per-user runtime dir only: a fixed name in a shared /tmp could
+# be planted by another account (audit C6-5). No runtime dir: recording is refused.
+run=${XDG_RUNTIME_DIR:-}
+pidf=${run:+"$run/wol-record.pid"}
 stamp=$(date '+%Y-%m-%d at %H.%M.%S')
 stop() {
 	pid=$(cut -d' ' -f1 "$pidf"); f=$(cut -d' ' -f2- "$pidf")
+	# Harmless: the recorder may have exited on its own already.
 	kill -INT "$pid" 2>/dev/null || true
 	while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
 	rm -f "$pidf"
@@ -27,25 +54,47 @@ stop() {
 	echo "$f"; exit 0
 }
 case $mode in
-record|record-region|stop) [ -f "$pidf" ] && stop; [ "$mode" = stop ] && exit 0
-	dir=${dir:-$HOME/Movies}; mkdir -p "$dir"; f="$dir/Screen Recording $stamp.mp4"
+record|record-region|stop)
+	if [ -z "$run" ] || [ ! -d "$run" ] || [ ! -O "$run" ]; then
+		echo "wol-screenshot: XDG_RUNTIME_DIR is not set to your own folder; cannot record" >&2; exit 1
+	fi
+	# A pid file that is not ours is never trusted (never signal what it names).
+	if [ -f "$pidf" ]; then [ -O "$pidf" ] && stop; rm -f "$pidf"; fi
+	[ "$mode" = stop ] && exit 0
+	dir=${dir:-"$HOME/Movies"}; mkdir -p "$dir"; f="$dir/Screen Recording $stamp.mp4"
 	g=; [ "$mode" = record-region ] && { g=$(slurp) || exit 0; }
 	sleep "$delay"
 	if [ -n "$g" ]; then wf-recorder -g "$g" -f "$f" >/dev/null 2>&1 & else wf-recorder -f "$f" >/dev/null 2>&1 & fi
 	echo "$! $f" > "$pidf"; exit 0 ;;
+full|region|window) ;;
+*) usage ;;
 esac
-dir=${dir:-${XDG_DESKTOP_DIR:-$HOME/Desktop}}
+# grim's -g argument for this mode; empty = every display.
+g=
+case $mode in
+region) g=$(slurp) || exit 0 ;;
+window) g=$geom ;;
+esac
+sleep "$delay"
+shoot() {
+	if [ -n "$g" ]; then grim -g "$g" "$1"; else grim "$1"; fi
+}
+if [ -n "$copy" ]; then
+	# wl-copy stays running to serve the clipboard: keep it off our stdout (callers read to EOF).
+	shoot - | wl-copy -t image/png >/dev/null 2>&1
+	[ -n "${WOL_SCREENSHOT_QUIET:-}" ] || notify-send -a Screenshot 'Copied to clipboard'
+	exit 0
+fi
+desk=${XDG_DESKTOP_DIR:-"$HOME/Desktop"}
+dir=${dir:-"$desk"}
 mkdir -p "$dir"
 f="$dir/Screenshot $stamp.png"
-case $mode in
-full) sleep "$delay"; grim "$f" ;;
-window) sleep "$delay"; grim -g "$geom" "$f" ;;
-region) g=$(slurp) || exit 0; sleep "$delay"; grim -g "$g" "$f" ;;
-clip) g=$(slurp) || exit 0; grim -g "$g" - | wl-copy -t image/png >/dev/null 2>&1; notify-send -a Screenshot 'Copied to clipboard'; exit 0 ;;
-*) echo "usage: wol-screenshot full|region|clip|window X,Y WxH|record|record-region|stop [--dir D] [--delay N]" >&2; exit 64 ;;
-esac
-# wl-copy stays running to serve the clipboard: keep it off our stdout (callers read to EOF).
-wl-copy -t image/png < "$f" >/dev/null 2>&1
+shoot "$f"
+# The file is saved: a clipboard or banner failure is reported, not fatal, so the path still
+# prints (audit5 S9-6: the capture toolbar reads it for its thumbnail).
+wl-copy -t image/png < "$f" >/dev/null 2>&1 ||
+	echo "wol-screenshot: not copied to the clipboard" >&2
 [ -n "${WOL_SCREENSHOT_QUIET:-}" ] ||
-	notify-send -a Screenshot -i wolos-photos -h "string:image-path:$f" "Screenshot saved to ${dir##*/}"
+	notify-send -a Screenshot -i wolos-photos -h "string:image-path:$f" "Screenshot saved to ${dir##*/}" ||
+	echo "wol-screenshot: no banner shown" >&2
 echo "$f"

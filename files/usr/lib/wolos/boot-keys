@@ -5,7 +5,7 @@
 # shipped: every machine has its own. With a TPM the private parts rest encrypted to that TPM and
 # exist in clear only in RAM while signing; without one they rest in a root-only directory, on the
 # encrypted volume when the disk is encrypted.
-#   boot-keys create     generate them (nothing happens when they exist)
+#   boot-keys create     generate them (nothing happens when the whole set exists; a half set is made again)
 #   boot-keys open       decrypt to RAM, print the directory
 #   boot-keys close      wipe it
 # Env: WOLOS_SB_DIR (/var/lib/wolos/secureboot), WOLOS_SB_RUN (/run/wolos/sb), WOLOS_TPM_DIR.
@@ -20,41 +20,76 @@ ram() { # never swapped, never on a disk
   mkdir -p "$RUN"
   mountpoint -q "$RUN" 2>/dev/null || mount -t ramfs -o mode=700 ramfs "$RUN" 2>/dev/null || :
 }
+# FUNCTION on every private key's name in turn; stops at the first that fails.
+each() {
+  for f in $PRIV; do "$1" "$f" || return 1; done
+}
+# Kept: encrypted to the TPM, or plain.
+held() { [ -s "$S/$1.cred" ] || [ -s "$S/$1" ]; }
+# The whole set: three certificates, db in DER, the policy's public key and every private key. A
+# run that stopped halfway is not a set (audit5 C9-3).
+whole_set() {
+  for f in PK.crt KEK.crt db.crt db.der tpm2-pcr-public.pem; do [ -s "$S/$f" ] || return 1; done
+  each held
+}
+wipe_one() { [ ! -f "$RUN/$1" ] || shred -u "$RUN/$1" 2>/dev/null || rm -f "$RUN/$1" || :; }
+wipe() { each wipe_one; }
+# A new key at rest, next to the set being made ($new).
+seal_one() {
+  if [ -n "$tpm" ]; then
+    systemd-creds encrypt --with-key=tpm2 --name="$1" "$RUN/$1" "$new/$1.cred"
+  else
+    cp "$RUN/$1" "$new/$1"
+  fi
+}
+drop_one() { rm -f "$S/$1" "$S/$1.cred"; }
+open_one() {
+  [ ! -f "$RUN/$1" ] || return 0
+  if [ -f "$S/$1.cred" ]; then
+    systemd-creds decrypt --with-key=tpm2 --name="$1" "$S/$1.cred" "$RUN/$1"
+  elif [ -f "$S/$1" ]; then
+    cp "$S/$1" "$RUN/$1"
+  else
+    echo "boot-keys: $1 is missing in $S (run boot-keys create)" >&2; return 1
+  fi
+}
 case ${1:-} in
 create)
-  [ ! -f "$S/db.crt" ] || exit 0
+  ! whole_set || exit 0
   mkdir -p "$S"; ram
+  # Made next to $S, moved in only when everything is there; db.crt (what older runs tested) last.
+  new=$(mktemp -d "$S.new.XXXXXX")
+  # Whatever the end: the temp folder goes and the clear private keys leave RAM (open decrypts them
+  # again when they are needed). A signal ends the run through the same path.
+  trap 'rm -rf "${new:?}"; wipe' EXIT
+  trap 'exit 1' HUP INT TERM
   for n in PK KEK db; do
     openssl req -new -x509 -newkey rsa:2048 -nodes -days 7300 -sha256 -subj "/CN=WolOS $n/" \
-      -keyout "$RUN/$n.key" -out "$S/$n.crt" 2>/dev/null
+      -keyout "$RUN/$n.key" -out "$new/$n.crt" 2>/dev/null
   done
-  openssl x509 -in "$S/db.crt" -outform der -out "$S/db.der"
+  openssl x509 -in "$new/db.crt" -outform der -out "$new/db.der"
   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$RUN/tpm2-pcr-private.pem" 2>/dev/null
-  openssl pkey -in "$RUN/tpm2-pcr-private.pem" -pubout -out "$S/tpm2-pcr-public.pem" 2>/dev/null
-  for f in $PRIV; do
-    if [ -n "$tpm" ]; then
-      systemd-creds encrypt --with-key=tpm2 --name="$f" "$RUN/$f" "$S/$f.cred"
-    else
-      cp "$RUN/$f" "$S/$f"
-    fi
+  openssl pkey -in "$RUN/tpm2-pcr-private.pem" -pubout -out "$new/tpm2-pcr-public.pem" 2>/dev/null
+  each seal_one || exit 1
+  each drop_one   # a half set from an earlier run
+  rm -f "$S/db.crt"
+  for f in "$new"/*; do
+    [ "${f##*/}" = db.crt ] || mv -f "$f" "$S/"
   done
+  mv -f "$new/db.crt" "$S/db.crt"
+  whole_set || { echo "boot-keys: the key set in $S is incomplete" >&2; exit 1; }
   ;;
 open)
   ram
-  for f in $PRIV; do
-    [ ! -f "$RUN/$f" ] || continue
-    if [ -f "$S/$f.cred" ]; then
-      systemd-creds decrypt --with-key=tpm2 --name="$f" "$S/$f.cred" "$RUN/$f"
-    elif [ -f "$S/$f" ]; then
-      cp "$S/$f" "$RUN/$f"
-    fi
-  done
+  # A key that could not be opened (missing, the TPM refused): none stay in RAM, the caller has no
+  # directory to close.
+  trap '[ "$?" -eq 0 ] || wipe' EXIT
+  trap 'exit 1' HUP INT TERM
+  each open_one || exit 1
   echo "$RUN"
   ;;
 close)
-  for f in $PRIV; do
-    [ ! -f "$RUN/$f" ] || shred -u "$RUN/$f" 2>/dev/null || rm -f "$RUN/$f"
-  done
+  wipe
   ;;
 *) echo "usage: boot-keys create|open|close" >&2; exit 64 ;;
 esac

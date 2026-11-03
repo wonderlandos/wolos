@@ -1,5 +1,5 @@
 # 0014 - the power source picks the profile
-Status: accepted
+Status: accepted. The policy stands; its old-base triggers and knobs (the device daemon, rc scripts, `powerd`, the suspend hook) are superseded by 0016: udev runs `wol power apply` on AC changes, systemd at boot and resume, and the systemd-sleep hook locks first (docs/modules/power.md).
 Context: Low Power Mode used to set powerd flags, which did nothing on Speed Shift CPUs (powerd is off there), and nothing changed when the charger was unplugged. A laptop should follow its power source without being asked; the user only overrides.
 Decision:
 - One pure policy (`wol_core::power::policy`): read-only facts (power source, CPU driver, idle states, Wi-Fi interfaces, S3) and the saved mode (auto, low, high) produce one plan of fixed argv. `wol power apply` runs it from devd (AC changes, priority above power_profile), rc.d at boot and resume, and wol-admind after a mode change. Nothing is set that the machine lacks.

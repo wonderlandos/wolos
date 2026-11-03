@@ -446,7 +446,7 @@ pub unsafe extern "C" fn wopkg_history(
     })
 }
 
-/// Record a change the caller made (Flatpak, AUR, recipe); `out` = its id.
+/// Record a change the caller made (Flatpak, community package, recipe); `out` = its id.
 /// # Safety
 /// Pointers as documented in `wopkg.h`.
 #[unsafe(no_mangle)]
@@ -516,7 +516,117 @@ struct PlanReq {
     paused: Option<bool>,
 }
 
-pub const FEEDS: &str = "https://wonderlandos.github.io/releases";
+/// Release feed base: `<channel>.json` and `<channel>.json.sig` of every channel are assets of the
+/// latest wolos-packages release (each publication uploads them all again, so `latest` always holds
+/// every channel). GitHub answers with a redirect to the asset; `fetch` follows it.
+pub const FEEDS: &str = "https://github.com/wonderlandos/wolos-packages/releases/latest/download";
+
+/// Largest `<channel>.json` release feed read.
+pub const MAX_FEED: u64 = 4 << 20;
+/// An Ed25519 signature file.
+const MAX_SIG: u64 = 64;
+
+/// Checks a feed pair: signature, format and channel, then freshness against the highest serial
+/// accepted for this channel (audit C6-2: never older than seen, never past its `expires`).
+fn checked_feed(
+    text: &[u8],
+    sig: &[u8],
+    keys: &[[u8; 32]],
+    channel: &str,
+    last: u64,
+) -> Result<release::Feed> {
+    let f = release::Feed::verify(text, sig, keys)?;
+    if f.channel != channel {
+        return Err(Error::untrusted("The release list is for another channel."));
+    }
+    release::check_fresh(
+        "release list",
+        f.serial,
+        f.expires,
+        last,
+        release::unix_now(),
+    )?;
+    Ok(f)
+}
+
+/// The channel feed: `<base>/<channel>.json` and `.json.sig` fetched into memory (bounded,
+/// conditional on the stored validators), checked as a pair, and only then written over the cache
+/// with their validators (audit C10-2). A download that fails or does not check leaves the cached
+/// pair as it was, and the cached pair is used when it still checks (it expires too); otherwise
+/// the error is returned. The highest serial accepted per channel is kept in the state dir, which
+/// outlives the cache.
+fn release_feed(c: &context::Context, base: &str, channel: &str) -> Result<release::Feed> {
+    let keys = wol_core::package::read_keys(&c.keys);
+    let dir = c.cache.join("releases");
+    let feed = dir.join(format!("{channel}.json"));
+    let sig = dir.join(format!("{channel}.json.sig"));
+    let seen = c.state.join(format!("release-{channel}.serial"));
+    let last = std::fs::read_to_string(&seen)
+        .ok()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    let read = shared::bounded::read_file;
+    let old = (read(&feed, MAX_FEED), read(&sig, MAX_SIG));
+    let have_pair = old.0.is_some() && old.1.is_some();
+    // Validators count only while the whole pair is cached.
+    let tag = |p: &std::path::Path| {
+        have_pair
+            .then(|| std::fs::read_to_string(fetch::tag_path(p)).ok())
+            .flatten()
+    };
+    let got = fetch::get_conditional(
+        &c.net,
+        &format!("{base}/{channel}.json"),
+        tag(&feed).as_deref(),
+        MAX_FEED,
+    )
+    .and_then(|f| {
+        let s = fetch::get_conditional(
+            &c.net,
+            &format!("{base}/{channel}.json.sig"),
+            tag(&sig).as_deref(),
+            MAX_SIG,
+        )?;
+        Ok((f, s))
+    });
+    let use_cached = |e: Error| match &old {
+        (Some(t), Some(s)) => checked_feed(t, s, &keys, channel, last).map_err(|_| e),
+        _ => Err(e),
+    };
+    let fresh = got.and_then(|(gf, gs)| {
+        let pick = |g: &fetch::Got, o: &Option<Vec<u8>>| match g {
+            fetch::Got::Body { bytes, .. } => Some(bytes.clone()),
+            fetch::Got::NotModified => o.clone(),
+        };
+        let (Some(t), Some(s)) = (pick(&gf, &old.0), pick(&gs, &old.1)) else {
+            return Err(Error::unavailable("The release list cannot be read."));
+        };
+        let f = checked_feed(&t, &s, &keys, channel, last)?;
+        Ok((f, [(sig.clone(), s, gs), (feed.clone(), t, gf)]))
+    });
+    let f = match fresh {
+        Ok((f, files)) => {
+            let cant = || Error::unavailable("The release list cannot be saved.");
+            std::fs::create_dir_all(&dir).map_err(|_| cant())?;
+            for (path, bytes, g) in files {
+                if let fetch::Got::Body { validator, .. } = g {
+                    let tp = fetch::tag_path(&path);
+                    let _ = std::fs::remove_file(&tp);
+                    shared::atomic::atomic_write(&path, 0o644, &bytes).map_err(|_| cant())?;
+                    if let Some(v) = validator {
+                        let _ = shared::atomic::atomic_write(&tp, 0o644, v.as_bytes());
+                    }
+                }
+            }
+            f
+        }
+        Err(e) => use_cached(e)?,
+    };
+    if f.serial > last && std::fs::create_dir_all(&c.state).is_ok() {
+        let _ = shared::atomic::atomic_write(&seen, 0o644, f.serial.to_string().as_bytes());
+    }
+    Ok(f)
+}
 
 pub fn release_plan(c: &context::Context, body: &str) -> Result<serde_json::Value> {
     let r: PlanReq = if body.trim().is_empty() {
@@ -565,26 +675,7 @@ pub fn release_plan(c: &context::Context, body: &str) -> Result<serde_json::Valu
             .is_some_and(|until| until > now)
     });
     let base = r.base_url.unwrap_or(FEEDS.into());
-    let dir = c.cache.join("releases");
-    let (feed, sig) = (
-        dir.join(format!("{channel}.json")),
-        dir.join(format!("{channel}.json.sig")),
-    );
-    for (url, dest) in [
-        (format!("{base}/{channel}.json"), &feed),
-        (format!("{base}/{channel}.json.sig"), &sig),
-    ] {
-        if let Err(e) = fetch::conditional(&c.net, &url, dest)
-            && !dest.exists()
-        {
-            return Err(e);
-        }
-    }
-    let text =
-        std::fs::read(&feed).map_err(|_| Error::unavailable("The release list cannot be read."))?;
-    let s =
-        std::fs::read(&sig).map_err(|_| Error::untrusted("The release list has no signature."))?;
-    let f = release::Feed::verify(&text, &s, &wol_core::package::read_keys(&c.keys))?;
+    let f = release_feed(c, &base, &channel)?;
     let p = release::plan(&release::Inputs {
         current: &current,
         feed: &f,
@@ -630,6 +721,17 @@ mod tests {
         assert_eq!(wopkg_version(), 0x01_00_00);
     }
 
+    /// The default feed is the latest wolos-packages release's assets (`<channel>.json` and
+    /// `.json.sig` appended), over TLS, with no trailing slash to double.
+    #[test]
+    fn default_feed_is_the_latest_release_assets() {
+        assert_eq!(
+            FEEDS,
+            "https://github.com/wonderlandos/wolos-packages/releases/latest/download"
+        );
+        assert!(FEEDS.starts_with("https://") && !FEEDS.ends_with('/'));
+    }
+
     #[test]
     fn release_plan_from_a_signed_feed() {
         let d = testutil::temp("plan");
@@ -657,5 +759,104 @@ mod tests {
         assert_eq!(p["target"]["version"], "1.1.0-beta.2");
         let bad = body.replace("beta\",\"current", "canary\",\"current");
         assert!(release_plan(&c, &bad).is_err());
+    }
+    /// C6-2 / C10-2: a feed is checked as a pair before it replaces the cache. A bad, oversized,
+    /// mismatched, other-channel, older or expired copy leaves the good cached pair and its
+    /// validators as they were; with no good cache the error is returned.
+    #[test]
+    fn a_bad_feed_never_replaces_the_good_cached_one() {
+        use testutil::Served;
+        let d = testutil::temp("plan-guard");
+        let seed = [5u8; 32];
+        std::fs::create_dir_all(d.join("keys")).unwrap();
+        std::fs::write(
+            d.join("keys/wolos.pub"),
+            wol_core::package::public_pem(&wol_core::package::public_of(&seed)),
+        )
+        .unwrap();
+        let feed = |channel: &str, serial: u64, expires: u64| {
+            format!(
+                concat!(
+                    r#"{{"format":1,"channel":"{channel}","serial":{serial},"expires":{expires},"#,
+                    r#""releases":[{{"version":"1.1.0","manifest":"{{}}","signature":"00"}}]}}"#,
+                ),
+                channel = channel,
+                serial = serial,
+                expires = expires,
+            )
+            .into_bytes()
+        };
+        let sign = |t: &[u8]| Served::bytes(wol_core::package::sign(&seed, t).to_vec());
+        let good = feed("stable", 5, 0);
+        let older = feed("stable", 4, 0);
+        let expired = feed("stable", 9, 1);
+        let other = feed("beta", 9, 0);
+        let newer = feed("stable", 6, 0);
+        let mut tampered = good.clone();
+        tampered[3] ^= 1;
+        let srv = testutil::serve(vec![
+            ("/g/stable.json", Served::bytes(good.clone()).etag("\"g\"")),
+            ("/g/stable.json.sig", sign(&good).etag("\"gs\"")),
+            ("/tampered/stable.json", Served::bytes(tampered)),
+            ("/tampered/stable.json.sig", sign(&good)),
+            (
+                "/big/stable.json",
+                Served::bytes(vec![b' '; MAX_FEED as usize + 1]),
+            ),
+            ("/big/stable.json.sig", sign(&good)),
+            ("/pair/stable.json", Served::bytes(newer.clone())),
+            ("/pair/stable.json.sig", sign(&good)),
+            ("/other/stable.json", Served::bytes(other.clone())),
+            ("/other/stable.json.sig", sign(&other)),
+            ("/old/stable.json", Served::bytes(older.clone())),
+            ("/old/stable.json.sig", sign(&older)),
+            ("/exp/stable.json", Served::bytes(expired.clone())),
+            ("/exp/stable.json.sig", sign(&expired)),
+            ("/new/stable.json", Served::bytes(newer.clone())),
+            ("/new/stable.json.sig", sign(&newer)),
+        ]);
+        let mut c = appimage::tests::ctx(&d);
+        c.keys = d.join("keys");
+        let cache = c.cache.join("releases");
+        let at = |base: &str| release_feed(&c, &srv.url(base), "stable");
+        assert_eq!(at("/g").unwrap().serial, 5);
+        let snapshot = || {
+            [
+                "stable.json",
+                "stable.json.sig",
+                "stable.json.etag",
+                "stable.json.sig.etag",
+            ]
+            .map(|n| std::fs::read(cache.join(n)).unwrap())
+        };
+        let before = snapshot();
+        assert_eq!(before[0], good);
+        assert_eq!(before[2], b"etag \"g\"");
+        for base in ["/tampered", "/big", "/pair", "/other", "/old", "/exp"] {
+            // The good cached pair is still served, and nothing on disk changed.
+            assert_eq!(at(base).unwrap().serial, 5, "{base}");
+            assert_eq!(snapshot(), before, "{base}");
+        }
+        let left: Vec<String> = std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left.len(), 4, "no temp or part files: {left:?}");
+        // A newer pair replaces it and raises the floor kept in the state dir.
+        assert_eq!(at("/new").unwrap().serial, 6);
+        assert_eq!(std::fs::read(cache.join("stable.json")).unwrap(), newer);
+        assert!(
+            !cache.join("stable.json.etag").exists(),
+            "no validator served"
+        );
+        // Without a cache the error comes through, and the floor outlives the cache.
+        std::fs::remove_dir_all(&cache).unwrap();
+        assert!(at("/old").is_err());
+        assert!(at("/g").is_err(), "serial 5 is below the 6 already seen");
+        assert!(at("/exp").unwrap_err().message.contains("expired"));
+        assert!(at("/other").is_err());
+        assert!(!cache.join("stable.json").exists());
+        assert_eq!(at("/new").unwrap().serial, 6);
     }
 }

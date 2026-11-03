@@ -1,87 +1,146 @@
 # Changelog
 
-## 0.12.0 (unreleased)
-A consolidation release: the same desktop, made solid. Not tagged until wave 2 lands and every
-package is built on our own build farm; then all four repositories are tagged together (ADR 0029).
+## 0.12.0 (2026-11-03)
+The same desktop, made solid, and then grown: a redesigned Settings and Control Center, shell
+plugins and themes you can make yourself, optional modules, and a friendlier installer with Secure
+Boot on the live USB stick. All four repositories are tagged together once every package is built
+on our own build farm and the ISO has passed its VM tests (ADR 0029).
 
-Release and build
-- One build path (ADR 0029): code in `wolos`, recipes in `wolos-pkgbuilds`, the image in `wolos-iso`, the build tool and farm in `wolos-build`; every package is built in a clean chroot and the ISO only from the published repo.
-- The build forge (milestones M1-M3): one build machine with a shared package and compiler cache, a prepared clean chroot and prefetched sources, so a rebuild reuses what did not change.
-- Packages come from a CDN (ADR 0030): the WolOS repo is served by CloudFront with GitHub as the fallback, and the CachyOS x86-64-v3 repos are reached through a redirect to a ranked CachyOS mirror instead of a WolOS copy. To do before the release: remove the last CachyOS republishing paths (the image README and release workflow, the publish workflow, the mirror list and the client's mirror code still name it).
-- The release pins one Arch Linux snapshot date for the whole system (set at release).
-- Version numbers agree: the code is 0.12.0 everywhere.
-
-Installer
-- The US International keyboard (and other layouts with a variant) no longer stops the install at 90%.
-- The installer finds a TPM the same way the encryption step does, so a machine with an old TPM is not offered TPM unlock that then fails.
-- The account password must be long enough before it becomes a disk password.
-- When an install fails you see what failed: every step writes to a log that is kept on the installed system.
-- The live USB stick and disks in use are no longer offered as targets; other systems on a disk are named correctly.
-- Your keyboard layout is applied before you type the start-up (disk) password, so the password you type at start is the one you chose.
-- When WolOS is installed next to Windows, the last page tells you how to choose Windows at start.
-- "Look Again" checks the disks once more after you plug one in or free space.
-- When the installer refuses to go on, the Failed page explains why and what to do.
-- Your recovery key is never written next to the plan the installer keeps in your account.
-- Next to a Windows that uses BitLocker, the installer warns you before Secure Boot changes that Windows will ask once for its BitLocker recovery key, and says how to avoid it; next to Windows it prefers the one-time key screen over replacing the computer's keys.
-- A Windows that is hibernated or was shut down with Fast Startup is refused, so its files cannot be damaged; shut it down fully and try again.
-- You can install WolOS again next to Windows over an earlier WolOS.
-- Next to Windows the clock keeps local time, as Windows does.
-- Other systems on the computer stay in the start menu after the install.
-- The Secure Boot page says in plain words which startup setting to change and what the blue key screen asks.
-- When the recovery key cannot be read at the end of an encrypted install, a page says so and lets you try again before you restart.
-
-Boot and Secure Boot
-- The boot loader menu can no longer be edited at start (`editor no`).
-- On a computer that uses the WolOS key through shim, the next start goes to shim first, so a refused boot entry never shows first; the EFI partition is found by its real number, not assumed to be the first.
-- The state of Secure Boot setup is reported per machine (own keys, MOK, firmware or off); the image's own Secure Boot signing stays off until the WolOS image key exists.
-- On a computer that trusts WolOS only through its firmware keys, Secure Boot switches itself to the stronger setup by itself after the key has been enrolled.
-
-Desktop
+Desktop & apps
+- WolKernel 1:1.0+7.3-5: a rebuild of the same fork tag `wolkernel-1.0-7.3` (no new patches).
+- Control Center has a new tile grid: Battery, Screen Mirroring, Keyboard Brightness, Night Shift, Screenshot, Record, accessibility and Stay Awake, plus tiles from plugins. It gained a Sound page (outputs, inputs, mute) and a Display page (brightness, Night Shift, mirroring).
+- A theme picker (Ctrl+Super+T) shows every installed theme as a preview card. One theme now colours the whole desktop: window borders, the lock screen, the terminal and the prompt in every shell you use. "Theme from your wallpaper" makes one from your picture.
+- `wol-hue` makes a theme from a picture, with sliders, and imports Base16 and colors.toml palettes.
+- Clipboard history (Shift+Super+V) can search, pin and clear, and never keeps one-time codes.
+- Screenshots can go to the clipboard instead of a file (Ctrl+Shift+Super+3 or 4), and a pen lets you mark up a capture. When the clipboard copy fails, the saved file is still named.
+- Web apps: `wol webapp add` opens a site in its own window, with its own launcher and icon.
+- `wol toggle` switches Night Shift, Stay Awake and Silence; `wol remind <minutes> <text>` sets a reminder.
+- The mic-mute key works, and its on-screen sign shows the microphone, not the speaker level. The brightness keys work.
+- The Dock follows your layout settings as the menu bar does: its edge and the order of its items, plugin items included.
+- Shortcuts added by plugins survive a reload of the window manager.
+- Banners held during a full-screen game or video stay gone if you cleared them meanwhile, and desktop widgets pause per display, by that display's own full-screen state.
+- `wol sessions save|restore|list`: terminal windows reopen on their desktops, in their folders, after a restart. With the sessions module, a notification offers it once at login; an empty desktop never overwrites a saved set unless you ask.
 - Control Center no longer closes itself as it opens; Settings opened from a link goes to the right page in the running window.
 - The menu bar keeps the current app's name while a panel has the keyboard; Log Out and Shut Down do different things again.
 - Clicking a running app in the Dock brings its window back instead of starting a second copy.
 - Search no longer says "Search Search" and waits for you to stop typing before it searches.
-- The desktop reconnects to the window server after it restarts, and no shell call to it can freeze the screen.
-- Desktop & Dock lost two controls that did nothing.
+- The desktop reconnects to the window manager after it restarts, and no call to it can freeze the screen.
 - Spaces shortcuts moved to Ctrl+Alt (Ctrl+Alt+1..4 and Ctrl+Alt+arrows), so Ctrl+1..4 and Ctrl+arrows go back to your apps.
-- Shift+Super+V opens clipboard history.
-- Esc no longer starts two helpers at once.
-- Panels no longer close when you switch from one to another.
-- Overview works the first time you open it and brings the window you click to the front.
-- In a narrow window you can bring the Settings sidebar back.
+- Esc and Super no longer start a helper program in every app you use, and Esc no longer starts two helpers at once.
+- Panels no longer close when you switch from one to another, and switching works every time.
+- Overview works the first time you open it, always shows four desktops and brings the window you click to the front.
 - Notification Center has a Clear button and keeps a limited number of notifications.
-- Switching from one panel to another works every time.
 - Banners wait while a game or video is full screen and show after you leave it.
-- Esc and Super no longer start a helper program in every app you use.
-- Overview always shows four desktops.
 - Force Quit and Overview open over full-screen games, and Esc closes them.
-- Desktop widgets written in Lua are stopped when they take too long.
+- Desktop widgets that take too long are stopped.
+- The login window lists only the accounts that can log in.
+- A new icon set: symbolic icons and app icons drawn on one grid, for light and dark.
+- Sound: automatic input level for the microphone really turns on, and microphone volume is set on the device itself.
+- In a virtual machine the pointer stays visible after the window manager reloads.
+
+Settings
+- Settings is redesigned: new navigation, and a search that finds every pane and every row.
+- A new Sound pane: outputs with their codec, a 0 dB mark with Allow Louder, balance, inputs with a level meter, automatic level and noise removal, Bluetooth codec and switching, pro audio rate and buffer, and troubleshooting. Its messages stay until you have read them, and its switches flip back when a change fails.
+- A new Modules pane installs and removes the optional modules.
+- Startup Security (under Privacy & Security) shows how this computer starts and finishes a Secure Boot setup that is waiting.
+- Displays: refresh rate and arrangement can be changed; a mode is saved only after it was applied, and Night Shift is one switch for all displays.
+- Appearance has a Wallpaper row and a row for themes from plugins.
+- Desktop & Dock lost two controls that did nothing; in a narrow window you can bring the sidebar back.
+- Add User refuses names the system reserves.
+- When a save fails, the control goes back to what is saved: Appearance, Desktop & Dock and Keyboard Shortcuts no longer show a change that was not kept, and the automatic-update switches flip back when the change failed or could not be made.
+- Software Update and "Theme from your wallpaper" read and decode in the background, so the window no longer stalls while they work.
+- Search: Return opens the subpage that has the row, and every Displays row can be found.
+- Keyboard Shortcuts: Restore Defaults also hides the Reset button on every row.
+- Modules: a list that cannot be read says so instead of "No modules are available", and each module runs one job at a time.
+- Startup Security: Finish Setup runs once and the facts on the page are read again afterwards.
+- Appearance: the accent swatches follow light and dark.
+
+Store & plugins
+- Shell plugins: a plugin can add menu bar and Dock items, desktop widgets, Control Center tiles, search results, shortcuts, themes and web-app launchers. Each runs in a sandbox with time and size limits, and a plugin that keeps failing is turned off.
+- A plugin's tiles, Dock items and shortcuts run commands only after you allow it to.
+- The Store has a Plugins page (from the signed plugin index) and a Kits page: one click for the media formats (MP3, AAC, H.264, HEVC, AC3 and fonts) or for the creative suite.
+- Plugin Maker: make a plugin or a theme and see it live. The editor shows problems as you type, a sandboxed preview runs it on the menu bar, Dock, desktop and Control Center, Theme Studio has colour sliders with live contrast checks, and Create Package and Share prepare it for the plugin index. Open it from Settings > Appearance or Store > Plugins.
+- `wol plugin add` installs a plugin from a folder or a `.wolplug` file. `wol plugin check`, `new` and `pack` no longer run a plugin's code with real permissions.
+- A plugin's web requests cannot be redirected to another host, its notifications are rate limited, and the `org.wolos` id is reserved.
+- Optional modules: AI, local AI, sessions, developer, creative, gaming and console. The installer installs the ones you tick while online, and first boot installs the rest in the background, the local AI graphics backend chosen for your machine, without asking for the password again.
+- A module that cannot install is given up after five tries instead of being retried at every start; removing a module also removes what it added.
+- The console module brings a themed prompt, pickers for files, commits and variables, faster folder jumping and listing, the same keys and colours in every shell, and system defaults for the terminal multiplexer and the tool version manager.
+- The AI module brings WolOS managed settings for Claude Code (`wol mcp` allowed, sudo and friends denied) and a WolOS skill for writing and checking plugins; they come with the module, not with every system.
+- Applying a theme keeps your own linked dotfiles.
+- The Store Plugins page can remove a plugin it installed.
+- Kits that are already installed show Added instead of Get.
+- Plugin Maker: Create Package asks you to save first instead of packing old files; Theme Studio never overwrites another theme with the same name; Create Plugin leaves no half-written folder after a write error; the preview's sandbox is cleaned up when the app closes; planned plugin kinds are not offered.
+
+Installer & boot
+- The live USB stick boots with Secure Boot on: the first start asks once to enrol the WolOS key from the stick.
+- The installer explains every page in plain words: what will happen, what is kept, and what Secure Boot means. Secure Boot is a step you choose, with a picture of the one-time key screen.
+- New pages for the optional modules and for extras such as media formats and fonts (one click, off by default).
+- Offline, the summary says which media formats and modules are added later, at first start with a network, instead of promising exactly what will happen.
+- Modules and media formats queued while offline install as soon as the network comes up, on Wi-Fi too, instead of at a later restart.
+- The US International keyboard (and other layouts with a variant) no longer stops the install at 90%.
+- The installer finds a TPM the same way the encryption step does, so a machine with an old TPM is not offered TPM unlock that then fails.
+- The account password must be long enough before it becomes a disk password.
+- When an install fails you see what failed: every step writes to a log that is kept on the installed system. When the installer refuses to go on, the Failed page explains why and what to do.
+- Password files are removed when an install stops, and your recovery key is never written next to the plan the installer keeps in your account.
+- The live USB stick and disks in use are no longer offered as targets; other systems on a disk are named correctly.
+- Your keyboard layout is applied before you type the start-up (disk) password, so the password you type at start is the one you chose.
+- "Look Again" checks the disks once more after you plug one in or free space.
+- Next to Windows: the last page tells you how to choose Windows at start, the clock keeps local time as Windows does, other systems stay in the start menu, and you can install again over an earlier WolOS.
+- Next to a Windows that uses BitLocker, the installer warns you before Secure Boot changes that Windows will ask once for its BitLocker recovery key, and says how to avoid it.
+- A Windows that is hibernated or was shut down with Fast Startup is refused, so its files cannot be damaged; shut it down fully and try again.
+- When the recovery key cannot be read at the end of an encrypted install, a page says so and lets you try again before you restart.
+- The boot loader menu can no longer be edited at start.
+- On a computer that uses the WolOS key through the signed first-stage loader, the next start goes to that loader first, and the startup partition is found by its real number. When the boot loader update fails on a shared startup partition, the other system's loader is put back.
+- On a computer that trusts WolOS only through its firmware keys, Secure Boot switches itself to the stronger setup after the key has been enrolled.
+- A clock set in the future no longer stops update checks.
 
 Security
-- Apps talking to the system service are identified the moment they connect, and the two sides confirm each other with a handshake before any request, so a program can no longer borrow another program's permissions.
-- A permission to change packages is now a permission to ask: every change made as root shows a sheet on your screen, and nothing happens until you confirm it.
+- Apps talking to the system service are identified the moment they connect, and both sides confirm each other with a handshake before any request, so a program can no longer borrow another program's permissions.
+- A permission to change packages is a permission to ask: every change made as root shows a sheet on your screen, and nothing happens until you confirm it. Installing a package file, rolling back the system and switching the update channel ask for the administrator password.
 - The most sensitive actions (accounts, remote login, firewall, permissions, boot environments) always ask for your password, even right after you typed it.
-- Every command the system runs as root starts with a clean environment, so settings an app left behind cannot change what it does.
+- Helpers (`wol mcp`) are named on the sheet together with the program that started them, and an Always Allow holds only for that program. A helper that adds or removes a web app, turns on a module or saves or reopens a session asks every time, and a reminder or notification shows its full text before you allow it.
+- Every command the system runs as root starts with a clean environment, root logins too.
 - System services run in a sandbox by default and see only what they need.
 - Everything read from files, sockets and plugins has limits on size and depth, and the readers are fuzz-tested.
-- The supply chain is pinned (build actions, container images, package sources) and audited on every change.
-- Coding standards and an independent audit after each change are part of how WolOS is built.
-- The Wonderland Doctrine, our code of conduct, was published.
+- One account can no longer slow down another account's apps, use up the system's sockets for everyone, or stop the system service by naming a terminal.
+- The malware check keeps its memory, its lists and the signatures it loads in a folder only the system may write; the background check and the full-database download (run as their own unprivileged account) can no longer change them. The full database is built by the system only from downloads whose publisher's signature checks. After this update the check rebuilds its memory by looking at files again, and the list of files it stopped before the update is cleared once.
+- The malware check refuses a file it could not scan instead of letting it through. Large files are checked in pieces with a time limit, and files above 1 GiB are answered "not checked yet" until the background check is done. It reads each account's download folder safely and marks only folders inside that account's home.
+- The plugin index and the update feed are signed and carry a serial number, so an old copy cannot be replayed to hold back updates; downloads have size limits and replace the old copy only once verified.
+- A web app's icon is checked, so an approved web app cannot become another command.
 - A program running in your account can no longer answer the system's confirmation sheets for you.
-- Every package change made through pacman asks for your password.
-- The malware check refuses a file it could not scan instead of letting it through; open it again in a moment.
 - `--help` on any `wol` command only shows help and never runs the command.
 - Apps you install after a system update has been prepared, but before you restart into it, are kept when the new system starts.
-- Large downloads are checked for malware in pieces, with a time limit.
-- Admin tools started by the desktop ask through the system service, which names the program asking, before the desktop shows a confirmation.
 - Packages waiting to be installed and pending confirmations have limits, so a program cannot fill memory with them.
-- Package index downloads replace the old index only when complete.
-- Root logins start with a clean environment.
-- The coding standards gained checks that may only get better, never worse: window server calls, user-facing sentences, crash-on-error calls, slow work on the desktop's main thread, Esc handling and style classes.
+- Files are written whole or not at all.
+- The supply chain is pinned (build actions, container images, package sources) and audited on every change.
+- The Wonderland Doctrine, our code of conduct, was published.
 
-Audio
-- Automatic input level for the microphone really turns on.
-- Microphone volume is set on the device itself.
+Packaging & release
+- One build path (ADR 0029): code in `wolos`, recipes in `wolos-pkgbuilds`, the image in `wolos-iso`, the build tool and farm in `wolos-build`; every package is built in a clean chroot and the ISO only from the published repo.
+- The build forge: one build machine with shared package and compiler caches, a reused clean chroot and prefetched sources, so a rebuild builds only what changed; more build boxes can join it.
+- The package repo is ready for a CDN (ADR 0030) with the release host as fallback; the x86-64-v3 repos are reached through a redirect to a ranked mirror instead of a WolOS copy.
+- The release pins one Arch Linux snapshot date for the whole system.
+- Version numbers agree: the code is 0.12.0 everywhere, and a release whose version does not match its tag is refused.
+- A release is signed only after its ISO passed the VM test, and becomes the latest release only once every file is on it.
+- Every stable release publishes the signed update feed that WolOS reads to offer updates.
+- The live image is signed with the WolOS live-image key.
+- Licences: WolOS is GPL-2.0-or-later (libwol BSD-2-Clause); third-party notices ship with the packages that need them.
+
+Developer
+- Coding standards, rule catalogues (docs/RULES.md, RULES-system.md, RULES-ui.md) and an independent audit after each change are part of how WolOS is built. Their checks may only get better, never worse: window manager calls, user-facing sentences, crash-on-error calls, slow work on the desktop's main thread, Esc handling, style classes, unsafe code, system files and UI rules.
+- `wolvm` drives the whole system in a VM step by step: boot the ISO, go through the installer, start the installed disk, open apps, take snapshots and collect the journal (docs/modules/vm-e2e.md).
+- The install tests fail when their checks fail, and they check Secure Boot, the first boot and dual boot for real.
+- Scripts that are run directly are checked to keep their executable bit.
+- Crystal code (the package tool, `wol-hue`, the libwol examples) has its own rule catalogue (docs/RULES-crystal.md): formatter and linter clean, raw memory and C bindings only in listed files, programs run without a shell, network clients with timeouts, input decoded into types, dependencies pinned by commit and counted (none today), and no shard fetched while a package builds. `tools/crystal/lint.sh` runs the tools.
+- Cryswol, the Crystal framework for WolOS apps (`wolos-crystal/shards/cryswol/`, BSD-2-Clause): every libwol call (windows and Kit parts, notifications, menus, clipboard, preferences, file panels, power, network, audio, Search, accounts, messages, devices, sharing, background services) as Crystal objects with exceptions and blocks, opt-in package calls (`require "cryswol/pkg"`), specs against a fake system service; libwol itself now ships as its own package, `libwol` (`libwol.so.1`, `wol.h`, version = ABI version). docs/modules/cryswol.md.
+- Wolkit, the WolOS UI kit, as a preview: libWolkit (`crates/wolkit`, `wolkit.h` and `libwolkit.so.1`, BSD-2-Clause) keeps a scene that apps change with patch streams and styles, lays out and draws it (real text, theme colours, CPU or Vulkan), and shows it in its own window, through the Kit or headless for tests; the `wolkit` Crystal shard puts a declarative DSL, signals and a test harness on top (docs/modules/libwolkit.md, docs/modules/wolkit.md). Apps keep the Kit path until the kit is declared stable.
+
+Known limitations
+- The CDN is not switched on yet: its mirror lines stay commented out until it exists, so packages come from the release host.
+- The update feed does not expire yet (`expires` is 0): only its serial number keeps an old copy out, until a job re-signs the feed regularly.
+- Adding a plugin by its id from the plugin index works only in the Store; `wol plugin add` takes a folder or a `.wolplug` file.
+- `wol jail run` and a codecs module are planned for 0.13.
+- Plugin kinds for looks and window manager rules are planned; `wol plugin check` refuses them for now.
 
 ## 0.11.5
 - VirtualBox (VMSVGA): the desktop starts after install. GTK used GL on the vmwgfx render node, Hyprland rejected its buffers, the shell died and the start-up lock respawned behind a black screen; on vmwgfx WolOS now renders with cairo.
@@ -101,7 +160,7 @@ Audio
 - Virtual machines: VirtualBox, VMware, SPICE and QEMU guest support, each started only under its own hypervisor. In VirtualBox the screen follows the window size (VBoxClient --vmsvga).
 
 ## 0.11.3
-- WolKernel 1:1.0+7.3-4: the series in `kernel/linux/patches` through 0034 (kernel/SERIES.md): futex spinning, prechecks and inline vectors for `futex_waitv`, pipe and semaphore wake paths, SLUB sheaf sizing, ntsync inline waits, large folios cleared on idle CPUs, and the syscall exit fixes. Each has a runtime off switch.
+- WolKernel 1:1.0+7.3-4: the series through 0034 (since moved to the fork, one commit per patch; list: `linux-wolos/SERIES.md` in wolos-pkgbuilds): futex spinning, prechecks and inline vectors for `futex_waitv`, pipe and semaphore wake paths, SLUB sheaf sizing, ntsync inline waits, large folios cleared on idle CPUs, and the syscall exit fixes. Each has a runtime off switch.
 - Arch Linux snapshot 2026-10-31.
 - linux-wolos-headers ships `vmlinux` without debug info (BTF kept), as Arch does: 390 MB less on disk, and the ISO stays one 2 GiB download.
 - Window title strip: follows light and dark. Kit windows show the title once, and strip plus toolbar take 64 px instead of 80.
@@ -209,7 +268,7 @@ Audio
 - Menu bar with no focused window shows no app name and no app/Window menu (was "Files", an app that was not running). Switcher fails closed: it does not open when the compositor does not answer or no window is open (drew "No open windows" over an open window when the Hyprland query failed).
 - Intel graphics (archicture/modules/intel-graphics.md): the offline repo ships i915 DMC/GuC/HuC firmware (gpu-firmware-intel-kmod-alderlake, tigerlake, rocketlake, meteorlake), VA-API iHD (libva-intel-media-driver), vulkan-loader and proof tools (mesa-demos, vulkan-tools, libva-utils, glmark2, vkmark). `/boot/loader.conf.d/wolos-i915.conf` pins the i915 "unsafe" params at driver defaults (GuC off: FreeBSD shutdown hang). `wol-session` now sources `wol-realtime gpu env` (AQ_DRM_DEVICES; `LIBVA_DRIVER_NAME=iHD` on i915/xe). `image/hw/verify-gpu.sh` (also `/usr/local/libexec/wolos/verify-gpu.sh`) writes the native-boot report to /var/log/wolos-gpu-report.txt. test-install.sh uses a scratch `install.raw` and never deletes a kept `disk.raw`.
 - wol-run: Proton output redirected to a file was lost (Proton ntdll closes seekable std handles). Proton targets now relay seekable stdout/stderr through pipes (`tests/relay.rs`). `image/vm/test/compat.sh --iso` packs the compat run for the installed disk.
-- Icons: no SVG `<filter>` in design/icons (grey shadow box behind Files/Notes in GTK, Qt, Firefox). App icon depth is baked as offset translucent copies (`design/tools/gen.py`); store icons stripped with `design/tools/nofilter.py`; `tests/icon_filters.rs` guards it. Avatars are fixed squares centred in their row (were 32x40 pills); the layout check fails any non-square `.avatar`.
+- Icons: no SVG `<filter>` in design/icons (grey shadow box behind Files/Notes in GTK, Qt, Firefox). App icon depth is baked as offset translucent copies (`design/tools/gen.py`); store icons stripped with `design/tools/nofilter.py`; `tests/icon_filters.rs` guarded it until v0.12, replaced by the GTK render check (`design/tools/icons/gtkcheck`, `tests/icons_v2.rs`). Avatars are fixed squares centred in their row (were 32x40 pills); the layout check fails any non-square `.avatar`.
 - Performance (archicture/modules/performance.md, design/tools/perf): status refresh is 1 s only while a panel watches, else 10 s with 60 s TTLs (wol-shell idle 0.27 ms/s, 1.8 wakeups/s); volume keys run `wol shell show osd`, which reads audio on demand; Control Center is a resident shell panel (`wol shell toggle control-center`, Super+A; 27 ms to frame, no growth over 200 opens); vendored `blocking` 1.7.0 lets idle pool threads exit (ADR 0006); `wolos-perf.conf` moved to the overlay and is now sourced; `wol shell` spawns write the shell socket directly; `WOL_SHELL_TIMING` adds dock/wallpaper map and Search per-key times.
 - Menu bar: placeholder File/Edit/View/Go/Help menus removed. The bold app menu has About <App> (shell panel), Settings… (apps that open preferences on Ctrl+,), Hide <App> Super+H, Hide Others Super+Alt+H, Quit <App> Super+Q; the Window menu has Minimise Super+M, Zoom, Fill, Centre, Move to Desktop 1-4. All of them run `wol-app <verb>` (new binary), and the keybinds call the same verbs (Super+Q now closes every window of the app, Super+H hides all of them).
 - No Hyprland nag banners: `wol-session` launches `start-hyprland` (watchdog); fork patch 0003 drops the `.conf` deprecation notice; `misc:disable_hyprland_guiutils_check` (guiutils is not shipped). `WOLOS_SHARE` overrides the defaults dir (live tests).

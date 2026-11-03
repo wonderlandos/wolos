@@ -2,9 +2,9 @@
   "id": "creative",
   "name": "Creative",
   "summary": "Blender, GIMP, Krita, Inkscape, OBS Studio, darktable, Kdenlive, Ardour and Audacity, colour management and a low-latency audio profile",
-  "icon": "wolos-module-creative-symbolic",
+  "icon": "applications-graphics-symbolic",
   "category": "creative",
-  "size_mb": 3500,
+  "size_mb": 1330,
   "packages": [
     "blender",
     "gimp",

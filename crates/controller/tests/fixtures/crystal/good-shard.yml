@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Scanner fixture: a shard.yml with no dependencies, which is what the repo has today.
+name: good
+version: 0.1.0
+crystal: ">= 1.12.0"
+license: GPL-2.0-or-later

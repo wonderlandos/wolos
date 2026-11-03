@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Effects & Looks: how windows look (corners, blur, transparency, borders, shadows, gaps, motion) as
-//! Hyprland keywords in the managed include (`hyprprefs`), and Looks presets that set them all at once.
+//! Compositor keywords in the managed include (`hyprprefs`), and Looks presets that set them all at once.
 //! Presets are data files: shipped in [`SYSTEM_DIR`], the user's own in [`USER_DIR`] (import/export).
 //! [`Looks::default`] equals the shipped hyprland.conf: writing defaults changes nothing.
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ pub const MAX_FILE: u64 = 64 * 1024;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Motion {
-    /// Grow from the centre (macOS-like, the default).
+    /// Grow from the centre (the default).
     #[default]
     Zoom,
     /// Spring past full size and settle.
@@ -131,7 +131,7 @@ pub fn is_color(s: &str) -> bool {
         .is_some_and(|h| matches!(h.len(), 3 | 6 | 8) && h.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
-/// Hyprland colour: `#8b6cff` -> `rgba(8b6cffff)`; None for anything else.
+/// Compositor colour: `#8b6cff` -> `rgba(8b6cffff)`; None for anything else.
 pub fn hypr_color(s: &str) -> Option<String> {
     if !is_color(s) {
         return None;
@@ -157,7 +157,7 @@ fn clamp_f(v: f32, (lo, hi): (f32, f32)) -> f32 {
     }
 }
 
-/// Seconds formatted the way Hyprland reads animation speed (deciseconds, one decimal).
+/// Seconds formatted the way the compositor reads animation speed (deciseconds, one decimal).
 fn ds(base: f32, speed: f32) -> String {
     format!("{:.1}", (base / speed).max(0.1))
 }
@@ -212,7 +212,7 @@ impl Looks {
         self.normalized() == other.normalized()
     }
 
-    /// Hyprland keywords in apply order. Accessibility wins: `reduce_transparency` turns blur off
+    /// Compositor keywords in apply order. Accessibility wins: `reduce_transparency` turns blur off
     /// and windows opaque, `reduce_motion` turns animations off.
     pub fn keywords(
         &self,
@@ -550,9 +550,7 @@ pub fn remove_user(config_home: &Path, id: &str) -> Result<(), PresetError> {
 }
 
 fn write_atomic(p: &Path, text: &str) -> Result<(), PresetError> {
-    let tmp = p.with_extension("tmp");
-    std::fs::write(&tmp, text)
-        .and_then(|_| std::fs::rename(&tmp, p))
+    shared::atomic::atomic_write(p, 0o644, text.as_bytes())
         .map_err(|e| PresetError::Io(e.to_string()))
 }
 
@@ -618,7 +616,7 @@ mod tests {
             .filter_map(|l| l.split('#').next()?.split_once('='))
             .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
             .collect();
-        // Hyprland's own defaults: not in the shipped conf (borders are 0 px wide there).
+        // The compositor's own defaults: not in the shipped conf (borders are 0 px wide there).
         let unset = [
             "dim_inactive",
             "dim_strength",

@@ -35,7 +35,7 @@ pub enum PackageCall {
     /// Update everything except the packages the person pinned.
     #[serde(rename = "package.update-holding")]
     UpdateHolding { hold: Vec<String> },
-    /// A package built on this machine (AUR, recipe): unreviewed, its own grant.
+    /// A package built on this machine (community package, recipe): unreviewed, its own grant.
     #[serde(rename = "package.install-file")]
     InstallFile { path: String },
     /// Move the system to the release in `manifest` (signed `release.json`, ADR 0022).

@@ -126,7 +126,12 @@ impl Event {
                 uid: *uid,
                 pid: *pid,
             },
-            _ => Audience::Everyone,
+            Self::ActiveWindow { .. }
+            | Self::OpenWindow { .. }
+            | Self::CloseWindow { .. }
+            | Self::Workspace { .. }
+            | Self::Theme { .. }
+            | Self::Job { .. } => Audience::Everyone,
         }
     }
 

@@ -1,0 +1,14 @@
+# WolOS mise defaults (ADR 0032 "Pinning"): the system config every user's mise reads first; your
+# ~/.config/mise/config.toml adds to it. Runtimes come from mise, never pacman, and stay pinned:
+# lockfiles on, the registry built into the `mise` package (pinned by the snapshot), no asdf plugins
+# (arbitrary shell), provenance and plugin checks always on, no project config trusted without
+# asking, nothing installed because a command was mistyped.
+[settings]
+lockfile = true
+registry_floating = false
+disable_backends = ["asdf"]
+paranoid = ["plugins", "provenance"]
+trusted_config_paths = []
+not_found_auto_install = false
+slsa = true
+github_attestations = true

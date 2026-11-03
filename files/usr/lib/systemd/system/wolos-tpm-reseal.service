@@ -2,8 +2,13 @@
 Description=Let the security chip unlock the disk again after a start it refused
 Documentation=file:///usr/share/doc/wolos/modules/security.md
 # Only after a start where the password or recovery key was typed: systemd-cryptsetup caches it in
-# root's user keyring ("cryptsetup", about 150 s). `wol encrypt reseal` finds nothing otherwise.
+# root's user keyring ("cryptsetup", about 150 s). `wol encrypt reseal` finds nothing otherwise, and
+# exits 0 on a passphrase-only install (no `tpm2-device` in rd.luks.options): the PCR public key is no
+# marker for that (a TPM disk without Secure Boot has none), so the command line decides, in the binary.
 ConditionKernelCommandLine=rd.luks.name
+# Not after a start the firmware did not measure (see wolos-tpm-bind.service): sealing to that
+# state would make the next good start ask again.
+ConditionSecurity=measured-uki
 After=cryptsetup.target local-fs.target wolos-tpm-bind.service
 Before=wolos-boot-ok.service
 

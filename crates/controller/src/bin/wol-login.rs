@@ -70,12 +70,12 @@ fn main() {
     }
 }
 
-/// ms since boot: CLOCK_MONOTONIC counts from boot on FreeBSD.
+/// ms since boot: CLOCK_MONOTONIC counts from boot (time in suspend excluded).
 fn uptime_ms() -> u64 {
     shared::sys::monotonic_ns() / 1_000_000
 }
 
-/// Boot timeline (ADR 0012): stdout (wold.log), syslog (/var/log/messages) and, when the console is a
+/// Boot timeline (ADR 0012): stdout (wold.log), the journal via logger and, when the console is a
 /// serial port, the console too; never the screen.
 struct Marks {
     timeline: Timeline,
@@ -84,14 +84,12 @@ struct Marks {
 
 impl Marks {
     fn new() -> Self {
-        let console = privileged_command("/sbin/sysctl")
-            .args(["-n", "kern.console"])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default();
         Marks {
             timeline: Timeline::default(),
-            serial: serial_primary(&console),
+            serial: serial_console_at(
+                std::path::Path::new(CONSOLE_ACTIVE),
+                std::path::Path::new(KERNEL_CMDLINE),
+            ),
         }
     }
 
@@ -116,41 +114,37 @@ impl Marks {
     }
 }
 
-/// Before each compositor: ttyv0 black without a cursor (vt(4) shows it whenever no compositor holds
-/// the screen) and Alt+Fn locked, so nothing but WolOS is ever on screen (ADR 0012).
+/// Before each compositor: the console VT black without a cursor (the kernel shows its text
+/// whenever no compositor holds the seat) and VT switching locked, so nothing but WolOS is ever on
+/// screen (ADR 0012).
 fn console_ready() {
-    match std::fs::OpenOptions::new().write(true).open(CONSOLE) {
-        Ok(mut tty) => {
-            let _ = tty.write_all(BLANK_CONSOLE.as_bytes());
-            vt_lock(&tty, true);
-        }
-        Err(e) => eprintln!("wol-login: {CONSOLE}: {e}"),
-    }
+    on_console(true, BLANK_CONSOLE);
 }
 
-/// The console notice: Alt+F2 (recovery getty) must work again.
+/// The console notice, with VT switching unlocked again (no compositor owns the screen).
 fn console_notice_shown(dri: bool, status: &str) {
-    match std::fs::OpenOptions::new().write(true).open(CONSOLE) {
-        Ok(mut tty) => {
-            vt_lock(&tty, false);
-            if let Err(e) = tty.write_all(console_notice(dri, status).as_bytes()) {
-                eprintln!("wol-login: {CONSOLE}: {e}");
-            }
-        }
-        Err(e) => eprintln!("wol-login: {CONSOLE}: {e}"),
+    on_console(false, &console_notice(dri, status));
+}
+
+/// [`console_step`] on the real console VT; no VT at all (a container, a nested compositor) is a
+/// quiet no-op.
+fn on_console(lock: bool, text: &str) {
+    let open = || std::fs::OpenOptions::new().write(true).open(CONSOLE);
+    if let VtStep::Failed(why) = console_step(open, vt_ioctl, lock, text) {
+        eprintln!("wol-login: {CONSOLE}: {why}");
     }
 }
 
-/// No-op where ttyv0 does not exist (the open fails first).
-fn vt_lock(tty: &std::fs::File, lock: bool) {
+/// `VT_LOCKSWITCH` / `VT_UNLOCKSWITCH` on an open descriptor.
+fn vt_ioctl(tty: &std::fs::File, request: libc::c_ulong) -> std::io::Result<()> {
     use std::os::fd::AsRawFd;
-    let arg: libc::c_int = vt_lock_arg(lock);
-    // SAFETY: VT_LOCKSWITCH reads one int from the pointer; the fd is an open vt tty.
-    if unsafe { libc::ioctl(tty.as_raw_fd(), VT_LOCKSWITCH, &arg) } != 0 {
-        eprintln!(
-            "wol-login: VT_LOCKSWITCH: {}",
-            std::io::Error::last_os_error()
-        );
+    debug_assert!(request == VT_LOCKSWITCH || request == VT_UNLOCKSWITCH);
+    // SAFETY: both requests take no argument (the kernel ignores the third one, no pointer is
+    // read); the fd stays open for the call.
+    if unsafe { libc::ioctl(tty.as_raw_fd(), request, 0) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
     }
 }
 
@@ -204,7 +198,7 @@ fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut M
                     "wol-login: greeter exited {st}; retrying with backoff up to {}s (/dev/dri present: {dri})",
                     GreeterRespawn::MAX_DELAY.as_secs()
                 );
-                // Never leave a raw text console: say what is wrong on ttyv0.
+                // Never leave a raw text console: say what is wrong on the console VT.
                 console_notice_shown(dri, &st.to_string());
             }
             std::thread::sleep(next.delay);
@@ -488,10 +482,10 @@ fn run_crypt(c: &wol_core::home_crypt::Cmd) -> bool {
 
 /// Opens an encrypted home with the password just checked; true when it is ready (or plain).
 fn unlock_home(name: &str, password: &[u8]) -> bool {
-    let Ok(pw) = std::str::from_utf8(password) else {
-        return true;
+    let Some(steps) = home_unlock_steps(name, home_state(name), password) else {
+        eprintln!("wol-login: {name}: the encrypted home needs a password typed as text");
+        return false;
     };
-    let steps = wol_core::home_crypt::unlock(name, home_state(name), pw);
     let ok = steps.iter().all(run_crypt);
     if !ok {
         eprintln!("wol-login: {name}: the encrypted home did not open");
@@ -533,4 +527,36 @@ fn stop_tree(child: &mut Child) {
         unsafe { libc::kill(p, libc::SIGKILL) };
     }
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The real ioctl layer on a file that is no VT (a nested compositor's case): ENOTTY, so the
+    /// step is a no-op and nothing is written; a missing device path is a no-op too.
+    #[test]
+    fn real_ioctl_on_a_non_vt_is_a_no_op() {
+        let dir = std::env::temp_dir().join(format!("wol-login-vt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("tty1");
+        std::fs::write(&fake, "").unwrap();
+        let open = || std::fs::OpenOptions::new().write(true).open(&fake);
+        assert_eq!(
+            console_step(open, vt_ioctl, true, BLANK_CONSOLE),
+            VtStep::NoVt
+        );
+        assert_eq!(
+            std::fs::read(&fake).unwrap(),
+            b"",
+            "nothing written to a non-VT"
+        );
+        let missing = || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(dir.join("none"))
+        };
+        assert_eq!(console_step(missing, vt_ioctl, false, "x"), VtStep::NoVt);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

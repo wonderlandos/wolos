@@ -155,9 +155,10 @@ pub fn service() -> Service<FakeBackend> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::METER_PROPS;
     use wol_core::audio::{
         AGC_SOURCE, APPMIX_SINK, Action, MICMIX_SOURCE, PRO_AUDIO_CONF, RNNOISE_SOURCE,
-        SNAPPED_FILE, percent_of,
+        SNAPPED_FILE, linear_for, percent_of,
     };
 
     const MIC: &str = "alsa_input.pci-0000_00_1f.3.analog-stereo";
@@ -864,6 +865,244 @@ mod tests {
                 .iter()
                 .any(|r| r.contains(&format!("source_master={MIC}")))
         );
+    }
+
+    /// A6-4: a PipeWire restart takes the pipewire-pulse modules with it; the switches stay on in
+    /// the service, so the filters are loaded again once the microphone is back.
+    #[test]
+    fn filters_come_back_after_pipewire_restarts() {
+        let mut s = service();
+        s.act(&Action::AutoInputLevel(true)).unwrap();
+        s.act(&Action::NoiseSuppression(true)).unwrap();
+        s.backend().taken();
+        s.set_connected(false);
+        s.set_connected(true);
+        assert!(
+            s.backend().runs().is_empty(),
+            "nothing to load into before the registry is back"
+        );
+        // The registry sends the graph again; the filters wait for their microphone.
+        let mut events = fixture().into_iter();
+        let before_mic = events.by_ref().take(2);
+        for ev in before_mic {
+            s.handle(ev);
+        }
+        assert!(
+            s.backend()
+                .runs()
+                .iter()
+                .all(|r| !r.contains("load-module")),
+            "other nodes do not trigger it"
+        );
+        for ev in events {
+            s.handle(ev);
+        }
+        let runs = s.backend().runs();
+        assert!(
+            runs.iter()
+                .any(|r| r.contains("module-echo-cancel")
+                    && r.contains(&format!("source_master={MIC}"))),
+            "{runs:?}"
+        );
+        assert!(
+            runs.iter().any(|r| r.contains("module-ladspa-source")),
+            "{runs:?}"
+        );
+        let snap = s.snapshot();
+        assert!(snap.auto_input_level && snap.noise_suppression && snap.error.is_none());
+        // Once: a second description of the same microphone does not reload anything.
+        s.backend().taken();
+        s.handle(Event::Node(NodeInfo {
+            id: 46,
+            node_name: MIC.into(),
+            description: "Built-in Audio Analog Stereo (renamed)".into(),
+            kind: DeviceKind::Input,
+            ..Default::default()
+        }));
+        assert!(s.backend().runs().is_empty());
+    }
+
+    #[test]
+    fn a_restart_with_the_filters_off_loads_nothing_and_a_reset_cancels_the_wait() {
+        let mut s = service();
+        s.set_connected(false);
+        s.set_connected(true);
+        s.backend().taken();
+        for ev in fixture() {
+            s.handle(ev);
+        }
+        assert!(
+            s.backend()
+                .runs()
+                .iter()
+                .all(|r| !r.contains("load-module"))
+        );
+
+        s.act(&Action::AutoInputLevel(true)).unwrap();
+        s.set_connected(false);
+        s.set_connected(true);
+        s.act(&Action::ResetAudio).unwrap();
+        s.backend().taken();
+        for ev in fixture() {
+            s.handle(ev);
+        }
+        assert!(
+            s.backend()
+                .runs()
+                .iter()
+                .all(|r| !r.contains("load-module")),
+            "a reset forgot the filters"
+        );
+    }
+
+    /// A6-2: the output slider is the 0 dB scale, converted by the service.
+    #[test]
+    fn the_output_slider_sets_the_gain_from_zero_db_not_from_the_maximum() {
+        let mut s = Service::new(FakeBackend::default(), PathBuf::from("/home/t"));
+        let sink = "alsa_output.usb-dac";
+        s.handle(Event::Node(NodeInfo {
+            id: 70,
+            node_name: sink.into(),
+            description: "DAC".into(),
+            kind: DeviceKind::Output,
+            device_id: Some(50),
+            route_device: Some(2),
+            ..Default::default()
+        }));
+        s.handle(Event::Props {
+            id: 70,
+            channel_volumes: vec![0.125, 0.125],
+            volume_base: 0.125,
+            muted: false,
+        });
+        assert_eq!(
+            s.act(&Action::OutputVolume(50)),
+            Err("no output device".into()),
+            "nothing is the default yet"
+        );
+        s.handle(Event::Default {
+            kind: DeviceKind::Output,
+            node_name: sink.into(),
+        });
+        let lin = |c: &Command| match c {
+            Command::SetVolume { id: 70, linear } => *linear,
+            other => panic!("{other:?}"),
+        };
+        s.backend().taken();
+        s.act(&Action::OutputVolume(100)).unwrap();
+        s.act(&Action::OutputVolume(180)).unwrap();
+        let c = s.backend().taken();
+        assert!(
+            (lin(&c[0]) - 0.125).abs() < 1e-7,
+            "100 is 0 dB, not 1.0: {c:?}"
+        );
+        assert!(
+            (lin(&c[1]) - 0.125).abs() < 1e-7,
+            "capped without Allow louder"
+        );
+        s.set_boost(true);
+        s.act(&Action::OutputVolume(180)).unwrap();
+        let c = s.backend().taken();
+        assert!(lin(&c[0]) > 0.125 && lin(&c[0]) <= 1.0, "{c:?}");
+        // What was set reads back as the same slider position (no jump after the drag).
+        s.handle(Event::Props {
+            id: 70,
+            channel_volumes: vec![linear_for(60, 0.125); 2],
+            volume_base: 0.125,
+            muted: false,
+        });
+        let d = s.snapshot().default_output().cloned().unwrap();
+        assert_eq!(percent_of(d.volume, d.volume_base, false), 60);
+        // With the card's route known, it goes to the hardware mixer like a microphone does.
+        s.handle(Event::Route {
+            device: 50,
+            index: 3,
+            route_device: 2,
+        });
+        s.backend().taken();
+        s.act(&Action::OutputVolume(100)).unwrap();
+        assert_eq!(
+            s.backend().taken()[0],
+            Command::SetRoute {
+                device: 50,
+                index: 3,
+                route_device: 2,
+                channel_volumes: Some(vec![0.125, 0.125]),
+                mute: None,
+            }
+        );
+    }
+
+    /// A6-7: `Props` before the card's `Route` must not set the node's own volume and call the
+    /// microphone done; the snap waits for the route and then moves the hardware mixer.
+    #[test]
+    fn a_microphone_waits_for_its_route_before_the_snap() {
+        let mut s = Service::new(FakeBackend::default(), PathBuf::from("/home/t"));
+        s.handle(Event::Node(NodeInfo {
+            id: 46,
+            node_name: MIC.into(),
+            description: "Built-in Audio Analog Stereo".into(),
+            kind: DeviceKind::Input,
+            device_id: Some(40),
+            route_device: Some(1),
+            ..Default::default()
+        }));
+        s.handle(Event::Props {
+            id: 46,
+            channel_volumes: vec![1.0, 1.0],
+            volume_base: MIC_BASE,
+            muted: false,
+        });
+        assert!(
+            s.backend().taken().is_empty(),
+            "no node SetVolume, nothing remembered"
+        );
+        // Another card's route is not this one's.
+        s.handle(Event::Route {
+            device: 99,
+            index: 1,
+            route_device: 1,
+        });
+        assert!(s.backend().taken().is_empty());
+        s.handle(Event::Route {
+            device: 40,
+            index: 7,
+            route_device: 1,
+        });
+        let cmds = s.backend().taken();
+        assert_eq!(
+            cmds[0],
+            Command::SetRoute {
+                device: 40,
+                index: 7,
+                route_device: 1,
+                channel_volumes: Some(vec![MIC_BASE, MIC_BASE]),
+                mute: None,
+            }
+        );
+        assert_eq!(
+            cmds[1],
+            Command::AppendLine(PathBuf::from("/home/t").join(SNAPPED_FILE), MIC.into())
+        );
+        // Snapped once: a later route change (another port) leaves the user's choice alone.
+        s.handle(Event::Route {
+            device: 40,
+            index: 9,
+            route_device: 1,
+        });
+        assert!(s.backend().taken().is_empty());
+    }
+
+    /// A6-5: the level meter is not a recorder as far as the Bluetooth autoswitch can tell.
+    #[test]
+    fn the_meter_stream_carries_a_link_group_so_headsets_stay_in_music_mode() {
+        let get = |k: &str| METER_PROPS.iter().find(|p| p.0 == k).map(|p| p.1);
+        assert_eq!(get("node.name"), Some("wolos-meter"));
+        assert!(
+            get("node.link-group").is_some_and(|g| !g.is_empty()),
+            "WirePlumber's autoswitch skips capture streams with a node.link-group"
+        );
+        assert_eq!(get("media.category"), Some("Capture"));
     }
 
     #[test]

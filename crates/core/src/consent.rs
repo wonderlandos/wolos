@@ -1,16 +1,28 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Consent database for Settings > Privacy: which app may use which privileged protocol or WolOS
-//! service. Same file and shape the compositor (`realtime::policy::Consent`) and wold (libwol
-//! services, ADR 0020) read:
-//! `{"grants":[{"app":"<canonical path>","capability":"<name>"}]}`. Malformed = no grants.
+//! service: `{"grants":[{"app":"<canonical path>","capability":"<name>"}]}`. Malformed = no grants.
+//! wold (libwol services, ADR 0020) reads the same file and shape. The compositor never reads it:
+//! its rules (`crate::security::hypr_permissions`) are static, let only the system's own tools
+//! copy the screen and send every app through the portal, which asks which screen to share.
 use crate::system::Host;
 use serde_json::{Map, Value, json};
 
 pub const FILE: &str = "/etc/wolos/consent.json";
 
+/// Screen recording is never a grant here: the compositor's rules are static and apps share the
+/// screen through the portal, which asks each time. [`is_valid_grant`] refuses it, [`parse`]
+/// ignores old entries, so the next [`set`] drops them from the file.
+pub const SCREEN_CAPTURE: &str = "screen-capture";
+
+/// Why `capability` can never be granted in this file, or None.
+pub fn refusal(capability: &str) -> Option<&'static str> {
+    (capability == SCREEN_CAPTURE).then_some(
+        "screen-capture is not a grant: apps ask each time they share the screen, and the person chooses which screen or window",
+    )
+}
+
 /// What Settings may grant. The shell's own layers come from the system defaults, never from here.
-pub const CAPABILITIES: [&str; 25] = [
-    "screen-capture",
+pub const CAPABILITIES: [&str; 24] = [
     "notifications",
     "input-injection",
     "clipboard-history",
@@ -87,6 +99,7 @@ pub fn is_valid_grant(app: &str, capability: &str) -> bool {
 }
 
 /// (app, capability) pairs; a file that is not exactly the documented shape grants nothing.
+/// Entries no file may hold ([`refusal`]) are left out.
 pub fn parse(json: &str) -> Vec<(String, String)> {
     #[derive(serde::Deserialize)]
     struct File {
@@ -103,6 +116,7 @@ pub fn parse(json: &str) -> Vec<(String, String)> {
         |f| {
             f.grants
                 .into_iter()
+                .filter(|g| refusal(&g.capability).is_none())
                 .map(|g| (g.app, g.capability))
                 .collect()
         },
@@ -143,14 +157,14 @@ mod tests {
     use super::*;
     use crate::system::fake::FakeHost;
 
-    const SHIPPED: &str = r#"{"grants":[{"app":"/usr/bin/grim","capability":"screen-capture"},{"app":"/usr/bin/slurp","capability":"shell-layer"}],"_note":"dev VM"}"#;
+    const SHIPPED: &str = r#"{"grants":[{"app":"/usr/bin/hello","capability":"notifications"},{"app":"/usr/bin/slurp","capability":"shell-layer"}],"_note":"dev VM"}"#;
 
     #[test]
     fn grants_parse_fail_closed() {
         assert_eq!(
             parse(SHIPPED),
             [
-                ("/usr/bin/grim".into(), "screen-capture".into()),
+                ("/usr/bin/hello".into(), "notifications".into()),
                 ("/usr/bin/slurp".into(), "shell-layer".into())
             ]
         );
@@ -179,7 +193,7 @@ mod tests {
         assert_eq!(set(Some(&on), wl, "window-list", true), on, "no duplicate");
         let off = set(Some(&on), wl, "window-list", false);
         assert_eq!(parse(&off), parse(SHIPPED));
-        let off = set(Some(SHIPPED), "/usr/bin/grim", "screen-capture", false);
+        let off = set(Some(SHIPPED), "/usr/bin/hello", "notifications", false);
         assert_eq!(
             parse(&off),
             [("/usr/bin/slurp".into(), "shell-layer".into())]
@@ -195,7 +209,7 @@ mod tests {
     #[test]
     fn what_settings_may_grant() {
         for (app, cap, ok) in [
-            ("/usr/bin/wayvnc", "screen-capture", true),
+            ("/usr/bin/wayvnc", "screen-capture", false),
             ("/usr/bin/wayvnc", "input-injection", true),
             ("/usr/bin/wl-paste", "clipboard-history", true),
             ("/usr/bin/wlrctl", "window-list", true),
@@ -216,6 +230,26 @@ mod tests {
             &format!("/{}", "a".repeat(1024)),
             "window-list"
         ));
+    }
+
+    #[test]
+    fn screen_capture_is_refused_ignored_and_tidied() {
+        assert!(refusal("screen-capture").is_some());
+        assert!(refusal("notifications").is_none());
+        assert!(!CAPABILITIES.contains(&SCREEN_CAPTURE));
+        assert!(!is_valid_grant("/usr/bin/obs", "screen-capture"));
+        // An old file with a screen-capture entry: read without it, and the next write drops it.
+        let old = r#"{"grants":[{"app":"/usr/bin/obs","capability":"screen-capture"},{"app":"/usr/bin/hello","capability":"notifications"}]}"#;
+        assert_eq!(
+            parse(old),
+            [("/usr/bin/hello".into(), "notifications".into())]
+        );
+        let next = set(Some(old), "/usr/bin/wlrctl", "window-list", true);
+        assert!(!next.contains("screen-capture"), "{next}");
+        assert_eq!(parse(&next).len(), 2);
+        let h = FakeHost::new(true);
+        h.file(FILE, old);
+        assert_eq!(read(&h).len(), 1);
     }
 
     #[test]

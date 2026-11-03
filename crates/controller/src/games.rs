@@ -106,18 +106,17 @@ fn launch(env: &mut dyn Env, url: Option<&str>) -> i32 {
         }
         notify(env, notice::PREPARING);
     }
-    crate::run::exec(env, &steam_argv(url))
+    crate::run::exec(env, &steam_argv(url, facts.ui_scale.as_deref()))
 }
 
 /// Malloc on transparent huge pages for Steam's children: Mesa's shader compilers run in them.
 const STEAM_TUNABLES: &str = "GLIBC_TUNABLES=glibc.malloc.hugetlb=1";
 
-fn steam_argv(url: Option<&str>) -> Vec<String> {
-    let mut argv = vec![
-        "/usr/bin/env".to_string(),
-        STEAM_TUNABLES.to_string(),
-        doctor::STEAM_BIN.to_string(),
-    ];
+/// `scale`: the HiDPI factor for Steam's X11 UI (`wol_core::games::steam::ui_scale`), None at 1x.
+fn steam_argv(url: Option<&str>, scale: Option<&str>) -> Vec<String> {
+    let mut argv = vec!["/usr/bin/env".to_string(), STEAM_TUNABLES.to_string()];
+    argv.extend(scale.map(|s| format!("STEAM_FORCE_DESKTOPUI_SCALING={s}")));
+    argv.push(doctor::STEAM_BIN.to_string());
     argv.extend(url.map(String::from));
     argv
 }
@@ -128,10 +127,18 @@ mod tests {
 
     #[test]
     fn steam_compiles_shaders_on_huge_pages() {
-        let argv = steam_argv(Some("steam://rungameid/620"));
+        let argv = steam_argv(Some("steam://rungameid/620"), None);
         assert_eq!(argv[0], "/usr/bin/env");
         assert_eq!(argv[1], "GLIBC_TUNABLES=glibc.malloc.hugetlb=1");
         assert_eq!(argv[2], doctor::STEAM_BIN);
         assert_eq!(argv[3], "steam://rungameid/620");
+    }
+
+    #[test]
+    fn steam_ui_scales_with_the_display() {
+        let argv = steam_argv(None, Some("2"));
+        assert_eq!(argv[2], "STEAM_FORCE_DESKTOPUI_SCALING=2");
+        assert_eq!(argv[3], doctor::STEAM_BIN);
+        assert_eq!(argv.len(), 4);
     }
 }
