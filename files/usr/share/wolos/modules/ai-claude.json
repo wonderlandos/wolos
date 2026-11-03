@@ -1,6 +1,6 @@
 {
   "id": "ai-claude",
-  "name": "Claude Code",
+  "name": "AI Assistants",
   "summary": "Anthropic's coding agent in the terminal, acting on WolOS through wol mcp with on-screen approval and a WolOS skill",
   "icon": "wolos-assistant-symbolic",
   "category": "ai",

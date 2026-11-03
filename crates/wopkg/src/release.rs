@@ -280,6 +280,14 @@ pub struct PluginUpdate {
     pub reason: PluginReason,
 }
 
+/// Whether a plugin that needs WolOS `min_wolos` (empty = any) runs on `os`. A requirement that is
+/// not a version, or an `os` that is not one, does not fit (no guessing). The Store asks it of
+/// plugins that are not installed yet, so it never offers one this WolOS cannot run (audit6 ST6-3).
+pub fn plugin_fits(os: &str, min_wolos: &str) -> bool {
+    min_wolos.is_empty()
+        || matches!((Version::parse(os), Version::parse(min_wolos)), (Some(o), Some(m)) if o >= m)
+}
+
 /// Plugin updates follow the signed plugin index, not a channel feed (ADR 0031 W4): no rollout,
 /// pause or OS release holds them, and they never touch pacman. `installed` is (id, version) for
 /// this account's plugins, `os` the running WolOS version. Only a strictly newer version is
@@ -289,19 +297,16 @@ pub fn plugin_updates(
     installed: &[(String, String)],
     index: &crate::index::plugins::PluginIndex,
 ) -> Vec<PluginUpdate> {
-    let os = Version::parse(os);
     installed
         .iter()
         .filter_map(|(id, have)| {
             let e = index.get(id)?;
             (Version::parse(&e.version)? > Version::parse(have)?).then_some(())?;
-            let fits = e.min_wolos.is_empty()
-                || matches!((&os, Version::parse(&e.min_wolos)), (Some(o), Some(m)) if *o >= m);
             Some(PluginUpdate {
                 id: id.clone(),
                 from: have.clone(),
                 to: e.version.clone(),
-                reason: if fits {
+                reason: if plugin_fits(os, &e.min_wolos) {
                     PluginReason::Available
                 } else {
                     PluginReason::NeedsNewerWolos
@@ -528,5 +533,15 @@ mod tests {
         let u = plugin_updates("0.13", &installed, &index);
         assert!(u.iter().all(|x| x.reason == PluginReason::Available));
         assert_eq!(u.len(), 2);
+    }
+
+    #[test]
+    fn a_plugin_fits_when_its_minimum_is_met() {
+        assert!(plugin_fits("0.12.1", ""), "no minimum: any");
+        assert!(plugin_fits("0.12.1", "0.12"));
+        assert!(plugin_fits("0.12.0", "0.12.0"));
+        assert!(!plugin_fits("0.12.1", "0.13"));
+        assert!(!plugin_fits("0.12.1", "soon"), "not a version: not offered");
+        assert!(!plugin_fits("dev", "0.12"), "an OS that is no version: no guess");
     }
 }

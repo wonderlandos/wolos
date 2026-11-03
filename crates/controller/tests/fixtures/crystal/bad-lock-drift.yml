@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# trips: RCR-041
+name: bad
+version: 0.1.0
+crystal: ">= 1.12.0"
+license: GPL-2.0-or-later
+dependencies:
+  example:
+    github: example/example
+    commit: 0123456789abcdef0123456789abcdef01234567

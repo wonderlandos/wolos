@@ -21,6 +21,8 @@ pre-commit)
   [ -z "$bad" ] || echo "$bad" | refuse pre-commit ;;
 pre-push)
   out=
+  # pre-push stdin is "<lref> <lsha> <rref> <rsha>"; the ref names are not needed.
+  # shellcheck disable=SC2034
   while read -r lref lsha rref rsha; do
     [ "$lsha" = "$Z" ] && continue
     if [ "$rsha" = "$Z" ]; then revs=$(git rev-list "$lsha" --not --remotes); else revs=$(git rev-list "$rsha..$lsha"); fi

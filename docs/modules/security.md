@@ -113,6 +113,11 @@ Advisory means a grant is recorded and shown to helpers that ask. An app that ig
 
 Screen recording is not a grant in the consent database (`/etc/wolos/consent.json`, `consent::SCREEN_CAPTURE`): nothing would read it, since the compositor rules are static and every app asks through the portal each time. The administrator `consent` action refuses it (`consent::refusal`), an old `screen-capture` entry is ignored when the file is read and dropped the next time it is written, and Settings > Privacy & Security shows one row saying apps ask each time, not a switch per app.
 
+## Who may answer an ask (the shower)
+Asks that need a person (`SessionAsk`) go to the account's shell over `subscribe account` and come back as `session.answer`. wold knows the shell by its executable, `/usr/bin/wol-shell` (`portal::SHOWERS`), and any process of the account can run that file (audit P6-1). So a peer that is a shower by path is also refused when its pinned `/proc/<pid>` shows foreign code (`PeerIdentity::injected`, `crates/api/src/peer.rs`): `LD_*`, `GTK_MODULES` and the other plug-in variables in its environment (or no environment), executable code mapped from outside `/usr` and `/lib`, a tracer attached, a mount namespace other than wold's, or anything unreadable. Other apps keep their identity for grants: a game launcher with `LD_LIBRARY_PATH` is still an app. Known and accepted: the check is defence in depth; a process that puts code into the real shell after it started is not caught (the shell should be non-dumpable), and a parent check is not possible because Hyprland double-forks. The real fix, a token only the session's shell holds, is ADR 0037 (proposed). Tests: `peer::tests::a_shower_binary_under_ld_preload_is_not_a_shower`, `server::tests::a_shower_binary_under_ld_preload_cannot_subscribe_to_the_account`.
+
+Also: the sweep (`wolos-xguard-sweep.service`) reads every home and writes none: `CAP_DAC_READ_SEARCH` only (no `CAP_CHOWN`), `ProtectHome=read-only`, `ReadWritePaths=/var/lib/wolos/xguard` (audit P6-2; test `the_sweep_reads_homes_and_cannot_change_them`). A program that runs `wol` can raise an install sheet; the sheet says "A program using wol wants to install “name”", never "wol" as the requester (P6-4). A package file copy (`wol` install of a local file) is refused when it would leave the staging disk under a reserve of 10 % (at least 1 GiB) free (P6-5; `packages::staging_reserve`). `wolos-build` drops a `.sig` that arrives with a package and signs it with the release key; a signature already beside a package is kept only if `gpg --verify` accepts it (P6-3).
+
 ## What runs as root
 | Program | Does | Takes input from |
 |---|---|---|
@@ -123,10 +128,10 @@ Screen recording is not a grant in the consent database (`/etc/wolos/consent.jso
 | wol-xguard guard | answers first-use checks, reads the files it is asked about | kernel events, file content, a Unix socket with file descriptors, peer uid from the kernel |
 | systemd units and timers | `wol power apply`, `update-check` | none |
 
-No Capsicum or jails yet. Each daemon runs argv lists it builds itself (never a shell with user text). Each parses only its own small wire format.
+No namespace sandbox around the daemons yet beyond their systemd hardening. Each daemon runs argv lists it builds itself (never a shell with user text). Each parses only its own small wire format.
 
 ## Needs hardware
-- pf at boot (pf.ko is in the image).
+- nftables firewall at boot on a real install (`nftables.service`).
 - Compositor permission prompts on a real GPU (only `--verify-config` checked).
-- freebsd-update against update.FreeBSD.org.
+- `wol update apply` against the real mirror on a real install (the slot switch is tested in a VM).
 - Encrypted homes on a real install.

@@ -6,13 +6,15 @@
 # Optional modules and media formats the installer queued offline (/var/lib/wolos/modules-pending,
 # packages-pending) start installing too, in the same transient unit firstboot uses
 # (wolos-modules-pending): while it runs, a second start is refused, so one drain at a time
-# (audit5 I6-5: Wi-Fi set up after the first login).
+# (audit5 I6-5: Wi-Fi set up after the first login). --collect: the unit is gone when it ends, even
+# failed, or the name would stay taken and no later connection could drain; SuccessExitStatus=1:
+# "something stays queued" is the normal end of an offline try (audit6 ST6-2).
 [ "${2:-}" = up ] || exit 0
 flock -n "${WOLOS_LOCK:-/run/wolos-hw-online.lock}" wol hw online >/dev/null 2>&1 &
 P=${WOL_MODULES_PENDING:-/var/lib/wolos/modules-pending}
 Q=${WOL_PACKAGES_PENDING:-/var/lib/wolos/packages-pending}
 if [ -s "$P" ] || [ -s "$Q" ]; then
-  systemd-run --no-block --unit=wolos-modules-pending --description="WolOS: install queued modules" \
+  systemd-run --no-block --unit=wolos-modules-pending --collect --property=SuccessExitStatus=1 --description="WolOS: install queued modules" \
     "${WOLOS_LIB:-/usr/lib/wolos}/modules-install" --drain >/dev/null 2>&1 || :
 fi
 exit 0

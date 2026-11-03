@@ -3,38 +3,92 @@
 # Regenerate: WOL_BLESS=1 cargo test -p wol-abi --test bindings
 @[Link("wol")]
 lib LibWol
-  WOL_VERSION_MAJOR = 1
-  WOL_VERSION_MINOR = 14
-  WOL_VERSION_PATCH = 0
-  WOL_OK = 0
-  WOL_ERR_INVALID_ARGUMENT = 1
-  WOL_ERR_PERMISSION_DENIED = 2
-  WOL_ERR_UNAVAILABLE = 3
-  WOL_ERR_INTERNAL = 4
-  WOL_APPEARANCE_LIGHT = 0
-  WOL_APPEARANCE_DARK = 1
+  WOL_VERSION_MAJOR         =  1
+  WOL_VERSION_MINOR         = 14
+  WOL_VERSION_PATCH         =  0
+  WOL_OK                    =  0
+  WOL_ERR_INVALID_ARGUMENT  =  1
+  WOL_ERR_PERMISSION_DENIED =  2
+  WOL_ERR_UNAVAILABLE       =  3
+  WOL_ERR_INTERNAL          =  4
+  WOL_APPEARANCE_LIGHT      =  0
+  WOL_APPEARANCE_DARK       =  1
 
   alias Status = Int32
   alias Appearance = Int32
+
   # Handles are opaque: the field exists only because a Crystal struct cannot be empty.
-  struct Error; opaque : UInt8; end
-  struct String; opaque : UInt8; end
-  struct Context; opaque : UInt8; end
-  struct Event; opaque : UInt8; end
-  struct Subscription; opaque : UInt8; end
-  struct SystemInfo; opaque : UInt8; end
-  struct Window; opaque : UInt8; end
-  struct Widget; opaque : UInt8; end
-  struct Notification; opaque : UInt8; end
-  struct Menu; opaque : UInt8; end
-  struct Toolbar; opaque : UInt8; end
-  struct Info; opaque : UInt8; end
-  struct File; opaque : UInt8; end
-  struct Assertion; opaque : UInt8; end
-  struct SearchProvider; opaque : UInt8; end
-  struct SearchReply; opaque : UInt8; end
-  struct Endpoint; opaque : UInt8; end
-  struct Message; opaque : UInt8; end
+  struct Error
+    opaque : UInt8
+  end
+
+  struct String
+    opaque : UInt8
+  end
+
+  struct Context
+    opaque : UInt8
+  end
+
+  struct Event
+    opaque : UInt8
+  end
+
+  struct Subscription
+    opaque : UInt8
+  end
+
+  struct SystemInfo
+    opaque : UInt8
+  end
+
+  struct Window
+    opaque : UInt8
+  end
+
+  struct Widget
+    opaque : UInt8
+  end
+
+  struct Notification
+    opaque : UInt8
+  end
+
+  struct Menu
+    opaque : UInt8
+  end
+
+  struct Toolbar
+    opaque : UInt8
+  end
+
+  struct Info
+    opaque : UInt8
+  end
+
+  struct File
+    opaque : UInt8
+  end
+
+  struct Assertion
+    opaque : UInt8
+  end
+
+  struct SearchProvider
+    opaque : UInt8
+  end
+
+  struct SearchReply
+    opaque : UInt8
+  end
+
+  struct Endpoint
+    opaque : UInt8
+  end
+
+  struct Message
+    opaque : UInt8
+  end
 
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
@@ -47,8 +101,8 @@ lib LibWol
   alias SearchOpenFn = SearchProvider*, String*, Void* -> Void
   alias MessageFn = Endpoint*, Message*, Void* -> Void
 
-  fun wol_version() : UInt32
-  fun wol_version_string() : UInt8*
+  fun wol_version : UInt32
+  fun wol_version_string : UInt8*
   fun wol_error_get_code(error : Error*) : Status
   fun wol_error_get_message(error : Error*, len : LibC::SizeT*) : UInt8*
   fun wol_error_release(error : Error*)

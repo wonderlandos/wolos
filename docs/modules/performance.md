@@ -34,6 +34,6 @@ Fixes behind these numbers (before -> after):
 
 Notes:
 - Latency = first frame whose region hash differs after the input stamp; includes compositor frame pacing (60 Hz headless).
-- Session start: the nested compositor socket is up at ~0.1 s, but exec-once fires on `Event start`, emitted on the first rendered monitor frame (`Renderer.cpp`). The harness creates its headless output from exec-once, so ~2 s goes to the compositor's fallback output. On hardware a DRM monitor renders at once; real-boot number still to measure on FreeBSD.
+- Session start: the nested compositor socket is up at ~0.1 s, but exec-once fires on `Event start`, emitted on the first rendered monitor frame (`Renderer.cpp`). The harness creates its headless output from exec-once, so ~2 s goes to the compositor's fallback output. On hardware a DRM monitor renders at once; real-boot number still to measure on the installed image.
 - N/A on this host: hypridle (not installed), wold (needs root paths under /var/run). perf/ptrace unavailable; profiling used LD_PRELOAD timer shims and per-thread context switches.
-- Linux helper cost (nmcli, wpctl) differs from FreeBSD (ifconfig, mixer); re-measure on FreeBSD.
+- Helper cost (nmcli, wpctl) was measured on a CachyOS host, not on the installed image; re-measure on the image.

@@ -35,13 +35,13 @@ describe Wopkg::Recipe do
 
   it "refuses unpinned, insecure or networked build steps" do
     {
-      recipe.sub(SUM, "abc")                                   => /64 hex/,
-      recipe.sub("https://static", "http://static")            => /HTTPS only/,
-      recipe(fetch: %(["curl https://evil"]))                  => /fetch steps may only run/,
-      recipe(fetch: %(["cargo fetch --locked; curl x"]))       => /one command/,
-      recipe.sub(%("target/release/hvm"), %("../../.bashrc"))  => /inside the build/,
-      recipe.sub(%(name = "hvm"), %(name = "HVM!"))            => /name is lowercase/,
-      recipe("file = \"../x\"")                                => /bad source file/,
+      recipe.sub(SUM, "abc")                                  => /64 hex/,
+      recipe.sub("https://static", "http://static")           => /HTTPS only/,
+      recipe(fetch: %(["curl https://evil"]))                 => /fetch steps may only run/,
+      recipe(fetch: %(["cargo fetch --locked; curl x"]))      => /one command/,
+      recipe.sub(%("target/release/hvm"), %("../../.bashrc")) => /inside the build/,
+      recipe.sub(%(name = "hvm"), %(name = "HVM!"))           => /name is lowercase/,
+      recipe("file = \"../x\"")                               => /bad source file/,
     }.each do |text, err|
       expect_raises(Wopkg::Recipe::Invalid, err) { Wopkg::Recipe.parse(text) }
     end

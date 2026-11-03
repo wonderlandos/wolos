@@ -255,7 +255,33 @@ pub fn check_download(entry: &Entry, file: &[u8], keys: &[[u8; 32]]) -> Result<V
             "The plugin download is not the plugin the list names.",
         ));
     }
+    // The list's permissions are the sentence a person consents to ("Asks for nothing"), and Turn
+    // On grants what the package's own manifest declares: the two must be the same set, or a
+    // listing could understate what the plugin gets (audit6 ST6-5).
+    if !same_permissions(&entry.permissions, &v.manifest.permissions) {
+        return Err(Error::untrusted(
+            "The plugin download asks for other permissions than the plugin list says.",
+        ));
+    }
     Ok(v)
+}
+
+/// The index entry's permission ids and the manifest's permissions name the same set (order and
+/// repeats do not matter; an id that is no permission never matches).
+fn same_permissions(listed: &[String], declared: &[Permission]) -> bool {
+    let mut a: Vec<Permission> = Vec::new();
+    for p in listed {
+        match Permission::parse(p) {
+            Some(p) => a.push(p),
+            None => return false,
+        }
+    }
+    let mut b = declared.to_vec();
+    for v in [&mut a, &mut b] {
+        v.sort_by_key(|p| p.id());
+        v.dedup();
+    }
+    a == b
 }
 
 // ---- Network and cache (blocking: callers run these off the UI thread) ----
@@ -529,8 +555,13 @@ mod tests {
 
     /// `.wolplug` bytes (zstd of the ustar) for a theme plugin `id`, signed by `seed`.
     fn wolplug(id: &str, seed: Option<&[u8; 32]>) -> Vec<u8> {
+        wolplug_of(id, seed, &[Kind::Theme])
+    }
+
+    /// The same for a plugin of `kinds` (a Dock plugin asks to run, a Toggle one for toggles).
+    fn wolplug_of(id: &str, seed: Option<&[u8; 32]>, kinds: &[Kind]) -> Vec<u8> {
         use wol_core::package::{manifest, sign, ustar};
-        let files: Vec<(String, Vec<u8>)> = wol_core::plugins::scaffold(id, "Demo", &[Kind::Theme])
+        let files: Vec<(String, Vec<u8>)> = wol_core::plugins::scaffold(id, "Demo", kinds)
             .unwrap()
             .into_iter()
             .map(|(r, t)| (format!("{id}/{r}"), t.into_bytes()))
@@ -552,6 +583,8 @@ mod tests {
     fn entry_for(id: &str, file: &[u8]) -> Entry {
         Entry {
             version: "0.1".into(),
+            // The theme plugin the tests build asks for nothing.
+            permissions: vec![],
             size: file.len() as u64,
             sha256: wol_core::package::sha256_hex(file),
             ..serde_json::from_value(entry(id)).unwrap()
@@ -575,6 +608,39 @@ mod tests {
             ..entry_for("alice.demo", &f)
         };
         assert!(check_download(&e, &f, &keys).is_err());
+    }
+
+    /// ST6-5: the list says what a person agrees to; Turn On grants the package manifest's own
+    /// permissions. A listing that says less (or more, or other) than the signed package is refused.
+    #[test]
+    fn a_download_must_ask_for_what_the_list_says() {
+        let keys = [wol_core::package::public_of(&SEED)];
+        let f = wolplug_of("alice.demo", Some(&SEED), &[Kind::Dock, Kind::Toggle]);
+        let with = |perms: &[&str]| Entry {
+            permissions: perms.iter().map(|p| p.to_string()).collect(),
+            ..entry_for("alice.demo", &f)
+        };
+        // Same set, any order, repeats allowed.
+        assert!(check_download(&with(&["toggles", "run"]), &f, &keys).is_ok());
+        assert!(check_download(&with(&["run", "toggles", "run"]), &f, &keys).is_ok());
+        // Understated, overstated, other, or none at all: untrusted.
+        for bad in [
+            &["run"][..],
+            &[],
+            &["run", "toggles", "http"],
+            &["run", "http"],
+        ] {
+            let err = check_download(&with(bad), &f, &keys).unwrap_err();
+            assert!(err.message.contains("other permissions"), "{bad:?}: {err}");
+            assert_eq!(err.status, crate::ffi::Status::Untrusted, "{bad:?}");
+        }
+        // The plugin that asks for nothing, listed as asking for something.
+        let t = wolplug("alice.theme", Some(&SEED));
+        let listed = Entry {
+            permissions: vec!["run".into()],
+            ..entry_for("alice.theme", &t)
+        };
+        assert!(check_download(&listed, &t, &keys).is_err());
     }
 
     #[test]

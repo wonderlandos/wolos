@@ -12,9 +12,6 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant: pulled by zbus 5, no maintained alternative (2026-11-02, review 2027-02-01)" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names: pulled by zbus 5, no maintained alternative (2026-11-02, review 2027-02-01)" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: pulled by zbus 5, no maintained alternative (2026-11-02, review 2027-02-01)" },
-    { id = "RUSTSEC-2026-0391", reason = "backhand pins zstd 0.13; no release with 0.14 yet (backhand 0.25.5 still on zstd 0.13.4 / zstd-safe 7.4; 2026-11-02, review 2026-12-01)" },
-    { id = "RUSTSEC-2026-0398", reason = "backhand pins zstd 0.13; no release with 0.14 yet (2026-11-02, review 2026-12-01)" },
-    { id = "RUSTSEC-2026-0403", reason = "backhand pins zstd 0.13; no release with 0.14 yet (2026-11-02, review 2026-12-01)" },
 ]
 
 [licenses]

@@ -19,7 +19,7 @@ Steam is the native Arch package from `[multilib]` (ADR 0016). Windows games run
 | `base` (info) | never: names the WolOS base (os-release) and whether the kernel is linux-wolos | another kernel is reported and kept |
 | `multilib` | `[multilib]` off in `/etc/pacman.conf` | enable it, `pacman -Sy` |
 | `steam` | no `/usr/bin/steam` | `pacman -S steam` |
-| `drm` | no `/dev/dri` | `wol hw doctor` |
+| `drm` | no `/dev/dri` | `wol hw status` |
 | `lib32-gl` | no 32-bit Vulkan loader or OpenGL (the client is 32-bit) | `lib32-vulkan-icd-loader`, `lib32-mesa`, vendor lib32 driver |
 | `vulkan-icd`, `vulkan` | no ICD in `/usr/share/vulkan/icd.d`, or only llvmpipe | vendor Vulkan packages |
 | `nvidia` | `lib32-nvidia-utils` missing or not the running driver's version | `pacman -S lib32-nvidia-utils` |

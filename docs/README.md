@@ -29,7 +29,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 
 | ADR | Decision | Status |
 |---|---|---|
-| [0001](adr/0001-freebsd-ports-not-from-scratch.md) | Fork and tune mature software, not a new stack | superseded by 0030 |
+| [0001](adr/0001-freebsd-ports-not-from-scratch.md) | Fork and tune mature software, not a new stack | accepted; its base is superseded by 0016, the fork-and-tune decision stands |
 | [0002](adr/0002-rust-port-of-iaraos.md) | Rust port of IaraOS userland on the forked compositor | accepted |
 | [0003](adr/0003-login-socket-power.md) | login socket: power requests | accepted |
 | [0004](adr/0004-setup-assistant.md) | first-boot setup assistant (wol-setup) | accepted |
@@ -44,8 +44,8 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0013](adr/0013-first-run.md) | first run: Install WolOS app and Setup Assistant v2 | accepted |
 | [0014](adr/0014-power-policy.md) | the power source picks the profile | accepted |
 | [0015](adr/0015-security-defaults.md) | secure by default, honest about the rest | accepted |
-| [0016](adr/0016-arch-linux-base.md) | Arch Linux base, released in snapshots | accepted |
-| [0017](adr/0017-wolos-base.md) | One base system: WolKernel and userland released together | accepted |
+| [0016](adr/0016-arch-linux-base.md) | Arch Linux base, released in snapshots | accepted; its build parts are replaced by 0029 |
+| [0017](adr/0017-wolos-base.md) | One base system: WolKernel and userland released together | accepted; its build parts are replaced by 0029 |
 | [0018](adr/0018-installer-systemd-repart.md) | Installer disk layout from systemd-repart | accepted |
 | [0019](adr/0019-wolos-mirror.md) | WolOS mirror: [wolos], [wolos-cachy], Arch | superseded by 0030 |
 | [0020](adr/0020-libwol-stable-abi.md) | libwol: one app API behind a stable C ABI | accepted |
@@ -62,7 +62,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0031](adr/0031-shell-plugins-themes-layouts.md) | Shell plugins, themes and layouts | accepted |
 | [0032](adr/0032-optional-modules.md) | Optional modules: AI, developer, creative and console stacks | accepted |
 | [0033](adr/0033-identity-handshake.md) | wold greets first: identity handshake on the control socket | accepted |
-| [0034](adr/0034-root-staged-installs.md) | Locally built packages: who installs the staged copy | proposed |
+| [0034](adr/0034-root-staged-installs.md) | Locally built packages: who installs the staged copy | accepted |
 | [0035](adr/0035-layer-hold-on-slot-switch.md) | Live layers on a slot switch: held, not merged, until the new slot is good | proposed |
 | [0036](adr/0036-crystal-userland.md) | Crystal is the userland language: bindings, wolkit, GPU surface, shard index | accepted |
 
@@ -83,7 +83,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/hig.md](modules/hig.md) | WolOS Human Interface Guidelines (binding for every app and shell surface) | [0016](adr/0016-arch-linux-base.md) |
 | [modules/hue.md](modules/hue.md) | wol-hue: themes from a picture, 12 sliders, Base16 and colors.toml import, saved looks | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/hyprland-fork.md](modules/hyprland-fork.md) | the compositor fork: base version, patches in `wolos-pkgbuilds/hyprland-wolos/`, config, QoS plugin | [0012](adr/0012-seamless-boot.md) |
-| [modules/intel-graphics.md](modules/intel-graphics.md) | i915 firmware, tunables, VA-API/Vulkan stack | [0008](adr/0008-i915-frame-deadline-boost.md) |
+| [modules/intel-graphics.md](modules/intel-graphics.md) | i915 firmware, tunables, VA-API/Vulkan stack (historical: FreeBSD base) | [0008](adr/0008-i915-frame-deadline-boost.md) |
 | [modules/memory-bandwidth.md](modules/memory-bandwidth.md) | iGPU bandwidth paradigms, top 5, measurement | [0007](adr/0007-gpu-tuning-interface.md) |
 | [modules/modules.md](modules/modules.md) | optional modules (AI, developer, creative, console stacks): what each installs | [0032](adr/0032-optional-modules.md) |
 | [modules/packages.md](modules/packages.md) | `.wol` format, keys and trust, `wol install/remove/list/search`, index, factory | [0011](adr/0011-wol-packages.md) |
@@ -96,7 +96,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/userland.md](modules/userland.md) | Dock apps and app-ids, default apps, zsh, sudo, keyring, printing, USB sticks, size | [0016](adr/0016-arch-linux-base.md) |
 | [modules/ux-journeys.md](modules/ux-journeys.md) | user journeys with verdicts and owners; error copy rules (`shell::copy`, lint) | [0013](adr/0013-first-run.md) |
 | [modules/vm-e2e.md](modules/vm-e2e.md) | VM end to end: `wolvm` boots the ISO, drives the installer and the installed desktop step by step, snapshots and collects the journal | [0029](adr/0029-repository-split-and-single-build-path.md) |
-| [modules/vm-graphics.md](modules/vm-graphics.md) | the desktop in a VM: what runs and why (FreeBSD-era result, partly historical) | none yet |
+| [modules/vm-graphics.md](modules/vm-graphics.md) | the desktop in a VM: what runs and why (historical record from the FreeBSD base) | none yet |
 | [modules/widgets.md](modules/widgets.md) | desktop widgets, Edit Widgets, building a widget package, `wol widgets` | [0010](adr/0010-desktop-widgets.md) |
 | [modules/wifi.md](modules/wifi.md) | Wi-Fi: one interface, NetworkManager and iwd, join and its errors | [0016](adr/0016-arch-linux-base.md) |
 | [modules/wopkg.md](modules/wopkg.md) | wopkg: one package tool for every source, libwopkg behind a stable C ABI | [0021](adr/0021-wopkg.md) |

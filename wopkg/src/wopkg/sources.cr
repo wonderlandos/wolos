@@ -30,7 +30,7 @@ module Wopkg
         key, _, val = line.partition('=')
         val = val.strip
         case key.strip
-        when "Server"  then c.servers << expand(val, c.name)
+        when "Server" then c.servers << expand(val, c.name)
         when "Include"
           if text = read.call(val)
             text.each_line do |l|

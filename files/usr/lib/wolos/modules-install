@@ -211,6 +211,14 @@ gave_up() {
     END { for (k in add) print kind, k > out }' \
     -v kind="$1" -v gave="$2" -v ok="$3"
 }
+# Offline (no default route) a failure says nothing about the module (audit I6-3): the laptop
+# installed offline would use up the tries in five boots before its first connection. The names stay
+# queued, no try is counted. Without `ip` there is no way to tell: count, as before.
+if command -v ip >/dev/null 2>&1 &&
+  [ -z "$(ip -4 route show default 2>/dev/null; ip -6 route show default 2>/dev/null)" ]; then
+  if [ -n "$failed$failed_pkgs" ]; then log "no network: nothing counted as a try"; fi
+  failed='' failed_pkgs=''
+fi
 dropped=$(count_tries m "$failed" "$done_ids" "$asked" | tr '\n' ' ')
 dropped_pkgs=$(count_tries p "$failed_pkgs" "$done_pkgs" "$asked_pkgs" | tr '\n' ' ')
 gave_up m "$dropped" "$done_ids $asked"

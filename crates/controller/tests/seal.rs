@@ -208,6 +208,9 @@ fn enroll_keeps_the_recovery_key_in_a_file_and_never_in_arguments() {
 }
 
 const CMDLINE: &str = "root=/dev/mapper/wolosroot rd.luks.name=U-1=wolosroot quiet\n";
+/// A TPM install (`encrypt::cmdline_words`, Unlock::Tpm2) and a passphrase-only one.
+const TPM_CMDLINE: &str = "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=tpm2-device=auto,discard root=/dev/mapper/wolosroot quiet\n";
+const PASS_CMDLINE: &str = "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=discard root=/dev/mapper/wolosroot quiet\n";
 
 /// The chip refused (Secure Boot turned off: PCR 7 changed), the person typed their password:
 /// systemd-cryptsetup's cached copy unlocks the volume once more and the TPM slot is sealed to the
@@ -216,7 +219,7 @@ const CMDLINE: &str = "root=/dev/mapper/wolosroot rd.luks.name=U-1=wolosroot qui
 fn reseal_binds_the_chip_again_with_what_was_typed_and_forgets_it() {
     let mut env = FakeEnv {
         files: vec![
-            (PathBuf::from("/proc/cmdline"), CMDLINE.into()),
+            (PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into()),
             (
                 PathBuf::from("/var/lib/wolos/secureboot/tpm2-pcr-public.pem"),
                 "PEM".into(),
@@ -245,7 +248,7 @@ fn reseal_binds_the_chip_again_with_what_was_typed_and_forgets_it() {
 #[test]
 fn reseal_does_nothing_when_the_chip_opened_the_disk() {
     let mut chip = FakeEnv {
-        files: vec![(PathBuf::from("/proc/cmdline"), CMDLINE.into())],
+        files: vec![(PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into())],
         ..Default::default()
     };
     assert_eq!(run("encrypt reseal", &mut chip), 0);
@@ -261,7 +264,7 @@ fn reseal_does_nothing_when_the_chip_opened_the_disk() {
     );
     assert!(plain.execs.is_empty());
     let mut refused = FakeEnv {
-        files: vec![(PathBuf::from("/proc/cmdline"), CMDLINE.into())],
+        files: vec![(PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into())],
         keys: vec![("cryptsetup".into(), b"a\0b\0".to_vec())],
         exec_codes: vec![1, 1],
         ..Default::default()
@@ -274,6 +277,48 @@ fn reseal_does_nothing_when_the_chip_opened_the_disk() {
         "no policy key on this machine: PCR 7 alone"
     );
     assert!(refused.keys.is_empty());
+}
+
+/// Audit I6-1: a passphrase-only install (`rd.luks.options=<uuid>=discard`) never asked for the
+/// chip. Even with the typed password cached, reseal does nothing and exits 0: no failed unit on a
+/// PC without a TPM, no TPM slot added behind the person's choice on a PC with one. The cache is
+/// left to expire.
+#[test]
+fn reseal_leaves_a_passphrase_only_install_alone() {
+    for cmdline in [PASS_CMDLINE, CMDLINE] {
+        let mut env = FakeEnv {
+            files: vec![(PathBuf::from("/proc/cmdline"), cmdline.into())],
+            keys: vec![("cryptsetup".into(), b"hunter2\0".to_vec())],
+            exec_codes: vec![1],
+            ..Default::default()
+        };
+        assert_eq!(run("encrypt reseal", &mut env), 0, "{}", env.err);
+        assert!(env.execs.is_empty(), "no systemd-cryptenroll: {cmdline}");
+        assert!(env.secrets.is_empty());
+        assert!(env.err.is_empty(), "{}", env.err);
+    }
+}
+
+/// The chip is asked for by the options of THIS disk's UUID only.
+#[test]
+fn reseal_reads_the_options_of_its_own_disk() {
+    let other = "rd.luks.name=U-1=wolosroot rd.luks.options=U-2=tpm2-device=auto,discard rd.luks.options=U-1=discard\n";
+    let mut env = FakeEnv {
+        files: vec![(PathBuf::from("/proc/cmdline"), other.into())],
+        keys: vec![("cryptsetup".into(), b"pw\0".to_vec())],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt reseal", &mut env), 0);
+    assert!(env.execs.is_empty());
+    let both = "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=discard,tpm2-device=auto\n";
+    let mut env = FakeEnv {
+        files: vec![(PathBuf::from("/proc/cmdline"), both.into())],
+        keys: vec![("cryptsetup".into(), b"pw\0".to_vec())],
+        exec_codes: vec![0],
+        ..Default::default()
+    };
+    assert_eq!(run("encrypt reseal", &mut env), 0, "{}", env.err);
+    assert_eq!(env.execs.len(), 1);
 }
 
 /// The disk's fallback is the account password: a new password replaces that slot (the chip

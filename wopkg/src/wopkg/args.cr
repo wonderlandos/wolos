@@ -68,10 +68,10 @@ module Wopkg
       while i < argv.size
         w = argv[i]
         case w
-        when "--json"           then a.json = true
+        when "--json"                     then a.json = true
         when "-y", "--yes", "--noconfirm" then a.yes = true
-        when "--check", "-c"    then a.check = true
-        when "--local"          then a.local = true
+        when "--check", "-c"              then a.check = true
+        when "--local"                    then a.local = true
         when "--from", "--to", "--only"
           v = argv[i + 1]? || raise UsageError.new("#{w} needs a value.")
           i += 1
@@ -80,7 +80,7 @@ module Wopkg
           when "--to"   then a.to = v
           else               a.only = v.split(',').map(&.strip).reject(&.empty?)
           end
-        when "-h", "--help" then verb ||= "help"
+        when "-h", "--help"    then verb ||= "help"
         when "-V", "--version" then verb ||= "version"
         when "--"
           a.targets.concat(argv[(i + 1)..])

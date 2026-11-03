@@ -2,6 +2,8 @@
 
 Decision record: none yet.
 
+> Historical. This result was measured on the FreeBSD base (no virtio GPU driver there). On Linux the VM tests use `virtio-vga` (`wolvm`, see [vm-e2e.md](vm-e2e.md)). The table below is the old FreeBSD record.
+
 Result: no full compositor desktop in a VM on FreeBSD 15.1. Desktop proof needs real hardware (USB boot) or iGPU passthrough (`wolos-iso/tests/run-gpu.sh`).
 
 | Option | Tried | Result | Evidence |

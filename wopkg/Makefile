@@ -24,7 +24,16 @@ completions: $(BUILD)/wopkg
 spec: $(BUILD)/libwopkg.so.1
 	crystal spec --link-flags "-L$(BUILD) -Wl,-rpath,$(BUILD)"
 
+# Same check CI runs (ci.yml lint job). Format with `make fmt`; the Crystal version must be CI's (Arch).
+FMT_DIRS := src spec ../hue ../crates/wol-abi/bindings/crystal
+
+fmt-check:
+	crystal tool format --check $(FMT_DIRS)
+
+fmt:
+	crystal tool format $(FMT_DIRS)
+
 clean:
 	rm -rf $(BUILD)
 
-.PHONY: all completions spec clean
+.PHONY: all completions spec fmt fmt-check clean

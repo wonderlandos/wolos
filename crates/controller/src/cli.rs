@@ -534,7 +534,7 @@ pub const TREE: &[Cmd] = &[
         action: "hw.boot",
         args: &[],
         flags: &["online"],
-        help: "Boot step: load drivers, write tunables (rc.d wolos_hw, root); --online installs missing packages first",
+        help: "Boot step: load drivers, write tunables (wolos-hw.service, root); --online installs missing packages first",
         hidden: false,
     },
     Cmd {
@@ -542,7 +542,7 @@ pub const TREE: &[Cmd] = &[
         action: "hw.online",
         args: &[],
         flags: &[],
-        help: "Network came up: install a driver first boot could not (dhclient hook, root)",
+        help: "Network came up: install a driver first boot could not (NetworkManager hook, root)",
         hidden: true,
     },
     // Optional modules (wol_core::modules, docs/modules/modules.md, ADR 0032).
@@ -649,7 +649,7 @@ pub const TREE: &[Cmd] = &[
         &["power", "apply"],
         "power.apply",
         &[],
-        "Apply the power policy now (root; devd on AC changes, rc.d at boot and resume)",
+        "Apply the power policy now (root; runs by itself when the charger is plugged or unplugged, at boot and after sleep)",
     ),
     cmd(&["power", "sleep"], "power.sleep", &[], "Sleep now"),
     cmd(&["power", "restart"], "power.restart", &[], "Restart now"),
@@ -1038,7 +1038,7 @@ pub const TREE: &[Cmd] = &[
         &["restore", "list"],
         "restore.list",
         &[],
-        "Restore points (ZFS boot environments)",
+        "Restore points (the system copies you can start from)",
     ),
     cmd(
         &["restore", "activate"],
@@ -1428,7 +1428,7 @@ mod tests {
             ),
             ("notify -- Hi --there", "notify title=Hi body=--there"),
             ("gpu hyprconf", "gpu.hyprconf"),
-            // rc.d wolos_hw, Settings, scripts
+            // wolos-hw.service, Settings, scripts
             ("hw boot", "hw.boot"),
             ("hw", "hw.list"),
             ("hw list --json", "hw.list --json"),

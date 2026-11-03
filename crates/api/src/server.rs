@@ -534,6 +534,58 @@ mod tests {
         assert_eq!(bus.len(), 0);
     }
 
+    /// Audit P6-1: a program that is a shower by its path alone is not one when it runs under
+    /// `LD_PRELOAD` (exec()ed by a same-account process to load its own code); the same path
+    /// without it subscribes.
+    #[test]
+    fn a_shower_binary_under_ld_preload_cannot_subscribe_to_the_account() {
+        for (env, subscribes) in [(None, true), (Some("LD_PRELOAD"), false)] {
+            let mut cmd = std::process::Command::new("/bin/sleep");
+            // Not the test runner's environment: cargo sets LD_LIBRARY_PATH for tests.
+            cmd.arg("10")
+                .env_clear()
+                .env("HOME", "/")
+                .stderr(std::process::Stdio::null());
+            if let Some(var) = env {
+                cmd.env(var, "/nonexistent/evil.so");
+            }
+            let mut child = cmd.spawn().unwrap();
+            let pid = i32::try_from(child.id()).unwrap();
+            let me = std::env::current_exe().unwrap();
+            while std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|e| e == me)
+                || std::fs::read(format!("/proc/{pid}/environ")).is_ok_and(|e| e.is_empty())
+            {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let exe = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap();
+            let exe: &'static str = Box::leak(exe.to_string_lossy().into_owned().into_boxed_str());
+            let showers: &'static [&'static str] = Box::leak(vec![exe].into_boxed_slice());
+            let peer = PeerIdentity::of_process(pid, showers);
+            let bus = Bus::default();
+            let (srv, mut cli) = UnixStream::pair().unwrap();
+            let h = ask(&cli, b"subscribe account\n");
+            serve(
+                srv,
+                Some(peer),
+                &Empty,
+                &bus,
+                &AllowAll,
+                &portal::State::default(),
+            );
+            h.join().unwrap();
+            if subscribes {
+                assert_eq!(bus.len(), 1, "the real shower subscribes");
+            } else {
+                let mut out = String::new();
+                cli.read_to_string(&mut out).unwrap();
+                assert!(out.contains("permission denied"), "{out}");
+                assert_eq!(bus.len(), 0, "a preloaded shower is refused");
+            }
+            child.kill().unwrap();
+            child.wait().unwrap();
+        }
+    }
+
     /// Child half of `a_peer_that_execs_after_sending_is_refused`: runs only when the parent test
     /// re-executes this binary with `WOL_EXEC_CLIENT` set. Connects, sends a call, waits for the
     /// parent to accept, then exec()s into another binary before the server reads the request.

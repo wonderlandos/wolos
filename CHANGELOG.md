@@ -7,6 +7,7 @@ Boot on the live USB stick. All four repositories are tagged together once every
 on our own build farm and the ISO has passed its VM tests (ADR 0029).
 
 Desktop & apps
+- WolKernel 1:1.0+7.3-5: a rebuild of the same fork tag `wolkernel-1.0-7.3` (no new patches).
 - Control Center has a new tile grid: Battery, Screen Mirroring, Keyboard Brightness, Night Shift, Screenshot, Record, accessibility and Stay Awake, plus tiles from plugins. It gained a Sound page (outputs, inputs, mute) and a Display page (brightness, Night Shift, mirroring).
 - A theme picker (Ctrl+Super+T) shows every installed theme as a preview card. One theme now colours the whole desktop: window borders, the lock screen, the terminal and the prompt in every shell you use. "Theme from your wallpaper" makes one from your picture.
 - `wol-hue` makes a theme from a picture, with sliders, and imports Base16 and colors.toml palettes.
@@ -155,7 +156,7 @@ Known limitations
 - Virtual machines: VirtualBox, VMware, SPICE and QEMU guest support, each started only under its own hypervisor. In VirtualBox the screen follows the window size (VBoxClient --vmsvga).
 
 ## 0.11.3
-- WolKernel 1:1.0+7.3-4: the series in `kernel/linux/patches` through 0034 (kernel/SERIES.md): futex spinning, prechecks and inline vectors for `futex_waitv`, pipe and semaphore wake paths, SLUB sheaf sizing, ntsync inline waits, large folios cleared on idle CPUs, and the syscall exit fixes. Each has a runtime off switch.
+- WolKernel 1:1.0+7.3-4: the series through 0034 (since moved to the fork, one commit per patch; list: `linux-wolos/SERIES.md` in wolos-pkgbuilds): futex spinning, prechecks and inline vectors for `futex_waitv`, pipe and semaphore wake paths, SLUB sheaf sizing, ntsync inline waits, large folios cleared on idle CPUs, and the syscall exit fixes. Each has a runtime off switch.
 - Arch Linux snapshot 2026-10-31.
 - linux-wolos-headers ships `vmlinux` without debug info (BTF kept), as Arch does: 390 MB less on disk, and the ISO stays one 2 GiB download.
 - Window title strip: follows light and dark. Kit windows show the title once, and strip plus toolbar take 64 px instead of 80.

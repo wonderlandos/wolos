@@ -45,9 +45,9 @@ module Wopkg
           k, _, v = line.strip.partition(" = ")
           base = k.sub(/_(x86_64|i686|aarch64|armv7h|armv6h|any)\z/, "")
           case base
-          when "url"           then url = v if url.empty?
-          when "source"        then srcs << v
-          when "validpgpkeys"  then keys << v
+          when "url"                        then url = v if url.empty?
+          when "source"                     then srcs << v
+          when "validpgpkeys"               then keys << v
           when /\A(b2|sha\d+|md5|ck)sums\z/ then sums[$1] << v
           end
         end

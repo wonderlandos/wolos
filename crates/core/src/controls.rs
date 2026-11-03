@@ -424,6 +424,10 @@ impl Controls {
             .and_then(|s| parse_wpctl_volume(&s))
     }
 
+    /// `wpctl set-volume N%`: N counts from the hardware maximum, capped at 100 (no boost here).
+    /// This is the path of the volume keys, `wol volume` and a machine with no sound service. The
+    /// sliders (Settings, Control Center) go through `wol_audio` instead, which knows each
+    /// device's 0 dB (`wol_core::audio::Action::OutputVolume`), so they never use this.
     pub fn set_volume(&self, percent: u8) -> Result<(), ControlError> {
         let p = percent.min(100);
         self.ok(self.run(&[

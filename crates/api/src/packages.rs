@@ -58,6 +58,52 @@ pub trait System {
     fn staging(&self) -> &Staging {
         &STAGED
     }
+    /// Is there room under [`STAGING`] for the copy of `path` and a reserve left over (P6-5)?
+    /// Err with what to tell the person. Checked before anything is copied.
+    fn room(&self, _path: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Free space [`STAGING`]'s filesystem keeps after a copy (audit P6-5): a tenth of it, at least
+/// 1 GiB. Pacman, the journal and the other accounts' files need it more than one more package.
+pub fn staging_reserve(total: u64) -> u64 {
+    (total / 10).max(1 << 30)
+}
+
+/// Would a copy of `size` bytes leave `free` of `total` bytes at or above [`staging_reserve`]?
+pub fn enough_room(free: u64, total: u64, size: u64) -> bool {
+    free.checked_sub(size)
+        .is_some_and(|left| left >= staging_reserve(total))
+}
+
+/// Bytes free to ordinary writes and in all, on the filesystem that holds `path` or its nearest
+/// existing parent. None when the kernel will not say (the copy is then refused).
+// statvfs field widths differ by target (u32 on some): the conversions are needed there.
+#[allow(clippy::useless_conversion)]
+fn space_at(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut at = path;
+    while !at.exists() {
+        at = at.parent()?;
+    }
+    let c = std::ffi::CString::new(at.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `c` is a NUL-terminated path and `st` a zeroed statvfs the call fills in.
+    let st = unsafe {
+        let mut st: libc::statvfs = std::mem::zeroed();
+        (libc::statvfs(c.as_ptr(), &mut st) == 0).then_some(st)?
+    };
+    let unit = u64::from(st.f_frsize);
+    Some((
+        u64::from(st.f_bavail).saturating_mul(unit),
+        u64::from(st.f_blocks).saturating_mul(unit),
+    ))
+}
+
+/// The refusal shown when the copy of `size` would leave too little free space.
+fn no_room_message() -> String {
+    "There is not enough free space on this computer to install that file. Free some space and try again."
+        .into()
 }
 
 /// The real machine (wold runs as root). Asks go to the account's shower over `bus`; `asks` holds
@@ -101,6 +147,17 @@ impl System for Host<'_> {
             crate::privileged::privileged_command(prog).args(args),
             RUN_TIMEOUT,
         )
+    }
+
+    fn room(&self, path: &str) -> Result<(), String> {
+        // The size of the file as it is now; the copy itself stops at MAX_STAGED either way.
+        let size = shared::sys::open_named(path)
+            .and_then(|f| f.metadata())
+            .map_or(MAX_STAGED, |m| m.len().min(MAX_STAGED));
+        match space_at(std::path::Path::new(STAGING)) {
+            Some((free, total)) if enough_room(free, total, size) => Ok(()),
+            _ => Err(no_room_message()),
+        }
     }
 
     fn stage(&self, path: &str, uid: u32) -> Option<String> {
@@ -847,6 +904,11 @@ pub fn handle(
         },
         _ => None,
     };
+    if let PackageCall::InstallFile { path } = &call
+        && let Err(why) = sys.room(path)
+    {
+        return Answer::err(Code::Unavailable, why);
+    }
     let staged = match &call {
         PackageCall::InstallFile { path } => match sys.stage(path, uid) {
             Some(copy) => Some(copy),
@@ -992,6 +1054,10 @@ mod tests {
         code: i32,
         /// Why the staged copy cannot be read (None: it reads as [`facts`]).
         unreadable: Option<String>,
+        /// Set: the disk has no room for the copy (the refusal shown).
+        no_room: Option<String>,
+        /// How many times the fake was asked to copy a file.
+        staged_calls: std::cell::Cell<u32>,
     }
 
     /// What the fake reads from every staged copy.
@@ -1026,7 +1092,11 @@ mod tests {
             self.ran.borrow_mut().push(a.to_vec());
             self.code
         }
+        fn room(&self, _: &str) -> Result<(), String> {
+            self.no_room.clone().map_or(Ok(()), Err)
+        }
         fn stage(&self, p: &str, uid: u32) -> Option<String> {
+            self.staged_calls.set(self.staged_calls.get() + 1);
             (uid == 1000).then(|| format!("{STAGING}/n/{}", p.rsplit('/').next().unwrap()))
         }
         fn discard(&self, staged: &str) {
@@ -1182,6 +1252,59 @@ mod tests {
         assert!(f.asked.borrow().is_empty() && f.ran.borrow().is_empty());
         drop(held);
         assert!(handle(call, Some((1000, APP)), &all, &f).ok, "free again");
+    }
+
+    /// Audit P6-5: a copy that would leave the disk under its reserve is refused with a clear
+    /// message before any file is copied or any sheet shown.
+    #[test]
+    fn a_staged_install_is_refused_below_the_free_space_reserve() {
+        let call = r#"{"call":"package.install-file","path":"/home/a/x.pkg.tar.zst"}"#;
+        let all = |_: &str, _: &str| true;
+        let full = Fake {
+            no_room: Some(no_room_message()),
+            ..yes([0; 32])
+        };
+        let a = handle(call, Some((1000, APP)), &all, &full);
+        assert!(!a.ok);
+        assert_eq!(a.code, Some(Code::Unavailable), "{a:?}");
+        assert!(
+            a.message.as_deref().unwrap().contains("free space"),
+            "{a:?}"
+        );
+        assert_eq!(full.staged_calls.get(), 0, "nothing was copied");
+        assert!(full.asked.borrow().is_empty() && full.ran.borrow().is_empty());
+        assert!(
+            full.staging.enter(1000).is_some() && full.staging.enter(1001).is_some(),
+            "the place was given back"
+        );
+        let roomy = yes([0; 32]);
+        assert!(handle(call, Some((1000, APP)), &all, &roomy).ok);
+        assert_eq!(roomy.staged_calls.get(), 1);
+    }
+
+    #[test]
+    fn the_reserve_is_a_tenth_of_the_disk_and_at_least_a_gigabyte() {
+        const G: u64 = 1 << 30;
+        assert_eq!(staging_reserve(5 * G), G, "small disk: the floor");
+        assert_eq!(staging_reserve(500 * G), 50 * G, "big disk: a tenth");
+        assert!(
+            enough_room(10 * G, 100 * G, 0),
+            "exactly the reserve is kept"
+        );
+        assert!(enough_room(15 * G, 100 * G, 5 * G));
+        assert!(!enough_room(15 * G, 100 * G, 6 * G), "would dip into it");
+        assert!(
+            !enough_room(2 * G, 100 * G, 4 * G),
+            "bigger than what is free"
+        );
+        assert!(!enough_room(0, 0, 0), "an unreadable disk keeps nothing");
+    }
+
+    /// The real host reads the real disk: a temp-dir filesystem answers, with its free space.
+    #[test]
+    fn the_space_of_a_real_directory_is_read() {
+        let (free, total) = space_at(&std::env::temp_dir().join("no/such/dir")).unwrap();
+        assert!(total > 0 && free <= total);
     }
 
     /// R2C-8: at start wold removes the copies a previous run left, never wol-admind's.

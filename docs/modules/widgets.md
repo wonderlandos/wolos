@@ -19,7 +19,7 @@ Decision: ADR 0010. Code: `crates/shared/src/widgets/` (layout file, package sch
 
 ## Build a widget in 5 minutes
 
-1. Copy the example: `cp -r /usr/local/share/wolos/widgets/game-friends ~/.local/share/wolos/widgets/my-widget`. The folder name is the widget's id (lowercase letters, digits, `-`).
+1. Copy the example: `cp -r /usr/share/wolos/widgets/game-friends ~/.local/share/wolos/widgets/my-widget`. The folder name is the widget's id (lowercase letters, digits, `-`).
 2. Make the data source print JSON. `friends.sh` is a plain script; replace its body with your query and keep the shape.
 3. Edit `widget.json`: name, sizes, and one layout per size.
 4. Check it: `wol widgets validate my-widget`. It names every problem with its JSON path, runs the source once, and lists every `{{binding}}` the output does not fill.

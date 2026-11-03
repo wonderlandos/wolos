@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# trips: RCR-044
+# Scanner fixture: a build step that downloads shards while it builds.
+build() {
+  cd "$srcdir/wolos/hue"
+  shards install
+  crystal build --release src/hue.cr
+}

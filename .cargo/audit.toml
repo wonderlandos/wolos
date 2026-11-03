@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# cargo audit config (ci.yml lint job: `cargo audit --deny warnings`). cargo-audit does not read deny.toml,
+# so the zbus trio that deny.toml ignores is repeated here. rsa and bincode are not in deny.toml: its graph
+# has all-features = false, so the optional yara feature (yara-x) is not scanned there, but Cargo.lock has it.
+# Every entry: why it does not apply, and the date to look again.
+
+[advisories]
+ignore = [
+    # rsa: Marvin timing attack on RSA *private-key* operations. Reached only through the optional `yara`
+    # feature of xguard (yara-x's authenticode module), which only verifies public signatures and never holds
+    # a private key. No fixed release exists. Review 2027-02-01.
+    "RUSTSEC-2023-0071",
+    # bincode 2.x unmaintained: only via yara-x (optional `yara` feature of xguard), no alternative there.
+    # Review 2027-02-01.
+    "RUSTSEC-2025-0141",
+    # zvariant, zbus_names, zvariant_derive unmaintained: pulled by zbus 5, no maintained alternative.
+    # Same entries and review date as deny.toml. Review 2027-02-01.
+    "RUSTSEC-2026-0370",
+    "RUSTSEC-2026-0371",
+    "RUSTSEC-2026-0372",
+]

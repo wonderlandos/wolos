@@ -4,7 +4,7 @@ What works out of the box on WolOS, what one command adds, and the three things 
 
 ## Before you record
 
-1. **100% is 0 dB.** The input slider's top is the microphone's nominal level, not the hardware maximum. If a mic is quiet at 100%, turn on *Allow louder* in Settings > Sound > Input and watch the meter; red means clipping.
+1. **100% is 0 dB.** The input slider's top is the microphone's nominal level, not the hardware maximum. If a mic is quiet at 100%, turn on *Allow louder* (Settings > Sound > Output; one switch for both the output and the input slider, which then reach the hardware maximum and mark 0 dB with a tick) and watch the meter in Settings > Sound > Input; red means clipping.
 2. **Check the stack:** `wol audio doctor`. It names the default input's level in dB, dropouts, forced buffers and the OBS pieces, each with the fix.
 3. **Pick the buffer for the job** in Settings > Sound > Pro Audio: 64 frames (1.3 ms) for monitoring through a DAW, 256 for a stream, automatic for everything else. The choice is written to `~/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf` and applied live; it survives a reboot and `wol audio reset` removes it.
 
@@ -14,7 +14,7 @@ Install OBS (`pacman -S obs-studio`) and the PipeWire audio capture plugin (`pac
 
 **Game audio and voice on separate tracks.** `wol audio appmix on` creates an output called **WolOS App Mix** and a source called **Mic + App Mix**:
 
-- send the game or the browser to *WolOS App Mix* (Settings > Sound > Apps, or the app's own output picker); you still hear it on your speakers or headset;
+- send the game or the browser to *WolOS App Mix* with the app's own output picker (Settings > Sound has no per-app list); you still hear it on your speakers or headset;
 - in OBS add *Application Audio Capture* on *WolOS App Mix* for the game track and *Audio Input Capture* on your microphone for the voice track, or one *Audio Input Capture* on *Mic + App Mix* when a single mixed track is enough.
 
 `wol audio appmix off` removes both; `wol audio appmix status` says which exists. They are pipewire-pulse modules, so they go away with a logout too.
@@ -27,13 +27,13 @@ Settings > Sound > Input has two switches. *Automatic input level* puts WebRTC g
 
 ## DAWs and JACK apps
 
-`pipewire-jack` is the JACK on the image: Ardour, Reaper, Bitwig, Carla and friends see PipeWire as a JACK server with the buffer you chose in Pro Audio. Realtime scheduling comes from rtkit, and members of the `audio` group have `rtprio 95` / `memlock unlimited` directly (`/etc/security/limits.d/70-wolos-audio.conf`). A USB interface keeps its hardware mixer (preamp gain in the interface's own knob), and its card can be switched to the *Pro Audio* profile in Settings > Sound > Pro Audio, which exposes every channel raw and bypasses the automatic routing.
+`pipewire-jack` is the JACK on the image: Ardour, Reaper, Bitwig, Carla and friends see PipeWire as a JACK server with the buffer you chose in Pro Audio. Realtime scheduling comes from rtkit, and members of the `audio` group have `rtprio 95` / `memlock unlimited` directly (`/etc/security/limits.d/70-wolos-audio.conf`). A USB interface keeps its hardware mixer (preamp gain in the interface's own knob), and its card can be switched to the card profile *Pro Audio*, which exposes every channel raw and bypasses the automatic routing. Settings > Sound > Pro Audio sets only the rate and the buffer; the card profile is a command: `pactl list short cards` names the card, then `pactl set-card-profile <card> pro-audio` (and back to `output:analog-stereo+input:analog-stereo`, or whatever the card listed before, to return).
 
 Sample rate: the graph runs at 48 kHz but follows 44.1, 88.2 and 96 kHz streams instead of resampling them; force one in Pro Audio for a whole session. Dropouts show as *xruns* in Pro Audio and in `wol audio doctor`; the fix is a larger buffer, another USB port, or a powered hub.
 
 ## Bluetooth headsets
 
-The best codec the headset offers wins (LDAC, aptX HD, aptX, AAC, SBC-XQ). Recording through a Bluetooth headset switches it to the call profile (HFP, lower quality) only while an app records, and back afterwards; turn *Switch to headset mode for calls* off in Settings > Sound if you prefer to keep music quality and use another microphone. The codec can be chosen per device.
+The best codec the headset offers wins (LDAC, aptX HD, aptX, AAC, SBC-XQ). Recording through a Bluetooth headset switches it to the call profile (HFP, lower quality) only while an app records, and back afterwards; the input level meter in Settings does not count as an app recording; turn *Use the headset microphone automatically* off in Settings > Sound (Bluetooth section, shown while a Bluetooth device is connected) if you prefer to keep music quality and use another microphone. The codec can be chosen per device.
 
 ## When something is wrong
 

@@ -1,0 +1,427 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Ameba (the Crystal linter) for every tracked .cr file; docs/RULES-crystal.md RCR-003.
+# Run: tools/crystal/lint.sh  (crystal tool format --check, then ameba --up-to-version 1.7.0).
+#
+# Every rule ameba 1.7.0 ships is listed with an explicit Enabled: a rule added by a newer ameba
+# is not in this file, so rules_crystal.rs RCR-003 fails until someone decides it here, and
+# lint.sh passes --up-to-version so a newer ameba does not switch rules on behind our back.
+# Excluded: lists under a rule are the baseline for that rule (the legacy files that still break
+# it). They only shrink: RCR-004 fails when one grows or when a file is listed that no longer breaks the rule.
+# The scanner fixtures under crates/controller/tests/fixtures/crystal are bad on purpose and are
+# never passed to ameba.
+Globs:
+  - "**/*.cr"
+  - "!lib"
+  - "!crates/controller/tests/fixtures"
+
+Documentation/Admonition:
+  Enabled: false
+
+Documentation/Documentation:
+  Enabled: false
+
+Layout/LineLength:
+  Enabled: false
+
+Layout/TrailingBlankLines:
+  Enabled: true
+
+Layout/TrailingWhitespace:
+  Enabled: true
+
+Lint/AmbiguousAssignment:
+  Enabled: true
+
+Lint/AssignmentInCallArgument:
+  Enabled: true
+
+Lint/BadDirective:
+  Enabled: true
+
+Lint/ComparisonToBoolean:
+  Enabled: false
+
+Lint/DebugCalls:
+  Enabled: true
+
+Lint/DebuggerStatement:
+  Enabled: true
+
+Lint/DeprecatedRule:
+  Enabled: true
+
+Lint/DuplicateBranch:
+  Enabled: false
+
+Lint/DuplicateEnumValue:
+  Enabled: true
+
+Lint/DuplicateMethodSignature:
+  Enabled: true
+
+Lint/DuplicateRequire:
+  Enabled: true
+
+Lint/DuplicateWhenCondition:
+  Enabled: true
+
+Lint/ElseNil:
+  Enabled: true
+
+Lint/EmptyEnsure:
+  Enabled: true
+
+Lint/EmptyExpression:
+  Enabled: true
+
+Lint/EmptyLoop:
+  Enabled: true
+
+Lint/EnumMemberNameConflict:
+  Enabled: true
+
+Lint/Formatting:
+  Enabled: true
+
+Lint/HashDuplicatedKey:
+  Enabled: true
+
+Lint/LiteralAssignmentsInExpressions:
+  Enabled: true
+
+Lint/LiteralInCondition:
+  Enabled: true
+
+Lint/LiteralInInterpolation:
+  Enabled: true
+
+Lint/LiteralsComparison:
+  Enabled: true
+
+Lint/MissingBlockArgument:
+  Enabled: true
+
+Lint/NonExistentRule:
+  Enabled: true
+
+Lint/NotNil:
+  Enabled: true
+  Excluded:
+    - hue/spec/cli_spec.cr
+    - hue/spec/perf_spec.cr
+    - hue/src/hue/cli.cr
+    - hue/src/hue/imports.cr
+    - hue/src/hue/theme.cr
+    - wopkg/spec/aur_guard_spec.cr
+    - wopkg/spec/completions_spec.cr
+    - wopkg/src/wopkg/app.cr
+    - wopkg/src/wopkg/sources.cr
+
+Lint/NotNilAfterNoBang:
+  Enabled: true
+  Excluded:
+    - wopkg/spec/aur_guard_spec.cr
+    - wopkg/src/wopkg/app.cr
+
+Lint/PercentArrays:
+  Enabled: true
+  Excluded:
+    - wopkg/spec/args_spec.cr
+
+Lint/RandZero:
+  Enabled: true
+
+Lint/RedundantStringCoercion:
+  Enabled: true
+
+Lint/RedundantWithIndex:
+  Enabled: true
+
+Lint/RedundantWithObject:
+  Enabled: true
+
+Lint/RequireParentheses:
+  Enabled: true
+
+Lint/SelfInitializeDefinition:
+  Enabled: true
+
+Lint/ShadowedArgument:
+  Enabled: true
+
+Lint/ShadowedException:
+  Enabled: true
+
+Lint/ShadowingOuterLocalVar:
+  Enabled: true
+  Excluded:
+    - hue/src/hue/extract.cr
+    - wopkg/src/wopkg/app.cr
+
+Lint/SharedVarInFiber:
+  Enabled: true
+
+Lint/SignalTrap:
+  Enabled: true
+
+Lint/SpecEqWithBoolOrNilLiteral:
+  Enabled: true
+  Excluded:
+    - wopkg/spec/toml_spec.cr
+
+Lint/SpecFilename:
+  Enabled: true
+
+Lint/SpecFocus:
+  Enabled: true
+
+Lint/Syntax:
+  Enabled: true
+
+Lint/TopLevelOperatorDefinition:
+  Enabled: true
+
+Lint/TrailingRescueException:
+  Enabled: true
+
+Lint/Typos:
+  Enabled: false
+
+Lint/UnneededDisableDirective:
+  Enabled: true
+
+Lint/UnreachableCode:
+  Enabled: true
+
+Lint/UnusedArgument:
+  Enabled: true
+  Excluded:
+    - crates/wol-abi/bindings/crystal/hello.cr
+    - crates/wol-abi/bindings/crystal/parts.cr
+    - crates/wol-abi/bindings/crystal/services.cr
+    - hue/spec/support/scenes.cr
+
+Lint/UnusedBlockArgument:
+  Enabled: true
+
+Lint/UnusedExpression:
+  Enabled: true
+
+Lint/UnusedRescueVariable:
+  Enabled: true
+
+Lint/UselessAssign:
+  Enabled: true
+
+Lint/UselessConditionInWhen:
+  Enabled: true
+
+Lint/UselessVisibilityModifier:
+  Enabled: true
+
+Lint/VoidOutsideLib:
+  Enabled: true
+
+Lint/WhitespaceAroundMacroExpression:
+  Enabled: true
+  Excluded:
+    - crates/wol-abi/bindings/crystal/hello.cr
+    - crates/wol-abi/bindings/crystal/parts.cr
+    - crates/wol-abi/bindings/crystal/services.cr
+
+# complexity is a review matter, not a defect class; the specs cover the branches
+Metrics/CyclomaticComplexity:
+  Enabled: false
+
+Naming/AccessorMethodName:
+  Enabled: true
+
+Naming/AsciiIdentifiers:
+  Enabled: true
+
+Naming/BinaryOperatorParameterName:
+  Enabled: true
+
+# one-letter block parameters (|x|, |e|) are the Crystal idiom here; style only
+Naming/BlockParameterName:
+  Enabled: false
+
+Naming/ConstantNames:
+  Enabled: true
+
+Naming/Filename:
+  Enabled: true
+
+Naming/MethodNames:
+  Enabled: true
+
+Naming/PredicateName:
+  Enabled: true
+
+Naming/QueryBoolMethods:
+  Enabled: true
+  Excluded:
+    - crates/wol-abi/bindings/crystal/hello.cr
+    - crates/wol-abi/bindings/crystal/services.cr
+    - wopkg/src/wopkg/args.cr
+
+Naming/RescuedExceptionsVariableName:
+  Enabled: true
+
+Naming/TypeNames:
+  Enabled: true
+
+Naming/VariableNames:
+  Enabled: true
+
+Performance/AnyAfterFilter:
+  Enabled: true
+
+Performance/AnyInsteadOfEmpty:
+  Enabled: false
+
+Performance/AnyInsteadOfPresent:
+  Enabled: true
+
+Performance/ChainedCallWithNoBang:
+  Enabled: true
+  Excluded:
+    - hue/spec/cli_spec.cr
+    - hue/spec/extract_spec.cr
+    - hue/spec/theme_spec.cr
+    - hue/src/hue/look.cr
+    - wopkg/src/wopkg/app.cr
+    - wopkg/src/wopkg/aur.cr
+    - wopkg/src/wopkg/aur_guard.cr
+    - wopkg/src/wopkg/pins.cr
+    - wopkg/src/wopkg/scan.cr
+    - wopkg/src/wopkg/ui.cr
+
+Performance/CompactAfterMap:
+  Enabled: true
+
+Performance/ExcessiveAllocations:
+  Enabled: true
+
+Performance/FirstLastAfterFilter:
+  Enabled: true
+
+Performance/FlattenAfterMap:
+  Enabled: true
+
+Performance/MapInsteadOfBlock:
+  Enabled: true
+
+Performance/MinMaxAfterMap:
+  Enabled: true
+
+Performance/SizeAfterFilter:
+  Enabled: true
+
+Performance/TimesMap:
+  Enabled: true
+
+Style/ArrayLiteralSyntax:
+  Enabled: false
+
+Style/CallParentheses:
+  Enabled: false
+
+Style/Elsif:
+  Enabled: false
+
+Style/GuardClause:
+  Enabled: false
+
+Style/HashLiteralSyntax:
+  Enabled: false
+
+Style/HeredocEscape:
+  Enabled: true
+
+Style/HeredocIndent:
+  Enabled: true
+
+Style/IsAFilter:
+  Enabled: true
+
+Style/IsANil:
+  Enabled: true
+
+Style/LargeNumbers:
+  Enabled: false
+
+Style/MultilineCurlyBlock:
+  Enabled: true
+
+Style/MultilineStringLiteral:
+  Enabled: true
+
+Style/NegatedConditionsInUnless:
+  Enabled: true
+  Excluded:
+    - wopkg/src/wopkg/recipe.cr
+
+Style/ParenthesesAroundCondition:
+  Enabled: true
+  Excluded:
+    - hue/spec/support/scenes.cr
+    - hue/src/hue/engine.cr
+
+# %w() vs %w[] is taste; crystal tool format does not touch it
+Style/PercentLiteralDelimiters:
+  Enabled: false
+
+Style/RedundantBegin:
+  Enabled: true
+
+Style/RedundantNext:
+  Enabled: true
+
+Style/RedundantNilInControlExpression:
+  Enabled: true
+  Excluded:
+    - hue/src/hue/engine.cr
+    - hue/src/hue/extract.cr
+    - hue/src/hue/look.cr
+    - hue/src/hue/palette.cr
+    - hue/src/hue/theme.cr
+    - wopkg/src/wopkg/aur_guard.cr
+    - wopkg/src/wopkg/flatpak.cr
+
+Style/RedundantReturn:
+  Enabled: true
+
+Style/RedundantSelf:
+  Enabled: true
+
+Style/UnlessElse:
+  Enabled: true
+
+Style/VerboseBlock:
+  Enabled: true
+  Excluded:
+    - hue/spec/extract_spec.cr
+    - hue/spec/theme_spec.cr
+    - hue/src/hue/theme.cr
+    - wopkg/src/wopkg/app.cr
+    - wopkg/src/wopkg/aur.cr
+    - wopkg/src/wopkg/aur_guard.cr
+
+Style/VerboseNilType:
+  Enabled: true
+
+Style/WhileTrue:
+  Enabled: true
+
+Typing/MacroCallArgumentTypeRestriction:
+  Enabled: false
+
+Typing/MethodParameterTypeRestriction:
+  Enabled: false
+
+Typing/MethodReturnTypeRestriction:
+  Enabled: false
+
+Typing/ProcLiteralReturnTypeRestriction:
+  Enabled: false

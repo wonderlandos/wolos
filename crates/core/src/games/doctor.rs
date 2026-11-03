@@ -461,7 +461,7 @@ pub fn checks(f: &Facts) -> Vec<Check> {
         } else {
             "no graphics driver loaded (/dev/dri missing)"
         },
-        if f.drm { "" } else { "wol hw doctor" },
+        if f.drm { "" } else { "wol hw status" },
     ));
     let gl = f.lib32_gl && f.lib32_vulkan;
     c.push(check(

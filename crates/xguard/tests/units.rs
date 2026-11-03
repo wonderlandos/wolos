@@ -112,3 +112,27 @@ fn the_guard_fits_its_descriptor_limit() {
         "FD_NEED {FD_NEED} x 4 > LimitNOFILE={limit}"
     );
 }
+
+/// Audit P6-2: the sweep parses hostile files in every home. It reads them (CAP_DAC_READ_SEARCH)
+/// and never changes an owner, so it holds no CAP_CHOWN and sees homes read-only.
+#[test]
+fn the_sweep_reads_homes_and_cannot_change_them() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../files/usr/lib/systemd/system/wolos-xguard-sweep.service"
+    );
+    let text = std::fs::read_to_string(path).unwrap();
+    let value = |key: &str| {
+        text.lines()
+            .find_map(|l| l.strip_prefix(&format!("{key}=")))
+            .unwrap_or_else(|| panic!("the sweep unit sets {key}"))
+            .to_owned()
+    };
+    for key in ["AmbientCapabilities", "CapabilityBoundingSet"] {
+        let caps = value(key);
+        let caps: Vec<&str> = caps.split_whitespace().collect();
+        assert_eq!(caps, ["CAP_DAC_READ_SEARCH"], "{key}: read, nothing else");
+    }
+    assert_eq!(value("ProtectHome"), "read-only");
+    assert_eq!(value("ReadWritePaths"), "/var/lib/wolos/xguard");
+}

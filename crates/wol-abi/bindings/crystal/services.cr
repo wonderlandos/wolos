@@ -90,9 +90,11 @@ puts "volume: #{percent.to_i} #{str(LibWol.wol_info_get_text(field(field(info, "
 LibWol.wol_info_release(info)
 ok LibWol.wol_audio_set_volume(ctx, 30, pointerof(err))
 ok LibWol.wol_audio_set_muted(ctx, 1, pointerof(err))
+
 class Found
   class_property opened = false
 end
+
 term = "term"
 ok LibWol.wol_search_query(ctx, term, term.bytesize, pointerof(info), pointerof(err))
 puts "found: #{LibWol.wol_info_get_count(field(info, "results"))}"
@@ -112,9 +114,11 @@ LibWol.wol_search_provider_release(provider)
 ok LibWol.wol_account_copy_info(ctx, pointerof(info), pointerof(err))
 puts "account: #{str(LibWol.wol_info_get_text(field(info, "name")))}"
 LibWol.wol_info_release(info)
+
 class Inbox
   class_property seen = false
 end
+
 peer, hello = "/usr/bin/peer", "hello"
 on_message = ->(e : LibWol::Endpoint*, m : LibWol::Message*, d : Void*) {
   puts "message: #{str(LibWol.wol_message_get_body(m))} #{str(LibWol.wol_message_get_from(m))}"

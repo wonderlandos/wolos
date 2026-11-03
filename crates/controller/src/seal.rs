@@ -326,6 +326,20 @@ fn luks_uuid(env: &dyn Env) -> Option<String> {
         .and_then(|w| w.split_once('=').map(|(u, _)| u.to_owned()))
 }
 
+/// Does this start's `rd.luks.options=<uuid>=...` ask the initramfs for the security chip
+/// (`tpm2-device`, [`encrypt::cmdline_words`])? A passphrase-only install does not: the chip
+/// must never be bound (or its absence reported as a failure) behind the person's choice.
+fn unlocks_with_chip(env: &dyn Env, uuid: &str) -> bool {
+    let Some(cmdline) = env.read_file(Path::new("/proc/cmdline")) else {
+        return false;
+    };
+    let prefix = format!("rd.luks.options={uuid}=");
+    cmdline
+        .split_whitespace()
+        .filter_map(|w| w.strip_prefix(prefix.as_str()))
+        .any(|opts| opts.split(',').any(|o| o.starts_with("tpm2-device")))
+}
+
 /// The PCRs this machine's chain measures: shim adds PCR 14.
 fn pcrs(env: &mut dyn Env) -> &'static str {
     let shim = env
@@ -338,11 +352,16 @@ fn pcrs(env: &mut dyn Env) -> &'static str {
 /// (Secure Boot turned off, new firmware: PCR 7 changed), the person typed their password or the
 /// recovery key, and systemd-cryptsetup left it in root's keyring ([`encrypt::PASSWORD_CACHE_KEY`]).
 /// That secret unlocks the volume once more to seal the key to the state measured now: the next
-/// start is automatic again. Nothing typed (the chip opened it): nothing to do.
+/// start is automatic again. Nothing typed (the chip opened it) or an install that never used the
+/// chip (no `tpm2-device` in `rd.luks.options`): nothing to do, exit 0.
 pub fn reseal(env: &mut dyn Env) -> i32 {
     let Some(uuid) = luks_uuid(env) else {
         return 0;
     };
+    // Passphrase-only install (audit I6-1): nothing to seal; the typed secret stays untouched.
+    if !unlocks_with_chip(env, &uuid) {
+        return 0;
+    }
     let Some(raw) = env.keyring_read(encrypt::PASSWORD_CACHE_KEY) else {
         return 0;
     };

@@ -18,14 +18,14 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | Terminal | foot | `foot` |
 
 Apps also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor, Image Viewer (eog) from their `.desktop` files; a pinned app appears once, under its WolOS name.
-Default apps: `/usr/local/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins).
+Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins).
 
 ## System
 
 | What | Where |
 |---|---|
 | zsh for accounts WolOS creates (`users::LOGIN_SHELL`); root keeps `/bin/sh` | `/etc/zsh/zshenv` (no wizard; loads `/usr/share/wolos/zsh/zshrc` in interactive shells), skel `.zshrc` (comments only) |
-| sudo for `%wheel` | `/usr/local/etc/sudoers.d/wolos` (0440) |
+| sudo for `%wheel` | `/etc/sudoers.d/wolos` (0440) |
 | Groups | admins `wheel,video,operator`, standard accounts `video` (operator can read raw disks) |
 | User folders | `xdg-user-dirs-update` in `wol-session` |
 | Login keyring | wol-login: `gnome-keyring-daemon --daemonize --login` (password on stdin) after PAM succeeds; the session's `--start --components=secrets` finishes it; stopped at logout |

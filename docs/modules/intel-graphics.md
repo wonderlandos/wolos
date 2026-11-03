@@ -3,6 +3,8 @@
 Target: ADL-P GT2 Iris Xe `8086:46a8` (`include/drm/intel/i915_pciids.h:677`, `INTEL_ADLP_IDS`). Loaded by `wolos_gpu` (`i915kms`).
 Source refs: `freebsd/drm-kmod` branch `6.12-lts`, under `drivers/gpu/drm/i915/`. Proof on hardware: `files/usr/lib/wolos/verify-gpu.sh`.
 
+> Historical. Written for the FreeBSD base (drm-kmod, `kldload`, `loader.conf`); ADR 0016 replaced that base with Linux, where the kernel's own i915/xe driver loads and the firmware comes from `linux-firmware`. The loader tunables and `.ko` steps below no longer exist on the image. Kept for the register-level notes and the measurement method. Live GPU code: `crates/realtime` (`gpu_probe.rs`, `gpu_tune.rs`); proof on hardware: `files/usr/lib/wolos/verify-gpu.sh`.
+
 ## Firmware (offline, `/boot/modules/*.ko`, packages in `wolos-iso/profile/packages.desktop`)
 
 | Blob i915 requests (46a8) | Order | Source | Package |

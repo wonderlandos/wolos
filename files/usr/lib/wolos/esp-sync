@@ -38,7 +38,12 @@ for f in "$E"/wolos-[ab]*.conf; do
   g=$(sed -n 's/^version \([0-9]*\)-.*/\1/p' "$f"); [ -n "$g" ] || continue
   [ "$g" -le "$top" ] || top=$g
 done
-cur=$(ls "$E" | grep -E "^$slot(\+[0-9]+(-[0-9]+)?)?\.conf$" | head -1 || :)
+cur=
+for f in "$E/$slot".conf "$E/$slot"+*.conf; do
+  [ -f "$f" ] || continue
+  printf '%s\n' "${f##*/}" | grep -qE "^$slot(\+[0-9]+(-[0-9]+)?)?\.conf$" || continue
+  cur=${f##*/}; break
+done
 gen=$((top + 1))
 if [ "$new" != --new ] && [ -n "$cur" ]; then
   g=$(sed -n 's/^version \([0-9]*\)-.*/\1/p' "$E/$cur"); [ -z "$g" ] || gen=$g

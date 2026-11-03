@@ -1,7 +1,7 @@
 # Compositor fork
 
-Base: upstream `v0.56.2` (FreeBSD port `x11-wm/hyprland` 0.56.2). Build: wolos-pkgbuilds `hyprland-wolos/` (PKGBUILD + the `NNNN-*.patch` files beside it).
-Patches: `wolos-pkgbuilds/hyprland-wolos/NNNN-*.patch`, applied in order. Config: `desktop/overlay/usr/local/share/wolos/hypr/wolos-perf.conf` (sourced by the desktop conf).
+Base: upstream `v0.56.2`, the version the pinned Arch snapshot ships (the PKGBUILD follows the Arch package's packaging). Build: wolos-pkgbuilds `hyprland-wolos/` (PKGBUILD + the `NNNN-*.patch` files beside it).
+Patches: `wolos-pkgbuilds/hyprland-wolos/NNNN-*.patch`, applied in order. Config: `desktop/overlay/usr/share/wolos/hypr/wolos-perf.conf` (sourced by the desktop conf).
 Frontmost QoS and placement: `plugins/wol-hypr` + `crates/realtime` C ABI (`wol_realtime.h`), not a patch.
 
 | Optimization | IaraOS source | Compositor mechanism | Status | Measured |
@@ -47,4 +47,4 @@ Animating = `hyprctl dispatch workspace` toggled every 500 ms.
 Invariants:
 - Patches stay small and apply with `git apply --check` on `v0.56.2`.
 - Policy math lives in `src/helpers/WolosPerf.hpp`, `WolosLock.hpp` and `WolosWindow.hpp`, tested by `tests/helpers/`.
-- Bump the base tag only together with the FreeBSD port; rebase patches then.
+- Bump the base tag only together with the Arch snapshot (`pkgver` of `wolos-pkgbuilds/hyprland-wolos/PKGBUILD` follows the version the snapshot ships); rebase the patches then and check them with the series check in `SERIES.md`.

@@ -41,6 +41,8 @@ Interaction nets, honest verdict: compositor work is regular, data-parallel and 
 
 ## Measurement (ADL-P 8086:46a8, FreeBSD 15.1, native)
 
+> Historical: the tool column is the FreeBSD one. On Linux, `perf_event_open` exists, so the limits below that name FreeBSD do not apply. Re-measure on the Linux image before relying on a number.
+
 | Need | Tool on FreeBSD | Status | Fallback |
 |---|---|---|---|
 | GPU busy/freq (intel_gpu_top) | `intel_gpu_top` (`igt-gpu-tools`) | needs i915 PMU via `perf_event_open`: FreeBSD has no such syscall -> not usable | `sysctl hw.dri.0` and lindebugfs `i915_frequency_info`, `i915_fbc_status`, `i915_edp_psr_status` (`mount -t lindebugfs lindebugfs /sys/kernel/debug`) |

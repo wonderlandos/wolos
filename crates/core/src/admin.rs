@@ -1639,6 +1639,9 @@ mod tests {
         let join = r(WifiJoin, &["wlan0", "Home", "psk"]);
         let off = r(SessionPower, &["shutdown"]);
         let sleep = r(SessionPower, &["sleep"]);
+        // The lock screen's Restart (audit6 S6-5): refused while another account is signed in,
+        // taken when the session is the only one; its caption says so.
+        let restart = r(SessionPower, &["restart"]);
         for (req, uid, sessions, want) in [
             (&join, 1002, &[1002][..], true),
             (&join, 1002, &[1001, 1002][..], true),
@@ -1646,6 +1649,8 @@ mod tests {
             (&join, 1002, &[1001][..], false),
             (&off, 1002, &[1002][..], true),
             (&off, 1002, &[1001, 1002][..], false),
+            (&restart, 1002, &[1002][..], true),
+            (&restart, 1002, &[1001, 1002][..], false),
             (&sleep, 1002, &[1001, 1002][..], true),
             (&r(PkgUpgrade, &[]), 1002, &[1002][..], false),
         ] {

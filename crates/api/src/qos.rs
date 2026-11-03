@@ -64,7 +64,7 @@ pub fn linux(class: QosClass) -> Linux {
 }
 
 /// WolKernel hint interface (README.wolos.md in the kernel tree); absent on a stock kernel: no-op.
-/// `foreground_pid` feeds the frontmost-app CPU floor, timer slack and the i915 waitboost.
+/// `foreground_pid` feeds the i915 waitboost (only the frontmost app raises GPU clocks) and the OOM victim bias.
 pub const HINTS: &str = "/sys/kernel/wolos";
 
 /// Session policy wold sets at start: the frontmost app runs at least at half capacity with exact

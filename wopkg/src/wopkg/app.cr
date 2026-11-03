@@ -455,7 +455,8 @@ module Wopkg
         core.system_call({"call" => "system.channel", "channel" => c}.to_json)
         say "This computer now follows the #{c} channel."
       else
-        say (File.read("/etc/wolos/channel").strip rescue "stable")
+        current = File.read("/etc/wolos/channel").strip rescue "stable"
+        say current
       end
     end
 

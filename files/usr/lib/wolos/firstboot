@@ -24,11 +24,14 @@ fi
 # Optional modules and media formats the installer queued (ticked, but not installable offline;
 # ADR 0032). A module can be gigabytes, so it never holds up the login window: its own transient
 # unit downloads and installs it after this one. What does not install stays queued for the
-# dispatcher's next run; it does not keep firstboot-done from being written.
+# dispatcher's next run; it does not keep firstboot-done from being written. The unit is
+# collected whatever its end (--collect) and exit 1, "something stays queued", is not a failure
+# (SuccessExitStatus=1): a failed transient unit would stay loaded and the next start under the same
+# name would be refused, so no later connection could drain the queue (audit6 ST6-2).
 P="${WOL_MODULES_PENDING:-$D/modules-pending}"
 Q="${WOL_PACKAGES_PENDING:-$D/packages-pending}"
 if [ -s "$P" ] || [ -s "$Q" ]; then
-  systemd-run --no-block --unit=wolos-modules-pending --description="WolOS: install queued modules" \
+  systemd-run --no-block --unit=wolos-modules-pending --collect --property=SuccessExitStatus=1 --description="WolOS: install queued modules" \
     --property=After=network-online.target "${WOLOS_LIB:-/usr/lib/wolos}/modules-install" --drain ||
     log "could not start the queued modules"
 fi

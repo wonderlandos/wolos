@@ -111,6 +111,10 @@ pub enum Action {
     /// Default input slider, 0..100 (100 = 0 dB; above 100 only with boost).
     MicVolume(u16),
     MicMuted(bool),
+    /// Default output slider, same scale as [`Action::MicVolume`] (100 = 0 dB; above 100 only
+    /// with boost). The service converts with [`linear_for`], so the slider and the hardware
+    /// agree on where 0 dB is (`wpctl set-volume N%` counts from the hardware maximum instead).
+    OutputVolume(u16),
     /// "Automatic input level": module-echo-cancel with WebRTC gain control -> `WolOS Microphone`.
     AutoInputLevel(bool),
     /// "Reduce background noise": RNNoise LADSPA source on the default input.
@@ -142,6 +146,13 @@ pub fn linear_for(percent: u16, volume_base: f32) -> f32 {
     let base = if volume_base > 0.0 { volume_base } else { 1.0 };
     let f = f32::from(percent) / 100.0;
     (base * f * f * f).clamp(0.0, 1.0)
+}
+
+/// What `pactl set-sink-volume N%` and `wpctl set-volume N%` call the slider position `percent`
+/// (100 = 0 dB) on a device whose 0 dB sits at `volume_base`: both count from the hardware
+/// maximum, cubic like the slider, so a base below 1.0 makes the numbers differ.
+pub fn hardware_percent(percent: u16, volume_base: f32) -> u16 {
+    (linear_for(percent, volume_base).cbrt() * 100.0).round() as u16
 }
 
 /// The slider's end when boost is allowed: the hardware maximum in percent of 0 dB.
@@ -591,6 +602,22 @@ mod tests {
         assert_eq!(db_of(0.0, base), f32::NEG_INFINITY);
     }
 
+    /// A6-2: the same position means the same sound on both scales; only a base below 1.0 makes
+    /// the numbers differ, and 100 stays 0 dB, never the hardware maximum.
+    #[test]
+    fn hardware_percent_counts_from_the_hardware_maximum() {
+        assert_eq!(hardware_percent(100, 1.0), 100);
+        assert_eq!(hardware_percent(40, 1.0), 40);
+        let base = 0.125; // 0 dB is half of the maximum on the cubic scale
+        assert_eq!(hardware_percent(100, base), 50, "0 dB is not the maximum");
+        assert_eq!(hardware_percent(0, base), 0);
+        assert_eq!(
+            hardware_percent(max_percent(base), base),
+            100,
+            "louder tops out"
+        );
+    }
+
     #[test]
     fn cubic_slider_round_trips() {
         for p in [0u16, 10, 37, 50, 73, 100] {
@@ -984,6 +1011,8 @@ mod tests {
         assert_eq!(serde_json::from_str::<Action>(&j).unwrap(), a);
         let j = serde_json::to_string(&Action::MicVolume(80)).unwrap();
         assert_eq!(j, r#"{"action":"mic-volume","value":80}"#);
+        let j = serde_json::to_string(&Action::OutputVolume(80)).unwrap();
+        assert_eq!(j, r#"{"action":"output-volume","value":80}"#);
         let j = serde_json::to_string(&Action::BtCodec("AA:BB".into(), "aac".into())).unwrap();
         assert_eq!(j, r#"{"action":"bt-codec","value":["AA:BB","aac"]}"#);
         assert_eq!(

@@ -30,13 +30,13 @@ describe Wopkg::Toml do
 
   it "refuses what it does not understand, with the line" do
     {
-      "a = 1\na = 2"      => /line 2: a is set twice/,
-      "x"                 => /line 1: expected key = value/,
-      "a = \"open"        => /unfinished string/,
-      "a = 1.5e3"         => /unexpected text/,
-      "[t]\n[t]"          => /appears twice/,
-      "a = {inline = 1}"  => /unsupported value/,
-      "a = [1 2]"         => /expected , or \]/,
+      "a = 1\na = 2"     => /line 2: a is set twice/,
+      "x"                => /line 1: expected key = value/,
+      "a = \"open"       => /unfinished string/,
+      "a = 1.5e3"        => /unexpected text/,
+      "[t]\n[t]"         => /appears twice/,
+      "a = {inline = 1}" => /unsupported value/,
+      "a = [1 2]"        => /expected , or \]/,
     }.each do |text, err|
       expect_raises(Wopkg::Toml::ParseError, err) { Wopkg::Toml.parse(text) }
     end

@@ -12,7 +12,7 @@
 //!
 //! The UI talks to [`Handle`]: requests go in through a `std::sync::mpsc` channel, every change
 //! comes back as a [`Snapshot`] on a receiver (drain it from a GLib idle).
-use crate::model::{Command, Event, NodeInfo, Snapshot};
+use crate::model::{Command, Event, METER_PROPS, NodeInfo, Snapshot};
 use crate::service::{Backend, Backoff, Ended, Input, MAX_RESTARTS, Service, serve_guarded};
 use pipewire as pw;
 use pw::device::{Device, DeviceListener};
@@ -487,13 +487,10 @@ fn send(tx: &Events, ev: Event) {
 }
 
 fn start_meter(core: &pw::core::CoreRc, tx: &Events) -> Option<Meter> {
-    let props = pw::properties::properties! {
-        *pw::keys::MEDIA_TYPE => "Audio",
-        *pw::keys::MEDIA_CATEGORY => "Capture",
-        *pw::keys::MEDIA_ROLE => "Production",
-        *pw::keys::NODE_NAME => "wolos-meter",
-        *pw::keys::NODE_DESCRIPTION => "WolOS input level",
-    };
+    let mut props = pw::properties::PropertiesBox::new();
+    for (k, v) in METER_PROPS {
+        props.insert(k, v);
+    }
     let stream = StreamRc::new(core.clone(), "wolos-meter", props).ok()?;
     let tx = tx.clone();
     let listener = stream
