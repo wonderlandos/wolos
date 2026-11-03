@@ -23,7 +23,7 @@ module Wol
     # The title shown in the menu bar.
     getter title : ::String
 
-    @on_choose : Menu, ::String -> Nil
+    @on_choose : (Menu, ::String -> Nil)? = nil
     @placed = false
 
     # A menu titled `title`; the block gets the menu and the chosen item's key.
@@ -68,9 +68,10 @@ module Wol
     end
 
     # :nodoc:
-    # Called by `Window#add_menu` after libwol accepted the menu.
-    def placed! : Nil
-      @placed = true
+    # Called by `Window#add_menu` after libwol accepted (or, with false,
+    # let go of) the menu.
+    def placed!(placed : Bool = true) : Nil
+      @placed = placed
     end
 
     # True once the menu was added to a window.
@@ -79,7 +80,7 @@ module Wol
     end
 
     # Release the menu. A menu on a window stays rooted: the window in libwol still holds it and
-    # may still deliver to it.
+    # may still call the trampoline, which must find a live object. The block is dropped.
     def close : Nil
       keep = !closed? && @placed
       super
@@ -87,7 +88,12 @@ module Wol
     end
 
     protected def fire(key : ::String) : Nil
-      @on_choose.call(self, key)
+      @on_choose.try &.call(self, key)
+    end
+
+    # Drop the block, so a block that captured this menu does not keep a cycle alive.
+    protected def before_release(_ptr : LibWol::Menu*) : Nil
+      @on_choose = nil
     end
 
     protected def release(ptr : LibWol::Menu*) : Nil

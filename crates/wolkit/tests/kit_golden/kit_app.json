@@ -1,0 +1,34 @@
+{
+  "type": "stack",
+  "spacing": 0,
+  "children": [
+    {
+      "type": "stack",
+      "spacing": 8,
+      "children": [
+        {
+          "type": "label",
+          "text": "Hello",
+          "role": "body"
+        },
+        {
+          "type": "text-field",
+          "id": 3,
+          "text": "",
+          "placeholder": "What needs doing?"
+        },
+        {
+          "type": "button",
+          "id": 4,
+          "label": "Add"
+        },
+        {
+          "type": "toggle",
+          "id": 5,
+          "on": false,
+          "label": "Notify me"
+        }
+      ]
+    }
+  ]
+}

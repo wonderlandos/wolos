@@ -148,12 +148,14 @@ describe Wol::Loop do
         kept ||= e.keep
       end
       Wol::Spec.run_until(ctx) { !kept.nil? }.should be_true
-      lent.not_nil!.valid?.should be_false
-      expect_raises(Wol::UsageError) { lent.not_nil!.json }
-      kept.not_nil!.topic.should eq "theme"
-      kept.not_nil!.json.should eq %({"event":"theme","id":"wol-dark-blue"})
-      kept.not_nil!.close
-      expect_raises(Wol::UsageError) { kept.not_nil!.json }
+      old = lent.should be_a(Wol::Event)
+      held = kept.should be_a(Wol::Event)
+      old.valid?.should be_false
+      expect_raises(Wol::UsageError) { old.json }
+      held.topic.should eq "theme"
+      held.json.should eq %({"event":"theme","id":"wol-dark-blue"})
+      held.close
+      expect_raises(Wol::UsageError) { held.json }
     end
   end
 
@@ -197,7 +199,8 @@ describe Wol::Loop do
     Wol::Spec.with_fake("core") do |ctx, _|
       sub = ctx.subscribe("theme") { }
     end
-    sub.not_nil!.closed?.should be_true
+    sub.should be_a(Wol::Subscription)
+    sub.try(&.closed?).should be_true
   end
 
   it "works across contexts that reuse the same wake fd number" do

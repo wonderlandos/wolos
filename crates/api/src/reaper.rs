@@ -259,10 +259,15 @@ mod tests {
         let pid = child.id() as i32;
         let rx = r.register(pid);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while rx.try_recv().map(|c| assert_eq!(c, 7)).is_err() {
+        // Waits on the channel, not in a hot loop: reap_all is waitpid(-1), and hammering it would
+        // take the children other tests of this binary are waiting for.
+        let code = loop {
             r.reap_all(|p| p == pid);
+            if let Ok(code) = rx.recv_timeout(std::time::Duration::from_millis(5)) {
+                break code;
+            }
             assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        };
+        assert_eq!(code, 7);
     }
 }

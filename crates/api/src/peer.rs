@@ -349,7 +349,14 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .spawn();
         if let Ok(mut c) = un {
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            // unshare execs sleep a moment after it started: wait for that exec, bounded.
+            for _ in 0..1_000_000 {
+                let exe = std::fs::read_link(format!("/proc/{}/exe", c.id()));
+                if exe.is_ok_and(|e| e.ends_with("sleep")) {
+                    break;
+                }
+                std::thread::yield_now();
+            }
             let id = PeerIdentity::of_process(i32::try_from(c.id()).unwrap(), &SHOWERS);
             let dir = id.dir.as_ref().unwrap();
             if exe_of(dir).is_some_and(|e| e.ends_with("sleep")) {
@@ -382,7 +389,7 @@ mod tests {
             if exe != me && !env.is_empty() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::yield_now(); // `spawn` returns after the exec; this is a safety net
         }
         child
     }

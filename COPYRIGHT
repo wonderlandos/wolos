@@ -4,6 +4,7 @@ WolOS. Copyright (c) 2026 Julia Klee.
 |---|---|
 | everything not listed below | GPL-2.0-or-later (`LICENSE`) |
 | `crates/wol-abi/`, `crates/shared/`, `crates/core/` | BSD-2-Clause (`LICENSES/BSD-2-Clause.txt`) |
+| `wolos-crystal/shards/cryswol/` (the Cryswol shard), except `src/wol/pkg/`, `src/wol/realtime/` and `spec/pkg_spec.cr` (GPL-2.0-or-later: they bind libwopkg and the realtime library) | BSD-2-Clause (`wolos-crystal/shards/cryswol/LICENSE`) |
 | `crates/shell/` | GPL-2.0-or-later (`crates/shell/LICENSE`) |
 | `kernel/scx_wolos/` | GPL-2.0-only (`LICENSES/GPL-2.0-only.txt`) |
 | `design/` (except `design/tools/`, `design/icons/store/`) | CC BY-NC-ND 4.0 (`design/LICENSE`) |

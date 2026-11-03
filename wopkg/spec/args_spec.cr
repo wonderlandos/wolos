@@ -24,8 +24,8 @@ describe Wopkg::Args do
     end
   end
 
+  it "reads flags anywhere" do
     a = Wopkg::Args.parse(["update", "--to", "1.1", "-y", "--json", "--only", "flatpak,appimage"])
-    a = Wopkg::Args.parse(%w(update --to 1.1 -y --json --only flatpak,appimage))
     {a.verb, a.to, a.yes?, a.json?, a.only}.should eq({"update", "1.1", true, true, ["flatpak", "appimage"]})
     Wopkg::Args.parse(%w(-Qu)).check?.should be_true
     Wopkg::Args.parse(%w(install --from flatpak gimp)).from.should eq("flatpak")

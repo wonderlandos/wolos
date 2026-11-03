@@ -115,7 +115,7 @@ Narrower contract tests stay the authority for their units: `units.rs` (hardenin
 |---|---|---|---|---|
 | RS-190 | script | Scripts are installed mode 0755 (set by the package recipe; checkouts do not carry modes everywhere). | none | manual |
 | RS-191 | unit | `systemd-analyze security` exposure of each root unit stays at or below 50 (CI step, STANDARDS.md). | none | manual |
-| RS-192 | hyprland | `Hyprland --verify-config` accepts the shipped confs on the pinned compositor version. | none | manual |
+| RS-192 | hyprland | `Hyprland --verify-config` accepts the shipped confs on the pinned compositor version (CI job `compositor-config`; options only the fork adds are let through). | none | manual |
 | RS-193 | desktop | `desktop-file-validate` accepts each `.desktop` file (tool not on the build box). | none | manual |
 | RS-194 | script | Behaviour of each script is covered by a runtime harness (these tests read the files, they do not run them). | none | manual |
 | RS-195 | sysctl | A documented value is accepted by the kernel of the target image (needs a booted image). | none | manual |

@@ -19,10 +19,12 @@ source = $share/hypr/hyprland.conf
 CONF
 fi
 # Third-party apps look like WolOS before the first `wol theme set`: link the shipped defaults
-# (never over the user's own files). Compositor exec-once regenerates them from the active theme.
+# (never over the user's own files). ghostty and kitty read no system-wide config, so their WolOS defaults are
+# linked as the user's own (replace the link to make it yours). Compositor exec-once regenerates them
+# from the active theme.
 cfg=${XDG_CONFIG_HOME:-$HOME/.config}
 for f in gtk-4.0/gtk.css gtk-4.0/settings.ini gtk-3.0/gtk.css gtk-3.0/settings.ini qt6ct/qt6ct.conf foot/foot.ini \
-	Kvantum/kvantum.kvconfig Kvantum/WolOS/WolOS.kvconfig Kvantum/WolOS/WolOS.svg; do
+	ghostty/config kitty/kitty.conf Kvantum/kvantum.kvconfig Kvantum/WolOS/WolOS.kvconfig Kvantum/WolOS/WolOS.svg; do
 	if [ ! -e "$cfg/$f" ] && [ ! -L "$cfg/$f" ]; then
 		mkdir -p "$cfg/${f%/*}" && ln -s "$share/$f" "$cfg/$f"
 	fi

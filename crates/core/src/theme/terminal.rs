@@ -61,7 +61,12 @@ fn derived(t: &ResolvedTheme, dark: bool) -> [Color; TERMINAL_COLORS] {
     } else {
         (Color::rgb(29, 29, 31), Color::rgb(199, 199, 204))
     };
-    let blue = Color::rgb(10, 132, 255);
+    // The lake blue of the design tokens (`blue`, light and dark).
+    let blue = if dark {
+        Color::rgb(0x6a, 0xae, 0xf2)
+    } else {
+        Color::rgb(0x1d, 0x64, 0xb0)
+    };
     let cyan = if dark {
         Color::rgb(100, 210, 255)
     } else {

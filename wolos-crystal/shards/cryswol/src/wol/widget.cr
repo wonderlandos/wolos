@@ -27,13 +27,15 @@ module Wol
     end
 
     # :nodoc:
-    # Called by `Container#add` and `Window#content=` after libwol accepted the part.
-    def placed! : Nil
-      @placed = true
+    # Called by `Container#add` and `Window#content=` after libwol accepted (or, with false,
+    # let go of) the part.
+    def placed!(placed : Bool = true) : Nil
+      @placed = placed
     end
 
-    # Release the part. A part with a callback that is inside a container or a window stays
-    # rooted: libwol's parent still holds it and may still call it.
+    # Release the part and stop its callback. A part with a callback that is inside a container
+    # or a window stays rooted (with no block): libwol's parent still holds it and may still call
+    # the trampoline, which must find a live object.
     def close : Nil
       keep = !closed? && @placed && callback?
       super
@@ -155,15 +157,8 @@ module Wol
 
     @on_click : (Button -> Nil)? = nil
 
-    # A button with no click handler.
-    def initialize(context : Context, label : ::String)
-      @context = context
-      adopt(Wol.out(LibWol::Widget) do |slot, err|
-        LibWol.wol_button_create(context, Strings.ptr(label), Strings.size(label), nil, nil, slot, err)
-      end)
-    end
-
-    # A button that calls the block on every click.
+    # A button that calls the block on every click (libwol needs the callback). Raises
+    # `InvalidArgument` for an empty label.
     def initialize(context : Context, label : ::String, &on_click : Button -> Nil)
       @context = context
       @on_click = on_click
@@ -175,11 +170,16 @@ module Wol
     end
 
     protected def callback? : Bool
-      !@on_click.nil?
+      true
     end
 
     protected def fire : Nil
       @on_click.try &.call(self)
+    end
+
+    # Drop the block, so a block that captured this button does not keep a cycle alive.
+    protected def before_release(_ptr : LibWol::Widget*) : Nil
+      @on_click = nil
     end
   end
 
@@ -194,6 +194,7 @@ module Wol
     end
 
     @on_change : (TextField -> Nil)? = nil
+    @with_callback = false
 
     # A field with grey `placeholder` text and no change handler.
     def initialize(context : Context, placeholder : ::String = "")
@@ -207,6 +208,7 @@ module Wol
     def initialize(context : Context, placeholder : ::String = "", &on_change : TextField -> Nil)
       @context = context
       @on_change = on_change
+      @with_callback = true
       adopt(Wol.out(LibWol::Widget) do |slot, err|
         LibWol.wol_text_field_create(context, Strings.ptr(placeholder), Strings.size(placeholder), TRAMPOLINE,
           Callbacks.user_data(self), slot, err)
@@ -215,11 +217,16 @@ module Wol
     end
 
     protected def callback? : Bool
-      !@on_change.nil?
+      @with_callback
     end
 
     protected def fire : Nil
       @on_change.try &.call(self)
+    end
+
+    # Drop the block, so a block that captured this part does not keep a cycle alive.
+    protected def before_release(_ptr : LibWol::Widget*) : Nil
+      @on_change = nil
     end
   end
 
@@ -232,6 +239,7 @@ module Wol
     end
 
     @on_change : (Toggle -> Nil)? = nil
+    @with_callback = false
 
     # A toggle with no change handler.
     def initialize(context : Context, label : ::String = "", on : Bool = false)
@@ -245,6 +253,7 @@ module Wol
     def initialize(context : Context, label : ::String = "", on : Bool = false, &on_change : Toggle -> Nil)
       @context = context
       @on_change = on_change
+      @with_callback = true
       adopt(Wol.out(LibWol::Widget) do |slot, err|
         LibWol.wol_toggle_create(context, Strings.ptr(label), Strings.size(label), on ? 1 : 0, TRAMPOLINE,
           Callbacks.user_data(self), slot, err)
@@ -264,11 +273,16 @@ module Wol
     end
 
     protected def callback? : Bool
-      !@on_change.nil?
+      @with_callback
     end
 
     protected def fire : Nil
       @on_change.try &.call(self)
+    end
+
+    # Drop the block, so a block that captured this part does not keep a cycle alive.
+    protected def before_release(_ptr : LibWol::Widget*) : Nil
+      @on_change = nil
     end
   end
 
@@ -281,6 +295,7 @@ module Wol
     end
 
     @on_change : (Slider -> Nil)? = nil
+    @with_callback = false
 
     # A slider with no change handler. Needs min < max and min <= value <= max, or raises
     # `InvalidArgument`.
@@ -295,6 +310,7 @@ module Wol
     def initialize(context : Context, min : Number, max : Number, value : Number, &on_change : Slider -> Nil)
       @context = context
       @on_change = on_change
+      @with_callback = true
       adopt(Wol.out(LibWol::Widget) do |slot, err|
         LibWol.wol_slider_create(context, min.to_f64, max.to_f64, value.to_f64, TRAMPOLINE, Callbacks.user_data(self), slot, err)
       end)
@@ -313,11 +329,16 @@ module Wol
     end
 
     protected def callback? : Bool
-      !@on_change.nil?
+      @with_callback
     end
 
     protected def fire : Nil
       @on_change.try &.call(self)
+    end
+
+    # Drop the block, so a block that captured this part does not keep a cycle alive.
+    protected def before_release(_ptr : LibWol::Widget*) : Nil
+      @on_change = nil
     end
   end
 end

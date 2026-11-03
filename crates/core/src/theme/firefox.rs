@@ -119,7 +119,7 @@ pub fn chrome_css(t: &ResolvedTheme) -> String {
     s += ".tab-background { border-radius: 6px !important; box-shadow: none !important; }\n";
     s += ".tabbrowser-tab[selected] .tab-background { background-color: var(--tab-selected-bgcolor) !important; box-shadow: var(--tab-selected-shadow) !important; }\n";
     s += "#urlbar-background { border-radius: 6px !important; }\n";
-    s += &traffic_lights(t);
+    s += &window_controls(t);
     s += "}\n";
     s += &format!(
         "@-moz-document {NEWTAB_DOCS} {{\n:root {{\n  color-scheme: {scheme} !important;\n"
@@ -153,11 +153,12 @@ pub fn chrome_css(t: &ResolvedTheme) -> String {
     s
 }
 
-/// Kit traffic lights (`button.light`): 12 px circles 22 px apart, left, close first; the glyph
-/// shows while the pointer is over the group. Order is forced so it does not depend on GTK's
-/// reported decoration layout.
-fn traffic_lights(t: &ResolvedTheme) -> String {
+/// WolOS window controls (`button.light`): quiet 12 px circles 22 px apart, left, close first; the
+/// glyph shows while the pointer is over the group, the control under it takes the accent. Order is
+/// forced so it does not depend on GTK's reported decoration layout.
+fn window_controls(t: &ResolvedTheme) -> String {
     let h = |k: &str| token_color(t, k).to_hex();
+    let (idle, hover, pressed) = super::apps::controls_colors(t);
     let mut s = String::new();
     s += ".titlebar-buttonbox-container { order: -1 !important; margin-inline-start: 12px !important; }\n";
     s += ".titlebar-buttonbox { --titlebar-button-size: 12px !important; --titlebar-button-spacing: 5px !important; --titlebar-button-end-spacing: 5px !important; }\n";
@@ -166,25 +167,23 @@ fn traffic_lights(t: &ResolvedTheme) -> String {
     s += ".titlebar-close { order: 0 !important; }\n.titlebar-min { order: 1 !important; }\n.titlebar-max, .titlebar-restore { order: 2 !important; }\n";
     // Firefox hides buttons missing from GTK's layout (e.g. a host default of "close" only).
     s += ".titlebar-min, :root:not([sizemode=\"maximized\"]) .titlebar-max, :root[sizemode=\"maximized\"] .titlebar-restore { display: flex !important; }\n";
-    s += ".titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12) !important; transition: none !important; }\n";
-    for (sel, tok) in [
-        (".titlebar-close", "danger"),
-        (".titlebar-min", "warning"),
-        (":is(.titlebar-max, .titlebar-restore)", "success"),
-    ] {
-        s += &format!(
-            "{sel} > .toolbarbutton-icon, {sel}:hover > .toolbarbutton-icon {{ background-color: {} !important; }}\n",
-            h(tok)
-        );
-    }
+    s += &format!(
+        ".titlebar-button > .toolbarbutton-icon {{ width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; background-color: {idle} !important; box-shadow: none !important; transition: none !important; }}\n"
+    );
+    s += &format!(
+        ".titlebar-button:hover > .toolbarbutton-icon {{ background-color: {hover} !important; }}\n\
+         .titlebar-button:hover:active > .toolbarbutton-icon {{ background-color: {pressed} !important; }}\n"
+    );
     for (sel, icon) in [
         (".titlebar-close", "window-close-symbolic"),
         (".titlebar-min", "window-minimize-symbolic"),
         (".titlebar-max", "window-maximize-symbolic"),
         (".titlebar-restore", "window-restore-symbolic"),
     ] {
+        let (text, on_accent) = (h("text"), h("accentText"));
         s += &format!(
-            ".titlebar-buttonbox:hover {sel} > .toolbarbutton-icon {{ background-image: -moz-symbolic-icon({icon}) !important; background-size: 8px !important; color: rgba(0,0,0,0.55) !important; stroke: rgba(0,0,0,0.55) !important; }}\n"
+            ".titlebar-buttonbox:hover {sel} > .toolbarbutton-icon {{ background-image: -moz-symbolic-icon({icon}) !important; background-size: 8px !important; color: {text} !important; stroke: {text} !important; }}\n\
+             .titlebar-buttonbox:hover {sel}:hover > .toolbarbutton-icon {{ color: {on_accent} !important; stroke: {on_accent} !important; }}\n"
         );
     }
     s
@@ -228,8 +227,8 @@ mod tests {
                 format!("--focus-outline-color: {} !important;", hx("accent")),
                 format!("color-scheme: {scheme} !important;"),
                 format!(
-                    ".titlebar-close > .toolbarbutton-icon, .titlebar-close:hover > .toolbarbutton-icon {{ background-color: {} !important; }}",
-                    hx("danger")
+                    ".titlebar-button:hover > .toolbarbutton-icon {{ background-color: {} !important; }}",
+                    hx("accent")
                 ),
             ] {
                 assert!(s.contains(&want), "{id}: {want}");
@@ -239,8 +238,8 @@ mod tests {
     }
 
     #[test]
-    fn traffic_lights_left_close_first() {
-        let (_, s) = css("wol-light");
+    fn window_controls_left_close_first_and_accent_on_hover() {
+        let (t, s) = css("wol-light");
         for want in [
             ".titlebar-buttonbox-container { order: -1 !important;",
             ".titlebar-close { order: 0 !important; }",
@@ -250,6 +249,14 @@ mod tests {
             "width: 12px !important; height: 12px !important; border-radius: 50% !important;",
         ] {
             assert!(s.contains(want), "{want}");
+        }
+        // One quiet colour for the three, never the status colours.
+        for tok in ["danger", "warning", "success"] {
+            let hex = token_color(&t, tok).to_hex();
+            assert!(
+                !s.contains(&format!("background-color: {hex} !important; }}")),
+                "{tok}"
+            );
         }
     }
 

@@ -1,6 +1,6 @@
 # Compositor fork
 
-Base: upstream `v0.56.2`, the version the pinned Arch snapshot ships (the PKGBUILD follows the Arch package's packaging). Build: wolos-pkgbuilds `hyprland-wolos/` (PKGBUILD + the `NNNN-*.patch` files beside it).
+Base: upstream `v0.56.2`, the last release with the legacy hyprlang config the shipped confs use (0.57.0 reads Lua; Arch's package moved to it, so the fork recipe is the only source of 0.56.2; the PKGBUILD follows Arch's 0.56.2-4 packaging). Build: wolos-pkgbuilds `hyprland-wolos/` (PKGBUILD + the `NNNN-*.patch` files beside it).
 Patches: `wolos-pkgbuilds/hyprland-wolos/NNNN-*.patch`, applied in order. Config: `desktop/overlay/usr/share/wolos/hypr/wolos-perf.conf` (sourced by the desktop conf).
 Frontmost QoS and placement: `plugins/wol-hypr` + `crates/realtime` C ABI (`wol_realtime.h`), not a patch.
 

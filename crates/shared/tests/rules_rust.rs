@@ -177,7 +177,6 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-055", "core", 209),
     ("RR-055", "shared", 131),
     ("RR-056", "aurlaws", 1),
-    ("RR-056", "shell", 2),
     ("RR-057", "api", 1),
     ("RR-057", "audio", 1),
     ("RR-057", "aurlaws", 1),

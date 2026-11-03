@@ -34,11 +34,11 @@ module Wol
   class SearchProvider < Handle(LibWol::SearchProvider)
     # The trampolines libwol calls; they capture nothing (see `Callbacks`).
     ON_QUERY = ->(_provider : LibWol::SearchProvider*, reply : LibWol::SearchReply*, text : LibWol::String*, data : Void*) do
-      Callbacks.invoke(SearchProvider, data) { |provider| provider.query(reply, text) }
+      Callbacks.invoke(SearchProvider, data, &.query(reply, text))
       nil
     end
     ON_OPEN = ->(_provider : LibWol::SearchProvider*, key : LibWol::String*, data : Void*) do
-      Callbacks.invoke(SearchProvider, data) { |provider| provider.open(key) }
+      Callbacks.invoke(SearchProvider, data, &.open(key))
       nil
     end
 
@@ -48,11 +48,8 @@ module Wol
     # Use `Search.provide`.
     def initialize(context : Context, @on_query : SearchReply, ::String ->, @on_open : (::String ->)?)
       @context = context
-      # No `on_open`: pass NULL (wol.h allows it). A nilable proc does not convert, so build the
-      # NULL function pointer explicitly.
-      opener = @on_open ? ON_OPEN : LibWol::SearchOpenFn.new(Pointer(Void).null, Pointer(Void).null)
       adopt(Wol.out(LibWol::SearchProvider) do |slot, err|
-        LibWol.wol_search_provide(context, ON_QUERY, opener, Callbacks.user_data(self), slot, err)
+        LibWol.wol_search_provide(context, ON_QUERY, ON_OPEN, Callbacks.user_data(self), slot, err)
       end)
       root!
     end
@@ -63,6 +60,8 @@ module Wol
       Callbacks.scoped(SearchReply.new(raw)) { |reply| @on_query.call(reply, words) }
     end
 
+    # Always registered (simpler than a NULL function pointer); without `on_open` an opened row
+    # does nothing.
     protected def open(key : LibWol::String*) : Nil
       return if closed?
       @on_open.try &.call(Strings.borrow(key) || "")

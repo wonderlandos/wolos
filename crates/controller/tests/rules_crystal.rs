@@ -26,40 +26,25 @@ use std::process::Command;
 /// RCR-002: non-spec files without a purpose comment (40+ characters in the first 30 lines).
 const B_PURPOSE: &[&str] = &[];
 /// RCR-010: files outside the FFI allowlist that use pointers or other unsafe constructs.
-const B_UNSAFE: &[&str] = &[
-    // the pixbuf calls the timing spec drives directly
-    "hue/spec/perf_spec.cr",
-    // LibC.getuid, the "not as root" check
-    "wopkg/src/wopkg/sandbox.cr",
-];
+const B_UNSAFE: &[&str] = &[];
 /// RCR-020: files that start a process through a shell or with a command line in one string.
-const B_PROCESS_SHELL: &[&str] = &["wopkg/spec/completions_spec.cr"];
+const B_PROCESS_SHELL: &[&str] = &[];
 /// RCR-022: files that use HTTP::Client class methods (no way to set a timeout) or a client
 /// without connect and read timeouts.
-const B_HTTP_TIMEOUT: &[&str] = &["wopkg/src/wopkg/app.cr", "wopkg/src/wopkg/aur.cr"];
+const B_HTTP_TIMEOUT: &[&str] = &[];
 /// RCR-024: untyped JSON/YAML parses per non-spec file (the number may only fall; new code uses
 /// `Type.from_json` / `from_yaml`).
-const B_UNTYPED_PARSE: &[(&str, usize)] = &[
-    ("hue/src/hue/cli.cr", 1),
-    ("hue/src/hue/engine.cr", 1),
-    ("hue/src/hue/imports.cr", 1),
-    ("wopkg/src/wopkg/app.cr", 5),
-    ("wopkg/src/wopkg/aur.cr", 2),
-    ("wopkg/src/wopkg/aur_guard.cr", 1),
-    ("wopkg/src/wopkg/aur_hook.cr", 1),
-    ("wopkg/src/wopkg/core.cr", 2),
-    ("wopkg/src/wopkg/scan.cr", 1),
-];
+const B_UNTYPED_PARSE: &[(&str, usize)] = &[("wopkg/src/wopkg/core.cr", 2)];
 /// RCR-026: catch-all rescues (bare `rescue`, `rescue e`, `rescue nil` modifier) per non-spec
 /// file (the number may only fall; new code names the exception types it handles).
-const B_CATCH_ALL: &[(&str, usize)] = &[
-    ("hue/src/hue/theme.cr", 1),
-    ("wopkg/src/wopkg/app.cr", 10),
-    ("wopkg/src/wopkg/aur.cr", 2),
-    ("wopkg/src/wopkg/aur_guard.cr", 1),
-    ("wopkg/src/wopkg/aur_hook.cr", 3),
-    ("wopkg/src/wopkg/sources.cr", 1),
-];
+const B_CATCH_ALL: &[(&str, usize)] = &[];
+/// RCR-026 allowlist (not a baseline): (file, most catch-all rescues it may hold, reason). More
+/// rescues than the count fail the test; a new entry needs an ADR.
+const ALLOW_CATCH_ALL: &[(&str, usize, &str)] = &[(
+    "wolos-crystal/shards/cryswol/src/wol/callbacks.cr",
+    3,
+    "a callback must not unwind into C; exceptions are routed to Wol::Loop.on_error",
+)];
 /// RCR-030: files with a fixed /tmp path in a string (not a spec).
 const B_TMP: &[&str] = &["wopkg/src/wopkg/sandbox.cr"];
 /// RCR-032: files using MD5 or SHA-1.
@@ -70,72 +55,30 @@ const B_RANDOM: &[&str] = &[];
 const B_HOME: &[&str] = &[];
 /// RCR-007: `Rule file` pairs in .ameba.yml `Excluded:` (the legacy files that still break the
 /// rule). Only shrinks; a pair here that no longer breaks the rule is reported for removal.
-const B_AMEBA_EXCLUDED: &[&str] = &[
-    "Lint/NotNil hue/spec/cli_spec.cr",
-    "Lint/NotNil hue/spec/perf_spec.cr",
-    "Lint/NotNil hue/src/hue/cli.cr",
-    "Lint/NotNil hue/src/hue/imports.cr",
-    "Lint/NotNil hue/src/hue/theme.cr",
-    "Lint/NotNil wopkg/spec/aur_guard_spec.cr",
-    "Lint/NotNil wopkg/spec/completions_spec.cr",
-    "Lint/NotNil wopkg/src/wopkg/app.cr",
-    "Lint/NotNil wopkg/src/wopkg/sources.cr",
-    "Lint/NotNilAfterNoBang wopkg/spec/aur_guard_spec.cr",
-    "Lint/NotNilAfterNoBang wopkg/src/wopkg/app.cr",
-    "Lint/PercentArrays wopkg/spec/args_spec.cr",
-    "Lint/ShadowingOuterLocalVar hue/src/hue/extract.cr",
-    "Lint/ShadowingOuterLocalVar wopkg/src/wopkg/app.cr",
-    "Lint/SpecEqWithBoolOrNilLiteral wopkg/spec/toml_spec.cr",
-    "Lint/UnusedArgument crates/wol-abi/bindings/crystal/hello.cr",
-    "Lint/UnusedArgument crates/wol-abi/bindings/crystal/parts.cr",
-    "Lint/UnusedArgument crates/wol-abi/bindings/crystal/services.cr",
-    "Lint/UnusedArgument hue/spec/support/scenes.cr",
-    "Lint/WhitespaceAroundMacroExpression crates/wol-abi/bindings/crystal/hello.cr",
-    "Lint/WhitespaceAroundMacroExpression crates/wol-abi/bindings/crystal/parts.cr",
-    "Lint/WhitespaceAroundMacroExpression crates/wol-abi/bindings/crystal/services.cr",
-    "Naming/QueryBoolMethods crates/wol-abi/bindings/crystal/hello.cr",
-    "Naming/QueryBoolMethods crates/wol-abi/bindings/crystal/services.cr",
-    "Naming/QueryBoolMethods wopkg/src/wopkg/args.cr",
-    "Performance/ChainedCallWithNoBang hue/spec/cli_spec.cr",
-    "Performance/ChainedCallWithNoBang hue/spec/extract_spec.cr",
-    "Performance/ChainedCallWithNoBang hue/spec/theme_spec.cr",
-    "Performance/ChainedCallWithNoBang hue/src/hue/look.cr",
-    "Performance/ChainedCallWithNoBang wopkg/src/wopkg/app.cr",
-    "Performance/ChainedCallWithNoBang wopkg/src/wopkg/aur.cr",
-    "Performance/ChainedCallWithNoBang wopkg/src/wopkg/aur_guard.cr",
-    "Performance/ChainedCallWithNoBang wopkg/src/wopkg/pins.cr",
-    "Performance/ChainedCallWithNoBang wopkg/src/wopkg/scan.cr",
-    "Performance/ChainedCallWithNoBang wopkg/src/wopkg/ui.cr",
-    "Style/NegatedConditionsInUnless wopkg/src/wopkg/recipe.cr",
-    "Style/ParenthesesAroundCondition hue/spec/support/scenes.cr",
-    "Style/ParenthesesAroundCondition hue/src/hue/engine.cr",
-    "Style/RedundantNilInControlExpression hue/src/hue/engine.cr",
-    "Style/RedundantNilInControlExpression hue/src/hue/extract.cr",
-    "Style/RedundantNilInControlExpression hue/src/hue/look.cr",
-    "Style/RedundantNilInControlExpression hue/src/hue/palette.cr",
-    "Style/RedundantNilInControlExpression hue/src/hue/theme.cr",
-    "Style/RedundantNilInControlExpression wopkg/src/wopkg/aur_guard.cr",
-    "Style/RedundantNilInControlExpression wopkg/src/wopkg/flatpak.cr",
-    "Style/VerboseBlock hue/spec/extract_spec.cr",
-    "Style/VerboseBlock hue/spec/theme_spec.cr",
-    "Style/VerboseBlock hue/src/hue/theme.cr",
-    "Style/VerboseBlock wopkg/src/wopkg/app.cr",
-    "Style/VerboseBlock wopkg/src/wopkg/aur.cr",
-    "Style/VerboseBlock wopkg/src/wopkg/aur_guard.cr",
-];
+const B_AMEBA_EXCLUDED: &[&str] = &[];
 
 // ---------------------------------------------------------------- policy lists
 
 /// RCR-010, RCR-011: the only files that may declare C bindings or touch raw pointers. A new entry
 /// needs an ADR. A directory entry ends in `/`, a prefix entry in `*`.
+/// Reasons: the generated bindings and `lib_*` files declare the C ABI; hue color/image and wopkg
+/// core call C libraries; the cryswol files `callbacks`, `context`, `error`, `handle`, `info`,
+/// `string` and `pkg/ffi` are the libwol handle/callback boundary.
 const FFI_ALLOW: &[&str] = &[
     "crates/wol-abi/bindings/crystal/",
     "hue/src/hue/color.cr",
     "hue/src/hue/image.cr",
     "wolos-crystal/shards/cryswol/spec/generated/",
+    "wolos-crystal/shards/cryswol/src/wol/callbacks.cr",
+    "wolos-crystal/shards/cryswol/src/wol/context.cr",
+    "wolos-crystal/shards/cryswol/src/wol/error.cr",
+    "wolos-crystal/shards/cryswol/src/wol/handle.cr",
+    "wolos-crystal/shards/cryswol/src/wol/info.cr",
     "wolos-crystal/shards/cryswol/src/wol/lib_*",
+    "wolos-crystal/shards/cryswol/src/wol/pkg/ffi.cr",
     "wolos-crystal/shards/cryswol/src/wol/pkg/lib_*",
     "wolos-crystal/shards/cryswol/src/wol/realtime/lib_*",
+    "wolos-crystal/shards/cryswol/src/wol/string.cr",
     "wopkg/src/wopkg/core.cr",
     "wopkg/src/wopkg/lib_wopkg.cr",
 ];
@@ -646,7 +589,18 @@ fn rcr_025_nothing_rescues_exception() {
 #[test]
 fn rcr_026_rescues_name_their_exceptions() {
     let m = findings("RCR-026", true, false);
-    assert_ratchet_count("RCR-026", counts(&m), B_CATCH_ALL);
+    let mut found = counts(&m);
+    for (f, max, reason) in ALLOW_CATCH_ALL {
+        let n = found.remove(*f).unwrap_or(0);
+        assert!(
+            n <= *max,
+            "RCR-026: {f} has {n} catch-all rescues, the allowlist permits {max} ({reason})"
+        );
+        if n < *max {
+            eprintln!("RCR-026: {f} is down to {n}; lower ALLOW_CATCH_ALL");
+        }
+    }
+    assert_ratchet_count("RCR-026", found, B_CATCH_ALL);
 }
 
 #[test]
@@ -1001,6 +955,7 @@ fn rcr_091_doc_and_tests_agree() {
         "B_HTTP_TIMEOUT",
         "B_UNTYPED_PARSE",
         "B_CATCH_ALL",
+        "ALLOW_CATCH_ALL",
         "B_TMP",
         "B_WEAK_HASH",
         "B_RANDOM",
@@ -1038,6 +993,15 @@ fn rcr_092_baselines_are_sorted_and_unique() {
         s.dedup();
         assert_eq!(s, b, "{n} must be sorted and free of duplicates");
     }
+    let allow: Vec<&str> = ALLOW_CATCH_ALL.iter().map(|(k, _, _)| *k).collect();
+    let mut sorted = allow.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted, allow, "ALLOW_CATCH_ALL must be sorted and unique");
+    assert!(
+        ALLOW_CATCH_ALL.iter().all(|(_, _, r)| !r.is_empty()),
+        "every ALLOW_CATCH_ALL entry needs a reason"
+    );
     for (n, b) in [
         ("B_UNTYPED_PARSE", B_UNTYPED_PARSE),
         ("B_CATCH_ALL", B_CATCH_ALL),

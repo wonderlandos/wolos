@@ -19,7 +19,7 @@ module Wol
       nil
     end
 
-    @on_choose : Toolbar, ::String -> Nil
+    @on_choose : (Toolbar, ::String -> Nil)? = nil
     @placed = false
 
     # An empty toolbar; the block gets the toolbar and the pressed button's key.
@@ -58,9 +58,10 @@ module Wol
     end
 
     # :nodoc:
-    # Called by `Window#toolbar=` after libwol accepted the toolbar.
-    def placed! : Nil
-      @placed = true
+    # Called by `Window#toolbar=` after libwol accepted (or, with false,
+    # let go of) the toolbar.
+    def placed!(placed : Bool = true) : Nil
+      @placed = placed
     end
 
     # True once the toolbar was set on a window.
@@ -69,7 +70,7 @@ module Wol
     end
 
     # Release the toolbar. A toolbar on a window stays rooted: the window in libwol still holds
-    # it and may still deliver to it.
+    # it and may still call the trampoline, which must find a live object. The block is dropped.
     def close : Nil
       keep = !closed? && @placed
       super
@@ -77,7 +78,12 @@ module Wol
     end
 
     protected def fire(key : ::String) : Nil
-      @on_choose.call(self, key)
+      @on_choose.try &.call(self, key)
+    end
+
+    # Drop the block, so a block that captured this toolbar does not keep a cycle alive.
+    protected def before_release(_ptr : LibWol::Toolbar*) : Nil
+      @on_choose = nil
     end
 
     protected def release(ptr : LibWol::Toolbar*) : Nil

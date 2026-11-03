@@ -9,9 +9,18 @@ require "./handle"
 require "./string"
 
 module Wol
-  class Context < Handle(LibWol::Context)
-    private F_DUPFD_CLOEXEC = 1030
+  # F_DUPFD_CLOEXEC (1030 on Linux): a dup that does not leak into child processes.
+  private F_DUPFD_CLOEXEC = 1030
 
+  # A Crystal-owned duplicate of `fd`, a descriptor libwol owns: closing or finalizing the result
+  # never touches libwol's own descriptor. Raises `Internal` for a bad fd.
+  def self.dup_fd(fd : Int32) : IO::FileDescriptor
+    dup = fd < 0 ? -1 : LibC.fcntl(fd, F_DUPFD_CLOEXEC, 0)
+    raise Internal.new(LibWol::WOL_ERR_INTERNAL, FALLBACK_MESSAGE) if dup < 0
+    IO::FileDescriptor.new(dup)
+  end
+
+  class Context < Handle(LibWol::Context)
     # The reverse-DNS app id the context was opened with.
     getter app_id : ::String
 
@@ -100,14 +109,7 @@ module Wol
     # hangs the next context given the same fd number (plan-cr1 "S0 results").
     # :nodoc:
     def wake_io : IO::FileDescriptor
-      @wake ||= begin
-        fd = LibWol.wol_context_get_fd(self)
-        raise Internal.new(LibWol::WOL_ERR_INTERNAL, FALLBACK_MESSAGE) if fd < 0
-        # F_DUPFD_CLOEXEC (1030 on Linux): the dup must not leak into child processes.
-        dup = LibC.fcntl(fd, F_DUPFD_CLOEXEC, 0)
-        raise Internal.new(LibWol::WOL_ERR_INTERNAL, FALLBACK_MESSAGE) if dup < 0
-        IO::FileDescriptor.new(dup)
-      end
+      @wake ||= Wol.dup_fd(LibWol.wol_context_get_fd(self))
     end
 
     # :nodoc:

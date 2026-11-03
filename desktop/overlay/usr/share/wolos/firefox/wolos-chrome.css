@@ -80,14 +80,17 @@
 .titlebar-min { order: 1 !important; }
 .titlebar-max, .titlebar-restore { order: 2 !important; }
 .titlebar-min, :root:not([sizemode="maximized"]) .titlebar-max, :root[sizemode="maximized"] .titlebar-restore { display: flex !important; }
-.titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12) !important; transition: none !important; }
-.titlebar-close > .toolbarbutton-icon, .titlebar-close:hover > .toolbarbutton-icon { background-color: #cf3a68 !important; }
-.titlebar-min > .toolbarbutton-icon, .titlebar-min:hover > .toolbarbutton-icon { background-color: #d9541e !important; }
-:is(.titlebar-max, .titlebar-restore) > .toolbarbutton-icon, :is(.titlebar-max, .titlebar-restore):hover > .toolbarbutton-icon { background-color: #1c9a6e !important; }
-.titlebar-buttonbox:hover .titlebar-close > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-close-symbolic) !important; background-size: 8px !important; color: rgba(0,0,0,0.55) !important; stroke: rgba(0,0,0,0.55) !important; }
-.titlebar-buttonbox:hover .titlebar-min > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-minimize-symbolic) !important; background-size: 8px !important; color: rgba(0,0,0,0.55) !important; stroke: rgba(0,0,0,0.55) !important; }
-.titlebar-buttonbox:hover .titlebar-max > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-maximize-symbolic) !important; background-size: 8px !important; color: rgba(0,0,0,0.55) !important; stroke: rgba(0,0,0,0.55) !important; }
-.titlebar-buttonbox:hover .titlebar-restore > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-restore-symbolic) !important; background-size: 8px !important; color: rgba(0,0,0,0.55) !important; stroke: rgba(0,0,0,0.55) !important; }
+.titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; background-color: #89898b !important; box-shadow: none !important; transition: none !important; }
+.titlebar-button:hover > .toolbarbutton-icon { background-color: #7c5cff !important; }
+.titlebar-button:hover:active > .toolbarbutton-icon { background-color: #674ece !important; }
+.titlebar-buttonbox:hover .titlebar-close > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-close-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-buttonbox:hover .titlebar-close:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
+.titlebar-buttonbox:hover .titlebar-min > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-minimize-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-buttonbox:hover .titlebar-min:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
+.titlebar-buttonbox:hover .titlebar-max > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-maximize-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-buttonbox:hover .titlebar-max:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
+.titlebar-buttonbox:hover .titlebar-restore > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-restore-symbolic) !important; background-size: 8px !important; color: #1d1d1f !important; stroke: #1d1d1f !important; }
+.titlebar-buttonbox:hover .titlebar-restore:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
 }
 @-moz-document url("about:newtab"), url("about:home"), url("about:privatebrowsing") {
 :root {

@@ -354,6 +354,76 @@ pub(crate) fn kept_mode(path: &Path) -> u32 {
 mod tests {
     use super::*;
 
+    /// The default themes are made of the design tokens (`design/tokens/colors.json`), so the
+    /// desktop, the icons and the brand cannot drift apart. Rule: the hue-carrying tokens (accent,
+    /// accent text, dim, success, warning, danger) are the token values exactly; the neutrals
+    /// (surface, card, text, sidebar, control, glass, line) keep the token's hue, within 4 levels
+    /// per channel of one neutral token of the same mode (they were tuned by eye), alpha free.
+    /// The third-party palettes (nord, catppuccin, ...) bring their own colours and are not held
+    /// to it; what they may not name is an icon theme the image does not ship.
+    #[test]
+    fn default_themes_are_made_of_the_design_tokens() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../design/tokens/colors.json");
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let rgb = |s: &str| {
+            let c = shared::theme::Color::parse(s).unwrap_or_else(|| panic!("colour {s}"));
+            [c.r, c.g, c.b]
+        };
+        for (id, mode) in [("wol-light", "light"), ("wol-dark", "dark")] {
+            let t = ThemeCatalog::builtin().resolve(id).unwrap();
+            let tok = |k: &str| {
+                rgb(json[mode][k]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{mode}.{k}")))
+            };
+            for (ours, theirs) in [
+                ("accent", "accent"),
+                ("accentText", "accent-fg"),
+                ("dim", "text-2"),
+                ("success", "green"),
+                ("warning", "orange"),
+                ("danger", "red"),
+            ] {
+                assert_eq!(
+                    rgb(&t.tokens[ours]),
+                    tok(theirs),
+                    "{id}: {ours} is token {theirs}"
+                );
+            }
+            let neutrals: Vec<[u8; 3]> = [
+                "bg",
+                "surface",
+                "surface-2",
+                "menubar",
+                "dock",
+                "text",
+                "border",
+                "shadow",
+            ]
+            .map(tok)
+            .to_vec();
+            for ours in [
+                "surface", "card", "text", "sidebar", "control", "glass", "line",
+            ] {
+                let c = rgb(&t.tokens[ours]);
+                let near = neutrals
+                    .iter()
+                    .any(|n| n.iter().zip(c).all(|(a, b)| a.abs_diff(b) <= 4));
+                assert!(near, "{id}: {ours} {c:?} is no design token colour");
+            }
+        }
+        // The accent presets and the icon theme every builtin names are the product's.
+        for spec in ThemeCatalog::builtin().list() {
+            assert!(
+                spec.icon_theme.as_deref().is_none_or(|n| n == "WolOS"),
+                "{}: {:?}",
+                spec.id,
+                spec.icon_theme
+            );
+        }
+    }
+
     fn temp(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("wol-theme-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -496,13 +566,13 @@ mod tests {
         put(
             &d,
             "w",
-            r#"{"id":"w","name":"W","variant":"light","tokens":{},"wallpaper":"bg.png","iconTheme":"WhiteSur"}"#,
+            r#"{"id":"w","name":"W","variant":"light","tokens":{},"wallpaper":"bg.png","iconTheme":"WolOS"}"#,
         );
         let t = ThemeCatalog::load(std::slice::from_ref(&d))
             .resolve("w")
             .unwrap();
         assert_eq!(t.wallpaper, Some(d.join("w").join("bg.png")));
-        assert_eq!(t.icon_theme.as_deref(), Some("WhiteSur"));
+        assert_eq!(t.icon_theme.as_deref(), Some("WolOS"));
     }
 
     #[test]

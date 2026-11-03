@@ -148,6 +148,28 @@ pub fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
+/// Bytes free to ordinary writes and in all, on the filesystem that holds `path` or its nearest
+/// existing parent. None when the kernel will not say (the copy is then refused).
+#[allow(clippy::useless_conversion)] // statvfs field widths differ by target (u32 on some)
+pub fn space_at(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let mut at = path;
+    while !at.exists() {
+        at = at.parent()?;
+    }
+    let c = std::ffi::CString::new(at.as_os_str().as_bytes()).ok()?;
+    // SAFETY: `c` is a NUL-terminated path and `st` a zeroed statvfs the call fills in.
+    let st = unsafe {
+        let mut st: libc::statvfs = std::mem::zeroed();
+        (libc::statvfs(c.as_ptr(), &mut st) == 0).then_some(st)?
+    };
+    let unit = u64::from(st.f_frsize);
+    Some((
+        u64::from(st.f_bavail).saturating_mul(unit),
+        u64::from(st.f_blocks).saturating_mul(unit),
+    ))
+}
+
 fn send(pid: i32, sig: i32) -> bool {
     // SAFETY: plain syscall.
     pid > 1 && unsafe { libc::kill(pid, sig) == 0 }

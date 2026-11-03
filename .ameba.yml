@@ -5,8 +5,8 @@
 # Every rule ameba 1.7.0 ships is listed with an explicit Enabled: a rule added by a newer ameba
 # is not in this file, so rules_crystal.rs RCR-003 fails until someone decides it here, and
 # lint.sh passes --up-to-version so a newer ameba does not switch rules on behind our back.
-# Excluded: lists under a rule are the baseline for that rule (the legacy files that still break
-# it). They only shrink: RCR-004 fails when one grows or when a file is listed that no longer breaks the rule.
+# No rule has an Excluded: list: the code meets every enabled rule. RCR-007 fails when an
+# Excluded: entry appears (B_AMEBA_EXCLUDED in rules_crystal.rs is empty and only ever shrinks).
 # The scanner fixtures under crates/controller/tests/fixtures/crystal are bad on purpose and are
 # never passed to ameba.
 Globs:
@@ -106,27 +106,12 @@ Lint/NonExistentRule:
 
 Lint/NotNil:
   Enabled: true
-  Excluded:
-    - hue/spec/cli_spec.cr
-    - hue/spec/perf_spec.cr
-    - hue/src/hue/cli.cr
-    - hue/src/hue/imports.cr
-    - hue/src/hue/theme.cr
-    - wopkg/spec/aur_guard_spec.cr
-    - wopkg/spec/completions_spec.cr
-    - wopkg/src/wopkg/app.cr
-    - wopkg/src/wopkg/sources.cr
 
 Lint/NotNilAfterNoBang:
   Enabled: true
-  Excluded:
-    - wopkg/spec/aur_guard_spec.cr
-    - wopkg/src/wopkg/app.cr
 
 Lint/PercentArrays:
   Enabled: true
-  Excluded:
-    - wopkg/spec/args_spec.cr
 
 Lint/RandZero:
   Enabled: true
@@ -154,9 +139,6 @@ Lint/ShadowedException:
 
 Lint/ShadowingOuterLocalVar:
   Enabled: true
-  Excluded:
-    - hue/src/hue/extract.cr
-    - wopkg/src/wopkg/app.cr
 
 Lint/SharedVarInFiber:
   Enabled: true
@@ -166,8 +148,6 @@ Lint/SignalTrap:
 
 Lint/SpecEqWithBoolOrNilLiteral:
   Enabled: true
-  Excluded:
-    - wopkg/spec/toml_spec.cr
 
 Lint/SpecFilename:
   Enabled: true
@@ -195,11 +175,6 @@ Lint/UnreachableCode:
 
 Lint/UnusedArgument:
   Enabled: true
-  Excluded:
-    - crates/wol-abi/bindings/crystal/hello.cr
-    - crates/wol-abi/bindings/crystal/parts.cr
-    - crates/wol-abi/bindings/crystal/services.cr
-    - hue/spec/support/scenes.cr
 
 Lint/UnusedBlockArgument:
   Enabled: true
@@ -224,10 +199,6 @@ Lint/VoidOutsideLib:
 
 Lint/WhitespaceAroundMacroExpression:
   Enabled: true
-  Excluded:
-    - crates/wol-abi/bindings/crystal/hello.cr
-    - crates/wol-abi/bindings/crystal/parts.cr
-    - crates/wol-abi/bindings/crystal/services.cr
 
 # complexity is a review matter, not a defect class; the specs cover the branches
 Metrics/CyclomaticComplexity:
@@ -260,10 +231,6 @@ Naming/PredicateName:
 
 Naming/QueryBoolMethods:
   Enabled: true
-  Excluded:
-    - crates/wol-abi/bindings/crystal/hello.cr
-    - crates/wol-abi/bindings/crystal/services.cr
-    - wopkg/src/wopkg/args.cr
 
 Naming/RescuedExceptionsVariableName:
   Enabled: true
@@ -285,17 +252,6 @@ Performance/AnyInsteadOfPresent:
 
 Performance/ChainedCallWithNoBang:
   Enabled: true
-  Excluded:
-    - hue/spec/cli_spec.cr
-    - hue/spec/extract_spec.cr
-    - hue/spec/theme_spec.cr
-    - hue/src/hue/look.cr
-    - wopkg/src/wopkg/app.cr
-    - wopkg/src/wopkg/aur.cr
-    - wopkg/src/wopkg/aur_guard.cr
-    - wopkg/src/wopkg/pins.cr
-    - wopkg/src/wopkg/scan.cr
-    - wopkg/src/wopkg/ui.cr
 
 Performance/CompactAfterMap:
   Enabled: true
@@ -359,14 +315,9 @@ Style/MultilineStringLiteral:
 
 Style/NegatedConditionsInUnless:
   Enabled: true
-  Excluded:
-    - wopkg/src/wopkg/recipe.cr
 
 Style/ParenthesesAroundCondition:
   Enabled: true
-  Excluded:
-    - hue/spec/support/scenes.cr
-    - hue/src/hue/engine.cr
 
 # %w() vs %w[] is taste; crystal tool format does not touch it
 Style/PercentLiteralDelimiters:
@@ -380,14 +331,6 @@ Style/RedundantNext:
 
 Style/RedundantNilInControlExpression:
   Enabled: true
-  Excluded:
-    - hue/src/hue/engine.cr
-    - hue/src/hue/extract.cr
-    - hue/src/hue/look.cr
-    - hue/src/hue/palette.cr
-    - hue/src/hue/theme.cr
-    - wopkg/src/wopkg/aur_guard.cr
-    - wopkg/src/wopkg/flatpak.cr
 
 Style/RedundantReturn:
   Enabled: true
@@ -400,13 +343,6 @@ Style/UnlessElse:
 
 Style/VerboseBlock:
   Enabled: true
-  Excluded:
-    - hue/spec/extract_spec.cr
-    - hue/spec/theme_spec.cr
-    - hue/src/hue/theme.cr
-    - wopkg/src/wopkg/app.cr
-    - wopkg/src/wopkg/aur.cr
-    - wopkg/src/wopkg/aur_guard.cr
 
 Style/VerboseNilType:
   Enabled: true

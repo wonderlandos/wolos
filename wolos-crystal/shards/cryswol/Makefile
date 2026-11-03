@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Cryswol = the Crystal shard over libwol (crates/wol-abi). `make spec` builds libwol.so.1 and the
 # fake wold/Kit host (crates/wol-abi/examples/wol_fake.rs) into build/ and runs the specs against
-# them, so no WolOS desktop is needed. -j4 keeps shared hosts usable.
+# them, so no WolOS desktop is needed. libwopkg.so.1 is only for the opt-in `cryswol/pkg` spec.
+# -j4 keeps shared hosts usable.
 ROOT := $(abspath ../../..)
 BUILD := $(abspath build)
 CARGO_TARGET := $(or $(CARGO_TARGET_DIR),$(ROOT)/target)
@@ -10,12 +11,17 @@ DESTDIR ?=
 PREFIX ?= /usr
 SHARD_DIR := $(DESTDIR)$(PREFIX)/lib/wolos/crystal/cryswol
 RS := $(wildcard $(ROOT)/crates/wol-abi/src/*.rs $(ROOT)/crates/shared/src/*.rs)
+PKG_RS := $(wildcard $(ROOT)/crates/wopkg/src/*.rs $(ROOT)/crates/wopkg/src/*/*.rs)
 
-all: $(BUILD)/libwol.so.1 $(BUILD)/wol_fake
+all: $(BUILD)/libwol.so.1 $(BUILD)/wol_fake $(BUILD)/libwopkg.so.1
 
 $(BUILD)/libwol.so.1: $(RS) $(ROOT)/crates/wol-abi/abi/wol.map
 	cd $(ROOT) && cargo build -p wol-abi --release -j4
 	$(ROOT)/crates/wol-abi/link.sh $(CARGO_TARGET)/release/libwol.a $(BUILD)
+
+$(BUILD)/libwopkg.so.1: $(PKG_RS) $(ROOT)/crates/wopkg/abi/wopkg.map
+	cd $(ROOT) && cargo build -p wopkg --release -j4
+	$(ROOT)/crates/wopkg/link.sh $(CARGO_TARGET)/release/libwopkg.a $(BUILD)
 
 $(BUILD)/wol_fake: $(RS) $(ROOT)/crates/wol-abi/examples/wol_fake.rs
 	cd $(ROOT) && cargo build -p wol-abi --release -j4 --example wol_fake

@@ -72,10 +72,20 @@ impl Fake {
             }
         }
         let mut events = Vec::new();
-        for e in s.get("events").and_then(Value::as_array).into_iter().flatten() {
+        for e in s
+            .get("events")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let after = e.get("after").and_then(Value::as_str).unwrap_or_default();
             let mut lines = Vec::new();
-            for one in e.get("emit").and_then(Value::as_array).into_iter().flatten() {
+            for one in e
+                .get("emit")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let ev = Event::parse(&one.to_string())
                     .ok_or_else(|| format!("events after {after}: not an event: {one}"))?;
                 lines.push(ev.to_line());
@@ -85,7 +95,11 @@ impl Fake {
         let mut kit = Vec::new();
         for k in s.get("kit").and_then(Value::as_array).into_iter().flatten() {
             let n = k.get("after_show").and_then(Value::as_u64).unwrap_or(1);
-            let send = k.get("send").and_then(Value::as_array).cloned().unwrap_or_default();
+            let send = k
+                .get("send")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
             kit.push((usize::try_from(n).unwrap_or(usize::MAX), send));
         }
         let log = std::fs::File::create(log).map_err(|e| format!("{}: {e}", log.display()))?;
@@ -248,11 +262,15 @@ fn resolve(send: &Value, show: Option<&Value>) -> Result<FromHost, String> {
     let mut e = send.clone();
     let o = e.as_object_mut().ok_or("a kit event is an object")?;
     if o.get("window").and_then(Value::as_str) == Some("$window") {
-        let w = show.and_then(|s| s.get("window")).ok_or("no window shown yet")?;
+        let w = show
+            .and_then(|s| s.get("window"))
+            .ok_or("no window shown yet")?;
         o.insert("window".into(), w.clone());
     }
     if let Some(sel) = o.get("widget").filter(|w| w.is_object()).cloned() {
-        let content = show.and_then(|s| s.get("content")).ok_or("no window shown yet")?;
+        let content = show
+            .and_then(|s| s.get("content"))
+            .ok_or("no window shown yet")?;
         let id = find(content, &sel).ok_or_else(|| format!("no widget matches {sel}"))?;
         o.insert("widget".into(), id);
     }

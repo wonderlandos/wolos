@@ -21,14 +21,16 @@ use std::path::{Path, PathBuf};
 /// 2024 requires, two of them `unsafe extern` because they write through the plugin's pointers
 /// (two `unsafe` blocks), and seven unit-test calls of those. xguard +2 (audit C7-3): `openat` with
 /// `O_NOFOLLOW` per path step and taking the descriptor it returns (`open_owned_dir`; std has no
-/// `openat`). A new crate needs a line here.
+/// `openat`). api +1 (F7-security P6-5, `os::space_at` in the listed `os.rs`): one `statvfs(3)`
+/// call so a staged package copy cannot fill the disk; std has no free-space query and no new
+/// dependency was wanted for one call. A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
     ("wopkg", 94),
     ("realtime", 71),
     ("xguard", 63),
     ("controller", 52),
-    ("api", 32),
+    ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
     ("core", 13),

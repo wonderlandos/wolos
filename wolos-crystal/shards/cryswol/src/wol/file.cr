@@ -7,13 +7,12 @@ require "./lib_wol"
 require "./error"
 require "./handle"
 require "./string"
+require "./context"
 
 module Wol
   # An open file the system handed over: from a panel (`Panel.open`, `Panel.save`) or a device
   # (`Device.open`).
   class OpenFile < Handle(LibWol::File)
-    private F_DUPFD_CLOEXEC = 1030 # fcntl command on Linux
-
     # Wrap an owned `wol_file` (from a verb). NULL gives nil: the person cancelled.
     def self.take(ptr : LibWol::File*) : OpenFile?
       ptr.null? ? nil : new(ptr)
@@ -32,9 +31,7 @@ module Wol
     # A Crystal IO on a duplicate of the descriptor (close-on-exec). It stays open after `close`;
     # closing it is the caller's.
     def to_io : IO::FileDescriptor
-      dup = LibC.fcntl(fd, F_DUPFD_CLOEXEC, 0)
-      raise Internal.new(LibWol::WOL_ERR_INTERNAL, FALLBACK_MESSAGE) if dup < 0
-      IO::FileDescriptor.new(dup)
+      Wol.dup_fd(fd)
     end
 
     # The whole file as text, read from the start through a duplicate (the descriptor's own

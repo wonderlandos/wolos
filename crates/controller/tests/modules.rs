@@ -583,11 +583,11 @@ fn install_adds_the_records_backend_package_for_this_machine() {
     );
     let r = sent(&e);
     assert!(
-        r[0].starts_with("pkg-install\u{0}1\u{0}wolos-module-ai-local\u{0}"),
-        "{r:?}"
+        r[0].starts_with("pkg-install\u{0}1\u{0}ollama-rocm\u{0}"),
+        "the backend first, as Settings does: {r:?}"
     );
     assert!(
-        r[1].starts_with("pkg-install\u{0}1\u{0}ollama-rocm\u{0}"),
+        r[1].starts_with("pkg-install\u{0}1\u{0}wolos-module-ai-local\u{0}"),
         "{r:?}"
     );
     assert_eq!(json_out(&e)["backend"], "ollama-rocm");
@@ -623,6 +623,15 @@ fn install_adds_the_records_backend_package_for_this_machine() {
     e.replies = vec!["ok\n".into()];
     assert_eq!(run("modules install ai-local", &mut e), 0, "{}", e.err);
     assert_eq!(sent(&e).len(), 1, "CPU only: the meta package alone");
+
+    // A backend that fails stops there: the meta package is never installed without it.
+    let mut e = env("backendfails", "git\n");
+    local(&mut e);
+    e.replies = vec!["failed\n".into()];
+    assert_ne!(run("modules install ai-local", &mut e), 0);
+    let r = sent(&e);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].contains("ollama-rocm"), "{r:?}");
 }
 
 /// Settings installs the record's backend package with the meta package, so `list --json` and

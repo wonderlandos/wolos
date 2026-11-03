@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Console colours from the theme (ADR 0032 Console, ADR 0031 themes v2): the starship palette,
-//! fish, nushell, bash and PowerShell colour files, the ghostty and zellij themes and a VS Code
+//! fish, nushell, bash and PowerShell colour files, the ghostty, kitty and zellij themes and a VS Code
 //! colour theme, all from the same tokens and terminal palette (`terminal::palette`) as foot and
 //! zsh. Written by `wol theme` under `$XDG_CONFIG_HOME/wolos/toolkits/<rel>`; the image ships the
 //! default theme's render under [`SYSTEM_DIR`]`/<rel>`. The console configs (zshrc, starship,
-//! fish, nu, bash, pwsh, ghostty, zellij) read the user file when it exists, else the system one.
+//! fish, nu, bash, pwsh, ghostty, kitty, zellij) read the user file when it exists, else the system one.
 use super::ResolvedTheme;
 use super::apps::{File, mix, readable, token_color};
 use super::terminal::{self, bare};
@@ -20,15 +20,19 @@ pub const BASH: &str = "bash/colors.sh";
 pub const PWSH: &str = "pwsh/colors.ps1";
 /// A ghostty theme file (`theme = /path/to/it`).
 pub const GHOSTTY: &str = "ghostty/theme";
+/// A kitty theme (`include`d by the kitty.conf the image ships and wol-session links).
+pub const KITTY: &str = "kitty/theme.conf";
 /// A zellij theme named [`ZELLIJ_THEME`] (`themes { wolos { ... } }`).
 pub const ZELLIJ: &str = "zellij/theme.kdl";
 pub const ZELLIJ_THEME: &str = "wolos";
 /// A VS Code / Code-OSS colour theme (`contributes.themes[].path` of a theme extension).
 pub const VSCODE: &str = "vscode/wolos.json";
-pub const FILES: [&str; 8] = [STARSHIP, FISH, NU, BASH, PWSH, GHOSTTY, ZELLIJ, VSCODE];
+pub const FILES: [&str; 9] = [
+    STARSHIP, FISH, NU, BASH, PWSH, GHOSTTY, KITTY, ZELLIJ, VSCODE,
+];
 /// Shipped under [`SYSTEM_DIR`] (the default theme's render). Not starship: its default is the
 /// shipped starship.toml itself (`STARSHIP_BASE`), which the shells fall back to.
-pub const SHIPPED: [&str; 7] = [FISH, NU, BASH, PWSH, GHOSTTY, ZELLIJ, VSCODE];
+pub const SHIPPED: [&str; 8] = [FISH, NU, BASH, PWSH, GHOSTTY, KITTY, ZELLIJ, VSCODE];
 
 /// Prompt roles every shell gets, readable on the terminal background (the surface): text roles
 /// >= 4.5:1, the autosuggestion dimmer but >= 3:1. Same values as zsh's `WOLOS_PROMPT_*`.
@@ -70,6 +74,7 @@ pub fn render(t: &ResolvedTheme) -> Vec<File> {
         (BASH, bash(t)),
         (PWSH, pwsh(t)),
         (GHOSTTY, ghostty(t)),
+        (KITTY, kitty(t)),
         (ZELLIJ, zellij(t)),
         (VSCODE, vscode(t)),
     ]
@@ -268,6 +273,35 @@ fn ghostty(t: &ResolvedTheme) -> String {
         ("selection-foreground", p.selection_fg),
     ] {
         s += &format!("{k} = {}\n", c.to_hex());
+    }
+    s
+}
+
+/// kitty: `key value` lines, the same palette as foot and ghostty, plus the tab bar and window
+/// borders from the tokens.
+fn kitty(t: &ResolvedTheme) -> String {
+    let p = terminal::palette(t);
+    let mut s = note(t, "#");
+    for (k, c) in [
+        ("foreground", p.foreground),
+        ("background", p.background),
+        ("cursor", p.cursor),
+        ("cursor_text_color", p.background),
+        ("selection_foreground", p.selection_fg),
+        ("selection_background", p.selection_bg),
+        ("url_color", token_color(t, "accent")),
+        ("active_border_color", token_color(t, "accent")),
+        ("inactive_border_color", token_color(t, "line")),
+        ("tab_bar_background", token_color(t, "sidebar")),
+        ("active_tab_foreground", token_color(t, "accentText")),
+        ("active_tab_background", token_color(t, "accent")),
+        ("inactive_tab_foreground", role(t, "muted")),
+        ("inactive_tab_background", token_color(t, "sidebar")),
+    ] {
+        s += &format!("{k} {}\n", c.to_hex());
+    }
+    for (i, c) in p.ansi.iter().enumerate() {
+        s += &format!("color{i} {}\n", c.to_hex());
     }
     s
 }
@@ -525,6 +559,39 @@ pub(crate) mod tests {
                 token_color(&t, "surface").to_hex()
             );
             assert_eq!(v["colors"].as_object().unwrap().len(), 34 + 16);
+            let k = file(&f, KITTY);
+            let keys: Vec<&str> = k
+                .lines()
+                .filter(|l| !l.starts_with('#'))
+                .map(|l| {
+                    let (key, v) = l.split_once(' ').unwrap();
+                    assert!(hex(v), "{}: kitty {l}", t.id);
+                    key
+                })
+                .collect();
+            for want in [
+                "foreground",
+                "background",
+                "cursor",
+                "cursor_text_color",
+                "selection_foreground",
+                "selection_background",
+                "active_tab_foreground",
+                "active_tab_background",
+                "inactive_tab_foreground",
+                "inactive_tab_background",
+                "tab_bar_background",
+            ] {
+                assert!(keys.contains(&want), "{}: kitty lacks {want}", t.id);
+            }
+            for i in 0..16 {
+                assert!(
+                    keys.contains(&format!("color{i}").as_str()),
+                    "{}: color{i}",
+                    t.id
+                );
+            }
+            assert_eq!(keys.len(), 14 + 16, "{}", t.id);
             let g = file(&f, GHOSTTY);
             assert_eq!(
                 g.lines().filter(|l| l.starts_with("palette = ")).count(),

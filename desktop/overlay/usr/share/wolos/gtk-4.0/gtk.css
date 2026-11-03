@@ -65,7 +65,7 @@
 
 /* ---- Type (HIG §2): Inter; 13 body and titles, 11 secondary, 22 large titles; weights 400/600 ---- */
 window, popover, tooltip, dialog, sheet { font-family: "Inter", sans-serif; font-size: 13px; }
-.title-1, .title-2, statuspage > scrolledwindow > viewport > box > clamp > box > .title { font-size: 22px; font-weight: 600; }
+.title-1, .title-2, statuspage > scrolledwindow > viewport > box > clamp > box > .title { font-size: 26px; font-weight: 600; }
 .title-3, .title-4, .heading { font-weight: 600; }
 .title-3, .title-4 { font-size: 13px; }
 .caption, .caption-heading, .subtitle { font-size: 11px; }
@@ -214,8 +214,7 @@ tabbar tab:selected, tabbox > tab:selected { background-color: var(--wol-card); 
 monthcell label.first-day { background: none; color: var(--wol-dim); font-weight: 600; font-size: 11px; }
 windowcontrols { border-spacing: 10px; }
 windowcontrols > button { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border: none; background: none; box-shadow: none; }
-windowcontrols > button image { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
-windowcontrols:hover > button image { color: rgba(0,0,0,0.55); }
-windowcontrols > button.close image { background: #cf3a68; }
-windowcontrols > button.minimize image { background: #d9541e; }
-windowcontrols > button.maximize image { background: #1c9a6e; }
+windowcontrols > button image { min-width: 12px; min-height: 12px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; background: #89898b; box-shadow: none; }
+windowcontrols:hover > button image { color: #1d1d1f; }
+windowcontrols > button:hover image { background: #7c5cff; color: #ffffff; }
+windowcontrols > button:active image { background: #674ece; color: #ffffff; }

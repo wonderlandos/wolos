@@ -51,6 +51,8 @@ module Wol
       else
         Wol.call { |err| LibWol.wol_window_set_content(self, nil, err) }
       end
+      # libwol let go of the old part: it may go somewhere else now.
+      @content.try &.placed!(false) unless @content.same?(content)
       @content = content
     end
 
@@ -110,11 +112,20 @@ module Wol
       else
         Wol.call { |err| LibWol.wol_window_set_toolbar(self, nil, err) }
       end
+      @toolbar.try &.placed!(false) unless @toolbar.same?(toolbar)
       @toolbar = toolbar
     end
 
     protected def fire_close : Nil
       @on_close.try &.call(self)
+    end
+
+    # Drop the block and the parts, so nothing this window held keeps a cycle alive.
+    protected def before_release(_ptr : LibWol::Window*) : Nil
+      @on_close = nil
+      @content = nil
+      @menus.clear
+      @toolbar = nil
     end
 
     protected def release(ptr : LibWol::Window*) : Nil

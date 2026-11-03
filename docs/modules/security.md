@@ -86,7 +86,9 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
   `wolos-tpm-reseal.service` (`wol encrypt reseal`) binds the chip again to the PCRs measured now. The
   secret comes from systemd-cryptsetup's password cache: what was typed stays ~150 s in root's
   user keyring as the `user` key `cryptsetup` (`password-cache=yes`, the default). It goes to
-  systemd-cryptenroll as `$PASSWORD`, then the key is invalidated. Nothing typed: nothing happens.
+  systemd-cryptenroll as `$PASSWORD`, then the key is invalidated. Nothing typed (the chip opened the disk):
+  nothing happens. A passphrase-only install (no `tpm2-device` in `rd.luks.options`) never asked for the chip:
+  the service does nothing and exits 0, so there is no failed unit and no chip slot added behind the choice.
 - Changing the password in Settings (wol-admind `user-password`, the current password every time)
   also replaces the disk slot (`wol encrypt password USER`, unlocked by the chip). `passwd` in a
   terminal does not: the disk keeps the previous password (the chip and the recovery key still work).

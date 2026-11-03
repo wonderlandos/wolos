@@ -14,11 +14,18 @@ module Wol
   class Message
     include Scoped
 
-    @ptr : LibWol::Message*
-    @kept : Bool
+    # A retained reference to a message: what `keep` holds, released by `close` or the GC.
+    private class Ref < Handle(LibWol::Message)
+      protected def release(ptr : LibWol::Message*) : Nil
+        LibWol.wol_message_release(ptr)
+      end
+    end
 
-    # Wrap a borrowed message (inside the endpoint's block) or, with `kept: true`, a retained one.
-    def initialize(@ptr : LibWol::Message*, @kept : Bool = false)
+    @ptr : LibWol::Message*
+    @ref : Ref?
+
+    # Wrap a borrowed message (inside the endpoint's block). `keep` makes the retained kind.
+    def initialize(@ptr : LibWol::Message*, @ref : Ref? = nil)
     end
 
     # The sender's executable, as the kernel saw it.
@@ -39,20 +46,13 @@ module Wol
 
     # A copy that stays valid after the block returns, to reply later (until `close` or the GC).
     def keep : Message
-      Message.new(LibWol.wol_message_retain(live_ptr), kept: true)
+      ptr = LibWol.wol_message_retain(live_ptr)
+      Message.new(ptr, Ref.new(ptr))
     end
 
-    # Release a kept message. No effect on a borrowed one.
+    # Release a kept message; later use raises `UsageError`. No effect on a borrowed one.
     def close : Nil
-      return unless @kept
-      ptr = @ptr
-      @ptr = Pointer(LibWol::Message).null
-      expire!
-      LibWol.wol_message_release(ptr) unless ptr.null?
-    end
-
-    def finalize
-      LibWol.wol_message_release(@ptr) if @kept && !@ptr.null?
+      @ref.try &.close
     end
 
     # Send `body` (up to 24 KiB) to endpoint `name` of the app at path `peer` and return its
@@ -75,10 +75,16 @@ module Wol
       end
     end
 
+    # A kept message is live until closed (its `Ref` raises then); a borrowed one until its
+    # callback returns.
     private def live_ptr : LibWol::Message*
-      check_valid!
-      raise UsageError.new("Wol::Message is closed") if @ptr.null?
-      @ptr
+      if ref = @ref
+        raise UsageError.new("Wol::Message is closed") if ref.closed?
+        @ptr
+      else
+        check_valid!
+        @ptr
+      end
     end
   end
 
@@ -87,7 +93,7 @@ module Wol
   class Endpoint < Handle(LibWol::Endpoint)
     # The trampoline libwol calls; captures nothing (see `Callbacks`).
     ON_MESSAGE = ->(_endpoint : LibWol::Endpoint*, message : LibWol::Message*, data : Void*) do
-      Callbacks.invoke(Endpoint, data) { |endpoint| endpoint.deliver(message) }
+      Callbacks.invoke(Endpoint, data, &.deliver(message))
       nil
     end
 

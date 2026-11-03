@@ -54,9 +54,9 @@ pub const SYSTEM_DIR: &str = "/usr/share/wolos";
 /// Shipped icon theme (`design/icons`, inherits Adwaita); the catalog's `iconTheme` names themes
 /// the image does not install, so apps always get this one, like the shell.
 pub const ICON_THEME: &str = "WolOS";
-pub const FONT: &str = "Inter 11";
+pub const FONT: &str = "Inter 10";
 pub const MONO_FONT: &str = "JetBrains Mono:size=11";
-/// macOS order: window controls on the left.
+/// Window controls on the left, where the compositor draws its own.
 pub const BUTTON_LAYOUT: &str = "close,minimize,maximize:";
 /// libadwaita accent presets (`org.gnome.desktop.interface accent-color`) and their colours.
 pub const ADW_ACCENTS: [(&str, &str); 9] = [
@@ -343,31 +343,46 @@ fn gtk4_css(t: &ResolvedTheme) -> String {
         "windowcontrols {{ border-spacing: {}px; }}\n",
         LIGHT_PITCH - LIGHT_SIZE
     );
-    s += &traffic_lights(
-        t,
-        "windowcontrols > button",
-        ["close", "minimize", "maximize"],
-    );
+    s += &window_controls(t, "windowcontrols > button");
     s
 }
 
-/// Kit AppWindow traffic lights (`button.light` in kit.css): 12 px token-coloured circles with a
-/// hairline rim, 22 px centre to centre (measured on kit goldens); the glyph shows on hover only.
-fn traffic_lights(t: &ResolvedTheme, button: &str, classes: [&str; 3]) -> String {
+/// WolOS window controls (`button.light` in kit.css): a quiet 12 px circle (the text colour at
+/// half way over the surface), 22 px centre to centre (measured on kit goldens). The glyph
+/// (close, minimise, zoom: the symbolic icons) shows while the pointer is over the group; only the
+/// control under the pointer takes the accent, a shade deeper while pressed.
+fn window_controls(t: &ResolvedTheme, button: &str) -> String {
+    let (idle, hover, pressed) = controls_colors(t);
+    let text = token(t, "text");
+    let on_accent = token(t, "accentText");
     // The header bar stretches buttons vertically, so the circle is drawn on the (centred) image.
-    let mut s = format!(
+    format!(
         "{button} {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; padding: 0; margin: 0; border: none; background: none; box-shadow: none; }}\n\
-         {button} image {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }}\n\
-         windowcontrols:hover > button image {{ color: rgba(0,0,0,0.55); }}\n"
-    );
-    for (class, tok) in classes.iter().zip(["danger", "warning", "success"]) {
-        s += &format!(
-            "{button}.{class} image {{ background: {}; }}\n",
-            token(t, tok)
-        );
-    }
-    s
+         {button} image {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; background: {idle}; box-shadow: none; }}\n\
+         windowcontrols:hover > button image {{ color: {text}; }}\n\
+         {button}:hover image {{ background: {hover}; color: {on_accent}; }}\n\
+         {button}:active image {{ background: {pressed}; color: {on_accent}; }}\n"
+    )
 }
+
+/// (idle circle, hovered, pressed) of the window controls, from the theme's tokens.
+pub(crate) fn controls_colors(t: &ResolvedTheme) -> (String, String, String) {
+    let (surface, text, accent) = (
+        token_color(t, "surface"),
+        token_color(t, "text"),
+        token_color(t, "accent"),
+    );
+    (
+        mix(surface, text, CONTROL_IDLE_MIX).to_hex(),
+        accent.to_hex(),
+        mix(accent, text, CONTROL_PRESSED_MIX).to_hex(),
+    )
+}
+
+/// How far the idle circle sits from the surface toward the text colour, and the pressed accent
+/// toward the text colour.
+const CONTROL_IDLE_MIX: f64 = 0.5;
+const CONTROL_PRESSED_MIX: f64 = 0.22;
 
 /// adw-gtk3 6.5's own titlebutton sizing selectors (`min-width: 24px; margin: 0 4px`). Ours
 /// repeat them verbatim: equal specificity, later in the cascade (after the @import), so ours win.
@@ -384,33 +399,35 @@ fn titlebutton(suffix: &str) -> String {
         .join(", ")
 }
 
-/// GTK 3 traffic lights: the circle is the 12 px button (GTK 3 centres titlebuttons). Chromium's
+/// GTK 3 window controls: the circle is the 12 px button (GTK 3 centres titlebuttons). Chromium's
 /// GTK mode renders only the button background under GTK 3, so the glyph is a hover background:
 /// that way GTK 3 apps and Helium (default browser) show the same one. Chromium styles each button
-/// on its own, so unlike GTK 4 only the hovered light shows its glyph. The real icon stays hidden.
-/// GTK 3 and Chromium place buttons at header padding + margins, 6 px apart.
-fn gtk3_traffic_lights(t: &ResolvedTheme) -> String {
+/// on its own, so unlike GTK 4 only the hovered control shows its glyph (on the accent). The real
+/// icon stays hidden. GTK 3 and Chromium place buttons at header padding + margins, 6 px apart.
+fn gtk3_window_controls(t: &ResolvedTheme) -> String {
     let side = (LIGHT_PITCH - LIGHT_SIZE - GTK3_BUTTON_SPACING) / 2;
     let first = LIGHT_FIRST_CENTRE - LIGHT_SIZE / 2 - GTK3_HEADER_PADDING;
+    let (idle, hover, pressed) = controls_colors(t);
+    let on_accent = token(t, "accentText");
     let mut s = format!(
-        "{} {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; margin: 0 {side}px; padding: 0; border: none; border-radius: 999px; background-image: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }}\n\
+        "{} {{ min-width: {LIGHT_SIZE}px; min-height: {LIGHT_SIZE}px; margin: 0 {side}px; padding: 0; border: none; border-radius: 999px; background-image: none; background-color: {idle}; box-shadow: none; }}\n\
          {} {{ margin-left: {first}px; }}\n\
          {} {{ margin: -2px; padding: 0; color: transparent; background: none; box-shadow: none; -gtk-icon-transform: scale(0.6); }}\n\
-",
+         {} {{ background-color: {hover}; color: {on_accent}; }}\n\
+         {} {{ background-color: {pressed}; color: {on_accent}; }}\n",
         titlebutton(""),
         titlebutton(".close"),
         titlebutton(" image"),
+        titlebutton(":hover"),
+        titlebutton(":active"),
     );
-    for (class, tok, glyph) in [
-        ("close", "danger", "window-close-symbolic"),
-        ("minimize", "warning", "list-remove-symbolic"),
-        ("maximize", "success", "list-add-symbolic"),
+    for (class, glyph) in [
+        ("close", "window-close-symbolic"),
+        ("minimize", "window-minimize-symbolic"),
+        ("maximize", "window-maximize-symbolic"),
     ] {
         s += &format!(
-            "{} {{ background-color: {}; }}\n\
-             {} {{ color: rgba(0,0,0,0.55); background-image: -gtk-icontheme(\"{glyph}\"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }}\n",
-            titlebutton(&format!(".{class}")),
-            token(t, tok),
+            "{} {{ background-image: -gtk-icontheme(\"{glyph}\"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }}\n",
             titlebutton(&format!(".{class}:hover")),
         );
     }
@@ -435,7 +452,7 @@ fn gtk3_css(t: &ResolvedTheme) -> String {
     ]);
     s += &super::scaffold::gtk3_defines(t);
     s += &super::scaffold::gtk3(t);
-    s += &gtk3_traffic_lights(t);
+    s += &gtk3_window_controls(t);
     s
 }
 
@@ -760,38 +777,58 @@ mod tests {
     }
 
     #[test]
-    fn window_controls_are_kit_traffic_lights() {
+    fn window_controls_are_wolos_own() {
         let t = theme("wol-light");
         let f = render(&t, Path::new("/x"));
+        let (idle, hover, pressed) = controls_colors(&t);
+        assert_eq!(hover, t.tokens["accent"].to_ascii_lowercase());
         let gtk4 = file(&f, "gtk-4.0/gtk.css");
         assert!(gtk4.contains(&format!(
-            "windowcontrols > button.close image {{ background: {}; }}",
-            t.tokens["danger"]
+            "windowcontrols > button image {{ min-width: 12px; min-height: 12px; padding: 0; margin: 0; border-radius: 999px; -gtk-icon-size: 8px; color: transparent; background: {idle}; box-shadow: none; }}"
         )));
-        assert!(gtk4.contains("min-width: 12px; min-height: 12px;"));
         assert!(
-            gtk4.contains("windowcontrols:hover > button image { color: rgba(0,0,0,0.55); }"),
-            "hovering any light shows the glyphs on all three"
+            gtk4.contains(&format!(
+                "windowcontrols:hover > button image {{ color: {}; }}",
+                t.tokens["text"]
+            )),
+            "hovering the group shows the glyphs on all three"
         );
+        assert!(gtk4.contains(&format!(
+            "windowcontrols > button:hover image {{ background: {hover}; color: {}; }}",
+            t.tokens["accentText"]
+        )));
+        assert!(gtk4.contains(&format!(
+            "windowcontrols > button:active image {{ background: {pressed};"
+        )));
         assert!(
             gtk4.contains("color: transparent;"),
             "glyph hidden until hover"
         );
+        // Not the traffic lights: one quiet colour for all three, never the status colours.
+        for class in ["close", "minimize", "maximize"] {
+            assert!(
+                !gtk4.contains(&format!("windowcontrols > button.{class} image")),
+                "{class}: no colour of its own"
+            );
+        }
         // GTK 3: the circle is the button itself. Chromium's GTK mode (Helium) renders only the
         // titlebutton background under GTK 3, never the image's (ui/gtk/nav_button_provider_gtk.cc).
         let gtk3 = file(&f, GTK3_THEME_CSS);
-        for (class, tok) in [
-            ("close", "danger"),
-            ("minimize", "warning"),
-            ("maximize", "success"),
-        ] {
+        assert!(gtk3.contains(&format!("background-color: {idle}; box-shadow: none; }}")));
+        assert!(gtk3.contains(&format!(
+            "{} {{ background-color: {hover}; color: {}; }}",
+            titlebutton(":hover"),
+            t.tokens["accentText"]
+        )));
+        assert!(gtk3.contains(&format!(
+            "{} {{ background-color: {pressed}; color: {}; }}",
+            titlebutton(":active"),
+            t.tokens["accentText"]
+        )));
+        for tok in ["danger", "warning", "success"] {
             assert!(
-                gtk3.contains(&format!(
-                    "{} {{ background-color: {}; }}",
-                    titlebutton(&format!(".{class}")),
-                    t.tokens[tok]
-                )),
-                "{class}"
+                !gtk3.contains(&format!("background-color: {}; }}", t.tokens[tok])),
+                "{tok}: the status colours are not window buttons"
             );
         }
         assert!(gtk3.contains(".titlebar:not(headerbar) button.titlebutton { min-width: 12px; min-height: 12px; margin: 0 2px; padding: 0; border: none; border-radius: 999px;"));
@@ -806,12 +843,12 @@ mod tests {
         // Chromium paints the background only, so that is where the hover glyph has to be.
         for (class, glyph) in [
             ("close", "window-close-symbolic"),
-            ("minimize", "list-remove-symbolic"),
-            ("maximize", "list-add-symbolic"),
+            ("minimize", "window-minimize-symbolic"),
+            ("maximize", "window-maximize-symbolic"),
         ] {
             assert!(
                 gtk3.contains(&format!(
-                    "{} {{ color: rgba(0,0,0,0.55); background-image: -gtk-icontheme(\"{glyph}\");",
+                    "{} {{ background-image: -gtk-icontheme(\"{glyph}\");",
                     titlebutton(&format!(".{class}:hover"))
                 )),
                 "{class} glyph on hover"
@@ -939,7 +976,7 @@ mod tests {
             );
             for ini in [ini3, file(&f, "gtk-4.0/settings.ini")] {
                 assert!(ini.contains("gtk-decoration-layout=close,minimize,maximize:"));
-                assert!(ini.contains("gtk-font-name=Inter 11"));
+                assert!(ini.contains("gtk-font-name=Inter 10"));
                 assert!(ini.contains("gtk-icon-theme-name=WolOS\n"));
                 assert!(ini.contains(&format!("gtk-application-prefer-dark-theme={}", dark as u8)));
             }
@@ -1065,7 +1102,7 @@ mod tests {
                 "@define-color accent_bg_color {};",
                 t.tokens["accent"]
             )));
-            assert!(th.contains("button.titlebutton.close { background-color:"));
+            assert!(th.contains("button.titlebutton:hover { background-color:"));
             let user = file(&f, "gtk-3.0/gtk.css");
             assert!(
                 !user.contains("@define-color") && !user.contains("titlebutton"),
@@ -1174,7 +1211,7 @@ mod tests {
         assert_eq!(get(&d, "gtk-theme"), "WolOS-wol-dark-gtk3");
         assert_eq!(get(&l, "accent-color"), "purple");
         assert_eq!(get(&l, "button-layout"), "close,minimize,maximize:");
-        assert_eq!(get(&l, "font-name"), "Inter 11");
+        assert_eq!(get(&l, "font-name"), "Inter 10");
         assert_eq!(
             get(&d, "icon-theme"),
             "WolOS",
@@ -1387,6 +1424,57 @@ mod tests {
             assert!(tk.join(rel).is_file(), "{rel}");
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The circle has to be seen on the bar and the glyph on the circle (WCAG 1.4.11, 3:1), in the
+    /// two themes the image starts with.
+    #[test]
+    fn window_controls_are_visible() {
+        for id in ["wol-light", "wol-dark"] {
+            let t = theme(id);
+            let (idle, hover, _) = controls_colors(&t);
+            let c = |h: &str| Color::parse(h).unwrap();
+            let on = |k: &str| token_color(&t, k);
+            assert!(
+                Color::contrast(c(&idle), on("surface")) >= 3.0,
+                "{id}: circle"
+            );
+            assert!(Color::contrast(on("text"), c(&idle)) >= 3.0, "{id}: glyph");
+            assert!(
+                Color::contrast(on("accentText"), c(&hover)) >= 3.0,
+                "{id}: glyph on the accent"
+            );
+        }
+    }
+
+    /// The icon theme every builtin theme names is the one the image ships: the `Name` of
+    /// `design/icons/index.theme`, which is also what the GTK settings carry.
+    #[test]
+    fn builtin_themes_name_the_shipped_icon_theme() {
+        let index = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../design/icons/index.theme"),
+        )
+        .unwrap();
+        let name = index
+            .lines()
+            .find_map(|l| l.strip_prefix("Name="))
+            .map(str::trim);
+        assert_eq!(name, Some(ICON_THEME));
+        for spec in ThemeCatalog::builtin().list() {
+            let t = theme(&spec.id);
+            assert!(
+                t.icon_theme.as_deref().is_none_or(|n| n == ICON_THEME),
+                "{}: {:?}",
+                spec.id,
+                t.icon_theme
+            );
+        }
+        for id in ["wol-light", "wol-dark"] {
+            assert_eq!(theme(id).icon_theme.as_deref(), Some(ICON_THEME), "{id}");
+        }
+        let files = render(&theme("wol-dark"), Path::new("/x"));
+        let ini = file(&files, "gtk-3.0/settings.ini");
+        assert!(ini.contains(&format!("gtk-icon-theme-name={ICON_THEME}")));
     }
 
     /// The image ships the default theme's files (`desktop/overlay`); `WOL_REGEN=1` rewrites them.

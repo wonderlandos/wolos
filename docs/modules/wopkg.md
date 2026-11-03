@@ -2,6 +2,8 @@
 
 One tool for every source. `wopkg` (Crystal CLI, `wopkg/`) drives `libwopkg` (`crates/wopkg`, `libwopkg.so.1`, header `include/wopkg.h`, symbols in `abi/wopkg.map`). The App Store links the Rust crate directly.
 
+The CLI's `lib LibWopkg` (`wopkg/src/wopkg/lib_wopkg.cr`) is generated from `wopkg.h` by the same generator as libwol's (`crates/wol-abi/tests/common/bindgen.rs`); `cargo test -p wol-abi --test bindings` fails when it drifts. Crystal apps reach the same calls through `require "cryswol/pkg"` (`Wol::Pkg`, [cryswol.md](cryswol.md)).
+
 ## Sources and ids
 
 | `kind` | Where | `id` | Installs as | Update |

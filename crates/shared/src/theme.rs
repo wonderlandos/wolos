@@ -60,7 +60,10 @@ pub mod scaffold {
     pub const WINDOW_RADIUS: i32 = 12;
     pub const BODY: i32 = 13;
     pub const SECONDARY: i32 = 11;
-    pub const LARGE_TITLE: i32 = 22;
+    /// Section headings (`label.heading`).
+    pub const HEADING: i32 = 15;
+    /// Page titles (`label.large-title`), bold, tracking -0.5 px.
+    pub const LARGE_TITLE: i32 = 26;
     /// Window buttons: 12 px circles, 22 px centre to centre, the first centred 23 px from the
     /// window's left edge (pixel edges), all on the toolbar's vertical centre.
     pub const LIGHT_SIZE: i32 = 12;

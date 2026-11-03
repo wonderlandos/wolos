@@ -56,6 +56,22 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "wolos-crystal/shards/cryswol/src/wol/pkg/**",
+      "spdx": "GPL-2.0-or-later"
+    },
+    {
+      "glob": "wolos-crystal/shards/cryswol/src/wol/realtime/**",
+      "spdx": "GPL-2.0-or-later"
+    },
+    {
+      "glob": "wolos-crystal/shards/cryswol/spec/pkg_spec.cr",
+      "spdx": "GPL-2.0-or-later"
+    },
+    {
+      "glob": "wolos-crystal/shards/cryswol/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "kernel/scx_wolos/**",
       "spdx": "GPL-2.0-only"
     },

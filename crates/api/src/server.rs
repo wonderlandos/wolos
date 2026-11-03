@@ -555,7 +555,7 @@ mod tests {
             while std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|e| e == me)
                 || std::fs::read(format!("/proc/{pid}/environ")).is_ok_and(|e| e.is_empty())
             {
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                std::thread::yield_now(); // `spawn` returns after the exec; this is a safety net
             }
             let exe = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap();
             let exe: &'static str = Box::leak(exe.to_string_lossy().into_owned().into_boxed_str());

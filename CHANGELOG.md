@@ -131,6 +131,7 @@ Developer
 - The install tests fail when their checks fail, and they check Secure Boot, the first boot and dual boot for real.
 - Scripts that are run directly are checked to keep their executable bit.
 - Crystal code (the package tool, `wol-hue`, the libwol examples) has its own rule catalogue (docs/RULES-crystal.md): formatter and linter clean, raw memory and C bindings only in listed files, programs run without a shell, network clients with timeouts, input decoded into types, dependencies pinned by commit and counted (none today), and no shard fetched while a package builds. `tools/crystal/lint.sh` runs the tools.
+- Cryswol, the Crystal framework for WolOS apps (`wolos-crystal/shards/cryswol/`, BSD-2-Clause): every libwol call (windows and Kit parts, notifications, menus, clipboard, preferences, file panels, power, network, audio, Search, accounts, messages, devices, sharing, background services) as Crystal objects with exceptions and blocks, opt-in package calls (`require "cryswol/pkg"`), specs against a fake system service; libwol itself now ships as its own package, `libwol` (`libwol.so.1`, `wol.h`, version = ABI version). docs/modules/cryswol.md.
 
 Known limitations
 - The CDN is not switched on yet: its mirror lines stay commented out until it exists, so packages come from the release host.

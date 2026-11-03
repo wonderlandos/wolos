@@ -1001,6 +1001,41 @@ mod tests {
         assert_eq!(handle(&none, ANN, &mut cache, &os), AdminReply::NeedsAuth);
     }
 
+    /// Settings > Modules Install sends two `PkgInstall` (the backend package, then the meta
+    /// package): the person types the password for the first only; the second rides the session's
+    /// authorization, so ONE password sheet rises (and a wrong password stops before either runs).
+    #[test]
+    fn a_module_install_of_two_packages_asks_one_password() {
+        let os = Fake::default();
+        let mut cache = AuthCache::default();
+        let send = |name: &str, pw: &[u8], cache: &mut AuthCache| {
+            handle(
+                &encode(&req(AdminAction::PkgInstall, &[name]), pw),
+                ANN,
+                cache,
+                &os,
+            )
+        };
+        assert_eq!(send("ollama-rocm", b"", &mut cache), AdminReply::NeedsAuth);
+        assert_eq!(send("ollama-rocm", b"bad", &mut cache), AdminReply::Denied);
+        assert!(
+            os.ran.borrow().is_empty(),
+            "nothing ran without the password"
+        );
+        assert_eq!(send("ollama-rocm", b"good", &mut cache), AdminReply::Ok);
+        assert_eq!(
+            send("wolos-module-ai-local", b"", &mut cache),
+            AdminReply::Ok,
+            "the second package needs no second sheet"
+        );
+        assert_eq!(
+            os.auths.get(),
+            2,
+            "one failed and one good password, no more"
+        );
+        assert_eq!(os.ran.borrow().len(), 2);
+    }
+
     #[test]
     fn runs_planned_steps_and_logs_without_secrets() {
         let os = Fake::default();

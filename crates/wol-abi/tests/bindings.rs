@@ -225,53 +225,9 @@ const RAW_ONLY: &[(&str, &str)] = &[(
     "compositor-internal, opt-in raw layer; its consumer is the compositor plugin",
 )];
 
-/// Functions the high layer does not wrap yet (CR1 workers B, C, D are writing it). It may only
-/// shrink: the test fails when one gains a wrapper, so drop it here in the same change. CR1 is done
-/// when this is empty.
-const PENDING: &[&str] = &[
-    "wol_notification_post",
-    "wol_window_set_content",
-    "wol_stack_create",
-    "wol_label_create",
-    "wol_button_create",
-    "wol_widget_add_child",
-    "wol_widget_release",
-    "wol_row_create",
-    "wol_list_create",
-    "wol_spacer_create",
-    "wol_text_field_create",
-    "wol_toggle_create",
-    "wol_slider_create",
-    "wol_image_create",
-    "wol_widget_set_text",
-    "wol_widget_copy_text",
-    "wol_toggle_get_on",
-    "wol_toggle_set_on",
-    "wol_slider_get_value",
-    "wol_slider_set_value",
-    "wol_window_set_close_handler",
-    "wol_window_close",
-    "wol_notification_create",
-    "wol_notification_add_action",
-    "wol_notification_set_action_handler",
-    "wol_notification_send",
-    "wol_notification_release",
-    "wol_notification_replace",
-    "wol_notification_withdraw",
-    "wol_menu_create",
-    "wol_menu_add_item",
-    "wol_menu_add_separator",
-    "wol_menu_set_enabled",
-    "wol_menu_set_checked",
-    "wol_menu_release",
-    "wol_window_add_menu",
-    "wol_toolbar_create",
-    "wol_toolbar_add_button",
-    "wol_toolbar_add_spacer",
-    "wol_toolbar_set_enabled",
-    "wol_toolbar_release",
-    "wol_window_set_toolbar",
-];
+/// Functions the high layer does not wrap yet. CR1 is done, so it is empty; a new header function
+/// is either wrapped in the same change or listed in EXEMPT with a reason. It may only shrink.
+const PENDING: &[&str] = &[];
 
 /// The high-layer Crystal sources that call `lib` (generated `lib_*.cr` files are not wrappers).
 fn high_layer(lib: &str) -> Vec<(PathBuf, String)> {
@@ -469,7 +425,7 @@ fn generated_crystal_is_formatted() {
             cmd.arg(root().join(rel));
         }
     }
-    run(cmd.arg(root().join(SHARD).join(LINKS_SPEC)));
+    run_checked(cmd.arg(root().join(SHARD).join(LINKS_SPEC)));
 }
 
 #[test]
@@ -479,13 +435,15 @@ fn the_links_spec_links_every_wol_function() {
     };
     let dir = temp("crystal-links");
     let lib = common::lib_dir();
-    run(Command::new(crystal)
-        .env("CRYSTAL_CACHE_DIR", dir.join("cache"))
-        .arg("spec")
-        .arg(root().join(SHARD).join(LINKS_SPEC))
-        .arg("--error-on-warnings")
-        .arg("--link-flags")
-        .arg(format!("-L{0} -Wl,-rpath,{0}", lib.display())));
+    run_checked(
+        Command::new(crystal)
+            .env("CRYSTAL_CACHE_DIR", dir.join("cache"))
+            .arg("spec")
+            .arg(root().join(SHARD).join(LINKS_SPEC))
+            .arg("--error-on-warnings")
+            .arg("--link-flags")
+            .arg(format!("-L{0} -Wl,-rpath,{0}", lib.display())),
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -502,10 +460,12 @@ fn the_wopkg_and_realtime_libs_compile() {
         std::fs::copy(root().join(places[0]), dir.join("lib.cr")).unwrap();
         let spec = dir.join(format!("{}_spec.cr", t.lib));
         std::fs::write(&spec, header_of(t).crystal_links_spec(t, "./lib")).unwrap();
-        run(Command::new(&crystal)
-            .env("CRYSTAL_CACHE_DIR", dir.join("cache"))
-            .args(["build", "--no-codegen", "--error-on-warnings"])
-            .arg(&spec));
+        run_checked(
+            Command::new(&crystal)
+                .env("CRYSTAL_CACHE_DIR", dir.join("cache"))
+                .args(["build", "--no-codegen", "--error-on-warnings"])
+                .arg(&spec),
+        );
     }
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -543,7 +503,8 @@ fn tool(name: &str) -> Option<PathBuf> {
     found
 }
 
-fn run(cmd: &mut Command) {
+/// Run `cmd` and check it exited 0 (the test's assertion).
+fn run_checked(cmd: &mut Command) {
     let out = cmd.output().unwrap_or_else(|e| panic!("{cmd:?}: {e}"));
     assert!(
         out.status.success(),
@@ -562,15 +523,17 @@ type Builder = fn(program: &str, dir: &Path, lib: &Path) -> Command;
 
 fn crystal(program: &str, dir: &Path, lib: &Path) -> Command {
     let exe = dir.join(program);
-    run(Command::new(tool("crystal").unwrap())
-        .env("CRYSTAL_CACHE_DIR", dir.join("cache"))
-        .arg("build")
-        .arg(bindings("crystal").join(format!("{program}.cr")))
-        .arg("--error-on-warnings")
-        .arg("--link-flags")
-        .arg(format!("-L{0} -Wl,-rpath,{0}", lib.display()))
-        .arg("-o")
-        .arg(&exe));
+    run_checked(
+        Command::new(tool("crystal").unwrap())
+            .env("CRYSTAL_CACHE_DIR", dir.join("cache"))
+            .arg("build")
+            .arg(bindings("crystal").join(format!("{program}.cr")))
+            .arg("--error-on-warnings")
+            .arg("--link-flags")
+            .arg(format!("-L{0} -Wl,-rpath,{0}", lib.display()))
+            .arg("-o")
+            .arg(&exe),
+    );
     Command::new(exe)
 }
 
@@ -584,15 +547,17 @@ fn swift(program: &str, dir: &Path, lib: &Path) -> Command {
     )
     .unwrap();
     let exe = dir.join(program);
-    run(Command::new(tool("swiftc").unwrap())
-        .args(["-swift-version", "5", "-static-stdlib", "-I"])
-        .arg(&inc)
-        .arg(bindings("swift").join(format!("{program}.swift")))
-        .arg(format!("-L{}", lib.display()))
-        .args(["-lwol", "-Xlinker", "-rpath", "-Xlinker"])
-        .arg(lib)
-        .arg("-o")
-        .arg(&exe));
+    run_checked(
+        Command::new(tool("swiftc").unwrap())
+            .args(["-swift-version", "5", "-static-stdlib", "-I"])
+            .arg(&inc)
+            .arg(bindings("swift").join(format!("{program}.swift")))
+            .arg(format!("-L{}", lib.display()))
+            .args(["-lwol", "-Xlinker", "-rpath", "-Xlinker"])
+            .arg(lib)
+            .arg("-o")
+            .arg(&exe),
+    );
     Command::new(exe)
 }
 
@@ -606,14 +571,16 @@ fn dotnet(program: &str, dir: &Path, lib: &Path) -> Command {
         .unwrap();
     assert!(status.success());
     let out = dir.join("out");
-    run(Command::new(tool("dotnet").unwrap())
-        .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
-        .env("DOTNET_NOLOGO", "1")
-        .env("DOTNET_CLI_HOME", dir.join("home"))
-        .arg("build")
-        .arg(src.join(program).join(format!("{program}.csproj")))
-        .args(["-c", "Release", "-warnaserror", "-o"])
-        .arg(&out));
+    run_checked(
+        Command::new(tool("dotnet").unwrap())
+            .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
+            .env("DOTNET_NOLOGO", "1")
+            .env("DOTNET_CLI_HOME", dir.join("home"))
+            .arg("build")
+            .arg(src.join(program).join(format!("{program}.csproj")))
+            .args(["-c", "Release", "-warnaserror", "-o"])
+            .arg(&out),
+    );
     let mut c = Command::new(tool("dotnet").unwrap());
     c.arg(out.join(format!("{program}.dll")))
         .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")

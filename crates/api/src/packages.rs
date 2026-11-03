@@ -77,29 +77,6 @@ pub fn enough_room(free: u64, total: u64, size: u64) -> bool {
         .is_some_and(|left| left >= staging_reserve(total))
 }
 
-/// Bytes free to ordinary writes and in all, on the filesystem that holds `path` or its nearest
-/// existing parent. None when the kernel will not say (the copy is then refused).
-// statvfs field widths differ by target (u32 on some): the conversions are needed there.
-#[allow(clippy::useless_conversion)]
-fn space_at(path: &std::path::Path) -> Option<(u64, u64)> {
-    use std::os::unix::ffi::OsStrExt;
-    let mut at = path;
-    while !at.exists() {
-        at = at.parent()?;
-    }
-    let c = std::ffi::CString::new(at.as_os_str().as_bytes()).ok()?;
-    // SAFETY: `c` is a NUL-terminated path and `st` a zeroed statvfs the call fills in.
-    let st = unsafe {
-        let mut st: libc::statvfs = std::mem::zeroed();
-        (libc::statvfs(c.as_ptr(), &mut st) == 0).then_some(st)?
-    };
-    let unit = u64::from(st.f_frsize);
-    Some((
-        u64::from(st.f_bavail).saturating_mul(unit),
-        u64::from(st.f_blocks).saturating_mul(unit),
-    ))
-}
-
 /// The refusal shown when the copy of `size` would leave too little free space.
 fn no_room_message() -> String {
     "There is not enough free space on this computer to install that file. Free some space and try again."
@@ -154,7 +131,7 @@ impl System for Host<'_> {
         let size = shared::sys::open_named(path)
             .and_then(|f| f.metadata())
             .map_or(MAX_STAGED, |m| m.len().min(MAX_STAGED));
-        match space_at(std::path::Path::new(STAGING)) {
+        match crate::os::space_at(std::path::Path::new(STAGING)) {
             Some((free, total)) if enough_room(free, total, size) => Ok(()),
             _ => Err(no_room_message()),
         }
@@ -1303,7 +1280,7 @@ mod tests {
     /// The real host reads the real disk: a temp-dir filesystem answers, with its free space.
     #[test]
     fn the_space_of_a_real_directory_is_read() {
-        let (free, total) = space_at(&std::env::temp_dir().join("no/such/dir")).unwrap();
+        let (free, total) = crate::os::space_at(&std::env::temp_dir().join("no/such/dir")).unwrap();
         assert!(total > 0 && free <= total);
     }
 

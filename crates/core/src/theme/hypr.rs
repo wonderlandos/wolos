@@ -9,7 +9,7 @@ use super::apps::{mix, token_color};
 use shared::theme::Color;
 pub use shared::theme::{HYPR_THEME_FILE, SYSTEM_HYPR_THEME};
 
-/// Kit window buttons (fixed macOS colours, not a theme value), sourced once by hyprland.conf:
+/// WolOS window buttons (one fixed neutral and ink glyphs, not a theme value), sourced once by hyprland.conf:
 /// each `hyprbars-button` line adds a button, so they must not sit in a file sourced twice.
 pub const LIGHTS: &str = "/usr/share/wolos/hypr/wolos/lights.conf";
 
@@ -25,7 +25,7 @@ pub fn keywords(t: &ResolvedTheme) -> Vec<(&'static str, String)> {
     vec![
         ("plugin:hyprbars:bar_color", rgba(bar, 0xe6)),
         ("plugin:hyprbars:col.text", rgba(text, 0xff)),
-        // Inactive windows look inactive (macOS): grey lights, a flatter bar, a dimmer title
+        // Inactive windows look inactive: dimmed buttons, a flatter bar, a dimmer title
         // (bar_color_inactive / col.text_inactive: desktop/hyprland/hyprbars patch).
         (
             "plugin:hyprbars:inactive_button_color",

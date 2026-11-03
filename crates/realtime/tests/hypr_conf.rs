@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The desktop hyprland.conf drives hyprbars and window animations; it must agree with the
-//! realtime geometry/curves and the kit (12 px lights, close centre 22.5 px in, 22 px apart).
-//! Live 0.56.2: lights were green-yellow-red, 20 px apart, CSD apps got a second bar, and the
+//! realtime geometry/curves and the kit (12 px buttons, close centre 22.5 px in, 22 px apart).
+//! Live 0.56.2: buttons were 20 px apart, CSD apps got a second bar, and the
 //! open animation used a 400 ms overshooting spring instead of our ease-out.
 use realtime::anim::{Animation, Bezier};
 use realtime::titlebar::{self, Button};
@@ -36,7 +36,7 @@ fn rgb(s: &str) -> (i32, i32, i32) {
 }
 
 #[test]
-fn hyprbars_lights_match_kit_order_colour_and_spacing() {
+fn hyprbars_buttons_match_kit_order_colour_and_spacing() {
     assert!(CONF.contains("\nsource = /usr/share/wolos/hypr/wolos/lights.conf\n"));
     let buttons: Vec<Vec<String>> = LIGHTS
         .lines()
@@ -48,24 +48,36 @@ fn hyprbars_lights_match_kit_order_colour_and_spacing() {
                 .collect()
         })
         .collect();
-    // Kit light/dark colours; ±12 per channel (measure.py) must hold for both themes.
-    let kit = [
-        ("close", [(255, 59, 48), (255, 69, 58)]),
-        ("minimize", [(255, 149, 0), (255, 159, 10)]),
-        ("zoom", [(52, 199, 89), (48, 209, 88)]),
-    ];
+    // WolOS window buttons: one quiet neutral for all three (no red, amber and green), the ink
+    // glyph on it readable (>= 3:1), and the circle visible on both bars (the default light and
+    // dark surfaces, >= 3:1).
     assert_eq!(buttons.len(), 3);
-    for (b, (action, themes)) in buttons.iter().zip(kit) {
+    let lum = |c: (i32, i32, i32)| {
+        let f = |v: i32| {
+            let v = f64::from(v) / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * f(c.0) + 0.7152 * f(c.1) + 0.0722 * f(c.2)
+    };
+    let contrast = |a: (i32, i32, i32), b: (i32, i32, i32)| {
+        let (hi, lo) = (lum(a).max(lum(b)), lum(a).min(lum(b)));
+        (hi + 0.05) / (lo + 0.05)
+    };
+    let circle = rgb(&buttons[0][0]);
+    for (b, action) in buttons.iter().zip(["close", "minimize", "zoom"]) {
         // The patched hyprbars runs these on the bar's own window (desktop/hyprland/hyprbars).
         assert_eq!(b[3], action, "order: {b:?} should be {action}");
         assert_eq!(b[1], titlebar::BUTTON.to_string());
-        let c = rgb(&b[0]);
-        for t in themes {
-            assert!(
-                (c.0 - t.0).abs() <= 12 && (c.1 - t.1).abs() <= 12 && (c.2 - t.2).abs() <= 12,
-                "{c:?} vs {t:?}"
-            );
-        }
+        assert_eq!(rgb(&b[0]), circle, "one colour for all three: {b:?}");
+        let ink = (0x22, 0x1b, 0x36);
+        assert!(contrast(ink, circle) >= 3.0, "glyph on the circle: {b:?}");
+    }
+    for (name, bar) in [("light", (255, 255, 255)), ("dark", (0x2c, 0x2c, 0x2e))] {
+        assert!(contrast(circle, bar) >= 3.0, "circle on the {name} bar");
     }
     assert_eq!(value("bar_buttons_alignment"), "left");
     assert_eq!(value("bar_padding"), titlebar::INSET.to_string());
@@ -75,9 +87,9 @@ fn hyprbars_lights_match_kit_order_colour_and_spacing() {
     assert!((centre(Button::Close) - 22.5).abs() <= 1.0);
     assert!((centre(Button::Minimize) - centre(Button::Close) - 22.0).abs() <= 1.0);
     assert_eq!(value("on_double_click"), "zoom");
-    // macOS: hovering any light shows the glyphs on all three (titlebar::Hover).
+    // Hovering any button shows the glyphs on all three (titlebar::Hover).
     assert_eq!(value("icon_on_hover"), "true");
-    for (b, glyph) in buttons.iter().zip(["×", "−", "+"]) {
+    for (b, glyph) in buttons.iter().zip(["×", "−", "□"]) {
         assert_eq!(b[2], glyph, "{b:?}");
         assert!(
             b.len() == 5 && b[4].starts_with("rgba("),

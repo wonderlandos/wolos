@@ -11,7 +11,7 @@ describe Wol::Service do
       status["starts"].as_i?.should eq 1
       Wol::Service.stop(ctx, "sync")
       fake.call_tags.should eq ["service.start", "service.status", "service.stop"]
-      fake.calls.map(&.["name"].as_s).uniq.should eq ["sync"]
+      fake.calls.map(&.["name"].as_s).uniq!.should eq ["sync"]
       expect_raises(Wol::PermissionDenied) { Wol::Service.start(ctx, "sync") }
     end
   end

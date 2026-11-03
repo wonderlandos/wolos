@@ -3,7 +3,6 @@
 //! repo readers, and the parsers for scripts, unit files, sysctl and compositor config.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::OnceLock;
 
 // ---------------------------------------------------------------- baselines (growth-only)

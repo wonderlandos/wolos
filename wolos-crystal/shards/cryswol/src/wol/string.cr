@@ -9,7 +9,7 @@ module Wol
   module Strings
     # Copy a borrowed `wol_string` (a `*_get_*` result). NULL gives nil.
     def self.borrow(s : LibWol::String*) : ::String?
-      return nil if s.null?
+      return if s.null?
       len = LibC::SizeT.new(0)
       bytes = LibWol.wol_string_get_bytes(s, pointerof(len))
       ::String.new(bytes, len)
@@ -18,7 +18,7 @@ module Wol
     # Copy an owned `wol_string` (a `*_copy_*` or out-parameter result) and release it.
     # NULL gives nil.
     def self.take(s : LibWol::String*) : ::String?
-      return nil if s.null?
+      return if s.null?
       begin
         borrow(s)
       ensure

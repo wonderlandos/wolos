@@ -31,7 +31,7 @@ fn info() -> wol::system::Info {
         kernel: "WolKernel".into(),
         appearance: wol::system::Appearance::Dark,
         accent_name: "blue".into(),
-        accent_rgb: 0x0a84ff,
+        accent_rgb: 0x6aaef2,
     }
 }
 

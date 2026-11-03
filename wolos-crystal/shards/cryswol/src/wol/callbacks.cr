@@ -47,8 +47,8 @@ module Wol
     # Hand `ex` to `Wol::Loop.on_error`. Never raises: a raising handler is reported on STDERR.
     def self.report(ex : Exception) : Nil
       Loop.on_error.call(ex)
-    rescue inner
-      STDERR.puts "cryswol: the error handler raised #{inner.class} while handling #{ex.class}"
+    rescue error
+      STDERR.puts "cryswol: the error handler raised #{error.class} while handling #{ex.class}"
     end
 
     # The block's value, or the exception it raised, so it can be raised again on another thread.

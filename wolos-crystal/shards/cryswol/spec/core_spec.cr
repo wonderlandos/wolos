@@ -43,14 +43,14 @@ describe Wol::Error do
   it "carries libwol's sentence verbatim for a bad app id" do
     ex = expect_raises(Wol::InvalidArgument) { Wol::Context.open("not an id") }
     ex.code.should eq LibWol::WOL_ERR_INVALID_ARGUMENT
-    ex.message.not_nil!.should start_with "An app id is reverse-DNS"
+    ex.message.to_s.should start_with "An app id is reverse-DNS"
   end
 
   it "raises Unavailable when the system service is not there" do
     ENV["WOL_SOCKET"] = "/nonexistent/cryswol/wold.sock"
     Wol::Context.open("org.example.core") do |ctx|
       ex = expect_raises(Wol::Unavailable) { ctx.subscribe("theme") { } }
-      ex.message.not_nil!.should_not be_empty
+      ex.message.to_s.should_not be_empty
       ctx.rooted_count.should eq 0
     end
   end
@@ -90,7 +90,8 @@ describe Wol::Context do
   it "gives the block form's value and closes afterwards" do
     kept = nil
     Wol::Context.open("org.example.core") { |ctx| kept = ctx; 42 }.should eq 42
-    kept.not_nil!.closed?.should be_true
+    kept.should be_a(Wol::Context)
+    kept.try(&.closed?).should be_true
   end
 
   it "refuses an unknown topic with libwol's sentence" do
@@ -106,6 +107,21 @@ describe Wol::Context do
       fake.calls[0]["title"].should eq "Hello"
       fake.problems.should be_empty
     end
+  end
+end
+
+describe "Wol.dup_fd" do
+  it "gives a separate descriptor that Crystal owns, and refuses a bad one" do
+    r, w = IO.pipe
+    dup = Wol.dup_fd(r.fd)
+    dup.fd.should_not eq r.fd
+    w.write_byte 7u8
+    dup.read_byte.should eq 7u8
+    dup.close
+    r.closed?.should be_false
+    expect_raises(Wol::Internal) { Wol.dup_fd(-1) }
+    r.close
+    w.close
   end
 end
 

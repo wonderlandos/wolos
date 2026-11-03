@@ -66,7 +66,7 @@ module Wol
 
     # Item `index` of a list; nil when out of range (or this is not a list).
     def []?(index : Int) : Info?
-      return nil if index < 0
+      return if index < 0
       child(LibWol.wol_info_get_item(live, LibC::SizeT.new(index)))
     end
 

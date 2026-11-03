@@ -318,7 +318,7 @@ module Wopkg
       rescue JSON::Error
         raise Failure.new(3, "GitHub's answer about #{repo} could not be read.")
       end
-      assets = release.assets.select { |x| x.name.downcase.ends_with?(".appimage") }
+      assets = release.assets.select(&.name.downcase.ends_with?(".appimage"))
       a = assets.find { |x| x.name.includes?("x86_64") || x.name.includes?("amd64") } || assets.first? ||
           raise Failure.new(6, "The latest #{repo} release has no AppImage.")
       a.browser_download_url

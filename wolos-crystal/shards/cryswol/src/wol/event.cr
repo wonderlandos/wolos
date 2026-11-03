@@ -62,7 +62,7 @@ module Wol
   class Subscription < Handle(LibWol::Subscription)
     # The trampoline libwol calls; captures nothing (see `Callbacks`).
     TRAMPOLINE = ->(event : LibWol::Event*, data : Void*) do
-      Callbacks.invoke(Subscription, data) { |sub| sub.deliver(event) }
+      Callbacks.invoke(Subscription, data, &.deliver(event))
       nil
     end
 

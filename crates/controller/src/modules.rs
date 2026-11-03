@@ -179,21 +179,23 @@ fn install(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let before = modules::status(&m, &f);
     // The record's per-machine package (`backend`, ADR 0032): `<stem>-<cuda|rocm|vulkan>` from
     // `wol hw compute`, none on a CPU-only machine. Installed with the meta package, or alone
-    // when the meta package is there and the backend is not.
+    // when the meta package is there and the backend is not. The backend goes first, as in
+    // Settings (`install_packages` in the shell): a failed backend leaves the module not
+    // installed, where the other order would leave one that looks ready without it.
     let backend = backend_for(env, &m);
     let backend_missing = backend.clone().filter(|p| !f.installed.contains(p));
-    if !before.installed {
-        let code = admin_send(env, &pkg_request(AdminAction::PkgInstall, &m));
-        if code != 0 {
-            return code;
-        }
-    }
     if let Some(p) = &backend_missing {
         let req = AdminRequest {
             action: AdminAction::PkgInstall,
             args: vec![p.clone()],
         };
         let code = admin_send(env, &req);
+        if code != 0 {
+            return code;
+        }
+    }
+    if !before.installed {
+        let code = admin_send(env, &pkg_request(AdminAction::PkgInstall, &m));
         if code != 0 {
             return code;
         }
