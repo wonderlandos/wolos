@@ -122,8 +122,8 @@ fn console_ready() {
 }
 
 /// The console notice, with VT switching unlocked again (no compositor owns the screen).
-fn console_notice_shown(dri: bool, status: &str) {
-    on_console(false, &console_notice(dri, status));
+fn console_notice_shown(dri: bool, status: &str, retry_in: Duration) {
+    on_console(false, &console_notice(dri, status, retry_in));
 }
 
 /// [`console_step`] on the real console VT; no VT at all (a container, a nested compositor) is a
@@ -192,15 +192,18 @@ fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut M
     let phase = loop {
         if let Ok(Some(st)) = greeter.try_wait() {
             let next = respawn.exited(started.elapsed());
+            let dri = std::path::Path::new("/dev/dri").exists();
             if next.log {
-                let dri = std::path::Path::new("/dev/dri").exists();
                 println!(
                     "wol-login: greeter exited {st}; retrying with backoff up to {}s (/dev/dri present: {dri})",
                     GreeterRespawn::MAX_DELAY.as_secs()
                 );
-                // Never leave a raw text console: say what is wrong on the console VT.
-                console_notice_shown(dri, &st.to_string());
             }
+            // Never leave a raw text console: say what is wrong on the console VT after every
+            // exit, not only the first of a streak. The next try blanks the VT (console_ready),
+            // so a notice drawn once was gone after one second and a failing greeter left a
+            // black screen with no way out shown (vt-lock journey, 2026-11-03).
+            console_notice_shown(dri, &st.to_string(), next.delay);
             std::thread::sleep(next.delay);
             break Phase::Greeter;
         }

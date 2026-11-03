@@ -574,13 +574,29 @@ pub fn is_user_level(a: AdminAction) -> bool {
 }
 
 /// [`is_user_level`] for `uid`, given the accounts with a desktop session (`sessions`): only from
-/// one of them, and restart or shut down only when no other account would lose its session.
+/// one of them, and restart or shut down only when no other account would lose its session
+/// ([`signed_in_others`] names who is in the way, for the refusal).
 pub fn user_level_ok(r: &AdminRequest, uid: u32, sessions: &[u32]) -> bool {
-    let ends_sessions =
-        r.action == AdminAction::SessionPower && r.args.first().is_some_and(|v| v != "sleep");
     is_user_level(r.action)
         && sessions.contains(&uid)
-        && !(ends_sessions && sessions.iter().any(|s| *s != uid))
+        && signed_in_others(r, uid, sessions).is_empty()
+}
+
+/// The other accounts (uids, in `sessions` order, once each) whose session `r` would end: a
+/// restart or shut down asked by `uid` while they are signed in. Empty for sleep and every other
+/// action. This is why the lock screen's Restart is refused (audit6 S6-5).
+pub fn signed_in_others(r: &AdminRequest, uid: u32, sessions: &[u32]) -> Vec<u32> {
+    let ends_sessions =
+        r.action == AdminAction::SessionPower && r.args.first().is_some_and(|v| v != "sleep");
+    let mut others = Vec::new();
+    if ends_sessions {
+        for s in sessions {
+            if *s != uid && !others.contains(s) {
+                others.push(*s);
+            }
+        }
+    }
+    others
 }
 
 /// When an administrator request may use the session's cached authorization ([`AuthCache`]).
@@ -1660,6 +1676,15 @@ mod tests {
                 "{:?} {uid} {sessions:?}",
                 req.action
             );
+        }
+        // Who is in the way of a restart or shut down, for the refusal: each other account once.
+        for (req, sessions, want) in [
+            (&restart, &[1001, 1002, 1001, 1003][..], &[1001, 1003][..]),
+            (&off, &[1002][..], &[][..]),
+            (&sleep, &[1001, 1002][..], &[][..]),
+            (&join, &[1001, 1002][..], &[][..]),
+        ] {
+            assert_eq!(signed_in_others(req, 1002, sessions), want, "{sessions:?}");
         }
     }
 
