@@ -137,13 +137,16 @@ jobs:
           tar -xzf "$RUNNER_TEMP/al.tgz" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -shellcheck= wolos/.github/workflows/*.yml wolos-pkgbuilds/.github/workflows/*.yml             wolos-iso/.github/workflows/*.yml
 
-  # docs/RULES-system.md RS-192: `Hyprland --verify-config` accepts the shipped compositor confs. The
-  # compositor is Arch's hyprland 0.56.2-4 from the archive snapshot of 2026/10/27 (the last day it was
-  # current; the fork in wolos-pkgbuilds is that version plus patches), so the job reads the same
-  # syntax the image does. Hyprland refuses root, so it runs as a plain user; the confs `source` /usr/share/wolos
-  # and ~/.cache/wolos/hypr-vm.conf, so the overlay is copied there and an empty vm file is made.
-  # The seven `misc:` options below exist only in the fork's patches and `hyprbars:` fields belong to a
-  # plugin that is not loaded here: those are the only errors let through; any other error fails.
+  # docs/RULES-system.md RS-192: `Hyprland --verify-config` accepts the shipped compositor configuration.
+  # WolOS 0.13 runs the compositor 0.57 series, which reads only Lua (hyprland.lua and the session
+  # files; the .conf files beside them are the 0.56 ones until every writer has switched). The
+  # compositor is Arch's hyprland 0.57.0 from the archive snapshot of 2026/10/31 (the date the
+  # wolos-pkgbuilds snapshot pins; the fork is 0.57.1 plus patches and reads the same Lua API), so
+  # the job reads the syntax the image does. Hyprland refuses root, so it runs as a plain user; the
+  # files `require` /usr/share/wolos and ~/.cache/wolos/hypr-vm.lua, so the overlay is copied there
+  # and an empty vm file is made. The seven `misc.` options below exist only in the fork's patches:
+  # those are the only errors let through (plugin settings wait for the plugin, which is not loaded
+  # here); any other error fails.
   compositor-config:
     runs-on: ubuntu-latest
     container: archlinux:latest@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 # bump: docker buildx imagetools inspect archlinux:latest
@@ -154,11 +157,11 @@ jobs:
         # bash -eo pipefail, not the container's sh -e (RC-019).
         shell: bash
         run: |
-          echo 'Server = https://archive.archlinux.org/repos/2026/10/27/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+          echo 'Server = https://archive.archlinux.org/repos/2026/10/31/$repo/os/$arch' > /etc/pacman.d/mirrorlist
           pacman -Syu --noconfirm --needed hyprland git
           v=$(pacman -Q hyprland)
           echo "$v"
-          grep -q ' 0\.56\.2-' <<< "$v"
+          grep -q ' 0\.57\.' <<< "$v"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Hyprland --verify-config on the shipped confs
         # bash -eo pipefail (RC-019); the checks read $out from a here-string, so an early grep -q
@@ -169,20 +172,21 @@ jobs:
           cp -r desktop/overlay/usr/share/wolos/. /usr/share/wolos/
           useradd -m ci
           mkdir -p /home/ci/.cache/wolos /run/ci
-          : > /home/ci/.cache/wolos/hypr-vm.conf
+          echo '-- ci: not a VM' > /home/ci/.cache/wolos/hypr-vm.lua
           chown -R ci /home/ci /run/ci
           chmod 700 /run/ci
-          fork_only='misc:(throttle_occluded|throttle_window_count|throttle_occlusion_cutoff|throttle_freeze_ms|throttle_freeze_updates|reconfigure_ack_timeout_ms|frame_deadline)>|hyprbars:'
+          fork_only="unknown config key 'misc\.(throttle_occluded|throttle_window_count|throttle_occlusion_cutoff|throttle_freeze_ms|throttle_freeze_updates|reconfigure_ack_timeout_ms|frame_deadline)'"
           bad=0
-          for c in hyprland login installer setup; do
-            out=$(runuser -u ci -- env HOME=/home/ci XDG_RUNTIME_DIR=/run/ci Hyprland --verify-config -c "/usr/share/wolos/hypr/$c.conf" 2>&1 || true)
-            errors=$(grep -E 'Config error|unexpected symbol' <<< "$out" | grep -vE "$fork_only" || true)
-            if [ -n "$errors" ] || ! grep -q 'config ok\|Config error' <<< "$out"; then
+          for c in hyprland login installer setup tiling; do
+            out=$(runuser -u ci -- env HOME=/home/ci XDG_RUNTIME_DIR=/run/ci Hyprland --verify-config -c "/usr/share/wolos/hypr/$c.lua" 2>&1 || true)
+            # The errors are the lines after the result header; "config ok" when there are none.
+            errors=$(sed -n '/Config parsing result:/,$p' <<< "$out" | sed 1d | grep -v '^config ok$' | grep -vE "$fork_only" || true)
+            if [ -n "$errors" ] || ! grep -q 'Config parsing result:' <<< "$out"; then
               tail -20 <<< "$out"
-              echo "::error::$c.conf is not accepted"
+              echo "::error::$c.lua is not accepted"
               bad=1
             else
-              echo "$c.conf: ok"
+              echo "$c.lua: ok"
             fi
           done
           exit "$bad"

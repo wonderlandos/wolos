@@ -18,6 +18,20 @@ if [ ! -e "$conf" ]; then
 source = $share/hypr/hyprland.conf
 CONF
 fi
+# The compositor 0.57 series reads only hyprland.lua (the .conf above is the 0.56 one until every
+# writer has switched). The files under hypr/wolos/ (theme, Settings) load after the defaults; none
+# yet is not an error, a broken one still is.
+lua=${conf%.conf}.lua
+if [ ! -e "$lua" ]; then
+	cat > "$lua" <<LUA
+-- WolOS defaults. Add your overrides below.
+require("$share/hypr/hyprland.lua")
+local ok, err = pcall(require, "./wolos/*.lua")
+if not ok and not tostring(err):find("found no match", 1, true) then
+    error(err, 0)
+end
+LUA
+fi
 # Third-party apps look like WolOS before the first `wol theme set`: link the shipped defaults
 # (never over the user's own files). ghostty and kitty read no system-wide config, so their WolOS defaults are
 # linked as the user's own (replace the link to make it yours). Compositor exec-once regenerates them
@@ -55,16 +69,20 @@ else
 	export GSK_RENDERER=${GSK_RENDERER:-cairo}
 fi
 # VM GPUs (vmwgfx, virtio): no pointer on the cursor plane, the compositor draws it. A fragment the conf
-# sources, not only a `hyprctl keyword`: it holds through `hyprctl reload` (audit4 S5-20). Written
-# every start (the conf sources it either way), empty off a VM.
+# sources (hypr-vm.lua for hyprland.lua), not only a live setting: it holds through `hyprctl reload`
+# (audit4 S5-20). Written every start (the conf loads it either way), empty off a VM.
 vmconf=$HOME/.cache/wolos/hypr-vm.conf
 mkdir -p "${vmconf%/*}"
+vmlua=${vmconf%.conf}.lua
 if command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt -q --vm; then
 	printf '%s\n' '# wol-session: this is a VM' 'cursor {' '    no_hardware_cursors = 1' '}' > "$vmconf.tmp"
+	printf '%s\n' '-- wol-session: this is a VM' 'hl.config({ cursor = { no_hardware_cursors = 1 } })' > "$vmlua.tmp"
 else
 	printf '%s\n' '# wol-session: not a VM' > "$vmconf.tmp"
+	printf '%s\n' '-- wol-session: not a VM' > "$vmlua.tmp"
 fi
 mv -f "$vmconf.tmp" "$vmconf"
+mv -f "$vmlua.tmp" "$vmlua"
 # GTK 3: client-side title bars everywhere, so apps without a header bar still get the traffic lights.
 export GTK_CSD=${GTK_CSD:-1}
 # start-hyprland: the 0.56 watchdog launcher (restarts on crash; no "started without" banner).
