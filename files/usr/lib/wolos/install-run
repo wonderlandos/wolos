@@ -289,7 +289,9 @@ echo "$rootwords quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.sho
   [ -z "$extra_fstab" ] || echo "$extra_fstab"
   if [ "$slots" = two ]; then
     echo "# The slot is read-only: /etc stays writable, its changes live in the shared @var (they survive updates)."
-    echo "overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,workdir=/var/lib/wolos/etc/work,x-systemd.requires-mounts-for=/var 0 0"
+    # The lower is the slot's /etc, another one after each update: overlayfs takes a changed lower
+    # only without index, metacopy, xino and redirects (wol_core::update::ETC_FSTAB, the same line).
+    echo "overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,workdir=/var/lib/wolos/etc/work,index=off,metacopy=off,redirect_dir=follow,xino=off,nfs_export=off,x-systemd.requires-mounts-for=/var 0 0"
   fi
 } > "$T/etc/fstab"
 if [ "$slots" = two ]; then

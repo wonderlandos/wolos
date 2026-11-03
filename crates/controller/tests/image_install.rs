@@ -380,10 +380,13 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     );
     // /etc stays writable on the read-only slot.
     let fstab0 = fs::read_to_string(t.join("etc/fstab")).unwrap();
+    // The lower is the slot's own /etc, another one after each update (FIX-slot 0.12.1): the
+    // line overlayfs takes a changed lower with, the one every slot build writes.
     assert!(
-        fstab0.contains("overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper"),
+        fstab0.lines().any(|l| l == wol_core::update::ETC_FSTAB),
         "{fstab0}"
     );
+    assert!(fstab0.contains(",index=off,metacopy=off,"), "{fstab0}");
     assert!(
         fstab0.contains(" /run/wolos/top btrfs subvolid=5,noauto,x-systemd.automount"),
         "{fstab0}"

@@ -32,20 +32,30 @@ pub enum Verb {
 /// Flags that point pacman somewhere else than the running system.
 const ELSEWHERE: [&str; 5] = ["--root", "--sysroot", "--dbpath", "--config", "--gpgdir"];
 
-pub fn classify(args: &[String]) -> Kind {
+/// One pacman command line, read the way pacman reads it.
+struct Scan<'a> {
+    op: Option<char>,
+    shorts: String,
+    longs: Vec<&'a str>,
+    /// Indexes of the targets in the arguments.
+    targets: Vec<usize>,
+}
+
+/// None: the command points pacman somewhere else ([`ELSEWHERE`], `-r`, `-b`).
+fn scan(args: &[String]) -> Option<Scan<'_>> {
     let mut op = None;
     let mut shorts = String::new();
     let mut longs: Vec<&str> = Vec::new();
     let mut targets = Vec::new();
     let mut skip_value = false;
-    for a in args {
+    for (i, a) in args.iter().enumerate() {
         if std::mem::take(&mut skip_value) {
             continue;
         }
         if let Some(l) = a.strip_prefix("--") {
             let name = l.split('=').next().unwrap_or(l);
             if ELSEWHERE.contains(&a.split('=').next().unwrap_or(a)) {
-                return Kind::Pass;
+                return None;
             }
             if matches!(
                 name,
@@ -68,7 +78,7 @@ pub fn classify(args: &[String]) -> Kind {
             }
         } else if let Some(s) = a.strip_prefix('-').filter(|s| !s.is_empty()) {
             if s.contains(['r', 'b']) {
-                return Kind::Pass;
+                return None;
             }
             for c in s.chars() {
                 if "SRUDQFTVh".contains(c) {
@@ -78,9 +88,28 @@ pub fn classify(args: &[String]) -> Kind {
                 }
             }
         } else {
-            targets.push(a.clone());
+            targets.push(i);
         }
     }
+    Some(Scan {
+        op,
+        shorts,
+        longs,
+        targets,
+    })
+}
+
+pub fn classify(args: &[String]) -> Kind {
+    let Some(Scan {
+        op,
+        shorts,
+        longs,
+        targets,
+    }) = scan(args)
+    else {
+        return Kind::Pass;
+    };
+    let targets: Vec<String> = targets.into_iter().map(|i| args[i].clone()).collect();
     let has = |c: char, l: &str| shorts.contains(c) || longs.contains(&l);
     let preview = has('p', "print") || has('p', "print-format");
     let (verb, change) = match op {
@@ -133,15 +162,35 @@ pub fn plan(
     release: &str,
     cmdline: Option<&str>,
 ) -> Option<Vec<Step>> {
-    let pacman: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (pacman, files) = stage(args);
+    let pacman: Vec<&str> = pacman.iter().map(String::as_str).collect();
     super::build(&Build {
         slot,
         from,
         prep: &|_| Vec::new(),
         pacman: &pacman,
+        files: &files,
         release,
         cmdline,
     })
+}
+
+/// `pacman -U FILE...`: the files are copied into the copy (pacman runs there in a chroot that
+/// has no `/var`, `/home` or `/tmp` of the running system and starts in `/`), so pacman is given
+/// their [`super::staged`] paths. Packages named by URL are fetched by pacman itself.
+fn stage(args: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut pacman = args.to_vec();
+    let mut files = Vec::new();
+    if let Some(s) = scan(args).filter(|s| s.op == Some('U')) {
+        for i in s.targets {
+            if args[i].contains("://") {
+                continue;
+            }
+            pacman[i] = super::staged(files.len(), &args[i]);
+            files.push(args[i].clone());
+        }
+    }
+    (pacman, files)
 }
 
 /// The slot is read-only: `btrfs property get -ts / ro`.
@@ -269,6 +318,66 @@ mod tests {
         }
     }
 
+    /// FIX-slot 0.12.1: `pacman -U FILE` failed in the copy ("could not determine root mount
+    /// point", and the file is not there: no `/var`, `/home` or `/tmp` of the running system).
+    #[test]
+    fn local_package_files_are_copied_into_the_copy_and_named_there() {
+        let args = a("-U --noconfirm /var/cache/k.pkg.tar.zst ./h.pkg.tar.zst \
+https://example.org/x.pkg.tar.zst --cachedir /c");
+        let s = plan(
+            "wolos-b",
+            Base::Running { replace: true },
+            &args,
+            "current",
+            None,
+        )
+        .unwrap();
+        let t: Vec<String> = s.iter().map(|x| x.to_string()).collect();
+        let r = "/run/wolos/top/@wolos-b";
+        let st = format!("{r}/var/tmp/wolos-pkg");
+        let at = |want: &str| {
+            t.iter()
+                .position(|x| x == want)
+                .unwrap_or_else(|| panic!("{want}: {t:?}"))
+        };
+        let mkdir = at(&format!("mkdir -p {st}/0 {st}/1"));
+        let cp0 = at(&format!(
+            "cp --reflink=auto -t {st}/0 -- /var/cache/k.pkg.tar.zst"
+        ));
+        let sig0 = at(&format!(
+            "find -L /var/cache -maxdepth 1 -type f -name k.pkg.tar.zst.sig -exec cp \
+--reflink=auto -t {st}/0 -- {{}} +"
+        ));
+        let cp1 = at(&format!("cp --reflink=auto -t {st}/1 -- ./h.pkg.tar.zst"));
+        let sig1 = at(&format!(
+            "find -L . -maxdepth 1 -type f -name h.pkg.tar.zst.sig -exec cp --reflink=auto \
+-t {st}/1 -- {{}} +"
+        ));
+        let bind = at(&format!("mount --bind {r} {r}"));
+        let pacman = at(&format!(
+            "arch-chroot {r} /usr/bin/pacman -U --noconfirm /var/tmp/wolos-pkg/0/k.pkg.tar.zst \
+/var/tmp/wolos-pkg/1/h.pkg.tar.zst https://example.org/x.pkg.tar.zst --cachedir /c"
+        ));
+        let unbind = at(&format!("umount {r}"));
+        let rm = at(&format!("rm -rf -- {st}"));
+        let seal = at(&format!("wol seal apply {r} /efi/wolos-b/verity"));
+        assert!(mkdir < cp0 && cp0 < sig0 && sig0 < cp1 && cp1 < sig1 && sig1 < bind);
+        assert!(
+            bind < pacman && pacman < unbind && unbind < rm && rm < seal,
+            "{t:?}"
+        );
+        // Repo installs and upgrades copy nothing.
+        for line in ["-S vim", "-Syu", "-R linux-lts", "-S --needed ./not-a-file"] {
+            let s = plan("wolos-b", Base::Pending, &a(line), "current", None).unwrap();
+            assert!(
+                !s.iter().any(|x| x.to_string().contains("wolos-pkg")),
+                "{line}: {s:?}"
+            );
+        }
+        assert_eq!(stage(&a("--upgrade x.zst")).1, ["x.zst"]);
+        assert_eq!(stage(&a("-Udd x.zst y.zst")).1, ["x.zst", "y.zst"]);
+    }
+
     fn be(name: &str, active: bool, next: bool) -> BootEnv {
         BootEnv {
             name: name.into(),
@@ -312,8 +421,12 @@ mod tests {
         let r = "/run/wolos/top/@wolos-b";
         assert_eq!(t[0], format!("btrfs subvolume snapshot / {r}"));
         assert_eq!(t[1], format!("wol layers fold {r}"));
-        assert_eq!(t[2], format!("arch-chroot {r} /usr/bin/pacman -S vim"));
-        assert_eq!(t[3], format!("arch-chroot {r} mkinitcpio -P"));
+        assert!(t[2].ends_with(&format!(" {r}/etc/fstab")), "{}", t[2]);
+        assert_eq!(t[3], super::super::ETC_SETTLE);
+        assert_eq!(t[4], format!("mount --bind {r} {r}"));
+        assert_eq!(t[5], format!("arch-chroot {r} /usr/bin/pacman -S vim"));
+        assert_eq!(t[6], format!("arch-chroot {r} mkinitcpio -P"));
+        assert_eq!(t[7], format!("umount {r}"));
         let seal = t
             .iter()
             .position(|x| x.starts_with("wol seal apply"))
@@ -334,7 +447,7 @@ mod tests {
         let (r, w) = ("/run/wolos/top/@wolos-b", "/run/wolos/top/@wolos-tx");
         assert_eq!(t[0], format!("btrfs subvolume snapshot {r} {w}"));
         assert_eq!(t[1], format!("wol layers fold {w}"));
-        assert_eq!(t[2], format!("arch-chroot {w} /usr/bin/pacman -S git"));
+        assert_eq!(t[5], format!("arch-chroot {w} /usr/bin/pacman -S git"));
         let del = t
             .iter()
             .position(|x| x == &format!("btrfs subvolume delete {r}"))
@@ -350,7 +463,10 @@ mod tests {
         assert_eq!(t[del + 1], format!("mv {w} {r}"));
         assert_eq!(
             super::super::rollback_from("wolos-b", Base::Pending),
-            vec![a(&format!("btrfs subvolume delete {w}"))]
+            vec![
+                a(&format!("umount -R {w}")),
+                a(&format!("btrfs subvolume delete {w}"))
+            ]
         );
         assert_eq!(
             super::super::rollback_from("wolos-b", Base::Running { replace: true }),

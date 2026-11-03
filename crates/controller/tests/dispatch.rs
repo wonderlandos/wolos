@@ -343,6 +343,8 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     assert_eq!(
         ran[4..],
         [
+            // A failed step may leave the copy bound for pacman: a mounted subvolume stays.
+            "umount -R /run/wolos/top/@wolos-b",
             "btrfs subvolume delete /run/wolos/top/@wolos-b",
             "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
         ],
