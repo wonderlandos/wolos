@@ -51,8 +51,8 @@ module GallerySpec
       false
     end
 
-    def open_with(path : String) : String?
-      Gallery::OPEN_WITH_MISSING
+    def open_with(path : String, &done : String? ->) : Nil
+      done.call(Gallery::OPEN_WITH_MISSING)
     end
   end
 

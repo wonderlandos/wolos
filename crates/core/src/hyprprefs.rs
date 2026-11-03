@@ -4,8 +4,8 @@
 //! `hyprctl keyword` takes), plus the minimal command batch that applies a change live. Never touches the
 //! user's own lines in hyprland.lua; never reloads.
 use crate::prefs::{
-    DISPLAYS_FILE, HYPR_USER, KEYBOARD_FILE, LAYOUTS, REPEATS, ensure_require, keyboard_lua,
-    monitor_lua, monitor_rules, parse_keyboard,
+    DISPLAYS_FILE, HYPR_USER, KEYBOARD_FILE, LAYOUTS, REPEATS, USER_CONF, carry_conf,
+    ensure_require, keyboard_lua, monitor_lua, monitor_rules, own_conf_lines, parse_keyboard,
 };
 use crate::shortcuts::{self, Overrides, Shortcut};
 use crate::system::Host;
@@ -509,7 +509,7 @@ pub fn edit_user_lua(
     config_home: &Path,
     edit: impl FnOnce(Option<&str>) -> Option<String>,
 ) -> std::io::Result<bool> {
-    let user = config_home.join(crate::prefs::HYPR_USER);
+    let user = config_home.join(HYPR_USER);
     crate::journal::Journal::for_config(config_home).with_lock(|| {
         let linked = user.symlink_metadata().is_ok_and(|m| m.is_symlink());
         let target = if linked {
@@ -545,8 +545,7 @@ const CARRIED_STATE: &str = "hyprland-conf.carried";
 /// commented block with a notice ([`crate::prefs::carry_conf`]), never dropped silently; the old
 /// file stays as it is. True when a block was added now (the caller tells the person).
 pub fn carry_user_conf(config_home: &Path) -> std::io::Result<bool> {
-    use crate::prefs::{carry_conf, own_conf_lines};
-    let Ok(conf) = std::fs::read_to_string(config_home.join(crate::prefs::USER_CONF)) else {
+    let Some(conf) = read_in(config_home, USER_CONF) else {
         return Ok(false);
     };
     let state = crate::journal::Journal::for_config(config_home).beside(CARRIED_STATE);
@@ -557,7 +556,7 @@ pub fn carry_user_conf(config_home: &Path) -> std::io::Result<bool> {
     }
     let added = edit_user_lua(config_home, |cur| carry_conf(&conf, cur, &carried))?;
     // Recorded once hyprland.lua holds them (a linked file that cannot be written: tried again).
-    let lua = std::fs::read_to_string(config_home.join(crate::prefs::HYPR_USER)).ok();
+    let lua = read_in(config_home, HYPR_USER);
     if lua.is_some() && carry_conf(&conf, lua.as_deref(), &carried).is_none() {
         let mut all = carried.clone();
         all.extend(
@@ -1045,16 +1044,23 @@ mod tests {
             "require(\"/usr/share/wolos/hypr/hyprland.lua\")\n",
         )
         .unwrap();
+        // All eight start together, and each yields between its read and its write: without the
+        // lock the edits interleave and lines are lost.
+        let start = std::sync::Arc::new(std::sync::Barrier::new(8));
         let threads: Vec<_> = (0..8)
             .map(|i| {
                 let h = h.clone();
+                let start = start.clone();
                 std::thread::spawn(move || {
+                    start.wait();
                     if i == 0 {
                         edit_user_lua(&h, crate::prefs::ensure_require).unwrap();
                     }
                     edit_user_lua(&h, |cur| {
                         let cur = cur.unwrap_or_default();
-                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        for _ in 0..200 {
+                            std::thread::yield_now();
+                        }
                         Some(format!("{cur}-- line {i}\n"))
                     })
                     .unwrap();

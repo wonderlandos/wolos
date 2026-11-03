@@ -4527,7 +4527,7 @@ dependencies = [
  "core",
  "libc",
  "libloading",
- "miniz_oxide",
+ "miniz_oxide 0.9.1",
  "serde",
  "serde_json",
  "shared",

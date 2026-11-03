@@ -79,7 +79,7 @@ impl Ready {
 
     fn ctl(&self, op: libc::c_int, fd: RawFd) -> std::io::Result<()> {
         let mut e = libc::epoll_event {
-            events: libc::EPOLLIN as u32,
+            events: libc::EPOLLIN.cast_unsigned(),
             u64: u64::try_from(fd).unwrap_or(0),
         };
         // SAFETY: `e` is a live epoll_event for the duration of the call (DEL ignores it).

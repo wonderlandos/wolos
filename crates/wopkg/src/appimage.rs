@@ -378,10 +378,7 @@ pub fn policy_args(policy_dir: &Path, config_home: &Path, name: &str) -> Vec<Str
 }
 
 fn config_home(ctx: &Context) -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| ctx.home.join(".config"))
+    crate::context::env_dir("XDG_CONFIG_HOME").unwrap_or_else(|| ctx.home.join(".config"))
 }
 
 /// Written at install and again after every update, so the policy is re-applied each time.

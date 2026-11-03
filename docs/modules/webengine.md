@@ -1,5 +1,7 @@
 # webengine: the web-app runtime's engine (ADR 0042)
 
+The web-app runtime's engine and its adaptor crate: WolOS's own web apps and the site-as-app entries run on it in a Wolkit window, one app per process.
+
 **Concept.** WolOS's own web apps and the site-as-app entries (track 2 of ADR 0042) run on the Rust browser engine in a Wolkit window, one app per process. `crates/webengine` (Rust, BSD-2-Clause, depends on `shared`, `core` and `wolkit` only) is the adaptor: a `WebView` made from a frozen `webengine::Policy` and an `App` paints into a wolkit `surface` node, or headless into memory. The engine itself is the library `libwolwebengine.so.1` (C ABI 1, `crates/webengine/engine/include/wolwebengine.h`) from the `[wolos]` package `webengine-wolos`, loaded at run time (`libloading`).
 
 **Why.** The engine is large (about 900 crates, a C++ JavaScript engine) and its embedding API still moves. Pinned by commit and built once, it never enters the WolOS workspace, its lock or its build time, and every web app uses the one copy. What the system decides (which origins, which files, which process, which input) is plain Rust in this crate and tested without the engine; the engine side is a thin shim.

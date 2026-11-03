@@ -23,6 +23,7 @@ pub const DIR: &str = "/usr/share/wolos/webpolicy";
 pub const STATE_DIR: &str = "/var/lib/wolos/webpolicy";
 /// Largest policy file read, in bytes.
 pub const MAX_BYTES: usize = 64 * 1024;
+/// Most patches one policy file may carry.
 pub const MAX_PATCHES: usize = 64;
 /// Longest `find` or `with`, in bytes.
 pub const MAX_EDIT: usize = 4096;
@@ -48,7 +49,8 @@ pub struct Jank {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+/// What a [`Patch`] does with the bytes it found: put `with` in their place, or drop them.
 pub enum Op {
     Replace,
     Remove,
@@ -73,6 +75,7 @@ pub struct Patch {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+/// One app's policy file, `<DIR>/<app>.json` (docs/modules/webapps.md); every key is optional.
 pub struct Policy {
     pub telemetry_off: Telemetry,
     pub jank: Jank,
@@ -166,6 +169,7 @@ impl Patch {
         }
     }
 
+    /// The bytes put in place of `find`: `with`, or nothing for `remove`.
     pub fn replacement(&self) -> &str {
         self.with.as_deref().unwrap_or("")
     }
@@ -191,6 +195,7 @@ impl Patch {
     }
 }
 
+/// sha256 of `b` as 64 lowercase hex digits (the form patches and state lines carry).
 pub fn sha256_hex(b: &[u8]) -> String {
     Sha256::digest(b)
         .iter()
@@ -643,7 +648,9 @@ mod tests {
     fn state_lines_round_trip_what_the_helper_writes() {
         let h = "a".repeat(64);
         let text = format!(
-            "patched /usr/lib/a.js {h}\nrefused /usr/lib/b.js 1762180000 {h} {} not the version the patch was written for\nrefused /etc/x 1 {h} - not under /usr/lib or /opt\ngarbage\npatched /x short\n",
+            "patched /usr/lib/a.js {h}\n\
+                refused /usr/lib/b.js 1762180000 {h} {} not the version the patch was written for\n\
+                refused /etc/x 1 {h} - not under /usr/lib or /opt\ngarbage\npatched /x short\n",
             "b".repeat(64)
         );
         let s = parse_state(&text);

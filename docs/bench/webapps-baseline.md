@@ -13,7 +13,7 @@ Concept: what the web-based apps WolOS ships or offers cost today, measured the 
 | Settings | 3 warm starts, 120 s idle in front, 120 s idle in the background, 60 s back after the interaction, 20 s prime run first (`settings` in the JSON) |
 | Runner | `tools/bench/webapps/webapps.py` at this commit. The baseline ran before `roles()` was added; the roles file comes from a second, shorter run of the added runner (`--modes off --warm 1 --idle 30`) |
 
-Apps as installed: `helium-browser 0.20.2.1-2` and `chromium 156.0.8078.79-1` (engine `chromium`), `code 1.138.0-1` on `electron42 42.11.18-1` (engine `electron`), `signal-desktop 8.33.0-1` (its own bundled `electron`), `steam 1.0.0.87-3` (client interface in `cef`), `firefox 159.0-1` and `thunderbird 158.0.1-1` (engine `gecko`), `gnome-text-editor 51.0-1` (the GTK 4 comparison), the Wolkit `todos` example (release build), and the Rust browser engine's own shell 0.7.0 (`servo`, official build; a candidate, not shipped).
+Apps as installed: `helium-browser 0.20.2.1-2` and `chromium 156.0.8078.79-1` (engine `chromium`), `code 1.138.0-1` on `electron42 42.11.18-1` (engine `electron`), `signal-desktop 8.33.0-1` (its own bundled `electron`), `steam 1.0.0.87-3` (client interface in `cef`), `firefox 159.0-1` and `thunderbird 158.0.1-1` (engine `gecko`), `gnome-text-editor 51.0-1` (the GTK 4 comparison), the Wolkit `todos` example (release build), and the Rust browser engine's own shell 0.7.0 (row `engine-shell`, official build; a candidate, not shipped).
 
 ## Inventory
 
@@ -28,7 +28,7 @@ Apps as installed: `helium-browser 0.20.2.1-2` and `chromium 156.0.8078.79-1` (e
 | `firefox` | browser; its interface is also drawn by its engine | `gecko` | `firefox` | Store `firefox` |
 | `thunderbird` | mail; interface drawn by `gecko` | `gecko` | `thunderbird` | Store `thunderbird` |
 | `text-editor`, `wolkit-todos` | comparison: a GTK 4 app, a Wolkit app | none | direct | base image, example |
-| `servo` | candidate runtime | `servo` | direct | not shipped |
+| `engine-shell` | candidate runtime | `engine-shell` | direct | not shipped |
 
 `tools/bench/webapps/apps.json` is the machine-readable list (argv, window class, packages, origin). Its `not_web` section names the Store apps that are not web-based, with the reason. `crates/controller/tests/bench_webapps.rs` fails when a Store app, a module or the web-app launcher is neither a row nor in `not_web`, so a new app is measured.
 
@@ -52,7 +52,7 @@ Memory in MiB, times in ms, saver **off** (the unperturbed numbers); the next se
 | `thunderbird` | gecko | 7 | 719 | 460 | 424 | 425 |
 | `text-editor` | GTK 4 | 1 | 172 | 103 | 103 | 105 |
 | `wolkit-todos` | Wolkit | 2 | 153 | 86 | 86 | 87 |
-| `servo` | servo | 1 | 327 | 270 | 271 | 271 |
+| `engine-shell` | engine-shell | 1 | 327 | 270 | 271 | 271 |
 
 | App | Cold window | Warm window | Warm settled | Idle CPU ms/s | Idle wakeups/s | Background CPU ms/s | Scroll key to frame p50 / p95 | Frame interval p50 / p95 | Type key to frame p50 / p95 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -66,7 +66,7 @@ Memory in MiB, times in ms, saver **off** (the unperturbed numbers); the next se
 | `thunderbird` | 5144 | 2694 | 7338 | 1.47 | 12.7 | 0.57 | - | - | 9.9 / 12 |
 | `text-editor` | 1293 | 956 | 5551 | 0.06 | 0.72 | 0.07 | 41.8 / 60.7 | 27.9 / 68 | 32.5 / 71.4 |
 | `wolkit-todos` | 3721 | 685 | 748 | 2.37 | 114.38 | 2.54 | - | - | - / - |
-| `servo` | 1157 | 388 | 1287 | 0.98 | 51.2 | 1.04 | 53.1 / 70.9 | 54.1 / 85 | 127.8 / 153.9 |
+| `engine-shell` | 1157 | 388 | 1287 | 0.98 | 51.2 | 1.04 | 53.1 / 70.9 | 54.1 / 85 | 127.8 / 153.9 |
 
 "Window" is the compositor's `openwindow` event after the launch (a mapped window has drawn its first buffer); "settled" is the first whole second in which the app's processes use under 5 % of a core. Scroll and type are scripted (15 pages down and up; 43 characters) and timed from the key press to the app's next `wl_surface.commit`; the frame interval is the gap between commits. `steam` and `signal` have no scripted interaction (they need an account to show content), `thunderbird` only types.
 
@@ -98,7 +98,7 @@ For a single trivial page the engine around it (main, GPU, utility, zygotes) is 
 | `thunderbird` | 425 | 263 | 38 % | 116 | n/m | 425 / 295 |
 | `text-editor` | 105 | 40 | 62 % | 64 | 21 / 13 | 110 / 64 |
 | `wolkit-todos` | 87 | 41 | 53 % | 45 | - | 87 / 53 |
-| `servo` | 271 | 85 | 69 % | 184 | 393 / 362 | 271 / 146 |
+| `engine-shell` | 271 | 85 | 69 % | 184 | 393 / 362 | 271 / 146 |
 
 n/m: not meaningful (the app keeps committing frames in the background, so the first commit after the key is not caused by it). The one clear cost is `code`, whose first frame after coming back doubles (75 to 157 ms), in line with ADR 0026 (88 to 197 ms). `chromium` saves least (19 %) because its background content keeps running (120 to 165 wakeups per second in the background).
 
@@ -126,8 +126,8 @@ n/m: not meaningful (the app keeps committing frames in the background, so the f
 | `text-editor` | off | 1293 / 5621 | 956 / 5551 | 103.1 | 103 | 104.7 | 0 | 0.06 | 0.72 | 0.07 | 41.8 / 60.7 | 27.9 / 68 | 32.5 / 71.4 | 743 / 140 | 21.3 |
 | `wolkit-todos` | on | 4047 / 4171 | 826 / 872 | 85 | 85.3 | 41.1 | 45.1 | 2.41 | 116.35 | 2.3 | - / - | - / - | - / - | 430 / 44 | - |
 | `wolkit-todos` | off | 3721 / 3770 | 685 / 748 | 85.7 | 85.9 | 86.9 | 0 | 2.37 | 114.38 | 2.54 | - / - | - / - | - / - | 471 / 0 | - |
-| `servo` | on | 1474 / 3208 | 490 / 1965 | 273.9 | 274.5 | 85.2 | 184 | 1.18 | 56.72 | 2.34 | 101.8 / 159 | 47.8 / 73.7 | 202.4 / 279.7 | 1272 / 3121 | 361.8 |
-| `servo` | off | 1157 / 2292 | 388 / 1287 | 270.1 | 270.7 | 270.8 | 0 | 0.98 | 51.2 | 1.04 | 53.1 / 70.9 | 54.1 / 85 | 127.8 / 153.9 | 338 / 161 | 392.7 |
+| `engine-shell` | on | 1474 / 3208 | 490 / 1965 | 273.9 | 274.5 | 85.2 | 184 | 1.18 | 56.72 | 2.34 | 101.8 / 159 | 47.8 / 73.7 | 202.4 / 279.7 | 1272 / 3121 | 361.8 |
+| `engine-shell` | off | 1157 / 2292 | 388 / 1287 | 270.1 | 270.7 | 270.8 | 0 | 0.98 | 51.2 | 1.04 | 53.1 / 70.9 | 54.1 / 85 | 127.8 / 153.9 | 338 / 161 | 392.7 |
 
 ## How far to trust it
 
@@ -158,7 +158,7 @@ Reading: the clear gaps are memory (4 to 11x), process count, idle wakeups and t
 
 Gains are estimates from the numbers above, not promises; each names what to re-measure.
 
-1. **One shared engine host per user for the `chromium`-family apps and the web-app launcher** (mechanism: shared engine; one browser and GPU process, a content process per site; the `webengine` crate in progress is the vehicle). The fixed part of a window is 263 MiB for `helium`, 314 for `signal` and 652 for `code`. With three such apps open the saving is about two fixed parts, roughly 500 to 600 MiB of PSS, plus a warm start that does not create a browser, GPU and zygote (1.1 to 1.9 s today; the candidate `servo` shows 0.4 s for a single-process engine, the order to aim at). Re-measure: PSS with three apps open, warm window.
+1. **One shared engine host per user for the `chromium`-family apps and the web-app launcher** (mechanism: shared engine; one browser and GPU process, a content process per site; the `webengine` crate in progress is the vehicle). The fixed part of a window is 263 MiB for `helium`, 314 for `signal` and 652 for `code`. With three such apps open the saving is about two fixed parts, roughly 500 to 600 MiB of PSS, plus a warm start that does not create a browser, GPU and zygote (1.1 to 1.9 s today; the candidate `engine-shell` shows 0.4 s for a single-process engine, the order to aim at). Re-measure: PSS with three apps open, warm window.
 2. **Lower idle cost with background throttling and JavaScript patches for polling** (mechanism: timer alignment and intensive wake-up throttling in the engine, per-app patches that remove telemetry and poll loops). `steam` spends 57 ms of CPU and 496 wakeups every second doing nothing (6 % of a core, for as long as it runs); `code` 24 ms and 215; `chromium` 133 wakeups in front. A GTK window needs 0.7. Expected: halve `code`; 5 to 10x for `steam` if its poll loops are the cause (not diagnosed: profile the client page first). This is also the battery win.
 3. **Discard hidden content in the engine ahead of the saver** (mechanism: tab discard and heap limits for hidden content processes). Renderers are 142 to 237 MiB of a window, and `chromium` shows the saver reaching only 19 % because its content keeps running. Discarding hidden renderers frees memory without zram traffic or swap (the saver leaves 80 to 470 MiB in swap per app). Expected: the saver's 26 to 56 % rises toward the renderer share, 35 to 60 %, and `code`'s return cost (157 ms) falls because less of the window is compressed and faulted back. Re-measure: background PSS and key to frame on return.
 4. **Start-up: code cache and startup snapshot for the Electron-class apps** (mechanism: startup snapshot, preloaded shared engine). `code` needs 15 s to settle (2.2 s to its window), `signal` 6.8 s, `thunderbird` 7.3 s, against 0.7 s for the Wolkit app. Expected: halve the settle time for `code`; window time is dominated by the process set-up covered by win 1. Re-measure: settled ms over three warm runs, noise floor 40 %.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: BSD-2-Clause
 //! A widget's command source may be a Ruby script exactly as it may be a shell script (ADR 0041):
 //! `widgets::run_limited` starts the argv it is given, never a shell, so the same limits hold for
 //! both: the JSON it prints comes back, a script that runs too long is stopped at the timeout, and

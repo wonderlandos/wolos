@@ -43,7 +43,8 @@ pub struct Context {
     pub net: crate::fetch::Net,
 }
 
-fn env_dir(var: &str) -> Option<PathBuf> {
+/// An absolute, non-empty folder from variable `var` (the crate's one door to the environment).
+pub(crate) fn env_dir(var: &str) -> Option<PathBuf> {
     std::env::var_os(var)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)

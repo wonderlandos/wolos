@@ -53,12 +53,18 @@ use std::path::{Path, PathBuf};
 /// process with Landlock and seccomp, which std wraps none of: one private `sys` function holds
 /// the one `libc::syscall` call (a ruleset, a rule, `prctl`, the filter), every other step is safe
 /// Rust (`O_PATH` through `OpenOptionsExt`). Lowered when the engine's embedding API settles.
+/// realtime 69 -> 79 (DT-2, compositor animations, counted at the wave-3 merge): `src/ffi.rs`
+/// `wol_anim_curve_name` and `wol_anim_curve` for the wol-hypr plugin (two `unsafe(no_mangle)`, one
+/// `unsafe extern`, the name read and the four-float out-write, each with a SAFETY line) and five
+/// unit-test calls through the C ABI. wopkg 94 -> 103 (CR-4, libwopkg 1.1, counted at the wave-3
+/// merge): `src/ffi.rs` `wopkg_shard_index`, `wopkg_shard_pin`, `wopkg_shard_check`, each
+/// `unsafe(no_mangle)`, `unsafe extern` and the context borrow with a SAFETY line.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 482),
     ("wolkit", 314),
-    ("wopkg", 94),
-    ("realtime", 69),
+    ("wopkg", 103),
+    ("realtime", 79),
     ("xguard", 63),
     ("controller", 52),
     ("api", 33),

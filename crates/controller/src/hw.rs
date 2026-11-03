@@ -52,6 +52,16 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
             }
             0
         }
+        "hw.report" => {
+            // Always JSON: the file a person sends to the hardware list (`wol hw report > r.json`).
+            let os = env
+                .read_file(Path::new("/etc/os-release"))
+                .and_then(|t| wol_core::base::version(&t))
+                .unwrap_or_default();
+            let s = env.hardware();
+            out_json(env, &wol_core::hardware::catalog::report(&s, &os));
+            0
+        }
         "hw.fix" => fix(env, inv.flag("yes")),
         "hw.boot" => boot(env, inv.flag("online")),
         "hw.online" => online(env),

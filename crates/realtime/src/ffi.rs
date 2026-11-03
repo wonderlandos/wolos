@@ -94,8 +94,9 @@ pub extern "C" fn wol_anim_curve_name(index: u32) -> *const std::ffi::c_char {
         c"overshoot",
         c"soft",
     ];
-    NAMES
-        .get(index as usize)
+    usize::try_from(index)
+        .ok()
+        .and_then(|i| NAMES.get(i))
         .map_or(std::ptr::null(), |n| n.as_ptr())
 }
 
@@ -598,7 +599,8 @@ mod tests {
         );
         let mut p = [9.0f32; 4];
         for (i, c) in crate::anim::Curve::ALL.into_iter().enumerate() {
-            let n = unsafe { std::ffi::CStr::from_ptr(wol_anim_curve_name(i as u32)) };
+            let n =
+                unsafe { std::ffi::CStr::from_ptr(wol_anim_curve_name(u32::try_from(i).unwrap())) };
             assert_eq!(n.to_str(), Ok(c.name()));
             assert_eq!(unsafe { wol_anim_curve(n.as_ptr(), p.as_mut_ptr()) }, 0);
             let crate::anim::Bezier(a, b, x, y) = c.bezier();

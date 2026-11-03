@@ -47,7 +47,7 @@ const LOCK: &str = "shard.lock";
 
 /// One shard as the index lists it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Entry {
     /// The shard's name (its `shard.yml` `name:`), also the dependency key.
     pub name: String,
@@ -75,6 +75,7 @@ pub struct ShardIndex {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Raw {
     format: u32,
     #[serde(default)]
@@ -1144,7 +1145,9 @@ mod tests {
         assert_eq!(
             lock,
             format!(
-                "version: 2.0\nshards:\n  cryswol:\n    git: https://git.wolos.org/shards/cryswol.git\n    version: 0.3.0+git.commit.{C2}\n\n  wolkit:\n    git: https://git.wolos.org/shards/wolkit.git\n    version: 0.3.0+git.commit.{C1}\n"
+                "version: 2.0\n\
+                    shards:\n  cryswol:\n    git: https://git.wolos.org/shards/cryswol.git\n    version: 0.3.0+git.commit.{C2}\n\n  \
+                    wolkit:\n    git: https://git.wolos.org/shards/wolkit.git\n    version: 0.3.0+git.commit.{C1}\n"
             )
         );
         assert_eq!(changed.len(), 1);
@@ -1176,7 +1179,9 @@ mod tests {
     fn add_replaces_a_loose_dependency_and_fills_inline_lists() {
         let i = list();
         let loose = format!(
-            "{APP}\ndependencies:\n  wolkit:\n    github: someone/wolkit\n    version: ~> 0.2\n  # kept\n\ndevelopment_dependencies:\n  cryswol:\n    git: https://git.wolos.org/shards/cryswol.git\n    branch: main\n"
+            "{APP}\n\
+                dependencies:\n  wolkit:\n    github: someone/wolkit\n    version: ~> 0.2\n  # kept\n\n\
+                development_dependencies:\n  cryswol:\n    git: https://git.wolos.org/shards/cryswol.git\n    branch: main\n"
         );
         let (yml, lock, changed) = plan_pin(&i, &loose, &[], true).unwrap();
         assert_eq!(changed.len(), 2);

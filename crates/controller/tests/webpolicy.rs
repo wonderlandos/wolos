@@ -53,6 +53,7 @@ impl Root {
     }
 }
 
+// Drop: removes the test's private root on every exit path.
 impl Drop for Root {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

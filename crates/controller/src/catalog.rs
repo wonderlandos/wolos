@@ -65,6 +65,7 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["hw", "list"], Read, "read"),
     hv(&["hw", "status"], Read, "read"),
     hv(&["hw", "compute"], Read, "read"),
+    hv(&["hw", "report"], Read, "read"),
     hv(&["wifi"], Read, "read"),
     hv(&["wifi", "on"], Admin, "network"),
     hv(&["wifi", "off"], Admin, "network"),

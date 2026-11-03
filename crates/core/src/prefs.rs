@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub const SHELL_FILE: &str = "wolos/shell.json";
 /// `$XDG_CONFIG_HOME/hypr/wolos/<name>.lua`, loaded by the user hyprland.lua ([`USER_LUA`]).
 pub const HYPR_DIR: &str = "hypr/wolos";
+/// The person's own compositor config, `$XDG_CONFIG_HOME/hypr/hyprland.lua` (written once, then theirs).
 pub const HYPR_USER: &str = "hypr/hyprland.lua";
 /// The keyboard file the setup assistant writes (first session, ADR 0004).
 pub const KEYBOARD_FILE: &str = "hypr/wolos/keyboard.lua";
@@ -221,6 +222,7 @@ impl ShellFile {
 
 /// File names in notices and logs (the files live under `$XDG_CONFIG_HOME/wolos/`).
 pub const SHELL_NAME: &str = "shell.json";
+/// The desktop widgets file, beside [`SHELL_NAME`].
 pub const WIDGETS_NAME: &str = "widgets.json";
 
 /// Why a config file did not load (live reload): the file, the first key whose value does not fit
@@ -235,6 +237,7 @@ pub struct ConfigError {
 }
 
 impl ConfigError {
+    /// The text of `file` is not JSON: no key, the parser's line and words.
     pub fn syntax(file: &'static str, e: &serde_json::Error) -> Self {
         Self {
             file,

@@ -1015,7 +1015,9 @@ fn rcr_045_no_locked_shard_or_toolchain_package_is_below_an_advisory() {
             {"package":"probe-shard","fixed_in":"1.5.0","note":"probe: header injection in the router"}]"#,
     )
     .expect("probe advisories parse");
-    let lock = "version: 2.0\nshards:\n  probe-shard:\n    git: https://example.invalid/probe-shard.git\n    version: 1.4.0+git.commit.0123456789abcdef0123456789abcdef01234567\n";
+    let lock = "version: 2.0\n\
+        shards:\n  probe-shard:\n    git: https://example.invalid/probe-shard.git\n    \
+        version: 1.4.0+git.commit.0123456789abcdef0123456789abcdef01234567\n";
     let mut probe_in: Vec<Installed> = parse_shard_lock(lock)
         .into_iter()
         .map(|(n, v)| ("probe/shard.lock".into(), n, v))

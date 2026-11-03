@@ -317,6 +317,7 @@ pub unsafe extern "C" fn wopkg_shard_index(
 ) -> wopkg_status {
     guard(error, || {
         need(out, "out")?;
+        // SAFETY: NULL or a live context from wopkg_context_create (contract); NULL is refused.
         let c = unsafe { crate::ctx(context) }?;
         let r: crate::index::shards::IndexRequest = request(req, len)?;
         give_json(out, &crate::index::shards::index_json(c, &r)?)
@@ -337,6 +338,7 @@ pub unsafe extern "C" fn wopkg_shard_pin(
 ) -> wopkg_status {
     guard(error, || {
         need(out, "out")?;
+        // SAFETY: NULL or a live context from wopkg_context_create (contract); NULL is refused.
         let c = unsafe { crate::ctx(context) }?;
         let r: crate::index::shards::PinRequest = request(req, len)?;
         give_json(out, &crate::index::shards::pin_json(c, &r)?)
@@ -357,6 +359,7 @@ pub unsafe extern "C" fn wopkg_shard_check(
 ) -> wopkg_status {
     guard(error, || {
         need(out, "out")?;
+        // SAFETY: NULL or a live context from wopkg_context_create (contract); NULL is refused.
         let c = unsafe { crate::ctx(context) }?;
         let r: crate::index::shards::CheckRequest = request(req, len)?;
         give_json(out, &crate::index::shards::check_json(c, &r)?)

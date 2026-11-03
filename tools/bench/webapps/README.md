@@ -26,7 +26,7 @@ Example, the full baseline on the forge VM `ms`:
 
     WOLVM=/scratch/split/wolos-iso/tests/wolvm/wolvm WOLVM_HOME=/scratch/memsaver/wolvm-home \
     WOLKIT_TODOS=/scratch/memsaver/todos WOLKIT_LIB=$PWD/wolos-crystal/shards/wolkit/build \
-    SERVO_DIR=/scratch/memsaver/servo-dl/x/servo OUT=/scratch/memsaver/baseline \
+    SERVO_DIR=/scratch/memsaver/engine-shell OUT=/scratch/memsaver/baseline \
     sh tools/bench/webapps/run.sh ms
 
 A quick check of one app: `sh run.sh ms --only code --modes on --warm 1 --idle 20 --back 40`.

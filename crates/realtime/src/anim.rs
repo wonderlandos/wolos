@@ -156,7 +156,12 @@ impl Duration {
     pub const ALL: [Duration; 3] = [Duration::Fast, Duration::Normal, Duration::Slow];
 
     pub fn ms(self) -> u64 {
-        DURATIONS_MS[self as usize]
+        let i = match self {
+            Duration::Fast => 0,
+            Duration::Normal => 1,
+            Duration::Slow => 2,
+        };
+        DURATIONS_MS[i]
     }
 
     pub fn name(self) -> &'static str {

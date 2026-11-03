@@ -294,9 +294,8 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         }
         "gpu.env" => exec(env, &[GPU_BIN.into(), "gpu".into(), "env".into()]),
         "gpu.hyprconf" => exec(env, &[GPU_BIN.into(), "gpu".into(), "hyprconf".into()]),
-        "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" | "hw.compute" => {
-            crate::hw::execute(inv, env)
-        }
+        "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" | "hw.compute"
+        | "hw.report" => crate::hw::execute(inv, env),
         "audio.doctor" | "audio.reset" | "audio.appmix" => crate::audio_doctor::execute(inv, env),
         a if a.starts_with("games.") => crate::games::execute(inv, env),
         a if a.starts_with("modules.") => crate::modules::execute(inv, env),

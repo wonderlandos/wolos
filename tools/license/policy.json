@@ -77,6 +77,10 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "crates/webengine/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "wolos-crystal/shards/wolkit/**",
       "spdx": "BSD-2-Clause"
     },

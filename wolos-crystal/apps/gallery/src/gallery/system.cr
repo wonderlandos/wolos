@@ -4,10 +4,10 @@
 #
 # Concept: each verb answers with nothing (it worked) or a sentence to show inline. Why: a refusal
 # is an everyday outcome of the permission system, and the HIG wants it said where it happened.
-# How: `Desktop` moves files into the shared Trash itself and shares through the system's share
-# sheet (`Wolkit::Services.share`, which runs off the UI context). The system has no verb yet for
-# moving to the Trash, sharing a file or opening it with another app; until it does, sharing offers
-# the picture's address as text and "Open with" says it is not available (see docs/modules/gallery.md).
+# How: `Desktop` uses libwol 1.15's file verbs through Cryswol: `Wol::Trash.move` (grant `trash`;
+# the desktop writes the standard note, so the Files Trash lists the picture and Undo renames it
+# back), `Wol::Share.file` and `Wol::Share.open_with` (grant `share`), the last two on their own
+# context off the UI thread because they wait for the person (see docs/modules/gallery.md).
 module Gallery
   abstract class System
     # Move a picture to the Trash: what to keep for Undo, or the sentence.
@@ -22,11 +22,14 @@ module Gallery
     # Whether "Open with" can be offered.
     abstract def open_with? : Bool
 
-    # Open the picture with another app. Nil, or the sentence.
-    abstract def open_with(path : String) : String?
+    # Let the person pick the app that opens the picture; the block gets nil or the sentence, on
+    # the UI context.
+    abstract def open_with(path : String, &done : String? ->) : Nil
   end
 
   OPEN_WITH_MISSING = "Opening a picture in another app needs a newer system."
+  # Undo of a picture whose drive has its own Trash (libwol answered no name in the home Trash).
+  OTHER_TRASH = "This picture is in the Trash of its own drive; put it back from the Files Trash."
 
   # The real system.
   class Desktop < System
@@ -34,12 +37,14 @@ module Gallery
     end
 
     def trash(path : String) : Trashed | String
-      @bin.move(path)
-    rescue ex : TrashError
+      full = File.expand_path(path)
+      Trashed.new(full, Wol::Trash.move(Wolkit::Services.context, full) || "")
+    rescue ex : Wol::Error
       ex.message || "The picture could not go to the Trash."
     end
 
     def restore(item : Trashed) : String?
+      return OTHER_TRASH if item.name.empty?
       @bin.restore(item)
       nil
     rescue ex : TrashError
@@ -47,17 +52,33 @@ module Gallery
     end
 
     def share(path : String, &done : String? ->) : Nil
-      Wolkit::Services.share(File.basename(path), "file://#{URI.encode_path(path)}") do |outcome|
-        done.call(outcome.notice)
-      end
+      full = File.expand_path(path)
+      waiting(done) { |ctx| Wol::Share.file(ctx, full) }
     end
 
     def open_with? : Bool
-      false
+      true
     end
 
-    def open_with(path : String) : String?
-      OPEN_WITH_MISSING
+    def open_with(path : String, &done : String? ->) : Nil
+      full = File.expand_path(path)
+      waiting(done) { |ctx| Wol::Share.open_with(ctx, full) }
+    end
+
+    # Run `work` on its own libwol context (it waits for the person), then give `done` nil, or the
+    # sentence of a refusal, on the UI context.
+    private def waiting(done : String? ->, &work : Wol::Context -> String) : Nil
+      app_id = Wolkit.default_app_id
+      spawn(name: "gallery-share") do
+        sentence = begin
+          Wol.background(app_id) { |ctx| work.call(ctx) }
+          nil
+        rescue ex : Wol::Error
+          ex.message || "That did not work. Try again in a moment."
+        end
+        Wolkit.batch { Wolkit.guard { done.call(sentence) } }
+        Wolkit::Frame.request
+      end
     end
   end
 

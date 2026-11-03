@@ -36,6 +36,7 @@ Matching: bus, vendor, device range, class prefix. Narrowest matching range wins
 | `wol hw status [--json]` | problems only and the fix |
 | `wol hw fix [--yes]` | `modprobe` via wol-admind `hw-load` (catalogue modules only); packages via `pkg-install` only with `--yes` |
 | `wol hw boot [--online]` | boot service only (root); `--online` on first boot: `pacman -S --needed --noconfirm` the missing catalogue packages first |
+| `wol hw report` | the models of this computer's devices for the public hardware list, JSON, no personal data ("Hardware reports" below) |
 | `wol sys hw` | same devices as `wol hw list --json` (System API topic, cached 30 s) |
 
 ## Boot (`wolos-hw.service`, every boot: a disk moves between machines)
@@ -69,7 +70,7 @@ A report is what a public hardware matrix needs from one computer: which models 
 |---|---|
 | kind, bus, id, catalogue name, driver, state, missing catalogue packages | `location` (bus paths tell machines apart), the bus's own description (USB strings can carry an owner's name or a serial), hints, notes, any package the catalogue does not name, any id or driver that is not a plain token |
 
-The `wol hw report` verb that writes it to a file is not wired yet (planned with the controller's `hw` rows). Test: `crates/core/src/hardware/catalog.rs` (`report_names_models_and_carries_no_personal_data`).
+`wol hw report` prints it (always JSON; `wol hw report > report.json` makes the file to send), with `os` from `/etc/os-release` `VERSION_ID` (`crates/controller/src/hw.rs`; test `crates/controller/tests/hw.rs` `report_is_json_for_the_hardware_list_with_the_os_version`). Test of the writer: `crates/core/src/hardware/catalog.rs` (`report_names_models_and_carries_no_personal_data`).
 
 ## Tested configurations
 

@@ -28,8 +28,10 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// Every profile, default first.
     pub const ALL: [Profile; 3] = [Profile::Balanced, Profile::Light, Profile::Full];
 
+    /// The word the profile file holds.
     pub fn id(self) -> &'static str {
         match self {
             Profile::Balanced => "balanced",
@@ -38,6 +40,7 @@ impl Profile {
         }
     }
 
+    /// The profile a word names (spaces around it ignored).
     pub fn parse(s: &str) -> Option<Profile> {
         Profile::ALL.into_iter().find(|p| p.id() == s.trim())
     }
@@ -55,6 +58,7 @@ pub enum Role {
 }
 
 impl Role {
+    /// Every role.
     pub const ALL: [Role; 3] = [Role::App, Role::Editor, Role::Browser];
 
     /// File name under `$XDG_CONFIG_HOME` (fixed by each launcher).
@@ -76,8 +80,10 @@ pub enum Gpu {
 }
 
 impl Gpu {
+    /// Both tiers.
     pub const ALL: [Gpu; 2] = [Gpu::Soft, Gpu::Hw];
 
+    /// The tier's word in the shipped file names (`<profile>-<soft|gpu>`).
     pub fn id(self) -> &'static str {
         match self {
             Gpu::Soft => "soft",
@@ -96,6 +102,7 @@ pub struct Gain {
     pub source: &'static str,
 }
 
+/// Whether a row ships, and why.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     /// Shipped before this table for correctness, not speed (the reason says which audit).
@@ -106,6 +113,7 @@ pub enum Status {
     Candidate,
 }
 
+/// What one row sets in the engine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Knob {
     /// `--name` or `--name=value`.
@@ -120,12 +128,14 @@ pub enum Knob {
     Policy(&'static str, PolicyValue),
 }
 
+/// The value of a browser policy row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PolicyValue {
     Bool(bool),
     Int(i64),
 }
 
+/// One row of [`ROWS`]: a knob, the roles and profiles it is for, and why it is there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Row {
     pub id: &'static str,
@@ -139,6 +149,7 @@ pub struct Row {
 }
 
 impl Row {
+    /// Whether the row reaches a file (Baseline or Measured, never Candidate).
     pub fn shipped(&self) -> bool {
         !matches!(self.status, Status::Candidate)
     }
@@ -357,8 +368,10 @@ pub fn dir(p: Profile, g: Gpu) -> String {
 
 /// The user's profile, `$XDG_CONFIG_HOME/wolos/web-runtime`: one word. wol-session reads it.
 pub const PROFILE_FILE: &str = "wolos/web-runtime";
+/// The profile when the file is missing or says something else.
 pub const DEFAULT: Profile = Profile::Balanced;
 
+/// [`PROFILE_FILE`] under `config_home`.
 pub fn profile_path(config_home: &Path) -> PathBuf {
     config_home.join(PROFILE_FILE)
 }

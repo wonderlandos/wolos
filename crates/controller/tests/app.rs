@@ -310,7 +310,10 @@ fn check_reports_findings_and_starts_nothing() {
     // needs it (RCR-051), a dependency pinned by version (RCR-040), a shell command line (RCR-020).
     files.push((
         "src/extra.cr".into(),
-        "# SPDX-License-Identifier: BSD-2-Clause\n# Extra: a file that breaks four rules on purpose, one per line below.\nmodule Extra\n  def self.go\n    system(\"ls #{Dir.current}\")\n  end\nend\n".into(),
+        "# SPDX-License-Identifier: BSD-2-Clause\n\
+            # Extra: a file that breaks four rules on purpose, one per line below.\n\
+            module Extra\n  def self.go\n    system(\"ls #{Dir.current}\")\n  end\nend\n"
+            .into(),
     ));
     for f in files.iter_mut() {
         if f.0 == "Makefile" {
@@ -362,7 +365,10 @@ fn check_reports_findings_and_starts_nothing() {
 
 #[test]
 fn public_doc_scanner() {
-    let ok = "# A.\nclass A\n  # Doc.\n  def a\n  end\n\n  # Doc.\n  @[AlwaysInline]\n  def self.b : Int32\n    1\n  end\n\n  private def c\n  end\n\n  protected def d\n  end\nend\n";
+    let ok = "# A.\n\
+        class A\n  # Doc.\n  def a\n  end\n\n  # Doc.\n  @[AlwaysInline]\n  def self.b : Int32\n    1\n  end\n\n  \
+        private def c\n  end\n\n  \
+        protected def d\n  end\nend\n";
     assert!(
         app::scan_public_docs(ok).is_empty(),
         "{:?}",

@@ -243,8 +243,9 @@ module Gallery
     def open_with : Nil
       target = photo
       return unless target
-      sentence = @system.open_with(target.path)
-      @notice.value = sentence if sentence
+      @system.open_with(target.path) do |sentence|
+        @notice.value = sentence if sentence
+      end
     end
 
     def dismiss_notice : Nil

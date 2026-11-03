@@ -122,6 +122,40 @@ fn status_lists_problems_and_the_fix() {
 }
 
 #[test]
+fn report_is_json_for_the_hardware_list_with_the_os_version() {
+    let mut env = FakeEnv {
+        tty: true,
+        hw: vec![laptop()],
+        files: vec![(
+            PathBuf::from("/etc/os-release"),
+            "NAME=\"WolOS\"\nID=wolos\nVERSION_ID=0.12.0\n".into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("hw report", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(v["format"], 1);
+    assert_eq!(v["os"], "0.12.0");
+    let devices = v["devices"].as_array().unwrap();
+    assert_eq!(devices.len(), 3);
+    assert_eq!(devices[1]["kind"], "wifi");
+    assert_eq!(devices[1]["driver"], "iwlwifi");
+    assert_eq!(
+        devices[2]["missing"],
+        serde_json::json!(["linux-firmware-intel"])
+    );
+    assert!(devices.iter().all(|d| d.get("location").is_none()));
+    // No os-release: the report still comes, without a version.
+    let mut env = FakeEnv {
+        hw: vec![laptop()],
+        ..Default::default()
+    };
+    assert_eq!(run("hw report", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(v["os"], serde_json::Value::Null);
+}
+
+#[test]
 fn fix_loads_modules_through_admind_and_installs_packages_only_with_yes() {
     let sock = PathBuf::from("/run/admin.sock");
     let mut env = FakeEnv {

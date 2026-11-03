@@ -563,6 +563,12 @@ pub const TREE: &[Cmd] = &[
         "GPU compute for local AI: backend (cuda, rocm, vulkan or cpu), VRAM and the GPU",
     ),
     cmd(
+        &["hw", "report"],
+        "hw.report",
+        &[],
+        "The models of this computer's devices for the public hardware list (JSON, no personal data)",
+    ),
+    cmd(
         &["hw", "fix"],
         "hw.fix",
         &[],
@@ -1537,6 +1543,7 @@ mod tests {
             ("hw fix --yes", "hw.fix --yes"),
             // Settings > Modules, the installer, firstboot (ADR 0032)
             ("hw compute --json", "hw.compute --json"),
+            ("hw report", "hw.report"),
             ("modules", "modules.list"),
             ("modules list --json", "modules.list --json"),
             ("modules status dev --json", "modules.status id=dev --json"),

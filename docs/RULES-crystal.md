@@ -124,8 +124,8 @@ Counts found when the catalogue was written (61 `.cr` files: wopkg 35, hue 22, b
 - RCR-030: `B_TMP`, 1 file (wopkg/src/wopkg/sandbox.cr, 3 strings: the `/tmp` mount point and `TMPDIR` inside the sandbox, which is a fresh tmpfs); 8 more in specs, not asked.
 - RCR-032: `B_WEAK_HASH`, 0. RCR-033: `B_RANDOM`, 0. RCR-035: `B_HOME`, 0.
 - RCR-040 to RCR-042: 2 `shard.yml` files (wopkg, hue), 0 dependencies, 0 lock files needed. `ALLOWED_SHARDS` is empty and `SHARD_CENSUS` is 0: the Crystal code uses the standard library and libwopkg only. Since wave 3 (CR-5) the wolkit shard pins `cryswol` by commit with a committed `shard.lock`: `ALLOWED_SHARDS` is `["cryswol"]` and `SHARD_CENSUS` is 1.
-- RCR-045: `advisories.json` is empty, 0 `shard.lock` files in the checkout; the toolchain record is crystal 1.22.2-1, gc 8.2.12-1, llvm-libs 23.1.4-1 (snapshot 2026-10-31).
-- RCR-046: `B_CRYSTAL_FLOOR`, 0 (all 6 `shard.yml` files ask for the pin); `B_RECIPE_PIN`, 0 (the 5 recipes that depend on crystal say `crystal>=1.22.0`).
+- RCR-045: `advisories.json` is empty, 1 `shard.lock` file in the checkout (the wolkit shard's, pinning `cryswol`, CR-5); the toolchain record is crystal 1.22.2-1, gc 8.2.12-1, llvm-libs 23.1.4-1 (snapshot 2026-10-31).
+- RCR-046: `B_CRYSTAL_FLOOR`, 0 (all 7 `shard.yml` files ask for the pin, the gallery's since CR-11); `B_RECIPE_PIN`, 0 (the 5 recipes that depend on crystal say `crystal>=1.22.0`).
 
 ## Projects: `wol app check`
 

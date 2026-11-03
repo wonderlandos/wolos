@@ -10,6 +10,7 @@
 # Not listed: crates/aurlaws/tests/fixtures/ (scanned as data, never run).
 crates/shell/tests/golden-env/run.sh
 crates/shell/tests/golden-env/starve.sh
+crates/webengine/engine/link.sh
 crates/wol-abi/link.sh
 crates/wolkit/link.sh
 crates/wolkit/shaders/build.sh
@@ -21,6 +22,7 @@ design/tools/apps/kvantum-vm.sh
 design/tools/apps/render.sh
 design/tools/apps/run.sh
 design/tools/icons/gtkcheck/check.sh
+design/tools/icons/qtcheck/check.sh
 design/tools/perf/build.sh
 design/tools/perf/idle.py
 design/tools/perf/latency.py
@@ -38,6 +40,7 @@ desktop/overlay/usr/bin/wol-vbox-guest
 desktop/overlay/usr/bin/wol-volume
 desktop/overlay/usr/bin/wol-x11-env
 desktop/overlay/usr/bin/wol-zoom
+desktop/overlay/usr/share/wolos/webruntime/link.sh
 desktop/overlay/usr/share/wolos/widgets/game-friends/friends.sh
 files/usr/bin/wolos-update-slot
 files/usr/lib/systemd/system-sleep/wolos-power
@@ -68,6 +71,7 @@ files/usr/lib/wolos/report
 files/usr/lib/wolos/update-check
 files/usr/lib/wolos/update-download
 files/usr/lib/wolos/verify-gpu.sh
+files/usr/lib/wolos/webpolicy
 files/usr/lib/wolos/wol-install
 files/usr/lib/wolos/xguard-update
 files/usr/share/wolos/boot/41_wolos
