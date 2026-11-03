@@ -445,9 +445,22 @@ fn an_unknown_type_names_the_table_to_extend() {
     assert!(v.contains("fun f(i : Void*, s : UInt64*) : Int32"), "{v}");
 }
 
-/// The shard's minimum Crystal (S0 in plan-cr1.md): older compilers cannot take the address of a
-/// `lib` fun with parameters, which the links spec does. `None` when Crystal is not installed or
-/// older (skipped, or a failure under `WOL_BINDINGS_REQUIRED`).
+/// The pinned Crystal release, (major, minor), from `tools/crystal/toolchain.json` (RCR-046, the
+/// one place the version lives).
+fn crystal_pin() -> (u32, u32) {
+    let path = root().join("tools/crystal/toolchain.json");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let pin = v["crystal"]
+        .as_str()
+        .expect("toolchain.json has a \"crystal\" string");
+    let mut p = pin.split('.').map(|n| n.parse::<u32>().unwrap_or(0));
+    (p.next().unwrap_or(0), p.next().unwrap_or(0))
+}
+
+/// The shard's minimum Crystal, the pin (S0 in plan-cr1.md: older compilers cannot take the
+/// address of a `lib` fun with parameters, which the links spec does). `None` when Crystal is not
+/// installed or older (skipped, or a failure under `WOL_BINDINGS_REQUIRED`).
 fn crystal_for_shard() -> Option<PathBuf> {
     let exe = tool("crystal")?;
     let out = Command::new(&exe).arg("--version").output().unwrap();
@@ -459,15 +472,16 @@ fn crystal_for_shard() -> Option<PathBuf> {
         .split('.')
         .map(|n| n.parse().unwrap_or(0))
         .collect();
-    if (v[0], v.get(1).copied().unwrap_or(0)) >= (1, 22) {
+    let (maj, min) = crystal_pin();
+    if (v[0], v.get(1).copied().unwrap_or(0)) >= (maj, min) {
         return Some(exe);
     }
     assert!(
         !required("crystal"),
-        "the cryswol shard needs Crystal >= 1.22, found {}",
+        "the cryswol shard needs Crystal >= {maj}.{min} (tools/crystal/toolchain.json), found {}",
         text.trim()
     );
-    eprintln!("skipped: Crystal older than 1.22");
+    eprintln!("skipped: Crystal older than {maj}.{min}");
     None
 }
 

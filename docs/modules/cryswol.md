@@ -73,6 +73,10 @@ All of them are `Wol::Error`, which carries `code : Int32`. `Wol::UsageError` is
 
 Some verbs wait for the person or a peer: `Wol::Panel.open` and `.save` (up to ten minutes), `Wol::Share.text` (until the person chooses) and `Wol::Message.send` (up to 3 seconds). On the loop's fiber they freeze the window. Run them through `Wol.background(ctx.app_id) { |bg| Wol::Panel.open(bg) }` (`src/wol/background.cr`). It runs the block on its own thread with a separate context for the same app (`wol.h` allows one context per driving thread), and the calling fiber waits for the result without blocking the other fibers. An exception in the block is raised in the caller. Crystal 1.22 has execution contexts with no flag; never build with `-Dpreview_mt` alone. Every such method says `Blocks:` in its doc comment.
 
+## Needs: toolchain and advisories
+
+A Cryswol program needs the pinned toolchain, `crystal >= 1.22.0`, and nothing outside the standard library unless the shard is counted. The pin lives in one file, `tools/crystal/toolchain.json`; the shard's `shard.yml`, the recipes, CI (`tools/crystal/lint.sh`) and this page are checked against it (RCR-046). Security advisories for `crystal`, `gc`, `llvm-libs` and for shards go into `tools/crystal/advisories.json`; a listed version in the snapshot record or in a `shard.lock` fails the rules until the snapshot moves and the recipes that compile Crystal bump `pkgrel` (RCR-045). What each standard-library module may be used for (typed decode, timeouts, `Random::Secure`, argv commands) is the table in `docs/RULES-crystal.md`, "Standard library and security policy"; the procedures are in `tools/crystal/README.md`.
+
 ## Build
 
 The toolchain is pinned: `crystal` 1.22 from the base distribution's repositories (`shard.yml` asks for `>= 1.22.0`, the only version tested). It is a build dependency only (ADR 0036): an app at run time needs `gc pcre2 glibc` and `libwol`.

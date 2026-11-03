@@ -38,10 +38,12 @@ use std::path::{Path, PathBuf};
 /// `unsafe extern` and a handle or buffer borrow) and 1.0 `create` forwarding to `create_encoded`
 /// (+11); the one `cmd_copy_buffer_to_image` that uploads picture levels to the atlas
 /// (`gpu/live.rs`, +1); `tests/image.rs` calling the verbs through the C ABI (+6).
+/// 312 -> 314 (CR-8, 2026-11-03): `loop_/mod.rs` `Ready`, the epoll set behind
+/// `wolkit_engine_get_fd` (epoll_create1 with OwnedFd taking it, epoll_ctl; std wraps neither).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
-    ("wolkit", 312),
+    ("wolkit", 314),
     ("wopkg", 94),
     ("realtime", 69),
     ("xguard", 63),

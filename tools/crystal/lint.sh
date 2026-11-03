@@ -15,6 +15,11 @@ cd "$(dirname "$0")/../.."
 fail=0
 require=${WOLOS_REQUIRE_CRYSTAL_LINT:-0}
 
+# The one Crystal pin (docs/RULES-crystal.md RCR-046): the formatter of an older release is no
+# reference, so an older crystal counts as missing.
+pin=$(sed -n 's/^  "crystal": "\([0-9][0-9.]*\)",*$/\1/p' tools/crystal/toolchain.json)
+[ -n "$pin" ] || { echo "lint.sh: no crystal pin in tools/crystal/toolchain.json" >&2; exit 2; }
+
 # tracked plus new files git does not ignore (a file not yet added is linted too)
 files=$(git ls-files -co --exclude-standard -z '*.cr' 2>/dev/null | tr '\0' '\n' | grep -v '^crates/controller/tests/fixtures/' || true)
 if [ -z "$files" ]; then
@@ -27,11 +32,17 @@ skip() {
   return 0
 }
 
-if command -v crystal >/dev/null 2>&1; then
+# true when the installed crystal is at least the pin (sort -V puts the older first)
+crystal_ok() {
+  have=$(crystal --version 2>/dev/null | sed -n '1s/^Crystal \([0-9][0-9.]*\).*/\1/p')
+  [ -n "$have" ] && [ "$(printf '%s\n%s\n' "$pin" "$have" | sort -V | head -n 1)" = "$pin" ]
+}
+
+if command -v crystal >/dev/null 2>&1 && crystal_ok; then
   # shellcheck disable=SC2086 # the file list has no spaces (RCR-001 names are plain)
   crystal tool format --check $files || fail=1
 else
-  skip "crystal not installed, format check skipped"
+  skip "crystal $pin or newer not installed, format check skipped"
 fi
 
 if command -v ameba >/dev/null 2>&1 && ameba --version >/dev/null 2>&1; then

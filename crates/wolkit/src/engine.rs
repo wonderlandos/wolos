@@ -9,7 +9,7 @@ use crate::diag::{Counters, FrameRing};
 use crate::env::Environment;
 use crate::error::{Error, Result};
 use crate::event::{self, EventQueue, kind as ev};
-use crate::loop_::{self, Waker};
+use crate::loop_::{self, Ready, Waker};
 use crate::scene::patch::Patch;
 use crate::scene::{Idx, NIL, NodeId, SceneRead};
 use crate::window::{
@@ -40,6 +40,8 @@ struct Inner {
 pub struct Engine {
     inner: Mutex<Inner>,
     waker: Waker,
+    /// What the app waits on: the waker plus every backend descriptor (`arm` re-syncs it).
+    ready: Ready,
 }
 
 /// Window ids are never reused within an engine.
@@ -63,6 +65,13 @@ impl Engine {
                 "The engine could not make its wake-up pipe.",
             )
         })?;
+        let ready = Ready::new().map_err(|_| {
+            Error::new(
+                crate::error::Status::Internal,
+                "The engine could not make its readiness set.",
+            )
+        })?;
+        ready.sync(&[waker.fd()]);
         Ok(Arc::new(Engine {
             inner: Mutex::new(Inner {
                 app_id: app_id.to_owned(),
@@ -78,6 +87,7 @@ impl Engine {
                 frames: FrameRing::new(),
             }),
             waker,
+            ready,
         }))
     }
 
@@ -90,9 +100,10 @@ impl Engine {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Readable while `dispatch` has work.
+    /// Readable while `dispatch` has work: an epoll descriptor over the waker and every window
+    /// backend's descriptors (poll it, do not read it).
     pub fn fd(&self) -> i32 {
-        self.waker.fd()
+        self.ready.fd()
     }
 
     pub fn flags(&self) -> u32 {
@@ -103,10 +114,19 @@ impl Engine {
         window::choose(self.lock().flags)
     }
 
+    /// After every call that can change events or windows: wake the app when events wait, and
+    /// make the readiness set the waker plus the backends' descriptors of this moment (a window
+    /// shown, a clipboard pipe opened or closed).
     fn arm(&self, g: &Inner) {
         if !g.events.is_empty() {
             self.waker.wake();
         }
+        self.ready.sync_with(|fds| {
+            fds.push(self.waker.fd());
+            for w in &g.windows {
+                fds.extend(w.backend.fds());
+            }
+        });
     }
 
     // ---- dispatch and events ----
@@ -130,19 +150,31 @@ impl Engine {
         let Inner {
             windows, events, ..
         } = &mut *g;
-        for w in windows.iter_mut() {
-            let mut sink = Sink {
-                events,
-                window: w.core.id,
-                seq: w.core.scene.last_seq(),
-            };
-            w.backend.pump(&mut w.core, &mut sink);
+        // Native windows share the process's one display connection: a window pumped later can
+        // read events off the socket into the queue of one pumped earlier, and the socket is then
+        // empty, so nothing would wake the app for them. A second pass dispatches those.
+        let shared = windows
+            .iter()
+            .filter(|w| w.backend.kind() == window::BACKEND_NATIVE)
+            .count()
+            >= 2;
+        for _ in 0..if shared { 2 } else { 1 } {
+            for w in windows.iter_mut() {
+                let mut sink = Sink {
+                    events,
+                    window: w.core.id,
+                    seq: w.core.scene.last_seq(),
+                };
+                w.backend.pump(&mut w.core, &mut sink);
+            }
         }
         let mut flags = 0;
         if !g.events.is_empty() {
             flags |= abi::DISPATCH_EVENTS;
-            self.arm(&g);
         }
+        // Wakes the app for what is queued and re-syncs the readiness set with the backends'
+        // descriptors after the pump (one may have opened or closed one).
+        self.arm(&g);
         if g.ever_had_window && g.windows.is_empty() {
             flags |= abi::DISPATCH_QUIT;
         }
@@ -289,6 +321,7 @@ impl Engine {
             core: WindowCore::new(id, title, width, height, flags, env),
             backend,
         });
+        self.arm(&g);
         Ok(id)
     }
 
@@ -320,6 +353,14 @@ impl Engine {
             windows, events, ..
         } = &mut *g;
         if let Some(at) = windows.iter().position(|w| w.core.id == id) {
+            // Out of the readiness set before the backend closes its descriptors: epoll forgets
+            // a closed one only when no other copy of it is open anywhere.
+            self.ready.sync_with(|keep| {
+                keep.push(self.waker.fd());
+                for w in windows.iter().filter(|w| w.core.id != id) {
+                    keep.extend(w.backend.fds());
+                }
+            });
             let mut w = windows.remove(at);
             let mut sink = Sink {
                 events,
@@ -635,5 +676,169 @@ fn live_node(core: &WindowCore, raw: u32) -> Result<Idx> {
         Err(Error::invalid(format!(
             "Part {raw} is not a part of this window."
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    /// A backend whose one descriptor is a socket the test writes to (a display connection
+    /// stand-in); `pump` reads what is there, as the native backend reads its socket.
+    struct Fd(UnixStream);
+
+    impl Backend for Fd {
+        fn kind(&self) -> u32 {
+            window::BACKEND_NATIVE
+        }
+        fn show(&mut self, _w: &mut WindowCore, _s: &mut Sink) -> Result<()> {
+            Ok(())
+        }
+        fn close(&mut self, _w: &mut WindowCore, _s: &mut Sink) {}
+        fn committed(&mut self, _w: &mut WindowCore, _s: &mut Sink) -> Result<()> {
+            Ok(())
+        }
+        fn pump(&mut self, _w: &mut WindowCore, _s: &mut Sink) {
+            let mut b = [0u8; 64];
+            while matches!((&self.0).read(&mut b), Ok(n) if n > 0) {}
+        }
+        fn fds(&self) -> Vec<std::os::fd::RawFd> {
+            vec![self.0.as_raw_fd()]
+        }
+    }
+
+    /// Two windows on one "connection". Each message names the window it is for; a pump reads
+    /// the shared socket (when `reads`), files each message into that window's queue, then
+    /// emits what its own queue holds (as the native backend's `read` and `dispatch_pending`).
+    /// Window 1 does not read, which stands for the message arriving after window 1's read and
+    /// before window 2's in the same pass.
+    struct Conn {
+        sock: UnixStream,
+        queues: [usize; 2],
+    }
+
+    struct Peer {
+        slot: usize,
+        reads: bool,
+        conn: std::sync::Arc<std::sync::Mutex<Conn>>,
+    }
+
+    impl Backend for Peer {
+        fn kind(&self) -> u32 {
+            window::BACKEND_NATIVE
+        }
+        fn show(&mut self, _w: &mut WindowCore, _s: &mut Sink) -> Result<()> {
+            Ok(())
+        }
+        fn close(&mut self, _w: &mut WindowCore, _s: &mut Sink) {}
+        fn committed(&mut self, _w: &mut WindowCore, _s: &mut Sink) -> Result<()> {
+            Ok(())
+        }
+        fn pump(&mut self, _w: &mut WindowCore, s: &mut Sink) {
+            let mut c = self.conn.lock().unwrap();
+            let mut b = [0u8; 64];
+            while self.reads
+                && let Ok(n) = (&c.sock).read(&mut b)
+                && n > 0
+            {
+                for m in &b[..n] {
+                    c.queues[usize::from(*m)] += 1;
+                }
+            }
+            for _ in 0..std::mem::take(&mut c.queues[self.slot]) {
+                s.emit(ev::CLOSE_REQUEST, 0, &[], &[]);
+            }
+        }
+        fn fds(&self) -> Vec<std::os::fd::RawFd> {
+            vec![self.conn.lock().unwrap().sock.as_raw_fd()]
+        }
+    }
+
+    #[test]
+    fn an_event_read_for_an_earlier_window_is_dispatched_in_the_same_pass() {
+        let e = Engine::new("org.example.twowindows", abi::ENGINE_HEADLESS).unwrap();
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        ours.set_nonblocking(true).unwrap();
+        let conn = std::sync::Arc::new(std::sync::Mutex::new(Conn {
+            sock: ours,
+            queues: [0, 0],
+        }));
+        {
+            let mut g = e.lock();
+            let env = g.env;
+            for (id, slot, reads) in [(1, 0, false), (2, 1, true)] {
+                g.windows.push(Window {
+                    core: WindowCore::new(id, "t", 100, 100, 0, env),
+                    backend: Box::new(Peer {
+                        slot,
+                        reads,
+                        conn: conn.clone(),
+                    }),
+                });
+            }
+            e.arm(&g);
+        }
+        // a message for window 1; only window 2's pump reads it off the socket
+        (&theirs).write_all(&[0]).unwrap();
+        let f = e.dispatch(0).unwrap();
+        assert_ne!(
+            f & abi::DISPATCH_EVENTS,
+            0,
+            "window 1's message was read by window 2 and is still queued after the dispatch"
+        );
+        let mut buf = [0u8; 256];
+        let n = e.read_events(&mut buf);
+        assert!(n >= event::HEADER, "one event");
+        let kind = u16::from_le_bytes([buf[4], buf[5]]);
+        let window = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        assert_eq!((kind, window), (ev::CLOSE_REQUEST, 1), "window 1 got it");
+        assert_eq!(conn.lock().unwrap().queues, [0, 0], "nothing left queued");
+    }
+
+    fn readable(e: &Engine) -> bool {
+        let mut r = Vec::new();
+        loop_::wait(&[e.fd()], 0, &mut r);
+        !r.is_empty()
+    }
+
+    #[test]
+    fn the_engine_fd_wakes_for_backend_descriptors_until_dispatch_reads_them() {
+        let e = Engine::new("org.example.ready", abi::ENGINE_HEADLESS).unwrap();
+        assert!(!readable(&e), "a new engine has no work");
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        ours.set_nonblocking(true).unwrap();
+        // the backend holds a copy; this one stays open, as a descriptor shared with another
+        // owner would
+        let copy = ours.try_clone().unwrap();
+        {
+            let mut g = e.lock();
+            let env = g.env;
+            g.windows.push(Window {
+                core: WindowCore::new(1, "t", 100, 100, 0, env),
+                backend: Box::new(Fd(copy)),
+            });
+            e.arm(&g);
+        }
+        assert!(!readable(&e), "nothing on the backend's descriptor yet");
+        (&theirs).write_all(b"configure").unwrap();
+        assert!(
+            readable(&e),
+            "the backend's descriptor makes the engine fd readable"
+        );
+        e.dispatch(0).unwrap();
+        assert!(!readable(&e), "dispatch pumped the backend; no work left");
+        // a window that goes away takes its descriptor out of the set
+        e.close_window(1);
+        (&theirs).write_all(b"late").unwrap();
+        assert!(
+            !readable(&e),
+            "a closed window's descriptor no longer wakes the app"
+        );
+        // the waker still does
+        e.waker.wake();
+        assert!(readable(&e), "the waker is always a member");
     }
 }

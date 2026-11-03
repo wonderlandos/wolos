@@ -95,9 +95,15 @@ const SHARD_CENSUS: usize = ALLOWED_SHARDS.len();
 const FIXTURES: &str = "crates/controller/tests/fixtures/crystal/";
 /// The ameba release whose rule list .ameba.yml carries (tools/crystal/lint.sh passes the same).
 const AMEBA_VERSION: &str = "1.7.0";
-/// The Crystal release `shard.yml` asks for; the formatter output differs between releases, so a
-/// toolchain older than this is not a reference for RCR-004.
-const CRYSTAL_FLOOR: (u32, u32) = (1, 12);
+/// RCR-046: the one file that pins the Crystal toolchain (recipes, CI, docs and this test read it).
+const TOOLCHAIN: &str = "tools/crystal/toolchain.json";
+/// RCR-045: the advisories every shard.lock and the toolchain packages are checked against.
+const ADVISORIES: &str = "tools/crystal/advisories.json";
+/// RCR-046: `shard.yml` files whose `crystal:` floor is not the pin yet (only shrinks).
+const B_CRYSTAL_FLOOR: &[&str] = &[];
+/// RCR-046: recipes (sibling wolos-pkgbuilds) that depend on an unversioned `crystal` instead of
+/// `crystal>=<pin>` (only shrinks; a recipe naming another version fails at once).
+const B_RECIPE_PIN: &[&str] = &[];
 
 // ---------------------------------------------------------------- repo access
 
@@ -395,12 +401,13 @@ fn rcr_004_crystal_format_is_clean() {
     let Some((maj, min)) = crystal_version() else {
         return skip_or_fail("RCR-004", "crystal is not installed");
     };
-    if (maj, min) < CRYSTAL_FLOOR {
+    let floor = crystal_floor();
+    if (maj, min) < floor {
         return skip_or_fail(
             "RCR-004",
             &format!(
-                "crystal {maj}.{min} is older than {}.{} (the formatter output differs between releases)",
-                CRYSTAL_FLOOR.0, CRYSTAL_FLOOR.1
+                "crystal {maj}.{min} is older than the pin {}.{} ({TOOLCHAIN}; the formatter output differs between releases)",
+                floor.0, floor.1
             ),
         );
     }
@@ -756,6 +763,521 @@ fn rcr_044_build_files_do_not_fetch_shards() {
     assert!(bad.is_empty(), "RCR-044:\n{}", bad.join("\n"));
 }
 
+// ---------------------------------------------------------------- toolchain pin and advisories
+
+/// `tools/crystal/toolchain.json` (RCR-046), read once.
+fn toolchain() -> &'static serde_json::Value {
+    static CELL: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    CELL.get_or_init(|| {
+        let t = read_repo(TOOLCHAIN).unwrap_or_else(|| panic!("RCR-046: {TOOLCHAIN} is missing"));
+        serde_json::from_str(&t).unwrap_or_else(|e| panic!("RCR-046: {TOOLCHAIN}: {e}"))
+    })
+}
+
+/// The pinned Crystal release (`"crystal"` of the toolchain file), `X.Y.Z`.
+fn pin() -> &'static str {
+    toolchain()["crystal"]
+        .as_str()
+        .unwrap_or_else(|| panic!("RCR-046: {TOOLCHAIN} has no \"crystal\" string"))
+}
+
+/// Major and minor of the pin: older toolchains are no reference for the formatter (RCR-004).
+fn crystal_floor() -> (u32, u32) {
+    let mut p = pin().split('.').map(|n| n.parse::<u32>().unwrap_or(0));
+    (p.next().unwrap_or(0), p.next().unwrap_or(0))
+}
+
+/// Order of two runs of digits or letters: digits after letters (`1.0rc1` < `1.0.1`), numbers by
+/// value, words by bytes.
+fn segment_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let (an, bn) = (
+        a.bytes().all(|c| c.is_ascii_digit()),
+        b.bytes().all(|c| c.is_ascii_digit()),
+    );
+    match (an, bn) {
+        (true, true) => {
+            let (a, b) = (a.trim_start_matches('0'), b.trim_start_matches('0'));
+            a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+        }
+        (true, false) => std::cmp::Ordering::Greater,
+        (false, true) => std::cmp::Ordering::Less,
+        (false, false) => a.cmp(b),
+    }
+}
+
+/// Split into runs of digits and runs of letters (separators dropped).
+fn segments(v: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut start: Option<usize> = None;
+    let b = v.as_bytes();
+    for i in 0..=b.len() {
+        let same = start.is_some_and(|s| {
+            i < b.len()
+                && b[i].is_ascii_alphanumeric()
+                && b[i].is_ascii_digit() == b[s].is_ascii_digit()
+        });
+        if same {
+            continue;
+        }
+        if let Some(s) = start.take() {
+            out.push(&v[s..i]);
+        }
+        if i < b.len() && b[i].is_ascii_alphanumeric() {
+            start = Some(i);
+        }
+    }
+    out
+}
+
+/// Version order of the package manager: `[epoch:]pkgver[-pkgrel]`, the release compared only
+/// when both sides carry one; a shard.lock `+git.commit.<sha>` suffix is not part of the version.
+/// A version with an extra trailing word is older (`1.0rc1` < `1.0`), an extra number newer.
+fn vercmp(a: &str, b: &str) -> std::cmp::Ordering {
+    fn split(v: &str) -> (u64, &str, Option<&str>) {
+        let v = v.split('+').next().unwrap_or(v);
+        let (epoch, rest) = match v.split_once(':') {
+            Some((e, r)) => (e.parse().unwrap_or(0), r),
+            None => (0, v),
+        };
+        match rest.rsplit_once('-') {
+            Some((ver, rel)) => (epoch, ver, Some(rel)),
+            None => (epoch, rest, None),
+        }
+    }
+    fn ver_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+        let (sa, sb) = (segments(a), segments(b));
+        for (x, y) in sa.iter().zip(&sb) {
+            let o = segment_cmp(x, y);
+            if o.is_ne() {
+                return o;
+            }
+        }
+        let extra = |s: &[&str], n: usize| s.get(n).map(|e| e.bytes().all(|c| c.is_ascii_digit()));
+        match sa.len().cmp(&sb.len()) {
+            std::cmp::Ordering::Equal => std::cmp::Ordering::Equal,
+            std::cmp::Ordering::Greater if extra(&sa, sb.len()) == Some(true) => {
+                std::cmp::Ordering::Greater
+            }
+            std::cmp::Ordering::Greater => std::cmp::Ordering::Less,
+            std::cmp::Ordering::Less if extra(&sb, sa.len()) == Some(true) => {
+                std::cmp::Ordering::Less
+            }
+            std::cmp::Ordering::Less => std::cmp::Ordering::Greater,
+        }
+    }
+    let (ea, va, ra) = split(a);
+    let (eb, vb, rb) = split(b);
+    ea.cmp(&eb)
+        .then_with(|| ver_cmp(va, vb))
+        .then_with(|| match (ra, rb) {
+            (Some(x), Some(y)) => ver_cmp(x, y),
+            _ => std::cmp::Ordering::Equal,
+        })
+}
+
+/// One row of `tools/crystal/advisories.json` (schema frozen: these three keys, all strings).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Advisory {
+    package: String,
+    fixed_in: String,
+    note: String,
+}
+
+/// The advisories file as rows, or the sentences that say why it is not valid.
+fn parse_advisories(text: &str) -> Result<Vec<Advisory>, Vec<String>> {
+    let v: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| vec![format!("not JSON: {e}")])?;
+    let Some(rows) = v.as_array() else {
+        return Err(vec!["the top level is not an array".into()]);
+    };
+    let mut out = Vec::new();
+    let mut bad = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        let Some(o) = r.as_object() else {
+            bad.push(format!("row {i}: not an object"));
+            continue;
+        };
+        let keys: BTreeSet<&str> = o.keys().map(String::as_str).collect();
+        if keys != BTreeSet::from(["fixed_in", "note", "package"]) {
+            bad.push(format!(
+                "row {i}: keys {keys:?}, the schema is exactly package, fixed_in, note"
+            ));
+            continue;
+        }
+        let s = |k: &str| o[k].as_str().map(str::trim).unwrap_or("").to_string();
+        let a = Advisory {
+            package: s("package"),
+            fixed_in: s("fixed_in"),
+            note: s("note"),
+        };
+        if a.package.is_empty()
+            || !a
+                .package
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._+-".contains(&c))
+        {
+            bad.push(format!(
+                "row {i}: package {:?} is not a package or shard name",
+                a.package
+            ));
+        }
+        if !a.fixed_in.starts_with(|c: char| c.is_ascii_digit()) {
+            bad.push(format!(
+                "row {i}: fixed_in {:?} is not a version",
+                a.fixed_in
+            ));
+        }
+        if a.note.len() < 10 {
+            bad.push(format!(
+                "row {i}: note says too little (the advisory id and what it is)"
+            ));
+        }
+        out.push(a);
+    }
+    let keys: Vec<(String, String)> = out
+        .iter()
+        .map(|a| (a.package.clone(), a.fixed_in.clone()))
+        .collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    sorted.dedup();
+    if sorted != keys {
+        bad.push("rows are not sorted by package then fixed_in, or repeat".into());
+    }
+    if bad.is_empty() { Ok(out) } else { Err(bad) }
+}
+
+/// What is in use: (where it was found, package or shard name, version).
+type Installed = (String, String, String);
+
+/// Every installed version that is older than an advisory's `fixed_in` for its package.
+fn advisory_hits(advisories: &[Advisory], installed: &[Installed]) -> Vec<String> {
+    let mut v = Vec::new();
+    for a in advisories {
+        for (from, name, ver) in installed {
+            if *name == a.package && vercmp(ver, &a.fixed_in).is_lt() {
+                v.push(format!(
+                    "{from}: {name} {ver} is older than {} ({})",
+                    a.fixed_in, a.note
+                ));
+            }
+        }
+    }
+    v
+}
+
+/// The toolchain packages the snapshot ships (`"packages"` of the toolchain file).
+fn toolchain_packages() -> Vec<Installed> {
+    toolchain()["packages"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| {
+                    (
+                        format!("{TOOLCHAIN} packages"),
+                        k.clone(),
+                        v.as_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn rcr_045_no_locked_shard_or_toolchain_package_is_below_an_advisory() {
+    // the comparison itself, on known cases
+    use std::cmp::Ordering::{Equal, Greater, Less};
+    for (a, b, o) in [
+        ("1.22.2-1", "1.22.2-1", Equal),
+        ("1.22.10", "1.22.9", Greater),
+        ("1.22.2-1", "1.22.2-2", Less),
+        ("1.22.2-3", "1.22.2", Equal),
+        ("1:1.0", "2.0", Greater),
+        ("1.0rc1", "1.0", Less),
+        ("1.0", "1.0.1", Less),
+        ("8.2.12-1", "8.2.13", Less),
+        ("1.4.0+git.commit.0123abcd", "1.4.0", Equal),
+        ("23.1.4-1", "23.1.10", Less),
+    ] {
+        assert_eq!(vercmp(a, b), o, "vercmp({a}, {b})");
+        assert_eq!(vercmp(b, a), o.reverse(), "vercmp({b}, {a})");
+    }
+    // the schema refuses what it does not know, and the check finds a listed version
+    assert!(parse_advisories(r#"{"package":"gc"}"#).is_err());
+    assert!(parse_advisories(r#"[{"package":"gc","fixed_in":"8.2.13"}]"#).is_err());
+    assert!(
+        parse_advisories(r#"[{"package":"gc","fixed_in":"8.2.13","note":"N","cve":"x"}]"#).is_err()
+    );
+    let probe = parse_advisories(
+        r#"[{"package":"gc","fixed_in":"8.2.13-1","note":"probe: heap overflow in the collector"},
+            {"package":"probe-shard","fixed_in":"1.5.0","note":"probe: header injection in the router"}]"#,
+    )
+    .expect("probe advisories parse");
+    let lock = "version: 2.0\nshards:\n  probe-shard:\n    git: https://example.invalid/probe-shard.git\n    version: 1.4.0+git.commit.0123456789abcdef0123456789abcdef01234567\n";
+    let mut probe_in: Vec<Installed> = parse_shard_lock(lock)
+        .into_iter()
+        .map(|(n, v)| ("probe/shard.lock".into(), n, v))
+        .collect();
+    probe_in.push(("probe".into(), "gc".into(), "8.2.12-1".into()));
+    probe_in.push(("probe".into(), "crystal".into(), "1.22.2-1".into()));
+    assert_eq!(
+        advisory_hits(&probe, &probe_in).len(),
+        2,
+        "the probe finds gc and probe-shard"
+    );
+    probe_in.retain(|(_, n, _)| n == "crystal");
+    probe_in.push(("probe".into(), "gc".into(), "8.2.13-1".into()));
+    assert!(
+        advisory_hits(&probe, &probe_in).is_empty(),
+        "a fixed version passes"
+    );
+
+    // the real list against the real tree
+    let text = read_repo(ADVISORIES).unwrap_or_else(|| panic!("RCR-045: {ADVISORIES} is missing"));
+    let advisories = parse_advisories(&text)
+        .unwrap_or_else(|e| panic!("RCR-045: {ADVISORIES}:\n{}", e.join("\n")));
+    let base = repo_dir();
+    let mut installed = toolchain_packages();
+    for f in all_files(&base)
+        .into_iter()
+        .filter(|f| (f == "shard.lock" || f.ends_with("/shard.lock")) && !is_fixture(f))
+    {
+        let t = std::fs::read_to_string(base.join(&f)).unwrap_or_default();
+        installed.extend(
+            parse_shard_lock(&t)
+                .into_iter()
+                .map(|(n, v)| (f.clone(), n, v)),
+        );
+    }
+    for a in &advisories {
+        if !installed.iter().any(|(_, n, _)| *n == a.package) {
+            eprintln!(
+                "RCR-045: {} ({}) is not used in this tree; the row stays as a record",
+                a.package, a.fixed_in
+            );
+        }
+    }
+    let hits = advisory_hits(&advisories, &installed);
+    assert!(
+        hits.is_empty(),
+        "RCR-045: affected versions in use (docs/RULES-crystal.md, Advisories: move the snapshot \
+         and the packages record of {TOOLCHAIN}, bump pkgrel of the recipes that compile Crystal; \
+         or update the shard and its shard.lock):\n{}",
+        hits.join("\n")
+    );
+}
+
+/// Versions a line names as a floor for Crystal: `>= X.Y[.Z]` or `X.Y[.Z] or newer|or later`, on
+/// a line that says crystal.
+fn crystal_floors(line: &str) -> Vec<String> {
+    let low = line.to_ascii_lowercase();
+    if !low.contains("crystal") {
+        return vec![];
+    }
+    let take = |s: &str| -> String {
+        s.chars()
+            .take_while(|c| c.is_ascii_digit() || *c == '.')
+            .collect::<String>()
+            .trim_end_matches('.')
+            .to_string()
+    };
+    let mut v = Vec::new();
+    for (i, _) in low.match_indices(">=") {
+        let ver = take(low[i + 2..].trim_start());
+        if ver.contains('.') {
+            v.push(ver);
+        }
+    }
+    for tail in [" or newer", " or later"] {
+        for (i, _) in low.match_indices(tail) {
+            let head = &low[..i];
+            let start = head
+                .rfind(|c: char| !(c.is_ascii_digit() || c == '.'))
+                .map_or(0, |p| p + 1);
+            let ver = &head[start..];
+            if ver.contains('.') && ver.starts_with(|c: char| c.is_ascii_digit()) {
+                v.push(ver.to_string());
+            }
+        }
+    }
+    v
+}
+
+/// A named floor agrees with the pin: same major and minor, and the same patch when it names one.
+fn floor_matches_pin(ver: &str) -> bool {
+    let p = pin();
+    if ver.matches('.').count() >= 2 {
+        ver == p
+    } else {
+        p.starts_with(&format!("{ver}."))
+    }
+}
+
+/// The `crystal` words of the `*depends=(...)` arrays of a PKGBUILD.
+fn recipe_crystal_deps(text: &str) -> Vec<String> {
+    let mut v = Vec::new();
+    for (i, _) in text.match_indices("depends=(") {
+        let body = &text[i + "depends=(".len()..];
+        let body = &body[..body.find(')').unwrap_or(body.len())];
+        for w in body.split_whitespace() {
+            let w = w.trim_matches(|c| c == '\'' || c == '"');
+            let w = w.split(':').next().unwrap_or(w); // optdepends: `name: why`
+            if w == "crystal"
+                || w.starts_with("crystal<")
+                || w.starts_with("crystal>")
+                || w.starts_with("crystal=")
+            {
+                v.push(w.to_string());
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn rcr_046_one_crystal_version_is_pinned_and_read_everywhere() {
+    let t = toolchain();
+    let p = pin();
+    let parts: Vec<&str> = p.split('.').collect();
+    assert!(
+        parts.len() == 3
+            && parts
+                .iter()
+                .all(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit())),
+        "RCR-046: {TOOLCHAIN} crystal {p:?} is not X.Y.Z"
+    );
+    let keys: BTreeSet<&str> = t
+        .as_object()
+        .map(|o| o.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    assert_eq!(
+        keys,
+        BTreeSet::from(["crystal", "packages", "snapshot"]),
+        "RCR-046: {TOOLCHAIN} keys"
+    );
+    // the snapshot record: the toolchain packages the build gets, the compiler on the pinned line
+    let pkgs = toolchain_packages();
+    for need in ["crystal", "gc", "llvm-libs"] {
+        assert!(
+            pkgs.iter().any(|(_, n, v)| n == need && !v.is_empty()),
+            "RCR-046: {TOOLCHAIN} packages has no {need}"
+        );
+    }
+    let compiler = &pkgs.iter().find(|(_, n, _)| n == "crystal").unwrap().2;
+    assert!(
+        vercmp(compiler, p).is_ge()
+            && floor_matches_pin(&format!("{}.{}", parts[0], parts[1]))
+            && compiler.starts_with(&format!("{}.{}.", parts[0], parts[1])),
+        "RCR-046: the snapshot's crystal {compiler} is not on the pinned line {p} (a new minor is \
+         tested first, then the pin moves)"
+    );
+    let snap = t["snapshot"].as_str().unwrap_or("");
+    let sb = snap.as_bytes();
+    assert!(
+        sb.len() == 10
+            && sb[4] == b'-'
+            && sb[7] == b'-'
+            && sb
+                .iter()
+                .enumerate()
+                .all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit()),
+        "RCR-046: {TOOLCHAIN} snapshot {snap:?} is not YYYY-MM-DD"
+    );
+    let root = siblings::root();
+    if let Ok(s) = std::fs::read_to_string(root.join("snapshot")) {
+        assert_eq!(
+            s.trim(),
+            snap,
+            "RCR-046: {TOOLCHAIN} records the toolchain of snapshot {snap}, wolos-pkgbuilds builds on {}",
+            s.trim()
+        );
+    } else {
+        eprintln!("RCR-046: no sibling wolos-pkgbuilds, snapshot and recipes not compared");
+    }
+
+    // shard.yml: `crystal: ">= <pin>"`
+    let mut off = BTreeSet::new();
+    for (f, text) in shard_ymls() {
+        if f.contains("/lib/") || f.starts_with("lib/") {
+            continue; // a vendored shard keeps its own floor
+        }
+        let (top, _) = parse_shard_yml(&text);
+        let want = format!(">= {p}");
+        if top.get("crystal").map(|v| v.trim().trim_matches('"')) != Some(want.as_str()) {
+            eprintln!(
+                "RCR-046: {f}: crystal {:?}, the pin says \"{want}\"",
+                top.get("crystal")
+            );
+            off.insert(f);
+        }
+    }
+    assert_ratchet("RCR-046", off, B_CRYSTAL_FLOOR);
+
+    // recipes: `crystal>=<pin>`; another version fails, an unversioned one is a baseline
+    let mut recipes = 0;
+    let mut loose = BTreeSet::new();
+    let mut wrong = Vec::new();
+    for f in all_files(&root)
+        .into_iter()
+        .filter(|f| f.ends_with("/PKGBUILD"))
+    {
+        let Ok(text) = std::fs::read_to_string(root.join(&f)) else {
+            continue;
+        };
+        for d in recipe_crystal_deps(&text) {
+            recipes += 1;
+            if d == "crystal" {
+                loose.insert(f.clone());
+            } else if d != format!("crystal>={p}") {
+                wrong.push(format!("{f}: {d}, the pin says crystal>={p}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "RCR-046:\n{}", wrong.join("\n"));
+    if recipes > 0 {
+        assert_ratchet("RCR-046", loose, B_RECIPE_PIN);
+    }
+
+    // CI and the lint script read the pin, they do not carry their own
+    let lint = read_repo("tools/crystal/lint.sh").unwrap_or_default();
+    assert!(
+        lint.contains("toolchain.json"),
+        "RCR-046: tools/crystal/lint.sh does not read {TOOLCHAIN}"
+    );
+    // docs: the policy states the pin, and no document names another floor
+    for doc in ["docs/RULES-crystal.md", "docs/modules/cryswol.md"] {
+        assert!(
+            read_repo(doc)
+                .unwrap_or_default()
+                .contains(&format!("`crystal >= {p}`")),
+            "RCR-046: {doc} does not state `crystal >= {p}`"
+        );
+    }
+    let mut stale = Vec::new();
+    for f in all_files(&repo_dir()) {
+        let scanned = (f.ends_with(".md") && !f.starts_with("design/") && !is_fixture(&f))
+            || (f.starts_with(".github/") && (f.ends_with(".yml") || f.ends_with(".yaml")))
+            || f.starts_with("tools/crystal/");
+        if !scanned {
+            continue;
+        }
+        let text = read_repo(&f).unwrap_or_default();
+        for (n, l) in text.lines().enumerate() {
+            for v in crystal_floors(l) {
+                if !floor_matches_pin(&v) {
+                    stale.push(format!("{f}:{}: crystal floor {v}, the pin is {p}", n + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "RCR-046 ({TOOLCHAIN}):\n{}",
+        stale.join("\n")
+    );
+}
+
 // ---------------------------------------------------------------- meta
 
 fn fixture_dir() -> PathBuf {
@@ -860,7 +1382,8 @@ fn rcr_090_fixtures_trip_exactly_their_rule() {
     );
 
     // the tool rules prove their fixtures when the tools exist
-    if let Some((maj, min)) = crystal_version().filter(|v| *v >= CRYSTAL_FLOOR) {
+    let floor = crystal_floor();
+    if let Some((maj, min)) = crystal_version().filter(|v| *v >= floor) {
         let ok = |f: &str| {
             Command::new("crystal")
                 .args(["tool", "format", "--check"])
@@ -879,7 +1402,7 @@ fn rcr_090_fixtures_trip_exactly_their_rule() {
     } else {
         eprintln!(
             "RCR-090: formatter fixtures skipped, no crystal >= {}.{}",
-            CRYSTAL_FLOOR.0, CRYSTAL_FLOOR.1
+            floor.0, floor.1
         );
     }
     if ameba_runs() {
@@ -967,12 +1490,35 @@ fn rcr_091_doc_and_tests_agree() {
         "FFI_ALLOW",
         "ALLOWED_SHARDS",
         "SHARD_CENSUS",
+        "B_CRYSTAL_FLOOR",
+        "B_RECIPE_PIN",
+        "STDLIB",
     ] {
         assert!(
             doc.contains(b),
             "docs/RULES-crystal.md does not mention {b}"
         );
     }
+    // the standard-library table lists exactly STDLIB (the policy names what RCR-043 allows)
+    let table: BTreeSet<String> = doc
+        .lines()
+        .filter_map(|l| l.strip_prefix("| stdlib |"))
+        .flat_map(|rest| {
+            let c: Vec<&str> = rest.split('|').collect();
+            c[0].split(',')
+                .map(|n| n.trim().trim_matches('`').to_string())
+                .filter(|n| !n.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let code: BTreeSet<String> = STDLIB.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(
+        table,
+        code,
+        "docs/RULES-crystal.md `| stdlib |` rows and STDLIB differ (only in the doc: {:?}, only in STDLIB: {:?})",
+        table.difference(&code).collect::<Vec<_>>(),
+        code.difference(&table).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -990,6 +1536,8 @@ fn rcr_092_baselines_are_sorted_and_unique() {
         ("FFI_ALLOW", FFI_ALLOW),
         ("ALLOWED_SHARDS", ALLOWED_SHARDS),
         ("STDLIB", STDLIB),
+        ("B_CRYSTAL_FLOOR", B_CRYSTAL_FLOOR),
+        ("B_RECIPE_PIN", B_RECIPE_PIN),
     ] {
         let mut s = b.to_vec();
         s.sort();
