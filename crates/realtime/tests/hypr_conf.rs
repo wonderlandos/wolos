@@ -496,7 +496,7 @@ fn greeter_gtk_uses_cairo() {
 fn shell_output_is_logged() {
     assert!(
         CONF.lines().any(|l| l.trim()
-            == r#"exec-once = sh -c 'exec wol-shell 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#)
+            == r#"exec-once = sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#)
     );
 }
 
