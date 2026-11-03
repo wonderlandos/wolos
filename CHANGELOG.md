@@ -3,6 +3,7 @@
 ## Unreleased
 
 - libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
+- PowerShell is a terminal shell beside zsh: the Developer module ships pwsh with the WolOS profile and completions, `wol-term-shell` starts it from foot, ghostty and kitty, and Settings > General has a Shells row.
 
 Scripts
 - Ruby scripts run like shell scripts (ADR 0041). `wol script check <file>` parses a sh, bash or Ruby script without running it, then runs shellcheck or RuboCop when installed; `wol script run <file>` runs it as you, never as root, with a clean environment, and every change it asks of `wol` shows the approval sheet and lands in the activity log under the script's name; `wol script on <host> <file>` runs a local script on another computer over ssh the same way. `wol script` lists the kinds.

@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# pwsh at one fixed path for WolOS tools (`wol script` runs .ps1 files with it): the person's own
+# pwsh, which the Console module installs user-side (wopkg recipe powershell, ~/.local/bin/pwsh).
+# Not on PATH and not a login shell (not in /etc/shells). Without it: one sentence and exit 127,
+# what a shell gives for a missing command.
+set -eu
+p=${HOME:-}/.local/bin/pwsh
+if [ -n "${HOME:-}" ] && [ -x "$p" ]; then
+  exec "$p" "$@"
+fi
+echo "pwsh comes with the Console module: run wol modules enable console." >&2
+exit 127

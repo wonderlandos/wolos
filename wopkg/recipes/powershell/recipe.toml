@@ -1,10 +1,15 @@
-# PowerShell: Microsoft's release tarball for Linux x64 (no Arch package; ADR 0032, console module).
-# The tarball is self-contained (.NET runtime inside) and has no top folder, so it unpacks into
-# /work/src. The recipe stages it under lib/powershell and writes a launcher that knows its final
-# home ($TARGET_PREFIX, ~/.local). Microsoft publishes the SHA-256 in the release's hashes.sha256.
+# pwsh: the upstream release tarball for Linux x64 (no Arch package; ADR 0032, console module).
+# The tarball is self-contained (its runtime inside) and has no top folder, so it unpacks into
+# /work/src. The recipe stages it under lib/powershell and writes:
+# - bin/pwsh, a launcher that knows its final home ($TARGET_PREFIX, ~/.local) and turns off the
+#   telemetry and the update check before pwsh starts;
+# - lib/powershell/profile.ps1 ($PSHOME's all-users profile), which loads the WolOS setup
+#   /usr/share/wolos/pwsh/profile.ps1 (interactive shells only; the setup checks that itself);
+# - share/applications/wolos-pwsh.desktop, the launcher entry (a foot window running pwsh).
+# The upstream release publishes the SHA-256 in its hashes.sha256. pwsh is never a login shell.
 name = "powershell"
 version = "7.6.9"
-summary = "PowerShell 7 (pwsh), Microsoft's cross-platform shell"
+summary = "pwsh 7, a cross-platform object shell"
 license = "MIT"
 homepage = "https://github.com/PowerShell/PowerShell"
 needs = ["sh"]
@@ -16,13 +21,21 @@ sha256 = "1da6d6d6035d651f20e70ddee7c4c15ac6ab8b9fb40ee92240d91263f28a884b"
 [build]
 run = [
   "test -f pwsh",
-  "mkdir -p \"$PREFIX/lib/powershell\" \"$PREFIX/bin\"",
+  "mkdir -p \"$PREFIX/lib/powershell\" \"$PREFIX/bin\" \"$PREFIX/share/applications\"",
   "cp -a . \"$PREFIX/lib/powershell/\"",
   "chmod 755 \"$PREFIX/lib/powershell/pwsh\"",
-  "printf '%s\\n' '#!/bin/sh' \"exec '$TARGET_PREFIX/lib/powershell/pwsh' \\\"\\$@\\\"\" > \"$PREFIX/bin/pwsh\"",
+  "printf '%s\\n' '#!/bin/sh' 'export POWERSHELL_TELEMETRY_OPTOUT=1 POWERSHELL_UPDATECHECK=Off DOTNET_CLI_TELEMETRY_OPTOUT=1' \"exec '$TARGET_PREFIX/lib/powershell/pwsh' \\\"\\$@\\\"\" > \"$PREFIX/bin/pwsh\"",
   "chmod 755 \"$PREFIX/bin/pwsh\"",
+  "printf '%s\\n' '# WolOS: the system setup for interactive shells (wopkg recipe powershell).' \"if (Test-Path -LiteralPath '/usr/share/wolos/pwsh/profile.ps1' -PathType Leaf) { . '/usr/share/wolos/pwsh/profile.ps1' }\" > \"$PREFIX/lib/powershell/profile.ps1\"",
+  "printf '%s\\n' '[Desktop Entry]' 'Type=Application' 'Name=pwsh' 'Comment=Object shell in a terminal window' 'Icon=utilities-terminal' 'Categories=System;TerminalEmulator;' 'Keywords=shell;terminal;console;' \"Exec=foot -T pwsh $TARGET_PREFIX/bin/pwsh\" > \"$PREFIX/share/applications/wolos-pwsh.desktop\"",
 ]
 
 [install]
-# Everything is staged already; the launcher must exist and be executable.
-run = ["test -x \"$PREFIX/bin/pwsh\"", "test -x \"$PREFIX/lib/powershell/pwsh\""]
+# Everything is staged already; the launcher, the profile hook and the entry must exist.
+run = [
+  "test -x \"$PREFIX/bin/pwsh\"",
+  "test -x \"$PREFIX/lib/powershell/pwsh\"",
+  "grep -q POWERSHELL_TELEMETRY_OPTOUT=1 \"$PREFIX/bin/pwsh\"",
+  "grep -q /usr/share/wolos/pwsh/profile.ps1 \"$PREFIX/lib/powershell/profile.ps1\"",
+  "grep -q '^Exec=foot ' \"$PREFIX/share/applications/wolos-pwsh.desktop\"",
+]
