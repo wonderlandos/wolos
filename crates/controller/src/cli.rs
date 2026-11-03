@@ -232,6 +232,21 @@ pub const TREE: &[Cmd] = &[
         &[],
         "Reload the shell",
     ),
+    // Plugin IPC (docs/modules/plugins.md "[[ipc]]"): one wire line, one JSON reply line.
+    Cmd {
+        path: &["shell", "call"],
+        action: "shell.call",
+        args: &[arg("plugin"), arg("function"), rest("json")],
+        flags: &[],
+        help: "Run a plugin's [[ipc]] function with one JSON value and print its JSON answer",
+        hidden: false,
+    },
+    cmd(
+        &["shell", "status"],
+        "shell.status",
+        &[],
+        "Shell surfaces and panels, and which are open",
+    ),
     cmd(
         &["update"],
         "update.check",

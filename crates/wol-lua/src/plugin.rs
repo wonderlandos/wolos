@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Plugin scripts (ADR 0031, docs/modules/plugins.md): one Lua file per `[[menubar]]`, `[[widget]]`,
-//! `[[panel]]` or `[[search]]` entry, run in the widget sandbox with API v1: the view parts, and
+//! `[[panel]]`, `[[search]]` or `[[ipc]]` entry, run in the widget sandbox with API v1: the view parts, and
 //! the service calls the manifest's permissions allow (`wol.notify`, `wol.run`, `wol.http_get`,
 //! `wol.open`, `wol.toggle_get`/`wol.toggle_set`, `wol.clipboard.text`, `wol.show`, `wol.state`).
 //! Loading never acts: services are added after the file has run, so only `render`, `query` and
@@ -22,6 +22,8 @@ use std::sync::Arc;
 /// `wol.run` timeout bounds (seconds).
 pub const DEFAULT_TIMEOUT: u32 = 5;
 pub const MAX_TIMEOUT: u32 = 30;
+/// Largest JSON text an `[[ipc]]` function may answer with (one reply line on the shell socket).
+pub const MAX_REPLY: usize = MAX_JSON;
 /// Rows a search script may return per query.
 pub const MAX_HITS: usize = 20;
 /// Nesting of a `wol.state` or `wol.json` value.
@@ -41,8 +43,17 @@ pub struct Hit {
     pub icon: String,
 }
 
+/// What an `[[ipc]]` function answered.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Answer {
+    /// What it returned, as JSON (`nil` = `null`).
+    Value(Json),
+    /// `return nil, "sentence"`: the function said no; the plugin did not fail.
+    Refused(String),
+}
+
 /// A loaded entry script: `wol.menubar { refresh, render, popover }`, `wol.widget { refresh, render }`,
-/// `wol.panel { title, render }` or `wol.search { query }`.
+/// `wol.panel { title, render }`, `wol.search { query }` or `wol.ipc { <entry id> = function(args) }`.
 pub struct Script {
     lua: Lua,
     kind: Kind,
@@ -54,6 +65,8 @@ pub struct Script {
     render: Option<Function>,
     popover: Option<Function>,
     query: Option<Function>,
+    /// `[[ipc]]`: the function named like the entry.
+    ipc: Option<Function>,
     handlers: Handlers,
     meter: Arc<Meter>,
     deadlines: Deadlines,
@@ -75,6 +88,7 @@ fn marker(kind: Kind) -> &'static str {
         Kind::Widget => "wol.widget",
         Kind::Panel => "wol.panel",
         Kind::Search => "wol.search",
+        Kind::Ipc => "wol.ipc",
         _ => "wol.widget",
     }
 }
@@ -121,6 +135,9 @@ impl Script {
             return Err(format!("A [[{}]] entry has no script.", kind.id()));
         }
         let lua = sandbox(&services).map_err(err)?;
+        if kind == Kind::Ipc {
+            ipc_marker(&lua).map_err(err)?;
+        }
         let meter = Meter::new();
         arm(&lua, &meter, deadlines.load).map_err(err)?;
         let v: Value = meter.settle(
@@ -147,7 +164,18 @@ impl Script {
         let render = func("render")?;
         let query = func("query")?;
         let popover = func("popover")?;
+        let ipc = if kind == Kind::Ipc {
+            func(entry)?
+        } else {
+            None
+        };
         match kind {
+            Kind::Ipc if ipc.is_none() => {
+                return Err(format!(
+                    "An ipc script returns wol.ipc {{ [\"{entry}\"] = function(args) ... end }}."
+                ));
+            }
+            Kind::Ipc => {}
             Kind::Search if query.is_none() => {
                 return Err("A search script needs query = function(text) ... end.".into());
             }
@@ -170,7 +198,11 @@ impl Script {
                 "title is one line of up to {MAX_TITLE} characters."
             ));
         }
-        let refresh = refresh_of(&t)?;
+        let refresh = if kind == Kind::Ipc {
+            0
+        } else {
+            refresh_of(&t)?
+        };
         let s = Self {
             lua,
             kind,
@@ -182,6 +214,7 @@ impl Script {
             render,
             popover,
             query,
+            ipc,
             handlers: Handlers::default(),
             meter,
             deadlines,
@@ -241,6 +274,9 @@ impl Script {
     /// The tree to draw now (bar item, card or panel body). Parts are numbered in tree order.
     pub fn render(&mut self) -> Result<Node, String> {
         let Some(f) = self.render.clone() else {
+            if self.kind == Kind::Ipc {
+                return Err("An ipc script has no render; wol shell call runs it.".into());
+            }
             return Err("A search script has no render; call query.".into());
         };
         self.call_node(&f)
@@ -350,6 +386,38 @@ impl Script {
     /// Run a search row's `on_activate` (ids from the last query).
     pub fn activate(&mut self, id: u32) -> Result<(), String> {
         self.click(id)
+    }
+
+    /// `[[ipc]]`: runs the entry's function with `args` (JSON `null` = no argument) under the
+    /// `event` deadline and answers what it returned, as JSON. `return nil, "sentence"` (or
+    /// `false, "sentence"`) is a refusal ([`Answer::Refused`]); Err is a failure of the script
+    /// (an error, out of time, a reply that is not JSON), which the host counts.
+    pub fn call(&mut self, args: &Json) -> Result<Answer, String> {
+        let Some(f) = self.ipc.clone() else {
+            return Err("Only an ipc script is called.".into());
+        };
+        self.meter.alive()?;
+        arm(&self.lua, &self.meter, self.deadlines.event).map_err(err)?;
+        let r = to_lua(&self.lua, args)
+            .map_err(err)
+            .and_then(|a| f.call::<mlua::MultiValue>(a).map_err(err))
+            .and_then(|out| {
+                let mut out = out.into_iter();
+                let first = out.next().unwrap_or(Value::Nil);
+                match (&first, out.next()) {
+                    (Value::Nil | Value::Boolean(false), Some(Value::String(m))) => {
+                        Ok(Answer::Refused(m.to_str().map_err(err)?.to_owned()))
+                    }
+                    _ => to_json(&first, 0).map(Answer::Value),
+                }
+            });
+        let a = self.meter.settle(r)?;
+        if let Answer::Value(v) = &a
+            && v.to_string().len() > MAX_REPLY
+        {
+            return Err(format!("An ipc reply is at most {} KB.", MAX_REPLY / 1024));
+        }
+        Ok(a)
     }
 
     /// Adds the `wol.*` calls the manifest allows. Each returns `ok, message` or `value, message`.
@@ -591,6 +659,18 @@ impl Script {
     }
 }
 
+/// `wol.ipc { ... }`: marks the table an `[[ipc]]` script returns (the other markers are in the
+/// base prelude, which every widget shares).
+fn ipc_marker(lua: &Lua) -> mlua::Result<()> {
+    let f = lua.create_function(|_, t: Value| {
+        if let Value::Table(t) = &t {
+            t.raw_set("__wol_kind", "ipc")?;
+        }
+        Ok(t)
+    })?;
+    crate::api(lua)?.raw_set("ipc", f)
+}
+
 fn to_lua(lua: &Lua, v: &Json) -> mlua::Result<Value> {
     Ok(match v {
         Json::Null => Value::Nil,
@@ -706,14 +786,129 @@ pub fn lua_problems(
                 continue;
             }
         };
-        let r = if kind == Kind::Search {
-            script.query("test").map(|_| ())
-        } else {
-            script.render().and_then(|_| script.popover().map(|_| ()))
+        let r = match kind {
+            Kind::Search => script.query("test").map(|_| ()),
+            // Loading found the function; calling it would act (run commands, change state).
+            Kind::Ipc => Ok(()),
+            _ => script.render().and_then(|_| script.popover().map(|_| ())),
         };
         if let Err(e) = r {
             out.push(format!("{file}: {e}"));
         }
     }
     out
+}
+
+/// `[[ipc]]` scripts (SP-6): the named function, JSON in and out, refusals and the deadline.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn load(entry: &str, src: &str) -> Result<Script, String> {
+        Script::load(
+            Entry {
+                kind: Kind::Ipc,
+                plugin: "alice.music",
+                id: entry,
+                dir: Path::new("/nonexistent"),
+            },
+            src,
+            &[],
+            Rc::new(crate::Live),
+        )
+    }
+
+    const SRC: &str = r#"
+local n = 0
+return wol.ipc {
+  next = function() n = n + 1; return { track = n } end,
+  volume = function(v) return { volume = v * 2, list = { 1, 2 } } end,
+  ["play-pause"] = function(args) return args == nil end,
+  refuse = function() return nil, "Nothing is playing." end,
+  spin = function() while true do end end,
+  bad = function() return function() end end,
+}
+"#;
+
+    #[test]
+    fn the_entry_names_the_function_and_it_answers_json() {
+        let mut s = load("next", SRC).unwrap();
+        assert_eq!(s.kind(), Kind::Ipc);
+        assert_eq!(s.refresh(), 0);
+        assert_eq!(
+            s.call(&json!(null)).unwrap(),
+            Answer::Value(json!({"track": 1}))
+        );
+        assert_eq!(
+            s.call(&json!(null)).unwrap(),
+            Answer::Value(json!({"track": 2})),
+            "the Lua state lives between calls"
+        );
+        let mut v = load("volume", SRC).unwrap();
+        assert_eq!(
+            v.call(&json!(21)).unwrap(),
+            Answer::Value(json!({"volume": 42, "list": [1, 2]}))
+        );
+        let mut p = load("play-pause", SRC).unwrap();
+        assert_eq!(p.call(&json!(null)).unwrap(), Answer::Value(json!(true)));
+        assert!(p.render().unwrap_err().contains("wol shell call"));
+    }
+
+    #[test]
+    fn a_missing_function_or_marker_is_a_load_error() {
+        assert_eq!(
+            load("prev", SRC).unwrap_err(),
+            "An ipc script returns wol.ipc { [\"prev\"] = function(args) ... end }."
+        );
+        assert_eq!(
+            load("next", "return { next = function() end }").unwrap_err(),
+            "The script must end with return wol.ipc { ... }."
+        );
+        assert_eq!(
+            load("next", "return wol.ipc { next = 1 }").unwrap_err(),
+            "next is a function."
+        );
+    }
+
+    #[test]
+    fn refusals_runaways_and_bad_values_are_sentences() {
+        let mut r = load("refuse", SRC).unwrap();
+        assert_eq!(
+            r.call(&json!(null)).unwrap(),
+            Answer::Refused("Nothing is playing.".into())
+        );
+        let mut b = load("bad", SRC).unwrap();
+        assert!(b.call(&json!(null)).is_err());
+        let mut spin = load("spin", SRC).unwrap();
+        let t = std::time::Instant::now();
+        assert_eq!(spin.call(&json!(null)).unwrap_err(), crate::TOO_LONG);
+        assert!(t.elapsed() < std::time::Duration::from_secs(2));
+        assert!(spin.stopped());
+        assert_eq!(spin.call(&json!(null)).unwrap_err(), crate::TOO_LONG);
+    }
+
+    #[test]
+    fn the_check_loads_ipc_scripts_without_calling_them() {
+        let dir = std::env::temp_dir().join(format!("wol-lua-ipc-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("ipc.lua"),
+            "return wol.ipc { go = function() error(\"called\") end }",
+        )
+        .unwrap();
+        let m = shared::plugins::parse(
+            concat!(
+                "schema = 1\nid = \"alice.music\"\nname = \"Music\"\nversion = \"1\"\nlicense = \"MIT\"\n",
+                "\n[[ipc]]\nid = \"go\"\nscript = \"ipc.lua\"\n\n[[ipc]]\nid = \"gone\"\nscript = \"ipc.lua\"\n",
+            ),
+        )
+        .unwrap();
+        let p = lua_problems(&dir, &m, Deadlines::DEFAULT, &|| Rc::new(crate::Live));
+        assert_eq!(
+            p,
+            ["ipc.lua: An ipc script returns wol.ipc { [\"gone\"] = function(args) ... end }."]
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

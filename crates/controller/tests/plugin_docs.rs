@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! docs/modules/plugins.md is executable: every ```toml block parses as a manifest and matches the
 //! published JSON Schema; every ```lua block loads as a plugin script with all permissions and
-//! renders (or answers a query) against a host that answers everything.
+//! renders (or answers a query, or answers every `[[ipc]]` call of the toml examples it defines)
+//! against a host that answers everything.
 use serde_json::Value;
 use shared::plugins::{Kind, Permission, SCHEMA_JSON};
 use std::path::Path;
@@ -214,7 +215,51 @@ fn every_lua_example_loads_and_renders() {
     let md = docs();
     let examples = blocks(&md, "lua");
     assert!(examples.len() >= 4, "{}", examples.len());
+    // `[[ipc]]` entries of the toml examples, with a value of their argument type.
+    let ipc: Vec<(String, Value)> = blocks(&md, "toml")
+        .iter()
+        .filter_map(|(_, t)| shared::plugins::parse(t).ok())
+        .flat_map(|m| m.ipc)
+        .map(|e| {
+            use shared::plugins::ArgType as A;
+            let sample = match e.args {
+                A::Any | A::None => Value::Null,
+                A::Text => "text".into(),
+                A::Number => 40.into(),
+                A::Bool => true.into(),
+                A::List => serde_json::json!([]),
+                A::Object => serde_json::json!({}),
+            };
+            (e.id, sample)
+        })
+        .collect();
+    assert!(!ipc.is_empty(), "plugins.md has an [[ipc]] example");
     for (line, src) in &examples {
+        if src.contains("return wol.ipc {") {
+            let mut called = 0;
+            for (id, sample) in ipc
+                .iter()
+                .filter(|(id, _)| src.contains(&format!("{id} = function")))
+            {
+                let at = Entry {
+                    kind: Kind::Ipc,
+                    plugin: "alice.docs",
+                    id,
+                    dir: Path::new("/plug/alice.docs"),
+                };
+                let mut s = Script::load(at, src, &Permission::ALL, Rc::new(Yes))
+                    .unwrap_or_else(|e| panic!("plugins.md line {line}: {e}"));
+                match s.call(sample) {
+                    Ok(wol_lua::plugin::Answer::Value(_)) => called += 1,
+                    other => panic!("plugins.md line {line}: {id}: {other:?}"),
+                }
+            }
+            assert!(
+                called > 0,
+                "plugins.md line {line}: no [[ipc]] entry names its functions"
+            );
+            continue;
+        }
         let kind = ["menubar", "widget", "panel", "search"]
             .iter()
             .find(|k| src.contains(&format!("return wol.{k} {{")))
