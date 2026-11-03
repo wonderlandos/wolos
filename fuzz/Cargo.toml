@@ -126,6 +126,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "wolkit_image"
+path = "fuzz_targets/wolkit_image.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 # Same vendored crate as the main workspace (docs/adr/0006-vendored-blocking-idle-exit.md).

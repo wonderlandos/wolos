@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# expect: image needs `alt:` (what the picture shows), or `decorative: true`. Screen readers use it.
+require "../../src/wolkit/core"
+
+class Fixture < Wolkit::App
+  def view
+    window "Pictures" do
+      column do
+        image src: "/pictures/a.jpg", fit: :cover # <= error
+      end
+    end
+  end
+end
+
+Wolkit::Test.record(Fixture.new)

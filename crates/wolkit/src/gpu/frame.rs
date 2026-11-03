@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use ash::vk;
 
 use super::device::{DeviceOptions, Gpu, barrier, vk_err};
+use super::images::ImageAtlas;
 use super::live::{Live, SLOTS};
 use super::pipelines::MAX_LAYERS;
 use super::shadow::ShadowAtlas;
@@ -141,6 +142,7 @@ pub struct Renderer {
     losses: Vec<Instant>,
     builder: InstanceBuilder,
     shadows: ShadowAtlas,
+    images: ImageAtlas,
     instances: Vec<Instance>,
     bytes: Vec<u8>,
     frame: u64,
@@ -159,6 +161,7 @@ impl Renderer {
             losses: Vec::new(),
             builder: InstanceBuilder::new(),
             shadows: ShadowAtlas::new(super::SHADOW_ATLAS),
+            images: ImageAtlas::new(),
             instances: Vec::new(),
             bytes: Vec::new(),
             frame: 0,
@@ -230,6 +233,7 @@ impl Renderer {
     pub fn trim(&mut self) {
         self.builder = InstanceBuilder::new();
         self.shadows.trim();
+        self.images.reset();
         self.instances = Vec::new();
         self.bytes = Vec::new();
         if let Some(l) = self.live.as_mut() {
@@ -246,6 +250,8 @@ impl Renderer {
         }
         let gpu = Arc::new(Gpu::new(&self.opts.device)?);
         let live = Live::new(gpu, self.opts.format.vk(), self.opts.cache_file.as_deref())?;
+        // The new device's picture pages are empty.
+        self.images.reset();
         self.devices_made += 1;
         self.live = Some(live);
         Ok(())
@@ -333,11 +339,14 @@ impl Renderer {
         self.ensure_live()?;
         let slot = self.frame.ix() % SLOTS;
         self.frame += 1;
-        let atlas_gen = frame
+        let glyph_gen = frame
             .text
             .as_ref()
             .map_or(0, |(_, c)| c.atlas.stats.evictions);
-        {
+        // A full image atlas starts over once and the frame is built again with only what it
+        // shows (`gpu::images`).
+        for _ in 0..2 {
+            let atlas_gen = glyph_gen.wrapping_add(self.images.generation << 40);
             let mut none = NoGlyphs;
             let mut with;
             let src: &mut dyn GlyphSource = match frame.text.as_mut() {
@@ -347,7 +356,17 @@ impl Renderer {
                 }
                 None => &mut none,
             };
-            self.builder.build(frame.list, src, frame.scale, atlas_gen);
+            self.builder.build_with_images(
+                frame.list,
+                src,
+                &mut self.images,
+                frame.scale,
+                atlas_gen,
+            );
+            if !self.images.take_overflow() {
+                break;
+            }
+            self.images.reset();
         }
         let Some(live) = self.live.as_mut() else {
             return Err(Error::unavailable(copy::NO_DEVICE));
@@ -365,6 +384,9 @@ impl Renderer {
         let pages = frame.text.as_ref().map_or(0, |(_, c)| c.atlas.page_count());
         let page_size = frame.text.as_ref().map_or(1, |(_, c)| c.atlas.page_size());
         let remade = live.ensure_glyphs(page_size, u32::try_from(pages).unwrap_or(1))?;
+        if live.ensure_images(super::images::PAGE, self.images.page_count())? {
+            self.images.reupload_all();
+        }
         // Instances: the builder's, with shadows pointed at their prototypes, then composites.
         self.instances.clear();
         self.instances.extend_from_slice(&self.builder.instances);
@@ -380,7 +402,7 @@ impl Renderer {
         }
         let clips_n = u64::try_from(self.builder.clips.len()).unwrap_or(0);
         let inst_n = u64::try_from(self.instances.len()).unwrap_or(0);
-        let staging_need = upload_need(&frame, &self.shadows);
+        let staging_need = upload_need(&frame, &self.shadows) + self.images.pending_bytes() + 4;
         live.reserve(slot, inst_n, clips_n.max(1), staging_need)?;
         let mut clip_bytes = Vec::with_capacity(self.builder.clips.len() * 48);
         for c in &self.builder.clips {
@@ -401,7 +423,9 @@ impl Renderer {
         live.update_sets(slot);
         let cmd = live.slots.get(slot).map(|s| s.cmd).unwrap_or_default();
         live.begin(cmd)?;
-        let uploaded = upload(live, slot, cmd, &mut frame, remade, &mut self.shadows)?;
+        let mut uploaded = upload(live, slot, cmd, &mut frame, remade, &mut self.shadows)?;
+        let ups = std::mem::take(&mut self.images.pending);
+        uploaded += live.upload_images(slot, cmd, upload_need(&frame, &self.shadows), &ups)?;
         let mut stats = FrameStats {
             upload_bytes: uploaded,
             damage_px: if scissor.is_empty() {

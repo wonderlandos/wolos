@@ -4,9 +4,10 @@
 //! One uber-pipeline draws every primitive as an instanced 64-byte quad (`paint::batch`): rounded
 //! rectangles, borders and 2-stop gradients are signed distance functions in the fragment shader,
 //! glyphs are quads from the R8 glyph atlas (a texture array), shadows are nine-sliced prototypes
-//! from an R8 shadow atlas, clips are rows of a table the shader indexes (axis-aligned and one
-//! rounded clip per instance), and group opacity is pushed into the leaves' colours; only groups
-//! whose children overlap get an offscreen layer. A typical window is a few draw calls.
+//! from an R8 shadow atlas, pictures are quads sampling premultiplied RGBA8 atlas pages
+//! ([`images`]), clips are rows of a table the shader indexes (axis-aligned and one rounded clip
+//! per instance), and group opacity is pushed into the leaves' colours; only groups whose
+//! children overlap get an offscreen layer. A typical window is a few draw calls.
 //!
 //! The shader evaluates each primitive the way the CPU reference rasteriser does (`cpu::raster`),
 //! so `tests/gpu_golden.rs` holds the GPU image of every golden scene within 0.1% of pixels
@@ -16,14 +17,16 @@
 //! [`pipelines`] (pipeline, render passes, pipeline cache), [`live`] (per-device state, frame
 //! slots, the persistent instance ring), [`frame`] (the renderer, damage, layers, readback,
 //! device-lost recovery), [`present`] (Wayland swapchain, incremental present), [`surface`]
-//! (`wolkit_surface_*` Vulkan surfaces for apps), [`shadow`] (nine-slice masks), [`canvas`] (the
-//! canvas op stream), [`copy`] (sentences). `unsafe` is confined to `device`, `pipelines`,
-//! `live`, `frame`, `present` and `surface`; every block names its invariant.
+//! (`wolkit_surface_*` Vulkan surfaces for apps), [`shadow`] (nine-slice masks), [`images`] (the
+//! picture atlas), [`canvas`] (the canvas op stream), [`copy`] (sentences). `unsafe` is confined
+//! to `device`, `pipelines`, `live`, `frame`, `present` and `surface`; every block names its
+//! invariant.
 
 pub mod canvas;
 pub mod copy;
 pub mod device;
 pub mod frame;
+pub mod images;
 pub mod live;
 pub mod pipelines;
 pub mod present;

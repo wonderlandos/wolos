@@ -177,6 +177,10 @@ pub struct NativeWindow {
     notes: Vec<String>,
     /// GPU surfaces of `surface` nodes (`wolkit_surface_*`).
     subs: subsurface::Subs,
+    /// Woken when a picture finished decoding (`image::subscribe`), and the picture generation
+    /// the window last drew at.
+    images: Option<std::sync::Arc<crate::loop_::Waker>>,
+    image_gen: u64,
 }
 
 /// A GPU surface made for a `surface` node: its id, the pointers Vulkan WSI takes, and its size
@@ -324,6 +328,8 @@ impl NativeWindow {
             cpu_only: true,
             notes: Vec::new(),
             subs: subsurface::Subs::default(),
+            images: crate::image::subscribe(),
+            image_gen: crate::image::generation(),
         };
         w.buffers.choose_format(&w.client.shm_formats);
         w.devices();

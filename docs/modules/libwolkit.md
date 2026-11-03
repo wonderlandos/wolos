@@ -98,6 +98,28 @@ The queue holds at most 4,096 records and 4 MiB. A newer scroll, slider, resize,
 
 Kit lowering, and what does not survive: `box` becomes a row or a stack (direction), spacing the nearest of 0, 4, 8, 12, 16, 24; `text` a label with its role; `button`, `toggle` and `text_input` take their label from their text, else their first text child, else their accessibility name (none is an error); `slider`, `image` (size snapped to the Kit's sizes) and `vlist` (all mounted rows as a list) map directly. Custom style properties, padding, borders, shadows, transforms and animations are ignored. `canvas` and `surface` become one placeholder sentence; `overlay`, `divider` and hidden parts are omitted. More than 200 parts or 12 levels is `WOLKIT_ERR_LIMIT`. A part's wire id is its node id, so a click on the wire maps straight back. Golden: `tests/kit_golden/kit_app.json` (rerun with `WOLKIT_BLESS=1` and review the diff).
 
+## Pictures (`image` nodes, ABI 1.1)
+
+An `image` node shows a picture: `WOLKIT_PROP_IMAGE_ID` names one the app made with the `wolkit_image_*` verbs, else `WOLKIT_PROP_IMAGE_SOURCE` with an absolute path (or a `file://` URL) names a file the engine reads itself (other sources, such as `icon:` names, are not drawn here). `WOLKIT_PROP_IMAGE_FIT` places it: `contain` (the default: the whole picture, centred), `cover` (the box filled, the overflow cut), `fill` (stretched) or `none` (one picture pixel per logical pixel, centred and cut; appended in 1.1). The node's `border-radius` rounds the picture (a rounded clip), its `opacity` fades it, its `background` shows where `contain` leaves room. Code: `src/image/` (decoding, fit, the path cache), `src/paint/scene.rs` (lowering), `src/cpu/raster.rs` and `src/gpu/images.rs` (drawing).
+
+| Verb | Since | Does |
+|---|---|---|
+| `wolkit_image_create(engine, bytes, len, &out, &err)` | 1.0 | PNG or JPEG bytes, no size cap (SVG is accepted and kept as FAILED: nothing draws it yet) |
+| `wolkit_image_create_encoded(engine, bytes, len, max_side, &out, &err)` | 1.1 | the same with a cap on the longer side (0: none) |
+| `wolkit_image_create_file(engine, path, len, max_side, &out, &err)` | 1.1 | an absolute path, read and decoded on a worker; a missing or broken file is FAILED, not an error |
+| `wolkit_image_create_rgba(engine, w, h, stride, px, len, &out, &err)` | 1.0 | straight RGBA8, ready at once |
+| `wolkit_image_get_id`, `_retain`, `_release` | 1.0 | the id a node names it by; references |
+| `wolkit_image_get_size(img, &w, &h)` | 1.1 | the upright natural size; known at once from the header for bytes, after the header is read for a file (`UNAVAILABLE` before) |
+| `wolkit_image_get_state(img)` | 1.1 | `WOLKIT_IMAGE_PENDING`, `READY` or `FAILED` |
+
+**Decoding.** PNG (every colour type, 16-bit stripped, palettes expanded) and baseline or progressive JPEG, by the first bytes. The header is read first and its size checked against the limits before any pixel memory is allocated. The EXIF orientation (APP1 for JPEG, `eXIf` for PNG; the eight turns and mirrors) is applied, so the size and pixels are upright. Then the cap (halved while that stays at or above it, then one bilinear step to the exact size), premultiplied alpha, and a mip chain halved down to 16 pixels whose largest level is at most 2,048 a side (the atlas page; "actual size" of a larger photo is drawn from that level). Decoding runs on up to four `wolkit-decode` threads (half the cores), off the app's thread; a picture released before its turn is skipped.
+
+**Placeholder and redraw.** Until a picture is ready (and when it failed) its node shows a `control`-token fill with the node's radius. When a decode finishes the picture generation moves: the chunk caches see it in their version, and each native window has a wake-up descriptor among its `fds()` (`image::subscribe`) and draws again from `pump`. The headless backend asks for every picture of the window and waits (at most 5 s) before `wolkit_window_render_rgba` draws, so its frames do not depend on timing.
+
+**Paths.** A source path is decoded at a size bucket: twice the node's longer side, rounded up to 64, 128, 192, 256, 384, 512, 768, 1024, 1536 or 2048, so a thumbnail grid decodes small. One cache per process keyed by path and bucket; a larger ready bucket serves a smaller node, and a smaller ready one stands in while a larger one decodes (a resize does not flash the placeholder). Least recently used entries go past 512 entries or 256 MB.
+
+**Drawing.** Both rasterisers choose the smallest level at least the device size of the picture's destination, and sample it bilinearly with weights quantised to 0..255 and integer mixing (`image::fit::bilinear`, `K_IMAGE` in `shaders/ui.frag`), so the GPU and CPU images agree (`tests/golden/scenes/13_images.png`: 0 pixels differ on the software Vulkan device). On the GPU a picture is one instanced quad (kind 6) sampling an RGBA8 texture array (binding 4; 2,048-pixel pages, at most four, shelf-packed); a level is uploaded once, when first placed, and a frame uploads only newly placed levels (200 thumbnails: 1 draw, 0 bytes after the first frame). A full atlas starts over and the frame is built again with only what it shows. On the CPU, rows at a time: interior pixels skip the edge coverage and an exactly hit texel (a 1:1 blit) skips the mix. A translucent bare picture (no background, border, shadow or focus ring) folds its opacity into the picture instead of a layer.
+
 ## Dumps
 
 `wolkit_window_dump` returns text; the shard's golden patch-stream specs compare against it. `WOLKIT_DUMP_SCENE`: one line per node, indented by depth: `id kind`, then `classes=`, `state=`, `key=`, `on=` (the bind mask), each inline property as `name=value`, then the text in quotes. `WOLKIT_DUMP_LAYOUT`: `id kind x y w h`. `WOLKIT_DUMP_A11Y`: `id kind role=… name="…"`, `focused`, `state=…`.
@@ -113,13 +135,16 @@ Kit lowering, and what does not survive: `box` becomes a row or a stack (directi
 | Text per node | 64 KiB |
 | Classes per node | 8 |
 | Pending events | 4,096 records, 4 MiB |
-| Decoded image | 16,384 px a side, 256 megapixels; 512 MB of images |
+| Decoded image | 16,384 px a side, 256 megapixels; 512 MB of images per process |
+| Encoded image | 64 MiB (bytes or file) |
+| Drawn picture level | 2,048 px a side; GPU picture atlas 4 pages of 2,048 x 2,048 |
+| Picture path cache | 512 entries, 256 MB |
 | Style table | 4 MiB |
 
 ## Security and untrusted input
 
-The patch stream, style tables, style sheets, images and fonts are untrusted. Each is bounded, validated before use and fuzzed (`fuzz/fuzz_targets/wolkit_patch.rs`, `wolkit_wsb.rs`, `wolkit_wolcss.rs`; seeds in `fuzz/regressions/`; `crates/wolkit/tests/patch_fuzz.rs` replays them and a deterministic mutation on stable). A panic stops at the boundary as `WOLKIT_ERR_INTERNAL`. The engine opens only the Kit socket (kit backend) and, on the native backend, the Wayland socket; it has no privilege and sends no telemetry.
+The patch stream, style tables, style sheets, images and fonts are untrusted. Each is bounded, validated before use and fuzzed (`fuzz/fuzz_targets/wolkit_patch.rs`, `wolkit_wsb.rs`, `wolkit_wolcss.rs`, `wolkit_image.rs`; seeds in `fuzz/regressions/`; `crates/wolkit/tests/patch_fuzz.rs` replays them and a deterministic mutation on stable, `tests/image.rs` mutates the picture fixtures). The picture decoders are permissively licensed crates `deny.toml` allows; a decoder panic on a worker becomes a FAILED picture. A panic stops at the boundary as `WOLKIT_ERR_INTERNAL`. The engine opens the Kit socket (kit backend), on the native backend the Wayland socket, and the picture files the app names (an `image-source` path or `wolkit_image_create_file`, read on a worker, at most 64 MiB); it has no privilege and sends no telemetry.
 
 ## Tests
 
-`cargo test -p wolkit`: `tests/abi.rs` (exports, linker map, header against the Rust signatures and constants, shipped declarations and property ids never change), `tests/c_hello.rs` (a C program, `tests/c/hello.c`, builds a window, clicks and reads the event), `tests/conformance.rs` (the same scenarios on every backend, with the reasons for each difference), `tests/alloc_free.rs` (zero heap allocations in a steady-state apply and frame, measured with a counting allocator), `tests/patch_fuzz.rs`. Shared test helpers (the fake Kit host, the `libwolkit.so.1` link, the C compile) are in `tests/support/`. `anim/` is the animation clock: `ANIM` ops run as tweens or springs on the headless virtual clock (`wolkit_window_advance_time`) and the native frame clock; the Kit host gets the final value at once.
+`cargo test -p wolkit`: `tests/abi.rs` (exports, linker map, header against the Rust signatures and constants, shipped declarations and property ids never change), `tests/c_hello.rs` (a C program, `tests/c/hello.c`, builds a window, clicks and reads the event), `tests/conformance.rs` (the same scenarios on every backend, with the reasons for each difference), `tests/alloc_free.rs` (zero heap allocations in a steady-state apply and frame, measured with a counting allocator), `tests/patch_fuzz.rs`, `tests/image.rs` (decoding, orientation, the cap, the 1.1 verbs, lowering, the placeholder, a headless window drawing a file). Shared test helpers (the fake Kit host, the `libwolkit.so.1` link, the C compile) are in `tests/support/`. `anim/` is the animation clock: `ANIM` ops run as tweens or springs on the headless virtual clock (`wolkit_window_advance_time`) and the native frame clock; the Kit host gets the final value at once.

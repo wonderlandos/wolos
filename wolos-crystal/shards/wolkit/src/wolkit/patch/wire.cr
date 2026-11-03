@@ -345,7 +345,7 @@ module Wolkit
       "feature"      => ["none", "tnum"],
       "select"       => ["none", "text"],
       "spring"       => ["gentle", "snappy", "bouncy"],
-      "fit"          => ["contain", "cover", "fill"],
+      "fit"          => ["contain", "cover", "fill", "none"],
       "side"         => ["bottom", "top", "right", "left"],
       "anchor_align" => ["start", "center", "end"],
     }

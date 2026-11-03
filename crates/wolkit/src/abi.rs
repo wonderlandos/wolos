@@ -95,6 +95,9 @@ fn fixed() -> Vec<(&'static str, i64)> {
         ("WOLKIT_EVENT_HEADER", n(event::HEADER)),
         ("WOLKIT_EVENT_MAX_RECORD", n(event::MAX_RECORD)),
         ("WOLKIT_EVENT_FLAG_OVERFLOW", n(event::FLAG_OVERFLOW)),
+        ("WOLKIT_IMAGE_PENDING", n(crate::image::STATE_PENDING)),
+        ("WOLKIT_IMAGE_READY", n(crate::image::STATE_READY)),
+        ("WOLKIT_IMAGE_FAILED", n(crate::image::STATE_FAILED)),
     ]
 }
 

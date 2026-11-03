@@ -34,6 +34,35 @@ pub mod kind {
     pub const BORDER: u32 = 2;
     pub const SHADOW: u32 = 3;
     pub const GLYPH: u32 = 4;
+    /// After the GPU's own `K_LAYER` (5).
+    pub const IMAGE: u32 = 6;
+}
+
+/// Where a picture level sits in the GPU image atlas: page and texel origin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImagePlace {
+    pub page: u32,
+    pub x: u16,
+    pub y: u16,
+}
+
+/// Places picture levels in the image atlas for the instance builder.
+pub trait ImageSource {
+    /// The atlas place of `level` of `px`, uploading it if needed; `None` skips the picture.
+    fn place(
+        &mut self,
+        px: &std::sync::Arc<crate::image::Pixels>,
+        level: usize,
+    ) -> Option<ImagePlace>;
+}
+
+/// No atlas: pictures are skipped (lists without them, and tests of the other primitives).
+pub struct NoImages;
+
+impl ImageSource for NoImages {
+    fn place(&mut self, _: &std::sync::Arc<crate::image::Pixels>, _: usize) -> Option<ImagePlace> {
+        None
+    }
 }
 
 /// One instanced quad, 64 bytes, `repr(C)` so it can be copied to a mapped GPU buffer as is.
@@ -43,7 +72,9 @@ pub mod kind {
 /// * `color0`, `color1`: straight RGBA8 (`Color::pack`); `color1` is the gradient end.
 /// * `radii`: corner radii in 1/16 pixel (tl, tr, br, bl).
 /// * `uv`: glyph atlas texels `(x, y, w, h)`; gradient end points as 16-bit fractions
-///   `(x0, y0, x1, y1)` of the rectangle.
+///   `(x0, y0, x1, y1)` of the rectangle; image: the level's atlas origin and size.
+/// * image: `rect` is the part drawn, `extra` the picture's origin and texels per pixel
+///   `(dest x, dest y, kx, ky)`, `color0` alpha the opacity.
 /// * `clip`: row of the clip table (0 = no clip).
 /// * `params`: bits 0..4 kind, 4..10 atlas page.
 #[repr(C)]
@@ -242,6 +273,19 @@ impl InstanceBuilder {
         scale: f32,
         atlas_gen: u64,
     ) {
+        self.build_with_images(list, glyphs, &mut NoImages, scale, atlas_gen);
+    }
+
+    /// [`InstanceBuilder::build`] with pictures placed through `images`. `atlas_gen` must also
+    /// change whenever placed pictures may have moved.
+    pub fn build_with_images(
+        &mut self,
+        list: &DisplayList,
+        glyphs: &mut dyn GlyphSource,
+        images: &mut dyn ImageSource,
+        scale: f32,
+        atlas_gen: u64,
+    ) {
         if self.clips.is_empty() || self.clips.len() > MAX_CLIPS {
             self.reset_clips();
         }
@@ -272,7 +316,7 @@ impl InstanceBuilder {
                 _ => true,
             };
             if fresh {
-                let built = self.build_chunk(list, ci, glyphs, (scale, frac), atlas_gen);
+                let built = self.build_chunk(list, ci, (glyphs, images), (scale, frac), atlas_gen);
                 self.cache.insert(chunk.id, built);
                 self.stats.chunks_rebuilt += 1;
             } else {
@@ -344,7 +388,7 @@ impl InstanceBuilder {
         &mut self,
         list: &DisplayList,
         ci: usize,
-        glyphs: &mut dyn GlyphSource,
+        (glyphs, images): (&mut dyn GlyphSource, &mut dyn ImageSource),
         (scale, frac): (f32, (f32, f32)),
         atlas_gen: u64,
     ) -> Cached {
@@ -404,6 +448,7 @@ impl InstanceBuilder {
                 Item::PushOpacity { .. } | Item::PopOpacity => b.layer(item),
                 Item::Rect { .. } | Item::Border { .. } | Item::Shadow { .. } => b.shape(item),
                 Item::Glyphs { .. } => b.glyphs(list, glyphs, item),
+                Item::Image { .. } => b.image(images, item),
             }
         }
         b.flush();
@@ -579,6 +624,40 @@ impl ChunkBuild {
             }
             _ => {}
         }
+    }
+
+    /// A picture: one instance sampling its level from the image atlas.
+    fn image(&mut self, images: &mut dyn ImageSource, item: &Item) {
+        let Item::Image {
+            rect,
+            dest,
+            image,
+            alpha,
+        } = item
+        else {
+            return;
+        };
+        let (r, d) = (self.scaled(rect), self.scaled(dest));
+        if r.is_empty() || d.is_empty() {
+            return;
+        }
+        let level = image.0.level_for(d.w, d.h);
+        let Some(l) = image.0.levels.get(level) else {
+            return;
+        };
+        let Some(at) = images.place(&image.0, level) else {
+            return;
+        };
+        let a = div255(self.opacity * u32::from(*alpha));
+        self.out.instances.push(Instance {
+            rect: [r.x, r.y, r.w, r.h],
+            extra: [d.x, d.y, l.w as f32 / d.w, l.h as f32 / d.h],
+            color0: a << 24,
+            uv: [at.x, at.y, to_u16(l.w), to_u16(l.h)],
+            clip: self.clip_id(),
+            params: kind::IMAGE | (at.page.min(63) << 4),
+            ..Instance::default()
+        });
     }
 
     /// A run of glyphs: atlas glyphs become instances, the rest are counted for the path pass.

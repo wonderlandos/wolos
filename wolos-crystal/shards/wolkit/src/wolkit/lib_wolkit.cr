@@ -4,7 +4,7 @@
 @[Link("wolkit")]
 lib LibWolkit
   WOLKIT_VERSION_MAJOR            =              1
-  WOLKIT_VERSION_MINOR            =              0
+  WOLKIT_VERSION_MINOR            =              1
   WOLKIT_VERSION_PATCH            =              0
   WOLKIT_OK                       =              0
   WOLKIT_ERR_INVALID_ARGUMENT     =              1
@@ -48,6 +48,9 @@ lib LibWolkit
   WOLKIT_MOD_CTRL                 =          2_u32
   WOLKIT_MOD_ALT                  =          4_u32
   WOLKIT_MOD_SUPER                =          8_u32
+  WOLKIT_IMAGE_PENDING            =              0
+  WOLKIT_IMAGE_READY              =              1
+  WOLKIT_IMAGE_FAILED             =              2
   WOLKIT_PATCH_MAGIC              =  827345751_u32
   WOLKIT_PATCH_FORMAT             =              1
   WOLKIT_PATCH_HEADER             =             24
@@ -342,6 +345,10 @@ lib LibWolkit
   fun wolkit_image_get_id(arg0 : Image*) : UInt32
   fun wolkit_image_retain(arg0 : Image*) : Image*
   fun wolkit_image_release(arg0 : Image*)
+  fun wolkit_image_create_encoded(arg0 : Engine*, encoded : UInt8*, len : LibC::SizeT, max_side : UInt32, out_ : Image**, arg5 : Error**) : Status
+  fun wolkit_image_create_file(arg0 : Engine*, path : UInt8*, len : LibC::SizeT, max_side : UInt32, out_ : Image**, arg5 : Error**) : Status
+  fun wolkit_image_get_size(arg0 : Image*, w : UInt32*, h : UInt32*) : Status
+  fun wolkit_image_get_state(arg0 : Image*) : UInt32
   fun wolkit_window_canvas_submit(arg0 : Window*, node : UInt32, ops : UInt8*, len : LibC::SizeT, arg4 : Error**) : Status
   fun wolkit_surface_create(arg0 : Window*, node : UInt32, width : UInt32, height : UInt32, out_ : Surface**, arg5 : Error**) : Status
   fun wolkit_surface_retain(arg0 : Surface*) : Surface*

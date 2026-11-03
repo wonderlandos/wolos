@@ -41,8 +41,15 @@ module Wolkit
           {% if spec[:pos] == "text" && name == "text" && !pos %}
             {% call.raise "text needs the words to show: `text \"Hello\"`." %}
           {% end %}
-          {% if spec[:label] && !props[:label] && !props[:decorative] %}
-            {% call.raise "#{name.id} needs `label:`. Screen readers and tooltips use it." %}
+          {% if spec[:label] && !props[:label] && !props[:decorative] && !(name == "image" && props[:alt]) %}
+            {% if name == "image" %}
+              {% call.raise "image needs `alt:` (what the picture shows), or `decorative: true`. Screen readers use it." %}
+            {% else %}
+              {% call.raise "#{name.id} needs `label:`. Screen readers and tooltips use it." %}
+            {% end %}
+          {% end %}
+          {% if props[:alt] && name != "image" %}
+            {% call.raise "Only image takes `alt:`; #{name.id} takes `label:`." %}
           {% end %}
           {% if spec[:pos] == "icon" && !pos %}
             {% call.raise "#{name.id} needs the icon to show: `#{name.id} :trash, label: \"Delete\"`." %}
@@ -52,7 +59,7 @@ module Wolkit
           {% for key, val in props %}
             {% k = key.stringify %}
             {% known = false %}
-            {% if k == "label" || k == "description" || k == "a11y_role" || k == "class" || k == "decorative" %}
+            {% if k == "label" || k == "description" || k == "a11y_role" || k == "class" || k == "decorative" || (k == "alt" && name == "image") %}
               {% known = true %}
             {% elsif ::Wolkit::DSL::STATES[k] %}
               {% known = true %}
@@ -98,7 +105,7 @@ module Wolkit
             {% end %}
             {% unless known %}
               {% best = nil %}{% bestd = 3 %}
-              {% for cand in allowed + spec[:events].keys + %w(label description a11y_role class decorative disabled selected checked expanded busy) %}
+              {% for cand in allowed + spec[:events].keys + %w(label description a11y_role class decorative disabled selected checked expanded busy alt) %}
                 {% a = k.chars %}{% b = cand.chars %}
                 {% prev = [] of NumberLiteral %}{% for j in (0..b.size) %}{% prev << j %}{% end %}
                 {% for i in (1..a.size) %}
@@ -149,6 +156,8 @@ module Wolkit
                   {% setter = "set_i32" %}{% co = "(" %}{% cc = ").to_i32" %}
                 {% elsif conv == "u32" %}
                   {% setter = "set_u32" %}{% co = "(" %}{% cc = ").to_u32" %}
+                {% elsif conv == "image" %}
+                  {% setter = "set_u32" %}{% co = "::Wolkit::Check.picture(" %}{% cc = ")" %}
                 {% elsif conv == "bool" %}
                   {% setter = "set_bool" %}{% co = "::Wolkit::Check.bool(" %}{% cc = ")" %}
                 {% elsif conv == "str" %}
@@ -214,7 +223,7 @@ module Wolkit
             {% end %}
 
             # --- accessibility: role, name, description
-            {% name_node = props[:label] %}
+            {% name_node = props[:label] || props[:alt] %}
             {% if !name_node && spec[:pos] == "text" && pos && spec[:a11y] != "NONE" %}{% name_node = pos %}{% end %}
             {% if !name_node && props[:placeholder] %}{% name_node = props[:placeholder] %}{% end %}
             {% role_name = spec[:a11y] %}

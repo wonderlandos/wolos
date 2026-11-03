@@ -199,6 +199,16 @@ A flexbox-like subset. Every box is border-box; sizes are logical `f32` pixels. 
 
 Incremental layout: a change marks the node and its ancestors up to the nearest *relayout boundary* (a node whose width and height are both in pixels, or that is out of the flow). Measured sizes are cached per node.
 
+## Pictures
+
+An `image` node paints its picture (`libwolkit.md`, Pictures) between its background and its border, placed by its `image-fit` (`contain`, `cover`, `fill`, `none`; set on the node, not in a sheet). Style it like any box: `border-radius` rounds the picture as well as the box, `opacity` fades it (with no background, border, shadow or focus ring the fade needs no offscreen layer), `background` fills what `contain` and `none` leave empty, and `box-shadow` lifts it. A picture still decoding shows the `control` token in the node's shape.
+
+```css
+.tile { border-radius: m; box-shadow: sm; background: card; }
+.tile:hover { box-shadow: md; transition: box-shadow fast ease; }
+.faded { opacity: 0.6; }
+```
+
 ## Not in 1.0
 
 Grid (planned for 1.1), floats, tables, pseudo-elements, `@import`, `@font-face`, `@keyframes`, `calc()`, filters and blend modes, `position: fixed` and `sticky`, variable-font axes, descendant and sibling selectors. Each is reported as WK-009 or WK-012, never ignored silently.

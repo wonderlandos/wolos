@@ -17,7 +17,7 @@
  *  - "needed" buffers: *needed is always set; a buffer that is too small gets WOLKIT_ERR_LIMIT.
  *  - A panic never crosses the boundary: it becomes WOLKIT_ERR_INTERNAL.
  *
- * Symbols are versioned (abi/wolkit.map, node WOLKIT_1.0); a shipped symbol never changes. The
+ * Symbols are versioned (abi/wolkit.map, nodes WOLKIT_1.0 and 1.1); a shipped symbol never changes. The
  * patch stream is the evolution surface: ids below are append-only.
  */
 #ifndef WOLKIT_H
@@ -33,7 +33,7 @@ extern "C" {
 /* ---- version, status, errors ---- */
 
 #define WOLKIT_VERSION_MAJOR  1
-#define WOLKIT_VERSION_MINOR  0
+#define WOLKIT_VERSION_MINOR  1
 #define WOLKIT_VERSION_PATCH  0
 
 uint32_t wolkit_version(void);
@@ -173,6 +173,19 @@ wolkit_status wolkit_image_create_rgba(wolkit_engine *, uint32_t w, uint32_t h, 
 uint32_t wolkit_image_get_id(const wolkit_image *);
 wolkit_image *wolkit_image_retain(wolkit_image *);
 void wolkit_image_release(wolkit_image *);
+/* 1.1: png, jpeg with the EXIF orientation applied; max_side caps the longer side (0: none) */
+wolkit_status wolkit_image_create_encoded(wolkit_engine *, const uint8_t *encoded, size_t len,
+                                          uint32_t max_side, wolkit_image **out, wolkit_error **);
+/* 1.1: an absolute path, read and decoded on a worker */
+wolkit_status wolkit_image_create_file(wolkit_engine *, const char *path, size_t len,
+                                       uint32_t max_side, wolkit_image **out, wolkit_error **);
+/* 1.1: oriented natural size; UNAVAILABLE until a file's header has been read */
+wolkit_status wolkit_image_get_size(const wolkit_image *, uint32_t *w, uint32_t *h);
+/* 1.1: PENDING while decoding (the node shows a placeholder), READY, FAILED */
+uint32_t wolkit_image_get_state(const wolkit_image *);
+#define WOLKIT_IMAGE_PENDING  0
+#define WOLKIT_IMAGE_READY    1
+#define WOLKIT_IMAGE_FAILED   2
 
 /* ---- canvas and GPU surface (native backend only) ---- */
 

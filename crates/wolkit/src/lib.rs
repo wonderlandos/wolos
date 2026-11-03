@@ -12,8 +12,8 @@
 //!
 //! Layout of the crate (the owner of each part is in the file header):
 //! `scene` (arena, patch, I10), `event` (I12), `error`, `loop_`, `window` (backends), `ffi` (the
-//! only place with `extern "C"`), and the pipeline stages `style`, `layout`, `text`, `paint`,
-//! `cpu`, `gpu`, `input`, `a11y`.
+//! only place with `extern "C"`), `image` (decoded pictures), and the pipeline stages `style`,
+//! `layout`, `text`, `paint`, `cpu`, `gpu`, `input`, `a11y`.
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod a11y;
@@ -28,6 +28,7 @@ pub mod error;
 pub mod event;
 pub mod ffi;
 pub mod gpu;
+pub mod image;
 pub mod input;
 pub mod layout;
 pub mod loop_;
@@ -39,4 +40,4 @@ pub mod text;
 pub mod window;
 
 /// libWolkit's own version (not the WolOS version): major.minor.patch.
-pub const VERSION: (u32, u32, u32) = (1, 0, 0);
+pub const VERSION: (u32, u32, u32) = (1, 1, 0);

@@ -33,10 +33,15 @@ use std::path::{Path, PathBuf};
 /// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
 /// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// 294 -> 312 for pictures (WK-image, 2026-11-03): the four 1.1 verbs in `ffi/image.rs`
+/// (`create_encoded`, `create_file`, `get_size`, `get_state`: each export is `unsafe(no_mangle)`,
+/// `unsafe extern` and a handle or buffer borrow) and 1.0 `create` forwarding to `create_encoded`
+/// (+11); the one `cmd_copy_buffer_to_image` that uploads picture levels to the atlas
+/// (`gpu/live.rs`, +1); `tests/image.rs` calling the verbs through the C ABI (+6).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
-    ("wolkit", 294),
+    ("wolkit", 312),
     ("wopkg", 94),
     ("realtime", 69),
     ("xguard", 63),

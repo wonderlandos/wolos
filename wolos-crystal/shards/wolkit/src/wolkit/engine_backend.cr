@@ -4,6 +4,7 @@
 require "./window"
 require "./ffi/engine"
 require "./ffi/window"
+require "./ffi/image"
 require "./style/kit_table"
 
 module Wolkit

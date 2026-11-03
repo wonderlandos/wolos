@@ -60,3 +60,17 @@ fling_frames_over_budget = 0
 caret_damage_px = 16
 idle_damage_px = 0
 idle_draws = 0
+
+[image]
+# WK-image (benches/image.rs). Forge (shared, release, load 18-33): 12 MP JPEG decode p50 116-187 ms,
+# p95 117-212 ms (whole; capped to 384 px the same, since the JPEG is decoded whole first); 200
+# thumbnails in a 1280 x 800 frame: instance build 10 us, GPU 1 draw, engine side p95 97-117 us with
+# a warm atlas (0 bytes uploaded), first frame 4.9 MB uploaded; CPU rasteriser 68-75 ms for reference.
+# The decode ceiling is 300 ms: one run at load 146-224 measured p95 232 ms.
+decode_12mp_jpeg_p95_ns = 300_000_000
+decode_12mp_jpeg_thumb_p95_ns = 300_000_000
+build_200_thumbs_ns = 100_000
+gpu_200_thumbs_draws = 2
+gpu_200_thumbs_cpu_p95_ns = 1_000_000
+gpu_200_thumbs_upload_steady_bytes = 0
+cpu_200_thumbs_ns = 150_000_000

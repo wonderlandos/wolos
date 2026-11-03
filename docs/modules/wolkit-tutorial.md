@@ -1,6 +1,6 @@
 # Your first Wolkit app in fifteen minutes (ADR 0039)
 
-A tutorial for writing a WolOS app with the `wolkit` Crystal shard: a to-do list in eight steps. It builds the program in `wolos-crystal/examples/todos/src/todos.cr`; the reference is `docs/modules/wolkit.md` and the engine is `docs/modules/libwolkit.md` (code in `crates/wolkit`). Every program in this tutorial that starts with `require "wolkit"` is type-checked by `wolos-crystal/shards/wolkit/spec/tutorial_spec.cr`, so it cannot drift from the shard. You need the Crystal toolchain, the `wolkit` and `cryswol` shards (`/usr/lib/wolos/crystal`) and `libwolkit`.
+A tutorial for writing a WolOS app with the `wolkit` Crystal shard: a to-do list in eight steps. It builds the program in `wolos-crystal/examples/todos/src/todos.cr`; the reference is `docs/modules/wolkit.md` and the engine is `docs/modules/libwolkit.md` (code in `crates/wolkit`). Every program in this tutorial that starts with `require "wolkit"` is type-checked by `wolos-crystal/shards/wolkit/spec/scripts/tutorial.sh` (run by the shard's `make spec`), so it cannot drift from the shard. You need the Crystal toolchain, the `wolkit` and `cryswol` shards (`/usr/lib/wolos/crystal`) and `libwolkit`.
 
 ## 1. Make the project (1 minute)
 

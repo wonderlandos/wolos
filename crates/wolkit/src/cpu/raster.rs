@@ -165,6 +165,15 @@ enum Kind {
         off: usize,
         color: Color,
     },
+    /// A picture level sampled bilinearly into `rect`; `k` is texels per device pixel.
+    Image {
+        rect: Rect,
+        dest: Rect,
+        px: std::sync::Arc<crate::image::Pixels>,
+        level: usize,
+        k: (f32, f32),
+        alpha: u32,
+    },
     LayerBegin {
         alpha: u8,
         end: usize,
@@ -337,6 +346,12 @@ fn prepare(
                     color,
                     glyphs: range,
                 } => p.glyphs(&cur, glyphs, *font, *size, *color, list.glyph_slice(range)),
+                Item::Image {
+                    rect,
+                    dest,
+                    image,
+                    alpha,
+                } => p.image(&cur, rect, dest, image, *alpha),
             }
         }
         // Close any layer left open by an unbalanced list.
@@ -547,6 +562,42 @@ impl Prepared {
         });
     }
 
+    /// A picture: the level for the device size of `dest`, drawn where `rect` and the clip
+    /// overlap. Texel coordinates are `(p - dest) * k - 0.5`, as in the GPU shader.
+    fn image(
+        &mut self,
+        cur: &Cur,
+        rect: &Rect,
+        dest: &Rect,
+        image: &crate::image::ImageRef,
+        alpha: u8,
+    ) {
+        let r = cur.rect(rect);
+        let d = cur.rect(dest);
+        let bounds = r.to_pixels().intersect(&cur.clip_bounds);
+        if bounds.is_empty() || d.is_empty() {
+            return;
+        }
+        let px = std::sync::Arc::clone(&image.0);
+        let level = px.level_for(d.w, d.h);
+        let Some(l) = px.levels.get(level) else {
+            return;
+        };
+        let k = (l.w as f32 / d.w, l.h as f32 / d.h);
+        self.prims.push(Prim {
+            kind: Kind::Image {
+                rect: r,
+                dest: d,
+                px,
+                level,
+                k,
+                alpha: div255(cur.opacity * u32::from(alpha)),
+            },
+            bounds,
+            clip: cur.clip,
+        });
+    }
+
     fn glyphs(
         &mut self,
         cur: &Cur,
@@ -722,6 +773,12 @@ fn clip_cov(p: &Prepared, clip: u32, px: f32, py: f32) -> u32 {
     let c = &p.clips[clip.ix()];
     let mut cov = 255u32;
     for (r, rad) in &p.soft[c.soft.start.ix()..c.soft.end.ix()] {
+        // Half a pixel inside the rectangle shrunk by its largest radius the coverage is 255
+        // (the exact evaluation gives the same), so the edge is not evaluated there.
+        let m = rad[0].max(rad[1]).max(rad[2]).max(rad[3]) + 0.5;
+        if px >= r.x + m && px <= r.x + r.w - m && py >= r.y + m && py <= r.y + r.h - m {
+            continue;
+        }
         let k = cov_u8(rrect_cov(px, py, r, rad));
         cov = div255(cov * k);
         if cov == 0 {
@@ -745,6 +802,26 @@ fn draw_prim(buf: &mut TileBuf, p: &Prepared, prim: &Prim) {
     }
     let soft = !p.clips[prim.clip.ix()].soft.is_empty()
         && p.clips[prim.clip.ix()].soft.start != p.clips[prim.clip.ix()].soft.end;
+    if let Kind::Image {
+        rect,
+        dest,
+        px,
+        level,
+        k,
+        alpha,
+    } = &prim.kind
+        && let Some(l) = px.levels.get(*level)
+    {
+        let im = ImagePrim {
+            rect,
+            dest,
+            level: l,
+            k: *k,
+            alpha: *alpha,
+        };
+        draw_image(buf, p, prim.clip, soft, area, &im);
+        return;
+    }
     for y in area.y0..area.y1 {
         for x in area.x0..area.x1 {
             let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
@@ -789,6 +866,30 @@ fn draw_prim(buf: &mut TileBuf, p: &Prepared, prim: &Prim) {
                     }
                     (color.premul(), u32::from(p.masks[off + (my * w + mx).ix()]))
                 }
+                Kind::Image {
+                    rect,
+                    dest,
+                    px,
+                    level,
+                    k,
+                    alpha,
+                } => {
+                    let c = cov_u8(rrect_cov(fx, fy, rect, &[0.0; 4]));
+                    let Some(l) = px.levels.get(*level) else {
+                        return;
+                    };
+                    let t = crate::image::fit::bilinear(
+                        l,
+                        (fx - dest.x) * k.0 - 0.5,
+                        (fy - dest.y) * k.1 - 0.5,
+                    );
+                    let t = if *alpha >= 255 {
+                        t
+                    } else {
+                        t.map(|v| to_u8(div255(u32::from(v) * alpha)))
+                    };
+                    (t, c)
+                }
                 Kind::LayerBegin { .. } | Kind::LayerEnd { .. } => return,
             };
             if soft {
@@ -796,6 +897,84 @@ fn draw_prim(buf: &mut TileBuf, p: &Prepared, prim: &Prim) {
             }
             let i = (((y - buf.y0) * buf.w + (x - buf.x0)) * 4).ix();
             over(&mut buf.px[i..i + 4], src, cov);
+        }
+    }
+}
+
+struct ImagePrim<'a> {
+    rect: &'a Rect,
+    dest: &'a Rect,
+    level: &'a crate::image::Level,
+    k: (f32, f32),
+    alpha: u32,
+}
+
+/// The picture fast path: rows at a time. Pixels whose centre is at least half a pixel inside
+/// the drawn rectangle have full coverage without evaluating its edge, and a texel hit exactly
+/// (weights 0, as for a 1:1 blit) is used as is. The arithmetic is `image::fit::bilinear`'s,
+/// so the result is the same as the general per-pixel path and the GPU shader.
+fn draw_image(
+    buf: &mut TileBuf,
+    p: &Prepared,
+    clip: u32,
+    soft: bool,
+    area: PixelRect,
+    im: &ImagePrim<'_>,
+) {
+    let l = im.level;
+    let (w, h) = (to_i32(l.w), to_i32(l.h));
+    if w == 0 || h == 0 || l.px.len() < (l.w.ix() * l.h.ix() * 4) {
+        return;
+    }
+    let r = im.rect;
+    let (ix0, iy0) = (ceil_i32(r.x), ceil_i32(r.y));
+    let (ix1, iy1) = (floor_i32(r.right()), floor_i32(r.bottom()));
+    let stride = l.w.ix() * 4;
+    let at = |row: &[u8], x: i32| -> [u8; 4] {
+        let i = x.clamp(0, w - 1).ix() * 4;
+        [row[i], row[i + 1], row[i + 2], row[i + 3]]
+    };
+    let mix = |a: [u8; 4], b: [u8; 4], t: u32| -> [u8; 4] {
+        let m = |x: u8, y: u8| to_u8(div255(u32::from(x) * (255 - t) + u32::from(y) * t));
+        [m(a[0], b[0]), m(a[1], b[1]), m(a[2], b[2]), m(a[3], b[3])]
+    };
+    for y in area.y0..area.y1 {
+        let fy = y as f32 + 0.5;
+        let v = (fy - im.dest.y) * im.k.1 - 0.5;
+        let fv = v.floor();
+        let wy = cov_u8(v - fv);
+        let ty = floor_i32(fv);
+        let row0 = &l.px[ty.clamp(0, h - 1).ix() * stride..][..stride];
+        let row1 = &l.px[ty.saturating_add(1).clamp(0, h - 1).ix() * stride..][..stride];
+        let inner_y = y >= iy0 && y < iy1;
+        for x in area.x0..area.x1 {
+            let fx = x as f32 + 0.5;
+            let mut cov = if inner_y && x >= ix0 && x < ix1 {
+                255
+            } else {
+                cov_u8(rrect_cov(fx, fy, r, &[0.0; 4]))
+            };
+            let u = (fx - im.dest.x) * im.k.0 - 0.5;
+            let fu = u.floor();
+            let wx = cov_u8(u - fu);
+            let tx = floor_i32(fu);
+            let t = if wx == 0 && wy == 0 {
+                at(row0, tx)
+            } else {
+                let top = mix(at(row0, tx), at(row0, tx.saturating_add(1)), wx);
+                let bot = mix(at(row1, tx), at(row1, tx.saturating_add(1)), wx);
+                mix(top, bot, wy)
+            };
+            let t = if im.alpha >= 255 {
+                t
+            } else {
+                t.map(|c| to_u8(div255(u32::from(c) * im.alpha)))
+            };
+            if soft {
+                cov = div255(cov * clip_cov(p, clip, fx, fy));
+            }
+            let i = (((y - buf.y0) * buf.w + (x - buf.x0)) * 4).ix();
+            over(&mut buf.px[i..i + 4], t, cov);
         }
     }
 }

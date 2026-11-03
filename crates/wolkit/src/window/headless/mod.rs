@@ -43,7 +43,7 @@ impl Backend for Headless {
     }
 
     fn render_rgba(&mut self, w: &mut WindowCore, out: &mut [u8]) -> Result<(u32, u32)> {
-        pipeline::ensure_layout(w);
+        pipeline::settle_images(w);
         let (pw, ph) = (scaled(w.width, w.scale), scaled(w.height, w.scale));
         let need = pw.ix() * ph.ix() * 4;
         if out.len() < need {

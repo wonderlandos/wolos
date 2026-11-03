@@ -56,6 +56,16 @@ pub fn render_rgba(w: &mut WindowCore, width: u32, height: u32, scale: f32, out:
     crate::cpu::render_frame(&frame, &mut sys, &mut w.text_cache, out);
 }
 
+/// Asks for every picture the window shows and waits (at most five seconds) until none is
+/// decoding, so a frame drawn next does not depend on timing. The headless backend's
+/// `render_rgba`; never on a display backend's frame path.
+pub fn settle_images(w: &mut WindowCore) {
+    ensure_layout(w);
+    if crate::paint::scene::request_images(&w.scene) > 0 {
+        crate::image::settle(std::time::Duration::from_secs(5));
+    }
+}
+
 /// A frame as the engine sees it: bring layout up to date, "paint", and clear the paint and
 /// accessibility bits. The headless backend has no screen to draw to, so this is also what a
 /// test's `advance_time` runs. Allocates nothing.
