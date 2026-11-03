@@ -11,7 +11,14 @@
 #   checked  when the check finished (seconds since 1970)
 set -u
 D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
-URL=${WOLOS_RELEASE_URL:-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
+# The release manifest (and URL.sig) from the CDN's latest/ folder (the release tooling writes it),
+# tried in order (wol_core::cdn::latest): the CDN under the project's domain, the same server under
+# its own name (MIRROR), then GitHub's latest release, which carries the same two files (FALLBACK).
+# The next one is read when one answers 404 or an error or cannot be reached; an empty MIRROR or
+# FALLBACK is skipped. The signature is checked when the findings are read, whichever came.
+URL=${WOLOS_RELEASE_URL:-https://cdn.wolos.org/latest/release.json}
+MIRROR=${WOLOS_RELEASE_MIRROR-https://wolos.squareweb.app/latest/release.json}
+FALLBACK=${WOLOS_RELEASE_FALLBACK-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
 EVERY=72000
 now=$(date +%s)
 last=$(cat "$D/checked" 2>/dev/null)
@@ -38,9 +45,14 @@ else
 	rm -f "$D/audit"
 fi
 pacman -Qq >"$D/kernels" 2>/dev/null
-if curl -fsSL -o "$D/base.new" "$URL" 2>/dev/null &&
-	curl -fsSL "$URL.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
-	[ -s "$D/base.sig.new" ]; then
+# release URL: the manifest and its signature (in hex) from one place; 0 when both came.
+release() {
+	[ -n "$1" ] &&
+		curl -fsSL -o "$D/base.new" "$1" 2>/dev/null &&
+		curl -fsSL "$1.sig" 2>/dev/null | od -An -v -tx1 | tr -d " \n" >"$D/base.sig.new" &&
+		[ -s "$D/base.sig.new" ]
+}
+if release "$URL" || release "$MIRROR" || release "$FALLBACK"; then
 	mv "$D/base.new" "$D/base"
 	mv "$D/base.sig.new" "$D/base.sig"
 else

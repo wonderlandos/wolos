@@ -106,13 +106,41 @@ fn release_signature_verifies_with_the_package_keys() {
     );
 }
 
-/// The check fetches from where the ISO workflow publishes.
+/// The check fetches from where releases are published: the CDN's `latest/` folder (the release
+/// tooling writes it) under cdn.wolos.org, then under the server's own name, then GitHub's latest
+/// release when the CDN has none or is down; the feed (`wopkg::FEEDS`) in the same order, both
+/// from `wol_core::cdn::LATEST` (tests/cdn_order.rs runs the order).
 #[test]
 fn update_check_reads_the_published_release() {
     let check = read("files/usr/lib/wolos/update-check");
-    let url =
-        "https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json";
-    assert!(check.contains(url), "update-check URL");
+    for (var, url) in [
+        (
+            "URL=${WOLOS_RELEASE_URL:-",
+            "https://cdn.wolos.org/latest/release.json}",
+        ),
+        (
+            "MIRROR=${WOLOS_RELEASE_MIRROR-",
+            "https://wolos.squareweb.app/latest/release.json}",
+        ),
+        (
+            "FALLBACK=${WOLOS_RELEASE_FALLBACK-",
+            "https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}",
+        ),
+    ] {
+        assert!(
+            check.lines().any(|l| l == format!("{var}{url}")),
+            "update-check {var}"
+        );
+    }
+    assert!(
+        check.contains("if release \"$URL\" || release \"$MIRROR\" || release \"$FALLBACK\"; then")
+    );
+    // The manifest and the feeds share one folder, named in one place.
+    assert!(
+        read("crates/wopkg/src/lib.rs")
+            .contains("pub const FEEDS: &str = wol_core::cdn::LATEST[0];"),
+        "wopkg::FEEDS"
+    );
     // wolos-iso release.yml is reusable: only wolos publish.yml (what=iso, the repo holding the
     // keys) calls it, one publish at a time. No tag push or dispatch of its own.
     let iso = read(".github/workflows/release.yml");

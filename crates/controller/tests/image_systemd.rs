@@ -797,7 +797,7 @@ fn reports_send_new_failures_once_and_only_when_on() {
             r#"{"kind":"crash","version":"0.11.2","kernel":"7.3.0-1-wolos","detail":"wol-shell SIGSEGV"}"#,
         ]
     );
-    assert!(log(&d).contains("https://wolos.squareweb.app/report"));
+    assert!(log(&d).contains(wol_core::cdn::REPORT[0]));
     run();
     assert_eq!(
         fs::read_to_string(d.join("sent")).unwrap(),
