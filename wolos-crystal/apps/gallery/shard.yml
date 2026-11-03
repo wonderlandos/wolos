@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: BSD-2-Clause
+name: gallery
+version: 0.1.0
+description: |
+  Gallery (org.wolos.gallery), the WolOS picture library and viewer, made with Wolkit.
+license: BSD-2-Clause
+crystal: ">= 1.22.0"
+targets:
+  gallery:
+    main: src/main.cr

@@ -1,0 +1,62 @@
+/* The gallery's own classes, after the kit look (compiled with build/00-kit.wolcss first, so the kit
+   class ids stay 0 to 7). Colours are theme tokens and motion uses the named durations, eases and
+   springs only; docs/modules/gallery.md lists which part moves on which curve. */
+
+/* Symbolic icons (the icon of an icon button) are 16 px, as the HIG asks for toolbars and rows;
+   pictures set their own size inline. */
+image { width: 16px; height: 16px; }
+
+/* A thumbnail in the library grid. Hover lifts it a little, selection rings it in the accent. */
+.tile {
+  background: card;
+  border-radius: m;
+  cursor: pointer;
+  transition: opacity, background fast ease;
+}
+.tile:hover { background: control; box-shadow: sm; }
+.tile:selected { border: 2px accent; box-shadow: md; }
+.tile:focus-visible { outline: 2px accent; }
+
+/* A section heading of the grid and the quiet line beside it. */
+.section-title { font-size: title; font-weight: 600; color: text; }
+.section-detail { font-size: secondary; color: dim; }
+
+/* The viewer's stage: the picture on the sidebar tone, edge to edge. */
+.stage { background: sidebar; }
+.picture { spring: snappy; }
+
+/* The filmstrip under the stage; the current picture is ringed. */
+.strip { background: surface; padding: xs sm; }
+.strip-item {
+  background: card;
+  border-radius: s;
+  opacity: 70%;
+  cursor: pointer;
+  transition: opacity fast ease;
+}
+.strip-item:hover { opacity: 100%; }
+.strip-item:selected { opacity: 100%; border: 2px accent; }
+
+/* The info panel slides in from the right on the normal duration. */
+.info {
+  background: sidebar;
+  padding: lg;
+  transition: opacity normal ease;
+}
+.info-label { font-size: caption; color: dim; }
+.info-value { font-size: body; color: text; }
+
+/* The notice line (an error, or what Undo would bring back). */
+.notice { background: card; border-radius: m; padding: sm md; box-shadow: sm; }
+
+@reduce-motion {
+  .picture { spring: none; }
+  .tile { transition: none; }
+  .strip-item { transition: none; }
+  .info { transition: none; }
+}
+
+@contrast {
+  .tile { border: 1px text; }
+  .strip-item { border: 1px text; opacity: 100%; }
+}
