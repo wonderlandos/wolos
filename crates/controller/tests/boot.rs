@@ -211,6 +211,61 @@ fn a_kernel_older_than_the_floor_does_not_stay_up() {
     assert!(e.execs.is_empty());
 }
 
+/// audit core-install #4: the boot check falls back only to a slot that failed no check itself
+/// (the rule `wol seal check` keeps). With both slots under the floor the first refusal marks
+/// its slot, the second finds that mark and stays instead of restarting back: no restart loop.
+#[test]
+fn two_slots_under_the_floor_do_not_restart_into_each_other() {
+    let mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/epoch-failed-{s}"));
+    // Slot a is refused first: b has no mark, so the computer restarts into b, and a is marked.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=5", "6\n");
+    assert_eq!(run("boot check", &mut e), 1);
+    assert_eq!(e.execs.len(), 2, "{:?}", e.execs);
+    assert!(
+        e.written.iter().any(|(p, _)| *p == mark("wolos-a")),
+        "{:?}",
+        e.written
+    );
+    // Slot b is under the floor too, and a carries its mark: b stays up and says why.
+    let mut e = booted("rootflags=subvol=@wolos-b wolos.epoch=5", "6\n");
+    e.files.push((
+        PathBuf::from("/efi/loader/entries/wolos-a.conf"),
+        "title WolOS 1.1\n".into(),
+    ));
+    e.files
+        .push((mark("wolos-a"), "older than the floor\n".into()));
+    assert_eq!(run("boot check", &mut e), 1);
+    assert!(e.execs.is_empty(), "no restart: {:?}", e.execs);
+    assert!(e.written.iter().any(|(p, _)| *p == mark("wolos-b")));
+    assert!(
+        e.written
+            .iter()
+            .any(|(p, t)| p.ends_with("verity-notice") && t.contains("no newer one")),
+        "{:?}",
+        e.written
+    );
+    // A slot the seal check refused is no way out either.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=5", "6\n");
+    e.files.push((
+        PathBuf::from("/var/lib/wolos/verity-failed-wolos-b"),
+        "failed\n".into(),
+    ));
+    assert_eq!(run("boot check", &mut e), 1);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
+    // Nor is a slot with no menu entry.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=5", "6\n");
+    e.files.retain(|(p, _)| !p.ends_with("wolos-b+3.conf"));
+    assert_eq!(run("boot check", &mut e), 1);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
+    // Updated past the floor since: the slot passes and loses its old mark.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    e.files
+        .push((mark("wolos-a"), "older than the floor\n".into()));
+    assert_eq!(run("boot check", &mut e), 0);
+    assert!(e.execs.is_empty());
+    assert!(e.removed.contains(&mark("wolos-a")), "{:?}", e.removed);
+}
+
 #[test]
 fn a_good_boot_moves_the_floor_and_names_the_other_slot() {
     let mut e = booted("rootflags=subvol=@wolos-b wolos.epoch=6", "2\n");
