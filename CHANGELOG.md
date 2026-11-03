@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.12.0 (unreleased)
+## 0.12.0 (2026-11-03)
 The same desktop, made solid, and then grown: a redesigned Settings and Control Center, shell
 plugins and themes you can make yourself, optional modules, and a friendlier installer with Secure
 Boot on the live USB stick. All four repositories are tagged together once every package is built
