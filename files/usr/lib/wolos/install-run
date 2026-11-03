@@ -135,7 +135,11 @@ SFS=${WOLOS_SOURCE_SFS:-/run/archiso/bootmnt/wolos/x86_64/airootfs.sfs}
 # A try before this one may have left its volume open and its mounts in place: let them go first.
 ! mountpoint -q "$T" 2>/dev/null || umount -R "$T" || :
 ! mountpoint -q /run/wolos/install-look 2>/dev/null || umount /run/wolos/install-look || :
-[ ! -e /dev/mapper/wolosroot ] || cryptsetup close wolosroot || :
+# Every volume a try opened goes: the system (wolosroot) and the extra ones `wol install layout`
+# names wolos<folder>; a layout that stopped part way closes its own, this catches the rest.
+for m in "${WOLOS_MAPPER_DIR:-/dev/mapper}"/wolos*; do
+  [ ! -e "$m" ] || cryptsetup close "${m##*/}" || :
+done
 # Only a disk the installer lists at all; then its partitions mounted by the person (a USB disk
 # opened in Files) go first, never the live medium's. install-check then sees the disk as it is.
 if [ -z "$disk" ] || ! sh "$here/install-disks" | grep -qx -- "$disk"; then

@@ -276,11 +276,14 @@ pub fn clear(env: &mut dyn Env) -> i32 {
         .unwrap_or_default();
     let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
     let steps = layers::clear_steps(&layers::to_clear(&folded, &ls));
-    for a in &steps {
+    let refresh = steps.iter().position(|s| *s == layers::refresh_step());
+    for (i, a) in steps.iter().enumerate() {
         if env.exec(a).unwrap_or(127) != 0 {
-            // The last step merges what is left: never leave the system unmerged.
-            if let Some(merge) = steps.last().filter(|m| *m != a) {
-                let _ = env.exec(merge);
+            // Stopped before the refresh: merge what is in the extensions directory now, so the
+            // merge matches it. At or after it: nothing more (the old merge may still use what
+            // moved aside).
+            if let Some(r) = refresh.filter(|r| i < *r) {
+                let _ = env.exec(&steps[r]);
             }
             return fail(env, ErrorCode::Failed, "could not clear the folded layers");
         }

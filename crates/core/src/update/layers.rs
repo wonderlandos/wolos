@@ -8,7 +8,8 @@
 //! Removing a package that is in the sealed base leaves overlay whiteouts in the layer.
 //! The next system update folds the layers into the new slot ([`super::build`]) and names them
 //! in the slot's [`FOLDED`]. The live layers stay while the old slot runs; when the new slot
-//! boots, `wol layers clear` ([`to_clear`]) removes the ones it already holds.
+//! boots, `wol layers clear` ([`to_clear`]) removes the ones it already holds; the layers that
+//! stay are unmerged only for systemd-sysext's own swap ([`clear_steps`]).
 //! Pure: argv lists, texts and decisions. `wol pkg` and `wol layers fold|clear` run them.
 use super::{PACMAN, Step};
 
@@ -79,28 +80,46 @@ pub fn to_clear(folded: &str, ls: &str) -> Vec<String> {
         .collect()
 }
 
-/// Steps that remove the layers [`to_clear`] found: unmerge first (an overlay lower directory
-/// must not change under a live mount), remove, then merge what is left. Empty when there is
-/// nothing to remove. The last step is always the merge, so a caller that stops on a failed
-/// removal still runs it.
+/// Where [`clear_steps`] moves the layers it clears until the new merge is up (same file system
+/// as [`DIR`], so the move is a rename and copies nothing).
+pub const CLEARED_DIR: &str = "/var/lib/wolos/layers-cleared";
+
+/// The step that merges [`DIR`] as it is now over `/usr`, in place of the merge that is up.
+/// systemd-sysext swaps the two itself; it documents a brief moment between them (systemd 262),
+/// far shorter than an unmerge, a removal and a merge one after the other.
+pub fn refresh_step() -> Vec<String> {
+    vec!["systemd-sysext".into(), "refresh".into()]
+}
+
+/// Steps that remove the layers [`to_clear`] found while the login window may already be up
+/// (audit core-install #5): each moves out of [`DIR`] into [`CLEARED_DIR`] (a rename: nothing in
+/// it changes under the live merge), [`refresh_step`] merges what is left, and only then are
+/// the moved layers and their work directories removed, so the layers that stay are never
+/// unmerged for as long as a removal takes. Empty when there is nothing to remove.
+/// A caller that stops before the refresh still runs it; one that stops at or after it runs
+/// nothing more (a failed refresh may still be using the moved layers).
 pub fn clear_steps(names: &[String]) -> Vec<Vec<String>> {
     let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
-    let rm: Vec<Vec<String>> = names
-        .iter()
-        .filter(|n| is_layer_name(n))
-        .flat_map(|n| {
-            [
-                s(&["rm", "-rf", &format!("{DIR}/{n}")]),
-                s(&["rm", "-rf", &format!("{WORK_DIR}/{n}")]),
-            ]
-        })
-        .collect();
-    if rm.is_empty() {
-        return rm;
+    let names: Vec<&String> = names.iter().filter(|n| is_layer_name(n)).collect();
+    if names.is_empty() {
+        return Vec::new();
     }
-    let mut out = vec![s(&["systemd-sysext", "unmerge"])];
-    out.extend(rm);
-    out.push(s(&["systemd-sysext", "merge"]));
+    let mut out = vec![s(&["mkdir", "-p", CLEARED_DIR])];
+    out.extend(names.iter().map(|n| {
+        s(&[
+            "mv",
+            "-T",
+            &format!("{DIR}/{n}"),
+            &format!("{CLEARED_DIR}/{n}"),
+        ])
+    }));
+    out.push(refresh_step());
+    out.push(s(&["rm", "-rf", CLEARED_DIR]));
+    out.extend(
+        names
+            .iter()
+            .map(|n| s(&["rm", "-rf", &format!("{WORK_DIR}/{n}")])),
+    );
     out
 }
 
@@ -416,15 +435,19 @@ mod tests {
             .iter()
             .map(|a| a.join(" "))
             .collect();
+        // audit core-install #5: no unmerge; the layer moves aside, the new merge replaces the
+        // old one, and only then is anything deleted.
         assert_eq!(
             s,
             [
-                "systemd-sysext unmerge",
-                "rm -rf /var/lib/extensions/wolos-layer-0002",
+                "mkdir -p /var/lib/wolos/layers-cleared",
+                "mv -T /var/lib/extensions/wolos-layer-0002 /var/lib/wolos/layers-cleared/wolos-layer-0002",
+                "systemd-sysext refresh",
+                "rm -rf /var/lib/wolos/layers-cleared",
                 "rm -rf /var/lib/wolos/layers/wolos-layer-0002",
-                "systemd-sysext merge"
             ]
         );
+        assert!(!s.iter().any(|x| x.contains("unmerge")));
         assert!(clear_steps(&[]).is_empty());
         assert!(clear_steps(&["../x".into()]).is_empty());
         assert!(to_clear("", ls).is_empty());

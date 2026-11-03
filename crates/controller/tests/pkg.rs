@@ -294,10 +294,11 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
     assert_eq!(
         lines(&env),
         [
-            "systemd-sysext unmerge",
-            "rm -rf /var/lib/extensions/wolos-layer-0001",
+            "mkdir -p /var/lib/wolos/layers-cleared",
+            "mv -T /var/lib/extensions/wolos-layer-0001 /var/lib/wolos/layers-cleared/wolos-layer-0001",
+            "systemd-sysext refresh",
+            "rm -rf /var/lib/wolos/layers-cleared",
             "rm -rf /var/lib/wolos/layers/wolos-layer-0001",
-            "systemd-sysext merge"
         ]
     );
     // R2C-1: the folded list is consumed.
@@ -316,6 +317,52 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
     assert!(none.execs.is_empty());
     let mut user = FakeEnv::default();
     assert_ne!(run("layers clear", &mut user), 0);
+}
+
+/// audit core-install #5: a clear that stops part way never leaves /usr unmerged. Stopped before
+/// the refresh (a move failed): the refresh still runs, nothing is deleted. The refresh itself
+/// failed: nothing after it runs (the old merge may still use the moved layers), no unmerge.
+#[test]
+fn a_clear_that_stops_never_leaves_the_layers_unmerged() {
+    let env_with = |codes: Vec<i32>| FakeEnv {
+        root: true,
+        exec_codes: codes,
+        files: vec![(
+            PathBuf::from("/etc/wolos/folded-layers"),
+            "wolos-layer-0001\nwolos-layer-0002\n".into(),
+        )],
+        captures: vec![(
+            "ls -1 /var/lib/extensions".into(),
+            "wolos-layer-0001\nwolos-layer-0002\nwolos-layer-0003\n".into(),
+        )],
+        ..Default::default()
+    };
+    // mkdir ok, the first move ok, the second fails.
+    let mut env = env_with(vec![0, 0, 1]);
+    assert_ne!(run("layers clear", &mut env), 0);
+    let l = lines(&env);
+    assert_eq!(l.len(), 4, "{l:?}");
+    assert_eq!(l[3], "systemd-sysext refresh");
+    assert!(
+        !l.iter()
+            .any(|x| x.starts_with("rm ") || x.contains("unmerge")),
+        "{l:?}"
+    );
+    assert!(
+        !env.written.iter().any(|w| w.0.ends_with("folded-layers")),
+        "the list stays for the next try"
+    );
+    // The refresh fails: it runs once, and nothing is deleted after it.
+    let mut env = env_with(vec![0, 0, 0, 1]);
+    assert_ne!(run("layers clear", &mut env), 0);
+    let l = lines(&env);
+    assert_eq!(l.last().unwrap(), "systemd-sysext refresh", "{l:?}");
+    assert_eq!(
+        l.iter().filter(|x| x.contains("sysext")).count(),
+        1,
+        "{l:?}"
+    );
+    assert!(!l.iter().any(|x| x.starts_with("rm ")), "{l:?}");
 }
 
 #[test]
