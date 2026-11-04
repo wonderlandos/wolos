@@ -266,6 +266,10 @@ fn the_key_screen_route_uses_the_unaltered_first_stage_and_queues_our_key() {
         d.join("sb/key-screen").exists(),
         "the first-boot unit knows the screen is still to come"
     );
+    // QA-DOC-29: the key is also at the top of the startup partition under the stick's name,
+    // where 'Enroll key from disk' finds it when the first blue screen was missed.
+    assert!(esp.join("ENROL_THIS_KEY_FOR_WOLOS.cer").exists());
+    assert!(esp.join("EFI/wolos/wolos-key.cer").exists());
 }
 
 /// Secure Boot on, only Windows trusted (audit2 B10): the signed first stage and the queued key

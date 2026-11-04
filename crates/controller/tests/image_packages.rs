@@ -429,6 +429,36 @@ fn ime_session_exports_only_with_fcitx5() {
     );
 }
 
+/// QA-PWR-10: ~/.local/bin (the Console module installs pwsh there, hints send programs there)
+/// is on every login shell's PATH, first, and only once however often the profile is read.
+#[test]
+fn login_path_has_local_bin_first_once() {
+    let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../desktop/overlay/etc/profile.d/wolos-console.sh");
+    let run = |path: &str| {
+        let o = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                ". '{}'; . '{}'; printf %s \"$PATH\"",
+                f.display(),
+                f.display()
+            ))
+            .env("HOME", "/home/ana")
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        String::from_utf8(o.stdout).unwrap()
+    };
+    assert_eq!(
+        run("/usr/local/bin:/usr/bin"),
+        "/home/ana/.local/bin:/usr/local/bin:/usr/bin"
+    );
+    assert_eq!(
+        run("/usr/bin:/home/ana/.local/bin"),
+        "/usr/bin:/home/ana/.local/bin"
+    );
+}
+
 /// set-regdom runs `iw reg set` itself (review of QA-100 B4): the image must ship `iw`, or every
 /// configured domain fails at cfg80211 load with "not found"; wireless-regdb is the database it reads.
 #[test]

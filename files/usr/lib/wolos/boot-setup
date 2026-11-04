@@ -178,6 +178,9 @@ rm -f "$S/key-screen"
 if [ "$screen" = yes ]; then
   # Also on the startup partition: the key screen can enroll it from there if the queue is ever lost.
   cp "$S/db.der" "$ESP/EFI/wolos/wolos-key.cer"
+  # And at the top, under the name the stick uses: 'Enroll key from disk' lists it first, and the
+  # key screen is reachable from the stick when this disk's own one was missed (QA-DOC-29).
+  cp "$S/db.der" "$ESP/ENROL_THIS_KEY_FOR_WOLOS.cer"
   : > "$S/key-screen"
   WOLOS_SB_DIR=$S sh "$here/boot-enroll" >/dev/null 2>&1 || :   # the first boot tries again
 fi

@@ -182,7 +182,9 @@ pub fn key_screen_steps() -> Vec<String> {
         "Press a key, choose Enroll MOK, then Continue, then Yes.".into(),
         format!("When it asks for a password, type {MOK_PASSWORD}. Nothing shows while you type."),
         "Choose Reboot. You will not see this screen again.".into(),
-        "Missed it? Run wol boot enroll and restart.".into(),
+        "Missed it? Start from the USB stick again: its blue screen shows Enroll MOK. Or \
+         choose Enroll key from disk and pick ENROL_THIS_KEY_FOR_WOLOS.cer."
+            .into(),
     ]
 }
 
@@ -409,6 +411,18 @@ mod tests {
                 .all(|c| !"aqwzym0123456789".contains(c))
         );
         assert!(key_screen_steps().iter().any(|s| s.contains(MOK_PASSWORD)));
+    }
+
+    /// QA-DOC-29: a missed key screen leaves a disk that does not start, so `wol boot enroll`
+    /// cannot be run; the steps name what still works (the stick, the key file boot-setup puts
+    /// at the top of the startup partition).
+    #[test]
+    fn a_missed_key_screen_points_at_what_still_starts() {
+        let last = key_screen_steps().pop().unwrap();
+        assert!(!last.contains("wol boot enroll"), "{last}");
+        assert!(last.contains("USB stick") && last.contains("ENROL_THIS_KEY_FOR_WOLOS.cer"));
+        let setup = include_str!("../../../files/usr/lib/wolos/boot-setup");
+        assert!(setup.contains("$ESP/ENROL_THIS_KEY_FOR_WOLOS.cer"));
     }
 
     #[test]

@@ -507,6 +507,31 @@ mod tests {
         }
     }
 
+    /// QA-PWR-9: a module's tool typed before the module is installed names the module (git,
+    /// docker and fish got a bare 'command not found').
+    #[test]
+    fn module_tools_name_their_module() {
+        let mut env = FakeEnv::default();
+        let m = Outcome::Missing;
+        for (line, want) in [
+            ("git status", "wol modules install dev"),
+            ("docker run hello-world", "wol modules install dev"),
+            ("podman ps", "wol modules install dev"),
+            ("fish", "wol modules install console"),
+            ("zellij", "wol modules install console"),
+        ] {
+            assert_eq!(
+                suggestion(&mut env, line, m).as_deref(),
+                Some(want),
+                "{line}"
+            );
+        }
+        let (s, _) = hint(&mut env, "git status", m).unwrap();
+        assert!(s.starts_with("git comes with the Developer module"), "{s}");
+        // Installed and failing: no hint (git's own message says why).
+        assert!(hint(&mut env, "git status", FAILED).is_none());
+    }
+
     #[test]
     fn package_tools_from_other_systems() {
         let mut env = FakeEnv::default();
@@ -667,6 +692,8 @@ mod tests {
             Some("sudo systemctl enable sshd")
         );
         assert!(hint(&mut env, "systemctl status sshd", FAILED).is_none());
+        // QA-PWR-5: `sudo systemctl --user` talks to root's user manager, which is not there.
+        assert!(hint(&mut env, "systemctl --user enable foo.timer", FAILED).is_none());
     }
 
     #[test]

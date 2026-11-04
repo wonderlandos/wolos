@@ -12,4 +12,7 @@ export GSK_RENDERER=${GSK_RENDERER:-cairo}
 install -d -o _wollogin -g _wollogin -m 0700 "$XDG_RUNTIME_DIR" "$HOME/.cache"   # .cache: compositor crash reports
 conf=login
 [ "${1:-}" = setup ] && conf=setup
-exec setpriv --reuid=_wollogin --regid=_wollogin --init-groups Hyprland -c /usr/share/wolos/hypr/$conf.lua
+# A session bus of its own (QA-ACC-3): without one no assistive technology could attach to the
+# login window or Setup (the password field, 'Incorrect password', every Setup page were silent).
+exec setpriv --reuid=_wollogin --regid=_wollogin --init-groups \
+  dbus-run-session -- Hyprland -c /usr/share/wolos/hypr/$conf.lua

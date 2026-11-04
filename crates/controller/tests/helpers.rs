@@ -354,8 +354,31 @@ fn open_notify_windows() {
     assert_eq!(run("notify Hello world", &mut e), 0);
     assert_eq!(
         e.execs[2],
-        ["notify-send", "--app-name=morning", "--", "Hello", "world"]
+        [
+            "timeout",
+            "2",
+            "notify-send",
+            "--app-name=morning",
+            "--",
+            "Hello",
+            "world"
+        ]
     );
+    // QA-PWR-8: --json answers, and a missing notification service is said within 2 s.
+    assert_eq!(run("notify Hello --json", &mut e), 0);
+    assert!(
+        e.out.contains("\"shown\": true") || e.out.contains("\"shown\":true"),
+        "{}",
+        e.out
+    );
+    e.exec_codes = vec![124];
+    assert_eq!(run("notify Hello", &mut e), 69);
+    assert!(
+        e.err.contains("no notification service answered"),
+        "{}",
+        e.err
+    );
+    e.exec_codes.clear();
     e.captures = vec![
         (
             "hyprctl -j clients".into(),

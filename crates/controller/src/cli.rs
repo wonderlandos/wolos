@@ -1425,6 +1425,22 @@ pub fn parse<S: AsRef<str>>(argv: &[S]) -> Result<Invocation, ParseError> {
         .iter()
         .filter(|c| c.path.len() <= words.len() && c.path.iter().zip(&words).all(|(p, w)| p == w))
         .max_by_key(|c| c.path.len());
+    // A group alone (`wol layers`, `wol boot`): its commands, as `wol help layers` lists them.
+    // It said "unknown command 'layers'; did you mean 'layers'?" (QA-PWR-6).
+    if best.is_none()
+        && TREE.iter().any(|c| {
+            !c.hidden
+                && c.path.len() > words.len()
+                && c.path.iter().zip(&words).all(|(p, w)| p == w)
+        })
+    {
+        return Ok(Invocation {
+            path: vec!["help".into()],
+            action: "help",
+            args: words.iter().map(|w| ("command", w.to_string())).collect(),
+            flags,
+        });
+    }
     let Some(c) = best else {
         let roots: Vec<&str> = TREE
             .iter()
@@ -1526,29 +1542,50 @@ fn distance(a: &str, b: &str) -> usize {
 }
 
 /// Help text for the whole tree or one command path.
+/// Longest choice list a usage line spells out (`on|off`); a longer one is named (`<panel>`)
+/// and `wol help <command>` lists it. The panel list made lines of 270 characters that broke
+/// the table in an 80 or 120 column terminal (QA-PWR-15).
+pub const USAGE_CHOICES_MAX: usize = 24;
+
+/// `c`'s usage (`theme set <id>`); `full` spells out every choice list.
+pub fn usage_line(c: &Cmd, full: bool) -> String {
+    let mut usage = c.path.join(" ");
+    for a in c.args {
+        let all = a.choices.join("|");
+        let n = if a.choices.is_empty() || (!full && all.len() > USAGE_CHOICES_MAX) {
+            a.name.to_string()
+        } else {
+            all
+        };
+        usage.push_str(&match (a.optional, a.rest) {
+            (_, true) => format!(" [{n}...]"),
+            (true, _) => format!(" [{n}]"),
+            _ => format!(" <{n}>"),
+        });
+    }
+    for f in c.flags {
+        usage.push_str(&format!(" [--{f}]"));
+    }
+    usage
+}
+
 pub fn help(prefix: &[String]) -> String {
     let mut out = String::from("usage: wol <command> [args] [--json] [--yes]\n\n");
-    for c in TREE
+    let shown: Vec<&Cmd> = TREE
         .iter()
         .filter(|c| !c.hidden && c.path.iter().zip(prefix).all(|(p, w)| p == w))
-    {
-        let mut usage = c.path.join(" ");
-        for a in c.args {
-            let n = if a.choices.is_empty() {
-                a.name.to_string()
-            } else {
-                a.choices.join("|")
-            };
-            usage.push_str(&match (a.optional, a.rest) {
-                (_, true) => format!(" [{n}...]"),
-                (true, _) => format!(" [{n}]"),
-                _ => format!(" <{n}>"),
-            });
+        .collect();
+    for c in &shown {
+        // One command asked about: its choices in full, one list per line under it.
+        let full = shown.len() == 1;
+        out.push_str(&format!("  {:<44} {}\n", usage_line(c, false), c.help));
+        for a in c
+            .args
+            .iter()
+            .filter(|a| full && a.choices.join("|").len() > USAGE_CHOICES_MAX)
+        {
+            out.push_str(&format!("    <{}>: {}\n", a.name, a.choices.join(", ")));
         }
-        for f in c.flags {
-            usage.push_str(&format!(" [--{f}]"));
-        }
-        out.push_str(&format!("  {usage:<44} {}\n", c.help));
     }
     out
 }
@@ -1668,10 +1705,36 @@ mod tests {
             ("hint apt --not-found", "hint command=apt --not-found"),
             ("hint cp 1", "hint command=cp status=1"),
             ("", "help"),
+            // QA-PWR-6: a group alone lists its commands.
+            ("layers", "help command=layers"),
+            ("boot", "help command=boot"),
+            ("encrypt", "help command=encrypt"),
         ];
         for (line, want) in table {
             assert_eq!(d(line), want, "wol {line}");
         }
+    }
+
+    /// QA-PWR-15: `wol help` lines reached 270 characters (the panel list); the usage column
+    /// stays narrow and `wol help shell toggle` lists the panels.
+    #[test]
+    fn help_usage_column_stays_narrow() {
+        for c in TREE.iter().filter(|c| !c.hidden) {
+            let u = usage_line(c, false);
+            assert!(u.len() <= 80, "{} chars: {u}", u.len());
+        }
+        let all = help(&[]);
+        assert!(
+            !all.contains("switcher|notifications"),
+            "no panel list in the table"
+        );
+        let one = help(&["shell".into(), "toggle".into()]);
+        assert!(one.contains("shell toggle <panel>"), "{one}");
+        assert!(
+            one.contains(&format!("    <panel>: {}", PANELS.join(", "))),
+            "{one}"
+        );
+        assert!(help(&[]).contains("theme toggle"), "short lists stay");
     }
 
     #[test]
@@ -1719,7 +1782,8 @@ mod tests {
     #[test]
     fn help_lists_visible_commands() {
         let h = help(&[]);
-        assert!(h.contains("shell toggle <switcher|notifications"));
+        // QA-PWR-15: the panel list is in `wol help shell toggle`, not in the table.
+        assert!(h.contains("shell toggle <panel>"));
         assert!(!h.contains("jobs list"), "aliases are hidden");
         let h = help(&["update".into()]);
         assert!(h.contains("update apply [be] [release]") && !h.contains("theme"));

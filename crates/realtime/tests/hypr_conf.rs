@@ -496,6 +496,26 @@ fn greeter_gtk_uses_cairo() {
     );
 }
 
+/// QA-ACC-3: the login window and Setup run on a session bus of their own, so assistive
+/// technology (the accessibility bus, a screen reader) can attach there.
+#[test]
+fn greeter_has_a_session_bus() {
+    let g = include_str!("../../../desktop/overlay/usr/bin/wol-greeter-session");
+    let exec = g
+        .split("\nexec ")
+        .nth(1)
+        .expect("one exec")
+        .replace("\\\n", " ");
+    let words: Vec<&str> = exec.split_whitespace().collect();
+    let bus = words.iter().position(|w| *w == "dbus-run-session");
+    let comp = words.iter().position(|w| *w == "Hyprland");
+    assert!(bus.is_some() && bus < comp, "{exec}");
+    assert!(
+        words.iter().position(|w| *w == "setpriv") < bus,
+        "the bus runs as _wollogin"
+    );
+}
+
 /// Live: the shell never appeared and left no trace. Its stderr goes to the session runtime dir.
 #[test]
 fn shell_output_is_logged() {

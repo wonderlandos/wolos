@@ -259,6 +259,38 @@ mod tests {
         );
     }
 
+    /// QA-DEV-6: no sound card: WirePlumber's Dummy Output (auto_null) is no output, not a
+    /// speaker at 100 %.
+    #[test]
+    fn the_dummy_output_is_no_output() {
+        let mut s = service();
+        for d in s.snapshot().devices.clone() {
+            s.handle(Event::Removed(d.id));
+        }
+        s.handle(Event::Node(NodeInfo {
+            id: 30,
+            node_name: "auto_null".into(),
+            description: "Dummy Output".into(),
+            kind: DeviceKind::Output,
+            ..Default::default()
+        }));
+        s.handle(Event::Default {
+            kind: DeviceKind::Output,
+            node_name: "auto_null".into(),
+        });
+        let snap = s.snapshot();
+        assert!(
+            snap.devices.iter().all(|d| d.kind != DeviceKind::Output),
+            "{:?}",
+            snap.devices
+        );
+        assert!(snap.default_output().is_none());
+        assert!(crate::model::is_placeholder("auto_null.monitor"));
+        assert!(!crate::model::is_placeholder(
+            "alsa_output.pci-0000_00_1f.3.analog-stereo"
+        ));
+    }
+
     #[test]
     fn choosing_an_input_writes_the_default_metadata() {
         let mut s = service();

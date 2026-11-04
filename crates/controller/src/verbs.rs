@@ -96,7 +96,7 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "remind" => remind(env, &a("minutes"), &inv.all("text").join(" "), json),
         "settings" => get(env, settings_state, json),
         "open" => open(env, &a("target")),
-        "notify" => notify(env, &a("title"), &inv.all("body").join(" ")),
+        "notify" => notify(env, &a("title"), &inv.all("body").join(" "), json),
         "screenshot" => screenshot(env, json),
         "windows.list" => windows(env, json),
         "windows.focus" => windows_focus(env, &a("window")),
@@ -698,12 +698,20 @@ fn actor_name(actor: &str) -> String {
         .map_or_else(|| "wol".to_string(), |(_, n)| n.to_string())
 }
 
-fn notify(env: &mut dyn Env, title: &str, body: &str) -> i32 {
+/// Seconds `wol notify` waits for the notification service: without one notify-send waited for
+/// D-Bus activation far past a script's patience (QA-PWR-8).
+pub const NOTIFY_WAIT_SECS: &str = "2";
+/// What `timeout` exits with when it stopped the program.
+const TIMED_OUT: i32 = 124;
+
+fn notify(env: &mut dyn Env, title: &str, body: &str, json: bool) -> i32 {
     if title.trim().is_empty() {
         return fail(env, ErrorCode::Usage, "missing <title>");
     }
     let app = actor_name(&env.actor());
     let mut argv = vec![
+        "timeout".to_string(),
+        NOTIFY_WAIT_SECS.into(),
         "notify-send".to_string(),
         format!("--app-name={app}"),
         "--".into(),
@@ -712,7 +720,18 @@ fn notify(env: &mut dyn Env, title: &str, body: &str) -> i32 {
     if !body.is_empty() {
         argv.push(body.into());
     }
-    crate::run::exec(env, &argv)
+    match crate::run::exec(env, &argv) {
+        TIMED_OUT => fail(
+            env,
+            ErrorCode::Unavailable,
+            "no notification service answered, so nothing was shown",
+        ),
+        0 if json => {
+            emit_json(env, &json!({"shown": true}));
+            0
+        }
+        c => c,
+    }
 }
 
 fn screenshot(env: &mut dyn Env, json: bool) -> i32 {
@@ -1481,7 +1500,7 @@ fn api(env: &mut dyn Env, json: bool) -> i32 {
         };
         s.push_str(&format!(
             "  {:<44} {:<22} {}\n",
-            v.usage(),
+            v.short_usage(),
             access,
             v.cmd.help
         ));

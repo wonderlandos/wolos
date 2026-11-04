@@ -197,6 +197,9 @@ pub enum SetupStep {
 
 /// The system language file (`man 5 locale.conf`).
 pub const LOCALE_CONF: &str = "/etc/locale.conf";
+/// The login window's keyboard (layout, variant): the first account's, `hl.config` lines that
+/// desktop/overlay/usr/share/wolos/hypr/login.lua loads when present.
+pub const LOGIN_KEYBOARD: &str = "/etc/wolos/login-keyboard.lua";
 
 /// Account first (`useradd`, then the password on `chpasswd`'s stdin), then per-user and
 /// system preferences.
@@ -226,17 +229,23 @@ pub fn setup_plan(a: &NewAccount) -> Vec<SetupStep> {
         // shells' profile.d read it; the installer generated every locale). The FreeBSD
         // ~/.login_conf this wrote before was read by nothing (QA-FILES-3, QA-FDAY-2).
         w(LOCALE_CONF.into(), format!("LANG={}\n", a.locale), false),
-        w(
-            format!("{home}/.config/wol/setup.json"),
-            serde_json::json!({
-                "locale": a.locale,
-                "keymap": a.keymap,
-                "appearance": a.appearance,
-            })
-            .to_string(),
-            true,
-        ),
     ];
+    // QA-ACC-10: the login window typed every password on the US layout (a German or ABNT2
+    // password with ß, ç or @ failed three times). The first account's layout is the login
+    // window's too: login.lua loads this file when it is there.
+    if let Some(lua) = wol_core::prefs::keyboard_lua(&a.keymap, 1) {
+        v.push(w(LOGIN_KEYBOARD.into(), lua, false));
+    }
+    v.extend([w(
+        format!("{home}/.config/wol/setup.json"),
+        serde_json::json!({
+            "locale": a.locale,
+            "keymap": a.keymap,
+            "appearance": a.appearance,
+        })
+        .to_string(),
+        true,
+    )]);
     let variant = match a.appearance.as_str() {
         "light" => Some(shared::theme::Variant::Light),
         "dark" => Some(shared::theme::Variant::Dark),
@@ -1372,6 +1381,12 @@ broken:line
                 mode: 0o700,
             }
         );
+        let gb = wol_core::prefs::keyboard_lua("gb", 1).unwrap();
+        assert!(gb.contains("kb_layout = \"gb\""), "{gb}");
+        // QA-ACC-10: the login window's compositor loads it.
+        let login = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/login.lua");
+        assert!(login.contains(&format!("local keyboard_lua = \"{LOGIN_KEYBOARD}\"")));
+        assert!(login.lines().any(|l| l.trim() == "require(keyboard_lua)"));
         let writes: Vec<(&str, &str, bool)> = p[3..]
             .iter()
             .map(|s| match s {
@@ -1387,6 +1402,7 @@ broken:line
             writes,
             [
                 ("/etc/locale.conf", "LANG=en_GB.UTF-8\n", false),
+                (LOGIN_KEYBOARD, gb.as_str(), false),
                 (
                     "/home/alice/.config/wol/setup.json",
                     r#"{"appearance":"dark","keymap":"gb","locale":"en_GB.UTF-8"}"#,
@@ -1398,13 +1414,14 @@ broken:line
                 ("/etc/wolos/appearance", "dark", false),
             ]
         );
-        // Auto + default accent + no hint/avatar: account, password, keyring dir, locale.conf, setup.json.
+        // Auto + default accent + no hint/avatar: account, password, keyring dir, locale.conf,
+        // the login window's keyboard, setup.json.
         let mut auto = account();
         auto.appearance = "auto".into();
         auto.hint = "".into();
         auto.avatar = "".into();
         auto.accent = "violet".into();
-        assert_eq!(setup_plan(&auto).len(), 5);
+        assert_eq!(setup_plan(&auto).len(), 6);
         // Auto with another accent follows the appearance in that accent; unknown values are dropped.
         auto.accent = "blue".into();
         let theme = |a: &NewAccount| {
@@ -1421,7 +1438,7 @@ broken:line
         assert_eq!(theme(&auto), None);
         assert_eq!(
             setup_plan(&auto).len(),
-            5,
+            6,
             "unknown avatar colour not written"
         );
     }

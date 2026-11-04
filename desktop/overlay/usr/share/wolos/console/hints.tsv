@@ -88,7 +88,7 @@ pacman	failed root sealed typed=/usr/bin/pacman arg=-S*|-R*|-U* !arg=-S*s*|-S*i*
 su	failed	On WolOS the root account has no password, so su cannot sign in to it; sudo -i opens the same root shell with your own password, and sudo passwd root turns classic su on.	sudo -i
 sudo	failed nowheel	Your account is not an administrator on this computer, so sudo cannot run commands for it; an administrator can change that in Settings > Users & Groups.	-
 systemctl	failed managed arg=enable|disable|mask|unmask|preset	WolOS sets this service up itself; if something it does is not working, wol doctor finds out why.	wol doctor
-systemctl	failed user arg=enable|disable|start|stop|restart|reload|mask|unmask	Turning a system service on or off needs administrator rights.	sudo systemctl {args}
+systemctl	failed user !arg=--user arg=enable|disable|start|stop|restart|reload|mask|unmask	Turning a system service on or off needs administrator rights.	sudo systemctl {args}
 cp	failed sealed last=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
 mv	failed sealed last=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
 ln	failed sealed last=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
@@ -103,3 +103,25 @@ chgrp	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-onl
 tee	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
 truncate	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
 sed	failed sealed arg=-i* arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+# QA-PWR-9: the tools of the Developer and Console modules, before the module is installed.
+docker	missing	WolOS runs containers with podman, which takes the same commands as docker; it comes with the Developer module.	wol modules install dev
+git	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+gh	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+podman	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+code	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+mise	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+lazygit	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+crystal	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+jq	missing	{cmd} comes with the Developer module, which is not installed yet.	wol modules install dev
+fish	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+nu	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+zellij	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+starship	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+fzf	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+zoxide	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+eza	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+bat	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+fd	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+rg	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+kitty	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console
+ghostty	missing	{cmd} comes with the Console module, which is not installed yet.	wol modules install console

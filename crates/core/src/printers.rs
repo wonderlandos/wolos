@@ -9,6 +9,14 @@ pub struct Printer {
     pub default: bool,
     /// "Idle", "Printing" or "Stopped".
     pub state: String,
+    /// What CUPS says about the queue now ("Connecting to printer.", "The printer is not
+    /// responding."), empty when it says nothing (QA-DEV-3: a printer that went away stayed
+    /// "Printing" with no reason).
+    #[serde(default)]
+    pub message: String,
+    /// Jobs waiting or printing (`lpstat -o`).
+    #[serde(default)]
+    pub jobs: usize,
 }
 
 /// `lpstat -v`: "device for HP_LaserJet: ipp://10.0.0.5/ipp/print".
@@ -47,6 +55,46 @@ pub fn parse_lpstat_p(text: &str) -> Vec<(String, String)> {
             Some((name.to_string(), state.to_string()))
         })
         .collect()
+}
+
+/// `lpstat -p`: (queue, the queue's message), from the indented line under each printer line;
+/// CUPS's placeholder "reason unknown" is no message.
+pub fn parse_lpstat_p_messages(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut queue: Option<String> = None;
+    for l in text.lines() {
+        if let Some(rest) = l.strip_prefix("printer ") {
+            queue = rest.split_once(' ').map(|(n, _)| n.to_string());
+        } else if l.starts_with([' ', '\t'])
+            && let Some(q) = &queue
+        {
+            let m = l.trim();
+            if !m.is_empty() && m != "reason unknown" && !out.iter().any(|(n, _)| n == q) {
+                out.push((q.clone(), m.to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// `lpstat -o`: jobs per queue ("Office-12 ana 1024 Mon 26 Oct ..." is job 12 of Office).
+pub fn parse_lpstat_o(text: &str, queue: &str) -> usize {
+    text.lines()
+        .filter_map(|l| l.split_whitespace().next()?.rsplit_once('-'))
+        .filter(|(q, n)| *q == queue && n.chars().all(|c| c.is_ascii_digit()))
+        .count()
+}
+
+/// CUPS's own test page, printed on `name` (QA-DEV-5). Any user may print; no admin.
+pub const TEST_PAGE: &str = "/usr/share/cups/data/testprint";
+
+pub fn test_page_argv(name: &str) -> Option<Vec<String>> {
+    is_valid_name(name).then(|| argv(&["lp", "-d", name, "--", TEST_PAGE]))
+}
+
+/// Cancels every job of `name` the person may cancel (their own; no admin, QA-DEV-3).
+pub fn cancel_argv(name: &str) -> Option<Vec<String>> {
+    is_valid_name(name).then(|| argv(&["cancel", "-a", "--", name]))
 }
 
 /// `lpinfo -v`: device URIs found; bare backend names ("network ipp") dropped.
@@ -125,10 +173,9 @@ pub fn read(h: &dyn Host) -> Option<Vec<Printer>> {
         return None;
     }
     let default = h.run(&["lpstat", "-d"]).and_then(|t| parse_lpstat_d(&t));
-    let states = h
-        .run(&["lpstat", "-p"])
-        .map(|t| parse_lpstat_p(&t))
-        .unwrap_or_default();
+    let p = h.run(&["lpstat", "-p"]).unwrap_or_default();
+    let (states, messages) = (parse_lpstat_p(&p), parse_lpstat_p_messages(&p));
+    let jobs = h.run(&["lpstat", "-o"]).unwrap_or_default();
     Some(
         h.run(&["lpstat", "-v"])
             .map(|t| parse_lpstat_v(&t))
@@ -141,6 +188,12 @@ pub fn read(h: &dyn Host) -> Option<Vec<Printer>> {
                     .find(|s| s.0 == name)
                     .map_or("Idle", |s| s.1.as_str())
                     .to_string(),
+                message: messages
+                    .iter()
+                    .find(|s| s.0 == name)
+                    .map(|s| s.1.clone())
+                    .unwrap_or_default(),
+                jobs: parse_lpstat_o(&jobs, &name),
                 name,
                 uri,
             })
@@ -191,6 +244,30 @@ mod tests {
                 ("Old".to_string(), "Stopped".to_string())
             ]
         );
+    }
+
+    /// QA-DEV-3 / QA-DEV-5: a printer that went away says why and how many jobs wait; the
+    /// test page and Cancel run as the person (no admin).
+    #[test]
+    fn messages_jobs_and_user_argv() {
+        let p = "printer Office now printing Office-12.  enabled since Mon 26 Oct 2026\n\tConnecting to printer.\nprinter HP_LaserJet is idle.  enabled since Mon\nprinter Old disabled since Mon -\n\treason unknown\n";
+        assert_eq!(
+            parse_lpstat_p_messages(p),
+            [("Office".to_string(), "Connecting to printer.".to_string())]
+        );
+        let o = "Office-12   ana   1024   Mon 26 Oct 2026 02:06:00 PM\nOffice-13   ana   2048   Mon\nHP_LaserJet-3  bo  1  Mon\n";
+        assert_eq!(parse_lpstat_o(o, "Office"), 2);
+        assert_eq!(parse_lpstat_o(o, "HP_LaserJet"), 1);
+        assert_eq!(parse_lpstat_o(o, "Old"), 0);
+        assert_eq!(
+            test_page_argv("Office").unwrap(),
+            ["lp", "-d", "Office", "--", TEST_PAGE]
+        );
+        assert_eq!(
+            cancel_argv("Office").unwrap(),
+            ["cancel", "-a", "--", "Office"]
+        );
+        assert!(test_page_argv("-x").is_none() && cancel_argv("a b").is_none());
     }
 
     #[test]

@@ -160,6 +160,10 @@ impl Verb {
     pub fn access(&self) -> Option<Access> {
         self.helper.map(|h| h.access)
     }
+    /// [`Self::usage`] for a table: long choice lists named, not spelled out (QA-PWR-15).
+    pub fn short_usage(&self) -> String {
+        format!("wol {}", crate::cli::usage_line(self.cmd, false))
+    }
     /// `wol theme set <id>` usage line.
     pub fn usage(&self) -> String {
         let mut u = format!("wol {}", self.cmd.path.join(" "));

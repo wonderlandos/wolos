@@ -44,6 +44,23 @@ fn lines(env: &FakeEnv) -> Vec<String> {
 const IDLE: &str = r#"[{"id":"wolos-a+3.conf","isSelected":true,"isDefault":true}]"#;
 const PENDING: &str = r#"[{"id":"wolos-a.conf","isSelected":true,"isDefault":false},{"id":"wolos-b+3.conf","isSelected":false,"isDefault":true}]"#;
 
+/// QA-PWR-22: no pacman (a dev box, a broken layer): one sentence naming it, not a bare 127.
+#[test]
+fn a_missing_pacman_is_named() {
+    let mut env = FakeEnv {
+        exec_codes: vec![i32::MIN],
+        ..Default::default()
+    };
+    assert_eq!(run("pkg -- -S vim", &mut env), 127);
+    assert!(
+        env.err
+            .contains("the package manager (/usr/bin/pacman) could not be started"),
+        "{}",
+        env.err
+    );
+    assert!(env.err.contains("Nothing was changed."));
+}
+
 #[test]
 fn queries_go_straight_to_the_real_pacman() {
     let mut env = sealed("", IDLE);
