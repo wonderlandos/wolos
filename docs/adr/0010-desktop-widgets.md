@@ -9,3 +9,6 @@ Decision:
 - Weather: Open-Meteo, a city the user picks by name (geocoding sends only the typed name), never derived from the network address.
 - `wol widgets list|add|remove|reload|validate` edits the same file through `wol_core::widgets` and asks a running shell to reload.
 Consequences: A broken package shows an error card naming each problem by JSON path; it never breaks the desktop. Widget authors get the system's look for free and cannot draw outside it. No web engine in the shell. Interactive widgets are limited to buttons (run a written-out program, open a URL, launch an app).
+
+Amended 2026-11-04 (QA report on 0.12.0, bug 5: the gallery opened under Settings and Done looked dead, because moving the mapped desktop to layer Top at runtime did not raise it on the compositor):
+- Edit Widgets no longer moves `wol-desktop`: it stays on layer Bottom with no keyboard. The gallery is its own layer surface per display, `wol-panel-widgets` (`kit::surface::Spec::widgets_gallery`): layer Top, on-demand keyboard, anchored to the bottom edge inside the menu bar and Dock zones, left and right margins keeping it clear of the cards. Edit Widgets presents it on the desktop's display; Done, Esc and `wol shell hide widgets` hide it. Its `wol-panel-*` namespace gets the compositor's glass rule and Esc forwarding.
