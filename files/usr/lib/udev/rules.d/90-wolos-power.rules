@@ -1,3 +1,4 @@
-# WolOS power policy (docs/modules/power.md): AC adapter plugged or unplugged -> the profile
-# for the new source.
-SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ACTION=="change", RUN+="/usr/bin/wol power apply"
+# WolOS power policy (docs/modules/power.md): a charger plugged or unplugged -> the profile for the
+# new source. Every type wol_core::power::policy::CHARGER_TYPES counts: Mains adapters and USB
+# (DCP, CDP, ACA), USB-C and USB-PD chargers (ucsi-source-psy-*); not batteries, whose change events come every percent.
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains|USB|USB_DCP|USB_CDP|USB_ACA|USB_C|USB_PD|USB_PD_DRP", ACTION=="change", RUN+="/usr/bin/wol power apply"

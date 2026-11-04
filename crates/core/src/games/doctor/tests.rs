@@ -246,3 +246,34 @@ fn wine_vulkan_and_groups_are_probed_concurrently() {
     assert_eq!(facts(&h), seq, "same facts");
     assert!(t.elapsed() < d * 2, "{:?} for 3 commands", t.elapsed());
 }
+
+/// QA-GFX-14: vulkaninfo installed but failing (loader or driver error) is not "missing": the
+/// fix is never `pacman -S vulkan-tools` for a package that is there.
+#[test]
+fn vulkaninfo_missing_vs_failed() {
+    let vk = |f: &Facts| {
+        checks(f)
+            .into_iter()
+            .find(|c| c.id == "vulkan")
+            .map(|c| (c.status, c.detail, c.fix))
+            .unwrap()
+    };
+    // gather sees the program.
+    assert!(!facts(&ready_host()).vulkaninfo);
+    let h = ready_host();
+    h.file("/usr/bin/vulkaninfo", "");
+    let mut f = facts(&h);
+    assert!(f.vulkaninfo && f.vulkan.is_some());
+    // Installed, but it exits with an error (no output): say so and how to see the error.
+    f.vulkan = None;
+    let (st, detail, fix) = vk(&f);
+    assert_eq!(st, Status::Warn);
+    assert!(detail.starts_with("vulkaninfo failed"), "{detail}");
+    assert_eq!(fix, "vulkaninfo --summary");
+    // Not installed: install it.
+    f.vulkaninfo = false;
+    let (st, detail, fix) = vk(&f);
+    assert_eq!(st, Status::Warn);
+    assert_eq!(detail, "vulkaninfo is not installed");
+    assert_eq!(fix, "sudo pacman -S vulkan-tools");
+}

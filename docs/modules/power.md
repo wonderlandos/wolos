@@ -2,19 +2,21 @@
 
 The power source picks the profile; Low Power and High Power Mode override it (ADR 0014).
 Code: `wol_core::power::policy` (pure: facts from read-only probes in, fixed argv out).
-`wol power apply` runs the plan; udev runs it on AC changes, systemd at boot and resume, wol-admind `power-mode` after a mode change.
+`wol power apply` runs the plan; udev runs it when a charger (Mains, USB, USB DCP/CDP/ACA, USB-C or USB-PD: `policy::CHARGER_TYPES`) is plugged or unplugged, systemd at boot and resume, wol-admind `power-mode` after a mode change.
 
 | Mechanism | AC (Auto) | Battery (Auto) | Low | High | Where |
 |---|---|---|---|---|---|
 | Energy profile | balanced | balanced (CPU prefers efficiency on battery) | power-saver | performance | `powerprofilesctl set`; switched only when it differs |
 | Wi-Fi power save | off | on | on (battery) | off | `iw dev <if> set power_save`, interfaces that answer `get power_save` |
-| Display off when idle | lock time + 1 min | 2 min | | | hypridle (`prefs::hypridle_conf`, system `hypridle.conf`) |
+| Display off when idle | lock time + 1 min | lock time + 1 min; 2 min when the screen never locks | | | hypridle (`prefs::hypridle_conf`, system `hypridle.conf`); never before the lock |
 | Sleep when idle | never | 10 min | | | hypridle -> `wol power idle sleep` (needs `mem` in /sys/power/state) |
 | Lid closed | suspend | suspend | | | logind; wol-admind `lid` writes `/etc/systemd/logind.conf.d/50-wolos-lid.conf` |
 
 power-profiles-daemon drives the CPU energy preference (intel_pstate, amd-pstate-epp) and the ACPI platform profile. Without it nothing steers the CPU and the switch hides. The mode is saved in `/etc/wolos/power.json`.
 
 Probes: `nproc`, `powerprofilesctl get`, `ls`/`cat` under `/sys/class/power_supply`, `/proc/acpi/button/lid`, `/sys/power/state`, `/sys/class/net/*/wireless`, `iw`. Entry names reach argv only when plain (`[A-Za-z0-9_.:-]`, no leading `-`).
+
+Time left on battery: `energy_now / power_now`, else `charge_now / current_now` (`power::parse_sysfs`); none while charging or before the battery reports a rate.
 
 Not offered yet: a battery charge limit (`charge_control_end_threshold`).
 

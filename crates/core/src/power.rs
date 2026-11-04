@@ -55,10 +55,31 @@ pub fn parse_sysfs(files: impl Fn(&str) -> Option<String>) -> Option<BatteryInfo
         charge,
         health: health(full, design).or(by_charge),
         cycles: get("cycle_count").filter(|c| *c > 0).map(|c| c as u32),
-        minutes_left: None,
+        minutes_left: (charge == Charge::Discharging)
+            .then(|| minutes_left(&files))
+            .flatten(),
         design_mwh: design,
         full_mwh: full,
     })
+}
+
+/// Time left on battery from the battery's own counters: energy_now / power_now (µWh / µW), else
+/// charge_now / current_now (µAh / µA). Some drivers report the rate negative while discharging.
+/// None without a rate (just unplugged), without counters, or past two days (a rate near zero).
+fn minutes_left(files: &impl Fn(&str) -> Option<String>) -> Option<u32> {
+    let get = |k: &str| files(k).and_then(|v| v.trim().parse::<i64>().ok());
+    let (left, rate) = match (get("energy_now"), get("power_now")) {
+        (Some(e), Some(p)) => (e, p),
+        _ => (get("charge_now")?, get("current_now")?),
+    };
+    let rate = rate.unsigned_abs();
+    if left <= 0 || rate == 0 {
+        return None;
+    }
+    let minutes = left.unsigned_abs() * 60 / rate;
+    u32::try_from(minutes)
+        .ok()
+        .filter(|m| (1..=48 * 60).contains(m))
 }
 
 /// Battery-type supplies of the computer (not a mouse's: scope Device), sorted.
@@ -248,6 +269,85 @@ mod tests {
         .unwrap();
         assert_eq!((c.charge, c.health), (Charge::Full, Some(75)));
         assert_eq!(parse_sysfs(files(&[("status", "Full")])), None);
+    }
+
+    /// QA-GFX-10: "3 h 25 min left" comes from the battery's own counters: energy_now / power_now
+    /// (µWh, µW), else charge_now / current_now (µAh, µA; the kernel's test_power battery and many
+    /// laptops). Charging gives no time left (the page says Charging); a zero or missing rate, a
+    /// battery that reports no remaining energy, or an absurd estimate give None.
+    #[test]
+    fn minutes_left_from_energy_now() {
+        let files = |kv: &'static [(&'static str, &'static str)]| {
+            move |k: &str| kv.iter().find(|x| x.0 == k).map(|x| x.1.to_string())
+        };
+        let left = |kv| parse_sysfs(files(kv)).unwrap().minutes_left;
+        // 41 Wh left at 12 W: 205 minutes.
+        assert_eq!(
+            left(&[
+                ("capacity", "82\n"),
+                ("status", "Discharging\n"),
+                ("energy_now", "41000000\n"),
+                ("power_now", "12000000\n"),
+            ]),
+            Some(205)
+        );
+        // test_power: 2000 mAh left at 1600 mA (charge counters only).
+        assert_eq!(
+            left(&[
+                ("capacity", "50"),
+                ("status", "Discharging"),
+                ("charge_now", "2000000"),
+                ("current_now", "1600000"),
+            ]),
+            Some(75)
+        );
+        // Some drivers report the discharge rate negative.
+        assert_eq!(
+            left(&[
+                ("capacity", "50"),
+                ("status", "Discharging"),
+                ("energy_now", "30000000"),
+                ("power_now", "-10000000"),
+            ]),
+            Some(180)
+        );
+        for kv in [
+            // Charging and full: no time left.
+            &[
+                ("capacity", "50"),
+                ("status", "Charging"),
+                ("energy_now", "30000000"),
+                ("power_now", "10000000"),
+            ][..],
+            &[
+                ("capacity", "100"),
+                ("status", "Full"),
+                ("energy_now", "50000000"),
+                ("power_now", "1"),
+            ][..],
+            // No rate yet (just unplugged), no counters, or nonsense (over two days).
+            &[
+                ("capacity", "50"),
+                ("status", "Discharging"),
+                ("energy_now", "30000000"),
+                ("power_now", "0"),
+            ][..],
+            &[("capacity", "50"), ("status", "Discharging")][..],
+            &[
+                ("capacity", "50"),
+                ("status", "Discharging"),
+                ("energy_now", "30000000"),
+                ("power_now", "100"),
+            ][..],
+            &[
+                ("capacity", "50"),
+                ("status", "Discharging"),
+                ("energy_now", "0"),
+                ("power_now", "9000000"),
+            ][..],
+        ] {
+            assert_eq!(left(kv), None, "{kv:?}");
+        }
     }
 
     #[test]

@@ -8,5 +8,5 @@ Decision:
 - Init = systemd. rc.d scripts become units in `files/usr/lib/systemd/` (wolos repo). sysctl/pciconf/kld readers become /proc, /sys, `lspci`, modprobe.
 - Build: `wolos-iso/build.sh` = mkarchiso profile `wolos-iso/profile/` (live + installer ISO) on any Arch host or `archlinux` container. VM tests use QEMU virtio-gpu, so the compositor runs in the VM.
 - Packages: pacman stays the package manager, used directly; `wol` controls only the pinned pacman.conf, release updates and `.wol` app metadata. `.wol` = signed pacman package + WolOS metadata; `[wolos]` repo (apps, kernel, system) beside the pinned Arch repos; each release has a signed manifest (snapshot date, repo revision, image + sha256).
-- Steam and Proton are native packages (multilib). NVIDIA uses `nvidia-open`.
+- Steam and Proton are native packages (multilib). NVIDIA uses `nvidia-open-dkms` (built for the running WolKernel; QA-GFX-2).
 Consequences: FreeBSD-only code (ZFS boot environments, pf, bsdinstall, pkg, wolos_qos kmod) is replaced; `Host::is_freebsd` paths stay compiling only while removed slice by slice. Firewall = nftables. Scheduler QoS moves to a sched_ext scheduler (follow-up).

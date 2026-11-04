@@ -219,9 +219,14 @@ pub const CATALOG: &[Entry] = &[
         class: "03",
         drivers: &["nvidia"],
         klds: &["nvidia", "nvidia_modeset", "nvidia_drm", "nvidia_uvm"],
-        packages: &["nvidia-open", "nvidia-utils"],
+        // DKMS: the modules are built for the running linux-wolos (its headers are in wolos-base);
+        // the prebuilt `nvidia-open` only carries modules for Arch's `linux` (QA-GFX-2). The 32-bit
+        // userland is Steam's (games doctor `nvidia`, QA-GFX-3); multilib is on in the image.
+        packages: &["nvidia-open-dkms", "nvidia-utils", "lib32-nvidia-utils"],
         loader: NV_OPTIONS,
-        notes: &["NVIDIA driver (open kernel modules); installed online at first boot if missing"],
+        notes: &[
+            "NVIDIA driver (open kernel modules, built for this kernel); installed online at first boot if missing",
+        ],
         ..BASE
     },
     virt(
@@ -802,6 +807,186 @@ mod tests {
             keys,
             ["bus", "driver", "id", "kind", "missing", "name", "state"]
         );
+    }
+
+    /// The catalogue row of a device, by its PCI ids.
+    fn pci_row(vendor: u16, device: u16) -> &'static Entry {
+        super::super::lookup(Bus::Pci, Some(vendor), Some(device), &["030000"]).unwrap()
+    }
+
+    /// QA-GFX-2: the NVIDIA driver is DKMS: the module is built for the kernel that runs
+    /// (linux-wolos, its headers are in wolos-base), never `nvidia-open`, which carries modules
+    /// for Arch's `linux` only and leaves a WolKernel without a driver after the Restart notice.
+    #[test]
+    fn nvidia_packages_are_dkms() {
+        let e = pci_row(0x10de, 0x2504);
+        assert_eq!(e.name, "NVIDIA GeForce");
+        assert!(e.packages.contains(&"nvidia-open-dkms"), "{:?}", e.packages);
+        assert!(
+            !e.packages.contains(&"nvidia-open"),
+            "prebuilt for Arch's kernel: {:?}",
+            e.packages
+        );
+        for p in CATALOG.iter().flat_map(|e| e.packages) {
+            assert!(
+                !p.starts_with("nvidia") || p.ends_with("-dkms") || p.ends_with("-utils"),
+                "{p}: a kernel module package must be the -dkms one"
+            );
+        }
+        // The note under the device and first boot's comment say what it does.
+        assert!(
+            e.notes[0].contains("built for this kernel"),
+            "{:?}",
+            e.notes
+        );
+        let fb = include_str!("../../../../files/usr/lib/wolos/firstboot");
+        assert!(fb.contains("nvidia-open-dkms"));
+    }
+
+    /// QA-GFX-3: Steam's 32-bit client needs the 32-bit NVIDIA userland of the same version
+    /// (the games doctor blocks Steam without it, games/doctor.rs `nvidia`); first boot installs it
+    /// with the driver (multilib is on in the image's pacman.conf).
+    #[test]
+    fn nvidia_has_lib32_utils() {
+        let e = pci_row(0x10de, 0x2504);
+        assert!(e.packages.contains(&"nvidia-utils"), "{:?}", e.packages);
+        assert!(
+            e.packages.contains(&"lib32-nvidia-utils"),
+            "{:?}",
+            e.packages
+        );
+        // Maxwell and older keep nouveau: nothing from NVIDIA's driver.
+        assert!(pci_row(0x10de, 0x1c8d).packages.is_empty());
+    }
+
+    /// QA-SHADOW-32: every catalogue row is reachable through its own ids: the first and last id
+    /// of each range land on that row (no earlier or wider row shadows it), and the vendor rows
+    /// without ranges catch an id no other row names.
+    #[test]
+    fn every_row_is_reached_by_its_own_ids() {
+        use super::super::lookup;
+        for e in CATALOG
+            .iter()
+            .filter(|e| e.bus == Bus::Pci || e.bus == Bus::Usb)
+        {
+            let class: &[&str] = &[if e.class.is_empty() {
+                "ff0000"
+            } else {
+                e.class
+            }];
+            for (lo, hi) in e.devices {
+                for id in [*lo, *hi] {
+                    let got = lookup(e.bus, e.vendor, Some(id), class).map(|g| g.name);
+                    assert_eq!(got, Some(e.name), "{:04x?}:{id:04x}", e.vendor);
+                }
+            }
+            if e.devices.is_empty() && e.vendor.is_some() && !e.class.is_empty() {
+                // An id outside every range of this vendor and class.
+                let free = (0..=u16::MAX).rev().find(|id| {
+                    !CATALOG.iter().any(|o| {
+                        o.vendor == e.vendor
+                            && o.bus == e.bus
+                            && o.devices.iter().any(|(l, h)| (l..=h).contains(&id))
+                    })
+                });
+                let got = lookup(e.bus, e.vendor, free, class).map(|g| g.name);
+                assert_eq!(got, Some(e.name), "{:04x?} generic row", e.vendor);
+            }
+        }
+    }
+
+    /// QA-SHADOW-32: Settings > Hardware rows for the catalogue's Intel GPU, Wi-Fi, Bluetooth and
+    /// virtual-GPU constructors, read from sysfs and `lspci -mm` fixtures (an AMD desktop with an
+    /// NVIDIA card, Realtek Wi-Fi and Bluetooth; a VMware and a VirtualBox guest), not only by id.
+    #[test]
+    fn desktop_and_guest_fixtures_read_as_rows() {
+        use super::super::fixtures::sysfs;
+        use crate::system::fake::FakeHost;
+        let rows = |h: &FakeHost| -> Vec<String> {
+            super::super::read(h)
+                .devices
+                .iter()
+                .map(|d| {
+                    format!(
+                        "{} {} | {} | {}",
+                        d.kind.name(),
+                        d.name,
+                        d.state.name(),
+                        d.hint
+                    )
+                })
+                .collect()
+        };
+        let cpu = "processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 7 7700\n";
+        let rel = "7.3.1-1-wolos";
+        let dep = "kernel/drivers/net/wireless/realtek/rtw89/rtw89_8852be.ko.zst:\nkernel/drivers/bluetooth/btusb.ko.zst:\nkernel/drivers/hwmon/k10temp.ko.zst:\n";
+        // AMD desktop: NVIDIA RTX 3060, Realtek RTL8852BE Wi-Fi and its Bluetooth, nothing installed yet.
+        let h = FakeHost::linux();
+        sysfs(
+            &h,
+            &[
+                ("0000:01:00.0", "0x10de", "0x2504", "0x030000", ""),
+                (
+                    "0000:03:00.0",
+                    "0x10ec",
+                    "0xb852",
+                    "0x028000",
+                    "rtw89_8852be",
+                ),
+            ],
+            &[("1-4", "0bda", "b85c", "e00101", "")],
+            &[("1-4:1.0", "e00101", "btusb")],
+        );
+        h.command(
+            "lspci -mm",
+            "01:00.0 \"VGA compatible controller\" \"NVIDIA Corporation\" \"GA106 [GeForce RTX 3060 Lite Hash Rate]\" -ra1 -p00 \"ASUSTeK\" \"Device 87f3\"\n\
+             03:00.0 \"Network controller\" \"Realtek Semiconductor Co., Ltd.\" \"RTL8852BE PCIe 802.11ax Wireless Network Controller\" -p00 \"\" \"\"\n",
+        )
+        .command("pacman -Qq", "linux-firmware-realtek\namd-ucode\n")
+        .file("/proc/cpuinfo", cpu)
+        .file("/proc/modules", "rtw89_8852be 12288 0 - Live 0x0\nbtusb 77824 0 - Live 0x0\nk10temp 12288 0 - Live 0x0\n")
+        .file("/proc/sys/kernel/osrelease", &format!("{rel}\n"))
+        .file(&format!("/usr/lib/modules/{rel}/modules.dep"), dep)
+        .file(&format!("/usr/lib/modules/{rel}/modules.builtin"), "");
+        assert_eq!(
+            rows(&h),
+            vec![
+                "cpu AMD Ryzen 7 7700 | ready | ",
+                "gpu GA106 [GeForce RTX 3060 Lite Hash Rate] | needs-driver | install nvidia-open-dkms nvidia-utils lib32-nvidia-utils: wol hw fix --yes",
+                "wifi Realtek RTL8852BE | ready | ",
+                "bluetooth Realtek Bluetooth | ready | ",
+            ]
+        );
+        // Guests: the display adapters have in-kernel drivers and are ready as they are.
+        for (vendor, device, drv, want) in [
+            ("0x15ad", "0x0405", "vmwgfx", "gpu VMware SVGA | ready | "),
+            (
+                "0x80ee",
+                "0xbeef",
+                "vboxvideo",
+                "gpu VirtualBox display | ready | ",
+            ),
+            ("0x1b36", "0x0100", "qxl", "gpu QEMU QXL | ready | "),
+            ("0x8086", "0x56a0", "i915", "gpu Intel Arc (DG2) | ready | "),
+        ] {
+            let h = FakeHost::linux();
+            sysfs(
+                &h,
+                &[("0000:00:02.0", vendor, device, "0x030000", drv)],
+                &[],
+                &[],
+            );
+            let m = drv.replace('-', "_");
+            h.command("pacman -Qq", "linux-firmware-intel\nvulkan-intel\n")
+                .file("/proc/modules", &format!("{m} 1 0 - Live 0x0\n"))
+                .file("/proc/sys/kernel/osrelease", &format!("{rel}\n"))
+                .file(
+                    &format!("/usr/lib/modules/{rel}/modules.dep"),
+                    &format!("kernel/drivers/gpu/drm/{m}.ko.zst:\n"),
+                )
+                .file(&format!("/usr/lib/modules/{rel}/modules.builtin"), "");
+            assert_eq!(rows(&h), vec![want.to_owned()], "{vendor}:{device}");
+        }
     }
 
     #[test]

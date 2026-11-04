@@ -195,7 +195,7 @@ fn system_idle_config_has_the_battery_steps() {
         .join("../../desktop/overlay/usr/share/wolos/hypr/hypridle.conf");
     let conf = std::fs::read_to_string(f).unwrap();
     assert!(
-        conf.ends_with(&wol_core::power::policy::hypridle_listeners()),
+        conf.ends_with(&wol_core::power::policy::hypridle_listeners(300)),
         "{conf}"
     );
     assert_eq!(wol_core::prefs::parse_hypridle(Some(&conf)), (300, true));

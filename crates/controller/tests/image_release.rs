@@ -236,3 +236,22 @@ fn image_trusts_the_ci_release_key() {
     let pem = std::fs::read_to_string(dir.join("wolos-2026b.pub")).unwrap();
     assert!(keys.contains(&wol_core::package::public_key(&pem).unwrap()));
 }
+
+/// QA-PRIV-15: the release is built on Linux 7.3.1 (stable; the two use-after-free fixes and the
+/// BPF verifier bound), not the 7.3 merge-window snapshot: linux-wolos/VERSION is the one source,
+/// and the headers and scx-wolos recipes build from the same tag.
+#[test]
+fn kernel_version_is_7_3_1() {
+    let v = read("linux-wolos/VERSION");
+    let key = |k: &str| {
+        v.lines()
+            .find_map(|l| l.strip_prefix(k))
+            .unwrap_or_else(|| panic!("{k}"))
+    };
+    assert_eq!((key("wolkernel="), key("linux=")), ("1.0", "7.3.1"));
+    for p in ["linux-wolos-api-headers/PKGBUILD", "scx-wolos/PKGBUILD"] {
+        let r = read(p);
+        assert!(r.lines().any(|l| l == "_linux=7.3.1"), "{p}");
+        assert!(r.lines().any(|l| l == "_wk=1.0"), "{p}");
+    }
+}

@@ -594,7 +594,8 @@ pub const IDLE_CHOICES: [(&str, u32); 5] = [
 pub const DISPLAY_OFF_AFTER_LOCK: u32 = 60;
 
 /// hypridle config: lock after `lock_secs`, display off a minute later; `require_password` = lock on sleep.
-/// Then the battery-only steps (display off, sleep: `power::policy::hypridle_listeners`).
+/// Then the battery-only steps (sleep; display off only with Never lock:
+/// `power::policy::hypridle_listeners`).
 ///
 /// Lock on sleep holds the system's sleep (a logind delay inhibitor, `inhibit_sleep = 3`) until
 /// the session is locked, that is until wol-lock has shown its first frame on every display, so
@@ -614,7 +615,7 @@ pub fn hypridle_conf(lock_secs: u32, lock_on_sleep: bool) -> String {
             lock_secs + DISPLAY_OFF_AFTER_LOCK
         ));
     }
-    s.push_str(&crate::power::policy::hypridle_listeners());
+    s.push_str(&crate::power::policy::hypridle_listeners(lock_secs));
     s
 }
 
@@ -810,11 +811,12 @@ mod tests {
             format!("# Written by WolOS Settings.\n{shipped}"),
             hypridle_conf(300, true)
         );
-        // Battery display off and sleep (power::policy) whatever the lock setting, Never too.
+        // Battery sleep (power::policy) whatever the lock setting; display off on battery only
+        // with Never (QA-GFX-11: never before the lock).
         for secs in [0, 300] {
             let c = hypridle_conf(secs, false);
             assert!(
-                c.ends_with(&crate::power::policy::hypridle_listeners()),
+                c.ends_with(&crate::power::policy::hypridle_listeners(secs)),
                 "{c}"
             );
         }

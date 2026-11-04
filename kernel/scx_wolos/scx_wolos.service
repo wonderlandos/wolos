@@ -2,17 +2,38 @@
 Description=WolOS QoS scheduler (sched_ext); EEVDF runs whenever it is not attached
 ConditionPathExists=/sys/kernel/sched_ext/state
 After=local-fs.target
+# Five failures in a minute: stay on EEVDF until next boot.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 ExecStart=/usr/bin/scx_wolos
 Restart=on-failure
 RestartSec=2
-# Five failures in a minute: stay on EEVDF until next boot.
-StartLimitIntervalSec=60
-StartLimitBurst=5
 Nice=-20
 CPUSchedulingPolicy=fifo
 CPUSchedulingPriority=1
+# Hardening (QA-PRIV-14; crates/controller/tests/image_packages.rs): a sched_ext loader needs
+# CAP_BPF and CAP_PERFMON (struct_ops programs), CAP_SYS_ADMIN (attaching the scheduler),
+# CAP_SYS_RESOURCE (locked BPF memory) and CAP_SYS_NICE (its own FIFO priority); it writes only
+# the boosted-map pin in bpffs (/sys/fs/bpf/wolos), so /sys stays writable (no
+# ProtectKernelTunables, no ProtectSystem=strict). No network, no files of its own.
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_NICE
+NoNewPrivileges=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
 
 [Install]
 WantedBy=multi-user.target

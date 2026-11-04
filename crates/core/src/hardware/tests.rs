@@ -250,13 +250,22 @@ fn status_rules() {
         (r.state, r.hint.as_str()),
         (
             State::NeedsDriver,
-            "install nvidia-open nvidia-utils: wol hw fix --yes"
+            "install nvidia-open-dkms nvidia-utils lib32-nvidia-utils: wol hw fix --yes"
         )
     );
     assert!(r.loader.is_empty());
     // ... installed, modules not loaded yet: load them; modeset options apply when they load.
     let (e, d) = pci(0x10de, 0x2520, "030000");
-    let r = resolve(e, d, &[], &ctx(&[], NV, &["nvidia-open", "nvidia-utils"]));
+    let r = resolve(
+        e,
+        d,
+        &[],
+        &ctx(
+            &[],
+            NV,
+            &["nvidia-open-dkms", "nvidia-utils", "lib32-nvidia-utils"],
+        ),
+    );
     assert_eq!((r.state, r.missing_klds.len()), (State::NeedsDriver, 4));
     assert_eq!(r.loader, vec!["options nvidia_drm modeset=1 fbdev=1"]);
     // ... loaded and bound.
@@ -265,7 +274,11 @@ fn status_rules() {
         e,
         d,
         &["nvidia"],
-        &ctx(NV, NV, &["nvidia-open", "nvidia-utils"]),
+        &ctx(
+            NV,
+            NV,
+            &["nvidia-open-dkms", "nvidia-utils", "lib32-nvidia-utils"],
+        ),
     );
     assert_eq!(r.state, State::Ready, "{r:?}");
     // A module this kernel lacks: unsupported, nothing to load.

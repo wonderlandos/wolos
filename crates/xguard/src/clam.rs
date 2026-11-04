@@ -51,14 +51,20 @@ pub fn ask(socket: &Path, f: &std::fs::File, wait: Duration) -> Answer {
     }
 }
 
-/// The socket to use: `env` when set, else the system's once there is data to scan with.
+/// The socket to use: `env` when set, else the system's once there is data to scan with and the
+/// socket is there (wolos-clam.socket has the engine's memory condition, QA-ACC-25: on a small
+/// machine the check is the quick scanner's alone, not an engine that never answers).
 pub fn socket(env: Option<PathBuf>, db: &Path) -> Option<PathBuf> {
+    socket_in(env, db, Path::new(SOCKET))
+}
+
+fn socket_in(env: Option<PathBuf>, db: &Path, system: &Path) -> Option<PathBuf> {
     let has_data = || {
         ["daily.cvd", "daily.cld"]
             .iter()
             .any(|f| db.join(f).exists())
     };
-    env.or_else(|| has_data().then(|| SOCKET.into()))
+    env.or_else(|| (has_data() && system.exists()).then(|| system.to_path_buf()))
 }
 
 /// Add the answer to a report: a finding wins, and no answer means the result is not complete.
@@ -158,9 +164,13 @@ mod tests {
         let d = std::env::temp_dir().join(format!("xg-o-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        assert_eq!(socket(None, &d), None, "no data, no question");
+        let sock = d.join("clam.sock");
+        assert_eq!(socket_in(None, &d, &sock), None, "no data, no question");
         std::fs::write(d.join("daily.cld"), "").unwrap();
-        assert_eq!(socket(None, &d), Some(SOCKET.into()));
+        // QA-ACC-25: no socket (a machine under the engine's memory condition): the quick scanner only.
+        assert_eq!(socket_in(None, &d, &sock), None, "no engine, no question");
+        let _l = UnixListener::bind(&sock).unwrap();
+        assert_eq!(socket_in(None, &d, &sock), Some(sock.clone()));
         assert_eq!(
             socket(Some("/s".into()), Path::new("/x")),
             Some("/s".into())

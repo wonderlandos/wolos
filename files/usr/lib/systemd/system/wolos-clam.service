@@ -2,6 +2,9 @@
 [Unit]
 Description=WolOS full malware check
 ConditionPathExists=/var/lib/wolos/xguard/clamav
+# QA-ACC-25: the engine keeps about 1.2 GB of signatures resident (MemoryMax=2G); below 5 GB of RAM
+# (a 4 GB machine) the socket is not there either and checks use the quick scanner only.
+ConditionMemory=>=5G
 Requires=wolos-clam.socket
 
 [Service]

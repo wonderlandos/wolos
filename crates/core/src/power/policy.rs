@@ -115,9 +115,22 @@ fn is_name(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
 }
 
-/// A `power_supply` `type` that charges the system: Mains, or USB / USB-C / USB-PD.
+/// `power_supply` `type`s that charge the system: Mains, or USB (SDP, DCP, CDP, ACA, USB-C,
+/// USB-PD). The udev rule
+/// that runs `wol power apply` on a plug or unplug (90-wolos-power.rules) matches the same list.
+pub const CHARGER_TYPES: &[&str] = &[
+    "Mains",
+    "USB",
+    "USB_DCP",
+    "USB_CDP",
+    "USB_ACA",
+    "USB_C",
+    "USB_PD",
+    "USB_PD_DRP",
+];
+
 fn is_charger(t: &str) -> bool {
-    matches!(t, "Mains" | "USB" | "USB_C" | "USB_PD" | "USB_PD_DRP")
+    CHARGER_TYPES.contains(&t)
 }
 
 /// Battery when the system battery is in use: a charger exists and none is online, or no
@@ -348,7 +361,9 @@ pub fn battery_alert(
     (Some(a), Some(l))
 }
 
-/// hypridle listeners (seconds idle) that only act on battery: display off, then sleep.
+/// hypridle listeners (seconds idle) that only act on battery: display off, then sleep. The
+/// battery display off is for Never lock only: with a lock the display turns off a minute after
+/// it, on AC and battery alike (QA-GFX-11: at 120 s it went dark before the 300 s lock).
 pub const BATTERY_DISPLAY_OFF_SECS: u32 = 120;
 pub const BATTERY_SLEEP_SECS: u32 = 600;
 
@@ -379,11 +394,22 @@ pub const AWAY_SECS: u32 = 300;
 /// Marker in the session's runtime folder while the person is away.
 pub const AWAY_FLAG: &str = "wolos-idle";
 
-/// hypridle listener blocks for [`idle_acts`], and the away marker.
-pub fn hypridle_listeners() -> String {
-    format!(
-        "listener {{\n    timeout = {AWAY_SECS}\n    on-timeout = touch \"$XDG_RUNTIME_DIR/{AWAY_FLAG}\"\n    on-resume = rm -f \"$XDG_RUNTIME_DIR/{AWAY_FLAG}\"\n}}\nlistener {{\n    timeout = {BATTERY_DISPLAY_OFF_SECS}\n    on-timeout = wol power idle display-off\n    on-resume = hyprctl dispatch dpms on\n}}\nlistener {{\n    timeout = {BATTERY_SLEEP_SECS}\n    on-timeout = wol power idle sleep\n}}\n"
-    )
+/// hypridle listener blocks for [`idle_acts`], and the away marker. `lock_secs` is the Lock
+/// Screen's timeout (0 = never): with a lock, the lock listener turns the display off a minute
+/// after it and nothing here turns it off sooner; without one, the battery display off stays.
+pub fn hypridle_listeners(lock_secs: u32) -> String {
+    let mut s = format!(
+        "listener {{\n    timeout = {AWAY_SECS}\n    on-timeout = touch \"$XDG_RUNTIME_DIR/{AWAY_FLAG}\"\n    on-resume = rm -f \"$XDG_RUNTIME_DIR/{AWAY_FLAG}\"\n}}\n"
+    );
+    if lock_secs == 0 {
+        s.push_str(&format!(
+            "listener {{\n    timeout = {BATTERY_DISPLAY_OFF_SECS}\n    on-timeout = wol power idle display-off\n    on-resume = hyprctl dispatch dpms on\n}}\n"
+        ));
+    }
+    s.push_str(&format!(
+        "listener {{\n    timeout = {BATTERY_SLEEP_SECS}\n    on-timeout = wol power idle sleep\n}}\n"
+    ));
+    s
 }
 
 /// Login accounts start here; the login window (`_wollogin`, 911) is never locked.
@@ -770,8 +796,13 @@ mod tests {
         }
         assert_eq!(Idle::parse("sleep"), Some(Idle::Sleep));
         assert_eq!(Idle::parse("reboot"), None);
-        let l = hypridle_listeners();
-        assert!(l.contains("timeout = 120\n    on-timeout = wol power idle display-off"));
+        // Never lock: the battery display off at 120 s; with a lock, none before it (QA-GFX-11).
+        assert!(
+            hypridle_listeners(0)
+                .contains("timeout = 120\n    on-timeout = wol power idle display-off")
+        );
+        assert!(!hypridle_listeners(300).contains("display-off"));
+        let l = hypridle_listeners(300);
         assert!(l.contains("timeout = 600\n    on-timeout = wol power idle sleep"));
         assert!(
             l.contains("timeout = 300\n    on-timeout = touch \"$XDG_RUNTIME_DIR/wolos-idle\"")

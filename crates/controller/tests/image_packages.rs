@@ -246,9 +246,20 @@ fn nvidia_first_boot_builds_for_the_running_kernel() {
         "headers of the image's kernel"
     );
     assert!(read("profile/pacman.conf").contains("[multilib]"));
-    // The unit has the time a DKMS build takes.
+    // The unit has the time a DKMS build takes: at least 10 minutes.
     let unit = read("files/usr/lib/systemd/system/wolos-firstboot.service");
-    assert!(unit.lines().any(|l| l == "TimeoutStartSec=10min"));
+    let t = unit
+        .lines()
+        .find_map(|l| l.strip_prefix("TimeoutStartSec="))
+        .expect("wolos-firstboot.service TimeoutStartSec=");
+    let mins: u32 = t
+        .strip_suffix("min")
+        .and_then(|m| m.parse().ok())
+        .unwrap_or_else(|| panic!("TimeoutStartSec={t}: expected <N>min"));
+    assert!(
+        mins >= 10,
+        "TimeoutStartSec={t}: a DKMS build needs >= 10min"
+    );
 }
 
 /// NET2-2 (network-r2.md): NetworkManager's shared mode (`nmcli dev wifi hotspot`, the Wi-Fi

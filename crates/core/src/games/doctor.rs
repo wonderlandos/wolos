@@ -63,6 +63,7 @@ pub enum FutexWaitv {
 pub const ICD_DIR: &str = "/usr/share/vulkan/icd.d";
 pub const PACMAN_CONF: &str = "/etc/pacman.conf";
 pub const STEAM_BIN: &str = "/usr/bin/steam";
+pub const VULKANINFO: &str = "/usr/bin/vulkaninfo";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
@@ -81,8 +82,10 @@ pub struct Facts {
     /// 32-bit Vulkan loader and OpenGL (the Steam client and 32-bit games).
     pub lib32_vulkan: bool,
     pub lib32_gl: bool,
-    /// None: vulkaninfo missing or failed.
+    /// None: vulkaninfo missing or failed ([`Facts::vulkaninfo`] tells which).
     pub vulkan: Option<Vec<VkDevice>>,
+    /// `/usr/bin/vulkaninfo` (vulkan-tools) is installed.
+    pub vulkaninfo: bool,
     /// `intel` | `amd` | `nvidia`, from the hardware snapshot (else Vulkan vendor ids).
     pub gpu_vendors: Vec<&'static str>,
     /// Kernel module version from `/proc/driver/nvidia/version`.
@@ -350,6 +353,7 @@ pub fn gather(
         lib32_vulkan: has("/usr/lib32/libvulkan.so.1"),
         lib32_gl: has("/usr/lib32/libGLX_mesa.so.0") || has("/usr/lib32/libGLX_nvidia.so.0"),
         vulkan,
+        vulkaninfo: has(VULKANINFO),
         gpu_vendors,
         lib32_nvidia: nvidia_version
             .as_ref()
@@ -499,10 +503,17 @@ pub fn checks(f: &Facts) -> Vec<Check> {
         .filter(|d| d.kind != "CPU")
         .collect();
     c.push(match (&f.vulkan, gpus.first()) {
+        // QA-GFX-14: an installed vulkaninfo that fails is a loader or driver problem.
+        (None, _) if f.vulkaninfo => check(
+            "vulkan",
+            Status::Warn,
+            "vulkaninfo failed: the Vulkan loader or a driver did not start (run it to see the error)",
+            "vulkaninfo --summary",
+        ),
         (None, _) => check(
             "vulkan",
             Status::Warn,
-            "vulkaninfo missing or failed",
+            "vulkaninfo is not installed",
             "sudo pacman -S vulkan-tools",
         ),
         (Some(_), None) => check(

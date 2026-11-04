@@ -2,6 +2,9 @@
 Description=WolOS automatic updates (downloads only; Software Update installs)
 After=network-online.target
 Wants=network-online.target
+# QA-ACC-18: on AC power only (a computer without a battery passes); a metered connection and too
+# little free space are the script's checks (a skipped day, not a failed unit).
+ConditionACPower=true
 
 [Service]
 Type=oneshot

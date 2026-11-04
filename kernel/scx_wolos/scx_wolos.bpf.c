@@ -26,7 +26,6 @@ const volatile u64 bg_starve_ns = 100000000ULL;		/* background runs at least eve
 static const u32 class_perf[C_NR] = { 1024, 1024, 768, 512, 256 };
 
 static u64 vtime_now;
-static u64 bg_last_ns;
 static s32 nr_low;	/* CPUs running utility or background: when 0, no scan for one */
 UEI_DEFINE(uei);
 
@@ -44,6 +43,7 @@ struct cpu_ctx {
 	u64 start;
 	u64 deadline;
 	u64 req;
+	u64 bg_last;	/* last background dispatch on this CPU (bg_starve_ns) */
 } __attribute__((aligned(64)));
 
 struct {
@@ -247,10 +247,16 @@ void BPF_STRUCT_OPS(wolos_dispatch, s32 cpu, struct task_struct *prev)
 {
 	u64 now = bpf_ktime_get_ns();
 	u32 n = scx_bpf_nr_cpu_ids();
+	struct cpu_ctx *cc = cpu_ctx(cpu);
 	s32 i;
 
-	if (now - bg_last_ns > bg_starve_ns && scx_bpf_dsq_move_to_local(DSQ_BG, 0)) {
-		bg_last_ns = now;
+	/*
+	 * Background starvation guard, per CPU (QA-SYS-13): every busy CPU takes one background task
+	 * every bg_starve_ns, so N background tasks wait about N * bg_starve_ns / nr_cpus, not
+	 * N * bg_starve_ns (one global stamp let the 5 s watchdog eject the scheduler past 50 tasks).
+	 */
+	if (cc && now - cc->bg_last > bg_starve_ns && scx_bpf_dsq_move_to_local(DSQ_BG, 0)) {
+		cc->bg_last = now;
 		return;
 	}
 	if (scx_bpf_dsq_move_to_local(DSQ_INTERACTIVE, 0) ||
@@ -265,8 +271,8 @@ void BPF_STRUCT_OPS(wolos_dispatch, s32 cpu, struct task_struct *prev)
 		    scx_bpf_dsq_move_to_local(DSQ_PCPU_BASE + v, 0))
 			return;
 	}
-	if (scx_bpf_dsq_move_to_local(DSQ_BG, 0))
-		bg_last_ns = now;
+	if (scx_bpf_dsq_move_to_local(DSQ_BG, 0) && cc)
+		cc->bg_last = now;
 }
 
 void BPF_STRUCT_OPS(wolos_running, struct task_struct *p)

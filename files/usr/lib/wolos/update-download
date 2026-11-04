@@ -3,14 +3,26 @@
 # Automatic updates (wolos-update-download.timer, wol_core::update::auto): check, then download the
 # pending packages into pacman's cache so Update Now is quick. Never installs: that stays Software
 # Update, which saves a restore point first. Off when $WOLOS_AUTO_UPDATE says download=off.
+# The unit runs on AC power only (ConditionACPower); here: never on a metered connection unless the
+# file says metered=on, and only with twice the download free in pacman's cache (QA-ACC-18).
 set -u
 conf=${WOLOS_AUTO_UPDATE:-/etc/wolos/auto-update}
-mode=on
-if [ -r "$conf" ]; then
-	v=$(sed -n 's/^[[:space:]]*download[[:space:]]*=[[:space:]]*//p' "$conf" | tail -n 1)
-	[ "$v" = off ] && mode=off
+# The last `key = value` line of the file for $1, empty without one.
+setting() {
+	[ -r "$conf" ] || return 0
+	sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$conf" | tail -n 1
+}
+[ "$(setting download)" = off ] && exit 0
+# NetworkManager's Metered property: 1 yes, 3 guess-yes (a phone hotspot, a mobile modem).
+if [ "$(setting metered)" != on ]; then
+	m=$(busctl --system get-property org.freedesktop.NetworkManager /org/freedesktop/NetworkManager \
+		org.freedesktop.NetworkManager Metered 2>/dev/null) || m=
+	case $m in "u 1" | "u 3")
+		echo "update-download: metered connection, not downloading today" >&2
+		exit 0
+		;;
+	esac
 fi
-[ "$mode" = on ] || exit 0
 # `wol update check` refreshes the catalogue; offline leaves nothing to download.
 wol update check --json >/dev/null 2>&1 || exit 0
 # pacman's database is on the sealed slot (DBPath /usr/lib/pacman, ADR 0016), where it cannot take
@@ -29,6 +41,16 @@ trap 'rm -rf "${tmp:?}"' EXIT
 chmod 755 "$tmp" || exit 1
 ln -s "$db/local" "$tmp/local" || exit 1
 if [ -d "$db/sync" ]; then cp -a "$db/sync" "$tmp/" || exit 1; fi
+# Room for the download and the install after it: twice the download size free in the cache.
+cache=${WOLOS_PACMAN_CACHE:-$(pacman-conf CacheDir 2>/dev/null | head -n 1)}
+cache=${cache:-/var/cache/pacman/pkg}
+need=$(pacman --dbpath "$tmp" -Sp --refresh --sysupgrade --print-format %s --noconfirm --noprogressbar 2>/dev/null |
+	awk '/^[0-9]+$/ { s += $1 } END { printf "%d", s }')
+free=$(df -Pk "$cache" 2>/dev/null | awk 'NR == 2 { printf "%d", $4 }')
+if [ -n "$need" ] && [ -n "$free" ] && [ "$((free * 1024))" -lt "$((need * 2))" ]; then
+	echo "update-download: $((need / 1048576)) MB to download needs $((need * 2 / 1048576)) MB free, $((free / 1024)) MB free; not downloading today" >&2
+	exit 0
+fi
 # A failure is the unit's: non-zero, the message in the journal (Settings and error reports see a failed unit).
 if ! pacman --dbpath "$tmp" -Sw --refresh --sysupgrade --noconfirm --noprogressbar >&2; then
 	echo "update-download: pacman could not download the pending updates" >&2

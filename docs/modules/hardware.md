@@ -57,7 +57,7 @@ Written files start with a WolOS header. Unchanged files are not rewritten. Alwa
 
 | GPU (PCI device) | Driver | Packages |
 |---|---|---|
-| Turing and newer (0x1e00+) | `nvidia` open modules (`nvidia`, `nvidia_modeset`, `nvidia_drm`, `nvidia_uvm`) | `nvidia-open`, `nvidia-utils` (installed online at first boot if missing) |
+| Turing and newer (0x1e00+) | `nvidia` open modules (`nvidia`, `nvidia_modeset`, `nvidia_drm`, `nvidia_uvm`) | `nvidia-open-dkms` (built by DKMS for the running WolKernel against `linux-wolos-headers`), `nvidia-utils`, `lib32-nvidia-utils` (Steam), installed online at first boot if missing |
 | older | `nouveau` | `linux-firmware-nvidia` |
 
 Session environment (GBM, GLX vendor, VA-API, PRIME offload): `crates/realtime/src/gpu_env.rs`.
