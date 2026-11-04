@@ -5,7 +5,6 @@ pub mod apps;
 pub mod console;
 pub mod firefox;
 pub mod generate;
-pub mod helium;
 pub mod hypr;
 pub mod kvantum;
 pub mod packs;

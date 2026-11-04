@@ -9,9 +9,9 @@ mod repo;
 use repo::read;
 use serde_json::Value;
 use std::collections::BTreeSet;
+use wol_core::browser::ATLAS;
 use wol_core::modules::{IDS, Module};
 use wol_core::store::CATALOG;
-use wol_core::theme::helium::HELIUM;
 use wol_core::webapps;
 
 const APPS: &str = "tools/bench/webapps/apps.json";
@@ -95,7 +95,7 @@ fn modules_that_bring_a_measured_app_are_named_in_its_row() {
 fn the_default_browser_and_the_web_app_launcher_are_measured() {
     let v = spec();
     let rows = rows(&v);
-    let browser = HELIUM.bin.rsplit('/').next().unwrap();
+    let browser = ATLAS.bin.rsplit('/').next().unwrap();
     let base_browser = rows.iter().find(|r| {
         strs(&r["origin"]).contains(&"base".to_string())
             && r["argv"][0] == browser

@@ -1005,7 +1005,7 @@ pub mod tests {
         for (pid, comm, adj) in [
             ("10", "Hyprland\n", "0\n"),
             ("11", "wol-shell\n", "0\n"),
-            ("12", "helium\n", "0\n"),
+            ("12", "atlas\n", "0\n"),
             ("13", "Hyprland\n", "-900\n"),
             ("self", "Hyprland\n", "0\n"),
         ] {
@@ -1047,7 +1047,7 @@ pub mod tests {
         for (pid, comm) in [
             ("10", "Hyprland\n"),
             ("11", "wol-shell\n"),
-            ("12", "helium\n"),
+            ("12", "atlas\n"),
         ] {
             std::fs::create_dir_all(d.join(pid)).unwrap();
             std::fs::write(d.join(pid).join("comm"), comm).unwrap();

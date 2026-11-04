@@ -1,0 +1,18 @@
+{
+  "BackgroundModeEnabled": false,
+  "BrowserNetworkTimeQueriesEnabled": false,
+  "BrowserSignin": 0,
+  "DefaultBrowserSettingEnabled": false,
+  "EnableMediaRouter": false,
+  "FeedbackSurveysEnabled": false,
+  "GenAiDefaultSettings": 2,
+  "MetricsReportingEnabled": false,
+  "PrivacySandboxAdMeasurementEnabled": false,
+  "PrivacySandboxAdTopicsEnabled": false,
+  "PrivacySandboxPromptEnabled": false,
+  "PrivacySandboxSiteEnabledAdsEnabled": false,
+  "PromotionalTabsEnabled": false,
+  "SpellCheckServiceEnabled": false,
+  "SyncDisabled": true,
+  "UrlKeyedAnonymizedDataCollectionEnabled": false
+}

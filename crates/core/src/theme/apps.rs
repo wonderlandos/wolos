@@ -72,7 +72,7 @@ pub const ADW_ACCENTS: [(&str, &str); 9] = [
 ];
 
 /// Preset nearest the theme accent by hue; greys map to slate. The settings portal carries it to
-/// libadwaita and to Chromium's colour mixer (Helium); gtk.css still sets the exact colour.
+/// libadwaita and to the engine's colour mixer (Atlas); gtk.css still sets the exact colour.
 pub fn adw_accent(t: &ResolvedTheme) -> &'static str {
     let (h, s) = hue_sat(token_color(t, "accent"));
     if s < 0.2 {
@@ -119,9 +119,9 @@ pub const FOOT_TITLE: &str = "Terminal";
 /// Window buttons as Kit AppWindow / hyprbars draw them (kit goldens, pixel edges): 12 px
 /// circles, 22 px apart, close centred 23 px in from the window's right edge. Every toolkit matches.
 pub use shared::theme::scaffold::{LIGHT_FIRST_CENTRE, LIGHT_PITCH, LIGHT_SIZE};
-/// adw-gtk3 6.5 `headerbar { padding: 0 6px }`; Chromium's GTK frame reads the same padding.
+/// adw-gtk3 6.5 `headerbar { padding: 0 6px }`; the engine's GTK frame reads the same padding.
 const GTK3_HEADER_PADDING: i32 = 6;
-/// GtkHeaderBar's default child spacing; Chromium hard-codes it (`kHeaderSpacing = 6`).
+/// GtkHeaderBar's default child spacing; the engine hard-codes it (`kHeaderSpacing = 6`).
 const GTK3_BUTTON_SPACING: i32 = 6;
 
 /// User toolkit dir: `$XDG_CONFIG_HOME/wolos/toolkits`.
@@ -404,11 +404,11 @@ fn titlebutton(suffix: &str) -> String {
         .join(", ")
 }
 
-/// GTK 3 window controls: the circle is the 12 px button (GTK 3 centres titlebuttons). Chromium's
+/// GTK 3 window controls: the circle is the 12 px button (GTK 3 centres titlebuttons). The engine's
 /// GTK mode renders only the button background under GTK 3, so the glyph is a hover background:
-/// that way GTK 3 apps and Helium (default browser) show the same one. Chromium styles each button
+/// that way GTK 3 apps and Atlas (default browser) show the same one. The engine styles each button
 /// on its own, so unlike GTK 4 only the hovered control shows its glyph (on the accent). The real
-/// icon stays hidden. GTK 3 and Chromium place buttons at header padding + margins, 6 px apart;
+/// icon stays hidden. GTK 3 and the engine place buttons at header padding + margins, 6 px apart;
 /// close is the last of [`BUTTON_LAYOUT`], so its extra right margin is the right-edge inset.
 fn gtk3_window_controls(t: &ResolvedTheme) -> String {
     let side = (LIGHT_PITCH - LIGHT_SIZE - GTK3_BUTTON_SPACING) / 2;
@@ -891,7 +891,7 @@ mod tests {
                 "{class}: no colour of its own"
             );
         }
-        // GTK 3: the circle is the button itself. Chromium's GTK mode (Helium) renders only the
+        // GTK 3: the circle is the button itself. The engine's GTK mode (Atlas) renders only the
         // titlebutton background under GTK 3, never the image's (ui/gtk/nav_button_provider_gtk.cc).
         let gtk3 = file(&f, GTK3_THEME_CSS);
         assert!(gtk3.contains(&format!("background-color: {idle}; box-shadow: none; }}")));
@@ -920,7 +920,7 @@ mod tests {
             !gtk3.contains("titlebutton.close image"),
             "no circle on the image"
         );
-        // Chromium paints the background only, so that is where the hover glyph has to be.
+        // The engine paints the background only, so that is where the hover glyph has to be.
         for (class, glyph) in [
             ("close", "window-close-symbolic"),
             ("minimize", "window-minimize-symbolic"),
@@ -980,7 +980,7 @@ mod tests {
     fn window_buttons_match_the_kit_geometry() {
         assert_eq!((LIGHT_SIZE, LIGHT_PITCH, LIGHT_FIRST_CENTRE), (12, 22, 23));
         let f = render(&theme("wol-light"), Path::new("/x"));
-        // GTK 3 and Chromium's GTK frame (Helium): header padding + margins + 6 px button spacing.
+        // GTK 3 and the engine's GTK frame (Atlas): header padding + margins + 6 px button spacing.
         // adw-gtk3 sizes titlebuttons with these exact selectors (gtk-3.0/gtk.css, 6.5); a weaker
         // selector loses the cascade and the buttons render 24 px, 34 px apart (measured).
         let g3 = file(&f, GTK3_THEME_CSS);
@@ -1218,7 +1218,7 @@ mod tests {
 
     /// GTK 3 reads the user gtk.css once; a theme is reloaded whenever its name changes. Colours
     /// live in a GTK 3 theme named after the WolOS theme, so every switch restyles running GTK 3
-    /// apps (and Helium's GTK mode) live; the user gtk.css carries no colours to shadow it.
+    /// apps (and Atlas's GTK mode) live; the user gtk.css carries no colours to shadow it.
     #[test]
     fn gtk3_colours_are_a_theme_that_switches_live() {
         for (id, adw) in [("wol-light", "adw-gtk3"), ("nord", "adw-gtk3-dark")] {
@@ -1265,8 +1265,8 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// The settings portal carries `accent-color` to libadwaita and to Chromium's colour mixer
-    /// (Helium): send the preset nearest the theme's accent, not a fixed one.
+    /// The settings portal carries `accent-color` to libadwaita and to the engine's colour mixer
+    /// (Atlas): send the preset nearest the theme's accent, not a fixed one.
     #[test]
     fn portal_accent_is_the_nearest_preset() {
         for (id, want) in [

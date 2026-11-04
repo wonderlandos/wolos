@@ -1,0 +1,29 @@
+# Policies the Atlas engine defines (name, type, allowed ints, 'recommendable' when the policy
+# can be set as a recommendation the person may change). STUB for the keys WolOS ships
+# (crates/core/src/browser.rs), read from components/policy/resources/templates/policy_definitions
+# of the prepared tree 156.0.8078.79 (forge dev slot 1, 2026-11-04): type main = bool, int-enum =
+# int with its item values, features.can_be_recommended. AT-1 replaces it with the dump of every
+# policy, same columns; a key WolOS writes that is missing here fails
+# browser::tests::every_policy_is_one_the_engine_defines.
+BackgroundModeEnabled	bool		recommendable
+BrowserNetworkTimeQueriesEnabled	bool		
+BrowserSignin	int	0,1,2	
+BrowserThemeColor	string		
+DefaultBrowserSettingEnabled	bool		
+EnableMediaRouter	bool		
+FeedbackSurveysEnabled	bool		
+GenAiDefaultSettings	int	0,1,2	
+IntensiveWakeUpThrottlingEnabled	bool		
+MemorySaverModeSavings	int	0,1,2	
+MetricsReportingEnabled	bool		recommendable
+NetworkPredictionOptions	int	0,1,2	recommendable
+PrivacySandboxAdMeasurementEnabled	bool		
+PrivacySandboxAdTopicsEnabled	bool		
+PrivacySandboxPromptEnabled	bool		
+PrivacySandboxSiteEnabledAdsEnabled	bool		
+PromotionalTabsEnabled	bool		
+SearchSuggestEnabled	bool		recommendable
+SpellCheckServiceEnabled	bool		recommendable
+SyncDisabled	bool		
+TranslateEnabled	bool		recommendable
+UrlKeyedAnonymizedDataCollectionEnabled	bool		

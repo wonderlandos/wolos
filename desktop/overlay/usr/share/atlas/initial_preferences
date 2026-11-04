@@ -10,5 +10,14 @@
     "theme": {
       "system_theme": 1
     }
+  },
+  "helium": {
+    "browser": {
+      "layout": 2
+    }
+  },
+  "vertical_tabs": {
+    "expand_on_hover": false,
+    "uncollapsed_width": 220
   }
 }
