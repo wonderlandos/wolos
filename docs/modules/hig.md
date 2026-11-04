@@ -36,6 +36,7 @@ Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`
 - Spacing scale: 4, 8, 12, 16, 24 (`shared::theme::SCALE`, `--space-1` to `--space-6`). Nothing else.
 - Radius: controls 8, cards 12 (`--glass-radius-s`), windows/panels `--glass-radius`.
 - Type: Inter. Title 13 semibold (toolbar), body 13, secondary 11 dim, heading 16, large title 27 bold (page titles; `shared::theme::scaffold`), 24 semibold inside an empty state; every size sits on a 4 px line (11/16, 13/20, 16/24, 24/36, 27/40). No other sizes.
+- Screen chrome: the installer and Setup show the door mark and the word WolOS at the upper left (60 px from the edges) only on a screen at least 968 px wide (`CHROME_MIN_WIDTH` in `ui/lock.rs`). Below that the centred 624 px card reaches the mark and the two overlap.
 - Icons: symbolic, 16 in rows/toolbar, 32/48/64 only for files and app tiles.
 
 ## 3. Behaviour
