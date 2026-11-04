@@ -12,10 +12,18 @@ name = "wolkit"
 # exports (a cdylib would also get rustc's own unversioned export list).
 crate-type = ["staticlib", "rlib"]
 
+[features]
+# `native`: everything that needs Linux (the Wayland window, Vulkan through ash, the event loop on
+# fds, the Kit socket, AT-SPI, the C ABI). Without it the crate is the portable pipeline (scene,
+# style, layout, text, paint, CPU raster, input, headless window) and builds for
+# wasm32-unknown-unknown (crates/wolkit-render, ADR 0060).
+default = ["native"]
+native = ["dep:wol_core", "dep:libc", "dep:wayland-client", "dep:wayland-protocols", "dep:xkbcommon", "dep:zbus", "dep:ash"]
+
 [dependencies]
 shared.workspace = true
-wol_core.workspace = true
-libc.workspace = true
+wol_core = { workspace = true, optional = true }
+libc = { workspace = true, optional = true }
 serde_json.workspace = true
 harfrust = "0.15.0"
 skrifa = "0.49.0"
@@ -24,12 +32,12 @@ unicode-linebreak = "0.1.5"
 unicode-segmentation = "1.13.3"
 # The native window backend (WK-W4): the Wayland client, keymaps and compose, and the accessibility bus.
 # `system`: libwayland-client itself, so the GPU backend can hand its display and surface to Vulkan WSI.
-wayland-client = { version = "0.31", features = ["system"] }
-wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
-xkbcommon = { version = "0.9", default-features = false, features = ["wayland"] }
-zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+wayland-client = { version = "0.31", features = ["system"], optional = true }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"], optional = true }
+xkbcommon = { version = "0.9", default-features = false, features = ["wayland"], optional = true }
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"], optional = true }
 # Vulkan, loaded at run time (libvulkan.so.1 is dlopened, nothing links it): the GPU backend (WK-W5).
-ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"], optional = true }
 # Image decoding (WK-image): PNG and JPEG, decoded on the engine's worker threads (src/image/).
 png = "0.18"
 zune-jpeg = { version = "0.5", default-features = false, features = ["std", "x86", "neon"] }

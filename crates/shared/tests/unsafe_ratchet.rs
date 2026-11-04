@@ -106,6 +106,10 @@ const BASELINE: &[(&str, usize)] = &[
     ("wol-lua", 3),
     ("xguard-clam", 13),
     ("webengine", 135),
+    // ADR 0060: the render targets and the browser module have no `unsafe` (the wasm-bindgen glue
+    // is macro-expanded, not in the source).
+    ("wolkit-render", 0),
+    ("wolkit-web", 0),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -98,6 +98,24 @@ The queue holds at most 4,096 records and 4 MiB. A newer scroll, slider, resize,
 
 Kit lowering, and what does not survive: `box` becomes a row or a stack (direction), spacing the nearest of 0, 4, 8, 12, 16, 24; `text` a label with its role; `button`, `toggle` and `text_input` take their label from their text, else their first text child, else their accessibility name (none is an error); `slider`, `image` (size snapped to the Kit's sizes) and `vlist` (all mounted rows as a list) map directly. Custom style properties, padding, borders, shadows, transforms and animations are ignored. `canvas` and `surface` become one placeholder sentence; `overlay`, `divider` and hidden parts are omitted. More than 200 parts or 12 levels is `WOLKIT_ERR_LIMIT`. A part's wire id is its node id, so a click on the wire maps straight back. Golden: `tests/kit_golden/kit_app.json` (rerun with `WOLKIT_BLESS=1` and review the diff).
 
+## Render targets (ADR 0060)
+
+The pipeline ends in a `DisplayList` and the instance batcher; what draws it is a `wolkit_render::Renderer` (`crates/wolkit-render`, BSD-2-Clause): `render_image(FrameIn) -> Image`, premultiplied RGBA8 out.
+
+| Target | Where | Notes |
+|---|---|---|
+| `CpuRenderer` | everywhere | `wolkit::cpu::raster`, the reference every other target is held to |
+| `VulkanRenderer` | native (feature `native`) | the ash renderer of the Wayland window (`wolkit::gpu`), wrapped, not copied |
+| `WgpuRenderer` | native (Vulkan, lavapipe in CI) and `wasm32-unknown-unknown` (the browser's WebGPU) | `src/shaders/ui.wgsl`, a port of `shaders/ui.{vert,frag}`; a 256-byte uniform slot per draw replaces push constants |
+
+Both GPU targets use `wolkit::gpu::prepare` (shadow placement, layer composites, the byte images of the instance ring and the clip table). The tolerance against the CPU image is the Vulkan golden one: no channel off by more than 2, at most 0.1 % of pixels off by more than 1 (`wolkit_render::MAX_CHANNEL_DIFF`, `MAX_DIFF_SHARE`).
+
+The `native` feature of `wolkit` (default) holds everything that needs Linux: Wayland, ash, zbus, xkbcommon, libc, `wol_core`, the engine on file descriptors, the Kit socket and the C ABI. Without it the crate is the portable pipeline (scene, style, layout, text, paint, CPU raster, input, headless window) and builds for `wasm32-unknown-unknown`; the built-in themes then come from the same JSON files as `ThemeCatalog::builtin` (`paint::palette::portable`, held to the catalog by a native test). In the web build there are no decode threads: pictures and icons decode inline, and `image::icon::register` hands the page its symbolic icons (no icon folder).
+
+`wolkit_render::page::Page` is a window without a display: the scene with the kit look and the shell's tokens, fonts from memory, input records in (`pointer`, `key`, `text`), a display list out; `wolkit_render::view::raise` shows a `shared::view` tree in it. `crates/wolkit-web` mounts a `Page` in a `<canvas>` (wasm-bindgen) and `site/public/kit/kit.js` forwards DOM events. Build: `bash crates/wolkit-web/build-site.sh` (needs the `wasm32-unknown-unknown` target and `wasm-bindgen` CLI 0.2.130). Check: `node crates/wolkit-web/check-browser.mjs SITE NATIVE_DIR` (headless Chromium with SwiftShader WebGPU; compares the browser frame with the native wgpu frame, light and dark, and clicks the switch).
+
+Tests: `cargo test -p wolkit-render` (`tests/wgpu_golden.rs`: the 13 shared golden scenes on every target against the CPU image, `WOLKIT_GPU_REQUIRED=1` turns a missing adapter into a failure, `WOLKIT_GPU_HARDWARE=1` uses a hardware adapter; `tests/page.rs`: the page against the CPU, against the GTK golden `app-window-parts` (at most 4 % of pixels more than 48 off), a click on the switch, the named icon; `tests/wgsl_port.rs`: the WGSL against the GLSL).
+
 ## Pictures (`image` nodes, ABI 1.1)
 
 An `image` node shows a picture: `WOLKIT_PROP_IMAGE_ID` names one the app made with the `wolkit_image_*` verbs, else `WOLKIT_PROP_IMAGE_SOURCE` with an absolute path (or a `file://` URL) names a file the engine reads itself; `icon:<name>` names an icon of the theme (below). `WOLKIT_PROP_IMAGE_FIT` places it: `contain` (the default: the whole picture, centred), `cover` (the box filled, the overflow cut), `fill` (stretched) or `none` (one picture pixel per logical pixel, centred and cut; appended in 1.1). The node's `border-radius` rounds the picture (a rounded clip), its `opacity` fades it, its `background` shows where `contain` leaves room. Code: `src/image/` (decoding, fit, the path cache), `src/paint/scene.rs` (lowering), `src/cpu/raster.rs` and `src/gpu/images.rs` (drawing).

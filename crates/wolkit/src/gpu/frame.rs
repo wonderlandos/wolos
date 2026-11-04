@@ -19,15 +19,16 @@ use std::time::{Duration, Instant};
 
 use ash::vk;
 
+use super::copy;
 use super::device::{DeviceOptions, Gpu, barrier, vk_err};
 use super::images::ImageAtlas;
 use super::live::{Live, SLOTS};
 use super::pipelines::MAX_LAYERS;
+use super::prepare::{clip_bytes, frame_instances, max_depth};
 use super::shadow::ShadowAtlas;
-use super::{ABSOLUTE, K_LAYER, copy};
 use crate::cpu::raster::Image;
 use crate::error::{Error, Result, Status};
-use crate::paint::batch::{Draw, Instance, InstanceBuilder, Pass, kind};
+use crate::paint::batch::{Draw, Instance, InstanceBuilder, Pass};
 use crate::paint::damage::Damage;
 use crate::paint::geom::{Color, PixelRect, Rect};
 use crate::paint::glyphs::{GlyphSource, NoGlyphs};
@@ -388,14 +389,13 @@ impl Renderer {
             self.images.reupload_all();
         }
         // Instances: the builder's, with shadows pointed at their prototypes, then composites.
-        self.instances.clear();
-        self.instances.extend_from_slice(&self.builder.instances);
-        for d in &self.builder.draws {
-            if d.pass == Pass::Draw {
-                place_shadows(&mut self.shadows, &mut self.instances, d);
-            }
-        }
-        composite_instances(&self.builder.draws, scissor, &mut self.instances);
+        frame_instances(
+            &self.builder.instances,
+            &self.builder.draws,
+            &mut self.shadows,
+            scissor,
+            &mut self.instances,
+        );
         self.bytes.clear();
         for i in &self.instances {
             self.bytes.extend_from_slice(&i.to_bytes());
@@ -404,19 +404,10 @@ impl Renderer {
         let inst_n = u64::try_from(self.instances.len()).unwrap_or(0);
         let staging_need = upload_need(&frame, &self.shadows) + self.images.pending_bytes() + 4;
         live.reserve(slot, inst_n, clips_n.max(1), staging_need)?;
-        let mut clip_bytes = Vec::with_capacity(self.builder.clips.len() * 48);
-        for c in &self.builder.clips {
-            for v in c
-                .rect
-                .iter()
-                .chain(c.rounded.iter())
-                .chain([c.radius, 0.0, 0.0, 0.0].iter())
-            {
-                clip_bytes.extend_from_slice(&v.to_le_bytes());
-            }
-        }
+        let mut clips = Vec::with_capacity(self.builder.clips.len() * 48);
+        clip_bytes(&self.builder.clips, &mut clips);
         if let Some(s) = live.slots.get_mut(slot)
-            && (!s.ring.write(0, &self.bytes) || !s.clips.write(0, &clip_bytes))
+            && (!s.ring.write(0, &self.bytes) || !s.clips.write(0, &clips))
         {
             return Err(Error::new(Status::Internal, copy::DRIVER));
         }
@@ -536,78 +527,6 @@ impl Renderer {
             height: h,
             data,
         })
-    }
-}
-
-/// Deepest nesting of overlapping-opacity layers in a frame.
-fn max_depth(draws: &[Draw]) -> usize {
-    let (mut d, mut m) = (0usize, 0usize);
-    for x in draws {
-        match x.pass {
-            Pass::LayerBegin => {
-                d += 1;
-                m = m.max(d);
-            }
-            Pass::LayerEnd { .. } => d = d.saturating_sub(1),
-            Pass::Draw => {}
-        }
-    }
-    m
-}
-
-/// Rewrites the shadow instances of one draw: the quad becomes the mask's pixel rectangle in
-/// window space (`ABSOLUTE`), `uv` the prototype in the shadow atlas, `extra` its slicing.
-fn place_shadows(atlas: &mut ShadowAtlas, inst: &mut [Instance], d: &Draw) {
-    let (a, b) = (d.first.ix(), (d.first + d.count).ix());
-    let Some(range) = inst.get_mut(a..b) else {
-        return;
-    };
-    for i in range.iter_mut().filter(|i| i.kind() == kind::SHADOW) {
-        let cast = Rect::new(
-            i.rect[0] + d.offset.0,
-            i.rect[1] + d.offset.1,
-            i.rect[2],
-            i.rect[3],
-        );
-        let radii = i.radii.map(|q| f32::from(q) / 16.0);
-        match atlas.get(&cast, &radii, i.extra[0]) {
-            Some((p, ext)) => {
-                i.rect = [
-                    ext.x0 as f32,
-                    ext.y0 as f32,
-                    ext.width() as f32,
-                    ext.height() as f32,
-                ];
-                i.extra = [
-                    p.slicing.split_x as f32,
-                    p.slicing.split_y as f32,
-                    p.slicing.stretch_x as f32,
-                    p.slicing.stretch_y as f32,
-                ];
-                i.uv = [p.x, p.y, p.w, p.h];
-                i.params = kind::SHADOW | ABSOLUTE;
-            }
-            None => i.rect = [0.0; 4],
-        }
-    }
-}
-
-/// Appends one composite instance per layer end.
-fn composite_instances(draws: &[Draw], scissor: PixelRect, out: &mut Vec<Instance>) {
-    for d in draws {
-        if let Pass::LayerEnd { alpha } = d.pass {
-            out.push(Instance {
-                rect: [
-                    scissor.x0 as f32,
-                    scissor.y0 as f32,
-                    scissor.width() as f32,
-                    scissor.height() as f32,
-                ],
-                color0: u32::from(alpha) << 24,
-                params: K_LAYER | ABSOLUTE,
-                ..Instance::default()
-            });
-        }
     }
 }
 
