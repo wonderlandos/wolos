@@ -879,6 +879,14 @@ pub const TREE: &[Cmd] = &[
         &[],
         "Model Context Protocol server on stdin/stdout",
     ),
+    Cmd {
+        path: &["webapp-call"],
+        action: "webapp.call",
+        args: &[arg("app"), arg("method"), opt("params")],
+        flags: &[],
+        help: "wold: one bridge call of a system web app (ADR 0048)",
+        hidden: true,
+    },
     cmd(
         &["theme", "get"],
         "theme.get",

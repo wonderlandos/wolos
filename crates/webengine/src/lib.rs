@@ -25,6 +25,7 @@
 //! host's end of `window.wolos`, with recorded answers for development ([`bridge::mock`]).
 pub mod bridge;
 pub mod ffi;
+pub mod host;
 pub mod input;
 pub mod policy;
 pub mod process;
@@ -32,4 +33,4 @@ pub mod sandbox;
 mod view;
 
 pub use policy::{Policy, TelemetryOff};
-pub use view::{App, Error, Image, Target, WebView};
+pub use view::{App, Channel, Error, Image, OnMessage, Target, WebView};

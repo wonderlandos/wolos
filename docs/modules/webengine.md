@@ -26,13 +26,26 @@ A host process starts as `<host> --content-process TOKEN` when the engine wants 
 
 | Part | Means |
 |---|---|
-| Exports | the 16 `wwe_*` functions of `crates/webengine/engine/wolwebengine.map`, at version `WOLWEBENGINE_1`; append-only within the major |
+| Exports | the 16 `wwe_*` functions of `crates/webengine/engine/wolwebengine.map` at version `WOLWEBENGINE_1`, and from WWE_1.1 `wwe_engine_set_host_channel` and `wwe_view_post_message` at version `WWE_1.1` (the host channel of system web apps, ADR 0048); append-only within the major |
 | Source | `crates/webengine/src/engine/lib.rs` (not a module of `webengine`; counted by its unsafe ratchet row), manifest `crates/webengine/engine/Cargo.toml` (excluded from the workspace) |
 | Build | `webengine-wolos` copies `crates/webengine` into the engine's workspace as `ports/wolwebengine`, builds `-p wolwebengine` under the engine's `Cargo.lock` (prepare() refuses any other change to the lock), links with `crates/webengine/engine/link.sh` |
 | Threads | every call on the thread that made the engine; `wake` may be called from any thread |
 | One per process | a second `wwe_engine_new` is refused ("one engine per process") |
 | Errors | NULL or -1 and one sentence in the caller's `err` buffer |
 | Callbacks | `allow` (required, every navigation and resource load), `wake`, `clip_get`, `clip_set`, all with the host's `ctx` |
+
+## The host process of a system web app (`wol-webhost`, ADR 0048)
+
+`wol-webhost /usr/share/wolos/webapps/<slug>/app.toml` (`src/bin/wol-webhost.rs`; the launcher entry's `Exec=`) is one app: it loads the manifest, enters the app's scope (it re-executes under `systemd-run --scope` once, same pid, unit `app-wol-<app id>-<pid>-<n>.scope`), opens a Wolkit window titled with the app's name holding one `surface` node, runs the page under `Manifest::policy`, and answers the page's `window.wolos` calls. It is also the engine's content process (`--content-process TOKEN` first). No shell is started and nothing from the page or the manifest is run.
+
+| Part | Where | Means |
+|---|---|---|
+| Channel | `webengine::App::channel` (`Channel {origin, init, on_message}`), `WebView::post_message`, `WebView::has_channel` | the page's `window.__wolosHost` over the library's WWE_1.1 pair |
+| Pump | `webengine::host::Host` | page message to `Bridge` (refuses what the app did not declare or hold), an allowed call on a worker thread (at most 8 in flight, then `unavailable`), the reply queued for the window loop; no text over 64 KiB either way |
+| wold | `host::WoldClient` | one `webapp-call <method> <params>` request per call on `/var/run/wold.sock` after the hello of ADR 0033; the app id is not in the request |
+| Start-up | `host::initial_grants`, `host::locale` | a system app starts with what it declares, an app of others with the consent grants for its folder; locale from `LC_ALL`, `LC_MESSAGES`, `LANG` |
+
+Tests without the engine: `tests/engine_channel.rs` (the injected script in a JavaScript interpreter), `tests/host_path.rs` (the real `bridge.js` and the Hello app's calls through the shim's scripts, the host and recorded answers), `tests/shim_loader_10.rs` and `tests/shim_loader_11.rs` (the loader and the view against a C stand-in library, with and without the channel).
 
 ## The origin gate (`src/sandbox.rs`)
 

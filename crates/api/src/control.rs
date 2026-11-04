@@ -31,7 +31,8 @@ pub fn handle(req: Option<&JobRequest>, uid: Option<u32>, jobs: &dyn JobTable) -
         JobRequest::Subscribe
         | JobRequest::SubscribeAccount
         | JobRequest::Publish(_)
-        | JobRequest::Call(_) => {
+        | JobRequest::Call(_)
+        | JobRequest::WebappCall(_) => {
             return Reply::of(Some("not a request-response request".into()));
         }
     };

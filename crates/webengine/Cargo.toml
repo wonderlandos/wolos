@@ -31,6 +31,10 @@ miniz_oxide = "0.9.1"
 # engine's workspace supplies libc) is compiled here too for tests/confinement.rs.
 libc.workspace = true
 
+[[bin]]
+name = "wol-webhost"
+path = "src/bin/wol-webhost.rs"
+
 [[test]]
 name = "content_process"
 harness = false

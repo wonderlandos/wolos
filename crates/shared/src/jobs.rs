@@ -183,6 +183,9 @@ pub enum JobRequest {
     Publish(String),
     /// libwol service call (`shared::portal::Call` JSON, decoded and checked by wold).
     Call(String),
+    /// A system web app's bridge call (ADR 0048): `<method> [<params JSON>]`, from the app's host
+    /// process only; the app is the caller's scope, never a word here.
+    WebappCall(String),
 }
 
 impl JobRequest {
@@ -197,6 +200,9 @@ impl JobRequest {
                 crate::events::Event::parse(json).map(|_| Self::Publish(json.into()))
             }
             ["call", ..] => Some(Self::Call(line.trim().strip_prefix("call")?.trim().into())),
+            ["webapp-call", _, ..] => Some(Self::WebappCall(
+                line.trim().strip_prefix("webapp-call")?.trim().into(),
+            )),
             ["start", l] => Some(Self::Start((*l).into())),
             ["stop", l] => Some(Self::Stop((*l).into())),
             _ => None,
@@ -210,6 +216,7 @@ impl JobRequest {
             Self::SubscribeAccount => "subscribe account".into(),
             Self::Publish(j) => format!("publish {j}"),
             Self::Call(j) => format!("call {j}"),
+            Self::WebappCall(r) => format!("webapp-call {r}"),
             Self::Start(l) => format!("start {l}"),
             Self::Stop(l) => format!("stop {l}"),
         }

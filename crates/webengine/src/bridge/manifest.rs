@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::path::Path;
 
 /// Where the image installs system web apps: `<SYSTEM_DIR>/<slug>/`, the kit at `<SYSTEM_DIR>/kit/`.
-pub const SYSTEM_DIR: &str = "/usr/share/wolos/webapps";
+pub use wol_core::sysapp::SYSTEM_DIR;
 /// The shared kit's folder name next to the apps (never an app slug).
 pub const KIT: &str = "kit";
 pub const FILE: &str = "app.toml";

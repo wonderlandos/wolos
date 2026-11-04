@@ -46,6 +46,7 @@ pub mod sharing;
 pub mod shortcuts;
 pub mod storage;
 pub mod store;
+pub mod sysapp;
 pub mod system;
 pub mod terminal_shell;
 pub mod theme;

@@ -162,6 +162,17 @@ impl PeerIdentity {
         }
     }
 
+    /// The web app this process belongs to (ADR 0048): the app scope its cgroup names for its own
+    /// pid (`wol_core::sysapp::app_of_cgroup`), read through the pinned `/proc/<pid>`. None when
+    /// the process changed since accept, has no such scope or cannot be read.
+    pub fn web_app(&self) -> Option<String> {
+        if !self.still_same() {
+            return None;
+        }
+        let text = proc_file(self.dir.as_ref()?, "cgroup")?;
+        wol_core::sysapp::app_of_cgroup(&String::from_utf8_lossy(&text), self.pid)
+    }
+
     /// Executable bytes as captured at accept (for exact-path checks such as the realtime agent).
     pub fn exe(&self) -> Option<&str> {
         self.exe.as_deref()

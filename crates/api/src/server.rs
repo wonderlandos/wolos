@@ -8,6 +8,7 @@ use crate::control::{JobTable, handle};
 use crate::packages;
 use crate::peer::PeerIdentity;
 use crate::portal::{self, Grants};
+use crate::webapp;
 use shared::bounded::BoundedLineReader;
 use shared::events::Event;
 use shared::jobs::{JobRequest, Reply};
@@ -132,6 +133,21 @@ pub fn serve(
                 }
                 answer
             };
+            let mut w = &stream;
+            let _ = w.write_all(answer.to_line().as_bytes());
+        }
+        Some(JobRequest::WebappCall(rest)) => {
+            // ADR 0048: the host of a system web app; the app is its scope's, not the request's.
+            let who = caller();
+            let app = peer.as_ref().and_then(PeerIdentity::web_app);
+            let answer = webapp::handle(
+                rest,
+                who.as_ref(),
+                app.as_deref(),
+                &webapp::Dirs::default(),
+                grants,
+                &webapp::WolVerbs,
+            );
             let mut w = &stream;
             let _ = w.write_all(answer.to_line().as_bytes());
         }
@@ -374,6 +390,26 @@ mod tests {
         );
         h.join().unwrap();
         assert_eq!(bus.len(), before);
+    }
+
+    /// ADR 0048: a webapp-call from any other program, or from a process in no app scope, is
+    /// refused with a sentence before anything runs.
+    #[test]
+    fn a_webapp_call_from_anything_but_a_web_app_host_is_refused() {
+        let bus = Bus::default();
+        let mut out = String::new();
+        call("webapp-call about\n", &bus)
+            .read_to_string(&mut out)
+            .unwrap();
+        assert!(
+            out.contains("\"ok\":false") && out.contains("permission-denied"),
+            "{out}"
+        );
+        assert_eq!(
+            JobRequest::parse("webapp-call about {\"topic\":\"x\"}"),
+            Some(JobRequest::WebappCall("about {\"topic\":\"x\"}".into()))
+        );
+        assert_eq!(JobRequest::parse("webapp-call"), None);
     }
 
     #[test]

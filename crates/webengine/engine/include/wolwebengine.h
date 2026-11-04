@@ -130,6 +130,20 @@ void wwe_view_theme(wwe_view *view, bool dark);
 /* Spins until the rendering is up to date and captured, at most timeout_ms. 0 ok, -1 error. */
 int wwe_view_screenshot(wwe_view *view, uint32_t timeout_ms, wwe_image *out, char *err, size_t errlen);
 void wwe_image_free(wwe_image *image);
+/* WWE_1.1 (ADR 0048): a message channel between the app's own page and the host. */
+#define WWE_MAX_MESSAGE 65536
+typedef void (*wwe_message_fn)(void *ctx, const uint8_t *text, size_t len);
+/* For views made after this call: in each top-level document whose URL is inside `origin` (a
+ * file:///dir/ folder of the policy), before any page script, the engine defines
+ * window.__wolosHost = {init: <init_json parsed>, post(text), onmessage: null}, the property
+ * non-writable and non-configurable. post(text) calls on_message on the engine thread (texts over
+ * WWE_MAX_MESSAGE are dropped). Frames and other documents get nothing. on_message and ctx stay
+ * valid until wwe_engine_free returns. 0 ok, -1 error. */
+int wwe_engine_set_host_channel(wwe_engine *engine, const char *origin, const char *init_json,
+                                wwe_message_fn on_message, void *ctx, char *err, size_t errlen);
+/* Calls window.__wolosHost.onmessage(text) in the view's top-level document if it has the channel;
+ * 0 handed to the document, -1 not (no channel, the document is elsewhere, or a bad text). */
+int wwe_view_post_message(wwe_view *view, const uint8_t *text, size_t len);
 /* In a content process (argv: --content-process TOKEN): confines the process (it must still have a
  * single thread: call this first in main), then runs the content until the engine ends it; the host
  * then exits. A process that cannot be confined prints why on stderr and returns without running the content. */

@@ -49,6 +49,23 @@ pub type ClipGetFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> isize;
 /// `wwe_clip_set_fn`: the page copied this text.
 pub type ClipSetFn = unsafe extern "C" fn(*mut c_void, *const u8, usize);
 
+// SAFETY: `wwe_message_fn` (WWE_1.1): the host's callback for a page message, called on the engine
+// thread with the `ctx` given to `wwe_engine_set_host_channel`.
+pub type MessageFn = unsafe extern "C" fn(*mut c_void, *const u8, usize);
+// SAFETY: WWE_1.1 `wwe_engine_set_host_channel`: a live engine, valid strings, a callback and a context
+// that live until the engine is freed, an error buffer.
+pub type SetChannelFn = unsafe extern "C" fn(
+    *mut EngineH,
+    *const c_char,
+    *const c_char,
+    Option<MessageFn>,
+    *mut c_void,
+    *mut c_char,
+    usize,
+) -> i32;
+// SAFETY: WWE_1.1 `wwe_view_post_message`: a live view and `len` readable bytes.
+pub type PostMessageFn = unsafe extern "C" fn(*mut ViewH, *const u8, usize) -> i32;
+
 #[repr(C)]
 pub struct Config {
     pub abi: u32,
@@ -139,6 +156,10 @@ pub struct Lib {
     pub image_free: unsafe extern "C" fn(*mut ImageC),
     // SAFETY: a token from the engine's own command line.
     pub run_content_process: unsafe extern "C" fn(*const c_char),
+    /// WWE_1.1 (ADR 0048), absent in a library of the 1.0 build: the page-to-host channel. Without
+    /// them an app runs in development mode (the page has no `window.__wolosHost`).
+    pub set_host_channel: Option<SetChannelFn>,
+    pub post_message: Option<PostMessageFn>,
     /// The loaded library: the function pointers above live as long as it.
     _handle: libloading::Library,
 }
@@ -174,6 +195,13 @@ fn open(path: &str) -> Result<Lib, String> {
             *sym
         }};
     }
+    // The 1.1 additions may be missing: that is a library of the earlier build, not an error.
+    macro_rules! opt {
+        ($name:literal) => {
+            // SAFETY: the symbol, when present, has the type the header (ABI 1, WWE_1.1) declares.
+            unsafe { handle.get($name) }.ok().map(|sym| *sym)
+        };
+    }
     let lib = Lib {
         abi_version: f!(b"wwe_abi_version"),
         engine_version: f!(b"wwe_engine_version"),
@@ -191,6 +219,8 @@ fn open(path: &str) -> Result<Lib, String> {
         view_screenshot: f!(b"wwe_view_screenshot"),
         image_free: f!(b"wwe_image_free"),
         run_content_process: f!(b"wwe_run_content_process"),
+        set_host_channel: opt!(b"wwe_engine_set_host_channel"),
+        post_message: opt!(b"wwe_view_post_message"),
         _handle: handle,
     };
     // SAFETY: resolved above with its declared type.

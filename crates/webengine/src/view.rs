@@ -43,6 +43,20 @@ pub trait Clipboard {
     fn set(&self, text: &str);
 }
 
+/// A host's callback for the texts a page posts.
+pub type OnMessage = Box<dyn FnMut(&str)>;
+
+/// The page-to-host channel of a system web app (WWE_1.1, ADR 0048): `window.__wolosHost` in the
+/// app's own documents, and the host's callback for what the page posts.
+pub struct Channel {
+    /// `file:///dir/` of the policy: the documents that get the channel.
+    pub origin: String,
+    /// The `init` record the page reads before its scripts run (JSON text).
+    pub init: String,
+    /// Called on the engine's thread (inside [`WebView::spin`]) with each text the page posts.
+    pub on_message: OnMessage,
+}
+
 /// Who the page belongs to.
 pub struct App {
     /// `org.wolos.webapp.<slug>` ([`crate::process::app_id`]).
@@ -54,6 +68,8 @@ pub struct App {
     /// probes, where a child process adds nothing).
     pub content_process: bool,
     pub clipboard: Option<Box<dyn Clipboard>>,
+    /// Set for a system web app; see [`WebView::has_channel`] for a library that cannot carry it.
+    pub channel: Option<Channel>,
 }
 
 impl App {
@@ -63,6 +79,7 @@ impl App {
             profile_dir,
             content_process: true,
             clipboard: None,
+            channel: None,
         }
     }
 }
@@ -112,6 +129,8 @@ struct Shared {
     refused: RefCell<Vec<String>>,
     refused_loads: std::cell::Cell<u64>,
     clipboard: Option<Box<dyn Clipboard>>,
+    /// The page's messages (WWE_1.1); taken while it runs, so a reentrant post is dropped.
+    on_message: RefCell<Option<OnMessage>>,
     /// The only field the waker touches (it runs on the engine's threads).
     woken: AtomicBool,
 }
@@ -138,6 +157,28 @@ unsafe extern "C" fn allow_cb(ctx: *mut c_void, url: *const u8, len: usize, kind
         }
     }
     ok
+}
+
+// SAFETY: WWE_1.1, as allow_cb: called on the view's thread with the `Shared` boxed as `ctx`; `text`
+// has `len` readable bytes.
+unsafe extern "C" fn message_cb(ctx: *mut c_void, text: *const u8, len: usize) {
+    // SAFETY: ctx is the Shared this view boxed (it outlives the engine); the engine passes len
+    // valid bytes.
+    let (s, bytes) = unsafe { (&*ctx.cast::<Shared>(), ffi::bytes_in(text, len)) };
+    deliver(s, bytes);
+}
+
+/// One page message to the host's callback: UTF-8 only, and not while the callback is running.
+fn deliver(s: &Shared, bytes: &[u8]) {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return;
+    };
+    let Ok(mut slot) = s.on_message.try_borrow_mut() else {
+        return;
+    };
+    if let Some(f) = slot.as_mut() {
+        f(text);
+    }
 }
 
 // SAFETY: called from any engine thread; touches only the atomic field of `ctx`.
@@ -174,11 +215,17 @@ pub struct WebView {
     engine: *mut EngineH,
     view: *mut ViewH,
     throttle: bool,
+    /// The library carried the channel (WWE_1.1) and the page has `window.__wolosHost`.
+    channel: bool,
     // Last: the engine is freed (in Drop) before what its callbacks point at.
     shared: Box<Shared>,
 }
 
 const ERR: usize = 512;
+
+fn cstring(s: &str, what: &str) -> Result<CString, Error> {
+    CString::new(s).map_err(|_| Error::Policy(format!("{what} has a NUL")))
+}
 
 fn take_err(buf: &[c_char]) -> String {
     let bytes: Vec<u8> = buf
@@ -221,11 +268,19 @@ impl WebView {
             refused: RefCell::new(Vec::new()),
             refused_loads: std::cell::Cell::new(0),
             clipboard: app.clipboard,
+            on_message: RefCell::new(None),
             woken: AtomicBool::new(false),
         });
         let profile = CString::new(app.profile_dir.to_string_lossy().into_owned())
             .map_err(|_| Error::Policy("the profile directory has a NUL".into()))?;
         let curl = CString::new(url).map_err(|_| Error::Policy("the URL has a NUL".into()))?;
+        let strings = match &app.channel {
+            Some(c) => Some((
+                cstring(&c.origin, "the channel origin")?,
+                cstring(&c.init, "the channel init")?,
+            )),
+            None => None,
+        };
         let flags = engine_flags(app.content_process);
         let ctx = (&raw const *shared).cast_mut().cast::<c_void>();
         let config = ffi::Config {
@@ -246,6 +301,31 @@ impl WebView {
         let engine = unsafe { (lib.engine_new)(&config, err.as_mut_ptr(), ERR) };
         if engine.is_null() {
             return Err(Error::Engine(take_err(&err)));
+        }
+        // WWE_1.1: the page's channel to the host, for the views made after this call. A library of
+        // the earlier build has no such call: the app then runs in development mode (`has_channel`).
+        let mut channel = false;
+        let mut failed = None;
+        if let (Some(ch), Some((o, i)), Some(set)) = (app.channel, strings, lib.set_host_channel) {
+            *shared.on_message.borrow_mut() = Some(ch.on_message);
+            // SAFETY: engine is live; o and i are valid for the call; message_cb and ctx live until
+            // engine_free (Drop), and ctx is the boxed Shared.
+            let rc = unsafe {
+                set(
+                    engine,
+                    o.as_ptr(),
+                    i.as_ptr(),
+                    Some(message_cb),
+                    ctx,
+                    err.as_mut_ptr(),
+                    ERR,
+                )
+            };
+            if rc == 0 {
+                channel = true;
+            } else {
+                failed = Some(Error::Engine(take_err(&err)));
+            }
         }
         let t = match target {
             Target::Headless { width, height } => ffi::TargetC {
@@ -271,21 +351,45 @@ impl WebView {
                 wl_surface: surface,
             },
         };
-        // SAFETY: engine is live; t and curl are valid for the call.
-        let view = unsafe { (lib.view_new)(engine, &t, curl.as_ptr(), err.as_mut_ptr(), ERR) };
+        let view = if failed.is_some() {
+            std::ptr::null_mut()
+        } else {
+            // SAFETY: engine is live; t and curl are valid for the call.
+            unsafe { (lib.view_new)(engine, &t, curl.as_ptr(), err.as_mut_ptr(), ERR) }
+        };
         if view.is_null() {
             // SAFETY: engine has no view. Freeing it gives the library's one-engine slot back,
             // so a later WebView::new in this process can make one again.
             unsafe { (lib.engine_free)(engine) };
-            return Err(Error::Engine(take_err(&err)));
+            return Err(failed.unwrap_or_else(|| Error::Engine(take_err(&err))));
         }
         Ok(WebView {
             lib,
             engine,
             view,
             throttle: policy.background_throttle,
+            channel,
             shared,
         })
+    }
+
+    /// Whether the page has `window.__wolosHost`: the app asked for a channel and the library
+    /// (WWE_1.1) carries it. False means development mode only.
+    pub fn has_channel(&self) -> bool {
+        self.channel
+    }
+
+    /// Hands `text` to the page's `window.__wolosHost.onmessage`. False when there is no channel,
+    /// the document is not the app's, or the text is over [`crate::bridge::MAX_MESSAGE`].
+    pub fn post_message(&self, text: &str) -> bool {
+        let Some(post) = self.lib.post_message.filter(|_| self.channel) else {
+            return false;
+        };
+        if text.len() > crate::bridge::MAX_MESSAGE {
+            return false;
+        }
+        // SAFETY: view is live; text is valid for the call.
+        unsafe { post(self.view, text.as_ptr(), text.len()) == 0 }
     }
 
     /// Runs what the engine has pending; call when [`WebView::take_woken`] is true or on the

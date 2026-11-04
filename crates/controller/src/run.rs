@@ -263,6 +263,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "update.status" => update_status(env, json),
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
+        "webapp.call" => crate::webapp::run(inv, env),
         "encrypt.rebind" => crate::seal::rebind(env),
         "encrypt.reseal" => crate::seal::reseal(env),
         "encrypt.password" => crate::seal::password(env, inv),

@@ -20,3 +20,4 @@ pub mod search;
 pub mod server;
 pub mod services;
 pub mod supervisor;
+pub mod webapp;

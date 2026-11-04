@@ -8,12 +8,14 @@
 //! What it adds to the engine, and nothing else: the origin gate (every navigation and every
 //! resource load asks the host's `allow`; a refusal is a network error, a refused navigation does
 //! not happen), the profile directory as the engine's only place for files, the page's features as
-//! preferences, the host's clipboard and waker, and a synchronous screenshot for the goldens.
+//! preferences, the host's clipboard and waker, a synchronous screenshot for the goldens, and (WWE_1.1,
+//! ADR 0048) a message channel between the app's own page and the host ([`channel`]).
 //!
 //! A fault in the engine stays on this side ([`boundary`]): no export unwinds (a panic is an error
 //! return, or a log line where the call returns nothing), the waker stops when the engine is
 //! freed, the engine's shutdown is watched, and the one-engine slot comes back with the engine.
 mod boundary;
+mod channel;
 mod confine;
 
 use std::cell::{Cell, RefCell};
@@ -28,12 +30,13 @@ use raw_window_handle::{
     WindowHandle,
 };
 use servo::{
-    ClipboardDelegate, Code, CompositionEvent, CompositionState, DevicePoint, EventLoopWaker,
-    ImeEvent, InputEvent, Key, KeyState, KeyboardEvent, LoadStatus, Location, Modifiers,
-    MouseButton, MouseButtonAction, MouseButtonEvent, MouseLeftViewportEvent, MouseMoveEvent,
-    NavigationRequest, Opts, Preferences, RenderingContext, Servo, ServoBuilder,
-    SoftwareRenderingContext, StringRequest, Theme, WebResourceLoad, WebResourceResponse, WebView,
-    WebViewBuilder, WebViewDelegate, WheelDelta, WheelEvent, WheelMode, WindowRenderingContext,
+    ClipboardDelegate, Code, CompositionEvent, CompositionState, ConsoleLogLevel, DevicePoint,
+    EventLoopWaker, ImeEvent, InputEvent, JSValue, Key, KeyState, KeyboardEvent, LoadStatus,
+    Location, Modifiers, MouseButton, MouseButtonAction, MouseButtonEvent, MouseLeftViewportEvent,
+    MouseMoveEvent, NavigationRequest, Opts, Preferences, RenderingContext, Servo, ServoBuilder,
+    SoftwareRenderingContext, StringRequest, Theme, UserContentManager, UserScript,
+    WebResourceLoad, WebResourceResponse, WebView, WebViewBuilder, WebViewDelegate, WheelDelta,
+    WheelEvent, WheelMode, WindowRenderingContext,
 };
 use url::Url;
 
@@ -56,6 +59,8 @@ type AllowFn = unsafe extern "C" fn(*mut c_void, *const u8, usize, u32) -> bool;
 type WakeFn = unsafe extern "C" fn(*mut c_void);
 type ClipGetFn = unsafe extern "C" fn(*mut c_void, *mut u8, usize) -> isize;
 type ClipSetFn = unsafe extern "C" fn(*mut c_void, *const u8, usize);
+// SAFETY: `wwe_message_fn`: the host's callback for a page message, called with its `ctx`.
+type MessageFn = unsafe extern "C" fn(*mut c_void, *const u8, usize);
 
 #[repr(C)]
 pub struct Config {
@@ -152,9 +157,35 @@ impl EventLoopWaker for Waker {
 /// processes (a wedged one never answers the engine's exit).
 const SHUTDOWN: Duration = Duration::from_secs(5);
 
+/// What `wwe_engine_set_host_channel` was given (WWE_1.1), shared by the views made after it.
+struct HostChannel {
+    /// `file:///dir/`: the folder whose top-level documents get the channel.
+    origin: String,
+    init: String,
+    /// Made per engine ([`channel::secret`]); only the injected script and the delegate know it.
+    secret: String,
+    on_message: MessageFn,
+    ctx: *mut c_void,
+}
+
+impl HostChannel {
+    /// A console line of the page: a message for the host when it carries the secret.
+    fn console(&self, level: &ConsoleLogLevel, line: &str) {
+        if !matches!(level, ConsoleLogLevel::Debug) {
+            return;
+        }
+        if let Some(text) = channel::from_console(&self.secret, line) {
+            // SAFETY: host contract (`wwe_message_fn`): callable on the engine thread with `ctx`
+            // until wwe_engine_free returns; the views, and so this, are gone before that.
+            unsafe { (self.on_message)(self.ctx, text.as_ptr(), text.len()) }
+        }
+    }
+}
+
 pub struct Engine {
     servo: Servo,
     host: Host,
+    channel: RefCell<Option<Rc<HostChannel>>>,
     waker: Option<boundary::Revocable<(WakeFn, usize)>>,
     /// Last: the slot comes back once the engine is gone.
     _slot: boundary::Claim<'static>,
@@ -170,6 +201,7 @@ struct ViewState {
 struct Delegate {
     host: Host,
     state: Rc<ViewState>,
+    channel: Option<Rc<HostChannel>>,
 }
 
 impl WebViewDelegate for Delegate {
@@ -218,6 +250,13 @@ impl WebViewDelegate for Delegate {
         });
     }
 
+    // The page's messages to the host (`window.__wolosHost.post`, channel.rs).
+    fn show_console_message(&self, _webview: WebView, level: ConsoleLogLevel, message: String) {
+        if let Some(c) = &self.channel {
+            c.console(&level, &message);
+        }
+    }
+
     fn notify_crashed(&self, _webview: WebView, reason: String, _backtrace: Option<String>) {
         log::error!("wolwebengine: content crashed: {reason}");
         self.state.crashed.set(self.state.crashed.get() + 1);
@@ -263,6 +302,10 @@ pub struct View {
     context: Rc<dyn RenderingContext>,
     state: Rc<ViewState>,
     engine: *mut Engine,
+    /// The channel this view was made with, if the host set one first.
+    channel: Option<Rc<HostChannel>>,
+    /// Keeps the injected script alive as long as the view.
+    _user_content: Option<Rc<UserContentManager>>,
 }
 
 /// One engine per process at a time (the engine keeps process-wide state).
@@ -442,6 +485,7 @@ pub unsafe extern "C" fn wwe_engine_new(
         Ok::<_, &str>(Box::into_raw(Box::new(Engine {
             servo,
             host,
+            channel: RefCell::new(None),
             waker: waker.clone(),
             _slot: slot,
         })))
@@ -569,17 +613,29 @@ pub unsafe extern "C" fn wwe_view_new(
             .make_current()
             .map_err(|x| format!("make_current: {x:?}"))?;
         let state = Rc::new(ViewState::default());
+        let channel = e.channel.borrow().clone();
         let delegate = Rc::new(Delegate {
             host: e.host,
             state: state.clone(),
+            channel: channel.clone(),
         });
         let scale = if t.scale > 0.0 { t.scale } else { 1.0 };
-        let webview = WebViewBuilder::new(&e.servo, context.clone())
+        let mut builder = WebViewBuilder::new(&e.servo, context.clone())
             .delegate(delegate)
             .clipboard_delegate(Rc::new(Clipboard(e.host)))
             .hidpi_scale_factor(euclid::Scale::new(scale))
-            .url(url)
-            .build();
+            .url(url);
+        // The channel script is in the view's user content from its first document on.
+        let user_content = channel.as_ref().map(|c| {
+            let m = Rc::new(UserContentManager::new(&e.servo));
+            let script = channel::bootstrap(&c.origin, &c.init, &c.secret);
+            m.add_script(Rc::new(UserScript::new(script, None)));
+            m
+        });
+        if let Some(m) = &user_content {
+            builder = builder.user_content_manager(m.clone());
+        }
+        let webview = builder.build();
         webview.show();
         webview.set_focused(true);
         Ok::<_, String>(Box::into_raw(Box::new(View {
@@ -587,6 +643,8 @@ pub unsafe extern "C" fn wwe_view_new(
             context,
             state,
             engine,
+            channel,
+            _user_content: user_content,
         })))
     });
     match made.and_then(|r| r) {
@@ -846,6 +904,113 @@ pub unsafe extern "C" fn wwe_image_free(image: *mut Image) {
         // SAFETY: made from a boxed slice of exactly n bytes in wwe_view_screenshot.
         drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(i.rgba, n)) });
         i.rgba = std::ptr::null_mut();
+    }
+}
+
+/// WWE_1.1. For the views made after this call: `window.__wolosHost` (`init_json` parsed as its
+/// `init`, `post(text)`, `onmessage`) in each top-level document inside `origin`, before the page's
+/// scripts; `post` calls `on_message` on the engine thread.
+///
+/// # Safety
+/// `engine` is live; `origin` and `init_json` are NUL-terminated strings; `on_message` is callable
+/// with `ctx` until `wwe_engine_free` returns; `err` as in `wwe_engine_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wwe_engine_set_host_channel(
+    engine: *mut Engine,
+    origin: *const c_char,
+    init_json: *const c_char,
+    on_message: Option<MessageFn>,
+    ctx: *mut c_void,
+    err: *mut c_char,
+    errlen: usize,
+) -> i32 {
+    // SAFETY: contract above.
+    let (e, origin, init) = unsafe { (engine.as_ref(), opt_str(origin), opt_str(init_json)) };
+    let Some(e) = e else {
+        put_err(err, errlen, "engine is NULL");
+        return -1;
+    };
+    let (Some(origin), Some(init), Some(on_message)) = (origin, init, on_message) else {
+        put_err(err, errlen, "origin, init_json and on_message are required");
+        return -1;
+    };
+    if !channel::valid_origin(&origin) {
+        put_err(err, errlen, "the origin must be a file:///dir/ folder");
+        return -1;
+    }
+    if init.len() > channel::MAX_MESSAGE {
+        put_err(err, errlen, "init_json is over 64 KiB");
+        return -1;
+    }
+    let secret = match channel::secret() {
+        Ok(s) => s,
+        Err(m) => {
+            put_err(err, errlen, &m);
+            return -1;
+        }
+    };
+    *e.channel.borrow_mut() = Some(Rc::new(HostChannel {
+        origin,
+        init,
+        secret,
+        on_message,
+        ctx,
+    }));
+    0
+}
+
+/// WWE_1.1. Calls `window.__wolosHost.onmessage(text)` in the view's top-level document when it has
+/// the channel: 0 when the call was handed to the document, -1 when it has none (no channel, the
+/// document is elsewhere, or the text is over 64 KiB or not UTF-8).
+///
+/// # Safety
+/// `view` is live; `text` has `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wwe_view_post_message(
+    view: *mut View,
+    text: *const u8,
+    len: usize,
+) -> i32 {
+    // SAFETY: contract above (`text` is read only when it is not NULL and not empty).
+    #[allow(clippy::disallowed_methods)] // the boundary slice clippy.toml names
+    let (v, bytes) = unsafe {
+        (
+            view.as_ref(),
+            if text.is_null() || len == 0 {
+                &[][..]
+            } else {
+                std::slice::from_raw_parts(text, len)
+            },
+        )
+    };
+    let Some(v) = v else {
+        return -1;
+    };
+    let Some(c) = &v.channel else {
+        return -1;
+    };
+    let Some(text) = std::str::from_utf8(bytes)
+        .ok()
+        .filter(|t| t.len() <= channel::MAX_MESSAGE)
+    else {
+        return -1;
+    };
+    match boundary::catch(|| {
+        let here = v
+            .webview
+            .url()
+            .is_some_and(|u| channel::inside(&c.origin, u.as_str()));
+        if here {
+            v.webview.evaluate_javascript(channel::delivery(text), |r| {
+                if matches!(r, Ok(JSValue::Boolean(false)) | Err(_)) {
+                    log::debug!("wolwebengine: a host message found no handler");
+                }
+            });
+        }
+        here
+    }) {
+        Ok(true) => 0,
+        _ => -1,
     }
 }
 

@@ -53,6 +53,14 @@ use std::path::{Path, PathBuf};
 /// process with Landlock and seccomp, which std wraps none of: one private `sys` function holds
 /// the one `libc::syscall` call (a ruleset, a rule, `prctl`, the filter), every other step is safe
 /// Rust (`O_PATH` through `OpenOptionsExt`). Lowered when the engine's embedding API settles.
+/// `webengine` 118 -> 135 (WEBHOST, 2026-11-04, ADR 0048): the host channel, symbol version WWE_1.1.
+/// `src/engine/lib.rs` (+8): the `wwe_message_fn` type, the two exports `wwe_engine_set_host_channel` and
+/// `wwe_view_post_message` (each `#[unsafe(no_mangle)] pub unsafe extern`), one block reading their
+/// pointers, and the call of the host's callback with its context. `src/ffi.rs` (+4): the three
+/// function-pointer types of the pair and the one `get` for the optional symbols. `src/view.rs` (+4):
+/// the callback the library calls with the view's context, the `set_host_channel` call and
+/// `post_message`. `src/bin/wol-webhost.rs` (+1): `Target::surface` for the app's window. Each has a
+/// SAFETY line, and the pair is covered by `tests/shim_loader_11.rs` against a C stand-in library.
 /// realtime 69 -> 79 (DT-2, compositor animations, counted at the wave-3 merge): `src/ffi.rs`
 /// `wol_anim_curve_name` and `wol_anim_curve` for the wol-hypr plugin (two `unsafe(no_mangle)`, one
 /// `unsafe extern`, the name read and the four-float out-write, each with a SAFETY line) and five
@@ -76,7 +84,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 8),
     ("wol-lua", 3),
     ("xguard-clam", 13),
-    ("webengine", 118),
+    ("webengine", 135),
 ];
 
 fn crates_dir() -> PathBuf {
