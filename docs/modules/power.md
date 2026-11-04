@@ -1,4 +1,4 @@
-# Power
+# Power (ADR 0014)
 
 The power source picks the profile; Low Power and High Power Mode override it (ADR 0014).
 Code: `wol_core::power::policy` (pure: facts from read-only probes in, fixed argv out).

@@ -346,8 +346,10 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
         exec_codes: vec![1],
         ..Default::default()
     };
-    assert_eq!(run("hw boot --online", &mut env), 0);
+    // ... but the exit code says so, or firstboot would write firstboot-done (audit8 stability2 #10).
+    assert_eq!(run("hw boot --online", &mut env), 1);
     assert!(env.out.contains("wolos_hw: pacman -S nvidia-open failed\n"));
+    assert!(env.out.contains("devices,"), "the rest of boot still ran");
     // Without --online (every boot): never touches the network.
     let mut env = FakeEnv {
         root: true,
@@ -396,7 +398,9 @@ fn firstboot_pacman_bounded_stale_lock_cleaned() {
         exec_codes: vec![124],
         ..Default::default()
     };
-    assert_eq!(run("hw boot --online", &mut env), 0);
+    // A failed install is the exit code, so firstboot and the network hook try again
+    // (rel/0.12.1, audit8 stability2 #10).
+    assert_eq!(run("hw boot --online", &mut env), 1);
     let first = env.execs.first().map(|a| a.join(" ")).unwrap_or_default();
     assert_eq!(
         first,

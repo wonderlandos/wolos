@@ -331,7 +331,10 @@ fn rules_failure_exits_1() {
         "curl",
         "while [ $# -gt 0 ]; do [ \"$1\" = -o ] && { echo '{\"files\":[]}' > \"$2\"; shift; }; shift; done",
     );
-    fake(&d, "wol-xguard", "exit 1");
+    // The signed manifest passes `rules check`; the bundle then fails `rules install` (a data
+    // file that does not match its signed hash): a failure the unit shows. A refused check (not
+    // signed, not newer) is the normal no-news day and stays exit 0 (rel/0.12.1).
+    fake(&d, "wol-xguard", "[ \"$2\" = check ] && exit 0; exit 1");
     fake(&d, "systemctl", "");
     let run = |d: &Path| {
         Command::new("sh")

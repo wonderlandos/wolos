@@ -259,6 +259,56 @@ fn helium_and_the_dock_apps_open_their_files_by_default() {
     assert!(mime.starts_with('#') && mime.contains("\n[Default Applications]\n"));
 }
 
+/// e2e D1: web apps named the package (`helium-browser`) as their program and never opened. Web
+/// apps, the browser theme files and the default-browser entry all name the program the
+/// `helium-browser` package really installs.
+#[test]
+fn web_apps_and_the_default_browser_run_the_program_the_package_installs() {
+    let bin = wol_core::webapps::BROWSER;
+    assert_eq!(bin, wol_core::theme::helium::HELIUM.bin);
+    let pkg = read("helium-browser/PKGBUILD");
+    assert!(
+        pkg.lines()
+            .any(|l| l.trim() == format!("install -Dm755 helium.sh \"$pkgdir{bin}\"")),
+        "helium-browser/PKGBUILD does not install {bin}"
+    );
+    assert!(
+        !pkg.contains("/usr/bin/helium-browser"),
+        "a second launcher name would hide which one the image has"
+    );
+    let entry = read("helium-browser/helium.desktop");
+    let exec = entry
+        .lines()
+        .find_map(|l| l.strip_prefix("Exec="))
+        .and_then(|e| e.split_whitespace().next())
+        .unwrap();
+    assert_eq!(Some(exec), bin.rsplit('/').next(), "helium.desktop Exec");
+    let mime = read("desktop/overlay/usr/share/applications/mimeapps.list");
+    assert!(
+        mime.lines()
+            .any(|l| l == "x-scheme-handler/https=helium.desktop;")
+    );
+}
+
+/// e2e D2: Night Light's program was not in the image, so the toggle, Ctrl+Super+N and the
+/// Control Center tile did nothing. The image installs it (wolos-iso profile) for the session's
+/// `exec-once` to start.
+#[test]
+fn night_light_has_its_program_in_the_image() {
+    let p = wol_core::toggles::NIGHT_LIGHT_PROGRAM;
+    let pkgs = read("profile/packages.desktop");
+    assert!(
+        pkgs.lines()
+            .any(|l| l.split('#').next().unwrap_or("").trim() == p),
+        "profile/packages.desktop lacks {p}"
+    );
+    let hypr = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+    assert!(
+        hypr.lines()
+            .any(|l| l.starts_with("exec-once = ") && l.contains(&format!("exec {p}")))
+    );
+}
+
 /// The live user has no password: a lock screen after five idle minutes could not be left.
 #[test]
 fn the_live_desktop_never_locks_itself() {

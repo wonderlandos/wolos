@@ -1,4 +1,4 @@
-# Scripts: sh, bash and Ruby
+# Scripts: sh, bash and Ruby (ADR 0041)
 
 Decision: ADR 0041. Code: `crates/controller/src/script.rs` (`wol script`, the `KINDS` table), `crates/controller/src/verbs.rs` (`as_script`, the helper gate), `crates/core/src/automation/audit.rs` (the audit log). Rules: docs/RULES-ruby.md (`RB-nnn`) beside docs/RULES-system.md (`RS-nnn`). Tests: `crates/controller/tests/script.rs` (every case for `.sh` and `.rb`), `crates/controller/tests/rules_ruby.rs`, `crates/proxy/tests/script_entry.rs`, `crates/core/tests/widget_ruby.rs`.
 

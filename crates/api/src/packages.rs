@@ -41,7 +41,9 @@ pub trait System {
     /// [`RUN_TIMEOUT`] and was stopped.
     fn run(&self, argv: &[String]) -> i32;
     /// Copy `path` into a fresh directory under [`STAGING`] if it is a regular file owned by
-    /// `uid`; the copy's path. None when the file is not the caller's or cannot be copied.
+    /// `uid` that `uid` can reach (every directory above it searchable,
+    /// [`crate::admind::caller_may_reach`]); the copy's path. None when the file is not the
+    /// caller's or cannot be copied.
     fn stage(&self, path: &str, uid: u32) -> Option<String>;
     /// Forget a copy [`System::stage`] made (after the install, or when the person said no).
     fn discard(&self, staged: &str);
@@ -152,8 +154,14 @@ impl System for Host<'_> {
         // wold and every session under it.
         let mut f = shared::sys::open_named(path).ok()?;
         let md = f.metadata().ok()?;
-        let dirs = crate::admind::opened_dirs(&f).ok()?;
+        let dirs = crate::admind::dirs_above(&f).ok()?;
         if !md.is_file() || !may_stage(md.uid(), &dirs, uid) {
+            return None;
+        }
+        // api-security 5: as for wol-admind's copy, the caller could walk down to the file
+        // (its own file kept inside another account's private directory is not the caller's).
+        let dirs = crate::admind::dirs_above(&f).ok()?;
+        if !crate::admind::caller_may_reach(&dirs, Some(uid)) {
             return None;
         }
         std::fs::DirBuilder::new()
@@ -849,18 +857,21 @@ pub fn is_package_call(json: &str) -> bool {
         .is_some_and(|c| c.starts_with("package.") || c.starts_with("system."))
 }
 
+/// The refusal names the pane and the row the person turns on: Privacy & Security lists the app
+/// under the section of its permission (the shell's `privacy::KINDS` titles), with its switch
+/// (wold noted the refusal, `portal::Remembering`). There is no "Software" section.
 fn denied(grant: &str, app: &str) -> Answer {
-    let what = match grant {
-        "packages-install" => "install system apps",
-        "packages-remove" => "remove system apps",
-        "packages-update" => "update the system",
-        _ => "install apps built on this computer",
+    let (what, section) = match grant {
+        "packages-install" => ("install system apps", "Install Apps"),
+        "packages-remove" => ("remove system apps", "Remove Apps"),
+        "packages-update" => ("update the system", "System Updates"),
+        _ => ("install apps built on this computer", "Unreviewed Apps"),
     };
     let name = app.rsplit('/').next().unwrap_or(app);
     Answer::err(
         Code::PermissionDenied,
         format!(
-            "{name} is not allowed to {what}. Allow it in System Settings > Privacy & Security > Software."
+            "{name} is not allowed to {what}. Turn on {name} under {section} in System Settings > Privacy & Security."
         ),
     )
 }
@@ -987,9 +998,10 @@ pub fn handle(
                     );
                 }
             };
+            // The running slot's release file has no image hash (wolos-base writes it): Running.
             let running = sys
                 .running_release()
-                .and_then(|t| wol_core::update::check::Manifest::parse(&t));
+                .and_then(|t| wol_core::update::check::Running::parse(&t));
             if running.is_some_and(|r| r.snapshot >= m.snapshot) {
                 return Answer::err(
                     Code::InvalidArgument,

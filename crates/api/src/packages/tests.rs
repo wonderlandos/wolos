@@ -2,6 +2,29 @@
 //! wold's package changes against a fake system.
 use super::*;
 
+/// The refusal leads to a real row: the section title Privacy & Security shows for the
+/// grant, and the app's name (MANUAL 0.12.0: it named a "Software" section that is not there).
+#[test]
+fn a_refusal_names_the_privacy_row() {
+    for (grant, section) in [
+        ("packages-install", "Install Apps"),
+        ("packages-remove", "Remove Apps"),
+        ("packages-update", "System Updates"),
+        ("packages-unreviewed", "Unreviewed Apps"),
+    ] {
+        let a = denied(grant, "/usr/bin/wopkg");
+        assert_eq!(a.code, Some(Code::PermissionDenied));
+        let m = a.message.unwrap_or_default();
+        assert!(
+            m.ends_with(&format!(
+                "Turn on wopkg under {section} in System Settings > Privacy & Security."
+            )),
+            "{m}"
+        );
+        assert!(!m.contains("Software"), "{m}");
+    }
+}
+
 #[test]
 fn a_pinned_package_is_held_through_a_full_update() {
     // Audit S2: holds are an administrator sheet; wol-admind runs `-Syu --ignore=…`.
@@ -263,7 +286,7 @@ fn stage_reach_check() {
     let file = dir.join("app.pkg.tar.zst");
     std::fs::write(&file, b"x").unwrap();
     let f = std::fs::File::open(&file).unwrap();
-    let dirs = crate::admind::opened_dirs(&f).unwrap();
+    let dirs = crate::admind::dirs_above(&f).unwrap();
     let md = std::fs::metadata(&dir).unwrap();
     assert_eq!(dirs[0], (md.uid(), md.mode()));
     assert_eq!(dirs.len(), file.ancestors().count() - 1, "{dirs:?}");
@@ -776,6 +799,16 @@ fn system_update_needs_a_signed_newer_release() {
         "no downgrades"
     );
     assert_eq!(f.ran.borrow().len(), 1);
+    // The running slot's own release file (wolos-base writes it, no image hash) counts too.
+    let g = Fake {
+        running: Some(r#"{"version":"2027.01","snapshot":"2027/01/10"}"#.into()),
+        ..yes(seed)
+    };
+    assert_eq!(
+        handle(&down, Some((1000, APP)), &all, &g).code,
+        Some(Code::InvalidArgument),
+        "no downgrades from a hash-less release file"
+    );
 }
 
 /// One tar header of `kind` for `name`, then the data, padded to whole blocks.

@@ -27,6 +27,7 @@ id, or the other way round. A rule is changed or dropped in the same commit as i
 | RCR- | [RULES-crystal.md](RULES-crystal.md) | Crystal: `wopkg/`, `hue/`, the libwol bindings, shards and their build files (`crates/controller/tests/rules_crystal.rs`) |
 | RP- | [../../wolos-pkgbuilds/docs/RULES-packaging.md](../../wolos-pkgbuilds/docs/RULES-packaging.md) | package recipes |
 | RC- | [../../wolos-build/docs/RULES-ci.md](../../wolos-build/docs/RULES-ci.md) | build and CI |
+| RH- | this file, section "Root-cause standards" | the 0.13 classes of ADR 0051 (`crates/shared/tests/rules_rc_*.rs`) |
 
 ## Rust
 
@@ -187,3 +188,41 @@ These cannot be decided by a text scan; the reviewer's checklist (`docs/REVIEW.m
 | RR-116 | Every file we ship has a contract test that reads the shipped file. | The file is the product. | review |
 | RR-117 | An error a person reads is one sentence they can act on. | RR-030 and copy_scan catch only the words. | review |
 | RR-118 | No upstream project name in our comments, manifests, scripts' comments, docs prose or Crystal sources (wopkg, wolos-crystal: comments and strings) (Wonderland Doctrine); the allowlist is written in the test. | Our words describe what WolOS does, not whose code it uses. | rules_rust.rs RR-118 |
+
+## Root-cause standards (ADR 0051)
+
+**Concept.** The rules that keep the ten first classes of the QA-100 root causes closed
+(docs/STANDARDS.md section 9; the class ids RC-nn are anchors there, not the RC- catalogue of CI).
+Each id is RH-, the class number and a digit: RH-011 is the first rule of class RC-01.
+
+**Why.** A finding closes only with a regression test or an enforced rule (ADR 0051). One rule per
+class closes dozens of findings at once and keeps the next one from being written.
+
+**How.** Each rule is a growth-only ratchet in `crates/shared/tests/rules_rc_*.rs` (reader in
+`crates/shared/tests/support/rc.rs`). A `BASELINE` row (rule, file or crate, count, owner brief)
+freezes the debt of the tree on 2026-11-04; a count above its row fails, a count below passes and
+asks for the row to be lowered, a key with no row starts at zero. The owner is the brief of the
+0.13 fix plan that brings it down. Print the table with
+`cargo test -p shared --test 'rules_rc_*' -- --nocapture --test-threads=1 | grep BASELINE-ROW`.
+Each file's `the_doc_and_the_tests_agree` and `rules_rc_00_index.rs` fail if this table, the test
+files, docs/STANDARDS.md section 9 and the table of ADR 0051 name different ids.
+
+| ID | Rule | Why | Class | How checked |
+|---|---|---|---|---|
+| RH-011 | In Settings, Control Center, the Store and Displays, a switch, picker, segmented control, entry or slider whose handler reaches the host (an action, a save, a spawn, a write) is a `pending_` control. | A plain control shows the new value before the system confirmed it and keeps it when the call fails. | RC-01 | rules_rc_01_confirmed_state.rs RH-011 |
+| RH-012 | Every action the Control Center or the Store sends carries a `done` callback that shows the confirmed value or puts the old one back with the reason. | A refused or cancelled action must not leave the screen showing a change that never happened. | RC-01 | rules_rc_01_confirmed_state.rs RH-012 |
+| RH-021 | No struct field or static holds one in-flight item (a name with pending, password, action, request, query or transaction in a `RefCell`, `Cell`, `Mutex` or `RwLock` of an `Option`); timer and thread handles excepted. | A second request overwrites the first: the second runs with the first one's password, the first ring never ends. | RC-02 | rules_rc_02_keyed_inflight.rs RH-021 |
+| RH-031 | No command result is collapsed to a bool: no `.is_some()`, `.is_none()`, `.is_ok()`, `.is_err()`, `.is_some_and(`, `.is_ok_and(` or `.unwrap_or_default()` straight on `capture(`, `capture_input(`, `.output(` or `.status(`. | The exit code and the last error line are the reason; a bool can only say that it did not work. | RC-03 | rules_rc_03_failure_reason.rs RH-031 |
+| RH-032 | A copy sentence that names a cause ("Check that you're online") is used only in the arm of that reason. | A full disk or a bad signature read as "offline" sends the person to fix the wrong thing. | RC-03 | rules_rc_03_failure_reason.rs RH-032 |
+| RH-071 | In Settings, Control Center and the Store no repeating timer writes a widget (`.set_active(`, `.set_value(`, `.set_selected(`, `.set_state(`, `.set_text(`); the poll updates the model, and the model skips a widget the person touched. | A poll that writes the widget undoes the person's tap. | RC-07 | rules_rc_07_live_model.rs RH-071 |
+| RH-131 | Every fact of the `FACTS` table in rules_rc_13_one_source.rs (web message cap, language list, update lock path, the version a person reads, the package manager path) has one definition, in its owner file, and every reader imports it. | Twins drift: three message caps, two language lists, two night light states. | RC-13 | rules_rc_13_one_source.rs RH-131 |
+| RH-141 | A decision record whose status is accepted or implemented names in backticks only repo paths that exist. | A record's status follows the merge, not a worker's report. | RC-14 | rules_rc_14_release_ancestry.rs RH-141 |
+| RH-161 | A current document (README, BUILD, docs/ except decision records) names in backticks only repo paths that exist. | A reader acts on the path the page gives. | RC-16 | rules_rc_16_docs_name_the_tree.rs RH-161 |
+| RH-162 | A `wol <verb>` in a current document is a verb of the command tree (`crates/controller/src/cli.rs` `TREE`). | A person types what the manual says. | RC-16 | rules_rc_16_docs_name_the_tree.rs RH-162 |
+| RH-191 | Root-side plans (`crates/core/src/admin.rs`, `crates/core/src/update.rs` and its modules, `crates/api/src`) start the package manager only through its one named constant. | The constant is the one place that picks the view (sealed base, merged, layer) and the wrapper. | RC-19 | rules_rc_19_mount_view.rs RH-191 |
+| RH-192 | A file that builds `mount` steps for a transaction runs them in a private mount namespace (`unshare`). | A bind mount made in the host namespace leaks into every service and outlives the transaction. | RC-19 | rules_rc_19_mount_view.rs RH-192 |
+| RH-221 | Every long-running unit we ship (a `.service` under `files/usr/lib/systemd/system` or `files/usr/lib/systemd/user` that is not `Type=oneshot`) has `Restart=on-failure` (or `always`) and `StartLimitIntervalSec=0`, in the file or a drop-in. | The default start limit gives up after five quick failures and leaves the screen black for good. | RC-22 | rules_rc_22_supervised.rs RH-221 |
+| RH-222 | A wait is a named constant: no `Duration::from_secs(` or `Duration::from_millis(` with a number at the call. | Both ends of a wait read one deadline; a number at the call is a second one that disagrees. | RC-22 | rules_rc_22_supervised.rs RH-222 |
+| RH-223 | No `.spawn(..)` result is followed by `.expect(` or `.unwrap()` in shipped code. | A failed thread or process spawn is an error the caller backs off from, not a panic that freezes state. | RC-22 | rules_rc_22_supervised.rs RH-223 |
+| RH-231 | In the shell and the window kit no size constant named `WIDTH`, `..._W` is above 640 or `HEIGHT`, `..._H` above 400, and no literal `set_size_request` or `set_default_size` is; a larger size is the constant clamped to the screen less its insets. | 640x400 is the smallest logical screen we support, at any scale. | RC-23 | rules_rc_23_fits_the_screen.rs RH-231 |
+| RH-232 | No compositor config we ship pins a number as the monitor scale; the scale is `auto`. | A pinned scale makes a 4K panel unreadable at 100 %. | RC-23 | rules_rc_23_fits_the_screen.rs RH-232 |

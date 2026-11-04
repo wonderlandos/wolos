@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-2-Clause
-# Template: turns wolos-crystal/templates/app into a new project (`wol app new todos --template app`).
+# Template: turns wolos-crystal/templates/app into a new project (`wolkit-new todos`; a `wol app new` is planned, ADR 0036).
 # Files ending in `.tmpl` are copied without the suffix, with `{{name}}`, `{{class_name}}` and
 # `{{app_id}}` replaced; other files are copied as they are. The templates carry the `.tmpl` suffix so
 # the repository's Crystal checks (which read every `.cr` file) do not see `require "wolkit"` as an

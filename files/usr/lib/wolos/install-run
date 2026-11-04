@@ -137,7 +137,11 @@ SFS=${WOLOS_SOURCE_SFS:-/run/archiso/bootmnt/wolos/x86_64/airootfs.sfs}
 # A try before this one may have left its volume open and its mounts in place: let them go first.
 ! mountpoint -q "$T" 2>/dev/null || umount -R "$T" || :
 ! mountpoint -q /run/wolos/install-look 2>/dev/null || umount /run/wolos/install-look || :
-[ ! -e /dev/mapper/wolosroot ] || cryptsetup close wolosroot || :
+# Every volume a try opened goes: the system (wolosroot) and the extra ones `wol install layout`
+# names wolos<folder>; a layout that stopped part way closes its own, this catches the rest.
+for m in "${WOLOS_MAPPER_DIR:-/dev/mapper}"/wolos*; do
+  [ ! -e "$m" ] || cryptsetup close "${m##*/}" || :
+done
 # Only a disk the installer lists at all; then its partitions mounted by the person (a USB disk
 # opened in Files) go first, never the live medium's. install-check then sees the disk as it is.
 if [ -z "$disk" ] || ! sh "$here/install-disks" | grep -qx -- "$disk"; then
@@ -288,7 +292,9 @@ echo "$rootwords quiet splash loglevel=3 audit=0 rd.udev.log_level=3 systemd.sho
   [ -z "$extra_fstab" ] || echo "$extra_fstab"
   if [ "$slots" = two ]; then
     echo "# The slot is read-only: /etc stays writable, its changes live in the shared @var (they survive updates)."
-    echo "overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,workdir=/var/lib/wolos/etc/work,x-systemd.requires-mounts-for=/var 0 0"
+    # The lower is the slot's /etc, another one after each update: overlayfs takes a changed lower
+    # only without index, metacopy, xino and redirects (wol_core::update::ETC_FSTAB, the same line).
+    echo "overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,workdir=/var/lib/wolos/etc/work,index=off,metacopy=off,redirect_dir=follow,xino=off,nfs_export=off,x-systemd.requires-mounts-for=/var 0 0"
   fi
 } > "$T/etc/fstab"
 if [ "$slots" = two ]; then

@@ -1,4 +1,4 @@
-# Optional modules
+# Optional modules (ADR 0032)
 
 ADR 0032. The base stays small; AI, developer, creative and console stacks are installed after it, never pre-ticked, each removable. A module is one meta package `wolos-module-<id>` (wolos-pkgbuilds) whose `depends=` names snapshot-pinned Arch and `[wolos]` packages, plus one registry record. Anything outside Arch (Claude Code, PowerShell) is installed user-side by the module's `enable` step through wopkg recipes or mise, so the sealed system stays sealed and no root is needed for it.
 

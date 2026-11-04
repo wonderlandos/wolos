@@ -308,6 +308,9 @@ struct LsDev {
     #[serde(default)]
     parttype: Option<String>,
     model: Option<String>,
+    /// Logical sector size (`LOG-SEC`): the unit of a table that isn't there yet.
+    #[serde(rename = "log-sec")]
+    log_sec: Option<u64>,
     fstype: Option<String>,
     label: Option<String>,
     uuid: Option<String>,
@@ -333,8 +336,17 @@ fn partition_number(node: &str) -> u32 {
     tail.parse().unwrap_or(0)
 }
 
+/// Last sector a GPT may use on a disk of `bytes`: the backup header and its 16 KiB of entries
+/// sit at the end (33 sectors of 512 bytes, 5 of 4096), and the sector before them is the last.
+fn gpt_last(bytes: u64, sector: u64) -> u64 {
+    let sector = sector.max(1);
+    (bytes / sector).saturating_sub(2 + 16384_u64.div_ceil(sector))
+}
+
 /// `sfdisk --json <disk>` (None: no partition table) and
-/// `lsblk --json -b -o NAME,PATH,SIZE,MODEL,FSTYPE,LABEL,UUID,MOUNTPOINTS <disk>`.
+/// `lsblk --json -b -o NAME,PATH,SIZE,MODEL,LOG-SEC,FSTYPE,LABEL,UUID,MOUNTPOINTS <disk>`.
+/// The sector size is sfdisk's, else lsblk's `LOG-SEC` (a blank disk: audit core-install #3),
+/// else 512.
 pub fn parse(sfdisk: Option<&str>, lsblk: &str) -> Option<Disk> {
     let ls: LsOut = serde_json::from_str(lsblk).ok()?;
     let top = ls.blockdevices.first()?;
@@ -342,12 +354,12 @@ pub fn parse(sfdisk: Option<&str>, lsblk: &str) -> Option<Disk> {
         path: top.path.clone()?,
         model: top.model.clone().unwrap_or_default().trim().to_string(),
         bytes: top.size?,
-        sector: 512,
+        sector: top.log_sec.filter(|s| *s >= 512).unwrap_or(512),
         ..Disk::default()
     };
     let Some(text) = sfdisk else {
         d.first = grain(d.sector);
-        d.last = (d.bytes / d.sector).saturating_sub(34);
+        d.last = gpt_last(d.bytes, d.sector);
         return Some(d);
     };
     let t = serde_json::from_str::<SfOut>(text).ok()?.partitiontable;
@@ -356,10 +368,10 @@ pub fn parse(sfdisk: Option<&str>, lsblk: &str) -> Option<Disk> {
     } else {
         Table::Other
     };
-    d.sector = t.sectorsize.unwrap_or(512);
+    d.sector = t.sectorsize.unwrap_or(d.sector);
     d.id = t.id.unwrap_or_default().to_lowercase();
     d.first = t.firstlba.unwrap_or(grain(d.sector));
-    d.last = t.lastlba.unwrap_or((d.bytes / d.sector).saturating_sub(34));
+    d.last = t.lastlba.unwrap_or(gpt_last(d.bytes, d.sector));
     for p in t.partitions {
         let fs = top
             .children
@@ -659,6 +671,33 @@ mod tests {
         assert_eq!(d.free().len(), 1);
         let mbr = r#"{"partitiontable":{"label":"dos","id":"0x1234","device":"/dev/vda","unit":"sectors","sectorsize":512,"partitions":[{"node":"/dev/vda1","start":2048,"size":4096,"type":"83"}]}}"#;
         assert_eq!(parse(Some(mbr), ls).unwrap().table, Table::Other);
+        // No LOG-SEC (an older lsblk): 512, the GPT ends 34 sectors before the disk does.
+        assert_eq!((d.sector, d.first, d.last), (512, 2048, 67108864 - 34));
+    }
+
+    /// audit core-install #3: a blank 4Kn disk counts in 4096-byte sectors, from lsblk's LOG-SEC:
+    /// 1 MiB is 256 of them, the backup GPT takes 5 at the end, and Create sizes come out right.
+    #[test]
+    fn a_blank_4k_disk_counts_in_its_own_sectors() {
+        let ls = r#"{"blockdevices":[{"path":"/dev/vda","size":34359738368,"model":null,"log-sec":4096}]}"#;
+        let d = parse(None, ls).unwrap();
+        assert_eq!((d.table, d.sector), (Table::None, 4096));
+        assert_eq!(d.first, 256);
+        assert_eq!(d.last, 8388608 - 6);
+        let free = d.free();
+        assert_eq!(free.len(), 1);
+        let (start, sectors) = free[0];
+        assert_eq!(start, 256);
+        assert!(
+            sectors * 4096 <= d.bytes && sectors * 4096 >= d.bytes - 2 * MIB,
+            "{free:?}"
+        );
+        // The table, once there, says the same; LOG-SEC is the fallback only.
+        let sf = r#"{"partitiontable":{"label":"gpt","id":"AAAA-1","device":"/dev/vda","unit":"sectors","partitions":[]}}"#;
+        let t = parse(Some(sf), ls).unwrap();
+        assert_eq!((t.sector, t.first, t.last), (4096, 256, 8388608 - 6));
+        let sf512 = r#"{"partitiontable":{"label":"gpt","id":"AAAA-1","device":"/dev/vda","unit":"sectors","sectorsize":512,"partitions":[]}}"#;
+        assert_eq!(parse(Some(sf512), ls).unwrap().sector, 512);
     }
 
     #[test]

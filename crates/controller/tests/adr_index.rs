@@ -87,3 +87,50 @@ fn adr_index_status_matches_the_records() {
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
+
+/// audit8 standards #14: the `Status:` line starts with one spelling, lowercase (accepted,
+/// proposed or superseded), so a reader and a grep find the same word in every record.
+#[test]
+fn adr_status_words_are_lowercase() {
+    let mut bad = Vec::new();
+    for e in std::fs::read_dir(repo("docs/adr")).unwrap().flatten() {
+        let f = e.file_name().into_string().unwrap();
+        if !f.ends_with(".md") || !f[..4].bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let text = read(&format!("docs/adr/{f}"));
+        let status = text.lines().find_map(|l| l.strip_prefix("Status:"));
+        let first: String = status
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .take_while(char::is_ascii_alphabetic)
+            .collect();
+        if !["accepted", "proposed", "superseded"].contains(&first.as_str()) {
+            bad.push(format!("{f}: Status starts with '{first}'"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// audit8 standards #13 (docs/STANDARDS.md section 5): a module document names its ADR in the
+/// title. These have no decision record of their own yet; a new document needs one, or a line
+/// here with the reason. shards.md (wave 3 CR-4, `wol shard`): no record decides the curated
+/// shard list yet.
+#[test]
+fn module_docs_name_their_adr_in_the_title() {
+    const NO_ADR_YET: &[&str] = &["hig.md", "performance.md", "vm-graphics.md", "shards.md"];
+    let mut bad = Vec::new();
+    for e in std::fs::read_dir(repo("docs/modules")).unwrap().flatten() {
+        let f = e.file_name().into_string().unwrap();
+        if !f.ends_with(".md") || NO_ADR_YET.contains(&f.as_str()) {
+            continue;
+        }
+        let text = read(&format!("docs/modules/{f}"));
+        let title = text.lines().next().unwrap_or("");
+        if !title.contains("(ADR ") {
+            bad.push(format!("{f}: title '{title}' names no ADR"));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

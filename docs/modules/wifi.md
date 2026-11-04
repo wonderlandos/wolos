@@ -1,4 +1,4 @@
-# Wi-Fi
+# Wi-Fi (ADR 0016)
 
 One interface: `wlan0`. Shell, Control Center (`wol_core::controls`), Setup Assistant (`wol-login` `SETUP_WIFI`) and admind (`wifi-join`, `wifi-power`) all use it.
 

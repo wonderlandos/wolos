@@ -1,4 +1,4 @@
-# UX journeys
+# UX journeys (ADR 0004, 0013)
 
 Decision records: ADR 0013 (first run), ADR 0004 (setup assistant).
 

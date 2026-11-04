@@ -1,4 +1,4 @@
-# Memory bandwidth (iGPU)
+# Memory bandwidth (iGPU) (ADR 0007)
 
 Ceiling on iGPUs: shared LPDDR, not FLOPS. Unit of cost: bytes moved per frame.
 Baseline (derived): 1920x1200 RGBA8 = 9.2 MB per full read or write; at 60 Hz = 553 MB/s per full-screen pass.

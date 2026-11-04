@@ -52,7 +52,11 @@ fn main() {
     });
     {
         let (jobs, bus) = (jobs.clone(), bus.clone());
-        let grants = Arc::new(api::portal::ConsentFile(wol_core::consent::FILE.into()));
+        let grants = Arc::new(api::portal::Remembering {
+            grants: api::portal::ConsentFile(wol_core::consent::FILE.into()),
+            dir: wol_core::consent::ASKED_DIR.into(),
+            log: |m| eprintln!("wold: {m}"),
+        });
         let state = Arc::new(api::portal::State {
             background: Box::new(api::services::AppJobs::new(ctx.clone())),
             ..Default::default()

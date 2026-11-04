@@ -15,8 +15,11 @@ pub const EVERY_SECS: u64 = 20 * 3600;
 /// the refresh through wol-admind (its own reply wait, `admin::reply_secs`) plus the local
 /// `pacman -Qu` and the manifest read. The shell, `wol` and wol-admind used to keep three numbers.
 pub const CHECK_SECS: u64 = 180;
-/// The manifest of the release this slot runs.
+/// The manifest of the release this slot runs. An image without it (v0.12.0) is known by
+/// [`OS_RELEASE`]'s `VERSION_ID` instead ([`Updates::installed`] reads either).
 pub const RELEASE_FILE: &str = "/usr/lib/wolos-release.json";
+/// os-release of the running system: its `VERSION_ID` is the release version.
+pub const OS_RELEASE: &str = "/etc/os-release";
 /// The system kernel, only from `[wolos]`; the default boot entry always boots it.
 pub const SYSTEM_KERNEL: &str = "linux-wolos";
 
@@ -41,6 +44,109 @@ pub struct Manifest {
     /// Installer image and its sha256.
     pub image: String,
     pub sha256: String,
+    /// Signed, increasing publication number (audit 8 #2), like the wopkg feed's; 0 in manifests
+    /// made before it existed (those count only when strictly newer than the running version).
+    #[serde(default)]
+    pub serial: u64,
+    /// Signed end of validity, Unix seconds; 0 = none.
+    #[serde(default)]
+    pub expires: u64,
+}
+
+/// Freshness of a signed list or manifest (audit C6-2, audit 8 #2), the one rule the release
+/// feed (`wopkg`) and the release manifest share: Err when `serial` is lower than the `last` one
+/// accepted (an old signed copy replayed) or when `expires` is set and already past `now`. Equal
+/// serials pass (the same list downloaded again).
+pub fn check_fresh(
+    what: &str,
+    serial: u64,
+    expires: u64,
+    last: u64,
+    now: u64,
+) -> Result<(), String> {
+    if serial < last {
+        return Err(format!("The {what} is older than the one already seen."));
+    }
+    if expires != 0 && expires <= now {
+        return Err(format!("The {what} has expired."));
+    }
+    Ok(())
+}
+
+/// `2026.11` / `2026.11.2` / `2026.11-rc1` as numbers and a pre-release tag (a tag sorts below
+/// the release); None when it is anything else.
+fn release_number(v: &str) -> Option<(Vec<u64>, Option<&str>)> {
+    let (num, pre) = match v.split_once('-') {
+        Some((n, p)) if !p.is_empty() => (n, Some(p)),
+        Some(_) => return None,
+        None => (v, None),
+    };
+    let parts = num
+        .split('.')
+        .map(|p| {
+            (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| p.parse().ok())
+                .flatten()
+        })
+        .collect::<Option<Vec<u64>>>()?;
+    Some((parts, pre))
+}
+
+/// `a` is a strictly newer release than `b`. Fails closed: a version that is not understood is
+/// never newer (nothing is offered on a guess).
+pub fn is_newer(a: &str, b: &str) -> bool {
+    let (Some((mut x, p)), Some((mut y, q))) = (release_number(a), release_number(b)) else {
+        return false;
+    };
+    let n = x.len().max(y.len());
+    x.resize(n, 0);
+    y.resize(n, 0);
+    x.cmp(&y).then_with(|| match (p, q) {
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (p, q) => p.cmp(&q),
+    }) == std::cmp::Ordering::Greater
+}
+
+/// The running slot's [`RELEASE_FILE`]: the release it runs, written by the `wolos-base` package of
+/// that release (so a system update replaces it). No image URL or hash: an image cannot carry its
+/// own. A published [`Manifest`] reads as one too (its other fields are ignored).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Running {
+    /// `0.12.1` (`VERSION_ID` of os-release).
+    pub version: String,
+    /// Arch Linux Archive date the release is pinned to (`2026/11/02`).
+    pub snapshot: String,
+    /// The rest of a published [`Manifest`] (and `size`, which release-manifest.sh adds): read,
+    /// not used. Any other key is a mistake and the file does not count.
+    #[serde(default)]
+    pub wolos_repo: String,
+    #[serde(default)]
+    pub cachy: String,
+    #[serde(default)]
+    pub kernel: String,
+    #[serde(default)]
+    pub image: String,
+    #[serde(default)]
+    pub sha256: String,
+    #[serde(default)]
+    pub size: u64,
+    /// The manifest's signed serial (audit 8 #2): a release with a lower one is a replay. 0 in a
+    /// release file without it.
+    #[serde(default)]
+    pub serial: u64,
+    /// The manifest's end of validity: read, not used (the running release is not judged by it).
+    #[serde(default)]
+    pub expires: u64,
+}
+
+impl Running {
+    /// None unless it has a version and a snapshot date and no unknown key.
+    pub fn parse(text: &str) -> Option<Self> {
+        let r: Self = serde_json::from_str(text).ok()?;
+        (!r.version.is_empty() && super::is_snapshot_date(&r.snapshot)).then_some(r)
+    }
 }
 
 impl Manifest {
@@ -76,6 +182,8 @@ pub struct Updates {
     pub base: Option<String>,
     /// Its snapshot date (`wol update apply` pins the new slot to it).
     pub snapshot: Option<String>,
+    /// Its signed serial (0: none), kept to compare with the running release's (`installed`).
+    pub base_serial: u64,
     /// Kernels the person installed with pacman besides linux-wolos (reported, never removed).
     pub kernels: Vec<String>,
 }
@@ -98,30 +206,36 @@ impl Updates {
             packages,
             security,
             base: release.as_ref().map(|m| m.version.clone()),
+            base_serial: release.as_ref().map_or(0, |m| m.serial),
             snapshot: release.map(|m| m.snapshot),
             kernels: Vec::new(),
         })
     }
 
-    /// [`Self::read_with`] the trusted package keys.
-    pub fn read(dir: &Path) -> Option<Self> {
+    /// [`Self::read_with`] the trusted package keys, at the time `now` (seconds since 1970; core
+    /// takes the clock from its caller, RR-067).
+    pub fn read(dir: &Path, now: u64) -> Option<Self> {
         let keys = crate::package::read_keys(Path::new(shared::package::KEYS_DIR));
-        Self::read_with(dir, &keys)
+        Self::read_with(dir, &keys, now)
     }
 
     /// The check's files; the release manifest counts only with a trusted `base.sig`.
-    pub fn read_with(dir: &Path, keys: &[[u8; 32]]) -> Option<Self> {
-        Self::from_files(
+    pub fn read_with(dir: &Path, keys: &[[u8; 32]], now: u64) -> Option<Self> {
+        Self::from_files_at(
             |n| std::fs::read_to_string(dir.join(n)).unwrap_or_default(),
             keys,
+            now,
         )
     }
 
-    /// From the check's files by name (`base.sig` = the signature in lowercase hex).
-    pub fn from_files(f: impl Fn(&str) -> String, keys: &[[u8; 32]]) -> Option<Self> {
+    /// From the check's files by name (`base.sig` = the signature in lowercase hex) at the time
+    /// `now`: a signed manifest past its `expires` is dropped.
+    pub fn from_files_at(f: impl Fn(&str) -> String, keys: &[[u8; 32]], now: u64) -> Option<Self> {
         let base = f("base");
         let sig = unhex(f("base.sig").trim()).unwrap_or_default();
         let base = Manifest::verify(base.as_bytes(), &sig, keys)
+            .ok()
+            .filter(|m| check_fresh("release manifest", m.serial, m.expires, 0, now).is_ok())
             .map(|_| base)
             .unwrap_or_default();
         let mut u = Self::parse(&f("checked"), &f("pkg"), &f("audit"), &base)?;
@@ -134,19 +248,33 @@ impl Updates {
         self.packages.len() + usize::from(self.base.is_some())
     }
 
-    /// Drop a release already installed since the check (the running [`RELEASE_FILE`]).
+    /// Drop a release that is not newer than the running one: the same, an older one (a signed
+    /// copy replayed, audit 8 #2) or one with a lower serial. A release is offered only when
+    /// strictly newer by version, with or without a serial. `running` is the text of the running
+    /// [`RELEASE_FILE`], or of [`OS_RELEASE`] where the image has no release file (e2e D3: once the
+    /// check worked, every 0.12.0 system was offered "WolOS 0.12.0"); os-release has no serial.
     pub fn installed(mut self, running: Option<&str>) -> Self {
-        let v = running.and_then(running_version);
-        let covered = match (&v, &self.base) {
-            (Some(run), Some(base)) => match version_cmp(run, base) {
-                Some(order) => order != std::cmp::Ordering::Less,
-                None => run == base,
-            },
-            _ => false,
+        let Some((version, serial)) = running.and_then(|t| {
+            Running::parse(t)
+                .map(|r| (r.version, r.serial))
+                // The image's small file names the version alone (QA-STORE-57).
+                .or_else(|| running_version(t).map(|v| (v, 0)))
+                .or_else(|| crate::base::version(t).map(|v| (v, 0)))
+        }) else {
+            return self;
         };
-        if covered {
+        let Some(b) = self.base.as_deref() else {
+            return self;
+        };
+        if release_number(&version).is_none() {
+            return self; // the running version cannot be compared: as before, keep
+        }
+        let newer = is_newer(b, &version)
+            && check_fresh("release manifest", self.base_serial, 0, serial, 0).is_ok();
+        if !newer {
             self.base = None;
             self.snapshot = None;
+            self.base_serial = 0;
         }
         self
     }
@@ -286,8 +414,166 @@ mod tests {
             u.clone().installed(Some(&older)).base.as_deref(),
             Some("2026.11")
         );
-        assert_eq!(u.installed(None).count(), 1, "unknown: keep");
+        assert_eq!(u.clone().installed(None).count(), 1, "unknown: keep");
         assert_eq!(USERLAND_ARGV, ["cat", "/usr/lib/wolos-release.json"]);
+        // The release file wolos-base writes (no image hash), and the published manifest, both read.
+        let file = r#"{"version":"2026.11","snapshot":"2026/11/02"}"#;
+        assert_eq!(u.clone().installed(Some(file)).base, None);
+        assert_eq!(
+            Running::parse(RELEASE).map(|r| r.version).as_deref(),
+            Some("2026.11")
+        );
+        assert_eq!(
+            Running::parse(r#"{"version":"2026.11","snapshot":"x"}"#),
+            None
+        );
+        assert_eq!(
+            Running::parse(r#"{"version":"","snapshot":"2026/11/02"}"#),
+            None
+        );
+        let published = r#"{"version":"0.12.0","snapshot":"2026/10/31","wolos_repo":"r","kernel":"k","image":"https://x/i.iso","sha256":"00","size":5}"#;
+        assert_eq!(
+            Running::parse(published).map(|r| r.version).as_deref(),
+            Some("0.12.0")
+        );
+        assert_eq!(
+            Running::parse(r#"{"version":"1","snapshot":"2026/10/31","verison":"2"}"#),
+            None,
+            "a typo is not read"
+        );
+        // No manifest in the image: os-release names the running version.
+        let os = "NAME=WolOS\nID=wolos\nVERSION_ID=2026.11\n";
+        assert_eq!(u.clone().installed(Some(os)).base, None);
+        let os_older = os.replace("2026.11", "2026.10");
+        assert_eq!(
+            u.installed(Some(&os_older)).base.as_deref(),
+            Some("2026.11")
+        );
+    }
+
+    /// e2e D3 with audit 8 #2: a system known only by os-release is offered a strictly newer
+    /// release, never the one it runs (or an older one).
+    #[test]
+    fn os_release_running_version_is_compared_strictly() {
+        let os = "NAME=WolOS\nID=wolos\nVERSION_ID=0.12.0\n";
+        let offered =
+            |v: &str| Updates::parse("9", "", "", &RELEASE.replace("2026.11", v)).unwrap();
+        assert_eq!(offered("0.12.0").installed(Some(os)).base, None, "the same");
+        assert_eq!(offered("0.11.3").installed(Some(os)).base, None, "older");
+        assert_eq!(
+            offered("0.12.1").installed(Some(os)).base.as_deref(),
+            Some("0.12.1")
+        );
+        // A running release file with a serial outranks os-release; a lower offered serial is a replay.
+        let running = r#"{"version":"0.12.0","snapshot":"2026/10/31","serial":5}"#;
+        assert_eq!(
+            offered("0.12.1").installed(Some(running)).base,
+            None,
+            "serial 0 < 5"
+        );
+    }
+
+    /// Audit 8 #2: an older signed manifest, replayed, is not offered to a newer system.
+    #[test]
+    fn an_older_manifest_is_not_offered_to_a_newer_system() {
+        let u = Updates::parse("9", "", "", RELEASE).unwrap();
+        let newer = RELEASE.replace("2026.11", "2027.01");
+        assert_eq!(u.clone().installed(Some(&newer)).base, None, "older");
+        assert_eq!(u.clone().installed(Some(&newer)).snapshot, None);
+        assert_eq!(u.clone().installed(Some(&newer)).count(), 0);
+        let patch = RELEASE.replace("2026.11", "2026.11.1");
+        assert_eq!(
+            u.clone().installed(Some(&patch)).base,
+            None,
+            "2026.11 < 2026.11.1"
+        );
+        let rc = RELEASE.replace("2026.11", "2026.11-rc1");
+        assert_eq!(
+            u.clone().installed(Some(&rc)).base.as_deref(),
+            Some("2026.11")
+        );
+        assert_eq!(u.clone().installed(Some(RELEASE)).base, None, "the same");
+        let junk = RELEASE.replace("2026.11", "latest");
+        assert_eq!(
+            u.clone().installed(Some(&junk)).base.as_deref(),
+            Some("2026.11"),
+            "unknown: keep"
+        );
+        // A release whose own version is not understood is never offered.
+        let odd = Updates {
+            base: Some("x.y".into()),
+            ..u.clone()
+        };
+        assert_eq!(odd.installed(Some(RELEASE)).base, None);
+        assert!(is_newer("2026.12", "2026.11") && is_newer("2026.11.1", "2026.11"));
+        assert!(!is_newer("2026.11", "2026.11") && !is_newer("2026.11", "2026.11.0"));
+        assert!(is_newer("2026.11", "2026.11-rc1") && !is_newer("2026.11-rc1", "2026.11"));
+        assert!(!is_newer("", "1") && !is_newer("1", "") && !is_newer("1..2", "1"));
+    }
+
+    /// Audit 8 #2: the serial and the end of validity are signed and checked like the feed's.
+    #[test]
+    fn a_manifest_needs_a_fresh_serial_and_a_future_end() {
+        let with = |serial: u64, expires: u64| {
+            RELEASE.replace(
+                r#""kernel""#,
+                &format!(r#""serial":{serial},"expires":{expires},"kernel""#),
+            )
+        };
+        let m = Manifest::parse(&with(7, 2000)).unwrap();
+        assert_eq!((m.serial, m.expires), (7, 2000));
+        assert_eq!(
+            Manifest::parse(RELEASE).unwrap().serial,
+            0,
+            "older manifests parse"
+        );
+        // Read from files: signed, then judged at `now`.
+        let seed = [7u8; 32];
+        let key = crate::package::public_of(&seed);
+        let read = |text: &str, now: u64| {
+            let sig = crate::package::sign(&seed, text.as_bytes());
+            let hex: String = sig.iter().map(|b| format!("{b:02x}")).collect();
+            let text = text.to_string();
+            Updates::from_files_at(
+                |n| match n {
+                    "checked" => "9".into(),
+                    "base" => text.clone(),
+                    "base.sig" => hex.clone(),
+                    _ => String::new(),
+                },
+                &[key],
+                now,
+            )
+            .unwrap()
+        };
+        assert_eq!(read(&with(7, 2000), 1999).base.as_deref(), Some("2026.11"));
+        assert_eq!(read(&with(7, 2000), 2000).base, None, "expired");
+        assert_eq!(read(&with(7, 2000), 5000).count(), 0);
+        assert_eq!(
+            read(&with(7, 0), 5000).base.as_deref(),
+            Some("2026.11"),
+            "no end"
+        );
+        // A serial lower than the running one is a replay, even with a newer-looking version.
+        let u = read(&with(7, 0), 1);
+        let running = |serial: u64| with(serial, 0).replace("2026.11", "2026.10");
+        assert_eq!(
+            u.clone().installed(Some(&running(7))).base.as_deref(),
+            Some("2026.11")
+        );
+        assert_eq!(
+            u.clone().installed(Some(&running(8))).base,
+            None,
+            "lower serial"
+        );
+        // Without a serial: only strictly newer by version (above).
+        assert_eq!(
+            read(RELEASE, 1)
+                .installed(Some(&running(0)))
+                .base
+                .as_deref(),
+            Some("2026.11")
+        );
     }
 
     /// QA-STORE-57: the image's own `wolos-release.json` is a small file, not a whole manifest;
@@ -311,7 +597,8 @@ mod tests {
             ("0.12.10", 0),
             ("0.12.0", 1),
             ("0.9.9", 1),
-            ("0.12.1-rc1", 0),
+            // The release is newer than its own candidate (rel/0.12.1 `is_newer`).
+            ("0.12.1-rc1", 1),
         ] {
             let run = format!(r#"{{"version":"{running}"}}"#);
             assert_eq!(u2.clone().installed(Some(&run)).count(), left, "{running}");
@@ -333,7 +620,7 @@ mod tests {
             "base" => RELEASE.to_string(),
             _ => String::new(),
         };
-        let u = Updates::from_files(unsigned, &[[7u8; 32]]).unwrap();
+        let u = Updates::from_files_at(unsigned, &[[7u8; 32]], 0).unwrap();
         assert_eq!(u.base, None, "no base.sig");
         assert_eq!(u.count(), 0);
         let forged = |f: &str| match f {
@@ -341,7 +628,9 @@ mod tests {
             other => unsigned(other),
         };
         assert_eq!(
-            Updates::from_files(forged, &[[7u8; 32]]).unwrap().base,
+            Updates::from_files_at(forged, &[[7u8; 32]], 0)
+                .unwrap()
+                .base,
             None
         );
     }
@@ -384,25 +673,29 @@ mod tests {
     fn reads_the_folder() {
         let d = std::env::temp_dir().join(format!("wol-updates-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        assert_eq!(Updates::read(&d), None);
+        assert_eq!(Updates::read(&d, 1), None);
         std::fs::write(d.join("checked"), "42\n").unwrap();
         std::fs::write(d.join("pkg"), PKG).unwrap();
         std::fs::write(d.join("kernels"), "linux-wolos\nlinux-lts\n").unwrap();
-        let u = Updates::read(&d).unwrap();
+        let u = Updates::read(&d, 1).unwrap();
         assert_eq!(u.count(), 2);
         assert_eq!(u.kernels, ["linux-lts"]);
         // The manifest counts only with a trusted signature.
         let seed = [7u8; 32];
         let key = crate::package::public_of(&seed);
         std::fs::write(d.join("base"), RELEASE).unwrap();
-        assert_eq!(Updates::read_with(&d, &[key]).unwrap().base, None, "no sig");
+        assert_eq!(
+            Updates::read_with(&d, &[key], 1).unwrap().base,
+            None,
+            "no sig"
+        );
         let sig = crate::package::hex(crate::package::sign(&seed, RELEASE.as_bytes()));
         std::fs::write(d.join("base.sig"), format!("{sig}\n")).unwrap();
         assert_eq!(
-            Updates::read_with(&d, &[key]).unwrap().base.as_deref(),
+            Updates::read_with(&d, &[key], 1).unwrap().base.as_deref(),
             Some("2026.11")
         );
-        assert_eq!(Updates::read_with(&d, &[[9; 32]]).unwrap().base, None);
+        assert_eq!(Updates::read_with(&d, &[[9; 32]], 1).unwrap().base, None);
         std::fs::remove_dir_all(&d).unwrap();
     }
 

@@ -9,6 +9,13 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// before anyone has said it is theirs.
 static SPAWNING: Mutex<()> = Mutex::new(());
 
+/// Hold this across starting a child and [`Reaper::register`]ing its pid (as [`run`] does): until
+/// it is dropped no `waitpid` runs, so the child's exit cannot arrive while nobody owns it yet
+/// (audit8 stability2 #1: a job that exited at once was taken for an orphan and dropped).
+pub fn hold_spawn() -> std::sync::MutexGuard<'static, ()> {
+    SPAWNING.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// The one reaper of this process.
 pub fn global() -> &'static Arc<Reaper> {
     static R: OnceLock<Arc<Reaper>> = OnceLock::new();
@@ -43,7 +50,7 @@ pub fn run_until(
 ) -> i32 {
     use std::os::unix::process::CommandExt;
     cmd.process_group(0);
-    let held = SPAWNING.lock().unwrap_or_else(|p| p.into_inner());
+    let held = hold_spawn();
     let Ok(mut child) = cmd.spawn() else {
         return 127;
     };
@@ -148,7 +155,7 @@ impl Reaper {
         let mut n = 0;
         loop {
             let mut status = 0;
-            let held = SPAWNING.lock().unwrap_or_else(|p| p.into_inner());
+            let held = hold_spawn();
             // SAFETY: waitpid with a valid out pointer.
             let pid = unsafe { libc::waitpid(target, &mut status, libc::WNOHANG) };
             drop(held);

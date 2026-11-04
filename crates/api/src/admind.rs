@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-admind request handling (IaraOS ADR 0026): allow-list only, judged by peer credentials.
 use shared::admin::{AdminAction, AdminReply, decode};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 use wol_core::admin::{
     AdminDecision, AdminStep, AuthCache, decide, describe, is_admin, needs_fresh_password,
     plan_with, validate,
@@ -114,14 +116,132 @@ pub fn read_request(
     n
 }
 
+/// What every connection thread shares (api-security 1+2). The authorization cache is locked
+/// only to read or change it: the refusal delay, the password check and the commands run with
+/// no lock other connections need, so one account looping bad requests (each one sleeping
+/// [`wol_core::admin::REFUSAL_DELAY_MS`]) or a long install never holds another's request.
+#[derive(Default)]
+pub struct Shared {
+    cache: Mutex<Cached>,
+    /// One password check (and its refusal delay) at a time per account: guessing runs no
+    /// faster with more connections, and other accounts never wait for it.
+    auth: Mutex<HashMap<u32, Arc<Mutex<()>>>>,
+    /// Commands still run one at a time per [`Lane`].
+    system: Mutex<()>,
+    settings: Mutex<()>,
+}
+
+#[derive(Default)]
+struct Cached {
+    cache: AuthCache,
+    /// Sessions with a request under way ([`Watching`]): how many requests, and the revokes of
+    /// that session since the first began. Per (uid, session), so one account's revokes never
+    /// touch another's; an entry goes with its last request, so the table is never larger than
+    /// the connections.
+    watched: HashMap<(u32, i32), Watch>,
+}
+
+#[derive(Default)]
+struct Watch {
+    requests: u32,
+    revokes: u64,
+}
+
+/// One request watching the revokes of its own session, from its decision to its end: a
+/// password accepted, or a command that waited for its lane on the cached authorization, while
+/// a revoke of that session went by does not count.
+struct Watching<'a> {
+    shared: &'a Shared,
+    key: (u32, i32),
+    seen: u64,
+}
+
+impl<'a> Watching<'a> {
+    /// Registered under the cache lock `c`, at the moment the cache is read.
+    fn new(shared: &'a Shared, c: &mut Cached, key: (u32, i32)) -> Self {
+        let w = c.watched.entry(key).or_default();
+        w.requests += 1;
+        Self {
+            shared,
+            key,
+            seen: w.revokes,
+        }
+    }
+    /// Whether the session was revoked since this request's decision.
+    fn revoked(&self, c: &Cached) -> bool {
+        c.watched
+            .get(&self.key)
+            .is_none_or(|w| w.revokes != self.seen)
+    }
+}
+
+// Unregisters the request: the session's entry goes with its last one.
+impl Drop for Watching<'_> {
+    fn drop(&mut self) {
+        let mut c = self.shared.cached();
+        if let Some(w) = c.watched.get_mut(&self.key) {
+            w.requests -= 1;
+            if w.requests == 0 {
+                c.watched.remove(&self.key);
+            }
+        }
+    }
+}
+
+/// Which commands may run side by side: the package manager, updates and boot entries are one
+/// lane (one pacman lock, one boot loader); every other action (consent, Wi-Fi, power, ...) is
+/// the other, so a 30-minute install does not hold a Wi-Fi join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    System,
+    Settings,
+}
+
+/// The [`Lane`] of `a`.
+pub fn lane(a: AdminAction) -> Lane {
+    if wol_core::admin::LONG_ACTIONS.contains(&a)
+        || matches!(
+            a,
+            AdminAction::PkgRefresh
+                | AdminAction::SystemChannel
+                | AdminAction::BootEnvironment
+                | AdminAction::BootEnroll
+        )
+    {
+        Lane::System
+    } else {
+        Lane::Settings
+    }
+}
+
+/// `m` locked; a thread that panicked holding it leaves plain data, still usable.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+impl Shared {
+    fn cached(&self) -> MutexGuard<'_, Cached> {
+        lock(&self.cache)
+    }
+    /// The per-account password lock of `uid`.
+    fn auth_of(&self, uid: Option<u32>) -> Arc<Mutex<()>> {
+        lock(&self.auth)
+            .entry(uid.unwrap_or(u32::MAX))
+            .or_default()
+            .clone()
+    }
+    fn lane(&self, l: Lane) -> MutexGuard<'_, ()> {
+        lock(match l {
+            Lane::System => &self.system,
+            Lane::Settings => &self.settings,
+        })
+    }
+}
+
 /// One connection, on its own thread: identity from the kernel at accept, the ADR 0033 hello,
-/// the request within [`REQUEST_DEADLINE`], then [`handle_shared`] (the cache lock is held only
-/// to read or change the cache, QA-100 H1), the reply, and the buffer wiped.
-pub fn serve_one(
-    conn: std::os::unix::net::UnixStream,
-    cache: &std::sync::Mutex<AuthCache>,
-    os: &dyn AdminOs,
-) {
+/// the request within [`REQUEST_DEADLINE`], then [`handle`] (which takes the [`Shared`] locks
+/// only as long as it needs them), the reply, and the buffer wiped.
+pub fn serve_one(conn: std::os::unix::net::UnixStream, shared: &Shared, os: &dyn AdminOs) {
     use std::io::Write;
     let caller = shared::sys::peer(&conn).map(|p| Caller {
         uid: p.uid,
@@ -135,7 +255,7 @@ pub fn serve_one(
     let mut buf = vec![0u8; shared::admin::MAX_REQUEST + 1];
     let n = read_request(&conn, &mut buf, REQUEST_DEADLINE);
     let mut said = None;
-    let reply = handle_shared(&buf[..n], caller, cache, os, &mut said);
+    let reply = handle_said(&buf[..n], caller, shared, os, &mut said);
     buf.fill(0); // password never outlives the request
     let _ = conn.set_write_timeout(Some(REQUEST_DEADLINE));
     let _ = writeln!(&conn, "{}", reply_line(reply, said.as_deref()));
@@ -203,7 +323,7 @@ pub fn serve_with(
     os: &'static (dyn AdminOs + Sync),
     mut done: impl FnMut() -> bool,
 ) {
-    let cache = std::sync::Arc::new(std::sync::Mutex::new(AuthCache::default()));
+    let shared = Arc::new(Shared::default());
     let quota = shared::bounded::Quota::new(CONN_PER_UID, CONN_TOTAL);
     let mut logged: Option<std::time::Instant> = None;
     let mut over_logged: Option<std::time::Instant> = None;
@@ -240,11 +360,11 @@ pub fn serve_with(
             refuse_busy(conn);
             continue;
         };
-        let cache = cache.clone();
+        let shared = shared.clone();
         let _ = std::thread::Builder::new()
             .name("admind-conn".into())
             .spawn(move || {
-                serve_one(conn, &cache, os);
+                serve_one(conn, &shared, os);
                 drop(slot);
             });
     }
@@ -290,49 +410,28 @@ pub fn check_password(
     }
 }
 
-/// Judge and run one request. Never logs the password or keybind JSON.
+/// Judge and run one request. Never logs the password or keybind JSON. Safe to call from many
+/// threads at once: see [`Shared`].
 pub fn handle(
     data: &[u8],
     caller: Option<Caller>,
-    cache: &mut AuthCache,
+    shared: &Shared,
     os: &dyn AdminOs,
 ) -> AdminReply {
-    handle_said(data, caller, cache, os, &mut None)
+    handle_said(data, caller, shared, os, &mut None)
 }
 
 /// [`handle`], and the sentence a failed request leaves for the person in `said` (the optional
-/// message of the failed reply, `shared::admin::failed_line`; today Update Now's).
+/// message of the failed reply, `shared::admin::failed_line`; today Update Now's). Many
+/// connections at once (QA-100 H1): the cache is locked only to read, grant or revoke; the
+/// refusal delay, the password check and the steps run outside it, the steps in their lane.
 pub fn handle_said(
     data: &[u8],
     caller: Option<Caller>,
-    cache: &mut AuthCache,
+    shared: &Shared,
     os: &dyn AdminOs,
     said: &mut Option<String>,
 ) -> AdminReply {
-    let shared = std::sync::Mutex::new(std::mem::take(cache));
-    let reply = handle_shared(data, caller, &shared, os, said);
-    *cache = shared.into_inner().unwrap_or_else(|p| p.into_inner());
-    reply
-}
-
-/// Serialises the steps of [`wol_core::admin::LONG_ACTIONS`] (pacman, flatpak, the slot
-/// builder: one package manager at a time).
-static LONG_RUN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-/// Serialises the steps of every other action (config files read, changed and written back).
-static SHORT_RUN: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// [`handle_said`] for many connections at once (QA-100 H1): `cache` is locked only to read,
-/// grant or revoke; the refusal delay, the password check and the steps run outside it, so one
-/// account's refusals, PAM stack or install never stall another's request. The steps take
-/// [`LONG_RUN`] or [`SHORT_RUN`] instead.
-pub fn handle_shared(
-    data: &[u8],
-    caller: Option<Caller>,
-    cache: &std::sync::Mutex<AuthCache>,
-    os: &dyn AdminOs,
-    said: &mut Option<String>,
-) -> AdminReply {
-    let cache = || cache.lock().unwrap_or_else(|p| p.into_inner());
     let uid = caller.map(|c| c.uid);
     let session = caller.map_or(-1, |c| c.session);
     let passwd = os.passwd();
@@ -358,7 +457,11 @@ pub fn handle_shared(
     let what = describe(&req);
     if req.action == AdminAction::Revoke {
         if let Some(u) = uid {
-            cache().revoke(u, session);
+            let mut c = shared.cached();
+            c.cache.revoke(u, session);
+            if let Some(w) = c.watched.get_mut(&(u, session)) {
+                w.revokes += 1;
+            }
         }
         return AdminReply::Ok;
     }
@@ -370,19 +473,29 @@ pub fn handle_shared(
     } else {
         user.as_ref().and(uid)
     };
-    let cached = !needs_fresh_password(&req)
-        && session > 0
-        && uid.is_some_and(|u| cache().valid(u, session, os.now()));
+    let (cached, watch) = {
+        let mut c = shared.cached();
+        let valid = !needs_fresh_password(&req)
+            && session > 0
+            && uid.is_some_and(|u| c.cache.valid(u, session, os.now()));
+        let watch = uid
+            .filter(|_| session > 0)
+            .map(|u| Watching::new(shared, &mut c, (u, session)));
+        (valid, watch)
+    };
     let user_level = known.is_some_and(|u| wol_core::admin::user_level_ok(&req, u, &os.sessions()));
     // Anyone may change their own password, with the current one (fresh: never the cache).
     let own_password = req.action == AdminAction::UserPassword
         && user.as_ref().is_some_and(|(n, _)| *n == req.args[0]);
-    match decide(
+    let decision = decide(
         known,
         admin || user_level || own_password,
         cached || user_level,
         !pw.is_empty(),
-    ) {
+    );
+    // Allowed on the session's cached authorization alone (not root, not a user-level action).
+    let on_cache = decision == AdminDecision::Allow && cached && !user_level && known != Some(0);
+    match decision {
         AdminDecision::NotAdmin => {
             // A restart or shut down from the session refused because another account would lose
             // its session (the lock screen's Restart, audit6 S6-5): the log names who is signed in.
@@ -411,6 +524,8 @@ pub fn handle_shared(
         AdminDecision::NeedPassword => return AdminReply::NeedsAuth,
         AdminDecision::Authenticate => {
             let name = user.as_ref().map_or("", |(n, _)| n.as_str());
+            let account = shared.auth_of(uid);
+            let _one_at_a_time = lock(&account);
             if !os.authenticate(name, &data[pw]) {
                 os.log(&format!("{who}: {what}: authentication failed"));
                 return refuse(AdminReply::Denied);
@@ -418,17 +533,27 @@ pub fn handle_shared(
             if session > 0
                 && let Some(u) = uid
             {
-                cache().grant(u, session, os.now());
+                let mut c = shared.cached();
+                if !watch.as_ref().is_some_and(|w| w.revoked(&c)) {
+                    c.cache.grant(u, session, os.now());
+                }
             }
         }
         AdminDecision::Allow => {}
     }
-    let run_lock = if wol_core::admin::LONG_ACTIONS.contains(&req.action) {
-        &LONG_RUN
-    } else {
-        &SHORT_RUN
-    };
-    let running = run_lock.lock().unwrap_or_else(|p| p.into_inner());
+    let _lane = shared.lane(lane(req.action));
+    // A command may wait long for its lane (an install before it): on the cache, it runs only
+    // if the authorization still holds now and its session was not revoked meanwhile.
+    if on_cache {
+        let c = shared.cached();
+        let holds = uid.is_some_and(|u| c.cache.valid(u, session, os.now()))
+            && !watch.as_ref().is_some_and(|w| w.revoked(&c));
+        if !holds {
+            drop(c);
+            os.log(&format!("{who}: {what}: authorization ended while waiting"));
+            return AdminReply::NeedsAuth;
+        }
+    }
     // A wrong Wi-Fi password must not leave the profile the join just made: asked before the
     // steps run, while the profiles are as they were (QA-100 NET2).
     let cleanup = wol_core::admin::wifi_join_cleanup(&req, &|argv: &[&str]| {
@@ -468,7 +593,6 @@ pub fn handle_shared(
     if ok && req.action == AdminAction::PkgInstall {
         drop_gave_up(os, &req.args[0]);
     }
-    drop(running);
     if ok {
         AdminReply::Ok
     } else {
@@ -713,7 +837,7 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
 }
 
 /// `.wol` install (ADR 0011): verify the daemon's own copy, check the payload is the package
-/// Info.json names, then `pacman -U` (dependencies from the pinned repos). `trust` is what the caller
+/// Info.json names, then `wol pkg -- -U` (dependencies from the pinned repos). `trust` is what the caller
 /// approved: an unsigned file needs `unsigned` (and so a fresh password).
 fn wol_install(os: &dyn AdminOs, src: &str, trust: &str, caller: Option<u32>) -> bool {
     let Some(dir) = os.stage_dir() else {
@@ -831,20 +955,17 @@ pub fn caller_may_reach(dirs: &[(u32, u32)], caller: Option<u32>) -> bool {
     }
 }
 
-/// (uid, mode) of every directory above an opened file, from its parent up to `/`: the kernel's
-/// path of the descriptor (symlinks in the parents resolved), not the name the caller sent. What
-/// [`caller_may_reach`] judges, for wol-admind's copy and wold's staging alike (QA-100 L1).
-pub fn opened_dirs(f: &std::fs::File) -> Result<Vec<(u32, u32)>, String> {
+/// (uid, mode) of every directory above the opened file `f`, parent first, for
+/// [`caller_may_reach`]: the directories of what was opened (the kernel's path of the
+/// descriptor, symlinks in the parents resolved), not of the name the caller sent.
+pub fn dirs_above(f: &std::fs::File) -> std::io::Result<Vec<(u32, u32)>> {
     use std::os::fd::AsRawFd;
     use std::os::unix::fs::MetadataExt;
-    let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd()))
-        .map_err(|e| e.to_string())?;
-    let mut dirs = Vec::new();
-    for d in real.ancestors().skip(1) {
-        let dm = std::fs::metadata(d).map_err(|e| e.to_string())?;
-        dirs.push((dm.uid(), dm.mode()));
-    }
-    Ok(dirs)
+    let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd()))?;
+    real.ancestors()
+        .skip(1)
+        .map(|d| std::fs::metadata(d).map(|m| (m.uid(), m.mode())))
+        .collect()
 }
 
 /// A path the caller names is absolute, has no `..` or `.` parts and no empty parts.
@@ -893,7 +1014,7 @@ impl AdminOs for RealOs {
     fn trusted_release(&self) -> Option<(String, String)> {
         use wol_core::update::check::{DIR, RELEASE_FILE, Updates};
         let running = std::fs::read_to_string(RELEASE_FILE).ok();
-        let u = Updates::read(Path::new(DIR))?.installed(running.as_deref());
+        let u = Updates::read(Path::new(DIR), self.now())?.installed(running.as_deref());
         u.base.zip(u.snapshot)
     }
     fn run_progress(&self, argv: &[String], kind: wol_core::progress::Kind, path: &str) -> bool {
@@ -967,7 +1088,7 @@ impl AdminOs for RealOs {
         if !caller_may_read(m.uid(), m.mode(), caller) {
             return Err("caller cannot read this file".into());
         }
-        let dirs = opened_dirs(&f)?;
+        let dirs = dirs_above(&f).map_err(|e| e.to_string())?;
         if !caller_may_reach(&dirs, caller) {
             return Err("caller cannot reach this file".into());
         }

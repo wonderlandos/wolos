@@ -367,12 +367,16 @@ fn boot(env: &mut dyn Env, online: bool) -> i32 {
     }
     let mut snap = env.hardware();
     let (_, install) = fixes(&snap);
+    // audit8 stability2 #10: a failed online install is the exit code (the rest still runs), so
+    // firstboot sees it and the network-up hook retries.
+    let mut code = 0;
     if online && !install.is_empty() {
         let what = install.join(" ");
         if install_bounded(env, &install) {
             env.out(&format!("wolos_hw: pacman -S {what}\n"));
         } else {
             env.out(&format!("wolos_hw: pacman -S {what} failed\n"));
+            code = 1;
         }
         snap = env.hardware();
     }
@@ -413,5 +417,5 @@ fn boot(env: &mut dyn Env, online: bool) -> i32 {
         snap.devices.len(),
         snap.problems().count()
     ));
-    0
+    code
 }

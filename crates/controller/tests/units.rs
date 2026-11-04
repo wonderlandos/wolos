@@ -1282,3 +1282,72 @@ fn shutdown_rearm_unit() {
             .any(|l| l == "enable wolos-boot-rearm.service")
     );
 }
+
+/// Audit8 stability2 #5: a oneshot has no start timeout of its own, so a stalled fetch would hold
+/// wolos-update-check.service and the hourly timer would never start it again until a restart.
+/// The unit is bounded and so is every fetch in its script.
+#[test]
+fn the_update_check_never_hangs_for_good() {
+    let have = service("wolos-update-check.service");
+    let got: Vec<&str> = have
+        .iter()
+        .filter(|(k, _)| k == "TimeoutStartSec")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(got, ["30min"]);
+    let text = script("wolos-update-check.service").expect("update-check");
+    let fetches: Vec<&str> = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| !l.starts_with('#') && (l.contains("curl ") || l.contains("get ")))
+        .collect();
+    // The script fetches through one `get` helper (audit 8 #5) that holds the only `curl`: it is
+    // called for the manifest and its signature, and its `curl` line is checked below.
+    assert!(fetches.len() >= 3, "{fetches:?}");
+    for l in &text
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| !l.starts_with('#'))
+        .collect::<Vec<_>>()
+    {
+        for (i, _) in l.match_indices("curl ") {
+            let call = l[i..].split('|').next().unwrap_or_default();
+            assert!(call.contains("--max-time "), "unbounded fetch: {l}");
+        }
+    }
+}
+
+/// Audit8 stability2 #6: the queued-modules drain runs as one transient unit name
+/// (`wolos-modules-pending`); a stall must not hold that name for good, or no later connection
+/// drains the queue. Both starters bound the unit (SIGINT first: pacman stops between packages),
+/// and modules-install bounds its install step as well as its download.
+#[test]
+fn the_queued_modules_drain_is_bounded() {
+    for f in [
+        "files/usr/lib/wolos/firstboot",
+        "desktop/overlay/etc/NetworkManager/dispatcher.d/50-wolos-online",
+    ] {
+        let text = std::fs::read_to_string(siblings::root().join(f)).unwrap();
+        // The systemd-run call, its continuation lines joined.
+        let call = text
+            .split("systemd-run ")
+            .nth(1)
+            .and_then(|r| r.split("modules-install").next())
+            .unwrap_or_else(|| panic!("{f}: no systemd-run"));
+        assert!(call.contains("--unit=wolos-modules-pending"), "{f}: {call}");
+        assert!(call.contains("--property=RuntimeMaxSec="), "{f}: {call}");
+        assert!(call.contains("--property=KillSignal=SIGINT"), "{f}: {call}");
+    }
+    let text =
+        std::fs::read_to_string(siblings::root().join("files/usr/lib/wolos/modules-install"))
+            .unwrap();
+    let installs: Vec<&str> = text
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| !l.starts_with('#') && l.contains("pacman \"-S$y\""))
+        .collect();
+    assert_eq!(installs.len(), 2, "{installs:?}");
+    for l in installs {
+        assert!(l.starts_with("timeout -s INT -k 60 \"$isecs\" "), "{l}");
+    }
+}

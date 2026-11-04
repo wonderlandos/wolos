@@ -29,6 +29,10 @@ jobs:
         with:
           submodules: recursive
           path: wolos
+          # Full history and tags (submodules too): crates/controller/tests/image_release.rs
+          # int_descends_from_last_release asks git whether HEAD descends from the last release.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: wonderlandos/wolos-pkgbuilds

@@ -4,6 +4,7 @@
 //! or altered ever replaces what is installed.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::io::Read;
 use std::path::Path;
 
 pub const MANIFEST: &str = "bundle.json";
@@ -45,10 +46,12 @@ pub fn describe(dir: &Path, version: u32, built: u64) -> Result<Bundle, String> 
     })
 }
 
-/// A plain file name of a data file: nothing can land outside the folder.
-fn fits(n: &str) -> bool {
+/// A plain file name of a data file: nothing can land outside the folder. `xguard-update`
+/// applies the same rule to the names it downloads.
+pub fn fits(n: &str) -> bool {
     !n.contains('/')
         && !n.starts_with('.')
+        && !n.chars().any(char::is_control)
         && (n.ends_with(".xgdb") || n.ends_with(".yxc") || n == "NOTICES")
 }
 
@@ -59,9 +62,20 @@ fn installed_version(dest: &Path) -> u32 {
         .map_or(0, |b| b.version)
 }
 
-/// Verify the bundle in `src` and swap it in at `dest`. Returns the new version.
-pub fn install(src: &Path, dest: &Path, keys: &[[u8; 32]]) -> Result<u32, String> {
-    let text = std::fs::read(src.join(MANIFEST)).map_err(|e| e.to_string())?;
+/// Most `bundle.json` may be (`check` reads no more; `xguard-update` downloads no more).
+pub const MANIFEST_MAX: u64 = 1 << 20;
+
+/// The signed manifest in `src` (`bundle.json` and `bundle.json.sig`, nothing else needed yet),
+/// checked before any data file is fetched (audit 8 #4): signed by a trusted key, newer than what
+/// is installed at `dest`, every name a plain data-file name ([`fits`]). Returns it and its text.
+pub fn check(src: &Path, dest: &Path, keys: &[[u8; 32]]) -> Result<(Bundle, Vec<u8>), String> {
+    let mut text = Vec::new();
+    std::fs::File::open(src.join(MANIFEST))
+        .and_then(|f| f.take(MANIFEST_MAX + 1).read_to_end(&mut text))
+        .map_err(|e| e.to_string())?;
+    if text.len() as u64 > MANIFEST_MAX {
+        return Err("the manifest is too large".into());
+    }
     let sig = std::fs::read(src.join(format!("{MANIFEST}.sig"))).map_err(|e| e.to_string())?;
     match wol_core::package::verify_index(&text, Some(&sig), keys)? {
         wol_core::package::Trust::Signed(_) => {}
@@ -71,13 +85,20 @@ pub fn install(src: &Path, dest: &Path, keys: &[[u8; 32]]) -> Result<u32, String
     if b.version <= installed_version(dest) {
         return Err("not newer than what is installed".into());
     }
+    if let Some(f) = b.files.iter().find(|f| !fits(&f.name)) {
+        return Err(format!("{}: not a signature file", f.name));
+    }
+    Ok((b, text))
+}
+
+/// Verify the bundle in `src` ([`check`], then every data file against its signed hash) and swap
+/// it in at `dest`. Returns the new version.
+pub fn install(src: &Path, dest: &Path, keys: &[[u8; 32]]) -> Result<u32, String> {
+    let (b, text) = check(src, dest, keys)?;
     let new = dest.with_extension("new");
     let _ = std::fs::remove_dir_all(&new);
     std::fs::create_dir_all(&new).map_err(|e| e.to_string())?;
     for f in &b.files {
-        if !fits(&f.name) {
-            return Err(format!("{}: not a signature file", f.name));
-        }
         let d = std::fs::read(src.join(&f.name)).map_err(|e| e.to_string())?;
         if crate::hexs(&Sha256::digest(&d)) != f.sha256 {
             let _ = std::fs::remove_dir_all(&new);
@@ -183,5 +204,44 @@ mod tests {
         std::fs::write(f.src().join(MANIFEST), &t).unwrap();
         std::fs::write(f.src().join("bundle.json.sig"), sign(&f.seed, &t)).unwrap();
         assert!(install(&f.src(), &f.dest(), &[f.key]).is_err());
+        assert!(
+            check(&f.src(), &f.dest(), &[f.key]).is_err(),
+            "refused before any fetch"
+        );
+    }
+
+    /// Audit 8 #4: the manifest alone is judged before any data file is downloaded.
+    #[test]
+    fn the_manifest_is_checked_before_the_data_files_arrive() {
+        let f = Fix::new("check");
+        f.publish(3, b"one");
+        std::fs::remove_file(f.src().join("a.xgdb")).unwrap();
+        let (b, _) = check(&f.src(), &f.dest(), &[f.key]).unwrap();
+        assert_eq!(
+            b.files.iter().map(|i| i.name.as_str()).collect::<Vec<_>>(),
+            ["a.xgdb"]
+        );
+        assert!(check(&f.src(), &f.dest(), &[[1; 32]]).is_err(), "wrong key");
+        f.publish(3, b"one");
+        install(&f.src(), &f.dest(), &[f.key]).unwrap();
+        assert!(check(&f.src(), &f.dest(), &[f.key]).is_err(), "not newer");
+        std::fs::write(
+            f.src().join(MANIFEST),
+            vec![b' '; MANIFEST_MAX as usize + 1],
+        )
+        .unwrap();
+        assert!(check(&f.src(), &f.dest(), &[f.key]).is_err(), "too large");
+        for (n, ok) in [
+            ("a.xgdb", true),
+            ("b.yxc", true),
+            ("NOTICES", true),
+            (".a.xgdb", false),
+            ("x/a.xgdb", false),
+            ("a.sh", false),
+            ("* .xgdb", true),
+            ("a\n.xgdb", false),
+        ] {
+            assert_eq!(fits(n), ok, "{n}");
+        }
     }
 }

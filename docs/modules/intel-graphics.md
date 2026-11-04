@@ -1,4 +1,4 @@
-# Intel graphics (i915, drm-612-kmod 6.12)
+# Intel graphics (i915, drm-612-kmod 6.12) (ADR 0007, 0016)
 
 Target: ADL-P GT2 Iris Xe `8086:46a8` (`include/drm/intel/i915_pciids.h:677`, `INTEL_ADLP_IDS`). Loaded by `wolos_gpu` (`i915kms`).
 Source refs: `freebsd/drm-kmod` branch `6.12-lts`, under `drivers/gpu/drm/i915/`. Proof on hardware: `files/usr/lib/wolos/verify-gpu.sh`.

@@ -3,16 +3,31 @@
 # Daily signature update (ADR 0024): downloads the signed bundle from the WolOS release channel and
 # hands it to `wol-xguard rules install`, which refuses anything unsigned, older or altered.
 # Nothing about this computer is sent: it is a plain download.
+# Audit 8 #4: the signed bundle.json is checked first (`wol-xguard rules check`: trusted key, newer
+# than what is installed, data-file names only); only the names it vouches for are fetched, each
+# filtered again here with the rule of xguard::bundle::fits. https only, every download capped.
 set -u
 URL=${WOLOS_XGUARD_URL:-https://github.com/wonderlandos/wolos-packages/releases/download/signatures}
 T=$(mktemp -d) || exit 1
 trap 'rm -rf "$T"' EXIT
-curl -fsSL -o "$T/bundle.json" "$URL/bundle.json" 2>/dev/null || exit 0
-curl -fsSL -o "$T/bundle.json.sig" "$URL/bundle.json.sig" 2>/dev/null || exit 0
-for f in $(sed 's/"name":"/\n/g' "$T/bundle.json" | sed -n '2,$s/".*//p'); do
-	case $f in */* | .*) exit 1 ;; esac
-	curl -fsSL -o "$T/$f" "$URL/$f" 2>/dev/null || exit 0
-done
+get() { # MAX FILE URL
+	curl --disable -fsSL --proto =https --proto-redir =https --max-filesize "$1" -o "$2" -- "$3" 2>/dev/null
+}
+get 1048576 "$T/bundle.json" "$URL/bundle.json" || exit 0
+get 4096 "$T/bundle.json.sig" "$URL/bundle.json.sig" || exit 0
+# Not signed, not newer or naming anything but a data file: nothing more is downloaded.
+names=$(wol-xguard rules check "$T") || exit 0
+while IFS= read -r f; do
+	case $f in
+	'') continue ;;
+	*/* | .*) exit 1 ;;
+	*.xgdb | *.yxc | NOTICES) ;;
+	*) exit 1 ;;
+	esac
+	get 536870912 "$T/$f" "$URL/$f" || exit 0
+done <<EOF_NAMES
+$names
+EOF_NAMES
 # Offline (a download above failed): nothing to do today, not an error. A bundle that is here and
 # refused (unsigned, older, altered) or that could not be installed is one: say so and fail, so
 # the unit shows it (QA-STORE-54).

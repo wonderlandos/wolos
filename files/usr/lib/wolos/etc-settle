@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Before a slot build (`wol update`, the pacman wrapper; wol_core::update::build): copy the data of
+# every metacopy-only copy-up in the /etc upper up through the live overlay. A new slot mounts /etc
+# with metacopy=off (wol_core::update::ETC_FSTAB: its lower is another slot's /etc, and overlayfs
+# defines lower changes only without metacopy, index, xino and redirects), and that mount refuses
+# a file whose data still sits in the old lower. A full copy keeps the file as /etc shows it now.
+# Opening a file for append is a full copy-up and changes nothing in it. Best effort: a file that
+# cannot be copied is named on stderr and the build goes on. Nothing to do without the overlay.
+# Env (tests): WOLOS_ETC_UPPER (/var/lib/wolos/etc/upper), WOLOS_ETC (/etc, not checked for a mount).
+set -eu
+up=${WOLOS_ETC_UPPER:-/var/lib/wolos/etc/upper}
+etc=${WOLOS_ETC:-/etc}
+[ -d "$up" ] || exit 0
+[ -n "${WOLOS_ETC:-}" ] || findmnt -rn -t overlay -M /etc >/dev/null || exit 0
+command -v getfattr >/dev/null || { echo "etc-settle: getfattr is missing, nothing copied" >&2; exit 0; }
+getfattr -R -P --absolute-names -m '^trusted\.overlay\.metacopy$' -- "$up" 2>/dev/null |
+  sed -n 's/^# file: //p' | while IFS= read -r f; do
+    rel=${f#"$up"}
+    if [ ! -f "$etc$rel" ] || [ -L "$etc$rel" ]; then continue; fi
+    if : >> "$etc$rel"; then
+      echo "etc-settle: copied up $etc$rel" >&2
+    else
+      echo "etc-settle: could not copy up $etc$rel" >&2
+    fi
+  done

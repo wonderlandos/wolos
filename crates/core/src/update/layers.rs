@@ -92,6 +92,17 @@ pub fn to_clear(folded: &str, ls: &str) -> Vec<String> {
         .collect()
 }
 
+/// Layers in `ls` of [`DIR`] without their [`RECORD`] (`has_record` false): pacman never finished
+/// in them (killed, power lost; [`finish`] writes the record first), so they are removed, never
+/// merged (audit8 stability2 #3). Only while no change runs: the one being made has none yet.
+pub fn unfinished(ls: &str, has_record: impl Fn(&str) -> bool) -> Vec<String> {
+    ls.lines()
+        .map(str::trim)
+        .filter(|n| is_layer_name(n) && !has_record(n))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Where [`clear_steps`] moves the layers it clears until the new merge is up (same file system
 /// as [`DIR`], so the move is a rename and copies nothing).
 pub const CLEARED_DIR: &str = "/var/lib/wolos/layers-cleared";
@@ -263,6 +274,22 @@ pub fn release_path(n: u32) -> String {
     )
 }
 
+/// Whether `/proc/self/mountinfo` text shows something mounted at or under [`CHROOT`]: a run
+/// that stopped at [`finish`]'s `umount -R` left its rbind and overlay there (audit8 stability2
+/// #8), and the next [`begin`] must not stack another rbind on them.
+pub fn chroot_mounted(mountinfo: &str) -> bool {
+    mountinfo.lines().any(|l| {
+        l.split_whitespace().nth(4).is_some_and(|m| {
+            m == CHROOT || m.strip_prefix(CHROOT).is_some_and(|r| r.starts_with('/'))
+        })
+    })
+}
+
+/// Unmounts what [`chroot_mounted`] found.
+pub fn unmount_chroot() -> Vec<String> {
+    ["umount", "-R", CHROOT].map(String::from).to_vec()
+}
+
 /// After a failed [`begin`] step (pacman did not commit): nothing of the layer is left, the
 /// running system is untouched.
 pub fn abort(n: u32) -> Vec<Vec<String>> {
@@ -381,6 +408,11 @@ mod tests {
         let t: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
         let l = "/var/lib/extensions/wolos-layer-0003";
         assert!(t[0].starts_with(&format!("mkdir -p {l}/usr/lib/extension-release.d")));
+        // audit8 stability2 #3: nothing makes the layer an extension before pacman is done.
+        assert!(
+            !t.iter().any(|x| x.contains("extension-release.wolos")),
+            "{t:?}"
+        );
         assert_eq!(t[2], "mount --rbind / /run/wolos/layer-root");
         assert!(t[4].contains(&format!(
             "lowerdir=/run/wolos/layer-root/usr,upperdir={l}/usr,workdir=/var/lib/wolos/layers/wolos-layer-0003/usr"
@@ -499,6 +531,34 @@ extension-release.wolos-layer-0003"
         assert_eq!(folded_list(None, None), "");
         // An empty list in the /etc upper (what clear wrote before) hides nothing any more.
         assert_eq!(folded_list(Some(new), Some("")), new);
+    }
+
+    #[test]
+    fn a_chroot_left_mounted_is_seen() {
+        let line =
+            |m: &str| format!("36 25 0:32 / {m} rw,relatime shared:1 - btrfs /dev/vda2 rw\n");
+        let left = line("/") + &line("/run/wolos/layer-root") + &line("/run/wolos/layer-root/usr");
+        assert!(chroot_mounted(&left));
+        assert!(chroot_mounted(&line("/run/wolos/layer-root/usr")));
+        assert!(!chroot_mounted(
+            &(line("/") + &line("/run/wolos/layer-rootx"))
+        ));
+        assert!(!chroot_mounted(""));
+        assert_eq!(
+            unmount_chroot().join(" "),
+            "umount -R /run/wolos/layer-root"
+        );
+    }
+
+    #[test]
+    fn a_layer_without_its_record_is_unfinished() {
+        let ls = "wolos-layer-0001\nwolos-layer-0002\nother\n";
+        assert_eq!(
+            unfinished(ls, |n| n == "wolos-layer-0001"),
+            ["wolos-layer-0002"]
+        );
+        assert!(unfinished(ls, |_| true).is_empty());
+        assert!(unfinished("", |_| false).is_empty());
     }
 
     #[test]

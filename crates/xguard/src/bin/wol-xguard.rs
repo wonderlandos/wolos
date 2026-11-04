@@ -442,6 +442,27 @@ fn install(args: &[String]) -> i32 {
     }
 }
 
+/// `rules check SRC [DEST]` (xguard-update, before any data file is fetched): the signed
+/// `bundle.json` in SRC is trusted, newer than DEST's and names only data files
+/// (`xguard::bundle::check`); prints those names, one per line. Exit 3 otherwise.
+fn check_bundle(args: &[String]) -> i32 {
+    let (src, dest) = match args {
+        [s] => (s.as_str(), xguard::RULES_DIR),
+        [s, d] => (s.as_str(), d.as_str()),
+        _ => die("usage: rules check SRC [DEST]"),
+    };
+    let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+    match xguard::bundle::check(Path::new(src), Path::new(dest), &keys) {
+        Ok((b, _)) => {
+            for f in &b.files {
+                println!("{}", f.name);
+            }
+            0
+        }
+        Err(m) => die(&m),
+    }
+}
+
 /// The work folder of `rules full`, emptied by name (RR-041): its two copies, the two unpacked
 /// folders (a signed file unpacks flat) and their files, then the folders. Anything else stays.
 fn clear_work(work: &Path) -> std::io::Result<()> {
@@ -622,12 +643,15 @@ fn main() {
         ["allow", ..] => ask("allow", &a[1..]),
         ["sweep", ..] => sweep(&a[1..]),
         ["rules", "bundle", ..] => bundle(&a[2..]),
+        ["rules", "check", ..] => check_bundle(&a[2..]),
         ["rules", "install", ..] => install(&a[2..]),
         #[cfg(feature = "yara")]
         ["rules", "yara", ..] => yara_build(&a[2..]),
         ["rules", "build", ..] => build(&a[2..]),
         ["rules", "full", ..] => full(&a[2..]),
-        _ => die("usage: wol-xguard scan|check|allow|guard|sweep|rules build|bundle|install|full"),
+        _ => die(
+            "usage: wol-xguard scan|check|allow|guard|sweep|rules build|bundle|check|install|full",
+        ),
     };
     std::process::exit(code)
 }

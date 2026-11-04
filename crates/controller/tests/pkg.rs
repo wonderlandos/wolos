@@ -289,15 +289,129 @@ fn fold_keeps_the_database_where_the_slot_has_it() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// A layer's record (`wolos-layer.json`): written once pacman is done in it.
+fn record(layer: &str) -> PathBuf {
+    PathBuf::from(format!("/var/lib/extensions/{layer}/wolos-layer.json"))
+}
+
+/// audit8 stability2 #3: a layer pacman never finished in (no record: killed, power lost) is
+/// removed at the next good boot, never left to merge; not while a change runs (its own layer
+/// has no record yet).
+#[test]
+fn a_good_boot_removes_a_layer_pacman_never_finished() {
+    let ls = "wolos-layer-0001\nwolos-layer-0002\n";
+    let boot = || FakeEnv {
+        root: true,
+        files: vec![(record("wolos-layer-0001"), "{}\n".into())],
+        captures: vec![("ls -1 /var/lib/extensions".into(), ls.into())],
+        ..Default::default()
+    };
+    let mut env = boot();
+    assert_eq!(run("layers clear", &mut env), 0, "{}", env.err);
+    let l = lines(&env);
+    assert!(
+        l.iter().any(|x| x.contains("wolos-layer-0002")
+            && x.starts_with("rm -rf /var/lib/extensions")
+            || x.starts_with("mv -T /var/lib/extensions/wolos-layer-0002")),
+        "{l:?}"
+    );
+    assert!(!l.iter().any(|x| x.contains("wolos-layer-0001")), "{l:?}");
+    let mut busy = boot();
+    let held = busy.locks.clone();
+    held.lock()
+        .unwrap()
+        .push(PathBuf::from("/run/wolos/update.lock"));
+    assert_eq!(run("layers clear", &mut busy), 0, "{}", busy.err);
+    assert!(busy.execs.is_empty(), "{:?}", busy.execs);
+}
+
+/// audit8 stability2 #2: one change to a slot or a layer at a time. A second `wol update apply`
+/// or pacman while the first holds the lock is refused before it runs anything.
+#[test]
+fn a_second_update_or_package_change_is_refused_while_one_runs() {
+    let mut first = sealed("vim\n", IDLE);
+    let mut second = sealed("vim\n", IDLE);
+    second.locks = first.locks.clone();
+    first
+        .locks
+        .lock()
+        .unwrap()
+        .push(PathBuf::from("/run/wolos/update.lock"));
+    for line in ["pkg -- -S vim", "pkg -- -S nvidia", "update apply --yes"] {
+        assert_eq!(run(line, &mut second), 69, "{line}");
+        assert!(second.execs.is_empty(), "{line}: {:?}", second.execs);
+        assert!(
+            second.err.contains("Another system update"),
+            "{}",
+            second.err
+        );
+    }
+    // Queries never wait for it.
+    assert_eq!(run("pkg -- -Qi vim", &mut second), 0);
+    first.locks.lock().unwrap().clear();
+    assert_eq!(run("pkg -- -S vim", &mut second), 0, "{}", second.err);
+    // Released at the end: the next change takes it again.
+    assert!(first.locks.lock().unwrap().is_empty());
+    assert_eq!(run("pkg -- -S vim", &mut first), 0, "{}", first.err);
+}
+
+/// audit8 stability2 #8: a run that stopped at `umount -R` left the chroot mounted; the next
+/// one unmounts it before it mounts anything, or changes nothing.
+#[test]
+fn a_chroot_left_mounted_is_unmounted_first() {
+    let mounted = "36 25 0:32 / /run/wolos/layer-root rw shared:1 - btrfs /dev/vda2 rw\n";
+    let mut env = sealed("vim\n", IDLE);
+    env.files
+        .push((PathBuf::from("/proc/self/mountinfo"), mounted.into()));
+    // The fake's mount table never changes: the unmount "did not take", so nothing is mounted.
+    assert_ne!(run("pkg -- -S vim", &mut env), 0);
+    assert_eq!(lines(&env), ["umount -R /run/wolos/layer-root"]);
+    assert!(env.err.contains("still mounted"), "{}", env.err);
+    let mut clean = sealed("vim\n", IDLE);
+    clean.files.push((
+        PathBuf::from("/proc/self/mountinfo"),
+        "36 25 0:32 / / rw shared:1 - btrfs /dev/vda2 rw\n".into(),
+    ));
+    assert_eq!(run("pkg -- -S vim", &mut clean), 0, "{}", clean.err);
+    assert!(!lines(&clean)[0].starts_with("umount"), "{:?}", clean.execs);
+}
+
+/// audit8 stability2 #4: a stacked change that fails after its first change was deleted (the
+/// boot image) removes the slot and says so; it never claims the slot was kept.
+#[test]
+fn a_stacked_change_failing_after_the_swap_says_the_pending_change_is_gone() {
+    let mut env = sealed("nvidia\nlinux-wolos\n", PENDING);
+    // snapshot, fold, fstab, etc-settle, bind, pacman, mkinitcpio, unbind, presets, mkdir, seal,
+    // delete, mv ok; esp-sync fails.
+    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    assert_ne!(run("pkg -- -S nvidia", &mut env), 0);
+    let l = lines(&env);
+    assert!(l[13].ends_with("esp-sync --new"), "{l:?}");
+    assert_eq!(
+        l[14..],
+        [
+            "umount -R /run/wolos/top/@wolos-b",
+            "btrfs subvolume delete /run/wolos/top/@wolos-b",
+            "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi",
+            "umount -R /run/wolos/top/@wolos-tx",
+            "btrfs subvolume delete /run/wolos/top/@wolos-tx"
+        ]
+    );
+    assert!(env.err.contains("waited for a restart"), "{}", env.err);
+}
+
 #[test]
 fn the_booted_slot_clears_the_layers_it_already_holds() {
     // CORE-1: run at boot of the new slot; the layer it does not hold stays.
     let mut env = FakeEnv {
         root: true,
-        files: vec![(
-            PathBuf::from("/usr/lib/wolos/folded-layers"),
-            "wolos-layer-0001\n".into(),
-        )],
+        files: vec![
+            (
+                PathBuf::from("/usr/lib/wolos/folded-layers"),
+                "wolos-layer-0001\n".into(),
+            ),
+            (record("wolos-layer-0002"), "{}\n".into()),
+        ],
         captures: vec![(
             "ls -1 /var/lib/extensions".into(),
             "wolos-layer-0001\nwolos-layer-0002\n".into(),
@@ -335,9 +449,11 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
 fn clear_never_writes_under_etc() {
     let boot = |files: Vec<(&str, &str)>| FakeEnv {
         root: true,
+        // 0002 is a finished layer (its record is there): only the folded list decides.
         files: files
             .into_iter()
             .map(|(p, t)| (PathBuf::from(p), t.to_owned()))
+            .chain([(record("wolos-layer-0002"), "{}\n".to_owned())])
             .collect(),
         captures: vec![(
             "ls -1 /var/lib/extensions".into(),
@@ -596,7 +712,10 @@ wolos-layer-0003
 
         let mut next = FakeEnv {
             root: true,
-            files: vec![(PathBuf::from("/usr/lib/wolos/folded-layers"), list.into())],
+            files: vec![
+                (PathBuf::from("/usr/lib/wolos/folded-layers"), list.into()),
+                (record(name), "{}\n".into()),
+            ],
             captures: vec![(
                 "ls -1 /var/lib/extensions".into(),
                 format!(
@@ -630,7 +749,13 @@ fn update_now_and_the_pacman_wrapper_build_the_same_slot() {
             .expect("a slot system keeps a restore point");
         assert_eq!(want.restore_point, "wolos-a");
         assert_eq!(want.from, from);
-        let planned: Vec<String> = want.steps.iter().map(ToString::to_string).collect();
+        // The commands (a `write` step, the slot's /etc/wolos/slot of 0.12.1, is a file write).
+        let planned: Vec<String> = want
+            .steps
+            .iter()
+            .filter(|s| matches!(s, wol_core::update::Step::Run(_)))
+            .map(ToString::to_string)
+            .collect();
         assert_eq!(lines(&env), planned);
         assert!(
             planned.iter().all(|l| !l.contains("@wolos-a")),

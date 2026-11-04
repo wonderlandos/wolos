@@ -159,8 +159,8 @@ for the tools). The rules in one place:
 - SPDX line first (`// SPDX-License-Identifier: GPL-2.0-or-later`; kernel: `GPL-2.0-only`;
   `wol.h`: `BSD-2-Clause`).
 - Built with `-Wall -Wextra -Werror`, and `-fstack-protector-strong -D_FORTIFY_SOURCE=3` from the
-  recipe's `CFLAGS`. (`plugins/wol-hypr/Makefile:5` does not pass the warning flags yet; adding
-  them is the first task of the next change in that directory.)
+  recipe's `CFLAGS` (`plugins/wol-hypr/Makefile:7` passes the warning flags; the compositor's
+  headers come in as `-isystem`, so the flags hold for the plugin's own code, `Makefile:5-6`).
 - Nothing from IPC, a file or another process is dereferenced before its length and type were
   checked. A pointer returned by the compositor or a library is checked for null before use.
 - No policy in C: the plugin forwards events to Rust (`crates/realtime`, `plugins/wol-hypr/main.cpp:2`); the kernel
@@ -185,9 +185,11 @@ for the tools). The rules in one place:
   that way, then the exact command or `file:line`.
 - An ADR (`docs/adr/NNNN-title.md`) has **CI** these four parts, as `Status:` lines or `##`
   headings: Status, Context, Decision, Consequences (`tools/check-adrs.sh`). A decision is changed
-  by a new ADR that names the old one, not by editing history.
-- A module document (`docs/modules/*.md`) names its ADR in the title and its code by crate and
-  path. `docs/README.md` lists every module document.
+  by a new ADR that names the old one, not by editing history. The `Status:` line starts with one
+  of `accepted`, `proposed`, `superseded`, in lowercase (**CI** `adr_index.rs`).
+- A module document (`docs/modules/*.md`) names its ADR in the title, as `(ADR NNNN)` (**CI**
+  `adr_index.rs`; `hig.md`, `performance.md` and `vm-graphics.md` have no record yet and are
+  listed there), and its code by crate and path. `docs/README.md` lists every module document.
 - Code comments say why, not what. A number has its unit and its origin (`// 8 ms: one frame at 120 Hz`).
 
 ## 6. Commits
@@ -293,9 +295,14 @@ brackets; `cargo test` runs in the `test` job).
 - **unsafe ratchet**: **CI** [test] `crates/shared/tests/unsafe_ratchet.rs` counts `unsafe` per
   crate (code only: comments, strings and char literals stripped by a lexer; `src/` with the
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
-  `BASELINE` row (that table is the record; at v0.12 after R2C-19: wol-abi 473, wopkg 94,
-  realtime 54, xguard 61, controller 52, api 32). Lowering a count lowers the baseline in the
-  same commit; the doc numbers change in the same commit as the table. (C, R2C-19)
+  `BASELINE` row (that table is the record and its comment gives the reason for every raise;
+  the rows: wol-abi 482, wolkit 314, wopkg 103, realtime 42, xguard 65, controller 56, api 33,
+  core 13, xguard-clam 13, shared 17, shell 8, proxy 3, wol-lua 3, webengine 135, audio 0, aurlaws 0).
+  Controller went 52 -> 56 for the administrator password prompt on a terminal (`src/secret.rs`): std has
+  no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap and `_exit` in that handler. A raise
+  is justified there and each new block has its `// SAFETY:` line (RR-012); lowering a count
+  lowers the baseline in the same commit, and these numbers change in the same commit as the
+  table (**CI** [test] `standards_quotes_the_baseline`). (C, R2C-19, audit8)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
   `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`, `wolkit_image`, `webpolicy`). **CI** [fuzz]
@@ -329,3 +336,22 @@ A change is **done** only after two passes:
 
 The second pass is not a formality for small changes: a one-line change to `install-run` or
 `esp-sync` gets the same pass, scoped to the component it touches.
+
+## 9. Classes (root-cause standards, 0.13, ADR 0051)
+
+Each line is one standard that closes a class of the QA-100 root causes (`RC-nn`, the anchor of
+ADR 0051; not the RC- catalogue of CI). The RH rules are in `docs/RULES.md`, section "Root-cause
+standards", each a ratchet in `crates/shared/tests/rules_rc_*.rs`; the other tests each standard
+needs, and the brief that adds them, are in ADR 0051 section 3. A finding of a class closes only
+with its proof: the class rule or its own regression test, red before the fix and green after.
+
+1. **RC-01** A control never shows a value the system has not confirmed: a control that changes state outside the process is a pending control that greys while it waits, shows the confirmed value on success and puts the old value back with the reason on failure or Cancel; a busy label (Installing…, Fixing…) appears only after the approval reply. **CI** RH-011, RH-012.
+2. **RC-03** Every failure carries a classified reason from where it happened to where it is shown: a daemon answers with a code, a reason and a bounded, sanitised detail (the last error line); the shell maps the reason to one copy sentence, and a general sentence is only for an unknown reason. A failed action is visible where it was taken (the tile, the row, the status line), never only in a log. **CI** RH-031, RH-032.
+3. **RC-13** Every shared fact has exactly one definition that every reader imports (a `pub const` or function in `crates/shared` or `wol_core`, or one shipped file both sides read); a twin is a bug, and the facts are listed in one table the tests read. **CI** RH-131.
+4. **RC-23** No surface has a fixed size larger than the smallest supported logical screen, 640x400 at any scale: a size is the constant clamped to the screen less its insets, content scrolls when it is longer, a popover flips to stay inside the window, the compositor scale is automatic, and the golden matrix renders every surface at 640x400, 1366x768, 1920x1080 and 3840x2160 at 1x and 2x with no layout issue. **CI** RH-231, RH-232.
+5. **RC-16** A document names only what the tree has: on-screen names come from the copy catalog, verbs from the command tree, paths from the repository and the image; a feature the lead has not decided is marked planned, not described as present. **CI** RH-161, RH-162.
+6. **RC-14** The integration branch always descends from the last release tag and from every merged wave; a fix counts as fixed only when its commit is an ancestor of the integration branch and the release gate passes, and a decision record's status follows the merge, not a worker's report. **CI** RH-141.
+7. **RC-22** Every process the session depends on is supervised (restart on failure with no start limit, or a WolOS supervisor with back-off) and every wait has one named deadline that both ends read; a spawn returns its error and the caller backs off; a panic in a worker never leaves state frozen. **CI** RH-221, RH-222, RH-223.
+8. **RC-19** Code that reads or writes system paths says which view it needs (sealed base, merged, layer root, writable state) and gets it from one helper; writable state lives under `/var/lib/wolos` or `/run`; the mounts of a transaction live in a private mount namespace and are undone; a measurement runs against the unmerged base. **CI** RH-191, RH-192.
+9. **RC-07** A view is driven by one live model: an event source, or a poll that updates the model and redraws only when the shape changed; a widget the person touched holds its value until the host confirms it, and a page reads its facts again when it is shown. **CI** RH-071.
+10. **RC-02** In-flight state is keyed by its request: a queue for approvals, a generation number for asynchronous results, an exclusive lock on a named file for every transaction on a shared resource; never one optional slot in a window or a daemon that a second request overwrites. **CI** RH-021.

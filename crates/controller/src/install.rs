@@ -81,7 +81,7 @@ pub fn read_table(t: &mut dyn Tools, path: &str) -> Option<Disk> {
             "-b",
             "-o",
             // NAME: without it lsblk prints a flat list, no partitions under their disk.
-            "NAME,PATH,SIZE,MODEL,FSTYPE,LABEL,UUID,MOUNTPOINTS",
+            "NAME,PATH,SIZE,MODEL,LOG-SEC,FSTYPE,LABEL,UUID,MOUNTPOINTS",
             path,
         ],
         None,
@@ -282,6 +282,9 @@ struct Run<'a> {
     disk: &'a str,
     /// New partitions by index in `Layout::create`.
     made: Vec<Option<String>>,
+    /// LUKS volumes this run opened (mapper names), in order: closed again when the run stops,
+    /// so "Try Again" finds the partitions free for `luksFormat` (audit core-install #2).
+    opened: Vec<String>,
     log: Vec<String>,
 }
 
@@ -491,6 +494,7 @@ fn step(r: &mut Run, op: &Op, l: &Layout, key: &str) -> Result<(), Stop> {
                 };
                 let a: Vec<&str> = open.iter().map(String::as_str).collect();
                 r.must(&a, None)?;
+                r.opened.push(name.clone());
                 format!("/dev/mapper/{name}")
             } else {
                 path
@@ -510,16 +514,36 @@ pub fn apply(
     before: &Disk,
     key: &str,
 ) -> Result<Applied, Stop> {
-    let chosen: BTreeSet<&str> = l.chosen();
     let mut r = Run {
         t,
         disk: &before.path,
         made: vec![None; l.create.len()],
+        opened: Vec::new(),
         log: Vec::new(),
     };
+    let done = run_ops(&mut r, l, c, before, key);
+    if done.is_err() {
+        // A stop leaves no volume of this run open: the look-in folder is let go first (a stop
+        // may come while it still holds the system volume), then each volume, the last first.
+        r.t.run(&["umount", LOOK], None);
+        for name in r.opened.iter().rev() {
+            r.t.run(&["cryptsetup", "close", name], None);
+        }
+    }
+    done
+}
+
+fn run_ops(
+    r: &mut Run,
+    l: &Layout,
+    c: &Compiled,
+    before: &Disk,
+    key: &str,
+) -> Result<Applied, Stop> {
+    let chosen: BTreeSet<&str> = l.chosen();
     for op in &c.ops {
         r.log.push(format!("{op:?}"));
-        step(&mut r, op, l, key)?;
+        step(r, op, l, key)?;
         r.settle();
         let after = read_table(r.t, &before.path)
             .ok_or_else(|| Stop::Step("the disk can't be read".into()))?;
@@ -1338,6 +1362,33 @@ mod tests {
         assert_eq!(got.parts[2].blocked, Some(Blocked::BitLocker));
     }
 
+    /// audit core-install #1: a BitLocker Windows, probed as the installer probes it, with room
+    /// free next to it: the free-space layout is refused with its own word (nothing runs), Erase
+    /// Disk is not.
+    #[test]
+    fn a_bitlocker_windows_next_to_free_space_is_refused_before_any_write() {
+        let mut d = windows();
+        d.parts[1].fstype = "BitLocker".into();
+        let mut f = Fake::new(d);
+        let got = probe(&mut f, "/dev/vda").unwrap();
+        assert_eq!(got.parts[1].blocked, Some(Blocked::BitLocker));
+        assert!(!got.free().is_empty(), "there is room next to Windows");
+        let free = Layout {
+            create: alongside().create,
+            ..Layout::default()
+        };
+        for encrypt in [false, true] {
+            let r = compile(&free, &got, encrypt).unwrap_err();
+            assert_eq!(refusal_word(&r), "WindowsUnchecked(\"u2\")");
+        }
+        assert!(compile(&Layout::erase(), &got, true).is_ok());
+        assert!(
+            f.writes()
+                .iter()
+                .all(|w| !w.starts_with("sfdisk") && !w.starts_with("cryptsetup"))
+        );
+    }
+
     #[test]
     fn alongside_runs_in_order_on_the_named_partition_only() {
         let d = windows();
@@ -1511,6 +1562,64 @@ mod tests {
         assert!(a.crypttab.is_empty());
         assert!(!a.env().contains("extra_crypttab"), "{}", a.env());
         assert_eq!(mapper_for("/games"), "wolosgames");
+    }
+
+    /// audit core-install #2: an encrypted layout that stops after it opened volumes closes every
+    /// one of them (the last first), so "Try Again" can format the same partitions again; a
+    /// volume that never opened is not closed.
+    #[test]
+    fn a_later_step_that_stops_leaves_no_volume_open() {
+        let d = windows();
+        let mut l = alongside();
+        l.create[1].bytes = Some(40 * GB);
+        l.create.push(New {
+            bytes: Some(20 * GB),
+            mount: "/home".into(),
+            fs: Fs::Ext4,
+        });
+        l.create.push(New {
+            bytes: Some(2 * GB),
+            mount: "swap".into(),
+            fs: Fs::Swap,
+        });
+        let c = compile(&l, &d, true).unwrap();
+        for (stop, open) in [
+            ("mkswap", &["wolosroot", "woloshome", "wolosswap"][..]),
+            ("mkfs.ext4", &["wolosroot", "woloshome"][..]),
+            (
+                "cryptsetup open --key-file=/run/k /dev/vda7",
+                &["wolosroot", "woloshome"][..],
+            ),
+            (
+                "btrfs subvolume create",
+                &["wolosroot", "woloshome", "wolosswap"][..],
+            ),
+        ] {
+            let mut f = Fake::new(d.clone());
+            f.refuse = Some(stop);
+            assert!(
+                matches!(apply(&mut f, &l, &c, &d, "/run/k"), Err(Stop::Step(_))),
+                "{stop}"
+            );
+            let closed: Vec<&str> = f
+                .log
+                .iter()
+                .filter_map(|x| x.strip_prefix("cryptsetup close "))
+                .collect();
+            let mut want = open.to_vec();
+            want.reverse();
+            assert_eq!(closed, want, "{stop}: {:#?}", f.log);
+            let last_open = f.log.iter().rposition(|x| x.starts_with("cryptsetup open"));
+            let first_close = f.log.iter().position(|x| x.starts_with("cryptsetup close"));
+            assert!(
+                last_open < first_close,
+                "{stop}: closed after the last open"
+            );
+        }
+        // A run that finishes leaves its volumes open for install-run.
+        let mut f = Fake::new(d.clone());
+        apply(&mut f, &l, &c, &d, "/run/k").unwrap();
+        assert!(!f.log.iter().any(|x| x.starts_with("cryptsetup close")));
     }
 
     #[test]

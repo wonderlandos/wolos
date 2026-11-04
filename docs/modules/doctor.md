@@ -1,4 +1,4 @@
-# Doctor
+# Doctor (ADR 0048)
 
 Decision record: [0048](../adr/0048-system-web-apps.md) (system web apps). Code: `crates/controller/src/doctor.rs`; the app: `webapps/doctor/`.
 

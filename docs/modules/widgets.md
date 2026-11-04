@@ -1,4 +1,4 @@
-# Desktop widgets
+# Desktop widgets (ADR 0010)
 
 Decision: ADR 0010. Code: `crates/shared/src/widgets/` (layout file, package schema, bindings, grid), `crates/core/src/widgets.rs` (packages, sources, layout store), `crates/shell/src/widgets/` (built-in data), `crates/shell/src/ui/widgets*.rs` (desktop, gallery, cards), `crates/shell/src/kit/data.rs` (card, gauge, chart, clock face, month grid), `crates/controller/src/widgets.rs` (`wol widgets`).
 

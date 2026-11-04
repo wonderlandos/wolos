@@ -1,4 +1,4 @@
-# Security
+# Security (ADR 0040)
 
 On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status), `wol_core::update::check`, `wol_core::home_crypt`.
 `wol security [--json]` shows the state; `wol firewall on|off|status` changes the firewall through wol-admind.
@@ -17,15 +17,23 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   shared sticky folders such as /tmp), `fs.suid_dumpable=0` (no core files from setuid programs),
   `kernel.unprivileged_bpf_disabled=1` (only administrators load BPF), `net.core.bpf_jit_harden=1`
   (constant blinding for ordinary accounts' BPF), `net.ipv4.tcp_syncookies=1` (half-open floods),
-  `kernel.kexec_load_disabled=1` (no kernel swap without a firmware restart). The same file raises
+  `kernel.kexec_load_disabled=1` (no kernel swap without a firmware restart),
+  `kernel.io_uring_disabled=1` (only administrators create io_uring instances; a hardening default,
+  revisit when a shipped app needs it). The same file raises
   `vm.max_map_count` for games. `wol security` reads them from /proc/sys; **CI** the controller test sysctl_docs
   fails when this line names a setting no file sets.
 
 ## Updates (ADR 0016, 0017)
 - A systemd timer runs `/usr/lib/wolos/update-check` hourly; it checks at most every 20 h:
-  `pacman -Sy` (pinned snapshot), `pacman -Qu`, `arch-audit -q`, `pacman -Qq` (kernels), and the
-  signed release manifest (`release.json` + `.sig`, verified with the package keys when read).
+  `pacman -Sy` (pinned snapshot) and `pacman -Qu` against a temporary copy of the package database
+  (`local` linked, `sync` copied: the real one is on the read-only seal, ADR 0016), `arch-audit -q`,
+  `pacman -Qq` (kernels), and the signed release manifest (`release.json` + `.sig`, verified with
+  the package keys when read) from `https://wolos.squareweb.app/latest/`, or from the latest GitHub
+  release of wolos-packages when the CDN answers 404 or cannot be reached.
 - Findings go to `/var/lib/wolos/updates`, readable by every account. Never installs.
+  `wol update check` and Settings > Software Update > Check Now ask wol-admind (`pkg-refresh`) to
+  run the check now, then read the same files; a stamp older than the request means it could not
+  refresh, and an empty list is then never shown as "up to date".
 - Release manifest: version, Arch snapshot date, `[wolos]` revision, linux-wolos version, image URL and sha256.
 - Update Now (wol-admind `pkg-upgrade`) = `pacman -Syu` inside the release (only `[wolos]` moves), made in the
   other root slot by the same builder as the pacman wrapper below (`wol_core::update::pkg::slot_change`). The running
@@ -70,7 +78,7 @@ How it works:
 - Tag: `user.wolos.quarantine`, set when a file lands in a Downloads folder, or `user.xdg.origin.url`, set by browsers, and by curl and wget through the shipped `.curlrc` and `.wgetrc`.
 - Verdict: a clean file gets an evictable kernel ignore mark, removed by the kernel when the file changes. The verdict store (`/var/lib/wolos/xguard/guard/verdicts`, 0600) keeps file identity and sha256, or the fs-verity digest when there is one, so a restart reads nothing again.
 - Fails open, except for downloads: the guard dying, or a check it cannot finish, lets the file run. A stopped file needs a signature match. The one exception (audit S4): when the deep check cannot run at all on a tagged download (its worker ended or the rule sets did not load), the file is refused for now with the answer `unchecked`; that is not remembered, so the next open asks again.
-- Size: a file up to 64 MiB is read whole and may get the deep check; a larger one, up to 1 GiB, is scanned in pieces (hashes and patterns, streamed with an overlap so a pattern across two pieces is still seen), and the deep worker reads it in pieces too, with its whole-file look left to the background pass. Above 1 GiB (audit S4-5): a file that is neither a tagged download nor asked about with `wol xguard check` runs at once and the background pass looks later; a tagged download or an asked file gets the streamed pass over its first 1 GiB, is refused if a pattern is found there, and otherwise is refused for now with `unchecked` (not remembered, no ignore mark) until the background pass clears it or the person chooses Open Anyway (`crates/xguard/src/guard.rs`, `check_large`).
+- Size: a file up to 64 MiB is read whole and may get the deep check; a larger one, up to 1 GiB, is scanned in pieces (hashes and patterns, streamed with an overlap so a pattern across two pieces is still seen), and the deep worker reads it in pieces too, with its whole-file look left to the background pass. Above 1 GiB (audit S4-5): a file that is neither a tagged download nor asked about through the guard's socket (`wol-xguard check PATH`; `wol security scan PATH` runs `wol-xguard scan`, which checks the file itself and does not ask the guard) runs at once and the background pass looks later; a tagged download or an asked file gets the streamed pass over its first 1 GiB, is refused if a pattern is found there, and otherwise is refused for now with `unchecked` (not remembered, no ignore mark) until the background pass clears it or the person chooses Open Anyway (`crates/xguard/src/guard.rs`, `check_large`).
 - The guard's socket (`/run/wolos/xguard.sock`, 0666) is served on its own thread, never on the thread that answers the kernel (audit S4-3): at most 64 requests at once, 8 per account, each with 2 s to send its file; a caller over its share hears `unchecked` at once. Questions about the same file share one scan. `LimitNOFILE` in the unit covers the queue (`crates/xguard/tests/units.rs`).
 - Engines: the mapped database in the guard; rule sets (YARA-X) only in a short-lived worker with no privileges, for tagged files, removable disks, Windows programs, AppImages and `.wol`; and, after the person opts in, the full signature engine (`wol-xguard-clam`) for the same files.
 - Full signatures, off by default: a switch in Privacy & Security enables `wolos-clam-update.timer`. freshclam fetches the data to this computer; it is never in the image. `wol-xguard-clam` is the only program that links libclamav; it starts on demand from `wolos-clam.socket`, takes 1 GB while loaded, and exits after 120 idle seconds. Off deletes the data.
@@ -84,7 +92,9 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 
 ## Error reports (off by default)
 - `/usr/lib/wolos/report` (`wolos-report.timer`, hourly) sends only when `/etc/wolos/reports.conf` has `send=1`.
-- Each new failed unit or coredump goes once to `https://wolos.squareweb.app/report`:
+- Each new failed unit or coredump goes once to `https://cdn.wolos.org/report`, or to the same
+  server under its own name `https://wolos.squareweb.app/report` when that cannot be reached
+  (`wol_core::cdn::REPORT`):
   `kind`, WolOS version, kernel, `detail` (unit name, or program and signal). No logs, user or host names.
 - Turn on: `wol admin reports on` (off: `wol admin reports off`); it writes `send=1|0` in that file and enables or disables the timer. A Settings > Privacy switch uses the same request.
 
@@ -130,6 +140,8 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 Advisory means a grant is recorded and shown to helpers that ask. An app that ignores it is not stopped. Settings says which kind each permission is (`security::enforcement`).
 
 Screen recording is not a grant in the consent database (`/etc/wolos/consent.json`, `consent::SCREEN_CAPTURE`): nothing would read it, since the compositor rules are static and every app asks through the portal each time. The administrator `consent` action refuses it (`consent::refusal`), an old `screen-capture` entry is ignored when the file is read and dropped the next time it is written, and Settings > Privacy & Security shows one row saying apps ask each time, not a switch per app.
+
+An app with no grant is refused: that is the default for an app WolOS has never seen (ADR 0040). So that the refusal's "Turn them on in System Settings > Privacy & Security" leads to a switch, wold notes each refused (app, capability) once in the account's own list, `/var/lib/wolos/consent-asked/<uid>.json` (`consent::ASKED_DIR`, `{"asked":[{"app","capability"}]}`, newest 64, owned by the account, mode 0600, read at most 64 KiB; `portal::Remembering`). Settings lists those apps under their permission with the switch off; turning it on is the administrator `consent` action as for any grant. The list grants nothing: the consent database alone decides.
 
 ## Who may answer an ask (the shower)
 Asks that need a person (`SessionAsk`) go to the account's shell over `subscribe account` and come back as `session.answer`. wold knows the shell by its executable, `/usr/bin/wol-shell` (`portal::SHOWERS`), and any process of the account can run that file (audit P6-1). So a peer that is a shower by path is also refused when its pinned `/proc/<pid>` shows foreign code (`PeerIdentity::injected`, `crates/api/src/peer.rs`): `LD_*`, `GTK_MODULES` and the other plug-in variables in its environment (or no environment), executable code mapped from outside `/usr` and `/lib`, a tracer attached, a mount namespace other than wold's, or anything unreadable. Other apps keep their identity for grants: a game launcher with `LD_LIBRARY_PATH` is still an app. Known and accepted: the check is defence in depth; a process that puts code into the real shell after it started is not caught (the shell should be non-dumpable), and a parent check is not possible because the compositor double-forks its `exec-once` programs. The real fix, a token only the session's shell holds, is ADR 0037 (proposed). Tests: `peer::tests::a_shower_binary_under_ld_preload_is_not_a_shower`, `server::tests::a_shower_binary_under_ld_preload_cannot_subscribe_to_the_account`.

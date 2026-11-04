@@ -272,6 +272,8 @@ fn sysctl_hardening_and_no_core_files() {
         "fs.protected_symlinks = 1",
         "fs.suid_dumpable = 0",
         "vm.max_map_count = 2147483642",
+        // Hardening default (audit8 cve #2): admin-only; revisit when a shipped app needs io_uring.
+        "kernel.io_uring_disabled = 1",
     ] {
         assert!(s.lines().any(|l| l == kv), "sysctl.d lacks {kv}");
     }
@@ -429,8 +431,19 @@ fn network_up_drains_the_queued_modules() {
     );
 }
 
+/// A pacman database like an installed slot's (`local` records, `sync` lists) for update-check.
+fn slot_db(d: &Path) -> PathBuf {
+    let db = d.join("db");
+    fs::create_dir_all(db.join("local")).unwrap();
+    fs::create_dir_all(db.join("sync")).unwrap();
+    fs::write(db.join("sync/wolos.db"), "old list").unwrap();
+    db
+}
+
 /// Daily update check: a timer runs it hourly; the script checks at most once every 20 hours,
-/// offline leaves no stamp, findings are readable by every account.
+/// offline leaves no stamp, findings are readable by every account. e2e D3: the packages are
+/// checked against a temporary copy of pacman's database (`pacman -Sy` cannot lock the sealed
+/// one, checkupdates needs fakeroot, which the image lacks), never against the real one.
 #[test]
 fn update_check_runs_hourly_and_checks_once_a_day() {
     let t = unit("wolos-update-check.timer");
@@ -443,16 +456,22 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
     );
     let d = scratch("updates");
     let out = d.join("out");
+    let db = slot_db(&d);
+    let tmp = d.join("tmp");
+    fs::create_dir_all(&tmp).unwrap();
     let run = |online: bool, arg: Option<&str>| {
+        // pacman -Qu exits 1 when nothing is pending; -Sy fails offline.
         let body = if online {
-            "echo 'wolos-system 0.11.1-1 -> 0.11.2-1'"
+            "case \"$*\" in *-Qu*) echo 'wolos-system 0.11.1-1 -> 0.11.2-1' ;; esac"
         } else {
-            "exit 1"
+            "case \"$*\" in *-Sy*) exit 1 ;; *-Qu*) exit 1 ;; esac"
         };
-        let path = fakes(&d, &[("checkupdates", body)]);
+        let path = fakes(&d, &[("pacman", body), ("curl", "exit 22")]);
         let mut c = Command::new("sh");
         c.arg(repo("files/usr/lib/wolos/update-check"))
             .env("PATH", &path)
+            .env("WOLOS_PACMAN_DB", &db)
+            .env("TMPDIR", &tmp)
             .env("WOLOS_UPDATES", &out);
         if let Some(a) = arg {
             c.arg(a);
@@ -467,27 +486,63 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
         "wolos-system 0.11.1-1 -> 0.11.2-1\n"
     );
     assert!(out.join("checked").exists());
-    let n = log(&d)
-        .lines()
-        .filter(|l| l.starts_with("checkupdates"))
-        .count();
-    run(true, None);
-    assert_eq!(
+    let refreshes = || {
         log(&d)
             .lines()
-            .filter(|l| l.starts_with("checkupdates"))
-            .count(),
-        n,
-        "checked less than 20 h ago"
+            .filter(|l| l.starts_with("pacman ") && l.contains(" -Sy"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let n = refreshes().len();
+    // The refresh and the query use the temporary copy, which is gone afterwards; the real
+    // database is never written.
+    for l in log(&d)
+        .lines()
+        .filter(|l| l.contains(" -Sy") || l.contains(" -Qu"))
+    {
+        let tdb = l.split_whitespace().nth(2).unwrap();
+        assert!(
+            l.starts_with("pacman --dbpath ") && tdb.starts_with(tmp.to_str().unwrap()),
+            "{l}"
+        );
+    }
+    assert_eq!(
+        fs::read_dir(&tmp).unwrap().count(),
+        0,
+        "temporary database removed"
+    );
+    assert_eq!(
+        fs::read_to_string(db.join("sync/wolos.db")).unwrap(),
+        "old list"
+    );
+    run(true, None);
+    assert_eq!(refreshes().len(), n, "checked less than 20 h ago");
+    run(true, Some("now"));
+    assert_eq!(refreshes().len(), n + 1);
+    // Nothing pending (-Qu exits 1, says nothing): an empty list, a stamp.
+    fs::remove_file(out.join("checked")).unwrap();
+    let path = fakes(
+        &d,
+        &[
+            ("pacman", "case \"$*\" in *-Qu*) exit 1 ;; esac"),
+            ("curl", "exit 22"),
+        ],
+    );
+    let st = Command::new("sh")
+        .arg(repo("files/usr/lib/wolos/update-check"))
+        .env("PATH", &path)
+        .env("WOLOS_PACMAN_DB", &db)
+        .env("TMPDIR", &tmp)
+        .env("WOLOS_UPDATES", &out)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    assert_eq!(fs::read_to_string(out.join("pkg")).unwrap(), "");
+    assert!(
+        out.join("checked").exists(),
+        "nothing pending is a finished check"
     );
     run(true, Some("now"));
-    assert_eq!(
-        log(&d)
-            .lines()
-            .filter(|l| l.starts_with("checkupdates"))
-            .count(),
-        n + 1
-    );
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(out.join("pkg")).unwrap().permissions().mode();
     assert_eq!(mode & 0o044, 0o044, "every account reads the findings");
@@ -511,6 +566,63 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
     assert!(stamp <= now + 60, "the new stamp is today's: {stamp}");
 }
 
+/// The release manifest and its signature come from the CDN under cdn.wolos.org, else under the
+/// server's own name, else GitHub's latest release (`wol_core::cdn::latest`); a place that answers
+/// 404 (or cannot be reached) is skipped, and both files always come from one place.
+#[test]
+fn update_check_reads_the_release_from_the_cdn_then_github() {
+    let d = scratch("release");
+    let out = d.join("out");
+    let db = slot_db(&d);
+    let tmp = d.join("tmp");
+    fs::create_dir_all(&tmp).unwrap();
+    let [cdn, mirror, github] =
+        <[String; 3]>::try_from(wol_core::cdn::latest("release.json")).unwrap();
+    // curl [options] [-o FILE] -- URL (get()): each CDN name is down or serves its own name,
+    // GitHub serves GH.
+    let curl = |primary: &str, second: &str| {
+        format!(
+            "o=; p=; for u; do [ \"$p\" = -o ] && o=$u; p=$u; done\n\
+             case $u in https://cdn.wolos.org/*) {primary} ;; https://wolos.squareweb.app/*) {second} ;; *) b=GH ;; esac\n\
+             case $u in *.sig) printf '%s' \"$b-sig\" ;; *) printf '%s' \"$b\" > \"$o\" ;; esac"
+        )
+    };
+    for (primary, second, want) in [
+        ("exit 6", "exit 22", "GH"),
+        ("exit 22", "b=MIRROR", "MIRROR"),
+        ("b=CDN", "b=MIRROR", "CDN"),
+    ] {
+        let _ = fs::remove_dir_all(&out);
+        let _ = fs::remove_file(d.join("log"));
+        let path = fakes(&d, &[("pacman", ""), ("curl", &curl(primary, second))]);
+        let st = Command::new("sh")
+            .arg(repo("files/usr/lib/wolos/update-check"))
+            .arg("now")
+            .env("PATH", &path)
+            .env("WOLOS_PACMAN_DB", &db)
+            .env("TMPDIR", &tmp)
+            .env("WOLOS_UPDATES", &out)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        assert_eq!(fs::read_to_string(out.join("base")).unwrap(), want);
+        let hex: String = format!("{want}-sig")
+            .bytes()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(fs::read_to_string(out.join("base.sig")).unwrap(), hex);
+        let gets: Vec<String> = log(&d)
+            .lines()
+            .filter(|l| l.starts_with("curl "))
+            .map(|l| l.rsplit(' ').next().unwrap().to_owned())
+            .collect();
+        assert_eq!(gets[0], cdn, "{gets:?}");
+        let asked = |u: &str| gets.iter().any(|g| g.starts_with(u));
+        assert_eq!(asked(&mirror), want != "CDN", "{want}: {gets:?}");
+        assert_eq!(asked(&github), want == "GH", "{want}: {gets:?}");
+    }
+}
+
 /// SHELLS-check F2: the vulnerability list comes from arch-audit. Absent, the check says so in the
 /// journal and leaves no list (an empty one would read "no known vulnerabilities"); present, a
 /// finding is listed.
@@ -520,17 +632,21 @@ fn update_check_without_arch_audit_says_so_and_lists_nothing() {
     let out = d.join("out");
     fs::create_dir_all(&out).unwrap();
     // PATH of exactly the tools the script uses, so a host arch-audit cannot leak in.
+    let db = slot_db(&d);
+    let tmp = d.join("tmp");
+    fs::create_dir_all(&tmp).unwrap();
     let fake = fakes(
         &d,
         &[
-            ("checkupdates", "exit 2"),
-            ("pacman", "echo linux-wolos"),
+            ("pacman", "case \"$*\" in *-Qq*) echo linux-wolos ;; esac"),
             ("curl", "exit 22"),
         ],
     );
     let bin = d.join("only");
     fs::create_dir_all(&bin).unwrap();
-    for t in ["date", "cat", "mkdir", "mv", "rm", "chmod", "od", "tr"] {
+    for t in [
+        "date", "cat", "mkdir", "mv", "rm", "chmod", "od", "tr", "mktemp", "ln", "cp",
+    ] {
         let o = Command::new("sh")
             .args(["-c", &format!("command -v {t}")])
             .output()
@@ -538,7 +654,7 @@ fn update_check_without_arch_audit_says_so_and_lists_nothing() {
         let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
         std::os::unix::fs::symlink(&p, bin.join(t)).unwrap();
     }
-    for t in ["checkupdates", "pacman", "curl"] {
+    for t in ["pacman", "curl"] {
         std::os::unix::fs::symlink(
             Path::new(fake.split(':').next().unwrap()).join(t),
             bin.join(t),
@@ -555,6 +671,8 @@ fn update_check_without_arch_audit_says_so_and_lists_nothing() {
         Command::new(&sh)
             .arg(repo("files/usr/lib/wolos/update-check"))
             .env("PATH", path)
+            .env("WOLOS_PACMAN_DB", &db)
+            .env("TMPDIR", &tmp)
             .env("WOLOS_UPDATES", &out)
             .output()
             .unwrap()
@@ -885,7 +1003,7 @@ fn reports_send_new_failures_once_and_only_when_on() {
             r#"{"kind":"crash","version":"0.11.2","kernel":"7.3.0-1-wolos","detail":"wol-shell SIGSEGV"}"#,
         ]
     );
-    assert!(log(&d).contains("https://wolos.squareweb.app/report"));
+    assert!(log(&d).contains(wol_core::cdn::REPORT[0]));
     run();
     assert_eq!(
         fs::read_to_string(d.join("sent")).unwrap(),

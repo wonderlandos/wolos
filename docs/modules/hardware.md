@@ -1,4 +1,4 @@
-# Hardware
+# Hardware (ADR 0016)
 
 Decision record: ADR 0016 (Arch base; firmware from Arch packages).
 

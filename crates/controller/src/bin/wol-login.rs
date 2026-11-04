@@ -41,6 +41,8 @@ fn main() {
     let mut flow = LoginFlow::new(listed_on_system(), auto);
     let mut phase = flow.start();
     let mut respawn = GreeterRespawn::default();
+    // Sessions that die while starting wait longer each time (1 s .. 5 min), never spin.
+    let mut sessions = GreeterRespawn::default();
     // wold (or this program) was restarted under a session that is still on the seat: wait for
     // it instead of starting a login window the seat daemon refuses (QA L2-39/39b).
     if let Some(running) = running_session() {
@@ -62,19 +64,33 @@ fn main() {
             console_ready();
             let started = Instant::now();
             // How soon it ended decides (`failed_early`); how, only whether a person asked.
-            let ended = run_session(&user, flow.locked, || marks.spawned(what));
+            // An account that cannot open the display never starts one (e2e D6).
+            let ended = if display_allowed(&user) {
+                run_session(&user, flow.locked, || marks.spawned(what))
+            } else {
+                None
+            };
             marks.exited(what);
-            settle_notice(
-                std::path::Path::new(NOTICE_FILE),
-                started.elapsed(),
-                ended,
-                || session_facts(&user),
-            );
-            if failed_early(started.elapsed()) && flow.locked {
-                println!("wol-login: locked start failed; the login window takes over");
+            let ran = started.elapsed();
+            settle_notice(std::path::Path::new(NOTICE_FILE), ran, ended, || {
+                session_facts(&user)
+            });
+            if failed_early(ran) {
+                // The login window takes over (it says nothing more than the journal does yet);
+                // the next start, whoever asks for it, waits.
+                let next = sessions.exited(ran);
+                println!(
+                    "wol-login: {} session of {} ended after {} ms; the login window takes over in {} s",
+                    if flow.locked { "locked" } else { "the" },
+                    user.name,
+                    ran.as_millis(),
+                    next.delay.as_secs()
+                );
                 flow.locked_start_failed();
-            } else if started.elapsed() >= GreeterRespawn::HEALTHY {
+                std::thread::sleep(next.delay);
+            } else if ran >= GreeterRespawn::HEALTHY {
                 flow.session_ran_healthy();
+                sessions = GreeterRespawn::default();
             }
             flow.session_ended();
             flow.listed = listed_on_system();
@@ -386,11 +402,17 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
                     result = Auth::Error; // no session without its files
                 }
             }
+            // No session that cannot open the display; the login window says why.
+            let no_display = result == Auth::Ok && !flow.user.as_ref().is_some_and(display_allowed);
+            if no_display {
+                result = Auth::Error;
+            }
             println!("wol-login: {user}: {result:?}");
             let phase = flow.authenticated(result == Auth::Ok);
             let line = match result {
                 Auth::Ok => "ok",
                 Auth::Denied => "denied",
+                Auth::Error if no_display => shared::login::REPLY_NO_DISPLAY,
                 Auth::Error => unlock_failure_reply(unlock),
             };
             reply(client, line, result != Auth::Ok);
@@ -649,6 +671,18 @@ fn start_keyring(user: &LoginUser, password: &[u8]) {
     if let Ok(mut all) = KEYRINGS.lock() {
         all.push(child);
     }
+}
+
+/// [`can_open_display`], said in the journal when not: the compositor would die while starting.
+fn display_allowed(user: &LoginUser) -> bool {
+    let ok = can_open_display(&read(GROUP_FILE), user);
+    if !ok {
+        println!(
+            "wol-login: {} is not in group {SEAT_GROUP}, so the display cannot open; an administrator adds it with: usermod -aG {SEAT_GROUP} {}",
+            user.name, user.name
+        );
+    }
+    ok
 }
 
 /// After the session: stops the daemon and the `su -l` that held its logind session open.

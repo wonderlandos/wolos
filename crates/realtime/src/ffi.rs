@@ -2,6 +2,11 @@
 //! C ABI for the wol-hypr compositor plugin. Header: `include/wol_realtime.h` (kept in sync by test).
 //! All functions are pure or best effort, never panic across the boundary, never allocate per call
 //! (except the first `wol_qos_foreground`, which creates the connection).
+//!
+//! Out-pointers are `Option<&mut T>`: the same ABI as a C `T *` (Rust guarantees the null-pointer
+//! optimisation for `Option<&mut T>`, null is `None`), so these functions need no `unsafe`. The C
+//! caller passes null or a pointer to a writable, aligned `T` that no other argument points to and
+//! nothing else touches during the call (the plugin passes distinct locals, `plugins/wol-hypr`).
 use crate::anim::Animation;
 use crate::qos::Qos;
 use crate::titlebar::{self, Button, Hit};
@@ -19,15 +24,13 @@ pub const WOL_ANIM_OPEN: u32 = 0;
 pub const WOL_ANIM_CLOSE: u32 = 1;
 
 /// Sample the open/close curve. Returns 1 when the animation is done, 0 while running, -1 bad kind.
-///
-/// # Safety
-/// `out` must be null or point to a writable `WolVisual`.
+/// `out` may be null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wol_anim_sample(
+pub extern "C" fn wol_anim_sample(
     kind: u32,
     start_ms: u64,
     now_ms: u64,
-    out: *mut WolVisual,
+    out: Option<&mut WolVisual>,
 ) -> i32 {
     let a = match kind {
         WOL_ANIM_OPEN => Animation::open(start_ms),
@@ -35,13 +38,10 @@ pub unsafe extern "C" fn wol_anim_sample(
         _ => return -1,
     };
     let v = a.sample(now_ms);
-    if !out.is_null() {
-        // SAFETY: caller contract above.
-        unsafe {
-            *out = WolVisual {
-                scale: v.scale,
-                opacity: v.opacity,
-            }
+    if let Some(out) = out {
+        *out = WolVisual {
+            scale: v.scale,
+            opacity: v.opacity,
         };
     }
     i32::from(a.done(now_ms))
@@ -178,6 +178,13 @@ fn button_code(b: Option<Button>) -> i32 {
     }
 }
 
+/// Write `v` through an out-pointer the caller may have left null.
+fn put(out: Option<&mut i32>, v: i32) {
+    if let Some(out) = out {
+        *out = v;
+    }
+}
+
 /// `titlebar::button_at` on a right-aligned row in a bar `width` px wide (close at the right
 /// edge, then zoom, minimise): 0 close, 1 minimise, 2 zoom, -1 none.
 #[unsafe(no_mangle)]
@@ -236,11 +243,13 @@ pub extern "C" fn wol_titlebar_height() -> i32 {
 }
 
 /// Top-left of button 0/1/2 (close/minimize/zoom). Returns 0 on success, -1 bad button.
-///
-/// # Safety
-/// `x`, `y` must be null or writable.
+/// `x`, `y` may be null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wol_titlebar_button_origin(button: i32, x: *mut i32, y: *mut i32) -> i32 {
+pub extern "C" fn wol_titlebar_button_origin(
+    button: i32,
+    x: Option<&mut i32>,
+    y: Option<&mut i32>,
+) -> i32 {
     let b = match button {
         0 => Button::Close,
         1 => Button::Minimize,
@@ -248,26 +257,16 @@ pub unsafe extern "C" fn wol_titlebar_button_origin(button: i32, x: *mut i32, y:
         _ => return -1,
     };
     let (bx, by) = titlebar::button_origin(b);
-    // SAFETY: caller contract above.
-    unsafe {
-        if !x.is_null() {
-            *x = bx;
-        }
-        if !y.is_null() {
-            *y = by;
-        }
-    }
+    put(x, bx);
+    put(y, by);
     0
 }
 
 /// Position for a new floating window of `w`x`h` in area (ax, ay, aw, ah) with title bar `bar`.
-/// `has_prev` != 0: cascade from (px, py) (previous window of the same app).
-///
-/// # Safety
-/// `x`, `y` must be null or writable.
+/// `has_prev` != 0: cascade from (px, py) (previous window of the same app). `x`, `y` may be null.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn wol_place(
+pub extern "C" fn wol_place(
     w: i32,
     h: i32,
     ax: i32,
@@ -278,33 +277,24 @@ pub unsafe extern "C" fn wol_place(
     has_prev: i32,
     px: i32,
     py: i32,
-    x: *mut i32,
-    y: *mut i32,
+    x: Option<&mut i32>,
+    y: Option<&mut i32>,
 ) -> i32 {
     let prev = (has_prev != 0).then_some((px, py));
     // (ax, ay, aw, ah) is the output minus reserved zones (menu bar, dock); keep the margin.
     let area = crate::placement::usable((ax, ay, aw, ah), None);
     let (rx, ry) = crate::placement::place((w, h), area, bar, prev);
-    // SAFETY: caller contract above.
-    unsafe {
-        if !x.is_null() {
-            *x = rx;
-        }
-        if !y.is_null() {
-            *y = ry;
-        }
-    }
+    put(x, rx);
+    put(y, ry);
     0
 }
 
 /// Client size for a new floating window: `placement::fit` of its `w`x`h` wish into the zone
 /// (ax, ay, aw, ah) minus the placement margin, title bar `bar` included. 0 in min/max = unset.
-///
-/// # Safety
-/// `out_w`, `out_h` must be null or writable.
+/// `out_w`, `out_h` may be null.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn wol_fit(
+pub extern "C" fn wol_fit(
     w: i32,
     h: i32,
     min_w: i32,
@@ -316,31 +306,22 @@ pub unsafe extern "C" fn wol_fit(
     aw: i32,
     ah: i32,
     bar: i32,
-    out_w: *mut i32,
-    out_h: *mut i32,
+    out_w: Option<&mut i32>,
+    out_h: Option<&mut i32>,
 ) -> i32 {
     let area = crate::placement::usable((ax, ay, aw, ah), None);
     let (rw, rh) = crate::placement::fit((w, h), (min_w, min_h), (max_w, max_h), area, bar);
-    // SAFETY: caller contract above.
-    unsafe {
-        if !out_w.is_null() {
-            *out_w = rw;
-        }
-        if !out_h.is_null() {
-            *out_h = rh;
-        }
-    }
+    put(out_w, rw);
+    put(out_h, rh);
     0
 }
 
 /// Position for a dialog of `w`x`h` centred on its parent's client rect (px, py, pw, ph), kept in
-/// the zone (ax, ay, aw, ah) minus the placement margin (`placement::centre_on`).
-///
-/// # Safety
-/// `x`, `y` must be null or writable.
+/// the zone (ax, ay, aw, ah) minus the placement margin (`placement::centre_on`). `x`, `y` may be
+/// null.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn wol_centre(
+pub extern "C" fn wol_centre(
     w: i32,
     h: i32,
     px: i32,
@@ -352,31 +333,21 @@ pub unsafe extern "C" fn wol_centre(
     aw: i32,
     ah: i32,
     bar: i32,
-    x: *mut i32,
-    y: *mut i32,
+    x: Option<&mut i32>,
+    y: Option<&mut i32>,
 ) -> i32 {
     let area = crate::placement::usable((ax, ay, aw, ah), None);
     let (rx, ry) = crate::placement::centre_on((w, h), (px, py, pw, ph), area, bar);
-    // SAFETY: caller contract above.
-    unsafe {
-        if !x.is_null() {
-            *x = rx;
-        }
-        if !y.is_null() {
-            *y = ry;
-        }
-    }
+    put(x, rx);
+    put(y, ry);
     0
 }
 
 /// An open floating window after the zone changed (`placement::refit`): client box in/out through
-/// `x`, `y`, `w`, `h`. Returns 1 when the box changed, 0 when it already fit.
-///
-/// # Safety
-/// `x`, `y`, `w`, `h` must point to writable i32s.
+/// `x`, `y`, `w`, `h`. Returns 1 when the box changed, 0 when it already fit or a pointer is null.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn wol_refit(
+pub extern "C" fn wol_refit(
     min_w: i32,
     min_h: i32,
     max_w: i32,
@@ -386,29 +357,26 @@ pub unsafe extern "C" fn wol_refit(
     aw: i32,
     ah: i32,
     bar: i32,
-    x: *mut i32,
-    y: *mut i32,
-    w: *mut i32,
-    h: *mut i32,
+    x: Option<&mut i32>,
+    y: Option<&mut i32>,
+    w: Option<&mut i32>,
+    h: Option<&mut i32>,
 ) -> i32 {
-    if x.is_null() || y.is_null() || w.is_null() || h.is_null() {
+    let (Some(x), Some(y), Some(w), Some(h)) = (x, y, w, h) else {
         return 0;
-    }
+    };
     let area = crate::placement::usable((ax, ay, aw, ah), None);
-    // SAFETY: caller contract above.
-    unsafe {
-        let before = (*x, *y, *w, *h);
-        let (rx, ry, rw, rh) = crate::placement::refit(
-            (before.0, before.1),
-            (before.2, before.3),
-            (min_w, min_h),
-            (max_w, max_h),
-            area,
-            bar,
-        );
-        (*x, *y, *w, *h) = (rx, ry, rw, rh);
-        i32::from(before != (rx, ry, rw, rh))
-    }
+    let before = (*x, *y, *w, *h);
+    let (rx, ry, rw, rh) = crate::placement::refit(
+        (before.0, before.1),
+        (before.2, before.3),
+        (min_w, min_h),
+        (max_w, max_h),
+        area,
+        bar,
+    );
+    (*x, *y, *w, *h) = (rx, ry, rw, rh);
+    i32::from(before != (rx, ry, rw, rh))
 }
 
 /// New floating window (`wm_gates::placement_for`): 0 skip (X11 override-redirect or borderless
@@ -446,45 +414,35 @@ pub extern "C" fn wol_fixed_axes(min_w: i32, min_h: i32, max_w: i32, max_h: i32)
 
 /// Limits for `wol_fit`/`wol_refit` in/out: a fixed axis is pinned to the current size
 /// (`cur_w`, `cur_h`), the other stays free. Returns the fixed-axes bits, -1 on a null pointer.
-///
-/// # Safety
-/// `min_w`, `min_h`, `max_w`, `max_h` must point to writable i32s.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wol_placement_limits(
+pub extern "C" fn wol_placement_limits(
     cur_w: i32,
     cur_h: i32,
-    min_w: *mut i32,
-    min_h: *mut i32,
-    max_w: *mut i32,
-    max_h: *mut i32,
+    min_w: Option<&mut i32>,
+    min_h: Option<&mut i32>,
+    max_w: Option<&mut i32>,
+    max_h: Option<&mut i32>,
 ) -> i32 {
-    if min_w.is_null() || min_h.is_null() || max_w.is_null() || max_h.is_null() {
+    let (Some(min_w), Some(min_h), Some(max_w), Some(max_h)) = (min_w, min_h, max_w, max_h) else {
         return -1;
-    }
-    // SAFETY: caller contract above.
-    unsafe {
-        let (mut min, mut max) = ((*min_w, *min_h), (*max_w, *max_h));
-        let f = crate::wm_gates::FixedAxes::of(min, max);
-        f.pin((cur_w, cur_h), &mut min, &mut max);
-        (*min_w, *min_h, *max_w, *max_h) = (min.0, min.1, max.0, max.1);
-        f.bits() as i32
-    }
+    };
+    let (mut min, mut max) = ((*min_w, *min_h), (*max_w, *max_h));
+    let f = crate::wm_gates::FixedAxes::of(min, max);
+    f.pin((cur_w, cur_h), &mut min, &mut max);
+    (*min_w, *min_h, *max_w, *max_h) = (min.0, min.1, max.0, max.1);
+    f.bits() as i32
 }
 
 /// One watched key (`wm_gates::SwitchKeys`): `state` from the previous call (start at 0), `key`
 /// WOL_KEY_*, `flags` WOL_KEYF_*. Returns the next state; `action` (may be null) gets the line
 /// code (WOL_LINE_*, text from `wol_keys_line`) in the low byte and WOL_ACTION_CONSUME.
-///
-/// # Safety
-/// `action` is null or points to a writable u32.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wol_keys_step(state: u32, key: i32, flags: u32, action: *mut u32) -> u32 {
+pub extern "C" fn wol_keys_step(state: u32, key: i32, flags: u32, action: Option<&mut u32>) -> u32 {
     use crate::wm_gates::{Key, KeyEvent, SwitchKeys};
     let mut s = SwitchKeys::from_bits(state);
     let a = s.on(Key::from_code(key), KeyEvent::from_flags(flags));
-    if !action.is_null() {
-        // SAFETY: caller contract above.
-        unsafe { *action = a.bits() };
+    if let Some(action) = action {
+        *action = a.bits();
     }
     s.bits()
 }
@@ -582,17 +540,11 @@ mod tests {
     #[test]
     fn abi_matches_pure_modules() {
         let mut v = WolVisual::default();
-        assert_eq!(unsafe { wol_anim_sample(WOL_ANIM_OPEN, 0, 0, &mut v) }, 0);
+        assert_eq!(wol_anim_sample(WOL_ANIM_OPEN, 0, 0, Some(&mut v)), 0);
         assert!(v.opacity < 1e-3);
-        assert_eq!(
-            unsafe { wol_anim_sample(WOL_ANIM_OPEN, 0, 10_000, &mut v) },
-            1
-        );
+        assert_eq!(wol_anim_sample(WOL_ANIM_OPEN, 0, 10_000, Some(&mut v)), 1);
         assert!((v.scale - 1.0).abs() < 1e-3 && (v.opacity - 1.0).abs() < 1e-3);
-        assert_eq!(
-            unsafe { wol_anim_sample(9, 0, 0, std::ptr::null_mut()) },
-            -1
-        );
+        assert_eq!(wol_anim_sample(9, 0, 0, None), -1);
         assert_eq!(
             wol_anim_duration_ms(WOL_ANIM_CLOSE),
             Animation::close(0).duration_ms
@@ -624,10 +576,23 @@ mod tests {
         assert_eq!(wol_titlebar_hit(400, 200, 5), 3);
         assert_eq!(wol_titlebar_hit(400, -1, 5), -1);
         let (mut x, mut y) = (0, 0);
-        assert_eq!(unsafe { wol_titlebar_button_origin(2, &mut x, &mut y) }, 0);
+        assert_eq!(wol_titlebar_button_origin(2, Some(&mut x), Some(&mut y)), 0);
         assert_eq!((x, y), titlebar::button_origin(Button::Zoom));
-        assert_eq!(unsafe { wol_titlebar_button_origin(7, &mut x, &mut y) }, -1);
-        unsafe { wol_place(400, 300, 0, 0, 1000, 800, 28, 0, 0, 0, &mut x, &mut y) };
+        assert_eq!(wol_titlebar_button_origin(7, Some(&mut x), None), -1);
+        wol_place(
+            400,
+            300,
+            0,
+            0,
+            1000,
+            800,
+            28,
+            0,
+            0,
+            0,
+            Some(&mut x),
+            Some(&mut y),
+        );
         assert_eq!(
             (x, y),
             crate::placement::place(
@@ -639,7 +604,21 @@ mod tests {
             "the zone gets the placement margin (live: windows touched the menu bar zone)"
         );
         let (mut w, mut h) = (0, 0);
-        unsafe { wol_fit(1600, 1000, 0, 0, 0, 0, 0, 28, 1280, 692, 30, &mut w, &mut h) };
+        wol_fit(
+            1600,
+            1000,
+            0,
+            0,
+            0,
+            0,
+            0,
+            28,
+            1280,
+            692,
+            30,
+            Some(&mut w),
+            Some(&mut h),
+        );
         assert_eq!(
             (w, h),
             crate::placement::fit(
@@ -650,11 +629,21 @@ mod tests {
                 30
             )
         );
-        unsafe {
-            wol_centre(
-                400, 300, 300, 200, 600, 400, 0, 28, 1280, 692, 30, &mut x, &mut y,
-            )
-        };
+        wol_centre(
+            400,
+            300,
+            300,
+            200,
+            600,
+            400,
+            0,
+            28,
+            1280,
+            692,
+            30,
+            Some(&mut x),
+            Some(&mut y),
+        );
         assert_eq!(
             (x, y),
             crate::placement::centre_on(
@@ -666,43 +655,61 @@ mod tests {
         );
         let (mut rx, mut ry, mut rw, mut rh) = (100, 100, 400, 300);
         assert_eq!(
-            unsafe {
-                wol_refit(
-                    0, 0, 0, 0, 0, 28, 1280, 692, 30, &mut rx, &mut ry, &mut rw, &mut rh,
-                )
-            },
+            wol_refit(
+                0,
+                0,
+                0,
+                0,
+                0,
+                28,
+                1280,
+                692,
+                30,
+                Some(&mut rx),
+                Some(&mut ry),
+                Some(&mut rw),
+                Some(&mut rh),
+            ),
             0,
             "fits: unchanged"
         );
         assert_eq!((rx, ry, rw, rh), (100, 100, 400, 300));
         (rx, ry) = (2000, 2000);
         assert_eq!(
-            unsafe {
-                wol_refit(
-                    0, 0, 0, 0, 0, 28, 1280, 692, 30, &mut rx, &mut ry, &mut rw, &mut rh,
-                )
-            },
+            wol_refit(
+                0,
+                0,
+                0,
+                0,
+                0,
+                28,
+                1280,
+                692,
+                30,
+                Some(&mut rx),
+                Some(&mut ry),
+                Some(&mut rw),
+                Some(&mut rh),
+            ),
             1
         );
         assert_eq!((rx, ry, rw, rh), (1272 - 400, 720 - 8 - 300, 400, 300));
         assert_eq!(
-            unsafe {
-                wol_refit(
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    10,
-                    10,
-                    0,
-                    std::ptr::null_mut(),
-                    &mut ry,
-                    &mut rw,
-                    &mut rh,
-                )
-            },
+            wol_refit(
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                10,
+                10,
+                0,
+                None,
+                Some(&mut ry),
+                Some(&mut rw),
+                Some(&mut rh),
+            ),
             0,
             "null box: nothing to do"
         );
@@ -738,59 +745,64 @@ mod tests {
         assert_eq!(wol_fixed_axes(300, 200, 300, 0), 1);
         let (mut a, mut b, mut c2, mut d) = (300, 200, 300, 0);
         assert_eq!(
-            unsafe { wol_placement_limits(300, 900, &mut a, &mut b, &mut c2, &mut d) },
+            wol_placement_limits(
+                300,
+                900,
+                Some(&mut a),
+                Some(&mut b),
+                Some(&mut c2),
+                Some(&mut d)
+            ),
             1
         );
         assert_eq!((a, b, c2, d), (300, 200, 300, 0));
-        let null = std::ptr::null_mut();
         assert_eq!(
-            unsafe { wol_placement_limits(1, 1, null, &mut b, &mut c2, &mut d) },
+            wol_placement_limits(1, 1, None, Some(&mut b), Some(&mut c2), Some(&mut d)),
             -1
         );
         let mut act = 0u32;
-        let st = unsafe { wol_keys_step(0, 0, 1, &mut act) }; // Super down
+        let st = wol_keys_step(0, 0, 1, Some(&mut act)); // Super down
         assert_eq!(act, 0);
-        let st = unsafe { wol_keys_step(st, 1, 1 | 2, &mut act) }; // Tab with Super
+        let st = wol_keys_step(st, 1, 1 | 2, Some(&mut act)); // Tab with Super
         assert_eq!(act, 2 | 0x100, "show switcher, consumed");
-        let line = unsafe { std::ffi::CStr::from_ptr(wol_keys_line((act & 0xff) as i32)) };
+        // The C side gets the static wire text itself (no copy), NUL-terminated.
+        let line = crate::wm_gates::Line::from_code((act & 0xff) as i32).wire();
+        assert_eq!(wol_keys_line((act & 0xff) as i32), line.as_ptr());
         assert_eq!(line.to_str().unwrap(), "show switcher\n");
-        let st = unsafe { wol_keys_step(st, 0, 0, std::ptr::null_mut()) }; // Super up
-        let _ = unsafe { wol_keys_step(st, 1, 0, &mut act) }; // Tab up: still ours
+        let st = wol_keys_step(st, 0, 0, None); // Super up
+        let _ = wol_keys_step(st, 1, 0, Some(&mut act)); // Tab up: still ours
         assert_eq!(act, 0x100);
         // One unsafe call site for the whole table: `class` is a C string or null, as asked.
-        let lights = |class: Option<&std::ffi::CStr>, decoration| {
+        let lights = |class: Option<&std::ffi::CStr>, decoration, transient, fixed| {
             let p = class.map_or(std::ptr::null(), std::ffi::CStr::as_ptr);
             // SAFETY: `p` is null or a NUL-terminated string that outlives the call.
-            unsafe { wol_window_lights(p, decoration, 0, 0) }
+            unsafe { wol_window_lights(p, decoration, transient, fixed) }
         };
         let class = Some(c"org.gnome.Nautilus");
-        assert_eq!(lights(class, 0), 0);
-        // SAFETY: a NUL-terminated string literal.
-        assert_eq!(
-            unsafe { wol_window_lights(c"org.gnome.Nautilus".as_ptr(), 1, 1, 1) },
-            1
-        );
-        assert_eq!(lights(class, 1), 3);
-        assert_eq!(lights(class, 2), 0);
-        assert_eq!(lights(Some(c"steam"), 3), 0);
-        assert_eq!(lights(None, 1), 3);
-        assert_eq!(lights(class, 9), 3, "unknown: ours");
+        assert_eq!(lights(class, 0, 0, 0), 0);
+        assert_eq!(lights(class, 1, 1, 1), 1);
+        assert_eq!(lights(class, 1, 0, 0), 3);
+        assert_eq!(lights(class, 2, 0, 0), 0);
+        assert_eq!(lights(Some(c"steam"), 3, 0, 0), 0);
+        assert_eq!(lights(None, 1, 0, 0), 3);
+        assert_eq!(lights(class, 9, 0, 0), 3, "unknown: ours");
     }
 
     #[test]
     fn frame_ring_round_trips_through_the_abi() {
         wol_frame_record(0, 2_000_000, 100, 100, 1);
         let mut buf = [0u8; 256];
-        let n = unsafe { wol_frame_stats_json(buf.as_mut_ptr(), buf.len()) };
+        let json = |p: *mut u8, len: usize| {
+            // SAFETY: every call below passes null or `buf` with `len` <= its 256 bytes.
+            unsafe { wol_frame_stats_json(p, len) }
+        };
+        let n = json(buf.as_mut_ptr(), buf.len());
         let j = std::str::from_utf8(&buf[..n as usize]).unwrap();
         assert!(
             j.contains(r#""full_frames":"#) && j.contains(r#""p50_us":"#),
             "{j}"
         );
-        assert_eq!(unsafe { wol_frame_stats_json(buf.as_mut_ptr(), 4) }, -1);
-        assert_eq!(
-            unsafe { wol_frame_stats_json(std::ptr::null_mut(), 64) },
-            -1
-        );
+        assert_eq!(json(buf.as_mut_ptr(), 4), -1);
+        assert_eq!(json(std::ptr::null_mut(), 64), -1);
     }
 }

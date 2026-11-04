@@ -17,7 +17,9 @@
 # modules-gave-up, below). Packages: DIR/var/lib/wolos/packages-pending (WOL_PACKAGES_PENDING), one name per
 # line, the same way (a name is store::is_pkg_name: never an option). Registry: DIR/usr/share/wolos/modules (WOL_MODULES_DIR); an id without a record is
 # refused. Downloads are bounded (WOLOS_MODULES_TIMEOUT seconds per module, default 900); the
-# install itself runs from the cache to the end (a transaction killed halfway leaves half a package).
+# install is bounded too (WOLOS_MODULES_INSTALL_TIMEOUT, default 1800: its -y refresh is network,
+# audit8 stability2 #6), by SIGINT, which pacman takes between packages (never half a package),
+# SIGKILL a minute later only if it still runs.
 # Exit 0 everything installed (or nothing asked), 1 something queued or given up, 2 usage error (bad
 # or unknown id).
 set -eu
@@ -58,6 +60,7 @@ pending=${WOL_MODULES_PENDING:-$r/var/lib/wolos/modules-pending}
 pkg_pending=${WOL_PACKAGES_PENDING:-$r/var/lib/wolos/packages-pending}
 registry=${WOL_MODULES_DIR:-$r/usr/share/wolos/modules}
 secs=${WOLOS_MODULES_TIMEOUT:-900}
+isecs=${WOLOS_MODULES_INSTALL_TIMEOUT:-1800}
 log() { echo "modules-install: $*" >&2; logger -t wolos-modules "$*" 2>/dev/null || :; } # logger: journal copy only
 
 for id in "$@"; do
@@ -79,8 +82,6 @@ if [ "$drain" = yes ] && [ -f "$pkg_pending" ]; then
   done < "$pkg_pending"
 fi
 [ -n "$ids" ] || [ -n "$extra" ] || exit 0
-
-in_root() { if [ "$r" = "" ]; then "$@"; else arch-chroot "$r" "$@"; fi; }
 
 # The record's per-machine part ("backend": "<stem>", as wol_core::modules::Module::backend_package):
 # <stem>-cuda|rocm|vulkan as `wol hw compute` picks for this machine (the live system and the
@@ -127,7 +128,12 @@ get() {
   else
     timeout -k 10 "$secs" arch-chroot "$r" pacman -Sw --noconfirm --needed "$@" >&2 || st=$?
   fi
-  [ "$st" -eq 0 ] && in_root pacman "-S$y" --noconfirm --needed "$@" >&2
+  [ "$st" -eq 0 ] || return "$st"
+  if [ -z "$r" ]; then
+    timeout -s INT -k 60 "$isecs" pacman "-S$y" --noconfirm --needed "$@" >&2
+  else
+    timeout -s INT -k 60 "$isecs" arch-chroot "$r" pacman "-S$y" --noconfirm --needed "$@" >&2
+  fi
 }
 
 done_ids='' queued='' done_pkgs='' queued_pkgs='' failed='' failed_pkgs=''

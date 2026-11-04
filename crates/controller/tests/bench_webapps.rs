@@ -111,10 +111,26 @@ fn the_default_browser_and_the_web_app_launcher_are_measured() {
         .expect("a row for the web-app launcher (origin webapp)");
     let argv = strs(&wa["argv"]);
     assert_eq!(argv[0], browser, "web apps open in the default browser");
-    // The same window kind and class shape `wol webapp add` writes (webapps::launch_argv).
+    // The same window kind `wol webapp add` writes (webapps::launch_argv), and the row finds the
+    // window by the class the engine really gives it (webapps::wm_class, from the address since
+    // 0.12.1: the engine ignores `--class` for app windows on Wayland).
     assert!(argv.iter().any(|a| a.starts_with("--app=")), "{argv:?}");
-    let class = format!("--class={}", webapps::wm_class("bench"));
-    assert!(argv.contains(&class), "{argv:?} lacks {class}");
+    let page = argv
+        .iter()
+        .find_map(|a| a.strip_prefix("--app={url}"))
+        .expect("--app={url}<path>");
+    let app = webapps::WebApp::new(
+        "Bench",
+        &format!("http://127.0.0.1:8080{page}"),
+        webapps::Profile::Shared,
+    )
+    .unwrap();
+    let class = format!("^{}$", webapps::wm_class(&app).replace('.', "\\."));
+    let pattern = wa["class"].as_str().expect("class pattern");
+    assert!(
+        pattern.split('|').any(|p| p == class),
+        "{pattern} does not accept {class}"
+    );
 }
 
 #[test]

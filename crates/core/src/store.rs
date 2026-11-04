@@ -748,10 +748,9 @@ pub fn install_plan(target: &str) -> Option<Vec<Vec<String>>> {
         (None, None) if is_pkg_name(target) => vec![target],
         (None, None) => return None,
     };
-    let mut step = pacman("-S", "--needed", &pkgs);
-    // Plain per-package lines the App Store turns into a percentage (`crate::progress`).
-    step.insert(3, "--noprogressbar".into());
-    Some(vec![step])
+    // `--noprogressbar`: plain per-package lines the App Store turns into a percentage
+    // (`crate::progress`).
+    Some(vec![pacman("-S", &["--needed", "--noprogressbar"], &pkgs)])
 }
 
 /// `pacman -Si` in C locale for the details page; None for an invalid name.
@@ -782,14 +781,17 @@ pub fn remove_plan(target: &str) -> Option<Vec<Vec<String>>> {
         None if is_pkg_name(target) => vec![target],
         None => return None,
     };
-    Some(vec![pacman("-Rns", "", &pkgs)])
+    Some(vec![pacman("-Rns", &[], &pkgs)])
 }
 
-fn pacman(op: &str, extra: &str, pkgs: &[&str]) -> Vec<String> {
-    let mut v = vec!["pacman".to_string(), op.into()];
-    if !extra.is_empty() {
-        v.push(extra.into());
-    }
+/// The sealed-system pacman (`wol pkg --`, `controller::pkg`: a live layer, the pending slot for
+/// kernel and init packages), as wol-admind's `PkgInstallFile` runs it. Not the bare `pacman`:
+/// wol-admind's children get `PATH=/usr/bin:/usr/sbin` (`privileged::PATH`), so that was the stock
+/// pacman, whose database lives on the read-only /usr ("unable to lock database"; MANUAL 0.12.0:
+/// Settings > Modules > Install failed right after the password).
+fn pacman(op: &str, extra: &[&str], pkgs: &[&str]) -> Vec<String> {
+    let mut v: Vec<String> = ["wol", "pkg", "--", op].map(String::from).to_vec();
+    v.extend(extra.iter().map(|e| e.to_string()));
     v.push("--noconfirm".into());
     v.extend(pkgs.iter().map(|p| p.to_string()));
     v
@@ -955,11 +957,19 @@ mod tests {
         let plan = install_plan("codecs-kit").unwrap();
         assert_eq!(plan.len(), 1);
         assert_eq!(
-            plan[0][..5],
-            ["pacman", "-S", "--needed", "--noprogressbar", "--noconfirm"]
+            plan[0][..7],
+            [
+                "wol",
+                "pkg",
+                "--",
+                "-S",
+                "--needed",
+                "--noprogressbar",
+                "--noconfirm"
+            ]
         );
         assert_eq!(
-            plan[0][5..],
+            plan[0][7..],
             pkgs.iter().map(|p| p.to_string()).collect::<Vec<_>>()[..]
         );
         assert_eq!(k.wopkg_args(), None);
@@ -1026,7 +1036,9 @@ mod tests {
         assert_eq!(
             install_plan("gimp").unwrap(),
             p(&[
-                "pacman",
+                "wol",
+                "pkg",
+                "--",
                 "-S",
                 "--needed",
                 "--noprogressbar",
@@ -1037,7 +1049,9 @@ mod tests {
         assert_eq!(
             install_plan("steam").unwrap(),
             p(&[
-                "pacman",
+                "wol",
+                "pkg",
+                "--",
                 "-S",
                 "--needed",
                 "--noprogressbar",
@@ -1048,7 +1062,9 @@ mod tests {
         assert_eq!(
             install_plan("htop").unwrap(),
             p(&[
-                "pacman",
+                "wol",
+                "pkg",
+                "--",
                 "-S",
                 "--needed",
                 "--noprogressbar",
@@ -1058,7 +1074,7 @@ mod tests {
         );
         assert_eq!(
             remove_plan("gimp").unwrap(),
-            p(&["pacman", "-Rns", "--noconfirm", "gimp"])
+            p(&["wol", "pkg", "--", "-Rns", "--noconfirm", "gimp"])
         );
         for bad in ["", "-f", "a b", "x;rm", "../x"] {
             assert_eq!(install_plan(bad), None, "{bad}");

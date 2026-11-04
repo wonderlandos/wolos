@@ -172,11 +172,45 @@ pub fn commands(t: Toggle, on: bool) -> Vec<Vec<String>> {
     }
 }
 
+/// The program behind Night Light: hyprland.conf starts it at login (`exec-once`), the commands
+/// reach it through `hyprctl hyprsunset`.
+pub const NIGHT_LIGHT_PROGRAM: &str = "hyprsunset";
+
+/// When `t`'s commands failed because its program is not running (it ended, or was installed
+/// after login): the command that starts it already applied (the compositor runs it in the
+/// session). Only Night Light on has one.
+pub fn start_command(t: Toggle, on: bool) -> Option<Vec<String>> {
+    (t == Toggle::NightLight && on).then(|| {
+        vec![
+            "hyprctl".to_owned(),
+            "dispatch".to_owned(),
+            "exec".to_owned(),
+            format!("{NIGHT_LIGHT_PROGRAM} -t {NIGHT_LIGHT_KELVIN}"),
+        ]
+    })
+}
+
+/// Why `t` could not change, one sentence a person can act on. `installed`: its program is on
+/// this system (only Night Light on can fail this way, [`must_succeed`]); then the compositor
+/// did not answer either ([`start_command`]): this is not a desktop session.
+pub fn unavailable(t: Toggle, installed: bool) -> String {
+    if installed {
+        format!("{} changes only from a desktop session.", t.label())
+    } else {
+        format!(
+            "{} is not available on this computer: the {NIGHT_LIGHT_PROGRAM} package that tints \
+             the screen is not installed.",
+            t.label()
+        )
+    }
+}
+
 /// Whether a failed command should stop the toggle. Turning Stay Awake on when it already is
 /// fails (the unit exists) and turning it off when it is not fails too: the state is right
-/// either way, so only Night Light failures (no hyprsunset) stop the change.
-pub fn must_succeed(t: Toggle) -> bool {
-    t == Toggle::NightLight
+/// either way, so only Night Light on (no hyprsunset) stops the change. Night Light off with
+/// hyprsunset not running is right as well: the screen has its true colours.
+pub fn must_succeed(t: Toggle, on: bool) -> bool {
+    t == Toggle::NightLight && on
 }
 
 /// What `wol toggle <id> [on|off]` does: `None` flips it.
@@ -240,7 +274,30 @@ mod tests {
             vec![vec!["systemctl", "--user", "stop", "--", STAY_AWAKE_UNIT]]
         );
         assert!(commands(Toggle::Silence, true).is_empty());
-        assert!(must_succeed(Toggle::NightLight) && !must_succeed(Toggle::StayAwake));
+        assert!(must_succeed(Toggle::NightLight, true) && !must_succeed(Toggle::StayAwake, true));
+        assert!(
+            !must_succeed(Toggle::NightLight, false),
+            "off without hyprsunset is off"
+        );
+        // e2e D2: never "log in" advice to someone logged in when the program is missing.
+        let missing = unavailable(Toggle::NightLight, false);
+        assert!(
+            missing.contains("not installed") && !missing.contains("log in"),
+            "{missing}"
+        );
+        assert!(unavailable(Toggle::NightLight, true).contains("desktop session"));
+        // Not running (ended, or installed after login): the compositor starts it warm.
+        assert_eq!(
+            start_command(Toggle::NightLight, true),
+            Some(vec![
+                "hyprctl".into(),
+                "dispatch".into(),
+                "exec".into(),
+                "hyprsunset -t 4500".into()
+            ])
+        );
+        assert_eq!(start_command(Toggle::NightLight, false), None);
+        assert_eq!(start_command(Toggle::StayAwake, true), None);
     }
 
     #[test]
