@@ -57,8 +57,17 @@ pub fn decide(
         };
     }
     let request = if admin {
-        match catalog::approval(inv, secret) {
-            Ok(r) => r,
+        match catalog::approval_in(env, inv, secret) {
+            Ok(Some(r)) => r,
+            // A Doctor fix of the person's own services: the consent sheet, every time, and the
+            // verb runs here after Allow (it sends no wol-admind request for a helper).
+            Ok(None) => {
+                let user = HelperVerb {
+                    access: Access::Change,
+                    ..*rule
+                };
+                return decide(env, helper, tool, &user, inv, None);
+            }
             Err(e) => return Verdict::Stop(Outcome::Failed, e),
         }
     } else {
@@ -157,6 +166,27 @@ fn timed_out(e: &std::io::Error) -> bool {
     )
 }
 
+/// How long wold may take to answer `call` (`api::packages::ask_wait`): the sheet, then the
+/// package steps it runs at wol-admind's long deadline (Update Now, a Doctor fix).
+fn sheet_wait(call: &shared::portal::Call) -> u32 {
+    use wol_core::admin::{LONG_STEP_SECS, REPLY_MARGIN_SECS};
+    let shared::portal::Call::SessionApprove { approval } = call else {
+        return APPROVAL_WAIT_SECS;
+    };
+    let long = match &approval.request {
+        ApprovalRequest::Packages { names, .. } => names.len().max(1),
+        ApprovalRequest::DoctorFix { steps, .. } => steps.len().max(1),
+        _ => 0,
+    };
+    match u32::try_from(long) {
+        Ok(0) => APPROVAL_WAIT_SECS,
+        Ok(n) => APPROVAL_WAIT_SECS
+            .saturating_add(n.saturating_mul(LONG_STEP_SECS))
+            .saturating_add(REPLY_MARGIN_SECS),
+        Err(_) => u32::MAX,
+    }
+}
+
 /// An administrator sheet through wold (`session.approve`): the sheet's answer, as the shell gave
 /// it to wold. wold's own refusals map to the same outcomes as the shell's.
 fn via_wold(env: &mut dyn Env, a: Approval) -> Result<Option<Answer>, Verdict> {
@@ -171,8 +201,9 @@ fn via_wold(env: &mut dyn Env, a: Approval) -> Result<Option<Answer>, Verdict> {
     }
     let line = format!("call {}\n", call.encode());
     let sock = wold_socket(env);
-    // wold waits APPROVAL_WAIT_SECS for the shell; give its answer a moment more to arrive.
-    let reply = match env.request_wait(&sock, line.as_bytes(), APPROVAL_WAIT_SECS + 5) {
+    // wold waits APPROVAL_WAIT_SECS for the shell, plus wol-admind's time for what the sheet runs;
+    // give its answer a moment more to arrive.
+    let reply = match env.request_wait(&sock, line.as_bytes(), sheet_wait(&call) + 5) {
         Ok(r) => r,
         Err(e) if timed_out(&e) => return Ok(Some(Answer::TimedOut)),
         Err(_) => return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),

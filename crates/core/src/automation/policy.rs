@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 pub const FILE: &str = "wolos/helpers.json";
 
 /// (id, Settings label). `screen-capture` and `window-list` are the compositor capability names.
-pub const CAPABILITIES: [(&str, &str); 13] = [
+pub const CAPABILITIES: [(&str, &str); 14] = [
     ("read", "See status and settings"),
     ("appearance", "Change appearance and wallpaper"),
     ("sound", "Change the volume"),
@@ -26,18 +26,25 @@ pub const CAPABILITIES: [(&str, &str); 13] = [
     ("files", "Tidy the Downloads folder"),
     ("restore", "Undo changes and pick a restore point"),
     ("modules", "Install or remove optional modules"),
+    // `wol update install` and `wol doctor fix` (ADR 0048): the administrator password every time.
+    (
+        "maintenance",
+        "Install updates and fix problems the Doctor check found",
+    ),
 ];
 
 /// Audit C10-1: changes that leave something behind (a launcher, an enabled module, a saved or
 /// reopened session) are asked every time, even though their capability (`apps`) also covers
 /// `open`, which may be Always Allowed. MCP tool names (`webapp_add`); `wol webapp add` paths
 /// (space-joined, as scripts send them) match too.
-pub const ONCE_ONLY: [&str; 5] = [
+pub const ONCE_ONLY: [&str; 6] = [
     "webapp_add",
     "webapp_remove",
     "modules_enable",
     "sessions_save",
     "sessions_restore",
+    // A Doctor fix that runs as the person (one that needs the administrator asks every time anyway).
+    "doctor_fix",
 ];
 
 /// The approval sheet's line for a [`ONCE_ONLY`] change: there is no Always Allow.

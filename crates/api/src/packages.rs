@@ -227,6 +227,10 @@ pub fn ask_wait(request: &ApprovalRequest) -> Duration {
         ApprovalRequest::PackageFile { .. } | ApprovalRequest::SystemRollback => {
             LONG_STEP_SECS.into()
         }
+        // A Doctor fix may install packages: a long step each.
+        ApprovalRequest::DoctorFix { steps, .. } => {
+            u64::from(LONG_STEP_SECS) * steps.len().max(1) as u64
+        }
         _ => STEP_SECS.into(),
     };
     let margin = if run > 0 { REPLY_MARGIN_SECS.into() } else { 0 };

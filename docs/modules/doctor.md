@@ -34,7 +34,7 @@ wol doctor fix [--json] <id>     run that check's fix, then check its area again
 
 `--json` is implied when stdout is not a terminal. `wol doctor --json` prints `{checked, ready, checks}` (`checked` in seconds since 1970). `wol doctor fix --json` prints `{id, ran, ok, check}`: `ran` is false when the check is fine or has no fix, `ok` is true when the check is no longer `fail` afterwards, `check` is the check as it is now. Unknown ids exit with "not found", a fix that cannot reach wol-admind exits with "unavailable".
 
-The verbs are in the catalog as `doctor` (read) and in the command tree as `doctor.check` and `doctor.fix`.
+The verbs are in the catalog as `doctor` (read) and `doctor fix` (administrator, capability `maintenance`, asked every time) and in the command tree as `doctor.check` and `doctor.fix`. For a helper (`wol mcp`, a `WOL_HELPER` script) or a web app, a fix that needs the administrator is `ApprovalRequest::DoctorFix` (`doctor::approval`): the check's wol-admind requests, at most 8 and only `shared::shell::DOCTOR_ACTIONS`, shown step by step on the password sheet and run by the shell; a fix of the person's own services is a consent sheet, then `wol doctor fix` runs it. `wol doctor fix` run for anyone but a person at `wol` never sends a wol-admind request itself.
 
 ## The web app
 
@@ -47,7 +47,7 @@ The verbs are in the catalog as `doctor` (read) and in the command tree as `doct
 
 The sidebar lists the areas with the number of checks that need a look (red when one has failed, orange otherwise). The page lists each area's checks, worst first; a row opens to its detail, a Fix button when there is a fix, and "Show the command", the only place a command appears. Fixing shows progress, then "Fixed." or what is still wrong. "Check again" runs everything again; when nothing needs a look the page says "Everything is fine" with the time of the last run. Keyboard: Up, Down, Home and End move between rows, Enter or Space opens one, Escape closes it.
 
-For `needs_admin` fixes the approval sheet is wold's, not the page's; the page just waits for the answer.
+For `needs_admin` fixes the approval sheet is wold's, not the page's; the page just waits for the answer, which is `{id, ran, ok, check}` like the command's.
 
 ### Launching it
 

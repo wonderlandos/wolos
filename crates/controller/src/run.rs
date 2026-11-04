@@ -263,6 +263,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "update.status" => update_status(env, json),
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
+        "update.install" => update_install(env, json),
         "webapp.call" => crate::webapp::run(inv, env),
         "encrypt.rebind" => crate::seal::rebind(env),
         "encrypt.reseal" => crate::seal::reseal(env),
@@ -881,6 +882,36 @@ fn update_check(env: &mut dyn Env, json: bool) -> i32 {
         env.out("up to date\n");
     } else {
         env.out(&format!("{}\n", pending.join("\n")));
+    }
+    0
+}
+
+/// What `wol update install --json` reports: `applied` = the package updates the daily check had
+/// listed (what Update Now installs), `restart` = one of them is a kernel.
+pub(crate) fn update_install_result(env: &mut dyn Env) -> serde_json::Value {
+    let pending = update_snapshot(env).map(|u| u.packages).unwrap_or_default();
+    let restart = pending
+        .iter()
+        .any(|p| p == "linux" || p.starts_with("linux-"));
+    serde_json::json!({ "applied": pending.len(), "restart": restart })
+}
+
+/// `wol update install`: every waiting package update through wol-admind (`pkg-upgrade`, the
+/// request the shell's Update Now sends after its sheet), with the password like `wol admin`.
+fn update_install(env: &mut dyn Env, json: bool) -> i32 {
+    let result = update_install_result(env);
+    let req = AdminRequest {
+        action: AdminAction::PkgUpgrade,
+        args: Vec::new(),
+    };
+    let code = admin_send(env, &req);
+    if code != 0 {
+        return code;
+    }
+    if json {
+        emit_json(env, &result);
+    } else {
+        env.out(&format!("Installed {} updates.\n", result["applied"]));
     }
     0
 }

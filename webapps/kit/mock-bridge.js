@@ -10,7 +10,7 @@
   var CATALOG = /*catalog*/{
     "system.read": ["about", "sys", "hw.status", "power.status", "battery", "boot.status", "modules.status"],
     "update.read": ["update.status", "update.check"],
-    "packages.update": ["update.apply"],
+    "packages.update": ["update.install"],
     "security.read": ["security.status", "firewall.status"],
     "network.read": ["network", "wifi.get", "bluetooth.get"],
     "audio.read": ["audio.get", "audio.doctor"],

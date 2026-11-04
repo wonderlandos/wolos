@@ -17,7 +17,7 @@ wolkitFixtures({
     "modules.status": {"modules": [{"id": "printing", "installed": false, "enabled": false}]},
     "update.status": {"checked": 1762210800, "packages": 3, "security": 1, "release": null},
     "update.check": {"upgrades": [{"name": "wolos-system", "from": "0.13.0-1", "to": "0.13.0-2"}]},
-    "update.apply": {"applied": 3, "restart": false},
+    "update.install": {"applied": 3, "restart": false},
     "security.status": {
       "firewall": true, "firewall_running": true, "remote_login": false, "system_log_private": true,
       "hardening": [{"key": "kernel.kptr_restrict", "now": "2", "want": "2"}, {"key": "kernel.yama.ptrace_scope", "now": "1", "want": "1"}],
@@ -53,7 +53,7 @@ wolkitFixtures({
     "doctor.check": {"checked": 1762210800, "checks": [
       {"id": "sound", "area": "sound", "title": "Sound", "status": "ok", "detail": "Speakers and a microphone are ready"},
       {"id": "updates", "area": "system", "title": "Updates", "status": "warn", "detail": "3 updates are ready",
-       "fix": {"title": "Install updates", "command": "wol update apply", "needs_admin": true}}
+       "fix": {"title": "Install updates", "command": "wol admin pkg-upgrade", "needs_admin": true}}
     ]},
     "doctor.fix": {"id": "updates", "ran": true, "ok": true, "check": {"id": "updates", "area": "system", "title": "Updates", "status": "ok", "detail": "Up to date"}},
     "notify": {"sent": true}

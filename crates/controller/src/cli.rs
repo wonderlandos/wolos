@@ -107,6 +107,7 @@ pub const CAPABILITIES: &[&str] = &[
     "files",
     "restore",
     "modules",
+    "maintenance",
 ];
 pub const GLOBAL_FLAGS: &[&str] = &["json", "yes", "help"];
 /// `wol toggle` words: `wol_core::toggles::words()` (test-checked).
@@ -309,6 +310,12 @@ pub const TREE: &[Cmd] = &[
         help: "Update into the other root slot (root, --yes)",
         hidden: false,
     },
+    cmd(
+        &["update", "install"],
+        "update.install",
+        &[],
+        "Install the waiting package updates, like Update Now (administrator password)",
+    ),
     cmd(
         &["update", "rollback"],
         "update.rollback",
@@ -1544,6 +1551,7 @@ mod tests {
             ("port Game.wol", "bundle.plan bundle=Game.wol"),
             ("update check", "update.check"),
             ("update apply", "update.apply"),
+            ("update install", "update.install"),
             (
                 "update apply wolos-b 2026/11/02 --yes",
                 "update.apply be=wolos-b release=2026/11/02 --yes",

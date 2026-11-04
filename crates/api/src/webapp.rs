@@ -24,6 +24,23 @@ pub const HOST: &str = "/usr/bin/wol-webhost";
 pub const WOL: &str = "/usr/bin/wol";
 /// Longest a call may run, and the most of its reply wold keeps.
 pub const DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// How long a call of `method` may run: [`DEADLINE`], or for an administrator method the sheet's
+/// wait plus wol-admind's long steps (Update Now, a Doctor fix of up to
+/// `shared::shell::MAX_DOCTOR_STEPS` package installs), as `wol` itself waits for wold.
+pub fn deadline(method: &str) -> std::time::Duration {
+    use wol_core::admin::{LONG_STEP_SECS, REPLY_MARGIN_SECS};
+    if !sysapp::permission_of(method).is_some_and(|p| p.admin) {
+        return DEADLINE;
+    }
+    let steps = shared::shell::MAX_DOCTOR_STEPS as u64;
+    std::time::Duration::from_secs(
+        u64::from(shared::shell::APPROVAL_WAIT_SECS)
+            + steps * u64::from(LONG_STEP_SECS)
+            + u64::from(REPLY_MARGIN_SECS)
+            + DEADLINE.as_secs(),
+    )
+}
 pub const MAX_REPLY: u64 = 1 << 20;
 
 /// Where the apps' folders are (tests name their own).
@@ -174,7 +191,7 @@ impl Verbs for WolVerbs {
                 out
             })
             .map_err(|e| e.to_string())?;
-        let code = crate::reaper::run(&mut cmd, DEADLINE);
+        let code = crate::reaper::run(&mut cmd, deadline(method));
         drop(cmd);
         let out = reading
             .join()
@@ -256,6 +273,14 @@ mod tests {
 
     fn code(a: &Answer) -> Option<Code> {
         a.code
+    }
+
+    #[test]
+    fn an_administrator_method_may_wait_for_the_sheet_and_wol_admind() {
+        assert_eq!(deadline("about"), DEADLINE);
+        for m in ["update.install", "doctor.fix"] {
+            assert!(deadline(m) > std::time::Duration::from_secs(3600), "{m}");
+        }
     }
 
     #[test]

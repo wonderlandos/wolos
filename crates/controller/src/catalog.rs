@@ -99,6 +99,13 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["undo"], Change, "restore"),
     hv(&["restore", "list"], Read, "restore"),
     hv(&["restore", "activate"], Admin, "restore"),
+    // Doctor (docs/modules/doctor.md, ADR 0048): a fix is the administrator sheet (its wol-admind
+    // requests, `ApprovalRequest::DoctorFix`) or, for a fix that runs as the person, the consent
+    // sheet (`approval_in`).
+    hv(&["doctor", "fix"], Admin, "maintenance"),
+    // The waiting package updates (Update Now's request, ADR 0048 `packages.update`). The slot
+    // update (`update apply`, root) stays for people.
+    hv(&["update", "install"], Admin, "maintenance"),
     // Optional modules (ADR 0032). install|remove are Admin verbs with capability `modules`; they
     // join this list once `shared::shell::ApprovalRequest` has a Module variant the shell runs
     // (`approval()` must map every Admin tool): until then only people run them (`wol modules
@@ -473,6 +480,20 @@ fn short(t: &str, max: usize) -> String {
     s
 }
 
+/// [`approval`], with what only this computer knows: a Doctor fix's requests come from the check
+/// as it is now (`crate::doctor::approval`). `Ok(None)`: the verb runs as the person after a
+/// consent sheet instead (a Doctor fix of the person's own services).
+pub fn approval_in(
+    env: &mut dyn crate::run::Env,
+    inv: &Invocation,
+    secret: Option<String>,
+) -> Result<Option<ApprovalRequest>, String> {
+    match inv.action {
+        "doctor.fix" => crate::doctor::approval(env, inv.get("id").unwrap_or_default()),
+        _ => approval(inv, secret).map(Some),
+    }
+}
+
 /// The on-screen approval for an admin verb (helpers never run these themselves).
 pub fn approval(inv: &Invocation, secret: Option<String>) -> Result<ApprovalRequest, String> {
     let get = |k: &str| inv.get(k).unwrap_or_default().to_string();
@@ -500,6 +521,11 @@ pub fn approval(inv: &Invocation, secret: Option<String>) -> Result<ApprovalRequ
             }
             ApprovalRequest::BootEnvironment { name }
         }
+        // The shell's Update Now sheet: every waiting update through wol-admind (`pkg-upgrade`).
+        "update.install" => ApprovalRequest::Packages {
+            verb: "update".into(),
+            names: Vec::new(),
+        },
         a => return Err(format!("{a} has no approval")),
     })
 }
@@ -577,6 +603,9 @@ mod tests {
                 words.push(if a.name == "be" { "wolos-a" } else { "Home" });
             }
             let inv = crate::cli::parse(&words).unwrap();
+            if inv.action == "doctor.fix" {
+                continue; // asks from the check as it is now: doctor_fix_asks_from_the_check
+            }
             assert!(approval(&inv, None).is_ok(), "{}", v.tool());
         }
         let inv = crate::cli::parse(&["restore", "activate", "a;b"]).unwrap();

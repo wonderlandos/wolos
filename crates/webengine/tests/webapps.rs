@@ -73,7 +73,11 @@ fn every_method_is_a_wol_verb() {
     assert!(actions.len() > 100 && actions.contains("audio.doctor") && !actions.contains("audio"));
     for p in PERMISSIONS {
         for m in p.methods {
-            assert!(actions.contains(m), "{}: {m} is no `wol` verb action", p.name);
+            assert!(
+                actions.contains(m),
+                "{}: {m} is no `wol` verb action",
+                p.name
+            );
         }
     }
 }

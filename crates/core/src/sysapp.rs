@@ -68,7 +68,7 @@ pub const PERMISSIONS: &[Permission] = &[
     ),
     p(
         "packages.update",
-        &["update.apply"],
+        &["update.install"],
         Some("packages-update"),
         true,
         "Install updates, after you approve each time",

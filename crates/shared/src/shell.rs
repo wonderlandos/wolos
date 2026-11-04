@@ -100,6 +100,16 @@ pub enum ApprovalRequest {
     SystemChannel {
         channel: String,
     },
+    /// A Doctor fix (`wol doctor fix <id>`, docs/modules/doctor.md) asked by a helper or a system
+    /// web app (ADR 0048): the check's wol-admind requests, run by the shell in order after the
+    /// password, as `wol doctor fix` sends them from a terminal. `steps` are `[action, args..]`
+    /// (`crate::admin::AdminAction` names); wold relays only [`DOCTOR_ACTIONS`], at most
+    /// [`MAX_DOCTOR_STEPS`], and the sheet shows every step, not only the title.
+    DoctorFix {
+        id: String,
+        title: String,
+        steps: Vec<Vec<String>>,
+    },
     /// A user-level change the helper runs itself once allowed. `what` is the sentence end
     /// ("switch to Dark appearance"); `capability` is what Always Allow grants.
     Change {
@@ -107,6 +117,18 @@ pub enum ApprovalRequest {
         what: String,
     },
 }
+
+/// The wol-admind actions a Doctor fix runs (`controller::doctor`, test-checked there): nothing
+/// else rides on a [`ApprovalRequest::DoctorFix`] sheet.
+pub const DOCTOR_ACTIONS: &[crate::admin::AdminAction] = &[
+    crate::admin::AdminAction::PkgInstall,
+    crate::admin::AdminAction::PkgUpgrade,
+    crate::admin::AdminAction::Firewall,
+    crate::admin::AdminAction::RemoteLogin,
+    crate::admin::AdminAction::HwLoad,
+];
+/// Most wol-admind requests one Doctor fix sends.
+pub const MAX_DOCTOR_STEPS: usize = 8;
 
 /// Hex digits of a SHA-256 shown in a sheet's title; the full digest is on the detail line.
 pub const SHA_PREFIX: usize = 12;
@@ -158,8 +180,39 @@ impl ApprovalRequest {
             Self::SystemChannel { channel } => {
                 format!("switch system updates to the “{channel}” channel")
             }
+            Self::DoctorFix { title, steps, .. } => {
+                let shown: Vec<String> = steps
+                    .iter()
+                    .map(|s| format!("wol admin {}", s.join(" ")))
+                    .collect();
+                format!("fix “{title}” ({})", shown.join("; "))
+            }
             Self::Change { what, .. } => what.clone(),
         }
+    }
+
+    /// A Doctor fix's steps as wol-admind requests, when every one is a [`DOCTOR_ACTIONS`] action
+    /// and there are 1 to [`MAX_DOCTOR_STEPS`] of them (None for any other request).
+    pub fn doctor_steps(&self) -> Option<Vec<crate::admin::AdminRequest>> {
+        let Self::DoctorFix { steps, .. } = self else {
+            return None;
+        };
+        if steps.is_empty() || steps.len() > MAX_DOCTOR_STEPS {
+            return None;
+        }
+        steps
+            .iter()
+            .map(|s| {
+                let (name, args) = s.split_first()?;
+                let action = crate::admin::AdminAction::parse(name)?;
+                DOCTOR_ACTIONS
+                    .contains(&action)
+                    .then(|| crate::admin::AdminRequest {
+                        action,
+                        args: args.to_vec(),
+                    })
+            })
+            .collect()
     }
 
     /// Needs the administrator password (runs through wol-admind in the shell).
@@ -371,6 +424,56 @@ mod tests {
             chan.describe(),
             "switch system updates to the “beta” channel"
         );
+    }
+
+    /// A Doctor fix is an administrator sheet that names every step; only Doctor's actions parse
+    /// into requests.
+    #[test]
+    fn a_doctor_fix_names_its_steps_and_carries_only_doctor_actions() {
+        let f = ApprovalRequest::DoctorFix {
+            id: "security.firewall".into(),
+            title: "Turn on the firewall".into(),
+            steps: vec![vec!["firewall".into(), "on".into()]],
+        };
+        assert!(f.is_admin());
+        assert_eq!(
+            f.describe(),
+            "fix “Turn on the firewall” (wol admin firewall on)"
+        );
+        let a = Approval {
+            helper: "org.wolos.webapp.doctor".into(),
+            tool: "doctor_fix".into(),
+            request: f.clone(),
+        };
+        assert_eq!(
+            Approval::parse(a.line().strip_prefix("approve ").unwrap()),
+            Some(a)
+        );
+        assert_eq!(
+            f.doctor_steps(),
+            Some(vec![crate::admin::AdminRequest {
+                action: crate::admin::AdminAction::Firewall,
+                args: vec!["on".into()],
+            }])
+        );
+        let with = |steps: Vec<Vec<&str>>| ApprovalRequest::DoctorFix {
+            id: "x.y".into(),
+            title: "t".into(),
+            steps: steps
+                .into_iter()
+                .map(|s| s.into_iter().map(String::from).collect())
+                .collect(),
+        };
+        for bad in [
+            vec![],
+            vec![vec![]],
+            vec![vec!["user-add", "eve"]],
+            vec![vec!["firewall", "on"], vec!["nope"]],
+            vec![vec!["pkg-upgrade"]; MAX_DOCTOR_STEPS + 1],
+        ] {
+            assert_eq!(with(bad.clone()).doctor_steps(), None, "{bad:?}");
+        }
+        assert_eq!(ApprovalRequest::SystemRollback.doctor_steps(), None);
     }
 
     /// The shell answers on the same connection: one JSON line.

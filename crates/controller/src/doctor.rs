@@ -10,6 +10,7 @@ use crate::run::{Env, admin_send, emit_json, fail};
 use shared::admin::{AdminAction, AdminRequest};
 use shared::errors::ErrorCode;
 use shared::hardware::{HardwareSnapshot, Kind};
+use shared::shell::ApprovalRequest;
 use std::cell::RefCell;
 use std::path::Path;
 use wol_core::games::doctor as games;
@@ -139,7 +140,11 @@ pub fn action_of(line: &str) -> Option<Action> {
         .split(" or ")
         .next()?;
     let words: Vec<&str> = first.split_whitespace().collect();
-    let words = words.strip_prefix(&["sudo"]).unwrap_or(&words);
+    // A doctor's line may put a privilege word before `pacman`; wol-admind is that path here.
+    let words = match words.as_slice() {
+        [_, "pacman", ..] => &words[1..],
+        _ => &words[..],
+    };
     match words {
         ["pacman", "-S", rest @ ..] => {
             let reqs: Vec<AdminRequest> = rest
@@ -646,6 +651,13 @@ fn security(env: &mut dyn Env) -> Vec<Check> {
             ),
         ),
     });
+    v.extend(malware_checks(&malware));
+    v
+}
+
+/// The malware check and what it stopped.
+fn malware_checks(malware: &wol_core::malware::Status) -> Vec<Check> {
+    let mut v = Vec::new();
     v.push(match (malware.on, malware.signatures_age_days) {
         (Some(true), Some(d)) if d > SIGNATURES_STALE_DAYS => check(
             "security",
@@ -790,7 +802,7 @@ fn storage(env: &mut dyn Env) -> Vec<Check> {
                 "{} {} let you go back to how things were before an update.",
                 s.boot_environments,
                 plural(
-                    s.boot_environments as usize,
+                    usize::try_from(s.boot_environments).unwrap_or(usize::MAX),
                     "restore point",
                     "restore points"
                 )
@@ -937,14 +949,7 @@ fn display(env: &mut dyn Env) -> Vec<Check> {
         ms => {
             let list: Vec<String> = ms
                 .iter()
-                .map(|m| {
-                    format!(
-                        "{} × {} at {} Hz",
-                        m.width,
-                        m.height,
-                        m.refresh.round() as u32
-                    )
-                })
+                .map(|m| format!("{} × {} at {} Hz", m.width, m.height, m.refresh.round()))
                 .collect();
             check(
                 "display",
@@ -1138,7 +1143,57 @@ fn run(env: &mut dyn Env, area: Option<&str>, json: bool) -> i32 {
     if ok { 0 } else { ErrorCode::Failed.exit() }
 }
 
-/// Run one check's fix, then check its area again.
+/// The check `id` as it is now, when its area and id exist.
+fn find(env: &mut dyn Env, id: &str) -> Option<Check> {
+    let area = id.split('.').next().unwrap_or_default();
+    if !AREAS.contains(&area) {
+        return None;
+    }
+    area_checks(env, area).into_iter().find(|c| c.id == id)
+}
+
+/// The on-screen approval for `wol doctor fix <id>` asked by a helper or a system web app (ADR
+/// 0048): the fix's wol-admind requests as a [`ApprovalRequest::DoctorFix`] sheet the shell runs
+/// after the password. `Ok(None)`: the fix runs as the person (their own services and settings),
+/// so it is a consent sheet and `wol doctor fix` itself runs it after Allow. An error: nothing to
+/// run.
+///
+/// [`ApprovalRequest::DoctorFix`]: shared::shell::ApprovalRequest::DoctorFix
+pub fn approval(env: &mut dyn Env, id: &str) -> Result<Option<ApprovalRequest>, String> {
+    let c = find(env, id).ok_or_else(|| format!("WolOS has no check {id}."))?;
+    let Some(f) = c.fix.filter(|_| c.status != Status::Ok) else {
+        return Err(format!("{}: nothing to fix. {}", c.title, c.detail));
+    };
+    let Action::Admin(reqs) = f.action else {
+        return Ok(None);
+    };
+    let request = ApprovalRequest::DoctorFix {
+        id: c.id,
+        title: f.title,
+        steps: reqs
+            .iter()
+            .map(|r| {
+                std::iter::once(r.action.name().to_string())
+                    .chain(r.args.iter().cloned())
+                    .collect()
+            })
+            .collect(),
+    };
+    match request.doctor_steps() {
+        Some(_) => Ok(Some(request)),
+        None => Err(format!("{id}: this fix cannot be asked on screen.")),
+    }
+}
+
+/// `wol doctor fix --json`'s answer after the shell ran the fix (the same shape as [`fix`]'s).
+pub fn after(env: &mut dyn Env, id: &str) -> serde_json::Value {
+    let after = find(env, id);
+    let ok = after.as_ref().is_some_and(|c| c.status != Status::Fail);
+    serde_json::json!({ "id": id, "ran": true, "ok": ok, "check": after })
+}
+
+/// Run one check's fix, then check its area again. A helper or a web app (any actor but a person
+/// at `wol`) never sends a wol-admind request from here: theirs went through [`approval`].
 fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let area = id.split('.').next().unwrap_or_default();
     if !AREAS.contains(&area) {
@@ -1163,6 +1218,17 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
         };
     };
     let code = match &f.action {
+        // The check changed between the sheet and now: ask again, never on a cached password.
+        Action::Admin(_) if env.actor() != "cli" => {
+            return fail(
+                env,
+                ErrorCode::Denied,
+                &format!(
+                    "{} needs the administrator now; ask again to see the password sheet",
+                    c.title
+                ),
+            );
+        }
         Action::Admin(reqs) => {
             let mut code = 0;
             for r in reqs {
@@ -1267,6 +1333,29 @@ mod tests {
         ] {
             assert_eq!(action_of(advice), None, "{advice}");
         }
+    }
+
+    /// Every wol-admind action a fix sends rides on the Doctor sheet (`shared::shell::DOCTOR_ACTIONS`).
+    #[test]
+    fn every_admin_action_of_a_fix_is_a_doctor_action() {
+        let src = include_str!("doctor.rs");
+        let mut n = 0;
+        for part in src.split("req(AdminAction::").skip(1) {
+            let name: String = part
+                .chars()
+                .take_while(char::is_ascii_alphanumeric)
+                .collect();
+            if name.is_empty() {
+                continue; // this test's own pattern
+            }
+            let a = AdminAction::ALL
+                .into_iter()
+                .find(|a| format!("{a:?}") == name)
+                .unwrap_or_else(|| panic!("{name}"));
+            assert!(shared::shell::DOCTOR_ACTIONS.contains(&a), "{name}");
+            n += 1;
+        }
+        assert!(n >= 5, "{n}");
     }
 
     #[test]

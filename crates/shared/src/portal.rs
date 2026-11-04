@@ -280,8 +280,8 @@ pub const NO_ANSWER: &str = "The desktop did not answer.";
 pub const MAX_HELPER_TEXT: usize = 128;
 
 /// A helper's administrator change as wold relays it: one of the helper catalogue's admin kinds
-/// (Wi-Fi, a Wi-Fi network, Bluetooth, a restore point; system packages go through wopkg), with
-/// short one-line texts.
+/// (Wi-Fi, a Wi-Fi network, Bluetooth, a restore point, a Doctor fix; system packages go through
+/// wopkg), with short one-line texts.
 fn helper_approval(a: &crate::shell::Approval) -> Result<(), String> {
     use crate::shell::ApprovalRequest as R;
     let line = |t: &str, max: usize| clean(t, max, false);
@@ -296,6 +296,20 @@ fn helper_approval(a: &crate::shell::Approval) -> Result<(), String> {
             !ssid.is_empty() && line(ssid, 32) && password.as_ref().is_none_or(|p| line(p, 64))
         }
         R::BootEnvironment { name } => !name.is_empty() && line(name, MAX_HELPER_TEXT),
+        // A Doctor fix (ADR 0048): only Doctor's wol-admind actions, every word one short line.
+        R::DoctorFix { id, title, steps } => {
+            a.request.doctor_steps().is_some()
+                && !id.is_empty()
+                && line(id, MAX_HELPER_TEXT)
+                && !title.is_empty()
+                && line(title, MAX_HELPER_TEXT)
+                && steps
+                    .iter()
+                    .flatten()
+                    .all(|w| !w.is_empty() && line(w, MAX_HELPER_TEXT))
+        }
+        // Update Now (every waiting update, `wol update install`, ADR 0048): the shell's own sheet.
+        R::Packages { verb, names } if verb == "update" && names.is_empty() => true,
         // wold's own package sheets (ADR 0021, 0034), never a helper's to relay.
         R::Packages { .. }
         | R::PackageFile { .. }
@@ -775,6 +789,53 @@ mod tests {
                 r#"{{"call":"session.approve","approval":{{"helper":"h","tool":"t","request":{request}}}}}"#
             );
             assert!(Call::decode(line.as_bytes()).is_err(), "{line}");
+        }
+    }
+
+    /// ADR 0048: Update Now (every waiting update) is a helper's to relay; naming packages is not.
+    #[test]
+    fn helpers_may_relay_update_now_only() {
+        let line = |request: &str| {
+            format!(
+                r#"{{"call":"session.approve","approval":{{"helper":"h","tool":"update_install","request":{request}}}}}"#
+            )
+        };
+        assert!(Call::decode(line(r#"{"action":"packages","verb":"update"}"#).as_bytes()).is_ok());
+        for r in [
+            r#"{"action":"packages","verb":"update","names":["firefox"]}"#,
+            r#"{"action":"packages","verb":"install","names":["firefox"]}"#,
+            r#"{"action":"packages","verb":"update-holding","names":["firefox"]}"#,
+            r#"{"action":"packages","verb":"remove","names":["firefox"]}"#,
+        ] {
+            assert!(Call::decode(line(r).as_bytes()).is_err(), "{r}");
+        }
+    }
+
+    /// ADR 0048: a Doctor fix is a helper's to relay, with Doctor's actions only.
+    #[test]
+    fn a_doctor_fix_is_relayed_with_doctor_actions_only() {
+        let line = |steps: &str, title: &str| {
+            let request = format!(
+                r#"{{"action":"doctor-fix","id":"security.firewall","title":"{title}","steps":{steps}}}"#
+            );
+            format!(
+                r#"{{"call":"session.approve","approval":{{"helper":"h","tool":"doctor_fix","request":{request}}}}}"#
+            )
+        };
+        assert!(Call::decode(line(r#"[["firewall","on"]]"#, "Turn on").as_bytes()).is_ok());
+        assert!(
+            Call::decode(line(r#"[["pkg-install","rtkit"],["hw-load","snd"]]"#, "Fix").as_bytes())
+                .is_ok()
+        );
+        for (steps, title) in [
+            (r#"[["user-add","eve"]]"#, "Turn on"),
+            (r#"[]"#, "Turn on"),
+            (r#"[["firewall","on"]]"#, ""),
+            (r#"[["firewall","on\nx"]]"#, "Turn on"),
+            (r#"[["firewall",""]]"#, "Turn on"),
+        ] {
+            let l = line(steps, title);
+            assert!(Call::decode(l.as_bytes()).is_err(), "{l}");
         }
     }
 
