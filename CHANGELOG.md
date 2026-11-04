@@ -11,6 +11,12 @@ Scripts
 - The background malware pass also looks at `.rb` files, as it does at `.sh` files.
 - Ruby scripts in the tree have their own rules (docs/RULES-ruby.md, `RB-nnn`), checked in CI with `ruby -wc` and one explicit RuboCop list (`tools/ruby/lint.sh`).
 
+Packages and updates
+- WolOS 0.13 has one update channel, Stable. Settings > Software Update shows it, `wol update channel` prints it, and `wopkg channel` offers it; a testing channel is not offered, and an old `/etc/wolos/channel` that names one reads as Stable.
+- A full disk is named ("There is no room left on the disk") when a download, an index, an update or a plugin cannot be written, instead of a path or the system's error text.
+- `sudo wol pkg -- -Sw <package>` (download only) works on the sealed system: it runs against a temporary copy of the package database instead of failing on the read-only lock.
+- An interrupted AppImage download is resumed only when the rest can be proven to belong to it (a checksum, or the ETag it was started under); a download without a size stops at 4 GiB. The shard list is fetched again once it is a day old, and a plugin install that was cut off leaves nothing behind, the older version back in place.
+
 ## 0.12.1 (unreleased)
 A fixes-only release after a hunt for stalls, races and weak spots in 0.12.0. Nothing new to learn.
 

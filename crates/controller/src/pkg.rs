@@ -45,8 +45,65 @@ const UNCHANGED: &str = "Nothing was changed. Try again, or run `wol update` fir
 const PENDING_LOST: &str = "Nothing was changed, and the change that waited for a restart was \
                             removed with it. Run it again, or run `wol update` first.";
 
+/// A download-only run on a sealed system: pacman cannot take its lock in the database on the
+/// read-only slot (QA-STORE-72: "could not lock database: Read-only file system"), so it works
+/// against a temporary copy (`local` linked, `sync` copied), as `update-download` does. The
+/// packages land in the cache as always; the live database is not touched.
+fn download(env: &mut dyn Env, args: &[String]) -> i32 {
+    let tmp = capture(
+        env,
+        &[
+            "mktemp".into(),
+            "-d".into(),
+            "/var/tmp/wolos-download-db.XXXXXX".into(),
+        ],
+    )
+    .map(|t| t.trim().to_owned())
+    .filter(|t| t.starts_with('/'));
+    let Some(tmp) = tmp else {
+        env.err(
+            "wol pkg: a temporary package database could not be made. Nothing was downloaded.\n",
+        );
+        return 1;
+    };
+    let db = live_db(env);
+    let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<String>>();
+    // pacman's download user must be able to look in; the folder holds a link and public lists.
+    let ready = env.exec(&s(&["chmod", "755", &tmp])).unwrap_or(127) == 0
+        && env
+            .exec(&s(&[
+                "ln",
+                "-s",
+                &format!("{db}/local"),
+                &format!("{tmp}/local"),
+            ]))
+            .unwrap_or(127)
+            == 0;
+    let code = if ready {
+        // No sync folder yet: `-y` makes it.
+        let _ = env.exec(&s(&["cp", "-a", &format!("{db}/sync"), &format!("{tmp}/")]));
+        let mut a = vec!["--dbpath".to_owned(), tmp.clone()];
+        a.extend(args.iter().cloned());
+        real(env, &a)
+    } else {
+        env.err(
+            "wol pkg: a temporary package database could not be set up. Nothing was downloaded.\n",
+        );
+        1
+    };
+    let _ = env.exec(&s(&["rm", "-rf", &tmp]));
+    code
+}
+
 pub fn run(env: &mut dyn Env, args: &[String]) -> i32 {
     let pkg::Kind::Change(c) = pkg::classify(args) else {
+        if pkg::needs_scratch_db(args) && env.is_root() {
+            let cmdline = env.read_file(Path::new("/proc/cmdline"));
+            let ro = env.capture(&pkg::RO_ARGV);
+            if pkg::is_sealed(cmdline.as_deref(), ro.as_deref()) {
+                return download(env, args);
+            }
+        }
         return real(env, args);
     };
     let cmdline = env.read_file(Path::new("/proc/cmdline"));

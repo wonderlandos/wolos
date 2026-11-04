@@ -66,8 +66,9 @@ fn md4(block: &[u8]) -> [u8; 16] {
     Md4::digest(block).into()
 }
 
-/// Largest file a control file may describe (1 TiB): keeps every offset product below `u64`.
-pub const MAX_LENGTH: u64 = 1 << 40;
+/// Largest file a control file may describe (16 GiB, far above any AppImage): a control file is
+/// unsigned input, and the update's copy is made that large (QA-STORE-20; 1 TiB before).
+pub const MAX_LENGTH: u64 = 1 << 34;
 
 /// Parses a `.zsync` control file. Pure (no I/O): the fuzz entry point.
 pub fn parse(bytes: &[u8]) -> Result<Control> {
@@ -312,9 +313,9 @@ pub fn build(
     let known = known_blocks(c, &old_bytes);
     let ranges = missing_ranges(c, &known);
     let mut f = std::fs::File::create(out)
-        .map_err(|_| Error::unavailable("The update cannot be written."))?;
+        .map_err(|e| crate::fetch::write_error(&e, "The update cannot be written."))?;
     f.set_len(c.length)
-        .map_err(|_| Error::unavailable("The disk is full."))?;
+        .map_err(|_| Error::unavailable(crate::fetch::NO_ROOM))?;
     let bs = c.blocksize;
     let mut reused = 0u64;
     let damaged = || Error::untrusted("The update description is damaged.");
@@ -329,7 +330,7 @@ pub fn build(
         let pos = u64::try_from(start).map_err(|_| damaged())?;
         f.seek(SeekFrom::Start(pos))
             .and_then(|_| f.write_all(&old_bytes[at..end]))
-            .map_err(|_| Error::unavailable("The update cannot be written."))?;
+            .map_err(|e| crate::fetch::write_error(&e, "The update cannot be written."))?;
         reused = reused.saturating_add(u64::try_from(n).map_err(|_| damaged())?);
     }
     let mut fetched = 0u64;
@@ -343,9 +344,7 @@ pub fn build(
             .get(file_url)
             .header("Range", &format!("bytes={s}-{e}"))
             .call()
-            .map_err(|e| {
-                Error::unavailable(format!("The update server could not be reached ({e})."))
-            })?;
+            .map_err(|_| Error::unavailable("The update server could not be reached."))?;
         let status = resp.status().as_u16();
         let mut body = resp.into_body().into_reader();
         let want = e
@@ -363,9 +362,9 @@ pub fn build(
         }
         // Streamed straight to the file: a range can be most of a large AppImage.
         f.seek(SeekFrom::Start(*s))
-            .map_err(|_| Error::unavailable("The update cannot be written."))?;
+            .map_err(|e| crate::fetch::write_error(&e, "The update cannot be written."))?;
         let got = std::io::copy(&mut body.by_ref().take(want), &mut f)
-            .map_err(|_| Error::unavailable("The update cannot be written."))?;
+            .map_err(|e| crate::fetch::write_error(&e, "The update cannot be written."))?;
         if got != want {
             return Err(Error::unavailable(
                 "The update download stopped. Try again.",
@@ -442,6 +441,9 @@ SHA-1: {}
         };
         assert!(parse(&head(&u64::MAX.to_string(), "256")).is_err());
         assert!(parse(&head(&(MAX_LENGTH + 1).to_string(), "256")).is_err());
+        // QA-STORE-20: a control file claiming more than 16 GiB is refused (1 TiB was taken).
+        assert!(parse(&head(&(1u64 << 40).to_string(), "256")).is_err());
+        const { assert!(MAX_LENGTH == 1 << 34) };
         // A huge length with no table behind it.
         assert!(parse(&head(&MAX_LENGTH.to_string(), "256")).is_err());
         assert!(parse(&head("100", "255")).is_err());

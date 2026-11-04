@@ -616,7 +616,7 @@ pub fn zsync_url(ctx: &Context, u: &UpdateInfo, api_base: &str) -> Result<String
                 .get(&api)
                 .header("Accept", "application/vnd.github+json")
                 .call()
-                .map_err(|e| Error::unavailable(format!("GitHub could not be reached ({e}).")))?;
+                .map_err(|_| Error::unavailable("GitHub could not be reached."))?;
             if resp.status().as_u16() != 200 {
                 return Err(Error::unavailable(format!(
                     "GitHub has no release for {owner}/{repo}."
@@ -816,9 +816,12 @@ fn update_one(
     };
     let zurl = zsync_url(ctx, &u, api)?;
     ctx.net.check_url(&zurl)?;
-    let resp = ctx.net.agent.get(&zurl).call().map_err(|e| {
-        Error::unavailable(format!("The update server could not be reached ({e})."))
-    })?;
+    let resp = ctx
+        .net
+        .agent
+        .get(&zurl)
+        .call()
+        .map_err(|_| Error::unavailable("The update server could not be reached."))?;
     if resp.status().as_u16() != 200 {
         return Err(Error::unavailable(format!(
             "The update server answered {}.",

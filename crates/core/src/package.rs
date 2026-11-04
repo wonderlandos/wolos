@@ -419,6 +419,50 @@ pub fn require_signed(v: VerifiedPlugin) -> Result<VerifiedPlugin, String> {
     }
 }
 
+/// Removes a staging folder; one that stays is found and removed by the next install.
+fn discard(stage: &Path) {
+    let _ = std::fs::remove_dir_all(stage);
+}
+
+/// Why a plugin could not be written: a full disk is named (QA-STORE-24), anything else carries
+/// the system's reason.
+fn plugin_write_error(e: std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::StorageFull || e.raw_os_error() == Some(28) {
+        "There is no room left on the disk. Free some space, then try again.".into()
+    } else {
+        format!("The plugin could not be written: {e}.")
+    }
+}
+
+/// Staging folders (`.stage-<id>-<pid>`) that an install left behind when its process died
+/// (QA-STORE-23): removed, and when it died between the two renames (the older version moved
+/// to the folder's `old`, the new one not yet in place) the older version goes back. A folder of
+/// a process that is still running is left alone.
+pub fn recover_stages(plugins_dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(plugins_dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some((id, pid)) = name
+            .strip_prefix(".stage-")
+            .and_then(|r| r.rsplit_once('-'))
+            .and_then(|(id, pid)| Some((id, pid.parse::<u32>().ok()?)))
+        else {
+            continue;
+        };
+        if pid == std::process::id() || Path::new(&format!("/proc/{pid}")).exists() {
+            continue;
+        }
+        let (stage, dest) = (e.path(), plugins_dir.join(id));
+        let old = stage.join("old");
+        if old.is_dir() && !dest.exists() && !id.is_empty() && !id.contains(['/', '\0']) {
+            let _ = std::fs::rename(&old, &dest);
+        }
+        discard(&stage);
+    }
+}
+
 /// Writes a verified plugin as `<plugins_dir>/<id>/` for this account: staged next to it, checked
 /// with [`crate::plugins::check`], then moved in place of any older version. Returns the folder.
 pub fn install_plugin(
@@ -426,10 +470,11 @@ pub fn install_plugin(
     plugins_dir: &Path,
 ) -> Result<std::path::PathBuf, String> {
     let id = &v.manifest.id;
-    let fail = |e: std::io::Error| format!("The plugin could not be written: {e}.");
+    let fail = plugin_write_error;
     std::fs::create_dir_all(plugins_dir).map_err(fail)?;
+    recover_stages(plugins_dir);
     let stage = plugins_dir.join(format!(".stage-{id}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&stage);
+    discard(&stage);
     let staged = stage.join(id);
     let write = || -> std::io::Result<()> {
         std::fs::create_dir_all(&staged)?;
@@ -444,11 +489,11 @@ pub fn install_plugin(
         Ok(())
     };
     if let Err(e) = write() {
-        let _ = std::fs::remove_dir_all(&stage);
+        discard(&stage);
         return Err(fail(e));
     }
     if let Some(p) = crate::plugins::check(&staged, false).problems.first() {
-        let _ = std::fs::remove_dir_all(&stage);
+        discard(&stage);
         return Err(p.clone());
     }
     let dest = plugins_dir.join(id);
@@ -458,10 +503,10 @@ pub fn install_plugin(
         if moved_old {
             let _ = std::fs::rename(&old, &dest);
         }
-        let _ = std::fs::remove_dir_all(&stage);
+        discard(&stage);
         return Err(fail(e));
     }
-    let _ = std::fs::remove_dir_all(&stage);
+    discard(&stage);
     Ok(dest)
 }
 
@@ -1263,6 +1308,53 @@ not-a-key x
         assert!(!at.join("stale.txt").exists());
         let left: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().collect();
         assert_eq!(left.len(), 1, "only the plugin folder stays");
+    }
+
+    /// QA-STORE-23: the staging a dead install left is removed by the next one, the older
+    /// version it had moved aside comes back, and a running process's staging is left alone.
+    #[test]
+    fn a_dead_installs_staging_is_cleaned_and_its_old_version_restored() {
+        let dead = {
+            let mut c = std::process::Command::new("true").spawn().unwrap();
+            c.wait().unwrap();
+            c.id()
+        };
+        let d = dir();
+        // Died between the renames: the older "alice.old" is only in the staging's `old`.
+        let s1 = d.join(format!(".stage-alice.old-{dead}"));
+        std::fs::create_dir_all(s1.join("old")).unwrap();
+        std::fs::write(s1.join("old/plugin.toml"), "kept").unwrap();
+        // Died before the swap: the plugin folder is in place, the staging is junk.
+        std::fs::create_dir_all(d.join("alice.here")).unwrap();
+        let s2 = d.join(format!(".stage-alice.here-{dead}/alice.here"));
+        std::fs::create_dir_all(&s2).unwrap();
+        // A process still running (init) owns this one.
+        let live = d.join(".stage-bob.x-1");
+        std::fs::create_dir_all(&live).unwrap();
+        let tar = wolplug(&plugin_files("alice.demo"), Some(&SEED));
+        let v = verify_wolplug(&tar, &[public_of(&SEED)]).unwrap();
+        install_plugin(&v, &d).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("alice.old/plugin.toml")).unwrap(),
+            "kept"
+        );
+        assert!(d.join("alice.here").is_dir());
+        assert!(!s1.exists() && !s2.exists());
+        assert!(live.exists());
+    }
+
+    /// QA-STORE-24: a plugin that does not fit says the disk is full, not "os error 28".
+    #[test]
+    fn a_full_disk_is_named_when_a_plugin_is_written() {
+        let full = std::io::Error::from_raw_os_error(28);
+        let m = plugin_write_error(full);
+        assert!(m.contains("no room left on the disk"), "{m}");
+        assert!(!m.contains("os error"), "{m}");
+        let other = plugin_write_error(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(
+            other.starts_with("The plugin could not be written"),
+            "{other}"
+        );
     }
 
     #[test]

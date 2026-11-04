@@ -196,6 +196,28 @@ impl Installed {
 mod tests {
     use super::*;
 
+    /// QA-STORE-62: the image makes root's folders at boot (tmpfiles.d), state root's alone.
+    #[test]
+    fn tmpfiles_makes_the_root_folders() {
+        let conf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../files/usr/lib/tmpfiles.d/wolos.conf"
+        ))
+        .unwrap();
+        let mode = |p: &str| {
+            conf.lines()
+                .map(|l| l.split_whitespace().collect::<Vec<_>>())
+                .find(|w| w.first() == Some(&"d") && w.get(1) == Some(&p))
+                .and_then(|w| w.get(2).map(|m| m.to_string()))
+                .unwrap_or_else(|| panic!("tmpfiles makes {p}"))
+        };
+        assert_eq!(mode(ROOT_CACHE), "0755");
+        assert_eq!(mode("/var/cache/wolos/packages"), "0755");
+        for p in ["/var/lib/wolos/wopkg", ROOT_STATE, ROOT_DATA] {
+            assert_eq!(mode(p), "0700", "{p}");
+        }
+    }
+
     /// QA-STORE-62: root's cache, state and data are under /var (its home is on the sealed
     /// slot), also without HOME; an XDG variable or the config still wins; a person keeps
     /// their home's folders, and without HOME is refused with a sentence.

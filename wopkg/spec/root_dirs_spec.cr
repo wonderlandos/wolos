@@ -11,3 +11,12 @@ describe "Wopkg::App.dir" do
     Wopkg::App.dir(nil, false, Wopkg::App::ROOT_CACHE) { "/home/ana/.cache/wopkg" }.should eq("/home/ana/.cache/wopkg")
   end
 end
+
+# QA-STORE-68: one channel in 0.13; a file left from before naming another reads as stable.
+describe "Wopkg::App.channel_of" do
+  it "reads stable whatever the file says" do
+    Wopkg::App.channel_of(nil).should eq("stable")
+    Wopkg::App.channel_of("stable\n").should eq("stable")
+    Wopkg::App.channel_of("beta\n").should eq("stable")
+  end
+end

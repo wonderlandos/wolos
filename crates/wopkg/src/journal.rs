@@ -67,7 +67,10 @@ impl Entry {
 
 /// Write by temp file + fsync + rename.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let bad = |_| Error::unavailable(format!("{} cannot be written.", path.display()));
+    // The disk being full is named; no path, no system text (QA-STORE-24).
+    let bad = |e: std::io::Error| {
+        crate::fetch::write_error(&e, "The package manager's records cannot be written.")
+    };
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d).map_err(bad)?;
     }

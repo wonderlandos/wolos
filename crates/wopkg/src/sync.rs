@@ -46,6 +46,9 @@ pub struct Report {
     pub error: Option<String>,
 }
 
+/// A source whose reading stopped on a bug ([`run`]'s worker panicked).
+pub const STOPPED: &str = "Reading this source stopped unexpectedly. The list from before is kept.";
+
 pub fn valid_name(n: &str) -> bool {
     !n.is_empty()
         && n.len() <= 64
@@ -92,6 +95,15 @@ pub fn rebuild(ctx: &Context, src: &Source, input: &Path) -> Result<(usize, bool
     let recs = build(src.kind, &src.name, &bytes)?;
     segment::write(&seg_path, &fp, &recs)?;
     Ok((recs.len(), true))
+}
+
+/// A worker's report; one that panicked is a failed source named `name` ([`STOPPED`]).
+fn settle(r: std::thread::Result<Report>, name: &str) -> Report {
+    r.unwrap_or_else(|_| Report {
+        name: name.to_owned(),
+        error: Some(STOPPED.into()),
+        ..Default::default()
+    })
 }
 
 pub fn run(
@@ -154,9 +166,12 @@ pub fn run(
                 })
             })
             .collect();
+        // A source whose reading panicked is a failed source with its name and a reason, never
+        // a blank report that reads as nothing wrong (QA-STORE-25).
         handles
             .into_iter()
-            .map(|h| h.join().unwrap_or_default())
+            .zip(&req.sources)
+            .map(|(h, s)| settle(h.join(), &s.name))
             .collect()
     });
     for r in &reports {
@@ -185,6 +200,19 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-STORE-25: a source whose worker panicked reports its name and a reason.
+    #[test]
+    fn a_panicking_source_is_named_and_failed() {
+        let r = settle(Err(Box::new("boom")), "extra");
+        assert_eq!(r.name, "extra");
+        assert_eq!(r.error.as_deref(), Some(STOPPED));
+        let ok = Report {
+            name: "core".into(),
+            ..Default::default()
+        };
+        assert_eq!(settle(Ok(ok), "core").error, None);
+    }
     use crate::testutil::{Served, serve, temp};
 
     fn ctx(d: &Path) -> Context {

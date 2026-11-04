@@ -1066,3 +1066,23 @@ fn update_chroot_binds_the_copy_and_the_cache() {
     run("help", &mut help);
     assert!(!help.out.contains("update chroot"), "{}", help.out);
 }
+
+/// QA-STORE-9/68: `wol update channel` says the channel the system follows: stable, also when a
+/// file from before names a testing channel; --json lists the offered ones.
+#[test]
+fn update_channel_reports_stable() {
+    for file in [None, Some("beta\n"), Some("stable\n")] {
+        let mut env = FakeEnv::default();
+        if let Some(t) = file {
+            env.files
+                .push((PathBuf::from("/etc/wolos/channel"), t.into()));
+        }
+        assert_eq!(run("update channel", &mut env), 0);
+        assert_eq!(env.out, "stable\n", "{file:?}");
+    }
+    let mut env = FakeEnv::default();
+    assert_eq!(run("update channel --json", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(v["channel"], "stable");
+    assert_eq!(v["offered"], serde_json::json!(["stable"]));
+}

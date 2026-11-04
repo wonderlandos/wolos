@@ -297,6 +297,12 @@ pub const TREE: &[Cmd] = &[
         "Base files that changed or went missing (wolos-base manifest)",
     ),
     cmd(
+        &["update", "channel"],
+        "update.channel",
+        &[],
+        "The update channel this computer follows (stable)",
+    ),
+    cmd(
         &["update", "status"],
         "update.status",
         &[],

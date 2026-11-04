@@ -313,6 +313,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "shell.call" | "shell.status" => shell_ask(env, inv, json),
         "update.check" => update_check(env, json),
         "update.status" => update_status(env, json),
+        "update.channel" => update_channel(env, json),
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
         "update.chroot" => update_chroot(env, inv),
@@ -1334,6 +1335,22 @@ fn update_chroot(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let mut a = s(&["arch-chroot", root]);
     a.extend(cmd.iter().map(|c| (*c).to_owned()));
     env.exec(&a).unwrap_or(127)
+}
+
+/// `wol update channel`: the channel this computer follows (`/etc/wolos/channel`, read as one
+/// this release offers: stable in 0.13; QA-STORE-9/68), and the ones it could follow.
+fn update_channel(env: &mut dyn Env, json: bool) -> i32 {
+    let text = env.read_file(Path::new(wol_core::admin::CHANNEL_FILE));
+    let ch = shared::packages::channel_of(text.as_deref());
+    if json {
+        emit_json(
+            env,
+            &serde_json::json!({ "channel": ch, "offered": shared::packages::OFFERED }),
+        );
+    } else {
+        env.out(&format!("{ch}\n"));
+    }
+    0
 }
 
 /// One step of `wol update plan` as it reads: an empty argument shows as `''` (QA-STORE-76:

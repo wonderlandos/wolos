@@ -165,7 +165,7 @@ module Wopkg
           wopkg list                (-Q)   what is installed
           wopkg history | rollback <id|system>
           wopkg pin|unpin <name>           keep a package at its version through updates
-          wopkg channel [stable|beta|nightly] | pause [days] | resume
+          wopkg channel [stable] | pause [days] | resume
           wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg audit <pkg> | wopkg recipe build|install|remove <name>
           wopkg completions zsh|bash|fish|pwsh
           wopkg shard list [words] | add <name>... | update [name]... | check   [folder] (default: here)
@@ -545,18 +545,28 @@ module Wopkg
       say "Undone: #{e["action"].as_s} of #{e["name"].as_s}."
     end
 
+    # The channels a person can follow in this release (shared::packages::OFFERED): stable only
+    # in 0.13 (QA-STORE-68). A file naming another reads as stable, as `wol update channel` does.
+    OFFERED = %w(stable)
+
     def channel
       if c = @a.targets.first?
+        raise UsageError.new("WolOS offers the #{OFFERED.join(", ")} channel only.") unless OFFERED.includes?(c)
         core.system_call({"call" => "system.channel", "channel" => c}.to_json)
-        say "This computer now follows the #{c} channel."
+        say "This computer follows the #{c} channel."
       else
-        current = begin
-          File.read("/etc/wolos/channel").strip
+        text = begin
+          File.read("/etc/wolos/channel")
         rescue File::Error
-          "stable"
+          nil
         end
-        say current
+        say App.channel_of(text)
       end
+    end
+
+    def self.channel_of(text : String?) : String
+      w = text.try(&.strip) || ""
+      OFFERED.includes?(w) ? w : OFFERED.first
     end
 
     def pause

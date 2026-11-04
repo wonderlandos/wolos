@@ -431,6 +431,32 @@ mod tests {
 
     const SEED: [u8; 32] = [7; 32];
 
+    /// QA-STORE-62: the folder root's index lives in is made by the image at boot (tmpfiles.d),
+    /// so the first `sudo wol pkg` finds it.
+    #[test]
+    fn root_cache_is_made_by_tmpfiles() {
+        let conf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../files/usr/lib/tmpfiles.d/wolos.conf"
+        ))
+        .unwrap();
+        let env = FakeEnv {
+            root: true,
+            ..Default::default()
+        };
+        let dir = cache_dir(&env);
+        for d in [Path::new(ROOT_CACHE), dir.as_path()] {
+            assert!(
+                conf.lines().any(|l| {
+                    let w: Vec<_> = l.split_whitespace().collect();
+                    w.len() >= 5 && w[0] == "d" && Path::new(w[1]) == d && w[3] == "root"
+                }),
+                "tmpfiles makes {}",
+                d.display()
+            );
+        }
+    }
+
     fn info(version: &str) -> String {
         format!(
             r#"{{"id":"org.wolos.Fixture","version":"{version}","name":"Fixture","capabilities":["network"],"package":"wol-fixture","targets":[{{"abi":"freebsd-native","arch":"amd64","entry":"bin/fixture"}}]}}"#

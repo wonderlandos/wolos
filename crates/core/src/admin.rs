@@ -247,7 +247,8 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         }
         AdminAction::PkgInstallFile => ok(n == 2 && is_staged_package(a[0]) && is_sha256_hex(a[1])),
         AdminAction::SystemRollback => ok(n == 0),
-        AdminAction::SystemChannel => ok(n == 1 && shared::packages::CHANNELS.contains(&a[0])),
+        // Only a channel this release offers (stable, QA-STORE-68).
+        AdminAction::SystemChannel => ok(n == 1 && shared::packages::OFFERED.contains(&a[0])),
         _ => invalid(),
     }
 }
@@ -2066,13 +2067,14 @@ mod tests {
             "wol update rollback"
         );
         assert!(validate(&r(SystemRollback, &["x"])).is_some());
-        let ch = plan(&r(SystemChannel, &["beta"])).unwrap();
+        let ch = plan(&r(SystemChannel, &["stable"])).unwrap();
         assert!(matches!(
             &ch[..],
             [AdminStep::Write { path, mode: 0o644, content: WriteContent::Fixed(t) }]
-                if path == CHANNEL_FILE && t == "beta\n"
+                if path == CHANNEL_FILE && t == "stable\n"
         ));
-        for bad in ["alpha", "", "--x", "beta\nnightly"] {
+        // QA-STORE-68: 0.13 offers stable only; a testing channel is never written.
+        for bad in ["alpha", "", "--x", "beta\nnightly", "beta", "nightly"] {
             assert!(validate(&r(SystemChannel, &[bad])).is_some(), "{bad:?}");
         }
         for a in [PkgInstallFile, SystemRollback, SystemChannel] {

@@ -51,6 +51,55 @@ fn queries_go_straight_to_the_real_pacman() {
     assert_eq!(lines(&env), ["/usr/bin/pacman -Qi vim"]);
 }
 
+/// QA-STORE-72: `pacman -Sw` on a sealed system runs against a temporary copy of the database
+/// (the live one is on the read-only slot and cannot be locked) and removes it after; on a
+/// system that is not sealed, or for a person, it goes straight to pacman.
+#[test]
+fn download_only_uses_a_scratch_database_on_a_sealed_system() {
+    let mut env = sealed("", IDLE);
+    env.captures.push((
+        "mktemp -d /var/tmp/wolos-download-db.XXXXXX".into(),
+        "/var/tmp/wolos-download-db.abc123\n".into(),
+    ));
+    env.exec_codes = vec![0, 0, 0, 0, 0];
+    assert_eq!(run("pkg -- -Sw htop", &mut env), 0, "{}", env.err);
+    assert_eq!(
+        lines(&env),
+        [
+            "chmod 755 /var/tmp/wolos-download-db.abc123",
+            "ln -s /var/lib/pacman/local /var/tmp/wolos-download-db.abc123/local",
+            "cp -a /var/lib/pacman/sync /var/tmp/wolos-download-db.abc123/",
+            "/usr/bin/pacman --dbpath /var/tmp/wolos-download-db.abc123 -Sw htop",
+            "rm -rf /var/tmp/wolos-download-db.abc123",
+        ]
+    );
+    // pacman's own failure is its status, and the copy is still removed.
+    let mut bad = sealed("", IDLE);
+    bad.captures.push((
+        "mktemp -d /var/tmp/wolos-download-db.XXXXXX".into(),
+        "/var/tmp/wolos-download-db.abc123\n".into(),
+    ));
+    bad.exec_codes = vec![0, 0, 0, 1, 0];
+    assert_eq!(run("pkg -- -Sw htop", &mut bad), 1);
+    assert_eq!(
+        lines(&bad).last().unwrap(),
+        "rm -rf /var/tmp/wolos-download-db.abc123"
+    );
+    // A person, or a command with its own database: pacman as given.
+    let mut user = sealed("", IDLE);
+    user.root = false;
+    assert_eq!(run("pkg -- -Sw htop", &mut user), 0);
+    assert_eq!(lines(&user), ["/usr/bin/pacman -Sw htop"]);
+    let mut own = sealed("", IDLE);
+    assert_eq!(run("pkg -- -Sw --dbpath /x htop", &mut own), 0);
+    assert_eq!(lines(&own), ["/usr/bin/pacman -Sw --dbpath /x htop"]);
+    // No scratch folder: said, nothing run.
+    let mut none = sealed("", IDLE);
+    assert_eq!(run("pkg -- -Sw htop", &mut none), 1);
+    assert!(none.err.contains("Nothing was downloaded"), "{}", none.err);
+    assert!(none.execs.is_empty(), "{:?}", none.execs);
+}
+
 #[test]
 fn an_install_is_a_live_layer_without_a_restart() {
     let mut env = sealed("vim\nvim-runtime\n", IDLE);
