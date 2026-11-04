@@ -1150,7 +1150,7 @@ mod tests {
     fn portal_accent_is_the_nearest_preset() {
         for (id, want) in [
             ("wol-light", "purple"),
-            ("wol-light-blue", "blue"),
+            ("wol-light-blue", "teal"),
             ("wol-dark-green", "green"),
             ("wol-light-pink", "pink"),
             ("nord", "teal"),

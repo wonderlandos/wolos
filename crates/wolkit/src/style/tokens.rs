@@ -124,22 +124,22 @@ pub const RADIUS: [Step; 6] = [
     },
     Step {
         name: "s",
-        value: 6.0,
+        value: 8.0,
         var: Some("--radius-s"),
     },
     Step {
         name: "m",
-        value: 10.0,
+        value: 12.0,
         var: Some("--radius-m"),
     },
     Step {
         name: "l",
-        value: 14.0,
+        value: 16.0,
         var: Some("--radius-l"),
     },
     Step {
         name: "xl",
-        value: 20.0,
+        value: 24.0,
         var: Some("--radius-xl"),
     },
     Step {
@@ -187,7 +187,7 @@ pub const ROLES: [RoleSpec; 6] = [
     },
     RoleSpec {
         name: "large",
-        size: 26.0,
+        size: 27.0,
         weight: 600,
         line_height: 1.2,
     },

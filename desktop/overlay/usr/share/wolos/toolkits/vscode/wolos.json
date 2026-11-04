@@ -1,93 +1,93 @@
 {
   "$schema": "vscode://schemas/color-theme",
   "colors": {
-    "activityBar.background": "#eae8f2",
-    "activityBar.foreground": "#181521",
-    "activityBarBadge.background": "#7c5cff",
+    "activityBar.background": "#ebebf4",
+    "activityBar.foreground": "#151520",
+    "activityBarBadge.background": "#7452f5",
     "activityBarBadge.foreground": "#ffffff",
-    "button.background": "#7c5cff",
+    "button.background": "#7452f5",
     "button.foreground": "#ffffff",
-    "descriptionForeground": "#686575",
+    "descriptionForeground": "#565563",
     "dropdown.background": "#ffffff",
-    "editor.background": "#f3f1f8",
-    "editor.foreground": "#181521",
-    "editor.selectionBackground": "#7c5cff55",
-    "editorCursor.foreground": "#7c5cff",
-    "editorGroupHeader.tabsBackground": "#f3f1f8",
-    "editorLineNumber.foreground": "#686575",
-    "errorForeground": "#c53763",
-    "focusBorder": "#7c5cff",
-    "foreground": "#181521",
+    "editor.background": "#f1f1fa",
+    "editor.foreground": "#151520",
+    "editor.selectionBackground": "#7452f555",
+    "editorCursor.foreground": "#7452f5",
+    "editorGroupHeader.tabsBackground": "#f1f1fa",
+    "editorLineNumber.foreground": "#565563",
+    "errorForeground": "#bb3f27",
+    "focusBorder": "#7452f5",
+    "foreground": "#151520",
     "input.background": "#ffffff",
-    "input.foreground": "#181521",
-    "list.activeSelectionBackground": "#7c5cff",
+    "input.foreground": "#151520",
+    "list.activeSelectionBackground": "#7452f5",
     "list.activeSelectionForeground": "#ffffff",
-    "panel.background": "#f3f1f8",
-    "panel.border": "#dedce5",
-    "sideBar.background": "#eae8f2",
-    "sideBar.border": "#dedce5",
-    "sideBar.foreground": "#181521",
-    "statusBar.background": "#eae8f2",
-    "statusBar.foreground": "#181521",
+    "panel.background": "#f1f1fa",
+    "panel.border": "#d7d7e0",
+    "sideBar.background": "#ebebf4",
+    "sideBar.border": "#d7d7e0",
+    "sideBar.foreground": "#151520",
+    "statusBar.background": "#ebebf4",
+    "statusBar.foreground": "#151520",
     "tab.activeBackground": "#ffffff",
-    "tab.inactiveBackground": "#f3f1f8",
+    "tab.inactiveBackground": "#f1f1fa",
     "terminal.ansiBlack": "#181521",
     "terminal.ansiBlue": "#1d64b0",
     "terminal.ansiBrightBlack": "#121019",
     "terminal.ansiBrightBlue": "#164b84",
     "terminal.ansiBrightCyan": "#0b535b",
-    "terminal.ansiBrightGreen": "#157453",
-    "terminal.ansiBrightMagenta": "#5d45bf",
-    "terminal.ansiBrightRed": "#9b2c4e",
+    "terminal.ansiBrightGreen": "#00652d",
+    "terminal.ansiBrightMagenta": "#573eb8",
+    "terminal.ansiBrightRed": "#8c2f1d",
     "terminal.ansiBrightWhite": "#93929a",
-    "terminal.ansiBrightYellow": "#a33f17",
+    "terminal.ansiBrightYellow": "#904b00",
     "terminal.ansiCyan": "#0f6e79",
-    "terminal.ansiGreen": "#1c9a6e",
-    "terminal.ansiMagenta": "#7c5cff",
-    "terminal.ansiRed": "#cf3a68",
+    "terminal.ansiGreen": "#00863c",
+    "terminal.ansiMagenta": "#7452f5",
+    "terminal.ansiRed": "#bb3f27",
     "terminal.ansiWhite": "#c4c2cd",
-    "terminal.ansiYellow": "#d9541e",
-    "terminal.background": "#f3f1f8",
-    "terminal.foreground": "#181521",
-    "titleBar.activeBackground": "#f3f1f8",
-    "titleBar.activeForeground": "#181521"
+    "terminal.ansiYellow": "#c06400",
+    "terminal.background": "#f1f1fa",
+    "terminal.foreground": "#151520",
+    "titleBar.activeBackground": "#f1f1fa",
+    "titleBar.activeForeground": "#151520"
   },
   "name": "WolOS WolOS Light",
   "tokenColors": [
     {
       "scope": "comment",
       "settings": {
-        "foreground": "#686575"
+        "foreground": "#565563"
       }
     },
     {
       "scope": "keyword, storage",
       "settings": {
-        "foreground": "#7053e6"
+        "foreground": "#6e4ee9"
       }
     },
     {
       "scope": "string",
       "settings": {
-        "foreground": "#167b58"
+        "foreground": "#007f39"
       }
     },
     {
       "scope": "constant.numeric, constant.language",
       "settings": {
-        "foreground": "#b8471a"
+        "foreground": "#a35500"
       }
     },
     {
       "scope": "entity.name.function",
       "settings": {
-        "foreground": "#7053e6"
+        "foreground": "#6e4ee9"
       }
     },
     {
       "scope": "invalid",
       "settings": {
-        "foreground": "#c53763"
+        "foreground": "#bb3f27"
       }
     }
   ],

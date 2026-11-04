@@ -12,13 +12,13 @@ use std::collections::BTreeMap;
 /// `design/tokens/colors.json` (test `accents_come_from_the_tokens`), pink is violet most of the way to
 /// rose, slate is the ink of the icon set lifted to a neutral.
 pub const ACCENTS: [(&str, &str, &str, &str); 8] = [
-    ("violet", "Violet", "#7c5cff", "#8b6cff"),
-    ("blue", "Lake", "#1d64b0", "#6aaef2"),
+    ("violet", "Violet", "#7452f5", "#7452f5"),
+    ("blue", "Lake", "#007292", "#35beee"),
     ("pink", "Orchid", "#b64495", "#d368b1"),
-    ("red", "Rose", "#cf3a68", "#f2678f"),
-    ("orange", "Tangerine", "#d9541e", "#ff8a55"),
-    ("yellow", "Marigold", "#e0a21f", "#ffc94a"),
-    ("green", "Jade", "#1c9a6e", "#5be3b0"),
+    ("red", "Rose", "#bb3f27", "#ee7e66"),
+    ("orange", "Tangerine", "#c06400", "#f2944c"),
+    ("yellow", "Marigold", "#c58a00", "#ffd189"),
+    ("green", "Jade", "#00863c", "#6bc681"),
     ("graphite", "Slate", "#5b5873", "#a9a6c4"),
 ];
 
@@ -221,7 +221,8 @@ mod tests {
         // No two accents share a colour, so a choice is always visible.
         let mut seen = std::collections::BTreeSet::new();
         for (_, _, l, d) in ACCENTS {
-            assert!(seen.insert(l) && seen.insert(d), "{l} {d}");
+            // Violet's fill is one colour in both modes (its ink is derived, `--accent-ink`).
+            assert!(seen.insert(l) && (d == l || seen.insert(d)), "{l} {d}");
         }
     }
 

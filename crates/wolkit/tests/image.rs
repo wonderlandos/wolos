@@ -269,7 +269,7 @@ struct Win {
     cache: TextCache,
 }
 
-const SHEET: &str = ".round { border-radius: 10px; } .faded { opacity: 0.5; }";
+const SHEET: &str = ".round { border-radius: 12px; } .faded { opacity: 0.5; }";
 
 fn px(v: f32) -> [u32; 2] {
     [DIM_PX, v.to_bits()]
@@ -357,7 +357,7 @@ fn an_image_node_lowers_to_a_rounded_clip_and_a_covering_picture() {
     else {
         panic!("{items:?}");
     };
-    assert_eq!(*radius, 10.0);
+    assert_eq!(*radius, 12.0);
     assert_eq!((rect.w, rect.h), (80.0, 40.0));
     assert_eq!((dest.w, dest.h), (80.0, 80.0), "cover keeps the aspect");
     assert_eq!(dest.y, rect.y - 20.0, "and centres the overflow");

@@ -48,7 +48,7 @@ The scales mirror `shared::theme::SCALE` (a test holds them to it):
 | Scale | Names and values | Theme variable |
 |---|---|---|
 | Spacing (padding, margin, gap) | `none` 0px, `xs` 4px, `sm` 8px, `md` 12px, `lg` 16px, `xl` 24px | `--space-1`, `--space-2`, `--space-3`, `--space-4`, `--space-6` |
-| Radius | `none` 0px, `s` 6px, `m` 10px, `l` 14px, `xl` 20px, `full` pill | `--radius-s`, `--radius-m`, `--radius-l`, `--radius-xl` |
+| Radius | `none` 0px, `s` 8px, `m` 12px, `l` 16px, `xl` 24px, `full` pill | `--radius-s`, `--radius-m`, `--radius-l`, `--radius-xl` |
 | Motion (transition) | `fast` 150ms, `normal` 250ms, `slow` 400ms | `--motion-fast`, `--motion-normal`, `--motion-slow` |
 | Eases | `ease` (the theme's `--ease`, cubic-bezier(0.2, 0.8, 0.2, 1)), `linear`, `in`, `out`, `in-out` | `--ease` |
 
@@ -59,7 +59,7 @@ Type roles (`font-size: title`; sizes mirror `shared::theme::scaffold`):
 | Role | Size | Usual weight |
 |---|---|---|
 | `display` | 34px | 700 |
-| `large` | 26px | 600 |
+| `large` | 27px | 600 |
 | `title` | 17px | 600 |
 | `body` | 13px | 400 |
 | `secondary` | 11px | 400 |

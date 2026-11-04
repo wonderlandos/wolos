@@ -102,7 +102,7 @@ fn a_class_gives_a_node_its_style() {
         c.paint.background,
         Paint::Color(ColorRef::Token(Token::Card))
     );
-    assert_eq!(c.paint.radius, [10.0; 4]);
+    assert_eq!(c.paint.radius, [12.0; 4]);
     // Nothing is left dirty for style, and the layout bit is cleared by the layout stage.
     assert_eq!(p.scene.dirty(1) & (dirty::STYLE | dirty::LAYOUT), 0);
 }

@@ -34,8 +34,8 @@ Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`
 
 - Colours: `--surface --card --text --dim --line --accent --accent-text --control --glass*`. No hex/rgb in app code or app CSS.
 - Spacing scale: 4, 8, 12, 16, 24 (`shared::theme::SCALE`, `--space-1` to `--space-6`). Nothing else.
-- Radius: controls 6, cards 10 (`--glass-radius-s`), windows/panels `--glass-radius`.
-- Type: Inter. Title 13 semibold (toolbar), body 13, secondary 11 dim, heading 15, large title 26 bold (page titles; `shared::theme::scaffold`), 22 semibold inside an empty state. No other sizes.
+- Radius: controls 8, cards 12 (`--glass-radius-s`), windows/panels `--glass-radius`.
+- Type: Inter. Title 13 semibold (toolbar), body 13, secondary 11 dim, heading 16, large title 27 bold (page titles; `shared::theme::scaffold`), 24 semibold inside an empty state; every size sits on a 4 px line (11/16, 13/20, 16/24, 24/36, 27/40). No other sizes.
 - Icons: symbolic, 16 in rows/toolbar, 32/48/64 only for files and app tiles.
 
 ## 3. Behaviour

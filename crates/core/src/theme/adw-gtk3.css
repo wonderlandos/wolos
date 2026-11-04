@@ -15,7 +15,7 @@ list.content, frame > border, .frame { border-radius: @RADIUS_CARD@px; border-co
 /* ---- Sidebar (Kit list.sidebar): 28 px source rows, accent pill selection ---- */
 .sidebar, .sidebar list, .navigation-sidebar, placessidebar list, stacksidebar list { background-color: @wol_sidebar; }
 .navigation-sidebar > row, .sidebar list > row, placessidebar row, stacksidebar row {
-  min-height: @SOURCE_ROW@px; margin: 0 8px 1px 8px; border-radius: @RADIUS_CONTROL@px; }
+  min-height: @SOURCE_ROW@px; margin: 0 8px 4px 8px; border-radius: @RADIUS_CONTROL@px; }
 .navigation-sidebar > row:selected, .sidebar list > row:selected, placessidebar row:selected, stacksidebar row:selected,
 .navigation-sidebar > row.activatable:selected, .sidebar list > row.activatable:selected {
   background-color: @wol_accent; color: @wol_accent_text; }

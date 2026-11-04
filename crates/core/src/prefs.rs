@@ -57,7 +57,7 @@ impl Default for ShellPrefs {
 }
 
 /// Dock icon size: (min, max, default) pixels.
-pub const TILE_SIZE: (u32, u32, u32) = (32, 96, 56);
+pub const TILE_SIZE: (u32, u32, u32) = (32, 96, 60);
 /// Longest autohide delay Settings offers.
 pub const AUTOHIDE_DELAY_MAX_MS: u32 = 5000;
 
@@ -660,9 +660,9 @@ mod tests {
     fn dock_keys_default_and_clamp() {
         let d = ShellPrefs::default();
         assert_eq!(d.dock_autohide_delay_ms, 0);
-        assert_eq!(d.dock_tile_size, 56);
+        assert_eq!(d.dock_tile_size, 60);
         let old = ShellPrefs::parse(Some(r#"{"dock_autohide":true}"#));
-        assert_eq!(old.dock_tile_size, 56);
+        assert_eq!(old.dock_tile_size, 60);
         let wild = ShellPrefs::parse(Some(
             r#"{"dock_tile_size":4000,"dock_autohide_delay_ms":999999,"dock_minimize_speed_pct":0}"#,
         ));

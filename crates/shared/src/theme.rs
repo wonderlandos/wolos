@@ -18,12 +18,16 @@ pub const TOKENS: [&str; 13] = [
     "danger",
 ];
 
+/// CSS variables the theme generator derives from the tokens (not themable, not part of the 13): the accent
+/// as text or a glyph on the card ([`accent_ink`]).
+pub const DERIVED: [&str; 1] = ["--accent-ink"];
+
 /// Fixed scale (not themable).
 pub const SCALE: [(&str, &str); 16] = [
-    ("--radius-s", "6px"),
-    ("--radius-m", "10px"),
-    ("--radius-l", "14px"),
-    ("--radius-xl", "20px"),
+    ("--radius-s", "8px"),
+    ("--radius-m", "12px"),
+    ("--radius-l", "16px"),
+    ("--radius-xl", "24px"),
     ("--space-1", "4px"),
     ("--space-2", "8px"),
     ("--space-3", "12px"),
@@ -44,26 +48,26 @@ pub const SCALE: [(&str, &str); 16] = [
 pub mod scaffold {
     pub const TOOLBAR_HEIGHT: i32 = 52;
     /// Kit's own toolbar, under the 28 px compositor strip.
-    pub const KIT_TOOLBAR_HEIGHT: i32 = 36;
+    pub const KIT_TOOLBAR_HEIGHT: i32 = 40;
     /// Toolbar side padding.
     pub const TOOLBAR_PADDING: i32 = 16;
-    pub const SIDEBAR_WIDTH: i32 = 220;
-    /// Sidebar source rows.
-    pub const SOURCE_ROW: i32 = 28;
+    pub const SIDEBAR_WIDTH: i32 = 240;
+    /// Sidebar source rows: 24 high with a 4 px gap, a pitch of 28.
+    pub const SOURCE_ROW: i32 = 24;
     /// Rows in card lists.
     pub const LIST_ROW: i32 = 40;
     /// Buttons, entries, menu items.
     pub const CONTROL_HEIGHT: i32 = 24;
-    pub const RADIUS_CONTROL: i32 = 6;
-    pub const RADIUS_CARD: i32 = 10;
+    pub const RADIUS_CONTROL: i32 = 8;
+    pub const RADIUS_CARD: i32 = 12;
     /// Window corners (compositor `decoration:rounding`).
     pub const WINDOW_RADIUS: i32 = 12;
     pub const BODY: i32 = 13;
     pub const SECONDARY: i32 = 11;
     /// Section headings (`label.heading`).
-    pub const HEADING: i32 = 15;
+    pub const HEADING: i32 = 16;
     /// Page titles (`label.large-title`), bold, tracking -0.5 px.
-    pub const LARGE_TITLE: i32 = 26;
+    pub const LARGE_TITLE: i32 = 27;
     /// Window buttons: 12 px circles, 22 px centre to centre, close (the edge one) centred 23 px
     /// in from the window's right edge (pixel edges), all on the toolbar's vertical centre.
     pub const LIGHT_SIZE: i32 = 12;
@@ -273,6 +277,26 @@ impl Color {
     }
 }
 
+/// The accent as ink (text, glyphs, links) on the card: the accent itself while it holds
+/// [`TEXT_CONTRAST`] on the card, else the first shade toward white (a dark card) or toward black (a light
+/// one), in 2 % steps, that does. The fill (buttons, switches) keeps the accent; only text needs the shade.
+pub fn accent_ink(accent: &str, card: &str, surface: &str) -> Option<String> {
+    let (a, c) = (Color::parse(accent)?, Color::parse(card)?);
+    let surface = Color::parse(surface).map_or(Color::WHITE, |s| s.over(Color::WHITE));
+    let card = c.over(surface);
+    let toward = if card.luminance() < 0.18 { 255.0 } else { 0.0 };
+    let a = a.over(card);
+    for step in 0..=50 {
+        let t = f64::from(step) * 0.02;
+        let m = |v: u8| (f64::from(v) + (toward - f64::from(v)) * t).round() as u8;
+        let shade = Color::rgb(m(a.r), m(a.g), m(a.b));
+        if Color::contrast(shade, card) >= TEXT_CONTRAST {
+            return Some(shade.to_hex());
+        }
+    }
+    None
+}
+
 /// Readability check of a fully resolved token set. Empty = valid.
 pub fn validate(get: impl Fn(&str) -> Option<String>) -> Vec<String> {
     let mut errors = Vec::new();
@@ -306,6 +330,24 @@ pub fn validate(get: impl Fn(&str) -> Option<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_accent_ink_holds_text_contrast_on_the_card() {
+        // Light: the accent already holds 4.5 on white, so it is its own ink.
+        assert_eq!(
+            accent_ink("#7452F5", "#ffffff", "#f1f1fa").as_deref(),
+            Some("#7452f5")
+        );
+        // Dark: the fill is 2.9:1 on the card, the ink is a lighter shade that holds 4.5.
+        let ink = accent_ink("#7452F5", "#292932", "#15151d").unwrap();
+        let (i, c) = (
+            Color::parse(&ink).unwrap(),
+            Color::parse("#292932").unwrap(),
+        );
+        assert!(Color::contrast(i, c) >= TEXT_CONTRAST, "{ink}");
+        assert_ne!(ink, "#7452f5");
+        assert_eq!(accent_ink("nope", "#fff", "#fff"), None);
+    }
 
     #[test]
     fn thirteen_tokens_css_vars() {

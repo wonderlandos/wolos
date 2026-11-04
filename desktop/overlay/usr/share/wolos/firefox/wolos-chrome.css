@@ -2,69 +2,69 @@
 @-moz-document url("chrome://browser/content/browser.xhtml"), url-prefix("chrome://browser/content/places/") {
 :root {
   color-scheme: light !important;
-  --toolbox-bgcolor: #f3f1f8 !important;
-  --toolbox-bgcolor-inactive: #f3f1f8 !important;
-  --toolbox-textcolor: #181521 !important;
-  --toolbox-textcolor-inactive: #686575 !important;
-  --toolbar-bgcolor: #f3f1f8 !important;
-  --toolbar-color: #181521 !important;
-  --toolbar-field-background-color: #e9e9f3 !important;
-  --toolbar-field-color: #181521 !important;
+  --toolbox-bgcolor: #f1f1fa !important;
+  --toolbox-bgcolor-inactive: #f1f1fa !important;
+  --toolbox-textcolor: #151520 !important;
+  --toolbox-textcolor-inactive: #565563 !important;
+  --toolbar-bgcolor: #f1f1fa !important;
+  --toolbar-color: #151520 !important;
+  --toolbar-field-background-color: #ebebf3 !important;
+  --toolbar-field-color: #151520 !important;
   --toolbar-field-border-color: transparent !important;
   --toolbar-field-focus-background-color: #ffffff !important;
-  --toolbar-field-focus-color: #181521 !important;
-  --toolbar-field-focus-border-color: #7c5cff !important;
-  --toolbarseparator-color: #dedce5 !important;
-  --toolbarbutton-icon-fill: #181521 !important;
-  --toolbarbutton-icon-fill-attention: #7053e6 !important;
-  --toolbarbutton-hover-background: #dddbe3 !important;
-  --toolbarbutton-active-background: #ccc9d1 !important;
+  --toolbar-field-focus-color: #151520 !important;
+  --toolbar-field-focus-border-color: #7452f5 !important;
+  --toolbarseparator-color: #d7d7e0 !important;
+  --toolbarbutton-icon-fill: #151520 !important;
+  --toolbarbutton-icon-fill-attention: #6e4ee9 !important;
+  --toolbarbutton-hover-background: #dbdbe4 !important;
+  --toolbarbutton-active-background: #c9c9d3 !important;
   --toolbarbutton-border-radius: 6px !important;
   --tab-selected-bgcolor: #ffffff !important;
-  --tab-selected-textcolor: #181521 !important;
-  --tab-hover-background-color: #e4e2e9 !important;
+  --tab-selected-textcolor: #151520 !important;
+  --tab-hover-background-color: #e2e2eb !important;
   --tab-border-radius: 6px !important;
-  --tab-selected-shadow: 0 0 0 1px #dedce5 !important;
+  --tab-selected-shadow: 0 0 0 1px #d7d7e0 !important;
   --tabs-navbar-separator-style: none !important;
-  --chrome-content-separator-color: #dedce5 !important;
-  --urlbar-box-background-color: #e9e9f3 !important;
+  --chrome-content-separator-color: #d7d7e0 !important;
+  --urlbar-box-background-color: #ebebf3 !important;
   --urlbar-box-background-color-focus: #ffffff !important;
-  --urlbarview-background-color-hover: #e4e2e9 !important;
-  --urlbarview-background-color-selected: #7c5cff !important;
+  --urlbarview-background-color-hover: #e2e2eb !important;
+  --urlbarview-background-color-selected: #7452f5 !important;
   --urlbarview-text-color-selected: #ffffff !important;
-  --sidebar-background-color: #eae8f2 !important;
-  --sidebar-text-color: #181521 !important;
-  --sidebar-border-color: #dedce5 !important;
+  --sidebar-background-color: #ebebf4 !important;
+  --sidebar-text-color: #151520 !important;
+  --sidebar-border-color: #d7d7e0 !important;
   --arrowpanel-background: #ffffff !important;
-  --arrowpanel-color: #181521 !important;
-  --arrowpanel-border-color: #dedce5 !important;
+  --arrowpanel-color: #151520 !important;
+  --arrowpanel-border-color: #d7d7e0 !important;
   --panel-background: #ffffff !important;
-  --panel-color: #181521 !important;
-  --panel-border-color: #dedce5 !important;
-  --panel-separator-color: #dedce5 !important;
+  --panel-color: #151520 !important;
+  --panel-border-color: #d7d7e0 !important;
+  --panel-separator-color: #d7d7e0 !important;
   --menu-background-color: #ffffff !important;
-  --menu-color: #181521 !important;
-  --menu-border-color: #dedce5 !important;
-  --menuitem-hover-background-color: #e1dfe7 !important;
-  --background-color-canvas: #f3f1f8 !important;
+  --menu-color: #151520 !important;
+  --menu-border-color: #d7d7e0 !important;
+  --menuitem-hover-background-color: #dfdfe9 !important;
+  --background-color-canvas: #f1f1fa !important;
   --background-color-box: #ffffff !important;
-  --text-color: #181521 !important;
-  --text-color-deemphasized: #686575 !important;
-  --border-color: #dedce5 !important;
-  --border-color-card: #dedce5 !important;
-  --focus-outline-color: #7c5cff !important;
-  --color-accent-primary: #7c5cff !important;
-  --color-accent-primary-hover: #7053e4 !important;
-  --color-accent-primary-active: #644bca !important;
-  --button-background-color: #e9e9f3 !important;
-  --button-background-color-hover: #d8d8e2 !important;
-  --button-background-color-active: #c8c7d1 !important;
-  --button-text-color: #181521 !important;
-  --button-background-color-primary: #7c5cff !important;
+  --text-color: #151520 !important;
+  --text-color-deemphasized: #565563 !important;
+  --border-color: #d7d7e0 !important;
+  --border-color-card: #d7d7e0 !important;
+  --focus-outline-color: #7452f5 !important;
+  --color-accent-primary: #7452f5 !important;
+  --color-accent-primary-hover: #694bdb !important;
+  --color-accent-primary-active: #5d43c2 !important;
+  --button-background-color: #ebebf3 !important;
+  --button-background-color-hover: #dadae2 !important;
+  --button-background-color-active: #c9c9d1 !important;
+  --button-text-color: #151520 !important;
+  --button-background-color-primary: #7452f5 !important;
   --button-text-color-primary: #ffffff !important;
   --input-bgcolor: #ffffff !important;
-  --input-color: #181521 !important;
-  --link-color: #7053e6 !important;
+  --input-color: #151520 !important;
+  --link-color: #6e4ee9 !important;
 }
 :root, menupopup, panel, tooltip { font-family: "Inter", sans-serif !important; }
 #navigator-toolbox { background-color: var(--toolbox-bgcolor) !important; border-bottom: 1px solid var(--chrome-content-separator-color) !important; }
@@ -80,36 +80,36 @@
 .titlebar-max, .titlebar-restore { order: 1 !important; }
 .titlebar-close { order: 2 !important; }
 .titlebar-min, :root:not([sizemode="maximized"]) .titlebar-max, :root[sizemode="maximized"] .titlebar-restore { display: flex !important; }
-.titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; background-color: #86838d !important; box-shadow: none !important; transition: none !important; }
-.titlebar-button:hover > .toolbarbutton-icon { background-color: #7c5cff !important; }
-.titlebar-button:hover:active > .toolbarbutton-icon { background-color: #664cce !important; }
-.titlebar-buttonbox:hover .titlebar-close > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-close-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
+.titlebar-button > .toolbarbutton-icon { width: 12px !important; height: 12px !important; border-radius: 50% !important; background-image: none !important; background-color: #83838d !important; box-shadow: none !important; transition: none !important; }
+.titlebar-button:hover > .toolbarbutton-icon { background-color: #7452f5 !important; }
+.titlebar-button:hover:active > .toolbarbutton-icon { background-color: #5f45c6 !important; }
+.titlebar-buttonbox:hover .titlebar-close > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-close-symbolic) !important; background-size: 8px !important; color: #151520 !important; stroke: #151520 !important; }
 .titlebar-buttonbox:hover .titlebar-close:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
-.titlebar-buttonbox:hover .titlebar-min > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-minimize-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
+.titlebar-buttonbox:hover .titlebar-min > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-minimize-symbolic) !important; background-size: 8px !important; color: #151520 !important; stroke: #151520 !important; }
 .titlebar-buttonbox:hover .titlebar-min:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
-.titlebar-buttonbox:hover .titlebar-max > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-maximize-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
+.titlebar-buttonbox:hover .titlebar-max > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-maximize-symbolic) !important; background-size: 8px !important; color: #151520 !important; stroke: #151520 !important; }
 .titlebar-buttonbox:hover .titlebar-max:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
-.titlebar-buttonbox:hover .titlebar-restore > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-restore-symbolic) !important; background-size: 8px !important; color: #181521 !important; stroke: #181521 !important; }
+.titlebar-buttonbox:hover .titlebar-restore > .toolbarbutton-icon { background-image: -moz-symbolic-icon(window-restore-symbolic) !important; background-size: 8px !important; color: #151520 !important; stroke: #151520 !important; }
 .titlebar-buttonbox:hover .titlebar-restore:hover > .toolbarbutton-icon { color: #ffffff !important; stroke: #ffffff !important; }
 }
 @-moz-document url("about:newtab"), url("about:home"), url("about:privatebrowsing") {
 :root {
   color-scheme: light !important;
-  --newtab-background-color: #f3f1f8 !important;
+  --newtab-background-color: #f1f1fa !important;
   --newtab-background-color-secondary: #ffffff !important;
   --newtab-background-card: #ffffff !important;
-  --newtab-text-primary-color: #181521 !important;
-  --newtab-text-secondary-color: #686575 !important;
-  --newtab-text-secondary-text: #686575 !important;
-  --newtab-wordmark-color: #181521 !important;
-  --newtab-element-hover-color: #e4e2e9 !important;
-  --newtab-element-active-color: #d4d2da !important;
-  --newtab-primary-action-background: #7c5cff !important;
+  --newtab-text-primary-color: #151520 !important;
+  --newtab-text-secondary-color: #565563 !important;
+  --newtab-text-secondary-text: #565563 !important;
+  --newtab-wordmark-color: #151520 !important;
+  --newtab-element-hover-color: #e2e2eb !important;
+  --newtab-element-active-color: #d2d2db !important;
+  --newtab-primary-action-background: #7452f5 !important;
   --newtab-primary-element-text-color: #ffffff !important;
   --newtab-weather-background-color: #ffffff !important;
-  --in-content-page-background: #f3f1f8 !important;
-  --in-content-page-color: #181521 !important;
-  --link-color: #7053e6 !important;
+  --in-content-page-background: #f1f1fa !important;
+  --in-content-page-color: #151520 !important;
+  --link-color: #6e4ee9 !important;
 }
-body { background-color: #f3f1f8 !important; color: #181521 !important; font-family: "Inter", sans-serif !important; }
+body { background-color: #f1f1fa !important; color: #151520 !important; font-family: "Inter", sans-serif !important; }
 }

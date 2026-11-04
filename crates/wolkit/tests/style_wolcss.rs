@@ -179,7 +179,7 @@ fn shorthands_expand_like_css() {
         "row then column"
     );
     let d = one(".a { border-radius: s m; }");
-    assert_eq!(d.p.paint.radius, [6.0, 10.0, 6.0, 10.0]);
+    assert_eq!(d.p.paint.radius, [8.0, 12.0, 8.0, 12.0]);
     let d = one(".a { inset: 0px 4px; }");
     assert_eq!(
         d.p.layout.inset,
