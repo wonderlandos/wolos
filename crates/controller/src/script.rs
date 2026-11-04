@@ -21,7 +21,9 @@ pub struct Kind {
     pub id: &'static str,
     /// Interpreter names a shebang may give (`#!/usr/bin/ruby`, `#!/usr/bin/env ruby`).
     pub interpreters: &'static [&'static str],
-    /// File name endings used when there is no shebang.
+    /// File name endings used when there is no shebang. (A `.rb` file whose shebang names rsh
+    /// is an rsh script too: the shebang wins, and rsh reads a `.rb` file as plain Ruby unless
+    /// its first line is `# rsh: shell`; a `#!/usr/bin/env ruby` file stays `ruby`.)
     pub extensions: &'static [&'static str],
     /// The interpreter on a WolOS system.
     pub program: &'static str,
@@ -268,7 +270,21 @@ pub fn remote_command(kind: &Kind, file: &str, args: &[String]) -> String {
         sh_quote(&format!("WOL_HELPER={}", helper_name(file))),
         sh_quote(kind.program),
     ];
-    words.extend(kind.stdin_args.iter().map(|a| sh_quote(a)));
+    let mut stdin_args: Vec<String> = kind.stdin_args.iter().map(|a| a.to_string()).collect();
+    if kind.id == "rsh" && file.to_ascii_lowercase().ends_with(".rb") {
+        // The script arrives on stdin, so rsh cannot see its name: tell it, so a `.rb` file is
+        // read the same way there as here (plain Ruby unless it opts in).
+        let base = Path::new(file)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("script.rb");
+        let at = stdin_args
+            .iter()
+            .position(|a| a == "--")
+            .unwrap_or(stdin_args.len());
+        stdin_args.splice(at..at, ["--name".to_string(), base.to_string()]);
+    }
+    words.extend(stdin_args.iter().map(|a| sh_quote(a)));
     words.extend(args.iter().map(|a| sh_quote(a)));
     words.join(" ")
 }
@@ -522,6 +538,27 @@ mod tests {
         assert_eq!(kind_of("x", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
         assert_eq!(kind_of("x", "#!/usr/bin/env rsh\n").unwrap().id, "rsh");
         assert_eq!(kind_of("x.sh", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
+        // a .rb file goes through rsh when its shebang says so; a ruby shebang keeps ruby
+        assert_eq!(
+            kind_of("x.rb", "#!/usr/bin/rsh\nputs 1\n").unwrap().id,
+            "rsh"
+        );
+        assert_eq!(
+            kind_of("x.rb", "#!/usr/bin/env rsh\nputs 1\n").unwrap().id,
+            "rsh"
+        );
+        assert_eq!(
+            kind_of("x.rb", "#!/usr/bin/rsh\n# rsh: shell\necho\n")
+                .unwrap()
+                .id,
+            "rsh"
+        );
+        assert_eq!(
+            kind_of("x.rb", "#!/usr/bin/env ruby\nputs 1\n").unwrap().id,
+            "ruby"
+        );
+        assert_eq!(kind_of("x.rb", "#!/usr/bin/ruby\n").unwrap().id, "ruby");
+        assert_eq!(kind_of("x.RB", "puts 1\n").unwrap().id, "ruby");
         assert_eq!(kind_of("x", "#!/bin/bash\n").unwrap().id, "bash");
         let e = kind_of("x.py", "#!/usr/bin/python3\n").unwrap_err();
         assert!(
@@ -569,6 +606,19 @@ mod tests {
             c.contains("'WOL_HELPER=deploy' '/usr/bin/rsh' '-s' '--' 'a b'"),
             "{c}"
         );
+        // a .rb file with an rsh shebang is sent with its name, so rsh reads it as plain Ruby
+        let c = remote_command(rsh, "/x/it's.rb", &["a b".into()]);
+        assert!(
+            c.contains("'WOL_HELPER=its' '/usr/bin/rsh' '-s' '--name' 'it'\\''s.rb' '--' 'a b'"),
+            "{c}"
+        );
+        let c = remote_command(rsh, "tool.rb", &[]);
+        assert!(
+            c.ends_with("'/usr/bin/rsh' '-s' '--name' 'tool.rb' '--'"),
+            "{c}"
+        );
+        assert!(!remote_command(rsh, "t.rsh", &[]).contains("--name"));
+        assert!(!remote_command(&KINDS[2], "t.rb", &[]).contains("--name"));
     }
 
     fn kind_named(id: &str) -> &'static Kind {

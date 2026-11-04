@@ -4,7 +4,7 @@ Decision: ADR 0041. Code: `crates/controller/src/script.rs` (`wol script`, the `
 
 ## What a script is
 
-A script is a text file you edit and run: its first line names the interpreter (`#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/ruby`, `#!/usr/bin/env ruby`, `#!/usr/bin/rsh`), or, without that line, its name ends in `.sh`, `.bash`, `.rb` or `.rsh`. `rsh` is Ruby with shell command lines (docs/modules/rsh.md). WolOS treats a Ruby script exactly as it treats a shell script. Why Ruby: Crystal is the language of apps and tools (ADR 0036), but it compiles; a script should run the moment you save it. The interpreter (`ruby`) is part of the system; the linter (`rubocop`) comes with the Developer module.
+A script is a text file you edit and run: its first line names the interpreter (`#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/ruby`, `#!/usr/bin/env ruby`, `#!/usr/bin/rsh`), or, without that line, its name ends in `.sh`, `.bash`, `.rb` or `.rsh`. `rsh` is Ruby with shell command lines (docs/modules/rsh.md; its source is github.com/wonderlandos/rsh). The shebang wins over the name: a `.rb` file with `#!/usr/bin/rsh` runs through rsh (as plain Ruby unless its first line after the shebang is `# rsh: shell`), a `#!/usr/bin/env ruby` file stays Ruby. WolOS treats a Ruby script exactly as it treats a shell script. Why Ruby: Crystal is the language of apps and tools (ADR 0036), but it compiles; a script should run the moment you save it. The interpreter (`ruby`) is part of the system; the linter (`rubocop`) comes with the Developer module.
 
 | Kind | Name | Interpreter | Checked with | Linter (when installed) |
 |---|---|---|---|---|

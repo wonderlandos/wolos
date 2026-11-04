@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! rsh rules (docs/modules/rsh.md "Rules", ids RSH-nnn; ADR 0041): the shell language in rsh/.
-//! The KINDS row `wol script` uses for it matches the document, every `.rsh` file in the tree has
-//! the header and parses, the interpreter is fetched at one pinned commit with a checksum and never
-//! kept in the tree, and upstream names stay out of rsh's own text. `rsh -n` runs when a built
-//! binary is found (rsh/build/rsh, or `rsh` on PATH); WOLOS_REQUIRE_RSH=1 turns a missing binary
-//! into a failure (CI sets it). `rsh_100_doc_and_tests_agree` ties the tests to the document.
+//! rsh rules (docs/modules/rsh.md "Rules", ids RSH-nnn; ADR 0041). rsh has its own repository
+//! (github.com/wonderlandos/rsh); here: the KINDS row `wol script` uses for it matches the
+//! document (an rsh shebang makes a `.rb` file an rsh script, a ruby shebang keeps `ruby`), every
+//! `.rsh` file in this tree has the header and parses, this tree holds no copy of rsh, the package
+//! text fetches the tagged release, and upstream names stay out of the document. `rsh -n` runs when
+//! an installed rsh is found (/usr/bin/rsh, else `rsh` on PATH); WOLOS_REQUIRE_RSH=1 turns a
+//! missing binary into a failure (CI sets it). `rsh_100_doc_and_tests_agree` ties the tests to the
+//! document.
 #[path = "support/repo.rs"]
 mod repo;
 
@@ -45,7 +47,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
 fn rsh_files() -> Vec<String> {
     let root = repo("");
     let mut all = Vec::new();
-    for top in ["rsh", "files", "desktop", "tools", "docs", "wopkg"] {
+    for top in ["files", "desktop", "tools", "docs", "wopkg"] {
         walk(&root, &root.join(top), &mut all);
     }
     let mut found = Vec::new();
@@ -66,11 +68,11 @@ fn require_tools() -> bool {
     std::env::var("WOLOS_REQUIRE_RSH").is_ok_and(|v| v == "1")
 }
 
-/// The built rsh: the one `make -C rsh` produced, else one on PATH.
+/// The installed rsh: /usr/bin/rsh when present, else one on PATH.
 fn rsh_binary() -> Option<PathBuf> {
-    let built = repo("rsh/build/rsh");
-    if built.is_file() {
-        return Some(built);
+    let installed = PathBuf::from("/usr/bin/rsh");
+    if installed.is_file() {
+        return Some(installed);
     }
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
@@ -81,7 +83,7 @@ fn rsh_binary() -> Option<PathBuf> {
 fn need_binary(rule: &str) -> Option<PathBuf> {
     let b = rsh_binary();
     if b.is_none() {
-        eprintln!("{rule}: rsh is not built (make -C rsh); skipped");
+        eprintln!("{rule}: rsh is not installed; skipped");
         assert!(
             !require_tools(),
             "{rule}: rsh missing (WOLOS_REQUIRE_RSH=1)"
@@ -108,11 +110,16 @@ fn rsh_001_the_kinds_row_matches_the_document() {
         "| `rsh` | `.rsh` | `/usr/bin/rsh` | `rsh -n` | `rsh --lint` |",
         "#!/usr/bin/rsh",
         "#!/usr/bin/env rsh",
+        "`.rb` file whose shebang is `#!/usr/bin/rsh`",
     ] {
         assert!(d.contains(needle), "docs/modules/rsh.md lacks {needle}");
     }
     assert_eq!(kind_of("x", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
     assert_eq!(kind_of("x.rsh", "echo\n").unwrap().id, "rsh");
+    // a .rb file: the shebang decides (rsh reads it as plain Ruby unless it opts in)
+    assert_eq!(kind_of("x.rb", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
+    assert_eq!(kind_of("x.rb", "#!/usr/bin/env ruby\n").unwrap().id, "ruby");
+    assert_eq!(kind_of("x.rb", "puts 1\n").unwrap().id, "ruby");
     let scripting = read("docs/modules/scripting.md");
     assert!(
         scripting.contains("| `rsh` | `.rsh` |"),
@@ -122,9 +129,7 @@ fn rsh_001_the_kinds_row_matches_the_document() {
 
 #[test]
 fn rsh_002_every_rsh_file_has_the_header() {
-    let files = rsh_files();
-    assert!(files.len() >= 13, "golden scripts and examples: {files:?}");
-    for f in files {
+    for f in rsh_files() {
         let text = read(&f);
         let mut lines = text.lines();
         assert_eq!(lines.next(), Some("#!/usr/bin/rsh"), "{f}: line 1");
@@ -156,49 +161,31 @@ fn rsh_003_every_rsh_file_parses() {
 }
 
 #[test]
-fn rsh_004_the_interpreter_is_pinned_and_never_in_the_tree() {
-    let m = read("rsh/Makefile");
-    let value = |key: &str| {
-        m.lines()
-            .find_map(|l| l.strip_prefix(key)?.trim_start().strip_prefix('='))
-            .map(|v| v.trim().to_string())
-            .unwrap_or_else(|| panic!("rsh/Makefile has no {key}"))
-    };
-    let commit = value("MRUBY_COMMIT");
-    let sum = value("MRUBY_SHA256");
-    let hex = |s: &str, n: usize| s.len() == n && s.bytes().all(|b| b.is_ascii_hexdigit());
-    assert!(hex(&commit, 40), "a full commit id: {commit}");
-    assert!(hex(&sum, 64), "a sha256: {sum}");
-    assert!(m.contains("sha256sum -c"), "the download is checked");
+fn rsh_004_the_tree_holds_no_copy_of_rsh() {
+    // The source is github.com/wonderlandos/rsh; a copy here would drift from it.
     assert!(
-        m.contains("MRUBY_TARBALL ?="),
-        "the package hands in its own copy"
+        !repo("rsh").exists(),
+        "rsh/ is gone: the source is its own repository"
     );
-    // Only these folders belong to rsh; a copy of the interpreter would be a new one.
-    let root = repo("rsh");
-    let mut names: Vec<String> = std::fs::read_dir(&root)
-        .unwrap()
-        .flatten()
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n != "build")
-        .collect();
-    names.sort();
-    let want = [
-        ".gitignore",
+    for f in [
         "Makefile",
-        "VERSION",
-        "build_config.rb",
-        "build_config.rb.lock",
-        "rsh.1",
-        "src",
-        "tests",
-    ];
-    assert!(
-        names.iter().all(|n| want.contains(&n.as_str())),
-        "rsh/ holds only {want:?}: {names:?}"
-    );
-    let ignore = read("rsh/.gitignore");
-    assert!(ignore.lines().any(|l| l == "build/"), "build/ is ignored");
+        "BUILD.md",
+        ".github/workflows/ci.yml",
+        "tools/exec-bits.txt",
+    ] {
+        let Ok(text) = std::fs::read_to_string(repo(f)) else {
+            continue;
+        };
+        for bad in [
+            "make -C rsh",
+            "rsh/build",
+            "rsh/src",
+            "rsh/Makefile",
+            "rsh/tests",
+        ] {
+            assert!(!text.contains(bad), "{f} still builds or lists rsh/: {bad}");
+        }
+    }
 }
 
 /// Words of `line` (letters and digits), lowercased.
@@ -211,28 +198,15 @@ fn words(line: &str) -> Vec<String> {
 
 #[test]
 fn rsh_005_upstream_names_stay_out_of_rsh_text() {
-    let mut files: Vec<String> = vec!["rsh/rsh.1".into(), "docs/modules/rsh.md".into()];
-    let root = repo("");
-    let mut all = Vec::new();
-    walk(&root, &root.join("rsh/src"), &mut all);
-    walk(&root, &root.join("rsh/tests"), &mut all);
-    files.extend(all.iter().map(|p| p.to_string_lossy().into_owned()));
-    for f in files {
-        let Ok(text) = std::fs::read_to_string(root.join(&f)) else {
-            continue;
-        };
-        for (n, l) in text.lines().enumerate() {
-            // The headers of the embedded interpreter and the regex library are build inputs.
-            if l.trim_start().starts_with("#include <mruby") || l.contains("PCRE2_") {
-                continue;
-            }
-            for w in words(l) {
-                assert!(
-                    !UPSTREAM.contains(&w.as_str()),
-                    "{f}:{}: names an upstream project ({w}); say \"the interpreter\"",
-                    n + 1
-                );
-            }
+    // The package text (rsh.PKGBUILD) is a build file and names the interpreter's source.
+    let f = "docs/modules/rsh.md";
+    for (n, l) in read(f).lines().enumerate() {
+        for w in words(l) {
+            assert!(
+                !UPSTREAM.contains(&w.as_str()),
+                "{f}:{}: names an upstream project ({w}); say \"the interpreter\"",
+                n + 1
+            );
         }
     }
 }
@@ -251,12 +225,7 @@ fn rsh_006_the_binary_is_small_and_stripped() {
 }
 
 #[test]
-fn rsh_007_the_man_page_and_the_package_text_exist() {
-    let man = read("rsh/rsh.1");
-    assert!(man.starts_with(".\\\" SPDX-License-Identifier: GPL-2.0-or-later"));
-    for section in ["NAME", "SYNOPSIS", "DESCRIPTION", "EXIT STATUS", "SEE ALSO"] {
-        assert!(man.contains(&format!(".SH {section}")), "rsh.1: {section}");
-    }
+fn rsh_007_the_package_text_exists() {
     assert!(doc().contains("docs/modules/rsh.PKGBUILD"));
     let pkg = read("docs/modules/rsh.PKGBUILD");
     assert!(pkg.contains("depends=(glibc pcre2)") && pkg.contains("sha256sums="));
@@ -264,10 +233,34 @@ fn rsh_007_the_man_page_and_the_package_text_exist() {
         pkg.contains("LINK=dynamic"),
         "no static regex library on the base"
     );
-    let mk = read("rsh/Makefile");
     assert!(
-        mk.contains("rsh.1"),
-        "make install puts the man page in place"
+        pkg.contains("url='https://github.com/wonderlandos/rsh'")
+            && pkg.contains("$url/archive/refs/tags/v$pkgver.tar.gz"),
+        "the source is the tagged release of wonderlandos/rsh"
+    );
+    assert!(
+        !pkg.contains("wolos.git") && !pkg.contains("_wolos_commit"),
+        "the package does not build from the WolOS repository"
+    );
+    // sha256sums: the release tarball first (a sha256, or the marked gap until the tag exists),
+    // then the interpreter's tarball (a sha256).
+    let sums = pkg
+        .split("sha256sums=(")
+        .nth(1)
+        .and_then(|r| r.split(')').next())
+        .expect("sha256sums=(...)");
+    let entries: Vec<&str> = sums
+        .split_whitespace()
+        .map(|w| w.trim_matches(['\'', '"']))
+        .collect();
+    let hex = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    assert!(
+        !entries.is_empty() && hex(entries.last().unwrap()),
+        "the interpreter tarball has a sha256: {entries:?}"
+    );
+    assert!(
+        hex(entries[0]) || sums.contains("<sha256 of rsh-"),
+        "the release tarball has a sha256 (or the marked gap until the tag exists): {sums}"
     );
 }
 

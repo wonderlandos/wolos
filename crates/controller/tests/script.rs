@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol script` (ADR 0041, docs/modules/scripting.md): a Ruby script is checked and run exactly
-//! like a shell script, and so is an rsh script (ADR 0041, rsh/). Every parity test walks the same
+//! like a shell script, and so is an rsh script (ADR 0041; rsh has its own repository, github.com/wonderlandos/rsh). Every parity test walks the same
 //! cases for `.sh`, `.rb` and `.rsh`: the argv
 //! (interpreter + file, never a shell string), the clean environment, the helper name, the audit
 //! record, the ssh path (file on stdin) and the refusals. The last tests run the real `wol` binary
@@ -52,6 +52,19 @@ const SCRIPTS: &[(&str, &str, &str, &str)] = &[
         "rsh",
         "tidy",
         "#!/usr/bin/env rsh\necho hi\n",
+        "/usr/bin/rsh",
+    ),
+    // a .rb file goes through rsh when its shebang says so (plain Ruby there, unless it opts in)
+    (
+        "rsh",
+        "tidy.rb",
+        "#!/usr/bin/rsh\nputs 'hi'\n",
+        "/usr/bin/rsh",
+    ),
+    (
+        "rsh",
+        "tidy.rb",
+        "#!/usr/bin/rsh\n# rsh: shell\necho hi\n",
         "/usr/bin/rsh",
     ),
 ];
@@ -159,6 +172,12 @@ fn every_kind_runs_on_another_computer_from_stdin() {
             "{kind}: the file goes on stdin, not by name"
         );
         assert_eq!(e.inputs, vec![text.to_string()], "{kind}");
+        // rsh reads a .rb file as plain Ruby: on stdin it needs the name to know it is one
+        assert_eq!(
+            cmd.contains("'--name' 'tidy.rb' '--'"),
+            *kind == "rsh" && file.ends_with(".rb"),
+            "{kind} {file}: {cmd}"
+        );
         let log = audit_log(&e);
         assert_eq!(log[0]["tool"], "script on");
         assert_eq!(log[0]["via"], "ssh");
@@ -400,6 +419,44 @@ fn real_check_tells_a_good_script_from_a_broken_one() {
     }
 }
 
+/// A `.rb` file whose shebang names rsh is plain Ruby (the shell layer is off) unless its first
+/// line after the shebang is `# rsh: shell`; `wol script check` and `run` follow the same rule.
+#[test]
+fn real_rb_files_through_rsh_are_plain_ruby_unless_they_opt_in() {
+    if !have("/usr/bin/rsh") {
+        eprintln!("/usr/bin/rsh not installed; the .rb mode test is skipped");
+        return;
+    }
+    let home = temp_home("real-rb-mode");
+    let state = home.join("state");
+    let wol_run = |name: &str, text: &str| {
+        let f = home.join(name);
+        std::fs::write(&f, text).unwrap();
+        wol(
+            &["script", "run", f.to_str().unwrap()],
+            &[("HOME", &home), ("XDG_STATE_HOME", &state)],
+        )
+    };
+    // plain: `echo hi` is a Ruby call of a method that does not exist
+    let plain = "#!/usr/bin/rsh\nbegin\n  echo 'hi'\nrescue NoMethodError\n  puts 'ruby'\nend\n";
+    let o = wol_run("plain.rb", plain);
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "ruby\n");
+    // opted in: the same word starts a command line
+    let o = wol_run("shell.rb", "#!/usr/bin/rsh\n# rsh: shell\necho hi\n");
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "hi\n");
+    // a command line is a mistake in a plain .rb file, and check says so
+    let f = home.join("cmd.rb");
+    std::fs::write(&f, "#!/usr/bin/rsh\ncd ~/src/app\n").unwrap();
+    let o = wol(&["script", "check", f.to_str().unwrap(), "--json"], &[]);
+    assert!(!o.status.success(), "{o:?}");
+    std::fs::write(&f, "#!/usr/bin/rsh\n# rsh: shell\ncd ~/src/app\n").unwrap();
+    let o = wol(&["script", "check", f.to_str().unwrap(), "--json"], &[]);
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["ok"], true, "{v}");
+}
+
 /// `wol script on` end to end with a stand-in for ssh that does what sshd does with the command
 /// line: hands it to the other side's shell, stdin attached. The script arrives on stdin, gets the
 /// clean environment and the helper name there, and its arguments arrive unchanged, quotes and all.
@@ -422,6 +479,13 @@ fn real_scripts_run_on_another_computer_from_stdin() {
             "far.rsh",
             "#!/usr/bin/rsh\n\
              puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\n",
+        ),
+        // a .rb file with an rsh shebang is plain Ruby over ssh too: `echo` is a Ruby call there
+        (
+            "/usr/bin/rsh",
+            "far.rb",
+            "#!/usr/bin/rsh\nbegin\n  echo 'x'\nrescue NoMethodError\n  \
+             puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\nend\n",
         ),
     ];
     for (prog, name, text) in cases {
