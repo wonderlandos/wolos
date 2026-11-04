@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol script` (ADR 0041, docs/modules/scripting.md): a Ruby script is checked and run exactly
-//! like a shell script. Every parity test walks the same cases for `.sh` and `.rb`: the argv
+//! like a shell script. Every parity test walks the same cases for `.sh`, `.rb` and `.rsh`: the argv
 //! (interpreter + file, never a shell string), the clean environment, the helper name, the audit
 //! record, the ssh path (file on stdin) and the refusals. The last tests run the real `wol` binary
 //! on real scripts and skip with a message when the interpreter is missing.
@@ -41,6 +41,11 @@ const SCRIPTS: &[(&str, &str, &str, &str)] = &[
         "#!/usr/bin/env ruby\nputs 'hi'\n",
         "/usr/bin/ruby",
     ),
+    // rsh (Ruby with command lines, the manual's first-ruby-script page): by its ending, by
+    // `#!/usr/bin/rsh` and by `#!/usr/bin/env rsh`.
+    ("rsh", "tidy.rsh", "puts 'hi'\nls\n", "/usr/bin/rsh"),
+    ("rsh", "tidy", "#!/usr/bin/rsh\nls\n", "/usr/bin/rsh"),
+    ("rsh", "tidy.rb", "#!/usr/bin/env rsh\nls\n", "/usr/bin/rsh"),
 ];
 
 fn env_with(tag: &str, file: &str, text: &str) -> (FakeEnv, String) {
@@ -215,6 +220,9 @@ fn check_parses_without_running_then_lints_when_installed() {
             assert!(lint.contains(&"--only".to_string()), "{lint:?}");
             assert!(lint.contains(&"--force-default-config".to_string()));
             "rubocop"
+        } else if *prog == "/usr/bin/rsh" {
+            assert_eq!(lint[..2], ["rsh", "--lint"], "rsh lints itself: {lint:?}");
+            "rsh"
         } else {
             "shellcheck"
         };
@@ -251,8 +259,31 @@ fn kinds_list_names_ruby_beside_sh() {
         .iter()
         .map(|k| k["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["sh", "bash", "ruby"]);
+    assert_eq!(ids, ["sh", "bash", "ruby", "rsh"]);
     assert_eq!(v[2]["extensions"], serde_json::json!([".rb"]));
+    assert_eq!(v[3]["extensions"], serde_json::json!([".rsh"]));
+    assert_eq!(v[3]["program"], "/usr/bin/rsh");
+    assert_eq!(v[3]["lint"], "rsh");
+}
+
+/// The manual (site/src/content/manual/first-ruby-script.md) promises this exact answer for
+/// `wol script check hello.rsh` when rsh is installed and finds nothing.
+#[test]
+fn check_of_an_rsh_script_says_what_the_manual_says() {
+    let text =
+        "#!/usr/bin/env rsh\nname = ENV.fetch(\"USER\")\nputs \"Hello, #{name}!\"\nls ~/Pictures\n";
+    let (mut e, _) = env_with("rshman", "hello.rsh", text);
+    e.files = vec![(PathBuf::from("hello.rsh"), text.into())];
+    e.captured = Some("rsh 0.9.0\n".into());
+    assert_eq!(run("script check hello.rsh", &mut e), 0, "{}", e.err);
+    assert_eq!(
+        e.execs,
+        [
+            vec!["/usr/bin/rsh", "-n", "hello.rsh"],
+            vec!["rsh", "--lint", "hello.rsh"]
+        ]
+    );
+    assert_eq!(e.out, "hello.rsh: rsh script, parses and rsh is clean\n");
 }
 
 #[test]
@@ -306,6 +337,14 @@ fn real_scripts_get_the_same_environment_and_the_same_gate() {
              system(ARGV[0], 'focus', 'on')\nputs \"code=#{$?.exitstatus}\"\n"
                 .to_string(),
         ),
+        (
+            "/usr/bin/rsh",
+            "probe.rsh",
+            "#!/usr/bin/rsh\n\
+             puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')}\"\n\
+             system(ARGV[0], 'focus', 'on')\nputs \"code=#{$?.exitstatus}\"\n"
+                .to_string(),
+        ),
     ];
     for (prog, name, text) in cases {
         if !have(prog) {
@@ -351,6 +390,11 @@ fn real_check_tells_a_good_script_from_a_broken_one() {
             "#!/usr/bin/ruby\n# frozen_string_literal: true\nputs 'ok'\n",
             "#!/usr/bin/ruby\ndef x(\n",
         ),
+        (
+            "/usr/bin/rsh",
+            "#!/usr/bin/rsh\nputs 'ok'\necho ok\n",
+            "#!/usr/bin/rsh\ndef x(\n",
+        ),
     ] {
         if !have(prog) {
             eprintln!("{prog} not installed; check skipped");
@@ -384,6 +428,12 @@ fn real_scripts_run_on_another_computer_from_stdin() {
             "/usr/bin/ruby",
             "far.rb",
             "#!/usr/bin/ruby\n# frozen_string_literal: true\n\
+             puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\n",
+        ),
+        (
+            "/usr/bin/rsh",
+            "far.rsh",
+            "#!/usr/bin/rsh\n\
              puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\n",
         ),
     ];
