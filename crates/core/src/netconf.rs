@@ -718,8 +718,32 @@ pub fn is_radio_kind(s: &str) -> bool {
 }
 
 /// Where the radios that were on before airplane mode are kept, under `$XDG_STATE_HOME`
-/// (`<state home>/wolos/airplane`): one rfkill type per line.
+/// (`<state home>/wolos/airplane`; [`airplane_path`] says where): one rfkill type per line.
 pub const AIRPLANE_FILE: &str = "wolos/airplane";
+
+/// The computer's own folder for that list, writable by every account (made by tmpfiles.d): the
+/// radios are the computer's, not one account's, so a person who signs in after airplane mode was
+/// turned on sees it on, and turning it off brings back the radios that were on before it (a
+/// list per account saw "off" while every radio was blocked; QA-A7-13).
+pub const AIRPLANE_SHARED_DIR: &str = "/var/lib/wolos/airplane";
+
+/// The list's file: in [`AIRPLANE_SHARED_DIR`] where the computer has it, else (a machine set up
+/// by hand) in the account's state home as [`AIRPLANE_FILE`].
+pub fn airplane_path(state_home: &std::path::Path) -> std::path::PathBuf {
+    airplane_path_in(std::path::Path::new(AIRPLANE_SHARED_DIR), state_home)
+}
+
+/// [`airplane_path`] with the shared folder given.
+pub fn airplane_path_in(
+    shared: &std::path::Path,
+    state_home: &std::path::Path,
+) -> std::path::PathBuf {
+    if shared.is_dir() {
+        shared.join("radios")
+    } else {
+        state_home.join(AIRPLANE_FILE)
+    }
+}
 
 /// The radio types that were on (not blocked) before airplane mode, once each.
 pub fn radios_on(radios: &[Radio]) -> Vec<String> {
@@ -757,6 +781,24 @@ pub fn airplane_on(saved: Option<&str>, radios: &[Radio]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-A7-13: the airplane list belongs to the computer where it has a folder for it, and to
+    /// the account's state home on a machine set up by hand.
+    #[test]
+    fn the_airplane_list_is_the_computers_when_it_has_a_folder() {
+        let d = std::env::temp_dir().join(format!("wol-airplane-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (shared, state) = (d.join("shared"), d.join("state"));
+        assert_eq!(airplane_path_in(&shared, &state), state.join(AIRPLANE_FILE));
+        std::fs::create_dir_all(&shared).unwrap();
+        assert_eq!(airplane_path_in(&shared, &state), shared.join("radios"));
+        // Every account reads and writes the same place.
+        assert_eq!(
+            airplane_path_in(&shared, &state),
+            airplane_path_in(&shared, &d.join("another-account"))
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     fn manual(a: &str, r: &str, dns: &[&str]) -> Ipv4Config {
         Ipv4Config {

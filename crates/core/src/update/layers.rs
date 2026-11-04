@@ -446,6 +446,21 @@ pub fn delta(before: &str, after: &str) -> Record {
     }
 }
 
+/// Whether the two `pacman -Q` answers around a change can be compared at all (QA-A7-4). The
+/// query in the layer's namespace is best effort; when it fails it leaves an empty (or cut)
+/// file, which [`delta`] would read as "every package was removed" and the record would then
+/// strip every package's entry from the next slot. Empty, or fewer than half of what was there
+/// before, is a failed query: no change to a layer removes half of the system.
+pub fn readable(before: &str, after: Option<&str>) -> bool {
+    let count = |t: &str| {
+        t.lines()
+            .filter(|l| l.split_whitespace().count() >= 2)
+            .count()
+    };
+    let (b, a) = (count(before), after.map_or(0, count));
+    b > 0 && a > 0 && a * 2 >= b
+}
+
 /// Package name of a database directory `name-version-release`.
 pub fn pkg_name(dir: &str) -> &str {
     let mut it = dir.rsplitn(3, '-');

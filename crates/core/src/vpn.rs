@@ -33,6 +33,12 @@ impl VpnKind {
             Self::Other => "VPN",
         }
     }
+    /// Whether the person can be asked to type a password for this kind. A WireGuard profile
+    /// has none: when NetworkManager asks it for a secret, its key is gone from the keyring and
+    /// only importing the file again helps (QA-A7-19).
+    pub fn has_password(self) -> bool {
+        self != Self::WireGuard
+    }
     /// The secret NetworkManager asks for when the profile does not keep it.
     pub fn secret_key(self) -> Option<&'static str> {
         match self {
@@ -272,6 +278,13 @@ mod tests {
     use super::*;
 
     const U: &str = "6a3f0c2e-1111-4a5b-9c8d-0123456789ab";
+
+    /// QA-A7-19: only WireGuard has no password to ask for.
+    #[test]
+    fn a_wireguard_profile_has_no_password() {
+        assert!(!VpnKind::WireGuard.has_password());
+        assert!(VpnKind::OpenVpn.has_password() && VpnKind::Other.has_password());
+    }
 
     #[test]
     fn lists_vpn_profiles_only() {

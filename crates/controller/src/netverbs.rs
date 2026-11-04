@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use shared::errors::ErrorCode;
 use wol_core::controls::ControlError;
 use wol_core::netconf::{self, DotConfig, DotMode, IpApplied, Ipv4Config, ProxyConfig, ProxyMode};
+use wol_core::vpn::VpnKind;
 
 /// Handles `inv` when it is a network verb.
 pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
@@ -109,7 +110,7 @@ fn network_ip(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
             env,
             ErrorCode::Failed,
             &format!(
-                "{iface} did not reach the network with the new address within {} seconds, so it went back to Automatic (DHCP)",
+                "{iface} did not reach the network with the new address within {} seconds, so it went back to how it was",
                 netconf::IP_TRIAL_SECS
             ),
         ),
@@ -169,23 +170,31 @@ enum Change {
     Forget,
 }
 
-/// The profile named `name` (or with that UUID).
-fn vpn_uuid(env: &mut dyn Env, name: &str) -> Result<String, ControlError> {
+/// The profile named `name` (or with that UUID): its UUID and kind.
+fn vpn_uuid(env: &mut dyn Env, name: &str) -> Result<(String, VpnKind), ControlError> {
     let list = env.controls().vpns().ok_or(ControlError::Unavailable)?;
     list.into_iter()
         .find(|v| v.name == name || v.uuid == name)
-        .map(|v| v.uuid)
+        .map(|v| (v.uuid, v.kind))
         .ok_or(ControlError::NotFound)
 }
 
 fn vpn_change(env: &mut dyn Env, name: &str, how: Change, json: bool) -> i32 {
-    let uuid = match vpn_uuid(env, name) {
+    let (uuid, kind) = match vpn_uuid(env, name) {
         Ok(u) => u,
         Err(e) => return vpn_error(env, e),
     };
     let c = env.controls();
     let r = match how {
         Change::Connect => match c.vpn_connect(&uuid, None) {
+            // A WireGuard profile has no password to give: its key left the keyring (QA-A7-19).
+            Err(ControlError::WrongPassword) if !kind.has_password() => {
+                return fail(
+                    env,
+                    ErrorCode::Failed,
+                    "the VPN's key is missing from this computer; import its file again (wol vpn import)",
+                );
+            }
             // OpenVPN with a password: asked once on stdin, remembered in the keyring.
             Err(ControlError::WrongPassword) => match env.stdin_line().filter(|p| !p.is_empty()) {
                 Some(pw) => c.vpn_connect(&uuid, Some(&pw)),
@@ -270,7 +279,7 @@ fn dns_tls(env: &mut dyn Env, mode: &str, servers: &[&str], json: bool) -> i32 {
 // ---- wol airplane ----
 
 fn airplane_file(env: &dyn Env) -> std::path::PathBuf {
-    env.state_home().join(netconf::AIRPLANE_FILE)
+    netconf::airplane_path(&env.state_home())
 }
 
 fn airplane_state(env: &mut dyn Env) -> Value {

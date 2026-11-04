@@ -85,6 +85,12 @@ pub fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+/// The record of Settings > Accessibility > Larger text, relative to the config home. The text
+/// scale itself lives in gsettings, which a journal of files cannot undo; Settings writes this
+/// file in step (`1.25`, or none when off) so the change is an entry like any other, and an undo
+/// that restores the file sets the scale to match ([`Reload::larger_text`]; QA-A7-11).
+pub const LARGER_TEXT_FILE: &str = "wol/larger-text";
+
 /// What a running session reloads after a change was undone.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reload {
@@ -97,6 +103,9 @@ pub struct Reload {
     /// hypridle's timeouts changed: it reads its file only at start, so it restarts
     /// ([`IDLE_RESTART`]; QA-SET-3).
     pub idle: bool,
+    /// Larger text is now on (`Some(true)`) or off (`Some(false)`): the desktop's text scale is
+    /// set to match ([`LARGER_TEXT_FILE`]).
+    pub larger_text: Option<bool>,
 }
 
 /// Restarts hypridle on its file, for every writer and every undo (Settings > Lock Screen, the
@@ -113,6 +122,8 @@ pub fn reload_for(e: &Entry) -> Reload {
             r.theme = Some(after.as_deref().map(|t| t.trim().to_owned()));
         } else if path == crate::prefs::IDLE_FILE {
             r.idle = true;
+        } else if path == LARGER_TEXT_FILE {
+            r.larger_text = Some(after.is_some());
         } else if path == crate::terminal_shell::FILE {
             // Read by each new terminal window (`wol-term-shell`): nothing running to tell.
         } else if path.starts_with("hypr/") {
@@ -635,6 +646,32 @@ mod tests {
         assert_eq!(r, Reload::default(), "new terminals read it themselves");
         assert_eq!(IDLE_RESTART[0], ["pkill", "-x", "hypridle"]);
         assert_eq!(IDLE_RESTART[1], ["hypridle"]);
+    }
+
+    /// QA-A7-11: Larger text is a gsettings value; its record file lets the journal undo it, and
+    /// the reload says which way the scale goes.
+    #[test]
+    fn larger_text_undoes_through_its_record_file() {
+        let (d, j) = temp("larger");
+        j.save(
+            "accessibility",
+            "settings",
+            &[(LARGER_TEXT_FILE, Some("1.25\n"))],
+            1,
+        )
+        .unwrap();
+        let on = j.entries().pop().unwrap();
+        assert_eq!(reload_for(&on).larger_text, Some(true));
+        let undone = j.undo(None, "settings", 2).unwrap();
+        assert!(!d.join("config").join(LARGER_TEXT_FILE).exists());
+        assert_eq!(reload_for(&undone).larger_text, Some(false));
+        assert_eq!(
+            reload_for(&undone),
+            Reload {
+                larger_text: Some(false),
+                ..Reload::default()
+            }
+        );
     }
 
     #[test]

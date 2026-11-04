@@ -990,6 +990,34 @@ pub fn is_admin(user: &str, gid: u32, group_file: &str) -> bool {
         })
 }
 
+/// Whether the account `user` (else the one whose uid is `uid` in `passwd`) is an administrator
+/// by `group_file` ([`is_admin`]). A process the compositor started has no `$USER`, so the name
+/// follows the uid; neither: not an administrator (QA-A7-17).
+pub fn account_is_admin(user: Option<&str>, uid: u32, passwd: &str, group_file: &str) -> bool {
+    let from_passwd = || {
+        passwd.lines().find_map(|l| {
+            let f: Vec<&str> = l.split(':').collect();
+            (f.get(2)?.parse::<u32>().ok()? == uid).then(|| f[0])
+        })
+    };
+    user.filter(|u| !u.is_empty())
+        .or_else(from_passwd)
+        .is_some_and(|name| is_admin(name, u32::MAX, group_file))
+}
+
+/// [`account_is_admin`] for the signed-in account: `user` is its `$USER` (the caller reads the
+/// environment), the uid is this process's, and the files are the system's `/etc/passwd` and
+/// `/etc/group`.
+pub fn this_account_is_admin(user: Option<&str>) -> bool {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    account_is_admin(
+        user,
+        shared::sys::euid(),
+        &read("/etc/passwd"),
+        &read("/etc/group"),
+    )
+}
+
 /// Root needs no password; unknown peers (uid None) and non-admins refused.
 pub fn decide(uid: Option<u32>, admin: bool, cached: bool, has_password: bool) -> AdminDecision {
     match uid {
