@@ -35,6 +35,19 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   run the check now, then read the same files; a stamp older than the request means it could not
   refresh, and an empty list is then never shown as "up to date".
 - Release manifest: version, Arch snapshot date, `[wolos]` revision, linux-wolos version, image URL and sha256.
+- Computers still on 0.12.0 (QA-UPG-1). Their daily check (wolos-system 0.12.0-2, the script of tag v0.12.0)
+  runs `checkupdates` first; it needs fakeroot, which the image does not ship, so the check stops there every
+  time: no stamp, no package list, no release manifest. Nothing a server publishes reaches that check. What does
+  reach 0.12.0: Settings > Software Update > Check Now (`pkg-refresh`, then `pacman -Qu`), which lists newer
+  packages of the `[wolos]` repo its mirror list names (release `wolos-2026-10-31` of wolos-packages). So a release
+  is found by 0.12.0 only when (1) a newer `wolos-system`, with today's update-check, is in that repo (then Check Now
+  shows it, and after it is installed the daily check works), and (2) the latest GitHub release of wolos-packages,
+  the only address 0.12.0 reads, carries `release.json` and `release.json.sig` that 0.12.0 accepts: the strings
+  `version` (not empty), `snapshot` (`YYYY/MM/DD`), `wolos_repo`, `kernel`, `image`, `sha256` (64 hex digits), any
+  other field ignored, signed (raw Ed25519, 64 bytes) by `wolos-2026.pub` or `wolos-2026b.pub`. The release tooling
+  writes that form (wolos-iso `release/release-manifest.sh`, wolos-build `release --iso` marks a stable release
+  the latest); **CI** the controller tests `the_0120_client_reads_the_published_release` and
+  `check_runs_without_checkupdates_or_fakeroot` fail when either side changes.
 - Update Now (wol-admind `pkg-upgrade`) = `pacman -Syu` inside the release (only `[wolos]` moves), made in the
   other root slot by the same builder as the pacman wrapper below (`wol_core::update::pkg::slot_change`). The running
   slot is the restore point Software Update promises: wol-admind logs its name before the first step, and no step
