@@ -127,9 +127,12 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
 
     // Grants the host starts with; wold decides each call again.
     let consent = |_: ()| {
-        std::fs::read_to_string(wol_core::consent::FILE)
-            .map(|t| wol_core::consent::parse(&t))
-            .unwrap_or_default()
+        wol_core::consent::effective(
+            std::fs::read_to_string(wol_core::consent::FILE)
+                .ok()
+                .as_deref(),
+            &wol_core::consent::defaults_in(std::path::Path::new(wol_core::consent::DEFAULTS_DIR)),
+        )
     };
     let folder = dir.to_string_lossy().into_owned();
     let grants = |c: &[(String, String)]| initial_grants(&manifest.permissions, system, &folder, c);

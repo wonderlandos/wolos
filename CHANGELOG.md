@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bundled apps need no Settings visit before they work: a package can ship default grants for harmless verbs (Gallery: move to the Trash, share), listed in Settings > Privacy & Security where the person can still switch them off, and the choice survives updates (`consent::DEFAULTS_DIR`, docs/modules/security.md).
 - libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
 - PowerShell is a terminal shell beside zsh: the Developer module ships pwsh with the WolOS profile and completions, `wol-term-shell` starts it from foot, ghostty and kitty, and Settings > General has a Shells row.
 

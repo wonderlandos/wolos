@@ -410,14 +410,14 @@ pub const SHOWERS: [&str; 1] = ["/usr/bin/wol-shell"];
 /// The one program that collects apps' rows, and so shows them to the person.
 pub const SEARCHBAR: &str = "/usr/bin/wol-search";
 
-/// `wol_core::consent::FILE`, read on every call so a change in Settings applies at once.
-pub struct ConsentFile(pub PathBuf);
+/// `wol_core::consent::FILE` and the vendor defaults folder (`wol_core::consent::DEFAULTS_DIR`),
+/// both read on every call so a change in Settings or a package update applies at once.
+pub struct ConsentFile(pub PathBuf, pub PathBuf);
 
 impl Grants for ConsentFile {
     fn granted(&self, app: &str, capability: &str) -> bool {
-        std::fs::read_to_string(&self.0)
-            .map(|t| wol_core::consent::parse(&t))
-            .unwrap_or_default()
+        let text = std::fs::read_to_string(&self.0).ok();
+        wol_core::consent::effective(text.as_deref(), &wol_core::consent::defaults_in(&self.1))
             .iter()
             .any(|(a, c)| a == app && c == capability)
     }
@@ -1833,7 +1833,8 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
         let dir = std::env::temp_dir().join(format!("wol-portal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("consent.json");
-        let g = ConsentFile(f.clone());
+        let defaults = dir.join("consent.d");
+        let g = ConsentFile(f.clone(), defaults.clone());
         assert!(
             !g.granted("/usr/bin/a", "notifications"),
             "missing file grants nothing"
@@ -1849,6 +1850,30 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
         assert!(!g.granted("/usr/bin/a", "notifications"));
         assert!(g.shows_notifications("/usr/bin/wol-shell"));
         assert!(!g.shows_notifications("/usr/bin/a"));
+
+        // E2E-GALLERY: a package's default holds on a fresh system with no consent file, a
+        // Settings switch-off (the `revoked` list) takes it away, and a default outside the
+        // allowed verbs is ignored.
+        std::fs::remove_file(&f).unwrap();
+        std::fs::create_dir_all(&defaults).unwrap();
+        std::fs::write(
+            defaults.join("org.wolos.gallery.json"),
+            r#"{"grants":[{"app":"/usr/bin/wol-gallery","capability":"trash"},
+                {"app":"/usr/bin/wol-gallery","capability":"share"},
+                {"app":"/usr/bin/wol-gallery","capability":"packages-install"}]}"#,
+        )
+        .unwrap();
+        assert!(g.granted("/usr/bin/wol-gallery", "trash"));
+        assert!(g.granted("/usr/bin/wol-gallery", "share"));
+        assert!(!g.granted("/usr/bin/wol-gallery", "packages-install"));
+        assert!(!g.granted("/usr/bin/other", "trash"));
+        std::fs::write(
+            &f,
+            r#"{"grants":[],"revoked":[{"app":"/usr/bin/wol-gallery","capability":"trash"}]}"#,
+        )
+        .unwrap();
+        assert!(!g.granted("/usr/bin/wol-gallery", "trash"));
+        assert!(g.granted("/usr/bin/wol-gallery", "share"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }
