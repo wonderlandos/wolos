@@ -56,6 +56,11 @@ use std::path::{Path, PathBuf};
 /// process with Landlock and seccomp, which std wraps none of: one private `sys` function holds
 /// the one `libc::syscall` call (a ruleset, a rule, `prctl`, the filter), every other step is safe
 /// Rust (`O_PATH` through `OpenOptionsExt`). Lowered when the engine's embedding API settles.
+/// `webengine` 135 -> 140 (WE-WEB, 2026-11-04, QA-WEB-13 sibling): symbol version WWE_1.3 (1.2 is the scheme hook of FEDERATE), the one export
+/// `wwe_view_present` that shows the frame the engine painted (`#[unsafe(no_mangle)] pub unsafe extern`
+/// and the block reading its pointer in `src/engine/lib.rs`, +3), its function-pointer type in
+/// `src/ffi.rs` (+1) and the call in `WebView::spin` (+1, SAFETY line); covered by
+/// `tests/shim_loader_13.rs` against a C stand-in library.
 /// `webengine` 118 -> 135 (WEBHOST, 2026-11-04, ADR 0048): the host channel, symbol version WWE_1.1.
 /// `src/engine/lib.rs` (+8): the `wwe_message_fn` type, the two exports `wwe_engine_set_host_channel` and
 /// `wwe_view_post_message` (each `#[unsafe(no_mangle)] pub unsafe extern`), one block reading their
@@ -105,7 +110,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 9),
     ("wol-lua", 3),
     ("xguard-clam", 13),
-    ("webengine", 135),
+    ("webengine", 140),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -70,6 +70,32 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
             &format!("no verb has the action {method:?}"),
         );
     };
+    // `sys` lists its topics as text when it has none: the page asked for data, so it must name one
+    // (QA-WEB-34).
+    if method == "sys"
+        && args
+            .get("topic")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return fault(
+            ErrorCode::Usage,
+            "The request was not understood.",
+            "sys needs a topic",
+        );
+    }
+    // A check that does not exist is `not-found` before the gate asks anyone for anything, and its
+    // name is not echoed into a sentence (QA-WEB-31).
+    if method == "doctor.fix" {
+        let id = args.get("id").and_then(Value::as_str).unwrap_or_default();
+        if !crate::doctor::exists(env, id) {
+            return fault(
+                ErrorCode::NotFound,
+                "WolOS has no check with that name.",
+                &format!("no check {id:?}"),
+            );
+        }
+    }
     let verb = catalog::Verb {
         cmd,
         helper: catalog::HELPER_VERBS.iter().find(|h| h.path == cmd.path),
@@ -238,6 +264,36 @@ mod tests {
         );
     }
 
+    /// QA-WEB-34 and QA-WEB-31: `sys` without a topic is `usage` (it printed its topic list as
+    /// text), and a check that does not exist is `not-found` whatever its name holds, with no
+    /// password sheet and nothing run.
+    #[test]
+    fn sys_needs_a_topic_and_an_unknown_check_is_not_found() {
+        for p in ["{}", r#"{"topic":""}"#, r#"{"topic":7}"#] {
+            assert_eq!(ask("sys", p)["err"]["code"], "usage", "{p}");
+        }
+        for id in [
+            "x; rm -rf /",
+            "fire\nwall",
+            "kitchen.sink",
+            "security.nope",
+            "",
+        ] {
+            let mut env = FakeEnv::default();
+            let v = call(
+                "org.wolos.webapp.t",
+                "doctor.fix",
+                &json!({ "id": id }).to_string(),
+                &mut env,
+            );
+            assert_eq!(v["err"]["code"], "not-found", "{id:?}: {v}");
+            let msg = v["err"]["message"].as_str().unwrap();
+            assert!(!msg.contains(id.trim()) || id.is_empty(), "{msg}");
+            assert!(!msg.contains('\n'), "{msg:?}");
+            assert!(env.execs.is_empty() && env.requests.is_empty(), "{id:?}");
+        }
+    }
+
     #[test]
     fn a_verb_no_permission_opens_is_not_run() {
         // The slot update stays for people (root, --yes); no app may hold it.
@@ -376,7 +432,7 @@ mod tests {
             env.admin.lock().unwrap().sent.is_empty() && env.execs.is_empty(),
             "the shell runs it, not wol"
         );
-        // A check with nothing to fix asks nothing.
+        // A check that does not exist asks nothing and is not found (QA-WEB-31).
         let mut env = session();
         let v = call(
             "org.wolos.webapp.doctor",
@@ -384,7 +440,7 @@ mod tests {
             r#"{"id":"security.nope"}"#,
             &mut env,
         );
-        assert_eq!(v["err"]["code"], "denied", "{v}");
+        assert_eq!(v["err"]["code"], "not-found", "{v}");
         assert!(env.requests.is_empty());
     }
 

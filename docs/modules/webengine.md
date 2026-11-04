@@ -26,7 +26,7 @@ A host process starts as `<host> --content-process TOKEN` when the engine wants 
 
 | Part | Means |
 |---|---|
-| Exports | the 16 `wwe_*` functions of `crates/webengine/engine/wolwebengine.map` at version `WOLWEBENGINE_1`, and from WWE_1.1 `wwe_engine_set_host_channel` and `wwe_view_post_message` at version `WWE_1.1` (the host channel of system web apps, ADR 0048); append-only within the major |
+| Exports | the 16 `wwe_*` functions of `crates/webengine/engine/wolwebengine.map` at version `WOLWEBENGINE_1`, and from WWE_1.1 `wwe_engine_set_host_channel` and `wwe_view_post_message` at version `WWE_1.1` (the host channel of system web apps, ADR 0048), and from WWE_1.3 `wwe_view_present` at version `WWE_1.3` (1.2 is the scheme hook of the federate branch); append-only within the major |
 | Source | `crates/webengine/src/engine/lib.rs` (not a module of `webengine`; counted by its unsafe ratchet row), manifest `crates/webengine/engine/Cargo.toml` (excluded from the workspace) |
 | Build | `webengine-wolos` copies `crates/webengine` into the engine's workspace as `ports/wolwebengine`, builds `-p wolwebengine` under the engine's `Cargo.lock` (prepare() refuses any other change to the lock), links with `crates/webengine/engine/link.sh` |
 | Threads | every call on the thread that made the engine; `wake` may be called from any thread |
@@ -41,11 +41,11 @@ A host process starts as `<host> --content-process TOKEN` when the engine wants 
 | Part | Where | Means |
 |---|---|---|
 | Channel | `webengine::App::channel` (`Channel {origin, init, on_message}`), `WebView::post_message`, `WebView::has_channel` | the page's `window.__wolosHost` over the library's WWE_1.1 pair |
-| Pump | `webengine::host::Host` | page message to `Bridge` (refuses what the app did not declare or hold), an allowed call on a worker thread (at most 8 in flight, then `unavailable`), the reply queued for the window loop; no text over 64 KiB either way |
+| Pump | `webengine::host::Host` | page message to `Bridge` (refuses what the app did not declare or hold), an allowed call on a worker thread (at most 8 in flight, then `unavailable`), the reply queued for the window loop; no text over 64 KiB either way (`MAX_MESSAGE`), and no request over `MAX_REQUEST` (wold's 60 KiB call line less 512 bytes) |
 | wold | `host::WoldClient` | one `webapp-call <method> <params>` request per call on `/var/run/wold.sock` after the hello of ADR 0033; the app id is not in the request |
 | Start-up | `host::initial_grants`, `host::locale` | a system app starts with what it declares, an app of others with the consent grants for its folder; locale from `LC_ALL`, `LC_MESSAGES`, `LANG` |
 | One host per app | `process::claim`, `process::raise_argv` | an exclusive `flock` on `$XDG_RUNTIME_DIR/wolos/webhost-<app id>.lock`, taken after the scope re-exec (the exec would close it); a second launch of a running app runs `hyprctl dispatch focuswindow class:^(<app id>)$` and exits 0 (QA-WEB-10) |
-| Oversize and silence | `bridge::Bridge::handle`, `kit/bridge.js` | a request over 64 KiB is refused in the page with `usage` before it is posted; one that still arrives over the cap (multi-byte text) with a leading `"id"` is answered `usage` by the host; a call with no answer ends `unavailable` after 210 s, except the administrator methods, which wait for a person (QA-WEB-6) |
+| Oversize and silence | `bridge::Bridge::handle`, `kit/bridge.js` | a request over 60 KiB less 512 bytes (`bridge::MAX_REQUEST`, `kit/bridge.js` `MAX_BYTES`) is refused in the page with `usage` before it is posted; one that still arrives over the cap (multi-byte text) with a leading `"id"` is answered `usage` by the host; a call with no answer ends `unavailable` after 210 s, except the administrator methods, which wait for a person (QA-WEB-6) |
 | Errors | `host::fault_of`, `process::error_url`, `kit/error.html` | the host adds no Settings hint of its own to wold's refusals (wold's message says "Turn it on in Settings > Privacy" where that helps, QA-WEB-7); a crashed content process makes the host replace the view with the kit's error page (`reason=crashed`, Try again returns to the app's page, where the channel is set up again; QA-WEB-9; not run against the real engine yet) |
 
 Tests without the engine: `tests/kit_js.rs` (`node --test webapps/kit/test`: `bridge.js` and `error.js` in a bare context; skipped without node unless `WOL_NODE_REQUIRED`), `tests/launchers.rs` (the package script, the launcher entries), `tests/engine_channel.rs` (the injected script in a JavaScript interpreter), `tests/host_path.rs` (the real `bridge.js` and the Hello app's calls through the shim's scripts, the host and recorded answers), `tests/shim_loader_10.rs` and `tests/shim_loader_11.rs` (the loader and the view against a C stand-in library, with and without the channel).
@@ -83,17 +83,24 @@ A host or path prefix in `telemetry_off` (`hosts`, `beacon_paths`; a path covers
 | wolkit record (surface node) | Page |
 |---|---|
 | CLICK | move, press, release at the point |
-| POINTER_ENTER, POINTER_LEAVE | move to the point, leave |
+| POINTER_ENTER, POINTER_LEAVE | move to the point, leave. Wolkit sends a `POINTER_ENTER` with the position for each move inside the node too (and for a drag that left it, while the button is held) |
+| SCROLL | the wheel: the node's running offset (down and right positive, unbounded); `input::Mapper` turns the change since the record before into `Input::Wheel` at the last pointer position, negated as the engine takes it (QA-WEB-13). Coalesced records lose no distance |
 | KEY | key value and code from the keysym (US layout for printable codes: the record has no scancode), modifiers, repeat |
 | FOCUS, SURFACE_RESIZED, THEME_CHANGED | focus, size and scale, dark or light |
+
+Wolkit sends a node only the events it bound, so `wol-webhost` binds `CLICK`, `POINTER_ENTER`, `POINTER_LEAVE`, `SCROLL` and `FOCUS` on the surface node and `KEY` on the window node (the page takes no wolkit focus, so keys are the window's: `input::bridge` reads a `KEY` of node 0 as the view's). `tests/native_input.rs` (wolkit) holds the routing, `input.rs` and `wol-webhost.rs` their halves.
+
+## Showing frames (WWE_1.3)
+
+The engine paints into the window's surface when a frame is ready (`wwe_state.frames` counts them), but a surface shows only what is presented. `WebView::spin` calls `wwe_view_present` (symbol version `WWE_1.3`, optional like the 1.1 pair) after `wwe_engine_spin` whenever the frame count grew, once per frame. A library without it presents itself or paints into memory. `tests/shim_loader_13.rs` holds the host side against the C stand-in; that the real engine's surface then shows the page is run on the forge with the engine build.
 
 ## Gaps
 
 | Gap | Where it is fixed |
 |---|---|
-| Pointer motion inside a surface, separate button presses, wheel deltas | wolkit record v1 (the engine side takes them: `input::Input::{MouseMove, MouseButton, Wheel}`) |
+| Separate button presses (a click is move, press, release at once) | wolkit record v1 (the engine side takes them: `input::Input::MouseButton`) |
 | IME preedit and commit for a surface; an app clipboard | wolkit (`input::Input::{ImePreedit, ImeCommit}`, `view::Clipboard`) |
-| On-screen presentation through the surface (`Target::surface`) | not run yet: needs a compositor on the test machine (CR-8) |
+| On-screen presentation through the surface (`Target::surface`) | the host calls `wwe_view_present` (above); the picture on a real compositor is not run yet: needs the engine build and a compositor on the test machine (CR-8) |
 | Pathname unix sockets of the user below Landlock ABI 9 | the kernel (`RESOLVE_UNIX`); `confine::REQUIRE_UNIX_RESOLVE` |
 | Media (`<video>`, audio) | the shim is built without the engine's media feature; WA-6's probes |
 

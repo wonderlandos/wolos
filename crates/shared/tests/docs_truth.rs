@@ -411,3 +411,47 @@ fn records_of_installer_boot_and_ratchet_decisions_say_what_the_code_does() {
     );
     assert!(row("RR-010").contains("`BASELINE`"), "RR-010 is a ratchet");
 }
+
+/// QA-ADR-5/31: RR-118's row says which names the test looks for, and the test looks for them (the
+/// row used to say "no upstream project name" while the list held one). QA-WEB-15: the record of
+/// the web apps' topics says `progress` has no producer, and the host has none.
+#[test]
+fn records_of_the_naming_rule_and_the_progress_topic_say_what_the_code_does() {
+    let read = |p: &str| std::fs::read_to_string(root().join(p)).unwrap();
+    let rules = read("docs/RULES.md");
+    let row = rules
+        .lines()
+        .find(|l| l.starts_with("| RR-118 "))
+        .expect("RR-118");
+    assert!(row.contains("UPSTREAM_NAMES"), "RR-118 names its list");
+    assert!(
+        row.contains("one name today"),
+        "RR-118 says how many names it looks for: update the row when the list grows"
+    );
+    let test = read("crates/shared/tests/rules_rust.rs");
+    let list = test
+        .lines()
+        .find(|l| l.starts_with("const UPSTREAM_NAMES"))
+        .expect("UPSTREAM_NAMES");
+    assert_eq!(
+        list.split('"').skip(1).step_by(2).count(),
+        1,
+        "UPSTREAM_NAMES grew: RR-118's row says one name today"
+    );
+    let adr = read("docs/adr/0048-system-web-apps.md");
+    assert!(
+        adr.contains("reserved: the host sends none yet"),
+        "0048 says progress is reserved"
+    );
+    for f in ["host.rs", "bridge.rs"] {
+        let src = read(&format!("crates/webengine/src/{f}"));
+        let emits = src.lines().any(|l| {
+            let l = l.trim_start();
+            !l.starts_with("//") && l.contains("\"progress\"") && l.contains("event(")
+        });
+        assert!(
+            !emits,
+            "{f} now sends the progress topic: amend 0048 where it says reserved"
+        );
+    }
+}

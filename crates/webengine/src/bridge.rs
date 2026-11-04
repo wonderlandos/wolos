@@ -25,8 +25,14 @@ use serde_json::{Map, Value, json};
 use shared::errors::ErrorCode;
 use std::collections::BTreeSet;
 
-/// Largest page message the host reads.
+/// Largest text the channel carries either way (the engine library drops more).
 pub const MAX_MESSAGE: usize = 64 * 1024;
+/// Largest request the host reads from the page: what wold takes of a call line
+/// (`shared::portal::MAX_LINE`) less room for `webapp-call <method> ` and the line's end, so a
+/// request the host reads is one wold takes (QA-WEB-19: the page's 64 KiB, the 60 KiB of the
+/// controller and wold's line cap were three numbers and a request between them was refused by
+/// wold with no better word). `kit/bridge.js` `MAX_BYTES` is this number (tests/webapps.rs).
+pub const MAX_REQUEST: usize = shared::portal::MAX_LINE - 512;
 
 /// An error as the page gets it: `code` is a [`shared::errors::ErrorCode`] name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,24 +199,37 @@ impl Bridge {
 
     /// Reads one page message.
     pub fn handle(&mut self, text: &str) -> Step {
-        if text.len() > MAX_MESSAGE {
+        if text.len() > MAX_REQUEST {
             // A call the page numbered is told, so its promise settles (QA-WEB-6): `bridge.js`
-            // writes the id first. The channel already drops a text over the cap in UTF-16 units;
-            // this one is over it in bytes (multi-byte characters).
+            // writes the id first. The page refuses such a request itself; this one got past it
+            // (a page of its own, or multi-byte characters counted differently).
             return match leading_id(text) {
                 Some(id) => Step::Reply(reply(
                     id,
                     Err(Fault::new(
                         ErrorCode::Usage,
                         "The request was too large.",
-                        "keep the whole request under 64 KiB",
+                        "keep the whole request under 60 KiB",
                     )),
                 )),
                 None => Step::Nothing,
             };
         }
         let Ok(Value::Object(m)) = serde_json::from_str::<Value>(text) else {
-            return Step::Nothing;
+            // A call the page numbered that is not JSON the host reads (a lone surrogate escape
+            // in its params, which `JSON.stringify` writes and serde refuses) is told so, so its
+            // promise settles instead of waiting out the watchdog (QA-WEB-27).
+            return match leading_id(text) {
+                Some(id) => Step::Reply(reply(
+                    id,
+                    Err(Fault::new(
+                        ErrorCode::Usage,
+                        "The request was not understood.",
+                        "the request is not valid JSON text",
+                    )),
+                )),
+                None => Step::Nothing,
+            };
         };
         if let Some(t) = m.get("sub").and_then(Value::as_str) {
             if catalog::TOPICS.contains(&t) {
@@ -375,7 +394,7 @@ mod tests {
         );
         assert_eq!(b.handle("not json"), Step::Nothing);
         assert_eq!(b.handle(r#"{"call":"audio.get"}"#), Step::Nothing);
-        assert_eq!(b.handle(&"x".repeat(MAX_MESSAGE + 1)), Step::Nothing);
+        assert_eq!(b.handle(&"x".repeat(MAX_REQUEST + 1)), Step::Nothing);
         // Over the cap with an id: the page is told (QA-WEB-6), so its promise settles.
         let big = format!(
             r#"{{"id":7,"call":"audio.get","params":{{"s":"{}"}}}}"#,
@@ -421,6 +440,56 @@ mod tests {
             "violet",
             "a colour no accent has: the default"
         );
+    }
+
+    /// QA-WEB-27: `JSON.stringify("\ud800")` is valid for the page and refused by serde, so the
+    /// call used to get no answer in the real host (and resolved in the mock). A numbered call
+    /// that cannot be read is answered `usage`; one with no id is still dropped.
+    #[test]
+    fn a_numbered_call_that_is_not_readable_json_is_answered() {
+        let mut b = bridge(&["audio.read"]);
+        let lone = r#"{"id":8,"call":"about","params":{"a":"\ud800"}}"#;
+        let Step::Reply(r) = b.handle(lone) else {
+            panic!("no answer for a lone surrogate");
+        };
+        let v: Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(
+            (v["id"].as_u64(), v["err"]["code"].as_str()),
+            (Some(8), Some("usage"))
+        );
+        assert!(
+            matches!(b.handle(r#"{"id":9,"call":"#), Step::Reply(_)),
+            "cut text"
+        );
+        assert_eq!(b.handle("{nope"), Step::Nothing, "no id, nothing to answer");
+        assert_eq!(
+            b.handle(r#"{"call":"about","params":"\ud800"#),
+            Step::Nothing
+        );
+    }
+
+    /// QA-WEB-19: the host reads exactly what wold takes. A request at the cap goes on to the call
+    /// (and its params fit the controller's cap), one byte more is answered `usage`.
+    #[test]
+    fn a_request_the_host_reads_is_one_wold_takes() {
+        let mut b = bridge(&["audio.read"]);
+        let at = |n: usize| {
+            let head = r#"{"id":4,"call":"audio.get","params":{"s":""#;
+            let tail = r#""}}"#;
+            format!("{head}{}{tail}", "x".repeat(n - head.len() - tail.len()))
+        };
+        assert!(matches!(b.handle(&at(MAX_REQUEST)), Step::Call(_)));
+        let Step::Reply(r) = b.handle(&at(MAX_REQUEST + 1)) else {
+            panic!("no answer for a request over the cap");
+        };
+        assert!(
+            r.contains(r#""code":"usage""#) && r.contains("60 KiB"),
+            "{r}"
+        );
+        const {
+            assert!(MAX_REQUEST < shared::portal::MAX_LINE);
+            assert!(MAX_REQUEST < MAX_MESSAGE);
+        }
     }
 
     #[test]

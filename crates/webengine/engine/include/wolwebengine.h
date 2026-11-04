@@ -144,6 +144,11 @@ int wwe_engine_set_host_channel(wwe_engine *engine, const char *origin, const ch
 /* Calls window.__wolosHost.onmessage(text) in the view's top-level document if it has the channel;
  * 0 handed to the document, -1 not (no channel, the document is elsewhere, or a bad text). */
 int wwe_view_post_message(wwe_view *view, const uint8_t *text, size_t len);
+/* WWE_1.3: shows the frame the engine last painted into a window target (the rendering context's
+ * present). A wl_surface shows nothing until it is called. The host calls it after wwe_engine_spin
+ * whenever wwe_state.frames grew (crates/webengine/src/view.rs spin). Does nothing for a headless
+ * view. */
+void wwe_view_present(wwe_view *view);
 /* In a content process (argv: --content-process TOKEN): confines the process (it must still have a
  * single thread: call this first in main), then runs the content until the engine ends it; the host
  * then exits. A process that cannot be confined prints why on stderr and returns without running the content. */

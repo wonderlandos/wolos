@@ -125,7 +125,18 @@ impl Host {
             .spawn({
                 let call = call.clone();
                 move || {
-                    let r = wold.call(&app, &call.method, &call.params);
+                    // A panic in the call is an answer, not silence: the page's promise settles
+                    // (QA-WEB-33). The slot is released either way (its Drop).
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        wold.call(&app, &call.method, &call.params)
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err(Fault::new(
+                            ErrorCode::Failed,
+                            "WolOS could not do that.",
+                            "the call stopped unexpectedly",
+                        ))
+                    });
                     // Before the reply is queued: whoever sees the reply may call again at once.
                     drop(slot);
                     let _ = out.send(reply_text(call.id, r));
@@ -263,12 +274,41 @@ impl Wold for WoldClient {
         s.write_all(line.as_bytes())
             .map_err(|e| unavailable(e.to_string()))?;
         let _ = s.shutdown(std::net::Shutdown::Write);
-        let mut out = String::new();
-        s.take(MAX_REPLY)
-            .read_to_string(&mut out)
-            .map_err(|e| unavailable(e.to_string()))?;
+        let out = read_capped(s, MAX_REPLY).map_err(|e| match e {
+            Capped::Io(why) => unavailable(why),
+            Capped::TooLarge => too_large(),
+        })?;
         read_answer(out.trim())
     }
+}
+
+/// Why [`read_capped`] stopped.
+#[derive(Debug, PartialEq)]
+enum Capped {
+    Io(String),
+    TooLarge,
+}
+
+/// All of `r` as text, at most `cap` bytes: one byte more is a reply cut short, which would only
+/// fail to parse and be reported as an unreadable reply (QA-WEB-36).
+fn read_capped(r: impl Read, cap: u64) -> Result<String, Capped> {
+    let mut out = String::new();
+    r.take(cap + 1)
+        .read_to_string(&mut out)
+        .map_err(|e| Capped::Io(e.to_string()))?;
+    if out.len() as u64 > cap {
+        return Err(Capped::TooLarge);
+    }
+    Ok(out)
+}
+
+/// The sentence for an answer over the host's cap, the page's own cap's sentence ([`reply_text`]).
+fn too_large() -> Fault {
+    Fault::new(
+        ErrorCode::Failed,
+        "The answer was too large for this app.",
+        "reply over the host's cap",
+    )
 }
 
 /// The locale for `wolos.app.locale`: `LC_ALL`, `LC_MESSAGES` or `LANG` (`pt_BR.UTF-8` -> `pt-BR`),
@@ -368,6 +408,45 @@ mod tests {
         };
         let g: Vec<String> = granted.iter().map(|s| s.to_string()).collect();
         Host::new(Bridge::new(m, app, &g), Arc::new(wold))
+    }
+
+    /// QA-WEB-36: a reply cut at the host's cap is "too large", not "unreadable".
+    #[test]
+    fn a_reply_over_the_hosts_cap_is_too_large_not_unreadable() {
+        let big = "x".repeat(2000);
+        assert_eq!(
+            read_capped(big.as_bytes(), 2000).as_deref(),
+            Ok(big.as_str())
+        );
+        assert_eq!(read_capped(big.as_bytes(), 1999), Err(Capped::TooLarge));
+        assert_eq!(
+            read_capped(&b"\xff"[..], 10).map_err(|e| matches!(e, Capped::Io(_))),
+            Err(true)
+        );
+        assert_eq!(
+            too_large().message,
+            "The answer was too large for this app."
+        );
+    }
+
+    /// QA-WEB-33: a panic in the call is answered (the page's promise settles) and gives its slot
+    /// back; before, the reply was never sent.
+    #[test]
+    fn a_call_that_panics_is_answered_and_its_slot_comes_back() {
+        struct Boom;
+        impl Wold for Boom {
+            fn call(&self, _: &str, _: &str, _: &Map<String, Value>) -> Result<Value, Fault> {
+                panic!("wold stand-in panics");
+            }
+        }
+        let mut h = host(Boom, &["audio.read"]);
+        for i in 0..MAX_IN_FLIGHT + 4 {
+            h.on_page_message(&format!(r#"{{"id":{i},"call":"audio.doctor"}}"#));
+            let r = h.wait_ready(Duration::from_secs(5)).expect("an answer");
+            let v: Value = serde_json::from_str(&r).unwrap();
+            assert_eq!(v["id"], i, "{r}");
+            assert_eq!(v["err"]["code"], "failed", "{r}");
+        }
     }
 
     #[test]

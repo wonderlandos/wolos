@@ -78,11 +78,12 @@ impl Manifest {
         if self.summary.chars().count() > 120 {
             return Err("summary: at most 120 characters".into());
         }
-        // Both reach a desktop entry line: no line breaks, no control characters, no escapes.
-        if [&self.name, &self.summary]
-            .iter()
-            .any(|t| t.chars().any(|c| c.is_control() || c == '\\'))
-        {
+        // Both reach a desktop entry line and a title bar: no line breaks, no control characters,
+        // no escapes, and nothing that reorders or hides text (QA-WEB-32).
+        if [&self.name, &self.summary].iter().any(|t| {
+            t.chars()
+                .any(|c| c.is_control() || c == '\\' || invisible(c))
+        }) {
             return Err("name and summary: one line of plain text".into());
         }
         let v: Vec<&str> = self.version.split('.').collect();
@@ -116,9 +117,16 @@ impl Manifest {
         if folder != m.slug() {
             return Err(format!("folder {folder:?} is not the slug {:?}", m.slug()));
         }
+        // Inside the folder, as it is on disk: a link to a file elsewhere is not the app's own file
+        // (QA-WEB-32: the entry could be `index.html -> /etc/hostname`).
+        let root = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for f in [&m.entry, &m.icon] {
             if !dir.join(f).is_file() {
                 return Err(format!("{f}: no such file"));
+            }
+            let real = std::fs::canonicalize(dir.join(f)).map_err(|e| format!("{f}: {e}"))?;
+            if !real.starts_with(&root) {
+                return Err(format!("{f}: a link to a file outside the folder"));
             }
         }
         Ok(m)
@@ -158,13 +166,43 @@ impl Manifest {
 /// The runtime's host process (ADR 0042), one per app id.
 pub const HOST: &str = "/usr/bin/wol-webhost";
 
-/// A plain relative path inside the folder, ending in one of `ext`.
+/// Characters that reorder, hide or break up text: bidirectional controls, zero-width characters,
+/// line and paragraph separators, the byte order mark.
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'              // soft hyphen
+            | '\u{61c}'       // Arabic letter mark
+            | '\u{115f}'..='\u{1160}' // Hangul choseong and jungseong fillers
+            | '\u{180e}'      // Mongolian vowel separator
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{3164}'      // Hangul filler
+            | '\u{feff}'
+            | '\u{ffa0}'      // halfwidth Hangul filler
+            | '\u{e0000}'..='\u{e007f}' // Tag characters
+    )
+}
+
+/// The longest entry or icon path.
+const MAX_PATH: usize = 128;
+
+/// A plain relative path inside the folder, ending in one of `ext`: segments of ASCII letters,
+/// digits, `.`, `_` and `-` only, so nothing needs quoting, decoding or expanding anywhere the path
+/// goes later (a URL, a desktop entry, a shell: `%2F`, `~`, `$HOME`, `C:`, a leading space).
 fn rel(path: &str, ext: &[&str]) -> Result<(), String> {
+    let plain = |s: &str| {
+        s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    };
     let ok = !path.is_empty()
+        && path.len() <= MAX_PATH
         && !path.starts_with('/')
         && path
             .split('/')
-            .all(|s| !s.is_empty() && s != "." && s != ".." && !s.contains('\\'))
+            .all(|s| !s.is_empty() && s != "." && s != ".." && plain(s))
         && ext.iter().any(|e| path.ends_with(e));
     if ok {
         Ok(())
@@ -210,6 +248,71 @@ permissions = ["system.read"]
             wol_core::sysapp::app_of_scope(&unit, 4242).as_deref(),
             Some(longest.id.as_str())
         );
+    }
+
+    /// QA-WEB-32: paths and words that passed the check and broke later or spoofed the title.
+    #[test]
+    fn paths_and_words_that_break_later_or_spoof_are_refused() {
+        let toml_text = |s: &str| toml::Value::String(s.into()).to_string();
+        let with =
+            |from: &str, to: &str| Manifest::parse(&GOOD.replace(from, &toml_text(to))).unwrap();
+        let entry_of =
+            |e: &str| Manifest::parse(&format!("{GOOD}entry = {}\n", toml_text(e))).unwrap();
+        for entry in [
+            " index.html",
+            "index.html ",
+            "ind%2Fex.html",
+            "%2e%2e/x.html",
+            "C:index.html",
+            "~/index.html",
+            "$HOME/index.html",
+            "a b.html",
+            "caf\u{e9}.html",
+            "x\u{202e}.html",
+            "a;b.html",
+            "a\nb.html",
+        ] {
+            assert!(entry_of(entry).check().is_err(), "entry {entry:?}");
+        }
+        let long = format!("{}.html", "a".repeat(MAX_PATH));
+        assert!(entry_of(&long).check().is_err());
+        for name in [
+            "Do\u{202e}ctor",
+            "Doc\u{200b}tor",
+            "Do\u{2028}ctor",
+            "\u{feff}Doctor",
+        ] {
+            assert!(with("\"Hello\"", name).check().is_err(), "name {name:?}");
+        }
+        // What an app really ships still passes.
+        for entry in ["index.html", "pages/sub-1/page_2.v1.html"] {
+            entry_of(entry).check().unwrap();
+        }
+        with("\"Hello\"", "Caf\u{e9} \u{65e5}\u{672c}")
+            .check()
+            .unwrap();
+    }
+
+    /// QA-WEB-32: the entry and the icon are files of the folder, not links out of it.
+    #[test]
+    fn a_link_out_of_the_folder_is_not_the_apps_file() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("wol-manifest-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("hello");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(FILE), GOOD).unwrap();
+        std::fs::write(dir.join("icon.svg"), "<svg/>").unwrap();
+        std::fs::write(base.join("outside.html"), "x").unwrap();
+        std::fs::write(dir.join("real.html"), "x").unwrap();
+        symlink("../outside.html", dir.join("index.html")).unwrap();
+        let e = Manifest::load(&dir).unwrap_err();
+        assert!(e.contains("outside the folder"), "{e}");
+        // A link inside the folder is the folder's own file.
+        std::fs::remove_file(dir.join("index.html")).unwrap();
+        symlink("real.html", dir.join("index.html")).unwrap();
+        Manifest::load(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -162,7 +162,15 @@ class WolRow extends Base {
     const d = this.getAttribute("detail");
     this.det.textContent = d || "";
     this.det.hidden = !d;
-    if (this.hasAttribute("href")) { this.tabIndex = 0; this.setAttribute("aria-label", this.lab.textContent); } else this.removeAttribute("tabindex");
+    // A link row is one control: its name carries the detail too, or a screen reader never
+    // hears it (QA-WEB-21). Without a link the label and detail are read as the text they are.
+    if (this.hasAttribute("href")) {
+      this.tabIndex = 0;
+      this.setAttribute("aria-label", d ? `${this.lab.textContent}, ${d}` : this.lab.textContent);
+    } else { this.removeAttribute("tabindex"); this.removeAttribute("aria-label"); }
+    // A switch in the row is named by the row's label, which may be set after the switch
+    // upgraded (data-t-label is localised later, QA-WEB-29).
+    for (const s of this.querySelectorAll("wol-switch")) if (s.update) s.update();
   }
 }
 
@@ -321,13 +329,17 @@ class WolSheet extends Base {
     this.yes.setAttribute("kind", this.hasAttribute("danger") ? "danger" : "primary");
   }
   open() {
+    // Open already: the same answer, not a second promise that nothing would ever settle (QA-WEB-16).
+    if (this.dlg.open && this.opened) return this.opened;
     this.back = document.activeElement;
     this.dlg.showModal();
     (this.hasAttribute("danger") ? this.no : this.yes).focus();
-    return new Promise((r) => { this.done = r; });
+    this.opened = new Promise((r) => { this.done = r; });
+    return this.opened;
   }
   close(answer) {
     if (!this.dlg.open) return;
+    this.opened = null;
     this.dlg.close();
     if (this.back && this.back.focus) this.back.focus();
     const d = this.done;
@@ -354,7 +366,8 @@ function confirmSheet({ heading, body = "", confirm, cancel, danger = false }) {
 function explain(err) {
   if (!err) return "";
   if (!err.code) return t("error.generic");
-  return err.hint && /^[A-Z]/.test(err.hint) ? `${err.message} ${err.hint}.` : err.message || t("error.generic");
+  // The hint may carry its own full stop: one is enough (QA-WEB-14).
+  return err.hint && /^[A-Z]/.test(err.hint) ? `${err.message} ${err.hint.replace(/[.\s]+$/, "")}.` : err.message || t("error.generic");
 }
 
 const DEFS = { "wol-app": WolApp, "wol-sidebar": WolSidebar, "wol-list": WolList, "wol-row": WolRow, "wol-switch": WolSwitch,

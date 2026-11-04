@@ -199,7 +199,8 @@ fn the_kit_is_small_plain_and_self_contained() {
         if rel.starts_with("launchers/") || rel == "SHIPPED" {
             continue;
         }
-        if rel.starts_with("kit/") {
+        // What is installed counts: the kit's own tests (node, development files) are not shipped.
+        if rel.starts_with("kit/") && rel.split('/').nth(1) != Some("test") {
             kit += text.len();
         }
         // The kit is BSD-2-Clause (any app may ship it); an app names its own licence. JSON (a
@@ -428,6 +429,37 @@ fn the_bridge_names_exactly_the_administrator_methods() {
         listed, catalog,
         "bridge.js ADMIN vs the catalog's administrator methods"
     );
+}
+
+/// QA-WEB-35: the page's two lanes (reads, which wait, and administrator methods, which are never
+/// queued) add up to the calls the host takes at once, so the host never has to say "busy" to a
+/// page that follows the kit.
+#[test]
+fn the_bridge_lanes_add_up_to_what_the_host_takes() {
+    let js = read(&webapps().join(KIT).join("bridge.js"));
+    let lane = |name: &str| -> usize {
+        js.lines()
+            .find_map(|l| l.trim().strip_prefix(&format!("var {name} = ")))
+            .and_then(|r| r.trim_end_matches(';').parse().ok())
+            .unwrap_or_else(|| panic!("bridge.js: var {name} = N;"))
+    };
+    assert_eq!(
+        lane("READ_LANE") + lane("ADMIN_LANE"),
+        webengine::host::MAX_IN_FLIGHT
+    );
+}
+
+/// QA-WEB-19: the page refuses a request at the number the host reads and wold takes.
+#[test]
+fn the_bridge_and_the_host_cap_a_request_at_the_same_number() {
+    let js = read(&webapps().join(KIT).join("bridge.js"));
+    let n: usize = js
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("var MAX_BYTES = "))
+        .and_then(|r| r.trim_end_matches(';').parse().ok())
+        .expect("bridge.js: var MAX_BYTES = N;");
+    assert_eq!(n, webengine::bridge::MAX_REQUEST);
+    assert!(n < shared::portal::MAX_LINE);
 }
 
 /// QA-WEB-9: the reasons the host passes to the kit's error page (`process::error_url` callers)
