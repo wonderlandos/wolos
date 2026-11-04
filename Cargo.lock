@@ -268,6 +268,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "shared",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

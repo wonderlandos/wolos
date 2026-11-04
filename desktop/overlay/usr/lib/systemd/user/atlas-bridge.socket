@@ -1,0 +1,15 @@
+# Atlas asks for Share, Open With and Move to Trash here (ADR 0043 D4, docs/modules/atlas.md).
+# The first connection starts atlas-bridge.service; the bridge leaves when idle and the socket
+# stays, so the next connection starts it again. Only the account's own processes can connect
+# (0600 in a 0700 directory), and the bridge answers only the browser executable.
+[Unit]
+Description=Atlas bridge socket
+
+[Socket]
+ListenStream=%t/atlas/bridge.sock
+SocketMode=0600
+DirectoryMode=0700
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

@@ -106,6 +106,11 @@ const BASELINE: &[(&str, usize)] = &[
     ("wol-lua", 3),
     ("xguard-clam", 13),
     ("webengine", 135),
+    // `atlas` (ADR 0043, ATLAS-BRIDGE, 2026-11-04): 1, `UnixListener::from_raw_fd(3)` in
+    // `src/activation.rs` for the socket systemd passes (LISTEN_PID and LISTEN_FDS checked, as
+    // xguard-clam does); std has no safe way to adopt an inherited descriptor. Everything else in the
+    // crate is safe Rust (`#![deny(unsafe_code)]`).
+    ("atlas", 1),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Repository-wide contracts and primitives. Transport- and storage-agnostic where practical.
 pub mod admin;
+pub mod atlas;
 pub mod atomic;
 pub mod bounded;
 pub mod bundle;
