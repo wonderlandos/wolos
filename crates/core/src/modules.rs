@@ -17,7 +17,7 @@ pub const STATE_FILE: &str = "wolos/modules.json";
 /// Meta package name prefix.
 pub const PACKAGE_PREFIX: &str = "wolos-module-";
 /// The modules this release ships records for (contract tests).
-pub const IDS: [&str; 7] = [
+pub const IDS: [&str; 9] = [
     "ai-claude",
     "ai-local",
     "ai-sessions",
@@ -25,6 +25,8 @@ pub const IDS: [&str; 7] = [
     "creative",
     "gaming",
     "console",
+    "ime",
+    "scanner",
 ];
 
 /// One registry record (`/usr/share/wolos/modules/<id>.json`).
@@ -36,7 +38,7 @@ pub struct Module {
     pub summary: String,
     /// Icon name (freedesktop theme name or a WolOS symbolic).
     pub icon: String,
-    /// `ai` | `developer` | `creative` | `gaming` | `console`.
+    /// `ai` | `developer` | `creative` | `gaming` | `console` | `system` (hardware helpers: input methods, scanners).
     pub category: String,
     /// Download size the installer shows ("Downloads N MB").
     pub size_mb: u32,

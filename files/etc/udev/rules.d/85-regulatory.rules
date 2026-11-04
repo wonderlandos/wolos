@@ -1,0 +1,6 @@
+# WolOS: wireless-regdb's /usr/lib/udev/rules.d/85-regulatory.rules of the same name, through a wrapper
+# that treats "no regulatory domain configured" as fine (it is the normal state: the kernel uses the
+# world domain and takes country hints from access points). The stock helper ends in
+# `[ -n "$WIRELESS_REGDOM" ] && iw reg set ...`, which exits 1 when the domain is unset, so every
+# boot logged "(udev-worker): /usr/bin/set-wireless-regdom failed with exit code 1" (QA-SYS-14).
+ACTION=="add", SUBSYSTEM=="module", DEVPATH=="/module/cfg80211", RUN+="/usr/lib/wolos/set-regdom"

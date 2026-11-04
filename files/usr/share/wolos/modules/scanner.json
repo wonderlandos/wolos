@@ -1,0 +1,22 @@
+{
+  "id": "scanner",
+  "name": "Scanners",
+  "summary": "Scan with network and USB scanners without drivers (eSCL, WSD, IPP over USB), SANE backends and Document Scanner",
+  "icon": "scanner-symbolic",
+  "category": "system",
+  "size_mb": 20,
+  "packages": [
+    "sane",
+    "sane-airscan",
+    "ipp-usb",
+    "simple-scan"
+  ],
+  "flatpaks": [],
+  "recipes": [],
+  "mise": [],
+  "post": [],
+  "offline": false,
+  "needs": [
+    "network"
+  ]
+}

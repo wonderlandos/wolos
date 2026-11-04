@@ -1,0 +1,25 @@
+{
+  "id": "ime",
+  "name": "Input methods",
+  "summary": "Type Japanese (Mozc), Chinese (Pinyin and more) and Korean (Hangul) with fcitx5, in GTK and Qt apps",
+  "icon": "input-keyboard-symbolic",
+  "category": "system",
+  "size_mb": 210,
+  "packages": [
+    "fcitx5",
+    "fcitx5-gtk",
+    "fcitx5-qt",
+    "fcitx5-configtool",
+    "fcitx5-mozc",
+    "fcitx5-chinese-addons",
+    "fcitx5-hangul"
+  ],
+  "flatpaks": [],
+  "recipes": [],
+  "mise": [],
+  "post": [],
+  "offline": false,
+  "needs": [
+    "network"
+  ]
+}

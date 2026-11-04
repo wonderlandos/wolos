@@ -497,7 +497,8 @@ fn shipped_module_records_are_valid() {
             );
         }
         assert!(
-            ["ai", "developer", "creative", "gaming", "console"].contains(&m.category.as_str()),
+            ["ai", "developer", "creative", "gaming", "console", "system"]
+                .contains(&m.category.as_str()),
             "{id}"
         );
         seen.push(id);

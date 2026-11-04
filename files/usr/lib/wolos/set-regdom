@@ -1,0 +1,16 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Sets the wireless regulatory domain when /etc/conf.d/wireless-regdom names one (WIRELESS_REGDOM="BR"),
+# through wireless-regdb's own helper; does nothing, successfully, when none is set. Run by udev when
+# cfg80211 loads (files/etc/udev/rules.d/85-regulatory.rules). A domain that is set but cannot be applied
+# still fails, with the helper's exit code, so udev logs it. Env (tests): WOLOS_REGDOM_CONF, WOLOS_REGDOM_HELPER.
+set -eu
+conf=${WOLOS_REGDOM_CONF:-/etc/conf.d/wireless-regdom}
+helper=${WOLOS_REGDOM_HELPER:-/usr/bin/set-wireless-regdom}
+WIRELESS_REGDOM=
+if [ -r "$conf" ]; then
+	# shellcheck source=/dev/null
+	. "$conf"
+fi
+[ -n "$WIRELESS_REGDOM" ] || exit 0
+exec "$helper"
