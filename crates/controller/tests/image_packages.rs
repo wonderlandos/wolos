@@ -429,6 +429,23 @@ fn ime_session_exports_only_with_fcitx5() {
     );
 }
 
+/// set-regdom runs `iw reg set` itself (review of QA-100 B4): the image must ship `iw`, or every
+/// configured domain fails at cfg80211 load with "not found"; wireless-regdb is the database it reads.
+#[test]
+fn regdom_helper_has_iw_in_the_image() {
+    let script = read("files/usr/lib/wolos/set-regdom");
+    assert!(
+        script.contains("iw=${WOLOS_REGDOM_IW:-/usr/bin/iw}"),
+        "{script}"
+    );
+    for p in ["iw", "wireless-regdb"] {
+        assert!(
+            ships(p),
+            "{p} is not in profile/packages.x86_64 or packages.desktop"
+        );
+    }
+}
+
 /// QA-SYS-14: cfg80211 loading must not log "set-wireless-regdom failed with exit code 1". wireless-regdb's
 /// helper exits 1 when no domain is configured (the normal state); the /etc rule of the same name runs
 /// our wrapper instead, which succeeds then and still passes a real failure through.
