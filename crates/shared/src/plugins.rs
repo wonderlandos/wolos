@@ -1618,7 +1618,10 @@ struct Listing {
 
 fn parse_listing(h: &Field, min_wolos: &str) -> Result<Listing, String> {
     let mut l = Listing::default();
-    let used: Vec<&str> = LISTING_KEYS.into_iter().filter(|k| h.get(k).is_some()).collect();
+    let used: Vec<&str> = LISTING_KEYS
+        .into_iter()
+        .filter(|k| h.get(k).is_some())
+        .collect();
     if used.is_empty() {
         return Ok(l);
     }
@@ -1645,7 +1648,9 @@ fn parse_listing(h: &Field, min_wolos: &str) -> Result<Listing, String> {
             ));
         }
         if l.screenshots.contains(&p) {
-            return Err(format!("plugin.toml: the screenshot \"{p}\" is listed twice."));
+            return Err(format!(
+                "plugin.toml: the screenshot \"{p}\" is listed twice."
+            ));
         }
         l.screenshots.push(p);
     }

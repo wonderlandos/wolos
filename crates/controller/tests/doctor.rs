@@ -214,3 +214,143 @@ fn text_report_names_the_fix_verb() {
     );
     assert!(env.out.contains("to fix.\n"), "{}", env.out);
 }
+
+// ---- QA-DOC-4/5/2 (the Doctor's setup round): what a fix can ask, what is not a problem ----
+
+use shared::hardware::{Device, HardwareSnapshot, Kind, State};
+
+fn missing(kind: Kind, name: &str, packages: &[&str]) -> Device {
+    Device {
+        kind,
+        name: name.into(),
+        state: State::NeedsFirmware,
+        missing_packages: packages.iter().map(|p| p.to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+/// The checks of one area, as the list prints them.
+fn area(env: &mut FakeEnv, area: &str) -> Vec<serde_json::Value> {
+    env.out.clear();
+    run(&format!("doctor {area} --json"), env);
+    json(env)["checks"].as_array().unwrap().clone()
+}
+
+/// QA-DOC-4: a laptop missing Wi-Fi, Bluetooth and Ethernet firmware needed nine requests and the
+/// sheet takes eight: "this fix cannot be asked on screen". The fix is cut to what one sheet can
+/// ask and the detail says the rest comes after "Check again".
+#[test]
+fn a_hardware_fix_of_many_packages_fits_the_sheet() {
+    let pk = |n: usize, p: &str| (0..n).map(|i| format!("{p}-{i}")).collect::<Vec<_>>();
+    let mut devs = Vec::new();
+    for (kind, name, p) in [
+        (Kind::Wifi, "Wi-Fi", "wifi-fw"),
+        (Kind::Bluetooth, "Bluetooth", "bt-fw"),
+        (Kind::Ethernet, "Ethernet", "eth-fw"),
+    ] {
+        let list = pk(3, p);
+        devs.push(missing(
+            kind,
+            name,
+            &list.iter().map(String::as_str).collect::<Vec<_>>(),
+        ));
+    }
+    let mut env = FakeEnv {
+        hw: vec![HardwareSnapshot { devices: devs }],
+        ..Default::default()
+    };
+    let c = area(&mut env, "network")
+        .into_iter()
+        .find(|c| c["id"] == "network.devices")
+        .unwrap();
+    assert_eq!(c["status"], "fail");
+    assert!(
+        c["detail"].as_str().unwrap().contains("Check again"),
+        "the rest is promised: {c}"
+    );
+    env.hw = vec![HardwareSnapshot {
+        devices: (0..3)
+            .map(|i| {
+                let list = pk(3, &format!("fw{i}"));
+                missing(
+                    [Kind::Wifi, Kind::Bluetooth, Kind::Ethernet][i],
+                    "x",
+                    &list.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+            })
+            .collect(),
+    }];
+    let Ok(Some(shared::shell::ApprovalRequest::DoctorFix { steps, .. })) =
+        controller::doctor::approval(&mut env, "network.devices")
+    else {
+        panic!("the fix is askable on screen")
+    };
+    assert_eq!(steps.len(), shared::shell::MAX_DOCTOR_STEPS, "{steps:?}");
+}
+
+/// QA-DOC-5: a virtual machine or a desktop with no sleep state is not a problem to fix, a fresh
+/// install has not looked for updates yet, and a camera is not a sound device.
+#[test]
+fn doctor_does_not_warn_about_how_a_machine_is_built() {
+    let mut env = FakeEnv {
+        hw: vec![HardwareSnapshot {
+            devices: vec![
+                missing(Kind::Webcam, "Integrated Camera", &["cam-fw"]),
+                Device {
+                    kind: Kind::Audio,
+                    name: "Speakers".into(),
+                    ..Default::default()
+                },
+            ],
+        }],
+        captures: vec![("systemd-detect-virt --vm".into(), "kvm\n".into())],
+        ..Default::default()
+    };
+    let power = area(&mut env, "power");
+    let sleep = power.iter().find(|c| c["id"] == "power.sleep").unwrap();
+    assert_ne!(sleep["status"], "warn", "{sleep}");
+    let updates = area(&mut env, "updates");
+    let looked = updates
+        .iter()
+        .find(|c| c["id"] == "updates.checked")
+        .unwrap();
+    assert_ne!(
+        looked["status"], "warn",
+        "the first daily look has not happened yet: {looked}"
+    );
+    let sound = area(&mut env, "sound");
+    let dev = sound.iter().find(|c| c["id"] == "sound.devices").unwrap();
+    assert_ne!(
+        dev["status"], "fail",
+        "a camera needing firmware is not a sound problem: {dev}"
+    );
+    let display = area(&mut env, "display");
+    assert!(
+        display
+            .iter()
+            .any(|c| c["id"] == "display.cameras" && c["status"] == "fail"),
+        "the camera has its own row under the screens: {display:?}"
+    );
+}
+
+/// QA-PWR-16: a list printed into a pipe (stdout is not a terminal) is JSON, as `--json` is; at a
+/// terminal it is the table.
+#[test]
+fn theme_list_is_json_when_piped_and_a_table_at_a_terminal() {
+    let mut piped = FakeEnv::default();
+    assert!(!piped.tty);
+    run("theme list", &mut piped);
+    let v: serde_json::Value = serde_json::from_str(&piped.out).expect(&piped.out);
+    assert!(v.as_array().is_some_and(|a| !a.is_empty()), "{v}");
+    assert!(v[0]["id"].is_string() && v[0]["variant"].is_string(), "{v}");
+    let mut term = FakeEnv {
+        tty: true,
+        ..Default::default()
+    };
+    run("theme list", &mut term);
+    assert!(
+        term.out.contains("wol-dark") && !term.out.trim_start().starts_with('['),
+        "{}",
+        term.out
+    );
+}

@@ -115,8 +115,110 @@ pub fn human(bytes: u64) -> String {
     format!("{n} {unit}")
 }
 
+/// A removable disk with a medium in it: its kernel name and what the label on it would say
+/// (maker and model; empty when the disk does not say).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Removable {
+    pub dev: String,
+    pub name: String,
+}
+
+/// The removable disks under `sys_block` (`/sys/block`): the kernel says `removable` (SD readers,
+/// floppy-like drives) or the device hangs off a USB bus; an empty card reader (size 0) is not
+/// there until a card is. Read from sysfs, no process, so every poll can afford it.
+pub fn removable_disks(sys_block: &std::path::Path) -> Vec<Removable> {
+    const NOT_DISKS: [&str; 8] = ["loop", "ram", "zram", "dm-", "md", "sr", "nbd", "fd"];
+    let Ok(dir) = std::fs::read_dir(sys_block) else {
+        return Vec::new();
+    };
+    let mut out: Vec<Removable> = dir
+        .flatten()
+        .filter_map(|e| {
+            let dev = e.file_name().to_string_lossy().into_owned();
+            if NOT_DISKS.iter().any(|p| dev.starts_with(p)) {
+                return None;
+            }
+            let path = e.path();
+            let read = |f: &str| std::fs::read_to_string(path.join(f)).unwrap_or_default();
+            let size: u64 = read("size").trim().parse().unwrap_or(0);
+            let removable = read("removable").trim() == "1"
+                || std::fs::canonicalize(&path).is_ok_and(|p| p.to_string_lossy().contains("/usb"));
+            if size == 0 || !removable {
+                return None;
+            }
+            let clean = |s: String| s.split_whitespace().collect::<Vec<_>>().join(" ");
+            let name = [read("device/vendor"), read("device/model")]
+                .into_iter()
+                .map(clean)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            Some(Removable { dev, name })
+        })
+        .collect();
+    out.sort_by(|a, b| a.dev.cmp(&b.dev));
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    /// A fake /sys/block: `disk(name, removable, size, vendor, model)`; `usb` puts the device under
+    /// a USB bus and links it, as sysfs does.
+    fn sysfs(tag: &str, disks: &[(&str, &str, &str, &str, &str, bool)]) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("wol-sysblock-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (block, devices) = (root.join("block"), root.join("devices/pci0/usb1"));
+        std::fs::create_dir_all(&block).unwrap();
+        std::fs::create_dir_all(&devices).unwrap();
+        for (name, removable, size, vendor, model, usb) in disks {
+            let real = if *usb {
+                devices.join(name)
+            } else {
+                root.join("devices/pci0").join(name)
+            };
+            std::fs::create_dir_all(real.join("device")).unwrap();
+            std::fs::write(real.join("removable"), format!("{removable}\n")).unwrap();
+            std::fs::write(real.join("size"), format!("{size}\n")).unwrap();
+            std::fs::write(real.join("device/vendor"), format!("{vendor:<8}\n")).unwrap();
+            std::fs::write(real.join("device/model"), format!("{model:<16}\n")).unwrap();
+            std::os::unix::fs::symlink(&real, block.join(name)).unwrap();
+        }
+        block
+    }
+
+    /// QA-FDAY-13: a stick plugged in said nothing. Only a removable disk with a medium counts
+    /// (USB bus or the removable flag); the system disk, loop devices and an empty card reader do not.
+    #[test]
+    fn sticks_are_the_removable_disks_with_a_medium() {
+        let block = sysfs(
+            "list",
+            &[
+                ("nvme0n1", "0", "500000000", "", "Samsung SSD", false),
+                ("sda", "0", "30000000", "Kingston", "DataTraveler 3.0", true),
+                ("mmcblk0", "1", "62000000", "", "SD64G", false),
+                ("sdb", "1", "0", "Generic", "Card Reader", true),
+                ("loop0", "1", "100", "", "", false),
+            ],
+        );
+        let got = removable_disks(&block);
+        assert_eq!(
+            got,
+            vec![
+                Removable {
+                    dev: "mmcblk0".into(),
+                    name: "SD64G".into()
+                },
+                Removable {
+                    dev: "sda".into(),
+                    name: "Kingston DataTraveler 3.0".into()
+                },
+            ],
+            "{got:?}"
+        );
+        assert!(removable_disks(std::path::Path::new("/no/such/sys")).is_empty());
+        let _ = std::fs::remove_dir_all(block.parent().unwrap());
+    }
+
     use super::*;
     use crate::system::fake::FakeHost;
 

@@ -18,7 +18,12 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
     match inv.action {
         "sessions.save" => save(env, json, inv.flag("yes")),
         "sessions.restore" => restore(env, json),
-        "sessions.list" => list(env, json),
+        // A list read by a script (stdout is not a terminal) is JSON, as every other list verb's
+        // is (QA-PWR-16: it said "no saved windows" into a pipe).
+        "sessions.list" => {
+            let piped = !env.stdout_tty();
+            list(env, json || piped)
+        }
         other => fail(
             env,
             ErrorCode::Usage,
@@ -350,10 +355,22 @@ mod tests {
         assert_eq!(v["opened"], 0);
     }
 
+    /// QA-PWR-16: piped, `sessions list` prints JSON like `--json` does.
+    #[test]
+    fn a_piped_list_is_json() {
+        let home = tmp("piped");
+        let mut env = fake(&home);
+        assert!(!env.tty);
+        assert_eq!(execute(&inv("sessions.list", false), &mut env), 0);
+        let v: serde_json::Value = serde_json::from_str(&env.out).expect(&env.out);
+        assert_eq!(v["windows"], serde_json::json!([]));
+    }
+
     #[test]
     fn nothing_saved_lists_and_restores_nothing() {
         let home = tmp("empty");
         let mut env = fake(&home);
+        env.tty = true;
         assert_eq!(execute(&inv("sessions.list", false), &mut env), 0);
         assert_eq!(env.out, "no saved windows\n");
         env.out.clear();

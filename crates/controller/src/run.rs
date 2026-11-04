@@ -758,7 +758,8 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
         }
         "theme.list" => {
             let list = catalog.list();
-            if json {
+            // Piped, a list is JSON (QA-PWR-16: a script got the text table).
+            if json || !env.stdout_tty() {
                 let v: Vec<_> = list.iter().map(|t| serde_json::json!({"id": t.id, "name": t.name, "variant": t.variant.name()})).collect();
                 env.out(&format!("{}\n", serde_json::Value::from(v)));
             } else {
@@ -1300,7 +1301,7 @@ fn update_interrupted(env: &mut dyn Env) -> Option<String> {
     up::interrupted(Some(&mark), env.lock_held(Path::new(up::LOCK))).map(str::to_owned)
 }
 
-/// `wol update status`: null / "not checked yet" before the first check.
+/// `wol update status`: `{"checked":null,..}` / "not checked yet" before the first check.
 fn update_status(env: &mut dyn Env, json: bool) -> i32 {
     let u = update_snapshot(env);
     let (base, kernel, wolos) = running_base(env);
@@ -1316,7 +1317,16 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
             v["kernel_is_wolos"] = wolos.into();
             v
         });
-        env.out(&format!("{}\n", v.unwrap_or_default()));
+        // No check yet is an object, not `null`: a script can read `checked` either way.
+        let none = serde_json::json!({
+            "checked": null,
+            "count": 0,
+            "interrupted": interrupted,
+            "base_version": base,
+            "kernel": kernel,
+            "kernel_is_wolos": wolos,
+        });
+        env.out(&format!("{}\n", v.unwrap_or(none)));
         return 0;
     }
     if interrupted.is_some() {

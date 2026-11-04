@@ -580,12 +580,13 @@ pub fn checks(f: &Facts) -> Vec<Check> {
                 format!("wine {}.{} (Windows apps outside Steam)", v.major, v.minor)
             }
             (Some(w), None) => format!("{w} (Windows apps outside Steam)"),
-            _ => "wine not installed: Steam games use Proton, which Steam installs".into(),
+            _ => "wine not installed: Steam games use Proton, which Steam installs; wine is only for Windows apps outside Steam".into(),
         },
         if f.wine.is_some() {
             ""
         } else {
-            "sudo pacman -S wine (only for Windows apps outside Steam)"
+            // Exactly the command, so pasting the line works; the why is in the detail.
+            "sudo pacman -S wine"
         },
     ));
     c

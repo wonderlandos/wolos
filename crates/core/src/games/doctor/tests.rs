@@ -169,6 +169,22 @@ fn each_problem_names_its_fix() {
     assert!(c.detail.contains("your own kernel, kept"), "{}", c.detail);
 }
 
+/// Pasting the fix line into a terminal must work: it is the command and nothing else, with the
+/// explanation in the detail text (a trailing "(only for Windows apps ...)" made the shell fail).
+#[test]
+fn the_wine_fix_line_is_exactly_the_command() {
+    let mut f = facts(&ready_host());
+    f.wine = None;
+    let all = checks(&f);
+    let c = all.iter().find(|c| c.id == "wine").unwrap();
+    assert_eq!(c.fix, "sudo pacman -S wine");
+    assert!(
+        c.detail.contains("only for Windows apps outside Steam"),
+        "{}",
+        c.detail
+    );
+}
+
 #[test]
 fn json_shape() {
     let c = check("steam", Status::Fail, "x", "y");

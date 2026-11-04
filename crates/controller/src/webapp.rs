@@ -19,6 +19,7 @@ use crate::mcp::ToolEnv;
 use crate::run::Env;
 use serde_json::{Map, Value, json};
 use shared::errors::ErrorCode;
+use wol_core::automation::Outcome;
 
 /// Largest params text and reply wold takes (`shared::portal::MAX_LINE`).
 pub const MAX_PARAMS: usize = shared::portal::MAX_LINE;
@@ -33,6 +34,13 @@ fn code_of(exit: i32) -> ErrorCode {
         .into_iter()
         .find(|c| c.exit() == exit && *c != ErrorCode::Ok)
         .unwrap_or(ErrorCode::Failed)
+}
+
+/// The shell's own sentence in the gate's message for an administrator change it ran that did not
+/// work (`approve::decide`'s `Answer::Failed` wording); None for every other stop (nothing ran).
+fn shell_failure(msg: &str) -> Option<&str> {
+    let rest = msg.strip_prefix("The user allowed it, but it did not work: ")?;
+    Some(rest.strip_suffix(" Nothing changed.").unwrap_or(rest))
 }
 
 /// The reply value for one call (the caller prints it as a line).
@@ -125,6 +133,15 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
         };
         // What the verb's own --json would have said, read before the change (the check after).
         let before = (method == "update.install").then(|| crate::run::update_install_result(env));
+        // The steps the sheet will show, to say which one stopped a fix that failed (QA-100 H3-2).
+        let asked = if method == "doctor.fix" {
+            match crate::doctor::approval(env, inv.get("id").unwrap_or_default()) {
+                Ok(Some(shared::shell::ApprovalRequest::DoctorFix { steps, .. })) => steps,
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
         match approve::decide(env, app, &verb.tool(), rule, &inv, secret) {
             Verdict::Done(what) => {
                 return json!({"ok": match method {
@@ -132,6 +149,15 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
                     "doctor.fix" => crate::doctor::after(env, inv.get("id").unwrap_or_default()),
                     _ => json!({"status": "done", "request": what}),
                 }});
+            }
+            // The shell ran the fix and a step did not work: the steps before it may have changed
+            // things, so the answer is the check as it is now and which step stopped.
+            Verdict::Stop(Outcome::Failed, msg) if method == "doctor.fix" => {
+                if let Some(why) = shell_failure(&msg) {
+                    let id = inv.get("id").unwrap_or_default();
+                    return json!({"ok": crate::doctor::after_failed(env, id, &asked, why)});
+                }
+                return fault(ErrorCode::Denied, &msg, "");
             }
             Verdict::Stop(_, msg) => return fault(ErrorCode::Denied, &msg, ""),
             // Allowed on the consent sheet: a fix of the person's own services runs below (the
@@ -219,6 +245,23 @@ mod tests {
             params,
             &mut FakeEnv::default(),
         )
+    }
+
+    /// QA-DOC-2: the gate's "The user allowed it, but it did not work: <why> Nothing changed." is
+    /// the shell's own sentence; the Doctor's answer keeps the reason and drops the gate's frame.
+    #[test]
+    fn the_shells_failure_sentence_is_found_in_the_gates_message() {
+        assert_eq!(
+            shell_failure(
+                "The user allowed it, but it did not work: The password was wrong. Nothing changed."
+            ),
+            Some("The password was wrong.")
+        );
+        assert_eq!(
+            shell_failure("The user allowed it, but it did not work: Out of space."),
+            Some("Out of space.")
+        );
+        assert_eq!(shell_failure("The user said no."), None);
     }
 
     #[test]

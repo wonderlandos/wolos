@@ -578,7 +578,10 @@ fn listing_values_are_checked() {
     ] {
         assert!(with(line).is_err(), "{line}");
     }
-    assert!(with("about = \"a\\u0007b\"").is_err(), "other control characters stay refused");
+    assert!(
+        with("about = \"a\\u0007b\"").is_err(),
+        "other control characters stay refused"
+    );
     assert!(with("about = \"a\\rb\"").is_err());
     // the same line break in a section's text is still refused
     let e = parse(&format!(

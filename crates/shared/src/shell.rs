@@ -156,6 +156,22 @@ pub fn sha_prefix(sha256: &str) -> &str {
         .map_or(sha256, |(i, _)| &sha256[..i])
 }
 
+/// One Doctor fix step (`[action, args…]`, a wol-admind request) as the sheet says it: the words
+/// a person reads, never the `wol admin …` command line (QA-DOC-3; the command stays behind
+/// "Show the command" in the Doctor itself).
+pub fn step_in_words(step: &[String]) -> String {
+    let arg = |i: usize| step.get(i).map(String::as_str).unwrap_or_default();
+    match (arg(0), arg(1)) {
+        ("pkg-install", p) if !p.is_empty() => format!("install {p}"),
+        ("pkg-upgrade", "") => "update all system apps".into(),
+        ("pkg-upgrade", _) => format!("update {}", step[1..].join(", ")),
+        ("firewall", s) => format!("turn the firewall {s}"),
+        ("remote-login", s) => format!("turn Remote Login {s}"),
+        ("hw-load", m) if !m.is_empty() => format!("start the driver {m}"),
+        _ => "make one more change".into(),
+    }
+}
+
 impl ApprovalRequest {
     /// Sentence end for "<helper> wants to …".
     pub fn describe(&self) -> String {
@@ -196,10 +212,7 @@ impl ApprovalRequest {
                 format!("switch system updates to the “{channel}” channel")
             }
             Self::DoctorFix { title, steps, .. } => {
-                let shown: Vec<String> = steps
-                    .iter()
-                    .map(|s| format!("wol admin {}", s.join(" ")))
-                    .collect();
+                let shown: Vec<String> = steps.iter().map(|s| step_in_words(s)).collect();
                 format!("fix “{title}” ({})", shown.join("; "))
             }
             Self::Change { what, .. } => what.clone(),
@@ -453,8 +466,25 @@ mod tests {
         assert!(f.is_admin());
         assert_eq!(
             f.describe(),
-            "fix “Turn on the firewall” (wol admin firewall on)"
+            "fix “Turn on the firewall” (turn the firewall on)"
         );
+        // QA-DOC-3: the words, never the command line, for every step a Doctor fix can send.
+        let words = ApprovalRequest::DoctorFix {
+            id: "network.devices".into(),
+            title: "Install the drivers".into(),
+            steps: vec![
+                vec!["pkg-install".into(), "linux-firmware".into()],
+                vec!["hw-load".into(), "iwlwifi".into()],
+                vec!["pkg-upgrade".into()],
+                vec!["remote-login".into(), "off".into()],
+            ],
+        }
+        .describe();
+        assert_eq!(
+            words,
+            "fix “Install the drivers” (install linux-firmware; start the driver iwlwifi; update all system apps; turn Remote Login off)"
+        );
+        assert!(!words.contains("wol "), "{words}");
         let a = Approval {
             helper: "org.wolos.webapp.doctor".into(),
             tool: "doctor_fix".into(),

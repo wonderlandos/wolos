@@ -863,8 +863,9 @@ pub fn fetch_argv(url: &str, dest: &str) -> Vec<String> {
     [
         "curl",
         "--disable",
-        // Silent: curl's own text never reaches the person; the caller words its exit status
-        // (QA-STORE-61).
+        // Silent: curl's own text never reaches the person ("curl: (22) The requested URL returned
+        // error: 404"; a missing .sig is normal); the caller words its exit status in one sentence
+        // (QA-STORE-61, QA-PWR-17).
         "-fsL",
         "--proto",
         "=https",
@@ -1013,21 +1014,34 @@ mod tests {
     fn screenshots_are_accepted_and_bounded() {
         let keys = [public_of(&SEED)];
         let ok = |m: &[(String, Vec<u8>)]| verify(&write(m), &keys);
-        let v = ok(&with_shots(&[("screenshots/main.png", png(100)), ("screenshots/two_2.webp", webp())])).unwrap();
+        let v = ok(&with_shots(&[
+            ("screenshots/main.png", png(100)),
+            ("screenshots/two_2.webp", webp()),
+        ]))
+        .unwrap();
         assert_eq!(v.trust, Trust::Signed(0));
         assert_eq!(
-            v.screenshots.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
+            v.screenshots
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>(),
             ["screenshots/main.png", "screenshots/two_2.webp"]
         );
         assert!(v.icon.is_some());
         // none at all is still a package
         assert!(ok(&with_shots(&[])).unwrap().screenshots.is_empty());
         // eight are the most
-        let eight: Vec<(String, Vec<u8>)> = (0..8).map(|i| (format!("screenshots/s{i}.png"), png(64))).collect();
-        let refs: Vec<(&str, Vec<u8>)> = eight.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+        let eight: Vec<(String, Vec<u8>)> = (0..8)
+            .map(|i| (format!("screenshots/s{i}.png"), png(64)))
+            .collect();
+        let refs: Vec<(&str, Vec<u8>)> =
+            eight.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
         assert_eq!(ok(&with_shots(&refs)).unwrap().screenshots.len(), 8);
-        let nine: Vec<(String, Vec<u8>)> = (0..9).map(|i| (format!("screenshots/s{i}.png"), png(64))).collect();
-        let refs: Vec<(&str, Vec<u8>)> = nine.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+        let nine: Vec<(String, Vec<u8>)> = (0..9)
+            .map(|i| (format!("screenshots/s{i}.png"), png(64)))
+            .collect();
+        let refs: Vec<(&str, Vec<u8>)> =
+            nine.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
         assert!(ok(&with_shots(&refs)).is_err(), "nine screenshots");
         // size: 2 MiB is the limit
         assert!(ok(&with_shots(&[("screenshots/big.png", png(2 << 20))])).is_ok());
@@ -1049,11 +1063,26 @@ mod tests {
             assert!(ok(&with_shots(&[(bad, png(64))])).is_err(), "{bad}");
         }
         // the same name twice; a picture that is not what its name says
-        assert!(ok(&with_shots(&[("screenshots/a.png", png(64)), ("screenshots/a.png", png(65))])).is_err());
-        assert!(ok(&with_shots(&[("screenshots/a.png", webp())])).is_err(), "webp bytes named .png");
-        assert!(ok(&with_shots(&[("screenshots/a.webp", png(64))])).is_err(), "png bytes named .webp");
+        assert!(
+            ok(&with_shots(&[
+                ("screenshots/a.png", png(64)),
+                ("screenshots/a.png", png(65))
+            ]))
+            .is_err()
+        );
+        assert!(
+            ok(&with_shots(&[("screenshots/a.png", webp())])).is_err(),
+            "webp bytes named .png"
+        );
+        assert!(
+            ok(&with_shots(&[("screenshots/a.webp", png(64))])).is_err(),
+            "png bytes named .webp"
+        );
         assert!(ok(&with_shots(&[("screenshots/a.png", b"<svg/>".to_vec())])).is_err());
-        assert!(ok(&with_shots(&[("screenshots/a.png", Vec::new())])).is_err(), "empty");
+        assert!(
+            ok(&with_shots(&[("screenshots/a.png", Vec::new())])).is_err(),
+            "empty"
+        );
     }
 
     /// Screenshots keep their slot: not before the icon or Info.json, not after the payload or the manifest,
@@ -1065,7 +1094,10 @@ mod tests {
         // [Info, icon, shot, payload, SHA256, SHA256.sig]
         assert!(verify(&write(&base), &keys).is_ok());
         for (what, edit) in [
-            ("shot first", (|m: &mut Vec<(String, Vec<u8>)>| m.swap(0, 2)) as fn(&mut Vec<_>)),
+            (
+                "shot first",
+                (|m: &mut Vec<(String, Vec<u8>)>| m.swap(0, 2)) as fn(&mut Vec<_>),
+            ),
             ("shot before Info.json", |m| m.swap(0, 2)),
             ("shot before the icon", |m| m.swap(1, 2)),
             ("shot after the payload", |m| m.swap(2, 3)),
@@ -1073,7 +1105,11 @@ mod tests {
             ("shot byte", |m| m[2].1[20] ^= 1),
             ("shot not in the manifest", |m| {
                 let t = String::from_utf8(m[4].1.clone()).unwrap();
-                let t: String = t.lines().filter(|l| !l.contains("screenshots/")).map(|l| format!("{l}\n")).collect();
+                let t: String = t
+                    .lines()
+                    .filter(|l| !l.contains("screenshots/"))
+                    .map(|l| format!("{l}\n"))
+                    .collect();
                 m[4].1 = t.into_bytes();
             }),
         ] {
@@ -1280,6 +1316,7 @@ not-a-key x
         let has = |w: &[&str]| a.windows(w.len()).any(|x| x == w);
         assert!(has(&["--proto", "=https"]) && has(&["--proto-redir", "=https"]));
         assert!(has(&["--max-filesize", "33554432"]));
+        // QA-PWR-17: curl stays silent; a 404 on the index (or its optional .sig) is wol's to word.
         assert!(
             has(&["-fsL"]) && !a.iter().any(|x| x.contains('S')),
             "{a:?}"
@@ -1652,7 +1689,10 @@ not-a-key x
         let keys = [public_of(&SEED)];
         let listed = |min: &str, with_files: bool| {
             let mut f = plugin_files("alice.demo");
-            let toml = f.iter_mut().find(|(n, _)| n.ends_with("plugin.toml")).unwrap();
+            let toml = f
+                .iter_mut()
+                .find(|(n, _)| n.ends_with("plugin.toml"))
+                .unwrap();
             let old: String = String::from_utf8(toml.1.clone())
                 .unwrap()
                 .lines()
@@ -1687,7 +1727,10 @@ not-a-key x
         let v = verify_wolplug(&listed("min_wolos = \"0.13\"\n", true), &keys).unwrap();
         let at = install_plugin(&v, &dir).unwrap();
         assert!(at.join("shots/a.png").is_file() && at.join("icon.png").is_file());
-        assert_eq!(crate::plugins::check(&at, false).problems, Vec::<String>::new());
+        assert_eq!(
+            crate::plugins::check(&at, false).problems,
+            Vec::<String>::new()
+        );
     }
 
     #[test]
