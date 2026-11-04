@@ -16,6 +16,9 @@ const BASELINE: &[Row] = &[
     ("RH-231", "crates/shell/src/ui/drop_shelf.rs", 1, "D2a"),
     // INT-1 (brand-ui): CHROME_MIN_WIDTH is the breakpoint the lock compares its width with, not a size.
     ("RH-231", "crates/shell/src/ui/lock.rs", 1, "D2a"),
+    // RATCHET-1: CENTER_MAX_HEIGHT is the cap on a big screen; center_list_cap clamps it to 70% of
+    // the screen at map (a const named HEIGHT is all the scanner sees).
+    ("RH-231", "crates/shell/src/ui/notify.rs", 1, "D2a"),
     ("RH-231", "crates/shell/src/ui/shortcut_sheet.rs", 2, "D2a"),
     (
         "RH-232",

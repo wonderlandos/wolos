@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! The index of the root-cause standards (ADR 0051 "Put the house in order"): the ten classes of
+//! The index of the root-cause standards (ADR 0051 "Put the house in order"): the classes of
 //! docs/STANDARDS.md section 9, their RH rules in docs/RULES.md, the rules_rc_*.rs files that
 //! check them and the table of the decision record must name the same ids. A standard written in
 //! one place and missing in another fails here, so the documents cannot drift from the tests.
@@ -19,6 +19,7 @@ const CLASSES: &[(&str, &[&str])] = &[
     ("RC-19", &["RH-191", "RH-192"]),
     ("RC-07", &["RH-071"]),
     ("RC-02", &["RH-021"]),
+    ("RC-39", &["RH-391"]),
 ];
 
 const ADR: &str = "docs/adr/0051-house-in-order.md";

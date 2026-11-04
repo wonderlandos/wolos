@@ -100,7 +100,9 @@ const BASELINE: &[(&str, usize)] = &[
     ("core", 13),
     ("proxy", 3),
     ("shared", 17),
-    ("shell", 8),
+    // +1 (RATCHET-1): tests/support/broadway.rs, the one `set_var` of GDK_BACKEND/BROADWAY_DISPLAY
+    // before gtk::init for the Broadway tests (Rust 2024), which replaced three copies.
+    ("shell", 9),
     ("wol-lua", 3),
     ("xguard-clam", 13),
     ("webengine", 135),

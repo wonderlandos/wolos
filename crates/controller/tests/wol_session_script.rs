@@ -45,8 +45,7 @@ fn start(tag: &str, home_setup: impl Fn(&std::path::Path)) -> (String, String) {
 
 #[test]
 fn unwritable_config_starts_on_the_defaults() {
-    // SAFETY: geteuid has no preconditions.
-    if unsafe { libc::geteuid() } == 0 {
+    if shared::sys::euid() == 0 {
         eprintln!("skipped: root writes through the folder's mode");
         return;
     }
