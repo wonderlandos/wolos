@@ -117,7 +117,7 @@ fn theme_apply_restyles_without_saving_a_theme() {
     let j = wol_core::journal::Journal::new(&home.join("state"), &home);
     assert!(j.entries().is_empty(), "nothing to undo: {:?}", j.entries());
     let css = std::fs::read_to_string(home.join("gtk-4.0/gtk.css")).unwrap();
-    assert!(css.contains("--accent-bg-color: #7c5cff;"), "{css}");
+    assert!(css.contains("--accent-bg-color: #7452f5;"), "{css}");
     // A saved theme is applied as it is, still without a new entry.
     assert_eq!(run("theme dark", &mut env), 0);
     let n = j.entries().len();
