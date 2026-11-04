@@ -3,7 +3,8 @@
 //! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `wol pkg -- -U` install (the sealed-system pacman).
 use shared::bundle::{INFO_FILE, Info};
 use shared::package::{
-    Entry, Index, MANIFEST, MAX_SIZE, MEMBERS, PAYLOAD, SIGNATURE, is_app_id, is_version,
+    Entry, Index, MANIFEST, MAX_SCREENSHOT_SIZE, MAX_SCREENSHOTS, MAX_SIZE, MEMBERS, PAYLOAD,
+    SIGNATURE, is_app_id, is_screenshot_member, is_version,
 };
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -35,6 +36,32 @@ pub struct Verified {
     pub trust: Trust,
     pub payload: Member,
     pub icon: Option<Member>,
+    /// The listing screenshots (`screenshots/<name>.png|webp`), in archive order.
+    pub screenshots: Vec<Member>,
+}
+
+/// Where the screenshots sit in [`MEMBERS`] order: in front of `payload.pkg` (after `icon.png`).
+const SHOT_SLOT: usize = 2;
+
+/// A member's place in contract order; every screenshot shares [`SHOT_SLOT`], the members from the
+/// payload on move up by one.
+fn slot(name: &str) -> Option<usize> {
+    if is_screenshot_member(name) {
+        return Some(SHOT_SLOT);
+    }
+    MEMBERS
+        .iter()
+        .position(|(n, _)| *n == name)
+        .map(|i| if i >= SHOT_SLOT { i + 1 } else { i })
+}
+
+/// A PNG or WebP by its first bytes (the screenshot's name says which).
+fn picture_matches_name(head: &[u8], name: &str) -> bool {
+    if name.ends_with(".png") {
+        head.starts_with(b"\x89PNG\r\n\x1a\n")
+    } else {
+        head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"WEBP"
+    }
 }
 
 fn octal(b: &[u8]) -> Option<u64> {
@@ -201,15 +228,34 @@ fn parse_manifest(text: &str) -> Option<Vec<(&str, &str)>> {
 /// Check order, names, hashes, signature and Info.json. `keys`: trusted Ed25519 public keys.
 pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
     let ms = members(path)?;
-    // Exactly the contract members, each once, in contract order.
-    let mut want = MEMBERS.iter().peekable();
+    // Exactly the contract members, each once, in contract order. Between the icon and the payload
+    // may sit the hub's listing screenshots: up to MAX_SCREENSHOTS, each name once, each a PNG or
+    // WebP (by name and first bytes) of at most MAX_SCREENSHOT_SIZE.
+    let mut last: Option<usize> = None;
+    let mut shots: Vec<Member> = Vec::new();
     for m in &ms {
-        loop {
-            match want.next() {
-                Some((n, _)) if *n == m.name => break,
-                Some((_, false)) => continue,
-                _ => return Err(format!("unexpected member {}", m.name)),
+        let at = slot(&m.name).ok_or_else(|| format!("unexpected member {}", m.name))?;
+        if last.is_some_and(|l| at < l || (at == l && at != SHOT_SLOT)) {
+            return Err(format!("unexpected member {}", m.name));
+        }
+        if at == SHOT_SLOT {
+            if shots.len() >= MAX_SCREENSHOTS || shots.iter().any(|s| s.name == m.name) {
+                return Err(format!("unexpected member {}", m.name));
             }
+            if m.size > MAX_SCREENSHOT_SIZE {
+                return Err(format!("{} too large", m.name));
+            }
+            shots.push(m.clone());
+        }
+        last = Some(at);
+    }
+    for s in &shots {
+        let head = Member {
+            size: s.size.min(12),
+            ..s.clone()
+        };
+        if !picture_matches_name(&read_member(path, &head, 12)?, &s.name) {
+            return Err(format!("{} is not a PNG or WebP picture", s.name));
         }
     }
     let get = |n: &str| ms.iter().find(|m| m.name == n);
@@ -260,6 +306,7 @@ pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
         trust,
         payload: get(PAYLOAD).cloned().ok_or("missing payload")?,
         icon: get(shared::package::ICON).cloned(),
+        screenshots: shots,
     })
 }
 
@@ -931,6 +978,111 @@ mod tests {
         }
     }
 
+    /// A PNG-looking picture of `n` bytes (the reader checks the first bytes only).
+    fn png(n: usize) -> Vec<u8> {
+        let mut b = b"\x89PNG\r\n\x1a\n".to_vec();
+        b.resize(n, 7);
+        b
+    }
+
+    fn webp() -> Vec<u8> {
+        let mut b = b"RIFF\x20\0\0\0WEBPVP8L".to_vec();
+        b.resize(40, 3);
+        b
+    }
+
+    /// `good()` with the given screenshots between the icon and the payload, manifest and signature redone.
+    fn with_shots(shots: &[(&str, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
+        let mut m: Vec<(String, Vec<u8>)> = vec![
+            ("Info.json".into(), INFO.into()),
+            (ICON.into(), b"\x89PNG".to_vec()),
+        ];
+        m.extend(shots.iter().map(|(n, b)| ((*n).into(), b.clone())));
+        m.push((PAYLOAD.into(), b"pkg payload bytes".to_vec()));
+        let refs: Vec<(&str, &[u8])> = m.iter().map(|(n, b)| (n.as_str(), b.as_slice())).collect();
+        let man = manifest(&refs);
+        let sig = sign(&SEED, man.as_bytes()).to_vec();
+        m.push((MANIFEST.into(), man.into_bytes()));
+        m.push((SIGNATURE.into(), sig));
+        m
+    }
+
+    /// The hub's listing pictures (hubcheck `facts`) are part of the contract: `screenshots/<name>.png|webp`
+    /// between the icon and the payload, up to eight, each a real picture of at most 2 MiB.
+    #[test]
+    fn screenshots_are_accepted_and_bounded() {
+        let keys = [public_of(&SEED)];
+        let ok = |m: &[(String, Vec<u8>)]| verify(&write(m), &keys);
+        let v = ok(&with_shots(&[("screenshots/main.png", png(100)), ("screenshots/two_2.webp", webp())])).unwrap();
+        assert_eq!(v.trust, Trust::Signed(0));
+        assert_eq!(
+            v.screenshots.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
+            ["screenshots/main.png", "screenshots/two_2.webp"]
+        );
+        assert!(v.icon.is_some());
+        // none at all is still a package
+        assert!(ok(&with_shots(&[])).unwrap().screenshots.is_empty());
+        // eight are the most
+        let eight: Vec<(String, Vec<u8>)> = (0..8).map(|i| (format!("screenshots/s{i}.png"), png(64))).collect();
+        let refs: Vec<(&str, Vec<u8>)> = eight.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+        assert_eq!(ok(&with_shots(&refs)).unwrap().screenshots.len(), 8);
+        let nine: Vec<(String, Vec<u8>)> = (0..9).map(|i| (format!("screenshots/s{i}.png"), png(64))).collect();
+        let refs: Vec<(&str, Vec<u8>)> = nine.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+        assert!(ok(&with_shots(&refs)).is_err(), "nine screenshots");
+        // size: 2 MiB is the limit
+        assert!(ok(&with_shots(&[("screenshots/big.png", png(2 << 20))])).is_ok());
+        let e = ok(&with_shots(&[("screenshots/big.png", png((2 << 20) + 1))])).unwrap_err();
+        assert!(e.contains("too large"), "{e}");
+        // names: charset, length, extension, directory
+        for bad in [
+            "screenshots/Main.png",
+            "screenshots/a b.png",
+            "screenshots/a.gif",
+            "screenshots/a.svg",
+            "screenshots/.png",
+            "screenshots/sub/a.png",
+            "screenshots/../a.png",
+            "screenshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+            "shots/a.png",
+            "screenshots.png",
+        ] {
+            assert!(ok(&with_shots(&[(bad, png(64))])).is_err(), "{bad}");
+        }
+        // the same name twice; a picture that is not what its name says
+        assert!(ok(&with_shots(&[("screenshots/a.png", png(64)), ("screenshots/a.png", png(65))])).is_err());
+        assert!(ok(&with_shots(&[("screenshots/a.png", webp())])).is_err(), "webp bytes named .png");
+        assert!(ok(&with_shots(&[("screenshots/a.webp", png(64))])).is_err(), "png bytes named .webp");
+        assert!(ok(&with_shots(&[("screenshots/a.png", b"<svg/>".to_vec())])).is_err());
+        assert!(ok(&with_shots(&[("screenshots/a.png", Vec::new())])).is_err(), "empty");
+    }
+
+    /// Screenshots keep their slot: not before the icon or Info.json, not after the payload or the manifest,
+    /// and a changed byte is still a hash mismatch.
+    #[test]
+    fn screenshots_have_their_place_in_the_archive() {
+        let keys = [public_of(&SEED)];
+        let base = with_shots(&[("screenshots/a.png", png(64))]);
+        // [Info, icon, shot, payload, SHA256, SHA256.sig]
+        assert!(verify(&write(&base), &keys).is_ok());
+        for (what, edit) in [
+            ("shot first", (|m: &mut Vec<(String, Vec<u8>)>| m.swap(0, 2)) as fn(&mut Vec<_>)),
+            ("shot before Info.json", |m| m.swap(0, 2)),
+            ("shot before the icon", |m| m.swap(1, 2)),
+            ("shot after the payload", |m| m.swap(2, 3)),
+            ("shot after the manifest", |m| m.swap(2, 4)),
+            ("shot byte", |m| m[2].1[20] ^= 1),
+            ("shot not in the manifest", |m| {
+                let t = String::from_utf8(m[4].1.clone()).unwrap();
+                let t: String = t.lines().filter(|l| !l.contains("screenshots/")).map(|l| format!("{l}\n")).collect();
+                m[4].1 = t.into_bytes();
+            }),
+        ] {
+            let mut m = base.clone();
+            edit(&mut m);
+            assert!(verify(&write(&m), &keys).is_err(), "{what}");
+        }
+    }
+
     #[test]
     fn info_must_describe_a_package() {
         for info in [
@@ -1490,6 +1642,52 @@ not-a-key x
         let refs: Vec<(&str, &[u8])> = vec![("alice.demo/plugin.toml", b"x")];
         let e = verify_wolplug(&ustar(&refs), &keys).unwrap_err();
         assert!(e.contains("SHA256"), "{e}");
+    }
+
+    /// A plugin from the hub names its store-page picture and screenshots in plugin.toml (hubcheck
+    /// `facts`, WolOS 0.13): they travel in the folder, are checked like every other named file, and a
+    /// manifest that uses the keys without min_wolos 0.13 is refused.
+    #[test]
+    fn a_wolplug_may_carry_its_store_page_pictures() {
+        let keys = [public_of(&SEED)];
+        let listed = |min: &str, with_files: bool| {
+            let mut f = plugin_files("alice.demo");
+            let toml = f.iter_mut().find(|(n, _)| n.ends_with("plugin.toml")).unwrap();
+            let old: String = String::from_utf8(toml.1.clone())
+                .unwrap()
+                .lines()
+                .filter(|l| !l.starts_with("min_wolos"))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            toml.1 = format!(
+                "{min}icon = \"icon.png\"\nscreenshots = [\"shots/a.png\"]\nabout = \"One.\\nTwo.\"\n{old}"
+            )
+            .into_bytes();
+            if with_files {
+                f.push(("alice.demo/icon.png".into(), b"\x89PNG".to_vec()));
+                f.push(("alice.demo/shots/a.png".into(), b"\x89PNG".to_vec()));
+            }
+            wolplug(&f, Some(&SEED))
+        };
+        let v = verify_wolplug(&listed("min_wolos = \"0.13\"\n", true), &keys).unwrap();
+        assert_eq!(v.manifest.icon, "icon.png");
+        assert_eq!(v.manifest.screenshots, ["shots/a.png"]);
+        assert_eq!(v.manifest.about, "One.\nTwo.");
+        assert!(v.files.iter().any(|(r, _)| r == "shots/a.png"));
+        // the picture the manifest names must be in the file
+        let e = verify_wolplug(&listed("min_wolos = \"0.13\"\n", false), &keys).unwrap_err();
+        assert!(e.contains("not in the plugin"), "{e}");
+        // 0.12 systems refuse these keys: the manifest has to say so
+        let e = verify_wolplug(&listed("min_wolos = \"0.12\"\n", true), &keys).unwrap_err();
+        assert!(e.contains("min_wolos"), "{e}");
+        let e = verify_wolplug(&listed("", true), &keys).unwrap_err();
+        assert!(e.contains("min_wolos"), "{e}");
+        // installed for the account, the folder has the pictures and `wol plugin check` is clean
+        let dir = dir();
+        let v = verify_wolplug(&listed("min_wolos = \"0.13\"\n", true), &keys).unwrap();
+        let at = install_plugin(&v, &dir).unwrap();
+        assert!(at.join("shots/a.png").is_file() && at.join("icon.png").is_file());
+        assert_eq!(crate::plugins::check(&at, false).problems, Vec::<String>::new());
     }
 
     #[test]

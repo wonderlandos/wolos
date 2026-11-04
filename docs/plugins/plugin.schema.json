@@ -25,6 +25,34 @@
       "uniqueItems": true,
       "items": { "enum": ["notifications", "run", "http", "clipboard", "open", "toggles"] }
     },
+    "icon": {
+      "$ref": "#/$defs/pictureFile",
+      "description": "The store page's picture of the plugin (the hub reads it from the package). A listing key: needs min_wolos 0.13 or newer."
+    },
+    "screenshots": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/pictureFile" },
+      "description": "Store page screenshots, .png or .webp files in the plugin folder. A listing key: needs min_wolos 0.13 or newer."
+    },
+    "categories": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["Create", "Work", "Play", "Develop"] },
+      "description": "App Store categories. A listing key: needs min_wolos 0.13 or newer."
+    },
+    "homepage": {
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^https://[A-Za-z0-9.:-]+([/?#][!-~]*)?$",
+      "description": "The project's https address. A listing key: needs min_wolos 0.13 or newer."
+    },
+    "about": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Longer text for the store page; write line breaks as \\n. A listing key: needs min_wolos 0.13 or newer."
+    },
     "menubar": {
       "type": "array",
       "items": {
@@ -227,6 +255,12 @@
       "maxLength": 128,
       "pattern": "^([A-Za-z0-9._-]+|[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\\.(png|svg))$",
       "description": "A symbolic icon name, or a .png or .svg in the plugin folder."
+    },
+    "pictureFile": {
+      "type": "string",
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\\.(png|webp)$",
+      "description": "A .png or .webp in the plugin folder; no .. or absolute paths."
     },
     "luaFile": {
       "type": "string",

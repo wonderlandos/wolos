@@ -53,6 +53,13 @@ Header keys, in this order:
 | `description` | no | One line, up to 120 characters. |
 | `min_wolos` | no | Lowest WolOS version with every API the plugin uses, like `"0.12"`. |
 | `permissions` | no | Any of `notifications`, `run`, `http`, `clipboard`, `open`, `toggles` (below). |
+| `icon` | no | The store page's picture: a `.png` or `.webp` file in the folder (a listing key, see below). |
+| `screenshots` | no | Up to 8 `.png` or `.webp` files in the folder, each named once (a listing key). |
+| `categories` | no | Any of `Create`, `Work`, `Play`, `Develop` (a listing key). |
+| `homepage` | no | The project's `https://` address, up to 200 characters (a listing key). |
+| `about` | no | Longer text for the store page, up to 4000 characters; write line breaks as `\n` (a listing key). |
+
+**Listing keys** (`icon`, `screenshots`, `categories`, `homepage`, `about`) only describe the plugin to the hub's store page, which reads them from the package itself (hubcheck `facts`, ADR 0047). They are new in WolOS 0.13: a 0.12 reader refuses unknown header keys, so a manifest that sets one must say `min_wolos = "0.13"` or newer, else it is refused with a sentence saying so. The pictures are files of the folder like any other file the manifest names, so they count toward the 1 MB folder limit and `plugin.toml` must find them there.
 
 Then one `[[section]]` per contribution. Every entry has an `id` (1 to 32 lowercase letters, digits, `-`, `_`), unique across the whole plugin; the shell refers to it as `<plugin id>/<entry id>`. Unknown keys and unknown sections are load errors, each a sentence naming the place (`[[menubar]] 1: unknown key "colour"; it takes id, script, side.`). Files are relative paths inside the folder, no `..`, no hidden names.
 

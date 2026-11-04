@@ -6,10 +6,12 @@ use super::catalog;
 use crate::policy::Policy;
 use crate::process::APP_ID_PREFIX;
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Where the image installs system web apps: `<SYSTEM_DIR>/<slug>/`, the kit at `<SYSTEM_DIR>/kit/`.
 pub use wol_core::sysapp::SYSTEM_DIR;
+/// Where an app of others (a package from the hub, ADR 0048) installs: `<OPT_DIR>/<slug>/`. There is no kit there.
+pub use wol_core::sysapp::OPT_DIR;
 /// The shared kit's folder name next to the apps (never an app slug).
 pub const KIT: &str = "kit";
 pub const FILE: &str = "app.toml";
@@ -141,6 +143,18 @@ impl Manifest {
             origins: vec![folder(dir), folder(kit)],
             ..Policy::default()
         }
+    }
+}
+
+/// The kit an app whose folder sits in `root` loads: the image's own, `<SYSTEM_DIR>/kit/`, for an app under
+/// `<OPT_DIR>` (a package from the hub never ships a kit, and one that put a `kit` folder next to the apps
+/// would not be believed); else the `kit` next to the apps (the image's own apps, and a checkout's `webapps/`
+/// in development). Both arguments are canonical paths.
+pub fn kit_for(root: &Path, system: &Path, opt: &Path) -> PathBuf {
+    if root == opt {
+        system.join(KIT)
+    } else {
+        root.join(KIT)
     }
 }
 
@@ -346,6 +360,21 @@ permissions = ["system.read"]
         let mut bad = m.clone();
         bad.name = "Hello\nExec=x".into();
         assert!(bad.check().is_err());
+    }
+
+    #[test]
+    fn an_app_under_opt_loads_the_kit_of_the_image() {
+        let (system, opt) = (Path::new("/usr/share/wolos/webapps"), Path::new("/opt/wolos/webapps"));
+        assert_eq!(kit_for(system, system, opt), system.join("kit"));
+        assert_eq!(kit_for(opt, system, opt), Path::new("/usr/share/wolos/webapps/kit"));
+        // a checkout in development keeps its own kit
+        assert_eq!(kit_for(Path::new("/src/wolos/webapps"), system, opt), Path::new("/src/wolos/webapps/kit"));
+        let m = Manifest::parse(GOOD).unwrap();
+        let p = m.policy(Path::new("/opt/wolos/webapps/hello"), &kit_for(opt, system, opt));
+        assert_eq!(
+            p.origins,
+            ["file:///opt/wolos/webapps/hello/", "file:///usr/share/wolos/webapps/kit/"]
+        );
     }
 
     #[test]

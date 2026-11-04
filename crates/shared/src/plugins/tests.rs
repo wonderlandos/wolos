@@ -450,3 +450,158 @@ fn the_schema_lists_the_argument_types() {
         .collect();
     assert_eq!(got, ArgType::ALL.map(ArgType::id));
 }
+
+const LISTED: &str = r#"
+schema = 1
+id = "alice.stats"
+name = "Stats"
+version = "1.0"
+license = "MIT"
+description = "CPU in the bar."
+min_wolos = "0.13"
+icon = "icon.png"
+screenshots = ["shots/one.png", "shots/two.webp"]
+categories = ["Develop", "Work", "Develop"]
+homepage = "https://example.org/stats"
+about = "First line.\nSecond line with \"quotes\"."
+
+[[menubar]]
+id = "cpu"
+script = "cpu.lua"
+"#;
+
+/// The hub's listing keys (hubcheck `facts`): read, kept, written back, and named in `files()`.
+#[test]
+fn listing_keys_are_read_and_round_trip() {
+    let m = parse(LISTED).unwrap();
+    assert_eq!(m.icon, "icon.png");
+    assert_eq!(m.screenshots, ["shots/one.png", "shots/two.webp"]);
+    assert_eq!(m.categories, ["Develop", "Work"], "twice is once");
+    assert_eq!(m.homepage, "https://example.org/stats");
+    assert_eq!(m.about, "First line.\nSecond line with \"quotes\".");
+    assert_eq!(
+        m.files(),
+        ["cpu.lua", "icon.png", "shots/one.png", "shots/two.webp"]
+    );
+    assert_eq!(parse(&m.to_toml()).unwrap(), m, "{}", m.to_toml());
+    // the raw document (validators, Plugin Maker) carries the line break too
+    let j = to_json(LISTED).unwrap();
+    assert_eq!(j["about"], "First line.\nSecond line with \"quotes\".");
+    // a plugin without them has none of them
+    let m = parse(STATS).unwrap();
+    assert!(m.icon.is_empty() && m.screenshots.is_empty() && m.categories.is_empty());
+    assert!(m.homepage.is_empty() && m.about.is_empty());
+    assert!(!m.to_toml().contains("about"));
+}
+
+/// These keys are new in 0.13: a 0.12 reader refuses them, so the manifest must say 0.13.
+#[test]
+fn listing_keys_need_min_wolos_013() {
+    for key in LISTING_KEYS {
+        let line = match key {
+            "icon" => "icon = \"icon.png\"",
+            "screenshots" => "screenshots = [\"a.png\"]",
+            "categories" => "categories = [\"Work\"]",
+            "homepage" => "homepage = \"https://example.org\"",
+            _ => "about = \"text\"",
+        };
+        let base = |min: &str| {
+            format!(
+                "schema = 1\nid = \"alice.x\"\nname = \"X\"\nversion = \"1\"\nlicense = \"MIT\"\n{min}{line}\n[[menubar]]\nid = \"m\"\nscript = \"m.lua\"\n"
+            )
+        };
+        for (min, ok) in [
+            ("", false),
+            ("min_wolos = \"0.12\"\n", false),
+            ("min_wolos = \"0.12.9\"\n", false),
+            ("min_wolos = \"0.13\"\n", true),
+            ("min_wolos = \"0.13.2\"\n", true),
+            ("min_wolos = \"0.14\"\n", true),
+            ("min_wolos = \"1.0\"\n", true),
+        ] {
+            let r = parse(&base(min));
+            assert_eq!(r.is_ok(), ok, "{key} with [{min}]: {r:?}");
+            if !ok {
+                let e = r.unwrap_err();
+                assert!(e.contains(key) && e.contains("min_wolos = \"0.13\""), "{e}");
+            }
+        }
+    }
+}
+
+#[test]
+fn listing_values_are_checked() {
+    let with = |line: &str| {
+        parse(&format!(
+            "schema = 1\nid = \"alice.x\"\nname = \"X\"\nversion = \"1\"\nlicense = \"MIT\"\nmin_wolos = \"0.13\"\n{line}\n[[menubar]]\nid = \"m\"\nscript = \"m.lua\"\n"
+        ))
+    };
+    for (bad, word) in [
+        ("icon = \"icon.svg\"", "icon"),
+        ("icon = \"icon.gif\"", "icon"),
+        ("icon = \"../icon.png\"", "icon"),
+        ("icon = \"/etc/x.png\"", "icon"),
+        ("icon = \".hidden.png\"", "icon"),
+        ("icon = 3", "icon"),
+        ("screenshots = [\"a.png\", \"a.png\"]", "twice"),
+        ("screenshots = [\"a.jpg\"]", "screenshots"),
+        ("screenshots = [\"a/../b.png\"]", "screenshots"),
+        ("screenshots = \"a.png\"", "screenshots"),
+        (
+            "screenshots = [\"1.png\",\"2.png\",\"3.png\",\"4.png\",\"5.png\",\"6.png\",\"7.png\",\"8.png\",\"9.png\"]",
+            "at most 8",
+        ),
+        ("categories = [\"Games\"]", "categories"),
+        ("categories = \"Work\"", "categories"),
+        ("homepage = \"http://example.org\"", "homepage"),
+        ("homepage = \"https://user@example.org\"", "homepage"),
+        ("homepage = \"https://\"", "homepage"),
+        ("homepage = \"https://a b.org\"", "homepage"),
+        ("homepage = \"javascript:alert(1)\"", "homepage"),
+        ("about = 3", "about"),
+    ] {
+        let e = with(bad).unwrap_err();
+        assert!(e.contains(word), "{bad}: {e}");
+    }
+    let long = format!("about = \"{}\"", "x".repeat(MAX_ABOUT + 1));
+    assert!(with(&long).unwrap_err().contains("about"));
+    let max = format!("about = \"{}\"", "x".repeat(MAX_ABOUT));
+    assert!(with(&max).is_ok());
+    let eight = "screenshots = [\"1.png\",\"2.png\",\"3.png\",\"4.png\",\"5.png\",\"6.png\",\"7.png\",\"8.webp\"]";
+    assert_eq!(with(eight).unwrap().screenshots.len(), 8);
+    // only `about` may hold a line break: it never reaches a name, a path or a command
+    for line in [
+        "description = \"a\\nb\"",
+        "author = \"a\\nb\"",
+        "homepage = \"https://a.org/\\n\"",
+        "icon = \"a\\n.png\"",
+    ] {
+        assert!(with(line).is_err(), "{line}");
+    }
+    assert!(with("about = \"a\\u0007b\"").is_err(), "other control characters stay refused");
+    assert!(with("about = \"a\\rb\"").is_err());
+    // the same line break in a section's text is still refused
+    let e = parse(&format!(
+        "{}\n[[dock]]\nid = \"d\"\nname = \"a\\nb\"\nicon = \"x-symbolic\"\nexec = [\"foot\"]\n",
+        LISTED.split("[[menubar]]").next().unwrap()
+    ))
+    .unwrap_err();
+    assert!(e.contains("control") || e.contains("name"), "{e}");
+}
+
+#[test]
+fn the_wolos_version_comparison() {
+    for (v, ok) in [
+        ("0.13", true),
+        ("0.13.0", true),
+        ("0.12.99", false),
+        ("0.9", false),
+        ("1.0", true),
+        ("0.100", true),
+        ("", false),
+        ("0", false),
+        ("x.y", false),
+    ] {
+        assert_eq!(wolos_at_least(v, LISTING_MIN_WOLOS), ok, "{v}");
+    }
+}
