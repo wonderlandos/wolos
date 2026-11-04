@@ -95,6 +95,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/wolkit-bench.md](modules/wolkit-bench.md) | Wolkit benchmarks: method, the budgets and what was measured | [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/apps.md](modules/apps.md) | the bundled apps rewritten in Crystal on Wolkit: the list, what each one has, lessons | [0036](adr/0036-crystal-userland.md), [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/gallery.md](modules/gallery.md) | Gallery (`org.wolos.gallery`, `wol-gallery`): picture library by date and place, viewer, Trash with Undo; how it is built and tested | [0039](adr/0039-libwolkit-and-wolkit.md) |
+| [modules/share.md](modules/share.md) | Share (`wol-share`, the share sheet): the apps that can take a file, text or link, found in the desktop entries; Files item; for app authors | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/aurlaws.md](modules/aurlaws.md) | aurlaws: community-collection packages judged by laws over dependency graphs | [0022](adr/0022-aur-laws.md) |
 | [modules/automation.md](modules/automation.md) | helpers (`wol mcp`, scripts): policy, approval sheet wire, audit log | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/console.md](modules/console.md) | the console: `su` through sudo in every shell, command hints (`wol hint`, `hints.tsv`) for what is missing or sealed | [0032](adr/0032-optional-modules.md) |
