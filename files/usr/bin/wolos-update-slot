@@ -1,10 +1,25 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# wolos-update-slot [SNAPSHOT YYYY-MM-DD]: update WolOS into the other slot and start it on the next boot.
-# A thin wrapper: `wol update apply SLOT [DATE]` snapshots the running root into the inactive slot,
-# repoints its pacman.conf at DATE (default: the newest tested release), runs pacman -Syu inside it,
-# rebuilds the initramfs and a boot entry with three tries and makes it the next boot.
-# The running slot stays as the restore point.
-cur=$(findmnt -no OPTIONS / | sed -n 's/.*subvol=\/*\([^,]*\).*/\1/p')
-case $cur in @wolos-a) slot=@wolos-b ;; *) slot=@wolos-a ;; esac
-exec wol update apply "$slot" ${1:+"$(echo "$1" | tr - /)"} --yes
+# wolos-update-slot [YYYY-MM-DD]: update WolOS into the other slot and start it on the next boot.
+# A thin wrapper over `wol update apply SLOT [YYYY/MM/DD] --yes` (wol_core::update::plan): the
+# running slot stays as the restore point, the other one is built from it at the release date
+# (default: the release the daily check found). Slots are named as wol names them (wolos-a, not
+# the subvolume @wolos-a), the date as the Arch Linux Archive writes it (QA-STORE-47).
+set -eu
+cur=$(findmnt -no OPTIONS / | sed -n 's/.*subvol=\/*@\(wolos-[ab]\).*/\1/p')
+case $cur in
+wolos-a) slot=wolos-b ;;
+wolos-b) slot=wolos-a ;;
+*)
+	echo "wolos-update-slot: this computer does not start from a WolOS root slot; use Software Update" >&2
+	exit 69
+	;;
+esac
+case ${1:-} in
+'') exec wol update apply "$slot" --yes ;;
+[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) exec wol update apply "$slot" "$(printf '%s' "$1" | tr - /)" --yes ;;
+*)
+	echo "usage: wolos-update-slot [YYYY-MM-DD]" >&2
+	exit 64
+	;;
+esac
