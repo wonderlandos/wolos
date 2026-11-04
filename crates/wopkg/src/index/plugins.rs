@@ -8,7 +8,8 @@
 //!
 //! `index.json`, format 1:
 //! `{"format":1,"plugins":[{"id","name","version","summary","author","license","kinds":[..],
-//! "permissions":[..],"min_wolos","url","sha256","size"}]}`. An entry that breaks a rule is
+//! "permissions":[..],"min_wolos","url","sha256","size"}]}`, and from the hub (ADR 0047) the optional
+//! "description", "icon" and "screenshots" (pictures by CDN file name `<sha256>.<png|webp>`). An entry that breaks a rule is
 //! dropped on its own (the rest of a signed index stays usable); a second entry with the same id
 //! is dropped too.
 use crate::ffi::{Error, Result};
@@ -52,6 +53,17 @@ pub struct Entry {
     pub sha256: String,
     /// Bytes of the `.wolplug` file.
     pub size: u64,
+    /// The package's own description (hub index; empty = none): plain text, at most
+    /// `shared::package::MAX_DESCRIPTION` characters.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// The listing's icon (hub index; empty = none): the CDN file name `<sha256>.<png|webp>`
+    /// (`shared::package::picture_url`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub icon: String,
+    /// Up to `shared::package::MAX_SCREENSHOTS` screenshots, file names like `icon`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -122,6 +134,13 @@ impl Entry {
             && hex64(&self.sha256)
             && self.size > 0
             && self.size <= WOLPLUG_MAX_FILE
+            && shared::package::is_description(&self.description)
+            && (self.icon.is_empty() || shared::package::is_picture_file(&self.icon))
+            && self.screenshots.len() <= shared::package::MAX_SCREENSHOTS
+            && self
+                .screenshots
+                .iter()
+                .all(|s| shared::package::is_picture_file(s))
     }
 
     /// Permission labels for the install sheet, in index order.
@@ -479,6 +498,53 @@ mod tests {
             verify(&changed, Some(&sig), &keys).is_err(),
             "changed after signing"
         );
+    }
+
+    /// The hub index (hub-pipeline schema/index.schema.json) adds the package's description and
+    /// its pictures by CDN file name; an index without them reads as before.
+    #[test]
+    fn the_listing_description_and_pictures_are_read() {
+        let sha = "95d648d3d175b7df65af3f36caacaacc448897768f22945b5637685a8d5242f6";
+        let (icon, shot) = (format!("{sha}.png"), format!("{sha}.webp"));
+        let mut e = entry("alice.weather");
+        e["description"] = serde_json::json!("Forecast.\nIn the menu bar.");
+        e["icon"] = serde_json::json!(icon);
+        e["screenshots"] = serde_json::json!([shot, icon]);
+        let i = parse(&index(vec![e, entry("bob.clock")])).unwrap();
+        let w = i.get("alice.weather").unwrap();
+        assert_eq!(w.description, "Forecast.\nIn the menu bar.");
+        assert_eq!(w.icon, icon);
+        assert_eq!(w.screenshots, [shot.clone(), icon.clone()]);
+        assert_eq!(
+            shared::package::picture_url(&w.icon).as_deref(),
+            Some(format!("https://cdn.wolos.org/plugins/pictures/{icon}").as_str())
+        );
+        let old = i.get("bob.clock").unwrap();
+        assert!(old.description.is_empty() && old.icon.is_empty() && old.screenshots.is_empty());
+        let text = serde_json::to_string(old).unwrap();
+        assert!(
+            !text.contains("description")
+                && !text.contains("icon")
+                && !text.contains("screenshots")
+        );
+        // Out of bounds: the entry is dropped, the rest of the list stays.
+        for (k, v) in [
+            ("description", serde_json::json!("x".repeat(4001))),
+            ("description", serde_json::json!("a\u{1b}b")),
+            ("icon", serde_json::json!(sha)),
+            (
+                "icon",
+                serde_json::json!("https://cdn.wolos.org/plugins/pictures/x.png"),
+            ),
+            ("screenshots", serde_json::json!(vec![shot.clone(); 9])),
+            ("screenshots", serde_json::json!([format!("{sha}.gif")])),
+        ] {
+            let mut e = entry("alice.weather");
+            e[k] = v.clone();
+            let i = parse(&index(vec![e, entry("bob.clock")])).unwrap();
+            assert!(i.get("alice.weather").is_none(), "{k}={v}");
+            assert!(i.get("bob.clock").is_some());
+        }
     }
 
     #[test]

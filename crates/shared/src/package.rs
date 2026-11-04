@@ -27,9 +27,9 @@ pub fn is_screenshot_member(name: &str) -> bool {
             .or_else(|| f.strip_suffix(".webp"))
             .is_some_and(|stem| {
                 (1..=32).contains(&stem.len())
-                    && stem
-                        .bytes()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+                    && stem.bytes().all(|b| {
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'
+                    })
             })
     })
 }
@@ -109,6 +109,34 @@ fn is_sha256(s: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// Longest listing description (characters), the hub index's bound (hub-pipeline
+/// `schema/index.schema.json`).
+pub const MAX_DESCRIPTION: usize = 4000;
+/// Where the hub's listing pictures are: `<PICTURES_URL>/<sha256>.<png|webp>`, served as
+/// `image/png` / `image/webp` (the CDN types a file by its extension).
+pub const PICTURES_URL: &str = "https://cdn.wolos.org/plugins/pictures";
+
+/// A hub picture's file name as the index carries it: `<sha256>.png` or `<sha256>.webp`.
+pub fn is_picture_file(s: &str) -> bool {
+    s.strip_suffix(".png")
+        .or_else(|| s.strip_suffix(".webp"))
+        .is_some_and(is_sha256)
+}
+
+/// The CDN URL of a hub picture, from the file name the index gives.
+pub fn picture_url(file: &str) -> Option<String> {
+    is_picture_file(file).then(|| format!("{PICTURES_URL}/{file}"))
+}
+
+/// A listing description: at most [`MAX_DESCRIPTION`] characters, no control character but
+/// tab and line breaks.
+pub fn is_description(s: &str) -> bool {
+    s.chars().count() <= MAX_DESCRIPTION
+        && !s
+            .chars()
+            .any(|c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+}
+
 /// One installable `.wol` in [`Index`].
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Entry {
@@ -128,9 +156,18 @@ pub struct Entry {
     pub url: String,
     pub sha256: String,
     pub size: u64,
-    /// Icon URL (optional).
+    /// Icon (optional): a URL (the wol-packages index) or, in a hub index, the file name
+    /// `<sha256>.<png|webp>` of a listing picture ([`Entry::icon_picture`], [`picture_url`]).
     #[serde(default)]
     pub icon: String,
+    /// The package's own description (hub index; optional, empty = none): plain text, at most
+    /// [`MAX_DESCRIPTION`] characters.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// Listing screenshots (hub index; optional): at most [`MAX_SCREENSHOTS`] file names
+    /// `<sha256>.<png|webp>` of pictures on the CDN ([`picture_url`]), in the package's order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
     #[serde(default)]
     pub signed: bool,
 }
@@ -144,6 +181,11 @@ impl Entry {
             self.version,
             super::bundle::EXTENSION
         )
+    }
+
+    /// The icon's file name when it names a hub picture (not a URL).
+    pub fn icon_picture(&self) -> Option<&str> {
+        is_picture_file(&self.icon).then_some(self.icon.as_str())
     }
 
     fn check(&self) -> Result<(), String> {
@@ -176,6 +218,14 @@ impl Entry {
             .any(|c| !CAPABILITIES.iter().any(|k| k.0 == c.as_str()))
         {
             return bad("capability");
+        }
+        if !is_description(&self.description) {
+            return bad("description");
+        }
+        if self.screenshots.len() > MAX_SCREENSHOTS
+            || !self.screenshots.iter().all(|s| is_picture_file(s))
+        {
+            return bad("screenshots");
         }
         Ok(())
     }
@@ -229,7 +279,7 @@ mod tests {
         );
         assert_eq!(e.file_name(), "raider-3.1.0.wol");
         // Unknown fields are ignored: newer indexes stay readable.
-        assert!(Index::parse(&entry(r#"{"screenshots":["x"]}"#)).is_ok());
+        assert!(Index::parse(&entry(r#"{"homepage":["x"]}"#)).is_ok());
         for bad in [
             r#"{"sha256":"abc"}"#,
             r#"{"sha256":"4F1C6A0D2B3E5F7A9C8D0E1F2A3B4C5D6E7F8091A2B3C4D5E6F708192A3B4C5D"}"#,
@@ -247,6 +297,72 @@ mod tests {
         }
         assert!(Index::parse(r#"{"format":2,"packages":[]}"#).is_err());
         assert!(Index::parse("not json").is_err());
+    }
+
+    #[test]
+    fn listing_description_and_pictures() {
+        // An index made before the keys existed parses, with none of them.
+        let old = Index::parse(&entry("{}")).unwrap();
+        let e = &old.packages[0];
+        assert!(e.description.is_empty() && e.screenshots.is_empty() && e.icon_picture().is_none());
+        // The live wol-packages index names its icon by URL: still read, not a hub picture.
+        let url = Index::parse(&entry(
+            r#"{"icon":"https://wonderlandos.github.io/wol-packages/icons/r.png"}"#,
+        ))
+        .unwrap();
+        assert_eq!(url.packages[0].icon_picture(), None);
+        // The hub index (hub-pipeline schema/index.schema.json): description, icon and screenshots
+        // as CDN file names <sha256>.<png|webp>.
+        let sha = "95d648d3d175b7df65af3f36caacaacc448897768f22945b5637685a8d5242f6";
+        let pic = &format!("{sha}.webp");
+        let shot = "3e0b5d9543783976039d0ab01171bb8b08c8fdc113b2891f467f6d0e7e0667f8.png";
+        let new = Index::parse(&entry(&format!(
+            r#"{{"description":"Shreds files.\nTabs\tare fine.","icon":"{pic}","screenshots":["{shot}","{pic}"]}}"#
+        )))
+        .unwrap();
+        let e = &new.packages[0];
+        assert_eq!(e.description, "Shreds files.\nTabs\tare fine.");
+        assert_eq!(e.icon_picture(), Some(pic.as_str()));
+        assert_eq!(e.screenshots, [shot, pic.as_str()]);
+        assert_eq!(
+            picture_url(pic).as_deref(),
+            Some(
+                "https://cdn.wolos.org/plugins/pictures/95d648d3d175b7df65af3f36caacaacc448897768f22945b5637685a8d5242f6.webp"
+            )
+        );
+        for bad in [
+            sha,
+            &format!("{sha}.gif"),
+            "../x.png",
+            &format!("{sha}.png/x"),
+        ] {
+            assert_eq!(picture_url(bad), None, "{bad}");
+        }
+        // A bare sha256 (no type) is not a picture name.
+        let bare = Index::parse(&entry(&format!(r#"{{"icon":"{sha}"}}"#))).unwrap();
+        assert_eq!(bare.packages[0].icon_picture(), None);
+        // An old entry serializes as before: no empty new keys.
+        let text = serde_json::to_string(&old.packages[0]).unwrap();
+        assert!(!text.contains("description") && !text.contains("screenshots"));
+        // The schema's bounds: 4000 characters of text, at most 8 picture file names.
+        let long = "\u{e9}".repeat(MAX_DESCRIPTION);
+        assert!(Index::parse(&entry(&format!(r#"{{"description":"{long}"}}"#))).is_ok());
+        let nine = vec![pic; 9];
+        for bad in [
+            format!(r#"{{"description":"{long}x"}}"#),
+            r#"{"description":"a\u0000b"}"#.to_string(),
+            r#"{"description":"a\u001bb"}"#.to_string(),
+            format!(
+                r#"{{"screenshots":{}}}"#,
+                serde_json::to_string(&nine).unwrap()
+            ),
+            format!(r#"{{"screenshots":["{}"]}}"#, pic.to_uppercase()),
+            format!(r#"{{"screenshots":["{sha}"]}}"#),
+            r#"{"screenshots":["https://cdn.wolos.org/plugins/pictures/x.png"]}"#.to_string(),
+            r#"{"screenshots":"x"}"#.to_string(),
+        ] {
+            assert!(Index::parse(&entry(&bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]
