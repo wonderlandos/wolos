@@ -29,6 +29,7 @@ pub mod malware;
 pub mod memsaver;
 pub mod mirror;
 pub mod modules;
+pub mod monitor;
 pub mod nearby;
 pub mod netinfo;
 pub mod package;

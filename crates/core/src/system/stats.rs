@@ -54,7 +54,8 @@ impl MemoryStats {
         let kb = |k: &str| {
             kv.get(k)
                 .and_then(|v| v.split(' ').next()?.parse::<i64>().ok())
-                .map_or(0, |n| n * 1024)
+                // Saturating: a corrupt or huge value never panics or wraps.
+                .map_or(0, |n| n.max(0).saturating_mul(1024))
         };
         let total = kb("MemTotal");
         let avail = if kv.contains_key("MemAvailable") {
@@ -64,9 +65,9 @@ impl MemoryStats {
         };
         Self {
             total,
-            used: total - avail,
+            used: total.saturating_sub(avail).max(0),
             swap_total: kb("SwapTotal"),
-            swap_used: kb("SwapTotal") - kb("SwapFree"),
+            swap_used: kb("SwapTotal").saturating_sub(kb("SwapFree")).max(0),
         }
     }
 }
@@ -154,7 +155,7 @@ impl DiskUsage {
                 if f.len() < 6 || PSEUDO.contains(&f[0]) {
                     return None;
                 }
-                let n = |i: usize| f[i].parse::<i64>().ok().map(|v| v * 1024);
+                let n = |i: usize| f[i].parse::<i64>().ok().map(|v| v.saturating_mul(1024));
                 let total = n(1).filter(|t| *t > 0)?;
                 Some(Self {
                     mount: f[5..].join(" "),
