@@ -73,6 +73,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0040](adr/0040-security-defaults-on-linux.md) | Security defaults on Linux | accepted |
 | [0041](adr/0041-ruby-scripts.md) | Ruby scripts run like shell scripts (`wol script`) | accepted |
 | [0042](adr/0042-wolos-web-runtime.md) | A WolOS web-app runtime on the Rust browser engine: two tracks, one engine library | accepted |
+| [0048](adr/0048-system-web-apps.md) | System web apps: a folder per app, one bridge to `wol` verbs by permission, one kit | proposed |
 
 ## Modules
 
@@ -83,6 +84,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/abi.md](modules/abi.md) | libwol: the app API (`wol.h`, `libwol.so.1`), ABI rules, planned families, Lua widgets | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Helium, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | [0038](adr/0038-sound-service.md) |
+| [modules/doctor.md](modules/doctor.md) | Doctor: every check of the system in one list (`wol doctor`, the Doctor app), each with its fix | [0048](adr/0048-system-web-apps.md) |
 | [modules/cryswol.md](modules/cryswol.md) | Cryswol: the Crystal shard over libwol (`require "cryswol"`, namespace `Wol`): layers, ownership and callback rules, errors, threads, build, how to add a verb | [0036](adr/0036-crystal-userland.md) |
 | [modules/libwolkit.md](modules/libwolkit.md) | libWolkit: the UI engine (`wolkit.h`, `libwolkit.so.1`): scene and patch stream, style, layout, text, paint, CPU and GPU renderers, window backends, limits | [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/wolkit.md](modules/wolkit.md) | Wolkit: the Crystal UI kit over libWolkit (`require "wolkit"`): DSL, signals, components, test harness, developer tools | [0039](adr/0039-libwolkit-and-wolkit.md) |

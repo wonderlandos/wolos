@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Doctor (ADR 0048): every part of the computer checked in plain words, each with its fix.
+# The checks are `wol doctor --json`; a fix is `wol doctor fix <id>` (docs/modules/doctor.md).
+id = "org.wolos.webapp.doctor"
+name = "Doctor"
+version = "0.1.0"
+summary = "Checks your computer and fixes what it finds"
+entry = "index.html"
+icon = "icon.svg"
+permissions = ["doctor.read", "doctor.fix"]

@@ -70,16 +70,10 @@ fn every_method_is_a_wol_verb() {
         .filter(|w| w[0].trim_end().ends_with("],") || w[0].contains("action: "))
         .map(|w| w[1])
         .collect();
-    // Verbs another branch is adding (the Doctor web app's `wol doctor`): checked once they land.
-    const LANDING: &[&str] = &["doctor.check", "doctor.fix"];
     assert!(actions.len() > 100 && actions.contains("audio.doctor") && !actions.contains("audio"));
     for p in PERMISSIONS {
         for m in p.methods {
-            assert!(
-                actions.contains(m) || LANDING.contains(m),
-                "{}: {m} is no `wol` verb action",
-                p.name
-            );
+            assert!(actions.contains(m), "{}: {m} is no `wol` verb action", p.name);
         }
     }
 }
@@ -198,11 +192,22 @@ fn the_kit_is_small_plain_and_self_contained() {
         if rel.starts_with("kit/") {
             kit += text.len();
         }
+        // The kit is BSD-2-Clause (any app may ship it); an app names its own licence. JSON (a
+        // recorded answer under fixtures/) has no comments: its app's fixtures.js carries it.
+        let spdx = if rel.starts_with("kit/") {
+            "SPDX-License-Identifier: BSD-2-Clause"
+        } else {
+            "SPDX-License-Identifier: "
+        };
         assert!(
-            text.contains("SPDX-License-Identifier: BSD-2-Clause") || rel.ends_with(".svg"),
+            text.contains(spdx) || rel.ends_with(".svg") || rel.ends_with(".json"),
             "{rel}: SPDX"
         );
-        // Nothing is fetched from the network: no remote script, style, font or image.
+        // Nothing is fetched from the network: no remote script, style, font or image. An app's
+        // `test/` folder is a development file (node and a browser), never installed.
+        if rel.split('/').nth(1) == Some("test") {
+            continue;
+        }
         for bad in [
             "http://", "https://", "@import", "import(", " from \"", "fetch(",
         ] {
@@ -297,6 +302,15 @@ fn every_string_an_app_shows_is_in_its_table() {
             }
         }
         for k in used {
+            // `t("area." + v)`: a prefix, so some key starts with it.
+            if k.ends_with('.') {
+                assert!(
+                    own.iter().chain(&kit).any(|o| o.starts_with(&k)),
+                    "{}: no string starts with {k:?}",
+                    dir.display()
+                );
+                continue;
+            }
             assert!(
                 own.contains(&k) || kit.contains(&k),
                 "{}: string {k:?} has no entry",

@@ -57,6 +57,7 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["audio", "mute"], Change, "sound"),
     hv(&["audio", "unmute"], Change, "sound"),
     hv(&["audio", "doctor"], Read, "read"),
+    hv(&["doctor"], Read, "read"),
     hv(&["display"], Read, "read"),
     hv(&["display", "brightness"], Change, "display"),
     hv(&["battery"], Read, "read"),

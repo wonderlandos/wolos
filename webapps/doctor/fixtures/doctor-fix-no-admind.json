@@ -1,0 +1,17 @@
+{
+  "check": {
+    "area": "security",
+    "detail": "The firewall is off, so other computers on the network can reach this one.",
+    "fix": {
+      "command": "wol admin firewall on",
+      "needs_admin": true,
+      "title": "Turn on the firewall"
+    },
+    "id": "security.firewall",
+    "status": "fail",
+    "title": "Firewall"
+  },
+  "id": "security.firewall",
+  "ok": false,
+  "ran": true
+}
