@@ -189,7 +189,7 @@ fn administrator_sheets_are_waited_for_as_long_as_they_may_run() {
     };
     assert!(ask_wait(&three, Patience::Normal) >= click + long * 3);
     let chan = ApprovalRequest::SystemChannel {
-        channel: "beta".into(),
+        channel: "stable".into(),
     };
     assert!(ask_wait(&chan, Patience::Normal) > click);
 }
@@ -557,9 +557,9 @@ fn root_changes_need_the_administrator_sheet() {
             ApprovalRequest::SystemRollback,
         ),
         (
-            r#"{"call":"system.channel","channel":"beta"}"#,
+            r#"{"call":"system.channel","channel":"stable"}"#,
             ApprovalRequest::SystemChannel {
-                channel: "beta".into(),
+                channel: "stable".into(),
             },
         ),
     ] {
@@ -770,13 +770,23 @@ fn decisions() {
     );
     assert!(
         handle(
-            r#"{"call":"system.channel","channel":"beta"}"#,
+            r#"{"call":"system.channel","channel":"stable"}"#,
             Some((1000, APP)),
             &all,
             &f
         )
         .ok,
         "wol-admind wrote the channel after the password"
+    );
+    // QA-STORE-68: a testing channel is refused before any sheet or password.
+    assert!(
+        !handle(
+            r#"{"call":"system.channel","channel":"beta"}"#,
+            Some((1000, APP)),
+            &all,
+            &f
+        )
+        .ok
     );
     assert!(f.ran.borrow().is_empty());
 }

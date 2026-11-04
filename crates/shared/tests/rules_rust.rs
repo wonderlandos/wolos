@@ -88,7 +88,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-021", "core", 4),
     ("RR-021", "realtime", 1),
     ("RR-021", "shell", 3),
-    ("RR-021", "wopkg", 5),
+    ("RR-021", "wopkg", 3),
     ("RR-021", "xguard", 3),
     ("RR-022", "shell", 5),
     ("RR-023", "core", 3),

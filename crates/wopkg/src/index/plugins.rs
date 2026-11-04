@@ -340,13 +340,22 @@ pub fn cached(dir: &std::path::Path, keys: &[[u8; 32]]) -> Result<PluginIndex> {
     Ok(index)
 }
 
+/// When the cached list at `path` was written (seconds; 0: unknown, which reads as old).
+pub(super) fn fetched_at(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
+}
+
 /// A cached list older than this is downloaded again when the Store opens (lists without an
 /// `expires` too).
 pub const MAX_AGE: u64 = 24 * 3600;
 
 /// Whether a cached list written at `fetched` should be downloaded again at `now`: once half of
 /// the time it had left at download is gone, or after [`MAX_AGE`], whichever comes first.
-fn is_stale(fetched: u64, expires: u64, now: u64) -> bool {
+pub(super) fn is_stale(fetched: u64, expires: u64, now: u64) -> bool {
     let half = if expires == 0 {
         MAX_AGE
     } else {
@@ -369,11 +378,7 @@ pub fn load(
         return refresh(net, url, dir, keys).or_else(|e| cached(dir, keys).map_err(|_| e));
     }
     let now = crate::release::unix_now();
-    let fetched = std::fs::metadata(dir.join(INDEX_FILE))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs());
+    let fetched = fetched_at(&dir.join(INDEX_FILE));
     match cached_full(dir, keys) {
         Ok((index, f))
             if crate::release::check_fresh("plugin list", f.serial, f.expires, 0, now).is_ok() =>
@@ -409,10 +414,11 @@ pub fn refresh(
         last,
         crate::release::unix_now(),
     )?;
-    let cant = || Error::unavailable("The plugin list cannot be saved.");
-    std::fs::create_dir_all(dir).map_err(|_| cant())?;
+    let cant =
+        |e: std::io::Error| crate::fetch::write_error(&e, "The plugin list cannot be saved.");
+    std::fs::create_dir_all(dir).map_err(cant)?;
     for (name, bytes) in [(SIG_FILE, &sig), (INDEX_FILE, &text)] {
-        shared::atomic::atomic_write(&dir.join(name), 0o644, bytes).map_err(|_| cant())?;
+        shared::atomic::atomic_write(&dir.join(name), 0o644, bytes).map_err(cant)?;
     }
     Ok(index)
 }

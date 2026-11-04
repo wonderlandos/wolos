@@ -433,23 +433,30 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     steps.extend(swap_steps(slot));
     steps.push(v(&["mv", "-f", &digest_new, &digest]));
     // After the seal: the signed image carries the slot's root digest.
-    steps.push(v(&[
-        "env",
-        &format!("WOLOS_ROOT={root}"),
-        &format!("WOLOS_SLOT={slot}"),
-        &format!("WOLOS_RELEASE={}", b.release),
-        &format!(
-            "WOLOS_CMDLINE={}",
-            crate::encrypt::slot_options(b.cmdline, slot)
-        ),
-        ESP_SYNC,
-        "--new",
-    ]));
+    steps.push(esp_sync_step(&root, slot, b));
     // The new slot boots next from here on: no longer an interrupted update (review 5).
     steps.push(v(&["rm", "-f", BUILDING]));
     // A rollback the person chose earlier stops being the default: newest good entry boots.
     steps.push(v(&["bootctl", "set-default", ""]));
     Some(steps)
+}
+
+/// esp-sync for the new slot, after the seal. The boot entry's version names the release date;
+/// without one (the same release, a package change) esp-sync takes the slot's base.version:
+/// never the word "current" in the boot menu (QA-STORE-77: "WolOS 0.12.1 (2-current)").
+fn esp_sync_step(root: &str, slot: &str, b: &Build) -> Step {
+    let release = format!("WOLOS_RELEASE={}", b.release);
+    let cmdline = format!(
+        "WOLOS_CMDLINE={}",
+        crate::encrypt::slot_options(b.cmdline, slot)
+    );
+    let (root_var, slot_var) = (format!("WOLOS_ROOT={root}"), format!("WOLOS_SLOT={slot}"));
+    let mut a = vec!["env", &root_var, &slot_var];
+    if is_snapshot_date(b.release) {
+        a.push(&release);
+    }
+    a.extend([cmdline.as_str(), ESP_SYNC, "--new"]);
+    Step::Run(a.into_iter().map(str::to_owned).collect())
 }
 
 /// `unshare --mount --propagation private wol update chroot WORK -- CMD...`: CMD in the copy at
@@ -811,6 +818,42 @@ pub mod be {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-STORE-77: the boot entry of a slot built without a release date (same release, a
+    /// package change) never carries the word "current": esp-sync takes the slot's base.version.
+    /// A dated release still names its date.
+    #[test]
+    fn entry_title_never_current() {
+        let env_step = |date: Option<&str>| {
+            plan("wolos-b", true, date)
+                .unwrap()
+                .iter()
+                .map(ToString::to_string)
+                .find(|s| s.starts_with("env WOLOS_ROOT="))
+                .unwrap()
+        };
+        let same = env_step(None);
+        assert!(
+            !same.contains("current") && !same.contains("WOLOS_RELEASE"),
+            "{same}"
+        );
+        assert!(same.ends_with(" --new"), "{same}");
+        let dated = env_step(Some("2026/11/02"));
+        assert!(dated.contains(" WOLOS_RELEASE=2026/11/02 "), "{dated}");
+        let pkg = pkg::plan(
+            "wolos-b",
+            Base::Pending,
+            &["-S".into(), "git".into()],
+            "current",
+            None,
+        )
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .find(|s| s.starts_with("env WOLOS_ROOT="))
+        .unwrap();
+        assert!(!pkg.contains("current"), "{pkg}");
+    }
 
     #[test]
     fn one_copy_updates_in_place_with_no_snapshot_and_no_seal() {

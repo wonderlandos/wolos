@@ -586,6 +586,21 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
         env.out
             .contains("unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm\n")
     );
+    // QA-STORE-76: an empty argument reads as '' (not a bare "bootctl set-default ").
+    assert!(env.out.ends_with("bootctl set-default ''\n"), "{}", env.out);
+}
+
+/// QA-STORE-76: `wol --version` prints the version, not the help; `wol layers` names its
+/// commands instead of "did you mean 'layers'?".
+#[test]
+fn version_and_group_words() {
+    let mut env = FakeEnv::default();
+    assert_eq!(run("--version", &mut env), 0);
+    assert_eq!(env.out, format!("wol {}\n", env!("CARGO_PKG_VERSION")));
+    let e = parse(&["layers"]).unwrap_err().to_string();
+    assert_eq!(e, "usage: wol layers fold|clear");
+    let e = parse(&["layer"]).unwrap_err().to_string();
+    assert!(e.contains("did you mean 'layers'"), "{e}");
 }
 
 #[test]
@@ -1050,4 +1065,24 @@ fn update_chroot_binds_the_copy_and_the_cache() {
     let mut help = FakeEnv::default();
     run("help", &mut help);
     assert!(!help.out.contains("update chroot"), "{}", help.out);
+}
+
+/// QA-STORE-9/68: `wol update channel` says the channel the system follows: stable, also when a
+/// file from before names a testing channel; --json lists the offered ones.
+#[test]
+fn update_channel_reports_stable() {
+    for file in [None, Some("beta\n"), Some("stable\n")] {
+        let mut env = FakeEnv::default();
+        if let Some(t) = file {
+            env.files
+                .push((PathBuf::from("/etc/wolos/channel"), t.into()));
+        }
+        assert_eq!(run("update channel", &mut env), 0);
+        assert_eq!(env.out, "stable\n", "{file:?}");
+    }
+    let mut env = FakeEnv::default();
+    assert_eq!(run("update channel --json", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(v["channel"], "stable");
+    assert_eq!(v["offered"], serde_json::json!(["stable"]));
 }

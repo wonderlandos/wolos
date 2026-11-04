@@ -247,7 +247,8 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         }
         AdminAction::PkgInstallFile => ok(n == 2 && is_staged_package(a[0]) && is_sha256_hex(a[1])),
         AdminAction::SystemRollback => ok(n == 0),
-        AdminAction::SystemChannel => ok(n == 1 && shared::packages::CHANNELS.contains(&a[0])),
+        // Only a channel this release offers (stable, QA-STORE-68).
+        AdminAction::SystemChannel => ok(n == 1 && shared::packages::OFFERED.contains(&a[0])),
         // NET-3: every value is checked here again (it is written into a shell file).
         AdminAction::Proxy => ok(crate::netconf::proxy_from_args(&a).is_some()),
         AdminAction::DnsOverTls => ok(crate::netconf::dot_from_args(&a).is_some()),

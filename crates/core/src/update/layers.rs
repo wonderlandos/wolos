@@ -66,7 +66,7 @@ pub fn local_db(pacman_conf: &str) -> String {
     format!("{}/local", db_path(pacman_conf))
 }
 
-/// `pacman -Q` of the layer while its chroot is still mounted: the chroot's `/usr` is the
+/// `pacman -Q` of the layer while its chroot is still mounted (inside [`begin`]'s namespace): the chroot's `/usr` is the
 /// layer's overlay, so a database under `/usr` shows the change before the layer is merged.
 pub fn after_query(db: &str) -> Vec<String> {
     [PACMAN, "--dbpath", &format!("{CHROOT}{db}/"), "-Q"]
@@ -287,17 +287,37 @@ fn v(a: &[&str]) -> Step {
     Step::Run(a.iter().map(|s| (*s).to_owned()).collect())
 }
 
-/// `umount -l -R` of [`CHROOT`] (QA-STORE-53): a chroot left mounted would have the next `wol pkg`
-/// stack its mounts on top of it. Lazy: nothing holds it, and it is gone at once; a process still
-/// holds it, and it is detached now and freed when that process lets go (what `umount -R ||
-/// umount -l -R` did, as one argv: no shell string, RR-020).
-fn umount_argv() -> Vec<String> {
-    ["umount", "-l", "-R", CHROOT].map(String::from).to_vec()
-}
-
 /// The overlay of the layer over one top directory of the chroot (`usr`, `opt`).
 fn overlay(l: &str, w: &str, top: &str) -> String {
     format!("lowerdir={CHROOT}/{top},upperdir={l}/{top},workdir={w}/{top}")
+}
+
+/// Where the in-namespace `pacman -Q` of the layer ([`after_query`]) is left for `wol pkg`: the
+/// chroot is gone once [`begin`]'s private namespace ends, so the query runs inside it.
+pub fn after_path(n: u32) -> String {
+    format!("{WORK_DIR}/{}/after", name(n))
+}
+
+/// The shell program [`begin`] runs in its private mount namespace: `$1` is the live `DBPath`,
+/// the rest pacman's arguments. pacman's own exit status is the step's; the query after it is
+/// best effort (pacman has committed by then, CORE-5).
+fn chroot_script(n: u32) -> String {
+    let l = format!("{DIR}/{}", name(n));
+    let w = format!("{WORK_DIR}/{}", name(n));
+    format!(
+        "set -e\n\
+mount --rbind / {CHROOT}\n\
+mount --make-rprivate {CHROOT}\n\
+mount -t overlay overlay -o {usr} {CHROOT}/usr\n\
+mount -t overlay overlay -o {opt} {CHROOT}/opt\n\
+db=$1\n\
+shift\n\
+arch-chroot {CHROOT} {PACMAN} \"$@\" || exit\n\
+{PACMAN} --dbpath \"{CHROOT}$db/\" -Q > {after} 2>/dev/null || :\n",
+        usr = overlay(&l, &w, "usr"),
+        opt = overlay(&l, &w, "opt"),
+        after = after_path(n),
+    )
 }
 
 /// Steps up to and including the real pacman in the layer's chroot. The layer has no
@@ -305,11 +325,22 @@ fn overlay(l: &str, w: &str, top: &str) -> String {
 /// layer cut off mid-pacman (power loss, the 1800 s cap) never merges (QA-STORE-45). `/usr` and
 /// `/opt` are overlays (both merge as system extensions): a package that installs under /opt
 /// would otherwise meet the sealed, read-only root (QA-L2-32).
-pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
+/// The chroot (the rbind of `/`, the two overlays, arch-chroot's own mounts) lives only in a
+/// mount namespace of its own (`unshare --mount --propagation private`), gone when pacman's
+/// step ends, killed or not: an rbind of the shared `/` in PID 1's namespace copied the whole
+/// mount tree into every service's namespace, and `umount -R` never reached those copies, so
+/// after about nine installs no mount could be made any more (QA-STORE-58, RH-192). `db` is
+/// the live `DBPath` ([`db_path`]); the layer's `pacman -Q` lands in [`after_path`].
+pub fn begin(n: u32, args: &[String], db: &str) -> Vec<Step> {
     let l = format!("{DIR}/{}", name(n));
     let w = format!("{WORK_DIR}/{}", name(n));
-    let mut chroot = vec!["arch-chroot", CHROOT, PACMAN];
-    chroot.extend(args.iter().map(String::as_str));
+    let mut private: Vec<String> = ["unshare", "--mount", "--propagation", "private", "sh", "-c"]
+        .map(String::from)
+        .to_vec();
+    private.push(chroot_script(n));
+    private.push("wol-layer".into());
+    private.push(db.to_owned());
+    private.extend(args.iter().cloned());
     vec![
         v(&[
             "mkdir",
@@ -320,33 +351,14 @@ pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
             &format!("{w}/opt"),
             CHROOT,
         ]),
-        // A chroot an earlier run left behind (QA-STORE-53) is unmounted before this plan runs,
-        // under the update lock (controller pkg.rs, `chroot_mounted`/`unmount_chroot`).
-        v(&["mount", "--rbind", "/", CHROOT]),
-        v(&["mount", "--make-rprivate", CHROOT]),
-        v(&[
-            "mount",
-            "-t",
-            "overlay",
-            "overlay",
-            "-o",
-            &overlay(&l, &w, "usr"),
-            &format!("{CHROOT}/usr"),
-        ]),
-        v(&[
-            "mount",
-            "-t",
-            "overlay",
-            "overlay",
-            "-o",
-            &overlay(&l, &w, "opt"),
-            &format!("{CHROOT}/opt"),
-        ]),
-        v(&chroot),
+        // A chroot an earlier run left behind (QA-STORE-53, from before QA-STORE-58: in PID 1's
+        // namespace) is unmounted before this plan runs, under the update lock (controller pkg.rs,
+        // `chroot_mounted`/`unmount_chroot`).
+        Step::Run(private),
     ]
 }
 
-/// Steps after pacman succeeded: keep the record, unmount, make the layer an extension (its
+/// Steps after pacman succeeded (the chroot went with [`begin`]'s namespace): keep the record, make the layer an extension (its
 /// extension-release, written last: QA-STORE-45), merge it. pacman has committed by now, so a
 /// failure here never removes the layer (its files and database entries are the change): the
 /// caller stops, and the next good boot finishes it (`boot-ok` writes a missing
@@ -358,7 +370,6 @@ pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
             path: format!("{l}/{RECORD}"),
             text: rec.to_json(),
         },
-        Step::Run(umount_argv()),
         Step::Write {
             path: release_path(n),
             text: extension_release(),
@@ -377,7 +388,7 @@ pub fn release_path(n: u32) -> String {
 }
 
 /// Whether `/proc/self/mountinfo` text shows something mounted at or under [`CHROOT`]: a run
-/// that stopped at [`finish`]'s `umount -R` left its rbind and overlay there (audit8 stability2
+/// from before QA-STORE-58 (its chroot was in PID 1's namespace) that stopped before its `umount -R` left its rbind and overlay there (audit8 stability2
 /// #8), and the next [`begin`] must not stack another rbind on them.
 pub fn chroot_mounted(mountinfo: &str) -> bool {
     mountinfo.lines().any(|l| {
@@ -397,7 +408,6 @@ pub fn unmount_chroot() -> Vec<String> {
 pub fn abort(n: u32) -> Vec<Vec<String>> {
     let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     vec![
-        umount_argv(),
         s(&["rm", "-rf", &format!("{DIR}/{}", name(n))]),
         s(&["rm", "-rf", &format!("{WORK_DIR}/{}", name(n))]),
     ]
@@ -717,7 +727,10 @@ mod tests {
     #[test]
     fn pacman_runs_in_an_overlay_chroot_and_the_layer_is_merged_at_once() {
         let args: Vec<String> = ["-S", "vim"].map(String::from).to_vec();
-        let t: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
+        let t: Vec<String> = begin(3, &args, DEFAULT_DB_PATH)
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let l = "/var/lib/extensions/wolos-layer-0003";
         assert!(t[0].starts_with(&format!("mkdir -p {l}/usr/lib/extension-release.d")));
         // audit8 stability2 #3: nothing makes the layer an extension before pacman is done.
@@ -725,21 +738,26 @@ mod tests {
             !t.iter().any(|x| x.contains("extension-release.wolos")),
             "{t:?}"
         );
-        assert_eq!(t[1], "mount --rbind / /run/wolos/layer-root");
-        assert!(t[3].contains(&format!(
+        assert!(
+            t[1].contains("\nmount --rbind / /run/wolos/layer-root\n"),
+            "{t:?}"
+        );
+        assert!(t[1].contains(&format!(
             "lowerdir=/run/wolos/layer-root/usr,upperdir={l}/usr,workdir=/var/lib/wolos/layers/wolos-layer-0003/usr"
         )));
-        assert_eq!(
-            t.last().unwrap(),
-            "arch-chroot /run/wolos/layer-root /usr/bin/pacman -S vim"
+        assert!(
+            t[1].contains("\narch-chroot /run/wolos/layer-root /usr/bin/pacman \"$@\" || exit\n"),
+            "{t:?}"
         );
+        assert!(t[1].ends_with(" wol-layer /var/lib/pacman -S vim"), "{t:?}");
+        assert_eq!(t.len(), 2, "{t:?}");
         let rec = Record {
             installed: vec!["vim-9.1-1".into()],
             removed: vec![],
         };
         let f: Vec<String> = finish(3, &rec).iter().map(|s| s.to_string()).collect();
         assert_eq!(f[0], format!("write {l}/wolos-layer.json"));
-        assert_eq!(f[1], "umount -l -R /run/wolos/layer-root", "{f:?}");
+        assert!(!f.iter().any(|x| x.contains("umount")), "{f:?}");
         assert_eq!(f.last().unwrap(), "systemd-sysext refresh");
         assert!(
             f.iter()
@@ -753,7 +771,10 @@ mod tests {
     #[test]
     fn extension_release_written_last() {
         let args: Vec<String> = ["-S", "vim"].map(String::from).to_vec();
-        let b: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
+        let b: Vec<String> = begin(3, &args, DEFAULT_DB_PATH)
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(
             !b.iter()
                 .any(|s| s.contains("extension-release.wolos-layer")),
@@ -782,23 +803,77 @@ extension-release.wolos-layer-0003"
         assert!(rel < refresh, "{f:?}");
     }
 
-    /// QA-STORE-53: a chroot that cannot be unmounted at once (a process still in it) is
-    /// detached lazily, never left stacked, with one argv (no shell string, RR-020). One an earlier
-    /// run left is unmounted before `begin`, under the lock (controller pkg.rs; tests/pkg.rs).
+    /// QA-STORE-53: a chroot an earlier run (from before QA-STORE-58) left mounted is unmounted
+    /// before `begin`, under the lock (controller pkg.rs; tests/pkg.rs), never stacked; finish and
+    /// abort have nothing left to unmount (the chroot went with its namespace), and no step of
+    /// the plan is a bare shell string (RR-020).
     #[test]
     fn umount_lazy_fallback() {
-        let lazy = format!("umount -l -R {CHROOT}");
         let f: Vec<String> = finish(3, &Record::default())
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert!(f.contains(&lazy), "{f:?}");
+        assert!(!f.iter().any(|s| s.contains("umount")), "{f:?}");
         let a: Vec<String> = abort(3).iter().map(|v| v.join(" ")).collect();
-        assert_eq!(a[0], lazy, "{a:?}");
+        assert!(!a.iter().any(|s| s.contains("umount")), "{a:?}");
         let args: Vec<String> = ["-S", "vim"].map(String::from).to_vec();
-        let b: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
+        let b: Vec<String> = begin(3, &args, DEFAULT_DB_PATH)
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(!b.iter().any(|s| s.starts_with("sh ")), "{b:?}");
-        assert_eq!(b[1], format!("mount --rbind / {CHROOT}"));
+        assert!(
+            b[1].starts_with("unshare --mount --propagation private ")
+                && b[1].contains(&format!("\nmount --rbind / {CHROOT}\n")),
+            "{b:?}"
+        );
+    }
+
+    /// QA-STORE-58, RH-192: no mount of the layer chroot is made in the caller's (PID 1's)
+    /// namespace: every mount and arch-chroot run in one `unshare --mount --propagation
+    /// private` step, so nothing reaches the services' namespaces and nothing outlives pacman.
+    /// The layer's `pacman -Q` runs in there too, before the chroot goes.
+    #[test]
+    fn the_layer_chroot_lives_in_a_private_namespace() {
+        let args: Vec<String> = ["-S", "vim"].map(String::from).to_vec();
+        let steps = begin(3, &args, "/usr/lib/pacman");
+        let argvs: Vec<&Vec<String>> = steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Run(a) => Some(a),
+                Step::Write { .. } => None,
+            })
+            .collect();
+        for a in &argvs {
+            assert!(
+                !matches!(a[0].as_str(), "mount" | "arch-chroot"),
+                "{a:?} runs in PID 1's namespace"
+            );
+        }
+        let ns = argvs
+            .iter()
+            .find(|a| a.iter().any(|x| x.contains("--rbind")))
+            .expect("a chroot step");
+        assert_eq!(ns[..4], ["unshare", "--mount", "--propagation", "private"]);
+        let script = &ns[6];
+        let bind = script.find("mount --rbind /").unwrap();
+        let chroot = script.find("arch-chroot").unwrap();
+        let query = script
+            .find("-Q > /var/lib/wolos/layers/wolos-layer-0003/after")
+            .unwrap();
+        assert!(bind < chroot && chroot < query, "{script}");
+        assert!(script.starts_with("set -e\n"), "{script}");
+        let parsed = std::process::Command::new("sh")
+            .args(["-n", "-c", script])
+            .status()
+            .unwrap();
+        assert!(parsed.success(), "{script}");
+        // The live DBPath and pacman's arguments are arguments, never spliced into the program.
+        assert_eq!(ns[7..], ["wol-layer", "/usr/lib/pacman", "-S", "vim"]);
+        assert_eq!(
+            after_path(3),
+            "/var/lib/wolos/layers/wolos-layer-0003/after"
+        );
     }
 
     /// QA-L2-32: pacman sees /opt writable in the layer chroot too (ROCm and other large
@@ -806,11 +881,14 @@ extension-release.wolos-layer-0003"
     #[test]
     fn opt_is_layered_too() {
         let args: Vec<String> = ["-S", "blender"].map(String::from).to_vec();
-        let b: Vec<String> = begin(4, &args).iter().map(|s| s.to_string()).collect();
+        let b: Vec<String> = begin(4, &args, DEFAULT_DB_PATH)
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let l = "/var/lib/extensions/wolos-layer-0004";
         assert!(
             b.iter().any(|s| s.contains(&format!("upperdir={l}/opt"))
-                && s.ends_with(&format!("{CHROOT}/opt"))),
+                && s.contains(&format!("{CHROOT}/opt\n"))),
             "{b:?}"
         );
     }
@@ -870,9 +948,10 @@ extension-release.wolos-layer-0003"
     #[test]
     fn a_failed_install_leaves_nothing_behind() {
         let a: Vec<String> = abort(2).iter().map(|v| v.join(" ")).collect();
-        assert_eq!(a[0], "umount -l -R /run/wolos/layer-root", "{a:?}");
-        assert!(a[1].starts_with("rm -rf /var/lib/extensions/wolos-layer-0002"));
-        assert!(a[2].starts_with("rm -rf /var/lib/wolos/layers/wolos-layer-0002"));
+        // Nothing to unmount: the chroot went with its namespace (QA-STORE-58).
+        assert_eq!(a.len(), 2, "{a:?}");
+        assert!(a[0].starts_with("rm -rf /var/lib/extensions/wolos-layer-0002"));
+        assert!(a[1].starts_with("rm -rf /var/lib/wolos/layers/wolos-layer-0002"));
     }
 
     #[test]

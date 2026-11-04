@@ -99,6 +99,26 @@ fn scan(args: &[String]) -> Option<Scan<'_>> {
     })
 }
 
+/// `pacman -Sw ...` (download only, no preview) aimed at the running system: it changes no
+/// package, but pacman takes its database lock for it, and on a sealed system the database is on
+/// the read-only slot (QA-STORE-72). The caller runs it against a temporary copy of the database.
+/// False for a command that names its own database or root.
+pub fn needs_scratch_db(args: &[String]) -> bool {
+    let Some(sc) = scan(args) else {
+        return false;
+    };
+    let has = |c: char, l: &str| sc.shorts.contains(c) || sc.longs.contains(&l);
+    sc.op == Some('S')
+        && has('w', "downloadonly")
+        && !has('p', "print")
+        && !has('p', "print-format")
+        && !has('s', "search")
+        && !has('i', "info")
+        && !has('l', "list")
+        && !has('g', "groups")
+        && !has('c', "clean")
+}
+
 pub fn classify(args: &[String]) -> Kind {
     let Some(Scan {
         op,
@@ -374,6 +394,36 @@ mod tests {
     fn a(s: &str) -> Vec<String> {
         s.split_whitespace().map(String::from).collect()
     }
+    /// QA-STORE-72: download-only runs need a scratch database on a sealed system; nothing else
+    /// does, and a command with its own database or root is left alone.
+    #[test]
+    fn download_only_needs_a_scratch_database() {
+        for yes in [
+            "-Sw vim",
+            "-Syw vim",
+            "-Suw",
+            "-Syuw --noconfirm",
+            "--sync --downloadonly vim",
+        ] {
+            assert!(needs_scratch_db(&a(yes)), "{yes}");
+        }
+        for no in [
+            "-S vim",
+            "-Syu",
+            "-Q",
+            "-Sy",
+            "-Sc",
+            "-Ss vim",
+            "-Swp vim",
+            "-Sw --dbpath /x vim",
+            "-Sw -b /x vim",
+            "-Sw --root /mnt vim",
+            "",
+        ] {
+            assert!(!needs_scratch_db(&a(no)), "{no}");
+        }
+    }
+
     fn c(verb: Verb, t: &str) -> Kind {
         Kind::Change(Change {
             targets: t.split_whitespace().map(String::from).collect(),

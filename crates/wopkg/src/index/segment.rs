@@ -42,7 +42,7 @@ pub fn write(path: &Path, fingerprint: &str, records: &[Record]) -> Result<()> {
             .map_err(|_| Error::unavailable("The index folder cannot be created."))?;
     }
     shared::atomic::atomic_write(path, 0o644, &out)
-        .map_err(|_| Error::unavailable("The index cannot be written."))
+        .map_err(|e| crate::fetch::write_error(&e, "The index cannot be written."))
 }
 
 /// A mapped segment.

@@ -669,6 +669,15 @@ fn release_feed(c: &context::Context, bases: &[String], channel: &str) -> Result
     Ok(f)
 }
 
+/// The channel a release plan reads: the request's own, else what this computer follows
+/// (`/etc/wolos/channel` as one this release offers: stable, QA-STORE-68).
+fn plan_channel(asked: Option<String>, file: Option<&str>) -> String {
+    match asked.filter(|s| !s.is_empty()) {
+        Some(c) => c,
+        None => shared::packages::channel_of(file).to_owned(),
+    }
+}
+
 pub fn release_plan(c: &context::Context, body: &str) -> Result<serde_json::Value> {
     let r: PlanReq = if body.trim().is_empty() {
         PlanReq::default()
@@ -676,15 +685,12 @@ pub fn release_plan(c: &context::Context, body: &str) -> Result<serde_json::Valu
         serde_json::from_str(body)
             .map_err(|e| Error::invalid(format!("The request is not valid: {e}.")))?
     };
-    let channel = r
-        .channel
-        .or_else(|| {
-            std::fs::read_to_string("/etc/wolos/channel")
-                .ok()
-                .map(|s| s.trim().to_owned())
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or("stable".into());
+    let channel = plan_channel(
+        r.channel,
+        std::fs::read_to_string("/etc/wolos/channel")
+            .ok()
+            .as_deref(),
+    );
     if !release::CHANNELS.contains(&channel.as_str()) {
         return Err(Error::invalid("The channel is stable, beta or nightly."));
     }
@@ -750,6 +756,15 @@ pub unsafe extern "C" fn wopkg_release_plan(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-STORE-68: a plan without its own channel follows stable, whatever an old file says.
+    #[test]
+    fn a_plan_follows_the_offered_channel() {
+        assert_eq!(plan_channel(None, Some("beta\n")), "stable");
+        assert_eq!(plan_channel(None, None), "stable");
+        assert_eq!(plan_channel(Some(String::new()), Some("nightly")), "stable");
+        assert_eq!(plan_channel(Some("beta".into()), None), "beta");
+    }
 
     #[test]
     fn version_agrees() {

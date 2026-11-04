@@ -58,16 +58,39 @@ module Wopkg
       @core = Core.new(config)
     end
 
+    # Root's home is in the sealed, read-only slot: its cache and state live under /var, as
+    # libwopkg's (QA-STORE-62; context.rs ROOT_CACHE, ROOT_STATE).
+    ROOT_CACHE = "/var/cache/wopkg"
+    ROOT_STATE = "/var/lib/wolos/wopkg/state"
+
+    # /proc/self belongs to the process's effective user (no FFI outside the ffi modules, RCR-010).
+    def self.root? : Bool
+      File.info("/proc/self").owner_id == "0"
+    rescue File::Error
+      false
+    end
+
     def home : String
-      @config.home || ENV["HOME"]
+      @config.home || ENV["HOME"]?.presence || (App.root? ? "/root" : raise ArgumentError.new("wopkg needs a home folder."))
     end
 
     def cache : String
-      @config.cache_dir || "#{ENV["XDG_CACHE_HOME"]? || "#{home}/.cache"}/wopkg"
+      @config.cache_dir || App.dir(ENV["XDG_CACHE_HOME"]?, App.root?, ROOT_CACHE) { "#{home}/.cache/wopkg" }
     end
 
     def state : String
-      @config.state_dir || "#{ENV["XDG_STATE_HOME"]? || "#{home}/.local/state"}/wopkg"
+      @config.state_dir || App.dir(ENV["XDG_STATE_HOME"]?, App.root?, ROOT_STATE) { "#{home}/.local/state/wopkg" }
+    end
+
+    # The XDG folder's wopkg directory when set, else root's /var one, else the home's.
+    def self.dir(xdg : String?, root : Bool, admin : String, & : -> String) : String
+      if x = xdg.presence
+        "#{x}/wopkg"
+      elsif root
+        admin
+      else
+        yield
+      end
     end
 
     def prefix : String
@@ -142,7 +165,7 @@ module Wopkg
           wopkg list                (-Q)   what is installed
           wopkg history | rollback <id|system>
           wopkg pin|unpin <name>           keep a package at its version through updates
-          wopkg channel [stable|beta|nightly] | pause [days] | resume
+          wopkg channel [stable] | pause [days] | resume
           wopkg appimage add <url|file> | wopkg aur review|update <pkg> | wopkg audit <pkg> | wopkg recipe build|install|remove <name>
           wopkg completions zsh|bash|fish|pwsh
           wopkg shard list [words] | add <name>... | update [name]... | check   [folder] (default: here)
@@ -522,18 +545,28 @@ module Wopkg
       say "Undone: #{e["action"].as_s} of #{e["name"].as_s}."
     end
 
+    # The channels a person can follow in this release (shared::packages::OFFERED): stable only
+    # in 0.13 (QA-STORE-68). A file naming another reads as stable, as `wol update channel` does.
+    OFFERED = %w(stable)
+
     def channel
       if c = @a.targets.first?
+        raise UsageError.new("WolOS offers the #{OFFERED.join(", ")} channel only.") unless OFFERED.includes?(c)
         core.system_call({"call" => "system.channel", "channel" => c}.to_json)
-        say "This computer now follows the #{c} channel."
+        say "This computer follows the #{c} channel."
       else
-        current = begin
-          File.read("/etc/wolos/channel").strip
+        text = begin
+          File.read("/etc/wolos/channel")
         rescue File::Error
-          "stable"
+          nil
         end
-        say current
+        say App.channel_of(text)
       end
+    end
+
+    def self.channel_of(text : String?) : String
+      w = text.try(&.strip) || ""
+      OFFERED.includes?(w) ? w : OFFERED.first
     end
 
     def pause

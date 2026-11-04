@@ -272,7 +272,7 @@ mod tests {
             let (srv, app) = UnixStream::pair().unwrap();
             let h = ask(
                 &app,
-                b"call {\"call\":\"system.channel\",\"channel\":\"beta\"}
+                b"call {\"call\":\"system.channel\",\"channel\":\"stable\"}
 ",
             );
             t.spawn(|| serve_me(srv, &Empty, &bus, &AllowAll, &state));

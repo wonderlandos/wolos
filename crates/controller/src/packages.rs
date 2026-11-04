@@ -45,28 +45,52 @@ fn records(env: &dyn Env) -> Vec<shared::bundle::Info> {
     package::installed(Path::new(&dir))
 }
 
-/// `$XDG_CACHE_HOME/wolos/packages` (downloads and the index).
+/// Where the administrator's downloads and index live when `XDG_CACHE_HOME` is not set: root's
+/// home is in the sealed, read-only slot (QA-STORE-62: curl 23 on every index fetch).
+pub const ROOT_CACHE: &str = "/var/cache/wolos";
+
+/// `$XDG_CACHE_HOME/wolos/packages` (downloads and the index); for root without one,
+/// [`ROOT_CACHE`]`/packages`.
 fn cache_dir(env: &dyn Env) -> PathBuf {
-    env.var("XDG_CACHE_HOME")
-        .map_or_else(|| env.home().join(".cache"), PathBuf::from)
-        .join("wolos/packages")
+    match env.var("XDG_CACHE_HOME").filter(|v| !v.is_empty()) {
+        Some(v) => PathBuf::from(v).join("wolos/packages"),
+        None if env.is_root() => Path::new(ROOT_CACHE).join("packages"),
+        None => env.home().join(".cache/wolos/packages"),
+    }
 }
 
-fn fetch(env: &mut dyn Env, url: &str, dest: &Path) -> bool {
-    fetch_code(env, url, dest) == Some(0)
+/// How a download ended. curl runs silent (`-fsL`: its own text never reaches the person,
+/// QA-STORE-61); its exit status picks the sentence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fetched {
+    Ok,
+    /// The server answered with an HTTP error (curl 22): the file is not published there.
+    NotPublished,
+    /// Anything else: no network, no name resolution, a cut connection.
+    Unreachable,
 }
 
-/// curl's exit status for one download (None: curl did not run).
-fn fetch_code(env: &mut dyn Env, url: &str, dest: &Path) -> Option<i32> {
+fn fetch(env: &mut dyn Env, url: &str, dest: &Path) -> Fetched {
     let argv = package::fetch_argv(url, &dest.to_string_lossy());
-    env.exec_quiet(&argv).ok()
+    match env.exec_quiet(&argv) {
+        Ok(0) => Fetched::Ok,
+        Ok(22) => Fetched::NotPublished,
+        _ => Fetched::Unreachable,
+    }
 }
 
-/// curl `-f`: the server answered with an HTTP error (404: no index at that address). The
-/// machine is online; "offline?" sent people to their network (QA-LIVE3-8).
-const CURL_HTTP_ERROR: i32 = 22;
-/// The index's address answered with an HTTP error, so there is no index to read.
-const INDEX_NOT_ON_SERVER: &str = "the package index is not on the server";
+/// The app list's address answered with an HTTP error and there is no copy from before, so
+/// there is no list to read: the machine is online ("offline?" sent people to their network,
+/// QA-LIVE3-8); callers tell it from a damaged list by this start.
+const INDEX_NOT_ON_SERVER: &str = "WolOS has not published the app list there yet";
+
+/// The sentence for an app list that could not be fetched.
+fn fetch_sentence(f: Fetched) -> &'static str {
+    match f {
+        Fetched::NotPublished => INDEX_NOT_ON_SERVER,
+        _ => "the app list could not be downloaded (are you online?)",
+    }
+}
 
 /// A file of at most [`package::INDEX_MAX_BYTES`] (audit 8 #5): a larger one is an error, never
 /// read into memory whole.
@@ -140,21 +164,35 @@ fn index(env: &mut dyn Env) -> Result<Option<Index>, String> {
         mark.exists(),
     );
     let (fresh, fresh_sig) = (part_of(&file), part_of(&sig));
-    let code = fetch_code(env, &url, &fresh);
-    if code != Some(0) {
+    let cached = |f: &Path| {
+        if f.exists() {
+            "; using the copy from before"
+        } else {
+            ""
+        }
+    };
+    let got = fetch(env, &url, &fresh);
+    if got != Fetched::Ok {
         let _ = std::fs::remove_file(&fresh);
-        if code == Some(CURL_HTTP_ERROR) && !file.exists() {
+        if got == Fetched::NotPublished && !file.exists() {
             return Err(format!("{INDEX_NOT_ON_SERVER} ({url})"));
         }
-        env.err("wol: index unavailable, using the cached copy\n");
+        env.err(&format!("wol: {}{}\n", fetch_sentence(got), cached(&file)));
     } else {
         let got_sig = fetch(env, &format!("{url}{INDEX_SIG_SUFFIX}"), &fresh_sig);
-        let s = got_sig.then_some(fresh_sig.as_path());
+        let s = (got_sig == Fetched::Ok).then_some(fresh_sig.as_path());
         if fresh.exists()
             && let Err(e) = adopt(&dir, &fresh, s, &keys, required)
         {
+            // A signature the server does not have yet is not a damaged list.
+            let why = if s.is_none() && got_sig == Fetched::NotPublished {
+                "WolOS has not published its signature yet".to_owned()
+            } else {
+                e
+            };
             env.err(&format!(
-                "wol: the downloaded index was not used ({e}); using the cached copy\n"
+                "wol: the downloaded app list was not used ({why}){}\n",
+                cached(&file)
             ));
         }
         let _ = std::fs::remove_file(&fresh);
@@ -273,12 +311,19 @@ fn install_file(env: &mut dyn Env, path: &Path) -> i32 {
 fn install_entry(env: &mut dyn Env, e: &Entry) -> i32 {
     let dest = cache_dir(env).join(e.file_name());
     let fresh = package::sha256_file(&dest).is_ok_and(|h| h == e.sha256);
-    if !fresh && !fetch(env, &e.url, &dest) {
-        return fail(
-            env,
-            ErrorCode::Unavailable,
-            &format!("download failed: {}", e.url),
-        );
+    if !fresh {
+        let why = match fetch(env, &e.url, &dest) {
+            Fetched::Ok => None,
+            Fetched::NotPublished => Some("the server does not have this app's file"),
+            Fetched::Unreachable => Some("the download did not finish (are you online?)"),
+        };
+        if let Some(why) = why {
+            return fail(
+                env,
+                ErrorCode::Unavailable,
+                &format!("{} could not be downloaded: {why}", e.name),
+            );
+        }
     }
     let size = std::fs::metadata(&dest).map_or(0, |m| m.len());
     if size != e.size || package::sha256_file(&dest).ok().as_deref() != Some(&e.sha256) {
@@ -354,7 +399,7 @@ fn search(env: &mut dyn Env, term: &str, json: bool) -> i32 {
             json!({"id": e.id, "name": e.name, "summary": e.summary, "version": e.version,
                    "source": "wol", "signed": e.signed})
         })),
-        Ok(None) => env.err("wol: no package index (offline?)\n"),
+        Ok(None) => env.err("wol: no app list to search yet\n"),
         Err(e) => env.err(&format!("wol: package index: {e}\n")),
     }
     print_rows(env, rows, json, "no matches")
@@ -363,7 +408,13 @@ fn search(env: &mut dyn Env, term: &str, json: bool) -> i32 {
 fn updates(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     let index = match index(env) {
         Ok(Some(i)) => i,
-        Ok(None) => return fail(env, ErrorCode::Unavailable, "no package index (offline?)"),
+        Ok(None) => {
+            return fail(
+                env,
+                ErrorCode::Unavailable,
+                "no app list yet, so app updates could not be checked",
+            );
+        }
         Err(e) if e.starts_with(INDEX_NOT_ON_SERVER) => {
             return fail(env, ErrorCode::Unavailable, &format!("package index: {e}"));
         }
@@ -393,6 +444,32 @@ mod tests {
     use wol_core::package::{manifest, public_of, public_pem, sha256_hex, sign, ustar};
 
     const SEED: [u8; 32] = [7; 32];
+
+    /// QA-STORE-62: the folder root's index lives in is made by the image at boot (tmpfiles.d),
+    /// so the first `sudo wol pkg` finds it.
+    #[test]
+    fn root_cache_is_made_by_tmpfiles() {
+        let conf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../files/usr/lib/tmpfiles.d/wolos.conf"
+        ))
+        .unwrap();
+        let env = FakeEnv {
+            root: true,
+            ..Default::default()
+        };
+        let dir = cache_dir(&env);
+        for d in [Path::new(ROOT_CACHE), dir.as_path()] {
+            assert!(
+                conf.lines().any(|l| {
+                    let w: Vec<_> = l.split_whitespace().collect();
+                    w.len() >= 5 && w[0] == "d" && Path::new(w[1]) == d && w[3] == "root"
+                }),
+                "tmpfiles makes {}",
+                d.display()
+            );
+        }
+    }
 
     fn info(version: &str) -> String {
         format!(
@@ -637,6 +714,65 @@ mod tests {
         assert_eq!(parts, 0);
     }
 
+    /// QA-STORE-61: an app list or signature the server does not have (HTTP 404, curl 22) is
+    /// "not published", not "offline"; no network is "are you online?"; curl's own text is never
+    /// shown (curl runs silent).
+    #[test]
+    fn index_404_says_not_published() {
+        let (mut e, home) = env("404");
+        let cache = home.join(".cache/wolos/packages");
+        let _ = std::fs::remove_dir_all(&cache);
+        e.exec_codes = vec![22];
+        assert_eq!(run(&mut e, "search gimp"), 0, "{}", e.err);
+        assert!(
+            e.err.contains("has not published the app list"),
+            "{}",
+            e.err
+        );
+        assert!(
+            !e.err.contains("offline") && !e.err.contains("online"),
+            "{}",
+            e.err
+        );
+        let curl = e.execs.iter().find(|a| a[0] == "curl").unwrap();
+        assert!(curl.contains(&"-fsL".to_string()), "{curl:?}");
+        let (mut e, home) = env("unreachable");
+        let _ = std::fs::remove_dir_all(home.join(".cache/wolos/packages"));
+        e.exec_codes = vec![6];
+        assert_ne!(run(&mut e, "update apps"), 0);
+        assert!(e.err.contains("are you online?"), "{}", e.err);
+        // The list came, its signature is not published: said as such, never "damaged".
+        let (mut e, home) = env("nosig");
+        let _ = std::fs::remove_dir_all(home.join(".cache/wolos/packages"));
+        e.exec_codes = vec![0, 22];
+        let _ = run(&mut e, "search gimp");
+        assert!(!e.err.contains("online"), "{}", e.err);
+    }
+
+    /// QA-STORE-62: root's home is in the sealed slot; its cache is under /var, unless
+    /// XDG_CACHE_HOME says otherwise. Another account keeps its own home's cache.
+    #[test]
+    fn root_cache_under_var() {
+        let mut e = FakeEnv {
+            root: true,
+            home: PathBuf::from("/root"),
+            ..FakeEnv::default()
+        };
+        assert_eq!(cache_dir(&e), Path::new("/var/cache/wolos/packages"));
+        e.vars = vec![("XDG_CACHE_HOME".into(), "/x".into())];
+        assert_eq!(cache_dir(&e), Path::new("/x/wolos/packages"));
+        e.vars = vec![("XDG_CACHE_HOME".into(), String::new())];
+        assert_eq!(cache_dir(&e), Path::new("/var/cache/wolos/packages"));
+        let user = FakeEnv {
+            home: PathBuf::from("/home/ana"),
+            ..FakeEnv::default()
+        };
+        assert_eq!(
+            cache_dir(&user),
+            Path::new("/home/ana/.cache/wolos/packages")
+        );
+    }
+
     /// Audit 8 #5: an index above the cap is never read whole, fresh or cached.
     #[test]
     fn an_oversize_index_is_refused() {
@@ -732,11 +868,11 @@ mod tests {
         e.exec_codes = vec![22];
         assert_eq!(run(&mut e, "search zzz-nothing"), 0, "{}", e.err);
         assert!(!e.err.contains("offline"), "{}", e.err);
-        assert!(e.err.contains("not on the server"), "{}", e.err);
+        assert!(e.err.contains(INDEX_NOT_ON_SERVER), "{}", e.err);
         let (mut off, _h) = env("offline");
         off.exec_codes = vec![6];
         assert_eq!(run(&mut off, "search zzz-nothing"), 0, "{}", off.err);
-        assert!(off.err.contains("offline"), "{}", off.err);
+        assert!(off.err.contains("are you online?"), "{}", off.err);
         let (mut app, _h) = env("http404-app");
         app.exec_codes = vec![22];
         assert_eq!(
@@ -745,7 +881,7 @@ mod tests {
             "{}",
             app.err
         );
-        assert!(app.err.contains("not on the server"), "{}", app.err);
+        assert!(app.err.contains(INDEX_NOT_ON_SERVER), "{}", app.err);
         assert!(app.requests.is_empty());
         let (mut pkg, _h) = env("http404-pkg");
         pkg.exec_codes = vec![22];

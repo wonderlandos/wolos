@@ -249,7 +249,7 @@ fn root_package_changes_need_an_administrator_and_a_fresh_password() {
     for (action, args) in [
         (AdminAction::PkgInstallFile, vec![staged.as_str(), FAKE_SHA]),
         (AdminAction::SystemRollback, vec![]),
-        (AdminAction::SystemChannel, vec!["beta"]),
+        (AdminAction::SystemChannel, vec!["stable"]),
     ] {
         let good = encode(&req(action, &args), b"good");
         let none = encode(&req(action, &args), b"");
@@ -273,7 +273,7 @@ fn root_package_changes_need_an_administrator_and_a_fresh_password() {
         *os.wrote.borrow(),
         [(
             wol_core::admin::CHANNEL_FILE.to_owned(),
-            "beta\n".to_owned()
+            "stable\n".to_owned()
         )]
     );
     for path in ["/home/bob/evil-1-1-any.pkg.tar.zst", "/tmp/x.pkg.tar.zst"] {
