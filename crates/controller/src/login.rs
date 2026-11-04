@@ -201,6 +201,15 @@ pub const LOCALE_CONF: &str = "/etc/locale.conf";
 /// desktop/overlay/usr/share/wolos/hypr/login.lua loads when present.
 pub const LOGIN_KEYBOARD: &str = "/etc/wolos/login-keyboard.lua";
 
+/// Writes [`wol_core::hyprprefs::LAST_LAYOUT`] (`out`) from the account whose home is `home`: its
+/// saved layouts, so the login window types like the person who last signed in (QA-A7-16).
+/// Root only; the account's file is parsed, never copied.
+pub fn record_last_layout(home: &std::path::Path, out: &std::path::Path) -> std::io::Result<()> {
+    let prefs = wol_core::hyprprefs::load_desktop(&home.join(".config"));
+    let text = wol_core::hyprprefs::last_layout_text(&prefs);
+    shared::atomic::atomic_write(out, 0o644, text.as_bytes())
+}
+
 /// Account first (`useradd`, then the password on `chpasswd`'s stdin), then per-user and
 /// system preferences.
 pub fn setup_plan(a: &NewAccount) -> Vec<SetupStep> {
@@ -1035,6 +1044,34 @@ mod tests {
     }
 
     use super::*;
+
+    /// QA-A7-16: the file the login window reads follows the account's saved layouts, and the
+    /// compositor config reads that very file.
+    #[test]
+    fn the_login_window_follows_the_last_accounts_layout() {
+        let d = std::env::temp_dir().join(format!("wol-last-layout-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let cfg = d.join("home/.config");
+        std::fs::create_dir_all(cfg.join("wolos")).unwrap();
+        std::fs::write(
+            cfg.join(wol_core::hyprprefs::PREFS_FILE),
+            r#"{"layouts":["br","us(intl)"]}"#,
+        )
+        .unwrap();
+        let out = d.join("last-layout");
+        record_last_layout(&d.join("home"), &out).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "br,us\n,intl\n");
+        // An account without a saved layout: the US one.
+        record_last_layout(&d.join("nobody"), &out).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "us\n\n");
+        let login = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/login.lua");
+        assert!(
+            login.contains(&format!("\"{}\"", wol_core::hyprprefs::LAST_LAYOUT)),
+            "login.lua reads the last layout file"
+        );
+        assert!(login.contains("kb_layout=layout"), "and sets it");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     const PASSWD: &str = "# comment
 root:*:0:0:Charlie &:/root:/bin/sh

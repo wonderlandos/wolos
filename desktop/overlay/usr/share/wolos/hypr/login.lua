@@ -27,6 +27,18 @@ if keyboard_file then
     keyboard_file:close()
     require(keyboard_lua)
 end
+-- The layout of the account that last used this computer (wol-login writes it when a session
+-- starts and ends, QA-A7-16): a layout changed in Settings is what the login window types on.
+-- It wins over the install-time file above; two lines, the layouts and the variants.
+local last_layout = io.open("/var/lib/wolos/last-layout", "r")
+if last_layout then
+    local layout, variant = last_layout:read("*l"), last_layout:read("*l")
+    last_layout:close()
+    if layout and layout:match("^[%w_,]+$") and variant and variant:match("^[%w_,]*$") then
+        -- pcall: a value the compositor refuses leaves the layout as it was, not the login window dead.
+        local applied = pcall(hl.config, {input={kb_layout=layout, kb_variant=variant}})
+    end
+end
 hl.config({
     decoration = { rounding = 12 },
     animations = { enabled = false },
