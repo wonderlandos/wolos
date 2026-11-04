@@ -2,7 +2,31 @@
 
 This is the guide for people who translate WolOS and for the people who add text to it. You do not need to know how to program. You need a text editor that keeps tabs as tabs (any editor that shows a tab character will do) and care for the person who will read your words. The design behind it is [ADR 0045](../adr/0045-locale-system.md).
 
-WolOS is translated into ten languages: English (the source), Brazilian Portuguese `pt-BR`, Spanish `es`, French `fr`, German `de`, Japanese `ja`, Korean `ko`, simplified Chinese `zh-Hans`, Indonesian `id` and Tagalog `tl`. A language not on this list shows English.
+## Supported languages and the order they are translated in
+
+WolOS is translated into ten languages. A language not on this list shows English. Translation is gradual, in this order, and a language starts only when the one before it is done and checked (`wol-i18n status` at 100 % with no stale rows, and its panes reviewed in the language):
+
+| Step | Language | File | Rules |
+|---|---|---|---|
+| 1 | English, the source, written and debugged first (every pane in the catalog, every `xx` golden clean) | `en.tsv` | [RULES-en.md](RULES-en.md) |
+| 2 | Brazilian Portuguese | `pt-BR.tsv` | [RULES-pt-BR.md](RULES-pt-BR.md) |
+| 3 | French | `fr.tsv` | [RULES-fr.md](RULES-fr.md) |
+| 4 | Japanese | `ja.tsv` | [RULES-ja.md](RULES-ja.md) |
+| 5 | Simplified Chinese | `zh-Hans.tsv` | [RULES-zh-Hans.md](RULES-zh-Hans.md) |
+| 6 | Spanish | `es.tsv` | [RULES-es.md](RULES-es.md) |
+| 7 | German | `de.tsv` | [RULES-de.md](RULES-de.md) |
+| 8 | Korean | `ko.tsv` | [RULES-ko.md](RULES-ko.md) |
+| 9 | Indonesian | `id.tsv` | [RULES-id.md](RULES-id.md) |
+| 10 | Tagalog | `tl.tsv` | [RULES-tl.md](RULES-tl.md) |
+
+How a language is translated (the rules of the project, which every `RULES-<lang>.md` repeats for its language):
+
+- **One dedicated translator per language.** Each language is translated by its own translator agent, briefed with its `RULES-<lang>.md` and this guide. The main agent never translates, and one translator never does two languages, so each language keeps one voice.
+- **Natural, not literal.** Write what a native speaker would say in the same moment, in a natural equivalent language that keeps the tone and the emotion of the English: calm, plain, kind, never blaming. A word-for-word copy that reads like a translation is a bug. Idioms are replaced by the local way of saying the same thing; humour and warmth stay.
+- **Rigid parts stay fixed.** Product names (WolOS, Cryswol, Wolkit and the app names), commands and program names (`wol`, `wol-settings`), file names and keys, codec and unit names, and every `{placeholder}` are not translated, not respelled and not reordered inside their braces. The list is in each RULES page, "Terms that are never translated".
+- **Nothing ships on trust.** The build refuses a line that breaks a rule (placeholders, plural forms, length budget); `wol-i18n status` shows the coverage; a native reviewer confirms the language’s RULES page before its first line lands and its panes after.
+
+The language codes are `en`, `pt-BR`, `es`, `fr`, `de`, `ja`, `ko`, `zh-Hans`, `id` and `tl`; `xx` is the test language below and is never translated.
 
 ## Where the words live
 
@@ -50,7 +74,7 @@ If you break one of these, the build stops and tells you the file and the key. T
 - **Plain, kind, short.** WolOS says what happened and what to do, in one or two sentences, and never blames the person. Keep that. Do not translate names of products and programs (WolOS, Wi-Fi, Bluetooth). Use the words people already know in your language for things like "Wi-Fi" and "password", not a literal copy of the English.
 - **Do not name other projects or people.** WolOS never mentions the software it is built from; if the English does not, you do not.
 
-Each language gets its own written rules (formal or informal "you", spelling variant, how to write numbers and dates, glossary) in `docs/l10n/RULES-<lang>.md`. They are written before the translation of that language starts; read yours first.
+Each language has its own written rules (formal or informal "you", quotation marks, number formats, plural forms, length, what `xx` tests for it): [en](RULES-en.md) (the source), [pt-BR](RULES-pt-BR.md), [es](RULES-es.md), [fr](RULES-fr.md), [de](RULES-de.md), [ja](RULES-ja.md), [ko](RULES-ko.md), [zh-Hans](RULES-zh-Hans.md), [id](RULES-id.md), [tl](RULES-tl.md). Read yours first. A native reviewer confirms each page before the first line of that language is translated.
 
 ## Check your work
 
@@ -74,7 +98,7 @@ To see your own language before it is shipped, put your language in the session 
 
 ## Where a person chooses the language
 
-- **First start.** The setup assistant's Language & Region page (after Welcome) shows the languages. The person's choice is used at once by the assistant and is saved as the new account's language.
+- **First start.** The setup assistant's Language & Region page (after Welcome) lists English (US and UK), Portuguese (Brazil and Portugal), Spanish, French, German, Japanese, Korean, Chinese (Simplified), Indonesian and Tagalog. The person's choice is used at once by the assistant and is saved as the new account's language.
 - **Later.** System Settings, General, Language & Region, "Preferred language". The shell and Settings change at once; other apps use the new language the next time the person logs in.
 - **How WolOS decides when it starts.** In order: `WOL_LANG` (for tests), `LC_ALL`, `LC_MESSAGES`, `LANG`. `pt_PT` and other Portuguese read Brazilian Portuguese; `zh_CN` and `zh_SG` read simplified Chinese; a language with no translation, such as `it_IT` or `zh_TW`, reads English.
 - **Any line missing in your language** shows the English for that line, never a blank.
@@ -88,3 +112,7 @@ To see your own language before it is shipped, put your language in the session 
 5. Add or update the golden in `crates/shell/tests/golden_cases/locale.rs`.
 
 For a Crystal app: put `locale/<unit>/en.tsv` in the app, run `wol-i18n compile locale/<unit> build/locale`, and call `Wolkit::I18n.load("build/locale", "<unit>")` once at start and `Wolkit::I18n.language = ENV["LANG"]` to pick the language; then `text t("greeting")` in a view relabels when the language changes.
+
+## Migration status (ADR 0045, step 3)
+
+The text of a pane is in the catalog when its labels and sentences are keys. Done: the shell’s sentences (`settings.*`, 35 keys, from `copy_settings.rs`), Settings > Sound (`sound.*`, 32 labels and value templates, from `copy_sound.rs`) and the Control Center panel (`cc.*`, 44 labels, from `copy_cc.rs`). Still English in the code, as counts of string literals that look like screen text (a rough scan, not a promise), for the next worker: Settings 976 (search.rs 200, mod.rs 110 with the sidebar and pane titles, effects.rs 84, privacy.rs 72, restore.rs 33, machine.rs 33, desktop_dock.rs 26, startup_security.rs 25, battery.rs 25, datetime.rs 24, software_update.rs 21, then 18 or fewer each in 25 more panes), the other windows under `src/ui` 310 (store.rs 82, widgets_builtin.rs 46, installer.rs 37, setup.rs 22, menubar.rs 20, then smaller ones) with `ui/store/` 41, `ui/maker/` 30 and `ui/installer/` 16 more, and outside `ui`: `packages.rs` 58, `install_flow.rs` 45, `setup.rs` 45, `appmenu.rs` 21, the desktop widgets (`widgets/*.rs`) 85, `system.rs` 19 (`wifi_subtitle`), `clock.rs` 18, `app_session.rs` 15. Strings built by `format!` become `{name}` templates (`i18n::fill`); a name that is a product term or data (Wi-Fi, Bluetooth, a network, a device) stays in the code. Do one pane at a time: move its literals into a `copy_<pane>.rs` module listed in `locale/shell/sources.tsv`, run `wol-i18n extract`, read the keys with `i18n::t`, add its `xx` golden to `tests/golden_cases/locale.rs` and fix whatever overflows.
