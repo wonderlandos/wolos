@@ -83,7 +83,10 @@ fn status_reports_the_last_check() {
 
     let mut never = FakeEnv::default();
     assert_eq!(run("update status --json", &mut never), 0);
-    assert_eq!(never.out.trim(), "null", "never checked");
+    // QA-PWR-16: never checked is an object a script can read, not `null`.
+    let v: serde_json::Value = serde_json::from_str(never.out.trim()).unwrap();
+    assert!(v.is_object(), "never checked: {}", never.out);
+    assert!(v["checked"].is_null() && v["count"] == 0, "{v}");
 }
 
 #[test]

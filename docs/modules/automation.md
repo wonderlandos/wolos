@@ -68,6 +68,8 @@ The keys `kind` (widget and plugin entries), `status` (the MCP approval result) 
 run, control socket) name different things; do not read one as the other. The plan is one envelope
 `{"ok", "code", "message"}` for the `--json` output of `wol`, with the exit status kept.
 
+**One rule for lists and status (QA-PWR-16).** A verb that lists or reports prints JSON when `--json` is given **or when stdout is not a terminal**; at a terminal it prints the table or sentence. `wol theme list`, `wol sessions list` and `wol update status` follow it like `wol hw`, `wol doctor`, `wol modules` and the rest (`env.stdout_tty()` in the controller). `wol update status --json` before the first check is an object with `"checked": null`, `"count": 0` and the running base and kernel, never `null`. Tests: `crates/controller/tests/doctor.rs` (`theme_list_is_json_when_piped_and_a_table_at_a_terminal`), `sessions.rs` (`a_piped_list_is_json`), `tests/update_status.rs`.
+
 ## Desktop toggles (`wol toggle <word> [on|off]`, `wol_core::toggles`)
 
 What a toggle is: one switch the menu bar, Control Center tiles, hotkeys and helpers share. Why one

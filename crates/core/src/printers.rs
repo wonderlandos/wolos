@@ -223,11 +223,11 @@ pub fn read(h: &dyn Host) -> Option<Vec<Printer>> {
     )
 }
 
-/// Devices CUPS can see (slow: backends probe the network; call off the UI thread).
-pub fn discover(h: &dyn Host) -> Vec<String> {
-    h.run_slow(&["lpinfo", "-v"])
-        .map(|t| parse_lpinfo_v(&t))
-        .unwrap_or_default()
+/// Devices CUPS can see (slow: backends probe the network; call off the UI thread). `None` when
+/// `lpinfo` itself failed: CUPS answers `lpinfo -v` only to its administrators, so for a plain
+/// account that is "not allowed", which is not the same as "no printer found" (QA-FDAY-15).
+pub fn discover(h: &dyn Host) -> Option<Vec<String>> {
+    h.run_slow(&["lpinfo", "-v"]).map(|t| parse_lpinfo_v(&t))
 }
 
 #[cfg(test)]
@@ -396,6 +396,15 @@ mod tests {
             "lpinfo -v",
             "network ipp\nnetwork ipp://10.0.0.9/ipp/print\n",
         );
-        assert_eq!(discover(&h), ["ipp://10.0.0.9/ipp/print"]);
+        assert_eq!(discover(&h), Some(vec!["ipp://10.0.0.9/ipp/print".into()]));
+    }
+
+    /// QA-FDAY-15: lpinfo failing (a plain account is refused) is not "no printers found".
+    #[test]
+    fn a_refused_lpinfo_is_not_an_empty_answer() {
+        let h = FakeHost::new(true);
+        assert_eq!(discover(&h), None, "lpinfo failed");
+        h.slow("lpinfo -v", "network ipp\n");
+        assert_eq!(discover(&h), Some(vec![]), "answered, nothing found");
     }
 }

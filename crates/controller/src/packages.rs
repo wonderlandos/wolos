@@ -131,7 +131,7 @@ fn index(env: &mut dyn Env) -> Result<Option<Index>, String> {
     let (fresh, fresh_sig) = (part_of(&file), part_of(&sig));
     if !fetch(env, &url, &fresh) {
         let _ = std::fs::remove_file(&fresh);
-        env.err("wol: index unavailable, using the cached copy\n");
+        env.err("wol: the app index could not be fetched (no network, or no answer); using the cached copy\n");
     } else {
         let got_sig = fetch(env, &format!("{url}{INDEX_SIG_SUFFIX}"), &fresh_sig);
         let s = got_sig.then_some(fresh_sig.as_path());

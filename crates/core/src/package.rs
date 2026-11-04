@@ -761,7 +761,10 @@ pub fn fetch_argv(url: &str, dest: &str) -> Vec<String> {
     [
         "curl",
         "--disable",
-        "-fsSL",
+        // No -S: curl's own "curl: (22) The requested URL returned error: 404" is not for the
+        // person (and a missing .sig is normal); `wol` says in one sentence what it could not get
+        // (QA-PWR-17).
+        "-fsL",
         "--proto",
         "=https",
         "--proto-redir",
@@ -1071,6 +1074,12 @@ not-a-key x
         let has = |w: &[&str]| a.windows(w.len()).any(|x| x == w);
         assert!(has(&["--proto", "=https"]) && has(&["--proto-redir", "=https"]));
         assert!(has(&["--max-filesize", "33554432"]));
+        // QA-PWR-17: curl stays silent; a 404 on the index (or its optional .sig) is wol's to word.
+        assert!(a.iter().any(|x| x == "-fsL"), "{a:?}");
+        assert!(
+            !a.iter()
+                .any(|x| x.starts_with('-') && !x.starts_with("--") && x.contains('S'))
+        );
         assert_eq!(
             a[a.len() - 2..],
             ["--", "https://x/a.wol"],

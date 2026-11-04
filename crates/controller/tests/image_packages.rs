@@ -31,6 +31,7 @@ fn ships(p: &str) -> bool {
 fn record_packages(id: &str) -> Vec<String> {
     let path = match id {
         "dev" => "files/usr/share/wolos/modules/dev.json",
+        "creative" => "files/usr/share/wolos/modules/creative.json",
         "ime" => "files/usr/share/wolos/modules/ime.json",
         "scanner" => "files/usr/share/wolos/modules/scanner.json",
         _ => panic!("{id}: no such record in this test"),
@@ -386,6 +387,54 @@ fn dev_module_carries_a_c_toolchain() {
         "base-devel adds about 94 MiB to the download (pacman -Sp, measured): {}",
         m.size_mb
     );
+}
+
+/// `wol script check` runs ShellCheck on shell scripts (controller/src/script.rs) and the manual sends people to it: the
+/// Developer module brings it (about 22 MiB with the Haskell libraries it needs, `pacman -Sp`
+/// measured on top of the module's other packages), and says so in its summary.
+#[test]
+fn dev_module_carries_shellcheck() {
+    let pk = record_packages("dev");
+    assert!(pk.iter().any(|p| p == "shellcheck"), "{pk:?}");
+    let m = wol_core::modules::Module::parse(&read("files/usr/share/wolos/modules/dev.json"))
+        .expect("dev record");
+    assert!(m.summary.contains("ShellCheck"), "{}", m.summary);
+    assert!(
+        m.size_mb >= 470,
+        "shellcheck adds about 22 MiB over the 450 MiB the module promised: {}",
+        m.size_mb
+    );
+    assert!(
+        read("docs/modules/modules.md").contains("`shellcheck`"),
+        "the module reference names it"
+    );
+}
+
+/// wol-hue (themes from a picture, ADR 0031) is part of the Creative module: the manual's Hue page
+/// and the Creative page promise it with Krita and GIMP. It is a `[wolos]` package (a Crystal
+/// program), so the record, not the image, carries it.
+#[test]
+fn creative_module_carries_wol_hue() {
+    let pk = record_packages("creative");
+    assert!(pk.iter().any(|p| p == "wolos-hue"), "{pk:?}");
+    // The image lists live in wolos-iso (a sibling: absent in a checkout of this repo alone).
+    if siblings::root().join("profile/packages.x86_64").exists() {
+        assert!(
+            !ships("wolos-hue"),
+            "the Creative module brings wol-hue, the image does not"
+        );
+    }
+    let m = wol_core::modules::Module::parse(&read("files/usr/share/wolos/modules/creative.json"))
+        .expect("creative record");
+    assert!(m.summary.contains("wol-hue"), "{}", m.summary);
+    assert!(
+        m.size_mb >= 1340,
+        "the binary and its libraries add to the 1330: {}",
+        m.size_mb
+    );
+    let d = read("docs/modules/modules.md");
+    assert!(d.contains("`wolos-hue`"), "the module reference names it");
+    assert!(read("docs/modules/hue.md").contains("Creative module"));
 }
 
 /// The `ime` (fcitx5) and `scanner` (sane) optional modules: a registry record each, the packages of

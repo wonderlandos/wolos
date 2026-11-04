@@ -197,6 +197,9 @@ async function runFix(c) {
     const after = r && r.check && r.check.id === c.id ? r.check : null;
     if (r && r.ok) res = { ok: true, text: t("fix.done") };
     else if (r && !r.ran) res = { ok: false, text: t("fix.nothing") };
+    // A step of the fix stopped (QA-DOC-2): which one, in the controller's own sentence, and the
+    // row as it is now (the steps before it may have changed things).
+    else if (r && typeof r.message === "string" && r.message) res = { ok: false, text: [r.message, after ? after.detail : ""].filter(Boolean).join(" ") };
     else res = { ok: false, text: [t("fix.notyet"), after ? after.detail : ""].filter(Boolean).join(" ") };
     replaceCheck(after);
   } catch (e) {

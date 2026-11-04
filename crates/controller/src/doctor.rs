@@ -306,10 +306,11 @@ fn sound(env: &mut dyn Env) -> Vec<Check> {
     v.push(devices(
         &env.hardware(),
         "sound",
+        "devices",
         "Sound devices",
-        &[Kind::Audio, Kind::Webcam],
-        "Every sound device and camera has its driver.",
-        "No sound card or camera was found.",
+        &[Kind::Audio],
+        "Every sound device has its driver.",
+        "No sound card was found.",
     ));
     v
 }
@@ -452,7 +453,8 @@ fn updates(env: &mut dyn Env) -> Vec<Check> {
                 "updates",
                 "checked",
                 "Looking for updates",
-                Status::Warn,
+                // A fresh install before its first daily look: nothing is wrong yet (QA-100 H3-5).
+                Status::Skipped,
                 "WolOS looks for updates every day. The first look has not happened yet.",
             ),
             check(
@@ -876,6 +878,7 @@ fn network(env: &mut dyn Env) -> Vec<Check> {
     v.push(devices(
         &env.hardware(),
         "network",
+        "devices",
         "Network devices",
         &[Kind::Wifi, Kind::Ethernet, Kind::Bluetooth],
         "Every Wi-Fi, cable and Bluetooth device has its driver.",
@@ -930,6 +933,16 @@ fn power(env: &mut dyn Env) -> Vec<Check> {
             Status::Ok,
             "This computer can sleep and wake where you left off.",
         )
+    } else if f.battery.is_none() || in_vm(env) {
+        // A virtual machine or a desktop with no sleep state: that is how it is built, not
+        // something to fix, and nothing here could fix it (QA-100 H3-5).
+        check(
+            "power",
+            "sleep",
+            "Sleep",
+            Status::Skipped,
+            "This computer does not sleep, so it stays on when you step away. Desktops and virtual machines are often built this way.",
+        )
     } else {
         check(
             "power",
@@ -940,6 +953,16 @@ fn power(env: &mut dyn Env) -> Vec<Check> {
         )
     });
     v
+}
+
+/// The system runs in a virtual machine (`systemd-detect-virt --vm` names one; `none` or no
+/// answer is real hardware).
+fn in_vm(env: &mut dyn Env) -> bool {
+    // A failed run (not a systemd system) names no machine: real hardware, said out loud.
+    match env.capture(&["systemd-detect-virt", "--vm"]) {
+        Some(s) => !matches!(s.trim(), "" | "none"),
+        None => false,
+    }
 }
 
 // ---------------------------------------------------------------- display
@@ -973,23 +996,41 @@ fn display(env: &mut dyn Env) -> Vec<Check> {
             )
         }
     }];
+    let snap = env.hardware();
     v.push(devices(
-        &env.hardware(),
+        &snap,
         "display",
+        "devices",
         "Graphics",
         &[Kind::Gpu, Kind::Backlight],
         "The graphics card and screen brightness have their drivers.",
         "No graphics card was found.",
+    ));
+    // Cameras are pictures, not sound (QA-100 H3-5): their own row next to the screens.
+    v.push(devices(
+        &snap,
+        "display",
+        "cameras",
+        "Cameras",
+        &[Kind::Webcam],
+        "Every camera has its driver.",
+        "No camera was found.",
     ));
     v
 }
 
 // ---------------------------------------------------------------- hardware
 
-/// Devices of `kinds` that are not ready, with `wol hw fix --yes`'s requests as the fix.
+/// Devices of `kinds` that are not ready, with `wol hw fix --yes`'s requests as the fix, at most
+/// [`MAX_DOCTOR_STEPS`] of them so the password sheet can ask (QA-100 H3-4): over the cap the
+/// module loads are left to the next start (`wol hw boot` loads them), then only the first
+/// packages are asked and the detail says the rest come after "Check again".
+///
+/// [`MAX_DOCTOR_STEPS`]: shared::shell::MAX_DOCTOR_STEPS
 fn devices(
     snap: &HardwareSnapshot,
     area: &'static str,
+    name: &str,
     title: &str,
     kinds: &[Kind],
     ok: &str,
@@ -1005,32 +1046,18 @@ fn devices(
         .filter(|d| d.state != shared::hardware::State::Ready)
         .collect();
     if mine.is_empty() {
-        return check(area, "devices", title, Status::Skipped, none);
+        return check(area, name, title, Status::Skipped, none);
     }
     if bad.is_empty() {
-        return check(area, "devices", title, Status::Ok, ok);
+        return check(area, name, title, Status::Ok, ok);
     }
     let names: Vec<&str> = bad.iter().map(|d| d.name.as_str()).collect();
-    let mut reqs: Vec<AdminRequest> = Vec::new();
-    for d in &bad {
-        for k in &d.missing_klds {
-            reqs.push(req(AdminAction::HwLoad, &[k]));
-        }
-    }
-    for d in &bad {
-        for p in &d.missing_packages {
-            let r = req(AdminAction::PkgInstall, &[p]);
-            if !reqs.contains(&r) {
-                reqs.push(r);
-            }
-        }
-    }
-    reqs.dedup();
+    let (reqs, later) = device_steps(&bad);
     if reqs.is_empty() {
         // Nothing in the catalogue drives it: the device runs on the generic path.
         return check(
             area,
-            "devices",
+            name,
             title,
             Status::Warn,
             &format!(
@@ -1042,19 +1069,69 @@ fn devices(
             ),
         );
     }
-    check(
-        area,
-        "devices",
-        title,
-        Status::Fail,
-        &format!(
-            "{} {} a driver: {}.",
-            bad.len(),
-            plural(bad.len(), "device needs", "devices need"),
-            names.join(", ")
-        ),
-    )
-    .with(Fix::admin("Install the drivers", reqs))
+    let mut detail = format!(
+        "{} {} a driver: {}.",
+        bad.len(),
+        plural(bad.len(), "device needs", "devices need"),
+        names.join(", ")
+    );
+    match later {
+        Later::Nothing => {}
+        Later::AtStart => detail.push_str(" Some of the drivers start the next time the computer starts."),
+        Later::More(n) => detail.push_str(&format!(
+            " The fix installs the first {MAX} drivers. Choose Check again afterwards for the other {n}. Some of the drivers start the next time the computer starts.",
+            MAX = shared::shell::MAX_DOCTOR_STEPS
+        )),
+    }
+    check(area, name, title, Status::Fail, &detail).with(Fix::admin("Install the drivers", reqs))
+}
+
+/// What a device fix leaves for later because one sheet asks at most
+/// [`shared::shell::MAX_DOCTOR_STEPS`] requests.
+#[derive(Debug, PartialEq, Eq)]
+enum Later {
+    Nothing,
+    /// The module loads, left to the next start (`wol hw boot`).
+    AtStart,
+    /// The module loads, and this many packages for a second fix.
+    More(usize),
+}
+
+/// The fix's wol-admind requests: module loads then package installs, each once; over the cap the
+/// packages only (a package's module loads at the next start), cut at the cap.
+fn device_steps(bad: &[&&shared::hardware::Device]) -> (Vec<AdminRequest>, Later) {
+    let max = shared::shell::MAX_DOCTOR_STEPS;
+    let mut klds: Vec<AdminRequest> = Vec::new();
+    let mut pkgs: Vec<AdminRequest> = Vec::new();
+    for d in bad {
+        for k in &d.missing_klds {
+            let r = req(AdminAction::HwLoad, &[k]);
+            if !klds.contains(&r) {
+                klds.push(r);
+            }
+        }
+        for p in &d.missing_packages {
+            let r = req(AdminAction::PkgInstall, &[p]);
+            if !pkgs.contains(&r) {
+                pkgs.push(r);
+            }
+        }
+    }
+    if klds.len() + pkgs.len() <= max {
+        klds.extend(pkgs);
+        return (klds, Later::Nothing);
+    }
+    if pkgs.is_empty() {
+        // Only module loads, too many for one sheet: the first ones now, the rest at the next start.
+        klds.truncate(max);
+        return (klds, Later::AtStart);
+    }
+    if pkgs.len() <= max {
+        return (pkgs, Later::AtStart);
+    }
+    let more = pkgs.len() - max;
+    pkgs.truncate(max);
+    (pkgs, Later::More(more))
 }
 
 // ---------------------------------------------------------------- run
@@ -1178,18 +1255,33 @@ pub fn approval(env: &mut dyn Env, id: &str) -> Result<Option<ApprovalRequest>, 
     let request = ApprovalRequest::DoctorFix {
         id: c.id,
         title: f.title,
-        steps: reqs
-            .iter()
-            .map(|r| {
-                std::iter::once(r.action.name().to_string())
-                    .chain(r.args.iter().cloned())
-                    .collect()
-            })
-            .collect(),
+        steps: steps_of(&reqs),
     };
     match request.doctor_steps() {
         Some(_) => Ok(Some(request)),
         None => Err(format!("{id}: this fix cannot be asked on screen.")),
+    }
+}
+
+/// wol-admind requests as `[action, args..]` steps (the [`ApprovalRequest::DoctorFix`] shape).
+fn steps_of(reqs: &[AdminRequest]) -> Vec<Vec<String>> {
+    reqs.iter()
+        .map(|r| {
+            std::iter::once(r.action.name().to_string())
+                .chain(r.args.iter().cloned())
+                .collect()
+        })
+        .collect()
+}
+
+/// The steps check `c`'s fix would still send (none when it is fine or runs as the person).
+fn steps_left(c: &Check) -> Vec<Vec<String>> {
+    match c.fix.as_ref().filter(|_| c.status != Status::Ok) {
+        Some(Fix {
+            action: Action::Admin(reqs),
+            ..
+        }) => steps_of(reqs),
+        _ => Vec::new(),
     }
 }
 
@@ -1198,6 +1290,44 @@ pub fn after(env: &mut dyn Env, id: &str) -> serde_json::Value {
     let after = find(env, id);
     let ok = after.as_ref().is_some_and(|c| c.status != Status::Fail);
     serde_json::json!({ "id": id, "ran": true, "ok": ok, "check": after })
+}
+
+/// The answer after the shell ran a fix that stopped at a step that did not work (QA-100 H3-2):
+/// [`after`]'s shape with `ok: false`, the check as it is now (the row shows what the steps that
+/// worked changed), and which step stopped it. `asked` are the steps the sheet showed;
+/// a step that is no longer needed now counts as done, the first one still needed is the one that
+/// did not work. `why` is the shell's sentence.
+pub fn after_failed(
+    env: &mut dyn Env,
+    id: &str,
+    asked: &[Vec<String>],
+    why: &str,
+) -> serde_json::Value {
+    let after = find(env, id);
+    let left = after.as_ref().map(steps_left).unwrap_or_default();
+    let of = asked.len();
+    let done = asked.iter().filter(|s| !left.contains(s)).count();
+    let step = asked
+        .iter()
+        .position(|s| left.contains(s))
+        .map_or(done.min(of.saturating_sub(1)) + 1, |i| i + 1);
+    let why = why.trim().trim_end_matches('.');
+    let message = match (of, why.is_empty()) {
+        (0 | 1, true) => "The fix did not work.".to_string(),
+        (0 | 1, false) => format!("The fix did not work: {why}."),
+        (_, true) => format!("Step {step} of {of} did not work."),
+        (_, false) => format!("Step {step} of {of} did not work: {why}."),
+    };
+    serde_json::json!({
+        "id": id,
+        "ran": true,
+        "ok": false,
+        "check": after,
+        "step": step,
+        "of": of,
+        "done": done,
+        "message": message,
+    })
 }
 
 /// Run one check's fix, then check its area again. A helper or a web app (any actor but a person
@@ -1364,6 +1494,54 @@ mod tests {
             n += 1;
         }
         assert!(n >= 5, "{n}");
+    }
+
+    /// QA-DOC-2: a fix of three drivers whose second one did not work: the answer carries the
+    /// check as it is now, which step stopped, and a sentence that says so.
+    #[test]
+    fn a_fix_that_stopped_midway_says_which_step() {
+        use shared::hardware::{Device, HardwareSnapshot, Kind, State};
+        let dev = |p: &str| Device {
+            kind: Kind::Wifi,
+            name: format!("Card {p}"),
+            state: State::NeedsFirmware,
+            missing_packages: vec![p.to_string()],
+            ..Default::default()
+        };
+        // Now only b and c are still missing: a was installed before the second step stopped.
+        let mut env = crate::run::FakeEnv {
+            hw: vec![HardwareSnapshot {
+                devices: vec![dev("b-fw"), dev("c-fw")],
+            }],
+            ..Default::default()
+        };
+        let step = |p: &str| vec!["pkg-install".to_string(), p.to_string()];
+        let asked = vec![step("a-fw"), step("b-fw"), step("c-fw")];
+        let v = after_failed(
+            &mut env,
+            "network.devices",
+            &asked,
+            "The password was wrong. ",
+        );
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["ran"], true);
+        assert_eq!(
+            (v["step"].as_u64(), v["of"].as_u64(), v["done"].as_u64()),
+            (Some(2), Some(3), Some(1))
+        );
+        assert_eq!(
+            v["message"],
+            "Step 2 of 3 did not work: The password was wrong."
+        );
+        assert_eq!(
+            v["check"]["id"], "network.devices",
+            "the row as it is now: {v}"
+        );
+        // One step only, or no reason given.
+        let v = after_failed(&mut env, "network.devices", &[step("b-fw")], "");
+        assert_eq!(v["message"], "The fix did not work.");
+        let v = after_failed(&mut env, "network.devices", &asked, "");
+        assert_eq!(v["message"], "Step 2 of 3 did not work.");
     }
 
     #[test]
