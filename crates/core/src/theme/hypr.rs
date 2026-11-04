@@ -642,6 +642,48 @@ end)
         }
     }
 
+    /// The strip is the body's variant, for every theme and both Auto variants of every accent: a
+    /// light strip over a dark body (or the reverse) is the defect the lead saw on the App Store
+    /// (2026-11-04 22:17Z). The colour is the theme's `surface` token, the one the kit paints a
+    /// window with; its luminance decides which variant it is.
+    #[test]
+    fn the_strip_is_dark_over_a_dark_body_and_light_over_a_light_one() {
+        use shared::theme::Variant;
+        let cat = ThemeCatalog::builtin();
+        let mut ids: Vec<String> = cat.list().iter().map(|s| s.id.clone()).collect();
+        for v in [Variant::Light, Variant::Dark] {
+            for (accent, ..) in super::super::accent::ACCENTS {
+                ids.extend(super::super::accent::theme_id(Some(v), accent));
+            }
+        }
+        let mut checked = 0;
+        for id in ids {
+            let Ok(t) = cat.resolve(&id) else { continue };
+            let bar = keywords(&t)
+                .into_iter()
+                .find(|(k, _)| *k == "plugin:hyprbars:bar_color")
+                .map(|(_, v)| v)
+                .expect("a strip colour");
+            let hex = format!("#{}", &bar["rgba(".len()..bar.len() - 3]);
+            let strip = Color::parse(&hex).expect("a colour");
+            assert_eq!(
+                strip,
+                token_color(&t, "surface"),
+                "{id}: the strip is the surface"
+            );
+            let dark = strip.luminance() < 0.25;
+            assert_eq!(
+                dark,
+                t.variant == Variant::Dark,
+                "{id}: a {:?} theme with a {} strip ({hex})",
+                t.variant,
+                if dark { "dark" } else { "light" }
+            );
+            checked += 1;
+        }
+        assert!(checked >= 20, "only {checked} themes checked");
+    }
+
     #[test]
     fn a_light_theme_gets_a_light_strip() {
         let t = ThemeCatalog::builtin().resolve("catppuccin-latte").unwrap();
