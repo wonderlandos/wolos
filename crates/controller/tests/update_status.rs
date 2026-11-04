@@ -211,6 +211,49 @@ fn base_verify_reports_changed_and_missing_files() {
             {"path": "/usr/bin/gone", "state": "missing"}
         ])
     );
+    assert_eq!(
+        (v["findings_total"].as_u64(), v["truncated"].as_bool()),
+        (Some(2), Some(false))
+    );
+    assert_eq!(
+        (v["changed"].as_u64(), v["missing"].as_u64()),
+        (Some(1), Some(1))
+    );
+    // QA-LIVE3-25: a layer's worth of missing files is a summary, not a megabyte.
+    let big: String = (0..3000)
+        .map(|i| format!("{abc}  /usr/lib/layer/f{i}\n"))
+        .collect();
+    let mut env = FakeEnv {
+        vars: vec![("WOL_ROOT".into(), root.to_string_lossy().into_owned())],
+        files: vec![(
+            root.join(wol_core::base::MANIFEST.trim_start_matches('/')),
+            big,
+        )],
+        ..FakeEnv::default()
+    };
+    assert_eq!(run("base verify", &mut env), 1);
+    assert!(env.out.len() < 60_000, "{} bytes", env.out.len());
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(
+        (v["findings_total"].as_u64(), v["truncated"].as_bool()),
+        (Some(3000), Some(true))
+    );
+    assert_eq!(v["findings"].as_array().unwrap().len(), 500);
+    let mut text = FakeEnv {
+        tty: true,
+        ..FakeEnv::default()
+    };
+    text.vars = env.vars.clone();
+    text.files = env.files.clone();
+    assert_eq!(run("base verify", &mut text), 1);
+    assert!(
+        text.out
+            .contains("3000 of 3000 base files differ: 0 changed, 3000 missing"),
+        "{}",
+        text.out
+    );
+    assert!(text.out.contains("... and 2980 more"), "{}", text.out);
+    assert_eq!(text.out.lines().count(), 22, "{}", text.out);
     let mut none = FakeEnv::default();
     assert_eq!(run("base verify", &mut none), 66, "no manifest");
     let _ = std::fs::remove_dir_all(&root);

@@ -668,7 +668,11 @@ pub mod be {
     /// Slots kept: the running one and the previous one.
     pub const KEEP: usize = 2;
 
-    #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    /// `wol restore list --json` keys (QA-LIVE3-12): `tries_left` (a number; null once the slot
+    /// booted fine) and `release` (the slot's release date, "current" for a slot built on the
+    /// repositories of the day). `space` and `created` held those two under names that said
+    /// otherwise; they stay for one release (0.13) as aliases with their old text, then go.
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
     pub struct BootEnv {
         pub name: String,
         /// Running now.
@@ -680,6 +684,30 @@ pub mod be {
         pub space: String,
         /// Release snapshot date of the slot (entry `version`).
         pub created: String,
+    }
+
+    impl BootEnv {
+        /// Boot tries left while the slot waits for its first good boot; None once it booted.
+        pub fn tries_left(&self) -> Option<u64> {
+            self.space.split(' ').next()?.parse().ok()
+        }
+    }
+
+    impl Serialize for BootEnv {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeStruct;
+            let mut m = s.serialize_struct("BootEnv", 8)?;
+            m.serialize_field("name", &self.name)?;
+            m.serialize_field("active", &self.active)?;
+            m.serialize_field("next_boot", &self.next_boot)?;
+            m.serialize_field("mountpoint", &self.mountpoint)?;
+            m.serialize_field("release", &self.created)?;
+            m.serialize_field("tries_left", &self.tries_left())?;
+            // Aliases for one release (0.13), then removed.
+            m.serialize_field("space", &self.space)?;
+            m.serialize_field("created", &self.created)?;
+            m.end()
+        }
     }
 
     /// WolOS slots from `bootctl list --json=short`.
@@ -1127,6 +1155,18 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
             ),
             ("wolos-b", true, "2 tries left", "2026/11/02")
         );
+        // QA-LIVE3-12: the JSON keys say what they hold; the old names stay as aliases.
+        assert_eq!((b[1].tries_left(), b[0].tries_left()), (Some(2), None));
+        let j = serde_json::to_value(&b[1]).unwrap();
+        assert_eq!(
+            (j["tries_left"].as_u64(), j["release"].as_str()),
+            (Some(2), Some("2026/11/02"))
+        );
+        assert_eq!(
+            (j["space"].as_str(), j["created"].as_str()),
+            (Some("2 tries left"), Some("2026/11/02"))
+        );
+        assert!(serde_json::to_value(&b[0]).unwrap()["tries_left"].is_null());
         assert!(be::parse("not json").is_empty());
         // Update applied, not rebooted yet: rollback = keep booting the running slot.
         assert_eq!(be::rollback_target(&b).unwrap().name, "wolos-a");

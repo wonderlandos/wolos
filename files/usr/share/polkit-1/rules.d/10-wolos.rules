@@ -17,6 +17,15 @@ polkit.addRule(function (action, subject) {
     if (subject.isInGroup("wheel")) {
         return polkit.Result.NOT_HANDLED;
     }
+    // A standard user cannot mount or unlock an internal disk (QA-FILES-23): Files shows no
+    // administrator password dialog for them, the answer is simply no.
+    if (
+        action.id === "org.freedesktop.udisks2.filesystem-mount-system" ||
+        action.id === "org.freedesktop.udisks2.filesystem-fstab" ||
+        action.id === "org.freedesktop.udisks2.encrypted-unlock-system"
+    ) {
+        return polkit.Result.NO;
+    }
     if (!subject.local || !subject.active) {
         return polkit.Result.NO;
     }

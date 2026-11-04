@@ -590,5 +590,43 @@ fn terminals_open_the_shell_chosen_in_settings() {
             )
         );
     }
+    // QA-FILES-4: a terminal's bash (no -l, no -c) reads the WolOS setup, which reads ~/.bashrc;
+    // a login bash or a command line is left alone.
+    let bashrc = root.join("usr/share/wolos/bash/bashrc");
+    fs::create_dir_all(bashrc.parent().unwrap()).unwrap();
+    fs::write(&bashrc, "# fake\n").unwrap();
+    let bash = root.join("usr/bin/bash");
+    fs::write(
+        &bash,
+        "#!/bin/sh\necho \"bash TERM_BASH=${WOLOS_TERM_BASH:-} $*\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&bash, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(&choice, "bash\n").unwrap();
+    let run_with = |args: &[&str]| {
+        let o = Command::new("sh")
+            .arg(repo(launcher))
+            .args(args)
+            .env_clear()
+            .env("HOME", &home)
+            .env("PATH", "/usr/bin:/bin")
+            .env("WOLOS_TERM_SHELL_ROOT", &root)
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    };
+    assert_eq!(
+        run_with(&[]),
+        format!("bash TERM_BASH=1 --rcfile {}", bashrc.display())
+    );
+    assert_eq!(run_with(&["-l"]), "bash TERM_BASH= -l");
+    assert_eq!(run_with(&["-c", "true"]), "bash TERM_BASH= -c true");
+    // The WolOS setup hands over to the person's own ~/.bashrc when asked to.
+    let setup = read("desktop/overlay/usr/share/wolos/bash/bashrc");
+    assert!(
+        setup.contains("WOLOS_TERM_BASH") && setup.contains(". ~/.bashrc"),
+        "bashrc reads ~/.bashrc for the terminal's bash"
+    );
     let _ = fs::remove_dir_all(&d);
 }

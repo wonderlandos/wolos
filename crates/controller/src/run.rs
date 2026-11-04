@@ -1121,6 +1121,10 @@ fn running_base(env: &mut dyn Env) -> (Option<String>, String, bool) {
     (base, kernel, wolos)
 }
 
+/// Findings `wol base verify` prints as text and in `--json`; the totals are always complete.
+const BASE_FINDINGS_TEXT: usize = 20;
+const BASE_FINDINGS_JSON: usize = 500;
+
 /// `wol base verify`: every file of the wolos-base manifest against its sha256. `WOL_ROOT`
 /// checks another root (an installed disk).
 fn base_verify(env: &mut dyn Env, json: bool) -> i32 {
@@ -1138,16 +1142,40 @@ fn base_verify(env: &mut dyn Env, json: bool) -> i32 {
     };
     let findings =
         wol_core::base::verify(&entries, &|p| wol_core::package::sha256_file(&at(p)).ok());
+    // QA-LIVE3-25: 28 000 findings were 1.25 MB on one line. The count of each kind is always
+    // there; the lines are the first few.
+    let total = findings.len();
+    let count = |state: &str| findings.iter().filter(|f| f.state == state).count();
     if json || !env.stdout_tty() {
         env.out(&format!(
             "{}\n",
-            serde_json::json!({"files": entries.len(), "findings": findings})
+            serde_json::json!({
+                "files": entries.len(),
+                "findings": findings.iter().take(BASE_FINDINGS_JSON).collect::<Vec<_>>(),
+                "findings_total": total,
+                "changed": count("changed"),
+                "missing": count("missing"),
+                "truncated": total > BASE_FINDINGS_JSON,
+            })
         ));
     } else if findings.is_empty() {
         env.out(&format!("{} base files intact\n", entries.len()));
     } else {
-        for f in &findings {
+        env.out(&format!(
+            "{} of {} base files differ: {} changed, {} missing\n",
+            total,
+            entries.len(),
+            count("changed"),
+            count("missing")
+        ));
+        for f in findings.iter().take(BASE_FINDINGS_TEXT) {
             env.out(&format!("{} {}\n", f.state, f.path));
+        }
+        if total > BASE_FINDINGS_TEXT {
+            env.out(&format!(
+                "... and {} more; `wol base verify --json` lists up to {BASE_FINDINGS_JSON}\n",
+                total - BASE_FINDINGS_TEXT
+            ));
         }
     }
     if findings.is_empty() {

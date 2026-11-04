@@ -685,6 +685,15 @@ pub fn strip_argv(t: &ResolvedTheme) -> Vec<Vec<String>> {
 /// Session/shell entry: resolve `id`, install the user toolkit files, push gsettings (blocking;
 /// call off the UI thread). gsettings failures are ignored (not every host has it).
 pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
+    let t = write_files(id, config_home)?;
+    push(&t, config_home);
+    Ok(())
+}
+
+/// The file half of [`apply`]: resolve `id` and write the toolkit files and links. Quick text
+/// writes, so a caller that must tell the person about a failure (a full disk: QA-LIVE-19) runs
+/// it before it says "changed", and [`push`] afterwards.
+pub fn write_files(id: &str, config_home: &Path) -> Result<ResolvedTheme, String> {
     let data = data_home(|k| std::env::var(k).ok());
     let t = super::ThemeCatalog::installed(config_home, data.as_deref())
         .resolve(id)
@@ -693,11 +702,16 @@ pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
     if let Some(data) = data {
         link_data(&t, &user_dir(config_home), &data).map_err(|e| e.to_string())?;
     }
+    Ok(t)
+}
+
+/// The slow half of [`apply`]: gsettings, the strip and foot (each failure ignored).
+pub fn push(t: &ResolvedTheme, config_home: &Path) {
     let foot = foot_is_ours(&user_dir(config_home), config_home)
-        .then(|| terminal_argv(&t, shared::sys::euid()));
-    for a in gsettings_argv(&t)
+        .then(|| terminal_argv(t, shared::sys::euid()));
+    for a in gsettings_argv(t)
         .into_iter()
-        .chain(strip_argv(&t))
+        .chain(strip_argv(t))
         .chain(foot)
     {
         let _ = std::process::Command::new(&a[0])
@@ -706,7 +720,6 @@ pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
             .stderr(std::process::Stdio::null())
             .status();
     }
-    Ok(())
 }
 
 /// `$XDG_DATA_HOME`, else `$HOME/.local/share`; None without either.
@@ -1757,5 +1770,24 @@ mod tests {
                 f.rel
             );
         }
+    }
+
+    /// QA-LIVE-19: the toolkit files are written before the caller says "changed": a config
+    /// home that cannot take them is an Err, not a log line on a worker thread.
+    #[test]
+    fn write_files_fails_loudly_when_the_files_cannot_be_written() {
+        let root = std::env::temp_dir().join(format!("wol-wf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // A file where the config folder should be: every create_dir_all under it fails.
+        let blocked = root.join("cfg");
+        std::fs::write(&blocked, "x").unwrap();
+        let e = write_files("wol-dark", &blocked).unwrap_err();
+        assert!(!e.is_empty(), "{e}");
+        let ok = root.join("ok");
+        let t = write_files("wol-dark", &ok).expect("a writable home");
+        assert_eq!(t.id, "wol-dark");
+        assert!(user_dir(&ok).join("gtk-3.0/settings.ini").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

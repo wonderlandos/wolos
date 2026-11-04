@@ -136,3 +136,10 @@ _wolos_hint() {
 }
 PROMPT_COMMAND="_wolos_hint; $PROMPT_COMMAND"
 unset _wolos_colors _wolos_star
+# A terminal's bash starts with --rcfile pointing here (wol-term-shell), which skips ~/.bashrc:
+# read the person's own setup now (a ~/.bashrc that sources this file returned early above).
+if [ -n "${WOLOS_TERM_BASH:-}" ]; then
+  unset WOLOS_TERM_BASH
+  # shellcheck source=/dev/null
+  [ -r ~/.bashrc ] && . ~/.bashrc
+fi

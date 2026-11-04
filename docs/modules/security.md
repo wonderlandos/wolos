@@ -75,7 +75,7 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   A change that fails before pacman commits leaves nothing; one that fails after pacman committed keeps its layer, which
   merges at the next restart.
 - Developer mode: `wol seal off` (root) makes the running system writable and stops the boot check until the next update.
-- `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones.
+- `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones: the first 20 on a terminal, and in `--json` up to 500 in `findings` with the whole count in `findings_total` (`changed`, `missing`, `truncated`; QA-LIVE3-25).
 
 ## Malware check (ADR 0024, 0027)
 A layer of protection against known malware. Code: `crates/xguard`, `wol_core::malware`. Runs on this computer only: no file, hash or verdict leaves it, and sample submission does not exist.

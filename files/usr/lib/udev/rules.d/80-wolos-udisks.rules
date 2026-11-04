@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The installer's key partition (WOLOSKEY) is the installer's: Files does not list it (QA-FILES-23).
+SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="WOLOSKEY", ENV{UDISKS_IGNORE}="1"
