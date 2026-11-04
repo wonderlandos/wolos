@@ -53,17 +53,15 @@ pub(crate) const B_UNQUOTED: &[(&str, usize)] = &[
     ("desktop/hyprland/build-plugins.sh", 5),
     ("desktop/overlay/usr/bin/wol-greeter-session", 1),
     ("desktop/overlay/usr/bin/wol-session", 6),
-    ("files/usr/bin/wolos-update-slot", 1),
     ("files/usr/lib/wolos/autoinstall", 2),
     ("files/usr/lib/wolos/boot-keys", 1),
     ("files/usr/lib/wolos/boot-setup", 3),
-    ("files/usr/lib/wolos/clam-update", 4),
+    ("files/usr/lib/wolos/clam-update", 2),
     ("files/usr/lib/wolos/esp-sync", 4),
     ("files/usr/lib/wolos/install-check", 1),
     ("files/usr/lib/wolos/install-run", 11),
     ("files/usr/lib/wolos/modules-install", 6),
     ("files/usr/lib/wolos/update-check", 2),
-    ("files/usr/lib/wolos/verify-gpu.sh", 1),
 ];
 /// RS-014: scripts using bashisms under `#!/bin/sh`.
 pub(crate) const B_BASHISM: &[&str] = &[];

@@ -14,12 +14,6 @@ use rc::{Hits, Row, Src, after, assert_ratchet, close_of, hit};
 const BASELINE: &[Row] = &[
     (
         "RH-221",
-        "files/usr/lib/systemd/system/wold.service",
-        1,
-        "B2",
-    ),
-    (
-        "RH-221",
         "files/usr/lib/systemd/system/wolos-clam.service",
         2,
         "B2",
