@@ -129,7 +129,7 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 
 | Permission | Enforced by | Why |
 |---|---|---|
-| Screen capture, cursor position, input capture | The compositor (`hypr/permissions.lua`, `hl.permission` calls, first match wins) | Only the portal and WolOS's own tools (`security::SCREENCOPY_SYSTEM`) copy the screen directly. Apps ask through the portal, which asks which screen to share. The rules are static (`security::hypr_permissions`): no grant adds a program to them. |
+| Screen capture, cursor position, input capture | The compositor (`hypr/permissions.lua`, `hl.permission` calls, first match wins) | Only the portal and WolOS's own tools (`security::SCREENCOPY_SYSTEM`, which includes the colour picker `hyprpicker` of Ctrl+Super+P) copy the screen directly. Apps ask through the portal, which asks which screen to share. The rules are static (`security::hypr_permissions`): no grant adds a program to them. |
 | X11 apps (Xwayland) | Xwayland's access list (`hyprland.lua`: `xhost +si:localuser`, `-local:`, `-`) | Xwayland starts without an auth cookie. Only the signed-in account may connect to its X server; other accounts, system users and root may not. Within one account, every X11 app can read the keys and the screen of every other X11 window: X11 apps share one trust domain per account. Wayland apps are not affected. |
 | Compositor plugins | The compositor | Loaded only from `/usr/lib/hyprland/plugins` (`security::PLUGIN_DIR`). |
 | Camera | advisory | Every account needs group video for the GPU, and `/dev/video*` belongs to it. |

@@ -9,3 +9,4 @@ Terminal=false
 NoDisplay=true
 Categories=Game;
 MimeType=application/x-ms-dos-executable;application/x-msdownload;application/x-msdos-program;application/vnd.microsoft.portable-executable;application/x-msi;application/x-ms-installer;
+X-WolOS-Surfaces=

@@ -18,6 +18,8 @@ hl.permission({ binary = "^/usr/bin/wol-window-shot$", type = "screencopy", mode
 hl.permission({ binary = "^/usr/bin/wol-window-shot$", type = "cursorpos", mode = "allow" })
 hl.permission({ binary = "^/usr/bin/wol-shell$", type = "screencopy", mode = "allow" })
 hl.permission({ binary = "^/usr/bin/wol-shell$", type = "cursorpos", mode = "allow" })
+hl.permission({ binary = "^/usr/bin/hyprpicker$", type = "screencopy", mode = "allow" })
+hl.permission({ binary = "^/usr/bin/hyprpicker$", type = "cursorpos", mode = "allow" })
 hl.permission({ binary = ".*", type = "screencopy", mode = "deny" })
 hl.permission({ binary = ".*", type = "cursorpos", mode = "deny" })
 hl.permission({ binary = ".*", type = "input-capture", mode = "deny" })

@@ -12,12 +12,12 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | Browser | firefox | `firefox` |
 | Mail | geary | `org.gnome.Geary` |
 | Music | amberol | `io.bassi.Amberol` |
-| Photos | shotwell | `org.gnome.Shotwell` |
+| Photos | wolos-app-gallery (Gallery; Shotwell is in the Store) | `org.wolos.gallery` |
 | Calendar | gnome-calendar | `org.gnome.Calendar` |
 | Notes | gnote | `org.gnome.Gnote` |
 | Terminal | foot | `foot` |
 
-Apps also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor, Image Viewer (eog) from their `.desktop` files; a pinned app appears once, under its WolOS name.
+Apps also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor from their `.desktop` files; a pinned app appears once, under its WolOS name.
 Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins).
 
 ## System

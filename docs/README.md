@@ -76,6 +76,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0044](adr/0044-etc-overlay-across-slot-switches.md) | The /etc overlay across slot switches | accepted |
 | [0048](adr/0048-system-web-apps.md) | System web apps: a folder per app, one bridge to `wol` verbs by permission, one kit | proposed |
 | [0051](adr/0051-house-in-order.md) | 0.13: put the house in order before adding anything (proof rule, root-cause standards, wave gates) | proposed |
+| [0059](adr/0059-the-wolos-experience.md) | The WolOS experience: the integration surfaces every app provides (28 surfaces, three tiers, one test) | accepted |
 
 ## Modules
 
@@ -86,6 +87,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/abi.md](modules/abi.md) | libwol: the app API (`wol.h`, `libwol.so.1`), ABI rules, planned families, Lua widgets | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Helium, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | [0038](adr/0038-sound-service.md) |
+| [modules/experience.md](modules/experience.md) | The experience as data: the 28 surfaces with owner and journey, what each shipped app provides (`X-WolOS-Surfaces`), the image budget | [0059](adr/0059-the-wolos-experience.md) |
 | [modules/doctor.md](modules/doctor.md) | Doctor: every check of the system in one list (`wol doctor`, the Doctor app), each with its fix | [0048](adr/0048-system-web-apps.md) |
 | [modules/cryswol.md](modules/cryswol.md) | Cryswol: the Crystal shard over libwol (`require "cryswol"`, namespace `Wol`): layers, ownership and callback rules, errors, threads, build, how to add a verb | [0036](adr/0036-crystal-userland.md) |
 | [modules/libwolkit.md](modules/libwolkit.md) | libWolkit: the UI engine (`wolkit.h`, `libwolkit.so.1`): scene and patch stream, style, layout, text, paint, CPU and GPU renderers, window backends, limits | [0039](adr/0039-libwolkit-and-wolkit.md) |
