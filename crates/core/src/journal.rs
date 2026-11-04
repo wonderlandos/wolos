@@ -94,7 +94,14 @@ pub struct Reload {
     pub shell: bool,
     /// Compositor fragments changed (`hyprctl reload`).
     pub hyprland: bool,
+    /// hypridle's timeouts changed: it reads its file only at start, so it restarts
+    /// ([`IDLE_RESTART`]; QA-SET-3).
+    pub idle: bool,
 }
+
+/// Restarts hypridle on its file, for every writer and every undo (Settings > Lock Screen, the
+/// Settings window's Undo, `wol undo`): stop it (run, short timeout), then start it detached.
+pub const IDLE_RESTART: [&[&str]; 2] = [&["pkill", "-x", "hypridle"], &["hypridle"]];
 
 pub fn reload_for(e: &Entry) -> Reload {
     let mut r = Reload::default();
@@ -104,6 +111,10 @@ pub fn reload_for(e: &Entry) -> Reload {
         };
         if path == shared::theme::ACTIVE_FILE {
             r.theme = Some(after.as_deref().map(|t| t.trim().to_owned()));
+        } else if path == crate::prefs::IDLE_FILE {
+            r.idle = true;
+        } else if path == crate::terminal_shell::FILE {
+            // Read by each new terminal window (`wol-term-shell`): nothing running to tell.
         } else if path.starts_with("hypr/") {
             r.hyprland = true;
         } else {
@@ -605,6 +616,25 @@ mod tests {
         assert!(!b.exists());
         std::fs::write(&b, "x").unwrap();
         assert!(move_no_clobber(&a, &b).is_err(), "never replaces a file");
+    }
+
+    /// QA-SET-3: undoing a Lock Screen change restored hypridle.conf but only reloaded the
+    /// compositor, so hypridle kept the undone timeouts; QA-SET-6: undoing the terminal shell
+    /// reloaded wol-shell for a file only new terminals read.
+    #[test]
+    fn reload_hints_idle_and_terminal_shell() {
+        let f = |p: &str| Change::File {
+            path: p.into(),
+            before: None,
+            after: Some("x".into()),
+        };
+        let e = |c: Vec<Change>| entry("x", "settings", c, 0, None);
+        let r = reload_for(&e(vec![f(crate::prefs::IDLE_FILE)]));
+        assert!(r.idle && !r.hyprland && !r.shell, "{r:?}");
+        let r = reload_for(&e(vec![f(crate::terminal_shell::FILE)]));
+        assert_eq!(r, Reload::default(), "new terminals read it themselves");
+        assert_eq!(IDLE_RESTART[0], ["pkill", "-x", "hypridle"]);
+        assert_eq!(IDLE_RESTART[1], ["hypridle"]);
     }
 
     #[test]

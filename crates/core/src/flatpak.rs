@@ -202,7 +202,14 @@ impl Perm {
 
     /// `flatpak override <scope> <flag> <id>` turning it on (`allow`) or off.
     pub fn override_argv(&self, scope: Scope, app_id: &str, allow: bool) -> Vec<String> {
-        let flag = |on: &str, off: &str| format!("{}={}", if allow { on } else { off }, self.value);
+        // Turning a filesystem off names it bare: `--nofilesystem` takes no `:ro`/`:rw`/`:create`
+        // (QA-SET-38), and flatpak stores the denial without it.
+        let value = if allow {
+            self.value.as_str()
+        } else {
+            self.bare()
+        };
+        let flag = |on: &str, off: &str| format!("{}={}", if allow { on } else { off }, value);
         let f = match self.key {
             Key::Filesystems => flag("--filesystem", "--nofilesystem"),
             Key::Sockets => flag("--socket", "--nosocket"),
@@ -219,6 +226,17 @@ impl Perm {
             .iter()
             .map(|s| (*s).to_owned())
             .collect()
+    }
+
+    /// The value without a filesystem mode suffix (`xdg-download:ro` -> `xdg-download`).
+    fn bare(&self) -> &str {
+        if self.key != Key::Filesystems {
+            return &self.value;
+        }
+        [":ro", ":rw", ":create"]
+            .iter()
+            .find_map(|m| self.value.strip_suffix(m))
+            .unwrap_or(&self.value)
     }
 
     /// Turned off in a `flatpak override` file (`[Context] sockets=!x11;`, bus `name=none`).
@@ -243,8 +261,10 @@ impl Perm {
             };
             match key {
                 Some(key) if k == key => {
-                    let off = format!("!{}", self.value);
-                    if v.split(';').any(|x| x == off) {
+                    let off = format!("!{}", self.bare());
+                    if v.split(';')
+                        .any(|x| x == off || x == format!("!{}", self.value))
+                    {
                         return true;
                     }
                 }
@@ -724,6 +744,39 @@ mod tests {
                 "sockets=wayland",
                 "devices=dri"
             ]
+        );
+    }
+
+    /// QA-SET-38: a filesystem grant with a mode suffix (`xdg-download:ro`) turned off is stored
+    /// by flatpak without it (`filesystems=!xdg-download;`), so the switch read On again after
+    /// reopening; and `--nofilesystem` takes no suffix.
+    #[test]
+    fn denied_in_strips_mode() {
+        for v in [
+            "xdg-download:ro",
+            "xdg-download:rw",
+            "xdg-download:create",
+            "xdg-download",
+        ] {
+            let perm = p(&format!("filesystems={v}"));
+            assert!(
+                perm.denied_in("[Context]\nfilesystems=!xdg-download;\n"),
+                "{v} reads off"
+            );
+            assert!(
+                !perm.denied_in("[Context]\nfilesystems=xdg-download:ro;\n"),
+                "{v}"
+            );
+            let off = perm
+                .override_argv(Scope::User, "org.gimp.GIMP", false)
+                .join(" ");
+            assert!(off.contains("--nofilesystem=xdg-download "), "{off}");
+        }
+        // The grant itself keeps its mode.
+        let on = p("filesystems=xdg-download:ro").override_argv(Scope::User, "a.b.C", true);
+        assert!(
+            on.join(" ").contains("--filesystem=xdg-download:ro"),
+            "{on:?}"
         );
     }
 
