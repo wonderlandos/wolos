@@ -19,7 +19,8 @@ the rest with the checklist in `docs/REVIEW.md`.
 - **CI** `cargo clippy --workspace --all-targets --locked -- -D warnings` plus this allow list, and
   nothing else: `clippy::too_many_arguments`, `clippy::type_complexity`. A new `#[allow]` in code
   names its reason on the same line (`#[allow(clippy::zombie_processes)] // reaped by wold`).
-  `#![allow(dead_code)]` is allowed only in `tests/support/*.rs` and generated bindings.
+  `#![allow(dead_code)]` is allowed only in `tests/support/*.rs` and generated bindings (RR-010, a
+  ratchet: the rows elsewhere only shrink).
 - **CI** `cargo fmt --all --check`. Do not reformat lines you did not change in a commit that does
   something else.
 - **CI** `cargo audit` on `Cargo.lock` (RustSec advisories). An advisory with no fix is ignored by

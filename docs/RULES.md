@@ -59,7 +59,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 |---|---|---|---|
 | RR-008 | Every `#[allow(` names its reason in a `//` comment on the same line. | An allow with no reason outlives the reason. | rules_rust.rs RR-008 |
 | RR-009 | No crate-wide `#![allow(` in shipped code. | It hides new warnings across the whole crate. | rules_rust.rs RR-009 |
-| RR-010 | No `allow(dead_code)` or `allow(unused…)` outside `tests/support/`. | Dead code is deleted, not silenced. | rules_rust.rs RR-010 |
+| RR-010 | No `allow(dead_code)` or `allow(unused…)` outside `tests/support/` (a ratchet: the rows of rules_rust.rs BASELINE only shrink). | Dead code is deleted, not silenced. | rules_rust.rs RR-010 |
 | RR-011 | No bare `#[ignore]`; write `#[ignore = "reason"]`. | A skipped test with no reason is a test nobody will run. | rules_rust.rs RR-011 |
 | RR-012 | Every `unsafe` has a `// SAFETY:` (or `# Safety`) comment within five lines above. | The invariant is the review. | rules_rust.rs RR-012 |
 | RR-013 | Every `impl Drop` has a comment on, above or below its line saying what it releases. | Drop order bugs are invisible without it. | rules_rust.rs RR-013 |
@@ -69,7 +69,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 | RR-045 | No glob import (`use x::*;`) in shipped code except a `prelude`. | Globs hide where a name comes from and break on upstream additions. | rules_rust.rs RR-045 |
 | RR-043 | No `lazy_static!` or `once_cell::`; use `std::sync::LazyLock` and `OnceLock`. | One less dependency. | rules_rust.rs RR-043 |
 | RR-074 | A crate with no `unsafe` has `#![forbid(unsafe_code)]` in each root file. | The compiler then keeps it at zero. | rules_rust.rs RR-074 |
-| RR-068 | `unsafe` appears only in wol-abi, wolkit, wopkg, xguard, xguard-clam, realtime, webengine (ADR 0042: the engine library's C boundary) and `crates/api/src/os.rs`. | STANDARDS section 1: elsewhere it is a review question. | rules_rust.rs RR-068 |
+| RR-068 | `unsafe` appears only in wol-abi, wolkit, wopkg, xguard, xguard-clam, realtime, webengine (ADR 0042: the engine library's C boundary) and `crates/api/src/os.rs`; elsewhere a ratchet (the rules_rust.rs BASELINE rows of other crates only shrink). | STANDARDS section 1: elsewhere it is a review question. | rules_rust.rs RR-068 |
 | RR-038 | No `mem::forget(` and no `Box::leak(`. | A leak is a bug in a daemon that runs for weeks. | rules_rust.rs RR-038 |
 | RR-039 | `transmute` only in `wol-abi`. | Reinterpreting bytes is an ABI job. | rules_rust.rs RR-039 |
 | RR-040 | No `get_unchecked`, `from_utf8_unchecked`, `unwrap_unchecked` or `unreachable_unchecked`. | Unchecked is UB on bad input. | rules_rust.rs RR-040 |
@@ -187,7 +187,7 @@ These cannot be decided by a text scan; the reviewer's checklist (`docs/REVIEW.m
 | RR-115 | A bug fix adds the test that would have caught it. | It cannot come back. | review |
 | RR-116 | Every file we ship has a contract test that reads the shipped file. | The file is the product. | review |
 | RR-117 | An error a person reads is one sentence they can act on. | RR-030 and copy_scan catch only the words. | review |
-| RR-118 | No upstream project name in our comments, manifests, scripts' comments, docs prose or Crystal sources (wopkg, wolos-crystal: comments and strings) (Wonderland Doctrine); the allowlist is written in the test. | Our words describe what WolOS does, not whose code it uses. | rules_rust.rs RR-118 |
+| RR-118 | None of the upstream project names listed in rules_rust.rs `UPSTREAM_NAMES` in our comments, manifests, scripts' comments, docs prose or Crystal sources (wopkg, wolos-crystal: comments and strings) (Wonderland Doctrine); the allowlist is written in the test. | Our words describe what WolOS does, not whose code it uses. | rules_rust.rs RR-118 |
 
 ## Root-cause standards (ADR 0051)
 
