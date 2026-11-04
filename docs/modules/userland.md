@@ -34,3 +34,17 @@ Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list`
 | USB sticks | `udisks2.service` (same preset): every session mounts removable volumes through udisks (Files' sidebar); no group needed (`settings.rs` `ACCOUNT_GROUPS_ADMIN`) |
 
 Weather is the WolOS desktop widget (gnome-weather would add gjs + spidermonkey, ~50 MB, and needs geoclue). Sizes: the image's package list is measured by the ISO build (`crates/controller/tests/module_sizes.rs` for the modules); the figures this page carried for the old base no longer apply (QA-PWR-24).
+
+## GNU and uutils (ADR 0017, 2026-11-04)
+
+`wolos-base` links every GNU coreutils 9.12 program name (102, no more) to uutils-coreutils 0.12.0 (`/usr/bin/ls` -> `uu-ls`) and `sudo`, `sudoedit`, `visudo` to sudo-rs; `provides=('coreutils=9.12' 'sudo')` and `conflicts=('coreutils' 'sudo')` keep `base`, `base-devel` and everything that depends on those names resolving. Everything else stays GNU: findutils, diffutils, procps-ng, util-linux, tar. Ubuntu made the same two defaults (rust-coreutils and sudo-rs, 25.10 and later) and keeps its Rust findutils and diffutils in `universe` as opt-in.
+
+Why the rest stays (checked 2026-11-04, details and sources in wolos-iso README "Userland and GNU"):
+
+- findutils: not in Arch `extra`; uutils-findutils 0.11.0 passes every call WolOS and Arch's tools make (find in `crates/core/src/update.rs` for the slot swap, `find -printf '%P\0'` in the base manifest, makepkg, mkinitcpio, dkms), but ships only as AUR source and its binary is larger than GNU findutils.
+- diffutils: uutils-diffutils 0.6.0 has no `-r`, `-q`, `-w`, `-p`, `-N`, `--label`, `--color`, `--version`; devtools and dkms use them.
+- procps-ng: uutils procps has no release; its `ps -ax -o pid= -o ppid=` prints nothing, which `wol-login` needs to stop a session's process tree (`jobs::PS_ARGS`).
+- util-linux: uutils/util-linux is 0.0.1.
+
+The gate for the next swap is wolos-pkgbuilds `wolos-base/userland-matrix.sh` (170 cases, each tool with every flag form WolOS and the Arch tools use, answers recorded from GNU); a tool joins `wolos-base` when no `ours-`/`third-` case differs. Code that calls these tools must keep to the forms in that script, or add the form there first (so `find -printf`, `ps -o pid=` and `pkill --signal --uid --exact` stay tested). Known differences in the shipped uutils-coreutils: `timeout -s INT -k N CMD` exits 137 where GNU exits 124; `stdbuf` needs `/usr/lib/uutils-coreutils/libstdbuf.so` (the package ships it).
+

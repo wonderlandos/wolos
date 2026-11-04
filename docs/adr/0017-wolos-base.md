@@ -9,3 +9,4 @@ Decision:
 - Stays compatible with the common Linux ecosystem: any binary, Flatpak, AppImage, container or DKMS module that runs on stock Arch runs on WolOS. Removals cover only interfaces nothing uses today; if unsure, keep it.
 - pacman cannot replace base packages from Arch: `[wolos]` provides/conflicts them, and the release snapshot is tested as one unit.
 Consequences: `wolos-base` is one meta-package with a manifest of every base file; `wol base verify` checks it (like `freebsd-update IDS`). Arch packages outside the base follow the pinned snapshot.
+Amendment 2026-11-04: only uutils-coreutils and sudo-rs replace GNU tools today. findutils and diffutils are not in Arch `extra` and uutils-diffutils lacks flags the Arch tools use, so they stay GNU together with procps-ng, util-linux and tar until wolos-pkgbuilds `wolos-base/userland-matrix.sh` passes for the uutils one; evidence in docs/modules/userland.md.
