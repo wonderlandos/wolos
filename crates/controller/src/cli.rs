@@ -546,6 +546,17 @@ pub const TREE: &[Cmd] = &[
         &[],
         "System kernel package for this CPU",
     ),
+    // The keyring (ADR 0054): the person's own secrets, so the verbs stay out of the helper
+    // catalogue. Everything after the verb goes to wol-keyring as typed; a secret or a password is
+    // read from the terminal or stdin there, never from an argument.
+    Cmd {
+        path: &["keyring"],
+        action: "keyring",
+        args: &[opt("verb"), rest("args")],
+        flags: &["passphrase"],
+        help: "Keyring: status init id list set get delete export import move audit acl enrol compact (no verb: usage)",
+        hidden: false,
+    },
     cmd(
         &["gpu", "env"],
         "gpu.env",
@@ -1615,6 +1626,15 @@ mod tests {
             ("admin revoke", "admin action=revoke"),
             ("admin idle 300", "admin action=idle args=300"),
             ("gpu env", "gpu.env"),
+            ("keyring", "keyring"),
+            (
+                "keyring get site=a.example",
+                "keyring verb=get args=site=a.example",
+            ),
+            (
+                "keyring export f.wkb --passphrase",
+                "keyring verb=export args=f.wkb --passphrase",
+            ),
             ("update rollback", "update.rollback"),
             ("update rollback wol-1", "update.rollback be=wol-1"),
             ("restore", "restore.list"),

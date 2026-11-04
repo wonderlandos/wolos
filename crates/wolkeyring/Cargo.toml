@@ -1,0 +1,43 @@
+[package]
+name = "wolkeyring"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "The WolOS keyring (ADR 0054): post-quantum store, unlock factors, access lists, audit chain, export bundles and the LAN move, on wolcrypt; the daemon wol-keyringd and the command wol-keyring"
+
+[lib]
+name = "wolkeyring"
+
+[[bin]]
+name = "wol-keyring"
+path = "src/bin/wol-keyring.rs"
+
+[[bin]]
+name = "wol-keyringd"
+path = "src/bin/wol-keyringd.rs"
+
+[[bin]]
+name = "wol-keyring-bench"
+path = "src/bin/wol-keyring-bench.rs"
+
+[dependencies]
+wolcrypt.workspace = true
+shared.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zeroize.workspace = true
+sha2.workspace = true
+libc.workspace = true
+# Argon2id (RFC 9106) for typed factors and passphrase bundles (CTO approval chat #plan 9168).
+argon2 = { version = "=0.5.3", default-features = false, features = ["alloc"] }
+# The Secret Service on the session bus (ADR 0054 section 8); already in the tree for the shell.
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+
+[dev-dependencies]
+# Known-answer tests of the primitives under wolcrypt (tests/kat.rs), tests only: the NIST ACVP
+# key-generation vectors run against the same fips203/fips204 builds wolcrypt links, and Go's
+# accumulated ML-KEM-768 test needs SHAKE128 (sha3 is already in the tree under fips203).
+fips203.workspace = true
+fips204.workspace = true
+sha3 = { version = "0.10", default-features = false }

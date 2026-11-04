@@ -76,6 +76,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0044](adr/0044-etc-overlay-across-slot-switches.md) | The /etc overlay across slot switches | accepted |
 | [0048](adr/0048-system-web-apps.md) | System web apps: a folder per app, one bridge to `wol` verbs by permission, one kit | proposed |
 | [0051](adr/0051-house-in-order.md) | 0.13: put the house in order before adding anything (proof rule, root-cause standards, wave gates) | proposed |
+| [0054](adr/0054-post-quantum-keyring.md) | Post-quantum local keyring: unlock factors, per-app access lists, signed audit chain, export and LAN move | proposed |
 
 ## Modules
 
@@ -105,6 +106,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/hue.md](modules/hue.md) | wol-hue: themes from a picture, 12 sliders, Base16 and colors.toml import, saved looks | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/hyprland-fork.md](modules/hyprland-fork.md) | the compositor fork: base version, patches in `wolos-pkgbuilds/hyprland-wolos/`, config, QoS plugin | [0012](adr/0012-seamless-boot.md) |
 | [modules/intel-graphics.md](modules/intel-graphics.md) | i915 firmware, tunables, VA-API/Vulkan stack (historical: FreeBSD base) | [0008](adr/0008-i915-frame-deadline-boost.md) |
+| [modules/keyring.md](modules/keyring.md) | the keyring: `wol keyring`, `wol-keyringd`, the Secret Service subset, unlock factors, audit, Settings page copy | [0054](adr/0054-post-quantum-keyring.md) |
 | [modules/memory-bandwidth.md](modules/memory-bandwidth.md) | iGPU bandwidth paradigms, top 5, measurement | [0007](adr/0007-gpu-tuning-interface.md) |
 | [modules/modules.md](modules/modules.md) | optional modules (AI, developer, creative, console stacks): what each installs | [0032](adr/0032-optional-modules.md) |
 | [modules/packages.md](modules/packages.md) | `.wol` format, keys and trust, `wol install/remove/list/search`, index, factory | [0011](adr/0011-wol-packages.md) |
