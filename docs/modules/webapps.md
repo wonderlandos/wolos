@@ -112,6 +112,16 @@ mock's catalog copy, the fixtures, the tokens and the strings tables; with
 `CHROME=<headless browser>` it also runs `webapps/hello` in development mode and saves light and
 dark screenshots to `WOLKIT_SHOTS`.
 
+The kit's elements are tested without a browser: `webapps/kit/test/elements.test.mjs` runs the
+eleven elements of `wolkit.js` (what each builds, what its attributes, keys and clicks do, what it
+announces) on `design/tools/dom-stub.mjs`, a DOM made for this (no dependency): elements, text,
+attributes, selectors, bubbling events, the custom-element lifecycle, focus, `<dialog>`, hash
+navigation, `dom.key`, `dom.type` and `dom.click` with the default actions that matter. It has no
+layout, no style cascade and no shadow DOM; `dom-stub.test.mjs` holds it to the browser behaviour the
+kit tests lean on. Run them with `node --test webapps/kit/test/*.test.mjs` (a directory argument
+fails on Node 22, so name the files or use the glob); `cargo test -p webengine --test kit_js` runs
+every `webapps/<app>/test/*.test.mjs` the same way.
+
 ## Not verified
 
 - No row is measured yet; switch and policy names in the table are not yet checked against the
