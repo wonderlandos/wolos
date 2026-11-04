@@ -135,6 +135,12 @@ pub fn run_input(mut cmd: std::process::Command, input: &str, timeout: Duration)
     wait_output(child, timeout)
 }
 
+/// How often [`run_full`] looks whether its child exited.
+const CHILD_POLL: Duration = Duration::from_millis(5);
+
+/// How long [`run_full`] waits for a pipe a grandchild holds open once the child is gone.
+const PIPE_GRACE: Duration = Duration::from_millis(500);
+
 /// How much of a child's stdout or stderr [`run_full`] keeps.
 const ANSWER_CAP: u64 = 8 << 20;
 
@@ -154,7 +160,7 @@ pub enum RunFail {
 /// Run argv (never a shell) with `input` on stdin, or stdin closed for None: (exit status, stdout,
 /// stderr), [`KILLED`] when a signal ended it. A child past `timeout` is killed. Each pipe is read
 /// on its own named thread, bounded, so neither can fill and stall; once the child is gone a
-/// grandchild that holds a pipe open is waited for half a second, no more.
+/// grandchild that holds a pipe open is waited for [`PIPE_GRACE`], no more.
 pub fn run_full(
     argv: &[&str],
     input: Option<&str>,
@@ -203,7 +209,7 @@ pub fn run_full(
         match child.try_wait() {
             Ok(Some(s)) => break s,
             Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(5));
+                std::thread::sleep(CHILD_POLL);
             }
             _ => {
                 let _ = child.kill();
@@ -213,7 +219,7 @@ pub fn run_full(
         }
     };
     let text = |rx: Option<std::sync::mpsc::Receiver<Vec<u8>>>| {
-        rx.and_then(|r| r.recv_timeout(Duration::from_millis(500)).ok())
+        rx.and_then(|r| r.recv_timeout(PIPE_GRACE).ok())
             .map(|v| String::from_utf8_lossy(&v).into_owned())
             .unwrap_or_default()
     };

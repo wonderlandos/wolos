@@ -20,6 +20,14 @@ const FAIL_DELAY: Duration = Duration::from_secs(2);
 /// Largest request: setup account (6 short fields + password).
 const MAX_REQUEST: usize = 2048;
 const WLAN: &str = "wlan0";
+/// How long a read-only system probe (loginctl, df, nmcli) may take before it counts as no answer.
+const PROBE_WAIT: Duration = Duration::from_secs(5);
+/// How often the greeter looks whether an adopted session's leader is gone.
+const LEADER_POLL: Duration = Duration::from_millis(500);
+/// How often a running child (the power command, the keyring daemon) is looked at.
+const CHILD_POLL: Duration = Duration::from_millis(50);
+/// How long the keyring daemon may take to open its socket.
+const KEYRING_START: Duration = Duration::from_secs(10);
 
 fn read(path: &str) -> String {
     std::fs::read_to_string(path).unwrap_or_default()
@@ -296,13 +304,13 @@ fn finish_greeter(greeter: &mut Child, stop: impl FnOnce(&mut Child)) {
 /// answers). None when there is none or logind did not answer within the time given.
 fn running_session() -> Option<SeatSession> {
     let ui = find(&read(PASSWD_FILE), UI_USER).map_or(u32::MAX, |u| u.uid);
-    let t = Duration::from_secs(5);
+    let t = PROBE_WAIT;
     let list = capture(
         &["loginctl", "list-sessions", "--no-legend", "--no-pager"],
         t,
     )?;
     seat0_user_session(&list, ui, |id| {
-        capture(
+        let shown = capture(
             &[
                 "loginctl",
                 "show-session",
@@ -317,8 +325,12 @@ fn running_session() -> Option<SeatSession> {
                 "State",
             ],
             t,
-        )
-        .unwrap_or_default()
+        );
+        // A session logind cannot describe is not taken for the person's: said, then skipped.
+        if shown.is_none() {
+            eprintln!("wol-login: loginctl show-session {id} gave no answer within {t:?}");
+        }
+        shown.unwrap_or_else(String::new)
     })
 }
 
@@ -332,7 +344,7 @@ fn wait_session_end(s: &SeatSession) {
     // /proc/<pid> exists until the leader is reaped (by init: it is nobody's child here).
     let leader = std::path::PathBuf::from(format!("/proc/{}", s.leader));
     while leader.exists() {
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(LEADER_POLL);
     }
     println!("wol-login: session {} of {} ended", s.id, s.user);
 }
@@ -340,7 +352,7 @@ fn wait_session_end(s: &SeatSession) {
 /// What the end of a short session depends on: free bytes on the home's disk, and whether the
 /// account can write its `~/.config`.
 fn session_facts(user: &LoginUser) -> (Option<u64>, Option<bool>) {
-    let t = Duration::from_secs(5);
+    let t = PROBE_WAIT;
     let free = capture(&["df", "-B1", "--output=avail", &user.home], t)
         .as_deref()
         .and_then(parse_df_avail);
@@ -520,7 +532,7 @@ fn run_power(argv: &[&str]) -> bool {
                     });
                 return true;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Ok(None) => std::thread::sleep(CHILD_POLL),
             Err(_) => return false,
         }
     }
@@ -595,7 +607,7 @@ fn join_wifi(ssid: &str, password: Option<&str>) -> bool {
     // The same facts wol-admind plans with: the saved profiles (a retry after a wrong password
     // changes the profile in place, never makes a second one with the same name) and the scan
     // (WPA3-only networks need `sae`).
-    let probe = |argv: &[&str]| capture(argv, Duration::from_secs(5));
+    let probe = |argv: &[&str]| capture(argv, PROBE_WAIT);
     let Ok(steps) = wol_core::admin::plan_with(&req, &probe) else {
         return false;
     };
@@ -677,12 +689,12 @@ fn start_keyring(user: &LoginUser, password: &[u8]) {
         let _ = stdin.write_all(pw.as_bytes());
     }
     let socket = keyring_socket(user);
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + KEYRING_START;
     while Instant::now() < deadline
         && !std::path::Path::new(&socket).exists()
         && matches!(child.try_wait(), Ok(None))
     {
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(CHILD_POLL);
     }
     if !std::path::Path::new(&socket).exists() {
         eprintln!("wol-login: {}: keyring daemon did not start", user.name);

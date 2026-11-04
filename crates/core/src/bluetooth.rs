@@ -563,6 +563,9 @@ pub enum PairOutcome {
     Failed(&'static str),
 }
 
+/// How often [`run_pair`] looks for bluetoothctl's next line.
+pub const PAIR_TICK: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// How long pairing waits for the device or the person before it gives up.
 pub const PAIR_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -588,7 +591,7 @@ pub fn run_pair(
     if !c.send("agent KeyboardDisplay") {
         return PairOutcome::Failed("Bluetooth didn’t answer. Try again.");
     }
-    let tick = std::time::Duration::from_millis(200);
+    let tick = PAIR_TICK;
     let mut idle = std::time::Duration::ZERO;
     let (mut pair_sent, mut paired, mut info_sent) = (false, false, false);
     let mut trust_sent = false;

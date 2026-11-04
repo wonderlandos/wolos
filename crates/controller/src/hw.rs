@@ -204,10 +204,26 @@ fn clear_stale_lock(env: &mut dyn Env) {
         .read_file(Path::new("/etc/pacman.conf"))
         .unwrap_or_default();
     let lock = format!("{}/db.lck", wol_core::update::layers::db_path(&conf));
-    if env.read_file(Path::new(&lock)).is_some()
-        && env.capture(&["pgrep", "-x", "pacman"]).is_none()
-        && env.remove_file(Path::new(&lock)).is_ok()
-    {
+    if env.read_file(Path::new(&lock)).is_none() {
+        return;
+    }
+    // pgrep exits 1 when no pacman runs: only then is the lock stale. A pgrep that could not run
+    // says nothing about pacman, and the lock stays.
+    match env.capture_status(&["pgrep", "-x", "pacman"]) {
+        Some((1, _, _)) => {}
+        Some((0, _, _)) => return,
+        other => {
+            let why = other.map_or_else(
+                || "it did not run".to_owned(),
+                |(c, _, e)| format!("exit {c}: {}", e.trim()),
+            );
+            env.err(&format!(
+                "wolos_hw: pgrep could not tell whether pacman runs ({why}); {lock} kept\n"
+            ));
+            return;
+        }
+    }
+    if env.remove_file(Path::new(&lock)).is_ok() {
         env.out(&format!("wolos_hw: removed a stale {lock}\n"));
     }
 }

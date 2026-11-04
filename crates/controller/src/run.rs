@@ -961,6 +961,9 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
     .is_ok_and(|r| AdminReply::parse(&r) == AdminReply::Ok)
 }
 
+/// How long `pacman -Qu` may take before `wol update check` stops waiting for it.
+const PACMAN_QU_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Run `argv` with stdin closed: (exit status, stdout, stderr). `wol_core::system::KILLED` when a signal ended it;
 /// None when it cannot start or does not finish within `timeout` (it is killed): a hung
 /// `pacman -Qu` must not hang `wol update check`. One runner for every crate:
@@ -1566,7 +1569,7 @@ impl Env for RealEnv {
         wol_core::system::run_with_timeout(argv, std::time::Duration::from_secs(60))
     }
     fn capture_status(&mut self, argv: &[&str]) -> Option<(i32, String, String)> {
-        run_status(argv, std::time::Duration::from_secs(60))
+        run_status(argv, PACMAN_QU_WAIT)
     }
     fn stdin_line(&mut self) -> Option<String> {
         let mut l = String::new();
@@ -1764,7 +1767,11 @@ impl Env for FakeEnv {
         let Some((_, code, err)) = self.statuses.iter().find(|s| s.0 == line).cloned() else {
             return self.capture(argv).map(|o| (0, o, String::new()));
         };
-        let out = self.capture(argv).unwrap_or_default();
+        // The fake's scripted output for this line; none scripted is an empty one.
+        let out = match self.capture(argv) {
+            Some(o) => o,
+            None => String::new(),
+        };
         Some((code, out, err))
     }
     fn stdin_line(&mut self) -> Option<String> {

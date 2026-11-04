@@ -105,7 +105,13 @@ fn main() {
                 saver.shutdown();
                 // The stop that starts a `systemctl restart wold` leaves the jobs running for
                 // the next wold to adopt (QA-SYS-2); any other stop ends them.
-                if os::restarting() {
+                let restarting = os::restarting();
+                if restarting.is_none() {
+                    eprintln!(
+                        "wold: systemd did not say whether this is a restart; stopping the jobs"
+                    );
+                }
+                if restarting == Some(true) {
                     eprintln!("wold: restarting; jobs keep running");
                 } else {
                     os::stop_all(&jobs.running());

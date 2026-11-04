@@ -4,9 +4,9 @@
 Description=WolOS Night Light (hyprsunset)
 PartOf=wolos-session.target
 After=wolos-session.target
-# A helper that cannot reach the display any more (the session ended) stops retrying after 5 tries.
-StartLimitIntervalSec=60
-StartLimitBurst=5
+# A crash burst never leaves it dead (RH-221): restarts slow down to one every 30 s instead of a
+# start limit, and the unit stops with the session (PartOf).
+StartLimitIntervalSec=0
 ConditionPathExists=/usr/bin/hyprsunset
 
 [Service]
@@ -14,3 +14,5 @@ ExecStart=/usr/lib/wolos/hyprsunset-run
 StandardOutput=null
 Restart=on-failure
 RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
