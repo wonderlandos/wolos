@@ -205,6 +205,9 @@ fn boot_check_that_passes_clears_the_slots_old_mark() {
                 d('b')
             ),
         )],
+        // Nothing is mounted on /usr: no layers (findmnt exits 1). An unscripted probe is
+        // said on stderr ("it did not run"), which this test asserts is empty.
+        statuses: vec![("findmnt -n -o FSTYPE /usr".into(), 1, String::new())],
         ..Default::default()
     };
     assert_eq!(run("seal check", &mut env), 0, "{}", env.err);

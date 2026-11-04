@@ -89,7 +89,7 @@ fn memory_pressure_ends_the_hog_before_the_machine_stalls() {
     for f in [
         format!("{SYS}/session-.scope.d/70-wolos-limits.conf"),
         format!("{SYS}/wold.service"),
-        "files/usr/lib/systemd/user/wol-lock.service".to_string(),
+        "files/usr/lib/systemd/user/wolos-lock.service".to_string(),
     ] {
         has(&f, &["ManagedOOMPreference=omit"]);
     }

@@ -591,14 +591,20 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
 }
 
 /// QA-STORE-76: `wol --version` prints the version, not the help; `wol layers` names its
-/// commands instead of "did you mean 'layers'?".
+/// commands instead of "did you mean 'layers'?". QA-PWR-6 (wd-settings) made that the rule for
+/// every group: the group word alone is the help for the group, exit 0, listing its commands.
 #[test]
 fn version_and_group_words() {
     let mut env = FakeEnv::default();
     assert_eq!(run("--version", &mut env), 0);
     assert_eq!(env.out, format!("wol {}\n", env!("CARGO_PKG_VERSION")));
-    let e = parse(&["layers"]).unwrap_err().to_string();
-    assert_eq!(e, "usage: wol layers fold|clear");
+    let inv = parse(&["layers"]).unwrap();
+    assert_eq!((inv.action, inv.get("command")), ("help", Some("layers")));
+    let mut env = FakeEnv::default();
+    assert_eq!(run("layers", &mut env), 0);
+    for sub in ["layers list", "layers fold", "layers clear"] {
+        assert!(env.out.contains(sub), "{sub}: {}", env.out);
+    }
     let e = parse(&["layer"]).unwrap_err().to_string();
     assert!(e.contains("did you mean 'layers'"), "{e}");
 }

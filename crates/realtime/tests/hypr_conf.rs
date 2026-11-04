@@ -11,6 +11,8 @@ const USER_REALTIME: &str =
     include_str!("../../../files/usr/lib/systemd/user/wolos-realtime.service");
 const USER_SUNSET: &str =
     include_str!("../../../files/usr/lib/systemd/user/wolos-hyprsunset.service");
+/// What the unit runs (RS-043: a unit runs a program, never a shell string).
+const SUNSET_RUN: &str = include_str!("../../../files/usr/lib/wolos/hyprsunset-run");
 const USER_TARGET: &str = include_str!("../../../files/usr/lib/systemd/user/wolos-session.target");
 /// The window buttons, sourced once by hyprland.conf (colours live outside it: themes v2).
 const LIGHTS: &str =
@@ -517,11 +519,13 @@ fn greeter_has_a_session_bus() {
 }
 
 /// Live: the shell never appeared and left no trace. Its stderr goes to the session runtime dir.
+/// The start line also runs the first sign-in Setup while the session's flag is there (ADR 0013,
+/// same words as hyprland.lua: `lua_session_starts_the_conf_programs`).
 #[test]
 fn shell_output_is_logged() {
     assert!(
         CONF.lines().any(|l| l.trim()
-            == r#"exec-once = sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#)
+            == r#"exec-once = sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#)
     );
 }
 
@@ -906,28 +910,31 @@ fn the_session_starts_night_light_in_its_saved_state() {
             .any(|l| l.trim() == format!("ConditionPathExists=/usr/bin/{NIGHT_LIGHT_PROGRAM}"))
     );
     assert!(USER_TARGET.contains("wolos-hyprsunset.service"));
-    let l = USER_SUNSET
-        .lines()
-        .find(|l| l.starts_with("ExecStart=") && l.contains(&format!("exec {NIGHT_LIGHT_PROGRAM}")))
-        .expect("hyprsunset ExecStart");
+    // The unit runs the script (no shell string, RS-043); the script reads the toggle file.
+    assert!(
+        USER_SUNSET
+            .lines()
+            .any(|l| l.trim() == "ExecStart=/usr/lib/wolos/hyprsunset-run"),
+        "{USER_SUNSET}"
+    );
     let s = std::path::Path::new("/S");
     let rel = state_file(Toggle::NightLight, std::path::Path::new("/C"), s);
     let rel = rel.strip_prefix(s).unwrap().display().to_string();
     assert!(
-        l.contains(&format!(
-            "f=\"${{XDG_STATE_HOME:-$HOME/.local/state}}/{rel}\""
-        )),
-        "{l}"
+        SUNSET_RUN.contains(&format!("f=\"${{XDG_STATE_HOME:-$HOME/.local/state}}/{rel}\"")),
+        "{SUNSET_RUN}"
     );
     assert!(
-        l.contains(&format!(
-            "[ -e \"$f\" ] && exec {NIGHT_LIGHT_PROGRAM} -t {NIGHT_LIGHT_KELVIN};"
+        SUNSET_RUN.contains(&format!(
+            "[ -e \"$f\" ] && exec {NIGHT_LIGHT_PROGRAM} -t {NIGHT_LIGHT_KELVIN}"
         )),
-        "{l}"
+        "{SUNSET_RUN}"
     );
     // Off: true colours. hyprsunset 0.4 with no flag tints to 6000 K.
     assert!(
-        l.contains(&format!("; exec {NIGHT_LIGHT_PROGRAM} -i'")),
-        "{l}"
+        SUNSET_RUN
+            .lines()
+            .any(|l| l.trim() == format!("exec {NIGHT_LIGHT_PROGRAM} -i")),
+        "{SUNSET_RUN}"
     );
 }
