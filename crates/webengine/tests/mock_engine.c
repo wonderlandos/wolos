@@ -2,9 +2,11 @@
 /* A stand-in for libwolwebengine.so.1 (ABI 1) that does no browsing: it lets tests/shim_loader_*.rs
  * drive crates/webengine's loader and view against the C boundary. Built with `cc -shared -fPIC`;
  * with -DCHANNEL it also has the WWE_1.1 host channel, which echoes each posted message back to the
- * host's callback as "echo:<text>" (the real library hands it to the page). With -DPRESENT it has the
- * WWE_1.3 wwe_view_present: it paints one frame when the view is new or resized and counts each
- * present into <profile_dir>/presented. */
+ * host's callback as "echo:<text>" (the real library hands it to the page). With -DSCHEME it also has
+ * WWE_1.2, wwe_engine_set_scheme, and two test hooks that do what the real library does with the
+ * host's handler: mock_fed_load (one fed: load, the body collected) and mock_fed_map. With -DPRESENT
+ * it has the WWE_1.3 wwe_view_present: it paints one frame when the view is new or resized and counts
+ * each present into <profile_dir>/presented. */
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -101,5 +103,47 @@ int wwe_view_post_message(void *v, const uint8_t *text, size_t len) {
     memcpy(buf + 5, text, len);
     en->fn(en->ctx, buf, len + 5);
     return 0;
+}
+#endif
+
+#ifdef SCHEME
+typedef void (*body_fn)(void *, const uint8_t *, size_t);
+typedef uint32_t (*load_fn)(void *, const uint8_t *, size_t, uint32_t, char *, size_t, body_fn, void *);
+typedef intptr_t (*map_fn)(void *, const uint8_t *, size_t, char *, size_t);
+static load_fn the_load;
+static map_fn the_map;
+static void *the_ctx;
+int wwe_engine_set_scheme(void *e, const char *scheme, load_fn load, map_fn map, void *ctx, char *err, size_t n) {
+    (void)e;
+    if (!scheme || strcmp(scheme, "fed") != 0 || !load) {
+        const char *m = "fed only";
+        size_t k = strlen(m) < n - 1 ? strlen(m) : n - 1;
+        memcpy(err, m, k);
+        err[k] = 0;
+        return -1;
+    }
+    the_load = load;
+    the_map = map;
+    the_ctx = ctx;
+    return 0;
+}
+typedef struct { uint8_t *buf; size_t cap, len; } sink;
+static void collect(void *s, const uint8_t *b, size_t len) {
+    sink *k = s;
+    size_t room = k->cap - k->len;
+    size_t m = len < room ? len : room;
+    memcpy(k->buf + k->len, b, m);
+    k->len += m;
+}
+uint32_t mock_fed_load(const char *url, uint32_t kind, char *mime, size_t mimecap, uint8_t *buf, size_t cap, size_t *len) {
+    sink k = { buf, cap, 0 };
+    uint32_t status;
+    if (!the_load) return 0;
+    status = the_load(the_ctx, (const uint8_t *)url, strlen(url), kind, mime, mimecap, collect, &k);
+    *len = k.len;
+    return status;
+}
+intptr_t mock_fed_map(const char *url, char *out, size_t cap) {
+    return the_map ? the_map(the_ctx, (const uint8_t *)url, strlen(url), out, cap) : -1;
 }
 #endif

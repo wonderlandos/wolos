@@ -329,6 +329,28 @@ impl WebView {
                 failed = Some(Error::Engine(take_err(&err)));
             }
         }
+        // WWE_1.2 (ADR 0052): Federate Network addresses are served natively, always: there is no
+        // setting. A library of an earlier build has no such call and loads no `fed:` address.
+        if failed.is_none()
+            && let Some(set) = lib.set_scheme
+        {
+            // SAFETY: engine is live; the scheme name is static; the callbacks are plain functions
+            // and take no context, so nothing they use can be freed before the engine.
+            let rc = unsafe {
+                set(
+                    engine,
+                    crate::fed::SCHEME.as_ptr(),
+                    Some(crate::fed::load_cb),
+                    Some(crate::fed::map_cb),
+                    std::ptr::null_mut(),
+                    err.as_mut_ptr(),
+                    ERR,
+                )
+            };
+            if rc != 0 {
+                failed = Some(Error::Engine(take_err(&err)));
+            }
+        }
         let t = match target {
             Target::Headless { width, height } => ffi::TargetC {
                 kind: ffi::TARGET_HEADLESS,

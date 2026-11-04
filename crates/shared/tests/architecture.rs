@@ -63,8 +63,13 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 "shell" => ["shared", "core", "wopkg", "wol-lua", "audio", "wolsem"]
                     .contains(&dep.as_str()),
                 // The web-app runtime (ADR 0042) paints into wolkit surface nodes and reads wolkit's
-                // event records; BSD-2-Clause like wolkit, so the licence rule holds.
-                "webengine" => ["shared", "core", "wolkit"].contains(&dep.as_str()),
+                // event records; BSD-2-Clause like wolkit, so the licence rule holds. It serves
+                // fed:// through `federate` (ADR 0052), a BSD-2-Clause leaf with no workspace
+                // dependency, which the browser's bridge links too.
+                "webengine" => ["shared", "core", "wolkit", "federate"].contains(&dep.as_str()),
+                // The Federate client (ADR 0052) uses wolcrypt (a BSD-2-Clause leaf, no workspace
+                // dependency) for the hybrid TLS group and to seal its local state.
+                "federate" => dep == "wolcrypt",
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",

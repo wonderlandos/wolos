@@ -209,6 +209,14 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
 
     // The page, with the channel when the library carries it.
     ffi::load(lib)?;
+    // fed:// (ADR 0052): the newest root zone version seen survives a restart.
+    let state = federate::resolve::default_state(&env);
+    let resolver = federate::Resolver::new(
+        Box::new(federate::Https::new(federate::BOOTSTRAP)),
+        federate::ROOT_KEY,
+    )
+    .with_state(state);
+    webengine::fed::use_resolver(resolver);
     let carries = ffi::lib()?.set_host_channel.is_some();
     if !carries {
         eprintln!(
