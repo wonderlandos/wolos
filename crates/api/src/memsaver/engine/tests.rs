@@ -300,6 +300,57 @@ fn an_app_that_moved_itself_to_a_user_scope_is_adopted_with_the_children_it_left
     assert_eq!(e.sys.0.borrow().adopted.len(), 1, "asked systemd once");
 }
 
+/// IMAGE-F: a Flatpak app runs as `flatpak run` (12) -> bwrap (13) -> bwrap (14) -> the app (20, its
+/// helpers 21-24), all in the user manager's `app-flatpak-<id>-<n>.scope`. The window's process and its
+/// children (the sandboxed tree) are adopted into the saver's scope, like Electron's; the sandbox's
+/// supervisors above it stay where they are and keep the Flatpak scope alive. The app is known by its
+/// app id.
+#[test]
+fn a_flatpak_app_is_adopted_by_its_window_and_its_supervisors_stay() {
+    let m = Model::default();
+    m.add(10, 1, "Hyprland");
+    m.add(11, 10, "wol-realtime");
+    m.add(12, 10, "flatpak");
+    m.add(13, 12, "bwrap");
+    m.add(14, 13, "bwrap");
+    m.add(20, 14, "firefox");
+    m.add(21, 20, "firefox");
+    m.add(22, 20, "firefox");
+    m.add(23, 20, "firefox");
+    m.add(24, 20, "firefox");
+    let own = "/user.slice/user-1000.slice/user@1000.service/app.slice/app-flatpak-org.mozilla.firefox-4242.scope";
+    m.set(own, |_| {});
+    for pid in [12, 13, 14, 20, 21, 22, 23, 24] {
+        m.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = own.into();
+    }
+    let mut e = Engine::new(m, Config::default());
+    assert!(e.connect(1000, 11));
+    e.snapshot(Snapshot {
+        enabled: true,
+        front: 20,
+        windows: vec![Window {
+            pid: 20,
+            app: "org.mozilla.Firefox".into(),
+            visible: false,
+        }],
+        ..Snapshot::default()
+    });
+    e.tick(0);
+    e.tick(1);
+    let scope = "/user.slice/user-1000.slice/app-wol-org.mozilla.firefox-20.scope";
+    for pid in [20, 21, 22, 23, 24] {
+        assert_eq!(e.sys.where_is(pid), scope, "pid {pid}");
+    }
+    for pid in [12, 13, 14] {
+        assert_eq!(e.sys.where_is(pid), own, "supervisor {pid} stays");
+    }
+    assert_eq!(e.sys.where_is(10), SESSION, "the compositor stays");
+    assert_eq!(e.sys.0.borrow().adopted.len(), 1, "asked systemd once");
+    let st = e.tick(2);
+    assert_eq!(st.apps.len(), 1, "{:?}", st.apps);
+    assert_eq!(st.apps[0].app, "org.mozilla.firefox");
+}
+
 /// QA-100 H9-01: a web app's host already sits in its own `app-wol-` scope of the user's
 /// manager; the saver leaves it there (wold knows the app by that scope name) and still lists it.
 #[test]

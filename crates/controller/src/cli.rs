@@ -683,7 +683,7 @@ pub const TREE: &[Cmd] = &[
             optional: true,
             rest: false,
         }],
-        "Check sound, games, updates, security, storage, network, power and displays, with the fix",
+        "Check sound, games, updates, security, storage, network, power, displays and hardware, with the fix",
     ),
     cmd(
         &["doctor", "fix"],

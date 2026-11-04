@@ -214,7 +214,8 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::AutoUpdate => {
             ok((n == 1 && on_off(a[0])) || (n == 2 && a[0] == "metered" && on_off(a[1])))
         }
-        AdminAction::Reports => ok(n == 1 && on_off(a[0])),
+        AdminAction::Reports | AdminAction::CoolingHelper => ok(n == 1 && on_off(a[0])),
+        AdminAction::MirrorGate => ok(n == 0),
         AdminAction::PrinterAdd => {
             ok(n == 2 && printers::is_valid_name(a[0]) && printers::is_valid_uri(a[1]))
         }
@@ -518,6 +519,9 @@ pub fn plan_with(
             steps.extend(service_steps(REPORTS_TIMER, on));
             steps
         }
+        // `wol doctor hardware`: the repo gate as root, and Intel's thermal helper with its unit.
+        AdminAction::MirrorGate => vec![argv(&["wol", "mirror", "gate", "--yes"])],
+        AdminAction::CoolingHelper => service_steps("thermald.service", a[0] == "on"),
         AdminAction::Lid => {
             let l = if a[0] == "sleep" {
                 power::Lid::Sleep
@@ -817,6 +821,9 @@ pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
         (A::SystemRollback, Always),
         (A::SystemChannel, Always),
         (A::Reports, Cached),
+        // Package repositories change under every later update: the password, every time.
+        (A::MirrorGate, Always),
+        (A::CoolingHelper, Cached),
     ]
 };
 

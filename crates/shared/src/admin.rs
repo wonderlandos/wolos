@@ -96,6 +96,11 @@ pub enum AdminAction {
     /// Error reports (Settings > Privacy), `on` or `off`: `send=1|0` in `/etc/wolos/reports.conf`
     /// and the hourly `wolos-report.timer`.
     Reports,
+    /// Turn the optimized x86-64-v3 repo sections on or off to match this processor
+    /// (`wol mirror gate --yes`, ADR 0030). No arguments.
+    MirrorGate,
+    /// Intel's cooling helper (`thermald.service`): `on` or `off`, with its unit.
+    CoolingHelper,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -145,6 +150,8 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::SystemRollback, "system-rollback"),
     (AdminAction::SystemChannel, "system-channel"),
     (AdminAction::Reports, "reports"),
+    (AdminAction::MirrorGate, "mirror-gate"),
+    (AdminAction::CoolingHelper, "cooling-helper"),
 ];
 
 impl AdminAction {

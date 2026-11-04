@@ -8,7 +8,7 @@ One list of checks for the whole computer, each worded for a person and each wit
 
 **Concept.** A check is `{id, area, title, status, detail, fix?}`. `id` is `<area>.<name>` and stays the same between releases; `status` is `ok`, `warn`, `fail` or `skipped` (not checked on this computer); `detail` is plain words and carries no command; `fix` is `{title, command, needs_admin}` and is absent when WolOS has nothing safe to run (the detail then says what to do).
 
-**Why.** Sound, games, updates, security, storage, network, power and displays each had their own doctor or status verb with their own words. A person with a problem does not know which verb to ask. One list lets the app show counts per area and one "Fix" per row, and lets `wol doctor fix <id>` run it.
+**Why.** Sound, games, updates, security, storage, network, power, displays and hardware each had their own doctor or status verb with their own words. A person with a problem does not know which verb to ask. One list lets the app show counts per area and one "Fix" per row, and lets `wol doctor fix <id>` run it.
 
 **How.** The facts and the rules stay where they live; `doctor.rs` words them and maps the existing fix line to something it can run.
 
@@ -22,8 +22,27 @@ One list of checks for the whole computer, each worded for a person and each wit
 | network | `connection`, `names`, `devices` | `wol_core::netinfo`, the hardware snapshot |
 | power | `battery`, `sleep` | `wol_core::power` |
 | display | `screens`, `devices` | `shared::hardware` |
+| hardware | `video`, `vulkan`, `firmware`, `fingerprint`, `thunderbolt`, `cpu-power`, `cooling`, `power-modes`, `cpu-level` | `crates/controller/src/doctor/hw.rs` (see below) |
 
 A fix is one of two things: wol-admind requests (`needs_admin`: installing a package, turning on the firewall; the password is asked for like for every admin verb) or one command run as the person (`systemctl --user start ...`, `wpctl set-volume ...`). `action_of` only turns the recognised shapes of the existing doctors' fix lines into actions; anything else (`enable [multilib]`, "plug in a microphone") stays advice and gets no button.
+
+### The hardware area
+
+The `display` and `network` areas ask whether a device has a driver. `hardware` asks whether the part works as well as the hardware can: a laptop of 2023 with a driver for everything can still decode video on the processor, run games on llvmpipe, miss a firmware blob or sit on the old speed driver. Every row reads the machine through `Env` and is `skipped` when the part is absent (no fingerprint reader, no Thunderbolt port) or the tool cannot run, never a failure. A virtual machine skips `video`, `vulkan` and `cooling`: software graphics and no thermal chip are normal there.
+
+| Row | Reads | `ok` | `warn` / `fail` |
+|---|---|---|---|
+| `video` | `vainfo`: profiles with a decode entry point | "The graphics card decodes H.264, H.265, VP9 and AV1 video" | `warn`: nothing decodes, or the VA-API driver did not start (Intel Broadwell and newer use `intel-media-driver`, AMD uses `mesa`) |
+| `vulkan` | `vulkaninfo --summary` | the GPU's name | `warn`: only llvmpipe (software), or the loader failed |
+| `firmware` | the kernel log of this boot: final verdicts only ("no suitable firmware found", "failed to load firmware"), not the first tries of a fallback list (iwlwifi asks for `-89.ucode` and loads `-77`) | none failed | `warn`: the drivers named; a system update brings the firmware (`linux-firmware` is the whole set) |
+| `fingerprint` | `fprintd-list` for the signed-in account | "A fingerprint reader works", with the number of fingers | `skipped` without a reader. No button: enrolling needs the sensor touched several times in a window of its own (`fprintd-enroll` in Terminal) |
+| `thunderbolt` | `/sys/bus/thunderbolt` domain, then `boltctl list` | devices connected | `fail`: a port but no `bolt` (fix installs it); `warn`: a device is plugged in and not allowed (fix: `boltctl enroll`) |
+| `cpu-power` | the cpufreq scaling driver | `intel_pstate`, `amd-pstate(-epp)` | `warn`: `acpi-cpufreq` and the other old controls |
+| `cooling` | `thermald.service` (Intel, not in a VM) | running, or ended with status 2 (a processor it has no table for; the unit counts that as success) | `warn`: not running (fix: the `cooling-helper` admin action, `systemctl enable --now thermald.service`) |
+| `power-modes` | `powerprofilesctl list` | the modes Energy Mode can use | `warn`: the daemon is not answering |
+| `cpu-level` | `/proc/cpuinfo` flags and the repo sections of `pacman.conf` (ADR 0030) | the processor runs the optimized (x86-64-v3) builds, or lacks AVX2 and uses the standard ones | `fail`: optimized builds on and no AVX2 (a disk moved to an older computer); fix: the `mirror-gate` admin action, `wol mirror gate --yes` as root, turns them off |
+
+There is one power daemon: `power-profiles-daemon` (Energy Mode, `wol power apply`). `tlp` and the others fight it over the same sysfs files and are not on the image (`wolos-iso/checks/tests/image_modern_hardware.rs` fails if one is added).
 
 ## The commands
 
@@ -59,6 +78,7 @@ Open `webapps/doctor/index.html?dev` in any browser: `kit/mock-bridge.js` answer
 
 | Test | Covers |
 |---|---|
+| `crates/controller/tests/doctor_hardware.rs`, `doctor/hw.rs` unit tests | the `hardware` area on fake machines: codecs the GPU decodes, software Vulkan, firmware the kernel could not load, fingerprint reader states, Thunderbolt (port, helper missing, device waiting), the processor power driver, Intel's cooling helper, power modes, x86-64 level against the builds installed |
 | `crates/controller/tests/doctor.rs` | argument parsing, every area with stable ids, one area, fixes through wol-admind (password on stdin) and as the person, nothing to run, unknown ids, no commands in words shown on screen |
 | `doctor.rs` unit tests | which fix lines become actions and which stay advice, the text report |
 | `webapps/doctor/test/doctor.test.mjs` | headless Chromium (`CHROME`, `--password-store=basic --use-mock-keychain`): counts, keyboard, Fix with progress and result, "Show the command", empty and error states, light and dark at 1280 and 800 wide with pictures in `OUT` |

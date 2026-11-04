@@ -569,6 +569,13 @@ fn settings_verbs_allow_list() {
         (AutoUpdate, &["roaming", "on"], false),
         (AutoUpdate, &["on", "off"], false),
         (AutoUpdate, &["metered"], false),
+        (MirrorGate, &[], true),
+        (MirrorGate, &["--yes"], false),
+        (MirrorGate, &["on"], false),
+        (CoolingHelper, &["on"], true),
+        (CoolingHelper, &["off"], true),
+        (CoolingHelper, &["maybe"], false),
+        (CoolingHelper, &[], false),
         (Reports, &["on"], true),
         (Reports, &["off"], true),
         (Reports, &["yes"], false),
@@ -1244,4 +1251,41 @@ fn wol_package_actions() {
         &["/h/a.wol", "signed"]
     )));
     assert!(!needs_fresh_password(&r(PkgUpgrade, &[])));
+}
+
+/// IMAGE-F: the two changes `wol doctor hardware` offers a button for. Mirror Gate runs the
+/// repo gate as root (CPU level against the optimized sections of pacman.conf); the cooling
+/// helper turns thermald on or off with its unit, and nothing else.
+#[test]
+fn the_doctor_hardware_actions_plan_exactly_one_command_each() {
+    assert_eq!(
+        plan(&r(MirrorGate, &[])).unwrap(),
+        [AdminStep::Run(
+            ["wol", "mirror", "gate", "--yes"]
+                .map(String::from)
+                .to_vec()
+        )]
+    );
+    assert_eq!(
+        plan(&r(CoolingHelper, &["on"])).unwrap(),
+        [AdminStep::Run(
+            ["systemctl", "enable", "--now", "thermald.service"]
+                .map(String::from)
+                .to_vec()
+        )]
+    );
+    assert_eq!(
+        plan(&r(CoolingHelper, &["off"])).unwrap(),
+        [AdminStep::Run(
+            ["systemctl", "disable", "--now", "thermald.service"]
+                .map(String::from)
+                .to_vec()
+        )]
+    );
+    // Repo changes need the password every time; the cooling switch is an everyday change.
+    assert_eq!(fresh_rule(MirrorGate), Fresh::Always);
+    assert_eq!(fresh_rule(CoolingHelper), Fresh::Cached);
+    assert!(!is_user_level(MirrorGate) && !is_user_level(CoolingHelper));
+    assert_eq!(MirrorGate.name(), "mirror-gate");
+    assert_eq!(CoolingHelper.name(), "cooling-helper");
 }

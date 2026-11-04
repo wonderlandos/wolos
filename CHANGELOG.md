@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Doctor has a Hardware section (`wol doctor hardware`): hardware video decode, Vulkan on the GPU, firmware the kernel could not load, the fingerprint reader, Thunderbolt, the processor's power driver, Intel's cooling helper, the power modes and the x86-64 level against the builds installed (docs/modules/doctor.md).
+- The image ships `fprintd`, `bolt` and `thermald` for modern laptops; the long table with what is left off on purpose is in docs/modules/hardware.md.
+- The App Store ranks and labels Flathub apps: Picked by WolOS (a list of 22), Verified by Flathub, or plain Flathub; Discover ends with "Picked from Flathub" (docs/modules/flathub.md). Passwords of sandboxed apps use the keyring (the Secret portal had no backend); Memory Saver no longer pauses a playing Flatpak music player behind a hidden window.
+- The installer refuses a processor below the image's minimum x86-64 level before it writes anything, and notes in its log that a processor without AVX2 gets the standard builds (docs/modules/x86-64-v3.md, which also records the v3 measurements and the decision).
 - libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
 - PowerShell is a terminal shell beside zsh: the Developer module ships pwsh with the WolOS profile and completions, `wol-term-shell` starts it from foot, ghostty and kitty, and Settings > General has a Shells row.
 
