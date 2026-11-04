@@ -38,3 +38,19 @@ Notes:
 - Session start: the nested compositor socket is up at ~0.1 s, but exec-once fires on `Event start`, emitted on the first rendered monitor frame (`Renderer.cpp`). The harness creates its headless output from exec-once, so ~2 s goes to the compositor's fallback output. On hardware a DRM monitor renders at once; real-boot number still to measure on the installed image.
 - N/A on this host: hypridle (not installed), wold (needs root paths under /var/run). perf/ptrace unavailable; profiling used LD_PRELOAD timer shims and per-thread context switches.
 - Helper cost (nmcli, wpctl) was measured on a CachyOS host, not on the installed image; re-measure on the image.
+
+## Warm Search
+
+Search (Super+Space) used to start a GTK process per press: 0.4-0.9 s to the first frame, and the letters typed in that time went to the window underneath (QA-LN-3). `wolos-search.service` (`files/usr/lib/systemd/user/`, wanted by `wolos-session.target`, restarted on failure, never waited for by the login) keeps one `wol-search --warm` with no window; a press only activates it over D-Bus (`ui::run_panel_app`, `Activation`). Without the unit a press still starts Search the old way.
+
+Measured 2026-11-04, release build, Arch container (GTK 4.24) on a Broadway display, not on the installed image; re-measure there before quoting it as a WolOS figure (3 runs: `wol-search --warm` under `dbus-run-session`, then one `wol-search` per press, RSS read from the process status):
+
+| Metric | Budget | Measured |
+|---|---|---|
+| Warm process, idle before the first press, RSS | < 40 MB | 35.9-36.5 MB (anonymous 7.6 MB, the rest is shared library pages) |
+| After the first press and close, RSS | - | 48-51 MB (anonymous 9.7 MB; it does not shrink back, GTK keeps its caches) |
+| Press to first map, warm | < 150 ms | 8.3-8.9 ms |
+| Second launch (the activating `wol-search`) | - | 28-30 ms, exits 0 |
+| Ceiling | - | `MemoryMax=96M` in the unit: a leak ends this process, not the session |
+
+The budget binds the fresh idle process (the journey `qa100-ln-launcher-toggle` reads it right after login). After use the resident figure is mostly shared pages that `wol-shell` also maps; the anonymous part is under 10 MB.

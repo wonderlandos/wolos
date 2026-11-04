@@ -5,4 +5,4 @@
 # session (user@.service stops with the last session, logind KillUserProcesses=yes).
 [Unit]
 Description=WolOS desktop session helpers
-Wants=wolos-hypridle.service wolos-hyprsunset.service wolos-realtime.service wolos-polkit-agent.service
+Wants=wolos-hypridle.service wolos-hyprsunset.service wolos-realtime.service wolos-polkit-agent.service wolos-search.service

@@ -1,0 +1,19 @@
+# The warm Search (QA-LN-3): one idle wol-search with no window, so Super+Space only activates it
+# over D-Bus instead of starting a GTK process (0.4-0.9 s, the first letters lost). Idle budget:
+# docs/modules/performance.md "Warm Search". It is a helper of the session like the others: it
+# comes back when it crashes, and a start that fails never holds the login (the target starts it
+# without waiting).
+[Unit]
+Description=WolOS Search, kept warm (wol-search --warm)
+PartOf=wolos-session.target
+After=wolos-session.target
+# A helper that cannot reach the display any more (the session ended) stops retrying after 5 tries.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+ExecStart=/usr/bin/wol-search --warm
+Restart=on-failure
+RestartSec=2
+# The budget with a margin: a leak ends this process, not the session.
+MemoryMax=96M
