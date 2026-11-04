@@ -12,7 +12,19 @@ use std::time::{Duration, Instant};
 pub trait Runner: Send + Sync {
     fn spawn(&self, spec: &JobSpec) -> std::io::Result<i32>;
     fn stop_tree(&self, root: i32);
+    /// The pid of this job's program a previous wold left running, if any: the supervisor takes
+    /// it over instead of starting a second copy (QA-SYS-2).
+    fn adopt(&self, _spec: &JobSpec) -> Option<i32> {
+        None
+    }
+    /// An adopted pid is nobody's child here, so nothing reaps it for us: ask whether it runs.
+    fn alive(&self, _pid: i32) -> bool {
+        false
+    }
 }
+
+/// How often an adopted process is looked at.
+const ADOPTED_POLL: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 struct State {
@@ -86,7 +98,15 @@ impl Supervisor {
             s.generation
         };
         let (me, ctx) = (Arc::clone(self), Arc::clone(ctx));
-        std::thread::spawn(move || me.run(generation, &ctx));
+        // A thread the system refuses (EAGAIN: TasksMax, RLIMIT_NPROC) is an error for the client,
+        // not a panic in the control connection that asked (QA-SHADOW-40).
+        let spawned = std::thread::Builder::new()
+            .name(format!("job-{}", self.spec.label))
+            .spawn(move || me.run(generation, &ctx));
+        if let Err(e) = spawned {
+            self.lock().wanted = None;
+            return Some(format!("could not start the job's thread: {e}"));
+        }
         None
     }
 
@@ -109,26 +129,35 @@ impl Supervisor {
         self.lock().wanted == Some(generation) && !ctx.stopping.load(Ordering::Relaxed)
     }
 
+    /// The first time round, a process of this job that the previous wold left running is taken
+    /// over: tracked, restarted when it ends, stopped on request, as one wold started itself.
+    fn run_adopted(&self, pid: i32, ctx: &Ctx) {
+        {
+            let mut s = self.lock();
+            s.pid = Some(pid);
+            s.starts += 1;
+            s.waiting = false;
+        }
+        while ctx.runner.alive(pid) {
+            std::thread::sleep(ADOPTED_POLL);
+        }
+        let mut s = self.lock();
+        s.pid = None;
+        s.last_exit = Some(-1); // nobody reaped it for us: the status is unknown
+    }
+
     fn run(&self, generation: u64, ctx: &Ctx) {
+        let mut adoptable = true;
         while self.wanted(generation, ctx) {
             let started = ctx.epoch.elapsed().as_secs_f64();
-            eprintln!("wold: start {}", self.spec.label);
-            match ctx.runner.spawn(&self.spec) {
-                Ok(pid) => {
-                    let rx = ctx.reaper.register(pid);
-                    {
-                        let mut s = self.lock();
-                        s.pid = Some(pid);
-                        s.starts += 1;
-                        s.waiting = false;
-                    }
-                    let code = rx.recv().unwrap_or(-1);
-                    let mut s = self.lock();
-                    s.pid = None;
-                    s.last_exit = Some(code);
-                    eprintln!("wold: {} exited {code}", self.spec.label);
-                }
-                Err(e) => eprintln!("wold: {} failed to start: {e}", self.spec.label),
+            let adopted = std::mem::take(&mut adoptable)
+                .then(|| ctx.runner.adopt(&self.spec))
+                .flatten();
+            if let Some(pid) = adopted {
+                self.run_adopted(pid, ctx);
+            } else {
+                eprintln!("wold: start {}", self.spec.label);
+                self.run_spawned(ctx);
             }
             let now = ctx.epoch.elapsed().as_secs_f64();
             let Some(next) = wol_core::jobs::next_start(&self.spec, started, now) else {
@@ -158,6 +187,26 @@ impl Supervisor {
             s.wanted = None;
         }
     }
+
+    fn run_spawned(&self, ctx: &Ctx) {
+        match ctx.runner.spawn(&self.spec) {
+            Ok(pid) => {
+                let rx = ctx.reaper.register(pid);
+                {
+                    let mut s = self.lock();
+                    s.pid = Some(pid);
+                    s.starts += 1;
+                    s.waiting = false;
+                }
+                let code = rx.recv().unwrap_or(-1);
+                let mut s = self.lock();
+                s.pid = None;
+                s.last_exit = Some(code);
+                eprintln!("wold: {} exited {code}", self.spec.label);
+            }
+            Err(e) => eprintln!("wold: {} failed to start: {e}", self.spec.label),
+        }
+    }
 }
 
 /// All jobs by label.
@@ -175,8 +224,14 @@ impl Jobs {
         Self { ctx, table }
     }
 
+    /// Jobs marked run-at-load start, and so does any other job the previous wold left running
+    /// (its supervisor takes the process over).
     pub fn start_at_load(&self) {
-        for s in self.table.values().filter(|s| s.spec.run_at_load) {
+        for s in self
+            .table
+            .values()
+            .filter(|s| s.spec.run_at_load || self.ctx.runner.adopt(&s.spec).is_some())
+        {
             s.start(&self.ctx);
         }
     }
@@ -212,6 +267,10 @@ mod tests {
     struct FakeRunner {
         next: AtomicI32,
         stopped: Mutex<Vec<i32>>,
+        /// A process the previous wold left for the first job that asks.
+        left_over: Mutex<Option<i32>>,
+        /// The pids "alive" for an adopted process.
+        running: Mutex<Vec<i32>>,
     }
 
     impl Runner for FakeRunner {
@@ -220,6 +279,12 @@ mod tests {
         }
         fn stop_tree(&self, root: i32) {
             self.stopped.lock().unwrap().push(root);
+        }
+        fn adopt(&self, _: &JobSpec) -> Option<i32> {
+            *self.left_over.lock().unwrap() // idempotent, as the real one is
+        }
+        fn alive(&self, pid: i32) -> bool {
+            self.running.lock().unwrap().contains(&pid)
         }
     }
 
@@ -305,5 +370,113 @@ mod tests {
         assert_eq!(JobTable::stop(&jobs, "nope"), None);
         assert_eq!(JobTable::start(&jobs, "a"), Some(None));
         until(|| jobs.is_job(1000));
+    }
+
+    /// QA-SYS-2: a job the previous wold left running is taken over, not started twice and not
+    /// stopped: it is tracked as running, a keep-alive job restarts when it ends, and a stop
+    /// reaches its tree.
+    #[test]
+    fn adopts_alive_stale_job_and_restarts_it_when_it_ends() {
+        let r = Arc::new(FakeRunner::default());
+        *r.left_over.lock().unwrap() = Some(777);
+        r.running.lock().unwrap().push(777);
+        let c = ctx(r.clone());
+        let s = Supervisor::new(spec(
+            r#"{"label":"login","program":["x"],"keepAlive":true,"throttleSeconds":0}"#,
+        ));
+        s.start(&c);
+        until(|| s.pid() == Some(777));
+        assert_eq!(s.status().state, "running");
+        assert_eq!(r.next.load(Ordering::SeqCst), 0, "nothing was spawned");
+        assert!(r.stopped.lock().unwrap().is_empty(), "nothing was stopped");
+        r.running.lock().unwrap().clear(); // it ends
+        until(|| s.pid() == Some(1000)); // keep-alive: a fresh copy of our own
+        assert_eq!(s.status().last_exit, Some(-1));
+        assert_eq!(s.status().starts, 2);
+        assert_eq!(s.stop(&c), None);
+        assert_eq!(*r.stopped.lock().unwrap(), vec![1000]);
+    }
+
+    /// A job not marked run-at-load starts at load anyway when the previous wold left it running.
+    #[test]
+    fn a_left_over_job_starts_at_load_even_when_not_run_at_load() {
+        let r = Arc::new(FakeRunner::default());
+        *r.left_over.lock().unwrap() = Some(55);
+        r.running.lock().unwrap().push(55);
+        let c = ctx(r);
+        let jobs = Jobs::new(
+            c,
+            vec![spec(r#"{"label":"a","program":["x"],"runAtLoad":false}"#)],
+        );
+        jobs.start_at_load();
+        until(|| jobs.is_job(55));
+    }
+
+    /// The real runner: the pid file left by a previous wold names a live process whose
+    /// executable is the job's program -> adopted; a recycled pid (another program) is neither
+    /// adopted nor signalled and its file goes; a program replaced on disk is stopped.
+    #[test]
+    fn adopts_alive_stale_job_with_matching_exe() {
+        use crate::os::{OsRunner, Stale, classify_stale};
+        let d = std::env::temp_dir().join(format!("wold-adopt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let sleep = std::fs::canonicalize("/usr/bin/sleep")
+            .or_else(|_| std::fs::canonicalize("/bin/sleep"))
+            .unwrap();
+        let mut child = std::process::Command::new(&sleep)
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+        let runner = OsRunner {
+            qos: Box::new(crate::qos::Sched),
+            pid_dir: d.clone(),
+        };
+        let job = |label: &str, program: &str| {
+            spec(&format!(r#"{{"label":"{label}","program":["{program}"]}}"#))
+        };
+        let write_pid =
+            |label: &str| std::fs::write(d.join(format!("{label}.pid")), pid.to_string()).unwrap();
+
+        write_pid("ours");
+        let ours = job("ours", &sleep.to_string_lossy());
+        assert_eq!(runner.adopt(&ours), Some(pid));
+        assert!(d.join("ours.pid").exists(), "kept for the next wold");
+
+        write_pid("recycled");
+        let other = job("recycled", "/usr/bin/true");
+        assert_eq!(
+            runner.adopt(&other),
+            None,
+            "another program is never adopted"
+        );
+        assert!(crate::os::alive(pid), "and never signalled");
+
+        // The supervisor tracks it as the job's process.
+        let c = Arc::new(Ctx {
+            runner: Arc::new(runner),
+            reaper: Arc::default(),
+            stopping: Arc::default(),
+            epoch: Instant::now(),
+        });
+        let sup = Supervisor::new(ours);
+        sup.start(&c);
+        until(|| sup.pid() == Some(pid));
+        assert_eq!(sup.status().state, "running");
+        child.kill().unwrap();
+        child.wait().unwrap();
+        until(|| sup.status().state == "stopped");
+        assert_eq!(sup.status().last_exit, Some(-1));
+
+        // The pure classification the runner uses.
+        let p = sleep.to_string_lossy();
+        assert_eq!(classify_stale(&p, &p), Stale::Adopt);
+        assert_eq!(
+            classify_stale(&p, &format!("{p} (deleted)")),
+            Stale::Outdated
+        );
+        assert_eq!(classify_stale(&p, "/usr/bin/true"), Stale::Foreign);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

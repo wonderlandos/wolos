@@ -2,18 +2,34 @@
 Description=WolOS job supervisor (wold: login window, admin daemon; jobs in /etc/wolos/jobs)
 After=dbus.service seatd.service systemd-user-sessions.service wolos-hw.service
 Wants=dbus.service seatd.service
+# wold is the only way to a screen (no getty, VT locked): it restarts after every crash, however
+# many in a row. The default limit (5 starts in 10 s) left it failed for good and the screen black
+# (QA-SYS-1). Checked in crates/controller/tests/units.rs.
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/bin/wold /etc/wolos/jobs
 Restart=always
 RestartSec=1
-# SIGTERM to wold first: it stops every job tree (children first), then exits.
-KillMode=mixed
+# wold exits on SIGTERM after stopping every job tree (children first), unless the stop is the
+# first half of a `systemctl restart`: then it leaves the jobs running and the next wold adopts
+# them (QA-SYS-2, api::os::restart_pending), so the login window and the session survive a
+# restart or a crash of the supervisor. KillMode=process keeps systemd from killing them at that
+# moment; wold itself stops them on a real stop (SIGTERM, not a restart) and at shutdown.
+KillMode=process
+# The OOM killer picks the supervisor last (QA-SYS-15). oom_score_adj is inherited by fork:
+# wold resets it to 0 in every job it starts (api::os::OsRunner), so the apps never share it.
+OOMScoreAdjust=-900
 # Descriptors (audit S4-26): wold holds up to 512 control connections, the bus's subscribers and
 # the realtime sockets; the default soft limit (1024) runs out first. Soft 4096 for wold, hard as
 # systemd's default; every job starts again from soft 1024 (api::os::child_nofile), so nothing in
 # the session inherits it. Checked in crates/controller/tests/units.rs.
 LimitNOFILE=4096:524288
+# No sandbox keys (QA-PRIV-14, decided, not forgotten): every one of them is inherited by what
+# wold starts, and wold starts the user's whole session and root's admin daemon. A mount
+# namespace, a seccomp filter or a smaller capability bounding set would bind the apps, `sudo` in
+# a terminal, pacman, modprobe and games. units.rs::wold_hardening_lines lists the keys that must
+# stay out and why.
 ExecStopPost=/usr/bin/rm -f /run/wold.sock /run/wol-qos.sock /run/wol-memsaver.sock /run/wol-memsaver.json
 
 [Install]

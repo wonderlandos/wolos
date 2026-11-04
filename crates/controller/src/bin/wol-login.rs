@@ -41,6 +41,15 @@ fn main() {
     let mut flow = LoginFlow::new(listed_on_system(), auto);
     let mut phase = flow.start();
     let mut respawn = GreeterRespawn::default();
+    // wold (or this program) was restarted under a session that is still on the seat: wait for
+    // it instead of starting a login window the seat daemon refuses (QA L2-39/39b).
+    if let Some(running) = running_session() {
+        wait_session_end(&running);
+        lock_home(&running.user);
+        flow.session_ended();
+        flow.listed = listed_on_system();
+        phase = flow.start();
+    }
     loop {
         if phase == Phase::Session
             && let Some(user) = flow.user.clone()
@@ -52,9 +61,15 @@ fn main() {
             };
             console_ready();
             let started = Instant::now();
-            // How it ended does not matter, only how soon (`failed_early`): run_session logged it.
-            let _clean = run_session(&user, flow.locked, || marks.spawned(what));
+            // How soon it ended decides (`failed_early`); how, only whether a person asked.
+            let ended = run_session(&user, flow.locked, || marks.spawned(what));
             marks.exited(what);
+            settle_notice(
+                std::path::Path::new(NOTICE_FILE),
+                started.elapsed(),
+                ended,
+                || session_facts(&user),
+            );
             if failed_early(started.elapsed()) && flow.locked {
                 println!("wol-login: locked start failed; the login window takes over");
                 flow.locked_start_failed();
@@ -151,18 +166,12 @@ fn vt_ioctl(tty: &std::fs::File, request: libc::c_ulong) -> std::io::Result<()> 
 
 fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut Marks) -> Phase {
     let Some(ui) = find(&read(PASSWD_FILE), UI_USER) else {
-        eprintln!("wol-login: no {UI_USER} user");
-        std::thread::sleep(Duration::from_secs(5));
-        return Phase::Greeter;
+        return start_failed(respawn, &format!("no {UI_USER} account"));
     };
     let _ = std::fs::remove_file(SOCKET);
     let listener = match UnixListener::bind(SOCKET) {
         Ok(l) => l,
-        Err(e) => {
-            eprintln!("wol-login: {SOCKET}: {e}");
-            std::thread::sleep(Duration::from_secs(5));
-            return Phase::Greeter;
-        }
+        Err(e) => return start_failed(respawn, &format!("{SOCKET}: {e}")),
     };
     // anyone may connect; the peer uid decides
     let _ = std::fs::set_permissions(SOCKET, std::fs::Permissions::from_mode(0o666));
@@ -183,9 +192,8 @@ fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut M
     let mut greeter = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("wol-login: {GREETER}: {e}");
-            std::thread::sleep(Duration::from_secs(5));
-            return Phase::Greeter;
+            let _ = std::fs::remove_file(SOCKET);
+            return start_failed(respawn, &format!("{GREETER}: {e}"));
         }
     };
     marks.spawned("greeter");
@@ -236,10 +244,121 @@ fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut M
             println!("{}", handoff_gave_up(flow.from_setup()));
         }
     }
-    stop_tree(&mut greeter);
+    finish_greeter(&mut greeter, stop_tree);
     marks.exited("greeter");
     let _ = std::fs::remove_file(SOCKET);
     phase
+}
+
+/// The greeter cannot be started at all (no `_wollogin`, socket bind or program spawn failed):
+/// the console says what is wrong, with VT switching unlocked, and the next try waits the
+/// back-off (QA-SHADOW-15/38: it used to sleep 5 s on a blanked, locked VT, forever, with
+/// nothing on screen).
+fn start_failed(respawn: &mut GreeterRespawn, why: &str) -> Phase {
+    eprintln!("wol-login: the login window cannot start: {why}");
+    let dri = std::path::Path::new("/dev/dri").exists();
+    let open = || std::fs::OpenOptions::new().write(true).open(CONSOLE);
+    let (next, step) = greeter_start_failed(respawn, why, dri, open, vt_ioctl);
+    if let VtStep::Failed(why) = step {
+        eprintln!("wol-login: {CONSOLE}: {why}");
+    }
+    std::thread::sleep(next.delay);
+    Phase::Greeter
+}
+
+/// After a greeter's loop ends: stop what is left of its tree, unless the child was already
+/// reaped (`try_wait` returned its status): its pid is free by now, and after the respawn delay
+/// signalling it as root could hit another process (QA-SHADOW-37). `stop` is [`stop_tree`].
+fn finish_greeter(greeter: &mut Child, stop: impl FnOnce(&mut Child)) {
+    if matches!(greeter.try_wait(), Ok(Some(_))) {
+        return;
+    }
+    stop(greeter);
+}
+
+/// A running Wayland session of a person on seat0, if any (`loginctl`; asked while logind
+/// answers). None when there is none or logind did not answer within the time given.
+fn running_session() -> Option<SeatSession> {
+    let ui = find(&read(PASSWD_FILE), UI_USER).map_or(u32::MAX, |u| u.uid);
+    let t = Duration::from_secs(5);
+    let list = capture(
+        &["loginctl", "list-sessions", "--no-legend", "--no-pager"],
+        t,
+    )?;
+    seat0_user_session(&list, ui, |id| {
+        capture(
+            &[
+                "loginctl",
+                "show-session",
+                id,
+                "-p",
+                "Class",
+                "-p",
+                "Type",
+                "-p",
+                "Leader",
+                "-p",
+                "State",
+            ],
+            t,
+        )
+        .unwrap_or_default()
+    })
+}
+
+/// Blocks until the session's leader is gone: nobody here is its parent, so it is looked at, not
+/// waited for.
+fn wait_session_end(s: &SeatSession) {
+    println!(
+        "wol-login: {} already has session {} on seat0 (leader {}); not starting a login window",
+        s.user, s.id, s.leader
+    );
+    // /proc/<pid> exists until the leader is reaped (by init: it is nobody's child here).
+    let leader = std::path::PathBuf::from(format!("/proc/{}", s.leader));
+    while leader.exists() {
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    println!("wol-login: session {} of {} ended", s.id, s.user);
+}
+
+/// What the end of a short session depends on: free bytes on the home's disk, and whether the
+/// account can write its `~/.config`.
+fn session_facts(user: &LoginUser) -> (Option<u64>, Option<bool>) {
+    let t = Duration::from_secs(5);
+    let free = capture(&["df", "-B1", "--output=avail", &user.home], t)
+        .as_deref()
+        .and_then(parse_df_avail);
+    let config = format!("{}/.config", user.home);
+    let writable = privileged_command("runuser")
+        .args(["-u", &user.name, "--", "test", "-w", &config])
+        .status()
+        .ok()
+        .map(|s| s.success());
+    (free, writable)
+}
+
+/// After a session: when it ended within seconds and nobody asked it to ([`ended_on_request`]), the
+/// sentence for the login window goes to `path` (atomically, readable by the window's account);
+/// any other end removes a notice left by an earlier one. `facts` is asked only for the first
+/// case. Returns the sentence written.
+fn settle_notice(
+    path: &std::path::Path,
+    ran: Duration,
+    ended: Option<(Option<i32>, Option<i32>)>,
+    facts: impl FnOnce() -> (Option<u64>, Option<bool>),
+) -> Option<&'static str> {
+    let (code, signal) = ended.unwrap_or((None, None));
+    if !failed_early(ran) || ended_on_request(code, signal) {
+        let _ = std::fs::remove_file(path);
+        return None;
+    }
+    let (free, writable) = facts();
+    let sentence = early_end_sentence(free, writable);
+    println!("wol-login: the session ended early: {sentence}");
+    if let Err(e) = shared::atomic::atomic_write(path, 0o644, sentence.as_bytes()) {
+        eprintln!("wol-login: {}: {e}", path.display());
+    }
+    Some(sentence)
 }
 
 fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
@@ -363,9 +482,13 @@ fn run_power(argv: &[&str]) -> bool {
                 return st.success();
             }
             Ok(None) if start.elapsed() >= POWER_WAIT => {
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
+                // Named; a thread the system refuses is not a failed power request (the child
+                // is then reaped when wol-login ends).
+                let _ = std::thread::Builder::new()
+                    .name("power-wait".into())
+                    .spawn(move || {
+                        let _ = child.wait();
+                    });
                 return true;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
@@ -412,6 +535,14 @@ fn scan_wifi() -> Vec<shared::login::SeenNetwork> {
         .collect()
 }
 
+/// An `AdminStep::Write`: the whole new file appears at once, with its mode from the first byte
+/// (QA-DATA-14: truncate-then-write left a cut file after a power cut, and a secret was readable
+/// for an instant before the mode was set).
+fn write_step(path: &std::path::Path, mode: u32, content: &wol_core::admin::WriteContent) -> bool {
+    let cur = std::fs::read_to_string(path).ok();
+    shared::atomic::atomic_write(path, mode, content.render(cur.as_deref()).as_bytes()).is_ok()
+}
+
 /// Same allow-listed steps as wol-admind's Wi-Fi join (NetworkManager, password on stdin).
 fn join_wifi(ssid: &str, password: Option<&str>) -> bool {
     let mut args = vec![WLAN.to_string(), ssid.to_string()];
@@ -436,11 +567,7 @@ fn join_wifi(ssid: &str, password: Option<&str>) -> bool {
             path,
             mode,
             content,
-        } => {
-            let cur = std::fs::read_to_string(&path).ok();
-            std::fs::write(&path, content.render(cur.as_deref())).is_ok()
-                && std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).is_ok()
-        }
+        } => write_step(std::path::Path::new(&path), mode, &content),
     })
 }
 
@@ -526,12 +653,14 @@ fn stop_keyring(user: &LoginUser) {
     }
 }
 
-/// Runs the session to its end; true when it exited cleanly (logout).
-fn run_session(user: &LoginUser, locked: bool, spawned: impl FnOnce()) -> bool {
+/// Runs the session to its end; its (exit code, signal), None when it did not start.
+fn run_session(
+    user: &LoginUser,
+    locked: bool,
+    spawned: impl FnOnce(),
+) -> Option<(Option<i32>, Option<i32>)> {
     make_runtime_dir(user);
-    let Some(cmd) = session_command(user, locked) else {
-        return false;
-    };
+    let cmd = session_command(user, locked)?;
     println!("wol-login: session {} ({})", user.name, user.uid);
     // `su -l` builds the login environment of the account itself.
     let st = privileged_command(&cmd[0])
@@ -546,7 +675,10 @@ fn run_session(user: &LoginUser, locked: bool, spawned: impl FnOnce()) -> bool {
         stop_keyring(user);
     }
     lock_home(&user.name);
-    st.is_ok_and(|s| s.success())
+    st.ok().map(|s| {
+        use std::os::unix::process::ExitStatusExt;
+        (s.code(), s.signal())
+    })
 }
 
 /// "Encrypt my files" (wol_core::home_crypt): state of the home's dataset; None for a plain folder.
@@ -628,6 +760,91 @@ fn stop_tree(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-DATA-14: a Setup write replaces the file whole, with the asked mode from the first
+    /// byte (the temporary is created with it) and no temporary left behind.
+    #[test]
+    fn admin_step_write_atomic() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("wol-login-write-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("secret.nmconnection");
+        std::fs::write(&file, "old and much longer than the new content\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let fixed = wol_core::admin::WriteContent::Fixed("psk=new\n".into());
+        assert!(write_step(&file, 0o600, &fixed));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "psk=new\n");
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
+        assert_eq!(left.len(), 1, "no temporary file stays: {left:?}");
+        // A folder that is not there: nothing is created and the step fails.
+        assert!(!write_step(&dir.join("missing").join("x"), 0o600, &fixed));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// QA-LIVE-33 / QA-DATA-3 / QA-DATA-14-style: the sentence really reaches the file the login
+    /// window reads, a crash within seconds writes it, and a logout, a long session or a later
+    /// healthy end takes a stale one away.
+    #[test]
+    fn early_end_notice_file_is_written_and_cleared() {
+        let dir = std::env::temp_dir().join(format!("wol-login-notice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("wol-login-notice");
+        let soon = Duration::from_secs(1);
+        let facts_full = || (Some(0), Some(true));
+        let never = || panic!("facts are asked only for a crash within seconds");
+
+        // A crash within a second on a full disk.
+        let said = settle_notice(&file, soon, Some((Some(1), None)), facts_full).unwrap();
+        assert!(said.contains("disk is full"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), said);
+        // A session that never started counts the same way.
+        assert!(settle_notice(&file, soon, None, facts_full).is_some());
+        // The person logged out within seconds: status 0, or logind's TERM. The old notice goes.
+        assert_eq!(
+            settle_notice(&file, soon, Some((Some(0), None)), never),
+            None
+        );
+        assert!(!file.exists());
+        settle_notice(&file, soon, Some((Some(1), None)), facts_full);
+        assert_eq!(
+            settle_notice(&file, soon, Some((None, Some(libc::SIGTERM))), never),
+            None
+        );
+        assert!(!file.exists());
+        // A crash after a healthy run is not a failed start.
+        settle_notice(&file, soon, Some((Some(1), None)), facts_full);
+        let long = Duration::from_secs(60);
+        assert_eq!(
+            settle_notice(&file, long, Some((Some(1), None)), never),
+            None
+        );
+        assert!(!file.exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// QA-SHADOW-37: a greeter whose exit `try_wait` already returned is not signalled again
+    /// (its pid may belong to another process by then); one still running is stopped.
+    #[test]
+    fn no_stop_tree_after_try_wait_some() {
+        let mut done = std::process::Command::new("true").spawn().unwrap();
+        done.wait().unwrap(); // reaped: `try_wait` answers with the same status from now on
+        let mut stopped = Vec::new();
+        finish_greeter(&mut done, |c| stopped.push(c.id()));
+        assert!(stopped.is_empty(), "already reaped: nothing to signal");
+
+        let mut alive = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        finish_greeter(&mut alive, |c| stopped.push(c.id()));
+        assert_eq!(stopped, [alive.id()]);
+        alive.kill().unwrap();
+        alive.wait().unwrap();
+    }
 
     /// The real ioctl layer on a file that is no VT (a nested compositor's case): ENOTTY, so the
     /// step is a no-op and nothing is written; a missing device path is a no-op too.

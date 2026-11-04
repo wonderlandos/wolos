@@ -318,11 +318,38 @@ pub fn oom_adj(class: QosClass) -> Option<i16> {
     (class == QosClass::Background).then_some(300)
 }
 
-/// The numeric pid directories under `proc_dir` whose `comm` is one of `comms`.
-fn procs_named<'a>(
-    proc_dir: &Path,
-    comms: &'a [&[u8]],
-) -> impl Iterator<Item = std::fs::DirEntry> + 'a {
+/// One process as `/proc/<pid>/stat` names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Proc {
+    pub pid: i32,
+    pub ppid: i32,
+    /// The kernel's `comm` (15 bytes at most).
+    pub comm: Vec<u8>,
+}
+
+/// `pid (comm) S ppid ...`: the command may hold spaces and parentheses, so it runs to the last
+/// `)`.
+fn parse_stat(text: &[u8]) -> Option<Proc> {
+    let open = text.iter().position(|b| *b == b'(')?;
+    let close = text.iter().rposition(|b| *b == b')')?;
+    let pid = std::str::from_utf8(text.get(..open)?)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    let rest = std::str::from_utf8(text.get(close + 1..)?).ok()?;
+    let ppid = rest.split_whitespace().nth(1)?.parse().ok()?;
+    Some(Proc {
+        pid,
+        ppid,
+        comm: text.get(open + 1..close)?.to_vec(),
+    })
+}
+
+/// Every process under `proc_dir`, from ONE read of `stat` each. The 5 s session tick used to
+/// read `comm` of every pid three times over (protect, grant, precompile: 144 reads a second on a
+/// small desktop, H17 R2-03b); now it reads each pid once and every step works on this list.
+pub fn scan(proc_dir: &Path) -> Vec<Proc> {
     std::fs::read_dir(proc_dir)
         .into_iter()
         .flatten()
@@ -332,32 +359,68 @@ fn procs_named<'a>(
                 .to_str()
                 .is_some_and(|n| n.parse::<u32>().is_ok())
         })
-        .filter(move |e| {
-            std::fs::read(e.path().join("comm")).is_ok_and(|c| comms.contains(&c.trim_ascii_end()))
-        })
+        .filter_map(|e| parse_stat(&std::fs::read(e.path().join("stat")).ok()?))
+        .collect()
+}
+
+/// The processes of `procs` whose `comm` is one of `comms`.
+fn named<'a>(procs: &'a [Proc], comms: &'a [&[u8]]) -> impl Iterator<Item = &'a Proc> + 'a {
+    procs
+        .iter()
+        .filter(move |p| comms.contains(&p.comm.as_slice()))
 }
 
 /// Session processes the OOM killer must spare (a dead compositor ends the whole session).
 pub const SESSION_COMMS: [&[u8]; 2] = [b"Hyprland", b"wol-shell"];
 pub const SESSION_OOM_ADJ: i16 = -900;
 
-/// Give every [`SESSION_COMMS`] process under `proc_dir` [`SESSION_OOM_ADJ`]; idempotent (only
-/// writes values that differ). Returns how many were written. On the real `/proc` it also gives
-/// them the interactive grant ([`grant_session`]).
-pub fn protect_session(proc_dir: &Path) -> usize {
+/// Give every [`SESSION_COMMS`] process in `procs` [`SESSION_OOM_ADJ`]; idempotent (only writes
+/// values that differ). Returns how many were written.
+pub fn protect_session(proc_dir: &Path, procs: &[Proc]) -> usize {
     let want = SESSION_OOM_ADJ.to_string();
-    let n = procs_named(proc_dir, &SESSION_COMMS)
-        .filter(|e| {
-            let adj = e.path().join("oom_score_adj");
+    named(procs, &SESSION_COMMS)
+        .filter(|p| {
+            let adj = proc_dir.join(p.pid.to_string()).join("oom_score_adj");
             std::fs::read_to_string(&adj).is_ok_and(|v| v.trim() != want)
                 && std::fs::write(&adj, &want).is_ok()
         })
-        .count();
+        .count()
+}
+
+/// `oom_score_adj` is inherited by fork: everything the compositor or the shell starts (every app
+/// from the launcher, every `exec-once`) would sit at [`SESSION_OOM_ADJ`] too, shielded like the
+/// session itself while logind, seatd and wold sit at 0 and are killed before a memory hog (QA
+/// L2-30). Every process in `procs` that carries exactly that value and is neither a session
+/// process nor wold itself (whose unit sets it) goes back to 0. Looked at by value, not by
+/// ancestry: an app that double-forked and was reparented to init or `systemd --user` keeps the
+/// value for good otherwise. A value somebody chose (anything else) is left alone. Raising needs
+/// no privilege. Returns how many.
+pub fn reset_inherited_oom_adj(proc_dir: &Path, procs: &[Proc]) -> usize {
+    let want = SESSION_OOM_ADJ.to_string();
+    let wold = std::process::id() as i32;
+    procs
+        .iter()
+        .filter(|p| p.pid != wold && !SESSION_COMMS.contains(&p.comm.as_slice()))
+        .filter(|p| {
+            let adj = proc_dir.join(p.pid.to_string()).join("oom_score_adj");
+            std::fs::read_to_string(&adj).is_ok_and(|v| v.trim() == want)
+                && std::fs::write(&adj, "0").is_ok()
+        })
+        .count()
+}
+
+/// wold's 5 s session tick: one pass over `proc_dir`, then the compositor and shell are protected
+/// and given their scheduler grant, what they started is not protected with them, and shader
+/// precompilers go to the background (the session starts after wold: re-checking is idempotent).
+pub fn session_tick(proc_dir: &Path) {
+    let procs = scan(proc_dir);
+    protect_session(proc_dir, &procs);
+    reset_inherited_oom_adj(proc_dir, &procs);
     // A fake /proc (tests) names pids that are not real: they get no grant.
     if proc_dir == Path::new("/proc") {
-        grant_session(proc_dir, &PinnedMap(GRANTS_PIN), &SESSION_GRANTS);
+        grant_session(proc_dir, &PinnedMap(GRANTS_PIN), &SESSION_GRANTS, &procs);
     }
-    n
+    tag_precompile(&procs, &Sched);
 }
 
 /// scx_wolos's grants map, pinned by its loader (kernel/scx_wolos/scx_wolos.c), NUL-terminated.
@@ -445,9 +508,14 @@ pub fn grant_for(map: &dyn GrantMap, session: &SessionGrants, pid: i32, class: Q
 /// The compositor and the shell under `proc_dir` get the interactive grant, ones that ended lose
 /// it, and key 0 turns grants on once one is written (so the compositor is never capped by its
 /// own missing grant). Returns how many grants were written.
-pub fn grant_session(proc_dir: &Path, map: &dyn GrantMap, session: &SessionGrants) -> usize {
-    let now: Vec<i32> = procs_named(proc_dir, &SESSION_COMMS)
-        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+pub fn grant_session(
+    proc_dir: &Path,
+    map: &dyn GrantMap,
+    session: &SessionGrants,
+    procs: &[Proc],
+) -> usize {
+    let now: Vec<i32> = named(procs, &SESSION_COMMS)
+        .map(|p| p.pid)
         .filter(|p| *p > 0)
         .take(SESSION_SLOTS)
         .collect();
@@ -627,12 +695,11 @@ impl GrantMap for PinnedMap {
 /// Shader precompilers, as the kernel truncates them in `comm`.
 pub const PRECOMPILE_COMMS: [&[u8]; 1] = [b"fossilize_repla"];
 
-/// Put every [`PRECOMPILE_COMMS`] process under `proc_dir` in [`QosClass::Background`]. Re-applying
-/// is harmless and threads inherit it. Returns how many were tagged.
-pub fn tag_precompile(proc_dir: &Path, applier: &dyn Applier) -> usize {
-    procs_named(proc_dir, &PRECOMPILE_COMMS)
-        .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
-        .filter(|pid| applier.apply(*pid, QosClass::Background))
+/// Put every [`PRECOMPILE_COMMS`] process in `procs` in [`QosClass::Background`]. Re-applying is
+/// harmless and threads inherit it. Returns how many were tagged.
+pub fn tag_precompile(procs: &[Proc], applier: &dyn Applier) -> usize {
+    named(procs, &PRECOMPILE_COMMS)
+        .filter(|p| applier.apply(p.pid, QosClass::Background))
         .count()
 }
 
@@ -849,6 +916,86 @@ pub mod tests {
         }
     }
 
+    /// A `/proc/<pid>/stat` line the way the kernel writes it.
+    fn stat_line(pid: &str, ppid: i32, comm: &str) -> String {
+        format!(
+            "{pid} ({}) S {ppid} {pid} {pid} 0 -1 4194560\n",
+            comm.trim()
+        )
+    }
+
+    /// One fake process: `stat` and `oom_score_adj`.
+    fn put_proc(d: &Path, pid: i32, ppid: i32, comm: &str, adj: &str) {
+        let dir = d.join(pid.to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("stat"), stat_line(&pid.to_string(), ppid, comm)).unwrap();
+        std::fs::write(dir.join("oom_score_adj"), format!("{adj}\n")).unwrap();
+    }
+
+    /// QA L2-30: the -900 given to the compositor and the shell is inherited by everything they
+    /// start; wold hands it back to 0 below them (kernel logind/seatd/wold would die before a
+    /// memory hog otherwise), also an app reparented to init. A chosen value, wold and the session
+    /// itself stay.
+    #[test]
+    fn apps_started_by_the_session_do_not_keep_its_oom_protection() {
+        let d = std::env::temp_dir().join(format!("wol-qos-inherit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        put_proc(&d, 10, 1, "Hyprland", "-900");
+        put_proc(&d, 11, 10, "wol-shell", "-900");
+        put_proc(&d, 12, 11, "wol-settings", "-900"); // an app: inherited
+        put_proc(&d, 13, 12, "helper", "-900"); // below the app: inherited
+        put_proc(&d, 14, 10, "sh", "-500"); // chosen by somebody: kept
+        put_proc(&d, 15, 1, "double-forked", "-900"); // reparented to init: inherited all the same
+        put_proc(&d, 16, 10, "foot", "0");
+        let wold = std::process::id() as i32;
+        put_proc(&d, wold, 1, "wold", "-900"); // wold's own unit value stays
+        let adj = |pid: i32| {
+            std::fs::read_to_string(d.join(pid.to_string()).join("oom_score_adj")).unwrap()
+        };
+        assert_eq!(reset_inherited_oom_adj(&d, &scan(&d)), 3);
+        for (pid, want) in [
+            (10, "-900"),
+            (11, "-900"),
+            (12, "0"),
+            (13, "0"),
+            (14, "-500"),
+            (15, "0"),
+            (16, "0"),
+        ] {
+            assert_eq!(adj(pid).trim(), want, "pid {pid}");
+        }
+        assert_eq!(adj(wold).trim(), "-900", "wold keeps its unit's value");
+        assert_eq!(reset_inherited_oom_adj(&d, &scan(&d)), 0, "idempotent");
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// `stat` is read once per pid and parsed with commands that hold spaces and parentheses.
+    #[test]
+    fn stat_names_pid_parent_and_command() {
+        let p = parse_stat(b"42 (a (b) c) S 7 42 42 0 -1 4194560 1 2 3").unwrap();
+        assert_eq!((p.pid, p.ppid, p.comm.as_slice()), (42, 7, &b"a (b) c"[..]));
+        assert_eq!(parse_stat(b"garbage"), None);
+        assert_eq!(parse_stat(b"x (y) S 1"), None);
+    }
+
+    /// H17 R2-03b: one tick reads each pid's `stat` once, not three scans of `comm`.
+    #[test]
+    fn a_tick_reads_each_pid_once() {
+        let d = std::env::temp_dir().join(format!("wol-qos-scan-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        for pid in 1..=20 {
+            put_proc(&d, pid, 1, "app", "0");
+        }
+        // The only file that names a process to the three steps is `stat`: no `comm` file is
+        // there to be read, and the tick still finds the compositor.
+        put_proc(&d, 30, 1, "Hyprland", "0");
+        assert!(!d.join("30").join("comm").exists());
+        let procs = scan(&d);
+        assert_eq!(procs.len(), 21);
+        assert_eq!(protect_session(&d, &procs), 1);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
     /// Fake /proc: compositor and shell get -900 once; other processes are untouched.
     #[test]
     fn session_is_protected_from_the_oom_killer() {
@@ -863,15 +1010,16 @@ pub mod tests {
         ] {
             std::fs::create_dir_all(d.join(pid)).unwrap();
             std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+            std::fs::write(d.join(pid).join("stat"), stat_line(pid, 1, comm)).unwrap();
             std::fs::write(d.join(pid).join("oom_score_adj"), adj).unwrap();
         }
         let adj = |pid: &str| std::fs::read_to_string(d.join(pid).join("oom_score_adj")).unwrap();
-        assert_eq!(protect_session(&d), 2);
+        assert_eq!(protect_session(&d, &scan(&d)), 2);
         assert_eq!(adj("10").trim(), "-900");
         assert_eq!(adj("11").trim(), "-900");
         assert_eq!(adj("12").trim(), "0");
         assert_eq!(adj("self").trim(), "0", "only numeric pid dirs");
-        assert_eq!(protect_session(&d), 0, "idempotent");
+        assert_eq!(protect_session(&d, &scan(&d)), 0, "idempotent");
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -902,10 +1050,11 @@ pub mod tests {
         ] {
             std::fs::create_dir_all(d.join(pid)).unwrap();
             std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+            std::fs::write(d.join(pid).join("stat"), stat_line(pid, 1, comm)).unwrap();
         }
         let (map, session) = (FakeMap::default(), SessionGrants::new());
         let grants = || map.0.lock().unwrap().clone();
-        assert_eq!(grant_session(&d, &map, &session), 2);
+        assert_eq!(grant_session(&d, &map, &session, &scan(&d)), 2);
         let want: std::collections::BTreeMap<u32, u32> = [
             (GRANTS_KEY, 0),
             (10, GRANT_INTERACTIVE),
@@ -928,7 +1077,7 @@ pub mod tests {
         assert!(!grant_for(&map, &session, -1, QosClass::UserInteractive));
         // The shell ends: its grant goes, the switch stays.
         std::fs::remove_dir_all(d.join("11")).unwrap();
-        assert_eq!(grant_session(&d, &map, &session), 1);
+        assert_eq!(grant_session(&d, &map, &session, &scan(&d)), 1);
         assert_eq!(grants().get(&11), None);
         assert_eq!(grants().get(&GRANTS_KEY), Some(&0));
         assert!(!session.contains(11));
@@ -944,20 +1093,21 @@ pub mod tests {
         for (pid, comm) in [("10", "Hyprland\n"), ("20", "app\n"), ("21", "app\n")] {
             std::fs::create_dir_all(d.join(pid)).unwrap();
             std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+            std::fs::write(d.join(pid).join("stat"), stat_line(pid, 1, comm)).unwrap();
         }
         let (map, session) = (FakeMap::default(), SessionGrants::new());
         let grants = || map.0.lock().unwrap().clone();
-        assert_eq!(grant_session(&d, &map, &session), 1);
+        assert_eq!(grant_session(&d, &map, &session, &scan(&d)), 1);
         assert!(grant_for(&map, &session, 20, QosClass::UserInteractive));
         assert!(grant_for(&map, &session, 21, QosClass::UserInteractive));
         std::fs::remove_dir_all(d.join("20")).unwrap();
-        grant_session(&d, &map, &session);
+        grant_session(&d, &map, &session, &scan(&d));
         assert_eq!(grants().get(&20), None, "ended while frontmost");
         assert_eq!(grants().get(&21), Some(&GRANT_FOREGROUND));
         assert_eq!(grants().get(&GRANTS_KEY), Some(&0));
         // The session ends: its rows and key 0 go.
         std::fs::remove_dir_all(d.join("10")).unwrap();
-        assert_eq!(grant_session(&d, &map, &session), 0);
+        assert_eq!(grant_session(&d, &map, &session, &scan(&d)), 0);
         assert_eq!(grants().get(&GRANTS_KEY), None);
         assert_eq!(grants().get(&10), None);
         // The tracked list never grows past its cap.
@@ -979,7 +1129,7 @@ pub mod tests {
         let d = std::env::temp_dir().join(format!("wol-qos-nogrants-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         let (map, session) = (FakeMap::default(), SessionGrants::new());
-        assert_eq!(grant_session(&d, &map, &session), 0);
+        assert_eq!(grant_session(&d, &map, &session, &scan(&d)), 0);
         assert!(map.0.lock().unwrap().is_empty());
         std::fs::remove_dir_all(&d).ok();
     }
@@ -1024,9 +1174,10 @@ pub mod tests {
         ] {
             std::fs::create_dir_all(d.join(pid)).unwrap();
             std::fs::write(d.join(pid).join("comm"), comm).unwrap();
+            std::fs::write(d.join(pid).join("stat"), stat_line(pid, 1, comm)).unwrap();
         }
         let r = Recorder(Mutex::new(Vec::with_capacity(8)));
-        assert_eq!(tag_precompile(&d, &r), 2);
+        assert_eq!(tag_precompile(&scan(&d), &r), 2);
         let mut got = r.0.lock().unwrap().clone();
         got.sort();
         assert_eq!(

@@ -226,6 +226,50 @@ pub struct Service {
 /// Background apps are looked at this often (focus and snapshots wake the ticker at once).
 pub const TICK: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// After a round that panicked the ticker waits this much longer, so a fault that repeats every
+/// round does not fill the journal.
+const PANIC_PAUSE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// One ticker round: the frontmost app, then the tick. None when it panicked (the engine's lock is
+/// poisoned and its tables may be half way; the next round starts from what the system shows).
+fn guarded_tick<S: Sys>(
+    engine: &std::sync::Mutex<engine::Engine<S>>,
+    front: i32,
+    now: u64,
+) -> Option<shared::memsaver::Status> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut e = engine.lock().unwrap_or_else(|p| p.into_inner());
+        if front > 0 {
+            e.focus(front);
+        }
+        e.tick(now)
+    }))
+    .ok()
+}
+
+/// Thaw every frozen cgroup under `root`/user.slice, whatever the engine believes: after a panic
+/// its table of apps may have lost the very scope it had just frozen. Returns how many were thawed.
+pub fn thaw_all(root: &Path) -> usize {
+    fn walk(dir: &Path, depth: u32, thawed: &mut usize) {
+        if std::fs::read_to_string(dir.join("cgroup.freeze")).is_ok_and(|v| v.trim() == "1")
+            && cgroup::freeze(dir, false)
+        {
+            *thawed += 1;
+        }
+        if depth == 0 {
+            return;
+        }
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                walk(&e.path(), depth - 1, thawed);
+            }
+        }
+    }
+    let mut thawed = 0;
+    walk(&root.join("user.slice"), 6, &mut thawed);
+    thawed
+}
+
 fn now_ms() -> u64 {
     shared::sys::monotonic_ns() / 1_000_000
 }
@@ -256,19 +300,20 @@ impl Service {
         self.wake();
     }
 
-    /// Runs forever on the calling thread.
+    /// Runs forever on the calling thread. A panic in one round is caught: every frozen app is
+    /// thawed (nothing watches them any more) and the ticker goes on (QA-SYS-9).
     pub fn run_ticker(&self) {
         let _ = self.ticker.set(std::thread::current());
         let mut last = None;
         loop {
             std::thread::park_timeout(TICK);
-            let st = {
-                let mut e = self.engine();
-                let f = self.front.swap(0, std::sync::atomic::Ordering::Relaxed);
-                if f > 0 {
-                    e.focus(f);
-                }
-                e.tick(now_ms())
+            let front = self.front.swap(0, std::sync::atomic::Ordering::Relaxed);
+            let Some(st) = guarded_tick(&self.engine, front, now_ms()) else {
+                // The panic itself is in the journal (the panic hook); what stays frozen is not.
+                thaw_all(Path::new(cgroup::ROOT));
+                last = None;
+                std::thread::park_timeout(PANIC_PAUSE);
+                continue;
             };
             if last.as_ref() != Some(&st) {
                 if let Err(e) = write_status(&self.status, &st) {
@@ -440,6 +485,113 @@ mod tests {
         assert!(reader.join().unwrap() > 0);
         let mode = std::fs::metadata(&p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o644);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A `Sys` whose every question is a panic: the model of a bug inside the engine.
+    struct Boom;
+    impl Sys for Boom {
+        fn cgroup(&self, _pid: i32) -> Option<String> {
+            panic!("engine bug")
+        }
+        fn owner_and_parent(&self, _pid: i32) -> Option<(u32, i32)> {
+            panic!("engine bug")
+        }
+        fn comm(&self, _pid: i32) -> String {
+            panic!("engine bug")
+        }
+        fn is_game(&self, _pid: i32) -> bool {
+            panic!("engine bug")
+        }
+        fn parents(&self) -> Vec<(i32, i32)> {
+            panic!("engine bug")
+        }
+        fn exists(&self, _cg: &str) -> bool {
+            panic!("engine bug")
+        }
+        fn procs(&self, _cg: &str) -> Vec<i32> {
+            panic!("engine bug")
+        }
+        fn current(&self, _cg: &str) -> u64 {
+            panic!("engine bug")
+        }
+        fn cpu_usec(&self, _cg: &str) -> u64 {
+            panic!("engine bug")
+        }
+        fn freeze(&self, _cg: &str, _frozen: bool) -> bool {
+            panic!("engine bug")
+        }
+        fn refused(&self, _cg: &str) -> u64 {
+            panic!("engine bug")
+        }
+        fn kill(&self, _cg: &str) -> bool {
+            panic!("engine bug")
+        }
+        fn oom_kills(&self, _cg: &str) -> u64 {
+            panic!("engine bug")
+        }
+        fn tasks(&self, _cg: &str) -> u64 {
+            panic!("engine bug")
+        }
+        fn adopt(&self, _args: &[String]) -> bool {
+            panic!("engine bug")
+        }
+        fn give_back(&self, _scope: &str, _bytes: u64, _pids: Vec<i32>) {
+            panic!("engine bug")
+        }
+        fn cancel(&self, _scope: &str) {
+            panic!("engine bug")
+        }
+        fn swapped(&self, _pids: &[i32]) -> u64 {
+            panic!("engine bug")
+        }
+    }
+
+    /// QA-SYS-9: a panic in a tick leaves an app frozen with nobody to thaw it while wold lives
+    /// on. The round reports it (None), and `thaw_all` thaws every frozen cgroup under the user
+    /// slice, also one no table of the engine names.
+    #[test]
+    fn ticker_panic_thaws() {
+        let engine = Mutex::new(engine::Engine::new(Boom, Default::default()));
+        engine.lock().unwrap().snapshot(shared::memsaver::Snapshot {
+            enabled: true,
+            windows: vec![shared::memsaver::Window {
+                pid: 4242,
+                app: "notes".into(),
+                visible: false,
+            }],
+            ..Default::default()
+        });
+        assert!(
+            guarded_tick(&engine, 0, 1000).is_none(),
+            "the panic is caught, not propagated"
+        );
+        // The lock is poisoned now; the next round still runs (and, here, panics again).
+        assert!(guarded_tick(&engine, 7, 3000).is_none());
+
+        let d = std::env::temp_dir().join(format!("wol-msthaw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let user = d.join("user.slice").join("user-1000.slice");
+        let frozen = user.join("app-wol-notes-4242.scope");
+        let deep = user
+            .join("user@1000.service")
+            .join("app.slice")
+            .join("app-x.scope");
+        let awake = user.join("app-wol-files-1.scope");
+        for (dir, v) in [(&frozen, "1"), (&deep, "1"), (&awake, "0")] {
+            std::fs::create_dir_all(dir).unwrap();
+            std::fs::write(dir.join("cgroup.freeze"), v).unwrap();
+        }
+        // Outside the user slice nothing is touched.
+        let system = d.join("system.slice").join("x.service");
+        std::fs::create_dir_all(&system).unwrap();
+        std::fs::write(system.join("cgroup.freeze"), "1").unwrap();
+        assert_eq!(thaw_all(&d), 2);
+        let read = |p: &Path| std::fs::read_to_string(p.join("cgroup.freeze")).unwrap();
+        assert_eq!(read(&frozen), "0");
+        assert_eq!(read(&deep), "0");
+        assert_eq!(read(&awake), "0");
+        assert_eq!(read(&system), "1");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
