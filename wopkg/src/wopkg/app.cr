@@ -58,16 +58,39 @@ module Wopkg
       @core = Core.new(config)
     end
 
+    # Root's home is in the sealed, read-only slot: its cache and state live under /var, as
+    # libwopkg's (QA-STORE-62; context.rs ROOT_CACHE, ROOT_STATE).
+    ROOT_CACHE = "/var/cache/wopkg"
+    ROOT_STATE = "/var/lib/wolos/wopkg/state"
+
+    # /proc/self belongs to the process's effective user (no FFI outside the ffi modules, RCR-010).
+    def self.root? : Bool
+      File.info("/proc/self").owner_id == "0"
+    rescue File::Error
+      false
+    end
+
     def home : String
-      @config.home || ENV["HOME"]
+      @config.home || ENV["HOME"]?.presence || (App.root? ? "/root" : raise ArgumentError.new("wopkg needs a home folder."))
     end
 
     def cache : String
-      @config.cache_dir || "#{ENV["XDG_CACHE_HOME"]? || "#{home}/.cache"}/wopkg"
+      @config.cache_dir || App.dir(ENV["XDG_CACHE_HOME"]?, App.root?, ROOT_CACHE) { "#{home}/.cache/wopkg" }
     end
 
     def state : String
-      @config.state_dir || "#{ENV["XDG_STATE_HOME"]? || "#{home}/.local/state"}/wopkg"
+      @config.state_dir || App.dir(ENV["XDG_STATE_HOME"]?, App.root?, ROOT_STATE) { "#{home}/.local/state/wopkg" }
+    end
+
+    # The XDG folder's wopkg directory when set, else root's /var one, else the home's.
+    def self.dir(xdg : String?, root : Bool, admin : String, & : -> String) : String
+      if x = xdg.presence
+        "#{x}/wopkg"
+      elsif root
+        admin
+      else
+        yield
+      end
     end
 
     def prefix : String

@@ -191,6 +191,9 @@ mod tests {
         Context::new(crate::context::Config {
             home: Some(d.to_path_buf()),
             cache_dir: Some(d.join("cache")),
+            // Never the administrator's /var folders when the tests run as root.
+            state_dir: Some(d.join("state")),
+            data_dir: Some(d.join("data")),
             allow_loopback_http: true,
             ..Default::default()
         })

@@ -1368,6 +1368,11 @@ pub enum ParseError {
     },
     Extra(String),
     BadFlag(String),
+    /// A group word alone (`wol layers`): its commands.
+    Group {
+        word: String,
+        subs: String,
+    },
 }
 
 impl std::fmt::Display for ParseError {
@@ -1393,6 +1398,7 @@ impl std::fmt::Display for ParseError {
             ),
             Self::Extra(w) => write!(f, "unexpected argument '{w}'"),
             Self::BadFlag(x) => write!(f, "unknown flag --{x}"),
+            Self::Group { word, subs } => write!(f, "usage: wol {word} {subs}"),
         }
     }
 }
@@ -1414,9 +1420,15 @@ pub fn parse<S: AsRef<str>>(argv: &[S]) -> Result<Invocation, ParseError> {
         }
     }
     if words.is_empty() {
+        // `wol --version` is the version, not the whole help (QA-STORE-76).
+        let action = if flags.iter().any(|f| f == "version") {
+            "version"
+        } else {
+            "help"
+        };
         return Ok(Invocation {
             path: vec![],
-            action: "help",
+            action,
             args: vec![],
             flags,
         });
@@ -1426,6 +1438,19 @@ pub fn parse<S: AsRef<str>>(argv: &[S]) -> Result<Invocation, ParseError> {
         .filter(|c| c.path.len() <= words.len() && c.path.iter().zip(&words).all(|(p, w)| p == w))
         .max_by_key(|c| c.path.len());
     let Some(c) = best else {
+        // A group with no command of its own (`wol layers`): name its commands, never "did you
+        // mean 'layers'?" (QA-STORE-76).
+        let subs: Vec<&str> = TREE
+            .iter()
+            .filter(|c| !c.hidden && c.path.len() > 1 && c.path[0] == words[0])
+            .map(|c| c.path[1])
+            .collect();
+        if !subs.is_empty() && words.len() == 1 {
+            return Err(ParseError::Group {
+                word: words[0].into(),
+                subs: subs.join("|"),
+            });
+        }
         let roots: Vec<&str> = TREE
             .iter()
             .filter(|c| !c.hidden)

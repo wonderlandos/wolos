@@ -761,7 +761,9 @@ pub fn fetch_argv(url: &str, dest: &str) -> Vec<String> {
     [
         "curl",
         "--disable",
-        "-fsSL",
+        // Silent: curl's own text never reaches the person; the caller words its exit status
+        // (QA-STORE-61).
+        "-fsL",
         "--proto",
         "=https",
         "--proto-redir",
@@ -1071,6 +1073,10 @@ not-a-key x
         let has = |w: &[&str]| a.windows(w.len()).any(|x| x == w);
         assert!(has(&["--proto", "=https"]) && has(&["--proto-redir", "=https"]));
         assert!(has(&["--max-filesize", "33554432"]));
+        assert!(
+            has(&["-fsL"]) && !a.iter().any(|x| x.contains('S')),
+            "{a:?}"
+        );
         assert_eq!(
             a[a.len() - 2..],
             ["--", "https://x/a.wol"],

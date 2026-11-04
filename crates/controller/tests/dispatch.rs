@@ -586,6 +586,21 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
         env.out
             .contains("unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm\n")
     );
+    // QA-STORE-76: an empty argument reads as '' (not a bare "bootctl set-default ").
+    assert!(env.out.ends_with("bootctl set-default ''\n"), "{}", env.out);
+}
+
+/// QA-STORE-76: `wol --version` prints the version, not the help; `wol layers` names its
+/// commands instead of "did you mean 'layers'?".
+#[test]
+fn version_and_group_words() {
+    let mut env = FakeEnv::default();
+    assert_eq!(run("--version", &mut env), 0);
+    assert_eq!(env.out, format!("wol {}\n", env!("CARGO_PKG_VERSION")));
+    let e = parse(&["layers"]).unwrap_err().to_string();
+    assert_eq!(e, "usage: wol layers fold|clear");
+    let e = parse(&["layer"]).unwrap_err().to_string();
+    assert!(e.contains("did you mean 'layers'"), "{e}");
 }
 
 #[test]

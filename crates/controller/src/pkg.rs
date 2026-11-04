@@ -130,7 +130,8 @@ fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
     // R2C-1: a number is never handed out twice, even after `wol layers clear` removed it.
     let n = layers::next_index(&ls, &counter, &folded);
     let before = capture(env, &[up::PACMAN.to_owned(), "-Q".into()]).unwrap_or_default();
-    for (i, s) in layers::begin(n, args).iter().enumerate() {
+    let db = live_db(env);
+    for (i, s) in layers::begin(n, args, &db).iter().enumerate() {
         // The first step creates /var/lib/wolos/layers; record the number right after it.
         let ok = run_step(env, s)
             && (i != 0
@@ -150,11 +151,19 @@ fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
             return Outcome::Unchanged;
         }
     }
-    // Still mounted: the chroot shows the layer's database even under /usr (CORE-2).
-    let after_argv = layers::after_query(&live_db(env));
-    let after = capture(env, &after_argv).unwrap_or_default();
+    // Queried in the chroot's namespace: it shows the layer's database even under /usr (CORE-2).
+    let after = env.read_file(Path::new(&layers::after_path(n)));
+    let rec = layers::delta(&before, after.as_deref().unwrap_or_default());
+    // A change that changed nothing (`-S --needed` of a present package) leaves no layer: an
+    // empty one was merged as one more overlay until the next update (QA-STORE-71).
+    if after.is_some() && rec.installed.is_empty() && rec.removed.is_empty() {
+        for a in layers::abort(n) {
+            let _ = env.exec(&a);
+        }
+        return Outcome::Done;
+    }
     // pacman has committed: from here on the layer is the change and is never removed (CORE-5).
-    for s in layers::finish(n, &layers::delta(&before, &after)) {
+    for s in layers::finish(n, &rec) {
         if !run_step(env, &s) {
             env.err(&format!(
                 "wol pkg: {s} did not finish; the layer merges at the next boot\n"

@@ -275,6 +275,10 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
             env.out(&help(&path));
             0
         }
+        "version" => {
+            env.out(&format!("wol {}\n", env!("CARGO_PKG_VERSION")));
+            0
+        }
         "about" => topic(env, "about", json),
         "sys" => match inv.get("topic") {
             None => {
@@ -1332,6 +1336,19 @@ fn update_chroot(env: &mut dyn Env, inv: &Invocation) -> i32 {
     env.exec(&a).unwrap_or(127)
 }
 
+/// One step of `wol update plan` as it reads: an empty argument shows as `''` (QA-STORE-76:
+/// the plan ended in a bare `bootctl set-default `).
+fn plan_line(s: &wol_core::update::Step) -> String {
+    match s {
+        wol_core::update::Step::Run(a) => a
+            .iter()
+            .map(|x| if x.is_empty() { "''" } else { x.as_str() })
+            .collect::<Vec<_>>()
+            .join(" "),
+        w => w.to_string(),
+    }
+}
+
 /// The program a failed step ran, for the one line that says where it stopped.
 fn step_name(s: &wol_core::update::Step) -> String {
     match s {
@@ -1399,7 +1416,12 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
         );
     };
     if inv.action == "update.plan" {
-        env.out(&steps.iter().map(|s| format!("{s}\n")).collect::<String>());
+        env.out(
+            &steps
+                .iter()
+                .map(|s| format!("{}\n", plan_line(s)))
+                .collect::<String>(),
+        );
         return 0;
     }
     if !inv.flag("yes") {

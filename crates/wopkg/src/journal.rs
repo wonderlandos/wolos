@@ -101,14 +101,30 @@ fn save(ctx: &Context, all: &[Entry]) -> Result<()> {
     write_atomic(&path(ctx), text.as_bytes())
 }
 
+/// One above the highest id in the history: a torn or dropped line never makes two entries
+/// share an id, so a rollback reaches the entry asked for (QA-STORE-18).
+fn next_id(all: &[Entry]) -> String {
+    let max = all
+        .iter()
+        .filter_map(|e| e.id.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0);
+    (max + 1).to_string()
+}
+
 /// Append `e`; returns its id.
 pub fn record(ctx: &Context, mut e: Entry) -> Result<String> {
     let all = list(ctx);
-    let n = all.len() + 1;
     e.time = now();
-    e.id = format!("{n}");
-    let line = serde_json::to_string(&e)
-        .map_err(|_| Error::internal("The history entry cannot be written."))?
+    e.id = next_id(&all);
+    // A last line a crash cut short gets its newline first, so this entry starts a line of its
+    // own and is read back (QA-STORE-18).
+    let torn = std::fs::read(path(ctx))
+        .ok()
+        .is_some_and(|b| b.last().is_some_and(|c| *c != b'\n'));
+    let line = if torn { "\n" } else { "" }.to_owned()
+        + &serde_json::to_string(&e)
+            .map_err(|_| Error::internal("The history entry cannot be written."))?
         + "\n";
     std::fs::create_dir_all(&ctx.state)
         .map_err(|_| Error::unavailable("The history cannot be written."))?;
@@ -180,6 +196,37 @@ pub fn rollback(ctx: &Context, id: &str) -> Result<Entry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-STORE-18: a crash mid-write left a last line without its newline; the next entry is
+    /// still read back, and ids never repeat (the torn one's number is not handed out again).
+    #[test]
+    fn a_torn_tail_never_swallows_the_next_entry() {
+        let d = crate::testutil::temp("journal-torn");
+        let c = crate::appimage::tests::ctx(&d);
+        let e = || Entry::new("flatpak", "install", "org.x", None, None, None);
+        assert_eq!(record(&c, e()).unwrap(), "1");
+        assert_eq!(record(&c, e()).unwrap(), "2");
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(path(&c))
+            .unwrap();
+        f.write_all(br#"{"id":"3","kind":"flat"#).unwrap();
+        drop(f);
+        let id = record(&c, e()).unwrap();
+        assert_eq!(id, "3");
+        let all = list(&c);
+        assert_eq!(all.len(), 3, "{all:?}");
+        assert_eq!(all.last().unwrap().id, "3");
+        // An entry dropped from the middle does not make the next id collide with the last.
+        let text = std::fs::read_to_string(path(&c)).unwrap();
+        let kept: String = text
+            .lines()
+            .filter(|l| !l.contains("\"id\":\"1\""))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        std::fs::write(path(&c), kept).unwrap();
+        assert_eq!(record(&c, e()).unwrap(), "4");
+    }
 
     #[test]
     fn record_list_rollback() {

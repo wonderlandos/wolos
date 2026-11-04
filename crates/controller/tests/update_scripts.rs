@@ -224,3 +224,25 @@ fn curl_retry_flags() {
         }
     }
 }
+
+/// QA-STORE-43: update-download never ends "nothing to download" (exit 0) when the check could
+/// not refresh the package lists (offline, or the sealed database could not be refreshed): it
+/// says so and exits 75, and no pacman runs.
+#[test]
+fn update_download_fails_when_the_check_fails() {
+    let d = scratch("download-check-fails");
+    fs::write(d.join("auto-update"), "download = on\nmetered = on\n").unwrap();
+    fake(&d, "wol", "exit 69");
+    fake(&d, "pacman", "exit 0");
+    fake(&d, "pacman-conf", "echo /var/lib/pacman");
+    let out = Command::new("sh")
+        .arg(repo("files/usr/lib/wolos/update-download"))
+        .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+        .env("WOLOS_AUTO_UPDATE", d.join("auto-update"))
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(75), "{err}");
+    assert!(err.contains("did not run"), "{err}");
+    assert!(!log(&d).contains("pacman "), "{}", log(&d));
+}

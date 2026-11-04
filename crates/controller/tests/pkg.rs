@@ -62,7 +62,20 @@ fn an_install_is_a_live_layer_without_a_restart() {
         )),
         "{l:?}"
     );
-    assert!(l.contains(&"arch-chroot /run/wolos/layer-root /usr/bin/pacman -S vim".into()));
+    // QA-STORE-58: the chroot and pacman in a mount namespace of their own.
+    assert!(
+        l.iter().any(
+            |x| x.starts_with("unshare --mount --propagation private sh -c ")
+                && x.contains("\narch-chroot /run/wolos/layer-root /usr/bin/pacman \"$@\"")
+                && x.ends_with(" wol-layer /var/lib/pacman -S vim")
+        ),
+        "{l:?}"
+    );
+    assert!(
+        !l.iter()
+            .any(|x| x.starts_with("mount ") || x.starts_with("umount ")),
+        "{l:?}"
+    );
     assert_eq!(l.last().unwrap(), "systemd-sysext refresh");
     assert!(
         !l.iter()
@@ -79,16 +92,11 @@ fn an_install_is_a_live_layer_without_a_restart() {
 #[test]
 fn a_failed_install_removes_the_layer_and_touches_nothing_else() {
     let mut env = sealed("vim\n", IDLE);
-    // mkdir, a stale-chroot check, 4 mounts (/ bind, private, /usr and /opt overlays) ok;
-    // pacman fails.
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 1];
+    // mkdir, a stale-chroot check ok; the private chroot step (mounts and pacman) fails.
+    env.exec_codes = vec![0, 0, 1];
     assert_ne!(run("pkg -- -S vim", &mut env), 0);
     let l = lines(&env);
-    assert!(
-        l.iter()
-            .any(|x| x.contains("umount -R /run/wolos/layer-root")),
-        "{l:?}"
-    );
+    assert!(!l.iter().any(|x| x.starts_with("umount ")), "{l:?}");
     assert!(l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()));
     assert!(!l.contains(&"systemd-sysext refresh".into()));
     assert!(!env.out.contains("Installed"));
@@ -569,11 +577,19 @@ fn a_layer_records_its_database_even_under_usr() {
     ));
     env.captures
         .push(("/usr/bin/pacman -Q".into(), "bash 5.2-1\n".into()));
-    env.captures.push((
-        "/usr/bin/pacman --dbpath /run/wolos/layer-root/usr/lib/pacman/ -Q".into(),
+    // Left by the in-namespace query (QA-STORE-58), which got the live DBPath.
+    env.files.push((
+        PathBuf::from("/var/lib/wolos/layers/wolos-layer-0002/after"),
         "bash 5.2-1\nvim 9.1-1\n".into(),
     ));
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
+    assert!(
+        lines(&env)
+            .iter()
+            .any(|x| x.ends_with(" wol-layer /usr/lib/pacman -S vim")),
+        "{:?}",
+        env.execs
+    );
     let rec = env
         .written
         .iter()
@@ -584,10 +600,10 @@ fn a_layer_records_its_database_even_under_usr() {
 
 #[test]
 fn a_layer_pacman_committed_is_kept_when_the_merge_fails() {
-    // CORE-5: mkdir, the stale-chroot check, 4 mounts, pacman, umount, rm work ok;
+    // CORE-5: mkdir, the stale-chroot check, the private chroot step, rm work ok;
     // `systemd-sysext refresh` fails.
     let mut env = sealed("vim\n", IDLE);
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    env.exec_codes = vec![0, 0, 0, 0, 1];
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
     assert_eq!(l.last().unwrap(), "systemd-sysext refresh");
@@ -863,4 +879,46 @@ fn rollback_keeps_folded_layers() {
     };
     assert_eq!(run("layers clear", &mut only_b), 0);
     assert!(only_b.execs.is_empty(), "{:?}", only_b.execs);
+}
+
+/// QA-STORE-73: `wol pkg` never exits 0 on a failed change: a person's change goes to the real
+/// pacman and keeps its exit status (its root error exits 1), a failed layer change exits
+/// non-zero with "Nothing was changed".
+#[test]
+fn wol_pkg_exit_codes() {
+    let mut user = sealed("vim\n", IDLE);
+    user.root = false;
+    user.exec_codes = vec![1];
+    assert_eq!(run("pkg -- -S vim", &mut user), 1);
+    let mut bad = sealed("vim\n", IDLE);
+    bad.exec_codes = vec![0, 0, 1];
+    assert_ne!(run("pkg -- -S vim", &mut bad), 0);
+    assert!(bad.err.contains("Nothing was changed"), "{}", bad.err);
+}
+
+/// QA-STORE-71: a change that changed nothing (`--needed` of a present package) leaves no
+/// layer and merges nothing.
+#[test]
+fn an_empty_transaction_makes_no_layer() {
+    let mut env = sealed("vim\n", IDLE);
+    env.captures
+        .push(("/usr/bin/pacman -Q".into(), "vim 9.1-1\n".into()));
+    env.files.push((
+        PathBuf::from("/var/lib/wolos/layers/wolos-layer-0002/after"),
+        "vim 9.1-1\n".into(),
+    ));
+    assert_eq!(run("pkg -- -S --needed vim", &mut env), 0, "{}", env.err);
+    let l = lines(&env);
+    assert!(
+        l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()),
+        "{l:?}"
+    );
+    assert!(!l.contains(&"systemd-sysext refresh".into()), "{l:?}");
+    assert!(
+        !env.written
+            .iter()
+            .any(|w| w.0.ends_with("wolos-layer.json")),
+        "{:?}",
+        env.written
+    );
 }

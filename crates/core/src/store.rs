@@ -803,7 +803,26 @@ pub fn search_argv(term: &str) -> Option<Vec<String>> {
     if t.is_empty() || t.starts_with('-') {
         return None;
     }
-    Some(vec!["pacman".into(), "-Ss".into(), "--".into(), t.into()])
+    Some(vec![
+        "pacman".into(),
+        "-Ss".into(),
+        "--".into(),
+        literal_regex(t),
+    ])
+}
+
+/// `t` as a POSIX extended regular expression that matches it literally: pacman's `-Ss` term is
+/// a regex, so "(" or "vlc[" failed with "invalid regular expression" (a silent "No results")
+/// and "c++" only worked by chance (QA-STORE-39, QA-STORE-79).
+pub fn literal_regex(t: &str) -> String {
+    let mut out = String::with_capacity(t.len());
+    for c in t.chars() {
+        if "\\^$.|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// A `pacman -Ss` hit that is not in the catalog.
@@ -1088,6 +1107,11 @@ mod tests {
         assert_eq!(v, ["pacman", "-Ss", "--", "photo"]);
         assert_eq!(search_argv("  "), None);
         assert_eq!(search_argv("-Syu"), None);
+        // QA-STORE-39/79: the term is matched literally, never as pacman's regex.
+        assert_eq!(search_argv("(").unwrap()[3], "\\(");
+        assert_eq!(search_argv("vlc[").unwrap()[3], "vlc\\[");
+        assert_eq!(search_argv("c++").unwrap()[3], "c\\+\\+");
+        assert_eq!(search_argv("gimp").unwrap()[3], "gimp");
     }
 
     #[test]
