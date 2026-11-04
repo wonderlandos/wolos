@@ -294,8 +294,9 @@ impl DesktopPrefs {
             .as_deref()
             .filter(|l| crate::region::is_valid_locale(l))
         {
+            // LANG only: LC_ALL would override every per-category choice in ~/.config/locale.conf
+            // (and a locale the machine lacks would break every program, QA-SET-27).
             s += &env("LANG", l);
-            s += &env("LC_ALL", l);
         }
         for c in self.login_items.iter().filter(|c| is_valid_command(c)) {
             s += &format!(
@@ -851,6 +852,21 @@ mod tests {
         assert_eq!(DesktopPrefs::parse(Some(&p.to_json())), p);
         assert_eq!(DesktopPrefs::parse(Some("junk")), DesktopPrefs::default());
         assert!(DesktopPrefs::parse(Some(r#"{"tiling":true}"#)).tap_to_click);
+    }
+
+    /// QA-SET-27 / L2-33: the chosen language is `LANG` only. `LC_ALL` beat every per-category
+    /// choice in ~/.config/locale.conf and made each program fail when the locale was missing.
+    #[test]
+    fn no_lc_all() {
+        for l in ["en_US.UTF-8", "pt_BR.UTF-8", "ja_JP.UTF-8", "zh_CN.UTF-8"] {
+            let inc = DesktopPrefs {
+                language: Some(l.into()),
+                ..Default::default()
+            }
+            .include();
+            assert!(inc.contains(&format!("hl.env(\"LANG\", \"{l}\")")), "{l}");
+            assert!(!inc.contains("LC_ALL"), "{l}: {inc}");
+        }
     }
 
     #[test]

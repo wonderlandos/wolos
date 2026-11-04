@@ -52,9 +52,10 @@ fn main() {
             };
             console_ready();
             let started = Instant::now();
-            let ok = run_session(&user, flow.locked, || marks.spawned(what));
+            // How it ended does not matter, only how soon (`failed_early`): run_session logged it.
+            let _clean = run_session(&user, flow.locked, || marks.spawned(what));
             marks.exited(what);
-            if failed_early(started.elapsed(), ok) && flow.locked {
+            if failed_early(started.elapsed()) && flow.locked {
                 println!("wol-login: locked start failed; the login window takes over");
                 flow.locked_start_failed();
             } else if started.elapsed() >= GreeterRespawn::HEALTHY {
@@ -200,10 +201,13 @@ fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut M
                 );
             }
             // Never leave a raw text console: say what is wrong on the console VT after every
-            // exit, not only the first of a streak. The next try blanks the VT (console_ready),
-            // so a notice drawn once was gone after one second and a failing greeter left a
-            // black screen with no way out shown (vt-lock journey, 2026-11-03).
-            console_notice_shown(dri, &st.to_string(), next.delay);
+            // exit of a streak but the first (a single crash respawns at once and must not flash
+            // the text, QA-DOC-11). The next try blanks the VT (console_ready), so a notice drawn
+            // once was gone after one second and a failing greeter left a black screen with no
+            // way out shown (vt-lock journey, 2026-11-03).
+            if next.notice {
+                console_notice_shown(dri, &st.to_string(), next.delay);
+            }
             std::thread::sleep(next.delay);
             break Phase::Greeter;
         }
@@ -227,6 +231,9 @@ fn run_greeter(flow: &mut LoginFlow, respawn: &mut GreeterRespawn, marks: &mut M
         let deadline = Instant::now() + handoff_wait(flow.from_setup());
         while Instant::now() < deadline && matches!(greeter.try_wait(), Ok(None)) {
             std::thread::sleep(Duration::from_millis(50));
+        }
+        if matches!(greeter.try_wait(), Ok(None)) {
+            println!("{}", handoff_gave_up(flow.from_setup()));
         }
     }
     stop_tree(&mut greeter);
@@ -253,15 +260,19 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
                 Ok(u) => controller::pam::authenticate(PAM_SERVICE, &u, &buf[password.clone()]),
                 Err(_) => Auth::Error,
             };
-            if result == Auth::Ok && !unlock_home(&user, &buf[password.clone()]) {
-                result = Auth::Error; // no session without its files
+            let mut unlock = Unlock::Opened;
+            if result == Auth::Ok {
+                unlock = unlock_home(&user, &buf[password.clone()]);
+                if unlock != Unlock::Opened {
+                    result = Auth::Error; // no session without its files
+                }
             }
             println!("wol-login: {user}: {result:?}");
             let phase = flow.authenticated(result == Auth::Ok);
             let line = match result {
                 Auth::Ok => "ok",
                 Auth::Denied => "denied",
-                Auth::Error => "error",
+                Auth::Error => unlock_failure_reply(unlock),
             };
             reply(client, line, result != Auth::Ok);
             if let (Phase::Session, Some(u)) = (phase, flow.user.as_ref()) {
@@ -310,10 +321,12 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
         Some(Request::Power(p)) => {
             let a = power_argv(p);
             println!("wol-login: {}", p.verb());
-            reply(client, "ok", false);
-            if let Err(e) = privileged_command(a[0]).args(&a[1..]).status() {
-                eprintln!("wol-login: {}: {e}", a[0]);
-            }
+            // The window hears "ok" only when the request was taken: a command that did not start
+            // or exited non-zero within POWER_WAIT is "error" (QA-FILES-1: it said ok for a
+            // missing acpiconf). `systemctl suspend` blocks until the computer wakes: still running
+            // after POWER_WAIT means taken.
+            let taken = run_power(a);
+            reply(client, if taken { "ok" } else { "error" }, false);
             flow.phase
         }
         _ => {
@@ -323,6 +336,42 @@ fn answer(client: &mut UnixStream, flow: &mut LoginFlow) -> Phase {
     };
     wipe(&mut buf);
     phase
+}
+
+/// How long a power command may run before it counts as taken (`suspend` blocks until wake-up).
+const POWER_WAIT: Duration = Duration::from_secs(3);
+
+/// Starts `argv` as root; true when it exited 0 or is still running after [`POWER_WAIT`].
+fn run_power(argv: &[&str]) -> bool {
+    let Some((prog, args)) = argv.split_first() else {
+        return false;
+    };
+    let mut child = match privileged_command(prog).args(args).spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("wol-login: {prog}: {e}");
+            return false;
+        }
+    };
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                if !st.success() {
+                    eprintln!("wol-login: {prog} {}: {st}", args.join(" "));
+                }
+                return st.success();
+            }
+            Ok(None) if start.elapsed() >= POWER_WAIT => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return true;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => return false,
+        }
+    }
 }
 
 /// Runs the setup plan; the new account on success.
@@ -419,7 +468,14 @@ fn make_runtime_dir(user: &LoginUser) {
         .status();
 }
 
-/// Login keyring unlocked with the password just checked (no-op without gnome-keyring).
+/// `su -l` sessions holding a login keyring daemon open: one per signed-in account, reaped when
+/// its session ends ([`stop_keyring`]).
+static KEYRINGS: std::sync::Mutex<Vec<Child>> = std::sync::Mutex::new(Vec::new());
+
+/// Login keyring unlocked with the password just checked (no-op without gnome-keyring). The daemon
+/// runs in the foreground under `su -l`, which this keeps alive until the session has ended: its
+/// logind session keeps `/run/user/UID` (and the daemon's socket) there for the real session to
+/// find (QA live-1 H2/H3, FILES-11).
 fn start_keyring(user: &LoginUser, password: &[u8]) {
     if !std::path::Path::new(KEYRING_DAEMON).exists() {
         return;
@@ -428,9 +484,45 @@ fn start_keyring(user: &LoginUser, password: &[u8]) {
         return;
     };
     make_runtime_dir(user); // the daemon's control socket lives there
-    let argv: Vec<&str> = cmd.iter().map(String::as_str).collect();
-    if capture_input(&argv, pw, Duration::from_secs(10)).is_none() {
+    let spawned = privileged_command(&cmd[0])
+        .args(&cmd[1..])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let Ok(mut child) = spawned else {
         eprintln!("wol-login: {}: keyring daemon did not start", user.name);
+        return;
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        // Closed after the write: the daemon reads the password up to the end of its input.
+        let _ = stdin.write_all(pw.as_bytes());
+    }
+    let socket = keyring_socket(user);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && !std::path::Path::new(&socket).exists()
+        && matches!(child.try_wait(), Ok(None))
+    {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if !std::path::Path::new(&socket).exists() {
+        eprintln!("wol-login: {}: keyring daemon did not start", user.name);
+    }
+    if let Ok(mut all) = KEYRINGS.lock() {
+        all.push(child);
+    }
+}
+
+/// After the session: stops the daemon and the `su -l` that held its logind session open.
+fn stop_keyring(user: &LoginUser) {
+    let stop = keyring_stop_command(user);
+    let _ = privileged_command(&stop[0]).args(&stop[1..]).status();
+    if let Ok(mut all) = KEYRINGS.lock() {
+        for mut c in all.drain(..) {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
     }
 }
 
@@ -451,8 +543,7 @@ fn run_session(user: &LoginUser, locked: bool, spawned: impl FnOnce()) -> bool {
         });
     println!("wol-login: session {} ended {st:?}", user.name);
     if std::path::Path::new(KEYRING_DAEMON).exists() {
-        let stop = keyring_stop_command(user);
-        let _ = privileged_command(&stop[0]).args(&stop[1..]).status();
+        stop_keyring(user);
     }
     lock_home(&user.name);
     st.is_ok_and(|s| s.success())
@@ -483,17 +574,19 @@ fn run_crypt(c: &wol_core::home_crypt::Cmd) -> bool {
     }
 }
 
-/// Opens an encrypted home with the password just checked; true when it is ready (or plain).
-fn unlock_home(name: &str, password: &[u8]) -> bool {
+/// Opens an encrypted home with the password just checked ([`Unlock::Opened`] when it is ready or
+/// plain).
+fn unlock_home(name: &str, password: &[u8]) -> Unlock {
     let Some(steps) = home_unlock_steps(name, home_state(name), password) else {
         eprintln!("wol-login: {name}: the encrypted home needs a password typed as text");
-        return false;
+        return Unlock::NeedsText;
     };
-    let ok = steps.iter().all(run_crypt);
-    if !ok {
+    if steps.iter().all(run_crypt) {
+        Unlock::Opened
+    } else {
         eprintln!("wol-login: {name}: the encrypted home did not open");
+        Unlock::Failed
     }
-    ok
 }
 
 /// Logout: locks the home again; stays open while something still uses a file in it.

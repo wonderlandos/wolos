@@ -80,6 +80,28 @@ pub const LANGUAGES: [(&str, &str); 12] = [
     ("zh_CN.UTF-8", "中文 (简体)"),
 ];
 
+/// The new system's `/etc/locale.gen`: every locale of [`LANGUAGES`], then `chosen` when it is not
+/// one of them. Settings > Language & Region offers all of them, so all are generated at install;
+/// choosing one later needs no root and no wait (QA-SET-27: the pane exported a locale the machine
+/// lacked and every program fell back to C). `chosen` must be [`is_valid_locale`] (else left out).
+pub fn locale_gen(chosen: &str) -> String {
+    let mut all: Vec<&str> = LANGUAGES.iter().map(|l| l.0).collect();
+    if is_valid_locale(chosen) && !all.contains(&chosen) {
+        all.push(chosen);
+    }
+    all.iter().map(|l| format!("{l} UTF-8\n")).collect()
+}
+
+/// The language a locale belongs to, in its preferred form: the code translators and message
+/// catalogs use. `pt_BR` is an alias of `pt` and `pt_PT` a variation of it, so all three are
+/// `pt`; `en_US` and `en_GB` are `en`; `zh_CN` is `zh`. "" for anything that is not a locale.
+pub fn language_of(locale: &str) -> &str {
+    if !is_valid_locale(locale) {
+        return "";
+    }
+    locale.split('_').next().unwrap_or_default()
+}
+
 /// `ll_CC.UTF-8` (2-3 lowercase letters, 2 uppercase).
 pub fn is_valid_locale(s: &str) -> bool {
     s.strip_suffix(".UTF-8")
@@ -177,5 +199,31 @@ mod tests {
             assert_eq!(is_valid_locale(l), ok, "{l}");
         }
         assert!(LANGUAGES.iter().all(|(l, _)| is_valid_locale(l)));
+    }
+
+    #[test]
+    fn portuguese_is_one_language() {
+        assert_eq!(language_of("pt_BR.UTF-8"), "pt");
+        assert_eq!(language_of("pt_PT.UTF-8"), "pt");
+        assert_eq!(language_of("en_GB.UTF-8"), "en");
+        assert_eq!(language_of("pt"), "");
+        let langs: std::collections::BTreeSet<_> =
+            LANGUAGES.iter().map(|l| language_of(l.0)).collect();
+        assert_eq!(
+            langs.len(),
+            LANGUAGES.len() - 2,
+            "en x2 and pt x2 share a language"
+        );
+    }
+
+    #[test]
+    fn locale_gen_has_every_language_and_the_chosen_one_once() {
+        let g = locale_gen("pt_BR.UTF-8");
+        for (l, _) in LANGUAGES {
+            assert_eq!(g.matches(&format!("{l} UTF-8\n")).count(), 1, "{l}");
+        }
+        assert!(locale_gen("ast_ES.UTF-8").ends_with("ast_ES.UTF-8 UTF-8\n"));
+        assert!(!locale_gen("x; rm -rf").contains("rm"));
+        assert_eq!(locale_gen("").lines().count(), LANGUAGES.len());
     }
 }

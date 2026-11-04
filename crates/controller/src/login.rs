@@ -112,13 +112,10 @@ pub fn parse_request(data: &[u8]) -> Option<(String, std::ops::Range<usize>)> {
 
 pub use shared::login::{Power, encode_power};
 
-/// What wol-login (root) runs for each power request.
-pub fn power_argv(p: Power) -> [&'static str; 3] {
-    match p {
-        Power::Sleep => ["/usr/sbin/acpiconf", "-s", "3"],
-        Power::Restart => ["/sbin/shutdown", "-r", "now"],
-        Power::ShutDown => ["/sbin/shutdown", "-p", "now"],
-    }
+/// What wol-login (root) runs for each power request: the same `systemctl` verbs as the session
+/// menu ([`wol_core::admin::session_power_argv`]; logind locks and saves state), one list for both.
+pub fn power_argv(p: Power) -> &'static [&'static str] {
+    wol_core::admin::session_power_argv(p.verb()).unwrap_or(&[])
 }
 
 /// One login socket request. Commands start with `!`, which no account name can.
@@ -194,6 +191,9 @@ pub enum SetupStep {
     },
 }
 
+/// The system language file (`man 5 locale.conf`).
+pub const LOCALE_CONF: &str = "/etc/locale.conf";
+
 /// Account first (`useradd`, then the password on `chpasswd`'s stdin), then per-user and
 /// system preferences.
 pub fn setup_plan(a: &NewAccount) -> Vec<SetupStep> {
@@ -218,11 +218,10 @@ pub fn setup_plan(a: &NewAccount) -> Vec<SetupStep> {
             path: format!("{home}/.local/share/keyrings"),
             mode: 0o700,
         },
-        w(
-            format!("{home}/.login_conf"),
-            format!("me:\\\n\t:charset=UTF-8:\\\n\t:lang={}:\n", a.locale),
-            true,
-        ),
+        // The language chosen in Setup is the computer's: /etc/locale.conf (systemd and the login
+        // shells' profile.d read it; the installer generated every locale). The FreeBSD
+        // ~/.login_conf this wrote before was read by nothing (QA-FILES-3, QA-FDAY-2).
+        w(LOCALE_CONF.into(), format!("LANG={}\n", a.locale), false),
         w(
             format!("{home}/.config/wol/setup.json"),
             serde_json::json!({
@@ -368,6 +367,29 @@ pub fn home_unlock_steps(
     }
 }
 
+/// How opening a home with the password just checked ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unlock {
+    Opened,
+    /// The home is encrypted and the password is not text homectl can be given.
+    NeedsText,
+    Failed,
+}
+
+/// The reply that carries [`Unlock::NeedsText`] to the login window (QA-SHADOW-39): the window
+/// shows [`TEXT_PASSWORD_SENTENCE`]; a window that does not know it shows its generic error line.
+pub const TEXT_PASSWORD_REPLY: &str = "error-text-password";
+pub const TEXT_PASSWORD_SENTENCE: &str = "Your files open only with a password made of typed characters. Sign in with a password you can type, or ask the person who looks after this computer.";
+
+/// The login window's reply for a correct password whose home did not open: the specific line for
+/// a non-text password, else the generic `error`.
+pub fn unlock_failure_reply(u: Unlock) -> &'static str {
+    match u {
+        Unlock::NeedsText => TEXT_PASSWORD_REPLY,
+        Unlock::Opened | Unlock::Failed => "error",
+    }
+}
+
 pub fn encode_request(user: &str, password: &[u8]) -> Vec<u8> {
     let mut b = format!("{user}\n").into_bytes();
     b.extend_from_slice(password);
@@ -401,8 +423,15 @@ pub const KEYRING_DAEMON: &str = "/usr/bin/gnome-keyring-daemon";
 /// gnome-keyring at login: reads the password on stdin, unlocks (or creates) the login keyring once
 /// the session runs `gnome-keyring-daemon --start` (hyprland.lua) within 120 s. Not the PAM keyring
 /// module: wol-login hands the password over only after it accepted it (a typo never creates or
-/// unlocks a keyring), and the login PAM stack does not depend on the keyring package (without the
-/// daemon this is a no-op).
+/// unlocks a keyring), `wol-session-pam` has no password to give a PAM module, and the login PAM
+/// stack does not depend on the keyring package (without the daemon this is a no-op).
+///
+/// The daemon stays in the foreground, and wol-login keeps the `su -l` that runs it until the
+/// session ends ([`keyring_socket`] says when it is up). `su -l` has its own logind session: when
+/// the daemon forked away and `su` returned, that was the user's last session, logind removed
+/// `/run/user/UID` with the daemon's control socket, and the real session started a second, locked
+/// daemon whose first secret request made gcr ask to "Choose password for new keyring" (QA live-1
+/// H2/H3: Cancel left the browser without a network stack).
 pub fn keyring_login_command(u: &LoginUser) -> Option<Vec<String>> {
     valid_name(&u.name).then(|| {
         vec![
@@ -411,11 +440,17 @@ pub fn keyring_login_command(u: &LoginUser) -> Option<Vec<String>> {
             u.name.clone(),
             "-c".into(),
             format!(
-                "exec env XDG_RUNTIME_DIR={} {KEYRING_DAEMON} --daemonize --login",
+                "exec env XDG_RUNTIME_DIR={} {KEYRING_DAEMON} --foreground --login",
                 runtime_dir(u)
             ),
         ]
     })
+}
+
+/// The daemon's control socket: once it exists the login keyring is unlocked and the session's
+/// `gnome-keyring-daemon --start` finds the daemon instead of starting a locked one.
+pub fn keyring_socket(u: &LoginUser) -> String {
+    format!("{}/keyring/control", runtime_dir(u))
 }
 
 /// Logout: the daemon is bound to the ended session's D-Bus; the next login starts a fresh one.
@@ -553,10 +588,12 @@ impl LoginFlow {
     }
 }
 
-/// A session that exited with an error before [`GreeterRespawn::HEALTHY`] (no GPU, lock screen
-/// broken). Never a reason to start unlocked: a failed locked start falls back to the login window.
-pub fn failed_early(ran: std::time::Duration, ok: bool) -> bool {
-    !ok && ran < GreeterRespawn::HEALTHY
+/// A session that ended before [`GreeterRespawn::HEALTHY`], by whatever exit code (no GPU, lock
+/// screen broken, a compositor that quits on a config error with status 0: QA-SYS-10 saw a tight
+/// respawn loop of `su -l`). Never a reason to start unlocked: a locked start that ends this soon
+/// falls back to the login window, which has the backoff and the console notice.
+pub fn failed_early(ran: std::time::Duration) -> bool {
+    ran < GreeterRespawn::HEALTHY
 }
 
 /// `!setup-wifi` answer once wpa_supplicant reloaded its networks (ADR 0013): Some(reply) when
@@ -589,9 +626,24 @@ pub fn nm_join_reply(joined: bool, secured: bool) -> &'static str {
 
 /// How long the greeter may take to leave on its own once the session is decided (ADR 0012): the
 /// login window fades to black and exits; the setup assistant first shows Done until "Get Started".
-/// Then it is stopped either way.
+/// Then it is stopped either way, with a line in the journal ([`handoff_gave_up`]). Two minutes
+/// is long enough to read the Done card; a hung Setup used to hold the session back ten minutes
+/// (QA-DOC-12).
 pub fn handoff_wait(from_setup: bool) -> std::time::Duration {
-    std::time::Duration::from_secs(if from_setup { 600 } else { 2 })
+    std::time::Duration::from_secs(if from_setup { 120 } else { 2 })
+}
+
+/// The journal line when the greeter was still up after [`handoff_wait`].
+pub fn handoff_gave_up(from_setup: bool) -> String {
+    format!(
+        "wol-login: the {} was still open {} s after the session was decided; stopping it",
+        if from_setup {
+            "setup assistant"
+        } else {
+            "login window"
+        },
+        handoff_wait(from_setup).as_secs()
+    )
 }
 
 /// The console VT. The login window and every session run on it: the seat daemon takes the VT
@@ -776,7 +828,7 @@ pub fn retry_words(d: std::time::Duration) -> String {
 
 /// Greeter respawn policy: a greeter that dies quickly (e.g. the compositor without DRM) is retried with
 /// exponential backoff (1 s .. 5 min) and logged once per failure streak, never spun; the console
-/// notice is drawn after each exit ([`console_notice`]).
+/// notice is drawn from the second exit of a streak ([`console_notice`]).
 #[derive(Debug, Default)]
 pub struct GreeterRespawn {
     quick_exits: u32,
@@ -787,6 +839,9 @@ pub struct GreeterRespawn {
 pub struct Respawn {
     pub delay: std::time::Duration,
     pub log: bool,
+    /// Draw the console notice: from the second quick exit of a streak. One crash of the setup
+    /// assistant or login window respawns at once; the text console flashed between (QA-DOC-11).
+    pub notice: bool,
 }
 
 impl GreeterRespawn {
@@ -801,7 +856,11 @@ impl GreeterRespawn {
         let n = self.quick_exits;
         self.quick_exits = n.saturating_add(1);
         let delay = std::time::Duration::from_secs(1u64 << n.min(16)).min(Self::MAX_DELAY);
-        Respawn { delay, log: n == 0 }
+        Respawn {
+            delay,
+            log: n == 0,
+            notice: n >= 1,
+        }
     }
 }
 
@@ -900,7 +959,7 @@ mod tests {
     fn greeter_hands_off_after_its_own_fade() {
         use std::time::Duration;
         assert_eq!(handoff_wait(false), Duration::from_secs(2));
-        assert_eq!(handoff_wait(true), Duration::from_secs(600));
+        assert_eq!(handoff_wait(true), Duration::from_secs(120));
         let ana = user("ana", 1001, "Ana", "/home/ana", "/bin/sh");
         let mut f = LoginFlow::new(vec![], None);
         assert_eq!(f.start(), Phase::Greeter);
@@ -1117,6 +1176,22 @@ mod tests {
         );
     }
 
+    /// QA-DOC-11: a single crash of wol-setup respawns without the text-console notice.
+    #[test]
+    fn notice_from_second_exit() {
+        use std::time::Duration as D;
+        let mut r = GreeterRespawn::default();
+        let quick = D::from_secs(1);
+        assert!(!r.exited(quick).notice, "first exit: respawn quietly");
+        assert!(r.exited(quick).notice, "second exit: say what is wrong");
+        assert!(r.exited(quick).notice);
+        assert!(
+            !r.exited(D::from_secs(120)).notice,
+            "a healthy run starts the streak over"
+        );
+        assert!(r.exited(quick).notice);
+    }
+
     #[test]
     fn greeter_respawn_backs_off_and_logs_once() {
         use std::time::Duration as D;
@@ -1285,10 +1360,23 @@ broken:line
         }
         // A user called "sleep" still authenticates: commands carry a `!` no name can start with.
         assert!(matches!(parse(b"sleep\npw"), Some(Request::Auth { user, .. }) if user == "sleep"));
-        assert_eq!(power_argv(Power::ShutDown), ["/sbin/shutdown", "-p", "now"]);
-        assert_eq!(power_argv(Power::Restart), ["/sbin/shutdown", "-r", "now"]);
-        assert_eq!(power_argv(Power::Sleep), ["/usr/sbin/acpiconf", "-s", "3"]);
         assert_eq!(encode_power(Power::Sleep), b"!sleep\n");
+    }
+
+    /// QA-FILES-1: the login window's power row ran FreeBSD commands (`acpiconf`, `shutdown -p`)
+    /// that do not exist on Linux while the window said ok. The three verbs are systemd's.
+    #[test]
+    fn power_argv_is_systemctl() {
+        assert_eq!(power_argv(Power::Sleep), ["systemctl", "suspend"]);
+        assert_eq!(power_argv(Power::Restart), ["systemctl", "reboot"]);
+        assert_eq!(power_argv(Power::ShutDown), ["systemctl", "poweroff"]);
+        for p in Power::ALL {
+            assert_eq!(
+                Some(power_argv(p)),
+                wol_core::admin::session_power_argv(p.verb()),
+                "{p:?}: the session menu and the login window run the same command"
+            );
+        }
     }
 
     #[test]
@@ -1480,11 +1568,7 @@ broken:line
         assert_eq!(
             writes,
             [
-                (
-                    "/home/alice/.login_conf",
-                    "me:\\\n\t:charset=UTF-8:\\\n\t:lang=en_GB.UTF-8:\n",
-                    true
-                ),
+                ("/etc/locale.conf", "LANG=en_GB.UTF-8\n", false),
                 (
                     "/home/alice/.config/wol/setup.json",
                     r#"{"appearance":"dark","keymap":"gb","locale":"en_GB.UTF-8"}"#,
@@ -1496,7 +1580,7 @@ broken:line
                 ("/etc/wolos/appearance", "dark", false),
             ]
         );
-        // Auto + default accent + no hint/avatar: account, password, keyring dir, login_conf, setup.json.
+        // Auto + default accent + no hint/avatar: account, password, keyring dir, locale.conf, setup.json.
         let mut auto = account();
         auto.appearance = "auto".into();
         auto.hint = "".into();
@@ -1522,6 +1606,40 @@ broken:line
             5,
             "unknown avatar colour not written"
         );
+    }
+
+    /// QA-FILES-3 / QA-FDAY-2: the language picked in Setup reaches the computer. The plan writes
+    /// `LANG=` into /etc/locale.conf (not the FreeBSD ~/.login_conf, which nothing reads on Linux),
+    /// and the value is one the installer generated (`region::locale_gen`).
+    #[test]
+    fn setup_plan_writes_locale_conf() {
+        for (_, label) in wol_core::region::LANGUAGES {
+            assert!(!label.is_empty());
+        }
+        for (locale, _) in wol_core::region::LANGUAGES {
+            let mut a = account();
+            a.locale = locale.to_string();
+            assert_eq!(validate_account(&a), Ok(()), "{locale}");
+            let plan = setup_plan(&a);
+            let conf = plan.iter().find_map(|s| match s {
+                SetupStep::Write {
+                    path,
+                    content,
+                    user_owned: false,
+                } if path == "/etc/locale.conf" => Some(content.clone()),
+                _ => None,
+            });
+            assert_eq!(conf, Some(format!("LANG={locale}\n")), "{locale}");
+            assert!(
+                wol_core::region::locale_gen("").contains(&format!("{locale} UTF-8\n")),
+                "{locale} is generated at install"
+            );
+            assert!(
+                !plan.iter().any(|s| matches!(s,
+                    SetupStep::Write { path, .. } if path.ends_with(".login_conf"))),
+                "no FreeBSD login_conf"
+            );
+        }
     }
 
     #[test]
@@ -1588,19 +1706,94 @@ broken:line
         assert!(!g.locked);
     }
 
+    /// QA-SYS-10: a session that exits 0 within seconds (the compositor quitting cleanly on a
+    /// config error) used to be respawned at once, forever. Any end under HEALTHY is a broken
+    /// locked start: the login window (with the greeter backoff) takes over.
+    #[test]
+    fn quick_exit_is_lock_broken() {
+        use std::time::Duration;
+        assert!(failed_early(Duration::ZERO));
+        assert!(failed_early(Duration::from_secs(2)));
+        assert!(failed_early(
+            GreeterRespawn::HEALTHY - Duration::from_millis(1)
+        ));
+        assert!(!failed_early(GreeterRespawn::HEALTHY));
+        let ana = user("ana", 1001, "Ana", "/home/ana", "/bin/sh");
+        let mut f = LoginFlow::new(vec![ana], None);
+        assert_eq!(
+            f.start(),
+            Phase::Session,
+            "the first start is the locked session"
+        );
+        if failed_early(Duration::from_secs(1)) {
+            f.locked_start_failed();
+        }
+        f.session_ended();
+        assert_eq!(
+            f.start(),
+            Phase::Greeter,
+            "a clean exit after one second does not respawn the session"
+        );
+    }
+
+    /// QA-DOC-12: the wait for a hung Setup is bounded to a couple of minutes, not ten, and says so.
+    /// QA-SHADOW-39: a correct non-text password on an encrypted home gets the specific reply, not
+    /// the generic `error` (every other failure stays generic).
+    #[test]
+    fn non_utf8_password_reply_sentence() {
+        use wol_core::home_crypt::State;
+        let closed = Some(State {
+            encrypted: true,
+            key_loaded: false,
+            mounted: false,
+        });
+        let bad = b"\xff\xfe-not-text";
+        // home_unlock_steps says "cannot": that is Unlock::NeedsText on the wire.
+        assert_eq!(home_unlock_steps("ana", closed, bad), None);
+        assert_eq!(unlock_failure_reply(Unlock::NeedsText), TEXT_PASSWORD_REPLY);
+        assert_eq!(unlock_failure_reply(Unlock::Failed), "error");
+        assert_ne!(TEXT_PASSWORD_REPLY, "error");
+        assert!(
+            TEXT_PASSWORD_SENTENCE.contains("typed"),
+            "{TEXT_PASSWORD_SENTENCE}"
+        );
+        // A login window that does not know the reply reads it as an error, never as ok.
+        assert_eq!(parse_reply_as_old_window(TEXT_PASSWORD_REPLY), "error");
+    }
+
+    fn parse_reply_as_old_window(r: &str) -> &'static str {
+        match r {
+            "ok" => "ok",
+            "denied" => "denied",
+            _ => "error",
+        }
+    }
+
+    #[test]
+    fn handoff_wait_bounded() {
+        use std::time::Duration;
+        assert!(handoff_wait(true) <= Duration::from_secs(120));
+        assert!(
+            handoff_wait(true) > handoff_wait(false),
+            "Done is read before Get Started"
+        );
+        assert_eq!(handoff_wait(false), Duration::from_secs(2));
+        let line = handoff_gave_up(true);
+        assert!(
+            line.contains("setup assistant") && line.contains("120 s"),
+            "{line}"
+        );
+        assert!(handoff_gave_up(false).contains("login window"));
+    }
+
     #[test]
     fn a_locked_start_that_dies_early_hands_over_to_the_login_window() {
         use std::time::Duration;
         let quick = Duration::from_secs(3);
         let healthy = GreeterRespawn::HEALTHY;
-        // (ran, exit ok) -> died before anyone could unlock it
-        for (ran, ok, early) in [
-            (quick, false, true),
-            (quick, true, false), // a quick logout is not a failure
-            (healthy, false, false),
-            (healthy, true, false),
-        ] {
-            assert_eq!(failed_early(ran, ok), early, "{ran:?} {ok}");
+        // ran -> ended before anyone could use it
+        for (ran, early) in [(quick, true), (healthy, false)] {
+            assert_eq!(failed_early(ran), early, "{ran:?}");
         }
         let ana = user("ana", 1001, "Ana", "/home/ana", "/bin/sh");
         let mut f = LoginFlow::new(vec![ana.clone()], None);
@@ -1654,14 +1847,27 @@ broken:line
                 "-l",
                 "zoe",
                 "-c",
-                "exec env XDG_RUNTIME_DIR=/var/run/user/1002 /usr/bin/gnome-keyring-daemon --daemonize --login"
+                "exec env XDG_RUNTIME_DIR=/var/run/user/1002 /usr/bin/gnome-keyring-daemon --foreground --login"
             ]
         );
         assert!(keyring_login_command(&user("a;b", 1, "", "", "")).is_none());
+        assert_eq!(keyring_socket(&zoe), "/var/run/user/1002/keyring/control");
         assert_eq!(
             keyring_stop_command(&zoe),
             ["pkill", "-U", "1002", "-f", KEYRING_DAEMON]
         );
+    }
+
+    /// QA live-1 H2/H3: the daemon that unlocks the login keyring must not outlive its `su -l`
+    /// session as an orphan: it runs in the foreground, so wol-login can hold that session (and
+    /// `/run/user/UID`, the daemon's socket) open until the real session ends.
+    #[test]
+    fn keyring_daemon_stays_in_the_foreground() {
+        let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/bin/sh");
+        let cmd = keyring_login_command(&zoe).unwrap();
+        let line = cmd.last().unwrap();
+        assert!(line.contains("--foreground --login"), "{line}");
+        assert!(!line.contains("--daemonize"), "{line}");
     }
 
     #[test]

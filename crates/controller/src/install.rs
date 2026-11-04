@@ -651,10 +651,8 @@ pub fn settings_files(p: &Plan) -> Option<Vec<(String, String)>> {
             "etc/vconsole.conf".into(),
             format!("KEYMAP={}\n", console_keymap(&p.keyboard)),
         ),
-        (
-            "etc/locale.gen".into(),
-            format!("en_US.UTF-8 UTF-8\n{} UTF-8\n", p.locale),
-        ),
+        // Every language Settings offers, not only the installer's (QA-SET-27).
+        ("etc/locale.gen".into(), region::locale_gen(&p.locale)),
     ])
 }
 
@@ -1649,6 +1647,29 @@ mod tests {
         p.zone = "UTC".into();
         p.locale = "x; rm".into();
         assert!(settings_files(&p).is_none());
+    }
+
+    /// QA-SET-27: Settings > Language & Region offers every `LANGUAGES` entry, so the installed
+    /// system has them all, whatever language the installer was run in (en_US included).
+    #[test]
+    fn every_language_in_locale_gen() {
+        for chosen in ["en_US.UTF-8", "pt_BR.UTF-8", "ja_JP.UTF-8"] {
+            let p = Plan {
+                locale: chosen.into(),
+                keyboard: "us".into(),
+                zone: "UTC".into(),
+                ..Plan::default()
+            };
+            let gen_file = &settings_files(&p).unwrap()[2];
+            assert_eq!(gen_file.0, "etc/locale.gen");
+            for (l, _) in region::LANGUAGES {
+                assert!(
+                    gen_file.1.contains(&format!("{l} UTF-8\n")),
+                    "{chosen}: {l}"
+                );
+            }
+            assert!(gen_file.1.contains(&format!("{chosen} UTF-8\n")));
+        }
     }
 
     /// The default US layout the app ships is `us(intl)`: a plan with it must install.
