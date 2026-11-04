@@ -285,7 +285,10 @@ mod tests {
         for perm in PERMISSIONS {
             for m in perm.methods {
                 for steps in 0..=shared::shell::MAX_DOCTOR_STEPS + 2 {
-                    assert!(host_wait_secs(m) > call_deadline_secs(m, steps), "{m} {steps}");
+                    assert!(
+                        host_wait_secs(m) > call_deadline_secs(m, steps),
+                        "{m} {steps}"
+                    );
                 }
                 if perm.admin {
                     assert!(call_deadline_secs(m, 1) > 1800, "{m}: one long step");

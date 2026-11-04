@@ -1318,7 +1318,7 @@ mod tests {
                         .into(),
                 );
             }
-            if self.n % 2 == 0 {
+            if self.n.is_multiple_of(2) {
                 Recv::Idle
             } else {
                 Recv::Line("[CHG] Device 11:22:33:44:55:66 RSSI: -61".into())
