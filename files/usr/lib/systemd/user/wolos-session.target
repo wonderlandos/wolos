@@ -1,0 +1,8 @@
+# The desktop session's helpers (QA-CRASH-5): the compositor's start lines run
+# `systemctl --user restart wolos-session.target` once the session environment is imported, and
+# every helper is PartOf this target, so a restarted compositor gets them again on its display.
+# A helper that crashes comes back by itself (Restart=on-failure); nothing of it outlives the
+# session (user@.service stops with the last session, logind KillUserProcesses=yes).
+[Unit]
+Description=WolOS desktop session helpers
+Wants=wolos-hypridle.service wolos-hyprsunset.service wolos-realtime.service wolos-polkit-agent.service

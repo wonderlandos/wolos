@@ -1,0 +1,16 @@
+# Night Light (wol_core::toggles): hyprsunset tints the screen, warm at start when Night Light was
+# left on, identity otherwise; `hyprctl hyprsunset` drives it.
+[Unit]
+Description=WolOS Night Light (hyprsunset)
+PartOf=wolos-session.target
+After=wolos-session.target
+# A helper that cannot reach the display any more (the session ended) stops retrying after 5 tries.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+ConditionPathExists=/usr/bin/hyprsunset
+
+[Service]
+ExecStart=/bin/sh -c 'f="${XDG_STATE_HOME:-$HOME/.local/state}/wolos/toggles/org.wolos.nightlight"; [ -e "$f" ] && exec hyprsunset -t 4500; exec hyprsunset -i'
+StandardOutput=null
+Restart=on-failure
+RestartSec=2

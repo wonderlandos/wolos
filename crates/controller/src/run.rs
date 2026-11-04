@@ -315,9 +315,8 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
             exec(env, &argv)
         }
         "bundle.plan" => bundle_plan(env, inv.get("bundle").unwrap_or_default(), json),
-        "theme.current" | "theme.list" | "theme.set" | "theme.switch" | "theme.css" => {
-            theme(env, inv, json)
-        }
+        "theme.current" | "theme.list" | "theme.set" | "theme.apply" | "theme.switch"
+        | "theme.css" => theme(env, inv, json),
         "shell.toggle" | "shell.show" | "shell.hide" | "shell.reload" => shell(env, inv),
         "shell.call" | "shell.status" => shell_ask(env, inv, json),
         "update.check" => update_check(env, json),
@@ -678,6 +677,21 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
             0
         }
         "theme.set" => set(env, inv.get("id").unwrap_or_default()),
+        // Session start (exec-once): the toolkits follow the theme in use and nothing is saved.
+        // No theme file means Auto; writing the shown one ended Auto and journaled a change the
+        // person never made (QA-SET-63, SET-R2-10).
+        "theme.apply" => match catalog.resolve(&current) {
+            Ok(t) => {
+                restyle_apps(env, &t);
+                env.out(&format!("{current}\n"));
+                0
+            }
+            Err(e) => fail(
+                env,
+                ErrorCode::NotFound,
+                &format!("theme '{current}': {e:?}"),
+            ),
+        },
         "theme.switch" => {
             let cmd = inv.path.last().map_or("", String::as_str);
             let Ok(cur) = catalog
@@ -735,8 +749,8 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
     announce_theme(env, &t.id);
 }
 
-/// The upgrade to the compositor's Lua configuration (WolOS 0.13): the first theme switch (`wol theme
-/// set`, at every session start) carries the 0.56 `.conf` files over (`hyprprefs::retire_plan`) and
+/// The upgrade to the compositor's Lua configuration (WolOS 0.13): the first restyle (`wol theme
+/// apply`, at every session start) carries the 0.56 `.conf` files over (`hyprprefs::retire_plan`) and
 /// reloads the compositor once, so the person's keyboard, displays, Settings and shortcuts hold.
 /// A stale file stays until its Lua file is written.
 fn retire_hypr_conf(env: &mut dyn Env, home: &Path) {
@@ -1703,7 +1717,7 @@ impl Env for FakeEnv {
         let admin = self.admin.clone();
         wol_core::controls::Controls {
             host,
-            stdin: Arc::new(|_, _| Some(String::new())),
+            stdin: Arc::new(|_, _| Ok(String::new())),
             admin: Arc::new(move |req, pw| {
                 let mut a = admin.lock().unwrap_or_else(|e| e.into_inner());
                 a.sent.push(format!(

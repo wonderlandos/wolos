@@ -1,0 +1,6 @@
+# Fake Arch system-auth for controller/tests/pam_fake.rs: the shipped WolOS stacks include it for
+# their account phase. Every module here exists on the build host and needs no root.
+auth		required	pam_deny.so
+account		required	pam_permit.so
+password	required	pam_deny.so
+session		required	pam_permit.so

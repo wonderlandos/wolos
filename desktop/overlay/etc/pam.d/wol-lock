@@ -1,8 +1,10 @@
 # wol-lock (crates/controller wol-authcheck): the lock screen checks the session user's password.
 # Typos are forgiven (Arch's system-auth locks 10 minutes after 3): 10 failures lock for 60 s.
-auth		required	pam_faillock.so preauth deny=10 unlock_time=60
-auth		[success=1 default=bad]	pam_unix.so
-auth		[default=die]	pam_faillock.so authfail deny=10 unlock_time=60
+# nodelay: wol-authcheck waits its one fixed 2 s after a refusal (ADR 0023); pam_unix's and
+# pam_faillock's own ~2 s came on top of it (QA-SHADOW-35).
+auth		required	pam_faillock.so preauth nodelay deny=10 unlock_time=60
+auth		[success=1 default=bad]	pam_unix.so nodelay
+auth		[default=die]	pam_faillock.so authfail nodelay deny=10 unlock_time=60
 auth		optional	pam_permit.so
 account		required	pam_faillock.so
 account		include		system-auth

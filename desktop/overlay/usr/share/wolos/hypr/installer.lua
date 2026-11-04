@@ -25,7 +25,8 @@ hl.config({
 hl.exec_cmd([[sh -c 'systemd-detect-virt -q --vm && hyprctl eval "hl.config({cursor = {no_hardware_cursors = 1}})"']])
 hl.on("hyprland.start", function()
     hl.exec_cmd("wol-vbox-guest") -- VirtualBox: resize with the VM window, clipboard, drag and drop (only under VirtualBox)
-    hl.exec_cmd([[sh -c '/usr/bin/wol-installer --boot; hyprctl dispatch "hl.dsp.exit()"']])
+    -- Output off before the exit: the last scanout was the Welcome card again (QA-SHEET-2).
+    hl.exec_cmd([[sh -c '/usr/bin/wol-installer --boot; hyprctl dispatch "hl.dsp.dpms({ action = \"off\" })"; hyprctl dispatch "hl.dsp.exit()"']])
 end)
 
 hl.config({ debug = { damage_tracking = 0 } })

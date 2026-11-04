@@ -210,6 +210,12 @@ pub const TREE: &[Cmd] = &[
     cmd(&["theme", "list"], "theme.list", &[], "Installed themes"),
     cmd(&["theme", "set"], "theme.set", &[arg("id")], "Use a theme"),
     cmd(
+        &["theme", "apply"],
+        "theme.apply",
+        &[],
+        "Restyle apps for the theme in use, saving nothing",
+    ),
+    cmd(
         &["theme", "light"],
         "theme.switch",
         &[],
@@ -1011,8 +1017,40 @@ pub const TREE: &[Cmd] = &[
     cmd(
         &["wifi", "join"],
         "wifi.join",
-        &[arg("ssid")],
-        "Join a network; Wi-Fi password on stdin (administrator)",
+        &[
+            arg("ssid"),
+            Arg {
+                name: "hidden",
+                choices: &["hidden"],
+                optional: true,
+                rest: false,
+            },
+        ],
+        "Join a network (add `hidden` for one that hides its name); Wi-Fi password on stdin",
+    ),
+    cmd(
+        &["wifi", "disconnect"],
+        "wifi.disconnect",
+        &[],
+        "Leave the current Wi-Fi network (it stays saved)",
+    ),
+    cmd(
+        &["wifi", "hotspot"],
+        "wifi.hotspot",
+        &[],
+        "Is the Wi-Fi hotspot on",
+    ),
+    cmd(
+        &["wifi", "hotspot", "on"],
+        "wifi.hotspot.on",
+        &[opt("name")],
+        "Share this computer's internet over Wi-Fi; hotspot password (8+ characters) on stdin",
+    ),
+    cmd(
+        &["wifi", "hotspot", "off"],
+        "wifi.hotspot.off",
+        &[],
+        "Stop the Wi-Fi hotspot",
     ),
     cmd(&["bluetooth"], "bluetooth.get", &[], "Bluetooth state"),
     cmd(

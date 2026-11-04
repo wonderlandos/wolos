@@ -97,8 +97,56 @@ fn boot_ok(d: &Path, procs: &[&str], cmdline: &str) -> Output {
         .env("WOLOS_LAYERS_WORK", d.join("work"))
         .env("WOLOS_LAYER_CHROOT", d.join("chroot"))
         .env("WOLOS_ESP", d.join("esp"))
+        .env("WOLOS_SLOTS", d.join("run/slots.json"))
         .output()
         .unwrap()
+}
+
+/// A bootctl that lists one slot (what `bootctl list --json=short` prints), logging its args.
+const SLOTS: &str = r#"[{"id":"wolos-a.conf","title":"WolOS","version":"1-2026.11.02","isDefault":true,"isSelected":true}]"#;
+
+/// A4 F5/F6 (QA-LIVE4-5): Settings > Restore and `wol restore` run as the person, who cannot read
+/// the ESP (fmask 0077), so `bootctl list` fails for them. A good boot and every esp-sync leave
+/// bootctl's list world-readable in /run/wolos/slots.json, replaced whole, for the ESP they used.
+#[test]
+fn boot_ok_and_esp_sync_leave_a_readable_slot_list() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = dir("slots");
+    fake(&d, "bootctl", &format!("echo '{SLOTS}'"));
+    let o = boot_ok(&d, &["wol-loginwindow"], "rootflags=subvol=@wolos-a ro");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let f = d.join("run/slots.json");
+    assert_eq!(fs::read_to_string(&f).unwrap().trim(), SLOTS);
+    assert_eq!(
+        fs::metadata(&f).unwrap().permissions().mode() & 0o777,
+        0o644
+    );
+    assert!(
+        log(&d).contains(&format!(
+            "bootctl --esp-path={} list --json=short",
+            d.join("esp").display()
+        )),
+        "{}",
+        log(&d)
+    );
+    assert!(!d.join("run/slots.json.new").exists());
+    // bootctl failing leaves the last good list in place.
+    fake(&d, "bootctl", "exit 1");
+    assert!(
+        boot_ok(&d, &["wol-loginwindow"], "rootflags=subvol=@wolos-a ro")
+            .status
+            .success()
+    );
+    assert_eq!(fs::read_to_string(&f).unwrap().trim(), SLOTS);
+
+    let e = esp("slots-esp");
+    fake(&e, "bootctl", &format!("echo '{SLOTS}'"));
+    let o = esp_sync(&e, true);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(
+        fs::read_to_string(e.join("run/slots.json")).unwrap().trim(),
+        SLOTS
+    );
 }
 
 /// QA-SYS-3: wold up is not a good boot; the login window (or Setup, or a session's shell or lock
@@ -241,6 +289,7 @@ fn esp_sync(d: &Path, new: bool) -> Output {
         .env("WOLOS_ESP", d.join("esp"))
         .env("WOLOS_SLOT", "wolos-a")
         .env("WOLOS_SB_DIR", d.join("sb"))
+        .env("WOLOS_SLOTS", d.join("run/slots.json"))
         .output()
         .unwrap()
 }

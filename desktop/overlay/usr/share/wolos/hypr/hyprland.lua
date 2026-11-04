@@ -34,24 +34,23 @@ if vm_file then
 end
 once("wol-vbox-guest") -- VirtualBox: resize with the VM window, clipboard, drag and drop (only under VirtualBox)
 -- --systemd: the systemd user manager gets DISPLAY/WAYLAND_DISPLAY too, whichever D-Bus daemon runs.
-once("dbus-update-activation-environment --systemd --all")
+once([[sh -c 'dbus-update-activation-environment --systemd --all; systemctl --user restart wolos-session.target']])
+-- The portal and the accessibility bus start now, in parallel with the shell: GTK waits for the portal
+-- registry at display open (2.8 s warm, 10 s at first boot, QA-100 H17-03).
+once("systemctl --user start --no-block xdg-desktop-portal.service xdg-desktop-portal-gtk.service xdg-desktop-portal-hyprland.service at-spi-dbus-bus.service")
 -- X11 apps follow the monitor scale: Xft.dpi, Xcursor.size, GDK_SCALE, Steam UI (again after a reload).
 hl.exec_cmd("wol-x11-env")
 -- Xwayland has no auth cookie: only this account's X11 clients may connect (other users, root).
 once([[sh -c 'xhost +si:localuser:"$(id -un)" && xhost -local: && xhost -']])
 once("gnome-keyring-daemon --start --components=secrets") -- finishes the login keyring wol-login unlocked
-once("/usr/lib/xdg-desktop-portal-hyprland")
-once("lxqt-policykit-agent")
+-- Input method (wolos-module-ime): nothing in this session runs /etc/xdg/autostart, so start it here;
+-- XMODIFIERS/QT_IM_MODULE come from /etc/profile.d/wolos-ime.sh.
+once([[sh -c '[ -x /usr/bin/fcitx5 ] && exec fcitx5 -d']])
 once([[sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
--- Session agent (crates/realtime): frontmost-app QoS, the event bus and Memory Saver's snapshots to
--- wold. Without it wold never hears that Memory Saver is on (e2e D4: status enabled:false).
-once([[sh -c 'exec wol-realtime >/dev/null 2>>"$XDG_RUNTIME_DIR/wol-realtime.log"']])
--- Night Light (wol_core::toggles): hyprsunset tints the screen, warm at start when Night Light was
--- left on (NIGHT_LIGHT_KELVIN), else true colours (-i). Same line as hyprland.conf.
-once([[sh -c 'command -v hyprsunset >/dev/null || exit 0; f="${XDG_STATE_HOME:-$HOME/.local/state}/wolos/toggles/org.wolos.nightlight"; [ -e "$f" ] && exec hyprsunset -t 4500 >/dev/null 2>>"$XDG_RUNTIME_DIR/hyprsunset.log"; exec hyprsunset -i >/dev/null 2>>"$XDG_RUNTIME_DIR/hyprsunset.log"']])
-once([[sh -c 'wol theme set "$(wol theme)"']]) -- GTK/Qt/foot files + gsettings from the active theme
--- User config (System Settings > Lock & Idle) wins over the system default.
-once([[sh -c '[ -e /etc/wolos-live ] && exit; c="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hypridle.conf"; [ -f "$c" ] || c=/usr/share/wolos/hypr/hypridle.conf; exec hypridle -c "$c"']])
+once([[wol theme apply]]) -- GTK/Qt/foot files + gsettings from the theme in use; saves nothing (QA-SET-63)
+-- Live: the account gets Flathub (QA-FDAY-11). /var/lib/flatpak is not there, so flatpak in a terminal
+-- saw no remote; the file ships the key, nothing is downloaded (the Store adds the same remote).
+once([[sh -c '[ -e /etc/wolos-live ] && exec flatpak remote-add --user --if-not-exists flathub /etc/flatpak/remotes.d/flathub.flatpakrepo']])
 
 hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
 hl.env("XDG_SESSION_TYPE", "wayland")
@@ -174,6 +173,9 @@ hl.config({
 -- (the rule's `enabled`); wol-float-apps keeps chosen apps floating while tiling.
 hl.window_rule({ name = "wol-float", match = { class = ".*" }, float = true })
 hl.window_rule({ name = "wol-float-apps", enabled = false, match = { class = "^$" }, float = true })
+-- The terminal is opaque (QA-LIVE-12): foot's own `alpha` (the theme's 0.9 glass look) lets the windows behind
+-- it bleed through the text where the compositor has no blur. `opaque` drops the buffer's alpha.
+hl.window_rule({ name = "wol-terminal-opaque", match = { class = "^(foot|footclient)$" }, opaque = true })
 -- Placement: wol-hypr centres new floating windows slightly high (realtime placement.rs).
 
 -- Blur and fade for shell surfaces.
@@ -240,6 +242,9 @@ bind(mod .. " + SHIFT + slash", "wol shell toggle shortcuts")
 -- Keyboard into the menu bar and the Dock (⌃F2, ⌃F3); Esc gives it back.
 bind("CTRL + F2", "wol shell show menubar")
 bind("CTRL + F3", "wol shell show dock")
+-- The two panels without a pointer (QA-ACC-7): ⌃⌘C Control Center, ⌃⌘A Notification Center (Alerts).
+bind("CTRL + " .. mod .. " + C", "wol shell toggle control-center")
+bind("CTRL + " .. mod .. " + A", "wol shell toggle notifications")
 -- Esc closes menus and panels and dismisses notification banners, and releasing Super finishes ⌘Tab:
 -- no binds. The wol-hypr plugin forwards Esc (`hide transient`) and the Super release (`hide
 -- switcher`) to the shell socket only while a shell layer is on screen, without a process; the app
@@ -314,6 +319,18 @@ hl.bind("CTRL + ALT + 1", hl.dsp.focus({ workspace = 1 }))
 hl.bind("CTRL + ALT + 2", hl.dsp.focus({ workspace = 2 }))
 hl.bind("CTRL + ALT + 3", hl.dsp.focus({ workspace = 3 }))
 hl.bind("CTRL + ALT + 4", hl.dsp.focus({ workspace = 4 }))
+
+-- Moving a window (QA-PWR-11): ⌃⌥⇧←/→ and ⌃⌥⇧1..4 send the focused window to another space (the
+-- same keys as switching, plus ⇧); ⌃⌥⌘←/→ send it to the display on that side. hyprctl does the
+-- move so the .conf and .lua forms are one text (units.rs hypr_conf_and_lua_bind_sets_equal).
+bind("CTRL + ALT + SHIFT + Left", "hyprctl dispatch movetoworkspace e-1")
+bind("CTRL + ALT + SHIFT + Right", "hyprctl dispatch movetoworkspace e+1")
+bind("CTRL + ALT + SHIFT + 1", "hyprctl dispatch movetoworkspace 1")
+bind("CTRL + ALT + SHIFT + 2", "hyprctl dispatch movetoworkspace 2")
+bind("CTRL + ALT + SHIFT + 3", "hyprctl dispatch movetoworkspace 3")
+bind("CTRL + ALT + SHIFT + 4", "hyprctl dispatch movetoworkspace 4")
+bind("CTRL + ALT + " .. mod .. " + Left", "hyprctl dispatch movewindow mon:l")
+bind("CTRL + ALT + " .. mod .. " + Right", "hyprctl dispatch movewindow mon:r")
 
 -- Toggles (wol toggle, ADR 0031 W5): each key flips the state.
 bind("CTRL + " .. mod .. " + N", "wol toggle nightlight")

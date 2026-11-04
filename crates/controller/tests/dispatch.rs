@@ -97,6 +97,36 @@ fn theme_light_dark_toggle_write_the_active_file() {
     assert!(env.out.contains("--accent-text") && env.out.contains("--radius-m"));
 }
 
+/// QA-SET-63 (SET-R2-10): the session start restyles the apps for the theme in force without
+/// saving one. `wol theme set "$(wol theme)"` at login wrote the theme file (Auto became a fixed
+/// Light, for good) and journaled it, so Restore offered 'Appearance · Terminal · Undo' after
+/// Setup. `wol theme apply` writes no theme file and no journal entry.
+#[test]
+fn theme_apply_restyles_without_saving_a_theme() {
+    let home = temp_home("theme-apply");
+    let mut env = FakeEnv {
+        home: home.clone(),
+        ..Default::default()
+    };
+    assert_eq!(run("theme apply", &mut env), 0, "{}", env.err);
+    assert_eq!(env.out, "wol-light\n");
+    assert!(
+        !home.join(shared::theme::ACTIVE_FILE).exists(),
+        "no theme file: Auto stays Auto"
+    );
+    let j = wol_core::journal::Journal::new(&home.join("state"), &home);
+    assert!(j.entries().is_empty(), "nothing to undo: {:?}", j.entries());
+    let css = std::fs::read_to_string(home.join("gtk-4.0/gtk.css")).unwrap();
+    assert!(css.contains("--accent-bg-color: #7c5cff;"), "{css}");
+    // A saved theme is applied as it is, still without a new entry.
+    assert_eq!(run("theme dark", &mut env), 0);
+    let n = j.entries().len();
+    env.out.clear();
+    assert_eq!(run("theme apply", &mut env), 0);
+    assert_eq!(env.out, "wol-dark\n");
+    assert_eq!(j.entries().len(), n);
+}
+
 #[test]
 fn theme_set_restyles_third_party_apps() {
     let home = temp_home("apps");
@@ -787,4 +817,59 @@ fn admin_reports_and_metered_requests() {
     let (code, req) = sent("admin auto-update metered maybe");
     assert_ne!(code, 0);
     assert_eq!(req, None);
+}
+
+/// QA-NET-8 (B7): `wol wifi join` that fails exits non-zero with its cause: no Wi-Fi device,
+/// a wrong password, an 802.1X network. `hidden` reaches NetworkManager as `hidden yes`.
+#[test]
+fn wifi_join_err_exits_nonzero() {
+    use wol_core::system::fake::FakeHost;
+    // No Wi-Fi device (NetworkManager answers, lists none).
+    let h = std::sync::Arc::new(FakeHost::linux());
+    h.command("nmcli -t -f TYPE dev", "ethernet\n");
+    let mut env = FakeEnv {
+        host: Some(h),
+        stdin: vec!["foo12345".into()],
+        ..Default::default()
+    };
+    let code = run("wifi join Foo", &mut env);
+    assert_ne!(code, 0, "{}", env.err);
+    assert!(env.err.contains("no Wi-Fi device"), "{}", env.err);
+    assert!(!env.err.contains("password"), "{}", env.err);
+    // An 802.1X network: said so, no password read.
+    let h = std::sync::Arc::new(FakeHost::linux());
+    h.command(
+        "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list --rescan auto",
+        " :70:WPA2 802.1X:Campus\n",
+    );
+    let mut env = FakeEnv {
+        host: Some(h),
+        stdin: vec!["password1".into()],
+        ..Default::default()
+    };
+    assert_ne!(run("wifi join Campus", &mut env), 0);
+    assert!(env.err.contains("802.1X"), "{}", env.err);
+    // Hidden: the profile asks for the network by name.
+    let h = std::sync::Arc::new(FakeHost::linux());
+    h.slow(
+        "nmcli connection add type wifi con-name Attic ifname * ssid Attic wifi-sec.key-mgmt wpa-psk 802-11-wireless.hidden yes",
+        "",
+    );
+    let mut env = FakeEnv {
+        host: Some(h.clone()),
+        stdin: vec!["password1".into()],
+        ..Default::default()
+    };
+    // The fake answers only the argv with `802-11-wireless.hidden yes`.
+    assert_eq!(run("wifi join Attic hidden", &mut env), 0, "{}", env.err);
+    let mut env = FakeEnv {
+        host: Some(h),
+        stdin: vec!["password1".into()],
+        ..Default::default()
+    };
+    assert_ne!(
+        run("wifi join Attic", &mut env),
+        0,
+        "not hidden: another argv"
+    );
 }

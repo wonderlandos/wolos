@@ -602,7 +602,7 @@ pub const DISPLAY_OFF_AFTER_LOCK: u32 = 60;
 /// waking up never shows the desktop before the lock screen.
 pub fn hypridle_conf(lock_secs: u32, lock_on_sleep: bool) -> String {
     use crate::power::policy::LOCK_CMD;
-    let mut s = format!("# Written by WolOS Settings.\ngeneral {{\n    lock_cmd = {LOCK_CMD}\n");
+    let mut s = format!("{HYPRIDLE_HEADER}general {{\n    lock_cmd = {LOCK_CMD}\n");
     if lock_on_sleep {
         s.push_str(&format!(
             "    before_sleep_cmd = {LOCK_CMD}\n    inhibit_sleep = 3\n"
@@ -617,6 +617,20 @@ pub fn hypridle_conf(lock_secs: u32, lock_on_sleep: bool) -> String {
     }
     s.push_str(&crate::power::policy::hypridle_listeners(lock_secs));
     s
+}
+
+/// First line of every hypridle config Settings writes ([`hypridle_conf`]).
+pub const HYPRIDLE_HEADER: &str = "# Written by WolOS Settings.\n";
+
+/// Whether the sleep hook locks this account before the computer sleeps (QA-FILES-8): yes unless
+/// the account turned "require the password after sleep" off in Settings, that is a config
+/// Settings wrote ([`HYPRIDLE_HEADER`]) without `before_sleep_cmd`. A hand-written or foreign
+/// hypridle.conf (or a dead hypridle) never leaves the desktop open after resume.
+pub fn lock_on_sleep(text: Option<&str>) -> bool {
+    match text {
+        Some(t) if t.starts_with(HYPRIDLE_HEADER) => parse_hypridle(Some(t)).1,
+        _ => true,
+    }
 }
 
 /// (lock_secs, lock_on_sleep) from a hypridle config; system defaults (300, true) when absent.
@@ -819,6 +833,21 @@ mod tests {
                 c.ends_with(&crate::power::policy::hypridle_listeners(secs)),
                 "{c}"
             );
+        }
+    }
+
+    /// QA-FILES-8: only Settings' own "no password after sleep" skips the lock before sleep.
+    #[test]
+    fn lock_on_sleep_only_settings_says_no() {
+        assert!(lock_on_sleep(None));
+        assert!(lock_on_sleep(Some(&hypridle_conf(300, true))));
+        assert!(!lock_on_sleep(Some(&hypridle_conf(300, false))));
+        for foreign in [
+            "",
+            "general {\n    lock_cmd = hyprlock\n}\n",
+            "listener {\n timeout = 60\n}\n",
+        ] {
+            assert!(lock_on_sleep(Some(foreign)), "{foreign:?}");
         }
     }
 

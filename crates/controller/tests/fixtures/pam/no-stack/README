@@ -1,0 +1,2 @@
+A PAM configuration directory with no stack at all (no service file, no `other`): pam_start_confdir
+fails with PAM_ABORT here. controller/tests/pam_fake.rs::pam_start_failure_is_error.

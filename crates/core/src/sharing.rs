@@ -27,6 +27,29 @@ pub fn ssh_rule(on: bool) -> String {
     }
 }
 
+/// AirPlay Receiver's rule file in [`FIREWALL_INCLUDE_DIR`] (QA-NET-5): shairport-sync listens on
+/// tcp 7000 (AirPlay 2) and 5000 (classic RAOP), takes audio and timing on udp 6000-6009 and PTP
+/// on udp 319-320. mDNS already advertises the receiver, so with the firewall on and no rule a
+/// phone lists it and then times out.
+pub const AIRPLAY_RULE_FILE: &str = "/etc/wolos/nftables.d/airplay.conf";
+
+/// The text of [`AIRPLAY_RULE_FILE`]: the receiver's ports while it is on, a comment while off.
+/// Only from the local network (link-local and private ranges): AirPlay never comes from the internet.
+pub fn airplay_rule(on: bool) -> String {
+    let head =
+        "# Written by Settings > General > Sharing > AirPlay Receiver (wol-admind). Do not edit.\n";
+    if on {
+        format!(
+            "{head}ip saddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }} tcp dport {{ 5000, 7000 }} ct state new accept\n\
+             ip6 saddr {{ fc00::/7, fe80::/10 }} tcp dport {{ 5000, 7000 }} ct state new accept\n\
+             ip saddr {{ 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 }} udp dport {{ 319, 320, 6000-6009 }} accept\n\
+             ip6 saddr {{ fc00::/7, fe80::/10 }} udp dport {{ 319, 320, 6000-6009 }} accept\n"
+        )
+    } else {
+        format!("{head}# AirPlay Receiver is off: its ports stay closed.\n")
+    }
+}
+
 /// The unit's drop-in (a oneshot that stays active, loads [`FIREWALL_RULES`], and takes its table
 /// out on stop; QA-NET-1/2/3).
 pub const FIREWALL_DROP_IN: &str = "/usr/lib/systemd/system/nftables.service.d/wolos.conf";

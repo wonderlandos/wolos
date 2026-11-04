@@ -1,6 +1,11 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Start a WolOS session: the compositor with WolOS defaults (user file sources the system file).
+# The login environment (/etc/profile and profile.d: LANG from /etc/locale.conf, the input method,
+# PATH). wol-session-pam starts this file directly, never through the account's login shell: a
+# pwsh or rsh account could not start a session at all (QA-SHADOW-43).
+# shellcheck disable=SC1090,SC1091
+[ -r "${WOLOS_PROFILE:-/etc/profile}" ] && . "${WOLOS_PROFILE:-/etc/profile}"
 export XDG_SESSION_TYPE=wayland XDG_SESSION_DESKTOP=Hyprland XDG_CURRENT_DESKTOP=Hyprland
 export LIBSEAT_BACKEND=seatd   # seatd (seat group), as the login window
 # No logind session (a TTY start, another launcher): /run/user/<uid> is logind's to make and root's
@@ -23,9 +28,13 @@ fi
 # WOLOS_SHARE: shipped defaults (overridable so a live test runs this script from the repo).
 share=${WOLOS_SHARE:-/usr/share/wolos}
 lua=${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua
+# A settings folder this account cannot write or read (chmod, a full disk, a root-owned ~/.config):
+# the session still starts, on the WolOS defaults alone (QA-LIVE-33: the compositor found no
+# config, exited in 0.6 s and the person was back at the login window after every password; the
+# login window names the folder, wol-login early_end_sentence).
+own_config=1
 if [ ! -e "$lua" ]; then
-	mkdir -p "${lua%/*}"
-	cat > "$lua" <<LUA
+	if ! { mkdir -p "${lua%/*}" && cat > "$lua" <<LUA
 -- WolOS defaults. Add your overrides below.
 require("$share/hypr/hyprland.lua")
 local ok, err = pcall(require, "./wolos/*.lua")
@@ -33,7 +42,18 @@ if not ok and not tostring(err):find("found no match", 1, true) then
     error(err, 0)
 end
 LUA
+	} 2>/dev/null; then
+		echo "wol-session: $lua cannot be written: starting on the WolOS defaults" >&2
+		command -v logger >/dev/null 2>&1 && logger -t wol-session -p user.warning "$lua cannot be written: starting on the WolOS defaults"
+		own_config=
+	fi
+elif [ ! -r "$lua" ]; then
+	echo "wol-session: $lua cannot be read: starting on the WolOS defaults" >&2
+	own_config=
 fi
+# Hyprland's own arguments after `--`: the defaults' file when the account's cannot be used.
+defaults=
+[ -n "$own_config" ] || defaults="--config $share/hypr/hyprland.lua"
 # The compositor reads only Lua. A hyprland.conf left by an older release is ignored; the files under
 # hypr/wolos/ (theme, Settings) load after the defaults, none yet is not an error, a broken one is.
 # Third-party apps look like WolOS before the first `wol theme set`: link the shipped defaults
@@ -108,6 +128,8 @@ fi
 # password. The variable stops here; apps never see it.
 if [ "${WOL_SESSION_LOCKED:-}" = 1 ]; then
 	unset WOL_SESSION_LOCKED
-	exec ${bus:+$bus --} start-hyprland -- --locked-cmd "$WOLOS_CRASH_LOCK_CMD"
+	# shellcheck disable=SC2086 # $defaults is two words or none
+	exec ${bus:+$bus --} start-hyprland -- --locked-cmd "$WOLOS_CRASH_LOCK_CMD" $defaults
 fi
-exec ${bus:+$bus --} start-hyprland
+# shellcheck disable=SC2086
+exec ${bus:+$bus --} start-hyprland ${defaults:+-- $defaults}

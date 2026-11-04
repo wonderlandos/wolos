@@ -405,22 +405,47 @@ pub fn runtime_dir(u: &LoginUser) -> String {
 }
 
 /// Root helper that opens the user's PAM session (service [`SESSION_PAM_SERVICE`]: pam_systemd
-/// makes the logind session, /run/user and user@.service) and runs a command in the user's login
-/// shell: `wol-session-pam USER COMMAND`.
+/// makes the logind session, /run/user and user@.service) and starts the session program in it:
+/// `wol-session-pam USER PROGRAM [NAME=VALUE]` ([`session_exec`]).
 pub const SESSION_PAM: &str = "/usr/lib/wol-session-pam";
 pub const SESSION_PAM_SERVICE: &std::ffi::CStr = c"wol-login";
 
-/// `locked`: wol-session starts the compositor locked behind wol-lock (ADR 0012).
+/// The only variable wol-login hands the session program: start locked (ADR 0012).
+pub const SESSION_LOCKED_VAR: &str = "WOL_SESSION_LOCKED=1";
+
+/// `locked`: wol-session starts the compositor locked behind wol-lock (ADR 0012). The session
+/// program runs directly, never through the account's login shell: a non-POSIX one (pwsh, rsh)
+/// could not run the `<shell> -l -c "exec env ..."` line, and the person was back at the login
+/// window after every right password (QA-SHADOW-43). wol-session builds the login environment
+/// itself (/etc/profile).
 pub fn session_command(u: &LoginUser, locked: bool) -> Option<Vec<String>> {
-    let lock = if locked { "WOL_SESSION_LOCKED=1 " } else { "" };
     valid_name(&u.name).then(|| {
-        vec![
-            SESSION_PAM.into(),
-            u.name.clone(),
-            format!("exec env {lock}{SESSION}"),
-        ]
+        let mut v = vec![SESSION_PAM.into(), u.name.clone(), SESSION.into()];
+        if locked {
+            v.push(SESSION_LOCKED_VAR.into());
+        }
+        v
     })
 }
+
+/// wol-session-pam's arguments after USER: the program it may start ([`SESSION`] only) and the
+/// variables it may set ([`SESSION_LOCKED_VAR`] only). None for anything else.
+pub fn session_exec(args: &[String]) -> Option<(String, Vec<(String, String)>)> {
+    let (prog, vars) = args.split_first()?;
+    if prog != SESSION || vars.len() > 1 || vars.iter().any(|v| v != SESSION_LOCKED_VAR) {
+        return None;
+    }
+    let env = vars
+        .iter()
+        .filter_map(|v| v.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    Some((prog.clone(), env))
+}
+
+/// `env`: su's "shell" for the keyring daemon ([`keyring_login_command`]), so no shell line is
+/// ever given to the account's login shell (QA-SHADOW-43).
+pub const KEYRING_RUNNER: &str = "/usr/bin/env";
 
 pub const KEYRING_DAEMON: &str = "/usr/bin/gnome-keyring-daemon";
 
@@ -436,19 +461,42 @@ pub const KEYRING_DAEMON: &str = "/usr/bin/gnome-keyring-daemon";
 /// `/run/user/UID` with the daemon's control socket, and the real session started a second, locked
 /// daemon whose first secret request made gcr ask to "Choose password for new keyring" (QA live-1
 /// H2/H3: Cancel left the browser without a network stack).
+///
+/// `-s /usr/bin/env` ([`KEYRING_RUNNER`]): su starts the daemon through `env`, not through the
+/// account's login shell, which could not run a POSIX line (pwsh; QA-SHADOW-43). The daemon's
+/// socket must land in the runtime folder `su`'s PAM session mounted (pam_systemd,
+/// user-runtime-dir@): wol-login checks [`runtime_dir_mounted`] once it is up (QA-FILES-11).
 pub fn keyring_login_command(u: &LoginUser) -> Option<Vec<String>> {
     valid_name(&u.name).then(|| {
         vec![
             "/usr/bin/su".into(),
             "-l".into(),
+            "-s".into(),
+            KEYRING_RUNNER.into(),
+            // su's own options end here: the daemon's --login and --foreground are not su's.
+            "--".into(),
             u.name.clone(),
-            "-c".into(),
-            format!(
-                "exec env XDG_RUNTIME_DIR={} {KEYRING_DAEMON} --foreground --login",
-                runtime_dir(u)
-            ),
+            format!("XDG_RUNTIME_DIR={}", runtime_dir(u)),
+            KEYRING_DAEMON.into(),
+            "--foreground".into(),
+            "--login".into(),
         ]
     })
+}
+
+/// `dir` is a mount point in `mountinfo` (/proc/self/mountinfo: field 5 is the mount point,
+/// octal escapes for spaces). /var/run is /run. A socket made in the plain folder wol-login
+/// prepares would be hidden by logind's tmpfs when the session starts, and the session would ask
+/// to "Choose password for new keyring" (QA-FILES-11).
+pub fn runtime_dir_mounted(mountinfo: &str, dir: &str) -> bool {
+    let dir = dir
+        .strip_prefix("/var")
+        .filter(|d| d.starts_with("/run/"))
+        .unwrap_or(dir);
+    mountinfo
+        .lines()
+        .filter_map(|l| l.split(' ').nth(4))
+        .any(|m| m.replace("\\040", " ") == dir)
 }
 
 /// The daemon's control socket: once it exists the login keyring is unlocked and the session's
@@ -1250,7 +1298,7 @@ broken:line
         assert!(argv.ends_with(" alice"), "{argv}");
         assert!(argv.contains(" -s /usr/bin/zsh "), "zsh: {argv}");
         assert!(
-            argv.contains(" -G wheel,seat,video,input,audio "),
+            argv.contains(" -G wheel,seat,video "),
             "administrator (wheel): {argv}"
         );
         assert_eq!(
@@ -1278,6 +1326,23 @@ broken:line
         assert!(!root2.join("home/alice").exists());
     }
 
+    /// QA-FILES-2: the Setup Assistant's account is not in `input` (every keyboard, the lock
+    /// screen's password included) nor `audio`; no Run step of the plan names either group.
+    #[test]
+    fn useradd_argv_no_input() {
+        for step in setup_plan(&account()) {
+            if let SetupStep::Run { argv, .. } = step {
+                for (i, a) in argv.iter().enumerate() {
+                    if i > 0 && argv[i - 1] == "-G" {
+                        let groups: Vec<&str> = a.split(',').collect();
+                        assert!(!groups.contains(&"input"), "{argv:?}");
+                        assert!(!groups.contains(&"audio"), "{argv:?}");
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn setup_plan_creates_user_then_writes_prefs() {
         let p = setup_plan(&account());
@@ -1292,7 +1357,7 @@ broken:line
                     "-s",
                     "/usr/bin/zsh",
                     "-G",
-                    "wheel,seat,video,input,audio",
+                    "wheel,seat,video",
                     "alice"
                 ]
                 .map(String::from)
@@ -1595,22 +1660,23 @@ broken:line
     #[test]
     fn session_opens_a_pam_session_as_the_user() {
         // wol-session-pam: PAM session (pam_systemd: logind session, /run/user, user@.service with
-        // PipeWire and the portals), then the user's login shell runs wol-session.
+        // PipeWire and the portals), then wol-session itself, no shell in between.
         let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/usr/bin/zsh");
         assert_eq!(runtime_dir(&zoe), "/var/run/user/1002");
-        let argv = |env: &str| {
-            [
-                SESSION_PAM.to_string(),
-                "zoe".into(),
-                format!("exec env {env}/usr/bin/wol-session"),
-            ]
-        };
         assert_eq!(SESSION_PAM, "/usr/lib/wol-session-pam");
-        assert_eq!(session_command(&zoe, false).unwrap(), argv(""));
+        assert_eq!(
+            session_command(&zoe, false).unwrap(),
+            [SESSION_PAM, "zoe", "/usr/bin/wol-session"]
+        );
         // Locked start (ADR 0012): wol-session starts the compositor locked with wol-lock.
         assert_eq!(
             session_command(&zoe, true).unwrap(),
-            argv("WOL_SESSION_LOCKED=1 ")
+            [
+                SESSION_PAM,
+                "zoe",
+                "/usr/bin/wol-session",
+                "WOL_SESSION_LOCKED=1"
+            ]
         );
         assert!(session_command(&user("a;b", 1, "", "", ""), false).is_none());
     }
@@ -1625,9 +1691,14 @@ broken:line
             [
                 "/usr/bin/su",
                 "-l",
+                "-s",
+                "/usr/bin/env",
+                "--",
                 "zoe",
-                "-c",
-                "exec env XDG_RUNTIME_DIR=/var/run/user/1002 /usr/bin/gnome-keyring-daemon --foreground --login"
+                "XDG_RUNTIME_DIR=/var/run/user/1002",
+                "/usr/bin/gnome-keyring-daemon",
+                "--foreground",
+                "--login"
             ]
         );
         assert!(keyring_login_command(&user("a;b", 1, "", "", "")).is_none());
@@ -1638,6 +1709,63 @@ broken:line
         );
     }
 
+    /// QA-SHADOW-43: the session starts the same way whatever the account's login shell (pwsh
+    /// could not run `exec env ...`), and so does the login keyring daemon (`su -s /usr/bin/env`):
+    /// no shell line at all, and wol-session-pam starts nothing but wol-session.
+    #[test]
+    fn session_command_independent_of_shell() {
+        let shells = [
+            "/usr/bin/zsh",
+            "/bin/bash",
+            "/usr/bin/pwsh",
+            "/usr/bin/fish",
+            "/usr/bin/rsh",
+        ];
+        let argvs: Vec<_> = shells
+            .iter()
+            .map(|sh| {
+                let u = user("alice", 1000, "Alice", "/home/alice", sh);
+                let cmd = session_command(&u, true).unwrap();
+                (
+                    cmd.clone(),
+                    session_exec(&cmd[2..]),
+                    keyring_login_command(&u).unwrap(),
+                )
+            })
+            .collect();
+        assert!(argvs.windows(2).all(|w| w[0] == w[1]), "{argvs:#?}");
+        let (_, run, keyring) = &argvs[0];
+        assert_eq!(
+            run.clone(),
+            Some((
+                SESSION.to_string(),
+                vec![("WOL_SESSION_LOCKED".to_string(), "1".to_string())]
+            ))
+        );
+        assert_eq!(
+            keyring[..6],
+            ["/usr/bin/su", "-l", "-s", KEYRING_RUNNER, "--", "alice"]
+        );
+        assert!(!keyring.iter().any(|a| a == "-c"), "{keyring:?}");
+        // wol-session-pam starts wol-session and nothing else.
+        let s = |v: &[&str]| session_exec(&v.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        assert!(s(&[SESSION]).is_some_and(|(_, e)| e.is_empty()));
+        assert!(s(&["/bin/sh", "-c", "id"]).is_none());
+        assert!(s(&[SESSION, "LD_PRELOAD=/tmp/x.so"]).is_none());
+        assert!(s(&[]).is_none());
+    }
+
+    /// QA-FILES-11: the keyring daemon's socket counts only inside logind's runtime mount.
+    #[test]
+    fn runtime_dir_mountpoint_before_keyring() {
+        let mi = "24 1 0:22 / /run rw - tmpfs tmpfs rw\n\
+                  88 24 0:51 / /run/user/1000 rw,nosuid - tmpfs tmpfs rw,size=1M,mode=700,uid=1000\n";
+        assert!(runtime_dir_mounted(mi, "/var/run/user/1000"));
+        assert!(runtime_dir_mounted(mi, "/run/user/1000"));
+        assert!(!runtime_dir_mounted(mi, "/var/run/user/1002"));
+        assert!(!runtime_dir_mounted(mi, "/run/user/100"));
+    }
+
     /// QA live-1 H2/H3: the daemon that unlocks the login keyring must not outlive its `su -l`
     /// session as an orphan: it runs in the foreground, so wol-login can hold that session (and
     /// `/run/user/UID`, the daemon's socket) open until the real session ends.
@@ -1645,9 +1773,11 @@ broken:line
     fn keyring_daemon_stays_in_the_foreground() {
         let zoe = user("zoe", 1002, "Zoe Lima", "/home/zoe", "/bin/sh");
         let cmd = keyring_login_command(&zoe).unwrap();
-        let line = cmd.last().unwrap();
-        assert!(line.contains("--foreground --login"), "{line}");
-        assert!(!line.contains("--daemonize"), "{line}");
+        assert!(
+            cmd.ends_with(&["--foreground".into(), "--login".into()]),
+            "{cmd:?}"
+        );
+        assert!(!cmd.iter().any(|a| a == "--daemonize"), "{cmd:?}");
     }
 
     #[test]

@@ -498,18 +498,25 @@ fn run_power(argv: &[&str]) -> bool {
     loop {
         match child.try_wait() {
             Ok(Some(st)) => {
-                if !st.success() {
-                    eprintln!("wol-login: {prog} {}: {st}", args.join(" "));
+                if let Some(note) = power_exit_note(prog, args, st) {
+                    eprintln!("{note}");
                 }
                 return st.success();
             }
             Ok(None) if start.elapsed() >= POWER_WAIT => {
                 // Named; a thread the system refuses is not a failed power request (the child
-                // is then reaped when wol-login ends).
+                // is then reaped when wol-login ends). The window already heard "ok": a late
+                // failure is still named in the journal.
+                let line = format!("{prog} {}", args.join(" "));
                 let _ = std::thread::Builder::new()
                     .name("power-wait".into())
-                    .spawn(move || {
-                        let _ = child.wait();
+                    .spawn(move || match child.wait() {
+                        Ok(st) => {
+                            if let Some(note) = power_exit_note(&line, &[], st) {
+                                eprintln!("{note}");
+                            }
+                        }
+                        Err(e) => eprintln!("wol-login: {line}: {e}"),
                     });
                 return true;
             }
@@ -517,6 +524,18 @@ fn run_power(argv: &[&str]) -> bool {
             Err(_) => return false,
         }
     }
+}
+
+/// The journal line for a power command that ended with `st`: None when it succeeded.
+fn power_exit_note(prog: &str, args: &[&str], st: std::process::ExitStatus) -> Option<String> {
+    if st.success() {
+        return None;
+    }
+    let cmd = std::iter::once(prog)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(format!("wol-login: {cmd}: {st}"))
 }
 
 /// Runs the setup plan; the new account on success.
@@ -804,6 +823,20 @@ fn stop_tree(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A1 follow-up: a power command that fails after [`POWER_WAIT`] (already answered "ok") is
+    /// still named in the journal, with the same line an early failure gets; success says nothing.
+    #[test]
+    fn power_exit_note_names_a_failure_only() {
+        use std::os::unix::process::ExitStatusExt;
+        let failed = std::process::ExitStatus::from_raw(1 << 8);
+        assert_eq!(
+            power_exit_note("systemctl", &["suspend"], failed).as_deref(),
+            Some("wol-login: systemctl suspend: exit status: 1")
+        );
+        let ok = std::process::ExitStatus::from_raw(0);
+        assert_eq!(power_exit_note("systemctl", &["suspend"], ok), None);
+    }
 
     /// QA-DATA-14: a Setup write replaces the file whole, with the asked mode from the first
     /// byte (the temporary is created with it) and no temporary left behind.

@@ -143,3 +143,13 @@ fn failed_early_names_full_disk() {
     let roomy = parse_df_avail("      Avail\n 52428800000\n");
     assert!(!early_end_sentence(roomy, Some(true)).contains("disk is full"));
 }
+
+/// QA-SHADOW-39: the reply wol-login sends for a password that is not text is the one the login
+/// window (shell login.rs from_reply) maps to its sentence (shell copy::LOGIN_TEXT_PASSWORD).
+#[test]
+fn text_password_reply_is_the_shared_word() {
+    assert_eq!(
+        controller::login::TEXT_PASSWORD_REPLY,
+        shared::login::REPLY_TEXT_PASSWORD
+    );
+}

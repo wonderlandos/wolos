@@ -1,0 +1,5 @@
+# Fake Arch system-local-login for controller/tests/pam_fake.rs (wol-login's account, session and
+# password phases).
+account		include		system-auth
+password	include		system-auth
+session		include		system-auth

@@ -38,11 +38,15 @@ pub fn account(passwd: &str, uid: u32) -> Option<Value> {
     Some(json!({ "name": line[0], "full_name": full }))
 }
 
+/// `online`: a default route (IPv4 or IPv6) and NetworkManager does not say "no network";
+/// `limited`: the network does not reach the internet; `portal`: a sign-in page holds it (QA-NET-12,
+/// NET2-3); `metered`: the connection costs by the byte (so apps hold big downloads).
 pub fn network(h: &dyn Host) -> Value {
     let n = netinfo::read(h);
     let kind = |k: IfKind| match k {
         IfKind::Ethernet => "ethernet",
         IfKind::WiFi => "wifi",
+        IfKind::Vpn => "vpn",
         IfKind::Other => "other",
     };
     let interfaces: Vec<Value> = n
@@ -50,7 +54,13 @@ pub fn network(h: &dyn Host) -> Value {
         .iter()
         .map(|i| json!({"name": i.name, "kind": kind(i.kind), "up": i.up}))
         .collect();
-    json!({"online": n.gateway.is_some(), "interfaces": interfaces})
+    json!({
+        "online": n.online(),
+        "limited": n.limited(),
+        "portal": n.portal(),
+        "metered": n.metered,
+        "interfaces": interfaces,
+    })
 }
 
 /// Keeps the machine awake while the value lives.
@@ -125,6 +135,37 @@ mod tests {
             !text.contains("aa:bb") && !text.contains("192.168"),
             "{text}"
         );
+    }
+
+    /// QA-NET-12 / NET2-3: `{online, limited, portal}` from NetworkManager; IPv6-only is online.
+    #[test]
+    fn limited_state() {
+        let h = FakeHost::linux();
+        h.command(
+            "ip route show default",
+            "default via 10.99.0.1 dev enp0s2\n",
+        )
+        .command("nmcli -t -g CONNECTIVITY general status", "portal\n");
+        let v = network(&h);
+        assert_eq!(
+            (&v["online"], &v["limited"], &v["portal"]),
+            (&json!(true), &json!(false), &json!(true))
+        );
+        h.command("nmcli -t -g CONNECTIVITY general status", "limited\n");
+        assert_eq!(network(&h)["limited"], true);
+        let h6 = FakeHost::linux();
+        h6.command(
+            "ip -6 route show default",
+            "default via fe80::1 dev enp0s1 proto ra metric 100\n",
+        )
+        .command("nmcli -t -g CONNECTIVITY general status", "full\n")
+        .command(
+            "busctl get-property org.freedesktop.NetworkManager /org/freedesktop/NetworkManager org.freedesktop.NetworkManager Metered",
+            "u 3\n",
+        );
+        let v = network(&h6);
+        assert_eq!((&v["online"], &v["metered"]), (&json!(true), &json!(true)));
+        assert!(!v.to_string().contains("fe80"), "{v}");
     }
 
     #[test]

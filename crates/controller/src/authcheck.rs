@@ -38,6 +38,19 @@ pub enum Auth {
     Error,
 }
 
+/// The one fixed wait after a refused password (ADR 0023/0024). The PAM stacks WolOS ships
+/// (`wol-lock`, `wol-login`, `wol-admin`) say `nodelay` to pam_unix and pam_faillock so this is the
+/// only wait: theirs ran on top of it (QA-SHADOW-35: ~4 s at the lock screen, ~6 s in Settings).
+pub const FAIL_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Whether wol-authcheck waits [`FAIL_DELAY`] before it answers `a`. Only a refused password at the
+/// lock screen: an error (the stack could not run) is not a guess and is told at once
+/// (QA-SHADOW-36), and in `--admin` mode wol-admind, the only caller, waits itself before its
+/// refusal (`REFUSAL_DELAY_MS`): two waits made the Authenticate sheet take 4 s.
+pub fn delay_for(a: &Auth, m: &Mode) -> bool {
+    matches!((a, m), (Auth::Denied, Mode::Lock))
+}
+
 pub fn exit_code(a: &Auth) -> i32 {
     match a {
         Auth::Ok => EXIT_OK,
@@ -111,6 +124,18 @@ pub fn wipe(buf: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SHADOW-36: a broken stack (exit 2) answers at once; only a refused password at the lock
+    /// screen waits, and the admin mode leaves the wait to wol-admind (QA-SHADOW-35).
+    #[test]
+    fn delay_for_error_false() {
+        assert!(!delay_for(&Auth::Error, &Mode::Lock));
+        assert!(!delay_for(&Auth::Ok, &Mode::Lock));
+        assert!(delay_for(&Auth::Denied, &Mode::Lock));
+        for a in [Auth::Ok, Auth::Denied, Auth::Error] {
+            assert!(!delay_for(&a, &Mode::Admin("bob".into())), "{a:?}");
+        }
+    }
 
     fn read(input: &[u8]) -> Result<Vec<u8>, BadInput> {
         let mut buf = [0u8; MAX_PASSWORD + 2];

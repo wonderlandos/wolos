@@ -1,12 +1,16 @@
 # wol-login (crates/controller): pam_authenticate + pam_acct_mgmt for the login window.
 # Auth is system-login's with wol-lock's forgiving guessing limits.
-auth		required	pam_shells.so
-auth		requisite	pam_nologin.so
-auth		required	pam_faillock.so preauth deny=10 unlock_time=60
-auth		[success=1 default=bad]	pam_unix.so
-auth		[default=die]	pam_faillock.so authfail deny=10 unlock_time=60
+# nodelay: wol-login waits its one fixed 2 s after a refusal (ADR 0024); the modules' own ~2 s came
+# on top of it (QA-SHADOW-35).
+# No pam_shells: the window lists exactly the accounts shared::login::login_names accepts (the shell
+# rule lives there), and a shell refusal in auth read "Incorrect password" (QA-FILES-9). /etc/nologin
+# is an account check: its refusal is told as an error, never as a wrong password.
+auth		required	pam_faillock.so preauth nodelay deny=10 unlock_time=60
+auth		[success=1 default=bad]	pam_unix.so nodelay
+auth		[default=die]	pam_faillock.so authfail nodelay deny=10 unlock_time=60
 auth		optional	pam_permit.so
 auth		required	pam_env.so
+account		requisite	pam_nologin.so
 account		required	pam_faillock.so
 account		include		system-local-login
 session		include		system-local-login

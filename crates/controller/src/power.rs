@@ -163,7 +163,9 @@ fn suspend(env: &mut dyn Env) -> i32 {
                     .join(wol_core::prefs::IDLE_FILE),
             )
         });
-        if !wol_core::prefs::parse_hypridle(conf.as_deref()).1 {
+        // QA-FILES-8: a foreign or hand-edited hypridle.conf still locks; only Settings' own
+        // "no password after sleep" skips the lock.
+        if !wol_core::prefs::lock_on_sleep(conf.as_deref()) {
             continue;
         }
         // Audit S4-21: a hung shell costs the sleep LOCK_WAIT_SECS, not the generic 30 s.
@@ -175,4 +177,47 @@ fn suspend(env: &mut dyn Env) -> i32 {
         ));
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::run::FakeEnv;
+    use std::path::PathBuf;
+
+    /// QA-FILES-8: an account whose hypridle.conf Settings did not write (hand-edited, another
+    /// locker's, empty) is locked before sleep like everyone else; Settings' "no password after
+    /// sleep" is the one way out.
+    #[test]
+    fn foreign_hypridle_still_locks() {
+        let f = |p: &str, t: &str| (PathBuf::from(p), t.to_string());
+        let mut env = FakeEnv {
+            root: true,
+            files: vec![
+                f(
+                    "/etc/passwd",
+                    "ann:*:1001:1001:Ann:/home/ann:/bin/sh\nbob:*:1002:1002:Bob:/home/bob:/bin/sh\n",
+                ),
+                f("/run/user/1001/hypr/a/.socket.sock", ""),
+                f("/run/user/1002/hypr/b/.socket.sock", ""),
+                f(
+                    "/home/ann/.config/hypr/hypridle.conf",
+                    "general {\n    lock_cmd = hyprlock\n}\nlistener {\n    timeout = 120\n    on-timeout = hyprlock\n}\n",
+                ),
+                f(
+                    "/home/bob/.config/hypr/hypridle.conf",
+                    &wol_core::prefs::hypridle_conf(300, false),
+                ),
+            ],
+            replies: vec!["ok\n".into(), "ok\n".into()],
+            ..FakeEnv::default()
+        };
+        assert_eq!(super::suspend(&mut env), 0);
+        let asked: Vec<&PathBuf> = env.requests.iter().map(|(p, _)| p).collect();
+        assert_eq!(
+            asked,
+            [&PathBuf::from("/run/user/1001/hypr/a/.socket.sock")],
+            "{}",
+            env.out
+        );
+    }
 }

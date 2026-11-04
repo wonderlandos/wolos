@@ -66,10 +66,17 @@ pub mod users {
     /// The zsh package registers it in /etc/shells. root keeps bash.
     pub const LOGIN_SHELL: &str = "/usr/bin/zsh";
     /// Groups of every account: seat (the display, through seatd), video (cameras, GPU render nodes).
-    pub const ACCOUNT_GROUPS: &str = "seat,video,input,audio";
+    /// Never `input` or `audio` (QA-FILES-2): `input` opens every /dev/input/event* to any process
+    /// of the account, so a background program of one person read the keys typed at the lock screen
+    /// and the login window; `audio` opened the microphone to every session, not only the one at
+    /// the screen. The session at the screen gets both from logind (uaccess) and seatd.
+    pub const ACCOUNT_GROUPS: &str = "seat,video";
     /// Administrators, like the Setup Assistant's account: wheel (sudo via /etc/sudoers.d,
     /// wol-admind). USB sticks mount through udisks for every session.
-    pub const ACCOUNT_GROUPS_ADMIN: &str = "wheel,seat,video,input,audio";
+    pub const ACCOUNT_GROUPS_ADMIN: &str = "wheel,seat,video";
+    /// Groups older WolOS releases gave every account; `wol doctor` names the accounts still in
+    /// them (controller doctor::groups).
+    pub const RETIRED_GROUPS: [&str; 2] = ["input", "audio"];
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Account {
@@ -230,6 +237,66 @@ pub mod users {
         )
     }
 
+    /// Longest account name `useradd` takes.
+    pub const NAME_MAX: usize = 32;
+
+    /// Latin letters with marks and ligatures as plain ASCII ("Ñandú" -> "nandu"). Other scripts
+    /// give nothing: the person types the account name (QA-FILES-16: only ASCII was kept, so
+    /// "Ñandú Álvarez" became `and`).
+    pub fn ascii_of(c: char) -> &'static str {
+        match c {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => "a",
+            'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => "c",
+            'ď' | 'đ' | 'ð' => "d",
+            'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
+            'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
+            'ĥ' | 'ħ' => "h",
+            'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
+            'ĵ' => "j",
+            'ķ' => "k",
+            'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
+            'ñ' | 'ń' | 'ņ' | 'ň' => "n",
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => "o",
+            'ŕ' | 'ŗ' | 'ř' => "r",
+            'ś' | 'ŝ' | 'ş' | 'š' | 'ș' => "s",
+            'ţ' | 'ť' | 'ŧ' | 'ț' => "t",
+            'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => "u",
+            'ŵ' => "w",
+            'ý' | 'ÿ' | 'ŷ' => "y",
+            'ź' | 'ż' | 'ž' => "z",
+            'ß' => "ss",
+            'æ' => "ae",
+            'œ' => "oe",
+            'þ' => "th",
+            _ => "",
+        }
+    }
+
+    /// The letters of `full` as account-name letters, before the [`NAME_MAX`] cut: lowercase,
+    /// transliterated ([`ascii_of`]), spaces and punctuation dropped, leading digits dropped (a
+    /// name starts with a letter).
+    pub fn derive_letters(full: &str) -> String {
+        let mut s = String::new();
+        for c in full.to_lowercase().chars() {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() {
+                s.push(c)
+            } else {
+                s.push_str(ascii_of(c))
+            }
+        }
+        s.trim_start_matches(|c: char| c.is_ascii_digit())
+            .to_string()
+    }
+
+    /// The account name WolOS suggests for a full name, one rule for the Setup Assistant and
+    /// Settings > Users > Add User (QA-LIVE3-24: Setup made `maracosta` of "Mara Costa", Add User
+    /// `tomas` of "Tomás Reis"): the whole name, transliterated, at most [`NAME_MAX`] letters.
+    /// "Alice Liddell" -> "aliceliddell", "Ñandú Álvarez" -> "nandualvarez"; "" when nothing
+    /// Latin is left.
+    pub fn derive_name(full: &str) -> String {
+        derive_letters(full).chars().take(NAME_MAX).collect()
+    }
+
     /// New account password: 8..=128 characters, no control characters.
     pub fn is_valid_password(p: &str) -> bool {
         (8..=128).contains(&p.chars().count()) && !p.chars().any(char::is_control)
@@ -240,7 +307,14 @@ pub mod users {
         is_valid_name(name).then(|| vec!["chpasswd".into()])
     }
 
+    /// Removes the account and keeps its home folder (QA-DATA-8: `userdel -r` deleted /home/NAME
+    /// at once, with no word and no way back). [`remove_with_files_argv`] is the explicit choice.
     pub fn remove_argv(name: &str) -> Option<Vec<String>> {
+        is_valid_name(name).then(|| ["userdel", name].map(String::from).to_vec())
+    }
+
+    /// Removes the account and its files (home folder, mail spool): only when the person chose so.
+    pub fn remove_with_files_argv(name: &str) -> Option<Vec<String>> {
         is_valid_name(name).then(|| ["userdel", "-r", name].map(String::from).to_vec())
     }
 }
@@ -330,17 +404,73 @@ mod tests {
         }
         assert_eq!(
             users::add_argv("bob", "B:b", true).unwrap().join(" "),
-            "useradd -m -c Bb -s /usr/bin/zsh -G wheel,seat,video,input,audio bob"
+            "useradd -m -c Bb -s /usr/bin/zsh -G wheel,seat,video bob"
         );
         // Admins match the Setup Assistant's account; everyone gets cameras (group video).
         assert_eq!(
             users::add_argv("ann", "Ann", false).unwrap().join(" "),
-            "useradd -m -c Ann -s /usr/bin/zsh -G seat,video,input,audio ann"
+            "useradd -m -c Ann -s /usr/bin/zsh -G seat,video ann"
         );
         assert!(users::remove_argv("x y").is_none());
         // Audit S4-6: reserved names never reach useradd.
         for n in ["git", "live", "wolos", "systemd-x", "root"] {
             assert!(users::add_argv(n, "X", false).is_none(), "{n}");
+        }
+    }
+
+    /// QA-LIVE3-24: one rule for every place that suggests an account name.
+    #[test]
+    fn derive_name_same_in_installer_and_adduser() {
+        for (full, want) in [
+            ("Mara Costa", "maracosta"),
+            ("Tomás Reis", "tomasreis"),
+            ("Alice Liddell", "aliceliddell"),
+            ("  José  Álvarez-Núñez ", "josealvareznunez"),
+            ("Ñandú Álvarez", "nandualvarez"),
+            ("Weißmüller", "weissmuller"),
+            ("42 Wonder", "wonder"),
+            ("李小龍", ""),
+            ("", ""),
+        ] {
+            assert_eq!(users::derive_name(full), want, "{full}");
+            let n = users::derive_name(full);
+            assert!(n.is_empty() || users::is_valid_name(&n), "{n}");
+        }
+        assert_eq!(users::derive_name(&"a".repeat(40)).len(), users::NAME_MAX);
+    }
+
+    /// QA-DATA-8: removing an account keeps its files unless deleting them was asked for.
+    #[test]
+    fn user_remove_keeps_home_by_default() {
+        assert_eq!(users::remove_argv("bob").unwrap(), ["userdel", "bob"]);
+        assert_eq!(
+            users::remove_with_files_argv("bob").unwrap(),
+            ["userdel", "-r", "bob"]
+        );
+        assert!(users::remove_with_files_argv("-r").is_none());
+    }
+
+    /// QA-FILES-2: no account WolOS creates can read the keyboard or the microphone of another
+    /// session: neither `input` nor `audio` in any group list or useradd line.
+    #[test]
+    fn account_groups_have_no_input_audio() {
+        for admin in [false, true] {
+            let argv = users::add_argv("ann", "Ann", admin).unwrap();
+            let groups = &argv[argv.iter().position(|a| a == "-G").unwrap() + 1];
+            let groups: Vec<&str> = groups.split(',').collect();
+            for g in users::RETIRED_GROUPS {
+                assert!(!groups.contains(&g), "admin={admin}: {groups:?}");
+            }
+            assert!(
+                groups.contains(&"seat") && groups.contains(&"video"),
+                "{groups:?}"
+            );
+            assert_eq!(groups.contains(&"wheel"), admin, "{groups:?}");
+        }
+        for list in [users::ACCOUNT_GROUPS, users::ACCOUNT_GROUPS_ADMIN] {
+            for g in users::RETIRED_GROUPS {
+                assert!(!list.split(',').any(|x| x == g), "{list}");
+            }
         }
     }
 

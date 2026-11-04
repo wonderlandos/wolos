@@ -1351,3 +1351,121 @@ fn the_queued_modules_drain_is_bounded() {
         assert!(l.starts_with("timeout -s INT -k 60 \"$isecs\" "), "{l}");
     }
 }
+
+fn repo_text(p: &str) -> String {
+    std::fs::read_to_string(siblings::root().join(p)).unwrap_or_else(|e| panic!("{p}: {e}"))
+}
+
+/// QA-PRIV-13 (B3): sudo and sudo -i count wrong passwords with pam_faillock on the one count
+/// the lock screen and Settings use (10 failures lock for 60 s), not Arch system-auth's own.
+#[test]
+fn sudo_has_faillock() {
+    for f in ["sudo", "sudo-i"] {
+        let pam = repo_text(&format!("desktop/overlay/etc/pam.d/{f}"));
+        let auth: Vec<&str> = pam.lines().filter(|l| l.starts_with("auth")).collect();
+        for stage in ["preauth", "authfail"] {
+            assert!(
+                auth.iter().any(|l| l.contains("pam_faillock.so")
+                    && l.contains(stage)
+                    && l.contains("deny=10")
+                    && l.contains("unlock_time=60")),
+                "{f}: no pam_faillock {stage}: {pam}"
+            );
+        }
+        assert!(auth.iter().any(|l| l.contains("pam_unix.so")), "{f}: {pam}");
+        assert!(!auth.iter().any(|l| l.contains("system-")), "{f}: {pam}");
+        assert!(
+            pam.lines()
+                .any(|l| l.starts_with("account") && l.contains("pam_faillock.so")),
+            "{f}: failures never reset: {pam}"
+        );
+    }
+}
+
+/// QA-STAB-8 (B3): lock on sleep holds the system's sleep (logind delay inhibitor) until the
+/// session is locked, in the shipped default and in what Settings writes.
+#[test]
+fn hypridle_sleep_inhibitor() {
+    let shipped = repo_text("desktop/overlay/usr/share/wolos/hypr/hypridle.conf");
+    for c in [shipped.clone(), wol_core::prefs::hypridle_conf(300, true)] {
+        let general = c.split("listener").next().unwrap();
+        assert!(
+            general.contains("before_sleep_cmd = ") && general.contains("wol-lock"),
+            "{c}"
+        );
+        assert!(general.contains("\n    inhibit_sleep = 3\n"), "{c}");
+    }
+}
+
+/// QA-LIVE3-24 (B3): a refused sudo never insults the person (Arch's sudo is built with insults).
+#[test]
+fn sudoers_no_insults() {
+    let s = repo_text("desktop/overlay/etc/sudoers.d/wolos");
+    let lines: Vec<&str> = s
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .collect();
+    assert!(lines.contains(&"Defaults !insults"), "{s}");
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("Defaults") && l.contains(" insults")),
+        "{s}"
+    );
+}
+
+/// QA-CRASH-5 (B3): the session helpers hypridle (lock on idle and before sleep), hyprsunset,
+/// wol-realtime and the polkit agent are user units that come back after a crash, part of
+/// wolos-session.target, which the compositor's start lines (re)start; the portal is the package's
+/// own unit, started with the other portals. No compositor start line runs one of them bare.
+#[test]
+fn session_helpers_have_restart() {
+    let dir = "files/usr/lib/systemd/user";
+    let target = repo_text(&format!("{dir}/wolos-session.target"));
+    for (unit, prog) in [
+        ("wolos-hypridle.service", "hypridle"),
+        ("wolos-hyprsunset.service", "hyprsunset"),
+        ("wolos-realtime.service", "wol-realtime"),
+        ("wolos-polkit-agent.service", "lxqt-policykit-agent"),
+    ] {
+        let u = repo_text(&format!("{dir}/{unit}"));
+        let lines: Vec<&str> = u.lines().map(str::trim).collect();
+        for want in ["Restart=on-failure", "PartOf=wolos-session.target"] {
+            assert!(lines.contains(&want), "{unit} lacks {want}: {u}");
+        }
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("ExecStart=") && l.contains(prog)),
+            "{unit}: {u}"
+        );
+        assert!(
+            target.contains(unit),
+            "wolos-session.target does not want {unit}"
+        );
+        for conf in ["hyprland.lua", "hyprland.conf"] {
+            let c = repo_text(&format!("desktop/overlay/usr/share/wolos/hypr/{conf}"));
+            let bare = c
+                .lines()
+                .filter(|l| l.contains("exec-once") || l.starts_with("once("))
+                .any(|l| {
+                    l.contains(&format!("exec {prog}"))
+                        || l.contains(&format!("\"{prog}\""))
+                        || l.trim_end().ends_with(&format!("= {prog}"))
+                });
+            assert!(!bare, "{conf} still starts {prog} with no restart");
+        }
+    }
+    for conf in ["hyprland.lua", "hyprland.conf"] {
+        let c = repo_text(&format!("desktop/overlay/usr/share/wolos/hypr/{conf}"));
+        assert!(
+            c.contains("systemctl --user restart wolos-session.target"),
+            "{conf} never starts the session helpers"
+        );
+        assert!(
+            !c.contains("/usr/lib/xdg-desktop-portal-hyprland\""),
+            "{conf}: bare portal"
+        );
+    }
+}

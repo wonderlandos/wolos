@@ -15,6 +15,8 @@ use std::cell::RefCell;
 use std::path::Path;
 use wol_core::games::doctor as games;
 
+pub mod groups;
+
 /// Every area, in the order the Doctor app lists them.
 pub const AREAS: &[&str] = &[
     "sound", "games", "updates", "security", "storage", "network", "power", "display",
@@ -651,6 +653,12 @@ fn security(env: &mut dyn Env) -> Vec<Check> {
             ),
         ),
     });
+    // QA-FILES-2: accounts an older release left in input/audio (doctor/groups.rs).
+    let (group, passwd) = (
+        env.read_file(Path::new("/etc/group")),
+        env.read_file(Path::new("/etc/passwd")),
+    );
+    v.push(groups::check(group.as_deref(), passwd.as_deref()));
     v.extend(malware_checks(&malware));
     v
 }

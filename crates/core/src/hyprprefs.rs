@@ -403,9 +403,30 @@ pub fn shortcut_defaults(host: &dyn Host) -> Vec<Shortcut> {
     shortcuts::load_defaults(|p| host.read_text(p))
 }
 
+/// The journal topic of a desktop prefs save from `old` to `new`: `language` when the session
+/// language is the only thing that moved (Settings' Undo toast and Restore say "Language & Region"),
+/// else `desktop`.
+pub fn journal_topic(old: &DesktopPrefs, new: &DesktopPrefs) -> &'static str {
+    let same_but_language = DesktopPrefs {
+        language: old.language.clone(),
+        ..new.clone()
+    };
+    if old.language != new.language && same_but_language == *old {
+        "language"
+    } else {
+        "desktop"
+    }
+}
+
 /// Writes prefs, both Lua files and the user hyprland.lua's `require` of them: one journal entry
-/// (`wol undo`, Settings > Restore).
-fn persist(home: &Path, d: &DesktopPrefs, o: &Overrides, list: &[Shortcut]) -> std::io::Result<()> {
+/// about `what` (`wol undo`, Settings > Restore).
+fn persist(
+    home: &Path,
+    what: &str,
+    d: &DesktopPrefs,
+    o: &Overrides,
+    list: &[Shortcut],
+) -> std::io::Result<()> {
     let user = HYPR_USER;
     let source = ensure_require(read_in(home, user).as_deref());
     let texts = [
@@ -420,7 +441,7 @@ fn persist(home: &Path, d: &DesktopPrefs, o: &Overrides, list: &[Shortcut]) -> s
         .filter_map(|(rel, t)| Some((*rel, Some(t.as_deref()?))))
         .collect();
     crate::journal::Journal::for_config(home).save(
-        "desktop",
+        what,
         "settings",
         &files,
         crate::journal::now(),
@@ -604,7 +625,7 @@ pub fn apply_desktop(
     let old = load_desktop(home);
     let o = load_overrides(home);
     let list = shortcuts::effective(&shortcut_defaults(host), &o);
-    persist(home, new, &o, &list)?;
+    persist(home, journal_topic(&old, new), new, &o, &list)?;
     let mut cmds = new.live(&old);
     if new.tiling != old.tiling {
         let clients = host.run(&["hyprctl", "-j", "clients"]).unwrap_or_default();
@@ -635,7 +656,7 @@ pub fn apply_shortcuts(
     let defaults = shortcut_defaults(host);
     let old = shortcuts::effective(&defaults, &load_overrides(home));
     let list = shortcuts::effective(&defaults, new);
-    persist(home, &d, new, &list)?;
+    persist(home, "shortcuts", &d, new, &list)?;
     let cmds = shortcuts::live(
         &shortcuts::active(&old, d.tiling),
         &shortcuts::active(&list, d.tiling),
@@ -1170,6 +1191,29 @@ mod tests {
         );
     }
 
+    /// A1 follow-up (language toast): a change of the session language alone is journaled as
+    /// `language`, so Settings' Undo toast and Restore name it "Language & Region"; any other
+    /// change, or one that also moves another pref, stays `desktop`.
+    #[test]
+    fn a_language_only_change_is_journaled_as_language() {
+        let h = home("journal-language");
+        let old = load_desktop(&h);
+        let lang = DesktopPrefs {
+            language: Some("pt_BR.UTF-8".into()),
+            ..old.clone()
+        };
+        assert_eq!(journal_topic(&old, &lang), "language");
+        let both = DesktopPrefs {
+            tiling: !old.tiling,
+            ..lang.clone()
+        };
+        assert_eq!(journal_topic(&old, &both), "desktop");
+        apply_desktop(&FakeHost::new(true), &h, &lang).unwrap();
+        let e = crate::journal::Journal::for_config(&h).entries();
+        assert_eq!((e.len(), e[0].what.as_str()), (1, "language"));
+        let _ = std::fs::remove_dir_all(h);
+    }
+
     #[test]
     fn desktop_changes_are_journaled_and_undoable() {
         let h = home("journal");
@@ -1319,6 +1363,9 @@ mod tests {
         );
         let sc = std::fs::read_to_string(h.join(shortcuts::INCLUDE)).unwrap();
         assert!(sc.contains("hl.bind(\"SUPER + SHIFT + K\", "), "{sc}");
+        // Settings' Undo toast looks the save up as `shortcuts` (settings/mod.rs Keys::edit).
+        let e = crate::journal::Journal::for_config(&h).entries();
+        assert_eq!(e.last().map(|e| e.what.as_str()), Some("shortcuts"));
         let _ = std::fs::remove_dir_all(h);
     }
 

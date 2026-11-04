@@ -16,7 +16,7 @@
 # Env (tests): WOLOS_BOOT_OK_WAIT (seconds between looks, 5), WOLOS_BOOT_OK_LIMIT (seconds to wait
 # for the screen, 90), WOLOS_PROC (/proc), WOLOS_CMDLINE_FILE (/proc/cmdline), WOLOS_MARKS
 # (/var/lib/wolos), WOLOS_LAYERS (/var/lib/extensions), WOLOS_LAYERS_WORK (/var/lib/wolos/layers),
-# WOLOS_LAYER_CHROOT (/run/wolos/layer-root), WOLOS_ESP (/efi).
+# WOLOS_LAYER_CHROOT (/run/wolos/layer-root), WOLOS_ESP (/efi), WOLOS_SLOTS (/run/wolos/slots.json).
 set -eu
 wait=${WOLOS_BOOT_OK_WAIT:-5}
 limit=${WOLOS_BOOT_OK_LIMIT:-90}
@@ -75,6 +75,18 @@ if [ -n "$slot" ] && [ -f "$ESP/EFI/wolos/$slot.efi" ] && [ -d "$ESP/$slot" ]; t
       sync "$ESP/$slot/blessed.sha256.new" || :
       mv -f "$ESP/$slot/blessed.sha256.new" "$ESP/$slot/blessed.sha256" || :
     fi
+  fi
+fi
+
+# The slot list for Settings > Restore and `wol restore`: they run as the person, who cannot read
+# the ESP (fmask 0077), so their own `bootctl list` fails (QA-LIVE4-5, F5/F6). bootctl's JSON as
+# it is, world-readable, replaced whole; a failed listing keeps the last good one.
+L=${WOLOS_SLOTS:-/run/wolos/slots.json}
+if list=$(bootctl --esp-path="$ESP" list --json=short 2>/dev/null) && [ -n "$list" ]; then
+  if mkdir -p "${L%/*}" && printf '%s\n' "$list" > "$L.new" && chmod 0644 "$L.new"; then
+    mv -f "$L.new" "$L" || :
+  else
+    rm -f "$L.new"
   fi
 fi
 

@@ -6,6 +6,8 @@ use super::{ControlError, Controls, backlight_percent};
 use crate::power::policy::Mode;
 use shared::admin::AdminAction;
 
+const INVALID: &str = "That isn’t a Bluetooth device.";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Charge {
     Discharging,
@@ -54,8 +56,6 @@ pub struct A11y {
 
 /// Cursor zoom factor for Accessibility > Zoom.
 pub const ZOOM_FACTOR: &str = "2";
-/// Night Shift counts as on below this colour temperature (K).
-const NIGHT_BELOW_K: u32 = 6000;
 
 /// playerctl `--format`: one tab-separated line.
 pub const PLAYERCTL_FORMAT: &str = "{{status}}\t{{position}}\t{{mpris:length}}\t{{xesam:title}}\t{{xesam:artist}}\t{{mpris:artUrl}}\t{{playerName}}";
@@ -192,8 +192,12 @@ impl Controls {
 
     // ---- Bluetooth devices ----
 
-    /// Paired devices (BlueZ).
+    /// Paired devices (BlueZ). Without an adapter bluetoothctl is not run (it would wait for
+    /// org.bluez for ever, QA-DEV2-3).
     pub fn bt_devices(&self) -> Vec<BtDevice> {
+        if crate::bluetooth::adapters(&*self.host).is_empty() {
+            return Vec::new();
+        }
         let Some(paired) = self.run(&["bluetoothctl", "devices", "Paired"]) else {
             return Vec::new();
         };
@@ -212,17 +216,20 @@ impl Controls {
     }
 
     pub fn bt_connect(&self, addr: &str, on: bool) -> Result<(), ControlError> {
+        self.bt_connect_reason(addr, on).map_err(|(e, _)| e)
+    }
+
+    /// [`Controls::bt_connect`] with BlueZ's reason as a sentence (page-timeout, profile
+    /// unavailable, adapter not powered: QA-DEV-13).
+    pub fn bt_connect_reason(
+        &self,
+        addr: &str,
+        on: bool,
+    ) -> Result<(), (ControlError, &'static str)> {
         if !is_bt_addr(addr) {
-            return Err(ControlError::Invalid);
+            return Err((ControlError::Invalid, INVALID));
         }
-        let verb = if on { "connect" } else { "disconnect" };
-        match self.host.run_slow(&["bluetoothctl", verb, addr]) {
-            Some(o) if o.contains("Failed") || o.contains("not available") => {
-                Err(ControlError::Failed)
-            }
-            Some(_) => Ok(()),
-            None => Err(ControlError::Failed),
-        }
+        crate::bluetooth::connect(&*self.host, addr, on).map_err(|why| (ControlError::Failed, why))
     }
 
     // ---- Keyboard backlight ----
@@ -330,12 +337,7 @@ impl Controls {
 
     /// hyprsunset's current temperature: None when hyprsunset is not running (tile hidden).
     pub fn night_shift(&self) -> Option<bool> {
-        let t: u32 = self
-            .run(&["hyprctl", "hyprsunset", "temperature"])?
-            .trim()
-            .parse()
-            .ok()?;
-        Some(t < NIGHT_BELOW_K)
+        crate::toggles::night_light_from(&self.run(&["hyprctl", "hyprsunset", "temperature"])?)
     }
 
     // ---- Network ----
@@ -464,6 +466,7 @@ mod tests {
     #[test]
     fn bluetooth_devices() {
         let (h, c, _) = controls();
+        h.file("/sys/class/bluetooth/hci0/address", "00:1A:7D:DA:71:13\n");
         h.command(
             "bluetoothctl devices Paired",
             "Device AA:BB:CC:DD:EE:01 AirPods Pro\nDevice AA:BB:CC:DD:EE:02 MX Keys\njunk\n",
@@ -489,6 +492,39 @@ mod tests {
             Err(ControlError::Failed)
         );
         assert_eq!(c.bt_connect("AA:BB; rm", true), Err(ControlError::Invalid));
+    }
+
+    /// QA-DEV-13: the Control Center tap gets BlueZ's reason, not "The change did not work".
+    #[test]
+    fn bluez_reasons_mapped() {
+        let (h, c, _) = controls();
+        h.file("/sys/class/bluetooth/hci0/address", "00:1A:7D:DA:71:13\n");
+        h.slow(
+            "bluetoothctl connect AA:BB:CC:DD:EE:01",
+            "Attempting to connect to AA:BB:CC:DD:EE:01\nFailed to connect: org.bluez.Error.Failed br-connection-page-timeout\n",
+        )
+        .slow(
+            "bluetoothctl connect AA:BB:CC:DD:EE:02",
+            "Failed to connect: org.bluez.Error.Failed br-connection-profile-unavailable\n",
+        )
+        .slow(
+            "bluetoothctl connect AA:BB:CC:DD:EE:03",
+            "Failed to connect: org.bluez.Error.NotReady\n",
+        );
+        let why = |a: &str| c.bt_connect_reason(a, true).unwrap_err().1;
+        assert!(why("AA:BB:CC:DD:EE:01").contains("didn’t answer"));
+        assert!(why("AA:BB:CC:DD:EE:02").contains("pair it again"));
+        assert!(why("AA:BB:CC:DD:EE:03").contains("Bluetooth is off"));
+        assert_eq!(
+            c.bt_connect("AA:BB:CC:DD:EE:01", true),
+            Err(ControlError::Failed)
+        );
+        assert_eq!(c.bt_connect("nope", true), Err(ControlError::Invalid));
+        // No adapter: nothing is run.
+        let (h2, c2, _) = controls();
+        assert!(c2.bt_devices().is_empty());
+        assert!(c2.bt_connect_reason("AA:BB:CC:DD:EE:01", true).is_err());
+        assert!(h2.ran().iter().all(|r| !r.contains("bluetoothctl")));
     }
 
     #[test]

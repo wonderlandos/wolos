@@ -1,2 +1,5 @@
 # WolOS: administrators (group wheel) may use sudo with their own password.
 %wheel ALL=(ALL:ALL) ALL
+# A refused sudo says why in plain words, never a joke at the person (QA-LIVE3-24: Arch's sudo is
+# built with insults and printed "I'm sorry tomas. I'm afraid I can't do that").
+Defaults !insults

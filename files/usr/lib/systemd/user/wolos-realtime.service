@@ -1,0 +1,14 @@
+# wol-realtime: the session's foreground QoS and GPU helper.
+[Unit]
+Description=WolOS realtime helper (wol-realtime)
+PartOf=wolos-session.target
+After=wolos-session.target
+# A helper that cannot reach the display any more (the session ended) stops retrying after 5 tries.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+ExecStart=/usr/bin/wol-realtime
+StandardOutput=null
+Restart=on-failure
+RestartSec=2

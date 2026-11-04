@@ -17,6 +17,9 @@ pub struct WifiNet {
     pub signal: u8,
     pub secure: bool,
     pub connected: bool,
+    /// What the network asks for (QA-NET-9: an 802.1X network needs more than a password).
+    #[serde(default)]
+    pub security: crate::wifi::Security,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -43,6 +46,10 @@ pub struct Monitor {
     pub scale: f64,
     /// "WxH@R" strings as the compositor lists them.
     pub modes: Vec<String>,
+    /// The output this one mirrors (`hyprctl -j monitors all` "mirrorOf"; "none" or absent =
+    /// None). Read from the compositor, so a reload or an unplug never leaves a stale mirror (QA-SET-47).
+    #[serde(default)]
+    pub mirror_of: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,6 +62,10 @@ pub enum ControlError {
     Failed,
     /// Wi-Fi join: the network refused the password.
     WrongPassword,
+    /// Wi-Fi join: no network of that name in range (QA-NET-8).
+    NotFound,
+    /// The network needs something WolOS cannot do yet (802.1X Enterprise Wi-Fi, QA-NET-9).
+    Unsupported,
 }
 
 /// wol-admind reply -> control result.
@@ -84,15 +95,20 @@ pub fn parse_nmcli_wifi(text: &str) -> Vec<WifiNet> {
         else {
             continue;
         };
-        let ssid = ssid.replace("\\:", ":");
+        let ssid = crate::wifi::unescape(ssid);
         if ssid.is_empty() {
             continue;
         }
+        let security = crate::wifi::security_kind(sec);
         let n = WifiNet {
             ssid,
             signal: sig.trim().parse::<u8>().unwrap_or(0).min(100),
-            secure: !sec.trim().is_empty() && sec.trim() != "--",
+            secure: matches!(
+                security,
+                crate::wifi::Security::Psk | crate::wifi::Security::Enterprise
+            ),
             connected: used.trim() == "*",
+            security,
         };
         match v.iter_mut().find(|x| x.ssid == n.ssid) {
             Some(x) => {
@@ -159,45 +175,6 @@ pub fn backlight_percent(cur: &str, max: &str) -> Option<u8> {
     (m > 0).then(|| (c.min(m) * 100 / m) as u8)
 }
 
-// ---- FreeBSD parsers ----
-
-/// `wpa_cli -i wlan0 scan_results`: header line, then `bssid freq signal flags ssid` (tab-separated, dBm).
-pub fn parse_scan_results(text: &str, connected: Option<&str>) -> Vec<WifiNet> {
-    let mut v: Vec<WifiNet> = Vec::new();
-    for line in text.lines() {
-        let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 5 || f[4].is_empty() {
-            continue;
-        }
-        let Ok(dbm) = f[2].trim().parse::<i32>() else {
-            continue;
-        };
-        let n = WifiNet {
-            ssid: f[4].into(),
-            signal: crate::wifi::signal_percent(dbm) as u8,
-            secure: ["WPA", "WEP", "RSN", "SAE"]
-                .iter()
-                .any(|k| f[3].contains(k)),
-            connected: connected == Some(f[4]),
-        };
-        match v.iter_mut().find(|x| x.ssid == n.ssid) {
-            Some(x) if n.signal > x.signal => *x = n,
-            Some(_) => {}
-            None => v.push(n),
-        }
-    }
-    sort_nets(&mut v);
-    v
-}
-
-/// `wpa_cli -i wlan0 status`: ssid when associated.
-pub fn parse_wpa_status(text: &str) -> Option<String> {
-    let p = crate::system::pairs(text, '=');
-    (p.get("wpa_state") == Some(&"COMPLETED"))
-        .then(|| p.get("ssid").map(|s| s.to_string()))
-        .flatten()
-}
-
 // ---- The compositor ----
 
 /// `hyprctl -j monitors all`.
@@ -226,6 +203,11 @@ pub fn parse_hypr_monitors(json: &str) -> Vec<Monitor> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                mirror_of: m
+                    .get("mirrorOf")
+                    .and_then(|x| x.as_str())
+                    .filter(|s| !s.is_empty() && *s != "none")
+                    .map(String::from),
             })
         })
         .collect()
@@ -252,11 +234,15 @@ pub fn monitor_rule(name: &str, w: u32, h: u32, refresh: f64, scale: f64) -> Opt
 
 pub const NIGHT_SHIFT_KELVIN: u32 = 4500;
 
+/// The dimmest backlight a change sets: 0 % would turn some panels off (one rule for the setter
+/// and the shell's optimistic snapshot, QA-SET-53).
+pub const BRIGHTNESS_MIN: u8 = 1;
+
 /// How long a Wi-Fi join (login window, wpa_supplicant) waits for the network.
 pub const JOIN_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Platform reads and writes. `stdin` runs argv with input on stdin (secrets); `admin` sends one wol-admind request.
-pub type StdinRunner = dyn Fn(&[&str], &str) -> Option<String> + Send + Sync;
+pub type StdinRunner = dyn Fn(&[&str], &str) -> Result<String, String> + Send + Sync;
 pub type AdminSender = dyn Fn(&AdminRequest, &str) -> Option<AdminReply> + Send + Sync;
 
 pub struct Controls {
@@ -275,8 +261,10 @@ impl Controls {
     pub fn new(host: Arc<dyn Host>) -> Self {
         Self {
             host,
+            // nmcli waits up to 90 s for an activation (`--wait`, its default): a slower runner
+            // cut joins that were about to work (QA-NET-8).
             stdin: Arc::new(|argv, input| {
-                run_with_input(argv, input, std::time::Duration::from_secs(60))
+                run_with_input_err(argv, input, std::time::Duration::from_secs(JOIN_SECS))
             }),
             admin: Arc::new(|req, pw| {
                 admin_request(std::path::Path::new(shared::admin::SOCKET), req, pw)
@@ -357,35 +345,37 @@ impl Controls {
     /// NetworkManager radio switch. `None` when there is no Wi-Fi device (nmcli reports the
     /// radio "enabled" with no adapter, QA-NET-7) or NetworkManager does not answer.
     pub fn wifi_enabled(&self) -> Option<bool> {
-        if let Some(devs) = self.run(&["nmcli", "-t", "-f", "TYPE", "dev"])
-            && !devs.lines().any(|l| l.trim() == "wifi")
-        {
+        // Both reads side by side: `wol wifi` and the snapshot wait for the slower one only.
+        let (devs, radio) = std::thread::scope(|sc| {
+            let d = sc.spawn(|| self.run(&["nmcli", "-t", "-f", "TYPE", "dev"]));
+            let r = self.run(&["nmcli", "radio", "wifi"]);
+            (d.join().ok().flatten(), r)
+        });
+        if devs.is_some_and(|d| !d.lines().any(|l| l.trim() == "wifi")) {
             return None;
         }
-        self.run(&["nmcli", "radio", "wifi"])
-            .map(|o| o.trim() == "enabled")
+        radio.map(|o| o.trim() == "enabled")
     }
 
+    /// The scan. `--rescan auto`: NetworkManager scans first when its list is older than 30 s
+    /// (QA-NET-16: `--rescan no` showed a hotspot switched on after the pane opened minutes late).
     pub fn wifi_networks(&self) -> Vec<WifiNet> {
-        self.run(&[
-            "nmcli",
-            "-t",
-            "-f",
-            "IN-USE,SIGNAL,SECURITY,SSID",
-            "dev",
-            "wifi",
-            "list",
-            "--rescan",
-            "no",
-        ])
-        .map(|s| parse_nmcli_wifi(&s))
-        .unwrap_or_default()
+        self.run(&crate::wifi::NM_LIST_ARGV)
+            .map(|s| parse_nmcli_wifi(&s))
+            .unwrap_or_default()
     }
 
     /// NetworkManager lets the person at the computer switch the radio (polkit): no password.
+    /// No Wi-Fi device, or NetworkManager not answering: Unavailable (QA-PWR-21).
     pub fn set_wifi(&self, on: bool, _pw: &str) -> Result<(), ControlError> {
         let v = if on { "on" } else { "off" };
-        self.ok(self.run(&["nmcli", "radio", "wifi", v]))
+        if self.run(&["nmcli", "radio", "wifi", v]).is_some() {
+            return Ok(());
+        }
+        match self.wifi_enabled() {
+            None => Err(ControlError::Unavailable),
+            Some(_) => Err(ControlError::Failed),
+        }
     }
 
     /// Joins (slow: call off the UI thread). The password goes on stdin, never argv.
@@ -393,10 +383,29 @@ impl Controls {
         &self,
         ssid: &str,
         password: Option<&str>,
+        admin_pw: &str,
+    ) -> Result<(), ControlError> {
+        self.wifi_join_hidden(ssid, password, false, admin_pw)
+    }
+
+    /// [`Controls::wifi_join`]; `hidden`: the network does not announce its name, so
+    /// NetworkManager asks for it by name (`802-11-wireless.hidden yes`, QA-NET-10).
+    pub fn wifi_join_hidden(
+        &self,
+        ssid: &str,
+        password: Option<&str>,
+        hidden: bool,
         _admin_pw: &str,
     ) -> Result<(), ControlError> {
+        use crate::wifi::{JoinFailure, Security};
         if crate::wifi::validate(ssid, password).is_some() {
             return Err(ControlError::Invalid);
+        }
+        let scan = self.run(&crate::wifi::NM_SCAN_ARGV).unwrap_or_default();
+        // QA-NET-9: an 802.1X network takes a user name and password (or a certificate), never
+        // a PSK: sending one only ever ended in "wrong password".
+        if crate::wifi::nm_security(&scan, ssid) == Some(Security::Enterprise) {
+            return Err(ControlError::Unsupported);
         }
         let out = match password {
             // NET2-1: a profile (made, or changed in place when one is saved), then
@@ -406,20 +415,17 @@ impl Controls {
                 let has = self
                     .run(&crate::wifi::NM_PROFILES_ARGV)
                     .is_some_and(|l| crate::wifi::nm_has_profile(&l, ssid));
-                let km = crate::wifi::nm_key_mgmt(
-                    &self.run(&crate::wifi::NM_SCAN_ARGV).unwrap_or_default(),
-                    ssid,
-                );
-                for step in crate::wifi::nm_profile_argvs(ssid, false, km, has) {
+                let km = crate::wifi::nm_key_mgmt(&scan, ssid);
+                for step in crate::wifi::nm_profile_argvs(ssid, hidden, km, has) {
                     let step: Vec<&str> = step.iter().map(String::as_str).collect();
                     if self.host.run_slow(&step).is_none() {
-                        return Err(ControlError::Failed);
+                        return Err(self.wifi_cause(ControlError::Failed));
                     }
                 }
                 let up = crate::wifi::nm_up_argv(ssid);
                 let up: Vec<&str> = up.iter().map(String::as_str).collect();
                 let r = (self.stdin)(&up, &crate::wifi::nm_secret_input(p));
-                if r.is_none() && !has {
+                if r.is_err() && !has {
                     // A wrong password leaves no profile behind.
                     let del = crate::wifi::nm_cleanup_argv(ssid);
                     let del: Vec<&str> = del.iter().map(String::as_str).collect();
@@ -427,15 +433,94 @@ impl Controls {
                 }
                 r
             }
-            None => self
-                .host
-                .run_slow(&["nmcli", "dev", "wifi", "connect", ssid]),
+            None => {
+                let mut v = vec!["nmcli", "dev", "wifi", "connect", ssid];
+                if hidden {
+                    v.extend(["hidden", "yes"]);
+                }
+                (self.stdin)(&v, "")
+            }
         };
-        out.map(|_| ()).ok_or(if password.is_some() {
-            ControlError::WrongPassword
+        let Err(stderr) = out else {
+            return Ok(());
+        };
+        // QA-NET-8: nmcli says why; only a refused secret is a wrong password.
+        Err(
+            match crate::wifi::classify_join_error(&stderr, password.is_some()) {
+                JoinFailure::WrongPassword => ControlError::WrongPassword,
+                JoinFailure::NoDevice => ControlError::Unavailable,
+                JoinFailure::NotFound => ControlError::NotFound,
+                JoinFailure::NoAddress => ControlError::Failed,
+                JoinFailure::Other => self.wifi_cause(ControlError::Failed),
+            },
+        )
+    }
+
+    /// `e`, or Unavailable when there is no Wi-Fi device or NetworkManager does not answer: asked
+    /// only after a failure, so a join that works costs no extra read.
+    fn wifi_cause(&self, e: ControlError) -> ControlError {
+        if self.wifi_enabled().is_none() {
+            ControlError::Unavailable
         } else {
-            ControlError::Failed
-        })
+            e
+        }
+    }
+
+    /// Leaves the network `iface` is on (QA-NET-17); the profile stays, so it joins again by
+    /// itself next time. NetworkManager lets the person at the computer do this (polkit).
+    pub fn wifi_disconnect(&self, iface: &str) -> Result<(), ControlError> {
+        let a = crate::wifi::nm_disconnect_argv(iface).ok_or(ControlError::Invalid)?;
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        self.ok(self.host.run_slow(&a))
+    }
+
+    /// Wi-Fi hotspot (internet sharing, NET2-2): NetworkManager's shared mode on the Wi-Fi device
+    /// (its own dnsmasq hands out addresses). The password goes on stdin. `None` turns it off.
+    pub fn set_hotspot(&self, on: Option<(&str, &str)>) -> Result<(), ControlError> {
+        use crate::wifi::{HOTSPOT_PROFILE, hotspot_argvs, nm_secret_input, nm_up_argv};
+        let Some((ssid, password)) = on else {
+            return self.ok(self.host.run_slow(&[
+                "nmcli",
+                "connection",
+                "down",
+                "id",
+                HOTSPOT_PROFILE,
+            ]));
+        };
+        if crate::wifi::validate(ssid, Some(password)).is_some() {
+            return Err(ControlError::Invalid);
+        }
+        if self.wifi_enabled().is_none() {
+            return Err(ControlError::Unavailable);
+        }
+        let has = self
+            .run(&crate::wifi::NM_PROFILES_ARGV)
+            .is_some_and(|l| crate::wifi::nm_has_profile(&l, HOTSPOT_PROFILE));
+        for step in hotspot_argvs(ssid, has) {
+            let step: Vec<&str> = step.iter().map(String::as_str).collect();
+            if self.host.run_slow(&step).is_none() {
+                return Err(ControlError::Failed);
+            }
+        }
+        let up = nm_up_argv(HOTSPOT_PROFILE);
+        let up: Vec<&str> = up.iter().map(String::as_str).collect();
+        (self.stdin)(&up, &nm_secret_input(password))
+            .map(|_| ())
+            .map_err(|e| match crate::wifi::classify_join_error(&e, false) {
+                crate::wifi::JoinFailure::NoDevice => ControlError::Unavailable,
+                _ => ControlError::Failed,
+            })
+    }
+
+    /// Is the hotspot on: its profile active (`nmcli -t -f NAME connection show --active`).
+    pub fn hotspot(&self) -> Option<bool> {
+        self.wifi_enabled()?;
+        let active = self.run(&crate::wifi::NM_ACTIVE_ARGV)?;
+        Some(
+            active
+                .lines()
+                .any(|l| crate::wifi::unescape(l) == crate::wifi::HOTSPOT_PROFILE),
+        )
     }
 
     // ---- Audio ----
@@ -508,7 +593,7 @@ impl Controls {
 
     /// logind `SetBrightness` (no root).
     pub fn set_brightness(&self, percent: u8) -> Result<(), ControlError> {
-        let p = percent.clamp(1, 100);
+        let p = percent.clamp(BRIGHTNESS_MIN, 100);
         let (dir, max) = self.linux_backlight().ok_or(ControlError::Unavailable)?;
         let dev = dir.rsplit('/').next().unwrap_or("");
         let raw = (max * p as u64 / 100).max(1).to_string();
@@ -726,6 +811,46 @@ impl Controls {
     }
 }
 
+/// How long a Wi-Fi join may take: nmcli's own activation wait (90 s) and a margin.
+pub const JOIN_SECS: u64 = 100;
+
+/// Run argv with `input` on stdin: stdout when it exits 0 within `timeout`, else its stderr
+/// (what [`crate::wifi::classify_join_error`] reads), or "timed out" when it was killed.
+pub fn run_with_input_err(
+    argv: &[&str],
+    input: &str,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let (file, args) = argv.split_first().ok_or_else(String::new)?;
+    let mut child = std::process::Command::new(file)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    if let Some(mut i) = child.stdin.take() {
+        let _ = i.write_all(input.as_bytes());
+    }
+    let pid = child.id() as libc::pid_t;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(o)) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
+        Ok(Ok(o)) => Err(String::from_utf8_lossy(&o.stderr).into_owned()),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => {
+            // SAFETY: plain kill(2) on the child we spawned; the waiting thread reaps it.
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            Err("timed out".into())
+        }
+    }
+}
+
 /// Run argv with `input` on stdin; stdout when it exits 0 within `timeout`.
 pub fn run_with_input(argv: &[&str], input: &str, timeout: std::time::Duration) -> Option<String> {
     let (file, args) = argv.split_first()?;
@@ -782,6 +907,36 @@ mod tests {
     use crate::system::fake::FakeHost;
     use std::sync::Mutex;
 
+    /// QA-NET-19: nmcli's terse output escapes `\\` as well as `:`; an SSID with a backslash
+    /// reads as typed.
+    #[test]
+    fn unescape_backslash() {
+        let v = parse_nmcli_wifi("*:60:WPA2:Cafe\\\\Bar\n :40:WPA2:A\\\\\\:B\n");
+        assert_eq!(v[0].ssid, "Cafe\\Bar");
+        assert_eq!(v[1].ssid, "A\\:B");
+        assert_eq!(
+            crate::netinfo::parse_nmcli_connections("Cafe\\\\Bar:802-11-wireless\n"),
+            ["Cafe\\Bar"]
+        );
+    }
+
+    /// QA-NET-16: Settings and Control Center ask NetworkManager for a fresh list when theirs is
+    /// old (`--rescan auto`), never only what it happens to remember.
+    #[test]
+    fn rescan_auto() {
+        let (h, c, _) = controls();
+        h.command(
+            "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list --rescan auto",
+            "*:60:WPA2:Home\n",
+        );
+        assert_eq!(c.wifi_networks().len(), 1);
+        assert!(
+            h.ran().iter().all(|l| !l.contains("--rescan no")),
+            "{:?}",
+            h.ran()
+        );
+    }
+
     #[test]
     fn nmcli_wifi_table() {
         let t = "*:50:WPA2:Home\n :34:WPA1 WPA2:Cafe\\:Bar\n :32:WPA2:\n :70:WPA2:Cafe\\:Bar\n :20::Open\n :90:WPA2:Home\n";
@@ -821,20 +976,7 @@ mod tests {
     }
 
     #[test]
-    fn wpa_and_misc_parsers() {
-        let scan = "bssid / frequency / signal level / flags / ssid\n00:11\t2412\t-50\t[WPA2-PSK-CCMP][ESS]\tHome\n00:12\t2412\t-80\t[ESS]\tFree\n00:13\t5180\t-60\t[WPA2-PSK]\t\n";
-        let v = parse_scan_results(scan, Some("Home"));
-        assert_eq!(v.len(), 2);
-        assert_eq!(
-            (v[0].signal, v[0].secure, v[0].connected),
-            (100, true, true)
-        );
-        assert_eq!((v[1].signal, v[1].secure), (40, false));
-        assert_eq!(
-            parse_wpa_status("wpa_state=COMPLETED\nssid=Home\n").as_deref(),
-            Some("Home")
-        );
-        assert_eq!(parse_wpa_status("wpa_state=SCANNING\nssid=Home\n"), None);
+    fn misc_parsers() {
         assert_eq!(backlight_percent("10666", "21333"), Some(49));
         assert_eq!(backlight_percent("1", "0"), None);
         assert_eq!(
@@ -842,6 +984,19 @@ mod tests {
             Some(false)
         );
         assert_eq!(parse_bluetoothctl(""), None);
+    }
+
+    /// QA-SET-47: the mirror comes from the compositor ("mirrorOf"), not the page's memory.
+    #[test]
+    fn mirror_of_from_the_compositor() {
+        let m = parse_hypr_monitors(
+            r#"[{"name":"HDMI-A-1","mirrorOf":"eDP-1"},{"name":"eDP-1","mirrorOf":"none"},{"name":"DP-1"}]"#,
+        );
+        assert_eq!(m[0].mirror_of.as_deref(), Some("eDP-1"));
+        assert_eq!(
+            (m[1].mirror_of.as_deref(), m[2].mirror_of.as_deref()),
+            (None, None)
+        );
     }
 
     #[test]
@@ -862,6 +1017,9 @@ mod tests {
 
     fn controls() -> (Arc<FakeHost>, Controls, Arc<Mutex<Vec<String>>>) {
         let h = Arc::new(FakeHost::linux());
+        // A Wi-Fi device with the radio on (tests that need none say so).
+        h.command("nmcli -t -f TYPE dev", "wifi\n")
+            .command("nmcli radio wifi", "enabled\n");
         let log = Arc::new(Mutex::new(Vec::new()));
         let (l1, l2) = (log.clone(), log.clone());
         let c = Controls {
@@ -870,7 +1028,7 @@ mod tests {
                 l1.lock()
                     .unwrap()
                     .push(format!("{} <{}", argv.join(" "), input.trim()));
-                Some(String::new())
+                Ok(String::new())
             }),
             admin: Arc::new(move |req, pw| {
                 l2.lock().unwrap().push(format!(
@@ -1002,7 +1160,7 @@ mod tests {
         );
         let c4 = Controls {
             host: h4,
-            stdin: Arc::new(|_, _| None),
+            stdin: Arc::new(|_, _| Err(SECRETS.into())),
             admin: Arc::new(|_, _| None),
             wlan: "wlan0".into(),
         };
@@ -1010,6 +1168,171 @@ mod tests {
             c4.wifi_join("Home", Some("password1"), ""),
             Err(ControlError::WrongPassword)
         );
+    }
+
+    const SECRETS: &str = "Error: Connection activation failed: Secrets were required, but not provided.\nHint: use 'journalctl -xe NM_CONNECTION=1f0e NM_DEVICE=wlan0' to get more details.\n";
+
+    /// QA-NET-8: nmcli's stderr names the cause; only a refused secret reads as a wrong password.
+    /// Fixtures are nmcli 1.58's own words.
+    #[test]
+    fn nmcli_stderr_classified() {
+        use crate::wifi::{JoinFailure::*, classify_join_error};
+        for (err, secret, want) in [
+            (SECRETS, true, WrongPassword),
+            (
+                "Error: Connection activation failed: The 802.1X supplicant disconnected\n",
+                true,
+                WrongPassword,
+            ),
+            ("Error: No Wi-Fi device found.\n", true, NoDevice),
+            (
+                "Error: Connection activation failed: No suitable device found for this connection (device lo not available because device is strictly unmanaged).\n",
+                true,
+                NoDevice,
+            ),
+            ("Error: NetworkManager is not running.\n", false, NoDevice),
+            (
+                "Error: No network with SSID 'Foo' found.\n",
+                false,
+                NotFound,
+            ),
+            (
+                "Error: Connection activation failed: The Wi-Fi network could not be found\n",
+                true,
+                NotFound,
+            ),
+            (
+                "Error: Connection activation failed: IP configuration could not be reserved (no available address, timeout, etc.).\n",
+                true,
+                NoAddress,
+            ),
+            ("Error: Timeout expired (90 seconds)\n", true, NoAddress),
+            ("timed out", true, NoAddress),
+            (SECRETS, false, Other),
+            ("", true, Other),
+        ] {
+            assert_eq!(classify_join_error(err, secret), want, "{err}");
+        }
+        // Through Controls: each cause has its own error.
+        for (err, want) in [
+            (SECRETS, ControlError::WrongPassword),
+            ("Error: No Wi-Fi device found.\n", ControlError::Unavailable),
+            (
+                "Error: Connection activation failed: The Wi-Fi network could not be found\n",
+                ControlError::NotFound,
+            ),
+            (
+                "Error: Timeout expired (90 seconds)\n",
+                ControlError::Failed,
+            ),
+        ] {
+            let h = Arc::new(FakeHost::linux());
+            h.slow(
+                "nmcli connection add type wifi con-name Home ifname * ssid Home wifi-sec.key-mgmt wpa-psk",
+                "",
+            );
+            let c = Controls {
+                host: h,
+                stdin: Arc::new(move |_, _| Err(err.into())),
+                admin: Arc::new(|_, _| None),
+                wlan: "wlan0".into(),
+            };
+            assert_eq!(
+                c.wifi_join("Home", Some("password1"), ""),
+                Err(want),
+                "{err}"
+            );
+        }
+    }
+
+    /// QA-NET-9: an 802.1X network is never sent a PSK; its kind travels with the scan.
+    #[test]
+    fn parse_eap_kind() {
+        use crate::wifi::Security;
+        let v =
+            parse_nmcli_wifi(" :70:WPA2 802.1X:Campus\n :60:WPA2:Home\n :50::Cafe\n :40:OWE:Lib\n");
+        let kinds: Vec<_> = v
+            .iter()
+            .map(|n| (n.ssid.as_str(), n.security, n.secure))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                ("Campus", Security::Enterprise, true),
+                ("Home", Security::Psk, true),
+                ("Cafe", Security::Open, false),
+                ("Lib", Security::Owe, false),
+            ]
+        );
+        let (h, c, log) = controls();
+        h.command(
+            "nmcli -t -f SECURITY,SSID dev wifi list",
+            "WPA2 802.1X:Campus\n",
+        );
+        assert_eq!(
+            c.wifi_join("Campus", Some("password1"), ""),
+            Err(ControlError::Unsupported)
+        );
+        assert!(
+            log.lock().unwrap().is_empty() && h.ran().iter().all(|r| !r.contains("connection"))
+        );
+    }
+
+    /// QA-NET-10: a hidden network is asked for by name, with or without a password.
+    #[test]
+    fn hidden_join_says_hidden_yes() {
+        let (h, c, log) = controls();
+        h.slow(
+            "nmcli connection add type wifi con-name Attic ifname * ssid Attic wifi-sec.key-mgmt wpa-psk 802-11-wireless.hidden yes",
+            "",
+        );
+        assert_eq!(
+            c.wifi_join_hidden("Attic", Some("password1"), true, ""),
+            Ok(())
+        );
+        assert!(log.lock().unwrap()[0].starts_with("nmcli connection up id Attic passwd-file"));
+        assert_eq!(c.wifi_join_hidden("Open Attic", None, true, ""), Ok(()));
+        assert_eq!(
+            log.lock().unwrap()[1],
+            "nmcli dev wifi connect Open Attic hidden yes <"
+        );
+    }
+
+    /// QA-NET-17: Disconnect leaves the network and keeps the profile; NET2-2: the hotspot
+    /// profile is made without the secret in argv, brought up with it on stdin.
+    #[test]
+    fn disconnect_and_hotspot() {
+        let (h, c, log) = controls();
+        h.slow("nmcli dev disconnect wlan0", "");
+        assert_eq!(c.wifi_disconnect("wlan0"), Ok(()));
+        assert_eq!(c.wifi_disconnect("-x"), Err(ControlError::Invalid));
+        h.command("nmcli -t -f TYPE dev", "wifi\n")
+            .command("nmcli radio wifi", "enabled\n")
+            .slow(
+                "nmcli connection add type wifi con-name WolOS Hotspot ifname * ssid My Hot 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared ipv6.method ignore wifi-sec.key-mgmt wpa-psk wifi-sec.psk-flags 0 connection.autoconnect no",
+                "",
+            );
+        assert_eq!(c.set_hotspot(Some(("My Hot", "hot12345"))), Ok(()));
+        assert_eq!(
+            log.lock().unwrap().last().unwrap(),
+            "nmcli connection up id WolOS Hotspot passwd-file /dev/stdin <802-11-wireless-security.psk:hot12345"
+        );
+        assert!(h.ran().iter().all(|r| !r.contains("hot12345")));
+        h.command(
+            "nmcli -t -f NAME connection show --active",
+            "WolOS Hotspot\nHome\n",
+        );
+        assert_eq!(c.hotspot(), Some(true));
+        h.slow("nmcli connection down id WolOS Hotspot", "");
+        assert_eq!(c.set_hotspot(None), Ok(()));
+        // No Wi-Fi device: nothing is made.
+        let (h2, c2, _) = controls();
+        h2.command("nmcli -t -f TYPE dev", "ethernet\n");
+        assert_eq!(
+            c2.set_hotspot(Some(("My Hot", "hot12345"))),
+            Err(ControlError::Unavailable)
+        );
+        assert_eq!(c2.hotspot(), None);
     }
 
     #[test]

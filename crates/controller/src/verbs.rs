@@ -57,9 +57,16 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "wifi.get" => get(env, wifi_state, json),
         "wifi.on" | "wifi.off" => {
             let on = inv.action == "wifi.on";
-            with_password(env, json, wifi_state, &move |c, pw| c.set_wifi(on, pw))
+            match with_wifi_cause(env, json, &move |c, pw| c.set_wifi(on, pw)) {
+                Ok(code) => code,
+                Err(e) => wifi_error(env, e),
+            }
         }
-        "wifi.join" => wifi_join(env, &a("ssid"), json),
+        "wifi.join" => wifi_join(env, &a("ssid"), inv.get("hidden").is_some(), json),
+        "wifi.disconnect" => wifi_disconnect(env, json),
+        "wifi.hotspot" => get(env, hotspot_state, json),
+        "wifi.hotspot.on" => hotspot_on(env, inv.get("name"), json),
+        "wifi.hotspot.off" => control(env, json, hotspot_state, |c| c.set_hotspot(None)),
         "bluetooth.get" => get(env, bluetooth_state, json),
         "bluetooth.on" | "bluetooth.off" => {
             let on = inv.action == "bluetooth.on";
@@ -160,8 +167,42 @@ fn control_error(env: &mut dyn Env, e: ControlError) -> i32 {
             ErrorCode::Denied,
             "the network refused the password; check it and try again",
         ),
+        ControlError::NotFound => (ErrorCode::Failed, "no network of that name is in range"),
+        ControlError::Unsupported => (
+            ErrorCode::Unavailable,
+            "this network needs a user name or a certificate (802.1X Enterprise), which WolOS cannot join yet",
+        ),
     };
     fail(env, code, msg)
+}
+
+/// A Wi-Fi change that did not work, with its cause (QA-PWR-21, QA-NET-8): no device or no
+/// NetworkManager is said so, never "the change did not work" with exit 0.
+fn wifi_error(env: &mut dyn Env, e: ControlError) -> i32 {
+    match e {
+        ControlError::Unavailable => fail(
+            env,
+            ErrorCode::Unavailable,
+            "no Wi-Fi device was found, or NetworkManager is not running",
+        ),
+        ControlError::Failed => fail(
+            env,
+            ErrorCode::Failed,
+            "NetworkManager did not make the change (see `journalctl -u NetworkManager`)",
+        ),
+        e => control_error(env, e),
+    }
+}
+
+/// A Wi-Fi change: NetworkManager lets the person at the computer make it (polkit), so no
+/// administrator password is asked; a failure comes back with its cause for [`wifi_error`].
+fn with_wifi_cause(
+    env: &mut dyn Env,
+    json: bool,
+    f: &dyn Fn(&Controls, &str) -> Result<(), ControlError>,
+) -> Result<i32, ControlError> {
+    f(&env.controls(), "")?;
+    Ok(get(env, wifi_state, json))
 }
 
 /// User-level control change, then print the new state.
@@ -442,32 +483,94 @@ fn network_state(env: &mut dyn Env) -> Value {
         || join(|| c.wifi_enabled(), || c.bluetooth()),
     );
     let joined = networks.into_iter().find(|n| n.connected);
+    // QA-NET-28: an active tunnel is a VPN, listed with its own DNS.
+    let vpn: Vec<&str> = info
+        .interfaces
+        .iter()
+        .filter(|i| i.kind == wol_core::netinfo::IfKind::Vpn && i.up)
+        .map(|i| i.name.as_str())
+        .collect();
     json!({
-        "online": info.gateway.is_some(),
+        "online": info.online(),
+        "limited": info.limited(),
+        "portal": info.portal(),
+        "metered": info.metered,
         "gateway": info.gateway,
         "dns": info.dns,
         "interfaces": info.interfaces,
+        "vpn": vpn,
         "wifi": {"on": on, "network": joined.as_ref().map(|n| n.ssid.clone()), "signal": joined.map(|n| n.signal)},
         "bluetooth": bluetooth,
     })
 }
 
-fn wifi_join(env: &mut dyn Env, ssid: &str, json: bool) -> i32 {
+fn wifi_join(env: &mut dyn Env, ssid: &str, hidden: bool, json: bool) -> i32 {
     let c = env.controls();
-    let secure = c
-        .wifi_networks()
-        .iter()
-        .find(|n| n.ssid == ssid)
-        .is_none_or(|n| n.secure);
+    let net = c.wifi_networks().into_iter().find(|n| n.ssid == ssid);
+    if net
+        .as_ref()
+        .is_some_and(|n| n.security == wol_core::wifi::Security::Enterprise)
+    {
+        return control_error(env, ControlError::Unsupported);
+    }
+    let secure = net.is_none_or(|n| n.secure);
     let wifi_pw = if secure { env.stdin_line() } else { None };
     let wifi_pw = wifi_pw.filter(|p| !p.is_empty());
     if let Some(e) = wol_core::wifi::validate(ssid, wifi_pw.as_deref()) {
         return fail(env, ErrorCode::Invalid, e);
     }
     let ssid = ssid.to_string();
-    with_password(env, json, wifi_state, &move |c, pw| {
-        c.wifi_join(&ssid, wifi_pw.as_deref(), pw)
-    })
+    // QA-NET-8: every failure exits non-zero with its own cause.
+    match with_wifi_cause(env, json, &move |c, pw| {
+        c.wifi_join_hidden(&ssid, wifi_pw.as_deref(), hidden, pw)
+    }) {
+        Ok(code) => code,
+        Err(e) => wifi_error(env, e),
+    }
+}
+
+/// `wol wifi disconnect`: the interface on the network now (QA-NET-17).
+fn wifi_disconnect(env: &mut dyn Env, json: bool) -> i32 {
+    let c = env.controls();
+    let iface = wol_core::netinfo::read(&*c.host)
+        .interfaces
+        .into_iter()
+        .find(|i| i.kind == wol_core::netinfo::IfKind::WiFi && i.up)
+        .map(|i| i.name);
+    let Some(iface) = iface else {
+        return fail(env, ErrorCode::Unavailable, "Wi-Fi is not on a network");
+    };
+    match c.wifi_disconnect(&iface) {
+        Ok(()) => get(env, wifi_state, json),
+        Err(e) => wifi_error(env, e),
+    }
+}
+
+fn hotspot_state(env: &mut dyn Env) -> Value {
+    json!({"on": env.controls().hotspot(), "name": wol_core::wifi::HOTSPOT_PROFILE})
+}
+
+/// `wol wifi hotspot on [name]` (NET2-2): password on stdin; the name defaults to the computer name.
+fn hotspot_on(env: &mut dyn Env, name: Option<&str>, json: bool) -> i32 {
+    let c = env.controls();
+    let name = name
+        .map(str::to_owned)
+        .or_else(|| c.hostname())
+        .unwrap_or_else(|| "WolOS".into());
+    let Some(pw) = env.stdin_line().filter(|p| !p.is_empty()) else {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            "the hotspot password (8 to 63 characters) goes on stdin",
+        );
+    };
+    if let Some(e) = wol_core::wifi::validate(&name, Some(&pw)) {
+        return fail(env, ErrorCode::Invalid, e);
+    }
+    match c.set_hotspot(Some((&name, &pw))) {
+        Ok(()) => get(env, hotspot_state, json),
+        Err(e) => wifi_error(env, e),
+    }
 }
 
 fn focus_state(env: &mut dyn Env) -> Value {
@@ -1711,5 +1814,34 @@ mod port_tests {
         assert_eq!(keyboard(&mut e), pair("us(intl)", "Slow"));
         e.files.remove(0);
         assert_eq!(keyboard(&mut e), pair("us(intl)", "Slow"));
+    }
+
+    /// QA-PWR-21: `wol wifi on` that does not work names the cause (no device or no
+    /// NetworkManager), never only "the change did not work".
+    #[test]
+    fn wifi_on_failure_names_cause() {
+        let mut e = fake();
+        let code = run(&mut e, "wifi on");
+        assert_ne!(code, 0);
+        assert!(
+            e.err.contains("no Wi-Fi device") && e.err.contains("NetworkManager"),
+            "{}",
+            e.err
+        );
+        assert!(!e.err.contains("the change did not work"), "{}", e.err);
+        // A device, NetworkManager refuses: its log is named.
+        let h = std::sync::Arc::new(wol_core::system::fake::FakeHost::linux());
+        h.command("nmcli -t -f TYPE dev", "wifi\n")
+            .command("nmcli radio wifi", "enabled\n");
+        let mut e = FakeEnv {
+            host: Some(h),
+            ..fake()
+        };
+        assert_ne!(run(&mut e, "wifi on"), 0);
+        assert!(
+            e.err.contains("NetworkManager did not make the change"),
+            "{}",
+            e.err
+        );
     }
 }

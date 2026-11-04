@@ -8,6 +8,8 @@
 # picture is saved to the Desktop (or --dir), copied to the clipboard, and its path printed on
 # stdout; with --copy it only goes to the clipboard and nothing is printed. `clip` is region
 # with --copy. Recordings go to ~/Movies; `stop` (or recording again) ends one and prints it.
+# Two captures in the same second get "(2)", "(3)" after the stamp: grim overwrites. The saved
+# picture is entered in the recent-files list (recently-used.xbel), so Files > Recent shows it.
 # The banner names the folder and shows the picture as its thumbnail (WOL_SCREENSHOT_QUIET=1:
 # no banner, the shell shows its own thumbnail). Exit 0 also when the person cancels a region;
 # 64 on a usage error.
@@ -44,13 +46,37 @@ case $delay in *[!0-9]* | '') usage ;; esac
 run=${XDG_RUNTIME_DIR:-}
 pidf=${run:+"$run/wol-record.pid"}
 stamp=$(date '+%Y-%m-%d at %H.%M.%S')
+# A name nobody uses yet: the stamp has one-second resolution and grim/wf-recorder overwrite
+# (QA-LN-9: four captures made three files). $1 dir, $2 name, $3 extension.
+unique() {
+	u="$1/$2.$3"; n=1
+	while [ -e "$u" ]; do n=$((n + 1)); u="$1/$2 ($n).$3"; done
+	printf '%s' "$u"
+}
+# Files > Recent reads recently-used.xbel (GTK's recent list): enter $1 ($2 = mime type). Best effort,
+# never fatal. The path becomes a file:// URI (space, quote, ampersand, angle brackets, percent escaped).
+recent() {
+	x=${XDG_DATA_HOME:-"$HOME/.local/share"}/recently-used.xbel
+	mkdir -p "${x%/*}" 2>/dev/null || return 0
+	now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	uri=$(printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/ /%20/g' -e "s/'/%27/g" -e 's/&/%26/g' -e 's/</%3C/g' -e 's/>/%3E/g' -e 's/"/%22/g')
+	b="<bookmark href=\"file://$uri\" added=\"$now\" modified=\"$now\" visited=\"$now\"><info><metadata owner=\"http://freedesktop.org\"><mime:mime-type type=\"$2\"/><bookmark:applications><bookmark:application name=\"wol-screenshot\" exec=\"wol-screenshot\" modified=\"$now\" count=\"1\"/></bookmark:applications></metadata></info></bookmark>"
+	t="$x.$$"
+	if [ -s "$x" ] && grep -q '</xbel>' "$x"; then
+		if sed '/<\/xbel>/d' "$x" > "$t" 2>/dev/null; then printf '%s\n</xbel>\n' "$b" >> "$t"; else rm -f "$t"; return 0; fi
+	else
+		printf '<?xml version="1.0" encoding="UTF-8"?>\n<xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks" xmlns:mime="http://www.freedesktop.org/standards/shared-mime-info">\n%s\n</xbel>\n' "$b" > "$t" || return 0
+	fi
+	mv -f "$t" "$x" 2>/dev/null || rm -f "$t"
+}
 stop() {
 	pid=$(cut -d' ' -f1 "$pidf"); f=$(cut -d' ' -f2- "$pidf")
 	# Harmless: the recorder may have exited on its own already.
 	kill -INT "$pid" 2>/dev/null || true
 	while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
 	rm -f "$pidf"
-	notify-send -a Screenshot 'Screen recording saved' "$f"
+	recent "$f" video/mp4 || true
+	notify-send -a Screenshot "Screen recording saved to $(basename "$(dirname "$f")")" "$f"
 	echo "$f"; exit 0
 }
 case $mode in
@@ -61,7 +87,7 @@ record|record-region|stop)
 	# A pid file that is not ours is never trusted (never signal what it names).
 	if [ -f "$pidf" ]; then [ -O "$pidf" ] && stop; rm -f "$pidf"; fi
 	[ "$mode" = stop ] && exit 0
-	dir=${dir:-"$HOME/Movies"}; mkdir -p "$dir"; f="$dir/Screen Recording $stamp.mp4"
+	dir=${dir:-"$HOME/Movies"}; mkdir -p "$dir"; f=$(unique "$dir" "Screen Recording $stamp" mp4)
 	g=; [ "$mode" = record-region ] && { g=$(slurp) || exit 0; }
 	sleep "$delay"
 	if [ -n "$g" ]; then wf-recorder -g "$g" -f "$f" >/dev/null 2>&1 & else wf-recorder -f "$f" >/dev/null 2>&1 & fi
@@ -88,8 +114,9 @@ fi
 desk=${XDG_DESKTOP_DIR:-"$HOME/Desktop"}
 dir=${dir:-"$desk"}
 mkdir -p "$dir"
-f="$dir/Screenshot $stamp.png"
+f=$(unique "$dir" "Screenshot $stamp" png)
 shoot "$f"
+recent "$f" image/png || true
 # The file is saved: a clipboard or banner failure is reported, not fatal, so the path still
 # prints (audit5 S9-6: the capture toolbar reads it for its thumbnail).
 wl-copy -t image/png < "$f" >/dev/null 2>&1 ||

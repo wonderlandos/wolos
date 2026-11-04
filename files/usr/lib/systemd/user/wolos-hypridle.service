@@ -1,0 +1,15 @@
+# Idle lock, lock before sleep, display off, battery sleep (hypridle). The account's own
+# config (System Settings > Lock & Idle) wins over the system default; not on the live medium.
+[Unit]
+Description=WolOS idle and sleep lock (hypridle)
+PartOf=wolos-session.target
+After=wolos-session.target
+# A helper that cannot reach the display any more (the session ended) stops retrying after 5 tries.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+ConditionPathExists=!/etc/wolos-live
+
+[Service]
+ExecStart=/bin/sh -c 'c="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hypridle.conf"; [ -f "$c" ] || c=/usr/share/wolos/hypr/hypridle.conf; exec hypridle -c "$c"'
+Restart=on-failure
+RestartSec=2

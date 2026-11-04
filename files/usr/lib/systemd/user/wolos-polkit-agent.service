@@ -1,0 +1,14 @@
+# The password dialog for programs that ask polkit (pkexec, Files, disks).
+[Unit]
+Description=WolOS polkit authentication agent
+PartOf=wolos-session.target
+After=wolos-session.target
+# A helper that cannot reach the display any more (the session ended) stops retrying after 5 tries.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+ConditionPathExists=/usr/bin/lxqt-policykit-agent
+
+[Service]
+ExecStart=/usr/bin/lxqt-policykit-agent
+Restart=on-failure
+RestartSec=2

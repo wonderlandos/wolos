@@ -18,7 +18,7 @@ pub enum AdminStep {
         argv: Vec<String>,
         input: String,
     },
-    /// `content` is the full new file text; `current` is what the daemon read (for merges like wpa_supplicant.conf).
+    /// `content` is the full new file text; `current` is what the daemon read (for merges like sysctl.d).
     Write {
         path: String,
         mode: u32,
@@ -29,18 +29,8 @@ pub enum AdminStep {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WriteContent {
     Fixed(String),
-    /// Merge Wi-Fi network into the current wpa_supplicant.conf.
-    WifiUpsert {
-        ssid: String,
-        password: Option<String>,
-        hidden: bool,
-    },
     /// Merge `key=value` lines into the current [`power::SYSCTL_LOCAL`] (allow-listed keys only).
     SysctlUpsert(Vec<(String, String)>),
-    /// Drop one Wi-Fi network from the current wpa_supplicant.conf.
-    WifiRemove {
-        ssid: String,
-    },
     /// `key=on|off` set in the current auto-update file, other lines kept.
     AutoUpdate {
         key: &'static str,
@@ -58,18 +48,12 @@ impl WriteContent {
     pub fn render(&self, current: Option<&str>) -> String {
         match self {
             Self::Fixed(s) => s.clone(),
-            Self::WifiUpsert {
-                ssid,
-                password,
-                hidden,
-            } => wifi::upsert_network_with(current, ssid, password.as_deref(), *hidden),
             Self::SysctlUpsert(kv) => kv
                 .iter()
                 .filter(|(k, v)| power::is_allowed_sysctl(k, v))
                 .fold(current.unwrap_or("").to_owned(), |conf, (k, v)| {
                     power::upsert_sysctl(Some(&conf), k, v)
                 }),
-            Self::WifiRemove { ssid } => wifi::remove_network(current, ssid),
             Self::AutoUpdate { key, on } => crate::update::auto::set(current, key, *on),
             Self::Consent {
                 app,
@@ -204,7 +188,10 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
             && a[1].chars().count() <= MAX_FULL_NAME
             && (a[2] == "yes" || a[2] == "no")
             && users::is_valid_password(a[3])),
-        AdminAction::UserRemove => ok(n == 1 && users::is_valid_name(a[0]) && a[0] != "root"),
+        // [name] keeps the home folder; [name, "with-files"] deletes it too (QA-DATA-8).
+        AdminAction::UserRemove => ok((n == 1 || (n == 2 && a[1] == USER_REMOVE_WITH_FILES))
+            && users::is_valid_name(a[0])
+            && a[0] != "root"),
         AdminAction::UserPassword => ok(n == 2
             && users::is_valid_name(a[0])
             && a[0] != "root"
@@ -364,6 +351,9 @@ pub fn reply_secs(r: &AdminRequest) -> u32 {
 }
 
 /// [`plan_with`] without facts (actions that need none).
+/// Second argument of `user-remove` that also deletes the home folder (`userdel -r`).
+pub const USER_REMOVE_WITH_FILES: &str = "with-files";
+
 pub fn plan(r: &AdminRequest) -> Result<Vec<AdminStep>, String> {
     plan_with(r, &|_| None)
 }
@@ -422,9 +412,30 @@ pub fn plan_with(
                 input: format!("{}:{}\n", a[0], a[3]),
             },
         ],
-        AdminAction::UserRemove => vec![AdminStep::Run(
-            users::remove_argv(&a[0]).unwrap_or_default(),
-        )],
+        // QA-DATA-8: never under a signed-in person (their session would lose its files and
+        // processes), and the home folder stays unless deleting it was asked for.
+        AdminAction::UserRemove => {
+            if probe(&[
+                "loginctl",
+                "show-user",
+                &a[0],
+                "--property=State",
+                "--value",
+            ])
+            .is_some_and(|s| !s.trim().is_empty())
+            {
+                return Err(format!(
+                    "{} is signed in: they log out first, then the account can be removed",
+                    a[0]
+                ));
+            }
+            let argv = if a.get(1).is_some_and(|w| w == USER_REMOVE_WITH_FILES) {
+                users::remove_with_files_argv(&a[0])
+            } else {
+                users::remove_argv(&a[0])
+            };
+            vec![AdminStep::Run(argv.unwrap_or_default())]
+        }
         // The account first; then the disk's password slot follows it (only for the account the
         // installer named; `wol encrypt password` never fails the change).
         AdminAction::UserPassword => vec![
@@ -489,7 +500,13 @@ pub fn plan_with(
             .into_iter()
             .map(AdminStep::Run)
             .collect(),
-        AdminAction::AirPlayReceiver => service_steps(crate::sharing::AIRPLAY_UNIT, a[0] == "on"),
+        // QA-NET-5: the receiver's ports open with it (same mechanism as Remote Login).
+        AdminAction::AirPlayReceiver => airplay_steps(
+            a[0] == "on",
+            crate::sharing::firewall_reload_wanted(
+                probe(&crate::sharing::FIREWALL_ENABLED_ARGV).as_deref(),
+            ),
+        ),
         AdminAction::Hostname => vec![argv(&["hostnamectl", "set-hostname", &a[0]])],
         // `on|off` is the download switch, `metered on|off` the metered-connection one: each keeps
         // the other's line.
@@ -557,7 +574,29 @@ pub fn plan_with(
             .map(|s| argv(&s))
             .into_iter()
             .collect(),
-        AdminAction::WifiForget => vec![argv(&["nmcli", "connection", "delete", "id", &a[1]])],
+        // QA-NET-17: every saved profile that joins this SSID, by UUID ("Home", "Home 1"), never
+        // a profile that merely shares the name. None found: the name itself (an older profile
+        // whose SSID could not be read).
+        AdminAction::WifiForget => {
+            let uuids: Vec<String> = probe(&crate::wifi::NM_UUIDS_ARGV)
+                .map(|l| crate::wifi::parse_wifi_uuids(&l))
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|u| {
+                    let a = crate::wifi::nm_ssid_argv(u);
+                    let a: Vec<&str> = a.iter().map(String::as_str).collect();
+                    probe(&a).is_some_and(|s| crate::wifi::unescape(s.trim()) == r.args[1])
+                })
+                .collect();
+            if uuids.is_empty() {
+                vec![argv(&["nmcli", "connection", "delete", "id", &a[1]])]
+            } else {
+                uuids
+                    .iter()
+                    .map(|u| argv(&["nmcli", "connection", "delete", "uuid", u]))
+                    .collect()
+            }
+        }
         AdminAction::SessionPower => {
             vec![argv(session_power_argv(&a[0]).unwrap_or_default())]
         }
@@ -633,6 +672,23 @@ fn remote_login_steps(on: bool, firewall_on: bool) -> Vec<AdminStep> {
         rule.push(argv(&FIREWALL_RELOAD_ARGV));
     }
     let unit = service_steps("sshd.service", on);
+    if on {
+        rule.into_iter().chain(unit).collect()
+    } else {
+        unit.into_iter().chain(rule).collect()
+    }
+}
+
+/// AirPlay Receiver: its rule file ([`crate::sharing::AIRPLAY_RULE_FILE`]), the ruleset loaded
+/// again when the firewall is on, and shairport-sync. On opens the ports before it listens; off
+/// stops it first.
+fn airplay_steps(on: bool, firewall_on: bool) -> Vec<AdminStep> {
+    use crate::sharing::{AIRPLAY_RULE_FILE, AIRPLAY_UNIT, FIREWALL_RELOAD_ARGV, airplay_rule};
+    let mut rule = vec![write(AIRPLAY_RULE_FILE, 0o644, airplay_rule(on))];
+    if firewall_on {
+        rule.push(argv(&FIREWALL_RELOAD_ARGV));
+    }
+    let unit = service_steps(AIRPLAY_UNIT, on);
     if on {
         rule.into_iter().chain(unit).collect()
     } else {
@@ -1058,6 +1114,9 @@ mod tests {
             (UserRemove, &["bob"], true),
             (UserRemove, &["root"], false),
             (UserRemove, &["bob;id"], false),
+            (UserRemove, &["bob", "with-files"], true),
+            (UserRemove, &["bob", "-r"], false),
+            (UserRemove, &["bob", "with-files", "x"], false),
             (TimeZone, &["America/Sao_Paulo"], true),
             (TimeZone, &["UTC"], true),
             (TimeZone, &["../../etc/passwd"], false),
@@ -1352,9 +1411,10 @@ mod tests {
             (
                 UserAdd,
                 &["bob", "Bob B", "yes", "s3cret-pw"],
-                "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video,input,audio bob; chpasswd <stdin",
+                "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video bob; chpasswd <stdin",
             ),
-            (UserRemove, &["bob"], "userdel -r bob"),
+            (UserRemove, &["bob"], "userdel bob"),
+            (UserRemove, &["bob", "with-files"], "userdel -r bob"),
             (
                 TimeZone,
                 &["Europe/Lisbon"],
@@ -1707,13 +1767,13 @@ mod tests {
                 AirPlayReceiver,
                 &["on"],
                 &[],
-                "systemctl enable --now shairport-sync.service",
+                "write /etc/wolos/nftables.d/airplay.conf; nft -f /etc/wolos/nftables.conf; systemctl enable --now shairport-sync.service",
             ),
             (
                 AirPlayReceiver,
                 &["off"],
                 &[],
-                "systemctl disable --now shairport-sync.service",
+                "systemctl disable --now shairport-sync.service; write /etc/wolos/nftables.d/airplay.conf; nft -f /etc/wolos/nftables.conf",
             ),
             (
                 Hostname,

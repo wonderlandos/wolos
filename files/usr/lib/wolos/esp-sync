@@ -13,7 +13,7 @@
 # Each image's digest stays next to it (<slot>/image.sha256): a good boot of the other slot
 # checks it (`wol boot bless`, QA-LIVE4-4).
 # Env: WOLOS_ROOT (slot root), WOLOS_ESP (/efi), WOLOS_SLOT (wolos-a), WOLOS_CMDLINE, WOLOS_RELEASE,
-#      WOLOS_SB_DIR (keys, see boot-keys).
+#      WOLOS_SB_DIR (keys, see boot-keys), WOLOS_SLOTS (/run/wolos/slots.json).
 set -eu
 R=${WOLOS_ROOT:-}
 new=${1:-}
@@ -117,3 +117,14 @@ done
 rm -f "$old"/vmlinuz-* "$old"/initramfs-*
 # Names, directories and the FAT itself on the disk before anyone says "updated" (QA-F7).
 sync -f "$ESP/"
+# The slot list for Settings > Restore and `wol restore`: they run as the person, who cannot read
+# the ESP (fmask 0077), so their own `bootctl list` fails (QA-LIVE4-5, F5/F6). bootctl's JSON as
+# it is, world-readable, replaced whole; a failed listing keeps the last good one.
+L=${WOLOS_SLOTS:-/run/wolos/slots.json}
+if list=$(bootctl --esp-path="$ESP" list --json=short 2>/dev/null) && [ -n "$list" ]; then
+  if mkdir -p "${L%/*}" && printf '%s\n' "$list" > "$L.new" && chmod 0644 "$L.new"; then
+    mv -f "$L.new" "$L" || :
+  else
+    rm -f "$L.new"
+  fi
+fi

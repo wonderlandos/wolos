@@ -123,7 +123,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-036", "core", 7),
     ("RR-036", "wopkg", 18),
     ("RR-036", "xguard", 34),
-    ("RR-037", "api", 10),
+    ("RR-037", "api", 1),
     ("RR-037", "core", 4),
     ("RR-037", "proxy", 1),
     ("RR-037", "realtime", 1),

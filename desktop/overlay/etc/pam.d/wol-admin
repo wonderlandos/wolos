@@ -1,8 +1,10 @@
 # wol-admin (crates/controller wol-authcheck --admin, for wol-admind): an administrator's password
 # before a privileged change in Settings. Guessing limits as wol-lock.
-auth		required	pam_faillock.so preauth deny=10 unlock_time=60
-auth		[success=1 default=bad]	pam_unix.so
-auth		[default=die]	pam_faillock.so authfail deny=10 unlock_time=60
+# nodelay: wol-admind waits its one fixed 2 s before a refusal (REFUSAL_DELAY_MS); the modules'
+# own ~2 s came on top of it (QA-SHADOW-35).
+auth		required	pam_faillock.so preauth nodelay deny=10 unlock_time=60
+auth		[success=1 default=bad]	pam_unix.so nodelay
+auth		[default=die]	pam_faillock.so authfail nodelay deny=10 unlock_time=60
 auth		optional	pam_permit.so
 account		required	pam_faillock.so
 account		include		system-auth

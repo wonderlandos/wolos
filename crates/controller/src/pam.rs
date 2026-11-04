@@ -7,6 +7,8 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 const PAM_SUCCESS: c_int = 0;
 const PAM_BUF_ERR: c_int = 5;
 const PAM_CONV_ERR: c_int = 19;
+#[cfg(not(target_os = "linux"))]
+const PAM_ABORT: c_int = 26;
 const PAM_SILENT: c_int = 0x8000_0000u32 as c_int;
 
 #[repr(C)]
@@ -42,6 +44,16 @@ unsafe extern "C" {
     fn pam_setcred(h: *mut c_void, flags: c_int) -> c_int;
     fn pam_open_session(h: *mut c_void, flags: c_int) -> c_int;
     fn pam_close_session(h: *mut c_void, flags: c_int) -> c_int;
+    // Linux-PAM >= 1.4: the stacks are read from `confdir` instead of /etc/pam.d (tests only:
+    // controller/tests/pam_fake.rs runs the shipped stacks against fake fixtures).
+    #[cfg(target_os = "linux")]
+    fn pam_start_confdir(
+        service: *const c_char,
+        user: *const c_char,
+        conv: *const PamConv,
+        confdir: *const c_char,
+        h: *mut *mut c_void,
+    ) -> c_int;
 }
 const PAM_TTY: c_int = 3;
 const PAM_ESTABLISH_CRED: c_int = 0x2;
@@ -166,13 +178,38 @@ extern "C" fn converse(
 
 /// PAM `service` check of `user`'s password plus account management.
 pub fn authenticate(service: &CStr, user: &CStr, password: &[u8]) -> Auth {
+    authenticate_in(None, service, user, password)
+}
+
+/// [`authenticate`] with the stacks read from `confdir` (None: /etc/pam.d). A handle PAM could
+/// not start (no stack for the service, unreadable configuration: `PAM_ABORT`) is
+/// [`Auth::Error`], never a wrong password (QA-SHADOW-18).
+pub fn authenticate_in(
+    confdir: Option<&CStr>,
+    service: &CStr,
+    user: &CStr,
+    password: &[u8],
+) -> Auth {
     let call = Call { password, user };
     let conv = PamConv {
         conv: converse,
         data: (&call as *const Call).cast_mut().cast(),
     };
     let mut h = std::ptr::null_mut();
-    if unsafe { pam_start(service.as_ptr(), user.as_ptr(), &conv, &mut h) } != PAM_SUCCESS {
+    // SAFETY: valid C strings and a conversation that outlive every PAM call on `h`; `confdir`
+    // is a valid C string when given.
+    let rc = unsafe {
+        match confdir {
+            None => pam_start(service.as_ptr(), user.as_ptr(), &conv, &mut h),
+            #[cfg(target_os = "linux")]
+            Some(dir) => {
+                pam_start_confdir(service.as_ptr(), user.as_ptr(), &conv, dir.as_ptr(), &mut h)
+            }
+            #[cfg(not(target_os = "linux"))]
+            Some(_) => PAM_ABORT,
+        }
+    };
+    if rc != PAM_SUCCESS {
         return Auth::Error;
     }
     let auth_rc = unsafe { pam_authenticate(h, PAM_SILENT) };

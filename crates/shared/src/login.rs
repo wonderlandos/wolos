@@ -7,6 +7,9 @@ pub const SOCKET: &str = "/var/run/wol-login.sock";
 /// Auth reply when the password is right but the account may not open the display (not in group
 /// `seat`, controller::login::can_open_display): no session starts, the login window says why.
 pub const REPLY_NO_DISPLAY: &str = "no-display";
+/// Auth reply when the account's encrypted home opens only with a password of typed characters
+/// and this one is not (controller::login::TEXT_PASSWORD_REPLY): the login window says so.
+pub const REPLY_TEXT_PASSWORD: &str = "error-text-password";
 /// Password hints by account name (world-readable; the login window shows one after 3 failures).
 pub const HINTS_DIR: &str = "/var/db/wolos/hints";
 

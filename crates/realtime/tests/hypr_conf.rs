@@ -7,6 +7,11 @@
 use realtime::anim::{self, Animation, Curve, Spring, Timing};
 use realtime::titlebar::{self, Align, Button};
 const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+const USER_REALTIME: &str =
+    include_str!("../../../files/usr/lib/systemd/user/wolos-realtime.service");
+const USER_SUNSET: &str =
+    include_str!("../../../files/usr/lib/systemd/user/wolos-hyprsunset.service");
+const USER_TARGET: &str = include_str!("../../../files/usr/lib/systemd/user/wolos-session.target");
 /// The window buttons, sourced once by hyprland.conf (colours live outside it: themes v2).
 const LIGHTS: &str =
     include_str!("../../../desktop/overlay/usr/share/wolos/hypr/wolos/lights.conf");
@@ -852,28 +857,39 @@ fn lua_has_the_glass_window_rule_once() {
 }
 
 /// e2e D4: nothing started the session agent, so wold never heard that Memory Saver was on
-/// (status `enabled:false` while Settings showed it on). The session starts it, output logged.
+/// (status `enabled:false` while Settings showed it on). The session starts it as a user unit
+/// that comes back after a crash (QA-CRASH-5), part of the session's helpers.
 #[test]
 fn the_session_starts_the_realtime_agent() {
-    assert!(CONF.lines().any(|l| l.trim()
-        == r#"exec-once = sh -c 'exec wol-realtime >/dev/null 2>>"$XDG_RUNTIME_DIR/wol-realtime.log"'"#));
+    assert!(
+        USER_REALTIME
+            .lines()
+            .any(|l| l.trim() == "ExecStart=/usr/bin/wol-realtime")
+    );
+    assert!(
+        USER_REALTIME
+            .lines()
+            .any(|l| l.trim() == "Restart=on-failure")
+    );
+    assert!(USER_TARGET.contains("wolos-realtime.service"));
 }
 
 /// e2e D2: Night Light's program never ran, so every toggle failed. The session starts
 /// hyprsunset when the image has it, warm at once when Night Light was left on: the same state
-/// file and temperature `wol toggle` uses.
+/// file and temperature `wol toggle` uses (a user unit since QA-CRASH-5).
 #[test]
 fn the_session_starts_night_light_in_its_saved_state() {
     use wol_core::toggles::{NIGHT_LIGHT_KELVIN, NIGHT_LIGHT_PROGRAM, Toggle, state_file};
-    let l = CONF
+    assert!(
+        USER_SUNSET
+            .lines()
+            .any(|l| l.trim() == format!("ConditionPathExists=/usr/bin/{NIGHT_LIGHT_PROGRAM}"))
+    );
+    assert!(USER_TARGET.contains("wolos-hyprsunset.service"));
+    let l = USER_SUNSET
         .lines()
-        .find(|l| {
-            l.starts_with("exec-once = ") && l.contains(&format!("exec {NIGHT_LIGHT_PROGRAM}"))
-        })
-        .expect("hyprsunset exec-once");
-    assert!(l.contains(&format!(
-        "command -v {NIGHT_LIGHT_PROGRAM} >/dev/null || exit 0"
-    )));
+        .find(|l| l.starts_with("ExecStart=") && l.contains(&format!("exec {NIGHT_LIGHT_PROGRAM}")))
+        .expect("hyprsunset ExecStart");
     let s = std::path::Path::new("/S");
     let rel = state_file(Toggle::NightLight, std::path::Path::new("/C"), s);
     let rel = rel.strip_prefix(s).unwrap().display().to_string();
@@ -883,12 +899,15 @@ fn the_session_starts_night_light_in_its_saved_state() {
         )),
         "{l}"
     );
-    assert!(l.contains(&format!(
-        "[ -e \"$f\" ] && exec {NIGHT_LIGHT_PROGRAM} -t {NIGHT_LIGHT_KELVIN} "
-    )));
+    assert!(
+        l.contains(&format!(
+            "[ -e \"$f\" ] && exec {NIGHT_LIGHT_PROGRAM} -t {NIGHT_LIGHT_KELVIN};"
+        )),
+        "{l}"
+    );
     // Off: true colours. hyprsunset 0.4 with no flag tints to 6000 K.
     assert!(
-        l.contains(&format!("; exec {NIGHT_LIGHT_PROGRAM} -i ")),
+        l.contains(&format!("; exec {NIGHT_LIGHT_PROGRAM} -i'")),
         "{l}"
     );
 }
