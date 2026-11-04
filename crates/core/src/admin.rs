@@ -248,6 +248,9 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::PkgInstallFile => ok(n == 2 && is_staged_package(a[0]) && is_sha256_hex(a[1])),
         AdminAction::SystemRollback => ok(n == 0),
         AdminAction::SystemChannel => ok(n == 1 && shared::packages::CHANNELS.contains(&a[0])),
+        // NET-3: every value is checked here again (it is written into a shell file).
+        AdminAction::Proxy => ok(crate::netconf::proxy_from_args(&a).is_some()),
+        AdminAction::DnsOverTls => ok(crate::netconf::dot_from_args(&a).is_some()),
         _ => invalid(),
     }
 }
@@ -618,6 +621,35 @@ pub fn plan_with(
         AdminAction::SystemChannel => {
             vec![write(CHANNEL_FILE, 0o644, format!("{}\n", a[0]))]
         }
+        AdminAction::Proxy => {
+            let a: Vec<&str> = a.iter().map(String::as_str).collect();
+            let c = crate::netconf::proxy_from_args(&a).ok_or("proxy: bad arguments")?;
+            vec![
+                write(
+                    crate::netconf::PROXY_CONF,
+                    0o644,
+                    crate::netconf::render_proxy_conf(&c),
+                ),
+                write(
+                    crate::netconf::PROXY_PROFILE,
+                    0o644,
+                    crate::netconf::render_proxy_profile(&c),
+                ),
+            ]
+        }
+        AdminAction::DnsOverTls => {
+            let a: Vec<&str> = a.iter().map(String::as_str).collect();
+            let c = crate::netconf::dot_from_args(&a).ok_or("dns-over-tls: bad arguments")?;
+            vec![
+                argv(&["mkdir", "-p", "-m", "0755", "/etc/systemd/resolved.conf.d"]),
+                write(
+                    crate::netconf::DOT_DROPIN,
+                    0o644,
+                    crate::netconf::render_dot(&c),
+                ),
+                argv(&crate::netconf::RESOLVED_RESTART_ARGV),
+            ]
+        }
     })
 }
 
@@ -816,6 +848,10 @@ pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
         (A::SystemRollback, Always),
         (A::SystemChannel, Always),
         (A::Reports, Cached),
+        // NET-3: where every connection or name lookup of this computer goes (a proxy or a DNS
+        // server of someone else's choosing sees it all).
+        (A::Proxy, Always),
+        (A::DnsOverTls, Always),
     ]
 };
 
@@ -1870,6 +1906,63 @@ mod tests {
         assert!(!c.render(Some(old)).contains("screen-capture"));
     }
 
+    /// NET-3: the proxy writes its own file and the login environment; DNS over TLS writes the
+    /// resolved drop-in and restarts resolved. Both ask for the password every time, and a
+    /// value that could break out of the shell file is refused before any step.
+    #[test]
+    fn proxy_and_dns_over_tls_plans() {
+        let steps = plan(&r(Proxy, &["manual", "proxy.lan:3128", "-", "-", "-"])).unwrap();
+        let paths: Vec<&str> = steps
+            .iter()
+            .filter_map(|s| match s {
+                AdminStep::Write { path, .. } => Some(path.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            paths,
+            [crate::netconf::PROXY_CONF, crate::netconf::PROXY_PROFILE]
+        );
+        let AdminStep::Write { content, mode, .. } = &steps[1] else {
+            panic!("{steps:?}")
+        };
+        assert_eq!(*mode, 0o644);
+        assert!(
+            content
+                .render(None)
+                .contains("export http_proxy='http://proxy.lan:3128/'")
+        );
+        for bad in [
+            &["manual", "proxy.lan:3128';id;'", "-", "-", "-"][..],
+            &["auto", "http://x/$(id)", "-"],
+            &[],
+        ] {
+            assert!(validate(&r(Proxy, bad)).is_some(), "{bad:?}");
+        }
+        let steps = plan(&r(DnsOverTls, &["opportunistic", "9.9.9.9#dns.quad9.net"])).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(
+            steps[2],
+            argv(&["systemctl", "restart", "systemd-resolved.service"])
+        );
+        let AdminStep::Write { path, content, .. } = &steps[1] else {
+            panic!("{steps:?}")
+        };
+        assert_eq!(path, crate::netconf::DOT_DROPIN);
+        assert!(
+            content
+                .render(None)
+                .contains("DNSOverTLS=opportunistic\nDNS=9.9.9.9#dns.quad9.net\n")
+        );
+        assert!(
+            validate(&r(DnsOverTls, &["strict"])).is_some(),
+            "strict needs a server"
+        );
+        assert!(validate(&r(DnsOverTls, &["off", "x;y"])).is_some());
+        assert!(needs_fresh_password(&r(Proxy, &["off"])));
+        assert!(needs_fresh_password(&r(DnsOverTls, &["off"])));
+    }
+
     /// A printer URI may carry credentials (`ipp://user:pass@host`): never logged.
     #[test]
     fn describe_hides_printer_credentials() {
@@ -2000,6 +2093,8 @@ mod tests {
             PkgInstallFile,
             SystemRollback,
             SystemChannel,
+            Proxy,
+            DnsOverTls,
         ] {
             assert_eq!(fresh_rule(a), Fresh::Always, "{a:?}");
         }

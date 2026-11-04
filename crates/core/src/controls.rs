@@ -8,6 +8,7 @@ use shared::admin::{AdminAction, AdminReply, AdminRequest};
 use std::sync::Arc;
 
 mod center;
+mod net;
 pub use center::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

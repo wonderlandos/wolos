@@ -98,6 +98,37 @@ pub fn builtin(argv: &[&str]) -> Option<Option<String>> {
     }
 }
 
+/// A copy of `src` named `name` in a fresh `0700` directory of its own under the temporary
+/// directory: (directory, file). For a tool that takes its input's file name as data (a
+/// WireGuard file's name becomes the tunnel's interface, NET-3). [`remove_staged`] cleans up.
+pub fn stage_copy(
+    src: &std::path::Path,
+    name: &str,
+) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    use std::os::unix::fs::DirBuilderExt;
+    if name.is_empty() || name.contains('/') || name.starts_with('.') {
+        return None;
+    }
+    let data = std::fs::read(src).ok()?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let dir = std::env::temp_dir().join(format!("wolos-stage-{}-{stamp}", std::process::id()));
+    std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?;
+    let file = dir.join(name);
+    if std::fs::write(&file, data).is_err() {
+        remove_staged(&dir, &file);
+        return None;
+    }
+    Some((dir, file))
+}
+
+/// Removes what [`stage_copy`] made: the one file, then its empty directory.
+pub fn remove_staged(dir: &std::path::Path, file: &std::path::Path) {
+    let _ = std::fs::remove_file(file);
+    let _ = std::fs::remove_dir(dir);
+}
+
 /// Run argv, capture stdout, kill after `timeout`. Never a shell; `cat`/`ls` probes never fork
 /// ([`builtin`]).
 pub fn run_with_timeout(argv: &[&str], timeout: Duration) -> Option<String> {

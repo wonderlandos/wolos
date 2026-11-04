@@ -16,6 +16,7 @@ pub mod login;
 pub mod mcp;
 pub mod mirror;
 pub mod modules;
+pub mod netverbs;
 pub mod packages;
 pub mod pam;
 pub mod pkg;
