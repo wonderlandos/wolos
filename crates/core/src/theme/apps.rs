@@ -459,6 +459,7 @@ fn gtk3_css(t: &ResolvedTheme) -> String {
     s += &super::scaffold::gtk3_defines(t);
     s += &super::scaffold::gtk3(t);
     s += &gtk3_window_controls(t);
+    s += &super::gtk_atlas::css(t);
     s
 }
 

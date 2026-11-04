@@ -95,3 +95,34 @@ button.titlebutton:not(.appmenu):active, headerbar.default-decoration button.tit
 button.titlebutton:not(.appmenu).close:hover, headerbar.default-decoration button.titlebutton.close:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.close:hover { background-image: -gtk-icontheme("window-close-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }
 button.titlebutton:not(.appmenu).minimize:hover, headerbar.default-decoration button.titlebutton.minimize:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.minimize:hover { background-image: -gtk-icontheme("window-minimize-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }
 button.titlebutton:not(.appmenu).maximize:hover, headerbar.default-decoration button.titlebutton.maximize:hover, .default-decoration.titlebar:not(headerbar) button.titlebutton.maximize:hover { background-image: -gtk-icontheme("window-maximize-symbolic"); background-repeat: no-repeat; background-position: center; background-size: 10px 10px; }
+/* Atlas: the colours the engine samples (gtk_atlas.rs). */
+@define-color placeholder_text_color #565563;
+window.background.chromium { background-color: #f1f1fa; background-image: none; }
+window.background.chromium label.chromium { color: #151520; }
+window.background.chromium label.chromium:disabled { color: #565563; }
+window.background.chromium treeview.view.chromium treeview.view.cell.chromium:selected:focus { background-color: #7452f5; background-image: none; }
+window.background.chromium treeview.view.chromium treeview.view.cell.chromium:selected:focus label.chromium { color: #ffffff; }
+window.background.chromium separator.horizontal.chromium { background-color: #d7d7e0; background-image: none; border-color: #d7d7e0; }
+window.background.chromium headerbar.header-bar.titlebar.chromium { background-color: #ebebf4; background-image: none; }
+window.background.chromium headerbar.header-bar.titlebar.chromium:backdrop { background-color: #ebebf4; background-image: none; }
+window.background.chromium headerbar.header-bar.titlebar.chromium label.title.chromium { color: #151520; }
+window.background.chromium toolbar.chromium { background-color: #f1f1fa; background-image: none; }
+window.background.chromium menu.chromium { background-color: #ffffff; background-image: none; border-style: solid; border-width: 1px; border-color: #e3e3e4; }
+window.background.chromium menu.chromium menuitem.chromium label.chromium { color: #151520; }
+window.background.chromium menu.chromium menuitem.chromium:disabled label.chromium { color: #565563; }
+window.background.chromium menu.chromium menuitem.chromium accelerator.chromium { color: #565563; }
+window.background.chromium menu.chromium menuitem.chromium:hover { background-color: #e0d9fd; background-image: none; }
+window.background.chromium menu.chromium separator.horizontal.chromium { background-color: #e3e3e4; background-image: none; border-color: #e3e3e4; }
+window.background.chromium tooltip.background.chromium { background-color: #ffffff; background-image: none; }
+window.background.chromium button.chromium { background-color: #ebebf3; background-image: none; border-style: solid; border-width: 1px; border-color: #d1d1da; }
+window.background.chromium button.text-button.chromium label.chromium { color: #151520; }
+window.background.chromium textview.view.chromium { background-color: #ebebf3; background-image: none; }
+window.background.chromium textview.view.chromium text.chromium { color: #151520; }
+window.background.chromium entry.chromium { border-style: solid; border-width: 1px; border-color: #d1d1da; }
+window.background.chromium entry.chromium:focus { border-style: solid; border-width: 1px; border-color: #7452f5; }
+window.background.chromium textview.view.chromium:focus text.chromium:focus selection.chromium:focus { background-color: #d1c9f3; background-image: none; color: #151520; }
+window.background.chromium spinner.chromium { color: #7452f5; }
+window.background.chromium button.flat.scale.chromium image.chromium { color: #151520; }
+window.background.chromium button.text-button.toggle.chromium:checked { background-color: #7452f5; background-image: none; }
+window.background.chromium button.text-button.toggle.chromium { background-color: #ebebf3; background-image: none; }
+window.background.chromium label.link.chromium:link { color: #7452f5; }
