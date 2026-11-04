@@ -30,7 +30,8 @@ key (Ctrl+C; a terminal's Ctrl+Shift+C), see `shell::appmenu::send`.
 | ⌘Q / ⌘H / ⌥⌘H / ⌘M | Quit / Hide / Hide Others / Minimize |
 | ⌘Space | Search |
 | ⌘Tab | App switcher |
-| ⌃↑ (⌘↑) | Overview |
+| ⌃↑ | Overview |
+| ⌘← / ⌘→ / ⌘↑ / ⌘↓ | Snap the window: halves, quarters, zoom, back (docs/modules/windows.md) |
 | ⌃⌘Q | Lock |
 | ⌥⌘Esc | Force Quit Applications |
 | ⌃F2 / ⌃F3 | Keyboard into the menu bar / the Dock (Esc gives it back) |

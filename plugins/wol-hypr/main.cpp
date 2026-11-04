@@ -27,6 +27,10 @@
 #include <hyprland/src/managers/SessionLockManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
+#include <hyprland/src/layout/supplementary/DragController.hpp>
+#include <hyprland/src/config/values/types/BoolValue.hpp>
+#include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
+#include <hyprland/src/desktop/state/ViewState.hpp>
 #include <algorithm>
 #include <array>
 #include <condition_variable>
@@ -37,6 +41,11 @@
 #include <linux/input-event-codes.h>
 #include <mutex>
 #include <pthread.h>
+extern "C" {
+#include <lauxlib.h>
+#include <lua.h>
+}
+#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -52,6 +61,7 @@ inline HANDLE PHANDLE = nullptr;
 // Set by PLUGIN_INIT, run by PLUGIN_EXIT: releases the event listeners.
 static std::function<void()> g_unhook;
 static SP<IPC::Socket1::SCommand> g_wolstats;
+static SP<IPC::Socket1::SCommand> g_wolsnap;
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 
@@ -498,6 +508,405 @@ static void onKey(const IKeyboard::SKeyEvent& e, Event::SCallbackInfo& info) {
         info.cancelled = true;
 }
 
+// ---------------------------------------------------------------- window snapping (realtime snap.rs)
+// Drag a floating window by its bar to a side of the screen for a half, a corner for a quarter, the
+// top for zoom; Super+arrows (`hyprctl wolsnap left|right|up|down`, hyprland.lua) walk the same
+// places; the shell draws the drop preview (`snap-preview`) and the snap layouts chooser
+// (`snap-layouts`, after a rest on the zoom button). Off with plugin:wol:edge_snap = false
+// (System Settings > Desktop & Dock > Snap windows to screen edges); the keys work either way.
+static SP<Config::Values::CBoolValue> g_edgeSnap;
+
+static bool edgeSnapOn() {
+    return !g_edgeSnap || g_edgeSnap->value();
+}
+
+// A window that snapped: where it went and the frame to give back (the frame before the first snap).
+struct SSnapped {
+    PHLWINDOWREF window;
+    int32_t      zone = WOL_SNAP_NONE;
+    CBox         frame;
+    CBox         restore;
+};
+static std::vector<SSnapped> g_snapped;
+
+static SSnapped* snappedOf(PHLWINDOW w) {
+    std::erase_if(g_snapped, [](const SSnapped& s) { return s.window.expired(); });
+    for (auto& s : g_snapped)
+        if (s.window.lock() == w)
+            return &s;
+    return nullptr;
+}
+
+static int32_t barOf(PHLWINDOW w) {
+    return lightsOf(w) != 0 ? wol_titlebar_height() : 0;
+}
+
+// Frame = client box with the compositor's title bar above it (placement.rs: positions are the client area).
+static CBox frameOf(PHLWINDOW w) {
+    const auto    pos = w->m_realPosition->goal(), sz = w->m_realSize->goal();
+    const int32_t bar = barOf(w);
+    return CBox{pos.x, pos.y - bar, sz.x, sz.y + bar};
+}
+
+static bool stillAt(const CBox& a, const CBox& b) {
+    return wol_snap_still((int32_t)a.x, (int32_t)a.y, (int32_t)a.w, (int32_t)a.h, (int32_t)b.x, (int32_t)b.y, (int32_t)b.w, (int32_t)b.h) != 0;
+}
+
+// The zone the window is in now: its record, while nobody moved or resized it since.
+static int32_t zoneOf(PHLWINDOW w) {
+    const auto s = snappedOf(w);
+    return s && stillAt(frameOf(w), s->frame) ? s->zone : WOL_SNAP_NONE;
+}
+
+static PHLMONITOR monitorAt(const Vector2D& p) {
+    for (const auto& m : State::monitorState()->monitors())
+        if (m->m_enabled && m->logicalBox().containsPoint(p))
+            return m;
+    return nullptr;
+}
+
+// Outer edges of an output: no other output 2 px beyond them (a shared edge is a way across).
+static uint32_t openEdges(PHLMONITOR mon) {
+    const auto b    = mon->logicalBox();
+    const auto mid  = b.middle();
+    uint32_t   open = 0;
+    const std::array<std::pair<Vector2D, uint32_t>, 4> probes = {{
+        {{b.x - 2, mid.y}, WOL_SNAP_OPEN_LEFT},
+        {{b.x + b.w + 2, mid.y}, WOL_SNAP_OPEN_RIGHT},
+        {{mid.x, b.y - 2}, WOL_SNAP_OPEN_TOP},
+        {{mid.x, b.y + b.h + 2}, WOL_SNAP_OPEN_BOTTOM},
+    }};
+    for (const auto& [p, bit] : probes)
+        if (!monitorAt(p))
+            open |= bit;
+    return open;
+}
+
+static std::pair<int32_t, int32_t> tilingGaps() {
+    static auto PIN  = CConfigValue<Config::IComplexConfigValue>("general:gaps_in");
+    static auto POUT = CConfigValue<Config::IComplexConfigValue>("general:gaps_out");
+    const auto* in   = sc<Config::CCssGapData*>(PIN.ptr());
+    const auto* out  = sc<Config::CCssGapData*>(POUT.ptr());
+    return {out ? (int32_t)out->m_top : 0, in ? (int32_t)in->m_top : 0};
+}
+
+// The frame of `zone` on `mon` (realtime snap::zone_box), in global layout coordinates.
+static std::optional<CBox> zoneFrame(PHLMONITOR mon, int32_t zone) {
+    const auto area         = mon->logicalBoxMinusReserved();
+    const auto [outer, inner] = tilingGaps();
+    int32_t    x = 0, y = 0, w = 0, h = 0;
+    if (wol_snap_box(zone, (int32_t)area.x, (int32_t)area.y, (int32_t)area.w, (int32_t)area.h, outer, inner, &x, &y, &w, &h) != 0)
+        return std::nullopt;
+    return CBox{(double)x, (double)y, (double)w, (double)h};
+}
+
+static void hidePreview();
+
+// Moves a floating window into `zone` on `mon` (zoom: the compositor's maximise, like the zoom button).
+static void snapTo(PHLWINDOW w, PHLMONITOR mon, int32_t zone) {
+    if (!w || !mon || !w->layoutTarget() || !w->isFloating())
+        return;
+    const bool zoomed = Fullscreen::controller()->isFullscreen(w);
+    if (zone == WOL_SNAP_ZOOM) {
+        if (!zoomed)
+            (void)Config::Actions::fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, true, w);
+        return;
+    }
+    const auto frame = zoneFrame(mon, zone);
+    if (!frame)
+        return;
+    if (zoomed)
+        Fullscreen::controller()->setFullscreenMode(w, Fullscreen::FSMODE_NONE);
+    auto* rec = snappedOf(w);
+    if (!rec) {
+        g_snapped.push_back(SSnapped{.window = w, .zone = WOL_SNAP_NONE, .frame = CBox{}, .restore = frameOf(w)});
+        rec = &g_snapped.back();
+    } else if (!stillAt(frameOf(w), rec->frame) && !zoomed)
+        rec->restore = frameOf(w); // moved or resized since: that is the size to come back to
+    rec->zone      = zone;
+    rec->frame     = *frame;
+    const int32_t bar = barOf(w);
+    g_layoutManager->setTargetGeom(CBox{frame->x, frame->y + bar, frame->w, std::max(1.0, frame->h - bar)}, w->layoutTarget());
+}
+
+static void restoreWindow(PHLWINDOW w) {
+    auto* rec = snappedOf(w);
+    if (Fullscreen::controller()->isFullscreen(w)) {
+        (void)Config::Actions::fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, true, w);
+        return;
+    }
+    if (!rec || !w->layoutTarget())
+        return;
+    const auto    r   = rec->restore;
+    const int32_t bar = barOf(w);
+    std::erase_if(g_snapped, [&](const SSnapped& s) { return s.window.lock() == w; });
+    g_layoutManager->setTargetGeom(CBox{r.x, r.y + bar, r.w, std::max(1.0, r.h - bar)}, w->layoutTarget());
+}
+
+static int32_t zoneFromName(const std::string& s) {
+    for (int32_t z = 0; const char* n = wol_snap_zone_name(z); ++z)
+        if (s == n)
+            return z;
+    return -1;
+}
+
+static int32_t keyFromName(const std::string& s) {
+    static const std::array<const char*, 4> names = {"left", "right", "up", "down"};
+    for (int32_t k = 0; k < 4; ++k)
+        if (s == names[k])
+            return k;
+    return -1;
+}
+
+// One Super+arrow on the focused window (realtime snap::key_step).
+static std::string snapKey(PHLWINDOW w, int32_t key) {
+    if (!w || !w->mapped() || !managedWindow(w))
+        return "no window";
+    const auto mon = w->m_monitor.lock();
+    if (!mon)
+        return "no display";
+    const bool    tiled  = !w->isFloating();
+    const bool    zoomed = Fullscreen::controller()->isFullscreen(w);
+    const int32_t step   = wol_snap_key(tiled ? WOL_SNAP_NONE : zoneOf(w), key, tiled, zoomed);
+    if (step < 0)
+        return "bad key";
+    // Fixed-size windows (palettes, dialogs) never resize: they only zoom off, minimise or stay.
+    const bool fixed = fixedAxesOf(w) != 0;
+    switch (step & 0xff) {
+        case WOL_SNAP_TO:
+            if (!fixed)
+                snapTo(w, mon, (step >> 8) & 0xff);
+            break;
+        case WOL_SNAP_RESTORE: restoreWindow(w); break;
+        case WOL_SNAP_MINIMISE: (void)Config::Actions::moveToWorkspace("special:hidden", true, w); break;
+        case WOL_SNAP_MOVE_TILED: {
+            static const std::array<Math::eDirection, 4> dirs = {Math::DIRECTION_LEFT, Math::DIRECTION_RIGHT, Math::DIRECTION_UP, Math::DIRECTION_DOWN};
+            (void)Config::Actions::moveInDirection(dirs[(step >> 8) & 3], w);
+            break;
+        }
+        case WOL_SNAP_ZOOM_TILED: (void)Config::Actions::fullscreenWindow(Fullscreen::FSMODE_MAXIMIZED, true, w); break;
+        default: break;
+    }
+    return "ok";
+}
+
+static PHLWINDOW windowByAddress(const std::string& arg) {
+    const auto hex = arg.starts_with("address:") ? arg.substr(8) : arg;
+    for (const auto& w : Desktop::windowState()->windows())
+        if (w->mapped() && std::format("0x{:x}", (uintptr_t)w.get()) == hex)
+            return w;
+    return nullptr;
+}
+
+// `hyprctl wolsnap <left|right|up|down> [address:0x...]`: a Super+arrow; `hyprctl wolsnap zone <ZONE>
+// [address:0x...]`: straight to a place (the snap layouts chooser; `left` and `right` are keys without
+// `zone`, so a window in the right half asked for the left half is not restored instead). The
+// focused window unless an address is given.
+static IPC::Socket1::SResponse wolSnap(const IPC::Socket1::SRequest& req) {
+    static const char* usage = "usage: wolsnap left|right|up|down | zone left|right|top-left|top-right|bottom-left|bottom-right|zoom|none [address:0x...]";
+    std::istringstream in(req.command);
+    std::string        verb, what, where;
+    in >> verb >> what;
+    const bool toZone = what == "zone";
+    if (toZone)
+        in >> what;
+    in >> where;
+    const int32_t key  = toZone ? -1 : keyFromName(what);
+    const int32_t zone = toZone ? zoneFromName(what) : -1;
+    if (key < 0 && zone < 0)
+        return std::string(usage);
+    const auto w = where.empty() ? Desktop::focusState()->window() : windowByAddress(where);
+    if (!w)
+        return std::string("no window");
+    if (key >= 0)
+        return snapKey(w, key);
+    if (!w->isFloating() || fixedAxesOf(w) != 0)
+        return std::string("not a floating window");
+    if (zone == WOL_SNAP_NONE)
+        restoreWindow(w);
+    else
+        snapTo(w, w->m_monitor.lock(), zone);
+    return std::string("ok");
+}
+
+// `hl.plugin.wol.snap("left"|"right"|"up"|"down")` in hyprland.lua: the same as `hyprctl wolsnap`, no
+// process. Its namespace also tells the configuration the plugin is loaded (`if hl.plugin.wol then`
+// guards the plugin:wol:* keys, as hl.plugin.hyprbars does for the strip).
+static int luaSnap(lua_State* L) {
+    const int32_t key = keyFromName(luaL_checkstring(L, 1));
+    if (key < 0)
+        return luaL_error(L, "hl.plugin.wol.snap: left, right, up or down");
+    (void)snapKey(Desktop::focusState()->window(), key);
+    return 0;
+}
+
+// Drop preview: one line to the shell per change of zone (never per motion).
+static int32_t       g_previewZone = WOL_SNAP_NONE;
+static PHLMONITORREF g_previewMonitor; // the output the shown preview is on: a drag across outputs moves it
+static PHLWINDOWREF  g_dragWindow;
+static PHLMONITORREF g_dragMonitor;
+
+static void hidePreview() {
+    if (g_previewZone != WOL_SNAP_NONE)
+        tellShell("snap-preview off\n");
+    g_previewZone = WOL_SNAP_NONE;
+    g_previewMonitor.reset();
+}
+
+static void showPreview(PHLMONITOR mon, int32_t zone) {
+    if (zone == g_previewZone && g_previewMonitor.lock() == mon)
+        return;
+    const auto frame = zoneFrame(mon, zone);
+    if (!frame)
+        return hidePreview();
+    g_previewZone    = zone;
+    g_previewMonitor = mon;
+    const auto origin = mon->logicalBox().pos();
+    tellShell(std::format("snap-preview {} {} {} {} {} {}\n", mon->m_name, wol_snap_zone_name(zone), (int)(frame->x - origin.x), (int)(frame->y - origin.y), (int)frame->w,
+                          (int)frame->h)
+                  .c_str());
+}
+
+// A snapped window that is dragged away gets the size it had before it snapped, under the pointer.
+static void unsnapForDrag(PHLWINDOW w, const Vector2D& p) {
+    auto* rec = snappedOf(w);
+    if (!rec || Fullscreen::controller()->isFullscreen(w))
+        return;
+    const auto cur = frameOf(w);
+    if (!stillAt(cur, rec->frame)) {
+        std::erase_if(g_snapped, [&](const SSnapped& s) { return s.window.lock() == w; });
+        return;
+    }
+    const auto r = rec->restore;
+    int32_t    x = 0, y = 0;
+    wol_snap_unsnap((int32_t)cur.x, (int32_t)cur.y, (int32_t)cur.w, (int32_t)cur.h, (int32_t)r.w, (int32_t)r.h, (int32_t)p.x, (int32_t)p.y, &x, &y);
+    std::erase_if(g_snapped, [&](const SSnapped& s) { return s.window.lock() == w; });
+    const int32_t bar    = barOf(w);
+    const auto    client = CBox{(double)x, (double)(y + bar), r.w, std::max(1.0, r.h - bar)};
+    setGeomNow(w, client);
+    // The drag goes on from the new box: the grab point moves with it (built with -fno-access-control).
+    auto& dc           = g_layoutManager->dragController();
+    dc->m_dragHotspot  = p - client.pos();
+    dc->m_beginDragXY  = p;
+    dc->m_beginDragPositionXY = client.pos();
+    dc->m_beginDragSizeXY     = client.size();
+}
+
+static void onDragMotion() {
+    const auto& dc     = g_layoutManager->dragController();
+    const auto  target = dc->target();
+    const auto  w      = target ? target->window() : nullptr;
+    if (!w || dc->mode() != MBIND_MOVE || dc->draggingTiled() || !w->isFloating() || !managedWindow(w) || fixedAxesOf(w) != 0 || !edgeSnapOn()) {
+        g_dragWindow.reset();
+        return hidePreview();
+    }
+    const auto p = g_pInputManager->getMouseCoordsInternal();
+    if (g_dragWindow.lock() != w) {
+        g_dragWindow = w;
+        unsnapForDrag(w, p);
+    }
+    const auto mon = monitorAt(p);
+    if (!mon)
+        return hidePreview();
+    const auto b    = mon->logicalBox();
+    const auto zone = wol_snap_zone_at((int32_t)b.x, (int32_t)b.y, (int32_t)b.w, (int32_t)b.h, openEdges(mon), (int32_t)p.x, (int32_t)p.y);
+    g_dragMonitor   = mon;
+    if (zone == WOL_SNAP_NONE)
+        return hidePreview();
+    showPreview(mon, zone);
+}
+
+static void onDragEnded() {
+    const auto w    = g_dragWindow.lock();
+    const auto mon  = g_dragMonitor.lock();
+    const auto zone = g_previewZone;
+    g_dragWindow.reset();
+    hidePreview();
+    if (!w || !mon || zone == WOL_SNAP_NONE)
+        return;
+    // After dragEnd committed the dropped box (and refocused the window).
+    g_pEventLoopManager->doLater([ref = PHLWINDOWREF{w}, m = PHLMONITORREF{mon}, zone] {
+        const auto w = ref.lock();
+        if (w && w->mapped())
+            snapTo(w, m.lock(), zone);
+    });
+}
+
+// Snap layouts chooser: the pointer rests on a window's zoom button; the shell shows the six places
+// next to it (`snap-layouts <output> <address> <x> <y>`, the button's centre in output coordinates)
+// and sends `wolsnap zone <zone> address:...` for the one clicked.
+static SP<CEventLoopTimer>                      g_hoverTimer;
+static PHLWINDOWREF                             g_hoverWindow;
+// lightsOf per window (reads /proc once). Keyed by address but kept with a ref: an entry whose window
+// is gone is never trusted, so a new window at the same address is read afresh.
+struct SLights {
+    PHLWINDOWREF window;
+    int32_t      lights = 0;
+};
+static std::unordered_map<uintptr_t, SLights> g_lights;
+
+static int32_t cachedLights(PHLWINDOW w) {
+    const auto key = (uintptr_t)w.get();
+    if (const auto it = g_lights.find(key); it != g_lights.end() && it->second.window.lock() == w)
+        return it->second.lights;
+    const auto n = lightsOf(w);
+    g_lights[key] = SLights{.window = w, .lights = n};
+    return n;
+}
+
+static void hoverDisarm() {
+    g_hoverWindow.reset();
+    if (g_hoverTimer)
+        g_hoverTimer->updateTimeout(std::nullopt);
+}
+
+static void onHoverFire() {
+    const auto w = g_hoverWindow.lock();
+    g_hoverWindow.reset();
+    if (!w || !w->mapped() || !w->isFloating())
+        return;
+    const auto mon = w->m_monitor.lock();
+    if (!mon)
+        return;
+    const auto p      = g_pInputManager->getMouseCoordsInternal();
+    const auto origin = mon->logicalBox().pos();
+    tellShell(std::format("snap-layouts {} 0x{:x} {} {}\n", mon->m_name, (uintptr_t)w.get(), (int)(p.x - origin.x), (int)(p.y - origin.y)).c_str());
+}
+
+// Runs on every pointer motion: one bounded hit test (the windows under the pointer, no allocation
+// beyond the result) and, over a window's title bar only, one cached /proc read per window. Nothing
+// else happens until the pointer rests on a zoom button for the dwell.
+static void onMouseMove(const Vector2D& p) {
+    if (!edgeSnapOn() || g_layoutManager->dragController()->target())
+        return hoverDisarm();
+    const auto w = Desktop::viewState()->hitTest().windowAt(p, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+    if (!w || !w->isFloating() || Fullscreen::controller()->isFullscreen(w) || fixedAxesOf(w) != 0 || !managedWindow(w))
+        return hoverDisarm();
+    const auto lights = cachedLights(w);
+    if (lights < 3)
+        return hoverDisarm();
+    const auto pos = w->m_realPosition->goal(), sz = w->m_realSize->goal();
+    const int  bar = wol_titlebar_height();
+    if (wol_lights_at_w((int32_t)sz.x, 3, (int32_t)(p.x - pos.x), (int32_t)(p.y - (pos.y - bar))) != 2)
+        return hoverDisarm();
+    if (g_hoverWindow.lock() == w)
+        return; // still resting on the same button: the timer runs
+    g_hoverWindow = w;
+    if (!g_hoverTimer) {
+        g_hoverTimer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { onHoverFire(); }, nullptr);
+        g_pEventLoopManager->addTimer(g_hoverTimer);
+    }
+    g_hoverTimer->updateTimeout(std::chrono::milliseconds(wol_snap_layouts_dwell_ms()));
+}
+
+// A window is destroyed: drop its cache entry, whether or not its ref still locks (the entries of
+// every window that is gone go, so the map cannot grow past the open windows).
+static void onWindowGone(PHLWINDOWREF gone) {
+    if (const auto w = gone.lock())
+        g_lights.erase((uintptr_t)w.get());
+    std::erase_if(g_lights, [](const auto& e) { return e.second.window.expired(); });
+}
+
 // Zone per output as last seen; a change (mode, scale, position or reserved area) refits once the
 // frame is out of the renderer (doLater), not inside render.pre.
 static std::unordered_map<MONITORID, std::array<double, 4>> g_zones;
@@ -559,9 +968,17 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto lsOpen = Event::bus()->m_events.layer.opened.listen([](PHLLS l) { onLayerOpened(l); });
     static auto lsShut = Event::bus()->m_events.layer.closed.listen([](PHLLS l) { onLayerClosed(l); });
     static auto key    = Event::bus()->m_events.input.keyboard.key.listen([](IKeyboard::SKeyEvent e, Event::SCallbackInfo& info) { onKey(e, info); });
+    static auto mouse  = Event::bus()->m_events.input.mouse.move.listen([](Vector2D p, Event::SCallbackInfo&) { onMouseMove(p); });
+    static auto gone   = Event::bus()->m_events.window.destroy.listen([](PHLWINDOWREF w) { onWindowGone(w); });
+    static auto dragMv = g_layoutManager->dragController()->m_events.motion.listen([] { onDragMotion(); });
+    static auto dragEd = g_layoutManager->dragController()->m_events.ended.listen([] { onDragEnded(); });
+    g_edgeSnap = makeShared<Config::Values::CBoolValue>("plugin:wol:edge_snap", "snap a dragged window to the screen edges (half, quarter, zoom)", true);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_edgeSnap);
     seedShellLayers();
     qosStart();
     g_wolstats = HyprlandAPI::registerHyprCtlCommand(PHANDLE, IPC::Socket1::SCommand{.name = "wolstats", .match = IPC::Socket1::COMMAND_MATCH_EXACT, .handler = wolStats});
+    HyprlandAPI::addLuaFunction(PHANDLE, "wol", "snap", luaSnap);
+    g_wolsnap  = HyprlandAPI::registerHyprCtlCommand(PHANDLE, IPC::Socket1::SCommand{.name = "wolsnap", .match = IPC::Socket1::COMMAND_MATCH_PREFIX, .handler = wolSnap});
     // Unloading must drop every listener: a callback left on the bus would jump into the
     // unmapped .so on the next window event.
     g_unhook = [] {
@@ -574,11 +991,21 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         lsOpen   = {};
         lsShut   = {};
         key      = {};
+        mouse    = {};
+        gone     = {};
+        dragMv   = {};
+        dragEd   = {};
+        if (g_hoverTimer && g_pEventLoopManager)
+            g_pEventLoopManager->removeTimer(g_hoverTimer);
+        g_hoverTimer.reset();
+        g_snapped.clear();
+        g_lights.clear();
+        g_edgeSnap.reset();
         g_shellLayers.clear();
         g_keys = 0;
         qosStop();
     };
-    return {"wol-hypr", "WolOS window policy (placement, refit, QoS, frame stats, shell keys)", "WolOS", "0.12.0"};
+    return {"wol-hypr", "WolOS window policy (placement, refit, snapping, QoS, frame stats, shell keys)", "WolOS", "0.13.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
@@ -587,6 +1014,10 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_unhook = nullptr;
     if (g_wolstats)
         HyprlandAPI::unregisterHyprCtlCommand(PHANDLE, g_wolstats);
+    HyprlandAPI::removeLuaFunction(PHANDLE, "wol", "snap");
+    if (g_wolsnap)
+        HyprlandAPI::unregisterHyprCtlCommand(PHANDLE, g_wolsnap);
     g_wolstats = nullptr;
+    g_wolsnap  = nullptr;
     PHANDLE    = nullptr;
 }

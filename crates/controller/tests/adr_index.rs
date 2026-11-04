@@ -116,10 +116,17 @@ fn adr_status_words_are_lowercase() {
 /// audit8 standards #13 (docs/STANDARDS.md section 5): a module document names its ADR in the
 /// title. These have no decision record of their own yet; a new document needs one, or a line
 /// here with the reason. shards.md (wave 3 CR-4, `wol shard`): no record decides the curated
-/// shard list yet.
+/// shard list yet. windows.md (tiling and snapping, lead order 2026-11-04): none decides the
+/// window arrangement yet.
 #[test]
 fn module_docs_name_their_adr_in_the_title() {
-    const NO_ADR_YET: &[&str] = &["hig.md", "performance.md", "vm-graphics.md", "shards.md"];
+    const NO_ADR_YET: &[&str] = &[
+        "hig.md",
+        "performance.md",
+        "vm-graphics.md",
+        "shards.md",
+        "windows.md",
+    ];
     let mut bad = Vec::new();
     for e in std::fs::read_dir(repo("docs/modules")).unwrap().flatten() {
         let f = e.file_name().into_string().unwrap();

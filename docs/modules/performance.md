@@ -15,7 +15,7 @@ Probes: `design/tools/perf/build.sh` builds `dmg` (screencopy region hash per fr
 | wol-shell RSS | - | ~110 MB | same |
 | Super+Tab to first frame | < 100 ms | 31.1 median / 32.5 p95 | `latency.py` (30 runs) |
 | Control Center click to frame | < 100 ms | 27.0 / 36.8 | same |
-| Overview (Super+Up) | < 100 ms | 31.6 / 32.3 | same |
+| Overview (Ctrl+Up) | < 100 ms | 31.6 / 32.3 | same |
 | Volume OSD | < 100 ms | 36.2 / 37.0 | same |
 | Search keystroke to frame | < 100 ms | 15.4 / 24.3 | same |
 | Search keystroke compute | < 16 ms | 0.58 / 0.94 | `WOL_SHELL_TIMING=1` log |

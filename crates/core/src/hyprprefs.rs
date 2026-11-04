@@ -16,6 +16,8 @@ use std::path::Path;
 pub const PREFS_FILE: &str = "wolos/desktop.json";
 /// Rendered file, loaded by the user hyprland.lua through `hypr/wolos/*.lua` (`prefs::ensure_require`).
 pub const INCLUDE: &str = "hypr/wolos/settings.lua";
+/// wol-hypr's edge snapping switch (plugins/wol-hypr, `plugin:wol:edge_snap`).
+pub const SNAP_KEY: &str = "plugin:wol:edge_snap";
 /// Named rules in the shipped hyprland.lua: everything floats; listed apps keep floating while tiling.
 pub const FLOAT_RULE: &str = "wol-float";
 pub const FLOAT_APPS_RULE: &str = "wol-float-apps";
@@ -44,6 +46,9 @@ impl Layout {
 pub struct DesktopPrefs {
     /// Windows tile instead of floating (floating is the default).
     pub tiling: bool,
+    /// A window dragged to a screen edge snaps there (half, quarter or zoom, with a preview), and
+    /// resting on the zoom button offers the snap layouts. The Super+arrow keys work either way.
+    pub snap: bool,
     pub layout: Layout,
     /// Effects & Looks (gaps, corners, blur, borders, shadows, motion). Flattened: its keys sit at the
     /// top level of desktop.json (older files' `gaps` keeps working).
@@ -79,6 +84,7 @@ impl Default for DesktopPrefs {
     fn default() -> Self {
         Self {
             tiling: false,
+            snap: true,
             layout: Layout::Dwindle,
             looks: crate::looks::Looks::default(),
             float_apps: Vec::new(),
@@ -198,6 +204,7 @@ impl DesktopPrefs {
             ),
             kv(&format!("windowrule[{FLOAT_APPS_RULE}]:enable"), b(apps)),
             kv("general:layout", self.layout.name().into()),
+            kv(SNAP_KEY, b(self.snap)),
             kv("input:kb_layout", kb),
             kv("input:kb_variant", variant),
             kv(
@@ -280,7 +287,13 @@ impl DesktopPrefs {
             s += " })\n";
         }
         for (k, v) in rest {
-            s += &crate::looks::keyword_lua(&k, &v);
+            let line = crate::looks::keyword_lua(&k, &v);
+            // A plugin's keys exist once it is loaded: the compositor loads the plugins after the
+            // first pass of the configuration and runs it again, so the first pass skips them.
+            match k.strip_prefix("plugin:").and_then(|p| p.split(':').next()) {
+                Some(plugin) => s += &format!("if hl.plugin.{plugin} then {line} end"),
+                None => s += &line,
+            }
             s.push('\n');
         }
         let env = |k: &str, v: &str| format!("hl.env({}, {})\n", lua_str(k), lua_str(v));
@@ -676,6 +689,35 @@ mod tests {
             .find(|(x, _)| x == k)
             .map(|(_, v)| v)
             .unwrap_or_else(|| panic!("{k}"))
+    }
+
+    /// Snap windows to screen edges: on by default (older desktop.json files without the key too),
+    /// one plugin keyword wrapped so the pass before the plugin loads skips it, sent live by
+    /// difference like every other keyword.
+    #[test]
+    fn snap_to_edges_is_a_guarded_plugin_keyword() {
+        let on = DesktopPrefs::default();
+        let off = DesktopPrefs {
+            snap: false,
+            ..Default::default()
+        };
+        assert!(on.snap && DesktopPrefs::parse(Some(r#"{"tiling":true}"#)).snap);
+        assert!(!DesktopPrefs::parse(Some(r#"{"snap":false}"#)).snap);
+        assert_eq!(kw(&on, SNAP_KEY), "true");
+        assert_eq!(kw(&off, SNAP_KEY), "false");
+        assert_eq!(SNAP_KEY, "plugin:wol:edge_snap");
+        assert!(on.include().contains(
+            "if hl.plugin.wol then hl.config({ [\"plugin.wol.edge_snap\"] = true }) end\n"
+        ));
+        assert!(off.include().contains("[\"plugin.wol.edge_snap\"] = false"));
+        assert_eq!(
+            off.live(&on),
+            vec![format!("keyword {SNAP_KEY} false")],
+            "only the changed keyword goes out"
+        );
+        assert!(on.live(&on).is_empty());
+        // Nothing else in the include is wrapped.
+        assert!(on.include().contains("\nhl.config({ [\"general.layout\"]"));
     }
 
     /// Tiling on/off -> the shipped float rule, the exceptions rule, layout and gaps.

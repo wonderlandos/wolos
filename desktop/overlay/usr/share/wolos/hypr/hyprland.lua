@@ -261,9 +261,15 @@ bind("CTRL + " .. mod .. " + A", "wol shell toggle notifications")
 -- no binds. The wol-hypr plugin forwards Esc (`hide transient`) and the Super release (`hide
 -- switcher`) to the shell socket only while a shell layer is on screen, without a process; the app
 -- still gets its keys (audit3 R2A-10: a `wol` process per Esc in every app, games included).
--- Overview: ⌃↑, ⌘↑ too.
+-- Overview: ⌃↑ (and the three-finger swipe up). ⌘↑ is Snap, below.
 bind("CTRL + Up", "wol shell toggle overview")
-bind(mod .. " + Up", "wol shell toggle overview")
+-- Snap (wol-hypr, realtime snap.rs): ⌘← and ⌘→ a half of the screen,
+-- ⌘↑ zoom (from a half: its top quarter), ⌘↓ back to the old size, then minimise. Tiled windows
+-- move through the tiling with ⌘←/⌘→ instead. The plugin keeps the window in its own zone.
+bind(mod .. " + Left", "hyprctl wolsnap left")
+bind(mod .. " + Right", "hyprctl wolsnap right")
+bind(mod .. " + Up", "hyprctl wolsnap up")
+bind(mod .. " + Down", "hyprctl wolsnap down")
 -- App switcher: hold Super, tap Tab (Shift reverses); releasing Super focuses the selection (wol-hypr).
 bind(mod .. " + Tab", "wol shell show switcher")
 bind(mod .. " + SHIFT + Tab", "wol shell show switcher-prev")

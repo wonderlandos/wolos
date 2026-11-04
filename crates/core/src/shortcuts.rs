@@ -411,7 +411,7 @@ pub fn name_of(dispatcher: &str, args: &str) -> Option<(&'static str, Group)> {
 
 use Group as G;
 /// (dispatcher, args, name, group) for every shipped bind (desktop conf + tiling set).
-const NAMES: [(&str, &str, &str, Group); 100] = [
+const NAMES: [(&str, &str, &str, Group); 104] = [
     ("exec", "wol-search", "Show Search", G::Search),
     ("exec", "foot", "Open Terminal", G::Apps),
     ("exec", "nautilus", "Open Files", G::Apps),
@@ -501,6 +501,30 @@ const NAMES: [(&str, &str, &str, Group); 100] = [
         "exec",
         "wol shell show switcher-prev",
         "Switch apps backwards",
+        G::Windows,
+    ),
+    (
+        "exec",
+        "hyprctl wolsnap left",
+        "Snap window to the left half",
+        G::Windows,
+    ),
+    (
+        "exec",
+        "hyprctl wolsnap right",
+        "Snap window to the right half",
+        G::Windows,
+    ),
+    (
+        "exec",
+        "hyprctl wolsnap up",
+        "Snap window up (top quarter, then fill the screen)",
+        G::Windows,
+    ),
+    (
+        "exec",
+        "hyprctl wolsnap down",
+        "Snap window down (bottom quarter, back to size, then minimise)",
         G::Windows,
     ),
     ("exec", "wol-app quit", "Quit app", G::Windows),
@@ -1263,6 +1287,36 @@ mod tests {
             assert_eq!(s.combo.as_ref(), Some(&combo));
             assert!(s.editable);
         }
+    }
+
+    /// Snap: ⌘ and the four arrows reach wol-hypr's `wolsnap`, named on the
+    /// sheet, and ⌘↑ is no longer the Overview (⌃↑ and the swipe are).
+    #[test]
+    fn super_arrows_snap_windows_and_control_up_stays_the_overview() {
+        let d = defaults(SHIPPED, TILING);
+        for (key, dir) in [
+            ("Left", "left"),
+            ("Right", "right"),
+            ("Up", "up"),
+            ("Down", "down"),
+        ] {
+            let s = d
+                .iter()
+                .find(|s| s.id == format!("exec hyprctl wolsnap {dir}"))
+                .unwrap_or_else(|| panic!("no snap bind for {dir}"));
+            assert_eq!(s.combo, Some(c("SUPER", key)), "{dir}");
+            assert!(s.name.starts_with("Snap window"), "{}", s.name);
+            assert_eq!(s.group, Group::Windows);
+        }
+        let overview = d
+            .iter()
+            .find(|s| s.id == "exec wol shell toggle overview")
+            .unwrap();
+        assert_eq!(overview.combo, Some(c("CTRL", "Up")));
+        assert!(
+            d.iter().all(|s| s.id != "exec wol shell toggle overview#2"),
+            "one Overview key"
+        );
     }
 
     /// QA-PWR-11: keys exist to send the focused window to another space and display, and the

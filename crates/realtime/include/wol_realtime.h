@@ -98,6 +98,48 @@ uint32_t wol_keys_step(uint32_t state, int32_t key, uint32_t flags, uint32_t *ac
 /* Wire text of a WOL_LINE_* code for wol-shell.sock (static, NUL-terminated, "" for none). */
 const char *wol_keys_line(int32_t code);
 
+/* Window snapping (snap.rs). Zones: */
+#define WOL_SNAP_NONE 0
+#define WOL_SNAP_LEFT 1
+#define WOL_SNAP_RIGHT 2
+#define WOL_SNAP_ZOOM 3
+#define WOL_SNAP_TOP_LEFT 4
+#define WOL_SNAP_TOP_RIGHT 5
+#define WOL_SNAP_BOTTOM_LEFT 6
+#define WOL_SNAP_BOTTOM_RIGHT 7
+/* Outer edges of an output (no other output beyond them). */
+#define WOL_SNAP_OPEN_LEFT 1u
+#define WOL_SNAP_OPEN_RIGHT 2u
+#define WOL_SNAP_OPEN_TOP 4u
+#define WOL_SNAP_OPEN_BOTTOM 8u
+/* The zone under the pointer (px, py) on output box (sx, sy, sw, sh). */
+int32_t wol_snap_zone_at(int32_t sx, int32_t sy, int32_t sw, int32_t sh, uint32_t open, int32_t px,
+                         int32_t py);
+/* Frame of `zone` in the usable area with the tiling gaps (outer = gaps_out, inner = gaps_in).
+   0 with x, y, w, h set (each may be NULL), -1 for none or a bad zone. */
+int32_t wol_snap_box(int32_t zone, int32_t ax, int32_t ay, int32_t aw, int32_t ah, int32_t outer,
+                     int32_t inner, int32_t *x, int32_t *y, int32_t *w, int32_t *h);
+/* One Super+arrow (key 0 left, 1 right, 2 up, 3 down) on a window in zone `now`: kind in the low
+   byte, the zone (TO) or key (MOVE_TILED) in bits 8..15; -1 bad zone or key. */
+#define WOL_SNAP_STAY 0
+#define WOL_SNAP_TO 1
+#define WOL_SNAP_RESTORE 2
+#define WOL_SNAP_MINIMISE 3
+#define WOL_SNAP_MOVE_TILED 4
+#define WOL_SNAP_ZOOM_TILED 5
+int32_t wol_snap_key(int32_t now, int32_t key, int32_t tiled, int32_t zoomed);
+/* Top-left (x, y may be NULL) of a snapped frame (cx, cy, cw, ch) given back its w x h under the
+   pointer (px, py). */
+void wol_snap_unsnap(int32_t cx, int32_t cy, int32_t cw, int32_t ch, int32_t w, int32_t h,
+                     int32_t px, int32_t py, int32_t *x, int32_t *y);
+/* 1 when frame (x, y, w, h) is still the snapped frame (sx, sy, sw, sh). */
+int32_t wol_snap_still(int32_t x, int32_t y, int32_t w, int32_t h, int32_t sx, int32_t sy,
+                       int32_t sw, int32_t sh);
+/* Word of a zone (static, NUL-terminated), NULL for a bad code. */
+const char *wol_snap_zone_name(int32_t code);
+/* Pointer rest on the zoom button (ms) before the snap layouts chooser opens. */
+uint64_t wol_snap_layouts_dwell_ms(void);
+
 /* Frontmost pid -> wold QoS boost. 1 sent, 0 dropped/unavailable. */
 int32_t wol_qos_foreground(int32_t pid);
 
