@@ -15,7 +15,7 @@ const BASELINE: &[Row] = &[
     ("RH-231", "crates/shell/src/ui/app_view.rs", 1, "D2a"),
     ("RH-231", "crates/shell/src/ui/drop_shelf.rs", 1, "D2a"),
     // INT-1 (brand-ui): CHROME_MIN_WIDTH is the breakpoint the lock compares its width with, not a size.
-    ("RH-231", "crates/shell/src/ui/lock.rs", 1, "brand-ui"),
+    ("RH-231", "crates/shell/src/ui/lock.rs", 1, "D2a"),
     ("RH-231", "crates/shell/src/ui/shortcut_sheet.rs", 2, "D2a"),
     (
         "RH-232",
