@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "wrong-label",
+  "about": "opened expecting another label",
+  "recipient": "alice-2",
+  "label": "wolos/file/1",
+  "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+  "rnd": "FpVC6i-Sv-w-Ht_ORhz1pbmEn0ZLCrer7_TJdzF6rS0KEubNpaRAnnSL4mJV7u1Rr-Fz9WULTGfHwMp9e40SUg",
+  "reproducible": true,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzFjNTdiZTE2N2Y2ZWU0MjBkG88muFcMDiUuvJoiJxu5nSVSuKbwbwvpbwn0j9DA8mCGOEHKs1-IvsjLDdTYmCwbmvz5Rj5XpMC6I4MoKeZP_7Xr-KUuE5eAkyXHZxVs7yKyOOilL2bT-r0di6p6deEmcznSI80A1ypbF0ErTU3pjD5DK07Bb4Yg8722ri5OM0W5BD5oYjr_27b9IEepUwgc3WWgGMb6X7Zz2ork2lIqEj_8SvL5k647-UhYUj7BjrY9IuD2c5_CmYBfaDf18oIBKoBtyT_q7RFKnZmG2QFRbZaZz6nyzLVN5eqevhizrMTTzEH4c7e-UDWCycahZDjDrNiy5jA25ZHD-XtZwWfZOHSL1rhPNVG_0kX5vWqlG4wx27Oul955F75Kpfr9qweDtgbtumyTPIkxTzPQhQP-M4FGtMEfUZQROReH2tDNznUxon3rwZJ-UyyydzmGVKCqLosM4qX57BrR83YI6b7Xp900eltVUKZ1hwcOdMDc29YykMXqtCuHvY3uVnfKGfXRSw3xrWiSd0QWfElBlHXijPKHU5hKVcuYUgxJo_DOZmquC5ePBy27If8B_-_6205Q4jJaLK7U7j8DxoqwoSGdDxbg8ER7mAWc1aFzsmVoZL8XrFq22P_cJKJjgVFqzXzjoy40oZNK50wdAoQgno-0w7QcalXwu22tJipr-hLwIr06zAqzKhN50OvUZL6xfA5C--2Y3qc8T1O3GzB-9FhaHTifFYIuHqqFzMlCAfzkRURAaDbT7rQgf39DDHBQBp6uUicPKOhiD_bmDAS5LaALAosqnOzfSPlaUZFGY7sr_hzrf7P5n5WZUTklaWz-quZD9poJDbHYoMfokakvMAGymSJ8Wd9RgBpAGS7CvdPuZuJeMaMAJHYtT7rcVFQLRS7We6kdZQcSM8PQZVKgllF6trK6q-9MXrwjvnI1OgPki3_WsRzksbXx0krtS0kl7kawvUNU9OLmjtSpr5MnzUAxbgCuLkHAgBr-329Gcff_sQ4bmoDjEKoDaUHcC8bZsHGhy_k8Ah-a25Wq7a9AujgzxZsHa-K00vXEBPpyVZa-py-OtUG9M0tAgwvV8BNv3JPgqMi5CDukOq13dr0mXmCyV9krnpGw6WHKt0ILMYLRtwnj_ynA6_UI5ScGtrkb4-P_gAsnAC7S-qV8yA81GdWz3W1WTwPQ4dPZHGrj1r8kIbT9s1P7ToiZHu-mjvGZ0Ydh1G3hxIdOa06d9piOQTt5oq-dq-fyctTomk-Csb0J_001_720Gns_b_hzjyD8gRc76FVk1S65MGuL6eTFP7n9tKrSyfdsPNdyKQCKbzKdMp2biZ-OSdu-NGnYvSAZDdd6sLLri05Hty3JzTkHOkkmNri0r5d6uWW_PlCPrRSk2fIiwc3UeqcAO4Dv7dUKGImC6n6mu5Q_aXR4uSKjJSrbaWlgeKM1_cqV1XGmoSp8W5mRXFyY3KecZ9q800BBBBI5aktqvt1RCItop12qlZPPJVUSrSS1rTnFre7py3fpojMRoa2Qcxi49FLrGm1EaL_ydMf4Itw4",
+  "opener_seed": "alice-2-seed",
+  "opener_serial": "c57be167f6ee420d",
+  "open_label": "wolos/other/1",
+  "expect": {
+    "plaintext": null,
+    "error": "wrong-label"
+  }
+}

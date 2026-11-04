@@ -4,7 +4,9 @@
 //! canonical-JSON step. Parsing is bounded (file 24 KiB, body 4 KiB) and every field is checked
 //! against the rules of its kind, so a certificate that parses is well formed.
 use crate::b64;
-use crate::crypto::{ED_PK, ED_SIG, ML_PK, ML_SIG, PublicKeys, SLH_PK, SLH_SIG, Second, Sig};
+use crate::crypto::{
+    ED_PK, ED_SIG, EncPublic, KEM_PK, ML_PK, ML_SIG, PublicKeys, SLH_PK, SLH_SIG, Second, Sig, X_PK,
+};
 use crate::{FORMAT, MAX_BODY, MAX_CERT_FILE};
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +74,20 @@ pub struct Subject {
     /// Label of a root, intermediate or signer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// The GitHub organisation a person publishes for, when any (shown as origin; a release
+    /// from that organisation's repositories counts as theirs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub org: Option<OrgRef>,
+}
+
+/// A GitHub organisation by its permanent numeric id, with the login as shown.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrgRef {
+    /// Numeric GitHub id of the organisation.
+    pub github_id: u64,
+    /// Its login.
+    pub login: String,
 }
 
 /// The public keys as written in a body (base64url).
@@ -90,6 +106,18 @@ pub struct KeysText {
         skip_serializing_if = "Option::is_none"
     )]
     pub slh_dsa_sha2_128s: Option<String>,
+    /// X25519 encryption key (optional, always together with `ml-kem-768`): the classical half
+    /// of the sealed-message KEM. Additive to format 1: a body without it is as before.
+    #[serde(rename = "x25519", default, skip_serializing_if = "Option::is_none")]
+    pub x25519: Option<String>,
+    /// ML-KEM-768 encapsulation key (optional, always together with `x25519`): the
+    /// post-quantum half of the sealed-message KEM.
+    #[serde(
+        rename = "ml-kem-768",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ml_kem_768: Option<String>,
 }
 
 /// The signed body of a certificate.
@@ -116,6 +144,9 @@ pub struct Body {
     pub not_after: u64,
     /// How the maker is shown.
     pub level: Level,
+    /// When the hub verified the subject (the GitHub account and the request), Unix seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<u64>,
 }
 
 /// The id prefix that only the Packages CA may issue for.
@@ -214,6 +245,14 @@ impl Body {
         {
             return Err("name malformed");
         }
+        if let Some(o) = &s.org
+            && (self.kind != Kind::Person || !is_login(&o.login))
+        {
+            return Err("only a person names an organisation, by a valid login");
+        }
+        if self.verified_at.is_some_and(|t| t >= self.not_after) {
+            return Err("verified after the end of validity");
+        }
         let ns_ok = self.namespaces.iter().all(|n| n == ANY || is_prefix(n));
         if !ns_ok {
             return Err("namespace malformed");
@@ -279,8 +318,55 @@ impl Body {
         if self.keys.ml_dsa_65.is_some() == self.keys.slh_dsa_sha2_128s.is_some() {
             return Err("exactly one post-quantum key");
         }
+        if self.keys.x25519.is_some() != self.keys.ml_kem_768.is_some() {
+            return Err("an encryption key has both halves or none");
+        }
         Ok(())
     }
+
+    /// Parses and checks a body on its own (the bytes `woltrust issue` is asked to sign): the
+    /// same rules as inside a certificate, the keys decoded.
+    pub fn parse(bytes: &[u8]) -> Result<(Body, PublicKeys, Option<EncPublic>), &'static str> {
+        if bytes.len() > MAX_BODY {
+            return Err("certificate body too large");
+        }
+        let body: Body = serde_json::from_slice(bytes).map_err(|_| "certificate body damaged")?;
+        body.check()?;
+        let keys = decode_keys(&body.keys)?;
+        let enc = decode_enc(&body.keys)?;
+        Ok((body, keys, enc))
+    }
+}
+
+fn decode_keys(k: &KeysText) -> Result<PublicKeys, &'static str> {
+    let ed = b64::decode(&k.ed25519, ED_PK).ok_or("key malformed")?;
+    let second = match (&k.ml_dsa_65, &k.slh_dsa_sha2_128s) {
+        (Some(k), None) => {
+            let raw = b64::decode(k, ML_PK).ok_or("key malformed")?;
+            Second::MlDsa65(Box::new(raw.try_into().map_err(|_| "key length")?))
+        }
+        (None, Some(k)) => {
+            let raw = b64::decode(k, SLH_PK).ok_or("key malformed")?;
+            Second::Slh(Box::new(raw.try_into().map_err(|_| "key length")?))
+        }
+        _ => return Err("exactly one post-quantum key"),
+    };
+    Ok(PublicKeys {
+        ed25519: ed.try_into().map_err(|_| "key length")?,
+        second,
+    })
+}
+
+fn decode_enc(k: &KeysText) -> Result<Option<EncPublic>, &'static str> {
+    let (Some(x), Some(m)) = (&k.x25519, &k.ml_kem_768) else {
+        return Ok(None);
+    };
+    let x = b64::decode(x, X_PK).ok_or("encryption key malformed")?;
+    let m = b64::decode(m, KEM_PK).ok_or("encryption key malformed")?;
+    Ok(Some(EncPublic {
+        x25519: x.try_into().map_err(|_| "encryption key length")?,
+        ml_kem_768: Box::new(m.try_into().map_err(|_| "encryption key length")?),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -307,6 +393,8 @@ pub struct Cert {
     pub body_bytes: Vec<u8>,
     /// Decoded public keys.
     pub keys: PublicKeys,
+    /// Decoded encryption keys, when the body carries them (sealed messages, `crate::seal`).
+    pub enc: Option<EncPublic>,
     /// The issuer's signature over the body (label `wolos/cert/1`).
     pub sig: Sig,
 }
@@ -325,22 +413,8 @@ impl Cert {
         let body: Body =
             serde_json::from_slice(&body_bytes).map_err(|_| "certificate body damaged")?;
         body.check()?;
-        let ed = b64::decode(&body.keys.ed25519, ED_PK).ok_or("key malformed")?;
-        let second = match (&body.keys.ml_dsa_65, &body.keys.slh_dsa_sha2_128s) {
-            (Some(k), None) => {
-                let raw = b64::decode(k, ML_PK).ok_or("key malformed")?;
-                Second::MlDsa65(Box::new(raw.try_into().map_err(|_| "key length")?))
-            }
-            (None, Some(k)) => {
-                let raw = b64::decode(k, SLH_PK).ok_or("key malformed")?;
-                Second::Slh(Box::new(raw.try_into().map_err(|_| "key length")?))
-            }
-            _ => return Err("exactly one post-quantum key"),
-        };
-        let keys = PublicKeys {
-            ed25519: ed.try_into().map_err(|_| "key length")?,
-            second,
-        };
+        let keys = decode_keys(&body.keys)?;
+        let enc = decode_enc(&body.keys)?;
         let sig_ed = b64::decode(&env.sig.ed25519, ED_SIG).ok_or("signature malformed")?;
         let sig_second = b64::decode(&env.sig.second, SLH_SIG).ok_or("signature malformed")?;
         if sig_second.len() != ML_SIG && sig_second.len() != SLH_SIG {
@@ -350,6 +424,7 @@ impl Cert {
             body,
             body_bytes,
             keys,
+            enc,
             sig: Sig {
                 ed25519: sig_ed.try_into().map_err(|_| "signature length")?,
                 second: sig_second,

@@ -45,7 +45,8 @@ const HARDENED: &[(&str, &[&str])] = &[
             "MemoryDenyWriteExecute=yes",
             "SystemCallFilter=@system-service",
             "SystemCallErrorNumber=EPERM",
-            "StateDirectory=wolos/updates",
+            // updates, and trust for the verified revocation list (ADR 0046, `wol trust update`).
+            "StateDirectory=wolos/updates wolos/trust",
             // pacman -Sy drops to its download user (audit S10), as in wolos-update-download.
             "CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH",
             "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",

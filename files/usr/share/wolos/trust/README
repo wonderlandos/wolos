@@ -1,0 +1,11 @@
+WolOS certificate trust store (ADR 0046)
+
+roots/          the two pinned WolOS roots, A and B (*.wolcert)
+intermediates/  the Authors CA, Packages CA and Index certificates (*.wolcert)
+revoked.json    the revocation list of the image, with revoked.json.wsig
+
+All of them are public. They come from the public/ folder that `woltrust init` writes; until the
+lead has run it, this folder holds no root, and every author signature counts as not checkable.
+A root whose label starts with "test" (the TEST authority of the woltrust crate) is never loaded,
+and the build refuses an image that holds one. Newer intermediates and lists that the update-check
+service verified are kept in /var/lib/wolos/trust/.

@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod appstream;
 pub mod audio;
+pub mod authorkeys;
 pub mod automation;
 pub mod base;
 pub mod bluetooth;
@@ -54,3 +55,6 @@ pub mod update;
 pub mod webapps;
 pub mod widgets;
 pub mod wifi;
+
+/// The pure trust crate (ADR 0046), for the adaptors that may only depend on core.
+pub use woltrust;

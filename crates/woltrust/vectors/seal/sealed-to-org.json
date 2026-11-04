@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "sealed-to-org",
+  "about": "a file sealed to an organisation's certificate opens with its keys",
+  "recipient": "examplelabs-2",
+  "label": "wolos/file/1",
+  "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+  "rnd": "K2EheE3LpoygdEd5DhXiohlIigSEEDFJPxIB2FahFgXcw8UoFQaYzudhitp32vMeO1s7ycnAlo8L0Hbc_K_3ZA",
+  "reproducible": true,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzEwZDU2NDQ0ZTZiNmE2ZGYwENVMZQgIM1W0XVgqtpNp83vrL6R2nZCKRj01D57bHnnzusKgjI9vmlaW_Qil4kYSoqADjllZJXnbztLlPwXkaRUXW63I0NCtCgvMO_6fd05rWG9G8sTRTS5cpBxq9bsDjMEft76Xg6-2K7wMENgW1rFVnTzRCtR6wpQNGxhENbRIYYj0HqJndI71tbGqOecAjmUSL8WRl0CA8ua4Yk0uNqy13uHewDXvt_p_7hjxGYunL373_fQPv2SyPsDGqgAjcMGIbtVcQT-iGk_WTgWAL81Q1asdvggsG03RPX7Wc4Sj3f2r5_X2M_JEEgqzMJIU7tRgFQPs14T7JMB3I8mysovjfMr4r4w5OEV-rgc16Hnwo5lkeCudmJQ2MX0EJwRddkpmgox11r4PwhHZTcL_a8I5Lz6QPCIE2dz-tWEfLuaBLM3G2VL7h45TzKJ1Co2eWZ82Z1jZF03Dn-0K6lAKRFm-IXscJOVziZkqmiqQVzkx3_bXsVlkfs8xa1g9gySJmX5DkDk8M5AtVDXL5zql1AOBJLdPDJwOUgwi0TGOiUmFEAIvNQ_VrdQsWB1qAbVu-n8Gqb4oMuvv3R9DhaL59UAoIKusxv7hvaR11Byw6aRtJ4rI5RS2nJR03pGMWWFbLYzdgeJN6ah0mk4ybIHbFzFrE4wm8yd3LVJK-t6AlrWW4fxO13a6qYfO0qYIpPTyAAeA1H5pNcjhCnFBr16QzOnSh4HgqVPEQTHKCYhmHwmEHXPgKQWz3HUVhTh8WKeHAYfBGdwLtEy2GzpeBo1L77TtCkazPtG28PH-jpjaaDF0P8-ZyEyNXbCdu1Q8RNcqBfjUypXXFXpEgp3O8KeNj_8TAgsEBz_fKsQ6QXoGEFKTDZrQkw38dbAmiVmB7vpRMzOS0r02z8kHFBjYSeLrnz7qw1-gaA7lAhJffJvMvwgSt8BJ87RvRmMRPSmTLtj67z3-U039neJFLGDn62beSSxfF91xgydIOTEYtIZ34kdq7Vr8IOfewazJkFH8t2EhlBHZtdgQdBx7FPNtJDPn4oGlTymy4l-8oZxUH_BjDkiJbOIvUDFWbL7UpufNlX-NnXV2f19kk-r36WK-rQl_RAX8P1GNvfCLHIvlfYqSQnWPjvScPuQA5wI-1V3pEgohrPuIqMphfBOTHkhvN57zJ4_VUpjBF0NPc4GCAamv5WrPmkntLtQQzTPR3qM0xpbtiTOU5dbL-77VV4fOhbKD-DtmvKAUMsds0_Q1rHtpxppC_FSS7v4n5c6t4tSE4S03KfVXkMFeWIAd6dIUnEFlsbnlfiPjxMoCEjyN6Cvjg9G1gpdFHLFTZ30iju_SYJT5oz9F6c56f24cEewdyTilwZ90JWkdNX0Ay9cyfdwfmIlxFOlsrc5DdCWWEQHIngOOdgDXreR7xCFG_pc4cgeRBk3Jj100ORb-NASXM_pn64nG6zW1q3cP5SUhuYFES0AE3c8tq33Tm0dLscYjFmNYxFuhQYM4DI82qpuGMtB1JsRjMjXx1tNk8tOKjLkrLNVjXmJVY0FX",
+  "opener_seed": "examplelabs-2-seed",
+  "opener_serial": "0d56444e6b6a6df0",
+  "open_label": "wolos/file/1",
+  "expect": {
+    "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+    "error": null
+  }
+}

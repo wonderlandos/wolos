@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "sealed-empty",
+  "about": "an empty file seals and opens",
+  "recipient": "alice-2",
+  "label": "wolos/file/1",
+  "plaintext": "",
+  "rnd": "Fz4Jn4_Zdp13I7j9w-q7hYkQW_7LVNX9z9DIlWXuedbnVoICKkjwlbo62ARoT29cSeIFQHP50CaLvAyKtmPl7Q",
+  "reproducible": true,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzFjNTdiZTE2N2Y2ZWU0MjBkBrF8sEVGKMnaU7HJ2c68b9oZ5RjLd1gZOzhADBONRDsZZ8apkP3k1XeBGvirxpvON8OvMGMq6mQhe-wLokXaSjrE2uN6dxqkTZXi30xyJKJhqgs35HXOVPpH2mvmq-n8srcaseSIyPsYn7F-oygy06AbPzOuLLaFalxIG5NHeFt7QWYJ-wCbyZ78ZlRqXUZ2e5V8D-99pgzelqw88b828JIUu-0NMmfL3ixTCt0tI5Pr3kaXIVjr0XyjCAcDyqwL__uy8RhJjZjUPfsH_ncr4AShxKFfRwGcsLFTjAnxyarn-Kb0KBW2MycPUlv7fw8RvHNVQAbuc-o_imWJKCoJGAu2_1vZ5TjrYlNV8f7_JERUSBP9ag4Lb__uNC580x09xs83xn6LnLfnLv58MH93ojbvl8ra_isIcLdMAMvW_NnBT5S8iJ4O3eSdOFNyb_c7i5x5Rtiab97-7_5kVOYwJNga5oYDIAFhabaKMYbLXRG7ieWJcXUE2hwVu2MCCDNGuuhVVIuCxdlpCCrZYn8aniiYMR5Yyujj6QMEzypqYb4oAdl5fhQHspi-qoGvM-rBsjNTRup7WB7fzpWQTrhCfgOrSSClROJmSLcduvbxYJGc0ajoCKWfhnZ3BVSRkacXQcmOBrR7S8Atqls2JOE53YtwWUgyJOeTLb-w3uYG0uT0xMeb20EzVJwbciY0utZ3y6hLRK5T314zL1FL3Go_G5FT6lUK0F55idF0p7fVP98sWLS4ty6LUCdtmYuweDSpDxTecH1pskcLW-UG6NfKZEaGlBcftLVvYADDFkaJ8irXkhIPWcYzj5mgWfmjAnyM9lsPYQ7geGpQIWf___6KOmHJ2mM_iR4PMz3_kgNNdzFnWG11R_2gcMa1Cyi_7f3R5ufo_GnAxQ5FoyIfpIaMDlCwLW7-GWHgccSPr7QBgiTA99MiRUcPcsisLXtwDLjSIV6B34i6oYne8BM5-JkDc9QATqjSzh2_82pZoCQQ8WwzJDhrOGdTI94FlLmL9ymE9P12SdP4V2eruqsUltDvjVl9m8eBQkNbtO59gTk-xRd5x_vni8NkppmGQLZRk9RcOt17uA6M5P_514dlkvl8U0jbzgzJGILycT2fNMYbapF1jCGSTcHaisCyurp33flkVM8kKhSGA0ZcOj3lYStOZz_3Mjc0J2dUpAI-TKq31E-38o9YL71VzTRFcMa0dapTPrm5TzwttS_47ayw5GgUAhsvImcpW2fvgsTVU3RYQ3RcDzD_g-tzoyT4xRidTQ9EHq6iNsNx5WbZZ-1ORa-sYmWwXHFF7kZVP6aLprTEihi_LjrF5VZinlu5xH1V2_AQw0P7QOyPd8xhT5HtMmhB6eKXmjWrbYxWHwz_XsDht0r6pG9C5SIU0-MBWVfWjftuLYsIaARCA67EDGeSpRld_K9l4YscY-lNVHVHl0qpa7NSeuoQuT9dU4Kvt4d19pPYwdAb8C7NzPFrsTLJbeB39q8vZmpdD_3svrkSCeHSm-Y",
+  "opener_seed": "alice-2-seed",
+  "opener_serial": "c57be167f6ee420d",
+  "open_label": "wolos/file/1",
+  "expect": {
+    "plaintext": "",
+    "error": null
+  }
+}

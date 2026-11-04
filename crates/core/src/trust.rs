@@ -97,6 +97,17 @@ impl TrustStore {
         legacy_keys: &[[u8; 32]],
         first_seen: Option<u64>,
     ) -> Result<Checked, String> {
+        self.verify_wol_at(path, legacy_keys, first_seen, unix(host))
+    }
+
+    /// [`TrustStore::verify_wol`] at a given clock (wol-admind passes its own).
+    pub fn verify_wol_at(
+        &self,
+        path: &Path,
+        legacy_keys: &[[u8; 32]],
+        first_seen: Option<u64>,
+        now: u64,
+    ) -> Result<Checked, String> {
         let (verified, extra) = package::verify_extra(path, legacy_keys)?;
         let outcome = if extra.wsig.is_some() {
             woltrust::verify(
@@ -108,7 +119,7 @@ impl TrustStore {
                     wsig: extra.wsig.as_deref(),
                     chain: extra.chain.as_deref(),
                     first_seen,
-                    now: unix(host),
+                    now,
                 },
             )
         } else if matches!(verified.trust, package::Trust::Signed(_)) {
@@ -120,6 +131,146 @@ impl TrustStore {
     }
 }
 
+/// A `.wolplug` that passed the structural checks, with what its signature is worth.
+#[derive(Clone, Debug)]
+pub struct CheckedPlugin {
+    /// The plugin.
+    pub verified: package::VerifiedPlugin,
+    /// Trust value, reason, signer and staleness.
+    pub outcome: Outcome,
+}
+
+/// What `wol trust status` shows: what the store holds and how old its revocation list is.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Status {
+    /// Pinned roots loaded.
+    pub roots: usize,
+    /// Intermediates loaded.
+    pub intermediates: usize,
+    /// Serial of the newest verified revocation list.
+    pub list_serial: Option<u64>,
+    /// When it was issued.
+    pub list_issued: Option<u64>,
+    /// When it runs out.
+    pub list_expires: Option<u64>,
+    /// Seconds since it was issued.
+    pub list_age: Option<u64>,
+    /// `fresh`, `stale`, `too-old` or `missing`.
+    pub freshness: &'static str,
+    /// Certificates withdrawn in it.
+    pub revoked: usize,
+    /// What was left out and why.
+    pub notes: Vec<String>,
+}
+
+impl TrustStore {
+    /// Judges a decompressed `.wolplug`: [`package::verify_wolplug_extra`], then the hybrid
+    /// signature (label `wolos/plugin/1`) when `CHAIN` and `SHA256.wsig` are there. A present
+    /// hybrid signature that is wrong or withdrawn refuses the plugin; none leaves the legacy
+    /// verdict (index key, or unsigned).
+    pub fn verify_wolplug(
+        &self,
+        tar: &[u8],
+        legacy_keys: &[[u8; 32]],
+        now: u64,
+    ) -> Result<CheckedPlugin, String> {
+        let (verified, extra) = package::verify_wolplug_extra(tar, legacy_keys)?;
+        let outcome = if extra.wsig.is_some() {
+            let o = woltrust::verify(
+                &self.store,
+                &Input {
+                    purpose: Purpose::Plugin,
+                    content: &extra.manifest,
+                    app_id: Some(&verified.manifest.id),
+                    wsig: extra.wsig.as_deref(),
+                    chain: extra.chain.as_deref(),
+                    first_seen: None,
+                    now,
+                },
+            );
+            if matches!(
+                o.trust,
+                woltrust::Trust::Invalid | woltrust::Trust::Withdrawn
+            ) {
+                return Err(o
+                    .code
+                    .sentence()
+                    .unwrap_or("The plugin's signature does not check out.")
+                    .to_owned());
+            }
+            o
+        } else if matches!(verified.trust, package::Trust::Signed(_)) {
+            legacy_outcome(woltrust::Trust::Wolos, woltrust::Code::Ok)
+        } else {
+            legacy_outcome(woltrust::Trust::Community, woltrust::Code::Unsigned)
+        };
+        Ok(CheckedPlugin { verified, outcome })
+    }
+
+    /// Checks a freshly downloaded revocation list before it may replace [`STATE_REVOKED`]: its
+    /// signature must verify against this store (the Index intermediate or a root, test roots
+    /// never), and its serial must be higher than every list held. Returns the new serial.
+    pub fn accept_list(&self, list: &[u8], sig: &[u8], now: u64) -> Result<u64, String> {
+        self.accept(list, sig, now, false)
+    }
+
+    fn accept(&self, list: &[u8], sig: &[u8], now: u64, allow_test: bool) -> Result<u64, String> {
+        let roots: Vec<Vec<u8>> = self
+            .store
+            .roots
+            .iter()
+            .map(woltrust::Cert::to_bytes)
+            .collect();
+        let inter: Vec<Vec<u8>> = self
+            .store
+            .intermediates
+            .iter()
+            .map(woltrust::Cert::to_bytes)
+            .collect();
+        let probe = Store::load(&roots, &inter, &[(list, sig)], now, allow_test);
+        let new = probe
+            .lists
+            .first()
+            .ok_or_else(|| {
+                format!(
+                    "the new revocation list does not verify ({})",
+                    probe.notes.join("; ")
+                )
+            })?
+            .list
+            .serial;
+        match self.store.best_list() {
+            Some(old) if old.list.serial >= new => Err(format!(
+                "the new revocation list ({new}) is not newer than the one held ({})",
+                old.list.serial
+            )),
+            _ => Ok(new),
+        }
+    }
+
+    /// The store's state at `now`.
+    pub fn status(&self, now: u64) -> Status {
+        let best = self.store.best_list();
+        let freshness = match self.store.freshness(now) {
+            woltrust::revoked::Freshness::Fresh => "fresh",
+            woltrust::revoked::Freshness::Stale => "stale",
+            woltrust::revoked::Freshness::TooOld => "too-old",
+            woltrust::revoked::Freshness::Missing => "missing",
+        };
+        Status {
+            roots: self.store.roots.len(),
+            intermediates: self.store.intermediates.len(),
+            list_serial: best.map(|l| l.list.serial),
+            list_issued: best.map(|l| l.list.issued),
+            list_expires: best.map(|l| l.list.expires),
+            list_age: best.map(|l| now.saturating_sub(l.list.issued)),
+            freshness,
+            revoked: best.map_or(0, |l| l.list.entries.len()),
+            notes: self.store.notes.clone(),
+        }
+    }
+}
+
 fn legacy_outcome(trust: woltrust::Trust, code: woltrust::Code) -> Outcome {
     Outcome {
         trust,
@@ -127,6 +278,7 @@ fn legacy_outcome(trust: woltrust::Trust, code: woltrust::Code) -> Outcome {
         cert: None,
         stale: false,
         list_expires: None,
+        origin: None,
     }
 }
 
@@ -381,6 +533,86 @@ mod tests {
         );
         let ts = TrustStore::load(&h);
         assert!(ts.store.lists.is_empty() && ts.store.intermediates.is_empty());
+    }
+
+    fn plug(p: &Pki, id: &str, signer: &woltrust::make::Secret, serial: &str) -> Vec<u8> {
+        let files: Vec<(String, Vec<u8>)> =
+            crate::plugins::scaffold(id, "Demo", &[shared::plugins::Kind::Theme])
+                .unwrap()
+                .into_iter()
+                .map(|(rel, text)| (format!("{id}/{rel}"), text.into_bytes()))
+                .collect();
+        let mut refs: Vec<(&str, &[u8])> = files
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        let sha = package::manifest(&refs);
+        let chain = Pki::chain(&[&p.alice, &p.authors]);
+        let w = wsig(serial, signer, Purpose::Plugin, sha.as_bytes());
+        refs.push(("SHA256", sha.as_bytes()));
+        refs.push((package::CHAIN, &chain));
+        refs.push((package::WSIG, &w));
+        package::ustar(&refs)
+    }
+
+    #[test]
+    fn a_wolplug_with_chain_and_wsig_is_judged_by_its_certificate() {
+        let p = Pki::new();
+        let ts = store(&p, 1);
+        let good = plug(&p, "alice.demo", &p.alice.secret, &p.alice.body.serial);
+        let c = ts.verify_wolplug(&good, &[], NOW).unwrap();
+        assert_eq!(
+            (c.outcome.trust, c.outcome.code),
+            (Trust::Verified, Code::Ok)
+        );
+        assert_eq!(c.verified.manifest.id, "alice.demo");
+        let other = plug(&p, "bob.demo", &p.alice.secret, &p.alice.body.serial);
+        assert!(
+            ts.verify_wolplug(&other, &[], NOW).is_err(),
+            "outside alice."
+        );
+        let forged = plug(&p, "alice.demo", &p.org.secret, &p.alice.body.serial);
+        assert!(ts.verify_wolplug(&forged, &[], NOW).is_err(), "wrong key");
+        // The legacy reader takes the same file and ignores the pair.
+        assert!(package::verify_wolplug(&good, &[]).is_ok());
+    }
+
+    #[test]
+    fn status_reports_the_list_age_and_freshness() {
+        let p = Pki::new();
+        let s = store(&p, 2).status(NOW);
+        assert_eq!(
+            (s.roots, s.freshness, s.list_age),
+            (1, "fresh", Some(2 * DAY))
+        );
+        assert_eq!(TrustStore::default().status(NOW).freshness, "missing");
+    }
+
+    #[test]
+    fn a_new_list_replaces_only_when_it_verifies_and_is_newer() {
+        let p = Pki::new();
+        let mk = |serial: u64| {
+            let l = woltrust::revoked::ListText {
+                format: 1,
+                serial,
+                issued: NOW - DAY,
+                expires: NOW - DAY + woltrust::LIST_LIFETIME,
+                entries: vec![],
+            };
+            woltrust::make::revocation_list(&l, &p.index.body.serial, &p.index.secret)
+        };
+        // A store as the system holds it, but with the TEST root pinned for the test.
+        let ts = store(&p, 1);
+        let held = ts.store.best_list().map(|l| l.list.serial).unwrap();
+        let (newer, sig) = mk(held + 1);
+        assert_eq!(ts.accept(&newer, &sig, NOW, true), Ok(held + 1));
+        // The system path never allows a test root, so the TEST authority cannot install one.
+        assert!(ts.accept_list(&newer, &sig, NOW).is_err());
+        let (older, osig) = mk(held);
+        assert!(ts.accept(&older, &osig, NOW, true).is_err(), "not newer");
+        let mut bad = sig.clone();
+        bad[20] ^= 1;
+        assert!(ts.accept(&newer, &bad, NOW, true).is_err(), "bad signature");
     }
 
     #[test]

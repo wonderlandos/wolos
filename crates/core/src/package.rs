@@ -340,11 +340,21 @@ pub struct VerifiedPlugin {
 }
 
 /// Checks a decompressed `.wolplug` in this order, stopping at the first failure: size, archive
-/// shape (plain files `<id>/<path>`, then `SHA256`, then optionally `SHA256.sig`), the signature
-/// over `SHA256` (before anything inside is read as text), every hash, then the folder rules and
-/// `plugin.toml` through [`shared::plugins::parse`]. A signature from an unknown key is refused;
-/// no signature gives [`Trust::Unsigned`] (the caller decides, see [`require_signed`]).
+/// shape (plain files `<id>/<path>`, then `SHA256`, then optionally `SHA256.sig`, then optionally
+/// `CHAIN` and `SHA256.wsig` of ADR 0046), the signature over `SHA256` (before anything inside is
+/// read as text), every hash, then the folder rules and `plugin.toml` through
+/// [`shared::plugins::parse`]. A signature from an unknown key is refused; no signature gives
+/// [`Trust::Unsigned`] (the caller decides, see [`require_signed`]). The hybrid signature is not
+/// judged here: `wol_core::trust::TrustStore::verify_wolplug` does that.
 pub fn verify_wolplug(tar: &[u8], keys: &[[u8; 32]]) -> Result<VerifiedPlugin, String> {
+    verify_wolplug_extra(tar, keys).map(|(v, _)| v)
+}
+
+/// [`verify_wolplug`], plus the `SHA256`, `CHAIN` and `SHA256.wsig` bytes for the hybrid check.
+pub fn verify_wolplug_extra(
+    tar: &[u8],
+    keys: &[[u8; 32]],
+) -> Result<(VerifiedPlugin, Extra), String> {
     use crate::plugins::{MAX_FILE, PACK_MANIFEST};
     use shared::plugins::{MANIFEST_FILE, MAX_TOTAL_SIZE, is_plugin_id, is_plugin_path};
     if tar.len() as u64 > WOLPLUG_MAX_TAR {
@@ -353,10 +363,31 @@ pub fn verify_wolplug(tar: &[u8], keys: &[[u8; 32]]) -> Result<VerifiedPlugin, S
     let ms = members_in(tar).map_err(|e| format!("The plugin file is damaged ({e})."))?;
     let bytes = |m: &Member| &tar[m.offset as usize..(m.offset + m.size) as usize];
     let names: Vec<&str> = ms.iter().map(|m| m.name.as_str()).collect();
+    // The ADR 0046 pair comes last, both or neither, so the legacy tail below is unchanged.
+    let (names, hybrid) = match names[..] {
+        [ref head @ .., CHAIN, WSIG] => (head.to_vec(), Some((ms.len() - 2, ms.len() - 1))),
+        _ => (names.clone(), None),
+    };
+    let n = names.len();
     let (man_at, sig) = match names[..] {
-        [.., PACK_MANIFEST, WOLPLUG_SIG] => (ms.len() - 2, Some(&ms[ms.len() - 1])),
-        [.., PACK_MANIFEST] => (ms.len() - 1, None),
+        [.., PACK_MANIFEST, WOLPLUG_SIG] => (n - 2, Some(&ms[n - 1])),
+        [.., PACK_MANIFEST] => (n - 1, None),
         _ => return Err("The plugin file has no SHA256 list at its end.".into()),
+    };
+    let capped = |at: usize, cap: usize| -> Result<Vec<u8>, String> {
+        let b = bytes(&ms[at]);
+        if b.len() > cap {
+            return Err("The plugin's certificate signature is too large.".into());
+        }
+        Ok(b.to_vec())
+    };
+    let extra = match hybrid {
+        Some((c, w)) => Extra {
+            manifest: Vec::new(),
+            chain: Some(capped(c, woltrust::MAX_CHAIN_BYTES)?),
+            wsig: Some(capped(w, woltrust::MAX_WSIG)?),
+        },
+        None => Extra::default(),
     };
     let files = &ms[..man_at];
     let man = bytes(&ms[man_at]);
@@ -441,11 +472,17 @@ pub fn verify_wolplug(tar: &[u8], keys: &[[u8; 32]]) -> Result<VerifiedPlugin, S
             "{MANIFEST_FILE} names {f}, which is not in the plugin."
         ));
     }
-    Ok(VerifiedPlugin {
-        manifest,
-        trust,
-        files: out,
-    })
+    Ok((
+        VerifiedPlugin {
+            manifest,
+            trust,
+            files: out,
+        },
+        Extra {
+            manifest: man.to_vec(),
+            ..extra
+        },
+    ))
 }
 
 /// Plugins from the index must carry the index key's signature (the index CI signs each one).

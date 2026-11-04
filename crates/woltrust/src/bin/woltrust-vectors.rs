@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! `woltrust-vectors <dir>` writes pki.json and one JSON file per vector into `<dir>`;
+//! `woltrust-vectors <dir>` writes pki.json and one JSON file per vector into `<dir>`, and the
+//! sealed-message vectors (keys.json and one file each) into `<dir>/seal`;
 //! `woltrust-vectors --check <dir>` regenerates them and fails if any byte differs. A development
 //! tool over the TEST authority; it is not shipped and holds no production key.
 #![forbid(unsafe_code)]
@@ -30,6 +31,17 @@ fn run(check: bool, dir: &Path) -> Result<usize, String> {
     for v in &vectors {
         files.push((format!("{}.json", v.name), woltrust::vectors::to_text(v)));
     }
+    let (keys, sealed) = woltrust::seal_vectors::generate()?;
+    files.push((
+        "seal/keys.json".to_owned(),
+        woltrust::vectors::to_text(&keys),
+    ));
+    for v in &sealed {
+        files.push((
+            format!("seal/{}.json", v.name),
+            woltrust::vectors::to_text(v),
+        ));
+    }
     for (name, text) in &files {
         let path = dir.join(name);
         if check {
@@ -39,7 +51,7 @@ fn run(check: bool, dir: &Path) -> Result<usize, String> {
                 return Err(format!("{} differs", path.display()));
             }
         } else {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(dir.join("seal")).map_err(|e| e.to_string())?;
             std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
         }
     }

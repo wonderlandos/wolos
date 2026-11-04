@@ -26,6 +26,32 @@ pub const SLH_PK: usize = slh_dsa_sha2_128s::PK_LEN;
 /// SLH-DSA-SHA2-128s signature length.
 pub const SLH_SIG: usize = slh_dsa_sha2_128s::SIG_LEN;
 
+/// X25519 public key length.
+pub const X_PK: usize = 32;
+/// ML-KEM-768 encapsulation key length (FIPS 203).
+pub const KEM_PK: usize = 1184;
+/// ML-KEM-768 ciphertext length (FIPS 203).
+pub const KEM_CT: usize = 1088;
+
+/// The encryption keys of one certificate: both halves of the hybrid KEM of `wolos/seal/1`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EncPublic {
+    /// X25519 public key.
+    pub x25519: [u8; X_PK],
+    /// ML-KEM-768 encapsulation key.
+    pub ml_kem_768: Box<[u8; KEM_PK]>,
+}
+
+/// `label || 0x00 || SHA-512(content)` for a label outside [`Purpose`] (the request proof).
+pub fn message_for(label: &str, content: &[u8]) -> Vec<u8> {
+    let label = label.as_bytes();
+    let mut m = Vec::with_capacity(label.len() + 1 + 64);
+    m.extend_from_slice(label);
+    m.push(0);
+    m.extend_from_slice(&Sha512::digest(content));
+    m
+}
+
 /// What a signature is for. The label is part of the signed message.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -86,12 +112,7 @@ impl Purpose {
 
 /// `label || 0x00 || SHA-512(content)`: the bytes both halves sign (under 100 bytes).
 pub fn message(purpose: Purpose, content: &[u8]) -> Vec<u8> {
-    let label = purpose.label().as_bytes();
-    let mut m = Vec::with_capacity(label.len() + 1 + 64);
-    m.extend_from_slice(label);
-    m.push(0);
-    m.extend_from_slice(&Sha512::digest(content));
-    m
+    message_for(purpose.label(), content)
 }
 
 /// The second public key of a certificate: fixed by the kind of key set.
@@ -173,6 +194,18 @@ pub struct Wsig {
     pub ed25519: String,
     /// Post-quantum half, base64url.
     pub second: String,
+    /// Where the release comes from (`crate::origin::Origin`): base64url of the exact signed
+    /// bytes. Absent: no origin, and the signed message is the plain one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+}
+
+/// The message of a signature that carries an origin: `label || 0x00 || SHA-512(content) ||
+/// SHA-512(origin)`.
+pub fn message_with_origin(purpose: Purpose, content: &[u8], origin: &[u8]) -> Vec<u8> {
+    let mut m = message(purpose, content);
+    m.extend_from_slice(&Sha512::digest(origin));
+    m
 }
 
 impl Wsig {

@@ -12,6 +12,21 @@ name = "woltrust"
 [[bin]]
 name = "woltrust-vectors"
 path = "src/bin/woltrust-vectors.rs"
+required-features = ["seal"]
+
+# `woltrust init|sign|issue|revoke|verify|keygen|public|extract`: the command line of the hub pipeline
+# (hub-index README, "Tooling contract") and the one-command key setup of ADR 0046.
+[[bin]]
+name = "woltrust"
+path = "src/bin/woltrust.rs"
+required-features = ["seal"]
+
+[features]
+default = ["seal"]
+# Sealed messages and passphrase-encrypted key files (`seal`, `wolkey`, `init`). On by default, so
+# `cargo install woltrust` gets the whole command line; the hub's wasm build takes
+# `default-features = false` and keeps a pure-Rust verifier without ring.
+seal = ["dep:fips203", "dep:curve25519-dalek", "dep:ring"]
 
 [dependencies]
 serde.workspace = true
@@ -20,6 +35,10 @@ ed25519-dalek.workspace = true
 sha2.workspace = true
 fips204.workspace = true
 fips205.workspace = true
+zeroize.workspace = true
+fips203 = { workspace = true, optional = true }
+curve25519-dalek = { workspace = true, optional = true }
+ring = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Cross-check of the ML-DSA-65 verifier against a second implementation (tests only, never shipped).

@@ -79,3 +79,52 @@ fn print_the_cost_of_one_verify() {
     });
     println!("TIMING package + leaf + Authors CA + root pin (verify only): {one:.1} us");
 }
+
+#[cfg(feature = "seal")]
+#[test]
+#[ignore = "timing, run by hand for docs/modules/trust.md"]
+fn print_the_cost_of_seal_and_open() {
+    use woltrust::seal::{EncSecret, FILE_LABEL, open, seal_to};
+    let me = EncSecret::from_seed(&[2; 32]);
+    let serial = "0123456789abcdef";
+    let keygen = median(|| {
+        let _ = EncSecret::from_seed(&[3; 32]);
+    });
+    println!("TIMING encryption key pair from seed (X25519 + ML-KEM-768): {keygen:.1} us");
+    for size in [0usize, 4096, 1 << 20] {
+        let msg = vec![7u8; size];
+        let s = seal_to(me.public(), serial, FILE_LABEL, &msg, &[5; 64]).expect("seals");
+        let us_seal = median(|| {
+            let _ = seal_to(me.public(), serial, FILE_LABEL, &msg, &[5; 64]).expect("seals");
+        });
+        let us_open = median(|| {
+            assert_eq!(
+                open(&me, serial, FILE_LABEL, &s).expect("opens").len(),
+                size
+            );
+        });
+        println!(
+            "TIMING seal {size} B: {us_seal:.1} us, open: {us_open:.1} us, sealed size {} B",
+            s.len()
+        );
+    }
+    let km = woltrust::key::KeyMaterial::new([4; 32], false);
+    let t = Instant::now();
+    let f = woltrust::wolkey::lock(
+        &km,
+        serial,
+        "correct horse",
+        &[1; 28],
+        woltrust::wolkey::ROUNDS,
+    )
+    .expect("locks");
+    let lock_ms = t.elapsed().as_secs_f64() * 1e3;
+    let t = Instant::now();
+    assert!(woltrust::wolkey::unlock(&f, serial, "correct horse").is_ok());
+    let unlock_ms = t.elapsed().as_secs_f64() * 1e3;
+    println!(
+        "TIMING .wolkey PBKDF2-HMAC-SHA512 x{}: lock {lock_ms:.0} ms, unlock {unlock_ms:.0} ms, file {} B",
+        woltrust::wolkey::ROUNDS,
+        f.len()
+    );
+}

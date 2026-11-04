@@ -8,16 +8,28 @@
 pub mod b64;
 pub mod cert;
 pub mod crypto;
+#[cfg(feature = "seal")]
+pub mod init;
+pub mod key;
 pub mod make;
+pub mod origin;
 pub mod pki;
 pub mod report;
+pub mod request;
 pub mod revoked;
+#[cfg(feature = "seal")]
+pub mod seal;
+#[cfg(feature = "seal")]
+pub mod seal_vectors;
 pub mod store;
 pub mod vectors;
 pub mod verify;
+#[cfg(feature = "seal")]
+pub mod wolkey;
 
-pub use cert::{Body, Cert, Kind, Level, Usage};
+pub use cert::{Body, Cert, Kind, Level, OrgRef, Usage};
 pub use crypto::{Purpose, Wsig};
+pub use origin::Origin;
 pub use report::{CertInfo, Finding, Report, Trust, Verdict};
 pub use revoked::{Reason, RevList};
 pub use store::Store;
@@ -25,9 +37,10 @@ pub use verify::{Code, Input, Outcome, verify};
 
 /// Certificate format number (`"format":1` in a `.wolcert`).
 pub const FORMAT: u32 = 1;
-/// Largest certificate body (the exact signed bytes).
-pub const MAX_BODY: usize = 4096;
-/// Largest `.wolcert` file: 4 KiB of body, a 7.8 KB root signature, base64 and braces.
+/// Largest certificate body (the exact signed bytes): 8 KiB, room for the 1.6 KB of encryption keys
+/// next to the 2.6 KB ML-DSA-65 key.
+pub const MAX_BODY: usize = 8192;
+/// Largest `.wolcert` file: 8 KiB of body, a 7.8 KB root signature, base64 and braces.
 pub const MAX_CERT_FILE: usize = 24 * 1024;
 /// Most certificates in a `CHAIN` member (the leaf first, never a root).
 pub const MAX_CHAIN_CERTS: usize = 4;

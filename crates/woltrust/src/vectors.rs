@@ -223,6 +223,7 @@ fn flip_half(wsig: &[u8], second: bool) -> Vec<u8> {
         cert: w.cert,
         ed25519: b64::encode(&ed),
         second: b64::encode(&sec),
+        origin: w.origin,
     }
     .to_bytes()
 }
@@ -362,6 +363,8 @@ pub fn generate() -> Result<(PkiFile, Vec<Vector>), String> {
         ("alice", g.p.alice.file.clone()),
         ("org", g.p.org.file.clone()),
         ("signer", g.p.signer.file.clone()),
+        ("ana", g.p.ana.file.clone()),
+        ("chain-ana", Pki::chain(&[&g.p.ana, &g.p.authors])),
         ("chain-alice", Pki::chain(&[&g.p.alice, &g.p.authors])),
         ("chain-org", Pki::chain(&[&g.p.org, &g.p.authors])),
         ("chain-signer", Pki::chain(&[&g.p.signer, &g.p.packages])),
@@ -428,7 +431,81 @@ fn cases(g: &mut Gen) -> Result<(), String> {
     cases_time(g)?;
     cases_revoked(g)?;
     cases_lists(g)?;
-    cases_shape(g)
+    cases_shape(g)?;
+    cases_origin(g)
+}
+
+/// The origin record of the `ana` vectors, from `owner`'s repository.
+fn origin_of(owner: &str) -> Vec<u8> {
+    crate::origin::Origin {
+        repo: format!("https://github.com/{owner}/notes"),
+        tag: "v1.2".into(),
+        commit: "0123456789abcdef0123456789abcdef01234567".into(),
+        built: NOW - DAY,
+    }
+    .to_bytes()
+}
+
+fn cases_origin(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    let ana = |g: &Gen, owner: &str| {
+        make::wsig_with_origin(
+            &g.p.ana.body.serial,
+            &g.p.ana.secret,
+            Purpose::Package,
+            CONTENT,
+            &origin_of(owner),
+        )
+    };
+    g.add(
+        "valid-origin",
+        "a release from the signer's own repository: verified, with its origin and organisation",
+        (T::Verified, C::Ok),
+        |g, v| {
+            v.app_id = Some("ana.notes".into());
+            v.wsig = Some(inline(&ana(g, "ana")));
+            v.chain = Some("@chain-ana".into());
+        },
+    )?;
+    g.add(
+        "valid-origin-organisation",
+        "a release from the repository of the organisation the person publishes for",
+        (T::Verified, C::Ok),
+        |g, v| {
+            v.app_id = Some("ana.notes".into());
+            v.wsig = Some(inline(&ana(g, "anaco")));
+            v.chain = Some("@chain-ana".into());
+        },
+    )?;
+    g.add(
+        "origin-mismatch",
+        "the signed origin names someone else's repository",
+        (T::Invalid, C::OriginMismatch),
+        |g, v| {
+            v.app_id = Some("ana.notes".into());
+            v.wsig = Some(inline(&ana(g, "bob")));
+            v.chain = Some("@chain-ana".into());
+        },
+    )?;
+    g.add(
+        "origin-tampered",
+        "the origin changed after signing (another owner's repository put in)",
+        (T::Invalid, C::BadSignature),
+        |g, v| {
+            let mut w = Wsig::parse(&ana(g, "ana")).unwrap_or_else(|_| Wsig {
+                cert: String::new(),
+                ed25519: String::new(),
+                second: String::new(),
+                origin: None,
+            });
+            w.origin = Some(b64::encode(&origin_of("anaco")));
+            v.app_id = Some("ana.notes".into());
+            v.wsig = Some(inline(&w.to_bytes()));
+            v.chain = Some("@chain-ana".into());
+        },
+    )?;
+    Ok(())
 }
 
 fn cases_valid(g: &mut Gen) -> Result<(), String> {

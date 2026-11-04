@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "wrong-keys",
+  "about": "the organisation's keys presented under the person's serial: the open fails",
+  "recipient": "alice-2",
+  "label": "wolos/file/1",
+  "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+  "rnd": "TNW7bQF1dt5Uwf-jiqXmUEOhQlSyz5fXDaU54xbwrLDW5d4Q7e7BmY7mH1FZu7K3MQUU5pqajI7Jqfy0aS2erQ",
+  "reproducible": true,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzFjNTdiZTE2N2Y2ZWU0MjBkkPjhKQsnCpDKQWMN9Hwya8uSgF7UHsbNABN-vcqfXU82YFxo3c73MIJ4q0-6fx1i7jtdX6qXJAeIoR6_CAvcLa9U4TlpLT033kfVei3NjBhjtMtPj8q95dEoFXqBLZ8avRYAulBRrowMYg8DMNIHFB7q1GagKC4zIIPHNXAwU8HoL4K3A93JpG3W5zoQx12zi-SQnYA3_ISMXSEGCkuKWq4LuWd0lF6zuXABvk17Hz_E4s8dwuQk-q-H_KqE3Axs6AxWlhjwLVE2oE2FG1FsfgRBZkMArAI536cchtY728RzGmy3QO-HCfMqu340MjmekvZmL-akMIq9YwjAvPT0OPftknTkk1U1TrNWW-u2Fcxa-XN59b7XjbWcM9nGe4jiIykodQu9edW-Qdn0ytbG_JL7zbfDxho7yo4jAfWqU6EwPUPzubOmyN9wsPsru6AHgZHAeb9_SNvxwm9KnMQohyTWlFcEL95SHV-jWcF9UxFBn0bUaTCp9LSgQY5GJVcB0WlSnbeWhgSbbGyPkEQyo1qMNQFjcI7GcpCRyhldHMTJwldUUeQimKdQLXnlxy4qzcLbiBUBkljTEjRwr7pfjc03_GX_Vee-mxuTnxvxZBb_uimBPESnpejyA57ETjIMWlBBPO7-FQZBzHAHyEtOmTq3zijUqi8LLUs7oVm49TWXoit-Rl7Eun7SjuLWIX4m1jfTSbaVlLGD8tkMGEuZr22YH2HTxsIgn3LkMrjAFaN7Lhvc4S5W0suQiYOYF-S6UCv16bjRz2PQgxU0GPdpyGOFqQjLiHxaO2_ln3meCai8V3VT_6kMBY585BcMQ9bXpDqeM2Q8ggAI47WibLVAtM4RtDnRYj1qAVrMsiZci5upuYp5UCUw9dZzeip53vLKp0P6pVxh1LBXAWvcmUAvPupIWF-1Kes2j8nFD2FrvT_2NSOEUTSkM4DY-_kuyCckGcHuLTkUNYDintX7EKp6q4yg_HawMt5v9PVwJcgvq677Kc4YXnExI8nvIY6OjEdOKMYMiyRONHy4mvfJX98AQH_mTxmFB6xEYg13b39atQrLnMz4Z1RTvZMrukYYD5a1hQ0oVPPoKLbml30baDkDBu_2RMkeratmx8t6RPo6zy5a24reAXsl055ndccNP3lkDVCCo63HmfRWIObmwcITu-CC37Yoc7fIzztFzXHy92S4jaJADfQEWbxbkxBtMr9W2gxG7Io8Prp0gTbq9uG-6raFrH8sFG3DQHbZcCmXeL4JmPRyZ5HwI1rexScDIVofcBkcrmrkoAv9QD1MUqSYiUzaQnUh9r2DiKTpbNoFeBAutnr9_XJ3VecmMrQMXv4njnhf5fzANaIywT4swigBjQ9gVOuWTbmGR6NGCn-q4MsBdpSbNqrDj42bJnDMjNEU_Ay2gYDGwlDc5h29NJaDMAz04gvrLmzfFj2HO5lAJeRDZ1OGORmoY1O8o9V_rzm-RheOfqhuPPxGRbiC2mIPvievq1ezLYTDj_gEGSHgX2olcZuXGL8q37bFBbebBJIABIjGofFh",
+  "opener_seed": "examplelabs-2-seed",
+  "opener_serial": "c57be167f6ee420d",
+  "open_label": "wolos/file/1",
+  "expect": {
+    "plaintext": null,
+    "error": "damaged"
+  }
+}

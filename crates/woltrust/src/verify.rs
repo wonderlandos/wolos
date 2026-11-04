@@ -3,6 +3,7 @@
 //! the signer's usage and namespace; the hybrid signature; each certificate against its issuer
 //! (the issuer may issue that kind and those namespaces) up to a pinned root; revocation in every
 //! list held; validity at the clock; freshness of the newest list. Pure: the caller passes `now`.
+use crate::b64;
 use crate::cert::{self, Cert, ChainError, Kind, Level};
 use crate::crypto::{self, Purpose, Wsig};
 use crate::report::{CertInfo, Finding, Report, Trust, Verdict};
@@ -48,6 +49,8 @@ pub enum Code {
     WrongUsage,
     /// The file's id is outside the signer's namespaces.
     WrongNamespace,
+    /// The signed origin names a repository that is not the signer's (login or organisation).
+    OriginMismatch,
     /// Withdrawn: key exposed.
     RevokedKeyCompromise,
     /// Withdrawn: abuse.
@@ -78,6 +81,7 @@ impl Code {
             Code::BadIssuer => "bad-issuer",
             Code::WrongUsage => "wrong-usage",
             Code::WrongNamespace => "wrong-namespace",
+            Code::OriginMismatch => "origin-mismatch",
             Code::RevokedKeyCompromise => "revoked-key-compromise",
             Code::RevokedAbuse => "revoked-abuse",
             Code::RevokedSuperseded => "revoked-superseded",
@@ -122,6 +126,9 @@ impl Code {
             }
             Code::WrongNamespace => {
                 "This file's id is outside the names its certificate is allowed to sign."
+            }
+            Code::OriginMismatch => {
+                "This file says it comes from a repository that does not belong to the person who signed it."
             }
             Code::RevokedKeyCompromise => {
                 "WolOS no longer trusts the certificate this file was signed with, because its key was exposed."
@@ -183,6 +190,8 @@ pub struct Outcome {
     pub stale: bool,
     /// `expires` of the newest list held, for "not checked since" lines.
     pub list_expires: Option<u64>,
+    /// The signed origin of the release, when its signature carries one and it checked out.
+    pub origin: Option<crate::origin::Origin>,
 }
 
 impl Outcome {
@@ -193,6 +202,7 @@ impl Outcome {
             cert: None,
             stale: false,
             list_expires: None,
+            origin: None,
         }
     }
 
@@ -215,6 +225,7 @@ impl Outcome {
             findings,
             trust: self.trust,
             cert: self.cert.clone(),
+            origin: self.origin.clone(),
         }
     }
 }
@@ -224,6 +235,7 @@ fn info(c: &Cert) -> CertInfo {
         serial: c.body.serial.clone(),
         subject: c.body.subject.clone(),
         level: c.body.level,
+        verified_at: c.body.verified_at,
     }
 }
 
@@ -351,6 +363,18 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
     let Some(sig) = wsig.sig() else {
         return invalid(Code::SignatureMalformed);
     };
+    let origin = match wsig
+        .origin
+        .as_deref()
+        .map(|t| b64::decode(t, crate::origin::MAX_ORIGIN))
+    {
+        None => None,
+        Some(None) => return invalid(Code::SignatureMalformed),
+        Some(Some(raw)) => match crate::origin::Origin::parse(&raw) {
+            Ok(o) => Some((raw, o)),
+            Err(_) => return invalid(Code::SignatureMalformed),
+        },
+    };
     let chain = match input.chain.map(cert::parse_chain).transpose() {
         Ok(c) => c.unwrap_or_default(),
         Err(e) => return invalid(split_chain_error(e)),
@@ -390,10 +414,26 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
             return bad(Code::WrongNamespace);
         }
     }
-    let msg = crypto::message(input.purpose, input.content);
+    let msg = match &origin {
+        Some((raw, _)) => crypto::message_with_origin(input.purpose, input.content, raw),
+        None => crypto::message(input.purpose, input.content),
+    };
     if crypto::verify_hybrid(&signer.keys, &msg, &sig).is_err() {
         return bad(Code::BadSignature);
     }
+    // WolOS's own signers publish from the project's organisation.
+    let ours = |o: &crate::origin::Origin| {
+        signer.body.level == Level::Wolos
+            && o.owner()
+                .is_some_and(|w| w.eq_ignore_ascii_case(crate::origin::WOLOS_OWNER))
+    };
+    if origin
+        .as_ref()
+        .is_some_and(|(_, o)| !o.belongs_to(&signer.body.subject) && !ours(o))
+    {
+        return bad(Code::OriginMismatch);
+    }
+    let origin = origin.map(|(_, o)| o);
     let rest = chain.get(1..).unwrap_or_default();
     let path = match path(signer, rest, store) {
         Ok(p) => p,
@@ -405,6 +445,7 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         cert: who.clone(),
         stale,
         list_expires: None,
+        origin: origin.clone(),
     };
     if let Some(code) = revocation(&path, &store.lists, input.first_seen) {
         return make(Trust::Withdrawn, code, false);

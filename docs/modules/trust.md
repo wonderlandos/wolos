@@ -193,8 +193,32 @@ parser and 160 mutated valid files, none of which may panic or turn into a trust
 ML-DSA implementation, used only in tests, must agree with ours on real and damaged signatures
 (`tests/crosscheck.rs`). Fuzz targets and the Store and admind integration are phase 2.
 
+## Phase 2 (2026-11-04): encryption, keys, origin, the OS hooks
+
+- **Sealed files** (`woltrust::seal`, format `wolos/seal/1`, ADR 0046 "Encryption"): X25519 + ML-KEM-768
+  hybrid KEM, ChaCha20-Poly1305, the whole header as associated data. Vectors in `vectors/seal/`
+  (13 cases). Measured on this box (release, median of 200, other jobs running): seal 190-260 us and
+  open 170-225 us for up to 4 KiB, 1.3-1.7 ms for 1 MiB; overhead 1178 bytes.
+- **Keys**: `woltrust::key` (one seed, its text form for CI), `woltrust::wolkey` (`.wolkey`,
+  PBKDF2-HMAC-SHA512 x600 000 + ChaCha20-Poly1305, 410-500 ms to lock or unlock), `woltrust::init`
+  (`woltrust init`: both roots, three intermediates, CI keys, one backup, five printed lines),
+  `woltrust::request` (proof of possession, label `wolos/request/1`), `wol_core::authorkeys` (where an
+  account keeps its keys and certificates).
+- **Origin** (`woltrust::origin`): the repository, tag, commit and build date inside `SHA256.wsig`,
+  signed, checked against the certificate's login or organisation; the I7 report gains `origin` and
+  `cert.verified_at`. Vectors `valid-origin`, `valid-origin-organisation`, `origin-mismatch`,
+  `origin-tampered`.
+- **Command lines**: `woltrust init|sign|issue|revoke|verify|keygen|public|extract` (the hub pipeline,
+  the lead) and `wol cert request|add|show|list`, `wol sign`, `wol encrypt --to`, `wol decrypt`,
+  `wol trust status|update`.
+- **OS**: wol-admind judges the staged `.wol` with `TrustStore::verify_wol_at` (withdrawn and invalid
+  are refused, unsigned needs the unsigned approval); `TrustStore::verify_wolplug` judges `CHAIN` and
+  `SHA256.wsig` in a `.wolplug`; the Store sheet has five rows and a "Made by ... from ..." line;
+  update-check fetches the list hourly and `wol trust update` installs it only when it verifies and is
+  newer; `files/usr/share/wolos/trust/` holds no root until `woltrust init` has been run.
+
 ## Not here yet
 
-The key ceremony, the real roots and intermediates, `wol cert` and `wol sign`, the five-row Store
-sheet, wol-admind's second check on the staged copy and the hourly list refresh are phase 2 and need
-the lead's decisions L1 to L4. The KMS spike is `docs/trust/kms.md`.
+The real roots and intermediates (the lead runs `woltrust init`), fuzz targets for the new parsers,
+`.wolplug` signing in `wol sign` (zstd), and the hub's ca and sign workflows switched from their stubs.
+The KMS spike (`docs/trust/kms.md`) is moot: there is no key service (lead decision 2026-11-04).

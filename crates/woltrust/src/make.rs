@@ -16,7 +16,7 @@ use sha2::{Digest, Sha512};
 
 /// A signing key pair derived from a seed.
 pub struct Secret {
-    seed: [u8; 32],
+    seed: zeroize::Zeroizing<[u8; 32]>,
     root: bool,
     ed: ed25519_dalek::SigningKey,
     keys: PublicKeys,
@@ -80,7 +80,7 @@ impl Secret {
             second,
         };
         Secret {
-            seed: *seed,
+            seed: zeroize::Zeroizing::new(*seed),
             root,
             ed,
             keys,
@@ -94,9 +94,13 @@ impl Secret {
 
     /// Signs `label || 0 || SHA-512(content)` with both halves.
     pub fn sign(&self, purpose: Purpose, content: &[u8]) -> Sig {
+        self.sign_message(&message(purpose, content))
+    }
+
+    /// Signs an already built message (`crate::crypto::message_for`) with both halves.
+    pub fn sign_message(&self, msg: &[u8]) -> Sig {
         use ed25519_dalek::Signer;
-        let msg = message(purpose, content);
-        let ed25519 = self.ed.sign(&msg).to_bytes();
+        let ed25519 = self.ed.sign(msg).to_bytes();
         let second = if self.root {
             let d = derive(&self.seed, "slh-dsa-sha2-128s");
             let (_, sk) = slh_dsa_sha2_128s::KG::keygen_from_seed(
@@ -104,7 +108,7 @@ impl Secret {
                 &d_part(&d, 16),
                 &d_part(&d, 32),
             );
-            sk.try_sign_with_rng(&mut NoRandom, &msg, &[], false)
+            sk.try_sign_with_rng(&mut NoRandom, msg, &[], false)
                 .map(|s| s.to_vec())
                 .unwrap_or_default()
         } else {
@@ -112,10 +116,10 @@ impl Secret {
                 ml_dsa_65::KG::keygen_from_seed(&first::<32>(&derive(&self.seed, "ml-dsa-65")));
             let mut rnd = Sha512::new();
             rnd.update(b"woltrust/rnd\0");
-            rnd.update(self.seed);
-            rnd.update(&msg);
+            rnd.update(&self.seed[..]);
+            rnd.update(msg);
             let rnd: [u8; 64] = rnd.finalize().into();
-            sk.try_sign_with_seed(&first::<32>(&rnd), &msg, &[])
+            sk.try_sign_with_seed(&first::<32>(&rnd), msg, &[])
                 .map(|s| s.to_vec())
                 .unwrap_or_default()
         };
@@ -157,6 +161,28 @@ pub fn wsig(serial: &str, secret: &Secret, purpose: Purpose, content: &[u8]) -> 
         cert: serial.to_owned(),
         ed25519: b64::encode(&s.ed25519),
         second: b64::encode(&s.second),
+        origin: None,
+    }
+    .to_bytes()
+}
+
+/// A `.wsig` that also signs where the release comes from (`origin`: the exact bytes of an
+/// [`crate::origin::Origin`]).
+pub fn wsig_with_origin(
+    serial: &str,
+    secret: &Secret,
+    purpose: Purpose,
+    content: &[u8],
+    origin: &[u8],
+) -> Vec<u8> {
+    let s = secret.sign_message(&crate::crypto::message_with_origin(
+        purpose, content, origin,
+    ));
+    Wsig {
+        cert: serial.to_owned(),
+        ed25519: b64::encode(&s.ed25519),
+        second: b64::encode(&s.second),
+        origin: Some(b64::encode(origin)),
     }
     .to_bytes()
 }

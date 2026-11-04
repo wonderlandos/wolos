@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "wrong-recipient",
+  "about": "sealed to the person, opened by the organisation: refused before any key is used",
+  "recipient": "alice-2",
+  "label": "wolos/file/1",
+  "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+  "rnd": "07t5FBUieMv7T7SINKaAE3-P5gKTAB_0yNq2caP2xONepZT33JyuZavfpBTsKbkZuRKRpbEr3y7-aQMY_06eOg",
+  "reproducible": true,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzFjNTdiZTE2N2Y2ZWU0MjBkNxr-I9IMuvqlAwB72tOcujJkHFI0I98ZzbywQPhPmnc4IwQ-L2G-1FGZhvz4t3Apm-jwqWMtlSRQiPHphlDaJIdVyMzEEkWHK9JZNUJH9zuUgEkAa2JJBeLtM8NNGh70FaVHJlcXY5NnZP4Ga0s4r7Au3poitlWQharmod2uy54J-a2Av0vSoZZ7vMEPdITkJ00MfFYkTEAuckS4VMCKLqKHMq9Mv_mqz8v2nG4-gVjRG8YeH5HdgeDp-v9FFmf1XxLvy9vYEdLmlf3IJ-8qbvQdH3dEZs6aAZMkE8m6eZNWC7JUt4_DpiTOQGW-I9BGsECCbpdadpyDOlT5k0tu1csWEUp1Qtkx0qw87w3K6CfvUY15V9kbzfZaIJ7iL4IZqIfRBOU263_sECXD0g_nDT6dFhgXLgg6LTUoSABgKtpVgyNk-jbjLtX1JZ3YmQr6psHWJmRM8XPXyBYnggo9RuB-cWZmXDquUJ2TBAd7tLHgLUFqffMWM5ojhXK_eGlBUiSEhzi7tLpzNH0zJfuCCe_KnjXWd2KdZeZWWVp3bOKyQgSmwWjHZBhjQlhYdr7n1QpI9i9DlwFPSzlXk9MmS2QC3oACyW_Ssf7-zK_0_srUpVMJUNBo1EG-4cJozk-xi8fgXFzjRRtSsC_EWQOVp98VSUslaJ98HNVLY55PCBCyL7s8PX7HRgc5R-fdtHCr7rXyz9pqnotN1hMatN-MHA5Br0vfptdcuz68nfeMt4n6DUPgM4UU7CLGXrLSDdu8JwF01_--OsvAMWbmWvAE__G7HIZn7nRXaqf7Cmg7rTj-xgF-ynC3V01RtrZJgPLBdCDUEVK19u90z0yJYZGxbD7VOoZvvS6fX4tapo0lAmXB6zpNoazGloDNiAhEtq21JPUznCOjBRGz1c8WeVIa0w6vKwD_5q9BWYEY3hMGrrHAZt9JjKrBZ0TSNeNcj2U3lB6_b_pYDmsidzNt-WUc0OZj2UcbimQuoEIkoY09x42evI4Kd_Tnn5Jq6itt-CsFe7WcVkOXA-lkp067ttJLNRSObncdQWAgsmyHufuOylXSGrf6M8_Bag7R8vUiNGHFycreulGHBT-M371ltysnjH3T1HQeoWztfyk0kvarHrLsl9vpJVdRZ6vseIwyjVRERTJ61wu392R7KphMtxSQ5gi8TNYliHnb1nvVZgWXkqIW0luxqP_RGhRSe-R8kIB6gWpZEx3omWFD6PPaaw8BQMmVH9A0Sx9j8OKqK4MlKNFRJIWo002lMHn-IrxM91pFQjSEX8Jq0cStQvVkyAvyQWX4jdOUYF53hhtEHIOrTEW93VG9ee1aSl2y9E8vBzlbZJrXAcyf3O05mvpGFvwozujef0qIa_FG6uudCX8Ct5E08i3LHaNSmrGusU6eFwxwos9R8W5cw-8jzmwmWSglGPHxSmzmAcWF9vPzXRQVeKo_tQH3BJ3bbVjKs7EotTTpCZMUgtd_4j5q05hSNkaPiQPbSL8uPqaaRfBOjoV92BEAf5YtYOiWDAwdDwcDUggnJ9idY9Vk",
+  "opener_seed": "examplelabs-2-seed",
+  "opener_serial": "0d56444e6b6a6df0",
+  "open_label": "wolos/file/1",
+  "expect": {
+    "plaintext": null,
+    "error": "wrong-recipient"
+  }
+}

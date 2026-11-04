@@ -40,6 +40,9 @@ pub struct Pki {
     pub org: Ident,
     /// A WolOS signer (`org.wolos.`), by the Packages CA.
     pub signer: Ident,
+    /// A person (`ana.`) who also publishes for the organisation `anaco`, verified by the hub on a
+    /// given day: the origin fields of ADR 0046.
+    pub ana: Ident,
 }
 
 /// 32 bytes derived from a public name.
@@ -92,6 +95,7 @@ pub fn body(spec: &Spec, secret: &Secret) -> Body {
         not_before: spec.not_before,
         not_after: spec.not_after,
         level: spec.level,
+        verified_at: None,
     }
 }
 
@@ -169,6 +173,7 @@ impl Pki {
                     login: Some("alice".into()),
                     name: Some("Alice Doe".into()),
                     label: None,
+                    org: None,
                 },
                 namespaces: &["alice."],
                 usage: leaf_usage,
@@ -188,6 +193,7 @@ impl Pki {
                     login: Some("examplelabs".into()),
                     name: Some("Example Labs".into()),
                     label: None,
+                    org: None,
                 },
                 namespaces: &["examplelabs."],
                 usage: leaf_usage,
@@ -212,6 +218,37 @@ impl Pki {
             },
             Some(&packages.secret),
         );
+        let ana = {
+            let spec = Spec {
+                name: "test-ana",
+                kind: Kind::Person,
+                subject: Subject {
+                    github_id: Some(4004),
+                    login: Some("ana".into()),
+                    name: Some("Ana Lima".into()),
+                    label: None,
+                    org: Some(crate::cert::OrgRef {
+                        github_id: 5005,
+                        login: "anaco".into(),
+                    }),
+                },
+                namespaces: &["ana."],
+                usage: leaf_usage,
+                issuer: serial("test-authors"),
+                not_before: t0,
+                not_after: t0 + year,
+                level: Level::Verified,
+            };
+            let secret = Secret::from_seed(&seed(spec.name), false);
+            let mut b = body(&spec, &secret);
+            b.verified_at = Some(t0 - DAY);
+            let file = make::issue(&b, &authors.secret);
+            Ident {
+                secret,
+                body: b,
+                file,
+            }
+        };
         Pki {
             root_a,
             root_b,
@@ -221,6 +258,7 @@ impl Pki {
             alice,
             org,
             signer,
+            ana,
         }
     }
 

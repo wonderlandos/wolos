@@ -5,6 +5,7 @@ pub mod audio_doctor;
 pub mod authcheck;
 pub mod boot;
 pub mod catalog;
+pub mod cert;
 pub mod cli;
 pub mod games;
 pub mod hw;

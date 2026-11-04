@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "tampered-tag",
+  "about": "one bit flipped in the Poly1305 tag",
+  "recipient": "alice-2",
+  "label": "wolos/file/1",
+  "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+  "rnd": "BYla-PUZ0FLYnU5fZ-6_gaGJCe_8LAKS7pJyHgsmv0cHYMwO-NrXbpg5S9BoaMvHxgMaxpnp_lh2YD0jh5BEQw",
+  "reproducible": false,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzFjNTdiZTE2N2Y2ZWU0MjBk6Cd2kR42d0Qp4Lfgwq5I-97gS5-enzgS_LyuctiUY2LfLuRykEVw5__ZlVYVF4eAxUsaIOkHsHHbMGt1iv6S6XQy-Iwa51SuWcmaXN6I7EJDOC0Hm3DmDuz3IDIJt_U_cNBgVPKwzaAof-vdtpRlM3o7kKyleM7H3CKlg0XpsOq5wQmg4OJFpCeTwgmIh9bayoWnqdzUOnCmSb1QI2Yt2e40cvsPMV6sTRKQTFEpaYMCK1LBG47IL2s9tVkAFvaW1tzFOVZ0CYClyXSoxlTNO-Nbe7YqP0rbB_bWe2iRXwuFhe9ejuWBPgw7wh1Wdgc-U0nKxEb6xmbGuD1IIVtC4DjyTpiJmDfmUume_HKIK1ps6cHUpR-LyBpw1Pfe3y2MQJaNuhON-dkUThyAO60BecGs_9aei-UPjahuRKyn77TIF5hZTvGSd1Qfdlq7knb-3PIE-IFFlXxcY21sovCAj9H-7B-F8bbC7Cijzs5kyagwPmNMyld08i9H9f8ip2YH5hbCMPla4nhmwX_TEaCyR_LZTDcp-ibtlCWCzNxrRsxwzOHwtYNdZBXEBtRVcam6B7MUDHJdN15I-p015UJsYfZiWz25jIb809WanXOxupcFtwGBW9WLrd2UhjXeBY4-H4JZLPOOEzhUoagKQadzMe6iVaExIyA97lTGnAPJBD-HDxPLeewpgR0bOLJ8lFMkJbr8HvQhdbS5zaCPIDmgLVBoE2aLT15VKxnmD-ntpOwQteq_cKyBeafbgF4QEYUBKkjbGJ79XpkLzcvCco3Cx_nA-R1FzubYJaMnRmnR52waLv68Xhnki-WyQ0Vz4m8O49oC93T-sjs9HbWSJTRKNZwdsTBSzuCM88AXzWRTGTk4P6jCAZZWQl4qfYDgbdzcNbWH8on5hVBurC_dbD9tkZAXJGUFjLBk8ktnXAvLLbyViedsbSmWRwaA9roxNTqDHjthHlvQUZLyPJAb6c0UBlRZjvCNbIpTFvnY22pIYodRR3GbDtFactUrPBoi-8FecPO-eU_l6IgnLssU9Adrjmzf-pSIYNr2qFl336VpG-b8dDxAQAr2G2WSJSw12vzltAH4XEysUljhZFG9zsAsCYrQnh1Q9aTaIis2DZ2L7gVFYXtWQavtZH_dwkvah_2ezbkrlXgXJJmcu6I5mnEWtSE2Ai4_8rkZA2gOLdUyaMFuSROP1b7C41HEu3ntXfJ3dwNE3KCPUquAnzMSTc4jN2qwHMvvmJA_NuIa9rANNigvjBdGyF9ow_uZlOTxZf1tliKwWZldod4gIKGpLmRfTtwHKEt3u0493u05S86GA2q2apT2tTrm6KTr6ZdbRl0FBGwenf9V7b3cHKfCVppnqTfhW5YfFvCvu7_5xHOo_CvWHt0bUtnYyb41LRDoGhEJrkICMdyLvKvOvUQdesvN1BIEjMRwrbs8e_9hTjO2fVlgQdA1Oh6NsbtfM-cmzccx5KrwWwvqy-ubzjwRroSFANbYSuHwZpgXTp3-3TXz54QOyKTRp_fR2N1t5JSZoLjsOs3HVG05",
+  "opener_seed": "alice-2-seed",
+  "opener_serial": "c57be167f6ee420d",
+  "open_label": "wolos/file/1",
+  "expect": {
+    "plaintext": null,
+    "error": "damaged"
+  }
+}

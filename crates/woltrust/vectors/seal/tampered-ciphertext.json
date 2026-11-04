@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "tampered-ciphertext",
+  "about": "one bit flipped in the encrypted bytes",
+  "recipient": "alice-2",
+  "label": "wolos/file/1",
+  "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+  "rnd": "lVwW9596PrPzcTfLRGJE-v-12u3nlSbtKEmNSjuSsJyWiypnHXSIFalEkAqwKEEX6DWzyG40dbpBXJHn5rsqvg",
+  "reproducible": false,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzFjNTdiZTE2N2Y2ZWU0MjBkUB0ghYWhPZAPswgi7XSqERvF51lRNJZQrj3showvcgGAKnUKH56KOAtmiJN5Kt3Kza1At_ehjVJqg_neRdoPl8-1v-ck5OxMG9gF9qDV73_W6rAmxBGRc_6uLiTiSzqK8o_Eaxt1Y10nFbaprp0Gtz2NpelYJpaOtzcyWDO98EdnIG4IwxKpOdy5TezgLXTJYpH783LBXIQGS2qd0v38owcqn2DnN3sj_7whOLGUYcXjsdF3cPfXrsog_d9-vX5pCMh1pxrTX1O4ARnk2d8DJ483wd2NiFcfqRZW1RDL6Hdyt-uFUI6ET7LN-B3WL5cw388AGCurx9gFNTarv9yG42ECq__JNUghQGF8OJnC6908aC3vu8jMs9HhTwIWCxASwRrmpwbW-7aegtyFZA7VvVsjUvpLquQy7JreHvNm9MWQ0ytUUdQ4eDo-FOI-FfhOMqBBIJUsgSqipULtTbBbRXKNLPi0r1qfLf3WMXSMspOOX9RVJ13UeyDo4T2HTOUUq8WlF1WLDs1d4SanDGqcsb_DVprNwLSUZyUBngL4BxPz_HkcDeDdHP8ShMZzRlQn5jfyiRhou1yAbiWMtTug05TMajsnosE-XRaHYlVscJb06VWnlmR7eayHyxC4pPGaFka5uH652bhSdHURB-64Jfdakumhh3_VkPNVS8NbFYBxT_iWvMsCvQ-2GZs2z-M5XVvXpouhHaRnqRgKXpvG-UnSP9DvUKkl4OMGFQUwynh38bY8qwHuKpwJHWothhkGqRDa7fmU8ey5WVDGsjxSvcIFKfOelDlSKKL18MZRFJYIjiXBZPvB09-eXSFv0f2cQuvMmfEVkIcDWxJdW-YSBul7ojrQ8kjSD-JcBMiHzo_26wtYIJc0AIYUKmnl9b_P3loCZYUu5qJjHargsSCYKZ2G22Nrt30r3FHZXhV-P3p1_G-S2kryYjOY1Y6NatHH7E5dXeF1WCHn9s_5Aero8QLRww_0GKqDL3Vf-2KNwccSBho20VpZYlzqglc2bvvTgYTcV3z4kT9h3DxTWcNcVvAUGn3i5991NNPzyMGjROVS2LDTaZ4zzCllVMbMqpcmvt14kbzQ60aIfIHxb7nJ4LJ_vDM-2FuAo-MBIKV6acU2iuItydGZLZEqFEWSEVTXOu_0mhGkrg5-BNhXDalmLo9iXYI5YYd4r4veb_XjRZpPaEK7MUEF3zOP5LyutAOO28-d50fMUqnK0RSek49CSDGj6LED-LDoKa4sC3MoeMNULpS3m71idZmgVweO-T9LfGhI8dyL8KHtzaNeWh1kOue3Jmoy7jnGF_bVrKqpxNo6Gj03H56ORhnYRXzq6HpOMpE8uPQ0s1WFGCCrG7-REGywV1VKu2SbiJbuRL8rlHaYlm9TugkS-leoj9-BO_QlRXCrqERjfEe9cvtURlEHVTwzJliiqBqAGxmF-qToLmDIU7iPIB7PfGBd8xbCHCndV03_0OIldYX0JUz4-Gk5OfH1-aFJqsgIVVs7gTvWYdLYVLK1U1zdNw4V8JnGSSmahstnaqc0",
+  "opener_seed": "alice-2-seed",
+  "opener_serial": "c57be167f6ee420d",
+  "open_label": "wolos/file/1",
+  "expect": {
+    "plaintext": null,
+    "error": "damaged"
+  }
+}

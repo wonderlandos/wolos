@@ -6,7 +6,8 @@ use wol_core::admin::{
     AdminDecision, AdminStep, AuthCache, decide, describe, is_admin, needs_fresh_password,
     plan_with, validate,
 };
-use wol_core::package::{self, Trust};
+use wol_core::package;
+use wol_core::woltrust::Trust as woltrust_trust;
 
 /// Everything the daemon needs from the OS; faked in tests.
 pub trait AdminOs {
@@ -37,6 +38,8 @@ pub trait AdminOs {
     fn copy_in(&self, src: &str, dst: &Path, caller: Option<u32>) -> Result<(), String>;
     /// Ed25519 keys in [`shared::package::KEYS_DIR`].
     fn trusted_keys(&self) -> Vec<[u8; 32]>;
+    /// The certificate trust store of ADR 0046 (`/usr/share/wolos/trust`, `/var/lib/wolos/trust`).
+    fn trust_store(&self) -> wol_core::trust::TrustStore;
     fn remove_dir(&self, dir: &Path);
     /// Name, version and SHA-256 of wold's staged package copy (ADR 0034,
     /// [`crate::packages::inspect_staged`]); Err: why it cannot be read.
@@ -396,9 +399,23 @@ fn stage_and_install(
     };
     let staged = under("app.wol")?;
     os.copy_in(src, &staged, caller)?;
-    let v = package::verify(&staged, &os.trusted_keys())?;
-    if v.trust == Trust::Unsigned && !allow_unsigned {
-        return Err("unsigned package; approve it as unsigned".into());
+    // ADR 0046: the second check, as root on the staged copy, with the certificate store.
+    let checked =
+        os.trust_store()
+            .verify_wol_at(&staged, &os.trusted_keys(), None, os.wall_now())?;
+    let (v, outcome) = (checked.verified, checked.outcome);
+    let sentence = outcome.code.sentence().unwrap_or_default();
+    match outcome.trust {
+        woltrust_trust::Invalid | woltrust_trust::Withdrawn => {
+            return Err(format!("refused ({}): {sentence}", outcome.code.as_str()));
+        }
+        woltrust_trust::Community if !allow_unsigned => {
+            return Err(format!(
+                "unsigned package ({}); approve it as unsigned",
+                outcome.code.as_str()
+            ));
+        }
+        _ => {}
     }
     let payload = under(shared::package::PAYLOAD)?;
     package::extract(&staged, &v.payload, &payload).map_err(|e| e.to_string())?;
@@ -425,10 +442,10 @@ fn stage_and_install(
         "installed {} {} ({})",
         info.id,
         info.version,
-        if v.trust == Trust::Unsigned {
-            "unsigned"
-        } else {
-            "signed"
+        match outcome.trust {
+            woltrust_trust::Wolos => "made by WolOS",
+            woltrust_trust::Verified => "verified author",
+            _ => "unsigned",
         }
     ));
     Ok(())
@@ -620,6 +637,9 @@ impl AdminOs for RealOs {
     fn trusted_keys(&self) -> Vec<[u8; 32]> {
         package::read_keys(Path::new(shared::package::KEYS_DIR))
     }
+    fn trust_store(&self) -> wol_core::trust::TrustStore {
+        wol_core::trust::TrustStore::load(&crate::privileged::PrivilegedHost)
+    }
     fn remove_dir(&self, dir: &Path) {
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -705,6 +725,10 @@ mod tests {
 
         /// Trusted package keys.
         keys: Vec<[u8; 32]>,
+        /// The certificate store (empty unless a test fills it).
+        trust: wol_core::trust::TrustStore,
+        /// `wall_now` when not zero.
+        wall: u64,
         /// (`pacman -Q` command line suffix, stdout); unmatched queries fail.
         pkg: Vec<(&'static str, String)>,
         /// (path, text) for `read`.
@@ -771,6 +795,9 @@ mod tests {
         fn trusted_keys(&self) -> Vec<[u8; 32]> {
             self.keys.clone()
         }
+        fn trust_store(&self) -> wol_core::trust::TrustStore {
+            self.trust.clone()
+        }
         fn remove_dir(&self, d: &std::path::Path) {
             let _ = std::fs::remove_dir_all(d);
         }
@@ -785,6 +812,9 @@ mod tests {
             }
         }
         fn wall_now(&self) -> u64 {
+            if self.wall != 0 {
+                return self.wall;
+            }
             1_761_600_000
         }
         fn run_input(&self, argv: &[String], input: &str) -> bool {
@@ -1381,6 +1411,126 @@ mod tests {
             AdminReply::Ok
         );
         assert!(ran(&os).is_empty());
+    }
+
+    /// A `.wol` signed with a TEST author certificate (`CHAIN` + `SHA256.wsig`).
+    fn author_wol(name: &str, p: &wol_core::woltrust::pki::Pki) -> String {
+        use wol_core::package::{manifest, ustar};
+        use wol_core::woltrust::{Purpose, make, pki::Pki};
+        let info = INFO.replace("org.wolos.Fixture", "alice.fixture");
+        let man = manifest(&[("Info.json", info.as_bytes()), ("payload.pkg", b"payload")]);
+        let chain = Pki::chain(&[&p.alice, &p.authors]);
+        let w = make::wsig(
+            &p.alice.body.serial,
+            &p.alice.secret,
+            Purpose::Package,
+            man.as_bytes(),
+        );
+        let m: Vec<(&str, &[u8])> = vec![
+            ("Info.json", info.as_bytes()),
+            ("payload.pkg", b"payload"),
+            ("SHA256", man.as_bytes()),
+            ("CHAIN", &chain),
+            ("SHA256.wsig", &w),
+        ];
+        let path =
+            std::env::temp_dir().join(format!("wol-admind-{}-{name}.wol", std::process::id()));
+        std::fs::write(&path, ustar(&m)).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    fn author_store(p: &wol_core::woltrust::pki::Pki, revoke: bool) -> wol_core::trust::TrustStore {
+        use wol_core::woltrust::pki::{DAY, NOW};
+        use wol_core::woltrust::{LIST_LIFETIME, Reason, Store, make, revoked};
+        let entries = if revoke {
+            vec![revoked::Entry {
+                serial: p.alice.body.serial.clone(),
+                at: NOW - DAY,
+                reason: Reason::KeyCompromise,
+            }]
+        } else {
+            vec![]
+        };
+        let l = revoked::ListText {
+            format: 1,
+            serial: 4,
+            issued: NOW - DAY,
+            expires: NOW - DAY + LIST_LIFETIME,
+            entries,
+        };
+        let lists = [make::revocation_list(
+            &l,
+            &p.index.body.serial,
+            &p.index.secret,
+        )];
+        wol_core::trust::TrustStore {
+            store: Store::load(
+                &[&p.root_a.file],
+                &[&p.authors.file, &p.index.file],
+                &lists,
+                NOW,
+                true,
+            ),
+        }
+    }
+
+    /// ADR 0046: wol-admind judges the staged copy with the certificate store, as root.
+    #[test]
+    fn wol_install_checks_the_author_certificate_again() {
+        let p = wol_core::woltrust::pki::Pki::new();
+        let f = author_wol("author", &p);
+        let os = Fake {
+            trust: author_store(&p, false),
+            pkg: vec![("payload.pkg", "wol-fixture 1.0\n".into())],
+            wall: wol_core::woltrust::pki::NOW,
+            ..Fake::default()
+        };
+        let r = req(AdminAction::WolInstall, &[&f, "signed"]);
+        assert_eq!(
+            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            AdminReply::Ok
+        );
+        assert!(
+            os.log
+                .borrow()
+                .iter()
+                .any(|l| l.contains("verified author")),
+            "{:?}",
+            os.log.borrow()
+        );
+        let os = Fake {
+            trust: author_store(&p, true),
+            wall: wol_core::woltrust::pki::NOW,
+            ..pkg_os()
+        };
+        assert_eq!(
+            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            AdminReply::Failed
+        );
+        assert!(os.ran.borrow().is_empty());
+        assert!(
+            os.log
+                .borrow()
+                .iter()
+                .any(|l| l.contains("revoked-key-compromise")),
+            "{:?}",
+            os.log.borrow()
+        );
+        // With no store (no roots shipped yet) the chain ends nowhere: refused, never installed.
+        let os = Fake {
+            wall: wol_core::woltrust::pki::NOW,
+            ..pkg_os()
+        };
+        assert_eq!(
+            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            AdminReply::Failed
+        );
+        assert!(
+            os.log
+                .borrow()
+                .iter()
+                .any(|l| l.contains("refused (issuer-unknown)"))
+        );
     }
 
     /// Refusals: nothing runs, the log says why.

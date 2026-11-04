@@ -58,6 +58,9 @@ pub struct CertInfo {
     pub subject: Subject,
     /// How the maker is shown.
     pub level: Level,
+    /// When the hub verified the subject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified_at: Option<u64>,
 }
 
 /// Interface I7.
@@ -73,6 +76,9 @@ pub struct Report {
     /// The signing certificate, when there is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cert: Option<CertInfo>,
+    /// Where the release comes from, when its signature carries a verified origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::origin::Origin>,
 }
 
 impl Report {

@@ -7,7 +7,7 @@ Type=oneshot
 ExecStart=/usr/lib/wolos/update-check
 Nice=10
 IOSchedulingClass=idle
-# Hardening (audit A7/B5, crates/controller/tests/units.rs): network fetcher: writes only its state directory; checkupdates and pacman -Qq read the package database; pacman -Sy on the copy drops to its download user (setuid/setgid, chown of the download folder), so the same capabilities as wolos-update-download (audit S10).
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): network fetcher: writes only its state directories (updates, and trust for the verified revocation list of ADR 0046); checkupdates and pacman -Qq read the package database; pacman -Sy on the copy drops to its download user (setuid/setgid, chown of the download folder), so the same capabilities as wolos-update-download (audit S10).
 NoNewPrivileges=yes
 LockPersonality=yes
 RestrictRealtime=yes
@@ -27,6 +27,6 @@ RestrictSUIDSGID=yes
 MemoryDenyWriteExecute=yes
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-StateDirectory=wolos/updates
+StateDirectory=wolos/updates wolos/trust
 CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

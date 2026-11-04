@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "sealed-to-person",
+  "about": "a file sealed to a person's certificate opens with that person's keys",
+  "recipient": "alice-2",
+  "label": "wolos/file/1",
+  "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+  "rnd": "knYk50RntV-6r8M__30Jz1GlvPSpOPrjoDdUgm3su2dqaz0oUTiSVrYRXAgd3K6Ep3PKXG26K946690bhhC5MQ",
+  "reproducible": true,
+  "sealed": "d29sb3Mvc2VhbC8xAAx3b2xvcy9maWxlLzFjNTdiZTE2N2Y2ZWU0MjBkkuA17EC_t_M5aj2IC6GiG8kcjsT2ESHjhJnHCuaVbBskvq5PQasn_n1hhuCIRg7PnHaG-93VCQVMcEpYP4UbUpa3KNRxJdvEZt4UC4MsNtd4fOZadnvHg_fRHpVEweAvbsu6HWhGLRp22qA7vloh-a6XWC4WkSjVwT5138tCTN2iQjI6rvMuhFh9RG44lhC0st7IL_ftxwDfEZQIMsKZxfJVlJ5lcJ1FB1Bko0QC9SRk3LPd9WG8XtP760pZnvZGZ9daDznEJEqY8b6zp5HGG3w2hKy6lGJut-O0PSp3BMRKVdbjeqi-0CXP6_4uki32qA4vDxiTNF6nco_IUTx6gXZx6zVIiSHw2Za49oFnhLGzaflZL8yq9PbeHFNg6chBJO8JAudOKM_MhH6l1SqfM48aAKVK1Ne_wdLGE8hiRjinP9wIfeoc7KFF1R7pijwDljmSUihdOBlOsGaml2kD0Pjit2rIUG16w5PdL5QM7OTFW9sCM-1dPeO6N7VOFOuI-5PhsDko8yGqUGfTFIRNPPc4vkui0bqc3JnxcNwpNxroWmfDHAC4sxOLYn5qBIvUHomWv2GgGTyGYOfK4rGHYHFO2k8DGJrEJ3E0y_9vZLxRRupabI44hoLZ67WjPIRrKHFcCF77tPJILtcYx9xFTkgMzjWAMn4_pJa-nEf0G26B2fra9KzcS-v04Zdr_7Qe36yWd4IBpSvQTyAaxF6ItR89McLimt10b9qORDzCQ62pSlWzHuhaCzGcQ8G6fKFuUR7IyJhtSJ7QnKH9JcbaKpUu7N9Tgt6BI8A7n9pUuEELP04POwRDLycIn15NvpwNP18rm3tezijIkR_cnkh_vu55_lzOA502KbJslG6lgrn8b6WZovcsE-0vqWQcCD4xHGXCDHCfSG0SCRf-6UW35bu0C_su1RMLkzrNRJoucPsO8k6W_DQwX1cVi6nO3ZRV0ljwXzNRqfYPZ84NOmbiVwJ1MUedBfHxco7lO_8yQGJCE0t67kgHdi-Euz23aqNrrkuM1hMWhGDz8ujPHdGOx_IKa139CyiY9gEoe_L7eVfPRiuUHpy3V_NQh1UXp3PbO7hSSUI3V17dT8uCnkxC7H5Ka-M7-ygoj47ZfM0UGX8pIeE3AwJBPMsxBEmD7umsUU7G3_Y1cVBRH5BjjBWAmbSyZYghYnOmm3LoA99f6pd0a9T0M04S1FzFFjgSbNsU6HTAGQB8_SvAqTc5gPmB3KSSq3KbATW8D3jrqI4P53OMy2K4NEXNavOOuJyQ71T2p9XE7yAFcklYp28Og6E317MYZRtXIbTaZuLiz8hdWSVCiPlqt6CPnnHUdkxvzAJqwbSVMk7zmtPRcpSNzDZq3OV41w_ll7MI0_7LP0mDPXiLVLIsWjhTHgaqpMXOtcfMmQw9nDIAqiLyvK_Z4_ApO-ghgbx8b0rdkyfgBo3_NvPcAzc49f-ncDfUVB1cyK59WWDzVdZzzOyeHCPRZV88FsICrcgaoOY4IE7wT_VNCEX7nKwepKbRll7Iue_JlCYGxOaCVLmO",
+  "opener_seed": "alice-2-seed",
+  "opener_serial": "c57be167f6ee420d",
+  "open_label": "wolos/file/1",
+  "expect": {
+    "plaintext": "dGVzdCBzZWFsZWQgbWVzc2FnZSAxCg",
+    "error": null
+  }
+}
