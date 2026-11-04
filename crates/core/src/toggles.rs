@@ -108,6 +108,34 @@ pub fn is_on(
     exists(&state_file(t, config_home, state_home))
 }
 
+/// Night Light counts as on below this colour temperature (hyprsunset's own 6500 K identity is off).
+pub const NIGHT_LIGHT_BELOW_K: u32 = 6000;
+
+/// Night Light as hyprsunset reports it (`hyprctl hyprsunset temperature`): the one truth, since
+/// the Control Center tile, the Displays switch and `wol toggle nightlight` all drive it. None
+/// when hyprsunset is not running (QA-SET-46: the tile read this, the hotkey read a flag file).
+pub fn night_light_from(temperature: &str) -> Option<bool> {
+    let k: u32 = temperature.trim().parse().ok()?;
+    Some(k < NIGHT_LIGHT_BELOW_K)
+}
+
+/// Writes `t`'s flag file (`on`) or removes it, so the file-reading views (`wol toggle` listing,
+/// plugin tiles) agree with a change made by the tile.
+pub fn set_flag(t: Toggle, config_home: &Path, state_home: &Path, on: bool) -> std::io::Result<()> {
+    let f = state_file(t, config_home, state_home);
+    if on {
+        if let Some(d) = f.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(&f, "")
+    } else {
+        match std::fs::remove_file(&f) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Commands that apply `t` = `on`, in order, before the state file changes. Silence needs none
 /// (the notification code reads the file).
 pub fn commands(t: Toggle, on: bool) -> Vec<Vec<String>> {
@@ -213,6 +241,27 @@ mod tests {
         );
         assert!(commands(Toggle::Silence, true).is_empty());
         assert!(must_succeed(Toggle::NightLight) && !must_succeed(Toggle::StayAwake));
+    }
+
+    #[test]
+    fn night_light_is_hyprsunsets_temperature() {
+        assert_eq!(night_light_from("4500\n"), Some(true));
+        assert_eq!(night_light_from("6500"), Some(false));
+        assert_eq!(night_light_from("error"), None, "not running");
+    }
+
+    #[test]
+    fn a_flag_follows_the_change() {
+        let d = std::env::temp_dir().join(format!("wol-toggle-flag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let (c, s) = (d.join("c"), d.join("s"));
+        let f = state_file(Toggle::NightLight, &c, &s);
+        set_flag(Toggle::NightLight, &c, &s, true).unwrap();
+        assert!(is_on(Toggle::NightLight, &c, &s, |p| p.exists()) && f.exists());
+        set_flag(Toggle::NightLight, &c, &s, false).unwrap();
+        assert!(!f.exists());
+        set_flag(Toggle::NightLight, &c, &s, false).unwrap();
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

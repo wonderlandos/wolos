@@ -405,8 +405,26 @@ pub mod be {
         ]
     }
 
+    /// The btrfs top level, listed: every slot's root subvolume is `@<name>` in it.
+    pub const TOP_ARGV: [&str; 2] = ["ls", super::TOP];
+
+    /// QA-STORE-5/U3: entries whose root subvolume is gone (an interrupted update leaves a boot
+    /// entry behind) are not restore points. `top` is [`TOP_ARGV`]'s output; nothing is dropped
+    /// unless it lists the running slot's own `@name`, so an unreadable or unmounted top level
+    /// (None, or an empty automount) keeps the list as bootctl gives it.
+    pub fn real(bes: Vec<BootEnv>, top: Option<&str>) -> Vec<BootEnv> {
+        let Some(top) = top else { return bes };
+        let has = |n: &str| top.lines().any(|l| l.trim().strip_prefix('@') == Some(n));
+        if !bes.iter().any(|b| b.active && has(&b.name)) {
+            return bes;
+        }
+        bes.into_iter().filter(|b| has(&b.name)).collect()
+    }
+
+    /// The restore points of this computer: bootctl's slots that still have a root subvolume.
     pub fn read(host: &dyn crate::system::Host) -> Option<Vec<BootEnv>> {
-        host.run(&LIST_ARGV).map(|t| parse(&t))
+        let bes = host.run(&LIST_ARGV).map(|t| parse(&t))?;
+        Some(real(bes, host.run(&TOP_ARGV).as_deref()))
     }
 }
 
@@ -599,6 +617,47 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
         let h = crate::system::fake::FakeHost::new(false);
         assert_eq!(be::read(&h), None, "no bootctl");
         h.command("bootctl list --json=short", BOOTCTL);
-        assert_eq!(be::read(&h).unwrap().len(), 2);
+        assert_eq!(
+            be::read(&h).unwrap().len(),
+            2,
+            "top level unreadable: as bootctl says"
+        );
+        // QA-STORE-5: an interrupted update leaves wolos-b's boot entry without its subvolume.
+        h.command("ls /run/wolos/top", "@wolos-a\nsnapshots\n");
+        let names: Vec<_> = be::read(&h).unwrap().into_iter().map(|b| b.name).collect();
+        assert_eq!(names, ["wolos-a"], "the ghost slot is not a restore point");
+        h.command("ls /run/wolos/top", "@wolos-a\n@wolos-b\n");
+        assert_eq!(be::read(&h).unwrap().len(), 2, "both subvolumes exist");
+    }
+
+    #[test]
+    fn ghost_slots_are_dropped_only_with_proof() {
+        let both = be::parse(BOOTCTL);
+        let only = |t: Option<&str>| -> Vec<String> {
+            be::real(both.clone(), t)
+                .into_iter()
+                .map(|b| b.name)
+                .collect()
+        };
+        let a = || vec!["wolos-a".to_string()];
+        let ab = || vec!["wolos-a".to_string(), "wolos-b".to_string()];
+        assert_eq!(
+            only(None),
+            ab(),
+            "top level unreadable: bootctl's list stands"
+        );
+        assert_eq!(
+            only(Some("")),
+            ab(),
+            "an unmounted (empty) top level proves nothing"
+        );
+        assert_eq!(
+            only(Some("@wolos-b\n")),
+            ab(),
+            "the running slot is not there: do not trust it"
+        );
+        assert_eq!(only(Some("@wolos-a\n")), a());
+        assert_eq!(only(Some("@wolos-a\n@wolos-b\n")), ab());
+        assert_eq!(be::TOP_ARGV, ["ls", TOP]);
     }
 }

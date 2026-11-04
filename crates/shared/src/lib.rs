@@ -21,5 +21,6 @@ pub mod safe_path;
 pub mod shell;
 pub mod sys;
 pub mod theme;
+pub mod update;
 pub mod view;
 pub mod widgets;

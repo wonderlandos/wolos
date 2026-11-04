@@ -841,12 +841,26 @@ fn undo(env: &mut dyn Env, id: Option<&str>, json: bool) -> i32 {
 
 // ---- restore points ----
 
+/// The restore points: bootctl's slots that still have a root subvolume (QA-STORE-5: an
+/// interrupted update leaves a boot entry behind; `be::real`).
 fn boot_envs(env: &mut dyn Env) -> Option<Vec<be::BootEnv>> {
-    env.capture(&be::LIST_ARGV).map(|t| be::parse(&t))
+    let bes = env.capture(&be::LIST_ARGV).map(|t| be::parse(&t))?;
+    let top = env.capture(&be::TOP_ARGV);
+    Some(be::real(bes, top.as_deref()))
 }
+
+/// Why there is nothing to list (QA-STORE-5): a one-copy install has no second copy by design.
+pub const ONE_COPY_SENTENCE: &str =
+    "This computer has one copy of WolOS, so there is no earlier copy to go back to.";
 
 fn restore_list(env: &mut dyn Env, json: bool) -> i32 {
     let Some(list) = boot_envs(env) else {
+        if env
+            .read_file(Path::new(wol_core::update::SINGLE_COPY))
+            .is_some()
+        {
+            return fail(env, ErrorCode::Unavailable, ONE_COPY_SENTENCE);
+        }
         return fail(
             env,
             ErrorCode::Unavailable,
@@ -1212,10 +1226,25 @@ fn toggle_on(env: &dyn Env, t: toggles::Toggle) -> bool {
     })
 }
 
+/// Is `t` on? Night Light is what hyprsunset reports, the state the Control Center tile shows
+/// and sets; the flag file is the answer only while hyprsunset is not running (QA-SET-46: the tile
+/// and the hotkey kept two states, so the hotkey needed two presses after a click).
+fn toggle_now(env: &mut dyn Env, t: toggles::Toggle) -> bool {
+    if t == toggles::Toggle::NightLight
+        && let Some(on) = env
+            .capture(&["hyprctl", "hyprsunset", "temperature"])
+            .as_deref()
+            .and_then(toggles::night_light_from)
+    {
+        return on;
+    }
+    toggle_on(env, t)
+}
+
 fn toggles_state(env: &mut dyn Env) -> Value {
     let list: Vec<Value> = toggles::Toggle::ALL
         .iter()
-        .map(|t| json!({"id": t.id(), "label": t.label(), "on": toggle_on(env, *t)}))
+        .map(|t| json!({"id": t.id(), "label": t.label(), "on": toggle_now(env, *t)}))
         .collect();
     json!({ "toggles": list })
 }
@@ -1225,7 +1254,7 @@ fn toggle(env: &mut dyn Env, word: &str, wanted: Option<bool>, json: bool) -> i3
         let msg = format!("<toggle> must be one of {}", crate::cli::TOGGLES.join(", "));
         return fail(env, ErrorCode::Usage, &msg);
     };
-    let on = toggles::target(toggle_on(env, t), wanted);
+    let on = toggles::target(toggle_now(env, t), wanted);
     if t == toggles::Toggle::Silence {
         // Do Not Disturb keeps its journaled file, as `wol focus on|off` writes it.
         return save(env, "focus", DND_FILE, on.then_some(""), json, focus_state);
@@ -1563,6 +1592,15 @@ mod port_tests {
         e.exec_codes = vec![1];
         assert_ne!(run(&mut e, "toggle nightlight on"), 0);
         assert!(e.written.is_empty());
+        // QA-SET-46: the tile turned Night Shift on (hyprsunset at 4500 K, no flag file): the
+        // hotkey turns it off at the first press.
+        let mut e = fake();
+        e.captures
+            .push(("hyprctl hyprsunset temperature".into(), "4500\n".into()));
+        assert_eq!(run(&mut e, "toggle nightlight --json"), 0, "{}", e.err);
+        assert_eq!(e.execs[0], vec!["hyprctl", "hyprsunset", "identity"]);
+        let v: Value = serde_json::from_str(&e.out).unwrap();
+        assert_eq!(v["on"], false);
         // list
         let mut e = fake();
         assert_eq!(run(&mut e, "toggle --json"), 0);

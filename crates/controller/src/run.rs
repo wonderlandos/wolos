@@ -38,6 +38,12 @@ pub trait Env {
     fn exec(&mut self, argv: &[String]) -> io::Result<i32>;
     /// Run argv, capture stdout (None on failure).
     fn capture(&mut self, argv: &[&str]) -> Option<String>;
+    /// Run argv with stdout and stderr captured: (exit status, stdout, stderr). None when it
+    /// could not run. For a tool whose non-zero exit is an answer (`pacman -Qu` exits 1 when
+    /// nothing is pending). Where a build has no such child, `capture`'s answer stands (0).
+    fn capture_status(&mut self, argv: &[&str]) -> Option<(i32, String, String)> {
+        self.capture(argv).map(|o| (0, o, String::new()))
+    }
     fn stdin_line(&mut self) -> Option<String>;
     fn read_file(&self, p: &Path) -> Option<String>;
     fn sys_topic(&mut self, topic: &str) -> Option<serde_json::Value>;
@@ -409,7 +415,10 @@ fn jobs_change(env: &mut dyn Env, req: &JobRequest) -> i32 {
             Ok(Reply { ok: true, .. }) => 0,
             Ok(Reply { error, .. }) => {
                 let msg = error.unwrap_or_else(|| "failed".into());
-                let code = if msg.contains("root") || msg.contains("denied") {
+                // wold refuses a root-only request from anyone else before it reaches a job
+                // (api/control.rs `handle`): that is the refusal code. Any other error text, such as
+                // "permission denied: /var/lib/…" from a job, is a failure, not a refusal.
+                let code = if req.needs_root() && !env.is_root() {
                     ErrorCode::Denied
                 } else {
                     ErrorCode::Failed
@@ -462,6 +471,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
         let secs = wol_core::admin::reply_secs(req);
         let sent = env.request_wait(&sock, &wire::encode(req, &password), secs);
         crate::authcheck::wipe(&mut password);
+        let said = sent.as_ref().ok().and_then(|r| wire::failure_message(r));
         let reply = match sent {
             Ok(r) => AdminReply::parse(&r),
             // A slow action (a package, a boot entry) is still running in wol-admind (S4-18).
@@ -501,7 +511,9 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
             }
             AdminReply::Ok => return 0,
             r => {
-                env.err(&format!("wol admin: {}\n", r.message()));
+                // wol-admind's own sentence when it gave one (the program's last line, QA-100 LIVE3-19).
+                let why = said.as_deref().unwrap_or_else(|| r.message());
+                env.err(&format!("wol admin: {why}\n"));
                 return admin_exit(r);
             }
         }
@@ -855,22 +867,124 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
         action: AdminAction::PkgRefresh,
         args: vec![],
     };
-    env.request_wait(&sock, &wire::encode(&req, b""), 180)
-        .is_ok_and(|r| AdminReply::parse(&r) == AdminReply::Ok)
+    // QA-STORE-14: wol-admind's own budget for the refresh (its reply wait), not a number of
+    // our own: the Settings button waits `check::CHECK_SECS`, which is this plus the rest.
+    env.request_wait(
+        &sock,
+        &wire::encode(&req, b""),
+        wol_core::admin::reply_secs(&req),
+    )
+    .is_ok_and(|r| AdminReply::parse(&r) == AdminReply::Ok)
+}
+
+/// The exit status [`run_status`] reports for a child a signal ended (OOM kill, SIGKILL): no exit
+/// code at all, and never the 1 that means "nothing pending".
+pub(crate) const KILLED: i32 = -1;
+
+/// Run `argv` with stdin closed: (exit status, stdout, stderr). [`KILLED`] when a signal ended it;
+/// None when it cannot start or does not finish within `timeout` (it is killed): a hung
+/// `pacman -Qu` must not hang `wol update check`.
+pub(crate) fn run_status(
+    argv: &[&str],
+    timeout: std::time::Duration,
+) -> Option<(i32, String, String)> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let (file, args) = argv.split_first()?;
+    let mut child = std::process::Command::new(file)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    let drain = |mut r: Box<dyn Read + Send>| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut b = Vec::new();
+            let _ = r.read_to_end(&mut b);
+            let _ = tx.send(b);
+        });
+        rx
+    };
+    let out = drain(Box::new(child.stdout.take()?));
+    let err = drain(Box::new(child.stderr.take()?));
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    // The pipes close with the child; a grandchild holding one is not waited for.
+    let text = |rx: std::sync::mpsc::Receiver<Vec<u8>>| {
+        String::from_utf8_lossy(
+            &rx.recv_timeout(std::time::Duration::from_millis(500))
+                .unwrap_or_default(),
+        )
+        .into_owned()
+    };
+    Some((status.code().unwrap_or(KILLED), text(out), text(err)))
+}
+
+/// The packages `pacman -Qu` listed, from its exit status, stdout and stderr. `pacman -Qu` exits
+/// 1 with nothing on stdout and nothing on stderr when no update is waiting (QA-STORE-1): that is
+/// an answer, not a failure. Err: the sentence for a run that did fail (the real message of
+/// pacman when it said one).
+pub(crate) fn pending_packages(r: Option<(i32, String, String)>) -> Result<Vec<String>, String> {
+    match r {
+        Some((0, out, _)) => Ok(wol_core::update::parse_pending(Some(&out)).unwrap_or_default()),
+        Some((1, out, err)) if out.trim().is_empty() && err.trim().is_empty() => Ok(Vec::new()),
+        Some((KILLED, _, _)) => Err("pacman -Qu was stopped before it finished".into()),
+        Some((_, _, err)) => Err(match err.lines().find(|l| !l.trim().is_empty()) {
+            Some(l) => format!("pacman -Qu failed: {}", l.trim()),
+            None => "pacman -Qu failed".into(),
+        }),
+        None => Err("pacman -Qu failed".into()),
+    }
+}
+
+/// Free bytes where the check writes (`shared::update::CHECK_DISK`); None when unreadable.
+fn var_free(env: &mut dyn Env) -> Option<u64> {
+    shared::update::free_from_df(&env.capture(&shared::update::FREE_ARGV)?)
+}
+
+/// `1 update available: a` / `3 updates available: a, b, c`, with "WolOS 2026.12" among them as
+/// the release it is (QA-STORE-15).
+pub(crate) fn update_line(pending: &[String]) -> String {
+    let n = pending.len();
+    let what = if n == 1 { "update" } else { "updates" };
+    format!("{n} {what} available: {}", pending.join(", "))
 }
 
 fn update_check(env: &mut dyn Env, json: bool) -> i32 {
     let refreshed = refresh_catalogue(env);
-    let out = env.capture(&wol_core::update::PENDING_ARGV);
-    let Some(mut pending) = wol_core::update::parse_pending(out.as_deref()) else {
-        return fail(env, ErrorCode::Unavailable, "pacman -Qu failed");
+    let out = env.capture_status(&wol_core::update::PENDING_ARGV);
+    let mut pending = match pending_packages(out) {
+        Ok(p) => p,
+        Err(why) => return fail(env, ErrorCode::Unavailable, &why),
     };
     // A newer release the daily check found, until installed (`wol update apply`).
     if let Some(b) = update_snapshot(env).and_then(|u| u.base) {
         pending.push(format!("WolOS {b}"));
     }
     if pending.is_empty() && !refreshed {
-        // Never claim "up to date" from a catalogue that could not be refreshed.
+        // Never claim "up to date" from a catalogue that could not be refreshed. A full disk
+        // is the cause worth naming (QA-FDAY F10): "are you online?" sends people to the router.
+        if shared::update::no_room(var_free(env)) {
+            return fail(
+                env,
+                ErrorCode::Unavailable,
+                "there is no room left on the system disk (/var) to check for updates; free some space in Settings > Storage",
+            );
+        }
         return fail(
             env,
             ErrorCode::Unavailable,
@@ -882,7 +996,7 @@ fn update_check(env: &mut dyn Env, json: bool) -> i32 {
     } else if pending.is_empty() {
         env.out("up to date\n");
     } else {
-        env.out(&format!("{}\n", pending.join("\n")));
+        env.out(&format!("{}\n", update_line(&pending)));
     }
     0
 }
@@ -912,9 +1026,26 @@ fn update_install(env: &mut dyn Env, json: bool) -> i32 {
     if json {
         emit_json(env, &result);
     } else {
-        env.out(&format!("Installed {} updates.\n", result["applied"]));
+        // QA-STORE-13: a computer with two root slots built the update in the other one: nothing
+        // applies until the restart. One copy (ADR 0023) was updated in place.
+        let one_copy = env
+            .read_file(Path::new(wol_core::update::SINGLE_COPY))
+            .is_some();
+        let n = result["applied"].as_u64().unwrap_or(0);
+        env.out(&installed_line(n, one_copy, result["restart"] == true));
     }
     0
+}
+
+/// What `wol update install` says when it is done.
+pub fn installed_line(n: u64, one_copy: bool, kernel: bool) -> String {
+    let what = if n == 1 { "update" } else { "updates" };
+    let tail = match (one_copy, kernel) {
+        (false, _) => " Restart to finish.",
+        (true, true) => " Restart to use the new kernel.",
+        (true, false) => "",
+    };
+    format!("Installed {n} {what}.{tail}\n")
 }
 
 /// The daily check's findings (wol_core::update::check), without a release installed since.
@@ -1257,6 +1388,9 @@ impl Env for RealEnv {
     fn capture(&mut self, argv: &[&str]) -> Option<String> {
         wol_core::system::run_with_timeout(argv, std::time::Duration::from_secs(60))
     }
+    fn capture_status(&mut self, argv: &[&str]) -> Option<(i32, String, String)> {
+        run_status(argv, std::time::Duration::from_secs(60))
+    }
     fn stdin_line(&mut self) -> Option<String> {
         let mut l = String::new();
         io::stdin().read_line(&mut l).ok()?;
@@ -1318,6 +1452,9 @@ pub struct FakeEnv {
     pub waits: Vec<u32>,
     /// stdin given to `exec_input`, in order (the argv is in `execs`).
     pub inputs: Vec<String>,
+    /// Per-command `capture_status` answers: (`argv joined by spaces`, exit status, stderr);
+    /// stdout is the `captures` entry. Else `capture`'s answer with status 0.
+    pub statuses: Vec<(String, i32, String)>,
 }
 
 #[derive(Default)]
@@ -1399,6 +1536,14 @@ impl Env for FakeEnv {
             Some(c) => Some(c.1.clone()),
             None => self.captured.clone(),
         }
+    }
+    fn capture_status(&mut self, argv: &[&str]) -> Option<(i32, String, String)> {
+        let line = argv.join(" ");
+        let Some((_, code, err)) = self.statuses.iter().find(|s| s.0 == line).cloned() else {
+            return self.capture(argv).map(|o| (0, o, String::new()));
+        };
+        let out = self.capture(argv).unwrap_or_default();
+        Some((code, out, err))
     }
     fn stdin_line(&mut self) -> Option<String> {
         (!self.stdin.is_empty()).then(|| self.stdin.remove(0))
@@ -1508,6 +1653,33 @@ impl Env for FakeEnv {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    /// QA-STORE-1 review: a pacman a signal ended is not "nothing pending", and a hung one does
+    /// not hang the check.
+    #[test]
+    fn a_killed_or_hung_pacman_is_not_nothing_pending() {
+        let sh =
+            |script: &'static str, t| run_status(&["sh", "-c", script], Duration::from_secs(t));
+        assert_eq!(sh("exit 1", 5), Some((1, String::new(), String::new())));
+        assert_eq!(sh("echo oops >&2; exit 2", 5).unwrap().0, 2);
+        let killed = sh("kill -9 $$", 5).expect("ran");
+        assert_eq!(killed.0, KILLED, "a signal has no exit code");
+        let started = std::time::Instant::now();
+        assert_eq!(
+            sh("sleep 30", 1),
+            None,
+            "past the timeout: killed, no answer"
+        );
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert!(pending_packages(Some(killed)).is_err());
+        assert!(pending_packages(None).is_err());
+        assert_eq!(
+            pending_packages(Some((1, String::new(), String::new()))),
+            Ok(vec![])
+        );
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 

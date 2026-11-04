@@ -11,6 +11,10 @@ pub const DIR: &str = "/var/lib/wolos/updates";
 /// The script the timer runs (hourly; it checks at most once every [`EVERY_SECS`]).
 pub const SCRIPT: &str = "/usr/lib/wolos/update-check";
 pub const EVERY_SECS: u64 = 20 * 3600;
+/// How long Settings > Software Update > Check Now waits for `wol update check` (QA-STORE-14):
+/// the refresh through wol-admind (its own reply wait, `admin::reply_secs`) plus the local
+/// `pacman -Qu` and the manifest read. The shell, `wol` and wol-admind used to keep three numbers.
+pub const CHECK_SECS: u64 = 180;
 /// The manifest of the release this slot runs.
 pub const RELEASE_FILE: &str = "/usr/lib/wolos-release.json";
 /// The system kernel, only from `[wolos]`; the default boot entry always boots it.
@@ -132,8 +136,15 @@ impl Updates {
 
     /// Drop a release already installed since the check (the running [`RELEASE_FILE`]).
     pub fn installed(mut self, running: Option<&str>) -> Self {
-        let v = running.and_then(Manifest::parse).map(|m| m.version);
-        if v.is_some() && v == self.base {
+        let v = running.and_then(running_version);
+        let covered = match (&v, &self.base) {
+            (Some(run), Some(base)) => match version_cmp(run, base) {
+                Some(order) => order != std::cmp::Ordering::Less,
+                None => run == base,
+            },
+            _ => false,
+        };
+        if covered {
             self.base = None;
             self.snapshot = None;
         }
@@ -144,6 +155,35 @@ impl Updates {
     pub fn notify_after(&self, shown: u64) -> bool {
         self.checked > shown && self.count() > 0
     }
+}
+
+/// The version in the running slot's [`RELEASE_FILE`]. The image ships it as just
+/// `{"version":"0.12.1","snapshot":"2026/11/02"}` (QA-STORE-57): the version is all that is
+/// compared, so the file need not be a whole signed manifest.
+pub fn running_version(text: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let v = v["version"].as_str()?.trim();
+    (!v.is_empty()).then(|| v.to_owned())
+}
+
+/// Dotted numeric versions compared by number ("2026.11" and "0.12.1"; "0.13.0-pre" counts as
+/// 0.13.0, a build newer than the 0.12.1 release). None when a version has a part without
+/// digits: then only equal text is a match.
+pub fn version_cmp(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    let nums = |v: &str| -> Option<Vec<u64>> {
+        v.trim()
+            .split('.')
+            .map(|c| {
+                let d: String = c.chars().take_while(char::is_ascii_digit).collect();
+                d.parse().ok()
+            })
+            .collect()
+    };
+    let (mut x, mut y) = (nums(a)?, nums(b)?);
+    let n = x.len().max(y.len());
+    x.resize(n, 0);
+    y.resize(n, 0);
+    Some(x.cmp(&y))
 }
 
 /// Hex text to bytes; None on an odd length, a non-hex digit or a non-ASCII character (never
@@ -248,6 +288,76 @@ mod tests {
         );
         assert_eq!(u.installed(None).count(), 1, "unknown: keep");
         assert_eq!(USERLAND_ARGV, ["cat", "/usr/lib/wolos-release.json"]);
+    }
+
+    /// QA-STORE-57: the image's own `wolos-release.json` is a small file, not a whole manifest;
+    /// the release it names is installed, so the daily check's copy of it is not an update.
+    #[test]
+    fn the_small_release_file_marks_the_running_release_installed() {
+        let u = Updates::parse("9", "", "", RELEASE).unwrap();
+        assert_eq!(u.count(), 1);
+        let small = r#"{"version":"2026.11","snapshot":"2026/11/02"}"#;
+        assert_eq!(small.len(), 45);
+        assert_eq!(u.clone().installed(Some(small)).count(), 0);
+        let older = small.replace("2026.11", "2026.10");
+        assert_eq!(u.clone().installed(Some(&older)).count(), 1);
+        // QA-STORE-57 review: versions are compared as versions. A build newer than the latest
+        // release (a 0.13 pre-release on the 0.12.1 channel) has nothing to update to.
+        let latest = RELEASE.replace("2026.11", "0.12.1");
+        let u2 = Updates::parse("9", "", "", &latest).unwrap();
+        for (running, left) in [
+            ("0.12.1", 0),
+            ("0.13.0-pre", 0),
+            ("0.12.10", 0),
+            ("0.12.0", 1),
+            ("0.9.9", 1),
+            ("0.12.1-rc1", 0),
+        ] {
+            let run = format!(r#"{{"version":"{running}"}}"#);
+            assert_eq!(u2.clone().installed(Some(&run)).count(), left, "{running}");
+        }
+        assert_eq!(
+            version_cmp("0.12.1", "0.12.1.0"),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(version_cmp("x", "y"), None);
+        assert_eq!(u.clone().installed(Some("not json")).count(), 1);
+        assert_eq!(u.installed(Some(r#"{"version":""}"#)).count(), 1);
+    }
+
+    /// QA-STORE-7: a release manifest without a trusted signature is not a release.
+    #[test]
+    fn base_none_without_sig() {
+        let unsigned = |f: &str| match f {
+            "checked" => "9".into(),
+            "base" => RELEASE.to_string(),
+            _ => String::new(),
+        };
+        let u = Updates::from_files(unsigned, &[[7u8; 32]]).unwrap();
+        assert_eq!(u.base, None, "no base.sig");
+        assert_eq!(u.count(), 0);
+        let forged = |f: &str| match f {
+            "base.sig" => "00".repeat(64),
+            other => unsigned(other),
+        };
+        assert_eq!(
+            Updates::from_files(forged, &[[7u8; 32]]).unwrap().base,
+            None
+        );
+    }
+
+    /// QA-STORE-14: Check Now outwaits the refresh `wol update check` makes through wol-admind.
+    #[test]
+    fn check_now_outwaits_the_refresh() {
+        use shared::admin::{AdminAction, AdminRequest};
+        let refresh = crate::admin::reply_secs(&AdminRequest {
+            action: AdminAction::PkgRefresh,
+            args: vec![],
+        });
+        assert!(
+            CHECK_SECS >= u64::from(refresh) + 60,
+            "{CHECK_SECS} vs {refresh}"
+        );
     }
 
     #[test]

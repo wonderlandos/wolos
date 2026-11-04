@@ -344,6 +344,16 @@ fn jobs_talk_to_wold() {
     };
     assert_eq!(run("stop a", &mut env), 77);
     assert_eq!(env.requests[0].1, b"stop a\n");
+    // E3: root's request failing with "denied" or "root" in the text is a failure, not a refusal.
+    for error in ["permission denied: /var/lib/wol/x", "cannot chroot"] {
+        let mut env = FakeEnv {
+            replies: vec![format!(r#"{{"ok":false,"error":"{error}"}}"#)],
+            root: true,
+            ..Default::default()
+        };
+        assert_eq!(run("start a", &mut env), 1, "{error}");
+        assert!(env.err.contains(error));
+    }
     let mut env = FakeEnv::default();
     assert_eq!(run("jobs", &mut env), 69);
 }
@@ -467,4 +477,201 @@ fn bundle_plan_resolves_for_this_host() {
     assert!(env.out.contains("\"entry\":\"n\""), "{}", env.out);
     let mut env = FakeEnv::default();
     assert_eq!(run("port Missing.wol", &mut env), 66);
+}
+
+/// QA-STORE-1: `pacman -Qu` exits 1 with nothing on either stream when no update is waiting. After
+/// a refresh that worked that is "up to date", not "pacman -Qu failed"; an exit 1 that says why is
+/// still a failure, with pacman's own sentence.
+#[test]
+fn pacman_qu_exit1_means_nothing_pending() {
+    let qu = |stderr: &str| FakeEnv {
+        replies: vec!["ok\n".into()],
+        statuses: vec![("pacman -Qu".into(), 1, stderr.into())],
+        captures: vec![("pacman -Qu".into(), "".into())],
+        ..Default::default()
+    };
+    let mut env = qu("");
+    assert_eq!(run("update check --json", &mut env), 0, "{}", env.err);
+    assert_eq!(env.out.trim(), "[]");
+    let mut env = qu("error: failed to init transaction (unable to lock database)\n");
+    assert_ne!(run("update check --json", &mut env), 0);
+    assert!(env.err.contains("unable to lock database"), "{}", env.err);
+    assert!(!env.out.contains("[]"), "{}", env.out);
+}
+
+/// QA-FDAY F10: a refresh that could not be written on a full disk says so, not "are you online?".
+#[test]
+fn check_on_a_full_disk_names_the_disk() {
+    let df = |avail: u64| FakeEnv {
+        captures: vec![
+            ("pacman -Qu".into(), "".into()),
+            (
+                "df -B1 --output=avail /var".into(),
+                format!("Avail\n{avail}\n"),
+            ),
+        ],
+        ..Default::default()
+    };
+    let mut env = df(0);
+    assert_ne!(run("update check --json", &mut env), 0);
+    assert!(env.err.contains("no room left"), "{}", env.err);
+    assert!(env.err.contains("Settings > Storage"), "{}", env.err);
+    let mut env = df(40 << 30);
+    assert_ne!(run("update check --json", &mut env), 0);
+    assert!(env.err.contains("online"), "{}", env.err);
+}
+
+/// QA-STORE-15 / QA-STORE-13: the text a person reads is a sentence, and an update built in the
+/// other slot says it needs the restart.
+#[test]
+fn update_check_and_install_speak_in_sentences() {
+    let mut env = FakeEnv {
+        tty: true,
+        replies: vec!["ok\n".into()],
+        captures: vec![(
+            "pacman -Qu".into(),
+            "wol-shell 0.12.1-1 -> 0.12.2-1\nlinux-wolos 6.17-1 -> 6.18-1\n".into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("update check", &mut env), 0);
+    assert_eq!(env.out, "2 updates available: wol-shell, linux-wolos\n");
+    let line = controller::run::installed_line;
+    assert_eq!(
+        line(1, false, false),
+        "Installed 1 update. Restart to finish.\n"
+    );
+    assert_eq!(line(3, true, false), "Installed 3 updates.\n");
+    assert_eq!(
+        line(2, true, true),
+        "Installed 2 updates. Restart to use the new kernel.\n"
+    );
+}
+
+/// QA-HUNT-3: 77 is "needs the administrator's password". A job's own error text with "denied" or
+/// "root" in it (root's `permission denied: /var/lib/...`) is a failure (1), not that refusal.
+#[test]
+fn denied_text_is_not_exit_77() {
+    for error in [
+        "permission denied: /var/lib/wol/x",
+        "cannot remove root dir",
+    ] {
+        let reply = format!(r#"{{"ok":false,"error":"{error}"}}"#);
+        let mut env = FakeEnv {
+            replies: vec![reply.clone()],
+            root: true,
+            ..Default::default()
+        };
+        assert_eq!(run("start a", &mut env), 1, "{error}");
+        assert!(env.err.contains(error), "{}", env.err);
+        // The refusal wold itself makes for a person without the right is still 77.
+        let mut env = FakeEnv {
+            replies: vec![reply],
+            ..Default::default()
+        };
+        assert_eq!(run("stop a", &mut env), 77, "{error}");
+    }
+}
+
+const SLOTS: &str = r#"[
+ {"id":"wolos-a.conf","version":"2026/10/20","isSelected":true,"isDefault":false},
+ {"id":"wolos-b+3.conf","version":"2026/11/02","isSelected":false,"isDefault":true,"triesLeft":3}
+]"#;
+
+/// QA-STORE-5: a boot entry whose root subvolume is gone (an interrupted update) is not a restore
+/// point, in the list and for `restore activate`.
+#[test]
+fn restore_list_drops_a_slot_without_its_subvolume() {
+    let env = |top: &str| FakeEnv {
+        captures: vec![
+            ("bootctl list --json=short".into(), SLOTS.into()),
+            ("ls /run/wolos/top".into(), top.into()),
+        ],
+        ..Default::default()
+    };
+    let mut e = env("@wolos-a\n");
+    assert_eq!(run("restore list --json", &mut e), 0, "{}", e.err);
+    let v: serde_json::Value = serde_json::from_str(e.out.trim()).unwrap();
+    assert_eq!(v.as_array().unwrap().len(), 1, "{}", e.out);
+    assert_eq!(v[0]["name"], "wolos-a");
+    let mut e = env("@wolos-a\n");
+    assert_eq!(run("restore activate wolos-b", &mut e), 66, "{}", e.err);
+    let mut e = env("@wolos-a\n@wolos-b\n");
+    assert_eq!(run("restore list --json", &mut e), 0);
+    assert!(e.out.contains("wolos-b"), "{}", e.out);
+}
+
+/// QA-STORE-5: one copy of WolOS says so, instead of "does not boot WolOS root slots".
+#[test]
+fn restore_list_one_copy_sentence() {
+    let mut e = FakeEnv {
+        files: vec![(PathBuf::from("/etc/wolos/single-copy"), String::new())],
+        ..Default::default()
+    };
+    assert_eq!(run("restore list", &mut e), 69);
+    assert!(e.err.contains("one copy of WolOS"), "{}", e.err);
+    assert!(!e.err.contains("root slots"), "{}", e.err);
+}
+
+/// QA-100 LIVE3-19: a failed administrator change says why. wol-admind's `failed <sentence>` reply
+/// reaches the person; a plain `failed` keeps the generic line.
+#[test]
+fn admin_failure_names_cause() {
+    let line = shared::admin::failed_line("The change failed: modprobe: ERROR: No such device");
+    let mut env = FakeEnv {
+        replies: vec![format!("{line}\n")],
+        ..Default::default()
+    };
+    assert_eq!(run("admin hw-load coretemp", &mut env), 1);
+    assert!(
+        env.err
+            .contains("wol admin: The change failed: modprobe: ERROR: No such device"),
+        "{}",
+        env.err
+    );
+    let mut plain = FakeEnv {
+        replies: vec!["failed\n".into()],
+        ..Default::default()
+    };
+    assert_eq!(run("admin hw-load coretemp", &mut plain), 1);
+    assert_eq!(plain.err, "wol admin: The change failed\n");
+}
+
+/// QA-100: `wol admin reports on|off` and `wol admin auto-update metered on|off` reach wol-admind as
+/// those requests (Settings > Privacy and Software Update send the same ones); bad words never leave.
+#[test]
+fn admin_reports_and_metered_requests() {
+    use shared::admin::{AdminAction, decode};
+    let sent = |line: &str| {
+        let mut env = FakeEnv {
+            replies: vec!["ok\n".into()],
+            ..Default::default()
+        };
+        let code = run(line, &mut env);
+        let req = env
+            .requests
+            .first()
+            .and_then(|(_, b)| decode(b))
+            .map(|(r, _)| (r.action, r.args));
+        (code, req)
+    };
+    let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        sent("admin reports on"),
+        (0, Some((AdminAction::Reports, args(&["on"]))))
+    );
+    assert_eq!(
+        sent("admin reports off"),
+        (0, Some((AdminAction::Reports, args(&["off"]))))
+    );
+    assert_eq!(
+        sent("admin auto-update metered on"),
+        (0, Some((AdminAction::AutoUpdate, args(&["metered", "on"]))))
+    );
+    let (code, req) = sent("admin reports maybe");
+    assert_ne!(code, 0);
+    assert_eq!(req, None, "refused before it was sent");
+    let (code, req) = sent("admin auto-update metered maybe");
+    assert_ne!(code, 0);
+    assert_eq!(req, None);
 }
