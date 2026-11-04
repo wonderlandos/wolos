@@ -148,6 +148,28 @@ pub fn queue_name(display: &str) -> String {
     out.trim_start_matches('-').chars().take(127).collect()
 }
 
+/// [`queue_name`] of `display` that no name in `taken` has: "HP_LaserJet" taken -> "HP_LaserJet_2"
+/// (QA-SET-14: two printers of one model both came out "HP_LaserJet", the second `lpadmin -p`
+/// replaced the first). A name that cleans down to nothing ("日本語") is "Printer".
+pub fn unique_queue_name(display: &str, taken: &[String]) -> String {
+    let mut base = queue_name(display);
+    if base.is_empty() {
+        base = "Printer".into();
+    }
+    let free = |n: &str| !taken.iter().any(|t| t.eq_ignore_ascii_case(n));
+    if free(&base) {
+        return base;
+    }
+    (2..)
+        .map(|i| {
+            let tail = format!("_{i}");
+            let keep: String = base.chars().take(127 - tail.len()).collect();
+            keep + &tail
+        })
+        .find(|n| free(n))
+        .unwrap_or(base)
+}
+
 fn argv(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
@@ -312,6 +334,28 @@ mod tests {
         }
         assert_eq!(queue_name("HP LaserJet Pro"), "HP_LaserJet_Pro");
         assert_eq!(queue_name("  Café / #2 "), "Caf_2");
+        // QA-SET-14: a second printer of one model gets its own queue, never the first one's.
+        let taken = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(unique_queue_name("HP LaserJet", &[]), "HP_LaserJet");
+        assert_eq!(
+            unique_queue_name("HP LaserJet", &taken(&["HP_LaserJet"])),
+            "HP_LaserJet_2"
+        );
+        assert_eq!(
+            unique_queue_name("HP LaserJet", &taken(&["hp_laserjet", "HP_LaserJet_2"])),
+            "HP_LaserJet_3"
+        );
+        assert_eq!(unique_queue_name("日本語", &[]), "Printer");
+        assert_eq!(
+            unique_queue_name("日本語", &taken(&["Printer"])),
+            "Printer_2"
+        );
+        let long = "x".repeat(127);
+        let n = unique_queue_name(&long, &taken(&[&long]));
+        assert!(
+            n.len() <= 127 && n.ends_with("_2") && is_valid_name(&n),
+            "{n}"
+        );
     }
 
     #[test]

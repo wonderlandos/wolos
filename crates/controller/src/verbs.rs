@@ -41,7 +41,11 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "audio.get" => get(env, audio_state, json),
         "audio.volume" => match percent(&a("percent"), 0) {
             Some(p) => control(env, json, audio_state, move |c| c.set_volume(p)),
-            None => fail(env, ErrorCode::Usage, "<percent> must be 0..100"),
+            None => fail(
+                env,
+                ErrorCode::Usage,
+                bad_argument(inv).unwrap_or("<percent> must be 0..100"),
+            ),
         },
         "audio.mute" | "audio.unmute" => {
             let m = inv.action == "audio.mute";
@@ -147,6 +151,20 @@ fn show(env: &mut dyn Env, v: Value, json: bool) -> i32 {
 
 fn percent(s: &str, min: u8) -> Option<u8> {
     s.parse::<u8>().ok().filter(|p| (min..=100).contains(p))
+}
+
+/// The usage sentence for an argument of `inv` that its verb would refuse, found before anything
+/// is asked or run. The helper gate (`approve::decide`) calls it first: a bad value used to be
+/// reported as "No WolOS session is showing" when no sheet could be shown (QA-PWR-20).
+pub fn bad_argument(inv: &Invocation) -> Option<&'static str> {
+    let a = |k: &str| inv.get(k).unwrap_or_default();
+    match inv.action {
+        "audio.volume" if percent(a("percent"), 0).is_none() => Some("<percent> must be 0..100"),
+        "display.brightness" if percent(a("percent"), 1).is_none() => {
+            Some("<percent> must be 1..100")
+        }
+        _ => None,
+    }
 }
 
 fn control_error(env: &mut dyn Env, e: ControlError) -> i32 {

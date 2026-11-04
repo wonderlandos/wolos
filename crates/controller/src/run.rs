@@ -46,6 +46,15 @@ pub trait Env {
     }
     fn stdin_line(&mut self) -> Option<String>;
     fn read_file(&self, p: &Path) -> Option<String>;
+    /// The account's "Give me more time" setting (`$XDG_CONFIG_HOME/wol/timeouts`). The real
+    /// environment opens the file without following a link or waiting on a pipe, so a FIFO put
+    /// there cannot hang `wol`; the fake reads it from its files.
+    fn patience(&self) -> shared::patience::Patience {
+        self.read_file(&self.config_home().join(shared::patience::FILE))
+            .map_or(shared::patience::Patience::Normal, |t| {
+                shared::patience::Patience::parse(&t)
+            })
+    }
     fn sys_topic(&mut self, topic: &str) -> Option<serde_json::Value>;
     fn now_secs(&self) -> u64;
     fn config_home(&self) -> PathBuf;
@@ -329,6 +338,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "seal.apply" => crate::seal::apply(env, inv),
         "seal.check" => crate::seal::check(env),
         "seal.off" => crate::pkg::seal_off(env),
+        "layers.list" => crate::pkg::list(env, inv),
         "layers.fold" => crate::pkg::fold(env, inv),
         "layers.clear" => crate::pkg::clear(env),
         "pkg" => crate::pkg::pkg_verb(env, inv),
@@ -1627,6 +1637,17 @@ impl Env for RealEnv {
     }
     fn read_file(&self, p: &Path) -> Option<String> {
         std::fs::read_to_string(p).ok()
+    }
+    fn patience(&self) -> shared::patience::Patience {
+        use std::os::unix::fs::MetadataExt;
+        // The owner of /proc/self is the process's effective user: the file must be that account's.
+        let Ok(me) = std::fs::metadata("/proc/self") else {
+            return shared::patience::Patience::Normal;
+        };
+        shared::patience::Patience::read_owned(
+            &self.config_home().join(shared::patience::FILE),
+            me.uid(),
+        )
     }
     fn sys_topic(&mut self, topic: &str) -> Option<serde_json::Value> {
         wol_core::system::SystemApi::default_host().topic_json(topic)

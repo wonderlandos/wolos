@@ -60,7 +60,9 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   new slot is blessed (a good boot, `boot-ok`). Kernel, initramfs and systemd packages and `-Syu` (also `-Syu <pkg>`) go to
   the pending slot instead (taking effect at the next restart; a second change stacks on it); queries pass through.
   A change that fails before pacman commits leaves nothing; one that fails after pacman committed keeps its layer, which
-  merges at the next restart.
+  merges at the next restart. `wol layers list` (no administrator, `--json` too) shows the live layers: each one's packages
+  added and removed, size, date and whether it is still live only (folded at the next update) or already part of this
+  system (removed at the next restart).
 - Developer mode: `wol seal off` (root) makes the running system writable and stops the boot check until the next update.
 - `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones.
 

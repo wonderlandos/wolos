@@ -30,6 +30,7 @@ fn ships(p: &str) -> bool {
 /// `"packages": [...]` of a registry record (the records are flat, one string per entry).
 fn record_packages(id: &str) -> Vec<String> {
     let path = match id {
+        "dev" => "files/usr/share/wolos/modules/dev.json",
         "ime" => "files/usr/share/wolos/modules/ime.json",
         "scanner" => "files/usr/share/wolos/modules/scanner.json",
         _ => panic!("{id}: no such record in this test"),
@@ -353,6 +354,38 @@ fn plugin_schema_is_installed() {
     assert!(read("wolos-system/PKGBUILD").contains(
         "docs/plugins/plugin.schema.json\" \"$pkgdir/usr/share/wolos/plugins.schema.json\""
     ));
+}
+
+/// QA-PWR-4: the Developer module can compile and link. `crystal build` links through `cc`, `make`
+/// runs a `wol app` project and mise builds some runtimes from source: the C toolchain comes with the
+/// module (`base-devel`), not with the image, and the size the module promises grew with it.
+#[test]
+fn dev_module_carries_a_c_toolchain() {
+    let pk = record_packages("dev");
+    assert!(pk.iter().any(|p| p == "base-devel"), "{pk:?}");
+    assert!(
+        pk.iter().any(|p| p == "crystal"),
+        "crystal needs the toolchain it links with"
+    );
+    // The image lists live in wolos-iso (a sibling: absent in a checkout of this repo alone).
+    if siblings::root().join("profile/packages.x86_64").exists() {
+        assert!(
+            !ships("base-devel"),
+            "the toolchain belongs to the module, not to the image"
+        );
+    }
+    let t = read("files/usr/share/wolos/modules/dev.json");
+    let m = wol_core::modules::Module::parse(&t).expect("dev record");
+    assert!(
+        m.summary.contains("C toolchain"),
+        "the record tells what the module brings: {}",
+        m.summary
+    );
+    assert!(
+        m.size_mb >= 450,
+        "base-devel adds about 94 MiB to the download (pacman -Sp, measured): {}",
+        m.size_mb
+    );
 }
 
 /// The `ime` (fcitx5) and `scanner` (sane) optional modules: a registry record each, the packages of

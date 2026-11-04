@@ -472,6 +472,159 @@ pub fn ordered(mut names: Vec<String>) -> Vec<String> {
     names
 }
 
+/// Where a live layer stands (`wol layers list`, QA-PWR-7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    /// Installed on this system only; the next system update copies it into the new slot.
+    LiveOnly,
+    /// The booted slot already holds it (its folded list names it); the next restart removes it.
+    InThisSystem,
+    /// pacman never finished in it (no record); it is removed, never merged.
+    Unfinished,
+}
+
+impl State {
+    /// What the listing says happens to a layer in this state.
+    pub fn words(self) -> &'static str {
+        match self {
+            State::LiveOnly => "live only, folded into the system at the next update",
+            State::InThisSystem => "already part of this system, removed at the next restart",
+            State::Unfinished => "unfinished, removed at the next restart",
+        }
+    }
+    /// The state's word in `--json`.
+    pub fn id(self) -> &'static str {
+        match self {
+            State::LiveOnly => "live-only",
+            State::InThisSystem => "in-system",
+            State::Unfinished => "unfinished",
+        }
+    }
+}
+
+/// One live layer as `wol layers list` shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub name: String,
+    /// Bytes on disk (0 when unknown).
+    pub bytes: u64,
+    /// `YYYY-MM-DD` the layer was finished (its record's date); empty when unknown.
+    pub date: String,
+    /// Packages added and removed, `name-version-release`.
+    pub installed: Vec<String>,
+    pub removed: Vec<String>,
+    pub state: State,
+}
+
+/// `du` of the layer directories: bytes, one line per path.
+pub fn size_argv(names: &[String]) -> Vec<String> {
+    let mut v = vec!["du".to_owned(), "-sb".into(), "--".into()];
+    v.extend(
+        names
+            .iter()
+            .filter(|n| is_layer_name(n))
+            .map(|n| format!("{DIR}/{n}")),
+    );
+    v
+}
+
+/// `find` that prints the day each layer's record was written: `YYYY-MM-DD <path>`.
+pub fn date_argv() -> Vec<String> {
+    [
+        "find",
+        DIR,
+        "-mindepth",
+        "2",
+        "-maxdepth",
+        "2",
+        "-name",
+        RECORD,
+        "-printf",
+        "%TY-%Tm-%Td %p\\n",
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
+/// The rows of `wol layers list`, oldest layer first. `ls` is `ls -1` of [`DIR`], `du` the output
+/// of [`size_argv`], `dates` that of [`date_argv`] (None = could not be read: unknown, not 0), `record(name)` the text of a layer's
+/// [`RECORD`] (None = not there), `folded` the booted slot's folded list ([`folded_list`]).
+pub fn list(
+    ls: &str,
+    du: Option<&str>,
+    dates: Option<&str>,
+    record: impl Fn(&str) -> Option<String>,
+    folded: &str,
+) -> Vec<Row> {
+    let names = ordered(
+        ls.lines()
+            .map(str::trim)
+            .filter(|n| is_layer_name(n))
+            .map(str::to_owned)
+            .collect(),
+    );
+    let by_path = |text: Option<&str>, name: &str| -> Option<String> {
+        text?.lines().find_map(|l| {
+            let (head, path) = l.split_once(['\t', ' '])?;
+            let path = path.trim();
+            let dir = path.strip_prefix(DIR)?.trim_start_matches('/');
+            (dir.split('/').next() == Some(name)).then(|| head.to_owned())
+        })
+    };
+    names
+        .iter()
+        .map(|n| {
+            let text = record(n);
+            let rec = text.as_deref().map(Record::parse).unwrap_or_default();
+            let state = if text.is_none() {
+                State::Unfinished
+            } else if folded.lines().any(|f| f.trim() == n) {
+                State::InThisSystem
+            } else {
+                State::LiveOnly
+            };
+            Row {
+                name: n.clone(),
+                bytes: by_path(du, n).and_then(|b| b.parse().ok()).unwrap_or(0),
+                date: by_path(dates, n).unwrap_or_default(),
+                installed: rec.installed,
+                removed: rec.removed,
+                state,
+            }
+        })
+        .collect()
+}
+
+/// What `wol layers list` prints for `rows` (a sentence when there are none).
+pub fn table(rows: &[Row]) -> String {
+    if rows.is_empty() {
+        return "No live layers: every package on this system is part of the system itself.\n"
+            .into();
+    }
+    let mut out = String::new();
+    for r in rows {
+        let size = if r.bytes == 0 {
+            String::new()
+        } else {
+            crate::storage::human(r.bytes)
+        };
+        out.push_str(&format!(
+            "{}  {}  {}  {}\n",
+            r.name,
+            if r.date.is_empty() { "-" } else { &r.date },
+            if size.is_empty() { "-" } else { &size },
+            r.state.words()
+        ));
+        if !r.installed.is_empty() {
+            out.push_str(&format!("  added:   {}\n", r.installed.join(" ")));
+        }
+        if !r.removed.is_empty() {
+            out.push_str(&format!("  removed: {}\n", r.removed.join(" ")));
+        }
+    }
+    out
+}
+
 /// Database directories to copy into a slot and package names to drop from it.
 pub fn db_changes(recs: &[Record]) -> (Vec<String>, Vec<String>) {
     let mut add: Vec<String> = Vec::new();
@@ -493,6 +646,63 @@ pub fn db_changes(recs: &[Record]) -> (Vec<String>, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-PWR-7: which packages are live-only, how big, since when.
+    #[test]
+    fn layers_list_names_packages_size_date_and_what_happens_next() {
+        let rec = |n: &str| match n {
+            "wolos-layer-0001" => Some(
+                Record {
+                    installed: vec!["htop-3.4.1-1".into(), "base-devel-1-2".into()],
+                    removed: vec!["nano-8.2-1".into()],
+                }
+                .to_json(),
+            ),
+            "wolos-layer-0002" => Some(Record::default().to_json()),
+            _ => None,
+        };
+        let du = "1234567\t/var/lib/extensions/wolos-layer-0001\n99\t/var/lib/extensions/wolos-layer-0002\n5\t/var/lib/extensions/wolos-layer-0010\n";
+        let dates = "2026-11-03 /var/lib/extensions/wolos-layer-0001/wolos-layer.json\n2026-11-02 /var/lib/extensions/wolos-layer-0002/wolos-layer.json\n";
+        let rows = list(
+            "wolos-layer-0010\nwolos-layer-0002\nwolos-layer-0001\nstray\n",
+            Some(du),
+            Some(dates),
+            rec,
+            "wolos-layer-0002\n",
+        );
+        // A size or a date that could not be read is unknown, not 0.
+        let blind = list("wolos-layer-0001\n", None, None, |_| Some("{}".into()), "");
+        assert_eq!((blind[0].bytes, blind[0].date.as_str()), (0, ""));
+        assert!(
+            table(&blind).contains("wolos-layer-0001  -  -  live only"),
+            "{}",
+            table(&blind)
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["wolos-layer-0001", "wolos-layer-0002", "wolos-layer-0010"]
+        );
+        assert_eq!(rows[0].bytes, 1_234_567);
+        assert_eq!(rows[0].date, "2026-11-03");
+        assert_eq!(rows[0].installed, ["htop-3.4.1-1", "base-devel-1-2"]);
+        assert_eq!(rows[0].state, State::LiveOnly);
+        assert_eq!(rows[1].state, State::InThisSystem);
+        assert_eq!(rows[2].state, State::Unfinished);
+        let t = table(&rows);
+        assert!(t.contains("wolos-layer-0001  2026-11-03  1.2 MB  live only, folded into the system at the next update"), "{t}");
+        assert!(
+            t.contains("  added:   htop-3.4.1-1 base-devel-1-2\n"),
+            "{t}"
+        );
+        assert!(t.contains("  removed: nano-8.2-1\n"), "{t}");
+        assert!(table(&[]).starts_with("No live layers"));
+        // The du/find lines: layer names only, never a path from the listing.
+        assert_eq!(
+            size_argv(&["wolos-layer-0001".into(), "../etc".into()]),
+            ["du", "-sb", "--", "/var/lib/extensions/wolos-layer-0001"]
+        );
+    }
 
     #[test]
     fn layers_number_after_the_last() {

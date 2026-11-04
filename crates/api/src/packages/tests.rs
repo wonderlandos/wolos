@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wold's package changes against a fake system.
 use super::*;
+use shared::patience::Patience;
 
 /// The refusal leads to a real row: the section title Privacy & Security shows for the
 /// grant, and the app's name (MANUAL 0.12.0: it named a "Software" section that is not there).
@@ -177,20 +178,44 @@ fn administrator_sheets_are_waited_for_as_long_as_they_may_run() {
         capability: "packages-update".into(),
         what: "x".into(),
     };
-    assert_eq!(ask_wait(&change), click);
+    assert_eq!(ask_wait(&change, Patience::Normal), click);
     let file = file_sheet();
     let long = Duration::from_secs(wol_core::admin::LONG_STEP_SECS.into());
-    assert!(ask_wait(&file) >= click + long);
-    assert!(ask_wait(&ApprovalRequest::SystemRollback) >= click + long);
+    assert!(ask_wait(&file, Patience::Normal) >= click + long);
+    assert!(ask_wait(&ApprovalRequest::SystemRollback, Patience::Normal) >= click + long);
     let three = ApprovalRequest::Packages {
         verb: "install".into(),
         names: vec!["a".into(), "b".into(), "c".into()],
     };
-    assert!(ask_wait(&three) >= click + long * 3);
+    assert!(ask_wait(&three, Patience::Normal) >= click + long * 3);
     let chan = ApprovalRequest::SystemChannel {
         channel: "beta".into(),
     };
-    assert!(ask_wait(&chan) > click);
+    assert!(ask_wait(&chan, Patience::Normal) > click);
+}
+
+/// QA-ACC-6: with "Give me more time" the sheet stays open x2, x5 or until [`shared::patience::NEVER_SECS`],
+/// and wold waits for it (10 s more for the answer to arrive), so a click on a late sheet is not lost.
+#[test]
+fn an_account_that_asked_for_more_time_gets_a_longer_wait() {
+    let change = ApprovalRequest::Change {
+        capability: "packages-update".into(),
+        what: "x".into(),
+    };
+    let secs = |p| ask_wait(&change, p).as_secs();
+    assert_eq!(secs(Patience::Normal), 60);
+    assert_eq!(secs(Patience::Double), 110);
+    assert_eq!(secs(Patience::Five), 260);
+    assert_eq!(
+        secs(Patience::Never),
+        u64::from(shared::patience::NEVER_SECS) + 10
+    );
+    // The administrator's steps come after the click, whatever the click took.
+    let file = file_sheet();
+    assert!(
+        ask_wait(&file, Patience::Five)
+            >= ask_wait(&file, Patience::Normal) + Duration::from_secs(200)
+    );
 }
 
 /// Audit S4-13: a failed administrator sheet of several names makes no "nothing changed"

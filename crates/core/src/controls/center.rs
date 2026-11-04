@@ -50,8 +50,9 @@ pub struct BtDevice {
 /// Compositor-backed accessibility shortcuts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct A11y {
-    pub reduce_motion: bool,
-    pub zoom: bool,
+    /// None = the compositor does not answer for it (its tile and row are left out).
+    pub reduce_motion: Option<bool>,
+    pub zoom: Option<bool>,
 }
 
 /// Cursor zoom factor for Accessibility > Zoom.
@@ -312,9 +313,13 @@ impl Controls {
             self.run(&["hyprctl", "-j", "getoption", name])
                 .and_then(|s| parse_hypr_option(&s))
         };
-        Some(A11y {
-            reduce_motion: opt("animations:enabled")? == 0.0,
-            zoom: opt("cursor:zoom_factor")? > 1.0,
+        // Each on its own (QA-SET-67): a compositor that answers for one option and not the other
+        // still gets the tile for the one it answers (a `?` on the first took both away).
+        let reduce_motion = opt("animations:enabled").map(|v| v == 0.0);
+        let zoom = opt("cursor:zoom_factor").map(|v| v > 1.0);
+        (reduce_motion.is_some() || zoom.is_some()).then_some(A11y {
+            reduce_motion,
+            zoom,
         })
     }
 
@@ -599,13 +604,43 @@ mod tests {
         assert_eq!(
             c.accessibility(),
             Some(A11y {
-                reduce_motion: true,
-                zoom: false
+                reduce_motion: Some(true),
+                zoom: Some(false)
             })
         );
         assert_eq!(c.set_zoom(true), Ok(()));
         assert_eq!(c.set_reduce_motion(false), Ok(()));
         assert_eq!(c.set_reduce_motion(true), Err(ControlError::Failed));
+    }
+
+    /// QA-SET-67: a compositor that answers for Reduce Motion but not Zoom (or the other way round)
+    /// still offers the one it answers.
+    #[test]
+    fn accessibility_options_are_read_one_by_one() {
+        let (h, c, _) = controls();
+        h.command(
+            "hyprctl -j getoption animations:enabled",
+            r#"{"option":"animations:enabled","int":1,"set":true}"#,
+        );
+        assert_eq!(
+            c.accessibility(),
+            Some(A11y {
+                reduce_motion: Some(false),
+                zoom: None
+            })
+        );
+        let (h, c, _) = controls();
+        h.command(
+            "hyprctl -j getoption cursor:zoom_factor",
+            r#"{"option":"cursor:zoom_factor","float":2.000000,"set":true}"#,
+        );
+        assert_eq!(
+            c.accessibility(),
+            Some(A11y {
+                reduce_motion: None,
+                zoom: Some(true)
+            })
+        );
     }
 
     #[test]

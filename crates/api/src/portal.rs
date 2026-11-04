@@ -22,6 +22,26 @@ pub struct Caller {
     pub app: String,
 }
 
+/// Where `uid`'s Timeouts setting is: its home from `/etc/passwd`, `.config/wol/timeouts`
+/// ([`shared::patience::FILE`]). wold does not see the account's `$XDG_CONFIG_HOME`.
+pub fn patience_path(passwd: &str, uid: u32) -> Option<std::path::PathBuf> {
+    let home = crate::services::identity(passwd, uid)?.home;
+    (home.starts_with('/') && !home.split('/').any(|c| c == "..")).then(|| {
+        std::path::Path::new(&home)
+            .join(".config")
+            .join(shared::patience::FILE)
+    })
+}
+
+/// The account's "Give me more time" setting (Settings > Accessibility > Timeouts); normal when it
+/// has none or the file is not the account's own small file ([`shared::patience::Patience::read_owned`]).
+pub fn patience_of(uid: u32) -> shared::patience::Patience {
+    let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+    patience_path(&passwd, uid).map_or(shared::patience::Patience::Normal, |p| {
+        shared::patience::Patience::read_owned(&p, uid)
+    })
+}
+
 /// Recent notifications: id -> (account, process that posted it), so a pressed button reaches
 /// only that process. Bounded: the oldest are forgotten.
 #[derive(Default)]
@@ -815,7 +835,16 @@ fn decide<W: Write + Send>(
                 helper: caller.app.clone(),
                 request: approval.request,
             };
-            let wait = Duration::from_secs(shared::shell::APPROVAL_WAIT_SECS.into());
+            // The sheet waits as long as the account's Timeouts setting says (QA-ACC-6); wold waits
+            // for it, not for the 60 s of a person who needed no more time.
+            let wait = Duration::from_secs(
+                patience_of(caller.uid)
+                    .secs(shared::shell::APPROVAL_TIMEOUT_SECS)
+                    .saturating_add(
+                        shared::shell::APPROVAL_WAIT_SECS - shared::shell::APPROVAL_TIMEOUT_SECS,
+                    )
+                    .into(),
+            );
             st.asks
                 .ask_from(bus, caller, Ask::Approval { approval }, wait)
         }
@@ -858,6 +887,32 @@ mod tests {
     }
 
     const POST: &str = r#"{"call":"notification.post","title":"Done","body":"ok"}"#;
+
+    /// QA-ACC-6: wold finds the account's Timeouts file from /etc/passwd, and only inside a plain home.
+    #[test]
+    fn the_timeouts_file_is_in_the_accounts_home() {
+        let passwd = concat!(
+            "root:x:0:0::/root:/bin/sh\n",
+            "ana:x:1000:1000:Ana:/home/ana:/bin/zsh\n",
+            "odd:x:1001:1001::/home/../etc:/bin/sh\n",
+            "rel:x:1002:1002::home:/bin/sh\n",
+        );
+        assert_eq!(
+            patience_path(passwd, 1000).as_deref(),
+            Some(std::path::Path::new("/home/ana/.config/wol/timeouts"))
+        );
+        assert_eq!(
+            patience_path(passwd, 1001),
+            None,
+            "a home with .. is not followed"
+        );
+        assert_eq!(
+            patience_path(passwd, 1002),
+            None,
+            "a relative home is not used"
+        );
+        assert_eq!(patience_path(passwd, 4242), None);
+    }
 
     fn caller(app: &str) -> Caller {
         Caller {

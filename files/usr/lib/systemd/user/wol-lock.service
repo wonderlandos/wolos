@@ -14,3 +14,5 @@ ExecStart=/usr/bin/wol-lock
 Restart=on-failure
 RestartSec=1
 RestartPreventExitStatus=69
+# Not the pick of systemd-oomd: a killed lock screen is a black screen until the supervisor is back.
+ManagedOOMPreference=omit

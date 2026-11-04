@@ -427,6 +427,12 @@ pub const TREE: &[Cmd] = &[
         "Developer mode: make the system writable again and stop checking it (root)",
     ),
     cmd(
+        &["layers", "list"],
+        "layers.list",
+        &[],
+        "Live layers: the packages installed since the last update, their size and date",
+    ),
+    cmd(
         &["layers", "fold"],
         "layers.fold",
         &[opt("a"), opt("b"), opt("c")],

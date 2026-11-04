@@ -218,6 +218,11 @@ impl Server {
             Err(e) => return Ok(tool_error(&e.to_string())),
         };
         let shown: Vec<&str> = inv.args.iter().map(|a| a.1.as_str()).collect();
+        // A value the verb would refuse is said so before the gate asks anyone (QA-PWR-20).
+        if let Some(msg) = crate::verbs::bad_argument(&inv) {
+            log(env, &shown, Outcome::Failed, msg);
+            return Ok(tool_error(msg));
+        }
         let helper = self.helper();
         let (approved, note) = match approve::decide(env, &helper, &tool, rule, &inv, secret) {
             Verdict::Stop(o, msg) => {
@@ -354,6 +359,9 @@ impl Env for ToolEnv<'_> {
     }
     fn read_file(&self, p: &Path) -> Option<String> {
         self.inner.read_file(p)
+    }
+    fn patience(&self) -> shared::patience::Patience {
+        self.inner.patience()
     }
     fn sys_topic(&mut self, topic: &str) -> Option<Value> {
         self.inner.sys_topic(topic)

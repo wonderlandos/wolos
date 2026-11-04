@@ -501,6 +501,42 @@ fn bad_arguments_are_tool_errors() {
     assert!(!e.home.join("wolos/theme").exists());
 }
 
+/// QA-PWR-20: a value the verb would refuse is reported as that, not as "No WolOS session is
+/// showing" (the gate ran first and found nobody to ask).
+#[test]
+fn a_bad_value_is_not_blamed_on_a_missing_session() {
+    let mut e = FakeEnv {
+        home: temp_home("badvalue"),
+        ..Default::default()
+    };
+    let mut s = init(&mut e);
+    for (tool, args, want) in [
+        (
+            "audio_volume",
+            json!({"percent": "abc"}),
+            "<percent> must be 0..100",
+        ),
+        (
+            "audio_volume",
+            json!({"percent": 300}),
+            "<percent> must be 0..100",
+        ),
+        (
+            "display_brightness",
+            json!({"percent": 0}),
+            "<percent> must be 1..100",
+        ),
+    ] {
+        let r = call(&mut s, &mut e, tool, args);
+        assert_eq!(r["isError"], true, "{r}");
+        assert_eq!(text(&r), want, "{r}");
+    }
+    assert!(e.requests.is_empty() && e.execs.is_empty());
+    // A good value still reaches the gate, which has no session to ask.
+    let r = call(&mut s, &mut e, "audio_volume", json!({"percent": 40}));
+    assert!(text(&r).contains("No WolOS session is showing"), "{r}");
+}
+
 /// Admin verbs: the shell asks for the password and runs it; the helper never does.
 #[test]
 fn admin_tool_runs_in_the_shell_after_the_password() {
