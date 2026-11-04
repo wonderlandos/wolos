@@ -790,7 +790,22 @@ fn system_update_needs_a_signed_newer_release() {
         signature: "aé".into(),
     }
     .encode();
-    assert!(!handle(&odd, Some((1000, APP)), &all, &f).ok);
+    // QA-SHADOW-22: the wire refuses a signature that is not 128 hex digits before anything is
+    // checked, with its own sentence; only a well-formed one that does not verify (the forged one
+    // above) reads "not signed by WolOS", and that is the sentence the person sees.
+    let refused = handle(&odd, Some((1000, APP)), &all, &f);
+    assert!(!refused.ok);
+    assert_eq!(refused.code, Some(Code::InvalidArgument));
+    assert_eq!(
+        refused.message.as_deref(),
+        Some("The release signature is not valid.")
+    );
+    let not_signed = handle(&forged, Some((1000, APP)), &all, &f);
+    assert_eq!(
+        not_signed.message.as_deref(),
+        Some("That release is not signed by WolOS, so it was not installed.")
+    );
+    assert_eq!(f.ran.borrow().len(), 1, "nothing ran for either");
     let older = manifest("2026/12/01");
     let down = call(&older, &wol_core::package::sign(&seed, older.as_bytes()));
     assert_eq!(

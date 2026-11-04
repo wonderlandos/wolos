@@ -1,0 +1,24 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# home-quota [HOME]: cap the btrfs subvolume that holds HOME (default /home, @home) at 85 % of the
+# file system, so one account that fills its files leaves the other 15 % to the system: the
+# journal, the package database, updates and every other account (QA-LIVE-17: a plain user's
+# fallocate took / and /var and /home down to 224 KB; all one btrfs, no quota). Run by install-run
+# on the new system's /home and by wol-admind after user-add (idempotent: the same limit again).
+# No `set -e`: a file system that is not btrfs, or a kernel without quotas, is not an error for
+# the account being made; every step is tried and the script exits 0 (the reason goes to stderr).
+# HOME_QUOTA_PERCENT: another share than 85 (a test, a policy).
+set -u
+home=${1:-/home}
+percent=${HOME_QUOTA_PERCENT:-85}
+[ "$(findmnt -n -o FSTYPE -T "$home" 2>/dev/null)" = btrfs ] || exit 0
+read -r blocks bsize <<EOF
+$(stat -f -c '%b %S' "$home" 2>/dev/null)
+EOF
+case ${blocks:-}${bsize:-} in '' | *[!0-9]*) echo "home-quota: cannot read the size of $home" >&2; exit 0 ;; esac
+limit=$((blocks * bsize / 100 * percent))
+# Simple quotas (kernel 6.7+) count without the rescan of full qgroups; the full kind where they
+# are not there. Enabling twice is harmless.
+btrfs quota enable --simple "$home" 2>/dev/null || btrfs quota enable "$home" 2>/dev/null
+btrfs qgroup limit "$limit" "$home" || echo "home-quota: the limit on $home was not set" >&2
+exit 0

@@ -392,6 +392,9 @@ pub fn plan_with(
                 argv: users::password_argv(&a[0]).unwrap_or_default(),
                 input: format!("{}:{}\n", a[0], a[3]),
             },
+            // QA-LIVE-17: the homes' subvolume keeps its cap (85 % of the pool) so no account can
+            // fill the system's share; an image made before the cap gets it with the next account.
+            AdminStep::Run(vec![users::HOME_QUOTA.into()]),
         ],
         // QA-DATA-8: never under a signed-in person (their session would lose its files and
         // processes), and the home folder stays unless deleting it was asked for.
@@ -1384,7 +1387,7 @@ mod tests {
             (
                 UserAdd,
                 &["bob", "Bob B", "yes", "s3cret-pw"],
-                "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video bob; chpasswd <stdin",
+                "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video bob; chpasswd <stdin; /usr/lib/wolos/home-quota",
             ),
             (UserRemove, &["bob"], "userdel bob"),
             (UserRemove, &["bob", "with-files"], "userdel -r bob"),
@@ -1927,6 +1930,16 @@ mod tests {
             (content.render(None).as_str(), *mode),
             (r#"{"lock_after_secs":60}"#, 0o644)
         );
+    }
+
+    /// QA-LIVE-17: a new account sets (again) the cap on the homes' subvolume, last, after the
+    /// account and its password exist; the helper takes no argument that could carry a secret.
+    #[test]
+    fn a_new_account_sets_the_home_quota() {
+        let p = plan(&r(UserAdd, &["bob", "Bob", "no", "s3cret-pw"])).unwrap();
+        assert_eq!(p.len(), 3);
+        assert!(matches!(&p[2], AdminStep::Run(v) if v == &["/usr/lib/wolos/home-quota"]));
+        assert_eq!(users::HOME_QUOTA, "/usr/lib/wolos/home-quota");
     }
 
     #[test]

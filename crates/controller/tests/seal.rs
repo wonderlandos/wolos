@@ -422,6 +422,7 @@ const PASS_CMDLINE: &str =
 #[test]
 fn reseal_binds_the_chip_again_with_what_was_typed_and_forgets_it() {
     let mut env = FakeEnv {
+        root: true,
         files: vec![
             (PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into()),
             (
@@ -452,12 +453,14 @@ fn reseal_binds_the_chip_again_with_what_was_typed_and_forgets_it() {
 #[test]
 fn reseal_does_nothing_when_the_chip_opened_the_disk() {
     let mut chip = FakeEnv {
+        root: true,
         files: vec![(PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into())],
         ..Default::default()
     };
     assert_eq!(run("encrypt reseal", &mut chip), 0);
     assert!(chip.execs.is_empty());
     let mut plain = FakeEnv {
+        root: true,
         keys: vec![("cryptsetup".into(), b"pw\0".to_vec())],
         ..Default::default()
     };
@@ -468,6 +471,7 @@ fn reseal_does_nothing_when_the_chip_opened_the_disk() {
     );
     assert!(plain.execs.is_empty());
     let mut refused = FakeEnv {
+        root: true,
         files: vec![(PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into())],
         keys: vec![("cryptsetup".into(), b"a\0b\0".to_vec())],
         exec_codes: vec![1, 1],
@@ -491,6 +495,7 @@ fn reseal_does_nothing_when_the_chip_opened_the_disk() {
 fn reseal_leaves_a_passphrase_only_install_alone() {
     for cmdline in [PASS_CMDLINE, CMDLINE] {
         let mut env = FakeEnv {
+            root: true,
             files: vec![(PathBuf::from("/proc/cmdline"), cmdline.into())],
             keys: vec![("cryptsetup".into(), b"hunter2\0".to_vec())],
             exec_codes: vec![1],
@@ -508,6 +513,7 @@ fn reseal_leaves_a_passphrase_only_install_alone() {
 fn reseal_reads_the_options_of_its_own_disk() {
     let other = "rd.luks.name=U-1=wolosroot rd.luks.options=U-2=tpm2-device=auto,discard rd.luks.options=U-1=discard\n";
     let mut env = FakeEnv {
+        root: true,
         files: vec![(PathBuf::from("/proc/cmdline"), other.into())],
         keys: vec![("cryptsetup".into(), b"pw\0".to_vec())],
         ..Default::default()
@@ -516,6 +522,7 @@ fn reseal_reads_the_options_of_its_own_disk() {
     assert!(env.execs.is_empty());
     let both = "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=discard,tpm2-device=auto\n";
     let mut env = FakeEnv {
+        root: true,
         files: vec![(PathBuf::from("/proc/cmdline"), both.into())],
         keys: vec![("cryptsetup".into(), b"pw\0".to_vec())],
         exec_codes: vec![0],
@@ -910,4 +917,21 @@ fn a_deleted_manifest_fails_the_check() {
     };
     assert_eq!(run("seal check", &mut env), 1);
     assert!(env.err.contains("protected file list"), "{}", env.err);
+}
+
+/// QA-LIVE3-32: `wol encrypt reseal` as a standard user was a silent success. It is root's (the
+/// service runs it): anyone else is told so, with the denied exit, and nothing runs.
+#[test]
+fn reseal_as_a_user_says_it_is_for_administrators() {
+    let mut env = FakeEnv {
+        root: false,
+        files: vec![(PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into())],
+        keys: vec![("cryptsetup".into(), b"pw\0".to_vec())],
+        ..Default::default()
+    };
+    let rc = run("encrypt reseal", &mut env);
+    assert_eq!(rc, 77, "{}", env.err);
+    assert!(env.err.contains("administrator"), "{}", env.err);
+    assert!(env.execs.is_empty());
+    assert_eq!(env.keys.len(), 1, "the cached secret is not touched");
 }

@@ -58,12 +58,14 @@ files/usr/lib/wolos/etc-settle
 files/usr/lib/wolos/etc-units
 files/usr/lib/wolos/firstboot
 files/usr/lib/wolos/gpu
+files/usr/lib/wolos/home-quota
 files/usr/lib/wolos/install-boot
 files/usr/lib/wolos/install-channel
 files/usr/lib/wolos/install-check
 files/usr/lib/wolos/install-disks
 files/usr/lib/wolos/install-run
 files/usr/lib/wolos/installer-session
+files/usr/lib/wolos/media-unmount
 files/usr/lib/wolos/modules-disable-ai-claude
 files/usr/lib/wolos/modules-disable-dev
 files/usr/lib/wolos/modules-enable-ai-claude
