@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Search understands what you mean (docs/modules/search.md): Settings search, the Search bar and `wol help` find rows, apps, manual sections and commands by meaning, in your language, on the computer (a 15 MB table of word pieces, nothing is sent). Word matches still come first. The Search bar offers "Did you mean" when nothing matches. `wol help <words>` where the words are not a command now lists the commands and manual pages that mean them (it used to print the usage with nothing in it) and exits 66 when nothing matches; `wol <word>` with an unknown first word suggests the command that means it.
 - libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
 - PowerShell is a terminal shell beside zsh: the Developer module ships pwsh with the WolOS profile and completions, `wol-term-shell` starts it from foot, ghostty and kitty, and Settings > General has a Shells row.
 

@@ -1,0 +1,11 @@
+[package]
+name = "wolsem"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "On-device search by meaning: a static token-embedding table, cosine top-k, rank fusion, a query map between languages (docs/modules/search.md)"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

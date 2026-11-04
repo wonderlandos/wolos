@@ -272,6 +272,17 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
             } else {
                 inv.all("command").iter().map(|s| s.to_string()).collect()
             };
+            // Words that are no command are a question: the commands and manual sections that
+            // mean it (docs/modules/search.md), on the device.
+            if !path.is_empty() && !crate::helpfind::names_a_command(&path) {
+                let found = crate::helpfind::find(&path, wolsem::installed());
+                env.out(&crate::helpfind::text(&path, &found));
+                return if found.is_empty() {
+                    ErrorCode::NotFound.exit()
+                } else {
+                    0
+                };
+            }
             env.out(&help(&path));
             0
         }
