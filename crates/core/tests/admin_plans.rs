@@ -227,3 +227,18 @@ fn user_remove_keeps_home_by_default() {
     let r = wol_core::admin::plan_with(&req(&["bob"]), &signed_in);
     assert!(r.as_ref().is_err_and(|e| e.contains("signed in")), "{r:?}");
 }
+
+/// Main 2026-11-04 (A-FOLLOWUP 8567): the default sound output is per person on Linux (PipeWire,
+/// `wpctl set-default`), never a root change. `audio-default` planned the FreeBSD
+/// `sysctl hw.snd.default_unit=N`; it is no administrator action any more.
+#[test]
+fn no_admin_plan_runs_sysctl_hw_snd() {
+    assert_eq!(AdminAction::parse("audio-default"), None);
+    assert!(AdminAction::ALL.iter().all(|a| a.name() != "audio-default"));
+    let source = include_str!("../src/admin.rs");
+    assert!(
+        !source.contains("hw.snd"),
+        "a FreeBSD sound sysctl is still planned"
+    );
+    assert!(!plan_programs(source).iter().any(|p| p == "sysctl"));
+}

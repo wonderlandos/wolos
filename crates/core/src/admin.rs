@@ -72,12 +72,6 @@ pub const REPORTS_TIMER: &str = "wolos-report.timer";
 fn on_off(s: &str) -> bool {
     s == "on" || s == "off"
 }
-fn digits_after(s: &str, prefix: &str, min: usize, max: usize) -> bool {
-    s.len() > min
-        && s.len() < max
-        && s.starts_with(prefix)
-        && s[prefix.len()..].bytes().all(|b| b.is_ascii_digit())
-}
 /// A network interface name as the kernel accepts it (`dev_valid_name`):
 /// 1..=15 bytes, not `.`/`..`, no `/`, `:` or whitespace. Control bytes and a
 /// leading `-` are refused too, so the name can never read as an option.
@@ -88,9 +82,6 @@ fn iface(s: &str) -> bool {
         && !s.starts_with('-')
         && s.bytes()
             .all(|b| b.is_ascii_graphic() && b != b'/' && b != b':')
-}
-fn pcm(s: &str) -> bool {
-    digits_after(s, "pcm", 3, 7)
 }
 
 fn binds(json: &str) -> Option<String> {
@@ -172,7 +163,6 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         }
         AdminAction::WifiPower => ok(n == 2 && iface(a[0]) && on_off(a[1])),
         AdminAction::Bluetooth => ok(n == 1 && on_off(a[0])),
-        AdminAction::AudioDefault => ok(n == 1 && pcm(a[0])),
         AdminAction::Appearance => {
             ok(n == 1 && (a[0] == appearance::LIGHT || a[0] == appearance::DARK))
         }
@@ -272,14 +262,6 @@ fn write(path: &str, mode: u32, s: String) -> AdminStep {
         mode,
         content: WriteContent::Fixed(s),
     }
-}
-
-/// `sysctl hw.snd.default_unit=N` for `pcmN`.
-pub fn audio_default_argv(pcm: &str) -> Vec<String> {
-    vec![
-        "sysctl".into(),
-        format!("hw.snd.default_unit={}", pcm.trim_start_matches("pcm")),
-    ]
 }
 
 /// Power mode: save it for `wol power apply` (AC changes, boot, resume), then run the policy
@@ -391,7 +373,6 @@ pub fn plan_with(
             argv(&["systemctl", "start", "bluetooth.service"]),
         ],
         AdminAction::Bluetooth => vec![argv(&["systemctl", "stop", "bluetooth.service"])],
-        AdminAction::AudioDefault => vec![AdminStep::Run(audio_default_argv(&a[0]))],
         AdminAction::Appearance => vec![write(appearance::FILE, 0o644, a[0].clone())],
         AdminAction::Keybinds => {
             vec![write(
@@ -792,7 +773,6 @@ pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
         (A::WifiJoin, Cached),
         (A::WifiPower, Cached),
         (A::Bluetooth, Cached),
-        (A::AudioDefault, Cached),
         (A::Appearance, Cached),
         (A::Keybinds, Cached),
         (A::Idle, Cached),
@@ -1068,12 +1048,6 @@ mod tests {
     fn allow_list_table() {
         let long = "x".repeat(200);
         let cases: &[(AdminAction, &[&str], bool)] = &[
-            (AudioDefault, &["pcm0"], true),
-            (AudioDefault, &["pcm12"], true),
-            (AudioDefault, &["pcm"], false),
-            (AudioDefault, &["pcm0; rm -rf /"], false),
-            (AudioDefault, &["pcm0", "x"], false),
-            (AudioDefault, &["-pcm1"], false),
             (WifiPower, &["wlan0", "on"], true),
             (WifiPower, &["wlan0", "off"], true),
             (WifiPower, &["em/0", "off"], false),
@@ -1397,7 +1371,6 @@ mod tests {
             AdminStep::Write { path, .. } => format!("write {path}"),
         };
         let cases: &[(AdminAction, &[&str], &str)] = &[
-            (AudioDefault, &["pcm1"], "sysctl hw.snd.default_unit=1"),
             (SessionPower, &["sleep"], "systemctl suspend"),
             (SessionPower, &["restart"], "systemctl reboot"),
             (SessionPower, &["shutdown"], "systemctl poweroff"),

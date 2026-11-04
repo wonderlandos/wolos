@@ -71,10 +71,20 @@ import UI yet (lead call, QA-NET-21).
 every other name goes through it (DNS-over-TLS and DNSSEC set there apply to all programs). No
 compiled-in fallback resolvers (`FallbackDNS=`; QA-NET-4).
 
+Why not `MulticastDNS=resolve` in systemd-resolved instead (decided 2026-11-04): avahi already
+answers and advertises on udp 5353 for printers, AirPlay and the Sharing name; resolved's mDNS on
+top would be a second stack on the same port, and the two make each other unreliable. With
+nss-mdns asked first only for `.local`, every other lookup still reaches resolved (`resolve
+[!UNAVAIL=return]` stays in the hosts line), so DNS-over-TLS and DNSSEC settings keep applying to
+every program (network-r2). Contract tests: `controller/tests/image_network.rs`
+(`nsswitch_has_mdns_or_resolved_off`, `resolver_has_no_hidden_fallback`) and
+`image_systemd.rs::one_mdns_stack`.
+
 Settings that open a port write a rule file in `/etc/wolos/nftables.d/` and load the ruleset again
 with `nft -f /etc/wolos/nftables.conf` while the firewall is on: Remote Login (`ssh.conf`, port 22)
 and AirPlay Receiver (`airplay.conf`: tcp 5000 and 7000, udp 319-320 and 6000-6009, local network
-only; QA-NET-5).
+only; QA-NET-5). Both ship closed and are in wolos-system's `backup=`, so an upgrade keeps what
+the setting wrote (wolos-pkgbuilds `checks/tests/recipe_firewall_files.rs`).
 
 ## Internet Sharing (hotspot)
 
