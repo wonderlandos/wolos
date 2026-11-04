@@ -95,8 +95,9 @@ Its private key then moves into the login keyring (`secret-tool store`, libsecre
 profile (`wireguard.private-key-flags 2`, not saved; `connection.autoconnect no`); Connect looks it up
 and hands it to `nmcli connection up uuid <u> passwd-file /dev/stdin`, never in argv. When no keyring
 answers, the key stays in NetworkManager's root-only profile file and Connect works without it.
-An OpenVPN `.ovpn` needs NetworkManager's OpenVPN plugin (networkmanager-openvpn, with openvpn), which the
-0.13 image does not ship yet: import says so. A password OpenVPN asks for is typed in Settings (or given
+An OpenVPN `.ovpn` needs NetworkManager's OpenVPN plugin (networkmanager-openvpn, with openvpn): the image
+ships both through wolos-system's depends (wolos-pkgbuilds `checks/tests/recipe_network_vpn.rs`); where the plugin
+is missing, import says so. A password OpenVPN asks for is typed in Settings (or given
 on stdin to `wol vpn connect`), sent the same way and remembered in the keyring once it worked. Forget
 deletes the profile and its keyring entries.
 
