@@ -40,7 +40,7 @@ const win = {
   console: { debug: (s) => process.stdout.write("LINE " + s + "\n"), log() {}, warn() {} },
   document: doc, navigator: { language: "en" },
   matchMedia: () => ({ matches: false }),
-  setTimeout, Promise, JSON, Object, Map, Error, TypeError, String,
+  setTimeout, clearTimeout, Promise, JSON, Object, Map, Error, TypeError, String,
 };
 win.window = win; win.top = win;
 const ctx = vm.createContext(win);

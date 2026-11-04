@@ -185,8 +185,16 @@ function replaceCheck(c) {
   if (i >= 0) state.data.checks[i] = c;
 }
 
+// The check's header, the one control of a row that stays enabled while a fix runs.
+function headOf(id) { return document.querySelector(`.dr-check[data-id="${CSS.escape(id)}"] .dr-head`); }
+
 async function runFix(c) {
   if (state.busy.has(c.id)) return;
+  // A busy button is disabled, and a disabled control drops the keyboard to the page body: take
+  // the person's place to the row's header first, and give it back there when the fix is over
+  // (QA-WEB-25).
+  const had = document.activeElement && document.activeElement.closest && document.activeElement.closest(`.dr-check[data-id="${CSS.escape(c.id)}"]`);
+  if (had && headOf(c.id)) headOf(c.id).focus();
   state.busy.add(c.id);
   state.results.delete(c.id);
   render();
@@ -206,6 +214,7 @@ async function runFix(c) {
   state.results.set(c.id, res);
   state.open.add(c.id);
   render();
+  if (had && headOf(c.id)) headOf(c.id).focus();
   announce(res.text);
 }
 

@@ -2,8 +2,10 @@
 
 ## Unreleased
 
+- Web app ids are now at most 47 letters (it was 48), so the app's whole id fits the name its process group carries. Once, when you upgrade: a web app whose name made an id of exactly 48 letters no longer shows in the launcher or in `wol webapp list`; add it again with the same name and it gets the shorter id. Apps with shorter names are not touched.
 - libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
 - PowerShell is a terminal shell beside zsh: the Developer module ships pwsh with the WolOS profile and completions, `wol-term-shell` starts it from foot, ghostty and kitty, and Settings > General has a Shells row.
+- `wol volume` works as the sound documentation says: `wol volume 40` sets the volume and `wol volume` alone shows it (the same as `wol audio volume`). `wol audio profile low-latency` sets the sound buffer to 128 frames (2.7 ms) for monitoring through a music or video program, now and after a restart; `wol audio profile default` gives the choice back to WolOS and `wol audio profile` says which is on.
 
 Scripts
 - Ruby scripts run like shell scripts (ADR 0041). `wol script check <file>` parses a sh, bash or Ruby script without running it, then runs shellcheck or RuboCop when installed; `wol script run <file>` runs it as you, never as root, with a clean environment, and every change it asks of `wol` shows the approval sheet and lands in the activity log under the script's name; `wol script on <host> <file>` runs a local script on another computer over ssh the same way. `wol script` lists the kinds.

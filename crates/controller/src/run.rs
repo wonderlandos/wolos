@@ -46,6 +46,10 @@ pub trait Env {
     }
     fn stdin_line(&mut self) -> Option<String>;
     fn read_file(&self, p: &Path) -> Option<String>;
+    /// Whether something is at `p` (a file that exists but cannot be read is not absent).
+    fn file_exists(&self, p: &Path) -> bool {
+        std::fs::symlink_metadata(p).is_ok()
+    }
     fn sys_topic(&mut self, topic: &str) -> Option<serde_json::Value>;
     fn now_secs(&self) -> u64;
     fn config_home(&self) -> PathBuf;
@@ -348,7 +352,9 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "gpu.hyprconf" => exec(env, &[GPU_BIN.into(), "gpu".into(), "hyprconf".into()]),
         "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" | "hw.compute"
         | "hw.report" => crate::hw::execute(inv, env),
-        "audio.doctor" | "audio.reset" | "audio.appmix" => crate::audio_doctor::execute(inv, env),
+        "audio.doctor" | "audio.reset" | "audio.appmix" | "audio.profile" => {
+            crate::audio_doctor::execute(inv, env)
+        }
         "doctor.check" | "doctor.fix" => crate::doctor::execute(inv, env),
         a if a.starts_with("games.") => crate::games::execute(inv, env),
         a if a.starts_with("modules.") => crate::modules::execute(inv, env),
@@ -1831,6 +1837,12 @@ impl Env for FakeEnv {
         v.sort();
         v.dedup();
         v
+    }
+    fn file_exists(&self, p: &Path) -> bool {
+        self.files.iter().any(|f| f.0 == p)
+            || (!self.home.as_os_str().is_empty()
+                && p.starts_with(&self.home)
+                && std::fs::symlink_metadata(p).is_ok())
     }
     /// Fake files first, then real files under `home` (tests use a temp home).
     fn read_file(&self, p: &Path) -> Option<String> {

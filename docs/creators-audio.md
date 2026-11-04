@@ -6,7 +6,7 @@ What works out of the box on WolOS, what one command adds, and the three things 
 
 1. **100% is 0 dB.** The input slider's top is the microphone's nominal level, not the hardware maximum. If a mic is quiet at 100%, turn on *Allow louder* (Settings > Sound > Output; one switch for both the output and the input slider, which then reach the hardware maximum and mark 0 dB with a tick) and watch the meter in Settings > Sound > Input; red means clipping.
 2. **Check the stack:** `wol audio doctor`. It names the default input's level in dB, dropouts, forced buffers and the OBS pieces, each with the fix.
-3. **Pick the buffer for the job** in Settings > Sound > Pro Audio: 64 frames (1.3 ms) for monitoring through a DAW, 256 for a stream, automatic for everything else. The choice is written to `~/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf` and applied live; it survives a reboot and `wol audio reset` removes it.
+3. **Pick the buffer for the job** in Settings > Sound > Pro Audio: 64 frames (1.3 ms) for monitoring through a DAW, 256 for a stream, automatic for everything else. `wol audio profile low-latency` is the quick way to 128 frames (2.7 ms) from a terminal or a script, `wol audio profile default` gives the choice back to WolOS, `wol audio profile` says which is on. The choice is written to `~/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf` and applied live; it survives a reboot and `wol audio reset` removes it.
 
 ## OBS Studio
 

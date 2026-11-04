@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! `wol audio doctor|reset|appmix` (docs/modules/audio.md, docs/creators-audio.md): the sound
+//! `wol audio doctor|reset|appmix|profile` (docs/modules/audio.md, docs/creators-audio.md): the sound
 //! stack checked with the exact fix, a reset that forgets per-user state (dry run unless `--yes`),
-//! and the OBS App Mix. Rules and parsers in `wol_core::audio`; all I/O goes through [`Env`].
+//! the OBS App Mix, and the buffer profile (`low-latency`, ADR 0032). Rules and parsers in `wol_core::audio`; all I/O goes through [`Env`].
 //! `wol audio`, `volume`, `mute` keep the `wpctl` path in `verbs.rs`.
 use crate::cli::Invocation;
 use crate::run::{Env, emit_json, fail};
@@ -15,6 +15,7 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "audio.doctor" => doctor(env, json),
         "audio.reset" => reset(env, inv.flag("yes"), json),
         "audio.appmix" => appmix(env, inv.get("state").unwrap_or("status"), json),
+        "audio.profile" => profile(env, inv.get("profile").unwrap_or("status"), json),
         other => fail(env, ErrorCode::Failed, &format!("no handler for {other}")),
     }
 }
@@ -434,6 +435,90 @@ fn reset(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     }
 }
 
+/// `wol audio profile [default|low-latency|status]` (ADR 0032): the low-latency profile is the Pro
+/// Audio buffer of [`a::LOW_LATENCY_QUANTUM`] frames, saved in the same user file Settings > Sound >
+/// Pro Audio writes (`~/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf`, kept after a
+/// restart; the chosen rate stays) and applied now with `pw-metadata`. `default` gives the buffer
+/// back to the graph. `wol audio reset --yes` removes the file too.
+fn profile(env: &mut dyn Env, name: &str, json: bool) -> i32 {
+    let home = env.home();
+    if !home.is_absolute() {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            "HOME is not set to an absolute path, so there is nowhere to keep the profile",
+        );
+    }
+    let file = home.join(a::PRO_AUDIO_CONF);
+    // A file that is there and cannot be read is an error: treating it as empty would write over
+    // what the person keeps in it.
+    let text = env.read_file(&file);
+    if text.is_none() && env.file_exists(&file) {
+        return fail(
+            env,
+            ErrorCode::Failed,
+            &format!("could not read {}", file.display()),
+        );
+    }
+    let now = text
+        .as_deref()
+        .map(a::parse_pro_audio_conf)
+        .unwrap_or_default();
+    let quantum = match name {
+        "low-latency" => a::LOW_LATENCY_QUANTUM,
+        "default" => 0,
+        _ => now.quantum,
+    };
+    if name != "status" {
+        // Only the rate and quantum lines change; every other line and comment stays.
+        let new = match &text {
+            Some(old) => a::rewrite_pro_audio_conf(old, now.rate, quantum),
+            None => a::pro_audio_conf(now.rate, quantum),
+        };
+        let saved = if new.is_empty() {
+            env.remove_file(&file)
+        } else {
+            file.parent()
+                .map_or(Ok(()), |d| env.make_dir(d))
+                .and_then(|()| env.write_file(&file, &new))
+        };
+        if let Err(e) = saved {
+            return fail(
+                env,
+                ErrorCode::Failed,
+                &format!("could not save the profile: {e}"),
+            );
+        }
+        // Live too; a graph that is not running takes the saved file at its next start.
+        let live = env.exec_quiet(&a::force_argv("clock.force-quantum", quantum));
+        if live.ok() != Some(0) {
+            env.err("Saved; it applies after the next restart of the sound server.\n");
+        }
+    }
+    let rate = if now.rate != 0 { now.rate } else { 48000 };
+    let ms = a::quantum_ms(quantum, rate);
+    if json {
+        emit_json(
+            env,
+            &serde_json::json!({
+                "profile": a::profile_name(quantum),
+                "quantum": quantum,
+                "rate": now.rate,
+                "ms": (ms * 10.0).round() / 10.0,
+            }),
+        );
+    } else if quantum == 0 {
+        env.out("Audio profile: default (the graph chooses its buffer, 1024 frames unless an app asks for less).\n");
+    } else {
+        env.out(&format!(
+            "Audio profile: {} ({quantum} frames, {ms:.1} ms at {} kHz).\n",
+            a::profile_name(quantum),
+            f64::from(rate) / 1000.0
+        ));
+    }
+    0
+}
+
 const APPMIX_MARKERS: [&str; 2] = [a::APPMIX_SINK, a::MICMIX_SOURCE];
 
 fn appmix(env: &mut dyn Env, state: &str, json: bool) -> i32 {
@@ -709,6 +794,210 @@ mod tests {
             ErrorCode::Usage.exit()
         );
         assert!(e.execs.is_empty(), "{:?}", e.execs);
+    }
+
+    const PRO_FILE: &str = "/home/t/.config/pipewire/pipewire.conf.d/50-wolos-pro-audio.conf";
+
+    /// ADR 0032: `wol audio profile low-latency` saves the 128-frame buffer in Pro Audio's own file
+    /// and applies it now; the rate the person chose stays.
+    #[test]
+    fn low_latency_saves_the_pro_audio_file_and_forces_the_buffer_now() {
+        let mut e = env(false);
+        e.files.push((
+            PathBuf::from(PRO_FILE),
+            "context.properties = {\n    default.clock.rate = 44100\n    default.clock.allowed-rates = [ 44100 ]\n}\n".into(),
+        ));
+        let argv = ["audio", "profile", "low-latency"];
+        assert_eq!(
+            execute(&crate::cli::parse(&argv).unwrap(), &mut e),
+            0,
+            "{}",
+            e.err
+        );
+        let (path, text) = e.written.last().expect("the file is written");
+        assert_eq!(path, &PathBuf::from(PRO_FILE));
+        assert!(text.contains("default.clock.quantum = 128"), "{text}");
+        assert!(text.contains("default.clock.rate = 44100"), "{text}");
+        let lines: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+        assert_eq!(lines, ["pw-metadata -n settings 0 clock.force-quantum 128"]);
+        assert!(
+            e.out
+                .contains("low-latency (128 frames, 2.9 ms at 44.1 kHz)"),
+            "{}",
+            e.out
+        );
+    }
+
+    #[test]
+    fn low_latency_without_a_file_leaves_the_rate_automatic() {
+        let mut e = env(false);
+        let argv = ["audio", "profile", "low-latency"];
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        let text = &e.written.last().unwrap().1;
+        assert!(!text.contains("default.clock.rate"), "{text}");
+        assert!(
+            e.dirs
+                .iter()
+                .any(|d| d.ends_with(".config/pipewire/pipewire.conf.d")),
+            "{:?}",
+            e.dirs
+        );
+        assert!(e.out.contains("128 frames, 2.7 ms at 48 kHz"), "{}", e.out);
+    }
+
+    #[test]
+    fn default_gives_the_buffer_back_and_removes_a_file_with_nothing_else_in_it() {
+        let mut e = env(false);
+        e.files.push((
+            PathBuf::from(PRO_FILE),
+            a::pro_audio_conf(0, a::LOW_LATENCY_QUANTUM),
+        ));
+        let argv = ["audio", "profile", "default"];
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        assert_eq!(e.removed, [PathBuf::from(PRO_FILE)]);
+        assert!(e.written.is_empty());
+        let lines: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+        assert_eq!(lines, ["pw-metadata -n settings 0 clock.force-quantum 0"]);
+        assert!(e.out.contains("Audio profile: default"), "{}", e.out);
+        // With a chosen rate the file stays, buffer-free.
+        let mut e = env(false);
+        e.files
+            .push((PathBuf::from(PRO_FILE), a::pro_audio_conf(96000, 256)));
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        let text = &e.written.last().unwrap().1;
+        assert!(
+            text.contains("default.clock.rate = 96000") && !text.contains("quantum"),
+            "{text}"
+        );
+        assert!(e.removed.is_empty());
+    }
+
+    #[test]
+    fn status_reads_the_file_and_changes_nothing() {
+        let mut e = env(false);
+        e.files
+            .push((PathBuf::from(PRO_FILE), a::pro_audio_conf(0, 256)));
+        let argv = ["audio", "profile", "--json"];
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        let v: serde_json::Value = serde_json::from_str(e.out.trim()).unwrap();
+        assert_eq!(v["profile"], "custom");
+        assert_eq!(v["quantum"], 256);
+        assert!(e.written.is_empty() && e.removed.is_empty() && e.execs.is_empty());
+        let mut e = env(false);
+        let argv = ["audio", "profile", "status", "--json"];
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        let v: serde_json::Value = serde_json::from_str(e.out.trim()).unwrap();
+        assert_eq!(
+            (v["profile"].as_str(), v["quantum"].as_u64()),
+            (Some("default"), Some(0))
+        );
+    }
+
+    #[test]
+    fn a_profile_that_does_not_exist_is_a_usage_error() {
+        let argv = ["audio", "profile", "turbo"];
+        assert!(crate::cli::parse(&argv).is_err());
+    }
+
+    #[test]
+    fn a_failed_live_force_still_keeps_the_saved_profile() {
+        let mut e = env(false);
+        e.exec_codes = vec![1];
+        let argv = ["audio", "profile", "low-latency"];
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        assert!(e.err.contains("after the next restart"), "{}", e.err);
+        assert!(!e.written.is_empty());
+    }
+
+    /// The person's own lines in the file survive a profile change, `key=value` written without
+    /// spaces is understood, and `default` keeps a file that holds anything besides the two settings.
+    #[test]
+    fn a_profile_change_keeps_every_other_line_and_comment() {
+        let mut e = env(false);
+        e.files.push((
+            PathBuf::from(PRO_FILE),
+            "# mine\ncontext.properties = {\n    default.clock.rate=44100\n    default.clock.quantum=256\n    \
+             # keep\n    log.level = 2\n}\n"
+                .into(),
+        ));
+        let argv = ["audio", "profile", "low-latency"];
+        assert_eq!(
+            execute(&crate::cli::parse(&argv).unwrap(), &mut e),
+            0,
+            "{}",
+            e.err
+        );
+        let text = &e.written.last().unwrap().1;
+        for l in [
+            "# mine",
+            "    # keep",
+            "    log.level = 2",
+            "    default.clock.rate = 44100",
+            "    default.clock.quantum = 128",
+        ] {
+            assert!(text.lines().any(|x| x == l), "{l}:\n{text}");
+        }
+        assert!(!text.contains("=256") && !text.contains("= 256"), "{text}");
+        assert!(
+            e.out.contains("44.1 kHz"),
+            "the spaceless rate is read: {}",
+            e.out
+        );
+        // default: the file stays, with the person's lines and the rate, without the buffer.
+        let mut e = env(false);
+        e.files.push((PathBuf::from(PRO_FILE), text.clone()));
+        let argv = ["audio", "profile", "default"];
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        let back = &e.written.last().unwrap().1;
+        assert!(
+            back.contains("log.level = 2") && !back.contains("quantum"),
+            "{back}"
+        );
+        assert!(e.removed.is_empty());
+        // Only the two settings: the file goes.
+        let mut e = env(false);
+        e.files
+            .push((PathBuf::from(PRO_FILE), a::pro_audio_conf(0, 128)));
+        assert_eq!(execute(&crate::cli::parse(&argv).unwrap(), &mut e), 0);
+        assert_eq!(e.removed, [PathBuf::from(PRO_FILE)]);
+    }
+
+    #[test]
+    fn a_file_that_exists_but_cannot_be_read_is_an_error_not_an_empty_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("wol-profile-unreadable-{}", std::process::id()));
+        let file = dir.join(a::PRO_AUDIO_CONF);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "log.level = 2\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0)).unwrap();
+        if std::fs::read_to_string(&file).is_ok() {
+            eprintln!("skipped: this account reads a mode 000 file (root)");
+        } else {
+            let mut e = env(false);
+            e.home = dir.clone();
+            let argv = ["audio", "profile", "low-latency"];
+            assert_eq!(
+                execute(&crate::cli::parse(&argv).unwrap(), &mut e),
+                ErrorCode::Failed.exit()
+            );
+            assert!(e.written.is_empty() && e.removed.is_empty() && e.execs.is_empty());
+            assert!(e.err.contains("could not read"), "{}", e.err);
+        }
+        let _ = std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_relative_home_keeps_nothing() {
+        let mut e = env(false);
+        e.home = PathBuf::new();
+        let argv = ["audio", "profile", "low-latency"];
+        assert_eq!(
+            execute(&crate::cli::parse(&argv).unwrap(), &mut e),
+            ErrorCode::Usage.exit()
+        );
+        assert!(e.written.is_empty() && e.execs.is_empty());
     }
 
     #[test]

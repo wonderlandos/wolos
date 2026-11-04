@@ -225,17 +225,40 @@ pub fn pro_audio_conf(rate: u32, quantum: u32) -> String {
         s.push_str(&format!("    default.clock.max-quantum = {quantum}\n"));
     }
     s.push_str("}\n");
-    if quantum != 0 && quantum < VM_MIN_QUANTUM {
-        let quantum = VM_MIN_QUANTUM;
-        s.push_str(&format!(
-            "{PRO_AUDIO_VM_RULES}\n    {{\n        matches = [ {{ cpu.vm.name = !null }} ]\n        \
-             actions = {{\n            update-props = {{\n                \
-             default.clock.quantum = {quantum}\n                \
-             default.clock.min-quantum = {quantum}\n                \
-             default.clock.max-quantum = {quantum}\n            }}\n        }}\n    }}\n]\n"
-        ));
-    }
+    s.push_str(&pro_audio_vm_block(quantum));
     s
+}
+
+/// The buffer of the "low-latency" profile (`wol audio profile low-latency`, ADR 0032): 128 frames,
+/// 2.7 ms at 48 kHz. Monitoring through a DAW wants it; 64 frames (Pro Audio) is the graph's floor
+/// and crackles on a busy machine. It is a Pro Audio buffer, so the file, the live force and
+/// `wol audio reset` are the ones Pro Audio already has.
+pub const LOW_LATENCY_QUANTUM: u32 = 128;
+
+/// The name of the profile a Pro Audio setting amounts to: `default` (the graph chooses its
+/// buffer), `low-latency` ([`LOW_LATENCY_QUANTUM`]), else `custom` (Settings > Sound > Pro Audio).
+pub fn profile_name(quantum: u32) -> &'static str {
+    match quantum {
+        0 => "default",
+        LOW_LATENCY_QUANTUM => "low-latency",
+        _ => "custom",
+    }
+}
+
+/// The VM block of [`pro_audio_conf`] for `quantum`: pins [`VM_MIN_QUANTUM`] in a VM when the
+/// quantum is below it; empty otherwise.
+fn pro_audio_vm_block(quantum: u32) -> String {
+    if quantum == 0 || quantum >= VM_MIN_QUANTUM {
+        return String::new();
+    }
+    let quantum = VM_MIN_QUANTUM;
+    format!(
+        "{PRO_AUDIO_VM_RULES}\n    {{\n        matches = [ {{ cpu.vm.name = !null }} ]\n        \
+         actions = {{\n            update-props = {{\n                \
+         default.clock.quantum = {quantum}\n                \
+         default.clock.min-quantum = {quantum}\n                \
+         default.clock.max-quantum = {quantum}\n            }}\n        }}\n    }}\n]\n"
+    )
 }
 
 /// The floor PipeWire's own rule sets when `cpu.vm.name` is present (pipewire.conf).
@@ -244,21 +267,138 @@ pub const VM_MIN_QUANTUM: u32 = 1024;
 /// Opens the VM block of [`pro_audio_conf`]; [`parse_pro_audio_conf`] stops reading there.
 const PRO_AUDIO_VM_RULES: &str = "context.properties.rules = [";
 
-/// Read back what [`pro_audio_conf`] wrote.
+/// `key = value` or `key=value` (the spaces are the writer's, not the format's).
+fn key_value(line: &str) -> Option<(&str, &str)> {
+    let (k, v) = line.trim().split_once('=')?;
+    Some((k.trim(), v.trim()))
+}
+
+/// Read back what [`pro_audio_conf`] wrote (a hand-edited file may leave out the spaces).
 pub fn parse_pro_audio_conf(text: &str) -> ProAudio {
     let mut p = ProAudio::default();
     for l in text.lines() {
-        let l = l.trim();
-        if l == PRO_AUDIO_VM_RULES {
+        if l.trim() == PRO_AUDIO_VM_RULES {
             break;
         }
-        if let Some(v) = l.strip_prefix("default.clock.rate =") {
-            p.rate = v.trim().parse().unwrap_or(0);
-        } else if let Some(v) = l.strip_prefix("default.clock.quantum =") {
-            p.quantum = v.trim().parse().unwrap_or(0);
+        match key_value(l) {
+            Some(("default.clock.rate", v)) => p.rate = v.parse().unwrap_or(0),
+            Some(("default.clock.quantum", v)) => p.quantum = v.parse().unwrap_or(0),
+            _ => {}
         }
     }
     p
+}
+
+/// The keys [`pro_audio_conf`] writes at the top level: the only lines [`rewrite_pro_audio_conf`]
+/// touches.
+const PRO_AUDIO_KEYS: [&str; 5] = [
+    "default.clock.rate",
+    "default.clock.allowed-rates",
+    "default.clock.quantum",
+    "default.clock.min-quantum",
+    "default.clock.max-quantum",
+];
+
+/// `old` (the Pro Audio file as it is) with its rate and quantum lines rewritten for `rate` and
+/// `quantum` and every other line and comment kept where it was. A file that has no such block
+/// gets one at its end. The result is empty when nothing but those two settings (and the writer's
+/// own header comment) was in the file: the caller then removes it instead of keeping a shell.
+pub fn rewrite_pro_audio_conf(old: &str, rate: u32, quantum: u32) -> String {
+    let mut lines: Vec<String> = old.lines().map(str::to_owned).collect();
+    // The writer's VM block (only that one: it names the VM match and the clock quantum).
+    if let Some(i) = lines.iter().position(|l| l.trim() == PRO_AUDIO_VM_RULES)
+        && let Some(len) = lines[i..].iter().position(|l| l.trim() == "]")
+        && lines[i..=i + len].iter().any(|l| l.contains("cpu.vm.name"))
+    {
+        lines.drain(i..=i + len);
+    }
+    let squash = |l: &str| l.split_whitespace().collect::<String>();
+    let open = lines
+        .iter()
+        .position(|l| squash(l) == "context.properties={");
+    // (key, line) of what the file should hold for `rate` and `quantum`.
+    let wanted = |rate: u32, quantum: u32| -> Vec<(&'static str, String)> {
+        let mut v = Vec::new();
+        if rate != 0 {
+            v.push((
+                PRO_AUDIO_KEYS[0],
+                format!("    default.clock.rate = {rate}"),
+            ));
+            v.push((
+                PRO_AUDIO_KEYS[1],
+                format!("    default.clock.allowed-rates = [ {rate} ]"),
+            ));
+        }
+        if quantum != 0 {
+            v.push((
+                PRO_AUDIO_KEYS[2],
+                format!("    default.clock.quantum = {quantum}"),
+            ));
+            v.push((
+                PRO_AUDIO_KEYS[3],
+                format!("    default.clock.min-quantum = {quantum}"),
+            ));
+            v.push((
+                PRO_AUDIO_KEYS[4],
+                format!("    default.clock.max-quantum = {quantum}"),
+            ));
+        }
+        v
+    };
+    match open {
+        Some(open) => {
+            let close = lines[open..]
+                .iter()
+                .position(|l| l.trim() == "}")
+                .map_or(lines.len(), |c| open + c);
+            // Each of our lines is replaced where it stands (or dropped); the ones the file did not
+            // have yet go last in the block.
+            let mut todo = wanted(rate, quantum);
+            let mut kept = Vec::new();
+            for l in &lines[open + 1..close] {
+                match key_value(l)
+                    .map(|(k, _)| k)
+                    .filter(|k| PRO_AUDIO_KEYS.contains(k))
+                {
+                    Some(k) => {
+                        if let Some(i) = todo.iter().position(|(w, _)| *w == k) {
+                            kept.push(todo.remove(i).1);
+                        }
+                    }
+                    None => kept.push(l.clone()),
+                }
+            }
+            kept.extend(todo.into_iter().map(|(_, l)| l));
+            let tail: Vec<String> = lines.split_off(close.min(lines.len()));
+            lines.truncate(open + 1);
+            lines.extend(kept);
+            lines.extend(tail);
+        }
+        None if rate != 0 || quantum != 0 => {
+            lines.push("context.properties = {".into());
+            lines.extend(wanted(rate, quantum).into_iter().map(|(_, l)| l));
+            lines.push("}".into());
+        }
+        None => {}
+    }
+    // An empty block says nothing.
+    if let Some(open) = lines
+        .iter()
+        .position(|l| squash(l) == "context.properties={")
+        && lines.get(open + 1).is_some_and(|l| l.trim() == "}")
+    {
+        lines.drain(open..=open + 1);
+    }
+    let bare = lines
+        .iter()
+        .all(|l| l.trim().is_empty() || l.starts_with("# Written by Settings > Sound > Pro Audio"));
+    if bare && pro_audio_vm_block(quantum).is_empty() {
+        return String::new();
+    }
+    let mut out = lines.join("\n");
+    out.push('\n');
+    out.push_str(&pro_audio_vm_block(quantum));
+    out
 }
 
 /// Live overrides as `pw-metadata -n settings 0` prints them (`clock.force-rate`,
@@ -609,6 +749,101 @@ mod tests {
             volume_base: base,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_pro_audio_file_is_rewritten_line_by_line_and_nothing_else_is_lost() {
+        let old = "# mine\nfoo.bar = 1\ncontext.properties = {\n    default.clock.rate=44100\n    \
+                   default.clock.allowed-rates = [ 44100 ]\n    # keep me\n    default.clock.quantum=256\n    \
+                   default.clock.min-quantum = 256\n    default.clock.max-quantum = 256\n    log.level = 2\n}\nlast = 1\n";
+        assert_eq!(
+            parse_pro_audio_conf(old),
+            ProAudio {
+                rate: 44100,
+                quantum: 256,
+                xruns: 0
+            },
+            "key=value without spaces"
+        );
+        let new = rewrite_pro_audio_conf(old, 44100, LOW_LATENCY_QUANTUM);
+        for kept in [
+            "# mine",
+            "foo.bar = 1",
+            "    # keep me",
+            "    log.level = 2",
+            "last = 1",
+        ] {
+            assert!(new.lines().any(|l| l == kept), "{kept} lost:\n{new}");
+        }
+        assert!(
+            new.contains("default.clock.quantum = 128")
+                && !new.contains("= 256")
+                && !new.contains("=256"),
+            "{new}"
+        );
+        assert!(new.contains("default.clock.rate = 44100"), "{new}");
+        // The quantum lines stay where they were, between the comment and log.level.
+        let at = |s: &str| new.lines().position(|l| l.contains(s)).unwrap();
+        assert!(
+            at("# keep me") < at("default.clock.quantum")
+                && at("default.clock.quantum") < at("log.level")
+        );
+        assert!(
+            new.contains("cpu.vm.name"),
+            "below 1024 the VM block comes with it"
+        );
+        // Back to the default keeps what was not ours, and the file stays.
+        let back = rewrite_pro_audio_conf(&new, 44100, 0);
+        assert!(
+            !back.contains("quantum") && !back.contains("cpu.vm.name"),
+            "{back}"
+        );
+        assert!(back.contains("log.level = 2") && back.contains("default.clock.rate = 44100"));
+    }
+
+    #[test]
+    fn the_file_goes_only_when_nothing_but_rate_and_quantum_was_in_it() {
+        assert_eq!(rewrite_pro_audio_conf(&pro_audio_conf(0, 128), 0, 0), "");
+        assert_eq!(
+            rewrite_pro_audio_conf(&pro_audio_conf(44100, 128), 0, 0),
+            ""
+        );
+        assert_ne!(
+            rewrite_pro_audio_conf(&pro_audio_conf(44100, 128), 44100, 0),
+            ""
+        );
+        // Another key, or a comment of the person's, keeps the file.
+        let own = format!("{}# note\n", pro_audio_conf(0, 128));
+        assert!(rewrite_pro_audio_conf(&own, 0, 0).contains("# note"));
+        let other =
+            "context.properties = {\n    default.clock.quantum = 64\n    link.max-buffers = 8\n}\n";
+        let new = rewrite_pro_audio_conf(other, 0, 0);
+        assert!(
+            new.contains("link.max-buffers = 8") && !new.contains("quantum"),
+            "{new}"
+        );
+        // A file with no block gets one; an empty one is the writer's own output.
+        assert!(rewrite_pro_audio_conf("# x\n", 0, 128).contains("context.properties = {"));
+        assert_eq!(rewrite_pro_audio_conf("", 0, 0), "");
+    }
+
+    #[test]
+    fn the_low_latency_profile_is_a_pro_audio_buffer_that_reads_back() {
+        let conf = pro_audio_conf(0, LOW_LATENCY_QUANTUM);
+        assert!(conf.contains("default.clock.quantum = 128"), "{conf}");
+        assert!(
+            !conf.contains("default.clock.rate"),
+            "the rate stays automatic: {conf}"
+        );
+        let back = parse_pro_audio_conf(&conf);
+        assert_eq!((back.rate, back.quantum), (0, 128));
+        assert_eq!(profile_name(back.quantum), "low-latency");
+        assert_eq!(profile_name(0), "default");
+        assert_eq!(profile_name(256), "custom");
+        assert!(
+            QUANTA.contains(&LOW_LATENCY_QUANTUM),
+            "Pro Audio offers it too"
+        );
     }
 
     #[test]

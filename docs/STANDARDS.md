@@ -19,7 +19,9 @@ the rest with the checklist in `docs/REVIEW.md`.
 - **CI** `cargo clippy --workspace --all-targets --locked -- -D warnings` plus this allow list, and
   nothing else: `clippy::too_many_arguments`, `clippy::type_complexity`. A new `#[allow]` in code
   names its reason on the same line (`#[allow(clippy::zombie_processes)] // reaped by wold`).
-  `#![allow(dead_code)]` is allowed only in `tests/support/*.rs` and generated bindings.
+  `#![allow(dead_code)]` is allowed only in `tests/support/*.rs` and generated bindings; the
+  files that still carry one are a debt counted per crate in `rules_rust.rs` (RR-010 `BASELINE`):
+  the count may fall and never rises (QA-ADR-13).
 - **CI** `cargo fmt --all --check`. Do not reformat lines you did not change in a commit that does
   something else.
 - **CI** `cargo audit` on `Cargo.lock` (RustSec advisories). An advisory with no fix is ignored by
@@ -196,7 +198,7 @@ for the tools). The rules in one place:
 
 - One concern per commit. The subject says what changed and the body says why, in sentences; it
   names the test that proves it (`image_seamless.rs: the_installer_compositor_never_hides_the_pointer`).
-- `Signed-off-by` on every commit (DCO, `CONTRIBUTING.md`); an AI tool is `Assisted-by`.
+- Contributions are covered by the hub's Contributor Licence Agreement (`CONTRIBUTING.md`); a commit needs no `Signed-off-by` (lead decision for 0.13, QA-ADR-28). Kernel patches keep the Linux rules (§3).
 - `CHANGELOG.md` gets one line under the unreleased heading when a person could notice the change.
 - Nothing is committed with tests red, and nothing is reformatted in a commit that also changes behaviour.
 

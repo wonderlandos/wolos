@@ -73,4 +73,4 @@ shred -u wolos-sb.key   # the plain copy; wolos-sb.key.enc stays offline
 Box builds (AWS) then build with `WOLOS_SB_LAYOUT=1 wolos-iso/build.sh`; the tag's `release.yml` run signs the
 image, boots it with Secure Boot on, and uploads the signed image with its new hash.
 
-
+Amended 2026-11-04 (QA-ADR-36, lead decision 352): Secure Boot is the person's choice in the installer, off unless they ask. `Flow::secure` starts false, the installer shows the Secure Boot step only to those who opt in (`ui::installer::Step::SecureBoot`), and the plan carries `secure_boot: Option<bool>` (`None`: not asked, `Some(false)`: asked and declined). The `off` tier above is also the state a person chose. The first-start key screen (0013) appears only while an enrolment is pending.

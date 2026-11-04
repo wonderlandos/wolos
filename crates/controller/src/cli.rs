@@ -130,6 +130,13 @@ const ONE_TOGGLE: Arg = Arg {
     optional: true,
     rest: false,
 };
+/// `wol audio profile`: the word is optional (none reads the profile, like `status`).
+const AUDIO_PROFILE: Arg = Arg {
+    name: "profile",
+    choices: &["default", "low-latency", "status"],
+    optional: true,
+    rest: false,
+};
 const ON_OFF: Arg = Arg {
     name: "state",
     choices: &["on", "off"],
@@ -964,6 +971,9 @@ pub const TREE: &[Cmd] = &[
         &[arg("percent")],
         "Set the volume, 0-100",
     ),
+    // ADR 0038 names `wol volume`: the volume as the keys and the OSD see it (`wol volume`), or set it
+    // (`wol volume 40`). The same action as `wol audio volume`; without a percent it reads.
+    alias(&["volume"], "audio.volume", &[opt("percent")]),
     cmd(&["audio", "mute"], "audio.mute", &[], "Mute the sound"),
     cmd(
         &["audio", "unmute"],
@@ -983,6 +993,12 @@ pub const TREE: &[Cmd] = &[
         "audio.reset",
         &[],
         "Forget stored sound defaults and volumes, drop Pro Audio overrides, restart PipeWire (dry run; --yes does it)",
+    ),
+    cmd(
+        &["audio", "profile"],
+        "audio.profile",
+        &[AUDIO_PROFILE],
+        "Buffer profile: low-latency (128 frames, 2.7 ms), default (automatic), status",
     ),
     cmd(
         &["audio", "appmix"],

@@ -17,7 +17,6 @@ const BASELINE: &[Row] = &[
     ("RH-161", "docs/modules/cryswol.md", 2, "C8"),
     ("RH-161", "docs/modules/gallery.md", 1, "C8"),
     ("RH-161", "docs/modules/intel-graphics.md", 2, "C8"),
-    ("RH-162", "docs/modules/audio.md", 1, "C8"),
     ("RH-162", "docs/modules/memory-bandwidth.md", 1, "C8"),
     ("RH-162", "docs/modules/modules.md", 1, "C8"),
     ("RH-162", "docs/modules/scripting.md", 1, "C8"),

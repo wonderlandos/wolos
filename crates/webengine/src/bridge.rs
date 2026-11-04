@@ -133,6 +133,13 @@ pub enum Step {
     Nothing,
 }
 
+/// The `id` of a text that starts `{"id":N,` (how `bridge.js` writes a call), without parsing it.
+fn leading_id(text: &str) -> Option<u64> {
+    let rest = text.strip_prefix(r#"{"id":"#)?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    rest[..digits.min(20)].parse().ok()
+}
+
 fn reply(id: u64, r: Result<Value, Fault>) -> String {
     match r {
         Ok(v) => json!({"id": id, "ok": v}),
@@ -187,7 +194,20 @@ impl Bridge {
     /// Reads one page message.
     pub fn handle(&mut self, text: &str) -> Step {
         if text.len() > MAX_MESSAGE {
-            return Step::Nothing;
+            // A call the page numbered is told, so its promise settles (QA-WEB-6): `bridge.js`
+            // writes the id first. The channel already drops a text over the cap in UTF-16 units;
+            // this one is over it in bytes (multi-byte characters).
+            return match leading_id(text) {
+                Some(id) => Step::Reply(reply(
+                    id,
+                    Err(Fault::new(
+                        ErrorCode::Usage,
+                        "The request was too large.",
+                        "keep the whole request under 64 KiB",
+                    )),
+                )),
+                None => Step::Nothing,
+            };
         }
         let Ok(Value::Object(m)) = serde_json::from_str::<Value>(text) else {
             return Step::Nothing;
@@ -356,6 +376,22 @@ mod tests {
         assert_eq!(b.handle("not json"), Step::Nothing);
         assert_eq!(b.handle(r#"{"call":"audio.get"}"#), Step::Nothing);
         assert_eq!(b.handle(&"x".repeat(MAX_MESSAGE + 1)), Step::Nothing);
+        // Over the cap with an id: the page is told (QA-WEB-6), so its promise settles.
+        let big = format!(
+            r#"{{"id":7,"call":"audio.get","params":{{"s":"{}"}}}}"#,
+            "é".repeat(MAX_MESSAGE)
+        );
+        let out: Value = match b.handle(&big) {
+            Step::Reply(r) => serde_json::from_str(&r).unwrap(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            (out["id"].as_u64(), out["err"]["code"].as_str()),
+            (Some(7), Some("usage"))
+        );
+        assert_eq!(leading_id(r#"{"id":12,"call":"x"}"#), Some(12));
+        assert_eq!(leading_id(r#"{"call":"x","id":12}"#), None);
+        assert_eq!(leading_id(r#"{"id":99999999999999999999999999,"#), None);
     }
 
     /// QA-WEB-2: a page subscribes as it loads (a reload too) and gets the record as it is now,

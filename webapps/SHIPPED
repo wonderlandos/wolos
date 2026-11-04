@@ -1,0 +1,5 @@
+# The system web apps the wolos-webapps package installs (ADR 0048), one folder name per line; the
+# kit is always installed. A folder not listed here is a sample or a work in progress
+# (webapps/hello is the starter to copy), not an app of the image. crates/webengine/tests/launchers.rs
+# keeps this list, the launcher entries under webapps/launchers and tools/install-webapps.sh in step.
+doctor

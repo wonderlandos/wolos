@@ -26,7 +26,7 @@ Not done: a parent check. The compositor starts `exec-once` programs by a double
 is an orphan whose parent is init, exactly like one an attacker double-forks.
 This raises the price; it is not the identity. It does not stop a process that gets code into the
 real shell after it started (ptrace needs the shell to be a descendant under `ptrace_scope=1`; making
-the shell non-dumpable closes that and is a one-line change in the shell, see Consequences). A user
+the shell non-dumpable would close that; it is not landed, see the note below). A user
 whose profile exports `LD_LIBRARY_PATH` gets no notifications until the shell is started clean.
 
 ## Decision (proposed: the token)
@@ -42,7 +42,10 @@ whose profile exports `LD_LIBRARY_PATH` gets no notifications until the shell is
    (never in an environment or argv); wold compares in constant time, per uid, and forgets it
    when the session ends. A mismatch is refused like a wrong executable. The path check stays too.
 4. The shell sets `PR_SET_DUMPABLE=0` first thing, so no process of the account can ptrace it or
-   read its memory or descriptors (`pidfd_getfd`).
+   read its memory or descriptors (`pidfd_getfd`). Not landed (no `prctl` in `crates/shell`, checked
+   2026-11-04, QA-ADR-11): it is one call, but it also stops `systemd-coredump` from keeping the
+   shell's stack trace, the crash evidence QA-CRASH-4 restored (`coredump.conf.d/wolos.conf`). Decide it
+   together with the token, not before.
 
 ## Options not taken
 - A systemd user unit and a cgroup check: the account owns `~/.config/systemd/user`, whose units

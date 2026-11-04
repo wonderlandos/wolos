@@ -123,8 +123,139 @@ pub fn content_token(args: &[String]) -> Option<&str> {
     }
 }
 
+/// The kit's error page for `reason` (one of `crashed manifest kit refused channel`, the words in
+/// `webapps/kit/error.js`), named for the app, with the address Try again goes back to. The values
+/// are percent-encoded: a name or an address never adds a parameter.
+pub fn error_url(kit: &std::path::Path, reason: &str, name: &str, retry: &str) -> String {
+    fn enc(s: &str) -> String {
+        let mut out = String::new();
+        for b in s.bytes() {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                out.push(char::from(b));
+            } else {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+        out
+    }
+    format!(
+        "file://{}/error.html?reason={}&name={}&retry={}",
+        kit.display().to_string().trim_end_matches('/'),
+        enc(reason),
+        enc(name),
+        enc(retry)
+    )
+}
+
+/// One host per app id (QA-WEB-10): opening an app that already runs raises its window instead of
+/// starting a second host in a second scope (two `doctor.check`s, the same fix twice).
+#[derive(Debug)]
+pub enum Single {
+    /// This process is the app's host; the lock lasts as long as the file is open.
+    First(std::fs::File),
+    /// Another host of this app holds the lock.
+    Running,
+    /// No lock could be taken (no runtime folder, or it is not writable): go on as before.
+    Unchecked(String),
+}
+
+/// The lock file of `app_id` in the user's runtime folder (`$XDG_RUNTIME_DIR`, a tmpfs of the
+/// session: the lock cannot outlive the session or a reboot).
+pub fn lock_path(runtime_dir: &std::path::Path, app_id: &str) -> std::path::PathBuf {
+    runtime_dir
+        .join("wolos")
+        .join(format!("webhost-{}.lock", shared::memsaver::app_id(app_id)))
+}
+
+/// Takes the app's host lock without waiting ([`Single`]).
+pub fn claim(runtime_dir: Option<&std::path::Path>, app_id: &str) -> Single {
+    let Some(dir) = runtime_dir.filter(|d| d.is_absolute()) else {
+        return Single::Unchecked("no XDG_RUNTIME_DIR".into());
+    };
+    match shared::sys::try_flock(&lock_path(dir, app_id)) {
+        Ok(Some(f)) => Single::First(f),
+        Ok(None) => Single::Running,
+        Err(e) => Single::Unchecked(e.to_string()),
+    }
+}
+
+/// `hyprctl` argv that raises the window of `app_id` (its window class is the app id, ADR 0048).
+pub fn raise_argv(app_id: &str) -> Vec<String> {
+    let class = app_id.replace('.', "\\.");
+    ["hyprctl", "dispatch", "focuswindow"]
+        .map(String::from)
+        .into_iter()
+        .chain([format!("class:^({class})$")])
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_error_page_url_carries_the_reason_the_name_and_the_way_back() {
+        let u = error_url(
+            std::path::Path::new("/usr/share/wolos/webapps/kit/"),
+            "crashed",
+            "Doctor & co",
+            "file:///usr/share/wolos/webapps/doctor/index.html",
+        );
+        assert_eq!(
+            u,
+            "file:///usr/share/wolos/webapps/kit/error.html?reason=crashed&name=Doctor%20%26%20co\
+             &retry=file%3A%2F%2F%2Fusr%2Fshare%2Fwolos%2Fwebapps%2Fdoctor%2Findex.html"
+        );
+    }
+
+    #[test]
+    fn a_second_host_of_one_app_finds_the_first_and_another_app_does_not() {
+        let dir = std::env::temp_dir().join(format!("webhost-single-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = "org.wolos.webapp.doctor";
+        let first = claim(Some(&dir), id);
+        assert!(matches!(first, Single::First(_)), "{first:?}");
+        assert!(matches!(claim(Some(&dir), id), Single::Running));
+        assert!(
+            matches!(
+                claim(Some(&dir), "org.wolos.webapp.hello"),
+                Single::First(_)
+            ),
+            "another app is not blocked"
+        );
+        drop(first);
+        assert!(
+            matches!(claim(Some(&dir), id), Single::First(_)),
+            "the lock goes with the host"
+        );
+        assert!(matches!(claim(None, id), Single::Unchecked(_)));
+        assert!(matches!(
+            claim(Some(std::path::Path::new("run")), id),
+            Single::Unchecked(_)
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_lock_lives_in_the_runtime_folder_and_the_raise_names_the_window_class() {
+        let p = lock_path(
+            std::path::Path::new("/run/user/1000"),
+            "org.wolos.webapp.doctor",
+        );
+        assert_eq!(
+            p,
+            std::path::Path::new("/run/user/1000/wolos/webhost-org.wolos.webapp.doctor.lock")
+        );
+        assert_eq!(
+            raise_argv("org.wolos.webapp.doctor"),
+            [
+                "hyprctl",
+                "dispatch",
+                "focuswindow",
+                "class:^(org\\.wolos\\.webapp\\.doctor)$"
+            ]
+        );
+    }
+
     use super::*;
 
     #[test]

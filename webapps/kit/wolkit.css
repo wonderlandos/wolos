@@ -177,3 +177,10 @@ wol-sheet .wk-sheet-actions { display: flex; justify-content: flex-end; gap: var
 @media (forced-colors: active) {
   wol-switch, wol-progress, wol-badge::before { forced-color-adjust: none; border: 1px solid CanvasText; }
 }
+
+/* The page a system web app shows when it cannot show itself (error.html). */
+.wk-error { display: grid; justify-items: center; align-content: center; gap: var(--wk-3); min-height: 100vh; padding: var(--wk-6); text-align: center; }
+.wk-error h1 { font-size: var(--wk-xl); }
+.wk-error p { color: var(--wol-text-2); max-width: 36em; }
+.wk-error button { font: inherit; padding: var(--wk-2) var(--wk-4); border-radius: var(--wol-radius-sm); border: 0; background: var(--wol-accent); color: var(--wol-accent-fg); cursor: pointer; }
+.wk-error button:focus-visible { outline: 2px solid var(--wol-accent); outline-offset: 2px; }

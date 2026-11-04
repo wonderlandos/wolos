@@ -193,7 +193,10 @@ fn fault_of(a: &Answer) -> Fault {
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| "WolOS could not do that.".into());
     let (code, hint) = match a.code {
-        Some(Code::PermissionDenied) => (ErrorCode::Denied, "Turn it on in Settings > Privacy"),
+        // No hint of the host's own: Privacy helps only for an app of others, and wold's message for
+        // that case already says so; "only an app's own host may ask" is not something to switch
+        // on (QA-WEB-7).
+        Some(Code::PermissionDenied) => (ErrorCode::Denied, ""),
         Some(Code::InvalidArgument) => (ErrorCode::Invalid, "wold refused the request"),
         Some(Code::Unavailable) => (ErrorCode::Unavailable, ""),
         _ => (ErrorCode::Failed, ""),
@@ -482,10 +485,21 @@ mod tests {
         let denied = r#"{"ok":false,"code":"permission-denied","message":"This app is not allowed to do that."}"#;
         let f = read_answer(denied).unwrap_err();
         assert_eq!(f.code, "denied");
-        assert!(
-            f.hint.starts_with("Turn it on"),
-            "a capital hint is for the person"
+        assert_eq!(
+            f.hint, "",
+            "the host adds no Settings hint of its own (QA-WEB-7)"
         );
+        // wold's own words for the case Privacy fixes reach the page whole.
+        let others = r#"{"ok":false,"code":"permission-denied","message":"This app is not allowed to do that. Turn it on in Settings > Privacy."}"#;
+        assert!(
+            read_answer(others)
+                .unwrap_err()
+                .message
+                .ends_with("Settings > Privacy.")
+        );
+        let host = r#"{"ok":false,"code":"permission-denied","message":"Only an app's own host may ask for this."}"#;
+        let f = read_answer(host).unwrap_err();
+        assert!(!f.message.contains("Privacy") && f.hint.is_empty(), "{f:?}");
         assert_eq!(read_answer("garbage").unwrap_err().code, "failed");
         assert_eq!(read_answer(r#"{"ok":true}"#).unwrap_err().code, "failed");
         let weird = r#"{"ok":true,"data":{"err":{"code":"made-up"}}}"#;
