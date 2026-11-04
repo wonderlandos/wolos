@@ -153,6 +153,39 @@ All four candidates built here with rust 1.99.1 in 28 s (scratch crate, `/tmp/hu
 
 What "post-quantum era" buys: the certificates and the roots stay unforgeable if quantum computers that break elliptic curves appear while they are still trusted (the roots have 20 years). Unlike encryption, signatures have no "record now, read later" risk, so the urgency is in the long-lived keys. What it costs: about 25 KB per package, about 1 ms per check, about 110 KB of code, and two algorithms to maintain. Not covered: the transport (TLS) and the pacman repositories, which keep their own trust (ADR 0021).
 
+### Phase 3 amendments (TRUST-core-4, 2026-11-04, lead decisions 02:18Z-02:23Z and TRUST audit 1)
+
+- **Two certificates per author.** Body field `class`: `origin` (automatic at GitHub sign-in with
+  the CLA) or `trusted` (after an administrator's approval); absent means origin. A trusted body
+  names `origin_cert`, the serial of the same subject's origin certificate, and has its own keys.
+  Trust values: `wolos`, `trusted`, `origin`, `legacy`, `community`, `withdrawn`, `invalid`
+  ("verified" is gone); the I7 `cert` carries `class`.
+- **Revocation, final.** `key-compromise` and `abuse` on any certificate void everything its key
+  signed (on an origin certificate: the supply-chain emergency path, it also voids the trusted
+  one); `superseded` on a trusted certificate downgrades its files to origin (`trust-withdrawn`);
+  `ceased` keeps files seen before it; `withdrawn-version` names a file certificate only. An
+  entry never takes effect after its list's `issued`.
+- **File certificates** (`woltrust::filecert`, label `wolos/release/1`, signed by the Index): one
+  per published version, binding the whole file's SHA-256, the `SHA256` member's SHA-256, id,
+  version, kind, origin, the author's serial and class, the verdict, the count of findings and the
+  date. Withdrawn alone by `withdrawn-version`.
+- **Roots name who vouches**: `subject.text`, signed, roots only, required by `woltrust init
+  --subject`.
+- **Audit 1.** H1: a raw Ed25519 `SHA256.sig` is `legacy`, revocable by its key id, refused once
+  the machine holds roots. H2: the request proof covers every field the CA copies. M1: a machine
+  keeps every withdrawal it saw (`seen-revocations.json`) and refuses a list that drops a hard
+  one. M2: a list counts if its signer was valid when it issued it. M3: past the stale window, or
+  with no list, signatures keep their value with the "not checked since" line (37 days from the
+  list's issue). L1: invisible and bidi characters are refused in names. L3: 24 hours of clock
+  skew on `not_before`.
+- **Key files (audit M9, D note).** `.wolkey` keeps PBKDF2-HMAC-SHA512 at 600 000 rounds:
+  standard (SP 800-132) and pure Rust, but not memory-hard, so a short passphrase falls to GPU
+  guessing far sooner than with Argon2id. Argon2id would be a new `kdf` value; no Argon2 crate is
+  in the tree yet (a dependency decision for the lead).
+- **Not yet (next round):** ids as SHA-512 of the public material (serials, file certificate ids,
+  seal recipients), the binary `.rkdb` store with its serial floor, 24-hour lists and checkpoints,
+  and the `wolcrypt` crate.
+
 ## Consequences
 - `.wol`, `.wolplug` and extension format 2 needs WolOS 0.13; 0.12 keeps working with today's keys and refuses format-2 files with a sentence.
 - One pure crate holds formats and checks, without I/O; `wol_core`, wol-admind, the Store, the hub Worker (wasm) and the browser (wasm) share it.

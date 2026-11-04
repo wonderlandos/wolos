@@ -99,7 +99,7 @@ fn a_certificate_with_encryption_keys_still_verifies_as_an_author() {
             now: NOW,
         },
     );
-    assert_eq!((out.trust, out.code), (Trust::Verified, Code::Ok));
+    assert_eq!((out.trust, out.code), (Trust::Origin, Code::Ok));
 }
 
 #[test]

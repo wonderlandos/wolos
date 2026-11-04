@@ -38,6 +38,20 @@ pub enum Level {
     Verified,
 }
 
+/// Which of a person's or organisation's two certificates this is (lead decision 2026-11-04):
+/// `origin` is issued automatically at GitHub sign-in with the CLA signed, and proves who
+/// published and that the id is theirs; `trusted` is issued after an administrator approved
+/// them. A body without `class` is an origin certificate: trust must be written in signed bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+#[serde(deny_unknown_fields)]
+pub enum Class {
+    /// Identity and namespace, proven at sign-in.
+    Origin,
+    /// Approved by a WolOS Hub administrator.
+    Trusted,
+}
+
 /// What a certificate may sign.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -78,6 +92,10 @@ pub struct Subject {
     /// from that organisation's repositories counts as theirs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org: Option<OrgRef>,
+    /// A root's human-readable subject, signed with it and shown as who vouches (at most 200
+    /// characters, no control characters; roots only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 /// A GitHub organisation by its permanent numeric id, with the login as shown.
@@ -147,7 +165,17 @@ pub struct Body {
     /// When the hub verified the subject (the GitHub account and the request), Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_at: Option<u64>,
+    /// Origin or trusted (people and organisations only); absent means origin ([`Body::class`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<Class>,
+    /// For a trusted certificate: the serial of the same subject's origin certificate, so
+    /// withdrawing that one withdraws this one too. Required for `trusted`, refused otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_cert: Option<String>,
 }
+
+/// Most characters of a root's subject text.
+pub const MAX_TEXT: usize = 200;
 
 /// The id prefix that only the Packages CA may issue for.
 pub const RESERVED: &str = "org.wolos.";
@@ -172,8 +200,28 @@ fn is_login(s: &str) -> bool {
     !s.is_empty() && s.len() <= 39 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
+/// A character that changes how text around it is shown without being shown itself: bidi
+/// embeddings, overrides and isolates, zero-width marks and joiners, the soft hyphen, the BOM
+/// (audit L1/D4: "Alice U+202E evitaN" must not reorder a shown name).
+pub fn is_invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+    )
+}
+
 fn is_name(s: &str) -> bool {
-    !s.trim().is_empty() && s.chars().count() <= 128 && !s.chars().any(char::is_control)
+    !s.trim().is_empty()
+        && s.chars().count() <= 128
+        && !s.chars().any(|c| c.is_control() || is_invisible(c))
 }
 
 /// A prefix like `alice.` or `org.wolos.`: dot-separated lowercase segments, a final dot.
@@ -250,6 +298,24 @@ impl Body {
         {
             return Err("only a person names an organisation, by a valid login");
         }
+        if let Some(t) = &s.text
+            && (self.kind != Kind::Root
+                || t.trim().is_empty()
+                || t.chars().count() > MAX_TEXT
+                || t.chars().any(|c| c.is_control() || is_invisible(c)))
+        {
+            return Err("only a root carries a subject text, of 1 to 200 characters");
+        }
+        let author = matches!(self.kind, Kind::Person | Kind::Org);
+        match (self.class, &self.origin_cert) {
+            (Some(_), _) if !author => return Err("only an author certificate has a class"),
+            (Some(Class::Trusted), Some(o)) if is_serial(o) && *o != self.serial => {}
+            (Some(Class::Trusted), _) => {
+                return Err("a trusted certificate names its origin certificate");
+            }
+            (_, Some(_)) => return Err("only a trusted certificate names an origin certificate"),
+            (_, None) => {}
+        }
         if self.verified_at.is_some_and(|t| t >= self.not_after) {
             return Err("verified after the end of validity");
         }
@@ -324,6 +390,12 @@ impl Body {
         Ok(())
     }
 
+    /// Origin or trusted; an author body without `class` is origin. None for roots,
+    /// intermediates and WolOS signers.
+    pub fn class(&self) -> Option<Class> {
+        matches!(self.kind, Kind::Person | Kind::Org).then(|| self.class.unwrap_or(Class::Origin))
+    }
+
     /// Parses and checks a body on its own (the bytes `woltrust issue` is asked to sign): the
     /// same rules as inside a certificate, the keys decoded.
     pub fn parse(bytes: &[u8]) -> Result<(Body, PublicKeys, Option<EncPublic>), &'static str> {
@@ -338,7 +410,7 @@ impl Body {
     }
 }
 
-fn decode_keys(k: &KeysText) -> Result<PublicKeys, &'static str> {
+pub(crate) fn decode_keys(k: &KeysText) -> Result<PublicKeys, &'static str> {
     let ed = b64::decode(&k.ed25519, ED_PK).ok_or("key malformed")?;
     let second = match (&k.ml_dsa_65, &k.slh_dsa_sha2_128s) {
         (Some(k), None) => {

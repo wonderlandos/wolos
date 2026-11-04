@@ -56,6 +56,10 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "crates/woltrust/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "wolos-crystal/shards/cryswol/src/wol/pkg/**",
       "spdx": "GPL-2.0-or-later"
     },

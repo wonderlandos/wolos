@@ -1,7 +1,8 @@
 # Trust: author certificates, signatures and withdrawn keys (ADR 0046)
 
 **Concept.** A `.wol`, a `.wolplug` or an extension can say who made it. WolOS issues certificates to
-people and organisations; a file signed with such a certificate shows as "Made by Alice Doe". The
+people and organisations; a file signed with such a certificate shows as "From Alice Doe" (origin)
+or "Trusted developer Alice Doe" (trusted). The
 system checks all of it offline, and a certificate WolOS has withdrawn stops working.
 
 **Why.** Until now "signed" meant "signed by WolOS". There was no way to say "made by this person"
@@ -82,15 +83,40 @@ made by WolOS, no signature counts as unsigned.
 6. Revocation (below). Then the clock against every certificate's validity. Then the freshness of
    the newest revocation list.
 
-The result is one of five trust values and a code (the code is the stable string the vectors check):
+The result is one of seven trust values and a code (the code is the stable string the vectors
+check):
 
 | Trust | Meaning | Codes |
 |---|---|---|
-| `wolos` | made by WolOS | `ok`, `list-stale` |
-| `verified` | made by a certified author | `ok`, `list-stale` |
-| `community` | nobody vouches; ask "Do you really want to open this?" | `unsigned`, `expired`, `not-yet-valid`, `list-too-old` |
-| `withdrawn` | a certificate in the path was withdrawn; refused, no override | `revoked-key-compromise`, `revoked-abuse`, `revoked-superseded`, `revoked-ceased` |
-| `invalid` | a signature is present and wrong | `bad-signature`, `bad-issuer`, `wrong-usage`, `wrong-namespace`, `signer-unknown`, `issuer-unknown`, `signature-malformed`, `chain-malformed`, `chain-too-long`, `chain-too-large` |
+| `wolos` | made by WolOS (Packages CA chain) | `ok`, `list-stale`, `list-too-old` |
+| `trusted` | a developer or organisation a WolOS Hub administrator approved (`class: trusted`) | `ok`, `list-stale`, `list-too-old` |
+| `origin` | who published it is proven (GitHub sign-in and the CLA, `class: origin`), or a trusted certificate superseded | `ok`, `list-stale`, `list-too-old`, `trust-withdrawn` |
+| `legacy` | signed only with WolOS's previous flat key (raw Ed25519 `SHA256.sig`, no post-quantum half) | `legacy-key` |
+| `community` | nobody vouches; ask "Do you really want to open this?" | `unsigned`, `expired`, `not-yet-valid` |
+| `withdrawn` | a certificate in the path, its origin certificate, or the legacy key was withdrawn; refused, no override | `revoked-key-compromise`, `revoked-abuse`, `revoked-superseded`, `revoked-ceased` |
+| `invalid` | a signature is present and wrong, or only the previous key on a machine that holds roots | `bad-signature`, `bad-issuer`, `wrong-usage`, `wrong-namespace`, `signer-unknown`, `issuer-unknown`, `signature-malformed`, `chain-malformed`, `chain-too-long`, `chain-too-large`, `origin-mismatch`, `legacy-refused` |
+
+### Two certificates per author (lead decision 2026-11-04)
+
+A person or organisation body carries `class`: `origin` (issued automatically at GitHub sign-in
+with the CLA signed; proves the publisher and the namespace) or `trusted` (issued after an
+administrator approved them). A body without `class` is origin: trust must be written in signed
+bytes. A trusted body must carry `origin_cert`, the serial of the same subject's origin
+certificate, and uses its own keys. The I7 report's `cert` gains `class`.
+
+Revocation, final rules: `key-compromise` and `abuse` on any certificate void everything its key
+signed; withdrawing the origin certificate also withdraws what its trusted certificate signed;
+`superseded` on a trusted certificate only downgrades its files to `origin` (`trust-withdrawn`);
+`ceased` keeps files the index saw before it. `key-compromise` or `abuse` on an origin certificate
+is the supply-chain emergency path: it kills both certificates of that author at once.
+
+### The previous key (audit H1)
+
+A `.wol` or `.wolplug` with only the raw Ed25519 `SHA256.sig` by a key in `/usr/share/wolos/keys/`
+is `legacy` ("Signed with the previous key"), never `wolos`. Each such key can be withdrawn in
+`revoked.json` by its key id (the first 8 bytes of SHA-256 of the public key, 16 hex; `wol trust
+status` prints them). Once the machine holds WolOS roots, a file signed only that way is refused
+(`legacy-refused`).
 
 **Expired is not revoked.** A certificate past `not_after` makes the file count as unsigned
 (`community`), unless the caller passes `first_seen`, the time the signed index first saw this exact
@@ -115,9 +141,20 @@ withdraw the other root but never itself; an entry that the signer has no right 
   valid.
 - **Revoked fails closed.** A certificate in any list the machine holds, fresh or stale, is refused.
 - A list is **fresh** until its `expires` (issued + 7 days). Up to **30 days** after that it is
-  **stale**: verified files still show as verified, with the line "Not checked for withdrawn
-  certificates since <date>" (`stale = true`, `list_expires` in the outcome). After 30 days, or with no
-  list, verified files count as unsigned (`community`, `list-too-old`), never refused.
+  **stale** (`list-stale`). Later, or with no list at all, it is **too old** (`list-too-old`). In
+  both cases signatures keep verifying and keep their value, with the line "Not checked for
+  withdrawn certificates since <date>" (`stale = true`, `list_expires` in the outcome): the maximum
+  offline window before that line appears is 37 days from the list's issue, and nothing turns
+  silently unsigned after it (audit M3).
+- **Memory** (audit M1): every entry of every list that verified is appended to
+  `/var/lib/wolos/trust/seen-revocations.json` (`wol_core::trust::SEEN_FILE`) by `wol trust
+  update`, never shortened, and every check consults it. A new list that leaves out a
+  `key-compromise` or `abuse` entry seen before, from a signer of the same rank, is refused.
+- A list counts when its signer was valid **when it issued the list** (audit M2), so an Index that
+  expired later keeps what it withdrew; a list dated more than 24 hours in the future is not
+  loaded. An entry never takes effect later than its list's `issued` (audit A7).
+- Clocks: a certificate whose `not_before` is up to 24 hours ahead of the machine's clock counts
+  (`woltrust::verify::CLOCK_SKEW`, audit L3).
 - A list whose signature does not verify is not loaded. The newest list is the one with the highest
   `serial`; a lower one never replaces it.
 
@@ -135,6 +172,42 @@ Loading caps each file (certificate 24 KiB, list 1 MiB, signature 16 KiB) and ea
 certificates); anything unreadable, oversize or not verifying is left out and noted, never trusted.
 A root whose label starts with `test` is never loaded by the system, and the test
 `the_image_trust_folder_holds_no_test_root` fails if one is placed in `files/usr/share/wolos/trust/`.
+
+## File certificates (lead decision 2026-11-04)
+
+One signed record per published version, what WolOS Hub checked about exactly that file
+(`woltrust::filecert`; called "release statement" in the first order). The Index intermediate
+signs it with label `wolos/release/1`; the index entry carries it (`filecert`, base64url, in the
+plugin index); the Store verifies it offline beside the author's own signature and shows "Checked
+by WolOS Hub on <date>" or refuses with "This version was withdrawn".
+
+```json
+{"format":1,"body":"<b64url>","cert":"<Index serial>","sig":{"ed25519":"..","second":".."}}
+```
+
+Body: `format`, `serial` (its own 16 hex), `file_sha256` (the whole file), `manifest_sha256` (the
+`SHA256` member), `id`, `version`, `kind` (`package`, `plugin`, `extension`), `origin`
+(`repo`, `tag`, `commit`, optional), `cert` (the author's serial), `class` (at the time),
+`verdict`, `findings` (count), `checked_at`. A revocation entry with the file certificate's serial
+and reason `withdrawn-version` withdraws that version alone; certificate checks ignore such
+entries. Vectors: `vectors/filecert/` (7).
+
+## Roots name who vouches
+
+A root's `subject.text` (1 to 200 characters, no control or invisible characters, roots only) is
+signed in the root. `woltrust init --subject TEXT` is required and has no default; `wol trust
+status` prints it as "who vouches", and the Store's install page shows "Who vouches: <text>" under
+the trust row.
+
+## Certificate requests (audit H2)
+
+The proof of possession (label `wolos/request/1`) signs the JSON array `[github_id, kind, login,
+name, org, namespaces, ed25519, ml-dsa-65, slh-dsa-sha2-128s, x25519, ml-kem-768]`
+(`woltrust::request::Claimed`), so the CA cannot issue a certificate that names another login,
+name, organisation or namespace: `woltrust issue --proof` refuses it. The requester names the
+organisation they publish for; the hub only checks the membership. Unknown top-level fields of the
+request file (the hub's `id`, `approved_by`, `approved_at`, `verified_at`) are ignored. Vectors:
+`vectors/request/` (16).
 
 ## The report (interface I7)
 
@@ -191,7 +264,7 @@ Every input is capped before parsing (see the caps above); no `unsafe`; no panic
 tests include a bounded random-input test (`tests/robust.rs`: 3,000 random strings through every
 parser and 160 mutated valid files, none of which may panic or turn into a trusted file), and a second
 ML-DSA implementation, used only in tests, must agree with ours on real and damaged signatures
-(`tests/crosscheck.rs`). Fuzz targets and the Store and admind integration are phase 2.
+(`tests/crosscheck.rs`). Fuzz targets: see phase 3.
 
 ## Phase 2 (2026-11-04): encryption, keys, origin, the OS hooks
 
@@ -217,8 +290,22 @@ ML-DSA implementation, used only in tests, must agree with ours on real and dama
   update-check fetches the list hourly and `wol trust update` installs it only when it verifies and is
   newer; `files/usr/share/wolos/trust/` holds no root until `woltrust init` has been run.
 
+## Phase 3 (2026-11-04)
+
+- The Store's plugin downloads (`wopkg::index::plugins::check_download`) and `wol plugin add` judge
+  `.wolplug` files with `TrustStore::verify_wolplug`; `wol sign` signs `.wolplug` files too (through
+  the system's zstd, as `wol plugin pack`).
+- Passphrases of author keys are read without echo on a terminal (`controller::secret`).
+- The revocation list comes from `https://cdn.wolos.org/plugins/revoked.json`, then the mirror
+  name of the same server (`wol_core::trust::revoked_urls`, from `wol_core::cdn::HOSTS`), in
+  update-check and in `wol trust update` without files.
+- Fuzz targets `wolcert`, `revoked`, `chain`, `seal`, `request`, `filecert` (`fuzz/fuzz_targets/`).
+- `.wolkey` keeps PBKDF2-HMAC-SHA512 x600 000: a memory-hard KDF (Argon2id) would resist GPU
+  guessing better, but there is no Argon2 crate in the tree yet; the format's `kdf` field allows
+  adding it as a new value (audit M9, a lead call).
+
 ## Not here yet
 
-The real roots and intermediates (the lead runs `woltrust init`), fuzz targets for the new parsers,
-`.wolplug` signing in `wol sign` (zstd), and the hub's ca and sign workflows switched from their stubs.
-The KMS spike (`docs/trust/kms.md`) is moot: there is no key service (lead decision 2026-11-04).
+The real roots and intermediates (the lead runs `woltrust init --subject`), derived 256-bit ids
+(SHA-512/256 of the public keys) for serials, file certificates and seal recipients, the binary
+`.rkdb` revocation store, and the `wolcrypt` crate (lead decisions of 02:41Z-02:45Z, next round).

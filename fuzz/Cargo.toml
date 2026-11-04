@@ -126,6 +126,48 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "wolcert"
+path = "fuzz_targets/wolcert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "revoked"
+path = "fuzz_targets/revoked.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chain"
+path = "fuzz_targets/chain.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "seal"
+path = "fuzz_targets/seal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "request"
+path = "fuzz_targets/request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filecert"
+path = "fuzz_targets/filecert.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
 
 # Same vendored crate as the main workspace (docs/adr/0006-vendored-blocking-idle-exit.md).

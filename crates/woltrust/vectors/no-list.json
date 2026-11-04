@@ -1,7 +1,7 @@
 {
   "format": 1,
   "name": "no-list",
-  "about": "no revocation list at all",
+  "about": "no revocation list at all: verified offline, not checked for withdrawn certificates",
   "now": 1770000000,
   "purpose": "wolos/package/1",
   "content": "@content",
@@ -20,13 +20,13 @@
     "allow_test": true
   },
   "expect": {
-    "trust": "community",
+    "trust": "origin",
     "code": "list-too-old",
-    "stale": false,
+    "stale": true,
     "cert": "fd51eec17572cf6c",
     "roots": 1,
     "intermediates": 1,
     "lists": 0,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/list-too-old\",\"sentence\":\"This computer has not checked for withdrawn certificates for more than 30 days, so the signature can't be counted.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"community\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/list-too-old\",\"sentence\":\"This computer has not checked for withdrawn certificates for more than 30 days. The signature itself checks out.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"origin\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

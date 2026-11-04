@@ -105,9 +105,8 @@ fn mutated_valid_files_never_panic_or_gain_trust() {
         );
         let unchanged = w == wsig && c == chain && m == content;
         if !unchanged {
-            assert_ne!(
-                out.trust,
-                Trust::Verified,
+            assert!(
+                !matches!(out.trust, Trust::Trusted | Trust::Origin),
                 "round {round}: a changed file was trusted"
             );
         }

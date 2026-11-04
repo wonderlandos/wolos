@@ -681,15 +681,18 @@ fn kept_lines(kept: &[String]) -> String {
 }
 
 /// `wol plugin add <folder|file.wolplug> [--yes]` (audit X6-2): the Store's install step
-/// (`wol_core::package::verify_wolplug`, then `install_plugin` into this account's plugin folder)
+/// (`wol_core::trust::TrustStore::verify_wolplug`, then `install_plugin` into this account's plugin folder)
 /// for a file or folder on this machine. Unsigned (every folder, a `.wolplug` without the index
 /// signature) needs `--yes`. Installing never turns the plugin on.
 fn add(env: &mut dyn Env, what: &str, yes: bool, as_json: bool) -> i32 {
     let p = Path::new(what);
     let v = if p.join(MANIFEST_FILE).is_file() {
-        verified_folder(p)
+        verified_folder(p).map(|v| (v, None))
     } else if p.is_file() {
-        verified_wolplug(p)
+        verified_wolplug(p, env.now_secs()).map(|c| {
+            let vouched = c.vouched();
+            (c.verified, Some((vouched, c.outcome)))
+        })
     } else if shared::plugins::is_plugin_id(what) {
         return fail(
             env,
@@ -709,17 +712,28 @@ fn add(env: &mut dyn Env, what: &str, yes: bool, as_json: bool) -> i32 {
             ),
         );
     };
-    let v = match v {
+    let (v, judged) = match v {
         Ok(v) => v,
         Err(e) => return fail(env, ErrorCode::Invalid, &e),
     };
-    let signed = matches!(v.trust, wol_core::package::Trust::Signed(_));
+    // Vouched for: the index key (0.12), or a certificate that says WolOS or a certified author.
+    let signed = matches!(v.trust, wol_core::package::Trust::Signed(_))
+        || judged.as_ref().is_some_and(|(vouched, _)| *vouched);
     if !signed && !yes {
+        // A certificate that no longer vouches (expired, list too old) says why.
+        let why = match judged.as_ref().map(|(_, o)| o.code) {
+            Some(c) if c != wol_core::woltrust::Code::Unsigned => c.sentence(),
+            _ => None,
+        }
+        .map_or_else(
+            || "is not signed by the WolOS plugin index".to_owned(),
+            |s| format!("is not vouched for ({s})"),
+        );
         return fail(
             env,
             ErrorCode::Usage,
             &format!(
-                "{} is not signed by the WolOS plugin index: read it (wol plugin check {what}), then pass --yes to install it anyway",
+                "{} {why}: read it (wol plugin check {what}), then pass --yes to install it anyway",
                 v.manifest.id
             ),
         );
@@ -787,8 +801,20 @@ fn verified_folder(dir: &Path) -> Result<wol_core::package::VerifiedPlugin, Stri
 
 /// A `.wolplug` file: unpacked by the system's zstd (as `pack` makes it) to a bounded pipe, so
 /// a bomb stops one byte past `WOLPLUG_MAX_TAR` and nothing is written; then the same checks as
-/// a Store download (`verify_wolplug`: size, shape, signature, hashes, manifest).
-fn verified_wolplug(file: &Path) -> Result<wol_core::package::VerifiedPlugin, String> {
+/// a Store download (`TrustStore::verify_wolplug`: size, shape, signature, hashes, manifest, and
+/// the certificate of ADR 0046 when the file carries `CHAIN` and `SHA256.wsig`, refused when it
+/// is withdrawn or wrong).
+fn verified_wolplug(file: &Path, now: u64) -> Result<wol_core::trust::CheckedPlugin, String> {
+    let tar = wolplug_tar(file)?;
+    let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+    wol_core::trust::TrustStore::load(&wol_core::system::PosixHost).verify_wolplug(&tar, &keys, now)
+}
+
+/// The tar inside a `.wolplug`, through the system's zstd with the [`WOLPLUG_MAX_TAR`] bound
+/// (`wol plugin add` and `wol sign`).
+///
+/// [`WOLPLUG_MAX_TAR`]: wol_core::package::WOLPLUG_MAX_TAR
+pub fn wolplug_tar(file: &Path) -> Result<Vec<u8>, String> {
     use wol_core::package::WOLPLUG_MAX_TAR;
     let size = std::fs::metadata(file).map_err(|e| format!("{}: {e}", file.display()))?;
     if size.len() > WOLPLUG_MAX_TAR {
@@ -815,8 +841,7 @@ fn verified_wolplug(file: &Path) -> Result<wol_core::package::VerifiedPlugin, St
         }
         _ => "The plugin file is damaged (zstd could not read it).".to_owned(),
     })?;
-    let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
-    wol_core::package::verify_wolplug(&tar, &keys)
+    Ok(tar)
 }
 
 fn pack(env: &mut dyn Env, what: &str, out: Option<&str>, yes: bool, as_json: bool) -> i32 {

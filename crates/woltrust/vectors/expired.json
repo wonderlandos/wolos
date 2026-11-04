@@ -32,6 +32,6 @@
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/expired\",\"sentence\":\"The certificate this file was signed with has expired, so nobody vouches for it any more.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"community\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/expired\",\"sentence\":\"The certificate this file was signed with has expired, so nobody vouches for it any more.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"community\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

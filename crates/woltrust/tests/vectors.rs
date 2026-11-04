@@ -82,6 +82,10 @@ fn the_vectors_name_every_case_of_the_adr() {
         "chain-too-long",
         "chain-too-large",
         "test-root-refused",
+        "valid-trusted",
+        "trusted-superseded-downgrade",
+        "trusted-abuse",
+        "trusted-origin-revoked",
     ] {
         assert!(names.contains(&want), "missing vector {want}");
     }
@@ -92,8 +96,15 @@ fn only_the_valid_vectors_are_trusted() {
     use woltrust::Trust;
     let (_, vectors) = load();
     for v in &vectors {
-        let good = matches!(v.expect.trust, Trust::Verified | Trust::Wolos);
+        let good = matches!(
+            v.expect.trust,
+            Trust::Trusted | Trust::Origin | Trust::Wolos
+        );
         let named_valid = v.name.starts_with("valid-")
+            || matches!(
+                v.name.as_str(),
+                "list-too-old" | "no-list" | "list-bad-signature"
+            )
             || matches!(
                 v.name.as_str(),
                 "stale-list"
@@ -102,6 +113,9 @@ fn only_the_valid_vectors_are_trusted() {
                     | "revoked-ceased-older-file"
                     | "revoked-intermediate-by-index-ignored"
                     | "root-a-revoked-by-itself-ignored"
+                    | "trusted-superseded-downgrade"
+                    | "trusted-ceased-older-file"
+                    | "version-entry-ignored-for-certificates"
             );
         assert_eq!(good, named_valid, "{}", v.name);
     }

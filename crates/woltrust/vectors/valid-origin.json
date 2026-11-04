@@ -25,13 +25,13 @@
     "allow_test": true
   },
   "expect": {
-    "trust": "verified",
+    "trust": "origin",
     "code": "ok",
     "stale": false,
     "cert": "7118149e9558d04b",
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"verified\",\"cert\":{\"serial\":\"7118149e9558d04b\",\"subject\":{\"github_id\":4004,\"login\":\"ana\",\"name\":\"Ana Lima\",\"org\":{\"github_id\":5005,\"login\":\"anaco\"}},\"level\":\"verified\",\"verified_at\":1767321600},\"origin\":{\"repo\":\"https://github.com/ana/notes\",\"tag\":\"v1.2\",\"commit\":\"0123456789abcdef0123456789abcdef01234567\",\"built\":1769913600}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"origin\",\"cert\":{\"serial\":\"7118149e9558d04b\",\"subject\":{\"github_id\":4004,\"login\":\"ana\",\"name\":\"Ana Lima\",\"org\":{\"github_id\":5005,\"login\":\"anaco\"}},\"level\":\"verified\",\"class\":\"origin\",\"verified_at\":1767321600},\"origin\":{\"repo\":\"https://github.com/ana/notes\",\"tag\":\"v1.2\",\"commit\":\"0123456789abcdef0123456789abcdef01234567\",\"built\":1769913600}}"
   }
 }

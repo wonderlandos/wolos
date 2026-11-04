@@ -70,6 +70,8 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0038](adr/0038-sound-service.md) | One sound service, and 100% is 0 dB | accepted |
 | [0039](adr/0039-libwolkit-and-wolkit.md) | libWolkit (the engine) and wolkit (the shard) | accepted |
 | [0040](adr/0040-security-defaults-on-linux.md) | Security defaults on Linux | accepted |
+| [0046](adr/0046-author-certificates.md) | Author certificates: who made a .wol, checked offline, withdrawn when a key leaks | proposed |
+| [0047](adr/0047-wolos-hub.md) | WolOS Hub: one place to publish apps, plugins and extensions, with nothing hosted but metadata | proposed |
 
 ## Modules
 

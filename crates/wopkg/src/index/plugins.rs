@@ -4,7 +4,7 @@
 //! check of one downloaded `.wolplug` against its index entry. Plugins install for the person
 //! only, so nothing here asks wold for anything. Order of trust: the index signature before the
 //! index is parsed; the entry's size and SHA-256 before the download is decompressed; the
-//! `.wolplug`'s own signature before its files are read (`wol_core::package::verify_wolplug`).
+//! `.wolplug`'s own signature before its files are read (`wol_core::trust::TrustStore::verify_wolplug`).
 //!
 //! `index.json`, format 1:
 //! `{"format":1,"plugins":[{"id","name","version","summary","author","license","kinds":[..],
@@ -15,10 +15,8 @@ use crate::ffi::{Error, Result};
 use serde::{Deserialize, Serialize};
 use shared::plugins::{Kind, Permission, is_plugin_id, is_wolos_version};
 use std::io::Read;
-use wol_core::package::{
-    Trust, VerifiedPlugin, WOLPLUG_MAX_FILE, WOLPLUG_MAX_TAR, require_signed, verify_index,
-    verify_wolplug,
-};
+use wol_core::package::{Trust, VerifiedPlugin, WOLPLUG_MAX_FILE, WOLPLUG_MAX_TAR, verify_index};
+use wol_core::trust::TrustStore;
 
 /// Largest `index.json` read.
 pub const MAX_INDEX: usize = 4 << 20;
@@ -51,6 +49,9 @@ pub struct Entry {
     pub sha256: String,
     /// Bytes of the `.wolplug` file.
     pub size: u64,
+    /// The file certificate for this exact file (base64url, `woltrust::filecert`): what WolOS
+    /// Hub checked, signed by the Index. Empty in 0.12 indexes.
+    pub filecert: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -239,16 +240,39 @@ pub fn unpack(wolplug: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// A downloaded `.wolplug` for `entry`: size and SHA-256 as listed, then unpacked with a bound,
-/// then its own signature, hashes and manifest; it must be the id and version listed.
+/// then its own signature, hashes and manifest; it must be the id and version listed. Judged
+/// against this machine's certificate store ([`TrustStore::load`]) at the system clock: see
+/// [`check_download_with`].
 pub fn check_download(entry: &Entry, file: &[u8], keys: &[[u8; 32]]) -> Result<VerifiedPlugin> {
+    let store = TrustStore::load(&wol_core::system::PosixHost);
+    check_download_with(entry, file, keys, &store, crate::release::unix_now())
+}
+
+/// [`check_download`] with a given store and clock. The signature is judged by
+/// [`TrustStore::verify_wolplug`]: a plugin with `CHAIN` and `SHA256.wsig` (ADR 0046) gets its
+/// certificate's verdict, and a withdrawn or wrong one is refused even when the legacy index key
+/// signed it too; a 0.12 plugin keeps the index key path. Either way someone must vouch for it
+/// ([`wol_core::trust::CheckedPlugin::require_vouched`]): unsigned, an expired certificate or a
+/// revocation list too old to rely on is refused, as before for unsigned.
+pub fn check_download_with(
+    entry: &Entry,
+    file: &[u8],
+    keys: &[[u8; 32]],
+    store: &TrustStore,
+    now: u64,
+) -> Result<VerifiedPlugin> {
     if file.len() as u64 != entry.size || wol_core::package::sha256_hex(file) != entry.sha256 {
         return Err(Error::untrusted(
             "The plugin download does not match the plugin list.",
         ));
     }
+    if !entry.filecert.is_empty() {
+        check_filecert(entry, store)?;
+    }
     let tar = unpack(file)?;
-    let v = verify_wolplug(&tar, keys)
-        .and_then(require_signed)
+    let v = store
+        .verify_wolplug(&tar, keys, now)
+        .and_then(wol_core::trust::CheckedPlugin::require_vouched)
         .map_err(Error::untrusted)?;
     if v.manifest.id != entry.id || v.manifest.version != entry.version {
         return Err(Error::untrusted(
@@ -264,6 +288,28 @@ pub fn check_download(entry: &Entry, file: &[u8], keys: &[[u8; 32]]) -> Result<V
         ));
     }
     Ok(v)
+}
+
+/// The entry's file certificate: it must verify against the store for this file's SHA-256,
+/// name the listed id and version, and not be withdrawn ("This version was withdrawn").
+fn check_filecert(entry: &Entry, store: &TrustStore) -> Result<()> {
+    use wol_core::woltrust::filecert;
+    let bytes = wol_core::woltrust::b64::decode(&entry.filecert, filecert::MAX_FILE)
+        .ok_or_else(|| Error::untrusted("The plugin's file certificate is damaged."))?;
+    match filecert::verify(&store.store, &bytes, &entry.sha256) {
+        Ok(filecert::Checked::Checked(b)) if b.id == entry.id && b.version == entry.version => {
+            Ok(())
+        }
+        Ok(filecert::Checked::Checked(_)) => Err(Error::untrusted(
+            "The plugin's file certificate is for another plugin or version.",
+        )),
+        Ok(filecert::Checked::Withdrawn(..)) => {
+            Err(Error::untrusted("This version was withdrawn."))
+        }
+        Err(_) => Err(Error::untrusted(
+            "The plugin's file certificate does not check out.",
+        )),
+    }
 }
 
 /// The index entry's permission ids and the manifest's permissions name the same set (order and
@@ -608,6 +654,212 @@ mod tests {
             ..entry_for("alice.demo", &f)
         };
         assert!(check_download(&e, &f, &keys).is_err());
+    }
+
+    /// A `.wolplug` with the ADR 0046 pair: `CHAIN` and `SHA256.wsig` by `signer` under `serial`,
+    /// and the legacy index signature by `seed` when given.
+    fn author_wolplug(
+        p: &wol_core::woltrust::pki::Pki,
+        id: &str,
+        signer: &wol_core::woltrust::make::Secret,
+        serial: &str,
+        seed: Option<&[u8; 32]>,
+    ) -> Vec<u8> {
+        use wol_core::package::{CHAIN, WSIG, manifest, sign, ustar};
+        let files: Vec<(String, Vec<u8>)> = wol_core::plugins::scaffold(id, "Demo", &[Kind::Theme])
+            .unwrap()
+            .into_iter()
+            .map(|(r, t)| (format!("{id}/{r}"), t.into_bytes()))
+            .collect();
+        let mut all: Vec<(&str, &[u8])> = files
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        let sha = manifest(&all);
+        let sig = seed.map(|s| sign(s, sha.as_bytes()));
+        let chain = wol_core::woltrust::pki::Pki::chain(&[&p.alice, &p.authors]);
+        let w = wol_core::woltrust::make::wsig(
+            serial,
+            signer,
+            wol_core::woltrust::Purpose::Plugin,
+            sha.as_bytes(),
+        );
+        all.push(("SHA256", sha.as_bytes()));
+        if let Some(s) = &sig {
+            all.push(("SHA256.sig", s.as_slice()));
+        }
+        all.push((CHAIN, &chain));
+        all.push((WSIG, &w));
+        let tar = ustar(&all);
+        ruzstd::encoding::compress_to_vec(&tar[..], ruzstd::encoding::CompressionLevel::Fastest)
+    }
+
+    /// The TEST authority's store with a fresh list; `revoked` withdraws Alice.
+    fn author_store(p: &wol_core::woltrust::pki::Pki, revoked: bool, age: u64) -> TrustStore {
+        use wol_core::woltrust::pki::{DAY, NOW};
+        use wol_core::woltrust::{LIST_LIFETIME, Reason, Store, make, revoked as rl};
+        let entries = if revoked {
+            vec![rl::Entry {
+                serial: p.alice.body.serial.clone(),
+                at: NOW - DAY,
+                reason: Reason::KeyCompromise,
+            }]
+        } else {
+            vec![]
+        };
+        let issued = NOW - age * DAY;
+        let l = rl::ListText {
+            format: 1,
+            serial: 4,
+            issued,
+            expires: issued + LIST_LIFETIME,
+            entries,
+        };
+        let lists = [make::revocation_list(
+            &l,
+            &p.index.body.serial,
+            &p.index.secret,
+        )];
+        TrustStore {
+            store: Store::load(
+                &[&p.root_a.file],
+                &[&p.authors.file, &p.index.file],
+                &lists,
+                NOW,
+                true,
+            ),
+        }
+    }
+
+    /// ADR 0046 in the Store's plugin path: a certified author's plugin installs without the index
+    /// key; a withdrawn or forged certificate is refused even when the index key signed it too; an
+    /// old list keeps the verdict (audit M3); a 0.12 plugin keeps the index key path only while
+    /// the machine holds no root (audit H1).
+    #[test]
+    fn a_download_with_a_certificate_gets_the_certificate_verdict() {
+        use wol_core::woltrust::pki::{NOW, Pki};
+        let p = Pki::new();
+        let keys = [wol_core::package::public_of(&SEED)];
+        let good = author_wolplug(
+            &p,
+            "alice.demo",
+            &p.alice.secret,
+            &p.alice.body.serial,
+            None,
+        );
+        let e = entry_for("alice.demo", &good);
+        let fresh = author_store(&p, false, 1);
+        let v = check_download_with(&e, &good, &[], &fresh, NOW).unwrap();
+        assert_eq!(v.manifest.id, "alice.demo");
+        // Withdrawn: refused, and the index key does not save it.
+        let both = author_wolplug(
+            &p,
+            "alice.demo",
+            &p.alice.secret,
+            &p.alice.body.serial,
+            Some(&SEED),
+        );
+        let eb = entry_for("alice.demo", &both);
+        let withdrawn = author_store(&p, true, 1);
+        assert!(check_download_with(&eb, &both, &keys, &fresh, NOW).is_ok());
+        let err = check_download_with(&eb, &both, &keys, &withdrawn, NOW).unwrap_err();
+        assert_eq!(err.status, crate::ffi::Status::Untrusted, "{err}");
+        // Signed with another key under Alice's serial: invalid, refused even with the index key.
+        let forged = author_wolplug(
+            &p,
+            "alice.demo",
+            &p.org.secret,
+            &p.alice.body.serial,
+            Some(&SEED),
+        );
+        let ef = entry_for("alice.demo", &forged);
+        assert!(check_download_with(&ef, &forged, &keys, &fresh, NOW).is_err());
+        // A list 40 days old: the certificate still vouches, not checked for withdrawals (M3).
+        let old = author_store(&p, false, 40);
+        assert!(check_download_with(&e, &good, &[], &old, NOW).is_ok());
+        // A 0.12 plugin with the index key only: fine on a machine with no roots (legacy, H1)...
+        let legacy = wolplug("alice.demo", Some(&SEED));
+        let el = entry_for("alice.demo", &legacy);
+        assert!(check_download_with(&el, &legacy, &keys, &TrustStore::default(), NOW).is_ok());
+        // ...refused once the machine holds WolOS roots.
+        let err = check_download_with(&el, &legacy, &keys, &fresh, NOW).unwrap_err();
+        assert!(err.message.contains("previous WolOS key"), "{err}");
+    }
+
+    /// The file certificate of the entry (lead 2026-11-04): checked, withdrawn by version, or for
+    /// another version.
+    #[test]
+    fn a_withdrawn_version_is_refused_by_its_file_certificate() {
+        use wol_core::woltrust::filecert::{self, Body, FileKind};
+        use wol_core::woltrust::pki::{DAY, NOW, Pki};
+        let p = Pki::new();
+        let good = author_wolplug(
+            &p,
+            "alice.demo",
+            &p.alice.secret,
+            &p.alice.body.serial,
+            None,
+        );
+        let body = |version: &str| Body {
+            format: 1,
+            serial: "0011223344556677".into(),
+            file_sha256: wol_core::package::sha256_hex(&good),
+            manifest_sha256: "00".repeat(32),
+            id: "alice.demo".into(),
+            version: version.into(),
+            kind: FileKind::Plugin,
+            origin: None,
+            cert: p.alice.body.serial.clone(),
+            class: None,
+            verdict: wol_core::woltrust::Verdict::Pass,
+            findings: 0,
+            checked_at: NOW - DAY,
+        };
+        let fc = |b: &Body| {
+            wol_core::woltrust::b64::encode(&filecert::make(
+                b,
+                &p.index.body.serial,
+                &p.index.secret,
+            ))
+        };
+        let e = Entry {
+            filecert: fc(&body("0.1")),
+            ..entry_for("alice.demo", &good)
+        };
+        let fresh = author_store(&p, false, 1);
+        assert!(check_download_with(&e, &good, &[], &fresh, NOW).is_ok());
+        let other = Entry {
+            filecert: fc(&body("0.2")),
+            ..e.clone()
+        };
+        assert!(check_download_with(&other, &good, &[], &fresh, NOW).is_err());
+        let l = wol_core::woltrust::revoked::ListText {
+            format: 1,
+            serial: 9,
+            issued: NOW - DAY,
+            expires: NOW - DAY + wol_core::woltrust::LIST_LIFETIME,
+            entries: vec![wol_core::woltrust::revoked::Entry {
+                serial: "0011223344556677".into(),
+                at: NOW - DAY,
+                reason: wol_core::woltrust::Reason::WithdrawnVersion,
+            }],
+        };
+        let lists = [wol_core::woltrust::make::revocation_list(
+            &l,
+            &p.index.body.serial,
+            &p.index.secret,
+        )];
+        let pulled = TrustStore {
+            store: wol_core::woltrust::Store::load(
+                &[&p.root_a.file],
+                &[&p.authors.file, &p.index.file],
+                &lists,
+                NOW,
+                true,
+            ),
+        };
+        let err = check_download_with(&e, &good, &[], &pulled, NOW).unwrap_err();
+        assert_eq!(err.message, "This version was withdrawn.");
     }
 
     /// ST6-5: the list says what a person agrees to; Turn On grants the package manifest's own

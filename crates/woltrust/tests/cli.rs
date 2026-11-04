@@ -97,6 +97,7 @@ fn issue_signs_exactly_the_body_and_needs_a_valid_proof() {
             name: Some("Carol".into()),
             label: None,
             org: None,
+            text: None,
         },
         namespaces: &["carol."],
         usage: &[Usage::SignPackage],
@@ -109,7 +110,10 @@ fn issue_signs_exactly_the_body_and_needs_a_valid_proof() {
     body.keys = author.keys_text();
     let body_bytes = serde_json::to_vec(&body).expect("json");
     let body_file = write(&d, "body.json", &body_bytes);
-    let proof = request::prove(&author.secret(), 77, Kind::Person, &body.keys);
+    let proof = request::prove(
+        &author.secret(),
+        &request::Claimed::of_body(&body).expect("claims"),
+    );
     let proof_file = write(&d, "proof.json", &serde_json::to_vec(&proof).expect("json"));
     let key_file = write(&d, "ca.key", km_text("test-authors").as_bytes());
     let out = run(
@@ -144,9 +148,7 @@ fn issue_signs_exactly_the_body_and_needs_a_valid_proof() {
     assert_eq!(none.status.code(), Some(1), "a person needs --proof");
     let stolen = request::prove(
         &KeyMaterial::new([1; 32], false).secret(),
-        77,
-        Kind::Person,
-        &body.keys,
+        &request::Claimed::of_body(&body).expect("claims"),
     );
     let bad = write(&d, "bad.json", &serde_json::to_vec(&stolen).expect("json"));
     let refused = run(
@@ -162,6 +164,25 @@ fn issue_signs_exactly_the_body_and_needs_a_valid_proof() {
         &[],
     );
     assert_eq!(refused.status.code(), Some(1));
+    // Audit H2: the CA asked to sign a body with a namespace the requester did not ask for (the
+    // proof is the requester's own): refused, nothing printed.
+    let mut wider = body.clone();
+    wider.namespaces.push("mozilla.".into());
+    let wider_file = write(&d, "wider.json", &serde_json::to_vec(&wider).expect("json"));
+    let squat = run(
+        &[
+            "issue",
+            "--body",
+            &wider_file,
+            "--proof",
+            &proof_file,
+            "--key-file",
+            &key_file,
+        ],
+        &[],
+    );
+    assert_eq!(squat.status.code(), Some(1));
+    assert!(squat.stdout.is_empty());
 }
 
 #[test]
@@ -255,7 +276,14 @@ fn revoke_builds_the_next_list_and_verify_reports_it() {
     assert_eq!(report["trust"], "withdrawn");
     let unlisted = base(false);
     let report: serde_json::Value = serde_json::from_slice(&unlisted.stdout).expect("I7 json");
-    assert_eq!(report["trust"], "community", "no list: counts as unsigned");
+    // Audit M3: with no list the signature keeps its value, flagged as not checked.
+    assert_eq!(report["trust"], "origin", "no list: still the author's");
+    assert!(
+        unlisted.status.success(),
+        "a verified signature exits 0 without a list"
+    );
+    let f = report["findings"][0]["rule"].as_str().unwrap_or_default();
+    assert_eq!(f, "trust/list-too-old");
 }
 
 #[test]
@@ -276,8 +304,22 @@ fn init_writes_locked_keys_that_sign_from_the_environment() {
     let d = tmp("init");
     let out_dir = d.join("authority");
     let dir = out_dir.to_string_lossy().into_owned();
-    let out = run(
+    // The subject text is required, with no default.
+    let none = run(
         &["init", "--out", &dir, "--passphrase-env", "P"],
+        &[("P", "lead passphrase")],
+    );
+    assert!(!none.status.success() && !out_dir.exists());
+    let out = run(
+        &[
+            "init",
+            "--out",
+            &dir,
+            "--subject",
+            "WolOS test authority - example.org",
+            "--passphrase-env",
+            "P",
+        ],
         &[("P", "lead passphrase")],
     );
     assert!(
@@ -287,6 +329,17 @@ fn init_writes_locked_keys_that_sign_from_the_environment() {
     );
     let text = String::from_utf8(out.stdout).expect("utf-8");
     assert_eq!(text.lines().count(), 5, "five plain lines: {text}");
+    for e in std::fs::read_dir(out_dir.join("public/roots"))
+        .expect("roots")
+        .flatten()
+    {
+        let c = woltrust::Cert::parse(&std::fs::read(e.path()).expect("root")).expect("parses");
+        assert_eq!(
+            c.body.subject.text.as_deref(),
+            Some("WolOS test authority - example.org"),
+            "the subject text is signed in each root"
+        );
+    }
     let roots = std::fs::read_dir(out_dir.join("public/roots"))
         .expect("roots")
         .count();
@@ -352,7 +405,15 @@ fn init_writes_locked_keys_that_sign_from_the_environment() {
         & 0o777;
     assert_eq!(mode, 0o600);
     let again = run(
-        &["init", "--out", &dir, "--passphrase-env", "P"],
+        &[
+            "init",
+            "--out",
+            &dir,
+            "--subject",
+            "WolOS test authority",
+            "--passphrase-env",
+            "P",
+        ],
         &[("P", "lead passphrase")],
     );
     assert_eq!(again.status.code(), Some(1), "never overwrites");

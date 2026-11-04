@@ -26,13 +26,13 @@
     "allow_test": true
   },
   "expect": {
-    "trust": "verified",
+    "trust": "origin",
     "code": "ok",
     "stale": false,
     "cert": "fd51eec17572cf6c",
     "roots": 1,
     "intermediates": 2,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"verified\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"origin\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

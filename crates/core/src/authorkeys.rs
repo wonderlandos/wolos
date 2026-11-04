@@ -50,7 +50,7 @@ pub fn request(
     if !matches!(kind, Kind::Person | Kind::Org) {
         return Err("a request is for a person or an organisation".into());
     }
-    let id = subject
+    subject
         .github_id
         .ok_or("a request needs the numeric GitHub id")?;
     if subject.login.is_none() || subject.name.is_none() {
@@ -64,19 +64,23 @@ pub fn request(
     {
         return Err("namespaces are 1 to 8 prefixes like alice. (outside org.wolos.)".into());
     }
-    let keys = km.keys_text();
-    let proof = request::prove(&km.secret(), id, kind, &keys);
-    Ok(Request {
+    let mut req = Request {
         format: 1,
         action: "issue".into(),
         kind,
         subject,
         namespaces,
-        keys,
-        proof,
+        keys: km.keys_text(),
+        proof: request::Proof {
+            ed25519: String::new(),
+            second: String::new(),
+        },
         months: MONTHS,
         requested_at: now,
-    })
+    };
+    let claimed = request::Claimed::of_request(&req).ok_or("a request needs a GitHub id")?;
+    req.proof = request::prove(&km.secret(), &claimed);
+    Ok(req)
 }
 
 /// True when `cert` was issued for the keys of `km` (signing and encryption alike).
@@ -127,6 +131,7 @@ mod tests {
             name: Some("Alice Doe".into()),
             label: None,
             org: None,
+            text: None,
         }
     }
 

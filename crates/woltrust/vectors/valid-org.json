@@ -25,13 +25,13 @@
     "allow_test": true
   },
   "expect": {
-    "trust": "verified",
+    "trust": "origin",
     "code": "ok",
     "stale": false,
     "cert": "36a3609eff7d96b1",
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"verified\",\"cert\":{\"serial\":\"36a3609eff7d96b1\",\"subject\":{\"github_id\":2002,\"login\":\"examplelabs\",\"name\":\"Example Labs\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"origin\",\"cert\":{\"serial\":\"36a3609eff7d96b1\",\"subject\":{\"github_id\":2002,\"login\":\"examplelabs\",\"name\":\"Example Labs\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

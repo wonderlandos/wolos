@@ -25,13 +25,13 @@
     "allow_test": true
   },
   "expect": {
-    "trust": "verified",
+    "trust": "origin",
     "code": "list-stale",
     "stale": true,
     "cert": "fd51eec17572cf6c",
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/list-stale\",\"sentence\":\"This computer has not checked for withdrawn certificates for a while.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"verified\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/list-stale\",\"sentence\":\"This computer has not checked for withdrawn certificates for a while.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"origin\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

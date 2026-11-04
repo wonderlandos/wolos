@@ -32,6 +32,6 @@
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/origin-mismatch\",\"sentence\":\"This file says it comes from a repository that does not belong to the person who signed it.\",\"evidence\":\"7118149e9558d04b\"}],\"trust\":\"invalid\",\"cert\":{\"serial\":\"7118149e9558d04b\",\"subject\":{\"github_id\":4004,\"login\":\"ana\",\"name\":\"Ana Lima\",\"org\":{\"github_id\":5005,\"login\":\"anaco\"}},\"level\":\"verified\",\"verified_at\":1767321600}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/origin-mismatch\",\"sentence\":\"This file says it comes from a repository that does not belong to the person who signed it.\",\"evidence\":\"7118149e9558d04b\"}],\"trust\":\"invalid\",\"cert\":{\"serial\":\"7118149e9558d04b\",\"subject\":{\"github_id\":4004,\"login\":\"ana\",\"name\":\"Ana Lima\",\"org\":{\"github_id\":5005,\"login\":\"anaco\"}},\"level\":\"verified\",\"class\":\"origin\",\"verified_at\":1767321600}}"
   }
 }

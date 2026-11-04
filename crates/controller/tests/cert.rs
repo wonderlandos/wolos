@@ -42,6 +42,8 @@ fn issue(p: &Pki, req: &request::Request) -> Vec<u8> {
         not_after: NOW + 300 * DAY,
         level: Level::Verified,
         verified_at: None,
+        class: None,
+        origin_cert: None,
     };
     make::issue(&body, &p.authors.secret)
 }
@@ -177,10 +179,67 @@ fn request_add_seal_open_and_sign_work_end_to_end() {
         ),
     };
     let c = ts.verify_wol_at(&wol, &[], None, NOW).expect("structure");
+    assert_eq!((c.outcome.trust, c.outcome.code), (Trust::Origin, Code::Ok));
+    sign_wolplug(&d, &ts);
+}
+
+/// A `.wolplug` (zstd of the ustar) for `id`, unsigned, as `wol plugin pack` makes it; None
+/// without zstd on this machine.
+fn wolplug(d: &Path, id: &str) -> Option<PathBuf> {
+    let files: Vec<(String, Vec<u8>)> =
+        wol_core::plugins::scaffold(id, "Demo", &[shared::plugins::Kind::Theme])
+            .expect("scaffold")
+            .into_iter()
+            .map(|(r, t)| (format!("{id}/{r}"), t.into_bytes()))
+            .collect();
+    let mut all: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(n, b)| (n.as_str(), b.as_slice()))
+        .collect();
+    let sha = wol_core::package::manifest(&all);
+    all.push(("SHA256", sha.as_bytes()));
+    let tar = d.join(format!("{id}.tar"));
+    std::fs::write(&tar, wol_core::package::ustar(&all)).expect("tar");
+    let out = d.join(format!("{id}-0.1.wolplug"));
+    let ok = std::process::Command::new("zstd")
+        .args(["-q", "-f", "--rm", "-o"])
+        .arg(&out)
+        .arg(&tar)
+        .status()
+        .is_ok_and(|s| s.success());
+    ok.then_some(out)
+}
+
+/// `wol sign` on a `.wolplug`: the plugin comes back as a zstd file whose `CHAIN` and
+/// `SHA256.wsig` (label `wolos/plugin/1`) verify as Alice's; a plugin outside her names is refused
+/// before any passphrase is asked.
+fn sign_wolplug(d: &Path, ts: &wol_core::trust::TrustStore) {
+    let Some(mine) = wolplug(d, "alice.demo") else {
+        eprintln!("no zstd here: the .wolplug signing half is skipped");
+        return;
+    };
+    let f = mine.to_string_lossy().into_owned();
+    let mut env = env_at(d);
+    env.stdin = vec!["correct horse battery".into()];
     assert_eq!(
-        (c.outcome.trust, c.outcome.code),
-        (Trust::Verified, Code::Ok)
+        run(&["sign", &f, "--as", "00c0ffee00c0ffee"], &mut env),
+        0,
+        "{}",
+        env.err
     );
+    let tar = controller::plugin::wolplug_tar(&mine).expect("still a zstd .wolplug");
+    let c = ts.verify_wolplug(&tar, &[], NOW).expect("verifies");
+    assert_eq!((c.outcome.trust, c.outcome.code), (Trust::Origin, Code::Ok));
+    assert_eq!(c.verified.manifest.id, "alice.demo");
+    let mut env = env_at(d);
+    env.stdin = vec!["correct horse battery".into()];
+    assert_ne!(run(&["sign", &f, "--as", "00c0ffee00c0ffee"], &mut env), 0);
+    assert!(env.err.contains("already"), "{}", env.err);
+    let theirs = wolplug(d, "bob.demo").expect("zstd ran once");
+    let mut env = env_at(d);
+    let t = theirs.to_string_lossy().into_owned();
+    assert_ne!(run(&["sign", &t, "--as", "00c0ffee00c0ffee"], &mut env), 0);
+    assert!(env.err.contains("outside"), "{}", env.err);
 }
 
 #[test]

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! The TEST certificate authority: a root pair, three intermediates and three leaves, all derived
+//! The TEST certificate authority: a root pair, three intermediates and five leaves, all derived
 //! from public seeds, so anyone can rebuild the same bytes. It exists for the test vectors and for
 //! tests in other crates. Its roots carry the subject label `test-...`, so [`crate::Store::load`]
 //! refuses them unless asked, and the image build refuses a trust folder that holds one.
@@ -43,6 +43,9 @@ pub struct Pki {
     /// A person (`ana.`) who also publishes for the organisation `anaco`, verified by the hub on a
     /// given day: the origin fields of ADR 0046.
     pub ana: Ident,
+    /// Alice's trusted certificate (`class: trusted`, after an administrator approved her): its own
+    /// keys; [`Pki::alice`] is her origin certificate, named in `origin_cert`.
+    pub alice_trusted: Ident,
 }
 
 /// 32 bytes derived from a public name.
@@ -96,6 +99,8 @@ pub fn body(spec: &Spec, secret: &Secret) -> Body {
         not_after: spec.not_after,
         level: spec.level,
         verified_at: None,
+        class: None,
+        origin_cert: None,
     }
 }
 
@@ -111,6 +116,23 @@ fn ident(spec: &Spec, issuer: Option<&Secret>) -> Ident {
     let body = body(spec, &secret);
     let file = make::issue(&body, issuer.unwrap_or(&secret));
     Ident { secret, body, file }
+}
+
+/// Alice's trusted certificate: her own keys for it (`test-alice-trusted`), `class: trusted`,
+/// naming her origin certificate, issued by the Authors CA.
+fn trusted_of(alice: &Ident, authors: &Ident) -> Ident {
+    let secret = Secret::from_seed(&seed("test-alice-trusted"), false);
+    let mut b = alice.body.clone();
+    b.serial = serial("test-alice-trusted");
+    b.keys = make::keys_text(&secret);
+    b.class = Some(crate::cert::Class::Trusted);
+    b.origin_cert = Some(alice.body.serial.clone());
+    let file = make::issue(&b, &authors.secret);
+    Ident {
+        secret,
+        body: b,
+        file,
+    }
 }
 
 impl Ident {
@@ -174,6 +196,7 @@ impl Pki {
                     name: Some("Alice Doe".into()),
                     label: None,
                     org: None,
+                    text: None,
                 },
                 namespaces: &["alice."],
                 usage: leaf_usage,
@@ -194,6 +217,7 @@ impl Pki {
                     name: Some("Example Labs".into()),
                     label: None,
                     org: None,
+                    text: None,
                 },
                 namespaces: &["examplelabs."],
                 usage: leaf_usage,
@@ -231,6 +255,7 @@ impl Pki {
                         github_id: 5005,
                         login: "anaco".into(),
                     }),
+                    text: None,
                 },
                 namespaces: &["ana."],
                 usage: leaf_usage,
@@ -249,6 +274,7 @@ impl Pki {
                 file,
             }
         };
+        let alice_trusted = trusted_of(&alice, &authors);
         Pki {
             root_a,
             root_b,
@@ -259,6 +285,7 @@ impl Pki {
             org,
             signer,
             ana,
+            alice_trusted,
         }
     }
 

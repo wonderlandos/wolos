@@ -32,6 +32,6 @@
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/wrong-namespace\",\"sentence\":\"This file's id is outside the names its certificate is allowed to sign.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"invalid\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/wrong-namespace\",\"sentence\":\"This file's id is outside the names its certificate is allowed to sign.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"invalid\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

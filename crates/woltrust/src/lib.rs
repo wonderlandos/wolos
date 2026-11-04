@@ -8,6 +8,8 @@
 pub mod b64;
 pub mod cert;
 pub mod crypto;
+pub mod filecert;
+pub mod filecert_vectors;
 #[cfg(feature = "seal")]
 pub mod init;
 pub mod key;
@@ -16,6 +18,8 @@ pub mod origin;
 pub mod pki;
 pub mod report;
 pub mod request;
+#[cfg(feature = "seal")]
+pub mod request_vectors;
 pub mod revoked;
 #[cfg(feature = "seal")]
 pub mod seal;
@@ -27,7 +31,7 @@ pub mod verify;
 #[cfg(feature = "seal")]
 pub mod wolkey;
 
-pub use cert::{Body, Cert, Kind, Level, OrgRef, Usage};
+pub use cert::{Body, Cert, Class, Kind, Level, OrgRef, Usage};
 pub use crypto::{Purpose, Wsig};
 pub use origin::Origin;
 pub use report::{CertInfo, Finding, Report, Trust, Verdict};

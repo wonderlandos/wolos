@@ -147,6 +147,7 @@ pub fn recipient(p: &Pki, org: bool) -> Recipient {
             name: Some(full.into()),
             label: None,
             org: None,
+            text: None,
         },
         namespaces: &[ns],
         usage: &[Usage::SignPackage, Usage::SignPlugin, Usage::SignExtension],

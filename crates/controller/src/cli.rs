@@ -318,7 +318,7 @@ pub const TREE: &[Cmd] = &[
             opt("commit"),
         ],
         flags: &["as"],
-        help: "Sign a .wol with your certificate: wol sign FILE --as SERIAL [REPO TAG COMMIT] (passphrase on stdin)",
+        help: "Sign a .wol or .wolplug with your certificate: wol sign FILE --as SERIAL [REPO TAG COMMIT] (passphrase on stdin)",
         hidden: false,
     },
     Cmd {
@@ -338,8 +338,8 @@ pub const TREE: &[Cmd] = &[
     cmd(
         &["trust", "update"],
         "trust.update",
-        &[arg("list"), arg("sig")],
-        "update-check: install a downloaded revocation list if it verifies and is newer (root)",
+        &[opt("list"), opt("sig")],
+        "Install the revocation list if it verifies and is newer; without LIST SIG it is fetched from the CDN (root)",
     ),
     cmd(
         &["trust", "status"],

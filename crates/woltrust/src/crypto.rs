@@ -67,17 +67,20 @@ pub enum Purpose {
     Index,
     /// A revocation list.
     Revocation,
+    /// A file certificate: what WolOS Hub checked about one release (`crate::filecert`).
+    Release,
 }
 
 impl Purpose {
-    /// All six, in label order.
-    pub const ALL: [Purpose; 6] = [
+    /// All seven, in label order.
+    pub const ALL: [Purpose; 7] = [
         Purpose::Cert,
         Purpose::Package,
         Purpose::Plugin,
         Purpose::Extension,
         Purpose::Index,
         Purpose::Revocation,
+        Purpose::Release,
     ];
 
     /// The label signed in front of the content hash.
@@ -89,6 +92,7 @@ impl Purpose {
             Purpose::Extension => "wolos/extension/1",
             Purpose::Index => "wolos/index/1",
             Purpose::Revocation => "wolos/revocation/1",
+            Purpose::Release => "wolos/release/1",
         }
     }
 
@@ -101,6 +105,8 @@ impl Purpose {
             Purpose::Extension => Usage::SignExtension,
             Purpose::Index => Usage::SignIndex,
             Purpose::Revocation => Usage::SignRevocations,
+            // The Index intermediate signs file certificates, as it signs the index.
+            Purpose::Release => Usage::SignIndex,
         }
     }
 

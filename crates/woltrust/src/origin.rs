@@ -132,6 +132,7 @@ mod tests {
                 github_id: 9,
                 login: "anaco".into(),
             }),
+            text: None,
         };
         assert!(o("https://github.com/ana/notes").belongs_to(&s));
         assert!(o("https://github.com/AnaCo/notes").belongs_to(&s));

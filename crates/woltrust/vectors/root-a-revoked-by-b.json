@@ -33,6 +33,6 @@
     "roots": 2,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/revoked-key-compromise\",\"sentence\":\"WolOS no longer trusts the certificate this file was signed with, because its key was exposed.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"withdrawn\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/revoked-key-compromise\",\"sentence\":\"WolOS no longer trusts the certificate this file was signed with, because its key was exposed.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"withdrawn\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

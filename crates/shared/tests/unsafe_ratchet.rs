@@ -33,6 +33,9 @@ use std::path::{Path, PathBuf};
 /// record's fd), the GPU present hand-off of the window's wl_display/wl_surface
 /// (`window/native/gpu.rs`, `window/native/mod.rs`) and `ffi/surface.rs` (the handle and
 /// vk_surface out-writes, AppSurface::create on the app's instance); each with a SAFETY line.
+/// controller +4 (MANUAL 0.12.0, `src/secret.rs`): the administrator password on a terminal was
+/// echoed; std has no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap (Ctrl-C restores
+/// the terminal) and `_exit` in that handler, each with a SAFETY line; no new dependency.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
@@ -40,7 +43,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("wopkg", 94),
     ("realtime", 69),
     ("xguard", 63),
-    ("controller", 52),
+    ("controller", 56),
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),

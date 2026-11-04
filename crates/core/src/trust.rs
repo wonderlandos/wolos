@@ -24,8 +24,25 @@ pub const STATE_INTERMEDIATES: &str = "/var/lib/wolos/trust/intermediates";
 pub const STATE_REVOKED: &str = "/var/lib/wolos/trust/revoked.json";
 /// Appended to a list path for its signature file.
 pub const SIG_SUFFIX: &str = ".wsig";
+/// Every revocation this machine has seen, kept forever (audit M1): `wol trust update` appends to
+/// it, never shortens it, and every check consults it, so a later list that lacks an entry, a
+/// rolled-back list file or an expired Index never un-revokes a certificate.
+pub const SEEN_FILE: &str = "/var/lib/wolos/trust/seen-revocations.json";
 /// Extension of a certificate file.
 pub const CERT_EXT: &str = ".wolcert";
+/// Where the revocation list lives on the CDN server, below each of [`crate::cdn::HOSTS`]; its
+/// signature is the same URL plus [`SIG_SUFFIX`].
+pub const REVOKED_PATH: &str = "/plugins/revoked.json";
+
+/// The revocation list's URLs in the order tried (`wol trust update`, `update-check`): the CDN
+/// under the project's domain, then its mirror name.
+pub fn revoked_urls() -> Vec<String> {
+    crate::cdn::HOSTS
+        .iter()
+        .map(|h| format!("{h}{REVOKED_PATH}"))
+        .collect()
+}
+
 /// Most certificate files read from one folder.
 const MAX_FILES: usize = 64;
 
@@ -81,14 +98,48 @@ impl TrustStore {
             .iter()
             .filter_map(|p| read_list(host, p))
             .collect();
-        TrustStore {
-            store: Store::load(&roots, &inter, &lists, unix(host), false),
+        let mut store = Store::load(&roots, &inter, &lists, unix(host), false);
+        match read_capped(host, SEEN_FILE, woltrust::revoked::MAX_SEEN_BYTES)
+            .map(|b| woltrust::revoked::Seen::parse(&b))
+        {
+            Some(Ok(seen)) => store.remember(&seen),
+            Some(Err(e)) => store.notes.push(format!("{SEEN_FILE}: {e}")),
+            None => {}
+        }
+        TrustStore { store }
+    }
+
+    /// What a raw Ed25519 `SHA256.sig` by WolOS's previous flat key `key` is worth (audit H1): its
+    /// key id (16 hex, [`woltrust::request::key_id`]) can be withdrawn in `revoked.json` like a
+    /// certificate; once this machine holds WolOS roots it is refused; before that it is
+    /// [`woltrust::Trust::Legacy`], never WolOS.
+    pub fn legacy(&self, key: &[u8; 32]) -> Outcome {
+        let serial = woltrust::request::key_id(key);
+        if let Some(code) = woltrust::verify::withdrawn(&self.store, &serial) {
+            return legacy_outcome(woltrust::Trust::Withdrawn, code);
+        }
+        if self.store.roots.is_empty() {
+            legacy_outcome(woltrust::Trust::Legacy, woltrust::Code::LegacyKey)
+        } else {
+            legacy_outcome(woltrust::Trust::Invalid, woltrust::Code::LegacyRefused)
+        }
+    }
+
+    fn legacy_of(&self, trust: package::Trust, keys: &[[u8; 32]]) -> Outcome {
+        match trust {
+            package::Trust::Signed(i) => keys.get(i).map_or_else(
+                || legacy_outcome(woltrust::Trust::Invalid, woltrust::Code::SignerUnknown),
+                |k| self.legacy(k),
+            ),
+            package::Trust::Unsigned => {
+                legacy_outcome(woltrust::Trust::Community, woltrust::Code::Unsigned)
+            }
         }
     }
 
     /// Judges a `.wol`: the structural checks of [`package::verify_extra`], then the hybrid
     /// signature if the file has one, else the legacy Ed25519 signature against `legacy_keys`
-    /// (WolOS's own flat keys, which count as made by WolOS), else unsigned. `first_seen` is the
+    /// (WolOS's own flat keys: [`TrustStore::legacy`]), else unsigned. `first_seen` is the
     /// signed index's first sighting of this exact file, if the caller has it.
     pub fn verify_wol(
         &self,
@@ -122,10 +173,8 @@ impl TrustStore {
                     now,
                 },
             )
-        } else if matches!(verified.trust, package::Trust::Signed(_)) {
-            legacy_outcome(woltrust::Trust::Wolos, woltrust::Code::Ok)
         } else {
-            legacy_outcome(woltrust::Trust::Community, woltrust::Code::Unsigned)
+            self.legacy_of(verified.trust, legacy_keys)
         };
         Ok(Checked { verified, outcome })
     }
@@ -138,6 +187,39 @@ pub struct CheckedPlugin {
     pub verified: package::VerifiedPlugin,
     /// Trust value, reason, signer and staleness.
     pub outcome: Outcome,
+}
+
+impl CheckedPlugin {
+    /// True when someone vouches for the plugin: its certificate chain says made by WolOS, by a
+    /// trusted developer or by a proven origin, or the legacy index key signed it (0.12 indexes,
+    /// only while this machine holds no WolOS root and the key is not withdrawn). An expired
+    /// certificate counts as unsigned, as for a `.wol`.
+    pub fn vouched(&self) -> bool {
+        matches!(
+            self.outcome.trust,
+            woltrust::Trust::Wolos
+                | woltrust::Trust::Trusted
+                | woltrust::Trust::Origin
+                | woltrust::Trust::Legacy
+        )
+    }
+
+    /// The plugin when [`CheckedPlugin::vouched`], else why not: the certificate's sentence when
+    /// it has one (expired, list too old), else "not signed".
+    pub fn require_vouched(self) -> Result<package::VerifiedPlugin, String> {
+        if self.vouched() {
+            return Ok(self.verified);
+        }
+        Err(match self.outcome.code {
+            woltrust::Code::Unsigned => {
+                "The plugin is not signed by the WolOS plugin index.".into()
+            }
+            c => c
+                .sentence()
+                .unwrap_or("The plugin is not signed by the WolOS plugin index.")
+                .to_owned(),
+        })
+    }
 }
 
 /// What `wol trust status` shows: what the store holds and how old its revocation list is.
@@ -161,6 +243,10 @@ pub struct Status {
     pub revoked: usize,
     /// What was left out and why.
     pub notes: Vec<String>,
+    /// The subject text of each pinned root (who vouches), in load order.
+    pub root_texts: Vec<String>,
+    /// Revocations remembered from earlier lists ([`SEEN_FILE`]).
+    pub remembered: usize,
 }
 
 impl TrustStore {
@@ -175,6 +261,18 @@ impl TrustStore {
         now: u64,
     ) -> Result<CheckedPlugin, String> {
         let (verified, extra) = package::verify_wolplug_extra(tar, legacy_keys)?;
+        let refused = |o: &Outcome| {
+            matches!(
+                o.trust,
+                woltrust::Trust::Invalid | woltrust::Trust::Withdrawn
+            )
+        };
+        let say = |o: &Outcome| {
+            o.code
+                .sentence()
+                .unwrap_or("The plugin's signature does not check out.")
+                .to_owned()
+        };
         let outcome = if extra.wsig.is_some() {
             let o = woltrust::verify(
                 &self.store,
@@ -188,22 +286,22 @@ impl TrustStore {
                     now,
                 },
             );
-            if matches!(
-                o.trust,
-                woltrust::Trust::Invalid | woltrust::Trust::Withdrawn
-            ) {
-                return Err(o
-                    .code
-                    .sentence()
-                    .unwrap_or("The plugin's signature does not check out.")
-                    .to_owned());
+            if refused(&o) {
+                return Err(say(&o));
             }
-            o
-        } else if matches!(verified.trust, package::Trust::Signed(_)) {
-            legacy_outcome(woltrust::Trust::Wolos, woltrust::Code::Ok)
+            // An expired certificate next to the 0.12 index key: the index key still counts.
+            match (o.trust, verified.trust) {
+                (woltrust::Trust::Community, package::Trust::Signed(_)) => {
+                    self.legacy_of(verified.trust, legacy_keys)
+                }
+                _ => o,
+            }
         } else {
-            legacy_outcome(woltrust::Trust::Community, woltrust::Code::Unsigned)
+            self.legacy_of(verified.trust, legacy_keys)
         };
+        if refused(&outcome) {
+            return Err(say(&outcome));
+        }
         Ok(CheckedPlugin { verified, outcome })
     }
 
@@ -215,6 +313,80 @@ impl TrustStore {
     }
 
     fn accept(&self, list: &[u8], sig: &[u8], now: u64, allow_test: bool) -> Result<u64, String> {
+        let probe = self.probe(list, sig, now, allow_test);
+        let new = probe.lists.first().ok_or_else(|| {
+            format!(
+                "the new revocation list does not verify ({})",
+                probe.notes.join("; ")
+            )
+        })?;
+        // Audit M1: a list that leaves out a withdrawal this machine has seen from a signer of
+        // the same rank (Index or root) is refused, so the pipeline cannot forget one.
+        let held = self.store.all_lists();
+        let dropped = held
+            .iter()
+            .filter(|l| l.signer_is_root == new.signer_is_root)
+            .flat_map(|l| l.list.entries.iter())
+            .find(|e| {
+                e.reason.is_hard()
+                    && !new
+                        .list
+                        .entries
+                        .iter()
+                        .any(|n| n.serial == e.serial && n.reason == e.reason)
+            });
+        if let Some(e) = dropped {
+            return Err(format!(
+                "the new revocation list leaves out {} ({}), which was withdrawn before",
+                e.serial,
+                e.reason.as_str()
+            ));
+        }
+        let new = new.list.serial;
+        match self.store.best_list() {
+            Some(old) if old.list.serial >= new => Err(format!(
+                "the new revocation list ({new}) is not newer than the one held ({})",
+                old.list.serial
+            )),
+            _ => Ok(new),
+        }
+    }
+
+    /// The memory file ([`SEEN_FILE`]) after the lists held and the new list: `old` (its current
+    /// bytes, empty when there is none) with every entry not yet in it appended. A damaged `old`
+    /// is an error, so a damaged memory is never replaced by a shorter one.
+    pub fn memory_after(
+        &self,
+        old: &[u8],
+        list: &[u8],
+        sig: &[u8],
+        now: u64,
+    ) -> Result<Vec<u8>, String> {
+        self.memory(old, list, sig, now, false)
+    }
+
+    fn memory(
+        &self,
+        old: &[u8],
+        list: &[u8],
+        sig: &[u8],
+        now: u64,
+        allow_test: bool,
+    ) -> Result<Vec<u8>, String> {
+        let mut seen = if old.is_empty() {
+            woltrust::revoked::Seen::default()
+        } else {
+            woltrust::revoked::Seen::parse(old).map_err(|e| format!("{SEEN_FILE}: {e}"))?
+        };
+        let probe = self.probe(list, sig, now, allow_test);
+        for l in self.store.lists.iter().chain(probe.lists.iter()) {
+            seen.add(l);
+        }
+        Ok(seen.to_bytes())
+    }
+
+    /// A store of this one's roots and intermediates with only the new list.
+    fn probe(&self, list: &[u8], sig: &[u8], now: u64, allow_test: bool) -> Store {
         let roots: Vec<Vec<u8>> = self
             .store
             .roots
@@ -227,25 +399,7 @@ impl TrustStore {
             .iter()
             .map(woltrust::Cert::to_bytes)
             .collect();
-        let probe = Store::load(&roots, &inter, &[(list, sig)], now, allow_test);
-        let new = probe
-            .lists
-            .first()
-            .ok_or_else(|| {
-                format!(
-                    "the new revocation list does not verify ({})",
-                    probe.notes.join("; ")
-                )
-            })?
-            .list
-            .serial;
-        match self.store.best_list() {
-            Some(old) if old.list.serial >= new => Err(format!(
-                "the new revocation list ({new}) is not newer than the one held ({})",
-                old.list.serial
-            )),
-            _ => Ok(new),
-        }
+        Store::load(&roots, &inter, &[(list, sig)], now, allow_test)
     }
 
     /// The store's state at `now`.
@@ -267,6 +421,18 @@ impl TrustStore {
             freshness,
             revoked: best.map_or(0, |l| l.list.entries.len()),
             notes: self.store.notes.clone(),
+            root_texts: self
+                .store
+                .roots
+                .iter()
+                .filter_map(|r| r.body.subject.text.clone())
+                .collect(),
+            remembered: self
+                .store
+                .remembered
+                .iter()
+                .map(|l| l.list.entries.len())
+                .sum(),
         }
     }
 }
@@ -279,6 +445,7 @@ fn legacy_outcome(trust: woltrust::Trust, code: woltrust::Code) -> Outcome {
         stale: false,
         list_expires: None,
         origin: None,
+        root_text: None,
     }
 }
 
@@ -368,10 +535,7 @@ mod tests {
         let (ts, h) = (store(&p, 1), host());
         let mine = author(&p, "alice.notes", "a");
         let c = ts.verify_wol(&h, &mine.path, &[], None).unwrap();
-        assert_eq!(
-            (c.outcome.trust, c.outcome.code),
-            (Trust::Verified, Code::Ok)
-        );
+        assert_eq!((c.outcome.trust, c.outcome.code), (Trust::Origin, Code::Ok));
         assert_eq!(
             c.outcome.cert.unwrap().subject.login.as_deref(),
             Some("alice")
@@ -400,16 +564,171 @@ mod tests {
         );
     }
 
+    /// Audit H1: a raw Ed25519 `SHA256.sig` by the previous flat key is "legacy", never WolOS;
+    /// once the machine holds roots it is refused; its key id can be withdrawn in revoked.json.
     #[test]
-    fn a_legacy_wolos_signature_still_counts_as_wolos() {
+    fn a_legacy_signature_is_legacy_refused_with_roots_and_revocable() {
         let seed = [3u8; 32];
+        let key = package::public_of(&seed);
         let f = wol("org.wolos.notes", "d", |man| {
             vec![(SIGNATURE, package::sign(&seed, man).to_vec())]
         });
         let c = TrustStore::default()
-            .verify_wol(&host(), &f.path, &[package::public_of(&seed)], None)
+            .verify_wol(&host(), &f.path, &[key], None)
             .unwrap();
-        assert_eq!(c.outcome.trust, Trust::Wolos);
+        assert_eq!(
+            (c.outcome.trust, c.outcome.code),
+            (Trust::Legacy, Code::LegacyKey)
+        );
+        let p = Pki::new();
+        let with_roots = store(&p, 1);
+        let c = with_roots
+            .verify_wol(&host(), &f.path, &[key], None)
+            .unwrap();
+        assert_eq!(
+            (c.outcome.trust, c.outcome.code),
+            (Trust::Invalid, Code::LegacyRefused)
+        );
+        // Withdrawn by its key id in a list the Index signed, held in memory only.
+        let serial = woltrust::request::key_id(&key);
+        let mut seen = woltrust::revoked::Seen::default();
+        seen.add(&woltrust::RevList {
+            list: woltrust::revoked::ListText {
+                format: 1,
+                serial: 3,
+                issued: NOW - DAY,
+                expires: NOW + DAY,
+                entries: vec![woltrust::revoked::Entry {
+                    serial,
+                    at: NOW - DAY,
+                    reason: woltrust::Reason::KeyCompromise,
+                }],
+            },
+            signer: p.index.body.serial.clone(),
+            signer_is_root: false,
+        });
+        let mut ts = TrustStore {
+            store: Store::load(
+                &[] as &[&[u8]],
+                &[&p.index.file],
+                &[(&b""[..], &b""[..])],
+                NOW,
+                true,
+            ),
+        };
+        ts.store.remember(&seen);
+        assert_eq!(ts.legacy(&key).trust, Trust::Withdrawn);
+        assert_eq!(
+            ts.legacy(&package::public_of(&[4; 32])).trust,
+            Trust::Legacy
+        );
+    }
+
+    fn hard_list(
+        p: &Pki,
+        serial: u64,
+        entries: Vec<woltrust::revoked::Entry>,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let l = woltrust::revoked::ListText {
+            format: 1,
+            serial,
+            issued: NOW - DAY,
+            expires: NOW - DAY + woltrust::LIST_LIFETIME,
+            entries,
+        };
+        woltrust::make::revocation_list(&l, &p.index.body.serial, &p.index.secret)
+    }
+
+    /// Audit M1 (A4/A5): the memory keeps a key-compromise after the list that carried it is
+    /// gone; a list that leaves it out is refused; the memory only grows.
+    #[test]
+    fn a_seen_withdrawal_is_never_forgotten() {
+        let p = Pki::new();
+        let entry = woltrust::revoked::Entry {
+            serial: p.alice.body.serial.clone(),
+            at: NOW - 2 * DAY,
+            reason: woltrust::Reason::KeyCompromise,
+        };
+        let (l2, s2) = hard_list(&p, 2, vec![entry.clone()]);
+        let holding = TrustStore {
+            store: Store::load(
+                &[&p.root_a.file],
+                &[&p.authors.file, &p.index.file],
+                &[(&l2, &s2)],
+                NOW,
+                true,
+            ),
+        };
+        let mem = holding.memory(b"", &l2, &s2, NOW, true).unwrap();
+        // A higher list without the entry: refused while the machine holds the old one.
+        let (l3, s3) = hard_list(&p, 3, vec![]);
+        let err = holding.accept(&l3, &s3, NOW, true).unwrap_err();
+        assert!(err.contains("leaves out"), "{err}");
+        // The state file rolled back to an empty list: the memory still withdraws Alice.
+        let mut rolled = TrustStore {
+            store: Store::load(
+                &[&p.root_a.file],
+                &[&p.authors.file, &p.index.file],
+                &[(&l3, &s3)],
+                NOW,
+                true,
+            ),
+        };
+        rolled
+            .store
+            .remember(&woltrust::revoked::Seen::parse(&mem).unwrap());
+        let f = author(&p, "alice.notes", "m1");
+        let c = rolled.verify_wol(&host(), &f.path, &[], None).unwrap();
+        assert_eq!(
+            (c.outcome.trust, c.outcome.code),
+            (Trust::Withdrawn, Code::RevokedKeyCompromise)
+        );
+        // Appending: the old bytes are a prefix of the new memory's entries.
+        let again = rolled.memory(&mem, &l3, &s3, NOW, true).unwrap();
+        let (a, b) = (
+            woltrust::revoked::Seen::parse(&mem).unwrap(),
+            woltrust::revoked::Seen::parse(&again).unwrap(),
+        );
+        assert!(b.entries.starts_with(&a.entries) && !a.entries.is_empty());
+        assert!(rolled.memory(b"{damaged", &l3, &s3, NOW, true).is_err());
+    }
+
+    #[test]
+    fn load_reads_the_memory_file() {
+        let p = Pki::new();
+        let h = host();
+        let mut seen = woltrust::revoked::Seen::default();
+        seen.add(&woltrust::RevList {
+            list: woltrust::revoked::ListText {
+                format: 1,
+                serial: 1,
+                issued: NOW,
+                expires: NOW + 1,
+                entries: vec![woltrust::revoked::Entry {
+                    serial: p.alice.body.serial.clone(),
+                    at: NOW,
+                    reason: woltrust::Reason::Abuse,
+                }],
+            },
+            signer: p.index.body.serial.clone(),
+            signer_is_root: false,
+        });
+        put(
+            &h,
+            "/usr/share/wolos/trust/intermediates/index.wolcert",
+            &p.index.file,
+        );
+        put(&h, SEEN_FILE, &seen.to_bytes());
+        let ts = TrustStore::load(&h);
+        assert_eq!(ts.status(NOW).remembered, 1);
+        h.file(SEEN_FILE, "{not json");
+        assert!(
+            TrustStore::load(&h)
+                .store
+                .notes
+                .iter()
+                .any(|n| n.contains("seen-revocations"))
+        );
     }
 
     #[test]
@@ -462,13 +781,14 @@ mod tests {
         let c = ts.verify_wol(&h, &f.path, &[], None).unwrap();
         assert_eq!(
             (c.outcome.trust, c.outcome.code, c.outcome.stale),
-            (Trust::Verified, Code::ListStale, true)
+            (Trust::Origin, Code::ListStale, true)
         );
+        // Audit M3: past the stale window the signature keeps its value, flagged.
         h.advance(40.0 * DAY as f64);
         let c = ts.verify_wol(&h, &f.path, &[], None).unwrap();
         assert_eq!(
-            (c.outcome.trust, c.outcome.code),
-            (Trust::Community, Code::ListTooOld)
+            (c.outcome.trust, c.outcome.code, c.outcome.stale),
+            (Trust::Origin, Code::ListTooOld, true)
         );
     }
 
@@ -561,10 +881,7 @@ mod tests {
         let ts = store(&p, 1);
         let good = plug(&p, "alice.demo", &p.alice.secret, &p.alice.body.serial);
         let c = ts.verify_wolplug(&good, &[], NOW).unwrap();
-        assert_eq!(
-            (c.outcome.trust, c.outcome.code),
-            (Trust::Verified, Code::Ok)
-        );
+        assert_eq!((c.outcome.trust, c.outcome.code), (Trust::Origin, Code::Ok));
         assert_eq!(c.verified.manifest.id, "alice.demo");
         let other = plug(&p, "bob.demo", &p.alice.secret, &p.alice.body.serial);
         assert!(
@@ -613,6 +930,32 @@ mod tests {
         let mut bad = sig.clone();
         bad[20] ^= 1;
         assert!(ts.accept(&newer, &bad, NOW, true).is_err(), "bad signature");
+    }
+
+    /// The list comes from the CDN under the project's domain first, then its mirror; the
+    /// update-check script's defaults are the same two URLs (it cannot import this).
+    #[test]
+    fn the_revoked_list_is_read_from_the_cdn_then_its_mirror() {
+        assert_eq!(
+            revoked_urls(),
+            [
+                "https://cdn.wolos.org/plugins/revoked.json",
+                "https://wolos.squareweb.app/plugins/revoked.json"
+            ]
+        );
+        let script = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../files/usr/lib/wolos/update-check"),
+        )
+        .unwrap();
+        let urls = revoked_urls();
+        for (var, url) in [("REVOKED_URL:-", &urls[0]), ("REVOKED_MIRROR-", &urls[1])] {
+            assert!(
+                script.contains(&format!("{var}{url}}}")),
+                "update-check {var} is {url}"
+            );
+        }
+        assert!(script.contains(r#"revoked "$REVOKED_URL" || revoked "$REVOKED_MIRROR""#));
     }
 
     #[test]

@@ -124,12 +124,34 @@ const PLANS: [Plan; 5] = [
     },
 ];
 
-/// Makes the authority at `now`. `random` fills a buffer with fresh random bytes (the OS
+/// Checks a root's subject text (`woltrust init --subject`): 1 to [`crate::cert::MAX_TEXT`]
+/// characters, no control characters. It is public: it is signed in both roots and shown as who
+/// vouches.
+pub fn check_subject(text: &str) -> Result<(), &'static str> {
+    if text.trim().is_empty()
+        || text.chars().count() > crate::cert::MAX_TEXT
+        || text
+            .chars()
+            .any(|c| c.is_control() || crate::cert::is_invisible(c))
+    {
+        return Err("the subject text is 1 to 200 characters on one line");
+    }
+    Ok(())
+}
+
+/// Makes the authority at `now`. `subject` is the human-readable text both roots carry (signed,
+/// public, see [`check_subject`]). `random` fills a buffer with fresh random bytes (the OS
 /// generator; tests pass a fixed one). `pass` is the backup passphrase.
-pub fn init(now: u64, pass: &str, random: &mut dyn FnMut(&mut [u8])) -> Result<Output, KeyError> {
+pub fn init(
+    now: u64,
+    subject: &str,
+    pass: &str,
+    random: &mut dyn FnMut(&mut [u8]),
+) -> Result<Output, KeyError> {
     if pass.chars().count() < wolkey::MIN_PASSPHRASE {
         return Err(KeyError::WeakPassphrase);
     }
+    check_subject(subject).map_err(|_| KeyError::Malformed)?;
     let mut ci_raw = [0u8; 32];
     random(&mut ci_raw);
     let ci_passphrase = b64::encode(&ci_raw);
@@ -161,7 +183,10 @@ pub fn init(now: u64, pass: &str, random: &mut dyn FnMut(&mut [u8])) -> Result<O
             } else {
                 Kind::Intermediate
             },
-            subject: label(plan.label),
+            subject: Subject {
+                text: plan.root.then(|| subject.to_owned()),
+                ..label(plan.label)
+            },
             namespaces: plan.namespaces.iter().map(|s| (*s).to_owned()).collect(),
             usage: plan.usage.to_vec(),
             keys,
@@ -170,6 +195,8 @@ pub fn init(now: u64, pass: &str, random: &mut dyn FnMut(&mut [u8])) -> Result<O
             not_after,
             level: Level::Wolos,
             verified_at: None,
+            class: None,
+            origin_cert: None,
         };
         let cert = match (&root_a, plan.root) {
             (Some((a, _)), false) => make::issue(&body, &a.secret()),
@@ -257,6 +284,8 @@ pub fn instructions(out: &Output, dir: &str) -> [String; 5] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const SUBJECT: &str = "WolOS test authority";
     use crate::store::Store;
 
     fn counter() -> impl FnMut(&mut [u8]) {
@@ -272,7 +301,7 @@ mod tests {
     #[test]
     fn init_makes_two_roots_three_intermediates_and_locked_keys() {
         let mut r = counter();
-        let out = init(1_800_000_000, "lead passphrase", &mut r).unwrap();
+        let out = init(1_800_000_000, SUBJECT, "lead passphrase", &mut r).unwrap();
         assert_eq!(out.made.len(), 5);
         let roots: Vec<&[u8]> = out.made[..2].iter().map(|m| m.cert.as_slice()).collect();
         let inter: Vec<&[u8]> = out.made[2..].iter().map(|m| m.cert.as_slice()).collect();
@@ -305,6 +334,11 @@ mod tests {
         }
         assert_eq!(instructions(&out, "d").len(), 5);
         let mut r = counter();
-        assert!(init(1, "short", &mut r).is_err());
+        assert!(init(1, SUBJECT, "short", &mut r).is_err());
+        assert!(
+            init(1, "", "lead passphrase", &mut r).is_err(),
+            "a subject is required"
+        );
+        assert!(init(1, "two\nlines", "lead passphrase", &mut r).is_err());
     }
 }

@@ -43,6 +43,6 @@ Issues and pull requests are welcome. Run `cargo test --workspace` before sendin
 
 ## License
 
-Under [`COPYRIGHT`](COPYRIGHT): GPL-2.0-or-later for everything not listed below (`LICENSE`); libwol (`crates/wol-abi/`, `crates/shared/`, `crates/core/`) is BSD-2-Clause; `kernel/scx_wolos/` is GPL-2.0-only; `design/` and `assets/` are CC BY-NC-ND 4.0; `third_party/blocking/` is Apache-2.0 OR MIT. Each source file names its license in an `SPDX-License-Identifier` line. The WolOS name and logo are trademarks of Julia Klee; forks should use their own name and art.
+Under [`COPYRIGHT`](COPYRIGHT): GPL-2.0-or-later for everything not listed below (`LICENSE`); libwol (`crates/wol-abi/`, `crates/shared/`, `crates/core/`) and `crates/woltrust/` are BSD-2-Clause; `kernel/scx_wolos/` is GPL-2.0-only; `design/` and `assets/` are CC BY-NC-ND 4.0; `third_party/blocking/` is Apache-2.0 OR MIT. Each source file names its license in an `SPDX-License-Identifier` line. The WolOS name and logo are trademarks of Julia Klee; forks should use their own name and art.
 
 Copyright (c) 2026 Julia Klee.

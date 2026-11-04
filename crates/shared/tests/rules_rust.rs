@@ -213,7 +213,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-066", "core", 137),
     ("RR-067", "core", 4),
     ("RR-068", "api", 15),
-    ("RR-068", "controller", 51),
+    // +4 (MANUAL 0.12.0, RR-114 justification): controller/src/secret.rs turns terminal echo off
+    // for the administrator password; std has no termios and controller depends on no listed crate.
+    ("RR-068", "controller", 55),
     ("RR-068", "core", 6),
     ("RR-068", "proxy", 1),
     ("RR-068", "shared", 16),

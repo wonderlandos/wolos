@@ -4,7 +4,7 @@
 //! (the issuer may issue that kind and those namespaces) up to a pinned root; revocation in every
 //! list held; validity at the clock; freshness of the newest list. Pure: the caller passes `now`.
 use crate::b64;
-use crate::cert::{self, Cert, ChainError, Kind, Level};
+use crate::cert::{self, Cert, ChainError, Class, Kind, Level};
 use crate::crypto::{self, Purpose, Wsig};
 use crate::report::{CertInfo, Finding, Report, Trust, Verdict};
 use crate::revoked::{Freshness, Reason, RevList};
@@ -13,11 +13,15 @@ use crate::store::Store;
 /// Most links walked from a signer to a root (leaf, intermediate, root, with room to spare).
 const MAX_PATH: usize = 5;
 
+/// How far a machine's clock may run behind a certificate's `not_before`, or ahead of a list's
+/// `issued`, before it counts: 24 hours (audit L3/C3).
+pub const CLOCK_SKEW: u64 = 86_400;
+
 /// The machine-readable reason behind a trust value; the string is stable and replayed by the
 /// vectors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
-    /// Verified (or made by WolOS), the revocation list is fresh.
+    /// Trusted, origin or made by WolOS, and the revocation list is fresh.
     Ok,
     /// As [`Code::Ok`], but the revocation list ran out up to 30 days ago.
     ListStale,
@@ -27,7 +31,8 @@ pub enum Code {
     Expired,
     /// A certificate in the chain starts after the clock.
     NotYetValid,
-    /// The revocation list is more than 30 days past its end, or missing.
+    /// The revocation list is more than 30 days past its end, or missing: the signature keeps its
+    /// value, flagged as not checked for withdrawn certificates (audit M3).
     ListTooOld,
     /// The signature file cannot be read.
     SignatureMalformed,
@@ -59,6 +64,13 @@ pub enum Code {
     RevokedSuperseded,
     /// Withdrawn: owner stopped, and the file is not known to predate it.
     RevokedCeased,
+    /// A trusted certificate was withdrawn as `superseded`: who published it is still proven, so
+    /// the file counts as origin.
+    TrustWithdrawn,
+    /// Signed only with WolOS's previous key (legacy `SHA256.sig`, classical only).
+    LegacyKey,
+    /// Signed only with the previous key on a computer that holds WolOS roots: refused.
+    LegacyRefused,
 }
 
 impl Code {
@@ -86,6 +98,9 @@ impl Code {
             Code::RevokedAbuse => "revoked-abuse",
             Code::RevokedSuperseded => "revoked-superseded",
             Code::RevokedCeased => "revoked-ceased",
+            Code::TrustWithdrawn => "trust-withdrawn",
+            Code::LegacyKey => "legacy-key",
+            Code::LegacyRefused => "legacy-refused",
         }
     }
 
@@ -106,7 +121,7 @@ impl Code {
                 "This computer's clock is earlier than the start of the certificate this file was signed with."
             }
             Code::ListTooOld => {
-                "This computer has not checked for withdrawn certificates for more than 30 days, so the signature can't be counted."
+                "This computer has not checked for withdrawn certificates for more than 30 days. The signature itself checks out."
             }
             Code::SignatureMalformed
             | Code::ChainMalformed
@@ -142,6 +157,15 @@ impl Code {
             Code::RevokedCeased => {
                 "WolOS no longer trusts the certificate this file was signed with, because its owner stopped publishing."
             }
+            Code::TrustWithdrawn => {
+                "WolOS Hub no longer lists this developer as trusted; who published this file is still proven."
+            }
+            Code::LegacyKey => {
+                "Signed with the previous WolOS key, which has no certificate and no post-quantum signature."
+            }
+            Code::LegacyRefused => {
+                "This file is signed only with the previous WolOS key, which this computer no longer accepts."
+            }
         })
     }
 
@@ -151,6 +175,8 @@ impl Code {
             Reason::Abuse => Code::RevokedAbuse,
             Reason::Superseded => Code::RevokedSuperseded,
             Reason::Ceased => Code::RevokedCeased,
+            // Never reached: certificate checks skip version entries.
+            Reason::WithdrawnVersion => Code::RevokedSuperseded,
         }
     }
 }
@@ -192,6 +218,9 @@ pub struct Outcome {
     pub list_expires: Option<u64>,
     /// The signed origin of the release, when its signature carries one and it checked out.
     pub origin: Option<crate::origin::Origin>,
+    /// The subject text of the pinned root at the top of the path (who vouches, signed in the
+    /// root certificate), when the path reached one that carries it.
+    pub root_text: Option<String>,
 }
 
 impl Outcome {
@@ -203,6 +232,7 @@ impl Outcome {
             stale: false,
             list_expires: None,
             origin: None,
+            root_text: None,
         }
     }
 
@@ -235,6 +265,7 @@ fn info(c: &Cert) -> CertInfo {
         serial: c.body.serial.clone(),
         subject: c.body.subject.clone(),
         level: c.body.level,
+        class: c.body.class(),
         verified_at: c.body.verified_at,
     }
 }
@@ -294,22 +325,46 @@ pub(crate) fn path<'a>(
 /// The revocation that applies to `path` for a file first seen at `first_seen`, in path order.
 pub(crate) fn revocation(
     path: &[&Cert],
-    lists: &[RevList],
+    lists: &[&RevList],
     first_seen: Option<u64>,
 ) -> Option<Code> {
+    let serials: Vec<(&str, bool)> = path
+        .iter()
+        .map(|c| {
+            let leaf_kind = matches!(c.body.kind, Kind::Person | Kind::Org | Kind::Signer);
+            (c.body.serial.as_str(), leaf_kind)
+        })
+        .collect();
+    revocation_of(&serials, lists, first_seen, None)
+}
+
+/// [`revocation`] over serials, each with whether it names a leaf (which the Index may withdraw;
+/// an intermediate or root only a root may). Version entries are not about certificates.
+pub(crate) fn revocation_of(
+    serials: &[(&str, bool)],
+    lists: &[&RevList],
+    first_seen: Option<u64>,
+    downgraded: Option<&str>,
+) -> Option<Code> {
     let mut soft = None;
-    for c in path {
+    for (serial, leaf_kind) in serials {
         for l in lists {
-            for e in l.list.entries.iter().filter(|e| e.serial == c.body.serial) {
-                let leaf_kind = matches!(c.body.kind, Kind::Person | Kind::Org | Kind::Signer);
-                let allowed = leaf_kind || (l.signer_is_root && l.signer != c.body.serial);
-                if !allowed {
+            for e in l.list.entries.iter().filter(|e| e.serial == *serial) {
+                let allowed = *leaf_kind || (l.signer_is_root && l.signer != *serial);
+                if !allowed || e.reason == Reason::WithdrawnVersion {
+                    continue;
+                }
+                // `superseded` on a trusted certificate is a downgrade, judged by the caller.
+                if e.reason == Reason::Superseded && downgraded == Some(*serial) {
                     continue;
                 }
                 if e.reason.is_hard() {
                     return Some(Code::revoked(e.reason));
                 }
-                if first_seen.is_none_or(|t| t >= e.at) && soft.is_none() {
+                // An entry cannot take effect after the list that carries it was issued (audit
+                // A7: a future `at` would keep every file valid).
+                let at = e.at.min(l.list.issued);
+                if first_seen.is_none_or(|t| t >= at) && soft.is_none() {
                     soft = Some(Code::revoked(e.reason));
                 }
             }
@@ -318,12 +373,28 @@ pub(crate) fn revocation(
     soft
 }
 
+/// Why `serial` (a leaf, or WolOS's previous flat key named by its key id) is withdrawn in any
+/// list or memory the store holds, at any time; None when it is not.
+pub fn withdrawn(store: &Store, serial: &str) -> Option<Code> {
+    revocation_of(&[(serial, true)], &store.all_lists(), None, None)
+}
+
+/// True when a list or the memory withdraws `serial` as `superseded` (allowed for a leaf).
+fn superseded(lists: &[&RevList], serial: &str) -> bool {
+    lists.iter().any(|l| {
+        l.list
+            .entries
+            .iter()
+            .any(|e| e.serial == serial && e.reason == Reason::Superseded)
+    })
+}
+
 /// The first time problem on `path`: expired or not yet valid at `now` (a file the index saw while
 /// the certificate was valid is not expired).
 fn time_problem(path: &[&Cert], now: u64, first_seen: Option<u64>) -> Option<Code> {
     let mut late = false;
     for c in path {
-        if c.valid_at(now) {
+        if c.valid_at(now) || (now < c.body.not_before && now + CLOCK_SKEW >= c.body.not_before) {
             continue;
         }
         if now < c.body.not_before {
@@ -439,6 +510,7 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         Ok(p) => p,
         Err(code) => return bad(code),
     };
+    let root_text = path.last().and_then(|r| r.body.subject.text.clone());
     let make = |trust, code, stale| Outcome {
         trust,
         code,
@@ -446,20 +518,47 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         stale,
         list_expires: None,
         origin: origin.clone(),
+        root_text: root_text.clone(),
     };
-    if let Some(code) = revocation(&path, &store.lists, input.first_seen) {
+    // Revocation, final rules (lead 2026-11-04): key-compromise and abuse on any certificate kill
+    // everything its key signed; a trusted certificate stands on its origin certificate, so
+    // withdrawing the origin withdraws what the trusted one signed too; `superseded` on a trusted
+    // certificate only downgrades it to origin; `ceased` keeps files seen before it.
+    let trusted = signer.body.class() == Some(Class::Trusted);
+    let mut serials: Vec<(&str, bool)> = Vec::new();
+    if let (true, Some(o)) = (trusted, signer.body.origin_cert.as_deref()) {
+        serials.push((o, true));
+    }
+    serials.extend(path.iter().map(|c| {
+        let leaf_kind = matches!(c.body.kind, Kind::Person | Kind::Org | Kind::Signer);
+        (c.body.serial.as_str(), leaf_kind)
+    }));
+    let lists = store.all_lists();
+    let leaf = signer.body.serial.as_str();
+    let down = trusted.then_some(leaf);
+    if let Some(code) = revocation_of(&serials, &lists, input.first_seen, down) {
         return make(Trust::Withdrawn, code, false);
     }
+    let approval_gone = trusted && superseded(&lists, leaf);
     if let Some(code) = time_problem(&path, input.now, input.first_seen) {
         return make(Trust::Community, code, false);
     }
-    let level = match signer.body.level {
-        Level::Wolos => Trust::Wolos,
-        Level::Verified => Trust::Verified,
+    let level = match (signer.body.level, signer.body.class()) {
+        (Level::Wolos, _) => Trust::Wolos,
+        (Level::Verified, Some(Class::Trusted)) if !approval_gone => Trust::Trusted,
+        (Level::Verified, _) => Trust::Origin,
     };
+    let ok = if approval_gone {
+        Code::TrustWithdrawn
+    } else {
+        Code::Ok
+    };
+    // Offline (audit M3): past the stale window, or with no list, the signature keeps its value
+    // with the line "not checked for withdrawn certificates since"; it never turns unsigned.
     match store.freshness(input.now) {
-        Freshness::Fresh => make(level, Code::Ok, false),
+        Freshness::Fresh => make(level, ok, false),
+        _ if approval_gone => make(level, ok, true),
         Freshness::Stale => make(level, Code::ListStale, true),
-        Freshness::TooOld | Freshness::Missing => make(Trust::Community, Code::ListTooOld, false),
+        Freshness::TooOld | Freshness::Missing => make(level, Code::ListTooOld, true),
     }
 }

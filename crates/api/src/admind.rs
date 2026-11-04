@@ -444,7 +444,8 @@ fn stage_and_install(
         info.version,
         match outcome.trust {
             woltrust_trust::Wolos => "made by WolOS",
-            woltrust_trust::Verified => "verified author",
+            woltrust_trust::Trusted => "trusted developer",
+            woltrust_trust::Origin => "author with a proven origin",
             _ => "unsigned",
         }
     ));
@@ -1494,7 +1495,7 @@ mod tests {
             os.log
                 .borrow()
                 .iter()
-                .any(|l| l.contains("verified author")),
+                .any(|l| l.contains("author with a proven origin")),
             "{:?}",
             os.log.borrow()
         );

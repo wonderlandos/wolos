@@ -13,7 +13,7 @@
 //!                 [--list revoked.json] [--id APP_ID] [--first-seen UNIX] [--now UNIX] [--allow-test] FILE
 //! woltrust keygen [--root]
 //! woltrust public KEY
-//! woltrust init --out DIR [--passphrase-env NAME] [--now UNIX]
+//! woltrust init --out DIR --subject TEXT [--passphrase-env NAME] [--now UNIX]
 //! woltrust extract --backup FILE --role root-a|root-b|authors-ca|packages-ca|index [--certificate]
 //! woltrust seal --to PUBLIC [--label L] FILE|-
 //! woltrust open [--serial S] [--label L] KEY FILE|-
@@ -308,7 +308,7 @@ fn verify(a: &Args) -> Result<(Vec<u8>, bool), Fail> {
     );
     let ok = matches!(
         out.trust,
-        woltrust::Trust::Wolos | woltrust::Trust::Verified
+        woltrust::Trust::Wolos | woltrust::Trust::Trusted | woltrust::Trust::Origin
     );
     let report = out.report(woltrust::Verdict::Pass, Vec::new()).to_json();
     Ok((report.into_bytes(), ok))
@@ -336,6 +336,9 @@ fn init_cmd(a: &Args) -> Result<Vec<u8>, Fail> {
     if dir.exists() {
         return Err(no(format!("{} exists; give a new folder", dir.display())));
     }
+    // Required, no default: the text both roots carry, signed and public (who vouches).
+    let subject = a.need("subject")?;
+    init::check_subject(subject).map_err(no)?;
     let pass = passphrase(a, "Backup passphrase (at least 8 characters)")?;
     if a.get("passphrase-env").is_none() {
         let again = passphrase(a, "Again")?;
@@ -345,7 +348,7 @@ fn init_cmd(a: &Args) -> Result<Vec<u8>, Fail> {
     }
     let mut failed = false;
     let mut rng = |b: &mut [u8]| failed |= random(b).is_err();
-    let out = init::init(now(a)?, &pass, &mut rng).map_err(|e| no(e.sentence()))?;
+    let out = init::init(now(a)?, subject, &pass, &mut rng).map_err(|e| no(e.sentence()))?;
     if failed {
         return Err(no("no random bytes"));
     }

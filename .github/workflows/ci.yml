@@ -195,7 +195,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader, package_call, core_parsers, wolplug_verify, plugin_index, wolkit_patch, wolkit_wsb, wolkit_wolcss]
+        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader, package_call, core_parsers, wolplug_verify, plugin_index, wolkit_patch, wolkit_wsb, wolkit_wolcss, wolcert, revoked, chain, seal, request, filecert]
     steps:
       - name: Toolchain (nightly pinned), cargo-fuzz, the libraries the shell links
         run: |

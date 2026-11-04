@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! The trust verdict and the report JSON of interface I7: `{verdict, findings, trust, cert?}`. The
+//! The trust verdict and the report JSON of interface I7: `{verdict, findings, trust, cert?, origin?}`. The
 //! system's sheet and the hub print the same sentences because both take them from here.
 use crate::cert::{Level, Subject};
 use serde::{Deserialize, Serialize};
@@ -11,9 +11,15 @@ use serde::{Deserialize, Serialize};
 pub enum Trust {
     /// Made by WolOS (Packages CA chain).
     Wolos,
-    /// A certified author or organisation.
-    Verified,
-    /// Nobody vouches: no signature, an expired certificate or a list too old to rely on.
+    /// A developer or organisation a WolOS Hub administrator approved (a `trusted` certificate).
+    Trusted,
+    /// Who published it is proven (GitHub sign-in, the CLA, the namespace): an `origin`
+    /// certificate, or a `trusted` one whose approval was withdrawn.
+    Origin,
+    /// Signed only with WolOS's previous key (a raw Ed25519 `SHA256.sig`, no certificate and no
+    /// post-quantum half; audit H1): shown as "Signed with the previous key", never as WolOS.
+    Legacy,
+    /// Nobody vouches: no signature or an expired certificate.
     Community,
     /// The certificate was withdrawn.
     Withdrawn,
@@ -58,6 +64,9 @@ pub struct CertInfo {
     pub subject: Subject,
     /// How the maker is shown.
     pub level: Level,
+    /// Origin or trusted, for people and organisations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<crate::cert::Class>,
     /// When the hub verified the subject.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verified_at: Option<u64>,

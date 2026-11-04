@@ -53,7 +53,7 @@ fn print_the_cost_of_one_verify() {
     };
     let full = median(|| {
         let (out, _) = woltrust::vectors::run(&vector, &pki).expect("runs");
-        assert_eq!(out.trust, woltrust::Trust::Verified);
+        assert_eq!(out.trust, woltrust::Trust::Origin);
     });
     println!("TIMING whole check incl. loading root and list: {full:.1} us");
     let (_, store) = woltrust::vectors::run(&vector, &pki).expect("runs");
@@ -75,7 +75,7 @@ fn print_the_cost_of_one_verify() {
                 now: woltrust::pki::NOW,
             },
         );
-        assert_eq!(out.trust, woltrust::Trust::Verified);
+        assert_eq!(out.trust, woltrust::Trust::Origin);
     });
     println!("TIMING package + leaf + Authors CA + root pin (verify only): {one:.1} us");
 }

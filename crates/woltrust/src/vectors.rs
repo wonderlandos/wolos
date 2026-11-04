@@ -369,6 +369,20 @@ pub fn generate() -> Result<(PkiFile, Vec<Vector>), String> {
         ("chain-org", Pki::chain(&[&g.p.org, &g.p.authors])),
         ("chain-signer", Pki::chain(&[&g.p.signer, &g.p.packages])),
         ("chain-alice-only", Pki::chain(&[&g.p.alice])),
+        ("alice-trusted", g.p.alice_trusted.file.clone()),
+        (
+            "chain-alice-trusted",
+            Pki::chain(&[&g.p.alice_trusted, &g.p.authors]),
+        ),
+        (
+            "wsig-alice-trusted",
+            make::wsig(
+                &g.p.alice_trusted.body.serial,
+                &g.p.alice_trusted.secret,
+                Purpose::Package,
+                CONTENT,
+            ),
+        ),
         (
             "wsig-alice",
             make::wsig(
@@ -432,7 +446,123 @@ fn cases(g: &mut Gen) -> Result<(), String> {
     cases_revoked(g)?;
     cases_lists(g)?;
     cases_shape(g)?;
-    cases_origin(g)
+    cases_origin(g)?;
+    cases_class(g)
+}
+
+/// The two certificates of one person (lead decisions 2026-11-04): trusted after an administrator
+/// approved her, origin from sign-in. Key-compromise and abuse on either kill everything; the
+/// trusted one superseded leaves origin; ceased keeps older files; withdrawing the origin
+/// withdraws what the trusted one signed; a version entry never touches a certificate.
+fn cases_class(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    let trusted = |v: &mut Vector| {
+        v.wsig = Some("@wsig-alice-trusted".into());
+        v.chain = Some("@chain-alice-trusted".into());
+    };
+    let t_serial = g.p.alice_trusted.body.serial.clone();
+    let o_serial = g.p.alice.body.serial.clone();
+    g.add(
+        "valid-trusted",
+        "a package signed with a trusted certificate: trusted developer",
+        (T::Trusted, C::Ok),
+        |_, v| trusted(v),
+    )?;
+    let l = Gen::list_text(
+        13,
+        NOW - DAY,
+        &[(&t_serial, NOW - 2 * DAY, Reason::Superseded)],
+    );
+    g.add(
+        "trusted-superseded-downgrade",
+        "the trusted certificate withdrawn as superseded: the file stays valid, shown as origin",
+        (T::Origin, C::TrustWithdrawn),
+        |g, v| {
+            trusted(v);
+            v.store.lists = vec![g.list(&l, 0)];
+        },
+    )?;
+    for (name, about, reason, first_seen, want) in [
+        (
+            "trusted-abuse",
+            "the trusted certificate withdrawn for abuse: everything its key signed is withdrawn",
+            Reason::Abuse,
+            None,
+            (T::Withdrawn, C::RevokedAbuse),
+        ),
+        (
+            "trusted-key-compromise",
+            "the trusted certificate's key exposed: withdrawn, even for a file seen long before",
+            Reason::KeyCompromise,
+            Some(NOW - 300 * DAY),
+            (T::Withdrawn, C::RevokedKeyCompromise),
+        ),
+        (
+            "trusted-ceased",
+            "the trusted developer stopped publishing: a file not known to predate it is withdrawn",
+            Reason::Ceased,
+            None,
+            (T::Withdrawn, C::RevokedCeased),
+        ),
+        (
+            "trusted-ceased-older-file",
+            "the trusted developer stopped publishing: a file the index saw before stays trusted",
+            Reason::Ceased,
+            Some(NOW - 10 * DAY),
+            (T::Trusted, C::Ok),
+        ),
+    ] {
+        let l = Gen::list_text(13, NOW - DAY, &[(&t_serial, NOW - 2 * DAY, reason)]);
+        g.add(name, about, want, |g, v| {
+            trusted(v);
+            v.store.lists = vec![g.list(&l, 0)];
+            v.first_seen = first_seen;
+        })?;
+    }
+    let l = Gen::list_text(
+        16,
+        NOW - DAY,
+        &[(&o_serial, NOW - 2 * DAY, Reason::Superseded)],
+    );
+    g.add(
+        "trusted-origin-superseded",
+        "the origin certificate superseded: what its trusted certificate signed afterwards is withdrawn",
+        (T::Withdrawn, C::RevokedSuperseded),
+        |g, v| {
+            trusted(v);
+            v.store.lists = vec![g.list(&l, 0)];
+        },
+    )?;
+    let l = Gen::list_text(
+        14,
+        NOW - DAY,
+        &[(&o_serial, NOW - 2 * DAY, Reason::KeyCompromise)],
+    );
+    g.add(
+        "trusted-origin-revoked",
+        "the origin certificate withdrawn (supply-chain emergency): what its trusted certificate signed is withdrawn too",
+        (T::Withdrawn, C::RevokedKeyCompromise),
+        |g, v| {
+            trusted(v);
+            v.store.lists = vec![g.list(&l, 0)];
+        },
+    )?;
+    let l = Gen::list_text(
+        15,
+        NOW - DAY,
+        &[(&t_serial, NOW - 2 * DAY, Reason::WithdrawnVersion)],
+    );
+    g.add(
+        "version-entry-ignored-for-certificates",
+        "a withdrawn-version entry with a certificate's serial: certificate checks ignore it",
+        (T::Trusted, C::Ok),
+        |g, v| {
+            trusted(v);
+            v.store.lists = vec![g.list(&l, 0)];
+        },
+    )?;
+    Ok(())
 }
 
 /// The origin record of the `ana` vectors, from `owner`'s repository.
@@ -461,7 +591,7 @@ fn cases_origin(g: &mut Gen) -> Result<(), String> {
     g.add(
         "valid-origin",
         "a release from the signer's own repository: verified, with its origin and organisation",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |g, v| {
             v.app_id = Some("ana.notes".into());
             v.wsig = Some(inline(&ana(g, "ana")));
@@ -471,7 +601,7 @@ fn cases_origin(g: &mut Gen) -> Result<(), String> {
     g.add(
         "valid-origin-organisation",
         "a release from the repository of the organisation the person publishes for",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |g, v| {
             v.app_id = Some("ana.notes".into());
             v.wsig = Some(inline(&ana(g, "anaco")));
@@ -514,13 +644,13 @@ fn cases_valid(g: &mut Gen) -> Result<(), String> {
     g.add(
         "valid-person",
         "a person's package: verified, fresh list",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |_, _| {},
     )?;
     g.add(
         "valid-org",
         "an organisation's package",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |_, v| {
             v.app_id = Some("examplelabs.tool".into());
             v.wsig = Some("@wsig-org".into());
@@ -540,7 +670,7 @@ fn cases_valid(g: &mut Gen) -> Result<(), String> {
     g.add(
         "valid-chain-from-store",
         "leaf only in CHAIN, issuer from the store (repair path)",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |_, v| {
             v.chain = Some("@chain-alice-only".into());
             v.store.intermediates = vec!["@authors".into(), "@index".into()];
@@ -632,7 +762,7 @@ fn cases_time(g: &mut Gen) -> Result<(), String> {
     g.add(
         "expired-but-timestamped",
         "expired, but the signed index saw this file inside the validity",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |g, v| {
             v.now = NOW + two_years;
             v.first_seen = Some(NOW);
@@ -693,14 +823,14 @@ fn cases_revoked(g: &mut Gen) -> Result<(), String> {
         "revoked-superseded-older-file",
         Reason::Superseded,
         Some(NOW - 10 * DAY),
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
     )?;
     revoked_case(
         g,
         "revoked-ceased-older-file",
         Reason::Ceased,
         Some(NOW - 10 * DAY),
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
     )?;
     let authors = g.p.authors.body.serial.clone();
     let l = Gen::list_text(
@@ -719,7 +849,7 @@ fn cases_revoked(g: &mut Gen) -> Result<(), String> {
     g.add(
         "revoked-intermediate-by-index-ignored",
         "the Index may not withdraw an intermediate: the entry does not apply",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |g, v| {
             v.store.lists = vec![g.list(&l, 0)];
         },
@@ -738,7 +868,7 @@ fn cases_revoked(g: &mut Gen) -> Result<(), String> {
     g.add(
         "root-a-revoked-by-itself-ignored",
         "a root cannot withdraw itself",
-        (T::Verified, C::Ok),
+        (T::Origin, C::Ok),
         |g, v| {
             v.store.lists = vec![g.list(&l, 1)];
         },
@@ -752,7 +882,7 @@ fn cases_lists(g: &mut Gen) -> Result<(), String> {
     g.add(
         "stale-list",
         "the list ran out 5 days ago: still verified, with the stale line",
-        (T::Verified, C::ListStale),
+        (T::Origin, C::ListStale),
         |g, v| {
             v.store.lists =
                 vec![g.list(&Gen::list_text(10, NOW - LIST_LIFETIME - 5 * DAY, &[]), 0)];
@@ -760,8 +890,8 @@ fn cases_lists(g: &mut Gen) -> Result<(), String> {
     )?;
     g.add(
         "list-too-old",
-        "the list ran out more than 30 days ago: counts as unsigned",
-        (T::Community, C::ListTooOld),
+        "the list ran out more than 30 days ago: the signature keeps its value, not checked for withdrawn certificates",
+        (T::Origin, C::ListTooOld),
         |g, v| {
             v.store.lists = vec![g.list(
                 &Gen::list_text(10, NOW - LIST_LIFETIME - STALE_WINDOW - DAY, &[]),
@@ -771,16 +901,16 @@ fn cases_lists(g: &mut Gen) -> Result<(), String> {
     )?;
     g.add(
         "no-list",
-        "no revocation list at all",
-        (T::Community, C::ListTooOld),
+        "no revocation list at all: verified offline, not checked for withdrawn certificates",
+        (T::Origin, C::ListTooOld),
         |_, v| {
             v.store.lists = Vec::new();
         },
     )?;
     g.add(
         "list-bad-signature",
-        "a list with a damaged signature is not loaded",
-        (T::Community, C::ListTooOld),
+        "a list with a damaged signature is not loaded (as if there were none)",
+        (T::Origin, C::ListTooOld),
         |g, v| {
             let l = g.list(&Gen::list_text(10, NOW - DAY, &[]), 0);
             let w = b64::decode(&l.wsig, 1 << 16).unwrap_or_default();

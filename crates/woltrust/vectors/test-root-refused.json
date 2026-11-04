@@ -32,6 +32,6 @@
     "roots": 0,
     "intermediates": 1,
     "lists": 0,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/issuer-unknown\",\"sentence\":\"The signature on this file comes from a certificate WolOS doesn't know.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"invalid\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/issuer-unknown\",\"sentence\":\"The signature on this file comes from a certificate WolOS doesn't know.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"invalid\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
   }
 }

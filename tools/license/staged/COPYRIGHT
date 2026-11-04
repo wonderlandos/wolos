@@ -3,7 +3,7 @@ WolOS. Copyright (c) 2026 Julia Klee.
 | Path | License |
 |---|---|
 | everything not listed below | GPL-2.0-or-later (`LICENSE`) |
-| `crates/wol-abi/`, `crates/shared/`, `crates/core/` | BSD-2-Clause (`LICENSES/BSD-2-Clause.txt`) |
+| `crates/wol-abi/`, `crates/shared/`, `crates/core/`, `crates/woltrust/` (author certificates, shared with the hub) | BSD-2-Clause (`LICENSES/BSD-2-Clause.txt`) |
 | `wolos-crystal/shards/cryswol/` (the Cryswol shard), except `src/wol/pkg/`, `src/wol/realtime/` and `spec/pkg_spec.cr` (GPL-2.0-or-later: they bind libwopkg and the realtime library) | BSD-2-Clause (`wolos-crystal/shards/cryswol/LICENSE`) |
 | `crates/wolkit/` (libWolkit, the UI engine), except `tests/golden/fonts/` | BSD-2-Clause (`LICENSES/BSD-2-Clause.txt`) |
 | `crates/wolkit/tests/golden/fonts/` (subsetted test fonts) | SIL OFL 1.1 or Apache-2.0, per font (`crates/wolkit/tests/golden/fonts/README.md`) |

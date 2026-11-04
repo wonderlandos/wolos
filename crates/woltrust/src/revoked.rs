@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! The revocation list (ADR 0046): `{"format":1,"serial":N,"issued":T,"expires":T+7d,"entries":[
-//! {"serial":"<16 hex>","at":T,"reason":"key-compromise|abuse|superseded|ceased"}]}`, signed with
+//! {"serial":"<16 hex>","at":T,"reason":"key-compromise|abuse|superseded|ceased|withdrawn-version"}]}`,
+//! signed with
 //! label `wolos/revocation/1` by the Index intermediate (leaf revocations) or by a root (any
 //! revocation, including the other root). Rules: `key-compromise` and `abuse` invalidate every
 //! signature by that certificate whenever made; `superseded` and `ceased` keep files the index saw
-//! before `at`. A revoked certificate fails closed.
+//! before `at`; `withdrawn-version` names a release statement, not a certificate. A revoked
+//! certificate fails closed.
 use crate::cert::is_serial;
 use crate::{MAX_REVOKED_BYTES, MAX_REVOKED_ENTRIES, STALE_WINDOW};
 use serde::{Deserialize, Serialize};
@@ -22,6 +24,10 @@ pub enum Reason {
     Superseded,
     /// The owner stopped publishing: earlier files stay valid.
     Ceased,
+    /// Not a certificate: one release statement (`crate::statement`) is withdrawn, so that one
+    /// version stops being offered while the author's certificate stays good. Certificate checks
+    /// ignore these entries.
+    WithdrawnVersion,
 }
 
 impl Reason {
@@ -38,6 +44,7 @@ impl Reason {
             Reason::Abuse => "abuse",
             Reason::Superseded => "superseded",
             Reason::Ceased => "ceased",
+            Reason::WithdrawnVersion => "withdrawn-version",
         }
     }
 }
@@ -81,6 +88,118 @@ pub struct RevList {
     pub signer_is_root: bool,
 }
 
+/// One entry the machine has seen in a verified list, with who signed that list: kept forever in
+/// `seen-revocations.json` (audit M1), so a later list without it, a rolled-back state file or an
+/// expired Index never un-revokes it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeenEntry {
+    /// The withdrawn serial.
+    pub serial: String,
+    /// When, as the list said (never later than that list's `issued`).
+    pub at: u64,
+    /// Why.
+    pub reason: Reason,
+    /// Serial of the certificate that signed the list it came in.
+    pub signer: String,
+    /// True when that signer was a root.
+    pub by_root: bool,
+}
+
+/// The memory of seen revocations (`/var/lib/wolos/trust/seen-revocations.json`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Seen {
+    /// Always 1.
+    pub format: u32,
+    /// Every entry seen, in the order first seen; never shortened.
+    pub entries: Vec<SeenEntry>,
+}
+
+/// Largest memory file read: 40,000 entries of about 100 bytes.
+pub const MAX_SEEN_BYTES: usize = 4 << 20;
+/// Most entries kept in memory.
+pub const MAX_SEEN_ENTRIES: usize = 40_000;
+
+impl Seen {
+    /// Parses the memory file within [`MAX_SEEN_BYTES`] and [`MAX_SEEN_ENTRIES`].
+    pub fn parse(bytes: &[u8]) -> Result<Seen, &'static str> {
+        if bytes.len() > MAX_SEEN_BYTES {
+            return Err("revocation memory too large");
+        }
+        let s: Seen = serde_json::from_slice(bytes).map_err(|_| "revocation memory damaged")?;
+        if s.format != crate::FORMAT
+            || s.entries.len() > MAX_SEEN_ENTRIES
+            || !s
+                .entries
+                .iter()
+                .all(|e| is_serial(&e.serial) && is_serial(&e.signer))
+        {
+            return Err("revocation memory out of range");
+        }
+        Ok(s)
+    }
+
+    /// Adds every entry of `l` not held yet (same serial, reason and signer); the old entries
+    /// stay, in order. Returns how many were added.
+    pub fn add(&mut self, l: &RevList) -> usize {
+        self.format = crate::FORMAT;
+        let mut n = 0;
+        for e in &l.list.entries {
+            let have = self
+                .entries
+                .iter()
+                .any(|s| s.serial == e.serial && s.reason == e.reason && s.signer == l.signer);
+            if !have && self.entries.len() < MAX_SEEN_ENTRIES {
+                self.entries.push(SeenEntry {
+                    serial: e.serial.clone(),
+                    at: e.at.min(l.list.issued),
+                    reason: e.reason,
+                    signer: l.signer.clone(),
+                    by_root: l.signer_is_root,
+                });
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// The memory as lists for the check: one per signer, so the rule "only a root withdraws an
+    /// intermediate or a root" still applies.
+    pub fn as_lists(&self) -> Vec<RevList> {
+        let mut out: Vec<RevList> = Vec::new();
+        for e in &self.entries {
+            let entry = Entry {
+                serial: e.serial.clone(),
+                at: e.at,
+                reason: e.reason,
+            };
+            match out.iter_mut().find(|l| l.signer == e.signer) {
+                Some(l) => l.list.entries.push(entry),
+                None => out.push(RevList {
+                    list: ListText {
+                        format: crate::FORMAT,
+                        serial: 0,
+                        issued: e.at,
+                        expires: e.at.saturating_add(1),
+                        entries: vec![entry],
+                    },
+                    signer: e.signer.clone(),
+                    signer_is_root: e.by_root,
+                }),
+            }
+        }
+        out
+    }
+
+    /// JSON text of the memory.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut v = serde_json::to_vec_pretty(self).unwrap_or_default();
+        v.push(b'\n');
+        v
+    }
+}
+
 /// Parses `revoked.json` (at most 1 MiB, 10,000 entries); the signature is checked elsewhere.
 pub fn parse(bytes: &[u8]) -> Result<ListText, &'static str> {
     if bytes.len() > MAX_REVOKED_BYTES {
@@ -106,7 +225,8 @@ pub enum Freshness {
     Fresh,
     /// Up to 30 days past `expires`: verified files show as verified with one more line.
     Stale,
-    /// Older: verified files count as unsigned.
+    /// Older: signatures still verify and keep their value, with the line "not checked for
+    /// withdrawn certificates since" (audit M3; never silently unsigned).
     TooOld,
     /// No list at all.
     Missing,
@@ -142,6 +262,7 @@ mod tests {
             Reason::Abuse,
             Reason::Superseded,
             Reason::Ceased,
+            Reason::WithdrawnVersion,
         ]
         .into_iter()
         .filter(|r| r.is_hard())

@@ -2,8 +2,8 @@
 //! `wol cert request|add|show|list`, `wol sign`, `wol encrypt FILE --to SERIAL`, `wol decrypt` and
 //! `wol trust status` (ADR 0046): an author's keys and certificates under the account's data
 //! home, locked with a passphrase (`wol_core::authorkeys`, `woltrust::wolkey`), files sealed with
-//! `wolos/seal/1`. Passphrases are read as one line from stdin, never from an argument; a key is
-//! never written in the clear.
+//! `wolos/seal/1`. Passphrases are read as one line from stdin, never from an argument, and not
+//! echoed on a terminal (`crate::secret`); a key is never written in the clear.
 use crate::cli::Invocation;
 use crate::run::{Env, emit_json, fail};
 use shared::errors::ErrorCode;
@@ -52,8 +52,9 @@ fn write_new(p: &Path, bytes: &[u8], mode: u32) -> Result<(), String> {
         .map_err(|_| format!("Can't write {} (does it exist already?).", p.display()))
 }
 
-fn passphrase(env: &mut dyn Env) -> Option<zeroize_free::Pass> {
-    env.stdin_line().map(zeroize_free::Pass)
+/// The passphrase after `prompt`, never echoed on a terminal (`crate::secret`).
+fn passphrase(env: &mut dyn Env, prompt: &str) -> Option<zeroize_free::Pass> {
+    env.read_secret(prompt).map(zeroize_free::Pass)
 }
 
 /// A passphrase wrapper that clears its text when dropped.
@@ -73,8 +74,7 @@ fn unlock(env: &mut dyn Env, name: &str) -> Result<KeyMaterial, String> {
     let path = ak::key_path(&env.data_home(), name);
     let file = read_capped(&path, 4096)
         .map_err(|_| format!("There is no key {name} on this account (wol cert list)."))?;
-    env.err("Passphrase of the key: ");
-    let pass = passphrase(env).ok_or("No passphrase given.")?;
+    let pass = passphrase(env, "Passphrase of the key: ").ok_or("No passphrase given.")?;
     wolkey::unlock(&file, name, &pass.0).map_err(|e| e.sentence().to_owned())
 }
 
@@ -111,6 +111,7 @@ pub fn request(env: &mut dyn Env, inv: &Invocation) -> i32 {
             name: Some(name),
             label: None,
             org: None,
+            text: None,
         };
         let kind = if inv.flag("org") {
             Kind::Org
@@ -123,8 +124,8 @@ pub fn request(env: &mut dyn Env, inv: &Invocation) -> i32 {
         let km = KeyMaterial::new(seed, false);
         seed.fill(0);
         let req = ak::request(&km, kind, subject, ns, env.now_secs())?;
-        env.err("Passphrase for the new key (at least 8 characters): ");
-        let pass = passphrase(env).ok_or("No passphrase given.")?;
+        let pass = passphrase(env, "Passphrase for the new key (at least 8 characters): ")
+            .ok_or("No passphrase given.")?;
         let mut rnd = [0u8; 28];
         random(&mut rnd)?;
         let id = km.key_id();
@@ -160,8 +161,8 @@ pub fn add(env: &mut dyn Env, inv: &Invocation) -> i32 {
             if !ak::is_mine(&c, &km) {
                 return Err("This certificate names other keys than yours.".into());
             }
-            env.err("Passphrase again, to store the key under its serial: ");
-            let pass = passphrase(env).ok_or("No passphrase given.")?;
+            let pass = passphrase(env, "Passphrase again, to store the key under its serial: ")
+                .ok_or("No passphrase given.")?;
             let mut rnd = [0u8; 28];
             random(&mut rnd)?;
             let old = read_capped(&pending, 4096)?;
@@ -233,8 +234,106 @@ pub fn list(env: &mut dyn Env, _inv: &Invocation) -> i32 {
     0
 }
 
-/// `wol sign FILE.wol --as SERIAL [REPO TAG COMMIT]`: adds `CHAIN` and `SHA256.wsig` to the
-/// `.wol`; with an origin, the signature also covers where the release comes from.
+/// The members of the file to sign, in order, and the `SHA256` bytes both signatures cover.
+struct ToSign {
+    parts: Vec<(String, Vec<u8>)>,
+    manifest: Vec<u8>,
+    purpose: Purpose,
+}
+
+fn already_signed() -> String {
+    "This file is signed with a certificate already.".into()
+}
+
+/// A `.wol`: every member read with its cap.
+fn wol_parts(path: &Path) -> Result<ToSign, String> {
+    let ms = wol_core::package::members(path)?;
+    if ms
+        .iter()
+        .any(|m| [wol_core::package::CHAIN, wol_core::package::WSIG].contains(&m.name.as_str()))
+    {
+        return Err(already_signed());
+    }
+    let mut parts: Vec<(String, Vec<u8>)> = Vec::new();
+    for m in &ms {
+        parts.push((
+            m.name.clone(),
+            wol_core::package::read_member(path, m, shared::package::MAX_SIZE)?,
+        ));
+    }
+    let manifest = parts
+        .iter()
+        .find(|(n, _)| n == shared::package::MANIFEST)
+        .map(|(_, b)| b.clone())
+        .ok_or("This package has no SHA256 member.")?;
+    Ok(ToSign {
+        parts,
+        manifest,
+        purpose: Purpose::Package,
+    })
+}
+
+/// A `.wolplug`: unpacked through zstd with its bound, every check of `wol plugin add` (a legacy
+/// index signature must still verify), and the plugin id inside the certificate's namespaces.
+fn wolplug_parts(path: &Path, c: &Cert) -> Result<ToSign, String> {
+    let tar = crate::plugin::wolplug_tar(path)?;
+    let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+    let (v, extra) = wol_core::package::verify_wolplug_extra(&tar, &keys)?;
+    if extra.wsig.is_some() {
+        return Err(already_signed());
+    }
+    if !wol_core::woltrust::cert::covers(&c.body.namespaces, &v.manifest.id) {
+        return Err(format!(
+            "{} is outside this certificate's names ({}).",
+            v.manifest.id,
+            c.body.namespaces.join(", ")
+        ));
+    }
+    let parts = wol_core::package::members_in(&tar)?
+        .iter()
+        .map(|m| {
+            let at = usize::try_from(m.offset).unwrap_or(usize::MAX);
+            let n = usize::try_from(m.size).unwrap_or(usize::MAX);
+            (m.name.clone(), tar[at..at + n].to_vec())
+        })
+        .collect();
+    Ok(ToSign {
+        parts,
+        manifest: extra.manifest,
+        purpose: Purpose::Plugin,
+    })
+}
+
+/// The signed `.wolplug` tar back through zstd (level 19, as `wol plugin pack`), within
+/// `WOLPLUG_MAX_FILE`.
+fn compress_wolplug(path: &Path, tar: &[u8]) -> Result<Vec<u8>, String> {
+    let tmp = path.with_extension("wolplug.signing.tar");
+    let _ = std::fs::remove_file(&tmp);
+    write_new(&tmp, tar, 0o600)?;
+    let argv: Vec<String> = ["zstd", "-q", "-19", "-c", "--"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .chain([tmp.to_string_lossy().into_owned()])
+        .collect();
+    let out = wol_core::widgets::run_limited(
+        &argv,
+        Path::new("/"),
+        std::time::Duration::from_secs(60),
+        usize::try_from(wol_core::package::WOLPLUG_MAX_FILE).unwrap_or(usize::MAX),
+    );
+    let _ = std::fs::remove_file(&tmp);
+    out.map_err(|e| match e {
+        wol_core::widgets::SourceError::TooLarge => "The signed plugin file is too large.".into(),
+        wol_core::widgets::SourceError::NotFound(_) => {
+            "zstd is missing, so the plugin file cannot be written.".into()
+        }
+        _ => "zstd could not compress the signed plugin.".into(),
+    })
+}
+
+/// `wol sign FILE --as SERIAL [REPO TAG COMMIT]`: adds `CHAIN` and `SHA256.wsig` to a `.wol`
+/// (label `wolos/package/1`) or a `.wolplug` (label `wolos/plugin/1`, unpacked and packed again
+/// with zstd); with an origin, the signature also covers where the release comes from.
 pub fn sign(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let r = (|| {
         if !inv.flag("as") {
@@ -242,29 +341,21 @@ pub fn sign(env: &mut dyn Env, inv: &Invocation) -> i32 {
         }
         let path = PathBuf::from(inv.get("file").unwrap_or_default());
         let serial = inv.get("serial").unwrap_or_default().to_owned();
-        if path.extension().is_none_or(|x| x != "wol") {
-            return Err("wol sign signs .wol packages.".into());
-        }
+        let plugin = match path.extension().and_then(|x| x.to_str()) {
+            Some("wol") => false,
+            Some("wolplug") => true,
+            _ => return Err("wol sign signs .wol packages and .wolplug plugins.".into()),
+        };
         let c = load_cert(env, &serial)?;
-        let ms = wol_core::package::members(&path)?;
-        if ms
-            .iter()
-            .any(|m| [wol_core::package::CHAIN, wol_core::package::WSIG].contains(&m.name.as_str()))
-        {
-            return Err("This package is signed with a certificate already.".into());
-        }
-        let mut parts: Vec<(String, Vec<u8>)> = Vec::new();
-        for m in &ms {
-            parts.push((
-                m.name.clone(),
-                wol_core::package::read_member(&path, m, shared::package::MAX_SIZE)?,
-            ));
-        }
-        let man = parts
-            .iter()
-            .find(|(n, _)| n == shared::package::MANIFEST)
-            .map(|(_, b)| b.clone())
-            .ok_or("This package has no SHA256 member.")?;
+        let ToSign {
+            mut parts,
+            manifest: man,
+            purpose,
+        } = if plugin {
+            wolplug_parts(&path, &c)?
+        } else {
+            wol_parts(&path)?
+        };
         let km = unlock(env, &serial)?;
         if !ak::is_mine(&c, &km) {
             return Err("This key does not belong to that certificate.".into());
@@ -287,9 +378,9 @@ pub fn sign(env: &mut dyn Env, inv: &Invocation) -> i32 {
                 {
                     return Err("That repository does not belong to this certificate's GitHub account or organisation.".into());
                 }
-                make::wsig_with_origin(&serial, &km.secret(), Purpose::Package, &man, &o)
+                make::wsig_with_origin(&serial, &km.secret(), purpose, &man, &o)
             }
-            (None, None, None) => make::wsig(&serial, &km.secret(), Purpose::Package, &man),
+            (None, None, None) => make::wsig(&serial, &km.secret(), purpose, &man),
             _ => return Err("Give the origin as REPO TAG COMMIT, all three.".into()),
         };
         parts.push((wol_core::package::CHAIN.into(), chain));
@@ -298,8 +389,19 @@ pub fn sign(env: &mut dyn Env, inv: &Invocation) -> i32 {
             .iter()
             .map(|(n, b)| (n.as_str(), b.as_slice()))
             .collect();
-        let tmp = path.with_extension("wol.signing");
-        write_new(&tmp, &wol_core::package::ustar(&refs), 0o644)?;
+        let tar = wol_core::package::ustar(&refs);
+        let bytes = if plugin {
+            compress_wolplug(&path, &tar)?
+        } else {
+            tar
+        };
+        let tmp = path.with_extension(if plugin {
+            "wolplug.signing"
+        } else {
+            "wol.signing"
+        });
+        let _ = std::fs::remove_file(&tmp);
+        write_new(&tmp, &bytes, 0o644)?;
         std::fs::rename(&tmp, &path).map_err(|_| format!("Can't replace {}.", path.display()))?;
         env.out(&format!("Signed {} as {serial}.\n", path.display()));
         Ok(())
@@ -377,14 +479,88 @@ pub fn status(env: &mut dyn Env, inv: &Invocation) -> i32 {
         )),
         _ => env.out("revocation list: none yet\n"),
     }
+    for t in &s.root_texts {
+        env.out(&format!("who vouches: {t}\n"));
+    }
+    if s.remembered > 0 {
+        env.out(&format!(
+            "remembered withdrawals: {} (kept forever)\n",
+            s.remembered
+        ));
+    }
+    let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+    for k in &keys {
+        // Audit H1: the previous flat keys can be withdrawn in revoked.json by this id.
+        env.out(&format!(
+            "previous key: {} ({})\n",
+            wol_core::woltrust::request::key_id(k),
+            if s.roots == 0 {
+                "accepted until WolOS roots are installed"
+            } else {
+                "refused: WolOS roots are installed"
+            }
+        ));
+    }
     if s.roots == 0 {
         env.out("No WolOS root is installed yet, so no certificate can be verified.\n");
     }
     0
 }
 
-/// `wol trust update LIST SIG` (root; the update-check service): installs a downloaded
-/// revocation list into `/var/lib/wolos/trust` only when it verifies and is newer.
+/// GET `url` over HTTPS only (no redirect to another scheme), at most `max` bytes, 60 s.
+fn fetch(url: &str, max: usize) -> Option<Vec<u8>> {
+    let argv: Vec<String> = [
+        "curl",
+        "-fsSL",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--max-filesize",
+        &max.to_string(),
+        "--max-time",
+        "60",
+        "--",
+        url,
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    wol_core::widgets::run_limited(
+        &argv,
+        Path::new("/"),
+        std::time::Duration::from_secs(70),
+        max,
+    )
+    .ok()
+    .filter(|b| !b.is_empty())
+}
+
+/// The list and its signature from the first of [`wol_core::trust::revoked_urls`] that gives
+/// both (the CDN, then its mirror).
+fn fetch_list() -> Result<(Vec<u8>, Vec<u8>), String> {
+    wol_core::trust::revoked_urls()
+        .iter()
+        .find_map(|u| {
+            // The caps the store reads them with.
+            let list = fetch(u, wol_core::woltrust::MAX_REVOKED_BYTES)?;
+            let sig = fetch(
+                &format!("{u}{}", wol_core::trust::SIG_SUFFIX),
+                wol_core::woltrust::MAX_WSIG,
+            )?;
+            Some((list, sig))
+        })
+        .ok_or_else(|| {
+            format!(
+                "The revocation list could not be downloaded ({}).",
+                wol_core::trust::revoked_urls().join(", ")
+            )
+        })
+}
+
+/// `wol trust update [LIST SIG]` (root; the update-check service): installs a revocation list into
+/// `/var/lib/wolos/trust` only when it verifies and is newer. Without files it fetches the list
+/// itself from [`wol_core::trust::revoked_urls`].
 pub fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     if !env.is_root() {
         return fail(
@@ -394,10 +570,30 @@ pub fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
         );
     }
     let r = (|| {
-        let list = read_capped(Path::new(inv.get("list").unwrap_or_default()), 1 << 20)?;
-        let sig = read_capped(Path::new(inv.get("sig").unwrap_or_default()), 64 * 1024)?;
+        let (list, sig) = match (inv.get("list"), inv.get("sig")) {
+            (Some(l), Some(s)) => (
+                read_capped(Path::new(l), 1 << 20)?,
+                read_capped(Path::new(s), 64 * 1024)?,
+            ),
+            (None, None) => fetch_list()?,
+            _ => return Err("Give both files, LIST and SIG, or neither.".to_owned()),
+        };
         let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
         let serial = ts.accept_list(&list, &sig, env.now_secs())?;
+        // Audit M1: the memory of every withdrawal seen grows first, so a crash between the two
+        // writes never loses one.
+        let seen_path = Path::new(wol_core::trust::SEEN_FILE);
+        let old = match std::fs::read(seen_path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(_) => return Err(format!("Can't read {}.", seen_path.display())),
+        };
+        let memory = ts.memory_after(&old, &list, &sig, env.now_secs())?;
+        let seen_tmp = seen_path.with_extension("new");
+        let _ = std::fs::remove_file(&seen_tmp);
+        write_new(&seen_tmp, &memory, 0o644)?;
+        std::fs::rename(&seen_tmp, seen_path)
+            .map_err(|_| format!("Can't replace {}.", seen_path.display()))?;
         let dest = Path::new(wol_core::trust::STATE_REVOKED);
         let dest_sig = PathBuf::from(format!(
             "{}{}",
