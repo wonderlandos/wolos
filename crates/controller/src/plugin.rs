@@ -20,7 +20,7 @@ use wol_lua::{Services, Stamp};
 /// (there is no consent sheet on the command line).
 pub const HOSTS_VAR: &str = "WOL_PLUGIN_HOSTS";
 /// Output cap for `wol.run`.
-const RUN_OUTPUT: usize = 64 * 1024;
+const RUN_OUTPUT: usize = shared::plugins::MAX_RUN_OUTPUT;
 
 pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
     let as_json = inv.flag("json") || !env.stdout_tty();
@@ -38,7 +38,8 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
         ),
         "plugin.enable" => set_enabled(env, &get("id"), true, as_json),
         "plugin.disable" => set_enabled(env, &get("id"), false, as_json),
-        "plugin.remove" => remove(env, &get("id")),
+        "plugin.allow-host" => allow_host(env, &get("id"), inv.get("host"), as_json),
+        "plugin.remove" => remove(env, &get("id"), as_json),
         "plugin.add" => add(env, &get("plugin"), inv.flag("yes"), as_json),
         "plugin.pack" => pack(
             env,
@@ -80,8 +81,14 @@ fn resolve(env: &dyn Env, what: &str) -> Result<(PathBuf, bool), String> {
             return Ok((d, system));
         }
     }
+    // QA-PLUG-72: `wol plugin new` takes an id, so only an id is told to start one.
+    if shared::plugins::is_plugin_id(what) {
+        return Err(format!(
+            "No plugin called \"{what}\" is installed and no folder {what}/{MANIFEST_FILE} exists. Start one: wol plugin new {what}"
+        ));
+    }
     Err(format!(
-        "No plugin called \"{what}\" is installed and no folder {what}/{MANIFEST_FILE} exists. Start one: wol plugin new {what}"
+        "\"{what}\" is not a plugin folder (it has no {MANIFEST_FILE}) and not the id of an installed plugin."
     ))
 }
 
@@ -152,11 +159,7 @@ impl Services for CliServices {
     }
     fn run(&self, plugin: &str, argv: &[String], timeout_secs: u32) -> Result<String, String> {
         // `wol` verbs see the plugin as a helper: policy, approval and the audit log apply.
-        let mut cmd: Vec<String> = Vec::new();
-        if argv[0] == "wol" {
-            cmd.extend(["env".to_owned(), format!("WOL_HELPER={plugin}")]);
-        }
-        cmd.extend(argv.iter().cloned());
+        let cmd = shared::plugins::helper_argv(plugin, argv);
         self.event(format!("run: {}", argv.join(" ")));
         if self.inert {
             return Ok(String::new());
@@ -178,7 +181,8 @@ impl Services for CliServices {
         }
         if !self.hosts.contains(&host) {
             return Err(format!(
-                "Allow this plugin to read data from {host} ({HOSTS_VAR}={host} on the command line)."
+                "Allow this plugin to read data from {host}: wol plugin allow-host {id} {host} (or {HOSTS_VAR}={host} for this run only).",
+                id = self.manifest.id
             ));
         }
         self.event(format!("http_get: {url}"));
@@ -209,8 +213,8 @@ impl Services for CliServices {
         cp::toggle_set(&self.state_home, plugin, toggle, on)
     }
     fn show(&self, _plugin: &str, panel: &str) -> Result<(), String> {
-        let own = self.manifest.panel.iter().any(|p| p.id == panel);
-        if !own && !shared::shell::PANELS.contains(&panel) {
+        // The shell's panels only, as the shell answers: `[[panel]]` is planned (QA-PLUG-4).
+        if !shared::shell::PANELS.contains(&panel) {
             return Err(format!("There is no panel called \"{panel}\"."));
         }
         self.event(format!("show: {panel}"));
@@ -238,6 +242,14 @@ fn services(env: &dyn Env, dir: &Path, m: &Manifest, inert: bool) -> Rc<CliServi
         .split(',')
         .map(|h| h.trim().to_ascii_lowercase())
         .filter(|h| !h.is_empty())
+        // The sites allowed with `wol plugin allow-host` hold for a run too (QA-PLUG-12).
+        .chain(
+            cp::load_enabled(&env.config_home())
+                .enabled
+                .get(&m.id)
+                .map(|g| g.hosts.clone())
+                .unwrap_or_default(),
+        )
         .collect();
     Rc::new(CliServices {
         inert,
@@ -259,7 +271,7 @@ fn load_script(
 ) -> Result<Script, String> {
     let src = std::fs::read_to_string(dir.join(file))
         .map_err(|_| format!("{file}: the file could not be read as text."))?;
-    Script::load(
+    Script::load_within(
         Entry {
             kind,
             plugin: &m.id,
@@ -269,9 +281,18 @@ fn load_script(
         &src,
         &m.permissions,
         s,
+        CLI_DEADLINES,
     )
     .map_err(|e| format!("{file}: {e}"))
 }
+
+/// `wol plugin run` waits on its services for as long as a `wol.run` may take (its longest
+/// timeout and a little), so a command's own timeout sentence comes back instead of "took too
+/// long" (QA-PLUG-2); the script's own work keeps the shell's deadlines.
+pub const CLI_DEADLINES: wol_lua::Deadlines = wol_lua::Deadlines {
+    services: std::time::Duration::from_secs(wol_lua::plugin::MAX_TIMEOUT as u64 + 5),
+    ..wol_lua::Deadlines::DEFAULT
+};
 
 /// The full check: folder (`wol_core::plugins::check`) plus every script loaded and run once
 /// (`wol_lua::plugin::lua_problems`), with inert services (nothing runs or is written); the same
@@ -307,9 +328,43 @@ fn kinds_line(m: &Manifest) -> String {
         .join(", ")
 }
 
+/// The running WolOS release: the slot's release file, else os-release's `VERSION_ID`.
+fn running_os(env: &dyn Env) -> Option<String> {
+    use wol_core::update::check::{OS_RELEASE, RELEASE_FILE, running_version};
+    env.read_file(Path::new(RELEASE_FILE))
+        .and_then(|t| running_version(&t))
+        .or_else(|| {
+            env.read_file(Path::new(OS_RELEASE))
+                .and_then(|t| wol_core::base::version(&t))
+        })
+}
+
+/// QA-PLUG-22: (asked, running) when the plugin's `min_wolos` is newer than this WolOS.
+fn needs_newer(env: &dyn Env, m: &Manifest) -> Option<(String, String)> {
+    if m.min_wolos.is_empty() {
+        return None;
+    }
+    let os = running_os(env)?;
+    matches!(
+        wol_core::update::check::version_cmp(&os, &m.min_wolos),
+        Some(std::cmp::Ordering::Less)
+    )
+    .then(|| (m.min_wolos.clone(), os))
+}
+
+/// The sentence for [`needs_newer`].
+fn needs_line(asked: &str, running: &str) -> String {
+    format!("Needs WolOS {asked}; this computer runs {running}.")
+}
+
 fn print_report(env: &mut dyn Env, r: &cp::Report, dir: &Path, as_json: bool) -> i32 {
+    let newer = r.manifest.as_ref().and_then(|m| needs_newer(env, m));
     if as_json {
-        emit_json(env, &report_json(r, dir));
+        let mut j = report_json(r, dir);
+        j["needs_wolos"] = newer
+            .as_ref()
+            .map_or(Value::Null, |(a, _)| Value::String(a.clone()));
+        emit_json(env, &j);
         return if r.problems.is_empty() {
             0
         } else {
@@ -319,13 +374,16 @@ fn print_report(env: &mut dyn Env, r: &cp::Report, dir: &Path, as_json: bool) ->
     match (&r.manifest, r.problems.is_empty()) {
         (Some(m), true) => {
             env.out(&format!(
-                "OK {} {} ({} KB): {}\nPermissions: {}\n{}",
+                "OK {} {} ({} KB): {}\nPermissions: {}\n{}{}",
                 m.id,
                 m.version,
                 r.size.div_ceil(1024),
                 kinds_line(m),
                 perm_labels(&m.permissions),
-                commands_lines(m)
+                commands_lines(m),
+                newer
+                    .as_ref()
+                    .map_or_else(String::new, |(a, o)| format!("{}\n", needs_line(a, o)))
             ));
             0
         }
@@ -344,13 +402,24 @@ fn print_report(env: &mut dyn Env, r: &cp::Report, dir: &Path, as_json: bool) ->
 
 fn list(env: &mut dyn Env, as_json: bool) -> i32 {
     let enabled = cp::load_enabled(&env.config_home());
+    // QA-PLUG-40: a plugins.json that does not read turns everything off; say so.
+    let broken = cp::enabled_problem(&env.config_home());
     let all = plugins(env);
     if as_json {
         let items: Vec<Value> = all
             .iter()
             .map(|p| {
                 let (valid, problem) = match &p.manifest {
-                    Ok(_) => (true, Value::Null),
+                    // QA-PLUG-63: why the shell turned it off, until it is on again; then
+                    // QA-PLUG-22: a WolOS it asks for that this computer does not run.
+                    Ok(m) => (
+                        true,
+                        (!enabled.is_enabled(&p.id))
+                            .then(|| cp::turned_off(&env.state_home(), &p.id))
+                            .flatten()
+                            .or_else(|| needs_newer(env, m).map(|(a, o)| needs_line(&a, &o)))
+                            .map_or(Value::Null, Value::String),
+                    ),
                     Err(e) => (false, Value::String(e.clone())),
                 };
                 json!({
@@ -364,8 +433,14 @@ fn list(env: &mut dyn Env, as_json: bool) -> i32 {
             })
             .collect();
         let dir = user_dir(env);
-        emit_json(env, &json!({"plugins": items, "user_dir": dir}));
+        emit_json(
+            env,
+            &json!({"plugins": items, "user_dir": dir, "settings_problem": broken}),
+        );
         return 0;
+    }
+    if let Some(b) = &broken {
+        env.err(&format!("wol: {b}\n"));
     }
     if all.is_empty() {
         env.out(&format!(
@@ -403,6 +478,30 @@ fn list(env: &mut dyn Env, as_json: bool) -> i32 {
     0
 }
 
+/// QA-PLUG-46: what an id must look like, with the person's own account name as the example
+/// (`bob.badid`), not a made-up one.
+fn bad_id_sentence(env: &dyn Env, id: &str) -> String {
+    let tail: String = id
+        .rsplit('.')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let tail = tail.trim_matches('-');
+    let tail = if tail.is_empty() { "demo" } else { tail };
+    let who = env
+        .var("USER")
+        .or_else(|| env.var("LOGNAME"))
+        .map(|u| u.to_ascii_lowercase())
+        .filter(|u| shared::plugins::is_plugin_id(&format!("{u}.{tail}")))
+        .unwrap_or_else(|| "alice".to_owned());
+    format!(
+        "\"{id}\" is not a plugin id. A plugin id is a reverse-DNS or user.name id of lowercase labels, like \"{who}.{tail}\"."
+    )
+}
+
 fn new(env: &mut dyn Env, id: &str, kinds: Option<&str>, as_json: bool) -> i32 {
     let mut ks = Vec::new();
     for k in kinds
@@ -429,6 +528,10 @@ fn new(env: &mut dyn Env, id: &str, kinds: Option<&str>, as_json: bool) -> i32 {
                 );
             }
         }
+    }
+    if !shared::plugins::is_plugin_id(id) {
+        let sentence = bad_id_sentence(env, id);
+        return fail(env, ErrorCode::Usage, &sentence);
     }
     let name = {
         let last = id.rsplit('.').next().unwrap_or(id);
@@ -542,6 +645,19 @@ fn run(env: &mut dyn Env, what: &str, kind: &str, entry: Option<&str>, input: Op
             ),
         );
     };
+    // QA-PLUG-36: the input of a bar item or card is the number of the part to click.
+    if kind != Kind::Search
+        && let Some(i) = input
+        && i.parse::<u32>().is_err()
+    {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            &format!(
+                "\"{i}\" is not a part number. Give the number of the part to click, like 2 (the final node lists the parts in order)."
+            ),
+        );
+    }
     let s = services(env, &dir, &m, false);
     let mut script = match load_script(&dir, &m, kind, id, file, s.clone()) {
         Ok(x) => x,
@@ -603,6 +719,18 @@ fn set_enabled(env: &mut dyn Env, id: &str, on: bool, as_json: bool) -> i32 {
             Ok(m) => m,
             Err(e) => return fail(env, ErrorCode::Invalid, &format!("{id} does not load: {e}")),
         };
+        // QA-PLUG-70: the same check as `wol plugin check` (every script loaded and run once): a
+        // plugin that fails it would only be turned off again after three failures.
+        let report = full_check(env, &p.dir, p.system);
+        if let Some(first) = report.problems.first() {
+            return fail(
+                env,
+                ErrorCode::Invalid,
+                &format!(
+                    "{id} has a problem, so it was not turned on: {first} Fix it, then try again (wol plugin check {id} lists every problem)."
+                ),
+            );
+        }
         enabled.enable(m);
         Some(m)
     } else {
@@ -613,6 +741,8 @@ fn set_enabled(env: &mut dyn Env, id: &str, on: bool, as_json: bool) -> i32 {
     if let Err(e) = cp::save_enabled(&config, &enabled) {
         return fail(env, ErrorCode::Failed, &e);
     }
+    // The person chose now: an old "turned off after 3 failures" no longer applies.
+    cp::clear_turned_off(&env.state_home(), id);
     // Audit X6-1: `[[webapp]]` entries are launchers while the plugin is on.
     let kept = match cp::sync_webapps(&env.data_home(), id, manifest.map(|m| (m, p.dir.as_path())))
     {
@@ -638,16 +768,19 @@ fn set_enabled(env: &mut dyn Env, id: &str, on: bool, as_json: bool) -> i32 {
     0
 }
 
-fn remove(env: &mut dyn Env, id: &str) -> i32 {
+fn remove(env: &mut dyn Env, id: &str, as_json: bool) -> i32 {
     let dir = user_dir(env).join(id);
     if !shared::plugins::is_plugin_id(id) || !dir.join(MANIFEST_FILE).is_file() {
         let system = Path::new(shared::plugins::SYSTEM_DIR).join(id);
         if system.join(MANIFEST_FILE).is_file() {
-            return fail(
-                env,
-                ErrorCode::Denied,
-                &format!("{id} is a system plugin; turn it off with wol plugin disable {id}"),
-            );
+            // QA-PLUG-38: as the manual says, a system plugin is only turned off.
+            let code = set_enabled(env, id, false, as_json);
+            if code == 0 && !as_json {
+                env.out(&format!(
+                    "{id} is a system plugin, so it was turned off, not deleted.\n"
+                ));
+            }
+            return code;
         }
         let msg = format!(
             "no user plugin called \"{id}\" in {}",
@@ -669,7 +802,95 @@ fn remove(env: &mut dyn Env, id: &str) -> i32 {
         return fail(env, ErrorCode::Failed, &format!("{}: {e}", dir.display()));
     }
     reload(env);
-    env.out(&format!("Removed {}.\n", dir.display()));
+    // QA-PLUG-37: JSON without a TTY, like every other plugin verb.
+    if as_json {
+        emit_json(env, &json!({"id": id, "removed": dir}));
+    } else {
+        env.out(&format!("Removed {}.\n", dir.display()));
+    }
+    0
+}
+
+/// A host name as `wol.http_get` sees it (`shared::widgets::manifest::url_host`): lowercase,
+/// letters, digits, `-` and `.`, or a bracketed IPv6 address. A whole address is cut to its host.
+fn host_of(arg: &str) -> Option<String> {
+    let a = arg.trim();
+    let h = if a.contains("://") {
+        shared::widgets::manifest::url_host(a)?
+    } else {
+        a.to_ascii_lowercase()
+    };
+    let name = !h.is_empty()
+        && h.len() <= 253
+        && !h.starts_with(['.', '-'])
+        && !h.ends_with(['.', '-'])
+        && !h.contains("..")
+        && h.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.');
+    let v6 = h.len() <= 47
+        && h.starts_with('[')
+        && h.ends_with(']')
+        && h.len() > 2
+        && h[1..h.len() - 1]
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() || b == b':' || b == b'.');
+    (name || v6).then_some(h)
+}
+
+/// `wol plugin allow-host <id> [host]` (QA-PLUG-12): the person lets a turned-on plugin read data
+/// from one site with `wol.http_get`; without a host, the sites it may read now. Only a person
+/// runs it (no helper verb): a plugin cannot widen its own reach.
+fn allow_host(env: &mut dyn Env, id: &str, host: Option<&str>, as_json: bool) -> i32 {
+    let config = env.config_home();
+    let mut enabled = cp::load_enabled(&config);
+    if !enabled.is_enabled(id) {
+        return fail(
+            env,
+            ErrorCode::NotFound,
+            &format!("{id} is not turned on; turn it on first: wol plugin enable {id}"),
+        );
+    }
+    if !enabled.allows(id, Permission::Http) {
+        return fail(
+            env,
+            ErrorCode::Invalid,
+            &format!(
+                "{id} was not given the web permission (http), so no site helps it; its plugin.toml has to ask for http, then wol plugin enable {id} again"
+            ),
+        );
+    }
+    let mut added = None;
+    if let Some(h) = host {
+        let Some(h) = host_of(h) else {
+            return fail(
+                env,
+                ErrorCode::Usage,
+                &format!("\"{h}\" is not a host name; give one like api.example.com"),
+            );
+        };
+        enabled.allow_host(id, &h);
+        if let Err(e) = cp::save_enabled(&config, &enabled) {
+            return fail(env, ErrorCode::Failed, &e);
+        }
+        reload(env);
+        added = Some(h);
+    }
+    let hosts = enabled
+        .enabled
+        .get(id)
+        .map(|g| g.hosts.clone())
+        .unwrap_or_default();
+    if as_json {
+        emit_json(env, &json!({"id": id, "hosts": hosts, "added": added}));
+    } else if let Some(h) = added {
+        env.out(&format!("{id} may now read data from {h}.\n"));
+    } else if hosts.is_empty() {
+        env.out(&format!(
+            "{id} may not read from any site yet. Allow one: wol plugin allow-host {id} <host>\n"
+        ));
+    } else {
+        env.out(&format!("{id} may read from: {}\n", hosts.join(", ")));
+    }
     0
 }
 
@@ -791,6 +1012,8 @@ fn verified_folder(dir: &Path) -> Result<wol_core::package::VerifiedPlugin, Stri
 fn verified_wolplug(file: &Path) -> Result<wol_core::package::VerifiedPlugin, String> {
     use wol_core::package::WOLPLUG_MAX_TAR;
     let size = std::fs::metadata(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    // QA-PLUG-19: zstd runs in /, so a relative name is made absolute here first.
+    let file = &std::path::absolute(file).map_err(|e| format!("{}: {e}", file.display()))?;
     if size.len() > WOLPLUG_MAX_TAR {
         return Err("The plugin file is too large.".into());
     }
@@ -813,7 +1036,8 @@ fn verified_wolplug(file: &Path) -> Result<wol_core::package::VerifiedPlugin, St
         wol_core::widgets::SourceError::NotFound(_) => {
             "zstd is missing, so the plugin file cannot be read.".to_owned()
         }
-        _ => "The plugin file is damaged (zstd could not read it).".to_owned(),
+        // The file exists (read above): zstd refused what is in it.
+        _ => "This file is not a plugin package (.wolplug), or it is damaged.".to_owned(),
     })?;
     let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
     wol_core::package::verify_wolplug(&tar, &keys)
@@ -842,6 +1066,14 @@ fn pack(env: &mut dyn Env, what: &str, out: Option<&str>, yes: bool, as_json: bo
     let target = match out {
         Some(o) if Path::new(o).is_dir() => Path::new(o).join(&p.name),
         Some(o) => PathBuf::from(o),
+        // QA-PLUG-11: an installed plugin's package goes to the working folder (else home), not
+        // beside the plugins in the hidden plugin folder; a checkout's goes next to it.
+        None if dir.starts_with(user_dir(env)) => env
+            .var("PWD")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .unwrap_or_else(|| env.home())
+            .join(&p.name),
         None => dir
             .parent()
             .map_or_else(|| PathBuf::from(&p.name), |d| d.join(&p.name)),

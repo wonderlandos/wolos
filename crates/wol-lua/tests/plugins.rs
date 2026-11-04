@@ -886,3 +886,209 @@ end }
     assert_eq!(posted[0].0.chars().count(), wol_lua::NOTIFY_TITLE);
     assert_eq!(posted[0].1.chars().count(), wol_lua::NOTIFY_BODY);
 }
+
+/// Lets real time pass, as a slow host call does: the script's clock reads the wall clock, so
+/// the time cannot be faked. A timed park, not a sleep standing in for a signal.
+fn pass_time(d: std::time::Duration) {
+    let end = std::time::Instant::now() + d;
+    while let Some(left) = end.checked_duration_since(std::time::Instant::now()) {
+        std::thread::park_timeout(left);
+    }
+}
+
+/// Every host call sleeps `delay` (a slow `wol.run`, a synchronous fsync or D-Bus call).
+struct Slow {
+    delay: std::time::Duration,
+    calls: RefCell<u32>,
+}
+
+impl Services for Slow {
+    fn now(&self) -> Stamp {
+        pass_time(self.delay);
+        stamp()
+    }
+    fn system(&self) -> wol::system::Info {
+        info()
+    }
+    fn notify(&self, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+    fn run(&self, _: &str, argv: &[String], _: u32) -> Result<String, String> {
+        *self.calls.borrow_mut() += 1;
+        pass_time(self.delay);
+        Ok(argv.join(" "))
+    }
+    fn state_save(&self, _: &str, _: &str) -> Result<(), String> {
+        pass_time(self.delay);
+        Ok(())
+    }
+}
+
+/// QA-PLUG-2: time spent inside a host service is not the script's own work: a render that calls a
+/// 100 ms `wol.run` (twice the 50 ms render deadline) and then does a little work of its own is
+/// not stopped; the credit is bounded, so a loop of slow service calls still ends.
+#[test]
+fn service_time_does_not_count_against_the_deadline() {
+    let slow = Rc::new(Slow {
+        delay: std::time::Duration::from_millis(100),
+        calls: RefCell::new(0),
+    });
+    let src = "return wol.menubar { render = function() \
+        local ok, out = wol.run { 'echo', 'hi' } \
+        wol.state.set('k', 1) \
+        local n = 0 for i = 1, 20000 do n = n + i end \
+        return wol.label { out } end }";
+    let mut s = load_with(Kind::Menubar, src, &[Permission::Run], slow.clone()).unwrap();
+    for _ in 0..2 {
+        assert!(
+            s.render().is_ok(),
+            "a render with a 100 ms service call was stopped"
+        );
+    }
+    assert!(!s.stopped());
+    // A load that calls wol.now 3 times (300 ms against the 200 ms load deadline) loads.
+    load_with(
+        Kind::Menubar,
+        "wol.now() wol.now() wol.now() local n = 0 for i = 1, 20000 do n = n + i end \
+         return wol.menubar { render = function() return wol.spacer() end }",
+        &[],
+        slow.clone(),
+    )
+    .unwrap();
+    // A loop of service calls is still bounded by the credit: it stops, and within a few seconds.
+    let start = std::time::Instant::now();
+    let mut s = load_with(
+        Kind::Menubar,
+        "return wol.menubar { render = function() while true do wol.run { 'x' } end end }",
+        &[Permission::Run],
+        slow,
+    )
+    .unwrap();
+    assert_eq!(s.render().unwrap_err(), wol_lua::TOO_LONG);
+    let took = start.elapsed();
+    assert!(
+        took < wol_lua::Deadlines::DEFAULT.services * 2 + std::time::Duration::from_millis(500),
+        "{took:?}"
+    );
+}
+
+/// QA-PLUG-13: `warn` (uncapped writes to the shell's journal) is not in the sandbox.
+#[test]
+fn sandbox_globals_leave_out_warn() {
+    let mut s = load(
+        Kind::Menubar,
+        "return wol.menubar { render = function() return wol.label { tostring(warn) } end }",
+        &[],
+    )
+    .unwrap();
+    assert_eq!(s.render().unwrap(), label("nil", Role::Body));
+}
+
+/// QA-PLUG-15: two entries of one plugin share its state: a key one sets is not lost when the
+/// other sets its own (each script kept its own cached copy and wrote it back whole).
+#[test]
+fn two_scripts_keep_each_others_keys() {
+    let fake = Rc::new(Fake::default());
+    let script = |key: &str| {
+        format!(
+            "return wol.menubar {{ render = function() wol.state.set('{key}', 1) return wol.spacer() end }}"
+        )
+    };
+    let mut a = load_with(Kind::Menubar, &script("a"), &[], fake.clone()).unwrap();
+    let mut b = load_with(Kind::Menubar, &script("b"), &[], fake.clone()).unwrap();
+    a.render().unwrap();
+    b.render().unwrap();
+    a.render().unwrap();
+    let saved: serde_json::Value =
+        serde_json::from_str(fake.state.borrow().as_deref().unwrap()).unwrap();
+    assert_eq!(saved, serde_json::json!({"a": 1, "b": 1}));
+}
+
+/// QA-PLUG-18: a plugin's image or row icon is an icon name or a file inside its folder; an
+/// absolute path (any picture the person can read) is refused, as the manual says.
+#[test]
+fn images_stay_inside_the_plugin_folder() {
+    let render = |src: &str| {
+        let mut s = load(
+            Kind::Menubar,
+            &format!(
+                "return wol.menubar {{ render = function() return wol.image {{ '{src}' }} end }}"
+            ),
+            &[],
+        )
+        .unwrap();
+        s.render()
+    };
+    assert!(
+        render("/home/bob/Pictures/x.png")
+            .unwrap_err()
+            .contains("inside the plugin folder")
+    );
+    assert!(
+        render("/usr/share/icons/x")
+            .unwrap_err()
+            .contains("inside the plugin folder")
+    );
+    assert!(render("../other/x.png").is_err());
+    assert!(render("weather-clear-symbolic").is_ok());
+    assert!(render("icons/sun.png").is_ok());
+    let mut s = load(
+        Kind::Search,
+        "return wol.search { query = function() return { { title = 'x', icon = '/home/bob/a.png' } } end }",
+        &[],
+    )
+    .unwrap();
+    assert!(
+        s.query("x")
+            .unwrap_err()
+            .contains("inside the plugin folder")
+    );
+}
+
+/// QA-PLUG-14 (documented in the manual): a script's globals, also set with `rawset(_G, ...)`,
+/// last across its renders and stay its own: another script of the same plugin does not see them.
+#[test]
+fn globals_persist_per_script_only() {
+    let src = "return wol.menubar { render = function() \
+        local before = tostring(rawget(_G, 'io')) rawset(_G, 'io', 1) \
+        return wol.label { before } end }";
+    let mut a = load(Kind::Menubar, src, &[]).unwrap();
+    assert_eq!(a.render().unwrap(), label("nil", Role::Body));
+    assert_eq!(
+        a.render().unwrap(),
+        label("1", Role::Body),
+        "kept for its own next render"
+    );
+    let mut b = load(Kind::Menubar, src, &[]).unwrap();
+    assert_eq!(
+        b.render().unwrap(),
+        label("nil", Role::Body),
+        "not seen by another script"
+    );
+    let doc = include_str!("../../../docs/modules/plugins.md");
+    assert!(doc.contains("no other script, plugin or entry sees them"));
+}
+
+/// QA-PLUG-43: `wol.run('id')` (a string, not a list) answers with what it takes, not Lua's
+/// conversion text, and is not a failure of the script.
+#[test]
+fn run_with_a_string_says_what_it_takes() {
+    let mut s = load(
+        Kind::Menubar,
+        "return wol.menubar { render = function() local ok, m = wol.run('id') return wol.label { tostring(ok) .. ': ' .. m } end }",
+        &[Permission::Run],
+    )
+    .unwrap();
+    let Node::Label { text, .. } = s.render().unwrap() else {
+        panic!("a label")
+    };
+    assert!(text.starts_with("false: wol.run takes a list"), "{text}");
+    assert!(!text.contains("converting"), "{text}");
+}
+
+/// QA-PLUG-34: a precompiled chunk is refused by Lua's own text mode, whatever bytes it has.
+#[test]
+fn a_binary_chunk_is_refused_as_binary() {
+    let e = load(Kind::Menubar, "\x1bLua\x54\0\x19\u{93}\r\n\x1a\n", &[]).unwrap_err();
+    assert!(e.contains("binary chunk"), "{e}");
+}

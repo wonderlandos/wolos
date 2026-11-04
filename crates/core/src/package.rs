@@ -75,6 +75,9 @@ pub fn members(path: &Path) -> Result<Vec<Member>, String> {
     }
 }
 
+/// Why a member other than a plain file is refused.
+const ONLY_PLAIN: &str = "only plain files are allowed";
+
 /// One ustar header block at `pos` of an archive `len` bytes long: the member, or None for the
 /// end-of-archive block. Only plain files without a name prefix pass.
 fn header(h: &[u8; BLOCK as usize], pos: u64, len: u64) -> Result<Option<Member>, String> {
@@ -99,7 +102,7 @@ fn header(h: &[u8; BLOCK as usize], pos: u64, len: u64) -> Result<Option<Member>
         return Err("not a ustar archive".into());
     }
     if !matches!(h[156], b'0' | 0) || !field(&h[345..500]).is_empty() {
-        return Err("only plain files are allowed".into());
+        return Err(ONLY_PLAIN.into());
     }
     let name = std::str::from_utf8(field(&h[..100]))
         .map_err(|_| "member name not UTF-8".to_string())?
@@ -313,7 +316,14 @@ pub fn verify_wolplug(tar: &[u8], keys: &[[u8; 32]]) -> Result<VerifiedPlugin, S
     if tar.len() as u64 > WOLPLUG_MAX_TAR {
         return Err("The plugin file is too large.".into());
     }
-    let ms = members_in(tar).map_err(|e| format!("The plugin file is damaged ({e})."))?;
+    let ms = members_in(tar).map_err(|e| {
+        // QA-PLUG-20: a hand-made tar (folder entries) is not damaged, it is not a package.
+        if e == ONLY_PLAIN {
+            "The plugin file has folders or links in it, so it was not made by wol plugin pack. Make it with wol plugin pack.".to_owned()
+        } else {
+            format!("The plugin file is damaged ({e}).")
+        }
+    })?;
     let bytes = |m: &Member| &tar[m.offset as usize..(m.offset + m.size) as usize];
     let names: Vec<&str> = ms.iter().map(|m| m.name.as_str()).collect();
     let (man_at, sig) = match names[..] {
@@ -1287,6 +1297,37 @@ not-a-key x
             all.push((WOLPLUG_SIG, s.as_slice()));
         }
         ustar(&all)
+    }
+
+    /// QA-PLUG-20: a hand-made archive (`tar -cf`, with its folder entry) is refused with what to
+    /// do (make it with `wol plugin pack`), not as "damaged".
+    #[test]
+    fn a_hand_made_tar_names_wol_plugin_pack() {
+        let d = std::env::temp_dir().join(format!("wol-handtar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("alice.hand")).unwrap();
+        std::fs::write(d.join("alice.hand/plugin.toml"), "schema = 1\n").unwrap();
+        let out = std::process::Command::new("tar")
+            .args(["--format=ustar", "-cf", "-", "-C"])
+            .arg(&d)
+            .arg("alice.hand")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let e = verify_wolplug(&out.stdout, &[]).unwrap_err();
+        assert!(
+            e.contains("wol plugin pack") && !e.contains("damaged"),
+            "{e}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// QA-PLUG-21: the manual names the per-file cap `check` enforces, next to the 1 MiB total.
+    #[test]
+    fn the_manual_names_the_per_file_cap() {
+        let doc = include_str!("../../../docs/modules/plugins.md");
+        let cap = format!("{} KiB per file", crate::plugins::MAX_FILE / 1024);
+        assert!(doc.contains(&cap), "{cap}");
     }
 
     #[test]

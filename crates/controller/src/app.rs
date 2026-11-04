@@ -428,7 +428,7 @@ fn new(inv: &Invocation, env: &mut dyn Env) -> i32 {
             env,
             ErrorCode::Unavailable,
             &format!(
-                "The {template} template is not installed ({}); install the Crystal tools with `wol install wolos-crystal`.",
+                "The {template} template is not installed ({}); install the Crystal tools with `wol modules install dev` (the Developer module).",
                 source.display()
             ),
         );
@@ -507,7 +507,10 @@ fn check_verb(inv: &Invocation, env: &mut dyn Env) -> i32 {
         return 1;
     }
     // The rules read files; the compiler then says whether the program type-checks.
-    if inv.flag("rules") || env.read_file(&dir.join("Makefile")).is_none() {
+    // QA-PLUG-16: helpers hold `app check` as a read verb (catalog), so they get the rules
+    // only: the project's Makefile is code, and it runs for people alone.
+    let helper = env.actor() != "cli";
+    if inv.flag("rules") || helper || env.read_file(&dir.join("Makefile")).is_none() {
         if !inv.flag("json") {
             env.out(&format!(
                 "{crystal_files} Crystal files follow the WolOS rules.\n"

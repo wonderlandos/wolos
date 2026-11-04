@@ -439,6 +439,39 @@ mod tests {
 
     const SEED: [u8; 32] = [3; 32];
 
+    /// QA-PLUG-3 release gate: the index [`DEFAULT_URL`] names is there, signed by a shipped key,
+    /// fresh and well formed; the Store's Plugins page can never load while the host is missing
+    /// (it was `plugins.wolos.org`, which never resolved). Run before a release, on a machine with
+    /// the network and the keys: `WOL_KEYS_DIR=/usr/share/wolos/keys cargo test -p wopkg --
+    /// --ignored release_gate_the_published_plugin_index`.
+    #[test]
+    #[ignore = "release gate: needs the network and the shipped keys"]
+    fn release_gate_the_published_plugin_index_loads() {
+        let dir =
+            std::env::var("WOL_KEYS_DIR").unwrap_or_else(|_| shared::package::KEYS_DIR.into());
+        let keys = wol_core::package::read_keys(std::path::Path::new(&dir));
+        assert!(!keys.is_empty(), "no package keys in {dir}");
+        let cache = std::env::temp_dir().join(format!("wol-plugin-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
+        std::fs::create_dir_all(&cache).unwrap();
+        let loaded = load(
+            &crate::fetch::Net::new(false),
+            DEFAULT_URL,
+            &cache,
+            &keys,
+            true,
+        );
+        let _ = std::fs::remove_dir_all(&cache);
+        let index = loaded.unwrap_or_else(|e| panic!("{DEFAULT_URL}: {e:?}"));
+        assert!(index.plugins.len() <= MAX_ENTRIES);
+    }
+
+    /// The gate's target is the CDN, not the host that never resolved.
+    #[test]
+    fn the_index_lives_on_the_cdn() {
+        assert_eq!(DEFAULT_URL, "https://cdn.wolos.org/plugins/index.json");
+    }
+
     fn entry(id: &str) -> serde_json::Value {
         serde_json::json!({
             "id": id, "name": "Weather", "version": "1.2", "summary": "Forecast in the menu bar",

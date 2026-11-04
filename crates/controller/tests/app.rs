@@ -229,7 +229,15 @@ fn new_refuses_what_it_cannot_do() {
     // No templates installed: say how to get them.
     let mut e = FakeEnv::default();
     assert_ne!(run(&mut e, &["app", "new", "x"]), 0);
-    assert!(e.err.contains("wol install wolos-crystal"), "{}", e.err);
+    // QA-PLUG-8: `wol install` is the OS installer; the tools come with the Developer module.
+    assert!(e.err.contains("wol modules install dev"), "{}", e.err);
+    assert!(!e.err.contains("wol install "), "{}", e.err);
+    let skill = include_str!("../../../wolos-crystal/skill/SKILL.md");
+    assert!(
+        !skill.contains("wol install "),
+        "SKILL.md names the OS installer"
+    );
+    assert!(skill.contains("wol modules install dev"));
 }
 
 #[test]
@@ -300,6 +308,12 @@ fn check_passes_every_template_and_then_type_checks() {
         let mut e = project_env(&files);
         assert_eq!(run(&mut e, &["app", "check", "p", "--rules"]), 0);
         assert!(e.execs.is_empty());
+        // QA-PLUG-16: `app check` is a read verb for helpers, so a helper never runs the
+        // project's Makefile: it gets the rules only.
+        let mut e = project_env(&files);
+        e.vars.push(("WOL_HELPER".into(), "backup".into()));
+        assert_eq!(run(&mut e, &["app", "check", "p"]), 0, "{t}: {}", e.err);
+        assert!(e.execs.is_empty(), "{t}: {:?}", e.execs);
     }
 }
 
@@ -388,4 +402,60 @@ fn public_doc_scanner() {
         app::scan_gc_none("all:\n\tcrystal build -Dgc_none x.cr\n").len(),
         1
     );
+}
+
+/// QA-PLUG-29: `make install` of the wolkit shard installs every template `wol app new` offers
+/// (only `app` was), each from a folder that exists.
+#[test]
+fn every_template_is_installed() {
+    let mk = include_str!("../../../wolos-crystal/shards/wolkit/Makefile");
+    let line = mk
+        .lines()
+        .find(|l| l.starts_with("TEMPLATES := "))
+        .expect("TEMPLATES list");
+    let listed: Vec<&str> = line["TEMPLATES := ".len()..].split_whitespace().collect();
+    assert_eq!(listed, controller::app::TEMPLATES);
+    assert!(
+        mk.contains("for t in $(TEMPLATES); do cp -r ../../templates/$$t $(TEMPLATE_DIR)/; done")
+    );
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wolos-crystal/templates");
+    for t in controller::app::TEMPLATES {
+        assert!(root.join(t).is_dir(), "{t}");
+    }
+}
+
+/// QA-PLUG-61: every project Makefile `wol app` drives (templates, examples, the gallery) has the
+/// `check` and `run` targets it runs, and `check` fails on warnings like the build does.
+#[test]
+fn every_project_makefile_has_check_and_run() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wolos-crystal");
+    let mut seen = 0;
+    for (dir, file) in [
+        ("templates", "Makefile.tmpl"),
+        ("examples", "Makefile"),
+        ("apps", "Makefile"),
+    ] {
+        for e in std::fs::read_dir(root.join(dir)).unwrap().flatten() {
+            let p = e.path().join(file);
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            seen += 1;
+            let target = |t: &str| text.lines().any(|l| l.starts_with(&format!("{t}:")));
+            assert!(
+                target("check") && target("run"),
+                "{}: check and run targets",
+                p.display()
+            );
+            let check = text.lines().position(|l| l.starts_with("check:")).unwrap();
+            let body = text.lines().nth(check + 1).unwrap();
+            assert!(
+                body.contains("--error-on-warnings"),
+                "{}: {body}",
+                p.display()
+            );
+        }
+    }
+    assert!(seen >= 7, "{seen} Makefiles");
 }

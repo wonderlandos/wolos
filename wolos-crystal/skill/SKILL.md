@@ -7,7 +7,7 @@ description: Write a WolOS app in Crystal the one supported way - start it with 
 # Apps in Crystal on WolOS
 
 Crystal is the WolOS userland language (ADR 0036). There is one way to write an app, and this
-skill is it. The pieces come with the `wolos-crystal` package (`wol install wolos-crystal`): the
+skill is it. The pieces come with the `wolos-crystal` package, part of the Developer module (`wol modules install dev`): the
 compiler, `libwol`, `libwolkit`, the two shards, the templates and this file.
 
 | Piece | Where | What |

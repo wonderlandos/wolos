@@ -29,6 +29,8 @@ pub struct Server {
     program: Option<String>,
     pub version: &'static str,
     pub initialized: bool,
+    /// `initialize` was answered: the client's name is fixed for the session (QA-PLUG-25).
+    named: bool,
 }
 
 impl Default for Server {
@@ -38,6 +40,7 @@ impl Default for Server {
             program: None,
             version: VERSIONS[0],
             initialized: false,
+            named: false,
         }
     }
 }
@@ -70,6 +73,29 @@ pub fn parent_program() -> Option<String> {
     std::fs::read_link(format!("/proc/self/fd/{}/exe", dir.as_raw_fd()))
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// True for a path part that is a release number (`2.1.3`, `v0.9`, `1.2.3-beta1`): digits and
+/// dots with at least one dot, after an optional `v`, then an optional `-`/`+` suffix.
+fn is_release(part: &str) -> bool {
+    let core = part.strip_prefix('v').unwrap_or(part);
+    let core = core.split(['-', '+']).next().unwrap_or("");
+    core.contains('.')
+        && core
+            .split('.')
+            .all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// QA-PLUG-26: the client's program path with every release number written `*`, so an Always Allow
+/// survives the client's self-update (`.../claude/versions/2.1.3` becomes `.../versions/*`)
+/// instead of asking again and piling up one grant per release. The folder is still the client's;
+/// a copy elsewhere is a different program.
+pub fn unversioned(program: &str) -> String {
+    program
+        .split('/')
+        .map(|p| if is_release(p) { "*" } else { p })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn ok(id: Value, result: Value) -> Value {
@@ -123,7 +149,12 @@ impl Server {
         let Some(program) = &self.program else {
             return self.client.clone();
         };
-        let program: String = program.chars().filter(|c| !c.is_control()).collect();
+        let program = unversioned(
+            &program
+                .chars()
+                .filter(|c| !c.is_control())
+                .collect::<String>(),
+        );
         let room = shared::portal::MAX_HELPER_TEXT.saturating_sub(self.client.len() + 3);
         let shown = if program.len() <= room {
             program
@@ -143,10 +174,38 @@ impl Server {
     }
 
     /// One JSON-RPC message in; a response for requests, None for notifications and responses.
+    /// A JSON array is a batch (protocol 2025-03-26): one array of the answers, none when every
+    /// element needed none (QA-PLUG-58); an empty array is one Invalid Request.
     pub fn handle(&mut self, line: &str, env: &mut dyn Env) -> Option<Value> {
+        if line == TOO_LONG {
+            return Some(error(
+                Value::Null,
+                -32600,
+                &format!(
+                    "Request too large: a line is at most {} KiB.",
+                    MAX_LINE / 1024
+                ),
+            ));
+        }
         let Ok(msg) = serde_json::from_str::<Value>(line) else {
             return Some(error(Value::Null, -32700, "Parse error"));
         };
+        match msg {
+            Value::Array(items) if items.is_empty() => {
+                Some(error(Value::Null, -32600, "Invalid Request"))
+            }
+            Value::Array(items) => {
+                let answers: Vec<Value> = items
+                    .into_iter()
+                    .filter_map(|m| self.handle_one(m, env))
+                    .collect();
+                (!answers.is_empty()).then_some(Value::Array(answers))
+            }
+            m => self.handle_one(m, env),
+        }
+    }
+
+    fn handle_one(&mut self, msg: Value, env: &mut dyn Env) -> Option<Value> {
         let id = msg.get("id").cloned();
         let method = msg.get("method").and_then(Value::as_str);
         let Some(method) = method.filter(|_| msg["jsonrpc"] == "2.0") else {
@@ -164,8 +223,18 @@ impl Server {
         };
         let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
         Some(match method {
+            "initialize" if self.named => error(
+                id,
+                -32600,
+                "Already initialized: the client keeps the name it gave first.",
+            ),
             "initialize" => ok(id, self.initialize(&params)),
             "ping" => ok(id, json!({})),
+            // QA-PLUG-59: a session starts with `initialize`; a tool call before it has no client
+            // name to ask the person about.
+            "tools/list" | "tools/call" if !self.named => {
+                error(id, -32002, "Server not initialized: send initialize first.")
+            }
             "tools/list" => {
                 let tools: Vec<Value> = catalog::tools().iter().map(catalog::tool_json).collect();
                 ok(id, json!({"tools": tools}))
@@ -186,6 +255,7 @@ impl Server {
             .copied()
             .unwrap_or(VERSIONS[0]);
         self.client = client_name(&p["clientInfo"]["name"]);
+        self.named = true;
         json!({
             "protocolVersion": self.version,
             "capabilities": {"tools": {"listChanged": false}},
@@ -222,6 +292,15 @@ impl Server {
         if let Some(msg) = crate::verbs::bad_argument(&inv) {
             log(env, &shown, Outcome::Failed, msg);
             return Ok(tool_error(msg));
+        }
+        // QA-PLUG-79: enabling a module that is not installed has nothing to do but say so; ask
+        // nobody first.
+        if inv.path == ["modules", "enable"]
+            && let Some(id) = inv.get("id")
+            && let Some(msg) = crate::modules::not_installed_sentence(env, id)
+        {
+            log(env, &shown, Outcome::Failed, &msg);
+            return Ok(tool_error(&msg));
         }
         let helper = self.helper();
         let (approved, note) = match approve::decide(env, &helper, &tool, rule, &inv, secret) {
@@ -261,6 +340,11 @@ impl Server {
         };
         log(env, &shown, o, note);
         let text = out.trim_end().to_string();
+        // QA-PLUG-59: a tool answers at most MAX_OUTPUT; a longer answer is cut, and says so.
+        let (text, cut) = cap_output(text);
+        if cut {
+            return Ok(json!({"content": [{"type": "text", "text": text}], "isError": false}));
+        }
         let mut r = json!({"content": [{"type": "text", "text": text}], "isError": false});
         match serde_json::from_str::<Value>(&text) {
             Ok(v @ Value::Object(_)) => r["structuredContent"] = v,
@@ -271,14 +355,54 @@ impl Server {
     }
 
     fn log(&self, env: &mut dyn Env, tool: &str, args: &[&str], o: Outcome, detail: &str) {
-        let r = crate::verbs::record(&self.client, "mcp", tool, args, o, detail, env.now_secs());
+        // The audit names who the policy and the sheet named: the declared name bound to the
+        // program that started `wol mcp` (QA-PLUG-25), not the name alone.
+        let r = crate::verbs::record(&self.helper(), "mcp", tool, args, o, detail, env.now_secs());
         let _ = audit::append(&env.state_home(), &r);
     }
 }
 
+/// Why `wol mcp` and `wol modules enable` refuse to run as root.
+pub const AS_ROOT: &str =
+    "this is for your own account, not for root: run it as yourself, without sudo.";
+
+/// The most a request line may be (one JSON-RPC message); a longer one is dropped unread.
+pub const MAX_LINE: usize = 1 << 20;
+/// What `read_line` hands over for such a line: [`Server::handle`] answers it as too large.
+pub const TOO_LONG: &str = "\u{0}line too long";
+/// The most text one tool call answers.
+pub const MAX_OUTPUT: usize = 256 * 1024;
+
+/// `text` cut at [`MAX_OUTPUT`] (on a character) with a note; whether it was cut.
+fn cap_output(text: String) -> (String, bool) {
+    if text.len() <= MAX_OUTPUT {
+        return (text, false);
+    }
+    let mut end = MAX_OUTPUT;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (
+        format!(
+            "{}\n(The answer was cut here: it was longer than {} KiB.)",
+            &text[..end],
+            MAX_OUTPUT / 1024
+        ),
+        true,
+    )
+}
+
 /// Serves until stdin closes.
 pub fn serve(env: &mut dyn Env) -> i32 {
+    // QA-PLUG-60: this serves a person's assistant, with that person's policy, journal and
+    // audit log; as root those would be root's.
+    if env.is_root() {
+        env.err(&format!("wol: {AS_ROOT}\n"));
+        return shared::errors::ErrorCode::Denied.exit();
+    }
     let mut s = Server::started_by(parent_program());
+    // QA-PLUG-62: a sheet waiting for a client that has exited is dropped, not approved.
+    crate::run::pin_client();
     while let Some(line) = env.read_line() {
         let l = line.trim();
         if l.is_empty() {
@@ -289,6 +413,9 @@ pub fn serve(env: &mut dyn Env) -> i32 {
                 "{}\n",
                 serde_json::to_string(&r).unwrap_or_default()
             ));
+        }
+        if crate::run::client_gone() {
+            break;
         }
     }
     0
@@ -383,5 +510,22 @@ impl Env for ToolEnv<'_> {
     }
     fn actor(&self) -> String {
         self.actor.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// QA-PLUG-59: a long answer is cut on a character and says so; a short one is untouched.
+    #[test]
+    fn a_long_tool_answer_is_cut() {
+        let (t, cut) = cap_output("short".into());
+        assert!(!cut && t == "short");
+        let long = "é".repeat(MAX_OUTPUT);
+        let (t, cut) = cap_output(long);
+        assert!(cut);
+        assert!(t.len() < MAX_OUTPUT + 200, "{}", t.len());
+        assert!(t.ends_with("longer than 256 KiB.)"), "{t:?}");
     }
 }

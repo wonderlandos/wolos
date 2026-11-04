@@ -1092,3 +1092,42 @@ fn update_channel_reports_stable() {
     assert_eq!(v["channel"], "stable");
     assert_eq!(v["offered"], serde_json::json!(["stable"]));
 }
+
+/// QA-PLUG-23: `wol open` starts the app and returns; the app has no pipe of the caller's (a
+/// guest agent or `su -l bob -c` waits for every holder of its stdout), and a launcher that stays
+/// up as the app does not hold `wol open` either.
+#[test]
+fn open_returns_and_shares_no_pipe_with_the_app() {
+    use controller::run::{Env, RealEnv};
+    let dir = temp_home("detached");
+    let out = dir.join("fds");
+    let pid = dir.join("pid");
+    let script = format!(
+        "echo $$ > {}; a=$(readlink /proc/$$/fd/0 /proc/$$/fd/1 /proc/$$/fd/2); echo \"$a\" > {}; exec sleep 60",
+        pid.display(),
+        out.display()
+    );
+    let start = std::time::Instant::now();
+    let code = RealEnv
+        .exec_detached(&["sh".into(), "-c".into(), script])
+        .unwrap();
+    assert_eq!(code, 0);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(15),
+        "waited for the app"
+    );
+    // The launcher is still running (it was waited for 5 s) and had written its descriptors long
+    // before: none is ours.
+    let seen = std::fs::read_to_string(&out).unwrap_or_default();
+    assert_eq!(seen, "/dev/null\n/dev/null\n/dev/null\n", "{seen}");
+    if let Ok(p) = std::fs::read_to_string(&pid) {
+        let _ = std::process::Command::new("kill").arg(p.trim()).status();
+    }
+    // A launcher that exits answers with its own status.
+    assert_eq!(
+        RealEnv
+            .exec_detached(&["sh".into(), "-c".into(), "exit 3".into()])
+            .unwrap(),
+        3
+    );
+}

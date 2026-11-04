@@ -47,3 +47,25 @@ fn power_shutdown_help_prints_its_usage() {
     assert!(!env.out.contains("  theme"), "{}", env.out);
     assert!(env.requests.is_empty() && env.execs.is_empty());
 }
+
+/// QA-PLUG-47: a parse error points at the help of the command the person was typing.
+#[test]
+fn a_parse_error_points_at_that_commands_help() {
+    use controller::cli::help_hint;
+    assert!(parse(&["plugin", "check"]).is_err());
+    assert_eq!(
+        help_hint(&["plugin", "check"]),
+        "Try 'wol help plugin check'."
+    );
+    assert_eq!(
+        help_hint(&["plugin", "frob"]),
+        "Try 'wol help plugin'.",
+        "the words that are a command"
+    );
+    assert_eq!(
+        help_hint(&["plugin", "check", "--json"]),
+        "Try 'wol help plugin check'."
+    );
+    assert_eq!(help_hint(&["frobnicate"]), "Try 'wol help'.");
+    assert_eq!(help_hint::<&str>(&[]), "Try 'wol help'.");
+}

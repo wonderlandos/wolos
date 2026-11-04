@@ -294,6 +294,25 @@ pub fn running_version(text: &str) -> Option<String> {
     (!v.is_empty()).then(|| v.to_owned())
 }
 
+/// The WolOS release this computer runs (QA-PLUG-57, for a plugin's `min_wolos`): the release
+/// file's version, else os-release's `VERSION_ID`, else `fallback`. Reads two small files.
+pub fn running_release(fallback: &str) -> String {
+    let read = |p: &str| shared::bounded::read_text(std::path::Path::new(p), 64 * 1024);
+    release_of(
+        read(RELEASE_FILE).as_deref(),
+        read(OS_RELEASE).as_deref(),
+        fallback,
+    )
+}
+
+/// [`running_release`] from the two files' text.
+pub fn release_of(release: Option<&str>, os_release: Option<&str>, fallback: &str) -> String {
+    release
+        .and_then(running_version)
+        .or_else(|| os_release.and_then(crate::base::version))
+        .unwrap_or_else(|| fallback.to_owned())
+}
+
 /// Dotted numeric versions compared by number ("2026.11" and "0.12.1"; "0.13.0-pre" counts as
 /// 0.13.0, a build newer than the 0.12.1 release). None when a version has a part without
 /// digits: then only equal text is a match.

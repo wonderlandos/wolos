@@ -393,3 +393,94 @@ fn asking_for_a_name_again_starts_its_tries_afresh() {
     assert!(!read(&st.join("modules-attempts")).contains("ai-local"));
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// Runs modules-disable-ai-claude in `d` with a stub `claude` whose `mcp get wolos` prints `get`
+/// and whose `mcp remove` exits `remove_code`; the skill links point at `d/skill`.
+fn disable_ai_claude(d: &Path, get: &str, remove_code: i32) -> (std::process::Output, bool) {
+    std::fs::write(d.join("get.txt"), get).unwrap();
+    let calls = d.join("calls");
+    let p = d.join("bin/claude");
+    std::fs::write(
+        &p,
+        format!(
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'mcp get') cat '{}' ;;\n  'mcp remove') echo \"remove $*\" >> '{}'; exit {remove_code} ;;\nesac\n",
+            d.join("get.txt").display(),
+            calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let home = d.join("home");
+    let skill = d.join("skill");
+    std::fs::create_dir_all(&skill).unwrap();
+    for dir in [".claude/skills", ".agents/skills"] {
+        std::fs::create_dir_all(home.join(dir)).unwrap();
+        let _ = std::fs::remove_file(home.join(dir).join("wolos"));
+        std::os::unix::fs::symlink(&skill, home.join(dir).join("wolos")).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        d.join("bin").display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let _ = std::fs::remove_file(&calls);
+    let out = std::process::Command::new("sh")
+        .arg(root().join("files/usr/lib/wolos/modules-disable-ai-claude"))
+        .env("PATH", path)
+        .env("HOME", &home)
+        .env("WOLOS_AGENT_SKILL", &skill)
+        .output()
+        .unwrap();
+    let links_gone = !home.join(".claude/skills/wolos").exists()
+        && std::fs::symlink_metadata(home.join(".claude/skills/wolos")).is_err()
+        && std::fs::symlink_metadata(home.join(".agents/skills/wolos")).is_err();
+    (out, links_gone)
+}
+
+/// QA-PLUG-61: only our `wol mcp` registration is removed (not any `Command: wol...`), and a
+/// failed removal does not leave the skill links behind.
+#[test]
+fn disable_ai_claude_matches_only_our_server_and_always_unlinks() {
+    let d = temp("disable-claude");
+    // The person's own servers: wolfram, `wol` with other arguments, another program called wol,
+    // a wrapper around `wol mcp`: all left alone, the links still come off.
+    for get in [
+        "wolos:\n  Type: stdio\n  Command: wolfram\n  Args: serve\n",
+        "wolos:\n  Type: stdio\n  Command: wol\n  Args: serve\n",
+        "wolos:\n  Type: stdio\n  Command: /opt/wol\n  Args: mcp\n",
+        "wolos:\n  Type: stdio\n  Command: sh\n  Args: -c wol mcp\n",
+        "wolos:\n  Type: stdio\n  Command: wol\n",
+    ] {
+        let (out, links_gone) = disable_ai_claude(&d, get, 0);
+        assert!(
+            out.status.success(),
+            "{get}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!d.join("calls").exists(), "{get}: not ours, so it stays");
+        assert!(links_gone, "the skill links come off either way");
+    }
+    // Ours, in the shapes `claude mcp get` prints: removed.
+    for get in [
+        "wolos:\n  Type: stdio\n  Command: wol\n  Args: mcp\n",
+        "wolos:\n  Command: /usr/bin/wol\n  Args: mcp  \n",
+    ] {
+        let (out, links_gone) = disable_ai_claude(&d, get, 0);
+        assert!(
+            out.status.success(),
+            "{get}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let calls = std::fs::read_to_string(d.join("calls")).unwrap_or_default();
+        assert!(
+            calls.contains("remove mcp remove --scope user wolos"),
+            "{get}: {calls}"
+        );
+        assert!(links_gone);
+    }
+    // The removal fails: the links still come off, and the exit status says it failed.
+    let (out, links_gone) = disable_ai_claude(&d, "wolos:\n  Command: wol\n  Args: mcp\n", 1);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(links_gone, "a failed removal must not keep the skill links");
+    let _ = std::fs::remove_dir_all(&d);
+}

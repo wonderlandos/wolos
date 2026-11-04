@@ -5,7 +5,7 @@ fn main() {
     let code = match controller::cli::parse(&argv) {
         Ok(inv) => controller::run::execute(&inv, &mut controller::run::RealEnv),
         Err(e) => {
-            eprintln!("wol: {e}\nTry 'wol help'.");
+            eprintln!("wol: {e}\n{}", controller::cli::help_hint(&argv));
             shared::errors::ErrorCode::Usage.exit()
         }
     };

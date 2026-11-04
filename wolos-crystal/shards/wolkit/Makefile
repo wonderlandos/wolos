@@ -68,12 +68,14 @@ format:
 fmt:
 	crystal tool format src spec bin
 
-# The shard as a CRYSTAL_PATH entry: require "wolkit" finds <dir>/wolkit/src/wolkit.cr. The app
-# template goes to the templates directory `wolkit-new` reads.
+# The shard as a CRYSTAL_PATH entry: require "wolkit" finds <dir>/wolkit/src/wolkit.cr. Every
+# template `wol app new --template app|cli|tool|ai` copies goes to the templates directory it
+# reads (QA-PLUG-29: only `app` was installed; controller/tests/app.rs checks this list).
+TEMPLATES := app cli tool ai
 install:
 	install -d $(SHARD_DIR) $(TEMPLATE_DIR)
 	cp -r src bin styles shard.yml LICENSE README.md $(SHARD_DIR)/
-	cp -r ../../templates/app $(TEMPLATE_DIR)/
+	for t in $(TEMPLATES); do cp -r ../../templates/$$t $(TEMPLATE_DIR)/; done
 
 clean:
 	rm -rf $(BUILD)

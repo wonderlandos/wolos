@@ -476,16 +476,16 @@ fn named_scripts_obey_the_off_switch() {
     assert_eq!(run("focus on", &mut e), 77);
     assert!(e.err.contains("turned off"));
     assert!(!e.home.join("wol/dnd").exists());
-    assert_eq!(
-        run("shell reload", &mut e),
-        69,
-        "non-helper verbs are not gated (no session here)"
-    );
+    // A verb that is not a helper verb is for people: a helper's call is refused (QA-PLUG-6),
+    // not run, and the audit log has it.
+    assert_eq!(run("shell reload", &mut e), 77, "{}", e.err);
+    assert!(e.err.contains("is for people"), "{}", e.err);
     assert_eq!(run("helpers --json", &mut user), 0);
     let s = json_out(&user);
     assert_eq!(s["enabled"], false);
     assert_eq!(s["helpers"][0]["name"], "script:cron");
-    assert_eq!(s["helpers"][0]["refused"], 1);
+    // The focus call and the people-only call were both refused.
+    assert_eq!(s["helpers"][0]["refused"], 2);
 }
 
 /// Scripts ask on screen like MCP clients: deny changes nothing, allow runs it, no session refuses.

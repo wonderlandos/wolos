@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Helper gate (docs/modules/automation.md), one for `wol mcp` and `WOL_HELPER` scripts:
+//! Helper gate (docs/modules/automation.md), one for `wol mcp`, `WOL_HELPER` scripts and an assistant's shell (`CLAUDECODE=1`):
 //! policy first; reads run; a change asks on screen (wol-shell's approval sheet) unless the user
 //! chose Always Allow for that helper; administrator changes ask for the password every time and
 //! run in the shell, never in the helper. No session showing = refused. The caller writes the one
@@ -165,6 +165,7 @@ fn on_shell_socket(
     match env.request_wait(&sock, a.line().as_bytes(), wait) {
         Ok(reply) => Ok(Answer::parse(&reply)),
         Err(e) if timed_out(&e) => Ok(Some(Answer::TimedOut)),
+        Err(e) if gone(&e) => Err(Verdict::Stop(Outcome::Refused, CLIENT_LEFT.into())),
         Err(_) => Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
     }
 }
@@ -176,6 +177,15 @@ pub fn approval_wait(patience: Patience) -> u32 {
         .secs(APPROVAL_TIMEOUT_SECS)
         .saturating_add(APPROVAL_WAIT_SECS - APPROVAL_TIMEOUT_SECS)
 }
+
+/// The wait ended because the program that asked is gone ([`crate::run::CLIENT_GONE`]).
+fn gone(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::ConnectionAborted
+}
+
+/// The refusal (audit detail) when the asking program left before the answer (QA-PLUG-62).
+pub const CLIENT_LEFT: &str =
+    "The program that asked is gone, so the request was dropped. Nothing changed.";
 
 fn timed_out(e: &std::io::Error) -> bool {
     matches!(
@@ -224,6 +234,7 @@ fn via_wold(env: &mut dyn Env, a: Approval, patience: Patience) -> Result<Option
     let reply = match env.request_wait(&sock, line.as_bytes(), sheet_wait(&call, patience) + 5) {
         Ok(r) => r,
         Err(e) if timed_out(&e) => return Ok(Some(Answer::TimedOut)),
+        Err(e) if gone(&e) => return Err(Verdict::Stop(Outcome::Refused, CLIENT_LEFT.into())),
         Err(_) => return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
     };
     // Audit S4-12: wold's own reason (permission, validation, a newer wold) reaches the helper.

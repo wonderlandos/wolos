@@ -106,6 +106,7 @@ fn boot_medium_loop_cd_zram_and_read_only_disks_are_never_targets() {
     let d = scratch("disks");
     disks_fakes(&d);
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-disks"))
         .env("PATH", path(&d))
         .env("WOLOS_CMDLINE", d.join("cmdline"))
@@ -130,6 +131,7 @@ fn boot_medium_loop_cd_zram_and_read_only_disks_are_never_targets() {
         ),
     );
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-disks"))
         .env("PATH", path(&d))
         .env("WOLOS_CMDLINE", d.join("cmdline"))
@@ -144,6 +146,7 @@ fn boot_medium_loop_cd_zram_and_read_only_disks_are_never_targets() {
 
 fn check(d: &Path, disk: &str) -> (Option<i32>, String) {
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-check"))
         .arg(disk)
         .env("PATH", path(d))
@@ -298,6 +301,7 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         fake(d, n, body);
     }
     let mut c = Command::new("sh");
+    c.env_remove("CLAUDECODE"); // an assistant's shell is a helper to `wol` (QA-PLUG-6)
     // A passphrase file next to the fakes is the autoinstall's wolos.passphrase= file.
     if d.join("passphrase").exists() {
         c.env("WOLOS_PASSPHRASE_FILE", d.join("passphrase"));
@@ -635,6 +639,7 @@ fn rerun(d: &Path, disk: &str) -> Output {
     fs::create_dir_all(&t).unwrap();
     let _ = fs::remove_file(d.join("log"));
     Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-run"))
         .arg(disk)
         .env("WOLOS_INSTALL_PATH", path(d))
@@ -718,6 +723,7 @@ fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, Pa
     fs::write(dir.join("account-password"), "pw\n").unwrap();
     prep(d);
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-run"))
         .arg("--plan")
         .arg(dir.join("plan.json"))
@@ -1296,6 +1302,7 @@ fn esp_sync_gives_other_kernels_their_own_entry() {
     fs::create_dir_all(d.join("sb")).unwrap();
     let run = |args: &[&str]| {
         let st = Command::new("sh")
+            .env_remove("CLAUDECODE")
             .arg(lib("esp-sync"))
             .args(args)
             .env("WOLOS_ROOT", &root)
@@ -1519,6 +1526,7 @@ fn results_land_in_a_folder_the_installer_made_never_next_to_the_plan() {
     );
     let result = || {
         let o = Command::new("sh")
+            .env_remove("CLAUDECODE")
             .arg(lib("install-check"))
             .arg("--result")
             .env("WOLOS_RESULT_DIR", &r)
@@ -1728,6 +1736,7 @@ fn the_autoinstall_name_follows_the_settings_rule() {
         ("a;reboot", "wolos"),
     ] {
         let o = Command::new(env!("CARGO_BIN_EXE_wol"))
+            .env_remove("CLAUDECODE")
             .args(["install", "hostname", given])
             .output()
             .unwrap();
@@ -1769,6 +1778,7 @@ fn the_first_start_installs_the_queued_media_formats() {
     fake(&d, "logger", "");
     let run = || {
         Command::new("sh")
+            .env_remove("CLAUDECODE")
             .arg(lib("modules-install"))
             .arg("--root")
             .arg(&r)
@@ -1817,6 +1827,7 @@ fn the_first_start_installs_the_queued_media_formats() {
     assert!(!w.join("modules-pending").exists() && !w.join("packages-pending").exists());
     // A name that is not a package is refused before anything runs.
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("modules-install"))
         .arg("--root")
         .arg(&r)

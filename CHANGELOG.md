@@ -19,6 +19,14 @@ Packages and updates
 - `sudo wol pkg -- -Sw <package>` (download only) works on the sealed system: it runs against a temporary copy of the package database instead of failing on the read-only lock.
 - An interrupted AppImage download is resumed only when the rest can be proven to belong to it (a checksum, or the ETag it was started under); a download without a size stops at 4 GiB. The shard list is fetched again once it is a day old, and a plugin install that was cut off leaves nothing behind, the older version back in place.
 
+Plugins and assistants
+- A plugin that calls a slow command is no longer stopped as "took too long": the time a command, a state write or the clipboard takes is not counted against its deadline (up to 2 seconds per call; `wol plugin run` allows as long as the longest `wol.run` timeout).
+- A plugin the shell turns off after three failures now says so (a notice, and `wol plugin list` names the reason until it is turned on again). A Plugin Maker save that breaks `plugin.toml` keeps the last working version on the desktop and says the plugin has a problem. A `plugins.json` that cannot be read is named (every plugin is off while it is), and the next change keeps it as `plugins.json.bad`.
+- `wol plugin allow-host <id> <host>` lets a plugin that has `http` read one site; until then `wol.http_get` answers with that command. `wol plugin enable` runs the full check first and refuses a plugin with a problem; `[[panel]]` and `[[search]]` are marked planned (the shell hosts neither yet) and `check` refuses them; a plugin folder that is a symlink is refused; `warn` is out of the Lua sandbox; images and icons stay inside the plugin folder.
+- Dock tiles that run a `wol` verb run it as the plugin's helper (policy, sheet and audit), like toggles and hotkeys.
+- Plugin Maker asks before dropping unsaved edits, saves only with edits (Ctrl+S), says where the package went (Downloads), checks every open file as you type, refuses to share a plugin that still has the scaffold's author or summary, and opens a shipped plugin. Store > Plugins lists plugins that are installed but not in the index.
+- `wol mcp`: an approval sheet is dropped when the assistant that asked has gone, a second `initialize` cannot rename the client, Always Allow survives the client's self-update, batches work, a line over 1 MiB and a tool answer over 256 KiB are cut, and it does not run as root. `wol open` returns once the app is asked for. `wol` run by an assistant's shell (Claude Code's Bash tool, `CLAUDECODE=1`) meets the same helper gate as `wol mcp` (ADR 0032).
+
 ## 0.12.1 (unreleased)
 A fixes-only release after a hunt for stalls, races and weak spots in 0.12.0. Nothing new to learn.
 

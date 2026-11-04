@@ -28,6 +28,9 @@ pub const RESERVED_PREFIX: &str = "org.wolos.";
 pub const MAX_TOTAL_SIZE: u64 = 1 << 20;
 /// `wol.state` JSON per plugin.
 pub const MAX_STATE: usize = 64 * 1024;
+/// Largest output of one `wol.run` or `wol.http_get`, in the shell and in `wol plugin run` alike
+/// (QA-PLUG-35); the manual says 64 KB.
+pub const MAX_RUN_OUTPUT: usize = 64 * 1024;
 pub const MAX_ID: usize = 64;
 pub const MAX_ENTRY_ID: usize = 32;
 pub const MAX_NAME: usize = 40;
@@ -172,8 +175,10 @@ impl Kind {
     }
 
     /// Kinds the manifest format knows but no part of WolOS applies yet (audit X6-1): `check`
-    /// refuses them, `new` and Plugin Maker do not offer them.
-    pub const PLANNED: [Kind; 2] = [Kind::Look, Kind::Hypr];
+    /// refuses them, `new` and Plugin Maker do not offer them. `[[panel]]` and `[[search]]` run
+    /// in `wol plugin run` and the Lua sandbox, but the shell hosts neither yet (QA-PLUG-4); the
+    /// shell's `every_offered_kind_has_a_host` keeps this list honest.
+    pub const PLANNED: [Kind; 4] = [Kind::Panel, Kind::Search, Kind::Look, Kind::Hypr];
 
     /// See [`Kind::PLANNED`].
     pub fn is_planned(self) -> bool {
@@ -1840,6 +1845,19 @@ pub fn is_reserved_id(id: &str) -> bool {
 /// argv that calls a `wol` verb (argv[0] is `wol`), so the helper policy applies.
 pub fn is_wol_argv(argv: &[String]) -> bool {
     argv.first().is_some_and(|a| a == "wol")
+}
+
+/// The argv that launches a plugin command (`wol.run`, `[[toggle]]`, `[[dock]]`, `[[hotkey]]`):
+/// a `wol` verb runs as the plugin's helper (`env WOL_HELPER=<plugin> wol ...`), so the helper
+/// policy, the approval sheet and the audit log apply; anything else runs unchanged. Every
+/// launcher builds its argv here (QA-PLUG-5: the Dock spawned `wol` verbs without it).
+pub fn helper_argv(plugin: &str, argv: &[String]) -> Vec<String> {
+    let mut cmd: Vec<String> = Vec::new();
+    if is_wol_argv(argv) {
+        cmd.extend(["env".to_owned(), format!("WOL_HELPER={plugin}")]);
+    }
+    cmd.extend(argv.iter().cloned());
+    cmd
 }
 
 #[cfg(test)]
