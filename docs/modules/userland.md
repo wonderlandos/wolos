@@ -18,7 +18,7 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | Terminal | foot | `foot` |
 
 Apps also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor from their `.desktop` files; a pinned app appears once, under its WolOS name.
-Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins).
+Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins). Pictures: PNG and JPEG open in Gallery; GIF, WebP and SVG in the image viewer (`eog`, on the image), then the browser. The image has no size limit, so no app is dropped for room (ISO-GATE).
 
 ## System
 

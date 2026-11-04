@@ -14,7 +14,7 @@ Scripts
 Everyday apps
 - Misspelled words are underlined in Text Editor and other apps that check spelling, in English (US and UK), Spanish, French, German, Italian, Dutch, Polish and Portuguese (Brazil and Portugal). Japanese and Chinese have no word list.
 - Ctrl+Super+P picks a colour from anywhere on the screen: click a pixel and its value is on the clipboard, with a notification.
-- Photos in the Dock is Gallery, and PNG and JPEG pictures open in it; GIF, WebP and SVG pictures open in the browser for now. The photo manager (Shotwell), the image viewer and the two graphics benchmarks are no longer on the image (the App Store and `pacman -S glmark2 vkmark` add them).
+- Photos in the Dock is Gallery, and PNG and JPEG pictures open in it. GIF, WebP and SVG pictures open in the image viewer, with the browser as the second choice. The image viewer and the two graphics benchmarks stay on the image; Shotwell is in the App Store.
 - The screen reader (Orca) and its voice are on the image.
 
 ## 0.12.1 (unreleased)

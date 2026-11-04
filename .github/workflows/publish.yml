@@ -14,6 +14,10 @@
 #       box (s3://$BUCKET/runs/<run>/: the .iso, its manifest .json and the VM test's checks.txt,
 #       which must say BOOT PASS and no FAIL) as a pre-release of this repo:
 #       `wolos-build release --do --iso --prerelease` (the same signer and writes as what=iso).
+# The ISO's primary download is the CDN (https://cdn.wolos.org/v<version>/<iso>, release.json `image`);
+# the GitHub release keeps the packages' files, the checksum and release.json, and an ISO of 2 GiB or
+# more is not uploaded there (its notes link the CDN). That needs WOLOS_CDN_UPLOAD_TOKEN (iso-s3 passes
+# it; the iso job passes it once its pinned release.yml declares it: bump the pin after the wolos-iso push).
 # Every write is `wolos-build publish|release` (lib/publish.sh in wolos-build, from the builder
 # image); the jobs here and the reusable workflows only check out, assume the role and pass keys.
 # Without WOLOS_RELEASES_TOKEN nothing is written to the releases repo: the run ends with a
@@ -121,6 +125,8 @@ jobs:
       - name: ISO, release.json, signature, pre-release
         env:
           WOLOS_RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+          # cdn.wolos.org is the primary download; an ISO of 2 GiB or more goes there only.
+          WOLOS_CDN_UPLOAD_TOKEN: ${{ secrets.WOLOS_CDN_UPLOAD_TOKEN }}
         run: |
           mkdir -p out/iso && aws s3 sync --quiet --exclude '*' --include '*.iso' --include '*.json' --include checks.txt "s3://$BUCKET/runs/$RUN/" out/iso/
           export WOLOS_ISO=$PWD/wolos-iso WOLOS_SUMMARY=$PWD/out/summary.md WOLOS_WORK=$PWD/out/work
