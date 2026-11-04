@@ -8,6 +8,14 @@ use shared::package::{
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
+/// Optional member after `SHA256.sig`: the certificate chain of the signer, a JSON array of
+/// `.wolcert` (ADR 0046). Not hashed in the manifest, so a renewed chain keeps the package hash.
+pub const CHAIN: &str = "CHAIN";
+/// Optional last member: the hybrid signature of the `SHA256` member (`woltrust::Wsig`).
+pub const WSIG: &str = "SHA256.wsig";
+/// The members ADR 0046 adds to format 2 of ADR 0011, in archive order, both optional.
+const EXTRA_MEMBERS: [(&str, bool); 2] = [(CHAIN, false), (WSIG, false)];
+
 const BLOCK: u64 = 512;
 /// Largest `Info.json` / `SHA256` / icon read into memory.
 const MAX_SMALL: u64 = 1 << 20;
@@ -195,11 +203,30 @@ fn parse_manifest(text: &str) -> Option<Vec<(&str, &str)>> {
         .collect()
 }
 
+/// The ADR 0046 members of a `.wol`, read with their caps; the signature itself is checked by
+/// `wol_core::trust`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Extra {
+    /// The `SHA256` member, the bytes both signatures cover.
+    pub manifest: Vec<u8>,
+    /// The `CHAIN` member, if present (at most 64 KiB).
+    pub chain: Option<Vec<u8>>,
+    /// The `SHA256.wsig` member, if present (at most 16 KiB).
+    pub wsig: Option<Vec<u8>>,
+}
+
 /// Check order, names, hashes, signature and Info.json. `keys`: trusted Ed25519 public keys.
+/// The optional `CHAIN` and `SHA256.wsig` members are allowed and not judged here: see
+/// [`verify_extra`].
 pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
+    verify_extra(path, keys).map(|(v, _)| v)
+}
+
+/// [`verify`], plus the bytes of the members `wol_core::trust` needs to judge the hybrid signature.
+pub fn verify_extra(path: &Path, keys: &[[u8; 32]]) -> Result<(Verified, Extra), String> {
     let ms = members(path)?;
     // Exactly the contract members, each once, in contract order.
-    let mut want = MEMBERS.iter().peekable();
+    let mut want = MEMBERS.iter().chain(EXTRA_MEMBERS.iter()).peekable();
     for m in &ms {
         loop {
             match want.next() {
@@ -210,7 +237,7 @@ pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
         }
     }
     let get = |n: &str| ms.iter().find(|m| m.name == n);
-    for (n, required) in MEMBERS {
+    for (n, required) in MEMBERS.iter().chain(EXTRA_MEMBERS.iter()).copied() {
         if required && get(n).is_none() {
             return Err(format!("missing {n}"));
         }
@@ -221,7 +248,7 @@ pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
     let lines = parse_manifest(text).ok_or("bad manifest line")?;
     let hashed: Vec<&Member> = ms
         .iter()
-        .filter(|m| m.name != MANIFEST && m.name != SIGNATURE)
+        .filter(|m| ![MANIFEST, SIGNATURE, CHAIN, WSIG].contains(&m.name.as_str()))
         .collect();
     if lines.len() != hashed.len() {
         return Err("manifest does not match the members".into());
@@ -252,12 +279,22 @@ pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
     if !is_app_id(&info.id) || info.package.is_empty() || !is_version(&info.version) {
         return Err("Info.json needs an app id, a package and a pkg version".into());
     }
-    Ok(Verified {
+    let extra = Extra {
+        chain: get(CHAIN)
+            .map(|m| read_member(path, m, woltrust::MAX_CHAIN_BYTES as u64))
+            .transpose()?,
+        wsig: get(WSIG)
+            .map(|m| read_member(path, m, woltrust::MAX_WSIG as u64))
+            .transpose()?,
+        manifest: man,
+    };
+    let v = Verified {
         info,
         trust,
         payload: get(PAYLOAD).cloned().ok_or("missing payload")?,
         icon: get(shared::package::ICON).cloned(),
-    })
+    };
+    Ok((v, extra))
 }
 
 fn verify_sig(key: &[u8; 32], msg: &[u8], sig: &[u8; 64]) -> bool {
@@ -803,6 +840,37 @@ mod tests {
     fn write(m: &[(String, Vec<u8>)]) -> std::path::PathBuf {
         let refs: Vec<(&str, &[u8])> = m.iter().map(|(n, b)| (n.as_str(), b.as_slice())).collect();
         file(&refs)
+    }
+
+    #[test]
+    fn the_adr_0046_members_are_optional_and_ordered() {
+        let keys = [public_of(&SEED)];
+        let mut m = good(Some(&SEED));
+        m.push((CHAIN.into(), b"[]".to_vec()));
+        m.push((WSIG.into(), b"{}".to_vec()));
+        let (v, extra) = verify_extra(&write(&m), &keys).unwrap();
+        assert_eq!(v.trust, Trust::Signed(0));
+        assert_eq!(extra.chain.as_deref(), Some(&b"[]"[..]));
+        assert_eq!(extra.wsig.as_deref(), Some(&b"{}"[..]));
+        assert!(
+            verify(&write(&good(Some(&SEED))), &keys).is_ok(),
+            "format 2 without them stays valid"
+        );
+        let mut swapped = good(Some(&SEED));
+        swapped.push((WSIG.into(), b"{}".to_vec()));
+        swapped.push((CHAIN.into(), b"[]".to_vec()));
+        assert!(
+            verify(&write(&swapped), &keys)
+                .unwrap_err()
+                .contains("unexpected member")
+        );
+        let mut big = good(None);
+        big.push((CHAIN.into(), vec![b' '; 70 * 1024]));
+        assert!(
+            verify(&write(&big), &keys)
+                .unwrap_err()
+                .contains("too large")
+        );
     }
 
     #[test]

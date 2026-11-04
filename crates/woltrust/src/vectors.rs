@@ -1,0 +1,851 @@
+// SPDX-License-Identifier: BSD-2-Clause
+//! Test vectors (interface I1): the format, a runner, and the generator behind
+//! `woltrust-vectors`. A vector is one JSON file holding the inputs of a check (clock, purpose,
+//! signed bytes, signature, chain, store, lists) and the expected result, including the exact
+//! report JSON. Bytes are base64url strings; a string starting with `@` names a blob in
+//! `pki.json`, which holds the TEST authority once so the vectors stay small. A native build and the
+//! wasm build of the hub must give the same `expect` for every file.
+use crate::cert::{Cert, Kind};
+use crate::crypto::{Purpose, Wsig};
+use crate::make;
+use crate::pki::{DAY, NOW, Pki, chain_of};
+use crate::report::{Trust, Verdict};
+use crate::revoked::{ListText, Reason};
+use crate::store::Store;
+use crate::verify::{Code, Input, Outcome, verify};
+use crate::{LIST_LIFETIME, STALE_WINDOW, b64};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Largest blob read from a vector file.
+const MAX_BLOB: usize = 1 << 20;
+
+/// `pki.json`: the TEST authority's named blobs.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PkiFile {
+    /// Always 1.
+    pub format: u32,
+    /// Always `test`.
+    pub name: String,
+    /// Name to base64url bytes.
+    pub blobs: BTreeMap<String, String>,
+}
+
+/// A revocation list and its signature file.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListSpec {
+    /// `revoked.json`.
+    pub list: String,
+    /// `revoked.json.wsig`.
+    pub wsig: String,
+}
+
+/// What the machine holds.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreSpec {
+    /// Root certificates.
+    pub roots: Vec<String>,
+    /// Intermediate certificates.
+    pub intermediates: Vec<String>,
+    /// Revocation lists.
+    pub lists: Vec<ListSpec>,
+    /// Whether a root labelled `test...` may load (true for every vector; the flag is part of the
+    /// replay so `test-root-refused` can say false).
+    pub allow_test: bool,
+}
+
+/// The expected result.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Expect {
+    /// Trust value.
+    pub trust: Trust,
+    /// Code string.
+    pub code: String,
+    /// True when it stands on a stale list.
+    pub stale: bool,
+    /// Serial of the signing certificate, if one was found.
+    pub cert: Option<String>,
+    /// Roots that loaded.
+    pub roots: usize,
+    /// Intermediates that loaded.
+    pub intermediates: usize,
+    /// Revocation lists that loaded (a list with a bad signature does not).
+    pub lists: usize,
+    /// `outcome.report(Verdict::Pass, [])` as JSON text, byte for byte.
+    pub report: String,
+}
+
+/// One vector file.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Vector {
+    /// Always 1.
+    pub format: u32,
+    /// File name without `.json`.
+    pub name: String,
+    /// One sentence on what is being tested.
+    pub about: String,
+    /// The clock.
+    pub now: u64,
+    /// The signature label (`wolos/package/1`, ...).
+    pub purpose: String,
+    /// The signed bytes.
+    pub content: String,
+    /// The app id from `Info.json`.
+    pub app_id: Option<String>,
+    /// The index's `first_seen` for this file.
+    pub first_seen: Option<u64>,
+    /// `SHA256.wsig`, or null for an unsigned file.
+    pub wsig: Option<String>,
+    /// The `CHAIN` member, or null.
+    pub chain: Option<String>,
+    /// The store.
+    pub store: StoreSpec,
+    /// The result.
+    pub expect: Expect,
+}
+
+fn blob(pki: &PkiFile, s: &str) -> Result<Vec<u8>, String> {
+    match s.strip_prefix('@') {
+        Some(name) => {
+            let t = pki
+                .blobs
+                .get(name)
+                .ok_or_else(|| format!("no blob {name}"))?;
+            b64::decode(t, MAX_BLOB).ok_or_else(|| format!("blob {name} damaged"))
+        }
+        None => b64::decode(s, MAX_BLOB).ok_or_else(|| "value is not base64url".to_owned()),
+    }
+}
+
+/// Runs the vector and returns what the code makes of it (no comparison).
+pub fn run(v: &Vector, pki: &PkiFile) -> Result<(Outcome, Store), String> {
+    let all = |xs: &[String]| {
+        xs.iter()
+            .map(|s| blob(pki, s))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let lists = v
+        .store
+        .lists
+        .iter()
+        .map(|l| Ok((blob(pki, &l.list)?, blob(pki, &l.wsig)?)))
+        .collect::<Result<Vec<_>, String>>()?;
+    let store = Store::load(
+        &all(&v.store.roots)?,
+        &all(&v.store.intermediates)?,
+        &lists,
+        v.now,
+        v.store.allow_test,
+    );
+    let content = blob(pki, &v.content)?;
+    let wsig = v.wsig.as_deref().map(|s| blob(pki, s)).transpose()?;
+    let chain = v.chain.as_deref().map(|s| blob(pki, s)).transpose()?;
+    let purpose = Purpose::from_label(&v.purpose).ok_or("unknown purpose label")?;
+    let out = verify(
+        &store,
+        &Input {
+            purpose,
+            content: &content,
+            app_id: v.app_id.as_deref(),
+            wsig: wsig.as_deref(),
+            chain: chain.as_deref(),
+            first_seen: v.first_seen,
+            now: v.now,
+        },
+    );
+    Ok((out, store))
+}
+
+/// The expectation that matches an actual run.
+pub fn observed(out: &Outcome, store: &Store) -> Expect {
+    Expect {
+        trust: out.trust,
+        code: out.code.as_str().to_owned(),
+        stale: out.stale,
+        cert: out.cert.as_ref().map(|c| c.serial.clone()),
+        roots: store.roots.len(),
+        intermediates: store.intermediates.len(),
+        lists: store.lists.len(),
+        report: out.report(Verdict::Pass, Vec::new()).to_json(),
+    }
+}
+
+/// Runs the vector and compares everything with `expect`.
+pub fn check(v: &Vector, pki: &PkiFile) -> Result<(), String> {
+    let (out, store) = run(v, pki)?;
+    let got = observed(&out, &store);
+    if got == v.expect {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}: expected {:?}, got {:?}",
+            v.name, v.expect, got
+        ))
+    }
+}
+
+// ---- generator ----
+
+const CONTENT: &[u8] = b"test package manifest 1\n";
+
+struct Gen {
+    p: Pki,
+    blobs: BTreeMap<String, String>,
+    out: Vec<Vector>,
+}
+
+fn flip(mut b: Vec<u8>, at: usize) -> Vec<u8> {
+    if let Some(x) = b.get_mut(at) {
+        *x ^= 0x01;
+    }
+    b
+}
+
+/// `wsig` with one bit flipped in the Ed25519 half (`second == false`) or the other half.
+fn flip_half(wsig: &[u8], second: bool) -> Vec<u8> {
+    let (Ok(w), true) = (Wsig::parse(wsig), true) else {
+        return Vec::new();
+    };
+    let Some(s) = w.sig() else {
+        return Vec::new();
+    };
+    let (ed, sec) = if second {
+        (s.ed25519.to_vec(), flip(s.second, 7))
+    } else {
+        (flip(s.ed25519.to_vec(), 7), s.second)
+    };
+    Wsig {
+        cert: w.cert,
+        ed25519: b64::encode(&ed),
+        second: b64::encode(&sec),
+    }
+    .to_bytes()
+}
+
+/// A certificate file with one bit flipped in one half of its issuer signature.
+fn flip_cert(file: &[u8], second: bool) -> Vec<u8> {
+    let Ok(c) = Cert::parse(file) else {
+        return Vec::new();
+    };
+    let mut sig = c.sig.clone();
+    if second {
+        sig.second = flip(sig.second, 9);
+    } else {
+        sig.ed25519[9] ^= 1;
+    }
+    crate::cert::encode(&c.body_bytes, &sig)
+}
+
+fn inline(bytes: &[u8]) -> String {
+    b64::encode(bytes)
+}
+
+impl Gen {
+    fn put(&mut self, name: &str, bytes: &[u8]) -> String {
+        self.blobs.insert(name.to_owned(), b64::encode(bytes));
+        format!("@{name}")
+    }
+
+    fn list_text(serial: u64, issued: u64, entries: &[(&str, u64, Reason)]) -> ListText {
+        ListText {
+            format: 1,
+            serial,
+            issued,
+            expires: issued + LIST_LIFETIME,
+            entries: entries
+                .iter()
+                .map(|(s, at, r)| crate::revoked::Entry {
+                    serial: (*s).to_owned(),
+                    at: *at,
+                    reason: *r,
+                })
+                .collect(),
+        }
+    }
+
+    /// A list signed by the Index (`by = 0`), root A (1) or root B (2).
+    fn list(&self, l: &ListText, by: u8) -> ListSpec {
+        let id = match by {
+            0 => &self.p.index,
+            1 => &self.p.root_a,
+            _ => &self.p.root_b,
+        };
+        let (a, b) = make::revocation_list(l, &id.body.serial, &id.secret);
+        ListSpec {
+            list: inline(&a),
+            wsig: inline(&b),
+        }
+    }
+
+    fn base(&self, name: &str, about: &str) -> Vector {
+        Vector {
+            format: 1,
+            name: name.to_owned(),
+            about: about.to_owned(),
+            now: NOW,
+            purpose: Purpose::Package.label().to_owned(),
+            content: "@content".into(),
+            app_id: Some("alice.notes".into()),
+            first_seen: None,
+            wsig: Some("@wsig-alice".into()),
+            chain: Some("@chain-alice".into()),
+            store: StoreSpec {
+                roots: vec!["@root-a".into()],
+                intermediates: vec!["@index".into()],
+                lists: vec![self.list(&Self::list_text(10, NOW - DAY, &[]), 0)],
+                allow_test: true,
+            },
+            expect: Expect {
+                trust: Trust::Invalid,
+                code: String::new(),
+                stale: false,
+                cert: None,
+                roots: 0,
+                intermediates: 0,
+                lists: 0,
+                report: String::new(),
+            },
+        }
+    }
+
+    /// Adds a vector; fails when the code does not give the trust and code the author meant.
+    fn add(
+        &mut self,
+        name: &str,
+        about: &str,
+        want: (Trust, Code),
+        f: impl FnOnce(&mut Gen, &mut Vector),
+    ) -> Result<(), String> {
+        let mut v = self.base(name, about);
+        f(self, &mut v);
+        let pki = self.pki_file();
+        let (out, store) = run(&v, &pki)?;
+        if (out.trust, out.code) != want {
+            return Err(format!(
+                "{name}: wanted {want:?}, got {:?} {:?}",
+                out.trust, out.code
+            ));
+        }
+        v.expect = observed(&out, &store);
+        self.out.push(v);
+        Ok(())
+    }
+
+    fn pki_file(&self) -> PkiFile {
+        PkiFile {
+            format: 1,
+            name: "test".into(),
+            blobs: self.blobs.clone(),
+        }
+    }
+}
+
+/// Builds `pki.json` and every vector. Deterministic: two runs give the same bytes.
+pub fn generate() -> Result<(PkiFile, Vec<Vector>), String> {
+    let mut g = Gen {
+        p: Pki::new(),
+        blobs: BTreeMap::new(),
+        out: Vec::new(),
+    };
+    g.put("content", CONTENT);
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("root-a", g.p.root_a.file.clone()),
+        ("root-b", g.p.root_b.file.clone()),
+        ("authors", g.p.authors.file.clone()),
+        ("packages", g.p.packages.file.clone()),
+        ("index", g.p.index.file.clone()),
+        ("alice", g.p.alice.file.clone()),
+        ("org", g.p.org.file.clone()),
+        ("signer", g.p.signer.file.clone()),
+        ("chain-alice", Pki::chain(&[&g.p.alice, &g.p.authors])),
+        ("chain-org", Pki::chain(&[&g.p.org, &g.p.authors])),
+        ("chain-signer", Pki::chain(&[&g.p.signer, &g.p.packages])),
+        ("chain-alice-only", Pki::chain(&[&g.p.alice])),
+        (
+            "wsig-alice",
+            make::wsig(
+                &g.p.alice.body.serial,
+                &g.p.alice.secret,
+                Purpose::Package,
+                CONTENT,
+            ),
+        ),
+        (
+            "wsig-org",
+            make::wsig(
+                &g.p.org.body.serial,
+                &g.p.org.secret,
+                Purpose::Package,
+                CONTENT,
+            ),
+        ),
+        (
+            "wsig-signer",
+            make::wsig(
+                &g.p.signer.body.serial,
+                &g.p.signer.secret,
+                Purpose::Package,
+                CONTENT,
+            ),
+        ),
+    ];
+    for (n, b) in &files {
+        g.put(n, b);
+    }
+    cases(&mut g)?;
+    let pki = g.pki_file();
+    Ok((pki, g.out))
+}
+
+fn revoked_case(
+    g: &mut Gen,
+    name: &str,
+    reason: Reason,
+    first_seen: Option<u64>,
+    want: (Trust, Code),
+) -> Result<(), String> {
+    let serial = g.p.alice.body.serial.clone();
+    let l = Gen::list_text(11, NOW - DAY, &[(&serial, NOW - 2 * DAY, reason)]);
+    g.add(
+        name,
+        "a leaf certificate in the revocation list",
+        want,
+        |g, v| {
+            v.store.lists = vec![g.list(&l, 0)];
+            v.first_seen = first_seen;
+        },
+    )
+}
+
+fn cases(g: &mut Gen) -> Result<(), String> {
+    cases_valid(g)?;
+    cases_signature(g)?;
+    cases_time(g)?;
+    cases_revoked(g)?;
+    cases_lists(g)?;
+    cases_shape(g)
+}
+
+fn cases_valid(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    g.add(
+        "valid-person",
+        "a person's package: verified, fresh list",
+        (T::Verified, C::Ok),
+        |_, _| {},
+    )?;
+    g.add(
+        "valid-org",
+        "an organisation's package",
+        (T::Verified, C::Ok),
+        |_, v| {
+            v.app_id = Some("examplelabs.tool".into());
+            v.wsig = Some("@wsig-org".into());
+            v.chain = Some("@chain-org".into());
+        },
+    )?;
+    g.add(
+        "valid-wolos",
+        "a package of WolOS's own: Packages CA chain",
+        (T::Wolos, C::Ok),
+        |_, v| {
+            v.app_id = Some("org.wolos.notes".into());
+            v.wsig = Some("@wsig-signer".into());
+            v.chain = Some("@chain-signer".into());
+        },
+    )?;
+    g.add(
+        "valid-chain-from-store",
+        "leaf only in CHAIN, issuer from the store (repair path)",
+        (T::Verified, C::Ok),
+        |_, v| {
+            v.chain = Some("@chain-alice-only".into());
+            v.store.intermediates = vec!["@authors".into(), "@index".into()];
+        },
+    )?;
+    g.add(
+        "unsigned",
+        "no signature member",
+        (T::Community, C::Unsigned),
+        |_, v| {
+            v.wsig = None;
+            v.chain = None;
+        },
+    )?;
+    Ok(())
+}
+
+fn cases_signature(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    g.add(
+        "bad-half-ed25519",
+        "one bit flipped in the Ed25519 half",
+        (T::Invalid, C::BadSignature),
+        |g, v| {
+            let w = flip_half(&g.blobs_bytes("wsig-alice"), false);
+            v.wsig = Some(inline(&w));
+        },
+    )?;
+    g.add(
+        "bad-half-second",
+        "one bit flipped in the ML-DSA-65 half: both must verify",
+        (T::Invalid, C::BadSignature),
+        |g, v| {
+            let w = flip_half(&g.blobs_bytes("wsig-alice"), true);
+            v.wsig = Some(inline(&w));
+        },
+    )?;
+    g.add(
+        "bad-half-cert-second",
+        "the issuer's ML-DSA-65 half of the leaf certificate is wrong",
+        (T::Invalid, C::BadSignature),
+        |g, v| {
+            let bad = flip_cert(&g.p.alice.file, true);
+            v.chain = Some(inline(&chain_of(&[&bad, &g.p.authors.file])));
+        },
+    )?;
+    g.add(
+        "bad-half-cert-ed25519",
+        "the issuer's Ed25519 half of the leaf certificate is wrong",
+        (T::Invalid, C::BadSignature),
+        |g, v| {
+            let bad = flip_cert(&g.p.alice.file, false);
+            v.chain = Some(inline(&chain_of(&[&bad, &g.p.authors.file])));
+        },
+    )?;
+    g.add(
+        "bad-content",
+        "the signed bytes changed after signing",
+        (T::Invalid, C::BadSignature),
+        |_, v| {
+            v.content = inline(b"test package manifest 2\n");
+        },
+    )?;
+    g.add(
+        "replayed-label",
+        "a package signature offered as a plugin signature",
+        (T::Invalid, C::BadSignature),
+        |_, v| {
+            v.purpose = Purpose::Plugin.label().to_owned();
+        },
+    )?;
+    Ok(())
+}
+
+fn cases_time(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    let two_years = 2 * 365 * DAY;
+    g.add(
+        "expired",
+        "the leaf has expired and the index has no timestamp for the file",
+        (T::Community, C::Expired),
+        |g, v| {
+            v.now = NOW + two_years;
+            v.store.lists = vec![g.list(&Gen::list_text(12, NOW + two_years - DAY, &[]), 0)];
+        },
+    )?;
+    g.add(
+        "expired-but-timestamped",
+        "expired, but the signed index saw this file inside the validity",
+        (T::Verified, C::Ok),
+        |g, v| {
+            v.now = NOW + two_years;
+            v.first_seen = Some(NOW);
+            v.store.lists = vec![g.list(&Gen::list_text(12, NOW + two_years - DAY, &[]), 0)];
+        },
+    )?;
+    g.add(
+        "not-yet-valid",
+        "the clock is before the certificate starts",
+        (T::Community, C::NotYetValid),
+        |_, v| {
+            v.now = NOW - 60 * DAY;
+        },
+    )?;
+    Ok(())
+}
+
+fn cases_revoked(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    revoked_case(
+        g,
+        "revoked-key-compromise",
+        Reason::KeyCompromise,
+        None,
+        (T::Withdrawn, C::RevokedKeyCompromise),
+    )?;
+    revoked_case(
+        g,
+        "revoked-key-compromise-old-file",
+        Reason::KeyCompromise,
+        Some(NOW - 10 * DAY),
+        (T::Withdrawn, C::RevokedKeyCompromise),
+    )?;
+    revoked_case(
+        g,
+        "revoked-abuse",
+        Reason::Abuse,
+        None,
+        (T::Withdrawn, C::RevokedAbuse),
+    )?;
+    revoked_case(
+        g,
+        "revoked-superseded",
+        Reason::Superseded,
+        None,
+        (T::Withdrawn, C::RevokedSuperseded),
+    )?;
+    revoked_case(
+        g,
+        "revoked-ceased",
+        Reason::Ceased,
+        None,
+        (T::Withdrawn, C::RevokedCeased),
+    )?;
+    revoked_case(
+        g,
+        "revoked-superseded-older-file",
+        Reason::Superseded,
+        Some(NOW - 10 * DAY),
+        (T::Verified, C::Ok),
+    )?;
+    revoked_case(
+        g,
+        "revoked-ceased-older-file",
+        Reason::Ceased,
+        Some(NOW - 10 * DAY),
+        (T::Verified, C::Ok),
+    )?;
+    let authors = g.p.authors.body.serial.clone();
+    let l = Gen::list_text(
+        11,
+        NOW - DAY,
+        &[(&authors, NOW - DAY, Reason::KeyCompromise)],
+    );
+    g.add(
+        "revoked-intermediate-by-root",
+        "the Authors CA withdrawn by a root: every author under it fails",
+        (T::Withdrawn, C::RevokedKeyCompromise),
+        |g, v| {
+            v.store.lists = vec![g.list(&l, 1)];
+        },
+    )?;
+    g.add(
+        "revoked-intermediate-by-index-ignored",
+        "the Index may not withdraw an intermediate: the entry does not apply",
+        (T::Verified, C::Ok),
+        |g, v| {
+            v.store.lists = vec![g.list(&l, 0)];
+        },
+    )?;
+    let ra = g.p.root_a.body.serial.clone();
+    let l = Gen::list_text(11, NOW - DAY, &[(&ra, NOW - DAY, Reason::KeyCompromise)]);
+    g.add(
+        "root-a-revoked-by-b",
+        "root B withdraws root A; both are pinned",
+        (T::Withdrawn, C::RevokedKeyCompromise),
+        |g, v| {
+            v.store.roots = vec!["@root-a".into(), "@root-b".into()];
+            v.store.lists = vec![g.list(&l, 2)];
+        },
+    )?;
+    g.add(
+        "root-a-revoked-by-itself-ignored",
+        "a root cannot withdraw itself",
+        (T::Verified, C::Ok),
+        |g, v| {
+            v.store.lists = vec![g.list(&l, 1)];
+        },
+    )?;
+    Ok(())
+}
+
+fn cases_lists(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    g.add(
+        "stale-list",
+        "the list ran out 5 days ago: still verified, with the stale line",
+        (T::Verified, C::ListStale),
+        |g, v| {
+            v.store.lists =
+                vec![g.list(&Gen::list_text(10, NOW - LIST_LIFETIME - 5 * DAY, &[]), 0)];
+        },
+    )?;
+    g.add(
+        "list-too-old",
+        "the list ran out more than 30 days ago: counts as unsigned",
+        (T::Community, C::ListTooOld),
+        |g, v| {
+            v.store.lists = vec![g.list(
+                &Gen::list_text(10, NOW - LIST_LIFETIME - STALE_WINDOW - DAY, &[]),
+                0,
+            )];
+        },
+    )?;
+    g.add(
+        "no-list",
+        "no revocation list at all",
+        (T::Community, C::ListTooOld),
+        |_, v| {
+            v.store.lists = Vec::new();
+        },
+    )?;
+    g.add(
+        "list-bad-signature",
+        "a list with a damaged signature is not loaded",
+        (T::Community, C::ListTooOld),
+        |g, v| {
+            let l = g.list(&Gen::list_text(10, NOW - DAY, &[]), 0);
+            let w = b64::decode(&l.wsig, 1 << 16).unwrap_or_default();
+            v.store.lists = vec![ListSpec {
+                list: l.list,
+                wsig: inline(&flip_half(&w, true)),
+            }];
+        },
+    )?;
+    Ok(())
+}
+
+fn cases_shape(g: &mut Gen) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    g.add(
+        "namespace-mismatch",
+        "the app id is outside the certificate's namespaces",
+        (T::Invalid, C::WrongNamespace),
+        |_, v| {
+            v.app_id = Some("bob.notes".into());
+        },
+    )?;
+    g.add(
+        "namespace-reserved",
+        "an author signing inside org.wolos.",
+        (T::Invalid, C::WrongNamespace),
+        |_, v| {
+            v.app_id = Some("org.wolos.notes".into());
+        },
+    )?;
+    g.add(
+        "wrong-usage",
+        "an author certificate offered for the index",
+        (T::Invalid, C::WrongUsage),
+        |_, v| {
+            v.purpose = Purpose::Index.label().to_owned();
+        },
+    )?;
+    g.add(
+        "bad-issuer",
+        "a signer for org.wolos. issued by the Authors CA",
+        (T::Invalid, C::BadIssuer),
+        |g, v| {
+            let sec = crate::make::Secret::from_seed(&crate::pki::seed("test-rogue"), false);
+            let spec = crate::pki::Spec {
+                name: "test-rogue",
+                kind: Kind::Signer,
+                subject: crate::cert::Subject {
+                    label: Some("test-rogue".into()),
+                    ..Default::default()
+                },
+                namespaces: &["org.wolos."],
+                usage: &[crate::cert::Usage::SignPackage],
+                issuer: g.p.authors.body.serial.clone(),
+                not_before: NOW - DAY,
+                not_after: NOW + 100 * DAY,
+                level: crate::cert::Level::Wolos,
+            };
+            let body = crate::pki::body(&spec, &sec);
+            let file = make::issue(&body, &g.p.authors.secret);
+            let w = make::wsig(&body.serial, &sec, Purpose::Package, CONTENT);
+            v.app_id = Some("org.wolos.notes".into());
+            v.wsig = Some(inline(&w));
+            v.chain = Some(inline(&chain_of(&[&file, &g.p.authors.file])));
+        },
+    )?;
+    g.add(
+        "unknown-root",
+        "only root B is pinned; the chain ends at root A",
+        (T::Invalid, C::IssuerUnknown),
+        |_, v| {
+            v.store.roots = vec!["@root-b".into()];
+        },
+    )?;
+    g.add(
+        "test-root-refused",
+        "a system store refuses a root labelled test",
+        (T::Invalid, C::IssuerUnknown),
+        |_, v| {
+            v.store.allow_test = false;
+        },
+    )?;
+    g.add(
+        "signer-unknown",
+        "the signature names a certificate nobody holds",
+        (T::Invalid, C::SignerUnknown),
+        |_, v| {
+            v.chain = None;
+        },
+    )?;
+    g.add(
+        "signature-malformed",
+        "the signature file is not a signature",
+        (T::Invalid, C::SignatureMalformed),
+        |_, v| {
+            v.wsig = Some(inline(b"{\"cert\":1}"));
+        },
+    )?;
+    g.add(
+        "chain-malformed",
+        "CHAIN is not an array of certificates",
+        (T::Invalid, C::ChainMalformed),
+        |_, v| {
+            v.chain = Some(inline(b"{\"not\":\"a chain\"}"));
+        },
+    )?;
+    g.add(
+        "chain-too-long",
+        "five certificates in CHAIN",
+        (T::Invalid, C::ChainTooLong),
+        |g, v| {
+            let a = &g.p.alice.file;
+            let files: Vec<&[u8]> = vec![a, a, a, a, a];
+            v.chain = Some(inline(&chain_of(&files)));
+        },
+    )?;
+    g.add(
+        "chain-too-large",
+        "CHAIN larger than 64 KiB",
+        (T::Invalid, C::ChainTooLarge),
+        |g, v| {
+            let mut c = Pki::chain(&[&g.p.alice, &g.p.authors]);
+            c.resize(crate::MAX_CHAIN_BYTES + 1, b' ');
+            v.chain = Some(inline(&c));
+        },
+    )?;
+    Ok(())
+}
+
+impl Gen {
+    fn blobs_bytes(&self, name: &str) -> Vec<u8> {
+        self.blobs
+            .get(name)
+            .and_then(|t| b64::decode(t, MAX_BLOB))
+            .unwrap_or_default()
+    }
+}
+
+/// The pretty JSON text of a vector or `pki.json` (what the files hold, plus a final newline).
+pub fn to_text<T: Serialize>(v: &T) -> String {
+    let mut s = serde_json::to_string_pretty(v).unwrap_or_default();
+    s.push('\n');
+    s
+}

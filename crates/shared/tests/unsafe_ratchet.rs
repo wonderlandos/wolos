@@ -49,6 +49,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("shared", 17),
     ("shell", 8),
     ("wol-lua", 3),
+    ("woltrust", 0),
     ("xguard-clam", 13),
 ];
 

@@ -1,0 +1,26 @@
+[package]
+name = "woltrust"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "Author certificates, signatures, chains and revocation lists of ADR 0046: pure, no I/O, shared by the system, the hub Worker and the browser"
+
+[lib]
+name = "woltrust"
+
+[[bin]]
+name = "woltrust-vectors"
+path = "src/bin/woltrust-vectors.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+fips204.workspace = true
+fips205.workspace = true
+
+[dev-dependencies]
+# Cross-check of the ML-DSA-65 verifier against a second implementation (tests only, never shipped).
+ml-dsa = "0.1"

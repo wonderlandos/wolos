@@ -45,7 +45,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
         for dep in deps {
             let ok = match pkg.as_str() {
                 "shared" => false,
-                "core" => dep == "shared",
+                // woltrust (ADR 0046): the pure certificate crate core links; it depends on nothing of ours.
+                "core" => dep == "shared" || dep == "woltrust",
+                "woltrust" => false,
                 // `wol plugin check|run` loads and renders plugin Lua without a display (ADR 0031).
                 "controller" => ["shared", "core", "wol-lua"].contains(&dep.as_str()),
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",

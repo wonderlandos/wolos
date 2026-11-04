@@ -49,6 +49,7 @@ pub mod store;
 pub mod system;
 pub mod theme;
 pub mod toggles;
+pub mod trust;
 pub mod update;
 pub mod webapps;
 pub mod widgets;

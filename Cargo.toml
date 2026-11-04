@@ -16,6 +16,7 @@ members = [
     "crates/xguard",
     "crates/xguard-clam",
     "crates/aurlaws",
+    "crates/woltrust",
 ]
 
 [workspace.package]
@@ -32,6 +33,10 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 # .wol signatures and hashes (ADR 0011).
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
 sha2 = "0.10"
+# Author certificates (ADR 0046): hybrid Ed25519 + ML-DSA-65 below the roots, Ed25519 + SLH-DSA-SHA2-128s for the roots.
+fips204 = { version = "0.5", default-features = false, features = ["ml-dsa-65"] }
+fips205 = { version = "0.5", default-features = false, features = ["slh-dsa-sha2-128s"] }
+woltrust = { path = "crates/woltrust" }
 shared = { path = "crates/shared" }
 wol_core = { path = "crates/core", package = "core" }
 

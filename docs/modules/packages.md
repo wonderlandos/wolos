@@ -24,6 +24,8 @@ ustar archive, regular files only (`typeflag` `0`), mode 0644, uid/gid 0, names 
 | `payload.pkg` | yes | pacman package (`makepkg`, `.pkg.tar.zst` bytes), prefix `/usr` |
 | `SHA256` | yes | `SHA256 (<member>) = <64 lowercase hex>\n` for every member above, sorted by name |
 | `SHA256.sig` | no | raw 64-byte Ed25519 signature of the `SHA256` bytes |
+| `CHAIN` | no | ADR 0046: JSON array of the signer's `.wolcert` files, leaf first, at most 4 and 64 KiB; not listed in `SHA256` |
+| `SHA256.wsig` | no | ADR 0046: hybrid signature of the `SHA256` bytes by the leaf (`docs/modules/trust.md`); not listed in `SHA256` |
 
 Verify (`wol_core::package::verify`): order and names exact, no duplicates, every hash matches, `SHA256` lists nothing else, `Info.json` valid, `package` set. Signature verified by a trusted key = signed; absent = unsigned; anything else = refused.
 
