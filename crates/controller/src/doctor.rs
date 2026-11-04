@@ -1160,6 +1160,18 @@ fn find(env: &mut dyn Env, id: &str) -> Option<Check> {
     area_checks(env, area).into_iter().find(|c| c.id == id)
 }
 
+/// Whether `id` names a check (its area exists and has it).
+pub fn exists(env: &mut dyn Env, id: &str) -> bool {
+    find(env, id).is_some()
+}
+
+/// A fix worked when its commands did and the check is fine now: a check that was worth a look
+/// and still is, or a fix that moved a failure to a warning, did not (QA-WEB-23: Doctor said
+/// "Fixed." for a warning that stayed).
+fn fixed(code: i32, after: Status) -> bool {
+    code == 0 && after == Status::Ok
+}
+
 /// The on-screen approval for `wol doctor fix <id>` asked by a helper or a system web app (ADR
 /// 0048): the fix's wol-admind requests as a [`ApprovalRequest::DoctorFix`] sheet the shell runs
 /// after the password. `Ok(None)`: the fix runs as the person (their own services and settings),
@@ -1196,7 +1208,7 @@ pub fn approval(env: &mut dyn Env, id: &str) -> Result<Option<ApprovalRequest>, 
 /// `wol doctor fix --json`'s answer after the shell ran the fix (the same shape as [`fix`]'s).
 pub fn after(env: &mut dyn Env, id: &str) -> serde_json::Value {
     let after = find(env, id);
-    let ok = after.as_ref().is_some_and(|c| c.status != Status::Fail);
+    let ok = after.as_ref().is_some_and(|c| fixed(0, c.status));
     serde_json::json!({ "id": id, "ran": true, "ok": ok, "check": after })
 }
 
@@ -1261,7 +1273,7 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
         .into_iter()
         .find(|c| c.id == id)
         .unwrap_or(c);
-    let fixed = code == 0 && after.status != Status::Fail;
+    let fixed = fixed(code, after.status);
     if json {
         emit_json(
             env,
@@ -1287,6 +1299,16 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-WEB-23: only a check that is fine after the fix was fixed.
+    #[test]
+    fn a_warning_that_stays_is_not_fixed() {
+        assert!(fixed(0, Status::Ok));
+        assert!(!fixed(0, Status::Warn), "still worth a look");
+        assert!(!fixed(0, Status::Fail));
+        assert!(!fixed(1, Status::Ok), "the commands failed");
+        assert!(!fixed(0, Status::Skipped), "not checked is not fixed");
+    }
 
     #[test]
     fn install_lines_become_one_admin_install_each() {

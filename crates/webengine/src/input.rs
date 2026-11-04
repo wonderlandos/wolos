@@ -4,12 +4,16 @@
 //! [`bridge`] with the id of the `surface` node the view paints into; what comes back is fed to
 //! [`crate::WebView::apply`]. Pure: no engine needed, so the mapping is tested here.
 //!
-//! What record v1 carries for a surface node today: a click (button, mods, x, y), hover enter and
-//! leave with a position, keys (keysym, pressed, mods, repeat), focus, the node's size in device
-//! pixels and the theme. Not carried yet (wolkit gap, docs/modules/webengine.md "Gaps"): pointer
-//! motion inside the node, separate button down and up, wheel deltas, IME preedit and commit for a
-//! surface, and the clipboard. [`Input`] already has those kinds, so the bridge grows without an
-//! ABI change when wolkit reports them.
+//! What record v1 carries for a surface node: a click (button, mods, x, y), hover enter and leave
+//! with a position, keys (keysym, pressed, mods, repeat), focus, the node's size in device pixels
+//! and the theme; and, from wolkit's pointer routing (`crates/wolkit/src/input/pointer.rs`,
+//! QA-WEB-13), pointer motion inside the node as a `POINTER_ENTER` record with the position each
+//! time, and the wheel as a `SCROLL` record carrying the node's running offset. The offset is
+//! absolute so that a record that waited in the queue and was coalesced loses no distance: the
+//! wheel delta is the difference to the offset before, which is why [`Mapper`] keeps state.
+//! Not carried yet (wolkit gap, docs/modules/webengine.md "Gaps"): separate button down and up,
+//! IME preedit and commit for a surface, and the clipboard. [`Input`] already has those kinds, so
+//! the bridge grows without an ABI change when wolkit reports them.
 use wolkit::event::{HEADER, kind};
 
 /// One input event for the page, in device pixels of the view.
@@ -76,8 +80,58 @@ fn f32_at(b: &[u8], at: usize) -> Option<f32> {
     u32_at(b, at).map(f32::from_bits)
 }
 
+/// The stateful half of the mapping: the wheel and the position it happened at. One per view.
+#[derive(Debug, Default)]
+pub struct Mapper {
+    /// The surface node's wheel offset (wolkit's `SCROLL` record), `(0, 0)` before the first.
+    wheel: (f32, f32),
+    /// Where the pointer was last (a move, a click, an enter): where a wheel step lands.
+    at: (f32, f32),
+}
+
+impl Mapper {
+    /// [`bridge`] for a view that sees many records: the same mapping, and a `SCROLL` record of
+    /// the node becomes [`Input::Wheel`] at the last pointer position. Wolkit's offset grows
+    /// downwards and to the right; the engine's wheel delta, like winit's, is positive when the
+    /// content moves down or right (the wheel turned up), so the delta is the offset's change
+    /// negated.
+    pub fn bridge(&mut self, record: &[u8], surface_node: u32) -> Vec<Bridged> {
+        let is_scroll = u32_at(record, 12) == Some(surface_node)
+            && record.get(4..6) == Some(&kind::SCROLL.to_le_bytes()[..]);
+        if is_scroll {
+            let at = HEADER;
+            let (Some(x), Some(y)) = (f32_at(record, at), f32_at(record, at + 4)) else {
+                return Vec::new();
+            };
+            if !x.is_finite() || !y.is_finite() {
+                return Vec::new();
+            }
+            let (dx, dy) = (self.wheel.0 - x, self.wheel.1 - y);
+            self.wheel = (x, y);
+            if dx == 0.0 && dy == 0.0 {
+                return Vec::new();
+            }
+            let (px, py) = self.at;
+            return vec![Bridged::Input(Input::Wheel {
+                x: px,
+                y: py,
+                dx,
+                dy,
+            })];
+        }
+        let out = bridge(record, surface_node);
+        for b in &out {
+            if let Bridged::Input(Input::MouseMove { x, y } | Input::MouseButton { x, y, .. }) = b {
+                self.at = (*x, *y);
+            }
+        }
+        out
+    }
+}
+
 /// The record's meaning for the view painting into `surface_node`, in order. A record for another
-/// node, or one this runtime does not use, gives nothing; a short record gives nothing.
+/// node, or one this runtime does not use, gives nothing; a short record gives nothing. The wheel
+/// needs the record before it: see [`Mapper`].
 pub fn bridge(record: &[u8], surface_node: u32) -> Vec<Bridged> {
     let (Some(len), Some(head)) = (u32_at(record, 0), record.get(4..6)) else {
         return Vec::new();
@@ -88,8 +142,9 @@ pub fn bridge(record: &[u8], surface_node: u32) -> Vec<Bridged> {
     if usize::try_from(len).map_or(true, |l| l > record.len()) {
         return Vec::new();
     }
-    // Window events reach every node; the rest only the view's own.
-    if k != kind::THEME_CHANGED && node != surface_node {
+    // Window events reach every node; the rest only the view's own. A key goes to the window node
+    // too: nothing in the page takes wolkit's focus, so the window is where keys land.
+    if k != kind::THEME_CHANGED && node != surface_node && !(k == kind::KEY && node == 0) {
         return Vec::new();
     }
     let out = (|| {
@@ -262,6 +317,18 @@ mod tests {
         assert!(bridge(&r, 8).is_empty(), "another node's click");
     }
 
+    /// The page takes no wolkit focus, so a key is a record of the window node (0); the surface's
+    /// own is read as before, any other node's is not the view's.
+    #[test]
+    fn a_key_of_the_window_node_is_the_views() {
+        let k = |node| record(kind::KEY, node, &words(&[0x61, 1, 0, 0]));
+        assert_eq!(bridge(&k(0), 7).len(), 1);
+        assert_eq!(bridge(&k(7), 7).len(), 1);
+        assert!(bridge(&k(9), 7).is_empty());
+        let click = record(kind::CLICK, 0, &words(&[0, 0, 1, 1]));
+        assert!(bridge(&click, 7).is_empty(), "only keys come by the window");
+    }
+
     #[test]
     fn keys_carry_their_value_code_and_modifiers() {
         let r = record(kind::KEY, 7, &words(&[0x61, 1, MOD_CTRL, 0]));
@@ -325,5 +392,75 @@ mod tests {
         r.truncate(HEADER + 4);
         assert!(bridge(&r, 7).is_empty());
         assert!(bridge(&record(kind::SLIDER, 7, &words(&[0])), 7).is_empty());
+    }
+
+    /// QA-WEB-13: motion inside the node and the wheel reach the view. Motion is the record the
+    /// hover sends (a position); the wheel is the node's running offset, so the delta is the
+    /// difference to the record before, at the pointer's last position, with the sign the engine
+    /// takes (positive when the content moves down: the wheel up).
+    #[test]
+    fn motion_and_the_wheel_reach_the_view() {
+        let mut m = Mapper::default();
+        let enter =
+            |x: f32, y: f32| record(kind::POINTER_ENTER, 7, &words(&[x.to_bits(), y.to_bits()]));
+        let scroll = |x: f32, y: f32| record(kind::SCROLL, 7, &words(&[x.to_bits(), y.to_bits()]));
+        assert_eq!(
+            m.bridge(&enter(5.0, 6.0), 7),
+            [Bridged::Input(Input::MouseMove { x: 5.0, y: 6.0 })]
+        );
+        // Down 40 px: the content moves up, the engine's delta is negative.
+        assert_eq!(
+            m.bridge(&scroll(0.0, 40.0), 7),
+            [Bridged::Input(Input::Wheel {
+                x: 5.0,
+                y: 6.0,
+                dx: 0.0,
+                dy: -40.0
+            })]
+        );
+        // A record that stood for two steps (coalesced to the newest offset) is both of them.
+        assert_eq!(
+            m.bridge(&scroll(3.0, 100.0), 7),
+            [Bridged::Input(Input::Wheel {
+                x: 5.0,
+                y: 6.0,
+                dx: -3.0,
+                dy: -60.0
+            })]
+        );
+        // Up: the offset falls, the delta is positive. Same offset again: nothing.
+        let up = m.bridge(&scroll(3.0, 90.0), 7);
+        assert_eq!(
+            up,
+            [Bridged::Input(Input::Wheel {
+                x: 5.0,
+                y: 6.0,
+                dx: 0.0,
+                dy: 10.0
+            })]
+        );
+        assert!(m.bridge(&scroll(3.0, 90.0), 7).is_empty());
+        assert!(
+            m.bridge(&scroll(f32::NAN, 0.0), 7).is_empty(),
+            "not a number"
+        );
+        assert!(
+            m.bridge(&scroll(3.0, 200.0), 8).is_empty(),
+            "another node's"
+        );
+        // The free function does not know the wheel: it is the Mapper's.
+        assert!(bridge(&scroll(0.0, 40.0), 7).is_empty());
+        // A click moves the place a later wheel step lands on.
+        let click = record(
+            kind::CLICK,
+            7,
+            &words(&[0, 0, 12.5f32.to_bits(), 3.0f32.to_bits()]),
+        );
+        m.bridge(&click, 7);
+        let Some(Bridged::Input(Input::Wheel { x, y, .. })) = m.bridge(&scroll(3.0, 91.0), 7).pop()
+        else {
+            panic!("no wheel");
+        };
+        assert_eq!((x, y), (12.5, 3.0));
     }
 }

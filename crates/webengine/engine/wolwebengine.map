@@ -28,3 +28,9 @@ WWE_1.1 {
     wwe_engine_set_host_channel;
     wwe_view_post_message;
 } WOLWEBENGINE_1;
+
+/* 1.2 is wwe_engine_set_scheme (wave3/federate); 1.3 does not depend on it. */
+WWE_1.3 {
+  global:
+    wwe_view_present;
+} WWE_1.1;

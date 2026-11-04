@@ -667,6 +667,20 @@ pub unsafe extern "C" fn wwe_view_free(view: *mut View) {
     }
 }
 
+/// Shows the frame painted last (`wwe_view_present`, WWE_1.3): the delegate paints into the
+/// rendering context when a frame is ready, and a window's surface shows what the context
+/// presents.
+///
+/// # Safety
+/// `view` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wwe_view_present(view: *mut View) {
+    // SAFETY: contract above.
+    if let Some(v) = unsafe { view.as_ref() } {
+        guarded("present", || v.context.present());
+    }
+}
+
 /// # Safety
 /// `view` is live; `out` is writable.
 #[unsafe(no_mangle)]

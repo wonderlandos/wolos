@@ -21,7 +21,7 @@ use webengine::bridge::manifest::{KIT, Manifest, SYSTEM_DIR};
 use webengine::bridge::{AppInfo, Bridge, Theme, accent_id};
 use webengine::host::{Host, WoldClient, initial_grants, locale};
 use webengine::{App, Channel, Target, WebView, ffi, input, process};
-use wolkit::event::{HEADER, kind};
+use wolkit::event::{HEADER, bit, kind};
 use wolkit::scene::Kind;
 use wolkit::scene::patch::{APPEND, Writer};
 use wolkit::scene::prop::{DIM_PERCENT, id};
@@ -101,13 +101,27 @@ fn data_home() -> PathBuf {
     }
 }
 
-/// The patch that gives the window one `surface` node filling it.
+/// What the page hears of the pointer, from the surface node: a click, motion (the position on each
+/// move), leaving, and the wheel (QA-WEB-13: wolkit sends a part only the events it asked for, and
+/// this one asked for none, so the page got no pointer at all).
+const SURFACE_EVENTS: u32 = bit(kind::CLICK)
+    | bit(kind::POINTER_ENTER)
+    | bit(kind::POINTER_LEAVE)
+    | bit(kind::SCROLL)
+    | bit(kind::FOCUS);
+/// What the page hears of the keyboard, from the window: nothing in the page takes wolkit's focus,
+/// so a key goes to the window node.
+const WINDOW_EVENTS: u32 = bit(kind::KEY);
+
+/// The patch that gives the window one `surface` node filling it, and asks for the input above.
 fn surface_patch() -> Vec<u8> {
     let full = [DIM_PERCENT, 100f32.to_bits()];
     let mut p = Writer::new();
     p.create(SURFACE, Kind::Surface).insert(0, SURFACE, APPEND);
     p.set_prop(SURFACE, id::WIDTH, &full);
     p.set_prop(SURFACE, id::HEIGHT, &full);
+    p.bind_event(SURFACE, SURFACE_EVENTS);
+    p.bind_event(0, WINDOW_EVENTS);
     p.finish(1).to_vec()
 }
 
@@ -226,6 +240,7 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
     let mut error_shown = false;
 
     let mut buf = vec![0u8; 1 << 16];
+    let mut mapper = input::Mapper::default();
     let mut last_grants = Instant::now();
     let mut held = host.borrow().bridge().granted().to_vec();
     'run: loop {
@@ -245,7 +260,7 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
             if k == kind::CLOSE_REQUEST {
                 break 'run;
             }
-            for b in input::bridge(record, SURFACE) {
+            for b in mapper.bridge(record, SURFACE) {
                 if let input::Bridged::Theme { dark, accent_rgb } = &b {
                     host.borrow_mut()
                         .set_app(info(*dark, accent_id(*dark, *accent_rgb)));
@@ -316,5 +331,33 @@ mod tests {
     fn the_surface_node_fills_the_window() {
         let bytes = surface_patch();
         assert_eq!(&bytes[..4], b"WKP1");
+    }
+
+    /// QA-WEB-13: wolkit sends a node the events it bound and no others, so the surface must ask
+    /// for the pointer (motion and the wheel included) and the window for the keys, or the page
+    /// hears nothing.
+    #[test]
+    fn the_patch_asks_for_the_pointer_and_the_keys() {
+        use wolkit::scene::patch::{Op, Patch, Scratch};
+        let bytes = surface_patch();
+        let mut scratch = Scratch::default();
+        let patch = Patch::parse(&bytes, &mut scratch).expect("a valid patch");
+        let binds: Vec<(u32, u32)> = patch
+            .ops()
+            .filter_map(|op| match op {
+                Op::BindEvent { node, mask } => Some((node, mask)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(binds, [(SURFACE, SURFACE_EVENTS), (0, WINDOW_EVENTS)]);
+        for k in [
+            kind::CLICK,
+            kind::POINTER_ENTER,
+            kind::POINTER_LEAVE,
+            kind::SCROLL,
+        ] {
+            assert_ne!(SURFACE_EVENTS & bit(k), 0, "kind {k}");
+        }
+        assert_ne!(WINDOW_EVENTS & bit(kind::KEY), 0);
     }
 }

@@ -226,7 +226,10 @@ async function load(again) {
   $("#checking").hidden = false;
   $("#error").hidden = true;
   try {
-    state.data = await wolos.call("doctor.check", {});
+    const r = await wolos.call("doctor.check", {});
+    // Anything but a report with its list is a fault, not a page with nothing on it (QA-WEB-30).
+    if (!r || !Array.isArray(r.checks)) throw new Error("no report");
+    state.data = r;
     state.results.clear();
     render();
     if (again) announce(t("announce.checked", { summary: summaryOf(state.data.checks) }));
@@ -277,7 +280,7 @@ $("#checking").setAttribute("label", t("checking"));
 $("#again").addEventListener("click", () => load(true));
 $("#retry").addEventListener("click", () => load(true));
 $("#fine-toggle").addEventListener("click", () => { state.showFine = !state.showFine; render(); });
-$("#areas").addEventListener("select", () => render());
+// The sidebar's own "select" follows the same hash change: one listener, one render (QA-WEB-17).
 window.addEventListener("hashchange", render);
 wolos.subscribe("progress", (p) => {
   if (!p || p.method !== "doctor.fix") return;

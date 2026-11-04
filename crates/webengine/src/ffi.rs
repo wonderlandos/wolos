@@ -65,6 +65,8 @@ pub type SetChannelFn = unsafe extern "C" fn(
 ) -> i32;
 // SAFETY: WWE_1.1 `wwe_view_post_message`: a live view and `len` readable bytes.
 pub type PostMessageFn = unsafe extern "C" fn(*mut ViewH, *const u8, usize) -> i32;
+// SAFETY: WWE_1.3 `wwe_view_present`: a live view of a window target.
+pub type PresentFn = unsafe extern "C" fn(*mut ViewH);
 
 #[repr(C)]
 pub struct Config {
@@ -160,6 +162,10 @@ pub struct Lib {
     /// them an app runs in development mode (the page has no `window.__wolosHost`).
     pub set_host_channel: Option<SetChannelFn>,
     pub post_message: Option<PostMessageFn>,
+    /// WWE_1.3, absent in a library of the earlier builds: shows the frame the engine painted. A
+    /// window target shows nothing until this is called after each new frame
+    /// ([`crate::WebView::spin`] does).
+    pub view_present: Option<PresentFn>,
     /// The loaded library: the function pointers above live as long as it.
     _handle: libloading::Library,
 }
@@ -221,6 +227,7 @@ fn open(path: &str) -> Result<Lib, String> {
         run_content_process: f!(b"wwe_run_content_process"),
         set_host_channel: opt!(b"wwe_engine_set_host_channel"),
         post_message: opt!(b"wwe_view_post_message"),
+        view_present: opt!(b"wwe_view_present"),
         _handle: handle,
     };
     // SAFETY: resolved above with its declared type.

@@ -217,6 +217,8 @@ pub struct WebView {
     throttle: bool,
     /// The library carried the channel (WWE_1.1) and the page has `window.__wolosHost`.
     channel: bool,
+    /// Frames painted so far that [`WebView::spin`] has shown (WWE_1.3 `view_present`).
+    presented: std::cell::Cell<u64>,
     // Last: the engine is freed (in Drop) before what its callbacks point at.
     shared: Box<Shared>,
 }
@@ -369,6 +371,7 @@ impl WebView {
             view,
             throttle: policy.background_throttle,
             channel,
+            presented: std::cell::Cell::new(0),
             shared,
         })
     }
@@ -392,11 +395,22 @@ impl WebView {
         unsafe { post(self.view, text.as_ptr(), text.len()) == 0 }
     }
 
-    /// Runs what the engine has pending; call when [`WebView::take_woken`] is true or on the
-    /// window's frame tick.
+    /// Runs what the engine has pending, and shows the frames it painted; call when
+    /// [`WebView::take_woken`] is true or on the window's frame tick. The engine paints into the
+    /// window's surface but the surface shows nothing until the frame is presented: the engine
+    /// counts a frame when it paints one, and each new count is presented here, once (QA-WEB-13's
+    /// sibling: a window that stayed empty). A library without `view_present` (WWE_1.3) presents
+    /// itself, or paints into memory.
     pub fn spin(&self) {
         // SAFETY: engine is live (self).
         unsafe { (self.lib.engine_spin)(self.engine) };
+        if let Some(present) = self.lib.view_present {
+            let frames = self.state().frames;
+            if frames != self.presented.replace(frames) {
+                // SAFETY: view is live (self).
+                unsafe { present(self.view) };
+            }
+        }
     }
 
     /// Whether the engine asked to be spun since the last call.
