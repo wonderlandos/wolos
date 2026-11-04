@@ -498,6 +498,12 @@ pub fn status(env: &mut dyn Env, inv: &Invocation) -> i32 {
             s.floor
         )),
     }
+    if let Some(t) = s.last_attempt {
+        env.out(&format!(
+            "update service: last reached the list's server {} minutes ago\n",
+            env.now_secs().saturating_sub(t) / 60
+        ));
+    }
     if s.behind {
         env.out("could not update the list: new apps wait until it is current; installed apps keep working\n");
     }
@@ -514,10 +520,11 @@ pub fn status(env: &mut dyn Env, inv: &Invocation) -> i32 {
     for k in &keys {
         // Audit H1: the previous flat keys can be withdrawn in revoked.json by this id.
         env.out(&format!(
-            "previous key: {} ({})\n",
+            "previous key: {} or {} ({})\n",
             wol_core::woltrust::request::key_id(k),
+            wol_core::woltrust::request::legacy_key_id(k),
             if s.roots == 0 {
-                "accepted until WolOS roots are installed"
+                "accepted until WolOS roots are installed, and never after 2027-02-01"
             } else {
                 "refused: WolOS roots are installed"
             }
@@ -606,8 +613,14 @@ fn install_rkdb(
 ) -> Result<(), String> {
     let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
     let now = env.now_secs();
-    let up = ts.accept_rkdb(db, cdn, log, now)?;
     let seen = Path::new(wol_core::trust::SEEN_FILE);
+    // Audit 2 H1: the root section a database carries is kept even when the database itself is
+    // refused (the section may withdraw the very Index that signed it).
+    if let Some(r) = ts.salvage_root_section(db, now) {
+        replace(seen, &ts.memory_after_root(&read_or_empty(seen)?, &r)?)?;
+        keep_section(&r)?;
+    }
+    let up = ts.accept_rkdb(db, cdn, log, now)?;
     let memory = ts.memory_after_rkdb(&read_or_empty(seen)?, db, now)?;
     replace(seen, &memory)?;
     replace(Path::new(wol_core::trust::STATE_RKDB), db)?;
@@ -618,6 +631,52 @@ fn install_rkdb(
         env.err(&format!("wol trust update: {w}\n"));
     }
     env.out(&format!("revocation database {} installed\n", up.serial));
+    Ok(())
+}
+
+/// Keeps a verified section's bytes in `STATE_SECTIONS`, loaded first by every later check.
+fn keep_section(r: &wol_core::woltrust::store::HeldRoot) -> Result<(), String> {
+    let dir = Path::new(wol_core::trust::STATE_SECTIONS);
+    std::fs::create_dir_all(dir).map_err(|_| format!("Can't create {}.", dir.display()))?;
+    let to = dir.join(wol_core::trust::section_file_name(r));
+    if to.exists() {
+        return Ok(());
+    }
+    replace(&to, &r.section.bytes)
+}
+
+/// Keeps a bare root-signed section (`emergency.rkdr`) in the memory of withdrawals, for ever.
+fn install_root(env: &mut dyn Env, bytes: &[u8]) -> Result<(), String> {
+    let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
+    let r = ts.accept_root_section(bytes, env.now_secs())?;
+    let seen = Path::new(wol_core::trust::SEEN_FILE);
+    replace(seen, &ts.memory_after_root(&read_or_empty(seen)?, &r)?)?;
+    keep_section(&r)?;
+    env.out(&format!(
+        "emergency section of {} entries kept\n",
+        r.section.entries.len()
+    ));
+    Ok(())
+}
+
+/// Keeps the intermediates of `intermediates.json` that reach both pinned roots in
+/// `STATE_INTERMEDIATES` (a rotated Index or Authors CA arrives without a new image).
+fn install_intermediates(env: &mut dyn Env, bytes: &[u8]) -> Result<(), String> {
+    let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
+    let (ok, bad) = ts.accept_intermediates(bytes, env.now_secs());
+    let dir = Path::new(wol_core::trust::STATE_INTERMEDIATES);
+    if !ok.is_empty() {
+        std::fs::create_dir_all(dir).map_err(|_| format!("Can't create {}.", dir.display()))?;
+    }
+    for (serial, file) in &ok {
+        let to = dir.join(format!("{serial}{}", wol_core::trust::CERT_EXT));
+        if !to.exists() {
+            replace(&to, file)?;
+        }
+    }
+    for b in &bad {
+        env.err(&format!("wol trust update: {b}\n"));
+    }
     Ok(())
 }
 
@@ -644,7 +703,9 @@ fn install_list(env: &mut dyn Env, list: &[u8], sig: &[u8]) -> Result<(), String
 /// `wol trust update [FILE [SIG]]` (root; the update-check service, hourly): installs the
 /// revocation database (`FILE` a `revoked.rkdb`) or a JSON list with its signature into
 /// `/var/lib/wolos/trust`, only when it verifies, is not below the floor and keeps every
-/// withdrawal held. Without files it fetches `revoked.rkdb` from [`wol_core::trust::rkdb_urls`]
+/// withdrawal held; `FILE` may also be a bare root-signed section (`.rkdr`). Without files it
+/// fetches the emergency section and the intermediates, then `revoked.rkdb` from
+/// [`wol_core::trust::rkdb_urls`]
 /// and the two checkpoints ([`wol_core::cdn::RKDB_CHECKPOINTS`]), else the JSON list from
 /// [`wol_core::trust::revoked_urls`]; when neither comes it says "could not update the list".
 pub fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
@@ -657,35 +718,66 @@ pub fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     }
     let r = (|| match (inv.get("list"), inv.get("sig")) {
         (Some(f), None) => {
-            let db = read_capped(Path::new(f), wol_core::trust::MAX_RKDB_BYTES as u64)?;
-            install_rkdb(env, &db, None, None)
+            let b = read_capped(Path::new(f), wol_core::trust::MAX_RKDB_BYTES as u64)?;
+            if b.starts_with(wol_core::woltrust::rkdb::ROOT_MAGIC) {
+                install_root(env, &b)
+            } else {
+                install_rkdb(env, &b, None, None)
+            }
         }
         (Some(l), Some(s)) => install_list(
             env,
             &read_capped(Path::new(l), 1 << 20)?,
             &read_capped(Path::new(s), 64 * 1024)?,
         ),
-        (None, None) => {
-            let db = wol_core::trust::rkdb_urls()
-                .iter()
-                .find_map(|u| fetch(u, wol_core::trust::MAX_RKDB_BYTES));
-            if let Some(db) = db {
-                let cps: Vec<Option<Vec<u8>>> = wol_core::cdn::RKDB_CHECKPOINTS
-                    .iter()
-                    .map(|u| fetch(u, 256))
-                    .collect();
-                return install_rkdb(env, &db, cps[0].as_deref(), cps[1].as_deref());
-            }
-            match fetch_list() {
-                Ok((list, sig)) => install_list(env, &list, &sig),
-                Err(_) => Err(
-                    "WolOS could not update the list of withdrawn certificates. New apps wait until it can; apps already installed keep working.".to_owned(),
-                ),
-            }
-        }
+        (None, None) => fetch_and_install(env),
         _ => Err("Give a revoked.rkdb, or a revoked.json and its .wsig, or nothing.".to_owned()),
     })();
     done(env, r)
+}
+
+/// Every run: the emergency section and the intermediates first, each on its own, then the
+/// database; when the database is missing or refused, the JSON list (audit 2 H1).
+fn fetch_and_install(env: &mut dyn Env) -> Result<(), String> {
+    let first = |path: &str, max: usize| {
+        wol_core::trust::cdn_urls(path)
+            .iter()
+            .find_map(|u| fetch(u, max))
+    };
+    if let Some(r) = first(wol_core::trust::EMERGENCY_PATH, 1 << 20)
+        && let Err(e) = install_root(env, &r)
+    {
+        env.err(&format!("wol trust update: {e}\n"));
+    }
+    if let Some(i) = first(
+        wol_core::trust::INTERMEDIATES_PATH,
+        wol_core::trust::MAX_INTERMEDIATES_BYTES,
+    ) && let Err(e) = install_intermediates(env, &i)
+    {
+        env.err(&format!("wol trust update: {e}\n"));
+    }
+    let db_result = match first(wol_core::trust::RKDB_PATH, wol_core::trust::MAX_RKDB_BYTES) {
+        Some(db) => {
+            let cps: Vec<Option<Vec<u8>>> = wol_core::cdn::RKDB_CHECKPOINTS
+                .iter()
+                .map(|u| fetch(u, 256))
+                .collect();
+            install_rkdb(env, &db, cps[0].as_deref(), cps[1].as_deref())
+        }
+        None => Err("the revocation database could not be downloaded".to_owned()),
+    };
+    let Err(db_err) = db_result else {
+        return Ok(());
+    };
+    env.err(&format!(
+        "wol trust update: {db_err}; trying the signed list\n"
+    ));
+    match fetch_list() {
+        Ok((list, sig)) => install_list(env, &list, &sig),
+        Err(_) => Err(
+            "WolOS could not update the list of withdrawn certificates. New apps wait until it can; apps already installed keep working.".to_owned(),
+        ),
+    }
 }
 
 /// `wol trust show FILE`: the signature line of a certificate, a file certificate, a revocation
@@ -693,94 +785,97 @@ pub fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
 /// Store sheet and `woltrust verify` show.
 pub fn show_line(env: &mut dyn Env, inv: &Invocation) -> i32 {
     use wol_core::woltrust::{self as wt, line, rkdb};
-    let r =
-        (|| {
-            let f = inv.get("file").unwrap_or_default();
-            let bytes = read_capped(Path::new(f), wol_core::trust::MAX_RKDB_BYTES as u64)?;
-            let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
-            let st = &ts.store;
-            let name_of = |serial: &str| {
-                st.roots
-                    .iter()
-                    .chain(st.intermediates.iter())
-                    .find(|c| c.body.serial == serial)
-                    .map_or_else(|| serial.to_owned(), line::ca_name)
-            };
-            let mut out = Vec::new();
-            if bytes.starts_with(rkdb::MAGIC) {
-                let db = rkdb::Db::parse(&bytes).map_err(|e| format!("{f}: {}", e.as_str()))?;
-                let checked = st.check_rkdb(&bytes, env.now_secs()).is_ok();
-                if !checked {
-                    out.push(
-                        "(this database does not verify against this computer's roots)".to_owned(),
-                    );
-                }
-                let by = name_of(&rkdb::id_text(&db.signer));
-                if let Some(r) = &db.root {
-                    let rb = name_of(&rkdb::id_text(&r.signer));
-                    for e in r.entries.iter() {
-                        out.push(line::revocation(
-                            &rkdb::id_text(&e.id),
-                            u64::from(e.at),
-                            e.reason,
-                            &rb,
-                        ));
-                    }
-                }
-                for e in db.entries.iter() {
-                    out.push(line::revocation(
-                        &rkdb::id_text(&e.id),
-                        u64::from(e.at),
-                        e.reason,
-                        &by,
-                    ));
-                }
-            } else if bytes.starts_with(rkdb::ROOT_MAGIC) {
-                let (r, _) =
-                    rkdb::RootSection::parse(&bytes).map_err(|e| format!("{f}: {}", e.as_str()))?;
-                let by = name_of(&rkdb::id_text(&r.signer));
+    let r = (|| {
+        let f = inv.get("file").unwrap_or_default();
+        let bytes = read_capped(Path::new(f), wol_core::trust::MAX_RKDB_BYTES as u64)?;
+        let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
+        let st = &ts.store;
+        let name_of = |serial: &str| {
+            st.roots
+                .iter()
+                .chain(st.intermediates.iter())
+                .find(|c| c.body.serial == serial)
+                .map_or_else(|| serial.to_owned(), line::ca_name)
+        };
+        let mut out = Vec::new();
+        if bytes.starts_with(rkdb::MAGIC) {
+            let db = rkdb::Db::parse(&bytes)
+                .map_err(|_| format!("{f}: this revocation database is damaged."))?;
+            let checked = st.check_rkdb(&bytes, env.now_secs()).is_ok();
+            if !checked {
+                out.push(
+                    "(this database does not verify against this computer's roots)".to_owned(),
+                );
+            }
+            let by = name_of(&rkdb::id_text(&db.signer));
+            if let Some(r) = &db.root {
+                let rb = name_of(&rkdb::id_text(&r.signer));
                 for e in r.entries.iter() {
                     out.push(line::revocation(
                         &rkdb::id_text(&e.id),
                         u64::from(e.at),
                         e.reason,
-                        &by,
+                        &rb,
                     ));
                 }
-            } else if let Ok(c) = Cert::parse(&bytes) {
-                let mut issuers: Vec<&Cert> = st
-                    .roots
+            }
+            for e in db.entries.iter() {
+                out.push(line::revocation(
+                    &rkdb::id_text(&e.id),
+                    u64::from(e.at),
+                    e.reason,
+                    &by,
+                ));
+            }
+        } else if bytes.starts_with(rkdb::ROOT_MAGIC) {
+            let (r, _) = rkdb::RootSection::parse(&bytes)
+                .map_err(|_| format!("{f}: this emergency section is damaged."))?;
+            let by = name_of(&rkdb::id_text(&r.signer));
+            for e in r.entries.iter() {
+                out.push(line::revocation(
+                    &rkdb::id_text(&e.id),
+                    u64::from(e.at),
+                    e.reason,
+                    &by,
+                ));
+            }
+        } else if let Ok(c) = Cert::parse(&bytes) {
+            let mut issuers: Vec<&Cert> = st
+                .roots
+                .iter()
+                .chain(st.intermediates.iter())
+                .filter(|i| i.body.serial == c.body.issuer && c.body.kind != Kind::Root)
+                .collect();
+            issuers.extend(
+                st.roots
                     .iter()
-                    .chain(st.intermediates.iter())
-                    .filter(|i| i.body.serial == c.body.issuer && c.body.kind != Kind::Root)
-                    .collect();
-                issuers.extend(
-                    st.roots
-                        .iter()
-                        .filter(|r| c.cosigs.iter().any(|x| x.issuer == r.body.serial)),
+                    .filter(|r| c.cosigs.iter().any(|x| x.issuer == r.body.serial)),
+            );
+            out.push(line::cert(&c, &issuers));
+        } else if let Some(body) = filecert_body(&bytes) {
+            let ok = wt::filecert::verify(st, &bytes, &body.file_sha256).is_ok();
+            out.push(line::file_certificate(&body, None));
+            if !ok {
+                out.push(
+                    "(this file certificate does not verify against this computer's roots)"
+                        .to_owned(),
                 );
-                out.push(line::cert(&c, &issuers));
-            } else if let Some(body) = filecert_body(&bytes) {
-                let ok = wt::filecert::verify(st, &bytes, &body.file_sha256).is_ok();
-                out.push(line::file_certificate(&body, None));
-                if !ok {
-                    out.push(
-                        "(this file certificate does not verify against this computer's roots)"
-                            .to_owned(),
-                    );
-                }
-            } else {
-                let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
-                let c = ts.verify_wol_at(Path::new(f), &keys, None, env.now_secs())?;
-                out.push(c.outcome.line.unwrap_or_else(|| {
-                    format!("(no signature line: {})", c.outcome.code.as_str())
-                }));
             }
-            for l in out {
-                env.out(&format!("{l}\n"));
-            }
-            Ok(())
-        })();
+        } else {
+            let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+            let c = ts.verify_wol_at(Path::new(f), &keys, None, env.now_secs())?;
+            out.push(c.outcome.line.unwrap_or_else(|| {
+                format!(
+                    "(no signature line: {})",
+                    c.outcome.code.sentence().unwrap_or("not signed")
+                )
+            }));
+        }
+        for l in out {
+            env.out(&format!("{l}\n"));
+        }
+        Ok(())
+    })();
     done(env, r)
 }
 

@@ -167,7 +167,7 @@ impl Code {
                 "WolOS Hub no longer lists this developer as trusted; who published this file is still proven."
             }
             Code::LegacyKey => {
-                "Signed with the previous WolOS key, which has no certificate and no post-quantum signature."
+                "Signed with the previous WolOS key, which has no certificate and no newer signature."
             }
             Code::LegacyRefused => {
                 "This file is signed only with the previous WolOS key, which this computer no longer accepts."
@@ -286,18 +286,25 @@ fn info(c: &Cert) -> CertInfo {
 }
 
 fn may_issue(issuer: &Cert, subject: &Cert) -> bool {
-    let kind_ok = match issuer.body.kind {
-        Kind::Root => subject.body.kind == Kind::Intermediate,
-        Kind::Intermediate => matches!(subject.body.kind, Kind::Person | Kind::Org | Kind::Signer),
+    may_issue_body(&issuer.body, &subject.body)
+}
+
+/// True when a certificate with body `issuer` may issue one with body `subject`: a root issues
+/// intermediates, an intermediate issues people, organisations and signers, the issuer has
+/// usage `sign-certs`, and every namespace of the subject is inside the issuer's. The verifier's
+/// rule, for producers to run before they sign (`woltrust issue --issuer-cert`, audit 2 L6).
+pub fn may_issue_body(issuer: &cert::Body, subject: &cert::Body) -> bool {
+    let kind_ok = match issuer.kind {
+        Kind::Root => subject.kind == Kind::Intermediate,
+        Kind::Intermediate => matches!(subject.kind, Kind::Person | Kind::Org | Kind::Signer),
         Kind::Person | Kind::Org | Kind::Signer => false,
     };
     kind_ok
-        && issuer.body.usage.contains(&cert::Usage::SignCerts)
+        && issuer.usage.contains(&cert::Usage::SignCerts)
         && subject
-            .body
             .namespaces
             .iter()
-            .all(|n| cert::covers(&issuer.body.namespaces, n))
+            .all(|n| cert::covers(&issuer.namespaces, n))
 }
 
 fn lookup<'a>(serial: &str, chain: &'a [Cert], store: &'a Store) -> Option<&'a Cert> {
@@ -487,6 +494,14 @@ pub fn withdrawn(store: &Store, serial: &str) -> Option<Code> {
     revocation_of(&[(serial, true)], store, None, None)
 }
 
+/// Why WolOS's previous flat key `ed25519` (legacy `SHA256.sig`) is withdrawn, looked up under
+/// both of its names (audit 2 M3): the 16-hex [`crate::request::key_id`] older lists use and the
+/// 128-hex [`crate::request::legacy_key_id`] rule "IDS" gives it. None when neither is withdrawn.
+pub fn key_withdrawn(store: &Store, ed25519: &[u8; 32]) -> Option<Code> {
+    withdrawn(store, &crate::request::key_id(ed25519))
+        .or_else(|| withdrawn(store, &crate::request::legacy_key_id(ed25519)))
+}
+
 /// When a list, the memory or a database withdraws the file certificate `serial` as
 /// `withdrawn-version`.
 pub fn version_withdrawn(store: &Store, serial: &str) -> Option<u64> {
@@ -505,10 +520,12 @@ fn superseded(store: &Store, serial: &str) -> bool {
 
 /// The first time problem on `path`: expired or not yet valid at `now` (a file the index saw while
 /// the certificate was valid is not expired).
-fn time_problem(path: &[&Cert], now: u64, first_seen: Option<u64>) -> Option<Code> {
+pub(crate) fn time_problem(path: &[&Cert], now: u64, first_seen: Option<u64>) -> Option<Code> {
     let mut late = false;
     for c in path {
-        if c.valid_at(now) || (now < c.body.not_before && now + CLOCK_SKEW >= c.body.not_before) {
+        if c.valid_at(now)
+            || (now < c.body.not_before && now.saturating_add(CLOCK_SKEW) >= c.body.not_before)
+        {
             continue;
         }
         if now < c.body.not_before {
@@ -548,6 +565,12 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
     let Some(sig) = wsig.sig() else {
         return invalid(Code::SignatureMalformed);
     };
+    // Audit 2 L1: a witness signature always carries `at` and never an origin; no other
+    // signature carries `at` (the date shown must be the date signed).
+    let witness = input.purpose == Purpose::Witness;
+    if witness != wsig.at.is_some() || (witness && wsig.origin.is_some()) {
+        return invalid(Code::SignatureMalformed);
+    }
     let origin = match wsig
         .origin
         .as_deref()
@@ -605,10 +628,8 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
     }
     let msg = match (&origin, wsig.at) {
         (Some((raw, _)), _) => crypto::message_with_origin(input.purpose, input.content, raw),
-        (None, Some(at)) if input.purpose == Purpose::Witness => {
-            crate::witness::message(input.content, at)
-        }
-        _ => crypto::message(input.purpose, input.content),
+        (None, Some(at)) => crate::witness::message(input.content, at),
+        (None, None) => crypto::message(input.purpose, input.content),
     };
     if crypto::verify_hybrid(&signer.keys, &msg, &sig).is_err() {
         return bad(Code::BadSignature);
@@ -631,8 +652,22 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         Ok(p) => p,
         Err(code) => return bad(code),
     };
+    judge(store, input, signer, origin, &path, wsig.at)
+}
+
+/// The second half of [`verify`]: the signature holds and `path` reaches a pinned root; the
+/// revocation, time and freshness rules now give the outcome.
+fn judge(
+    store: &Store,
+    input: &Input,
+    signer: &Cert,
+    origin: Option<crate::origin::Origin>,
+    path: &[&Cert],
+    at: Option<u64>,
+) -> Outcome {
+    let who = Some(info(signer));
     let root_text = path.last().and_then(|r| r.body.subject.text.clone());
-    let line = Some(match (input.purpose, wsig.at) {
+    let line = Some(match (input.purpose, at) {
         (Purpose::Witness, Some(at)) => crate::line::witness(signer, input.content, at),
         _ => crate::line::signature(signer, origin.as_ref(), input.content),
     });
@@ -665,7 +700,7 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         return make(Trust::Withdrawn, code, false);
     }
     let approval_gone = trusted && superseded(store, leaf);
-    if let Some(code) = time_problem(&path, input.now, input.first_seen) {
+    if let Some(code) = time_problem(path, input.now, input.first_seen) {
         return make(Trust::Community, code, false);
     }
     let level = match (signer.body.level, signer.body.class()) {

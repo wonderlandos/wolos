@@ -113,13 +113,46 @@ impl Updates {
         )
     }
 
-    /// From the check's files by name (`base.sig` = the signature in lowercase hex).
+    /// From the check's files by name (`base.sig` = the signature in lowercase hex), judged
+    /// against this machine's certificate store ([`Self::from_files_with`]).
     pub fn from_files(f: impl Fn(&str) -> String, keys: &[[u8; 32]]) -> Option<Self> {
+        use crate::system::Host as _;
+        let ts = crate::trust::TrustStore::load(&crate::system::PosixHost);
+        let now = crate::system::PosixHost.now().max(0.0) as u64;
+        Self::from_files_with(f, keys, &ts.store, now)
+    }
+
+    /// [`Self::from_files`] with a given store and clock (audit 2 M6): once the machine holds
+    /// WolOS roots, the release manifest counts only with the Index's hybrid `base.wsig`
+    /// (`release.json.wsig`, label `wolos/index/1`); the classical `base.sig` alone is refused.
+    /// Without roots, `base.sig` by the package keys as before.
+    pub fn from_files_with(
+        f: impl Fn(&str) -> String,
+        keys: &[[u8; 32]],
+        store: &woltrust::Store,
+        now: u64,
+    ) -> Option<Self> {
         let base = f("base");
-        let sig = unhex(f("base.sig").trim()).unwrap_or_default();
-        let base = Manifest::verify(base.as_bytes(), &sig, keys)
-            .map(|_| base)
-            .unwrap_or_default();
+        let ok = if store.roots.is_empty() {
+            let sig = unhex(f("base.sig").trim()).unwrap_or_default();
+            Manifest::verify(base.as_bytes(), &sig, keys).is_ok()
+        } else {
+            let wsig = f("base.wsig");
+            let o = woltrust::verify(
+                store,
+                &woltrust::Input {
+                    purpose: woltrust::Purpose::Index,
+                    content: base.as_bytes(),
+                    app_id: None,
+                    wsig: (!wsig.is_empty()).then_some(wsig.as_bytes()),
+                    chain: None,
+                    first_seen: None,
+                    now,
+                },
+            );
+            o.trust == woltrust::Trust::Wolos && Manifest::parse(&base).is_some()
+        };
+        let base = if ok { base } else { String::new() };
         let mut u = Self::parse(&f("checked"), &f("pkg"), &f("audit"), &base)?;
         u.kernels = user_kernels(&f("kernels"));
         Some(u)
@@ -294,6 +327,48 @@ mod tests {
         );
         assert_eq!(Updates::read_with(&d, &[[9; 32]]).unwrap().base, None);
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Audit 2 M6: with WolOS roots, the release manifest needs the Index's hybrid signature.
+    #[test]
+    fn the_release_manifest_needs_the_index_signature_once_roots_are_held() {
+        use woltrust::pki::{NOW, Pki};
+        let p = Pki::new();
+        let none: [(&[u8], &[u8]); 0] = [];
+        let store = woltrust::Store::load(&[&p.root_a.file], &[&p.index.file], &none, NOW, true);
+        let key = [5u8; 32];
+        let sig = crate::package::sign(&key, RELEASE.as_bytes());
+        let flat = crate::package::public_of(&key);
+        let wsig = woltrust::make::wsig(
+            &p.index.body.serial,
+            &p.index.secret,
+            woltrust::Purpose::Index,
+            RELEASE.as_bytes(),
+        );
+        let files = |with_wsig: bool| {
+            let w = String::from_utf8(wsig.clone()).unwrap();
+            let sighex: String = sig.iter().map(|b| format!("{b:02x}")).collect();
+            move |n: &str| match n {
+                "checked" => "1".to_owned(),
+                "base" => RELEASE.to_owned(),
+                "base.sig" => sighex.clone(),
+                "base.wsig" if with_wsig => w.clone(),
+                _ => String::new(),
+            }
+        };
+        let classical = Updates::from_files_with(files(false), &[flat], &store, NOW).unwrap();
+        assert_eq!(
+            classical.base, None,
+            "base.sig alone is refused once roots are held"
+        );
+        let hybrid = Updates::from_files_with(files(true), &[flat], &store, NOW).unwrap();
+        assert_eq!(hybrid.base.as_deref(), Some("2026.11"));
+        let old = Updates::from_files_with(files(false), &[flat], &woltrust::Store::default(), NOW);
+        assert_eq!(
+            old.unwrap().base.as_deref(),
+            Some("2026.11"),
+            "no roots: the flat key"
+        );
     }
 
     /// CORE-7 / R2C-21: hex digits only, never a slice that panics on a multi-byte character.

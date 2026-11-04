@@ -51,7 +51,10 @@ impl EncSecret {
         let x = derive(seed, "x25519");
         let x25519 = Zeroizing::new(take::<32>(&x[..], 0));
         let m = derive(seed, "ml-kem-768");
-        let (ek, dk) = ml_kem_768::KG::keygen_from_seed(take(&m[..], 0), take(&m[..], 32));
+        // Audit 2 L3: the d and z seeds are wiped copies (the call takes them by value).
+        let d = Zeroizing::new(take::<32>(&m[..], 0));
+        let z = Zeroizing::new(take::<32>(&m[..], 32));
+        let (ek, dk) = ml_kem_768::KG::keygen_from_seed(*d, *z);
         EncSecret {
             public: EncPublic {
                 x25519: MontgomeryPoint::mul_base_clamped(*x25519).to_bytes(),
@@ -112,6 +115,19 @@ fn schedule(
     ]))
 }
 
+/// The AEAD key (okm[0..32]) and nonce (okm[32..44]) as wiped copies (audit 2 L3).
+fn key_nonce(
+    okm: &[u8; 64],
+) -> (
+    Zeroizing<[u8; crate::aead::KEY]>,
+    Zeroizing<[u8; crate::aead::NONCE]>,
+) {
+    (
+        Zeroizing::new(take::<{ crate::aead::KEY }>(&okm[..], 0)),
+        Zeroizing::new(take::<{ crate::aead::NONCE }>(&okm[..], 32)),
+    )
+}
+
 /// Seals `plaintext` to `to`: `prefix || ephemeral || ciphertext || aead`. `rnd` is 64 fresh random
 /// bytes (the ephemeral X25519 scalar, then the ML-KEM message); the same `rnd` gives the same
 /// bytes.
@@ -126,15 +142,17 @@ pub fn seal(
     let eph_secret = Zeroizing::new(take::<32>(rnd, 0));
     let eph = x25519_public(&eph_secret);
     let ss_x = x25519(&eph_secret, &to.x25519).ok_or(Error::BadKey)?;
-    let (ss_m, ct) = ek.encaps_from_seed(&take(rnd, 32));
+    let m = Zeroizing::new(take::<32>(rnd, 32));
+    let (ss_m, ct) = ek.encaps_from_seed(&m);
     let ss_m = Zeroizing::new(ss_m.into_bytes());
     let mut out = Vec::with_capacity(prefix.len() + KEM_PART + plaintext.len() + crate::aead::TAG);
     out.extend_from_slice(prefix);
     out.extend_from_slice(&eph);
     out.extend_from_slice(&ct.into_bytes());
     let okm = schedule(format, &ss_m[..], &ss_x, &eph, to, &out);
+    let (key, nonce) = key_nonce(&okm);
     let mut body = Zeroizing::new(plaintext.to_vec());
-    crate::aead::seal(&take(&okm[..], 0), &take(&okm[..], 32), &out, &mut body);
+    crate::aead::seal(&key, &nonce, &out, &mut body);
     out.extend_from_slice(&body);
     Ok(out)
 }
@@ -159,9 +177,9 @@ pub fn open(
     let ss_m = Zeroizing::new(dk.try_decaps(&ct).map_err(|_| Error::Damaged)?.into_bytes());
     let ss_x = x25519(&keys.x25519, &eph).ok_or(Error::Damaged)?;
     let okm = schedule(format, &ss_m[..], &ss_x, &eph, &keys.public, header);
+    let (key, nonce) = key_nonce(&okm);
     let mut body = Zeroizing::new(rest.to_vec());
-    crate::aead::open(&take(&okm[..], 0), &take(&okm[..], 32), header, &mut body)
-        .ok_or(Error::Damaged)?;
+    crate::aead::open(&key, &nonce, header, &mut body).ok_or(Error::Damaged)?;
     Ok(body)
 }
 

@@ -52,6 +52,9 @@ pub const MAX_ENTRIES: usize = 4_000_000;
 pub const MAX_ROOT_ENTRIES: usize = 64;
 /// How long a database is fresh: 24 hours from `issued` (republished hourly).
 pub const LIFETIME: u64 = 86_400;
+/// The longest `expires - issued` a reader accepts: [`LIFETIME`] plus the clock skew allowance
+/// ([`crate::verify::CLOCK_SKEW`]).
+pub const MAX_LIFETIME: u64 = LIFETIME + crate::verify::CLOCK_SKEW;
 /// The signature label (the same as `revoked.json`; the content starts with `WRKDB`, so the two
 /// can never be confused).
 pub const LABEL: &str = "wolos/revocation/1";
@@ -455,7 +458,9 @@ impl RootSection {
         out.extend_from_slice(&issued.to_be_bytes());
         out.extend_from_slice(&len32(e.len()).to_be_bytes());
         out.extend_from_slice(&e.raw);
-        let s = secret.sign_message(&wolcrypt::sign::message(LABEL, &out));
+        let s = secret
+            .try_sign_message(&wolcrypt::sign::message(LABEL, &out))
+            .map_err(|_| Error::BadSignature)?;
         if s.second.len() != SLH_SIG {
             return Err(Error::BadSignature);
         }
@@ -464,6 +469,44 @@ impl RootSection {
         out.extend_from_slice(&s.second);
         Ok(out)
     }
+}
+
+/// What a revocation file is, by its magic: a whole database, a root section on its own
+/// (`.rkdr`), or a delta (`.rkdd`). A caller handed a file by a person dispatches on it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    /// `WRKDB`.
+    Db,
+    /// `WRKDR`.
+    RootSection,
+    /// `WRKDD`.
+    Delta,
+}
+
+/// The kind of `b` by its first five bytes, or None.
+pub fn kind_of(b: &[u8]) -> Option<FileKind> {
+    match b.get(..5)? {
+        m if m == MAGIC => Some(FileKind::Db),
+        m if m == ROOT_MAGIC => Some(FileKind::RootSection),
+        m if m == DELTA_MAGIC => Some(FileKind::Delta),
+        _ => None,
+    }
+}
+
+/// The root section a database carries, found by the layout alone (header, entry count, flag),
+/// without judging the rest of the file: the Index block, its signature, the lifetime. Audit 2
+/// H1: the withdrawal of the Index travels in a file the Index signed, so it must survive that
+/// file being refused. The section still has to verify ([`crate::Store::salvage_root_section`]).
+pub fn root_section_in(b: &[u8]) -> Option<RootSection> {
+    if b.get(..5)? != MAGIC || *b.get(5)? != FORMAT || *b.get(58)? & FLAG_ROOT == 0 {
+        return None;
+    }
+    let count = len_of(u32::from_be_bytes(b.get(22..26)?.try_into().ok()?));
+    if count > MAX_ENTRIES {
+        return None;
+    }
+    let at = count.checked_mul(ENTRY)?.checked_add(HEADER)?;
+    RootSection::parse(b.get(at..)?).ok().map(|(s, _)| s)
 }
 
 /// A parsed database (signatures not yet checked: [`crate::Store::load_rkdb`] does that).
@@ -518,6 +561,11 @@ impl Db {
         let prev_hash: [u8; 32] = b[26..58].try_into().map_err(|_| Error::Malformed)?;
         let flags = b[58];
         if flags & !FLAG_ROOT != 0 || expires <= issued || count > MAX_ENTRIES {
+            return Err(Error::Malformed);
+        }
+        // Audit 2 M1: the verifier bounds the lifetime, not only the producer; an eternal file
+        // would stay fresh (and open the install gate) for ever.
+        if u64::from(expires) > u64::from(issued) + MAX_LIFETIME {
             return Err(Error::Malformed);
         }
         let end = HEADER + count * ENTRY;
@@ -620,7 +668,9 @@ fn unsigned(m: &Make) -> Vec<u8> {
 /// Builds and signs a database as the Index intermediate `signer` (its id) with `secret`.
 pub fn make(m: &Make, signer: &str, secret: &crate::make::Secret) -> Result<Vec<u8>, Error> {
     let mut out = unsigned(m);
-    let s = secret.sign_message(&wolcrypt::sign::message(LABEL, &out));
+    let s = secret
+        .try_sign_message(&wolcrypt::sign::message(LABEL, &out))
+        .map_err(|_| Error::BadSignature)?;
     if s.second.len() != ML_SIG {
         return Err(Error::BadSignature);
     }
@@ -686,20 +736,29 @@ pub fn apply(base: &[u8], d: &[u8]) -> Result<Vec<u8>, Error> {
     if n > MAX_ENTRIES {
         return Err(Error::Malformed);
     }
-    let raw = d.get(at..at + n * ENTRY).ok_or(Error::Malformed)?;
+    // Audit 2 L4: every offset from the input is checked, so a 32-bit target cannot wrap.
+    let end = n
+        .checked_mul(ENTRY)
+        .and_then(|l| at.checked_add(l))
+        .ok_or(Error::Malformed)?;
+    let raw = d.get(at..end).ok_or(Error::Malformed)?;
     check_records(raw, n)?;
-    at += n * ENTRY;
+    at = end;
     let added = Entries::from_raw(raw.to_vec());
     if added.iter().any(|e| b.entries.lookup(&e.id).is_some()) {
         return Err(Error::Malformed);
     }
-    let rlen = len_of(u32_at(d, at.min(d.len().saturating_sub(4))));
-    if d.len() < at + 4 {
-        return Err(Error::Malformed);
-    }
-    at += 4;
-    let root = d.get(at..at + rlen).ok_or(Error::Malformed)?;
-    at += rlen;
+    let len_end = at.checked_add(4).ok_or(Error::Malformed)?;
+    let rlen = len_of(u32::from_be_bytes(
+        d.get(at..len_end)
+            .ok_or(Error::Malformed)?
+            .try_into()
+            .map_err(|_| Error::Malformed)?,
+    ));
+    at = len_end;
+    let root_end = at.checked_add(rlen).ok_or(Error::Malformed)?;
+    let root = d.get(at..root_end).ok_or(Error::Malformed)?;
+    at = root_end;
     let sig = d.get(at..).ok_or(Error::Malformed)?;
     if sig.len() != INDEX_SIG
         || &th[..5] != MAGIC
@@ -711,7 +770,12 @@ pub fn apply(base: &[u8], d: &[u8]) -> Result<Vec<u8>, Error> {
     if len_of(u32_at(th, 22)) != merged.len() || (th[58] & FLAG_ROOT != 0) != !root.is_empty() {
         return Err(Error::Malformed);
     }
-    let mut out = Vec::with_capacity(HEADER + merged.raw.len() + rlen + INDEX_SIG);
+    let mut out = Vec::with_capacity(
+        HEADER
+            .saturating_add(merged.raw.len())
+            .saturating_add(rlen)
+            .saturating_add(INDEX_SIG),
+    );
     out.extend_from_slice(th);
     out.extend_from_slice(&merged.raw);
     out.extend_from_slice(root);
@@ -804,22 +868,24 @@ impl Checkpoint {
 pub enum Agreement {
     /// Both answered and agree.
     Agree(Checkpoint),
-    /// Both answered and differ: warn, keep the higher serial as the floor.
+    /// Both answered and differ: warn; the floor stays.
     Disagree,
-    /// Only one answered: warn, keep it as the floor.
+    /// Only one answered: warn; the floor stays.
     OneSource,
     /// Neither answered.
     None,
 }
 
 /// Combines the CDN checkpoint `a` and the public log's `b` with the `floor` held. Returns the new
-/// floor (never lower) and the agreement. A machine never drops below the floor; a checkpoint
-/// only raises it.
+/// floor (never lower) and the agreement. A machine never drops below the floor, and only both
+/// sources agreeing raise it (audit 2 M2): whoever controls one of the two URLs could otherwise
+/// publish a huge serial and make every machine refuse every real database as older.
+/// [`Agreement::Disagree`] and [`Agreement::OneSource`] are for a warning, and leave the floor.
 pub fn checkpoints(a: Option<Checkpoint>, b: Option<Checkpoint>, floor: u64) -> (u64, Agreement) {
     match (a, b) {
         (Some(x), Some(y)) if x == y => (floor.max(x.serial), Agreement::Agree(x)),
-        (Some(x), Some(y)) => (floor.max(x.serial).max(y.serial), Agreement::Disagree),
-        (Some(x), None) | (None, Some(x)) => (floor.max(x.serial), Agreement::OneSource),
+        (Some(_), Some(_)) => (floor, Agreement::Disagree),
+        (Some(_), None) | (None, Some(_)) => (floor, Agreement::OneSource),
         (None, None) => (floor, Agreement::None),
     }
 }
@@ -909,11 +975,16 @@ mod tests {
             checkpoints(Some(c(5)), Some(c(5)), 3),
             (5, Agreement::Agree(c(5)))
         );
+        // Audit 2 M2: only agreement raises the floor; one source or two that differ do not.
         assert_eq!(
             checkpoints(Some(c(5)), Some(c(7)), 3),
-            (7, Agreement::Disagree)
+            (3, Agreement::Disagree)
         );
         assert_eq!(checkpoints(Some(c(2)), None, 3), (3, Agreement::OneSource));
+        assert_eq!(
+            checkpoints(None, Some(c(u64::MAX >> 1)), 3),
+            (3, Agreement::OneSource)
+        );
         assert_eq!(checkpoints(None, None, 3), (3, Agreement::None));
         assert_eq!(Checkpoint::parse(c(9).to_json().as_bytes()), Some(c(9)));
         assert!(Checkpoint::parse(b"{}").is_none());

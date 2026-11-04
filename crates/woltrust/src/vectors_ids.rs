@@ -433,6 +433,106 @@ fn cases_emergency(g: &mut Gen, ids: &Ids) -> Result<(), String> {
             v.store.rkdb = vec![inline(&idx_wrong)];
         },
     )?;
+    cases_audit2(g, ids)
+}
+
+/// Audit 2: the emergency section that withdraws the Index travels in the Index's own database
+/// (H1), lists and databases with an eternal lifetime (M1), a root section from the future (L2).
+fn cases_audit2(g: &mut Gen, ids: &Ids) -> Result<(), String> {
+    use Code as C;
+    use Trust as T;
+    let index_gone = rkdb::RootSection::make(
+        u32::try_from(NOW - DAY).unwrap_or(0),
+        &[entry(
+            &ids.index.body.serial,
+            NOW - DAY,
+            Reason::KeyCompromise,
+        )],
+        &g.p.root_b.body.serial,
+        &g.p.root_b.secret,
+    )
+    .unwrap_or_default();
+    let carried = db(ids, 7, NOW - 3600, &[], Some(&index_gone[..]), [0; 32]);
+    let wsig_index = make::wsig(
+        &ids.index.body.serial,
+        &ids.index.secret(),
+        Purpose::Index,
+        CONTENT,
+    );
+    let index_vector = |v: &mut Vector| {
+        v.purpose = Purpose::Index.label().into();
+        v.app_id = None;
+        v.chain = None;
+        v.wsig = Some(inline(&wsig_index));
+        v.store.roots = vec!["@root-a".into(), "@root-b".into()];
+        v.store.intermediates = vec!["@index".into(), "@index-2".into()];
+    };
+    g.add(
+        "emergency-index-in-db",
+        "root B withdraws the derived Index in a section carried by a database that Index signed: \
+         the database is refused, the section is kept, and what the Index signed is withdrawn",
+        (T::Withdrawn, C::RevokedKeyCompromise),
+        |_, v| {
+            index_vector(v);
+            v.store.rkdb = vec![inline(&carried)];
+        },
+    )?;
+    let future = rkdb::RootSection::make(
+        u32::try_from(NOW + 300 * DAY).unwrap_or(0),
+        &[entry(
+            &ids.index.body.serial,
+            NOW + 300 * DAY,
+            Reason::Ceased,
+        )],
+        &g.p.root_b.body.serial,
+        &g.p.root_b.secret,
+    )
+    .unwrap_or_default();
+    g.add(
+        "emergency-section-future-dated",
+        "a root section dated 300 days ahead of the clock is refused (beyond the 24-hour skew): \
+         it would delay a ceased or superseded withdrawal",
+        (T::Wolos, C::Ok),
+        |_, v| {
+            index_vector(v);
+            v.store.root_sections = vec![inline(&future)];
+        },
+    )?;
+    let eternal_list = crate::revoked::ListText {
+        format: 1,
+        serial: 11,
+        issued: NOW - DAY,
+        expires: NOW + 100 * 365 * DAY,
+        entries: Vec::new(),
+    };
+    let spec = g.list(&eternal_list, 0);
+    g.add(
+        "list-eternal",
+        "a validly signed list fresh for a hundred years is refused: lifetime at most 7 days plus \
+         the 24-hour skew, so the signature keeps its value with \"not checked since\"",
+        (T::Origin, C::ListTooOld),
+        |_, v| v.store.lists = vec![spec.clone()],
+    )?;
+    let wsig_no_at = make::wsig(
+        &ids.witness.body.serial,
+        &ids.witness.secret(),
+        Purpose::Witness,
+        &g.p.root_a.file,
+    );
+    g.add(
+        "witness-without-at-refused",
+        "a witness signature without its date is not a witness signature: refused, never wolos",
+        (T::Invalid, C::SignatureMalformed),
+        |g, v| {
+            v.purpose = Purpose::Witness.label().into();
+            v.content = inline(&g.p.root_a.file);
+            v.app_id = None;
+            v.chain = None;
+            v.wsig = Some(inline(&wsig_no_at));
+            v.store.roots = vec!["@root-a".into(), "@root-b".into()];
+            v.store.intermediates = vec!["@index".into(), "@witness-a".into()];
+        },
+    )?;
     Ok(())
 }
 

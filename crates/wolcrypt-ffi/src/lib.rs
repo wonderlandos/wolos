@@ -4,6 +4,7 @@
 //! allocates for the caller, and returns a status: 0 success, 1 does not verify / not equal,
 //! negative a bad argument (-1 a NULL pointer, -2 a length, -3 a buffer too small, -4 a bad key).
 //! The `unsafe` here is the pointer boundary only; every operation is the safe crate's.
+use wolcrypt::Zeroizing;
 use wolcrypt::sign::{PublicKeys, Scheme, Second, Sig, SigningKey};
 
 /// Success.
@@ -20,6 +21,11 @@ pub const WOLCRYPT_ESPACE: i32 = -3;
 pub const WOLCRYPT_EKEY: i32 = -4;
 
 const MAX_IN: usize = 1 << 30;
+
+/// A 32-byte seed copied out of the caller's buffer into a wiped copy (audit 2 L3).
+fn seed32(b: &[u8]) -> Result<Zeroizing<[u8; 32]>, i32> {
+    Ok(Zeroizing::new(b.try_into().map_err(|_| WOLCRYPT_ELEN)?))
+}
 
 /// # Safety
 /// `p` is NULL or points at `len` readable bytes.
@@ -160,9 +166,7 @@ pub unsafe extern "C" fn wolcrypt_public(
 ) -> i32 {
     status((|| {
         // SAFETY: contract.
-        let s: [u8; 32] = unsafe { input(seed, 32) }?
-            .try_into()
-            .map_err(|_| WOLCRYPT_ELEN)?;
+        let s = seed32(unsafe { input(seed, 32) }?)?;
         let k = SigningKey::from_seed(&s, scheme(root));
         let mut v = k.public().ed25519.to_vec();
         v.extend_from_slice(k.public().second.as_bytes());
@@ -189,14 +193,14 @@ pub unsafe extern "C" fn wolcrypt_sign(
 ) -> i32 {
     status((|| {
         // SAFETY: contract.
-        let s: [u8; 32] = unsafe { input(seed, 32) }?
-            .try_into()
-            .map_err(|_| WOLCRYPT_ELEN)?;
+        let s = seed32(unsafe { input(seed, 32) }?)?;
         // SAFETY: contract.
         let l = unsafe { text(label) }?;
         // SAFETY: contract.
         let c = unsafe { input(content, len) }?;
-        let sig = SigningKey::from_seed(&s, scheme(root)).sign(l, c);
+        let sig = SigningKey::from_seed(&s, scheme(root))
+            .sign(l, c)
+            .map_err(|_| WOLCRYPT_EKEY)?;
         let mut v = sig.ed25519.to_vec();
         v.extend_from_slice(&sig.second);
         // SAFETY: contract.
@@ -269,9 +273,7 @@ pub unsafe extern "C" fn wolcrypt_verify(
 pub unsafe extern "C" fn wolcrypt_kem_public(seed: *const u8, out: *mut u8) -> i32 {
     status((|| {
         // SAFETY: contract.
-        let s: [u8; 32] = unsafe { input(seed, 32) }?
-            .try_into()
-            .map_err(|_| WOLCRYPT_ELEN)?;
+        let s = seed32(unsafe { input(seed, 32) }?)?;
         let e = wolcrypt::kem::EncSecret::from_seed(&s);
         // SAFETY: contract.
         let o = unsafe { out_n::<1216>(out) }?;
@@ -310,9 +312,11 @@ pub unsafe extern "C" fn wolcrypt_kem_seal(
         // SAFETY: contract.
         let m = unsafe { input(plaintext, len) }?;
         // SAFETY: contract.
-        let r: [u8; 64] = unsafe { input(rnd, 64) }?
-            .try_into()
-            .map_err(|_| WOLCRYPT_ELEN)?;
+        let r: Zeroizing<[u8; 64]> = Zeroizing::new(
+            unsafe { input(rnd, 64) }?
+                .try_into()
+                .map_err(|_| WOLCRYPT_ELEN)?,
+        );
         let pk = wolcrypt::kem::EncPublic {
             x25519: t[..32].try_into().map_err(|_| WOLCRYPT_ELEN)?,
             ml_kem_768: Box::new(t[32..].try_into().map_err(|_| WOLCRYPT_ELEN)?),
@@ -343,9 +347,7 @@ pub unsafe extern "C" fn wolcrypt_kem_open(
         // SAFETY: contract.
         let f = unsafe { text(format) }?;
         // SAFETY: contract.
-        let s: [u8; 32] = unsafe { input(seed, 32) }?
-            .try_into()
-            .map_err(|_| WOLCRYPT_ELEN)?;
+        let s = seed32(unsafe { input(seed, 32) }?)?;
         // SAFETY: contract.
         let m = unsafe { input(sealed, len) }?;
         let keys = wolcrypt::kem::EncSecret::from_seed(&s);

@@ -253,6 +253,20 @@ pub fn generate() -> Result<Vec<RkdbVector>, String> {
         hash: [7; 32],
     }
     .to_json();
+    // Audit 2 M1: the same database with `expires` at the end of time, validly re-signed.
+    let eternal = {
+        let mut b = db3[..db3.len() - rkdb::INDEX_SIG].to_vec();
+        b[18..22].copy_from_slice(&u32::MAX.to_be_bytes());
+        let s = ids
+            .index
+            .secret()
+            .try_sign_message(&wolcrypt::sign::message(rkdb::LABEL, &b))
+            .map_err(|_| "signing failed")?;
+        b.extend_from_slice(&rkdb::id_bytes(&ids.index.body.serial).ok_or("index id")?);
+        b.extend_from_slice(&s.ed25519);
+        b.extend_from_slice(&s.second);
+        b
+    };
     let v = |name: &str, about: &str| RkdbVector {
         format: 1,
         name: name.into(),
@@ -283,6 +297,7 @@ pub fn generate() -> Result<Vec<RkdbVector>, String> {
             shrunk: &shrunk,
             older: &older,
             fc: &fc,
+            eternal: &eternal,
             cp3: cp(&db3)?,
             other_cp,
         },
@@ -302,6 +317,7 @@ struct Blobs<'a> {
     shrunk: &'a [u8],
     older: &'a [u8],
     fc: &'a [u8],
+    eternal: &'a [u8],
     cp3: String,
     other_cp: String,
 }
@@ -363,7 +379,31 @@ fn cases(b: Blobs, v: &dyn Fn(&str, &str) -> RkdbVector) -> Vec<RkdbVector> {
             checkpoints: vec![Some(b.cp3.clone()), Some(other_cp)],
             ..v(
                 "rkdb-checkpoints-disagree",
-                "the CDN says serial 2, the public log serial 3 with another hash: warn and keep the higher floor",
+                "the CDN says serial 2, the public log serial 3 with another hash: warn; the floor stays where it was",
+            )
+        },
+        RkdbVector {
+            new: Some(e(db3)),
+            checkpoints: vec![
+                None,
+                Some(
+                    Checkpoint {
+                        serial: 1 << 62,
+                        hash: [1; 32],
+                    }
+                    .to_json(),
+                ),
+            ],
+            ..v(
+                "rkdb-checkpoint-one-source",
+                "only the public log answers, with a serial far beyond any database: one source never raises the floor, so serial 2 is accepted",
+            )
+        },
+        RkdbVector {
+            new: Some(e(b.eternal)),
+            ..v(
+                "rkdb-eternal",
+                "a validly signed database whose expires is the end of time: refused, at most 24 hours plus the skew",
             )
         },
         RkdbVector {

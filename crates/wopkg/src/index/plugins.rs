@@ -180,6 +180,52 @@ fn verify_full(
     sig: Option<&[u8]>,
     keys: &[[u8; 32]],
 ) -> Result<(PluginIndex, Freshness)> {
+    verify_full_with(
+        text,
+        sig,
+        None,
+        keys,
+        &system_store(),
+        crate::release::unix_now(),
+    )
+}
+
+fn system_store() -> TrustStore {
+    TrustStore::load(&wol_core::system::PosixHost)
+}
+
+/// The index's signature (audit 2 H2, ADR 0047): once the machine holds WolOS roots, only the
+/// Index intermediate's hybrid `index.json.wsig` (label `wolos/index/1`) counts and the classical
+/// `index.json.sig` alone is refused; before that, the flat Ed25519 key of 0.12.
+fn verify_full_with(
+    text: &[u8],
+    sig: Option<&[u8]>,
+    wsig: Option<&[u8]>,
+    keys: &[[u8; 32]],
+    store: &TrustStore,
+    now: u64,
+) -> Result<(PluginIndex, Freshness)> {
+    if !store.store.roots.is_empty() {
+        let o = wol_core::woltrust::verify(
+            &store.store,
+            &wol_core::woltrust::Input {
+                purpose: wol_core::woltrust::Purpose::Index,
+                content: text,
+                app_id: None,
+                wsig,
+                chain: None,
+                first_seen: None,
+                now,
+            },
+        );
+        return if o.trust == wol_core::woltrust::Trust::Wolos {
+            parse_full(text)
+        } else {
+            Err(Error::untrusted(
+                "The plugin list is not signed by the WolOS Index (a post-quantum signature is required).",
+            ))
+        };
+    }
     match verify_index(text, sig, keys) {
         Ok(Trust::Signed(_)) => parse_full(text),
         _ => Err(Error::untrusted(
@@ -266,10 +312,20 @@ pub fn check_download_with(
             "The plugin download does not match the plugin list.",
         ));
     }
-    if !entry.filecert.is_empty() {
-        check_filecert(entry, store)?;
-    }
     let tar = unpack(file)?;
+    // Audit 2 H2: with WolOS roots the index is Index-signed and every entry carries its file
+    // certificate, so a withdrawn version cannot come back listed without one. L9: it is checked
+    // against the `SHA256` member just unpacked (`verify_member`, rule IDS).
+    if !entry.filecert.is_empty() || !store.store.roots.is_empty() {
+        if entry.filecert.is_empty() {
+            return Err(Error::untrusted(
+                "The plugin list gives this version no file certificate.",
+            ));
+        }
+        let (_, extra) =
+            wol_core::package::verify_wolplug_extra(&tar, keys).map_err(Error::untrusted)?;
+        check_filecert(entry, store, &extra.manifest)?;
+    }
     let v = store
         .verify_wolplug(&tar, keys, now)
         .and_then(wol_core::trust::CheckedPlugin::require_vouched)
@@ -292,11 +348,11 @@ pub fn check_download_with(
 
 /// The entry's file certificate: it must verify against the store for this file's SHA-256,
 /// name the listed id and version, and not be withdrawn ("This version was withdrawn").
-fn check_filecert(entry: &Entry, store: &TrustStore) -> Result<()> {
+fn check_filecert(entry: &Entry, store: &TrustStore, member: &[u8]) -> Result<()> {
     use wol_core::woltrust::filecert;
     let bytes = wol_core::woltrust::b64::decode(&entry.filecert, filecert::MAX_FILE)
         .ok_or_else(|| Error::untrusted("The plugin's file certificate is damaged."))?;
-    match filecert::verify(&store.store, &bytes, &entry.sha256) {
+    match filecert::verify_member(&store.store, &bytes, &entry.sha256, member) {
         Ok(filecert::Checked::Checked(b)) if b.id == entry.id && b.version == entry.version => {
             Ok(())
         }
@@ -336,6 +392,7 @@ fn same_permissions(listed: &[String], declared: &[Permission]) -> bool {
 pub const CACHE_DIR: &str = "wolos/plugin-index";
 const INDEX_FILE: &str = "index.json";
 const SIG_FILE: &str = "index.json.sig";
+const WSIG_FILE: &str = "index.json.wsig";
 
 /// GET `url` into memory, at most `max` bytes (a longer body is refused, not cut).
 fn get_bounded(net: &crate::fetch::Net, url: &str, max: u64) -> Result<Vec<u8>> {
@@ -367,7 +424,16 @@ fn cached_full(dir: &std::path::Path, keys: &[[u8; 32]]) -> Result<(PluginIndex,
     let text = shared::bounded::read_file(&dir.join(INDEX_FILE), MAX_INDEX as u64)
         .ok_or_else(|| Error::unavailable("The plugin list has not been downloaded yet."))?;
     let sig = shared::bounded::read_file(&dir.join(SIG_FILE), 64);
-    verify_full(&text, sig.as_deref(), keys)
+    let wsig =
+        shared::bounded::read_file(&dir.join(WSIG_FILE), wol_core::woltrust::MAX_WSIG as u64);
+    verify_full_with(
+        &text,
+        sig.as_deref(),
+        wsig.as_deref(),
+        keys,
+        &system_store(),
+        crate::release::unix_now(),
+    )
 }
 
 /// The cached index in `dir`, checked again on every read (a changed cache is refused), and
@@ -442,8 +508,24 @@ pub fn refresh(
     keys: &[[u8; 32]],
 ) -> Result<PluginIndex> {
     let text = get_bounded(net, url, MAX_INDEX as u64)?;
-    let sig = get_bounded(net, &format!("{url}.sig"), 64)?;
-    let (index, f) = verify_full(&text, Some(&sig), keys)?;
+    let sig = get_bounded(net, &format!("{url}.sig"), 64).unwrap_or_default();
+    let wsig = get_bounded(
+        net,
+        &format!("{url}.wsig"),
+        wol_core::woltrust::MAX_WSIG as u64,
+    )
+    .unwrap_or_default();
+    fn opt(b: &[u8]) -> Option<&[u8]> {
+        (!b.is_empty()).then_some(b)
+    }
+    let (index, f) = verify_full_with(
+        &text,
+        opt(&sig),
+        opt(&wsig),
+        keys,
+        &system_store(),
+        crate::release::unix_now(),
+    )?;
     // Replay guard (audit C6-2): never older than the cached list (expired or not), never past
     // its own expiry.
     let last = cached_full(dir, keys).map_or(0, |(_, c)| c.serial);
@@ -456,7 +538,12 @@ pub fn refresh(
     )?;
     let cant = || Error::unavailable("The plugin list cannot be saved.");
     std::fs::create_dir_all(dir).map_err(|_| cant())?;
-    for (name, bytes) in [(SIG_FILE, &sig), (INDEX_FILE, &text)] {
+    for (name, bytes) in [(SIG_FILE, &sig), (WSIG_FILE, &wsig), (INDEX_FILE, &text)] {
+        if bytes.is_empty() {
+            // A signature file the server no longer gives is not kept from an older list.
+            let _ = std::fs::remove_file(dir.join(name));
+            continue;
+        }
         shared::atomic::atomic_write(&dir.join(name), 0o644, bytes).map_err(|_| cant())?;
     }
     Ok(index)
@@ -694,6 +781,41 @@ mod tests {
         ruzstd::encoding::compress_to_vec(&tar[..], ruzstd::encoding::CompressionLevel::Fastest)
     }
 
+    /// `e` with a file certificate by the TEST Index for exactly `file` (its `SHA256` member, the
+    /// TEST authority's legacy-length serial), as every entry of an Index-signed list carries one.
+    fn with_fc(p: &wol_core::woltrust::pki::Pki, e: Entry, file: &[u8], version: &str) -> Entry {
+        use wol_core::woltrust::filecert::{self, Body, FileKind};
+        use wol_core::woltrust::pki::{DAY, NOW};
+        let tar = unpack(file).unwrap();
+        let keys = [wol_core::package::public_of(&SEED)];
+        let (_, extra) = wol_core::package::verify_wolplug_extra(&tar, &keys).unwrap();
+        let b = Body {
+            format: 1,
+            serial: "0011223344556677".into(),
+            file_sha256: wol_core::package::sha256_hex(file),
+            manifest_sha256: wol_core::package::sha256_hex(&extra.manifest),
+            id: e.id.clone(),
+            version: version.into(),
+            kind: FileKind::Plugin,
+            origin: None,
+            cert: p.alice.body.serial.clone(),
+            class: None,
+            verdict: wol_core::woltrust::Verdict::Pass,
+            findings: 0,
+            checked_at: NOW - DAY,
+            rkdb_serial: None,
+            terms: None,
+        };
+        Entry {
+            filecert: wol_core::woltrust::b64::encode(&filecert::make(
+                &b,
+                &p.index.body.serial,
+                &p.index.secret,
+            )),
+            ..e
+        }
+    }
+
     /// The TEST authority's store with a fresh list; `revoked` withdraws Alice.
     fn author_store(p: &wol_core::woltrust::pki::Pki, revoked: bool, age: u64) -> TrustStore {
         use wol_core::woltrust::pki::{DAY, NOW};
@@ -747,7 +869,7 @@ mod tests {
             &p.alice.body.serial,
             None,
         );
-        let e = entry_for("alice.demo", &good);
+        let e = with_fc(&p, entry_for("alice.demo", &good), &good, "0.1");
         let fresh = author_store(&p, false, 1);
         let v = check_download_with(&e, &good, &[], &fresh, NOW).unwrap();
         assert_eq!(v.manifest.id, "alice.demo");
@@ -759,7 +881,7 @@ mod tests {
             &p.alice.body.serial,
             Some(&SEED),
         );
-        let eb = entry_for("alice.demo", &both);
+        let eb = with_fc(&p, entry_for("alice.demo", &both), &both, "0.1");
         let withdrawn = author_store(&p, true, 1);
         assert!(check_download_with(&eb, &both, &keys, &fresh, NOW).is_ok());
         let err = check_download_with(&eb, &both, &keys, &withdrawn, NOW).unwrap_err();
@@ -772,7 +894,7 @@ mod tests {
             &p.alice.body.serial,
             Some(&SEED),
         );
-        let ef = entry_for("alice.demo", &forged);
+        let ef = with_fc(&p, entry_for("alice.demo", &forged), &forged, "0.1");
         assert!(check_download_with(&ef, &forged, &keys, &fresh, NOW).is_err());
         // A list 40 days old: the certificate still vouches, not checked for withdrawals (M3).
         let old = author_store(&p, false, 40);
@@ -781,6 +903,7 @@ mod tests {
         let legacy = wolplug("alice.demo", Some(&SEED));
         let el = entry_for("alice.demo", &legacy);
         assert!(check_download_with(&el, &legacy, &keys, &TrustStore::default(), NOW).is_ok());
+        let el = with_fc(&p, el, &legacy, "0.1");
         // ...refused once the machine holds WolOS roots.
         let err = check_download_with(&el, &legacy, &keys, &fresh, NOW).unwrap_err();
         assert!(err.message.contains("previous WolOS key"), "{err}");
@@ -800,11 +923,16 @@ mod tests {
             &p.alice.body.serial,
             None,
         );
+        let member_sha = {
+            let tar = unpack(&good).unwrap();
+            let (_, extra) = wol_core::package::verify_wolplug_extra(&tar, &[]).unwrap();
+            wol_core::package::sha256_hex(&extra.manifest)
+        };
         let body = |version: &str| Body {
             format: 1,
             serial: "0011223344556677".into(),
             file_sha256: wol_core::package::sha256_hex(&good),
-            manifest_sha256: "00".repeat(32),
+            manifest_sha256: member_sha.clone(),
             id: "alice.demo".into(),
             version: version.into(),
             kind: FileKind::Plugin,
@@ -862,6 +990,52 @@ mod tests {
         };
         let err = check_download_with(&e, &good, &[], &pulled, NOW).unwrap_err();
         assert_eq!(err.message, "This version was withdrawn.");
+        // Audit 2 H2: the same version listed again without its file certificate (by whoever
+        // holds the old index key) is refused once the machine holds roots.
+        let stripped = Entry {
+            filecert: String::new(),
+            ..e.clone()
+        };
+        let err = check_download_with(&stripped, &good, &[], &pulled, NOW).unwrap_err();
+        assert!(err.message.contains("no file certificate"), "{err}");
+        // L9: a file certificate naming another SHA256 member is refused.
+        let wrong = Entry {
+            filecert: fc(&Body {
+                manifest_sha256: "00".repeat(32),
+                ..body("0.1")
+            }),
+            ..e.clone()
+        };
+        assert!(check_download_with(&wrong, &good, &[], &fresh, NOW).is_err());
+    }
+
+    /// Audit 2 H2: with WolOS roots the index needs the Index's hybrid `index.json.wsig`; the
+    /// classical `index.json.sig` alone is refused; without roots the flat key still works.
+    #[test]
+    fn an_index_signed_only_with_the_flat_key_is_refused_once_roots_are_held() {
+        use wol_core::woltrust::pki::{NOW, Pki};
+        let p = Pki::new();
+        let text = index(vec![entry("alice.demo")]);
+        let sig = wol_core::package::sign(&SEED, &text);
+        let keys = [wol_core::package::public_of(&SEED)];
+        let roots = author_store(&p, false, 1);
+        assert!(verify_full_with(&text, Some(&sig), None, &keys, &roots, NOW).is_err());
+        let wsig = wol_core::woltrust::make::wsig(
+            &p.index.body.serial,
+            &p.index.secret,
+            wol_core::woltrust::Purpose::Index,
+            &text,
+        );
+        assert!(verify_full_with(&text, Some(&sig), Some(&wsig), &keys, &roots, NOW).is_ok());
+        let by_author = wol_core::woltrust::make::wsig(
+            &p.alice.body.serial,
+            &p.alice.secret,
+            wol_core::woltrust::Purpose::Index,
+            &text,
+        );
+        assert!(verify_full_with(&text, None, Some(&by_author), &keys, &roots, NOW).is_err());
+        let none = TrustStore::default();
+        assert!(verify_full_with(&text, Some(&sig), None, &keys, &none, NOW).is_ok());
     }
 
     /// ST6-5: the list says what a person agrees to; Turn On grants the package manifest's own

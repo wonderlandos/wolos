@@ -36,6 +36,10 @@ pub mod witness;
 #[cfg(feature = "seal")]
 pub mod wolkey;
 
+/// The cryptography crate underneath, for callers that reach wolcrypt only through woltrust (the
+/// fuzz targets: `wolcrypt::detached`).
+pub use wolcrypt;
+
 pub use cert::{Body, Cert, Class, Kind, Level, OrgRef, Usage};
 pub use crypto::{Purpose, Wsig};
 pub use origin::Origin;

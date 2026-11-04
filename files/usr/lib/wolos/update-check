@@ -19,10 +19,21 @@ set -u
 D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
 URL=${WOLOS_RELEASE_URL:-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
 EVERY=72000
+# Stamps for wol-admind's install gate (wol_core::trust::LAST_ATTEMPT_FILE, LAST_OK_FILE):
+# last-attempt when the list's server answered (online), last-ok when a list was installed. A
+# machine online whose list is stale or below the floor holds installs of new apps.
+TRUST=/var/lib/wolos/trust
+CHECKPOINT=${WOLOS_CHECKPOINT_URL:-https://cdn.wolos.org/plugins/revoked.checkpoint.json}
 if command -v wol >/dev/null 2>&1; then
-	mkdir -p /var/lib/wolos/trust 2>/dev/null
-	wol trust update >/dev/null 2>&1 ||
+	mkdir -p "$TRUST" 2>/dev/null
+	if curl -fsS --proto =https --proto-redir =https --max-filesize 256 --max-time 20 -o /dev/null "$CHECKPOINT" 2>/dev/null; then
+		date +%s >"$TRUST/last-attempt" 2>/dev/null
+	fi
+	if wol trust update >/dev/null 2>&1; then
+		date +%s >"$TRUST/last-ok" 2>/dev/null
+	else
 		echo "update-check: could not update the list of withdrawn certificates" >&2
+	fi
 fi
 now=$(date +%s)
 last=$(cat "$D/checked" 2>/dev/null)
@@ -54,10 +65,16 @@ if curl -fsSL -o "$D/base.new" "$URL" 2>/dev/null &&
 	[ -s "$D/base.sig.new" ]; then
 	mv "$D/base.new" "$D/base"
 	mv "$D/base.sig.new" "$D/base.sig"
+	# The Index's hybrid signature (audit 2 M6): required once the machine holds WolOS roots.
+	if curl -fsSL --proto =https --proto-redir =https --max-filesize 16384 -o "$D/base.wsig.new" "$URL.wsig" 2>/dev/null; then
+		mv "$D/base.wsig.new" "$D/base.wsig"
+	else
+		rm -f "$D/base.wsig.new" "$D/base.wsig"
+	fi
 else
 	rm -f "$D/base.new" "$D/base.sig.new"
 fi
 date +%s >"$D/checked"
 chmod 644 "$D/pkg" "$D/checked"
-chmod 644 "$D/audit" "$D/kernels" "$D/base" "$D/base.sig" 2>/dev/null
+chmod 644 "$D/audit" "$D/kernels" "$D/base" "$D/base.sig" "$D/base.wsig" 2>/dev/null
 exit 0

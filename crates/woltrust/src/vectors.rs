@@ -152,16 +152,15 @@ pub fn run(v: &Vector, pki: &PkiFile) -> Result<(Outcome, Store), String> {
         .iter()
         .map(|l| Ok((blob(pki, &l.list)?, blob(pki, &l.wsig)?)))
         .collect::<Result<Vec<_>, String>>()?;
-    let mut store = Store::load(
+    // Root sections first (audit 2 M5), as a machine loads them.
+    let mut store = Store::load_with_sections(
         &all(&v.store.roots)?,
         &all(&v.store.intermediates)?,
+        &all(&v.store.root_sections)?,
         &lists,
         v.now,
         v.store.allow_test,
     );
-    for r in &v.store.root_sections {
-        let _ = store.load_root_section(&blob(pki, r)?);
-    }
     for d in &v.store.rkdb {
         let _ = store.load_rkdb(&blob(pki, d)?, v.now);
     }

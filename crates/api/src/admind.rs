@@ -400,9 +400,8 @@ fn stage_and_install(
     let staged = under("app.wol")?;
     os.copy_in(src, &staged, caller)?;
     // ADR 0046: the second check, as root on the staged copy, with the certificate store.
-    let checked =
-        os.trust_store()
-            .verify_wol_at(&staged, &os.trusted_keys(), None, os.wall_now())?;
+    let ts = os.trust_store();
+    let checked = ts.verify_wol_at(&staged, &os.trusted_keys(), None, os.wall_now())?;
     let (v, outcome) = (checked.verified, checked.outcome);
     let sentence = outcome.code.sentence().unwrap_or_default();
     match outcome.trust {
@@ -432,6 +431,12 @@ fn stage_and_install(
     let installed = query(package::query_installed_argv(&info.package))
         .and_then(|t| package::parse_name_version(&t))
         .map(|(_, v)| v);
+    // Lead decision "RKDB": online with a list past its 24 hours or below the floor, a new app
+    // waits ("could not update the list"); an update of an installed app goes ahead.
+    if installed.is_none() {
+        ts.gate_new_install_now(os.wall_now())
+            .map_err(|s| format!("held ({s})"))?;
+    }
     let steps = package::install_steps(p, &info.version, installed.as_deref())?;
     for s in &steps {
         if !os.run(s, true) {
@@ -1531,6 +1536,63 @@ mod tests {
                 .borrow()
                 .iter()
                 .any(|l| l.contains("refused (issuer-unknown)"))
+        );
+    }
+
+    /// Lead decision "RKDB": online (the update service reached the server within two hours)
+    /// with a list behind its floor, a new app is held; an update of an installed one is not.
+    #[test]
+    fn a_new_app_waits_while_an_online_machine_cannot_update_the_list() {
+        use wol_core::woltrust::pki::NOW;
+        let p = wol_core::woltrust::pki::Pki::new();
+        let f = author_wol("gate", &p);
+        let r = req(AdminAction::WolInstall, &[&f, "signed"]);
+        let mut ts = author_store(&p, false);
+        ts.store.last_attempt = Some(NOW - 600);
+        let fresh = Fake {
+            trust: ts.clone(),
+            pkg: vec![("payload.pkg", "wol-fixture 1.0\n".into())],
+            wall: NOW,
+            ..Fake::default()
+        };
+        assert_eq!(
+            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &fresh),
+            AdminReply::Ok,
+            "connected and current: installs"
+        );
+        ts.observe_rkdb_serial(9);
+        let held = Fake {
+            trust: ts.clone(),
+            pkg: vec![("payload.pkg", "wol-fixture 1.0\n".into())],
+            wall: NOW,
+            ..Fake::default()
+        };
+        assert_eq!(
+            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &held),
+            AdminReply::Failed
+        );
+        assert!(held.ran.borrow().is_empty());
+        assert!(
+            held.log
+                .borrow()
+                .iter()
+                .any(|l| l.contains("could not update the list")),
+            "{:?}",
+            held.log.borrow()
+        );
+        let update = Fake {
+            trust: ts,
+            pkg: vec![
+                ("payload.pkg", "wol-fixture 1.0\n".into()),
+                ("-Q wol-fixture", "wol-fixture 0.9\n".into()),
+            ],
+            wall: NOW,
+            ..Fake::default()
+        };
+        assert_eq!(
+            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &update),
+            AdminReply::Ok,
+            "an installed app's update is not held"
         );
     }
 

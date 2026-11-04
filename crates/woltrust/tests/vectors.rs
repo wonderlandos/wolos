@@ -121,6 +121,8 @@ fn only_the_valid_vectors_are_trusted() {
                     | "emergency-forged-by-intermediate"
                     | "rkdb-index-cannot-revoke-a-ca"
                     | "witness-valid"
+                    | "emergency-section-future-dated"
+                    | "list-eternal"
             );
         assert_eq!(good, named_valid, "{}", v.name);
     }

@@ -35,7 +35,7 @@
     "cert": "1b5dec99507b7a617023f08154fb7d0c36cbe3b383c381fc56e12d3a986373997a54c5ac7e4e8f3e7d4b5f3538a867be4ccbac5b3184af30555835f51ba77649",
     "roots": 2,
     "intermediates": 1,
-    "lists": 1,
+    "lists": 0,
     "dbs": 1,
     "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/revoked-key-compromise\",\"sentence\":\"WolOS no longer trusts the certificate this file was signed with, because its key was exposed.\",\"evidence\":\"1b5dec99507b7a617023f08154fb7d0c36cbe3b383c381fc56e12d3a986373997a54c5ac7e4e8f3e7d4b5f3538a867be4ccbac5b3184af30555835f51ba77649\"}],\"trust\":\"withdrawn\",\"cert\":{\"serial\":\"1b5dec99507b7a617023f08154fb7d0c36cbe3b383c381fc56e12d3a986373997a54c5ac7e4e8f3e7d4b5f3538a867be4ccbac5b3184af30555835f51ba77649\",\"subject\":{\"github_id\":3003,\"login\":\"bob\",\"name\":\"Bob Lima\"},\"level\":\"verified\",\"class\":\"origin\",\"verified_at\":1767321600},\"origin\":{\"repo\":\"https://github.com/bob/notes\",\"tag\":\"v2.0\",\"commit\":\"89abcdef0123456789abcdef0123456789abcdef\",\"built\":1769913600,\"rkdb_serial\":7}}"
   }

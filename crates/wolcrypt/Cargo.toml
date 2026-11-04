@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license = "BSD-2-Clause"
 authors.workspace = true
-description = "WolOS's cryptography in one place: hybrid signatures (Ed25519 + ML-DSA-65, roots Ed25519 + SLH-DSA-SHA2-128s), the hybrid KEM (X25519 + ML-KEM-768) with ChaCha20-Poly1305, derived ids, SHA-512, PBKDF2; pure Rust, no I/O, no_std with alloc"
+description = "WolOS's cryptography in one place: hybrid signatures (Ed25519 + ML-DSA-65, roots Ed25519 + SLH-DSA-SHA2-128s), the hybrid KEM (X25519 + ML-KEM-768) with ChaCha20-Poly1305, derived ids, SHA-512, PBKDF2; pure Rust, no I/O, a std crate written no_std-friendly (core and alloc only)"
 
 [lib]
 name = "wolcrypt"

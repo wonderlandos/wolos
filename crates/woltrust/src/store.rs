@@ -31,6 +31,11 @@ pub struct Store {
     /// saw in a signed release manifest, a file certificate or the checkpoints). A store whose
     /// newest database is below it is behind: [`Store::freshness`] says stale at best.
     pub floor: u64,
+    /// When the update service last reached the list's server (its `last-attempt` stamp), Unix
+    /// seconds: the "connected" signal of the install gate.
+    pub last_attempt: Option<u64>,
+    /// When it last installed a list or database (`last-ok`).
+    pub last_ok: Option<u64>,
     /// Why something was left out (for a log, never shown).
     pub notes: Vec<String>,
 }
@@ -59,6 +64,21 @@ impl Store {
     pub fn load(
         roots: &[impl AsRef<[u8]>],
         intermediates: &[impl AsRef<[u8]>],
+        lists: &[(impl AsRef<[u8]>, impl AsRef<[u8]>)],
+        now: u64,
+        allow_test: bool,
+    ) -> Store {
+        let none: [&[u8]; 0] = [];
+        Store::load_with_sections(roots, intermediates, &none, lists, now, allow_test)
+    }
+
+    /// [`Store::load`] with root-signed sections (`.rkdr` files, the sections kept from earlier
+    /// databases) loaded before any list (audit 2 M5): a section that withdraws the Index (or a
+    /// root on its path) is in place before the Index's lists are judged, so they never load.
+    pub fn load_with_sections(
+        roots: &[impl AsRef<[u8]>],
+        intermediates: &[impl AsRef<[u8]>],
+        sections: &[impl AsRef<[u8]>],
         lists: &[(impl AsRef<[u8]>, impl AsRef<[u8]>)],
         now: u64,
         allow_test: bool,
@@ -106,6 +126,11 @@ impl Store {
                     .notes
                     .push(format!("intermediate {i}: a root does not belong here")),
                 Err(e) => s.notes.push(format!("intermediate {i}: {e}")),
+            }
+        }
+        for (i, raw) in sections.iter().enumerate() {
+            if let Err(e) = s.load_root_section(raw.as_ref(), now) {
+                s.notes.push(format!("root section {i}: {}", e.as_str()));
             }
         }
         // Lists signed by a root first: they can revoke the Index intermediate that signs the rest.
@@ -173,15 +198,9 @@ impl Store {
             return fail(self, "list issued in the future");
         }
         let at = parsed.issued;
-        if !is_root {
-            let ok = verify::path(cert, &[], self)
-                .ok()
-                .filter(|p| p.iter().all(|c| c.valid_at(at)))
-                .filter(|p| verify::revocation(p, self, None).is_none());
-            if ok.is_none() {
-                return fail(self, "signer is not a valid, unrevoked intermediate");
-            }
-        } else if !cert.valid_at(at) {
+        if !is_root && !self.list_signer_ok(cert, at) {
+            return fail(self, "signer is not a valid, unrevoked intermediate");
+        } else if is_root && !cert.valid_at(at) {
             return fail(self, "signing root was not valid when it issued the list");
         }
         Some(RevList {
@@ -189,6 +208,119 @@ impl Store {
             signer: cert.body.serial.clone(),
             signer_is_root: is_root,
         })
+    }
+
+    /// True when the intermediate `cert` may sign a list issued at `at`: its path reaches the
+    /// pinned roots, every certificate on it was valid then, and nothing the store holds
+    /// withdraws one of them.
+    fn list_signer_ok(&self, cert: &Cert, at: u64) -> bool {
+        verify::path(cert, &[], self)
+            .ok()
+            .filter(|p| p.iter().all(|c| c.valid_at(at)))
+            .filter(|p| verify::revocation(p, self, None).is_none())
+            .is_some()
+    }
+
+    /// Drops the lists and databases whose signer a root section kept since withdraws (audit 2
+    /// M5: whatever order the files came in, a withdrawn Index's lists stop counting).
+    fn prune(&mut self) {
+        let lists = std::mem::take(&mut self.lists);
+        for l in lists {
+            let signer = self
+                .roots
+                .iter()
+                .chain(self.intermediates.iter())
+                .find(|c| c.body.serial == l.signer)
+                .cloned();
+            let ok = signer.is_some_and(|c| {
+                if l.signer_is_root {
+                    verify::revocation(&[&c], self, None).is_none()
+                } else {
+                    self.list_signer_ok(&c, l.list.issued)
+                }
+            });
+            if ok {
+                self.lists.push(l);
+            } else {
+                self.notes.push(format!(
+                    "list by {}: its signer is withdrawn by a root section",
+                    l.signer
+                ));
+            }
+        }
+        let dbs = std::mem::take(&mut self.dbs);
+        for h in dbs {
+            if self
+                .signer_ok(&h.db.signer, u64::from(h.db.issued), false, None)
+                .is_some()
+            {
+                self.dbs.push(h);
+            } else {
+                self.notes.push(format!(
+                    "revocation database {}: its signer is withdrawn by a root section",
+                    h.db.serial
+                ));
+            }
+        }
+    }
+
+    /// Keeps a verified root section (once), then drops what it withdraws.
+    fn keep_section(&mut self, r: HeldRoot) {
+        if !self
+            .root_sections
+            .iter()
+            .any(|h| h.section.bytes == r.section.bytes)
+        {
+            self.root_sections.push(r);
+            self.prune();
+        }
+    }
+
+    /// Checks an intermediate certificate before it is kept (`/var/lib/wolos/trust/
+    /// intermediates/`, a rotated Index fetched from the CDN): its path reaches the pinned roots
+    /// with both roots' signatures, every certificate on it is valid at `now` and none is
+    /// withdrawn.
+    pub fn check_intermediate(&self, c: &Cert, now: u64) -> Result<(), verify::Code> {
+        if c.body.kind != Kind::Intermediate {
+            return Err(verify::Code::BadIssuer);
+        }
+        let p = verify::path(c, &[], self)?;
+        if let Some(code) = verify::time_problem(&p, now, None) {
+            return Err(code);
+        }
+        match verify::revocation(&p, self, None) {
+            Some(code) => Err(code),
+            None => Ok(()),
+        }
+    }
+
+    /// The hard entries (`key-compromise`, `abuse`) the database `new` adds over `held`, as one
+    /// list by its Index: what the memory of seen revocations must keep (audit 2 M4), so a
+    /// rolled-back database cannot drop them. Entries `held` has with the same or a stronger
+    /// reason are left out.
+    pub fn hard_added(new: &HeldDb, held: Option<&HeldDb>) -> RevList {
+        let entries = new
+            .db
+            .entries
+            .iter()
+            .filter(|e| e.reason.is_hard())
+            .filter(|e| {
+                held.and_then(|h| h.db.entries.lookup(&e.id))
+                    .is_none_or(|o| rkdb::strength(o.reason) < rkdb::strength(e.reason))
+            })
+            .map(|e| e.to_json())
+            .collect();
+        RevList {
+            list: revoked::ListText {
+                format: crate::FORMAT,
+                serial: new.db.serial,
+                issued: u64::from(new.db.issued),
+                expires: u64::from(new.db.expires),
+                entries,
+            },
+            signer: new.signer.clone(),
+            signer_is_root: false,
+        }
     }
 
     /// Adds the memory of seen revocations (audit M1). Entries whose signer is no root or
@@ -208,10 +340,17 @@ impl Store {
     }
 
     /// The memory after this store's lists: what a machine must keep (`seen-revocations.json`).
-    pub fn seen(&self, old: &revoked::Seen) -> revoked::Seen {
+    /// Entries the memory has no room for are counted in a note (audit 2 M4: never silently).
+    pub fn seen(&mut self, old: &revoked::Seen) -> revoked::Seen {
         let mut s = old.clone();
+        let mut refused = 0;
         for l in &self.lists {
-            s.add(l);
+            refused += s.add(l).refused;
+        }
+        if refused > 0 {
+            self.notes.push(format!(
+                "revocation memory full: {refused} entries not remembered"
+            ));
         }
         s
     }
@@ -305,8 +444,15 @@ impl Store {
     }
 
     /// Verifies a root-signed section: a pinned root, valid when it signed, not withdrawn, that
-    /// does not name itself.
-    pub fn check_root_section(&self, s: &rkdb::RootSection) -> Result<HeldRoot, rkdb::Error> {
+    /// does not name itself, not issued after `now` (plus [`verify::CLOCK_SKEW`]; audit 2 L2).
+    pub fn check_root_section(
+        &self,
+        s: &rkdb::RootSection,
+        now: u64,
+    ) -> Result<HeldRoot, rkdb::Error> {
+        if u64::from(s.issued) > now.saturating_add(verify::CLOCK_SKEW) {
+            return Err(rkdb::Error::Malformed);
+        }
         let c = self
             .signer_ok(&s.signer, u64::from(s.issued), true, None)
             .ok_or(rkdb::Error::BadSignature)?;
@@ -334,7 +480,7 @@ impl Store {
         }
         // The root section first: it may withdraw the Index itself.
         let root = match &db.root {
-            Some(r) => Some(self.check_root_section(r)?),
+            Some(r) => Some(self.check_root_section(r, now)?),
             None => None,
         };
         let c = self
@@ -354,32 +500,84 @@ impl Store {
         Ok((HeldDb { db, signer }, root))
     }
 
-    /// Adds a database after [`Store::check_rkdb`]; on failure it is left out with a note.
+    /// The root section a database carries, verified on its own: kept even when the rest of the
+    /// file is refused (audit 2 H1: a section that withdraws the Index, or a root on its path,
+    /// makes the Index block fail, and it is exactly the withdrawal that must arrive). The
+    /// section is found by the layout alone, so a database the Index got wrong in any other way
+    /// still delivers it.
+    pub fn salvage_root_section(&self, bytes: &[u8], now: u64) -> Option<HeldRoot> {
+        let s = rkdb::root_section_in(bytes)?;
+        self.check_root_section(&s, now).ok()
+    }
+
+    /// Adds a database after [`Store::check_rkdb`]; on failure it is left out with a note, but a
+    /// root section it carries that verifies on its own is kept ([`Store::salvage_root_section`]).
     pub fn load_rkdb(&mut self, bytes: &[u8], now: u64) -> Result<(), rkdb::Error> {
         match self.check_rkdb(bytes, now) {
             Ok((db, root)) => {
-                if let Some(r) = root {
-                    self.root_sections.push(r);
-                }
                 self.dbs.push(db);
+                if let Some(r) = root {
+                    self.keep_section(r);
+                }
                 Ok(())
             }
             Err(e) => {
-                self.notes
-                    .push(format!("revocation database: {}", e.as_str()));
+                self.refuse_db(bytes, now, e);
                 Err(e)
             }
         }
     }
 
-    /// Adds a root-signed section on its own (`.rkdr`, `woltrust emergency`).
-    pub fn load_root_section(&mut self, bytes: &[u8]) -> Result<(), rkdb::Error> {
+    fn refuse_db(&mut self, bytes: &[u8], now: u64, e: rkdb::Error) {
+        self.notes
+            .push(format!("revocation database: {}", e.as_str()));
+        if let Some(r) = self.salvage_root_section(bytes, now) {
+            self.notes.push(format!(
+                "revocation database: its root section by {} is kept",
+                r.signer
+            ));
+            self.keep_section(r);
+        }
+    }
+
+    /// [`Store::load_rkdb`] for a database that must also pass the acceptance rules against what
+    /// the store already holds ([`rkdb::accept`]: the floor, no older serial, no dropped or
+    /// weakened entry, the chain): the state file `/var/lib/wolos/trust/revoked.rkdb` after the
+    /// image's database (audit 2 M4), so a restored or rolled-back file is left out with a note.
+    /// Its root section, when it verifies, is kept either way.
+    pub fn load_rkdb_accepted(&mut self, bytes: &[u8], now: u64) -> Result<(), rkdb::Error> {
+        let (h, root) = match self.check_rkdb(bytes, now) {
+            Ok(x) => x,
+            Err(e) => {
+                self.refuse_db(bytes, now, e);
+                return Err(e);
+            }
+        };
+        let held = self.best_db().map(|d| d.db.clone());
+        if let Some(r) = root {
+            self.keep_section(r);
+        }
+        if let Err(e) = rkdb::accept(&h.db, held.as_ref(), self.floor) {
+            self.notes.push(format!(
+                "revocation database {}: {}, left out",
+                h.db.serial,
+                e.as_str()
+            ));
+            return Err(e);
+        }
+        self.dbs.push(h);
+        self.prune();
+        Ok(())
+    }
+
+    /// Adds a root-signed section on its own (`.rkdr`, `woltrust emergency`), checked at `now`.
+    pub fn load_root_section(&mut self, bytes: &[u8], now: u64) -> Result<(), rkdb::Error> {
         let (s, n) = rkdb::RootSection::parse(bytes)?;
         if n != bytes.len() {
             return Err(rkdb::Error::Malformed);
         }
-        let r = self.check_root_section(&s)?;
-        self.root_sections.push(r);
+        let r = self.check_root_section(&s, now)?;
+        self.keep_section(r);
         Ok(())
     }
 }

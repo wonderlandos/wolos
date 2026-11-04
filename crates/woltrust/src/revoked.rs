@@ -116,10 +116,22 @@ pub struct Seen {
     pub entries: Vec<SeenEntry>,
 }
 
-/// Largest memory file read: 40,000 entries of about 100 bytes.
-pub const MAX_SEEN_BYTES: usize = 4 << 20;
-/// Most entries kept in memory.
-pub const MAX_SEEN_ENTRIES: usize = 40_000;
+/// Largest memory file read: [`MAX_SEEN_ENTRIES`] entries of up to 420 bytes each as
+/// [`Seen::to_bytes`] writes them (two 128-hex ids), so a full memory always reads back.
+pub const MAX_SEEN_BYTES: usize = 64 << 20;
+/// Most entries kept in memory (audit 2 M4: raised from 40,000; a full memory is refused loudly,
+/// see [`Added::refused`]).
+pub const MAX_SEEN_ENTRIES: usize = 150_000;
+
+/// What [`Seen::add`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Added {
+    /// Entries added.
+    pub added: usize,
+    /// Entries left out because the memory holds [`MAX_SEEN_ENTRIES`]: never silent, the caller
+    /// logs it.
+    pub refused: usize,
+}
 
 impl Seen {
     /// Parses the memory file within [`MAX_SEEN_BYTES`] and [`MAX_SEEN_ENTRIES`].
@@ -141,27 +153,35 @@ impl Seen {
     }
 
     /// Adds every entry of `l` not held yet (same serial, reason and signer); the old entries
-    /// stay, in order. Returns how many were added.
-    pub fn add(&mut self, l: &RevList) -> usize {
+    /// stay, in order. Returns how many were added and how many the cap refused.
+    pub fn add(&mut self, l: &RevList) -> Added {
         self.format = crate::FORMAT;
-        let mut n = 0;
+        let mut out = Added::default();
+        let mut have: std::collections::HashSet<(String, &'static str)> = self
+            .entries
+            .iter()
+            .filter(|s| s.signer == l.signer)
+            .map(|s| (s.serial.clone(), s.reason.as_str()))
+            .collect();
         for e in &l.list.entries {
-            let have = self
-                .entries
-                .iter()
-                .any(|s| s.serial == e.serial && s.reason == e.reason && s.signer == l.signer);
-            if !have && self.entries.len() < MAX_SEEN_ENTRIES {
-                self.entries.push(SeenEntry {
-                    serial: e.serial.clone(),
-                    at: e.at.min(l.list.issued),
-                    reason: e.reason,
-                    signer: l.signer.clone(),
-                    by_root: l.signer_is_root,
-                });
-                n += 1;
+            if have.contains(&(e.serial.clone(), e.reason.as_str())) {
+                continue;
             }
+            if self.entries.len() >= MAX_SEEN_ENTRIES {
+                out.refused += 1;
+                continue;
+            }
+            have.insert((e.serial.clone(), e.reason.as_str()));
+            self.entries.push(SeenEntry {
+                serial: e.serial.clone(),
+                at: e.at.min(l.list.issued),
+                reason: e.reason,
+                signer: l.signer.clone(),
+                by_root: l.signer_is_root,
+            });
+            out.added += 1;
         }
-        n
+        out
     }
 
     /// The memory as lists for the check: one per signer, so the rule "only a root withdraws an
@@ -212,11 +232,19 @@ pub fn parse(bytes: &[u8]) -> Result<ListText, &'static str> {
     if l.entries.len() > MAX_REVOKED_ENTRIES || l.expires <= l.issued {
         return Err("revocation list out of range");
     }
+    // Audit 2 M1: a list fresh for longer than its lifetime (plus the clock skew) is refused.
+    if l.expires > l.issued.saturating_add(MAX_LIST_LIFETIME) {
+        return Err("revocation list lives too long");
+    }
     if !l.entries.iter().all(|e| is_serial(&e.serial)) {
         return Err("revocation serial malformed");
     }
     Ok(l)
 }
+
+/// The longest `expires - issued` a reader accepts for `revoked.json`: [`crate::LIST_LIFETIME`]
+/// plus [`crate::verify::CLOCK_SKEW`].
+pub const MAX_LIST_LIFETIME: u64 = crate::LIST_LIFETIME + crate::verify::CLOCK_SKEW;
 
 /// How current the best list is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

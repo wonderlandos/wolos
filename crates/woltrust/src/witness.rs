@@ -28,6 +28,21 @@ pub fn sign(serial: &str, secret: &crate::make::Secret, file: &[u8], at: u64) ->
     .to_bytes()
 }
 
+/// A checkpoint (`revoked.checkpoint.json`) that counts only with a witness's signature beside it
+/// (`revoked.checkpoint.json.wsig`, audit 2 M2): TLS alone is classical, and one forged
+/// checkpoint must not move a machine's floor. None when the signature does not verify as
+/// `wolos` or the text is not a checkpoint.
+pub fn checkpoint(
+    store: &Store,
+    file: &[u8],
+    wsig: &[u8],
+    now: u64,
+) -> Option<crate::rkdb::Checkpoint> {
+    let out = verify(store, file, wsig, now);
+    (out.trust == crate::report::Trust::Wolos).then_some(())?;
+    crate::rkdb::Checkpoint::parse(file)
+}
+
 /// Checks `wsig` over `file` against the store (roots pinned, the witness among the
 /// intermediates). Valid when the outcome's trust is `wolos`; its `line` is the witness line. A
 /// signature without `at` is not a witness signature and does not verify.

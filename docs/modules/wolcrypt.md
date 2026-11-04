@@ -8,7 +8,8 @@ system, the hub Worker (wasm), the browser and C programs all call it.
 PBKDF2, and the hub's wasm build had to leave sealing out because ring is not pure Rust. One small
 crate with one API is easier to review, to fuzz and to swap a primitive in, and it builds for wasm.
 
-**How.** `#![no_std]` with `alloc`, `#![forbid(unsafe_code)]`, no I/O, no clock, no random
+**How.** A std crate written no_std-friendly (only `core` and the `alloc` types; a `no_std` build
+is `#![no_std]` and `extern crate alloc` away, which rule RR-044 forbids today), `#![forbid(unsafe_code)]`, no I/O, no clock, no random
 generator: callers pass fresh random bytes. Pure-Rust dependencies only, no ring: ed25519-dalek,
 fips204 (ML-DSA-65), fips205 (SLH-DSA-SHA2-128s), fips203 (ML-KEM-768), curve25519-dalek (X25519),
 sha2, chacha20poly1305 0.10.1 and pbkdf2 0.12.2 (RustCrypto, MIT/Apache-2.0, new with this crate),
@@ -18,7 +19,7 @@ subtle, zeroize, serde/serde_json (alloc only, for the detached check).
 |---|---|
 | `hash` | SHA-512, SHA-512/256 (FIPS 180-4), SHA-256; lowercase hex |
 | `id` | derived ids: `of_keys` (SHA-512 over `ed25519 \|\| ml-dsa-65 \|\| x25519 \|\| ml-kem-768`; roots `ed25519 \|\| slh-dsa-sha2-128s`; absent keys omitted), `of_file` (SHA-512 of the `SHA256` member), `of_ed25519` |
-| `sign` | `SigningKey::from_seed(seed, Scheme::Signing \| Scheme::Root)`, `sign(label, content)`, `verify(keys, label, content, sig)`: hybrid, both halves, label-bound; no classical-only call |
+| `sign` | `SigningKey::from_seed(seed, Scheme::Signing \| Scheme::Root)`, `sign(label, content) -> Result<Sig, Fail>` (a post-quantum half that cannot be made is `Fail::Second`, never an empty half), `verify(keys, label, content, sig)`: hybrid, both halves, label-bound; no classical-only call |
 | `kem` | `EncSecret::from_seed`, `seal(format, to, prefix, plaintext, rnd)`, `open(format, keys, sealed, prefix_len)`: X25519 + ML-KEM-768, bound key schedule, ChaCha20-Poly1305 |
 | `aead` | ChaCha20-Poly1305 seal/open with associated data (RFC 8439) |
 | `kdf` | `pbkdf2_sha512(pass, salt, rounds)`: PBKDF2-HMAC-SHA512, 210 000 to 10 000 000 rounds, new files 600 000 |
@@ -36,7 +37,9 @@ before the move derives and signs to the same bytes (`crates/woltrust/vectors/` 
 
 Secret types wipe themselves: `SigningKey` (seed and Ed25519 key; the post-quantum secret is derived
 per signature and wiped), `EncSecret` (X25519 scalar and ML-KEM decapsulation key), every
-intermediate secret in `Zeroizing`.
+intermediate secret in `Zeroizing`: the three SLH-DSA seeds, the ML-KEM `d`/`z` seeds and
+encapsulation message, the AEAD key and nonce, and in the C ABI each seed and `rnd` copied out of
+the caller's buffer (TRUST audit 2 L3; `wolcrypt::Zeroizing` is re-exported for that).
 
 ## Ids: why they cannot be forged or collide
 

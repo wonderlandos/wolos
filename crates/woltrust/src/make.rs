@@ -29,13 +29,23 @@ impl Secret {
         self.key.public()
     }
 
-    /// Signs `label || 0 || SHA-512(content)` with both halves.
+    /// Signs `label || 0 || SHA-512(content)` with both halves (see [`Secret::sign_message`]).
     pub fn sign(&self, purpose: Purpose, content: &[u8]) -> Sig {
-        self.key.sign(purpose.label(), content)
+        self.sign_message(&wolcrypt::sign::message(purpose.label(), content))
     }
 
-    /// Signs an already built message (`crate::crypto::message_for`) with both halves.
+    /// Signs an already built message (`crate::crypto::message_for`) with both halves. When the
+    /// post-quantum half cannot be made the result is all zeros with an empty second half, which
+    /// never verifies; producers that can report it use [`Secret::try_sign_message`].
     pub fn sign_message(&self, msg: &[u8]) -> Sig {
+        self.try_sign_message(msg).unwrap_or_else(|_| Sig {
+            ed25519: [0; 64],
+            second: Vec::new(),
+        })
+    }
+
+    /// [`Secret::sign_message`] that says when the post-quantum half failed (audit 2 L3).
+    pub fn try_sign_message(&self, msg: &[u8]) -> Result<Sig, wolcrypt::sign::Fail> {
         self.key.sign_message(msg)
     }
 

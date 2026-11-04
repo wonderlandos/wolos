@@ -28,7 +28,10 @@ signature is for, so one made for a package cannot be replayed as an index or a 
 | `wolos/plugin/1` | the `SHA256` member of a `.wolplug` |
 | `wolos/extension/1` | the `SHA256` member of an extension |
 | `wolos/index/1` | the hub index |
-| `wolos/revocation/1` | a revocation list |
+| `wolos/revocation/1` | a revocation list, a revocation database, a root-signed section |
+| `wolos/release/1` | a file certificate (the Index) |
+| `wolos/witness/1` | a witness's detached signature on a published file |
+| `wolos/request/1` | the proof of possession in a certificate request |
 
 A signature has two halves and **both must verify**. Below the roots the pair is Ed25519 plus
 ML-DSA-65; the two roots use Ed25519 plus SLH-DSA-SHA2-128s. There is no "either" mode: the format
@@ -372,7 +375,7 @@ valid 24 hours too). The image ships the database current at build time
 file certificate carries `rkdb_serial` (and the release origin may), the serial the signer saw; a
 verified one raises the floor (`TrustStore::observe_rkdb_serial`, `/var/lib/wolos/trust/rkdb-floor`).
 The checkpoint is read from the CDN and from the public log (`wol_core::cdn::RKDB_CHECKPOINTS`); they
-must agree, else `wol trust update` warns and keeps the higher serial as the floor; a database whose
+must agree, else `wol trust update` warns and the floor stays; a database whose
 serial both name must have their hash. A new database is taken only when it verifies, is not below
 the floor, keeps every entry held (no shrinking, no weakening) and, one serial up, chains by
 `prev_hash`. It is kept at `/var/lib/wolos/trust/revoked.rkdb`; its root-signed entries go into
@@ -380,6 +383,14 @@ the floor, keeps every entry held (no shrinking, no weakening) and, one serial u
 floor says "could not update the list" and holds installs of new apps (`TrustStore::gate_new_install`,
 `rkdb::gate`); installed apps keep running; offline the stale rules apply. update-check runs `wol trust
 update` every hour, which fetches `revoked.rkdb` and the checkpoints, falling back to the JSON list.
+"Connected" is update-check's `last-attempt` stamp (`/var/lib/wolos/trust/last-attempt`, written
+when the checkpoint URL answered) within two hours; `last-ok` is written after a list was installed.
+wol-admind asks `TrustStore::gate_new_install_now` in `stage_and_install` before installing an app
+that is not installed yet (an update of an installed app is never held). The floor persists in `/var/lib/wolos/trust/rkdb-floor` and rises only to the serial of a
+database that verified (`wol trust update`); never from a checkpoint alone (one or two that
+disagree only warn; two that agree refuse an older database for that check), never from a release
+manifest or any unverified text (audit 2 M2 and its note: one answering URL must not freeze every
+machine). A `rkdb_serial` in a verified file certificate raises the floor in memory for that check.
 
 Measured on the CTO box (Xeon Platinum 8488C, 32 threads, release, one run, other jobs idle;
 `cargo test --release -p woltrust --test rkdb -- --ignored --nocapture`), 1 000 000 entries, file
@@ -403,9 +414,9 @@ Runbook, in ten plain steps:
 3. Take the surviving root's key out of the backup: `woltrust extract --backup wolos-trust.wolbackup --role root-b > b.wolkey` (or `root-a`), offline.
 4. Sign the withdrawal: `woltrust emergency --root A --roots public/roots --revoke <root A id> --reason key-compromise --out emergency.rkdr --key-file b.wolkey`; type each id back when asked.
 5. Check it: `wol trust show emergency.rkdr` prints the line of each entry.
-6. Give `emergency.rkdr` to the pipeline: the next database carries it (`woltrust rkdb make --root-section emergency.rkdr ...`); machines take it within the hour.
+6. Publish `emergency.rkdr` on its own at `https://cdn.wolos.org/plugins/emergency.rkdr` (and the mirror). Every machine's hourly `wol trust update` fetches it first, independently of the database, and keeps its entries for ever (`seen-revocations.json`): this is the path that works when the Index itself, or a root on its path, is what was withdrawn, because a database signed by that Index is then refused (its section is still salvaged and kept). Also carry it in the next database (`woltrust rkdb make --root-section emergency.rkdr ...`). On a machine without network: `wol trust update emergency.rkdr`.
 7. If a root was withdrawn: make its replacement and new intermediates, `woltrust init --rotate-intermediates --backup wolos-trust.wolbackup --root root-b --subject-new "<text>" --out new` (the example subjects of `woltrust init`: root A "Júlia Klee - Kleedolinux - WolOS.org - 10/04/2009 - 9 de Julho 1932 - São Paulo", root B "WolOS Project - hello@wolos.org").
-8. Replace the CI secrets with the new `ci/` files (lines 1-3 of `woltrust init`).
+8. Replace the CI secrets with the new `ci/` files (lines 1-3 of `woltrust init`), and publish the new intermediates (co-signed by both roots) at `https://cdn.wolos.org/plugins/intermediates.json` (a JSON array of `.wolcert` objects): `wol trust update` keeps each that reaches both pinned roots in `/var/lib/wolos/trust/intermediates`, so a new Index or Authors CA under the surviving roots needs no new image (a new root still does).
 9. Ship the new root in the next image (`files/usr/share/wolos/trust/roots/`); until then nothing new validates under the dead root.
 10. Re-issue every author certificate with the new Authors CA (same author keys, so the same ids), and delete the extracted key file.
 
@@ -425,6 +436,12 @@ An absent field is `none`. Terms: requests and certificate bodies carry `terms {
 verify); file certificates may too. Vectors: `line` in every valid vector, `vectors/lines.json` for
 every TEST certificate and the two example roots, `line` in the file certificate vectors, the
 entries' lines in `vectors/rkdb/`.
+
+### The previous key's end date (audit 2 M6)
+A file signed only with WolOS's previous flat Ed25519 key counts as `legacy` (vouched) only while
+the machine holds no root and only until `wol_core::trust::LEGACY_UNTIL`, 2027-02-01T00:00:00Z
+(the lead may move it); from then on it is refused (`legacy-refused`). The release manifest needs
+the Index's `release.json.wsig` once roots are held.
 
 ### wolcrypt
 The crypto moved to `crates/wolcrypt` (docs/modules/wolcrypt.md): woltrust's `crypto` re-exports its

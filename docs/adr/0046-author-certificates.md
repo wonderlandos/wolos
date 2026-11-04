@@ -40,10 +40,12 @@ Labels: [mem] = taken from project memory or the code as it is; [fresh] = reason
 - [fresh, measured] Cost of one check on this box (Xeon Platinum 8488C, x86-64 baseline, release build, LTO, 4 KiB message, one run): Ed25519 verify 99.6 us, ML-DSA-65 verify 218 us (137.7 us with the second crate below), SLH-DSA-SHA2-128s verify 327.5 us. A full chain (package, leaf, intermediate) is 3 Ed25519 + 2 ML-DSA-65 + 1 SLH-DSA, about 1.1 ms. Not measured on a laptop or in wasm.
 
 ### Revocation
-- **One signed list**, `revoked.json` + `revoked.json.wsig` (label `wolos/revocation/1`, signed by the Index intermediate; revocations of intermediates or of a root are signed by a root): `{"format":1,"serial":N,"issued":T,"expires":T+7d,"entries":[{"serial":"<16 hex>","at":T,"reason":"key-compromise|abuse|superseded|ceased"}]}`. It travels with every index publication (at least daily, ADR 0047), sits in each image, and the update-check timer that already runs hourly (ADR 0040) refreshes it.
+> Brought to Phase 4 and TRUST audit 2 (2026-11-04); the first design said 7-day lists, 16-hex serials and "older than 30 days: unsigned", all replaced as below.
+- **The signed revocation data**: the binary database `revoked.rkdb` (sorted 64-byte ids, Index-signed, with a root-signed section for intermediates and roots; docs/modules/trust.md "Phase 4") and, as its readable export and fallback, `revoked.json` + `revoked.json.wsig` (label `wolos/revocation/1` for both; signed by the Index intermediate, or by a root for an intermediate or a root): `{"format":1,"serial":N,"issued":T,"expires":T+24h,"entries":[{"serial":"<128-hex id>","at":T,"reason":"key-compromise|abuse|superseded|ceased|withdrawn-version"}]}`. 16-hex serials remain only for the TEST authority and WolOS's previous flat key, which is looked up under both its 16-hex and 128-hex ids. Both are republished hourly, sit in each image, and the hourly update-check timer (ADR 0040) refreshes them. A reader refuses a database fresh for more than 24 hours plus the 24-hour clock skew, a JSON list for more than 7 days plus the skew, and a root section dated more than the skew ahead of its clock (audit 2 M1, L2).
+- **Emergency withdrawals arrive on their own.** A root section that withdraws the Index (or a root on its path) makes the Index's database fail; the section is still taken from it and kept, and it is also published alone as `emergency.rkdr` and fetched every hour regardless of the database (audit 2 H1).
 - **Reasons**: `key-compromise` and `abuse` invalidate every signature by that certificate, whenever made (a thief can sign with any date). `superseded` and `ceased` keep files the index saw before `at` valid; new signatures fail.
 - **Revoked fails closed.** A certificate found in any list the machine holds, fresh or stale, is refused with no override. On a newly arrived revocation, installed apps signed by that certificate get one notification ("The certificate “Name” was signed with has been withdrawn. ...") and their next launch and every update ask the unsigned question (L5 decides whether launch is blocked instead).
-- **Stale offline**: list fresh (before `expires`): normal. Stale up to 30 days past `expires`: verified files still show as verified with one more line, "Not checked for withdrawn certificates since 3 November". Older than that: verified files count as unsigned (the question), never refused. The window bounds how long a leaked key keeps working on a machine that never goes online; a machine that is online gets a new list within an hour.
+- **Stale offline**: list fresh (before `expires`): normal. Stale up to 30 days past `expires`: verified files still show as verified with one more line, "Not checked for withdrawn certificates since 3 November". Older than that, or with no list at all: the signature keeps its value with the line "not checked for withdrawn certificates since" (audit 1 M3), never refused and never turned unsigned. A connected machine whose list is stale or below its floor holds installs of new apps; a machine that is online gets a new list within an hour.
 - A root is revoked only by the other root: a list signed by B may revoke A (and B becomes active); clients pin both, so this works without an image update. If both leak, only an image update recovers.
 
 ### What the person sees
@@ -86,9 +88,9 @@ Store install page and the open sheet (`TRUST_ROWS` grows from three to five row
 | Crate | Version | Use | Notes |
 |---|---|---|---|
 | ed25519-dalek | 2.2.0 | Ed25519 (in tree) | `verify_strict` as today |
-| fips204 | 0.5.0 | ML-DSA-65, favourite | pure Rust, `no_std`, no heap; README claims constant-time signing and a WASM build; MIT OR Apache-2.0; no independent audit named |
+| fips204 | =0.5.0 | ML-DSA-65, favourite | pure Rust, `no_std`, no heap; README claims constant-time signing and a WASM build; MIT OR Apache-2.0; no independent audit named |
 | ml-dsa | 0.1.2 | second ML-DSA, tests only | pure Rust; README: "never been independently audited"; Apache-2.0 OR MIT |
-| fips205 | 0.5.0 | SLH-DSA-SHA2-128s (roots) | pure Rust, `no_std`; MIT OR Apache-2.0 |
+| fips205 | =0.5.0 | SLH-DSA-SHA2-128s (roots) | pure Rust, `no_std`; MIT OR Apache-2.0 |
 | slh-dsa | 0.2.0-rc.5 | none | pre-release |
 | aws-lc-rs | 1.16.3 | none | ML-DSA only behind its `unstable` feature, C and assembly, no wasm |
 | fips203 | =0.5.0 | ML-KEM-768 (sealed messages), added 2026-11-04 | pure Rust, `no_std`, same author and family as fips204/fips205; MIT OR Apache-2.0; its dependencies (rand_core 0.6, sha3, subtle, zeroize) were already in the tree |
@@ -203,14 +205,17 @@ docs/modules/wolcrypt.md.
 - **Revocation database `revoked.rkdb`** (binary, sorted, Index-signed, a root-signed section for
   intermediates and roots), deltas, merge, the JSON list as export. Lists live 24 hours, republished
   hourly. Freshness: the image's database is a floor; every file certificate (and origin) carries
-  `rkdb_serial` and raises it; two checkpoints (CDN, public log) must agree, else warn and keep the
-  higher. A connected machine with a stale or behind list holds installs of new apps.
+  `rkdb_serial` and raises it; two checkpoints (CDN, public log) must agree before they raise it
+  (audit 2 M2: one source, or two that differ, only warn and leave the floor), and a checkpoint
+  counts only with a witness's `.wsig` (`witness::checkpoint`). A connected machine with a stale or
+  behind list holds installs of new apps.
 - **Emergency** (`woltrust emergency`, `woltrust init --rotate-intermediates`): runbook of ten steps;
   both roots gone means a new image.
 - **Signature lines** (`woltrust::line`), one per signed body, and `terms {version, sha256}` in
   requests, certificates and file certificates.
-- **wolcrypt.** All cryptography in `crates/wolcrypt` (pure, `no_std`, no ring), a C ABI
-  (`crates/wolcrypt-ffi`, libwolcrypt.so.1) and a wasm build; same bytes as before.
+- **wolcrypt.** All cryptography in `crates/wolcrypt` (pure, a std crate written no_std-friendly,
+  no ring), a C ABI (`crates/wolcrypt-ffi`, libwolcrypt.so.1) and a wasm build; same bytes as
+  before. fips204 and fips205 are pinned `=0.5.0` like fips203 (audit 2 M7).
 
 ## Consequences
 - `.wol`, `.wolplug` and extension format 2 needs WolOS 0.13; 0.12 keeps working with today's keys and refuses format-2 files with a sentence.

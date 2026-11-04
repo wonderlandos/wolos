@@ -339,7 +339,7 @@ pub const TREE: &[Cmd] = &[
         &["trust", "update"],
         "trust.update",
         &[opt("list"), opt("sig")],
-        "Install the revocation database or list if it verifies and is not older; without files, fetch it and its checkpoints (root)",
+        "Install the revocation database, emergency section or list if it verifies and is not older; without files, fetch them (root)",
     ),
     cmd(
         &["trust", "show"],

@@ -185,6 +185,88 @@ fn issue_signs_exactly_the_body_and_needs_a_valid_proof() {
     );
     assert_eq!(squat.status.code(), Some(1));
     assert!(squat.stdout.is_empty());
+    // Audit 2 L6: with --issuer-cert the verifier's may-issue rule runs before signing. The
+    // Authors CA may issue carol; the Packages CA (namespaces org.wolos.) may not, and a
+    // certificate that is not the issuer the body names is refused.
+    let authors_cert = write(&d, "authors.wolcert", &p.authors.file);
+    let packages_cert = write(&d, "packages.wolcert", &p.packages.file);
+    let ok = run(
+        &[
+            "issue",
+            "--body",
+            &body_file,
+            "--proof",
+            &proof_file,
+            "--issuer-cert",
+            &authors_cert,
+            "--key-file",
+            &key_file,
+        ],
+        &[],
+    );
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let wrong_cert = run(
+        &[
+            "issue",
+            "--body",
+            &body_file,
+            "--proof",
+            &proof_file,
+            "--issuer-cert",
+            &packages_cert,
+            "--key-file",
+            &key_file,
+        ],
+        &[],
+    );
+    assert_eq!(wrong_cert.status.code(), Some(1));
+    let mut under_packages = body.clone();
+    under_packages.issuer = p.packages.body.serial.clone();
+    let up_file = write(
+        &d,
+        "under-packages.json",
+        &serde_json::to_vec(&under_packages).expect("json"),
+    );
+    let pk_key = write(&d, "packages.key", km_text("test-packages").as_bytes());
+    let refused = run(
+        &[
+            "issue",
+            "--body",
+            &up_file,
+            "--proof",
+            &proof_file,
+            "--issuer-cert",
+            &packages_cert,
+            "--key-file",
+            &pk_key,
+        ],
+        &[],
+    );
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("may not issue"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(refused.stdout.is_empty());
+    // Without --issuer-cert the same body is signed (the check is the producer's opt-in).
+    let unchecked = run(
+        &[
+            "issue",
+            "--body",
+            &up_file,
+            "--proof",
+            &proof_file,
+            "--key-file",
+            &pk_key,
+        ],
+        &[],
+    );
+    assert!(unchecked.status.success());
 }
 
 #[test]

@@ -170,13 +170,19 @@ pub struct SigningKey {
     keys: PublicKeys,
 }
 
-fn slh_parts(seed: &[u8; 32]) -> ([u8; 16], [u8; 16], [u8; 16], Zeroizing<[u8; 64]>) {
+/// The three SLH-DSA seeds, each wiped on drop (audit 2 L3: no plain copy of a root's secret).
+type SlhParts = (
+    Zeroizing<[u8; 16]>,
+    Zeroizing<[u8; 16]>,
+    Zeroizing<[u8; 16]>,
+);
+
+fn slh_parts(seed: &[u8; 32]) -> SlhParts {
     let d = derive(seed, "slh-dsa-sha2-128s");
     (
-        take::<16>(&d[..], 0),
-        take::<16>(&d[..], 16),
-        take::<16>(&d[..], 32),
-        d,
+        Zeroizing::new(take::<16>(&d[..], 0)),
+        Zeroizing::new(take::<16>(&d[..], 16)),
+        Zeroizing::new(take::<16>(&d[..], 32)),
     )
 }
 
@@ -189,7 +195,7 @@ impl SigningKey {
         let ed = ed25519_dalek::SigningKey::from_bytes(&ed_seed);
         let second = match scheme {
             Scheme::Root => {
-                let (a, b, c, _d) = slh_parts(seed);
+                let (a, b, c) = slh_parts(seed);
                 let (pk, _) = slh_dsa_sha2_128s::KG::keygen_from_seed(&a, &b, &c);
                 Second::Slh(Box::new(pk.into_bytes()))
             }
@@ -221,24 +227,27 @@ impl SigningKey {
         self.scheme
     }
 
-    /// Signs [`message`]`(label, content)` with both halves.
-    pub fn sign(&self, label: &str, content: &[u8]) -> Sig {
+    /// Signs [`message`]`(label, content)` with both halves; [`Fail::Second`] when the
+    /// post-quantum half could not be made.
+    pub fn sign(&self, label: &str, content: &[u8]) -> Result<Sig, Fail> {
         self.sign_message(&message(label, content))
     }
 
     /// Signs an already built message ([`message`], [`message_with`]) with both halves.
     /// ML-DSA-65 takes its 32 random bytes from `SHA-512("woltrust/rnd" 0x00 || seed || msg)`
     /// (deterministic, secret-dependent: the hedged form of FIPS 204 with a derived seed).
-    pub fn sign_message(&self, msg: &[u8]) -> Sig {
+    /// A failure of the post-quantum half is [`Fail::Second`] (audit 2 L3: never an empty half
+    /// that fails later without a reason).
+    pub fn sign_message(&self, msg: &[u8]) -> Result<Sig, Fail> {
         use ed25519_dalek::Signer as _;
         let ed25519 = self.ed.sign(msg).to_bytes();
         let second = match self.scheme {
             Scheme::Root => {
-                let (a, b, c, _d) = slh_parts(&self.seed);
+                let (a, b, c) = slh_parts(&self.seed);
                 let (_, sk) = slh_dsa_sha2_128s::KG::keygen_from_seed(&a, &b, &c);
                 sk.try_sign_with_rng(&mut NoRandom, msg, &[], false)
                     .map(|s| s.to_vec())
-                    .unwrap_or_default()
+                    .map_err(|_| Fail::Second)?
             }
             Scheme::Signing => {
                 let s = Zeroizing::new(take::<32>(&derive(&self.seed, "ml-dsa-65")[..], 0));
@@ -248,12 +257,13 @@ impl SigningKey {
                     &self.seed[..],
                     msg,
                 ]));
-                sk.try_sign_with_seed(&take::<32>(&rnd[..], 0), msg, &[])
+                let r = Zeroizing::new(take::<32>(&rnd[..], 0));
+                sk.try_sign_with_seed(&r, msg, &[])
                     .map(|s| s.to_vec())
-                    .unwrap_or_default()
+                    .map_err(|_| Fail::Second)?
             }
         };
-        Sig { ed25519, second }
+        Ok(Sig { ed25519, second })
     }
 }
 
@@ -265,8 +275,8 @@ mod tests {
     fn both_schemes_sign_deterministically_and_bind_the_label() {
         for scheme in [Scheme::Signing, Scheme::Root] {
             let k = SigningKey::from_seed(&[7; 32], scheme);
-            let a = k.sign("wolos/package/1", b"hello");
-            assert_eq!(a, k.sign("wolos/package/1", b"hello"));
+            let a = k.sign("wolos/package/1", b"hello").unwrap();
+            assert_eq!(a, k.sign("wolos/package/1", b"hello").unwrap());
             assert!(verify(k.public(), "wolos/package/1", b"hello", &a).is_ok());
             assert!(verify(k.public(), "wolos/plugin/1", b"hello", &a).is_err());
             assert!(verify(k.public(), "wolos/package/1", b"hellp", &a).is_err());

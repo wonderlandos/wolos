@@ -35,6 +35,10 @@ pub mod kem;
 pub mod sign;
 pub mod text;
 
+/// The wiping wrapper the secret types use, for callers that hold a secret copy of their own
+/// (the C ABI's seed parameters, audit 2 L3) without a dependency of their own.
+pub use zeroize::Zeroizing;
+
 /// The wolcrypt API version (the C ABI's `wolcrypt_version()` returns it as `major << 16 | minor`).
 pub const VERSION: (u16, u16) = (1, 0);
 

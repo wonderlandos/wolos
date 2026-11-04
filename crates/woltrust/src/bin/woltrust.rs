@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! woltrust sign   --purpose index|revocation|package|plugin|extension --cert SERIAL [--origin ORIGIN.json] KEY FILE
-//! woltrust issue  --body BODY.json [--proof PROOF.json] KEY
+//! woltrust issue  --body BODY.json [--proof PROOF.json] [--issuer-cert ISSUER.wolcert] KEY
 //!                 [--cosign-file ROOT_B.wolkey [--cosign-passphrase-env NAME]]  (intermediates)
 //! woltrust revoke --source revocations.json [--previous revoked.json] [--now UNIX]
 //! woltrust verify --purpose P --wsig F [--chain F] --roots DIR [--intermediates DIR]
@@ -22,6 +22,7 @@
 //!                    [--root-section F.rkdr] [--now UNIX] --cert INDEX_ID KEY
 //! woltrust rkdb delta BASE.rkdb TARGET.rkdb | rkdb apply BASE.rkdb DELTA.rkdd
 //! woltrust rkdb verify --roots DIR [--intermediates DIR] [--floor N] [--now UNIX] [--allow-test] FILE
+//!                      (FILE = a .rkdb, or a bare root section .rkdr)
 //! woltrust rkdb export FILE | rkdb checkpoint FILE
 //! woltrust witness sign --cert WITNESS_ID [--now UNIX] KEY FILE      (prints FILE.wsig)
 //! woltrust witness verify --roots DIR --intermediates DIR [--now UNIX] FILE [FILE.wsig]
@@ -238,6 +239,25 @@ fn issue(a: &Args) -> Result<Vec<u8>, Fail> {
         return Err(no(
             "a root signs its own body: the key is not the body's key",
         ));
+    }
+    // Audit 2 L6: with the issuer's certificate, the verifier's rule runs before anything is
+    // signed (kind, usage sign-certs, namespaces inside the issuer's), and the key is the
+    // certificate's.
+    if let Some(f) = a.get("issuer-cert") {
+        let issuer = woltrust::Cert::parse(&read(f, 64 * 1024)?).map_err(no)?;
+        if issuer.body.serial != body.issuer {
+            return Err(no(
+                "--issuer-cert is not the certificate the body names as issuer",
+            ));
+        }
+        if issuer.keys != *km.secret().public() {
+            return Err(no("the key is not the key of --issuer-cert"));
+        }
+        if !woltrust::verify::may_issue_body(&issuer.body, &body) {
+            return Err(no(
+                "the issuer may not issue this certificate (kind, usage or namespaces)",
+            ));
+        }
     }
     match (a.get("proof"), body.kind) {
         (Some(f), _) => {
@@ -611,62 +631,143 @@ fn emergency(a: &Args) -> Result<Vec<u8>, Fail> {
     Ok(text.into_bytes())
 }
 
+/// `rkdb make`: a new database from a source list (or `revoked.json`), on top of `--previous`
+/// (never dropping an entry), with an optional root section, signed by the Index key.
+fn rkdb_make(a: &Args) -> Result<Vec<u8>, Fail> {
+    let src = read(a.need("source")?, 1 << 30)?;
+    let list: Vec<woltrust::revoked::Entry> = match woltrust::revoked::parse(&src) {
+        Ok(l) => l.entries,
+        Err(_) => {
+            let s: Source = serde_json::from_slice(&src).map_err(|_| no("source damaged"))?;
+            s.entries
+        }
+    };
+    let entries: Vec<rkdb::Entry> = list
+        .iter()
+        .map(|e| {
+            Ok(rkdb::Entry {
+                id: rkdb::id_bytes(&e.serial)
+                    .ok_or_else(|| no(format!("{}: not an id", e.serial)))?,
+                at: u32::try_from(e.at).map_err(no)?,
+                reason: e.reason,
+            })
+        })
+        .collect::<Result<_, Fail>>()?;
+    let mut set = rkdb::Entries::from_list(&entries);
+    let (serial, prev_hash) = match a.get("previous").filter(|p| Path::new(p).exists()) {
+        Some(p) => {
+            let old = rkdb::Db::parse(&read(p, 1 << 30)?).map_err(|e| no(e.as_str()))?;
+            // Never dropping: the new file holds every entry of the previous one.
+            set = rkdb::merge(&old.entries, &set);
+            (old.serial + 1, old.hash)
+        }
+        None => (1, [0u8; 32]),
+    };
+    let root = a
+        .get("root-section")
+        .map(|f| read(f, 1 << 20))
+        .transpose()?;
+    let t = u32::try_from(now(a)?).map_err(no)?;
+    let cert = a.need("cert")?;
+    let secret = key(a, Some(cert))?.secret();
+    rkdb::make(
+        &rkdb::Make {
+            serial,
+            issued: t,
+            expires: t.saturating_add(u32::try_from(rkdb::LIFETIME).map_err(no)?),
+            prev_hash,
+            entries: &set,
+            root: root.as_deref(),
+        },
+        cert,
+        &secret,
+    )
+    .map_err(|e| no(e.as_str()))
+}
+
+/// The revocation lines of one root section, by the root that signed it.
+fn section_lines(text: &mut String, store: &Store, r: &woltrust::store::HeldRoot) {
+    let by = store
+        .roots
+        .iter()
+        .find(|c| c.body.serial == r.signer)
+        .map_or_else(|| r.signer.clone(), woltrust::line::ca_name);
+    for e in r.section.entries.iter() {
+        text.push_str(&woltrust::line::revocation(
+            &rkdb::id_text(&e.id),
+            u64::from(e.at),
+            e.reason,
+            &by,
+        ));
+        text.push('\n');
+    }
+}
+
+/// `rkdb verify`: checks a `.rkdb` (or a bare `.rkdr` root section) against the roots and prints
+/// what it holds.
+fn rkdb_verify(a: &Args) -> Result<Vec<u8>, Fail> {
+    let bytes = read(one(a)?, 1 << 30)?;
+    let roots = certs_in(Some(a.need("roots")?))?;
+    let inter = certs_in(a.get("intermediates"))?;
+    let t = now(a)?;
+    let none: [(&[u8], &[u8]); 0] = [];
+    let mut store = Store::load(
+        &roots,
+        &inter,
+        &none,
+        t,
+        a.flags.iter().any(|f| f == "allow-test"),
+    );
+    store.floor = a.num("floor")?.unwrap_or(0);
+    // A bare root section (`.rkdr`, `woltrust emergency`): checked on its own.
+    if rkdb::kind_of(&bytes) == Some(rkdb::FileKind::RootSection) {
+        store
+            .load_root_section(&bytes, t)
+            .map_err(|e| no(e.as_str()))?;
+        let mut text = String::new();
+        for r in &store.root_sections {
+            text.push_str(&format!(
+                "root section issued {} entries {}\n",
+                woltrust::line::date(u64::from(r.section.issued)),
+                r.section.entries.len()
+            ));
+            section_lines(&mut text, &store, r);
+        }
+        return Ok(text.into_bytes());
+    }
+    let (held, root) = store.check_rkdb(&bytes, t).map_err(|e| no(e.as_str()))?;
+    rkdb::accept(&held.db, None, store.floor).map_err(|e| no(e.as_str()))?;
+    let index = store
+        .intermediates
+        .iter()
+        .find(|c| c.body.serial == held.signer)
+        .map_or_else(|| "WolOS Index".to_owned(), woltrust::line::ca_name);
+    let mut text = format!(
+        "serial {} issued {} expires {} entries {}\n",
+        held.db.serial,
+        woltrust::line::date(u64::from(held.db.issued)),
+        woltrust::line::date(u64::from(held.db.expires)),
+        held.db.entries.len()
+    );
+    if let Some(r) = &root {
+        section_lines(&mut text, &store, r);
+    }
+    for e in held.db.entries.iter().take(1000) {
+        text.push_str(&woltrust::line::revocation(
+            &rkdb::id_text(&e.id),
+            u64::from(e.at),
+            e.reason,
+            &index,
+        ));
+        text.push('\n');
+    }
+    Ok(text.into_bytes())
+}
+
 fn rkdb_cmd(a: &Args) -> Result<(Vec<u8>, bool), Fail> {
     let ok = |b: Vec<u8>| (b, true);
     match a.rest.first().map(String::as_str) {
-        Some("make") => {
-            let src = read(a.need("source")?, 1 << 30)?;
-            let list: Vec<woltrust::revoked::Entry> = match woltrust::revoked::parse(&src) {
-                Ok(l) => l.entries,
-                Err(_) => {
-                    let s: Source =
-                        serde_json::from_slice(&src).map_err(|_| no("source damaged"))?;
-                    s.entries
-                }
-            };
-            let entries: Vec<rkdb::Entry> = list
-                .iter()
-                .map(|e| {
-                    Ok(rkdb::Entry {
-                        id: rkdb::id_bytes(&e.serial)
-                            .ok_or_else(|| no(format!("{}: not an id", e.serial)))?,
-                        at: u32::try_from(e.at).map_err(no)?,
-                        reason: e.reason,
-                    })
-                })
-                .collect::<Result<_, Fail>>()?;
-            let mut set = rkdb::Entries::from_list(&entries);
-            let (serial, prev_hash) = match a.get("previous").filter(|p| Path::new(p).exists()) {
-                Some(p) => {
-                    let old = rkdb::Db::parse(&read(p, 1 << 30)?).map_err(|e| no(e.as_str()))?;
-                    // Never dropping: the new file holds every entry of the previous one.
-                    set = rkdb::merge(&old.entries, &set);
-                    (old.serial + 1, old.hash)
-                }
-                None => (1, [0u8; 32]),
-            };
-            let root = a
-                .get("root-section")
-                .map(|f| read(f, 1 << 20))
-                .transpose()?;
-            let t = u32::try_from(now(a)?).map_err(no)?;
-            let cert = a.need("cert")?;
-            let secret = key(a, Some(cert))?.secret();
-            rkdb::make(
-                &rkdb::Make {
-                    serial,
-                    issued: t,
-                    expires: t.saturating_add(u32::try_from(rkdb::LIFETIME).map_err(no)?),
-                    prev_hash,
-                    entries: &set,
-                    root: root.as_deref(),
-                },
-                cert,
-                &secret,
-            )
-            .map(ok)
-            .map_err(|e| no(e.as_str()))
-        }
+        Some("make") => rkdb_make(a).map(ok),
         Some("delta") => {
             let (b, t) = two(a)?;
             rkdb::delta(&read(b, 1 << 30)?, &read(t, 1 << 30)?)
@@ -687,61 +788,7 @@ fn rkdb_cmd(a: &Args) -> Result<(Vec<u8>, bool), Fail> {
             let db = rkdb::Db::parse(&read(one(a)?, 1 << 30)?).map_err(|e| no(e.as_str()))?;
             Ok(ok((rkdb::Checkpoint::of(&db).to_json() + "\n").into_bytes()))
         }
-        Some("verify") => {
-            let bytes = read(one(a)?, 1 << 30)?;
-            let roots = certs_in(Some(a.need("roots")?))?;
-            let inter = certs_in(a.get("intermediates"))?;
-            let t = now(a)?;
-            let none: [(&[u8], &[u8]); 0] = [];
-            let mut store = Store::load(
-                &roots,
-                &inter,
-                &none,
-                t,
-                a.flags.iter().any(|f| f == "allow-test"),
-            );
-            store.floor = a.num("floor")?.unwrap_or(0);
-            let (held, root) = store.check_rkdb(&bytes, t).map_err(|e| no(e.as_str()))?;
-            rkdb::accept(&held.db, None, store.floor).map_err(|e| no(e.as_str()))?;
-            let index = store
-                .intermediates
-                .iter()
-                .find(|c| c.body.serial == held.signer)
-                .map_or_else(|| "WolOS Index".to_owned(), woltrust::line::ca_name);
-            let mut text = format!(
-                "serial {} issued {} expires {} entries {}\n",
-                held.db.serial,
-                woltrust::line::date(u64::from(held.db.issued)),
-                woltrust::line::date(u64::from(held.db.expires)),
-                held.db.entries.len()
-            );
-            if let Some(r) = &root {
-                let by = store
-                    .roots
-                    .iter()
-                    .find(|c| c.body.serial == r.signer)
-                    .map_or_else(|| r.signer.clone(), woltrust::line::ca_name);
-                for e in r.section.entries.iter() {
-                    text.push_str(&woltrust::line::revocation(
-                        &rkdb::id_text(&e.id),
-                        u64::from(e.at),
-                        e.reason,
-                        &by,
-                    ));
-                    text.push('\n');
-                }
-            }
-            for e in held.db.entries.iter().take(1000) {
-                text.push_str(&woltrust::line::revocation(
-                    &rkdb::id_text(&e.id),
-                    u64::from(e.at),
-                    e.reason,
-                    &index,
-                ));
-                text.push('\n');
-            }
-            Ok(ok(text.into_bytes()))
-        }
+        Some("verify") => rkdb_verify(a).map(ok),
         _ => Err(Fail::Usage(
             "rkdb make|delta|apply|verify|export|checkpoint".into(),
         )),

@@ -41,6 +41,21 @@ pub const STATE_RKDB: &str = "/var/lib/wolos/trust/revoked.rkdb";
 /// The floor: the highest database serial this machine was told of (a signed release manifest, a
 /// file certificate, the checkpoints), one decimal number.
 pub const FLOOR_FILE: &str = "/var/lib/wolos/trust/rkdb-floor";
+/// Written by update-check each run in which the list's server answered (Unix seconds).
+pub const LAST_ATTEMPT_FILE: &str = "/var/lib/wolos/trust/last-attempt";
+/// Written by update-check after `wol trust update` installed a list or database.
+pub const LAST_OK_FILE: &str = "/var/lib/wolos/trust/last-ok";
+/// How long a `last-attempt` stamp counts as "connected": two hourly runs.
+pub const CONNECTED_WINDOW: u64 = 2 * 3600;
+
+/// The floor file's new text when `serial` raises the floor held in `old` (its bytes, empty when
+/// there is none), or None when it does not: the floor is never lowered. The callers that may write
+/// [`FLOOR_FILE`] (root: `wol trust update --floor N`, wopkg as root) write it with
+/// `shared::atomic::atomic_write`.
+pub fn floor_after(old: &[u8], serial: u64) -> Option<Vec<u8>> {
+    (serial > parse_floor(old)).then(|| floor_text(serial))
+}
+
 /// Where the database lives on the CDN server, below each of [`crate::cdn::HOSTS`].
 pub const RKDB_PATH: &str = "/plugins/revoked.rkdb";
 /// Largest database read: 128 MiB (about 1.9 million entries); a bound for hostile input.
@@ -52,6 +67,74 @@ pub fn rkdb_urls() -> Vec<String> {
         .iter()
         .map(|h| format!("{h}{RKDB_PATH}"))
         .collect()
+}
+
+/// The end of the previous flat Ed25519 key (audit 2 M6): from 2027-02-01T00:00:00Z a `.wol` or
+/// `.wolplug` signed only with it is refused, roots or not. The lead may move this date.
+pub const LEGACY_UNTIL: u64 = 1_801_440_000;
+
+/// Root-signed sections kept on this machine (`<sha512/256 hex>.rkdr`), loaded before every
+/// list and database (audit 2 M5), so a withdrawn Index's lists never count.
+pub const STATE_SECTIONS: &str = "/var/lib/wolos/trust/sections";
+/// Extension of a kept root section.
+pub const SECTION_EXT: &str = ".rkdr";
+
+/// The file name a verified section is kept under in [`STATE_SECTIONS`] (SHA-256 of its bytes).
+pub fn section_file_name(r: &woltrust::store::HeldRoot) -> String {
+    format!(
+        "{}{SECTION_EXT}",
+        crate::package::sha256_hex(&r.section.bytes)
+    )
+}
+
+/// Most kept sections read.
+const MAX_SECTIONS: usize = 64;
+
+/// Where the hub publishes the current root-signed emergency section, below each of
+/// [`crate::cdn::HOSTS`] (fetched on every `wol trust update`, independently of the database).
+pub const EMERGENCY_PATH: &str = "/plugins/emergency.rkdr";
+/// Where the hub publishes the current intermediates (a JSON array of `.wolcert` objects).
+pub const INTERMEDIATES_PATH: &str = "/plugins/intermediates.json";
+/// Largest intermediates file read.
+pub const MAX_INTERMEDIATES_BYTES: usize = 512 * 1024;
+
+/// `path` below each of [`crate::cdn::HOSTS`], in the order tried.
+pub fn cdn_urls(path: &str) -> Vec<String> {
+    crate::cdn::HOSTS
+        .iter()
+        .map(|h| format!("{h}{path}"))
+        .collect()
+}
+
+/// Whether the state database may join a store that holds the image's (audit 2 M4): it keeps
+/// every entry of the image's, chains onto it, and is not below the floor.
+pub fn state_db_counts(bytes: &[u8], store: &Store) -> Result<(), String> {
+    let db = woltrust::rkdb::Db::parse(bytes).map_err(|_| "damaged, left out".to_owned())?;
+    let image = store.best_db().map(|d| d.db.clone());
+    woltrust::rkdb::accept(&db, image.as_ref(), store.floor)
+        .map_err(|_| "older than the image's database or the floor, left out".to_owned())
+}
+
+fn seen_of(old: &[u8]) -> Result<woltrust::revoked::Seen, String> {
+    if old.is_empty() {
+        Ok(woltrust::revoked::Seen::default())
+    } else {
+        woltrust::revoked::Seen::parse(old).map_err(|e| format!("{SEEN_FILE}: {e}"))
+    }
+}
+
+fn root_list(r: &woltrust::store::HeldRoot) -> woltrust::RevList {
+    woltrust::RevList {
+        list: woltrust::revoked::ListText {
+            format: 1,
+            serial: 0,
+            issued: u64::from(r.section.issued),
+            expires: u64::from(r.section.issued) + 1,
+            entries: r.section.entries.iter().map(|e| e.to_json()).collect(),
+        },
+        signer: r.signer.clone(),
+        signer_is_root: true,
+    }
 }
 
 /// The floor file's text for `floor`.
@@ -144,19 +227,41 @@ impl TrustStore {
             .filter_map(|p| read_list(host, p))
             .collect();
         let now = unix(host);
-        let mut store = Store::load(&roots, &inter, &lists, now, false);
+        // Audit 2 M5: the kept root-signed sections go in first, so every list and database is
+        // judged with them (a withdrawn Index's lists never count).
+        let sections: Vec<Vec<u8>> = host
+            .list_dir(STATE_SECTIONS)
+            .iter()
+            .filter(|p| p.ends_with(SECTION_EXT))
+            .take(MAX_SECTIONS)
+            .filter_map(|p| read_capped(host, p, 1 << 20))
+            .collect();
+        let mut store = Store::load_with_sections(&roots, &inter, &sections, &lists, now, false);
         // The image's database sets the floor; the state's is newer or equal (checked when kept).
-        for (i, p) in [IMAGE_RKDB, STATE_RKDB].iter().enumerate() {
-            if let Some(b) = read_capped(host, p, MAX_RKDB_BYTES) {
-                let _ = store.load_rkdb(&b, now);
-                if i == 0 {
-                    store.floor = store.db_serial().unwrap_or(0);
-                }
-            }
+        if let Some(b) = read_capped(host, IMAGE_RKDB, MAX_RKDB_BYTES) {
+            let _ = store.load_rkdb(&b, now);
+            store.floor = store.db_serial().unwrap_or(0);
         }
         if let Some(t) = read_capped(host, FLOOR_FILE, 64) {
             store.raise_floor(parse_floor(&t));
         }
+        // Audit 2 M4: the state database counts only when it keeps everything the image's had
+        // and is not below the floor (a restored or rolled-back file is left out, with a note).
+        if let Some(b) = read_capped(host, STATE_RKDB, MAX_RKDB_BYTES) {
+            match state_db_counts(&b, &store) {
+                Ok(()) => {
+                    let _ = store.load_rkdb(&b, now);
+                }
+                Err(e) => store.notes.push(format!("{STATE_RKDB}: {e}")),
+            }
+        }
+        let stamp = |p| {
+            read_capped(host, p, 64)
+                .map(|t| parse_floor(&t))
+                .filter(|t| *t > 0)
+        };
+        store.last_attempt = stamp(LAST_ATTEMPT_FILE);
+        store.last_ok = stamp(LAST_OK_FILE);
         match read_capped(host, SEEN_FILE, woltrust::revoked::MAX_SEEN_BYTES)
             .map(|b| woltrust::revoked::Seen::parse(&b))
         {
@@ -172,8 +277,13 @@ impl TrustStore {
     /// certificate; once this machine holds WolOS roots it is refused; before that it is
     /// [`woltrust::Trust::Legacy`], never WolOS.
     pub fn legacy(&self, key: &[u8; 32]) -> Outcome {
-        let serial = woltrust::request::key_id(key);
-        if let Some(code) = woltrust::verify::withdrawn(&self.store, &serial) {
+        // Audit 2 M3: a list may name the flat key by its 16-hex key id or by its id under rule
+        // IDS (SHA-512, 128 hex); either withdraws it.
+        let short = woltrust::request::key_id(key);
+        let full = woltrust::request::legacy_key_id(key);
+        if let Some(code) = woltrust::verify::withdrawn(&self.store, &short)
+            .or_else(|| woltrust::verify::withdrawn(&self.store, &full))
+        {
             return legacy_outcome(woltrust::Trust::Withdrawn, code);
         }
         if self.store.roots.is_empty() {
@@ -183,11 +293,21 @@ impl TrustStore {
         }
     }
 
-    fn legacy_of(&self, trust: package::Trust, keys: &[[u8; 32]]) -> Outcome {
+    /// [`TrustStore::legacy`] at `now`: from [`LEGACY_UNTIL`] on, the previous flat key vouches
+    /// for nothing (audit 2 M6), whether or not the machine holds roots.
+    pub fn legacy_at(&self, key: &[u8; 32], now: u64) -> Outcome {
+        let o = self.legacy(key);
+        if o.trust == woltrust::Trust::Legacy && now >= LEGACY_UNTIL {
+            return legacy_outcome(woltrust::Trust::Invalid, woltrust::Code::LegacyRefused);
+        }
+        o
+    }
+
+    fn legacy_of(&self, trust: package::Trust, keys: &[[u8; 32]], now: u64) -> Outcome {
         match trust {
             package::Trust::Signed(i) => keys.get(i).map_or_else(
                 || legacy_outcome(woltrust::Trust::Invalid, woltrust::Code::SignerUnknown),
-                |k| self.legacy(k),
+                |k| self.legacy_at(k, now),
             ),
             package::Trust::Unsigned => {
                 legacy_outcome(woltrust::Trust::Community, woltrust::Code::Unsigned)
@@ -232,7 +352,7 @@ impl TrustStore {
                 },
             )
         } else {
-            self.legacy_of(verified.trust, legacy_keys)
+            self.legacy_of(verified.trust, legacy_keys, now)
         };
         Ok(Checked { verified, outcome })
     }
@@ -313,6 +433,10 @@ pub struct Status {
     pub floor: u64,
     /// True when the newest database is below the floor ("could not update the list").
     pub behind: bool,
+    /// The update service's `last-attempt` and `last-ok` stamps.
+    pub last_attempt: Option<u64>,
+    /// See `last_attempt`.
+    pub last_ok: Option<u64>,
 }
 
 impl TrustStore {
@@ -358,12 +482,12 @@ impl TrustStore {
             // An expired certificate next to the 0.12 index key: the index key still counts.
             match (o.trust, verified.trust) {
                 (woltrust::Trust::Community, package::Trust::Signed(_)) => {
-                    self.legacy_of(verified.trust, legacy_keys)
+                    self.legacy_of(verified.trust, legacy_keys, now)
                 }
                 _ => o,
             }
         } else {
-            self.legacy_of(verified.trust, legacy_keys)
+            self.legacy_of(verified.trust, legacy_keys, now)
         };
         if refused(&outcome) {
             return Err(say(&outcome));
@@ -493,11 +617,21 @@ impl TrustStore {
             rkdb::Error::Checkpoint => {
                 "the revocation database is not the one both checkpoints name".to_owned()
             }
-            e => format!("the revocation database does not verify ({})", e.as_str()),
+            rkdb::Error::Malformed => "the revocation database is damaged".to_owned(),
+            rkdb::Error::NotAllowed => {
+                "the revocation database withdraws what its signer may not".to_owned()
+            }
+            _ => "the revocation database does not verify against this computer's roots".to_owned(),
         };
         let (held, _) = self.store.check_rkdb(bytes, now).map_err(say)?;
         let cp = |b: Option<&[u8]>| b.and_then(rkdb::Checkpoint::parse);
-        let (floor, agreement) = rkdb::checkpoints(cp(cdn), cp(log), self.store.floor);
+        let (_, agreement) = rkdb::checkpoints(cp(cdn), cp(log), self.store.floor);
+        // Audit 2 M2: an unsigned checkpoint from one source, or two that disagree, never raise
+        // the floor (one URL could freeze every machine); only two that agree do, for this check.
+        let floor = match agreement {
+            rkdb::Agreement::Agree(c) => self.store.floor.max(c.serial),
+            _ => self.store.floor,
+        };
         let prev = self.store.best_db().map(|d| d.db.clone());
         rkdb::accept(&held.db, prev.as_ref(), floor).map_err(say)?;
         let agreed = match agreement {
@@ -507,43 +641,158 @@ impl TrustStore {
         rkdb::check_checkpoint(&held.db, agreed).map_err(say)?;
         let warning = match agreement {
             rkdb::Agreement::Disagree => Some(
-                "the two checkpoints (CDN and public log) disagree; keeping the higher floor"
+                "the two checkpoints (CDN and public log) disagree; the floor stays where it was"
                     .to_owned(),
             ),
             rkdb::Agreement::OneSource => Some("only one checkpoint answered".to_owned()),
             rkdb::Agreement::None => Some("no checkpoint answered".to_owned()),
             rkdb::Agreement::Agree(_) => None,
         };
+        // The floor kept on disk rises only to the serial of a database that verified.
         Ok(RkdbUpdate {
             serial: held.db.serial,
-            floor: floor.max(held.db.serial),
+            floor: self.store.floor.max(held.db.serial),
             warning,
+        })
+    }
+
+    /// The root-signed section a database carries, verified on its own (audit 2 H1): kept even
+    /// when the database's Index block then fails, because the section may be what withdraws
+    /// that Index.
+    pub fn salvage_root_section(
+        &self,
+        bytes: &[u8],
+        now: u64,
+    ) -> Option<woltrust::store::HeldRoot> {
+        let db = woltrust::rkdb::Db::parse(bytes).ok()?;
+        let r = db.root?;
+        self.check_section(&r, now).ok()
+    }
+
+    fn check_section(
+        &self,
+        r: &woltrust::rkdb::RootSection,
+        now: u64,
+    ) -> Result<woltrust::store::HeldRoot, String> {
+        // Audit 2 L2: a section from the future is refused here too.
+        if u64::from(r.issued) > now.saturating_add(woltrust::verify::CLOCK_SKEW) {
+            return Err("the emergency section is dated in the future".into());
+        }
+        self.store.check_root_section(r, now).map_err(|_| {
+            "the emergency section is not signed by a WolOS root that may sign it".into()
+        })
+    }
+
+    /// Checks a bare root-signed section (`emergency.rkdr`, `woltrust emergency`): a pinned root
+    /// signed it, not naming itself, not dated in the future.
+    pub fn accept_root_section(
+        &self,
+        bytes: &[u8],
+        now: u64,
+    ) -> Result<woltrust::store::HeldRoot, String> {
+        let (r, n) = woltrust::rkdb::RootSection::parse(bytes)
+            .map_err(|_| "the emergency section is damaged".to_owned())?;
+        if n != bytes.len() {
+            return Err("the emergency section is damaged".into());
+        }
+        self.check_section(&r, now)
+    }
+
+    /// The memory file ([`SEEN_FILE`]) with a verified root section's entries added (kept for
+    /// ever, so a replayed older list or database cannot undo them).
+    pub fn memory_after_root(
+        &self,
+        old: &[u8],
+        r: &woltrust::store::HeldRoot,
+    ) -> Result<Vec<u8>, String> {
+        let mut seen = seen_of(old)?;
+        seen.add(&root_list(r));
+        Ok(seen.to_bytes())
+    }
+
+    /// Intermediates published by the hub (`intermediates.json`, a JSON array of `.wolcert`
+    /// objects): each kept only when it is an intermediate with a derived id, signed by one pinned
+    /// root and co-signed by the other, both valid now and not withdrawn, the certificate valid
+    /// now (audit 2 H1c: a rotated Index or Authors CA reaches machines without a new image).
+    /// Returns `(serial, .wolcert bytes)` of each that checks out; the rest are named in the error
+    /// list.
+    pub fn accept_intermediates(
+        &self,
+        bytes: &[u8],
+        now: u64,
+    ) -> (Vec<(String, Vec<u8>)>, Vec<String>) {
+        let mut ok = Vec::new();
+        let mut bad = Vec::new();
+        let items: Vec<serde_json::Value> = if bytes.len() > MAX_INTERMEDIATES_BYTES {
+            bad.push("the intermediates file is too large".into());
+            Vec::new()
+        } else {
+            serde_json::from_slice(bytes).unwrap_or_else(|_| {
+                bad.push("the intermediates file is damaged".into());
+                Vec::new()
+            })
+        };
+        for (i, item) in items.iter().take(MAX_FILES).enumerate() {
+            let raw = serde_json::to_vec(item).unwrap_or_default();
+            match woltrust::Cert::parse(&raw)
+                .map_err(str::to_owned)
+                .and_then(|c| self.check_intermediate(&c, now).map(|()| c))
+            {
+                Ok(c) => ok.push((c.body.serial.clone(), c.to_bytes())),
+                Err(e) => bad.push(format!("intermediate {i}: {e}")),
+            }
+        }
+        (ok, bad)
+    }
+
+    /// The two-root rule for one intermediate (see [`TrustStore::accept_intermediates`]):
+    /// woltrust's `Store::check_intermediate`, and a derived id (a legacy-length TEST serial is
+    /// never published).
+    fn check_intermediate(&self, c: &woltrust::Cert, now: u64) -> Result<(), String> {
+        if woltrust::cert::is_legacy_serial(&c.body.serial) {
+            return Err("not an intermediate with a derived id".into());
+        }
+        self.store.check_intermediate(c, now).map_err(|code| {
+            code.sentence()
+                .unwrap_or("it does not check out")
+                .to_owned()
         })
     }
 
     /// The memory file ([`SEEN_FILE`]) after a database: its root-signed entries (emergency
     /// withdrawals of intermediates and roots) are kept forever, like every root list's.
     pub fn memory_after_rkdb(&self, old: &[u8], bytes: &[u8], now: u64) -> Result<Vec<u8>, String> {
-        let mut seen = if old.is_empty() {
-            woltrust::revoked::Seen::default()
-        } else {
-            woltrust::revoked::Seen::parse(old).map_err(|e| format!("{SEEN_FILE}: {e}"))?
-        };
+        let mut seen = seen_of(old)?;
         for l in &self.store.lists {
             seen.add(l);
         }
-        if let Ok((_, Some(r))) = self.store.check_rkdb(bytes, now) {
-            seen.add(&woltrust::RevList {
-                list: woltrust::revoked::ListText {
-                    format: 1,
-                    serial: 0,
-                    issued: u64::from(r.section.issued),
-                    expires: u64::from(r.section.issued) + 1,
-                    entries: r.section.entries.iter().map(|e| e.to_json()).collect(),
-                },
-                signer: r.signer,
-                signer_is_root: true,
-            });
+        if let Some(r) = self.salvage_root_section(bytes, now) {
+            seen.add(&root_list(&r));
+        }
+        // Audit 2 M4: the hard withdrawals (key-compromise, abuse) a new database adds over the
+        // one held are remembered too, so a rolled-back database file cannot drop them.
+        if let Ok((h, _)) = self.store.check_rkdb(bytes, now) {
+            let held = self.store.best_db();
+            let entries: Vec<woltrust::revoked::Entry> =
+                h.db.entries
+                    .iter()
+                    .filter(|e| e.reason.is_hard())
+                    .filter(|e| held.is_none_or(|d| d.db.entries.lookup(&e.id) != Some(*e)))
+                    .map(|e| e.to_json())
+                    .collect();
+            if !entries.is_empty() {
+                seen.add(&woltrust::RevList {
+                    list: woltrust::revoked::ListText {
+                        format: 1,
+                        serial: 0,
+                        issued: u64::from(h.db.issued),
+                        expires: u64::from(h.db.issued) + 1,
+                        entries,
+                    },
+                    signer: h.signer,
+                    signer_is_root: false,
+                });
+            }
         }
         Ok(seen.to_bytes())
     }
@@ -571,6 +820,21 @@ impl TrustStore {
             woltrust::rkdb::Gate::Open => Ok(()),
             woltrust::rkdb::Gate::HoldNew => Err(woltrust::rkdb::HOLD_SENTENCE),
         }
+    }
+
+    /// True when the update service reached the list's server within [`CONNECTED_WINDOW`] (its
+    /// `last-attempt` stamp): a machine that is online but still holds a stale or behind list.
+    pub fn connected(&self, now: u64) -> bool {
+        self.store.last_attempt.is_some_and(|t| {
+            t <= now.saturating_add(woltrust::verify::CLOCK_SKEW)
+                && now.saturating_sub(t) <= CONNECTED_WINDOW
+        })
+    }
+
+    /// [`TrustStore::gate_new_install`] with [`TrustStore::connected`]: what wol-admind asks
+    /// before it installs an app that is not installed yet.
+    pub fn gate_new_install_now(&self, now: u64) -> Result<(), &'static str> {
+        self.gate_new_install(now, self.connected(now))
     }
 
     /// The store's state at `now`.
@@ -608,6 +872,8 @@ impl TrustStore {
             rkdb_entries: self.store.best_db().map_or(0, |d| d.db.entries.len()),
             floor: self.store.floor,
             behind: self.store.behind(),
+            last_attempt: self.store.last_attempt,
+            last_ok: self.store.last_ok,
         }
     }
 }
@@ -740,16 +1006,33 @@ mod tests {
                 .unwrap_err()
                 .contains("checkpoints")
         );
-        // A higher checkpoint from one source raises the floor above what is offered.
+        // Audit 2 M2: one unsigned checkpoint (or two that disagree) never raises the floor.
         let high = Checkpoint {
             serial: 9,
             hash: [3; 32],
         }
         .to_json();
+        let one = ts
+            .accept_rkdb(&db2, Some(high.as_bytes()), None, NOW)
+            .unwrap();
+        assert_eq!(
+            one.floor, 2,
+            "the floor kept is the verified database's serial"
+        );
+        let low = Checkpoint {
+            serial: 2,
+            hash: [3; 32],
+        }
+        .to_json();
         assert!(
-            ts.accept_rkdb(&db2, Some(high.as_bytes()), None, NOW)
+            ts.accept_rkdb(&db2, Some(high.as_bytes()), Some(low.as_bytes()), NOW)
+                .is_ok()
+        );
+        assert!(
+            ts.accept_rkdb(&db2, Some(high.as_bytes()), Some(high.as_bytes()), NOW)
                 .unwrap_err()
-                .contains("older")
+                .contains("older"),
+            "two that agree on a higher serial do refuse it"
         );
         // The install gate: fresh and at the floor, open; behind the floor, new installs wait.
         assert_eq!(ts.gate_new_install(NOW, true), Ok(()));
@@ -766,7 +1049,230 @@ mod tests {
         );
         assert!(behind.status(NOW).behind);
         assert_eq!(parse_floor(&floor_text(42)), 42);
+        // Connected: the update service reached the server within two hours.
+        let mut online = behind.clone();
+        assert!(!online.connected(NOW));
+        online.store.last_attempt = Some(NOW - 600);
+        assert!(online.connected(NOW));
+        assert_eq!(
+            online.gate_new_install_now(NOW),
+            Err(woltrust::rkdb::HOLD_SENTENCE)
+        );
+        online.store.last_attempt = Some(NOW - 3 * 3600);
+        assert_eq!(
+            online.gate_new_install_now(NOW),
+            Ok(()),
+            "offline: stale rules instead"
+        );
+        assert_eq!(floor_after(b"", 7), Some(b"7\n".to_vec()));
+        assert_eq!(floor_after(b"7\n", 3), None, "never lowered");
+        assert_eq!(floor_after(b"7\n", 7), None);
+        assert_eq!(floor_after(b"7\n", 9), Some(b"9\n".to_vec()));
         assert_eq!(parse_floor(b"junk"), 0);
+    }
+
+    /// Audit 2 H1: a database by the derived Index carrying root B's section that withdraws
+    /// that Index is refused, but the section is salvaged and kept in the memory; a bare
+    /// section is accepted alone; one dated in the future is refused (L2).
+    #[test]
+    fn the_emergency_section_survives_a_database_its_index_cannot_sign() {
+        use woltrust::revoked::Reason;
+        use woltrust::rkdb::RootSection;
+        use woltrust::vectors_ids::{Ids, db, entry};
+        let p = Pki::new();
+        let ids = Ids::new(&p);
+        let none: [(&[u8], &[u8]); 0] = [];
+        let s = Store::load(
+            &[&p.root_a.file, &p.root_b.file],
+            &[&ids.index.file],
+            &none,
+            NOW,
+            true,
+        );
+        let ts = TrustStore { store: s };
+        let at = u32::try_from(NOW - 600).unwrap();
+        let section = RootSection::make(
+            at,
+            &[entry(
+                &ids.index.body.serial,
+                NOW - 600,
+                Reason::KeyCompromise,
+            )],
+            &p.root_b.body.serial,
+            &p.root_b.secret,
+        )
+        .unwrap();
+        let carried = db(&ids, 3, NOW - 600, &[], Some(&section), [0; 32]);
+        assert!(
+            ts.accept_rkdb(&carried, None, None, NOW).is_err(),
+            "the Index is withdrawn"
+        );
+        let kept = ts
+            .salvage_root_section(&carried, NOW)
+            .expect("the section is kept");
+        let mem = ts.memory_after_root(b"", &kept).unwrap();
+        let mut again = ts.clone();
+        again
+            .store
+            .remember(&woltrust::revoked::Seen::parse(&mem).unwrap());
+        assert!(woltrust::verify::withdrawn(&again.store, &ids.index.body.serial).is_some());
+        assert!(ts.accept_root_section(&section, NOW).is_ok());
+        let future = RootSection::make(
+            u32::try_from(NOW + 3 * 86_400).unwrap(),
+            &[entry(&ids.index.body.serial, NOW, Reason::KeyCompromise)],
+            &p.root_b.body.serial,
+            &p.root_b.secret,
+        )
+        .unwrap();
+        assert!(
+            ts.accept_root_section(&future, NOW)
+                .unwrap_err()
+                .contains("future")
+        );
+        let mut forged = section.clone();
+        let last = forged.len() - 1;
+        forged[last] ^= 1;
+        assert!(
+            ts.accept_root_section(&forged, NOW).is_err(),
+            "the root's signature is checked"
+        );
+    }
+
+    /// Audit 2 H1c: published intermediates are kept only with both roots' signatures.
+    #[test]
+    fn published_intermediates_need_both_pinned_roots() {
+        use woltrust::vectors_ids::Ids;
+        let p = Pki::new();
+        let ids = Ids::new(&p);
+        let none: [(&[u8], &[u8]); 0] = [];
+        let both = TrustStore {
+            store: Store::load(
+                &[&p.root_a.file, &p.root_b.file],
+                &[] as &[&[u8]],
+                &none,
+                NOW,
+                true,
+            ),
+        };
+        let mut lone = woltrust::Cert::parse(&ids.authors.file).unwrap();
+        lone.cosigs.clear();
+        let file = |b: &[u8]| serde_json::from_slice::<serde_json::Value>(b).unwrap();
+        let list = serde_json::to_vec(&serde_json::json!([
+            file(&ids.authors.file),
+            file(&ids.index.file),
+            file(&lone.to_bytes()),
+            file(&p.authors.file),
+            file(&ids.bob.file)
+        ]))
+        .unwrap();
+        let (ok, bad) = both.accept_intermediates(&list, NOW);
+        let kept: Vec<&str> = ok.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(
+            kept,
+            [
+                ids.authors.body.serial.as_str(),
+                ids.index.body.serial.as_str()
+            ]
+        );
+        assert_eq!(bad.len(), 3, "{bad:?}");
+        let only_a = TrustStore {
+            store: Store::load(&[&p.root_a.file], &[] as &[&[u8]], &none, NOW, true),
+        };
+        assert!(only_a.accept_intermediates(&list, NOW).0.is_empty());
+        assert!(!both.accept_intermediates(b"not json", NOW).1.is_empty());
+    }
+
+    /// Audit 2 M6: the previous flat key vouches until LEGACY_UNTIL and never after.
+    #[test]
+    fn the_previous_key_stops_vouching_on_its_end_date() {
+        let ts = TrustStore::default();
+        let key = package::public_of(&[4; 32]);
+        assert_eq!(ts.legacy_at(&key, LEGACY_UNTIL - 1).trust, Trust::Legacy);
+        let after = ts.legacy_at(&key, LEGACY_UNTIL);
+        assert_eq!(
+            (after.trust, after.code),
+            (Trust::Invalid, Code::LegacyRefused)
+        );
+        assert_eq!(woltrust::line::date(LEGACY_UNTIL), "2027-02-01");
+    }
+
+    /// Audit 2 M3: the flat key withdrawn under its id by rule IDS is refused too.
+    #[test]
+    fn a_flat_key_withdrawn_by_its_full_id_is_withdrawn() {
+        let p = Pki::new();
+        let key = [7u8; 32];
+        let l = woltrust::revoked::ListText {
+            format: 1,
+            serial: 5,
+            issued: NOW - DAY,
+            expires: NOW - DAY + woltrust::LIST_LIFETIME,
+            entries: vec![woltrust::revoked::Entry {
+                serial: woltrust::request::legacy_key_id(&key),
+                at: NOW - DAY,
+                reason: woltrust::Reason::KeyCompromise,
+            }],
+        };
+        let lists = [woltrust::make::revocation_list(
+            &l,
+            &p.index.body.serial,
+            &p.index.secret,
+        )];
+        let ts = TrustStore {
+            store: Store::load(&[&p.root_a.file], &[&p.index.file], &lists, NOW, true),
+        };
+        assert_eq!(ts.legacy(&key).trust, Trust::Withdrawn);
+    }
+
+    /// Audit 2 M4: a state database below the image's (a rolled-back file) is left out.
+    #[test]
+    fn a_rolled_back_state_database_is_left_out() {
+        use woltrust::revoked::Reason;
+        use woltrust::rkdb::Db;
+        use woltrust::vectors_ids::{Ids, db, entry};
+        let p = Pki::new();
+        let ids = Ids::new(&p);
+        let a = entry(&ids.bob.body.serial, NOW - DAY, Reason::KeyCompromise);
+        let old = db(&ids, 1, NOW - 7200, &[], None, [0; 32]);
+        let image = db(
+            &ids,
+            2,
+            NOW - 3600,
+            &[a],
+            None,
+            Db::parse(&old).unwrap().hash,
+        );
+        let none: [(&[u8], &[u8]); 0] = [];
+        let mut s = Store::load(
+            &[&p.root_a.file, &p.root_b.file],
+            &[&ids.index.file],
+            &none,
+            NOW,
+            true,
+        );
+        s.load_rkdb(&image, NOW).unwrap();
+        s.floor = 2;
+        assert!(state_db_counts(&old, &s).is_err());
+        let next = db(
+            &ids,
+            3,
+            NOW - 60,
+            &[a],
+            None,
+            Db::parse(&image).unwrap().hash,
+        );
+        assert_eq!(state_db_counts(&next, &s), Ok(()));
+        let dropped = db(
+            &ids,
+            3,
+            NOW - 60,
+            &[],
+            None,
+            Db::parse(&image).unwrap().hash,
+        );
+        assert!(
+            state_db_counts(&dropped, &s).is_err(),
+            "it lost an entry the image has"
+        );
     }
 
     fn host() -> FakeHost {
@@ -1220,7 +1726,8 @@ mod tests {
         let gate = script.find("-ge $EVERY").expect("the daily gate");
         assert!(update < gate, "the list is refreshed on every hourly run");
         assert!(
-            !script.contains("/plugins/revoked"),
+            !script.lines().any(|l| l.contains("curl")
+                && (l.contains("revoked.json") || l.contains("revoked.rkdb"))),
             "wol trust update fetches the files itself"
         );
     }
