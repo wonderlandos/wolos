@@ -365,6 +365,13 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         | "package.updates" => crate::packages::execute(inv, env),
         "widgets.list" | "widgets.add" | "widgets.remove" | "widgets.reload"
         | "widgets.validate" => crate::widgets::execute(inv, env),
+        "network.ip" => crate::netverbs::execute(inv, env),
+        a if ["vpn.", "proxy.", "dns.", "airplane."]
+            .iter()
+            .any(|p| a.starts_with(p)) =>
+        {
+            crate::netverbs::execute(inv, env)
+        }
         other => crate::verbs::execute(inv, env)
             .unwrap_or_else(|| fail(env, ErrorCode::Failed, &format!("no handler for {other}"))),
     }

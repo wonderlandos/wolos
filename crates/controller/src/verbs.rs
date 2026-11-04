@@ -136,7 +136,7 @@ fn get(env: &mut dyn Env, state: fn(&mut dyn Env) -> Value, json: bool) -> i32 {
     show(env, v, json)
 }
 
-fn show(env: &mut dyn Env, v: Value, json: bool) -> i32 {
+pub(crate) fn show(env: &mut dyn Env, v: Value, json: bool) -> i32 {
     if json {
         emit_json(env, &v);
     } else {
@@ -149,7 +149,7 @@ fn percent(s: &str, min: u8) -> Option<u8> {
     s.parse::<u8>().ok().filter(|p| (min..=100).contains(p))
 }
 
-fn control_error(env: &mut dyn Env, e: ControlError) -> i32 {
+pub(crate) fn control_error(env: &mut dyn Env, e: ControlError) -> i32 {
     let (code, msg) = match e {
         ControlError::Unavailable => (ErrorCode::Unavailable, "not available on this computer"),
         ControlError::NeedsAuth => (ErrorCode::Denied, "administrator password required"),
@@ -220,7 +220,7 @@ fn control(
 
 /// Change that may need the administrator password (wol-admind on FreeBSD): password from stdin,
 /// up to [`PASSWORD_TRIES`] times. Helpers on `wol mcp` never get here: they get the on-screen prompt.
-fn with_password(
+pub(crate) fn with_password(
     env: &mut dyn Env,
     json: bool,
     state: fn(&mut dyn Env) -> Value,

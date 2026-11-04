@@ -96,6 +96,13 @@ pub enum AdminAction {
     /// Error reports (Settings > Privacy), `on` or `off`: `send=1|0` in `/etc/wolos/reports.conf`
     /// and the hourly `wolos-report.timer`.
     Reports,
+    /// System proxy (Settings > Network > Proxy): `off`, `auto <pac url> <no proxy|->` or
+    /// `manual <http|-> <https|-> <socks|-> <no proxy|->` (`wol_core::netconf::proxy_args`):
+    /// /etc/wolos/proxy.conf and the login environment /etc/profile.d/wolos-proxy.sh.
+    Proxy,
+    /// DNS over TLS (systemd-resolved): `<off|opportunistic|strict> [server…]`, a resolved.conf.d
+    /// drop-in, then resolved restarted.
+    DnsOverTls,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -145,6 +152,8 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::SystemRollback, "system-rollback"),
     (AdminAction::SystemChannel, "system-channel"),
     (AdminAction::Reports, "reports"),
+    (AdminAction::Proxy, "proxy"),
+    (AdminAction::DnsOverTls, "dns-over-tls"),
 ];
 
 impl AdminAction {

@@ -248,6 +248,9 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::PkgInstallFile => ok(n == 2 && is_staged_package(a[0]) && is_sha256_hex(a[1])),
         AdminAction::SystemRollback => ok(n == 0),
         AdminAction::SystemChannel => ok(n == 1 && shared::packages::CHANNELS.contains(&a[0])),
+        // NET-3: every value is checked here again (it is written into a shell file).
+        AdminAction::Proxy => ok(crate::netconf::proxy_from_args(&a).is_some()),
+        AdminAction::DnsOverTls => ok(crate::netconf::dot_from_args(&a).is_some()),
         _ => invalid(),
     }
 }
@@ -619,6 +622,35 @@ pub fn plan_with(
         AdminAction::SystemChannel => {
             vec![write(CHANNEL_FILE, 0o644, format!("{}\n", a[0]))]
         }
+        AdminAction::Proxy => {
+            let a: Vec<&str> = a.iter().map(String::as_str).collect();
+            let c = crate::netconf::proxy_from_args(&a).ok_or("proxy: bad arguments")?;
+            vec![
+                write(
+                    crate::netconf::PROXY_CONF,
+                    0o644,
+                    crate::netconf::render_proxy_conf(&c),
+                ),
+                write(
+                    crate::netconf::PROXY_PROFILE,
+                    0o644,
+                    crate::netconf::render_proxy_profile(&c),
+                ),
+            ]
+        }
+        AdminAction::DnsOverTls => {
+            let a: Vec<&str> = a.iter().map(String::as_str).collect();
+            let c = crate::netconf::dot_from_args(&a).ok_or("dns-over-tls: bad arguments")?;
+            vec![
+                argv(&["mkdir", "-p", "-m", "0755", "/etc/systemd/resolved.conf.d"]),
+                write(
+                    crate::netconf::DOT_DROPIN,
+                    0o644,
+                    crate::netconf::render_dot(&c),
+                ),
+                argv(&crate::netconf::RESOLVED_RESTART_ARGV),
+            ]
+        }
     })
 }
 
@@ -817,6 +849,10 @@ pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
         (A::SystemRollback, Always),
         (A::SystemChannel, Always),
         (A::Reports, Cached),
+        // NET-3: where every connection or name lookup of this computer goes (a proxy or a DNS
+        // server of someone else's choosing sees it all).
+        (A::Proxy, Always),
+        (A::DnsOverTls, Always),
     ]
 };
 

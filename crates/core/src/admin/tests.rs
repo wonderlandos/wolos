@@ -883,6 +883,63 @@ fn settings_verbs_merge_files() {
     assert!(!c.render(Some(old)).contains("screen-capture"));
 }
 
+/// NET-3: the proxy writes its own file and the login environment; DNS over TLS writes the
+/// resolved drop-in and restarts resolved. Both ask for the password every time, and a
+/// value that could break out of the shell file is refused before any step.
+#[test]
+fn proxy_and_dns_over_tls_plans() {
+    let steps = plan(&r(Proxy, &["manual", "proxy.lan:3128", "-", "-", "-"])).unwrap();
+    let paths: Vec<&str> = steps
+        .iter()
+        .filter_map(|s| match s {
+            AdminStep::Write { path, .. } => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        paths,
+        [crate::netconf::PROXY_CONF, crate::netconf::PROXY_PROFILE]
+    );
+    let AdminStep::Write { content, mode, .. } = &steps[1] else {
+        panic!("{steps:?}")
+    };
+    assert_eq!(*mode, 0o644);
+    assert!(
+        content
+            .render(None)
+            .contains("export http_proxy='http://proxy.lan:3128/'")
+    );
+    for bad in [
+        &["manual", "proxy.lan:3128';id;'", "-", "-", "-"][..],
+        &["auto", "http://x/$(id)", "-"],
+        &[],
+    ] {
+        assert!(validate(&r(Proxy, bad)).is_some(), "{bad:?}");
+    }
+    let steps = plan(&r(DnsOverTls, &["opportunistic", "9.9.9.9#dns.quad9.net"])).unwrap();
+    assert_eq!(steps.len(), 3);
+    assert_eq!(
+        steps[2],
+        argv(&["systemctl", "restart", "systemd-resolved.service"])
+    );
+    let AdminStep::Write { path, content, .. } = &steps[1] else {
+        panic!("{steps:?}")
+    };
+    assert_eq!(path, crate::netconf::DOT_DROPIN);
+    assert!(
+        content
+            .render(None)
+            .contains("DNSOverTLS=opportunistic\nDNS=9.9.9.9#dns.quad9.net\n")
+    );
+    assert!(
+        validate(&r(DnsOverTls, &["strict"])).is_some(),
+        "strict needs a server"
+    );
+    assert!(validate(&r(DnsOverTls, &["off", "x;y"])).is_some());
+    assert!(needs_fresh_password(&r(Proxy, &["off"])));
+    assert!(needs_fresh_password(&r(DnsOverTls, &["off"])));
+}
+
 /// A printer URI may carry credentials (`ipp://user:pass@host`): never logged.
 #[test]
 fn describe_hides_printer_credentials() {
@@ -1013,6 +1070,8 @@ fn every_action_is_classified() {
         PkgInstallFile,
         SystemRollback,
         SystemChannel,
+        Proxy,
+        DnsOverTls,
     ] {
         assert_eq!(fresh_rule(a), Fresh::Always, "{a:?}");
     }
