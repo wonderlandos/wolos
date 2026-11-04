@@ -5,6 +5,7 @@
 //! depends on `shared` and `core` only (BSD-2-Clause), and no GPL crate may depend on it back.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
 //! Plugins (ADR 0031): `controller` may use `wol-lua` too, so `wol plugin check|run` runs plugin Lua headless.
+//! Search by meaning: `wolsem` (BSD-2-Clause) is a leaf crate (no workspace dependency); `controller` and `shell` use it.
 use std::collections::BTreeMap;
 use std::process::Command;
 
@@ -47,7 +48,8 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 "shared" => false,
                 "core" => dep == "shared",
                 // `wol plugin check|run` loads and renders plugin Lua without a display (ADR 0031).
-                "controller" => ["shared", "core", "wol-lua"].contains(&dep.as_str()),
+                // `wol help <words>` finds a command by meaning (wolsem, docs/modules/search.md).
+                "controller" => ["shared", "core", "wol-lua", "wolsem"].contains(&dep.as_str()),
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
                 "wol-lua" => ["shared", "core", "wol-abi"].contains(&dep.as_str()),
                 // Links only libc and libclamav: a GPL-2.0-only program stays alone (ADR 0028).
@@ -57,7 +59,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The App Store links the package core directly (ADR 0021); the desktop runs Lua
                 // widgets (ADR 0020); the Sound pane and the Control Center drive PipeWire through
                 // the audio adaptor (wol_audio::pw::Handle).
-                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio"].contains(&dep.as_str()),
+                // Settings and the Search bar rank by meaning with wolsem (docs/modules/search.md).
+                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio", "wolsem"]
+                    .contains(&dep.as_str()),
                 // The web-app runtime (ADR 0042) paints into wolkit surface nodes and reads wolkit's
                 // event records; BSD-2-Clause like wolkit, so the licence rule holds.
                 "webengine" => ["shared", "core", "wolkit"].contains(&dep.as_str()),

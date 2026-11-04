@@ -12,6 +12,8 @@ wol_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true
+# `wol help <words>` and the unknown-command hint find a command by meaning (docs/modules/search.md).
+wolsem = { path = "../wolsem" }
 
 [[bin]]
 name = "wol"

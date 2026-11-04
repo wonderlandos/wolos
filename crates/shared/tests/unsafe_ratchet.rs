@@ -111,6 +111,8 @@ const BASELINE: &[(&str, usize)] = &[
     ("wol-lua", 3),
     ("xguard-clam", 13),
     ("webengine", 140),
+    // Search by meaning: pread, no mmap, so no unsafe (docs/modules/search.md).
+    ("wolsem", 0),
 ];
 
 fn crates_dir() -> PathBuf {
