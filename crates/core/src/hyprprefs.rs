@@ -86,7 +86,7 @@ impl Default for DesktopPrefs {
             repeat_rate: 25,
             repeat_delay: 400,
             pointer_speed: 0.0,
-            mouse_natural_scroll: true,
+            mouse_natural_scroll: false, // a wheel scrolls the page the way it turns; natural stays on for the trackpad
             touchpad_natural_scroll: true,
             tap_to_click: true,
             two_finger_secondary: true,
