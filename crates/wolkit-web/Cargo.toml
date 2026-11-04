@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license = "BSD-2-Clause"
 authors.workspace = true
-description = "A wolkit page in the browser: the wasm32 module the site's /kit/ loader mounts into a canvas (WebGPU)"
+description = "A wolkit page in the browser: the wasm32 module the site's /kit loader mounts into a canvas (WebGPU)"
 publish = false
 
 [lib]

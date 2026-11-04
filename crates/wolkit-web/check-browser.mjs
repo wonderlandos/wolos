@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-// The web path, end to end: serves SITE/public/kit, opens /kit/ in headless Chromium with WebGPU
+// The web path, end to end: serves SITE/public/kit, opens /kit.html in headless Chromium with WebGPU
 // (SwiftShader's software Vulkan, so no GPU is needed), waits for Wolkit's first frame, reads the
 // frame back from the GPU (window.__kit.snapshot) and compares it with the native wgpu image of
 // the same page (crates/wolkit-render tests/page.rs writes them), light and dark. Then clicks the switch and checks
@@ -90,7 +90,7 @@ try {
   result.logs = logs;
   let all = true;
   for (const theme of ["light", "dark"]) {
-    await page.goto(`http://127.0.0.1:${port}/kit/?theme=${theme}`);
+    await page.goto(`http://127.0.0.1:${port}/kit.html?theme=${theme}`);
     await page.waitForFunction(() => window.__kit && (window.__kit.timings || window.__kit.error), null, { timeout: 60000 });
     const info = await page.evaluate(() => ({ error: window.__kit.error, timings: window.__kit.timings, stats: window.__kit.stats, status: document.getElementById("kit-status").textContent }));
     const t = (result.themes[theme] = info);

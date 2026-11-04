@@ -222,7 +222,7 @@ A native window tells the compositor and the menu bar two things about itself, w
 
 ## In the browser (ADR 0060)
 
-The same engine draws on the site: `crates/wolkit-web` compiles the portable pipeline (no Wayland, no Vulkan, no Lua) to WebAssembly and draws it on WebGPU into a `<canvas>`. The route `/kit/` (`site/public/kit/`) shows the libwol sample window (the tree behind the shell's `app-window-parts` golden) with the same kit look, tokens, Inter faces and layout as the desktop, light or dark (`?theme=dark`, else the system setting). Click the switch, type in the field, Tab between the parts. Size: about 1.29 MB gzip for the wasm, the glue, the loader and the two fonts. See the "Render targets" section of `docs/modules/libwolkit.md` for the pieces and the checks.
+The same engine draws on the site: `crates/wolkit-web` compiles the portable pipeline (no Wayland, no Vulkan, no Lua) to WebAssembly and draws it on WebGPU into a `<canvas>`. The page `/kit` (`site/public/kit.html`, assets in `site/public/kit/`) shows the libwol sample window (the tree behind the shell's `app-window-parts` golden) with the same kit look, tokens, Inter faces and layout as the desktop, light or dark (`?theme=dark`, else the system setting). Click the switch, type in the field, Tab between the parts. Size: about 1.29 MB gzip for the wasm, the glue, the loader and the two fonts. See the "Render targets" section of `docs/modules/libwolkit.md` for the pieces and the checks.
 
 ## Testing without a display
 
