@@ -2,7 +2,9 @@
 //! `.wol` package file, index and paths (ADR 0011, docs/modules/packages.md). Wire names and
 //! paths are compatibility contract.
 
-/// Archive members, in archive order: (name, required).
+/// Archive members, in archive order: (name, required). Between [`ICON`] and [`PAYLOAD`] a
+/// package from the hub may carry up to [`MAX_SCREENSHOTS`] listing pictures, see
+/// [`is_screenshot_member`].
 pub const MEMBERS: [(&str, bool); 5] = [
     (super::bundle::INFO_FILE, true),
     (ICON, false),
@@ -11,6 +13,26 @@ pub const MEMBERS: [(&str, bool); 5] = [
     (SIGNATURE, false),
 ];
 pub const ICON: &str = "icon.png";
+/// Prefix of the listing screenshots a package from the hub may carry (ADR 0047, hubcheck
+/// `facts`): `screenshots/<name>.png|webp`, after [`ICON`] and before [`PAYLOAD`], each name once.
+pub const SCREENSHOT_PREFIX: &str = "screenshots/";
+/// Most screenshot members in one package.
+pub const MAX_SCREENSHOTS: usize = 8;
+/// Largest screenshot member (bytes); the hub's own limit for a listing picture.
+pub const MAX_SCREENSHOT_SIZE: u64 = 2 << 20;
+/// `screenshots/<name>.png` or `.webp`, the name of 1 to 32 lowercase letters, digits, `-` and `_`.
+pub fn is_screenshot_member(name: &str) -> bool {
+    name.strip_prefix(SCREENSHOT_PREFIX).is_some_and(|f| {
+        f.strip_suffix(".png")
+            .or_else(|| f.strip_suffix(".webp"))
+            .is_some_and(|stem| {
+                (1..=32).contains(&stem.len())
+                    && stem
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+            })
+    })
+}
 pub const PAYLOAD: &str = "payload.pkg";
 /// `SHA256 (<member>) = <hex>` lines for every other member, sorted by name.
 pub const MANIFEST: &str = "SHA256";

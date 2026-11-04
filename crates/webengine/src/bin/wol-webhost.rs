@@ -17,7 +17,7 @@ use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use webengine::bridge::manifest::{KIT, Manifest, SYSTEM_DIR};
+use webengine::bridge::manifest::{Manifest, OPT_DIR, SYSTEM_DIR, kit_for};
 use webengine::bridge::{AppInfo, Bridge, Theme};
 use webengine::host::{Host, WoldClient, initial_grants, locale};
 use webengine::{App, Channel, Target, WebView, ffi, input, process};
@@ -116,7 +116,9 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
     let dir = toml.parent().ok_or("no folder")?.to_path_buf();
     let manifest = Manifest::load(&dir)?;
     let root = dir.parent().ok_or("no apps folder")?;
-    let kit = root.join(KIT);
+    // The kit is the image's own, whichever of the two folders the app is in (a hub package under /opt never ships one).
+    let canonical = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| PathBuf::from(p));
+    let kit = kit_for(root, &canonical(SYSTEM_DIR), &canonical(OPT_DIR));
     if !kit.is_dir() {
         return Err(format!("{}: the kit is missing", kit.display()));
     }

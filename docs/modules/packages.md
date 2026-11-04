@@ -21,11 +21,12 @@ ustar archive, regular files only (`typeflag` `0`), mode 0644, uid/gid 0, names 
 |---|---|---|
 | `Info.json` | yes | `shared::bundle::Info` (below) |
 | `icon.png` | no | 256x256 icon for the install sheet |
+| `screenshots/<name>.png` or `.webp` | no | Up to 8 pictures for the hub's store page (the hub reads them from the package, hubcheck `facts`), each of at most 2 MiB; `<name>` is 1 to 32 lowercase letters, digits, `-` and `_`, each name once; PNG or WebP by name and first bytes. They sit between `icon.png` and `payload.pkg` |
 | `payload.pkg` | yes | pacman package (`makepkg`, `.pkg.tar.zst` bytes), prefix `/usr` |
 | `SHA256` | yes | `SHA256 (<member>) = <64 lowercase hex>\n` for every member above, sorted by name |
 | `SHA256.sig` | no | raw 64-byte Ed25519 signature of the `SHA256` bytes |
 
-Verify (`wol_core::package::verify`): order and names exact, no duplicates, every hash matches, `SHA256` lists nothing else, `Info.json` valid, `package` set. Signature verified by a trusted key = signed; absent = unsigned; anything else = refused.
+Verify (`wol_core::package::verify`): order and names exact (the screenshots as above: `shared::package::is_screenshot_member`, `MAX_SCREENSHOTS`, `MAX_SCREENSHOT_SIZE`), no duplicates, every hash matches, `SHA256` lists nothing else, `Info.json` valid, `package` set. Signature verified by a trusted key = signed; absent = unsigned; anything else = refused.
 
 ## Info.json
 
