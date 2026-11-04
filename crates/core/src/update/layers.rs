@@ -152,6 +152,114 @@ pub fn clear_steps(names: &[String]) -> Vec<Vec<String>> {
     out
 }
 
+/// Where `wol layers clear` keeps the layers the booted slot folded in, out of the merge, for as
+/// long as the other slot (the restore point) does not hold them (QA-LIVE3-1: a rollback lost
+/// every program installed since the install). Same file system as [`DIR`]: moves are renames.
+pub const KEPT_DIR: &str = "/var/lib/wolos/layers-kept";
+
+/// What one `wol layers clear` does, by layer name.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tidy {
+    /// Folded into the booted slot: out of the merge, kept.
+    pub keep: Vec<String>,
+    /// Kept, but the booted slot does not hold them (a rollback): back into the merge.
+    pub restore: Vec<String>,
+    /// Never finished ([`unfinished`]): removed.
+    pub drop: Vec<String>,
+    /// Kept, and both slots hold them: removed for good.
+    pub prune: Vec<String>,
+}
+
+/// [`Tidy`] from the booted slot's folded list, the other slot's (None: unknown, nothing is
+/// pruned), `ls` of [`DIR`] and of [`KEPT_DIR`], and the unfinished layers.
+pub fn tidy(
+    folded: &str,
+    other_folded: Option<&str>,
+    ls: &str,
+    kept: &str,
+    unfinished: &[String],
+) -> Tidy {
+    let names = |t: &str| -> Vec<String> {
+        t.lines()
+            .map(str::trim)
+            .filter(|n| is_layer_name(n))
+            .map(str::to_owned)
+            .collect()
+    };
+    let (booted, kept) = (names(folded), names(kept));
+    let keep: Vec<String> = to_clear(folded, ls)
+        .into_iter()
+        .filter(|n| !unfinished.contains(n))
+        .collect();
+    let restore = kept
+        .iter()
+        .filter(|n| !booted.contains(n))
+        .cloned()
+        .collect();
+    let other = other_folded.map(names);
+    let prune = kept
+        .iter()
+        .filter(|n| booted.contains(n) && other.as_ref().is_some_and(|o| o.contains(n)))
+        .cloned()
+        .collect();
+    let drop = unfinished
+        .iter()
+        .filter(|n| is_layer_name(n))
+        .cloned()
+        .collect();
+    Tidy {
+        keep,
+        restore,
+        drop,
+        prune,
+    }
+}
+
+/// [`Tidy`]'s steps, as [`clear_steps`] orders them: renames out of (and back into) [`DIR`]
+/// first, then one [`refresh_step`], then the removals. Empty when there is nothing to do.
+pub fn tidy_steps(t: &Tidy) -> Vec<Vec<String>> {
+    let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    let mv = |from: &str, to: &str, n: &str| {
+        s(&["mv", "-T", &format!("{from}/{n}"), &format!("{to}/{n}")])
+    };
+    let moves = !(t.keep.is_empty() && t.restore.is_empty() && t.drop.is_empty());
+    if !moves && t.prune.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if moves {
+        let mut mkdir = vec!["mkdir", "-p"];
+        if !t.keep.is_empty() {
+            mkdir.push(KEPT_DIR);
+        }
+        if !t.drop.is_empty() {
+            mkdir.push(CLEARED_DIR);
+        }
+        if mkdir.len() > 2 {
+            out.push(s(&mkdir));
+        }
+        out.extend(t.keep.iter().map(|n| mv(DIR, KEPT_DIR, n)));
+        out.extend(t.drop.iter().map(|n| mv(DIR, CLEARED_DIR, n)));
+        out.extend(t.restore.iter().map(|n| mv(KEPT_DIR, DIR, n)));
+        out.push(refresh_step());
+        if !t.drop.is_empty() {
+            out.push(s(&["rm", "-rf", CLEARED_DIR]));
+        }
+        out.extend(
+            t.keep
+                .iter()
+                .chain(&t.drop)
+                .map(|n| s(&["rm", "-rf", &format!("{WORK_DIR}/{n}")])),
+        );
+    }
+    out.extend(
+        t.prune
+            .iter()
+            .map(|n| s(&["rm", "-rf", &format!("{KEPT_DIR}/{n}")])),
+    );
+    out
+}
+
 pub fn name(n: u32) -> String {
     format!("{PREFIX}{n:04}")
 }

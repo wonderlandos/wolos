@@ -57,13 +57,14 @@ fn the_installer_writes_the_etc_line_the_updates_keep() {
 #[test]
 fn a_slot_build_turns_the_old_etc_line_into_the_new_one() {
     let d = scratch("fstab");
-    let steps = up::plan_from("wolos-b", Base::Running { replace: true }, None, None).unwrap();
+    let steps = up::plan_from("wolos-b", Base::Running { replace: true }, None, None, &[]).unwrap();
     let sed = steps
         .iter()
         .map(argv)
         .find(|a| a[0] == "sed" && a.last().unwrap().ends_with("/etc/fstab"))
         .expect("the plan rewrites the new slot's fstab");
-    assert_eq!(sed.last().unwrap(), &format!("{TOP}/@wolos-b/etc/fstab"));
+    // Built in the scratch copy (QA-STORE-3), which becomes wolos-b at the swap.
+    assert_eq!(sed.last().unwrap(), &format!("{TOP}/@wolos-tx/etc/fstab"));
     let fstab = d.join("fstab");
     fs::write(&fstab, FSTAB_012).unwrap();
     let mut a = sed.clone();
@@ -179,14 +180,20 @@ fn pacman_u_files_reach_the_copy_with_their_signature() {
     let root = d.join("tx");
     // Run the staging steps (everything before the bind) under the scratch folder.
     let moved = |a: &str| a.replace(&work, &root.display().to_string());
+    // Up to pacman, which runs in the copy under `unshare` (RH-192).
     let bind = steps
         .iter()
-        .position(|s| s.to_string() == format!("mount --bind {work} {work}"))
+        .position(|s| {
+            s.to_string()
+                .starts_with("unshare --mount --propagation private wol update chroot ")
+        })
         .unwrap();
     let mut ran = 0;
     for s in &steps[..bind] {
         let a: Vec<String> = argv(s).iter().map(|x| moved(x)).collect();
-        if !matches!(a[0].as_str(), "mkdir" | "cp" | "find") {
+        // Only the staging of the files: the other steps before the bind act on the real
+        // /run/wolos/top (the scratch clean-up) or the copy's /etc.
+        if !matches!(a[0].as_str(), "mkdir" | "cp" | "find") || !a.join(" ").contains("wolos-pkg") {
             continue;
         }
         let st = Command::new(&a[0]).args(&a[1..]).status().unwrap();
@@ -211,11 +218,11 @@ fn pacman_u_files_reach_the_copy_with_their_signature() {
         !st.join("1/hello1.pkg.tar.zst.sig").exists(),
         "a glob never matches another file"
     );
-    let pacman = steps[bind + 1].to_string();
+    let pacman = steps[bind].to_string();
     assert_eq!(
         pacman,
         format!(
-            "arch-chroot {work} /usr/bin/pacman -U --noconfirm \
+            "unshare --mount --propagation private wol update chroot {work} -- /usr/bin/pacman -U --noconfirm \
 /var/tmp/wolos-pkg/0/linux-wolos-7.3.1-1-x86_64.pkg.tar.zst /var/tmp/wolos-pkg/1/hello[1].pkg.tar.zst"
         )
     );

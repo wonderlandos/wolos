@@ -124,17 +124,20 @@ pub fn plan_for(
     date: Option<&str>,
     cmdline: Option<&str>,
 ) -> Option<Vec<Step>> {
-    plan_from(slot, Base::Running { replace }, date, cmdline)
+    plan_from(slot, Base::Running { replace }, date, cmdline, &[])
 }
 
 /// [`plan_for`] from a chosen base: [`Base::Pending`] stacks the update onto a slot that waits
 /// for its first boot (a kernel installed with pacman), so the update keeps that change instead
-/// of replacing the slot with a fresh copy of the running root. None on a bad slot or date.
+/// of replacing the slot with a fresh copy of the running root. `holds`: package names that stay
+/// at their version (QA-STORE-49; validated names, as wol-admind's `pkg-upgrade` arguments). None
+/// on a bad slot or date.
 pub fn plan_from(
     slot: &str,
     from: Base,
     date: Option<&str>,
     cmdline: Option<&str>,
+    holds: &[String],
 ) -> Option<Vec<Step>> {
     if date.is_some_and(|d| !is_snapshot_date(d)) {
         return None;
@@ -142,11 +145,13 @@ pub fn plan_from(
     let release = date.unwrap_or("current").to_owned();
     let date = date.map(str::to_owned);
     let prep = move |root: &str| repo_date_steps(date.as_deref(), root);
+    let args = pkg::update_now_args(holds);
+    let pacman: Vec<&str> = args.iter().map(String::as_str).collect();
     build(&Build {
         slot,
         from,
         prep: &prep,
-        pacman: &["-Syu", "--noconfirm"],
+        pacman: &pacman,
         files: &[],
         release: &release,
         cmdline,
@@ -304,20 +309,22 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     }
     let v = |a: &[&str]| Step::Run(a.iter().map(|s| (*s).to_owned()).collect());
     let root = format!("{TOP}/@{slot}");
-    let work = match b.from {
-        Base::Running { .. } => root.clone(),
-        Base::Pending => format!("{TOP}/@{SCRATCH}"),
+    // QA-STORE-3: every change is built aside, in the scratch copy; the slot (the earlier restore
+    // point, or a change that waits for its restart) is touched only once the new one is complete
+    // and sealed ([`swap_steps`]). A cut or a failed step before that leaves the slot as it was.
+    let work = format!("{TOP}/@{SCRATCH}");
+    let mut steps = vec![Step::Write {
+        path: BUILDING.into(),
+        text: format!("{slot} {}\n", b.release),
+    }];
+    // A scratch copy a cut left behind (QA-STORE-8, QA-LIVE4-8: the next try failed with "File
+    // exists"): unmounted and deleted first; nothing to do when there is none.
+    steps.extend(clear_scratch());
+    let from = match b.from {
+        Base::Running { .. } => "/",
+        Base::Pending => root.as_str(),
     };
-    let mut steps = Vec::new();
-    match b.from {
-        Base::Running { replace } => {
-            if replace {
-                steps.push(v(&["btrfs", "subvolume", "delete", &root]));
-            }
-            steps.push(v(&["btrfs", "subvolume", "snapshot", "/", &work]));
-        }
-        Base::Pending => steps.push(v(&["btrfs", "subvolume", "snapshot", &root, &work])),
-    }
+    steps.push(v(&["btrfs", "subvolume", "snapshot", from, &work]));
     // Packages installed live since: their files and database entries come along, then the
     // layers are cleared from the copy.
     steps.push(v(&["wol", "layers", "fold", &work]));
@@ -336,6 +343,34 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
         text: slot_file_text(slot),
     });
     steps.push(v(&[ETC_SETTLE]));
+    // QA-LIVE4-13: the repos the copy updates from are the ones Settings and the daily check read
+    // (the live /etc, with the person's own repos), not the sealed copy under the overlay.
+    // A stacked change keeps the pending slot's own (its repos dated by the first change).
+    if b.from != Base::Pending {
+        steps.push(v(&[
+            "cp",
+            "--remove-destination",
+            PACMAN_CONF,
+            &format!("{work}{PACMAN_CONF}"),
+        ]));
+    }
+    // QA-UPG-11: the copy's kernel command line names the slot it becomes (esp-sync reads the file
+    // when a pacman hook runs it in that slot later).
+    steps.push(v(&[
+        "find",
+        &format!("{work}/etc"),
+        "-maxdepth",
+        "2",
+        "-path",
+        &format!("{work}/etc/kernel/cmdline"),
+        "-exec",
+        "sed",
+        "-i",
+        "-E",
+        &format!("s#subvol=/?@wolos-[ab]([ ,]|$)#subvol=@{slot}\\1#"),
+        "{}",
+        "+",
+    ]));
     steps.extend((b.prep)(&work));
     let stage = format!("{work}{STAGE}");
     if !b.files.is_empty() {
@@ -368,14 +403,13 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
             ]));
         }
     }
-    // pacman finds the root's file system in the mount table (CheckSpace); a subvolume folder is
-    // not a mount, so the copy is bound onto itself (arch-chroot(8)) and let go before the seal.
-    steps.push(v(&["mount", "--bind", &work, &work]));
-    let mut chroot = vec!["arch-chroot", &work, PACMAN];
-    chroot.extend(b.pacman);
-    steps.push(v(&chroot));
-    steps.push(v(&["arch-chroot", &work, "mkinitcpio", "-P"]));
-    steps.push(v(&["umount", &work]));
+    // pacman and mkinitcpio run in the copy through `wol update chroot`, each in a mount
+    // namespace of its own (RH-192): the copy bound onto itself (pacman's CheckSpace needs a mount
+    // point), the shared package cache (QA-STORE-46) and arch-chroot's mounts end with it.
+    let mut pacman = vec![PACMAN];
+    pacman.extend(b.pacman);
+    steps.push(in_copy(&work, &pacman));
+    steps.push(in_copy(&work, &["mkinitcpio", "-P"]));
     if !b.files.is_empty() {
         steps.push(v(&["rm", "-rf", "--", &stage]));
     }
@@ -391,18 +425,13 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     ]));
     let esp = format!("{ESP}/{slot}");
     steps.push(v(&["mkdir", "-p", &esp]));
-    steps.push(v(&[
-        "wol",
-        "seal",
-        "apply",
-        &work,
-        &crate::seal::digest_file(slot),
-    ]));
-    if b.from == Base::Pending {
-        // The first change stays until the second one is complete and sealed.
-        steps.push(v(&["btrfs", "subvolume", "delete", &root]));
-        steps.push(v(&["mv", &work, &root]));
-    }
+    // Next to the slot's record, not over it: until the swap the slot's own image is checked
+    // against its own digest.
+    let digest = crate::seal::digest_file(slot);
+    let digest_new = format!("{digest}.new");
+    steps.push(v(&["wol", "seal", "apply", &work, &digest_new]));
+    steps.extend(swap_steps(slot));
+    steps.push(v(&["mv", "-f", &digest_new, &digest]));
     // After the seal: the signed image carries the slot's root digest.
     steps.push(v(&[
         "env",
@@ -416,9 +445,114 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
         ESP_SYNC,
         "--new",
     ]));
+    // The new slot boots next from here on: no longer an interrupted update (review 5).
+    steps.push(v(&["rm", "-f", BUILDING]));
     // A rollback the person chose earlier stops being the default: newest good entry boots.
     steps.push(v(&["bootctl", "set-default", ""]));
     Some(steps)
+}
+
+/// `unshare --mount --propagation private wol update chroot WORK -- CMD...`: CMD in the copy at
+/// WORK, every mount it needs private to that one process.
+pub fn in_copy(work: &str, cmd: &[&str]) -> Step {
+    let mut a: Vec<String> = [
+        "unshare",
+        "--mount",
+        "--propagation",
+        "private",
+        "wol",
+        "update",
+        "chroot",
+    ]
+    .map(String::from)
+    .to_vec();
+    a.push(work.to_owned());
+    a.push("--".to_owned());
+    a.extend(cmd.iter().map(|c| (*c).to_owned()));
+    Step::Run(a)
+}
+
+/// Present while a slot is being built (`<slot> <release>`), removed at its end or by its undo:
+/// found with no build running ([`interrupted`]), the last one was cut off (QA-LIVE4-14). In the
+/// shared `/var`, so either slot sees it.
+pub const BUILDING: &str = "/var/lib/wolos/update-building";
+
+/// The package cache every slot shares (pacman's default `CacheDir`, in the shared `/var`).
+pub const CACHE: &str = "/var/cache/pacman/pkg";
+
+/// The slot an update was building when it was cut off: [`BUILDING`]'s text while no build holds
+/// [`LOCK`] (`lock_held`). None when nothing was cut off or a build is running now.
+pub fn interrupted(building: Option<&str>, lock_held: bool) -> Option<&str> {
+    let slot = building?.split_whitespace().next()?;
+    (!lock_held && is_valid_be(slot)).then_some(slot)
+}
+
+/// `find TOP -maxdepth 1 -name NAME -exec ARGV {} TERM`: ARGV on the subvolume `@NAME` only when
+/// it exists. With `+` a failing ARGV fails the step; with `;` it never does (an unmount of what
+/// is not mounted).
+fn on_subvolume(name: &str, argv: &[&str], strict: bool) -> Step {
+    let mut a: Vec<String> = ["find", TOP, "-maxdepth", "1", "-name"]
+        .map(String::from)
+        .to_vec();
+    a.push(format!("@{name}"));
+    a.push("-exec".into());
+    a.extend(argv.iter().map(|s| (*s).to_owned()));
+    a.push("{}".into());
+    a.push(if strict { "+" } else { ";" }.into());
+    Step::Run(a)
+}
+
+/// Unmounts and deletes the scratch copy if there is one.
+fn clear_scratch() -> Vec<Step> {
+    vec![
+        on_subvolume(SCRATCH, &["umount", "-R"], false),
+        on_subvolume(SCRATCH, &["btrfs", "subvolume", "delete"], true),
+    ]
+}
+
+/// Every boot entry of `slot`: blessed (`wolos-b.conf`), counted (`wolos-b+3.conf`, `+2-1`) and
+/// the other kernels' (`wolos-b-linux.conf`).
+fn entries_of(slot: &str) -> Vec<String> {
+    let mut a: Vec<String> = vec![
+        "find".into(),
+        format!("{ESP}/loader/entries"),
+        "-maxdepth".into(),
+        "1".into(),
+        "(".into(),
+    ];
+    for (i, pat) in ["", "+*", "-*"].iter().enumerate() {
+        if i > 0 {
+            a.push("-o".into());
+        }
+        a.push("-name".into());
+        a.push(format!("{slot}{pat}.conf"));
+    }
+    a.push(")".into());
+    a
+}
+
+/// The swap, once the new copy is complete and sealed: the slot's entries go first (no entry ever
+/// names a slot that is not there, QA-STORE-3), then the slot itself, then the copy takes its name.
+fn swap_steps(slot: &str) -> Vec<Step> {
+    let mut entries = entries_of(slot);
+    entries.push("-delete".into());
+    vec![
+        Step::Run(entries),
+        // FAT keeps a removed entry until it is flushed: on the disk before the root goes.
+        Step::Run(flush_esp()),
+        on_subvolume(slot, &["btrfs", "subvolume", "delete"], true),
+        Step::Run(vec![
+            "mv".into(),
+            format!("{TOP}/@{SCRATCH}"),
+            format!("{TOP}/@{slot}"),
+        ]),
+    ]
+}
+
+/// `sync -f /efi`: what was written to or removed from the ESP is on the disk (FAT has no
+/// journal; esp-sync flushes the same way).
+fn flush_esp() -> Vec<String> {
+    vec!["sync".into(), "-f".into(), ESP.into()]
 }
 
 /// Unbinds a copy a failed step left mounted (the bind for pacman, a chroot's mounts): a mounted
@@ -427,18 +561,23 @@ fn unmount(root: &str) -> Vec<String> {
     vec!["umount".into(), "-R".into(), root.into()]
 }
 
-/// After a failed step: a stacked change only loses its scratch copy.
-pub fn rollback_from(slot: &str, from: Base) -> Vec<Vec<String>> {
-    match from {
-        Base::Running { .. } => rollback(slot),
-        Base::Pending => {
-            let scratch = format!("{TOP}/@{SCRATCH}");
-            vec![
-                unmount(&scratch),
-                vec!["btrfs".into(), "subvolume".into(), "delete".into(), scratch],
-            ]
-        }
-    }
+/// After a step before the swap failed: the scratch copy and the unswapped digest go; the slot,
+/// its entries and its image were never touched.
+pub fn rollback_from(slot: &str, _from: Base) -> Vec<Vec<String>> {
+    let mut argv: Vec<Vec<String>> = clear_scratch()
+        .into_iter()
+        .filter_map(|s| match s {
+            Step::Run(a) => Some(a),
+            Step::Write { .. } => None,
+        })
+        .collect();
+    argv.push(vec![
+        "rm".into(),
+        "-f".into(),
+        format!("{}.new", crate::seal::digest_file(slot)),
+        BUILDING.into(),
+    ]);
+    argv
 }
 
 /// How to undo a build whose step `failed` (an index into its `steps`) did not succeed.
@@ -448,52 +587,75 @@ pub struct Undo {
     pub argv: Vec<Vec<String>>,
     /// The slot still holds what it held before (else it is removed with its boot entry).
     pub kept: bool,
+    /// The new slot is complete, sealed and has its entry (only a step after esp-sync failed):
+    /// nothing is removed, it boots next unless a default chosen earlier still holds.
+    pub done: bool,
 }
 
-/// [`rollback_from`], knowing which step failed. A stacked change ([`Base::Pending`]) keeps the
-/// slot only until its first change is deleted (audit8 stability2 #4): past that the slot is gone
-/// (a failed `mv`) or holds the new change under the old signed image (a failed boot image or
-/// entry), which cannot boot as it is, so it goes like any half-made slot, scratch copy too.
+/// [`rollback_from`], knowing which step failed. Before the swap ([`swap_steps`]) nothing of the
+/// slot changed: kept. From the swap on, the slot's entries are gone first; what is left of it
+/// (the old copy, or the new one without its image) is removed with its images, which no entry
+/// names any more (QA-STORE-3: never an image an entry still names), so it is not kept.
 pub fn rollback_at(slot: &str, from: Base, steps: &[Step], failed: usize) -> Undo {
-    let first_gone = || {
-        let delete = ["btrfs", "subvolume", "delete", &format!("{TOP}/@{slot}")];
-        steps.iter().take(failed).any(|s| {
-            matches!(s, Step::Run(a) if a.iter().map(String::as_str).eq(delete.iter().copied()))
-        })
-    };
-    match from {
-        Base::Pending if !first_gone() => Undo {
+    if steps
+        .iter()
+        .position(|s| matches!(s, Step::Run(a) if a.last().is_some_and(|x| x == "--new")))
+        .is_some_and(|esp| failed > esp)
+    {
+        return Undo {
+            argv: vec![vec!["rm".into(), "-f".into(), BUILDING.into()]],
+            kept: false,
+            done: true,
+        };
+    }
+    let swap = swap_steps(slot);
+    let started = steps
+        .iter()
+        .position(|s| *s == swap[0])
+        .is_some_and(|at| failed >= at);
+    if !started {
+        return Undo {
             argv: rollback_from(slot, from),
             kept: true,
-        },
-        Base::Pending => {
-            let mut argv = rollback(slot);
-            argv.extend(rollback_from(slot, from));
-            Undo { argv, kept: false }
-        }
-        Base::Running { .. } => Undo {
-            argv: rollback(slot),
-            kept: false,
-        },
+            done: false,
+        };
+    }
+    let mut argv = rollback(slot);
+    argv.extend(rollback_from(slot, from));
+    Undo {
+        argv,
+        kept: false,
+        done: false,
     }
 }
 
-/// After a failed step: delete the half-made slot and its entry.
+/// A slot whose swap started and did not finish: its entries (all of them), then its images, then
+/// its subvolume.
 pub fn rollback(slot: &str) -> Vec<Vec<String>> {
+    let mut entries = entries_of(slot);
+    entries.push("-delete".into());
     vec![
+        entries,
+        flush_esp(),
+        vec![
+            "find".into(),
+            format!("{ESP}/EFI/wolos"),
+            "-maxdepth".into(),
+            "1".into(),
+            "(".into(),
+            "-name".into(),
+            format!("{slot}.efi"),
+            "-o".into(),
+            "-name".into(),
+            format!("{slot}-*.efi"),
+            ")".into(),
+            "-delete".into(),
+        ],
         unmount(&format!("{TOP}/@{slot}")),
-        vec![
-            "btrfs".into(),
-            "subvolume".into(),
-            "delete".into(),
-            format!("{TOP}/@{slot}"),
-        ],
-        vec![
-            "rm".into(),
-            "-f".into(),
-            entry_file(slot),
-            format!("{ESP}/EFI/wolos/{slot}.efi"),
-        ],
+        match on_subvolume(slot, &["btrfs", "subvolume", "delete"], true) {
+            Step::Run(a) => a,
+            Step::Write { .. } => Vec::new(),
+        },
     ]
 }
 
@@ -601,10 +763,20 @@ pub mod be {
         bes.into_iter().filter(|b| has(&b.name)).collect()
     }
 
+    /// bootctl's list as boot-ok and esp-sync last left it for every account (root-written, 0644,
+    /// replaced whole): an account's own `bootctl list` fails, the ESP is root's (QA-LIVE4-5).
+    pub const SLOTS_FILE: &str = "/run/wolos/slots.json";
+
+    /// The text of the slot list: `bootctl list` when it answers (root), else [`SLOTS_FILE`].
+    /// One source for `wol restore` and Settings > Restore.
+    pub fn list_text(run: Option<String>, file: Option<String>) -> Option<String> {
+        run.or(file)
+    }
+
     /// The restore points of this computer: bootctl's slots that still have a root subvolume.
     pub fn read(host: &dyn crate::system::Host) -> Option<Vec<BootEnv>> {
-        let bes = host.run(&LIST_ARGV).map(|t| parse(&t))?;
-        Some(real(bes, host.run(&TOP_ARGV).as_deref()))
+        let text = list_text(host.run(&LIST_ARGV), host.read_text(SLOTS_FILE))?;
+        Some(real(parse(&text), host.run(&TOP_ARGV).as_deref()))
     }
 }
 
@@ -680,32 +852,59 @@ mod tests {
     fn update_snapshots_the_running_root_into_the_other_slot() {
         let p = plan("wolos-b", true, Some("2026/11/02")).unwrap();
         let s: Vec<String> = p.iter().map(Step::to_string).collect();
+        let (tx, b) = ("/run/wolos/top/@wolos-tx", "/run/wolos/top/@wolos-b");
         assert_eq!(
             s,
             [
-                "btrfs subvolume delete /run/wolos/top/@wolos-b",
-                "btrfs subvolume snapshot / /run/wolos/top/@wolos-b",
-                "wol layers fold /run/wolos/top/@wolos-b",
+                "write /var/lib/wolos/update-building",
+                "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec umount -R {} ;",
+                "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec btrfs subvolume delete {} +",
+                &format!("btrfs subvolume snapshot / {tx}"),
+                &format!("wol layers fold {tx}"),
                 &format!(
                     "sed -i -E s#^overlay[[:space:]]+/etc[[:space:]]+overlay[[:space:]].*#{ETC_FSTAB}# \
-/run/wolos/top/@wolos-b/etc/fstab"
+{tx}/etc/fstab"
                 ),
-                "write /run/wolos/top/@wolos-b/etc/wolos/slot",
+                &format!("write {tx}/etc/wolos/slot"),
                 "/usr/lib/wolos/etc-settle",
-                "sed -i -E s#/repos/[0-9]{4}/[0-9]{2}/[0-9]{2}/#/repos/2026/11/02/# \
-/run/wolos/top/@wolos-b/etc/pacman.conf",
-                "sed -i -E s#[0-9]{4}-[0-9]{2}-[0-9]{2}#2026-11-02#g \
-/run/wolos/top/@wolos-b/etc/pacman.d/wolos-mirrorlist",
-                "mount --bind /run/wolos/top/@wolos-b /run/wolos/top/@wolos-b",
-                "arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm",
-                "arch-chroot /run/wolos/top/@wolos-b mkinitcpio -P",
-                "umount /run/wolos/top/@wolos-b",
-                "systemctl --root=/run/wolos/top/@wolos-b preset-all --preset-mode=enable-only",
+                &format!("cp --remove-destination /etc/pacman.conf {tx}/etc/pacman.conf"),
+                &format!(
+                    "find {tx}/etc -maxdepth 2 -path {tx}/etc/kernel/cmdline -exec sed -i -E \
+s#subvol=/?@wolos-[ab]([ ,]|$)#subvol=@wolos-b\\1# {{}} +"
+                ),
+                &format!(
+                    "sed -i -E s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/2026/11/02/# \
+{tx}/etc/pacman.conf"
+                ),
+                &format!(
+                    "sed -i -E s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#2026-11-02#g \
+{tx}/etc/pacman.d/wolos-mirrorlist"
+                ),
+                // RH-192: each in a mount namespace of its own (`wol update chroot` binds the copy
+                // and the shared cache there); nothing is left mounted, not even after a cut.
+                &format!(
+                    "unshare --mount --propagation private wol update chroot {tx} -- \
+/usr/bin/pacman -Syu --noconfirm"
+                ),
+                &format!(
+                    "unshare --mount --propagation private wol update chroot {tx} -- mkinitcpio -P"
+                ),
+                &format!("systemctl --root={tx} preset-all --preset-mode=enable-only"),
                 "mkdir -p /efi/wolos-b",
-                "wol seal apply /run/wolos/top/@wolos-b /efi/wolos-b/verity",
-                "env WOLOS_ROOT=/run/wolos/top/@wolos-b WOLOS_SLOT=wolos-b WOLOS_RELEASE=2026/11/02 \
+                &format!("wol seal apply {tx} /efi/wolos-b/verity.new"),
+                // The swap: entries, then the old slot, then the new copy takes its name.
+                "find /efi/loader/entries -maxdepth 1 ( -name wolos-b.conf -o -name wolos-b+*.conf \
+-o -name wolos-b-*.conf ) -delete",
+                "sync -f /efi",
+                "find /run/wolos/top -maxdepth 1 -name @wolos-b -exec btrfs subvolume delete {} +",
+                &format!("mv {tx} {b}"),
+                "mv -f /efi/wolos-b/verity.new /efi/wolos-b/verity",
+                &format!(
+                    "env WOLOS_ROOT={b} WOLOS_SLOT=wolos-b WOLOS_RELEASE=2026/11/02 \
 WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
-/usr/lib/wolos/esp-sync --new",
+/usr/lib/wolos/esp-sync --new"
+                ),
+                "rm -f /var/lib/wolos/update-building",
                 // No pinned default: the newest good entry boots, a bad one sorts last.
                 "bootctl set-default ",
             ]
@@ -713,8 +912,8 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
         // First update: no previous slot; same release: no new date.
         let first = plan("wolos-a", false, None).unwrap();
         assert_eq!(
-            first[0].to_string(),
-            "btrfs subvolume snapshot / /run/wolos/top/@wolos-a"
+            first[3].to_string(),
+            "btrfs subvolume snapshot / /run/wolos/top/@wolos-tx"
         );
         // Only the fstab line is rewritten: no repo date moves.
         assert!(
@@ -733,41 +932,23 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
             Some("root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rw"),
         )
         .unwrap();
-        let sync = enc
+        let t: Vec<String> = enc.iter().map(Step::to_string).collect();
+        let sync = t.iter().position(|s| s.contains("esp-sync")).unwrap();
+        assert!(t[sync].contains("WOLOS_CMDLINE=root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rootflags=subvol=@wolos-b ro "), "{}", t[sync]);
+        let seal = t
             .iter()
-            .map(Step::to_string)
-            .find(|s| s.contains("esp-sync"))
+            .position(|s| s.starts_with("wol seal apply"))
             .unwrap();
-        assert!(sync.contains("WOLOS_CMDLINE=root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rootflags=subvol=@wolos-b ro "), "{sync}");
-        let seal = enc
-            .iter()
-            .position(|s| s.to_string().starts_with("wol seal apply"))
-            .unwrap();
-        assert_eq!(
-            seal + 3,
-            enc.len(),
+        assert!(
+            seal < sync,
             "the kernel image is built from the sealed slot"
         );
-        let r: Vec<String> = rollback("wolos-b").iter().map(|a| a.join(" ")).collect();
-        assert_eq!(
-            r,
-            [
-                "umount -R /run/wolos/top/@wolos-b",
-                "btrfs subvolume delete /run/wolos/top/@wolos-b",
-                "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
-            ]
-        );
-        let r: Vec<String> = rollback_from("wolos-b", Base::Pending)
-            .iter()
-            .map(|a| a.join(" "))
-            .collect();
-        assert_eq!(
-            r,
-            [
-                "umount -R /run/wolos/top/@wolos-tx",
-                "btrfs subvolume delete /run/wolos/top/@wolos-tx"
-            ]
-        );
+        // Holds stay at their version in the slot (QA-STORE-49).
+        let held = plan_from("wolos-b", Base::Pending, None, None, &["gimp".to_owned()]).unwrap();
+        assert!(held.iter().any(|s| {
+            s.to_string()
+                .ends_with("/usr/bin/pacman -Syu --noconfirm --ignore=gimp")
+        }));
     }
 
     /// FIX-slot 0.12.1: the copy pacman runs in is a mount for exactly the chroot steps (pacman's
@@ -775,11 +956,13 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
     /// a stacked change and the boot image; the new slot's /etc overlay line is rewritten first.
     #[test]
     fn the_copy_is_a_mount_only_while_pacman_and_mkinitcpio_run_in_it() {
-        for (from, work) in [
-            (Base::Running { replace: true }, "/run/wolos/top/@wolos-b"),
-            (Base::Pending, "/run/wolos/top/@wolos-tx"),
-        ] {
-            let s: Vec<String> = plan_from("wolos-b", from, None, None)
+        // QA-STORE-3: every change is built in the scratch copy. RH-192: the plan itself mounts
+        // nothing; pacman and mkinitcpio each run under `unshare` in `wol update chroot`, which
+        // binds the copy (and the shared cache) in that namespace only.
+        let work = "/run/wolos/top/@wolos-tx";
+        let private = format!("unshare --mount --propagation private wol update chroot {work} -- ");
+        for from in [Base::Running { replace: true }, Base::Pending] {
+            let s: Vec<String> = plan_from("wolos-b", from, None, None, &[])
                 .unwrap()
                 .iter()
                 .map(Step::to_string)
@@ -789,24 +972,27 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
                     .position(|x| x.starts_with(p))
                     .unwrap_or_else(|| panic!("{p}: {s:?}"))
             };
-            let bind = at(&format!("mount --bind {work} {work}"));
-            let unbind = at(&format!("umount {work}"));
-            let chroots: Vec<usize> = (0..s.len())
-                .filter(|&i| s[i].starts_with("arch-chroot "))
+            assert!(
+                !s.iter()
+                    .any(|x| x.starts_with("mount ") || x.starts_with("umount ")),
+                "{s:?}"
+            );
+            let runs: Vec<usize> = (0..s.len())
+                .filter(|&i| s[i].starts_with(&private))
                 .collect();
-            assert_eq!(chroots, [bind + 1, bind + 2], "{s:?}");
-            assert_eq!(unbind, bind + 3, "{s:?}");
-            assert!(unbind < at("wol seal apply") && unbind < at("env WOLOS_ROOT="));
-            if from == Base::Pending {
-                assert!(unbind < at("mv "), "{s:?}");
-            }
+            assert_eq!(runs.len(), 2, "{s:?}");
+            assert!(s[runs[0]].ends_with("/usr/bin/pacman -Syu --noconfirm"));
+            assert!(s[runs[1]].ends_with("-- mkinitcpio -P"));
+            assert_eq!(runs[1], runs[0] + 1);
+            assert!(runs[1] < at("wol seal apply") && runs[1] < at("env WOLOS_ROOT="));
+            assert!(runs[1] < at(&format!("mv {work} ")), "{s:?}");
             let fstab = at("sed -i -E s#^overlay");
             assert!(
                 s[fstab].ends_with(&format!(" {work}/etc/fstab")),
                 "{}",
                 s[fstab]
             );
-            assert!(fstab < bind && at(ETC_SETTLE) < bind, "{s:?}");
+            assert!(fstab < runs[0] && at(ETC_SETTLE) < runs[0], "{s:?}");
         }
     }
 
@@ -814,22 +1000,13 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
     /// copy of slot a said `a` after booting b). Written before the seal, in the copy pacman runs in.
     #[test]
     fn the_new_slot_names_itself_before_the_seal() {
-        for (slot, from, work, letter) in [
-            (
-                "wolos-b",
-                Base::Running { replace: true },
-                "/run/wolos/top/@wolos-b",
-                "b\n",
-            ),
-            (
-                "wolos-a",
-                Base::Running { replace: false },
-                "/run/wolos/top/@wolos-a",
-                "a\n",
-            ),
-            ("wolos-b", Base::Pending, "/run/wolos/top/@wolos-tx", "b\n"),
+        let work = "/run/wolos/top/@wolos-tx";
+        for (slot, from, letter) in [
+            ("wolos-b", Base::Running { replace: true }, "b\n"),
+            ("wolos-a", Base::Running { replace: false }, "a\n"),
+            ("wolos-b", Base::Pending, "b\n"),
         ] {
-            let p = plan_from(slot, from, None, None).unwrap();
+            let p = plan_from(slot, from, None, None, &[]).unwrap();
             let at = |pre: &str| {
                 p.iter()
                     .position(|s| s.to_string().starts_with(pre))
@@ -838,7 +1015,7 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
             let writes: Vec<(usize, &Step)> = p
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| matches!(s, Step::Write { .. }))
+                .filter(|(_, s)| matches!(s, Step::Write { path, .. } if path != BUILDING))
                 .collect();
             assert_eq!(writes.len(), 1, "{p:?}");
             let (i, w) = writes[0];
@@ -865,11 +1042,11 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
         )
         .unwrap()
         .into_iter()
-        .find(|s| matches!(s, Step::Write { .. }))
+        .find(|s| matches!(s, Step::Write { path, .. } if path != BUILDING))
         .unwrap();
         assert_eq!(
             w.to_string(),
-            "write /run/wolos/top/@wolos-a/etc/wolos/slot"
+            "write /run/wolos/top/@wolos-tx/etc/wolos/slot"
         );
         assert_eq!(slot_file_text("wolos-a"), "a\n");
         // install-run names the first slot the same way.
@@ -985,6 +1162,12 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
         assert_eq!(names, ["wolos-a"], "the ghost slot is not a restore point");
         h.command("ls /run/wolos/top", "@wolos-a\n@wolos-b\n");
         assert_eq!(be::read(&h).unwrap().len(), 2, "both subvolumes exist");
+        // QA-LIVE4-5: an account's own bootctl fails on the root-only ESP; the list boot-ok and
+        // esp-sync left in /run is read instead. Neither: nothing.
+        let user = crate::system::fake::FakeHost::new(false);
+        assert_eq!(be::read(&user), None, "no bootctl, no list");
+        user.file(be::SLOTS_FILE, BOOTCTL);
+        assert_eq!(be::read(&user).unwrap().len(), 2, "the list from /run");
     }
 
     #[test]

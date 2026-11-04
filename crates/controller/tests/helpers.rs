@@ -244,8 +244,20 @@ fn first_update_has_no_previous_slot_to_replace() {
     };
     assert_eq!(run("update apply --yes", &mut e), 0, "{}", e.err);
     let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
-    assert_eq!(ran[0], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
-    assert!(!ran.iter().any(|r| r.contains("delete")), "{ran:?}");
+    // Built in the scratch copy (QA-STORE-3); with no earlier slot the swap finds nothing to
+    // delete (`find` runs nothing) and the copy takes the slot's name.
+    assert!(
+        ran.contains(&"btrfs subvolume snapshot / /run/wolos/top/@wolos-tx".to_owned()),
+        "{ran:?}"
+    );
+    assert!(
+        ran.contains(&"mv /run/wolos/top/@wolos-tx /run/wolos/top/@wolos-b".to_owned()),
+        "{ran:?}"
+    );
+    assert!(
+        !ran.iter().any(|r| r.starts_with("btrfs subvolume delete")),
+        "{ran:?}"
+    );
     assert_eq!(ran.last().unwrap(), "bootctl set-default ");
     assert!(e.out.contains("updated into wolos-b"));
 }

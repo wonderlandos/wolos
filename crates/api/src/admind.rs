@@ -40,6 +40,11 @@ pub trait AdminOs {
     fn update_locked(&self) -> bool {
         false
     }
+    /// Take [`UPDATE_LOCK`] for the whole of one Update Now (QA-100 STORE-4): wol-admind runs the
+    /// slot builder's steps itself, so it is the builder that holds it. Ok(None): another holds it.
+    fn hold_update_lock(&self) -> Result<Option<Box<dyn std::any::Any>>, String> {
+        Ok(Some(Box::new(())))
+    }
     /// The newer WolOS release the daily check found and its signature vouches for, as (version,
     /// snapshot date `YYYY/MM/DD`); None when there is none, it is already running, or it is not
     /// signed by a trusted key. Update Now installs it with the packages (QA-100 STORE-2).
@@ -660,7 +665,7 @@ pub fn reason_of(stderr: &str) -> Option<String> {
 /// The lock every slot update holds while it builds (`flock`, taken by the slot builder that
 /// `wol update apply`, the pacman wrapper and Update Now share). wol-admind only asks whether it is
 /// held; it never holds it itself, so the builder it starts can.
-pub const UPDATE_LOCK: &str = "/run/wolos/update.lock";
+pub const UPDATE_LOCK: &str = wol_core::update::LOCK;
 
 /// What Update Now answers when another update holds [`UPDATE_LOCK`]: nothing was started.
 pub const UPDATE_RUNNING: &str = concat!(
@@ -679,29 +684,12 @@ pub fn lock_held(path: &Path) -> bool {
 /// [`lock_held`] for a lock file owned by `owner` (root in the daemon, the test's own account in
 /// tests).
 fn lock_held_by_owner(path: &Path, owner: u32) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    let Ok(md) = std::fs::metadata(path) else {
-        return false;
-    };
-    if !md.is_file() || md.uid() != owner || md.mode() & 0o077 != 0 {
-        return false;
-    }
-    let locks = std::fs::read_to_string("/proc/locks").unwrap_or_default();
-    flock_write_held(&locks, md.dev(), md.ino())
+    shared::sys::flock_held_by(path, owner)
 }
 
-/// Whether `/proc/locks` text lists an exclusive `FLOCK` held (not waited for) on the file with
-/// device `dev` (as `st_dev`) and inode `ino`. A line reads
-/// `1: FLOCK  ADVISORY  WRITE 4242 08:01:131074 0 EOF`, the device in hex `major:minor`.
+/// [`shared::sys::flock_write_held`] (the one implementation wol shares).
 pub fn flock_write_held(locks: &str, dev: u64, ino: u64) -> bool {
-    // glibc's dev_t layout, as the kernel prints it.
-    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
-    let minor = (dev & 0xff) | ((dev >> 12) & !0xff);
-    let want = format!("{major:02x}:{minor:02x}:{ino}");
-    locks.lines().any(|l| {
-        let f: Vec<&str> = l.split_whitespace().collect();
-        matches!(f.get(1..), Some(["FLOCK", _, "WRITE", _, id, ..]) if *id == want)
-    })
+    shared::sys::flock_write_held(locks, dev, ino)
 }
 
 /// `: <what the program said>` for a log line, one line, or nothing when it said nothing.
@@ -724,6 +712,20 @@ fn update_now(os: &dyn AdminOs, holds: &[String], who: &str) -> Result<(), Strin
         ));
         return Err(UPDATE_RUNNING.into());
     }
+    // Held to the end of this function: every step below runs under it.
+    let _lock = match os.hold_update_lock() {
+        Ok(Some(l)) => l,
+        Ok(None) => {
+            os.log(&format!(
+                "{who}: pkg-upgrade: another update holds {UPDATE_LOCK}; nothing was started"
+            ));
+            return Err(UPDATE_RUNNING.into());
+        }
+        Err(e) => {
+            os.log(&format!("{who}: pkg-upgrade: {e}; nothing was started"));
+            return Err(pkg::SLOT_FAILED.into());
+        }
+    };
     // The release the daily check found moves with the packages: the new slot's repos are set to
     // its snapshot date. With a package held back the release stays where it is (a held package
     // pins the repos it came from), and the log says so (QA-100 STORE-2).
@@ -770,27 +772,49 @@ fn update_now(os: &dyn AdminOs, holds: &[String], who: &str) -> Result<(), Strin
         return Err(pkg::NO_RESTORE_POINT.into());
     };
     let (point, slot) = (c.restore_point, &c.slot);
+    // Room first (QA-100 STORE-11, ACC-23): a slot build that runs the disk full fails late and
+    // read as "check that you're online".
+    let free = os
+        .capture(&pkg::ROOM_ARGV.map(String::from))
+        .and_then(|t| shared::update::free_from_df(&t));
+    if let Some(said) = pkg::room_needed(free) {
+        os.log(&format!("{who}: pkg-upgrade: {said}"));
+        return Err(said);
+    }
     // The same slot, built on the release's snapshot (its repos set to the date) when there is one.
     let steps = match &release {
-        Some((_, date)) => up::plan_from(slot, c.from, Some(date), cmdline.as_deref())
+        Some((_, date)) => up::plan_from(slot, c.from, Some(date), cmdline.as_deref(), holds)
             .unwrap_or_else(|| c.steps.clone()),
         None => c.steps.clone(),
     };
     os.log(&format!(
         "{who}: pkg-upgrade: restore point {point} (the running system) is kept; updating into {slot}"
     ));
-    for s in &steps {
+    for (i, s) in steps.iter().enumerate() {
         if !run(s) {
             // Before the cleanup: its steps are commands too and would replace what this said.
             let why = os.last_error();
-            for r in up::rollback_from(slot, c.from) {
-                let _ = os.run(&r, false);
+            let undo = up::rollback_at(slot, c.from, &steps, i);
+            for r in &undo.argv {
+                let _ = os.run(r, false);
             }
+            if undo.done {
+                os.log(&format!(
+                    "{who}: pkg-upgrade: {s} failed{}; updated into {slot} all the same, restore point {point}",
+                    failure_detail(&why)
+                ));
+                return Ok(());
+            }
+            let kept = if undo.kept {
+                format!("{slot} is as it was")
+            } else {
+                format!("{slot} could not be kept and was removed")
+            };
             os.log(&format!(
-                "{who}: pkg-upgrade: {s} failed{}; {slot} was cleaned up, restore point {point} is unchanged",
+                "{who}: pkg-upgrade: {s} failed{}; {kept}, restore point {point} is unchanged",
                 failure_detail(&why)
             ));
-            return Err(pkg::slot_failed(point));
+            return Err(pkg::SLOT_FAILED.into());
         }
     }
     os.log(&format!(
@@ -1010,6 +1034,11 @@ impl AdminOs for RealOs {
     }
     fn update_locked(&self) -> bool {
         lock_held(Path::new(UPDATE_LOCK))
+    }
+    fn hold_update_lock(&self) -> Result<Option<Box<dyn std::any::Any>>, String> {
+        shared::sys::try_flock(Path::new(UPDATE_LOCK))
+            .map(|l| l.map(|f| Box::new(f) as Box<dyn std::any::Any>))
+            .map_err(|e| format!("{UPDATE_LOCK}: {e}"))
     }
     fn trusted_release(&self) -> Option<(String, String)> {
         use wol_core::update::check::{DIR, RELEASE_FILE, Updates};

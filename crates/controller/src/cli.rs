@@ -302,6 +302,14 @@ pub const TREE: &[Cmd] = &[
         &[],
         "What the daily check found: package fixes, security fixes, a new release",
     ),
+    Cmd {
+        path: &["update", "chroot"],
+        action: "update.chroot",
+        args: &[arg("root"), rest("args")],
+        flags: &[],
+        help: "Slot build: run a command in the copy at ROOT, its mounts private to it (root)",
+        hidden: true,
+    },
     cmd(
         &["update", "plan"],
         "update.plan",

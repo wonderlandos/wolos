@@ -51,7 +51,11 @@ fn wolos_update_slot_names_the_slot_as_wol_does() {
     let script = std::env::var("WOL_UPDATE_SLOT_SCRIPT")
         .map_or_else(|_| repo("files/usr/bin/wolos-update-slot"), PathBuf::from);
     for (mount, args, want) in [
-        ("rw,subvol=/@wolos-a", &[][..], "wol update apply wolos-b --yes"),
+        (
+            "rw,subvol=/@wolos-a",
+            &[][..],
+            "wol update apply wolos-b --yes",
+        ),
         (
             "rw,subvol=/@wolos-b",
             &["2026-12-01"][..],
@@ -82,5 +86,141 @@ fn wolos_update_slot_names_the_slot_as_wol_does() {
         assert_eq!(o.status.code(), Some(code), "{mount} {args:?}");
         assert!(!o.stderr.is_empty());
         assert!(!log(&d).contains("wol "), "{}", log(&d));
+    }
+}
+
+/// update-check in `d` with fake pacman/curl/df bodies; returns (exit code, stderr).
+fn check(
+    d: &Path,
+    script: &Path,
+    pacman: &str,
+    curl: &str,
+    df_avail_kb: u64,
+) -> (Option<i32>, String) {
+    for sub in ["db/local", "db/sync", "tmp", "out"] {
+        fs::create_dir_all(d.join(sub)).unwrap();
+    }
+    fake(d, "pacman", pacman);
+    fake(d, "curl", curl);
+    fake(
+        d,
+        "df",
+        &format!(
+            "echo 'Filesystem 1024-blocks Used Available Capacity Mounted'; echo \"/dev/x 100 1 {df_avail_kb} 1% /\""
+        ),
+    );
+    let o = Command::new("sh")
+        .arg(script)
+        .arg("now")
+        .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+        .env("WOLOS_PACMAN_DB", d.join("db"))
+        .env("TMPDIR", d.join("tmp"))
+        .env("WOLOS_UPDATES", d.join("out"))
+        .output()
+        .unwrap();
+    (
+        o.status.code(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+const CURL_OK: &str = "o=; p=; for u; do [ \"$p\" = -o ] && o=$u; p=$u; done\n\
+case $u in *.sig) printf sig ;; *) printf '{}' > \"$o\" ;; esac";
+
+fn check_script() -> PathBuf {
+    std::env::var("WOL_UPDATE_CHECK_SCRIPT")
+        .map_or_else(|_| repo("files/usr/lib/wolos/update-check"), PathBuf::from)
+}
+
+/// QA-STORE-12: `checked` is written only when the package lists were refreshed and read: a
+/// package list pacman could not refresh leaves no stamp and exits 75 (try again later), so
+/// "Last checked: now" never stands for a check that did not happen. A release manifest no server
+/// gave does not undo the package check (review of B4): stamped, exit 0, and `base.error` says
+/// why there is no release news; the next fetch that works clears it.
+#[test]
+fn stamp_only_on_success() {
+    let ok_pacman = "case \"$*\" in *-Qu*) echo 'wol-shell 1-1 -> 2-1' ;; esac";
+    for (why, pacman, curl, want, stamped, manifest_error) in [
+        (
+            "no release server answered",
+            ok_pacman,
+            "exit 22",
+            0,
+            true,
+            true,
+        ),
+        (
+            "offline",
+            "case \"$*\" in *-Sy*) exit 1 ;; esac",
+            CURL_OK,
+            75,
+            false,
+            false,
+        ),
+        ("everything worked", ok_pacman, CURL_OK, 0, true, false),
+    ] {
+        let d = scratch("stamp");
+        let (code, err) = check(&d, &check_script(), pacman, curl, 1 << 20);
+        assert_eq!(code, Some(want), "{why}: {err}");
+        assert_eq!(d.join("out/checked").exists(), stamped, "{why}");
+        assert_eq!(d.join("out/base.error").exists(), manifest_error, "{why}");
+        if want != 0 || manifest_error {
+            assert!(
+                err.starts_with("update-check: "),
+                "{why}: a sentence: {err}"
+            );
+        }
+    }
+    // A fetch that works again clears the old error.
+    let d = scratch("stamp-clear");
+    fs::create_dir_all(d.join("out")).unwrap();
+    fs::write(d.join("out/base.error"), "old\n").unwrap();
+    let (code, err) = check(&d, &check_script(), ok_pacman, CURL_OK, 1 << 20);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(!d.join("out/base.error").exists());
+}
+
+/// QA-LIVE4-10: on a full disk the findings were truncated to nothing and Check Now said "up to
+/// date" twice. With less than 1 MiB free nothing is written and the check fails (1), naming it.
+#[test]
+fn disk_full_exit_nonzero() {
+    let d = scratch("full");
+    fs::create_dir_all(d.join("out")).unwrap();
+    fs::write(d.join("out/pkg"), "wol-shell 1-1 -> 2-1\n").unwrap();
+    let (code, err) = check(&d, &check_script(), "exit 0", CURL_OK, 100);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("no room left"), "{err}");
+    assert_eq!(
+        fs::read_to_string(d.join("out/pkg")).unwrap(),
+        "wol-shell 1-1 -> 2-1\n",
+        "the last findings stay"
+    );
+    assert!(!d.join("out/checked").exists());
+}
+
+/// QA-ACC-20: every fetch of the check is bounded and retried (a Wi-Fi drop or a portal's slow
+/// answer is not the end of today's check).
+#[test]
+fn curl_retry_flags() {
+    let d = scratch("retry");
+    let log = d.join("log");
+    let (code, err) = check(&d, &check_script(), "exit 0", CURL_OK, 1 << 20);
+    assert_eq!(code, Some(0), "{err}");
+    let calls: Vec<String> = fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .filter(|l| l.starts_with("curl "))
+        .map(String::from)
+        .collect();
+    assert_eq!(calls.len(), 2, "manifest and signature: {calls:?}");
+    for c in &calls {
+        for flag in [
+            "--retry 2",
+            "--retry-connrefused",
+            "--connect-timeout 15",
+            "--max-time 60",
+        ] {
+            assert!(c.contains(flag), "{flag}: {c}");
+        }
     }
 }

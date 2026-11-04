@@ -8,7 +8,15 @@
 #   audit    installed packages with a known vulnerability (arch-audit -q)
 #   kernels  installed package names (pacman -Qq): kernels besides linux-wolos are reported
 #   base     the latest release manifest; base.sig its signature in hex (verified when read)
-#   checked  when the check finished (seconds since 1970)
+#   checked  when the package check finished (seconds since 1970): written only when the package
+#            lists were refreshed and read, so "checked now" never stands for a check that could
+#            not run (QA-STORE-12)
+#   base.error  why the release manifest could not be fetched this time (one sentence); gone after
+#            a fetch that worked. The packages are still checked and stamped (review of B4).
+# Exit: 0 checked (the manifest may have failed: base.error); 75 could not refresh the package
+# lists (try again later, nothing stamped); 1 anything else (no room on the disk, the database
+# copy failed). wol-admind's `update-check now` (Check Now) reads the code, so a failure is never
+# "up to date" (QA-NET-26).
 set -u
 D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
 # The release manifest (and URL.sig) from the CDN's latest/ folder (the release tooling writes it),
@@ -27,7 +35,16 @@ case $last in '' | *[!0-9]*) last=0 ;; esac
 [ "$last" -le "$now" ] || last=0
 [ "${1:-}" = now ] || [ $((now - last)) -ge $EVERY ] || exit 0
 umask 022
-mkdir -p "$D" || exit 1
+# fail CODE SENTENCE: say it in the journal and stop, nothing stamped.
+fail() {
+	echo "update-check: $2" >&2
+	exit "$1"
+}
+mkdir -p "$D" || fail 1 "cannot create $D"
+# A full disk truncated the findings to nothing, which read "up to date" (QA-LIVE4-10): with less
+# than 1 MiB free nothing is written.
+free=$(df -Pk "$D" 2>/dev/null | awk 'NR == 2 { print $4 }')
+case $free in '' | *[!0-9]*) ;; *) [ "$free" -ge 1024 ] || fail 1 "no room left on the disk for the update check ($D)" ;; esac
 # Packages, against a temporary copy of pacman's database: an installed slot keeps it on the
 # read-only seal (DBPath /usr/lib/pacman, ADR 0016), where `pacman -Sy` cannot take its lock, and
 # checkupdates needs fakeroot, which the image does not ship (e2e D3: no check ever finished).
@@ -36,20 +53,20 @@ mkdir -p "$D" || exit 1
 db=${WOLOS_PACMAN_DB:-$(pacman-conf DBPath 2>/dev/null || :)}
 db=${db:-/var/lib/pacman}
 db=${db%/}
-tmp=$(mktemp -d "${TMPDIR:-/var/tmp}/wolos-check-db.XXXXXX") || exit 0
+tmp=$(mktemp -d "${TMPDIR:-/var/tmp}/wolos-check-db.XXXXXX") || fail 1 "no temporary database"
 trap 'rm -rf "${tmp:?}"' EXIT
-chmod 755 "$tmp" && ln -s "$db/local" "$tmp/local" || exit 0
-if [ -d "$db/sync" ]; then cp -a "$db/sync" "$tmp/" || exit 0; fi
+{ chmod 755 "$tmp" && ln -s "$db/local" "$tmp/local"; } || fail 1 "no temporary database"
+if [ -d "$db/sync" ]; then cp -a "$db/sync" "$tmp/" || fail 1 "could not copy the package lists"; fi
 # Offline (the refresh fails) leaves no stamp: the next hour tries.
-pacman --dbpath "$tmp" -Sy --noprogressbar >/dev/null 2>&1 || exit 0
+pacman --dbpath "$tmp" -Sy --noprogressbar >/dev/null 2>&1 || fail 75 "could not refresh the package lists (offline?)"
 # -Qu: 0 = updates listed, 1 = none (or an error, which says so on stderr).
 pacman --dbpath "$tmp" -Qu >"$D/pkg.new" 2>"$tmp/err"
 st=$?
 if [ "$st" -eq 0 ] || { [ "$st" -eq 1 ] && [ ! -s "$tmp/err" ]; }; then
-	mv "$D/pkg.new" "$D/pkg"
+	mv "$D/pkg.new" "$D/pkg" || fail 1 "could not write $D/pkg"
 else
 	rm -f "$D/pkg.new"
-	exit 0
+	fail 1 "pacman -Qu failed: $(head -n 1 "$tmp/err")"
 fi
 # Exit 1 also means "found some"; an empty list from a failed run keeps the last one. Without
 # arch-audit there is no list at all (not an empty one: that would read "no known vulnerabilities").
@@ -68,7 +85,9 @@ pacman -Qq >"$D/kernels" 2>/dev/null
 get() { # MAX URL [extra options]
 	max=$1 url=$2
 	shift 2
-	curl --disable -fsSL --max-time 60 --proto =https --proto-redir =https --max-filesize "$max" "$@" -- "$url" 2>/dev/null
+	# QA-ACC-20: a dropped Wi-Fi or a slow portal is retried, not the end of today's check.
+	curl --disable -fsSL --connect-timeout 15 --max-time 60 --retry 2 --retry-delay 3 --retry-connrefused \
+		--proto =https --proto-redir =https --max-filesize "$max" "$@" -- "$url" 2>/dev/null
 }
 # release URL: the manifest and its signature (in hex) from one place, both through get(); 0 when
 # both came within their caps.
@@ -82,10 +101,14 @@ release() {
 if release "$URL" || release "$MIRROR" || release "$FALLBACK"; then
 	mv "$D/base.new" "$D/base"
 	mv "$D/base.sig.new" "$D/base.sig"
+	rm -f "$D/base.error"
 else
 	rm -f "$D/base.new" "$D/base.sig.new"
+	echo "update-check: could not fetch the release manifest from any server; the packages were checked" >&2
+	echo "The list of WolOS releases could not be fetched from any server." >"$D/base.error"
+	chmod 644 "$D/base.error"
 fi
-date +%s >"$D/checked"
+{ date +%s >"$D/checked.new" && mv -f "$D/checked.new" "$D/checked"; } || fail 1 "could not write $D/checked"
 chmod 644 "$D/pkg" "$D/checked"
 chmod 644 "$D/audit" "$D/kernels" "$D/base" "$D/base.sig" 2>/dev/null
 exit 0

@@ -947,7 +947,12 @@ fn undo(env: &mut dyn Env, id: Option<&str>, json: bool) -> i32 {
 /// The restore points: bootctl's slots that still have a root subvolume (QA-STORE-5: an
 /// interrupted update leaves a boot entry behind; `be::real`).
 fn boot_envs(env: &mut dyn Env) -> Option<Vec<be::BootEnv>> {
-    let bes = env.capture(&be::LIST_ARGV).map(|t| be::parse(&t))?;
+    // QA-LIVE4-5: an account's own `bootctl list` fails (the ESP is root's): boot-ok's list.
+    let text = be::list_text(
+        env.capture(&be::LIST_ARGV),
+        env.read_file(Path::new(be::SLOTS_FILE)),
+    )?;
+    let bes = be::parse(&text);
     let top = env.capture(&be::TOP_ARGV);
     Some(be::real(bes, top.as_deref()))
 }

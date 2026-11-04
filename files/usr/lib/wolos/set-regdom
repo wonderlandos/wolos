@@ -1,16 +1,26 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Sets the wireless regulatory domain when /etc/conf.d/wireless-regdom names one (WIRELESS_REGDOM="BR"),
-# through wireless-regdb's own helper; does nothing, successfully, when none is set. Run by udev when
-# cfg80211 loads (files/etc/udev/rules.d/85-regulatory.rules). A domain that is set but cannot be applied
-# still fails, with the helper's exit code, so udev logs it. Env (tests): WOLOS_REGDOM_CONF, WOLOS_REGDOM_HELPER.
+# with `iw reg set` itself; does nothing, successfully, when none is set. Run by udev when cfg80211
+# loads (files/etc/udev/rules.d/85-regulatory.rules). A domain that is set but cannot be applied still
+# fails, with iw's exit code, so udev logs it. wireless-regdb's own set-wireless-regdom is not used: it
+# sources the file as shell, as root (review of QA-100 B4). Env (tests): WOLOS_REGDOM_CONF, WOLOS_REGDOM_IW.
 set -eu
 conf=${WOLOS_REGDOM_CONF:-/etc/conf.d/wireless-regdom}
-helper=${WOLOS_REGDOM_HELPER:-/usr/bin/set-wireless-regdom}
-WIRELESS_REGDOM=
+iw=${WOLOS_REGDOM_IW:-/usr/bin/iw}
+# The file is read, never run (audit3 R2B-14: no generated shell as root): the last uncommented
+# WIRELESS_REGDOM= line, its value a two-character code, quoted or not ("BR", 'US', 00). Any
+# other value is not a domain and is said, not passed on.
+domain=
 if [ -r "$conf" ]; then
-	# shellcheck source=/dev/null
-	. "$conf"
+	domain=$(sed -n "s/^[[:space:]]*WIRELESS_REGDOM=[\"']\{0,1\}\([^\"' #]*\)[\"']\{0,1\}[[:space:]]*\(#.*\)\{0,1\}$/\1/p" "$conf" | tail -n 1)
 fi
-[ -n "$WIRELESS_REGDOM" ] || exit 0
-exec "$helper"
+[ -n "$domain" ] || exit 0
+case $domain in
+[A-Za-z0-9][A-Za-z0-9]) ;;
+*)
+	echo "set-regdom: $conf names \"$domain\", not a two-letter country code; not set" >&2
+	exit 1
+	;;
+esac
+exec "$iw" reg set "$domain"

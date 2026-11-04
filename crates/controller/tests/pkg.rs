@@ -99,11 +99,13 @@ fn the_kernel_goes_to_the_pending_slot() {
     let mut env = sealed("nvidia\nlinux-wolos\n", IDLE);
     assert_eq!(run("pkg -- -S nvidia", &mut env), 0, "{}", env.err);
     let l = lines(&env);
+    // Built in the scratch copy, swapped in after the seal (QA-STORE-3).
     assert!(
-        l.contains(&"btrfs subvolume snapshot / /run/wolos/top/@wolos-b".into()),
+        l.contains(&"btrfs subvolume snapshot / /run/wolos/top/@wolos-tx".into()),
         "{l:?}"
     );
-    assert!(l.contains(&"arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -S nvidia".into()));
+    assert!(l.contains(&"unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -S nvidia".into()));
+    assert!(l.contains(&"mv /run/wolos/top/@wolos-tx /run/wolos/top/@wolos-b".into()));
     assert!(l.contains(&"bootctl set-default ".into()));
     assert!(!l.contains(&"systemd-sysext refresh".into()));
     assert_eq!(
@@ -125,14 +127,22 @@ fn two_kernel_changes_stack_and_a_failed_second_keeps_the_first() {
     );
     assert!(l.contains(&"mv /run/wolos/top/@wolos-tx /run/wolos/top/@wolos-b".into()));
     let mut bad = sealed("nvidia\nlinux-wolos\n", PENDING);
-    bad.exec_codes = vec![0, 0, 1]; // snapshot, fold ok; pacman fails
+    // scratch clean-up (2), snapshot ok; the fold fails
+    bad.exec_codes = vec![0, 0, 0, 1];
     assert_ne!(run("pkg -- -S nvidia", &mut bad), 0);
     let l = lines(&bad);
     assert_eq!(
         l.last().unwrap(),
-        "btrfs subvolume delete /run/wolos/top/@wolos-tx"
+        "rm -f /efi/wolos-b/verity.new /var/lib/wolos/update-building"
     );
-    assert!(!l.contains(&"btrfs subvolume delete /run/wolos/top/@wolos-b".into()));
+    assert!(
+        l[l.len() - 2].contains("-name @wolos-tx -exec btrfs subvolume delete"),
+        "{l:?}"
+    );
+    assert!(
+        !l.iter().any(|x| x.contains("@wolos-b -exec")),
+        "the first change stays: {l:?}"
+    );
 }
 
 #[test]
@@ -381,22 +391,30 @@ fn a_chroot_left_mounted_is_unmounted_first() {
 #[test]
 fn a_stacked_change_failing_after_the_swap_says_the_pending_change_is_gone() {
     let mut env = sealed("nvidia\nlinux-wolos\n", PENDING);
-    // snapshot, fold, fstab, etc-settle, bind, pacman, mkinitcpio, unbind, presets, mkdir, seal,
-    // delete, mv ok; esp-sync fails.
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    // Everything up to the swap and the swap itself ok; esp-sync fails.
+    let mut probe = sealed("nvidia\nlinux-wolos\n", PENDING);
+    run("pkg -- -S nvidia", &mut probe);
+    let all = lines(&probe);
+    let esp = all
+        .iter()
+        .position(|x| x.ends_with("esp-sync --new"))
+        .unwrap();
+    let mut codes = vec![0; esp];
+    codes.push(1);
+    env.exec_codes = codes;
     assert_ne!(run("pkg -- -S nvidia", &mut env), 0);
     let l = lines(&env);
-    assert!(l[13].ends_with("esp-sync --new"), "{l:?}");
+    assert!(l[esp].ends_with("esp-sync --new"), "{l:?}");
+    // The slot's entries are already gone: its images and subvolume go after them.
+    assert!(l[esp + 1].starts_with("find /efi/loader/entries "), "{l:?}");
+    assert!(l[esp + 1].ends_with("-delete"), "{l:?}");
     assert_eq!(
-        l[14..],
-        [
-            "umount -R /run/wolos/top/@wolos-b",
-            "btrfs subvolume delete /run/wolos/top/@wolos-b",
-            "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi",
-            "umount -R /run/wolos/top/@wolos-tx",
-            "btrfs subvolume delete /run/wolos/top/@wolos-tx"
-        ]
+        l[esp + 2],
+        "sync -f /efi",
+        "on the disk before anything else goes"
     );
+    assert!(l[esp + 3].starts_with("find /efi/EFI/wolos "), "{l:?}");
+    assert_eq!(l[esp + 4], "umount -R /run/wolos/top/@wolos-b");
     assert!(env.err.contains("waited for a restart"), "{}", env.err);
 }
 
@@ -410,6 +428,7 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
                 PathBuf::from("/usr/lib/wolos/folded-layers"),
                 "wolos-layer-0001\n".into(),
             ),
+            (record("wolos-layer-0001"), "{}\n".into()),
             (record("wolos-layer-0002"), "{}\n".into()),
         ],
         captures: vec![(
@@ -419,13 +438,13 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
         ..Default::default()
     };
     assert_eq!(run("layers clear", &mut env), 0, "{}", env.err);
+    // QA-LIVE3-1: out of the merge, but kept while the restore point does not hold it.
     assert_eq!(
         lines(&env),
         [
-            "mkdir -p /var/lib/wolos/layers-cleared",
-            "mv -T /var/lib/extensions/wolos-layer-0001 /var/lib/wolos/layers-cleared/wolos-layer-0001",
+            "mkdir -p /var/lib/wolos/layers-kept",
+            "mv -T /var/lib/extensions/wolos-layer-0001 /var/lib/wolos/layers-kept/wolos-layer-0001",
             "systemctl reload-or-restart systemd-sysext.service",
-            "rm -rf /var/lib/wolos/layers-cleared",
             "rm -rf /var/lib/wolos/layers/wolos-layer-0001",
         ]
     );
@@ -595,7 +614,7 @@ fn syu_with_a_target_goes_to_the_pending_slot() {
     assert_eq!(run("pkg -- -Syu vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
     assert!(
-        l.contains(&"btrfs subvolume snapshot / /run/wolos/top/@wolos-b".into()),
+        l.contains(&"btrfs subvolume snapshot / /run/wolos/top/@wolos-tx".into()),
         "{l:?}"
     );
     assert!(!l.contains(&"systemd-sysext refresh".into()));
@@ -606,10 +625,12 @@ fn a_system_update_stacks_onto_a_pending_slot() {
     // CORE-6: `wol pkg` left a kernel in wolos-b for the next boot; the update keeps it.
     let mut env = sealed("", PENDING);
     assert_eq!(run("update plan", &mut env), 0, "{}", env.err);
-    let first = env.out.lines().next().unwrap_or_default().to_string();
-    assert_eq!(
-        first,
-        "btrfs subvolume snapshot /run/wolos/top/@wolos-b /run/wolos/top/@wolos-tx"
+    assert!(
+        env.out.contains(
+            "\nbtrfs subvolume snapshot /run/wolos/top/@wolos-b /run/wolos/top/@wolos-tx\n"
+        ),
+        "{}",
+        env.out
     );
     assert!(
         env.out
@@ -621,7 +642,7 @@ fn a_system_update_stacks_onto_a_pending_slot() {
     assert_eq!(run("update plan", &mut idle), 0, "{}", idle.err);
     assert!(
         idle.out
-            .starts_with("btrfs subvolume snapshot / /run/wolos/top/@wolos-b\n"),
+            .contains("\nbtrfs subvolume snapshot / /run/wolos/top/@wolos-tx\n"),
         "{}",
         idle.out
     );
@@ -771,4 +792,75 @@ fn update_now_and_the_pacman_wrapper_build_the_same_slot() {
         ),
         None
     );
+}
+
+/// QA-LIVE3-1: an update folded htop's layer into wolos-b and the good boot of b took it out of
+/// the merge; `wol update rollback` and a restart into wolos-a (which never had it) must not lose
+/// htop: a's first good boot puts the kept layer back into the merge. Once both slots hold it,
+/// it goes for good.
+#[test]
+fn rollback_keeps_folded_layers() {
+    // The kept layer, as the folder lists it (its record inside).
+    let kept = || {
+        (
+            PathBuf::from("/var/lib/wolos/layers-kept/wolos-layer-0001/wolos-layer.json"),
+            "{}\n".to_owned(),
+        )
+    };
+    // Booted wolos-a after the rollback: its own list does not name the layer.
+    let mut a = FakeEnv {
+        root: true,
+        files: vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                "rootflags=subvol=@wolos-a\n".into(),
+            ),
+            kept(),
+        ],
+        captures: vec![("ls -1 /var/lib/extensions".into(), String::new())],
+        ..Default::default()
+    };
+    assert_eq!(run("layers clear", &mut a), 0, "{}", a.err);
+    assert_eq!(
+        lines(&a),
+        [
+            "mv -T /var/lib/wolos/layers-kept/wolos-layer-0001 /var/lib/extensions/wolos-layer-0001",
+            "systemctl reload-or-restart systemd-sysext.service",
+        ]
+    );
+    // Booted wolos-b, and wolos-a holds it too now (a later update folded it): removed.
+    let mut b = FakeEnv {
+        root: true,
+        files: vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                "rootflags=subvol=@wolos-b\n".into(),
+            ),
+            (
+                PathBuf::from("/usr/lib/wolos/folded-layers"),
+                "wolos-layer-0001\n".into(),
+            ),
+            (
+                PathBuf::from("/run/wolos/top/@wolos-a/usr/lib/wolos/folded-layers"),
+                "wolos-layer-0001\n".into(),
+            ),
+            kept(),
+        ],
+        captures: vec![("ls -1 /var/lib/extensions".into(), String::new())],
+        ..Default::default()
+    };
+    assert_eq!(run("layers clear", &mut b), 0, "{}", b.err);
+    assert_eq!(
+        lines(&b),
+        ["rm -rf /var/lib/wolos/layers-kept/wolos-layer-0001"]
+    );
+    // Only wolos-b holds it: kept, nothing runs.
+    let mut only_b = FakeEnv {
+        root: true,
+        files: b.files.iter().take(2).cloned().chain([kept()]).collect(),
+        captures: vec![("ls -1 /var/lib/extensions".into(), String::new())],
+        ..Default::default()
+    };
+    assert_eq!(run("layers clear", &mut only_b), 0);
+    assert!(only_b.execs.is_empty(), "{:?}", only_b.execs);
 }

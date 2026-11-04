@@ -566,7 +566,7 @@ fn a_failed_update_step_logs_what_it_said() {
     );
     assert!(
         os.log.borrow().iter().any(|l| l.contains(
-            "failed: error: failed to synchronize all databases (unable to lock database); wolos-b was cleaned up"
+            "failed: error: failed to synchronize all databases (unable to lock database); wolos-b is as it was"
         )),
         "{:?}",
         os.log.borrow()
@@ -1552,3 +1552,61 @@ fn failed_join_cleanup_runs_after_the_failure() {
 mod concurrency;
 /// Update Now: the restore point, one copy, a failed slot (UPD-restore).
 mod update_now;
+
+/// QA-100 STORE-42: wol-admind's children run with `PATH=/usr/bin:/usr/sbin`, where a bare
+/// `pacman` is the stock one whose database is on the sealed /usr ("unable to lock database").
+/// No administrator plan (refresh, install, remove, Update Now in place or in a slot) starts one:
+/// pacman is reached through `wol pkg --` (the layer or the pending slot) or by its absolute path.
+#[test]
+fn no_admin_plan_names_bare_pacman() {
+    use wol_core::admin::{AdminStep, plan_with};
+    assert!(!wol_core::privileged::PATH.contains("/usr/local/bin"));
+    let tries: [&[&str]; 6] = [
+        &[],
+        &["gimp"],
+        &["steam"],
+        &["codecs-kit"],
+        &["wolos-b"],
+        &["gimp", "x"],
+    ];
+    let mut planned = 0;
+    for action in AdminAction::ALL {
+        for args in tries {
+            let r = req(action, args);
+            let Ok(steps) = plan_with(&r, &|_| None) else {
+                continue;
+            };
+            for s in steps {
+                let argv = match s {
+                    AdminStep::Run(a) | AdminStep::RunInput { argv: a, .. } => a,
+                    AdminStep::Write { .. } => continue,
+                };
+                planned += 1;
+                assert!(
+                    !argv.iter().any(|a| a == "pacman"),
+                    "{action:?} {args:?}: {argv:?}"
+                );
+            }
+        }
+    }
+    assert!(planned > 20, "{planned}");
+    // Update Now itself, in a slot and in place.
+    for os in [
+        slot_os(),
+        Fake {
+            files: vec![(wol_core::update::SINGLE_COPY.into(), String::new())],
+            ..Fake::default()
+        },
+    ] {
+        let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
+        handle(&up, ROOT, &Shared::default(), &os);
+        assert!(
+            os.ran
+                .borrow()
+                .iter()
+                .all(|a| !a.iter().any(|x| x == "pacman")),
+            "{:?}",
+            os.ran.borrow()
+        );
+    }
+}

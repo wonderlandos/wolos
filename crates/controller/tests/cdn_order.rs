@@ -109,6 +109,11 @@ fn the_scripts_defaults_are_the_cdn_constants() {
 }
 
 fn update_check(d: &Path, path: &str) -> PathBuf {
+    update_check_code(d, path, 0)
+}
+
+/// [`update_check`], expecting exit `code`.
+fn update_check_code(d: &Path, path: &str, code: i32) -> PathBuf {
     let out = d.join("out");
     let st = Command::new("sh")
         .arg(repo("files/usr/lib/wolos/update-check"))
@@ -117,7 +122,7 @@ fn update_check(d: &Path, path: &str) -> PathBuf {
         .env("WOLOS_UPDATES", &out)
         .status()
         .unwrap();
-    assert!(st.success());
+    assert_eq!(st.code(), Some(code));
     out
 }
 
@@ -160,12 +165,13 @@ fn update_check_asks_the_new_name_then_the_old_then_github() {
     assert_eq!(asked(&d), [latest[0].clone(), format!("{}.sig", latest[0])]);
     assert!(out.join("base").exists());
 
-    // Nothing answers: no manifest is kept from a half read, the check still finishes.
+    // Nothing answers: no manifest is kept from a half read; the packages are still checked and
+    // stamped, and base.error says why there is no release news (review of B4).
     let d = scratch("check-none");
-    let out = update_check(&d, &fakes(&d, &[PRIMARY, MIRROR, GITHUB], &[]));
+    let out = update_check_code(&d, &fakes(&d, &[PRIMARY, MIRROR, GITHUB], &[]), 0);
     assert_eq!(asked(&d).len(), 3);
     assert!(!out.join("base").exists() && !out.join("base.new").exists());
-    assert!(out.join("checked").exists());
+    assert!(out.join("checked").exists() && out.join("base.error").exists());
 }
 
 fn report(d: &Path, path: &str) {

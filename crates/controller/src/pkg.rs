@@ -22,10 +22,21 @@ fn capture(env: &mut dyn Env, argv: &[String]) -> Option<String> {
     env.capture(&a)
 }
 
+/// The real pacman; one that cannot start at all (missing or not executable in a layer chroot or
+/// a broken slot) says so instead of a bare 127 (QA-SHADOW-44).
 fn real(env: &mut dyn Env, args: &[String]) -> i32 {
     let mut a = vec![up::PACMAN.to_owned()];
     a.extend(args.iter().cloned());
-    env.exec(&a).unwrap_or(127)
+    match env.exec(&a) {
+        Ok(code) => code,
+        Err(e) => {
+            env.err(&format!(
+                "wol pkg: the package manager ({}) could not be started: {e}. Nothing was changed.\n",
+                up::PACMAN
+            ));
+            127
+        }
+    }
 }
 
 const UNCHANGED: &str = "Nothing was changed. Try again, or run `wol update` first.";
@@ -169,6 +180,10 @@ fn in_slot(env: &mut dyn Env, args: &[String], cmdline: Option<&str>) -> Outcome
             for r in &undo.argv {
                 let _ = env.exec(r);
             }
+            if undo.done {
+                env.err(&format!("{}\n", pkg::INSTALLED_NOT_DEFAULT));
+                return Outcome::Done;
+            }
             return if undo.kept || from != up::Base::Pending {
                 Outcome::Unchanged
             } else {
@@ -296,6 +311,18 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
     0
 }
 
+/// The other slot's folded list (the restore point's), read through the btrfs top level; None
+/// when there is no other slot or it cannot be read (then nothing kept is removed).
+fn other_folded(env: &dyn Env) -> Option<String> {
+    let cmdline = env.read_file(Path::new("/proc/cmdline"))?;
+    let other = up::running_slot(&cmdline).and_then(up::other_slot)?;
+    let root = Path::new(up::TOP).join(format!("@{other}"));
+    let usr = env.read_file(&root.join(layers::FOLDED));
+    let etc = env.read_file(&root.join(layers::ETC_FOLDED));
+    (usr.is_some() || etc.is_some())
+        .then(|| layers::folded_list(usr.as_deref(), etc.as_deref()).to_owned())
+}
+
 /// `wol layers clear`: on the slot that just booted, remove the live layers it already holds
 /// (its folded list), so they stop merging over its newer `/usr` (CORE-1). Nothing to clear: 0.
 /// Writes no file: the list is the slot's, sealed in its /usr (QA-STORE-44).
@@ -305,22 +332,32 @@ pub fn clear(env: &mut dyn Env) -> i32 {
     }
     let folded = booted_folded(env);
     let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
-    let mut names = layers::to_clear(&folded, &ls);
     // audit8 stability2 #3: layers pacman never finished in go too, only while no change runs
     // (the one being made has no record yet); held to the end so none starts meanwhile.
     let lock = env.try_lock(Path::new(up::LOCK)).ok().flatten();
+    let mut unfinished = Vec::new();
     if lock.is_some() {
         let has = |n: &str| {
             env.read_file(&Path::new(layers::DIR).join(n).join(layers::RECORD))
                 .is_some()
         };
-        for n in layers::unfinished(&ls, has) {
-            if !names.contains(&n) {
-                names.push(n);
-            }
-        }
+        unfinished = layers::unfinished(&ls, has);
     }
-    let steps = layers::clear_steps(&names);
+    // QA-LIVE3-1: folded layers are kept (out of the merge) while the other slot, the restore
+    // point, does not hold them; a slot that does not hold a kept one (a rollback) gets it back.
+    // Names, from the folder itself: a missing folder is none kept.
+    let kept: String = env
+        .list_dir(Path::new(layers::KEPT_DIR))
+        .iter()
+        .filter_map(|p| {
+            Path::new(p)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned() + "\n")
+        })
+        .collect();
+    let other = other_folded(env);
+    let tidy = layers::tidy(&folded, other.as_deref(), &ls, &kept, &unfinished);
+    let steps = layers::tidy_steps(&tidy);
     let refresh = steps.iter().position(|s| *s == layers::refresh_step());
     for (i, a) in steps.iter().enumerate() {
         if env.exec(a).unwrap_or(127) != 0 {

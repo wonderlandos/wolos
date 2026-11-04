@@ -261,6 +261,62 @@ pub fn euid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// An exclusive `flock` on `path` without waiting: the file (and its folder) made if missing,
+/// mode 0600, never through a symlink (`O_NOFOLLOW`). `Ok(None)` while another open file holds
+/// it. The lock lasts as long as the returned file is open. One implementation for every holder
+/// of `wol_core::update::LOCK` (wol, wol-admind): wol-admind's probe trusts the file only when
+/// root made it 0600.
+pub fn try_flock(path: &std::path::Path) -> std::io::Result<Option<std::fs::File>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    match f.try_lock() {
+        Ok(()) => Ok(Some(f)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
+/// Whether another open file holds an exclusive `flock` on `path` right now, the file counting
+/// only when `owner` made it for this: a regular file of that uid with no group or other bits
+/// (anyone else could create or hold one to block an update). Read from `/proc/locks`, so the
+/// probe takes no lock of its own (a builder's `flock -n` never fails because of it) and needs no
+/// permission on the file: any account may ask (wol-admind's Update Now, `wol update status`).
+pub fn flock_held_by(path: &std::path::Path, owner: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(md) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !md.is_file() || md.uid() != owner || md.mode() & 0o077 != 0 {
+        return false;
+    }
+    let locks = std::fs::read_to_string("/proc/locks").unwrap_or_default();
+    flock_write_held(&locks, md.dev(), md.ino())
+}
+
+/// Whether `/proc/locks` text lists an exclusive `FLOCK` held (not waited for) on the file with
+/// device `dev` (as `st_dev`) and inode `ino`. A line reads
+/// `1: FLOCK  ADVISORY  WRITE 4242 08:01:131074 0 EOF`, the device in hex `major:minor`.
+pub fn flock_write_held(locks: &str, dev: u64, ino: u64) -> bool {
+    // glibc's dev_t layout, as the kernel prints it.
+    let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
+    let minor = (dev & 0xff) | ((dev >> 12) & !0xff);
+    let want = format!("{major:02x}:{minor:02x}:{ino}");
+    locks.lines().any(|l| {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        matches!(f.get(1..), Some(["FLOCK", _, "WRITE", _, id, ..]) if *id == want)
+    })
+}
+
 /// Executable path of `pid` as bytes written into `buf`; returns the length. Does not allocate.
 pub fn executable(pid: i32, buf: &mut [u8]) -> Option<usize> {
     if pid <= 0 || buf.is_empty() {
@@ -440,6 +496,27 @@ mod fd_tests {
 
 #[cfg(test)]
 mod tests {
+    /// The update lock: one holder at a time, 0600, released on close, never through a link.
+    #[test]
+    fn try_flock_holds_one_at_a_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("shared-flock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let p = d.join("run/update.lock");
+        let first = super::try_flock(&p).unwrap().expect("free");
+        assert_eq!(
+            std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(super::try_flock(&p).unwrap().is_none(), "held");
+        drop(first);
+        assert!(super::try_flock(&p).unwrap().is_some(), "released on close");
+        let link = d.join("link.lock");
+        std::os::unix::fs::symlink(&p, &link).unwrap();
+        assert!(super::try_flock(&link).is_err(), "never through a symlink");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     use super::*;
     use std::os::unix::net::UnixStream;
 

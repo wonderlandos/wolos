@@ -23,8 +23,12 @@ if [ "$(setting metered)" != on ]; then
 		;;
 	esac
 fi
-# `wol update check` refreshes the catalogue; offline leaves nothing to download.
-wol update check --json >/dev/null 2>&1 || exit 0
+# `wol update check` refreshes the catalogue. A check that did not run (offline, no room) is the
+# unit's failure, said in the journal (QA-STORE-43), not a quiet "nothing to download".
+wol update check --json >/dev/null 2>&1 || {
+	echo "update-download: the update check did not run (offline or no room); nothing downloaded" >&2
+	exit 75
+}
 # pacman's database is on the sealed slot (DBPath /usr/lib/pacman, ADR 0016), where it cannot take
 # its lock: the download runs against a temporary copy (`local` linked, `sync` copied and refreshed
 # there), as checkupdates does (audit5 C9-1). --dbpath makes the /usr/local/bin wrapper pass it on.

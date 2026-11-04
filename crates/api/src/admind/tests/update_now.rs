@@ -14,18 +14,32 @@ fn update_now_keeps_a_restore_point_first() {
     let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
     assert_eq!(handle(&up, ROOT, &Shared::default(), &os), AdminReply::Ok);
     let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-    let b = "/run/wolos/top/@wolos-b";
-    assert_eq!(ran[0], format!("btrfs subvolume delete {b}"));
-    assert_eq!(ran[1], format!("btrfs subvolume snapshot / {b}"));
-    assert_eq!(ran[2], format!("wol layers fold {b}"));
+    // QA-STORE-3: built in the scratch copy; wolos-b (the earlier restore point) goes only at
+    // the swap, after the seal.
+    let b = "/run/wolos/top/@wolos-tx";
+    let snap = ran
+        .iter()
+        .position(|l| *l == format!("btrfs subvolume snapshot / {b}"))
+        .expect("snapshot");
+    assert_eq!(ran[snap + 1], format!("wol layers fold {b}"));
+    let seal = ran
+        .iter()
+        .position(|l| l.starts_with("wol seal apply"))
+        .unwrap();
+    let swap = ran
+        .iter()
+        .position(|l| l.contains("-name @wolos-b -exec btrfs subvolume delete"))
+        .unwrap();
+    assert!(seal < swap, "{ran:?}");
     // After the fold, the slot's own /etc overlay line (ADR 0044, 0.12.1), then pacman.
-    let pacman = format!("arch-chroot {b} /usr/bin/pacman -Syu --noconfirm");
+    let pacman = format!(
+        "unshare --mount --propagation private wol update chroot {b} -- /usr/bin/pacman -Syu --noconfirm"
+    );
     let at = ran
         .iter()
         .position(|l| *l == pacman)
         .expect("pacman in the slot");
-    assert!(at > 2, "{ran:?}");
-    assert!(ran.iter().any(|l| l.starts_with("wol seal apply")));
+    assert!(at > snap + 1, "{ran:?}");
     assert_eq!(ran.last().unwrap(), "bootctl set-default ");
     assert!(ran.iter().all(|l| !l.contains("@wolos-a")), "{ran:?}");
     assert!(
@@ -46,7 +60,7 @@ fn update_now_keeps_a_restore_point_first() {
     let r = req(AdminAction::PkgUpgrade, &["firefox", "gimp"]);
     handle(&encode(&r, b""), ROOT, &Shared::default(), &held);
     assert!(held.ran.borrow().iter().any(|a| a.join(" ")
-        == format!("arch-chroot {b} /usr/bin/pacman -Syu --noconfirm --ignore=firefox,gimp")));
+        == format!("unshare --mount --propagation private wol update chroot {b} -- /usr/bin/pacman -Syu --noconfirm --ignore=firefox,gimp")));
     let wifi = Fake::default();
     let r = req(AdminAction::WifiPower, &["wlan0", "off"]);
     handle(&encode(&r, b""), ROOT, &Shared::default(), &wifi);
@@ -167,13 +181,14 @@ fn a_failed_update_now_cleans_up_and_keeps_the_restore_point() {
     let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
     let at = ran.iter().position(|l| l.contains("mkinitcpio")).unwrap();
     let after: Vec<&str> = ran[at + 1..].iter().map(String::as_str).collect();
+    // QA-STORE-3: before the swap only the scratch copy goes (its mounts first, 0.12.1
+    // FIX-stab2); wolos-b, its entries and its image are as they were.
     assert_eq!(
         after,
         [
-            // An interrupted build's mounts go first (0.12.1 FIX-stab2, `rollback`).
-            "umount -R /run/wolos/top/@wolos-b",
-            "btrfs subvolume delete /run/wolos/top/@wolos-b",
-            "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
+            "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec umount -R {} ;",
+            "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec btrfs subvolume delete {} +",
+            "rm -f /efi/wolos-b/verity.new /var/lib/wolos/update-building",
         ]
     );
     assert!(
@@ -185,11 +200,51 @@ fn a_failed_update_now_cleans_up_and_keeps_the_restore_point() {
             .borrow()
             .iter()
             .any(|l| l
-                .contains("failed; wolos-b was cleaned up, restore point wolos-a is unchanged")),
+                .contains("failed; wolos-b is as it was, restore point wolos-a is unchanged")),
         "{:?}",
         os.log.borrow()
     );
     let mut said = None;
     handle_said(&up, ROOT, &Shared::default(), &os, &mut said);
-    assert_eq!(said, Some(wol_core::update::pkg::slot_failed("wolos-a")));
+    assert_eq!(said.as_deref(), Some(wol_core::update::pkg::SLOT_FAILED));
+}
+
+/// QA-100 STORE-11, ACC-23: Update Now with too little room on the system disk starts nothing and
+/// says how much more it needs in GB (it used to fill the disk and read "check that you're
+/// online"); with room, or with the free space unknown, it runs.
+#[test]
+fn no_room_sentence_with_gb() {
+    let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
+    let df = "df -B1 --output=avail /run/wolos/top";
+    let full = Fake {
+        probes: vec![
+            ("bootctl list --json=short", SLOT_BOOTCTL),
+            (df, "Avail\n1073741824\n"),
+        ],
+        ..slot_os()
+    };
+    let mut said = None;
+    assert_eq!(
+        handle_said(&up, ROOT, &Shared::default(), &full, &mut said),
+        AdminReply::Failed
+    );
+    let said = said.unwrap();
+    assert!(said.contains("about 3 GB more"), "{said}");
+    assert!(
+        said.contains("Settings > Storage") && !said.contains("online"),
+        "{said}"
+    );
+    assert!(
+        full.ran.borrow().is_empty(),
+        "nothing ran: {:?}",
+        full.ran.borrow()
+    );
+    let room = Fake {
+        probes: vec![
+            ("bootctl list --json=short", SLOT_BOOTCTL),
+            (df, "Avail\n64424509440\n"),
+        ],
+        ..slot_os()
+    };
+    assert_eq!(handle(&up, ROOT, &Shared::default(), &room), AdminReply::Ok);
 }

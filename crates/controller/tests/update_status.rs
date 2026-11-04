@@ -239,3 +239,81 @@ fn check_never_offers_the_running_release() {
         assert_eq!(env.out.trim(), want, "running {os}");
     }
 }
+
+/// QA-LIVE4-14: an update cut off by a power loss is said, not hidden: its mark is there and no
+/// build holds the lock. While a build runs (the lock held), or with no mark, nothing is said.
+#[test]
+fn an_interrupted_update_is_reported() {
+    let mark = (
+        PathBuf::from(wol_core::update::BUILDING),
+        "wolos-b 2026/11/02\n".to_owned(),
+    );
+    let mut env = FakeEnv {
+        files: vec![mark.clone(), file("checked", "5\n")],
+        ..FakeEnv::default()
+    };
+    assert_eq!(run("update status --json", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(env.out.trim()).unwrap();
+    assert_eq!(v["interrupted"], "wolos-b", "{}", env.out);
+    let busy = FakeEnv {
+        files: vec![mark, file("checked", "5\n")],
+        ..FakeEnv::default()
+    };
+    let _held = {
+        // The build is root's; the person asking below is not (review 4: the status asks
+        // /proc/locks, it never takes the lock, which a person could not anyway).
+        let mut b = FakeEnv {
+            root: true,
+            locks: std::sync::Arc::clone(&busy.locks),
+            ..FakeEnv::default()
+        };
+        use controller::run::Env;
+        b.try_lock(std::path::Path::new(wol_core::update::LOCK))
+            .unwrap()
+            .unwrap()
+    };
+    let mut busy = busy;
+    assert_eq!(run("update status --json", &mut busy), 0);
+    let v: serde_json::Value = serde_json::from_str(busy.out.trim()).unwrap();
+    assert!(
+        v["interrupted"].is_null(),
+        "a build is running: {}",
+        busy.out
+    );
+    let mut none = FakeEnv {
+        files: vec![file("checked", "5\n")],
+        ..FakeEnv::default()
+    };
+    assert_eq!(run("update status --json", &mut none), 0);
+    let v: serde_json::Value = serde_json::from_str(none.out.trim()).unwrap();
+    assert!(v["interrupted"].is_null());
+}
+
+/// QA-STORE-2 (frozen for the Store, C1): `wol update install --json` says which WolOS release
+/// came with the update (the signed one the check found, newer than the running one), null when
+/// none.
+#[test]
+fn install_json_names_the_release() {
+    let (keys, mut files) = signed("install");
+    files.push(file("checked", "5\n"));
+    files.push(file("pkg", "wol-shell 0.12.1-1 -> 0.12.2-1\n"));
+    for (running, want) in [
+        (
+            RELEASE.replace("2026.11", "2026.10"),
+            serde_json::json!("2026.11"),
+        ),
+        (RELEASE.to_string(), serde_json::Value::Null),
+    ] {
+        let mut env = FakeEnv {
+            files: files.clone(),
+            vars: vec![keys.clone()],
+            replies: vec!["ok\n".into()],
+            captures: vec![("cat /usr/lib/wolos-release.json".into(), running.clone())],
+            ..FakeEnv::default()
+        };
+        assert_eq!(run("update install --json", &mut env), 0, "{}", env.err);
+        let v: serde_json::Value = serde_json::from_str(env.out.trim()).unwrap();
+        assert_eq!(v["release"], want, "{}", env.out);
+        assert_eq!(v["applied"], 1);
+    }
+}

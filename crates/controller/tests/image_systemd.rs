@@ -431,6 +431,10 @@ fn network_up_drains_the_queued_modules() {
     );
 }
 
+/// A curl that serves the release manifest (`-o FILE`) and a signature (stdout) from anywhere.
+const CURL_OK: &str = "o=; p=; for u; do [ \"$p\" = -o ] && o=$u; p=$u; done\n\
+case $u in *.sig) printf sig ;; *) printf '{}' > \"$o\" ;; esac";
+
 /// A pacman database like an installed slot's (`local` records, `sync` lists) for update-check.
 fn slot_db(d: &Path) -> PathBuf {
     let db = d.join("db");
@@ -466,7 +470,7 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
         } else {
             "case \"$*\" in *-Sy*) exit 1 ;; *-Qu*) exit 1 ;; esac"
         };
-        let path = fakes(&d, &[("pacman", body), ("curl", "exit 22")]);
+        let path = fakes(&d, &[("pacman", body), ("curl", CURL_OK)]);
         let mut c = Command::new("sh");
         c.arg(repo("files/usr/lib/wolos/update-check"))
             .env("PATH", &path)
@@ -476,7 +480,11 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
         if let Some(a) = arg {
             c.arg(a);
         }
-        assert!(c.status().unwrap().success());
+        // QA-NET-26: offline is said (75, try again later), never the 0 of "checked".
+        assert_eq!(
+            c.status().unwrap().code(),
+            Some(if online { 0 } else { 75 })
+        );
     };
     run(false, None);
     assert!(!out.join("checked").exists(), "offline: no stamp");
@@ -525,7 +533,7 @@ fn update_check_runs_hourly_and_checks_once_a_day() {
         &d,
         &[
             ("pacman", "case \"$*\" in *-Qu*) exit 1 ;; esac"),
-            ("curl", "exit 22"),
+            ("curl", CURL_OK),
         ],
     );
     let st = Command::new("sh")
@@ -639,13 +647,14 @@ fn update_check_without_arch_audit_says_so_and_lists_nothing() {
         &d,
         &[
             ("pacman", "case \"$*\" in *-Qq*) echo linux-wolos ;; esac"),
-            ("curl", "exit 22"),
+            ("curl", CURL_OK),
         ],
     );
     let bin = d.join("only");
     fs::create_dir_all(&bin).unwrap();
     for t in [
-        "date", "cat", "mkdir", "mv", "rm", "chmod", "od", "tr", "mktemp", "ln", "cp",
+        "date", "cat", "mkdir", "mv", "rm", "chmod", "od", "tr", "mktemp", "ln", "cp", "wc",
+        "head", "df", "awk",
     ] {
         let o = Command::new("sh")
             .args(["-c", &format!("command -v {t}")])

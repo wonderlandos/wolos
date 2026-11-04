@@ -232,11 +232,41 @@ pub const NO_RESTORE_POINT: &str = concat!(
     "restore point. Nothing was changed."
 );
 
-/// A slot update that stopped: the half-made copy is gone, the running system is as it was.
-pub fn slot_failed(restore_point: &str) -> String {
-    format!(
-        "The update did not finish, so nothing was changed. The restore point {restore_point} is kept."
-    )
+/// A slot update that stopped before its swap: the half-made copy is gone, the running system
+/// and the restore point are as they were. No slot name (QA-STORE-6: people do not know
+/// `wolos-a`); the log names it.
+pub const SLOT_FAILED: &str =
+    "The update did not finish, so nothing was changed. Your restore point is kept.";
+
+/// A slot update whose new slot is complete and has its entry, but whose last step (clearing a
+/// default chosen earlier) failed: installed, said so, nothing removed.
+pub const INSTALLED_NOT_DEFAULT: &str = concat!(
+    "The update is installed and starts at the next restart, unless an earlier choice in ",
+    "Settings > Restore keeps the other copy as the default."
+);
+
+/// Free space a slot update needs on the system disk before it starts (QA-STORE-11, QA-ACC-23):
+/// the copy shares every unchanged block with the running system, so what it takes is the
+/// downloaded packages (shared cache), their unpacked files and a new initramfs and boot image.
+/// An estimate with headroom (the 0.12.0 -> 0.12.1 upgrade downloaded 860 MiB); not measured
+/// per update.
+pub const SLOT_ROOM_BYTES: u64 = 4 << 30;
+
+/// Where [`room_needed`] is measured: `df -B1 --output=avail` of the btrfs top level, the one file
+/// system the slots, `/var` and `/home` share.
+pub const ROOM_ARGV: [&str; 4] = ["df", "-B1", "--output=avail", super::TOP];
+
+/// The sentence for an update that would run out of room, from `free` bytes ([`ROOM_ARGV`]'s
+/// number); None when there is room or the free space is unknown (the build's own errors still
+/// stop it then). Names how much more is needed, in whole GB rounded up.
+pub fn room_needed(free: Option<u64>) -> Option<String> {
+    let free = free?;
+    let short = SLOT_ROOM_BYTES.checked_sub(free).filter(|s| *s > 0)?;
+    let gb = short.div_ceil(1 << 30);
+    Some(format!(
+        "Update Now was not started: the system disk needs about {gb} GB more free space for \
+         the update. Free some space in Settings > Storage, then try again. Nothing was changed."
+    ))
 }
 
 /// An in-place update (one copy) that stopped: part of it may be installed.
@@ -415,7 +445,7 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
         )
         .unwrap();
         let t: Vec<String> = s.iter().map(|x| x.to_string()).collect();
-        let r = "/run/wolos/top/@wolos-b";
+        let r = "/run/wolos/top/@wolos-tx";
         let st = format!("{r}/var/tmp/wolos-pkg");
         let at = |want: &str| {
             t.iter()
@@ -435,19 +465,15 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
             "find -L . -maxdepth 1 -type f -name h.pkg.tar.zst.sig -exec cp --reflink=auto \
 -t {st}/1 -- {{}} +"
         ));
-        let bind = at(&format!("mount --bind {r} {r}"));
         let pacman = at(&format!(
-            "arch-chroot {r} /usr/bin/pacman -U --noconfirm /var/tmp/wolos-pkg/0/k.pkg.tar.zst \
-/var/tmp/wolos-pkg/1/h.pkg.tar.zst https://example.org/x.pkg.tar.zst --cachedir /c"
+            "unshare --mount --propagation private wol update chroot {r} -- /usr/bin/pacman -U \
+--noconfirm /var/tmp/wolos-pkg/0/k.pkg.tar.zst /var/tmp/wolos-pkg/1/h.pkg.tar.zst \
+https://example.org/x.pkg.tar.zst --cachedir /c"
         ));
-        let unbind = at(&format!("umount {r}"));
         let rm = at(&format!("rm -rf -- {st}"));
-        let seal = at(&format!("wol seal apply {r} /efi/wolos-b/verity"));
-        assert!(mkdir < cp0 && cp0 < sig0 && sig0 < cp1 && cp1 < sig1 && sig1 < bind);
-        assert!(
-            bind < pacman && pacman < unbind && unbind < rm && rm < seal,
-            "{t:?}"
-        );
+        let seal = at(&format!("wol seal apply {r} /efi/wolos-b/verity.new"));
+        assert!(mkdir < cp0 && cp0 < sig0 && sig0 < cp1 && cp1 < sig1 && sig1 < pacman);
+        assert!(pacman < rm && rm < seal, "{t:?}");
         // Repo installs and upgrades copy nothing.
         for line in ["-S vim", "-Syu", "-R linux-lts", "-S --needed ./not-a-file"] {
             let s = plan("wolos-b", Base::Pending, &a(line), "current", None).unwrap();
@@ -500,27 +526,36 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
         )
         .unwrap();
         let t: Vec<String> = s.iter().map(|x| x.to_string()).collect();
-        let r = "/run/wolos/top/@wolos-b";
-        assert_eq!(t[0], format!("btrfs subvolume snapshot / {r}"));
-        assert_eq!(t[1], format!("wol layers fold {r}"));
-        assert!(t[2].ends_with(&format!(" {r}/etc/fstab")), "{}", t[2]);
-        assert_eq!(t[3], format!("write {r}/etc/wolos/slot"));
-        assert_eq!(t[4], super::super::ETC_SETTLE);
-        assert_eq!(t[5], format!("mount --bind {r} {r}"));
-        assert_eq!(t[6], format!("arch-chroot {r} /usr/bin/pacman -S vim"));
-        assert_eq!(t[7], format!("arch-chroot {r} mkinitcpio -P"));
-        assert_eq!(t[8], format!("umount {r}"));
-        let seal = t
-            .iter()
-            .position(|x| x.starts_with("wol seal apply"))
-            .unwrap();
+        let (w, r) = ("/run/wolos/top/@wolos-tx", "/run/wolos/top/@wolos-b");
+        let at = |want: &str| {
+            t.iter()
+                .position(|x| x == want)
+                .unwrap_or_else(|| panic!("{want}: {t:?}"))
+        };
+        let snap = at(&format!("btrfs subvolume snapshot / {w}"));
+        assert_eq!(t[snap + 1], format!("wol layers fold {w}"));
+        assert!(
+            t[snap + 2].ends_with(&format!(" {w}/etc/fstab")),
+            "{}",
+            t[snap + 2]
+        );
+        assert_eq!(t[snap + 3], format!("write {w}/etc/wolos/slot"));
+        assert_eq!(t[snap + 4], super::super::ETC_SETTLE);
+        let pacman = at(&format!(
+            "unshare --mount --propagation private wol update chroot {w} -- /usr/bin/pacman -S vim"
+        ));
+        assert_eq!(
+            t[pacman + 1],
+            format!("unshare --mount --propagation private wol update chroot {w} -- mkinitcpio -P")
+        );
+        let seal = at(&format!("wol seal apply {w} /efi/wolos-b/verity.new"));
+        let mv = at(&format!("mv {w} {r}"));
         let entry = t
             .iter()
             .position(|x| x.ends_with("esp-sync --new"))
             .unwrap();
-        assert!(seal < entry);
-        assert_eq!(t.last().unwrap(), "bootctl set-default ");
-        assert!(!t.iter().any(|x| x.contains("delete")));
+        assert!(pacman < seal && seal < mv && mv < entry, "{t:?}");
+        assert_eq!(t[t.len() - 1], "bootctl set-default ");
     }
 
     #[test]
@@ -528,13 +563,18 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
         let s = plan("wolos-b", Base::Pending, &a("-S git"), "current", None).unwrap();
         let t: Vec<String> = s.iter().map(|x| x.to_string()).collect();
         let (r, w) = ("/run/wolos/top/@wolos-b", "/run/wolos/top/@wolos-tx");
-        assert_eq!(t[0], format!("btrfs subvolume snapshot {r} {w}"));
-        assert_eq!(t[1], format!("wol layers fold {w}"));
-        assert_eq!(t[6], format!("arch-chroot {w} /usr/bin/pacman -S git"));
-        let del = t
-            .iter()
-            .position(|x| x == &format!("btrfs subvolume delete {r}"))
-            .unwrap();
+        let at = |want: &str| {
+            t.iter()
+                .position(|x| x == want)
+                .unwrap_or_else(|| panic!("{want}: {t:?}"))
+        };
+        let snap = at(&format!("btrfs subvolume snapshot {r} {w}"));
+        assert_eq!(t[snap + 1], format!("wol layers fold {w}"));
+        at(&format!(
+            "unshare --mount --propagation private wol update chroot {w} -- /usr/bin/pacman -S git"
+        ));
+        let del =
+            at("find /run/wolos/top -maxdepth 1 -name @wolos-b -exec btrfs subvolume delete {} +");
         let seal = t
             .iter()
             .position(|x| x.starts_with("wol seal apply"))
@@ -544,16 +584,23 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
             "the first change is dropped only once the second is sealed"
         );
         assert_eq!(t[del + 1], format!("mv {w} {r}"));
+        // Undo before the swap: the scratch copy, its digest and the mark, nothing of the slot.
+        let undo: Vec<String> = super::super::rollback_from("wolos-b", Base::Pending)
+            .iter()
+            .map(|x| x.join(" "))
+            .collect();
         assert_eq!(
-            super::super::rollback_from("wolos-b", Base::Pending),
-            vec![
-                a(&format!("umount -R {w}")),
-                a(&format!("btrfs subvolume delete {w}"))
+            undo,
+            [
+                "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec umount -R {} ;".to_string(),
+                "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec btrfs subvolume delete {} +"
+                    .to_string(),
+                "rm -f /efi/wolos-b/verity.new /var/lib/wolos/update-building".into(),
             ]
         );
         assert_eq!(
             super::super::rollback_from("wolos-b", Base::Running { replace: true }),
-            super::super::rollback("wolos-b")
+            super::super::rollback_from("wolos-b", Base::Pending)
         );
     }
 
@@ -574,10 +621,23 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
             plan("wolos-b", c.from, &args, "current", Some(cmd)).unwrap()
         );
         let t: Vec<String> = c.steps.iter().map(ToString::to_string).collect();
-        assert_eq!(t[0], "btrfs subvolume delete /run/wolos/top/@wolos-b");
-        assert_eq!(t[1], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
+        // QA-STORE-3: the old restore point in wolos-b is deleted only after the new copy is
+        // sealed; the copy is built aside.
+        let snap = t
+            .iter()
+            .position(|x| x == "btrfs subvolume snapshot / /run/wolos/top/@wolos-tx")
+            .unwrap();
+        let del = t
+            .iter()
+            .position(|x| x.contains("-name @wolos-b -exec btrfs subvolume delete"))
+            .unwrap();
+        let seal = t
+            .iter()
+            .position(|x| x.starts_with("wol seal apply"))
+            .unwrap();
+        assert!(snap < seal && seal < del, "{t:?}");
         assert!(t.contains(
-            &"arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm".into()
+            &"unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm".into()
         ));
         assert!(
             t.iter().all(|x| !x.contains("@wolos-a")),
@@ -601,7 +661,10 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
             .map(ToString::to_string)
             .collect();
         assert_eq!(one, ["/usr/bin/pacman -Syu --noconfirm --ignore=gimp"]);
-        assert!(slot_failed("wolos-a").contains("restore point wolos-a is kept"));
+        assert!(
+            !SLOT_FAILED.contains("wolos-"),
+            "no slot name for the person (QA-STORE-6)"
+        );
     }
 
     /// audit8 stability2 #4: a stacked change that fails before its first change is deleted keeps
@@ -609,59 +672,58 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
     #[test]
     fn a_stacked_change_failing_after_the_swap_removes_the_slot() {
         use super::super::{Undo, rollback, rollback_at};
-        let s = plan("wolos-b", Base::Pending, &a("-S git"), "current", None).unwrap();
-        let t: Vec<String> = s.iter().map(|x| x.to_string()).collect();
-        let (r, w) = ("/run/wolos/top/@wolos-b", "/run/wolos/top/@wolos-tx");
-        let del = t
-            .iter()
-            .position(|x| x == &format!("btrfs subvolume delete {r}"))
-            .unwrap();
-        let mv = t.iter().position(|x| x == &format!("mv {w} {r}")).unwrap();
-        let esp = t
-            .iter()
-            .position(|x| x.ends_with("esp-sync --new"))
-            .unwrap();
-        assert!(del < mv && mv < esp, "{t:?}");
-        let scratch = super::super::rollback_from("wolos-b", Base::Pending);
-        for kept in [0, del - 1, del] {
-            assert_eq!(
-                rollback_at("wolos-b", Base::Pending, &s, kept),
-                Undo {
-                    argv: scratch.clone(),
-                    kept: true
-                },
-                "step {kept}: {}",
-                t[kept]
-            );
-        }
-        let mut gone = rollback("wolos-b");
-        gone.extend(scratch);
-        for lost in [mv, esp, t.len() - 1] {
-            assert_eq!(
-                rollback_at("wolos-b", Base::Pending, &s, lost),
-                Undo {
-                    argv: gone.clone(),
-                    kept: false
-                },
-                "step {lost}: {}",
-                t[lost]
-            );
-        }
-        let s = plan(
-            "wolos-b",
-            Base::Running { replace: true },
-            &a("-S git"),
-            "current",
-            None,
-        )
-        .unwrap();
-        assert_eq!(
-            rollback_at("wolos-b", Base::Running { replace: true }, &s, 1),
-            Undo {
-                argv: rollback("wolos-b"),
-                kept: false
+        for from in [Base::Pending, Base::Running { replace: true }] {
+            let s = plan("wolos-b", from, &a("-S git"), "current", None).unwrap();
+            let t: Vec<String> = s.iter().map(|x| x.to_string()).collect();
+            let (r, w) = ("/run/wolos/top/@wolos-b", "/run/wolos/top/@wolos-tx");
+            let swap = t
+                .iter()
+                .position(|x| x.starts_with("find /efi/loader/entries "))
+                .unwrap();
+            let mv = t.iter().position(|x| x == &format!("mv {w} {r}")).unwrap();
+            let esp = t
+                .iter()
+                .position(|x| x.ends_with("esp-sync --new"))
+                .unwrap();
+            assert!(swap < mv && mv < esp, "{t:?}");
+            let scratch = super::super::rollback_from("wolos-b", from);
+            for kept in [0, 3, swap - 1] {
+                assert_eq!(
+                    rollback_at("wolos-b", from, &s, kept),
+                    Undo {
+                        argv: scratch.clone(),
+                        kept: true,
+                        done: false
+                    },
+                    "step {kept}: {}",
+                    t[kept]
+                );
             }
-        );
+            let mut gone = rollback("wolos-b");
+            gone.extend(scratch);
+            for lost in [swap, mv, esp] {
+                assert_eq!(
+                    rollback_at("wolos-b", from, &s, lost),
+                    Undo {
+                        argv: gone.clone(),
+                        kept: false,
+                        done: false
+                    },
+                    "step {lost}: {}",
+                    t[lost]
+                );
+            }
+            // After esp-sync the new slot is complete: a failed `set-default` removes nothing.
+            for late in [esp + 1, t.len() - 1] {
+                let u = rollback_at("wolos-b", from, &s, late);
+                assert!(u.done && !u.kept, "step {late}: {}", t[late]);
+                assert!(
+                    u.argv
+                        .iter()
+                        .all(|a| a[0] == "rm" && !a.join(" ").contains("@wolos"))
+                );
+            }
+        }
     }
 
     #[test]

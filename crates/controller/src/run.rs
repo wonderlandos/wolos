@@ -138,6 +138,11 @@ pub trait Env {
     fn try_lock(&mut self, path: &Path) -> io::Result<Option<Lock>> {
         flock_file(path)
     }
+    /// Whether another process holds `path` (root's 0600 lock file) now: asked of `/proc/locks`,
+    /// so it takes nothing and needs no permission on the file (`shared::sys::flock_held_by`).
+    fn lock_held(&self, path: &Path) -> bool {
+        shared::sys::flock_held_by(path, 0)
+    }
     /// Delete one file; a file that is already gone is not an error (`wol webapp remove`).
     fn remove_file(&mut self, path: &Path) -> io::Result<()> {
         match std::fs::remove_file(path) {
@@ -178,27 +183,10 @@ pub struct Lock {
     _held: Box<dyn std::any::Any>,
 }
 
-/// [`Env::try_lock`] on the real file system: `path` (and its directory) made if missing, mode
-/// 0600, `flock(LOCK_EX | LOCK_NB)` on it (`File::try_lock`: std has the call, no `unsafe`).
+/// [`Env::try_lock`] on the real file system: `shared::sys::try_flock` (0600, no symlink,
+/// `flock(LOCK_EX | LOCK_NB)`), the one implementation wol-admind holds too.
 fn flock_file(path: &Path) -> io::Result<Option<Lock>> {
-    use std::os::unix::fs::OpenOptionsExt;
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-        .open(path)?;
-    match f.try_lock() {
-        // The lock goes with `f`: it is released when the `Lock` drops.
-        Ok(()) => Ok(Some(Lock { _held: Box::new(f) })),
-        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-        Err(std::fs::TryLockError::Error(e)) => Err(e),
-    }
+    Ok(shared::sys::try_flock(path)?.map(|f| Lock { _held: Box::new(f) }))
 }
 
 /// Take [`wol_core::update::LOCK`] for one change to a slot or a layer, or say why not: only one
@@ -323,6 +311,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "update.status" => update_status(env, json),
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
+        "update.chroot" => update_chroot(env, inv),
         "update.install" => update_install(env, json),
         "webapp.call" => crate::webapp::run(inv, env),
         "encrypt.rebind" => crate::seal::rebind(env),
@@ -1088,12 +1077,16 @@ fn update_check(env: &mut dyn Env, json: bool) -> i32 {
 
 /// What `wol update install --json` reports: `applied` = the package updates the daily check had
 /// listed (what Update Now installs), `restart` = one of them is a kernel.
+/// `release` = the WolOS release that comes with it (the daily check's signed manifest, newer
+/// than the running one; QA-STORE-2), null when none (frozen for the Store, C1).
 pub(crate) fn update_install_result(env: &mut dyn Env) -> serde_json::Value {
-    let pending = update_snapshot(env).map(|u| u.packages).unwrap_or_default();
+    let found = update_snapshot(env);
+    let release = found.as_ref().and_then(|u| u.base.clone());
+    let pending = found.map(|u| u.packages).unwrap_or_default();
     let restart = pending
         .iter()
         .any(|p| p == "linux" || p.starts_with("linux-"));
-    serde_json::json!({ "applied": pending.len(), "restart": restart })
+    serde_json::json!({ "applied": pending.len(), "restart": restart, "release": release })
 }
 
 /// `wol update install`: every waiting package update through wol-admind (`pkg-upgrade`, the
@@ -1200,13 +1193,25 @@ fn base_verify(env: &mut dyn Env, json: bool) -> i32 {
     }
 }
 
+/// The slot an update was building when it was cut off (`wol_core::update::interrupted`): its
+/// mark is there and no build holds the lock (asked of `/proc/locks`: any account, and the lock
+/// is never taken, not even for a moment). None while a build runs.
+fn update_interrupted(env: &mut dyn Env) -> Option<String> {
+    use wol_core::update as up;
+    let mark = env.read_file(Path::new(up::BUILDING))?;
+    up::interrupted(Some(&mark), env.lock_held(Path::new(up::LOCK))).map(str::to_owned)
+}
+
 /// `wol update status`: null / "not checked yet" before the first check.
 fn update_status(env: &mut dyn Env, json: bool) -> i32 {
     let u = update_snapshot(env);
     let (base, kernel, wolos) = running_base(env);
+    // QA-LIVE4-14: an update's mark with no build holding the lock is one that was cut off.
+    let interrupted = update_interrupted(env);
     if json || !env.stdout_tty() {
         let v = u.map(|u| {
             let mut v = serde_json::json!(u);
+            v["interrupted"] = interrupted.clone().into();
             v["count"] = u.count().into();
             v["base_version"] = base.clone().into();
             v["kernel"] = kernel.clone().into();
@@ -1215,6 +1220,9 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
         });
         env.out(&format!("{}\n", v.unwrap_or_default()));
         return 0;
+    }
+    if interrupted.is_some() {
+        env.out("The last update was interrupted before it finished; nothing of it is used. Update again to finish it.\n");
     }
     let Some(u) = u else {
         env.out("not checked yet\n");
@@ -1252,6 +1260,94 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
     }
     env.out(&s);
     0
+}
+
+/// `wol update chroot ROOT -- CMD...`: one command of a slot build in the copy at ROOT. The slot
+/// build runs it as `unshare --mount --propagation private wol update chroot ...`
+/// (`wol_core::update::in_copy`), so every mount made here (the copy bound onto itself, which
+/// pacman needs to find its root's file system; the shared package cache, QA-STORE-46; and
+/// arch-chroot's own) is gone when it exits, even when it is killed or the power goes (RH-192).
+fn update_chroot(env: &mut dyn Env, inv: &Invocation) -> i32 {
+    use wol_core::update as up;
+    let (Some(root), cmd) = (inv.get("root"), inv.all("args")) else {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            "usage: wol update chroot ROOT -- COMMAND...",
+        );
+    };
+    // Only the scratch copy a slot build makes: never a running slot, no other path.
+    let scratch = format!("{}/@{}", up::TOP, up::SCRATCH);
+    if cmd.is_empty() || root != scratch {
+        return fail(
+            env,
+            ErrorCode::Usage,
+            "usage: wol update chroot ROOT -- COMMAND... (ROOT is the slot build's copy)",
+        );
+    }
+    if !env.is_root() {
+        return fail(env, ErrorCode::Denied, "update chroot needs root");
+    }
+    // The copy itself, not a link to somewhere else.
+    if env
+        .capture(&["realpath", "-e", root])
+        .as_deref()
+        .map(str::trim)
+        != Some(root)
+    {
+        return fail(
+            env,
+            ErrorCode::Failed,
+            &format!("{root} is not the slot build's copy"),
+        );
+    }
+    // Only in a mount namespace of its own (the build starts it under `unshare`): the binds
+    // below must never reach the rest of the system (RH-192).
+    let mut ns = |p: &str| env.capture(&["readlink", p]).map(|t| t.trim().to_owned());
+    let (own, init) = (ns("/proc/self/ns/mnt"), ns("/proc/1/ns/mnt"));
+    if own.is_none() || own == init {
+        return fail(
+            env,
+            ErrorCode::Failed,
+            "update chroot runs only in a private mount namespace (unshare --mount)",
+        );
+    }
+    let cache = format!("{root}{}", up::CACHE);
+    let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<String>>();
+    for a in [
+        s(&["mount", "--bind", root, root]),
+        s(&["mkdir", "-p", &cache]),
+        s(&["mount", "--bind", up::CACHE, &cache]),
+    ] {
+        if env.exec(&a).unwrap_or(127) != 0 {
+            return fail(
+                env,
+                ErrorCode::Failed,
+                &format!("could not prepare the copy at {root}"),
+            );
+        }
+    }
+    let mut a = s(&["arch-chroot", root]);
+    a.extend(cmd.iter().map(|c| (*c).to_owned()));
+    env.exec(&a).unwrap_or(127)
+}
+
+/// The program a failed step ran, for the one line that says where it stopped.
+fn step_name(s: &wol_core::update::Step) -> String {
+    match s {
+        wol_core::update::Step::Run(a) => {
+            let i = usize::from(a.first().is_some_and(|x| x == "env" || x == "find"));
+            let w = a
+                .iter()
+                .skip(i)
+                .find(|x| !x.contains('='))
+                .map_or("", String::as_str);
+            Path::new(w)
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+        }
+        wol_core::update::Step::Write { .. } => "a file write".into(),
+    }
 }
 
 /// `wol update plan|apply [slot] [--release YYYY/MM/DD]`: update into the other root slot
@@ -1293,7 +1389,7 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let planned = if one_copy {
         up::plan_in_place(date.as_deref())
     } else {
-        up::plan_from(&slot, from, date.as_deref(), cmdline.as_deref())
+        up::plan_from(&slot, from, date.as_deref(), cmdline.as_deref(), &[])
     };
     let Some(steps) = planned else {
         return fail(
@@ -1320,31 +1416,59 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
         Ok(l) => l,
         Err(code) => return code,
     };
+    // QA-STORE-55: the person reads what happens, not the commands (`wol update plan` lists them).
+    env.err(&if one_copy {
+        "wol update: updating this computer's only copy of WolOS in place\n".to_owned()
+    } else {
+        format!("wol update: building the update in {slot}; this takes a few minutes\n")
+    });
     for (i, s) in steps.iter().enumerate() {
-        env.err(&format!("wol update: {s}\n"));
         let code = match s {
             Step::Run(argv) => env.exec(argv).unwrap_or(127),
             Step::Write { path, text } => i32::from(env.write_file(Path::new(path), text).is_err()),
         };
-        if code != 0 {
-            // A stacked change past its swap no longer has the slot as it was (audit8 #4).
-            let undo = up::rollback_at(&slot, from, &steps, i);
-            for r in &undo.argv {
-                let _ = env.exec(r);
-            }
+        if code == 0 {
+            continue;
+        }
+        let what = step_name(s);
+        // QA-STORE-50: one copy has no slot to roll back: nothing is deleted, the sentence says
+        // what may already be installed.
+        if one_copy {
             return fail(
                 env,
                 ErrorCode::Failed,
-                &match (undo.kept, from) {
-                    (true, _) => format!("{s} failed ({code}); slot {slot} kept as it was"),
-                    (false, up::Base::Pending) => format!(
-                        "{s} failed ({code}); slot {slot} removed, with the change that waited \
-                         for a restart in it"
-                    ),
-                    (false, _) => format!("{s} failed ({code}); slot {slot} removed"),
-                },
+                &format!(
+                    "{} ({what} stopped with {code})",
+                    wol_core::update::pkg::IN_PLACE_FAILED
+                ),
             );
         }
+        // A failure after the swap no longer has the slot as it was (audit8 #4, QA-STORE-3).
+        let undo = up::rollback_at(&slot, from, &steps, i);
+        for r in &undo.argv {
+            let _ = env.exec(r);
+        }
+        if undo.done {
+            env.err(&format!(
+                "wol update: {}\n",
+                wol_core::update::pkg::INSTALLED_NOT_DEFAULT
+            ));
+            env.out(&format!("updated into {slot}; restart to use it\n"));
+            return 0;
+        }
+        let said = if undo.kept {
+            wol_core::update::pkg::SLOT_FAILED.to_owned()
+        } else {
+            format!(
+                "The update did not finish and {slot} could not be kept, so it was removed. The \
+                 running system is as it was."
+            )
+        };
+        return fail(
+            env,
+            ErrorCode::Failed,
+            &format!("{said} ({what} stopped with {code})"),
+        );
     }
     env.out(&format!("updated into {slot}; restart to use it\n"));
     0
@@ -1613,11 +1737,15 @@ impl Env for FakeEnv {
     }
     fn exec(&mut self, argv: &[String]) -> io::Result<i32> {
         self.execs.push(argv.into());
-        Ok(if self.exec_codes.is_empty() {
+        match if self.exec_codes.is_empty() {
             0
         } else {
             self.exec_codes.remove(0)
-        })
+        } {
+            // `i32::MIN` in `exec_codes`: the program could not be started at all.
+            i32::MIN => Err(io::Error::from(io::ErrorKind::NotFound)),
+            code => Ok(code),
+        }
     }
     /// Recorded like `exec`; stdout is the `captures` entry for the argv, else `captured`.
     fn exec_output(&mut self, argv: &[String]) -> io::Result<(i32, String)> {
@@ -1639,7 +1767,15 @@ impl Env for FakeEnv {
     fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
         self.keys.iter().find(|k| k.0 == desc).map(|k| k.1.clone())
     }
+    fn lock_held(&self, path: &Path) -> bool {
+        let held = self.locks.lock().unwrap_or_else(|p| p.into_inner());
+        held.iter().any(|p| p == path)
+    }
     fn try_lock(&mut self, path: &Path) -> io::Result<Option<Lock>> {
+        // As the real one: the lock file is root's, 0600.
+        if !self.root {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
         let mut held = self.locks.lock().unwrap_or_else(|p| p.into_inner());
         if held.iter().any(|p| p == path) {
             return Ok(None);

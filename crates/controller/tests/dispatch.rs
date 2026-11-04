@@ -537,19 +537,36 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     };
     assert_eq!(run("update apply wolos-b 2026/11/02 --yes", &mut env), 1);
     let ran: Vec<String> = env.execs.iter().map(|e| e.join(" ")).collect();
-    assert_eq!(ran[0], "btrfs subvolume delete /run/wolos/top/@wolos-b");
-    assert_eq!(ran[1], "btrfs subvolume snapshot / /run/wolos/top/@wolos-b");
-    assert_eq!(ran[2], "wol layers fold /run/wolos/top/@wolos-b");
-    assert!(ran[3].starts_with("sed -i "), "{ran:?}");
+    let tx = "/run/wolos/top/@wolos-tx";
+    let clean = [
+        "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec umount -R {} ;".to_string(),
+        "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec btrfs subvolume delete {} +"
+            .to_string(),
+    ];
+    assert_eq!(ran[..2], clean, "a scratch copy a cut left goes first");
+    assert_eq!(ran[2], format!("btrfs subvolume snapshot / {tx}"));
+    assert_eq!(ran[3], format!("wol layers fold {tx}"));
+    // QA-STORE-3: the fold failed before the swap: only the scratch copy goes; wolos-b (the
+    // earlier restore point), its entries and its image stay.
     assert_eq!(
         ran[4..],
         [
-            // A failed step may leave the copy bound for pacman: a mounted subvolume stays.
-            "umount -R /run/wolos/top/@wolos-b",
-            "btrfs subvolume delete /run/wolos/top/@wolos-b",
-            "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
+            clean[0].clone(),
+            clean[1].clone(),
+            "rm -f /efi/wolos-b/verity.new /var/lib/wolos/update-building".to_owned(),
         ],
-        "failed: the new slot is removed"
+        "failed: the restore point is kept"
+    );
+    assert!(
+        env.err.contains(wol_core::update::pkg::SLOT_FAILED),
+        "{}",
+        env.err
+    );
+    // QA-STORE-55: the person reads sentences, not the commands.
+    assert!(
+        !env.err.contains("btrfs") && !env.err.contains("/run/wolos"),
+        "{}",
+        env.err
     );
     // Never the running slot; the other one by default.
     let mut env = FakeEnv {
@@ -561,13 +578,13 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     run("update plan", &mut env);
     assert!(
         env.out
-            .contains("btrfs subvolume snapshot / /run/wolos/top/@wolos-b\n"),
+            .contains("mv /run/wolos/top/@wolos-tx /run/wolos/top/@wolos-b\n"),
         "{}",
         env.out
     );
     assert!(
         env.out
-            .contains("arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm\n")
+            .contains("unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm\n")
     );
 }
 
@@ -872,4 +889,165 @@ fn wifi_join_err_exits_nonzero() {
         0,
         "not hidden: another argv"
     );
+}
+
+/// QA-STORE-50: a one-copy computer updated in place that fails has no slot to roll back: no
+/// btrfs step runs and the sentence says some packages may already be updated.
+#[test]
+fn one_copy_failure_no_rollback() {
+    let mut env = FakeEnv {
+        root: true,
+        exec_codes: vec![1],
+        files: vec![(
+            std::path::PathBuf::from(wol_core::update::SINGLE_COPY),
+            String::new(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("update apply --yes", &mut env), 1);
+    let ran: Vec<String> = env.execs.iter().map(|e| e.join(" ")).collect();
+    assert_eq!(
+        ran,
+        ["/usr/bin/pacman -Syu --noconfirm"],
+        "nothing after the failure"
+    );
+    assert!(
+        env.err.contains(wol_core::update::pkg::IN_PLACE_FAILED),
+        "{}",
+        env.err
+    );
+    assert!(!env.err.contains("removed"), "{}", env.err);
+}
+
+/// QA-LIVE4-8: after a cut, the next `wol update apply` succeeds at once: its first steps clear
+/// a scratch copy the cut left (`find` runs nothing when there is none), and it ends by removing
+/// its mark.
+#[test]
+fn retry_after_cut_succeeds() {
+    let mut env = FakeEnv {
+        root: true,
+        files: vec![(
+            std::path::PathBuf::from("/proc/cmdline"),
+            "root=LABEL=wolos rootflags=subvol=@wolos-a rw\n".into(),
+        )],
+        captures: vec![(
+            "bootctl list --json=short".into(),
+            r#"[{"id":"wolos-a.conf","isSelected":true},{"id":"wolos-b.conf"}]"#.into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("update apply --yes", &mut env), 0, "{}", env.err);
+    let ran: Vec<String> = env.execs.iter().map(|e| e.join(" ")).collect();
+    assert!(
+        ran[1].contains("-name @wolos-tx -exec btrfs subvolume delete"),
+        "{ran:?}"
+    );
+    assert!(ran[2].starts_with("btrfs subvolume snapshot / "), "{ran:?}");
+    assert_eq!(ran[ran.len() - 2], "rm -f /var/lib/wolos/update-building");
+    assert!(env.out.contains("restart"), "{}", env.out);
+}
+
+/// QA-SHADOW-44: a pacman that cannot start (missing in a broken slot) is a sentence and 127,
+/// not a silent 127.
+#[test]
+fn pacman_exec_err_has_sentence() {
+    let mut env = FakeEnv {
+        exec_codes: vec![i32::MIN],
+        ..Default::default()
+    };
+    assert_eq!(run("pkg -- -Q", &mut env), 127);
+    assert!(env.err.contains("could not be started"), "{}", env.err);
+    assert!(env.err.contains("Nothing was changed"), "{}", env.err);
+}
+
+/// QA-LIVE4-5: as a standard account `bootctl list` fails (the ESP is root's); `wol restore list`
+/// reads the list boot-ok and esp-sync left in /run/wolos/slots.json and shows both slots.
+#[test]
+fn restore_list_reads_the_slot_list_as_a_user() {
+    let list = concat!(
+        r#"[{"id":"wolos-a.conf","isSelected":true,"isDefault":true},"#,
+        r#"{"id":"wolos-b.conf","isSelected":false,"isDefault":false,"version":"3-2026.11.02"}]"#
+    );
+    let mut e = FakeEnv {
+        files: vec![(
+            std::path::PathBuf::from(wol_core::update::be::SLOTS_FILE),
+            list.into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("restore list --json", &mut e), 0, "{}", e.err);
+    let v: serde_json::Value = serde_json::from_str(e.out.trim()).unwrap();
+    let names: Vec<&str> = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|b| b["name"].as_str())
+        .collect();
+    assert_eq!(names, ["wolos-a", "wolos-b"], "{}", e.out);
+}
+
+/// QA-STORE-46, RH-192: `wol update chroot` (run by the slot build under `unshare`) binds the copy
+/// onto itself and the shared package cache into it, then runs the command in it; pacman's own
+/// flags pass through untouched. Only a slot copy, only root.
+#[test]
+fn update_chroot_binds_the_copy_and_the_cache() {
+    let tx = "/run/wolos/top/@wolos-tx";
+    let private = |own: &str| FakeEnv {
+        root: true,
+        captures: vec![
+            (format!("realpath -e {tx}"), format!("{tx}\n")),
+            ("readlink /proc/self/ns/mnt".into(), format!("{own}\n")),
+            (
+                "readlink /proc/1/ns/mnt".into(),
+                "mnt:[4026531841]\n".into(),
+            ),
+        ],
+        ..Default::default()
+    };
+    let line = format!("update chroot {tx} -- /usr/bin/pacman -Syu --noconfirm --ignore=gimp");
+    let mut env = private("mnt:[4026532999]");
+    assert_eq!(run(&line, &mut env), 0, "{}", env.err);
+    let ran: Vec<String> = env.execs.iter().map(|e| e.join(" ")).collect();
+    assert_eq!(
+        ran,
+        [
+            format!("mount --bind {tx} {tx}"),
+            format!("mkdir -p {tx}/var/cache/pacman/pkg"),
+            format!("mount --bind /var/cache/pacman/pkg {tx}/var/cache/pacman/pkg"),
+            format!("arch-chroot {tx} /usr/bin/pacman -Syu --noconfirm --ignore=gimp"),
+        ]
+    );
+    // Review 3: in the system's own mount namespace (no `unshare`) it mounts nothing.
+    let mut shared = private("mnt:[4026531841]");
+    assert_ne!(run(&line, &mut shared), 0);
+    assert!(shared.execs.is_empty(), "{:?}", shared.execs);
+    assert!(
+        shared.err.contains("private mount namespace"),
+        "{}",
+        shared.err
+    );
+    // Only the scratch copy, never a slot or another path, and not through a link.
+    for other in [
+        "/run/wolos/top/@wolos-a",
+        "/run/wolos/top/@wolos-tx/../@wolos-a",
+        "/",
+    ] {
+        let mut e = private("mnt:[4026532999]");
+        assert_eq!(
+            run(&format!("update chroot {other} -- ls"), &mut e),
+            64,
+            "{other}"
+        );
+        assert!(e.execs.is_empty());
+    }
+    let mut link = private("mnt:[4026532999]");
+    link.captures[0].1 = "/home/eve/x\n".into();
+    assert_ne!(run(&line, &mut link), 0);
+    assert!(link.execs.is_empty());
+    let mut user = FakeEnv::default();
+    assert_eq!(run(&line, &mut user), 77);
+    // Not in `wol help`: the slot build's own step.
+    let mut help = FakeEnv::default();
+    run("help", &mut help);
+    assert!(!help.out.contains("update chroot"), "{}", help.out);
 }

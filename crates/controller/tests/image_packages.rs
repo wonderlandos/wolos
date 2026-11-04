@@ -442,11 +442,23 @@ fn regdom_helper_is_quiet_when_unset_and_loud_when_it_fails() {
                 && l.contains("RUN+=\"/usr/lib/wolos/set-regdom\"")),
         "{rule}"
     );
-    let script = siblings::root().join("files/usr/lib/wolos/set-regdom");
+    let script = std::env::var("WOL_REGDOM_SCRIPT").map_or_else(
+        |_| siblings::root().join("files/usr/lib/wolos/set-regdom"),
+        std::path::PathBuf::from,
+    );
     let dir = std::env::temp_dir().join(format!("regdom-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();
     let fake = dir.join("helper");
-    fs::write(&fake, "#!/bin/sh\necho ran > \"$0.ran\"\nexit 7\n").unwrap();
+    // The fake `iw`: records what it was asked, fails (a domain that cannot be applied).
+    fs::write(&fake, "#!/bin/sh\necho \"$*\" > \"$0.ran\"\nexit 7\n").unwrap();
+    // wireless-regdb's set-wireless-regdom, as it ships: it sources the file as shell. The
+    // script must never hand the file to it (review of B4).
+    let regdb = dir.join("set-wireless-regdom");
+    fs::write(
+        &regdb,
+        "#!/bin/sh\n. \"$WOLOS_REGDOM_CONF\"\necho ran > \"$0.ran\"\nexit 7\n",
+    )
+    .unwrap();
     let run = |conf: &str| {
         let c = dir.join("conf");
         fs::write(&c, conf).unwrap();
@@ -454,13 +466,15 @@ fn regdom_helper_is_quiet_when_unset_and_loud_when_it_fails() {
         Command::new("sh")
             .arg(&script)
             .env("WOLOS_REGDOM_CONF", &c)
-            .env("WOLOS_REGDOM_HELPER", &fake)
+            .env("WOLOS_REGDOM_IW", &fake)
+            .env("WOLOS_REGDOM_HELPER", &regdb)
             .status()
             .unwrap()
             .code()
     };
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&regdb, fs::Permissions::from_mode(0o755)).unwrap();
     // Every line commented, as wireless-regdb ships it: nothing to set, no error, helper not run.
     assert_eq!(
         run("#WIRELESS_REGDOM=\"BR\"\n#WIRELESS_REGDOM=\"US\"\n"),
@@ -470,5 +484,34 @@ fn regdom_helper_is_quiet_when_unset_and_loud_when_it_fails() {
     // A configured domain runs the helper, and its failure is not hidden.
     assert_eq!(run("WIRELESS_REGDOM=\"BR\"\n"), Some(7));
     assert!(dir.join("helper.ran").exists());
+    // The file is read, never run as shell (audit3 R2B-14): a command in it does nothing.
+    let pwned = dir.join("pwned");
+    let _ = fs::remove_file(dir.join("helper.ran"));
+    let evil = format!(
+        "touch {}\nWIRELESS_REGDOM=\"$(touch {})\"\n",
+        pwned.display(),
+        pwned.display()
+    );
+    assert_eq!(run(&evil), Some(0));
+    assert!(!pwned.exists(), "a line of the file ran");
+    assert!(!dir.join("helper.ran").exists());
+    // A valid domain next to a command: the domain is set with `iw reg set`, the command never
+    // runs (the regdb helper would have sourced it).
+    let evil = format!("touch {}\nWIRELESS_REGDOM=DE\n", pwned.display());
+    assert_eq!(run(&evil), Some(7));
+    assert!(!pwned.exists(), "the file was run as shell");
+    assert_eq!(
+        fs::read_to_string(dir.join("helper.ran")).unwrap().trim(),
+        "reg set DE"
+    );
+    // The last uncommented line counts, quoted or not, a comment after it allowed.
+    assert_eq!(
+        run("WIRELESS_REGDOM=US\nWIRELESS_REGDOM='de'  # Germany\n"),
+        Some(7)
+    );
+    // A value that is no country code is said and not passed on.
+    let _ = fs::remove_file(dir.join("helper.ran"));
+    assert_eq!(run("WIRELESS_REGDOM=BRAZIL\n"), Some(1));
+    assert!(!dir.join("helper.ran").exists());
     let _ = fs::remove_dir_all(&dir);
 }
