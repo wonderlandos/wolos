@@ -41,6 +41,11 @@ pub enum WriteContent {
     WifiRemove {
         ssid: String,
     },
+    /// `key=on|off` set in the current auto-update file, other lines kept.
+    AutoUpdate {
+        key: &'static str,
+        on: bool,
+    },
     /// Add or drop one grant in the compositor consent database.
     Consent {
         app: String,
@@ -65,6 +70,7 @@ impl WriteContent {
                     power::upsert_sysctl(Some(&conf), k, v)
                 }),
             Self::WifiRemove { ssid } => wifi::remove_network(current, ssid),
+            Self::AutoUpdate { key, on } => crate::update::auto::set(current, key, *on),
             Self::Consent {
                 app,
                 capability,
@@ -73,6 +79,11 @@ impl WriteContent {
         }
     }
 }
+
+/// Read by the error-report sender: `send=1` turns it on (Settings > Privacy).
+pub const REPORTS_CONF: &str = "/etc/wolos/reports.conf";
+/// The hourly timer of the error-report sender.
+pub const REPORTS_TIMER: &str = "wolos-report.timer";
 
 fn on_off(s: &str) -> bool {
     s == "on" || s == "off"
@@ -111,22 +122,54 @@ fn binds(json: &str) -> Option<String> {
     }
 }
 
-/// NetworkManager join (the image ships NetworkManager): the password goes on stdin, never argv.
-fn nm_join(ssid: &str, password: Option<&str>, hidden: bool) -> AdminStep {
-    let mut v = vec!["nmcli", "dev", "wifi", "connect", ssid];
-    if hidden {
-        v.extend(["hidden", "yes"]);
-    }
+/// NetworkManager join (the image ships NetworkManager). Open network: `nmcli dev wifi connect`.
+/// With a password: the profile made or changed in place and then
+/// `nmcli connection up ... passwd-file /dev/stdin`, the password on stdin, never argv (NET2-1:
+/// `dev wifi connect ... passwd-file` is not valid nmcli). `exists`: a Wi-Fi profile of that name
+/// is saved; `key_mgmt`: [`crate::wifi::nm_key_mgmt`].
+fn nm_join(
+    ssid: &str,
+    password: Option<&str>,
+    hidden: bool,
+    exists: bool,
+    key_mgmt: &str,
+) -> Vec<AdminStep> {
+    use crate::wifi;
     match password {
-        Some(p) => {
-            v.extend(["passwd-file", "/dev/stdin"]);
-            AdminStep::RunInput {
-                argv: v.iter().map(|s| (*s).to_owned()).collect(),
-                input: format!("802-11-wireless-security.psk:{p}\n"),
+        Some(p) => wifi::nm_profile_argvs(ssid, hidden, key_mgmt, exists)
+            .into_iter()
+            .map(AdminStep::Run)
+            .chain([AdminStep::RunInput {
+                argv: wifi::nm_up_argv(ssid),
+                input: wifi::nm_secret_input(p),
+            }])
+            .collect(),
+        None => {
+            let mut v = vec!["nmcli", "dev", "wifi", "connect", ssid];
+            if hidden {
+                v.extend(["hidden", "yes"]);
             }
+            vec![argv(&v)]
         }
-        None => argv(&v),
     }
+}
+
+/// What to run when a password join failed: delete the profile the join made, so a wrong password
+/// leaves nothing behind. None when the request is not a password join or the profile was saved
+/// before it (then it is the person's and stays). Ask BEFORE running the plan (`probe` sees the
+/// profiles as they were) and run the argv only if the plan failed.
+pub fn wifi_join_cleanup(
+    r: &AdminRequest,
+    probe: &dyn Fn(&[&str]) -> Option<String>,
+) -> Option<Vec<String>> {
+    if r.action != AdminAction::WifiJoin || validate(r).is_some() {
+        return None;
+    }
+    let password = r.args.get(2).is_some_and(|p| !p.is_empty());
+    let ssid = r.args.get(1)?;
+    let saved = probe(&crate::wifi::NM_PROFILES_ARGV)
+        .is_some_and(|l| crate::wifi::nm_has_profile(&l, ssid));
+    (password && !saved).then(|| crate::wifi::nm_cleanup_argv(ssid))
 }
 
 /// Error text, or None when allowed.
@@ -191,7 +234,10 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         | AdminAction::AirPlayReceiver => ok(n == 1 && on_off(a[0])),
         AdminAction::Hostname => ok(n == 1 && sharing::is_valid_hostname(a[0])),
         AdminAction::Lid => ok(n == 1 && (a[0] == "sleep" || a[0] == "nothing")),
-        AdminAction::AutoUpdate => ok(n == 1 && on_off(a[0])),
+        AdminAction::AutoUpdate => {
+            ok((n == 1 && on_off(a[0])) || (n == 2 && a[0] == "metered" && on_off(a[1])))
+        }
+        AdminAction::Reports => ok(n == 1 && on_off(a[0])),
         AdminAction::PrinterAdd => {
             ok(n == 2 && printers::is_valid_name(a[0]) && printers::is_valid_uri(a[1]))
         }
@@ -333,20 +379,25 @@ pub fn plan_with(
     }
     let a = &r.args;
     Ok(match r.action {
-        AdminAction::WifiJoin => vec![nm_join(
+        AdminAction::WifiJoin => nm_join(
             &a[1],
             a.get(2).filter(|p| !p.is_empty()).map(String::as_str),
             a.get(3).is_some_and(|h| h == "hidden"),
-        )],
+            probe(&crate::wifi::NM_PROFILES_ARGV)
+                .is_some_and(|l| crate::wifi::nm_has_profile(&l, &a[1])),
+            crate::wifi::nm_key_mgmt(
+                &probe(&crate::wifi::NM_SCAN_ARGV).unwrap_or_default(),
+                &a[1],
+            ),
+        ),
         AdminAction::WifiPower => vec![argv(&["nmcli", "radio", "wifi", &a[1]])],
-        AdminAction::Bluetooth => {
-            vec![argv(&[
-                "service",
-                "bluetooth",
-                if a[0] == "on" { "onestart" } else { "onestop" },
-                "ubt0",
-            ])]
-        }
+        // bluetoothd as a systemd service (the FreeBSD `service bluetooth onestart ubt0` was dead
+        // code on Linux, QA-SHADOW-42); the radio itself is `bluetoothctl power` as the user.
+        AdminAction::Bluetooth => vec![argv(&[
+            "systemctl",
+            if a[0] == "on" { "start" } else { "stop" },
+            "bluetooth.service",
+        ])],
         AdminAction::AudioDefault => vec![AdminStep::Run(audio_default_argv(&a[0]))],
         AdminAction::Appearance => vec![write(appearance::FILE, 0o644, a[0].clone())],
         AdminAction::Keybinds => {
@@ -420,19 +471,49 @@ pub fn plan_with(
             "set-ntp",
             if a[0] == "on" { "true" } else { "false" },
         ])],
-        AdminAction::RemoteLogin => service_steps("sshd.service", a[0] == "on"),
-        AdminAction::Firewall => service_steps("nftables.service", a[0] == "on"),
+        // privilege-cve M4: sshd behind a firewall that drops port 22 does nothing, and the only
+        // way out was Firewall off. Remote Login opens (or closes) port 22 itself.
+        AdminAction::RemoteLogin => remote_login_steps(
+            a[0] == "on",
+            crate::sharing::firewall_reload_wanted(
+                probe(&crate::sharing::FIREWALL_ENABLED_ARGV).as_deref(),
+            ),
+        ),
+        AdminAction::Firewall => firewall_steps(a[0] == "on"),
         AdminAction::MalwareSignatures => crate::malware::clam_argvs(a[0] == "on")
             .into_iter()
             .map(AdminStep::Run)
             .collect(),
         AdminAction::AirPlayReceiver => service_steps(crate::sharing::AIRPLAY_UNIT, a[0] == "on"),
         AdminAction::Hostname => vec![argv(&["hostnamectl", "set-hostname", &a[0]])],
-        AdminAction::AutoUpdate => vec![write(
-            crate::update::auto::FILE,
-            0o644,
-            crate::update::auto::conf(a[0] == "on"),
-        )],
+        // `on|off` is the download switch, `metered on|off` the metered-connection one: each keeps
+        // the other's line.
+        AdminAction::AutoUpdate => {
+            let (key, on) = match a.as_slice() {
+                [on] => ("download", on),
+                [_, on] => ("metered", on),
+                _ => return Err("auto-update: bad arguments".into()),
+            };
+            vec![AdminStep::Write {
+                path: crate::update::auto::FILE.into(),
+                mode: 0o644,
+                content: WriteContent::AutoUpdate {
+                    key,
+                    on: on == "on",
+                },
+            }]
+        }
+        // The sender reads `send=1` (files/usr/lib/wolos/report); the timer follows the switch.
+        AdminAction::Reports => {
+            let on = a[0] == "on";
+            let mut steps = vec![write(
+                REPORTS_CONF,
+                0o644,
+                format!("send={}\n", u8::from(on)),
+            )];
+            steps.extend(service_steps(REPORTS_TIMER, on));
+            steps
+        }
         AdminAction::Lid => {
             let l = if a[0] == "sleep" {
                 power::Lid::Sleep
@@ -523,6 +604,35 @@ pub fn session_power_argv(verb: &str) -> Option<&'static [&'static str]> {
         "shutdown" => &["systemctl", "poweroff"],
         _ => return None,
     })
+}
+
+/// Firewall on/off. Off also deletes the table by hand: the unit's own stop does it
+/// ([`crate::sharing::FIREWALL_DROP_IN`]), but a running system that has not restarted since the
+/// drop-in changed still has a oneshot unit that reads "inactive", and `disable --now` on it
+/// unloads nothing (QA-NET-1). `destroy` is no error when the table is already gone.
+fn firewall_steps(on: bool) -> Vec<AdminStep> {
+    let mut v = service_steps("nftables.service", on);
+    if !on {
+        v.push(argv(&crate::sharing::FIREWALL_DELETE_ARGV));
+    }
+    v
+}
+
+/// Remote Login: the firewall rule for port 22 ([`crate::sharing::SSH_RULE_FILE`]), the firewall
+/// ruleset loaded again when the firewall is on (`firewall_on`, [`crate::sharing::firewall_reload_wanted`]),
+/// and sshd. On opens the port before sshd listens; off stops sshd first.
+fn remote_login_steps(on: bool, firewall_on: bool) -> Vec<AdminStep> {
+    use crate::sharing::{FIREWALL_RELOAD_ARGV, SSH_RULE_FILE, ssh_rule};
+    let mut rule = vec![write(SSH_RULE_FILE, 0o644, ssh_rule(on))];
+    if firewall_on {
+        rule.push(argv(&FIREWALL_RELOAD_ARGV));
+    }
+    let unit = service_steps("sshd.service", on);
+    if on {
+        rule.into_iter().chain(unit).collect()
+    } else {
+        unit.into_iter().chain(rule).collect()
+    }
 }
 
 /// Enable and start (or disable and stop) a systemd unit; both are no-ops when already so.
@@ -664,6 +774,7 @@ pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
         (A::PkgInstallFile, Always),
         (A::SystemRollback, Always),
         (A::SystemChannel, Always),
+        (A::Reports, Cached),
     ]
 };
 
@@ -1015,23 +1126,203 @@ mod tests {
         }
     }
 
+    /// NET2-1: `nmcli dev wifi connect <ssid> passwd-file` is not nmcli grammar (rc 2). A password
+    /// join is a profile plus `connection up ... passwd-file /dev/stdin`, secret on stdin only.
     #[test]
     fn wifi_join_uses_networkmanager_with_password_on_stdin() {
         let p = plan(&r(WifiJoin, &["wlan0", "Home", "password1"])).unwrap();
-        let AdminStep::RunInput { argv, input } = &p[0] else {
+        let lines: Vec<String> = p
+            .iter()
+            .map(|s| match s {
+                AdminStep::Run(v) => v.join(" "),
+                AdminStep::RunInput { argv, .. } => format!("{} <stdin", argv.join(" ")),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                "nmcli connection add type wifi con-name Home ifname * ssid Home wifi-sec.key-mgmt wpa-psk",
+                "nmcli connection up id Home passwd-file /dev/stdin <stdin",
+            ]
+        );
+        let AdminStep::RunInput { input, .. } = &p[1] else {
             panic!("{p:?}")
         };
-        assert_eq!(
-            argv.join(" "),
-            "nmcli dev wifi connect Home passwd-file /dev/stdin"
-        );
         assert_eq!(input, "802-11-wireless-security.psk:password1\n");
-        assert!(!argv.iter().any(|a| a.contains("password1")));
+        assert!(
+            !format!("{:?}", &p[..1]).contains("password1"),
+            "secret never in argv"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("dev wifi connect")),
+            "{lines:?}"
+        );
+        // A Wi-Fi profile of that name is saved: changed in place (autoconnect and address
+        // settings survive), not deleted and not doubled. An Ethernet profile of the same name is
+        // not the network.
+        let join = r(WifiJoin, &["wlan0", "Home", "password1"]);
+        let with = plan_with(
+            &join,
+            &probe(&[(
+                "nmcli -t -f NAME,TYPE connection show",
+                "Wired connection 1:802-3-ethernet\nHome:802-11-wireless\n",
+            )]),
+        )
+        .unwrap();
+        assert_eq!(
+            shown(&with),
+            "nmcli connection modify id Home wifi-sec.key-mgmt wpa-psk; \
+             nmcli connection up id Home passwd-file /dev/stdin <stdin"
+        );
+        let eth = plan_with(
+            &join,
+            &probe(&[(
+                "nmcli -t -f NAME,TYPE connection show",
+                "Home:802-3-ethernet\n",
+            )]),
+        )
+        .unwrap();
+        assert!(shown(&eth).starts_with("nmcli connection add type wifi con-name Home"));
+        // WPA3-only networks (the scan's SECURITY column) need sae; WPA2 and WPA2/WPA3 do not.
+        let sae = |scan: &'static str| {
+            shown(
+                &plan_with(&join, &|argv: &[&str]| {
+                    (argv.join(" ") == "nmcli -t -f SECURITY,SSID dev wifi list")
+                        .then(|| scan.to_string())
+                })
+                .unwrap(),
+            )
+        };
+        assert!(sae("WPA3:Home\nWPA2:Other\n").contains("wifi-sec.key-mgmt sae"));
+        assert!(sae("WPA2:Home\n").contains("wifi-sec.key-mgmt wpa-psk"));
+        assert!(sae("WPA2 WPA3:Home\n").contains("wifi-sec.key-mgmt wpa-psk"));
+        assert!(sae("WPA3:Home\nWPA2:Home\n").contains("wifi-sec.key-mgmt wpa-psk"));
+        assert!(sae("WPA3:Other\n").contains("wifi-sec.key-mgmt wpa-psk"));
+        assert_eq!(crate::wifi::nm_key_mgmt("WPA3:A\\:B\n", "A:B"), "sae");
         let p = plan(&r(WifiJoin, &["wlan0", "Attic", "", "hidden"])).unwrap();
         assert!(
-            matches!(&p[0], AdminStep::Run(v) if v.join(" ") == "nmcli dev wifi connect Attic hidden yes")
+            matches!(&p[..], [AdminStep::Run(v)] if v.join(" ") == "nmcli dev wifi connect Attic hidden yes")
         );
-        assert!(!format!("{p:?}").contains("wpa"), "no wpa_supplicant left");
+        let p = plan(&r(WifiJoin, &["wlan0", "Attic", "password1", "hidden"])).unwrap();
+        assert!(
+            matches!(&p[0], AdminStep::Run(v) if v.join(" ").ends_with("wpa-psk 802-11-wireless.hidden yes"))
+        );
+        assert!(
+            !format!("{p:?}").contains("wpa_supplicant"),
+            "no wpa_supplicant left"
+        );
+    }
+
+    /// A wrong password must not leave a profile behind: the cleanup argv exists only for a
+    /// password join that found no saved Wi-Fi profile of that name.
+    #[test]
+    fn failed_join_removes_the_profile_it_made() {
+        let join = r(WifiJoin, &["wlan0", "Home", "password1"]);
+        let none = probe(&[(
+            "nmcli -t -f NAME,TYPE connection show",
+            "Wired connection 1:802-3-ethernet\n",
+        )]);
+        assert_eq!(
+            wifi_join_cleanup(&join, &none)
+                .map(|v| v.join(" "))
+                .as_deref(),
+            Some("nmcli connection delete id Home")
+        );
+        let saved = probe(&[(
+            "nmcli -t -f NAME,TYPE connection show",
+            "Home:802-11-wireless\n",
+        )]);
+        assert_eq!(
+            wifi_join_cleanup(&join, &saved),
+            None,
+            "the person's own profile stays"
+        );
+        assert_eq!(
+            wifi_join_cleanup(&r(WifiJoin, &["wlan0", "Home"]), &none),
+            None,
+            "open network"
+        );
+        assert_eq!(
+            wifi_join_cleanup(&r(WifiPower, &["wlan0", "on"]), &none),
+            None
+        );
+    }
+
+    /// RC-01: the argv is checked against the real nmcli when the tool is installed. The old form
+    /// is refused as a usage error (rc 2); the new `up` form is understood (NetworkManager then
+    /// answers "unknown connection" or "not running", never a usage error), and the profile argv
+    /// parses (`--offline` prints the keyfile and touches nothing).
+    #[test]
+    fn wifi_join_argv_is_valid_nmcli_grammar() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        if Command::new("nmcli").arg("--version").output().is_err() {
+            return; // not installed here: the journey qa100-net2-wifi-join-argv runs it on the image
+        }
+        let run = |argv: &[String], offline: bool, input: &str| {
+            let mut c = Command::new(&argv[0]);
+            if offline {
+                c.arg("--offline");
+            }
+            let mut child = c
+                .args(&argv[1..])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(input.as_bytes()).ok();
+            let o = child.wait_with_output().unwrap();
+            (
+                o.status.code(),
+                String::from_utf8_lossy(&o.stderr).into_owned(),
+                String::from_utf8_lossy(&o.stdout).into_owned(),
+            )
+        };
+        let old: Vec<String> = [
+            "nmcli",
+            "dev",
+            "wifi",
+            "connect",
+            "QaNoSuchNet",
+            "passwd-file",
+            "/dev/stdin",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let (rc, err, _) = run(&old, false, "802-11-wireless-security.psk:password1\n");
+        assert_eq!(rc, Some(2), "{err}");
+        assert!(err.contains("invalid extra argument"), "{err}");
+        for hidden in [false, true] {
+            for km in ["wpa-psk", "sae"] {
+                for step in crate::wifi::nm_profile_argvs("Qa No Such Net", hidden, km, false) {
+                    let (rc, err, out) = run(&step, true, "");
+                    assert_eq!(rc, Some(0), "{step:?}: {err}");
+                    assert!(out.contains(&format!("key-mgmt={km}")), "{out}");
+                    assert_eq!(out.contains("hidden=true"), hidden, "{out}");
+                }
+            }
+            // The in-place change of a saved profile and the cleanup parse as well (NetworkManager
+            // answers "unknown connection" or "not running", never a usage error).
+            for step in [
+                crate::wifi::nm_profile_argvs("QaNoSuchNet", hidden, "sae", true).remove(0),
+                crate::wifi::nm_cleanup_argv("QaNoSuchNet"),
+            ] {
+                let (rc, err, _) = run(&step, false, "");
+                assert_ne!(rc, Some(2), "usage error {step:?}: {err}");
+                assert!(
+                    !err.contains("invalid") && !err.contains("Usage"),
+                    "{step:?}: {err}"
+                );
+            }
+        }
+        let (rc, err, _) = run(&crate::wifi::nm_up_argv("QaNoSuchNet"), false, "x\n");
+        assert_ne!(rc, Some(2), "usage error: {err}");
+        assert!(
+            !err.contains("invalid extra argument") && !err.contains("Usage"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -1047,7 +1338,8 @@ mod tests {
             (SessionPower, &["restart"], "systemctl reboot"),
             (SessionPower, &["shutdown"], "systemctl poweroff"),
             (WifiPower, &["wlan0", "off"], "nmcli radio wifi off"),
-            (Bluetooth, &["on"], "service bluetooth onestart ubt0"),
+            (Bluetooth, &["on"], "systemctl start bluetooth.service"),
+            (Bluetooth, &["off"], "systemctl stop bluetooth.service"),
             (
                 UserAdd,
                 &["bob", "Bob B", "yes", "s3cret-pw"],
@@ -1216,6 +1508,17 @@ mod tests {
             (AutoUpdate, &["off"], true),
             (AutoUpdate, &["yes"], false),
             (AutoUpdate, &[], false),
+            (AutoUpdate, &["metered", "on"], true),
+            (AutoUpdate, &["metered", "off"], true),
+            (AutoUpdate, &["metered", "maybe"], false),
+            (AutoUpdate, &["roaming", "on"], false),
+            (AutoUpdate, &["on", "off"], false),
+            (AutoUpdate, &["metered"], false),
+            (Reports, &["on"], true),
+            (Reports, &["off"], true),
+            (Reports, &["yes"], false),
+            (Reports, &[], false),
+            (Reports, &["on", "off"], false),
             (
                 PrinterAdd,
                 &["HP_LaserJet", "ipp://10.0.0.5/ipp/print"],
@@ -1286,6 +1589,92 @@ mod tests {
         );
     }
 
+    /// privilege-cve M4: Remote Login opens port 22 through the firewall's include file while it
+    /// is on (rate-limited new connections) and closes it again when it is off.
+    #[test]
+    fn remote_login_opens_and_closes_port_22_in_the_firewall() {
+        let rule = |on: &str| {
+            plan(&r(RemoteLogin, &[on]))
+                .unwrap()
+                .into_iter()
+                .find_map(|s| match s {
+                    AdminStep::Write {
+                        path,
+                        mode,
+                        content: WriteContent::Fixed(t),
+                    } => Some((path, mode, t)),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let (path, mode, on) = rule("on");
+        assert_eq!(path, crate::sharing::SSH_RULE_FILE);
+        assert!(path.starts_with(crate::sharing::FIREWALL_INCLUDE_DIR));
+        assert_eq!(mode, 0o644);
+        assert!(
+            on.lines()
+                .any(|l| l == "tcp dport 22 ct state new limit rate 10/minute accept"),
+            "{on}"
+        );
+        let (_, _, off) = rule("off");
+        assert!(
+            off.lines()
+                .all(|l| l.trim().is_empty() || l.starts_with('#')),
+            "{off}"
+        );
+    }
+
+    /// QA-NET-3/PRIV-5: the rule file is only a file until the ruleset is loaded again. The reload
+    /// is `nft -f` (the unit's `reload` is a no-op when the oneshot is inactive), and it is
+    /// skipped when the firewall is off: reloading would turn it on.
+    #[test]
+    fn remote_login_reloads_ruleset() {
+        let enabled = |state| plan_with(&r(RemoteLogin, &["on"]), &probe(state)).unwrap();
+        let on = shown(&enabled(&[(
+            "systemctl show -p UnitFileState --value nftables.service",
+            "enabled\n",
+        )]));
+        assert_eq!(
+            on,
+            "write /etc/wolos/nftables.d/ssh.conf; nft -f /etc/wolos/nftables.conf; systemctl enable --now sshd.service"
+        );
+        let off = shown(&enabled(&[(
+            "systemctl show -p UnitFileState --value nftables.service",
+            "disabled\n",
+        )]));
+        assert_eq!(
+            off,
+            "write /etc/wolos/nftables.d/ssh.conf; systemctl enable --now sshd.service"
+        );
+        let closing = plan_with(
+            &r(RemoteLogin, &["off"]),
+            &probe(&[(
+                "systemctl show -p UnitFileState --value nftables.service",
+                "enabled\n",
+            )]),
+        )
+        .unwrap();
+        assert_eq!(
+            shown(&closing),
+            "systemctl disable --now sshd.service; write /etc/wolos/nftables.d/ssh.conf; nft -f /etc/wolos/nftables.conf"
+        );
+        assert!(!on.contains("systemctl reload") && !on.contains("try-reload"));
+    }
+
+    /// QA-NET-1: Firewall Off unloads the rules even when the unit reads "inactive" (a oneshot
+    /// that already ran), and Firewall On is only `enable --now`.
+    #[test]
+    fn firewall_off_deletes_table() {
+        assert_eq!(
+            shown(&plan(&r(Firewall, &["off"])).unwrap()),
+            "systemctl disable --now nftables.service; nft destroy table inet wolos"
+        );
+        assert_eq!(
+            shown(&plan(&r(Firewall, &["on"])).unwrap()),
+            "systemctl enable --now nftables.service"
+        );
+    }
+
     #[test]
     fn settings_verbs_plan() {
         let printer = ["HP", "ipp://10.0.0.5/ipp/print"];
@@ -1297,13 +1686,13 @@ mod tests {
                 RemoteLogin,
                 &["on"],
                 &[],
-                "systemctl enable --now sshd.service",
+                "write /etc/wolos/nftables.d/ssh.conf; nft -f /etc/wolos/nftables.conf; systemctl enable --now sshd.service",
             ),
             (
                 RemoteLogin,
                 &["off"],
                 &[],
-                "systemctl disable --now sshd.service",
+                "systemctl disable --now sshd.service; write /etc/wolos/nftables.d/ssh.conf; nft -f /etc/wolos/nftables.conf",
             ),
             (
                 AirPlayReceiver,
@@ -1333,7 +1722,7 @@ mod tests {
                 Firewall,
                 &["off"],
                 &[],
-                "systemctl disable --now nftables.service",
+                "systemctl disable --now nftables.service; nft destroy table inet wolos",
             ),
             (
                 Lid,
@@ -1398,6 +1787,31 @@ mod tests {
             (c.render(None), mode),
             (crate::update::auto::conf(false), 0o644)
         );
+        // QA-100 metered download: each switch keeps the other's line.
+        let (c, mode) = content(AutoUpdate, &["metered", "on"]);
+        assert_eq!(mode, 0o644);
+        let both = c.render(Some(&crate::update::auto::conf(false)));
+        assert!(
+            both.contains("download=off") && both.contains("metered=on"),
+            "{both}"
+        );
+        assert!(crate::update::auto::metered_allowed(Some(&both)));
+        assert!(!crate::update::auto::downloads(Some(&both)));
+        let (c, _) = content(AutoUpdate, &["on"]);
+        let back = c.render(Some(&both));
+        assert!(
+            back.contains("download=on") && back.contains("metered=on"),
+            "{back}"
+        );
+        assert_eq!(
+            back.matches("download=").count(),
+            1,
+            "replaced, not added: {back}"
+        );
+        let (c, _) = content(AutoUpdate, &["metered", "off"]);
+        assert!(!crate::update::auto::metered_allowed(Some(
+            &c.render(Some(&back))
+        )));
         let (c, mode) = content(Lid, &["sleep"]);
         assert_eq!(
             (c.render(Some("[Login]\nHandleLidSwitch=ignore\n")), mode),
@@ -1429,6 +1843,36 @@ mod tests {
             "printer-add HP ipp://10.0.0.5/a@b"
         );
         assert_eq!(describe(&r(Hostname, &["wolos"])), "hostname wolos");
+    }
+
+    /// QA-100 error reports switch: the sender's own flag, then the timer follows.
+    #[test]
+    fn reports_switch_writes_the_flag_and_the_timer() {
+        for (arg, flag, verb) in [("on", "send=1\n", "enable"), ("off", "send=0\n", "disable")] {
+            let steps = plan(&r(Reports, &[arg])).unwrap();
+            assert_eq!(steps.len(), 2, "{steps:?}");
+            let AdminStep::Write {
+                path,
+                mode,
+                content,
+            } = &steps[0]
+            else {
+                panic!("{steps:?}")
+            };
+            assert_eq!((path.as_str(), *mode), (REPORTS_CONF, 0o644));
+            assert_eq!(content.render(None), flag);
+            assert_eq!(
+                steps[1],
+                AdminStep::Run(
+                    ["systemctl", verb, "--now", REPORTS_TIMER]
+                        .map(String::from)
+                        .to_vec()
+                )
+            );
+        }
+        assert_eq!(REPORTS_CONF, "/etc/wolos/reports.conf");
+        assert!(!needs_fresh_password(&r(Reports, &["on"])));
+        assert_eq!(describe(&r(Reports, &["on"])), "reports on");
     }
 
     #[test]

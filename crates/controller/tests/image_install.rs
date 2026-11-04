@@ -282,6 +282,7 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
             "R=$3\nmkdir -p $R/var/lib/pacman/local $R/usr/lib/modules/7.3.0-wolos $R/etc/wolos $R/etc/sysusers.d $R/etc/sudoers.d \
              $R/etc/mkinitcpio.conf.d $R/etc/mkinitcpio.d $R/boot $R/home/live\n\
              echo kernel > $R/usr/lib/modules/7.3.0-wolos/vmlinuz\necho linux-wolos > $R/usr/lib/modules/7.3.0-wolos/pkgbase\n\
+             mkdir -p $R/etc/wolos/nftables.d\ntouch $R/etc/wolos/nftables.d/live-ssh.conf\n\
              touch $R/etc/sysusers.d/wolos-live.conf $R/etc/sudoers.d/wolos-live $R/etc/wolos/login.json $R/etc/wolos-live \
              $R/etc/mkinitcpio.conf.d/archiso.conf\necho live > $R/etc/wolos/shell.json\necho pkg > $R/etc/wolos/shell.json.pacnew\n\
              echo 2026-10-20 > $R/etc/wolos/snapshot\nprintf '[options]\\nHoldPkg = pacman\\n' > $R/etc/pacman.conf",
@@ -393,6 +394,8 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
         "etc/sudoers.d/wolos-live",
         "etc/wolos/login.json",
         "etc/wolos-live",
+        // QA-NET-13: the live medium's port 22 rule is not on the installed system.
+        "etc/wolos/nftables.d/live-ssh.conf",
         "etc/mkinitcpio.conf.d/archiso.conf",
         "home/live",
     ] {

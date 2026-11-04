@@ -5,7 +5,9 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
 
 ## Defaults
 - Firewall: nftables, `/etc/wolos/nftables.conf` (loaded by a `nftables.service` drop-in), `nftables.service` enabled.
-  - Inbound dropped except replies, ping, DHCP, IPv6 neighbour discovery and mDNS. Outbound allowed.
+  - Inbound dropped except replies, ping, DHCP, IPv6 neighbour discovery and mDNS (to the multicast groups only). Outbound allowed.
+  - The switch is Settings > Network > Firewall. The unit is a oneshot that stays active (`RemainAfterExit=yes`) and takes the table out on stop, so Off unloads every rule; `wol security` calls the firewall running when the kernel has the table.
+  - A setting that opens a port writes a file in `/etc/wolos/nftables.d/` (Remote Login: `ssh.conf`, port 22, 10 new connections a minute) and loads the ruleset again with `nft -f /etc/wolos/nftables.conf` when the firewall is on. The live medium opens 22 with `live-ssh.conf` there.
 - No remote login: `sshd.service` stays disabled until Sharing turns it on.
 - The log stays local: journald only, no network syslog daemon.
 - Kernel hardening (`/usr/lib/sysctl.d/90-wolos.conf`, one reason per line): `kernel.dmesg_restrict=1`

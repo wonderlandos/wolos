@@ -551,10 +551,16 @@ fn join_wifi(ssid: &str, password: Option<&str>) -> bool {
         action: shared::admin::AdminAction::WifiJoin,
         args,
     };
-    let Ok(steps) = wol_core::admin::plan(&req) else {
+    // The same facts wol-admind plans with: the saved profiles (a retry after a wrong password
+    // changes the profile in place, never makes a second one with the same name) and the scan
+    // (WPA3-only networks need `sae`).
+    let probe = |argv: &[&str]| capture(argv, Duration::from_secs(5));
+    let Ok(steps) = wol_core::admin::plan_with(&req, &probe) else {
         return false;
     };
-    steps.into_iter().all(|s| match s {
+    // A wrong password leaves no profile behind: asked before the plan runs.
+    let cleanup = wol_core::admin::wifi_join_cleanup(&req, &probe);
+    let ok = steps.into_iter().all(|s| match s {
         wol_core::admin::AdminStep::Run(argv) => privileged_command(&argv[0])
             .args(&argv[1..])
             .status()
@@ -568,7 +574,11 @@ fn join_wifi(ssid: &str, password: Option<&str>) -> bool {
             mode,
             content,
         } => write_step(std::path::Path::new(&path), mode, &content),
-    })
+    });
+    if let (false, Some(del)) = (ok, cleanup) {
+        let _ = privileged_command(&del[0]).args(&del[1..]).status();
+    }
+    ok
 }
 
 /// Fixed delay on every non-ok answer (ADR 0023, 0024).

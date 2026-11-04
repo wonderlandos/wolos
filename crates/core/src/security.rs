@@ -117,6 +117,20 @@ pub fn parse_active(text: &str) -> Option<bool> {
     }
 }
 
+/// The firewall's table as the kernel has it (root only; the CLI and wol-admind run it as root).
+pub const FIREWALL_TABLE_ARGV: [&str; 5] = ["nft", "list", "table", "inet", "wolos"];
+
+/// Is the firewall running now? What the kernel says wins over what the unit says: the unit is a
+/// oneshot, and one that is `inactive` after it loaded the rules still has them loaded (QA-NET-2).
+/// `active` is `systemctl show -p ActiveState --value`, `table` is [`FIREWALL_TABLE_ARGV`]'s
+/// output (None when the caller may not read it).
+pub fn firewall_running(active: Option<&str>, table: Option<&str>) -> Option<bool> {
+    if table.is_some_and(|t| t.contains("table inet wolos")) {
+        return Some(true);
+    }
+    active.and_then(parse_active)
+}
+
 pub fn status(probe: Probe) -> Status {
     let unit = |u: &str| {
         probe(&["systemctl", "show", "-p", "UnitFileState", "--value", u])
@@ -124,15 +138,18 @@ pub fn status(probe: Probe) -> Status {
     };
     Status {
         firewall: unit("nftables.service"),
-        firewall_running: probe(&[
-            "systemctl",
-            "show",
-            "-p",
-            "ActiveState",
-            "--value",
-            "nftables.service",
-        ])
-        .and_then(|o| parse_active(&o)),
+        firewall_running: firewall_running(
+            probe(&[
+                "systemctl",
+                "show",
+                "-p",
+                "ActiveState",
+                "--value",
+                "nftables.service",
+            ])
+            .as_deref(),
+            probe(&FIREWALL_TABLE_ARGV).as_deref(),
+        ),
         remote_login: unit("sshd.service"),
         system_log_private: NETWORK_LOGGERS.iter().all(|u| unit(u) == Some(false)),
         hardening: hardening(probe),
@@ -469,6 +486,33 @@ mod tests {
         assert!(!user.system_log_private);
         assert_eq!(parse_active("failed\n"), Some(false));
         assert_eq!(parse_active("Permission denied"), None);
+    }
+
+    /// QA-NET-2: a oneshot unit that read `inactive` after it ran, with the rules loaded in the
+    /// kernel, is a firewall that is running; with nothing loaded it is not.
+    #[test]
+    fn inactive_oneshot_with_table_is_running() {
+        let table = "table inet wolos {\n\tchain input {\n\t}\n}\n";
+        assert_eq!(
+            firewall_running(Some("inactive\n"), Some(table)),
+            Some(true)
+        );
+        assert_eq!(firewall_running(Some("inactive\n"), None), Some(false));
+        assert_eq!(firewall_running(Some("active\n"), None), Some(true));
+        assert_eq!(firewall_running(None, None), None);
+        let machine: &'static [(&str, &str)] = &[
+            (
+                "systemctl show -p UnitFileState --value nftables.service",
+                "enabled\n",
+            ),
+            (
+                "systemctl show -p ActiveState --value nftables.service",
+                "inactive\n",
+            ),
+            ("nft list table inet wolos", "table inet wolos {\n}\n"),
+        ];
+        let st = status(&probe(machine));
+        assert_eq!((st.firewall, st.firewall_running), (Some(true), Some(true)));
     }
 
     #[test]

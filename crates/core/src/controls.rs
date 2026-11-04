@@ -354,8 +354,14 @@ impl Controls {
 
     // ---- Wi-Fi ----
 
-    /// NetworkManager radio switch.
+    /// NetworkManager radio switch. `None` when there is no Wi-Fi device (nmcli reports the
+    /// radio "enabled" with no adapter, QA-NET-7) or NetworkManager does not answer.
     pub fn wifi_enabled(&self) -> Option<bool> {
+        if let Some(devs) = self.run(&["nmcli", "-t", "-f", "TYPE", "dev"])
+            && !devs.lines().any(|l| l.trim() == "wifi")
+        {
+            return None;
+        }
         self.run(&["nmcli", "radio", "wifi"])
             .map(|o| o.trim() == "enabled")
     }
@@ -393,18 +399,34 @@ impl Controls {
             return Err(ControlError::Invalid);
         }
         let out = match password {
-            Some(p) => (self.stdin)(
-                &[
-                    "nmcli",
-                    "dev",
-                    "wifi",
-                    "connect",
+            // NET2-1: a profile (made, or changed in place when one is saved), then
+            // `connection up ... passwd-file /dev/stdin` (the secret on stdin).
+            // `dev wifi connect ... passwd-file` is not valid nmcli.
+            Some(p) => {
+                let has = self
+                    .run(&crate::wifi::NM_PROFILES_ARGV)
+                    .is_some_and(|l| crate::wifi::nm_has_profile(&l, ssid));
+                let km = crate::wifi::nm_key_mgmt(
+                    &self.run(&crate::wifi::NM_SCAN_ARGV).unwrap_or_default(),
                     ssid,
-                    "passwd-file",
-                    "/dev/stdin",
-                ],
-                &format!("802-11-wireless-security.psk:{p}\n"),
-            ),
+                );
+                for step in crate::wifi::nm_profile_argvs(ssid, false, km, has) {
+                    let step: Vec<&str> = step.iter().map(String::as_str).collect();
+                    if self.host.run_slow(&step).is_none() {
+                        return Err(ControlError::Failed);
+                    }
+                }
+                let up = crate::wifi::nm_up_argv(ssid);
+                let up: Vec<&str> = up.iter().map(String::as_str).collect();
+                let r = (self.stdin)(&up, &crate::wifi::nm_secret_input(p));
+                if r.is_none() && !has {
+                    // A wrong password leaves no profile behind.
+                    let del = crate::wifi::nm_cleanup_argv(ssid);
+                    let del: Vec<&str> = del.iter().map(String::as_str).collect();
+                    let _ = self.host.run_slow(&del);
+                }
+                r
+            }
             None => self
                 .host
                 .run_slow(&["nmcli", "dev", "wifi", "connect", ssid]),
@@ -507,12 +529,19 @@ impl Controls {
     // ---- Bluetooth ----
 
     /// BlueZ adapter powered.
+    /// None without an adapter (bluetoothctl is not run: it waits for org.bluez for ever, QA-DEV2-3).
     pub fn bluetooth(&self) -> Option<bool> {
+        if crate::bluetooth::adapters(&*self.host).is_empty() {
+            return None;
+        }
         self.run(&["bluetoothctl", "show"])
             .and_then(|s| parse_bluetoothctl(&s))
     }
 
     pub fn set_bluetooth(&self, on: bool, _pw: &str) -> Result<(), ControlError> {
+        if crate::bluetooth::adapters(&*self.host).is_empty() {
+            return Err(ControlError::Unavailable);
+        }
         let v = if on { "on" } else { "off" };
         self.ok(self.run(&["bluetoothctl", "power", v]))
     }
@@ -537,8 +566,48 @@ impl Controls {
         r
     }
 
-    /// hyprsunset IPC (`exec-once = hyprsunset`).
+    /// Reduce Motion from the Control Center: the same saved preference Settings > Accessibility
+    /// writes (`reduce_motion`, applied live by [`crate::hyprprefs::apply_desktop`]), so the tile
+    /// and the pane are one switch and the choice survives the next login (QA-SET-17).
+    pub fn set_reduce_motion_saved(
+        &self,
+        home: &std::path::Path,
+        on: bool,
+    ) -> Result<(), ControlError> {
+        let mut d = crate::hyprprefs::load_desktop(home);
+        let same = d.reduce_motion == on;
+        d.reduce_motion = on;
+        crate::hyprprefs::apply_desktop(&*self.host, home, &d).map_err(|_| ControlError::Failed)?;
+        if same {
+            // Saved already; make the live keyword agree (an older tile only set that).
+            let _ = self.set_reduce_motion(on);
+        }
+        Ok(())
+    }
+
+    /// hyprsunset IPC (`exec-once = hyprsunset`). Night Light has one state: after hyprsunset
+    /// took the change, the toggle flag `wol toggle nightlight` lists follows it (QA-SET-46).
     pub fn set_night_shift(&self, on: bool) -> Result<(), ControlError> {
+        self.set_night_shift_in(on, &crate::journal::state_home())
+    }
+
+    /// [`Controls::set_night_shift`] with the state home given.
+    pub fn set_night_shift_in(
+        &self,
+        on: bool,
+        state_home: &std::path::Path,
+    ) -> Result<(), ControlError> {
+        self.hyprsunset(on)?;
+        let _ = crate::toggles::set_flag(
+            crate::toggles::Toggle::NightLight,
+            std::path::Path::new(""),
+            state_home,
+            on,
+        );
+        Ok(())
+    }
+
+    fn hyprsunset(&self, on: bool) -> Result<(), ControlError> {
         let k = NIGHT_SHIFT_KELVIN.to_string();
         let argv: &[&str] = if on {
             &["hyprctl", "hyprsunset", "temperature", &k]
@@ -884,12 +953,81 @@ mod tests {
         }
     }
 
+    const ADD_HOME: &str =
+        "nmcli connection add type wifi con-name Home ifname * ssid Home wifi-sec.key-mgmt wpa-psk";
+
+    const MODIFY_HOME: &str = "nmcli connection modify id Home wifi-sec.key-mgmt wpa-psk";
+
+    /// NET2-1: the password join never uses `dev wifi connect ... passwd-file` (nmcli rc 2); a
+    /// saved Wi-Fi profile of that name is changed in place (not deleted), a profile that cannot
+    /// be made is a failure, not "wrong password", and a failed bring-up is "wrong password".
+    #[test]
+    fn wifi_join_makes_profile_then_brings_it_up_with_the_secret_on_stdin() {
+        let (h, c, log) = controls();
+        h.slow(MODIFY_HOME, "").command(
+            "nmcli -t -f NAME,TYPE connection show",
+            "Wired connection 1:802-3-ethernet\nHome:802-11-wireless\n",
+        );
+        assert_eq!(c.wifi_join("Home", Some("password1"), ""), Ok(()));
+        assert_eq!(
+            log.lock().unwrap().clone(),
+            [
+                "nmcli connection up id Home passwd-file /dev/stdin <802-11-wireless-security.psk:password1"
+            ]
+        );
+        // WPA3-only network: sae.
+        let (h3, c3, _) = controls();
+        h3.slow(
+            "nmcli connection add type wifi con-name Home ifname * ssid Home wifi-sec.key-mgmt sae",
+            "",
+        )
+        .command("nmcli -t -f SECURITY,SSID dev wifi list", "WPA3:Home\n");
+        assert_eq!(c3.wifi_join("Home", Some("password1"), ""), Ok(()));
+        // The profile cannot be changed: nothing is brought up.
+        let (h2, c2, log2) = controls();
+        h2.command(
+            "nmcli -t -f NAME,TYPE connection show",
+            "Home:802-11-wireless\n",
+        );
+        assert_eq!(
+            c2.wifi_join("Home", Some("password1"), ""),
+            Err(ControlError::Failed)
+        );
+        assert!(log2.lock().unwrap().is_empty(), "nothing brought up");
+        // The bring-up fails: wrong password.
+        let h4 = Arc::new(FakeHost::linux());
+        h4.slow(
+            "nmcli connection add type wifi con-name Home ifname * ssid Home wifi-sec.key-mgmt wpa-psk",
+            "",
+        );
+        let c4 = Controls {
+            host: h4,
+            stdin: Arc::new(|_, _| None),
+            admin: Arc::new(|_, _| None),
+            wlan: "wlan0".into(),
+        };
+        assert_eq!(
+            c4.wifi_join("Home", Some("password1"), ""),
+            Err(ControlError::WrongPassword)
+        );
+    }
+
+    #[test]
+    fn wifi_enabled_none_without_device() {
+        let (h, c, _log) = controls();
+        h.command("nmcli radio wifi", "enabled\n")
+            .command("nmcli -t -f TYPE dev", "ethernet\nloopback\n");
+        assert_eq!(c.wifi_enabled(), None);
+    }
+
     #[test]
     fn linux_reads_and_writes() {
         let (h, c, log) = controls();
         h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.64\n")
             .command("nmcli radio wifi", "enabled\n")
+            .command("nmcli -t -f TYPE dev", "ethernet\nwifi\nloopback\n")
             .command("wpctl set-volume @DEFAULT_AUDIO_SINK@ 30%", "")
+            .slow(ADD_HOME, "")
             .file("/sys/class/backlight/intel/brightness", "50\n")
             .file("/sys/class/backlight/intel/max_brightness", "200\n");
         assert_eq!(c.volume().map(|v| v.percent), Some(64));
@@ -905,9 +1043,12 @@ mod tests {
         );
         assert_eq!(c.wifi_join("Home", Some("password1"), ""), Ok(()));
         let l = log.lock().unwrap().clone();
-        assert!(l[0].contains(
-            "connect Home passwd-file /dev/stdin <802-11-wireless-security.psk:password1"
-        ));
+        assert!(
+            l[0].contains("connection up id Home passwd-file /dev/stdin <802-11-wireless-security.psk:password1"),
+            "{l:?}"
+        );
+        assert!(!l[0].contains("dev wifi connect"), "{l:?}");
+
         assert!(
             !h.ran().iter().any(|r| r.contains("password1")),
             "secret never in argv"
@@ -918,11 +1059,22 @@ mod tests {
         );
     }
 
+    /// QA-DEV2-3/4: no adapter, no bluetoothctl; the answer is immediate.
+    #[test]
+    fn bluetooth_without_adapter_runs_nothing() {
+        let (h, c, _) = controls();
+        h.command("bluetoothctl show", "Controller x\n\tPowered: yes\n");
+        assert_eq!(c.bluetooth(), None);
+        assert_eq!(c.set_bluetooth(true, ""), Err(ControlError::Unavailable));
+        assert!(h.ran().iter().all(|r| !r.contains("bluetoothctl")));
+    }
+
     /// Radio, Bluetooth and the output need no administrator (NetworkManager, BlueZ, PipeWire);
     /// accounts and packages still go through wol-admind.
     #[test]
     fn local_changes_and_admin_actions() {
         let (h, c, log) = controls();
+        h.file("/sys/class/bluetooth/hci0/address", "00:1A:7D:DA:71:13\n");
         h.command("nmcli radio wifi off", "")
             .command("bluetoothctl power on", "Changing power on succeeded\n")
             .command("pactl set-default-sink alsa.out", "");
@@ -1008,6 +1160,51 @@ mod tests {
             (c.network_time(), c.lid()),
             (Some(true), Some(crate::power::Lid::Sleep))
         );
+    }
+
+    /// QA-SET-46: the tile set hyprsunset and left the flag `wol toggle nightlight` reads, so the
+    /// hotkey needed two presses after a click. One change, one state.
+    #[test]
+    fn set_night_shift_sets_toggle_state() {
+        use crate::toggles::{Toggle, is_on};
+        let (h, c, _) = controls();
+        h.command("hyprctl hyprsunset temperature 4500", "ok\n")
+            .command("hyprctl hyprsunset identity", "ok\n");
+        let d = std::env::temp_dir().join(format!("wol-night-shift-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let none = std::path::Path::new("");
+        let on = |d: &std::path::Path| is_on(Toggle::NightLight, none, d, |p| p.exists());
+        assert!(!on(&d));
+        c.set_night_shift_in(true, &d).unwrap();
+        assert!(on(&d), "on: the flag says on");
+        c.set_night_shift_in(false, &d).unwrap();
+        assert!(!on(&d), "off: the flag says off");
+        // hyprsunset refuses: nothing changed, the flag stays as it was
+        let (_, c, _) = controls();
+        assert!(c.set_night_shift_in(true, &d).is_err());
+        assert!(!on(&d));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// QA-SET-17: the Control Center tile only flipped the live keyword, Settings > Accessibility
+    /// saved the preference; one of them was lost at the next login.
+    #[test]
+    fn reduce_motion_persists() {
+        let (h, c, _) = controls();
+        let home = std::env::temp_dir().join(format!("wol-reduce-motion-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert!(!crate::hyprprefs::load_desktop(&home).reduce_motion);
+        c.set_reduce_motion_saved(&home, true).unwrap();
+        assert!(crate::hyprprefs::load_desktop(&home).reduce_motion, "saved");
+        assert!(
+            h.ran().iter().any(|r| r.contains("animations")),
+            "and applied live: {:?}",
+            h.ran()
+        );
+        c.set_reduce_motion_saved(&home, false).unwrap();
+        assert!(!crate::hyprprefs::load_desktop(&home).reduce_motion);
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

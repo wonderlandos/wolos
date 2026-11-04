@@ -6,6 +6,58 @@ use crate::system::Host;
 /// The ruleset nftables.service loads (block in, pass out; desktop/overlay).
 pub const FIREWALL_RULES: &str = "/etc/wolos/nftables.conf";
 
+/// Folder of rule files [`FIREWALL_RULES`] includes inside its input chain
+/// (`include "/etc/wolos/nftables.d/*.conf"`): what a setting opens while it is on.
+pub const FIREWALL_INCLUDE_DIR: &str = "/etc/wolos/nftables.d";
+
+/// Remote Login's rule file in [`FIREWALL_INCLUDE_DIR`] (privilege-cve M4): with the firewall on,
+/// turning Remote Login on opens port 22 through this file instead of leaving people to turn the
+/// whole firewall off. Off writes [`ssh_rule`]`(false)`, a comment only, so the file always exists.
+pub const SSH_RULE_FILE: &str = "/etc/wolos/nftables.d/ssh.conf";
+
+/// The text of [`SSH_RULE_FILE`]: new SSH connections on port 22 (at most 10 a minute, so
+/// password guessing stays slow) while Remote Login is on; nothing while it is off.
+pub fn ssh_rule(on: bool) -> String {
+    let head =
+        "# Written by Settings > General > Sharing > Remote Login (wol-admind). Do not edit.\n";
+    if on {
+        format!("{head}tcp dport 22 ct state new limit rate 10/minute accept\n")
+    } else {
+        format!("{head}# Remote Login is off: port 22 stays closed.\n")
+    }
+}
+
+/// The unit's drop-in (a oneshot that stays active, loads [`FIREWALL_RULES`], and takes its table
+/// out on stop; QA-NET-1/2/3).
+pub const FIREWALL_DROP_IN: &str = "/usr/lib/systemd/system/nftables.service.d/wolos.conf";
+
+/// Load [`FIREWALL_RULES`] (and every file of [`FIREWALL_INCLUDE_DIR`]) again, in one atomic
+/// transaction. Not `systemctl reload`: that is a no-op on a unit that is not active (QA-NET-3),
+/// and not `try-reload-or-restart`: it must not start a firewall the person turned off (see
+/// [`firewall_reload_wanted`]). Settings that open a port (Remote Login; AirPlay) run this after
+/// they write their rule file.
+pub const FIREWALL_RELOAD_ARGV: [&str; 3] = ["nft", "-f", FIREWALL_RULES];
+
+/// Take the firewall's table out (Firewall off).
+pub const FIREWALL_DELETE_ARGV: [&str; 5] = ["nft", "destroy", "table", "inet", "wolos"];
+
+/// `systemctl show -p UnitFileState --value nftables.service`: is the firewall on at all?
+pub const FIREWALL_ENABLED_ARGV: [&str; 6] = [
+    "systemctl",
+    "show",
+    "-p",
+    "UnitFileState",
+    "--value",
+    "nftables.service",
+];
+
+/// Reload only when the firewall is on (or unknown): with it off, the rule file waits for the next
+/// On, and a reload here would switch the firewall on behind the person's back.
+/// `enabled` is [`FIREWALL_ENABLED_ARGV`]'s output.
+pub fn firewall_reload_wanted(enabled: Option<&str>) -> bool {
+    enabled.and_then(parse_enabled) != Some(false)
+}
+
 /// The computer name rule, [`crate::settings::hostname::is_valid`] (one rule, audit3 R2B-18).
 pub fn is_valid_hostname(s: &str) -> bool {
     crate::settings::hostname::is_valid(s)

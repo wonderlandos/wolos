@@ -36,6 +36,13 @@
 # WOLOS_RESULT_DIR, WOLOS_INSTALL_LOG.
 set -u
 PATH=${WOLOS_INSTALL_PATH:-/usr/bin:/usr/sbin}; export PATH
+# Closing the lid or idling must not sleep the machine mid-install; the hold ends with the install.
+# First of all: the run under the hold starts the results folder and the log afresh, so anything
+# said before it would be lost (QA-DOC-22).
+if [ "${WOLOS_NO_INHIBIT:-0}" != 1 ] && [ -z "${WOLOS_INHIBITED:-}" ] && command -v systemd-inhibit >/dev/null; then
+  WOLOS_INHIBITED=1 exec systemd-inhibit --what=sleep:idle:handle-lid-switch --who="Install WolOS" \
+    --why="Installing WolOS" "$0" "$@"
+fi
 # The results folder: whatever is at that name from an earlier run (or put there by anyone) goes,
 # and this run makes its own, so nothing in it was decided by someone else. Not makeable (a test
 # that is not root): a fresh private temp folder instead, said in the log.
@@ -125,11 +132,6 @@ if [ -z "$plan" ]; then
   WOLOS_HOSTNAME=$(wol install hostname "$WOLOS_HOSTNAME") || WOLOS_HOSTNAME=
 fi
 [ -n "$WOLOS_HOSTNAME" ] || WOLOS_HOSTNAME=wolos
-# Closing the lid or idling must not sleep the machine mid-install; the hold ends with the install.
-if [ "${WOLOS_NO_INHIBIT:-0}" != 1 ] && [ -z "${WOLOS_INHIBITED:-}" ] && command -v systemd-inhibit >/dev/null; then
-  WOLOS_INHIBITED=1 exec systemd-inhibit --what=sleep:idle:handle-lid-switch --who="Install WolOS" \
-    --why="Installing WolOS" "$0" "$@"
-fi
 T=${WOLOS_INSTALL_ROOT:-/mnt/wolos}
 SFS=${WOLOS_SOURCE_SFS:-/run/archiso/bootmnt/wolos/x86_64/airootfs.sfs}
 # A try before this one may have left its volume open and its mounts in place: let them go first.
@@ -256,7 +258,8 @@ rm -rf "$T/etc/sysusers.d/wolos-live.conf" "$T/etc/tmpfiles.d/wolos-live.conf" "
   "$T/etc/systemd/journald.conf.d/volatile-storage.conf" "$T/home/live" \
   "$T/etc/systemd/system/wold.service.d" "$T/etc/systemd/system/wolos-installer.service" \
   "$T/etc/systemd/system/multi-user.target.wants/wolos-installer.service" \
-  "$T/etc/systemd/system/sshd.service.d/wolos-live.conf" "$T/etc/systemd/system/multi-user.target.d/wolos-live-ssh.conf"
+  "$T/etc/systemd/system/sshd.service.d/wolos-live.conf" "$T/etc/systemd/system/multi-user.target.d/wolos-live-ssh.conf" \
+  "$T/etc/wolos/nftables.d/live-ssh.conf"
 userdel -R "$T" live || :
 # The channel the image was built from (testing or stable): the installed system updates from it.
 sh "$here/install-channel" "$T" >&2 || fail "could not set where updates come from"

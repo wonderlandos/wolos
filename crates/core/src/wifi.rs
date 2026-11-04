@@ -23,6 +23,122 @@ pub fn validate(ssid: &str, password: Option<&str>) -> Option<&'static str> {
     (!(8..=63).contains(&p.chars().count())).then_some("Password must be 8 to 63 characters")
 }
 
+/// Saved connections with their type, terse (`NAME:TYPE`); [`nm_has_profile`] reads it.
+pub const NM_PROFILES_ARGV: [&str; 6] = ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"];
+
+/// Is there a saved Wi-Fi profile named `ssid` in [`NM_PROFILES_ARGV`]'s output? Only Wi-Fi ones
+/// count: an Ethernet profile that happens to share the name is not the network.
+pub fn nm_has_profile(listing: &str, ssid: &str) -> bool {
+    crate::netinfo::parse_nmcli_connections(listing)
+        .iter()
+        .any(|n| n == ssid)
+}
+
+/// The scan, terse, SSID last (it may contain `\:`): what [`nm_key_mgmt`] reads.
+pub const NM_SCAN_ARGV: [&str; 7] = ["nmcli", "-t", "-f", "SECURITY,SSID", "dev", "wifi", "list"];
+
+/// `FIELD:rest` at the first colon that is not escaped (`\\:`) in nmcli's terse output.
+fn split_unescaped(l: &str) -> Option<(&str, &str)> {
+    let mut esc = false;
+    for (i, c) in l.char_indices() {
+        if c == ':' && !esc {
+            return Some((&l[..i], &l[i + 1..]));
+        }
+        esc = c == '\\' && !esc;
+    }
+    None
+}
+
+/// `wifi-sec.key-mgmt` for a password join: `sae` when every access point of that name in the
+/// scan (`scan` is [`NM_SCAN_ARGV`]'s output) offers WPA3 and nothing older, else `wpa-psk`
+/// (WPA2, a WPA2/WPA3 mix, or a network not in range, e.g. a hidden one). A WPA3-only network
+/// cannot be joined with `wpa-psk`.
+pub fn nm_key_mgmt(scan: &str, ssid: &str) -> &'static str {
+    let mut seen = false;
+    for l in scan.lines() {
+        let Some((sec, name)) = split_unescaped(l) else {
+            continue;
+        };
+        if name.replace("\\:", ":").replace("\\\\", "\\") != ssid {
+            continue;
+        }
+        let words: Vec<&str> = sec.split_whitespace().collect();
+        let sae_only =
+            words.contains(&"WPA3") && !words.iter().any(|w| matches!(*w, "WPA1" | "WPA2" | "WPA"));
+        if !sae_only {
+            return "wpa-psk";
+        }
+        seen = true;
+    }
+    if seen { "sae" } else { "wpa-psk" }
+}
+
+/// The steps of a password join through NetworkManager (NET2-1). `nmcli dev wifi connect ... passwd-file`
+/// is not valid nmcli (rc 2, "invalid extra argument"): `passwd-file` belongs to `connection up`.
+/// So the profile is made first (no secret in argv), then brought up with the secret on stdin
+/// ([`nm_up_argv`], [`nm_secret_input`]). `exists`: a Wi-Fi profile of that name is saved; it is
+/// changed in place (`connection modify`), so the person's autoconnect and address settings
+/// survive and a second join never leaves two profiles for one network.
+pub fn nm_profile_argvs(
+    ssid: &str,
+    hidden: bool,
+    key_mgmt: &str,
+    exists: bool,
+) -> Vec<Vec<String>> {
+    let s = |v: &[&str]| v.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+    let mut step = if exists {
+        s(&["nmcli", "connection", "modify", "id", ssid])
+    } else {
+        s(&[
+            "nmcli",
+            "connection",
+            "add",
+            "type",
+            "wifi",
+            "con-name",
+            ssid,
+            "ifname",
+            "*",
+            "ssid",
+            ssid,
+        ])
+    };
+    step.extend(s(&["wifi-sec.key-mgmt", key_mgmt]));
+    if hidden {
+        step.extend(s(&["802-11-wireless.hidden", "yes"]));
+    }
+    vec![step]
+}
+
+/// Removes a profile a join made when bringing it up failed (a wrong password must not leave a
+/// profile behind). Only for a join that found no profile of that name first.
+pub fn nm_cleanup_argv(ssid: &str) -> Vec<String> {
+    ["nmcli", "connection", "delete", "id", ssid]
+        .map(str::to_owned)
+        .to_vec()
+}
+
+/// `nmcli connection up <ssid> passwd-file /dev/stdin`: the secret comes on stdin as
+/// [`nm_secret_input`].
+pub fn nm_up_argv(ssid: &str) -> Vec<String> {
+    [
+        "nmcli",
+        "connection",
+        "up",
+        "id",
+        ssid,
+        "passwd-file",
+        "/dev/stdin",
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+/// The `passwd-file` text for a WPA-PSK profile.
+pub fn nm_secret_input(password: &str) -> String {
+    format!("802-11-wireless-security.psk:{password}\n")
+}
+
 /// Safe between wpa_supplicant.conf quotes: its reader has no escapes, ends a value at the last
 /// `"`, strips `#` comments by counting quotes and the block parser here ends at `}`.
 fn quotable(s: &str) -> bool {
