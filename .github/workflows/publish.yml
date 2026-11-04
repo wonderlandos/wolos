@@ -62,7 +62,7 @@ defaults:
 jobs:
   packages:
     if: inputs.what == 'packages'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@a3a5ad9d24188ed5105e08724de462222638a424 # main 2026-11-04 (channel input); bump after each wolos-pkgbuilds push
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # main 2026-11-04 (builder a41444d); bump after each wolos-pkgbuilds push
     with:
       run: ${{ inputs.run }}
       mode: sign
@@ -72,7 +72,7 @@ jobs:
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   cdn:
     if: inputs.what == 'cdn'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@a3a5ad9d24188ed5105e08724de462222638a424 # main 2026-11-04 (channel input); bump after each wolos-pkgbuilds push
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # main 2026-11-04 (builder a41444d); bump after each wolos-pkgbuilds push
     with:
       run: ${{ inputs.run }}
       mode: cdn
@@ -81,7 +81,7 @@ jobs:
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   promote:
     if: inputs.what == 'promote'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/promote.yml@a3a5ad9d24188ed5105e08724de462222638a424 # main 2026-11-04; bump after each wolos-pkgbuilds push
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/promote.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # main 2026-11-04 (builder a41444d); bump after each wolos-pkgbuilds push
     secrets:
       WOLOS_GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
