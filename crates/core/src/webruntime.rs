@@ -299,8 +299,13 @@ pub fn flags(p: Profile, r: Role, g: Gpu) -> Vec<String> {
 
 /// Shipped rows that `select` lets through (`webpolicy::allows` with the app's policy).
 pub fn flags_with(p: Profile, r: Role, g: Gpu, select: &dyn Fn(&Row) -> bool) -> Vec<String> {
+    merge(rows(p, r, g).filter(|row| select(row)))
+}
+
+/// Argument lines of `rows`, one word each: plain switches in order, then the merged lists.
+fn merge<'a>(rows: impl Iterator<Item = &'a Row>) -> Vec<String> {
     let (mut out, mut on, mut off, mut js) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for row in rows(p, r, g).filter(|row| select(row)) {
+    for row in rows {
         match row.knob {
             Knob::Switch(n, None) => out.push(n.to_owned()),
             Knob::Switch(n, Some(v)) => out.push(format!("{n}={v}")),
@@ -320,6 +325,87 @@ pub fn flags_with(p: Profile, r: Role, g: Gpu, select: &dyn Fn(&Row) -> bool) ->
         out.push(format!("--js-flags={}", js.join(" ")));
     }
     out
+}
+
+/// Lean engine switches for third-party apps with their own engine that run under a memory
+/// budget (`memsaver::budget`), tried on Discord and NOT shipped: with the same limits the app
+/// held the same PSS with and without them (front 89-93 MiB of PSS against 80-92, background
+/// 56-60 against 57; the GPU process folds into the main one, so the sum stays), and two of them
+/// weaken the engine (site isolation, one renderer). Record: docs/bench/memsaver-discord.md,
+/// "Engine switches". The budget's launch passes them on the command line (these apps read no flag
+/// file of ours) once a row earns `Status::Measured`. Only switches with a name of their own are
+/// here: Discord sets `--disable-features` itself after reading the command line, and the engine
+/// keeps the last value, so a `NoFeature` row would never apply.
+pub const THIRD_PARTY: &[Row] = &[
+    Row {
+        id: "lean-reduced-motion",
+        knob: Knob::Switch("--force-prefers-reduced-motion", None),
+        roles: &[App],
+        profiles: ALL_P,
+        needs_gpu: false,
+        reason: "pages that honour prefers-reduced-motion stop their animations: the hot set is what is drawn",
+        status: Status::Candidate,
+    },
+    Row {
+        id: "lean-in-process-gpu",
+        knob: Knob::Switch("--in-process-gpu", None),
+        roles: &[App],
+        profiles: ALL_P,
+        needs_gpu: false,
+        reason: "the GPU service runs in the main process: one process, its stack and allocator fewer",
+        status: Status::Candidate,
+    },
+    Row {
+        id: "lean-raster-threads",
+        knob: Knob::Switch("--num-raster-threads", Some("1")),
+        roles: &[App],
+        profiles: ALL_P,
+        needs_gpu: false,
+        reason: "one raster thread: fewer stacks and tile buffers in flight",
+        status: Status::Candidate,
+    },
+    Row {
+        id: "lean-renderer-limit",
+        knob: Knob::Switch("--renderer-process-limit", Some("1")),
+        roles: &[App],
+        profiles: ALL_P,
+        needs_gpu: false,
+        reason: "a chat app is one page: never a second renderer",
+        status: Status::Candidate,
+    },
+    Row {
+        id: "lean-no-site-isolation",
+        knob: Knob::Switch("--disable-site-isolation-trials", None),
+        roles: &[App],
+        profiles: ALL_P,
+        needs_gpu: false,
+        reason: "embedded frames of other sites share the page's renderer instead of one process each",
+        status: Status::Candidate,
+    },
+    Row {
+        id: "lean-js-size",
+        knob: Knob::JsFlag("--optimize-for-size"),
+        roles: &[App],
+        profiles: ALL_P,
+        needs_gpu: false,
+        reason: "the script engine trades peak speed for smaller code and heap",
+        status: Status::Candidate,
+    },
+    Row {
+        id: "lean-js-young",
+        knob: Knob::JsFlag("--max-semi-space-size=1"),
+        roles: &[App],
+        profiles: ALL_P,
+        needs_gpu: false,
+        reason: "a 1 MiB young generation: short-lived objects are collected sooner",
+        status: Status::Candidate,
+    },
+];
+
+/// The lean switches' argument words (shipped rows of [`THIRD_PARTY`], merged like the files):
+/// none until a row earns its place.
+pub fn third_party_flags() -> Vec<String> {
+    merge(THIRD_PARTY.iter().filter(|r| r.shipped()))
 }
 
 /// The flag file text for `$XDG_CONFIG_HOME/<role file>`, with the role's policy
@@ -509,6 +595,58 @@ mod tests {
                 assert!(!FORBIDDEN.contains(&n), "{}", row.id);
             }
         }
+    }
+
+    #[test]
+    fn third_party_lean_switches_are_one_word_each_and_never_forbidden() {
+        let f = merge(THIRD_PARTY.iter());
+        assert_eq!(
+            f,
+            [
+                "--force-prefers-reduced-motion",
+                "--in-process-gpu",
+                "--num-raster-threads=1",
+                "--renderer-process-limit=1",
+                "--disable-site-isolation-trials",
+                "--js-flags=--optimize-for-size --max-semi-space-size=1",
+            ]
+        );
+        for w in &f {
+            let name = w.split('=').next().unwrap();
+            assert!(!FORBIDDEN.contains(&name), "{w}");
+            assert!(w.starts_with("--"), "{w}");
+        }
+        assert!(
+            THIRD_PARTY
+                .iter()
+                .all(|r| !matches!(r.knob, Knob::NoFeature(_) | Knob::Policy(..))),
+            "the app overrides --disable-features; policies are browser-only"
+        );
+        // Tried, not shipped: no measured gain (docs/bench/memsaver-discord.md, "Engine switches").
+        assert!(THIRD_PARTY.iter().all(|r| !r.shipped()));
+        assert!(third_party_flags().is_empty());
+        let ids: std::collections::BTreeSet<_> = THIRD_PARTY.iter().map(|r| r.id).collect();
+        assert_eq!(ids.len(), THIRD_PARTY.len(), "ids are unique");
+        assert!(
+            ROWS.iter().all(|r| !ids.contains(r.id)),
+            "and apart from the role rows"
+        );
+    }
+
+    /// A row that ships reaches the words the budget's launch passes; one that does not stays out.
+    #[test]
+    fn a_shipped_third_party_row_reaches_the_launch_words() {
+        let mut rows = THIRD_PARTY.to_vec();
+        rows[3].status = Status::Baseline; // --renderer-process-limit=1
+        rows[5].status = Status::Baseline; // --optimize-for-size
+        let shipped = merge(rows.iter().filter(|r| r.shipped()));
+        assert_eq!(
+            shipped,
+            [
+                "--renderer-process-limit=1",
+                "--js-flags=--optimize-for-size"
+            ]
+        );
     }
 
     #[test]

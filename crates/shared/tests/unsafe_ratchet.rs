@@ -86,6 +86,9 @@ use std::path::{Path, PathBuf};
 /// the terminal) and `_exit` in that handler, each with a SAFETY line; no new dependency.
 /// Merged (rel/0.12.1 into wave3, STEP-0, 2026-11-04): realtime is the 0.12.1 audit8 refactor (32)
 /// plus DT-2 (+10); xguard and controller are the 0.12.1 rows; the others are wave3 rows.
+/// core 13 -> 14 (MEMSAVER-X, 2026-11-04): `memsaver/budget.rs` `evict`, one `posix_fadvise(DONTNEED)`
+/// on an open descriptor so a budgeted app starts with its own files out of the page cache; std has
+/// no fadvise, no new dependency was wanted for one call.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 482),
@@ -97,7 +100,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
-    ("core", 13),
+    ("core", 14),
     ("proxy", 3),
     ("shared", 17),
     ("shell", 8),
