@@ -1228,6 +1228,15 @@ fn proc_locks_lines_are_read() {
         !flock_write_held(text, (9 << 8) | 1, 131074),
         "other device"
     );
+    // btrfs (WolOS's root): the kernel prints the filesystem's anonymous device (00:2f), stat says
+    // the subvolume's (00:45). Seen held; a block device with that inode is not.
+    let btrfs = "1: FLOCK  ADVISORY  WRITE 4242 00:2f:268 0 EOF\n";
+    assert!(flock_write_held(btrfs, 0x45, 268), "btrfs subvolume");
+    assert!(!flock_write_held(btrfs, 0x45, 269), "another inode");
+    assert!(
+        !flock_write_held(btrfs, dev, 268),
+        "a block device must match"
+    );
 }
 
 /// QA-100 LIVE3-19, DEV-4: a failed step's last stderr line reaches the log and the reply
