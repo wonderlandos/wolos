@@ -17,6 +17,8 @@ members = [
     "crates/xguard-clam",
     "crates/aurlaws",
     "crates/woltrust",
+    "crates/wolcrypt",
+    "crates/wolcrypt-ffi",
 ]
 
 [workspace.package]
@@ -37,12 +39,13 @@ sha2 = "0.10"
 fips204 = { version = "0.5", default-features = false, features = ["ml-dsa-65"] }
 fips205 = { version = "0.5", default-features = false, features = ["slh-dsa-sha2-128s"] }
 # Sealed messages (ADR 0046 "Encryption"): hybrid KEM X25519 + ML-KEM-768. X25519 is curve25519-dalek's
-# Montgomery ladder (already in the tree under ed25519-dalek); ML-KEM-768 is the one new crate, of the same
-# family as fips204/fips205; ChaCha20-Poly1305 and PBKDF2-HMAC-SHA512 come from ring (already in the tree).
+# Montgomery ladder (already in the tree under ed25519-dalek); ML-KEM-768 is fips203, of the same family as
+# fips204/fips205. ChaCha20-Poly1305 and PBKDF2-HMAC-SHA512 are RustCrypto's (chacha20poly1305, pbkdf2), in
+# crates/wolcrypt only (lead decision 2026-11-04 "WOLCRYPT": no ring).
 fips203 = { version = "=0.5.0", default-features = false, features = ["ml-kem-768"] }
 curve25519-dalek = { version = "4.1", default-features = false }
-ring = { version = "0.17", default-features = false }
 zeroize = { version = "1.8", default-features = false }
+wolcrypt = { path = "crates/wolcrypt" }
 woltrust = { path = "crates/woltrust" }
 shared = { path = "crates/shared" }
 wol_core = { path = "crates/core", package = "core" }

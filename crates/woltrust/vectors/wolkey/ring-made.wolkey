@@ -1,0 +1,1 @@
+{"format":1,"name":"0123456789abcdef","kdf":"pbkdf2-hmac-sha512","rounds":210000,"salt":"AAECAwQFBgcICQoLDA0ODw","aead":"chacha20-poly1305","nonce":"EBESExQVFhcYGRob","sealed":"yBgcmY9khu0JWjQxcCx6okfPN6JdeOWm350cz3YPACu_taNWjB87pWrblo0JdTmL9NojUQmfTkEmGNt8vVF6gvCDPLNnLHNG7qFlP9QaC1JLBW-ieajo5omoFofazAzw-gJZ48JN"}

@@ -304,8 +304,135 @@ ML-DSA implementation, used only in tests, must agree with ours on real and dama
   guessing better, but there is no Argon2 crate in the tree yet; the format's `kdf` field allows
   adding it as a new value (audit M9, a lead call).
 
+## Phase 4 (2026-11-04, TRUST-core-5): ids, the revocation database, wolcrypt, lines
+
+### Ids (rule "IDS")
+Nothing is named by a random number. A certificate's serial is its id: SHA-512 over its public keys
+in the order `ed25519 || ml-dsa-65 || x25519 || ml-kem-768` (roots `ed25519 || slh-dsa-sha2-128s`;
+absent keys omitted), 128 lowercase hex (`woltrust::cert::id_of`, `wolcrypt::id::of_keys`). Every
+parse recomputes it and refuses a certificate whose 128-hex serial is not the id of its keys
+(`serial does not match the keys`). A file certificate's serial is the file id, SHA-512 of the
+file's `SHA256` member (`filecert::verify_member` recomputes it where the member is at hand). A
+sealed message names its recipient by the certificate id (`wolos/seal/2`). A key file is named by the
+id of its keys from the start, which is the serial its certificate will carry (no rename at `wol cert
+add`). Format stays 1: the longer serial is additive. The older TEST vectors keep 16-hex serials
+("legacy-length"): accepted only on a path that ends at a TEST root (`legacy-serial` otherwise), and a
+non-TEST root with one is never loaded. Security: second preimage 2^512 classical / 2^256 quantum,
+collision 2^256 (docs/modules/wolcrypt.md).
+
+### Both roots on every intermediate (lead decision 03:17Z)
+An intermediate with a derived id (Authors CA, Packages CA, Index, the witnesses) carries root A's
+signature in `sig` and root B's in `sigs` (`[{"issuer":"<root id>","ed25519","second"}]`, additive to
+format 1, left out when empty so older files are byte for byte the same). The verifier accepts it
+only when the issuing root and another pinned root both verify, and both roots join the path, so
+withdrawing either root (or its expiry) makes every intermediate invalid until re-signed by the
+survivor and a new root (`woltrust init --rotate-intermediates`). `woltrust init` makes both
+signatures; `woltrust issue` refuses an intermediate body without `--cosign-file` (the other root's
+key). The TEST authority's 16-hex intermediates keep one signature (legacy). One root alone still
+signs a revocation of the other root or of an intermediate. Code `root-signatures`.
+
+### The witness (lead decisions 03:2xZ)
+Two intermediates with usage `witness` alone (`wolos-witness-a`, `wolos-witness-b`, Ed25519 +
+ML-DSA-65, signed by both roots, made by `woltrust init`, kept in the backup only). A witness makes
+detached signatures on published files: the two root certificates, checkpoints, `.rkdb` files,
+release manifests and images, as `<file>.wsig` (`{"cert","ed25519","second","at"}`, label
+`wolos/witness/1`, message `label || 0x00 || SHA-512(file) || SHA-512(at as decimal text)`).
+`woltrust witness sign|verify`; `wolcrypt verify-detached` checks one with nothing but wolcrypt (the
+wasm build for wolos.org/verify). The verifier refuses a witness as the signer of anything else
+(`wrong-usage`); withdrawing a witness is a normal entry and touches no app.
+
+### The revocation database `revoked.rkdb` (lead decision "RKDB")
+Integers big-endian. Header 59 bytes: `"WRKDB"` | format u8 = 1 | serial u64 | issued u32 | expires
+u32 | count u32 | prev_hash [32] (SHA-512/256 of the previous full file; zeros for the first) |
+flags u8 (bit 0: a root section follows). Then `count` entries of 69 bytes, strictly ascending by id:
+id [64] | at u32 | reason u8 (1 key-compromise, 2 abuse, 3 superseded, 4 ceased, 5
+withdrawn-version). A 16-hex legacy serial is its 8 bytes and 56 zero bytes. With flag bit 0, the
+root section: `"WRKDR"` | format u8 | issued u32 | count u32 (at most 64) | entries | signer id [64]
+| Ed25519 [64] | SLH-DSA-SHA2-128s [7856], the root signing `wolos/revocation/1` over everything
+before its signer id; the same bytes are a file of their own (`.rkdr`, `woltrust emergency`). Last,
+the Index's block: signer id [64] | Ed25519 [64] | ML-DSA-65 [3309] over `wolos/revocation/1` and
+every byte before the block. Root-signed entries live only in the root section (decision: a section,
+not a flag, because the Index cannot vouch for a root's word and the section must also travel alone).
+
+Operations (`woltrust::rkdb`, no I/O): `Db::parse` (bounded: 4 million entries; sortedness and
+reasons checked in parallel runs with `std::thread::scope` from 65 536 entries), `Store::check_rkdb`
+(the Index valid at `issued`, up to the pinned roots, not withdrawn, not by the root section it
+carries; the root section by a pinned root that does not name itself), lookup by binary search in
+place, `merge` (union, never dropping; where both name an id, the earlier time and the stronger
+reason: key-compromise, abuse, ceased, superseded, withdrawn-version), `delta`/`apply`, `to_list`
+(the JSON list, still the human-readable form; `woltrust rkdb export`). A delta (`.rkdd`): `"WRKDD"` |
+format u8 | from_serial u64 | to_serial u64 | base_hash [32] | target header [59] | added count u32 |
+added entries | root section length u32 | root section | the target's Index block: applied only onto a
+base with that serial and hash, it gives the full target file byte for byte, whose signature then
+verifies. Checkpoint: `{"format":1,"serial":N,"sha512_256":"<64 hex>"}` (`rkdb::Checkpoint`).
+
+Freshness: a database is valid 24 hours (republished hourly; `woltrust revoke` writes JSON lists
+valid 24 hours too). The image ships the database current at build time
+(`/usr/share/wolos/trust/revoked.rkdb`); its serial is a floor the machine never goes below. Every
+file certificate carries `rkdb_serial` (and the release origin may), the serial the signer saw; a
+verified one raises the floor (`TrustStore::observe_rkdb_serial`, `/var/lib/wolos/trust/rkdb-floor`).
+The checkpoint is read from the CDN and from the public log (`wol_core::cdn::RKDB_CHECKPOINTS`); they
+must agree, else `wol trust update` warns and keeps the higher serial as the floor; a database whose
+serial both name must have their hash. A new database is taken only when it verifies, is not below
+the floor, keeps every entry held (no shrinking, no weakening) and, one serial up, chains by
+`prev_hash`. It is kept at `/var/lib/wolos/trust/revoked.rkdb`; its root-signed entries go into
+`seen-revocations.json`, kept forever. A connected machine whose list is past 24 hours or below the
+floor says "could not update the list" and holds installs of new apps (`TrustStore::gate_new_install`,
+`rkdb::gate`); installed apps keep running; offline the stale rules apply. update-check runs `wol trust
+update` every hour, which fetches `revoked.rkdb` and the checkpoints, falling back to the JSON list.
+
+Measured on the CTO box (Xeon Platinum 8488C, 32 threads, release, one run, other jobs idle;
+`cargo test --release -p woltrust --test rkdb -- --ignored --nocapture`), 1 000 000 entries, file
+69 003 496 bytes: build (sort and encode) 296 ms; load (parse, parallel order check, SHA-512/256 of
+the file) 148-150 ms; verify (parse and the hybrid signature over the file) 257-259 ms; lookup 0.97
+us each; merge with 500 000 entries 43-44 ms.
+
+### Emergency withdrawals (lead decision 03:14Z)
+`woltrust emergency --root A|B --roots DIR --revoke ID... --reason key-compromise --out F.rkdr
+--key-file OTHER_ROOT.wolkey` signs, with the other root's key, root-signed entries for the named root
+and/or intermediates; it prints each entry's line and the consequence ("every certificate issued
+under it stops validating everywhere, at once and for good") and signs only after each id is typed
+back. A path whose root or intermediate id is withdrawn by a root-signed entry is invalid whatever the
+serial or age of what carried it; the machine keeps the entry forever. Vectors:
+`emergency-root-a-by-b`, `emergency-authors-ca-alone`, `emergency-other-chain-unaffected`,
+`emergency-forged-by-intermediate`, `emergency-replayed-older-list`.
+
+Runbook, in ten plain steps:
+1. Decide what leaked: a root, an intermediate, or both roots.
+2. Both roots gone: stop; only a new image with new roots recovers. Steps 3 to 10 do not apply.
+3. Take the surviving root's key out of the backup: `woltrust extract --backup wolos-trust.wolbackup --role root-b > b.wolkey` (or `root-a`), offline.
+4. Sign the withdrawal: `woltrust emergency --root A --roots public/roots --revoke <root A id> --reason key-compromise --out emergency.rkdr --key-file b.wolkey`; type each id back when asked.
+5. Check it: `wol trust show emergency.rkdr` prints the line of each entry.
+6. Give `emergency.rkdr` to the pipeline: the next database carries it (`woltrust rkdb make --root-section emergency.rkdr ...`); machines take it within the hour.
+7. If a root was withdrawn: make its replacement and new intermediates, `woltrust init --rotate-intermediates --backup wolos-trust.wolbackup --root root-b --subject-new "<text>" --out new` (the example subjects of `woltrust init`: root A "Júlia Klee - Kleedolinux - WolOS.org - 10/04/2009 - 9 de Julho 1932 - São Paulo", root B "WolOS Project - hello@wolos.org").
+8. Replace the CI secrets with the new `ci/` files (lines 1-3 of `woltrust init`).
+9. Ship the new root in the next image (`files/usr/share/wolos/trust/roots/`); until then nothing new validates under the dead root.
+10. Re-issue every author certificate with the new Authors CA (same author keys, so the same ids), and delete the extracted key file.
+
+### Signature lines (lead decision "SIGNATURE LINES", shapes approved 03:12Z)
+`woltrust::line` renders each signed body to one line, the same in the Store sheet, `woltrust verify`
+(on stderr, or alone with `--line`), `woltrust rkdb verify`, `wol trust show FILE` and the hub. Fields
+in angle brackets, ids in full:
+- root: `<TEXT> <root> <wolos.org/trust/ID> valid-until <YYYY-MM-DD> <ed25519+slh-dsa-sha2-128s>`
+- intermediate: `<LABEL> <issued-by: A | B> <wolos.org/trust/ID> valid-until <DATE> <ed25519+ml-dsa-65>`
+- person: `<LOGIN> <github:ID> <issued-by: WolOS Authors> <wolos.org/trust/ID> <namespaces: a.,b.> valid-until <DATE> <origin|trusted>` plus ` <origin-cert: ID>` on trusted; organisation `<org/LOGIN> ...`
+- file signature: `<WHO> <github:OWNER/REPO@TAG COMMIT7> <wolos.org/trust/ID> <wolos.org/terms/trust/vN> <sha512:HASH> <DATE> <origin|trusted|wolos>`
+- file certificate: `<WolOS Index> <wolos.org/hub/APP/VERSION> <author: ID> <sha512:HASH> <checked DATE> <pass|flag> <rkdb:SERIAL>`
+- witness: `<WolOS Witness A|B> <sha512:HASH> <DATE> <wolos.org/trust/ID>`
+- revocation entry: `<ID> <revoked DATE> <REASON> <by: WolOS Index>`; a file certificate `<ID> <withdrawn DATE> <withdrawn-version> <by: WolOS Index>`
+An absent field is `none`. Terms: requests and certificate bodies carry `terms {version, sha256}`
+(covered by the proof, a twelfth element of the proof content only when present, so older proofs
+verify); file certificates may too. Vectors: `line` in every valid vector, `vectors/lines.json` for
+every TEST certificate and the two example roots, `line` in the file certificate vectors, the
+entries' lines in `vectors/rkdb/`.
+
+### wolcrypt
+The crypto moved to `crates/wolcrypt` (docs/modules/wolcrypt.md): woltrust's `crypto` re-exports its
+types, `make::Secret` wraps `wolcrypt::sign::SigningKey`, `seal` and `.wolkey` call its KEM, AEAD and
+KDF. No ring. Every existing vector and key file gives the same bytes.
+
 ## Not here yet
 
-The real roots and intermediates (the lead runs `woltrust init --subject`), derived 256-bit ids
-(SHA-512/256 of the public keys) for serials, file certificates and seal recipients, the binary
-`.rkdb` revocation store, and the `wolcrypt` crate (lead decisions of 02:41Z-02:45Z, next round).
+The real roots and intermediates (the lead runs `woltrust init --subject-a --subject-b`). The hub's
+side of the new formats (128-hex ids, `.rkdb`, deltas, checkpoints, the witness) and the Store sheet
+showing the line are other lanes.

@@ -51,7 +51,7 @@ fn sealed_to_public_keys_opens_with_the_key_only() {
     let msg = b"throwaway test secret\n\x00\xff";
     let s = run(&["seal", "--to", &p, "--label", "wolos/vault/t", "-"], msg);
     assert!(s.status.success(), "{}", String::from_utf8_lossy(&s.stderr));
-    assert!(s.stdout.starts_with(b"wolos/seal/1\0"));
+    assert!(s.stdout.starts_with(b"wolos/seal/2\0"));
     assert!(!s.stdout.windows(msg.len()).any(|w| w == msg));
     let sf = d.join("s.sealed");
     std::fs::write(&sf, &s.stdout).expect("write sealed");

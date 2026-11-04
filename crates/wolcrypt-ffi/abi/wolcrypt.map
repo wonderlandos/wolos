@@ -1,0 +1,19 @@
+/* libwolcrypt symbol versions. A shipped node never changes: new symbols go in a new node. */
+WOLCRYPT_1.0 {
+  global:
+    wolcrypt_ct_eq;
+    wolcrypt_id;
+    wolcrypt_kem_open;
+    wolcrypt_kem_public;
+    wolcrypt_kem_seal;
+    wolcrypt_pbkdf2_sha512;
+    wolcrypt_public;
+    wolcrypt_sha512;
+    wolcrypt_sha512_256;
+    wolcrypt_sign;
+    wolcrypt_verify;
+    wolcrypt_verify_detached;
+    wolcrypt_version;
+  local:
+    *;
+};

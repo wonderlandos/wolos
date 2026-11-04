@@ -3,6 +3,8 @@
 //! libwopkg (ADR 0021): `wopkg` is the package core's stable C ABI, an adaptor like `wol-abi`.
 //! libWolkit (ADR 0039): `wolkit` is the UI engine's stable C ABI, an adaptor like `wol-abi` that
 //! depends on `shared` and `core` only (BSD-2-Clause), and no GPL crate may depend on it back.
+//! wolcrypt (ADR 0046, "wolcrypt"): the cryptography crate under woltrust, depending on nothing of
+//! ours; `wolcrypt-ffi` is its C ABI (BSD-2-Clause) and depends on it alone.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
 //! Plugins (ADR 0031): `controller` may use `wol-lua` too, so `wol plugin check|run` runs plugin Lua headless.
 use std::collections::BTreeMap;
@@ -47,7 +49,11 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 "shared" => false,
                 // woltrust (ADR 0046): the pure certificate crate core links; it depends on nothing of ours.
                 "core" => dep == "shared" || dep == "woltrust",
-                "woltrust" => false,
+                // wolcrypt (lead decision 2026-11-04 "WOLCRYPT"): every cryptographic operation,
+                // pure, below woltrust; it depends on nothing of ours, and its C ABI crate on it alone.
+                "woltrust" => dep == "wolcrypt",
+                "wolcrypt" => false,
+                "wolcrypt-ffi" => dep == "wolcrypt",
                 // `wol plugin check|run` loads and renders plugin Lua without a display (ADR 0031).
                 "controller" => ["shared", "core", "wol-lua"].contains(&dep.as_str()),
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
@@ -146,6 +152,12 @@ fn violations_table() {
         (&[("controller", &["wol-lua", "core", "shared"])], &[]),
         (&[("controller", &["wol-abi"])], &["controller -> wol-abi"]),
         (&[("controller", &["api"])], &["controller -> api"]),
+        (&[("woltrust", &["wolcrypt"])], &[]),
+        (&[("woltrust", &["core"])], &["woltrust -> core"]),
+        (&[("wolcrypt", &["shared"])], &["wolcrypt -> shared"]),
+        (&[("wolcrypt", &["woltrust"])], &["wolcrypt -> woltrust"]),
+        (&[("wolcrypt-ffi", &["wolcrypt"])], &[]),
+        (&[("wolcrypt-ffi", &["core"])], &["wolcrypt-ffi -> core"]),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

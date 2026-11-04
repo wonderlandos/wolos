@@ -32,6 +32,7 @@
     "roots": 1,
     "intermediates": 1,
     "lists": 0,
-    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/list-too-old\",\"sentence\":\"This computer has not checked for withdrawn certificates for more than 30 days. The signature itself checks out.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"origin\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[{\"rule\":\"trust/list-too-old\",\"sentence\":\"This computer has not checked for withdrawn certificates for more than 30 days. The signature itself checks out.\",\"evidence\":\"fd51eec17572cf6c\"}],\"trust\":\"origin\",\"cert\":{\"serial\":\"fd51eec17572cf6c\",\"subject\":{\"github_id\":1001,\"login\":\"alice\",\"name\":\"Alice Doe\"},\"level\":\"verified\",\"class\":\"origin\"}}",
+    "line": "<alice> <github:none> <wolos.org/trust/fd51eec17572cf6c> <wolos.org/terms/trust/none> <sha512:f0afef04138297ee13a2bfb67f80bfe87f2dee4504f13d11e3c91acc531e3dc8e01d6e2f8d3ca3311209198e8807b5e6c872a08a91c87adda7e24c1e7c2b4dca> <none> <origin>"
   }
 }

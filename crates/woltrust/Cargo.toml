@@ -24,22 +24,19 @@ required-features = ["seal"]
 [features]
 default = ["seal"]
 # Sealed messages and passphrase-encrypted key files (`seal`, `wolkey`, `init`). On by default, so
-# `cargo install woltrust` gets the whole command line; the hub's wasm build takes
-# `default-features = false` and keeps a pure-Rust verifier without ring.
-seal = ["dep:fips203", "dep:curve25519-dalek", "dep:ring"]
+# `cargo install woltrust` gets the whole command line. All of it is pure Rust in wolcrypt now (no
+# ring), so the hub's wasm build may keep it; `default-features = false` still leaves it out.
+seal = []
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-ed25519-dalek.workspace = true
 sha2.workspace = true
-fips204.workspace = true
-fips205.workspace = true
 zeroize.workspace = true
-fips203 = { workspace = true, optional = true }
-curve25519-dalek = { workspace = true, optional = true }
-ring = { workspace = true, optional = true }
+wolcrypt.workspace = true
 
 [dev-dependencies]
+# The timing test measures one Ed25519 half alone, outside wolcrypt (tests only).
+ed25519-dalek.workspace = true
 # Cross-check of the ML-DSA-65 verifier against a second implementation (tests only, never shipped).
 ml-dsa = "0.1"

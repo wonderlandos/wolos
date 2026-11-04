@@ -9,12 +9,13 @@
 //! File: `{"format":1,"body":"<b64url>","cert":"<signer serial>","sig":{"ed25519":"..","second":".."}}`.
 //! Body (the exact signed bytes, at most 4 KiB): `{"format":1,"serial","file_sha256",
 //! "manifest_sha256","id","version","kind","origin"?,"cert","class"?,"verdict","findings",
-//! "checked_at"}`.
+//! "checked_at","rkdb_serial"?,"terms"?}`. Rule "IDS": `serial` is the file id, SHA-512 of the
+//! file's `SHA256` member (128 hex), recomputed by [`verify_member`] wherever the member is at
+//! hand; 16 hex in the TEST authority's older vectors.
 use crate::b64;
 use crate::cert::{Class, Kind, Usage, is_serial};
 use crate::crypto::{self, Purpose, Sig};
 use crate::report::Verdict;
-use crate::revoked::Reason;
 use crate::store::Store;
 use serde::{Deserialize, Serialize};
 
@@ -80,6 +81,13 @@ pub struct Body {
     pub findings: u32,
     /// When the hub checked it, Unix seconds.
     pub checked_at: u64,
+    /// The serial of the revocation database the hub held when it signed (lead decision "RKDB"):
+    /// a machine that verifies this file certificate never accepts an older database again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rkdb_serial: Option<u64>,
+    /// The trust terms the release was published under, when the hub records them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms: Option<crate::cert::Terms>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -169,6 +177,7 @@ impl Body {
         let ok = self.format == crate::FORMAT
             && is_serial(&self.serial)
             && is_serial(&self.cert)
+            && self.terms.as_ref().is_none_or(crate::cert::Terms::is_valid)
             && hex64(&self.file_sha256)
             && hex64(&self.manifest_sha256)
             && short(&self.id, 128)
@@ -204,6 +213,27 @@ pub fn make(body: &Body, serial: &str, secret: &crate::make::Secret) -> Vec<u8> 
     .unwrap_or_default()
 }
 
+/// [`verify`], and with the file's `SHA256` member at hand: the member's SHA-256 is the body's
+/// `manifest_sha256` and, for a derived serial, the serial is the file id SHA-512(member) (rule
+/// "IDS"), else [`FileCertError::OtherFile`].
+pub fn verify_member(
+    store: &Store,
+    bytes: &[u8],
+    file_sha256: &str,
+    member: &[u8],
+) -> Result<Checked, FileCertError> {
+    let c = verify(store, bytes, file_sha256)?;
+    let b = c.body();
+    let id = wolcrypt::id::to_hex(&wolcrypt::id::of_file(member));
+    let ok = b.manifest_sha256 == wolcrypt::hash::hex(&wolcrypt::hash::sha256(member))
+        && (crate::cert::is_legacy_serial(&b.serial) || b.serial == id);
+    if ok {
+        Ok(c)
+    } else {
+        Err(FileCertError::OtherFile)
+    }
+}
+
 /// Verifies a file certificate for the file whose SHA-256 is `file_sha256` (lowercase hex): the
 /// signer is an intermediate of `store` with `sign-index`, valid when it signed (`checked_at`),
 /// reaching a pinned root and not withdrawn; both halves verify; it names this file. Then a
@@ -235,9 +265,8 @@ pub fn verify(store: &Store, bytes: &[u8], file_sha256: &str) -> Result<Checked,
         return Err(FileCertError::WrongSigner);
     }
     let path = crate::verify::path(signer, &[], store).map_err(|_| FileCertError::WrongSigner)?;
-    let lists = store.all_lists();
     if !path.iter().all(|c| c.valid_at(body.checked_at))
-        || crate::verify::revocation(&path, &lists, None).is_some()
+        || crate::verify::revocation(&path, store, None).is_some()
     {
         return Err(FileCertError::WrongSigner);
     }
@@ -246,11 +275,7 @@ pub fn verify(store: &Store, bytes: &[u8], file_sha256: &str) -> Result<Checked,
     if body.file_sha256 != file_sha256 {
         return Err(FileCertError::OtherFile);
     }
-    let withdrawn = lists
-        .iter()
-        .flat_map(|l| l.list.entries.iter())
-        .find(|e| e.serial == body.serial && e.reason == Reason::WithdrawnVersion)
-        .map(|e| e.at);
+    let withdrawn = crate::verify::version_withdrawn(store, &body.serial);
     Ok(match withdrawn {
         Some(at) => Checked::Withdrawn(body, at),
         None => Checked::Checked(body),

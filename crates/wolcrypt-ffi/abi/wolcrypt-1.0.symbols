@@ -1,0 +1,13 @@
+wolcrypt_ct_eq@WOLCRYPT_1.0
+wolcrypt_id@WOLCRYPT_1.0
+wolcrypt_kem_open@WOLCRYPT_1.0
+wolcrypt_kem_public@WOLCRYPT_1.0
+wolcrypt_kem_seal@WOLCRYPT_1.0
+wolcrypt_pbkdf2_sha512@WOLCRYPT_1.0
+wolcrypt_public@WOLCRYPT_1.0
+wolcrypt_sha512@WOLCRYPT_1.0
+wolcrypt_sha512_256@WOLCRYPT_1.0
+wolcrypt_sign@WOLCRYPT_1.0
+wolcrypt_verify@WOLCRYPT_1.0
+wolcrypt_verify_detached@WOLCRYPT_1.0
+wolcrypt_version@WOLCRYPT_1.0

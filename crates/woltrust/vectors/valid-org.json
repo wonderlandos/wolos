@@ -32,6 +32,7 @@
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"origin\",\"cert\":{\"serial\":\"36a3609eff7d96b1\",\"subject\":{\"github_id\":2002,\"login\":\"examplelabs\",\"name\":\"Example Labs\"},\"level\":\"verified\",\"class\":\"origin\"}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"origin\",\"cert\":{\"serial\":\"36a3609eff7d96b1\",\"subject\":{\"github_id\":2002,\"login\":\"examplelabs\",\"name\":\"Example Labs\"},\"level\":\"verified\",\"class\":\"origin\"}}",
+    "line": "<org/examplelabs> <github:none> <wolos.org/trust/36a3609eff7d96b1> <wolos.org/terms/trust/none> <sha512:f0afef04138297ee13a2bfb67f80bfe87f2dee4504f13d11e3c91acc531e3dc8e01d6e2f8d3ca3311209198e8807b5e6c872a08a91c87adda7e24c1e7c2b4dca> <none> <origin>"
   }
 }

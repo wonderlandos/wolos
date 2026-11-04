@@ -36,6 +36,9 @@ pub struct FileCertVector {
     pub lists: Vec<[String; 2]>,
     /// `checked`, `withdrawn-version` or the error name.
     pub expect: String,
+    /// The signature line of a file certificate that checked (`crate::line::file_certificate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
 }
 
 fn dec(s: &str) -> Result<Vec<u8>, String> {
@@ -44,6 +47,11 @@ fn dec(s: &str) -> Result<Vec<u8>, String> {
 
 /// Runs the vector (TEST roots allowed) and returns the result name.
 pub fn observe(v: &FileCertVector) -> Result<String, String> {
+    observe_line(v).map(|(r, _)| r)
+}
+
+/// The result name and, when it checked, the signature line.
+pub fn observe_line(v: &FileCertVector) -> Result<(String, Option<String>), String> {
     let all = |xs: &[String]| xs.iter().map(|s| dec(s)).collect::<Result<Vec<_>, _>>();
     let lists = v
         .lists
@@ -51,21 +59,34 @@ pub fn observe(v: &FileCertVector) -> Result<String, String> {
         .map(|[l, s]| Ok((dec(l)?, dec(s)?)))
         .collect::<Result<Vec<_>, String>>()?;
     let store = Store::load(&all(&v.roots)?, &all(&v.intermediates)?, &lists, NOW, true);
-    Ok(
-        match filecert::verify(&store, &dec(&v.filecert)?, &v.file_sha256) {
-            Ok(c) => c.as_str().to_owned(),
-            Err(e) => e.as_str().to_owned(),
-        },
-    )
+    let raw = dec(&v.filecert)?;
+    let signer = serde_json::from_slice::<serde_json::Value>(&raw)
+        .ok()
+        .and_then(|j| j["cert"].as_str().map(str::to_owned));
+    let by = store
+        .intermediates
+        .iter()
+        .find(|c| Some(&c.body.serial) == signer.as_ref());
+    Ok(match filecert::verify(&store, &raw, &v.file_sha256) {
+        Ok(c @ filecert::Checked::Checked(_)) => (
+            c.as_str().to_owned(),
+            Some(crate::line::file_certificate(c.body(), by)),
+        ),
+        Ok(c) => (c.as_str().to_owned(), None),
+        Err(e) => (e.as_str().to_owned(), None),
+    })
 }
 
 /// Replays the vector.
 pub fn check(v: &FileCertVector) -> Result<(), String> {
-    let got = observe(v)?;
-    if got == v.expect {
+    let (got, line) = observe_line(v)?;
+    if got == v.expect && line == v.line {
         Ok(())
     } else {
-        Err(format!("{}: expected {}, got {got}", v.name, v.expect))
+        Err(format!(
+            "{}: expected {} {:?}, got {got} {line:?}",
+            v.name, v.expect, v.line
+        ))
     }
 }
 
@@ -95,6 +116,8 @@ fn body(p: &Pki) -> (String, Body) {
         verdict: Verdict::Pass,
         findings: 0,
         checked_at: NOW - DAY,
+        rkdb_serial: None,
+        terms: None,
     };
     (b.file_sha256.clone(), b)
 }
@@ -219,12 +242,55 @@ pub fn generate() -> Result<Vec<FileCertVector>, String> {
             intermediates,
             lists,
             expect: want.into(),
+            line: None,
         };
-        let got = observe(&v)?;
+        let (got, line) = observe_line(&v)?;
         if got != want {
             return Err(format!("{name}: wanted {want}, got {got}"));
         }
-        out.push(v);
+        out.push(FileCertVector { line, ..v });
     }
+    out.push(derived(&p, &b)?);
     Ok(out)
+}
+
+/// Rule "IDS": a file certificate named by the file id (SHA-512 of the SHA256 member), with the
+/// database serial the hub held and the terms, signed by the derived Index (both roots).
+fn derived(p: &Pki, b: &Body) -> Result<FileCertVector, String> {
+    let ids = crate::vectors_ids::Ids::new(p);
+    let member = crate::vectors::CONTENT;
+    let mut d = b.clone();
+    d.serial = wolcrypt::id::to_hex(&wolcrypt::id::of_file(member));
+    d.manifest_sha256 = hex(&Sha256::digest(member));
+    d.cert = ids.bob.body.serial.clone();
+    d.id = "bob.notes".into();
+    d.rkdb_serial = Some(7);
+    d.terms = Some(crate::vectors_ids::terms());
+    let derived = filecert::make(&d, &ids.index.body.serial, &ids.index.secret());
+    let store = Store::load(
+        &[&p.root_a.file, &p.root_b.file],
+        &[&ids.index.file],
+        &[] as &[(&[u8], &[u8])],
+        NOW,
+        true,
+    );
+    filecert::verify_member(&store, &derived, &d.file_sha256, member)
+        .map_err(|e| format!("filecert-derived-id: {}", e.as_str()))?;
+    if filecert::verify_member(&store, &derived, &d.file_sha256, b"another member").is_ok() {
+        return Err("filecert-derived-id: another member passed".into());
+    }
+    let v = FileCertVector {
+        format: 1,
+        name: "filecert-derived-id".into(),
+        about: "named by the file id (SHA-512 of the SHA256 member), carrying rkdb_serial and the terms, by the derived Index under both roots".into(),
+        filecert: b64::encode(&derived),
+        file_sha256: d.file_sha256.clone(),
+        roots: vec![b64::encode(&p.root_a.file), b64::encode(&p.root_b.file)],
+        intermediates: vec![b64::encode(&ids.index.file)],
+        lists: Vec::new(),
+        expect: "checked".into(),
+        line: None,
+    };
+    let (_, line) = observe_line(&v)?;
+    Ok(FileCertVector { line, ..v })
 }

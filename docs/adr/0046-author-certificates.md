@@ -93,7 +93,9 @@ Store install page and the open sheet (`TRUST_ROWS` grows from three to five row
 | aws-lc-rs | 1.16.3 | none | ML-DSA only behind its `unstable` feature, C and assembly, no wasm |
 | fips203 | =0.5.0 | ML-KEM-768 (sealed messages), added 2026-11-04 | pure Rust, `no_std`, same author and family as fips204/fips205; MIT OR Apache-2.0; its dependencies (rand_core 0.6, sha3, subtle, zeroize) were already in the tree |
 | curve25519-dalek | 4.1 | X25519 (Montgomery ladder) | already in the tree under ed25519-dalek; now also direct |
-| ring | 0.17 | ChaCha20-Poly1305, PBKDF2-HMAC-SHA512 | already in the tree (TLS client); behind the default feature `seal` of woltrust, which the hub's wasm build turns off |
+| ring | 0.17 | none since Phase 4 | was ChaCha20-Poly1305 and PBKDF2 until crates/wolcrypt replaced it (still in the tree under the TLS client) |
+| chacha20poly1305 | 0.10.1 | ChaCha20-Poly1305 (sealed messages, `.wolkey`), added 2026-11-04 Phase 4 | RustCrypto, pure Rust, `no_std`; MIT OR Apache-2.0; in crates/wolcrypt only |
+| pbkdf2 | 0.12.2 | PBKDF2-HMAC-SHA512 (`.wolkey`), added 2026-11-04 Phase 4 | RustCrypto, pure Rust, `no_std`; MIT OR Apache-2.0; in crates/wolcrypt only |
 | zeroize | 1.8 | wipes seeds and passphrases | already in the tree |
 
 All four candidates built here with rust 1.99.1 in 28 s (scratch crate, `/tmp/hubarch-bench`, outside every repo). Adding them to the workspace is a CTO decision (`deny.toml`). `cargo deny check` passes with the 2026-11-04 additions and no change to `deny.toml` (all MIT, Apache-2.0, BSD or ISC, all from crates.io).
@@ -182,9 +184,33 @@ What "post-quantum era" buys: the certificates and the roots stay unforgeable if
   standard (SP 800-132) and pure Rust, but not memory-hard, so a short passphrase falls to GPU
   guessing far sooner than with Argon2id. Argon2id would be a new `kdf` value; no Argon2 crate is
   in the tree yet (a dependency decision for the lead).
-- **Not yet (next round):** ids as SHA-512 of the public material (serials, file certificate ids,
-  seal recipients), the binary `.rkdb` store with its serial floor, 24-hour lists and checkpoints,
-  and the `wolcrypt` crate.
+- **Not yet (next round):** done in Phase 4 below.
+
+### Phase 4 amendments (TRUST-core-5, 2026-11-04, lead decisions 02:41Z-03:27Z)
+
+Byte layouts and the runbook are in docs/modules/trust.md ("Phase 4"); the crate in
+docs/modules/wolcrypt.md.
+- **Ids.** Every identifier is derived: a certificate serial is SHA-512 over its public keys
+  (`ed25519 || ml-dsa-65 || x25519 || ml-kem-768`, roots `ed25519 || slh-dsa-sha2-128s`), 128 hex,
+  recomputed on every parse; a file certificate's id is SHA-512 of the `SHA256` member; a sealed
+  message names the recipient's id (`wolos/seal/2`; `wolos/seal/1` still opens). Format stays 1 (the
+  longer serial is additive); 16-hex serials are "legacy-length", accepted only under a TEST root.
+  Second preimage 2^512 classical / 2^256 quantum; collision 2^256.
+- **Two root signatures on every intermediate** (`sigs`, additive): both must verify and both roots
+  join the path; one root alone signs the emergency withdrawal of the other or of an intermediate.
+- **Witness keys.** Two intermediates with usage `witness` alone sign published files (detached
+  `<file>.wsig`, label `wolos/witness/1`); never an app.
+- **Revocation database `revoked.rkdb`** (binary, sorted, Index-signed, a root-signed section for
+  intermediates and roots), deltas, merge, the JSON list as export. Lists live 24 hours, republished
+  hourly. Freshness: the image's database is a floor; every file certificate (and origin) carries
+  `rkdb_serial` and raises it; two checkpoints (CDN, public log) must agree, else warn and keep the
+  higher. A connected machine with a stale or behind list holds installs of new apps.
+- **Emergency** (`woltrust emergency`, `woltrust init --rotate-intermediates`): runbook of ten steps;
+  both roots gone means a new image.
+- **Signature lines** (`woltrust::line`), one per signed body, and `terms {version, sha256}` in
+  requests, certificates and file certificates.
+- **wolcrypt.** All cryptography in `crates/wolcrypt` (pure, `no_std`, no ring), a C ABI
+  (`crates/wolcrypt-ffi`, libwolcrypt.so.1) and a wasm build; same bytes as before.
 
 ## Consequences
 - `.wol`, `.wolplug` and extension format 2 needs WolOS 0.13; 0.12 keeps working with today's keys and refuses format-2 files with a sentence.

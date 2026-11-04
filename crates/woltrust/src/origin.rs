@@ -26,6 +26,11 @@ pub struct Origin {
     pub commit: String,
     /// When it was built, Unix seconds.
     pub built: u64,
+    /// The serial of the revocation database the signer held (lead decision "RKDB"): a machine
+    /// that verifies this release never accepts an older database again. Absent in older
+    /// releases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rkdb_serial: Option<u64>,
 }
 
 fn gh_name(s: &str, max: usize) -> bool {
@@ -98,6 +103,7 @@ mod tests {
             tag: "v1.2".into(),
             commit: "0123456789abcdef0123456789abcdef01234567".into(),
             built: 5,
+            rkdb_serial: None,
         }
     }
 

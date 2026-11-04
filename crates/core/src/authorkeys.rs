@@ -2,8 +2,9 @@
 //! An author's own keys and the certificates this account holds (ADR 0046, "Key storage"):
 //! `<data home>/wolos/trust/keys/<name>.wolkey`, each locked with the author's passphrase and never
 //! written in the clear, and `<data home>/wolos/trust/certs/<serial>.wolcert`, the account's own
-//! certificates and those of people it seals files to. A key is named by its key id until its
-//! certificate arrives, then by the certificate's serial. Pure: the controller does the I/O.
+//! certificates and those of people it seals files to. A key is named by the id of its keys
+//! (rule "IDS"), which is the serial its certificate will carry; key files made before, under a
+//! 16-hex key id, are renamed to the serial when the certificate arrives. Pure: the controller does the I/O.
 use std::path::{Path, PathBuf};
 use woltrust::cert::{Cert, Kind, Subject};
 use woltrust::key::KeyMaterial;
@@ -47,6 +48,22 @@ pub fn request(
     namespaces: Vec<String>,
     now: u64,
 ) -> Result<Request, String> {
+    request_with_terms(km, kind, subject, namespaces, None, now)
+}
+
+/// [`request`] naming the trust terms accepted (`wolos.org/terms/trust/v<version>` and the
+/// SHA-256 of their text), which the proof then covers.
+pub fn request_with_terms(
+    km: &KeyMaterial,
+    kind: Kind,
+    subject: Subject,
+    namespaces: Vec<String>,
+    terms: Option<woltrust::cert::Terms>,
+    now: u64,
+) -> Result<Request, String> {
+    if terms.as_ref().is_some_and(|t| !t.is_valid()) {
+        return Err("terms are a version from 1 and the SHA-256 of their text".into());
+    }
     if !matches!(kind, Kind::Person | Kind::Org) {
         return Err("a request is for a person or an organisation".into());
     }
@@ -77,6 +94,7 @@ pub fn request(
         },
         months: MONTHS,
         requested_at: now,
+        terms,
     };
     let claimed = request::Claimed::of_request(&req).ok_or("a request needs a GitHub id")?;
     req.proof = request::prove(&km.secret(), &claimed);
@@ -88,8 +106,14 @@ pub fn is_mine(cert: &Cert, km: &KeyMaterial) -> bool {
     cert.body.keys == km.keys_text()
 }
 
-/// The key id a certificate's keys were stored under before it was issued.
+/// The name a certificate's keys were stored under before it was issued: the id of its keys
+/// (rule "IDS"), which is its serial; [`legacy_key_id_of`] for key files made before.
 pub fn key_id_of(cert: &Cert) -> String {
+    woltrust::cert::id_of(&cert.keys, cert.enc.as_ref())
+}
+
+/// The 16-hex name of before rule "IDS" (first 8 bytes of SHA-256 of the Ed25519 key).
+pub fn legacy_key_id_of(cert: &Cert) -> String {
     request::key_id(&cert.keys.ed25519)
 }
 

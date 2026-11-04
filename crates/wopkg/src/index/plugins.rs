@@ -814,6 +814,8 @@ mod tests {
             verdict: wol_core::woltrust::Verdict::Pass,
             findings: 0,
             checked_at: NOW - DAY,
+            rkdb_serial: None,
+            terms: None,
         };
         let fc = |b: &Body| {
             wol_core::woltrust::b64::encode(&filecert::make(

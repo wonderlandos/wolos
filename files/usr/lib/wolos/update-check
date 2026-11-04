@@ -9,18 +9,21 @@
 #   kernels  installed package names (pacman -Qq): kernels besides linux-wolos are reported
 #   base     the latest release manifest; base.sig its signature in hex (verified when read)
 #   checked  when the check finished (seconds since 1970)
-# It also refreshes the certificate revocation list (ADR 0046): revoked.json and its .wsig from the
-# hub's CDN, handed to `wol trust update`, which installs them in /var/lib/wolos/trust only when the
-# signature verifies against the image's roots and the list is newer than the one held.
+# Every run (hourly) it first refreshes the list of withdrawn certificates (ADR 0046, "RKDB"): the
+# list is valid 24 hours and republished hourly. `wol trust update` fetches revoked.rkdb and the two
+# checkpoints itself (wol_core::trust::rkdb_urls, wol_core::cdn::RKDB_CHECKPOINTS), falling back to
+# revoked.json and its .wsig (wol_core::trust::revoked_urls), and installs them in
+# /var/lib/wolos/trust only when they verify against the image's roots, are not older than the
+# floor and keep every withdrawal held.
 set -u
 D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
 URL=${WOLOS_RELEASE_URL:-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
-# The revocation list, tried in order (wol_core::trust::revoked_urls, from wol_core::cdn::HOSTS):
-# the CDN under the project's domain, then the same server under its own name (an empty MIRROR is
-# skipped). The next one is read when one answers 404 or an error or cannot be reached.
-REVOKED_URL=${WOLOS_REVOKED_URL:-https://cdn.wolos.org/plugins/revoked.json}
-REVOKED_MIRROR=${WOLOS_REVOKED_MIRROR-https://wolos.squareweb.app/plugins/revoked.json}
 EVERY=72000
+if command -v wol >/dev/null 2>&1; then
+	mkdir -p /var/lib/wolos/trust 2>/dev/null
+	wol trust update >/dev/null 2>&1 ||
+		echo "update-check: could not update the list of withdrawn certificates" >&2
+fi
 now=$(date +%s)
 last=$(cat "$D/checked" 2>/dev/null)
 case $last in '' | *[!0-9]*) last=0 ;; esac
@@ -53,23 +56,6 @@ if curl -fsSL -o "$D/base.new" "$URL" 2>/dev/null &&
 	mv "$D/base.sig.new" "$D/base.sig"
 else
 	rm -f "$D/base.new" "$D/base.sig.new"
-fi
-# HTTPS only, no redirect to another scheme, at most 1 MiB and 64 KiB, 60 s each.
-T=$(mktemp -d) || T=
-# shellcheck disable=SC2064 # $T is fixed now: expand it when the trap is set, on purpose
-trap "[ -z '$T' ] || { rm -f '$T/revoked.json' '$T/revoked.json.wsig'; rmdir '$T' 2>/dev/null; }" EXIT
-# revoked URL: the list and its signature from one place; 0 when both came.
-revoked() {
-	[ -n "$1" ] &&
-		curl -fsSL --proto =https --proto-redir =https --max-filesize 1048576 --max-time 60 -o "$T/revoked.json" "$1" 2>/dev/null &&
-		curl -fsSL --proto =https --proto-redir =https --max-filesize 65536 --max-time 60 -o "$T/revoked.json.wsig" "$1.wsig" 2>/dev/null
-}
-if [ -n "$T" ]; then
-	if revoked "$REVOKED_URL" || revoked "$REVOKED_MIRROR"; then
-		mkdir -p /var/lib/wolos/trust
-		wol trust update "$T/revoked.json" "$T/revoked.json.wsig" >/dev/null 2>&1 ||
-			echo "update-check: the downloaded revocation list was not installed (not newer, or it does not verify)" >&2
-	fi
 fi
 date +%s >"$D/checked"
 chmod 644 "$D/pkg" "$D/checked"

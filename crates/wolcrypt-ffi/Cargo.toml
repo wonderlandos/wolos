@@ -1,0 +1,16 @@
+[package]
+name = "wolcrypt-ffi"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "libwolcrypt: wolcrypt behind a stable C ABI (wolcrypt.h, libwolcrypt.so.1, symbol versions WOLCRYPT_1.0)"
+
+[lib]
+name = "wolcrypt_ffi"
+# libwolcrypt.so.1 is linked from the staticlib by link.sh, so abi/wolcrypt.map alone decides the
+# exports (as libwolkit).
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+wolcrypt.workspace = true

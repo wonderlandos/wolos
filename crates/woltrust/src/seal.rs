@@ -1,27 +1,28 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Sealed messages, format `wolos/seal/1` (ADR 0046, "Encryption"): bytes encrypted to the
-//! encryption keys of one certificate with a hybrid KEM, X25519 plus ML-KEM-768, and
-//! ChaCha20-Poly1305. Both shared secrets go into the key, so a reader must break both halves;
-//! the whole header is the associated data, so the label, the recipient and both KEM ciphertexts
-//! cannot be changed without the open failing. Pure: the caller passes 64 fresh random bytes.
+//! Sealed messages (ADR 0046, "Encryption"): bytes encrypted to the encryption keys of one
+//! certificate with the hybrid KEM of [`wolcrypt::kem`] (X25519 plus ML-KEM-768, ChaCha20-Poly1305).
+//! Both shared secrets go into the key, so a reader must break both halves; the whole header is
+//! the associated data, so the label, the recipient and both KEM ciphertexts cannot be changed
+//! without the open failing. Pure: the caller passes 64 fresh random bytes.
 //!
-//! Layout (all lengths fixed except the label):
-//! `"wolos/seal/1" 0x00` (13) | label length (1, 1..=64) | label (ASCII) | recipient serial (16
-//! lowercase hex) | X25519 ephemeral public key (32) | ML-KEM-768 ciphertext (1088) | AEAD
-//! ciphertext and 16-byte tag. Key schedule: `okm = SHA-512("wolos/seal/1/kdf" 0x00 || ss_mlkem
-//! || ss_x25519 || x25519_ephemeral || x25519_recipient || SHA-512(mlkem_recipient) ||
-//! SHA-512(header))`, key = okm[0..32], nonce = okm[32..44]. Every key is used once.
+//! Layout (all lengths fixed except the label): format `"wolos/seal/2" 0x00` (13) | label length
+//! (1, 1..=64) | label (ASCII) | recipient certificate id (128 lowercase hex, rule "IDS") | X25519
+//! ephemeral public key (32) | ML-KEM-768 ciphertext (1088) | AEAD ciphertext and 16-byte tag.
+//! `wolos/seal/1` is the same with a 16-hex recipient serial: still opened, and still written for
+//! a recipient with a legacy-length serial (the TEST authority). Key schedule:
+//! `okm = SHA-512(format || "/kdf" 0x00 || ss_mlkem || ss_x25519 || x25519_ephemeral ||
+//! x25519_recipient || SHA-512(mlkem_recipient) || SHA-512(header))`, key = okm[0..32], nonce =
+//! okm[32..44]. Every key is used once.
 use crate::cert::{Cert, is_serial};
-use crate::crypto::{EncPublic, KEM_CT, KEM_PK, X_PK};
-use curve25519_dalek::montgomery::MontgomeryPoint;
-use fips203::ml_kem_768;
-use fips203::traits::{Decaps, Encaps, KeyGen, SerDes};
-use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
-use sha2::{Digest, Sha512};
-use zeroize::{Zeroize, Zeroizing};
+use crate::crypto::{EncPublic, KEM_CT, X_PK};
+use zeroize::Zeroizing;
 
-/// The format label, first in every sealed message.
-pub const FORMAT: &str = "wolos/seal/1";
+pub use wolcrypt::kem::EncSecret;
+
+/// The format label of new messages.
+pub const FORMAT: &str = "wolos/seal/2";
+/// The format of messages to a 16-hex serial.
+pub const FORMAT_1: &str = "wolos/seal/1";
 /// The label `wol encrypt` seals files under.
 pub const FILE_LABEL: &str = "wolos/file/1";
 /// Largest plaintext sealed or opened in one piece: 64 MiB.
@@ -30,52 +31,6 @@ pub const MAX_PLAINTEXT: usize = 64 << 20;
 pub const TAG: usize = 16;
 const MAGIC_LEN: usize = FORMAT.len() + 1;
 const MAX_LABEL: usize = 64;
-
-/// The secret half of a certificate's encryption keys, derived from the author's 32-byte seed.
-pub struct EncSecret {
-    x25519: Zeroizing<[u8; 32]>,
-    dk: Zeroizing<[u8; ml_kem_768::DK_LEN]>,
-    public: EncPublic,
-}
-
-fn derive(seed: &[u8; 32], what: &str) -> Zeroizing<[u8; 64]> {
-    let mut h = Sha512::new();
-    h.update(b"woltrust/");
-    h.update(what.as_bytes());
-    h.update([0]);
-    h.update(seed);
-    Zeroizing::new(h.finalize().into())
-}
-
-fn half(b: &[u8; 64], at: usize) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&b[at..at + 32]);
-    out
-}
-
-impl EncSecret {
-    /// The encryption key pair of `seed` (the same seed as the signing keys, another label).
-    pub fn from_seed(seed: &[u8; 32]) -> EncSecret {
-        let x = derive(seed, "x25519");
-        let x25519 = Zeroizing::new(half(&x, 0));
-        let m = derive(seed, "ml-kem-768");
-        let (ek, dk) = ml_kem_768::KG::keygen_from_seed(half(&m, 0), half(&m, 32));
-        let public = EncPublic {
-            x25519: MontgomeryPoint::mul_base_clamped(*x25519).to_bytes(),
-            ml_kem_768: Box::new(ek.into_bytes()),
-        };
-        EncSecret {
-            x25519,
-            dk: Zeroizing::new(dk.into_bytes()),
-            public,
-        }
-    }
-
-    /// The public halves (what goes into the certificate body).
-    pub fn public(&self) -> &EncPublic {
-        &self.public
-    }
-}
 
 /// Why a message could not be sealed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,9 +103,11 @@ impl SealError {
 /// The header fields of a sealed message, read without opening it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
+    /// `wolos/seal/2` or `wolos/seal/1`.
+    pub format: &'static str,
     /// The label it was sealed under.
     pub label: String,
-    /// Serial of the recipient certificate.
+    /// The recipient certificate's id (128 hex; 16 hex in `wolos/seal/1`).
     pub recipient: String,
     /// Length of the header (where the AEAD part starts).
     pub len: usize,
@@ -164,63 +121,38 @@ fn label_ok(l: &str) -> bool {
         })
 }
 
-/// Reads the header; `Malformed` when the bytes are not a `wolos/seal/1` message.
+/// Reads the header; `Malformed` when the bytes are not a `wolos/seal/2` or `wolos/seal/1`
+/// message.
 pub fn peek(sealed: &[u8]) -> Result<Header, OpenError> {
     let magic = sealed.get(..MAGIC_LEN).ok_or(OpenError::Malformed)?;
-    if magic.get(..FORMAT.len()) != Some(FORMAT.as_bytes()) || magic.last() != Some(&0) {
+    let (format, rlen) = if magic == b"wolos/seal/2\0" {
+        (FORMAT, wolcrypt::id::HEX_LEN)
+    } else if magic == b"wolos/seal/1\0" {
+        (FORMAT_1, 16)
+    } else {
         return Err(OpenError::Malformed);
-    }
+    };
     let n = usize::from(*sealed.get(MAGIC_LEN).ok_or(OpenError::Malformed)?);
     let at = MAGIC_LEN + 1;
     let label = sealed.get(at..at + n).ok_or(OpenError::Malformed)?;
     let label = std::str::from_utf8(label).map_err(|_| OpenError::Malformed)?;
     let serial = sealed
-        .get(at + n..at + n + 16)
+        .get(at + n..at + n + rlen)
         .ok_or(OpenError::Malformed)?;
     let serial = std::str::from_utf8(serial).map_err(|_| OpenError::Malformed)?;
     if !label_ok(label) || !is_serial(serial) {
         return Err(OpenError::Malformed);
     }
-    let len = at + n + 16 + X_PK + KEM_CT;
+    let len = at + n + rlen + X_PK + KEM_CT;
     if sealed.len() < len + TAG {
         return Err(OpenError::Malformed);
     }
     Ok(Header {
+        format,
         label: label.to_owned(),
         recipient: serial.to_owned(),
         len,
     })
-}
-
-fn kdf(
-    ss_m: &[u8],
-    ss_x: &[u8; 32],
-    eph: &[u8; 32],
-    to: &EncPublic,
-    header: &[u8],
-) -> Zeroizing<[u8; 64]> {
-    let mut h = Sha512::new();
-    h.update(FORMAT.as_bytes());
-    h.update(b"/kdf\0");
-    h.update(ss_m);
-    h.update(ss_x);
-    h.update(eph);
-    h.update(to.x25519);
-    h.update(Sha512::digest(&to.ml_kem_768[..]));
-    h.update(Sha512::digest(header));
-    Zeroizing::new(h.finalize().into())
-}
-
-fn aead(okm: &[u8; 64]) -> Option<(LessSafeKey, Nonce)> {
-    let key = UnboundKey::new(&CHACHA20_POLY1305, &okm[..32]).ok()?;
-    let nonce = Nonce::try_assume_unique_for_key(&okm[32..44]).ok()?;
-    Some((LessSafeKey::new(key), nonce))
-}
-
-/// X25519 with the all-zero output (a low-order point) refused.
-fn x25519(secret: &[u8; 32], public: &[u8; 32]) -> Option<Zeroizing<[u8; 32]>> {
-    let ss = Zeroizing::new(MontgomeryPoint(*public).mul_clamped(*secret).to_bytes());
-    (ss.iter().any(|b| *b != 0)).then_some(ss)
 }
 
 /// Seals `plaintext` to the encryption keys of `cert` under `label`. `rnd` must be 64 fresh random
@@ -235,7 +167,8 @@ pub fn seal(
     seal_to(to, &cert.body.serial, label, plaintext, rnd)
 }
 
-/// [`seal`] to raw encryption keys and a serial.
+/// [`seal`] to raw encryption keys and a certificate id (`wolos/seal/2`), or a 16-hex serial
+/// (`wolos/seal/1`).
 pub fn seal_to(
     to: &EncPublic,
     serial: &str,
@@ -252,30 +185,15 @@ pub fn seal_to(
     if !is_serial(serial) {
         return Err(SealError::BadKey);
     }
-    let ek =
-        ml_kem_768::EncapsKey::try_from_bytes(*to.ml_kem_768).map_err(|_| SealError::BadKey)?;
-    let eph_secret = Zeroizing::new(half(rnd, 0));
-    let eph = MontgomeryPoint::mul_base_clamped(*eph_secret).to_bytes();
-    let ss_x = x25519(&eph_secret, &to.x25519).ok_or(SealError::BadKey)?;
-    let (ss_m, ct) = ek.encaps_from_seed(&half(rnd, 32));
-    let ss_m = Zeroizing::new(ss_m.into_bytes());
+    let format = if serial.len() == 16 { FORMAT_1 } else { FORMAT };
     let label_len = u8::try_from(label.len()).map_err(|_| SealError::BadLabel)?;
-    let mut out = Vec::with_capacity(MAGIC_LEN + 1 + label.len() + 16 + X_PK + KEM_CT);
-    out.extend_from_slice(FORMAT.as_bytes());
-    out.push(0);
-    out.push(label_len);
-    out.extend_from_slice(label.as_bytes());
-    out.extend_from_slice(serial.as_bytes());
-    out.extend_from_slice(&eph);
-    out.extend_from_slice(&ct.into_bytes());
-    let okm = kdf(&ss_m[..], &ss_x, &eph, to, &out);
-    let (key, nonce) = aead(&okm).ok_or(SealError::BadKey)?;
-    let mut body = plaintext.to_vec();
-    key.seal_in_place_append_tag(nonce, Aad::from(&out[..]), &mut body)
-        .map_err(|_| SealError::TooLarge)?;
-    out.extend_from_slice(&body);
-    body.zeroize();
-    Ok(out)
+    let mut prefix = Vec::with_capacity(MAGIC_LEN + 1 + label.len() + serial.len());
+    prefix.extend_from_slice(format.as_bytes());
+    prefix.push(0);
+    prefix.push(label_len);
+    prefix.extend_from_slice(label.as_bytes());
+    prefix.extend_from_slice(serial.as_bytes());
+    wolcrypt::kem::seal(format, to, &prefix, plaintext, rnd).map_err(|_| SealError::BadKey)
 }
 
 /// Opens a message sealed to `serial` (whose secret keys are `keys`) under `label`. The plaintext
@@ -296,69 +214,24 @@ pub fn open(
     if h.label != label {
         return Err(OpenError::WrongLabel);
     }
-    let (header, rest) = sealed.split_at(h.len);
-    let at = h.len - X_PK - KEM_CT;
-    let mut eph = [0u8; X_PK];
-    eph.copy_from_slice(&header[at..at + X_PK]);
-    let mut ct = [0u8; KEM_CT];
-    ct.copy_from_slice(&header[at + X_PK..]);
-    let ct = ml_kem_768::CipherText::try_from_bytes(ct).map_err(|_| OpenError::Damaged)?;
-    let dk = ml_kem_768::DecapsKey::try_from_bytes(*keys.dk).map_err(|_| OpenError::Damaged)?;
-    let ss_m = Zeroizing::new(
-        dk.try_decaps(&ct)
-            .map_err(|_| OpenError::Damaged)?
-            .into_bytes(),
-    );
-    let ss_x = x25519(&keys.x25519, &eph).ok_or(OpenError::Damaged)?;
-    let okm = kdf(&ss_m[..], &ss_x, &eph, &keys.public, header);
-    let (key, nonce) = aead(&okm).ok_or(OpenError::Damaged)?;
-    let mut body = Zeroizing::new(rest.to_vec());
-    let n = key
-        .open_in_place(nonce, Aad::from(header), &mut body)
-        .map_err(|_| OpenError::Damaged)?
-        .len();
-    body.truncate(n);
-    Ok(body)
+    let prefix = h.len - X_PK - KEM_CT;
+    wolcrypt::kem::open(h.format, keys, sealed, prefix).map_err(|_| OpenError::Damaged)
 }
 
 /// Bytes a sealed message adds to its plaintext for `label`.
 pub fn overhead(label: &str) -> usize {
-    MAGIC_LEN + 1 + label.len() + 16 + X_PK + KEM_CT + TAG
+    overhead_to(label, wolcrypt::id::HEX_LEN)
 }
 
-const _: () = assert!(KEM_PK == ml_kem_768::EK_LEN && KEM_CT == ml_kem_768::CT_LEN);
+/// Bytes a sealed message adds for `label` and a recipient of `recipient_len` hex characters
+/// (16 for `wolos/seal/1`).
+pub fn overhead_to(label: &str, recipient_len: usize) -> usize {
+    MAGIC_LEN + 1 + label.len() + recipient_len + X_PK + KEM_CT + TAG
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn hex32(s: &str) -> [u8; 32] {
-        let mut out = [0u8; 32];
-        for (i, b) in out.iter_mut().enumerate() {
-            *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap_or(0);
-        }
-        out
-    }
-
-    #[test]
-    fn x25519_matches_rfc_7748_section_6_1() {
-        let a = hex32("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
-        let b = hex32("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
-        let a_pub = MontgomeryPoint::mul_base_clamped(a).to_bytes();
-        let b_pub = MontgomeryPoint::mul_base_clamped(b).to_bytes();
-        assert_eq!(
-            a_pub,
-            hex32("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
-        );
-        assert_eq!(
-            b_pub,
-            hex32("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f")
-        );
-        let k = hex32("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742");
-        assert_eq!(x25519(&a, &b_pub).map(|s| *s), Some(k));
-        assert_eq!(x25519(&b, &a_pub).map(|s| *s), Some(k));
-        assert!(x25519(&a, &[0u8; 32]).is_none(), "low-order point refused");
-    }
 
     #[test]
     fn seal_then_open_round_trips_and_binds_everything() {
@@ -366,7 +239,7 @@ mod tests {
         let serial = "0123456789abcdef";
         let msg = b"hello sealed world";
         let s = seal_to(me.public(), serial, FILE_LABEL, msg, &[9; 64]).unwrap();
-        assert_eq!(s.len(), msg.len() + overhead(FILE_LABEL));
+        assert_eq!(s.len(), msg.len() + overhead_to(FILE_LABEL, 16));
         assert_eq!(&open(&me, serial, FILE_LABEL, &s).unwrap()[..], msg);
         assert_eq!(
             open(&me, "fedcba9876543210", FILE_LABEL, &s).err(),
@@ -410,7 +283,7 @@ mod tests {
             Some(SealError::BadKey)
         );
         let mut bad = me.public().clone();
-        *bad.ml_kem_768 = [0xff; KEM_PK];
+        *bad.ml_kem_768 = [0xff; crate::crypto::KEM_PK];
         assert_eq!(
             seal_to(&bad, s, FILE_LABEL, b"", &[1; 64]).err(),
             Some(SealError::BadKey)

@@ -270,6 +270,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "cert.decrypt" => crate::cert::decrypt(env, inv),
         "trust.status" => crate::cert::status(env, inv),
         "trust.update" => crate::cert::update(env, inv),
+        "trust.show" => crate::cert::show_line(env, inv),
         "encrypt.rebind" => crate::seal::rebind(env),
         "encrypt.reseal" => crate::seal::reseal(env),
         "encrypt.password" => crate::seal::password(env, inv),

@@ -197,7 +197,7 @@ const BASE: Case<'static> = Case {
 };
 
 fn cases(big: &[u8]) -> Vec<Case<'_>> {
-    let header_end = seal::overhead(FILE_LABEL) - seal::TAG;
+    let header_end = seal::overhead_to(FILE_LABEL, 16) - seal::TAG;
     vec![
         Case {
             name: "sealed-to-person",

@@ -5,132 +5,45 @@
 //! be reproduced byte for byte. The production CA keys never come through here: the intermediates
 //! sign remotely and the roots at the ceremony.
 use crate::cert::{self, Body};
-use crate::crypto::{PublicKeys, Purpose, Second, Sig, Wsig, message};
+use crate::crypto::{PublicKeys, Purpose, Second, Sig, Wsig};
 use crate::{b64, revoked};
-use fips204::ml_dsa_65;
-use fips204::traits::{KeyGen as MlKeyGen, SerDes as MlSerDes, Signer as MlSigner};
-use fips205::slh_dsa_sha2_128s;
-use fips205::traits::{KeyGen as SlhKeyGen, SerDes as SlhSerDes, Signer as SlhSigner};
-use fips205::{CryptoRng, RngCore};
-use sha2::{Digest, Sha512};
+use wolcrypt::sign::{Scheme, SigningKey};
 
-/// A signing key pair derived from a seed.
+/// A signing key pair derived from a seed ([`wolcrypt::sign::SigningKey`]; wiped on drop).
 pub struct Secret {
-    seed: zeroize::Zeroizing<[u8; 32]>,
-    root: bool,
-    ed: ed25519_dalek::SigningKey,
-    keys: PublicKeys,
+    key: SigningKey,
 }
-
-fn derive(seed: &[u8; 32], what: &str) -> [u8; 64] {
-    let mut h = Sha512::new();
-    h.update(b"woltrust/");
-    h.update(what.as_bytes());
-    h.update([0]);
-    h.update(seed);
-    h.finalize().into()
-}
-
-fn first<const N: usize>(b: &[u8; 64]) -> [u8; N] {
-    let mut out = [0u8; N];
-    out.copy_from_slice(&b[..N]);
-    out
-}
-
-/// Fills with zeros: SLH-DSA is called with `hedged = false`, which never reads the generator.
-struct NoRandom;
-
-impl RngCore for NoRandom {
-    fn next_u32(&mut self) -> u32 {
-        0
-    }
-    fn next_u64(&mut self) -> u64 {
-        0
-    }
-    fn fill_bytes(&mut self, out: &mut [u8]) {
-        out.fill(0);
-    }
-    fn try_fill_bytes(&mut self, out: &mut [u8]) -> Result<(), fips205::RngError> {
-        out.fill(0);
-        Ok(())
-    }
-}
-
-impl CryptoRng for NoRandom {}
 
 impl Secret {
     /// The key pair for `seed`: Ed25519 plus SLH-DSA-SHA2-128s when `root`, else Ed25519 plus
     /// ML-DSA-65.
     pub fn from_seed(seed: &[u8; 32], root: bool) -> Secret {
-        let ed = ed25519_dalek::SigningKey::from_bytes(&first::<32>(&derive(seed, "ed25519")));
-        let second = if root {
-            let d = derive(seed, "slh-dsa-sha2-128s");
-            let (pk, _) = slh_dsa_sha2_128s::KG::keygen_from_seed(
-                &first::<16>(&d),
-                &d_part(&d, 16),
-                &d_part(&d, 32),
-            );
-            Second::Slh(Box::new(pk.into_bytes()))
-        } else {
-            let (pk, _) = ml_dsa_65::KG::keygen_from_seed(&first::<32>(&derive(seed, "ml-dsa-65")));
-            Second::MlDsa65(Box::new(pk.into_bytes()))
-        };
-        let keys = PublicKeys {
-            ed25519: ed.verifying_key().to_bytes(),
-            second,
-        };
+        let scheme = if root { Scheme::Root } else { Scheme::Signing };
         Secret {
-            seed: zeroize::Zeroizing::new(*seed),
-            root,
-            ed,
-            keys,
+            key: SigningKey::from_seed(seed, scheme),
         }
     }
 
     /// The public halves.
     pub fn public(&self) -> &PublicKeys {
-        &self.keys
+        self.key.public()
     }
 
     /// Signs `label || 0 || SHA-512(content)` with both halves.
     pub fn sign(&self, purpose: Purpose, content: &[u8]) -> Sig {
-        self.sign_message(&message(purpose, content))
+        self.key.sign(purpose.label(), content)
     }
 
     /// Signs an already built message (`crate::crypto::message_for`) with both halves.
     pub fn sign_message(&self, msg: &[u8]) -> Sig {
-        use ed25519_dalek::Signer;
-        let ed25519 = self.ed.sign(msg).to_bytes();
-        let second = if self.root {
-            let d = derive(&self.seed, "slh-dsa-sha2-128s");
-            let (_, sk) = slh_dsa_sha2_128s::KG::keygen_from_seed(
-                &first::<16>(&d),
-                &d_part(&d, 16),
-                &d_part(&d, 32),
-            );
-            sk.try_sign_with_rng(&mut NoRandom, msg, &[], false)
-                .map(|s| s.to_vec())
-                .unwrap_or_default()
-        } else {
-            let (_, sk) =
-                ml_dsa_65::KG::keygen_from_seed(&first::<32>(&derive(&self.seed, "ml-dsa-65")));
-            let mut rnd = Sha512::new();
-            rnd.update(b"woltrust/rnd\0");
-            rnd.update(&self.seed[..]);
-            rnd.update(msg);
-            let rnd: [u8; 64] = rnd.finalize().into();
-            sk.try_sign_with_seed(&first::<32>(&rnd), msg, &[])
-                .map(|s| s.to_vec())
-                .unwrap_or_default()
-        };
-        Sig { ed25519, second }
+        self.key.sign_message(msg)
     }
-}
 
-fn d_part(d: &[u8; 64], at: usize) -> [u8; 16] {
-    let mut out = [0u8; 16];
-    out.copy_from_slice(&d[at..at + 16]);
-    out
+    /// The certificate id of these keys with `enc` (rule "IDS": SHA-512 over the public keys in
+    /// order), as 128 hex.
+    pub fn id(&self, enc: Option<&crate::crypto::EncPublic>) -> String {
+        wolcrypt::id::to_hex(&wolcrypt::id::of_keys(self.public(), enc))
+    }
 }
 
 /// The `Keys` text of a body for `secret`.
@@ -154,6 +67,21 @@ pub fn issue(body: &Body, issuer: &Secret) -> Vec<u8> {
     cert::encode(&body_bytes, &sig)
 }
 
+/// `.wolcert` bytes for an intermediate signed by `issuer` (the root `body.issuer` names) and
+/// co-signed by each of `cosigners` (`(root id, key)`; the other root).
+pub fn issue_cosigned(body: &Body, issuer: &Secret, cosigners: &[(&str, &Secret)]) -> Vec<u8> {
+    let body_bytes = serde_json::to_vec(body).unwrap_or_default();
+    let sig = issuer.sign(Purpose::Cert, &body_bytes);
+    let cosigs: Vec<cert::CoSig> = cosigners
+        .iter()
+        .map(|(id, k)| cert::CoSig {
+            issuer: (*id).to_owned(),
+            sig: k.sign(Purpose::Cert, &body_bytes),
+        })
+        .collect();
+    cert::encode_with(&body_bytes, &sig, &cosigs)
+}
+
 /// A `.wsig` for `content` by the certificate `serial`, signed by `secret`.
 pub fn wsig(serial: &str, secret: &Secret, purpose: Purpose, content: &[u8]) -> Vec<u8> {
     let s = secret.sign(purpose, content);
@@ -162,6 +90,7 @@ pub fn wsig(serial: &str, secret: &Secret, purpose: Purpose, content: &[u8]) -> 
         ed25519: b64::encode(&s.ed25519),
         second: b64::encode(&s.second),
         origin: None,
+        at: None,
     }
     .to_bytes()
 }
@@ -183,6 +112,7 @@ pub fn wsig_with_origin(
         ed25519: b64::encode(&s.ed25519),
         second: b64::encode(&s.second),
         origin: Some(b64::encode(origin)),
+        at: None,
     }
     .to_bytes()
 }
@@ -201,7 +131,7 @@ pub fn revocation_list(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::verify_hybrid;
+    use crate::crypto::{message, verify_hybrid};
 
     #[test]
     fn signing_is_deterministic_and_verifies() {

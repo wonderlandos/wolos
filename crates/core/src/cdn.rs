@@ -52,6 +52,16 @@ pub const REPORT: [&str; 2] = [
     concat!(mirror!(), "/report"),
 ];
 
+/// The revocation database's checkpoint (`{"format":1,"serial":N,"sha512_256":".."}`, ADR 0046
+/// "RKDB"), published twice and read from both: the CDN under the project's domain, and the
+/// public log, the hub-index repository on GitHub (its history is public and append-only in
+/// practice). They must agree; when they do not, `wol trust update` warns and keeps the higher
+/// serial as its floor.
+pub const RKDB_CHECKPOINTS: [&str; 2] = [
+    concat!(primary!(), "/plugins/revoked.checkpoint.json"),
+    "https://raw.githubusercontent.com/wonderlandos/hub-index/main/revoked.checkpoint.json",
+];
+
 /// The Crystal shard index (`index.json`, its signature at `index.json.sig`): a Cloudflare Worker
 /// on the project's domain serving the `wolos-shards` repository's published files. wopkg's shard
 /// index (`wopkg::index::shards::DEFAULT_URL`) reads it.

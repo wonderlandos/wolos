@@ -15,12 +15,20 @@ use sha2::{Digest, Sha256};
 /// The label of a proof of possession.
 pub const LABEL: &str = "wolos/request/1";
 
-/// 16 hex characters naming a public Ed25519 key: the first 8 bytes of its SHA-256.
+/// 16 hex characters naming a public Ed25519 key: the first 8 bytes of its SHA-256. The short
+/// name of before rule "IDS" (key files made then, WolOS's previous flat keys in older lists);
+/// new names are [`crate::key::KeyMaterial::key_id`] and [`legacy_key_id`].
 pub fn key_id(ed25519: &[u8; 32]) -> String {
     Sha256::digest(ed25519)[..8]
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// The id of WolOS's previous flat Ed25519 key under rule "IDS": SHA-512 of its 32 bytes, 128
+/// hex. A revocation names it so (the 16-hex [`key_id`] is still honoured).
+pub fn legacy_key_id(ed25519: &[u8; 32]) -> String {
+    wolcrypt::id::to_hex(&wolcrypt::id::of_ed25519(ed25519))
 }
 
 /// What the CA copies from a request into the certificate, all covered by the proof (audit H2):
@@ -41,6 +49,8 @@ pub struct Claimed<'a> {
     pub namespaces: &'a [String],
     /// Every public key.
     pub keys: &'a KeysText,
+    /// The trust terms accepted, when the request names them.
+    pub terms: Option<&'a crate::cert::Terms>,
 }
 
 impl<'a> Claimed<'a> {
@@ -54,6 +64,7 @@ impl<'a> Claimed<'a> {
             org: b.subject.org.as_ref(),
             namespaces: &b.namespaces,
             keys: &b.keys,
+            terms: b.terms.as_ref(),
         })
     }
 
@@ -67,18 +78,21 @@ impl<'a> Claimed<'a> {
             org: r.subject.org.as_ref(),
             namespaces: &r.namespaces,
             keys: &r.keys,
+            terms: r.terms.as_ref(),
         })
     }
 
     /// The bytes a proof signs: the JSON array `[github_id, kind, login, name, org, namespaces,
     /// ed25519, ml-dsa-65, slh-dsa-sha2-128s, x25519, ml-kem-768]` (absent values `null`, `org` as
-    /// `{"github_id","login"}`), so no field can bleed into the next.
+    /// `{"github_id","login"}`), so no field can bleed into the next. With terms, a twelfth
+    /// element `{"version","sha256"}` follows (absent: the eleven of before, so older proofs
+    /// still verify).
     pub fn content(&self) -> Vec<u8> {
         let org = self
             .org
             .map(|o| serde_json::json!({"github_id": o.github_id, "login": o.login}));
         let k = self.keys;
-        serde_json::to_vec(&serde_json::json!([
+        let mut v = serde_json::json!([
             self.github_id,
             kind_name(self.kind),
             self.login,
@@ -90,8 +104,11 @@ impl<'a> Claimed<'a> {
             k.slh_dsa_sha2_128s,
             k.x25519,
             k.ml_kem_768,
-        ]))
-        .unwrap_or_default()
+        ]);
+        if let (Some(t), Some(a)) = (self.terms, v.as_array_mut()) {
+            a.push(serde_json::json!({"version": t.version, "sha256": t.sha256}));
+        }
+        serde_json::to_vec(&v).unwrap_or_default()
     }
 }
 
@@ -167,6 +184,10 @@ pub struct Request {
     pub months: u32,
     /// Unix seconds.
     pub requested_at: u64,
+    /// The trust terms accepted (`wolos.org/terms/trust/v<version>` and the SHA-256 of its text);
+    /// covered by the proof and copied into the certificate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms: Option<crate::cert::Terms>,
 }
 
 /// Largest request file read: keys and proof are about 7 KB of base64, the hub's additions a few
@@ -200,7 +221,7 @@ impl RequestError {
 }
 
 /// The top-level fields of a [`Request`]; [`parse`] ignores every other one.
-pub const FIELDS: [&str; 9] = [
+pub const FIELDS: [&str; 10] = [
     "format",
     "action",
     "kind",
@@ -210,6 +231,7 @@ pub const FIELDS: [&str; 9] = [
     "proof",
     "months",
     "requested_at",
+    "terms",
 ];
 
 /// Reads a request file within [`MAX_REQUEST`]. Unknown top-level fields are ignored (the hub's
@@ -280,6 +302,7 @@ mod tests {
             verified_at: None,
             class: None,
             origin_cert: None,
+            terms: None,
         }
     }
 

@@ -108,6 +108,8 @@ fn issue_signs_exactly_the_body_and_needs_a_valid_proof() {
     };
     let mut body = pki::body(&spec, &author.secret());
     body.keys = author.keys_text();
+    // Rule "IDS": the serial is the id of the keys.
+    body.serial = author.key_id();
     let body_bytes = serde_json::to_vec(&body).expect("json");
     let body_file = write(&d, "body.json", &body_bytes);
     let proof = request::prove(
@@ -315,8 +317,10 @@ fn init_writes_locked_keys_that_sign_from_the_environment() {
             "init",
             "--out",
             &dir,
-            "--subject",
+            "--subject-a",
             "WolOS test authority - example.org",
+            "--subject-b",
+            "WolOS test project - hello@example.org",
             "--passphrase-env",
             "P",
         ],
@@ -334,10 +338,15 @@ fn init_writes_locked_keys_that_sign_from_the_environment() {
         .flatten()
     {
         let c = woltrust::Cert::parse(&std::fs::read(e.path()).expect("root")).expect("parses");
+        let want = if c.body.subject.label.as_deref() == Some("wolos-root-a") {
+            "WolOS test authority - example.org"
+        } else {
+            "WolOS test project - hello@example.org"
+        };
         assert_eq!(
             c.body.subject.text.as_deref(),
-            Some("WolOS test authority - example.org"),
-            "the subject text is signed in each root"
+            Some(want),
+            "each root carries its own subject text, signed"
         );
     }
     let roots = std::fs::read_dir(out_dir.join("public/roots"))
@@ -346,7 +355,11 @@ fn init_writes_locked_keys_that_sign_from_the_environment() {
     let inter = std::fs::read_dir(out_dir.join("public/intermediates"))
         .expect("inter")
         .count();
-    assert_eq!((roots, inter), (2, 3));
+    assert_eq!(
+        (roots, inter),
+        (2, 5),
+        "two roots, three CAs, two witnesses"
+    );
     let index_key = std::fs::read_to_string(out_dir.join("ci/index.wolkey")).expect("key");
     let ci_pass = std::fs::read_to_string(out_dir.join("ci/passphrase")).expect("pass");
     let serial = woltrust::wolkey::name_of(index_key.as_bytes()).expect("name");
@@ -409,8 +422,10 @@ fn init_writes_locked_keys_that_sign_from_the_environment() {
             "init",
             "--out",
             &dir,
-            "--subject",
+            "--subject-a",
             "WolOS test authority",
+            "--subject-b",
+            "WolOS test project",
             "--passphrase-env",
             "P",
         ],

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! `woltrust-vectors <dir>` writes pki.json and one JSON file per vector into `<dir>`, and the
 //! sealed-message vectors (keys.json and one file each) into `<dir>/seal` and the certificate
-//! request vectors into `<dir>/request` and the file certificate vectors into `<dir>/filecert`;
+//! request vectors into `<dir>/request`, the file certificate vectors into `<dir>/filecert` and the
+//! revocation database vectors into `<dir>/rkdb`;
 //! `woltrust-vectors --check <dir>` regenerates them and fails if any byte differs. A development
 //! tool over the TEST authority; it is not shipped and holds no production key.
 #![forbid(unsafe_code)]
@@ -49,6 +50,16 @@ fn run(check: bool, dir: &Path) -> Result<usize, String> {
             woltrust::vectors::to_text(v),
         ));
     }
+    for v in &woltrust::rkdb_vectors::generate()? {
+        files.push((
+            format!("rkdb/{}.json", v.name),
+            woltrust::vectors::to_text(v),
+        ));
+    }
+    files.push((
+        "lines.json".to_owned(),
+        woltrust::vectors::to_text(&woltrust::vectors_ids::cert_lines()),
+    ));
     for v in &woltrust::request_vectors::generate()? {
         files.push((
             format!("request/{}.json", v.name),
@@ -64,7 +75,7 @@ fn run(check: bool, dir: &Path) -> Result<usize, String> {
                 return Err(format!("{} differs", path.display()));
             }
         } else {
-            for sub in ["seal", "request", "filecert"] {
+            for sub in ["seal", "request", "filecert", "rkdb"] {
                 std::fs::create_dir_all(dir.join(sub)).map_err(|e| e.to_string())?;
             }
             std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;

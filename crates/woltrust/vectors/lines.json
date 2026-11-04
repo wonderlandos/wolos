@@ -1,0 +1,19 @@
+{
+  "alice": "<alice> <github:1001> <issued-by: TEST WolOS Authors> <wolos.org/trust/fd51eec17572cf6c> <namespaces: alice.> valid-until <2027-01-03> <origin>",
+  "alice-trusted": "<alice> <github:1001> <issued-by: TEST WolOS Authors> <wolos.org/trust/62a1405a7ede3967> <namespaces: alice.> valid-until <2027-01-03> <trusted> <origin-cert: fd51eec17572cf6c>",
+  "ana": "<ana> <github:4004> <issued-by: TEST WolOS Authors> <wolos.org/trust/7118149e9558d04b> <namespaces: ana.> valid-until <2027-01-03> <origin>",
+  "authors": "<test-authors> <issued-by: test-root-a> <wolos.org/trust/2ae32495ac831014> valid-until <2029-01-02> <ed25519+ml-dsa-65>",
+  "authors-2": "<test-authors-2> <issued-by: test-root-a | test-root-b> <wolos.org/trust/8ab57833404a6186e9c70ad11887332f2efd3ca8b0389907f898b5000d44b687f6fe996d9bb61a64674b561a5a6060f98a9b875200ca21159489f394296313c0> valid-until <2029-02-01> <ed25519+ml-dsa-65>",
+  "bob": "<bob> <github:3003> <issued-by: TEST WolOS Authors> <wolos.org/trust/1b5dec99507b7a617023f08154fb7d0c36cbe3b383c381fc56e12d3a986373997a54c5ac7e4e8f3e7d4b5f3538a867be4ccbac5b3184af30555835f51ba77649> <namespaces: bob.> valid-until <2027-01-03> <origin>",
+  "example-authors-ca": "<wolos-authors-ca> <issued-by: Júlia Klee - Kleedolinux - WolOS.org - 10/04/2009 - 9 de Julho 1932 - São Paulo | WolOS Project - hello@wolos.org> <wolos.org/trust/ef406a215f56c0d4805b4fb062c2f152ebcf546845d6b2d451788f760fec9021c70ba4db336371cb0d5870cdada5c3dfc6df46cde2e64c998f6039ab45d63be0> valid-until <2029-02-01> <ed25519+ml-dsa-65>",
+  "example-root-a": "<Júlia Klee - Kleedolinux - WolOS.org - 10/04/2009 - 9 de Julho 1932 - São Paulo> <root> <wolos.org/trust/0fc58c69adc0163fa3393d1de54f943b86b33e801a4319933c363e86a87a68d495452fa04e22afdaa4cd0aa0d7f9f0ea9c9996aa9ae0fb5e699f6f3f312f6394> valid-until <2046-01-28> <ed25519+slh-dsa-sha2-128s>",
+  "example-root-b": "<WolOS Project - hello@wolos.org> <root> <wolos.org/trust/ec35488c26c11b1582be16a4bddef08518cdf3cfcbca31c1a022e202b7974f0dd8a5c05c5e6a6846bab3f17f3f5f03725dcc87bcece84069baa910be62ea9375> valid-until <2046-01-28> <ed25519+slh-dsa-sha2-128s>",
+  "index": "<test-index> <issued-by: test-root-a> <wolos.org/trust/0e972272c2e22af3> valid-until <2029-01-02> <ed25519+ml-dsa-65>",
+  "index-2": "<test-index-2> <issued-by: test-root-a | test-root-b> <wolos.org/trust/6123df82f4bba0b6d2afff2764cd372d02a35bb48f127cb7b9a2783716ed213db683b7729716c16cf2eaf97dc4c55c487f3a748bf0bd57898b590cbf9028f56d> valid-until <2029-02-01> <ed25519+ml-dsa-65>",
+  "org": "<org/examplelabs> <github:2002> <issued-by: TEST WolOS Authors> <wolos.org/trust/36a3609eff7d96b1> <namespaces: examplelabs.> valid-until <2027-01-03> <origin>",
+  "packages": "<test-packages> <issued-by: test-root-a> <wolos.org/trust/2025e27a1c80ee6f> valid-until <2029-01-02> <ed25519+ml-dsa-65>",
+  "root-a": "<test-root-a> <root> <wolos.org/trust/1a17f8a2e51de4d2> valid-until <2045-12-29> <ed25519+slh-dsa-sha2-128s>",
+  "root-b": "<test-root-b> <root> <wolos.org/trust/d15d9b056ed91334> valid-until <2045-12-29> <ed25519+slh-dsa-sha2-128s>",
+  "signer": "<test-signer> <issued-by: TEST WolOS Packages> <wolos.org/trust/4270de06992f0ebd> <namespaces: org.wolos.> valid-until <2027-01-03> <wolos>",
+  "witness-a": "<test-witness-a> <issued-by: test-root-a | test-root-b> <wolos.org/trust/9fa0f0544783dd2270c968c1e6562a12ef2d4608a27267de72851c79223328aebfa40232f47ef27fd381912e60750c59452f52de9127d32dfbd5e7f0f8ec5a29> valid-until <2029-02-01> <ed25519+ml-dsa-65>"
+}

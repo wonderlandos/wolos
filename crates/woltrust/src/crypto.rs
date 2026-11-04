@@ -6,50 +6,16 @@
 //! "either" mode: the key set of the issuer fixes the pair.
 use crate::b64;
 use crate::cert::Usage;
-use fips204::ml_dsa_65;
-use fips204::traits::{SerDes as MlSerDes, Verifier as MlVerifier};
-use fips205::slh_dsa_sha2_128s;
-use fips205::traits::{SerDes as SlhSerDes, Verifier as SlhVerifier};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha512};
 
-/// Ed25519 public key length.
-pub const ED_PK: usize = 32;
-/// Ed25519 signature length.
-pub const ED_SIG: usize = 64;
-/// ML-DSA-65 public key length.
-pub const ML_PK: usize = ml_dsa_65::PK_LEN;
-/// ML-DSA-65 signature length.
-pub const ML_SIG: usize = ml_dsa_65::SIG_LEN;
-/// SLH-DSA-SHA2-128s public key length.
-pub const SLH_PK: usize = slh_dsa_sha2_128s::PK_LEN;
-/// SLH-DSA-SHA2-128s signature length.
-pub const SLH_SIG: usize = slh_dsa_sha2_128s::SIG_LEN;
-
-/// X25519 public key length.
-pub const X_PK: usize = 32;
-/// ML-KEM-768 encapsulation key length (FIPS 203).
-pub const KEM_PK: usize = 1184;
-/// ML-KEM-768 ciphertext length (FIPS 203).
-pub const KEM_CT: usize = 1088;
-
-/// The encryption keys of one certificate: both halves of the hybrid KEM of `wolos/seal/1`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EncPublic {
-    /// X25519 public key.
-    pub x25519: [u8; X_PK],
-    /// ML-KEM-768 encapsulation key.
-    pub ml_kem_768: Box<[u8; KEM_PK]>,
-}
+pub use wolcrypt::kem::{EncPublic, KEM_CT, KEM_PK, X_PK};
+pub use wolcrypt::sign::{
+    ED_PK, ED_SIG, Fail, ML_PK, ML_SIG, PublicKeys, SLH_PK, SLH_SIG, Second, Sig,
+};
 
 /// `label || 0x00 || SHA-512(content)` for a label outside [`Purpose`] (the request proof).
 pub fn message_for(label: &str, content: &[u8]) -> Vec<u8> {
-    let label = label.as_bytes();
-    let mut m = Vec::with_capacity(label.len() + 1 + 64);
-    m.extend_from_slice(label);
-    m.push(0);
-    m.extend_from_slice(&Sha512::digest(content));
-    m
+    wolcrypt::sign::message(label, content)
 }
 
 /// What a signature is for. The label is part of the signed message.
@@ -69,11 +35,13 @@ pub enum Purpose {
     Revocation,
     /// A file certificate: what WolOS Hub checked about one release (`crate::filecert`).
     Release,
+    /// A witness's detached signature on a published file (`crate::witness`).
+    Witness,
 }
 
 impl Purpose {
-    /// All seven, in label order.
-    pub const ALL: [Purpose; 7] = [
+    /// All eight, in label order.
+    pub const ALL: [Purpose; 8] = [
         Purpose::Cert,
         Purpose::Package,
         Purpose::Plugin,
@@ -81,6 +49,7 @@ impl Purpose {
         Purpose::Index,
         Purpose::Revocation,
         Purpose::Release,
+        Purpose::Witness,
     ];
 
     /// The label signed in front of the content hash.
@@ -93,6 +62,7 @@ impl Purpose {
             Purpose::Index => "wolos/index/1",
             Purpose::Revocation => "wolos/revocation/1",
             Purpose::Release => "wolos/release/1",
+            Purpose::Witness => "wolos/witness/1",
         }
     }
 
@@ -107,6 +77,7 @@ impl Purpose {
             Purpose::Revocation => Usage::SignRevocations,
             // The Index intermediate signs file certificates, as it signs the index.
             Purpose::Release => Usage::SignIndex,
+            Purpose::Witness => Usage::Witness,
         }
     }
 
@@ -121,72 +92,10 @@ pub fn message(purpose: Purpose, content: &[u8]) -> Vec<u8> {
     message_for(purpose.label(), content)
 }
 
-/// The second public key of a certificate: fixed by the kind of key set.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Second {
-    /// ML-DSA-65 (intermediates, signers, people, organisations).
-    MlDsa65(Box<[u8; ML_PK]>),
-    /// SLH-DSA-SHA2-128s (roots).
-    Slh(Box<[u8; SLH_PK]>),
-}
-
-/// The public keys of one certificate.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PublicKeys {
-    /// Ed25519 public key.
-    pub ed25519: [u8; ED_PK],
-    /// The post-quantum half.
-    pub second: Second,
-}
-
-/// A hybrid signature as raw bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Sig {
-    /// Ed25519 signature.
-    pub ed25519: [u8; ED_SIG],
-    /// ML-DSA-65 or SLH-DSA-SHA2-128s signature, by the signer's key set.
-    pub second: Vec<u8>,
-}
-
-/// Why a hybrid check failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fail {
-    /// The Ed25519 half did not verify.
-    Ed25519,
-    /// The post-quantum half did not verify (or has the wrong length or key).
-    Second,
-}
-
-/// Both halves must verify over `msg`; the first failing half is named.
+/// Both halves must verify over `msg` ([`wolcrypt::sign::verify_message`]); the first failing
+/// half is named.
 pub fn verify_hybrid(keys: &PublicKeys, msg: &[u8], sig: &Sig) -> Result<(), Fail> {
-    let ed_ok = ed25519_dalek::VerifyingKey::from_bytes(&keys.ed25519).is_ok_and(|k| {
-        k.verify_strict(msg, &ed25519_dalek::Signature::from_bytes(&sig.ed25519))
-            .is_ok()
-    });
-    let second_ok = match &keys.second {
-        Second::MlDsa65(pk) => verify_ml(pk, msg, &sig.second),
-        Second::Slh(pk) => verify_slh(pk, msg, &sig.second),
-    };
-    // Both halves are always evaluated, so the cost does not tell which one failed.
-    match (ed_ok, second_ok) {
-        (true, true) => Ok(()),
-        (false, _) => Err(Fail::Ed25519),
-        (true, false) => Err(Fail::Second),
-    }
-}
-
-fn verify_ml(pk: &[u8; ML_PK], msg: &[u8], sig: &[u8]) -> bool {
-    let Ok(sig) = <&[u8; ML_SIG]>::try_from(sig) else {
-        return false;
-    };
-    ml_dsa_65::PublicKey::try_from_bytes(*pk).is_ok_and(|k| k.verify(msg, sig, &[]))
-}
-
-fn verify_slh(pk: &[u8; SLH_PK], msg: &[u8], sig: &[u8]) -> bool {
-    let Ok(sig) = <&[u8; SLH_SIG]>::try_from(sig) else {
-        return false;
-    };
-    slh_dsa_sha2_128s::PublicKey::try_from_bytes(*pk).is_ok_and(|k| k.verify(msg, sig, &[]))
+    wolcrypt::sign::verify_message(keys, msg, sig)
 }
 
 /// The wire form of a signature next to a `.wol` (`SHA256.wsig`) or a list (`revoked.json.wsig`):
@@ -204,14 +113,15 @@ pub struct Wsig {
     /// bytes. Absent: no origin, and the signed message is the plain one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    /// When a witness signed (`crate::witness`, Unix seconds); bound into its message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<u64>,
 }
 
 /// The message of a signature that carries an origin: `label || 0x00 || SHA-512(content) ||
 /// SHA-512(origin)`.
 pub fn message_with_origin(purpose: Purpose, content: &[u8], origin: &[u8]) -> Vec<u8> {
-    let mut m = message(purpose, content);
-    m.extend_from_slice(&Sha512::digest(origin));
-    m
+    wolcrypt::sign::message_with(purpose.label(), content, &[origin])
 }
 
 impl Wsig {

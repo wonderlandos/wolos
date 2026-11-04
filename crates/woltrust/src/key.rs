@@ -106,9 +106,15 @@ impl KeyMaterial {
         t
     }
 
-    /// A 16-hex id of the public signing key, naming a key before its certificate exists.
+    /// The id of these keys (rule "IDS": SHA-512 over the public signing and, below the roots,
+    /// encryption keys, 128 hex): the serial its certificate will have, so the key file is named
+    /// once and never renamed.
     pub fn key_id(&self) -> String {
-        crate::request::key_id(&self.secret().public().ed25519)
+        #[cfg(feature = "seal")]
+        if !self.root {
+            return crate::cert::id_of(self.secret().public(), Some(self.enc().public()));
+        }
+        crate::cert::id_of(self.secret().public(), None)
     }
 }
 

@@ -33,6 +33,51 @@ pub const CERT_EXT: &str = ".wolcert";
 /// Where the revocation list lives on the CDN server, below each of [`crate::cdn::HOSTS`]; its
 /// signature is the same URL plus [`SIG_SUFFIX`].
 pub const REVOKED_PATH: &str = "/plugins/revoked.json";
+/// The revocation database of the image (lead decision 2026-11-04 "RKDB"): current at build
+/// time; its serial is a floor the machine never goes below.
+pub const IMAGE_RKDB: &str = "/usr/share/wolos/trust/revoked.rkdb";
+/// The newer revocation database below [`STATE_DIR`], replaced only by a verified superset.
+pub const STATE_RKDB: &str = "/var/lib/wolos/trust/revoked.rkdb";
+/// The floor: the highest database serial this machine was told of (a signed release manifest, a
+/// file certificate, the checkpoints), one decimal number.
+pub const FLOOR_FILE: &str = "/var/lib/wolos/trust/rkdb-floor";
+/// Where the database lives on the CDN server, below each of [`crate::cdn::HOSTS`].
+pub const RKDB_PATH: &str = "/plugins/revoked.rkdb";
+/// Largest database read: 128 MiB (about 1.9 million entries); a bound for hostile input.
+pub const MAX_RKDB_BYTES: usize = 128 << 20;
+
+/// The database's URLs in the order tried (`wol trust update`, `update-check`).
+pub fn rkdb_urls() -> Vec<String> {
+    crate::cdn::HOSTS
+        .iter()
+        .map(|h| format!("{h}{RKDB_PATH}"))
+        .collect()
+}
+
+/// The floor file's text for `floor`.
+pub fn floor_text(floor: u64) -> Vec<u8> {
+    format!("{floor}\n").into_bytes()
+}
+
+/// The floor in a floor file's text (0 when unreadable).
+pub fn parse_floor(text: &[u8]) -> u64 {
+    std::str::from_utf8(text)
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// What a newly downloaded database came to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RkdbUpdate {
+    /// Its serial.
+    pub serial: u64,
+    /// The floor after it and the checkpoints.
+    pub floor: u64,
+    /// A warning for the log and `wol trust status` (the checkpoints disagree, or one is
+    /// missing).
+    pub warning: Option<String>,
+}
 
 /// The revocation list's URLs in the order tried (`wol trust update`, `update-check`): the CDN
 /// under the project's domain, then its mirror name.
@@ -98,7 +143,20 @@ impl TrustStore {
             .iter()
             .filter_map(|p| read_list(host, p))
             .collect();
-        let mut store = Store::load(&roots, &inter, &lists, unix(host), false);
+        let now = unix(host);
+        let mut store = Store::load(&roots, &inter, &lists, now, false);
+        // The image's database sets the floor; the state's is newer or equal (checked when kept).
+        for (i, p) in [IMAGE_RKDB, STATE_RKDB].iter().enumerate() {
+            if let Some(b) = read_capped(host, p, MAX_RKDB_BYTES) {
+                let _ = store.load_rkdb(&b, now);
+                if i == 0 {
+                    store.floor = store.db_serial().unwrap_or(0);
+                }
+            }
+        }
+        if let Some(t) = read_capped(host, FLOOR_FILE, 64) {
+            store.raise_floor(parse_floor(&t));
+        }
         match read_capped(host, SEEN_FILE, woltrust::revoked::MAX_SEEN_BYTES)
             .map(|b| woltrust::revoked::Seen::parse(&b))
         {
@@ -247,6 +305,14 @@ pub struct Status {
     pub root_texts: Vec<String>,
     /// Revocations remembered from earlier lists ([`SEEN_FILE`]).
     pub remembered: usize,
+    /// Serial of the newest verified revocation database ([`STATE_RKDB`], [`IMAGE_RKDB`]).
+    pub rkdb_serial: Option<u64>,
+    /// Entries in it.
+    pub rkdb_entries: usize,
+    /// The floor ([`FLOOR_FILE`]).
+    pub floor: u64,
+    /// True when the newest database is below the floor ("could not update the list").
+    pub behind: bool,
 }
 
 impl TrustStore {
@@ -402,6 +468,111 @@ impl TrustStore {
         Store::load(&roots, &inter, &[(list, sig)], now, allow_test)
     }
 
+    /// Checks a downloaded revocation database before it may replace [`STATE_RKDB`]: it verifies
+    /// against this store (the Index, its root section by a root), its serial is not below the
+    /// floor, it keeps every entry of the database held and chains onto it, and when both
+    /// checkpoints (`cdn`, `log`: the bytes of each, if they answered) agree on its serial, it
+    /// has their hash. Disagreeing or missing checkpoints only warn; the higher serial becomes the
+    /// floor.
+    pub fn accept_rkdb(
+        &self,
+        bytes: &[u8],
+        cdn: Option<&[u8]>,
+        log: Option<&[u8]>,
+        now: u64,
+    ) -> Result<RkdbUpdate, String> {
+        use woltrust::rkdb;
+        let say = |e: rkdb::Error| match e {
+            rkdb::Error::Older => {
+                "the revocation database is older than one this computer already knows".to_owned()
+            }
+            rkdb::Error::Shrunk => {
+                "the revocation database leaves out a withdrawal this computer holds".to_owned()
+            }
+            rkdb::Error::Chain => "the revocation database does not follow the one held".to_owned(),
+            rkdb::Error::Checkpoint => {
+                "the revocation database is not the one both checkpoints name".to_owned()
+            }
+            e => format!("the revocation database does not verify ({})", e.as_str()),
+        };
+        let (held, _) = self.store.check_rkdb(bytes, now).map_err(say)?;
+        let cp = |b: Option<&[u8]>| b.and_then(rkdb::Checkpoint::parse);
+        let (floor, agreement) = rkdb::checkpoints(cp(cdn), cp(log), self.store.floor);
+        let prev = self.store.best_db().map(|d| d.db.clone());
+        rkdb::accept(&held.db, prev.as_ref(), floor).map_err(say)?;
+        let agreed = match agreement {
+            rkdb::Agreement::Agree(c) => Some(c),
+            _ => None,
+        };
+        rkdb::check_checkpoint(&held.db, agreed).map_err(say)?;
+        let warning = match agreement {
+            rkdb::Agreement::Disagree => Some(
+                "the two checkpoints (CDN and public log) disagree; keeping the higher floor"
+                    .to_owned(),
+            ),
+            rkdb::Agreement::OneSource => Some("only one checkpoint answered".to_owned()),
+            rkdb::Agreement::None => Some("no checkpoint answered".to_owned()),
+            rkdb::Agreement::Agree(_) => None,
+        };
+        Ok(RkdbUpdate {
+            serial: held.db.serial,
+            floor: floor.max(held.db.serial),
+            warning,
+        })
+    }
+
+    /// The memory file ([`SEEN_FILE`]) after a database: its root-signed entries (emergency
+    /// withdrawals of intermediates and roots) are kept forever, like every root list's.
+    pub fn memory_after_rkdb(&self, old: &[u8], bytes: &[u8], now: u64) -> Result<Vec<u8>, String> {
+        let mut seen = if old.is_empty() {
+            woltrust::revoked::Seen::default()
+        } else {
+            woltrust::revoked::Seen::parse(old).map_err(|e| format!("{SEEN_FILE}: {e}"))?
+        };
+        for l in &self.store.lists {
+            seen.add(l);
+        }
+        if let Ok((_, Some(r))) = self.store.check_rkdb(bytes, now) {
+            seen.add(&woltrust::RevList {
+                list: woltrust::revoked::ListText {
+                    format: 1,
+                    serial: 0,
+                    issued: u64::from(r.section.issued),
+                    expires: u64::from(r.section.issued) + 1,
+                    entries: r.section.entries.iter().map(|e| e.to_json()).collect(),
+                },
+                signer: r.signer,
+                signer_is_root: true,
+            });
+        }
+        Ok(seen.to_bytes())
+    }
+
+    /// A signed release manifest or a file certificate said its signer held database `serial`:
+    /// this machine never accepts an older one again ([`FLOOR_FILE`] keeps it).
+    pub fn observe_rkdb_serial(&mut self, serial: u64) {
+        self.store.raise_floor(serial);
+    }
+
+    /// Whether a new app may be installed now (lead decision "RKDB"): a connected machine whose
+    /// newest list expired (24 hours) or that is below its floor says "could not update the list"
+    /// and holds installs of new apps; apps already installed keep running. Offline, the stale
+    /// rules apply instead.
+    pub fn gate_new_install(&self, now: u64, connected: bool) -> Result<(), &'static str> {
+        match woltrust::rkdb::gate(
+            self.store.newest_expires(),
+            self.store
+                .db_serial()
+                .or(self.store.best_list().map(|l| l.list.serial)),
+            self.store.floor,
+            now,
+            connected,
+        ) {
+            woltrust::rkdb::Gate::Open => Ok(()),
+            woltrust::rkdb::Gate::HoldNew => Err(woltrust::rkdb::HOLD_SENTENCE),
+        }
+    }
+
     /// The store's state at `now`.
     pub fn status(&self, now: u64) -> Status {
         let best = self.store.best_list();
@@ -433,6 +604,10 @@ impl TrustStore {
                 .iter()
                 .map(|l| l.list.entries.len())
                 .sum(),
+            rkdb_serial: self.store.db_serial(),
+            rkdb_entries: self.store.best_db().map_or(0, |d| d.db.entries.len()),
+            floor: self.store.floor,
+            behind: self.store.behind(),
         }
     }
 }
@@ -446,6 +621,7 @@ fn legacy_outcome(trust: woltrust::Trust, code: woltrust::Code) -> Outcome {
         list_expires: None,
         origin: None,
         root_text: None,
+        line: None,
     }
 }
 
@@ -509,6 +685,88 @@ mod tests {
         TrustStore {
             store: Store::load(&[&p.root_a.file], &[&p.index.file], &lists, NOW, true),
         }
+    }
+
+    #[test]
+    fn a_revocation_database_is_kept_only_as_a_newer_superset_above_the_floor() {
+        use woltrust::revoked::Reason;
+        use woltrust::rkdb::{Checkpoint, Db};
+        use woltrust::vectors_ids::{Ids, db, entry};
+        let p = Pki::new();
+        let ids = Ids::new(&p);
+        let a = entry(&ids.bob.body.serial, NOW - DAY, Reason::KeyCompromise);
+        let b = entry(&p.alice.body.serial, NOW - DAY, Reason::Superseded);
+        let db1 = db(&ids, 1, NOW - 3600, &[a], None, [0; 32]);
+        let none: [(&[u8], &[u8]); 0] = [];
+        let mut s = Store::load(
+            &[&p.root_a.file, &p.root_b.file],
+            &[&ids.index.file],
+            &none,
+            NOW,
+            true,
+        );
+        s.load_rkdb(&db1, NOW).unwrap();
+        s.floor = 1;
+        let ts = TrustStore { store: s };
+        let h1 = Db::parse(&db1).unwrap().hash;
+        let db2 = db(&ids, 2, NOW - 60, &[a, b], None, h1);
+        let ok = ts.accept_rkdb(&db2, None, None, NOW).unwrap();
+        assert_eq!((ok.serial, ok.floor), (2, 2));
+        assert!(ok.warning.is_some(), "no checkpoint answered");
+        let cp = Checkpoint::of(&Db::parse(&db2).unwrap()).to_json();
+        let agreed = ts
+            .accept_rkdb(&db2, Some(cp.as_bytes()), Some(cp.as_bytes()), NOW)
+            .unwrap();
+        assert_eq!(agreed.warning, None);
+        let shrunk = db(&ids, 2, NOW - 60, &[b], None, h1);
+        assert!(
+            ts.accept_rkdb(&shrunk, None, None, NOW)
+                .unwrap_err()
+                .contains("leaves out")
+        );
+        let unchained = db(&ids, 2, NOW - 60, &[a, b], None, [1; 32]);
+        assert!(
+            ts.accept_rkdb(&unchained, None, None, NOW)
+                .unwrap_err()
+                .contains("follow")
+        );
+        let other = Checkpoint {
+            serial: 2,
+            hash: [3; 32],
+        }
+        .to_json();
+        assert!(
+            ts.accept_rkdb(&db2, Some(other.as_bytes()), Some(other.as_bytes()), NOW)
+                .unwrap_err()
+                .contains("checkpoints")
+        );
+        // A higher checkpoint from one source raises the floor above what is offered.
+        let high = Checkpoint {
+            serial: 9,
+            hash: [3; 32],
+        }
+        .to_json();
+        assert!(
+            ts.accept_rkdb(&db2, Some(high.as_bytes()), None, NOW)
+                .unwrap_err()
+                .contains("older")
+        );
+        // The install gate: fresh and at the floor, open; behind the floor, new installs wait.
+        assert_eq!(ts.gate_new_install(NOW, true), Ok(()));
+        let mut behind = ts.clone();
+        behind.observe_rkdb_serial(5);
+        assert_eq!(
+            behind.gate_new_install(NOW, true),
+            Err(woltrust::rkdb::HOLD_SENTENCE)
+        );
+        assert_eq!(
+            behind.gate_new_install(NOW, false),
+            Ok(()),
+            "offline: the stale rules apply"
+        );
+        assert!(behind.status(NOW).behind);
+        assert_eq!(parse_floor(&floor_text(42)), 42);
+        assert_eq!(parse_floor(b"junk"), 0);
     }
 
     fn host() -> FakeHost {
@@ -932,8 +1190,9 @@ mod tests {
         assert!(ts.accept(&newer, &bad, NOW, true).is_err(), "bad signature");
     }
 
-    /// The list comes from the CDN under the project's domain first, then its mirror; the
-    /// update-check script's defaults are the same two URLs (it cannot import this).
+    /// The list comes from the CDN under the project's domain first, then its mirror; so does the
+    /// database; the update-check script leaves the fetching to `wol trust update`, every hour,
+    /// before its once-a-day gate (lists live 24 hours).
     #[test]
     fn the_revoked_list_is_read_from_the_cdn_then_its_mirror() {
         assert_eq!(
@@ -948,14 +1207,22 @@ mod tests {
                 .join("../../files/usr/lib/wolos/update-check"),
         )
         .unwrap();
-        let urls = revoked_urls();
-        for (var, url) in [("REVOKED_URL:-", &urls[0]), ("REVOKED_MIRROR-", &urls[1])] {
-            assert!(
-                script.contains(&format!("{var}{url}}}")),
-                "update-check {var} is {url}"
-            );
-        }
-        assert!(script.contains(r#"revoked "$REVOKED_URL" || revoked "$REVOKED_MIRROR""#));
+        assert_eq!(
+            rkdb_urls(),
+            [
+                "https://cdn.wolos.org/plugins/revoked.rkdb",
+                "https://wolos.squareweb.app/plugins/revoked.rkdb"
+            ]
+        );
+        let update = script
+            .find("wol trust update")
+            .expect("update-check calls it");
+        let gate = script.find("-ge $EVERY").expect("the daily gate");
+        assert!(update < gate, "the list is refreshed on every hourly run");
+        assert!(
+            !script.contains("/plugins/revoked"),
+            "wol trust update fetches the files itself"
+        );
     }
 
     #[test]

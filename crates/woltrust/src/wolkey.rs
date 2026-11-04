@@ -4,26 +4,26 @@
 //! into a ChaCha20-Poly1305 key; the associated data binds the format, the name the key is stored
 //! under and the KDF parameters, so a file renamed to another serial or downgraded to fewer rounds
 //! does not open. Argon2id would be stronger against GPUs but is not in the dependency tree; both
-//! primitives here come from ring, which is.
+//! primitives come from [`wolcrypt`] (`kdf`, `aead`), pure Rust: files written with ring before
+//! open byte for byte the same (`vectors/wolkey/ring-made.wolkey`).
 //!
-//! `{"format":1,"name":"<16 hex>","kdf":"pbkdf2-hmac-sha512","rounds":600000,"salt":"<b64url>",
+//! `{"format":1,"name":"<certificate id, 128 hex; 16 hex before rule IDS>","kdf":"pbkdf2-hmac-sha512","rounds":600000,"salt":"<b64url>",
 //! "aead":"chacha20-poly1305","nonce":"<b64url>","sealed":"<b64url>"}`
 use crate::b64;
 use crate::cert::is_serial;
 use crate::key::KeyMaterial;
-use ring::aead::{Aad, CHACHA20_POLY1305, LessSafeKey, Nonce, UnboundKey};
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroU32;
 use zeroize::Zeroizing;
 
 /// PBKDF2 rounds for new files.
-pub const ROUNDS: u32 = 600_000;
+pub const ROUNDS: u32 = wolcrypt::kdf::ROUNDS;
 /// Fewest rounds a file may name (lower is refused, so a file cannot be downgraded).
-pub const MIN_ROUNDS: u32 = 210_000;
+pub const MIN_ROUNDS: u32 = wolcrypt::kdf::MIN_ROUNDS;
 /// Most rounds a file may name (bounds the time a hostile file can cost).
-pub const MAX_ROUNDS: u32 = 10_000_000;
+pub const MAX_ROUNDS: u32 = wolcrypt::kdf::MAX_ROUNDS;
 /// Largest `.wolkey` file.
 pub const MAX_FILE: usize = 2048;
+const NONCE: usize = wolcrypt::aead::NONCE;
 /// Shortest passphrase accepted for a new file, in characters.
 pub const MIN_PASSPHRASE: usize = 8;
 const KDF: &str = "pbkdf2-hmac-sha512";
@@ -78,18 +78,8 @@ fn aad(name: &str, rounds: u32, salt: &[u8]) -> Vec<u8> {
     a
 }
 
-fn key(pass: &[u8], salt: &[u8], rounds: u32) -> Option<LessSafeKey> {
-    let mut k = Zeroizing::new([0u8; 32]);
-    ring::pbkdf2::derive(
-        ring::pbkdf2::PBKDF2_HMAC_SHA512,
-        NonZeroU32::new(rounds)?,
-        salt,
-        pass,
-        &mut k[..],
-    );
-    Some(LessSafeKey::new(
-        UnboundKey::new(&CHACHA20_POLY1305, &k[..]).ok()?,
-    ))
+fn key(pass: &[u8], salt: &[u8], rounds: u32) -> Option<Zeroizing<[u8; 32]>> {
+    wolcrypt::kdf::pbkdf2_sha512(pass, salt, rounds)
 }
 
 /// Encrypts `km` under `pass` for storage as `<name>.wolkey`; `rnd` is 28 fresh random bytes (salt
@@ -109,10 +99,9 @@ pub fn lock(
     }
     let (salt, nonce) = rnd.split_at(16);
     let k = key(pass.as_bytes(), salt, rounds).ok_or(KeyError::Malformed)?;
-    let n = Nonce::try_assume_unique_for_key(nonce).map_err(|_| KeyError::Malformed)?;
+    let n: [u8; NONCE] = nonce.try_into().map_err(|_| KeyError::Malformed)?;
     let mut body = km.to_text();
-    k.seal_in_place_append_tag(n, Aad::from(aad(name, rounds, salt)), &mut *body)
-        .map_err(|_| KeyError::Malformed)?;
+    wolcrypt::aead::seal(&k, &n, &aad(name, rounds, salt), &mut body);
     let f = File {
         format: 1,
         name: name.to_owned(),
@@ -154,11 +143,13 @@ pub fn unlock(file: &[u8], name: &str, pass: &str) -> Result<KeyMaterial, KeyErr
     let nonce = b64::decode(&f.nonce, 12).ok_or(KeyError::Malformed)?;
     let mut body = Zeroizing::new(b64::decode(&f.sealed, MAX_FILE).ok_or(KeyError::Malformed)?);
     let k = key(pass.as_bytes(), &salt, f.rounds).ok_or(KeyError::Malformed)?;
-    let n = Nonce::try_assume_unique_for_key(&nonce).map_err(|_| KeyError::Malformed)?;
-    let plain = k
-        .open_in_place(n, Aad::from(aad(name, f.rounds, &salt)), &mut body[..])
-        .map_err(|_| KeyError::WrongPassphrase)?;
-    KeyMaterial::parse(plain).map_err(|_| KeyError::Malformed)
+    let n: [u8; NONCE] = nonce
+        .as_slice()
+        .try_into()
+        .map_err(|_| KeyError::Malformed)?;
+    wolcrypt::aead::open(&k, &n, &aad(name, f.rounds, &salt), &mut body)
+        .ok_or(KeyError::WrongPassphrase)?;
+    KeyMaterial::parse(&body).map_err(|_| KeyError::Malformed)
 }
 
 /// Re-encrypts under a new name (a key made before its certificate gets the serial on issue).

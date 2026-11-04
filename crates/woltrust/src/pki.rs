@@ -101,6 +101,7 @@ pub fn body(spec: &Spec, secret: &Secret) -> Body {
         verified_at: None,
         class: None,
         origin_cert: None,
+        terms: None,
     }
 }
 

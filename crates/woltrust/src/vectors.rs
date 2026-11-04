@@ -17,6 +17,10 @@ use crate::{LIST_LIFETIME, STALE_WINDOW, b64};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
 /// Largest blob read from a vector file.
 const MAX_BLOB: usize = 1 << 20;
 
@@ -55,6 +59,12 @@ pub struct StoreSpec {
     /// Whether a root labelled `test...` may load (true for every vector; the flag is part of the
     /// replay so `test-root-refused` can say false).
     pub allow_test: bool,
+    /// Revocation databases (`revoked.rkdb`), loaded after the lists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rkdb: Vec<String>,
+    /// Root-signed sections kept on their own (`.rkdr`, the memory of emergency withdrawals).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub root_sections: Vec<String>,
 }
 
 /// The expected result.
@@ -75,8 +85,15 @@ pub struct Expect {
     pub intermediates: usize,
     /// Revocation lists that loaded (a list with a bad signature does not).
     pub lists: usize,
+    /// Revocation databases and root sections that verified.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub dbs: usize,
     /// `outcome.report(Verdict::Pass, [])` as JSON text, byte for byte.
     pub report: String,
+    /// The signature line (`crate::line::signature`) of a valid file (made by WolOS, trusted or
+    /// origin); absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
 }
 
 /// One vector file.
@@ -135,13 +152,19 @@ pub fn run(v: &Vector, pki: &PkiFile) -> Result<(Outcome, Store), String> {
         .iter()
         .map(|l| Ok((blob(pki, &l.list)?, blob(pki, &l.wsig)?)))
         .collect::<Result<Vec<_>, String>>()?;
-    let store = Store::load(
+    let mut store = Store::load(
         &all(&v.store.roots)?,
         &all(&v.store.intermediates)?,
         &lists,
         v.now,
         v.store.allow_test,
     );
+    for r in &v.store.root_sections {
+        let _ = store.load_root_section(&blob(pki, r)?);
+    }
+    for d in &v.store.rkdb {
+        let _ = store.load_rkdb(&blob(pki, d)?, v.now);
+    }
     let content = blob(pki, &v.content)?;
     let wsig = v.wsig.as_deref().map(|s| blob(pki, s)).transpose()?;
     let chain = v.chain.as_deref().map(|s| blob(pki, s)).transpose()?;
@@ -171,7 +194,12 @@ pub fn observed(out: &Outcome, store: &Store) -> Expect {
         roots: store.roots.len(),
         intermediates: store.intermediates.len(),
         lists: store.lists.len(),
+        dbs: store.dbs.len() + store.root_sections.len(),
         report: out.report(Verdict::Pass, Vec::new()).to_json(),
+        line: out
+            .line
+            .clone()
+            .filter(|_| matches!(out.trust, Trust::Wolos | Trust::Trusted | Trust::Origin)),
     }
 }
 
@@ -191,12 +219,12 @@ pub fn check(v: &Vector, pki: &PkiFile) -> Result<(), String> {
 
 // ---- generator ----
 
-const CONTENT: &[u8] = b"test package manifest 1\n";
+pub(crate) const CONTENT: &[u8] = b"test package manifest 1\n";
 
-struct Gen {
-    p: Pki,
-    blobs: BTreeMap<String, String>,
-    out: Vec<Vector>,
+pub(crate) struct Gen {
+    pub(crate) p: Pki,
+    pub(crate) blobs: BTreeMap<String, String>,
+    pub(crate) out: Vec<Vector>,
 }
 
 fn flip(mut b: Vec<u8>, at: usize) -> Vec<u8> {
@@ -224,6 +252,7 @@ fn flip_half(wsig: &[u8], second: bool) -> Vec<u8> {
         ed25519: b64::encode(&ed),
         second: b64::encode(&sec),
         origin: w.origin,
+        at: None,
     }
     .to_bytes()
 }
@@ -242,17 +271,17 @@ fn flip_cert(file: &[u8], second: bool) -> Vec<u8> {
     crate::cert::encode(&c.body_bytes, &sig)
 }
 
-fn inline(bytes: &[u8]) -> String {
+pub(crate) fn inline(bytes: &[u8]) -> String {
     b64::encode(bytes)
 }
 
 impl Gen {
-    fn put(&mut self, name: &str, bytes: &[u8]) -> String {
+    pub(crate) fn put(&mut self, name: &str, bytes: &[u8]) -> String {
         self.blobs.insert(name.to_owned(), b64::encode(bytes));
         format!("@{name}")
     }
 
-    fn list_text(serial: u64, issued: u64, entries: &[(&str, u64, Reason)]) -> ListText {
+    pub(crate) fn list_text(serial: u64, issued: u64, entries: &[(&str, u64, Reason)]) -> ListText {
         ListText {
             format: 1,
             serial,
@@ -270,7 +299,7 @@ impl Gen {
     }
 
     /// A list signed by the Index (`by = 0`), root A (1) or root B (2).
-    fn list(&self, l: &ListText, by: u8) -> ListSpec {
+    pub(crate) fn list(&self, l: &ListText, by: u8) -> ListSpec {
         let id = match by {
             0 => &self.p.index,
             1 => &self.p.root_a,
@@ -300,6 +329,8 @@ impl Gen {
                 intermediates: vec!["@index".into()],
                 lists: vec![self.list(&Self::list_text(10, NOW - DAY, &[]), 0)],
                 allow_test: true,
+                rkdb: Vec::new(),
+                root_sections: Vec::new(),
             },
             expect: Expect {
                 trust: Trust::Invalid,
@@ -309,13 +340,15 @@ impl Gen {
                 roots: 0,
                 intermediates: 0,
                 lists: 0,
+                dbs: 0,
                 report: String::new(),
+                line: None,
             },
         }
     }
 
     /// Adds a vector; fails when the code does not give the trust and code the author meant.
-    fn add(
+    pub(crate) fn add(
         &mut self,
         name: &str,
         about: &str,
@@ -447,7 +480,8 @@ fn cases(g: &mut Gen) -> Result<(), String> {
     cases_lists(g)?;
     cases_shape(g)?;
     cases_origin(g)?;
-    cases_class(g)
+    cases_class(g)?;
+    crate::vectors_ids::cases(g)
 }
 
 /// The two certificates of one person (lead decisions 2026-11-04): trusted after an administrator
@@ -572,6 +606,7 @@ fn origin_of(owner: &str) -> Vec<u8> {
         tag: "v1.2".into(),
         commit: "0123456789abcdef0123456789abcdef01234567".into(),
         built: NOW - DAY,
+        rkdb_serial: None,
     }
     .to_bytes()
 }
@@ -628,6 +663,7 @@ fn cases_origin(g: &mut Gen) -> Result<(), String> {
                 ed25519: String::new(),
                 second: String::new(),
                 origin: None,
+                at: None,
             });
             w.origin = Some(b64::encode(&origin_of("anaco")));
             v.app_id = Some("ana.notes".into());

@@ -1220,7 +1220,13 @@ rule!(
         prod(s)
             && !matches!(
                 s.krate.as_str(),
-                "wol-abi" | "wolkit" | "wopkg" | "xguard" | "xguard-clam" | "realtime"
+                "wol-abi"
+                    | "wolkit"
+                    | "wolcrypt-ffi"
+                    | "wopkg"
+                    | "xguard"
+                    | "xguard-clam"
+                    | "realtime"
             )
             && !s.rel.ends_with("api/src/os.rs")
     },

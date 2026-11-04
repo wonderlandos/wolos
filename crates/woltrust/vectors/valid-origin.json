@@ -32,6 +32,7 @@
     "roots": 1,
     "intermediates": 1,
     "lists": 1,
-    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"origin\",\"cert\":{\"serial\":\"7118149e9558d04b\",\"subject\":{\"github_id\":4004,\"login\":\"ana\",\"name\":\"Ana Lima\",\"org\":{\"github_id\":5005,\"login\":\"anaco\"}},\"level\":\"verified\",\"class\":\"origin\",\"verified_at\":1767321600},\"origin\":{\"repo\":\"https://github.com/ana/notes\",\"tag\":\"v1.2\",\"commit\":\"0123456789abcdef0123456789abcdef01234567\",\"built\":1769913600}}"
+    "report": "{\"verdict\":\"pass\",\"findings\":[],\"trust\":\"origin\",\"cert\":{\"serial\":\"7118149e9558d04b\",\"subject\":{\"github_id\":4004,\"login\":\"ana\",\"name\":\"Ana Lima\",\"org\":{\"github_id\":5005,\"login\":\"anaco\"}},\"level\":\"verified\",\"class\":\"origin\",\"verified_at\":1767321600},\"origin\":{\"repo\":\"https://github.com/ana/notes\",\"tag\":\"v1.2\",\"commit\":\"0123456789abcdef0123456789abcdef01234567\",\"built\":1769913600}}",
+    "line": "<ana> <github:ana/notes@v1.2 0123456> <wolos.org/trust/7118149e9558d04b> <wolos.org/terms/trust/none> <sha512:f0afef04138297ee13a2bfb67f80bfe87f2dee4504f13d11e3c91acc531e3dc8e01d6e2f8d3ca3311209198e8807b5e6c872a08a91c87adda7e24c1e7c2b4dca> <2026-02-01> <origin>"
   }
 }

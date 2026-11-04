@@ -7,7 +7,7 @@ use crate::b64;
 use crate::cert::{self, Cert, ChainError, Class, Kind, Level};
 use crate::crypto::{self, Purpose, Wsig};
 use crate::report::{CertInfo, Finding, Report, Trust, Verdict};
-use crate::revoked::{Freshness, Reason, RevList};
+use crate::revoked::{Freshness, Reason};
 use crate::store::Store;
 
 /// Most links walked from a signer to a root (leaf, intermediate, root, with room to spare).
@@ -71,6 +71,10 @@ pub enum Code {
     LegacyKey,
     /// Signed only with the previous key on a computer that holds WolOS roots: refused.
     LegacyRefused,
+    /// A certificate on the path has a 16-hex serial, which only the TEST authority may use.
+    LegacySerial,
+    /// An intermediate lacks the second root's signature, or it does not verify.
+    RootSignatures,
 }
 
 impl Code {
@@ -101,6 +105,8 @@ impl Code {
             Code::TrustWithdrawn => "trust-withdrawn",
             Code::LegacyKey => "legacy-key",
             Code::LegacyRefused => "legacy-refused",
+            Code::LegacySerial => "legacy-serial",
+            Code::RootSignatures => "root-signatures",
         }
     }
 
@@ -166,6 +172,12 @@ impl Code {
             Code::LegacyRefused => {
                 "This file is signed only with the previous WolOS key, which this computer no longer accepts."
             }
+            Code::RootSignatures => {
+                "The certificate authority behind this file is not signed by both WolOS roots."
+            }
+            Code::LegacySerial => {
+                "The certificate this file was signed with has a short serial, which only the test authority may use."
+            }
         })
     }
 
@@ -221,6 +233,8 @@ pub struct Outcome {
     /// The subject text of the pinned root at the top of the path (who vouches, signed in the
     /// root certificate), when the path reached one that carries it.
     pub root_text: Option<String>,
+    /// The signature line of the file ([`crate::line::signature`]), once the signature verified.
+    pub line: Option<String>,
 }
 
 impl Outcome {
@@ -233,6 +247,7 @@ impl Outcome {
             list_expires: None,
             origin: None,
             root_text: None,
+            line: None,
         }
     }
 
@@ -312,6 +327,9 @@ pub(crate) fn path<'a>(
         }
         let msg = crypto::message(Purpose::Cert, &cur.body_bytes);
         crypto::verify_hybrid(&issuer.keys, &msg, &cur.sig).map_err(|_| Code::BadSignature)?;
+        if let Some(other) = cosigner(cur, issuer, store, &msg)? {
+            out.push(other);
+        }
         out.push(issuer);
         cur = issuer;
     }
@@ -319,15 +337,54 @@ pub(crate) fn path<'a>(
     if !store.roots.iter().any(|r| r.keys == cur.keys) {
         return Err(Code::IssuerUnknown);
     }
+    // Rule "IDS": a 16-hex serial is the TEST authority's alone.
+    if !is_test_root(cur) && out.iter().any(|c| cert::is_legacy_serial(&c.body.serial)) {
+        return Err(Code::LegacySerial);
+    }
     Ok(out)
 }
 
+/// The second root behind an intermediate (lead decision 2026-11-04 03:17Z): an intermediate with
+/// a derived id is valid only when its issuing root and one other pinned root both signed it.
+/// Returns that other root, which then joins the path (its validity and revocation count too).
+/// An intermediate with a legacy-length serial (the TEST authority's older vectors) keeps the
+/// single signature.
+fn cosigner<'a>(
+    cur: &'a Cert,
+    issuer: &'a Cert,
+    store: &'a Store,
+    msg: &[u8],
+) -> Result<Option<&'a Cert>, Code> {
+    if cur.body.kind != Kind::Intermediate || cert::is_legacy_serial(&cur.body.serial) {
+        return Ok(None);
+    }
+    for c in &cur.cosigs {
+        let Some(root) = store.roots.iter().find(|r| r.body.serial == c.issuer) else {
+            continue;
+        };
+        if root.body.serial == issuer.body.serial || !may_issue(root, cur) {
+            continue;
+        }
+        if crypto::verify_hybrid(&root.keys, msg, &c.sig).is_ok() {
+            return Ok(Some(root));
+        }
+        return Err(Code::RootSignatures);
+    }
+    Err(Code::RootSignatures)
+}
+
+/// True for a root labelled `test...` (the TEST authority).
+pub fn is_test_root(c: &Cert) -> bool {
+    c.body.kind == Kind::Root
+        && c.body
+            .subject
+            .label
+            .as_deref()
+            .is_some_and(|l| l.starts_with(crate::TEST_LABEL))
+}
+
 /// The revocation that applies to `path` for a file first seen at `first_seen`, in path order.
-pub(crate) fn revocation(
-    path: &[&Cert],
-    lists: &[&RevList],
-    first_seen: Option<u64>,
-) -> Option<Code> {
+pub(crate) fn revocation(path: &[&Cert], store: &Store, first_seen: Option<u64>) -> Option<Code> {
     let serials: Vec<(&str, bool)> = path
         .iter()
         .map(|c| {
@@ -335,38 +392,89 @@ pub(crate) fn revocation(
             (c.body.serial.as_str(), leaf_kind)
         })
         .collect();
-    revocation_of(&serials, lists, first_seen, None)
+    revocation_of(&serials, store, first_seen, None)
+}
+
+/// One entry naming a serial, wherever it was found: a JSON list, the memory, or a revocation
+/// database (its Index part or its root section).
+struct Hit<'a> {
+    at: u64,
+    reason: Reason,
+    by_root: bool,
+    signer: &'a str,
+    issued: u64,
+}
+
+/// Every entry for `serial` the store holds. The databases are searched by binary search.
+fn hits<'a>(store: &'a Store, serial: &str) -> Vec<Hit<'a>> {
+    let mut out = Vec::new();
+    for l in store.lists.iter().chain(store.remembered.iter()) {
+        for e in l.list.entries.iter().filter(|e| e.serial == serial) {
+            out.push(Hit {
+                at: e.at,
+                reason: e.reason,
+                by_root: l.signer_is_root,
+                signer: &l.signer,
+                issued: l.list.issued,
+            });
+        }
+    }
+    let Some(id) = crate::rkdb::id_bytes(serial) else {
+        return out;
+    };
+    for h in &store.dbs {
+        if let Some(e) = h.db.entries.lookup(&id) {
+            out.push(Hit {
+                at: u64::from(e.at),
+                reason: e.reason,
+                by_root: false,
+                signer: &h.signer,
+                issued: u64::from(h.db.issued),
+            });
+        }
+    }
+    for r in &store.root_sections {
+        if let Some(e) = r.section.entries.lookup(&id) {
+            out.push(Hit {
+                at: u64::from(e.at),
+                reason: e.reason,
+                by_root: true,
+                signer: &r.signer,
+                issued: u64::from(r.section.issued),
+            });
+        }
+    }
+    out
 }
 
 /// [`revocation`] over serials, each with whether it names a leaf (which the Index may withdraw;
-/// an intermediate or root only a root may). Version entries are not about certificates.
+/// an intermediate or root only a root may, and never itself). Version entries are not about
+/// certificates. A root-signed entry counts whatever the serial or age of what carried it.
 pub(crate) fn revocation_of(
     serials: &[(&str, bool)],
-    lists: &[&RevList],
+    store: &Store,
     first_seen: Option<u64>,
     downgraded: Option<&str>,
 ) -> Option<Code> {
     let mut soft = None;
     for (serial, leaf_kind) in serials {
-        for l in lists {
-            for e in l.list.entries.iter().filter(|e| e.serial == *serial) {
-                let allowed = *leaf_kind || (l.signer_is_root && l.signer != *serial);
-                if !allowed || e.reason == Reason::WithdrawnVersion {
-                    continue;
-                }
-                // `superseded` on a trusted certificate is a downgrade, judged by the caller.
-                if e.reason == Reason::Superseded && downgraded == Some(*serial) {
-                    continue;
-                }
-                if e.reason.is_hard() {
-                    return Some(Code::revoked(e.reason));
-                }
-                // An entry cannot take effect after the list that carries it was issued (audit
-                // A7: a future `at` would keep every file valid).
-                let at = e.at.min(l.list.issued);
-                if first_seen.is_none_or(|t| t >= at) && soft.is_none() {
-                    soft = Some(Code::revoked(e.reason));
-                }
+        for e in hits(store, serial) {
+            let allowed = *leaf_kind || (e.by_root && e.signer != *serial);
+            if !allowed || e.reason == Reason::WithdrawnVersion {
+                continue;
+            }
+            // `superseded` on a trusted certificate is a downgrade, judged by the caller.
+            if e.reason == Reason::Superseded && downgraded == Some(*serial) {
+                continue;
+            }
+            if e.reason.is_hard() {
+                return Some(Code::revoked(e.reason));
+            }
+            // An entry cannot take effect after the list that carries it was issued (audit
+            // A7: a future `at` would keep every file valid).
+            let at = e.at.min(e.issued);
+            if first_seen.is_none_or(|t| t >= at) && soft.is_none() {
+                soft = Some(Code::revoked(e.reason));
             }
         }
     }
@@ -374,19 +482,25 @@ pub(crate) fn revocation_of(
 }
 
 /// Why `serial` (a leaf, or WolOS's previous flat key named by its key id) is withdrawn in any
-/// list or memory the store holds, at any time; None when it is not.
+/// list, memory or database the store holds, at any time; None when it is not.
 pub fn withdrawn(store: &Store, serial: &str) -> Option<Code> {
-    revocation_of(&[(serial, true)], &store.all_lists(), None, None)
+    revocation_of(&[(serial, true)], store, None, None)
 }
 
-/// True when a list or the memory withdraws `serial` as `superseded` (allowed for a leaf).
-fn superseded(lists: &[&RevList], serial: &str) -> bool {
-    lists.iter().any(|l| {
-        l.list
-            .entries
-            .iter()
-            .any(|e| e.serial == serial && e.reason == Reason::Superseded)
-    })
+/// When a list, the memory or a database withdraws the file certificate `serial` as
+/// `withdrawn-version`.
+pub fn version_withdrawn(store: &Store, serial: &str) -> Option<u64> {
+    hits(store, serial)
+        .into_iter()
+        .find(|h| h.reason == Reason::WithdrawnVersion)
+        .map(|h| h.at)
+}
+
+/// True when a list, the memory or a database withdraws `serial` as `superseded` (a leaf).
+fn superseded(store: &Store, serial: &str) -> bool {
+    hits(store, serial)
+        .iter()
+        .any(|h| h.reason == Reason::Superseded)
 }
 
 /// The first time problem on `path`: expired or not yet valid at `now` (a file the index saw while
@@ -417,7 +531,7 @@ fn split_chain_error(e: ChainError) -> Code {
 
 /// Checks one signed file against the store at `input.now`. Never panics on any input.
 pub fn verify(store: &Store, input: &Input) -> Outcome {
-    let list_expires = store.best_list().map(|l| l.list.expires);
+    let list_expires = store.newest_expires();
     let mut out = verify_inner(store, input);
     out.list_expires = list_expires;
     out
@@ -470,6 +584,10 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
     if !signer.body.usage.contains(&input.purpose.usage()) {
         return bad(Code::WrongUsage);
     }
+    // A witness signs published files, never an app, a plugin, an extension, the index or a list.
+    if signer.body.usage.contains(&cert::Usage::Witness) && input.purpose != Purpose::Witness {
+        return bad(Code::WrongUsage);
+    }
     if matches!(
         input.purpose,
         Purpose::Package | Purpose::Plugin | Purpose::Extension
@@ -485,9 +603,12 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
             return bad(Code::WrongNamespace);
         }
     }
-    let msg = match &origin {
-        Some((raw, _)) => crypto::message_with_origin(input.purpose, input.content, raw),
-        None => crypto::message(input.purpose, input.content),
+    let msg = match (&origin, wsig.at) {
+        (Some((raw, _)), _) => crypto::message_with_origin(input.purpose, input.content, raw),
+        (None, Some(at)) if input.purpose == Purpose::Witness => {
+            crate::witness::message(input.content, at)
+        }
+        _ => crypto::message(input.purpose, input.content),
     };
     if crypto::verify_hybrid(&signer.keys, &msg, &sig).is_err() {
         return bad(Code::BadSignature);
@@ -511,6 +632,10 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         Err(code) => return bad(code),
     };
     let root_text = path.last().and_then(|r| r.body.subject.text.clone());
+    let line = Some(match (input.purpose, wsig.at) {
+        (Purpose::Witness, Some(at)) => crate::line::witness(signer, input.content, at),
+        _ => crate::line::signature(signer, origin.as_ref(), input.content),
+    });
     let make = |trust, code, stale| Outcome {
         trust,
         code,
@@ -519,6 +644,7 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         list_expires: None,
         origin: origin.clone(),
         root_text: root_text.clone(),
+        line: line.clone(),
     };
     // Revocation, final rules (lead 2026-11-04): key-compromise and abuse on any certificate kill
     // everything its key signed; a trusted certificate stands on its origin certificate, so
@@ -533,13 +659,12 @@ fn verify_inner(store: &Store, input: &Input) -> Outcome {
         let leaf_kind = matches!(c.body.kind, Kind::Person | Kind::Org | Kind::Signer);
         (c.body.serial.as_str(), leaf_kind)
     }));
-    let lists = store.all_lists();
     let leaf = signer.body.serial.as_str();
     let down = trusted.then_some(leaf);
-    if let Some(code) = revocation_of(&serials, &lists, input.first_seen, down) {
+    if let Some(code) = revocation_of(&serials, store, input.first_seen, down) {
         return make(Trust::Withdrawn, code, false);
     }
-    let approval_gone = trusted && superseded(&lists, leaf);
+    let approval_gone = trusted && superseded(store, leaf);
     if let Some(code) = time_problem(&path, input.now, input.first_seen) {
         return make(Trust::Community, code, false);
     }

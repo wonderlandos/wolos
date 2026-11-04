@@ -11,6 +11,7 @@
 crates/shell/tests/golden-env/run.sh
 crates/shell/tests/golden-env/starve.sh
 crates/wol-abi/link.sh
+crates/wolcrypt-ffi/link.sh
 crates/wolkit/link.sh
 crates/wolkit/shaders/build.sh
 crates/wopkg/link.sh

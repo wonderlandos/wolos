@@ -339,7 +339,13 @@ pub const TREE: &[Cmd] = &[
         &["trust", "update"],
         "trust.update",
         &[opt("list"), opt("sig")],
-        "Install the revocation list if it verifies and is newer; without LIST SIG it is fetched from the CDN (root)",
+        "Install the revocation database or list if it verifies and is not older; without files, fetch it and its checkpoints (root)",
+    ),
+    cmd(
+        &["trust", "show"],
+        "trust.show",
+        &[arg("file")],
+        "Show the signature line of a certificate, a file certificate, a revocation database or a .wol",
     ),
     cmd(
         &["trust", "status"],

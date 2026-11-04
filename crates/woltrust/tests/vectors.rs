@@ -19,7 +19,8 @@ fn load() -> (PkiFile, Vec<Vector>) {
     {
         let p = e.path();
         if p.extension().is_some_and(|x| x == "json")
-            && p.file_name().is_some_and(|n| n != "pki.json")
+            && p.file_name()
+                .is_some_and(|n| n != "pki.json" && n != "lines.json")
         {
             let v: Vector = serde_json::from_slice(&std::fs::read(&p).expect("vector readable"))
                 .expect("vector parses");
@@ -116,7 +117,52 @@ fn only_the_valid_vectors_are_trusted() {
                     | "trusted-superseded-downgrade"
                     | "trusted-ceased-older-file"
                     | "version-entry-ignored-for-certificates"
+                    | "emergency-other-chain-unaffected"
+                    | "emergency-forged-by-intermediate"
+                    | "rkdb-index-cannot-revoke-a-ca"
+                    | "witness-valid"
             );
         assert_eq!(good, named_valid, "{}", v.name);
     }
+}
+
+#[test]
+fn every_certificate_line_is_recorded() {
+    let want = woltrust::vectors::to_text(&woltrust::vectors_ids::cert_lines());
+    let have = std::fs::read_to_string(dir().join("lines.json")).expect("lines.json");
+    assert_eq!(want, have);
+    let lines: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(&have).expect("parses");
+    assert!(lines["root-a"].ends_with("<ed25519+slh-dsa-sha2-128s>"));
+    assert!(lines["authors-2"].contains("<issued-by: test-root-a | test-root-b>"));
+    assert!(lines["alice-trusted"].contains("<trusted> <origin-cert: "));
+    assert!(lines["org"].starts_with("<org/examplelabs> <github:2002>"));
+    assert!(lines["bob"].contains("<issued-by: TEST WolOS Authors>"));
+    assert!(lines["example-root-b"].starts_with("<WolOS Project - hello@wolos.org> <root> "));
+    assert!(lines["example-authors-ca"].contains(
+        "<issued-by: Júlia Klee - Kleedolinux - WolOS.org - 10/04/2009 - 9 de Julho 1932 - São Paulo | WolOS Project - hello@wolos.org>"
+    ));
+}
+
+#[test]
+fn a_seal_to_a_derived_id_is_format_2_and_names_the_full_id() {
+    let p = woltrust::pki::Pki::new();
+    let ids = woltrust::vectors_ids::Ids::new(&p);
+    let bob = woltrust::Cert::parse(&ids.bob.file).expect("bob");
+    let s = woltrust::seal::seal(&bob, woltrust::seal::FILE_LABEL, b"hi", &[4; 64]).expect("seals");
+    let h = woltrust::seal::peek(&s).expect("header");
+    assert_eq!(
+        (h.format, h.recipient.as_str()),
+        ("wolos/seal/2", bob.body.serial.as_str())
+    );
+    assert_eq!(
+        s.len(),
+        2 + woltrust::seal::overhead(woltrust::seal::FILE_LABEL)
+    );
+    let k = ids.bob.km.enc();
+    assert_eq!(
+        &woltrust::seal::open(&k, &bob.body.serial, woltrust::seal::FILE_LABEL, &s).expect("opens")
+            [..],
+        b"hi"
+    );
 }

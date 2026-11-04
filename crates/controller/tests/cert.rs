@@ -28,10 +28,23 @@ fn env_at(d: &Path) -> FakeEnv {
     }
 }
 
+/// The serial the CA gives: the id of the request's keys (rule "IDS").
+fn serial_of(req: &request::Request) -> String {
+    let keys = wol_core::woltrust::cert::decode_keys(&req.keys).expect("keys");
+    let enc = wol_core::woltrust::Cert::parse(&issue_with(&Pki::new(), req, "0000000000000000"))
+        .ok()
+        .and_then(|c| c.enc);
+    wol_core::woltrust::cert::id_of(&keys, enc.as_ref())
+}
+
 /// What the hub's ca workflow does with the request: the TEST Authors CA issues it.
 fn issue(p: &Pki, req: &request::Request) -> Vec<u8> {
+    issue_with(p, req, &serial_of(req))
+}
+
+fn issue_with(p: &Pki, req: &request::Request, serial: &str) -> Vec<u8> {
     let body = Body {
-        serial: "00c0ffee00c0ffee".into(),
+        serial: serial.into(),
         kind: req.kind,
         subject: req.subject.clone(),
         namespaces: req.namespaces.clone(),
@@ -44,6 +57,7 @@ fn issue(p: &Pki, req: &request::Request) -> Vec<u8> {
         verified_at: None,
         class: None,
         origin_cert: None,
+        terms: None,
     };
     make::issue(&body, &p.authors.secret)
 }
@@ -89,11 +103,15 @@ fn request_add_seal_open_and_sign_work_end_to_end() {
         "{}",
         env.err
     );
-    assert!(keys_dir.join("00c0ffee00c0ffee.wolkey").exists());
+    let serial = serial_of(&req);
+    assert!(
+        keys_dir.join(format!("{serial}.wolkey")).exists(),
+        "rule IDS: the key was named by its certificate's serial from the start"
+    );
     let mut env = env_at(&d);
     assert_eq!(run(&["cert", "list"], &mut env), 0);
     assert!(
-        env.out.contains("00c0ffee00c0ffee") && env.out.contains("(your key)"),
+        env.out.contains(&serial) && env.out.contains("(your key)"),
         "{}",
         env.out
     );
@@ -103,7 +121,7 @@ fn request_add_seal_open_and_sign_work_end_to_end() {
     let mut env = env_at(&d);
     let f = secret.to_string_lossy().into_owned();
     assert_eq!(
-        run(&["encrypt", &f, "--to", "00c0ffee00c0ffee"], &mut env),
+        run(&["encrypt", &f, "--to", &serial], &mut env),
         0,
         "{}",
         env.err
@@ -140,7 +158,7 @@ fn request_add_seal_open_and_sign_work_end_to_end() {
         "sign",
         w.as_str(),
         "--as",
-        "00c0ffee00c0ffee",
+        &serial,
         "https://github.com/bob/notes",
         "v1.0",
         commit,
@@ -153,7 +171,7 @@ fn request_add_seal_open_and_sign_work_end_to_end() {
     let mut env = env_at(&d);
     env.stdin = vec!["correct horse battery".into()];
     let rc = run(
-        &["sign", &w, "--as", "00c0ffee00c0ffee", repo, "v1.0", commit],
+        &["sign", &w, "--as", &serial, repo, "v1.0", commit],
         &mut env,
     );
     assert_eq!(rc, 0, "{}", env.err);
@@ -180,7 +198,7 @@ fn request_add_seal_open_and_sign_work_end_to_end() {
     };
     let c = ts.verify_wol_at(&wol, &[], None, NOW).expect("structure");
     assert_eq!((c.outcome.trust, c.outcome.code), (Trust::Origin, Code::Ok));
-    sign_wolplug(&d, &ts);
+    sign_wolplug(&d, &ts, &serial);
 }
 
 /// A `.wolplug` (zstd of the ustar) for `id`, unsigned, as `wol plugin pack` makes it; None
@@ -213,7 +231,7 @@ fn wolplug(d: &Path, id: &str) -> Option<PathBuf> {
 /// `wol sign` on a `.wolplug`: the plugin comes back as a zstd file whose `CHAIN` and
 /// `SHA256.wsig` (label `wolos/plugin/1`) verify as Alice's; a plugin outside her names is refused
 /// before any passphrase is asked.
-fn sign_wolplug(d: &Path, ts: &wol_core::trust::TrustStore) {
+fn sign_wolplug(d: &Path, ts: &wol_core::trust::TrustStore, serial: &str) {
     let Some(mine) = wolplug(d, "alice.demo") else {
         eprintln!("no zstd here: the .wolplug signing half is skipped");
         return;
@@ -222,7 +240,7 @@ fn sign_wolplug(d: &Path, ts: &wol_core::trust::TrustStore) {
     let mut env = env_at(d);
     env.stdin = vec!["correct horse battery".into()];
     assert_eq!(
-        run(&["sign", &f, "--as", "00c0ffee00c0ffee"], &mut env),
+        run(&["sign", &f, "--as", serial], &mut env),
         0,
         "{}",
         env.err
@@ -233,12 +251,12 @@ fn sign_wolplug(d: &Path, ts: &wol_core::trust::TrustStore) {
     assert_eq!(c.verified.manifest.id, "alice.demo");
     let mut env = env_at(d);
     env.stdin = vec!["correct horse battery".into()];
-    assert_ne!(run(&["sign", &f, "--as", "00c0ffee00c0ffee"], &mut env), 0);
+    assert_ne!(run(&["sign", &f, "--as", serial], &mut env), 0);
     assert!(env.err.contains("already"), "{}", env.err);
     let theirs = wolplug(d, "bob.demo").expect("zstd ran once");
     let mut env = env_at(d);
     let t = theirs.to_string_lossy().into_owned();
-    assert_ne!(run(&["sign", &t, "--as", "00c0ffee00c0ffee"], &mut env), 0);
+    assert_ne!(run(&["sign", &t, "--as", serial], &mut env), 0);
     assert!(env.err.contains("outside"), "{}", env.err);
 }
 

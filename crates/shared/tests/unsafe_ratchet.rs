@@ -36,6 +36,10 @@ use std::path::{Path, PathBuf};
 /// controller +4 (MANUAL 0.12.0, `src/secret.rs`): the administrator password on a terminal was
 /// echoed; std has no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap (Ctrl-C restores
 /// the terminal) and `_exit` in that handler, each with a SAFETY line; no new dependency.
+/// `wolcrypt` (lead decision 2026-11-04 "WOLCRYPT"): 0, `#![forbid(unsafe_code)]`. `wolcrypt-ffi`
+/// (its C ABI, libwolcrypt.so.1): the pointer boundary only, one `#[unsafe(no_mangle)]` and one
+/// `unsafe extern` per export, the four pointer helpers, and one `unsafe` block per pointer read
+/// or write, each with a SAFETY line; the tests' calls.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 473),
@@ -53,6 +57,8 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 8),
     ("wol-lua", 3),
     ("woltrust", 0),
+    ("wolcrypt", 0),
+    ("wolcrypt-ffi", 74),
     ("xguard-clam", 13),
 ];
 

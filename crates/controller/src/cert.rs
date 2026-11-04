@@ -154,9 +154,17 @@ pub fn add(env: &mut dyn Env, inv: &Invocation) -> i32 {
         let bytes = read_capped(Path::new(file), 64 * 1024)?;
         let c = Cert::parse(&bytes).map_err(|e| format!("{file}: {e}"))?;
         let dh = env.data_home();
-        let id = ak::key_id_of(&c);
+        // Rule "IDS": a key made now is already stored under the certificate's serial; one made
+        // before waits under its 16-hex key id and is renamed.
+        let id = ak::legacy_key_id_of(&c);
         let pending = ak::key_path(&dh, &id);
-        if pending.exists() {
+        let named = ak::key_path(&dh, &c.body.serial);
+        if ak::key_id_of(&c) == c.body.serial && named.exists() {
+            let km = unlock(env, &c.body.serial)?;
+            if !ak::is_mine(&c, &km) {
+                return Err("This certificate names other keys than yours.".into());
+            }
+        } else if pending.exists() {
             let km = unlock(env, &id)?;
             if !ak::is_mine(&c, &km) {
                 return Err("This certificate names other keys than yours.".into());
@@ -368,6 +376,7 @@ pub fn sign(env: &mut dyn Env, inv: &Invocation) -> i32 {
                     tag: tag.to_owned(),
                     commit: commit.to_owned(),
                     built: env.now_secs(),
+                    rkdb_serial: None,
                 }
                 .to_bytes();
                 wol_core::woltrust::Origin::parse(&o).map_err(|e| {
@@ -479,6 +488,19 @@ pub fn status(env: &mut dyn Env, inv: &Invocation) -> i32 {
         )),
         _ => env.out("revocation list: none yet\n"),
     }
+    match s.rkdb_serial {
+        Some(n) => env.out(&format!(
+            "revocation database: number {n}, {} withdrawn, floor {}\n",
+            s.rkdb_entries, s.floor
+        )),
+        None => env.out(&format!(
+            "revocation database: none yet, floor {}\n",
+            s.floor
+        )),
+    }
+    if s.behind {
+        env.out("could not update the list: new apps wait until it is current; installed apps keep working\n");
+    }
     for t in &s.root_texts {
         env.out(&format!("who vouches: {t}\n"));
     }
@@ -558,9 +580,73 @@ fn fetch_list() -> Result<(Vec<u8>, Vec<u8>), String> {
         })
 }
 
-/// `wol trust update [LIST SIG]` (root; the update-check service): installs a revocation list into
-/// `/var/lib/wolos/trust` only when it verifies and is newer. Without files it fetches the list
-/// itself from [`wol_core::trust::revoked_urls`].
+/// Replaces `to` with `bytes` through a `.new` file and a rename.
+fn replace(to: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = to.with_extension("new");
+    let _ = std::fs::remove_file(&tmp);
+    write_new(&tmp, bytes, 0o644)?;
+    std::fs::rename(&tmp, to).map_err(|_| format!("Can't replace {}.", to.display()))
+}
+
+fn read_or_empty(p: &Path) -> Result<Vec<u8>, String> {
+    match std::fs::read(p) {
+        Ok(b) => Ok(b),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(_) => Err(format!("Can't read {}.", p.display())),
+    }
+}
+
+/// Installs a verified revocation database (lead decision 2026-11-04 "RKDB"): the memory of
+/// root-signed withdrawals grows first, then the database, then the floor.
+fn install_rkdb(
+    env: &mut dyn Env,
+    db: &[u8],
+    cdn: Option<&[u8]>,
+    log: Option<&[u8]>,
+) -> Result<(), String> {
+    let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
+    let now = env.now_secs();
+    let up = ts.accept_rkdb(db, cdn, log, now)?;
+    let seen = Path::new(wol_core::trust::SEEN_FILE);
+    let memory = ts.memory_after_rkdb(&read_or_empty(seen)?, db, now)?;
+    replace(seen, &memory)?;
+    replace(Path::new(wol_core::trust::STATE_RKDB), db)?;
+    let floor_path = Path::new(wol_core::trust::FLOOR_FILE);
+    let old = wol_core::trust::parse_floor(&read_or_empty(floor_path)?);
+    replace(floor_path, &wol_core::trust::floor_text(old.max(up.floor)))?;
+    if let Some(w) = &up.warning {
+        env.err(&format!("wol trust update: {w}\n"));
+    }
+    env.out(&format!("revocation database {} installed\n", up.serial));
+    Ok(())
+}
+
+/// Installs a verified JSON list and its signature (the fallback, and `wol trust update LIST SIG`).
+fn install_list(env: &mut dyn Env, list: &[u8], sig: &[u8]) -> Result<(), String> {
+    let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
+    let serial = ts.accept_list(list, sig, env.now_secs())?;
+    // Audit M1: the memory of every withdrawal seen grows first, so a crash between the two
+    // writes never loses one.
+    let seen_path = Path::new(wol_core::trust::SEEN_FILE);
+    let memory = ts.memory_after(&read_or_empty(seen_path)?, list, sig, env.now_secs())?;
+    replace(seen_path, &memory)?;
+    let dest_sig = PathBuf::from(format!(
+        "{}{}",
+        wol_core::trust::STATE_REVOKED,
+        wol_core::trust::SIG_SUFFIX
+    ));
+    replace(&dest_sig, sig)?;
+    replace(Path::new(wol_core::trust::STATE_REVOKED), list)?;
+    env.out(&format!("revocation list {serial} installed\n"));
+    Ok(())
+}
+
+/// `wol trust update [FILE [SIG]]` (root; the update-check service, hourly): installs the
+/// revocation database (`FILE` a `revoked.rkdb`) or a JSON list with its signature into
+/// `/var/lib/wolos/trust`, only when it verifies, is not below the floor and keeps every
+/// withdrawal held. Without files it fetches `revoked.rkdb` from [`wol_core::trust::rkdb_urls`]
+/// and the two checkpoints ([`wol_core::cdn::RKDB_CHECKPOINTS`]), else the JSON list from
+/// [`wol_core::trust::revoked_urls`]; when neither comes it says "could not update the list".
 pub fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     if !env.is_root() {
         return fail(
@@ -569,45 +655,141 @@ pub fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
             "wol trust update runs as root (update-check).",
         );
     }
-    let r = (|| {
-        let (list, sig) = match (inv.get("list"), inv.get("sig")) {
-            (Some(l), Some(s)) => (
-                read_capped(Path::new(l), 1 << 20)?,
-                read_capped(Path::new(s), 64 * 1024)?,
-            ),
-            (None, None) => fetch_list()?,
-            _ => return Err("Give both files, LIST and SIG, or neither.".to_owned()),
-        };
-        let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
-        let serial = ts.accept_list(&list, &sig, env.now_secs())?;
-        // Audit M1: the memory of every withdrawal seen grows first, so a crash between the two
-        // writes never loses one.
-        let seen_path = Path::new(wol_core::trust::SEEN_FILE);
-        let old = match std::fs::read(seen_path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(_) => return Err(format!("Can't read {}.", seen_path.display())),
-        };
-        let memory = ts.memory_after(&old, &list, &sig, env.now_secs())?;
-        let seen_tmp = seen_path.with_extension("new");
-        let _ = std::fs::remove_file(&seen_tmp);
-        write_new(&seen_tmp, &memory, 0o644)?;
-        std::fs::rename(&seen_tmp, seen_path)
-            .map_err(|_| format!("Can't replace {}.", seen_path.display()))?;
-        let dest = Path::new(wol_core::trust::STATE_REVOKED);
-        let dest_sig = PathBuf::from(format!(
-            "{}{}",
-            wol_core::trust::STATE_REVOKED,
-            wol_core::trust::SIG_SUFFIX
-        ));
-        for (to, bytes) in [(dest_sig.as_path(), &sig), (dest, &list)] {
-            let tmp = to.with_extension("new");
-            let _ = std::fs::remove_file(&tmp);
-            write_new(&tmp, bytes, 0o644)?;
-            std::fs::rename(&tmp, to).map_err(|_| format!("Can't replace {}.", to.display()))?;
+    let r = (|| match (inv.get("list"), inv.get("sig")) {
+        (Some(f), None) => {
+            let db = read_capped(Path::new(f), wol_core::trust::MAX_RKDB_BYTES as u64)?;
+            install_rkdb(env, &db, None, None)
         }
-        env.out(&format!("revocation list {serial} installed\n"));
-        Ok(())
+        (Some(l), Some(s)) => install_list(
+            env,
+            &read_capped(Path::new(l), 1 << 20)?,
+            &read_capped(Path::new(s), 64 * 1024)?,
+        ),
+        (None, None) => {
+            let db = wol_core::trust::rkdb_urls()
+                .iter()
+                .find_map(|u| fetch(u, wol_core::trust::MAX_RKDB_BYTES));
+            if let Some(db) = db {
+                let cps: Vec<Option<Vec<u8>>> = wol_core::cdn::RKDB_CHECKPOINTS
+                    .iter()
+                    .map(|u| fetch(u, 256))
+                    .collect();
+                return install_rkdb(env, &db, cps[0].as_deref(), cps[1].as_deref());
+            }
+            match fetch_list() {
+                Ok((list, sig)) => install_list(env, &list, &sig),
+                Err(_) => Err(
+                    "WolOS could not update the list of withdrawn certificates. New apps wait until it can; apps already installed keep working.".to_owned(),
+                ),
+            }
+        }
+        _ => Err("Give a revoked.rkdb, or a revoked.json and its .wsig, or nothing.".to_owned()),
     })();
     done(env, r)
+}
+
+/// `wol trust show FILE`: the signature line of a certificate, a file certificate, a revocation
+/// database (each entry), a root-signed section, or a `.wol` (its signature), the same line the
+/// Store sheet and `woltrust verify` show.
+pub fn show_line(env: &mut dyn Env, inv: &Invocation) -> i32 {
+    use wol_core::woltrust::{self as wt, line, rkdb};
+    let r =
+        (|| {
+            let f = inv.get("file").unwrap_or_default();
+            let bytes = read_capped(Path::new(f), wol_core::trust::MAX_RKDB_BYTES as u64)?;
+            let ts = wol_core::trust::TrustStore::load(&wol_core::system::PosixHost);
+            let st = &ts.store;
+            let name_of = |serial: &str| {
+                st.roots
+                    .iter()
+                    .chain(st.intermediates.iter())
+                    .find(|c| c.body.serial == serial)
+                    .map_or_else(|| serial.to_owned(), line::ca_name)
+            };
+            let mut out = Vec::new();
+            if bytes.starts_with(rkdb::MAGIC) {
+                let db = rkdb::Db::parse(&bytes).map_err(|e| format!("{f}: {}", e.as_str()))?;
+                let checked = st.check_rkdb(&bytes, env.now_secs()).is_ok();
+                if !checked {
+                    out.push(
+                        "(this database does not verify against this computer's roots)".to_owned(),
+                    );
+                }
+                let by = name_of(&rkdb::id_text(&db.signer));
+                if let Some(r) = &db.root {
+                    let rb = name_of(&rkdb::id_text(&r.signer));
+                    for e in r.entries.iter() {
+                        out.push(line::revocation(
+                            &rkdb::id_text(&e.id),
+                            u64::from(e.at),
+                            e.reason,
+                            &rb,
+                        ));
+                    }
+                }
+                for e in db.entries.iter() {
+                    out.push(line::revocation(
+                        &rkdb::id_text(&e.id),
+                        u64::from(e.at),
+                        e.reason,
+                        &by,
+                    ));
+                }
+            } else if bytes.starts_with(rkdb::ROOT_MAGIC) {
+                let (r, _) =
+                    rkdb::RootSection::parse(&bytes).map_err(|e| format!("{f}: {}", e.as_str()))?;
+                let by = name_of(&rkdb::id_text(&r.signer));
+                for e in r.entries.iter() {
+                    out.push(line::revocation(
+                        &rkdb::id_text(&e.id),
+                        u64::from(e.at),
+                        e.reason,
+                        &by,
+                    ));
+                }
+            } else if let Ok(c) = Cert::parse(&bytes) {
+                let mut issuers: Vec<&Cert> = st
+                    .roots
+                    .iter()
+                    .chain(st.intermediates.iter())
+                    .filter(|i| i.body.serial == c.body.issuer && c.body.kind != Kind::Root)
+                    .collect();
+                issuers.extend(
+                    st.roots
+                        .iter()
+                        .filter(|r| c.cosigs.iter().any(|x| x.issuer == r.body.serial)),
+                );
+                out.push(line::cert(&c, &issuers));
+            } else if let Some(body) = filecert_body(&bytes) {
+                let ok = wt::filecert::verify(st, &bytes, &body.file_sha256).is_ok();
+                out.push(line::file_certificate(&body, None));
+                if !ok {
+                    out.push(
+                        "(this file certificate does not verify against this computer's roots)"
+                            .to_owned(),
+                    );
+                }
+            } else {
+                let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+                let c = ts.verify_wol_at(Path::new(f), &keys, None, env.now_secs())?;
+                out.push(c.outcome.line.unwrap_or_else(|| {
+                    format!("(no signature line: {})", c.outcome.code.as_str())
+                }));
+            }
+            for l in out {
+                env.out(&format!("{l}\n"));
+            }
+            Ok(())
+        })();
+    done(env, r)
+}
+
+fn filecert_body(bytes: &[u8]) -> Option<wol_core::woltrust::filecert::Body> {
+    let f: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    f.get("cert")?;
+    let raw = wol_core::woltrust::b64::decode(
+        f.get("body")?.as_str()?,
+        wol_core::woltrust::filecert::MAX_BODY,
+    )?;
+    serde_json::from_slice(&raw).ok()
 }

@@ -13,6 +13,7 @@ pub mod filecert_vectors;
 #[cfg(feature = "seal")]
 pub mod init;
 pub mod key;
+pub mod line;
 pub mod make;
 pub mod origin;
 pub mod pki;
@@ -21,13 +22,17 @@ pub mod request;
 #[cfg(feature = "seal")]
 pub mod request_vectors;
 pub mod revoked;
+pub mod rkdb;
+pub mod rkdb_vectors;
 #[cfg(feature = "seal")]
 pub mod seal;
 #[cfg(feature = "seal")]
 pub mod seal_vectors;
 pub mod store;
 pub mod vectors;
+pub mod vectors_ids;
 pub mod verify;
+pub mod witness;
 #[cfg(feature = "seal")]
 pub mod wolkey;
 
@@ -44,8 +49,9 @@ pub const FORMAT: u32 = 1;
 /// Largest certificate body (the exact signed bytes): 8 KiB, room for the 1.6 KB of encryption keys
 /// next to the 2.6 KB ML-DSA-65 key.
 pub const MAX_BODY: usize = 8192;
-/// Largest `.wolcert` file: 8 KiB of body, a 7.8 KB root signature, base64 and braces.
-pub const MAX_CERT_FILE: usize = 24 * 1024;
+/// Largest `.wolcert` file: 8 KiB of body and up to two 7.8 KB root signatures (an intermediate
+/// carries both roots', lead decision 2026-11-04 03:17Z), base64 and braces.
+pub const MAX_CERT_FILE: usize = 40 * 1024;
 /// Most certificates in a `CHAIN` member (the leaf first, never a root).
 pub const MAX_CHAIN_CERTS: usize = 4;
 /// Largest `CHAIN` member.

@@ -91,6 +91,7 @@ fn made(seed_name: &str, kind: Kind, login: &str, name: &str, id: u64, enc: bool
         },
         months: 12,
         requested_at: NOW - 3600,
+        terms: None,
     };
     if let Some(c) = request::Claimed::of_request(&r) {
         r.proof = request::prove(&km.secret(), &c);
@@ -292,7 +293,44 @@ pub fn generate() -> Result<Vec<RequestVector>, String> {
     if let Some(c) = request::Claimed::of_request(&member) {
         member.proof = request::prove(&km.secret(), &c);
     }
-    let cases = cases(&alice, &org, &plain, &member, &added)?;
+    let mut cases = cases(&alice, &org, &plain, &member, &added)?;
+    // Terms (lead decision "SIGNATURE LINES"): named in the request, covered by the proof.
+    let mut termed = made(
+        "test-dana-request",
+        Kind::Person,
+        "dana",
+        "Dana Roe",
+        1005,
+        true,
+    );
+    termed.terms = Some(crate::vectors_ids::terms());
+    let dk = KeyMaterial::new(pki::seed("test-dana-request"), false);
+    if let Some(c) = request::Claimed::of_request(&termed) {
+        termed.proof = request::prove(&dk.secret(), &c);
+    }
+    let tv = serde_json::to_value(&termed).map_err(|e| e.to_string())?;
+    cases.push((
+        "request-terms",
+        "a request that names the trust terms (version and SHA-256 of the text): the proof covers them",
+        tv.clone(),
+        Ok(()),
+    ));
+    cases.push((
+        "request-terms-changed",
+        "the terms version changed after the proof was made: refused",
+        edit(tv.clone(), |v| v["terms"]["version"] = json!(2)),
+        Err(RequestError::BadProof),
+    ));
+    cases.push((
+        "request-terms-removed",
+        "the terms removed after the proof was made: refused",
+        edit(tv, |v| {
+            if let Some(o) = v.as_object_mut() {
+                o.remove("terms");
+            }
+        }),
+        Err(RequestError::BadProof),
+    ));
     let mut out = Vec::new();
     for (name, about, value, want) in cases {
         let v = RequestVector {
