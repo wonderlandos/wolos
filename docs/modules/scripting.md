@@ -4,13 +4,14 @@ Decision: ADR 0041. Code: `crates/controller/src/script.rs` (`wol script`, the `
 
 ## What a script is
 
-A script is a text file you edit and run: its first line names the interpreter (`#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/ruby`, `#!/usr/bin/env ruby`), or, without that line, its name ends in `.sh`, `.bash` or `.rb`. WolOS treats a Ruby script exactly as it treats a shell script. Why Ruby: Crystal is the language of apps and tools (ADR 0036), but it compiles; a script should run the moment you save it. The interpreter (`ruby`) is part of the system; the linter (`rubocop`) comes with the Developer module.
+A script is a text file you edit and run: its first line names the interpreter (`#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/ruby`, `#!/usr/bin/env ruby`, `#!/usr/bin/env pwsh`), or, without that line, its name ends in `.sh`, `.bash`, `.rb` or `.ps1`. WolOS treats a Ruby script exactly as it treats a shell script. Why Ruby: Crystal is the language of apps and tools (ADR 0036), but it compiles; a script should run the moment you save it. The interpreter (`ruby`) is part of the system; the linter (`rubocop`) comes with the Developer module.
 
 | Kind | Name | Interpreter | Checked with | Linter (when installed) |
 |---|---|---|---|---|
 | `sh` | `.sh` | `/bin/sh` | `sh -n` | `shellcheck -S error -s sh` |
 | `bash` | `.bash` | `/bin/bash` | `bash -n` | `shellcheck -S error -s bash` |
 | `ruby` | `.rb` | `/usr/bin/ruby` | `ruby -wc` | `rubocop` with the WolOS cop list |
+| `ps1` | `.ps1` | `/usr/lib/wolos/pwsh` (the person's pwsh from the Console module; `-NoProfile -NonInteractive`) | pwsh's parser, `/usr/share/wolos/pwsh/check.ps1` | none |
 
 `wol script` (or `wol script --json`) prints this table.
 

@@ -42,12 +42,7 @@ const SCRIPTS: &[(&str, &str, &str, &str)] = &[
         "#!/usr/bin/env ruby\nputs 'hi'\n",
         "/usr/bin/ruby",
     ),
-    (
-        "ps1",
-        "tidy.ps1",
-        "'hi'\n",
-        "/usr/lib/wolos/pwsh",
-    ),
+    ("ps1", "tidy.ps1", "'hi'\n", "/usr/lib/wolos/pwsh"),
     (
         "ps1",
         "tidy",
@@ -255,7 +250,6 @@ fn check_parses_without_running_then_lints_when_installed() {
         assert_eq!(v["ok"], false);
         assert_eq!(v["lint"], tool);
         assert!(v["problems"][0].as_str().unwrap().contains(tool));
-
     }
     // a parse error stops before the linter (every kind)
     for (i, (kind, file, text, _)) in SCRIPTS.iter().enumerate() {

@@ -1,5 +1,5 @@
 # WolOS: PowerShell in zsh, sourced by the WolOS zshrc when the Console module's pwsh is installed
-# (wopkg recipe powershell, ~/.local/bin/pwsh). docs/modules/pwsh-zsh.md says the same in prose.
+# (wopkg recipe powershell, ~/.local/bin/pwsh). docs/modules/pwsh.md says the same in prose.
 #   pw 'LINE' [ARGS]  runs one pwsh line inside a zsh pipeline: stdin lines (a pipe or a file) go
 #                     into its first command, its output comes out as text, its exit status is
 #                     the line's (/usr/share/wolos/pwsh/pw.ps1 does the pwsh side). Not `ps`: that

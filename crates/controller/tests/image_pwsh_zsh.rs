@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! pwsh in zsh (docs/modules/pwsh-zsh.md): the WolOS zshrc loads /usr/share/wolos/zsh/pwsh.zsh when
+//! pwsh in zsh (docs/modules/pwsh.md): the WolOS zshrc loads /usr/share/wolos/zsh/pwsh.zsh when
 //! the person's pwsh is installed; it adds `pw 'LINE'` (one pwsh line in a zsh pipeline, run by
 //! /usr/share/wolos/pwsh/pw.ps1), runs `x.ps1` typed as a command, completes cmdlets and their
 //! parameters from a list /usr/share/wolos/pwsh/commands.ps1 writes, and colours pwsh lines.
@@ -108,15 +108,15 @@ fn zsh_run(home: &Path, body: &str) -> (i32, String, String) {
         )
         .unwrap();
     }
-    let script = format!(
-        "emulate zsh; source {}; {body}",
-        repo(ZSH_FILE).display()
-    );
+    let script = format!("emulate zsh; source {}; {body}", repo(ZSH_FILE).display());
     let o = Command::new("zsh")
         .args(["-f", "-c", &script])
         .env_clear()
         .env("HOME", home)
-        .env("PATH", format!("{}:/usr/bin:/bin", home.join("bin").display()))
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", home.join("bin").display()),
+        )
         .env("WOLOS_PWSH_SHARE", repo(SHARE))
         .env("TERM", "dumb")
         .output()
@@ -208,7 +208,10 @@ fn the_persons_pwsh_joins_path_at_the_end_once() {
         ),
     );
     assert_eq!(code, 0, "{err}");
-    assert_eq!(out.trim(), format!("{} 1", home.join(".local/bin").display()));
+    assert_eq!(
+        out.trim(),
+        format!("{} 1", home.join(".local/bin").display())
+    );
     let _ = fs::remove_dir_all(&home);
 }
 
@@ -222,7 +225,7 @@ fn the_command_list_is_read_once_and_case_insensitively() {
     let (code, out, err) = zsh_run(
         &home,
         "_wolos_pw_load && print -r -- \"${_wolos_pw_name[sort-object]}|${_wolos_pw_params[Sort-Object]}|\
-         ${_wolos_pw_common}|${_wolos_pw_what[sort]}|${+_wolos_pw_what[*]}\"",
+         ${_wolos_pw_common}|${_wolos_pw_what[sort]}|${+_wolos_pw_what[(e)*]}\"",
     );
     assert_eq!(code, 0, "{err}");
     assert_eq!(
@@ -258,8 +261,8 @@ fn pwsh_lines_get_colours_where_they_are_and_nowhere_else() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(
         out,
-        "8 21 fg=green Get-ChildItem\n22 27 fg=cyan -Path\n32 33 fg=green ?\n\
-         36 38 fg=magenta,bold $_\n46 49 fg=magenta -gt\n54 59 fg=8 # big\n"
+        "9 22 fg=green Get-ChildItem\n23 28 fg=cyan -Path\n33 34 fg=green ?\n\
+         37 39 fg=magenta,bold $_\n47 50 fg=magenta -gt\n55 60 fg=8 # big\n"
     );
     // pwsh -c and -Command: the same; other commands' quoted words: nothing.
     let (_, out, _) = zsh_run(
@@ -321,13 +324,20 @@ fn runner_pipes_both_ways_and_keeps_the_status() {
         &[],
     );
     assert_eq!(code, 0);
-    assert!(out.contains("Name Size") && out.contains("x       3"), "{out}");
+    assert!(
+        out.contains("Name Size") && out.contains("x       3"),
+        "{out}"
+    );
     assert!(!out.contains('\u{1b}'), "colour codes in a pipe: {out:?}");
     assert_eq!(run("exit 7", None, &[]).0, 7);
     assert_eq!(run("Get-Item /nowhere/at/all", None, &[]).0, 1);
     assert_eq!(run("/bin/sh -c 'exit 9'", None, &[]).0, 9);
     assert_eq!(run("/bin/sh -c 'exit 9'; 'then fine'", None, &[]).0, 0);
-    let (code, out, _) = run("\"$($args.Count) $($args -join '|')\"", None, &["a b", "-x"]);
+    let (code, out, _) = run(
+        "\"$($args.Count) $($args -join '|')\"",
+        None,
+        &["a b", "-x"],
+    );
     assert_eq!((code, out.as_str()), (0, "2 a b|-x\n"));
     let (code, _, err) = run("Get-Date |", None, &[]);
     assert_eq!(code, 2);
@@ -368,7 +378,10 @@ fn the_lister_writes_commands_with_their_parameters() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let text = fs::read_to_string(&out).unwrap();
     let first = text.lines().next().unwrap();
-    assert!(first.starts_with("*\tcommon\t") && first.contains("ErrorAction"), "{first}");
+    assert!(
+        first.starts_with("*\tcommon\t") && first.contains("ErrorAction"),
+        "{first}"
+    );
     let row = |name: &str| {
         text.lines()
             .find(|l| l.split('\t').next() == Some(name))
@@ -379,7 +392,10 @@ fn the_lister_writes_commands_with_their_parameters() {
     };
     let sort = row("Sort-Object");
     assert!(sort[2].split(' ').any(|p| p == "Descending"), "{sort:?}");
-    assert!(!sort[2].split(' ').any(|p| p == "ErrorAction"), "common ones listed once");
+    assert!(
+        !sort[2].split(' ').any(|p| p == "ErrorAction"),
+        "common ones listed once"
+    );
     assert_eq!(row("%")[1], "alias of ForEach-Object");
     assert!(
         fs::read_dir(d.join("cache")).unwrap().count() == 1,
