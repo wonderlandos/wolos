@@ -53,9 +53,20 @@ fn cache_dir(env: &dyn Env) -> PathBuf {
 }
 
 fn fetch(env: &mut dyn Env, url: &str, dest: &Path) -> bool {
-    let argv = package::fetch_argv(url, &dest.to_string_lossy());
-    env.exec_quiet(&argv).is_ok_and(|c| c == 0)
+    fetch_code(env, url, dest) == Some(0)
 }
+
+/// curl's exit status for one download (None: curl did not run).
+fn fetch_code(env: &mut dyn Env, url: &str, dest: &Path) -> Option<i32> {
+    let argv = package::fetch_argv(url, &dest.to_string_lossy());
+    env.exec_quiet(&argv).ok()
+}
+
+/// curl `-f`: the server answered with an HTTP error (404: no index at that address). The
+/// machine is online; "offline?" sent people to their network (QA-LIVE3-8).
+const CURL_HTTP_ERROR: i32 = 22;
+/// The index's address answered with an HTTP error, so there is no index to read.
+const INDEX_NOT_ON_SERVER: &str = "the package index is not on the server";
 
 /// A file of at most [`package::INDEX_MAX_BYTES`] (audit 8 #5): a larger one is an error, never
 /// read into memory whole.
@@ -129,8 +140,12 @@ fn index(env: &mut dyn Env) -> Result<Option<Index>, String> {
         mark.exists(),
     );
     let (fresh, fresh_sig) = (part_of(&file), part_of(&sig));
-    if !fetch(env, &url, &fresh) {
+    let code = fetch_code(env, &url, &fresh);
+    if code != Some(0) {
         let _ = std::fs::remove_file(&fresh);
+        if code == Some(CURL_HTTP_ERROR) && !file.exists() {
+            return Err(format!("{INDEX_NOT_ON_SERVER} ({url})"));
+        }
         env.err("wol: index unavailable, using the cached copy\n");
     } else {
         let got_sig = fetch(env, &format!("{url}{INDEX_SIG_SUFFIX}"), &fresh_sig);
@@ -177,6 +192,9 @@ fn install(env: &mut dyn Env, app: &str) -> i32 {
                 "wol: package index: {e}; installing '{app}' from the system repositories\n"
             ));
             None
+        }
+        Err(e) if e.starts_with(INDEX_NOT_ON_SERVER) => {
+            return fail(env, ErrorCode::Unavailable, &format!("package index: {e}"));
         }
         Err(e) => return fail(env, ErrorCode::Invalid, &format!("package index: {e}")),
     };
@@ -346,6 +364,9 @@ fn updates(env: &mut dyn Env, yes: bool, json: bool) -> i32 {
     let index = match index(env) {
         Ok(Some(i)) => i,
         Ok(None) => return fail(env, ErrorCode::Unavailable, "no package index (offline?)"),
+        Err(e) if e.starts_with(INDEX_NOT_ON_SERVER) => {
+            return fail(env, ErrorCode::Unavailable, &format!("package index: {e}"));
+        }
         Err(e) => return fail(env, ErrorCode::Invalid, &format!("package index: {e}")),
     };
     let installed = records(env);
@@ -700,5 +721,35 @@ mod tests {
         assert_ne!(run(&mut off, "install org.wolos.Fixture"), 0);
         assert!(off.requests.is_empty());
         assert!(off.err.contains("signature"), "{}", off.err);
+    }
+
+    /// QA-LIVE3-8: an index the server does not have (curl 22, HTTP 404) is not "offline": search
+    /// names the server and says so; an index app id fails with Unavailable (69), a plain package
+    /// name still goes to the system repositories. Unreachable (curl 6/7) still says offline.
+    #[test]
+    fn missing_index_is_not_offline() {
+        let (mut e, _home) = env("http404");
+        e.exec_codes = vec![22];
+        assert_eq!(run(&mut e, "search zzz-nothing"), 0, "{}", e.err);
+        assert!(!e.err.contains("offline"), "{}", e.err);
+        assert!(e.err.contains("not on the server"), "{}", e.err);
+        let (mut off, _h) = env("offline");
+        off.exec_codes = vec![6];
+        assert_eq!(run(&mut off, "search zzz-nothing"), 0, "{}", off.err);
+        assert!(off.err.contains("offline"), "{}", off.err);
+        let (mut app, _h) = env("http404-app");
+        app.exec_codes = vec![22];
+        assert_eq!(
+            run(&mut app, "install org.wolos.Nothing"),
+            69,
+            "{}",
+            app.err
+        );
+        assert!(app.err.contains("not on the server"), "{}", app.err);
+        assert!(app.requests.is_empty());
+        let (mut pkg, _h) = env("http404-pkg");
+        pkg.exec_codes = vec![22];
+        assert_eq!(run(&mut pkg, "install htop"), 0, "{}", pkg.err);
+        assert_eq!(sent(&pkg), ["pkg-install htop"]);
     }
 }

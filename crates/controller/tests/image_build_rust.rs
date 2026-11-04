@@ -34,7 +34,7 @@ fn cargo_calls_ask_only_for_their_packages_features() {
             r#"echo "$*" >> {log}
 p=; f=; while [ $# -gt 0 ]; do case $1 in -p) p=$2; shift;; --features) f="$f $2"; shift;; esac; shift; done
 for x in $f; do case $x in */*) [ -z "$p" ] || [ "${{x%%/*}}" = "$p" ] || {{ echo "error: the package '$p' does not contain this feature: $x" >&2; exit 101; }};; esac; done
-for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-flatpak-consent wol-analyze wol-kit-host wol-plugin-maker wol-xguard wol-xguard-clam pacman wol-authcheck wol-session-pam; do
+for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-flatpak-consent wol-analyze wol-kit-host wol-plugin-maker wol-webhost wol-xguard wol-xguard-clam pacman wol-authcheck wol-session-pam; do
   printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {rel}/$b; done"#,
             log = log.display(),
             rel = target.join("release").display()
@@ -57,4 +57,13 @@ for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search
         "{calls}"
     );
     assert!(calls.contains("-p xguard-clam"), "{calls}\n{err}");
+    // QA-SHADOW-26: the web-app host is runtime-required (api webapp.rs HOST): it is installed
+    // where HOST names it, from the workspace build (crates/webengine's bin).
+    let host = t.join("dest/usr/bin/wol-webhost");
+    assert!(
+        host.is_file(),
+        "build-rust.sh does not install wol-webhost\n{err}"
+    );
+    let api = fs::read_to_string(root().join("crates/api/src/webapp.rs")).unwrap();
+    assert!(api.contains("pub const HOST: &str = \"/usr/bin/wol-webhost\";"));
 }

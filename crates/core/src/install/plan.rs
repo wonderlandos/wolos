@@ -35,6 +35,10 @@ pub struct Account {
     pub full_name: String,
     /// Monogram colour (`shared::login::AVATAR_TONES`).
     pub tone: String,
+    /// The password hint from the account page ("" = none). A plan written before 0.13 has
+    /// none (QA-LIVE-24: the installer dropped it, the lock screen never showed one).
+    #[serde(default)]
+    pub hint: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -726,6 +730,7 @@ mod tests {
                 name: "alice".into(),
                 full_name: "Alice".into(),
                 tone: "violet".into(),
+                hint: String::new(),
             }),
             secure_boot: Some(false),
             modules: vec!["dev".into(), "creative".into()],

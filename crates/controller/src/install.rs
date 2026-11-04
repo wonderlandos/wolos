@@ -683,17 +683,23 @@ pub fn settings_files(p: &Plan) -> Option<Vec<(String, String)>> {
 /// The account's request for `login::setup_plan`.
 pub fn new_account(p: &Plan, password: &str) -> Option<NewAccount> {
     let a = p.account.as_ref()?;
-    Some(NewAccount {
+    let mut n = NewAccount {
         name: a.name.clone(),
         full_name: a.full_name.clone(),
-        hint: String::new(),
+        hint: a.hint.clone(),
         locale: p.locale.clone(),
         keymap: p.keyboard.clone(),
         appearance: "auto".into(),
         avatar: a.tone.clone(),
         accent: shared::login::DEFAULT_ACCENT.into(),
         password: password.into(),
-    })
+    };
+    // The plan file is input: a hint the account rules refuse is left out, never written
+    // (the account's other fields are checked by plan_problem and setup_plan).
+    if wol_core::settings::users::validate_account(&n) == Err("hint") {
+        n.hint.clear();
+    }
+    Some(n)
 }
 
 /// Creates the account in the new system through the same plan as the Setup Assistant.
@@ -1814,6 +1820,7 @@ mod tests {
                 name: "alice".into(),
                 full_name: "Alice".into(),
                 tone: "green".into(),
+                hint: String::new(),
             }),
             ..Plan::default()
         };
@@ -1953,6 +1960,7 @@ mod tests {
                 name: "alice".into(),
                 full_name: "Alice".into(),
                 tone: "green".into(),
+                hint: String::new(),
             }),
             protect: Protect::Off,
             ..Plan::default()
@@ -1964,5 +1972,40 @@ mod tests {
         );
         assert_eq!(a.appearance, "auto");
         assert!(login::setup_plan(&a).len() > 3);
+    }
+
+    /// QA-LIVE-24: the hint typed on the installer's account page reaches the new system's hint
+    /// file (the lock screen shows it after three wrong passwords); 0.12.1 dropped it, so the lock
+    /// screen only ever said "Incorrect password". An older plan without the field still reads.
+    #[test]
+    fn the_installers_hint_reaches_the_hint_file() {
+        let p = Plan {
+            locale: "en_US.UTF-8".into(),
+            keyboard: "us".into(),
+            account: Some(Account {
+                name: "alice".into(),
+                full_name: "Alice".into(),
+                tone: "green".into(),
+                hint: "white rabbit".into(),
+            }),
+            ..Plan::default()
+        };
+        let a = new_account(&p, "curiouser").unwrap();
+        assert_eq!(a.hint, "white rabbit");
+        let plan = login::setup_plan(&a);
+        let file = format!("{}/alice", login::HINTS_DIR);
+        assert!(
+            plan.iter()
+                .any(|w| format!("{w:?}").contains(&file)
+                    && format!("{w:?}").contains("white rabbit")),
+            "{plan:?}"
+        );
+        let old = r#"{"name":"alice","full_name":"Alice","tone":"green"}"#;
+        let back: Account = serde_json::from_str(old).unwrap();
+        assert_eq!(back.hint, "");
+        // A hint the account rules refuse (a colon) is not written.
+        let mut bad = p.clone();
+        bad.account.as_mut().unwrap().hint = "a:b".into();
+        assert_eq!(new_account(&bad, "curiouser").unwrap().hint, "");
     }
 }
