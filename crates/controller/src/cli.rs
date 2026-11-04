@@ -185,7 +185,7 @@ pub const TREE: &[Cmd] = &[
         &["script", "run"],
         "script.run",
         &[arg("file"), rest("args")],
-        "Run a sh, bash or ruby script as you, clean environment, its wol changes through the helper gate",
+        "Run a sh, bash, ruby or rsh script as you, clean environment, its wol changes through the helper gate",
     ),
     cmd(
         &["script", "on"],
