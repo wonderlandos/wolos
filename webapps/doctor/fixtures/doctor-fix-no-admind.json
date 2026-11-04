@@ -11,7 +11,11 @@
     "status": "fail",
     "title": "Firewall"
   },
+  "error": "administrator service unavailable (wol-admind)",
+  "exit": 69,
   "id": "security.firewall",
+  "message": "The fix did not work: administrator service unavailable (wol-admind).",
+  "next": "Choose Check again to see how it stands now. If it keeps failing, restart the computer and try again.",
   "ok": false,
   "ran": true
 }

@@ -63,6 +63,8 @@ function commandBlock(c) {
   } else {
     d.append(make("p", null, t("command.check")), make("code", null, `wol doctor ${c.area}`));
   }
+  // A check that could not run says what it stopped with (the report is never only "failed").
+  if (c.error) d.append(make("p", null, t("command.error")), make("code", null, c.error));
   return d;
 }
 
@@ -197,16 +199,30 @@ async function runFix(c) {
     const after = r && r.check && r.check.id === c.id ? r.check : null;
     if (r && r.ok) res = { ok: true, text: t("fix.done") };
     else if (r && !r.ran) res = { ok: false, text: t("fix.nothing") };
+    // A step of the fix stopped (QA-DOC-2): which one, in the controller's own sentence, and the
+    // row as it is now (the steps before it may have changed things).
+    else if (r && typeof r.message === "string" && r.message) res = { ok: false, text: [r.message, after ? after.detail : ""].filter(Boolean).join(" ") };
     else res = { ok: false, text: [t("fix.notyet"), after ? after.detail : ""].filter(Boolean).join(" ") };
+    // What to do next, in the controller's words when it gave them, else ours.
+    if (!res.ok && r && r.ran !== false) res.text += " " + (typeof r.next === "string" && r.next ? r.next : t("fix.next"));
     replaceCheck(after);
   } catch (e) {
-    res = { ok: false, text: explain(e) };
+    // wold refused or did not answer: the reason, then what to do.
+    res = { ok: false, text: [explain(e), t("fix.next")].filter(Boolean).join(" ") };
   }
   state.busy.delete(c.id);
   state.results.set(c.id, res);
   state.open.add(c.id);
   render();
   announce(res.text);
+}
+
+// What the bridge said, for "Show what happened": the code, its message and its hint, or the error's own text.
+function rawOf(e) {
+  if (!e) return "";
+  if (e.empty) return "doctor.check: no checks in the answer";
+  if (e.code) return [`${e.code}:`, e.message, e.hint ? `(${e.hint})` : ""].filter(Boolean).join(" ");
+  return String(e.message || e);
 }
 
 async function load(again) {
@@ -217,13 +233,18 @@ async function load(again) {
   $("#checking").hidden = false;
   $("#error").hidden = true;
   try {
-    state.data = await wolos.call("doctor.check", {});
+    const data = await wolos.call("doctor.check", {});
+    // An answer with no checks is not "everything is fine": nothing was looked at.
+    if (!data || !Array.isArray(data.checks) || !data.checks.length) throw { empty: true };
+    state.data = data;
     state.results.clear();
     render();
     if (again) announce(t("announce.checked", { summary: summaryOf(state.data.checks) }));
   } catch (e) {
     $("#error").setAttribute("heading", t("error.title"));
-    $("#error-text").textContent = explain(e);
+    $("#error-text").textContent = e && e.empty ? t("error.empty") : explain(e);
+    $("#error-checked").textContent = t("error.checked", { area: t("area." + view()) });
+    $("#error-raw").textContent = rawOf(e);
     $("#error").hidden = false;
     $("#lists").hidden = true;
     $("#fine").hidden = true;

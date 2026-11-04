@@ -123,6 +123,17 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
     let mut te = ToolEnv::new(env, format!("webapp:{app}"));
     let code = crate::run::dispatch(&inv, &mut te);
     let (out, err) = (te.out, te.err);
+    // The Doctor's check exits 1 when something needs a fix, and its fix exits non-zero when it did
+    // not work: both print the report as JSON first, and the report is the answer (QA-WEB-24: the
+    // app showed "It did not work." exactly when the computer had a problem). Only a refusal that
+    // never ran (`ran: false` with an `error`) stays an error.
+    if code != 0
+        && matches!(method, "doctor.check" | "doctor.fix")
+        && let Ok(report @ Value::Object(_)) = serde_json::from_str::<Value>(out.trim())
+        && !(report["ran"] == false && report.get("error").is_some())
+    {
+        return json!({"ok": report});
+    }
     if code != 0 {
         let msg = err.trim().trim_start_matches("wol: ").trim().to_string();
         let msg = if msg.is_empty() {
