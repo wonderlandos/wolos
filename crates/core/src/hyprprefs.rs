@@ -22,6 +22,11 @@ pub const FLOAT_APPS_RULE: &str = "wol-float-apps";
 /// Cursor theme the shipped session exports (`env = XCURSOR_THEME`).
 pub const CURSOR_THEME: &str = "Adwaita";
 
+/// Lines a mouse wheel notch scrolls: what Settings offers (1 to 10) and the shipped value, where
+/// the compositor's `input:scroll_factor` is 1.0.
+pub const SCROLL_LINES: std::ops::RangeInclusive<u32> = 1..=10;
+pub const SCROLL_LINES_DEFAULT: u32 = 3;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Layout {
@@ -60,6 +65,10 @@ pub struct DesktopPrefs {
     /// Pointer speed, -1.0..=1.0 (0 = unchanged).
     pub pointer_speed: f32,
     pub mouse_natural_scroll: bool,
+    /// Mouse wheel speed: lines per notch, [`SCROLL_LINES`] (3 as shipped). The compositor takes it
+    /// as `input:scroll_factor` (lines / 3), so toolkits and the browser see longer or shorter
+    /// wheel events and need no setting of their own.
+    pub scroll_lines: u32,
     pub touchpad_natural_scroll: bool,
     pub tap_to_click: bool,
     pub two_finger_secondary: bool,
@@ -87,6 +96,7 @@ impl Default for DesktopPrefs {
             repeat_delay: 400,
             pointer_speed: 0.0,
             mouse_natural_scroll: false, // a wheel scrolls the page the way it turns; natural stays on for the trackpad
+            scroll_lines: SCROLL_LINES_DEFAULT,
             touchpad_natural_scroll: true,
             tap_to_click: true,
             two_finger_secondary: true,
@@ -215,6 +225,16 @@ impl DesktopPrefs {
                 format!("{:.2}", self.pointer_speed.clamp(-1.0, 1.0)),
             ),
             kv("input:natural_scroll", b(self.mouse_natural_scroll)),
+            kv(
+                "input:scroll_factor",
+                format!(
+                    "{:.2}",
+                    self.scroll_lines
+                        .clamp(*SCROLL_LINES.start(), *SCROLL_LINES.end())
+                        as f32
+                        / SCROLL_LINES_DEFAULT as f32
+                ),
+            ),
             kv(
                 "input:touchpad:natural_scroll",
                 b(self.touchpad_natural_scroll),
@@ -742,6 +762,47 @@ mod tests {
             );
             assert!(inc.contains(&apps), "{inc}");
         }
+    }
+
+    /// Settings > Trackpad & Mouse > Scroll speed: lines per wheel notch (1 to 10, 3 as shipped),
+    /// sent to the compositor as `input:scroll_factor` (its multiplier on the wheel: 3 lines = 1.0,
+    /// so writing the default changes nothing).
+    #[test]
+    fn scroll_speed_is_lines_per_notch_as_the_compositor_scroll_factor() {
+        let d = DesktopPrefs::default();
+        assert_eq!(d.scroll_lines, 3);
+        assert_eq!(kw(&d, "input:scroll_factor"), "1.00");
+        let five = DesktopPrefs {
+            scroll_lines: 5,
+            ..d.clone()
+        };
+        assert_eq!(kw(&five, "input:scroll_factor"), "1.67");
+        assert_eq!(five.live(&d), ["keyword input:scroll_factor 1.67"]);
+        assert!(d.live(&five).len() == 1 && d.live(&d).is_empty());
+        // Only 1 to 10 reach the compositor, whatever a hand-edited file says.
+        let lo = DesktopPrefs {
+            scroll_lines: 0,
+            ..d.clone()
+        };
+        let hi = DesktopPrefs {
+            scroll_lines: 400,
+            ..d.clone()
+        };
+        assert_eq!(kw(&lo, "input:scroll_factor"), "0.33");
+        assert_eq!(kw(&hi, "input:scroll_factor"), "3.33");
+        // The Lua file the compositor loads carries it, as a number.
+        assert!(
+            five.include().contains("[\"input.scroll_factor\"] = 1.67"),
+            "{}",
+            five.include()
+        );
+        // A desktop.json from before the setting reads as the shipped 3.
+        assert_eq!(
+            DesktopPrefs::parse(Some(r#"{"tiling":true}"#)).scroll_lines,
+            3
+        );
+        let kept = DesktopPrefs::parse(Some(&five.to_json()));
+        assert_eq!(kept.scroll_lines, 5);
     }
 
     #[test]

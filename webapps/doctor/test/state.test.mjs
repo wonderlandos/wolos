@@ -69,9 +69,18 @@ test("a report without its list is an error, not a page with nothing on it (QA-W
     assert.equal(d.get("#fine").hidden, true);
     assert.equal(d.get("#lists").hidden, true);
   }
-  const ok = doctor({ checked: 1, ready: true, checks: [] });
+  // A report whose list is empty looked at nothing: it is the error state too, never "Everything
+  // is fine" (QA-WEB-24, journey qa100-doctor-failure-report; this test said the opposite before
+  // the Doctor failure reports were merged).
+  const empty = doctor({ checked: 1, ready: true, checks: [] });
+  await empty.settle();
+  assert.equal(empty.get("#error").hidden, false, "an empty list is an error");
+  assert.equal(empty.get("#fine").hidden, true, "and nothing is fine");
+  assert.equal(empty.get("#lists").hidden, true);
+  // One check that passes is a report: the page says everything is fine.
+  const ok = doctor({ checked: 1, ready: true, checks: [{ id: "a.b", area: "system", status: "ok", title: "A", detail: "" }] });
   await ok.settle();
-  assert.equal(ok.get("#error").hidden, true, "a report with an empty list is a report");
+  assert.equal(ok.get("#error").hidden, true, "a report with its list is a report");
   assert.equal(ok.get("#fine").hidden, false, "and everything is fine");
 });
 

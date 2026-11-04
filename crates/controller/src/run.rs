@@ -599,6 +599,18 @@ fn admin(env: &mut dyn Env, inv: &Invocation) -> i32 {
 
 /// One wol-admind request; asks for the password on stdin while it answers `auth`/`denied`.
 pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
+    admin_send_said(env, req, &mut String::new())
+}
+
+/// [`admin_send`], and the sentence it printed for the person when the request did not go through
+/// is also put in `said_out` (the Doctor's report carries it: a fix that fails says why, never
+/// only an exit status).
+pub(crate) fn admin_send_said(env: &mut dyn Env, req: &AdminRequest, said_out: &mut String) -> i32 {
+    // The message goes to stderr as `wol: <msg>` and into `said_out`.
+    fn stop(env: &mut dyn Env, said_out: &mut String, code: ErrorCode, msg: &str) -> i32 {
+        *said_out = msg.to_string();
+        fail(env, code, msg)
+    }
     let sock = admin_socket(env);
     let mut password: Vec<u8> = Vec::new(); // empty = use cached authorization
     for attempt in 0..=PASSWORD_TRIES {
@@ -616,15 +628,17 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                     io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
                 ) =>
             {
-                return fail(
+                return stop(
                     env,
+                    said_out,
                     ErrorCode::Failed,
                     "wol-admind is still working on it; check again later",
                 );
             }
             Err(_) => {
-                return fail(
+                return stop(
                     env,
+                    said_out,
                     ErrorCode::Unavailable,
                     "administrator service unavailable (wol-admind)",
                 );
@@ -634,6 +648,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
             AdminReply::NeedsAuth | AdminReply::Denied => {
                 if reply == AdminReply::Denied {
                     env.err("wol admin: incorrect password\n");
+                    *said_out = "incorrect password".to_string();
                 }
                 // The last try does not ask for a password nobody will check (S4-18).
                 if attempt == PASSWORD_TRIES {
@@ -641,7 +656,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 }
                 match env.read_password() {
                     Some(p) if !p.is_empty() => password = p.into_bytes(),
-                    _ => return fail(env, ErrorCode::Denied, reply.message()),
+                    _ => return stop(env, said_out, ErrorCode::Denied, reply.message()),
                 }
             }
             AdminReply::Ok => return 0,
@@ -649,11 +664,17 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 // wol-admind's own sentence when it gave one (the program's last line, QA-100 LIVE3-19).
                 let why = said.as_deref().unwrap_or_else(|| r.message());
                 env.err(&format!("wol admin: {why}\n"));
+                *said_out = why.to_string();
                 return admin_exit(r);
             }
         }
     }
-    fail(env, ErrorCode::Denied, AdminReply::Denied.message())
+    stop(
+        env,
+        said_out,
+        ErrorCode::Denied,
+        AdminReply::Denied.message(),
+    )
 }
 
 fn bundle_plan(env: &mut dyn Env, bundle: &str, json: bool) -> i32 {
@@ -1895,6 +1916,9 @@ pub struct FakeEnv {
     pub statuses: Vec<(String, i32, String)>,
     /// Lock files held through `try_lock` (share one between two fakes to interleave runs).
     pub locks: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
+    /// Commands (`argv joined by spaces`) whose `capture` panics: a check that crashes, to prove
+    /// the Doctor still reports (the other areas, and this one as a failed row).
+    pub crash: Vec<String>,
 }
 
 /// A [`FakeEnv`] lock: gone from the shared list when dropped.
@@ -2007,6 +2031,9 @@ impl Env for FakeEnv {
         self.captured_argvs
             .push(argv.iter().map(|a| (*a).to_owned()).collect());
         let line = argv.join(" ");
+        if self.crash.contains(&line) {
+            panic!("FakeEnv: {line} crashed");
+        }
         match self.captures.iter().find(|c| c.0 == line) {
             Some(c) => Some(c.1.clone()),
             None => self.captured.clone(),

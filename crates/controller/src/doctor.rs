@@ -6,7 +6,7 @@
 //! `wol_core::netinfo`, `wol_core::power`, `wol_core::hardware`); this module only words them for
 //! a person and runs a fix through the path the owning verb uses (wol-admind for root changes).
 use crate::cli::Invocation;
-use crate::run::{Env, admin_send, emit_json, fail};
+use crate::run::{Env, admin_send_said, emit_json, fail};
 use shared::admin::{AdminAction, AdminRequest};
 use shared::errors::ErrorCode;
 use shared::hardware::{HardwareSnapshot, Kind};
@@ -67,6 +67,10 @@ pub struct Check {
     pub detail: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<Fix>,
+    /// The error text when the check itself could not run (it crashed): for the report, apart from
+    /// the words in `detail`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 fn check(area: &'static str, name: &str, title: &str, status: Status, detail: &str) -> Check {
@@ -77,6 +81,7 @@ fn check(area: &'static str, name: &str, title: &str, status: Status, detail: &s
         status,
         detail: detail.into(),
         fix: None,
+        error: None,
     }
 }
 
@@ -1064,9 +1069,13 @@ fn devices(
 
 // ---------------------------------------------------------------- run
 
-/// The checks of one area; unknown areas give none.
+/// The checks of one area; unknown areas give none. An area whose checks crash, or find nothing to
+/// look at, is one row that says so ([`guarded`]): the report is never empty and never lost.
 pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
-    match area {
+    let Some(area) = AREAS.iter().find(|a| **a == area).copied() else {
+        return Vec::new();
+    };
+    guarded(area, || match area {
         "sound" => sound(env),
         "games" => games(env),
         "updates" => updates(env),
@@ -1074,8 +1083,62 @@ pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
         "storage" => storage(env),
         "network" => network(env),
         "power" => power(env),
-        "display" => display(env),
-        _ => Vec::new(),
+        _ => display(env),
+    })
+}
+
+/// What a person calls an area (the Doctor app's sidebar words).
+fn area_name(area: &str) -> &'static str {
+    match area {
+        "sound" => "Sound",
+        "games" => "Games",
+        "updates" => "Updates",
+        "security" => "Security",
+        "storage" => "Storage",
+        "network" => "Network",
+        "power" => "Power",
+        _ => "Displays",
+    }
+}
+
+/// Runs one area's checks so that a crash in one (a panic in a check or in what it reads) cannot
+/// take the whole report with it: the area becomes a failed `<area>.check` row with the error text
+/// and what to do, and the other areas still report. An area that returns nothing is a warning row
+/// for the same reason: a report with nothing in it looks like "everything is fine".
+fn guarded(area: &'static str, run: impl FnOnce() -> Vec<Check>) -> Vec<Check> {
+    let name = area_name(area);
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => {
+            let mut c = check(
+                area,
+                "check",
+                &format!("{name} checks"),
+                Status::Warn,
+                &format!("Doctor found nothing to look at in {name}. Choose Check again."),
+            );
+            c.error = Some("the area returned no checks".into());
+            vec![c]
+        }
+        Err(payload) => {
+            let why = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "it stopped without saying why".into());
+            let mut c = check(
+                area,
+                "check",
+                &format!("{name} checks"),
+                Status::Fail,
+                &format!(
+                    "Doctor could not finish looking at {name}. It stopped with: {}. Choose Check again. If it stops again, restart the computer.",
+                    why.trim().trim_end_matches('.')
+                ),
+            );
+            c.error = Some(why);
+            vec![c]
+        }
     }
 }
 
@@ -1217,15 +1280,61 @@ pub fn after(env: &mut dyn Env, id: &str) -> serde_json::Value {
     serde_json::json!({ "id": id, "ran": true, "ok": ok, "check": after })
 }
 
+/// What to do after a fix that did not work, for the person and for a web app: the same words.
+const FIX_NEXT: &str = "Choose Check again to see how it stands now. If it keeps failing, restart the computer and try again.";
+
+/// The answer of a fix that never started or did not work (`--json`; the same keys as a fix that
+/// ran, so a script reads `ok`, `message` and `error` either way): never only an exit status.
+fn fix_report(id: &str, ran: bool, exit: i32, error: &str, message: &str) -> serde_json::Value {
+    let mut v = serde_json::json!({
+        "id": id,
+        "ran": ran,
+        "ok": false,
+        "exit": exit,
+        "message": message,
+        "next": FIX_NEXT,
+    });
+    if !error.is_empty() {
+        v["error"] = error.into();
+    }
+    v
+}
+
+/// The last line a command printed: the sentence that says why it failed.
+fn last_line(text: &str) -> String {
+    text.lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// Run one check's fix, then check its area again. A helper or a web app (any actor but a person
 /// at `wol`) never sends a wol-admind request from here: theirs went through [`approval`].
+///
+/// A fix that cannot start or does not work is a report, not a status: `--json` carries `message`
+/// (what failed), `error` (the text the failing step gave), `next` (what to do), `exit` and the
+/// check as it is now; the text report prints the same on stderr.
 fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let area = id.split('.').next().unwrap_or_default();
-    if !AREAS.contains(&area) {
-        return fail(env, ErrorCode::NotFound, &format!("no check {id}"));
-    }
-    let Some(c) = area_checks(env, area).into_iter().find(|c| c.id == id) else {
-        return fail(env, ErrorCode::NotFound, &format!("no check {id}"));
+    let found = AREAS
+        .contains(&area)
+        .then(|| area_checks(env, area).into_iter().find(|c| c.id == id))
+        .flatten();
+    let Some(c) = found else {
+        let code = fail(env, ErrorCode::NotFound, &format!("no check {id}"));
+        if json {
+            let v = fix_report(
+                id,
+                false,
+                code,
+                &format!("no check {id}"),
+                &format!("WolOS has no check {id}."),
+            );
+            emit_json(env, &v);
+        }
+        return code;
     };
     let Some(f) = c.fix.clone().filter(|_| c.status != Status::Ok) else {
         if json {
@@ -1242,22 +1351,24 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
             ErrorCode::Unsupported.exit()
         };
     };
+    let mut said = String::new();
     let code = match &f.action {
         // The check changed between the sheet and now: ask again, never on a cached password.
         Action::Admin(_) if env.actor() != "cli" => {
-            return fail(
-                env,
-                ErrorCode::Denied,
-                &format!(
-                    "{} needs the administrator now; ask again to see the password sheet",
-                    c.title
-                ),
+            let why = format!(
+                "{} needs the administrator now; ask again to see the password sheet",
+                c.title
             );
+            let code = fail(env, ErrorCode::Denied, &why);
+            if json {
+                emit_json(env, &fix_report(id, false, code, &why, &format!("{why}.")));
+            }
+            return code;
         }
         Action::Admin(reqs) => {
             let mut code = 0;
             for r in reqs {
-                let c = admin_send(env, r);
+                let c = admin_send_said(env, r, &mut said);
                 if c != 0 {
                     code = c;
                     break;
@@ -1265,12 +1376,20 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
             }
             code
         }
-        // Captured, so `--json` stays one document.
+        // Captured, so `--json` stays one document; what it printed is the reason it failed.
         Action::User(argv) => match env.exec_output(argv) {
-            Ok((c, _)) => c,
+            Ok((c, out)) => {
+                if c != 0 {
+                    said = last_line(&out);
+                }
+                c
+            }
             Err(_) => match env.exec(argv) {
                 Ok(c) => c,
-                Err(_) => ErrorCode::Unavailable.exit(),
+                Err(_) => {
+                    said = "The command could not be started.".into();
+                    ErrorCode::Unavailable.exit()
+                }
             },
         },
     };
@@ -1279,26 +1398,37 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
         .find(|c| c.id == id)
         .unwrap_or(c);
     let fixed = fixed(code, after.status);
-    if json {
-        emit_json(
-            env,
-            &serde_json::json!({ "id": id, "ran": true, "ok": fixed, "check": after }),
-        );
-    } else if fixed {
-        env.out(&format!("{}: {}\n", after.title, after.detail));
-    } else {
-        env.err(&format!(
-            "wol: {} is not fixed: {}\n",
-            after.title, after.detail
-        ));
-    }
-    if fixed {
+    let exit = if fixed {
         0
     } else if code != 0 {
         code
     } else {
         ErrorCode::Failed.exit()
+    };
+    let message = match (said.trim().trim_end_matches('.'), code) {
+        ("", 0) => format!("{} ran, but it is still not fine.", f.title),
+        ("", _) => "The fix did not work.".to_string(),
+        (why, _) => format!("The fix did not work: {why}."),
+    };
+    if json {
+        let mut v = serde_json::json!({ "id": id, "ran": true, "ok": fixed, "check": after });
+        if !fixed {
+            v = {
+                let mut r = fix_report(id, true, exit, &said, &message);
+                r["check"] = serde_json::json!(after);
+                r
+            };
+        }
+        emit_json(env, &v);
+    } else if fixed {
+        env.out(&format!("{}: {}\n", after.title, after.detail));
+    } else {
+        env.err(&format!(
+            "wol: {} is not fixed: {}\nwol: {message} {FIX_NEXT}\n",
+            after.title, after.detail
+        ));
     }
+    exit
 }
 
 #[cfg(test)]
@@ -1402,5 +1532,61 @@ mod tests {
         let t = report(&[c]);
         assert!(t.contains("fix: wol doctor fix security.firewall"), "{t}");
         assert!(t.ends_with("1 problem to fix.\n"), "{t}");
+    }
+
+    /// A helper or a web app never sends a wol-admind request from `wol doctor fix`; the refusal is
+    /// an answer with its words in `--json` too, not only a status.
+    #[test]
+    fn a_fix_asked_by_a_helper_is_refused_with_words_in_json() {
+        let mut env = crate::run::FakeEnv {
+            captures: vec![(
+                "systemctl show -p UnitFileState --value nftables.service".into(),
+                "disabled\n".into(),
+            )],
+            vars: vec![("WOL_HELPER".into(), "test-helper".into())],
+            ..Default::default()
+        };
+        let code = fix(&mut env, "security.firewall", true);
+        assert_eq!(code, ErrorCode::Denied.exit());
+        assert!(
+            env.requests.is_empty(),
+            "no wol-admind request from a helper"
+        );
+        let v: serde_json::Value = serde_json::from_str(&env.out).expect(&env.out);
+        assert_eq!(
+            (v["ran"].as_bool(), v["ok"].as_bool()),
+            (Some(false), Some(false)),
+            "{v}"
+        );
+        assert!(
+            v["error"].as_str().unwrap().contains("administrator"),
+            "{v}"
+        );
+        assert!(v["next"].is_string() && v["message"].is_string(), "{v}");
+    }
+
+    /// An area that returns nothing is a row that says so, never an empty report.
+    #[test]
+    fn an_area_with_no_checks_is_a_warning_row() {
+        let rows = guarded("games", Vec::new);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].id.as_str(), rows[0].status),
+            ("games.check", Status::Warn)
+        );
+        assert!(rows[0].detail.contains("Games"), "{}", rows[0].detail);
+        let rows = guarded("games", || panic!("{}", String::from("the list was cut")));
+        assert_eq!(
+            (rows[0].status, rows[0].error.as_deref()),
+            (Status::Fail, Some("the list was cut"))
+        );
+        let rows = guarded("power", || std::panic::panic_any(7u8));
+        assert!(
+            rows[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("without saying why")
+        );
     }
 }

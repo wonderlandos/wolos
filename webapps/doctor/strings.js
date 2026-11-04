@@ -43,11 +43,18 @@ window.WOLKIT_STRINGS = {
   "fix.done": "Fixed.",
   "fix.notyet": "That did not fix it.",
   "fix.nothing": "There is nothing to run for this one.",
+  "fix.next": "Choose Check again to see how it stands now. If it keeps failing, restart the computer and try again.",
   "fix.progress": "Fixing {title}",
   "command.show": "Show the command",
   "command.fix": "To do the same in Terminal:",
   "command.check": "To check this in Terminal:",
+  "command.error": "What the check said:",
   "error.title": "Doctor could not check your computer",
   "error.retry": "Try again",
+  "error.empty": "Doctor got an empty answer, so nothing was checked.",
+  "error.checked": "Doctor was looking at: {area}.",
+  "error.next": "Choose Try again. If it keeps happening, restart the computer.",
+  "error.more": "Show what happened",
+  "error.raw": "What WolOS said:",
   "announce.checked": "Checked again. {summary}"
 };

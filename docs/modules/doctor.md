@@ -34,6 +34,17 @@ wol doctor fix [--json] <id>     run that check's fix, then check its area again
 
 `--json` is implied when stdout is not a terminal. `wol doctor --json` prints `{checked, ready, checks}` (`checked` in seconds since 1970). `wol doctor fix --json` prints `{id, ran, ok, check}`: `ran` is false when the check is fine or has no fix, `ok` is true when the check is no longer `fail` afterwards, `check` is the check as it is now. Unknown ids exit with "not found", a fix that cannot reach wol-admind exits with "unavailable".
 
+**Failures are reports, never an empty answer** (QA-100 WEB-24, H3-2; journey `qa100-doctor-failure-report`). Whatever goes wrong, stdout (with `--json`) and the screen carry what was checked, what failed, the error text and what to do, and the exit status says it too:
+
+| What fails | The report | Exit |
+|---|---|---|
+| A check crashes (a panic in it or in what it reads) | That area is one `fail` row `<area>.check` ("Security checks") whose `detail` says what Doctor could not finish and what to do, and whose `error` is the error text; every other area still reports; `ready` is false | 1 |
+| An area finds nothing to look at | One `warn` row `<area>.check`, never "Everything is fine" over an empty list | 0 |
+| A fix does not work (wol-admind refused, is not running, the command exited non-zero, or it ran and the check is still `fail`) | `{id, ran: true, ok: false, check, exit, message, next}` and `error` when a step gave a sentence: `message` says what failed ("The fix did not work: <why>."), `error` is the step's own text (wol-admind's sentence, or the last line the command printed), `next` is what to do, `check` is the row as it is now; the text report prints the same on stderr | the step's own (`unavailable`, `denied`, ...), else 1 |
+| A fix for an id that does not exist, or asked by a helper | `{id, ran: false, ok: false, exit, error, message, next}` | `not found` (66), `denied` |
+
+The bridge (`wol webapp-call`) returns that report as `ok` for `doctor.check` and `doctor.fix` whatever the exit status (it answered "It did not work." and dropped the report whenever a check was failing); a refusal that never ran (`ran: false` with an `error`) stays an error.
+
 The verbs are in the catalog as `doctor` (read) and `doctor fix` (administrator, capability `maintenance`, asked every time) and in the command tree as `doctor.check` and `doctor.fix`. For a helper (`wol mcp`, a `WOL_HELPER` script) or a web app, a fix that needs the administrator is `ApprovalRequest::DoctorFix` (`doctor::approval`): the check's wol-admind requests, at most 8 and only `shared::shell::DOCTOR_ACTIONS`, shown step by step on the password sheet and run by the shell; a fix of the person's own services is a consent sheet, then `wol doctor fix` runs it. `wol doctor fix` run for anyone but a person at `wol` never sends a wol-admind request itself.
 
 ## The web app
@@ -45,7 +56,7 @@ The verbs are in the catalog as `doctor` (read) and `doctor fix` (administrator,
 | `doctor.check` | `doctor.read` | the output of `wol doctor --json` |
 | `doctor.fix` `{id}` | `doctor.fix` | the output of `wol doctor fix --json <id>` |
 
-The sidebar lists the areas with the number of checks that need a look (red when one has failed, orange otherwise). The page lists each area's checks, worst first; a row opens to its detail, a Fix button when there is a fix, and "Show the command", the only place a command appears. Fixing shows progress, then "Fixed." or what is still wrong. "Check again" runs everything again; when nothing needs a look the page says "Everything is fine" with the time of the last run. Keyboard: Up, Down, Home and End move between rows, Enter or Space opens one, Escape closes it.
+The sidebar lists the areas with the number of checks that need a look (red when one has failed, orange otherwise). The page lists each area's checks, worst first; a row opens to its detail, a Fix button when there is a fix, and "Show the command", the only place a command appears. Fixing shows progress, then "Fixed." or what failed, the error text and what to do. When the checks cannot be read (wold refuses, no answer, an answer with no checks) the page says what it was looking at, what to do and, behind "Show what happened", the raw text. "Check again" runs everything again; when nothing needs a look the page says "Everything is fine" with the time of the last run. Keyboard: Up, Down, Home and End move between rows, Enter or Space opens one, Escape closes it.
 
 For `needs_admin` fixes the approval sheet is wold's, not the page's; the page just waits for the answer, which is `{id, ran, ok, check}` like the command's.
 
@@ -60,5 +71,6 @@ Open `webapps/doctor/index.html?dev` in any browser: `kit/mock-bridge.js` answer
 | Test | Covers |
 |---|---|
 | `crates/controller/tests/doctor.rs` | argument parsing, every area with stable ids, one area, fixes through wol-admind (password on stdin) and as the person, nothing to run, unknown ids, no commands in words shown on screen |
+| `crates/controller/tests/doctor_failure.rs` | the failure paths above: a crashing check (JSON and text), the app's `doctor.check` while a check fails or crashes, a fix refused by wol-admind, with wol-admind down, a command that fails, an unknown id |
 | `doctor.rs` unit tests | which fix lines become actions and which stay advice, the text report |
 | `webapps/doctor/test/doctor.test.mjs` | headless Chromium (`CHROME`, `--password-store=basic --use-mock-keychain`): counts, keyboard, Fix with progress and result, "Show the command", empty and error states, light and dark at 1280 and 800 wide with pictures in `OUT` |

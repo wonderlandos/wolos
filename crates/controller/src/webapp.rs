@@ -150,8 +150,25 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
     let code = crate::run::dispatch(&inv, &mut te);
     let (out, err) = (te.out, te.err);
     let read = wol_core::sysapp::permission_of(method).is_some_and(|p| !p.admin);
-    if let Some(report) = (code != 0 && read).then(|| report_of(&out, &err)).flatten() {
-        return json!({ "ok": report });
+    // The Doctor's check exits 1 when something needs a fix, and its fix exits non-zero when it did
+    // not work: both print the report as JSON first, and the report is the answer (QA-WEB-24: the
+    // app showed "It did not work." exactly when the computer had a problem). Only a refusal that
+    // never ran (`ran: false` with an `error`) stays an error. Any other read verb whose stdout is
+    // one JSON object and stderr is empty answers the same way (`report_of`).
+    let doctor = matches!(method, "doctor.check" | "doctor.fix");
+    let report = if code == 0 {
+        None
+    } else if doctor {
+        serde_json::from_str::<Value>(out.trim())
+            .ok()
+            .filter(|r| r.is_object() && !(r["ran"] == false && r.get("error").is_some()))
+    } else if read {
+        report_of(&out, &err)
+    } else {
+        None
+    };
+    if let Some(report) = report {
+        return json!({"ok": report});
     }
     if code != 0 {
         let msg = err.trim().trim_start_matches("wol: ").trim().to_string();
