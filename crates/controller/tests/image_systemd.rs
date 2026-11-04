@@ -788,7 +788,7 @@ fn firewall_blocks_unasked_traffic_in() {
         "/etc/wolos/nftables.conf"
     );
     for want in [
-        "flush ruleset",
+        "destroy table inet wolos",
         "type filter hook input priority filter; policy drop;",
         "ct state established,related accept",
         "iif \"lo\" accept",

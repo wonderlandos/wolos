@@ -127,6 +127,8 @@ const BASELINE: &[(&str, usize)] = &[
     ("wolcrypt", 0),
     // Search by meaning: pread, no mmap, so no unsafe (docs/modules/search.md).
     ("wolsem", 0),
+    // ADR 0053 (2026-11-04): Atlas Tor groups; std and safe APIs only, `forbid(unsafe_code)`.
+    ("wol-tor", 0),
 ];
 
 fn crates_dir() -> PathBuf {

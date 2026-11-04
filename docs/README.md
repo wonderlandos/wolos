@@ -77,6 +77,8 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0045](adr/0045-locale-system.md) | One locale system for the whole OS: TSV sources, compiled `.wtx` tables, constant-time lookup, English fallback, plurals, pseudo-locale | accepted |
 | [0048](adr/0048-system-web-apps.md) | System web apps: a folder per app, one bridge to `wol` verbs by permission, one kit | proposed |
 | [0051](adr/0051-house-in-order.md) | 0.13: put the house in order before adding anything (proof rule, root-cause standards, wave gates) | proposed |
+| [0053](adr/0053-atlas-private-and-tor-tabs.md) | Atlas private and Tor tabs: the kernel is the kill switch | proposed |
+| [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
 
 ## Modules
 
@@ -88,6 +90,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Helium, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | [0038](adr/0038-sound-service.md) |
 | [modules/search.md](modules/search.md) | search by meaning on the device: the `.wst` table and its reader (`wolsem`), the hybrid rank, Settings search, the Search bar's manual and "Did you mean", `wol help <words>` | [0057](adr/0057-search-by-meaning.md) |
+| [modules/tor.md](modules/tor.md) | Tor as a layer of the OS (`wol-tor`): Atlas tabs, one app, the whole computer; switches, status, doctor, Keep Tor ready | [0053](adr/0053-atlas-private-and-tor-tabs.md), [0056](adr/0056-wol-tor-system-tor-layer.md) |
 | [modules/doctor.md](modules/doctor.md) | Doctor: every check of the system in one list (`wol doctor`, the Doctor app), each with its fix | [0048](adr/0048-system-web-apps.md) |
 | [modules/cryswol.md](modules/cryswol.md) | Cryswol: the Crystal shard over libwol (`require "cryswol"`, namespace `Wol`): layers, ownership and callback rules, errors, threads, build, how to add a verb | [0036](adr/0036-crystal-userland.md) |
 | [modules/libwolkit.md](modules/libwolkit.md) | libWolkit: the UI engine (`wolkit.h`, `libwolkit.so.1`): scene and patch stream, style, layout, text, paint, CPU and GPU renderers, window backends, limits | [0039](adr/0039-libwolkit-and-wolkit.md) |
@@ -136,4 +139,5 @@ Each module document names its ADR and its code by crate and path.
 | [creators-audio.md](creators-audio.md) | sound for creators: recording, streaming, producing |
 | [plugins/plugin.schema.json](plugins/plugin.schema.json) | JSON schema of a shell plugin manifest (ADR 0031, [modules/plugins.md](modules/plugins.md)) |
 | [bench/webapps-baseline.md](bench/webapps-baseline.md) | web-app baseline: what each web-based app costs in memory, start-up, idle and frames, Memory Saver on and off, the gap against native apps and the ranked wins; raw data in `bench/webapps-baseline.json` and `bench/webapps-roles.json`, harness in `tools/bench/webapps/` |
+| [bench/atlas-tor-plan.md](bench/atlas-tor-plan.md) | Atlas Tor tab benchmark plan: bootstrap, warm open, page load, relay overhead, memory and leak checks against the Brave Tor window; nothing measured yet | [0053](adr/0053-atlas-private-and-tor-tabs.md) |
 | [research/attested-gaming-mode.md](research/attested-gaming-mode.md) | research: attested gaming mode and kernel anti-cheat on WolOS (builds on ADR 0025; not a decision) |

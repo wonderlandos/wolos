@@ -20,6 +20,7 @@ members = [
     "crates/wolsem",
     "crates/federate",
     "crates/wolcrypt",
+    "crates/wol-tor",
 ]
 # The engine library's source (ADR 0042): built in the engine's own workspace by webengine-wolos.
 exclude = ["crates/webengine/engine"]
