@@ -66,4 +66,73 @@ fi
 if command -v bat >/dev/null 2>&1; then
   export BAT_THEME=${BAT_THEME:-ansi}
 fi
+
+# su: root has no password on WolOS, so `su` and `su NAME` become sudo (your own password). An
+# interactive-shell function only: wol-login and scripts run the real /usr/bin/su (`command su`).
+su() {
+  case $#:${1-} in
+    0:* | 1:- | 1:-l | 1:--login) sudo -i; return ;;
+    1:[!-]*) sudo -iu "$1"; return ;;
+    2:- | 2:-l | 2:--login) case $2 in -*) ;; *) sudo -iu "$2"; return ;; esac ;;
+    2:-c | 2:--command) sudo sh -c "$2"; return ;;
+  esac
+  ! command -v wol >/dev/null 2>&1 || wol hint su
+  command su "$@"
+}
+
+# Hints (console/hints.tsv, `wol hint`): a missing command or one that fails in a way WolOS knows
+# gets one sentence and what to run instead. The table's command names are read once here, so a
+# command it does not name never starts `wol`.
+declare -gA _wolos_hint_cmds=()
+_wolos_hints=${WOLOS_HINTS:-/usr/share/wolos/console/hints.tsv}
+if [ -r "$_wolos_hints" ] && command -v wol >/dev/null 2>&1; then
+  while IFS=$'\t' read -r _wolos_c _; do
+    case $_wolos_c in '' | '#'*) ;; *) _wolos_hint_cmds[$_wolos_c]=1 ;; esac
+  done <"$_wolos_hints"
+  unset _wolos_c
+fi
+unset _wolos_hints
+command_not_found_handle() {
+  if [ -n "${_wolos_hint_cmds[${1##*/}]:-}" ] && wol hint "$*" --not-found; then
+    return 127
+  fi
+  printf 'bash: %s: command not found\n' "$1" >&2
+  return 127
+}
+# The last line from history (`history 1`: `fc -l` in a subshell lags one line behind); bash 5.3
+# reads it without a subshell.
+if ((BASH_VERSINFO[0] > 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] >= 3))); then
+  eval '_wolos_last() { local HISTTIMEFORMAT=; _wolos_line=${ history 1; }; }'
+else
+  _wolos_last() {
+    local HISTTIMEFORMAT=
+    _wolos_line=$(history 1)
+  }
+fi
+# After each command (first in PROMPT_COMMAND, keeps $?): a new command number (\#, so an empty
+# line or the same prompt again stays quiet), a failure that is not command-not-found (127) or an
+# interrupt (over 128), and a first word in the table. su speaks for itself.
+_wolos_hint_seen=
+_wolos_hint() {
+  local s=$? n='\#' w
+  n=${n@P}
+  [ "$n" != "$_wolos_hint_seen" ] || return "$s"
+  _wolos_hint_seen=$n
+  if [ "$s" != 0 ] && [ "$s" -ne 127 ] && [ "$s" -le 128 ] && ((${#_wolos_hint_cmds[@]})); then
+    local _wolos_line
+    _wolos_last
+    # "  12  line" (a * after the number: edited in history)
+    _wolos_line=${_wolos_line#"${_wolos_line%%[![:space:]]*}"}
+    _wolos_line=${_wolos_line#"${_wolos_line%%[!0-9]*}"}
+    _wolos_line=${_wolos_line#[* ]}
+    _wolos_line=${_wolos_line# }
+    w=${_wolos_line%%[[:space:]]*}
+    w=${w##*/}
+    if [ "$w" != su ] && [ -n "${_wolos_hint_cmds[$w]:-}" ]; then
+      wol hint "$_wolos_line" "$s"
+    fi
+  fi
+  return "$s"
+}
+PROMPT_COMMAND="_wolos_hint; $PROMPT_COMMAND"
 unset _wolos_colors _wolos_star

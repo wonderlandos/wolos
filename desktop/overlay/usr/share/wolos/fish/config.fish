@@ -39,3 +39,56 @@ end
 if command -q bat; and not set -q BAT_THEME
     set -gx BAT_THEME ansi
 end
+
+# su: root has no password on WolOS, so `su` and `su NAME` become sudo (your own password). An
+# interactive-shell function only: wol-login and scripts run the real /usr/bin/su (`command su`).
+function su --description 'su on WolOS: sudo -i, sudo -iu NAME, sudo sh -c CMD'
+    set -l n (count $argv)
+    set -l login 0
+    test $n -ge 1; and contains -- $argv[1] - -l --login; and set login 1
+    if test $n -eq 0; or test $n -eq 1 -a $login = 1
+        sudo -i
+        return $status
+    else if test $n -eq 1; and not string match -q -- '-*' $argv[1]
+        sudo -iu $argv[1]
+        return $status
+    else if test $n -eq 2 -a $login = 1; and not string match -q -- '-*' $argv[2]
+        sudo -iu $argv[2]
+        return $status
+    else if test $n -eq 2; and contains -- $argv[1] -c --command
+        sudo sh -c $argv[2]
+        return $status
+    end
+    command -q wol; and wol hint su
+    command su $argv
+end
+
+# Hints (console/hints.tsv, `wol hint`): a missing command or one that fails in a way WolOS knows
+# gets one sentence and what to run instead. The table's command names are read once here, so a
+# command it does not name never starts `wol`.
+set -l hints $WOLOS_HINTS
+test -n "$hints"; or set hints /usr/share/wolos/console/hints.tsv
+set -g __wolos_hint_cmds
+if test -r $hints; and command -q wol
+    set __wolos_hint_cmds (string match -rv '^(#|$)' <$hints | string replace -r '\t.*' '')
+end
+function fish_command_not_found
+    if contains -- (path basename -- $argv[1]) $__wolos_hint_cmds; and wol hint "$argv" --not-found
+        return 127
+    end
+    if functions -q __fish_default_command_not_found_handler
+        __fish_default_command_not_found_handler $argv
+    else
+        printf 'fish: Unknown command: %s\n' $argv[1] >&2
+    end
+end
+# After each command: a failure that is not command-not-found (127) or an interrupt (over 128),
+# and a first word in the table. su speaks for itself.
+function __wolos_hint_postexec --on-event fish_postexec
+    set -l s $status
+    test $s -ne 0 -a $s -ne 127 -a $s -le 128; or return 0
+    string match -rq '^\s*(?<w>\S+)' -- "$argv[1]"; or return 0
+    set w (path basename -- $w)
+    test "$w" != su; and contains -- $w $__wolos_hint_cmds; and wol hint "$argv[1]" $s
+    return 0
+end

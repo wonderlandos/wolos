@@ -1259,6 +1259,15 @@ pub const TREE: &[Cmd] = &[
         help: "Check a Crystal project against the WolOS rules, then type-check it (--rules: the files only)",
         hidden: false,
     },
+    // Every WolOS shell after a missing or failed command it names (console/hints.tsv, ADR 0032).
+    Cmd {
+        path: &["hint"],
+        action: "hint",
+        args: &[arg("command"), opt("status")],
+        flags: &["not-found"],
+        help: "What a missing or failed command means on WolOS, and what to run instead",
+        hidden: false,
+    },
     cmd(&["help"], "help", &[rest("command")], "Show help"),
 ];
 
@@ -1608,6 +1617,10 @@ mod tests {
                 "remind 10 tea is ready",
                 "remind minutes=10 text=tea text=is text=ready",
             ),
+            // the shells' hint hooks (zshrc, bashrc, config.fish, wolos.nu, profile.ps1)
+            ("hint su", "hint command=su"),
+            ("hint apt --not-found", "hint command=apt --not-found"),
+            ("hint cp 1", "hint command=cp status=1"),
             ("", "help"),
         ];
         for (line, want) in table {

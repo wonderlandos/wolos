@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# WolOS console hints (ADR 0032 "Console"). `wol hint` prints a row's sentence and suggestion when a
+# command is missing or fails in a way WolOS knows; every WolOS shell reads the first column once at
+# start, so a command not named here never starts `wol`. One row per line, four columns separated by
+# one tab: command, condition, sentence, suggestion. The first row that matches wins.
+#
+# command: the program name as typed (its last path part; `sudo X` is looked up as X too).
+# condition: words that must all hold; `!` in front of one means it must not:
+#   missing      the command is not installed (the shell's command-not-found)
+#   failed       it ran and its exit status was not 0
+#   any          missing or failed
+#   status=N     it exited with N
+#   arg=PATTERN  one of its arguments matches; last=PATTERN: its last argument does
+#   typed=PATTERN the command word as typed (/usr/bin/pacman, not pacman)
+#   user | root  who ran it
+#   sealed       the system files are read-only (a WolOS slot, not developer mode)
+#   nowheel      the account is not in the administrators' group (wheel)
+#   managed      an argument names a service in /usr/lib/systemd/system-preset/50-wolos.preset
+#   PATTERN: `*` is any text, `|` separates choices.
+# sentence, suggestion: {cmd} the command, {args} all its arguments, {targets} the ones that are not
+# options, {names} the targets after the first (apt install NAME), {first} the first target. An empty
+# {names}, {targets} or {first} reads "name". Suggestion `-` = none.
+# Translations: hints.<lang>.tsv beside this file (hints.pt_BR.tsv, then hints.pt.tsv, from LC_ALL,
+# LC_MESSAGES or LANG), the same first two columns as the key; a row it lacks stays in English.
+# Wording (UX-LESSONS): what happened and what to do, for a person, no blame, no jargon.
+apt	missing arg=install|reinstall	{cmd} is how Debian and Ubuntu install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+apt	missing arg=remove|purge|autoremove	{cmd} is how Debian and Ubuntu remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+apt	missing arg=search|show|list|policy	{cmd} is how Debian and Ubuntu find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+apt	missing arg=update|upgrade|full-upgrade|dist-upgrade	{cmd} is how Debian and Ubuntu update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+apt	missing	{cmd} is the package tool of Debian and Ubuntu and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+apt-get	missing arg=install|reinstall	{cmd} is how Debian and Ubuntu install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+apt-get	missing arg=remove|purge|autoremove	{cmd} is how Debian and Ubuntu remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+apt-get	missing arg=search|show|list|policy	{cmd} is how Debian and Ubuntu find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+apt-get	missing arg=update|upgrade|full-upgrade|dist-upgrade	{cmd} is how Debian and Ubuntu update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+apt-get	missing	{cmd} is the package tool of Debian and Ubuntu and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+dpkg	missing arg=-i|--install	dpkg installs .deb files, which are made for Debian and Ubuntu and do not work on WolOS; wopkg finds the same program made for WolOS.	wopkg search name
+dpkg	missing arg=-l|--list|-L|--listfiles|-s|--status	dpkg lists the packages of Debian and Ubuntu; on WolOS, pacman lists what is installed.	pacman -Q
+dpkg	missing	{cmd} is the package tool of Debian and Ubuntu and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+dnf	missing arg=install|reinstall|localinstall	{cmd} is how Fedora and Red Hat install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+dnf	missing arg=remove|erase|autoremove	{cmd} is how Fedora and Red Hat remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+dnf	missing arg=search|info|list|provides	{cmd} is how Fedora and Red Hat find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+dnf	missing arg=update|upgrade|distro-sync|check-update	{cmd} is how Fedora and Red Hat update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+dnf	missing	{cmd} is the package tool of Fedora and Red Hat and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+yum	missing arg=install|reinstall|localinstall	{cmd} is how Fedora and Red Hat install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+yum	missing arg=remove|erase|autoremove	{cmd} is how Fedora and Red Hat remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+yum	missing arg=search|info|list|provides	{cmd} is how Fedora and Red Hat find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+yum	missing arg=update|upgrade|distro-sync|check-update	{cmd} is how Fedora and Red Hat update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+yum	missing	{cmd} is the package tool of Fedora and Red Hat and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+zypper	missing arg=install|in	{cmd} is how openSUSE install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+zypper	missing arg=remove|rm	{cmd} is how openSUSE remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+zypper	missing arg=search|se|info|if	{cmd} is how openSUSE find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+zypper	missing arg=update|up|dup|dist-upgrade|patch|refresh|ref	{cmd} is how openSUSE update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+zypper	missing	{cmd} is the package tool of openSUSE and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+brew	missing arg=install|reinstall	{cmd} is how Homebrew on macOS install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+brew	missing arg=uninstall|remove|rm	{cmd} is how Homebrew on macOS remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+brew	missing arg=search|info	{cmd} is how Homebrew on macOS find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+brew	missing arg=update|upgrade	{cmd} is how Homebrew on macOS update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+brew	missing	{cmd} is the package tool of Homebrew on macOS and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+port	missing arg=install	{cmd} is how MacPorts on macOS install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+port	missing arg=uninstall	{cmd} is how MacPorts on macOS remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+port	missing arg=search|info	{cmd} is how MacPorts on macOS find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+port	missing arg=selfupdate|upgrade|sync	{cmd} is how MacPorts on macOS update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+port	missing	{cmd} is the package tool of MacPorts on macOS and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+snap	missing arg=install	{cmd} is how Snap on Ubuntu install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+snap	missing arg=remove	{cmd} is how Snap on Ubuntu remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+snap	missing arg=find|search|info	{cmd} is how Snap on Ubuntu find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+snap	missing arg=refresh	{cmd} is how Snap on Ubuntu update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+snap	missing	{cmd} is the package tool of Snap on Ubuntu and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+emerge	missing arg=-s|--search|-S|--searchdesc	{cmd} is how Gentoo find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {targets}
+emerge	missing arg=-C|--unmerge|-c|--depclean	{cmd} is how Gentoo remove programs; on WolOS, wopkg removes them.	wopkg remove {targets}
+emerge	missing arg=--sync|-u*|--update|@world	{cmd} is how Gentoo update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+emerge	missing arg=-*	{cmd} is the package tool of Gentoo and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+emerge	missing	{cmd} is how Gentoo install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {targets}
+nix	missing arg=install|add	{cmd} is how Nix install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install {names}
+nix	missing arg=remove	{cmd} is how Nix remove programs; on WolOS, wopkg removes them.	wopkg remove {names}
+nix	missing arg=search	{cmd} is how Nix find programs; on WolOS, wopkg searches the App Store and every package source.	wopkg search {names}
+nix	missing arg=upgrade	{cmd} is how Nix update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+nix	missing	{cmd} is the package tool of Nix and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+nix-env	missing arg=-i*|--install	{cmd} is how Nix install programs; on WolOS, wopkg installs them from the App Store and every package source.	wopkg install name
+nix-env	missing arg=-e|--uninstall	{cmd} is how Nix remove programs; on WolOS, wopkg removes them.	wopkg remove name
+nix-env	missing arg=-u*|--upgrade	{cmd} is how Nix update the system; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+nix-env	missing	{cmd} is the package tool of Nix and is not part of WolOS; here wopkg installs, finds and removes programs.	wopkg help
+flatpak	missing	Flatpak is not installed on this computer; install it with pacman, then run your command again.	sudo pacman -S flatpak
+pacman	failed user arg=-S*u*	Updating the system needs administrator rights; WolOS updates everything in one step, the same as Update Now in Settings.	wol update install
+pacman	failed user arg=-S*|-R*|-U* !arg=-S*s*|-S*i*|-S*l*|-S*g*|-S*p*|-Q*|-F*|-T*|-V|--version|-h|--help	Installing or removing packages needs administrator rights: put sudo in front and enter your own password.	sudo pacman {args}
+pacman	failed root sealed typed=/usr/bin/pacman arg=-S*u*	The system files of WolOS are read-only, so updates go through wol update, which keeps the running system as a restore point.	wol update install
+pacman	failed root sealed typed=/usr/bin/pacman arg=-S*|-R*|-U* !arg=-S*s*|-S*i*|-S*l*|-S*g*|-S*p*|-Q*|-F*|-T*|-V|--version|-h|--help	The system files of WolOS are read-only; wol pkg makes the same change in a layer that works at once and comes along with the next update.	wol pkg -- {args}
+su	failed	On WolOS the root account has no password, so su cannot sign in to it; sudo -i opens the same root shell with your own password, and sudo passwd root turns classic su on.	sudo -i
+sudo	failed nowheel	Your account is not an administrator on this computer, so sudo cannot run commands for it; an administrator can change that in Settings > Users & Groups.	-
+systemctl	failed managed arg=enable|disable|mask|unmask|preset	WolOS sets this service up itself; if something it does is not working, wol doctor finds out why.	wol doctor
+systemctl	failed user arg=enable|disable|start|stop|restart|reload|mask|unmask	Turning a system service on or off needs administrator rights.	sudo systemctl {args}
+cp	failed sealed last=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+mv	failed sealed last=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+ln	failed sealed last=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+install	failed sealed last=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+rm	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+rmdir	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+touch	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+mkdir	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+chmod	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+chown	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+chgrp	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+tee	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+truncate	failed sealed arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-
+sed	failed sealed arg=-i* arg=/usr/*	Files under /usr belong to WolOS and are read-only, so every update can be undone; your own programs go in ~/.local/bin, and packages install with pacman.	-

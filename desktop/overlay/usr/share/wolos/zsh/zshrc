@@ -150,4 +150,52 @@ fi
 if [[ -r $_wolos_share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]]; then
   source "$_wolos_share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
 fi
+
+# su: root has no password on WolOS, so `su` and `su NAME` become sudo (your own password). An
+# interactive-shell function only: wol-login and scripts run the real /usr/bin/su (`command su`).
+su() {
+  case $#:${1-} in
+    0:* | 1:- | 1:-l | 1:--login) sudo -i; return ;;
+    1:[!-]*) sudo -iu "$1"; return ;;
+    2:- | 2:-l | 2:--login) case $2 in -*) ;; *) sudo -iu "$2"; return ;; esac ;;
+    2:-c | 2:--command) sudo sh -c "$2"; return ;;
+  esac
+  (( ! $+commands[wol] )) || wol hint su
+  command su "$@"
+}
+
+# Hints (console/hints.tsv, `wol hint`): a missing command or one that fails in a way WolOS knows
+# gets one sentence and what to run instead. The table's command names are read once here (no
+# process: $(<file) is read by zsh itself), so a command it does not name never starts `wol`.
+typeset -gA _wolos_hint_cmds
+() {
+  local file=${WOLOS_HINTS:-/usr/share/wolos/console/hints.tsv} line
+  [[ -r $file ]] && (( $+commands[wol] )) || return 0
+  for line in "${(@f)$(<$file)}"; do
+    [[ -z $line || $line == \#* ]] || _wolos_hint_cmds[${line%%$'\t'*}]=1
+  done
+}
+command_not_found_handler() {
+  if [[ -n ${_wolos_hint_cmds[${1:t}]} ]] && wol hint "$*" --not-found; then
+    return 127
+  fi
+  print -ru2 -- "zsh: command not found: $1"
+  return 127
+}
+# After each command (first among the precmd hooks, so $? is the command's): a failure that is
+# not command-not-found (127) or an interrupt (over 128), and a first word in the table. su
+# speaks for itself. preexec clears and sets the line, so an empty line stays quiet.
+_wolos_hint_line=
+_wolos_hint_preexec() { _wolos_hint_line=$1 }
+_wolos_hint_precmd() {
+  local s=$? line=$_wolos_hint_line w
+  _wolos_hint_line=
+  (( s != 0 && s != 127 && s <= 128 )) && [[ -n $line ]] || return $s
+  w=${${(z)line}[1]}
+  w=${w:t}
+  [[ -n $w && $w != su && -n ${_wolos_hint_cmds[$w]} ]] && wol hint "$line" $s
+  return $s
+}
+precmd_functions=(_wolos_hint_precmd $precmd_functions)
+preexec_functions+=(_wolos_hint_preexec)
 unset _wolos_share _wolos_colors _wolos_cache

@@ -31,7 +31,7 @@ $wolosConfigHome = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { "$H
 $wolosCache = "$(if ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME } else { "$HOME/.cache" })/wolos/pwsh"
 # The programs this file wires, looked up once on PATH (Get-Command scans modules for a missing name).
 $wolosTools = @{}
-foreach ($t in 'starship', 'zoxide', 'wopkg', 'fzf', 'eza', 'ls', 'grep', 'bat') {
+foreach ($t in 'starship', 'zoxide', 'wopkg', 'fzf', 'eza', 'ls', 'grep', 'bat', 'wol', 'sudo', 'su') {
     foreach ($d in "$env:PATH".Split(':')) {
         if ($d -and [IO.File]::Exists("$d/$t")) { $wolosTools[$t] = "$d/$t"; break }
     }
@@ -129,6 +129,7 @@ function global:Get-WolosPath {
 
 function global:Invoke-WolosPurePrompt {
     $ok = $global:?
+    Invoke-WolosHint
     $reset = "`e[0m"
     $muted = ConvertTo-WolosSgr $env:WOLOS_PROMPT_MUTED '90'
     $s = ''
@@ -142,6 +143,68 @@ function global:Invoke-WolosPurePrompt {
     "$s $color$sym$reset "
 }
 function global:prompt { Invoke-WolosPurePrompt }
+
+# su: root has no password on WolOS, so `su` and `su NAME` become sudo (your own password). A
+# function of the interactive pwsh only: wol-login and scripts run the real /usr/bin/su.
+# Hints (console/hints.tsv, `wol hint`): a missing command or one that fails in a way WolOS knows
+# gets one sentence and what to run instead. The table's command names are read once here, so a
+# command it does not name never starts `wol`.
+$global:WolosConsole = @{ Sudo = $wolosTools['sudo']; Su = $wolosTools['su']; Wol = $wolosTools['wol']; Hints = $null; Seen = -1 }
+function global:su {
+    $c = $global:WolosConsole
+    $n = $args.Count
+    $a0 = if ($n -gt 0) { "$($args[0])" } else { '' }
+    $a1 = if ($n -gt 1) { "$($args[1])" } else { '' }
+    $login = $a0 -ceq '-' -or $a0 -ceq '-l' -or $a0 -ceq '--login'
+    if ($c.Sudo) {
+        if ($n -eq 0 -or ($n -eq 1 -and $login)) { & $c.Sudo -i; return }
+        if ($n -eq 1 -and -not $a0.StartsWith('-')) { & $c.Sudo -iu $a0; return }
+        if ($n -eq 2 -and $login -and -not $a1.StartsWith('-')) { & $c.Sudo -iu $a1; return }
+        if ($n -eq 2 -and ($a0 -ceq '-c' -or $a0 -ceq '--command')) { & $c.Sudo sh -c $a1; return }
+    }
+    if ($c.Wol) { & $c.Wol hint su }
+    if ($c.Su) { & $c.Su @args }
+}
+$wolosHints = if ($env:WOLOS_HINTS) { $env:WOLOS_HINTS } else { '/usr/share/wolos/console/hints.tsv' }
+if ($global:WolosConsole.Wol -and [IO.File]::Exists($wolosHints)) {
+    $wolosSet = [Collections.Generic.HashSet[string]]::new()
+    foreach ($l in [IO.File]::ReadAllLines($wolosHints)) {
+        if ($l -and -not $l.StartsWith('#')) { $null = $wolosSet.Add($l.Split("`t")[0]) }
+    }
+    $global:WolosConsole.Hints = $wolosSet
+    # A command typed at the prompt that is not installed and is in the table: its hint, or the
+    # usual one-line message when the table has none for these arguments.
+    $ExecutionContext.InvokeCommand.CommandNotFoundAction = {
+        param($n, $e)
+        $c = $global:WolosConsole
+        if ($e.CommandOrigin -ne 'Runspace' -or -not $c.Hints.Contains([IO.Path]::GetFileName($n))) { return }
+        $e.CommandScriptBlock = {
+            & $c.Wol hint "$n $args".Trim() --not-found
+            if ($global:LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("${n}: command not found") }
+            $global:LASTEXITCODE = 127
+        }.GetNewClosure()
+        $e.StopSearch = $true
+    }
+}
+# After each command (the pure prompt above, and starship's pre-command hook): a program in the
+# table that failed, not with 127 (not found, said above) or an interrupt (over 128). The last
+# history entry is read once (its id), so an empty line stays quiet; su speaks for itself.
+function global:Invoke-WolosHint {
+    $c = $global:WolosConsole
+    $code = $global:LASTEXITCODE
+    if (-not $c -or -not $c.Hints -or -not $code -or $code -eq 127 -or $code -gt 128) { return }
+    $h = Get-History -Count 1
+    if (-not $h -or $h.Id -eq $c.Seen) { return }
+    $c.Seen = $h.Id
+    $line = $h.CommandLine.Trim()
+    $w = [IO.Path]::GetFileName(($line -split '\s+', 2)[0])
+    if ($w -eq 'su' -or -not $c.Hints.Contains($w)) { return }
+    $cmd = $ExecutionContext.InvokeCommand.GetCommand($w, 'All')
+    if (-not $cmd -or $cmd.CommandType -ne 'Application') { return }
+    & $c.Wol hint $line "$code"
+    $global:LASTEXITCODE = $code
+}
+function global:Invoke-Starship-PreCommand { Invoke-WolosHint }
 
 # Console module (ADR 0032 "Console"): each tool is wired only when it is installed. starship
 # replaces the prompt above with the same shape (not on the Linux text console, TERM=linux: its
@@ -205,6 +268,6 @@ if ($wolosTools['bat']) {
 
 # Leave no variables behind (the session API: the Remove-Variable cmdlet would load a module).
 foreach ($n in 'wolosConfigHome', 'wolosCache', 'wolosTools', 'wolosReadLine', 'wolosColors', 'wolosInit',
-    'wolosStar', 'wolosFile', 'wolosDefs', 't', 'd', 'e', 'n') {
+    'wolosStar', 'wolosFile', 'wolosDefs', 'wolosHints', 'wolosSet', 't', 'd', 'e', 'l', 'n') {
     $ExecutionContext.SessionState.PSVariable.Remove($n)
 }

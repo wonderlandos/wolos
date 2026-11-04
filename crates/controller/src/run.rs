@@ -283,6 +283,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "layers.fold" => crate::pkg::fold(env, inv),
         "layers.clear" => crate::pkg::clear(env),
         "pkg" => crate::pkg::pkg_verb(env, inv),
+        "hint" => crate::hint::run(env, inv),
         "install.info" | "install.probe" | "install.check" | "install.layout"
         | "install.settings" | "install.account" | "install.facts" | "install.mounts"
         | "install.hostname" => crate::install::verb(env, inv),
