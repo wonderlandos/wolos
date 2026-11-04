@@ -7,6 +7,7 @@ pub mod bundle;
 pub mod errors;
 pub mod events;
 pub mod hardware;
+pub mod i18n;
 pub mod jobs;
 pub mod layout;
 pub mod login;

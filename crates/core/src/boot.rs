@@ -176,7 +176,7 @@ pub fn bitlocker_note(tier: Tier, bitlocker: bool) -> Option<&'static str> {
 /// The blue screen, explained before it appears. Steps name what the firmware shows.
 pub fn key_screen_steps() -> Vec<String> {
     vec![
-        "After the restart a blue screen appears. It comes from your computer's firmware, not \
+        "After the restart a blue screen appears. It comes from your computer’s firmware, not \
          from WolOS, and it waits for you."
             .into(),
         "Press a key, choose Enroll MOK, then Continue, then Yes.".into(),

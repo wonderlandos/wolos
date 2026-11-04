@@ -469,7 +469,9 @@ pub fn console_keymap(xkb: &str) -> &'static str {
         "es" => "es",
         "gb" => "uk",
         "it" => "it",
+        "jp" => "jp106",
         "pt" => "pt-latin1",
+        "ru" => "ru",
         _ => "us",
     }
 }

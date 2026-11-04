@@ -349,7 +349,7 @@ pub fn with_layout(old: Option<&str>, l: &shared::layout::Layout) -> Result<Stri
 }
 
 /// (xkb layout, label).
-pub const LAYOUTS: [(&str, &str); 8] = [
+pub const LAYOUTS: [(&str, &str); 11] = [
     ("us", "U.S."),
     ("us(intl)", "U.S. International"),
     ("br", "Brazilian (ABNT2)"),
@@ -358,6 +358,9 @@ pub const LAYOUTS: [(&str, &str); 8] = [
     ("de", "German"),
     ("fr", "French"),
     ("es", "Spanish"),
+    ("it", "Italian"),
+    ("ru", "Russian"),
+    ("jp", "Japanese"),
 ];
 
 /// (label, repeat_rate per s, repeat_delay ms).
