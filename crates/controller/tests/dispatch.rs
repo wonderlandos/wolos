@@ -136,7 +136,7 @@ fn theme_set_restyles_third_party_apps() {
     };
     assert_eq!(run("theme dark", &mut env), 0, "{}", env.err);
     let css = std::fs::read_to_string(home.join("gtk-4.0/gtk.css")).unwrap();
-    assert!(css.contains("--accent-bg-color: #8b6cff;"), "{css}");
+    assert!(css.contains("--accent-bg-color: #7452f5;"), "{css}");
     assert!(home.join("wolos/toolkits/qt6ct/colors/WolOS.conf").exists());
     let set = |k: &str, v: &str| {
         env.execs
@@ -148,7 +148,7 @@ fn theme_set_restyles_third_party_apps() {
     env.execs.clear();
     assert_eq!(run("theme light", &mut env), 0);
     let css = std::fs::read_to_string(home.join("gtk-4.0/gtk.css")).unwrap();
-    assert!(css.contains("--accent-bg-color: #7c5cff;"));
+    assert!(css.contains("--accent-bg-color: #7452f5;"));
     assert!(
         env.execs
             .iter()

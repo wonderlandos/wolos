@@ -7,78 +7,78 @@
     <property name="variant">light</property>
     <property name="light-variant">wolos-light</property>
     <property name="dark-variant">wolos-dark</property>
-    <property name="accent_bg_color">#7c5cff</property>
+    <property name="accent_bg_color">#7452f5</property>
     <property name="accent_fg_color">#ffffff</property>
-    <property name="accent_color">#7657f2</property>
-    <property name="destructive_bg_color">#cf3a68</property>
-    <property name="destructive_color">#cf3a68</property>
-    <property name="success_bg_color">#1c9a6e</property>
-    <property name="success_color">#18835e</property>
-    <property name="warning_bg_color">#d9541e</property>
-    <property name="warning_color">#c34c1b</property>
-    <property name="error_bg_color">#cf3a68</property>
-    <property name="error_color">#cf3a68</property>
-    <property name="window_bg_color">#f3f1f8</property>
-    <property name="window_fg_color">#181521</property>
+    <property name="accent_color">#7452f5</property>
+    <property name="destructive_bg_color">#bb3f27</property>
+    <property name="destructive_color">#bb3f27</property>
+    <property name="success_bg_color">#00863c</property>
+    <property name="success_color">#00863c</property>
+    <property name="warning_bg_color">#c06400</property>
+    <property name="warning_color">#b65f00</property>
+    <property name="error_bg_color">#bb3f27</property>
+    <property name="error_color">#bb3f27</property>
+    <property name="window_bg_color">#f1f1fa</property>
+    <property name="window_fg_color">#151520</property>
     <property name="view_bg_color">#ffffff</property>
-    <property name="view_fg_color">#181521</property>
-    <property name="headerbar_bg_color">#f3f1f8</property>
-    <property name="headerbar_fg_color">#181521</property>
-    <property name="headerbar_backdrop_color">#f3f1f8</property>
-    <property name="sidebar_bg_color">#eae8f2</property>
-    <property name="sidebar_fg_color">#181521</property>
-    <property name="sidebar_backdrop_color">#eae8f2</property>
-    <property name="secondary_sidebar_bg_color">#eae8f2</property>
+    <property name="view_fg_color">#151520</property>
+    <property name="headerbar_bg_color">#f1f1fa</property>
+    <property name="headerbar_fg_color">#151520</property>
+    <property name="headerbar_backdrop_color">#f1f1fa</property>
+    <property name="sidebar_bg_color">#ebebf4</property>
+    <property name="sidebar_fg_color">#151520</property>
+    <property name="sidebar_backdrop_color">#ebebf4</property>
+    <property name="secondary_sidebar_bg_color">#ebebf4</property>
     <property name="card_bg_color">#ffffff</property>
-    <property name="card_fg_color">#181521</property>
+    <property name="card_fg_color">#151520</property>
     <property name="dialog_bg_color">#ffffff</property>
-    <property name="dialog_fg_color">#181521</property>
+    <property name="dialog_fg_color">#151520</property>
     <property name="popover_bg_color">#ffffff</property>
-    <property name="popover_fg_color">#181521</property>
-    <property name="borders">rgba(34,27,54,0.10)</property>
+    <property name="popover_fg_color">#151520</property>
+    <property name="borders">rgba(21,21,32,0.12)</property>
   </metadata>
-  <style name="text" foreground="#181521" background="#ffffff"/>
-  <style name="selection" foreground="#ffffff" background="#7c5cff"/>
-  <style name="cursor" foreground="#7c5cff"/>
+  <style name="text" foreground="#151520" background="#ffffff"/>
+  <style name="selection" foreground="#ffffff" background="#7452f5"/>
+  <style name="cursor" foreground="#7452f5"/>
   <style name="current-line" background="#f3f3f4"/>
-  <style name="line-numbers" foreground="#686575" background="#ffffff"/>
-  <style name="current-line-number" foreground="#181521" background="#f3f3f4"/>
+  <style name="line-numbers" foreground="#565563" background="#ffffff"/>
+  <style name="current-line-number" foreground="#151520" background="#f3f3f4"/>
   <style name="right-margin" foreground="#e3e3e4" background="#e3e3e4"/>
-  <style name="draw-spaces" foreground="#c5c5c8"/>
+  <style name="draw-spaces" foreground="#c5c5c7"/>
   <style name="background-pattern" foreground="#f1f1f2"/>
   <style name="bracket-match" background="#e3e3e4" bold="true"/>
-  <style name="bracket-mismatch" foreground="#cf3a68" underline="error"/>
-  <style name="search-match" foreground="#ffffff" background="#7c5cff"/>
+  <style name="bracket-mismatch" foreground="#bb3f27" underline="error"/>
+  <style name="search-match" foreground="#ffffff" background="#7452f5"/>
   <style name="map-overlay" background="#e8e8e9"/>
-  <style name="def:comment" foreground="#686575" italic="true"/>
-  <style name="def:doc-comment-element" foreground="#686575" bold="true" italic="true"/>
-  <style name="def:keyword" foreground="#7657f2" bold="true"/>
-  <style name="def:statement" foreground="#7657f2" bold="true"/>
-  <style name="def:type" foreground="#7657f2"/>
-  <style name="def:builtin" foreground="#7657f2"/>
-  <style name="def:preprocessor" foreground="#c34c1b"/>
-  <style name="def:string" foreground="#18835e"/>
-  <style name="def:special-char" foreground="#c34c1b"/>
-  <style name="def:character" foreground="#18835e"/>
-  <style name="def:number" foreground="#c34c1b"/>
-  <style name="def:decimal" foreground="#c34c1b"/>
-  <style name="def:floating-point" foreground="#c34c1b"/>
-  <style name="def:base-n-integer" foreground="#c34c1b"/>
-  <style name="def:boolean" foreground="#cf3a68"/>
-  <style name="def:special-constant" foreground="#cf3a68"/>
-  <style name="def:constant" foreground="#c34c1b"/>
-  <style name="def:identifier" foreground="#181521"/>
-  <style name="def:function" foreground="#7657f2"/>
-  <style name="def:heading" foreground="#7657f2" bold="true"/>
-  <style name="def:link-destination" foreground="#7657f2"/>
-  <style name="def:net-address" foreground="#7657f2"/>
-  <style name="def:error" foreground="#cf3a68" underline="error"/>
-  <style name="def:warning" foreground="#c34c1b"/>
-  <style name="def:note" foreground="#7657f2" bold="true"/>
+  <style name="def:comment" foreground="#565563" italic="true"/>
+  <style name="def:doc-comment-element" foreground="#565563" bold="true" italic="true"/>
+  <style name="def:keyword" foreground="#7452f5" bold="true"/>
+  <style name="def:statement" foreground="#7452f5" bold="true"/>
+  <style name="def:type" foreground="#7452f5"/>
+  <style name="def:builtin" foreground="#7452f5"/>
+  <style name="def:preprocessor" foreground="#b65f00"/>
+  <style name="def:string" foreground="#00863c"/>
+  <style name="def:special-char" foreground="#b65f00"/>
+  <style name="def:character" foreground="#00863c"/>
+  <style name="def:number" foreground="#b65f00"/>
+  <style name="def:decimal" foreground="#b65f00"/>
+  <style name="def:floating-point" foreground="#b65f00"/>
+  <style name="def:base-n-integer" foreground="#b65f00"/>
+  <style name="def:boolean" foreground="#bb3f27"/>
+  <style name="def:special-constant" foreground="#bb3f27"/>
+  <style name="def:constant" foreground="#b65f00"/>
+  <style name="def:identifier" foreground="#151520"/>
+  <style name="def:function" foreground="#7452f5"/>
+  <style name="def:heading" foreground="#7452f5" bold="true"/>
+  <style name="def:link-destination" foreground="#7452f5"/>
+  <style name="def:net-address" foreground="#7452f5"/>
+  <style name="def:error" foreground="#bb3f27" underline="error"/>
+  <style name="def:warning" foreground="#b65f00"/>
+  <style name="def:note" foreground="#7452f5" bold="true"/>
   <style name="def:emphasis" italic="true"/>
   <style name="def:strong-emphasis" bold="true"/>
-  <style name="def:inline-code" foreground="#18835e"/>
-  <style name="def:insertion" foreground="#18835e"/>
-  <style name="def:deletion" foreground="#cf3a68"/>
+  <style name="def:inline-code" foreground="#00863c"/>
+  <style name="def:insertion" foreground="#00863c"/>
+  <style name="def:deletion" foreground="#bb3f27"/>
   <style name="def:underlined" underline="single"/>
 </style-scheme>

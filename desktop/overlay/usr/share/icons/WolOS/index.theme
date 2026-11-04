@@ -2,7 +2,7 @@
 Name=WolOS
 Comment=WolOS (Wonderland OS) icons: one geometry, design/tools/icons.py
 Inherits=Adwaita,hicolor
-Directories=48x48/apps,128x128/apps,512x512/apps,scalable/apps,scalable/places,scalable/devices,scalable/mimetypes,symbolic/status,symbolic/actions
+Directories=48x48/apps,128x128/apps,512x512/apps,scalable/apps,scalable/places,scalable/devices,scalable/mimetypes,symbolic/status,symbolic/actions,symbolic24/status
 
 [48x48/apps]
 Size=48
@@ -50,13 +50,20 @@ Type=Scalable
 [symbolic/status]
 Size=16
 MinSize=16
-MaxSize=512
+MaxSize=19
 Context=Status
 Type=Scalable
 
 [symbolic/actions]
 Size=16
 MinSize=16
-MaxSize=512
+MaxSize=19
 Context=Actions
+Type=Scalable
+
+[symbolic24/status]
+Size=24
+MinSize=20
+MaxSize=512
+Context=Status
 Type=Scalable

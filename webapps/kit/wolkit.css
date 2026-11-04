@@ -3,11 +3,11 @@
    (design/tokens/colors.json, checked by crates/webengine/tests/webapps.rs); the accent comes from
    <html data-accent>, the scheme from <html data-theme>, both set by bridge.js from wolos.app. */
 :root {
-  --wol-bg: #F3F1F8; --wol-surface: #FFFFFF; --wol-surface-2: #E9E7F0; --wol-border: rgba(34,27,54,0.12);
-  --wol-text: #181521; --wol-text-2: #686575; --wol-shadow: rgba(24,21,33,0.18);
-  --wol-red: #CF3A68; --wol-orange: #D9541E; --wol-yellow: #E0A21F; --wol-green: #1C9A6E; --wol-blue: #1D64B0;
-  --wol-accent: #7C5CFF; --wol-accent-fg: #FFFFFF; --wol-selection: rgba(124,92,255,0.22);
-  --wol-radius-sm: 6px; --wol-radius-md: 10px; --wol-radius-lg: 14px; --wol-radius-window: 12px;
+  --wol-bg: #F1F1FA; --wol-surface: #FFFFFF; --wol-surface-2: #EBEBF3; --wol-border: rgba(21,21,32,0.12);
+  --wol-text: #151520; --wol-text-2: #565563; --wol-shadow: rgba(21,21,32,0.18);
+  --wol-red: #BB3F27; --wol-orange: #C06400; --wol-yellow: #C58A00; --wol-green: #00863C; --wol-blue: #007292;
+  --wol-accent: #7452F5; --wol-accent-fg: #FFFFFF; --wol-selection: rgba(116,82,245,0.22);
+  --wol-radius-sm: 8px; --wol-radius-md: 12px; --wol-radius-lg: 16px; --wol-radius-window: 12px;
   --wol-font-ui: Inter, Cantarell, "Noto Sans", "DejaVu Sans", sans-serif;
   --wol-font-mono: "JetBrains Mono", "Fira Code", "DejaVu Sans Mono", monospace;
   /* One type scale, 13 px UI base. */
@@ -21,27 +21,27 @@
   --wk-ok: var(--wol-green); --wk-warn: var(--wol-orange); --wk-fail: var(--wol-red); --wk-info: var(--wol-blue);
   color-scheme: light;
 }
-:root[data-accent="blue"] { --wol-accent: #1d64b0; }
+:root[data-accent="blue"] { --wol-accent: #007292; }
 :root[data-accent="pink"] { --wol-accent: #b64495; }
-:root[data-accent="red"] { --wol-accent: #cf3a68; }
-:root[data-accent="orange"] { --wol-accent: #d9541e; }
-:root[data-accent="yellow"] { --wol-accent: #e0a21f; --wol-accent-fg: #181521; }
-:root[data-accent="green"] { --wol-accent: #1c9a6e; }
+:root[data-accent="red"] { --wol-accent: #bb3f27; }
+:root[data-accent="orange"] { --wol-accent: #c06400; }
+:root[data-accent="yellow"] { --wol-accent: #c58a00; --wol-accent-fg: #181521; }
+:root[data-accent="green"] { --wol-accent: #00863c; }
 :root[data-accent="graphite"] { --wol-accent: #5b5873; }
 :root[data-theme="dark"] {
-  --wol-bg: #191720; --wol-surface: #2A2832; --wol-surface-2: #393643; --wol-border: rgba(237,232,255,0.12);
-  --wol-text: #F6F5FB; --wol-text-2: #AAA7B6; --wol-shadow: rgba(8,6,14,0.45);
-  --wol-red: #F2678F; --wol-orange: #FF8A55; --wol-yellow: #FFC94A; --wol-green: #5BE3B0; --wol-blue: #6AAEF2;
-  --wol-accent: #8B6CFF; --wol-accent-fg: #FFFFFF; --wol-selection: rgba(155,133,255,0.30);
+  --wol-bg: #15151D; --wol-surface: #292932; --wol-surface-2: #383741; --wol-border: rgba(248,248,252,0.12);
+  --wol-text: #F8F8FC; --wol-text-2: #B4B4BB; --wol-shadow: rgba(2,2,6,0.45);
+  --wol-red: #EE7E66; --wol-orange: #F2944C; --wol-yellow: #FFD189; --wol-green: #6BC681; --wol-blue: #35BEEE;
+  --wol-accent: #7452F5; --wol-accent-fg: #FFFFFF; --wol-selection: rgba(145,129,255,0.3);
   --wk-sidebar-bg: color-mix(in srgb, var(--wol-surface) 55%, var(--wol-bg));
   color-scheme: dark;
 }
-:root[data-theme="dark"][data-accent="blue"] { --wol-accent: #6aaef2; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="blue"] { --wol-accent: #35beee; --wol-accent-fg: #181521; }
 :root[data-theme="dark"][data-accent="pink"] { --wol-accent: #d368b1; }
-:root[data-theme="dark"][data-accent="red"] { --wol-accent: #f2678f; }
-:root[data-theme="dark"][data-accent="orange"] { --wol-accent: #ff8a55; --wol-accent-fg: #181521; }
-:root[data-theme="dark"][data-accent="yellow"] { --wol-accent: #ffc94a; --wol-accent-fg: #181521; }
-:root[data-theme="dark"][data-accent="green"] { --wol-accent: #5be3b0; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="red"] { --wol-accent: #ee7e66; }
+:root[data-theme="dark"][data-accent="orange"] { --wol-accent: #f2944c; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="yellow"] { --wol-accent: #ffd189; --wol-accent-fg: #181521; }
+:root[data-theme="dark"][data-accent="green"] { --wol-accent: #6bc681; --wol-accent-fg: #181521; }
 :root[data-theme="dark"][data-accent="graphite"] { --wol-accent: #a9a6c4; --wol-accent-fg: #181521; }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -124,7 +124,7 @@ wol-button[busy] > button::after { content: ""; width: 10px; height: 10px; borde
 wol-switch { display: inline-flex; flex: none; width: 38px; height: 22px; border-radius: 11px; position: relative; cursor: pointer;
   background: color-mix(in srgb, var(--wol-text) 22%, transparent); transition: background .15s; }
 wol-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
-  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.3); transition: transform .15s; }
+  background: #fff; box-shadow: 1px 2px 3px rgba(21,21,32,.3); transition: transform .15s; }
 wol-switch[aria-checked="true"] { background: var(--wol-accent); }
 wol-switch[aria-checked="true"]::after { transform: translateX(16px); }
 wol-switch[aria-disabled="true"] { opacity: .45; cursor: default; }
@@ -161,7 +161,7 @@ wol-empty > :last-child:not(.wk-empty-heading) { margin-top: var(--wk-2); }
 wol-sheet { display: contents; }
 wol-sheet dialog { width: min(420px, calc(100vw - 32px)); margin: 0 auto; top: 0; padding: var(--wk-5); border: 1px solid var(--wol-border);
   border-top: 0; border-radius: 0 0 var(--wol-radius-lg) var(--wol-radius-lg); background: var(--wol-surface); color: var(--wol-text);
-  box-shadow: 0 24px 60px -18px var(--wol-shadow); }
+  box-shadow: 3px 6px 24px var(--wol-shadow); }
 wol-sheet dialog::backdrop { background: color-mix(in srgb, var(--wol-bg) 55%, transparent); }
 wol-sheet dialog[open] { animation: wk-drop .18s ease-out both; }
 wol-sheet .wk-sheet-body { margin-top: var(--wk-2); color: var(--wol-text-2); }

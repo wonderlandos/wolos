@@ -3,19 +3,19 @@
   "name": "WolOS Light",
   "variant": "light",
   "tokens": {
-    "surface": "#f3f1f8",
-    "sidebar": "rgba(233,231,241,0.92)",
+    "surface": "#f1f1fa",
+    "sidebar": "rgba(235,235,243,0.92)",
     "card": "#ffffff",
-    "line": "rgba(34,27,54,0.10)",
-    "text": "#181521",
-    "dim": "#686575",
-    "accent": "#7c5cff",
+    "line": "rgba(21,21,32,0.12)",
+    "text": "#151520",
+    "dim": "#565563",
+    "accent": "#7452f5",
     "accentText": "#ffffff",
-    "glass": "rgba(245,244,251,0.84)",
-    "control": "#e9e9f3",
-    "success": "#1c9a6e",
-    "warning": "#d9541e",
-    "danger": "#cf3a68"
+    "glass": "rgba(241,241,250,0.84)",
+    "control": "#ebebf3",
+    "success": "#00863c",
+    "warning": "#c06400",
+    "danger": "#bb3f27"
   },
   "iconTheme": "WolOS"
 }

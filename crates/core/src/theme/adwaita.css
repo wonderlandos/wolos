@@ -58,7 +58,7 @@ windowcontrols.end { margin-left: 8px; margin-right: @LIGHTS_INSET@px; }
 /* ---- Sidebar (Kit list.sidebar): sidebar token, 28 px source rows, accent pill selection ---- */
 .sidebar-pane, navigation-split-view > .sidebar-pane, overlay-split-view > .sidebar-pane { background-color: var(--wol-sidebar); color: var(--wol-text); }
 .navigation-sidebar { padding: 8px 0; background: none; }
-.navigation-sidebar > row { min-height: @SOURCE_ROW@px; padding: 0 8px; margin: 0 8px 1px 8px; border-radius: @RADIUS_CONTROL@px; box-shadow: none; }
+.navigation-sidebar > row { min-height: @SOURCE_ROW@px; padding: 0 8px; margin: 0 8px 4px 8px; border-radius: @RADIUS_CONTROL@px; box-shadow: none; }
 .navigation-sidebar > row.activatable:hover, .navigation-sidebar > row.activatable:active { background-color: var(--wol-control); box-shadow: none; }
 .navigation-sidebar > row:selected, .navigation-sidebar > row:selected:hover, .navigation-sidebar > row:selected:active {
   background-color: var(--wol-accent); color: var(--wol-accent-text); box-shadow: none; }

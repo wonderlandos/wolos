@@ -6,11 +6,11 @@
     padding-left: 16.0
     border-width: 1.0
     background: Color(Token(Card))
-    border-top-left-radius: 10.0
-    border-top-right-radius: 10.0
-    border-bottom-right-radius: 10.0
-    border-bottom-left-radius: 10.0
-    box-shadow: [Shadow { dx: 0.0, dy: 1.0, blur: 3.0, color: Shade(16) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
+    border-top-left-radius: 12.0
+    border-top-right-radius: 12.0
+    border-bottom-right-radius: 12.0
+    border-bottom-left-radius: 12.0
+    box-shadow: [Shadow { dx: 1.0, dy: 2.0, blur: 4.0, color: Shade(14) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
   [hover]
     padding-top: 12.0
     padding-right: 16.0
@@ -18,11 +18,11 @@
     padding-left: 16.0
     border-width: 1.0
     background: Color(Token(Control))
-    border-top-left-radius: 10.0
-    border-top-right-radius: 10.0
-    border-bottom-right-radius: 10.0
-    border-bottom-left-radius: 10.0
-    box-shadow: [Shadow { dx: 0.0, dy: 3.0, blur: 10.0, color: Shade(20) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
+    border-top-left-radius: 12.0
+    border-top-right-radius: 12.0
+    border-bottom-right-radius: 12.0
+    border-bottom-left-radius: 12.0
+    box-shadow: [Shadow { dx: 2.0, dy: 4.0, blur: 12.0, color: Shade(18) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
   [dark]
     padding-top: 12.0
     padding-right: 16.0
@@ -30,11 +30,11 @@
     padding-left: 16.0
     border-width: 1.0
     background: Color(Token(Card))
-    border-top-left-radius: 10.0
-    border-top-right-radius: 10.0
-    border-bottom-right-radius: 10.0
-    border-bottom-left-radius: 10.0
-    box-shadow: [Shadow { dx: 0.0, dy: 6.0, blur: 18.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 1.0, blur: 4.0, color: Shade(16) }]
+    border-top-left-radius: 12.0
+    border-top-right-radius: 12.0
+    border-bottom-right-radius: 12.0
+    border-bottom-left-radius: 12.0
+    box-shadow: [Shadow { dx: 3.0, dy: 6.0, blur: 24.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
   [focus-visible dark contrast]
     padding-top: 12.0
     padding-right: 16.0
@@ -43,11 +43,11 @@
     border-width: 2.0
     background: Color(Token(Card))
     border-color: Token(Text)
-    border-top-left-radius: 10.0
-    border-top-right-radius: 10.0
-    border-bottom-right-radius: 10.0
-    border-bottom-left-radius: 10.0
-    box-shadow: [Shadow { dx: 0.0, dy: 6.0, blur: 18.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 1.0, blur: 4.0, color: Shade(16) }]
+    border-top-left-radius: 12.0
+    border-top-right-radius: 12.0
+    border-bottom-right-radius: 12.0
+    border-bottom-left-radius: 12.0
+    box-shadow: [Shadow { dx: 3.0, dy: 6.0, blur: 24.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
   [compact reduce-motion dark]
     padding-top: 12.0
     padding-right: 16.0
@@ -55,11 +55,11 @@
     padding-left: 16.0
     border-width: 1.0
     background: Color(Token(Card))
-    border-top-left-radius: 10.0
-    border-top-right-radius: 10.0
-    border-bottom-right-radius: 10.0
-    border-bottom-left-radius: 10.0
-    box-shadow: [Shadow { dx: 0.0, dy: 6.0, blur: 18.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 1.0, blur: 4.0, color: Shade(16) }]
+    border-top-left-radius: 12.0
+    border-top-right-radius: 12.0
+    border-bottom-right-radius: 12.0
+    border-bottom-left-radius: 12.0
+    box-shadow: [Shadow { dx: 3.0, dy: 6.0, blur: 24.0, color: Shade(24) }, Shadow { dx: 0.0, dy: 0.0, blur: 0.0, color: Transparent }]
 .row (1 variants)
   [plain]
     row-gap: 8.0
@@ -228,9 +228,9 @@ kinds
     padding-bottom: 8.0
     padding-left: 12.0
     background: Color(Token(Control))
-    border-top-left-radius: 6.0
-    border-top-right-radius: 6.0
-    border-bottom-right-radius: 6.0
-    border-bottom-left-radius: 6.0
+    border-top-left-radius: 8.0
+    border-top-right-radius: 8.0
+    border-bottom-right-radius: 8.0
+    border-bottom-left-radius: 8.0
     cursor: Pointer
     transition: Transition { props: 103079215104, ms: 250, ease: Standard }

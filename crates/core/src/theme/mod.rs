@@ -149,6 +149,11 @@ impl ResolvedTheme {
         for (v, val) in contract::SCALE {
             s.push_str(&format!(" {v}: {val};"));
         }
+        // Derived, not themable: the accent as text on the card.
+        let get = |n: &str| self.tokens.get(n).map_or("", String::as_str);
+        if let Some(ink) = contract::accent_ink(get("accent"), get("card"), get("surface")) {
+            s.push_str(&format!(" {}: {ink};", contract::DERIVED[0]));
+        }
         s.push_str(" }\n");
         s
     }
@@ -395,6 +400,7 @@ mod tests {
                 "bg",
                 "surface",
                 "surface-2",
+                "sidebar",
                 "menubar",
                 "dock",
                 "text",
@@ -504,10 +510,10 @@ mod tests {
     #[test]
     fn builtins_match_palette() {
         let cat = ThemeCatalog::builtin();
-        assert_eq!(cat.resolve("wol-dark").unwrap().tokens["card"], "#2a2834");
+        assert_eq!(cat.resolve("wol-dark").unwrap().tokens["card"], "#292932");
         assert_eq!(
             cat.resolve("wol-light").unwrap().tokens["sidebar"],
-            "rgba(233,231,241,0.92)"
+            "rgba(235,235,243,0.92)"
         );
         assert_eq!(cat.resolve("wol-dark").unwrap().variant, Variant::Dark);
     }
@@ -516,7 +522,7 @@ mod tests {
     fn builtins_use_brand_accent() {
         // design/tokens: violet brand accent; dark is lighter but keeps white text >= 3.0.
         let cat = ThemeCatalog::builtin();
-        for (id, accent) in [("wol-light", "#7c5cff"), ("wol-dark", "#8b6cff")] {
+        for (id, accent) in [("wol-light", "#7452f5"), ("wol-dark", "#7452f5")] {
             assert_eq!(cat.resolve(id).unwrap().tokens["accent"], accent, "{id}");
         }
     }
@@ -532,7 +538,7 @@ mod tests {
         let t = ThemeCatalog::load(&[d]).resolve("mine").unwrap();
         assert_eq!(
             (t.tokens["accent"].as_str(), t.tokens["card"].as_str()),
-            ("#ff00ff", "#2a2834")
+            ("#ff00ff", "#292932")
         );
     }
 
@@ -686,9 +692,9 @@ mod tests {
     fn css_has_tokens_and_scale() {
         let css = ThemeCatalog::builtin().resolve("wol-dark").unwrap().css();
         for want in [
-            "--card: #2a2834;",
+            "--card: #292932;",
             "--accent-text: #ffffff;",
-            "--radius-m: 10px;",
+            "--radius-m: 12px;",
             "--motion-fast: 150ms;",
         ] {
             assert!(css.contains(want), "{want}");

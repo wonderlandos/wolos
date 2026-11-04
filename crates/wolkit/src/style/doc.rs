@@ -49,7 +49,10 @@ const TOKENS_INTRO: &str = "Colours are the 13 theme tokens of `shared::theme::T
 
 const EASES: &str = "| Eases | `ease` (the theme's `--ease`, cubic-bezier(0.2, 0.8, 0.2, 1)), `linear`, `in`, `out`, `in-out` | `--ease` |";
 
-const SHADOWS_INTRO: &str = "Shadows are fixed material (black at an alpha), not themable. `box-shadow` holds two layers at most; `lg` is two.";
+const SHADOWS_INTRO: &str = concat!(
+    "Shadows are fixed material (black at an alpha), not themable. One light upper left: a shadow falls right and ",
+    "down at 1:2, and `sm`, `md` and `lg` are the Kit's elevations 1, 2 and 3. `box-shadow` holds two layers at most."
+);
 
 const PROPS_INTRO: &str = "`Affects` is what a change dirties: `layout` or `paint` (a paint change never dirties layout). \
 `Anim` marks the properties a `transition` can run on. Ids are append-only (a property's id is part of `WSB1`).";
@@ -218,12 +221,15 @@ a transition over 500 ms is WK-004 (RU-060).\n"
 
 fn materials(w: &mut String) {
     let _ = writeln!(w, "\n{SHADOWS_INTRO}\n");
-    let _ = writeln!(w, "| Shadow | Layers (offset y, blur, alpha) |\n|---|---|");
+    let _ = writeln!(
+        w,
+        "| Shadow | Layers (offset x, offset y, blur, alpha) |\n|---|---|"
+    );
     for s in ShadowTok::ALL {
         let l: Vec<String> = s
             .layers()
             .iter()
-            .map(|p| format!("{}px {}px {}%", p.dy, p.blur, p.alpha))
+            .map(|p| format!("{}px {}px {}px {}%", p.dx, p.dy, p.blur, p.alpha))
             .collect();
         let text = if l.is_empty() {
             "none".to_string()

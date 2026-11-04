@@ -179,7 +179,7 @@ fn shorthands_expand_like_css() {
         "row then column"
     );
     let d = one(".a { border-radius: s m; }");
-    assert_eq!(d.p.paint.radius, [6.0, 10.0, 6.0, 10.0]);
+    assert_eq!(d.p.paint.radius, [8.0, 12.0, 8.0, 12.0]);
     let d = one(".a { inset: 0px 4px; }");
     assert_eq!(
         d.p.layout.inset,
@@ -272,8 +272,12 @@ fn values_parse_to_what_they_say() {
     let d = one(".a { aspect-ratio: 2; }");
     assert_eq!(d.p.layout.aspect, 2.0);
     let d = one(".a { box-shadow: lg; }");
-    assert_eq!(d.p.paint.shadow[0].dy, 6.0);
-    assert_eq!(d.p.paint.shadow[1].dy, 1.0);
+    assert_eq!(
+        (d.p.paint.shadow[0].dx, d.p.paint.shadow[0].dy),
+        (3.0, 6.0),
+        "elevation 3 falls at 1:2"
+    );
+    assert_eq!(d.p.paint.shadow[1].dy, 0.0);
     let d = one(".a { opacity: 0; width: 0; }");
     assert_eq!(d.p.layout.width, Dim::Px(0.0));
 }
