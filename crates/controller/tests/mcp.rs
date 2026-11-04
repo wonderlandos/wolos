@@ -29,6 +29,15 @@ fn rpc(s: &mut Server, env: &mut FakeEnv, msg: Value) -> Option<Value> {
     s.handle(&msg.to_string(), env)
 }
 
+/// An `initialize` request from the client called `name`.
+fn hello(id: u64, name: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0", "id": id, "method": "initialize",
+        "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                   "clientInfo": {"name": name, "version": "1"}}
+    })
+}
+
 fn init(env: &mut FakeEnv) -> Server {
     let mut s = Server::default();
     let r = rpc(
@@ -126,6 +135,22 @@ fn protocol_errors() {
         &mut s,
         &mut e,
         json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"rm_rf"}}),
+    )
+    .unwrap();
+    // QA-PLUG-59: before `initialize` no tool is called or listed.
+    assert_eq!(r["error"]["code"], -32002, "{r}");
+    let r = rpc(
+        &mut s,
+        &mut e,
+        json!({"jsonrpc":"2.0","id":5,"method":"tools/list"}),
+    )
+    .unwrap();
+    assert_eq!(r["error"]["code"], -32002, "{r}");
+    rpc(&mut s, &mut e, hello(6, "t")).unwrap();
+    let r = rpc(
+        &mut s,
+        &mut e,
+        json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"rm_rf"}}),
     )
     .unwrap();
     assert_eq!(r["error"]["code"], -32602);
@@ -463,6 +488,115 @@ fn always_allow_is_bound_to_the_starting_program() {
         h.starts_with("Claude Desktop (…") && h.ends_with("/claude)"),
         "{h}"
     );
+}
+
+/// QA-PLUG-58: a JSON array is a batch: one array of answers (notifications give none); an empty
+/// array is one Invalid Request.
+#[test]
+fn a_batch_gets_an_array_of_answers() {
+    let mut e = env("batch");
+    let mut s = init(&mut e);
+    let batch = json!([
+        {"jsonrpc":"2.0","id":1,"method":"ping"},
+        {"jsonrpc":"2.0","method":"notifications/initialized"},
+        {"jsonrpc":"2.0","id":2,"method":"nope"}
+    ]);
+    let r = s.handle(&batch.to_string(), &mut e).unwrap();
+    let a = r.as_array().expect("an array");
+    assert_eq!(a.len(), 2, "{r}");
+    assert_eq!(a[0]["result"], json!({}));
+    assert_eq!(a[1]["error"]["code"], -32601);
+    let only_notes = json!([{"jsonrpc":"2.0","method":"notifications/initialized"}]);
+    assert!(s.handle(&only_notes.to_string(), &mut e).is_none());
+    let r = s.handle("[]", &mut e).unwrap();
+    assert_eq!(r["error"]["code"], -32600);
+}
+
+/// QA-PLUG-59: a line over the cap is answered as too large without being parsed.
+#[test]
+fn an_oversize_line_is_refused() {
+    let mut e = env("bigline");
+    let mut s = init(&mut e);
+    let r = s.handle(controller::mcp::TOO_LONG, &mut e).unwrap();
+    assert_eq!(r["error"]["code"], -32600);
+    assert!(
+        r["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("too large"),
+        "{r}"
+    );
+    assert_eq!(controller::mcp::MAX_LINE, 1 << 20);
+}
+
+/// QA-PLUG-60: `wol mcp` does not serve root.
+#[test]
+fn mcp_refuses_root() {
+    let mut e = env("root");
+    e.root = true;
+    let code = controller::mcp::serve(&mut e);
+    assert_eq!(code, shared::errors::ErrorCode::Denied.exit());
+    assert!(e.err.contains("not for root"), "{}", e.err);
+}
+
+/// QA-PLUG-79: `modules_enable` for a module that is not installed answers the sentence at
+/// once; nobody is asked first.
+#[test]
+fn modules_enable_checks_installed_first() {
+    let mut e = env("enable79");
+    let dir = "/fake/modules";
+    let record = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../files/usr/share/wolos/modules/ai-local.json");
+    e.vars
+        .push((controller::modules::DIR_VAR.into(), dir.into()));
+    e.files.push((
+        PathBuf::from(format!("{dir}/ai-local.json")),
+        std::fs::read_to_string(record).unwrap(),
+    ));
+    e.captures.push(("pacman -Qq".into(), "bash\n".into()));
+    let mut s = init(&mut e);
+    let r = call(&mut s, &mut e, "modules_enable", json!({"id": "ai-local"}));
+    assert_eq!(r["isError"], true, "{r}");
+    let text = r["content"][0]["text"].as_str().unwrap();
+    assert!(
+        text.contains("is not installed yet") && text.contains("wol modules install ai-local"),
+        "{text}"
+    );
+    assert!(
+        approvals(&e).is_empty(),
+        "no sheet for a change with nothing to do"
+    );
+}
+
+/// QA-PLUG-26: a client's self-update moves its program to a new versioned path; the grant given
+/// before still holds, and another folder is still another program.
+#[test]
+fn a_grant_survives_the_clients_self_update() {
+    for (n, (program, granted)) in [
+        ("/home/bob/.local/share/claude/versions/2.1.3", true),
+        ("/home/bob/.local/share/claude/versions/2.2.0-beta1", true),
+        ("/home/bob/.local/share/other/versions/2.1.3", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut e = env(&format!("selfupdate{n}"));
+        std::fs::create_dir_all(e.home.join("wolos")).unwrap();
+        std::fs::write(
+            e.home.join("wolos/helpers.json"),
+            r#"{"enabled":true,"deny":[],"always":{"Claude Code (/home/bob/.local/share/claude/versions/*)":["appearance"]}}"#,
+        )
+        .unwrap();
+        let mut s = Server::started_by(Some(program.to_owned()));
+        rpc(&mut s, &mut e, hello(1, "Claude Code")).unwrap();
+        let r = call(&mut s, &mut e, "appearance_set", json!({"mode": "dark"}));
+        assert_eq!(approvals(&e).is_empty(), granted, "{program}: {r}");
+    }
+    assert_eq!(
+        controller::mcp::unversioned("/opt/app-1.2/bin/v3.4.5/tool"),
+        "/opt/app-1.2/bin/*/tool"
+    );
+    assert_eq!(controller::mcp::unversioned("/usr/bin/a"), "/usr/bin/a");
 }
 
 /// AllowAlways from the shell runs it now (the shell saved the grant).
@@ -816,5 +950,35 @@ fn every_admin_tool_is_asked_through_wold() {
                 .all(|q| q.0 == std::path::Path::new(shared::jobs::SOCKET)),
             "{tool}: nothing on the shell socket"
         );
+    }
+}
+
+/// QA-PLUG-25: `initialize` is answered once; a second one cannot rename the client mid-session.
+#[test]
+fn a_second_initialize_is_refused() {
+    let mut e = env("reinit");
+    let mut s = init(&mut e);
+    let r = rpc(&mut s, &mut e, hello(2, "Trusted Thing")).unwrap();
+    assert_eq!(r["error"]["code"], -32600, "{r}");
+    assert_eq!(s.client(), "Claude Desktop");
+}
+
+/// QA-PLUG-24: a percent that is not a whole number from 0 to 100 is a tool error before any
+/// sheet: the sheet never reads "wants to set the volume to abc%".
+#[test]
+fn bad_percent_never_reaches_a_sheet() {
+    for (tool, bad) in [
+        ("audio_volume", json!("abc")),
+        ("audio_volume", json!("150")),
+        ("audio_volume", json!(-3)),
+        ("display_brightness", json!("40%")),
+    ] {
+        let mut e = env("percent");
+        e.replies = vec![Answer::AllowOnce.line()];
+        let mut s = init(&mut e);
+        let r = call(&mut s, &mut e, tool, json!({ "percent": bad }));
+        assert_eq!(r["isError"], true, "{tool} {bad}: {r}");
+        assert!(text(&r).contains(" to 100"), "{tool} {bad}: {r}");
+        assert!(e.requests.is_empty(), "{tool} {bad}: a sheet was asked for");
     }
 }

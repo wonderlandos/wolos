@@ -113,6 +113,7 @@ fn scripts_get_no_files_processes_or_loaders() {
         "loadfile",
         "dofile",
         "collectgarbage",
+        "warn",
     ] {
         let src = format!(
             "return wol.widget {{ name = 'x', render = function() return wol.label {{ tostring({global}) }} end }}"

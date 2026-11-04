@@ -134,15 +134,17 @@ impl Script {
         if !kind.has_script() {
             return Err(format!("A [[{}]] entry has no script.", kind.id()));
         }
+        let meter = Meter::new();
+        let services = crate::OffClock::wrap(services, &meter);
         let lua = sandbox(&services).map_err(err)?;
         if kind == Kind::Ipc {
             ipc_marker(&lua).map_err(err)?;
         }
-        let meter = Meter::new();
-        arm(&lua, &meter, deadlines.load).map_err(err)?;
+        arm(&lua, &meter, deadlines.load, deadlines).map_err(err)?;
         let v: Value = meter.settle(
             lua.load(src)
                 .set_name(format!("={plugin}/{entry}"))
+                .set_mode(mlua::chunk::ChunkMode::Text)
                 .eval()
                 .map_err(err),
         )?;
@@ -259,7 +261,13 @@ impl Script {
 
     fn call_node(&mut self, f: &Function) -> Result<Node, String> {
         self.meter.alive()?;
-        arm(&self.lua, &self.meter, self.deadlines.render).map_err(err)?;
+        arm(
+            &self.lua,
+            &self.meter,
+            self.deadlines.render,
+            self.deadlines,
+        )
+        .map_err(err)?;
         let r = f.call(()).map_err(err).and_then(|v: Value| {
             let mut handlers = Handlers::default();
             let node = to_node(&v, &mut handlers, 1, Some(&self.dir))?;
@@ -294,7 +302,7 @@ impl Script {
     pub fn click(&mut self, id: u32) -> Result<(), String> {
         self.meter.alive()?;
         let f = self.handlers.get(id)?;
-        arm(&self.lua, &self.meter, self.deadlines.event).map_err(err)?;
+        arm(&self.lua, &self.meter, self.deadlines.event, self.deadlines).map_err(err)?;
         self.meter.settle(f.call::<()>(()).map_err(err))
     }
 
@@ -302,7 +310,7 @@ impl Script {
     pub fn change(&mut self, id: u32, value: Input) -> Result<(), String> {
         self.meter.alive()?;
         let f = self.handlers.get(id)?;
-        arm(&self.lua, &self.meter, self.deadlines.event).map_err(err)?;
+        arm(&self.lua, &self.meter, self.deadlines.event, self.deadlines).map_err(err)?;
         let r = match value {
             Input::Text(s) => f.call::<()>(s),
             Input::On(b) => f.call::<()>(b),
@@ -318,7 +326,7 @@ impl Script {
             return Err("Only a search script answers queries.".into());
         };
         self.meter.alive()?;
-        arm(&self.lua, &self.meter, self.deadlines.event).map_err(err)?;
+        arm(&self.lua, &self.meter, self.deadlines.event, self.deadlines).map_err(err)?;
         let r = self.rows(&f, text);
         self.meter.settle(r)
     }
@@ -361,16 +369,14 @@ impl Script {
                 _ => return Err("A search row's on_activate is a function.".into()),
             };
             let icon = text("icon")?;
-            let icon = if !icon.is_empty()
-                && !icon.starts_with('/')
-                && shared::plugins::is_icon_file(&icon)
-            {
-                if !shared::plugins::is_plugin_path(&icon) {
-                    return Err("A row's icon file is inside the plugin folder.".into());
-                }
-                self.dir.join(icon).to_string_lossy().into_owned()
-            } else {
+            let icon = if icon.is_empty() {
                 icon
+            } else {
+                crate::plugin_image(
+                    &self.dir,
+                    &icon,
+                    "A row's icon file is inside the plugin folder.",
+                )?
             };
             hits.push(Hit {
                 id: handlers.id(on_activate),
@@ -397,7 +403,7 @@ impl Script {
             return Err("Only an ipc script is called.".into());
         };
         self.meter.alive()?;
-        arm(&self.lua, &self.meter, self.deadlines.event).map_err(err)?;
+        arm(&self.lua, &self.meter, self.deadlines.event, self.deadlines).map_err(err)?;
         let r = to_lua(&self.lua, args)
             .map_err(err)
             .and_then(|a| f.call::<mlua::MultiValue>(a).map_err(err))
@@ -433,7 +439,17 @@ impl Script {
             let (s, id) = (services.clone(), plugin.clone());
             wol.raw_set(
                 "run",
-                lua.create_function(move |_, t: Table| {
+                lua.create_function(move |_, t: Value| {
+                    // QA-PLUG-43: wol.run("id") is a likely slip; say what it takes.
+                    let Value::Table(t) = t else {
+                        return Ok((
+                            false,
+                            Some(
+                                "wol.run takes a list, like wol.run { \"wol\", \"focus\", \"on\" }."
+                                    .to_owned(),
+                            ),
+                        ));
+                    };
                     let mut argv = Vec::new();
                     for v in t.sequence_values::<Value>() {
                         match v? {
@@ -537,7 +553,10 @@ impl Script {
             "show",
             lua.create_function(move |_, panel: String| {
                 if !shared::view::key_ok(&panel) {
-                    return Ok((false, Some("wol.show takes a panel name, like \"control-center\" or a [[panel]] id.".to_owned())));
+                    return Ok((
+                        false,
+                        Some("wol.show takes a panel name, like \"control-center\".".to_owned()),
+                    ));
                 }
                 Ok(match s.show(&id, &panel) {
                     Ok(()) => (true, None),
@@ -628,6 +647,9 @@ impl Script {
                 if key.is_empty() || key.len() > 64 {
                     return Ok((false, Some("A state key is 1 to 64 characters.".to_owned())));
                 }
+                // Read again: another entry of this plugin may have set its own keys since this
+                // script cached the state (QA-PLUG-15).
+                *cache.borrow_mut() = None;
                 let mut m = load2();
                 match to_json(&value, 0) {
                     Ok(Json::Null) => {

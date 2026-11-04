@@ -12,8 +12,9 @@ One door for people, scripts and AI helpers: the `wol` command tree. Helpers nev
 | script with `WOL_HELPER=<name>` | `script:<name>` | yes |
 | script started with `wol script run <file>` or `wol script on <host> <file>` (sh, bash or Ruby, docs/modules/scripting.md) | `script:<file name>` (set by the runner) | yes; plus one `script run` / `script on` record per run |
 | a person running `wol` | `cli` | no (admin verbs ask for the password on stdin) |
+| an assistant's own shell (Claude Code's Bash tool running `wol ...`) | `script:claude-code` (`CLAUDECODE=1`, set by Claude Code), or `script:<name>` when `WOL_HELPER=<name>` is set | yes (advisory: a process can unset its own environment) |
 
-Helper verbs: `catalog::HELPER_VERBS` (`wol api --json` lists access and capability). Anything else stays for people.
+Helper verbs: `catalog::HELPER_VERBS` (`wol api --json` lists access and capability). Anything else stays for people: under a helper name (`WOL_HELPER`, or an assistant's shell) it is refused and logged, except `help`, `api` and `mcp`.
 
 ## Gate (`controller::approve::decide`, same for MCP and scripts)
 
@@ -47,6 +48,10 @@ Shell -> one line `{"answer": ...}`, then close:
 - Change: Deny, Always Allow, Allow Once; focus starts on Deny (a stray Enter or Space never says yes).
 - Admin: password field, Deny, Allow; a wrong password asks again.
 - Esc or closing = Deny. Queue: one on screen, 4 waiting, more get `busy`.
+
+## `wol mcp` server limits
+
+One server per client process, stdio, one JSON-RPC message per line. A client starts with `initialize` (its `clientInfo.name` is fixed for the session; a second `initialize` is refused, and listing or calling a tool before it answers -32002). A JSON array is a batch and gets one array of answers. A line over 1 MiB is dropped unread and answered as too large; a tool answers at most 256 KiB of text. The server ends when its client has gone, and a sheet it was waiting on is dropped, not approved. It does not serve root: run as your own account. Always Allow is bound to the client's name and its program, with release numbers in the program's path read as `*` (`.../claude/versions/2.1.3` is `.../claude/versions/*`), so a self-update keeps the grant.
 
 ## Errors and JSON, today (audit8 standards #11)
 

@@ -333,9 +333,60 @@ fn remove(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     }
 }
 
+/// QA-PLUG-28: a step of `enable` that failed, in words: what did not come (a download names the
+/// network), how to try again, then the exact step for whoever helps (`detail`).
+fn step_failed(m: &modules::Module, argv: &[String], detail: &str) -> String {
+    let download = matches!(
+        argv.first().map(String::as_str),
+        Some("wopkg" | "mise" | "flatpak")
+    );
+    let what = argv.last().map_or("", String::as_str);
+    let lead = if download {
+        format!(
+            "{} could not finish setting up: {what} did not download. Check that you are online, then try again",
+            m.name
+        )
+    } else {
+        format!("{} could not finish its setup step. Try again", m.name)
+    };
+    format!("{lead}: wol modules enable {} ({detail}).", m.id)
+}
+
+/// QA-PLUG-79: the sentence `enable` would end with for a module that is not installed, for a
+/// caller that wants it before asking the person anything (the MCP server: a sheet for a change
+/// that has nothing to do is a question for nothing). None: installed, or no such module (the
+/// verb says so itself).
+pub(crate) fn not_installed_sentence(env: &mut dyn Env, id: &str) -> Option<String> {
+    if !modules::valid_id(id) {
+        return None;
+    }
+    let m = registry(env).into_iter().find(|m| m.id == id)?;
+    let f = facts(env);
+    (!modules::status(&m, &f).installed).then(|| {
+        format!(
+            "{} is not installed yet: wol modules install {}",
+            m.name, m.id
+        )
+    })
+}
+
+/// Why `enable` refuses root (QA-PLUG-60): its steps set up the person's own account.
+fn root_refusal(env: &mut dyn Env) -> Option<i32> {
+    env.is_root().then(|| {
+        fail(
+            env,
+            ErrorCode::Denied,
+            &format!("wol modules enable: {}", crate::mcp::AS_ROOT),
+        )
+    })
+}
+
 /// As the user: wopkg recipes, mise tools, Flatpaks, then the record's `post` argv; all idempotent
 /// by contract. Recorded in the enablement file only when every step passed.
 fn enable(env: &mut dyn Env, id: &str, json: bool) -> i32 {
+    if let Some(code) = root_refusal(env) {
+        return code;
+    }
     let m = match find(env, id) {
         Ok(m) => m,
         Err(code) => return code,
@@ -379,18 +430,12 @@ fn enable(env: &mut dyn Env, id: &str, json: bool) -> i32 {
         match env.exec(argv) {
             Ok(0) => ran.push(line),
             Ok(c) => {
-                return fail(
-                    env,
-                    ErrorCode::Failed,
-                    &format!("{}: `{line}` failed (exit {c})", m.name),
-                );
+                let msg = step_failed(&m, argv, &format!("`{line}` exited {c}"));
+                return fail(env, ErrorCode::Failed, &msg);
             }
             Err(e) => {
-                return fail(
-                    env,
-                    ErrorCode::Unavailable,
-                    &format!("{}: `{line}`: {e}", m.name),
-                );
+                let msg = step_failed(&m, argv, &format!("`{line}`: {e}"));
+                return fail(env, ErrorCode::Unavailable, &msg);
             }
         }
     }

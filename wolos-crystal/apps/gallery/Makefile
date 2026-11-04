@@ -41,4 +41,8 @@ check:
 format:
 	$(CRYSTAL) tool format --check src spec
 
-.PHONY: all spec spec-core spec-engine styles check format
+# `wol app run` comes here.
+run: bin/gallery
+	bin/gallery
+
+.PHONY: all spec spec-core spec-engine styles check format run

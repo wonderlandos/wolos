@@ -311,3 +311,100 @@ fn every_lua_example_loads_and_renders() {
         }
     }
 }
+
+/// QA-PLUG-35: `wol.run` and `wol.http_get` answer at most one size everywhere: the shell and
+/// `wol plugin run` read it from `shared::plugins::MAX_RUN_OUTPUT` and the manual names it.
+#[test]
+fn one_output_cap_for_run_and_http_get() {
+    let kb = format!("{} KB", shared::plugins::MAX_RUN_OUTPUT / 1024);
+    let md = docs();
+    for verb in ["| `wol.run {", "| `wol.http_get(url)`"] {
+        let row = md.lines().find(|l| l.starts_with(verb)).expect(verb);
+        assert!(row.contains(&kb), "{row}");
+    }
+    for file in [
+        "crates/controller/src/plugin.rs",
+        "crates/shell/src/ui/plugins.rs",
+    ] {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join(file),
+        )
+        .unwrap();
+        let line = src
+            .lines()
+            .find(|l| l.contains("const RUN_OUTPUT"))
+            .expect(file);
+        assert!(
+            line.contains("shared::plugins::MAX_RUN_OUTPUT"),
+            "{file}: {line}"
+        );
+    }
+}
+
+/// QA-PLUG-2 / QA-PLUG-39: the manual says that service time is not counted against the
+/// deadlines (what the host does), by the number the host uses, and where a failing item shows
+/// its sentence.
+#[test]
+fn the_manual_names_the_service_credit_and_the_failing_item() {
+    let md = docs();
+    let secs = format!(
+        "{} seconds of service time",
+        wol_lua::Deadlines::DEFAULT.services.as_secs()
+    );
+    assert!(md.contains(&secs), "{secs}");
+    assert!(md.contains("a bar item shows the plugin's name with the sentence as its tooltip"));
+}
+
+/// QA-PLUG-42: the manual's verb table is the CLI's `plugin` verbs, both ways, and its limits are
+/// the constants the code enforces (a number changed in one place shows here).
+#[test]
+fn the_verb_table_and_the_limits_match_the_code() {
+    let md = docs();
+    // Verbs: `| `wol plugin <verb> ...` |` rows (one row may list `enable` / `disable`).
+    let mut doc: Vec<String> = Vec::new();
+    for l in md.lines().filter(|l| l.starts_with("| `wol plugin ")) {
+        let cell = l.split('|').nth(1).unwrap_or_default();
+        for part in cell.split('/') {
+            let words: Vec<&str> = part.trim().trim_matches('`').split_whitespace().collect();
+            let verb = match words.as_slice() {
+                ["wol", "plugin", v, ..] => *v,
+                [v, ..] => *v,
+                [] => continue,
+            };
+            doc.push(verb.to_owned());
+        }
+    }
+    doc.sort();
+    let mut code: Vec<String> = controller::cli::TREE
+        .iter()
+        .filter(|c| c.path.len() == 2 && c.path[0] == "plugin")
+        .map(|c| c.path[1].to_owned())
+        .collect();
+    code.sort();
+    assert_eq!(doc, code, "the manual's verb table and cli::TREE");
+    // Limits.
+    let kib = |n: u64| format!("{} KiB", n / 1024);
+    assert!(md.contains(&format!(
+        "{} MiB in all",
+        shared::plugins::MAX_TOTAL_SIZE >> 20
+    )));
+    assert!(md.contains(&format!("{} per file", kib(wol_core::plugins::MAX_FILE))));
+    assert!(md.contains(&format!(
+        "at most {} KB in",
+        shared::plugins::MAX_STATE / 1024
+    )));
+    assert!(md.contains(&format!("up to {} characters", shared::plugins::MAX_NAME)));
+    assert!(md.contains(&format!(
+        "up to {} characters",
+        shared::plugins::MAX_DESCRIPTION
+    )));
+    assert!(md.contains(&format!(
+        "1 to {} lowercase letters",
+        shared::plugins::MAX_ENTRY_ID
+    )));
+    assert!(md.contains(&format!("timeout` 1 to {} s", wol_lua::plugin::MAX_TIMEOUT)));
+    assert!(md.contains(&format!("(default {})", wol_lua::plugin::DEFAULT_TIMEOUT)));
+    assert!(md.contains("5 million Lua instructions"));
+}

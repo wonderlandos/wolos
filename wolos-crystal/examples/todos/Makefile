@@ -17,4 +17,11 @@ spec:
 fmt-check:
 	crystal tool format --check src spec
 
-.PHONY: all spec fmt-check
+# `wol app check` / `wol app run` come here (QA-PLUG-61).
+check:
+	crystal build --no-codegen --error-on-warnings src/main.cr
+
+run: bin/todos
+	bin/todos
+
+.PHONY: all spec fmt-check check run

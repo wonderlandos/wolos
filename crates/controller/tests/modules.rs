@@ -233,7 +233,16 @@ fn enable_refuses_what_is_not_installed_and_reports_a_failed_step() {
     e.exec_codes = vec![3];
     assert_eq!(run("modules enable console", &mut e), 1);
     assert!(
-        e.err.contains("wopkg install powershell") && e.err.contains("exit 3"),
+        e.err.contains("wopkg install powershell") && e.err.contains("exited 3"),
+        "{}",
+        e.err
+    );
+    // QA-PLUG-28: in words first: what did not come, and how to try again.
+    assert!(
+        e.err.contains(
+            "Console could not finish setting up: powershell did not download. \
+             Check that you are online, then try again: wol modules enable console"
+        ),
         "{}",
         e.err
     );
@@ -777,4 +786,15 @@ fn shipped_records_with_side_effects_have_an_unpost() {
         assert_eq!(m.unpost, [format!("/usr/lib/wolos/{script}")], "{id}");
         assert!(root.join("files/usr/lib/wolos").join(script).is_file());
     }
+}
+
+/// QA-PLUG-60: `wol modules enable` sets up the person's own account; as root it refuses.
+#[test]
+fn enable_refuses_root() {
+    let mut e = env("root60", "bash\n");
+    e.root = true;
+    let code = run("modules enable dev", &mut e);
+    assert_eq!(code, shared::errors::ErrorCode::Denied.exit(), "{}", e.err);
+    assert!(e.err.contains("not for root"), "{}", e.err);
+    assert!(e.execs.is_empty(), "nothing ran as root: {:?}", e.execs);
 }

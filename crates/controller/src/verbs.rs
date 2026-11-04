@@ -145,7 +145,7 @@ fn show(env: &mut dyn Env, v: Value, json: bool) -> i32 {
     0
 }
 
-fn percent(s: &str, min: u8) -> Option<u8> {
+pub(crate) fn percent(s: &str, min: u8) -> Option<u8> {
     s.parse::<u8>().ok().filter(|p| (min..=100).contains(p))
 }
 
@@ -688,7 +688,11 @@ fn open(env: &mut dyn Env, target: &str) -> i32 {
             &format!("no app, file or link named '{target}'"),
         );
     };
-    crate::run::exec(env, &argv)
+    // Detached: the app must not keep our pipes open once it runs (QA-PLUG-23).
+    match env.exec_detached(&argv) {
+        Ok(c) => c,
+        Err(e) => fail(env, ErrorCode::Unavailable, &format!("{}: {e}", argv[0])),
+    }
 }
 
 /// Display name of the actor for notifications.
@@ -1124,7 +1128,25 @@ pub fn record(
     }
 }
 
-/// A named script (`WOL_HELPER=<name>`) calling a helper verb: the same gate as `wol mcp` clients
+/// A helper (`name`) ran a verb that is for people only: refused, and in the audit log.
+pub fn refuse_people_verb(inv: &Invocation, env: &mut dyn Env, name: &str) -> i32 {
+    let tool = inv.path.join(" ");
+    let args: Vec<&str> = inv.args.iter().map(|a| a.1.as_str()).collect();
+    let msg = format!("{tool} is for people: a helper such as {name} cannot run it.");
+    let rec = record(
+        &format!("script:{name}"),
+        "cli",
+        &tool,
+        &args,
+        Outcome::Refused,
+        &msg,
+        env.now_secs(),
+    );
+    let _ = audit::append(&env.state_home(), &rec);
+    fail(env, ErrorCode::Denied, &msg)
+}
+
+/// A named script (`WOL_HELPER=<name>`, or an assistant's shell, `CLAUDECODE=1`) calling a helper verb: the same gate as `wol mcp` clients
 /// ([`crate::approve`]): policy, the approval sheet for changes, the password sheet for
 /// administrator verbs. Changes are logged.
 pub fn as_script(inv: &Invocation, env: &mut dyn Env, name: &str, rule: &HelperVerb) -> i32 {

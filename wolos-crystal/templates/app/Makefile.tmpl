@@ -17,7 +17,7 @@ format:
 	$(CRYSTAL) tool format src spec dev
 
 check:
-	$(CRYSTAL) build --no-codegen src/main.cr
+	$(CRYSTAL) build --no-codegen --error-on-warnings src/main.cr
 
 # `wol app run` comes here. With WOL_APP_WATCH=1 (`wol app run --watch`) dev/watch.sh runs a dev
 # build (-Ddev) and follows your edits; without it the program runs once.

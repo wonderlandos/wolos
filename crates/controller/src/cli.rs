@@ -882,6 +882,12 @@ pub const TREE: &[Cmd] = &[
         "Turn a plugin on and grant the permissions it declares",
     ),
     cmd(
+        &["plugin", "allow-host"],
+        "plugin.allow-host",
+        &[arg("id"), opt("host")],
+        "Let a turned-on plugin read data from one web site (a host name; none: list the sites it may read)",
+    ),
+    cmd(
         &["plugin", "disable"],
         "plugin.disable",
         &[arg("id")],
@@ -1394,6 +1400,24 @@ impl std::fmt::Display for ParseError {
             Self::Extra(w) => write!(f, "unexpected argument '{w}'"),
             Self::BadFlag(x) => write!(f, "unknown flag --{x}"),
         }
+    }
+}
+
+/// QA-PLUG-47: where a parse error points: `wol help <the longest command the words start>`
+/// (`wol plugin check` with no plugin says `Try 'wol help plugin check'.`), else `wol help`.
+pub fn help_hint<S: AsRef<str>>(argv: &[S]) -> String {
+    let words: Vec<&str> = argv
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|a| !a.starts_with("--"))
+        .collect();
+    let known = (1..=words.len()).rev().find(|&n| {
+        TREE.iter()
+            .any(|c| c.path.len() >= n && c.path[..n] == words[..n])
+    });
+    match known {
+        Some(n) => format!("Try 'wol help {}'.", words[..n].join(" ")),
+        None => "Try 'wol help'.".to_owned(),
     }
 }
 

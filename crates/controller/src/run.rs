@@ -54,6 +54,13 @@ pub trait Env {
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
         self.exec(argv)
     }
+    /// Starts argv and does not wait for what it opens: no stdin, stdout or stderr shared with
+    /// us, its own process group, and the launcher itself is waited for only briefly (`wol open`
+    /// returns once the app is asked for; QA-PLUG-23: it held the caller's pipes until the app
+    /// quit, which blocked `su -l bob -c 'wol open ...'` for minutes).
+    fn exec_detached(&mut self, argv: &[String]) -> io::Result<i32> {
+        self.exec(argv)
+    }
     /// Run argv with no stdin and stdout captured; (exit status, stdout). Unlike `capture`, a
     /// non-zero exit keeps its output (`wol shard check --json` reports findings and exits 1).
     /// Refused where there is no child to run.
@@ -88,11 +95,41 @@ pub trait Env {
     }
     /// One raw line from stdin; None at end of input (`wol mcp`).
     fn read_line(&mut self) -> Option<String> {
-        let mut l = String::new();
-        match io::stdin().read_line(&mut l) {
-            Ok(0) | Err(_) => None,
-            Ok(_) => Some(l),
+        // At most MAX_LINE bytes are kept (QA-PLUG-59): the rest of a longer line is read and
+        // dropped, and the caller gets the TOO_LONG marker instead of 3 MB of text.
+        use std::io::BufRead;
+        let stdin = io::stdin();
+        let mut stdin = stdin.lock();
+        let mut l: Vec<u8> = Vec::new();
+        let mut too_long = false;
+        loop {
+            let (used, done) = match stdin.fill_buf() {
+                Ok([]) | Err(_) => break,
+                Ok(buf) => {
+                    let (chunk, done) = match buf.iter().position(|b| *b == b'\n') {
+                        Some(i) => (&buf[..=i], true),
+                        None => (buf, false),
+                    };
+                    if l.len() + chunk.len() > crate::mcp::MAX_LINE {
+                        too_long = true;
+                    } else if !too_long {
+                        l.extend_from_slice(chunk);
+                    }
+                    (chunk.len(), done)
+                }
+            };
+            stdin.consume(used);
+            if done {
+                break;
+            }
         }
+        if too_long {
+            return Some(crate::mcp::TOO_LONG.to_owned());
+        }
+        if l.is_empty() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&l).into_owned())
     }
     /// Server latency probe in ms (`wol mirror rank`); shareable across threads.
     fn prober(&self) -> Prober {
@@ -170,9 +207,17 @@ pub trait Env {
         wol_core::theme::apps::data_home(|k| self.var(k))
             .unwrap_or_else(|| self.home().join(".local/share"))
     }
-    /// Who acts (journal, audit log): `cli`, `script:<WOL_HELPER>`, `mcp:<client>`.
-    fn actor(&self) -> String {
+    /// The helper name this process acts under, if any (QA-PLUG-6): `WOL_HELPER`, else
+    /// [`AGENT_HELPER`] when the environment says an assistant's shell started it
+    /// (`CLAUDECODE=1`, which Claude Code sets for its Bash tool). A person's own shell has
+    /// neither, and is `cli`.
+    fn helper_name(&self) -> Option<String> {
         self.var("WOL_HELPER")
+            .or_else(|| (self.var(AGENT_ENV).as_deref() == Some("1")).then(|| AGENT_HELPER.into()))
+    }
+    /// Who acts (journal, audit log): `cli`, `script:<helper name>`, `mcp:<client>`.
+    fn actor(&self) -> String {
+        self.helper_name()
             .map_or_else(|| "cli".into(), |h| format!("script:{h}"))
     }
 }
@@ -256,8 +301,16 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
         return 0;
     }
     // A named script is a helper: policy + audit log (docs/modules/automation.md).
-    if let (Some(name), Some(rule)) = (env.var("WOL_HELPER"), crate::catalog::rule_of(inv)) {
-        return crate::verbs::as_script(inv, env, &name, rule);
+    // A verb that is not a helper verb is for people: under a helper name it is refused, not run
+    // (fail closed; `plugin allow-host`, `plugin enable` and the like are never a helper's).
+    if let Some(name) = env.helper_name() {
+        match crate::catalog::rule_of(inv) {
+            Some(rule) => return crate::verbs::as_script(inv, env, &name, rule),
+            None if !HELPER_OPEN.contains(&inv.action) => {
+                return crate::verbs::refuse_people_verb(inv, env, &name);
+            }
+            None => {}
+        }
     }
     dispatch(inv, env)
 }
@@ -1474,8 +1527,43 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     0
 }
 
+/// Verbs a helper may run although they are not helper verbs: they only describe `wol` (`help`,
+/// `api`) or are the server an assistant starts (`mcp`, which gates each tool call itself).
+const HELPER_OPEN: [&str; 3] = ["help", "api", "mcp"];
+
+/// The variable Claude Code sets in the shell its Bash tool starts: such a `wol` is an assistant's.
+pub const AGENT_ENV: &str = "CLAUDECODE";
+/// The helper name an assistant's shell acts under (policy, sheet and audit log).
+pub const AGENT_HELPER: &str = "claude-code";
+
 /// Real side effects.
 pub struct RealEnv;
+
+/// How long `wol open` waits for the launcher to say it started the app, and how often it looks.
+const LAUNCH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const LAUNCH_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How often a wait on a socket looks whether the pinned client is still there.
+const CLIENT_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+/// Why a wait ended early: the program that started `wol mcp` is gone (QA-PLUG-62).
+pub const CLIENT_GONE: &str = "the program that asked is gone";
+/// The parent pid `wol mcp` was started by (0 = not pinned).
+static CLIENT_PARENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// `wol mcp`: remember the program that started this process, so a wait for an on-screen answer
+/// ends once it is gone (its sheet then closes, and nothing runs for nobody).
+pub fn pin_client() {
+    CLIENT_PARENT.store(
+        std::os::unix::process::parent_id(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// True when [`pin_client`] ran and this process has a different parent now (the client exited
+/// and the process was handed to init or a subreaper).
+pub fn client_gone() -> bool {
+    let p = CLIENT_PARENT.load(std::sync::atomic::Ordering::Relaxed);
+    p != 0 && std::os::unix::process::parent_id() != p
+}
 
 const KEYCTL_SEARCH: libc::c_long = 10;
 const KEYCTL_READ: libc::c_long = 11;
@@ -1532,12 +1620,40 @@ impl Env for RealEnv {
         } else {
             std::os::unix::net::UnixStream::connect(socket)?
         };
-        s.set_read_timeout(Some(std::time::Duration::from_secs(secs.into())))?;
         s.write_all(req)?;
         s.shutdown(std::net::Shutdown::Write)?;
-        let mut out = String::new();
-        s.read_to_string(&mut out)?;
-        Ok(out)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs.into());
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            // A short read timeout, so a pinned client that went away is noticed while waiting
+            // (QA-PLUG-62); dropping `s` then closes the request on the other side.
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            s.set_read_timeout(Some(left.min(CLIENT_POLL)))?;
+            match s.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    if client_gone() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::ConnectionAborted,
+                            CLIENT_GONE,
+                        ));
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        String::from_utf8(out).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
     }
     fn exec(&mut self, argv: &[String]) -> io::Result<i32> {
         let st = std::process::Command::new(&argv[0])
@@ -1585,6 +1701,28 @@ impl Env for RealEnv {
         if let Some(id) = keyring_search(desc) {
             // SAFETY: plain integer arguments.
             unsafe { libc::syscall(libc::SYS_keyctl, KEYCTL_INVALIDATE, id) };
+        }
+    }
+    fn exec_detached(&mut self, argv: &[String]) -> io::Result<i32> {
+        use std::os::unix::process::CommandExt;
+        use std::process::Stdio;
+        let mut child = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()?;
+        let until = std::time::Instant::now() + LAUNCH_WAIT;
+        loop {
+            if let Some(st) = child.try_wait()? {
+                return Ok(st.code().unwrap_or(1));
+            }
+            if std::time::Instant::now() >= until {
+                // Still running: the launcher is the app (xdg-open handing a file to its viewer).
+                return Ok(0);
+            }
+            std::thread::sleep(LAUNCH_POLL);
         }
     }
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
