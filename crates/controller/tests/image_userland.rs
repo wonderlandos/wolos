@@ -292,7 +292,7 @@ fn web_apps_and_the_default_browser_run_the_program_the_package_installs() {
 
 /// e2e D2: Night Light's program was not in the image, so the toggle, Ctrl+Super+N and the
 /// Control Center tile did nothing. The image installs it (wolos-iso profile) for the session's
-/// `exec-once` to start.
+/// user unit (wolos-hyprsunset.service, part of wolos-session.target since QA-CRASH-5) to start.
 #[test]
 fn night_light_has_its_program_in_the_image() {
     let p = wol_core::toggles::NIGHT_LIGHT_PROGRAM;
@@ -302,17 +302,31 @@ fn night_light_has_its_program_in_the_image() {
             .any(|l| l.split('#').next().unwrap_or("").trim() == p),
         "profile/packages.desktop lacks {p}"
     );
-    let hypr = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+    let unit = read("files/usr/lib/systemd/user/wolos-hyprsunset.service");
     assert!(
-        hypr.lines()
-            .any(|l| l.starts_with("exec-once = ") && l.contains(&format!("exec {p}")))
+        unit.lines()
+            .any(|l| l.starts_with("ExecStart=") && l.contains(&format!("exec {p}"))),
+        "{unit}"
+    );
+    assert!(
+        read("files/usr/lib/systemd/user/wolos-session.target")
+            .contains("wolos-hyprsunset.service")
     );
 }
 
-/// The live user has no password: a lock screen after five idle minutes could not be left.
+/// The live user has no password: a lock screen after five idle minutes could not be left. The
+/// idle daemon's unit does not run on the live medium.
 #[test]
 fn the_live_desktop_never_locks_itself() {
+    let unit = read("files/usr/lib/systemd/user/wolos-hypridle.service");
+    assert!(
+        unit.lines()
+            .any(|l| l.trim() == "ConditionPathExists=!/etc/wolos-live"),
+        "{unit}"
+    );
     let hypr = read("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
-    let line = hypr.lines().find(|l| l.contains("exec hypridle")).unwrap();
-    assert!(line.contains("[ -e /etc/wolos-live ] && exit"), "{line}");
+    assert!(
+        !hypr.lines().any(|l| l.contains("exec hypridle")),
+        "hypridle runs from its unit only"
+    );
 }

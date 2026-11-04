@@ -90,9 +90,10 @@ fn x11_scale_step_runs_on_every_load_and_after_reload() {
             .any(|l| l.starts_with("exec-once = wol-x11-env"))
     );
     // X1-11: the systemd user manager gets the session variables whichever D-Bus daemon runs.
+    // The same line then (re)starts the session helpers' units on this display (QA-CRASH-5).
     assert!(has_line(
         &h,
-        "exec-once = dbus-update-activation-environment --systemd --all"
+        "exec-once = sh -c 'dbus-update-activation-environment --systemd --all; systemctl --user restart wolos-session.target'"
     ));
     let s = read(&format!("{BIN}/wol-x11-env"));
     assert!(s.starts_with("#!/bin/sh\n# SPDX-License-Identifier: GPL-2.0-or-later\n"));

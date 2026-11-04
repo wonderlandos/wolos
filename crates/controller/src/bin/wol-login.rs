@@ -686,6 +686,16 @@ fn start_keyring(user: &LoginUser, password: &[u8]) {
     }
     if !std::path::Path::new(&socket).exists() {
         eprintln!("wol-login: {}: keyring daemon did not start", user.name);
+    } else if !controller::login::runtime_dir_mounted(
+        &std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default(),
+        &runtime_dir(user),
+    ) {
+        // QA-FILES-11: a socket in the plain folder is hidden by logind's mount at session start.
+        eprintln!(
+            "wol-login: {}: {} is not logind's runtime mount: the keyring socket will be hidden when the session starts",
+            user.name,
+            runtime_dir(user)
+        );
     }
     if let Ok(mut all) = KEYRINGS.lock() {
         all.push(child);

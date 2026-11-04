@@ -1,0 +1,16 @@
+# The lock screen's supervisor (QA-LIVE-41). Every `wol-lock` started by hand (Super+L, the menu,
+# hypridle, the sleep hook) hands the lock to this unit (shell ui/lock.rs run_lock), so a supervisor
+# that is killed comes back at once and takes the session lock over
+# (misc:allow_session_lock_restore): the screen never stays black with no way back. A real unlock
+# exits 0 and is not restarted; 69 = this compositor has no session lock, nothing to retry.
+[Unit]
+Description=WolOS lock screen (wol-lock)
+PartOf=wolos-session.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+ExecStart=/usr/bin/wol-lock
+Restart=on-failure
+RestartSec=1
+RestartPreventExitStatus=69

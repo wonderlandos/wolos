@@ -1469,3 +1469,59 @@ fn session_helpers_have_restart() {
         );
     }
 }
+
+/// QA-LIVE-41 (B3): the lock screen's supervisor is a user unit that comes back when it is killed
+/// (both wol-lock processes killed left a black screen with no way back), never after a real unlock
+/// (exit 0) nor on a compositor with no session lock (69, shell lock.rs LOCK_UNSUPPORTED).
+#[test]
+fn wold_restarts_wol_lock_when_session_locked() {
+    let u = repo_text("files/usr/lib/systemd/user/wol-lock.service");
+    let lines: Vec<&str> = u.lines().map(str::trim).collect();
+    for want in [
+        "ExecStart=/usr/bin/wol-lock",
+        "Restart=on-failure",
+        "RestartPreventExitStatus=69",
+        "PartOf=wolos-session.target",
+    ] {
+        assert!(lines.contains(&want), "wol-lock.service lacks {want}: {u}");
+    }
+    let lock = repo_text("crates/shell/src/ui/lock.rs");
+    assert!(lock.contains("pub const LOCK_UNIT: &str = \"wol-lock.service\";"));
+    assert!(lock.contains("pub const LOCK_UNSUPPORTED: i32 = 69;"));
+}
+
+/// QA-LIVE-38 (B3): the polkit password dialog stays on top and keeps the keyboard until it is
+/// answered, so a password is never typed into the terminal behind it.
+#[test]
+fn polkit_agent_stays_focused() {
+    let conf = repo_text("desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+    let block = conf
+        .split("windowrule {")
+        .find(|b| b.contains("name = wol-polkit-agent"))
+        .expect("hyprland.conf: no wol-polkit-agent rule");
+    let lua = repo_text("desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+    let rule = &lua[lua
+        .find("name = \"wol-polkit-agent\"")
+        .expect("hyprland.lua: no rule")..];
+    let rule = &rule[..rule.find("})").unwrap()];
+    for key in ["pin", "stay_focused", "dim_around", "center", "float"] {
+        assert!(
+            block.contains(&format!("    {key} = on")),
+            "conf lacks {key}: {block}"
+        );
+        assert!(
+            rule.contains(&format!("{key} = true")),
+            "lua lacks {key}: {rule}"
+        );
+    }
+    assert!(
+        block.contains("match:class = ^(lxqt-policykit-agent)$"),
+        "{block}"
+    );
+    assert!(
+        rule.contains("class = \"^(lxqt-policykit-agent)$\""),
+        "{rule}"
+    );
+    let agent = repo_text("files/usr/lib/systemd/user/wolos-polkit-agent.service");
+    assert!(agent.contains("ExecStart=/usr/bin/lxqt-policykit-agent"));
+}

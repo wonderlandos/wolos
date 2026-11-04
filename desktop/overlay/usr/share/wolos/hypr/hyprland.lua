@@ -176,6 +176,18 @@ hl.window_rule({ name = "wol-float-apps", enabled = false, match = { class = "^$
 -- The terminal is opaque (QA-LIVE-12): foot's own `alpha` (the theme's 0.9 glass look) lets the windows behind
 -- it bleed through the text where the compositor has no blur. `opaque` drops the buffer's alpha.
 hl.window_rule({ name = "wol-terminal-opaque", match = { class = "^(foot|footclient)$" }, opaque = true })
+-- The polkit password dialog (pkexec, Files, disks) stays on top and keeps the keyboard until it is
+-- answered: once another window was focused nothing brought it back, and the password typed next
+-- landed in the terminal and its history (QA-LIVE-38; interim until a WolOS agent).
+hl.window_rule({
+    name = "wol-polkit-agent",
+    match = { class = "^(lxqt-policykit-agent)$" },
+    float = true,
+    center = true,
+    pin = true,
+    stay_focused = true,
+    dim_around = true,
+})
 -- Placement: wol-hypr centres new floating windows slightly high (realtime placement.rs).
 
 -- Blur and fade for shell surfaces.
