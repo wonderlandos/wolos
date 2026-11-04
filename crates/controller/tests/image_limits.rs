@@ -53,6 +53,48 @@ fn background_services_of_the_user_are_capped_together() {
     );
 }
 
+/// QA-ACC-22: on 4 GB with a zram swap the kernel's OOM killer comes minutes after the machine froze.
+/// systemd-oomd ends the hog first, but only among the apps: the kill is set on `user@.service`
+/// (the user manager and what it runs: app scopes and background services), never on the user slice,
+/// whose children include the login session scope that holds the compositor and the shell. And what
+/// the desktop cannot lose is never the pick: the session scope, the supervisor, the lock screen.
+#[test]
+fn memory_pressure_ends_the_hog_before_the_machine_stalls() {
+    has(
+        &format!("{SYS}/user@.service.d/70-wolos-limits.conf"),
+        &[
+            "ManagedOOMMemoryPressure=kill",
+            "ManagedOOMMemoryPressureLimit=50%",
+        ],
+    );
+    // The daemon that acts on it is on, from the first boot.
+    has(
+        "files/usr/lib/systemd/system-preset/50-wolos.preset",
+        &["enable systemd-oomd.service"],
+    );
+    // Not on the slice or the scope: oomd could pick the session scope itself (Hyprland, wol-shell).
+    for f in [
+        format!("{SYS}/user-.slice.d/70-wolos-limits.conf"),
+        format!("{SYS}/user.slice.d/70-wolos-limits.conf"),
+        format!("{SYS}/session-.scope.d/70-wolos-limits.conf"),
+    ] {
+        let t = read(&f);
+        assert!(
+            !t.lines()
+                .any(|l| l.trim().starts_with("ManagedOOMMemoryPressure")),
+            "{f} would let oomd pick the session"
+        );
+    }
+    // Never the pick: the session scope (compositor, shell), wold, the lock screen's supervisor.
+    for f in [
+        format!("{SYS}/session-.scope.d/70-wolos-limits.conf"),
+        format!("{SYS}/wold.service"),
+        "files/usr/lib/systemd/user/wol-lock.service".to_string(),
+    ] {
+        has(&f, &["ManagedOOMPreference=omit"]);
+    }
+}
+
 #[test]
 fn files_are_limited_by_memory_not_by_a_shared_count() {
     has(

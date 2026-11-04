@@ -14,6 +14,7 @@ pub mod memsaver;
 pub mod package;
 pub mod packages;
 pub mod par;
+pub mod patience;
 pub mod plugins;
 pub mod portal;
 pub mod qos;

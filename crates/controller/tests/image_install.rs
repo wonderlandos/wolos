@@ -246,6 +246,9 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
     for (n, body) in [
         ("systemd-repart", ""),
         ("udevadm", ""),
+        ("partx", ""),
+        ("wipefs", ""),
+        ("sleep", ""),
         ("mount", ""),
         ("umount", ""),
         ("swapoff", ""),
@@ -578,6 +581,51 @@ fn a_new_try_closes_every_volume_the_last_one_left_open() {
     let first = l.lines().position(|x| x.starts_with("cryptsetup close"));
     let check = l.lines().position(|x| x.starts_with("wol install mounts"));
     assert!(first < check, "closed before the disk is looked at: {l}");
+}
+
+/// QA-DOC-28: after a power cut the live system still holds the half install's partitions and
+/// repart's first add is 'Device or resource busy': the kernel forgets the old table before
+/// repart, and a busy try is retried once (the second attempt used to fail, the third worked).
+#[test]
+fn an_erase_after_a_cut_install_forgets_the_old_partitions_and_retries_a_busy_one() {
+    let d = scratch("repart-busy");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    let flag = d.join("repart-tried");
+    fake(
+        &d,
+        "systemd-repart",
+        &format!(
+            "[ -e {f} ] && exit 0; touch {f}\necho 'Failed to create new partition /dev/nvme0n1p1: Device or resource busy' >&2; exit 1",
+            f = flag.display()
+        ),
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    let l = log(&d);
+    let at = |w: &str| l.lines().position(|x| x.starts_with(w));
+    let reparts = l
+        .lines()
+        .filter(|x| x.starts_with("systemd-repart"))
+        .count();
+    assert_eq!(reparts, 2, "one retry: {l}");
+    assert!(at("partx -d /dev/nvme0n1") < at("systemd-repart"), "{l}");
+    assert!(
+        at("wipefs -a -q /dev/nvme0n1") < at("systemd-repart"),
+        "{l}"
+    );
+    // Busy twice: the install stops with the partition sentence, no third try.
+    let _ = fs::remove_file(&flag);
+    fake(&d, "systemd-repart", "exit 1");
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(
+        log(&d)
+            .lines()
+            .filter(|x| x.starts_with("systemd-repart"))
+            .count(),
+        2
+    );
 }
 
 /// install-run again on the fakes [`install_with`] left (some replaced since), on an empty target.

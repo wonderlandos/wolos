@@ -323,6 +323,59 @@ fn other_folded(env: &dyn Env) -> Option<String> {
         .then(|| layers::folded_list(usr.as_deref(), etc.as_deref()).to_owned())
 }
 
+/// `wol layers list [--json]`: the live layers (packages installed with `wol pkg` since the system
+/// was last updated), oldest first, each with its packages, size, date and what happens to it next.
+/// Needs no administrator: the folder and the records are readable.
+pub fn list(env: &mut dyn Env, inv: &Invocation) -> i32 {
+    // No folder (a machine without layers) is no layers; a size or a date that cannot be read is
+    // shown as unknown ("-"), never as 0 bytes (the listing says what it could not read).
+    let ls = match capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]) {
+        Some(t) => t,
+        None => String::new(),
+    };
+    let names: Vec<String> = ls
+        .lines()
+        .map(str::trim)
+        .filter(|n| layers::is_layer_name(n))
+        .map(str::to_owned)
+        .collect();
+    let (du, dates) = if names.is_empty() {
+        (None, None)
+    } else {
+        (
+            capture(env, &layers::size_argv(&names)),
+            capture(env, &layers::date_argv()),
+        )
+    };
+    let folded = booted_folded(env);
+    let rows = layers::list(
+        &ls,
+        du.as_deref(),
+        dates.as_deref(),
+        |n| env.read_file(&Path::new(layers::DIR).join(n).join(layers::RECORD)),
+        &folded,
+    );
+    if inv.flag("json") {
+        let v: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "name": r.name,
+                    "bytes": r.bytes,
+                    "date": r.date,
+                    "installed": r.installed,
+                    "removed": r.removed,
+                    "state": r.state.id(),
+                })
+            })
+            .collect();
+        crate::run::emit_json(env, &serde_json::Value::Array(v));
+    } else {
+        env.out(&layers::table(&rows));
+    }
+    0
+}
+
 /// `wol layers clear`: on the slot that just booted, remove the live layers it already holds
 /// (its folded list), so they stop merging over its newer `/usr` (CORE-1). Nothing to clear: 0.
 /// Writes no file: the list is the slot's, sealed in its /usr (QA-STORE-44).

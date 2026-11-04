@@ -1088,7 +1088,7 @@ const LIVE_MARK: &str = "ConditionPathExists=!/etc/wolos-live";
 
 /// Units 50-wolos.preset enables that may run on the live medium: (unit, the condition in the
 /// unit that keeps it off there, or "" when running there is right, reason).
-const LIVE_SAFE: [(&str, &str, &str); 20] = [
+const LIVE_SAFE: [(&str, &str, &str); 21] = [
     (
         "wold.service",
         "",
@@ -1162,6 +1162,11 @@ const LIVE_SAFE: [(&str, &str, &str); 20] = [
         "a right clock for TLS downloads and the installed system's files",
     ),
     ("udisks2.service", "", "Files mounts disks in Try WolOS"),
+    (
+        "systemd-oomd.service",
+        "",
+        "a live session on 4 GB needs the same out-of-memory policy as the installed one (QA-ACC-22)",
+    ),
     ("seatd.service", "", "the live session's seat"),
     (
         "vboxservice.service",

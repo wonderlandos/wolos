@@ -17,3 +17,5 @@ RestartSec=1
 RestartSteps=5
 RestartMaxDelaySec=5
 RestartPreventExitStatus=69
+# Not the pick of systemd-oomd: a killed lock screen is a black screen until the supervisor is back.
+ManagedOOMPreference=omit

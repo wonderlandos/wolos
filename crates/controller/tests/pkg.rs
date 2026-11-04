@@ -44,6 +44,23 @@ fn lines(env: &FakeEnv) -> Vec<String> {
 const IDLE: &str = r#"[{"id":"wolos-a+3.conf","isSelected":true,"isDefault":true}]"#;
 const PENDING: &str = r#"[{"id":"wolos-a.conf","isSelected":true,"isDefault":false},{"id":"wolos-b+3.conf","isSelected":false,"isDefault":true}]"#;
 
+/// QA-PWR-22: no pacman (a dev box, a broken layer): one sentence naming it, not a bare 127.
+#[test]
+fn a_missing_pacman_is_named() {
+    let mut env = FakeEnv {
+        exec_codes: vec![i32::MIN],
+        ..Default::default()
+    };
+    assert_eq!(run("pkg -- -S vim", &mut env), 127);
+    assert!(
+        env.err
+            .contains("the package manager (/usr/bin/pacman) could not be started"),
+        "{}",
+        env.err
+    );
+    assert!(env.err.contains("Nothing was changed."));
+}
+
 #[test]
 fn queries_go_straight_to_the_real_pacman() {
     let mut env = sealed("", IDLE);
@@ -861,4 +878,78 @@ fn rollback_keeps_folded_layers() {
     };
     assert_eq!(run("layers clear", &mut only_b), 0);
     assert!(only_b.execs.is_empty(), "{:?}", only_b.execs);
+}
+
+/// QA-PWR-7: `wol layers list` answers "which packages are live-only?" without a password:
+/// every layer with its packages, size and date, and whether the next update folds it.
+#[test]
+fn layers_list_shows_packages_size_and_date() {
+    const L: &str = "/var/lib/extensions";
+    let rec = |layer: &str| PathBuf::from(format!("/var/lib/extensions/{layer}/wolos-layer.json"));
+    let mut env = FakeEnv {
+        root: false,
+        files: vec![
+            (
+                rec("wolos-layer-0001"),
+                r#"{"installed":["base-devel-1-2","gcc-14.2.1-1"],"removed":["nano-8.2-1"]}"#.into(),
+            ),
+            (rec("wolos-layer-0002"), r#"{"installed":["htop-3.4.1-1"],"removed":[]}"#.into()),
+            (PathBuf::from("/usr/lib/wolos/folded-layers"), "wolos-layer-0002\n".into()),
+        ],
+        captures: vec![
+            (
+                "ls -1 /var/lib/extensions".into(),
+                "wolos-layer-0001\nwolos-layer-0002\nwolos-layer-0003\n".into(),
+            ),
+            (
+                format!("du -sb -- {L}/wolos-layer-0001 {L}/wolos-layer-0002 {L}/wolos-layer-0003"),
+                format!(
+                    "251658240\t{L}/wolos-layer-0001\n1048576\t{L}/wolos-layer-0002\n4096\t{L}/wolos-layer-0003\n"
+                ),
+            ),
+            (
+                "find /var/lib/extensions -mindepth 2 -maxdepth 2 -name wolos-layer.json -printf %TY-%Tm-%Td %p\\n".into(),
+                "2026-11-03 /var/lib/extensions/wolos-layer-0001/wolos-layer.json\n2026-10-20 /var/lib/extensions/wolos-layer-0002/wolos-layer.json\n".into(),
+            ),
+        ],
+        ..Default::default()
+    };
+    assert_eq!(run("layers list", &mut env), 0, "{}", env.err);
+    assert!(
+        env.execs.is_empty(),
+        "a listing changes nothing: {:?}",
+        env.execs
+    );
+    let out = env.out.clone();
+    assert!(
+        out.contains("wolos-layer-0001  2026-11-03  252 MB  live only, folded into the system at the next update\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  added:   base-devel-1-2 gcc-14.2.1-1\n"),
+        "{out}"
+    );
+    assert!(out.contains("  removed: nano-8.2-1\n"), "{out}");
+    assert!(
+        out.contains("wolos-layer-0002  2026-10-20  1 MB  already part of this system, removed at the next restart\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("wolos-layer-0003  -  4.1 KB  unfinished"),
+        "{out}"
+    );
+    // --json carries the same rows.
+    env.out.clear();
+    assert_eq!(run("layers list --json", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(v[0]["name"], "wolos-layer-0001");
+    assert_eq!(v[0]["bytes"], 251_658_240);
+    assert_eq!(v[0]["state"], "live-only");
+    assert_eq!(v[0]["installed"][1], "gcc-14.2.1-1");
+    assert_eq!(v[1]["state"], "in-system");
+    assert_eq!(v[2]["state"], "unfinished");
+    // Nothing live: one sentence, not an empty screen.
+    let mut none = FakeEnv::default();
+    assert_eq!(run("layers list", &mut none), 0);
+    assert!(none.out.starts_with("No live layers"), "{}", none.out);
 }

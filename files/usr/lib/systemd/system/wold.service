@@ -20,6 +20,8 @@ KillMode=process
 # The OOM killer picks the supervisor last (QA-SYS-15). oom_score_adj is inherited by fork:
 # wold resets it to 0 in every job it starts (api::os::OsRunner), so the apps never share it.
 OOMScoreAdjust=-900
+# And never the pick of systemd-oomd either (it ranks by memory pressure, not oom_score_adj; QA-ACC-22).
+ManagedOOMPreference=omit
 # Descriptors (audit S4-26): wold holds up to 512 control connections, the bus's subscribers and
 # the realtime sockets; the default soft limit (1024) runs out first. Soft 4096 for wold, hard as
 # systemd's default; every job starts again from soft 1024 (api::os::child_nofile), so nothing in

@@ -19,6 +19,14 @@ hl.config({
 hl.env("XCURSOR_THEME", "Adwaita")
 hl.env("XCURSOR_SIZE", "24")
 hl.config({ cursor = { invisible = true } })
+-- The first account's keyboard layout (wol-login writes it with the account, QA-ACC-10): a
+-- password with ß, ç or @ is typed as at the desktop. No file (no account yet): the US layout.
+local keyboard_lua = "/etc/wolos/login-keyboard.lua"
+local keyboard_file = io.open(keyboard_lua, "r")
+if keyboard_file then
+    keyboard_file:close()
+    require(keyboard_lua)
+end
 hl.config({
     decoration = { rounding = 12 },
     animations = { enabled = false },

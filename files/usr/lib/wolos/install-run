@@ -192,12 +192,26 @@ fi
 if [ "$wipe" = 1 ]; then
   say disk 5 "Erasing $disk"
   # systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
+  # The live system may still hold the old partitions (udev probing what a cut install left):
+  # repart's first add then fails 'Device or resource busy' (QA-DOC-28). The kernel forgets them
+  # and the old table goes first; a partition still busy gets one more try after a second.
+  forget() {
+    udevadm settle
+    partx -d "$disk" >/dev/null 2>&1 || :
+    wipefs -a -q "$disk" >/dev/null 2>&1 || :
+    udevadm settle
+  }
+  repart() {
+    forget
+    systemd-repart --empty=force --dry-run=no --no-pager "$@" "$disk" >&2 && return 0
+    sleep 1
+    forget
+    systemd-repart --empty=force --dry-run=no --no-pager "$@" "$disk" >&2
+  }
   if [ "$unlock" = off ]; then
-    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >&2 ||
-      fail "could not partition $disk"
+    repart --definitions="$here/repart.d" || fail "could not partition $disk"
   else
-    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d-crypt" \
-      --key-file="$KEYDIR/key" "$disk" >&2 || fail "could not partition $disk"
+    repart --definitions="$here/repart.d-crypt" --key-file="$KEYDIR/key" || fail "could not partition $disk"
   fi
   udevadm settle
   esp=$(part 1); root=$(part 2); fsdev=$root

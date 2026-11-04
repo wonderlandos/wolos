@@ -7,6 +7,7 @@
 use crate::catalog::{self, Access, HelperVerb};
 use crate::cli::Invocation;
 use crate::run::{Env, SHELL_SOCKET};
+use shared::patience::Patience;
 use shared::shell::{APPROVAL_TIMEOUT_SECS, APPROVAL_WAIT_SECS, Answer, Approval, ApprovalRequest};
 use std::path::Path;
 use wol_core::automation::{Outcome, Policy, policy};
@@ -77,6 +78,9 @@ pub fn decide(
         }
     };
     let what = request.describe();
+    // Settings > Accessibility > Timeouts: the sheet stays open that much longer, so the wait for
+    // its answer does too (the shell and wold read the same file).
+    let patience = env.patience();
     let a = Approval {
         helper: helper.into(),
         tool: tool.into(),
@@ -86,12 +90,12 @@ pub fn decide(
         // R2C-6: an administrator change is asked through wold, which shows it to this account's
         // shell naming this process by its kernel executable; the shell runs it after the
         // password. The shell takes administrator sheets from no same-account process directly.
-        match via_wold(env, a) {
+        match via_wold(env, a, patience) {
             Ok(a) => a,
             Err(stop) => return stop,
         }
     } else {
-        match on_shell_socket(env, &a) {
+        match on_shell_socket(env, &a, patience) {
             Ok(a) => a,
             Err(stop) => return stop,
         }
@@ -123,7 +127,8 @@ pub fn decide(
         (Some(Answer::TimedOut), _) => Verdict::Stop(
             Outcome::Declined,
             format!(
-                "No answer on screen within {APPROVAL_TIMEOUT_SECS} seconds, so the request to {what} was turned down. {nothing}"
+                "No answer on screen within {} seconds, so the request to {what} was turned down. {nothing}",
+                patience.secs(APPROVAL_TIMEOUT_SECS)
             ),
         ),
         (Some(Answer::Busy), _) => Verdict::Stop(
@@ -147,16 +152,29 @@ fn wold_socket(env: &dyn Env) -> std::path::PathBuf {
 }
 
 /// A user-level consent sheet: straight to this account's shell (`approve` on its socket).
-fn on_shell_socket(env: &mut dyn Env, a: &Approval) -> Result<Option<Answer>, Verdict> {
+fn on_shell_socket(
+    env: &mut dyn Env,
+    a: &Approval,
+    patience: Patience,
+) -> Result<Option<Answer>, Verdict> {
     let Some(rt) = env.var("XDG_RUNTIME_DIR") else {
         return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into()));
     };
     let sock = Path::new(&rt).join(SHELL_SOCKET);
-    match env.request_wait(&sock, a.line().as_bytes(), APPROVAL_WAIT_SECS) {
+    let wait = approval_wait(patience);
+    match env.request_wait(&sock, a.line().as_bytes(), wait) {
         Ok(reply) => Ok(Answer::parse(&reply)),
         Err(e) if timed_out(&e) => Ok(Some(Answer::TimedOut)),
         Err(_) => Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),
     }
+}
+
+/// How long a requester waits for the sheet's answer: the sheet's own time, stretched by the
+/// account's Timeouts setting, and the ten seconds for the answer to arrive.
+pub fn approval_wait(patience: Patience) -> u32 {
+    patience
+        .secs(APPROVAL_TIMEOUT_SECS)
+        .saturating_add(APPROVAL_WAIT_SECS - APPROVAL_TIMEOUT_SECS)
 }
 
 fn timed_out(e: &std::io::Error) -> bool {
@@ -168,10 +186,10 @@ fn timed_out(e: &std::io::Error) -> bool {
 
 /// How long wold may take to answer `call` (`api::packages::ask_wait`): the sheet, then the
 /// package steps it runs at wol-admind's long deadline (Update Now, a Doctor fix).
-fn sheet_wait(call: &shared::portal::Call) -> u32 {
+fn sheet_wait(call: &shared::portal::Call, patience: Patience) -> u32 {
     use wol_core::admin::{LONG_STEP_SECS, REPLY_MARGIN_SECS};
     let shared::portal::Call::SessionApprove { approval } = call else {
-        return APPROVAL_WAIT_SECS;
+        return approval_wait(patience);
     };
     let long = match &approval.request {
         ApprovalRequest::Packages { names, .. } => names.len().max(1),
@@ -179,8 +197,8 @@ fn sheet_wait(call: &shared::portal::Call) -> u32 {
         _ => 0,
     };
     match u32::try_from(long) {
-        Ok(0) => APPROVAL_WAIT_SECS,
-        Ok(n) => APPROVAL_WAIT_SECS
+        Ok(0) => approval_wait(patience),
+        Ok(n) => approval_wait(patience)
             .saturating_add(n.saturating_mul(LONG_STEP_SECS))
             .saturating_add(REPLY_MARGIN_SECS),
         Err(_) => u32::MAX,
@@ -189,7 +207,7 @@ fn sheet_wait(call: &shared::portal::Call) -> u32 {
 
 /// An administrator sheet through wold (`session.approve`): the sheet's answer, as the shell gave
 /// it to wold. wold's own refusals map to the same outcomes as the shell's.
-fn via_wold(env: &mut dyn Env, a: Approval) -> Result<Option<Answer>, Verdict> {
+fn via_wold(env: &mut dyn Env, a: Approval, patience: Patience) -> Result<Option<Answer>, Verdict> {
     use shared::portal::{Answer as Reply, BUSY, Call, NO_ANSWER, NOT_RUNNING};
     // No session in this environment: nobody could see a sheet.
     if env.var("XDG_RUNTIME_DIR").is_none() {
@@ -203,7 +221,7 @@ fn via_wold(env: &mut dyn Env, a: Approval) -> Result<Option<Answer>, Verdict> {
     let sock = wold_socket(env);
     // wold waits APPROVAL_WAIT_SECS for the shell, plus wol-admind's time for what the sheet runs;
     // give its answer a moment more to arrive.
-    let reply = match env.request_wait(&sock, line.as_bytes(), sheet_wait(&call) + 5) {
+    let reply = match env.request_wait(&sock, line.as_bytes(), sheet_wait(&call, patience) + 5) {
         Ok(r) => r,
         Err(e) if timed_out(&e) => return Ok(Some(Answer::TimedOut)),
         Err(_) => return Err(Verdict::Stop(Outcome::Refused, NO_SESSION.into())),

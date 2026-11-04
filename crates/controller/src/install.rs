@@ -145,6 +145,25 @@ fn look_inside(t: &mut dyn Tools, p: &mut Part) {
     t.run(&["umount", LOOK], None);
 }
 
+/// Windows sleeps in `hiberfil.sys` (hibernate or Fast Startup) although `ntfsresize --info`
+/// passes the volume (QA-DOC-27): read its first 4 bytes from a read-only mount. A mount that
+/// refuses because Windows is hibernated says the same.
+fn hibernated(t: &mut dyn Tools, p: &Part) -> bool {
+    if !t.run(&["mkdir", "-p", LOOK], None).ok {
+        return false;
+    }
+    let m = t.run(
+        &["mount", "-o", look_options(&p.fstype), &p.path, LOOK],
+        None,
+    );
+    if !m.ok {
+        return disk::ntfs_blocked(&format!("{}\n{}", m.stdout, m.stderr)) == Blocked::NotShutDown;
+    }
+    let h = t.run(&["head", "-c", "4", &format!("{LOOK}/hiberfil.sys")], None);
+    t.run(&["umount", LOOK], None);
+    h.ok && disk::hiberfil_hibernated(&h.stdout)
+}
+
 /// Everything the pages need to know about `path`. Writes nothing to it.
 pub fn probe(t: &mut dyn Tools, path: &str) -> Option<Disk> {
     let mut d = read_table(t, path)?;
@@ -157,6 +176,7 @@ pub fn probe(t: &mut dyn Tools, path: &str) -> Option<Disk> {
                 );
                 let text = format!("{}\n{}", o.stdout, o.stderr);
                 match disk::parse_ntfsresize(&text).filter(|_| o.ok) {
+                    Some(_) if hibernated(t, p) => p.blocked = Some(Blocked::NotShutDown),
                     Some(m) => p.min_bytes = Some(m),
                     None => p.blocked = Some(disk::ntfs_blocked(&text)),
                 }
@@ -1196,6 +1216,15 @@ mod tests {
                         },
                     }
                 }
+                // `head -c N p`: the first N bytes of what `cat` knows.
+                ["head", "-c", n, p] => match self.cat.iter().find(|(k, _)| p.ends_with(k)) {
+                    Some((_, v)) => ok(v.chars().take(n.parse().unwrap()).collect()),
+                    None => Out {
+                        ok: false,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    },
+                },
                 ["df", ..] => ok("Used Avail\n40000000 700000000\n".into()),
                 ["ntfsresize", "--info", ..] => ok(
                     "You might resize at 50000000000 bytes or 50000 MB (freeing 2 MB).\n".into(),
@@ -1313,7 +1342,8 @@ mod tests {
                     "umount",
                     "cat",
                     "df",
-                    "test"
+                    "test",
+                    "head"
                 ]
                 .contains(&w),
                 "{l}"
@@ -1366,6 +1396,23 @@ mod tests {
         let got = probe(&mut No, "/dev/vda").unwrap();
         assert_eq!(got.parts[1].blocked, Some(Blocked::NotShutDown));
         assert_eq!(got.parts[2].blocked, Some(Blocked::BitLocker));
+    }
+
+    /// QA-DOC-27: ntfsresize passes a hibernated (or Fast Startup) Windows; its hiberfil.sys
+    /// header refuses it. A zeroed header (full shutdown) keeps the slider.
+    #[test]
+    fn a_hibernated_windows_that_ntfsresize_passes_is_refused() {
+        let mut f = Fake::new(windows());
+        f.cat = vec![("hiberfil.sys", "HIBR\0\0\0\0")];
+        let got = probe(&mut f, "/dev/vda").unwrap();
+        assert_eq!(got.parts[1].blocked, Some(Blocked::NotShutDown));
+        assert_eq!(got.parts[1].min_bytes, None);
+        assert!(f.log.iter().any(|l| l.starts_with("mount -o ro,")));
+        let mut f = Fake::new(windows());
+        f.cat = vec![("hiberfil.sys", "\0\0\0\0wake")];
+        let got = probe(&mut f, "/dev/vda").unwrap();
+        assert_eq!(got.parts[1].blocked, None);
+        assert_eq!(got.parts[1].min_bytes, Some(50 * GB));
     }
 
     /// audit core-install #1: a BitLocker Windows, probed as the installer probes it, with room

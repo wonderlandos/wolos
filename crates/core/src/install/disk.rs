@@ -512,6 +512,16 @@ pub fn ntfs_blocked(out: &str) -> Blocked {
     }
 }
 
+/// The first bytes of `hiberfil.sys`: Windows is hibernated (or shut down with Fast Startup,
+/// which hibernates the kernel) when they read `hibr` (or `rstr`, a resume in progress), in
+/// either case. `ntfsresize --info` passes such a volume (QA-DOC-27): moving it under a
+/// hibernated Windows breaks the file system when Windows resumes. A zeroed or `wake` header,
+/// or no file, is a full shutdown.
+pub fn hiberfil_hibernated(head: &str) -> bool {
+    let h = head.get(..4).unwrap_or("").to_ascii_lowercase();
+    h == "hibr" || h == "rstr"
+}
+
 /// `resize2fs -P <part>`: smallest size, blocks.
 pub fn parse_resize2fs(out: &str) -> Option<u64> {
     let rest = out.split("minimum size of the filesystem:").nth(1)?;
@@ -799,6 +809,12 @@ mod tests {
             ntfs_blocked("Failed to startup volume"),
             Blocked::Unreadable
         );
+        for h in ["hibr\0\0\0", "HIBR", "RSTRxyz"] {
+            assert!(hiberfil_hibernated(h), "{h:?}");
+        }
+        for h in ["", "\0\0\0\0", "wake", "WAKE", "hib"] {
+            assert!(!hiberfil_hibernated(h), "{h:?}");
+        }
         assert_eq!(
             parse_resize2fs("Estimated minimum size of the filesystem: 37704\n"),
             Some(37704)

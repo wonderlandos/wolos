@@ -225,7 +225,7 @@ impl System for Host<'_> {
             self.asks,
             uid,
             approval,
-            ask_wait(&approval.request),
+            ask_wait(&approval.request, crate::portal::patience_of(uid)),
         )
     }
 }
@@ -234,7 +234,7 @@ impl System for Host<'_> {
 /// administrator sheet answers after wol-admind ran it, so the wait also covers its steps at
 /// wol-admind's own deadlines (one request per package name). Otherwise wold would give up, and
 /// drop a staged copy, while pacman still works on it.
-pub fn ask_wait(request: &ApprovalRequest) -> Duration {
+pub fn ask_wait(request: &ApprovalRequest, patience: shared::patience::Patience) -> Duration {
     use wol_core::admin::{LONG_STEP_SECS, REPLY_MARGIN_SECS, STEP_SECS};
     let run: u64 = match request {
         ApprovalRequest::Change { .. } => 0,
@@ -251,7 +251,12 @@ pub fn ask_wait(request: &ApprovalRequest) -> Duration {
         _ => STEP_SECS.into(),
     };
     let margin = if run > 0 { REPLY_MARGIN_SECS.into() } else { 0 };
-    Duration::from_secs(u64::from(shared::shell::APPROVAL_WAIT_SECS) + run + margin)
+    // The sheet's own time, stretched by the account's Timeouts setting, then the ten seconds
+    // for its answer to arrive.
+    let click = patience
+        .secs(shared::shell::APPROVAL_TIMEOUT_SECS)
+        .saturating_add(shared::shell::APPROVAL_WAIT_SECS - shared::shell::APPROVAL_TIMEOUT_SECS);
+    Duration::from_secs(u64::from(click) + run + margin)
 }
 
 /// Largest locally built package wold copies into [`STAGING`] (bytes): 4 GiB.

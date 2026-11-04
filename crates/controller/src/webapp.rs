@@ -269,6 +269,30 @@ mod tests {
         assert!(env.requests.is_empty() && env.admin.lock().unwrap().sent.is_empty());
     }
 
+    /// QA-ACC-6: with Settings > Accessibility > Timeouts at x5 the sheet stays open five times as
+    /// long, so the wait for its answer is that much longer (wold reads the same file).
+    #[test]
+    fn a_patient_account_waits_longer_for_the_sheet() {
+        use shared::shell::Answer;
+        let waits = |text: Option<&str>| {
+            let mut env = session();
+            if let Some(t) = text {
+                let f = env.home.join(shared::patience::FILE);
+                env.files.push((f, t.into()));
+            }
+            env.replies = vec![wold(Answer::Done)];
+            call("org.wolos.webapp.t", "update.install", "", &mut env);
+            env.waits[0]
+        };
+        let normal = waits(None);
+        assert_eq!(waits(Some("5\n")), normal + 200, "50 s -> 250 s");
+        assert_eq!(
+            waits(Some("never")),
+            normal - shared::shell::APPROVAL_TIMEOUT_SECS + shared::patience::NEVER_SECS
+        );
+        assert_eq!(waits(Some("bogus")), normal);
+    }
+
     const FIREWALL_OFF: &str = "systemctl show -p UnitFileState --value nftables.service";
 
     #[test]
