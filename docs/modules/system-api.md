@@ -1,4 +1,4 @@
-# System API (`wol_core::system`)
+# System API (`wol_core::system`) (ADR 0016)
 
 What the shell and `wol sys <topic> [--json]` read about the machine.
 Shape per topic: pure parser (fixture/table-tested) + read via `Host` trait (real host or fake). Linux only (ADR 0016): everything is a file under /proc and /sys, a symlink (`Host::read_link`), or a short command. `Host::is_freebsd` and `sysctl_*` remain as transitional defaults (false/None) until the last caller is gone.

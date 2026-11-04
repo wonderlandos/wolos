@@ -27,11 +27,14 @@ fi
 # dispatcher's next run; it does not keep firstboot-done from being written. The unit is
 # collected whatever its end (--collect) and exit 1, "something stays queued", is not a failure
 # (SuccessExitStatus=1): a failed transient unit would stay loaded and the next start under the same
-# name would be refused, so no later connection could drain the queue (audit6 ST6-2).
+# name would be refused, so no later connection could drain the queue (audit6 ST6-2). For the same
+# reason a drain that stalls ends after two hours (RuntimeMaxSec; SIGINT first, which pacman takes
+# between packages; audit8 stability2 #6).
 P="${WOL_MODULES_PENDING:-$D/modules-pending}"
 Q="${WOL_PACKAGES_PENDING:-$D/packages-pending}"
 if [ -s "$P" ] || [ -s "$Q" ]; then
   systemd-run --no-block --unit=wolos-modules-pending --collect --property=SuccessExitStatus=1 --description="WolOS: install queued modules" \
+    --property=RuntimeMaxSec=2h --property=KillSignal=SIGINT \
     --property=After=network-online.target "${WOLOS_LIB:-/usr/lib/wolos}/modules-install" --drain ||
     log "could not start the queued modules"
 fi

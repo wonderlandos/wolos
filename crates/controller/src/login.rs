@@ -7,6 +7,10 @@ pub const UI_USER: &str = "_wollogin";
 pub const SESSION: &str = "/usr/bin/wol-session";
 pub const CONFIG_FILE: &str = "/etc/wolos/login.json";
 pub const PASSWD_FILE: &str = "/etc/passwd";
+pub const GROUP_FILE: &str = "/etc/group";
+/// The group seatd opens the display for (wol-session: `LIBSEAT_BACKEND=seatd`). Every account
+/// WolOS makes is in it (`wol_core::settings::users::ACCOUNT_GROUPS`, the Setup Assistant).
+pub const SEAT_GROUP: &str = "seat";
 pub const SHELLS_FILE: &str = "/etc/shells";
 pub const MAX_USER: usize = 32;
 pub const MAX_PASSWORD: usize = 512;
@@ -553,10 +557,41 @@ impl LoginFlow {
     }
 }
 
+/// `user` may open the display: a member of [`SEAT_GROUP`] in /etc/group (`group_text`), listed
+/// or by its primary group. An account made by hand without it gets a compositor that dies while
+/// starting (e2e D6), so wol-login never starts its session.
+pub fn can_open_display(group_text: &str, user: &LoginUser) -> bool {
+    group_text.lines().any(|l| {
+        let f: Vec<&str> = l.split(':').collect();
+        f.len() == 4
+            && f[0] == SEAT_GROUP
+            && (f[2].parse() == Ok(user.gid) || f[3].split(',').any(|m| m.trim() == user.name))
+    })
+}
+
+/// The login window's one-line answer to a password (shared::login): `no_display` = the password
+/// was right but [`can_open_display`] said no, so the window names the real reason.
+pub fn auth_reply(result: &crate::authcheck::Auth, no_display: bool) -> &'static str {
+    use crate::authcheck::Auth;
+    match result {
+        Auth::Ok => "ok",
+        Auth::Denied => "denied",
+        Auth::Error if no_display => shared::login::REPLY_NO_DISPLAY,
+        Auth::Error => "error",
+    }
+}
+
+/// A session that ended sooner than this never started: nobody logs out within two seconds of
+/// the compositor's first frame. The compositor's launcher (start-hyprland) reports a compositor
+/// that died while starting as a clean exit (e2e D6: an account outside group `seat` restarted
+/// every 0.7 s, black screen, 780 crash reports in 40 minutes).
+pub const QUICK_SESSION: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// A session that exited with an error before [`GreeterRespawn::HEALTHY`] (no GPU, lock screen
-/// broken). Never a reason to start unlocked: a failed locked start falls back to the login window.
+/// broken), or ended at all before [`QUICK_SESSION`]. Never a reason to start unlocked: a failed
+/// start falls back to the login window, after [`GreeterRespawn`]'s growing wait.
 pub fn failed_early(ran: std::time::Duration, ok: bool) -> bool {
-    !ok && ran < GreeterRespawn::HEALTHY
+    ran < QUICK_SESSION || (!ok && ran < GreeterRespawn::HEALTHY)
 }
 
 /// `!setup-wifi` answer once wpa_supplicant reloaded its networks (ADR 0013): Some(reply) when
@@ -1589,6 +1624,28 @@ broken:line
     }
 
     #[test]
+    fn a_right_password_without_the_seat_group_gets_its_own_answer() {
+        use crate::authcheck::Auth;
+        assert_eq!(auth_reply(&Auth::Ok, false), "ok");
+        assert_eq!(auth_reply(&Auth::Denied, false), "denied");
+        assert_eq!(auth_reply(&Auth::Error, false), "error");
+        assert_eq!(auth_reply(&Auth::Error, true), "no-display");
+        assert_eq!(shared::login::REPLY_NO_DISPLAY, "no-display");
+    }
+
+    #[test]
+    fn only_members_of_the_seat_group_open_the_display() {
+        let ana = user("ana", 1001, "Ana", "/home/ana", "/usr/bin/zsh");
+        let group = "wheel:x:998:ana\nseat:x:990:bob, ana\nvideo:x:985:\n";
+        assert!(can_open_display(group, &ana));
+        assert!(!can_open_display("seat:x:990:bob\nseats:x:9:ana\n", &ana));
+        assert!(!can_open_display("seat:x:990:anabel\n", &ana));
+        // the group as the account's primary group (gid of `user()` is the uid)
+        assert!(can_open_display("seat:x:1001:\n", &ana));
+        assert!(!can_open_display("", &ana));
+    }
+
+    #[test]
     fn a_locked_start_that_dies_early_hands_over_to_the_login_window() {
         use std::time::Duration;
         let quick = Duration::from_secs(3);
@@ -1599,6 +1656,9 @@ broken:line
             (quick, true, false), // a quick logout is not a failure
             (healthy, false, false),
             (healthy, true, false),
+            // e2e D6: the compositor died while starting and its launcher exited 0.
+            (Duration::from_millis(700), true, true),
+            (QUICK_SESSION, true, false),
         ] {
             assert_eq!(failed_early(ran, ok), early, "{ran:?} {ok}");
         }

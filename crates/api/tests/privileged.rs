@@ -52,6 +52,14 @@ const ALLOWED: &[(&str, &str, &str, usize, &str)] = &[
         "PrivilegedHost reads files through PosixHost; its run and run_slow go through capture",
     ),
     (
+        "api",
+        "packages/tests.rs",
+        "Command::new(",
+        3,
+        "test-only (packages.rs `#[cfg(test)] mod tests;`, a file of its own since RR-056): mkfifo \
+         and zstd build fixture packages in a temporary directory; no root side runs them",
+    ),
+    (
         "controller-bin",
         "wol-session-pam.rs",
         "Command::new(",

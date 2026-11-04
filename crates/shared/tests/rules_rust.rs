@@ -8,6 +8,9 @@
 //! `cargo test -p shared --test rules_rust -- --nocapture --test-threads=1 | grep BASELINE-ROW`
 //! to print the current table. The invariant: the debt only comes down, and a new crate, file or
 //! line starts clean. The doc and this file name the same ids (`the_doc_and_the_tests_agree`).
+#[path = "support/lexer.rs"]
+mod lexer;
+use lexer::{is_ident, lex};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -176,7 +179,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-052", "shell", 9),
     ("RR-054", "core", 193),
     ("RR-054", "shared", 97),
-    ("RR-055", "core", 208),
+    ("RR-055", "core", 207),
     ("RR-055", "shared", 131),
     ("RR-056", "aurlaws", 1),
     ("RR-057", "api", 1),
@@ -210,7 +213,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-066", "core", 136),
     ("RR-067", "core", 4),
     ("RR-068", "api", 15),
-    ("RR-068", "controller", 51),
+    // +4 (MANUAL 0.12.0, RR-114 justification): controller/src/secret.rs turns terminal echo off
+    // for the administrator password; std has no termios and controller depends on no listed crate.
+    ("RR-068", "controller", 55),
     ("RR-068", "core", 6),
     ("RR-068", "proxy", 1),
     ("RR-068", "shared", 16),
@@ -245,95 +250,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
 ];
 
 // ---------------------------------------------------------------------------------------------
-// The lexer.
-
-fn is_ident(c: u8) -> bool {
-    c.is_ascii_alphanumeric() || c == b'_'
-}
-
-/// The code of `text` with comments, strings and char literals blanked (newlines kept, length
-/// kept), and the byte spans of the string literals (quotes and prefix included).
-fn lex(text: &str) -> (Vec<u8>, Vec<(usize, usize)>) {
-    let b = text.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(b.len());
-    let mut lits = Vec::new();
-    let blank = |out: &mut Vec<u8>, from: usize, to: usize| {
-        out.extend(
-            b[from..to.min(b.len())]
-                .iter()
-                .map(|c| if *c == b'\n' { b'\n' } else { b' ' }),
-        );
-    };
-    let mut i = 0;
-    while i < b.len() {
-        let c = b[i];
-        let prev_ident = i > 0 && is_ident(b[i - 1]);
-        if c == b'/' && b.get(i + 1) == Some(&b'/') {
-            let end = b[i..]
-                .iter()
-                .position(|c| *c == b'\n')
-                .map_or(b.len(), |n| i + n);
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'/' && b.get(i + 1) == Some(&b'*') {
-            let (mut j, mut depth) = (i + 2, 1usize);
-            while j < b.len() && depth > 0 {
-                if b[j] == b'/' && b.get(j + 1) == Some(&b'*') {
-                    depth += 1;
-                    j += 2;
-                } else if b[j] == b'*' && b.get(j + 1) == Some(&b'/') {
-                    depth -= 1;
-                    j += 2;
-                } else {
-                    j += 1;
-                }
-            }
-            blank(&mut out, i, j);
-            i = j;
-        } else if !prev_ident && (c == b'r' || (c == b'b' && b.get(i + 1) == Some(&b'r'))) && {
-            let k = i + 1 + usize::from(c == b'b');
-            let h = b[k.min(b.len())..]
-                .iter()
-                .take_while(|c| **c == b'#')
-                .count();
-            b.get(k + h) == Some(&b'"')
-        } {
-            let k = i + 1 + usize::from(c == b'b');
-            let h = b[k..].iter().take_while(|c| **c == b'#').count();
-            let mut j = k + h + 1;
-            while j < b.len()
-                && !(b[j] == b'"' && b[j + 1..].iter().take(h).filter(|c| **c == b'#').count() == h)
-            {
-                j += 1;
-            }
-            let end = (j + 1 + h).min(b.len());
-            lits.push((i, end));
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'"' {
-            let mut j = i + 1;
-            while j < b.len() && b[j] != b'"' {
-                j += if b[j] == b'\\' { 2 } else { 1 };
-            }
-            let end = (j + 1).min(b.len());
-            lits.push((i, end));
-            blank(&mut out, i, end);
-            i = end;
-        } else if c == b'\'' && (b.get(i + 1) == Some(&b'\\') || b.get(i + 2) == Some(&b'\'')) {
-            let mut j = i + 1;
-            while j < b.len() && b[j] != b'\'' {
-                j += if b[j] == b'\\' { 2 } else { 1 };
-            }
-            let end = (j + 1).min(b.len());
-            blank(&mut out, i, end);
-            i = end;
-        } else {
-            out.push(c);
-            i += 1;
-        }
-    }
-    (out, lits)
-}
+// The lexer (`lex`, shared with unsafe_ratchet.rs in tests/support/lexer.rs) and item ranges.
 
 /// The index after the `}` that closes the `{` at `open` (or the end of `code`).
 fn match_brace(code: &[u8], open: usize) -> usize {

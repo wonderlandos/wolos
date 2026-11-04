@@ -1,4 +1,4 @@
-# Web apps
+# Web apps (ADR 0042)
 
 Two tracks (ADR 0042). Track 1: apps that bundle their own web engine (packaged desktop apps, the
 code editor, the browser) stay as packaged and keep the Memory Saver (ADR 0026); WolOS tunes them

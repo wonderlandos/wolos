@@ -18,7 +18,7 @@ Needs clang, bpftool and libbpf (the loader built with 1.7; 1.3 lacks what the g
 
 ## Fork config lines known dead (to fix on the fork in the next tag)
 
-`kernel/configs/wolos.config` on the fork at `wolkernel-1.0-7.3` asks for options that do not take effect in the shipped kernel:
+`kernel/configs/wolos.config` on the fork at `wolkernel-1.0-7.3.1` asks for options that do not take effect in the shipped kernel:
 - `CONFIG_WOLOS_SHIELD=y`: no such symbol exists in the fork; Kconfig drops it silently. The "quiet core for the frontmost app" it describes is not in the kernel.
 - `CONFIG_SCHED_PROXY_EXEC=y`: depends on `CONFIG_EXPERT`, which is off, so it is dropped. Proxy execution is not in the kernel.
 - `CONFIG_DM_CRYPT=y` ends as `m` (the base config has `BLK_DEV_DM=m`). Harmless while the initramfs loads `dm_crypt`; it is not built in.

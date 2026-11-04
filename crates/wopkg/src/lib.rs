@@ -516,10 +516,41 @@ struct PlanReq {
     paused: Option<bool>,
 }
 
-/// Release feed base: `<channel>.json` and `<channel>.json.sig` of every channel are assets of the
-/// latest wolos-packages release (each publication uploads them all again, so `latest` always holds
-/// every channel). GitHub answers with a redirect to the asset; `fetch` follows it.
-pub const FEEDS: &str = "https://github.com/wonderlandos/wolos-packages/releases/latest/download";
+/// Release feed base: `<channel>.json` and `<channel>.json.sig` of every channel in the CDN's
+/// `latest/` folder, which the release tooling (wolos-build) writes after each publication is
+/// uploaded and verified, so it always holds every channel. The CDN under the project's domain
+/// (`https://cdn.wolos.org/latest`, [`wol_core::cdn::LATEST`]).
+pub const FEEDS: &str = wol_core::cdn::LATEST[0];
+/// The same folder under the CDN server's own name (`https://wolos.squareweb.app/latest`): read
+/// when [`FEEDS`] answers 404 or cannot be reached (DNS not live yet).
+pub const FEEDS_MIRROR: &str = wol_core::cdn::LATEST[1];
+/// Where the feed is read when neither CDN name has it: the same files as assets of the latest
+/// wolos-packages release on GitHub (it answers with a redirect to the asset; `fetch` follows it).
+/// All are checked against the same keys.
+pub const FEEDS_FALLBACK: &str = wol_core::cdn::LATEST[2];
+
+/// Feed bases in the order tried: the request's own base alone, else [`FEEDS`], [`FEEDS_MIRROR`],
+/// [`FEEDS_FALLBACK`].
+fn feed_bases(base_url: Option<String>) -> Vec<String> {
+    base_url.map_or_else(
+        || {
+            [FEEDS, FEEDS_MIRROR, FEEDS_FALLBACK]
+                .map(str::to_owned)
+                .to_vec()
+        },
+        |b| vec![b],
+    )
+}
+
+/// A fetch error after which the next feed base is tried: the file is not there (404) or the
+/// server could not be reached or answered with an error. A body that is too large, or any
+/// check of the feed itself, stops there.
+fn try_next_base(e: &Error) -> bool {
+    matches!(
+        e.status,
+        crate::ffi::Status::NotFound | crate::ffi::Status::Unavailable
+    )
+}
 
 /// Largest `<channel>.json` release feed read.
 pub const MAX_FEED: u64 = 4 << 20;
@@ -555,7 +586,7 @@ fn checked_feed(
 /// pair as it was, and the cached pair is used when it still checks (it expires too); otherwise
 /// the error is returned. The highest serial accepted per channel is kept in the state dir, which
 /// outlives the cache.
-fn release_feed(c: &context::Context, base: &str, channel: &str) -> Result<release::Feed> {
+fn release_feed(c: &context::Context, bases: &[String], channel: &str) -> Result<release::Feed> {
     let keys = wol_core::package::read_keys(&c.keys);
     let dir = c.cache.join("releases");
     let feed = dir.join(format!("{channel}.json"));
@@ -574,21 +605,31 @@ fn release_feed(c: &context::Context, base: &str, channel: &str) -> Result<relea
             .then(|| std::fs::read_to_string(fetch::tag_path(p)).ok())
             .flatten()
     };
-    let got = fetch::get_conditional(
-        &c.net,
-        &format!("{base}/{channel}.json"),
-        tag(&feed).as_deref(),
-        MAX_FEED,
-    )
-    .and_then(|f| {
-        let s = fetch::get_conditional(
+    // The pair comes from one base: the first that has it ([`try_next_base`] moves on).
+    let pair = |base: &str| {
+        fetch::get_conditional(
             &c.net,
-            &format!("{base}/{channel}.json.sig"),
-            tag(&sig).as_deref(),
-            MAX_SIG,
-        )?;
-        Ok((f, s))
-    });
+            &format!("{base}/{channel}.json"),
+            tag(&feed).as_deref(),
+            MAX_FEED,
+        )
+        .and_then(|f| {
+            let s = fetch::get_conditional(
+                &c.net,
+                &format!("{base}/{channel}.json.sig"),
+                tag(&sig).as_deref(),
+                MAX_SIG,
+            )?;
+            Ok((f, s))
+        })
+    };
+    let mut got = Err(Error::unavailable("No release list address is set."));
+    for base in bases {
+        got = pair(base);
+        if !got.as_ref().is_err_and(try_next_base) {
+            break;
+        }
+    }
     let use_cached = |e: Error| match &old {
         (Some(t), Some(s)) => checked_feed(t, s, &keys, channel, last).map_err(|_| e),
         _ => Err(e),
@@ -674,8 +715,7 @@ pub fn release_plan(c: &context::Context, body: &str) -> Result<serde_json::Valu
             .and_then(|t| t.trim().parse::<u64>().ok())
             .is_some_and(|until| until > now)
     });
-    let base = r.base_url.unwrap_or(FEEDS.into());
-    let f = release_feed(c, &base, &channel)?;
+    let f = release_feed(c, &feed_bases(r.base_url), &channel)?;
     let p = release::plan(&release::Inputs {
         current: &current,
         feed: &f,
@@ -721,15 +761,100 @@ mod tests {
         assert_eq!(wopkg_version(), 0x01_01_00);
     }
 
-    /// The default feed is the latest wolos-packages release's assets (`<channel>.json` and
-    /// `.json.sig` appended), over TLS, with no trailing slash to double.
+    /// The default feed is the CDN's `latest/` folder under the project's domain, then under the
+    /// server's own name, then the latest wolos-packages release's assets on GitHub
+    /// (`<channel>.json` and `.json.sig` appended), over TLS, with no trailing slash to double. A
+    /// request's own base is the only one tried.
     #[test]
-    fn default_feed_is_the_latest_release_assets() {
+    fn default_feed_is_the_cdn_then_the_latest_release_assets() {
+        assert_eq!(FEEDS, "https://cdn.wolos.org/latest");
+        assert_eq!(FEEDS_MIRROR, "https://wolos.squareweb.app/latest");
         assert_eq!(
-            FEEDS,
+            FEEDS_FALLBACK,
             "https://github.com/wonderlandos/wolos-packages/releases/latest/download"
         );
-        assert!(FEEDS.starts_with("https://") && !FEEDS.ends_with('/'));
+        for b in [FEEDS, FEEDS_MIRROR, FEEDS_FALLBACK] {
+            assert!(b.starts_with("https://") && !b.ends_with('/'), "{b}");
+        }
+        assert_eq!(feed_bases(None), [FEEDS, FEEDS_MIRROR, FEEDS_FALLBACK]);
+        assert_eq!(feed_bases(None), wol_core::cdn::LATEST);
+        assert_eq!(
+            feed_bases(Some("https://m.example/x".into())),
+            ["https://m.example/x"]
+        );
+    }
+
+    /// The CDN answers 404 or cannot be reached: the feed comes from the next base, checked with
+    /// the same keys. A feed that does not check stops there: no other base is tried.
+    #[test]
+    fn the_feed_falls_back_when_the_cdn_has_none_or_is_down() {
+        let d = testutil::temp("fallback");
+        let seed = [5u8; 32];
+        std::fs::create_dir_all(d.join("keys")).unwrap();
+        std::fs::write(
+            d.join("keys/wolos.pub"),
+            wol_core::package::public_pem(&wol_core::package::public_of(&seed)),
+        )
+        .unwrap();
+        let feed = br#"{"format":1,"channel":"beta","releases":[{"version":"1.1.0-beta.2","manifest":"{}","signature":"00"}]}"#.to_vec();
+        let sig = wol_core::package::sign(&seed, &feed).to_vec();
+        let good = testutil::serve(vec![
+            ("/beta.json", testutil::Served::bytes(feed.clone())),
+            ("/beta.json.sig", testutil::Served::bytes(sig)),
+        ]);
+        let empty = testutil::serve(vec![]);
+        // A port nothing listens on: bind one, note it, close it.
+        let down = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://127.0.0.1:{}", l.local_addr().unwrap().port())
+        };
+        let mut c = appimage::tests::ctx(&d);
+        c.keys = d.join("keys");
+        for first in [empty.url(""), down] {
+            let _ = std::fs::remove_dir_all(c.cache.join("releases"));
+            let _ = std::fs::remove_dir_all(&c.state);
+            let f = release_feed(&c, &[first.clone(), good.url("")], "beta").unwrap();
+            assert_eq!(f.releases[0].version, "1.1.0-beta.2", "{first}");
+        }
+        // Three bases as shipped (cdn.wolos.org not live, wolos.squareweb.app without the file,
+        // GitHub with it): the third is read. The first that has the pair wins, later ones are
+        // never asked (`good` holds a pair that would not check against this state).
+        let _ = std::fs::remove_dir_all(c.cache.join("releases"));
+        let _ = std::fs::remove_dir_all(&c.state);
+        let down = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            format!("http://127.0.0.1:{}", l.local_addr().unwrap().port())
+        };
+        empty.log.lock().unwrap().clear();
+        let f = release_feed(&c, &[down.clone(), empty.url(""), good.url("")], "beta").unwrap();
+        assert_eq!(f.releases[0].version, "1.1.0-beta.2");
+        assert_eq!(
+            empty.log.lock().unwrap().len(),
+            1,
+            "the 404 base is asked once"
+        );
+        let other = testutil::serve(vec![
+            ("/beta.json", testutil::Served::bytes(b"not json".to_vec())),
+            ("/beta.json.sig", testutil::Served::bytes(vec![0; 64])),
+        ]);
+        let _ = std::fs::remove_dir_all(c.cache.join("releases"));
+        let _ = std::fs::remove_dir_all(&c.state);
+        let f = release_feed(&c, &[good.url(""), other.url(""), down], "beta").unwrap();
+        assert_eq!(f.releases[0].version, "1.1.0-beta.2");
+        assert!(
+            other.log.lock().unwrap().is_empty(),
+            "a later base is never asked"
+        );
+        // Signed with another key on the first base: refused, never read from the second.
+        let forged = testutil::serve(vec![
+            ("/beta.json", testutil::Served::bytes(feed.clone())),
+            (
+                "/beta.json.sig",
+                testutil::Served::bytes(wol_core::package::sign(&[6u8; 32], &feed).to_vec()),
+            ),
+        ]);
+        let _ = std::fs::remove_dir_all(c.cache.join("releases"));
+        assert!(release_feed(&c, &[forged.url(""), good.url("")], "beta").is_err());
     }
 
     #[test]
@@ -818,7 +943,7 @@ mod tests {
         let mut c = appimage::tests::ctx(&d);
         c.keys = d.join("keys");
         let cache = c.cache.join("releases");
-        let at = |base: &str| release_feed(&c, &srv.url(base), "stable");
+        let at = |base: &str| release_feed(&c, &[srv.url(base)], "stable");
         assert_eq!(at("/g").unwrap().serial, 5);
         let snapshot = || {
             [

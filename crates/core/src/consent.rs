@@ -153,12 +153,134 @@ pub fn read(h: &dyn Host) -> Vec<(String, String)> {
     h.read_text(FILE).map(|t| parse(&t)).unwrap_or_default()
 }
 
+/// What wold refused an account's apps (`<ASKED_DIR>/<uid>.json`, `{"asked":[{"app":"<canonical
+/// path>","capability":"<name>"}]}`, newest last). No grant is still no access (ADR 0040: a
+/// never-seen app is off); the list only lets Settings > Privacy & Security show the app with its
+/// switch off, where every refusal sends the person. Written by wold alone (the caller's identity
+/// from the kernel), owned by the account, mode 0600: nobody else sees which apps it ran.
+pub const ASKED_DIR: &str = "/var/lib/wolos/consent-asked";
+/// Apps kept per account; the oldest goes first.
+pub const MAX_ASKED: usize = 64;
+/// Bytes of an asked file anyone reads: the account owns its file and could grow it.
+pub const MAX_ASKED_BYTES: u64 = 64 * 1024;
+
+/// The account's asked file.
+pub fn asked_path(uid: u32) -> std::path::PathBuf {
+    std::path::Path::new(ASKED_DIR).join(format!("{uid}.json"))
+}
+
+/// (app, capability) pairs a Settings switch can turn on: valid grants (never screen capture),
+/// at most [`MAX_ASKED`], newest last. Anything else in the file is left out.
+pub fn asked(json: &str) -> Vec<(String, String)> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct File {
+        #[serde(default)]
+        asked: Vec<Grant>,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Grant {
+        app: String,
+        capability: String,
+    }
+    let mut v: Vec<(String, String)> = serde_json::from_str::<File>(json)
+        .map(|f| f.asked)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|g| is_valid_grant(&g.app, &g.capability) && refusal(&g.capability).is_none())
+        .map(|g| (g.app, g.capability))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    v.retain(|g| seen.insert(g.clone()));
+    let extra = v.len().saturating_sub(MAX_ASKED);
+    v.drain(..extra);
+    v
+}
+
+/// `current` with `app` asking for `capability` recorded; None when there is nothing to write
+/// (already listed, or not a grant Settings could turn on), so a refused app that retries never
+/// rewrites the file.
+pub fn note_asked(current: Option<&str>, app: &str, capability: &str) -> Option<String> {
+    if !is_valid_grant(app, capability) || refusal(capability).is_some() {
+        return None;
+    }
+    let mut v = current.map(asked).unwrap_or_default();
+    if v.iter().any(|(a, c)| a == app && c == capability) {
+        return None;
+    }
+    v.push((app.to_owned(), capability.to_owned()));
+    let extra = v.len().saturating_sub(MAX_ASKED);
+    v.drain(..extra);
+    let list: Vec<Value> = v
+        .iter()
+        .map(|(a, c)| json!({"app": a, "capability": c}))
+        .collect();
+    let mut s = serde_json::to_string_pretty(&json!({ "asked": list })).unwrap_or_default();
+    s.push('\n');
+    Some(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::system::fake::FakeHost;
 
     const SHIPPED: &str = r#"{"grants":[{"app":"/usr/bin/hello","capability":"notifications"},{"app":"/usr/bin/slurp","capability":"shell-layer"}],"_note":"dev VM"}"#;
+
+    /// MANUAL 0.12.0: a new app's notification was refused and Privacy & Security had no row for
+    /// it. A refusal is remembered once per (app, capability) so Settings can show the switch.
+    #[test]
+    fn a_refused_app_is_remembered_once() {
+        let one = note_asked(None, "/home/a/Work/hello/hello", "notifications").unwrap();
+        assert_eq!(
+            asked(&one),
+            [("/home/a/Work/hello/hello".into(), "notifications".into())]
+        );
+        assert_eq!(
+            note_asked(Some(&one), "/home/a/Work/hello/hello", "notifications"),
+            None
+        );
+        let two = note_asked(Some(&one), "/home/a/Work/hello/hello", "share").unwrap();
+        assert_eq!(asked(&two).len(), 2);
+        // Not a grant Settings can turn on: nothing to write.
+        for (app, cap) in [
+            ("hello", "notifications"),
+            ("/a/../b", "notifications"),
+            ("/usr/bin/x", "screen-capture"),
+            ("/usr/bin/x", "made-up"),
+        ] {
+            assert_eq!(note_asked(None, app, cap), None, "{app} {cap}");
+        }
+        assert!(asked("not json").is_empty());
+        let odd = concat!(
+            r#"{"asked":[{"app":"rel","capability":"notifications"},"#,
+            r#"{"app":"/x","capability":"screen-capture"},"#,
+            r#"{"app":"/x","capability":"share"},{"app":"/x","capability":"share"}]}"#
+        );
+        assert_eq!(asked(odd), [("/x".into(), "share".into())]);
+        // Only the documented shape: a file with other keys is no list.
+        assert!(asked(r#"{"asked":[],"grants":[]}"#).is_empty());
+    }
+
+    #[test]
+    fn the_asked_list_keeps_the_newest() {
+        let mut t: Option<String> = None;
+        for i in 0..MAX_ASKED + 5 {
+            t = note_asked(t.as_deref(), &format!("/usr/bin/app{i}"), "notifications").or(t);
+        }
+        let v = asked(t.as_deref().unwrap());
+        assert_eq!(v.len(), MAX_ASKED);
+        assert_eq!(v[0].0, "/usr/bin/app5");
+        assert_eq!(
+            v.last().unwrap().0,
+            format!("/usr/bin/app{}", MAX_ASKED + 4)
+        );
+        assert_eq!(
+            asked_path(1000),
+            std::path::Path::new(ASKED_DIR).join("1000.json")
+        );
+    }
 
     #[test]
     fn grants_parse_fail_closed() {

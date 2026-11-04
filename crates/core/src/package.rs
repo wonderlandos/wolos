@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! `.wol` package files (ADR 0011, docs/modules/packages.md): read and verify the ustar
-//! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `pacman -U` install.
+//! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `wol pkg -- -U` install (the sealed-system pacman).
 use shared::bundle::{INFO_FILE, Info};
 use shared::package::{
     Entry, Index, MANIFEST, MAX_SIZE, MEMBERS, PAYLOAD, SIGNATURE, is_app_id, is_version,
@@ -601,9 +601,10 @@ pub fn ustar(members: &[(&str, &[u8])]) -> Vec<u8> {
     out
 }
 
-/// Steps after verification: `pacman -U` of the payload (a pacman package). pacman resolves its
-/// dependencies from the pinned repos and replaces another installed version itself; the same
-/// version installed: nothing to do.
+/// Steps after verification: `-U` of the payload (a pacman package) through the sealed-system
+/// pacman (`wol pkg --`, like [`remove_steps`]; the bare `pacman` on wol-admind's `PATH` keeps its
+/// database on the read-only /usr). pacman resolves its dependencies from the pinned repos and
+/// replaces another installed version itself; the same version installed: nothing to do.
 pub fn install_steps(
     payload: &str,
     version: &str,
@@ -616,21 +617,23 @@ pub fn install_steps(
         return Ok(vec![]);
     }
     Ok(vec![
-        ["pacman", "-U", "--noconfirm", payload]
+        ["wol", "pkg", "--", "-U", "--noconfirm", payload]
             .map(String::from)
             .to_vec(),
     ])
 }
 
 /// Remove an installed app from its install record text: the package and the dependencies
-/// nothing else needs (`pacman -Rns`).
+/// nothing else needs (`-Rns`), through the sealed-system pacman (`wol pkg --`, as the install
+/// plans in `store` run it). The bare `pacman` wol-admind finds on its `PATH` keeps its database
+/// on the read-only /usr and cannot remove anything.
 pub fn remove_steps(id: &str, record: &str) -> Result<Vec<Vec<String>>, String> {
     let i = Info::parse(record)?;
     if i.id != id || i.package.is_empty() {
         return Err(format!("{id}: install record does not match"));
     }
     Ok(vec![
-        ["pacman", "-Rns", "--noconfirm", &i.package]
+        ["wol", "pkg", "--", "-Rns", "--noconfirm", &i.package]
             .map(String::from)
             .to_vec(),
     ])
@@ -747,11 +750,31 @@ pub fn verify_fetched_index(
     verify_index(text, sig, keys)
 }
 
-/// curl into `dest` (fails on HTTP errors).
+/// Most bytes the store index (or its signature) may be (audit 8 #5): curl stops a larger
+/// download, and the controller reads no more of what is on disk.
+pub const INDEX_MAX_BYTES: u64 = 32 << 20;
+
+/// curl into `dest` (fails on HTTP errors): https only, also after a redirect, nothing larger
+/// than [`INDEX_MAX_BYTES`], no `.curlrc`.
 pub fn fetch_argv(url: &str, dest: &str) -> Vec<String> {
-    ["curl", "-fsSL", "-o", dest, url]
-        .map(String::from)
-        .to_vec()
+    let max = INDEX_MAX_BYTES.to_string();
+    [
+        "curl",
+        "--disable",
+        "-fsSL",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--max-filesize",
+        &max,
+        "-o",
+        dest,
+        "--",
+        url,
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 #[cfg(test)]
@@ -998,7 +1021,7 @@ not-a-key x
             (
                 p,
                 None,
-                "pacman -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
+                "wol pkg -- -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
             ),
             // Same version installed: nothing to do.
             (p, Some("3.1.0-1"), ""),
@@ -1006,7 +1029,7 @@ not-a-key x
             (
                 p,
                 Some("3.0.0-1"),
-                "pacman -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
+                "wol pkg -- -U --noconfirm /var/cache/wolos/install/1/payload.pkg",
             ),
             ("-x", None, "error: payload -x is not an absolute path"),
         ];
@@ -1024,7 +1047,14 @@ not-a-key x
         let rec = |pkg: &str| INFO.replace("wol-fixture", pkg);
         assert_eq!(
             remove_steps("org.wolos.Fixture", &rec("wol-fixture")).unwrap(),
-            [vec!["pacman", "-Rns", "--noconfirm", "wol-fixture"]]
+            [vec![
+                "wol",
+                "pkg",
+                "--",
+                "-Rns",
+                "--noconfirm",
+                "wol-fixture"
+            ]]
         );
         // The record must be the app asked for and name a package.
         assert!(remove_steps("org.wolos.Other", &rec("wol-fixture")).is_err());
@@ -1036,7 +1066,16 @@ not-a-key x
             .is_err()
         );
         assert!(remove_steps("org.wolos.Fixture", "{").is_err());
-        assert_eq!(fetch_argv("https://x/a.wol", "/t/a")[0], "curl");
+        let a = fetch_argv("https://x/a.wol", "/t/a");
+        assert_eq!(a[0], "curl");
+        let has = |w: &[&str]| a.windows(w.len()).any(|x| x == w);
+        assert!(has(&["--proto", "=https"]) && has(&["--proto-redir", "=https"]));
+        assert!(has(&["--max-filesize", "33554432"]));
+        assert_eq!(
+            a[a.len() - 2..],
+            ["--", "https://x/a.wol"],
+            "the url is never an option"
+        );
     }
 
     #[test]

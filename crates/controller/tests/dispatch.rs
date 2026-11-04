@@ -126,6 +126,97 @@ fn theme_set_restyles_third_party_apps() {
     );
 }
 
+/// MANUAL 0.12.0: `wol appearance set dark` left the open terminal light. The session links foot.ini
+/// to the shipped (light) default before the first theme; the theme now takes that link over, and
+/// running foot terminals of this account switch sections by signal.
+#[test]
+fn appearance_reaches_the_open_terminal() {
+    let home = temp_home("foot");
+    std::fs::create_dir_all(home.join("foot")).unwrap();
+    std::os::unix::fs::symlink("/usr/share/wolos/foot/foot.ini", home.join("foot/foot.ini"))
+        .unwrap();
+    let mut env = FakeEnv {
+        home: home.clone(),
+        ..Default::default()
+    };
+    let uid = shared::sys::euid().to_string();
+    let signal = |env: &FakeEnv| {
+        env.execs
+            .iter()
+            .find(|a| a.first().is_some_and(|x| x == "pkill"))
+            .cloned()
+    };
+    assert_eq!(run("appearance set dark", &mut env), 0, "{}", env.err);
+    let foot = std::fs::read_to_string(home.join("foot/foot.ini")).unwrap();
+    assert!(foot.contains("initial-color-theme=dark\n"), "{foot}");
+    assert_eq!(
+        signal(&env).unwrap(),
+        [
+            "pkill",
+            "--signal",
+            "USR1",
+            "--uid",
+            &uid,
+            "--exact",
+            "foot|footclient"
+        ]
+    );
+    env.execs.clear();
+    assert_eq!(run("appearance set light", &mut env), 0, "{}", env.err);
+    assert_eq!(signal(&env).unwrap()[2], "USR2");
+    // A foot.ini of the person's own: kept, and their terminals are left alone.
+    std::fs::remove_file(home.join("foot/foot.ini")).unwrap();
+    std::fs::write(home.join("foot/foot.ini"), "mine").unwrap();
+    env.execs.clear();
+    assert_eq!(run("appearance set dark", &mut env), 0, "{}", env.err);
+    assert_eq!(signal(&env), None);
+    assert_eq!(
+        std::fs::read_to_string(home.join("foot/foot.ini")).unwrap(),
+        "mine"
+    );
+}
+
+/// MANUAL 0.12.0: `wol appearance set dark` printed about ten "ok" lines (hyprctl's answer to
+/// each keyword). Those stay quiet; an error hyprctl answers, or no compositor, is said.
+#[test]
+fn appearance_keeps_hyprctl_quiet_but_its_errors() {
+    let home = temp_home("quiet");
+    let mut env = FakeEnv {
+        home: home.clone(),
+        captured: Some("ok\n".into()),
+        ..Default::default()
+    };
+    assert_eq!(run("appearance set dark", &mut env), 0, "{}", env.err);
+    assert!(!env.captured_argvs.is_empty());
+    assert!(
+        !env.out.contains("\nok\n") && !env.out.starts_with("ok"),
+        "{}",
+        env.out
+    );
+    assert!(!env.err.contains("ok"), "{}", env.err);
+    env.captured = Some("config option <plugin:hyprbars:bar_color> does not exist.\n".into());
+    env.err.clear();
+    assert_eq!(run("appearance set light", &mut env), 0);
+    assert!(
+        // The Lua call (`hyprctl eval` of an `hl.config`) names the option `plugin.hyprbars.…`.
+        env.err.contains("wol: hl.config(") && env.err.contains("plugin.hyprbars.bar_color"),
+        "{}",
+        env.err
+    );
+    assert!(env.err.contains("does not exist"), "{}", env.err);
+    env.captured = None;
+    env.captured_argvs.clear();
+    env.err.clear();
+    assert_eq!(run("appearance set dark", &mut env), 0);
+    assert_eq!(env.captured_argvs.len(), 1, "stops after the first failure");
+    assert_eq!(
+        env.err.matches("hyprctl did not answer").count(),
+        1,
+        "{}",
+        env.err
+    );
+}
+
 /// The compositor's title strip follows the theme, so it is not dark on a light desktop (live:
 /// `hyprctl eval` of the theme file's `hl.config` calls).
 #[test]
@@ -133,13 +224,14 @@ fn theme_set_colours_the_title_strip() {
     let home = temp_home("strip");
     let mut env = FakeEnv {
         home: home.clone(),
+        captured: Some("ok\n".into()),
         ..Default::default()
     };
     let set = |key: &str, colour: &str| {
         format!("hl.config({{ [\"plugin.hyprbars.{key}\"] = \"{colour}\" }})")
     };
     let bar = |env: &FakeEnv| {
-        env.execs
+        env.captured_argvs
             .iter()
             .find(|a| {
                 a[..2] == ["hyprctl", "eval"] && a[2].contains("\"plugin.hyprbars.bar_color\"")
@@ -154,16 +246,16 @@ fn theme_set_colours_the_title_strip() {
     );
     assert_eq!(bar(&env), Some(set("bar_color", "rgba(eff1f5e6)")));
     assert!(
-        env.execs.iter().any(|a| a[..]
+        env.captured_argvs.iter().any(|a| a[..]
             == [
                 "hyprctl".to_string(),
                 "eval".into(),
                 set("col.text", "rgba(4c4f69ff)")
             ]),
         "{:?}",
-        env.execs
+        env.captured_argvs
     );
-    env.execs.clear();
+    env.captured_argvs.clear();
     assert_eq!(run("theme set lumon", &mut env), 0, "{}", env.err);
     assert_eq!(bar(&env), Some(set("bar_color", "rgba(16242de6)")));
 }
@@ -412,6 +504,8 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     assert_eq!(
         ran[4..],
         [
+            // A failed step may leave the copy bound for pacman: a mounted subvolume stays.
+            "umount -R /run/wolos/top/@wolos-b",
             "btrfs subvolume delete /run/wolos/top/@wolos-b",
             "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
         ],

@@ -301,3 +301,25 @@ fn the_rules_catch_what_they_should() {
         "# 0016\nStatus: accepted. Supersedes 0001\n"
     ));
 }
+
+/// QA-ADR-7/32: the code of conduct is the doctrine, not a joke that says there is none.
+#[test]
+fn coc_points_at_doctrine() {
+    let doctrine =
+        std::fs::read_to_string(root().join("docs/DOCTRINE.md")).expect("docs/DOCTRINE.md");
+    assert!(
+        doctrine.contains("This is the code of conduct of WolOS"),
+        "docs/DOCTRINE.md no longer calls itself the code of conduct"
+    );
+    let coc =
+        std::fs::read_to_string(root().join("CODE_OF_CONDUCT.md")).expect("CODE_OF_CONDUCT.md");
+    assert!(
+        coc.contains("(docs/DOCTRINE.md)"),
+        "CODE_OF_CONDUCT.md does not link the doctrine"
+    );
+    assert!(
+        !coc.to_lowercase()
+            .contains("we do not have a code of conduct"),
+        "CODE_OF_CONDUCT.md denies having a code of conduct"
+    );
+}

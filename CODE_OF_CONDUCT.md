@@ -1,5 +1,3 @@
 # Code of Conduct
 
-We do not have a code of conduct. Those are boring.
-
-Respect is cool, though. See [The Wonderland Doctrine](docs/DOCTRINE.md).
+The code of conduct of WolOS is [The Wonderland Doctrine](docs/DOCTRINE.md): build freely, disagree openly, and treat every person here with respect.

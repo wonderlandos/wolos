@@ -198,14 +198,28 @@ pub fn check(env: &mut dyn Env) -> i32 {
         return 0;
     };
     let epoch = boot::cmdline_word(&cmdline, "wolos.epoch").and_then(|e| e.parse().ok());
+    let mark = crate::seal::failed_mark(crate::seal::EPOCH_MARK, slot);
     if boot::epoch_allowed(epoch, number(env.read_file(&state("floor")))) {
+        // Updated since it was refused: the other slot may fall back to it again.
+        let _ = env.remove_file(&mark);
         return 0;
     }
-    let fb = seal::fallback(slot, true);
-    let msg = format!(
-        "This copy of WolOS is older than the version last used here, so it will not stay running. \
-         Slot {slot} was refused.\n"
-    );
+    // The same rule as `wol seal check`: only to a slot that has an entry and failed neither
+    // check, so two slots under the floor stop here instead of restarting into each other.
+    let other = update::other_slot(slot).unwrap_or("");
+    let fb = seal::fallback(slot, crate::seal::may_fall_back_to(env, other));
+    let _ = env.write_file(&mark, "older than the floor\n");
+    let msg = if matches!(fb, seal::Fallback::Boot { .. }) {
+        format!(
+            "This copy of WolOS is older than the version last used here, so it will not stay running. \
+             Slot {slot} was refused.\n"
+        )
+    } else {
+        format!(
+            "This copy of WolOS (slot {slot}) is older than the version last used here, and there \
+             is no newer one to start; please reinstall or restore.\n"
+        )
+    };
     let _ = env.write_file(Path::new(seal::NOTICE), &msg);
     env.err(&msg);
     if let seal::Fallback::Boot { argv } = fb {

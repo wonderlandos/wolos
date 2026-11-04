@@ -1,4 +1,4 @@
-# Bundled apps
+# Bundled apps (ADR 0036, ADR 0039)
 
 The apps that come with WolOS. The plan (wave 3, package CR-11) is that each of them is a Crystal app on Cryswol and Wolkit (ADR 0036, ADR 0039) with a new visual, built and tested headless on libwolkit (`crates/wolkit`), and drawn on screen once the native presentation lands. This page lists them and the rules they share; each app has its own page.
 

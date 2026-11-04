@@ -282,6 +282,61 @@ pub trait Grants {
     fn granted(&self, app: &str, capability: &str) -> bool;
     /// May receive the account's notifications (`subscribe account`).
     fn shows_notifications(&self, app: &str) -> bool;
+    /// `app` of account `uid` was refused `capability`. Nothing by default; wold remembers it
+    /// ([`Remembering`]) so Settings can show the app with its switch off.
+    fn refused(&self, uid: u32, app: &str, capability: &str) {
+        let _ = (uid, app, capability);
+    }
+}
+
+/// [`Grants`] that remember each refusal in the account's asked file under `dir`
+/// (`wol_core::consent::ASKED_DIR`): no access changes, the refused app only becomes visible in
+/// Settings > Privacy & Security, where the refusal sends the person (MANUAL 0.12.0: "Notifications
+/// are off for hello" with no switch for hello anywhere). Best effort: a write that fails goes to
+/// `log` (the binary's choice) and the call is answered as before.
+pub struct Remembering<G> {
+    pub grants: G,
+    pub dir: PathBuf,
+    pub log: fn(&str),
+}
+
+impl<G: Grants> Grants for Remembering<G> {
+    fn granted(&self, app: &str, capability: &str) -> bool {
+        self.grants.granted(app, capability)
+    }
+    fn shows_notifications(&self, app: &str) -> bool {
+        self.grants.shows_notifications(app)
+    }
+    fn refused(&self, uid: u32, app: &str, capability: &str) {
+        if let Err(e) = remember_refusal(&self.dir, uid, app, capability) {
+            (self.log)(&format!(
+                "could not note that {app} asked for {capability}: {e}"
+            ));
+        }
+    }
+}
+
+/// Adds (app, capability) to `<dir>/<uid>.json` unless it is listed already. The file belongs to
+/// the account (0600, so no other account learns which apps it runs); it is read bounded, since
+/// the account could grow it, and replaced whole by root. The directory is root's (0755).
+pub fn remember_refusal(dir: &Path, uid: u32, app: &str, capability: &str) -> std::io::Result<()> {
+    use std::io::Read;
+    use std::os::unix::fs::DirBuilderExt;
+    let path = dir.join(format!("{uid}.json"));
+    let mut cur = String::new();
+    if let Ok(f) = std::fs::File::open(&path) {
+        let _ = f
+            .take(wol_core::consent::MAX_ASKED_BYTES)
+            .read_to_string(&mut cur);
+    }
+    let Some(text) = wol_core::consent::note_asked(Some(&cur), app, capability) else {
+        return Ok(());
+    };
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(dir)?;
+    shared::atomic::write_as(&path, 0o600, Some(uid), text.as_bytes())
 }
 
 /// Programs that show notifications: the shell.
@@ -434,6 +489,9 @@ fn decide<W: Write + Send>(
         Need::HelperGate => caller.app == shared::portal::HELPER_GATE && caller.uid != 0,
     };
     if !allowed {
+        if let Need::Grant(cap) = call.need() {
+            grants.refused(caller.uid, &caller.app, cap);
+        }
         return Answer::err(
             Code::PermissionDenied,
             match call.need() {
@@ -1565,6 +1623,58 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
         }
         assert_eq!(n.owner(first, 1), None);
         assert_eq!(n.owner(first + 1, 1), Some(2));
+    }
+
+    /// MANUAL 0.12.0: hello's notification was refused and Settings had no row for hello. The
+    /// refusal still refuses; wold also notes (app, capability) once in the account's own file.
+    #[test]
+    fn a_refused_app_is_noted_for_settings() {
+        let dir = std::env::temp_dir().join(format!("wol-portal-asked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let g = Remembering {
+            grants: Fixed(&[("/usr/bin/good", "notifications")]),
+            dir: dir.clone(),
+            log: |m| panic!("{m}"),
+        };
+        let uid = shared::sys::euid();
+        let who = Caller {
+            uid,
+            pid: 1,
+            app: "/home/a/Work/hello/hello".into(),
+        };
+        let bus = Bus::<UnixStream>::default();
+        for _ in 0..3 {
+            let a = handle(POST, Some(&who), &g, &bus, &State::default());
+            assert_eq!(a.code, Some(Code::PermissionDenied));
+        }
+        // Granted (no desktop listening here, so Unavailable): not a refusal, nothing noted.
+        let ok = handle(
+            POST,
+            Some(&caller("/usr/bin/good")),
+            &g,
+            &bus,
+            &State::default(),
+        );
+        assert_ne!(ok.code, Some(Code::PermissionDenied));
+        let f = dir.join(format!("{uid}.json"));
+        let text = std::fs::read_to_string(&f).unwrap();
+        assert_eq!(
+            wol_core::consent::asked(&text),
+            [("/home/a/Work/hello/hello".into(), "notifications".into())],
+            "once, and never the granted app: {text}"
+        );
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let m = std::fs::metadata(&f).unwrap();
+        assert_eq!(m.permissions().mode() & 0o777, 0o600);
+        assert_eq!(m.uid(), uid);
+        // A huge file the account wrote is read only so far, and replaced whole.
+        std::fs::write(&f, "x".repeat(200_000)).unwrap();
+        handle(POST, Some(&who), &g, &bus, &State::default());
+        assert_eq!(
+            wol_core::consent::asked(&std::fs::read_to_string(&f).unwrap()).len(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

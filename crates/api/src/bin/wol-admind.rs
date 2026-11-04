@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-admind (root, wold job org.wol.admin): runs only the admin allow-list. Each connection is
-//! read on its own thread within a deadline after the ADR 0033 hello; requests still run one at
-//! a time (`api::admind::serve`, audit S4-7).
+//! read on its own thread within a deadline after the ADR 0033 hello; commands run one at a time
+//! per lane, and no refusal delay or password check holds another account
+//! (`api::admind::serve`, audit S4-7, api-security 1+2).
 use api::admind::RealOs;
 
 static OS: RealOs = RealOs;

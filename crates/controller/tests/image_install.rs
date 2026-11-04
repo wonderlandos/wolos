@@ -309,6 +309,7 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         .env("WOLOS_NO_INHIBIT", "1")
         .env("WOLOS_TEST_UNLOCK", unlock)
         .env("WOLOS_KEYDIR", d.join("keys"))
+        .env("WOLOS_MAPPER_DIR", d.join("mapper"))
         .env("WOLOS_SB_RUN", d.join("sbrun"))
         .env("WOLOS_TPM_DIR", d.join("no-tpm"))
         .env("WOLOS_BOOT_NOTE", d.join("note"))
@@ -379,10 +380,13 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
     );
     // /etc stays writable on the read-only slot.
     let fstab0 = fs::read_to_string(t.join("etc/fstab")).unwrap();
+    // The lower is the slot's own /etc, another one after each update (FIX-slot 0.12.1): the
+    // line overlayfs takes a changed lower with, the one every slot build writes.
     assert!(
-        fstab0.contains("overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper"),
+        fstab0.lines().any(|l| l == wol_core::update::ETC_FSTAB),
         "{fstab0}"
     );
+    assert!(fstab0.contains(",index=off,metacopy=off,"), "{fstab0}");
     assert!(
         fstab0.contains(" /run/wolos/top btrfs subvolid=5,noauto,x-systemd.automount"),
         "{fstab0}"
@@ -542,6 +546,37 @@ fn a_stop_names_the_stage_and_the_real_error() {
     );
 }
 
+/// audit core-install #2: a try that stopped may have left any of its volumes open (the system
+/// and the extra `wolos<folder>` ones); the next try closes every one before it looks at the
+/// disk, and nothing else under /dev/mapper.
+#[test]
+fn a_new_try_closes_every_volume_the_last_one_left_open() {
+    let d = scratch("mappers");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    fs::create_dir_all(d.join("mapper")).unwrap();
+    for m in [
+        "wolosroot",
+        "woloshome",
+        "wolosswap",
+        "luks-other",
+        "control",
+    ] {
+        fs::write(d.join("mapper").join(m), "").unwrap();
+    }
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let l = log(&d);
+    let closed: Vec<&str> = l
+        .lines()
+        .filter_map(|x| x.strip_prefix("cryptsetup close "))
+        .collect();
+    assert_eq!(closed, ["woloshome", "wolosroot", "wolosswap"], "{l}");
+    let first = l.lines().position(|x| x.starts_with("cryptsetup close"));
+    let check = l.lines().position(|x| x.starts_with("wol install mounts"));
+    assert!(first < check, "closed before the disk is looked at: {l}");
+}
+
 /// install-run again on the fakes [`install_with`] left (some replaced since), on an empty target.
 fn rerun(d: &Path, disk: &str) -> Output {
     let t = d.join("target");
@@ -559,6 +594,7 @@ fn rerun(d: &Path, disk: &str) -> Output {
         .env("WOLOS_EFIVARS", d.join("efivars"))
         .env("WOLOS_NO_INHIBIT", "1")
         .env("WOLOS_KEYDIR", d.join("keys"))
+        .env("WOLOS_MAPPER_DIR", d.join("mapper"))
         .env("WOLOS_SB_RUN", d.join("sbrun"))
         .env("WOLOS_TPM_DIR", d.join("no-tpm"))
         .env("WOLOS_BOOT_NOTE", d.join("note"))
@@ -642,6 +678,7 @@ fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, Pa
         .env("WOLOS_EFIVARS", d.join("efivars"))
         .env("WOLOS_NO_INHIBIT", "1")
         .env("WOLOS_KEYDIR", d.join("keys"))
+        .env("WOLOS_MAPPER_DIR", d.join("mapper"))
         .env("WOLOS_SB_RUN", d.join("sbrun"))
         .env("WOLOS_TPM_DIR", d.join("no-tpm"))
         .env("WOLOS_BOOT_NOTE", d.join("note"))

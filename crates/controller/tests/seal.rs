@@ -123,6 +123,51 @@ fn boot_check_with_a_tampered_manifest_tells_the_person() {
     );
 }
 
+/// A seal failure restarts into the other slot only when it has a menu entry and failed neither
+/// early-boot check (its seal, or the boot check's floor: audit core-install #4).
+#[test]
+fn a_failed_seal_falls_back_only_to_a_slot_that_failed_no_check() {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let tampered = |extra: &[(&str, &str)]| {
+        let mut files = vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                "root=x rootflags=subvol=@wolos-b ro".to_string(),
+            ),
+            (
+                PathBuf::from("/efi/wolos-b/verity"),
+                format!("{}\n", d('0')),
+            ),
+            (PathBuf::from("/usr/lib/wolos/verity.manifest"), m.to_text()),
+            (
+                PathBuf::from("/efi/loader/entries/wolos-a.conf"),
+                "title WolOS\n".to_string(),
+            ),
+        ];
+        files.extend(extra.iter().map(|(p, t)| (PathBuf::from(p), t.to_string())));
+        FakeEnv {
+            files,
+            ..Default::default()
+        }
+    };
+    let mut env = tampered(&[]);
+    assert_eq!(run("seal check", &mut env), 1);
+    let ran: Vec<String> = env.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(
+        ran,
+        ["bootctl set-default wolos-a.conf", "systemctl reboot"]
+    );
+    for mark in [
+        "/var/lib/wolos/verity-failed-wolos-a",
+        "/var/lib/wolos/epoch-failed-wolos-a",
+    ] {
+        let mut env = tampered(&[(mark, "failed\n")]);
+        assert_eq!(run("seal check", &mut env), 1);
+        assert!(env.execs.is_empty(), "{mark}: {:?}", env.execs);
+        assert!(env.err.contains("no other version"), "{}", env.err);
+    }
+}
+
 /// A slot that passes loses any old mark of its own (F10: a check that could not see
 /// /usr/lib/modules marked every fresh slot failed, and the mark then barred the fallback to it).
 #[test]

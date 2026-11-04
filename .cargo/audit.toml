@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # cargo audit config (ci.yml lint job: `cargo audit --deny warnings`). cargo-audit does not read deny.toml,
-# so the zbus trio that deny.toml ignores is repeated here. rsa and bincode are not in deny.toml: its graph
-# has all-features = false, so the optional yara feature (yara-x) is not scanned there, but Cargo.lock has it.
+# so every entry of deny.toml's ignore list is repeated here (deny.toml has all-features = true, so both
+# tools see the yara-x graph of xguard).
 # Every entry: why it does not apply, and the date to look again.
 
 [advisories]

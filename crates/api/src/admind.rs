@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-admind request handling (IaraOS ADR 0026): allow-list only, judged by peer credentials.
 use shared::admin::{AdminAction, AdminReply, decode};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 use wol_core::admin::{
     AdminDecision, AdminStep, AuthCache, decide, describe, is_admin, needs_fresh_password,
     plan_with, validate,
@@ -98,14 +100,132 @@ pub fn read_request(
     n
 }
 
+/// What every connection thread shares (api-security 1+2). The authorization cache is locked
+/// only to read or change it: the refusal delay, the password check and the commands run with
+/// no lock other connections need, so one account looping bad requests (each one sleeping
+/// [`wol_core::admin::REFUSAL_DELAY_MS`]) or a long install never holds another's request.
+#[derive(Default)]
+pub struct Shared {
+    cache: Mutex<Cached>,
+    /// One password check (and its refusal delay) at a time per account: guessing runs no
+    /// faster with more connections, and other accounts never wait for it.
+    auth: Mutex<HashMap<u32, Arc<Mutex<()>>>>,
+    /// Commands still run one at a time per [`Lane`].
+    system: Mutex<()>,
+    settings: Mutex<()>,
+}
+
+#[derive(Default)]
+struct Cached {
+    cache: AuthCache,
+    /// Sessions with a request under way ([`Watching`]): how many requests, and the revokes of
+    /// that session since the first began. Per (uid, session), so one account's revokes never
+    /// touch another's; an entry goes with its last request, so the table is never larger than
+    /// the connections.
+    watched: HashMap<(u32, i32), Watch>,
+}
+
+#[derive(Default)]
+struct Watch {
+    requests: u32,
+    revokes: u64,
+}
+
+/// One request watching the revokes of its own session, from its decision to its end: a
+/// password accepted, or a command that waited for its lane on the cached authorization, while
+/// a revoke of that session went by does not count.
+struct Watching<'a> {
+    shared: &'a Shared,
+    key: (u32, i32),
+    seen: u64,
+}
+
+impl<'a> Watching<'a> {
+    /// Registered under the cache lock `c`, at the moment the cache is read.
+    fn new(shared: &'a Shared, c: &mut Cached, key: (u32, i32)) -> Self {
+        let w = c.watched.entry(key).or_default();
+        w.requests += 1;
+        Self {
+            shared,
+            key,
+            seen: w.revokes,
+        }
+    }
+    /// Whether the session was revoked since this request's decision.
+    fn revoked(&self, c: &Cached) -> bool {
+        c.watched
+            .get(&self.key)
+            .is_none_or(|w| w.revokes != self.seen)
+    }
+}
+
+// Unregisters the request: the session's entry goes with its last one.
+impl Drop for Watching<'_> {
+    fn drop(&mut self) {
+        let mut c = self.shared.cached();
+        if let Some(w) = c.watched.get_mut(&self.key) {
+            w.requests -= 1;
+            if w.requests == 0 {
+                c.watched.remove(&self.key);
+            }
+        }
+    }
+}
+
+/// Which commands may run side by side: the package manager, updates and boot entries are one
+/// lane (one pacman lock, one boot loader); every other action (consent, Wi-Fi, power, ...) is
+/// the other, so a 30-minute install does not hold a Wi-Fi join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lane {
+    System,
+    Settings,
+}
+
+/// The [`Lane`] of `a`.
+pub fn lane(a: AdminAction) -> Lane {
+    if wol_core::admin::LONG_ACTIONS.contains(&a)
+        || matches!(
+            a,
+            AdminAction::PkgRefresh
+                | AdminAction::SystemChannel
+                | AdminAction::BootEnvironment
+                | AdminAction::BootEnroll
+        )
+    {
+        Lane::System
+    } else {
+        Lane::Settings
+    }
+}
+
+/// `m` locked; a thread that panicked holding it leaves plain data, still usable.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+impl Shared {
+    fn cached(&self) -> MutexGuard<'_, Cached> {
+        lock(&self.cache)
+    }
+    /// The per-account password lock of `uid`.
+    fn auth_of(&self, uid: Option<u32>) -> Arc<Mutex<()>> {
+        lock(&self.auth)
+            .entry(uid.unwrap_or(u32::MAX))
+            .or_default()
+            .clone()
+    }
+    fn lane(&self, l: Lane) -> MutexGuard<'_, ()> {
+        lock(match l {
+            Lane::System => &self.system,
+            Lane::Settings => &self.settings,
+        })
+    }
+}
+
 /// One connection, on its own thread: identity from the kernel at accept, the ADR 0033 hello,
-/// the request within [`REQUEST_DEADLINE`], then [`handle`] under the one cache lock (requests
-/// still run one at a time, as before), the reply, and the buffer wiped.
-pub fn serve_one(
-    conn: std::os::unix::net::UnixStream,
-    cache: &std::sync::Mutex<AuthCache>,
-    os: &dyn AdminOs,
-) {
+/// the request within [`REQUEST_DEADLINE`], then [`handle`] (which takes the [`Shared`] locks
+/// only as long as it needs them), the reply, and the buffer wiped.
+pub fn serve_one(conn: std::os::unix::net::UnixStream, shared: &Shared, os: &dyn AdminOs) {
     use std::io::Write;
     let caller = shared::sys::peer(&conn).map(|p| Caller {
         uid: p.uid,
@@ -119,10 +239,7 @@ pub fn serve_one(
     let mut buf = vec![0u8; shared::admin::MAX_REQUEST + 1];
     let n = read_request(&conn, &mut buf, REQUEST_DEADLINE);
     let mut said = None;
-    let reply = {
-        let mut c = cache.lock().unwrap_or_else(|p| p.into_inner());
-        handle_said(&buf[..n], caller, &mut c, os, &mut said)
-    };
+    let reply = handle_said(&buf[..n], caller, shared, os, &mut said);
     buf.fill(0); // password never outlives the request
     let _ = conn.set_write_timeout(Some(REQUEST_DEADLINE));
     let _ = writeln!(&conn, "{}", reply_line(reply, said.as_deref()));
@@ -140,7 +257,7 @@ pub fn reply_line(reply: AdminReply, said: Option<&str>) -> String {
 /// [`CONN_PER_UID`] per account and [`CONN_TOTAL`] in all, so one idle or slow client never
 /// holds the others. Never returns.
 pub fn serve(listener: &std::os::unix::net::UnixListener, os: &'static (dyn AdminOs + Sync)) {
-    let cache = std::sync::Arc::new(std::sync::Mutex::new(AuthCache::default()));
+    let shared = Arc::new(Shared::default());
     let quota = shared::bounded::Quota::new(CONN_PER_UID, CONN_TOTAL);
     loop {
         let conn = match listener.accept() {
@@ -154,11 +271,11 @@ pub fn serve(listener: &std::os::unix::net::UnixListener, os: &'static (dyn Admi
         let Some(slot) = shared::sys::peer(&conn).and_then(|p| quota.admit(p.uid)) else {
             continue;
         };
-        let cache = cache.clone();
+        let shared = shared.clone();
         let _ = std::thread::Builder::new()
             .name("admind-conn".into())
             .spawn(move || {
-                serve_one(conn, &cache, os);
+                serve_one(conn, &shared, os);
                 drop(slot);
             });
     }
@@ -204,14 +321,15 @@ pub fn check_password(
     }
 }
 
-/// Judge and run one request. Never logs the password or keybind JSON.
+/// Judge and run one request. Never logs the password or keybind JSON. Safe to call from many
+/// threads at once: see [`Shared`].
 pub fn handle(
     data: &[u8],
     caller: Option<Caller>,
-    cache: &mut AuthCache,
+    shared: &Shared,
     os: &dyn AdminOs,
 ) -> AdminReply {
-    handle_said(data, caller, cache, os, &mut None)
+    handle_said(data, caller, shared, os, &mut None)
 }
 
 /// [`handle`], and the sentence a failed request leaves for the person in `said` (the optional
@@ -219,7 +337,7 @@ pub fn handle(
 pub fn handle_said(
     data: &[u8],
     caller: Option<Caller>,
-    cache: &mut AuthCache,
+    shared: &Shared,
     os: &dyn AdminOs,
     said: &mut Option<String>,
 ) -> AdminReply {
@@ -242,7 +360,11 @@ pub fn handle_said(
     let what = describe(&req);
     if req.action == AdminAction::Revoke {
         if let Some(u) = uid {
-            cache.revoke(u, session);
+            let mut c = shared.cached();
+            c.cache.revoke(u, session);
+            if let Some(w) = c.watched.get_mut(&(u, session)) {
+                w.revokes += 1;
+            }
         }
         return AdminReply::Ok;
     }
@@ -254,19 +376,29 @@ pub fn handle_said(
     } else {
         user.as_ref().and(uid)
     };
-    let cached = !needs_fresh_password(&req)
-        && session > 0
-        && uid.is_some_and(|u| cache.valid(u, session, os.now()));
+    let (cached, watch) = {
+        let mut c = shared.cached();
+        let valid = !needs_fresh_password(&req)
+            && session > 0
+            && uid.is_some_and(|u| c.cache.valid(u, session, os.now()));
+        let watch = uid
+            .filter(|_| session > 0)
+            .map(|u| Watching::new(shared, &mut c, (u, session)));
+        (valid, watch)
+    };
     let user_level = known.is_some_and(|u| wol_core::admin::user_level_ok(&req, u, &os.sessions()));
     // Anyone may change their own password, with the current one (fresh: never the cache).
     let own_password = req.action == AdminAction::UserPassword
         && user.as_ref().is_some_and(|(n, _)| *n == req.args[0]);
-    match decide(
+    let decision = decide(
         known,
         admin || user_level || own_password,
         cached || user_level,
         !pw.is_empty(),
-    ) {
+    );
+    // Allowed on the session's cached authorization alone (not root, not a user-level action).
+    let on_cache = decision == AdminDecision::Allow && cached && !user_level && known != Some(0);
+    match decision {
         AdminDecision::NotAdmin => {
             // A restart or shut down from the session refused because another account would lose
             // its session (the lock screen's Restart, audit6 S6-5): the log names who is signed in.
@@ -295,6 +427,8 @@ pub fn handle_said(
         AdminDecision::NeedPassword => return AdminReply::NeedsAuth,
         AdminDecision::Authenticate => {
             let name = user.as_ref().map_or("", |(n, _)| n.as_str());
+            let account = shared.auth_of(uid);
+            let _one_at_a_time = lock(&account);
             if !os.authenticate(name, &data[pw]) {
                 os.log(&format!("{who}: {what}: authentication failed"));
                 return refuse(AdminReply::Denied);
@@ -302,10 +436,26 @@ pub fn handle_said(
             if session > 0
                 && let Some(u) = uid
             {
-                cache.grant(u, session, os.now());
+                let mut c = shared.cached();
+                if !watch.as_ref().is_some_and(|w| w.revoked(&c)) {
+                    c.cache.grant(u, session, os.now());
+                }
             }
         }
         AdminDecision::Allow => {}
+    }
+    let _lane = shared.lane(lane(req.action));
+    // A command may wait long for its lane (an install before it): on the cache, it runs only
+    // if the authorization still holds now and its session was not revoked meanwhile.
+    if on_cache {
+        let c = shared.cached();
+        let holds = uid.is_some_and(|u| c.cache.valid(u, session, os.now()))
+            && !watch.as_ref().is_some_and(|w| w.revoked(&c));
+        if !holds {
+            drop(c);
+            os.log(&format!("{who}: {what}: authorization ended while waiting"));
+            return AdminReply::NeedsAuth;
+        }
     }
     let ok = match req.action {
         AdminAction::WolInstall => wol_install(os, &req.args[0], &req.args[1], uid),
@@ -458,7 +608,7 @@ fn execute(req: &shared::admin::AdminRequest, os: &dyn AdminOs) -> bool {
 }
 
 /// `.wol` install (ADR 0011): verify the daemon's own copy, check the payload is the package
-/// Info.json names, then `pacman -U` (dependencies from the pinned repos). `trust` is what the caller
+/// Info.json names, then `wol pkg -- -U` (dependencies from the pinned repos). `trust` is what the caller
 /// approved: an unsigned file needs `unsigned` (and so a fresh password).
 fn wol_install(os: &dyn AdminOs, src: &str, trust: &str, caller: Option<u32>) -> bool {
     let Some(dir) = os.stage_dir() else {
@@ -576,6 +726,19 @@ pub fn caller_may_reach(dirs: &[(u32, u32)], caller: Option<u32>) -> bool {
     }
 }
 
+/// (uid, mode) of every directory above the opened file `f`, parent first, for
+/// [`caller_may_reach`]: the directories of what was opened (the kernel's path of the
+/// descriptor, symlinks in the parents resolved), not of the name the caller sent.
+pub fn dirs_above(f: &std::fs::File) -> std::io::Result<Vec<(u32, u32)>> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+    let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd()))?;
+    real.ancestors()
+        .skip(1)
+        .map(|d| std::fs::metadata(d).map(|m| (m.uid(), m.mode())))
+        .collect()
+}
+
 /// A path the caller names is absolute, has no `..` or `.` parts and no empty parts.
 pub fn is_plain_absolute(path: &str) -> bool {
     path.len() < 4096
@@ -684,16 +847,7 @@ impl AdminOs for RealOs {
         if !caller_may_read(m.uid(), m.mode(), caller) {
             return Err("caller cannot read this file".into());
         }
-        // The directories of what was opened (the kernel's path of the descriptor, symlinks in
-        // the parents resolved), not of the name the caller sent.
-        use std::os::fd::AsRawFd;
-        let real = std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd()))
-            .map_err(|e| e.to_string())?;
-        let mut dirs = Vec::new();
-        for d in real.ancestors().skip(1) {
-            let dm = std::fs::metadata(d).map_err(|e| e.to_string())?;
-            dirs.push((dm.uid(), dm.mode()));
-        }
+        let dirs = dirs_above(&f).map_err(|e| e.to_string())?;
         if !caller_may_reach(&dirs, caller) {
             return Err("caller cannot reach this file".into());
         }
@@ -959,7 +1113,7 @@ mod tests {
         ];
         for (data, caller, want, delays) in cases {
             let os = slot_os();
-            let got = handle(data, caller, &mut AuthCache::default(), &os);
+            let got = handle(data, caller, &Shared::default(), &os);
             assert_eq!(
                 (got, os.delays.get()),
                 (want, delays),
@@ -975,18 +1129,18 @@ mod tests {
     #[test]
     fn boot_enroll_needs_the_admin_password_and_runs_the_verb() {
         let os = Fake::default();
-        let mut cache = AuthCache::default();
+        let cache = Shared::default();
         let none = encode(&req(AdminAction::BootEnroll, &[]), b"");
         let good = encode(&req(AdminAction::BootEnroll, &[]), b"good");
-        assert_eq!(handle(&none, ANN, &mut cache, &os), AdminReply::NeedsAuth);
-        assert_eq!(handle(&good, BOB, &mut cache, &os), AdminReply::NotAdmin);
-        assert_eq!(handle(&good, ANN, &mut cache, &os), AdminReply::Ok);
-        assert_eq!(handle(&good, ANN, &mut cache, &os), AdminReply::Ok);
+        assert_eq!(handle(&none, ANN, &cache, &os), AdminReply::NeedsAuth);
+        assert_eq!(handle(&good, BOB, &cache, &os), AdminReply::NotAdmin);
+        assert_eq!(handle(&good, ANN, &cache, &os), AdminReply::Ok);
+        assert_eq!(handle(&good, ANN, &cache, &os), AdminReply::Ok);
         let ran: Vec<String> = os.ran.borrow().iter().map(|v| v.join(" ")).collect();
         assert_eq!(ran, ["wol boot enroll", "wol boot enroll"]);
         let with_arg = encode(&req(AdminAction::BootEnroll, &["--force"]), b"good");
         assert_eq!(
-            handle(&with_arg, ROOT, &mut cache, &Fake::default()),
+            handle(&with_arg, ROOT, &cache, &Fake::default()),
             AdminReply::Invalid
         );
     }
@@ -1002,7 +1156,7 @@ mod tests {
             shared::package::STAGING_DIR
         );
         let os = Fake::default();
-        let mut cache = AuthCache::default();
+        let cache = Shared::default();
         for (action, args) in [
             (AdminAction::PkgInstallFile, vec![staged.as_str(), FAKE_SHA]),
             (AdminAction::SystemRollback, vec![]),
@@ -1010,10 +1164,10 @@ mod tests {
         ] {
             let good = encode(&req(action, &args), b"good");
             let none = encode(&req(action, &args), b"");
-            assert_eq!(handle(&good, BOB, &mut cache, &os), AdminReply::NotAdmin);
-            assert_eq!(handle(&good, ANN, &mut cache, &os), AdminReply::Ok);
+            assert_eq!(handle(&good, BOB, &cache, &os), AdminReply::NotAdmin);
+            assert_eq!(handle(&good, ANN, &cache, &os), AdminReply::Ok);
             assert_eq!(
-                handle(&none, ANN, &mut cache, &os),
+                handle(&none, ANN, &cache, &os),
                 AdminReply::NeedsAuth,
                 "{action:?}: a warm cache is not enough"
             );
@@ -1038,7 +1192,7 @@ mod tests {
                 &req(AdminAction::PkgInstallFile, &[path, FAKE_SHA]),
                 b"good",
             );
-            assert_eq!(handle(&r, ANN, &mut cache, &os), AdminReply::Invalid);
+            assert_eq!(handle(&r, ANN, &cache, &os), AdminReply::Invalid);
         }
         assert_eq!(os.ran.borrow().len(), 2, "nothing else ran");
         assert!(
@@ -1060,7 +1214,7 @@ mod tests {
             "{}/0123456789abcdef0123456789abcdef/x-1-1-x86_64.pkg.tar.zst",
             shared::package::STAGING_DIR
         );
-        let mut cache = AuthCache::default();
+        let cache = Shared::default();
         for (sha, why) in [
             ("f".repeat(64), "the sheet showed"),
             (String::new(), ".PKGINFO"),
@@ -1073,7 +1227,7 @@ mod tests {
                 &req(AdminAction::PkgInstallFile, &[&staged, FAKE_SHA]),
                 b"good",
             );
-            assert_eq!(handle(&r, ANN, &mut cache, &os), AdminReply::Failed);
+            assert_eq!(handle(&r, ANN, &cache, &os), AdminReply::Failed);
             assert!(os.ran.borrow().is_empty(), "nothing ran");
             assert!(
                 os.log.borrow().iter().any(|l| l.contains(why)),
@@ -1086,30 +1240,30 @@ mod tests {
     #[test]
     fn authorization_is_cached_per_session_and_revocable() {
         let os = slot_os();
-        let mut cache = AuthCache::default();
+        let cache = Shared::default();
         let good = encode(&req(AdminAction::PkgUpgrade, &[]), b"good");
         let none = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
-        assert_eq!(handle(&good, ANN, &mut cache, &os), AdminReply::Ok);
-        assert_eq!(handle(&none, ANN, &mut cache, &os), AdminReply::Ok);
+        assert_eq!(handle(&good, ANN, &cache, &os), AdminReply::Ok);
+        assert_eq!(handle(&none, ANN, &cache, &os), AdminReply::Ok);
         assert_eq!(os.auths.get(), 1);
         let other_session = Some(Caller {
             uid: 1001,
             session: 9,
         });
         assert_eq!(
-            handle(&none, other_session, &mut cache, &os),
+            handle(&none, other_session, &cache, &os),
             AdminReply::NeedsAuth
         );
         assert_eq!(
             handle(
                 &encode(&req(AdminAction::Revoke, &[]), b""),
                 ANN,
-                &mut cache,
+                &cache,
                 &os
             ),
             AdminReply::Ok
         );
-        assert_eq!(handle(&none, ANN, &mut cache, &os), AdminReply::NeedsAuth);
+        assert_eq!(handle(&none, ANN, &cache, &os), AdminReply::NeedsAuth);
     }
 
     /// Settings > Modules Install sends two `PkgInstall` (the backend package, then the meta
@@ -1118,8 +1272,8 @@ mod tests {
     #[test]
     fn a_module_install_of_two_packages_asks_one_password() {
         let os = Fake::default();
-        let mut cache = AuthCache::default();
-        let send = |name: &str, pw: &[u8], cache: &mut AuthCache| {
+        let cache = Shared::default();
+        let send = |name: &str, pw: &[u8], cache: &Shared| {
             handle(
                 &encode(&req(AdminAction::PkgInstall, &[name]), pw),
                 ANN,
@@ -1127,15 +1281,15 @@ mod tests {
                 &os,
             )
         };
-        assert_eq!(send("ollama-rocm", b"", &mut cache), AdminReply::NeedsAuth);
-        assert_eq!(send("ollama-rocm", b"bad", &mut cache), AdminReply::Denied);
+        assert_eq!(send("ollama-rocm", b"", &cache), AdminReply::NeedsAuth);
+        assert_eq!(send("ollama-rocm", b"bad", &cache), AdminReply::Denied);
         assert!(
             os.ran.borrow().is_empty(),
             "nothing ran without the password"
         );
-        assert_eq!(send("ollama-rocm", b"good", &mut cache), AdminReply::Ok);
+        assert_eq!(send("ollama-rocm", b"good", &cache), AdminReply::Ok);
         assert_eq!(
-            send("wolos-module-ai-local", b"", &mut cache),
+            send("wolos-module-ai-local", b"", &cache),
             AdminReply::Ok,
             "the second package needs no second sheet"
         );
@@ -1152,7 +1306,7 @@ mod tests {
         let os = Fake::default();
         let r = req(AdminAction::WifiJoin, &["wlan0", "Home", "hunter22"]);
         assert_eq!(
-            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
             AdminReply::Ok
         );
         assert!(os.wrote.borrow().is_empty());
@@ -1167,7 +1321,7 @@ mod tests {
         };
         let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
         assert_eq!(
-            handle(&up, ROOT, &mut AuthCache::default(), &failing),
+            handle(&up, ROOT, &Shared::default(), &failing),
             AdminReply::Failed
         );
     }
@@ -1180,7 +1334,7 @@ mod tests {
             &["dinah", "Dinah", "no", "n3w-passw0rd"],
         );
         assert_eq!(
-            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
             AdminReply::Ok
         );
         let ran = os.ran.borrow();
@@ -1191,7 +1345,7 @@ mod tests {
         assert!(os.log.borrow().iter().all(|l| !l.contains("n3w")));
         let nopw = encode(&req(AdminAction::UserAdd, &["dinah", "Dinah", "no"]), b"");
         assert_eq!(
-            handle(&nopw, ROOT, &mut AuthCache::default(), &os),
+            handle(&nopw, ROOT, &Shared::default(), &os),
             AdminReply::Invalid
         );
     }
@@ -1201,10 +1355,10 @@ mod tests {
     #[test]
     fn a_password_change_needs_the_current_password_every_time() {
         let os = Fake::default();
-        let mut cache = AuthCache::default();
+        let cache = Shared::default();
         let mine = req(AdminAction::UserPassword, &["ann", "n3w-passw0rd"]);
         assert_eq!(
-            handle(&encode(&mine, b"good"), ANN, &mut cache, &os),
+            handle(&encode(&mine, b"good"), ANN, &cache, &os),
             AdminReply::Ok
         );
         assert_eq!(os.ran.borrow()[0], ["chpasswd"]);
@@ -1212,211 +1366,20 @@ mod tests {
         assert_eq!(*os.stdin.borrow(), ["ann:n3w-passw0rd\n", "n3w-passw0rd\n"]);
         assert!(os.log.borrow().iter().all(|l| !l.contains("n3w")));
         assert_eq!(
-            handle(&encode(&mine, b""), ANN, &mut cache, &os),
+            handle(&encode(&mine, b""), ANN, &cache, &os),
             AdminReply::NeedsAuth,
             "a password given a moment ago does not change it again"
         );
         let bobs = req(AdminAction::UserPassword, &["bob", "n3w-passw0rd"]);
         assert_eq!(
-            handle(&encode(&bobs, b"wrong"), BOB, &mut cache, &os),
+            handle(&encode(&bobs, b"wrong"), BOB, &cache, &os),
             AdminReply::Denied,
             "not an administrator, but his own: the password decides"
         );
         assert_eq!(
-            handle(&encode(&mine, b"good"), BOB, &mut cache, &os),
+            handle(&encode(&mine, b"good"), BOB, &cache, &os),
             AdminReply::NotAdmin
         );
-    }
-
-    /// Update Now keeps a restore point first (the page says so): the running slot wolos-a is
-    /// named in the log before anything runs, and the `[wolos]` fixes go into wolos-b through the
-    /// shared slot builder (snapshot, pacman inside the release, initramfs, seal, boot entry).
-    /// No step writes the restore point.
-    #[test]
-    fn update_now_keeps_a_restore_point_first() {
-        let os = slot_os();
-        let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
-        assert_eq!(
-            handle(&up, ROOT, &mut AuthCache::default(), &os),
-            AdminReply::Ok
-        );
-        let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-        let b = "/run/wolos/top/@wolos-b";
-        assert_eq!(ran[0], format!("btrfs subvolume delete {b}"));
-        assert_eq!(ran[1], format!("btrfs subvolume snapshot / {b}"));
-        assert_eq!(ran[2], format!("wol layers fold {b}"));
-        assert_eq!(
-            ran[3],
-            format!("arch-chroot {b} /usr/bin/pacman -Syu --noconfirm")
-        );
-        assert!(ran.iter().any(|l| l.starts_with("wol seal apply")));
-        assert_eq!(ran.last().unwrap(), "bootctl set-default ");
-        assert!(ran.iter().all(|l| !l.contains("@wolos-a")), "{ran:?}");
-        assert!(
-            ran.iter().all(|l| l != "pacman -Syu --noconfirm"),
-            "never pacman on the live root"
-        );
-        let log = os.log.borrow();
-        assert_eq!(
-            log[0],
-            "root(0): pkg-upgrade: restore point wolos-a (the running system) is kept; updating into wolos-b"
-        );
-        assert!(
-            log.iter().any(|l| l.contains("updated into wolos-b")),
-            "{log:?}"
-        );
-        // Holds stay at their version, in the slot.
-        let held = slot_os();
-        let r = req(AdminAction::PkgUpgrade, &["firefox", "gimp"]);
-        handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &held);
-        assert!(held.ran.borrow().iter().any(|a| a.join(" ")
-            == format!("arch-chroot {b} /usr/bin/pacman -Syu --noconfirm --ignore=firefox,gimp")));
-        let wifi = Fake::default();
-        let r = req(AdminAction::WifiPower, &["wlan0", "off"]);
-        handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &wifi);
-        assert!(wifi.captured.borrow().is_empty());
-    }
-
-    /// A machine with one copy of WolOS (no root slot) cannot keep a restore point: Update Now
-    /// is refused with one sentence and nothing runs, not even pacman on the live root.
-    #[test]
-    fn update_now_without_a_restore_point_is_refused() {
-        for os in [
-            Fake::default(),
-            Fake {
-                files: vec![("/proc/cmdline".into(), "root=/dev/vda2 rw".into())],
-                ..Fake::default()
-            },
-        ] {
-            let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
-            assert_eq!(
-                handle(&up, ROOT, &mut AuthCache::default(), &os),
-                AdminReply::Failed
-            );
-            assert!(os.ran.borrow().is_empty(), "{:?}", os.ran.borrow());
-            let log = os.log.borrow();
-            assert_eq!(
-                log[0],
-                format!(
-                    "root(0): pkg-upgrade: {}",
-                    wol_core::update::pkg::NO_RESTORE_POINT
-                )
-            );
-            drop(log);
-            // The page gets the same sentence: the failed reply carries it.
-            let mut said = None;
-            let again = handle_said(&up, ROOT, &mut AuthCache::default(), &os, &mut said);
-            assert_eq!(again, AdminReply::Failed);
-            assert_eq!(
-                said.as_deref(),
-                Some(wol_core::update::pkg::NO_RESTORE_POINT)
-            );
-            let line = reply_line(again, said.as_deref());
-            assert_eq!(AdminReply::parse(&line), AdminReply::Failed, "old clients");
-            assert_eq!(
-                shared::admin::failure_message(&line).as_deref(),
-                Some(wol_core::update::pkg::NO_RESTORE_POINT)
-            );
-        }
-    }
-
-    /// One copy of WolOS (ADR 0023): Update Now updates the running system in place (the page
-    /// said there is no restore point); a failure says some packages may already be updated.
-    #[test]
-    fn update_now_on_one_copy_updates_in_place() {
-        let one = || Fake {
-            files: vec![
-                (wol_core::update::SINGLE_COPY.into(), String::new()),
-                ("/proc/cmdline".into(), "root=/dev/vda2 rw".into()),
-            ],
-            ..Fake::default()
-        };
-        let os = one();
-        let r = req(AdminAction::PkgUpgrade, &["gimp"]);
-        let mut said = None;
-        assert_eq!(
-            handle_said(
-                &encode(&r, b""),
-                ROOT,
-                &mut AuthCache::default(),
-                &os,
-                &mut said
-            ),
-            AdminReply::Ok
-        );
-        assert_eq!(said, None);
-        let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-        assert_eq!(ran, ["/usr/bin/pacman -Syu --noconfirm --ignore=gimp"]);
-        assert!(os.log.borrow()[0].contains("one copy of WolOS, no restore point"));
-        assert!(os.captured.borrow().is_empty(), "no slot is looked for");
-        let failing = Fake {
-            fail_run: true,
-            ..one()
-        };
-        let mut said = None;
-        assert_eq!(
-            handle_said(
-                &encode(&r, b""),
-                ROOT,
-                &mut AuthCache::default(),
-                &failing,
-                &mut said
-            ),
-            AdminReply::Failed
-        );
-        assert_eq!(
-            said.as_deref(),
-            Some(wol_core::update::pkg::IN_PLACE_FAILED)
-        );
-    }
-
-    /// Only a failure carries a sentence; every other reply keeps its plain line.
-    #[test]
-    fn reply_lines_carry_a_sentence_only_on_failure() {
-        assert_eq!(reply_line(AdminReply::Ok, Some("x")), "ok");
-        assert_eq!(reply_line(AdminReply::Failed, None), "failed");
-        assert_eq!(
-            reply_line(AdminReply::Failed, Some("It broke.")),
-            "failed It broke."
-        );
-        assert_eq!(reply_line(AdminReply::Denied, Some("x")), "denied");
-    }
-
-    /// A step that fails deletes the half-made slot; the restore point is untouched and named.
-    #[test]
-    fn a_failed_update_now_cleans_up_and_keeps_the_restore_point() {
-        let os = Fake {
-            fail_on: Some("mkinitcpio"),
-            ..slot_os()
-        };
-        let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
-        assert_eq!(
-            handle(&up, ROOT, &mut AuthCache::default(), &os),
-            AdminReply::Failed
-        );
-        let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-        let at = ran.iter().position(|l| l.contains("mkinitcpio")).unwrap();
-        let after: Vec<&str> = ran[at + 1..].iter().map(String::as_str).collect();
-        assert_eq!(
-            after,
-            [
-                "btrfs subvolume delete /run/wolos/top/@wolos-b",
-                "rm -f /efi/loader/entries/wolos-b+3.conf /efi/EFI/wolos/wolos-b.efi"
-            ]
-        );
-        assert!(
-            ran.iter()
-                .all(|l| !l.contains("@wolos-a") && !l.contains("set-default"))
-        );
-        assert!(
-            os.log.borrow().iter().any(|l| l
-                .contains("failed; wolos-b was cleaned up, restore point wolos-a is unchanged")),
-            "{:?}",
-            os.log.borrow()
-        );
-        let mut said = None;
-        handle_said(&up, ROOT, &mut AuthCache::default(), &os, &mut said);
-        assert_eq!(said, Some(wol_core::update::pkg::slot_failed("wolos-a")));
     }
 
     /// Low Power Mode probes the machine, saves the mode and switches power-profiles-daemon.
@@ -1427,10 +1390,7 @@ mod tests {
             ..Fake::default()
         };
         let low = encode(&req(AdminAction::PowerMode, &["low"]), b"");
-        assert_eq!(
-            handle(&low, ROOT, &mut AuthCache::default(), &os),
-            AdminReply::Ok
-        );
+        assert_eq!(handle(&low, ROOT, &Shared::default(), &os), AdminReply::Ok);
         let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
         assert_eq!(ran, ["powerprofilesctl set power-saver"]);
         assert_eq!(
@@ -1448,7 +1408,7 @@ mod tests {
         // Nothing to steer (VM: no power-profiles-daemon): refused, nothing runs.
         let vm = Fake::default();
         assert_eq!(
-            handle(&low, ROOT, &mut AuthCache::default(), &vm),
+            handle(&low, ROOT, &Shared::default(), &vm),
             AdminReply::Failed
         );
         assert!(vm.ran.borrow().is_empty() && vm.wrote.borrow().is_empty());
@@ -1471,16 +1431,13 @@ mod tests {
             (None, AdminReply::NotAdmin),
         ] {
             assert_eq!(
-                handle(&low, caller, &mut AuthCache::default(), &os),
+                handle(&low, caller, &Shared::default(), &os),
                 want,
                 "{caller:?}"
             );
         }
         let sleep = encode(&req(AdminAction::SessionPower, &["sleep"]), b"");
-        assert_eq!(
-            handle(&sleep, BOB, &mut AuthCache::default(), &os),
-            AdminReply::Ok
-        );
+        assert_eq!(handle(&sleep, BOB, &Shared::default(), &os), AdminReply::Ok);
         assert_eq!(
             os.ran.borrow().last().unwrap().join(" "),
             "systemctl suspend"
@@ -1493,20 +1450,20 @@ mod tests {
         );
         let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
         assert_eq!(
-            handle(&up, BOB, &mut AuthCache::default(), &os),
+            handle(&up, BOB, &Shared::default(), &os),
             AdminReply::NotAdmin
         );
         // Ann shutting down would end Bob's session: her password, like an administrator change.
         let off = encode(&req(AdminAction::SessionPower, &["shutdown"]), b"");
         assert_eq!(
-            handle(&off, ANN, &mut AuthCache::default(), &os),
+            handle(&off, ANN, &Shared::default(), &os),
             AdminReply::NeedsAuth
         );
         // Bob restarting would end Ann's session: refused, and the log says who is signed in
         // (the lock screen's Restart, audit6 S6-5), not "not an administrator".
         let restart = encode(&req(AdminAction::SessionPower, &["restart"]), b"");
         assert_eq!(
-            handle(&restart, BOB, &mut AuthCache::default(), &os),
+            handle(&restart, BOB, &Shared::default(), &os),
             AdminReply::NotAdmin
         );
         let last = os.log.borrow().last().cloned().unwrap_or_default();
@@ -1515,7 +1472,7 @@ mod tests {
         let away = Fake::default();
         let join = encode(&req(AdminAction::WifiPower, &["wlan0", "on"]), b"");
         assert_eq!(
-            handle(&join, BOB, &mut AuthCache::default(), &away),
+            handle(&join, BOB, &Shared::default(), &away),
             AdminReply::NotAdmin
         );
     }
@@ -1594,7 +1551,7 @@ mod tests {
         ] {
             let r = req(a, &[t]);
             assert_eq!(
-                handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+                handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
                 AdminReply::Ok
             );
         }
@@ -1620,7 +1577,7 @@ mod tests {
         };
         let go = |os: &Fake, name: &str| {
             let r = req(AdminAction::PkgInstall, &[name]);
-            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), os)
+            handle(&encode(&r, b""), ROOT, &Shared::default(), os)
         };
         assert_eq!(go(&os, "wolos-module-dev"), AdminReply::Ok);
         assert_eq!(go(&os, "gst-libav"), AdminReply::Ok);
@@ -1647,17 +1604,17 @@ mod tests {
         assert_eq!(go(&Fake::default(), "wolos-module-dev"), AdminReply::Ok);
     }
 
-    /// Signed `.wol`: verified on the daemon's own copy, then `pacman -U` (deps from the repos).
+    /// Signed `.wol`: verified on the daemon's own copy, then `wol pkg -- -U` (deps from the repos).
     #[test]
     fn wol_install_signed() {
         let os = pkg_os();
         let f = wol_file("signed", Some(&SEED), b"payload");
         let r = req(AdminAction::WolInstall, &[&f, "signed"]);
         assert_eq!(
-            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(ran(&os), ["pacman -U --noconfirm <stage>/payload.pkg"]);
+        assert_eq!(ran(&os), ["wol pkg -- -U --noconfirm <stage>/payload.pkg"]);
         let stage = os.stage.borrow().clone().unwrap();
         assert!(!stage.exists(), "staging removed");
         // Same version installed: nothing runs.
@@ -1670,7 +1627,7 @@ mod tests {
             ..pkg_os()
         };
         assert_eq!(
-            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
             AdminReply::Ok
         );
         assert!(ran(&os).is_empty());
@@ -1701,7 +1658,7 @@ mod tests {
         for (f, trust, os, why) in cases {
             let r = req(AdminAction::WolInstall, &[f, trust]);
             assert_eq!(
-                handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+                handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
                 AdminReply::Failed,
                 "{why}"
             );
@@ -1718,7 +1675,7 @@ mod tests {
     #[test]
     fn opening_the_aur_always_checks_the_password() {
         let os = Fake::default();
-        let mut cache = AuthCache::default();
+        let cache = Shared::default();
         let ann = Some(Caller {
             uid: 1001,
             session: 7,
@@ -1732,26 +1689,17 @@ mod tests {
                 pw,
             )
         };
-        assert_eq!(
-            handle(&open(b""), ann, &mut cache, &os),
-            AdminReply::NeedsAuth
-        );
-        assert_eq!(
-            handle(&open(b"bad"), ann, &mut cache, &os),
-            AdminReply::Denied
-        );
-        assert_eq!(handle(&open(b"good"), ann, &mut cache, &os), AdminReply::Ok);
+        assert_eq!(handle(&open(b""), ann, &cache, &os), AdminReply::NeedsAuth);
+        assert_eq!(handle(&open(b"bad"), ann, &cache, &os), AdminReply::Denied);
+        assert_eq!(handle(&open(b"good"), ann, &cache, &os), AdminReply::Ok);
         // A password given a moment ago does not open it again.
-        assert_eq!(
-            handle(&open(b""), ann, &mut cache, &os),
-            AdminReply::NeedsAuth
-        );
+        assert_eq!(handle(&open(b""), ann, &cache, &os), AdminReply::NeedsAuth);
         let bob = Some(Caller {
             uid: 1002,
             session: 8,
         });
         assert_eq!(
-            handle(&open(b"good"), bob, &mut cache, &os),
+            handle(&open(b"good"), bob, &cache, &os),
             AdminReply::NotAdmin
         );
         assert!(os.ran.borrow().is_empty());
@@ -1760,29 +1708,26 @@ mod tests {
     #[test]
     fn wol_install_unsigned_needs_a_fresh_password() {
         let os = pkg_os();
-        let mut cache = AuthCache::default();
-        cache.grant(1001, 7, os.now());
+        let cache = Shared::default();
+        cache.cached().cache.grant(1001, 7, os.now());
         let f = wol_file("fresh", None, b"payload");
         let r = req(AdminAction::WolInstall, &[&f, "unsigned"]);
         assert_eq!(
-            handle(&encode(&r, b""), ANN, &mut cache, &os),
+            handle(&encode(&r, b""), ANN, &cache, &os),
             AdminReply::NeedsAuth
         );
         assert_eq!(
-            handle(&encode(&r, b"good"), ANN, &mut cache, &os),
+            handle(&encode(&r, b"good"), ANN, &cache, &os),
             AdminReply::Ok
         );
         assert_eq!(
             ran(&os).last().unwrap(),
-            "pacman -U --noconfirm <stage>/payload.pkg"
+            "wol pkg -- -U --noconfirm <stage>/payload.pkg"
         );
         // Signed installs use the cache as before.
         let s = wol_file("fresh-signed", Some(&SEED), b"payload");
         let r = req(AdminAction::WolInstall, &[&s, "signed"]);
-        assert_eq!(
-            handle(&encode(&r, b""), ANN, &mut cache, &os),
-            AdminReply::Ok
-        );
+        assert_eq!(handle(&encode(&r, b""), ANN, &cache, &os), AdminReply::Ok);
     }
 
     #[test]
@@ -1796,14 +1741,14 @@ mod tests {
         };
         let r = req(AdminAction::WolRemove, &["org.wolos.Fixture"]);
         assert_eq!(
-            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
             AdminReply::Ok
         );
-        assert_eq!(ran(&os), ["pacman -Rns --noconfirm wol-fixture"]);
+        assert_eq!(ran(&os), ["wol pkg -- -Rns --noconfirm wol-fixture"]);
         let r = req(AdminAction::WolRemove, &["org.wolos.Missing"]);
         let os = Fake::default();
         assert_eq!(
-            handle(&encode(&r, b""), ROOT, &mut AuthCache::default(), &os),
+            handle(&encode(&r, b""), ROOT, &Shared::default(), &os),
             AdminReply::Failed
         );
         assert!(os.ran.borrow().is_empty());
@@ -1827,6 +1772,30 @@ mod tests {
                 "{owner} {mode:o} {caller:?}"
             );
         }
+    }
+
+    /// The walk is of the opened file's real directories: a private directory above it shows.
+    #[test]
+    fn dirs_above_lists_the_opened_files_directories() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let base = std::env::temp_dir().join(format!("wol-admind-reach-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let private = base.join("private");
+        std::fs::create_dir_all(&private).unwrap();
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let file = private.join("x.pkg");
+        std::fs::write(&file, b"x").unwrap();
+        let link = base.join("link.pkg");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        let me = std::fs::metadata(&private).unwrap().uid();
+        let dirs = dirs_above(&std::fs::File::open(&link).unwrap()).unwrap();
+        assert_eq!(dirs[0], (me, std::fs::metadata(&private).unwrap().mode()));
+        assert_eq!(
+            dirs.len(),
+            private.canonicalize().unwrap().ancestors().count()
+        );
+        assert!(!caller_may_reach(&dirs, Some(me.wrapping_add(1).max(1))));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -1953,4 +1922,9 @@ mod tests {
         assert!(!got.contains("ok"), "{got}");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// Requests from many threads at once (api-security 1+2 and its review).
+    mod concurrency;
+    /// Update Now: the restore point, one copy, a failed slot (UPD-restore).
+    mod update_now;
 }

@@ -1,4 +1,4 @@
-# Gallery (org.wolos.gallery)
+# Gallery, org.wolos.gallery (ADR 0039)
 
 The picture library and viewer that ships with WolOS: a Wolkit app in Crystal (ADR 0039), the first of the bundled apps rewritten on Cryswol and Wolkit (`docs/modules/apps.md`). Source `wolos-crystal/apps/gallery/`, program `wol-gallery`, package `wolos-app-gallery`. The look and the reasons are in the design note, `wolos-crystal/apps/gallery/DESIGN.md`.
 

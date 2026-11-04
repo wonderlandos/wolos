@@ -24,6 +24,7 @@ pub mod power;
 pub mod run;
 pub mod script;
 pub mod seal;
+pub mod secret;
 pub mod security;
 pub mod sessions;
 pub mod shard;

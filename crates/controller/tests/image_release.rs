@@ -106,13 +106,85 @@ fn release_signature_verifies_with_the_package_keys() {
     );
 }
 
-/// The check fetches from where the ISO workflow publishes.
+/// Audit 8 #4/#5: the two scripts that download as root fetch over https only, every download
+/// capped; xguard-update judges the signed bundle.json before it fetches any data file.
+#[test]
+fn downloading_scripts_are_https_only_and_capped() {
+    for p in [
+        "files/usr/lib/wolos/update-check",
+        "files/usr/lib/wolos/xguard-update",
+    ] {
+        let t = read(p);
+        for want in ["--proto =https", "--proto-redir =https", "--max-filesize"] {
+            assert!(t.contains(want), "{p}: {want}");
+        }
+        // Every curl is called through get(): nothing is fetched without those options.
+        let curls = t
+            .lines()
+            .filter(|l| l.trim_start().starts_with("curl ") || l.contains("| curl"))
+            .count();
+        assert_eq!(curls, 1, "{p}: one curl call, in get()");
+    }
+    // The error report only posts, but over https only and bounded too.
+    let r = read("files/usr/lib/wolos/report");
+    for want in ["--proto =https", "--proto-redir =https", "--max-time"] {
+        assert!(r.contains(want), "report: {want}");
+    }
+    let x = read("files/usr/lib/wolos/xguard-update");
+    let at = |s: &str| x.find(s).unwrap_or_else(|| panic!("xguard-update: {s}"));
+    assert!(
+        at("wol-xguard rules check") < at(r#"get 536870912 "$T/$f""#),
+        "the signature is verified before data files are fetched"
+    );
+    assert!(
+        x.contains("while IFS= read -r f"),
+        "the names loop is quoted"
+    );
+    assert!(
+        !x.contains("for f in $("),
+        "no word splitting of downloaded names"
+    );
+    assert!(
+        x.contains("*.xgdb | *.yxc | NOTICES"),
+        "the same names as bundle::fits"
+    );
+}
+
+/// The check fetches from where releases are published: the CDN's `latest/` folder (the release
+/// tooling writes it) under cdn.wolos.org, then under the server's own name, then GitHub's latest
+/// release when the CDN has none or is down; the feed (`wopkg::FEEDS`) in the same order, both
+/// from `wol_core::cdn::LATEST` (tests/cdn_order.rs runs the order).
 #[test]
 fn update_check_reads_the_published_release() {
     let check = read("files/usr/lib/wolos/update-check");
-    let url =
-        "https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json";
-    assert!(check.contains(url), "update-check URL");
+    for (var, url) in [
+        (
+            "URL=${WOLOS_RELEASE_URL:-",
+            "https://cdn.wolos.org/latest/release.json}",
+        ),
+        (
+            "MIRROR=${WOLOS_RELEASE_MIRROR-",
+            "https://wolos.squareweb.app/latest/release.json}",
+        ),
+        (
+            "FALLBACK=${WOLOS_RELEASE_FALLBACK-",
+            "https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}",
+        ),
+    ] {
+        assert!(
+            check.lines().any(|l| l == format!("{var}{url}")),
+            "update-check {var}"
+        );
+    }
+    assert!(
+        check.contains("if release \"$URL\" || release \"$MIRROR\" || release \"$FALLBACK\"; then")
+    );
+    // The manifest and the feeds share one folder, named in one place.
+    assert!(
+        read("crates/wopkg/src/lib.rs")
+            .contains("pub const FEEDS: &str = wol_core::cdn::LATEST[0];"),
+        "wopkg::FEEDS"
+    );
     // wolos-iso release.yml is reusable: only wolos publish.yml (what=iso, the repo holding the
     // keys) calls it, one publish at a time. No tag push or dispatch of its own.
     let iso = read(".github/workflows/release.yml");
@@ -235,4 +307,141 @@ fn image_trusts_the_ci_release_key() {
     assert!(keys.len() >= 2, "{keys:?}");
     let pem = std::fs::read_to_string(dir.join("wolos-2026b.pub")).unwrap();
     assert!(keys.contains(&wol_core::package::public_key(&pem).unwrap()));
+}
+
+/// This repo's own checkout (not the sibling overlay): where `git` runs.
+fn checkout() -> PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// `git -C dir args`: its trimmed stdout and whether it exited 0; None when git cannot run.
+fn git(dir: &std::path::Path, args: &[&str]) -> Option<(bool, String)> {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    Some((
+        o.status.success(),
+        String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+    ))
+}
+
+/// qa100 H18-1: the integration branch descends from the last release, so a release cut from it
+/// keeps every fix that release shipped (wave3/int lacked all 38 commits of 0.12.1: the /etc
+/// overlay of ADR 0044, the security and stability fixes). `tools/release/last-release.txt`
+/// records the tag, its commit and the shell commit it pins; both repos must contain them.
+/// A tree with no history to ask (a tarball, a shallow clone without the commit) says so and
+/// checks the record only; a full history that lacks the commit fails.
+#[test]
+fn int_descends_from_last_release() {
+    let text = read("tools/release/last-release.txt");
+    let field = |k: &str| {
+        text.lines()
+            .filter(|l| !l.starts_with('#'))
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix(' '))
+            .unwrap_or_else(|| panic!("last-release.txt has no `{k} ` line"))
+            .trim()
+            .to_owned()
+    };
+    let (tag, wolos, shell) = (field("tag"), field("wolos"), field("shell"));
+    assert!(tag.starts_with('v'), "tag {tag}");
+    for c in [&wolos, &shell] {
+        assert!(
+            c.len() == 40 && c.bytes().all(|b| b.is_ascii_hexdigit()),
+            "a full commit id: {c}"
+        );
+    }
+    let root = checkout();
+    for (repo, dir, commit) in [
+        ("wolos", root.clone(), &wolos),
+        ("crates/shell", root.join("crates/shell"), &shell),
+    ] {
+        let Some((true, top)) = git(&dir, &["rev-parse", "--show-toplevel"]) else {
+            eprintln!("note: {repo} is not a git checkout here: the release gate is not checked");
+            continue;
+        };
+        assert!(
+            std::path::Path::new(&top)
+                .canonicalize()
+                .is_ok_and(|t| dir.canonicalize().is_ok_and(|d| d == t)),
+            "{repo}: {} is not its own checkout ({top})",
+            dir.display()
+        );
+        let known = git(&dir, &["cat-file", "-e", &format!("{commit}^{{commit}}")])
+            .is_some_and(|(ok, _)| ok);
+        if !known {
+            let shallow = git(&dir, &["rev-parse", "--is-shallow-repository"])
+                .is_some_and(|(_, s)| s == "true");
+            assert!(
+                shallow,
+                "{repo}: the last release {commit} is not in this history at all"
+            );
+            eprintln!("note: {repo} is a shallow clone without {commit}: not checked");
+            continue;
+        }
+        let (descends, _) = git(&dir, &["merge-base", "--is-ancestor", commit, "HEAD"]).unwrap();
+        assert!(
+            descends,
+            "{repo}: HEAD does not descend from the last release {tag} ({commit}); merge the \
+             release branch first (qa100 H18-1)"
+        );
+    }
+    // The record agrees with itself where the tag and the commit are known.
+    if let Some((true, at)) = git(
+        &root,
+        &["rev-parse", "-q", "--verify", &format!("{tag}^{{commit}}")],
+    ) {
+        assert_eq!(
+            at, wolos,
+            "{tag} names another commit than last-release.txt"
+        );
+    }
+    if let Some((true, pinned)) = git(&root, &["rev-parse", &format!("{wolos}:crates/shell")]) {
+        assert_eq!(pinned, shell, "{wolos} pins another shell commit");
+    }
+}
+
+/// ADR 0044 (0.12.1 FIX-slot): the `/etc` overlay line every slot reads mounts with
+/// `index=off,metacopy=off`, so the overlay takes the new slot's `/etc` as its lower after a
+/// switch (with `index=on` it refused it: emergency mode after an update). The installer's line
+/// (`install-run`) is the same line the slot builder writes (`wol_core::update::ETC_FSTAB`).
+#[test]
+fn etc_overlay_line_keeps_index_and_metacopy_off() {
+    let line = wol_core::update::ETC_FSTAB;
+    let opts = line.split_whitespace().nth(3).expect("fstab options field");
+    let opts: Vec<&str> = opts.split(',').collect();
+    for want in [
+        "index=off",
+        "metacopy=off",
+        "redirect_dir=follow",
+        "xino=off",
+        "nfs_export=off",
+    ] {
+        assert!(opts.contains(&want), "ETC_FSTAB lacks {want}: {line}");
+    }
+    assert!(line.starts_with("overlay /etc overlay "), "{line}");
+    let run = read("files/usr/lib/wolos/install-run");
+    let written: Vec<&str> = run
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.contains("overlay /etc overlay"))
+        .collect();
+    assert!(
+        !written.is_empty(),
+        "install-run writes no /etc overlay line"
+    );
+    for l in written {
+        assert_eq!(
+            l,
+            format!("echo \"{line}\""),
+            "install-run's /etc overlay line is not ETC_FSTAB"
+        );
+    }
+    assert!(
+        repo("docs/adr/0044-etc-overlay-across-slot-switches.md").is_file(),
+        "ADR 0044"
+    );
 }

@@ -110,7 +110,13 @@ pub fn serve(
                 packages::handle(
                     json,
                     c,
-                    &|app, cap| grants.granted(app, cap),
+                    &|app, cap| {
+                        let ok = grants.granted(app, cap);
+                        if let (false, Some((uid, _))) = (ok, c) {
+                            grants.refused(uid, app, cap);
+                        }
+                        ok
+                    },
                     &packages::Host {
                         bus,
                         asks: &state.asks,

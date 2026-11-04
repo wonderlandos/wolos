@@ -57,6 +57,20 @@ fn fetch(env: &mut dyn Env, url: &str, dest: &Path) -> bool {
     env.exec_quiet(&argv).is_ok_and(|c| c == 0)
 }
 
+/// A file of at most [`package::INDEX_MAX_BYTES`] (audit 8 #5): a larger one is an error, never
+/// read into memory whole.
+fn read_capped(p: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut v = Vec::new();
+    std::fs::File::open(p)?
+        .take(package::INDEX_MAX_BYTES + 1)
+        .read_to_end(&mut v)?;
+    if v.len() as u64 > package::INDEX_MAX_BYTES {
+        return Err(std::io::Error::other("larger than an index may be"));
+    }
+    Ok(v)
+}
+
 /// A unique name next to `dest` for one download (R2C-23): two runs never write the same file,
 /// and the final name only ever holds a complete, verified copy.
 fn part_of(dest: &Path) -> PathBuf {
@@ -79,8 +93,8 @@ fn adopt(
 ) -> Result<(), String> {
     let (file, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
     let done = (|| {
-        let text = std::fs::read(fresh).map_err(|_| "the download is missing".to_owned())?;
-        let s = fresh_sig.and_then(|p| std::fs::read(p).ok());
+        let text = read_capped(fresh).map_err(|e| format!("the download is unusable ({e})"))?;
+        let s = fresh_sig.and_then(|p| read_capped(p).ok());
         package::verify_fetched_index(&text, s.as_deref(), keys, required)?;
         Index::parse(&String::from_utf8_lossy(&text))?;
         // The cached signature belongs to the cached index: replace it, or drop it with it.
@@ -131,10 +145,10 @@ fn index(env: &mut dyn Env) -> Result<Option<Index>, String> {
         let _ = std::fs::remove_file(&fresh);
         let _ = std::fs::remove_file(&fresh_sig);
     }
-    let Ok(text) = std::fs::read(&file) else {
+    let Ok(text) = read_capped(&file) else {
         return Ok(None);
     };
-    let sig = std::fs::read(&sig).ok();
+    let sig = read_capped(&sig).ok();
     if let Trust::Signed(_) = package::verify_fetched_index(&text, sig.as_deref(), &keys, required)?
     {
         let _ = std::fs::write(&mark, ""); // only tightens the next check
@@ -600,6 +614,26 @@ mod tests {
             .filter(|f| f.file_name().to_string_lossy().ends_with(".part"))
             .count();
         assert_eq!(parts, 0);
+    }
+
+    /// Audit 8 #5: an index above the cap is never read whole, fresh or cached.
+    #[test]
+    fn an_oversize_index_is_refused() {
+        let (_e, home) = env("big");
+        let d = home.join("big");
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("i");
+        let max = package::INDEX_MAX_BYTES;
+        let w = std::fs::File::create(&f).unwrap();
+        w.set_len(max).unwrap();
+        assert_eq!(read_capped(&f).unwrap().len() as u64, max);
+        std::fs::File::create(&f).unwrap().set_len(max + 1).unwrap();
+        assert!(read_capped(&f).is_err());
+        let keys = vec![wol_core::package::public_of(&SEED)];
+        let sig = d.join("s");
+        std::fs::write(&sig, [0u8; 64]).unwrap();
+        let e = adopt(&d, &f, Some(&sig), &keys, true).unwrap_err();
+        assert!(e.contains("unusable"), "{e}");
     }
 
     /// R2C-10/R2C-23: a fresh pair replaces the cache only when it verifies.

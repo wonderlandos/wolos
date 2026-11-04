@@ -386,7 +386,9 @@ pub fn plan_with(
             },
         ],
         AdminAction::TimeZone => vec![AdminStep::Run(timezones::set_argv(&a[0]))],
-        AdminAction::PkgRefresh => vec![argv(&["pacman", "-Sy"])],
+        // The update check now: catalogue refreshed in a temporary database (`pacman -Sy` cannot
+        // lock the sealed one, ADR 0016), findings in `update::check::DIR` for every account.
+        AdminAction::PkgRefresh => vec![argv(&[crate::update::check::SCRIPT, "now"])],
         // Revoke: the daemon handles it. Packages: verified and planned by the daemon itself.
         // Update Now: planned by the daemon from the running slot, the restore point it keeps
         // (`crate::update::pkg::slot_change`).
@@ -1059,7 +1061,7 @@ mod tests {
                 &["Europe/Lisbon"],
                 "timedatectl set-timezone Europe/Lisbon",
             ),
-            (PkgRefresh, &[], "pacman -Sy"),
+            (PkgRefresh, &[], "/usr/lib/wolos/update-check now"),
             (
                 BootEnvironment,
                 &["wolos-b"],
@@ -1068,9 +1070,9 @@ mod tests {
             (
                 PkgInstall,
                 &["steam"],
-                "pacman -S --needed --noprogressbar --noconfirm steam",
+                "wol pkg -- -S --needed --noprogressbar --noconfirm steam",
             ),
-            (PkgRemove, &["gimp"], "pacman -Rns --noconfirm gimp"),
+            (PkgRemove, &["gimp"], "wol pkg -- -Rns --noconfirm gimp"),
             (
                 FlatpakOverride,
                 &["org.gimp.GIMP", "shared=network", "deny"],

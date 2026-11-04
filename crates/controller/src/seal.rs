@@ -111,6 +111,34 @@ pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
     0
 }
 
+/// The mark `wol seal check` leaves on a slot whose files did not match their seal.
+pub(crate) const VERITY_MARK: &str = "verity-failed";
+/// The mark `wol boot check` leaves on a slot older than the floor.
+pub(crate) const EPOCH_MARK: &str = "epoch-failed";
+
+/// `/var/lib/wolos/<kind>-<slot>`: that slot failed an early-boot check of that kind.
+pub(crate) fn failed_mark(kind: &str, slot: &str) -> PathBuf {
+    PathBuf::from(format!("/var/lib/wolos/{kind}-{slot}"))
+}
+
+/// The early-boot checks (`wol seal check`, `wol boot check`) may restart into `other`: it has a
+/// menu entry and failed neither check itself. Two failing slots would otherwise restart into
+/// each other for ever (audit core-install #4).
+pub(crate) fn may_fall_back_to(env: &dyn Env, other: &str) -> bool {
+    let entry = |suffix: &str| {
+        env.read_file(Path::new(&format!(
+            "{}/loader/entries/{other}{suffix}.conf",
+            update::ESP
+        )))
+        .is_some()
+    };
+    !other.is_empty()
+        && [VERITY_MARK, EPOCH_MARK]
+            .iter()
+            .all(|k| env.read_file(&failed_mark(k, other)).is_none())
+        && (entry("") || entry(&format!("+{}", update::TRIES)))
+}
+
 /// `wol seal check` (early boot): compare the running slot with what was sealed; on a mismatch
 /// boot the other slot and leave a message for the person.
 pub fn check(env: &mut dyn Env) -> i32 {
@@ -149,26 +177,16 @@ pub fn check(env: &mut dyn Env) -> i32 {
         }
     }
     let v = seal::verify(&man, &expected, &|p| cache.get(p).cloned().flatten());
-    let failed_mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/verity-failed-{s}"));
     if v == seal::Verdict::Ok {
         // A slot that passes has not failed: an old mark (a check that could not see every file)
         // would keep the other slot from ever falling back to this one.
-        let _ = env.remove_file(&failed_mark(slot));
+        let _ = env.remove_file(&failed_mark(VERITY_MARK, slot));
         return 0;
     }
     let other = update::other_slot(slot).unwrap_or("");
-    let entry = |suffix: &str| {
-        Path::new(&format!(
-            "{}/loader/entries/{other}{suffix}.conf",
-            update::ESP
-        ))
-        .exists()
-    };
-    let other_ok = !other.is_empty()
-        && !failed_mark(other).exists()
-        && (entry("") || entry(&format!("+{}", update::TRIES)));
+    let other_ok = may_fall_back_to(env, other);
     let fb = seal::fallback(slot, other_ok);
-    let _ = env.write_file(&failed_mark(slot), "failed\n");
+    let _ = env.write_file(&failed_mark(VERITY_MARK, slot), "failed\n");
     let msg = seal::notice(slot, &v, matches!(fb, seal::Fallback::Boot { .. }));
     let _ = env.write_file(Path::new(seal::NOTICE), &msg);
     env.err(&msg);

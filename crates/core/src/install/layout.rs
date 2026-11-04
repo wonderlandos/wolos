@@ -254,6 +254,11 @@ pub enum Refusal {
     /// it still holds the partition table and its startup partition open, so only Erase Disk may
     /// change this disk (audit3 R2B-10). `shell::copy::install_blocked(NotShutDown)` says why.
     WindowsNotShutDown(String),
+    /// Whether this Windows shut down fully can't be read (audit core-install #1): BitLocker
+    /// hides its volume, or `ntfsresize` could not read it (`Blocked::BitLocker`,
+    /// `Blocked::Unreadable`). Unknown counts as hibernated: while it stays, only Erase Disk may
+    /// change this disk. A layout that deletes it is not refused for it.
+    WindowsUnchecked(String),
     /// That partition isn't a startup partition, or can't hold the kernels.
     NotAnEsp(String),
     BadMount(String),
@@ -570,6 +575,15 @@ pub fn room(l: &Layout, d: &Disk) -> Vec<(u64, u64)> {
     free
 }
 
+/// A Windows system volume whose shutdown state the probe could not read: BitLocker, or NTFS that
+/// `ntfsresize` refused for another reason. Windows' reserved and recovery partitions never
+/// hibernate, so they don't count.
+fn shutdown_unknown(p: &Part) -> bool {
+    p.system().as_deref() == Some("Windows")
+        && !p.is_windows_helper()
+        && (p.bitlocker() || p.blocked == Some(Blocked::Unreadable))
+}
+
 pub fn compile(l: &Layout, d: &Disk, encrypt: bool) -> Result<Compiled, Refusal> {
     if l.wipe {
         if d.bytes < MIN_ROOT {
@@ -601,6 +615,15 @@ pub fn compile(l: &Layout, d: &Disk, encrypt: bool) -> Result<Compiled, Refusal>
         .find(|p| p.blocked == Some(Blocked::NotShutDown))
     {
         return Err(Refusal::WindowsNotShutDown(p.uuid.clone()));
+    }
+    // A Windows nothing could look inside may be just as hibernated: the same gate, for as long
+    // as the layout keeps it.
+    if let Some(p) = d
+        .parts
+        .iter()
+        .find(|p| shutdown_unknown(p) && !l.delete.contains(&p.uuid))
+    {
+        return Err(Refusal::WindowsUnchecked(p.uuid.clone()));
     }
     check_names(l, d)?;
     let mounts = check_mounts(l, d)?;
@@ -944,12 +967,17 @@ mod tests {
     #[test]
     fn systems_that_can_not_be_resized_say_so() {
         let mut d = windows();
-        d.parts[2].blocked = Some(Blocked::BitLocker);
+        d.parts[2].blocked = Some(Blocked::MacOs);
         assert_eq!(shrink_range(&d, &d.parts[2]), None);
         assert_eq!(
             compile(&alongside(), &d, false),
             Err(Refusal::CantResize("u3".into()))
         );
+        // BitLocker can't shrink either, and is refused sooner: see
+        // a_windows_whose_shutdown_can_not_be_read_refuses_everything_but_erase.
+        let mut d = windows();
+        d.parts[2].blocked = Some(Blocked::BitLocker);
+        assert_eq!(shrink_range(&d, &d.parts[2]), None);
         let mut d = windows();
         d.parts[2].mounted = true;
         assert_eq!(
@@ -1083,6 +1111,107 @@ mod tests {
         assert!(compile(&Layout::erase(), &d, false).is_ok());
         d.parts[2].blocked = None;
         assert!(compile(&free, &d, false).is_ok());
+    }
+
+    /// audit core-install #1: BitLocker (Windows 11's default) hides whether Windows is
+    /// hibernated, and so does an NTFS volume ntfsresize can't read: unknown is refused like
+    /// hibernated for free space, Replace and Manual next to it; Erase Disk, and a layout that
+    /// deletes that Windows, still run.
+    #[test]
+    fn a_windows_whose_shutdown_can_not_be_read_refuses_everything_but_erase() {
+        let base = || {
+            let mut d = windows();
+            d.last += 40 * GB / 512;
+            d.bytes += 40 * GB;
+            d
+        };
+        let free = Layout {
+            create: vec![esp_new(), root_new(None)],
+            ..Layout::default()
+        };
+        for (fstype, blocked) in [
+            ("BitLocker", Some(Blocked::BitLocker)),
+            ("BitLocker", None),
+            ("ntfs", Some(Blocked::Unreadable)),
+        ] {
+            let mut d = base();
+            d.parts[2].fstype = fstype.into();
+            d.parts[2].blocked = blocked;
+            d.parts[2].min_bytes = None;
+            let why = format!("{fstype} {blocked:?}");
+            assert_eq!(
+                compile(&free, &d, false),
+                Err(Refusal::WindowsUnchecked("u3".into())),
+                "free space: {why}"
+            );
+            assert_eq!(
+                compile(&free, &d, true),
+                Err(Refusal::WindowsUnchecked("u3".into())),
+                "encrypted: {why}"
+            );
+            // Manual, a sized system in the free space: still next to that Windows.
+            let mut manual = free.clone();
+            manual.create[1].bytes = Some(20 * GB);
+            assert_eq!(
+                compile(&manual, &d, false),
+                Err(Refusal::WindowsUnchecked("u3".into())),
+                "manual: {why}"
+            );
+            assert!(compile(&Layout::erase(), &d, false).is_ok(), "erase: {why}");
+            // Replace that Windows: nothing of it stays to resume.
+            let replace = Layout {
+                delete: vec!["u3".into()],
+                create: vec![esp_new(), root_new(None)],
+                ..Layout::default()
+            };
+            assert!(
+                compile(&replace, &d, false).is_ok(),
+                "replace Windows itself: {why}"
+            );
+        }
+        // A recovery partition ntfsresize can't read is no Windows that hibernates.
+        let mut d = base();
+        d.parts[3].blocked = Some(Blocked::Unreadable);
+        assert!(compile(&free, &d, false).is_ok());
+        // A Windows ntfsresize read is checked as before.
+        assert!(compile(&free, &base(), false).is_ok());
+    }
+
+    /// audit core-install #3: a blank disk of 4096-byte sectors (lsblk LOG-SEC) gets its new
+    /// partitions in its own sectors: 1 MiB is 256 of them, and the system fills the disk.
+    #[test]
+    fn a_blank_4k_disk_gets_partitions_in_its_own_sectors() {
+        let ls = r#"{"blockdevices":[{"path":"/dev/vda","size":34359738368,"model":null,"log-sec":4096}]}"#;
+        let d = crate::install::disk::parse(None, ls).unwrap();
+        let l = Layout {
+            create: vec![esp_new(), root_new(None)],
+            ..Layout::default()
+        };
+        let c = compile(&l, &d, false).unwrap();
+        assert_eq!(c.ops[0], Op::NewTable);
+        let made: Vec<(u64, u64)> = c
+            .ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::Create { start, sectors, .. } => Some((*start, *sectors)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(made.len(), 2);
+        assert_eq!(made[0].0, 256);
+        assert_eq!(made[0].1 * 4096, ESP_BYTES.div_ceil(MIB) * MIB, "{made:?}");
+        assert_eq!(made[1].0, made[0].0 + made[0].1);
+        let end = made[1].0 + made[1].1 - 1;
+        assert!(
+            end <= d.last && (d.last - end) * 4096 < 2 * MIB,
+            "{made:?} {}",
+            d.last
+        );
+        assert!(
+            c.root_bytes > 30 * GB && c.root_bytes < d.bytes,
+            "{}",
+            c.root_bytes
+        );
     }
 
     #[test]

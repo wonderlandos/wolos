@@ -43,6 +43,12 @@ once("gnome-keyring-daemon --start --components=secrets") -- finishes the login 
 once("/usr/lib/xdg-desktop-portal-hyprland")
 once("lxqt-policykit-agent")
 once([[sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
+-- Session agent (crates/realtime): frontmost-app QoS, the event bus and Memory Saver's snapshots to
+-- wold. Without it wold never hears that Memory Saver is on (e2e D4: status enabled:false).
+once([[sh -c 'exec wol-realtime >/dev/null 2>>"$XDG_RUNTIME_DIR/wol-realtime.log"']])
+-- Night Light (wol_core::toggles): hyprsunset tints the screen, warm at start when Night Light was
+-- left on (NIGHT_LIGHT_KELVIN), else true colours (-i). Same line as hyprland.conf.
+once([[sh -c 'command -v hyprsunset >/dev/null || exit 0; f="${XDG_STATE_HOME:-$HOME/.local/state}/wolos/toggles/org.wolos.nightlight"; [ -e "$f" ] && exec hyprsunset -t 4500 >/dev/null 2>>"$XDG_RUNTIME_DIR/hyprsunset.log"; exec hyprsunset -i >/dev/null 2>>"$XDG_RUNTIME_DIR/hyprsunset.log"']])
 once([[sh -c 'wol theme set "$(wol theme)"']]) -- GTK/Qt/foot files + gsettings from the active theme
 -- User config (System Settings > Lock & Idle) wins over the system default.
 once([[sh -c '[ -e /etc/wolos-live ] && exit; c="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hypridle.conf"; [ -f "$c" ] || c=/usr/share/wolos/hypr/hypridle.conf; exec hypridle -c "$c"']])

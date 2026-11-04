@@ -90,6 +90,7 @@ fn status_reports_the_last_check() {
 fn check_lists_a_new_release_until_installed() {
     let (keys, mut files) = signed("check");
     files.push(file("checked", "5\n"));
+    files.push(file("pkg", "wol-shell 0.12.1-1 -> 0.12.2-1\n"));
     for (running, want) in [
         (
             RELEASE.replace("2026.11", "2026.10"),
@@ -100,13 +101,7 @@ fn check_lists_a_new_release_until_installed() {
         let mut env = FakeEnv {
             files: files.clone(),
             vars: vec![keys.clone()],
-            captures: vec![
-                (
-                    "pacman -Qu".into(),
-                    "wol-shell 0.12.1-1 -> 0.12.2-1\n".into(),
-                ),
-                ("cat /usr/lib/wolos-release.json".into(), running.clone()),
-            ],
+            captures: vec![("cat /usr/lib/wolos-release.json".into(), running.clone())],
             ..FakeEnv::default()
         };
         assert_eq!(run("update check --json", &mut env), 0);
@@ -116,23 +111,53 @@ fn check_lists_a_new_release_until_installed() {
 
 #[test]
 fn check_never_says_up_to_date_without_refreshing_the_catalogue() {
-    let none = || FakeEnv {
-        captures: vec![("pacman -Qu".into(), "".into())],
+    // FakeEnv's clock reads 1000: a check stamped 1000 ran for this request, 5 long before.
+    let none = |checked: &str| FakeEnv {
+        files: vec![file("checked", checked), file("pkg", "")],
         ..FakeEnv::default()
     };
-    // wol-admind unreachable: the (possibly stale) catalogue proves nothing.
-    let mut env = none();
+    // wol-admind unreachable: the (possibly stale) findings prove nothing.
+    let mut env = none("5\n");
     assert_ne!(run("update check --json", &mut env), 0);
     assert!(!env.out.contains("[]"), "{}", env.out);
-    // Refreshed first: an empty list is trustworthy.
+    // wol-admind ran the check but it could not refresh (offline): the stamp stayed old.
     let mut env = FakeEnv {
         replies: vec!["ok\n".into()],
-        ..none()
+        ..none("5\n")
+    };
+    assert_ne!(run("update check --json", &mut env), 0);
+    // Checked now: an empty list is trustworthy.
+    let mut env = FakeEnv {
+        replies: vec!["ok\n".into()],
+        ..none("1000\n")
     };
     assert_eq!(run("update check --json", &mut env), 0);
     assert_eq!(env.out.trim(), "[]");
     let sent = &env.requests[0].1;
     assert!(String::from_utf8_lossy(sent).contains("pkg-refresh"));
+}
+
+/// e2e D3: `pacman -Qu` on an installed slot reads the sealed, never refreshed database and exits
+/// 1 when nothing is pending; the check never runs it, whatever it would say.
+#[test]
+fn check_reads_the_findings_and_never_runs_pacman() {
+    let mut env = FakeEnv {
+        files: vec![
+            file("checked", "1000\n"),
+            file("pkg", "wolos-system 0.12.0-1 -> 0.12.1-1\n"),
+        ],
+        replies: vec!["ok\n".into()],
+        // Whatever a command would print: a `pacman -Qu` run would add this package.
+        captured: Some("stale 1-1 -> 2-1\n".into()),
+        ..FakeEnv::default()
+    };
+    assert_eq!(run("update check --json", &mut env), 0);
+    assert_eq!(env.out.trim(), r#"["wolos-system"]"#);
+    assert!(
+        env.execs.iter().all(|a| a[0] != "pacman"),
+        "{:?}",
+        env.execs
+    );
 }
 
 #[test]
@@ -189,4 +214,28 @@ fn base_verify_reports_changed_and_missing_files() {
     let mut none = FakeEnv::default();
     assert_eq!(run("base verify", &mut none), 66, "no manifest");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// e2e D3: v0.12.0 ships no /usr/lib/wolos-release.json; once the check worked it offered
+/// "WolOS 0.12.0" on 0.12.0. os-release names the running release.
+#[test]
+fn check_never_offers_the_running_release() {
+    let (keys, mut files) = signed("running");
+    files.push(file("checked", "1000\n"));
+    files.push(file("pkg", ""));
+    for (os, want) in [("2026.11", "[]"), ("2026.10", r#"["WolOS 2026.11"]"#)] {
+        let mut f = files.clone();
+        f.push((
+            PathBuf::from("/etc/os-release"),
+            format!("NAME=WolOS\nID=wolos\nVERSION_ID={os}\n"),
+        ));
+        let mut env = FakeEnv {
+            files: f,
+            vars: vec![keys.clone()],
+            replies: vec!["ok\n".into()],
+            ..FakeEnv::default()
+        };
+        assert_eq!(run("update check --json", &mut env), 0, "{}", env.err);
+        assert_eq!(env.out.trim(), want, "running {os}");
+    }
 }

@@ -75,6 +75,11 @@ pub trait Env {
     fn keyring_forget(&mut self, desc: &str) {
         let _ = desc;
     }
+    /// The administrator password: on a terminal "Password: " and no echo (`secret`); otherwise
+    /// one line of stdin, as [`Env::stdin_line`].
+    fn read_password(&mut self) -> Option<String> {
+        self.stdin_line()
+    }
     /// One raw line from stdin; None at end of input (`wol mcp`).
     fn read_line(&mut self) -> Option<String> {
         let mut l = String::new();
@@ -121,6 +126,12 @@ pub trait Env {
     fn write_private(&mut self, path: &Path, text: &str) -> io::Result<()> {
         shared::atomic::atomic_write(path, 0o600, text.as_bytes())
     }
+    /// Take the exclusive lock file `path` without waiting (`flock`, released when the [`Lock`]
+    /// drops or the process ends): `Ok(None)` while another run holds it (`wol update apply`, the
+    /// pacman wrapper; audit8 stability2 #2).
+    fn try_lock(&mut self, path: &Path) -> io::Result<Option<Lock>> {
+        flock_file(path)
+    }
     /// Delete one file; a file that is already gone is not an error (`wol webapp remove`).
     fn remove_file(&mut self, path: &Path) -> io::Result<()> {
         match std::fs::remove_file(path) {
@@ -152,6 +163,50 @@ pub trait Env {
     fn actor(&self) -> String {
         self.var("WOL_HELPER")
             .map_or_else(|| "cli".into(), |h| format!("script:{h}"))
+    }
+}
+
+/// An exclusive lock from [`Env::try_lock`]; dropping it releases the lock.
+pub struct Lock {
+    /// Holds the locked file (or a fake): only its drop matters.
+    _held: Box<dyn std::any::Any>,
+}
+
+/// [`Env::try_lock`] on the real file system: `path` (and its directory) made if missing, mode
+/// 0600, `flock(LOCK_EX | LOCK_NB)` on it (`File::try_lock`: std has the call, no `unsafe`).
+fn flock_file(path: &Path) -> io::Result<Option<Lock>> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+        .open(path)?;
+    match f.try_lock() {
+        // The lock goes with `f`: it is released when the `Lock` drops.
+        Ok(()) => Ok(Some(Lock { _held: Box::new(f) })),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
+/// Take [`wol_core::update::LOCK`] for one change to a slot or a layer, or say why not: only one
+/// such change runs at a time (audit8 stability2 #2: a second `wol update apply` or pacman would
+/// delete or snapshot over the slot the first one is building). Err = the exit code to return.
+pub(crate) fn update_lock(env: &mut dyn Env) -> Result<Lock, i32> {
+    match env.try_lock(Path::new(wol_core::update::LOCK)) {
+        Ok(Some(l)) => Ok(l),
+        Ok(None) => Err(fail(env, ErrorCode::Unavailable, wol_core::update::BUSY)),
+        Err(e) => Err(fail(
+            env,
+            ErrorCode::Failed,
+            &format!("{}: {e}", wol_core::update::LOCK),
+        )),
     }
 }
 
@@ -494,7 +549,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 if attempt == PASSWORD_TRIES {
                     break;
                 }
-                match env.stdin_line() {
+                match env.read_password() {
                     Some(p) if !p.is_empty() => password = p.into_bytes(),
                     _ => return fail(env, ErrorCode::Denied, reply.message()),
                 }
@@ -638,7 +693,8 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
 }
 
 /// Third-party toolkits follow the theme: regenerate GTK/Qt/foot files, then gsettings so
-/// running GTK apps switch live (settings portal), then the `theme` event on wold for libwol apps
+/// running GTK apps switch live (settings portal), running foot terminals by signal
+/// (`apps::terminal_argv`), then the `theme` event on wold for libwol apps
 /// (`subscribe("theme")`). Best effort: a missing gsettings or wold is not an error.
 /// Every theme change goes through here: `wol theme set|light|dark|toggle`, appearance and accent
 /// (verbs.rs `set_theme`) and undo.
@@ -654,10 +710,14 @@ pub(crate) fn restyle_apps(env: &mut dyn Env, t: &wol_core::theme::ResolvedTheme
         env.err(&format!("wol: app themes: {e}\n"));
     }
     retire_hypr_conf(env, &home);
-    for argv in apps::gsettings_argv(t)
-        .into_iter()
-        .chain(apps::strip_argv(t))
-    {
+    // foot rereads nothing while it runs: its two colour sections are switched by signal.
+    let foot = apps::foot_is_ours(&apps::user_dir(&home), &home)
+        .then(|| apps::terminal_argv(t, shared::sys::euid()));
+    for argv in apps::gsettings_argv(t) {
+        let _ = env.exec(&argv);
+    }
+    restyle_compositor(env, &apps::strip_argv(t));
+    if let Some(argv) = foot {
         let _ = env.exec(&argv);
     }
     announce_theme(env, &t.id);
@@ -710,6 +770,27 @@ fn carry_user_conf(env: &mut dyn Env, home: &Path) {
         }
         Ok(false) => {}
         Err(e) => env.err(&format!("wol: {}: {e}\n", wol_core::prefs::USER_CONF)),
+    }
+}
+
+/// The compositor's colours, live. hyprctl answers each keyword on stdout, "ok" when it took it
+/// and its error otherwise: the "ok" lines are dropped (`wol appearance set` printed ten of them),
+/// anything else goes to stderr. A hyprctl that fails to run (no compositor: a tty, ssh, a
+/// chroot) is said once and the other keywords are not tried.
+fn restyle_compositor(env: &mut dyn Env, argvs: &[Vec<String>]) {
+    for argv in argvs {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let Some(out) = env.capture(&a) else {
+            env.err("wol: the window title bars keep their colours until the desktop restarts (hyprctl did not answer)\n");
+            return;
+        };
+        for line in out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && *l != "ok")
+        {
+            env.err(&format!("wol: {}: {line}\n", argv[2..].join(" ")));
+        }
     }
 }
 
@@ -845,8 +926,8 @@ fn shell_ask(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
     if ok { 0 } else { ErrorCode::Failed.exit() }
 }
 
-/// Refresh the package catalogue through wol-admind (no password: the person at the computer)
-/// so "up to date" is never read from a stale catalogue.
+/// Run the update check now through wol-admind (no password: the person at the computer) so
+/// "up to date" is never read from a stale catalogue.
 fn refresh_catalogue(env: &mut dyn Env) -> bool {
     let sock = env
         .var("WOL_ADMIN_SOCKET")
@@ -859,14 +940,22 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
         .is_ok_and(|r| AdminReply::parse(&r) == AdminReply::Ok)
 }
 
+/// Pending updates: the check's own findings, never `pacman -Qu` on the running system. Its
+/// database sits on the read-only seal (ADR 0016) and is never refreshed there, and `-Qu` exits 1
+/// when nothing is pending (e2e D3: "pacman -Qu failed" on every installed system). wol-admind
+/// runs the check now (`update-check now`, a temporary database); a stamp from before this request
+/// means it could not refresh (offline).
 fn update_check(env: &mut dyn Env, json: bool) -> i32 {
+    let asked = env.now_secs();
     let refreshed = refresh_catalogue(env);
-    let out = env.capture(&wol_core::update::PENDING_ARGV);
-    let Some(mut pending) = wol_core::update::parse_pending(out.as_deref()) else {
-        return fail(env, ErrorCode::Unavailable, "pacman -Qu failed");
-    };
-    // A newer release the daily check found, until installed (`wol update apply`).
-    if let Some(b) = update_snapshot(env).and_then(|u| u.base) {
+    let found = update_snapshot(env);
+    let refreshed = refreshed && found.as_ref().is_some_and(|u| u.checked >= asked);
+    let mut pending = found
+        .as_ref()
+        .map(|u| u.packages.clone())
+        .unwrap_or_default();
+    // A newer release the check found, until installed (`wol update apply`).
+    if let Some(b) = found.and_then(|u| u.base) {
         pending.push(format!("WolOS {b}"));
     }
     if pending.is_empty() && !refreshed {
@@ -924,9 +1013,14 @@ pub(crate) fn update_snapshot(env: &mut dyn Env) -> Option<wol_core::update::che
         &env.var("WOL_KEYS_DIR")
             .unwrap_or_else(|| shared::package::KEYS_DIR.into()),
     ));
+    let now = env.now_secs();
     let f = |n: &str| env.read_file(&Path::new(DIR).join(n)).unwrap_or_default();
-    let u = Updates::from_files(f, &keys)?;
-    let userland = u.base.as_ref().and_then(|_| env.capture(&USERLAND_ARGV));
+    let u = Updates::from_files_at(f, &keys, now)?;
+    // No release file in the image (v0.12.0): os-release names the running release.
+    let userland = u.base.as_ref().and_then(|_| {
+        env.capture(&USERLAND_ARGV)
+            .or_else(|| env.read_file(Path::new(wol_core::update::check::OS_RELEASE)))
+    });
     Some(u.installed(userland.as_deref()))
 }
 
@@ -1095,23 +1189,32 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     if !env.is_root() {
         return fail(env, ErrorCode::Denied, "update apply needs root");
     }
-    for s in &steps {
+    let _lock = match update_lock(env) {
+        Ok(l) => l,
+        Err(code) => return code,
+    };
+    for (i, s) in steps.iter().enumerate() {
         env.err(&format!("wol update: {s}\n"));
         let code = match s {
             Step::Run(argv) => env.exec(argv).unwrap_or(127),
             Step::Write { path, text } => i32::from(env.write_file(Path::new(path), text).is_err()),
         };
         if code != 0 {
-            for r in up::rollback_from(&slot, from) {
-                let _ = env.exec(&r);
+            // A stacked change past its swap no longer has the slot as it was (audit8 #4).
+            let undo = up::rollback_at(&slot, from, &steps, i);
+            for r in &undo.argv {
+                let _ = env.exec(r);
             }
             return fail(
                 env,
                 ErrorCode::Failed,
-                &if from == up::Base::Pending {
-                    format!("{s} failed ({code}); slot {slot} kept as it was")
-                } else {
-                    format!("{s} failed ({code}); slot {slot} removed")
+                &match (undo.kept, from) {
+                    (true, _) => format!("{s} failed ({code}); slot {slot} kept as it was"),
+                    (false, up::Base::Pending) => format!(
+                        "{s} failed ({code}); slot {slot} removed, with the change that waited \
+                         for a restart in it"
+                    ),
+                    (false, _) => format!("{s} failed ({code}); slot {slot} removed"),
                 },
             );
         }
@@ -1262,6 +1365,12 @@ impl Env for RealEnv {
         io::stdin().read_line(&mut l).ok()?;
         Some(l.trim_end_matches(['\n', '\r']).to_owned())
     }
+    fn read_password(&mut self) -> Option<String> {
+        use std::os::fd::AsRawFd;
+        let stdin = io::stdin();
+        let fd = stdin.as_raw_fd();
+        crate::secret::read_password(&mut stdin.lock(), &mut io::stderr(), fd)
+    }
     fn read_file(&self, p: &Path) -> Option<String> {
         std::fs::read_to_string(p).ok()
     }
@@ -1298,6 +1407,8 @@ pub struct FakeEnv {
     pub home: PathBuf,
     /// Per-command captures (`argv joined by spaces`, stdout); else `captured`.
     pub captures: Vec<(String, String)>,
+    /// Every argv run through `capture`, in order.
+    pub captured_argvs: Vec<Vec<String>>,
     /// Host behind `controls()` (Linux fake when None).
     pub host: Option<std::sync::Arc<wol_core::system::fake::FakeHost>>,
     /// wol-admind as seen by `controls()`: replies in order (none left = not running), requests sent.
@@ -1318,6 +1429,19 @@ pub struct FakeEnv {
     pub waits: Vec<u32>,
     /// stdin given to `exec_input`, in order (the argv is in `execs`).
     pub inputs: Vec<String>,
+    /// Lock files held through `try_lock` (share one between two fakes to interleave runs).
+    pub locks: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
+}
+
+/// A [`FakeEnv`] lock: gone from the shared list when dropped.
+struct FakeLock(std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>, PathBuf);
+
+// Gives the path back to the shared list, so a second fake can take the lock again.
+impl Drop for FakeLock {
+    fn drop(&mut self) {
+        let mut held = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        held.retain(|p| *p != self.1);
+    }
 }
 
 #[derive(Default)]
@@ -1382,6 +1506,16 @@ impl Env for FakeEnv {
     fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
         self.keys.iter().find(|k| k.0 == desc).map(|k| k.1.clone())
     }
+    fn try_lock(&mut self, path: &Path) -> io::Result<Option<Lock>> {
+        let mut held = self.locks.lock().unwrap_or_else(|p| p.into_inner());
+        if held.iter().any(|p| p == path) {
+            return Ok(None);
+        }
+        held.push(path.into());
+        Ok(Some(Lock {
+            _held: Box::new(FakeLock(std::sync::Arc::clone(&self.locks), path.into())),
+        }))
+    }
     fn keyring_forget(&mut self, desc: &str) {
         self.keys.retain(|k| k.0 != desc);
     }
@@ -1394,6 +1528,8 @@ impl Env for FakeEnv {
         })
     }
     fn capture(&mut self, argv: &[&str]) -> Option<String> {
+        self.captured_argvs
+            .push(argv.iter().map(|a| (*a).to_owned()).collect());
         let line = argv.join(" ");
         match self.captures.iter().find(|c| c.0 == line) {
             Some(c) => Some(c.1.clone()),
