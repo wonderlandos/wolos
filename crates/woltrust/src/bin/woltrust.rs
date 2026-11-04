@@ -15,6 +15,10 @@
 //! woltrust public KEY
 //! woltrust init --out DIR [--passphrase-env NAME] [--now UNIX]
 //! woltrust extract --backup FILE --role root-a|root-b|authors-ca|packages-ca|index [--certificate]
+//! woltrust seal --to PUBLIC [--label L] FILE|-
+//! woltrust open [--serial S] [--label L] KEY FILE|-
+//!   PUBLIC = a .wolcert with encryption keys, or the output of `woltrust public` (serial = key id)
+//!   L defaults to wolos/file/1; `-` reads stdin
 //!   KEY = (--key-env NAME | --key-file F) [--passphrase-env NAME]
 //! ```
 #![forbid(unsafe_code)]
@@ -390,10 +394,86 @@ fn public(a: &Args) -> Result<Vec<u8>, Fail> {
     serde_json::to_vec(&key(a, None)?.keys_text()).map_err(no)
 }
 
+/// FILE, or stdin for `-`, up to `cap` bytes.
+fn input(a: &Args, cap: u64) -> Result<Vec<u8>, Fail> {
+    let f = a.file()?;
+    if f != "-" {
+        return read(f, cap);
+    }
+    let mut buf = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(cap + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| no(format!("stdin: {e}")))?;
+    if u64::try_from(buf.len()).unwrap_or(u64::MAX) > cap {
+        return Err(no(format!("stdin: larger than {cap} bytes")));
+    }
+    Ok(buf)
+}
+
+fn label(a: &Args) -> &str {
+    a.get("label").unwrap_or(woltrust::seal::FILE_LABEL)
+}
+
+/// The encryption keys and serial `seal --to F` seals to: a certificate (its serial), or the keys
+/// `woltrust public` prints (the key id of its Ed25519 key, as `open` assumes by default).
+fn recipient(path: &str) -> Result<(woltrust::crypto::EncPublic, String), Fail> {
+    use woltrust::crypto::{ED_PK, EncPublic, KEM_PK, X_PK};
+    let raw = read(path, 24 * 1024)?;
+    if let Ok(c) = woltrust::Cert::parse(&raw) {
+        let enc = c
+            .enc
+            .ok_or_else(|| no(woltrust::seal::SealError::NoEncryptionKey.sentence()))?;
+        return Ok((enc, c.body.serial));
+    }
+    let k: woltrust::cert::KeysText = serde_json::from_slice(&raw)
+        .map_err(|_| no(format!("{path}: not a certificate or public keys")))?;
+    let bad = || no(format!("{path}: encryption keys missing or malformed"));
+    let ed: [u8; ED_PK] = woltrust::b64::decode(&k.ed25519, ED_PK)
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(bad)?;
+    let x: [u8; X_PK] = k
+        .x25519
+        .as_deref()
+        .and_then(|s| woltrust::b64::decode(s, X_PK))
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(bad)?;
+    let m: [u8; KEM_PK] = k
+        .ml_kem_768
+        .as_deref()
+        .and_then(|s| woltrust::b64::decode(s, KEM_PK))
+        .and_then(|v| v.try_into().ok())
+        .ok_or_else(bad)?;
+    let enc = EncPublic {
+        x25519: x,
+        ml_kem_768: Box::new(m),
+    };
+    Ok((enc, request::key_id(&ed)))
+}
+
+fn seal_cmd(a: &Args) -> Result<Vec<u8>, Fail> {
+    let (to, serial) = recipient(a.need("to")?)?;
+    let plain = zeroize::Zeroizing::new(input(a, woltrust::seal::MAX_PLAINTEXT as u64)?);
+    let mut rnd = zeroize::Zeroizing::new([0u8; 64]);
+    random(&mut rnd[..])?;
+    woltrust::seal::seal_to(&to, &serial, label(a), &plain, &rnd).map_err(|e| no(e.sentence()))
+}
+
+fn open_cmd(a: &Args) -> Result<Vec<u8>, Fail> {
+    a.file()?;
+    let k = key(a, None)?;
+    let sealed = input(a, (woltrust::seal::MAX_PLAINTEXT + 4096) as u64)?;
+    let serial = a.get("serial").map_or_else(|| k.key_id(), str::to_owned);
+    woltrust::seal::open(&k.enc(), &serial, label(a), &sealed)
+        .map(|p| p.to_vec())
+        .map_err(|e| no(e.sentence()))
+}
+
 fn run(argv: &[String]) -> Result<(Vec<u8>, bool), Fail> {
     let Some((cmd, rest)) = argv.split_first() else {
         return Err(Fail::Usage(
-            "init|sign|issue|revoke|verify|keygen|public|extract".into(),
+            "init|sign|issue|revoke|verify|keygen|public|extract|seal|open".into(),
         ));
     };
     let a = parse_args(rest).map_err(Fail::Usage)?;
@@ -407,6 +487,8 @@ fn run(argv: &[String]) -> Result<(Vec<u8>, bool), Fail> {
         "public" => public(&a).map(ok),
         "init" => init_cmd(&a).map(ok),
         "extract" => extract(&a).map(ok),
+        "seal" => seal_cmd(&a).map(ok),
+        "open" => open_cmd(&a).map(ok),
         _ => Err(Fail::Usage(format!("unknown command {cmd}"))),
     }
 }
@@ -429,7 +511,7 @@ fn main() {
         Err(Fail::Usage(m)) => {
             eprintln!("woltrust: {m}");
             eprintln!(
-                "usage: woltrust init|sign|issue|revoke|verify|keygen|public|extract ... (see the crate docs)"
+                "usage: woltrust init|sign|issue|revoke|verify|keygen|public|extract|seal|open ... (see the crate docs)"
             );
             2
         }
