@@ -180,6 +180,47 @@ fn stamp_only_on_success() {
     assert!(!d.join("out/base.error").exists());
 }
 
+/// QA-UPG-1: the daily check never depends on `checkupdates`. The 0.12.0 check (wolos-system
+/// 0.12.0-2, the script of tag v0.12.0) ran it first; it needs fakeroot, which the image does not
+/// ship, so it said "Cannot find the fakeroot binary", exited 1, and the script left at once with
+/// status 0: no `checked`, no `pkg`, no release manifest, for ever, on every 0.12.0 computer.
+/// Here `checkupdates` fails as it does on the image, and the check must still read the packages
+/// and the release, stamp, and never call it (or fakeroot). The proof against the old script:
+/// `WOL_UPDATE_CHECK_SCRIPT=<v0.12.0 update-check> cargo test -p controller --test update_scripts`.
+#[test]
+fn check_runs_without_checkupdates_or_fakeroot() {
+    let d = scratch("no-fakeroot");
+    fake(
+        &d,
+        "checkupdates",
+        "echo '==> ERROR: Cannot find the fakeroot binary.' >&2; exit 1",
+    );
+    fake(&d, "fakeroot", "exit 127");
+    let ok_pacman = "case \"$*\" in *-Qu*) echo 'wolos-system 0.12.0-2 -> 0.13.0-1' ;; esac";
+    let (code, err) = check(&d, &check_script(), ok_pacman, CURL_OK, 1 << 20);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        d.join("out/checked").exists(),
+        "no stamp: the check stopped before it ran ({err})"
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("out/pkg")).unwrap_or_default(),
+        "wolos-system 0.12.0-2 -> 0.13.0-1\n",
+        "the package list"
+    );
+    assert!(
+        d.join("out/base").exists(),
+        "the release manifest was not fetched"
+    );
+    let calls = log(&d);
+    assert!(
+        !calls
+            .lines()
+            .any(|l| l.starts_with("checkupdates") || l.starts_with("fakeroot")),
+        "the check calls checkupdates/fakeroot: {calls}"
+    );
+}
+
 /// QA-LIVE4-10: on a full disk the findings were truncated to nothing and Check Now said "up to
 /// date" twice. With less than 1 MiB free nothing is written and the check fails (1), naming it.
 #[test]
