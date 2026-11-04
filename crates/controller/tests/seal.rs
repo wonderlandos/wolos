@@ -53,6 +53,11 @@ fn apply_enables_verity_records_digests_and_makes_the_slot_read_only() {
                 format!("fsverity measure {r}/usr/lib/libx.so"),
                 format!("sha256:{} x", d('b')),
             ),
+            // QA-F11: a complete seal covers data under /usr/lib too.
+            (
+                format!("fsverity measure {r}/usr/lib/os-release"),
+                format!("sha256:{} x", d('c')),
+            ),
         ],
         ..Default::default()
     };
@@ -67,15 +72,17 @@ fn apply_enables_verity_records_digests_and_makes_the_slot_read_only() {
         .iter()
         .find(|w| w.0.ends_with("usr/lib/wolos/verity.manifest"))
         .unwrap();
-    let m = Manifest::parse(&man.1);
-    assert_eq!(m.0.len(), 2, "{}", man.1);
+    let (m, complete) = Manifest::parse_text(&man.1);
+    assert!(complete, "{}", man.1);
+    assert_eq!(m.0.len(), 3, "{}", man.1);
     assert_eq!(m.0["usr/bin/tool"], d('a'));
+    assert_eq!(m.0["usr/lib/os-release"], d('c'));
     let dig = env
         .written
         .iter()
         .find(|w| w.0 == std::path::Path::new("/efi/wolos-b/verity"))
         .unwrap();
-    assert_eq!(dig.1.trim(), m.root_digest());
+    assert_eq!(dig.1.trim(), m.complete_root_digest());
     let last = env.execs.last().unwrap().join(" ");
     assert_eq!(last, format!("btrfs property set -ts {r} ro true"));
     assert!(
@@ -121,6 +128,56 @@ fn boot_check_with_a_tampered_manifest_tells_the_person() {
             .iter()
             .any(|w| w.0 == std::path::Path::new(wol_core::seal::NOTICE))
     );
+}
+
+/// A seal failure restarts into the other slot only when it has a menu entry and failed neither
+/// early-boot check (its seal, or the boot check's floor: audit core-install #4).
+#[test]
+fn a_failed_seal_falls_back_only_to_a_slot_that_failed_no_check() {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let tampered = |extra: &[(&str, &str)]| {
+        let mut files = vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                "root=x rootflags=subvol=@wolos-b ro".to_string(),
+            ),
+            (
+                PathBuf::from("/efi/wolos-b/verity"),
+                format!("{}\n", d('0')),
+            ),
+            (PathBuf::from("/usr/lib/wolos/verity.manifest"), m.to_text()),
+            (
+                PathBuf::from("/efi/loader/entries/wolos-a.conf"),
+                "title WolOS\nuki /EFI/wolos/wolos-a.efi\n".to_string(),
+            ),
+            // The entry's image is there (BOOT2-2: a ghost entry is no fallback).
+            (
+                PathBuf::from("/efi/EFI/wolos/wolos-a.efi"),
+                "MZ".to_string(),
+            ),
+        ];
+        files.extend(extra.iter().map(|(p, t)| (PathBuf::from(p), t.to_string())));
+        FakeEnv {
+            files,
+            ..Default::default()
+        }
+    };
+    let mut env = tampered(&[]);
+    assert_eq!(run("seal check", &mut env), 1);
+    let ran: Vec<String> = env.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(
+        ran,
+        ["bootctl set-default wolos-a.conf", "systemctl reboot"]
+    );
+    for mark in [
+        "/var/lib/wolos/verity-failed-wolos-a",
+        "/var/lib/wolos/epoch-failed-wolos-a",
+    ] {
+        let mut env = tampered(&[(mark, "failed\n")]);
+        assert_eq!(run("seal check", &mut env), 1);
+        assert!(env.execs.is_empty(), "{mark}: {:?}", env.execs);
+        assert!(env.err.contains("no other version"), "{}", env.err);
+    }
 }
 
 /// A slot that passes loses any old mark of its own (F10: a check that could not see
@@ -422,4 +479,333 @@ fn a_new_account_password_replaces_the_disk_password_slot() {
         no_marker.execs.is_empty(),
         "a passphrase disk keeps its own"
     );
+}
+
+/// A tampered wolos-b (its manifest's digest is not the sealed one), plus `extra` files.
+fn tampered_b(extra: &[(&str, &str)]) -> FakeEnv {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let mut files = vec![
+        (
+            PathBuf::from("/proc/cmdline"),
+            "root=x rootflags=subvol=@wolos-b ro".to_string(),
+        ),
+        (
+            PathBuf::from("/efi/wolos-b/verity"),
+            format!("{}\n", d('0')),
+        ),
+        (PathBuf::from("/usr/lib/wolos/verity.manifest"), m.to_text()),
+    ];
+    files.extend(extra.iter().map(|(p, t)| (PathBuf::from(p), t.to_string())));
+    FakeEnv {
+        files,
+        ..Default::default()
+    }
+}
+
+const A_ENTRY: &str = "title WolOS\nversion 1-x\nuki /EFI/wolos/wolos-a.efi\n";
+
+/// QA-SYS-12: the other slot's entry half way through its tries (`+1-2`) is still a slot to
+/// start; the seal check falls back to it instead of staying on the broken one.
+#[test]
+fn accepts_counted_entries() {
+    let mut env = tampered_b(&[
+        ("/efi/loader/entries/wolos-a+1-2.conf", A_ENTRY),
+        ("/efi/EFI/wolos/wolos-a.efi", "MZ"),
+    ]);
+    assert_eq!(run("seal check", &mut env), 1);
+    let ran: Vec<String> = env.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(
+        ran,
+        ["bootctl set-default wolos-a.conf", "systemctl reboot"],
+        "{}",
+        env.err
+    );
+}
+
+/// QA-STORE-51 / BOOT2-2: the fallback goes only to an entry that was found and can start: its
+/// image is on the ESP, its tries are not used up, and this slot did not already fall back once
+/// (its own mark from an earlier boot: the other one did not start, so restarting loops). The
+/// default it sets is the entry's id, which never carries the counter.
+#[test]
+fn set_default_entry_found() {
+    let mut found = tampered_b(&[
+        ("/efi/loader/entries/wolos-a+3.conf", A_ENTRY),
+        ("/efi/EFI/wolos/wolos-a.efi", "MZ"),
+    ]);
+    assert_eq!(run("seal check", &mut found), 1);
+    assert_eq!(
+        found.execs.first().map(|a| a.join(" ")).as_deref(),
+        Some("bootctl set-default wolos-a.conf")
+    );
+    for (why, extra) in [
+        (
+            "ghost entry: its image is gone",
+            vec![("/efi/loader/entries/wolos-a+3.conf", A_ENTRY)],
+        ),
+        (
+            "tries used up",
+            vec![
+                ("/efi/loader/entries/wolos-a+0-3.conf", A_ENTRY),
+                ("/efi/EFI/wolos/wolos-a.efi", "MZ"),
+            ],
+        ),
+        (
+            "entry starts nothing",
+            vec![
+                ("/efi/loader/entries/wolos-a.conf", "title WolOS\n"),
+                ("/efi/EFI/wolos/wolos-a.efi", "MZ"),
+            ],
+        ),
+        (
+            "this slot fell back once already",
+            vec![
+                ("/efi/loader/entries/wolos-a.conf", A_ENTRY),
+                ("/efi/EFI/wolos/wolos-a.efi", "MZ"),
+                ("/var/lib/wolos/verity-failed-wolos-b", "failed\n"),
+            ],
+        ),
+    ] {
+        let mut env = tampered_b(&extra);
+        assert_eq!(run("seal check", &mut env), 1, "{why}");
+        assert!(env.execs.is_empty(), "{why}: {:?}", env.execs);
+        assert!(env.err.contains("no other version"), "{why}: {}", env.err);
+    }
+}
+
+/// A slot root on disk for `seal apply` / `seal check` (WOLOS_SEAL_ROOT): coreutils with a
+/// symlinked `true`, a library, a Python module (no exec bit), locale data, usr/sbin as a link
+/// to bin (Arch) and a polkit rule.
+fn slot_root(name: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!("wol-seal2-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for dir in [
+        "usr/bin",
+        "usr/lib/locale",
+        "usr/lib/wolos",
+        "usr/share/polkit-1/rules.d",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(root.join("usr/bin/coreutils"), b"\x7fELFcore").unwrap();
+    std::fs::set_permissions(
+        root.join("usr/bin/coreutils"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("coreutils", root.join("usr/bin/true")).unwrap();
+    std::fs::write(root.join("usr/lib/os.py"), "import sys\n").unwrap();
+    std::fs::write(root.join("usr/lib/locale/locale-archive"), "data").unwrap();
+    std::os::unix::fs::symlink("bin", root.join("usr/sbin")).unwrap();
+    std::fs::write(
+        root.join("usr/share/polkit-1/rules.d/50-x.rules"),
+        "polkit.addRule()",
+    )
+    .unwrap();
+    root
+}
+
+fn measures(root: &str, paths: &[(&str, char)]) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = paths
+        .iter()
+        .map(|(p, c)| {
+            (
+                format!("fsverity measure {root}/{p}"),
+                format!("sha256:{} {root}/{p}\n", d(*c)),
+            )
+        })
+        .collect();
+    let all: Vec<String> = paths.iter().map(|(p, _)| format!("{root}/{p}")).collect();
+    let out: String = paths
+        .iter()
+        .map(|(p, c)| format!("sha256:{} {root}/{p}\n", d(*c)))
+        .collect();
+    v.push((format!("fsverity measure {}", all.join(" ")), out));
+    v
+}
+
+/// QA-F11 / BOOT2-5: the seal lists every file under usr/bin and usr/lib (a Python module too),
+/// its symlinks with their targets, and names locale data without sealing it; the check then
+/// fails a swapped symlink and a file that was added after the seal.
+#[test]
+fn the_seal_covers_symlinks_and_added_files() {
+    let root = slot_root("cover");
+    let r = root.to_string_lossy().into_owned();
+    let sealed = [
+        ("usr/bin/coreutils", 'a'),
+        ("usr/lib/locale/locale-archive", 'c'),
+        ("usr/lib/os.py", 'b'),
+    ];
+    let mut env = FakeEnv {
+        root: true,
+        captures: measures(&r, &sealed),
+        ..Default::default()
+    };
+    assert_eq!(
+        run(&format!("seal apply {r} /efi/wolos-b/verity"), &mut env),
+        0,
+        "{}",
+        env.err
+    );
+    let text = env
+        .written
+        .iter()
+        .find(|w| w.0.ends_with("usr/lib/wolos/verity.manifest"))
+        .map(|w| w.1.clone())
+        .unwrap();
+    let (m, complete) = Manifest::parse_text(&text);
+    assert!(complete, "{text}");
+    assert_eq!(m.0["usr/lib/os.py"], d('b'), "{text}");
+    assert_eq!(
+        m.0["usr/bin/true"],
+        wol_core::seal::link_field(b"coreutils")
+    );
+    // D2: locale data is sealed like the rest.
+    assert_eq!(m.0["usr/lib/locale/locale-archive"], d('c'));
+    // D1: a directory that is a link is one entry; policy files carry a content hash.
+    assert_eq!(m.0["usr/sbin"], wol_core::seal::link_field(b"bin"));
+    assert!(!m.0.contains_key("usr/sbin/coreutils"), "{text}");
+    assert_eq!(
+        m.0["usr/share/polkit-1/rules.d/50-x.rules"],
+        wol_core::seal::hash_field(b"polkit.addRule()")
+    );
+    let digest = env
+        .written
+        .iter()
+        .find(|w| w.0 == std::path::Path::new("/efi/wolos-b/verity"))
+        .map(|w| w.1.trim().to_owned())
+        .unwrap();
+    std::fs::write(root.join("usr/lib/wolos/verity.manifest"), &text).unwrap();
+    let check = |root: &PathBuf| {
+        let mut env = FakeEnv {
+            vars: vec![("WOLOS_SEAL_ROOT".into(), r.clone())],
+            files: vec![
+                (
+                    PathBuf::from("/proc/cmdline"),
+                    format!("rootflags=subvol=@wolos-b wolos.seal={digest}"),
+                ),
+                (
+                    PathBuf::from(format!("{r}/usr/lib/wolos/verity.manifest")),
+                    text.clone(),
+                ),
+            ],
+            captures: measures(&root.to_string_lossy(), &sealed),
+            ..Default::default()
+        };
+        (run("seal check", &mut env), env)
+    };
+    let (code, env) = check(&root);
+    assert_eq!(code, 0, "untouched slot passes: {}", env.err);
+    // An added file.
+    std::fs::write(root.join("usr/lib/qa-tamper"), "x").unwrap();
+    let (code, env) = check(&root);
+    assert_eq!(code, 1, "an added file fails");
+    assert!(env.err.contains("1 protected"), "{}", env.err);
+    std::fs::remove_file(root.join("usr/lib/qa-tamper")).unwrap();
+    // A polkit rule rewritten (D1).
+    let rule = root.join("usr/share/polkit-1/rules.d/50-x.rules");
+    std::fs::write(&rule, "polkit.addRule(yes)").unwrap();
+    let (code, _) = check(&root);
+    assert_eq!(code, 1, "a rewritten polkit rule fails");
+    std::fs::write(&rule, "polkit.addRule()").unwrap();
+    let (code, env) = check(&root);
+    assert_eq!(code, 0, "restored: {}", env.err);
+    // `true` re-pointed at a script.
+    std::fs::remove_file(root.join("usr/bin/true")).unwrap();
+    std::os::unix::fs::symlink("/tmp/evil", root.join("usr/bin/true")).unwrap();
+    let (code, _) = check(&root);
+    assert_eq!(code, 1, "a re-pointed link fails");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// QA-LIVE3-2: run with layers merged over /usr (a check by hand, or any order), the slot is
+/// read through a plain bind of `/`, never through the merge: a layer is not a changed file.
+#[test]
+fn layer_shadowed_files_not_changed() {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let view = "/run/wolos/seal-root";
+    let mut env = FakeEnv {
+        root: true,
+        files: vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                format!("rootflags=subvol=@wolos-a wolos.seal={}", m.root_digest()),
+            ),
+            (
+                PathBuf::from(format!("{view}/usr/lib/wolos/verity.manifest")),
+                m.to_text(),
+            ),
+        ],
+        captures: vec![
+            ("findmnt -n -o FSTYPE /usr".into(), "overlay\n".into()),
+            (
+                format!("fsverity measure {view}/usr/bin/a"),
+                format!("sha256:{} {view}/usr/bin/a\n", d('a')),
+            ),
+        ],
+        ..Default::default()
+    };
+    assert_eq!(run("seal check", &mut env), 0, "{}", env.err);
+    let ran: Vec<String> = env.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(
+        ran,
+        [
+            "mkdir -p /run/wolos/seal-root",
+            "mount --bind / /run/wolos/seal-root",
+            "umount /run/wolos/seal-root"
+        ]
+    );
+}
+
+/// D7: layers merged over /usr and the bind of `/` fails: no verdict through the merge, no
+/// mark, no restart into the other slot.
+#[test]
+fn a_failed_bind_with_layers_merged_stays() {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let mut env = FakeEnv {
+        root: true,
+        files: vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                format!("rootflags=subvol=@wolos-b wolos.seal={}", m.root_digest()),
+            ),
+            (PathBuf::from("/usr/lib/wolos/verity.manifest"), m.to_text()),
+            (
+                PathBuf::from("/efi/loader/entries/wolos-a.conf"),
+                A_ENTRY.into(),
+            ),
+            (PathBuf::from("/efi/EFI/wolos/wolos-a.efi"), "MZ".into()),
+        ],
+        captures: vec![("findmnt -n -o FSTYPE /usr".into(), "overlay\n".into())],
+        // mkdir ok, mount --bind fails.
+        exec_codes: vec![0, 1],
+        ..Default::default()
+    };
+    assert_eq!(run("seal check", &mut env), 1);
+    let ran: Vec<String> = env.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(
+        ran,
+        [
+            "mkdir -p /run/wolos/seal-root",
+            "mount --bind / /run/wolos/seal-root"
+        ]
+    );
+    assert!(env.written.is_empty(), "{:?}", env.written);
+    assert!(env.err.contains("not checked"), "{}", env.err);
+}
+
+/// D3: a sealed slot whose manifest was deleted fails its check (the unit no longer skips the
+/// check when the file is gone).
+#[test]
+fn a_deleted_manifest_fails_the_check() {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let mut env = FakeEnv {
+        files: vec![(
+            PathBuf::from("/proc/cmdline"),
+            format!("rootflags=subvol=@wolos-b wolos.seal={}", m.root_digest()),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(run("seal check", &mut env), 1);
+    assert!(env.err.contains("protected file list"), "{}", env.err);
 }

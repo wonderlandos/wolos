@@ -4,11 +4,11 @@
 use crate::cli::Invocation;
 use crate::run::{Env, fail};
 use shared::errors::ErrorCode;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use wol_core::{encrypt, seal, update};
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+/// Regular files and symlinks under `dir`, sorted; `true` marks a symlink (never followed).
+fn walk(dir: &Path, out: &mut Vec<(PathBuf, bool)>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
@@ -16,11 +16,49 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     v.sort_by_key(|e| e.file_name());
     for e in v {
         match e.file_type() {
+            Ok(t) if t.is_symlink() => out.push((e.path(), true)),
             Ok(t) if t.is_dir() => walk(&e.path(), out),
-            Ok(t) if t.is_file() => out.push(e.path()),
+            Ok(t) if t.is_file() => out.push((e.path(), false)),
             _ => {}
         }
     }
+}
+
+/// [`walk`] of [`seal::sealed_dirs`] under `root`, as paths relative to it. A directory that is
+/// itself a symlink (usr/sbin on Arch) is one entry, never followed; a missing one is skipped.
+fn slot_files(root: &Path) -> Vec<(String, PathBuf, bool)> {
+    let mut files = Vec::new();
+    for d in seal::sealed_dirs() {
+        let p = root.join(d);
+        match std::fs::symlink_metadata(&p) {
+            Ok(m) if m.file_type().is_symlink() => files.push((p, true)),
+            Ok(m) if m.is_dir() => walk(&p, &mut files),
+            _ => {}
+        }
+    }
+    files
+        .into_iter()
+        .filter_map(|(f, link)| {
+            let rel = f.strip_prefix(root).ok()?.to_string_lossy().into_owned();
+            Some((rel, f, link))
+        })
+        .collect()
+}
+
+/// [`seal::hash_field`] of a regular file (never through a symlink).
+fn hash_of(path: &Path) -> Option<String> {
+    let m = std::fs::symlink_metadata(path).ok()?;
+    m.is_file()
+        .then(|| std::fs::read(path).ok())
+        .flatten()
+        .map(|b| seal::hash_field(&b))
+}
+
+fn link_of(path: &Path) -> Option<String> {
+    use std::os::unix::ffi::OsStrExt;
+    std::fs::read_link(path)
+        .ok()
+        .map(|t| seal::link_field(t.as_os_str().as_bytes()))
 }
 
 fn measure(env: &mut dyn Env, path: &Path) -> Option<String> {
@@ -29,8 +67,36 @@ fn measure(env: &mut dyn Env, path: &Path) -> Option<String> {
     seal::parse_measure(&env.capture(&a)?)
 }
 
-/// `wol seal apply ROOT DIGESTFILE`: fs-verity on the slot's executables and libraries, the
-/// manifest inside the slot, its root digest at DIGESTFILE, then the subvolume read-only.
+/// fs-verity digests of `paths` (absolute), 512 to a process; a chunk whose run fails (a file
+/// with no verity stops it) is asked one file at a time.
+fn measure_all(env: &mut dyn Env, paths: &[PathBuf]) -> std::collections::HashMap<PathBuf, String> {
+    let mut found = std::collections::HashMap::new();
+    for chunk in paths.chunks(512) {
+        let names: Vec<String> = chunk
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let argv = seal::measure_many_argv(&names);
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        if let Some(out) = env.capture(&a) {
+            for (p, d) in seal::parse_measures(&out) {
+                found.insert(PathBuf::from(p), d);
+            }
+        } else {
+            for p in chunk {
+                if let Some(d) = measure(env, p) {
+                    found.insert(p.clone(), d);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// `wol seal apply ROOT DIGESTFILE`: fs-verity on every file under the slot's
+/// [`seal::VERITY_DIRS`], a content hash of every file under [`seal::HASHED_DIRS`], symlinks with
+/// their targets, the complete manifest
+/// inside the slot (QA-F11), its root digest at DIGESTFILE, then the subvolume read-only.
 pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let (Some(root), Some(digest)) = (inv.get("root"), inv.get("digestfile")) else {
         return fail(
@@ -43,35 +109,40 @@ pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
         return fail(env, ErrorCode::Denied, "seal needs root");
     }
     let root = Path::new(root);
-    let mut files = Vec::new();
-    for d in seal::DIRS {
-        walk(&root.join(d), &mut files);
-    }
     let mut man = seal::Manifest::default();
-    for f in files {
-        let Ok(rel) = f
-            .strip_prefix(root)
-            .map(|r| r.to_string_lossy().into_owned())
-        else {
-            continue;
-        };
-        let mut head = [0u8; 4];
-        let n = std::fs::File::open(&f)
-            .and_then(|mut h| std::io::Read::read(&mut h, &mut head))
-            .unwrap_or(0);
-        let mode = std::os::unix::fs::PermissionsExt::mode(
-            &std::fs::metadata(&f)
-                .map(|m| m.permissions())
-                .unwrap_or_else(|_| std::fs::Permissions::from_mode(0o0)),
-        );
-        if !seal::wants_verity(&rel, mode, &head[..n]) {
+    let mut sealed: Vec<(String, PathBuf)> = Vec::new();
+    for (rel, f, link) in slot_files(root) {
+        match (seal::covers(&rel), link) {
+            (seal::Cover::Outside, _) => {}
+            (_, true) => {
+                let Some(l) = link_of(&f) else {
+                    return fail(
+                        env,
+                        ErrorCode::Failed,
+                        &format!("could not read the link {rel}"),
+                    );
+                };
+                man.0.insert(rel, l);
+            }
+            (seal::Cover::Hashed, false) => {
+                let Some(h) = hash_of(&f) else {
+                    return fail(env, ErrorCode::Failed, &format!("could not read {rel}"));
+                };
+                man.0.insert(rel, h);
+            }
+            (seal::Cover::Verity, false) => sealed.push((rel, f)),
+        }
+    }
+    let paths: Vec<PathBuf> = sealed.iter().map(|(_, f)| f.clone()).collect();
+    let mut digests = measure_all(env, &paths);
+    for (rel, f) in &sealed {
+        if digests.contains_key(f) {
             continue;
         }
-        if measure(env, &f).is_none()
-            && env
-                .exec(&seal::enable_argv(&f.to_string_lossy()))
-                .unwrap_or(1)
-                != 0
+        if env
+            .exec(&seal::enable_argv(&f.to_string_lossy()))
+            .unwrap_or(1)
+            != 0
         {
             return fail(
                 env,
@@ -79,19 +150,27 @@ pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
                 &format!("fs-verity could not be enabled on {rel}"),
             );
         }
-        let Some(d) = measure(env, &f) else {
+        let Some(d) = measure(env, f) else {
             return fail(
                 env,
                 ErrorCode::Failed,
                 &format!("no fs-verity digest for {rel}"),
             );
         };
-        man.0.insert(rel, d);
+        digests.insert(f.clone(), d);
+    }
+    for (rel, f) in sealed {
+        if let Some(d) = digests.remove(&f) {
+            man.0.insert(rel, d);
+        }
     }
     let mpath = root.join(seal::MANIFEST);
-    if env.write_file(&mpath, &man.to_text()).is_err()
+    if env.write_file(&mpath, &man.to_complete_text()).is_err()
         || env
-            .write_file(Path::new(digest), &format!("{}\n", man.root_digest()))
+            .write_file(
+                Path::new(digest),
+                &format!("{}\n", man.complete_root_digest()),
+            )
             .is_err()
     {
         return fail(env, ErrorCode::Failed, "could not write the seal records");
@@ -111,6 +190,77 @@ pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
     0
 }
 
+/// The mark `wol seal check` leaves on a slot whose files did not match their seal.
+pub(crate) const VERITY_MARK: &str = "verity-failed";
+/// The mark `wol boot check` leaves on a slot older than the floor.
+pub(crate) const EPOCH_MARK: &str = "epoch-failed";
+
+/// `/var/lib/wolos/<kind>-<slot>`: that slot failed an early-boot check of that kind.
+pub(crate) fn failed_mark(kind: &str, slot: &str) -> PathBuf {
+    PathBuf::from(format!("/var/lib/wolos/{kind}-{slot}"))
+}
+
+/// The other slot's menu entry the early-boot checks (`wol seal check`, `wol boot check`) may
+/// restart into: found under any counter state with tries left (QA-SYS-12), its image on the ESP
+/// and not empty (a ghost entry restarts into this slot again: BOOT2-2, QA-STORE-51), and that
+/// slot failed neither check itself (two failing slots would restart into each other for ever,
+/// audit core-install #4). None: stay.
+pub(crate) fn fallback_entry(env: &mut dyn Env, other: &str) -> Option<String> {
+    if other.is_empty()
+        || [VERITY_MARK, EPOCH_MARK]
+            .iter()
+            .any(|k| env.read_file(&failed_mark(k, other)).is_some())
+    {
+        return None;
+    }
+    let dir = format!("{}/loader/entries", update::ESP);
+    let listed: Vec<String> = env
+        .list_dir(Path::new(&dir))
+        .iter()
+        .filter_map(|p| {
+            Path::new(p)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+        })
+        .collect();
+    let names: Vec<&str> = listed.iter().map(String::as_str).collect();
+    let entry = seal::entry_of(other, &names)?.to_owned();
+    let text = env.read_file(&Path::new(&dir).join(&entry))?;
+    let image = format!("{}{}", update::ESP, seal::entry_image(&text)?);
+    let parent = Path::new(&image).parent()?.to_path_buf();
+    if !env.list_dir(&parent).contains(&image) {
+        return None;
+    }
+    let size = env.capture(&["stat", "-c", "%s", &image]);
+    if size.as_deref().map(str::trim) == Some("0") || image_damaged(env, other) {
+        return None;
+    }
+    Some(entry)
+}
+
+/// The other slot's image is not the one esp-sync wrote: its digest (`<slot>/image.sha256` on
+/// the ESP) does not match, or the image cannot be read. No digest kept (an image from before):
+/// not known to be damaged.
+pub(crate) fn image_damaged(env: &mut dyn Env, slot: &str) -> bool {
+    let Some(want) = env
+        .read_file(Path::new(&format!("{}/{slot}/image.sha256", update::ESP)))
+        .map(|t| t.trim().to_owned())
+        .filter(|t| !t.is_empty())
+    else {
+        return false;
+    };
+    let image = format!("{}/EFI/wolos/{slot}.efi", update::ESP);
+    let got = env
+        .capture(&["sha256sum", &image])
+        .and_then(|o| o.split_whitespace().next().map(str::to_owned));
+    got.as_deref() != Some(want.as_str())
+}
+
+/// [`fallback_entry`] found one.
+pub(crate) fn may_fall_back_to(env: &mut dyn Env, other: &str) -> bool {
+    fallback_entry(env, other).is_some()
+}
+
 /// `wol seal check` (early boot): compare the running slot with what was sealed; on a mismatch
 /// boot the other slot and leave a message for the person.
 pub fn check(env: &mut dyn Env) -> i32 {
@@ -127,48 +277,100 @@ pub fn check(env: &mut dyn Env) -> i32 {
     else {
         return 0; // never sealed (a system from before the seal): nothing to compare
     };
-    let man = env
-        .read_file(Path::new(&format!("/{}", seal::MANIFEST)))
-        .map(|t| seal::Manifest::parse(&t))
-        .unwrap_or_default();
-    let mut cache = std::collections::HashMap::new();
-    let keys: Vec<&String> = man.0.keys().collect();
-    for chunk in keys.chunks(512) {
-        let paths: Vec<String> = chunk.iter().map(|p| format!("/{p}")).collect();
-        let argv = seal::measure_many_argv(&paths);
-        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
-        if let Some(out) = env.capture(&a) {
-            for (p, d) in seal::parse_measures(&out) {
-                cache.insert(p.trim_start_matches('/').to_owned(), Some(d));
+    // Tests point this at a slot on disk; at boot it is `/`, before any layer merges over /usr
+    // (wolos-verity-check.service runs before systemd-sysext). Run later, with the layers merged,
+    // the slot is looked at through a plain bind of `/`, which has no merge over its /usr:
+    // through the merge every sealed file read as changed (QA-LIVE3-2).
+    // The override is for tests only: a release build always checks the real slot (D8).
+    let test_root = if cfg!(debug_assertions) {
+        env.var("WOLOS_SEAL_ROOT")
+    } else {
+        None
+    };
+    let mut bound = false;
+    let root = match test_root {
+        Some(r) => PathBuf::from(r),
+        None if layers_merged(env) => {
+            if !bind_slot(env) {
+                // Through the merge every sealed file reads as changed: no verdict, no mark, no
+                // restart into the other slot (D7).
+                env.err(
+                    "wol seal check: the layers are merged over /usr and the slot could not be \
+                     looked at under them; not checked\n",
+                );
+                return 1;
             }
-        } else {
-            // A file with no seal stops the whole run: ask for each one.
-            for p in chunk {
-                cache.insert((*p).clone(), measure(env, &Path::new("/").join(p)));
-            }
+            bound = true;
+            PathBuf::from(SLOT_VIEW)
         }
+        None => PathBuf::from("/"),
+    };
+    let code = check_at(env, slot, &expected, &root);
+    if bound {
+        let _ = env.exec(&["umount".to_owned(), SLOT_VIEW.to_owned()]);
     }
-    let v = seal::verify(&man, &expected, &|p| cache.get(p).cloned().flatten());
-    let failed_mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/verity-failed-{s}"));
+    code
+}
+
+/// Where `wol seal check` binds `/` (without the layers merged over /usr) when run late.
+const SLOT_VIEW: &str = "/run/wolos/seal-root";
+
+/// systemd-sysext has merged layers over /usr (an overlay mounted there).
+fn layers_merged(env: &mut dyn Env) -> bool {
+    env.capture(&["findmnt", "-n", "-o", "FSTYPE", "/usr"])
+        .is_some_and(|t| t.trim() == "overlay")
+}
+
+/// A non-recursive bind of `/` at [`SLOT_VIEW`]: the slot's own /usr, nothing mounted over it.
+fn bind_slot(env: &mut dyn Env) -> bool {
+    let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    env.exec(&s(&["mkdir", "-p", SLOT_VIEW])).unwrap_or(1) == 0
+        && env
+            .exec(&s(&["mount", "--bind", "/", SLOT_VIEW]))
+            .unwrap_or(1)
+            == 0
+}
+
+/// The seal check of the slot seen at `root` (see [`check`]).
+fn check_at(env: &mut dyn Env, slot: &str, expected: &str, root: &Path) -> i32 {
+    let root = root.to_path_buf();
+    let text = env
+        .read_file(&root.join(seal::MANIFEST))
+        .unwrap_or_default();
+    let (man, complete) = seal::Manifest::parse_text(&text);
+    let paths: Vec<PathBuf> = man.verity_paths().iter().map(|p| root.join(p)).collect();
+    let digests = measure_all(env, &paths);
+    let measured = |p: &str| digests.get(&root.join(p)).cloned();
+    let link = |p: &str| link_of(&root.join(p));
+    let hashed = |p: &str| hash_of(&root.join(p));
+    let present: Vec<String> = if complete {
+        slot_files(&root)
+            .into_iter()
+            .map(|(rel, _, _)| rel)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let seen = seal::Seen {
+        measured: &measured,
+        link: &link,
+        hashed: &hashed,
+        present: &present,
+    };
+    let v = seal::verify_text(&text, expected, &seen);
     if v == seal::Verdict::Ok {
         // A slot that passes has not failed: an old mark (a check that could not see every file)
         // would keep the other slot from ever falling back to this one.
-        let _ = env.remove_file(&failed_mark(slot));
+        let _ = env.remove_file(&failed_mark(VERITY_MARK, slot));
         return 0;
     }
+    // This slot failed before and is running again: the fallback did not take (the other one
+    // did not start, or the person picked this one). Restarting again would loop (QA-STORE-51).
+    let again = env.read_file(&failed_mark(VERITY_MARK, slot)).is_some();
     let other = update::other_slot(slot).unwrap_or("");
-    let entry = |suffix: &str| {
-        Path::new(&format!(
-            "{}/loader/entries/{other}{suffix}.conf",
-            update::ESP
-        ))
-        .exists()
-    };
-    let other_ok = !other.is_empty()
-        && !failed_mark(other).exists()
-        && (entry("") || entry(&format!("+{}", update::TRIES)));
+    let other_ok = !again && may_fall_back_to(env, other);
     let fb = seal::fallback(slot, other_ok);
-    let _ = env.write_file(&failed_mark(slot), "failed\n");
+    let _ = env.write_file(&failed_mark(VERITY_MARK, slot), "failed\n");
     let msg = seal::notice(slot, &v, matches!(fb, seal::Fallback::Boot { .. }));
     let _ = env.write_file(Path::new(seal::NOTICE), &msg);
     env.err(&msg);

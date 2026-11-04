@@ -7,8 +7,20 @@ D=/run/wolos-installer
 export XDG_RUNTIME_DIR=$D HOME=$D XDG_SESSION_TYPE=wayland LIBSEAT_BACKEND=seatd
 export GSK_RENDERER=${GSK_RENDERER:-cairo}
 install -d -o live -g live -m 0700 "$D" "$D/.cache"
+# The console the compositor leaves when it exits (QA-SHEET-2: the boot log showed): black, no cursor,
+# later kernel text black on black. The bytes and the VT of wol-login's BLANK_CONSOLE / CONSOLE
+# (crates/controller/src/login.rs), written in text mode, before the compositor takes the VT.
+tty=/dev/tty1
+printf '\033[30;40m\033[?25l\033[H\033[2J' > "$tty" 2>/dev/null || true
 setpriv --reuid=live --regid=live --init-groups Hyprland -c /usr/share/wolos/hypr/installer.lua
 if [ -e "$D/try" ]; then
+  # QA-FDAY-1: between this compositor and the live desktop's first frame the screen was black for
+  # seconds with no word. One line in the middle says what happens until wol-login blanks the console
+  # for the desktop's compositor (ASCII: the console font may lack the ellipsis).
+  msg='Starting the desktop...'
+  size=$(stty -F "$tty" size 2>/dev/null) || size='24 80'
+  rows=${size% *} cols=${size#* }
+  printf '\033[2J\033[0;37;40m\033[%d;%dH%s\033[30;40m' $((rows / 2)) $(((cols - ${#msg}) / 2 + 1)) "$msg" > "$tty" 2>/dev/null || true
   mkdir -p /run/wolos && : > /run/wolos/try
   systemctl start --no-block wold.service
 fi

@@ -79,14 +79,20 @@ fn live_db(env: &dyn Env) -> String {
     )
 }
 
+/// The booted slot's folded list: its sealed /usr copy, else (a slot from before QA-STORE-44)
+/// the one in its /etc.
+fn booted_folded(env: &dyn Env) -> String {
+    let usr = env.read_file(&Path::new("/").join(layers::FOLDED));
+    let etc = env.read_file(&Path::new("/").join(layers::ETC_FOLDED));
+    layers::folded_list(usr.as_deref(), etc.as_deref()).to_owned()
+}
+
 fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
     let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
     let counter = env
         .read_file(Path::new(layers::COUNTER))
         .unwrap_or_default();
-    let folded = env
-        .read_file(&Path::new("/").join(layers::FOLDED))
-        .unwrap_or_default();
+    let folded = booted_folded(env);
     // R2C-1: a number is never handed out twice, even after `wol layers clear` removed it.
     let n = layers::next_index(&ls, &counter, &folded);
     let before = capture(env, &[up::PACMAN.to_owned(), "-Q".into()]).unwrap_or_default();
@@ -193,7 +199,7 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
     );
     let folded_path = root.join(layers::FOLDED);
     let mut folded: Vec<String> = Vec::new();
-    for f in [layers::FOLDED, layers::LEGACY_FOLDED] {
+    for f in [layers::FOLDED, layers::ETC_FOLDED, layers::LEGACY_FOLDED] {
         for n in std::fs::read_to_string(root.join(f))
             .unwrap_or_default()
             .lines()
@@ -261,39 +267,28 @@ pub fn fold(env: &mut dyn Env, inv: &Invocation) -> i32 {
 
 /// `wol layers clear`: on the slot that just booted, remove the live layers it already holds
 /// (its folded list), so they stop merging over its newer `/usr` (CORE-1). Nothing to clear: 0.
+/// Writes no file: the list is the slot's, sealed in its /usr (QA-STORE-44).
 pub fn clear(env: &mut dyn Env) -> i32 {
     if !env.is_root() {
         return fail(env, ErrorCode::Denied, "clear needs root");
     }
-    let folded = env
-        .read_file(&Path::new("/").join(layers::FOLDED))
-        .unwrap_or_default();
+    let folded = booted_folded(env);
     let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
     let steps = layers::clear_steps(&layers::to_clear(&folded, &ls));
-    for a in &steps {
+    let refresh = steps.iter().position(|s| *s == layers::refresh_step());
+    for (i, a) in steps.iter().enumerate() {
         if env.exec(a).unwrap_or(127) != 0 {
-            // The last step merges what is left: never leave the system unmerged.
-            if let Some(merge) = steps.last().filter(|m| *m != a) {
-                let _ = env.exec(merge);
+            // Stopped before the refresh: merge what is in the extensions directory now, so the
+            // merge matches it. At or after it: nothing more (the old merge may still use what
+            // moved aside).
+            if let Some(r) = refresh.filter(|r| i < *r) {
+                let _ = env.exec(&steps[r]);
             }
             return fail(env, ErrorCode::Failed, "could not clear the folded layers");
         }
     }
-    // R2C-1: the list is consumed once applied, so a later layer is never matched by it.
-    if !folded.trim().is_empty()
-        && env
-            .write_file(
-                &Path::new("/").join(layers::FOLDED),
-                layers::folded_after_clear(),
-            )
-            .is_err()
-    {
-        return fail(
-            env,
-            ErrorCode::Failed,
-            "could not record the cleared layers",
-        );
-    }
+    // The list stays as sealed (QA-STORE-44): a cleared name is gone from the extensions
+    // directory and never handed out again (R2C-1, `layers::next_index`), so it matches nothing.
     0
 }
 

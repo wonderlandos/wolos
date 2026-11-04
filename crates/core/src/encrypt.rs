@@ -252,13 +252,18 @@ pub fn open_argv(part: &str, key: &str) -> Vec<String> {
     ])
 }
 
+/// The unlock asks again after a wrong passphrase, for as long as it takes: systemd-cryptsetup's
+/// default (three tries) fails the unit and leaves the boot in Emergency Mode with a locked
+/// root, where nothing typed reaches the disk any more (QA-LIVE4-2).
+pub const TRIES: &str = "tries=0";
+
 /// Kernel command line words for the initramfs (`sd-encrypt`). `discard` either way: SSD TRIM
-/// reaches the disk through the encrypted volume, whatever unlocks it.
+/// reaches the disk through the encrypted volume, whatever unlocks it; [`TRIES`] either way.
 pub fn cmdline_words(luks_uuid: &str, unlock: Unlock) -> String {
     let opts = if unlock == Unlock::Tpm2 {
-        "tpm2-device=auto,discard"
+        "tpm2-device=auto,discard,tries=0"
     } else {
-        "discard"
+        "discard,tries=0"
     };
     format!(
         "rd.luks.name={luks_uuid}={MAPPER} rd.luks.options={luks_uuid}={opts} root=/dev/mapper/{MAPPER}"
@@ -276,10 +281,18 @@ pub fn hooks(line: &str) -> String {
 /// Kernel command line for the other slot's boot entry: the running system's root words
 /// (root=, rd.luks.*) kept, the slot swapped, read-only (sealed).
 pub fn slot_options(running_cmdline: Option<&str>, slot: &str) -> String {
-    let keep: Vec<&str> = running_cmdline
+    // A system installed before [`TRIES`] gets it with its next slot.
+    let keep: Vec<String> = running_cmdline
         .unwrap_or("")
         .split_whitespace()
         .filter(|w| w.starts_with("root=") || w.starts_with("rd.luks."))
+        .map(|w| {
+            if w.starts_with("rd.luks.options=") && !w.contains("tries=") {
+                format!("{w},{TRIES}")
+            } else {
+                w.to_owned()
+            }
+        })
         .collect();
     // The label repart.d/20-root.conf writes; by-label lookups are case-sensitive.
     let root = if keep.iter().any(|w| w.starts_with("root=")) {
@@ -482,11 +495,34 @@ mod tests {
         assert!(parse_cache(b"").is_empty());
     }
 
+    /// QA-LIVE4-2 (live-4 F2): a wrong passphrase asks again, without limit, instead of failing
+    /// the unlock after systemd-cryptsetup's default three tries and dropping the boot into
+    /// Emergency Mode with a locked root. Slots built from a running system keep the rule, and
+    /// a system installed before it gets it at its next update.
+    #[test]
+    fn crypttab_options_have_tries() {
+        for u in [Unlock::Tpm2, Unlock::Passphrase] {
+            let w = cmdline_words("U-1", u);
+            let opts = w
+                .split_whitespace()
+                .find_map(|w| w.strip_prefix("rd.luks.options=U-1="))
+                .unwrap();
+            assert!(opts.split(',').any(|o| o == "tries=0"), "{u:?}: {w}");
+        }
+        let old =
+            "root=/dev/mapper/wolosroot rd.luks.name=U=wolosroot rd.luks.options=U=discard rw";
+        let s = slot_options(Some(old), "wolos-b");
+        assert!(s.contains("rd.luks.options=U=discard,tries=0"), "{s}");
+        let new = "rd.luks.options=U=tpm2-device=auto,discard,tries=0 root=/dev/mapper/wolosroot";
+        let s = slot_options(Some(new), "wolos-b");
+        assert_eq!(s.matches("tries=").count(), 1, "{s}");
+    }
+
     #[test]
     fn initramfs_and_boot_entry_words() {
         assert_eq!(
             cmdline_words("U-1", Unlock::Tpm2),
-            "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=tpm2-device=auto,discard root=/dev/mapper/wolosroot"
+            "rd.luks.name=U-1=wolosroot rd.luks.options=U-1=tpm2-device=auto,discard,tries=0 root=/dev/mapper/wolosroot"
         );
         assert!(cmdline_words("U-1", Unlock::Passphrase).contains("=discard"));
         // TRIM reaches an SSD under a TPM install too (audit2 B15).
@@ -494,7 +530,8 @@ mod tests {
             assert!(
                 cmdline_words("U-1", u)
                     .split_whitespace()
-                    .any(|w| w.starts_with("rd.luks.options=") && w.ends_with("discard")),
+                    .any(|w| w.starts_with("rd.luks.options=")
+                        && w.split(['=', ',']).any(|o| o == "discard")),
                 "{u:?}"
             );
         }

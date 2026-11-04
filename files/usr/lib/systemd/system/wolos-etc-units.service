@@ -1,0 +1,32 @@
+[Unit]
+Description=WolOS: services turned on after the install start at this boot too
+# A sealed slot's /etc is an overlay (install-run's fstab: upper in the shared @var). systemd reads
+# its unit files before local-fs mounts it, so whatever was enabled, disabled or overridden since
+# the install (Settings: Remote Login, AirPlay, the firewall, modules) was not part of this boot's
+# plan: enabled yet never started (QA-SET-R2-01, QA-LIVE3-4). Once the overlay is up, systemd reads
+# the units again and the boot's target takes in what that adds. The hostname it set from the
+# lower /etc is the person's again, too.
+DefaultDependencies=no
+After=etc.mount local-fs.target
+Before=sysinit.target
+ConditionPathIsMountPoint=/etc
+# Nothing about units or the hostname changed since the install: nothing to do. (Either one
+# triggers: the `|` conditions are OR-ed, the mount point above must hold as well.)
+ConditionDirectoryNotEmpty=|/var/lib/wolos/etc/upper/systemd
+ConditionPathExists=|/var/lib/wolos/etc/upper/hostname
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/etc-units
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): talks to systemd over AF_UNIX and writes the hostname (/proc/sys/kernel); before sysinit (no PrivateTmp). The reload is systemd's own, so a read-only /usr and /etc here change nothing for it.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=full
+
+[Install]
+WantedBy=sysinit.target

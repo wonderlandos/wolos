@@ -1,7 +1,9 @@
 [Unit]
-Description=WolOS boot is good: the login window supervisor is up (boot counting)
+Description=WolOS boot is good: the slot passed its checks and the login window is up (boot counting)
 Requires=wold.service
 After=wold.service
+# The early checks mark a slot that failed them; boot-ok reads the mark (QA-LIVE3-36).
+After=wolos-verity-check.service
 # The key screen's unit may be rewriting the same boot entries bless does (audit3 R2B-8).
 After=wolos-mok-enroll.service
 Before=boot-complete.target
@@ -11,6 +13,8 @@ DefaultDependencies=no
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/lib/wolos/boot-ok
+# Up to 90 s for the login window, a minute for the key screen's unit (boot-ok).
+TimeoutStartSec=4min
 # Hardening (audit A7/B5, crates/controller/tests/units.rs): systemctl over AF_UNIX and wol boot bless on the ESP: no network, no namespaces beyond /home (DefaultDependencies=no: no PrivateTmp).
 NoNewPrivileges=yes
 LockPersonality=yes
@@ -27,3 +31,6 @@ RestrictAddressFamilies=AF_UNIX
 
 [Install]
 RequiredBy=boot-complete.target
+# A blessed entry pulls no boot-complete.target: the bless (other slot's titles, a broken default
+# replaced, QA-LIVE4-4) and the layer clear run on every good boot, not only counted ones.
+WantedBy=multi-user.target

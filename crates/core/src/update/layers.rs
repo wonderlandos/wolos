@@ -8,7 +8,8 @@
 //! Removing a package that is in the sealed base leaves overlay whiteouts in the layer.
 //! The next system update folds the layers into the new slot ([`super::build`]) and names them
 //! in the slot's [`FOLDED`]. The live layers stay while the old slot runs; when the new slot
-//! boots, `wol layers clear` ([`to_clear`]) removes the ones it already holds.
+//! boots, `wol layers clear` ([`to_clear`]) removes the ones it already holds; the layers that
+//! stay are unmerged only for systemd-sysext's own swap ([`clear_steps`]).
 //! Pure: argv lists, texts and decisions. `wol pkg` and `wol layers fold|clear` run them.
 use super::{PACMAN, Step};
 
@@ -22,11 +23,23 @@ pub const CHROOT: &str = "/run/wolos/layer-root";
 /// What a layer holds besides `usr/`: the packages it added and removed.
 pub const RECORD: &str = "wolos-layer.json";
 /// Layers already copied into a slot (so a later fold does not undo that slot's own upgrades),
-/// relative to the slot's root. In the slot's own `/etc`, not under `/var`: `/var` is the shared
-/// `@var` at boot, and the booted slot reads this list to clear the layers it already holds.
-pub const FOLDED: &str = "etc/wolos/folded-layers";
-/// Where [`FOLDED`] was kept before (inside the slot's `var` mount point, hidden at boot).
+/// relative to the slot's root. In the slot's own sealed `/usr` (QA-STORE-44): not under `/var`
+/// (the shared `@var` at boot) and not in `/etc`, which is the shared overlay at boot, so a
+/// copy written there once lands in its upper directory and shadows every later slot's list.
+/// Written by the fold before the seal, read-only afterwards: `wol layers clear` never writes
+/// it (layer names are never handed out twice, [`next_index`], so a listed name that is gone
+/// from [`DIR`] matches nothing again).
+pub const FOLDED: &str = "usr/lib/wolos/folded-layers";
+/// Where [`FOLDED`] was kept by slots folded before QA-STORE-44 (the slot's `/etc`).
+pub const ETC_FOLDED: &str = "etc/wolos/folded-layers";
+/// Where [`FOLDED`] was kept before that (inside the slot's `var` mount point, hidden at boot).
 pub const LEGACY_FOLDED: &str = "var/lib/wolos/folded";
+
+/// The booted slot's folded list: [`FOLDED`] when the slot has one (`usr`), else the list a
+/// slot from before QA-STORE-44 kept in `/etc` (`etc`, read through the overlay).
+pub fn folded_list<'a>(usr: Option<&'a str>, etc: Option<&'a str>) -> &'a str {
+    usr.or(etc).unwrap_or("")
+}
 /// The highest layer number ever handed out (decimal text). Layer names are never reused: a
 /// cleared layer's name may still be in a slot's [`FOLDED`] list (R2C-1).
 pub const COUNTER: &str = "/var/lib/wolos/layer-counter";
@@ -79,35 +92,53 @@ pub fn to_clear(folded: &str, ls: &str) -> Vec<String> {
         .collect()
 }
 
-/// Steps that remove the layers [`to_clear`] found: unmerge first (an overlay lower directory
-/// must not change under a live mount), remove, then merge what is left. Empty when there is
-/// nothing to remove. The last step is always the merge, so a caller that stops on a failed
-/// removal still runs it.
-pub fn clear_steps(names: &[String]) -> Vec<Vec<String>> {
-    let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
-    let rm: Vec<Vec<String>> = names
-        .iter()
-        .filter(|n| is_layer_name(n))
-        .flat_map(|n| {
-            [
-                s(&["rm", "-rf", &format!("{DIR}/{n}")]),
-                s(&["rm", "-rf", &format!("{WORK_DIR}/{n}")]),
-            ]
-        })
-        .collect();
-    if rm.is_empty() {
-        return rm;
-    }
-    let mut out = vec![s(&["systemd-sysext", "unmerge"])];
-    out.extend(rm);
-    out.push(s(&["systemd-sysext", "merge"]));
-    out
+/// Where [`clear_steps`] moves the layers it clears until the new merge is up (same file system
+/// as [`DIR`], so the move is a rename and copies nothing).
+pub const CLEARED_DIR: &str = "/var/lib/wolos/layers-cleared";
+
+/// The step that merges [`DIR`] as it is now over `/usr`, in place of the merge that is up.
+/// systemd-sysext swaps the two itself; it documents a brief moment between them (systemd 262),
+/// far shorter than an unmerge, a removal and a merge one after the other.
+/// Through systemd-sysext.service (its reload is `systemd-sysext refresh`), not by running the
+/// tool here: `wol layers clear` runs from wolos-boot-ok.service, whose sandbox is its own mount
+/// namespace, and a merge made there never reaches the system (the stale merge after a clear,
+/// store-update-pkg-r2 R2-10). Not running: started, which merges.
+pub fn refresh_step() -> Vec<String> {
+    ["systemctl", "reload-or-restart", "systemd-sysext.service"]
+        .map(String::from)
+        .to_vec()
 }
 
-/// What [`FOLDED`] holds after a successful clear: nothing, so a second clear is a no-op even
-/// if a layer of the same name ever existed again.
-pub fn folded_after_clear() -> &'static str {
-    ""
+/// Steps that remove the layers [`to_clear`] found while the login window may already be up
+/// (audit core-install #5): each moves out of [`DIR`] into [`CLEARED_DIR`] (a rename: nothing in
+/// it changes under the live merge), [`refresh_step`] merges what is left, and only then are
+/// the moved layers and their work directories removed, so the layers that stay are never
+/// unmerged for as long as a removal takes. Empty when there is nothing to remove.
+/// A caller that stops before the refresh still runs it; one that stops at or after it runs
+/// nothing more (a failed refresh may still be using the moved layers).
+pub fn clear_steps(names: &[String]) -> Vec<Vec<String>> {
+    let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    let names: Vec<&String> = names.iter().filter(|n| is_layer_name(n)).collect();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![s(&["mkdir", "-p", CLEARED_DIR])];
+    out.extend(names.iter().map(|n| {
+        s(&[
+            "mv",
+            "-T",
+            &format!("{DIR}/{n}"),
+            &format!("{CLEARED_DIR}/{n}"),
+        ])
+    }));
+    out.push(refresh_step());
+    out.push(s(&["rm", "-rf", CLEARED_DIR]));
+    out.extend(
+        names
+            .iter()
+            .map(|n| s(&["rm", "-rf", &format!("{WORK_DIR}/{n}")])),
+    );
+    out
 }
 
 pub fn name(n: u32) -> String {
@@ -137,15 +168,29 @@ fn v(a: &[&str]) -> Step {
     Step::Run(a.iter().map(|s| (*s).to_owned()).collect())
 }
 
-/// Steps up to and including the real pacman in the layer's chroot.
+/// `umount -R` of [`CHROOT`], detached lazily when a process still holds it (QA-STORE-53): a
+/// chroot left mounted would have the next `wol pkg` stack its mounts on top of it.
+fn umount_argv() -> Vec<String> {
+    vec![
+        "sh".into(),
+        "-c".into(),
+        format!("umount -R {CHROOT} || umount -l -R {CHROOT}"),
+    ]
+}
+
+/// The overlay of the layer over one top directory of the chroot (`usr`, `opt`).
+fn overlay(l: &str, w: &str, top: &str) -> String {
+    format!("lowerdir={CHROOT}/{top},upperdir={l}/{top},workdir={w}/{top}")
+}
+
+/// Steps up to and including the real pacman in the layer's chroot. The layer has no
+/// extension-release yet: until [`finish`] writes it, systemd-sysext ignores the directory, so a
+/// layer cut off mid-pacman (power loss, the 1800 s cap) never merges (QA-STORE-45). `/usr` and
+/// `/opt` are overlays (both merge as system extensions): a package that installs under /opt
+/// would otherwise meet the sealed, read-only root (QA-L2-32).
 pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
     let l = format!("{DIR}/{}", name(n));
     let w = format!("{WORK_DIR}/{}", name(n));
-    let rel = format!(
-        "{l}/usr/lib/extension-release.d/extension-release.{}",
-        name(n)
-    );
-    let opts = format!("lowerdir={CHROOT}/usr,upperdir={l}/usr,workdir={w}");
     let mut chroot = vec!["arch-chroot", CHROOT, PACMAN];
     chroot.extend(args.iter().map(String::as_str));
     vec![
@@ -153,13 +198,17 @@ pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
             "mkdir",
             "-p",
             &format!("{l}/usr/lib/extension-release.d"),
-            &w,
+            &format!("{l}/opt"),
+            &format!("{w}/usr"),
+            &format!("{w}/opt"),
             CHROOT,
         ]),
-        Step::Write {
-            path: rel,
-            text: extension_release(),
-        },
+        // A chroot an earlier run left behind (QA-STORE-53).
+        v(&[
+            "sh",
+            "-c",
+            &format!("! mountpoint -q {CHROOT} || umount -l -R {CHROOT}"),
+        ]),
         v(&["mount", "--rbind", "/", CHROOT]),
         v(&["mount", "--make-rprivate", CHROOT]),
         v(&[
@@ -168,16 +217,27 @@ pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
             "overlay",
             "overlay",
             "-o",
-            &opts,
+            &overlay(&l, &w, "usr"),
             &format!("{CHROOT}/usr"),
+        ]),
+        v(&[
+            "mount",
+            "-t",
+            "overlay",
+            "overlay",
+            "-o",
+            &overlay(&l, &w, "opt"),
+            &format!("{CHROOT}/opt"),
         ]),
         v(&chroot),
     ]
 }
 
-/// Steps after pacman succeeded: keep the record, unmount, merge the layer. pacman has committed
-/// by now, so a failure here never removes the layer (its files and database entries are the
-/// change): the caller stops and the layer merges at the next boot (systemd-sysext.service).
+/// Steps after pacman succeeded: keep the record, unmount, make the layer an extension (its
+/// extension-release, written last: QA-STORE-45), merge it. pacman has committed by now, so a
+/// failure here never removes the layer (its files and database entries are the change): the
+/// caller stops, and the next good boot finishes it (`boot-ok` writes a missing
+/// extension-release of a layer that has its record) and merges it.
 pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
     let l = format!("{DIR}/{}", name(n));
     vec![
@@ -185,10 +245,22 @@ pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
             path: format!("{l}/{RECORD}"),
             text: rec.to_json(),
         },
-        v(&["umount", "-R", CHROOT]),
+        Step::Run(umount_argv()),
+        Step::Write {
+            path: release_path(n),
+            text: extension_release(),
+        },
         v(&["rm", "-rf", &format!("{WORK_DIR}/{}", name(n))]),
         v(&["systemd-sysext", "refresh"]),
     ]
+}
+
+/// A layer's extension-release file.
+pub fn release_path(n: u32) -> String {
+    format!(
+        "{DIR}/{0}/usr/lib/extension-release.d/extension-release.{0}",
+        name(n)
+    )
 }
 
 /// After a failed [`begin`] step (pacman did not commit): nothing of the layer is left, the
@@ -196,7 +268,7 @@ pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
 pub fn abort(n: u32) -> Vec<Vec<String>> {
     let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     vec![
-        s(&["umount", "-R", CHROOT]),
+        umount_argv(),
         s(&["rm", "-rf", &format!("{DIR}/{}", name(n))]),
         s(&["rm", "-rf", &format!("{WORK_DIR}/{}", name(n))]),
     ]
@@ -309,10 +381,9 @@ mod tests {
         let t: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
         let l = "/var/lib/extensions/wolos-layer-0003";
         assert!(t[0].starts_with(&format!("mkdir -p {l}/usr/lib/extension-release.d")));
-        assert!(t[1].contains("extension-release.wolos-layer-0003"));
         assert_eq!(t[2], "mount --rbind / /run/wolos/layer-root");
         assert!(t[4].contains(&format!(
-            "lowerdir=/run/wolos/layer-root/usr,upperdir={l}/usr,workdir=/var/lib/wolos/layers/wolos-layer-0003"
+            "lowerdir=/run/wolos/layer-root/usr,upperdir={l}/usr,workdir=/var/lib/wolos/layers/wolos-layer-0003/usr"
         )));
         assert_eq!(
             t.last().unwrap(),
@@ -324,7 +395,7 @@ mod tests {
         };
         let f: Vec<String> = finish(3, &rec).iter().map(|s| s.to_string()).collect();
         assert_eq!(f[0], format!("write {l}/wolos-layer.json"));
-        assert_eq!(f[1], "umount -R /run/wolos/layer-root");
+        assert!(f[1].contains("umount -R /run/wolos/layer-root"), "{f:?}");
         assert_eq!(f.last().unwrap(), "systemd-sysext refresh");
         assert!(
             f.iter()
@@ -332,10 +403,108 @@ mod tests {
         );
     }
 
+    /// QA-STORE-45: a layer becomes a system extension only once pacman committed and its
+    /// record is written: begin writes no extension-release, finish writes it after the record.
+    /// A power cut or the 1800 s cap mid-pacman leaves a directory sysext ignores.
+    #[test]
+    fn extension_release_written_last() {
+        let args: Vec<String> = ["-S", "vim"].map(String::from).to_vec();
+        let b: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
+        assert!(
+            !b.iter()
+                .any(|s| s.contains("extension-release.wolos-layer")),
+            "{b:?}"
+        );
+        let f: Vec<String> = finish(3, &Record::default())
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let rec = f
+            .iter()
+            .position(|s| s.ends_with("/wolos-layer.json"))
+            .unwrap();
+        let rel = f
+            .iter()
+            .position(|s| {
+                s == "write /var/lib/extensions/wolos-layer-0003/usr/lib/extension-release.d/\
+extension-release.wolos-layer-0003"
+            })
+            .unwrap();
+        assert!(rec < rel, "{f:?}");
+        let refresh = f
+            .iter()
+            .position(|s| s == "systemd-sysext refresh")
+            .unwrap();
+        assert!(rel < refresh, "{f:?}");
+    }
+
+    /// QA-STORE-53: a chroot that cannot be unmounted at once (a process still in it) is
+    /// detached lazily, never left stacked; begin detaches one an earlier run left.
+    #[test]
+    fn umount_lazy_fallback() {
+        let lazy = format!("umount -R {CHROOT} || umount -l -R {CHROOT}");
+        let f: Vec<String> = finish(3, &Record::default())
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(f.iter().any(|s| s.contains(&lazy)), "{f:?}");
+        let a: Vec<String> = abort(3).iter().map(|v| v.join(" ")).collect();
+        assert!(a[0].contains(&lazy), "{a:?}");
+        let args: Vec<String> = ["-S", "vim"].map(String::from).to_vec();
+        let b: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
+        let stale = b
+            .iter()
+            .position(|s| s.contains(&format!("umount -l -R {CHROOT}")))
+            .unwrap();
+        let bind = b
+            .iter()
+            .position(|s| s == &format!("mount --rbind / {CHROOT}"))
+            .unwrap();
+        assert!(stale < bind, "{b:?}");
+    }
+
+    /// QA-L2-32: pacman sees /opt writable in the layer chroot too (ROCm and other large
+    /// packages install there; systemd-sysext merges /opt as well as /usr).
+    #[test]
+    fn opt_is_layered_too() {
+        let args: Vec<String> = ["-S", "blender"].map(String::from).to_vec();
+        let b: Vec<String> = begin(4, &args).iter().map(|s| s.to_string()).collect();
+        let l = "/var/lib/extensions/wolos-layer-0004";
+        assert!(
+            b.iter().any(|s| s.contains(&format!("upperdir={l}/opt"))
+                && s.ends_with(&format!("{CHROOT}/opt"))),
+            "{b:?}"
+        );
+    }
+
+    /// QA-STORE-44: the folded list lives in the slot's sealed /usr (never in the shared /etc
+    /// overlay, whose upper copy would shadow every later slot's list); a slot sealed before
+    /// keeps it in /etc and is read there when /usr has none.
+    #[test]
+    fn folded_path_usr_lib_with_legacy() {
+        assert_eq!(FOLDED, "usr/lib/wolos/folded-layers");
+        assert!(!FOLDED.starts_with("etc/"));
+        let new = "wolos-layer-0004\n";
+        let old = "wolos-layer-0002\n";
+        assert_eq!(
+            folded_list(Some(new), Some(old)),
+            new,
+            "the slot's own list wins"
+        );
+        assert_eq!(
+            folded_list(None, Some(old)),
+            old,
+            "a slot from before: /etc"
+        );
+        assert_eq!(folded_list(None, None), "");
+        // An empty list in the /etc upper (what clear wrote before) hides nothing any more.
+        assert_eq!(folded_list(Some(new), Some("")), new);
+    }
+
     #[test]
     fn a_failed_install_leaves_nothing_behind() {
         let a: Vec<String> = abort(2).iter().map(|v| v.join(" ")).collect();
-        assert_eq!(a[0], "umount -R /run/wolos/layer-root");
+        assert!(a[0].contains("umount -R /run/wolos/layer-root"), "{a:?}");
         assert!(a[1].starts_with("rm -rf /var/lib/extensions/wolos-layer-0002"));
         assert!(a[2].starts_with("rm -rf /var/lib/wolos/layers/wolos-layer-0002"));
     }
@@ -416,15 +585,19 @@ mod tests {
             .iter()
             .map(|a| a.join(" "))
             .collect();
+        // audit core-install #5: no unmerge; the layer moves aside, the new merge replaces the
+        // old one, and only then is anything deleted.
         assert_eq!(
             s,
             [
-                "systemd-sysext unmerge",
-                "rm -rf /var/lib/extensions/wolos-layer-0002",
+                "mkdir -p /var/lib/wolos/layers-cleared",
+                "mv -T /var/lib/extensions/wolos-layer-0002 /var/lib/wolos/layers-cleared/wolos-layer-0002",
+                "systemctl reload-or-restart systemd-sysext.service",
+                "rm -rf /var/lib/wolos/layers-cleared",
                 "rm -rf /var/lib/wolos/layers/wolos-layer-0002",
-                "systemd-sysext merge"
             ]
         );
+        assert!(!s.iter().any(|x| x.contains("unmerge")));
         assert!(clear_steps(&[]).is_empty());
         assert!(clear_steps(&["../x".into()]).is_empty());
         assert!(to_clear("", ls).is_empty());

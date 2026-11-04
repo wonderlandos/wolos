@@ -49,10 +49,12 @@ files/usr/lib/wolos/autoinstall
 files/usr/lib/wolos/boot-enroll
 files/usr/lib/wolos/boot-keys
 files/usr/lib/wolos/boot-ok
+files/usr/lib/wolos/boot-rearm
 files/usr/lib/wolos/boot-setup
 files/usr/lib/wolos/clam-update
 files/usr/lib/wolos/dkms-sign
 files/usr/lib/wolos/esp-sync
+files/usr/lib/wolos/etc-units
 files/usr/lib/wolos/firstboot
 files/usr/lib/wolos/gpu
 files/usr/lib/wolos/install-boot

@@ -79,10 +79,16 @@ fn an_install_is_a_live_layer_without_a_restart() {
 #[test]
 fn a_failed_install_removes_the_layer_and_touches_nothing_else() {
     let mut env = sealed("vim\n", IDLE);
-    env.exec_codes = vec![0, 0, 0, 0, 1]; // mkdir, 3 mounts ok; pacman fails
+    // mkdir, a stale-chroot check, 4 mounts (/ bind, private, /usr and /opt overlays) ok;
+    // pacman fails.
+    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 1];
     assert_ne!(run("pkg -- -S vim", &mut env), 0);
     let l = lines(&env);
-    assert!(l.contains(&"umount -R /run/wolos/layer-root".into()));
+    assert!(
+        l.iter()
+            .any(|x| x.contains("umount -R /run/wolos/layer-root")),
+        "{l:?}"
+    );
     assert!(l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()));
     assert!(!l.contains(&"systemd-sysext refresh".into()));
     assert!(!env.out.contains("Installed"));
@@ -198,12 +204,14 @@ fn fold_copies_layers_and_package_records_and_keeps_the_live_layers() {
     assert!(root.join("var/lib/pacman/local/old-1-1").exists());
     // CORE-1: the live layer stays for the running slot; the new slot names it to clear at boot.
     assert!(l1.join("usr/bin/vim").exists());
+    // QA-STORE-44: in the slot's own /usr (sealed with it), not in /etc.
     assert_eq!(
-        std::fs::read_to_string(root.join("etc/wolos/folded-layers")).unwrap(),
+        std::fs::read_to_string(root.join("usr/lib/wolos/folded-layers")).unwrap(),
         "wolos-layer-0001\n"
     );
+    assert!(!root.join("etc/wolos/folded-layers").exists());
     // Audit S4-10: written through a unique temporary that is gone afterwards.
-    let tmps: Vec<_> = std::fs::read_dir(root.join("etc/wolos"))
+    let tmps: Vec<_> = std::fs::read_dir(root.join("usr/lib/wolos"))
         .unwrap()
         .flatten()
         .filter(|e| e.file_name().to_string_lossy().ends_with(".wol-tmp"))
@@ -227,11 +235,17 @@ fn fold_honours_a_folded_list_in_the_old_place() {
     std::fs::write(layers.join("wolos-layer-0001/usr/bin/vim"), "old").unwrap();
     std::fs::create_dir_all(root.join("var/lib/wolos")).unwrap();
     std::fs::write(root.join("var/lib/wolos/folded"), "wolos-layer-0001\n").unwrap();
+    // QA-STORE-44: a slot folded before keeps its list in /etc; that one counts too.
+    std::fs::create_dir_all(layers.join("wolos-layer-0002/usr/bin")).unwrap();
+    std::fs::write(layers.join("wolos-layer-0002/usr/bin/nano"), "old").unwrap();
+    std::fs::create_dir_all(root.join("etc/wolos")).unwrap();
+    std::fs::write(root.join("etc/wolos/folded-layers"), "wolos-layer-0002\n").unwrap();
     fold(&root, &layers, &db);
     assert!(!root.join("usr/bin/vim").exists());
+    assert!(!root.join("usr/bin/nano").exists());
     assert_eq!(
-        std::fs::read_to_string(root.join("etc/wolos/folded-layers")).unwrap(),
-        "wolos-layer-0001\n"
+        std::fs::read_to_string(root.join("usr/lib/wolos/folded-layers")).unwrap(),
+        "wolos-layer-0002\nwolos-layer-0001\n"
     );
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -281,7 +295,7 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
     let mut env = FakeEnv {
         root: true,
         files: vec![(
-            PathBuf::from("/etc/wolos/folded-layers"),
+            PathBuf::from("/usr/lib/wolos/folded-layers"),
             "wolos-layer-0001\n".into(),
         )],
         captures: vec![(
@@ -294,20 +308,15 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
     assert_eq!(
         lines(&env),
         [
-            "systemd-sysext unmerge",
-            "rm -rf /var/lib/extensions/wolos-layer-0001",
+            "mkdir -p /var/lib/wolos/layers-cleared",
+            "mv -T /var/lib/extensions/wolos-layer-0001 /var/lib/wolos/layers-cleared/wolos-layer-0001",
+            "systemctl reload-or-restart systemd-sysext.service",
+            "rm -rf /var/lib/wolos/layers-cleared",
             "rm -rf /var/lib/wolos/layers/wolos-layer-0001",
-            "systemd-sysext merge"
         ]
     );
-    // R2C-1: the folded list is consumed.
-    assert!(
-        env.written
-            .iter()
-            .any(|w| w.0 == std::path::Path::new("/etc/wolos/folded-layers") && w.1.is_empty()),
-        "{:?}",
-        env.written
-    );
+    // QA-STORE-44: the list is the slot's and stays as sealed; nothing is written.
+    assert!(env.written.is_empty(), "{:?}", env.written);
     let mut none = FakeEnv {
         root: true,
         ..Default::default()
@@ -316,6 +325,103 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
     assert!(none.execs.is_empty());
     let mut user = FakeEnv::default();
     assert_ne!(run("layers clear", &mut user), 0);
+}
+
+/// QA-STORE-44: the booted slot's list is in its sealed /usr; `wol layers clear` reads it there
+/// (an empty copy an older clear left in the /etc overlay hides nothing) and never writes a
+/// list anywhere: under /etc it would shadow every later slot's list for good. A slot from
+/// before keeps its list in /etc and is read there.
+#[test]
+fn clear_never_writes_under_etc() {
+    let boot = |files: Vec<(&str, &str)>| FakeEnv {
+        root: true,
+        files: files
+            .into_iter()
+            .map(|(p, t)| (PathBuf::from(p), t.to_owned()))
+            .collect(),
+        captures: vec![(
+            "ls -1 /var/lib/extensions".into(),
+            "wolos-layer-0001\nwolos-layer-0002\n".into(),
+        )],
+        ..Default::default()
+    };
+    for (why, files) in [
+        (
+            "the slot's own list, an empty one left in the /etc upper",
+            vec![
+                ("/usr/lib/wolos/folded-layers", "wolos-layer-0001\n"),
+                ("/etc/wolos/folded-layers", ""),
+            ],
+        ),
+        (
+            "a slot from before: its list in /etc",
+            vec![("/etc/wolos/folded-layers", "wolos-layer-0001\n")],
+        ),
+    ] {
+        let mut env = boot(files);
+        assert_eq!(run("layers clear", &mut env), 0, "{why}: {}", env.err);
+        let l = lines(&env);
+        assert!(
+            l.iter()
+                .any(|x| x.contains("mv -T /var/lib/extensions/wolos-layer-0001 ")),
+            "{why}: {l:?}"
+        );
+        assert!(
+            !l.iter().any(|x| x.contains("wolos-layer-0002")),
+            "{why}: {l:?}"
+        );
+        assert!(env.written.is_empty(), "{why}: wrote {:?}", env.written);
+    }
+}
+
+/// audit core-install #5: a clear that stops part way never leaves /usr unmerged. Stopped before
+/// the refresh (a move failed): the refresh still runs, nothing is deleted. The refresh itself
+/// failed: nothing after it runs (the old merge may still use the moved layers), no unmerge.
+#[test]
+fn a_clear_that_stops_never_leaves_the_layers_unmerged() {
+    let env_with = |codes: Vec<i32>| FakeEnv {
+        root: true,
+        exec_codes: codes,
+        files: vec![(
+            PathBuf::from("/usr/lib/wolos/folded-layers"),
+            "wolos-layer-0001\nwolos-layer-0002\n".into(),
+        )],
+        captures: vec![(
+            "ls -1 /var/lib/extensions".into(),
+            "wolos-layer-0001\nwolos-layer-0002\nwolos-layer-0003\n".into(),
+        )],
+        ..Default::default()
+    };
+    // mkdir ok, the first move ok, the second fails.
+    let mut env = env_with(vec![0, 0, 1]);
+    assert_ne!(run("layers clear", &mut env), 0);
+    let l = lines(&env);
+    assert_eq!(l.len(), 4, "{l:?}");
+    assert_eq!(l[3], "systemctl reload-or-restart systemd-sysext.service");
+    assert!(
+        !l.iter()
+            .any(|x| x.starts_with("rm ") || x.contains("unmerge")),
+        "{l:?}"
+    );
+    assert!(
+        !env.written.iter().any(|w| w.0.ends_with("folded-layers")),
+        "the list stays for the next try"
+    );
+    // The refresh fails: it runs once, and nothing is deleted after it.
+    let mut env = env_with(vec![0, 0, 0, 1]);
+    assert_ne!(run("layers clear", &mut env), 0);
+    let l = lines(&env);
+    assert_eq!(
+        l.last().unwrap(),
+        "systemctl reload-or-restart systemd-sysext.service",
+        "{l:?}"
+    );
+    assert_eq!(
+        l.iter().filter(|x| x.contains("sysext")).count(),
+        1,
+        "{l:?}"
+    );
+    assert!(!l.iter().any(|x| x.starts_with("rm ")), "{l:?}");
 }
 
 #[test]
@@ -343,9 +449,10 @@ fn a_layer_records_its_database_even_under_usr() {
 
 #[test]
 fn a_layer_pacman_committed_is_kept_when_the_merge_fails() {
-    // CORE-5: mkdir, 3 mounts, pacman, umount, rm work ok; `systemd-sysext refresh` fails.
+    // CORE-5: mkdir, the stale-chroot check, 4 mounts, pacman, umount, rm work ok;
+    // `systemd-sysext refresh` fails.
     let mut env = sealed("vim\n", IDLE);
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 1];
+    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
     assert_eq!(l.last().unwrap(), "systemd-sysext refresh");
@@ -426,7 +533,7 @@ wolos-layer-0003
 ";
     let mut boot = FakeEnv {
         root: true,
-        files: vec![(PathBuf::from("/etc/wolos/folded-layers"), folded.into())],
+        files: vec![(PathBuf::from("/usr/lib/wolos/folded-layers"), folded.into())],
         captures: vec![(
             "ls -1 /var/lib/extensions".into(),
             "wolos-layer-0001
@@ -438,15 +545,11 @@ wolos-layer-0003
         ..Default::default()
     };
     assert_eq!(run("layers clear", &mut boot), 0, "{}", boot.err);
-    let after_clear = boot
-        .written
-        .iter()
-        .find(|w| w.0 == std::path::Path::new("/etc/wolos/folded-layers"))
-        .map(|w| w.1.clone())
-        .unwrap();
+    // QA-STORE-44: the list stays (sealed); the names are never handed out again.
+    assert!(boot.written.is_empty(), "{:?}", boot.written);
+    let after_clear = folded.to_owned();
 
-    // Today: the list was consumed and the counter says 3. Worst case: the list was not
-    // consumed (an older clear) and no counter exists yet.
+    // Today: the list stays and the counter says 3. Worst case: no counter exists yet.
     for (list, counter) in [
         (
             after_clear.as_str(),
@@ -465,7 +568,7 @@ wolos-layer-0003
         env.captures
             .push(("ls -1 /var/lib/extensions".into(), String::new()));
         env.files
-            .push((PathBuf::from("/etc/wolos/folded-layers"), list.into()));
+            .push((PathBuf::from("/usr/lib/wolos/folded-layers"), list.into()));
         if let Some(c) = counter {
             env.files
                 .push((PathBuf::from("/var/lib/wolos/layer-counter"), c.into()));
@@ -493,7 +596,7 @@ wolos-layer-0003
 
         let mut next = FakeEnv {
             root: true,
-            files: vec![(PathBuf::from("/etc/wolos/folded-layers"), list.into())],
+            files: vec![(PathBuf::from("/usr/lib/wolos/folded-layers"), list.into())],
             captures: vec![(
                 "ls -1 /var/lib/extensions".into(),
                 format!(

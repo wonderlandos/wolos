@@ -326,7 +326,16 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
     assert_eq!(
         env.execs,
         vec![
-            vec!["pacman", "-S", "--needed", "--noconfirm", "nvidia-open"],
+            vec![
+                "timeout",
+                "--kill-after=30s",
+                "25m",
+                "pacman",
+                "-S",
+                "--needed",
+                "--noconfirm",
+                "nvidia-open"
+            ],
             vec!["modprobe", "nvidia_drm"],
         ]
     );
@@ -355,6 +364,68 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
     };
     assert_eq!(run("hw boot", &mut env), 0);
     assert!(env.execs.is_empty());
+}
+
+/// QA-SYS-6: a DKMS build is slow on a slow machine. pacman gets a bound well inside the unit's
+/// start timeout, so it is never the unit that kills it mid-transaction; a lock left by a kill
+/// (this boot's bound, or an earlier boot's timeout) is removed when no pacman runs, so the next
+/// try is not refused for good.
+#[test]
+fn firstboot_pacman_bounded_stale_lock_cleaned() {
+    let need = HardwareSnapshot {
+        devices: vec![dev(
+            Kind::Gpu,
+            "NVIDIA GeForce",
+            State::NeedsDriver,
+            &[],
+            &["nvidia-open-dkms"],
+        )],
+    };
+    let lock = PathBuf::from("/usr/lib/pacman/db.lck");
+    let mut env = FakeEnv {
+        root: true,
+        hw: vec![need.clone(), need.clone()],
+        files: vec![
+            (
+                PathBuf::from("/etc/pacman.conf"),
+                "[options]\nDBPath = /usr/lib/pacman/\n".into(),
+            ),
+            (lock.clone(), String::new()),
+        ],
+        // The bound ran out.
+        exec_codes: vec![124],
+        ..Default::default()
+    };
+    assert_eq!(run("hw boot --online", &mut env), 0);
+    let first = env.execs.first().map(|a| a.join(" ")).unwrap_or_default();
+    assert_eq!(
+        first,
+        "timeout --kill-after=30s 25m pacman -S --needed --noconfirm nvidia-open-dkms"
+    );
+    assert_eq!(
+        env.removed.iter().filter(|p| **p == lock).count(),
+        2,
+        "the old lock before, the killed run's after: {:?}",
+        env.removed
+    );
+    assert!(env.out.contains("took too long"), "{}", env.out);
+    // A pacman still running (another job) keeps its lock.
+    let mut busy = FakeEnv {
+        root: true,
+        hw: vec![need.clone(), need],
+        files: vec![(PathBuf::from("/var/lib/pacman/db.lck"), String::new())],
+        captures: vec![("pgrep -x pacman".into(), "123\n".into())],
+        ..Default::default()
+    };
+    assert_eq!(run("hw boot --online", &mut busy), 0);
+    assert!(busy.removed.is_empty(), "{:?}", busy.removed);
+    // The unit waits longer than the bound (25 min + 30 s), so the bound always ends it first.
+    let unit = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../files/usr/lib/systemd/system/wolos-firstboot.service"),
+    )
+    .unwrap();
+    assert!(unit.lines().any(|l| l == "TimeoutStartSec=30min"), "{unit}");
 }
 
 #[test]
@@ -404,6 +475,9 @@ fn network_up_installs_a_pending_driver_once_and_leaves_the_result() {
         assert_eq!(
             env.execs,
             vec![vec![
+                "timeout",
+                "--kill-after=30s",
+                "25m",
                 "pacman",
                 "-S",
                 "--needed",

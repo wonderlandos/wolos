@@ -1,0 +1,53 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wolos-boot-rearm.service, at shutdown (`stop`), live-4 F3: a blessed entry (<slot>.conf) has no
+# try counter, so an image the firmware cannot load failed every start and never fell back.
+# Blessed stays blessed (systemd's rule), unless this boot gives a reason to count the next start
+# again (<slot>+3.conf; systemd-boot counts before it loads the image, three failed starts sort
+# the entry last and the other slot starts by itself; a good boot blesses it again):
+#   - the image no longer matches the digest esp-sync kept: damaged, rebuilt from the slot first;
+#   - the image is not the one blessed last (boot-ok keeps <slot>/blessed.sha256);
+#   - this boot's seal or floor check failed (verity-failed-<slot>, epoch-failed-<slot>).
+# The new entry is written, synced and renamed before the old one goes (FAT, a power cut): there
+# is never a moment without an entry for the slot.
+# `start` does nothing (the unit only needs to be up to be stopped at shutdown).
+# Env (tests): WOLOS_ESP (/efi), WOLOS_CMDLINE_FILE (/proc/cmdline), WOLOS_LIB (/usr/lib/wolos),
+# WOLOS_MARKS (/var/lib/wolos).
+set -u
+[ "${1:-}" = stop ] || exit 0
+ESP=${WOLOS_ESP:-/efi}
+M=${WOLOS_MARKS:-/var/lib/wolos}
+E=$ESP/loader/entries
+slot=$(sed -n 's/.*subvol=\/*@\(wolos-[ab]\).*/\1/p' "${WOLOS_CMDLINE_FILE:-/proc/cmdline}" 2>/dev/null || :)
+[ -n "$slot" ] || exit 0
+# Only a blessed entry: one still counted is already counted.
+[ -f "$E/$slot.conf" ] || exit 0
+img="$ESP/EFI/wolos/$slot.efi"
+got=$(sha256sum "$img" 2>/dev/null | cut -d' ' -f1)
+want=$(cat "$ESP/$slot/image.sha256" 2>/dev/null || :)
+blessed=$(cat "$ESP/$slot/blessed.sha256" 2>/dev/null || :)
+why=
+if [ -n "$want" ] && [ "$got" != "$want" ]; then
+  why=damaged
+  echo "boot-rearm: the image of $slot is damaged; building it again" >&2
+  WOLOS_SLOT=$slot sh "${WOLOS_LIB:-/usr/lib/wolos}/esp-sync" ||
+    echo "boot-rearm: could not build it again; the try counter falls back to the other slot" >&2
+fi
+if [ -z "$why" ] && [ -n "$blessed" ] && [ "$got" != "$blessed" ]; then
+  why="not the image blessed last"
+fi
+for k in verity-failed epoch-failed; do
+  if [ -z "$why" ] && [ -e "$M/$k-$slot" ]; then why=$k; fi
+done
+[ -n "$why" ] || exit 0
+echo "boot-rearm: $slot counted again at the next start ($why)" >&2
+# esp-sync may have counted the entry already (a changed image gets three tries).
+if [ -f "$E/$slot.conf" ]; then
+  cp "$E/$slot.conf" "$E/$slot+3.conf.new" || exit 1
+  sync "$E/$slot+3.conf.new"
+  mv -f "$E/$slot+3.conf.new" "$E/$slot+3.conf" || exit 1
+  sync -f "$ESP/"
+  rm -f "$E/$slot.conf"
+fi
+sync -f "$ESP/"
+exit 0

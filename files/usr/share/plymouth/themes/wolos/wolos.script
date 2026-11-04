@@ -1,7 +1,63 @@
-# WolOS boot splash: the mark centred on black, nothing else (no spinner, no text).
+# WolOS boot splash: the mark centred on black, nothing else (no spinner, no text), until the
+# system asks something: the disk passphrase of an encrypted install (or any question) is drawn
+# under the mark, with a dot per character typed; messages show under it (QA-SYS-4: with no
+# handlers the prompt was invisible on a real screen, a raw text console in a VM).
 Window.SetBackgroundTopColor(0, 0, 0);
 Window.SetBackgroundBottomColor(0, 0, 0);
 logo.image = Image("wolos.png");
 logo.sprite = Sprite(logo.image);
-logo.sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2);
-logo.sprite.SetY(Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2);
+logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
+logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2;
+logo.sprite.SetX(logo.x);
+logo.sprite.SetY(logo.y);
+below = logo.y + logo.image.GetHeight() + 40;
+
+prompt.sprite = Sprite();
+entry.sprite = Sprite();
+message.sprite = Sprite();
+
+fun show_text(sprite, text, y) {
+    image = Image.Text(text, 1, 1, 1);
+    sprite.SetImage(image);
+    sprite.SetX(Window.GetX() + Window.GetWidth() / 2 - image.GetWidth() / 2);
+    sprite.SetY(y);
+    sprite.SetOpacity(1);
+}
+
+fun display_password(text, bullets) {
+    show_text(prompt.sprite, text, below);
+    dots = "";
+    for (i = 0; i < bullets && i < 64; i++)
+        dots += "•";
+    if (bullets > 0)
+        show_text(entry.sprite, dots, below + 32);
+    else
+        entry.sprite.SetOpacity(0);
+}
+
+fun display_question(text, typed) {
+    show_text(prompt.sprite, text, below);
+    if (typed != "")
+        show_text(entry.sprite, typed, below + 32);
+    else
+        entry.sprite.SetOpacity(0);
+}
+
+fun display_normal() {
+    prompt.sprite.SetOpacity(0);
+    entry.sprite.SetOpacity(0);
+}
+
+fun display_message(text) {
+    show_text(message.sprite, text, below + 72);
+}
+
+fun hide_message(text) {
+    message.sprite.SetOpacity(0);
+}
+
+Plymouth.SetDisplayPasswordFunction(display_password);
+Plymouth.SetDisplayQuestionFunction(display_question);
+Plymouth.SetDisplayNormalFunction(display_normal);
+Plymouth.SetMessageFunction(display_message);
+Plymouth.SetHideMessageFunction(hide_message);

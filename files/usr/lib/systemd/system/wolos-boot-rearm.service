@@ -1,0 +1,29 @@
+[Unit]
+Description=WolOS: a damaged or changed image gets its try counter back, so it can fall back
+# live-4 F3: a blessed entry has no try counter. At shutdown boot-rearm counts the next start again
+# only when there is a reason: the image is damaged (rebuilt first), it is not the image blessed
+# last, or this boot's seal or floor check failed. Otherwise blessed stays blessed. Stopped
+# before /efi and /var unmount.
+RequiresMountsFor=/efi /var
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/wolos/boot-rearm start
+ExecStop=/usr/lib/wolos/boot-rearm stop
+TimeoutStopSec=3min
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): renames an entry on the ESP and may rebuild the slot's image with esp-sync (ukify, the signing keys under /var); no network, no namespaces beyond what esp-sync's signing needs.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictSUIDSGID=yes
+PrivateNetwork=yes
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/efi
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

@@ -754,9 +754,18 @@ fn a_good_boot_blesses_only_after_the_key_screen_unit_is_done() {
     );
     fake(&d, "sleep", "");
     fake(&d, "wol", "");
+    fake(&d, "mountpoint", "exit 1");
+    // QA-SYS-3: the login window is on the screen (a fake /proc), no layers to settle.
+    fs::create_dir_all(d.join("proc/100")).unwrap();
+    fs::write(d.join("proc/100/comm"), "wol-loginwindow\n").unwrap();
+    fs::create_dir_all(d.join("ext")).unwrap();
+    fs::write(d.join("cmdline"), "").unwrap();
     let o = Command::new("sh")
         .arg(lib("boot-ok"))
         .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+        .env("WOLOS_PROC", d.join("proc"))
+        .env("WOLOS_CMDLINE_FILE", d.join("cmdline"))
+        .env("WOLOS_LAYERS", d.join("ext"))
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));

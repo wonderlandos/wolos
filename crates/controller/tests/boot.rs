@@ -181,6 +181,8 @@ fn booted(cmdline: &str, floor: &str) -> FakeEnv {
                 "title WolOS 1.0 (previous version)\nsort-key wolos\nversion 6-2026.10.20\nuki /EFI/wolos/wolos-b.efi\n"
                     .into(),
             ),
+            (PathBuf::from("/efi/EFI/wolos/wolos-a.efi"), "MZ".into()),
+            (PathBuf::from("/efi/EFI/wolos/wolos-b.efi"), "MZ".into()),
         ],
         captures: vec![(
             "ls -1 /efi/loader/entries".into(),
@@ -209,6 +211,134 @@ fn a_kernel_older_than_the_floor_does_not_stay_up() {
     let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
     assert_eq!(run("boot check", &mut e), 0);
     assert!(e.execs.is_empty());
+}
+
+/// audit core-install #4: the boot check falls back only to a slot that failed no check itself
+/// (the rule `wol seal check` keeps). With both slots under the floor the first refusal marks
+/// its slot, the second finds that mark and stays instead of restarting back: no restart loop.
+#[test]
+fn two_slots_under_the_floor_do_not_restart_into_each_other() {
+    let mark = |s: &str| PathBuf::from(format!("/var/lib/wolos/epoch-failed-{s}"));
+    // Slot a is refused first: b has no mark, so the computer restarts into b, and a is marked.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=5", "6\n");
+    assert_eq!(run("boot check", &mut e), 1);
+    assert_eq!(e.execs.len(), 2, "{:?}", e.execs);
+    assert!(
+        e.written.iter().any(|(p, _)| *p == mark("wolos-a")),
+        "{:?}",
+        e.written
+    );
+    // Slot b is under the floor too, and a carries its mark: b stays up and says why.
+    let mut e = booted("rootflags=subvol=@wolos-b wolos.epoch=5", "6\n");
+    e.files.push((
+        PathBuf::from("/efi/loader/entries/wolos-a.conf"),
+        "title WolOS 1.1\n".into(),
+    ));
+    e.files
+        .push((mark("wolos-a"), "older than the floor\n".into()));
+    assert_eq!(run("boot check", &mut e), 1);
+    assert!(e.execs.is_empty(), "no restart: {:?}", e.execs);
+    assert!(e.written.iter().any(|(p, _)| *p == mark("wolos-b")));
+    assert!(
+        e.written
+            .iter()
+            .any(|(p, t)| p.ends_with("verity-notice") && t.contains("no newer one")),
+        "{:?}",
+        e.written
+    );
+    // A slot the seal check refused is no way out either.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=5", "6\n");
+    e.files.push((
+        PathBuf::from("/var/lib/wolos/verity-failed-wolos-b"),
+        "failed\n".into(),
+    ));
+    assert_eq!(run("boot check", &mut e), 1);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
+    // Nor is a slot with no menu entry.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=5", "6\n");
+    e.files.retain(|(p, _)| !p.ends_with("wolos-b+3.conf"));
+    assert_eq!(run("boot check", &mut e), 1);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
+    // Updated past the floor since: the slot passes and loses its old mark.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    e.files
+        .push((mark("wolos-a"), "older than the floor\n".into()));
+    assert_eq!(run("boot check", &mut e), 0);
+    assert!(e.execs.is_empty());
+    assert!(e.removed.contains(&mark("wolos-a")), "{:?}", e.removed);
+}
+
+/// QA-SYS-7: `wol boot check` asks the same question as the seal check before restarting: the
+/// other slot must carry no failed mark of either check and have an entry whose image is there
+/// (BOOT2-2: a ghost entry the loader cannot start brings this slot back, a restart loop).
+#[test]
+fn other_ok_needs_failed_mark() {
+    let under = || booted("rootflags=subvol=@wolos-a wolos.epoch=5", "6\n");
+    let mut e = under();
+    assert_eq!(run("boot check", &mut e), 1);
+    assert_eq!(
+        e.execs.first().map(|a| a.join(" ")).as_deref(),
+        Some("bootctl set-default wolos-b.conf")
+    );
+    for mark in ["verity-failed-wolos-b", "epoch-failed-wolos-b"] {
+        let mut e = under();
+        e.files.push((
+            PathBuf::from(format!("/var/lib/wolos/{mark}")),
+            "x\n".into(),
+        ));
+        assert_eq!(run("boot check", &mut e), 1);
+        assert!(e.execs.is_empty(), "{mark}: {:?}", e.execs);
+    }
+    let mut e = under();
+    e.files.retain(|(p, _)| !p.ends_with("wolos-b.efi"));
+    assert_eq!(run("boot check", &mut e), 1);
+    assert!(e.execs.is_empty(), "ghost entry: {:?}", e.execs);
+}
+
+/// QA-LIVE4-4 (live-4 F4): the newest slot's image was damaged, the firmware could not load it
+/// and the person started the previous version from the menu. Its good boot sees the other
+/// image no longer matches the digest esp-sync kept, makes itself the default and says so;
+/// an intact other image changes nothing.
+#[test]
+fn manual_fallback_sets_default() {
+    let sum = |c: char| c.to_string().repeat(64);
+    let with = |got: Option<char>| {
+        let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+        e.files.push((
+            PathBuf::from("/efi/wolos-b/image.sha256"),
+            format!("{}\n", sum('a')),
+        ));
+        if let Some(c) = got {
+            e.captures.push((
+                "sha256sum /efi/EFI/wolos/wolos-b.efi".into(),
+                format!("{}  /efi/EFI/wolos/wolos-b.efi\n", sum(c)),
+            ));
+        }
+        e
+    };
+    let mut e = with(Some('f'));
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["bootctl set-default wolos-a.conf"], "{}", e.err);
+    assert!(
+        e.written
+            .iter()
+            .any(|(p, t)| p.ends_with("verity-notice") && t.contains("damaged")),
+        "{:?}",
+        e.written
+    );
+    // Unreadable counts as damaged too.
+    let mut e = with(None);
+    assert_eq!(run("boot bless", &mut e), 0);
+    assert_eq!(e.execs.len(), 1, "{:?}", e.execs);
+    // Intact: nothing pinned.
+    let mut e = with(Some('a'));
+    assert_eq!(run("boot bless", &mut e), 0);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
+    // No digest kept (an image from before): nothing to compare.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    assert_eq!(run("boot bless", &mut e), 0);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
 }
 
 #[test]

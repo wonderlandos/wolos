@@ -13,6 +13,12 @@ for f in $(sed 's/"name":"/\n/g' "$T/bundle.json" | sed -n '2,$s/".*//p'); do
 	case $f in */* | .*) exit 1 ;; esac
 	curl -fsSL -o "$T/$f" "$URL/$f" 2>/dev/null || exit 0
 done
-wol-xguard rules install "$T" || exit 0
+# Offline (a download above failed): nothing to do today, not an error. A bundle that is here and
+# refused (unsigned, older, altered) or that could not be installed is one: say so and fail, so
+# the unit shows it (QA-STORE-54).
+if ! wol-xguard rules install "$T"; then
+	echo "xguard-update: the downloaded signatures were refused or could not be installed" >&2
+	exit 1
+fi
 # Files trusted under the old signatures are looked at again.
 systemctl try-restart wolos-xguard.service

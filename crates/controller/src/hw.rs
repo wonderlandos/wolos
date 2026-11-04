@@ -175,13 +175,58 @@ pub fn compute(env: &mut dyn Env, s: &HardwareSnapshot) -> Compute {
     }
 }
 
-/// pacman, non-interactive, skipping what is already installed.
+/// How long a driver install may take (a DKMS build on a slow machine is long), then
+/// `--kill-after` more: well inside wolos-firstboot.service's TimeoutStartSec (30 min), so it is
+/// never the unit that kills pacman mid-transaction (QA-SYS-6).
+const PACMAN_LIMIT: &str = "25m";
+
+/// pacman, non-interactive, skipping what is already installed, bounded by [`PACMAN_LIMIT`].
 fn pacman_install(pkgs: &[String]) -> Vec<String> {
-    let mut argv: Vec<String> = ["pacman", "-S", "--needed", "--noconfirm"]
-        .map(String::from)
-        .to_vec();
+    let mut argv: Vec<String> = [
+        "timeout",
+        "--kill-after=30s",
+        PACMAN_LIMIT,
+        "pacman",
+        "-S",
+        "--needed",
+        "--noconfirm",
+    ]
+    .map(String::from)
+    .to_vec();
     argv.extend(pkgs.iter().cloned());
     argv
+}
+
+/// pacman's lock (`<DBPath>/db.lck`), removed when no pacman runs: a kill leaves it, and every
+/// later pacman refuses to start while it is there.
+fn clear_stale_lock(env: &mut dyn Env) {
+    let conf = env
+        .read_file(Path::new("/etc/pacman.conf"))
+        .unwrap_or_default();
+    let lock = format!("{}/db.lck", wol_core::update::layers::db_path(&conf));
+    if env.read_file(Path::new(&lock)).is_some()
+        && env.capture(&["pgrep", "-x", "pacman"]).is_none()
+        && env.remove_file(Path::new(&lock)).is_ok()
+    {
+        env.out(&format!("wolos_hw: removed a stale {lock}\n"));
+    }
+}
+
+/// [`pacman_install`] with the stale lock cleared before, and after a run the bound killed.
+fn install_bounded(env: &mut dyn Env, pkgs: &[String]) -> bool {
+    clear_stale_lock(env);
+    match env.exec(&pacman_install(pkgs)) {
+        Ok(0) => true,
+        // timeout(1): 124 ran out, 137 killed after the grace.
+        Ok(124 | 137) => {
+            env.out(&format!(
+                "wolos_hw: pacman took too long (over {PACMAN_LIMIT}); the next start tries again\n"
+            ));
+            clear_stale_lock(env);
+            false
+        }
+        _ => false,
+    }
 }
 
 fn out_json(env: &mut dyn Env, v: &serde_json::Value) {
@@ -283,8 +328,7 @@ fn online(env: &mut dyn Env) -> i32 {
     let Some((packages, graphics)) = wol_core::hardware::online::pending(&snap) else {
         return 0;
     };
-    let argv = pacman_install(&packages);
-    let ok = matches!(env.exec(&argv), Ok(0));
+    let ok = install_bounded(env, &packages);
     let what = packages.join(" ");
     env.out(&format!(
         "wolos_hw: pacman -S {what}{}\n",
@@ -325,9 +369,10 @@ fn boot(env: &mut dyn Env, online: bool) -> i32 {
     let (_, install) = fixes(&snap);
     if online && !install.is_empty() {
         let what = install.join(" ");
-        match env.exec(&pacman_install(&install)) {
-            Ok(0) => env.out(&format!("wolos_hw: pacman -S {what}\n")),
-            _ => env.out(&format!("wolos_hw: pacman -S {what} failed\n")),
+        if install_bounded(env, &install) {
+            env.out(&format!("wolos_hw: pacman -S {what}\n"));
+        } else {
+            env.out(&format!("wolos_hw: pacman -S {what} failed\n"));
         }
         snap = env.hardware();
     }

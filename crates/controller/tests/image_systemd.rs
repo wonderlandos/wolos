@@ -205,8 +205,9 @@ fn boot_order_hw_first_then_gpu_firstboot_and_wold() {
             .iter()
             .any(|a| a == "wolos-hw.service")
     );
-    // SIGTERM stops every job tree before wold exits; its sockets go with it.
-    assert_eq!(values(&w, "Service", "KillMode"), ["mixed"]);
+    // SIGTERM stops every job tree before wold exits (not on a restart: the next wold adopts
+    // them, QA-SYS-2, so systemd must not kill them either); its sockets go with it.
+    assert_eq!(values(&w, "Service", "KillMode"), ["process"]);
     let fbs = read("files/usr/lib/wolos/firstboot");
     assert!(
         fbs.contains("wol hw boot --online")
@@ -294,7 +295,7 @@ fn power_follows_the_adapter_and_sleep() {
     let r = read("files/usr/lib/udev/rules.d/90-wolos-power.rules");
     assert!(
         r.contains(r#"SUBSYSTEM=="power_supply""#)
-            && r.contains(r#"ATTR{type}=="Mains""#)
+            && r.contains(r#"ATTR{type}=="Mains|USB|"#)
             && r.contains(r#"RUN+="/usr/bin/wol power apply""#),
         "{r}"
     );
@@ -620,9 +621,20 @@ fn firewall_blocks_unasked_traffic_in() {
         "ExecStart=\n",
         "ExecStart=/usr/bin/nft -f /etc/wolos/nftables.conf",
         "ExecReload=\n",
+        "ExecReload=/usr/bin/nft -f /etc/wolos/nftables.conf",
+        // QA-NET-1/2/3: stays active after loading (disable --now, reload and "running now" all
+        // need that) and stopping takes the table out.
+        "Type=oneshot\n",
+        "RemainAfterExit=yes\n",
+        "ExecStop=\n",
+        "ExecStop=-/usr/bin/nft delete table inet wolos",
     ] {
         assert!(unit.contains(want), "nftables drop-in lacks {want:?}");
     }
+    assert!(
+        wol_core::sharing::FIREWALL_DROP_IN.ends_with("nftables.service.d/wolos.conf"),
+        "the constant names the drop-in"
+    );
     assert_eq!(
         wol_core::sharing::FIREWALL_RULES,
         "/etc/wolos/nftables.conf"
@@ -635,12 +647,70 @@ fn firewall_blocks_unasked_traffic_in() {
         "icmp type { echo-request, destination-unreachable } accept",
         "icmpv6 type { echo-request, destination-unreachable, packet-too-big, nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept",
         "udp sport 67 udp dport 68 accept",
-        "udp dport 5353 accept",
         "type filter hook output priority filter; policy accept;",
+        // What a setting opens while it is on is a file in nftables.d, included in the input chain.
+        "include \"/etc/wolos/nftables.d/*.conf\"",
     ] {
         assert!(n.contains(want), "nftables.conf lacks {want}");
     }
+    assert_eq!(
+        wol_core::sharing::FIREWALL_INCLUDE_DIR,
+        "/etc/wolos/nftables.d"
+    );
+    // Shipped closed: Remote Login is off until the person turns it on.
+    assert_eq!(
+        read("desktop/overlay/etc/wolos/nftables.d/ssh.conf"),
+        wol_core::sharing::ssh_rule(false)
+    );
     assert!(!n.contains("tcp dport"), "no open TCP port by default");
+}
+
+/// QA-PRIV-6: mDNS is answered only for the multicast groups; a unicast query from any host that
+/// can route here (udp dport 5353 alone) gets nothing. The ruleset is also loaded for real (in a
+/// throw-away network namespace) when root is available without a password and nft is installed.
+#[test]
+fn mdns_multicast_only() {
+    let n = read("desktop/overlay/etc/wolos/nftables.conf");
+    let rules: Vec<&str> = n
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#') && l.contains("5353"))
+        .collect();
+    assert_eq!(
+        rules,
+        [
+            "ip daddr 224.0.0.251 udp dport 5353 accept",
+            "ip6 daddr ff02::fb udp dport 5353 accept",
+            // RFC 6762 5.4: unicast replies to QU questions, link-local only (TTL 255).
+            "ip ttl 255 udp sport 5353 udp dport 5353 accept",
+            "ip6 hoplimit 255 udp sport 5353 udp dport 5353 accept",
+        ],
+        "every 5353 rule names the mDNS group or is a link-local reply from port 5353"
+    );
+    assert!(
+        !n.lines().any(|l| l.trim() == "udp dport 5353 accept"),
+        "mDNS open to any address"
+    );
+    let sudo = Command::new("sudo").args(["-n", "true"]).status();
+    let nft = Command::new("nft").arg("--version").output();
+    if !(sudo.is_ok_and(|s| s.success()) && nft.is_ok()) {
+        return;
+    }
+    let d = scratch("nftcheck");
+    fs::create_dir_all(d.join("d")).unwrap();
+    fs::write(d.join("d/ssh.conf"), wol_core::sharing::ssh_rule(true)).unwrap();
+    let conf = d.join("n.conf");
+    fs::write(
+        &conf,
+        n.replace("/etc/wolos/nftables.d", d.join("d").to_str().unwrap()),
+    )
+    .unwrap();
+    let o = Command::new("sudo")
+        .args(["-n", "unshare", "-n", "nft", "-c", "-f"])
+        .arg(&conf)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
 
 /// Automatic updates (Settings > Software Update): a daily system timer checks and downloads
@@ -670,13 +740,19 @@ fn automatic_updates_download_daily_and_apps_update_per_account() {
     let pacman = "db=$2; [ \"$1\" = --dbpath ] || exit 9; : > \"$db/db.lck\" || exit 1
 [ -L \"$db/local\" ] || exit 8; echo new > \"$db/sync/core.db\"
 [ ! -e \"$(dirname \"$0\")/../pacman-fails\" ] || exit 1; rm -f \"$db/db.lck\"";
-    let path = fakes(&d, &[("wol", ""), ("pacman", pacman)]);
+    // An unmetered connection (NetworkManager Metered 2 = no); the metered, battery and
+    // free-space conditions are units.rs `download_timer_conditions` (QA-ACC-18).
+    let path = fakes(
+        &d,
+        &[("wol", ""), ("pacman", pacman), ("busctl", "echo 'u 2'")],
+    );
     let run = || {
         Command::new("sh")
             .arg(repo("files/usr/lib/wolos/update-download"))
             .env("PATH", &path)
             .env("WOLOS_AUTO_UPDATE", &conf)
             .env("WOLOS_PACMAN_DB", &db)
+            .env("WOLOS_PACMAN_CACHE", &tmp)
             .env("TMPDIR", &tmp)
             .output()
             .unwrap()
@@ -685,10 +761,22 @@ fn automatic_updates_download_daily_and_apps_update_per_account() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let l = log(&d);
     let mut lines = l.lines();
+    assert!(
+        lines
+            .next()
+            .is_some_and(|x| x.starts_with("busctl --system get-property")),
+        "metered? {l}"
+    );
     assert_eq!(
         lines.next(),
         Some("wol update check --json"),
         "no file: on: {l}"
+    );
+    // The size of the download first (twice of it must be free), then the download.
+    let size = lines.next().unwrap_or_default();
+    assert!(
+        size.contains(" -Sp --refresh --sysupgrade --print-format %s "),
+        "{l}"
     );
     let p = lines.next().unwrap_or_default();
     let want = format!("pacman --dbpath {}/wolos-download-db.", tmp.display());
@@ -874,16 +962,11 @@ const LIVE_MARK: &str = "ConditionPathExists=!/etc/wolos-live";
 
 /// Units 50-wolos.preset enables that may run on the live medium: (unit, the condition in the
 /// unit that keeps it off there, or "" when running there is right, reason).
-const LIVE_SAFE: [(&str, &str, &str); 21] = [
+const LIVE_SAFE: [(&str, &str, &str); 20] = [
     (
         "wold.service",
         "",
         "the login window; airootfs's wold.service.d/wolos-live.conf starts it only for Try WolOS",
-    ),
-    (
-        "wolos-verity-check.service",
-        "ConditionPathExists=/usr/lib/wolos/verity.manifest",
-        "the manifest is written when a slot is sealed",
     ),
     (
         "wolos-tpm-bind.service",

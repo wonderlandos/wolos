@@ -3,7 +3,9 @@ Description=Check the system files against their seal; a mismatch starts the pre
 DefaultDependencies=no
 After=local-fs.target
 Before=sysinit.target
-ConditionPathExists=/usr/lib/wolos/verity.manifest
+# The slot as sealed, not /usr with the layers merged over it: measured through the merge every
+# file read as changed and every boot with an app installed fell back (QA-LIVE3-2).
+Before=systemd-sysext.service
 
 [Service]
 Type=oneshot

@@ -1,17 +1,63 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Boot counting (wolos-boot-ok.service): this boot is good once wold, which runs the login window,
-# has stayed up for a few seconds. A failure leaves the try counter; three such boots fall back.
+# Boot counting (wolos-boot-ok.service): this boot is good once the slot passed its early checks
+# and something a person can use is on the screen: the login window, Setup, or a session (its
+# shell or its lock screen), up under wold for a few seconds in a row (QA-SYS-3). wold alone is
+# not enough: a slot whose login window never appears must not raise the floor. A failure
+# leaves the try counter; three such boots fall back.
 # A good boot of a new slot also clears the live layers it already holds (`wol layers clear`,
 # its folded list): they stay until here so a slot that fails falls back to an old slot that
-# still has them.
+# still has them. Layers a cut-off `wol pkg` left are settled first (QA-STORE-45): one without
+# its record never committed and goes; one with its record but no extension-release committed
+# and gets it.
 # `wol boot bless` rewrites loader/entries/wolos-*; wolos-mok-enroll.service may be rewriting the
 # same entries at this boot (a Firmware-tier install moving to the key-screen tier, boot-enroll ->
 # esp-sync), so bless waits for that unit to end, at most a minute (audit3 R2B-8).
-# Env (tests): WOLOS_BOOT_OK_WAIT (seconds wold must stay up, 5).
+# Env (tests): WOLOS_BOOT_OK_WAIT (seconds between looks, 5), WOLOS_BOOT_OK_LIMIT (seconds to wait
+# for the screen, 90), WOLOS_PROC (/proc), WOLOS_CMDLINE_FILE (/proc/cmdline), WOLOS_MARKS
+# (/var/lib/wolos), WOLOS_LAYERS (/var/lib/extensions), WOLOS_LAYERS_WORK (/var/lib/wolos/layers),
+# WOLOS_LAYER_CHROOT (/run/wolos/layer-root), WOLOS_ESP (/efi).
 set -eu
-sleep "${WOLOS_BOOT_OK_WAIT:-5}"
-systemctl is-active --quiet wold.service || exit 1
+wait=${WOLOS_BOOT_OK_WAIT:-5}
+limit=${WOLOS_BOOT_OK_LIMIT:-90}
+P=${WOLOS_PROC:-/proc}
+M=${WOLOS_MARKS:-/var/lib/wolos}
+X=${WOLOS_LAYERS:-/var/lib/extensions}
+W=${WOLOS_LAYERS_WORK:-/var/lib/wolos/layers}
+C=${WOLOS_LAYER_CHROOT:-/run/wolos/layer-root}
+
+# A slot that failed its seal or floor check this boot is not good, whatever comes up after it
+# (QA-LIVE3-36; a check that passes removes its slot's mark, so a mark is this boot's).
+slot=$(sed -n 's/.*subvol=\/*@\(wolos-[ab]\).*/\1/p' "${WOLOS_CMDLINE_FILE:-/proc/cmdline}" 2>/dev/null || :)
+if [ -n "$slot" ]; then
+  for k in verity-failed epoch-failed; do
+    if [ -e "$M/$k-$slot" ]; then
+      echo "boot-ok: $slot failed its early check ($k): not blessed" >&2
+      exit 1
+    fi
+  done
+fi
+
+# The program a person sees: the login window, Setup, the shell or its lock screen.
+on_screen() {
+  cat "$P"/[0-9]*/comm 2>/dev/null | grep -qxE 'wol-loginwindow|wol-setup|wol-shell|wol-lock'
+}
+waited=0 seen=0
+while :; do
+  if systemctl is-active --quiet wold.service && on_screen; then
+    seen=$((seen + 1))
+    [ "$seen" -lt 2 ] || break
+  else
+    seen=0
+  fi
+  if [ "$waited" -ge "$limit" ]; then
+    echo "boot-ok: nothing reached the screen in ${limit} s: not blessed" >&2
+    exit 1
+  fi
+  sleep "$wait"
+  waited=$((waited + wait))
+done
+
 n=0
 while [ "$n" -lt 60 ] &&
   [ "$(systemctl show --property=ActiveState --value wolos-mok-enroll.service 2>/dev/null || :)" = activating ]; do
@@ -19,5 +65,39 @@ while [ "$n" -lt 60 ] &&
 done
 # Harmless if it fails: the floor and the titles are set again at the next good boot.
 wol boot bless || :
+# The image this good boot started, for boot-rearm (live-4 F3): it counts the next start again
+# only when the image is no longer this one.
+ESP=${WOLOS_ESP:-/efi}
+if [ -n "$slot" ] && [ -f "$ESP/EFI/wolos/$slot.efi" ] && [ -d "$ESP/$slot" ]; then
+  sum=$(sha256sum "$ESP/EFI/wolos/$slot.efi" | cut -d' ' -f1)
+  if [ -n "$sum" ] && [ "$(cat "$ESP/$slot/blessed.sha256" 2>/dev/null || :)" != "$sum" ]; then
+    if printf '%s\n' "$sum" > "$ESP/$slot/blessed.sha256.new"; then
+      sync "$ESP/$slot/blessed.sha256.new" || :
+      mv -f "$ESP/$slot/blessed.sha256.new" "$ESP/$slot/blessed.sha256" || :
+    fi
+  fi
+fi
+
+# Layers a cut-off `wol pkg` left; never while one runs (its chroot is mounted).
+changed=
+if ! mountpoint -q "$C" 2>/dev/null; then
+  for l in "$X"/wolos-layer-*; do
+    [ -d "$l" ] || continue
+    name=${l##*/}
+    rel="$l/usr/lib/extension-release.d/extension-release.$name"
+    if [ ! -f "$l/wolos-layer.json" ]; then
+      echo "boot-ok: $name never finished installing: removed" >&2
+      rm -rf "${l:?}" "${W:?}/$name"
+      changed=1
+    elif [ ! -f "$rel" ]; then
+      mkdir -p "${rel%/*}"
+      printf 'ID=_any\nARCHITECTURE=x86-64\n' > "$rel"
+      changed=1
+    fi
+  done
+fi
+# Through the unit (its reload is `systemd-sysext refresh`): a merge made from this service's
+# own mount namespace never reaches the system.
+[ -z "$changed" ] || systemctl reload-or-restart systemd-sysext.service || :
 # Harmless if it fails: the layers stay merged and the next good boot tries again.
 wol layers clear || :

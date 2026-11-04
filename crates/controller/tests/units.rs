@@ -168,6 +168,34 @@ const HARDENED: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "wolos-boot-rearm.service",
+        &[
+            "NoNewPrivileges=yes",
+            "LockPersonality=yes",
+            "RestrictRealtime=yes",
+            "SystemCallArchitectures=native",
+            "RestrictSUIDSGID=yes",
+            "PrivateNetwork=yes",
+            "ProtectHome=yes",
+            "ProtectSystem=full",
+            "ReadWritePaths=/efi",
+            "RestrictAddressFamilies=AF_UNIX",
+        ],
+    ),
+    (
+        "wolos-etc-units.service",
+        &[
+            "NoNewPrivileges=yes",
+            "LockPersonality=yes",
+            "RestrictRealtime=yes",
+            "SystemCallArchitectures=native",
+            "RestrictSUIDSGID=yes",
+            "RestrictNamespaces=yes",
+            "RestrictAddressFamilies=AF_UNIX",
+            "ProtectSystem=full",
+        ],
+    ),
+    (
         "wolos-power.service",
         &[
             "NoNewPrivileges=yes",
@@ -609,4 +637,648 @@ fn tpm_binding_waits_for_a_start_the_firmware_measured() {
             "{u}: [Unit] lacks ConditionSecurity=measured-uki"
         );
     }
+}
+
+/// QA-PWR-11: the compositor loads `hyprland.conf` while Settings > Keyboard > Shortcuts reads
+/// `hyprland.lua` (and `tiling.lua`): two hand-kept copies. Their bind sets must be equal, or the
+/// sheet lists keys that do nothing and hides keys that work.
+#[test]
+fn hypr_conf_and_lua_bind_sets_equal() {
+    use wol_core::shortcuts::{Bind, parse, parse_lua};
+    const HYPR: &str = "desktop/overlay/usr/share/wolos/hypr";
+    let read = |f: &str| {
+        std::fs::read_to_string(siblings::root().join(HYPR).join(f))
+            .unwrap_or_else(|e| panic!("{f}: {e}"))
+    };
+    let norm = |binds: Vec<Bind>| {
+        let mut v: Vec<String> = binds
+            .iter()
+            .map(|b| {
+                format!(
+                    "bind{} {} {} {}",
+                    b.flags,
+                    b.combo.mods,
+                    b.combo.key.to_ascii_lowercase(),
+                    b.dispatcher
+                ) + &format!(" {}", b.args)
+            })
+            .collect();
+        v.sort();
+        v
+    };
+    for (conf, lua) in [
+        ("hyprland.conf", "hyprland.lua"),
+        ("tiling.conf", "tiling.lua"),
+    ] {
+        let (c, l) = (norm(parse(&read(conf))), norm(parse_lua(&read(lua))));
+        let only_conf: Vec<&String> = c.iter().filter(|x| !l.contains(x)).collect();
+        let only_lua: Vec<&String> = l.iter().filter(|x| !c.contains(x)).collect();
+        assert!(
+            only_conf.is_empty() && only_lua.is_empty(),
+            "{conf} vs {lua}\nonly in .conf: {only_conf:#?}\nonly in .lua: {only_lua:#?}"
+        );
+        assert!(!c.is_empty(), "{conf}: no binds parsed");
+    }
+}
+
+/// QA-SYS-8: Arch's bluetooth.service has no Restart=; the drop-in brings bluetoothd back after a
+/// crash or a SIGKILL, without a restart storm.
+#[test]
+fn bluetooth_restart_on_failure() {
+    let have = service("bluetooth.service.d/wolos.conf");
+    let get = |k: &str| {
+        have.iter()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(get("Restart"), Some("on-failure"));
+    let secs: u32 = get("RestartSec")
+        .and_then(|v| v.trim_end_matches('s').parse().ok())
+        .expect("RestartSec in seconds");
+    assert!((1..=10).contains(&secs), "RestartSec={secs}");
+    let text = std::fs::read_to_string(path("bluetooth.service.d/wolos.conf")).unwrap();
+    assert!(
+        text.contains("StartLimitBurst=") && text.contains("StartLimitIntervalSec="),
+        "a bluetoothd that dies at once must stop, not loop"
+    );
+}
+
+/// QA-FILES-10: the login window never turned the display off (no idle handling in login.conf),
+/// so a greeter left at the lock screen lit the panel all night. Both compositor files (.conf and
+/// .lua) start hypridle on `login-idle.conf`, whose one listener switches the display off at
+/// 10 minutes and back on at the first input. The desktop's lock and suspend timers stay out.
+#[test]
+fn login_conf_has_idle_dpms() {
+    const HYPR: &str = "desktop/overlay/usr/share/wolos/hypr";
+    let read = |f: &str| {
+        std::fs::read_to_string(siblings::root().join(HYPR).join(f))
+            .unwrap_or_else(|e| panic!("{f}: {e}"))
+    };
+    for f in ["login.conf", "login.lua"] {
+        let t = read(f);
+        assert!(
+            t.lines().any(|l| {
+                let l = l.trim();
+                !l.starts_with(['#', '-'])
+                    && l.contains("hypridle -c /usr/share/wolos/hypr/login-idle.conf")
+            }),
+            "{f} does not start hypridle on login-idle.conf"
+        );
+    }
+    let idle = read("login-idle.conf");
+    let code: Vec<&str> = idle
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .collect();
+    assert!(code.contains(&"timeout = 600"), "{code:?}");
+    assert!(
+        code.contains(&"on-timeout = hyprctl dispatch dpms off"),
+        "{code:?}"
+    );
+    assert!(
+        code.contains(&"on-resume = hyprctl dispatch dpms on"),
+        "{code:?}"
+    );
+    assert!(
+        !code
+            .iter()
+            .any(|l| l.contains("wol-lock") || l.contains("sleep")),
+        "the greeter has nobody to lock or suspend: {code:?}"
+    );
+}
+
+// ---- B6 (hardware-power-image): power, idle, download and malware-engine conditions ----
+
+/// `key=value` lines of one section of any file under the overlaid root (comments skipped).
+fn section(rel: &str, name: &str) -> Vec<(String, String)> {
+    let text = std::fs::read_to_string(siblings::root().join(rel))
+        .unwrap_or_else(|e| panic!("{rel}: {e}"));
+    let mut inside = false;
+    let mut out = Vec::new();
+    for l in text.lines().map(str::trim) {
+        if l.starts_with('[') {
+            inside = l == format!("[{name}]");
+        } else if inside
+            && !l.starts_with('#')
+            && let Some((k, v)) = l.split_once('=')
+        {
+            out.push((k.trim().to_owned(), v.trim().to_owned()));
+        }
+    }
+    out
+}
+
+/// QA-GFX-9: a USB-C / USB-PD charger plugged or unplugged runs `wol power apply` like a Mains
+/// adapter: the rule matches every `type` the policy counts as a charger, and nothing else (a
+/// battery's `change` events come every percent).
+#[test]
+fn udev_rule_matches_usb_pd() {
+    let rule = std::fs::read_to_string(
+        siblings::root().join("files/usr/lib/udev/rules.d/90-wolos-power.rules"),
+    )
+    .unwrap();
+    let lines: Vec<&str> = rule
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#') && !l.trim().is_empty())
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let l = lines[0];
+    assert!(
+        l.contains(r#"SUBSYSTEM=="power_supply""#) && l.contains(r#"ACTION=="change""#),
+        "{l}"
+    );
+    assert!(l.contains(r#"RUN+="/usr/bin/wol power apply""#), "{l}");
+    let types = l
+        .split(r#"ATTR{type}==""#)
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .expect("ATTR{type}== match");
+    let mut got: Vec<&str> = types.split('|').collect();
+    let mut want = wol_core::power::policy::CHARGER_TYPES.to_vec();
+    got.sort_unstable();
+    want.sort_unstable();
+    assert_eq!(got, want, "udev types vs policy::CHARGER_TYPES");
+}
+
+/// The `listener { timeout = N ... }` blocks of a hypridle config: (timeout, block text).
+fn listeners(conf: &str) -> Vec<(u32, String)> {
+    conf.split("listener")
+        .skip(1)
+        .filter_map(|b| {
+            let t = b
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("timeout = "))?;
+            Some((t.trim().parse().ok()?, b.to_owned()))
+        })
+        .collect()
+}
+
+/// QA-GFX-11: Settings > Lock Screen says the display "turns off one minute after the screen
+/// locks". On battery a 120 s listener turned every head off before the 300 s lock (no lock
+/// running, the desktop one key away). Whatever the power source, nothing turns the displays off
+/// before the lock listener fires; with Never lock, the battery still gets its display off.
+#[test]
+fn hypridle_battery_dpms_after_lock() {
+    let darkens = |b: &str| b.contains("dpms off") || b.contains("wol power idle display-off");
+    let check = |what: &str, conf: &str, lock: Option<u32>| {
+        let ls = listeners(conf);
+        let at = ls
+            .iter()
+            .find(|(_, b)| b.contains("wol-lock"))
+            .map(|(t, _)| *t);
+        assert_eq!(at, lock, "{what}: lock listener");
+        let off: Vec<u32> = ls
+            .iter()
+            .filter(|(_, b)| darkens(b))
+            .map(|(t, _)| *t)
+            .collect();
+        assert!(
+            !off.is_empty(),
+            "{what}: the display turns off at some point"
+        );
+        if let Some(lock) = lock {
+            for t in &off {
+                assert!(
+                    *t > lock,
+                    "{what}: display off at {t} s before the lock at {lock} s"
+                );
+            }
+            assert!(
+                off.contains(&(lock + 60)),
+                "{what}: one minute after the lock: {off:?}"
+            );
+        }
+    };
+    let system = std::fs::read_to_string(
+        siblings::root().join("desktop/overlay/usr/share/wolos/hypr/hypridle.conf"),
+    )
+    .unwrap();
+    check("system hypridle.conf", &system, Some(300));
+    for secs in [60, 120, 300, 600, 900, 1800] {
+        check(
+            &format!("Settings, lock {secs}"),
+            &wol_core::prefs::hypridle_conf(secs, true),
+            Some(secs),
+        );
+    }
+    // Never lock: no lock listener; the battery-only display off still saves the battery.
+    let never = wol_core::prefs::hypridle_conf(0, true);
+    check("Settings, never", &never, None);
+    assert!(never.contains("wol power idle display-off"), "{never}");
+    // The page sentence the listeners make true.
+    let lock_rs =
+        std::fs::read_to_string(siblings::root().join("crates/shell/src/ui/settings/lock.rs"))
+            .unwrap();
+    assert!(lock_rs.contains("The display turns off one minute after the screen locks."));
+}
+
+/// Runs files/usr/lib/wolos/update-download with fake `wol`, `pacman`, `busctl` and `df` (each
+/// logs its argv); returns (exit status, log, stderr).
+fn download_run(
+    name: &str,
+    metered: &str,
+    free_kb: u64,
+    need: u64,
+    conf: &str,
+) -> (bool, String, String) {
+    use std::process::Command;
+    let d = std::env::temp_dir().join(format!("wol-units-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let bin = d.join("bin");
+    for p in [
+        &bin,
+        &d.join("db/local"),
+        &d.join("db/sync"),
+        &d.join("tmp"),
+        &d.join("cache"),
+    ] {
+        std::fs::create_dir_all(p).unwrap();
+    }
+    let log = d.join("log");
+    let fakes = [
+        ("wol", String::new()),
+        // -Sp prints the size of each package to download (%s), -Sw downloads.
+        (
+            "pacman",
+            format!("case \" $* \" in *\" -Sp \"*) echo {need}; echo 0;; esac"),
+        ),
+        ("busctl", format!("echo 'u {metered}'")),
+        (
+            "df",
+            format!(
+                "echo 'Filesystem 1024-blocks Used Available Capacity Mounted on'; echo \"/dev/x 1 1 {free_kb} 1% /\""
+            ),
+        ),
+    ];
+    for (n, body) in fakes {
+        let p = bin.join(n);
+        std::fs::write(
+            &p,
+            format!("#!/bin/sh\necho \"{n} $*\" >> {}\n{body}\n", log.display()),
+        )
+        .unwrap();
+        Command::new("chmod").arg("+x").arg(&p).status().unwrap();
+    }
+    std::fs::write(d.join("auto-update"), conf).unwrap();
+    let o = Command::new("sh")
+        .arg(siblings::root().join("files/usr/lib/wolos/update-download"))
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("WOLOS_AUTO_UPDATE", d.join("auto-update"))
+        .env("WOLOS_PACMAN_DB", d.join("db"))
+        .env("WOLOS_PACMAN_CACHE", d.join("cache"))
+        .env("TMPDIR", d.join("tmp"))
+        .output()
+        .unwrap();
+    let l = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&d);
+    (
+        o.status.success(),
+        l,
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+/// QA-ACC-18 (ACC C-01): the daily automatic download runs on AC power only (a desktop or VM
+/// has no battery and passes), never on a metered connection unless the person said so
+/// (`metered=on` in /etc/wolos/auto-update), and only with twice the download free in pacman's
+/// cache (the install needs room too). A skipped day is not a failed unit.
+#[test]
+fn download_timer_conditions() {
+    let unit = section(
+        "files/usr/lib/systemd/system/wolos-update-download.service",
+        "Unit",
+    );
+    assert!(
+        unit.contains(&("ConditionACPower".into(), "true".into())),
+        "{unit:?}"
+    );
+    let downloads = |l: &str| {
+        l.lines()
+            .any(|x| x.starts_with("pacman ") && x.contains(" -Sw "))
+    };
+    // NetworkManager's Metered: 1 yes, 3 guess-yes (a phone hotspot) skip; 2 no, 4 guess-no, 0 unknown run.
+    for m in ["1", "3"] {
+        let (ok, l, err) = download_run(&format!("metered{m}"), m, 10_000_000, 1_000_000, "");
+        assert!(ok, "{err}");
+        assert!(
+            !downloads(&l) && !l.contains("wol update"),
+            "metered {m}: {l}"
+        );
+        assert!(err.contains("metered"), "{err}");
+    }
+    for m in ["0", "2", "4"] {
+        let (ok, l, err) = download_run(&format!("free{m}"), m, 10_000_000, 1_000_000, "");
+        assert!(ok && downloads(&l), "metered {m}: {l} {err}");
+    }
+    // The person allowed metered downloads.
+    let (ok, l, _) = download_run(
+        "allowed",
+        "1",
+        10_000_000,
+        1_000_000,
+        "download=on\nmetered=on\n",
+    );
+    assert!(ok && downloads(&l), "{l}");
+    // 1 GB to download, 1.5 GB free: not enough for download and install.
+    let (ok, l, err) = download_run("space", "2", 1_500_000, 1_000_000_000, "");
+    assert!(ok, "skipped, not failed: {err}");
+    assert!(!downloads(&l), "{l}");
+    assert!(
+        l.lines()
+            .any(|x| x.starts_with("pacman ") && x.contains(" -Sp ")),
+        "{l}"
+    );
+    assert!(err.contains("free"), "{err}");
+    // download=off still wins over everything.
+    let (ok, l, _) = download_run("off", "2", 10_000_000, 1, "download=off\n");
+    assert!(ok && l.is_empty(), "{l}");
+}
+
+/// QA-ACC-25 (ACC C-08): the full signature engine (MemoryMax=2G, about 1.2 GB of signatures
+/// resident) starts only on machines with the memory for it; below that the socket is not there,
+/// so a check uses the quick scanner instead of waiting on an engine that never starts.
+#[test]
+fn clam_memory_condition() {
+    for u in ["wolos-clam.service", "wolos-clam.socket"] {
+        let unit = section(&format!("files/usr/lib/systemd/system/{u}"), "Unit");
+        assert!(
+            unit.contains(&("ConditionMemory".into(), ">=5G".into())),
+            "{u}: {unit:?}"
+        );
+    }
+    let s = section("files/usr/lib/systemd/system/wolos-clam.service", "Service");
+    assert!(s.contains(&("MemoryMax".into(), "2G".into())), "{s:?}");
+}
+
+/// QA-SYS-1, QA-SYS-15, QA-SYS-2: wold is the only way to a screen (no getty, VT locked), so it
+/// restarts however often it dies (the default limit, 5 in 10 s, left it failed for good: black
+/// screen); the OOM killer picks it last; its jobs outlive it (KillMode=process, `wold` stops them
+/// itself on a real stop and leaves them for the next wold on a restart).
+#[test]
+fn wold_start_limit_zero_and_oom_adjust() {
+    let get = |sec: &str, key: &str| {
+        section("files/usr/lib/systemd/system/wold.service", sec)
+            .into_iter()
+            .filter(|(k, _)| k == key)
+            .map(|(_, v)| v)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(get("Unit", "StartLimitIntervalSec"), ["0"]);
+    assert!(
+        get("Unit", "StartLimitBurst").is_empty(),
+        "no burst: no limit"
+    );
+    assert_eq!(get("Service", "Restart"), ["always"]);
+    assert_eq!(get("Service", "OOMScoreAdjust"), ["-900"]);
+    assert_eq!(get("Service", "KillMode"), ["process"]);
+    // The value is inherited by fork: wold hands every job back to 0 (os.rs), and wold is the
+    // only unit that carries it.
+    let os = std::fs::read_to_string(siblings::root().join("crates/api/src/os.rs")).unwrap();
+    assert!(os.contains("/proc/self/oom_score_adj") && os.contains("fn reset_oom_adj"));
+    for u in root_services().iter().filter(|u| *u != "wold.service") {
+        assert!(
+            !service(u)
+                .iter()
+                .any(|(k, v)| k == "OOMScoreAdjust" && v.starts_with('-')),
+            "{u}: an inheriting root unit must not shield its children from the OOM killer"
+        );
+    }
+}
+
+/// QA-PRIV-14: wold.service has no sandbox keys, on purpose and written down. Every key below is
+/// inherited by what wold starts: the whole user session (apps, games, `sudo` in a terminal, bwrap
+/// and Flatpak), root's admin daemon (pacman, modprobe, mount, chroot for slots) and the login
+/// window. A mount namespace, a seccomp filter or a smaller capability bounding set on wold
+/// binds all of them. The `# No sandbox keys` comment names the decision; this list keeps a key
+/// from arriving without somebody reading why.
+#[test]
+fn wold_hardening_lines() {
+    const INHERITED: &[&str] = &[
+        "NoNewPrivileges",
+        "PrivateTmp",
+        "PrivateDevices",
+        "PrivateNetwork",
+        "PrivateUsers",
+        "PrivateMounts",
+        "ProtectSystem",
+        "ProtectHome",
+        "ProtectKernelTunables",
+        "ProtectKernelModules",
+        "ProtectKernelLogs",
+        "ProtectControlGroups",
+        "ProtectClock",
+        "ProtectHostname",
+        "ProtectProc",
+        "ReadOnlyPaths",
+        "InaccessiblePaths",
+        "RestrictNamespaces",
+        "RestrictSUIDSGID",
+        "RestrictRealtime",
+        "RestrictAddressFamilies",
+        "SystemCallFilter",
+        "SystemCallArchitectures",
+        "MemoryDenyWriteExecute",
+        "LockPersonality",
+        "CapabilityBoundingSet",
+        "DevicePolicy",
+        "LimitCORE",
+    ];
+    let have = service("wold.service");
+    for (k, v) in &have {
+        assert!(
+            !INHERITED.contains(&k.as_str()),
+            "wold.service: {k}={v} would bind the session, sudo and pacman it starts"
+        );
+    }
+    let text = std::fs::read_to_string(path("wold.service")).unwrap();
+    assert!(text.contains("QA-PRIV-14") && text.contains("No sandbox keys"));
+    assert!(EXEMPT.iter().any(|(u, _)| *u == "wold.service"));
+}
+
+/// QA L2-30: the user's whole slice has a memory ceiling, so the kernel's out-of-memory pick
+/// happens inside it (the hog, not logind/seatd/wold which live outside); the ceiling sits above
+/// the user manager's own `MemoryMax=80%` (background services) and under the machine's RAM.
+#[test]
+fn user_slice_memory_ceiling_keeps_the_oom_pick_inside_the_session() {
+    let slice = section(
+        "files/usr/lib/systemd/system/user-.slice.d/70-wolos-limits.conf",
+        "Slice",
+    );
+    let max: Vec<&str> = slice
+        .iter()
+        .filter(|(k, _)| k == "MemoryMax")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    assert_eq!(max, ["90%"]);
+    let mgr = section(
+        "files/usr/lib/systemd/system/user@.service.d/70-wolos-limits.conf",
+        "Service",
+    );
+    assert!(mgr.iter().any(|(k, v)| k == "MemoryMax" && v == "80%"));
+}
+
+// ---- B5 boot rows (layers-seal-boot) ----
+
+/// `key=value` lines of any section of a unit (comments skipped).
+fn unit_lines(unit: &str) -> Vec<String> {
+    std::fs::read_to_string(path(unit))
+        .unwrap_or_else(|e| panic!("{unit}: {e}"))
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#') && l.contains('='))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// QA-LIVE3-2: the seal check measures the slot as sealed, before systemd-sysext merges the
+/// layers over /usr (through the merge every file read as changed and every boot fell back).
+#[test]
+fn verity_check_before_sysext() {
+    let u = unit_lines("wolos-verity-check.service");
+    assert!(
+        u.iter().any(|l| l == "Before=systemd-sysext.service"),
+        "{u:?}"
+    );
+    // D3: a deleted manifest must not skip the check (`wol seal check` passes an unsealed slot).
+    assert!(
+        !u.iter().any(|l| l.starts_with("ConditionPathExists=")),
+        "{u:?}"
+    );
+    assert!(u.iter().any(|l| l == "DefaultDependencies=no"), "{u:?}");
+}
+
+/// QA-LIVE3-36: boot-ok reads the marks the early checks leave, so it runs after them; it runs
+/// on every good boot (a blessed entry pulls no boot-complete.target, QA-LIVE4-4) and has time
+/// for its 90 s wait for the login window (QA-SYS-3).
+#[test]
+fn boot_ok_requires_seal_check() {
+    let u = unit_lines("wolos-boot-ok.service");
+    for want in [
+        "After=wolos-verity-check.service",
+        "After=wold.service",
+        "Before=boot-complete.target",
+        "RequiredBy=boot-complete.target",
+        "WantedBy=multi-user.target",
+        "TimeoutStartSec=4min",
+    ] {
+        assert!(
+            u.iter().any(|l| l == want),
+            "wolos-boot-ok lacks {want}: {u:?}"
+        );
+    }
+    let script =
+        std::fs::read_to_string(siblings::root().join("files/usr/lib/wolos/boot-ok")).unwrap();
+    assert!(
+        script.contains("verity-failed epoch-failed"),
+        "boot-ok reads both marks"
+    );
+}
+
+/// QA-SET-R2-01 / QA-LIVE3-4: the /etc overlay mounts after systemd read /etc, so a unit turned
+/// on since the install was never part of the boot. Once the overlay is up, systemd reads the
+/// units again (only when the overlay holds unit changes) and the default target takes in what
+/// that adds, before sysinit; the unit is on by preset.
+#[test]
+fn etc_overlay_before_systemd_reads_etc() {
+    let u = unit_lines("wolos-etc-units.service");
+    for want in [
+        "DefaultDependencies=no",
+        "After=etc.mount local-fs.target",
+        "Before=sysinit.target",
+        "ConditionPathIsMountPoint=/etc",
+        // D6: a hostname-only change triggers too (either condition, OR-ed).
+        "ConditionDirectoryNotEmpty=|/var/lib/wolos/etc/upper/systemd",
+        "ConditionPathExists=|/var/lib/wolos/etc/upper/hostname",
+        "ExecStart=/usr/lib/wolos/etc-units",
+        "WantedBy=sysinit.target",
+    ] {
+        assert!(
+            u.iter().any(|l| l == want),
+            "wolos-etc-units lacks {want}: {u:?}"
+        );
+    }
+    let script =
+        std::fs::read_to_string(siblings::root().join("files/usr/lib/wolos/etc-units")).unwrap();
+    let reload = script.find("systemctl daemon-reload").unwrap();
+    let start = script
+        .find("systemctl start --no-block default.target")
+        .unwrap();
+    assert!(reload < start, "read the units, then take them in");
+    let preset = std::fs::read_to_string(
+        siblings::root().join("files/usr/lib/systemd/system-preset/50-wolos.preset"),
+    )
+    .unwrap();
+    assert!(
+        preset
+            .lines()
+            .any(|l| l == "enable wolos-etc-units.service")
+    );
+    // The overlay it waits for is the one install-run writes.
+    let run =
+        std::fs::read_to_string(siblings::root().join("files/usr/lib/wolos/install-run")).unwrap();
+    assert!(
+        run.contains("overlay /etc overlay lowerdir=/etc,upperdir=/var/lib/wolos/etc/upper,"),
+        "install-run's /etc overlay line"
+    );
+}
+
+/// QA-PERF-3 (H17-03): GTK 4 registers every app with the portal at display open and waits for
+/// `xdg-desktop-portal` to activate its backends (2.8 s warm, 10 s at first boot). The session
+/// starts the portal and the accessibility bus in the background before the shell, so the wait is
+/// over by the time the shell asks. Both files the compositor can load carry the line, ahead of
+/// `wol-shell`, and without blocking the compositor's startup.
+#[test]
+fn portal_started_before_the_shell() {
+    const HYPR: &str = "desktop/overlay/usr/share/wolos/hypr";
+    for file in ["hyprland.conf", "hyprland.lua"] {
+        let text = std::fs::read_to_string(siblings::root().join(HYPR).join(file)).unwrap();
+        let at = |needle: &str| {
+            text.lines()
+                .position(|l| l.contains(needle) && !l.trim_start().starts_with(['#', '-']))
+                .unwrap_or_else(|| panic!("{file}: no line with {needle}"))
+        };
+        let portal = at("systemctl --user start --no-block xdg-desktop-portal.service");
+        let line = text.lines().nth(portal).unwrap();
+        for unit in ["xdg-desktop-portal-gtk.service", "at-spi-dbus-bus.service"] {
+            assert!(line.contains(unit), "{file}: {unit}");
+        }
+        assert!(
+            portal < at("wol-shell --supervised"),
+            "{file}: the portal first"
+        );
+        // The user manager has the display and D-Bus environment before it starts the portal.
+        assert!(
+            at("dbus-update-activation-environment --systemd") < portal,
+            "{file}: environment first"
+        );
+    }
+}
+
+/// live-4 F3: the shutdown unit that counts the running slot's entry again runs its script at
+/// stop, while /efi and /var are still mounted, on every installed boot (preset).
+#[test]
+fn shutdown_rearm_unit() {
+    let u = unit_lines("wolos-boot-rearm.service");
+    for want in [
+        "RequiresMountsFor=/efi /var",
+        "RemainAfterExit=yes",
+        "ExecStart=/usr/lib/wolos/boot-rearm start",
+        "ExecStop=/usr/lib/wolos/boot-rearm stop",
+        "WantedBy=multi-user.target",
+    ] {
+        assert!(
+            u.iter().any(|l| l == want),
+            "wolos-boot-rearm lacks {want}: {u:?}"
+        );
+    }
+    let preset = std::fs::read_to_string(
+        siblings::root().join("files/usr/lib/systemd/system-preset/50-wolos.preset"),
+    )
+    .unwrap();
+    assert!(
+        preset
+            .lines()
+            .any(|l| l == "enable wolos-boot-rearm.service")
+    );
 }

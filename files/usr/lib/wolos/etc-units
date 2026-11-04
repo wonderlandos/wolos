@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# wolos-etc-units.service: a sealed slot's /etc is an overlay that mounts after systemd read its
+# unit files, so what was enabled, disabled or overridden since the install was not in this
+# boot's plan (QA-SET-R2-01, QA-LIVE3-4). Read the units again, let the boot's target take in
+# what that adds, and set the hostname from the person's /etc (systemd set it from the lower one).
+set -u
+systemctl daemon-reload || exit 1
+systemctl start --no-block default.target || exit 1
+h=
+read -r h < /etc/hostname 2>/dev/null || :
+[ -z "$h" ] || printf '%s' "$h" > /proc/sys/kernel/hostname || :
+exit 0
