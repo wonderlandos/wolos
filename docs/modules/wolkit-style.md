@@ -65,14 +65,14 @@ Type roles (`font-size: title`; sizes mirror `shared::theme::scaffold`):
 | `secondary` | 11px | 400 |
 | `caption` | 11px | 400 |
 
-Shadows are fixed material (black at an alpha), not themable. `box-shadow` holds two layers at most; `lg` is two.
+Shadows are fixed material (black at an alpha), not themable. One light upper left: a shadow falls right and down at 1:2, and `sm`, `md` and `lg` are the Kit's elevations 1, 2 and 3. `box-shadow` holds two layers at most.
 
-| Shadow | Layers (offset y, blur, alpha) |
+| Shadow | Layers (offset x, offset y, blur, alpha) |
 |---|---|
 | `none` | none |
-| `sm` | 1px 3px 16% |
-| `md` | 3px 10px 20% |
-| `lg` | 6px 18px 24%; 1px 4px 16% |
+| `sm` | 1px 2px 4px 14% |
+| `md` | 2px 4px 12px 18% |
+| `lg` | 3px 6px 24px 24% |
 
 Springs (`spring: snappy`): stiffness, damping, mass.
 

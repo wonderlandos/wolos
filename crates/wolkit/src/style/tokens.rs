@@ -242,7 +242,8 @@ pub fn on_radius_scale(px: f32) -> bool {
     RADIUS.iter().any(|s| s.value == px)
 }
 
-/// Elevation: fixed material, not themable (`docs/RULES-ui.md`). Black at `alpha` percent.
+/// Elevation: fixed material, not themable (`docs/RULES-ui.md`). One light upper left: a shadow falls right and down at
+/// 1:2, `sm`/`md`/`lg` are the Kit's `--elev-1/2/3`. Black at `alpha` percent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum ShadowTok {
@@ -253,9 +254,10 @@ pub enum ShadowTok {
     Lg,
 }
 
-/// One shadow layer: offset y, blur radius, black alpha in percent.
+/// One shadow layer: offsets x and y (1:2), blur radius, black alpha in percent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShadowParams {
+    pub dx: f32,
     pub dy: f32,
     pub blur: f32,
     pub alpha: u8,
@@ -275,30 +277,26 @@ impl ShadowTok {
     pub fn from_u8(b: u8) -> Option<Self> {
         Self::ALL.get(b.ix()).copied()
     }
-    /// Layers, mirroring `--glass-shadow` of the Kit for `lg`.
+    /// Layers, mirroring `--elev-1`, `--elev-2` and `--elev-3` of the Kit.
     pub fn layers(self) -> &'static [ShadowParams] {
         const SM: [ShadowParams; 1] = [ShadowParams {
-            dy: 1.0,
-            blur: 3.0,
-            alpha: 16,
+            dx: 1.0,
+            dy: 2.0,
+            blur: 4.0,
+            alpha: 14,
         }];
         const MD: [ShadowParams; 1] = [ShadowParams {
-            dy: 3.0,
-            blur: 10.0,
-            alpha: 20,
+            dx: 2.0,
+            dy: 4.0,
+            blur: 12.0,
+            alpha: 18,
         }];
-        const LG: [ShadowParams; 2] = [
-            ShadowParams {
-                dy: 6.0,
-                blur: 18.0,
-                alpha: 24,
-            },
-            ShadowParams {
-                dy: 1.0,
-                blur: 4.0,
-                alpha: 16,
-            },
-        ];
+        const LG: [ShadowParams; 1] = [ShadowParams {
+            dx: 3.0,
+            dy: 6.0,
+            blur: 24.0,
+            alpha: 24,
+        }];
         match self {
             ShadowTok::None => &[],
             ShadowTok::Sm => &SM,

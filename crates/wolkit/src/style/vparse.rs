@@ -773,12 +773,13 @@ pub fn parse_shadow(c: &mut Cur) -> PRes<[Shadow; 2]> {
                 return Err(c.err(
                     &t,
                     L::BAD_VALUE,
-                    "`box-shadow` holds two layers at most (`lg` is two).".into(),
+                    "`box-shadow` holds two layers at most (none of the three is more than one)."
+                        .into(),
                     Some("use fewer or smaller shadows".into()),
                 ));
             }
             out[n] = Shadow {
-                dx: 0.0,
+                dx: l.dx,
                 dy: l.dy,
                 blur: l.blur,
                 color: ColorRef::Shade(l.alpha),
