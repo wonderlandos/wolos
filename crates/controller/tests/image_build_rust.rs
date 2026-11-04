@@ -35,7 +35,8 @@ fn cargo_calls_ask_only_for_their_packages_features() {
 p=; f=; while [ $# -gt 0 ]; do case $1 in -p) p=$2; shift;; --features) f="$f $2"; shift;; esac; shift; done
 for x in $f; do case $x in */*) [ -z "$p" ] || [ "${{x%%/*}}" = "$p" ] || {{ echo "error: the package '$p' does not contain this feature: $x" >&2; exit 101; }};; esac; done
 for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-flatpak-consent wol-analyze wol-kit-host wol-plugin-maker wol-xguard wol-xguard-clam pacman wol-authcheck wol-session-pam; do
-  printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {rel}/$b; done"#,
+  printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {rel}/$b; done
+for b in wol-quicklook; do printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {rel}/$b; done"#,
             log = log.display(),
             rel = target.join("release").display()
         ),
@@ -57,4 +58,9 @@ for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search
         "{calls}"
     );
     assert!(calls.contains("-p xguard-clam"), "{calls}\n{err}");
+    // Quick Look: Files starts it through D-Bus, so the binary must land in /usr/bin.
+    assert!(
+        t.join("dest/usr/bin/wol-quicklook").exists(),
+        "wol-quicklook is not installed\n{err}"
+    );
 }

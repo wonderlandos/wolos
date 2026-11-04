@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Quick Look
+Comment=Preview a file with the Space bar
+Icon=wolos-files
+Exec=wol-quicklook
+NoDisplay=true
+StartupNotify=false
+Categories=System;Utility;
