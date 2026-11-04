@@ -54,17 +54,18 @@ const SCRIPTS: &[(&str, &str, &str, &str)] = &[
         "#!/usr/bin/env rsh\necho hi\n",
         "/usr/bin/rsh",
     ),
-    // a .rb file goes through rsh when its shebang says so (plain Ruby there, unless it opts in)
+    // a .rb file goes through rsh when its shebang says so (the shell layer on there, unless it
+    // opts out with `# rsh: ruby`)
     (
         "rsh",
         "tidy.rb",
-        "#!/usr/bin/rsh\nputs 'hi'\n",
+        "#!/usr/bin/rsh\necho hi\n",
         "/usr/bin/rsh",
     ),
     (
         "rsh",
         "tidy.rb",
-        "#!/usr/bin/rsh\n# rsh: shell\necho hi\n",
+        "#!/usr/bin/rsh\n# rsh: ruby\nputs 'hi'\n",
         "/usr/bin/rsh",
     ),
 ];
@@ -172,7 +173,7 @@ fn every_kind_runs_on_another_computer_from_stdin() {
             "{kind}: the file goes on stdin, not by name"
         );
         assert_eq!(e.inputs, vec![text.to_string()], "{kind}");
-        // rsh reads a .rb file as plain Ruby: on stdin it needs the name to know it is one
+        // a .rb file is sent with its name, for rsh's messages and $0 (cosmetic)
         assert_eq!(
             cmd.contains("'--name' 'tidy.rb' '--'"),
             *kind == "rsh" && file.ends_with(".rb"),
@@ -419,10 +420,11 @@ fn real_check_tells_a_good_script_from_a_broken_one() {
     }
 }
 
-/// A `.rb` file whose shebang names rsh is plain Ruby (the shell layer is off) unless its first
-/// line after the shebang is `# rsh: shell`; `wol script check` and `run` follow the same rule.
+/// A `.rb` file whose shebang names rsh has the shell layer, like any rsh file, unless its first
+/// line after the shebang is `# rsh: ruby` (plain Ruby); `wol script check` and `run` follow the
+/// same rule.
 #[test]
-fn real_rb_files_through_rsh_are_plain_ruby_unless_they_opt_in() {
+fn real_rb_files_through_rsh_mix_commands_unless_they_opt_out() {
     if !have("/usr/bin/rsh") {
         eprintln!("/usr/bin/rsh not installed; the .rb mode test is skipped");
         return;
@@ -437,24 +439,25 @@ fn real_rb_files_through_rsh_are_plain_ruby_unless_they_opt_in() {
             &[("HOME", &home), ("XDG_STATE_HOME", &state)],
         )
     };
-    // plain: `echo hi` is a Ruby call of a method that does not exist
-    let plain = "#!/usr/bin/rsh\nbegin\n  echo 'hi'\nrescue NoMethodError\n  puts 'ruby'\nend\n";
+    // the shell layer is on: `echo hi` is a command line in a .rb file too
+    let o = wol_run("shell.rb", "#!/usr/bin/rsh\necho hi\n");
+    assert!(o.status.success(), "{o:?}");
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "hi\n");
+    // opted out: the same word is a Ruby call of a method that does not exist
+    let plain = "#!/usr/bin/rsh\n# rsh: ruby\nbegin\n  echo 'hi'\nrescue NoMethodError\n  puts 'ruby'\nend\n";
     let o = wol_run("plain.rb", plain);
     assert!(o.status.success(), "{o:?}");
     assert_eq!(String::from_utf8_lossy(&o.stdout), "ruby\n");
-    // opted in: the same word starts a command line
-    let o = wol_run("shell.rb", "#!/usr/bin/rsh\n# rsh: shell\necho hi\n");
-    assert!(o.status.success(), "{o:?}");
-    assert_eq!(String::from_utf8_lossy(&o.stdout), "hi\n");
-    // a command line is a mistake in a plain .rb file, and check says so
+    // a command line is fine by default, and check says so
     let f = home.join("cmd.rb");
     std::fs::write(&f, "#!/usr/bin/rsh\ncd ~/src/app\n").unwrap();
     let o = wol(&["script", "check", f.to_str().unwrap(), "--json"], &[]);
-    assert!(!o.status.success(), "{o:?}");
-    std::fs::write(&f, "#!/usr/bin/rsh\n# rsh: shell\ncd ~/src/app\n").unwrap();
-    let o = wol(&["script", "check", f.to_str().unwrap(), "--json"], &[]);
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(v["ok"], true, "{v}");
+    // ... and a mistake in a file that opted out of it
+    std::fs::write(&f, "#!/usr/bin/rsh\n# rsh: ruby\ncd ~/src/app\n").unwrap();
+    let o = wol(&["script", "check", f.to_str().unwrap(), "--json"], &[]);
+    assert!(!o.status.success(), "{o:?}");
 }
 
 /// `wol script on` end to end with a stand-in for ssh that does what sshd does with the command
@@ -480,11 +483,11 @@ fn real_scripts_run_on_another_computer_from_stdin() {
             "#!/usr/bin/rsh\n\
              puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\n",
         ),
-        // a .rb file with an rsh shebang is plain Ruby over ssh too: `echo` is a Ruby call there
+        // `# rsh: ruby` reaches the other side too: there `echo` is a Ruby call, as here
         (
             "/usr/bin/rsh",
             "far.rb",
-            "#!/usr/bin/rsh\nbegin\n  echo 'x'\nrescue NoMethodError\n  \
+            "#!/usr/bin/rsh\n# rsh: ruby\nbegin\n  echo 'x'\nrescue NoMethodError\n  \
              puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\nend\n",
         ),
     ];

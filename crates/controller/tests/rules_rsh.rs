@@ -116,7 +116,8 @@ fn rsh_001_the_kinds_row_matches_the_document() {
     }
     assert_eq!(kind_of("x", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
     assert_eq!(kind_of("x.rsh", "echo\n").unwrap().id, "rsh");
-    // a .rb file: the shebang decides (rsh reads it as plain Ruby unless it opts in)
+    // a .rb file: the shebang decides (rsh gives it the shell layer unless it opts out with
+    // `# rsh: ruby`)
     assert_eq!(kind_of("x.rb", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
     assert_eq!(kind_of("x.rb", "#!/usr/bin/env ruby\n").unwrap().id, "ruby");
     assert_eq!(kind_of("x.rb", "puts 1\n").unwrap().id, "ruby");

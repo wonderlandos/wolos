@@ -4,7 +4,7 @@ Decision: ADR 0041 (scripts). rsh is Ruby with a shell layer: a script is Ruby, 
 
 ## Files: `.rsh` and `.rb`
 
-`rsh script.rsh` and `./script.rsh` (with `#!/usr/bin/rsh`) have the shell layer. `rsh script.rb` runs a plain Ruby file with the shell layer off, so a Ruby script means what it means in Ruby; a `.rb` file asks for the shell layer with `# rsh: shell` as its first line (or the line after a `#!` line). `rsh --explain file` says which mode a file gets.
+Every file rsh runs has the shell layer: `rsh script.rsh`, `./script.rsh` (with `#!/usr/bin/rsh`) and `rsh script.rb` alike, so Ruby and command lines mix the same way in a `.rb` file. A file that should be plain Ruby (no line is a command) says so with `# rsh: ruby` as its first line (or the line after a `#!` line). `rsh --explain file` says which mode a file gets. (Until rsh 0.1.0 a `.rb` file was plain Ruby unless it opted in with `# rsh: shell`; that rule is gone since 0.1.1.)
 
 ## Plugging in
 
@@ -14,13 +14,13 @@ Decision: ADR 0041 (scripts). rsh is Ruby with a shell layer: a script is Ruby, 
 |---|---|---|---|---|
 | `rsh` | `.rsh` | `/usr/bin/rsh` | `rsh -n` | `rsh --lint` |
 
-Shebangs `#!/usr/bin/rsh` and `#!/usr/bin/env rsh` are recognised. The shebang wins over the file name, so a `.rb` file whose shebang is `#!/usr/bin/rsh` is an rsh script too (plain Ruby there unless it opts in); a `#!/usr/bin/env ruby` file, or a `.rb` file with no shebang, stays a `ruby` script. `wol script on <host> x.rsh` sends the file on stdin to `/usr/bin/rsh -s --` there; for a `.rb` file it sends `/usr/bin/rsh -s --name x.rb --`, so rsh reads it the same way there as here. A computer without rsh fails with the ssh error.
+Shebangs `#!/usr/bin/rsh` and `#!/usr/bin/env rsh` are recognised. The shebang wins over the file name, so a `.rb` file whose shebang is `#!/usr/bin/rsh` is an rsh script too (with the shell layer, unless it opts out with `# rsh: ruby`); a `#!/usr/bin/env ruby` file, or a `.rb` file with no shebang, stays a `ruby` script. `wol script on <host> x.rsh` sends the file on stdin to `/usr/bin/rsh -s --` there; for a `.rb` file it sends `/usr/bin/rsh -s --name x.rb --`, so rsh's messages and `$0` name the file there as here (the name does not change how rsh reads it; `# rsh: ruby` travels inside the text). A computer without rsh fails with the ssh error.
 
 The terminal menu (Settings > General, "Shell in the terminal") lists `rsh` when `/usr/bin/rsh` exists, in the order zsh, bash, rsh, fish, nu, pwsh (`crates/core/src/terminal_shell.rs`, `/usr/bin/wol-term-shell`; a test keeps the two tables equal). The login shell stays zsh: rsh is not POSIX, and the session and ssh hand the login shell POSIX text. rsh is not put in `/etc/shells`.
 
 ## Build and size
 
-Built in its repository: `make` (needs a C and C++ compiler, `ruby` and `bison` for the interpreter's own build script, and `libpcre2-8`; `LINK=static` is the default and needs `libpcre2-8.a`, `LINK=dynamic` is for distributions without it), `make test`, `make install PREFIX=/usr DESTDIR=...`. The repository's CI builds and tests it on every push. Limits: the stripped program under 3 MB (measured 2,904,168 bytes, static, `-Os`), start-up under 10 ms (about 2.5 ms).
+Built in its repository: `make` (needs a C and C++ compiler, `ruby` and `bison` for the interpreter's own build script, and `libpcre2-8`; `LINK=static` is the default and needs `libpcre2-8.a`, `LINK=dynamic` is for distributions without it), `make test`, `make install PREFIX=/usr DESTDIR=...`. The repository's CI builds and tests it on every push. Limits: the stripped program under 3 MB (0.1.2: 2,928,744 bytes, static, `-Os`), start-up under 10 ms (0.1.2: `rsh -c nil` median about 1.2 ms, the same as 0.1.0; the repository's `docs/rsh.md` has the measurements).
 
 ## Rules
 

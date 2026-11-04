@@ -22,8 +22,9 @@ pub struct Kind {
     /// Interpreter names a shebang may give (`#!/usr/bin/ruby`, `#!/usr/bin/env ruby`).
     pub interpreters: &'static [&'static str],
     /// File name endings used when there is no shebang. (A `.rb` file whose shebang names rsh
-    /// is an rsh script too: the shebang wins, and rsh reads a `.rb` file as plain Ruby unless
-    /// its first line is `# rsh: shell`; a `#!/usr/bin/env ruby` file stays `ruby`.)
+    /// is an rsh script too: the shebang wins, and rsh gives every file the shell layer, `.rb`
+    /// included, unless its first line (after `#!`) is `# rsh: ruby`; a `#!/usr/bin/env ruby`
+    /// file stays `ruby`.)
     pub extensions: &'static [&'static str],
     /// The interpreter on a WolOS system.
     pub program: &'static str,
@@ -272,8 +273,9 @@ pub fn remote_command(kind: &Kind, file: &str, args: &[String]) -> String {
     ];
     let mut stdin_args: Vec<String> = kind.stdin_args.iter().map(|a| a.to_string()).collect();
     if kind.id == "rsh" && file.to_ascii_lowercase().ends_with(".rb") {
-        // The script arrives on stdin, so rsh cannot see its name: tell it, so a `.rb` file is
-        // read the same way there as here (plain Ruby unless it opts in).
+        // The script arrives on stdin, so rsh cannot see its name: tell it, for its messages and
+        // `$0` only (cosmetic: the name no longer changes how rsh reads the file; `# rsh: ruby`
+        // inside the text does, there as here).
         let base = Path::new(file)
             .file_name()
             .and_then(|n| n.to_str())
@@ -548,7 +550,7 @@ mod tests {
             "rsh"
         );
         assert_eq!(
-            kind_of("x.rb", "#!/usr/bin/rsh\n# rsh: shell\necho\n")
+            kind_of("x.rb", "#!/usr/bin/rsh\n# rsh: ruby\nputs 1\n")
                 .unwrap()
                 .id,
             "rsh"
@@ -606,7 +608,7 @@ mod tests {
             c.contains("'WOL_HELPER=deploy' '/usr/bin/rsh' '-s' '--' 'a b'"),
             "{c}"
         );
-        // a .rb file with an rsh shebang is sent with its name, so rsh reads it as plain Ruby
+        // a .rb file with an rsh shebang is sent with its name (for rsh's messages and $0)
         let c = remote_command(rsh, "/x/it's.rb", &["a b".into()]);
         assert!(
             c.contains("'WOL_HELPER=its' '/usr/bin/rsh' '-s' '--name' 'it'\\''s.rb' '--' 'a b'"),
