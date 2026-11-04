@@ -178,9 +178,10 @@ fn hello_calls_travel_page_to_host_to_wold_and_back() {
             .ends_with('.')
     );
     // Posted: 2 subscriptions of the bridge itself, 1 of the page's, 6 calls (the bad params never
-    // leave the page: bridge.js refuses them); every call is answered.
+    // leave the page: bridge.js refuses them); every call is answered, and the bridge's two
+    // subscriptions get the record as it is now (QA-WEB-2).
     assert_eq!(posted, 3 + 6, "posted");
-    assert_eq!(delivered, 6, "delivered");
+    assert_eq!(delivered, 2 + 6, "delivered");
 }
 
 #[test]

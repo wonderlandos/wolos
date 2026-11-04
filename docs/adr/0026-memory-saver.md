@@ -38,3 +38,5 @@ Consequences:
 - A frozen app stops answering the compositor's ping, so the compositor shows its not-responding dialog over it. App Nap stays off until that is solved. Chromium with busy tabs never counts as idle and does not nap at all.
 - Memory stays compressed in zram, and the first focus after saving costs up to about 110 ms.
 - The numbers come from a VM with software rendering. Restore on real hardware has not been measured.
+
+Amended 2026-11-04 (QA-ADR-19, QA-ADR-10: the numbers above had no named constant): the 30 s is `wol_core::memsaver::app::SAVE_AFTER_MS` and the 10 minutes `NAP_AFTER_MS`, the defaults of `app::Config`; App Nap is off in `memsaver::Prefs::default`. `idle` (under 1 % of a core for a minute, `IDLE_CPU`/`IDLE_MS` in `crates/api/src/memsaver/engine.rs`) is a fact the phase table reads, not a delay. Test: `app::tests::phase_table_runs_on_the_adr_0026_delays` reads this record.

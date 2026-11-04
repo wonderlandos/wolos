@@ -11,3 +11,5 @@ Decision:
 - wol-login's account plan adds `~/.local/share/keyrings` (0700, the user's), the theme for the chosen look (`wol-<light|dark|auto>-<accent>`, default accent with Auto = no file) and `/var/db/wolos/avatars/<name>` (one allow-listed tone). Account: administrator (wheel, video, operator), zsh.
 - Pages are built from `kit::assistant` only (`tests/kit_only.rs`): fixed-size glass cards over the lock backdrop, the same as the login window and lock screen. Illustrations ship in `/usr/local/share/wolos/illustrations`.
 Consequences: the live image carries one sudo rule (`live` may run `install-run` and `install-check` as root). Time left is unknown until the first packages install. Language list is seven locales; more need translations first.
+
+Amended 2026-11-04 (QA-ADR-18, QA-ADR-9): Setup has seven steps (`shell::setup::STEPS`): Welcome, then Finish Secure Boot Setup (`Step::KeyScreen`, the one key screen of ADR 0025 at first start, shown only while the enrolment is pending), then the four questions as above, then You're All Set. Still four questions: the key screen asks nothing, it finishes a step the installer started.

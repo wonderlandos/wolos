@@ -61,3 +61,5 @@ names the file, not what it contains.
   the digest can be compared with the one the builder published; wol-admind's log records them.
 - `.PKGINFO` must sit in the first MiB of the decompressed package (makepkg writes it first); a
   package that places it later is refused.
+
+Amended 2026-11-04 (QA-ADR-23: the size caps were read as disagreeing): three caps, one test. A staged copy is at most 4 GiB per copy (`packages::MAX_STAGED`), one per account and two at once, so at most 8 GiB of copies in flight (`STAGED_PER_UID`, `STAGED_TOTAL`); the walk reads at most 16 GiB unpacked (`MAX_UNPACKED`, 4 x the copy cap) in 120 s (`ZSTD_TIMEOUT`). `packages::tests::staged_caps_are_the_adr_0034_numbers` reads this record.

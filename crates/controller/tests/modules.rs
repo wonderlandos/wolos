@@ -778,3 +778,37 @@ fn shipped_records_with_side_effects_have_an_unpost() {
         assert!(root.join("files/usr/lib/wolos").join(script).is_file());
     }
 }
+
+/// QA-ADR-4: ADR 0032 "Pinning": the system mise config every account reads first is shipped
+/// (desktop/overlay, installed by wolos-system) and carries the pins the decision names: lockfiles
+/// on, the registry of the `mise` package, no asdf backend, paranoid plugins and provenance, no
+/// trusted project paths.
+#[test]
+fn dev_module_mise_config_carries_the_adr_0032_pins() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../desktop/overlay/etc/mise/config.toml");
+    let text = std::fs::read_to_string(&path).expect("desktop/overlay/etc/mise/config.toml");
+    let settings: Vec<(String, String)> = text
+        .lines()
+        .skip_while(|l| l.trim() != "[settings]")
+        .skip(1)
+        .take_while(|l| !l.trim_start().starts_with('['))
+        .filter_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            Some((k.trim().to_owned(), v.trim().to_owned()))
+        })
+        .collect();
+    for (key, want) in [
+        ("lockfile", "true"),
+        ("registry_floating", "false"),
+        ("disable_backends", r#"["asdf"]"#),
+        ("paranoid", r#"["plugins", "provenance"]"#),
+        ("trusted_config_paths", "[]"),
+    ] {
+        let got = settings
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str());
+        assert_eq!(got, Some(want), "mise [settings] {key}");
+    }
+}

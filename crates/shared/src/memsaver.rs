@@ -38,12 +38,16 @@ pub struct Snapshot {
     pub exclude: Vec<String>,
 }
 
-/// Normalised app id: lower case, `[a-z0-9._-]` only (anything else becomes `_`), at most 64
-/// bytes. Window classes and Settings exclusions compare through it; it is also scope-name safe.
+/// Most bytes of an [`app_id`]: the app part of a scope name (`app-wol-<id>-<pid>-<n>.scope`).
+pub const APP_ID_MAX: usize = 64;
+
+/// Normalised app id: lower case, `[a-z0-9._-]` only (anything else becomes `_`), at most
+/// [`APP_ID_MAX`] bytes. Window classes and Settings exclusions compare through it; it is also
+/// scope-name safe.
 pub fn app_id(class: &str) -> String {
     class
         .chars()
-        .take(64)
+        .take(APP_ID_MAX)
         .map(|c| match c.to_ascii_lowercase() {
             c @ ('a'..='z' | '0'..='9' | '.' | '_' | '-') => c,
             _ => '_',

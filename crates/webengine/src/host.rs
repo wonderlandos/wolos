@@ -28,8 +28,13 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 pub const MAX_IN_FLIGHT: usize = 8;
 /// Most of wold's reply the host reads.
 pub const MAX_REPLY: u64 = 1 << 20;
-/// How long the host waits for wold's reply: wold's own deadline plus the sheet's wait.
-pub const WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+/// How long the host waits for wold's reply to `method`: wold's longest deadline for it plus a
+/// margin, from the one table wold runs by (`wol_core::sysapp::host_wait_secs`). A flat 300 s gave
+/// up while wold still ran an Update Now or a Doctor fix, so the page said WolOS was not
+/// answering and the change finished unseen (QA-WEB-3).
+pub fn wait_for(method: &str) -> std::time::Duration {
+    std::time::Duration::from_secs(wol_core::sysapp::host_wait_secs(method))
+}
 
 /// Page messages in, replies out.
 pub struct Host {
@@ -246,7 +251,7 @@ impl Wold for WoldClient {
             )
         };
         let mut s = shared::jobs::connect(&self.socket).map_err(|e| unavailable(e.to_string()))?;
-        s.set_read_timeout(Some(WAIT))
+        s.set_read_timeout(Some(wait_for(method)))
             .map_err(|e| unavailable(e.to_string()))?;
         let line = format!(
             "webapp-call {method} {}\n",
@@ -308,6 +313,28 @@ mod tests {
     use super::*;
     use crate::bridge::{Manifest, Theme};
     use std::time::Duration;
+
+    /// QA-WEB-3: the host waits longer than wold may take on every method, so wold always
+    /// answers first (with its own sentence), and past the old flat 5 minutes on the
+    /// administrator ones (an Update Now, a Doctor fix of several long steps).
+    #[test]
+    fn the_host_outwaits_wold_on_every_method() {
+        use wol_core::sysapp::{PERMISSIONS, call_deadline_secs};
+        let most = shared::shell::MAX_DOCTOR_STEPS;
+        for p in PERMISSIONS {
+            for m in p.methods {
+                let wold = Duration::from_secs(call_deadline_secs(m, most));
+                assert!(
+                    wait_for(m) > wold,
+                    "{m}: host {:?} <= wold {wold:?}",
+                    wait_for(m)
+                );
+                if p.admin {
+                    assert!(wait_for(m) > Duration::from_secs(300), "{m}");
+                }
+            }
+        }
+    }
 
     /// Answers once the test lets it (one release per call), so nothing here depends on timing.
     struct Gated(std::sync::Mutex<std::sync::mpsc::Receiver<()>>);
@@ -432,9 +459,13 @@ mod tests {
         assert!(h.take_ready().is_empty(), "not subscribed");
         h.on_page_message(r#"{"sub":"permissions"}"#);
         h.set_granted(&["games.read".into()]);
+        // The subscribe gets the record as it is, then each change (QA-WEB-2).
         assert_eq!(
             h.take_ready(),
-            [r#"{"data":["games.read"],"topic":"permissions"}"#]
+            [
+                r#"{"data":["audio.read"],"topic":"permissions"}"#,
+                r#"{"data":["games.read"],"topic":"permissions"}"#
+            ]
         );
     }
 

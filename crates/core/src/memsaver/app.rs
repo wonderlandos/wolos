@@ -11,11 +11,16 @@ pub struct Config {
     pub nap_after_ms: u64,
 }
 
+/// ADR 0026: memory goes back 30 s after an app stops being in use.
+pub const SAVE_AFTER_MS: u64 = 30_000;
+/// ADR 0026: App Nap pauses an app hidden and idle for 10 minutes (only when switched on).
+pub const NAP_AFTER_MS: u64 = 10 * 60_000;
+
 impl Default for Config {
     fn default() -> Self {
         Config {
-            delay_ms: 30_000,
-            nap_after_ms: 10 * 60_000,
+            delay_ms: SAVE_AFTER_MS,
+            nap_after_ms: NAP_AFTER_MS,
         }
     }
 }
@@ -147,6 +152,38 @@ mod tests {
             p = np;
         }
         (out, p)
+    }
+
+    /// QA-ADR-19/QA-ADR-10: the phase table runs on the delays ADR 0026 publishes, and the record
+    /// still says them: a change to either side fails here.
+    #[test]
+    fn phase_table_runs_on_the_adr_0026_delays() {
+        assert_eq!((SAVE_AFTER_MS, NAP_AFTER_MS), (30 * 1000, 10 * 60 * 1000));
+        let adr = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/adr/0026-memory-saver.md"
+        ))
+        .unwrap();
+        assert!(
+            adr.contains("30 s after an app stops being in use"),
+            "ADR 0026 save delay"
+        );
+        assert!(
+            adr.contains("freeze after 10 minutes hidden and idle"),
+            "ADR 0026 nap delay"
+        );
+        assert!(adr.contains("off by default"), "ADR 0026 nap default");
+        let nap = Facts {
+            nap: true,
+            idle: true,
+            ..bg()
+        };
+        let (s, n) = (SAVE_AFTER_MS, NAP_AFTER_MS);
+        let (acts, _) = replay(&[(0, nap), (s - 1, nap), (s, nap), (n - 1, nap), (n, nap)]);
+        assert_eq!(acts, vec![(s, Action::Save), (n, Action::Nap)]);
+        // Without the opt-in (`nap` false, as `memsaver::Prefs::default` has it) only Save happens.
+        let (acts, _) = replay(&[(0, bg()), (s, bg()), (n, bg())]);
+        assert_eq!(acts, vec![(s, Action::Save)]);
     }
 
     #[test]

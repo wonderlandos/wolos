@@ -91,6 +91,22 @@ impl AppInfo {
     }
 }
 
+/// The accent id (`wol_core::theme::accent::ACCENTS`) of a theme's accent colour `0xRRGGBB`, the
+/// toolkit's `accent_rgb`; the default accent for a colour none has (a theme of others).
+pub fn accent_id(dark: bool, rgb: u32) -> &'static str {
+    use wol_core::theme::accent::{ACCENTS, DEFAULT};
+    let rgb_of = |h: &str| u32::from_str_radix(h.trim_start_matches('#'), 16).ok();
+    ACCENTS
+        .iter()
+        .find(|a| rgb_of(if dark { a.3 } else { a.2 }) == Some(rgb))
+        .or_else(|| {
+            ACCENTS
+                .iter()
+                .find(|a| rgb_of(a.2) == Some(rgb) || rgb_of(a.3) == Some(rgb))
+        })
+        .map_or(DEFAULT, |a| a.0)
+}
+
 /// One allowed call, to run where the host likes (a worker thread: wold may take a while).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Call {
@@ -179,6 +195,16 @@ impl Bridge {
         if let Some(t) = m.get("sub").and_then(Value::as_str) {
             if catalog::TOPICS.contains(&t) {
                 self.subs.insert(t.to_owned());
+                // The record as it is now (QA-WEB-2): the page subscribes as it loads, a reload
+                // included, and its `init` is the one of the host's start.
+                let now = match t {
+                    "app" => Some(self.app.to_json()),
+                    "permissions" => Some(json!(self.granted)),
+                    _ => None,
+                };
+                if let Some(e) = now.and_then(|d| self.event(t, d)) {
+                    return Step::Reply(e);
+                }
             }
             return Step::Nothing;
         }
@@ -332,11 +358,43 @@ mod tests {
         assert_eq!(b.handle(&"x".repeat(MAX_MESSAGE + 1)), Step::Nothing);
     }
 
+    /// QA-WEB-2: a page subscribes as it loads (a reload too) and gets the record as it is now,
+    /// not the `init` of the host's start: the dark mode set before it subscribed is the first
+    /// event it sees. The accent of a theme colour is the id Settings names.
+    #[test]
+    fn a_subscribe_answers_with_the_current_record() {
+        let mut b = bridge(&[]);
+        let mut dark = b.app().clone();
+        dark.theme = Theme::Dark;
+        dark.accent = "green".into();
+        assert_eq!(b.set_app(dark), None, "not subscribed yet");
+        let Step::Reply(r) = b.handle(r#"{"sub":"app"}"#) else {
+            panic!("no record on subscribe");
+        };
+        let e: Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(e["topic"], "app");
+        assert_eq!(
+            (e["data"]["theme"].as_str(), e["data"]["accent"].as_str()),
+            (Some("dark"), Some("green"))
+        );
+        assert_eq!(accent_id(true, 0x6bc681), "green");
+        assert_eq!(accent_id(false, 0x00863c), "green");
+        assert_eq!(accent_id(false, 0x7452f5), "violet");
+        assert_eq!(
+            accent_id(true, 0x123456),
+            "violet",
+            "a colour no accent has: the default"
+        );
+    }
+
     #[test]
     fn events_reach_only_subscribed_pages() {
         let mut b = bridge(&[]);
         assert_eq!(b.set_granted(&["games.read".into()]), None);
-        assert_eq!(b.handle(r#"{"sub":"permissions"}"#), Step::Nothing);
+        assert_eq!(
+            b.handle(r#"{"sub":"permissions"}"#),
+            Step::Reply(json!({"topic": "permissions", "data": ["games.read"]}).to_string())
+        );
         assert_eq!(b.handle(r#"{"sub":"secrets"}"#), Step::Nothing);
         assert!(b.event("secrets", json!(1)).is_none());
         let e: Value =

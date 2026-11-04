@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use webengine::bridge::manifest::{KIT, Manifest, SYSTEM_DIR};
-use webengine::bridge::{AppInfo, Bridge, Theme};
+use webengine::bridge::{AppInfo, Bridge, Theme, accent_id};
 use webengine::host::{Host, WoldClient, initial_grants, locale};
 use webengine::{App, Channel, Target, WebView, ffi, input, process};
 use wolkit::event::{HEADER, kind};
@@ -87,6 +87,13 @@ fn ensure_scope(id: &str, name: &str, manifest_arg: &str) -> Result<(), String> 
     Err(format!("systemd-run: {err}"))
 }
 
+fn config_home() -> PathBuf {
+    match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        Some(d) => d.into(),
+        None => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"),
+    }
+}
+
 fn data_home() -> PathBuf {
     match std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
         Some(d) => d.into(),
@@ -140,8 +147,14 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
         theme: if dark { Theme::Dark } else { Theme::Light },
         accent: accent.to_owned(),
     };
-    let accent = wol_core::theme::accent::DEFAULT;
-    let bridge = Bridge::new(manifest.clone(), info(false, accent), &grants(&consent(())));
+    // The look the toolkit paints now (QA-WEB-2: the page started light violet whatever was set).
+    let look = wolkit::window::native::theme::read(
+        &config_home(),
+        wolkit::window::native::sys::local_time(),
+    )
+    .env;
+    let start = info(look.dark, accent_id(look.dark, look.accent_rgb));
+    let bridge = Bridge::new(manifest.clone(), start, &grants(&consent(())));
     let init = bridge.init().to_string();
     let host = Rc::new(RefCell::new(Host::new(bridge, Arc::new(WoldClient::new()))));
 
@@ -202,8 +215,9 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
                 break 'run;
             }
             for b in input::bridge(record, SURFACE) {
-                if let input::Bridged::Theme { dark: d } = &b {
-                    host.borrow_mut().set_app(info(*d, accent));
+                if let input::Bridged::Theme { dark, accent_rgb } = &b {
+                    host.borrow_mut()
+                        .set_app(info(*dark, accent_id(*dark, *accent_rgb)));
                 }
                 view.apply(&b);
             }
