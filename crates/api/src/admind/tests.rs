@@ -185,7 +185,7 @@ const BOB: Option<Caller> = Some(Caller {
 const ROOT: Option<Caller> = Some(Caller { uid: 0, session: 1 });
 
 #[test]
-fn decision_table() {
+fn the_decision_table_answers_each_request() {
     let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
     let up_good = encode(&req(AdminAction::PkgUpgrade, &[]), b"good");
     let up_bad = encode(&req(AdminAction::PkgUpgrade, &[]), b"bad");
@@ -706,7 +706,8 @@ fn passwd_lookup_and_atomic_write() {
 }
 
 const SEED: [u8; 32] = [7; 32];
-const INFO: &str = r#"{"id":"org.wolos.Fixture","version":"1.0","package":"wol-fixture","targets":[{"abi":"freebsd-native","arch":"amd64","entry":"bin/fixture"}]}"#;
+const INFO: &str = r#"{"id":"org.wolos.Fixture","version":"1.0","package":"wol-fixture","targets":[{"abi":"freebsd-native","arch":"amd64",
+"entry":"bin/fixture"}]}"#;
 
 /// A `.wol` file on disk, signed with `seed` when given.
 fn wol_file(name: &str, seed: Option<&[u8; 32]>, payload: &[u8]) -> String {

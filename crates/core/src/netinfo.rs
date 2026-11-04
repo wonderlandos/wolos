@@ -16,7 +16,7 @@ pub enum IfKind {
 /// CONNECTIVITY general`): one definition of online for the tray, Control Center, `wol network`
 /// and wold's facts (QA-NET-12).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
 pub enum Connectivity {
     /// NetworkManager did not say (not running, check disabled).
     #[default]
@@ -343,8 +343,10 @@ mod tests {
 
     #[test]
     fn linux_ip_json() {
-        let j = r#"[{"ifindex":1,"ifname":"lo","operstate":"UNKNOWN","address":"00:00:00:00:00:00","addr_info":[{"family":"inet","local":"127.0.0.1","prefixlen":8}]},
-{"ifindex":2,"ifname":"wlp2s0","operstate":"UP","address":"3c:58:c2:aa:bb:cc","addr_info":[{"family":"inet","local":"192.168.1.5","prefixlen":24},{"family":"inet6","local":"fe80::1","prefixlen":64,"scope":"link"},{"family":"inet6","local":"2001:db8::5","prefixlen":64,"scope":"global"}]},
+        let j = r#"[{"ifindex":1,"ifname":"lo","operstate":"UNKNOWN","address":"00:00:00:00:00:00","addr_info":[{"family":"inet","local":"127.0.0.1",
+"prefixlen":8}]},
+{"ifindex":2,"ifname":"wlp2s0","operstate":"UP","address":"3c:58:c2:aa:bb:cc","addr_info":[{"family":"inet","local":"192.168.1.5",
+"prefixlen":24},{"family":"inet6","local":"fe80::1","prefixlen":64,"scope":"link"},{"family":"inet6","local":"2001:db8::5","prefixlen":64,"scope":"global"}]},
 {"ifindex":3,"ifname":"enp0s31f6","operstate":"DOWN","address":"aa:bb:cc:dd:ee:ff","addr_info":[]},
 {"ifindex":4,"ifname":"docker0","operstate":"DOWN","address":"02:42:00:00:00:01","addr_info":[]},
 {"ifindex":5,"ifname":"veth12ab","operstate":"UP","address":"02:42:00:00:00:02","addr_info":[]}]"#;
@@ -426,8 +428,10 @@ mod tests {
     /// QA-NET-28: an active WireGuard tunnel is a VPN that is up, with its own DNS.
     #[test]
     fn wireguard_is_vpn_with_its_dns() {
-        let j = r#"[{"ifname":"enp0s1","operstate":"UP","link_type":"ether","address":"52:54:00:12:34:56","addr_info":[{"family":"inet","local":"10.0.2.15","prefixlen":24}]},
-{"ifname":"qa-wg0","flags":["POINTOPOINT","NOARP","UP","LOWER_UP"],"operstate":"UNKNOWN","link_type":"none","addr_info":[{"family":"inet","local":"10.77.0.2","prefixlen":32}]}]"#;
+        let j = r#"[{"ifname":"enp0s1","operstate":"UP","link_type":"ether","address":"52:54:00:12:34:56","addr_info":[{"family":"inet","local":"10.0.2.15",
+"prefixlen":24}]},
+{"ifname":"qa-wg0","flags":["POINTOPOINT","NOARP","UP","LOWER_UP"],"operstate":"UNKNOWN","link_type":"none","addr_info":[{"family":"inet",
+"local":"10.77.0.2","prefixlen":32}]}]"#;
         let l = FakeHost::linux();
         l.command("ip -j addr", j).command(
             "nmcli -t -f GENERAL.DEVICE,IP4.DNS,IP6.DNS device show",

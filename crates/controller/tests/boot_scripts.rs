@@ -425,7 +425,7 @@ fn rules_failure_exits_1() {
 /// with no handlers plymouth showed nothing on a real screen. The screenshot golden is the
 /// wolvm journey (unrun here); this is the static half.
 #[test]
-fn plymouth_prompt() {
+fn plymouth_shows_the_passphrase_prompt() {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../files/usr/share/plymouth/themes/wolos/wolos.script");
     let t = fs::read_to_string(p).unwrap();

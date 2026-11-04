@@ -74,7 +74,8 @@ pub fn capture(argv: &[&str], timeout: Duration) -> Option<String> {
     // Drained as it comes (a full pipe would stop the child); only the end is kept.
     let (tx, rx) = std::sync::mpsc::channel();
     if let Some(mut err) = child.stderr.take() {
-        std::thread::spawn(move || {
+        let drain = std::thread::Builder::new().name("privileged-stderr".into());
+        let _ = drain.spawn(move || {
             let mut all = Vec::new();
             let mut chunk = [0u8; 4096];
             while let Ok(n) = err.read(&mut chunk) {

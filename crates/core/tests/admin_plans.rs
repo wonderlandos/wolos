@@ -166,7 +166,8 @@ fn forget_by_ssid() {
     };
     let probe = |a: &[&str]| -> Option<String> {
         Some(match a.join(" ").as_str() {
-            "nmcli -t -f UUID,TYPE connection show" => "11111111-aaaa:802-11-wireless\n22222222-bbbb:802-11-wireless\n33333333-cccc:802-11-wireless\n44444444-dddd:802-3-ethernet\n".into(),
+            "nmcli -t -f UUID,TYPE connection show" => "11111111-aaaa:802-11-wireless\n22222222-bbbb:802-11-wireless\n33333333-cccc:802-11-wireless\n\
+                44444444-dddd:802-3-ethernet\n".into(),
             "nmcli -g 802-11-wireless.ssid connection show uuid 11111111-aaaa" => "Home\n".into(),
             "nmcli -g 802-11-wireless.ssid connection show uuid 22222222-bbbb" => "Home\n".into(),
             // A profile NAMED "Home" that joins the neighbour's network.
@@ -192,7 +193,7 @@ fn forget_by_ssid() {
 /// QA-NET-17 (B7): Disconnect is `nmcli dev disconnect <iface>` (the profile stays); never an
 /// option-looking or path-looking name.
 #[test]
-fn disconnect_argv() {
+fn disconnect_is_nmcli_dev_disconnect() {
     assert_eq!(
         wol_core::wifi::nm_disconnect_argv("wlan0").unwrap(),
         ["nmcli", "dev", "disconnect", "wlan0"]

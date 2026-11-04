@@ -69,6 +69,7 @@ fn under(rel: &str, d: &str) -> bool {
     rel == d || rel.strip_prefix(d).is_some_and(|r| r.starts_with('/'))
 }
 
+/// How the seal covers the file at `rel` (relative to the slot root).
 pub fn covers(rel: &str) -> Cover {
     if rel == MANIFEST {
         Cover::Outside

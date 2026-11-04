@@ -338,7 +338,7 @@ fn fwupd_ships_without_auto_download() {
 
 /// QA-FILES-6: phones, cameras and shares in Files.
 #[test]
-fn gvfs_backends() {
+fn files_has_the_gvfs_backends() {
     for p in ["gvfs", "gvfs-mtp", "gvfs-gphoto2", "gvfs-smb", "gvfs-afc"] {
         assert!(ships(p), "{p}");
     }

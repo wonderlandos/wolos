@@ -821,34 +821,7 @@ pub fn run_with_input_err(
     input: &str,
     timeout: std::time::Duration,
 ) -> Result<String, String> {
-    use std::io::Write;
-    use std::process::Stdio;
-    let (file, args) = argv.split_first().ok_or_else(String::new)?;
-    let mut child = std::process::Command::new(file)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    if let Some(mut i) = child.stdin.take() {
-        let _ = i.write_all(input.as_bytes());
-    }
-    let pid = child.id() as libc::pid_t;
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
-    });
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(o)) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
-        Ok(Ok(o)) => Err(String::from_utf8_lossy(&o.stderr).into_owned()),
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => {
-            // SAFETY: plain kill(2) on the child we spawned; the waiting thread reaps it.
-            unsafe { libc::kill(pid, libc::SIGKILL) };
-            Err("timed out".into())
-        }
-    }
+    crate::system::run_input_err(argv, input, timeout)
 }
 
 /// Run argv with `input` on stdin; stdout when it exits 0 within `timeout`.
@@ -910,7 +883,7 @@ mod tests {
     /// QA-NET-19: nmcli's terse output escapes `\\` as well as `:`; an SSID with a backslash
     /// reads as typed.
     #[test]
-    fn unescape_backslash() {
+    fn an_ssid_with_a_backslash_reads_as_typed() {
         let v = parse_nmcli_wifi("*:60:WPA2:Cafe\\\\Bar\n :40:WPA2:A\\\\\\:B\n");
         assert_eq!(v[0].ssid, "Cafe\\Bar");
         assert_eq!(v[1].ssid, "A\\:B");
@@ -923,7 +896,7 @@ mod tests {
     /// QA-NET-16: Settings and Control Center ask NetworkManager for a fresh list when theirs is
     /// old (`--rescan auto`), never only what it happens to remember.
     #[test]
-    fn rescan_auto() {
+    fn wifi_lists_ask_for_a_fresh_scan() {
         let (h, c, _) = controls();
         h.command(
             "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list --rescan auto",
@@ -954,7 +927,7 @@ mod tests {
     }
 
     #[test]
-    fn audio_parsers() {
+    fn audio_volume_lines_parse() {
         for (t, want) in [
             ("Volume: 0.40\n", Some((40, false))),
             ("Volume: 1.00 [MUTED]\n", Some((100, true))),
@@ -976,7 +949,7 @@ mod tests {
     }
 
     #[test]
-    fn misc_parsers() {
+    fn backlight_and_other_lines_parse() {
         assert_eq!(backlight_percent("10666", "21333"), Some(49));
         assert_eq!(backlight_percent("1", "0"), None);
         assert_eq!(
@@ -1001,7 +974,8 @@ mod tests {
 
     #[test]
     fn hypr_monitors_and_rules() {
-        let j = r#"[{"name":"eDP-1","description":"BOE 0x1","width":1920,"height":1080,"refreshRate":60.003,"scale":1.25,"availableModes":["1920x1080@60.00Hz","1280x720@60.00Hz"]}]"#;
+        let j = r#"[{"name":"eDP-1","description":"BOE 0x1","width":1920,"height":1080,"refreshRate":60.003,"scale":1.25,
+"availableModes":["1920x1080@60.00Hz","1280x720@60.00Hz"]}]"#;
         let m = parse_hypr_monitors(j);
         assert_eq!(m.len(), 1);
         assert_eq!((m[0].width, m[0].scale, m[0].modes.len()), (1920, 1.25, 2));
@@ -1170,7 +1144,8 @@ mod tests {
         );
     }
 
-    const SECRETS: &str = "Error: Connection activation failed: Secrets were required, but not provided.\nHint: use 'journalctl -xe NM_CONNECTION=1f0e NM_DEVICE=wlan0' to get more details.\n";
+    const SECRETS: &str = "Error: Connection activation failed: Secrets were required, but not provided.\nHint: use 'journalctl -xe \
+        NM_CONNECTION=1f0e NM_DEVICE=wlan0' to get more details.\n";
 
     /// QA-NET-8: nmcli's stderr names the cause; only a refused secret reads as a wrong password.
     /// Fixtures are nmcli 1.58's own words.
@@ -1186,7 +1161,8 @@ mod tests {
             ),
             ("Error: No Wi-Fi device found.\n", true, NoDevice),
             (
-                "Error: Connection activation failed: No suitable device found for this connection (device lo not available because device is strictly unmanaged).\n",
+                "Error: Connection activation failed: No suitable device found for this connection (device lo not available because device is \
+                    strictly unmanaged).\n",
                 true,
                 NoDevice,
             ),
@@ -1309,7 +1285,8 @@ mod tests {
         h.command("nmcli -t -f TYPE dev", "wifi\n")
             .command("nmcli radio wifi", "enabled\n")
             .slow(
-                "nmcli connection add type wifi con-name WolOS Hotspot ifname * ssid My Hot 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared ipv6.method ignore wifi-sec.key-mgmt wpa-psk wifi-sec.psk-flags 0 connection.autoconnect no",
+                "nmcli connection add type wifi con-name WolOS Hotspot ifname * ssid My Hot 802-11-wireless.mode ap 802-11-wireless.band bg \
+                    ipv4.method shared ipv6.method ignore wifi-sec.key-mgmt wpa-psk wifi-sec.psk-flags 0 connection.autoconnect no",
                 "",
             );
         assert_eq!(c.set_hotspot(Some(("My Hot", "hot12345"))), Ok(()));
@@ -1474,7 +1451,7 @@ mod tests {
     }
 
     #[test]
-    fn settings_reads() {
+    fn settings_reads_answer_none_then_values() {
         let (h, c, _) = controls();
         assert_eq!((c.network_time(), c.lid()), (None, None));
         h.command("timedatectl show -p NTP --value", "yes\n")

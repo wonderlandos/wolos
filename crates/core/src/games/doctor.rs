@@ -61,8 +61,11 @@ pub enum FutexWaitv {
 
 /// Vulkan ICD manifests (64- and 32-bit drivers).
 pub const ICD_DIR: &str = "/usr/share/vulkan/icd.d";
+/// pacman's configuration, where the Doctor looks for the multilib repository.
 pub const PACMAN_CONF: &str = "/etc/pacman.conf";
+/// Steam's launcher: the Doctor checks that Steam is installed.
 pub const STEAM_BIN: &str = "/usr/bin/steam";
+/// `vulkaninfo` (vulkan-tools): the Doctor checks that it is installed.
 pub const VULKANINFO: &str = "/usr/bin/vulkaninfo";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

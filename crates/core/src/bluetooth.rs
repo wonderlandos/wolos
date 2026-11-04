@@ -166,6 +166,7 @@ pub enum BtLink {
     Up,
 }
 
+/// Whether there is an adapter and bluetoothd runs for it (Settings > Bluetooth's three states).
 pub fn link(h: &dyn Host) -> BtLink {
     if adapters(h).is_empty() {
         return BtLink::None;
@@ -517,6 +518,7 @@ pub struct LineSplitter {
 }
 
 impl LineSplitter {
+    /// Adds `bytes`; returns the lines they complete, a prompt without its newline included.
     pub fn push(&mut self, bytes: &[u8]) -> Vec<String> {
         self.buf.extend_from_slice(bytes);
         let mut out = Vec::new();
@@ -541,6 +543,7 @@ pub trait Console {
     fn recv(&mut self, wait: std::time::Duration) -> Recv;
 }
 
+/// What [`Console::recv`] got: a line, nothing within the wait, or the end of the process.
 pub enum Recv {
     Line(String),
     Idle,
@@ -604,33 +607,11 @@ pub fn run_pair(
             Recv::Idle => {
                 idle += tick;
                 if idle >= wait {
-                    let o = if paired {
-                        PairOutcome::Paired {
-                            connected: false,
-                            note: Some("Paired, but it didn’t connect. Try Connect."),
-                        }
-                    } else if !pair_sent {
-                        PairOutcome::Failed("Bluetooth didn’t answer. Try again.")
-                    } else {
-                        PairOutcome::Failed(
-                            "The device didn’t answer. Put it in pairing mode and try again.",
-                        )
-                    };
-                    return finish(c, o);
+                    return finish(c, gave_up(paired, pair_sent));
                 }
                 continue;
             }
-            Recv::Closed => {
-                let o = if paired {
-                    PairOutcome::Paired {
-                        connected: false,
-                        note: None,
-                    }
-                } else {
-                    PairOutcome::Failed("Bluetooth stopped answering. Try again.")
-                };
-                return o;
-            }
+            Recv::Closed => return closed(paired),
         };
         let Some(ev) = parse_agent_line(&clean_line(&line)) else {
             continue;
@@ -736,6 +717,32 @@ pub fn run_pair(
     }
 }
 
+/// How a pairing ends when nothing meaningful came for the whole wait.
+fn gave_up(paired: bool, pair_sent: bool) -> PairOutcome {
+    if paired {
+        PairOutcome::Paired {
+            connected: false,
+            note: Some("Paired, but it didn’t connect. Try Connect."),
+        }
+    } else if !pair_sent {
+        PairOutcome::Failed("Bluetooth didn’t answer. Try again.")
+    } else {
+        PairOutcome::Failed("The device didn’t answer. Put it in pairing mode and try again.")
+    }
+}
+
+/// How a pairing ends when bluetoothctl exited under it.
+fn closed(paired: bool) -> PairOutcome {
+    if paired {
+        PairOutcome::Paired {
+            connected: false,
+            note: None,
+        }
+    } else {
+        PairOutcome::Failed("Bluetooth stopped answering. Try again.")
+    }
+}
+
 fn pair_failure(reason: &str) -> &'static str {
     let r = reason.to_ascii_lowercase();
     if r.contains("authenticationfailed") || r.contains("authenticationrejected") {
@@ -755,67 +762,7 @@ fn pair_failure(reason: &str) -> &'static str {
     }
 }
 
-/// The real `bluetoothctl`, one process per pairing, killed when dropped.
-pub struct BluetoothctlProc {
-    child: std::process::Child,
-    stdin: Option<std::process::ChildStdin>,
-    rx: std::sync::mpsc::Receiver<String>,
-}
-
-impl BluetoothctlProc {
-    pub fn spawn() -> Option<Self> {
-        use std::io::Read;
-        use std::process::{Command, Stdio};
-        let mut child = Command::new("bluetoothctl")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .ok()?;
-        let stdin = child.stdin.take();
-        let mut out = child.stdout.take()?;
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut split = LineSplitter::default();
-            let mut buf = [0u8; 4096];
-            while let Ok(n) = out.read(&mut buf) {
-                if n == 0 {
-                    break;
-                }
-                for l in split.push(&buf[..n]) {
-                    if tx.send(l).is_err() {
-                        return;
-                    }
-                }
-            }
-        });
-        Some(Self { child, stdin, rx })
-    }
-}
-
-impl Console for BluetoothctlProc {
-    fn send(&mut self, line: &str) -> bool {
-        use std::io::Write;
-        self.stdin
-            .as_mut()
-            .is_some_and(|s| writeln!(s, "{line}").and_then(|_| s.flush()).is_ok())
-    }
-    fn recv(&mut self, wait: std::time::Duration) -> Recv {
-        match self.rx.recv_timeout(wait) {
-            Ok(l) => Recv::Line(l),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Recv::Idle,
-            Err(_) => Recv::Closed,
-        }
-    }
-}
-
-impl Drop for BluetoothctlProc {
-    fn drop(&mut self) {
-        self.stdin = None;
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
+pub use crate::system::bluetoothctl::BluetoothctlProc;
 
 #[cfg(test)]
 mod tests {

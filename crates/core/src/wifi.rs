@@ -42,6 +42,7 @@ pub fn unescape(s: &str) -> String {
 
 /// What a network asks for, from nmcli's SECURITY column ("WPA2", "WPA1 WPA2 802.1X", "OWE").
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub enum Security {
     #[default]
     Open,
@@ -404,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_table() {
+    fn ssid_and_password_validation_table() {
         for (ssid, pw, ok) in [
             ("Home", None, true),
             ("Home", Some("password1"), true),
@@ -423,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn unescape_pairs() {
+    fn nmcli_escapes_are_undone() {
         assert_eq!(unescape("Cafe\\\\Bar"), "Cafe\\Bar");
         assert_eq!(unescape("A\\:B"), "A:B");
         assert_eq!(unescape("plain"), "plain");
@@ -432,7 +433,7 @@ mod tests {
 
     /// QA-NET-9: the kind of security, so an 802.1X network is never offered a password field.
     #[test]
-    fn security_kinds() {
+    fn security_kinds_are_read_from_nmcli() {
         for (sec, want) in [
             ("", Security::Open),
             ("--", Security::Open),

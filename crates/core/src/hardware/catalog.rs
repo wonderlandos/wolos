@@ -919,7 +919,8 @@ mod tests {
         };
         let cpu = "processor\t: 0\nvendor_id\t: AuthenticAMD\nmodel name\t: AMD Ryzen 7 7700\n";
         let rel = "7.3.1-1-wolos";
-        let dep = "kernel/drivers/net/wireless/realtek/rtw89/rtw89_8852be.ko.zst:\nkernel/drivers/bluetooth/btusb.ko.zst:\nkernel/drivers/hwmon/k10temp.ko.zst:\n";
+        let dep = "kernel/drivers/net/wireless/realtek/rtw89/rtw89_8852be.ko.zst:\nkernel/drivers/bluetooth/btusb.ko.zst:\n\
+            kernel/drivers/hwmon/k10temp.ko.zst:\n";
         // AMD desktop: NVIDIA RTX 3060, Realtek RTL8852BE Wi-Fi and its Bluetooth, nothing installed yet.
         let h = FakeHost::linux();
         sysfs(

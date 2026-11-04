@@ -653,6 +653,10 @@ fn tally(scope: impl Fn(&Src) -> bool, count: impl Fn(&Src) -> usize) -> BTreeMa
     for s in sources().iter().filter(|s| scope(s)) {
         let n = count(s);
         if n > 0 {
+            // RULES_FILES=1: the hits per file, to find which file a grown row points at.
+            if std::env::var_os("RULES_FILES").is_some() {
+                println!("FILE-HIT {} {n}", s.rel);
+            }
             *m.entry(s.krate.clone()).or_insert(0) += n;
         }
     }
@@ -1116,7 +1120,8 @@ rule!(
         && s.krate == "core"
         && !s.rel.contains("core/src/system/")
         && !s.rel.ends_with("core/src/privileged.rs"),
-    |s| n_all(
+    // As words: `hyprprefs::load()` is a module path, not `std::fs::`.
+    |s| n_words(
         &s.code,
         &[
             "fs::",
@@ -1708,4 +1713,11 @@ fn the_doc_and_the_tests_agree() {
         "docs/RULES.md lists {} Rust rules, at least 60 are required",
         doc_ids.len()
     );
+}
+
+/// RR-066 counts the fs module, not a module whose name ends in "fs" (`hyprprefs::`).
+#[test]
+fn rr_066_counts_the_fs_module_not_names_ending_in_fs() {
+    assert_eq!(n_words(b"let d = crate::hyprprefs::load(h);", &["fs::"]), 0);
+    assert_eq!(n_words(b"std::fs::read(p); fs::write(p, b)", &["fs::"]), 2);
 }
