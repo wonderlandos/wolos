@@ -43,6 +43,32 @@ pub fn initial_preferences() -> String {
     serde_json::to_string_pretty(&v).unwrap_or_default() + "\n"
 }
 
+/// The browser's rows of the system TLS policy (ADR 0055), as managed policies so a page or an
+/// extension cannot turn them off. Chromium 156 always offers the hybrid post-quantum group
+/// X25519MLKEM768 first (its `PostQuantumKeyAgreementEnabled` policy ended at 146: there is no off
+/// switch left to pin) and has TLS 1.2 as its floor (`SSLVersionMin` ended at 97), so neither needs
+/// a row. Encrypted Client Hello hides the site's name from the network; it needs the site's HTTPS
+/// DNS record, which only the built-in DNS client asks for (it sends its queries to the system
+/// resolver, so DNS over TLS still applies). DNS over HTTPS is off: Chromium's "automatic" mode
+/// would move lookups to a public DNS-over-HTTPS provider whenever the system's server is one it
+/// knows, around the system resolver and its DNS-over-TLS choice (Settings > Network); pinned off,
+/// every lookup goes to the system resolver. http:// pages are upgraded to https:// first.
+/// Certificate transparency is enforced by default: no `CertificateTransparencyEnforcementDisabled*`
+/// row is ever written (test below).
+pub fn tls_policies() -> serde_json::Map<String, serde_json::Value> {
+    let v = json!({
+        "EncryptedClientHelloEnabled": true,
+        "BuiltInDnsClientEnabled": true,
+        "AdditionalDnsQueryTypesEnabled": true,
+        "HttpsUpgradesEnabled": true,
+        "DnsOverHttpsMode": "off"
+    });
+    match v {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    }
+}
+
 /// Privacy defaults: no usage reports, no sign-in or sync, no promotional tabs; then the browser
 /// rows its web policy (`webpolicy/helium.json`) allows, and only those.
 pub fn policies() -> String {
@@ -56,9 +82,13 @@ pub fn policies() -> String {
         "BackgroundModeEnabled": false,
         "DefaultBrowserSettingEnabled": false
     });
+    // The TLS policy's browser rows (ADR 0055).
+    let mut v = v;
+    if let Some(m) = v.as_object_mut() {
+        m.extend(tls_policies());
+    }
     // The browser's web policy decides its runtime rows (tab discard, throttling; ADR 0042). A
     // refused policy adds none.
-    let mut v = v;
     if let (Some(m), Ok(p)) = (
         v.as_object_mut(),
         crate::webpolicy::parse(crate::webpolicy::HELIUM_JSON.as_bytes()),
@@ -107,6 +137,37 @@ mod tests {
             p.get("BrowserThemeColor").is_none(),
             "would override GTK mode"
         );
+    }
+
+    /// ADR 0055: ECH and the DNS records it needs are on, http is upgraded, and nothing weakens
+    /// certificate checks or TLS (no CT exemption, no TLS-error override, no obsolete TLS rows).
+    #[test]
+    fn tls_rows_are_on_and_nothing_weakens_tls() {
+        let p: serde_json::Value = serde_json::from_str(&policies()).unwrap();
+        for k in [
+            "EncryptedClientHelloEnabled",
+            "BuiltInDnsClientEnabled",
+            "AdditionalDnsQueryTypesEnabled",
+            "HttpsUpgradesEnabled",
+        ] {
+            assert_eq!(p[k], true, "{k}");
+        }
+        assert_eq!(
+            p["DnsOverHttpsMode"], "off",
+            "lookups go to the system resolver (its DNS over TLS), never a public DoH provider"
+        );
+        assert!(p.get("DnsOverHttpsTemplates").is_none());
+        let m = p.as_object().unwrap();
+        for k in m.keys() {
+            assert!(
+                !k.starts_with("CertificateTransparencyEnforcementDisabled")
+                    && !k.starts_with("SSLVersion")
+                    && k != "PostQuantumKeyAgreementEnabled"
+                    && k != "InsecureHashesInTLSHandshakesEnabled"
+                    && k != "HSTSPolicyBypassList",
+                "{k} weakens TLS or is not a policy of this engine"
+            );
+        }
     }
 
     /// Light/dark and the accent reach Helium (and Firefox, libadwaita) through the settings

@@ -72,6 +72,7 @@ files/usr/lib/wolos/modules-install
 files/usr/lib/wolos/pwsh
 files/usr/lib/wolos/report
 files/usr/lib/wolos/set-regdom
+files/usr/lib/wolos/tls-policy
 files/usr/lib/wolos/update-check
 files/usr/lib/wolos/update-download
 files/usr/lib/wolos/verify-gpu.sh

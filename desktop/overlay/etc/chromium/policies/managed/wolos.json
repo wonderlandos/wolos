@@ -1,8 +1,13 @@
 {
+  "AdditionalDnsQueryTypesEnabled": true,
   "BackgroundModeEnabled": false,
   "BrowserSignin": 0,
+  "BuiltInDnsClientEnabled": true,
   "DefaultBrowserSettingEnabled": false,
+  "DnsOverHttpsMode": "off",
+  "EncryptedClientHelloEnabled": true,
   "FeedbackSurveysEnabled": false,
+  "HttpsUpgradesEnabled": true,
   "MetricsReportingEnabled": false,
   "PromotionalTabsEnabled": false,
   "SyncDisabled": true,

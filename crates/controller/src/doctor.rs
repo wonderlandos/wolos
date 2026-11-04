@@ -16,10 +16,18 @@ use std::path::Path;
 use wol_core::games::doctor as games;
 
 pub mod groups;
+pub mod tls;
 
 /// Every area, in the order the Doctor app lists them.
 pub const AREAS: &[&str] = &[
     "sound", "games", "updates", "security", "storage", "network", "power", "display",
+];
+/// Areas run only when asked for by name (`wol doctor tls` connects to servers outside the
+/// computer, so neither plain `wol doctor` nor the Doctor app runs it).
+pub const ON_ASK: &[&str] = &[tls::AREA];
+/// What `wol doctor <area>` accepts: [`AREAS`], then [`ON_ASK`].
+pub const CHOICES: &[&str] = &[
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "tls",
 ];
 
 /// Last-check age that turns the update check into a warning: three days.
@@ -659,6 +667,8 @@ fn security(env: &mut dyn Env) -> Vec<Check> {
         env.read_file(Path::new("/etc/passwd")),
     );
     v.push(groups::check(group.as_deref(), passwd.as_deref()));
+    // ADR 0055: the system TLS policy and the browser's TLS rows (files only, no network).
+    v.extend(tls::file_checks(env));
     v.extend(malware_checks(&malware));
     v
 }
@@ -1070,12 +1080,16 @@ pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
         "network" => network(env),
         "power" => power(env),
         "display" => display(env),
+        tls::AREA => tls::checks(env),
         _ => Vec::new(),
     }
 }
 
-/// Every area in [`AREAS`] order, or the one asked for.
+/// Every area in [`AREAS`] order, or the one asked for (an [`ON_ASK`] area only by name).
 pub fn checks(env: &mut dyn Env, area: Option<&str>) -> Vec<Check> {
+    if let Some(a) = area.filter(|a| ON_ASK.contains(a)) {
+        return area_checks(env, a);
+    }
     AREAS
         .iter()
         .filter(|a| area.is_none_or(|x| x == **a))
@@ -1154,7 +1168,7 @@ fn run(env: &mut dyn Env, area: Option<&str>, json: bool) -> i32 {
 /// The check `id` as it is now, when its area and id exist.
 fn find(env: &mut dyn Env, id: &str) -> Option<Check> {
     let area = id.split('.').next().unwrap_or_default();
-    if !AREAS.contains(&area) {
+    if !AREAS.contains(&area) && !ON_ASK.contains(&area) {
         return None;
     }
     area_checks(env, area).into_iter().find(|c| c.id == id)
@@ -1204,7 +1218,7 @@ pub fn after(env: &mut dyn Env, id: &str) -> serde_json::Value {
 /// at `wol`) never sends a wol-admind request from here: theirs went through [`approval`].
 fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let area = id.split('.').next().unwrap_or_default();
-    if !AREAS.contains(&area) {
+    if !AREAS.contains(&area) && !ON_ASK.contains(&area) {
         return fail(env, ErrorCode::NotFound, &format!("no check {id}"));
     }
     let Some(c) = area_checks(env, area).into_iter().find(|c| c.id == id) else {

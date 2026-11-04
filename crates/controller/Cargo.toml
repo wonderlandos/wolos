@@ -8,7 +8,8 @@ authors.workspace = true
 [dependencies]
 wol_lua = { path = "../wol-lua", package = "wol-lua" }
 shared.workspace = true
-wol_core.workspace = true
+# `tls`: `wol doctor tls` probes WolOS's own Rust TLS stack (wol_core::net::probe, ADR 0055).
+wol_core = { workspace = true, features = ["tls"] }
 serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true

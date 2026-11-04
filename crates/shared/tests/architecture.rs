@@ -45,7 +45,10 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
         for dep in deps {
             let ok = match pkg.as_str() {
                 "shared" => false,
-                "core" => dep == "shared",
+                // wolcrypt (ADR 0055): only behind core's `tls` feature, for the one TLS provider
+                // (`wol_core::net`); a BSD-2-Clause leaf that depends on nothing of ours.
+                "core" => dep == "shared" || dep == "wolcrypt",
+                "wolcrypt" => false,
                 // `wol plugin check|run` loads and renders plugin Lua without a display (ADR 0031).
                 "controller" => ["shared", "core", "wol-lua"].contains(&dep.as_str()),
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",

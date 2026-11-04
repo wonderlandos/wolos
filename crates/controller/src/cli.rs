@@ -679,11 +679,11 @@ pub const TREE: &[Cmd] = &[
         "doctor.check",
         &[Arg {
             name: "area",
-            choices: crate::doctor::AREAS,
+            choices: crate::doctor::CHOICES,
             optional: true,
             rest: false,
         }],
-        "Check sound, games, updates, security, storage, network, power and displays, with the fix",
+        "Check sound, games, updates, security, storage, network, power and displays, with the fix (tls: what each TLS stack negotiates, only when asked)",
     ),
     cmd(
         &["doctor", "fix"],

@@ -61,13 +61,9 @@ pub struct Net {
 
 impl Net {
     pub fn new(allow_loopback_http: bool) -> Self {
-        use ureq::tls::{RootCerts, TlsConfig};
-        let agent = ureq::Agent::config_builder()
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
+        // The system's TLS policy for our Rust stack: hybrid post-quantum group first, AEAD only,
+        // the system's certificate store (ADR 0055).
+        let agent = wol_core::net::agent_config()
             .https_only(!allow_loopback_http)
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(15)))

@@ -696,11 +696,15 @@ version = "0.12.0"
 dependencies = [
  "ed25519-dalek",
  "libc",
+ "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "shared",
  "toml",
+ "ureq",
+ "wolcrypt",
 ]
 
 [[package]]

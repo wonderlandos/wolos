@@ -17,6 +17,18 @@ ed25519-dalek.workspace = true
 sha2.workspace = true
 # app.toml of system web apps (wol_core::sysapp::declared; already in the lock, ADR 0048).
 toml = "1"
+# Feature `tls` (ADR 0055): `net::tls_provider` / `net::tls_config`, the one TLS setup of every
+# WolOS Rust program that fetches (ureq over rustls with ring, wolcrypt's hybrid X25519MLKEM768
+# group first). All three are already in the lock (wopkg, wolcrypt); off by default so crates that
+# never open a TLS connection do not compile a TLS stack.
+ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier"], optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+wolcrypt = { workspace = true, features = ["tls"], optional = true }
+# `net::probe` (wol doctor tls) verifies with the system store as ureq does (already in the lock).
+rustls-platform-verifier = { version = "0.7", optional = true }
+
+[features]
+tls = ["dep:ureq", "dep:rustls", "dep:wolcrypt", "dep:rustls-platform-verifier"]
 
 [dev-dependencies]
 # Contract tests: the starship palette file parses as TOML (ADR 0031 themes v2, ADR 0032).
