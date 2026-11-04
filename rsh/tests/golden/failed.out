@@ -1,0 +1,10 @@
+caught: sh exited 3
+status 3, argv ["sh", "-c", "echo oops >&2; exit 3"]
+stderr tail: oops
+condition: false
+or branch ran
+relaxed, status 5
+pipeline: sh exited 1
+missing: 127
+uncaught next
+status: 9

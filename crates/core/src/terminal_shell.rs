@@ -15,9 +15,10 @@ pub const DEFAULT: &str = "zsh";
 /// The programs, in menu order; a shell's word in [`FILE`] is its file name ([`id`]). `~/` is the
 /// person's home: pwsh is installed per person by the Console module's recipe. [`LAUNCHER`] has
 /// the same table (a test keeps the two equal).
-pub const SHELLS: [&str; 5] = [
+pub const SHELLS: [&str; 6] = [
     "/usr/bin/zsh",
     "/usr/bin/bash",
+    "/usr/bin/rsh",
     "/usr/bin/fish",
     "/usr/bin/nu",
     "~/.local/bin/pwsh",
@@ -104,7 +105,7 @@ mod tests {
         assert_eq!(have, ["zsh", "pwsh"]);
         assert_eq!(
             ids().collect::<Vec<_>>(),
-            ["zsh", "bash", "fish", "nu", "pwsh"]
+            ["zsh", "bash", "rsh", "fish", "nu", "pwsh"]
         );
     }
 }

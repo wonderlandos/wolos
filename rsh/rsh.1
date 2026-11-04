@@ -1,0 +1,308 @@
+.\" SPDX-License-Identifier: GPL-2.0-or-later
+.TH RSH 1 "November 2026" "rsh 0.1" "WolOS"
+.SH NAME
+rsh \- Ruby with command lines: a scripting language and a shell
+.SH SYNOPSIS
+.B rsh
+.RI [ options ]
+.RI [ file " [" arguments ]]
+.br
+.B rsh \-c
+.I text
+.br
+.B rsh \-s
+.RB [ \-\- ]
+.RI [ arguments ]
+.SH DESCRIPTION
+.B rsh
+runs Ruby. A statement whose first word is not something Ruby knows is a
+.I command line
+instead, written the way you write it in a terminal: pipes, redirects,
+.BR && ,
+.BR || ,
+file name patterns, here-documents and
+.BR & .
+So one file can hold both, and it can start with
+.B #!/usr/bin/rsh
+and be run as a program.
+.PP
+With a file name,
+.B rsh
+runs that file; the arguments after it are
+.BR ARGV .
+With
+.B \-c
+or
+.B \-e
+it runs the text. With
+.B \-s
+it reads the script from standard input (this is how
+.B "wol script on"
+sends a script to another computer). With nothing, on a terminal, it is
+interactive.
+.SS How a line is read
+Only the start of a statement is looked at: the start of the file, after a new line or
+.BR ; ,
+after
+.BR then ,
+.BR do ,
+.BR else ,
+after
+.B {
+and after the words
+.BR if ,
+.BR unless ,
+.BR while ,
+.B until
+and
+.BR elsif .
+There the line is a command line when its first word is a plain word, is not a Ruby keyword, is not a
+variable you set earlier, is not a method defined in the file (or in a file loaded with
+.BR require_relative ),
+is not one of Ruby's own words (puts, print, p, printf, format, require, raise, loop, exit, rand,
+gets, warn, lambda, proc and a few more; "sleep" is a command), and is not followed straight away by
+.BR .\ ,
+.BR (\  ,
+.BR [\  ,
+.B =
+and the like. A word that starts with
+.BR ./ ,
+.BR ../ ,
+.B /
+or
+.B ~
+is always a command.
+.PP
+To be sure, put
+.B "$ "
+in front to force a command line (so
+.B "$ printf"
+runs the program, not Ruby's printf),
+or write a call with brackets, like
+.BR foo(1) ,
+to force Ruby.
+.B rsh \-\-explain
+.I file
+shows how each line is read: R for Ruby, C for a command line, X for a back-quote capture inside Ruby.
+.SS Command lines
+Words, single quotes and double quotes work as in a shell. Anywhere in a word, quoted or not,
+.BI #{ expression }
+puts a Ruby value in. A value is always exactly one argument, whatever it holds (spaces, quotes,
+semicolons, a leading dash): nothing is split again and no text is ever handed to
+.BR /bin/sh .
+An Array gives one argument for each element.
+.B $NAME
+and
+.B ${NAME}
+read the environment.
+.TP
+.B | and |&
+Pipe the output (and with
+.B |&
+the error output) into the next stage. A stage can be a Ruby block:
+.B "seq 1 9 | { |line| (line.to_i * 2).to_s } | cat"
+runs the block for each line. A String replaces the line, nil or false drops it, any other value keeps it.
+The status of a pipeline is the last one that failed.
+.TP
+.B "> >> < 2> 2>> 2>&1 &> <<<"
+Redirects. A file name written as
+.B #{path}
+is one word.
+.TP
+.B "<<WORD  <<~WORD  <<'WORD'"
+Here-documents. The first and second take
+.B #{}
+values; the third is taken literally.
+.TP
+.B "* ? [a-z] {a,b} **"
+File name patterns, only in unquoted text. A pattern that matches nothing is an error;
+.B "Rsh.nullglob = true"
+turns it into no words.
+.B ~
+and
+.B ~name
+are home directories.
+.TP
+.B "&& || ;"
+Run the next command if the first worked, if it failed, or in any case.
+.TP
+.B &
+Run in the background. See
+.B jobs
+below.
+.TP
+.B NAME=value command
+Sets a variable for that one command.
+.PP
+A back-quoted text (or
+.BR %x{} )
+runs a command line and gives its output as a String; its status is in
+.BR $? .
+A command line is also a value:
+.B true
+or
+.B false
+by its status, so
+.B "if grep \-q root /etc/passwd"
+and
+.B "ok = (make test)"
+work.
+.SS Failure
+A command line that fails and is not used as a condition (not after
+.BR if ,
+.BR unless ,
+.B while
+or
+.BR until ,
+not left of
+.B &&
+or
+.BR || )
+raises
+.B Rsh::Failed
+with
+.BR status ,
+.B argv
+and
+.B stderr
+(the end of what it wrote on the error output). Left alone it ends the script with a message such as
+.B "rsh: deploy.rsh:12: make exited 2"
+and the same exit status. Use
+.B begin ... rescue Rsh::Failed => e
+to handle it, an
+.B ||
+to ignore it, or
+.B relaxed!
+to carry on after every failure (then look at
+.BR $? ).
+.B $?
+is an
+.B Rsh::Status
+with
+.BR exitstatus ,
+.BR success? ,
+.BR signaled? ,
+.B termsig
+and
+.B statuses
+(one for each pipeline stage). In the interactive shell nothing is raised.
+.SS Commands built in
+.B cd
+(also
+.B "cd dir do ... end"
+to go back afterwards),
+.BR pushd ,
+.BR popd ,
+.BR dirs ,
+.BR export ,
+.BR unset ,
+.BR exec ,
+.BR umask ,
+.BR jobs ,
+.BR fg ,
+.BR bg ,
+.BR wait ,
+.BR source ,
+.BR echo ,
+.BR type ,
+.B pwd
+and
+.BR history .
+.SS The Ruby inside
+Ruby with the usual core classes, plus
+.BR JSON ,
+.BR Regexp ,
+.BR Set ,
+.BR Time ,
+.BR File ,
+.BR Dir ,
+.BR ENV ,
+.B Process
+and
+.BR Etc .
+There is no
+.B eval
+and no network library: use a command (curl, wol) for that.
+.B system
+takes separate arguments only.
+.SS Interactive use
+On a terminal
+.B rsh
+is a shell: a line editor with history (kept in
+.IR ~/.local/state/rsh/history ,
+readable only by you), Ctrl-R search, Tab completion of commands, files and your variables and
+methods, lines that go on while the Ruby is not finished, job control (Ctrl-Z,
+.BR fg ,
+.BR bg ),
+and colours while you type: the command word is green when the program exists and red when it does
+not. If
+.I ~/.config/rsh/init.rsh
+exists it runs first; a method named
+.B prompt
+in it gives the prompt text.
+.SH OPTIONS
+.TP
+.BI \-c " text" ", " \-e " text"
+Run the text.
+.TP
+.B \-s
+Read the script from standard input. Arguments come after
+.BR \-\- .
+.TP
+.B \-n
+Read and compile the script and run nothing.
+.TP
+.B \-\-lint
+Like
+.BR \-n ,
+with warnings for command words that are not on PATH, text built into
+.B "sh \-c"
+and world-writable
+.BR chmod .
+.TP
+.B \-\-explain
+Show how each line is read.
+.TP
+.B \-\-ruby
+Show the Ruby text that will run.
+.TP
+.BR \-i ", " \-l
+Interactive.
+.TP
+.BR \-v ", " \-\-version
+Print the version.
+.SH EXIT STATUS
+The script's own
+.BR exit ;
+else the status of the failed command that ended it; 2 for a mistake in the script itself found
+before it runs; 127 if the file cannot be read.
+.SH ENVIRONMENT
+.TP
+.B XDG_CONFIG_HOME
+Where
+.I rsh/init.rsh
+is read (interactive only).
+.TP
+.B XDG_STATE_HOME
+Where the history is kept.
+.SH FILES
+.TP
+.I ~/.config/rsh/init.rsh
+Your start-up file for the interactive shell.
+.TP
+.I ~/.local/state/rsh/history
+The history.
+.SH EXAMPLES
+.nf
+#!/usr/bin/rsh
+dest = ARGV[0] || "/srv/app"
+cd ~/src/app
+git pull \-\-ff\-only && make \-j4
+rsync \-a build/ #{dest}/
+errors = `journalctl \-b \-p err`.lines.reject { |l| l =~ /fwupd/ }
+puts "#{errors.size} errors" unless errors.empty?
+.fi
+.SH SEE ALSO
+.BR wol (1),
+.BR sh (1),
+.BR ruby (1)

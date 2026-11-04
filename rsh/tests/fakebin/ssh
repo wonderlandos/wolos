@@ -1,0 +1,25 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Test stand-in for ssh: "connects" to a host called "down" never, to anything else it runs the
+# remote text on the local computer in a clean directory-free way (sh -c), prefixed by the host.
+# Options (-o x, -T) are skipped.
+while [ $# -gt 0 ]; do
+	case $1 in
+	-o) shift 2 ;;
+	-*) shift ;;
+	*) break ;;
+	esac
+done
+host=$1
+shift
+if [ "$host" = down ]; then
+	echo "ssh: connect to host down: Connection refused" >&2
+	exit 255
+fi
+if [ $# -eq 0 ]; then
+	echo "$host: script" >&2
+	sh -s
+else
+	printf '[%s] ' "$host"
+	sh -c "$*"
+fi

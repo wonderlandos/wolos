@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol script` (ADR 0041, docs/modules/scripting.md): a Ruby script is checked and run exactly
-//! like a shell script. Every parity test walks the same cases for `.sh` and `.rb`: the argv
+//! like a shell script, and so is an rsh script (ADR 0041, rsh/). Every parity test walks the same
+//! cases for `.sh`, `.rb` and `.rsh`: the argv
 //! (interpreter + file, never a shell string), the clean environment, the helper name, the audit
 //! record, the ssh path (file on stdin) and the refusals. The last tests run the real `wol` binary
 //! on real scripts and skip with a message when the interpreter is missing.
@@ -40,6 +41,18 @@ const SCRIPTS: &[(&str, &str, &str, &str)] = &[
         "tidy",
         "#!/usr/bin/env ruby\nputs 'hi'\n",
         "/usr/bin/ruby",
+    ),
+    (
+        "rsh",
+        "tidy.rsh",
+        "#!/usr/bin/rsh\necho hi\n",
+        "/usr/bin/rsh",
+    ),
+    (
+        "rsh",
+        "tidy",
+        "#!/usr/bin/env rsh\necho hi\n",
+        "/usr/bin/rsh",
     ),
 ];
 
@@ -215,6 +228,10 @@ fn check_parses_without_running_then_lints_when_installed() {
             assert!(lint.contains(&"--only".to_string()), "{lint:?}");
             assert!(lint.contains(&"--force-default-config".to_string()));
             "rubocop"
+        } else if *prog == "/usr/bin/rsh" {
+            assert_eq!(lint[1], "--lint", "{lint:?}");
+            assert!(!lint.contains(&"--only".to_string()), "{lint:?}");
+            "rsh"
         } else {
             "shellcheck"
         };
@@ -241,7 +258,7 @@ fn check_parses_without_running_then_lints_when_installed() {
 }
 
 #[test]
-fn kinds_list_names_ruby_beside_sh() {
+fn kinds_list_names_ruby_and_rsh_beside_sh() {
     let mut e = FakeEnv::default();
     assert_eq!(run("script --json", &mut e), 0);
     let v: serde_json::Value = serde_json::from_str(&e.out).unwrap();
@@ -251,8 +268,9 @@ fn kinds_list_names_ruby_beside_sh() {
         .iter()
         .map(|k| k["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ids, ["sh", "bash", "ruby"]);
+    assert_eq!(ids, ["sh", "bash", "ruby", "rsh"]);
     assert_eq!(v[2]["extensions"], serde_json::json!([".rb"]));
+    assert_eq!(v[3]["extensions"], serde_json::json!([".rsh"]));
 }
 
 #[test]
@@ -306,6 +324,14 @@ fn real_scripts_get_the_same_environment_and_the_same_gate() {
              system(ARGV[0], 'focus', 'on')\nputs \"code=#{$?.exitstatus}\"\n"
                 .to_string(),
         ),
+        (
+            "/usr/bin/rsh",
+            "probe.rsh",
+            "#!/usr/bin/rsh\n\
+             puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')}\"\n\
+             system(ARGV[0], 'focus', 'on')\nputs \"code=#{$?.exitstatus}\"\n"
+                .to_string(),
+        ),
     ];
     for (prog, name, text) in cases {
         if !have(prog) {
@@ -351,6 +377,11 @@ fn real_check_tells_a_good_script_from_a_broken_one() {
             "#!/usr/bin/ruby\n# frozen_string_literal: true\nputs 'ok'\n",
             "#!/usr/bin/ruby\ndef x(\n",
         ),
+        (
+            "/usr/bin/rsh",
+            "#!/usr/bin/rsh\necho ok\n",
+            "#!/usr/bin/rsh\nif test -e x\n",
+        ),
     ] {
         if !have(prog) {
             eprintln!("{prog} not installed; check skipped");
@@ -384,6 +415,12 @@ fn real_scripts_run_on_another_computer_from_stdin() {
             "/usr/bin/ruby",
             "far.rb",
             "#!/usr/bin/ruby\n# frozen_string_literal: true\n\
+             puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\n",
+        ),
+        (
+            "/usr/bin/rsh",
+            "far.rsh",
+            "#!/usr/bin/rsh\n\
              puts \"helper=#{ENV['WOL_HELPER']} token=#{ENV.fetch('GITHUB_TOKEN', 'none')} arg=#{ARGV[0]}\"\n",
         ),
     ];

@@ -15,6 +15,7 @@ read -r id 2>/dev/null < "${XDG_CONFIG_HOME:-$HOME/.config}/wolos/terminal-shell
 case $id in
 	zsh) p=$root/usr/bin/zsh ;;
 	bash) p=$root/usr/bin/bash ;;
+	rsh) p=$root/usr/bin/rsh ;;
 	fish) p=$root/usr/bin/fish ;;
 	nu) p=$root/usr/bin/nu ;;
 	pwsh) p=$HOME/.local/bin/pwsh ;;

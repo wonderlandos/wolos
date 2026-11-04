@@ -1,0 +1,49 @@
+   1 R  #!/usr/bin/rsh
+   2 R  # SPDX-License-Identifier: GPL-2.0-or-later
+   3 R  # How each line is read: R Ruby, C command line, X a capture inside Ruby (see classify.explain).
+   4 R  name = "world"
+   5 R  puts "hello #{name}"
+   6 C  echo hello #{name}
+   7 C  $ echo forced command
+   8 C  $ echo also forced
+   9 C  ls -d /
+  10 R  def never
+  11 C    ./local-tool --flag
+  12 C    ~/bin/tool arg
+  13 R  end
+  14 R  def helper(x)
+  15 R    x * 2
+  16 R  end
+  17 R  helper 21
+  18 R  helper(21)
+  19 R  nothing = helper 4
+  20 C  if grep -q root /etc/passwd
+  21 R    puts "yes"
+  22 R  else
+  23 R    puts "no"
+  24 R  end
+  25 C  while test -e /no/such/file
+  26 R    puts "never"
+  27 R  end
+  28 R  [1, 2].each do |n|
+  29 C    echo item #{n}
+  30 R  end
+  31 C  [3].each { |n| echo brace #{n} }
+  32 C  cd /tmp do
+  33 C    pwd
+  34 R  end
+  35 X  files = `ls /`.lines
+  36 X  n = `echo a`.size + 1
+  37 R  x = 5
+  38 R  x += 1
+  39 R  x
+  40 R  printf("%s\n", "ruby printf")
+  41 C  sleep 0
+  42 C  test -d / && echo and
+  43 C  test -d / || echo or
+  44 C  echo a; echo b
+  45 C  echo trailing # a comment
+  46 C  echo "quote # not a comment"
+  47 R  Struct.new(:a)
+  48 R  exit 0
+  49    

@@ -1,0 +1,18 @@
+2 a
+1 b
+1 c
+THREE
+x!
+y!
+2+4
+y
+y
+to-err
+pipefail: false 3 [3, 0]
+first
+second
+both
+err
+silenced
+  plain here-doc WORK/home
+status: 0

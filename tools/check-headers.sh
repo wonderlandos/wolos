@@ -21,7 +21,10 @@ for f in "$@"; do
     '#!/usr/bin/ruby'* | '#!/usr/bin/env ruby'*)
       if command -v ruby >/dev/null; then ruby -wc "$f" >/dev/null || fail=1
       else echo "header: $f: ruby not installed, syntax not checked" >&2; fi ;;
-    '#!'*) echo "header: $f: shebang $l1 is not sh, bash or ruby" >&2; fail=1; continue ;;
+    '#!/usr/bin/rsh'* | '#!/usr/bin/env rsh'*)
+      if command -v rsh >/dev/null; then rsh -n "$f" || fail=1
+      else echo "header: $f: rsh not installed, syntax not checked" >&2; fi ;;
+    '#!'*) echo "header: $f: shebang $l1 is not sh, bash, ruby or rsh" >&2; fail=1; continue ;;
     *) continue ;; # not a script (a unit, a config)
   esac
   sed -n 2p "$f" | grep -q '^# SPDX-License-Identifier: ' || { echo "header: $f: line 2 is not the SPDX line" >&2; fail=1; }

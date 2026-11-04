@@ -1,0 +1,7 @@
+git: <pull> <--ff-only>
+make: <-j4>
+rsync: <-a> <build/> </srv/my app/>
+systemctl: <--user> <restart> <app>
+restarted app
+deployed to /srv/my app
+status: 0

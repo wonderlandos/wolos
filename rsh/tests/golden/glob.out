@@ -1,0 +1,12 @@
+a.txt b.txt star*.txt
+a.txt b.txt star*.txt c.log
+a.txt b.txt
+c.log
+a.txt b.txt d/e/f.txt d/g.txt star*.txt
+*.txt *.log
+WORK/home/x
+*.txt
+no match: Rsh::Error
+
+x1y x2y a1 a2 b1 b2
+status: 0

@@ -172,7 +172,7 @@ pub const TREE: &[Cmd] = &[
         &["script"],
         "script.kinds",
         &[],
-        "Script kinds wol checks and runs: sh, bash, ruby (ADR 0041)",
+        "Script kinds wol checks and runs: sh, bash, ruby, rsh (ADR 0041)",
     ),
     cmd(
         &["script", "check"],
@@ -184,7 +184,7 @@ pub const TREE: &[Cmd] = &[
         &["script", "run"],
         "script.run",
         &[arg("file"), rest("args")],
-        "Run a sh, bash or ruby script as you, clean environment, its wol changes through the helper gate",
+        "Run a sh, bash, ruby or rsh script as you, clean environment, its wol changes through the helper gate",
     ),
     cmd(
         &["script", "on"],

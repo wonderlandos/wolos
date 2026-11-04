@@ -17,7 +17,7 @@ use wol_core::automation::{Outcome, audit};
 /// One script language: how to recognise it, run it, read it from stdin and check it.
 #[derive(Clone, Copy, Debug)]
 pub struct Kind {
-    /// `sh`, `bash`, `ruby`.
+    /// `sh`, `bash`, `ruby`, `rsh`.
     pub id: &'static str,
     /// Interpreter names a shebang may give (`#!/usr/bin/ruby`, `#!/usr/bin/env ruby`).
     pub interpreters: &'static [&'static str],
@@ -25,11 +25,11 @@ pub struct Kind {
     pub extensions: &'static [&'static str],
     /// The interpreter on a WolOS system.
     pub program: &'static str,
-    /// Arguments before the script's file when it runs here (empty for sh, bash, ruby).
+    /// Arguments before the script's file when it runs here (empty for sh, bash, ruby, rsh).
     pub run_args: &'static [&'static str],
     /// Arguments before the script's own when the program reads the script from stdin.
     pub stdin_args: &'static [&'static str],
-    /// Syntax check without running anything (`sh -n`, `ruby -wc`).
+    /// Syntax check without running anything (`sh -n`, `ruby -wc`, `rsh -n`).
     pub syntax: &'static [&'static str],
     /// Linter used when it is installed: program and arguments before the file.
     pub lint: Option<(&'static str, &'static [&'static str])>,
@@ -99,6 +99,17 @@ pub const KINDS: &[Kind] = &[
             ],
         )),
         lint_only: RUBOCOP_COPS,
+    },
+    Kind {
+        id: "rsh",
+        interpreters: &["rsh"],
+        extensions: &[".rsh"],
+        program: "/usr/bin/rsh",
+        run_args: &[],
+        stdin_args: &["-s", "--"],
+        syntax: &["-n"],
+        lint: Some(("rsh", &["--lint"])),
+        lint_only: &[],
     },
 ];
 
@@ -492,6 +503,8 @@ mod tests {
             ("#!/usr/bin/env ruby", Some("ruby")),
             ("#!/usr/bin/env -S ruby -w", Some("ruby")),
             ("#!/usr/bin/ruby3.4", Some("ruby")),
+            ("#!/usr/bin/rsh", Some("rsh")),
+            ("#!/usr/bin/env rsh", Some("rsh")),
             ("#! /usr/bin/python3", Some("python")),
             ("# a comment", None),
             ("#!", None),
@@ -505,10 +518,14 @@ mod tests {
         assert_eq!(kind_of("x.sh", "#!/usr/bin/ruby\n").unwrap().id, "ruby");
         assert_eq!(kind_of("x.rb", "puts 1\n").unwrap().id, "ruby");
         assert_eq!(kind_of("x.SH", "echo\n").unwrap().id, "sh");
+        assert_eq!(kind_of("x.rsh", "puts 1\n").unwrap().id, "rsh");
+        assert_eq!(kind_of("x", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
+        assert_eq!(kind_of("x", "#!/usr/bin/env rsh\n").unwrap().id, "rsh");
+        assert_eq!(kind_of("x.sh", "#!/usr/bin/rsh\n").unwrap().id, "rsh");
         assert_eq!(kind_of("x", "#!/bin/bash\n").unwrap().id, "bash");
         let e = kind_of("x.py", "#!/usr/bin/python3\n").unwrap_err();
         assert!(
-            e.contains("python script") && e.contains("sh, bash and ruby"),
+            e.contains("python script") && e.contains("sh, bash, ruby and rsh"),
             "{e}"
         );
         let e = kind_of("notes.txt", "hello\n").unwrap_err();
@@ -546,6 +563,26 @@ mod tests {
         );
         let sh = &KINDS[0];
         assert!(remote_command(sh, "t.sh", &[]).ends_with("'/bin/sh' '-s' '--'"));
+        let rsh = kind_named("rsh");
+        let c = remote_command(rsh, "/x/deploy.rsh", &["a b".into()]);
+        assert!(
+            c.contains("'WOL_HELPER=deploy' '/usr/bin/rsh' '-s' '--' 'a b'"),
+            "{c}"
+        );
+    }
+
+    fn kind_named(id: &str) -> &'static Kind {
+        KINDS.iter().find(|k| k.id == id).unwrap()
+    }
+
+    #[test]
+    fn the_rsh_row_reads_from_stdin_and_checks_with_its_own_flags() {
+        let k = kind_named("rsh");
+        assert_eq!(k.program, "/usr/bin/rsh");
+        assert_eq!(k.syntax, ["-n"]);
+        assert_eq!(k.stdin_args, ["-s", "--"]);
+        assert_eq!(k.lint.map(|l| l.0), Some("rsh"));
+        assert!(k.run_args.is_empty() && k.lint_only.is_empty());
     }
 
     #[test]

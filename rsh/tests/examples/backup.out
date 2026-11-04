@@ -1,0 +1,4 @@
+archive holds: my data/, my data/one.txt, my data/two.txt
+kept: archive/my data-2026-11-03.tar archive/my data-2026-11-04.tar archive/my data-2026-11-05.tar
+check failed: tar exited 2
+status: 0

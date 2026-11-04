@@ -21,13 +21,13 @@ namespace {
 
 const char* USAGE =
     "usage: rsh [options] [file [arguments]]\n"
-    "  -c TEXT     run TEXT\n"
+    "  -c TEXT     run TEXT (-e is the same)\n"
     "  -s          read the script from standard input (arguments follow, after --)\n"
     "  -n          check the script: read and compile it, run nothing\n"
     "  --lint      -n, plus warnings (unknown commands, risky forms)\n"
     "  --explain   show how each line is read: C command line, R Ruby, X a capture inside Ruby\n"
     "  --ruby      show the Ruby text rsh runs\n"
-    "  -i          interactive\n"
+    "  -i          interactive (-l, a login window, is the same)\n"
     "  -v          version\n";
 
 // ---- interactive: colours and completion ---------------------------------------------------------
@@ -261,6 +261,9 @@ int interactive() {
     }
     const char* xs = getenv("XDG_STATE_HOME");
     std::string state = xs && *xs ? std::string(xs) : home + "/.local/state";
+    if (!xs || !*xs) {
+        mkdir((home + "/.local").c_str(), 0700);
+    }
     mkdir(state.c_str(), 0700);
     mkdir((state + "/rsh").c_str(), 0700);
     Editor ed;
@@ -318,13 +321,13 @@ int main(int argc, char** argv) {
             break;
         }
         if (a.empty() || a[0] != '-' || a == "-") break;
-        if (a == "-c" && i + 1 < argc) code = argv[++i], have_code = true;
+        if ((a == "-c" || a == "-e") && i + 1 < argc) code = argv[++i], have_code = true;
         else if (a == "-s") from_stdin = true;
         else if (a == "-n") check = true;
         else if (a == "--lint") check = lint = true;
         else if (a == "--explain") explain = true;
         else if (a == "--ruby") show_ruby = true;
-        else if (a == "-i") inter = true;
+        else if (a == "-i" || a == "-l") inter = true;
         else if (a == "-v" || a == "--version") {
             std::printf("rsh %s\n", RSH_VERSION);
             return 0;

@@ -1,0 +1,7 @@
+[alpha] hello from alpha
+script on alpha
+down: failed (255) ssh: connect to host down: Connection refused
+[beta] hello from beta
+script on beta
+failed: down
+status: 1

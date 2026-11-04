@@ -1,0 +1,8 @@
+  plain a b and tester
+stripped a b
+  two more spaces
+  literal #{who} $USER
+PIPED A B
+to a file
+classified after: a b
+status: 0

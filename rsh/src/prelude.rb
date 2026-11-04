@@ -159,6 +159,18 @@ module Kernel
   end
 end
 
+class File
+  def self.write(path, data, *_opts)
+    text = data.to_s
+    File.open(path.to_s, "w") { |f| f.write(text) }
+    text.bytesize
+  end
+
+  def self.readlines(path, *_opts)
+    File.open(path.to_s) { |f| f.each_line.to_a }
+  end
+end
+
 ENV = Object.new
 class << ENV
   def [](key)

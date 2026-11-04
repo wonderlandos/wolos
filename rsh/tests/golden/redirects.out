@@ -1,0 +1,15 @@
+first
+second
+o.txt: to-out
+e.txt: to-err
+to-err
+more-err
+merged-err
+merged-out
+both
+err
+into a path value
+here string name with spaces.txt
+silenced
+13
+status: 0

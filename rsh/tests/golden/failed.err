@@ -1,0 +1,3 @@
+oops
+rsh: nonexistent-program-x: command not found
+rsh: golden/failed.rsh:30: sh exited 9

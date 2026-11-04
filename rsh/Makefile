@@ -70,7 +70,8 @@ build/unit: tests/unit.cpp $(LIBOBJ) build/obj/prelude.o $(MLIB)
 
 test: build/unit build/rsh
 	./build/unit
-	RSH=$(CURDIR)/build/rsh sh ../tests/rsh/run.sh
+	RSH=$(CURDIR)/build/rsh sh tests/run.sh
+	@if command -v ruby >/dev/null; then ruby tests/interactive.rb build/rsh; else echo 'interactive: ruby missing, skipped'; fi
 
 bench: build/rsh
 	sh tests/bench.sh build/rsh

@@ -1,0 +1,7 @@
+6 error lines (any found: true)
+      3 web
+      2 db
+      1 cache
+services with timeouts or deadlocks: db, web
+no fatal lines
+status: 0

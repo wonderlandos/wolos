@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Test stand-in: prints what it was called with, changes nothing.
+[ "${1:-}" = is-active ] && exit "${FAKE_ACTIVE:-0}"
+printf '%s:' "${0##*/}"
+for a in "$@"; do printf ' <%s>' "$a"; done
+printf '\n'
