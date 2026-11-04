@@ -260,10 +260,12 @@ pub fn assert_ratchet(id: &str, rule: &str, baseline: &[Row], hits: &Hits) {
     );
 }
 
-/// A brief id of the 0.13 fix plan (`STEP-0`, `A2`, `D2a`, ...).
+/// A brief id of the 0.13 fix plan (`STEP-0`, `A2`, `D2a`, ...), or `STD-7`, the sweep that
+/// annotates the debt the origin rules (STANDARDS "Origins of the 0.13 bugs") found.
 pub fn is_brief(b: &str) -> bool {
     let mut c = b.chars();
     b == "STEP-0"
+        || b == "STD-7"
         || (c.next().is_some_and(|w| ('A'..='D').contains(&w))
             && b.len() >= 2
             && b[1..]
