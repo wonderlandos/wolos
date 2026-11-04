@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# media-unmount <user>: let go of the removable disks <user> mounted (udisks puts them under
+# /run/media/<user>/). Run by the account's wolos-media-unmount.service when its session ends
+# (QA-FILES-22: a stick left mounted was invisible and unreachable for the next account).
+# WOLOS_MEDIA: the folder that holds the accounts' folders (a test points it at a scratch one).
+# No `set -e`: a stick that will not let go must not stop the others from being let go.
+set -u
+# `media-unmount --start` does nothing: the unit is up from the session's start and does its work when it stops.
+[ "${1:-}" = --start ] && exit 0
+user=${1:?usage: media-unmount <user>}
+case $user in */* | .*) exit 2 ;; esac
+for m in "${WOLOS_MEDIA:-/run/media}/$user"/*; do
+	[ -d "$m" ] || continue
+	dev=$(findmnt -n -o SOURCE -- "$m") || continue
+	udisksctl unmount --no-user-interaction -b "$dev"
+done
+exit 0

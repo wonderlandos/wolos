@@ -75,6 +75,68 @@ pub fn check(group: Option<&str>, passwd: Option<&str>) -> super::Check {
     )
 }
 
+/// QA-FILES-25: the human accounts that are administrators (members of `wheel`), in `/etc/group`
+/// order. Nothing in Settings removes the last one, but `gpasswd -d` in a terminal does, and
+/// Settings then only said "Only an administrator can make this change."
+pub fn administrators(group: &str, passwd: &str) -> Vec<String> {
+    let humans: Vec<String> = wol_core::settings::users::parse(passwd)
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    for line in group.lines() {
+        let f: Vec<&str> = line.trim().split(':').collect();
+        if f.first() != Some(&"wheel") {
+            continue;
+        }
+        for m in f.get(3).copied().unwrap_or("").split(',').map(str::trim) {
+            if humans.iter().any(|h| h == m) && !out.iter().any(|o| o == m) {
+                out.push(m.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The check: Ok when some account is an administrator; Warn, text only, when none is (nobody can
+/// then install, update or add an account from Settings; wol-admind has no way to promote one).
+pub fn administrators_check(group: Option<&str>, passwd: Option<&str>) -> super::Check {
+    let (Some(group), Some(passwd)) = (group, passwd) else {
+        return super::check(
+            "security",
+            "administrator",
+            "Administrator",
+            super::Status::Skipped,
+            "The account and group lists could not be read.",
+        );
+    };
+    if !administrators(group, passwd).is_empty() {
+        return super::check(
+            "security",
+            "administrator",
+            "Administrator",
+            super::Status::Ok,
+            "At least one account can make administrator changes.",
+        );
+    }
+    let first = wol_core::settings::users::parse(passwd)
+        .into_iter()
+        .next()
+        .map_or_else(|| "ACCOUNT".to_string(), |a| a.name);
+    super::check(
+        "security",
+        "administrator",
+        "Administrator",
+        super::Status::Warn,
+        &format!(
+            "No account on this computer is an administrator, so nobody can change the system, \
+             install updates or add accounts from Settings. Start WolOS from the install medium \
+             (Try WolOS), open a terminal, mount this computer's system and add an account to the \
+             wheel group: usermod -aG wheel {first}"
+        ),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,6 +177,33 @@ mod tests {
         );
         assert_eq!(
             check(None, Some(PASSWD)).status,
+            super::super::Status::Skipped
+        );
+    }
+
+    /// QA-FILES-25: removing the last administrator from wheel is said by the Doctor, text only.
+    #[test]
+    fn no_administrator_is_said() {
+        let with = "wheel:x:998:alice\nvideo:x:985:bob\n";
+        assert_eq!(administrators(with, PASSWD), ["alice"]);
+        assert_eq!(
+            administrators_check(Some(with), Some(PASSWD)).status,
+            super::super::Status::Ok
+        );
+        // wheel with no one, only a system account, or no wheel line at all.
+        for none in [
+            "wheel:x:998:\n",
+            "wheel:x:998:rtkit\n",
+            "video:x:985:alice\n",
+        ] {
+            assert!(administrators(none, PASSWD).is_empty(), "{none}");
+            let c = administrators_check(Some(none), Some(PASSWD));
+            assert_eq!(c.status, super::super::Status::Warn, "{none}");
+            assert!(c.detail.contains("usermod -aG wheel alice"), "{}", c.detail);
+            assert!(c.fix.is_none(), "text only: no button");
+        }
+        assert_eq!(
+            administrators_check(None, Some(PASSWD)).status,
             super::super::Status::Skipped
         );
     }

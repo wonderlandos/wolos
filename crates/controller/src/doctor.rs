@@ -659,6 +659,11 @@ fn security(env: &mut dyn Env) -> Vec<Check> {
         env.read_file(Path::new("/etc/passwd")),
     );
     v.push(groups::check(group.as_deref(), passwd.as_deref()));
+    // QA-FILES-25: the last administrator removed from wheel.
+    v.push(groups::administrators_check(
+        group.as_deref(),
+        passwd.as_deref(),
+    ));
     v.extend(malware_checks(&malware));
     v
 }

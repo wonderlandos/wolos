@@ -597,6 +597,15 @@ fn pcrs(env: &mut dyn Env) -> &'static str {
 /// start is automatic again. Nothing typed (the chip opened it) or an install that never used the
 /// chip (no `tpm2-device` in `rd.luks.options`): nothing to do, exit 0.
 pub fn reseal(env: &mut dyn Env) -> i32 {
+    // Root's keyring and the disk are not a person's to touch: said, not a silent success
+    // (QA-LIVE3-32: a user got rc 0 and no output).
+    if !env.is_root() {
+        return fail(
+            env,
+            ErrorCode::Denied,
+            "only an administrator can bind the disk key",
+        );
+    }
     let Some(uuid) = luks_uuid(env) else {
         return 0;
     };

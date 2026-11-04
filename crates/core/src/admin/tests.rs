@@ -398,7 +398,7 @@ fn plan_maps_to_fixed_argv() {
         (
             UserAdd,
             &["bob", "Bob B", "yes", "s3cret-pw"],
-            "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video bob; chpasswd <stdin",
+            "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video bob; chpasswd <stdin; /usr/lib/wolos/home-quota",
         ),
         (UserRemove, &["bob"], "userdel bob"),
         (UserRemove, &["bob", "with-files"], "userdel -r bob"),
@@ -997,6 +997,16 @@ fn write_contents() {
         (content.render(None).as_str(), *mode),
         (r#"{"lock_after_secs":60}"#, 0o644)
     );
+}
+
+/// QA-LIVE-17: a new account sets (again) the cap on the homes' subvolume, last, after the
+/// account and its password exist; the helper takes no argument that could carry a secret.
+#[test]
+fn a_new_account_sets_the_home_quota() {
+    let p = plan(&r(UserAdd, &["bob", "Bob", "no", "s3cret-pw"])).unwrap();
+    assert_eq!(p.len(), 3);
+    assert!(matches!(&p[2], AdminStep::Run(v) if v == &["/usr/lib/wolos/home-quota"]));
+    assert_eq!(users::HOME_QUOTA, "/usr/lib/wolos/home-quota");
 }
 
 #[test]

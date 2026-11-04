@@ -1,0 +1,16 @@
+# Removable disks mounted by this account (Files, udisks: /run/media/<user>/...) are let go when
+# the session ends. A stick left mounted after a logout belonged to nobody the next person could
+# be: it was not in their Files sidebar, was not theirs to eject, and stayed busy until a reboot
+# (QA-FILES-22). Not PartOf wolos-session.target: a compositor restart (`restart
+# wolos-session.target`) must not pull a stick out from under open files. It stops with the user
+# manager, i.e. when the last session of the account is gone.
+[Unit]
+Description=Unmount this account's removable disks at the end of the session
+ConditionPathExists=!/etc/wolos-live
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/wolos/media-unmount --start
+ExecStop=-/usr/lib/wolos/media-unmount %u
+TimeoutStopSec=20

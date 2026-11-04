@@ -65,6 +65,10 @@ pub mod users {
     /// Login shell of every account WolOS creates (Setup Assistant, Settings > Accounts, live user).
     /// The zsh package registers it in /etc/shells. root keeps bash.
     pub const LOGIN_SHELL: &str = "/usr/bin/zsh";
+
+    /// Caps the btrfs subvolume under /home at 85 % of the pool (`files/usr/lib/wolos/home-quota`,
+    /// ADR 0023); run by `install-run` for the first account's /home and after every `useradd`.
+    pub const HOME_QUOTA: &str = "/usr/lib/wolos/home-quota";
     /// Groups of every account: seat (the display, through seatd), video (cameras, GPU render nodes).
     /// Never `input` or `audio` (QA-FILES-2): `input` opens every /dev/input/event* to any process
     /// of the account, so a background program of one person read the keys typed at the lock screen

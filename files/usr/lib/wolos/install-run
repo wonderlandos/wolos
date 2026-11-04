@@ -254,6 +254,9 @@ else
   mkdir -p "$T/home" "$T/var" "$T/efi"
 fi
 [ -z "$var_dev" ] || mount "$var_dev" "$T/var" || fail "could not mount the new system"
+# The homes' subvolume is capped at 85 % of the pool before any account exists, so no account can
+# fill the share of the system (QA-LIVE-17, ADR 0023). Best effort: it never stops an install.
+[ -n "$home_dev" ] || /usr/lib/wolos/home-quota "$T/home" >&2 || true
 mount "$esp" "$T/efi" || fail "could not mount the new system"
 # A startup partition another WolOS used. The WolOS this plan replaces gives its startup files up
 # (`wol install layout` says esp_wolos=1 only when no WolOS system stays, audit3 R2B-5): they go

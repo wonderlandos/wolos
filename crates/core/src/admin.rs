@@ -397,6 +397,9 @@ pub fn plan_with(
                 argv: users::password_argv(&a[0]).unwrap_or_default(),
                 input: format!("{}:{}\n", a[0], a[3]),
             },
+            // QA-LIVE-17: the homes' subvolume keeps its cap (85 % of the pool) so no account can
+            // fill the system's share; an image made before the cap gets it with the next account.
+            AdminStep::Run(vec![users::HOME_QUOTA.into()]),
         ],
         // QA-DATA-8: never under a signed-in person (their session would lose its files and
         // processes), and the home folder stays unless deleting it was asked for.

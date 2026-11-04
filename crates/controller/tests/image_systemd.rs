@@ -1344,3 +1344,72 @@ fn mok_enroll_is_skipped_without_secure_boot_firmware() {
         assert!(conds.contains(&c.to_owned()), "{c}: {conds:?}");
     }
 }
+
+/// QA-FILES-22: a stick mounted by one account stayed mounted after its logout, invisible and
+/// unreachable for the next. The session ends it: a user unit that unmounts /run/media/<user> when
+/// the user manager stops, pulled in by the session target but never stopped with it (a compositor
+/// restart restarts the target and must leave the sticks mounted).
+#[test]
+fn removable_disks_are_unmounted_at_the_end_of_the_session() {
+    let user = "files/usr/lib/systemd/user";
+    let u = read(&format!("{user}/wolos-media-unmount.service"));
+    assert_eq!(values(&u, "Service", "Type"), ["oneshot"]);
+    assert_eq!(values(&u, "Service", "RemainAfterExit"), ["yes"]);
+    assert_eq!(
+        values(&u, "Service", "ExecStart"),
+        ["/usr/lib/wolos/media-unmount", "--start"]
+    );
+    assert_eq!(
+        values(&u, "Service", "ExecStop"),
+        ["-/usr/lib/wolos/media-unmount", "%u"]
+    );
+    assert!(
+        values(&u, "Unit", "PartOf").is_empty() && values(&u, "Unit", "BindsTo").is_empty(),
+        "stopped with the session target, a compositor restart would unmount the sticks"
+    );
+    let t = read(&format!("{user}/wolos-session.target"));
+    assert!(
+        values(&t, "Unit", "Wants")
+            .join(" ")
+            .contains("wolos-media-unmount.service"),
+        "the session target pulls it in"
+    );
+    // The script, against a folder of mounts and fake findmnt/udisksctl: only the account's own.
+    let d = scratch("media-unmount");
+    let media = d.join("media");
+    for m in ["alice/STICK", "alice/CARD", "bob/OTHER"] {
+        fs::create_dir_all(media.join(m)).unwrap();
+    }
+    let path = fakes(
+        &d,
+        &[
+            ("findmnt", "echo /dev/sdX-$(basename \"$5\")"),
+            ("udisksctl", ""),
+        ],
+    );
+    let run = |who: &str| {
+        Command::new("sh")
+            .arg(repo("files/usr/lib/wolos/media-unmount"))
+            .arg(who)
+            .env("PATH", &path)
+            .env("WOLOS_MEDIA", &media)
+            .output()
+            .unwrap()
+    };
+    let o = run("alice");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let l = log(&d);
+    assert!(
+        l.contains("udisksctl unmount --no-user-interaction -b /dev/sdX-STICK"),
+        "{l}"
+    );
+    assert!(l.contains("-b /dev/sdX-CARD"), "{l}");
+    assert!(!l.contains("OTHER"), "another account's stick stays: {l}");
+    // A name that is a path is refused, an account without mounts is fine.
+    assert!(!run("../etc").status.success());
+    // The start does nothing (the unit only works when it stops).
+    let before = log(&d);
+    assert!(run("--start").status.success());
+    assert_eq!(log(&d), before);
+    assert!(run("carol").status.success());
+}
